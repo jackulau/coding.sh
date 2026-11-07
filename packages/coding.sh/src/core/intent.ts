@@ -157,6 +157,23 @@ const WORD = /'[^']*'|"(?:\\.|[^"\\])*"|[^\s'"]+/g;
 const unquote = (w: string) => (w.length >= 2 && (w[0] === "'" || w[0] === '"') && w.endsWith(w[0]) ? w.slice(1, -1) : w);
 const pathLike = (w: string) => w !== "" && !w.startsWith("-") && !w.includes("$") && /^[\w.@~+/*[\]{},:-]+$/.test(w) && /[./]/.test(w) && w !== "." && w !== "..";
 
+/** A shell command without its heredoc bodies (`<<EOF` … `EOF`): their text is data, not commands. */
+export function stripHeredocs(command: string): string {
+  if (!command.includes("<<")) return command;
+  const lines: string[] = [];
+  let heredoc: string | undefined;
+  for (const line of command.split("\n")) {
+    if (heredoc !== undefined) {
+      if (line.trim() === heredoc) heredoc = undefined;
+      continue;
+    }
+    lines.push(line);
+    const m = /<<-?\s*(['"]?)([\w.-]+)\1/.exec(line);
+    if (m) heredoc = m[2];
+  }
+  return lines.join("\n");
+}
+
 /**
  * Files a shell command writes or removes: `sed -i`, `perl -pi`, `>`/`>>`,
  * `tee`, `rm`, `mv`, `cp`, `truncate`, `git checkout|restore -- <path>`, `git rm`.
@@ -172,18 +189,7 @@ export function shellWrites(command: string): ShellWrite[] {
     if (!pathLike(path) || path.startsWith("/dev/") || (dir?.includes("$") && !/^(?:\/|[A-Za-z]:[\\/]|~)/.test(path))) return;
     out.push({ path: under(path), op, ...(renamedTo !== undefined ? { renamedTo: under(renamedTo) } : {}) });
   };
-  const lines: string[] = [];
-  let heredoc: string | undefined;
-  for (const line of command.split("\n")) {
-    if (heredoc !== undefined) {
-      if (line.trim() === heredoc) heredoc = undefined;
-      continue;
-    }
-    lines.push(line);
-    const m = /<<-?\s*(['"]?)([\w.-]+)\1/.exec(line);
-    if (m) heredoc = m[2];
-  }
-  const text = lines.join("\n").replace(/\d*>&\d+|<<-?\s*(['"]?)[\w.-]+\1/g, " ").replace(/&>/g, ">");
+  const text = stripHeredocs(command).replace(/\d*>&\d+|<<-?\s*(['"]?)[\w.-]+\1/g, " ").replace(/&>/g, ">");
   for (const seg of text.split(/&&|\|\||[;|&\n]/)) {
     const words = (seg.match(WORD) ?? []).map(unquote);
     // Redirections write their target wherever they sit.

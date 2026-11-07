@@ -9,6 +9,7 @@
 //   or the script itself, with a path under `skills/<name>/` as its first argument.
 // Pure over a session's events; nothing is executed.
 import type { AgentEvent } from "../schema/index.ts";
+import { stripHeredocs } from "./intent.ts";
 import { commandOf, FLAGS } from "./sessions.ts";
 
 export type SkillScope = "project" | "nested" | "personal" | "plugin" | "bundled" | "unknown";
@@ -50,16 +51,51 @@ const READ_TOOLS = new Set(["read", "view", "read_file", "read_many_files", "not
 const SHELL_READERS = new Set(["cat", "head", "tail", "sed", "less", "more", "nl", "bat"]);
 const INTERPRETERS = new Set(["python", "python3", "node", "bash", "sh", "zsh", "deno", "bun", "ruby", "perl", "uv", "npx", "tsx"]);
 const EDIT_TOOLS = /^(?:write|edit|multiedit|multi_edit|notebookedit|notebook_edit|str_replace|str_replace_editor|str_replace_based_edit_tool|search_replace|replace|edit_file|write_file|create_file|write_to_file|replace_in_file|apply_patch|patch|delete_file)$/;
-/** A skill directory: `.../skills/<name>/`. */
-const SKILL_DIR = /^(.*?(?:^|\/)skills\/([^/]+))(?:\/|$)/;
+/** A plugin's files: `.../plugins/cache/<marketplace>/…` or `.../plugins/marketplaces/<marketplace>/…`. */
+const PLUGIN_DIR = /\/plugins\/(cache|marketplaces)\/([^/]+)\/(.*)$/;
+/** A skill's name: a plain directory name (no `…`, quotes or other markup). */
+const SKILL_NAME = /^\w[\w.-]*$/;
 
 /** A home directory when none is given: macOS, Linux and Windows user dirs, and root's. */
 const HOME_DIR = /^(?:\/Users\/[^/]+|\/home\/[^/]+|\/root|[A-Za-z]:\/Users\/[^/]+)\/(.*)$/;
-/** A skill dir relative to home: `.claude/skills/x`, `.config/opencode/skills/x`. */
-const PERSONAL_SKILL = /^\.[^/]+\/(?:[^/]+\/)?skills\/[^/]+$/;
+/** A skills dir relative to home: `.claude/skills`, `.config/opencode/skills`. */
+const PERSONAL_SKILLS = /^\.[^/]+\/(?:[^/]+\/)?skills$/;
 
 const posix = (p: string) => p.replace(/\\/g, "/");
 const trimSlash = (p: string) => p.replace(/\/+$/, "");
+const dotDir = (s: string | undefined) => !!s && s.startsWith(".") && s !== "." && s !== "..";
+
+/**
+ * The skill a path is in: `<base>/skills/<name>/…`, where `<base>` is an agent's
+ * dot dir (`.claude`, `.agents`, `.codex`, `.config/opencode`, …) or a plugin's
+ * files. A `skills/` folder anywhere else (a repo's source, a reference checkout)
+ * holds no installed skill. Containers inside a skills dir are skipped: dot dirs
+ * (Codex's `.system/`) and Codex's `synced/<id>/`. A file path must go past the
+ * skill's directory; `dir` accepts the directory itself (a harness's skill source).
+ */
+function skillDir(path: string, dir = false): { base: string; root: string; name: string } | undefined {
+  const p = posix(path);
+  for (const m of p.matchAll(/(?:^|\/)skills\//g)) {
+    const base = p.slice(0, m.index + m[0].length - 1);
+    const parents = base.split("/").slice(0, -1);
+    if (!dotDir(parents.at(-1)) && !dotDir(parents.at(-2)) && !PLUGIN_DIR.test(base)) continue;
+    const rest = p.slice(m.index + m[0].length).split("/");
+    let i = 0;
+    while (dotDir(rest[i])) i++;
+    if (rest[i] === "synced" && rest[i + 2]) i += 2;
+    const name = rest[i];
+    if (!name || !SKILL_NAME.test(name)) continue;
+    if (!dir && !rest[i + 1]) continue;
+    return { base, root: `${base}/${rest.slice(0, i + 1).join("/")}`, name };
+  }
+  return undefined;
+}
+
+/** `frontend-design:frontend-design` → `frontend-design`: a plugin named for its one skill. */
+const skillName = (name: string) => {
+  const [plugin, skill, ...more] = name.split(":");
+  return !more.length && skill !== undefined && plugin === skill ? skill : name;
+};
 
 interface Hit {
   name: string;
@@ -70,28 +106,26 @@ interface Hit {
 }
 
 /** Scope and qualified name of a skill directory path. */
-function classify(path: string, o: SkillUseOpts): { name: string; scope: SkillScope; root: string } | undefined {
-  const p = posix(path);
-  const m = SKILL_DIR.exec(p);
-  if (!m) return undefined;
-  const root = m[1]!;
-  const name = m[2]!;
-  const plugin = /\/plugins\/(cache|marketplaces)\/([^/]+)\/(.*)$/.exec(root);
+function classify(path: string, o: SkillUseOpts, dir = false): { name: string; scope: SkillScope; root: string } | undefined {
+  const d = skillDir(path, dir);
+  if (!d) return undefined;
+  const { base, root, name } = d;
+  const plugin = PLUGIN_DIR.exec(base);
   if (plugin) {
     const rest = plugin[3]!.split("/");
     // cache/<marketplace>/<plugin>/<version>/skills/<name>; marketplaces/<marketplace>/[plugins/<plugin>/]skills/<name>
     const owner = plugin[1] === "cache" ? (rest[0] ?? plugin[2]!) : rest[0] === "plugins" && rest[1] ? rest[1] : plugin[2]!;
-    return { name: `${owner}:${name}`, scope: "plugin", root };
+    return { name: skillName(`${owner}:${name}`), scope: "plugin", root };
   }
   const home = o.home ? trimSlash(posix(o.home)) : undefined;
   const cwd = o.cwd ? trimSlash(posix(o.cwd)) : undefined;
-  const absolute = root.startsWith("/") || root.startsWith("~/") || /^[A-Za-z]:\//.test(root);
-  const underCwd = !!cwd && root.startsWith(`${cwd}/`);
-  const homeRel = home && root.startsWith(`${home}/`) ? root.slice(home.length + 1) : root.startsWith("~/") ? root.slice(2) : HOME_DIR.exec(root)?.[1];
+  const absolute = base.startsWith("/") || base.startsWith("~/") || /^[A-Za-z]:\//.test(base);
+  const underCwd = !!cwd && base.startsWith(`${cwd}/`);
+  const homeRel = home && base.startsWith(`${home}/`) ? base.slice(home.length + 1) : base.startsWith("~/") ? base.slice(2) : HOME_DIR.exec(base)?.[1];
   // ~/.claude/skills, ~/.agents/skills, ~/.codex/skills, ~/.config/opencode/skills, … (unless the session runs inside that dir's project)
-  if (homeRel !== undefined && PERSONAL_SKILL.test(homeRel) && !(underCwd && cwd !== home)) return { name, scope: "personal", root };
+  if (homeRel !== undefined && PERSONAL_SKILLS.test(homeRel) && !(underCwd && cwd !== home)) return { name, scope: "personal", root };
   const rel = underCwd ? root.slice(cwd!.length + 1) : absolute ? undefined : root;
-  if (rel !== undefined) return { name, scope: /^\.[^/]+\/skills\/[^/]+$/.test(rel) ? "project" : "nested", root: cwd ? `${cwd}/${rel}` : root };
+  if (rel !== undefined) return { name, scope: /^\.[^/]+\/skills$/.test(underCwd ? base.slice(cwd!.length + 1) : base) ? "project" : "nested", root: cwd ? `${cwd}/${rel}` : root };
   return { name, scope: "unknown", root };
 }
 
@@ -118,7 +152,7 @@ function firstPathArg(argv: string[]): string | undefined {
 
 /** Shell segments of a command, unquoted tokens per segment; undefined segments for substitutions. */
 function shellSegments(cmd: string): string[][] {
-  return cmd
+  return stripHeredocs(cmd)
     .split(/&&|\|\||[;|\n]/)
     .filter((s) => !/\$\(|`|<\(/.test(s))
     .map((s) =>
@@ -139,11 +173,16 @@ function shellHits(cmd: string): { path: string; via: SkillVia }[] {
     const base = prog.split("/").pop()!;
     if (SHELL_READERS.has(base)) {
       if (base === "sed" && argv.some((a) => /^-[a-z]*i/.test(a))) continue;
-      for (const a of argv.slice(1)) if (!a.startsWith("-") && SKILL_DIR.test(posix(a)) && !/[$`*?]/.test(a) && !a.split("/").includes("..")) out.push({ path: a, via: "read" });
+      for (let i = 1; i < argv.length; i++) {
+        const a = argv[i]!;
+        // `cat > .claude/skills/x/SKILL.md` writes the file.
+        if (/^\d*>>?$/.test(a)) i++;
+        else if (!a.startsWith("-") && !/^\d*>/.test(a) && skillDir(a) && !/[$`*?]/.test(a) && !a.split("/").includes("..")) out.push({ path: a, via: "read" });
+      }
     } else if (INTERPRETERS.has(base)) {
       const arg = firstPathArg(argv.slice(1));
-      if (arg && SKILL_DIR.test(posix(arg))) out.push({ path: arg, via: "run" });
-    } else if (SKILL_DIR.test(posix(prog)) && !/[$`*?]/.test(prog) && !prog.split("/").includes("..")) {
+      if (arg && skillDir(arg)) out.push({ path: arg, via: "run" });
+    } else if (skillDir(prog) && !/[$`*?]/.test(prog) && !prog.split("/").includes("..")) {
       out.push({ path: prog, via: "run" });
     }
   }
@@ -172,12 +211,12 @@ export function skillUse(events: readonly AgentEvent[], o: SkillUseOpts = {}): S
   for (const e of sorted) {
     if (e.kind === "file.change") firstChange = Math.min(firstChange, e.ts);
     if (e.kind === "notification" && e.payload.kind === "harness.loaded") {
-      const skills = strs(e.payload.skills);
+      const skills = strs(e.payload.skills).map(skillName);
       const sources = strs(e.payload.sources);
       skills.forEach((name, i) => {
         const src = sources[i];
         if (!src) return;
-        const c = classify(src, opts);
+        const c = classify(src, opts, true);
         const scope = sourceScope(src);
         if (c) origin.set(name, { scope: c.scope, root: c.root });
         else if (scope) origin.set(name, { scope });
@@ -197,9 +236,10 @@ export function skillUse(events: readonly AgentEvent[], o: SkillUseOpts = {}): S
     const tagged = strs(e.payload.skill).concat(strs(e.payload.skills));
     const named = t === "skill" ? strs(input?.skill ?? input?.name ?? input?.command) : [];
     const invokeNames = t === "skill" ? [...new Set([...named, ...tagged])] : [];
-    for (const name of invokeNames) {
+    for (const raw of invokeNames) {
+      const name = skillName(raw);
       invoked.add(name);
-      hits.push({ name, scope: name.includes(":") ? "plugin" : "unknown", via: "invoke", e });
+      hits.push({ name, scope: raw.includes(":") ? "plugin" : "unknown", via: "invoke", e });
     }
     if (invokeNames.length) continue;
     const paths: { path: string; via: SkillVia }[] = [];
@@ -212,7 +252,7 @@ export function skillUse(events: readonly AgentEvent[], o: SkillUseOpts = {}): S
       if (c) hits.push({ name: c.name, scope: c.scope, root: c.root, via: h.via, e });
     }
     // payload.skill on a non-Skill call (an adapter's skill-load tag on a read) with no path to place it.
-    if (!paths.length) for (const name of tagged) hits.push({ name, scope: name.includes(":") ? "plugin" : "unknown", via: "read", e });
+    if (!paths.length) for (const raw of tagged) hits.push({ name: skillName(raw), scope: raw.includes(":") ? "plugin" : "unknown", via: "read", e });
   }
 
   // One entry per (name, root). A hit without a root (a Skill call) joins its name's

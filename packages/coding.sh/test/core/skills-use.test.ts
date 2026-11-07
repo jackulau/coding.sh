@@ -60,9 +60,37 @@ describe("skill use", () => {
 
   it("plugin and nested skills get their scope; plugin names are qualified", () => {
     const plugin = `${HOME}/.claude/plugins/cache/caveman/caveman/1.2.0/skills/caveman/SKILL.md`;
-    assert.deepEqual(brief([start("Read", { file_path: plugin })]), [["caveman:caveman", "plugin", "read", true]]);
+    // A plugin named for its one skill is not doubled (`caveman:caveman`).
+    assert.deepEqual(brief([start("Read", { file_path: plugin })]), [["caveman", "plugin", "read", true]]);
+    assert.deepEqual(brief([start("Read", { file_path: `${HOME}/.claude/plugins/cache/acme/tools/2.0.0/skills/lint/SKILL.md` })]), [["tools:lint", "plugin", "read", true]]);
+    assert.deepEqual(brief([start("Read", { file_path: `${HOME}/.claude/plugins/marketplaces/acme/plugins/design/skills/design/SKILL.md` })]), [["design", "plugin", "read", true]]);
     assert.deepEqual(brief([start("Read", { file_path: `${CWD}/packages/web/.claude/skills/ui/SKILL.md` })]), [["ui", "nested", "read", true]]);
     assert.deepEqual(brief([start("Skill", { skill: "vercel:deploy" })]), [["vercel:deploy", "plugin", "invoke", true]]);
+    assert.deepEqual(brief([start("Skill", { skill: "design:design" })]), [["design", "plugin", "invoke", true]]);
+  });
+
+  it("only installed skills count: no skills/ folder in a repo, no heredoc text, no writes, no bare file under skills/", () => {
+    const none = [
+      // A heredoc body is data: a test fixture that mentions a skill path.
+      `cat >> test/a.test.ts <<'EOF'\nconst files = { ".claude/skills/pdf/SKILL.md": "x" };\ncat .claude/skills/pdfx/SKILL.md\nEOF`,
+      `python3 - <<'EOF'\nopen('.claude/skills/x/SKILL.md').read()\nEOF`,
+      // Writing a skill file is not using it.
+      "mkdir -p .claude/skills/x && cat > .claude/skills/x/SKILL.md",
+      // skills/ folders in source trees and reference checkouts.
+      "cat crates/goose/src/skills/mod.rs",
+      "cd /tmp/ref && cat claude-code/skills/off/SKILL.md codex/skills/judgment/SKILL.md",
+      "cat skills/judges/SKILL.md",
+      "cat .claude/skills/mod.rs",
+    ];
+    for (const cmd of none) assert.deepEqual(use([bash(cmd)]).used, [], cmd);
+    assert.deepEqual(use([start("Read", { file_path: `${CWD}/src/skills/parse/index.ts` })]).used, []);
+    assert.deepEqual(use([start("Read", { file_path: `${CWD}/.claude/skills/pdf…/SKILL.md` })]).used, []);
+  });
+
+  it("container folders inside a skills dir name no skill: Codex's .system/ and synced/<id>/", () => {
+    assert.deepEqual(brief([bash(`cat ${HOME}/.codex/skills/.system/imagegen/SKILL.md`)]), [["imagegen", "personal", "read", true]]);
+    assert.deepEqual(brief([bash(`sed -n 1,80p ${HOME}/.agents/skills/synced/0a1b2c_3d4e5f/computer-use/SKILL.md`)]), [["computer-use", "personal", "read", true]]);
+    assert.deepEqual(brief([start("Read", { file_path: `${HOME}/.config/opencode/skills/review/SKILL.md` })]), [["review", "personal", "read", true]]);
   });
 
   it("substitutions, deletes and parent-relative paths are not use", () => {

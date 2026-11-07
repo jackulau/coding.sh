@@ -52,7 +52,11 @@ timeline.
 
 A flag with a colon, such as `gateway:vercel`, is a tag rather than a failure. Each skill a session
 used (through the Skill tool, or by reading or running a file in the skill's folder) adds a
-`skill:<name>` tag, so `coding.sh sessions --flag skill:pdf` lists the sessions that used it. A session
+`skill:<name>` tag. A skill's folder is `skills/<name>/` under an agent's dot folder (`.claude`,
+`.agents`, `.codex`, `.config/opencode`, …) or inside a plugin; a `skills/` folder in source code,
+text inside a heredoc and a write to a skill file do not count. A plugin named for its one skill
+tags it once (`skill:frontend-design`, not `skill:frontend-design:frontend-design`).
+`coding.sh sessions --flag skill:pdf` lists the sessions that used the pdf skill. A session
 in which redaction replaced a vendor token (an Anthropic, OpenAI, GitHub, GitLab, Slack, AWS, Google,
 Stripe, npm, coding.sh or AI Gateway key, a Slack webhook or a private key) gets the `secret:exposed`
 tag: the stored copy is redacted, but the agent and its model provider saw the credential, so rotate it.
