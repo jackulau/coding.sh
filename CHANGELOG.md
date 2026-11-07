@@ -9,13 +9,19 @@ grouped by area, with links to the docs for the details.
 
 ## [0.1.1] - 2026-11-07
 
-Sturdier experiments for any AI agent: cluster bootstrap, an A/A noise floor, attrition checks,
-interleaved A/B runs, early stopping, and `compare --without` to measure what one file is worth.
-The viewer and the site now work on phones, the installer uses npm once the package is there, and
-a round of QA fixes is in.
+Daily benchmarks for any AI agent: `coding.sh bench` runs every contender on fresh cases each day,
+and experiments add cluster bootstrap, an A/A noise floor, interleaved runs, early stopping and `compare --without`.
+Seven more agents are verified on a real install, the viewer and the site work on phones, and the installer uses npm once the package is there.
 
 ### Added
 
+- **Benchmarks.** `coding.sh bench` samples fresh cases each day from a command, failed sessions, GitHub issues, a sitemap or a dataset, freezes them as a dataset version and runs every contender on that set in random order. [Benchmarks](https://github.com/jackulau/coding.sh/blob/main/docs/guides/benchmarks.md).
+- **Benchmarks.** Shared timeout and retries, a budget cap, quota and rate-limit cases dropped for every contender, and `bench run --resume` to finish a stopped run with the same seed and cases.
+- **Benchmarks.** `bench report` writes a static HTML page and JSON: trend, gaps to a reference pooled over a fixed window, head-to-head stats, difficulty and failures. `bench regrade` re-scores stored outputs and `bench schedule` prints a cron line and a GitHub Actions workflow.
+- **Benchmarks.** An `[anchor]` set of fixed cases runs every day next to the fresh ones and is scored apart, so its trend has no day-to-day difficulty in it.
+- **Benchmarks.** `seed = "secret"` publishes the hash of each next day's salt and `bench show` checks the chain. Content hashes keep the same case under a new key from counting as fresh.
+- **Benchmarks.** Input and output tokens are kept apart, and each cost says where it came from: reported, `costPerRun`, the shared price table, or unknown.
+- **MCP.** A `benchmarks` tool lists benchmarks and reads results and history.
 - **Experiments.** `exp compare --cluster <key>` resamples by repo or session and warns under 10 clusters. [Evals](https://coding.sh/docs/evals).
 - **Experiments.** `exp aa` measures the run-to-run noise floor, and power planning uses it.
 - **Experiments.** Compare flags uneven attrition between arms (Fisher exact) and splits infra errors from agent errors.
@@ -27,14 +33,21 @@ a round of QA fixes is in.
 - **Compare.** `compare <bundle> --without <path>` measures what one skill, AGENTS.md, CLAUDE.md or MCP config is worth. [Compare agents](https://coding.sh/docs/how-to/compare-agents).
 - **Compare.** With 2+ attempts per task, failed runs split into bad runs, arm limits and tasks no arm solves, with variance shares.
 - **Compare.** Cost rows show how many runs had a known cost, and "cheaper" needs a known cost for 80% of each arm.
+- **Agents.** Verified on a real install against a local stub model: opencode, copilot-cli, droid, goose, pi, t3code and aider. [Agent matrix](https://coding.sh/docs/agents).
+- **Agents.** Antigravity backfill reads agy transcripts and conversation DBs for model, tokens, cache reads and latency per call. Tool steps missing from the transcript count as failures, and hooks reply `{}`.
 - **Viewer.** Phone layouts: 44px targets, filters in a bottom sheet, a compact session header and safe-area insets.
 - **Viewer.** The Benchmarks tab shows anchors, pooled gaps, difficulty, cost sources and tokens, and ranks follow the pooled gaps.
 - **Site.** Mobile pass: touch targets, safe areas, stacked agent cards and 16px body text on phones.
+- **Site.** A new landing page, a changelog page and docs pages.
 - **Install.** `install.sh` installs from npm when the registry has the version, else from the GitHub release. `CODING_SH_SOURCE=npm|github` picks one.
 - **Release.** A tag creates its GitHub release as soon as the checks pass, so the installer gets it right away.
+- **Release.** One tag publishes all five packages to npm and PyPI with trusted publishing.
+- **Docs.** A new README, reference pages, how-to guides and a code of conduct.
 
 ### Fixed
 
+- **Fixes.** Safer installs: symlinked and JSONC agent configs survive, `init --dry-run` prints a short plan, and blockers show before the Y/n.
+- **Fixes.** Each SQLite migration runs once when the hook and the CLI open a new index at the same time.
 - **Fixes.** Experiments stop cleanly on Ctrl-C, kill their child processes and keep every finished run.
 - **Fixes.** Capture, ingest and storage state bugs from an audit of each state machine. Sessions are priced locally at ingest.
 - **Fixes.** Adapter fixes for opencode, goose, copilot-cli, droid, aider and t3code, found running each on a real install.
@@ -67,11 +80,8 @@ It also runs as a server on SQLite or Postgres, with SDKs for apps that call mod
 - **Capture.** `coding.sh collector` takes OTLP/HTTP traces and logs, protobuf or JSON, on 127.0.0.1:4318. [OTLP setup](https://coding.sh/docs/otel).
 - **Capture.** The receiver reads OTel GenAI semconv, OpenInference, the Vercel AI SDK, and Claude Code, Codex and Gemini CLI logs.
 - **Agents.** Verified on real sessions: Claude Code, Codex and Antigravity. [Agent matrix](https://coding.sh/docs/agents).
-- **Agents.** Verified on a real install against a local stub model: opencode, copilot-cli, droid, goose, pi, t3code, aider.
-- **Agents.** Fixture-tested so far: cursor, amp (both need an account login), gemini-cli.
+- **Agents.** Fixture-tested so far: opencode, cursor, gemini-cli, copilot-cli, amp, pi, droid, goose, t3code and aider.
 - **Agents.** Every adapter has fixture tests, and an `ingest --backfill` path where the agent keeps history.
-- **Agents.** Antigravity backfill reads agy transcripts and conversation DBs: model, tokens, cache reads and latency per call.
-- **Agents.** agy tool steps missing from its transcript count as failures, prompts drop agy's wrapper, and hooks reply `{}`.
 - **Agents.** T3 Code threads import from its local store; Codex and Claude Code runs in T3 count once, agent in `provider`.
 - **Agents.** `coding.sh usage --by agent-model` compares tokens per turn and cache-read share across harnesses.
 - **Storage.** One SQLite index (node:sqlite, no native deps) and a content-addressed, zstd-compressed blob store. [Storage](https://coding.sh/docs/storage).
@@ -85,16 +95,6 @@ It also runs as a server on SQLite or Postgres, with SDKs for apps that call mod
 - **Evals.** Datasets with deterministic graders, command graders and LLM judges.
 - **Evals.** Judges are calibrated on human labels with Cohen's kappa on a held-out split. Reports flag uncalibrated judges.
 - **Evals.** Experiments run two arms on the same cases: a paired bootstrap CI of the difference and exact McNemar on flips.
-- **Benchmarks.** `coding.sh bench` samples fresh cases each day from a command, failed sessions, GitHub issues, a sitemap or a dataset, freezes them as a dataset version and runs every contender on that set in random order. [Benchmarks](https://github.com/jackulau/coding.sh/blob/main/docs/guides/benchmarks.md).
-- **Benchmarks.** Shared timeout and retries, quota and rate-limit cases dropped for every contender, a budget cap, and history that counts only the first complete scheduled run per day.
-- **Benchmarks.** `bench report` writes a static HTML page and JSON with the trend, paired gaps to a reference, head-to-head stats and failures. `bench regrade` re-scores stored outputs. `bench schedule` prints a cron line and a pinned GitHub Actions workflow.
-- **Benchmarks.** `bench run --resume` finishes a run stopped by the budget or an interrupt, with the same seed and cases, keeping the calls that finished.
-- **Benchmarks.** An `[anchor]` set: fixed cases that run every day next to the fresh ones and are scored apart, so their trend has no day-to-day difficulty in it. `bench history --anchor` and a report section.
-- **Benchmarks.** `seed = "secret"`: each run reveals its salt and publishes the hash of the next day's, and `bench show` checks the chain, so nobody can predict a sample or pick one after looking.
-- **Benchmarks.** Each case's content hash goes into the freshness ledger, so the same content under a new key isn't fresh. History warns when a key's content changes, and regrade checks stored inputs against their hashes.
-- **Benchmarks.** Input and output tokens are kept apart, and each cost says where it came from: reported, `costPerRun`, the shared price table, or unknown.
-- **Benchmarks.** `history --vs` and the report pool each daily gap over a fixed window (random effects with the Hartung-Knapp interval), and the report adds a difficulty chart.
-- **MCP.** A `benchmarks` tool lists benchmarks and reads results and history.
 - **Evals.** Harness compare adds per-arm Wilson intervals and the first step where the traces diverge.
 - **Evals.** [Tool evals](https://coding.sh/docs/tool-evals) for CLI and MCP surfaces: description size, schema checks, per-task tool-call metrics in a sandbox.
 - **Production.** `coding.sh serve` runs ingest (OTLP/HTTP and `POST /v1/ingest`), the viewer and its API on one port. [Production](https://coding.sh/docs/production).
