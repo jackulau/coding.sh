@@ -28,6 +28,7 @@ import type { AgentEvent, Usage } from "../../schema/index.ts";
 import {
   Emitter,
   applyWrites,
+  jsonEdit,
   attachRaw,
   binVersion,
   copyAuth,
@@ -352,14 +353,15 @@ export const geminiCliAdapter: Adapter = {
     const { text, value } = readJsonObject(path);
     const next = mergeClaudeHooks(value, hookSpec(opts.hookCommand));
     const summary = `add coding.sh hooks (${GEMINI_HOOK_EVENTS.join(", ")})${opts.scope === "project" ? "; project hooks need a trusted folder" : ""}`;
-    return applyWrites(ID, [{ path, before: text, after: toJson(next), summary, track: "install", pristine: !hasClaudeHooks(value, isOurs) }], opts.dryRun);
+    // Edited in place: settings.json is JSONC, and the user's comments must survive.
+    return applyWrites(ID, [{ path, before: text, after: jsonEdit(text, next), summary, track: "install", pristine: !hasClaudeHooks(value, isOurs) }], opts.dryRun);
   },
   async uninstall(opts): Promise<FileChange[]> {
     const path = geminiSettingsPath(opts);
     const { text, value } = readJsonObject(path);
     if (text === undefined || !hasClaudeHooks(value, isOurs)) return [];
     const next = stripClaudeHooks(value, isOurs);
-    return applyWrites(ID, [{ path, before: text, after: isEmptyObject(next) ? undefined : toJson(next), summary: "remove coding.sh hooks", track: "uninstall", remaining: next }], opts.dryRun);
+    return applyWrites(ID, [{ path, before: text, after: isEmptyObject(next) ? undefined : jsonEdit(text, next), summary: "remove coding.sh hooks", track: "uninstall", remaining: next }], opts.dryRun);
   },
   // mcpServers in the user settings.json (the same file as the hooks).
   ...mcpInstaller((env) => ({ agent: ID, file: geminiSettingsPath({ scope: "user" }, env), format: "json", key: "mcpServers", entry: commandArgsEntry })),

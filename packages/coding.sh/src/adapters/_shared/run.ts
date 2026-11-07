@@ -2,6 +2,7 @@
 // hard timeout that kills the group, stdout parsed as JSONL as it streams,
 // and bounded stdout/stderr tails.
 import { spawn } from "node:child_process";
+import { supervise } from "../../core/children.ts";
 import type { AgentRunOutput, RunSpec } from "../../core/types.ts";
 
 const DEFAULT_TAIL = 16 * 1024;
@@ -34,6 +35,8 @@ export interface HeadlessOpts {
   onJson?: (value: unknown) => void;
   stdin?: string;
   tailBytes?: number;
+  /** Kill the process group on abort (default: the ambient signal, see core/children.ts). */
+  signal?: AbortSignal;
 }
 
 export type HeadlessResult = Pick<AgentRunOutput, "exitCode" | "timedOut" | "durationMs" | "stdoutTail" | "stderrTail">;
@@ -42,74 +45,52 @@ export type HeadlessResult = Pick<AgentRunOutput, "exitCode" | "timedOut" | "dur
 export function runHeadless(o: HeadlessOpts): Promise<HeadlessResult> {
   const started = Date.now();
   const max = o.tailBytes ?? DEFAULT_TAIL;
-  return new Promise((resolve) => {
-    const out = new Tail(max);
-    const err = new Tail(max);
-    let buf = "";
-    let timedOut = false;
-    let settled = false;
-    const child = spawn(o.bin, o.args, {
-      cwd: o.cwd,
-      env: o.env as NodeJS.ProcessEnv,
-      stdio: [o.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-      windowsHide: true,
-    });
-    const killGroup = () => {
-      try {
-        if (child.pid !== undefined && process.platform !== "win32") process.kill(-child.pid, "SIGKILL");
-        else child.kill("SIGKILL");
-      } catch {
-        // already gone
-      }
+  const out = new Tail(max);
+  const err = new Tail(max);
+  let buf = "";
+  const group = process.platform !== "win32";
+  const child = spawn(o.bin, o.args, {
+    cwd: o.cwd,
+    env: o.env as NodeJS.ProcessEnv,
+    stdio: [o.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+    detached: group,
+    windowsHide: true,
+  });
+  const feed = (line: string) => {
+    if (!o.onJson) return;
+    const t = line.trim();
+    if (!t.startsWith("{") && !t.startsWith("[")) return;
+    try {
+      o.onJson(JSON.parse(t));
+    } catch {
+      // not JSON
+    }
+  };
+  child.stdout?.setEncoding("utf8");
+  child.stderr?.setEncoding("utf8");
+  child.stdout?.on("data", (s: string) => {
+    out.push(s);
+    buf += s;
+    let i: number;
+    while ((i = buf.indexOf("\n")) >= 0) {
+      feed(buf.slice(0, i));
+      buf = buf.slice(i + 1);
+    }
+    if (buf.length > 64 * 1024 * 1024) buf = ""; // pathological unterminated line
+  });
+  child.stderr?.on("data", (s: string) => err.push(s));
+  child.stdin?.on("error", () => {}); // the agent may exit without reading stdin
+  if (o.stdin !== undefined) child.stdin?.end(o.stdin);
+  return supervise(child, { group, timeoutMs: o.timeoutMs, signal: o.signal }).then((r) => {
+    if (buf) feed(buf);
+    const note = r.error ? r.error.message : r.aborted ? "aborted" : undefined;
+    return {
+      exitCode: r.error ? 127 : r.code,
+      timedOut: r.timedOut,
+      durationMs: Date.now() - started,
+      stdoutTail: out.text(),
+      stderrTail: note ? `${err.text()}\n${note}` : err.text(),
     };
-    const timer = o.timeoutMs > 0 ? setTimeout(() => ((timedOut = true), killGroup()), o.timeoutMs) : undefined;
-    const feed = (line: string) => {
-      if (!o.onJson) return;
-      const t = line.trim();
-      if (!t.startsWith("{") && !t.startsWith("[")) return;
-      try {
-        o.onJson(JSON.parse(t));
-      } catch {
-        // not JSON
-      }
-    };
-    child.stdout?.setEncoding("utf8");
-    child.stderr?.setEncoding("utf8");
-    child.stdout?.on("data", (s: string) => {
-      out.push(s);
-      buf += s;
-      let i: number;
-      while ((i = buf.indexOf("\n")) >= 0) {
-        feed(buf.slice(0, i));
-        buf = buf.slice(i + 1);
-      }
-      if (buf.length > 64 * 1024 * 1024) buf = ""; // pathological unterminated line
-    });
-    child.stderr?.on("data", (s: string) => err.push(s));
-    if (o.stdin !== undefined) child.stdin?.end(o.stdin);
-    const finish = (code: number | null, note?: string) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      if (buf) feed(buf);
-      if (process.platform !== "win32" && child.pid !== undefined) {
-        try {
-          process.kill(-child.pid, "SIGKILL"); // reap leftover grandchildren
-        } catch {
-          // group already empty
-        }
-      }
-      resolve({
-        exitCode: timedOut ? null : code,
-        timedOut,
-        durationMs: Date.now() - started,
-        stdoutTail: out.text(),
-        stderrTail: note ? `${err.text()}\n${note}` : err.text(),
-      });
-    };
-    child.on("error", (e) => finish(127, e.message));
-    child.on("close", (code) => finish(code));
   });
 }
 

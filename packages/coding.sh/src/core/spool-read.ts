@@ -1,8 +1,12 @@
 // Reads hook spool files incrementally from a byte cursor.
 //
 // The hook appends whole lines with O_APPEND, but a reader can still observe a
-// line mid-write. A final line without "\n" is therefore never consumed: the
-// returned nextOffset stops before it and the next ingest picks it up whole.
+// line mid-write. A final line without "\n" is therefore not consumed while it
+// is fresh: the returned nextOffset stops before it and the next ingest picks
+// it up whole. One still incomplete after TORN_TAIL_MS is a torn write (ENOSPC,
+// EIO, a killed writer): it is reported and skipped, so the cursor reaches the
+// end of the file and gc can remove it. The writer starts its next line on a
+// fresh line after such a fragment (spool/write.ts).
 import { open, readdir, readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { SpoolLine } from "./types.ts";
@@ -32,6 +36,9 @@ export interface SpoolReadError {
   message: string;
 }
 
+/** A trailing line without "\n" in a file untouched this long is a torn write, not one in progress. */
+export const TORN_TAIL_MS = 60 * 60_000;
+
 export interface ReadSpoolOptions {
   /** Called for lines that are skipped (bad JSON/shape) or degraded (missing rawFile). */
   onError?: (err: SpoolReadError) => void;
@@ -39,11 +46,21 @@ export interface ReadSpoolOptions {
   chunkSize?: number;
   /** Load rawFile side files into line.raw (default true). */
   resolveRaw?: boolean;
+  /** Clock for the torn-tail age check (default Date.now). */
+  now?: () => number;
 }
 
 const toSource = (spoolDir: string, file: string) => relative(spoolDir, file).split(sep).join("/");
 
-/** Lists `<spool>/<agent>/*.jsonl`, sorted by source for deterministic ingest order. */
+const DAY_PREFIX = /^(\d{4}-\d{2}-\d{2})\./;
+
+/**
+ * Lists `<spool>/<agent>/*.jsonl`, oldest first within each agent: by the UTC
+ * day in the name, then mtime, then name. Every hook call writes its own
+ * `<day>.<pid>.jsonl`, so the pid part says nothing about order (9999 and
+ * 10000 sort the wrong way as strings, and pids wrap); mtime is when the line
+ * was written. A tool.start is then normally read before its tool.end.
+ */
 export async function listSpoolFiles(spoolDir: string): Promise<SpoolFile[]> {
   const out: SpoolFile[] = [];
   let agents: string[];
@@ -62,17 +79,20 @@ export async function listSpoolFiles(spoolDir: string): Promise<SpoolFile[]> {
     } catch {
       continue;
     }
-    for (const name of names.sort()) {
+    const files: (SpoolFile & { day: string; name: string })[] = [];
+    for (const name of names) {
       if (!name.endsWith(".jsonl")) continue;
       const path = join(dir, name);
       try {
         const s = await stat(path);
         if (!s.isFile()) continue;
-        out.push({ source: toSource(spoolDir, path), path, agent, size: s.size, mtimeMs: s.mtimeMs });
+        files.push({ source: toSource(spoolDir, path), path, agent, size: s.size, mtimeMs: s.mtimeMs, day: DAY_PREFIX.exec(name)?.[1] ?? "", name });
       } catch {
         // Deleted between readdir and stat (gc in another process): skip.
       }
     }
+    files.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.mtimeMs - b.mtimeMs || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)));
+    for (const { day: _d, name: _n, ...f } of files) out.push(f);
   }
   return out;
 }
@@ -109,7 +129,14 @@ export async function* readSpoolFile(spoolDir: string, file: string, from = 0, o
     while (!eof || buf.length) {
       const nl = buf.indexOf(0x0a);
       if (nl < 0) {
-        if (eof) return; // trailing partial line: leave it for the next run
+        if (eof) {
+          // Trailing partial line: in progress (leave it for the next run), or torn long ago.
+          const { mtimeMs } = await fh.stat();
+          if ((opts.now ?? Date.now)() - mtimeMs > TORN_TAIL_MS) {
+            opts.onError?.({ source, offset: pos, nextOffset: pos + buf.length, message: `incomplete last line (${buf.length} bytes, unchanged for over an hour): a torn write, skipped` });
+          }
+          return;
+        }
         const chunk = Buffer.allocUnsafe(chunkSize);
         const { bytesRead } = await fh.read(chunk, 0, chunkSize, pos + buf.length);
         if (bytesRead === 0) eof = true;

@@ -34,6 +34,7 @@ export const KNOWN_AGENTS = [
   "opencode",
   "cursor",
   "gemini-cli",
+  "antigravity",
   "copilot-cli",
   "amp",
   "pi",

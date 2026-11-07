@@ -27,6 +27,8 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     hook: join(root, "bin", "hook.mjs"),
     /** Text file holding the absolute path of the installed dist/cli.mjs (the hook starts background ingests with it). */
     cliPointer: join(root, "bin", "cli-path"),
+    /** Stable MCP entry agents run with `node`: starts the CLI named in cli-path (see mcp/launch.ts). */
+    mcpLauncher: join(root, "bin", "mcp.mjs"),
     spool: join(root, "spool"),
     spoolErrors: join(root, "spool", "errors.log"),
     index: join(root, "index.db"),

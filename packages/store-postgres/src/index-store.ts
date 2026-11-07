@@ -4,6 +4,7 @@
 // GIN-indexed tsvector, retention, and a cluster-wide single-writer lock.
 import pg from "pg";
 import {
+  BLOB_REF_FIELDS,
   DEFAULT_PROJECT,
   searchableText,
   searchTerms,
@@ -11,6 +12,7 @@ import {
   type AgentEvent,
   type AgentId,
   type BlobRef,
+  type BlobRefField,
   type Dataset,
   type DatasetListing,
   type DatasetVersionInfo,
@@ -369,10 +371,18 @@ export class PgIndexStore implements IndexStore {
     return (await this.q(sql, w.params)).map(rowToSession);
   }
 
+  /** Distinct project ids with sessions (sessions_project index), for serve's GET /api/projects. */
+  async listProjects(): Promise<string[]> {
+    return (await this.q<{ p: string }>(`SELECT DISTINCT project_id AS p FROM ${this.t("sessions")} ORDER BY 1`)).map((r) => r.p);
+  }
+
   /**
-   * Retention: deletes sessions whose coalesce(ended_at, started_at) is before
-   * the cutoff, with their events and labels, in chunks of DELETE_CHUNK sessions
-   * per transaction. Eval assets (tasks, datasets, experiments, judges) are kept.
+   * Retention: deletes sessions whose last activity is before the cutoff, with
+   * their events and labels, in chunks of DELETE_CHUNK sessions per transaction.
+   * Last activity is the latest of coalesce(ended_at, started_at) and every
+   * event's end (ts + duration_ms), so a resumed session or one that never sent
+   * session.end survives while it still gets events. Eval assets (tasks,
+   * datasets, experiments, judges) are kept.
    */
   async deleteBefore(cutoffMs: number, opts: { project?: string } = {}): Promise<{ sessions: number; events: number }> {
     let sessions = 0;
@@ -380,6 +390,7 @@ export class PgIndexStore implements IndexStore {
     for (;;) {
       const n = await withTx(this.pool, async (c) => {
         const w = new Where().add("coalesce(ended_at, started_at) < ?", cutoffMs);
+        w.add(`NOT EXISTS (SELECT 1 FROM ${this.t("events")} e WHERE e.session_id = ${this.t("sessions")}.id AND e.ts + coalesce(e.duration_ms, 0) >= ?)`, cutoffMs);
         if (opts.project) w.add("project_id = ?", opts.project);
         const { rows } = await c.query<{ id: string }>(
           `DELETE FROM ${this.t("sessions")} d USING (
@@ -535,7 +546,7 @@ export class PgIndexStore implements IndexStore {
   }
 
   async listDatasetVersions(id: string): Promise<DatasetVersionInfo[]> {
-    const rows = await this.q(`SELECT version, cases, created_at, note FROM ${this.t("datasets")} WHERE id = $1 ORDER BY created_at, seq`, [id]);
+    const rows = await this.q(`SELECT version, cases, created_at, note FROM ${this.t("datasets")} WHERE id = $1 ORDER BY seq`, [id]);
     return rows.map((r) => {
       const info: DatasetVersionInfo = { version: r.version as string, cases: num(r.cases)!, createdAt: num(r.created_at)! };
       if (typeof r.note === "string") info.note = r.note;
@@ -567,7 +578,9 @@ export class PgIndexStore implements IndexStore {
     const w = new Where();
     if (f.datasetId) w.add("dataset_id = ?", f.datasetId);
     if (f.name) w.add("name = ?", f.name);
-    const sql = `SELECT doc FROM ${this.t("experiments")} ${w.sql} ORDER BY id DESC LIMIT ${w.param(f.limit ?? null)}`;
+    // Contract: limit 0 returns none, undefined or negative means no limit (Postgres rejects a negative LIMIT).
+    const limit = f.limit !== undefined && f.limit >= 0 ? f.limit : null;
+    const sql = `SELECT doc FROM ${this.t("experiments")} ${w.sql} ORDER BY id DESC LIMIT ${w.param(limit)}`;
     return (await this.q(sql, w.params)).map((r) => parse<ExperimentResult>(r.doc)!);
   }
 
@@ -589,22 +602,26 @@ export class PgIndexStore implements IndexStore {
 
   // ------------------------------------------------------------ gc / maintenance
 
+  /** SELECT of the refs at one BLOB_REF_FIELDS entry (paths are constants, not user input). */
+  private refFieldSql(f: BlobRefField): string {
+    const at = `(x.doc::json #> '{${f.path.join(",")}}')`;
+    const from = `${this.t(f.table)} x`;
+    if (f.shape === "ref") return `SELECT ${at} #>> '{}' FROM ${from} WHERE json_typeof(${at}) = 'string'`;
+    const [each, type, empty] = f.shape === "list" ? ["json_array_elements", "array", "[]"] : ["json_each", "object", "{}"];
+    return `SELECT j.value #>> '{}' FROM ${from}, ${each}(CASE WHEN json_typeof(${at}) = '${type}' THEN ${at} ELSE '${empty}'::json END) AS j
+      WHERE json_typeof(j.value) = 'string'`;
+  }
+
   /**
    * Every referenced blob, de-duplicated by Postgres and streamed through a
    * cursor so a large events table never lands in memory at once. `json` (not
    * jsonb) accepts any stored document, including escaped \u0000.
    */
   async *referencedBlobs(): AsyncIterable<BlobRef> {
-    const sql = `
-      SELECT j.v AS ref FROM ${this.t("events")} e, json_array_elements_text(e.blobs::json) AS j(v) WHERE e.blobs IS NOT NULL
-      UNION SELECT doc::json ->> 'referencePatch' FROM ${this.t("tasks")}
-      UNION SELECT j.v FROM ${this.t("tasks")} t,
-        json_array_elements_text(CASE WHEN json_typeof(t.doc::json -> 'nearMissPatches') = 'array' THEN t.doc::json -> 'nearMissPatches' ELSE '[]'::json END) AS j(v)
-      UNION SELECT j.value FROM ${this.t("tasks")} t,
-        json_each_text(CASE WHEN json_typeof(t.doc::json -> 'verifier' -> 'hiddenFiles') = 'object' THEN t.doc::json -> 'verifier' -> 'hiddenFiles' ELSE '{}'::json END) AS j
-      UNION SELECT j.value FROM ${this.t("bundles")} b,
-        json_each_text(CASE WHEN json_typeof(b.doc::json -> 'files') = 'object' THEN b.doc::json -> 'files' ELSE '{}'::json END) AS j
-      UNION SELECT doc::json ->> 'diffBlob' FROM ${this.t("runs")}`;
+    const sql = [
+      `SELECT j.v AS ref FROM ${this.t("events")} e, json_array_elements_text(e.blobs::json) AS j(v) WHERE e.blobs IS NOT NULL`,
+      ...BLOB_REF_FIELDS.map((f) => this.refFieldSql(f)),
+    ].join("\n      UNION ");
     const c = await this.pool.connect();
     try {
       await c.query("BEGIN READ ONLY");

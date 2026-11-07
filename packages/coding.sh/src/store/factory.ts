@@ -9,6 +9,7 @@
 import { resolve } from "node:path";
 import type { BlobStore, Config, IndexStore, Sink, SinkConfig } from "../core/types.ts";
 import { expandHome } from "../core/paths.ts";
+import { repriceStored } from "../core/reprice.ts";
 import { createHttpSink } from "../sinks/http.ts";
 import { createOtlpSink } from "../sinks/otlp.ts";
 import { FsBlobStore } from "./fs-blobs.ts";
@@ -69,7 +70,9 @@ registerSink("http", (s) => createHttpSink(s));
 
 /** Scheme spellings served by another scheme's plugin package (hosting platforms hand out postgresql:// URLs). */
 const PLUGIN_ALIASES: Record<string, string> = { postgresql: "postgres" };
-export const storePluginPackage = (scheme: string): string => `coding.sh-store-${PLUGIN_ALIASES[scheme] ?? scheme}`;
+/** The canonical name of a scheme: `postgresql` → `postgres`; others unchanged. */
+export const canonicalScheme = (scheme: string): string => PLUGIN_ALIASES[scheme] ?? scheme;
+export const storePluginPackage = (scheme: string): string => `coding.sh-store-${canonicalScheme(scheme)}`;
 
 async function loadPlugin(pkg: string): Promise<StorePlugin | undefined> {
   try {
@@ -97,6 +100,9 @@ export async function openIndexStore(url: string, config: Config): Promise<Index
   }
   const store = await factory(url, config);
   await store.migrate();
+  // Cost estimates for events stored before local pricing (or under older prices): once per
+  // price table. Never fails the open: a pass that errors runs again on the next one.
+  await repriceStored(store, config.pricing).catch(() => {});
   return store;
 }
 

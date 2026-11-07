@@ -158,7 +158,8 @@ describe("postgres store", { skip: SKIP }, () => {
       await s.upsertSession({ id: "old", agent: "sdk", startedAt: 10, endedAt: 20, stats, flags: [] });
       await s.upsertSession({ id: "demo/old", project: "demo", agent: "sdk", startedAt: 10, stats, flags: [] });
       await s.upsertSession({ id: "new", agent: "sdk", startedAt: 10, endedAt: 1000, stats, flags: [] });
-      await s.putEvents([ev({ sessionId: "old" }), ev({ sessionId: "old" }), ev({ sessionId: "demo/old", project: "demo" }), ev({ sessionId: "new" })]);
+      // Event times inside each session: retention judges by last activity, events included.
+      await s.putEvents([ev({ sessionId: "old", ts: 10 }), ev({ sessionId: "old", ts: 20 }), ev({ sessionId: "demo/old", project: "demo", ts: 10 }), ev({ sessionId: "new", ts: 1000 })]);
       await s.putLabel({ id: "l1", sessionId: "old", criterion: "outcome", value: "pass", by: "me", ts: 1 });
       await s.putDataset!({ id: "qa", name: "QA", version: "v1", cases: [] }, { now: 1 });
       assert.deepEqual(await s.deleteBefore(100, { project: "default" }), { sessions: 1, events: 2 });
@@ -167,6 +168,8 @@ describe("postgres store", { skip: SKIP }, () => {
       assert.deepEqual(await s.listLabels({ sessionId: "old" }), []);
       assert.deepEqual(await s.deleteBefore(100), { sessions: 1, events: 1 });
       assert.ok(await s.getSession("new"));
+      await s.putEvents([ev({ sessionId: "new", ts: 5000 })]);
+      assert.deepEqual(await s.deleteBefore(2000), { sessions: 0, events: 0 }, "an event after the cutoff keeps a session that ended before it");
       assert.ok(await s.getDataset!("qa"), "eval assets are never deleted");
     } finally {
       await s.close();
@@ -181,7 +184,7 @@ describe("postgres store", { skip: SKIP }, () => {
       for (let i = 0; i < ids.length; i += 50) {
         await Promise.all(ids.slice(i, i + 50).map((id) => s.upsertSession({ id, agent: "sdk", startedAt: 1, stats, flags: [] })));
       }
-      await s.putEvents(Array.from({ length: 1203 }, (_, i) => ev({ sessionId: `s${i}` })));
+      await s.putEvents(Array.from({ length: 1203 }, (_, i) => ev({ sessionId: `s${i}`, ts: 1 })));
       assert.deepEqual(await s.deleteBefore(2), { sessions: 1203, events: 1203 });
       assert.deepEqual(await s.listSessions(), []);
     } finally {

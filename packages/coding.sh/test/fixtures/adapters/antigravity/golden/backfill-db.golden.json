@@ -1,0 +1,489 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931600000,
+    "payload": {
+      "source": "transcript"
+    },
+    "id": "b78b5efb08f42fe7d3e43a38fad9126610f005fcd89259d4953cba627e94c575",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931600000,
+    "payload": {
+      "text": "The parser test fails on empty input. Find out why and fix it without changing the public API."
+    },
+    "id": "2819c4e8dd52f20dbd5b845c1151119469096a8661ccfd233e9670d5cb9f0133",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931604000,
+    "payload": {
+      "provider": "google",
+      "responseModel": "gemini-3.8-flash",
+      "ttftMs": 1500,
+      "ok": true
+    },
+    "id": "de97ca52d4eae176b39b38677d0060fb7723e60df5bcb8967cc1efdebb45f900",
+    "model": "gemini-3.8-flash",
+    "durationMs": 2000,
+    "usage": {
+      "inputTokens": 1200,
+      "outputTokens": 300,
+      "cacheReadTokens": 8000
+    },
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931604000,
+    "payload": {
+      "tool": "run_command",
+      "toolUseId": "step-1-0",
+      "input": {
+        "CommandLine": "npm test",
+        "Cwd": "/work/agy",
+        "WaitMsBeforeAsync": "5000",
+        "RunPersistent": "false",
+        "RequestedTerminalID": "",
+        "toolAction": "Running tests",
+        "toolSummary": "npm test"
+      },
+      "verify": true
+    },
+    "id": "0d64ee9ed518d0936d4c645306d3788afb46a72875748a4b440f99fbca5d6c4e",
+    "model": "gemini-3.8-flash",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931609000,
+    "payload": {
+      "tool": "run_command",
+      "toolUseId": "step-1-0",
+      "ok": false,
+      "durationMs": 5000,
+      "output": "exit status 1",
+      "error": "exit status 1"
+    },
+    "id": "a98599e157af9e6672fa967201b9fefd04ddaa9b6b75338b9a89ca7a398f4f4f",
+    "model": "gemini-3.8-flash",
+    "durationMs": 5000,
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931609000,
+    "payload": {
+      "provider": "google",
+      "responseModel": "gemini-3.8-flash",
+      "ttftMs": 900,
+      "ok": true
+    },
+    "id": "a4dd43b7e6eb141fb41aa2eb6cab1374755b3636bb225d6a623e2fe4ccf4c19f",
+    "model": "gemini-3.8-flash",
+    "durationMs": 1000,
+    "usage": {
+      "inputTokens": 400,
+      "outputTokens": 20
+    },
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931609000,
+    "payload": {
+      "tool": "view_file",
+      "toolUseId": "step-3-0",
+      "input": {
+        "AbsolutePath": "/work/agy/src/parse.ts",
+        "StartLine": "1",
+        "EndLine": "40",
+        "toolAction": "Reading",
+        "toolSummary": "parse.ts"
+      }
+    },
+    "id": "b9de717700a97ae567386cdf958e05af414cf36120cc5a7def1d2d7351ddc016",
+    "model": "gemini-3.8-flash",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931610000,
+    "payload": {
+      "tool": "view_file",
+      "toolUseId": "step-3-0",
+      "ok": true,
+      "durationMs": 1000,
+      "output": "1: export function parse(s) {\n2:   return s.split(\",\");\n3: }"
+    },
+    "id": "80715e26a6c410b5394ed5f6a57cde477985251a0ba7f4af592de1d7c2f9c4bb",
+    "model": "gemini-3.8-flash",
+    "durationMs": 1000,
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931612000,
+    "payload": {
+      "provider": "google",
+      "responseModel": "gemini-3.8-flash",
+      "ttftMs": 1000,
+      "ok": true
+    },
+    "id": "4a143dbfa583a7df16c5746c176a373b8926fdd7069ab9a1742f54ae47048e77",
+    "model": "gemini-3.8-flash",
+    "durationMs": 1250,
+    "usage": {
+      "inputTokens": 500,
+      "outputTokens": 80,
+      "cacheReadTokens": 9000
+    },
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931612000,
+    "payload": {
+      "text": "Adding a guard for empty input."
+    },
+    "id": "7b1d4c0a03f9ba8efed444fd94ce00bd61224bbf3b77e60f525d1aed8fa3de1f",
+    "model": "gemini-3.8-flash",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931612000,
+    "payload": {
+      "tool": "replace_file_content",
+      "toolUseId": "step-5-0",
+      "input": {
+        "TargetFile": "/work/agy/src/parse.ts",
+        "Instruction": "guard empty input",
+        "TargetContent": "export function parse(s) {",
+        "ReplacementContent": "export function parse(s) {\n  if (!s) return [];",
+        "AllowMultiple": "false",
+        "Description": "guard",
+        "toolAction": "Editing",
+        "toolSummary": "parse.ts"
+      }
+    },
+    "id": "9d9f30ca72aae0d483ac17957844d5af537d2a0ca89ed2d98357c81e660e9a1a",
+    "model": "gemini-3.8-flash",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931613000,
+    "payload": {
+      "tool": "replace_file_content",
+      "toolUseId": "step-5-0",
+      "ok": true,
+      "durationMs": 1000,
+      "output": "The following changes were made to /work/agy/src/parse.ts"
+    },
+    "id": "51d9c4f7f3a4bdde63d9f08ea4126915502e20002b62273610a0115236487cb8",
+    "model": "gemini-3.8-flash",
+    "durationMs": 1000,
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931613000,
+    "payload": {
+      "path": "src/parse.ts",
+      "op": "modify",
+      "tool": "replace_file_content",
+      "toolUseId": "step-5-0"
+    },
+    "id": "2c1726e14786539e992ab10ff55fea20b51751abd535425ff773af4d1ef54e3a",
+    "model": "gemini-3.8-flash",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931614000,
+    "payload": {
+      "provider": "google",
+      "responseModel": "gemini-3.8-flash",
+      "ttftMs": 600,
+      "ok": true
+    },
+    "id": "37556266b63e212bdc886e956d9a5b27d19fe4cb585ce35dd815a101dc8605ee",
+    "model": "gemini-3.8-flash",
+    "durationMs": 650,
+    "usage": {
+      "inputTokens": 200,
+      "outputTokens": 10
+    },
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931614000,
+    "payload": {
+      "tool": "run_command",
+      "toolUseId": "step-7-0",
+      "input": {
+        "CommandLine": "npm test",
+        "Cwd": "/work/agy",
+        "WaitMsBeforeAsync": "5000",
+        "RunPersistent": "false",
+        "RequestedTerminalID": "",
+        "toolAction": "Running tests",
+        "toolSummary": "npm test"
+      },
+      "verify": true
+    },
+    "id": "6b2ee28c5f81c3f926f7c67ac03ada7f3a592fb0f2f9f8aacaf9c03163b72fe7",
+    "model": "gemini-3.8-flash",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931617000,
+    "payload": {
+      "tool": "run_command",
+      "toolUseId": "step-7-0",
+      "ok": true,
+      "durationMs": 3000,
+      "output": "# tests 2\n# pass 2\n# fail 0"
+    },
+    "id": "dfc35d247e56f50a1c15294cdd93024a00d8db7065eaff334ffc0104d9d4279e",
+    "model": "gemini-3.8-flash",
+    "durationMs": 3000,
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931617000,
+    "payload": {
+      "runner": "node",
+      "passed": 2,
+      "failed": 0,
+      "toolUseId": "step-7-0"
+    },
+    "id": "40ee9d4c094fd8755125ffc38806420f6ce04af92206f76465725c70e4b315cf",
+    "model": "gemini-3.8-flash",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931618000,
+    "payload": {
+      "provider": "google",
+      "responseModel": "gemini-3.8-flash",
+      "ttftMs": 700,
+      "ok": true
+    },
+    "id": "c3b1d2dfc590e1db5412d53df4d20bc40121f8df2975cad3418e0bdedc1642d3",
+    "model": "gemini-3.8-flash",
+    "durationMs": 750,
+    "usage": {
+      "inputTokens": 300,
+      "outputTokens": 40
+    },
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931618000,
+    "payload": {
+      "tool": "run_command",
+      "toolUseId": "step-9-0",
+      "input": {
+        "CommandLine": "npm run test:watch",
+        "Cwd": "/work/agy",
+        "WaitMsBeforeAsync": "500",
+        "RunPersistent": "true",
+        "RequestedTerminalID": "",
+        "toolAction": "Watching",
+        "toolSummary": "test watch"
+      },
+      "verify": true
+    },
+    "id": "6d1fb666078b1f1b86bff5ee5f4d23da47301a38a6d426c33d67c8293cdb4113",
+    "model": "gemini-3.8-flash",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931619000,
+    "payload": {
+      "tool": "run_command",
+      "toolUseId": "step-9-0",
+      "ok": true,
+      "durationMs": 1000,
+      "output": "Background command ID: 1"
+    },
+    "id": "2d55be7d5e87fd28c22060d8fa66a7a20f4325bb660a266fb96d4aae274971ec",
+    "model": "gemini-3.8-flash",
+    "durationMs": 1000,
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931622000,
+    "payload": {
+      "provider": "anthropic",
+      "responseModel": "claude-opus-4-6-thinking",
+      "ttftMs": 2000,
+      "ok": true
+    },
+    "id": "b78bedbdbeb7570ff51ff3a4dde7783e56cbfa89001fbe60a62385eb2ac24829",
+    "model": "claude-opus-4-6-thinking",
+    "durationMs": 2300,
+    "usage": {
+      "inputTokens": 100,
+      "outputTokens": 30
+    },
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931622000,
+    "payload": {
+      "text": "Fixed: parse(\"\") now returns []."
+    },
+    "id": "a0af5e259e2e7e63bc9af9e46557699604cdac5a65085337b423bd7fd4548e5e",
+    "model": "claude-opus-4-6-thinking",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931660000,
+    "payload": {},
+    "id": "1cef09b3cd0cf2e222ccca56541588a2332ae34513c3d726cb08cb01deb73b6f",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931660000,
+    "payload": {
+      "text": "Also add a changelog line."
+    },
+    "id": "2ab98030eb2d9b514f4663c3c5660f8f21a01f09597bc8dd2dffa8ffa2cc278e",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "error",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931663000,
+    "payload": {
+      "message": "model unavailable, please retry"
+    },
+    "id": "ff6a2555a1e39a7bf18b3fe0345ed9e70f958a724b22310a947540070ee76ebb",
+    "model": "gemini-3.8-flash",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931663000,
+    "payload": {
+      "provider": "google",
+      "responseModel": "gemini-3.8-flash",
+      "ttftMs": 400,
+      "ok": false,
+      "error": "model unavailable, please retry"
+    },
+    "id": "8fc0b7e82c4412947931110a8c7524b85a6c57ad61f49f836e2e53b612c5df6b",
+    "model": "gemini-3.8-flash",
+    "durationMs": 400,
+    "usage": {
+      "inputTokens": 50,
+      "outputTokens": 0
+    },
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931690000,
+    "payload": {},
+    "id": "cad3e8cc9d84a54e67584d99fc43b4e50d3029badbdcfb65225ee5ae28d36f37",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931690000,
+    "payload": {
+      "text": "retry"
+    },
+    "id": "589a80249b42092641c9f30623a71968401b636ab73706dc53d5e922e7c111e6",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931693000,
+    "payload": {
+      "provider": "google",
+      "responseModel": "gemini-3.8-flash",
+      "ttftMs": 800,
+      "ok": true
+    },
+    "id": "e88f631fab06bab92d8df3eb4d1a3f4d6030d4861b906aad9b69cfe7c65fbef3",
+    "model": "gemini-3.8-flash",
+    "durationMs": 840,
+    "usage": {
+      "inputTokens": 600,
+      "outputTokens": 15
+    },
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931693000,
+    "payload": {
+      "tool": "view_file",
+      "toolUseId": "step-15-0",
+      "input": {
+        "AbsolutePath": "/work/agy/CHANGELOG.md",
+        "StartLine": "1",
+        "EndLine": "20",
+        "toolAction": "Reading",
+        "toolSummary": "CHANGELOG.md"
+      }
+    },
+    "id": "3f57d494d644f2c51ce01f0bb8f02d31bc3a5952922d40c6f738f8a97f9c5db8",
+    "model": "gemini-3.8-flash",
+    "cwd": "/work/agy"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "agy-conv-2",
+    "ts": 1790931693000,
+    "payload": {},
+    "id": "8f942d4abf159cdc788af2e97f66cd5216ff91585bbcca548345923e8222c2ec",
+    "cwd": "/work/agy"
+  }
+]

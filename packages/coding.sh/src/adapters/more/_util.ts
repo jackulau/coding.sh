@@ -19,8 +19,11 @@ import type { AgentRunOutput, FileChange, NormalizeContext, SpoolLine } from "..
 import type { AgentEvent, AgentId, EventKind, Usage } from "../../schema/index.ts";
 import { paths, userHome } from "../../core/paths.ts";
 import { sha256Hex } from "../../core/ids.ts";
+import { supervise } from "../../core/children.ts";
 import { commandOf, isVerifyCommand } from "../../core/sessions.ts";
 import { exactUninstall, existedBeforeInstall, forgetInstall, recordInstall, restoreForInstall } from "../_shared/installs.ts";
+import { resolveWriteTarget } from "../_shared/files.ts";
+import { editJsonc, parseJsonc as parseJsoncShared } from "../_shared/jsonc.ts";
 
 export type Json = Record<string, unknown>;
 
@@ -102,42 +105,9 @@ export function readText(path: string): string | undefined {
   }
 }
 
-/** JSON with comments and trailing commas (settings.json files are often JSONC). */
+/** JSON with comments and trailing commas (settings.json files are often JSONC). One parser for every config path. */
 export function parseJsonc(text: string): unknown {
-  let out = "";
-  let i = 0;
-  let inStr = false;
-  while (i < text.length) {
-    const c = text[i]!;
-    const n = text[i + 1];
-    if (inStr) {
-      out += c;
-      if (c === "\\") {
-        out += n ?? "";
-        i += 2;
-        continue;
-      }
-      if (c === '"') inStr = false;
-      i++;
-      continue;
-    }
-    if (c === '"') {
-      inStr = true;
-      out += c;
-      i++;
-    } else if (c === "/" && n === "/") {
-      while (i < text.length && text[i] !== "\n") i++;
-    } else if (c === "/" && n === "*") {
-      i += 2;
-      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
-      i += 2;
-    } else {
-      out += c;
-      i++;
-    }
-  }
-  out = out.replace(/,(\s*[}\]])/g, "$1");
-  return out.trim() === "" ? {} : JSON.parse(out);
+  return parseJsoncShared(text);
 }
 
 export class ConfigParseError extends Error {}
@@ -157,6 +127,15 @@ export function readJsonObject(path: string): { text: string | undefined; value:
 }
 
 export const toJson = (v: unknown): string => `${JSON.stringify(v, null, 2)}\n`;
+
+/**
+ * New text for a JSON(C) config whose value becomes `next`: a file that exists
+ * is edited in place, so comments and layout outside the changed members
+ * survive; a new file is plain two-space JSON.
+ */
+export function jsonEdit(before: string | undefined, next: Json): string {
+  return before === undefined || before.trim() === "" ? toJson(next) : editJsonc(before, next);
+}
 
 export interface PlannedWrite {
   path: string;
@@ -209,17 +188,19 @@ export function applyWrites(agent: AgentId, writes: PlannedWrite[], dryRun: bool
       rmSync(w.path, { force: true });
       continue;
     }
-    mkdirSync(dirname(w.path), { recursive: true });
+    // A symlinked config is written through to its target (the link stays a link).
+    const target = resolveWriteTarget(w.path);
+    mkdirSync(dirname(target), { recursive: true });
     let mode = w.mode;
     try {
-      mode ??= statSync(w.path).mode & 0o777;
+      mode ??= statSync(target).mode & 0o777;
     } catch {
       // new file
     }
-    const tmp = `${w.path}.codingsh-${randomBytes(4).toString("hex")}.tmp`;
+    const tmp = `${target}.codingsh-${randomBytes(4).toString("hex")}.tmp`;
     writeFileSync(tmp, w.after, { mode: mode ?? 0o644 });
     if (mode !== undefined) chmodSync(tmp, mode);
-    renameSync(tmp, w.path);
+    renameSync(tmp, target);
     if (w.track === "install") recordInstall(agent, w.path, w.after, env, Date.now(), restoreForInstall(w.path, w.before, w.pristine === true, backup, env));
   }
   return changes;
@@ -750,6 +731,8 @@ export interface SpawnOpts {
   /** Called for each complete stdout line (stream-json parsers). */
   onLine?: (line: string) => void;
   tailBytes?: number;
+  /** Stop the agent's process group on abort (default: the ambient signal, see core/children.ts). */
+  signal?: AbortSignal;
 }
 
 export interface SpawnResult {
@@ -761,87 +744,55 @@ export interface SpawnResult {
 }
 
 /**
- * Spawn an agent headless (argv array, no shell). On timeout the whole process
- * group is SIGTERMed, then SIGKILLed 3 s later; stragglers are reaped on exit.
+ * Spawn an agent headless (argv array, no shell). On timeout or abort the whole
+ * process group is SIGTERMed, then SIGKILLed 3 s later; stragglers are reaped
+ * when the agent exits.
  */
 export function spawnAgent(o: SpawnOpts): Promise<SpawnResult> {
   const started = Date.now();
   const max = o.tailBytes ?? 16 * 1024;
-  return new Promise((resolve) => {
-    const out = new Tail(max);
-    const err = new Tail(max);
-    let partial = "";
-    let timedOut = false;
-    let settled = false;
-    const posix = process.platform !== "win32";
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(o.bin, o.args, {
-        cwd: o.cwd,
-        env: o.env as NodeJS.ProcessEnv,
-        stdio: [o.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-        detached: posix,
-        windowsHide: true,
-      });
-    } catch (e) {
-      resolve({ exitCode: 127, timedOut: false, durationMs: 0, stdoutTail: "", stderrTail: (e as Error).message });
-      return;
-    }
-    const signal = (sig: NodeJS.Signals) => {
-      try {
-        if (posix && child.pid !== undefined) process.kill(-child.pid, sig);
-        else child.kill(sig);
-      } catch {
-        // gone
-      }
-    };
-    let killTimer: NodeJS.Timeout | undefined;
-    const timer =
-      o.timeoutMs > 0
-        ? setTimeout(() => {
-            timedOut = true;
-            signal("SIGTERM");
-            killTimer = setTimeout(() => signal("SIGKILL"), 3000);
-          }, o.timeoutMs)
-        : undefined;
-    child.stdout?.setEncoding("utf8");
-    child.stderr?.setEncoding("utf8");
-    child.stdout?.on("data", (s: string) => {
-      out.push(s);
-      if (!o.onLine) return;
-      partial += s;
-      let i: number;
-      while ((i = partial.indexOf("\n")) >= 0) {
-        const line = partial.slice(0, i).replace(/\r$/, "");
-        partial = partial.slice(i + 1);
-        if (line.trim()) safeCall(o.onLine, line);
-      }
+  const out = new Tail(max);
+  const err = new Tail(max);
+  let partial = "";
+  const posix = process.platform !== "win32";
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(o.bin, o.args, {
+      cwd: o.cwd,
+      env: o.env as NodeJS.ProcessEnv,
+      stdio: [o.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+      detached: posix,
+      windowsHide: true,
     });
-    child.stderr?.on("data", (s: string) => err.push(s));
-    if (o.stdin !== undefined) child.stdin?.end(o.stdin);
-    const finish = (code: number | null, extraErr?: string) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      if (killTimer) clearTimeout(killTimer);
-      if (o.onLine && partial.trim()) safeCall(o.onLine, partial);
-      if (posix && child.pid !== undefined) {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-        } catch {
-          // empty group
-        }
-      }
-      resolve({
-        exitCode: timedOut ? null : code,
-        timedOut,
-        durationMs: Date.now() - started,
-        stdoutTail: out.text(),
-        stderrTail: extraErr ? `${err.text()}\n${extraErr}` : err.text(),
-      });
+  } catch (e) {
+    return Promise.resolve({ exitCode: 127, timedOut: false, durationMs: 0, stdoutTail: "", stderrTail: (e as Error).message });
+  }
+  child.stdout?.setEncoding("utf8");
+  child.stderr?.setEncoding("utf8");
+  child.stdout?.on("data", (s: string) => {
+    out.push(s);
+    if (!o.onLine) return;
+    partial += s;
+    let i: number;
+    while ((i = partial.indexOf("\n")) >= 0) {
+      const line = partial.slice(0, i).replace(/\r$/, "");
+      partial = partial.slice(i + 1);
+      if (line.trim()) safeCall(o.onLine, line);
+    }
+  });
+  child.stderr?.on("data", (s: string) => err.push(s));
+  child.stdin?.on("error", () => {}); // the agent may exit without reading stdin
+  if (o.stdin !== undefined) child.stdin?.end(o.stdin);
+  return supervise(child, { group: posix, timeoutMs: o.timeoutMs, termGraceMs: 3000, signal: o.signal }).then((r) => {
+    if (o.onLine && partial.trim()) safeCall(o.onLine, partial);
+    const extraErr = r.error ? r.error.message : r.aborted ? "aborted" : undefined;
+    return {
+      exitCode: r.error ? (r.error.code === "ENOENT" ? 127 : 126) : r.code,
+      timedOut: r.timedOut,
+      durationMs: Date.now() - started,
+      stdoutTail: out.text(),
+      stderrTail: extraErr ? `${err.text()}\n${extraErr}` : err.text(),
     };
-    child.on("error", (e: NodeJS.ErrnoException) => finish(e.code === "ENOENT" ? 127 : 126, e.message));
-    child.on("close", (code) => finish(code));
   });
 }
 

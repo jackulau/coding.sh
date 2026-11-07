@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import { listSpoolFiles, rawFilesOf, readSpoolFile, resolveRawFile, type SpoolReadError, type SpoolRecord } from "../../src/core/spool-read.ts";
+import { listSpoolFiles, rawFilesOf, readSpoolFile, resolveRawFile, TORN_TAIL_MS, type SpoolReadError, type SpoolRecord } from "../../src/core/spool-read.ts";
 
 const roots: string[] = [];
 after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
@@ -100,5 +100,36 @@ describe("spool-read", () => {
     assert.match(errs[1]!.message, /outside the spool directory/);
     assert.throws(() => resolveRawFile(dir, file, "/etc/passwd"), /outside/);
     assert.deepEqual(await rawFilesOf(dir, file), [join(dir, "codex", "raw", "big.json"), join(dir, "codex", "raw", "plain.txt"), join(dir, "codex", "raw", "missing.json")]);
+  });
+
+  it("orders each agent's files by day, then mtime, then name (not by pid as a string)", async () => {
+    const dir = spool();
+    const at = (name: string, ms: number) => {
+      const p = join(dir, "codex", name);
+      writeFileSync(p, line());
+      utimesSync(p, new Date(ms), new Date(ms));
+    };
+    const t0 = Date.UTC(2026, 10, 6, 12);
+    at("2026-11-06.10000.jsonl", t0 + 2000); // written after 9999 (digit rollover)
+    at("2026-11-06.9999.jsonl", t0 + 1000);
+    at("2026-11-06.112.jsonl", t0 + 3000); // pid wrapped around
+    at("2026-11-05.99990.jsonl", t0 + 9000); // an older day, touched later, still first
+    at("2026-11-06.20.jsonl", t0 + 3000); // same mtime as 112: name breaks the tie
+    const files = await listSpoolFiles(dir);
+    assert.deepEqual(files.map((f) => f.source.split("/")[1]), ["2026-11-05.99990.jsonl", "2026-11-06.9999.jsonl", "2026-11-06.10000.jsonl", "2026-11-06.112.jsonl", "2026-11-06.20.jsonl"]);
+  });
+
+  it("reports and skips a torn last line once the file has been untouched for over an hour", async () => {
+    const dir = spool();
+    const file = join(dir, "codex", "a.jsonl");
+    const good = line();
+    writeFileSync(file, good + line({ event: "Torn" }).slice(0, 40));
+    const old = new Date(Date.now() - TORN_TAIL_MS - 60_000);
+    utimesSync(file, old, old);
+    const { recs, errs } = await readAll(dir, file);
+    assert.equal(recs.length, 1);
+    assert.equal(errs.length, 1);
+    assert.match(errs[0]!.message, /incomplete last line/);
+    assert.deepEqual([errs[0]!.offset, errs[0]!.nextOffset], [good.length, statSync(file).size], "the cursor can move to the end");
   });
 });

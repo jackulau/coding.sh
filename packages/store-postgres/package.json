@@ -19,6 +19,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "prepare": "node scripts/build.mjs --soft",
     "test": "node --conditions=source --no-warnings --test \"test/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check": "npm run typecheck && npm test"

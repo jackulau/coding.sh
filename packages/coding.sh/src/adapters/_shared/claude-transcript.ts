@@ -37,7 +37,8 @@ export interface ClaudeConvertOpts {
   sidechain?: boolean;
   /**
    * Backfill of a finished transcript: when the last entry is older than this
-   * (ms), emit a session.end at its timestamp. Omitted = never (live windows).
+   * (ms), close a turn still open at the end of the file and emit a session.end
+   * at the last entry's timestamp. Omitted = never (live windows).
    */
   endIfIdleMs?: number;
 }
@@ -129,6 +130,22 @@ export class ClaudeTranscriptConverter {
   constructor(ctx: NormalizeContext, opts: ClaudeConvertOpts) {
     this.ctx = ctx;
     this.opts = opts;
+  }
+
+  /** Id of the latest turn opened so far: a hook Stop keys its turn.end by it, as the transcript does. */
+  get currentTurnId(): string | undefined {
+    return this.turnId;
+  }
+
+  /** Timestamp of the latest entry seen (0 before any). */
+  get lastEntryTs(): number {
+    return this.lastTs;
+  }
+
+  /** The transcript has been quiet longer than endIfIdleMs (never, without it). */
+  idle(now = Date.now()): boolean {
+    const idle = this.opts.endIfIdleMs;
+    return idle !== undefined && this.lastTs > 0 && now - this.lastTs > idle;
   }
 
   private em(ts: number, lineNo: number | string): Emitter {
@@ -329,7 +346,8 @@ export class ClaudeTranscriptConverter {
     } else if (e.subtype === "turn_duration") {
       if (this.opts.mode === "full" && !this.turnEnded) {
         const d = num(e.durationMs);
-        em.emit("turn.end", { durationMs: d }, { key: [uuid], durationMs: d });
+        // Keyed by the turn, like a synthesized end and the hook Stop's turn.end, so all copies of one turn's end dedupe.
+        em.emit("turn.end", { durationMs: d }, { key: [this.turnId ?? uuid, "end"], durationMs: d });
         this.turnEnded = true;
       }
     } else if (e.subtype === "api_error" && this.opts.mode === "full") {
@@ -378,12 +396,16 @@ export class ClaudeTranscriptConverter {
     this.push(em);
   }
 
-  /** Flush pending state at end of input. */
-  async finish(): Promise<AgentEvent[]> {
+  /**
+   * Flush pending state at end of input. A turn still open at the end is
+   * closed only when `closed` (default: the transcript is idle): a live
+   * transcript's open turn ends later, with its real end.
+   */
+  async finish(closed = this.idle()): Promise<AgentEvent[]> {
     await this.localCommand();
-    await this.endTurn(this.lastTs, "eof");
-    const idle = this.opts.endIfIdleMs;
-    if (this.opts.mode === "full" && this.started && idle !== undefined && Date.now() - this.lastTs > idle) {
+    if (closed) await this.endTurn(this.lastTs, "eof");
+    else await this.flushCall();
+    if (this.opts.mode === "full" && this.started && this.idle()) {
       const em = this.em(this.lastTs, "eof");
       // Keyed by the last entry's time: a resumed session gets a later end instead of keeping a stale one.
       em.emit("session.end", { reason: "idle" }, { key: ["idle", this.lastTs], turnId: undefined });

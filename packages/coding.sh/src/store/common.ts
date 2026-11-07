@@ -129,20 +129,54 @@ export function toBytes(data: Uint8Array | string): Uint8Array {
   return typeof data === "string" ? new TextEncoder().encode(data) : data;
 }
 
-/** Blob refs held by a task (patches + hidden verifier files). */
+/** Where a stored eval document keeps blob refs. `shape`: one ref, an array of refs, or a name → ref map. */
+export interface BlobRefField {
+  table: "tasks" | "bundles" | "runs";
+  path: readonly string[];
+  shape: "ref" | "list" | "map";
+}
+
+/**
+ * Every blob ref a task, bundle or run document holds. gc keeps exactly these
+ * (plus event blobs), so a new field that stores a ref must be listed here:
+ * the memory store walks this list in JS, SQLite and Postgres build their
+ * referencedBlobs SQL from it.
+ */
+export const BLOB_REF_FIELDS: readonly BlobRefField[] = [
+  { table: "tasks", path: ["referencePatch"], shape: "ref" },
+  { table: "tasks", path: ["nearMissPatches"], shape: "list" },
+  { table: "tasks", path: ["verifier", "hiddenFiles"], shape: "map" },
+  { table: "tasks", path: ["validation", "impossible", "variant", "hiddenFiles"], shape: "map" },
+  { table: "bundles", path: ["files"], shape: "map" },
+  { table: "runs", path: ["diffBlob"], shape: "ref" },
+  { table: "runs", path: ["tapBlob"], shape: "ref" },
+];
+
+/** The refs at one field of a document; anything not of the field's shape yields none. */
+export function refsAt(doc: unknown, f: BlobRefField): BlobRef[] {
+  let v: unknown = doc;
+  for (const k of f.path) v = v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>)[k] : undefined;
+  const strings = (xs: unknown[]) => xs.filter((x): x is string => typeof x === "string");
+  if (f.shape === "ref") return typeof v === "string" ? [v] : [];
+  if (f.shape === "list") return Array.isArray(v) ? strings(v) : [];
+  return v && typeof v === "object" && !Array.isArray(v) ? strings(Object.values(v)) : [];
+}
+
+const blobsOf = (table: BlobRefField["table"], doc: unknown): BlobRef[] =>
+  BLOB_REF_FIELDS.filter((f) => f.table === table).flatMap((f) => refsAt(doc, f));
+
+/** Blob refs held by a task (patches, hidden verifier files, impossible-variant hidden files). */
 export function taskBlobs(t: EvalTask): BlobRef[] {
-  const out = Object.values(t.verifier?.hiddenFiles ?? {});
-  if (t.referencePatch) out.push(t.referencePatch);
-  out.push(...(t.nearMissPatches ?? []));
-  return out;
+  return blobsOf("tasks", t);
 }
 
 export function bundleBlobs(b: HarnessBundle): BlobRef[] {
-  return Object.values(b.files ?? {});
+  return blobsOf("bundles", b);
 }
 
+/** Blob refs held by a run (its diff and, for toolevals trials, the tap log). */
 export function runBlobs(r: RunResult): BlobRef[] {
-  return r.diffBlob ? [r.diffBlob] : [];
+  return blobsOf("runs", r);
 }
 
 /**

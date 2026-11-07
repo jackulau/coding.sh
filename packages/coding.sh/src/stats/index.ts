@@ -3,7 +3,7 @@ export type { Summary } from "./summary.ts";
 export { mulberry32 } from "./prng.ts";
 export { pairedBootstrap, roganGladen, wilson } from "./interval.ts";
 export type { BootstrapOpts, BootstrapResult, CalibrationCounts, Interval, RoganGladenResult } from "./interval.ts";
-export { binomCdfHalf, mcnemar, mcnemarPaired } from "./tests.ts";
+export { binomCdfHalf, holm, mcnemar, mcnemarPaired } from "./tests.ts";
 export type { McNemarResult } from "./tests.ts";
 export { cohenKappa, percentAgreement } from "./agreement.ts";
 export type { KappaResult } from "./agreement.ts";

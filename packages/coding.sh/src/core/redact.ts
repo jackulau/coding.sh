@@ -35,13 +35,36 @@ function keepPrefix(kind: string): (m: string, ...g: string[]) => string {
   return (_m, ...g) => `${g[0] ?? ""}${marker(kind)}`;
 }
 
+/**
+ * Linear-time appliers for rules whose regex backtracks quadratically on some
+ * inputs. createRedactor uses these instead of rule.pattern; each produces
+ * exactly what `s.replace(rule.pattern, …)` would (test/core/redact.test.ts
+ * checks this against a frozen copy of the original patterns). Rules are keyed
+ * by identity, so a copied rule object falls back to its (equivalent) regex.
+ */
+const fastApply = new WeakMap<RedactRule, (s: string) => string>();
+
+function withFastApply(rule: RedactRule, apply: (s: string) => string): RedactRule {
+  fastApply.set(rule, apply);
+  return rule;
+}
+
 /** Built-in "secrets" rules. Order matters: specific vendor formats first. */
 export function secretRules(): RedactRule[] {
+  const privateKey: RedactRule = {
+    kind: "private-key",
+    pattern: /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----/g,
+  };
+  // Secrets pasted in prose: "PAT here ya go: abcD3f-…", "the password is hunter22".
+  // A secret word, a short gap, then ":", "=" or "is", then one token that mixes
+  // letters and digits (so "password: string" and "token = getToken(user)" pass).
+  const proseSecret: RedactRule = {
+    kind: "prose-secret",
+    pattern: /(\b(?:PAT|personal access token|token|password|passwd|passcode|pass phrase|passphrase|api[ _-]?key|secret)\b[^\n[\]:=]{0,24}?(?::|=|\bis\b)\s*)(?![$[])(?=[^\s"'`]*\d)(?=[^\s"'`]*[A-Za-z])[^\s"'`,;)]{8,}/gi,
+    replace: keepPrefix("prose-secret"),
+  };
   return [
-    {
-      kind: "private-key",
-      pattern: /-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----/g,
-    },
+    withFastApply(privateKey, (s) => redactPrivateKeys(s, privateKey.pattern)),
     { kind: "anthropic-key", pattern: /(?<![A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{20,}/g },
     // OpenAI-style: sk-, sk-proj-, sk-svcacct-… Require a digit so kebab-case words don't match.
     { kind: "openai-key", pattern: /(?<![A-Za-z0-9_-])sk-(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{20,}/g },
@@ -61,10 +84,13 @@ export function secretRules(): RedactRule[] {
     // "Bearer <token>" / "Basic <b64>" in headers and curl commands; keep the scheme word.
     { kind: "bearer", pattern: /(\b[Bb]earer\s+)(?=[A-Za-z0-9._~+/-]*\d)[A-Za-z0-9._~+/-]{16,}=*/g, replace: keepPrefix("bearer") },
     { kind: "basic-auth", pattern: /(\bAuthorization:\s*Basic\s+)[A-Za-z0-9+/]{8,}=*/gi, replace: keepPrefix("basic-auth") },
-    // scheme://user:password@host — keep user and host.
+    // scheme://user:password@host — keep user and host. The scheme is checked by
+    // a lookbehind once "://" is found: scanning forward from every word start in
+    // a long dotted/dashed run is quadratic. The scheme stays in the output either
+    // way, so only where the match starts changes.
     {
       kind: "password",
-      pattern: /(\b[a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)([^\s@/]+)(@)/gi,
+      pattern: /(:\/\/(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s:@/]+:)([^\s@/]+)(@)/gi,
       replace: (_m, pre, _pw, at) => `${pre}${marker("password")}${at}`,
     },
     // ?password=…&token=… in URLs and form bodies.
@@ -80,21 +106,137 @@ export function secretRules(): RedactRule[] {
       pattern: new RegExp(`(\\b${ENV_SECRET_NAME}=)(["']?)(?![$])(?!\\d+\\b)([^\\s"'\`;|&]{8,})\\2`, "g"),
       replace: (_m, name, q) => `${name}${q}${marker("secret-assignment")}${q}`,
     },
-    // "api_key": "value" in JSON/YAML-ish text.
+    // "api_key": "value" in JSON/YAML-ish text. The match starts at the secret
+    // word: the name it suffixes ("client_api_key", "x-api-key") is left as is, so
+    // there is no need for a `(?:[A-Za-z0-9]+[_-])*` prefix loop, which rescans the
+    // whole identifier from every start position (quadratic on long words).
     {
       kind: "secret-field",
-      pattern: new RegExp(`(["']?(?:[A-Za-z0-9]+[_-])*${SECRET_NAME}["']?\\s*:\\s*["'])([^"'\\s]{8,})(["'])`, "gi"),
+      pattern: new RegExp(`(${SECRET_NAME}["']?\\s*:\\s*["'])([^"'\\s]{8,})(["'])`, "gi"),
       replace: (_m, pre, _v, post) => `${pre}${marker("secret-field")}${post}`,
     },
-    // Secrets pasted in prose: "PAT here ya go: abcD3f-…", "the password is hunter22".
-    // A secret word, a short gap, then ":", "=" or "is", then one token that mixes
-    // letters and digits (so "password: string" and "token = getToken(user)" pass).
-    {
-      kind: "prose-secret",
-      pattern: /(\b(?:PAT|personal access token|token|password|passwd|passcode|pass phrase|passphrase|api[ _-]?key|secret)\b[^\n[\]:=]{0,24}?(?::|=|\bis\b)\s*)(?![$[])(?=[^\s"'`]*\d)(?=[^\s"'`]*[A-Za-z])[^\s"'`,;)]{8,}/gi,
-      replace: keepPrefix("prose-secret"),
-    },
+    withFastApply(proseSecret, redactProseSecrets),
   ];
+}
+
+// The private-key regex lazily scans to the next END line from every BEGIN line,
+// so many unterminated BEGIN lines cost O(n²). Every match ends with an END line,
+// so only the text up to the end of the last END line can change; inside that
+// prefix each BEGIN line finds its END and the scan consumes it.
+const PRIVATE_KEY_END = /-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----/y;
+function redactPrivateKeys(s: string, re: RegExp): string {
+  let cut = -1;
+  for (let q = s.lastIndexOf("-----END "); q >= 0; q = q > 0 ? s.lastIndexOf("-----END ", q - 1) : -1) {
+    PRIVATE_KEY_END.lastIndex = q;
+    if (PRIVATE_KEY_END.test(s)) {
+      cut = PRIVATE_KEY_END.lastIndex; // END lines can't nest, so the last one ends last
+      break;
+    }
+  }
+  if (cut < 0 || !s.includes("-----BEGIN ")) return s;
+  re.lastIndex = 0;
+  return s.slice(0, cut).replace(re, marker("private-key")) + s.slice(cut);
+}
+
+// prose-secret, evaluated by hand. The regex checks "the rest of the token has a
+// digit and a letter" with lookaheads that scan to the end of the token from every
+// candidate start, which is O(n²) on input like "token:token:token:…". This walks
+// the same alternatives in the same order (secret word, lazy 0–24 char gap, then
+// ":" / "=" / "is", greedy whitespace, value) and answers the lookaheads from a
+// table built in one right-to-left pass.
+const PROSE_WORD = /\b(?:PAT|personal access token|token|password|passwd|passcode|pass phrase|passphrase|api[ _-]?key|secret)\b/gi;
+const NON_ASCII_SPACE = /\s/;
+const isWordCode = (c: number): boolean => (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 95;
+const isSpaceAt = (s: string, i: number): boolean => {
+  const c = s.charCodeAt(i);
+  return c < 128 ? c === 32 || (c >= 9 && c <= 13) : NON_ASCII_SPACE.test(s[i]!);
+};
+/** `[^\s"'\`]` — the class the original lookaheads scan. */
+const isTokenAt = (s: string, i: number): boolean => {
+  const c = s.charCodeAt(i);
+  return c !== 34 && c !== 39 && c !== 96 && !isSpaceAt(s, i);
+};
+/** `[^\s"'\`,;)]` — the class of the redacted value. */
+const isValueAt = (s: string, i: number): boolean => {
+  const c = s.charCodeAt(i);
+  return c !== 44 && c !== 59 && c !== 41 && isTokenAt(s, i);
+};
+
+/** flags[i]: bit 1 = a digit, bit 2 = an ASCII letter occurs in the `[^\s"'\`]` run starting at i. */
+function tokenFlags(s: string): Uint8Array {
+  const flags = new Uint8Array(s.length + 1);
+  for (let i = s.length - 1; i >= 0; i--) {
+    if (!isTokenAt(s, i)) continue;
+    const c = s.charCodeAt(i);
+    flags[i] = flags[i + 1]! | (c >= 48 && c <= 57 ? 1 : 0) | ((c >= 65 && c <= 90) || (c >= 97 && c <= 122) ? 2 : 0);
+  }
+  return flags;
+}
+
+function redactProseSecrets(s: string): string {
+  const n = s.length;
+  let flags: Uint8Array | undefined;
+  let wsFrom = -1;
+  let wsTo = -1;
+  // Value end for a value that would start at a (after "\s*"), or -1.
+  const valueAt = (a: number): number => {
+    if (a !== wsFrom) {
+      let v = a;
+      while (v < n && isSpaceAt(s, v)) v++;
+      wsFrom = a;
+      wsTo = v;
+    }
+    // Giving whitespace back to \s* can't help: the lookaheads then fail on it.
+    const v = wsTo;
+    if (v < n) {
+      const c = s.charCodeAt(v);
+      if (c === 36 || c === 91) return -1; // (?![$[])
+    }
+    flags ??= tokenFlags(s);
+    if (flags[v] !== 3) return -1;
+    let e = v;
+    while (e < n && isValueAt(s, e)) e++;
+    return e - v >= 8 ? e : -1;
+  };
+
+  let out = "";
+  let copied = 0;
+  let pos = 0;
+  while (pos < n) {
+    PROSE_WORD.lastIndex = pos;
+    const m = PROSE_WORD.exec(s);
+    if (!m) break;
+    const p = m.index;
+    const k = p + m[0].length; // at most one alternative can match at p
+    let value = -1;
+    let end = -1;
+    for (let g = 0; g <= 24; g++) {
+      const j = k + g;
+      if (j >= n) break;
+      if (g > 0) {
+        const c = s.charCodeAt(j - 1); // gap char: [^\n[\]:=]
+        if (c === 10 || c === 91 || c === 93 || c === 58 || c === 61) break;
+      }
+      const c = s.charCodeAt(j);
+      let a = -1;
+      if (c === 58 || c === 61) a = j + 1;
+      else if ((c === 105 || c === 73) && j + 1 < n && (s.charCodeAt(j + 1) | 32) === 115 && !isWordCode(s.charCodeAt(j - 1)) && (j + 2 >= n || !isWordCode(s.charCodeAt(j + 2)))) a = j + 2;
+      if (a < 0) continue;
+      const e = valueAt(a);
+      if (e >= 0) {
+        value = wsTo;
+        end = e;
+        break;
+      }
+    }
+    if (end < 0) {
+      pos = p + 1;
+      continue;
+    }
+    out += s.slice(copied, value) + marker("prose-secret");
+    copied = pos = end;
+  }
+  return copied === 0 ? s : out + s.slice(copied);
 }
 
 /** Rules that replace literal values of secret-looking environment variables. */
@@ -146,6 +288,11 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
   const string = (s: string): string => {
     let out = s;
     for (const r of rules) {
+      const fast = fastApply.get(r);
+      if (fast) {
+        out = fast(out);
+        continue;
+      }
       r.pattern.lastIndex = 0;
       if (!r.pattern.test(out)) continue;
       r.pattern.lastIndex = 0;
@@ -245,6 +392,8 @@ export function toMetadata(event: AgentEvent): AgentEvent {
   if (event.model !== undefined) out.model = event.model;
   if (event.usage !== undefined) out.usage = { ...event.usage };
   if (event.runId !== undefined) out.runId = event.runId;
+  // The capture path ("hook", "transcript", …): live-vs-backfill dedupe and session end rules read it.
+  if (event.source !== undefined) out.source = event.source;
   if (event.repo) {
     out.repo = { root: "", head: event.repo.head };
     if (event.repo.snapshot) out.repo.snapshot = event.repo.snapshot;

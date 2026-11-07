@@ -28,6 +28,7 @@ import type { Adapter, AgentRunOutput, BackfillOpts, FileChange, HarnessBundle, 
 import type { AgentEvent, Usage } from "../schema/index.ts";
 import {
   Emitter,
+  cursorView,
   addUsage,
   applyChanges,
   applyHookInstall,
@@ -285,6 +286,8 @@ export class CodexRolloutConverter {
   private firstOutputTs?: number;
   private lastTs = 0;
   private lastOk?: boolean;
+  /** A task_started not yet closed by task_complete/turn_aborted. */
+  private turnOpen = false;
   private lastTotal?: number;
   private readonly calls = new Map<string, Call>();
   private readonly prompts = new Map<string, number>();
@@ -375,14 +378,18 @@ export class CodexRolloutConverter {
     const em = this.emitter(ts, ord);
     if (type === "event_msg") {
       if (pt === "task_started") {
+        this.turnOpen = true;
         this.turnId = str(p.turn_id) ?? this.turnId;
         em.base.turnId = this.turnId;
         this.markInput(ts);
-      } else if ((pt === "task_complete" || pt === "turn_aborted") && full && this.inTurn(str(p.turn_id))) {
-        const ok = pt === "task_complete" && p.error == null;
-        this.lastOk = ok;
-        const turn = str(p.turn_id) ?? this.turnId;
-        em.emit("turn.end", { ok, status: pt === "turn_aborted" ? (str(p.reason) ?? "aborted") : undefined, ttftMs: num(p.time_to_first_token_ms) }, { key: [turn ?? ord], turnId: turn, durationMs: num(p.duration_ms) });
+      } else if (pt === "task_complete" || pt === "turn_aborted") {
+        this.turnOpen = false;
+        if (full && this.inTurn(str(p.turn_id))) {
+          const ok = pt === "task_complete" && p.error == null;
+          this.lastOk = ok;
+          const turn = str(p.turn_id) ?? this.turnId;
+          em.emit("turn.end", { ok, status: pt === "turn_aborted" ? (str(p.reason) ?? "aborted") : undefined, ttftMs: num(p.time_to_first_token_ms) }, { key: [turn ?? ord], turnId: turn, durationMs: num(p.duration_ms) });
+        }
       } else if (pt === "item_completed") {
         await this.item(em, p, ts, full);
       } else if ((pt === "user_message" || pt === "agent_message") && !this.flags.items) {
@@ -543,7 +550,10 @@ export class CodexRolloutConverter {
   }
 
   finish(): AgentEvent[] {
-    if (this.parent && this.opts.mode === "full" && this.opts.edges !== false && this.started) {
+    // A child thread has ended when its last turn closed, or it went quiet; a backfill of a
+    // running child adds no subagent.end (its real end has the same id and would be dropped).
+    const childDone = !this.turnOpen || Date.now() - this.lastTs > (this.opts.endIfIdleMs ?? ROLLOUT_IDLE_MS);
+    if (this.parent && this.opts.mode === "full" && this.opts.edges !== false && this.started && childDone) {
       const em = this.emitter(this.lastTs, -1, undefined);
       em.emit("subagent.end", { subagentId: this.sessionId, ok: this.lastOk, childSessionId: this.sessionId }, { sessionId: this.parent.sessionId, subagentId: undefined, turnId: undefined, key: [this.sessionId] });
       this.push(em);
@@ -684,7 +694,8 @@ export async function normalizeCodexLine(line: SpoolLine, ctx: NormalizeContext)
       break;
     }
     case "SessionEnd":
-      em.emit("session.end", { reason: str(raw.reason) }, { key: ["end"] });
+      // Keyed by spool position: a resumed thread (same id) ends again later, and that end must not be dropped as a copy of the first.
+      em.emit("session.end", { reason: str(raw.reason) });
       break;
     default:
       em.emit("notification", { hookEvent: event });
@@ -700,7 +711,7 @@ async function* backfillCodex(ctx: NormalizeContext, opts: BackfillOpts = {}): A
   const home = codexHome();
   for (const dir of ["sessions", "archived_sessions"]) {
     for await (const f of walkFiles(join(home, dir), { match: (n) => /^rollout-.*\.jsonl$/.test(n), maxDepth: 4, since: opts.since })) {
-      if (opts.changed && !(await opts.changed(f))) continue; // unchanged since the last backfill
+      if (opts.changed && !(await opts.changed(cursorView(f, ROLLOUT_IDLE_MS)))) continue; // unchanged since the last backfill (or since it went idle)
       for (const e of await convertRollout(ctx, f.path, { mode: "full", endIfIdleMs: ROLLOUT_IDLE_MS })) if (opts.since === undefined || e.ts >= opts.since) yield e;
     }
   }

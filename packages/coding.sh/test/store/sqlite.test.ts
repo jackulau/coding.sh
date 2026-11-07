@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { AgentEvent } from "../../src/schema/index.ts";
@@ -22,6 +22,22 @@ function events(n: number, session = "perf"): AgentEvent[] {
     usage: { inputTokens: i },
   }));
 }
+
+describe("SqliteIndexStore writer lock fencing (STO-8)", () => {
+  it("assertHeld passes while held and throws once another process took the lease over or after release", async () => {
+    const db = join(root, "fence.db");
+    const s = await SqliteIndexStore.open(db);
+    const lock = await s.acquireWriterLock({ waitMs: 0 });
+    assert.ok(lock && typeof lock.assertHeld === "function", "writer lock exposes a fence");
+    lock.assertHeld!();
+    // A same-host standby broke our stale lease (we stalled past staleMs) and is alive holding it.
+    writeFileSync(`${db}.writer.lock`, JSON.stringify({ pid: process.ppid, host: hostname(), ts: Date.now(), nonce: "peer" }));
+    assert.throws(() => lock.assertHeld!(), { name: "LockLostError" });
+    await lock.release();
+    assert.throws(() => lock.assertHeld!(), /released/);
+    await s.close();
+  });
+});
 
 describe("SqliteIndexStore", () => {
   it("writes 10k events in one batch in under a second", async () => {
@@ -99,6 +115,88 @@ describe("SqliteIndexStore", () => {
     const check = new DatabaseSync(path);
     check.exec("INSERT INTO events_fts(events_fts, rank) VALUES ('integrity-check', 1)"); // throws if index and content disagree
     check.close();
+  });
+
+  it("retention over empty-text messages leaves the FTS index intact", async () => {
+    const path = join(root, "fts-empty.db");
+    const s = await SqliteIndexStore.open(path);
+    const msg = (id: string, sessionId: string, ts: number, text: string): AgentEvent =>
+      ({ id, v: 0, sessionId, ts, agent: "claude-code", kind: "assistant.message", payload: { text } });
+    const session = (id: string, at: number) => ({ id, agent: "claude-code", startedAt: at, endedAt: at, stats: { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] });
+    await s.putEvents([msg("e1", "all-empty", 10, ""), msg("e2", "all-empty", 11, ""), msg("m1", "mixed", 10, ""), msg("m2", "mixed", 11, "hello world")]);
+    await s.putEvents([msg("k", "keep", Date.now(), "refactor the tokenizer")]);
+    await s.upsertSession(session("all-empty", 11));
+    await s.upsertSession(session("mixed", 11));
+    await s.upsertSession(session("keep", Date.now()));
+    assert.deepEqual(await s.deleteBefore(10_000), { sessions: 2, events: 4 });
+    assert.equal((await s.search("tokeni")).length, 1);
+    assert.deepEqual(await s.deleteBefore(10_000), { sessions: 0, events: 0 });
+    await s.close();
+    const { DatabaseSync } = await loadSqlite();
+    const check = new DatabaseSync(path);
+    check.exec("INSERT INTO events_fts(events_fts, rank) VALUES ('integrity-check', 1)");
+    check.close();
+  });
+
+  it("migrating to v5 repairs an FTS index that v4 retention corrupted", async () => {
+    const path = join(root, "v4-corrupt.db");
+    const { DatabaseSync } = await loadSqlite();
+    const db = new DatabaseSync(path);
+    db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
+    for (const m of MIGRATIONS.filter((m) => m.version <= 4)) {
+      db.exec(m.sql);
+      m.after?.(db);
+      db.prepare("INSERT INTO migrations (version, applied_at) VALUES (?, 0)").run(m.version);
+    }
+    // As v4 putEvents wrote them: the empty message is not indexed, the others are.
+    const insert = db.prepare("INSERT INTO events (id, session_id, ts, agent, kind, payload) VALUES (?, ?, ?, 'claude-code', 'assistant.message', ?)");
+    const fts = db.prepare("INSERT INTO events_fts (rowid, text) VALUES (?, ?)");
+    for (const [id, sid, text] of [["m1", "old", ""], ["m2", "old", "hello world"], ["k", "keep", "refactor the tokenizer"]] as const) {
+      const r = insert.run(id, sid, 1, JSON.stringify({ text }));
+      if (text) fts.run(r.lastInsertRowid, text);
+    }
+    // What v4 deleteBefore did for session "old": an FTS 'delete' for the never-indexed '' row too.
+    db.exec("INSERT INTO events_fts(events_fts, rowid, text) SELECT 'delete', rowid, text FROM events WHERE session_id = 'old' AND text IS NOT NULL");
+    db.exec("DELETE FROM events WHERE session_id = 'old'");
+    assert.throws(() => db.exec("INSERT INTO events_fts(events_fts, rank) VALUES ('integrity-check', 1)"), /malformed/, "the v4 index is corrupt");
+    db.close();
+
+    const s = await SqliteIndexStore.open(path);
+    assert.deepEqual((await s.search("tokeni")).map((h) => h.event.id), ["k"]);
+    assert.deepEqual(await s.search("hello"), []);
+    await s.close();
+    const check = new DatabaseSync(path);
+    assert.equal((check.prepare("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v, SQLITE_SCHEMA_VERSION);
+    assert.equal((check.prepare("SELECT text FROM events WHERE id = 'k'").get() as { text: string }).text, "refactor the tokenizer");
+    check.exec("INSERT INTO events_fts(events_fts, rank) VALUES ('integrity-check', 1)");
+    check.close();
+  });
+
+  it("retention keeps a resumed session and a session that never ended while they are active", async () => {
+    const { rebuildSessions } = await import("../../src/otel/receiver.ts");
+    const s = await SqliteIndexStore.open(":memory:");
+    const now = Date.now();
+    const H = 3_600_000;
+    const ev = (id: string, sessionId: string, kind: string, ts: number, payload: Record<string, unknown> = {}): AgentEvent =>
+      ({ id, v: 0, sessionId, ts, agent: "claude-code", kind: kind as AgentEvent["kind"], payload, source: "hook" });
+    await s.putEvents([
+      ev("r1", "resumed", "session.start", now - 72 * H),
+      ev("r2", "resumed", "user.message", now - 72 * H + 1000, { text: "first run" }),
+      ev("r3", "resumed", "session.end", now - 71 * H),
+      ev("r4", "resumed", "session.start", now - 10 * 60_000),
+      ev("r5", "resumed", "user.message", now - 5 * 60_000, { text: "still working on this right now" }),
+      ev("l1", "long", "session.start", now - 48 * H),
+      ev("l2", "long", "user.message", now - 60_000, { text: "live" }),
+      ev("o1", "over", "session.start", now - 72 * H),
+      ev("o2", "over", "session.end", now - 71 * H),
+    ]);
+    await rebuildSessions(s, ["resumed", "long", "over"]);
+    assert.equal((await s.getSession("resumed"))!.endedAt, undefined, "activity after the first run's session.end reopens the session");
+    assert.deepEqual(await s.deleteBefore(now - 24 * H), { sessions: 1, events: 2 });
+    assert.equal((await s.listEvents("resumed")).length, 5);
+    assert.equal((await s.listEvents("long")).length, 2);
+    assert.equal(await s.getSession("over"), undefined);
+    await s.close();
   });
 
   it("matches prefixes and ignores diacritics", async () => {

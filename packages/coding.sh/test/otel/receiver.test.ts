@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { request } from "node:http";
+import { once } from "node:events";
+import { Agent, request } from "node:http";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { deflateSync, gzipSync } from "node:zlib";
 import type { Session } from "../../src/schema/index.ts";
@@ -379,14 +380,39 @@ describe("OTLP receiver over HTTP", () => {
   });
 
   it("closes gracefully, waiting for in-flight requests", async () => {
+    // Close once the server has the request, not after a fixed sleep: libuv runs due
+    // timers before the poll phase that accepts connections, so a test process
+    // descheduled past the sleep closed the listener with the connection still in
+    // the kernel backlog, and the client saw "connect ECONNRESET".
+    const arrived = once(rx.server, "request");
     const pending = send(rx.url, json("/v1/traces", fixture("openinference.json")));
-    // Let the request reach the server before closing.
-    await new Promise((r) => setTimeout(r, 20));
+    await arrived;
     await rx.close();
     assert.equal((await pending).status, 200);
     assert.ok(await store.getSession("thread-42"));
     await rx.close(); // idempotent
     await assert.rejects(send(rx.url, json("/v1/traces", {})), /ECONNREFUSED/);
+    await start();
+  });
+
+  it("answers a keep-alive request in flight at close with Connection: close, so close() does not wait out keepAliveTimeout", async () => {
+    const agent = new Agent({ keepAlive: true });
+    const arrived = once(rx.server, "request");
+    const pending = new Promise<{ status: number; connection: string | undefined }>((resolve, reject) => {
+      const body = JSON.stringify(fixture("openinference.json"));
+      const req = request(new URL("/v1/traces", rx.url), { method: "POST", agent, headers: { "Content-Type": "application/json", "Content-Length": String(Buffer.byteLength(body)) } }, (res) => {
+        res.resume();
+        res.on("end", () => resolve({ status: res.statusCode!, connection: res.headers.connection }));
+      });
+      req.on("error", reject);
+      req.end(body);
+    });
+    await arrived;
+    const closed = rx.close();
+    const r = await pending;
+    assert.deepEqual(r, { status: 200, connection: "close" });
+    await closed;
+    agent.destroy();
     await start();
   });
 });

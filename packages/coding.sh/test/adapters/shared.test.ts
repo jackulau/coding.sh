@@ -154,4 +154,10 @@ describe("toml edits", () => {
     assert.equal(upsertTomlBlock(withBlock, "notify", 'notify = ["node", "x"]'), withBlock);
     assert.equal(removeTomlBlock(withBlock, "notify"), src);
   });
+
+  it("a marked block whose END moved below a foreign table is not removed (INS-3)", () => {
+    const moved = '# >>> coding.sh:mcp-server (managed by coding.sh)\n[mcp_servers.coding-sh]\ncommand = "x"\n\n[mcp_servers.my-db]\ncommand = "db"\n# <<< coding.sh:mcp-server\n';
+    assert.equal(hasTomlBlock(moved, "mcp-server"), false);
+    assert.equal(removeTomlBlock(moved, "mcp-server"), moved);
+  });
 });

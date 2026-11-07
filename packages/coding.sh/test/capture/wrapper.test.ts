@@ -101,7 +101,7 @@ describe("wrapRun", () => {
     assert.equal(r.error, undefined);
   });
 
-  test("stdoutToStderr sends the child's stdout to fd 2 and leaves stdout empty", { timeout: 30_000 }, async () => {
+  test("stdoutToStderr sends the child's stdout to fd 2 and leaves stdout empty", { timeout: 150_000 }, async () => {
     const dir = tmp("csh-stdout-");
     const driver = join(dir, "driver.ts");
     const wrapper = JSON.stringify(join(PKG_ROOT, "src", "capture", "wrapper.ts"));
@@ -112,7 +112,7 @@ describe("wrapRun", () => {
 process.exit(await wrapRun({ cmd: process.execPath, args: ["-e", "console.log('child-out'); console.error('child-err')"], cwd: ${JSON.stringify(dir)}, stdoutToStderr: ${toStderr} }));
 `,
       );
-      const p = spawnSync(process.execPath, [...tsNodeArgs(), driver], { env: { ...process.env, CODING_SH_HOME: join(dir, "home") }, encoding: "utf8", timeout: 20_000 });
+      const p = spawnSync(process.execPath, [...tsNodeArgs(), driver], { env: { ...process.env, CODING_SH_HOME: join(dir, "home") }, encoding: "utf8", timeout: 60_000 });
       assert.equal(p.status, 0, p.stderr);
       return p;
     };
@@ -139,17 +139,18 @@ process.exit(await wrapRun({ cmd: process.execPath, args: ["-e", "console.log('c
     assert.equal((lines("wrapper", h).pop()!.raw as { signal?: string }).signal, "SIGKILL");
   });
 
-  test("forwards SIGTERM to the child and returns the child's exit code", { timeout: 30_000 }, async () => {
+  test("forwards SIGTERM to the child and returns the child's exit code", { timeout: 150_000 }, async (t) => {
     const dir = tmp("csh-sig-");
     const h = join(dir, "home");
     const ready = join(dir, "ready");
     const child = join(dir, "child.mjs");
+    // The child gives up on its own after 2 minutes, a last resort should a kill miss.
     writeFileSync(
       child,
       `import { writeFileSync } from "node:fs";
 process.on("SIGTERM", () => { writeFileSync(${JSON.stringify(join(dir, "got-term"))}, "1"); process.exit(42); });
 writeFileSync(${JSON.stringify(ready)}, "1");
-setInterval(() => {}, 1000);
+setTimeout(() => process.exit(99), 120_000);
 `,
     );
     const driver = join(dir, "driver.ts");
@@ -159,18 +160,82 @@ setInterval(() => {}, 1000);
 process.exit(await wrapRun({ cmd: process.execPath, args: [${JSON.stringify(child)}], cwd: ${JSON.stringify(dir)} }));
 `,
     );
-    const p = spawn(process.execPath, [...tsNodeArgs(), driver], { env: { ...process.env, CODING_SH_HOME: h }, stdio: ["ignore", "inherit", "inherit"] });
+    // Detached: the driver leads its own process group, and the wrapper's child
+    // joins it, so one group kill reaches both even before the child reports in.
+    const p = spawn(process.execPath, [...tsNodeArgs(), driver], { env: { ...process.env, CODING_SH_HOME: h }, stdio: ["ignore", "inherit", "inherit"], detached: true });
     const exited = new Promise<number | null>((resolve) => p.on("exit", (c) => resolve(c)));
-    const t0 = Date.now();
-    while (!existsSync(ready)) {
-      if (Date.now() - t0 > 20_000) throw new Error("child never became ready");
-      await new Promise((r) => setTimeout(r, 20));
+    // Kill the group on every way out: a failed assertion, a thrown wait, or the
+    // test timing out (t.signal). A survivor holding the inherited stdout would
+    // keep the test file, and the whole run, alive.
+    const killAll = () => {
+      try {
+        process.kill(-p.pid!, "SIGKILL");
+      } catch {
+        // group already gone
+      }
+    };
+    t.signal.addEventListener("abort", killAll, { once: true });
+    try {
+      // No fixed sleep: wait for the child to report in. Under load the driver's
+      // startup and the start snapshot can take far longer than usual.
+      while (!existsSync(ready)) {
+        if (t.signal.aborted) throw new Error("child never became ready");
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      p.kill("SIGTERM");
+      assert.equal(await exited, 42);
+      assert.equal(existsSync(join(dir, "got-term")), true);
+      const end = lines("wrapper", h).pop()!;
+      assert.equal(end.event, "session.end");
+      assert.equal((end.raw as { exitCode: number }).exitCode, 42);
+    } finally {
+      t.signal.removeEventListener("abort", killAll);
+      killAll();
     }
-    p.kill("SIGTERM");
-    assert.equal(await exited, 42);
-    assert.equal(existsSync(join(dir, "got-term")), true);
-    const end = lines("wrapper", h).pop()!;
-    assert.equal(end.event, "session.end");
-    assert.equal((end.raw as { exitCode: number }).exitCode, 42);
+  });
+
+  test("a wrapper that dies hard takes its child with it", { timeout: 150_000 }, async (t) => {
+    const dir = tmp("csh-hard-");
+    const pidFile = join(dir, "pid");
+    const driver = join(dir, "driver.ts");
+    writeFileSync(
+      driver,
+      `import { existsSync } from "node:fs";
+import { wrapRun } from ${JSON.stringify(join(PKG_ROOT, "src", "capture", "wrapper.ts"))};
+void wrapRun({ cmd: "/bin/sh", args: ["-c", "echo $$ > ${pidFile}; exec sleep 120"], cwd: ${JSON.stringify(dir)} });
+const t = setInterval(() => { if (existsSync(${JSON.stringify(pidFile)})) { clearInterval(t); setTimeout(() => process.exit(3), 50); } }, 20);
+`,
+    );
+    let pid = 0;
+    try {
+      const p = spawn(process.execPath, [...tsNodeArgs(), driver], { env: { ...process.env, CODING_SH_HOME: join(dir, "home") }, stdio: "ignore", detached: true });
+      const onAbort = () => {
+        try {
+          process.kill(-p.pid!, "SIGKILL");
+        } catch {
+          // gone
+        }
+      };
+      t.signal.addEventListener("abort", onAbort, { once: true });
+      assert.equal(await new Promise<number | null>((r) => p.on("exit", r)), 3);
+      t.signal.removeEventListener("abort", onAbort);
+      pid = Number(readFileSync(pidFile, "utf8").trim());
+      let alive = true;
+      for (let i = 0; i < 50 && alive; i++) {
+        try {
+          process.kill(pid, 0);
+          await new Promise((r) => setTimeout(r, 20));
+        } catch {
+          alive = false;
+        }
+      }
+      assert.equal(alive, false, "child killed when the wrapper exited");
+    } finally {
+      try {
+        if (pid) process.kill(pid, "SIGKILL");
+      } catch {
+        // gone, as it should be
+      }
+    }
   });
 });

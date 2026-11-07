@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import type { SpoolLine } from "../../src/core/types.ts";
@@ -181,10 +181,39 @@ describe("appendSpool", () => {
     assert.ok(last.rawFile);
     assert.deepEqual(resolveRaw(last), bigRaw);
   });
+
+  test("a failed append leaves no raw side file behind", () => {
+    const env = { ...process.env, CODING_SH_HOME: freshHome() };
+    const line: SpoolLine = { v: 0, agent: "fake", event: "PostToolUse", ts: Date.now(), pid: 777, cwd: "/r", raw: null };
+    mkdirSync(spoolFile("fake", line.ts, 777, env), { recursive: true }); // the append fails (EISDIR, like ENOSPC)
+    const big = JSON.stringify({ secret: "sk-live-" + "A".repeat(MAX_INLINE_LINE_BYTES) });
+    assert.throws(() => appendSpool({ ...line, raw: JSON.parse(big) }, env, { rawText: big }), { code: "EISDIR" });
+    const rawDir = join(env.CODING_SH_HOME, "spool", "fake", "raw");
+    assert.deepEqual(existsSync(rawDir) ? readdirSync(rawDir) : [], [], "payload not orphaned");
+  });
+
+  test("starts on a fresh line after a torn fragment, so the fragment cannot swallow the new line", () => {
+    const env = { ...process.env, CODING_SH_HOME: freshHome() };
+    const base: SpoolLine = { v: 0, agent: "fake", event: "Stop", ts: Date.now(), pid: 555, cwd: "/r", raw: { a: 1 } };
+    const f = spoolFile("fake", base.ts, 555, env);
+    mkdirSync(join(f, ".."), { recursive: true });
+    appendFileSync(f, JSON.stringify(base) + "\n" + JSON.stringify(base).slice(0, 30)); // partial write (ENOSPC)
+    appendSpool({ ...base, event: "UserPromptSubmit" }, env);
+    const lines = readFileSync(f, "utf8").split("\n");
+    assert.equal(lines.length, 4);
+    assert.equal(lines[1], JSON.stringify(base).slice(0, 30), "fragment isolated on its own line");
+    assert.equal((JSON.parse(lines[2]!) as SpoolLine).event, "UserPromptSubmit");
+    assert.equal(lines[3], "");
+  });
 });
 
 describe("hook performance", () => {
-  test("bundled hook: 10 KB payload well under 150 ms", { timeout: 60_000 }, async () => {
+  // Absolute times swing 10x under parallel test load, so the hook is timed against a
+  // bare node start that reads the same stdin, interleaved pair by pair so both see
+  // the same load. Idle on the desk: hook/bare ≈ 1.05; a hook made 2x slower ≈ 2.1
+  // (≈ 1.8 with every core busy). One re-measure absorbs a burst; a real
+  // regression fails both.
+  test("bundled hook: 10 KB payload costs under 1.5x a bare node start", { timeout: 120_000 }, async () => {
     let script = HOOK_TS;
     try {
       const { build } = await import("esbuild");
@@ -194,24 +223,34 @@ describe("hook performance", () => {
     } catch {
       // esbuild unavailable: measure the .ts source (slower: type stripping at startup)
     }
+    const bundled = script.endsWith(".mjs");
     const h = freshHome();
     const payload = JSON.stringify({ cwd: "/p", session_id: "s", tool_response: "z".repeat(10_000) });
-    runHook(["claude-code", "warmup"], payload, { CODING_SH_HOME: h }, script); // first run warms the OS file cache only
-    const times: number[] = [];
-    for (let i = 0; i < 7; i++) {
-      const t = performance.now();
-      const r = runHook(["claude-code", "PostToolUse"], payload, { CODING_SH_HOME: h }, script);
-      times.push(performance.now() - t);
-      assert.equal(r.code, 0);
-    }
-    times.sort((a, b) => a - b);
-    const t0 = performance.now();
-    spawnSync(process.execPath, ["-e", "0"]);
-    const bare = performance.now() - t0;
-    const median = times[3]!;
-    console.log(`# hook (${script.endsWith(".mjs") ? "bundled" : "ts source"}): median ${median.toFixed(1)} ms, min ${times[0]!.toFixed(1)} ms, max ${times[6]!.toFixed(1)} ms; bare node ${bare.toFixed(1)} ms`);
-    assert.ok(median < 150, `median ${median} ms`);
-    assert.equal(readLines(h, "claude-code").length, 8);
+    const bare = () => spawnSync(process.execPath, ["-e", "process.stdin.resume()"], { input: payload, env: { ...process.env, CODING_SH_HOME: h } });
+    runHook(["claude-code", "warmup"], payload, { CODING_SH_HOME: h }, script); // warms the OS file cache only
+    bare();
+    const median = (a: number[]) => [...a].sort((x, y) => x - y)[a.length >> 1]!;
+    const measure = () => {
+      const hook: number[] = [];
+      const base: number[] = [];
+      for (let i = 0; i < 9; i++) {
+        let t = performance.now();
+        bare();
+        base.push(performance.now() - t);
+        t = performance.now();
+        const r = runHook(["claude-code", "PostToolUse"], payload, { CODING_SH_HOME: h }, script);
+        hook.push(performance.now() - t);
+        assert.equal(r.code, 0);
+      }
+      return { hook: median(hook), bare: median(base), ratio: median(hook) / median(base) };
+    };
+    const limit = bundled ? 1.5 : 3; // .ts source pays for type stripping
+    let m = measure();
+    const first = m;
+    if (m.ratio >= limit) m = measure();
+    console.log(`# hook (${bundled ? "bundled" : "ts source"}): median ${m.hook.toFixed(1)} ms, bare node ${m.bare.toFixed(1)} ms, ratio ${m.ratio.toFixed(2)}${m === first ? "" : ` (first try ${first.ratio.toFixed(2)})`}`);
+    assert.ok(m.ratio < limit, `hook ${m.hook.toFixed(1)} ms is ${m.ratio.toFixed(2)}x a bare node start (${m.bare.toFixed(1)} ms); limit ${limit}x`);
+    assert.equal(readLines(h, "claude-code").length, m === first ? 10 : 19);
   });
 });
 

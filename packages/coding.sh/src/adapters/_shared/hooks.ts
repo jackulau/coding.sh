@@ -40,9 +40,19 @@ export function parseHookCommand(cmd: unknown): { hookPath: string; agent: strin
 }
 
 /**
+ * The exact shape buildHookCommand writes: `node "<abs>/bin/hook.mjs" <agent>
+ * <Event>` plus optional `--flags`. A command in this shape is ours whatever
+ * CODING_SH_HOME it was installed under (a test or eval home, an old
+ * override), so changing the home never duplicates hooks and uninstall still
+ * finds the old ones, even in formats with no marker (Cursor).
+ */
+const CANONICAL_RE = /^node "((?:[A-Za-z]:)?[\\/](?:[^"\\]|\\.)*[\\/]bin[\\/]hook\.mjs)" ([A-Za-z0-9_-]+) [A-Za-z][A-Za-z0-9_]*(?: --[a-z][a-z0-9-]*)*$/;
+
+/**
  * True when `cmd` invokes coding.sh's hook for `agent` (any agent when omitted).
  * Accepts our default path (…/.coding.sh/bin/hook.mjs), the current
- * CODING_SH_HOME hook path, or any `knownHookPaths`.
+ * CODING_SH_HOME hook path, any `knownHookPaths`, or any command in the
+ * exact shape coding.sh writes (see CANONICAL_RE).
  */
 export function isCodingShCommand(cmd: unknown, agent?: string, knownHookPaths: string[] = [], env: NodeJS.ProcessEnv = process.env): boolean {
   const p = parseHookCommand(cmd);
@@ -51,6 +61,7 @@ export function isCodingShCommand(cmd: unknown, agent?: string, knownHookPaths: 
   const norm = (s: string) => s.replace(/\\/g, "/");
   const hp = norm(p.hookPath);
   if (/(^|\/)\.?coding\.sh\/bin\/hook\.mjs$/.test(hp)) return true;
+  if (typeof cmd === "string" && CANONICAL_RE.test(cmd.trim())) return true;
   return [paths(env).hook, ...knownHookPaths].some((k) => norm(k) === hp);
 }
 

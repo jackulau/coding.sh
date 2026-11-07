@@ -1,7 +1,7 @@
 // The hook's session-end background ingest: when it starts, and when it stays out of the way.
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { END_EVENT, kickIngest, type KickSpawner } from "../../src/spool/kick.ts";
@@ -48,5 +48,25 @@ describe("kickIngest", () => {
     rmSync(join(root, "data", "bin", "cli-path"));
     assert.equal(kickIngest("Stop", env, spawn), undefined, "no pointer (init ran from source)");
     assert.deepEqual(calls, []);
+  });
+
+  it("a lock left by a dead holder does not block the kick; a live holder's does", () => {
+    const lock = join(root, "data", "spool", ".ingest.lock");
+    // Crashed or SIGKILLed ingest, a day ago: provably stale.
+    writeFileSync(lock, JSON.stringify({ pid: 2 ** 22 + 999, host: hostname(), ts: Date.now() - 86_400_000 }));
+    assert.equal(kickIngest("Stop", env, spawn), join(root, "cli.mjs"), "stale lock: spawned");
+    writeFileSync(lock, JSON.stringify({ pid: process.pid, host: hostname(), ts: Date.now() }));
+    assert.equal(kickIngest("Stop", env, spawn), undefined, "live holder: skipped");
+    assert.equal(calls.length, 1);
+  });
+
+  it("leaves a wake-up marker for a running ingest whenever it would kick", () => {
+    const marker = join(root, "data", "spool", ".ingest.pending");
+    writeFileSync(join(root, "data", "spool", ".ingest.lock"), JSON.stringify({ pid: process.pid, host: hostname(), ts: Date.now() }));
+    assert.equal(kickIngest("Stop", env, spawn), undefined);
+    assert.ok(existsSync(marker), "marker set even though the kick was skipped");
+    rmSync(marker);
+    assert.equal(kickIngest("PreToolUse", env, spawn), undefined);
+    assert.equal(existsSync(marker), false, "only end events wake an ingest");
   });
 });

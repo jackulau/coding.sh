@@ -11,7 +11,18 @@
 //
 // One ingest at a time: a lockfile in the spool dir (core/lock.ts, with stale
 // detection) keeps two processes from reading the same range and sending it
-// to the sinks twice.
+// to the sinks twice. The holder checks it still owns the lock before every
+// cursor write and sink send, and stops with LockLostError otherwise.
+//
+// No lost wakeups: the hook touches `spool/.ingest.pending` after appending an
+// end event and before looking at the lock (spool/kick.ts). The holder clears
+// the marker before each pass and, after releasing, runs another pass when it
+// is back (bounded), so a session that ended mid-ingest is never left waiting
+// for an unrelated trigger.
+//
+// Order: spool files are read oldest first (listSpoolFiles), and cursors move
+// at run-level checkpoints, so a tool.end read before its tool.start (another
+// hook process, another file) still gets its duration filled in.
 //
 // Enrichment applied to every event, whatever the adapter:
 // - `source` defaults to the capture path ("hook", "wrapper", "transcript").
@@ -21,7 +32,11 @@
 //   linked even when the child arrives in a later run (the link is kept in
 //   the index kv when the store has one).
 // - Backfilled (transcript) copies of prompts/replies that a live capture
-//   path already recorded for the same session are dropped: live wins.
+//   path already recorded for the same session are dropped: live wins. A live
+//   prompt a backfill already stored is kept out of the local index
+//   (./message-copies.ts).
+// - Model calls with tokens but no cost get a list-price costUsd (built-in
+//   prices with `[pricing]` overrides, ./pricing.ts), as serve does.
 // - Adapters keep the raw source payload as blobs[0] on the FIRST event each
 //   spool line produces (not on every event), so one payload is stored once.
 // - A session with a cwd inside a git work tree but no repo state (hooks and
@@ -37,13 +52,15 @@ import type { AgentEvent, Session } from "../schema/index.ts";
 import { isEventKind } from "../schema/index.ts";
 import type { Adapter, BackfillFile, BlobStore, Config, IndexStore, NormalizeContext, Sink, SpoolLine } from "./types.ts";
 import { resolveRepoConfig, isExcluded } from "./config.ts";
-import { acquireLock, type Lock, type LockOptions } from "./lock.ts";
-import { existsSync } from "node:fs";
+import { acquireLock, LockBusyError, wakeMarker, type Lock, type LockOptions } from "./lock.ts";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { hashParts, sha256Hex } from "./ids.ts";
 import { paths } from "./paths.ts";
 import { createRedactor, sessionToMetadata, toMetadata, type Redactor } from "./redact.ts";
 import { buildSession, isBackfillEvent, isVerifyToolStart } from "./sessions.ts";
+import { copyFilter } from "./message-copies.ts";
+import { priceEvent, pricesFor } from "./pricing.ts";
 import { listSpoolFiles, readSpoolFile, type SpoolFile } from "./spool-read.ts";
 import { repoResolver, type RepoResolver } from "./repo-state.ts";
 import { snapshot } from "./snapshot.ts";
@@ -60,6 +77,8 @@ const MAX_ERRORS = 500;
  * would be recorded as the agent's work.
  */
 export const END_SNAPSHOT_MAX_AGE_MS = 10 * 60_000;
+/** Passes one ingest() call runs at most while the wake-up marker keeps coming back. */
+const MAX_PASSES = 3;
 
 export const sinkCursorKey = (sink: string, source: string): string => `sink:${sink}:${source}`;
 export const sinkRetryKey = (sink: string): string => `sink:${sink}#retryAt`;
@@ -142,20 +161,61 @@ export const childLinkKey = (childId: string): string => `child-link:${childId}`
 export async function ingest(opts: IngestOptions): Promise<IngestResult> {
   const env = opts.env ?? process.env;
   const spoolDir = opts.spoolDir ?? paths(env).spool;
-  let lock: Lock | undefined;
   // No spool dir = nothing to read; don't create one just to lock it.
-  if (opts.lock !== false && existsSync(spoolDir)) {
-    const lo = opts.lock ?? {};
-    lock = await acquireLock(lo.path ?? join(spoolDir, ".ingest.lock"), lo);
+  if (opts.lock === false || !existsSync(spoolDir)) return ingestLocked(opts, env, spoolDir, () => {});
+  const lo = opts.lock ?? {};
+  const lockPath = lo.path ?? join(spoolDir, ".ingest.lock");
+  const marker = wakeMarker(lockPath);
+  let total: IngestResult | undefined;
+  for (let pass = 0; pass < MAX_PASSES; pass++) {
+    let lock: Lock;
+    try {
+      lock = await acquireLock(lockPath, pass === 0 ? lo : { ...lo, waitMs: 0 });
+    } catch (e) {
+      // Another ingest took over after our release: it clears and handles the marker.
+      if (total && e instanceof LockBusyError) break;
+      throw e;
+    }
+    try {
+      // Cleared before listing files: a hook appends, then touches the marker,
+      // so a file this pass misses always leaves the marker set.
+      rmSync(marker, { force: true });
+      const r = await ingestLocked(opts, env, spoolDir, () => lock.assertHeld());
+      total = total ? mergeResults(total, r) : r;
+    } finally {
+      lock.release();
+    }
+    // Checked after release: a hook that saw the lock held touched the marker before it looked.
+    if (!existsSync(marker)) break;
   }
-  try {
-    return await ingestLocked(opts, env, spoolDir);
-  } finally {
-    lock?.release();
-  }
+  return total!;
 }
 
-async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDir: string): Promise<IngestResult> {
+function mergeResults(a: IngestResult, b: IngestResult): IngestResult {
+  const sinks = a.sinks.map((s) => ({ ...s }));
+  for (const s of b.sinks) {
+    const prev = sinks.find((x) => x.name === s.name);
+    if (!prev) {
+      sinks.push({ ...s });
+      continue;
+    }
+    prev.sent += s.sent;
+    prev.ok &&= s.ok;
+    if (s.error !== undefined) prev.error = s.error;
+    if (s.retryAt !== undefined) prev.retryAt = s.retryAt;
+  }
+  return {
+    lines: a.lines + b.lines,
+    events: a.events + b.events,
+    sessions: a.sessions + b.sessions,
+    excluded: a.excluded + b.excluded,
+    errors: [...a.errors, ...b.errors].slice(0, MAX_ERRORS + 1),
+    sinks,
+  };
+}
+
+/** `fence` throws when this run no longer owns the ingest lock; called before every cursor write and sink send. */
+async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDir: string, fence: () => void): Promise<IngestResult> {
   const { config, index, blobs, adapters } = opts;
   const now = opts.now ?? Date.now;
   const checkpointEvents = opts.checkpointEvents ?? DEFAULT_CHECKPOINT_EVENTS;
@@ -293,6 +353,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
       if (batch.length) {
         const sessions = await sessionsFor(index, batch);
         const meta = sink.mode === "metadata";
+        fence();
         let ack;
         try {
           ack = await sink.write(meta ? batch.map(toMetadata) : batch, meta ? sessions.map(sessionToMetadata) : sessions, blobs);
@@ -304,85 +365,120 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
           state.failed = true;
           state.error = ack.error ?? "sink rejected the batch";
           state.retryAt = now() + (ack.retryAfterMs ?? PERMANENT_FAILURE_BACKOFF_MS);
+          fence();
           await index.setCursor(sinkRetryKey(sink.name), state.retryAt);
           error({ sink: sink.name, source: file.source, message: state.error });
           return;
         }
         state.sent += batch.length;
       }
+      fence();
       await index.setCursor(key, lines[end - 1]!.nextOffset);
       i = end;
     }
     // Covers trailing lines with no events (blank, invalid, excluded).
-    if (readPos > from) await index.setCursor(key, readPos);
+    if (readPos > from) {
+      fence();
+      await index.setCursor(key, readPos);
+    }
+  };
+
+  // Files read since the last checkpoint. Events are buffered across files and
+  // cursors move together at run-level checkpoints (flush → recompute → cursors
+  // → sinks), so a tool.end read before its tool.start in a later file is
+  // still filled in before either is stored or sent.
+  interface FileRun {
+    file: SpoolFile;
+    local: number;
+    readPos: number;
+    active: Sink[];
+    window: LineEvents[];
+  }
+  let open: FileRun[] = [];
+  let pending: AgentEvent[] = [];
+  const copies = copyFilter(index);
+  let windowEvents = 0;
+  const touched = new Set<string>();
+  const checkpoint = async () => {
+    for (let i = 0; i < pending.length; i += PUT_BATCH) {
+      const { inserted } = await index.putEvents(pending.slice(i, i + PUT_BATCH));
+      result.events += inserted;
+    }
+    pending = [];
+    durations.settle();
+    await recompute(touched);
+    touched.clear();
+    for (const f of open) {
+      if (f.readPos > f.local) {
+        fence();
+        f.local = f.readPos;
+        await index.setCursor(f.file.source, f.local);
+      }
+      for (const sink of f.active) await sendToSink(sink, f.file, f.window, f.readPos);
+      f.window = [];
+    }
+    open = [];
+    windowEvents = 0;
   };
 
   for (const file of await listSpoolFiles(spoolDir)) {
     let local = await index.getCursor(file.source);
     if (local > file.size) {
+      // Recreated at the same path (pid reuse after gc, say): start over for every consumer.
       error({ source: file.source, message: `cursor ${local} is past the end of the file (${file.size} bytes); re-reading from the start` });
       local = 0;
+      fence();
+      await index.setCursor(file.source, 0);
+    }
+    const sinkFrom = new Map<Sink, number>();
+    for (const sink of sinkStates.keys()) {
+      const key = sinkCursorKey(sink.name, file.source);
+      let c = await index.getCursor(key);
+      if (c > file.size) {
+        error({ sink: sink.name, source: file.source, message: `sink cursor ${c} is past the end of the file (${file.size} bytes); re-sending from the start` });
+        c = 0;
+        fence();
+        await index.setCursor(key, 0);
+      }
+      sinkFrom.set(sink, c);
     }
     const active = [...sinkStates].filter(([, s]) => !s.failed).map(([sink]) => sink);
-    const sinkFrom = await Promise.all(active.map((s) => index.getCursor(sinkCursorKey(s.name, file.source))));
-    const start = Math.min(local, ...sinkFrom);
+    const start = Math.min(local, ...active.map((s) => sinkFrom.get(s)!));
     if (start >= file.size) continue;
 
-    let window: LineEvents[] = [];
-    let windowEvents = 0;
-    let pending: AgentEvent[] = [];
-    const touched = new Set<string>();
-    let readPos = start;
+    const fr: FileRun = { file, local, readPos: start, active, window: [] };
+    open.push(fr);
     const keepWindow = active.length > 0;
-
-    const flush = async () => {
-      if (!pending.length) return;
-      for (let i = 0; i < pending.length; i += PUT_BATCH) {
-        const { inserted } = await index.putEvents(pending.slice(i, i + PUT_BATCH));
-        result.events += inserted;
-      }
-      pending = [];
-    };
-    const checkpoint = async () => {
-      await flush();
-      await recompute(touched);
-      touched.clear();
-      if (readPos > local) {
-        local = readPos;
-        await index.setCursor(file.source, local);
-      }
-      for (const sink of active) await sendToSink(sink, file, window, readPos);
-      window = [];
-      windowEvents = 0;
-    };
-
     const reader = readSpoolFile(spoolDir, file.path, start, {
       onError: (e) => {
-        if (e.offset >= local) error({ source: e.source, offset: e.offset, message: e.message });
-        readPos = Math.max(readPos, e.nextOffset);
+        if (e.offset >= fr.local) error({ source: e.source, offset: e.offset, message: e.message });
+        fr.readPos = Math.max(fr.readPos, e.nextOffset);
       },
     });
     for await (const rec of reader) {
       const events = await durations(await normalize(rec.line, rec.source, rec.offset));
-      readPos = rec.nextOffset;
-      if (rec.offset >= local) {
+      fr.readPos = rec.nextOffset;
+      if (rec.offset >= fr.local) {
         result.lines++;
-        pending.push(...events);
+        // A prompt a backfill already stored stays out of the local index (sinks still get it).
+        for (const e of events) if (!(await copies.isCopy(e))) pending.push(e);
         for (const e of events) {
           touched.add(e.sessionId);
           if ((e.kind === "turn.end" || e.kind === "session.end") && !isBackfill(e) && !e.repo?.snapshot) {
             freshEnds.set(e.sessionId, Math.max(e.ts, freshEnds.get(e.sessionId) ?? -Infinity));
           }
         }
-        if (pending.length >= PUT_BATCH) await flush();
       }
-      if (keepWindow) window.push({ offset: rec.offset, nextOffset: rec.nextOffset, events });
-      // Bounds memory (sink window) and how much work a crash can force us to redo.
+      if (keepWindow) fr.window.push({ offset: rec.offset, nextOffset: rec.nextOffset, events });
+      // Bounds memory (buffered events, sink windows) and how much work a crash can force us to redo.
       windowEvents += events.length;
-      if (windowEvents >= checkpointEvents) await checkpoint();
+      if (windowEvents >= checkpointEvents) {
+        await checkpoint();
+        open = [fr];
+      }
     }
-    await checkpoint();
   }
+  await checkpoint();
 
   // Applied after every file so a child ingested before its parent is still linked.
   for (const id of await linker.apply()) touchedAll.add(id);
@@ -413,7 +509,11 @@ function normalizeContext(profile: CaptureProfile, blobs: BlobStore, metadata: b
   return ctx;
 }
 
-/** Redaction, then metadata stripping (keeping the "a check ran" signal the no-verification detector needs). */
+/**
+ * Redaction, then metadata stripping (keeping the "a check ran" signal the
+ * no-verification detector needs), then a list-price cost on model calls that
+ * report tokens but no cost (built-in prices, `[pricing]` overrides), as serve does.
+ */
 function finishEvent(e: AgentEvent, profile: CaptureProfile, metadata: boolean): AgentEvent {
   let ev = profile.redactor.event(e);
   if (metadata) {
@@ -421,25 +521,39 @@ function finishEvent(e: AgentEvent, profile: CaptureProfile, metadata: boolean):
     ev = toMetadata(ev);
     if (verify) ev.payload.verify = true;
   }
-  return ev;
+  return priceEvent(ev, pricesFor(profile.config.pricing));
 }
 
 /**
  * Fills tool.end durationMs from the tool.start with the same toolUseId when the
  * adapter could not. Starts seen in this run are remembered; earlier ones are
- * looked up in the index once per session.
+ * looked up in the index once per session. A tool.end whose start has not been
+ * seen yet is kept, and filled in place when the start arrives later in the
+ * run (another hook process's file read after this one), as long as that is
+ * before the next checkpoint stores it: settle() marks that point.
  */
-function toolDurationFiller(index: IndexStore): (events: AgentEvent[]) => Promise<AgentEvent[]> {
+type DurationFiller = ((events: AgentEvent[]) => Promise<AgentEvent[]>) & { settle(): void };
+function toolDurationFiller(index: IndexStore): DurationFiller {
   const starts = new Map<string, Map<string, number>>();
   const loaded = new Set<string>();
+  // sessionId → toolUseId → tool.end still waiting for its start (not yet stored).
+  const orphans = new Map<string, Map<string, AgentEvent>>();
   const remember = (e: AgentEvent) => {
     const id = e.payload.toolUseId;
     if (e.kind !== "tool.start" || typeof id !== "string") return;
     let m = starts.get(e.sessionId);
     if (!m) starts.set(e.sessionId, (m = new Map()));
     if (!m.has(id)) m.set(id, e.ts);
+    const end = orphans.get(e.sessionId)?.get(id);
+    if (end) {
+      orphans.get(e.sessionId)!.delete(id);
+      if (end.ts >= e.ts) {
+        end.durationMs = end.ts - e.ts;
+        end.payload = { ...end.payload, durationMs: end.durationMs };
+      }
+    }
   };
-  return async (events) => {
+  const fill = async (events: AgentEvent[]) => {
     for (const e of events) remember(e);
     for (let i = 0; i < events.length; i++) {
       const e = events[i]!;
@@ -455,13 +569,23 @@ function toolDurationFiller(index: IndexStore): (events: AgentEvent[]) => Promis
           for (const s of await index.listEvents(e.sessionId, { kinds: ["tool.start"] })) remember(s);
           start = starts.get(e.sessionId)?.get(id);
         }
-        if (start === undefined || e.ts < start) continue;
+        if (start === undefined) {
+          // Its start may still come later in this run: fill this very object then.
+          const copy = { ...e };
+          events[i] = copy;
+          let m = orphans.get(e.sessionId);
+          if (!m) orphans.set(e.sessionId, (m = new Map()));
+          m.set(id, copy);
+          continue;
+        }
+        if (e.ts < start) continue;
         ms = e.ts - start;
       }
       events[i] = { ...e, durationMs: ms, payload: own === undefined ? { ...e.payload, durationMs: ms } : e.payload };
     }
     return events;
   };
+  return Object.assign(fill, { settle: () => orphans.clear() });
 }
 
 interface ChildLinker {
@@ -568,17 +692,8 @@ export interface BackfillResult {
   agents: { agent: string; events: number; error?: string }[];
 }
 
-const MESSAGE_KINDS = ["user.message", "assistant.message"];
-
 /** Cursor keys for one backfill source file: size, mtime (floored ms) and the `since` it was read with. */
 export const backfillCursorKey = (agent: string, path: string, field: "size" | "mtime" | "since"): string => `backfill:${agent}:${path}#${field}`;
-
-/** Natural key for a prompt/reply: kind + whitespace-folded text. */
-function messageKey(e: AgentEvent): string | undefined {
-  if (!MESSAGE_KINDS.includes(e.kind) || typeof e.payload.text !== "string") return undefined;
-  const t = e.payload.text.replace(/\s+/g, " ").trim().slice(0, 4000);
-  return t ? `${e.kind}\u0000${t}` : undefined;
-}
 
 /**
  * Imports historical sessions from each adapter's local transcripts, with the
@@ -612,20 +727,7 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   const metadata = base.config.capture.mode === "metadata";
   // Blobs are redacted with the user-level profile: backfill can't know an event's cwd before normalizing it.
   const ctx = normalizeContext(base, blobs, metadata);
-  const live = new Map<string, Set<string>>();
-  const liveKeys = async (sessionId: string) => {
-    let set = live.get(sessionId);
-    if (!set) {
-      set = new Set();
-      for (const e of await index.listEvents(sessionId, { kinds: MESSAGE_KINDS })) {
-        if (isBackfill(e)) continue;
-        const k = messageKey(e);
-        if (k) set.add(k);
-      }
-      live.set(sessionId, set);
-    }
-    return set;
-  };
+  const copies = copyFilter(index);
   const durations = toolDurationFiller(index);
   // Sessions to recompute: those that received new events, plus every session
   // of a file read for the first time (so sessions imported before file cursors
@@ -642,6 +744,7 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
     const flush = async () => {
       if (!pending.length) return;
       const batch = await durations(pending);
+      durations.settle(); // stored next: a later start can no longer fill these in place
       pending = [];
       // Per session, so a session is recomputed only when it actually gained rows.
       const bySession = new Map<string, AgentEvent[]>();
@@ -684,13 +787,13 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
           result.excluded++;
           continue;
         }
-        const ev = e.source === undefined ? { ...e, source: "transcript" } : e;
-        const key = isBackfill(ev) ? messageKey(ev) : undefined;
-        if (key && (await liveKeys(ev.sessionId)).has(key)) {
+        // Compared in stored form (redacted, metadata-stripped), the form a live copy was stored in.
+        const ev = finishEvent(e.source === undefined ? { ...e, source: "transcript" } : e, profile, metadata);
+        if (await copies.isCopy(ev)) {
           result.duplicates++;
           continue;
         }
-        pending.push(finishEvent(ev, profile, metadata));
+        pending.push(ev);
         if (firstRead !== false) touched.add(ev.sessionId);
         if (pending.length >= PUT_BATCH) await flush();
       }

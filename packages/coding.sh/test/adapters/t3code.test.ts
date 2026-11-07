@@ -1,7 +1,7 @@
 // T3 Code adapter: a synthetic T3 store (real v2/v1 table shapes, made-up rows)
 // built in a temp HOME next to Codex and Claude transcripts T3 "ran".
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
@@ -195,15 +195,18 @@ describe("t3code adapter", () => {
     const gEvents = await index.listEvents("grok-session-1");
     assert.ok(!gEvents.some((e) => e.payload.text === "still stream"), "streaming messages are skipped");
     assert.equal(gEvents.filter((e) => e.kind === "tool.end").length, 2, "a running tool has no end yet");
-    // T3's running cost is reported, never summed.
-    assert.equal(by[CODEX_ID]!.stats.usage?.costUsd, undefined);
+    // T3's running cost is reported, never summed: session cost is the local estimate of its model calls.
+    const codexCalls = (await index.listEvents(CODEX_ID, { kinds: ["llm.call"] })).reduce((n, e) => n + (e.usage?.costUsd ?? 0), 0);
+    assert.ok(codexCalls > 0 && Math.abs(by[CODEX_ID]!.stats.usage!.costUsd! - codexCalls) < 1e-9);
     const report = (await index.listEvents(CODEX_ID)).find((e) => e.payload.type === "usage-report");
     assert.deepEqual(report?.payload.reportedUsage, { costUsd: 0.42 });
     // v1-only thread: store messages, tool activity, totals from the last context snapshot.
     const old = by["v1-codex-thread-not-on-disk"]!;
     assert.equal(old.title, "Old prompt");
     assert.equal(old.stats.toolCalls, 1);
-    assert.deepEqual(old.stats.usage, { inputTokens: 300, cacheReadTokens: 500, outputTokens: 100 });
+    const { costUsd, ...tokens } = old.stats.usage!;
+    assert.deepEqual(tokens, { inputTokens: 300, cacheReadTokens: 500, outputTokens: 100 });
+    assert.ok(Math.abs(costUsd! - 0.002375) < 1e-12, "priced locally at gpt-5.4");
   });
 
   it("emits well-formed events", async () => {
@@ -326,5 +329,40 @@ describe("host attribution", () => {
     const g = Object.fromEntries(r.groups.map((x) => [x.key, x]));
     assert.deepEqual([g["t3code gpt-5.5"]!.turns, g["t3code gpt-5.5"]!.tokensPerTurn, g["t3code gpt-5.5"]!.cacheReadShare], [2, 500, 0.889]);
     assert.deepEqual([g["codex gpt-5.5"]!.turns, g["codex gpt-5.5"]!.tokensPerTurn, g["codex gpt-5.5"]!.cacheReadShare], [4, 250, 0.5]);
+  });
+});
+
+describe("t3code v1 usage snapshots", () => {
+  let env: TmpEnv;
+  const saved: Record<string, string | undefined> = {};
+  before(() => {
+    env = tmpEnv();
+    for (const k of t3Env) (saved[k] = process.env[k]), delete process.env[k];
+  });
+  after(() => {
+    for (const k of t3Env) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+    env.restore();
+  });
+
+  it("a later, larger thread total replaces the first one (not frozen, not summed)", async () => {
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    buildV1(dir);
+    const config = defaultConfig({ ...process.env });
+    const index = new MemoryIndexStore();
+    const run = () => backfill({ config, index, blobs: new MemoryBlobStore(), adapters: [t3code], env: { ...process.env } });
+    const sid = "v1-codex-thread-not-on-disk";
+    await run();
+    assert.equal((await index.getSession(sid))!.stats.usage?.outputTokens, 100);
+    const db = new DatabaseSync(join(dir, "state.sqlite"));
+    db.prepare("INSERT INTO projection_thread_activities VALUES ('a4', 'thr-old', 'turn-o1', 'info', 'context-window.updated', 'ctx', ?, ?, 4)").run(J({ inputTokens: 90_000, cachedInputTokens: 50_000, outputTokens: 7000 }), T(13));
+    db.close();
+    utimesSync(join(dir, "state.sqlite"), new Date(), new Date(Date.now() + 5000));
+    await run();
+    const u = (await index.getSession(sid))!.stats.usage!;
+    assert.deepEqual([u.inputTokens, u.cacheReadTokens, u.outputTokens], [40_000, 50_000, 7000]);
+    // gpt-5.4: 40K × $2.50 + 50K × $0.25 + 7K × $15 per 1M, the latest snapshot priced once.
+    assert.ok(Math.abs(u.costUsd! - 0.2175) < 1e-9, String(u.costUsd));
   });
 });

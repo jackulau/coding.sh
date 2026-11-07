@@ -30,7 +30,7 @@ export function costFrom(u: Usage, p: Price): number {
 
 /** Where each provider's numbers come from and when they were last checked. */
 export const PRICE_SOURCES: Record<"openai" | "anthropic" | "google", { url: string; updated: string }> = {
-  openai: { url: "https://openai.com/api/pricing/", updated: "2026-06-01" },
+  openai: { url: "https://developers.openai.com/api/docs/pricing", updated: "2026-11-06" },
   anthropic: { url: "https://platform.claude.com/docs/en/about-claude/pricing", updated: "2026-11-06" },
   google: { url: "https://ai.google.dev/gemini-api/docs/pricing", updated: "2026-06-01" },
 };
@@ -43,7 +43,21 @@ const plain = (input: number, output: number, cacheRead: number): Price => ({ in
 
 /** Built-in list prices (standard tier, short context). `[pricing."<model>"]` overrides any entry. */
 export const BUILTIN_PRICES: Prices = {
-  // OpenAI (PRICE_SOURCES.openai)
+  // OpenAI (PRICE_SOURCES.openai, Standard tier). GPT-5.5 and 5.4 bill more
+  // past 272K prompt tokens; these are the short-context prices.
+  "gpt-5.5": plain(5, 30, 0.5),
+  "gpt-5.4": plain(2.5, 15, 0.25),
+  "gpt-5.4-mini": plain(0.75, 4.5, 0.075),
+  "gpt-5.4-nano": plain(0.2, 1.25, 0.02),
+  "gpt-5.3-codex": plain(1.75, 14, 0.175),
+  "gpt-5.2": plain(1.75, 14, 0.175),
+  "gpt-5.1": plain(1.25, 10, 0.125),
+  // Earlier Codex models, no longer on the page: they launched at their base model's price.
+  "gpt-5.2-codex": plain(1.75, 14, 0.175),
+  "gpt-5.1-codex-max": plain(1.25, 10, 0.125),
+  "gpt-5.1-codex": plain(1.25, 10, 0.125),
+  "gpt-5.1-codex-mini": plain(0.25, 2, 0.025),
+  "gpt-5-codex": plain(1.25, 10, 0.125),
   "gpt-5": plain(1.25, 10, 0.125),
   "gpt-5-mini": plain(0.25, 2, 0.025),
   "gpt-5-nano": plain(0.05, 0.4, 0.005),
@@ -103,20 +117,37 @@ export function priceTable(overrides?: Prices): Prices {
   return { ...BUILTIN_PRICES, ...(overrides ?? {}) };
 }
 
+const tables = new WeakMap<Prices, Prices>();
+const builtin = priceTable();
+/** priceTable(overrides), built once per overrides object (a config's `pricing`). */
+export function pricesFor(overrides?: Prices): Prices {
+  if (!overrides) return builtin;
+  let t = tables.get(overrides);
+  if (!t) tables.set(overrides, (t = priceTable(overrides)));
+  return t;
+}
+
 const hasTokens = (u: Usage | undefined): u is Usage =>
   !!u && [u.inputTokens, u.outputTokens, u.cacheReadTokens, u.cacheWriteTokens].some((v) => typeof v === "number" && v > 0);
 
+/** Events whose usage is billed tokens: model calls, and session usage snapshots (T3 Code v1, OpenCode totals). */
+const priceable = (e: AgentEvent): boolean => e.kind === "llm.call" || (e.kind === "notification" && e.payload?.type === "usage-summary");
+
 /**
- * Fills `usage.costUsd` on `llm.call` events that carry tokens but no cost, and marks
- * them `payload.costEstimated = true`. Returns a new array; events it changes are copies.
+ * Fills `usage.costUsd` on a model call (or usage snapshot) that carries tokens
+ * but no cost, from its model's price, and marks it `payload.costEstimated = true`.
+ * A cost the agent reported always wins. Returns `e` itself when unchanged, else a copy.
  */
+export function priceEvent(e: AgentEvent, prices: Prices): AgentEvent {
+  if (!priceable(e) || !hasTokens(e.usage) || typeof e.usage.costUsd === "number") return e;
+  const pl = e.payload ?? {};
+  const names = [pl.responseModel, e.model, pl.requestModel].filter((m): m is string => typeof m === "string" && m !== "");
+  const p = names.map((m) => lookupPrice(m, prices)).find(Boolean);
+  if (!p) return e;
+  return { ...e, usage: { ...e.usage, costUsd: costFrom(e.usage, p) }, payload: { ...e.payload, costEstimated: true } };
+}
+
+/** priceEvent over a batch. Returns a new array; events it changes are copies. */
 export function applyPricing(events: AgentEvent[], prices: Prices): AgentEvent[] {
-  return events.map((e) => {
-    if (e.kind !== "llm.call" || !hasTokens(e.usage) || typeof e.usage.costUsd === "number") return e;
-    const pl = e.payload ?? {};
-    const names = [pl.responseModel, e.model, pl.requestModel].filter((m): m is string => typeof m === "string" && m !== "");
-    const p = names.map((m) => lookupPrice(m, prices)).find(Boolean);
-    if (!p) return e;
-    return { ...e, usage: { ...e.usage, costUsd: costFrom(e.usage, p) }, payload: { ...e.payload, costEstimated: true } };
-  });
+  return events.map((e) => priceEvent(e, prices));
 }

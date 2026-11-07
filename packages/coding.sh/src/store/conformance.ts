@@ -405,7 +405,7 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.deepEqual(await s.deleteBefore(100, { project: "default" }), { sessions: 1, events: 2 });
       assert.equal(await s.getSession("old"), undefined);
       assert.deepEqual(await s.listEvents("old"), []);
-      assert.ok(await s.getSession("ended-late"), "coalesce(endedAt, startedAt) is compared, not startedAt");
+      assert.ok(await s.getSession("ended-late"), "endedAt counts as activity, not only startedAt");
       assert.ok(await s.getSession("demo/old"), "other projects are untouched");
       assert.deepEqual((await s.listLabels()).map((l) => l.id), ["lab-new"]);
       assert.ok(await s.getTask("keep-task"), "eval assets are never deleted");
@@ -414,6 +414,81 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.deepEqual(await s.deleteBefore(100), { sessions: 1, events: 1 });
       assert.equal(await s.getSession("demo/old"), undefined);
       assert.deepEqual(await s.deleteBefore(100), { sessions: 0, events: 0 });
+    }));
+
+    it("optional deleteBefore judges a session by its last activity, not its recorded end", withStore(async (s) => {
+      if (!s.deleteBefore) return;
+      await s.putEvents([
+        // Resumed: the first run ended long ago, the resumed run is still writing.
+        fixtureEvent({ id: "res-1", sessionId: "resumed", ts: 10, kind: "session.start" }),
+        fixtureEvent({ id: "res-2", sessionId: "resumed", ts: 20, kind: "session.end" }),
+        fixtureEvent({ id: "res-3", sessionId: "resumed", ts: 600, kind: "user.message", payload: { text: "still going" } }),
+        // Never sent session.end; its last tool call ends after the cutoff.
+        fixtureEvent({ id: "open-1", sessionId: "open", ts: 10, kind: "session.start" }),
+        fixtureEvent({ id: "open-2", sessionId: "open", ts: 50, durationMs: 100, kind: "tool.end", payload: { tool: "Bash" } }),
+        fixtureEvent({ id: "stale-1", sessionId: "stale", ts: 10 }),
+        fixtureEvent({ id: "stale-2", sessionId: "stale", ts: 90, durationMs: 5 }),
+      ]);
+      await s.upsertSession(fixtureSession({ id: "resumed", startedAt: 10, endedAt: 20 }));
+      await s.upsertSession(fixtureSession({ id: "open", startedAt: 10 }));
+      await s.upsertSession(fixtureSession({ id: "stale", startedAt: 10, endedAt: 95 }));
+      assert.deepEqual(await s.deleteBefore(100), { sessions: 1, events: 2 });
+      assert.equal(await s.getSession("stale"), undefined);
+      assert.ok(await s.getSession("resumed"), "an event after the cutoff keeps a session that ended before it");
+      assert.equal((await s.listEvents("resumed")).length, 3);
+      assert.ok(await s.getSession("open"), "an event's end (ts + durationMs) counts as activity");
+      assert.deepEqual(await s.deleteBefore(601), { sessions: 2, events: 5 });
+    }));
+
+    it("optional deleteBefore keeps search working when messages have empty text", withStore(async (s) => {
+      if (!s.deleteBefore) return;
+      const msg = (id: string, sessionId: string, ts: number, text: string) =>
+        fixtureEvent({ id, sessionId, ts, kind: id.startsWith("u") ? "user.message" : "assistant.message", payload: { text } });
+      await s.putEvents([
+        msg("a-empty-1", "all-empty", 10, ""),
+        msg("u-empty-2", "all-empty", 11, ""),
+        msg("a-mixed-1", "mixed", 10, ""),
+        msg("u-mixed-2", "mixed", 11, "hello world"),
+        msg("a-keep", "keep", 500, "refactor the tokenizer"),
+        msg("u-keep-empty", "keep", 501, ""),
+      ]);
+      await s.upsertSession(fixtureSession({ id: "all-empty", startedAt: 10, endedAt: 11 }));
+      await s.upsertSession(fixtureSession({ id: "mixed", startedAt: 10, endedAt: 11 }));
+      await s.upsertSession(fixtureSession({ id: "keep", startedAt: 500 }));
+      assert.deepEqual(await s.deleteBefore(100), { sessions: 2, events: 4 });
+      assert.deepEqual((await s.search("tokeni")).map((h) => h.event.id), ["a-keep"]);
+      assert.deepEqual(await s.search("hello"), []);
+      assert.deepEqual(await s.deleteBefore(100), { sessions: 0, events: 0 });
+      assert.deepEqual(await s.deleteBefore(1000), { sessions: 1, events: 2 });
+      assert.deepEqual(await s.search("tokeni"), []);
+    }));
+
+    it("getBundle by name breaks a createdAt tie by the greatest id", withStore(async (s) => {
+      await s.putBundle(fixtureBundle({ id: "b-aaa", name: "tied", createdAt: 1 }));
+      await s.putBundle(fixtureBundle({ id: "b-zzz", name: "tied", createdAt: 1 }));
+      await s.putBundle(fixtureBundle({ id: "b-mmm", name: "tied", createdAt: 1 }));
+      assert.equal((await s.getBundle("tied"))?.id, "b-zzz");
+    }));
+
+    it("optional listExperiments: limit 0 is none, negative is no limit", withStore(async (s) => {
+      if (!s.putExperiment || !s.listExperiments) return;
+      for (const id of ["x1", "x2"]) {
+        await s.putExperiment({
+          id, name: "e", dataset: { id: "d", name: "d", version: "v" }, task: { kind: "command", ref: "echo" }, graders: [], trials: 1, createdAt: 1, finishedAt: 2, runs: [],
+          summary: { n: 0, cases: 0, passed: 0, errors: 0, passRate: { p: 0, lo: 0, hi: 0 }, ciMethod: "wilson", graders: [], latencyMs: { mean: 0, median: 0, p90: 0, max: 0 } },
+        });
+      }
+      assert.deepEqual(await s.listExperiments({ limit: 0 }), []);
+      assert.deepEqual((await s.listExperiments({ limit: -1 })).map((r) => r.id), ["x2", "x1"]);
+      assert.deepEqual((await s.listExperiments({})).map((r) => r.id), ["x2", "x1"]);
+    }));
+
+    it("optional listDatasetVersions keeps insertion order whatever createdAt says", withStore(async (s) => {
+      if (!s.putDataset || !s.listDatasetVersions) return;
+      await s.putDataset({ id: "d", name: "d", version: "v-new", cases: [] }, { now: 2000 });
+      await s.putDataset({ id: "d", name: "d", version: "v-old", cases: [] }, { now: 1000 });
+      await s.putDataset({ id: "d", name: "d", version: "v-new", cases: [] }, { now: 3000 });
+      assert.deepEqual((await s.listDatasetVersions("d")).map((v) => [v.version, v.createdAt]), [["v-new", 2000], ["v-old", 1000]]);
     }));
 
     it("concurrent overlapping putEvents insert each id once", withStore(async (s) => {
@@ -440,12 +515,25 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
     it("referencedBlobs covers events, tasks, bundles and runs without duplicates", withStore(async (s) => {
       const shared = REF("shared");
       await s.putEvents([fixtureEvent({ blobs: [shared, REF("e1")] }), fixtureEvent({ blobs: [shared] }), fixtureEvent()]);
-      await s.putTask(fixtureTask({ referencePatch: REF("patch"), nearMissPatches: [REF("nm1")] }));
+      await s.putTask(fixtureTask({
+        referencePatch: REF("patch"),
+        nearMissPatches: [REF("nm1")],
+        validation: {
+          ok: true, ts: 1, noopFails: true, referencePasses: { passed: 1, of: 1 }, nearMissesFail: { failed: 1, of: 1 }, leakage: [],
+          impossible: { gameable: false, tried: 1, passedByReference: [], variant: { label: "flip", noopFails: true, hiddenFiles: { "test/a.test.ts": REF("variant-hidden"), "test/b.test.ts": shared } } },
+        },
+      }));
+      await s.putTask(fixtureTask({ id: "t-variant-without-files", verifier: { command: "x", hiddenFiles: {}, timeoutMs: 1 }, validation: {
+        ok: true, ts: 1, noopFails: true, referencePasses: { passed: 1, of: 1 }, nearMissesFail: { failed: 0, of: 0 }, leakage: [],
+        impossible: { gameable: true, tried: 1, passedByReference: ["flip"] },
+      } }));
       await s.putBundle(fixtureBundle());
       await s.putRun(fixtureRun({ diffBlob: REF("diff") }));
+      // toolevals trials keep their tap log on the run (RunResult.tapBlob).
+      await s.putRun({ ...fixtureRun({ id: "r-tap" }), tapBlob: REF("tap") } as RunResult);
       const refs: string[] = [];
       for await (const r of s.referencedBlobs()) refs.push(r);
-      assert.deepEqual(refs.sort(), [shared, REF("e1"), REF("patch"), REF("nm1"), REF("hidden"), REF("claude.md"), REF("diff")].sort());
+      assert.deepEqual(refs.sort(), [shared, REF("e1"), REF("patch"), REF("nm1"), REF("hidden"), REF("variant-hidden"), REF("claude.md"), REF("diff"), REF("tap")].sort());
     }));
   });
 }

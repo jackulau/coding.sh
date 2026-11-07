@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileTouches, isOurCommand, parseJsonc, parseTestSummary, spawnAgent, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
@@ -81,12 +81,28 @@ describe("spawnAgent", () => {
 
   it("times out, kills the process group and keeps output tails", async () => {
     const bin = join(env.root, "bin");
-    const p = fakeBinary(bin, "slow", `console.log("started"); setInterval(() => {}, 1000);`);
+    mkdirSync(bin, { recursive: true });
+    // A sh script, not node: it prints at once, so "started" is out long before the
+    // timeout even on a loaded machine (a node binary's startup alone can take
+    // seconds there). The background sleeper checks the whole group is killed.
+    const p = join(bin, "slow");
+    const pidFile = join(env.root, "slow.bg.pid");
+    writeFileSync(p, `#!/bin/sh\necho started\nsleep 60 &\necho $! > ${JSON.stringify(pidFile)}\nwait\n`);
+    chmodSync(p, 0o755);
     mkdirSync(join(env.root, "w"), { recursive: true });
     const r = await spawnAgent({ bin: p, args: [], cwd: join(env.root, "w"), env: { ...process.env }, timeoutMs: 2000 });
     assert.equal(r.timedOut, true);
     assert.match(r.stdoutTail, /started/);
-    assert.ok(r.durationMs < 10_000);
+    assert.ok(r.durationMs < 30_000, `took ${r.durationMs}ms`);
+    const bg = Number(readFileSync(pidFile, "utf8").trim());
+    let alive = true;
+    try {
+      process.kill(bg, 0);
+    } catch {
+      alive = false;
+    }
+    if (alive) process.kill(bg, "SIGKILL");
+    assert.equal(alive, false, "background child of the agent killed with its group");
   });
 
   it("reports a missing binary instead of throwing", async () => {
@@ -97,7 +113,7 @@ describe("spawnAgent", () => {
 
   it("keeps only the last tailBytes of output", async () => {
     const p = fakeBinary(join(env.root, "bin"), "loud", `for (let i = 0; i < 2000; i++) console.log("line " + i);`);
-    const r = await spawnAgent({ bin: p, args: [], cwd: env.root, env: { ...process.env }, timeoutMs: 10_000, tailBytes: 256 });
+    const r = await spawnAgent({ bin: p, args: [], cwd: env.root, env: { ...process.env }, timeoutMs: 120_000, tailBytes: 256 }); // a ceiling, not a timing: node startup is slow under load
     assert.ok(r.stdoutTail.length <= 256);
     assert.match(r.stdoutTail, /line 1999/);
   });

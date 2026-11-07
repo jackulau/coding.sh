@@ -23,6 +23,8 @@ import { acquireLock, LockBusyError, type Lock } from "../core/lock.ts";
 import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "../datasets/types.ts";
 import type { DatasetListing } from "../core/types.ts";
 import {
+  BLOB_REF_FIELDS,
+  type BlobRefField,
   ftsQuery,
   MESSAGE_SEARCH_KINDS,
   searchableText,
@@ -64,6 +66,14 @@ interface Migration {
 }
 
 const sqlList = (xs: readonly string[]) => xs.map((x) => `'${x.replace(/'/g, "''")}'`).join(", ");
+
+/** SELECT of the refs at one BLOB_REF_FIELDS entry (paths are constants, not user input). */
+function refFieldSql(f: BlobRefField): string {
+  const path = `'$.${f.path.join(".")}'`;
+  if (f.shape === "ref") return `SELECT json_extract(doc, ${path}) FROM ${f.table} WHERE json_type(doc, ${path}) = 'text'`;
+  const type = f.shape === "list" ? "array" : "object";
+  return `SELECT j.value FROM ${f.table}, json_each(${f.table}.doc, ${path}) AS j WHERE json_type(${f.table}.doc, ${path}) = '${type}' AND j.type = 'text'`;
+}
 
 /** Exported for migration tests only. */
 export const MIGRATIONS: Migration[] = [
@@ -275,6 +285,27 @@ CREATE INDEX sessions_project ON sessions(project_id, started_at DESC);
 CREATE INDEX events_project ON events(project_id, ts);
 `,
   },
+  {
+    // events.text is NULL exactly when putEvents indexed nothing (searchableText is
+    // undefined for empty text). v3 gave '' for an empty message, so retention sent
+    // FTS 'delete' for rows never indexed and corrupted the index; 'rebuild' repairs
+    // databases that already hit it.
+    version: 5,
+    sql: `
+DROP TABLE events_fts;
+ALTER TABLE events DROP COLUMN text;
+-- Message kinds must match MESSAGE_SEARCH_KINDS in common.ts (written out so this migration never changes).
+ALTER TABLE events ADD COLUMN text TEXT GENERATED ALWAYS AS (NULLIF(
+  CASE WHEN kind IN ('user.message', 'assistant.message') THEN
+    CASE WHEN json_type(payload, '$.text') = 'text' THEN json_extract(payload, '$.text') END
+  ELSE search_extra END, ''
+)) VIRTUAL;
+CREATE VIRTUAL TABLE events_fts USING fts5(
+  text, content='events', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2'
+);
+`,
+    after: (db) => db.exec("INSERT INTO events_fts(events_fts) VALUES ('rebuild')"),
+  },
 ];
 
 export const SQLITE_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
@@ -472,6 +503,17 @@ export class SqliteIndexStore implements IndexStore {
     });
   }
 
+  async setEventCosts(costs: { id: string; costUsd: number }[]): Promise<number> {
+    if (!costs.length) return 0;
+    // Only usage and payload.costEstimated: message text (the FTS source) never changes here.
+    const update = this.stmt("UPDATE events SET usage = json_set(coalesce(usage, '{}'), '$.costUsd', ?), payload = json_set(payload, '$.costEstimated', json('true')) WHERE id = ?");
+    return this.tx(() => {
+      let found = 0;
+      for (const { id, costUsd } of costs) found += Number(update.run(costUsd, id).changes);
+      return found;
+    });
+  }
+
   async listEvents(sessionId: string, opts: { kinds?: string[]; limit?: number; offset?: number } = {}): Promise<AgentEvent[]> {
     const params: (string | number)[] = [sessionId];
     let sql = "SELECT * FROM events WHERE session_id = ?";
@@ -528,6 +570,12 @@ export class SqliteIndexStore implements IndexStore {
   async getSession(id: string): Promise<Session | undefined> {
     const r = this.stmt("SELECT * FROM sessions WHERE id = ?").get(id) as Row | undefined;
     return r ? rowToSession(r) : undefined;
+  }
+
+  async sessionIdsByPrefix(prefix: string, limit: number): Promise<string[]> {
+    // A range on the primary key: every id with this prefix sorts in [prefix, prefix + U+10FFFF).
+    const rows = this.stmt("SELECT id FROM sessions WHERE id >= ? AND id < ? ORDER BY id LIMIT ?").all(prefix, `${prefix}\u{10FFFF}`, limit) as Row[];
+    return rows.map((r) => String(r.id)).filter((id) => id.startsWith(prefix));
   }
 
   async listSessions(f: SessionFilter = {}): Promise<Session[]> {
@@ -696,7 +744,7 @@ export class SqliteIndexStore implements IndexStore {
   }
 
   async listDatasetVersions(id: string): Promise<DatasetVersionInfo[]> {
-    const rows = this.stmt("SELECT version, cases, created_at, note FROM datasets WHERE id = ? ORDER BY created_at, rowid").all(id) as Row[];
+    const rows = this.stmt("SELECT version, cases, created_at, note FROM datasets WHERE id = ? ORDER BY rowid").all(id) as Row[];
     return rows.map((r) => {
       const info: DatasetVersionInfo = { version: r.version as string, cases: num(r.cases)!, createdAt: num(r.created_at)! };
       if (typeof r.note === "string") info.note = r.note;
@@ -729,7 +777,7 @@ export class SqliteIndexStore implements IndexStore {
     if (f.datasetId) where.push("dataset_id = ?"), params.push(f.datasetId);
     if (f.name) where.push("name = ?"), params.push(f.name);
     const sql = `SELECT doc FROM experiments ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY id DESC LIMIT ?`;
-    params.push(f.limit ?? -1);
+    params.push(f.limit ?? -1); // SQLite: a negative LIMIT is no limit, LIMIT 0 is none
     return (this.db.prepare(sql).all(...params) as Row[]).map((r) => parse<ExperimentResult>(r.doc)!);
   }
 
@@ -750,13 +798,7 @@ export class SqliteIndexStore implements IndexStore {
 
   async *referencedBlobs(): AsyncIterable<BlobRef> {
     // UNION de-duplicates inside SQLite, so a blob shared by 1,000 events is yielded once.
-    const sql = `
-      SELECT j.value AS ref FROM events, json_each(events.blobs) AS j WHERE events.blobs IS NOT NULL
-      UNION SELECT json_extract(doc, '$.referencePatch') FROM tasks WHERE json_extract(doc, '$.referencePatch') IS NOT NULL
-      UNION SELECT j.value FROM tasks, json_each(tasks.doc, '$.nearMissPatches') AS j
-      UNION SELECT j.value FROM tasks, json_each(tasks.doc, '$.verifier.hiddenFiles') AS j
-      UNION SELECT j.value FROM bundles, json_each(bundles.doc, '$.files') AS j
-      UNION SELECT json_extract(doc, '$.diffBlob') FROM runs WHERE json_extract(doc, '$.diffBlob') IS NOT NULL`;
+    const sql = ["SELECT j.value AS ref FROM events, json_each(events.blobs) AS j WHERE events.blobs IS NOT NULL", ...BLOB_REF_FIELDS.map(refFieldSql)].join("\nUNION ");
     for (const r of this.db.prepare(sql).iterate() as IterableIterator<Row>) {
       if (typeof r.ref === "string") yield r.ref;
     }
@@ -807,19 +849,32 @@ export class SqliteIndexStore implements IndexStore {
         heldWriterLocks.delete(path);
         lock?.release();
       },
+      // Fencing (core/lock.ts nonce): fails once another replica took the lease over.
+      assertHeld: () => {
+        if (released) throw new Error(`writer lock ${path} was released`);
+        lock?.assertHeld();
+      },
     };
   }
 
+  async listProjects(): Promise<string[]> {
+    return (this.stmt("SELECT DISTINCT project_id AS p FROM sessions").all() as { p: string }[]).map((r) => r.p).sort();
+  }
+
   async deleteBefore(cutoffMs: number, opts: { project?: string } = {}): Promise<{ sessions: number; events: number }> {
-    const params: (string | number)[] = [cutoffMs];
-    let sql = "SELECT id FROM sessions WHERE coalesce(ended_at, started_at) < ?";
+    // Last activity (see IndexStore.deleteBefore), not the recorded end: a resumed session keeps
+    // its first run's endedAt, and one that never sent session.end has none.
+    const params: (string | number)[] = [cutoffMs, cutoffMs];
+    let sql = `SELECT id FROM sessions s WHERE coalesce(ended_at, started_at) < ?
+      AND NOT EXISTS (SELECT 1 FROM events e WHERE e.session_id = s.id AND e.ts + coalesce(e.duration_ms, 0) >= ?)`;
     if (opts.project !== undefined) sql += " AND project_id = ?", params.push(opts.project);
-    const ids = (this.db.prepare(sql).all(...params) as Row[]).map((r) => r.id as string);
-    if (!ids.length) return { sessions: 0, events: 0 };
     return this.tx(() => {
+      // Selected inside the transaction so an event committed meanwhile is seen.
+      const ids = (this.stmt(sql).all(...params) as Row[]).map((r) => r.id as string);
       let events = 0;
       // External-content FTS: remove each row's index entry with the text it was indexed under.
-      const ftsDelete = this.stmt("INSERT INTO events_fts(events_fts, rowid, text) SELECT 'delete', rowid, text FROM events WHERE session_id = ? AND text IS NOT NULL");
+      // events.text is NULL or '' exactly when putEvents indexed nothing (searchableText undefined).
+      const ftsDelete = this.stmt("INSERT INTO events_fts(events_fts, rowid, text) SELECT 'delete', rowid, text FROM events WHERE session_id = ? AND text IS NOT NULL AND text <> ''");
       const delEvents = this.stmt("DELETE FROM events WHERE session_id = ?");
       const delLabels = this.stmt("DELETE FROM labels WHERE session_id = ?");
       const delSession = this.stmt("DELETE FROM sessions WHERE id = ?");

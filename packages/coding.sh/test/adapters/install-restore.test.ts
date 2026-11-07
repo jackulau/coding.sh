@@ -1,7 +1,7 @@
 // Uninstall puts hook config files back exactly as the user had them (QA: init →
 // uninstall re-serialized ~/.claude/settings.json and deleted a pre-existing "{}").
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
@@ -98,3 +98,28 @@ describe("antigravity + gemini-cli detection", () => {
     assert.equal((await geminiCliAdapter.detect()).installed, true);
   });
 });
+
+// INS-2: a symlinked config (stow-style dotfiles) stays a symlink; the writes
+// land in the dotfiles target, and uninstall restores the target's bytes.
+describe("symlinked agent configs stay symlinks", () => {
+  async function linked(a: Adapter, file: string, original: string, withMcp = false): Promise<void> {
+    const target = join(env.home, "dotfiles", `${a.id}-settings.json`);
+    writeFile(target, original);
+    mkdirSync(join(file, ".."), { recursive: true });
+    symlinkSync(target, file);
+    await a.install({ hookCommand: hookCommand(), scope: "user", dryRun: false });
+    if (withMcp) await a.installMcp!({ server: { name: "coding-sh", command: "node", args: ["mcp.mjs"] }, dryRun: false });
+    assert.ok(lstatSync(file).isSymbolicLink(), `${a.id}: still a symlink after install`);
+    assert.equal(readlinkSync(file), target);
+    assert.match(readFileSync(target, "utf8"), /hook\.mjs/, `${a.id}: the dotfiles target holds the hooks`);
+    assert.deepEqual(readdirSync(join(target, "..")).sort(), [`${a.id}-settings.json`], "no temp file left next to the target");
+    if (withMcp) await a.uninstallMcp!({ name: "coding-sh", dryRun: false });
+    await a.uninstall({ scope: "user", dryRun: false });
+    assert.ok(lstatSync(file).isSymbolicLink(), `${a.id}: still a symlink after uninstall`);
+    assert.equal(readFileSync(target, "utf8"), original, `${a.id}: target restored byte-for-byte`);
+  }
+
+  it("claude-code settings.json (shared atomicWrite)", () => linked(claudeCode, join(env.home, ".claude", "settings.json"), '{"model":"opus"}\n'));
+  it("gemini-cli settings.json (more/_util applyWrites + MCP writer)", () => linked(geminiCliAdapter, join(env.home, ".gemini", "settings.json"), '{\n  "theme": "GitHub"\n}\n', true));
+});
+

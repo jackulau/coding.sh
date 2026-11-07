@@ -12,6 +12,7 @@ import type { AgentEvent, Usage } from "../schema/index.ts";
 import {
   ClaudeTranscriptConverter,
   Emitter,
+  cursorView,
   anthropicUsage,
   arr,
   applyChanges,
@@ -123,7 +124,7 @@ async function transcriptWindow(path: string, untilTs: number, whole = false): P
   return entries.slice(start);
 }
 
-async function windowEvents(ctx: NormalizeContext, path: string | undefined, untilTs: number, sessionId: string, subagentId: string | undefined, runId: string | undefined, whole: boolean): Promise<{ events: AgentEvent[]; model?: string }> {
+async function windowEvents(ctx: NormalizeContext, path: string | undefined, untilTs: number, sessionId: string, subagentId: string | undefined, runId: string | undefined, whole: boolean): Promise<{ events: AgentEvent[]; model?: string; turnId?: string }> {
   if (!path) return { events: [] };
   let entries: unknown[];
   try {
@@ -134,7 +135,7 @@ async function windowEvents(ctx: NormalizeContext, path: string | undefined, unt
   const conv = new ClaudeTranscriptConverter(ctx, { agent: CLAUDE_AGENT, mode: "assistant", sessionId, subagentId, runId, source: basename(path), sidechain: subagentId !== undefined });
   let i = 0;
   for (const e of entries) await conv.add(e, i++);
-  return { events: await conv.finish(), model: conv.model };
+  return { events: await conv.finish(), model: conv.model, turnId: conv.currentTurnId };
 }
 
 export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext, agent = CLAUDE_AGENT): Promise<AgentEvent[]> {
@@ -167,7 +168,8 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
 
   switch (event) {
     case "SessionStart":
-      em.emit("session.start", { source: str(raw.source), transcriptPath: str(raw.transcript_path), permissionMode: str(raw.permission_mode) });
+      // Same key as the transcript's session.start: a backfill of a hooked session adds no second start.
+      em.emit("session.start", { source: str(raw.source), transcriptPath: str(raw.transcript_path), permissionMode: str(raw.permission_mode) }, { key: ["start"] });
       break;
     case "UserPromptSubmit": {
       const t = await clipText(ctx, str(raw.prompt) ?? "");
@@ -200,7 +202,10 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
         em.emit("assistant.message", { text: t.value, truncated: t.truncated || undefined }, { blobs: blobList(t.blob) });
       }
       if (event === "StopFailure") em.emit("error", { message: (str(raw.error) ?? str(obj(raw.error).message) ?? "stop failure").slice(0, 1000), errorType: str(raw.error_type) });
-      em.emit("turn.end", { ok: event === "Stop", stopHookActive: raw.stop_hook_active === true || undefined });
+      // Keyed by the turn the transcript window ends in (the transcript keys its turn.end the
+      // same way), so a backfill of this session and a Stop-hook continuation
+      // (stop_hook_active) add no second end for the turn. No transcript: keyed by spool position.
+      em.emit("turn.end", { ok: event === "Stop", stopHookActive: raw.stop_hook_active === true || undefined }, w.turnId ? { key: [w.turnId, "end"], turnId: w.turnId } : {});
       break;
     }
     case "SubagentStart": {
@@ -245,21 +250,38 @@ const SUBAGENT_FILE = /[\\/]([^\\/]+)[\\/]subagents[\\/](?:workflows[\\/]([^\\/]
 /** A backfilled session whose last entry is older than this is treated as finished (gets a session.end). */
 export const TRANSCRIPT_IDLE_MS = 30 * 60_000;
 
-async function* backfillClaude(ctx: NormalizeContext, opts: BackfillOpts = {}, env = process.env): AsyncIterable<AgentEvent> {
+async function* backfillClaude(base: NormalizeContext, opts: BackfillOpts = {}, env = process.env): AsyncIterable<AgentEvent> {
   const root = join(claudeConfigDir(env), "projects");
   const since = opts.since;
   const workflows = new WorkflowIndex();
+  // A failed blob write is the store's fault (bad S3 secret, DB down), not a bad
+  // transcript: it must abort the backfill (reported, cursors left unset) rather
+  // than silently drop the file.
+  let blobError: { err: unknown } | undefined;
+  const ctx: NormalizeContext = {
+    ...base,
+    blob: async (data) => {
+      try {
+        return await base.blob(data);
+      } catch (err) {
+        blobError ??= { err };
+        throw err;
+      }
+    },
+  };
   for await (const f of walkFiles(root, { match: (n) => n.endsWith(".jsonl") && n !== "journal.jsonl", maxDepth: 5, since })) {
     const sub = SUBAGENT_FILE.exec(f.path);
     // Main transcripts sit directly in projects/<slug>/; any other .jsonl (workflow journals, …) is not a session.
     if (!sub && relative(root, f.path).split(/[\\/]/).length !== 2) continue;
-    if (opts.changed && !(await opts.changed(f))) continue; // unchanged since the last backfill
+    if (opts.changed && !(await opts.changed(cursorView(f, TRANSCRIPT_IDLE_MS)))) continue; // unchanged since the last backfill (or since it went idle)
     let events: AgentEvent[];
     try {
       events = sub ? await convertSubagentFile(ctx, f.path, sub[1]!, sub[3]!, sub[2] ? (firstTs) => workflows.link(f.path, sub[1]!, sub[2]!, sub[3]!, firstTs) : undefined) : await convertMainFile(ctx, f.path);
     } catch {
+      if (blobError) throw blobError.err;
       continue; // unreadable transcript: skip, never abort the whole backfill
     }
+    if (blobError) throw blobError.err; // in case a converter swallowed it
     for (const e of events) if (since === undefined || e.ts >= since) yield e;
   }
 }
@@ -372,11 +394,16 @@ async function convertSubagentFile(ctx: NormalizeContext, path: string, parentSi
   }
   const type = str(meta.agentType);
   const conv = new ClaudeTranscriptConverter(ctx, { agent: CLAUDE_AGENT, mode: "full", sessionId: child, subagentId: agentId, source: basename(path), sidechain: true });
-  const events = await convertFile(path, conv);
-  if (!events.length) return events;
+  for await (const r of readJsonl(path)) await conv.add(r.value, r.lineNo);
+  if (!conv.out.length) return conv.finish();
+  const link = resolveLink ? await resolveLink(conv.out[0]!.ts) : undefined;
+  // Finished per the meta sidecar; without that flag (Workflow agents, old versions), per the run journal or an idle transcript.
+  const known = typeof meta.finished === "boolean" ? meta.finished : link?.done;
+  const finished = known ?? Date.now() - conv.lastEntryTs > TRANSCRIPT_IDLE_MS;
+  // A running subagent's open turn ends later, with its real end.
+  const events = await conv.finish(finished);
   const first = events[0]!;
   const last = events[events.length - 1]!;
-  const link = resolveLink ? await resolveLink(first.ts) : undefined;
   const start = events.find((e) => e.kind === "session.start");
   if (start) start.payload = { ...start.payload, source: "subagent", ...parentLink(ctx, CLAUDE_AGENT, parentSid, agentId, type) };
   const toolUseId = link?.toolUseId ?? str(meta.toolUseId);
@@ -384,13 +411,13 @@ async function convertSubagentFile(ctx: NormalizeContext, path: string, parentSi
   const em = new Emitter(ctx, { agent: CLAUDE_AGENT, sessionId: parentSid, ts: first.ts, cwd: first.cwd, agentVersion: first.agentVersion }, ["subagent", agentId]);
   const description = str(meta.description) ?? link?.label;
   em.emit("subagent.start", { subagentId: agentId, type, description, childSessionId: child, toolUseId, workflowId: link?.workflowId, phase: str(meta.workflowPhase) ?? link?.phase }, { key: [agentId], parentId });
-  // Finished per the meta sidecar; without that flag (Workflow agents, old versions), per the run journal or an idle transcript.
-  const finished = typeof meta.finished === "boolean" ? meta.finished : (link?.done ?? Date.now() - last.ts > TRANSCRIPT_IDLE_MS);
   if (finished) {
     const lastText = [...events].reverse().find((e) => e.kind === "assistant.message");
     em.emit("subagent.end", { subagentId: agentId, type, ok: true, childSessionId: child, result: typeof lastText?.payload.text === "string" ? (lastText.payload.text as string).slice(0, 1024) : undefined }, { key: [agentId], ts: last.ts, parentId, durationMs: last.ts - first.ts });
-    // The child ends with its subagent.end (same key as the live SubagentStop's session.end, so they dedupe).
-    em.emit("session.end", { reason: "subagent-stop" }, { sessionId: child, subagentId: agentId, key: ["end"], ts: last.ts, cwd: last.cwd });
+    // The child ends with its subagent.end (same key as the live SubagentStop's session.end, so
+    // they dedupe). An end guessed from idleness is keyed by its time instead: if the
+    // subagent turns out to be still running, its real end is not dropped as a duplicate.
+    em.emit("session.end", { reason: known ? "subagent-stop" : "idle" }, { sessionId: child, subagentId: agentId, key: known ? ["end"] : ["idle", last.ts], ts: last.ts, cwd: last.cwd });
   }
   return [...events, ...em.events];
 }

@@ -1,9 +1,9 @@
 // File-edit planning for install/uninstall: every change is computed first as
 // a FileChange (full before/after text), then applied with a backup and an
 // atomic rename. Dry runs stop after planning, so they never touch disk.
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { chmod, copyFile, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { paths } from "../../core/paths.ts";
 import type { FileChange } from "../../core/types.ts";
 
@@ -56,8 +56,31 @@ export async function backupFile(agent: string, path: string, env: NodeJS.Proces
   return dest;
 }
 
-/** Write via temp file + rename so a crash never leaves a half-written config. Keeps the file mode. */
-export async function atomicWrite(path: string, text: string, mode?: number): Promise<void> {
+/**
+ * The file a write to `path` must replace. A symlinked config (a dotfiles
+ * repo managed with stow and the like) is followed to its target, so the
+ * rename lands on the real file and the link stays a link. Dangling links
+ * resolve too (the write creates the target).
+ */
+export function resolveWriteTarget(path: string): string {
+  let p = resolve(path);
+  for (let hops = 0; hops < 40; hops++) {
+    try {
+      if (!lstatSync(p).isSymbolicLink()) return p;
+    } catch {
+      return p; // missing: a new file at this path
+    }
+    p = resolve(dirname(p), readlinkSync(p));
+  }
+  throw Object.assign(new Error(`too many symbolic links at ${path}`), { code: "ELOOP" });
+}
+
+/**
+ * Write via temp file + rename so a crash never leaves a half-written config.
+ * Keeps the file mode; a symlink is written through (see resolveWriteTarget).
+ */
+export async function atomicWrite(linkOrPath: string, text: string, mode?: number): Promise<void> {
+  const path = resolveWriteTarget(linkOrPath);
   await mkdir(dirname(path), { recursive: true });
   let keepMode = mode;
   if (keepMode === undefined) {

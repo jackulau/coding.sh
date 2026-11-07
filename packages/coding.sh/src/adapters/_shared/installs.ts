@@ -6,6 +6,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { paths } from "../../core/paths.ts";
+import { resolveWriteTarget } from "./files.ts";
 
 export interface InstallRecord {
   agent: string;
@@ -19,6 +20,12 @@ export interface InstallRecord {
    * byte-for-byte. Absent = no exact restore known.
    */
   restore?: string | null;
+  /**
+   * The MCP server entry coding.sh last wrote to this file. Ownership of an
+   * entry is decided by its content matching this, not by comment markers
+   * (agents that re-serialize their config, like `codex mcp add`, drop those).
+   */
+  mcp?: { command: string; args: string[] };
 }
 
 interface InstallsFile {
@@ -41,7 +48,7 @@ function load(env: NodeJS.ProcessEnv): InstallsFile {
 }
 
 function save(f: InstallsFile, env: NodeJS.ProcessEnv): void {
-  const file = paths(env).installs;
+  const file = resolveWriteTarget(paths(env).installs);
   mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
   const tmp = `${file}.codingsh-${randomBytes(4).toString("hex")}.tmp`;
   writeFileSync(tmp, JSON.stringify(f, null, 2) + "\n", { mode: 0o600 });
@@ -60,10 +67,24 @@ export function ownsInstall(path: string, text: string | undefined, env: NodeJS.
   return r !== undefined && r.sha256 === sha256(text);
 }
 
-/** Record that coding.sh wrote `text` to `path` (with the original to restore, when known). */
-export function recordInstall(agent: string, path: string, text: string, env: NodeJS.ProcessEnv = process.env, now = Date.now(), restore?: string | null): void {
+/**
+ * Record that coding.sh wrote `text` to `path` (with the original to restore,
+ * when known). `mcp` is the server entry written; a later write that passes
+ * none (a hook install into the same file) keeps the earlier one.
+ */
+export function recordInstall(
+  agent: string,
+  path: string,
+  text: string,
+  env: NodeJS.ProcessEnv = process.env,
+  now = Date.now(),
+  restore?: string | null,
+  mcp?: InstallRecord["mcp"],
+): void {
   const f = load(env);
-  f.files[resolve(path)] = { agent, sha256: sha256(text), ts: now, ...(restore !== undefined ? { restore } : {}) };
+  const key = resolve(path);
+  const keepMcp = mcp ?? f.files[key]?.mcp;
+  f.files[key] = { agent, sha256: sha256(text), ts: now, ...(restore !== undefined ? { restore } : {}), ...(keepMcp ? { mcp: keepMcp } : {}) };
   save(f, env);
 }
 

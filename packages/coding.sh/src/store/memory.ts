@@ -72,11 +72,22 @@ export class MemoryIndexStore implements IndexStore {
     };
   }
 
+  async listProjects(): Promise<string[]> {
+    return [...new Set([...this.sessions.values()].map(projectOf))].sort();
+  }
+
   async deleteBefore(cutoffMs: number, opts: { project?: string } = {}): Promise<{ sessions: number; events: number }> {
+    // Last activity: the recorded end (or start) and every event's end (see IndexStore.deleteBefore).
+    const lastActivity = new Map<string, number>();
+    for (const s of this.sessions.values()) lastActivity.set(s.id, s.endedAt ?? s.startedAt);
+    for (const { event: e } of this.events.values()) {
+      const at = lastActivity.get(e.sessionId);
+      if (at !== undefined) lastActivity.set(e.sessionId, Math.max(at, e.ts + (e.durationMs ?? 0)));
+    }
     const doomed = new Set<string>();
     for (const s of this.sessions.values()) {
       if (opts.project !== undefined && projectOf(s) !== opts.project) continue;
-      if ((s.endedAt ?? s.startedAt) < cutoffMs) doomed.add(s.id);
+      if (lastActivity.get(s.id)! < cutoffMs) doomed.add(s.id);
     }
     let events = 0;
     for (const [id, r] of this.events) {
@@ -98,6 +109,17 @@ export class MemoryIndexStore implements IndexStore {
       inserted++;
     }
     return { inserted };
+  }
+
+  async setEventCosts(costs: { id: string; costUsd: number }[]): Promise<number> {
+    let found = 0;
+    for (const { id, costUsd } of costs) {
+      const r = this.events.get(id);
+      if (!r) continue;
+      r.event = { ...r.event, usage: { ...r.event.usage, costUsd }, payload: { ...r.event.payload, costEstimated: true } };
+      found++;
+    }
+    return found;
   }
 
   async listEvents(sessionId: string, opts: { kinds?: string[]; limit?: number; offset?: number } = {}): Promise<AgentEvent[]> {
@@ -134,6 +156,10 @@ export class MemoryIndexStore implements IndexStore {
   async getSession(id: string): Promise<Session | undefined> {
     const s = this.sessions.get(id);
     return s ? clone(s) : undefined;
+  }
+
+  async sessionIdsByPrefix(prefix: string, limit: number): Promise<string[]> {
+    return [...this.sessions.keys()].filter((id) => id.startsWith(prefix)).sort().slice(0, limit);
   }
 
   async listSessions(f: SessionFilter = {}): Promise<Session[]> {
@@ -181,7 +207,9 @@ export class MemoryIndexStore implements IndexStore {
   }
 
   async getBundle(idOrName: string): Promise<HarnessBundle | undefined> {
-    const b = this.bundles.get(idOrName) ?? [...this.bundles.values()].filter((x) => x.name === idOrName).sort(byCreatedDesc)[0];
+    // Newest createdAt, ties to the greatest id (like the SQL stores' ORDER BY created_at DESC, id DESC).
+    const b = this.bundles.get(idOrName) ??
+      [...this.bundles.values()].filter((x) => x.name === idOrName).sort((x, y) => y.createdAt - x.createdAt || cmp(y.id, x.id))[0];
     return b ? clone(b) : undefined;
   }
 
@@ -267,7 +295,7 @@ export class MemoryIndexStore implements IndexStore {
       .filter((r) => (!f.datasetId || r.dataset.id === f.datasetId) && (!f.name || r.name === f.name))
       .sort((a, b) => cmp(b.id, a.id))
       .map(clone);
-    return f.limit ? rows.slice(0, f.limit) : rows;
+    return page(rows, f.limit); // 0 → none, undefined or negative → all
   }
 
   async putJudge(v: JudgeVersion): Promise<void> {

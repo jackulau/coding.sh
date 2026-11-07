@@ -3,6 +3,9 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
+import { defaultConfig } from "../../src/core/config.ts";
+import { backfill, backfillCursorKey } from "../../src/core/ingest.ts";
+import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 
 const SID = "11111111-2222-4333-8444-555555555555";
@@ -75,6 +78,32 @@ describe("claude-code backfill", () => {
       assert.ok(l.length > 0);
       for (const e of l) assert.ok(ids.has(e.id), `${kind} ${JSON.stringify(e.payload).slice(0, 80)} not deduped`);
     }
+  });
+
+  it("surfaces failed blob writes instead of dropping transcripts silently", async () => {
+    // Small inline limit: the fixture transcripts need blobs.
+    const { ctx } = testCtx(16);
+    let puts = 0;
+    const failing = { ...ctx, blob: async () => { puts++; throw new Error("blob store: SignatureDoesNotMatch"); } };
+    await assert.rejects(collect(claudeCode.backfill!(failing)), /SignatureDoesNotMatch/);
+    assert.ok(puts > 0);
+
+    // Through core backfill: reported in errors, and no file cursor marks the transcripts as read.
+    const index = new MemoryIndexStore();
+    const blobs = new MemoryBlobStore();
+    blobs.put = async () => { throw new Error("blob store: SignatureDoesNotMatch"); };
+    const config = defaultConfig();
+    config.capture = { ...config.capture, maxInlineBytes: 16 };
+    const r = await backfill({ config, index, blobs, adapters: [claudeCode], env: process.env });
+    assert.ok(r.errors.some((e) => /claude-code\.backfill failed: .*SignatureDoesNotMatch/.test(e.message)), JSON.stringify(r.errors));
+    assert.equal(r.agents.find((a) => a.agent === "claude-code")?.error?.includes("SignatureDoesNotMatch"), true);
+    const transcript = join(FIXTURES, "claude-code", "config", "projects");
+    const cursors = await Promise.all(
+      readdirSync(transcript, { recursive: true, encoding: "utf8" })
+        .filter((p) => p.endsWith(".jsonl"))
+        .map((p) => index.getCursor(backfillCursorKey("claude-code", join(transcript, p), "mtime"))),
+    );
+    assert.ok(cursors.every((c) => c === 0), "a failed file is retried on the next backfill");
   });
 
   it("honors since", async () => {

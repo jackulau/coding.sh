@@ -64,8 +64,8 @@ describe("antigravity install", () => {
     assert.deepEqual(h["my-guard"], user["my-guard"]);
     assert.deepEqual(Object.keys(h["coding-sh"]), [...AGY_HOOK_EVENTS]);
     assert.ok(!("PreToolUse" in h["coding-sh"]), "PreToolUse requires a decision; never installed");
-    assert.deepEqual(h["coding-sh"].PostToolUse, [{ matcher: "*", hooks: [{ type: "command", command: `node "${HOOK}" antigravity PostToolUse`, timeout: 10 }] }]);
-    assert.deepEqual(h["coding-sh"].Stop, [{ type: "command", command: `node "${HOOK}" antigravity Stop`, timeout: 10 }]);
+    assert.deepEqual(h["coding-sh"].PostToolUse, [{ matcher: "*", hooks: [{ type: "command", command: `node "${HOOK}" antigravity PostToolUse --reply={}`, timeout: 10 }] }]);
+    assert.deepEqual(h["coding-sh"].Stop, [{ type: "command", command: `node "${HOOK}" antigravity Stop --reply={}`, timeout: 10 }]);
     assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), user);
   });
 

@@ -35,7 +35,7 @@ import { userHome } from "../core/paths.ts";
 import type { Adapter, BackfillFile, BackfillOpts, NormalizeContext } from "../core/types.ts";
 import type { AgentEvent, Usage } from "../schema/index.ts";
 import { T3_AGENT } from "../spool/host.ts";
-import { ClaudeTranscriptConverter, Emitter, blobList, clipText, clipValue, emitDerived, hasOurHooks, num, obj, parentLink, readJsonl, str, toMs, walkFiles } from "./_shared/index.ts";
+import { ClaudeTranscriptConverter, Emitter, blobList, clipText, clipValue, emitDerived, hasOurHooks, num, obj, parentLink, readJsonl, str, toMs, usageSnapshotKey, walkFiles } from "./_shared/index.ts";
 import { CLAUDE_AGENT, TRANSCRIPT_IDLE_MS, claudeConfigDir } from "./claude-code.ts";
 import { ROLLOUT_IDLE_MS, codexHome, convertRollout } from "./codex.ts";
 import { cursorConfigDir } from "./cursor.ts";
@@ -324,7 +324,7 @@ async function storeEvents(ctx: NormalizeContext, p: SessionPlan, rows: StoreRow
   }
   out.push(...em.events);
   const tail = new Emitter(ctx, { ...base, ts: last }, ["t3", p.sessionId, "tail"]);
-  if (rows.totals) tail.emit("notification", { type: "usage-summary", via: T3_AGENT }, { key: ["usage-summary"], usage: rows.totals });
+  if (rows.totals) tail.emit("notification", { type: "usage-summary", via: T3_AGENT }, { key: usageSnapshotKey(rows.totals), usage: rows.totals });
   if (Date.now() - last > ROLLOUT_IDLE_MS) tail.emit("session.end", { reason: "idle" }, { key: ["idle", last] });
   out.push(...tail.events);
   return out;
@@ -571,7 +571,7 @@ function readV1Rows(db: DatabaseSync, threadId: string): StoreRows {
       } else if (kind === "context-compaction") {
         items.push({ id: String(r.activity_id), kind: "compact", done: true, ok: true, start: ts, end: ts });
       } else if (kind === "context-window.updated") {
-        // Running totals (v1 has no per-turn usage): the latest snapshot wins.
+        // Running totals (v1 has no per-turn usage): the latest snapshot wins, here and in buildSession.
         const input = num(pl.inputTokens);
         const cached = num(pl.cachedInputTokens) ?? 0;
         const output = num(pl.outputTokens);

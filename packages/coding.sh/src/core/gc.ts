@@ -10,16 +10,28 @@
 // Safety: blobs younger than `minBlobAgeMs` are never swept, so an ingest that
 // has stored a blob but not yet committed the event referencing it is safe.
 // Dedupe hits refresh a blob's mtime (FsBlobStore), extending the same guard.
-import { stat, unlink } from "node:fs/promises";
+// That guard alone has a gap: an ingest that dedupes onto an OLD unreferenced
+// blob between the sweep's stat and its delete would commit an event pointing
+// at a deleted blob. So a real (non-dry) run holds the ingest lock
+// (core/lock.ts) across the blob mark+sweep and the spool phase; a spool file
+// is then never deleted mid-read either. Deleting a spool file also resets its
+// cursors, so a file recreated at the same path (pid reuse the same UTC day) is
+// read from the start.
+import { existsSync } from "node:fs";
+import { readdir, stat, unlink } from "node:fs/promises";
+import { join } from "node:path";
 import type { BlobRef } from "../schema/index.ts";
 import type { BlobStore, Config, IndexStore } from "./types.ts";
 import { paths } from "./paths.ts";
 import { bundleBlobs, runBlobs, taskBlobs } from "../store/common.ts";
 import { gcJudgeCache, type JudgeCacheGcResult } from "../judge/cache.ts";
 import { sinkCursorKey } from "./ingest.ts";
-import { listSpoolFiles, rawFilesOf } from "./spool-read.ts";
+import { acquireLock, type Lock, type LockOptions } from "./lock.ts";
+import { listSpoolFiles, rawFilesOf, type SpoolFile } from "./spool-read.ts";
 
 const DAY = 86_400_000;
+/** An unreferenced raw side file younger than this may belong to a hook between its two writes. */
+const MIN_ORPHAN_RAW_AGE_MS = 3_600_000;
 
 export interface GcOptions {
   index: IndexStore;
@@ -37,6 +49,12 @@ export interface GcOptions {
   judgeCacheMaxBytes?: number;
   /** Also reclaim index space (IndexStore.compact) when not a dry run. */
   compact?: boolean;
+  /**
+   * The ingest lock held across the blob and spool phases of a real run
+   * (default: `<spoolDir>/.ingest.lock`, wait 30 s, taken only when the spool
+   * dir exists). false = no lock (the caller serializes ingest and gc itself).
+   */
+  lock?: false | (LockOptions & { path?: string });
 }
 
 export interface GcResult {
@@ -54,6 +72,10 @@ export interface GcResult {
     skippedNoAge: number;
     /** Referenced only by tool output older than retention.toolOutputDays (counted in deleted when swept). */
     expired: number;
+    /** Orphan temp files of interrupted blob writes older than minBlobAgeMs, removed (or that would be). */
+    tmpFiles: number;
+    /** Their bytes (not counted in `bytes`). */
+    tmpBytes: number;
   };
   judgeCache?: JudgeCacheGcResult;
   /** True when the index was compacted. */
@@ -62,12 +84,14 @@ export interface GcResult {
     scanned: number;
     deleted: number;
     bytes: number;
-    /** Side files (large raw payloads) removed with their spool file. */
+    /** Side files (large raw payloads) removed: with their spool file, or unreferenced and older than keepSpoolDays. */
     rawFiles: number;
   };
 }
 
 type Stat = { size: number; mtimeMs: number };
+type DeleteIfOlder = (ref: BlobRef, opts: { olderThanMs: number; now?: number }) => Promise<number | "kept" | undefined>;
+type SweepTmp = (opts: { olderThanMs: number; now?: number; dryRun?: boolean }) => Promise<{ files: number; bytes: number }>;
 type StatFn = (ref: BlobRef) => Promise<Stat | undefined>;
 
 /** Optional capability: stores that can report blob age implement stat(ref). */
@@ -77,69 +101,27 @@ function statOf(blobs: BlobStore): StatFn | undefined {
 }
 
 export async function gc(opts: GcOptions): Promise<GcResult> {
-  const { index, blobs, config } = opts;
+  const { index } = opts;
   const dryRun = opts.dryRun ?? false;
   const now = opts.now ?? Date.now();
   const minAge = opts.minBlobAgeMs ?? DAY;
   const result: GcResult = {
     dryRun,
-    blobs: { scanned: 0, referenced: 0, deleted: 0, bytes: 0, skippedYoung: 0, skippedNoAge: 0, expired: 0 },
+    blobs: { scanned: 0, referenced: 0, deleted: 0, bytes: 0, skippedYoung: 0, skippedNoAge: 0, expired: 0, tmpFiles: 0, tmpBytes: 0 },
     spool: { scanned: 0, deleted: 0, bytes: 0, rawFiles: 0 },
   };
 
-  // ---- blobs: mark
-  const referenced = new Set<BlobRef>();
-  for await (const ref of index.referencedBlobs()) referenced.add(ref);
-  const days = config.retention.toolOutputDays;
-  if (days > 0) {
-    for (const ref of await expiredToolOutput(index, now - days * DAY)) {
-      if (referenced.delete(ref)) result.blobs.expired++;
-    }
-  }
-  result.blobs.referenced = referenced.size;
-
-  // ---- blobs: sweep
-  const statFn = statOf(blobs);
-  for await (const ref of blobs.list()) {
-    result.blobs.scanned++;
-    if (referenced.has(ref)) continue;
-    if (!statFn) {
-      result.blobs.skippedNoAge++;
-      continue;
-    }
-    const s = await statFn(ref);
-    if (!s) continue; // removed concurrently
-    if (now - s.mtimeMs < minAge) {
-      result.blobs.skippedYoung++;
-      continue;
-    }
-    if (!dryRun) await blobs.delete(ref);
-    result.blobs.deleted++;
-    result.blobs.bytes += s.size;
-  }
-
-  // ---- spool
   const spoolDir = opts.spoolDir ?? paths(opts.env ?? process.env).spool;
-  const keepMs = config.retention.keepSpoolDays * DAY;
-  const sinkNames = config.sinks.map((s) => s.name ?? s.kind);
-  for (const file of await listSpoolFiles(spoolDir)) {
-    result.spool.scanned++;
-    if (now - file.mtimeMs < keepMs) continue;
-    const cursors = [await index.getCursor(file.source)];
-    for (const name of sinkNames) cursors.push(await index.getCursor(sinkCursorKey(name, file.source)));
-    if (cursors.some((c) => c < file.size)) continue;
-    const raws = await rawFilesOf(spoolDir, file.path);
-    let bytes = file.size;
-    for (const raw of raws) bytes += await stat(raw).then((s) => s.size, () => 0);
-    if (!dryRun) {
-      for (const raw of raws) await unlink(raw).catch(() => {});
-      await unlink(file.path).catch((err: NodeJS.ErrnoException) => {
-        if (err.code !== "ENOENT") throw err;
-      });
-    }
-    result.spool.deleted++;
-    result.spool.rawFiles += raws.length;
-    result.spool.bytes += bytes;
+  let lock: Lock | undefined;
+  if (!dryRun && opts.lock !== false && existsSync(spoolDir)) {
+    const lo = opts.lock ?? {};
+    lock = await acquireLock(lo.path ?? join(spoolDir, ".ingest.lock"), lo);
+  }
+  try {
+    await sweepBlobs(opts, result, now, minAge, lock);
+    await sweepSpool(opts, result, now, spoolDir, lock);
+  } finally {
+    lock?.release();
   }
 
   // ---- judge cache
@@ -155,6 +137,135 @@ export async function gc(opts: GcOptions): Promise<GcResult> {
     result.compacted = true;
   }
   return result;
+}
+
+async function sweepBlobs(opts: GcOptions, result: GcResult, now: number, minAge: number, lock: Lock | undefined): Promise<void> {
+  const { index, blobs, config, dryRun } = opts;
+  // ---- blobs: mark
+  const referenced = new Set<BlobRef>();
+  for await (const ref of index.referencedBlobs()) referenced.add(ref);
+  const days = config.retention.toolOutputDays;
+  if (days > 0) {
+    for (const ref of await expiredToolOutput(index, now - days * DAY)) {
+      if (referenced.delete(ref)) result.blobs.expired++;
+    }
+  }
+  result.blobs.referenced = referenced.size;
+
+  // ---- blobs: sweep
+  const statFn = statOf(blobs);
+  const deleteIfOlder = (blobs as BlobStore & { deleteIfOlder?: DeleteIfOlder }).deleteIfOlder;
+  for await (const ref of blobs.list()) {
+    result.blobs.scanned++;
+    if (referenced.has(ref)) continue;
+    if (!statFn) {
+      result.blobs.skippedNoAge++;
+      continue;
+    }
+    const s = await statFn(ref);
+    if (!s) continue; // removed concurrently
+    if (now - s.mtimeMs < minAge) {
+      result.blobs.skippedYoung++;
+      continue;
+    }
+    let size = s.size;
+    if (!dryRun) {
+      lock?.assertHeld();
+      if (typeof deleteIfOlder === "function") {
+        // Writers outside the ingest lock (backfill, otel, eval) may re-capture it right now.
+        const removed = await deleteIfOlder.call(blobs, ref, { olderThanMs: minAge, now });
+        if (removed === "kept") result.blobs.skippedYoung++;
+        if (typeof removed !== "number") continue;
+        size = removed;
+      } else await blobs.delete(ref);
+    }
+    result.blobs.deleted++;
+    result.blobs.bytes += size;
+  }
+
+  // ---- blobs: temp files of writes that never reached their rename (FsBlobStore)
+  const sweepTmp = (blobs as BlobStore & { sweepTmp?: SweepTmp }).sweepTmp;
+  if (typeof sweepTmp === "function") {
+    if (!dryRun) lock?.assertHeld();
+    const t = await sweepTmp.call(blobs, { olderThanMs: minAge, now, dryRun: !!dryRun });
+    result.blobs.tmpFiles += t.files;
+    result.blobs.tmpBytes += t.bytes;
+  }
+}
+
+async function sweepSpool(opts: GcOptions, result: GcResult, now: number, spoolDir: string, lock: Lock | undefined): Promise<void> {
+  const { index, config, dryRun } = opts;
+  const keepMs = config.retention.keepSpoolDays * DAY;
+  const sinkNames = config.sinks.map((s) => s.name ?? s.kind);
+  const kept: SpoolFile[] = [];
+  for (const file of await listSpoolFiles(spoolDir)) {
+    result.spool.scanned++;
+    if (now - file.mtimeMs < keepMs) {
+      kept.push(file);
+      continue;
+    }
+    const cursors = [await index.getCursor(file.source)];
+    for (const name of sinkNames) cursors.push(await index.getCursor(sinkCursorKey(name, file.source)));
+    if (cursors.some((c) => c < file.size)) {
+      kept.push(file);
+      continue;
+    }
+    const raws = await rawFilesOf(spoolDir, file.path);
+    let bytes = file.size;
+    for (const raw of raws) bytes += await stat(raw).then((s) => s.size, () => 0);
+    if (!dryRun) {
+      // Appended since it was listed (the `coding.sh run` wrapper writes without the lock): keep it.
+      const s = await stat(file.path).catch(() => undefined);
+      if (s && (s.size !== file.size || s.mtimeMs !== file.mtimeMs)) {
+        kept.push(file);
+        continue;
+      }
+      lock?.assertHeld();
+      for (const raw of raws) await unlink(raw).catch(() => {});
+      await unlink(file.path).catch((err: NodeJS.ErrnoException) => {
+        if (err.code !== "ENOENT") throw err;
+      });
+      // A later file at this path is new content: every consumer starts it from 0.
+      await index.setCursor(file.source, 0);
+      for (const name of sinkNames) await index.setCursor(sinkCursorKey(name, file.source), 0);
+    }
+    result.spool.deleted++;
+    result.spool.rawFiles += raws.length;
+    result.spool.bytes += bytes;
+  }
+  await sweepOrphanRaw(opts, result, now, spoolDir, keepMs, kept, lock);
+}
+
+/**
+ * Raw side files no remaining spool line references (the hook died, or its
+ * append failed, between writing the side file and the line). They can hold
+ * whole prompts or tool output, so they follow keepSpoolDays too.
+ */
+async function sweepOrphanRaw(opts: GcOptions, result: GcResult, now: number, spoolDir: string, keepMs: number, kept: SpoolFile[], lock: Lock | undefined): Promise<void> {
+  const minAge = Math.max(keepMs, MIN_ORPHAN_RAW_AGE_MS);
+  const candidates: { path: string; size: number }[] = [];
+  for (const agent of await readdir(spoolDir).catch(() => [] as string[])) {
+    const rawDir = join(spoolDir, agent, "raw");
+    for (const name of await readdir(rawDir).catch(() => [] as string[])) {
+      const path = join(rawDir, name);
+      const s = await stat(path).catch(() => undefined);
+      if (s?.isFile() && now - s.mtimeMs >= minAge) candidates.push({ path, size: s.size });
+    }
+  }
+  if (!candidates.length) return;
+  const referenced = new Set<string>();
+  for (const file of kept) {
+    for (const raw of await rawFilesOf(spoolDir, file.path).catch(() => [] as string[])) referenced.add(raw);
+  }
+  for (const c of candidates) {
+    if (referenced.has(c.path)) continue;
+    if (!opts.dryRun) {
+      lock?.assertHeld();
+      await unlink(c.path).catch(() => {});
+    }
+    result.spool.rawFiles++;
+    result.spool.bytes += c.size;
+  }
 }
 
 /**

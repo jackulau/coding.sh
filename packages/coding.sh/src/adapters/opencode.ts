@@ -45,6 +45,7 @@ import {
   runHeadless,
   str,
   toMs,
+  usageSnapshotKey,
   which,
   lineKey,
   mcpInstaller,
@@ -403,7 +404,8 @@ async function convertStoredSession(ctx: NormalizeContext, s: { id: string; pare
   if (!sawUsage && totals) {
     // Session-level totals only (no per-call rows): attach to a summary so session usage is still right.
     const em = new Emitter(ctx, { ...base, ts: lastTs }, ["store", s.id, "totals"]);
-    em.emit("notification", { type: "usage-summary" }, { key: ["usage-summary"], usage: totals });
+    // Running totals: a later backfill with larger totals adds a new snapshot (buildSession counts the latest).
+    em.emit("notification", { type: "usage-summary" }, { key: usageSnapshotKey(totals), usage: totals });
     out.push(...em.events);
   }
   if (s.parentId) {

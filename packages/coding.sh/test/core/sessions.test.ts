@@ -209,6 +209,18 @@ describe("session duration (QA regressions)", () => {
     assert.equal(s.endedAt! - s.startedAt, 5000);
   });
 
+  it("SDK sessions (source sdk, no session.end) end at their last activity, also mixed with OTel spans", () => {
+    const sdk = (id: string, kind: EventKind, ts: number, o: Partial<AgentEvent> = {}): AgentEvent => ({ id, v: 0, sessionId: "demo/chat-1", agent: "my-api", kind, ts, source: "sdk", payload: {}, ...o });
+    const s = buildSession([sdk("a", "user.message", 1000), sdk("b", "llm.call", 2000, { durationMs: 1500 })]);
+    assert.equal(s.endedAt, 3500, "ends when the last call finished, not running forever");
+    // aiSdkTracer() spans for the same conversation arrive over OTLP next to native events.
+    const mixed = buildSession([sdk("a", "user.message", 1000), { ...sdk("c", "llm.call", 4000, { durationMs: 1000 }), source: "otel-span", traceId: "t9" }]);
+    assert.equal(mixed.endedAt, 5000);
+    // An explicit session.end still wins; a client-set non-sdk source keeps waiting for one.
+    assert.equal(buildSession([sdk("a", "llm.call", 1000, { durationMs: 9000 }), sdk("e", "session.end", 2000)]).endedAt, 2000);
+    assert.equal(buildSession([sdk("a", "llm.call", 1000, { source: "hook" })]).endedAt, undefined);
+  });
+
   it("transcript-only (backfilled) sessions end at their last event; live ones wait for session.end", () => {
     const tr = (kind: EventKind, ts: number, o: Partial<AgentEvent> = {}) => ev(kind, {}, { ts, source: "transcript", ...o });
     const s = buildSession([tr("session.start", 1000), tr("user.message", 1000), tr("turn.end", 375_021, { durationMs: 374_021 })]);

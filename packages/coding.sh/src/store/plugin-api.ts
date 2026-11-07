@@ -21,7 +21,9 @@ export type {
 export type { AgentEvent, AgentId, BlobRef, Session, Usage } from "../schema/index.ts";
 export type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "../datasets/types.ts";
 export type { BlobStoreFactory, IndexStoreFactory, StorePlugin } from "./factory.ts";
+export type { BlobRefField } from "./common.ts";
 export {
+  BLOB_REF_FIELDS,
   MESSAGE_SEARCH_KINDS,
   SEARCHABLE_KINDS,
   SNIPPET_CLOSE,
@@ -33,6 +35,7 @@ export {
   bundleBlobs,
   foldTerm,
   ftsQuery,
+  refsAt,
   runBlobs,
   searchTerms,
   searchableText,

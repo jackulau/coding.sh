@@ -57,3 +57,19 @@ export function mcnemarPaired(baseline: readonly boolean[], candidate: readonly 
   }
   return mcnemar(b, c);
 }
+
+/**
+ * Holm–Bonferroni step-down adjustment: adjusted p-values (same order as the
+ * input) that control the family-wise error rate across m tests.
+ */
+export function holm(ps: readonly number[]): number[] {
+  const m = ps.length;
+  const order = ps.map((p, i) => [p, i] as const).sort((a, b) => a[0] - b[0]);
+  const out = new Array<number>(m);
+  let running = 0;
+  for (const [rank, [p, i]] of order.entries()) {
+    running = Math.max(running, Math.min(1, (m - rank) * p));
+    out[i] = running;
+  }
+  return out;
+}

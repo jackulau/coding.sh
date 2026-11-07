@@ -8,7 +8,7 @@
       "transcriptPath": "${FIXTURES}/claude-code/config/projects/-work-demo/11111111-2222-4333-8444-555555555555.jsonl",
       "permissionMode": "default"
     },
-    "id": "c21588cdcefc5e20b1a0f5dda90f7d5c907acccbe99ffd5716b6917f1d5b304d",
+    "id": "bbc769a64157f31569a3de21925804e30cd1c6a5159454a5b4a2e301c82ad437",
     "model": "claude-opus-4-5",
     "blobs": [
       "3658f8f77938b97b01cab540e2e5b56dde6dffbb6a823ffd8666574a1dd1ab2c"
@@ -382,7 +382,8 @@
     "payload": {
       "ok": true
     },
-    "id": "286ee543916573b4e6d75f43a8215334b839faf8a0196f70bad475878555dfac",
+    "id": "b340a4eadea0a6d3b277423f5408b15a4b4199211b897143681cc0d4e3ed99f5",
+    "turnId": "0f8d3561bb19728af7c31fca842cceea02de0ed2cb831426dda2bba05e306b1b",
     "model": "claude-opus-4-5",
     "blobs": [
       "43768ab7c5611fdc2118a29ab0c1acee93639e94d137140f6db49545e9a25b45"

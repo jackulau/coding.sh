@@ -47,7 +47,8 @@ The tables mirror the SQLite store: `events`, `sessions`, `cursors`, `tasks`, `b
 
 The conformance suite from `coding.sh/store/conformance` and the Postgres-specific tests run against
 `CODING_SH_TEST_PG_URL`. They skip when it is unset. Each test creates a schema `t_<random>` and drops it
-afterwards.
+afterwards. `npm ci` builds this package's `dist/` through its `prepare` script; after editing `src/`,
+rebuild with `npm run build -w coding.sh-store-postgres`.
 
 ```sh
 npm run build -w coding.sh

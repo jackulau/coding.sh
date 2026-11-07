@@ -114,6 +114,34 @@ function addUsage(sum: Usage, u: Usage | undefined): void {
 
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 
+/**
+ * A usage snapshot: running session totals (T3 Code v1 threads, OpenCode
+ * sessions without per-message tokens), re-emitted as the totals grow. Only
+ * the latest one counts; summing them would count the same tokens again.
+ */
+export const isUsageSnapshot = (e: AgentEvent): boolean => e.kind === "notification" && e.payload.type === "usage-summary";
+
+const tokenTotal = (u: Usage | undefined): number => (u?.inputTokens ?? 0) + (u?.outputTokens ?? 0) + (u?.cacheReadTokens ?? 0) + (u?.cacheWriteTokens ?? 0);
+
+/**
+ * Activity this long after a session.end reopens the session (a resume under
+ * the same id, or more work after a guessed idle end). The slack covers events
+ * stamped just after the end they belong to: hook transcript windows read up
+ * to 2 s past their hook's time.
+ */
+export const REOPEN_SLACK_MS = 5_000;
+
+/**
+ * Turns from turn.end rows. One capture path: every row is a turn. Both paths:
+ * rows with a turnId count once per turn (both paths key them alike, so either
+ * may hold a given turn); rows without one are each path's own count of the same
+ * turns, so the larger count wins (a hook installed mid-session saw fewer).
+ */
+function turnCount(t: { live: number; backfill: number; liveIdless: number; backfillIdless: number }, turnIds: Set<string>): number {
+  if (t.live === 0 || t.backfill === 0) return t.live + t.backfill;
+  return turnIds.size + Math.max(t.liveIdless, t.backfillIdless);
+}
+
 /** The agent a host ran: the first event from another agent, else what the host's own events name. */
 function hostProvider(sorted: AgentEvent[], via: string): string | undefined {
   const native = sorted.find((e) => e.agent !== via && !isEnrichment(e));
@@ -134,11 +162,20 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
 
   const usage: Usage = {};
   const files = new Set<string>();
-  let turnEnds = 0;
+  // Turn ends per capture path. A session seen live (hooks) and from its
+  // transcript (backfill) has two turn.end rows per turn wherever the two paths
+  // share no natural key (most hook payloads name no turn the transcript knows).
+  const turnEnds = { live: 0, backfill: 0, liveIdless: 0, backfillIdless: 0 };
+  const turnIds = new Set<string>();
   let userMessages = 0;
-  let toolStarts = 0;
-  let toolEnds = 0;
+  // Tool calls by toolUseId (a call seen only by its start or only by its end
+  // still counts once); calls without an id are counted by start/end events.
+  const toolIds = new Set<string>();
+  let idlessStarts = 0;
+  let idlessEnds = 0;
   let toolErrors = 0;
+  let snapshot: AgentEvent | undefined;
+  let lastActivity: number | undefined;
   let lastTest: { passed: number; failed: number } | undefined;
   let title: string | undefined;
   let fallbackTitle: string | undefined;
@@ -152,7 +189,8 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   const traceIds = new Set<string>(prev?.traceIds ?? []);
   let lastEnd: number | undefined;
   const captured = sorted.filter((e) => !isEnrichment(e));
-  let allOtel = captured.length > 0;
+  // Live-ingested (OTel or the SDKs' native batches): no adapter emits a session.end.
+  let allLive = captured.length > 0;
   let allTranscript = captured.length > 0;
 
   // Host app that drove the agent (T3 Code): set on events by the host's adapter
@@ -160,13 +198,18 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   // stays on the session as provider.
   let via: string | undefined;
   for (const e of sorted) {
-    addUsage(usage, e.usage);
+    if (isUsageSnapshot(e)) {
+      // Latest snapshot wins; equal times keep the larger (running totals only grow).
+      if (!snapshot || e.ts > snapshot.ts || (e.ts === snapshot.ts && tokenTotal(e.usage) >= tokenTotal(snapshot.usage))) snapshot = e;
+    } else addUsage(usage, e.usage);
     if (isEnrichment(e)) continue;
     if (typeof e.payload.via === "string" && e.payload.via) via ??= e.payload.via;
     if (e.traceId && traceIds.size < MAX_TRACE_IDS) traceIds.add(e.traceId);
     const end = eventEnd(e);
     if (lastEnd === undefined || end > lastEnd) lastEnd = end;
-    if (!e.source?.startsWith("otel")) allOtel = false;
+    // When it was stamped, not when it ended: a span that began before the end is not a resume.
+    if (e.kind !== "session.end" && (lastActivity === undefined || e.ts > lastActivity)) lastActivity = e.ts;
+    if (!e.source?.startsWith("otel") && e.source !== "sdk") allLive = false;
     if (!isBackfillEvent(e)) allTranscript = false;
     if (e.model) model = e.model;
     if (e.agentVersion) agentVersion = e.agentVersion;
@@ -187,15 +230,23 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
         break;
       }
       case "turn.end":
-        turnEnds++;
+        // A Stop that fired because a Stop hook blocked the previous one continues the same turn.
+        if (e.payload.stopHookActive === true) break;
+        if (isBackfillEvent(e)) turnEnds.backfill++;
+        else turnEnds.live++;
+        if (e.turnId) turnIds.add(e.turnId);
+        else if (isBackfillEvent(e)) turnEnds.backfillIdless++;
+        else turnEnds.liveIdless++;
         break;
       case "tool.start":
-        toolStarts++;
+      case "tool.end": {
+        const id = e.payload.toolUseId;
+        if (typeof id === "string" && id) toolIds.add(id);
+        else if (e.kind === "tool.start") idlessStarts++;
+        else idlessEnds++;
+        if (e.kind === "tool.end" && e.payload.ok === false) toolErrors++;
         break;
-      case "tool.end":
-        toolEnds++;
-        if (e.payload.ok === false) toolErrors++;
-        break;
+      }
       case "file.change":
         if (typeof e.payload.path === "string") files.add(e.payload.path);
         break;
@@ -209,6 +260,12 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
     }
   }
 
+  addUsage(usage, snapshot?.usage);
+  // A session.end followed by later captured activity was reopened (resumed
+  // under the same id): it is not ended, whatever an earlier build stored.
+  const reopened = endedAt !== undefined && lastActivity !== undefined && lastActivity > endedAt + REOPEN_SLACK_MS;
+  if (reopened) endedAt = undefined;
+
   const session: Session = {
     id,
     agent: via ?? first?.agent ?? prev!.agent,
@@ -216,9 +273,9 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
     stats: {
       events: sorted.length,
       // Agents without a turn-end hook still have one turn per prompt.
-      turns: turnEnds || userMessages,
-      // A crashed tool has a start without an end; count whichever is larger.
-      toolCalls: Math.max(toolStarts, toolEnds),
+      turns: turnCount(turnEnds, turnIds) || userMessages,
+      // A crashed tool has a start without an end, a lost hook line an end without a start.
+      toolCalls: toolIds.size + Math.max(idlessStarts, idlessEnds),
       toolErrors,
       filesChanged: files.size,
     },
@@ -244,11 +301,13 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   // (see Session.endedAt), a value that moves forward as more events arrive:
   // - conversation-keyed OTel sessions (id is a conversation id, not one of its
   //   traces) and log-keyed ones (OTel logs carry no traceId at all);
+  // - SDK sessions (source "sdk", alone or mixed with OTel spans): apps send
+  //   events per conversation and rarely a session.end;
   // - sessions known only from a recorded transcript (backfill): a transcript
   //   is history, and it has no end marker.
   // Trace-keyed OTel sessions end with the root span's session.end.
-  const endsAtLastActivity = (allOtel && !traceIds.has(id)) || allTranscript;
-  set("endedAt", endedAt ?? (endsAtLastActivity ? lastEnd : undefined) ?? prev?.endedAt);
+  const endsAtLastActivity = (allLive && !traceIds.has(id)) || allTranscript;
+  set("endedAt", endedAt ?? (endsAtLastActivity ? lastEnd : undefined) ?? (reopened ? undefined : prev?.endedAt));
   if (traceIds.size) session.traceIds = [...traceIds];
   set("runId", runId ?? prev?.runId);
   set("endSnapshot", endSnapshot);

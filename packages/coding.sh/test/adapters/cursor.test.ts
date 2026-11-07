@@ -83,6 +83,46 @@ describe("cursor install", () => {
     const u = await cursor.uninstall({ scope: "project", projectDir: proj, dryRun: false });
     assert.equal(u[0]!.action, "delete");
   });
+
+  // INS-9: Cursor entries carry no marker. Hooks installed under another
+  // CODING_SH_HOME (an eval/test home) must still be recognized as ours.
+  it("hooks from another CODING_SH_HOME are replaced, not duplicated, and uninstall removes them", async () => {
+    const saved = process.env.CODING_SH_HOME;
+    const userEntry = { command: "./hooks/format.sh" };
+    writeFile(file(), JSON.stringify({ version: 1, hooks: { sessionStart: [userEntry] } }, null, 2) + "\n");
+    try {
+      const a = join(env.root, "cs-eval");
+      process.env.CODING_SH_HOME = a;
+      await cursor.install({ hookCommand: join(a, "bin", "hook.mjs"), scope: "user", dryRun: false });
+      process.env.CODING_SH_HOME = saved;
+      await cursor.install({ hookCommand: hookCommand(), scope: "user", dryRun: false });
+      const cfg = JSON.parse(readFileSync(file(), "utf8")) as { hooks: Record<string, { command: string }[]> };
+      for (const e of CURSOR_HOOK_EVENTS) {
+        const ours = cfg.hooks[e.event]!.filter((h) => h.command.includes("hook.mjs"));
+        assert.equal(ours.length, 1, `${e.event}: exactly one coding.sh entry`);
+        assert.ok(ours[0]!.command.includes(hookCommand()), `${e.event}: the current home's hook`);
+      }
+      assert.deepEqual(cfg.hooks.sessionStart![0], userEntry, "the user's hook is kept, first");
+      await cursor.uninstall({ scope: "user", dryRun: false });
+      const left = readFileSync(file(), "utf8");
+      assert.doesNotMatch(left, /hook\.mjs/, "no coding.sh entry left from either home");
+      assert.deepEqual(JSON.parse(left).hooks.sessionStart, [userEntry]);
+    } finally {
+      process.env.CODING_SH_HOME = saved;
+    }
+  });
+
+  it("a user's own hook.mjs command (not our exact shape) is never taken for ours", async () => {
+    const theirs = [
+      { command: 'node "/opt/tools/bin/hook.mjs" cursor sessionStart --verbose=2' },
+      { command: 'node /opt/tools/bin/hook.mjs cursor sessionStart' },
+      { command: 'node "/opt/tools/hook.mjs" cursor sessionStart' },
+    ];
+    writeFile(file(), JSON.stringify({ version: 1, hooks: { sessionStart: theirs } }, null, 2) + "\n");
+    await cursor.install({ hookCommand: hookCommand(), scope: "user", dryRun: false });
+    await cursor.uninstall({ scope: "user", dryRun: false });
+    assert.deepEqual(JSON.parse(readFileSync(file(), "utf8")).hooks.sessionStart, theirs);
+  });
 });
 
 describe("cursor detect", () => {

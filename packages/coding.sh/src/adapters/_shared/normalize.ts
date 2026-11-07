@@ -3,7 +3,7 @@
 // and small type guards for untyped agent JSON.
 import type { AgentEvent, AgentId, BlobRef, EventKind, Usage } from "../../schema/index.ts";
 import { SCHEMA_VERSION } from "../../schema/index.ts";
-import type { NormalizeContext, SpoolLine } from "../../core/types.ts";
+import type { BackfillFile, NormalizeContext, SpoolLine } from "../../core/types.ts";
 import { resolveRaw } from "../../spool/write.ts";
 
 // ---------------------------------------------------------------- guards
@@ -274,6 +274,15 @@ export class Emitter {
   }
 }
 
+/**
+ * Key for a usage-summary notification (running session totals). Snapshots are
+ * keyed by their totals, so a larger snapshot is a new event instead of a
+ * duplicate of the first; buildSession counts only the latest one.
+ */
+export function usageSnapshotKey(u: Usage): (string | number)[] {
+  return ["usage-summary", u.inputTokens ?? 0, u.outputTokens ?? 0, u.cacheReadTokens ?? 0, u.cacheWriteTokens ?? 0, u.costUsd ?? 0];
+}
+
 /** Drop undefined values (shallow) so payloads serialize identically. */
 export function compact(p: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -300,4 +309,15 @@ export function parentLink(ctx: NormalizeContext, agent: AgentId, parentSessionI
 /** Deterministic child-session id for a subagent run inside `parentSessionId`. */
 export function childSessionId(parentSessionId: string, subagentId: string): string {
   return `${parentSessionId}:sub:${subagentId}`;
+}
+
+/**
+ * The file as the backfill cursor should see it. A transcript gone quiet reads
+ * differently from the same bytes still being written: once idle, a backfill
+ * closes its open turn and ends the session or subagent. An idle file reports
+ * its mtime 1 ms later, so the cursor takes the idle transition for a change and
+ * the file is read once more, even though it never changes again (no extra reads otherwise).
+ */
+export function cursorView<F extends BackfillFile>(f: F, idleMs: number, now = Date.now()): F {
+  return now - f.mtimeMs > idleMs ? { ...f, mtimeMs: f.mtimeMs + 1 } : f;
 }

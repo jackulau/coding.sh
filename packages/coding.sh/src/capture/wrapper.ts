@@ -25,8 +25,9 @@
 //
 // Capture failures (snapshot, spool I/O) are logged to spool/errors.log and never
 // change the command's exit code.
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { trackChild } from "../core/children.ts";
 import { constants } from "node:os";
 import { isatty } from "node:tty";
 import type { SpoolLine } from "../core/types.ts";
@@ -112,15 +113,17 @@ export async function wrapRunDetailed(opts: WrapRunOptions): Promise<WrapRunResu
 
   const t0 = Date.now();
   const { exitCode, signal, error } = await new Promise<{ exitCode: number; signal?: NodeJS.Signals; error?: string }>((resolve) => {
-    const child = spawn(opts.cmd, args, { cwd, env, stdio: opts.stdoutToStderr ? ["inherit", 2, "inherit"] : "inherit" });
     // isatty(0), not process.stdin: touching process.stdin would open a reader on the TTY the child owns.
     const stdinIsTTY = isatty(0);
+    // Handlers go in before the spawn: a SIGTERM landing between spawn() and
+    // process.on() would otherwise kill the wrapper by default and orphan the child.
+    let child: ChildProcess | undefined;
     const handlers = new Map<NodeJS.Signals, () => void>();
     for (const sig of FORWARDED) {
       const h = () => {
         if (sig === "SIGINT" && stdinIsTTY) return; // child already got it from the TTY
         try {
-          child.kill(sig);
+          child?.kill(sig);
         } catch {
           // child gone
         }
@@ -128,6 +131,9 @@ export async function wrapRunDetailed(opts: WrapRunOptions): Promise<WrapRunResu
       handlers.set(sig, h);
       process.on(sig, h);
     }
+    child = spawn(opts.cmd, args, { cwd, env, stdio: opts.stdoutToStderr ? ["inherit", 2, "inherit"] : "inherit" });
+    // If the wrapper itself dies hard (uncaught error, process.exit), take the child with it.
+    trackChild(child);
     const cleanup = () => {
       for (const [sig, h] of handlers) process.removeListener(sig, h);
     };

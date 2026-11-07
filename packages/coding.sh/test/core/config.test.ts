@@ -51,7 +51,7 @@ blobs = "file://~/blobs"
 [capture]
 mode = "metadata"
 redact = ["secrets", "env"]
-redactPatterns = ["ACME-[0-9]+"]
+redactPatterns = ["TICKET-[0-9]+"]
 maxInlineBytes = 8192
 [snapshot]
 enabled = false
@@ -73,7 +73,7 @@ batchSize = 100
     assert.equal(c.store.blobs, `file://${join(root, "user")}/blobs`);
     assert.equal(c.capture.mode, "metadata");
     assert.deepEqual(c.capture.redact, ["secrets", "env"]);
-    assert.deepEqual(c.capture.redactPatterns, ["ACME-[0-9]+"]);
+    assert.deepEqual(c.capture.redactPatterns, ["TICKET-[0-9]+"]);
     assert.equal(c.capture.maxInlineBytes, 8192);
     assert.equal(c.snapshot.enabled, false);
     assert.equal(c.snapshot.maxFiles, 20000);

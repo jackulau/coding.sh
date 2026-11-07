@@ -600,7 +600,15 @@ export async function startReceiver(opts: ReceiverOptions): Promise<Receiver> {
     },
   });
 
+  // Responses not yet sent. close() turns their keep-alive off, so a client whose
+  // request was in flight gets Connection: close instead of an idle socket that
+  // holds close() open for keepAliveTimeout.
+  const live = new Set<ServerResponse>();
+  let stopping = false;
   const server = createServer((req, res) => {
+    if (stopping) res.shouldKeepAlive = false;
+    live.add(res);
+    res.once("close", () => live.delete(res));
     void handle(req, res);
   });
   server.on("clientError", (_err, socket) => {
@@ -624,6 +632,8 @@ export async function startReceiver(opts: ReceiverOptions): Promise<Receiver> {
     url: `http://${urlHost}:${addr.port}`,
     server,
     close() {
+      stopping = true;
+      for (const res of live) if (!res.headersSent) res.shouldKeepAlive = false;
       closing ??= new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
         server.closeIdleConnections();

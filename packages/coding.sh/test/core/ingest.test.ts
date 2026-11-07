@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -7,7 +7,8 @@ import type { AgentEvent, EventKind, Session } from "../../src/schema/index.ts";
 import type { Adapter, Config, Sink, SinkAck } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { backfill, ingest, sinkCursorKey, sinkRetryKey } from "../../src/core/ingest.ts";
-import { acquireLock, isStale, LockBusyError } from "../../src/core/lock.ts";
+import { acquireLock, isStale, LockBusyError, LockLostError } from "../../src/core/lock.ts";
+import { kickIngest } from "../../src/spool/kick.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 
@@ -15,6 +16,8 @@ const roots: string[] = [];
 after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
 
 const seenSources: (undefined | { file: string; offset: number })[] = [];
+/** raw.hook = name → awaited inside normalize (to act mid-run). */
+const hooks: Record<string, () => Promise<void> | void> = {};
 /** raw = { session, kind, text?, blob?, ...payload } → one event; raw.events = n → n events. */
 const fakeAdapter: Adapter = {
   id: "fake",
@@ -26,12 +29,13 @@ const fakeAdapter: Adapter = {
   async normalize(line, ctx) {
     const raw = line.raw as Record<string, unknown>;
     seenSources.push(ctx.source);
+    if (typeof raw.hook === "string") await hooks[raw.hook]?.();
     if (raw.throw) throw new Error("boom");
     if (raw.invalid) return [{ id: "", sessionId: "", kind: "nope" } as unknown as AgentEvent];
     const n = typeof raw.events === "number" ? raw.events : 1;
     const out: AgentEvent[] = [];
     for (let i = 0; i < n; i++) {
-      const { session, kind, blob, events: _n, ...payload } = raw;
+      const { session, kind, blob, events: _n, hook: _h, ...payload } = raw;
       const e: AgentEvent = {
         id: ctx.id(line.agent, String(session), line.ts, line.event, i),
         v: 0,
@@ -382,5 +386,72 @@ describe("ingest", () => {
     rmSync(join(t.env.CODING_SH_HOME, "spool"), { recursive: true });
     const r = await ingest({ config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env });
     assert.deepEqual(r, { lines: 0, events: 0, sessions: 0, excluded: 0, errors: [], sinks: [] });
+  });
+
+  it("re-runs for a session that ended while it held the lock (no lost wakeup)", async () => {
+    const t = setup();
+    const dir = join(t.env.CODING_SH_HOME, "spool", "fake");
+    const later = join(dir, "2026-11-06.2.jsonl");
+    // Session B ends while this ingest is busy: its hook appends a new file, then kicks.
+    hooks.midRun = () => {
+      appendFileSync(later, t.line({ session: "B", kind: "turn.end" }, { pid: 2 }));
+      assert.equal(kickIngest("Stop", t.env, () => assert.fail("must not spawn while the lock is held")), undefined);
+    };
+    t.write(t.line({ session: "A", kind: "turn.end", hook: "midRun" }));
+    const r = await ingest({ config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env });
+    delete hooks.midRun;
+    assert.equal(r.lines, 2);
+    assert.ok(await t.index.getSession("B"), "B ingested by the same call");
+    assert.equal(await t.index.getCursor("fake/2026-11-06.2.jsonl"), statSync(later).size);
+    assert.equal(existsSync(join(t.env.CODING_SH_HOME, "spool", ".ingest.pending")), false, "marker consumed");
+  });
+
+  it("stops before writing a cursor or sending to a sink once its lock was broken by a peer", async () => {
+    const t = setup();
+    const lockPath = join(t.env.CODING_SH_HOME, "spool", ".ingest.lock");
+    const sink = new RecordingSink("remote", "full");
+    t.config.sinks.push({ kind: "test", name: "remote", endpoint: "http://x", mode: "full" });
+    // We stalled past staleMs; a peer broke our lock and holds its own now.
+    hooks.steal = () => writeFileSync(lockPath, JSON.stringify({ pid: process.ppid, host: (process.getBuiltinModule("node:os") as typeof import("node:os")).hostname(), ts: Date.now(), nonce: "peer" }));
+    t.write(t.line({ session: "s", kind: "notification", hook: "steal" }));
+    await assert.rejects(ingest({ config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] }), LockLostError);
+    delete hooks.steal;
+    assert.equal(await t.index.getCursor("fake/2026-11-06.1.jsonl"), 0, "no cursor committed");
+    assert.equal(await t.index.getCursor(sinkCursorKey("remote", "fake/2026-11-06.1.jsonl")), 0);
+    assert.equal(sink.events.length, 0, "nothing sent");
+    rmSync(lockPath);
+  });
+
+  it("fills a tool.end's duration when its tool.start is in a file read after it", async () => {
+    for (const [startPid, endPid] of [[9999, 10000], [99990, 112]] as const) {
+      const t = setup();
+      const dir = join(t.env.CODING_SH_HOME, "spool", "fake");
+      const startFile = join(dir, `2026-11-06.${startPid}.jsonl`);
+      const endFile = join(dir, `2026-11-06.${endPid}.jsonl`);
+      const ts = 1_700_000_000_000;
+      writeFileSync(startFile, JSON.stringify({ v: 0, agent: "fake", event: "PreToolUse", ts, pid: startPid, cwd: t.root, raw: { session: "d", kind: "tool.start", toolUseId: "tu1", tool: "Bash" } }) + "\n");
+      writeFileSync(endFile, JSON.stringify({ v: 0, agent: "fake", event: "PostToolUse", ts: ts + 1234, pid: endPid, cwd: t.root, raw: { session: "d", kind: "tool.end", toolUseId: "tu1", tool: "Bash" } }) + "\n");
+      // Same mtime: only the name breaks the tie, and it puts the end first.
+      const m = new Date(ts);
+      for (const f of [startFile, endFile]) utimesSync(f, m, m);
+      await ingest({ config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env });
+      const [end] = await t.index.listEvents("d", { kinds: ["tool.end"] });
+      assert.deepEqual([end?.durationMs, end?.payload.durationMs], [1234, 1234], `start pid ${startPid}, end pid ${endPid}`);
+    }
+  });
+
+  it("re-sends a recreated file to a sink whose cursor is past its end", async () => {
+    const t = setup();
+    const sink = new RecordingSink("remote", "full");
+    t.config.sinks.push({ kind: "test", name: "remote", endpoint: "http://x", mode: "full" });
+    t.write(t.line({ session: "s", kind: "notification" }));
+    const src = "fake/2026-11-06.1.jsonl";
+    // Left over from a longer file that was deleted (gc) before this one took its path.
+    await t.index.setCursor(src, 10_000);
+    await t.index.setCursor(sinkCursorKey("remote", src), 10_000);
+    const r = await ingest({ config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env, sinks: [sink] });
+    assert.equal(r.lines, 1);
+    assert.equal(sink.events.length, 1, "the sink gets the new content");
+    assert.equal(await t.index.getCursor(sinkCursorKey("remote", src)), statSync(t.file).size);
   });
 });

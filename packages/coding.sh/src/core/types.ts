@@ -64,6 +64,13 @@ export interface SearchOpts {
 /** Held by the one replica allowed to write (see IndexStore.acquireWriterLock). */
 export interface WriterLock {
   release(): Promise<void>;
+  /**
+   * Throws once the lease is no longer this holder's (another replica broke it
+   * after a stall, e.g. a synchronous store call that blocked the heartbeat).
+   * The writer checks it before every write tick and exclusive job. Optional:
+   * a lock that cannot be lost need not implement it.
+   */
+  assertHeld?(): void;
 }
 
 export interface SearchHit {
@@ -105,6 +112,7 @@ export interface IndexStore {
   listTasks(opts?: { status?: EvalTask["status"]; tag?: string }): Promise<EvalTask[]>;
 
   putBundle(bundle: HarnessBundle): Promise<void>;
+  /** By id, else the bundle with that name and the newest createdAt (ties: the greatest id). */
   getBundle(idOrName: string): Promise<HarnessBundle | undefined>;
   listBundles(): Promise<HarnessBundle[]>;
 
@@ -125,17 +133,31 @@ export interface IndexStore {
 
   /** Cheap round trip that throws when the store is unreachable (serve's /readyz). */
   ping?(): Promise<void>;
+  /** Up to `limit` session ids starting with `prefix`, sorted (`coding.sh show <prefix>`, like a git short hash). */
+  sessionIdsByPrefix?(prefix: string, limit: number): Promise<string[]>;
   /**
    * The single-writer lock `coding.sh serve` holds while it ingests. Resolves
    * undefined when another process holds it (after waiting up to waitMs, default 0).
    */
   acquireWriterLock?(opts?: { waitMs?: number }): Promise<WriterLock | undefined>;
   /**
-   * Retention: deletes sessions whose coalesce(endedAt, startedAt) is before
-   * cutoffMs (optionally only one project), with their events and labels.
+   * Retention: deletes sessions whose last activity is before cutoffMs
+   * (optionally only one project), with their events and labels. Last activity
+   * is the latest of coalesce(endedAt, startedAt) and every event's end
+   * (ts + durationMs), so a resumed session, or one that never sent
+   * session.end, survives while it still gets events.
    * Eval assets (tasks, datasets, experiments, judges) are never touched.
    */
   deleteBefore?(cutoffMs: number, opts?: { project?: string }): Promise<{ sessions: number; events: number }>;
+  /** Distinct project ids that have sessions ("default" for unscoped ones). Optional: serve falls back to scanning sessions. */
+  listProjects?(): Promise<string[]>;
+
+  /**
+   * Sets an estimated cost on stored events in place (`usage.costUsd`, and
+   * `payload.costEstimated = true`); ids and everything else stay. Used by the
+   * one-time reprice of events stored before local pricing. Returns how many it found.
+   */
+  setEventCosts?(costs: { id: string; costUsd: number }[]): Promise<number>;
 
   /** Small durable key/value state (e.g. the OTLP trace → session map). */
   kvGet?(key: string): Promise<string | undefined>;
@@ -146,11 +168,12 @@ export interface IndexStore {
   /** A stored version; "latest" (default) follows the latest pointer. */
   getDataset?(id: string, version?: string | "latest"): Promise<Dataset | undefined>;
   listDatasets?(): Promise<DatasetListing[]>;
+  /** In the order the versions were first stored (history order), whatever their createdAt. */
   listDatasetVersions?(id: string): Promise<DatasetVersionInfo[]>;
 
   putExperiment?(r: ExperimentResult): Promise<void>;
   getExperiment?(id: string): Promise<ExperimentResult | undefined>;
-  /** Newest first. */
+  /** Newest first (id descending). `limit` 0 returns none; undefined or negative means no limit. */
   listExperiments?(filter?: { datasetId?: string; name?: string; limit?: number }): Promise<ExperimentResult[]>;
 
   putJudge?(v: JudgeVersion): Promise<void>;
@@ -533,6 +556,14 @@ export interface RunResult {
   error?: string;
   /** Test-tamper check of the agent's diff. Absent when no diff was taken (older runs, setup failure). */
   tamper?: TamperReport;
+  /**
+   * The run was interrupted (Ctrl-C, SIGTERM) before it finished: the agent or
+   * verifier was killed, so `pass` says nothing about the harness. Comparisons
+   * leave cancelled runs out.
+   */
+  cancelled?: true;
+  /** Tool-eval trials: the tap log (tool calls seen on the wire) as NDJSON. Referenced so blob gc keeps it. */
+  tapBlob?: BlobRef;
 }
 
 export type { AgentEvent, AgentId, BlobRef, RepoState, Session, Usage };

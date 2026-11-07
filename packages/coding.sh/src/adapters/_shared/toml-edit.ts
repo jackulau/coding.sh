@@ -16,7 +16,24 @@ function blockRange(lines: string[], id: string): [number, number] | undefined {
   const start = lines.findIndex((l) => l.trim().startsWith(b));
   if (start < 0) return undefined;
   const end = lines.findIndex((l, i) => i > start && l.trim() === END(id));
-  return end < 0 ? undefined : [start, end];
+  if (end < 0) return undefined;
+  // A tool that rewrites the file (`codex mcp add`) can move our END marker
+  // below someone else's table. A "block" spanning a foreign table header is
+  // broken, never ours to replace or remove.
+  let first: string | undefined;
+  for (let i = start + 1; i < end; i++) {
+    const h = headerName(lines[i]!);
+    if (h === undefined) continue;
+    if (first === undefined) first = h;
+    else if (h !== first && !h.startsWith(`${first}.`)) return undefined;
+  }
+  return [start, end];
+}
+
+/** True for a line that is one of our markers for block `id` (BEGIN or END). */
+function isMarker(line: string, id: string): boolean {
+  const t = line.trim();
+  return t.startsWith(BEGIN(id).split(" (")[0]!) || t === END(id);
 }
 
 /** Throws when `text` is not valid TOML (so a bad edit is never written). */
@@ -179,4 +196,88 @@ export function revertTomlKey(text: string, table: string, key: string): string 
     out.push(line);
   }
   return out.join(nl);
+}
+
+// ---------------------------------------------------------------- tables by header
+
+/**
+ * Line range [start, end) of table `name`: its `[name]` header through the
+ * line before the next header that is not one of its own subtables
+ * (`[name.x]`). Trailing blank and comment lines are left out (a comment
+ * right above a header belongs to that table). Undefined when there is no
+ * `[name]` header (absent, or written inline / as dotted keys).
+ */
+export function tableRange(text: string | undefined, name: string): [number, number] | undefined {
+  if (!text) return undefined;
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((l) => !/^\s*\[\[/.test(l) && headerName(l) === name);
+  if (start < 0) return undefined;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    const h = headerName(lines[i]!);
+    if (h !== undefined && h !== name && !h.startsWith(`${name}.`)) {
+      end = i;
+      break;
+    }
+  }
+  while (end > start + 1 && (lines[end - 1]!.trim() === "" || lines[end - 1]!.trim().startsWith("#"))) end--;
+  return [start, end];
+}
+
+/** Drops every marker line of block `id` (orphans left behind when a tool rewrote the file). */
+function dropMarkers(lines: string[], id: string): string[] {
+  return lines.filter((l) => !isMarker(l, id));
+}
+
+/**
+ * Insert or replace table `name` with `body` (which starts with its header),
+ * located structurally by header, so it keeps working after a tool rewrote the
+ * file and dropped our comments. Marker lines of the legacy block `markerId`
+ * are removed. Returns undefined when `name` exists but has no header of its
+ * own to replace (inline table or dotted keys).
+ */
+export function upsertTomlTable(text: string | undefined, name: string, body: string, markerId: string): string | undefined {
+  const src = text ?? "";
+  const nl = eol(src);
+  const lines = dropMarkers(src.split(/\r?\n/), markerId);
+  const cleaned = lines.join(nl);
+  const bodyLines = body.replace(/\s+$/, "").split(/\r?\n/);
+  const range = tableRange(cleaned, name);
+  if (range) return [...lines.slice(0, range[0]), ...bodyLines, ...lines.slice(range[1])].join(nl);
+  const parsed = cleaned.trim() ? parseToml(cleaned) : {};
+  if (lookup(parsed, name) !== undefined) return undefined;
+  const trimmed = [...lines];
+  while (trimmed.length && trimmed[trimmed.length - 1]!.trim() === "") trimmed.pop();
+  return (trimmed.length ? [...trimmed, "", ...bodyLines, ""] : [...bodyLines, ""]).join(nl);
+}
+
+/**
+ * Remove table `name` (and its subtables) by header, plus one blank line next
+ * to it and any marker lines of the legacy block `markerId`. The range ends
+ * before the next foreign header, so removal never takes someone else's table.
+ * Undefined when `name` has no header of its own.
+ */
+export function removeTomlTable(text: string, name: string, markerId: string): string | undefined {
+  const nl = eol(text);
+  const lines = dropMarkers(text.split(/\r?\n/), markerId);
+  const range = tableRange(lines.join(nl), name);
+  if (!range) return undefined;
+  let [s, e] = range;
+  if (s > 0 && lines[s - 1]!.trim() === "") s--;
+  else if (e < lines.length && lines[e]!.trim() === "" && e + 1 < lines.length) e++;
+  return [...lines.slice(0, s), ...lines.slice(e)].join(nl);
+}
+
+/** True when the text still carries a marker line of block `id` (a whole block or an orphan). */
+export function hasTomlMarker(text: string | undefined, id: string): boolean {
+  return !!text && text.split(/\r?\n/).some((l) => isMarker(l, id));
+}
+
+function lookup(obj: Record<string, unknown>, dotted: string): unknown {
+  let cur: unknown = obj;
+  for (const part of dotted.split(".")) {
+    if (typeof cur !== "object" || cur === null || Array.isArray(cur)) return undefined;
+    cur = (cur as Record<string, unknown>)[part];
+  }
+  return cur;
 }

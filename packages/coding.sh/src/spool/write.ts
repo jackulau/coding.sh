@@ -14,10 +14,12 @@
 // with O_APPEND, so every write(2) lands at the current end of file atomically
 // with respect to other appenders (and writes < PIPE_BUF are never split on local
 // filesystems). A pid reused later by another hook simply appends after the
-// previous owner's last complete line.
+// previous owner's last line. If that line is torn (a partial write on ENOSPC
+// or EIO left no "\n"), the new line starts with "\n": the fragment becomes a
+// line of its own that readers skip, instead of swallowing the new line.
 //
 // Files are created 0600 and dirs 0700: payloads can hold prompts and secrets.
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { SpoolLine } from "../core/types.ts";
 import { paths } from "../core/paths.ts";
@@ -43,13 +45,33 @@ export function spoolFile(agent: string, ts: number, pid: number, env: NodeJS.Pr
   return join(spoolDir(agent, env), `${utcDay(ts)}.${pid}.jsonl`);
 }
 
-function append(file: string, dir: string, data: string): void {
+function openAppend(file: string, dir: string): number {
   try {
-    appendFileSync(file, data, { mode: 0o600 });
+    return openSync(file, "a+", 0o600);
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
     mkdirSync(dir, { recursive: true, mode: 0o700 });
-    appendFileSync(file, data, { mode: 0o600 });
+    return openSync(file, "a+", 0o600);
+  }
+}
+
+/** O_APPEND write of `data`, on a fresh line even when the file ends in a torn fragment. */
+function append(file: string, dir: string, data: string): void {
+  const fd = openAppend(file, dir);
+  try {
+    let buf = Buffer.from(data);
+    const { size } = fstatSync(fd);
+    if (size > 0) {
+      const last = Buffer.alloc(1);
+      if (readSync(fd, last, 0, 1, size - 1) === 1 && last[0] !== 0x0a) buf = Buffer.concat([Buffer.from("\n"), buf]);
+    }
+    for (let off = 0; off < buf.length; ) off += writeSync(fd, buf, off, buf.length - off);
+  } finally {
+    try {
+      closeSync(fd);
+    } catch {
+      // the bytes are written; a failed close must not make the caller undo them
+    }
   }
 }
 
@@ -102,7 +124,14 @@ export function appendSpool(line: SpoolLine, env: NodeJS.ProcessEnv = process.en
       writeFileSync(rawFile, body, { mode: 0o600, flag: "wx" });
     }
     const { raw: _raw, ...rest } = line;
-    out = JSON.stringify({ ...rest, rawFile });
+    try {
+      append(file, dir, JSON.stringify({ ...rest, rawFile }) + "\n");
+    } catch (e) {
+      // Nothing will ever reference the side file: don't leave the payload (prompts, secrets) behind.
+      rmSync(rawFile, { force: true });
+      throw e;
+    }
+    return file;
   }
   append(file, dir, out + "\n");
   return file;
