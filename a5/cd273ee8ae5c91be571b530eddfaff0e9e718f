@@ -1,0 +1,119 @@
+apps/site/src/pages/index.astro
+  s_8e040dbdf13565::t_877484b5335ecb 121,681-695
+apps/site/package.json
+  s_8e040dbdf13565::t_9082538b8f0ec0 12,27
+scripts/perf/budgets.json
+  s_8e040dbdf13565::t_22352f66adc2ce 1-37
+apps/site/src/components/Shot.astro
+  s_8e040dbdf13565::t_877b258277bc23 5,21-22,26,69
+  s_8e040dbdf13565::t_39bfea363ae029 6-7
+  s_8e040dbdf13565::t_1365f8690175f3 51,118-119,124-129
+  s_8e040dbdf13565::t_754e2cde267938 33-45,58
+  s_8e040dbdf13565::t_984ba95148a7fc 47-48
+apps/site/src/components/ChangelogRail.astro
+  s_8e040dbdf13565::t_7b061acd8ad019 1-10
+apps/site/scripts/subset-fonts.py
+  s_8e040dbdf13565::t_540e0fbfd775a2 16-21,64-68,96-121,125-128,131,136,143-145
+  s_8e040dbdf13565::t_faa5009601a1d5 1-15,22-59,63,69-95,122-124,129-130,132-135,137-142,146-152
+  s_8e040dbdf13565::t_28068fb652b545 60-62
+apps/site/public/_headers
+  s_8e040dbdf13565::t_f97cbc20a5fb50 23
+  s_8e040dbdf13565::t_c677367a0c9b79 5-6
+  s_8e040dbdf13565::t_bad3df1219c993 3-4
+apps/site/src/components/Nav.astro
+  s_8e040dbdf13565::t_487696a440b3d4 581-598
+apps/site/src/pages/changelog/[version].astro
+  s_8e040dbdf13565::t_7b061acd8ad019 7,125
+apps/site/src/pages/changelog.astro
+  s_8e040dbdf13565::t_7b061acd8ad019 8,89
+apps/site/src/layouts/Layout.astro
+  s_8e040dbdf13565::t_f97cbc20a5fb50 3-4,70-73
+apps/site/scripts/gen-og.mjs
+  s_8e040dbdf13565::t_14a32d7e3ca67e 5-7,11,16-19
+  s_8e040dbdf13565::t_461bdf82e0d5ed 57,60-61,64-65,68
+apps/site/src/components/InstallActions.astro
+  s_8e040dbdf13565::t_877484b5335ecb 3
+.github/workflows/site.yml
+  s_8e040dbdf13565::t_9082538b8f0ec0 53-59
+docs/perf.md
+  s_8e040dbdf13565::t_39f4787bc804f1 1-101
+scripts/perf/ab.mjs
+  s_8e040dbdf13565::t_8ab823c830ce94 1-92,94-127
+  s_8e040dbdf13565::t_0a6ed530083b61 93,128-166
+apps/site/scripts/perf-budget.mjs
+  s_8e040dbdf13565::t_5418a8e05162ce 17-19
+  s_8e040dbdf13565::t_ce7f982fee4fff 1-4,6-10,12-16,20-21,26-29,32-36,41-64,66-75,77-78,80-90,92-95,97,99-108,110-112,114-164,166-174,176-185,192-193
+  s_8e040dbdf13565::t_7b44cc75a59204 5,11,30-31,37-40,65,76,79,91,96,98,109,113,165,175,186-191
+  s_8e040dbdf13565::t_23e3e9d45121b8 22
+  s_8e040dbdf13565::t_fa51bb0e7f6d20 23-25
+apps/site/src/styles/global.css
+  s_8e040dbdf13565::t_b6014cbf030350 56,58-108,153-154
+  s_8e040dbdf13565::t_ab22011ea7a0ce 9
+  s_8e040dbdf13565::t_1756cf1a913ff7 8,10-12,18-29,36-38,45-55
+  s_8e040dbdf13565::t_7be461feae7c30 57
+.github/workflows/site-perf.yml
+  s_8e040dbdf13565::t_3aeee394fe7bcb 1-130
+  s_8e040dbdf13565::t_9c365e6ba4d18c 131-135
+CHANGELOG.md
+  s_8e040dbdf13565::t_af5f8de54bbd34 18-19
+apps/site/src/components/docs/markdown.ts
+  s_8e040dbdf13565::t_a3ca47002faf4d 29
+apps/site/src/components/docs/nav.ts
+  s_8e040dbdf13565::t_1fcc3c1662c88a 107
+apps/site/src/pages/docs/evals.astro
+  s_8e040dbdf13565::t_41230ea95c7835 174-185
+apps/site/src/pages/docs/perf.astro
+  s_8e040dbdf13565::t_9325f1b488eed6 1-9
+docs/guides/evals.md
+  s_8e040dbdf13565::t_e8f5c78f2bef08 70-93
+docs/reference/cli.md
+  s_8e040dbdf13565::t_7883ab840ffeb1 565,682-707
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_0bfbc80c5a1a91 154-155
+package-lock.json
+  s_8e040dbdf13565::t_f973c468914800 13,27,467,479,910-965,1432-1438,1511,1522-1844,1952-1990,2235,2603-2721,3457,3476-3494,3562-3571,4283,4297-4317,4337-4346,4381-4409,4489-4566,4655-4674,4703-4709,4813-4819,4833-4875,4937-4944,5027-5071,5117-5153,5178,5387-5404,5428-5437,5621-5637,5648-5660,5694-5706,5737-5749,5774-5790,5858-5924,6223-6229,7049-7092,7222-7242,7285-7331,7437-7453,7459,7635-7647,7654,7706-7730,7994-8003,8042,8083-8095,8117-8129,8247-8261,8328-8360,8386-8398,8418-8424,8456-8472,8540-8546,8559,9285-9298,9340-9391,9423,9579
+packages/coding.sh/src/cli/commands/exp.ts
+  s_8e040dbdf13565::t_00946b07597792 6-7,15,258-364,367
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_212001553f6a9e 417-436
+packages/coding.sh/src/experiments/index.ts
+  s_8e040dbdf13565::t_089bd811d40d9d 11
+packages/coding.sh/src/stats/index.ts
+  s_8e040dbdf13565::t_de3b069567b316 4,6-7
+packages/coding.sh/src/stats/interval.ts
+  s_8e040dbdf13565::t_458792d749587b 52-80,82-83,85-86,88-90
+packages/coding.sh/src/stats/tests.ts
+  s_8e040dbdf13565::t_844fdaca2c39d2 49-76
+packages/coding.sh/test/experiments/metrics.test.ts
+  s_8e040dbdf13565::t_8292988dcc699b 1-269
+scripts/perf/lighthouse.mjs
+  s_8e040dbdf13565::t_a8fea79f04a48e 1-219
+packages/coding.sh/src/experiments/metrics.ts
+  s_1cf9c43aa135e0::t_8076635eb0c20c 1-398
+scripts/perf/serve.mjs
+  s_1cf9c43aa135e0::t_f6d3dcb9d1003d 1-180
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a5cd273ee8ae5c91be571b530eddfaff0e9e718f",
+  "prompts": {},
+  "sessions": {
+    "s_1cf9c43aa135e0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aa47d19675fe13ac7",
+        "model": "unknown"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    },
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
