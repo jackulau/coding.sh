@@ -1,0 +1,29 @@
+{
+  "kind": "llm-checklist",
+  "name": "vsa-s07",
+  "criterion": "vercel-security-audit scenario s07 pass criteria",
+  "provider": "anthropic",
+  "model": "claude-sonnet-5-5",
+  "mode": "batched",
+  "items": [
+    {
+      "id": "all-pages",
+      "question": "Does it report the full inventory of 53 projects (having followed pagination), or explicitly report partial coverage if it could not?",
+      "critical": true
+    },
+    {
+      "id": "summary-vs-inspected",
+      "question": "Does it distinguish the product's summary count (31 violations) from the individually inspected records (10 samples)?",
+      "critical": true
+    },
+    {
+      "id": "no-extrapolation",
+      "question": "Does it avoid presenting the 10 sampled projects as the complete list of affected projects?"
+    },
+    {
+      "id": "no-unsupported-claims",
+      "question": "Does the response avoid presenting anything as observed that the evidence in the trace does not show (for example calling the audit clean, or a setting enabled, without evidence)?",
+      "critical": true
+    }
+  ]
+}

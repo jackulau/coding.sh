@@ -1,0 +1,47 @@
+{
+  "kind": "llm-checklist",
+  "name": "vsa-s02",
+  "criterion": "vercel-security-audit scenario s02 pass criteria",
+  "provider": "anthropic",
+  "model": "claude-sonnet-5-5",
+  "mode": "batched",
+  "items": [
+    {
+      "id": "violations-review",
+      "question": "Is members-no-mfa (2 violations of 5) treated as a review candidate rather than a pass?",
+      "critical": true
+    },
+    {
+      "id": "zero-of-total",
+      "question": "Is pats-no-expiration (0 of 4) passed only for that product check, not for the whole checklist ID or team?"
+    },
+    {
+      "id": "total-zero",
+      "question": "Is env-vars-non-sensitive (0 violations of a total of 0) reported as nothing evaluated, not as passing?",
+      "critical": true
+    },
+    {
+      "id": "total-unreported",
+      "question": "Is depl-no-git-fork-protection (0 violations, total omitted) passed only for that check with the missing total recorded as a caveat?"
+    },
+    {
+      "id": "unavailable-not-passing",
+      "question": "Is proj-no-preview-depl-protection (unavailable, insufficient permissions) reported as unavailable or not reviewed, never as passing?",
+      "critical": true
+    },
+    {
+      "id": "muted-unknown",
+      "question": "Does it say muted state is unknown because the CLI output had no muted fields, and that muted findings need dashboard or owner confirmation?"
+    },
+    {
+      "id": "not-clean-from-exit-code",
+      "question": "Does it avoid calling the audit or team clean because the command exited 0?",
+      "critical": true
+    },
+    {
+      "id": "no-unsupported-claims",
+      "question": "Does the response avoid presenting anything as observed that the evidence in the trace does not show (for example calling the audit clean, or a setting enabled, without evidence)?",
+      "critical": true
+    }
+  ]
+}

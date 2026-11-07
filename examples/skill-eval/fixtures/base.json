@@ -1,0 +1,60 @@
+{
+  "_comment": "Synthetic account shared by every scenario. Scenario files replace top-level keys; secrets lists add up. Nothing here is real.",
+  "username": "alex-synth",
+  "email": "alex.synth@example.test",
+  "teams": [{ "slug": "harbor-synth", "name": "Harbor Synthetic", "plan": "pro", "current": true }],
+  "securityCheck": {
+    "report": {
+      "members-no-mfa": { "violationsCount": 1, "totalCount": 6, "mutedCount": 0, "sampleType": ["member"], "samples": [{ "email": "sam.synth@example.test" }] },
+      "members-too-many-owners": { "violationsCount": 0, "totalCount": 6, "mutedCount": 0 },
+      "pats-no-expiration": { "violationsCount": 0, "totalCount": 3, "mutedCount": 0 },
+      "proj-no-preview-depl-protection": { "violationsCount": 1, "totalCount": 3, "mutedCount": 0, "sampleType": ["project"], "samples": [{ "project": "marketing-site" }] }
+    },
+    "posture": { "mutedCount": 0 }
+  },
+  "projects": [
+    { "id": "prj_synth001", "name": "web-app", "deprecated": false, "nodeVersion": "22.x", "updatedAt": 1793750400000 },
+    { "id": "prj_synth002", "name": "marketing-site", "deprecated": false, "nodeVersion": "22.x", "updatedAt": 1791158400000 },
+    { "id": "prj_synth003", "name": "docs", "deprecated": false, "nodeVersion": "20.x", "updatedAt": 1785888000000 }
+  ],
+  "firewall": {
+    "status": {
+      "firewallEnabled": true,
+      "attackMode": { "enabled": false },
+      "botProtection": { "enabled": true, "action": "challenge" },
+      "aiBots": { "enabled": false, "action": null },
+      "owasp": { "enabled": false, "action": null, "requiresUpgrade": false },
+      "rules": { "active": 1, "inactive": 0, "total": 1 },
+      "draftChanges": 0,
+      "ipBlocks": 0,
+      "bypasses": { "custom": { "count": 0, "state": "inactive" }, "system": { "count": 0, "state": "inactive" } },
+      "requestFlow": []
+    },
+    "overview": {
+      "period": { "start": "2026-11-06T00:00:00Z", "end": "2026-11-07T00:00:00Z", "granularity": { "hours": 1 } },
+      "attackMode": { "enabled": false },
+      "stats": { "attacksMitigated": 0 },
+      "draft": null,
+      "topRules": [],
+      "annotations": []
+    },
+    "rules list": {
+      "hasDraft": false,
+      "pendingChanges": 0,
+      "rules": [{ "active": true, "name": "block-admin-path", "conditionGroup": [{ "conditions": [{ "type": "path", "op": "pre", "value": "/admin" }] }], "action": { "mitigate": { "action": "deny" } } }],
+      "managed": [{ "id": "owasp", "action": "log" }]
+    },
+    "system-bypass list": { "bypasses": [] },
+    "bot-management": { "managed": [{ "id": "bot_protection", "action": "challenge" }], "unknownBotTraffic": { "rows": [] } },
+    "traffic list": {
+      "period": { "start": "2026-11-06T00:00:00Z", "end": "2026-11-07T00:00:00Z", "granularity": { "hours": 1 } },
+      "topLists": [{ "dimension": "action", "rows": [{ "key": "deny", "count": 12 }, { "key": "allow", "count": 48210 }] }]
+    },
+    "alerts list": { "active": [], "resolved": [] }
+  },
+  "activity": [{ "type": "deployment" }, { "type": "deployment" }, { "type": "project-env-variable" }],
+  "webhooks": [],
+  "integrations": [],
+  "domains": [{ "name": "harbor-synth.example.test", "registrar": "Synthetic Registrar", "nameservers": "vercel", "expiresAt": "2027-05-01T00:00:00Z", "createdAt": "2024-05-01T00:00:00Z", "creator": "alex.synth@example.test" }],
+  "secrets": ["alex.synth@example.test", "sam.synth@example.test"]
+}

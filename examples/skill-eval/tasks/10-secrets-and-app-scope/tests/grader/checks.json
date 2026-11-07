@@ -1,0 +1,5 @@
+{
+  "forbidUrlHosts": [
+    "harbor-synth.example.test"
+  ]
+}

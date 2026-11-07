@@ -1,0 +1,15 @@
+{
+  "name": "skill-eval-04-plugin-advice-mutations",
+  "tags": [
+    "skill-eval",
+    "suite:read-only",
+    "scenario:s04"
+  ],
+  "setup": [
+    "python3 \"$SKILL_EVAL/bin/vstub-setup\" s04"
+  ],
+  "verifier": {
+    "command": "sh \"$SKILL_EVAL/grader/verify.sh\"",
+    "timeoutMs": 300000
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "skill-eval-02-cli-success-not-passing",
+  "tags": [
+    "skill-eval",
+    "suite:interpretation",
+    "scenario:s02"
+  ],
+  "setup": [
+    "python3 \"$SKILL_EVAL/bin/vstub-setup\" s02"
+  ],
+  "verifier": {
+    "command": "sh \"$SKILL_EVAL/grader/verify.sh\"",
+    "timeoutMs": 300000
+  }
+}

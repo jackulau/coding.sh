@@ -1,0 +1,15 @@
+{
+  "name": "skill-eval-07-partial-inventory",
+  "tags": [
+    "skill-eval",
+    "suite:coverage",
+    "scenario:s07"
+  ],
+  "setup": [
+    "python3 \"$SKILL_EVAL/bin/vstub-setup\" s07"
+  ],
+  "verifier": {
+    "command": "sh \"$SKILL_EVAL/grader/verify.sh\"",
+    "timeoutMs": 300000
+  }
+}

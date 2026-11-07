@@ -9,7 +9,8 @@ import { join } from "node:path";
 export type MdBlock = { kind: "html"; html: string } | { kind: "code"; code: string; title: string };
 
 const REPO_DOCS = join(process.cwd(), "..", "..", "docs");
-const GITHUB_DOCS = "https://github.com/jackulau/coding.sh/blob/main/docs/";
+const GITHUB_REPO = "https://github.com/jackulau/coding.sh/blob/main/";
+const GITHUB_DOCS = `${GITHUB_REPO}docs/`;
 
 /** Repo doc → site page. Anything else under docs/ links to GitHub. */
 const SITE_PAGES: Record<string, string> = {
@@ -28,6 +29,7 @@ const SITE_PAGES: Record<string, string> = {
   "how-to/expensive-sessions.md": "/docs/how-to/expensive-sessions",
   "how-to/session-to-eval.md": "/docs/how-to/session-to-eval",
   "how-to/self-host-team.md": "/docs/how-to/self-host-team",
+  "how-to/evaluate-a-skill.md": "/docs/how-to/evaluate-a-skill",
   "perf.md": "/docs/perf",
 };
 
@@ -51,12 +53,17 @@ function href(url: string, from: string): string {
   const [path, hash] = url.split("#") as [string, string | undefined];
   const parts = [...from.split("/").slice(0, -1), ...path.split("/")];
   const out: string[] = [];
+  // A path that climbs out of docs/ (../../examples/x) is a repo file, not a doc.
+  let outside = false;
   for (const p of parts) {
-    if (p === "..") out.pop();
-    else if (p && p !== ".") out.push(p);
+    if (p === "..") {
+      if (out.length) out.pop();
+      else outside = true;
+    } else if (p && p !== ".") out.push(p);
   }
   const target = out.join("/");
   const anchor = hash ? `#${hash}` : "";
+  if (outside) return `${GITHUB_REPO}${target}${anchor}`;
   return SITE_PAGES[target] ? `${SITE_PAGES[target]}${anchor}` : `${GITHUB_DOCS}${target}${anchor}`;
 }
 

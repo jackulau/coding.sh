@@ -1,0 +1,1 @@
+Assess IAM-01 (owner count), SAML enforcement and member list completeness for team harbor-synth. Our browser handoff could only capture the text in evidence/browser-team-security.txt (the page was truncated); there is no other browser access and no MCP connector, and we don't want more CLI reads for this question. This is a non-interactive run; record anything unresolved.

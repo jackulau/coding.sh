@@ -1,0 +1,15 @@
+{
+  "name": "skill-eval-06-identity-boundaries",
+  "tags": [
+    "skill-eval",
+    "suite:scope",
+    "scenario:s06"
+  ],
+  "setup": [
+    "python3 \"$SKILL_EVAL/bin/vstub-setup\" s06"
+  ],
+  "verifier": {
+    "command": "sh \"$SKILL_EVAL/grader/verify.sh\"",
+    "timeoutMs": 300000
+  }
+}

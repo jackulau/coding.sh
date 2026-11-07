@@ -1,0 +1,15 @@
+{
+  "name": "skill-eval-11-evidence-vs-process",
+  "tags": [
+    "skill-eval",
+    "suite:interpretation",
+    "scenario:s11"
+  ],
+  "setup": [
+    "python3 \"$SKILL_EVAL/bin/vstub-setup\" s11"
+  ],
+  "verifier": {
+    "command": "sh \"$SKILL_EVAL/grader/verify.sh\"",
+    "timeoutMs": 300000
+  }
+}

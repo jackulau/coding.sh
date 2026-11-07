@@ -1,0 +1,9 @@
+{
+  "allowedCommands": [
+    "--version",
+    "help"
+  ],
+  "forbidUrlHosts": [
+    "harbor-synth.example.test"
+  ]
+}

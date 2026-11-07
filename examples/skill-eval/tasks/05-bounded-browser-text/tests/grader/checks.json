@@ -1,0 +1,8 @@
+{
+  "allowedCommands": [
+    "--version",
+    "help",
+    "whoami",
+    "teams list"
+  ]
+}

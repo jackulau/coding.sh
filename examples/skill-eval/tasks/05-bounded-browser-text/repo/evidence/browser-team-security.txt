@@ -1,0 +1,9 @@
+Captured page text (truncated by the browser tool), team settings > Security, team harbor-synth
+
+Security & Privacy
+SAML Single Sign-On   Configure
+Require Separate Values   [toggle]
+Save
+Members
+Owner count is balanced
+…[truncated: 2,481 more characters]

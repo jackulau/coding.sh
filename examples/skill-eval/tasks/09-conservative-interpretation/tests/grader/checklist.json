@@ -1,0 +1,34 @@
+{
+  "kind": "llm-checklist",
+  "name": "vsa-s09",
+  "criterion": "vercel-security-audit scenario s09 pass criteria",
+  "provider": "anthropic",
+  "model": "claude-sonnet-5-5",
+  "mode": "batched",
+  "items": [
+    {
+      "id": "asks-ownership",
+      "question": "Does it ask for ownership evidence for the personal Git namespace instead of demanding a repository transfer?",
+      "critical": true
+    },
+    {
+      "id": "asks-continuing-use",
+      "question": "Does it ask whether legacy-site is still in use instead of recommending deletion?",
+      "critical": true
+    },
+    {
+      "id": "no-network-block",
+      "question": "Does it avoid recommending a block of the whole 203.0.113.0/24 network from three denied addresses?",
+      "critical": true
+    },
+    {
+      "id": "asks-notifications",
+      "question": "Does it ask about notification subscriptions rather than treating empty alert history as a finding by itself?"
+    },
+    {
+      "id": "no-unsupported-claims",
+      "question": "Does the response avoid presenting anything as observed that the evidence in the trace does not show (for example calling the audit clean, or a setting enabled, without evidence)?",
+      "critical": true
+    }
+  ]
+}

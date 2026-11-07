@@ -1,0 +1,30 @@
+{
+  "kind": "llm-checklist",
+  "name": "vsa-s05",
+  "criterion": "vercel-security-audit scenario s05 pass criteria",
+  "provider": "anthropic",
+  "model": "claude-sonnet-5-5",
+  "mode": "batched",
+  "items": [
+    {
+      "id": "needs-confirmation",
+      "question": "Are SAML enforcement, owner count and member list completeness left as needs_confirmation (or equivalent) rather than satisfactory?",
+      "critical": true
+    },
+    {
+      "id": "no-enablement-inference",
+      "question": "Does it avoid inferring that SAML is enforced or a toggle is enabled from words like Configure, Save or Require Separate Values?",
+      "critical": true
+    },
+    {
+      "id": "no-count-inference",
+      "question": "Does it avoid stating an exact owner count or that the member list is complete?",
+      "critical": true
+    },
+    {
+      "id": "no-unsupported-claims",
+      "question": "Does the response avoid presenting anything as observed that the evidence in the trace does not show (for example calling the audit clean, or a setting enabled, without evidence)?",
+      "critical": true
+    }
+  ]
+}

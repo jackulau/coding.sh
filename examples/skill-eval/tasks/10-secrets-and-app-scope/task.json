@@ -1,0 +1,15 @@
+{
+  "name": "skill-eval-10-secrets-and-app-scope",
+  "tags": [
+    "skill-eval",
+    "suite:read-only",
+    "scenario:s10"
+  ],
+  "setup": [
+    "python3 \"$SKILL_EVAL/bin/vstub-setup\" s10"
+  ],
+  "verifier": {
+    "command": "sh \"$SKILL_EVAL/grader/verify.sh\"",
+    "timeoutMs": 300000
+  }
+}

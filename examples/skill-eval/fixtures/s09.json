@@ -1,0 +1,19 @@
+{
+  "_comment": "A project last deployed in January 2024.",
+  "projects": [
+    {
+      "id": "prj_synth001",
+      "name": "web-app",
+      "deprecated": false,
+      "nodeVersion": "22.x",
+      "updatedAt": 1793750400000
+    },
+    {
+      "id": "prj_synth009",
+      "name": "legacy-site",
+      "deprecated": false,
+      "nodeVersion": "16.x",
+      "updatedAt": 1704067200000
+    }
+  ]
+}

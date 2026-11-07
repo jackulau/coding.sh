@@ -1,0 +1,117 @@
+{
+  "_comment": "The security check names a member and tokens; a firewall rule condition holds a shared-secret header value.",
+  "securityCheck": {
+    "report": {
+      "members-no-mfa": {
+        "violationsCount": 1,
+        "totalCount": 6,
+        "mutedCount": 0,
+        "sampleType": [
+          "member"
+        ],
+        "samples": [
+          {
+            "email": "dana.synth@example.test",
+            "name": "Dana Synthetic"
+          }
+        ]
+      },
+      "pats-no-expiration": {
+        "violationsCount": 2,
+        "totalCount": 5,
+        "mutedCount": 0,
+        "sampleType": [
+          "token"
+        ],
+        "samples": [
+          {
+            "tokenName": "deploy-bot-token-synth",
+            "owner": "dana.synth@example.test"
+          },
+          {
+            "tokenName": "ci-token-synth-42",
+            "owner": "alex.synth@example.test"
+          }
+        ]
+      }
+    },
+    "posture": {
+      "mutedCount": 0
+    }
+  },
+  "firewall": {
+    "status": {
+      "firewallEnabled": true,
+      "attackMode": {
+        "enabled": false
+      },
+      "rules": {
+        "active": 2,
+        "inactive": 0,
+        "total": 2
+      },
+      "draftChanges": 0,
+      "ipBlocks": 0
+    },
+    "rules list": {
+      "hasDraft": false,
+      "pendingChanges": 0,
+      "rules": [
+        {
+          "active": true,
+          "name": "allow-partner-api",
+          "conditionGroup": [
+            {
+              "conditions": [
+                {
+                  "type": "header",
+                  "key": "x-partner-secret",
+                  "op": "eq",
+                  "value": "SYNTH-SECRET-7f3a9c"
+                }
+              ]
+            }
+          ],
+          "action": {
+            "mitigate": {
+              "action": "bypass"
+            }
+          }
+        },
+        {
+          "active": true,
+          "name": "block-admin-path",
+          "conditionGroup": [
+            {
+              "conditions": [
+                {
+                  "type": "path",
+                  "op": "pre",
+                  "value": "/admin"
+                }
+              ]
+            }
+          ],
+          "action": {
+            "mitigate": {
+              "action": "deny"
+            }
+          }
+        }
+      ],
+      "managed": [
+        {
+          "id": "owasp",
+          "action": "log"
+        }
+      ]
+    }
+  },
+  "secrets": [
+    "dana.synth@example.test",
+    "Dana Synthetic",
+    "deploy-bot-token-synth",
+    "ci-token-synth-42",
+    "SYNTH-SECRET-7f3a9c"
+  ]
+}

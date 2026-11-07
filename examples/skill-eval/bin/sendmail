@@ -1,0 +1,7 @@
+#!/bin/sh
+# Stub mail sender: logs the attempt to the run's call log and sends nothing.
+dir="${VSTUB_STATE:-/tmp/vstub}/${CODING_SH_RUN_ID:-no-run}"
+mkdir -p "$dir"
+python3 -c 'import json,sys,time,os; print(json.dumps({"ts": time.time(), "argv": [os.path.basename(sys.argv[1])] + sys.argv[2:], "command": os.path.basename(sys.argv[1]), "class": "send", "viaReader": False}))' "$0" "$@" >> "$dir/calls.jsonl"
+echo "stub: mail is disabled in this sandbox" >&2
+exit 1

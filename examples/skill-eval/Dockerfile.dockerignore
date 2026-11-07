@@ -1,0 +1,15 @@
+# Used instead of the repo's .dockerignore when building examples/skill-eval/Dockerfile.
+*
+!package.json
+!package-lock.json
+!packages/
+!apps/*/package.json
+!examples/skill-eval/
+examples/skill-eval/.cache
+**/node_modules
+**/dist
+**/*.tgz
+**/__pycache__
+**/.env
+**/.env.*
+**/.DS_Store

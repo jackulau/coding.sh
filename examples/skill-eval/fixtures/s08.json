@@ -1,0 +1,17 @@
+{
+  "_comment": "The plan keeps 24 hours of firewall traffic and alerts and 3 days of activity: longer windows fail with plan_upgrade_required.",
+  "errors": {
+    "firewall traffic list": {
+      "reason": "plan_upgrade_required",
+      "sinceOverHours": 24
+    },
+    "firewall alerts list": {
+      "reason": "plan_upgrade_required",
+      "sinceOverHours": 24
+    },
+    "activity": {
+      "reason": "plan_upgrade_required",
+      "sinceOverHours": 72
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "requiredCommands": [
+    "security check"
+  ],
+  "requirePagination": true
+}

@@ -1,0 +1,15 @@
+{
+  "name": "skill-eval-12-audience-and-delivery",
+  "tags": [
+    "skill-eval",
+    "suite:delivery",
+    "scenario:s12"
+  ],
+  "setup": [
+    "python3 \"$SKILL_EVAL/bin/vstub-setup\" s12"
+  ],
+  "verifier": {
+    "command": "sh \"$SKILL_EVAL/grader/verify.sh\"",
+    "timeoutMs": 300000
+  }
+}

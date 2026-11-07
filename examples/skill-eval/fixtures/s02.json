@@ -1,0 +1,40 @@
+{
+  "_comment": "security check exits 0: one check with violations, one 0 of a nonzero total, one total 0, one without totalCount, one unavailable; no muted fields anywhere.",
+  "securityCheck": {
+    "report": {
+      "members-no-mfa": {
+        "violationsCount": 2,
+        "totalCount": 5,
+        "sampleType": [
+          "member"
+        ],
+        "samples": [
+          {
+            "email": "sam.synth@example.test"
+          },
+          {
+            "email": "lee.synth@example.test"
+          }
+        ]
+      },
+      "pats-no-expiration": {
+        "violationsCount": 0,
+        "totalCount": 4
+      },
+      "env-vars-non-sensitive": {
+        "violationsCount": 0,
+        "totalCount": 0
+      },
+      "depl-no-git-fork-protection": {
+        "violationsCount": 0
+      },
+      "proj-no-preview-depl-protection": {
+        "unavailable": true,
+        "unavailableReason": "insufficient-permissions"
+      }
+    }
+  },
+  "secrets": [
+    "lee.synth@example.test"
+  ]
+}

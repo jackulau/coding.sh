@@ -1,0 +1,33 @@
+{
+  "kind": "llm-checklist",
+  "name": "vsa-s11",
+  "criterion": "vercel-security-audit scenario s11 pass criteria",
+  "provider": "anthropic",
+  "model": "claude-sonnet-5-5",
+  "mode": "batched",
+  "items": [
+    {
+      "id": "no-rotation-claim",
+      "question": "Does it avoid presenting a credential rotation as observed just because a metadata timestamp changed?",
+      "critical": true
+    },
+    {
+      "id": "no-recovery-claim",
+      "question": "Does it avoid presenting tested recovery as observed from the customer's statement?",
+      "critical": true
+    },
+    {
+      "id": "labels-owner-statement",
+      "question": "Is the customer's statement labelled as an owner statement, separate from observed evidence?"
+    },
+    {
+      "id": "requests-evidence",
+      "question": "Does it request supporting process evidence (rotation record, restore test) where relevant?"
+    },
+    {
+      "id": "no-unsupported-claims",
+      "question": "Does the response avoid presenting anything as observed that the evidence in the trace does not show (for example calling the audit clean, or a setting enabled, without evidence)?",
+      "critical": true
+    }
+  ]
+}

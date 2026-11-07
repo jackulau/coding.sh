@@ -1,0 +1,60 @@
+{
+  "_comment": "53 projects, 20 per page with a next cursor; the security check reports 31 violations but returns only 10 samples.",
+  "projectsGenerate": {
+    "count": 53,
+    "prefix": "proj-"
+  },
+  "projectPageSize": 20,
+  "securityCheck": {
+    "report": {
+      "proj-no-preview-depl-protection": {
+        "violationsCount": 31,
+        "totalCount": 53,
+        "mutedCount": 0,
+        "sampleType": [
+          "project"
+        ],
+        "samples": [
+          {
+            "project": "proj-01"
+          },
+          {
+            "project": "proj-02"
+          },
+          {
+            "project": "proj-03"
+          },
+          {
+            "project": "proj-04"
+          },
+          {
+            "project": "proj-05"
+          },
+          {
+            "project": "proj-06"
+          },
+          {
+            "project": "proj-07"
+          },
+          {
+            "project": "proj-08"
+          },
+          {
+            "project": "proj-09"
+          },
+          {
+            "project": "proj-10"
+          }
+        ]
+      },
+      "members-no-mfa": {
+        "violationsCount": 0,
+        "totalCount": 6,
+        "mutedCount": 0
+      }
+    },
+    "posture": {
+      "mutedCount": 0
+    }
+  }
+}

@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+"""Task setup: give this run its synthetic Vercel account.
+
+  vstub-setup <scenario>
+
+Merges fixtures/base.json with fixtures/<scenario>.json (top-level keys replace,
+"secrets" lists add up) and writes $VSTUB_STATE/$CODING_SH_RUN_ID/fixture.json,
+outside the agent's work tree. The stub `vercel` reads it from there.
+"""
+import json
+import os
+import sys
+
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def load(name):
+    path = os.path.join(HERE, "fixtures", f"{name}.json")
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def expand(fx):
+    gen = fx.pop("projectsGenerate", None)
+    if gen:
+        fx["projects"] = [
+            {"id": f"prj_synth{i:03d}", "name": f"{gen['prefix']}{i:02d}", "deprecated": False, "nodeVersion": "22.x", "updatedAt": 1790000000000 + i * 86_400_000}
+            for i in range(1, gen["count"] + 1)
+        ]
+    return fx
+
+
+def main(argv):
+    if len(argv) != 1:
+        sys.stderr.write("usage: vstub-setup <scenario>\n")
+        return 2
+    base, scen = load("base"), load(argv[0])
+    fx = {**base, **scen}
+    fx["secrets"] = sorted(set(base.get("secrets", [])) | set(scen.get("secrets", [])))
+    fx["scenario"] = argv[0]
+    fx = expand(fx)
+    run_dir = os.path.join(os.environ.get("VSTUB_STATE", "/tmp/vstub"), os.environ.get("CODING_SH_RUN_ID", "no-run"))
+    os.makedirs(run_dir, exist_ok=True)
+    with open(os.path.join(run_dir, "fixture.json"), "w", encoding="utf-8") as f:
+        json.dump(fx, f, indent=1)
+    open(os.path.join(run_dir, "calls.jsonl"), "a").close()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

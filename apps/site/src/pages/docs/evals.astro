@@ -314,6 +314,15 @@ const COMPARE = [
     removal is ACCEPT, REJECT, UNMEASURED (it never fired, so keep it) or RERUN. <code>--item-gate</code> makes it set the exit code. Method:
     Cortex (<a href="https://arxiv.org/abs/2610.14216">arXiv 2610.14216</a>).
   </p>
+  <p id="hand-written">
+    A task can also be written by hand: a directory with <code>task.json</code>, <code>instruction.md</code>, an optional <code>repo/</code>
+    start tree and <code>tests/</code> for hidden files. <code>eval import tasks/*/</code> loads them as drafts, and
+    <code>compare A B --tag &lt;tag&gt;</code> runs them. The verifier gets the agent's final answer and its whole stdout as files
+    (<code>CODING_SH_AGENT_OUTPUT</code>, <code>CODING_SH_AGENT_STDOUT</code>), so <code>judge grade --grader checklist.json</code> can grade
+    what the agent said and which commands it ran. <code>--max-cost 15</code> stops starting runs once agent and judge spend reach $15;
+    the report shows both as <code>agent spend</code> and <code>grader spend</code>. The <a href="/docs/how-to/evaluate-a-skill">Evaluate an
+    Agent Skill</a> guide walks through it.
+  </p>
   <Code code={replay} />
   <div class="note">
     <p>

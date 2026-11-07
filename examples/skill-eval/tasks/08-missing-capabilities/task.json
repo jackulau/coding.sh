@@ -1,0 +1,15 @@
+{
+  "name": "skill-eval-08-missing-capabilities",
+  "tags": [
+    "skill-eval",
+    "suite:coverage",
+    "scenario:s08"
+  ],
+  "setup": [
+    "python3 \"$SKILL_EVAL/bin/vstub-setup\" s08"
+  ],
+  "verifier": {
+    "command": "sh \"$SKILL_EVAL/grader/verify.sh\"",
+    "timeoutMs": 300000
+  }
+}
