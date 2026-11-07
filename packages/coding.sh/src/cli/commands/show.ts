@@ -139,7 +139,12 @@ export function durableSteps(d: DurableStats, t0: number): string[] {
   const rel = (t: number) => `+${duration(Math.max(0, t - t0))}`.padStart(8);
   const lines: [number, string][] = d.steps.map((s) => {
     const attempts: string[] = [];
-    if (s.unreported) attempts.push(`${s.unreported} lost${s.unreportedMs ? ` ${duration(s.unreportedMs)}` : ""} (never reported: its process stopped)`);
+    if (s.unreported) {
+      const ms = s.unreportedMs;
+      const seen = ms !== undefined && s.unreportedRanMs !== undefined ? `; seen ${duration(s.unreportedRanMs)}, then down ${duration(ms - s.unreportedRanMs)}` : "";
+      const time = ms !== undefined && !seen ? ` ${duration(ms)}` : "";
+      attempts.push(`${s.unreported} lost${time} (its process stopped${seen})`);
+    }
     for (const a of s.attempts) {
       const what = a.replay ? "replayed" : a.ok ? "ok" : "failed";
       const err = !a.ok && a.error ? ` (${oneLine(clean(a.error), 50)})` : "";

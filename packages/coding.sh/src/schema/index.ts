@@ -274,6 +274,8 @@ export interface DurableStep {
   unreported?: number;
   /** Time between scheduling and the first reported attempt, when an earlier attempt went unreported. */
   unreportedMs?: number;
+  /** Of unreportedMs, how long the lost attempt's process was still seen working (to its last export); the rest is lost. */
+  unreportedRanMs?: number;
   ok: boolean;
 }
 

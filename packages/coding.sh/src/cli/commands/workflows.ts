@@ -198,7 +198,7 @@ function nodeLine(n: WorkflowNode): string {
   const label = n.kind === "wait" && n.name === "wait" ? "wait" : `${n.kind} ${clean(n.name) || "(unnamed)"}${attempt}`;
   const parts = [label, n.status, dur];
   if (n.resume) parts.push(n.resume === "wait" ? "resumed after wait" : `resumed after ${n.resume}`);
-  if (n.lost) parts.push("lost");
+  if (n.lost) parts.push(n.lostMs ? `lost, then down ${duration(n.lostMs)}` : "lost");
   if (n.usage?.costUsd !== undefined) parts.push(usd(n.usage.costUsd));
   const t = totalTokens(n.usage);
   if (t) parts.push(`${tokens(t)} tok`);
@@ -252,6 +252,7 @@ async function show(c: CommandContext): Promise<number> {
     const resumes = nodes.filter((n) => n.resume && n.resume !== "wait").map((n) => `${n.resume} at ${clean(n.name)}`);
     const bits = [plural(run.stats.stepRetries ?? 0, "retry", "retries")];
     if (run.stats.waitMs) bits.push(`${duration(run.stats.waitMs)} waiting`);
+    if (run.stats.lostMs) bits.push(`${duration(run.stats.lostMs)} lost to crashes`);
     if (resumes.length) bits.push(`resumed after ${resumes.join(", ")}`);
     out.row("Durable", bits.join(", "));
   }
@@ -277,6 +278,7 @@ async function stats(c: CommandContext): Promise<number> {
     ["critical path", `${duration(s.criticalPathMs)}${s.criticalPathExact ? " (exact)" : " (approx)"}`],
     ["orchestration gap", duration(s.orchestrationGapMs)],
     ...(s.waitMs !== undefined ? [["durable waits", duration(s.waitMs)] as [string, string]] : []),
+    ...(s.lostMs !== undefined ? [["lost to crashes", duration(s.lostMs)] as [string, string]] : []),
     ...(s.stepRetries !== undefined ? [["step retries", String(s.stepRetries)] as [string, string]] : []),
     ["agent time", duration(s.agentMs)],
     ["parallelism", s.parallelism !== undefined ? s.parallelism.toFixed(2) : "-"],

@@ -3475,7 +3475,8 @@ function durableStrip(s, pick) {
     const bars = [];
     if (st.unreported && st.unreportedMs && st.attempts[0]) {
       const from = st.attempts[0].startedAt - st.unreportedMs;
-      const text = st.name + " · " + plural(st.unreported, "attempt") + " never reported (its process stopped) · " + fmtDuration(st.unreportedMs);
+      const time = st.unreportedRanMs !== undefined ? "seen " + fmtDuration(st.unreportedRanMs) + ", then down " + fmtDuration(st.unreportedMs - st.unreportedRanMs) : fmtDuration(st.unreportedMs);
+      const text = st.name + " · " + plural(st.unreported, "attempt") + " never reported (its process stopped) · " + time;
       bars.push(at(h("span", { class: "wf-bar lost", title: text, role: "img", "aria-label": text }), from, st.attempts[0].startedAt));
     }
     const total = Math.max(0, ...st.attempts.map((a) => a.n));

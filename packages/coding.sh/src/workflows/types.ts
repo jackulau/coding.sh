@@ -107,6 +107,8 @@ export interface WorkflowNode {
   attempts?: number;
   /** A durable step attempt the engine never reported (its process stopped); its time is inferred. */
   lost?: boolean;
+  /** A lost attempt: time after its process was last seen until the next attempt started (downtime, not work). */
+  lostMs?: number;
   /** The run resumed here after a crash, a deploy, a worker restart or a durable wait. */
   resume?: "crash" | "deploy" | "restart" | "wait";
   /** Process that ran this durable step attempt. */
@@ -157,6 +159,8 @@ export interface WorkflowStats {
   waitMs?: number;
   /** Durable runs: step attempts after a step's first. */
   stepRetries?: number;
+  /** Durable runs: time lost to crashed attempts after their process was last seen, left out of agentMs and orchestrationGapMs. */
+  lostMs?: number;
   barrierIdleMs: number;
   pipelineSavingsMs?: number;
   queueWaitMs?: number;
@@ -192,6 +196,8 @@ export interface GanttRow {
   costUsd?: number;
   /** Durable runs: a wait row (a gap, not work), attempt numbers, the resume reason. */
   wait?: boolean;
+  /** A lost durable attempt (its process stopped before it reported). */
+  lost?: boolean;
   attempt?: number;
   attempts?: number;
   resume?: WorkflowNode["resume"];

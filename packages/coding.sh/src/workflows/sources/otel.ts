@@ -47,7 +47,7 @@ interface SpanInfo {
 
 /** Workflow framework of a durable engine id (DurableTag.engine). */
 function engineFramework(engine: string): WorkflowFramework {
-  if (engine === "vercel-workflow" || engine === "workflow") return "vercel-workflow";
+  if (engine === "vercel-workflow") return "vercel-workflow";
   if (engine === "temporal" || engine === "inngest" || engine === "restate" || engine === "dbos" || engine === "langgraph") return engine;
   return "otel";
 }
@@ -56,12 +56,18 @@ interface AttemptInfo {
   n: number;
   attempts: number;
   ok: boolean;
+  startedAt: number;
+  endedAt: number;
   error?: string;
   replay?: boolean;
   resume?: WorkflowNode["resume"];
   instance?: string;
   /** Inferred time of the attempt before this one, which was never reported. */
   lostMs?: number;
+  /** Of lostMs, how long its process was still seen working. */
+  ranMs?: number;
+  /** Earlier attempts inside the same span (DBOS retries a step within one span). */
+  before?: AttemptInfo[];
 }
 
 /** Step attempts of a durable run by span id, with the step's attempt count and where the run resumed. */
@@ -71,14 +77,20 @@ function attemptsBySpan(d: DurableStats): Map<string, AttemptInfo> {
     const attempts = Math.max(0, ...step.attempts.map((a) => a.n));
     step.attempts.forEach((a, i) => {
       if (!a.spanId) return;
-      const info: AttemptInfo = { n: a.n, attempts, ok: a.ok };
+      const info: AttemptInfo = { n: a.n, attempts, ok: a.ok, startedAt: a.startedAt, endedAt: a.endedAt };
       if (a.error) info.error = a.error;
       if (a.replay) info.replay = true;
       if (a.instance) info.instance = a.instance;
       // A crash, deploy or restart says more than the wait that may end at the same attempt.
-      const resume = d.resumes.filter((r) => r.spanId === a.spanId).sort((x, y) => Number(x.reason === "wait") - Number(y.reason === "wait"))[0];
+      // Attempts sharing a span (DBOS): the resume belongs to the first.
+      const prev = out.get(a.spanId);
+      const resume = prev ? undefined : d.resumes.filter((r) => r.spanId === a.spanId).sort((x, y) => Number(x.reason === "wait") - Number(y.reason === "wait"))[0];
       if (resume) info.resume = resume.reason;
-      if (i === 0 && step.unreportedMs !== undefined && a.n > 1) info.lostMs = step.unreportedMs;
+      if (i === 0 && step.unreportedMs !== undefined && a.n > 1) {
+        info.lostMs = step.unreportedMs;
+        if (step.unreportedRanMs !== undefined) info.ranMs = step.unreportedRanMs;
+      }
+      if (prev) info.before = [...(prev.before ?? []), { ...prev, before: undefined }];
       out.set(a.spanId, info);
     });
   }
@@ -231,6 +243,8 @@ export function otelTree(events: readonly AgentEvent[], opts: { runId?: string; 
 
   const walk = (s: SpanInfo, parent: WorkflowNode, ctx: { inAgent: boolean; phase?: string }) => {
     let node: WorkflowNode | undefined;
+    // Earlier attempts split out of this span; a child goes under the one it started in.
+    const parts: WorkflowNode[] = [];
     let next = ctx;
     const base = (kind: WorkflowNode["kind"], name: string): WorkflowNode => {
       const n: WorkflowNode = { id: nodeId(s), runId, parentId: parent.id, kind, name, startedAt: s.start, endedAt: s.end, status: s.ok ? "ok" : "failed" };
@@ -255,11 +269,22 @@ export function otelTree(events: readonly AgentEvent[], opts: { runId?: string; 
       if (a) {
         const name = s.durable.step ?? s.name;
         if (a.lostMs !== undefined) {
-          const lost: WorkflowNode = { ...base("step", name), id: `${nodeId(s)}/lost`, startedAt: s.start - a.lostMs, endedAt: s.start, status: "failed", attempt: a.n - 1, attempts: a.attempts, lost: true };
+          // It counts as work only until its process was last seen; the rest is downtime.
+          const ran = Math.min(a.ranMs ?? a.lostMs, a.lostMs);
+          const lost: WorkflowNode = { ...base("step", name), id: `${nodeId(s)}/lost`, startedAt: s.start - a.lostMs, endedAt: s.start - a.lostMs + ran, status: "failed", attempt: a.n - 1, attempts: a.attempts, lost: true };
+          if (a.lostMs > ran) lost.lostMs = a.lostMs - ran;
           lost.error = "never reported: the process running it stopped";
           nodes.push(lost);
         }
+        for (const b of a.before ?? []) {
+          const part: WorkflowNode = { ...base("step", name), id: `${nodeId(s)}/${b.n}`, startedAt: b.startedAt, endedAt: b.endedAt, attempt: b.n, attempts: a.attempts, status: b.ok ? "ok" : "failed" };
+          if (!b.ok && b.error) part.error = b.error;
+          else delete part.error;
+          parts.push(part);
+          nodes.push(part);
+        }
         node = base("step", name);
+        if (parts.length) node.startedAt = a.startedAt;
         node.attempt = a.n;
         node.attempts = a.attempts;
         // The attempt's outcome as core/durable.ts read it (Vercel leaves a failed attempt's span OK).
@@ -301,7 +326,7 @@ export function otelTree(events: readonly AgentEvent[], opts: { runId?: string; 
       framework ??= frameworkOfScope(s.scope);
     }
     if (node) nodes.push(node);
-    for (const c of children.get(keyOf(s.traceId, s.spanId)) ?? []) walk(c, node ?? parent, next);
+    for (const c of children.get(keyOf(s.traceId, s.spanId)) ?? []) walk(c, parts.find((p) => c.start < p.endedAt!) ?? node ?? parent, next);
   };
 
   if (single) {

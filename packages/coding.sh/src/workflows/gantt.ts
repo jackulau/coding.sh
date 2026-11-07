@@ -32,6 +32,7 @@ export function buildGantt(run: WorkflowRun, nodes: WorkflowNode[]): GanttData {
       if (a.sessionId) row.sessionId = a.sessionId;
       if (a.usage?.costUsd !== undefined) row.costUsd = a.usage.costUsd;
       if (a.kind === "wait") row.wait = true;
+      if (a.lost) row.lost = true;
       if (a.attempt !== undefined) row.attempt = a.attempt;
       if (a.attempts !== undefined) row.attempts = a.attempts;
       if (a.resume) row.resume = a.resume;
@@ -52,7 +53,7 @@ export function buildGantt(run: WorkflowRun, nodes: WorkflowNode[]): GanttData {
 
 /**
  * Tab-separated timeline: one row per agent, offsets in ms from run start.
- * Durable runs add a row per wait and two columns: kind (attempt | wait) and resume.
+ * Durable runs add a row per wait and two columns: kind (attempt | lost | wait) and resume.
  */
 export function ganttTsv(g: GanttData): string {
   const durable = g.phases.some((p) => p.rows.some((r) => r.wait || r.attempt !== undefined));
@@ -74,7 +75,7 @@ export function ganttTsv(g: GanttData): string {
           r.idleAfterMs !== undefined ? ms(r.idleAfterMs) : "",
           r.costUsd !== undefined ? r.costUsd.toFixed(4) : "",
           r.sessionId ?? "",
-          ...(durable ? [r.wait ? "wait" : r.attempt !== undefined ? "attempt" : "", r.resume ?? ""] : []),
+          ...(durable ? [r.wait ? "wait" : r.lost ? "lost" : r.attempt !== undefined ? "attempt" : "", r.resume ?? ""] : []),
         ].join("\t"),
       );
     }

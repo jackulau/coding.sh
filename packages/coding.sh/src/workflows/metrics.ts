@@ -2,7 +2,7 @@
 // Times are ms. "Agents" are nodes of kind agent or step that ran
 // (status ≠ cached), unless noted.
 import type { AgentEvent, Usage } from "../schema/index.ts";
-import { coveredMs, criticalPath, timedAgents, waitIntervals } from "./critical-path.ts";
+import { coveredMs, criticalPath, lostIntervals, timedAgents, waitIntervals } from "./critical-path.ts";
 import type { AgentMetric, PhaseMetric, WorkflowNode, WorkflowRun, WorkflowStats } from "./types.ts";
 
 const AGENTISH = new Set<WorkflowNode["kind"]>(["agent", "step", "subagent"]);
@@ -249,11 +249,13 @@ export function workflowStats(run: WorkflowRun, nodes: WorkflowNode[], base?: { 
   if (cp.path.length) {
     stats.criticalPathMs = cp.ms;
     stats.criticalPath = cp.path;
-    stats.orchestrationGapMs = cp.gaps.reduce((s, g) => s + g.ms - (g.waitMs ?? 0), 0);
+    stats.orchestrationGapMs = cp.gaps.reduce((s, g) => s + Math.max(0, g.ms - (g.waitMs ?? 0) - (g.lostMs ?? 0)), 0);
   }
   const waitSpans = waitIntervals(nodes);
   if (waitSpans.length) stats.waitMs = coveredMs(-Infinity, Infinity, waitSpans);
-  if (allAgents.some((n) => n.attempt !== undefined)) stats.stepRetries = allAgents.filter((n) => (n.attempt ?? 1) > 1).length;
+  const lostSpans = lostIntervals(nodes);
+  if (lostSpans.length) stats.lostMs = coveredMs(-Infinity, Infinity, lostSpans);
+  if (allAgents.some((n) => n.attempt !== undefined)) stats.stepRetries = allAgents.filter((n) => (n.attempt ?? 1) > 1 && n.status !== "cached").length;
   const savings = pipelineSavings(nodes, run.concurrencyCap);
   if (savings !== undefined) stats.pipelineSavingsMs = savings;
   const waits = timed.filter((a) => a.issuedAt !== undefined).map((a) => Math.max(0, a.startedAt - a.issuedAt!));
