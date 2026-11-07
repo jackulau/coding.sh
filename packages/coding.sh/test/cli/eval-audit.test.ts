@@ -124,4 +124,29 @@ describe("eval audit", () => {
     const task = list.tasks.find((x) => x.name === "sum");
     assert.deepEqual([task?.status, task?.verifier.command], ["draft", "node test.js && node neg.test.js"]);
   });
+
+  it("compare reads the audit: audited pass rate per arm, and --audited counts refuted passes as fails (AA-13)", (t) => {
+    if (!gitBin) return t.skip("needs git");
+    type Arm = { passes: number; refutedPasses?: number; auditedRuns?: number; auditedPassRate?: { p: number } };
+    type Report = { baseline: Arm; candidate: Arm; verdict: { kind: string }; audited?: { rawVerdict: string; method: string }; notes: string[] };
+    const raw = cli(["compare", "honest", "special", "--experiment", experimentId, "--json"]);
+    assert.equal(raw.status, 0, raw.stdout + raw.stderr);
+    const rj = (JSON.parse(raw.stdout) as { report: Report }).report;
+    assert.equal(rj.audited, undefined);
+    assert.deepEqual([rj.baseline.passes, rj.baseline.refutedPasses, rj.baseline.auditedPassRate?.p], [2, 0, 1]);
+    assert.deepEqual([rj.candidate.passes, rj.candidate.refutedPasses, rj.candidate.auditedRuns, rj.candidate.auditedPassRate?.p], [2, 2, 2, 0]);
+
+    const a = cli(["compare", "honest", "special", "--experiment", experimentId, "--audited", "--json"]);
+    assert.equal(a.status, 0, a.stdout + a.stderr);
+    const aj = (JSON.parse(a.stdout) as { report: Report }).report;
+    assert.deepEqual(aj.audited, { rawVerdict: rj.verdict.kind, method: "manual" });
+    assert.equal(aj.candidate.passes, 0, "refuted passes count as fails");
+    assert.ok(aj.notes.some((n) => /^audited/.test(n) && /2 refuted pass\(es\) count as fails/.test(n)), aj.notes.join("\n"));
+
+    const text = cli(["compare", "honest", "special", "--experiment", experimentId, "--audited"]);
+    assert.equal(text.status, 0, text.stdout + text.stderr);
+    assert.match(text.stdout, /^audited pass +A 100% → 100% \(0 refuted, coverage 100%\)$/m);
+    assert.match(text.stdout, /^ +B 100% → 0% \(2 refuted, coverage 100%\)$/m);
+    assert.match(text.stdout, /^verdict \(audited\): /m);
+  });
 });

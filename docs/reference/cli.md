@@ -1602,6 +1602,7 @@ coding.sh compare <A> [b] [options]
 | `--eps-c <C|inf>` | `inf` | With --promote: relative cost rise a better B may take (0.2 = +20%) |
 | `--draws <N>` | `10000` | With --promote: bootstrap draws. |
 | `--item-gate` |  | One-item gate (shown automatically when B adds or removes one rule, skill or context file): exit 0 on KEEP or ACCEPT, 1 otherwise; --no-item-gate hides it. |
+| `--audited` |  | Count passes a witness refuted (eval audit) as fails in the verdict; needs every pass in both arms audited. |
 | `--resume [<ID>]` |  | Continue an interrupted comparison: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
@@ -1611,6 +1612,7 @@ coding.sh compare <A> [b] [options]
 coding.sh compare base candidate --k 3
 coding.sh compare base candidate --k 3 --resume
 coding.sh compare base candidate --experiment exp_01
+coding.sh compare base candidate --experiment exp_01 --audited
 coding.sh compare base candidate --k 3 --gate
 coding.sh compare base candidate --k 3 --gate --by suite:
 coding.sh compare no-skill with-skill --tag skill-eval --gate --by suite: --max-cost 15

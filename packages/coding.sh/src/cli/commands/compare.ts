@@ -179,6 +179,7 @@ export async function run(c: CommandContext): Promise<number> {
       ...(gateBy ? { gateBy, taskTags } : {}),
       ...(promote ? { pareto: promote } : {}),
       ...(change ? { change } : {}),
+      ...(c.flags.audited === true ? { audited: true } : {}),
     });
     if (out.json) out.data({ experimentId, report, ...resume, ...(budget ? { budget } : {}) });
     else {

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
 import type { AgentEvent, EvalTask, RunResult, Session } from "../../src/core/types.ts";
-import { compare, formatCompare, formatDuration, pool, runExperiment, scheduleJobs } from "../../src/runner/experiment.ts";
+import { compare, formatCompare, formatDuration, pool, runExperiment, scheduleJobs, type RunAuditStatus } from "../../src/runner/experiment.ts";
+import { auditStatuses } from "../../src/eval/witness.ts";
 import { cleanupWorlds, obedientAgent, toyWorld } from "../helpers-eval.ts";
 
 after(cleanupWorlds);
@@ -814,5 +815,82 @@ describe("compare --gate --by (AB-2)", () => {
     const { taskTags: _t, ...noTags } = opts(tags);
     assert.deepEqual(compare(rs, noTags), plain);
     assert.doesNotMatch(formatCompare(plain), /suite:/);
+  });
+});
+
+describe("compare with witness audits (AA-13)", () => {
+  // A and B pass the same 8 of 10 tasks; a witness refutes 7 of B's passes.
+  const rs: RunResult[] = [];
+  for (let i = 0; i < 10; i++) rs.push(run(`t${i}`, "A", 1, i < 8), run(`t${i}`, "B", 1, i < 8));
+  const full = new Map<string, RunAuditStatus>(rs.filter((r) => r.pass).map((r) => [r.id, r.bundleId === "B" && r.taskId !== "t7" ? "refuted" : "clean"]));
+  const opts = { baseline: "A", candidate: "B", iters: 2000, seed: 1 };
+
+  it("adds the audited pass rate per arm; --audited counts refuted passes as fails and says the verdict changed", () => {
+    const raw = compare(rs, { ...opts, audit: full });
+    assert.equal(raw.verdict.kind, "no-difference");
+    assert.equal(raw.audited, undefined);
+    assert.deepEqual([raw.candidate.passes, raw.candidate.refutedPasses, raw.candidate.auditedRuns, raw.candidate.auditedPassRate?.p], [8, 7, 8, 0.1]);
+    assert.deepEqual([raw.baseline.refutedPasses, raw.baseline.auditedRuns, raw.baseline.auditedPassRate?.p], [0, 8, 0.8]);
+    const text = formatCompare(raw);
+    assert.match(text, /audited pass +A 80% → 80% \(0 refuted, coverage 100%\)/);
+    assert.match(text, /B 80% → 10% \(7 refuted, coverage 100%\)/);
+    assert.match(text, /^verdict: /m);
+
+    const a = compare(rs, { ...opts, audit: full, audited: true });
+    assert.equal(a.verdict.kind, "worse");
+    assert.deepEqual(a.audited, { rawVerdict: "no-difference", method: "manual" });
+    assert.equal(a.candidate.passes, 1);
+    assert.ok(a.notes.includes("audited verdict worse differs from the raw verdict no-difference: 7 refuted pass(es) count as fails"), a.notes.join("\n"));
+    const at = formatCompare(a);
+    assert.match(at, /^verdict \(audited\): /m);
+    assert.match(at, /B 80% → 10% \(7 refuted, coverage 100%\)/, "the row still reads raw → audited");
+  });
+
+  it("an audit of one arm gives that arm's row and keeps the raw verdict, with a coverage note", () => {
+    const onlyB = new Map([...full].filter(([id]) => id.startsWith("B-")));
+    const r = compare(rs, { ...opts, audit: onlyB, audited: true });
+    assert.equal(r.verdict.kind, "no-difference");
+    assert.equal(r.audited, undefined);
+    assert.equal(r.baseline.auditedPassRate, undefined);
+    assert.ok(r.notes.some((n) => /^audit covers candidate only \(8\/8 passes\); no audited verdict/.test(n)), r.notes.join("\n"));
+    const text = formatCompare(r);
+    assert.match(text, /audited pass +B 80% → 10% \(7 refuted, coverage 100%\)/);
+    assert.doesNotMatch(text, /A \d+% → \d+% \(/);
+  });
+
+  it("unreplayable and replay-mismatch passes are not covered and never refuted", () => {
+    const m = new Map<string, RunAuditStatus>(rs.filter((r) => r.pass).map((r, i) => [r.id, r.bundleId === "A" ? "clean" : i % 4 === 1 ? "unreplayable" : "replay-mismatch"]));
+    const r = compare(rs, { ...opts, audit: m, audited: true });
+    assert.deepEqual([r.candidate.refutedPasses, r.candidate.auditedRuns, r.candidate.passes], [0, 0, 8]);
+    assert.equal(r.verdict.kind, "no-difference");
+    assert.equal(r.audited, undefined);
+    assert.match(formatCompare(r), /B 80% → 80% \(0 refuted, coverage 0%\)/);
+  });
+
+  it("refutations by an ambiguous witness are not counted", () => {
+    const statuses = auditStatuses([
+      {
+        taskId: "t0",
+        method: "manual",
+        witnesses: ["w"],
+        runs: [
+          { runId: "B-t0-1", bundleId: "B", status: "refuted", refutedBy: ["w"], countsAsRefuted: false },
+          { runId: "B-t1-1", bundleId: "B", status: "refuted", refutedBy: ["w"], countsAsRefuted: true },
+        ],
+        ambiguous: [],
+        ts: 0,
+      },
+    ]);
+    assert.deepEqual([...statuses], [["B-t0-1", "clean"], ["B-t1-1", "refuted"]]);
+  });
+
+  it("no audits: output is byte-identical; --audited only adds a note", () => {
+    const plain = compare(rs, opts);
+    assert.deepEqual(compare(rs, { ...opts, audit: new Map() }), plain);
+    assert.equal(formatCompare(compare(rs, { ...opts, audit: new Map() })), formatCompare(plain));
+    assert.doesNotMatch(formatCompare(plain), /audited/);
+    const asked = compare(rs, { ...opts, audited: true });
+    assert.deepEqual({ ...asked, notes: plain.notes }, plain);
+    assert.match(asked.notes.at(-1) ?? "", /^no witness audits for these runs, so no audited verdict/);
   });
 });

@@ -360,6 +360,12 @@ const AB = [
     <a href="https://arxiv.org/abs/2611.06563">arXiv 2611.06563</a>). Each pass gets a line with the run, file, tool, event id and the
     agent's words; <code>--json</code> has them under <code>tamperAttribution</code>.
   </p>
+  <p id="audited">
+    After <a href="#witness"><code>eval audit</code></a>, compare shows each audited arm's raw and audited pass rate:
+    <code>audited pass B 60% → 30% (3 refuted, coverage 100%)</code>. <code>compare A B --audited</code> counts refuted passes as fails
+    and labels the verdict <code>verdict (audited)</code>, with a note when that changes it. It needs every pass in both arms replayed;
+    otherwise the raw verdict stands and a note says what the audit covers.
+  </p>
   <p id="promote">
     <code>compare A B --promote</code> keeps a B that is cheaper at the same quality, which the verdict calls "no significant difference". It
     prints <code>pareto: support 0.86 ≥ 0.70 → promote (cost-cut: cost -38% …)</code> or <code>→ hold</code>, and exits 0 only on promote.

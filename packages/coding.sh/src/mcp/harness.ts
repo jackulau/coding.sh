@@ -67,7 +67,16 @@ export async function harnessCompareList(ctx: Context, env: NodeJS.ProcessEnv, o
 }
 
 const ownTests = (s: SelfCheckSummary) => ({ fails: s.fails, green: s.green, red: s.red, stale: s.stale, none: s.none, unknown: s.unknown });
-const armOut = (a: ArmSummary) => ({ bundle: a.name, id: a.bundleId, runs: a.runs, passes: a.passes, passRate: round(a.passRate.p), errors: a.errors });
+const armOut = (a: ArmSummary) => ({
+  bundle: a.name,
+  id: a.bundleId,
+  runs: a.runs,
+  passes: a.passes,
+  passRate: round(a.passRate.p),
+  errors: a.errors,
+  // Witness audits (eval audit): passes a witness refuted, passes replayed, the pass rate without the refuted ones.
+  ...(a.auditedPassRate ? { refuted: a.refutedPasses ?? 0, audited: a.auditedRuns ?? 0, auditedPassRate: round(a.auditedPassRate.p) } : {}),
+});
 const tamperArm = (a: ArmSummary) => ({
   runs: a.tampered,
   passes: a.tamperedPasses,

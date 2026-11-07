@@ -417,7 +417,7 @@ Confirmed witnesses are stored at `task.meta.witnesses`, and `eval audit <task> 
 without `--witness` replays them again. A witness that refutes more than half of all passing runs
 is listed as ambiguous: the instruction probably doesn't state the requirement clearly. Its
 refutations are shown but not counted unless you pass `--count-ambiguous`. The report is stored at
-`task.meta.audits[<experiment>]`. `--promote` then adds the
+`task.meta.audits[<experiment>]`, where [`compare --audited`](#harness-ab) reads it. `--promote` then adds the
 witnesses to the verifier (hidden file plus `&& <cmd>`) and puts the task back to draft for
 `eval validate`. `eval export` writes witnesses to `witnesses/`, and `eval import` reads them back.
 
@@ -522,6 +522,23 @@ means no event in the trace touched the flagged file. The tamper note gets the s
 adds `tamperedPassesDisclosed` and `tamperedPassesStealth` to each arm and `tamperAttribution`,
 keyed by run id, with each flag's finding: event id, tool call id, shape, whether the edit alone
 turned the tests green, and the agent's words.
+
+Once `eval audit` has replayed witnesses on an experiment's passes, compare adds each audited
+arm's raw and audited pass rate. `--audited` counts refuted passes as fails before every statistic
+and labels the verdict:
+
+```
+audited pass      A 60% → 60% (0 refuted, coverage 100%)
+                  B 60% → 30% (3 refuted, coverage 100%)
+verdict (audited): candidate worse …
+```
+
+The audited verdict needs every pass in both arms replayed. Unreplayable and replay-mismatch
+passes are never refuted but leave coverage short, and then the raw verdict stands with a note
+saying which arm the audit covers. When the audit changes the verdict, a note gives both. `--json`
+adds `refutedPasses`, `auditedRuns` and `auditedPassRate` to each audited arm, plus `audited:
+{rawVerdict, method}` with `--audited`. The MCP `harness_compare` tool gives `refuted`, `audited`
+and `auditedPassRate` per arm.
 
 A cost, token or turn value shows `(3/10)` when only 3 of the arm's 10 runs reported it. The
 "X% cheaper" note needs a known cost for at least 80% of each arm's runs. Below that, the report

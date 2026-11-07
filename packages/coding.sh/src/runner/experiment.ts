@@ -326,7 +326,16 @@ export interface ArmSummary {
   tamperedPassesStealth?: number;
   /** Failed runs split by the agent's own last test result (silent misses: own tests green, verifier red). */
   selfCheck: SelfCheckSummary;
+  /** With witness audits (`eval audit`): passes a confirmed witness refuted. */
+  refutedPasses?: number;
+  /** With witness audits: passes the audit replayed (clean or refuted); unreplayable runs are not. */
+  auditedRuns?: number;
+  /** With witness audits: Wilson interval of (raw passes − refuted) / runs. */
+  auditedPassRate?: Interval;
 }
+
+/** One run's witness-audit outcome (src/eval/witness.ts); only "refuted" changes anything. */
+export type RunAuditStatus = "clean" | "audited-clean" | "refuted" | "unaudited" | "unreplayable" | "replay-mismatch";
 
 export interface TaskOutcome {
   taskId: string;
@@ -404,6 +413,14 @@ export interface CompareReport {
   itemGate?: ItemGateReport;
   /** With traces: each tamper-flagged run's flags linked to the tool call that made them, keyed by run id. */
   tamperAttribution?: Record<string, RunTamperAttribution>;
+  /**
+   * `compare --audited` with every pass in both arms audited: refuted passes count as
+   * fails in everything above (pass rates, bootstrap, McNemar, gates). `rawVerdict` is
+   * the verdict before.
+   */
+  audited?: { rawVerdict: VerdictKind; method: "manual" | "sampled" | "per-trial" };
+  /** How the witness audits were made, when there are any. */
+  auditMethod?: "manual" | "sampled" | "per-trial";
 }
 
 export interface RunTamperAttribution {
@@ -487,6 +504,11 @@ export interface CompareOpts {
   pareto?: Pick<ParetoOpts, "gamma" | "epsQ" | "epsC" | "draws">;
   /** Add the one-item gate: B adds (mode "add") or removes ("remove") one instruction item. */
   itemGate?: Omit<ItemGateOpts, "baseline" | "candidate">;
+  /** Witness-audit outcome per run id (task.meta.audits); adds the audited pass rate per arm. */
+  audit?: ReadonlyMap<string, RunAuditStatus>;
+  auditMethod?: "manual" | "sampled" | "per-trial";
+  /** Refuted passes count as fails before every statistic, when every pass in both arms was audited. */
+  audited?: boolean;
 }
 
 type Extract = (r: RunResult, s: Session | undefined) => number | undefined;
@@ -562,7 +584,57 @@ function arm(
   };
 }
 
+/**
+ * The harness A/B report. With witness audits (`opts.audit`) each arm also gets its
+ * audited pass rate; with `opts.audited` and every pass in both arms audited, refuted
+ * passes count as fails before every statistic (TestJack, arXiv 2610.10619 Table 2:
+ * refuted passes cut resolution by 17 points on average, so an A/B can flip).
+ */
 export function compare(all: readonly RunResult[], opts: CompareOpts): CompareReport {
+  const audit = opts.audit;
+  if (!audit?.size) {
+    const r = compareRuns(all, opts);
+    if (opts.audited) r.notes.push("no witness audits for these runs, so no audited verdict; run eval audit <task> --experiment <id> first");
+    return r;
+  }
+  const raw = compareRuns(all, opts);
+  const counted = (r: RunResult) => !r.cancelled && !r.superseded && !r.infra;
+  const fields = (bundleId: string) => {
+    const rs = all.filter((r) => r.bundleId === bundleId && counted(r));
+    const passes = rs.filter((r) => r.pass);
+    const st = (r: RunResult) => audit.get(r.id);
+    const refuted = passes.filter((r) => st(r) === "refuted").length;
+    const replayed = passes.filter((r) => ["clean", "audited-clean", "refuted"].includes(st(r) ?? "")).length;
+    const seen = passes.filter((r) => st(r) !== undefined).length;
+    const out: Partial<ArmSummary> = seen ? { refutedPasses: refuted, auditedRuns: replayed, auditedPassRate: wilson(passes.length - refuted, rs.length) } : {};
+    return { out, replayed, passes: passes.length };
+  };
+  const fa = fields(opts.baseline);
+  const fb = fields(opts.candidate);
+  const method = opts.auditMethod ?? "manual";
+  const withFields = (r: CompareReport): CompareReport => ({ ...r, baseline: { ...r.baseline, ...fa.out }, candidate: { ...r.candidate, ...fb.out }, auditMethod: method });
+  if (!opts.audited) return withFields(raw);
+  // An audited verdict needs every pass in both arms replayed: unreplayable and replay-mismatch passes leave it partial.
+  if (fa.replayed < fa.passes || fb.replayed < fb.passes) {
+    const part = (f: typeof fa) => `${f.replayed}/${f.passes}`;
+    const which = !fb.replayed ? `baseline only (${part(fa)} passes)` : !fa.replayed ? `candidate only (${part(fb)} passes)` : `baseline ${part(fa)} and candidate ${part(fb)} passes`;
+    const r = withFields(raw);
+    r.notes.push(`audit covers ${which}; no audited verdict`);
+    return r;
+  }
+  const rewritten = all.map((r) => (r.pass && audit.get(r.id) === "refuted" ? { ...r, pass: false } : r));
+  const r = withFields(compareRuns(rewritten, opts));
+  r.audited = { rawVerdict: raw.verdict.kind, method };
+  const refuted = (fa.out.refutedPasses ?? 0) + (fb.out.refutedPasses ?? 0);
+  r.notes.push(
+    r.verdict.kind === raw.verdict.kind
+      ? `audited: ${refuted} refuted pass(es) count as fails; the verdict is the same as without the audit`
+      : `audited verdict ${r.verdict.kind} differs from the raw verdict ${raw.verdict.kind}: ${refuted} refuted pass(es) count as fails`,
+  );
+  return r;
+}
+
+function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareReport {
   const alpha = opts.alpha ?? 0.05;
   // Interrupted runs were killed mid-flight, and runs that failed on infrastructure (rate
   // limit, 5xx, network) never measured the agent: neither says anything about either harness.
@@ -1039,6 +1111,16 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
     const td = r.candidate.tamperRate - r.baseline.tamperRate;
     out.push(row(["tamper rate", tr(r.baseline), tr(r.candidate), Number.isFinite(td) ? signed(td, true, pp(td)) : "—"]));
   }
+  // Witness audits: raw → audited pass rate per audited arm, "A 60% → 30% (3 refuted, coverage 100%)".
+  const audited = (["A", "B"] as const).map((k) => [k, k === "A" ? r.baseline : r.candidate] as const).filter(([, a]) => a.auditedPassRate);
+  audited.forEach(([k, a], i) => {
+    const refuted = a.refutedPasses ?? 0;
+    const raw = r.audited ? a.passes + refuted : a.passes;
+    const cov = raw ? share((a.auditedRuns ?? 0) / raw) : "n/a";
+    const how = r.auditMethod && r.auditMethod !== "manual" ? `, ${r.auditMethod}` : "";
+    const text = `${k} ${share(raw / a.runs)} → ${share((raw - refuted) / a.runs)} (${refuted} refuted, coverage ${cov}${how})`;
+    out.push(`${pad(i === 0 ? "audited pass" : "", W[0] as number)}${refuted ? bad(text) : text}`);
+  });
   for (const m of r.metrics) {
     const rel = Number.isFinite(m.relative) ? ` (${m.relative >= 0 ? "+" : ""}${(m.relative * 100).toFixed(0)}%)` : "";
     const d = `${m.delta >= 0 && Number.isFinite(m.delta) ? "+" : ""}${fmtValue(m.delta, m.unit)}${rel}`;
@@ -1105,7 +1187,7 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   out.push("");
   const v = r.verdict;
   const vtext = v.kind === "better" ? good(v.text) : v.kind === "worse" ? bad(v.text) : bold(v.text);
-  out.push(`verdict: ${vtext}`);
+  out.push(`${r.audited ? "verdict (audited)" : "verdict"}: ${vtext}`);
   if (r.gate) {
     const g = r.gate;
     const head = gateLine(g, ab);

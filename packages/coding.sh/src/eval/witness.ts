@@ -275,6 +275,11 @@ export function auditOutcome(r: AuditRun): AuditRunStatus {
   return r.status === "refuted" && r.countsAsRefuted === false ? "clean" : r.status;
 }
 
+/** Each audited run's outcome across reports (ambiguous-only refutations count as clean), for compare. */
+export function auditStatuses(reports: readonly AuditReport[]): Map<string, AuditRunStatus> {
+  return new Map(reports.flatMap((rep) => rep.runs.map((r) => [r.runId, auditOutcome(r)] as const)));
+}
+
 /** `task.meta.audits[experimentId]`, when it is a report. */
 export function taskAudit(task: EvalTask, experimentId: string): AuditReport | undefined {
   const a = (task.meta?.audits as Record<string, unknown> | undefined)?.[experimentId] as AuditReport | undefined;

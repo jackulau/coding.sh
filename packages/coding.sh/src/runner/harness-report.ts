@@ -4,7 +4,8 @@
 import { harnessItem, itemExposure, type ExposureState } from "../core/exposure.ts";
 import type { BlobStore, EvalTask, HarnessBundle, IndexStore, RunResult } from "../core/types.ts";
 import { diffBundles } from "./bundle.ts";
-import { compare, loadRunEvents, loadRunSessions, type CompareOpts, type CompareReport } from "./experiment.ts";
+import { auditStatuses, taskAudit, type AuditReport } from "../eval/witness.ts";
+import { compare, loadRunEvents, loadRunSessions, type CompareOpts, type CompareReport, type RunAuditStatus } from "./experiment.ts";
 import { singleItemChange } from "./gate-item.ts";
 
 export type ItemChange = { mode: "add" | "remove"; path: string };
@@ -53,5 +54,31 @@ export async function harnessReport(stores: { index: IndexStore; blobs: BlobStor
       itemGate = { mode: change.mode, exposure, agentVersions, item: { path: item.path, kind: item.kind, tier: item.tier } };
     }
   }
-  return compare(results, { ...rest, baseline: A.id, candidate: B.id, sessions, events, bundles: { baseline: A, candidate: B }, ...(itemGate ? { itemGate } : {}) });
+  const audit = await loadRunAudits(stores.index, results);
+  return compare(results, {
+    ...rest,
+    baseline: A.id,
+    candidate: B.id,
+    sessions,
+    events,
+    bundles: { baseline: A, candidate: B },
+    ...(itemGate ? { itemGate } : {}),
+    ...(audit.size ? { audit, auditMethod: "manual" as const } : {}),
+  });
+}
+
+/** Witness-audit outcome per run, from each task's `meta.audits[<the run's experiment>]` (`eval audit`). */
+export async function loadRunAudits(index: IndexStore, results: readonly RunResult[]): Promise<Map<string, RunAuditStatus>> {
+  const reports: AuditReport[] = [];
+  const byTask = new Map<string, Set<string>>();
+  for (const r of results) if (r.experimentId) byTask.set(r.taskId, (byTask.get(r.taskId) ?? new Set()).add(r.experimentId));
+  for (const [taskId, exps] of byTask) {
+    const task = await index.getTask(taskId);
+    if (!task?.meta?.audits) continue;
+    for (const e of exps) {
+      const rep = taskAudit(task, e);
+      if (rep) reports.push(rep);
+    }
+  }
+  return auditStatuses(reports);
 }

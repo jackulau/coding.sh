@@ -10,6 +10,7 @@ import { buildSession } from "../../src/core/sessions.ts";
 import type { HarnessBundle } from "../../src/core/types.ts";
 import { jobConfig } from "../../src/jobs/config.ts";
 import { JobStore } from "../../src/jobs/store.ts";
+import { withAudit, type AuditReport } from "../../src/eval/witness.ts";
 import { harnessCompareGet, harnessCompareList } from "../../src/mcp/harness.ts";
 import { ToolError } from "../../src/mcp/protocol.ts";
 import { fixtureBundle, fixtureRun, fixtureTask } from "../../src/store/conformance.ts";
@@ -153,5 +154,33 @@ describe("harness_compare", () => {
     assert.equal(byRun.h2b2.intent, "Refactor helpers.");
     const h1 = (await harnessCompareGet(ctx, w.env, "exp_h1", { limit: 10 })) as Record<string, any>;
     assert.equal("tamper" in h1, false, "no tampered run, no tamper field");
+  });
+
+  it("adds each audited arm's refuted passes and audited pass rate from the task's witness audit (AA-13)", async () => {
+    const plain = (await harnessCompareGet(ctx, w.env, "exp_h1", { limit: 10 })) as Record<string, any>;
+    assert.equal("auditedPassRate" in plain.candidate, false, "no audit, no audit fields");
+    const t2 = await ctx.index.getTask("t2");
+    const report: AuditReport = {
+      taskId: "t2",
+      experimentId: "exp_h1",
+      method: "manual",
+      witnesses: ["w1"],
+      runs: [
+        { runId: "r3", bundleId: "b-base", status: "clean" },
+        { runId: "r4", bundleId: "b-base", status: "clean" },
+        { runId: "r7", bundleId: "b-good", status: "refuted", witnessId: "w1", refutedBy: ["w1"], countsAsRefuted: true },
+        { runId: "r8", bundleId: "b-good", status: "clean" },
+      ],
+      ambiguous: [],
+      ts: T0,
+    };
+    await ctx.index.putTask(withAudit(t2!, "exp_h1", report));
+    try {
+      const r = (await harnessCompareGet(ctx, w.env, "exp_h1", { limit: 10 })) as Record<string, any>;
+      assert.deepEqual([r.baseline.refuted, r.baseline.audited, r.baseline.auditedPassRate], [0, 2, 0.5]);
+      assert.deepEqual([r.candidate.passes, r.candidate.refuted, r.candidate.audited, r.candidate.auditedPassRate], [4, 1, 2, 0.75]);
+    } finally {
+      await ctx.index.putTask(t2!);
+    }
   });
 });
