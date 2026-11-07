@@ -170,6 +170,18 @@ the tool call that changed it, with what the agent said. Disclosed means it said
 test (`the test expecting 5 is wrong; update the expected value`). Stealth means it didn't. Read the
 stealth ones first.
 
+A `surface` row shows the bytes of instruction text each bundle puts in front of the agent:
+`CLAUDE.md`, `AGENTS.md`, `GEMINI.md`, `SKILL.md` files, Claude Code, Cursor and Copilot rules, and
+Pi or Prime system prompts, under `~/` too:
+
+```
+surface           1.5 KB (2 files)      2.1 KB (3 files)      +620 B (+40%)
+```
+
+Those bytes are paid on every turn. When B's surface is more than 20% bigger than A's, the notes say
+`instruction surface +40%: require a success CI above 0, not just non-inferiority`: a bigger prompt
+that only ties is a cost with no gain. `--json` has the sizes per file in `report.surface`.
+
 Cost, token and turn values show `(3/10)` when only some runs reported them. The "X% cheaper" note
 only appears when each arm has a known cost for at least 80% of its runs.
 

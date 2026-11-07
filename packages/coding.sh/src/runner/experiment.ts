@@ -14,7 +14,7 @@ import { gateDetail, gateHeadline, gateVerdict, idList, type GateVerdict } from 
 import { acceptanceGate, mcnemar, type GateOpts, type GateResult, type McNemarResult } from "../stats/tests.ts";
 import { paretoSupport, type ParetoOpts, type ParetoSupport } from "../stats/pareto.ts";
 import { failureAnatomy, nestedVarianceShares, type ArmAnatomy, type VarianceShares } from "./anatomy.ts";
-import { diffBundles, formatBundleDiff, type BundleDiff } from "./bundle.ts";
+import { diffBundles, formatBundleDiff, type BundleDiff, type InstructionSurface } from "./bundle.ts";
 import { firstDivergence, type Divergence } from "./divergence.ts";
 import { selfCheckSummary, type SelfCheckSummary } from "./selfcheck.ts";
 import type { SnapshotOps } from "./git.ts";
@@ -421,7 +421,15 @@ export interface CompareReport {
   audited?: { rawVerdict: VerdictKind; method: "manual" | "sampled" | "per-trial" };
   /** How the witness audits were made, when there are any. */
   auditMethod?: "manual" | "sampled" | "per-trial";
+  /**
+   * Instruction bytes per arm (runner/bundle.ts INSTRUCTION_GLOBS), present
+   * when both bundles were given. relative = (B − A) / A (NaN when A has none).
+   */
+  surface?: { baseline: InstructionSurface; candidate: InstructionSurface; relative: number };
 }
+
+/** A candidate whose instruction surface grows by more than this gets the bloat note. */
+export const SURFACE_BLOAT = 0.2;
 
 export interface RunTamperAttribution {
   taskId: string;
@@ -509,6 +517,8 @@ export interface CompareOpts {
   auditMethod?: "manual" | "sampled" | "per-trial";
   /** Refuted passes count as fails before every statistic, when every pass in both arms was audited. */
   audited?: boolean;
+  /** Each bundle's instruction surface (`instructionSurface`); used only when `bundles` has both arms. */
+  surfaces?: { baseline: InstructionSurface; candidate: InstructionSurface };
 }
 
 type Extract = (r: RunResult, s: Session | undefined) => number | undefined;
@@ -788,6 +798,12 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
   } else if (failed) {
     notes.push(`${k <= 1 ? "k=1" : "some tasks ran once"}: bad runs and beyond-ability failures look the same; rerun with --k 3 (arXiv 2611.08285)`);
   }
+  const surface = opts.bundles?.baseline && opts.bundles.candidate && opts.surfaces ? surfaceDelta(opts.surfaces.baseline, opts.surfaces.candidate) : undefined;
+  const bloat = surface && (surface.relative > SURFACE_BLOAT || (!surface.baseline.bytes && surface.candidate.bytes > 0));
+  if (surface && bloat) {
+    const grew = surface.baseline.bytes ? `+${Math.round(surface.relative * 100)}%` : `0 → ${surface.candidate.bytes} bytes`;
+    notes.push(`instruction surface ${grew}: require a success CI above 0, not just non-inferiority (instructions cost tokens on every turn)`);
+  }
   let pareto: ComparePareto | undefined;
   if (opts.pareto) {
     const p = paretoGate(ta, tb, pairedIds, metrics, opts.sessions, { ...opts.pareto, seed: opts.seed });
@@ -817,7 +833,14 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     // Cancelled runs count as invalid here: an incomplete sweep is not scorable.
     ...(opts.itemGate ? { itemGate: itemGate(all, { ...opts.itemGate, baseline: opts.baseline, candidate: opts.candidate }) } : {}),
     ...(atts?.size ? { tamperAttribution: Object.fromEntries(atts) } : {}),
+    ...(surface ? { surface } : {}),
   };
+}
+
+function surfaceDelta(baseline: InstructionSurface, candidate: InstructionSurface): NonNullable<CompareReport["surface"]> {
+  const a = baseline.bytes;
+  const b = candidate.bytes;
+  return { baseline, candidate, relative: a ? (b - a) / a : NaN };
 }
 
 /** Why `compare --promote` has no Pareto gate. */
@@ -1127,6 +1150,14 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
     // "(3/10)": the mean covers only the runs where the metric is known.
     const val = (v: number, n: number, runs: number) => (n > 0 && n < runs ? `${fmtValue(v, m.unit)} ${dim(`(${n}/${runs})`)}` : fmtValue(v, m.unit));
     out.push(row([m.label, val(m.baseline, m.n.baseline, m.runs.baseline), val(m.candidate, m.n.candidate, m.runs.candidate), covered(m) ? signed(m.delta, m.better !== "higher", d) : d]));
+  }
+  if (r.surface) {
+    const kb = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
+    const { baseline: a, candidate: b, relative } = r.surface;
+    const d = b.bytes - a.bytes;
+    const text = `${d >= 0 ? "+" : "−"}${kb(Math.abs(d))}${Number.isFinite(relative) ? ` (${relative >= 0 ? "+" : ""}${(relative * 100).toFixed(0)}%)` : ""}`;
+    const files = (s: InstructionSurface) => `${kb(s.bytes)} ${dim(`(${Object.keys(s.files).length} files)`)}`;
+    out.push(row(["surface", files(a), files(b), signed(d, true, text)]));
   }
   const sp = r.spend;
   if (sp && sp.baseline.priced + sp.candidate.priced > 0) {

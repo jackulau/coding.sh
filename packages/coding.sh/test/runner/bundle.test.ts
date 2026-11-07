@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
-import { ablateBundle, applyBundle, bundleFromDir, bundleFromToml, bundleId, diffBundles, formatBundleDiff, normalizeBundlePath } from "../../src/runner/bundle.ts";
+import { ablateBundle, applyBundle, bundleFromDir, bundleFromToml, bundleId, diffBundles, formatBundleDiff, instructionSurface, isInstructionPath, normalizeBundlePath } from "../../src/runner/bundle.ts";
 import { MemBlobs, tempDir } from "../helpers-eval.ts";
 
 const dirs: string[] = [];
@@ -200,5 +200,23 @@ describe("ablateBundle", () => {
     assert.equal(await readFile(join(run, "AGENTS.md"), "utf8"), "agents");
     assert.equal(existsSync(join(run, ".claude/skills/pdfx/SKILL.md")), true);
     assert.ok(r.removed.includes(".claude/skills/pdf"));
+  });
+});
+
+// R2-2: the instruction surface is what the agent reads on every turn.
+describe("instructionSurface", () => {
+  it("sums instruction files only, ~/ included", async () => {
+    const blobs = new MemBlobs();
+    const files = {
+      "AGENTS.md": await blobs.put("a".repeat(1000)),
+      ".claude/skills/x/SKILL.md": await blobs.put("s".repeat(500)),
+      ".mcp.json": await blobs.put("{}".repeat(400)),
+      ".claude/settings.json": await blobs.put("{}"),
+    };
+    const s = await instructionSurface({ files }, blobs);
+    assert.equal(s.bytes, 1500);
+    assert.deepEqual(s.files, { "AGENTS.md": 1000, ".claude/skills/x/SKILL.md": 500 });
+    for (const p of ["CLAUDE.md", "pkg/CLAUDE.md", "~/.claude/CLAUDE.md", "GEMINI.md", ".cursor/rules/x.mdc", ".pi/SYSTEM.md", ".prime/agent/APPEND_SYSTEM.md", "SKILL.md"]) assert.ok(isInstructionPath(p), p);
+    for (const p of [".mcp.json", ".claude/settings.json", "README.md", ".pi/OTHER.md", "src/agents.ts"]) assert.ok(!isInstructionPath(p), p);
   });
 });

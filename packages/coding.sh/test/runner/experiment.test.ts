@@ -894,3 +894,27 @@ describe("compare with witness audits (AA-13)", () => {
     assert.match(asked.notes.at(-1) ?? "", /^no witness audits for these runs, so no audited verdict/);
   });
 });
+
+// R2-2: a candidate that grows the instruction surface by more than 20% gets a bloat note.
+describe("compare instruction surface", () => {
+  const results: RunResult[] = [];
+  for (let i = 0; i < 4; i++) results.push(run(`t${i}`, "A", 1, i < 2), run(`t${i}`, "B", 1, i < 3));
+  const bundle = (id: string) => ({ id, name: id, agent: "x", flags: [], env: {}, files: {}, remove: [], createdAt: 0 });
+  const surf = (bytes: number) => ({ bytes, files: { "AGENTS.md": bytes } });
+  const report = (b: number, withBundles = true) =>
+    compare(results, { baseline: "A", candidate: "B", iters: 200, ...(withBundles ? { bundles: { baseline: bundle("A"), candidate: bundle("B") } } : {}), surfaces: { baseline: surf(1500), candidate: surf(b) } });
+
+  it("notes bloat only above +20%", () => {
+    const at = report(1800);
+    assert.equal(at.surface?.relative, 0.2);
+    assert.ok(!at.notes.some((n) => n.startsWith("instruction surface")));
+    const over = report(1801);
+    assert.ok(over.notes.some((n) => /^instruction surface \+20%: require a success CI above 0/.test(n)), over.notes.join("\n"));
+    assert.match(formatCompare(over), /^surface\s+1\.5 KB \(1 files\)\s+1\.8 KB \(1 files\)\s+\+301 B \(\+20%\)$/m);
+  });
+
+  it("has no surface without both bundles", () => {
+    assert.equal(report(3000, false).surface, undefined);
+    assert.doesNotMatch(formatCompare(report(3000, false)), /^surface/m);
+  });
+});

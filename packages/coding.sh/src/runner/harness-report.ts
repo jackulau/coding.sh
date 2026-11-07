@@ -3,7 +3,7 @@
 // compare(). Shared by `coding.sh compare` and the MCP harness_compare tool.
 import { harnessItem, itemExposure, type ExposureState } from "../core/exposure.ts";
 import type { BlobStore, EvalTask, HarnessBundle, IndexStore, RunResult } from "../core/types.ts";
-import { diffBundles } from "./bundle.ts";
+import { diffBundles, instructionSurface } from "./bundle.ts";
 import { auditStatuses, taskAudit, type AuditReport } from "../eval/witness.ts";
 import { compare, loadRunEvents, loadRunSessions, type CompareOpts, type CompareReport, type RunAuditStatus } from "./experiment.ts";
 import { singleItemChange } from "./gate-item.ts";
@@ -28,7 +28,7 @@ export function tagPrefixProblem(tasks: readonly Pick<EvalTask, "tags">[], prefi
   return `no task has a tag starting with it; ${seen.length ? `prefixes seen: ${seen.join(", ")}` : "the tasks have no tags"}`;
 }
 
-export type HarnessReportOpts = Omit<CompareOpts, "baseline" | "candidate" | "sessions" | "events" | "bundles" | "itemGate"> & {
+export type HarnessReportOpts = Omit<CompareOpts, "baseline" | "candidate" | "sessions" | "events" | "bundles" | "itemGate" | "surfaces"> & {
   /** The one item B adds or removes; the report then carries the one-item gate. */
   change?: ItemChange;
 };
@@ -55,6 +55,7 @@ export async function harnessReport(stores: { index: IndexStore; blobs: BlobStor
     }
   }
   const audit = await loadRunAudits(stores.index, results);
+  const surfaces = { baseline: await instructionSurface(A, stores.blobs), candidate: await instructionSurface(B, stores.blobs) };
   return compare(results, {
     ...rest,
     baseline: A.id,
@@ -62,6 +63,7 @@ export async function harnessReport(stores: { index: IndexStore; blobs: BlobStor
     sessions,
     events,
     bundles: { baseline: A, candidate: B },
+    surfaces,
     ...(itemGate ? { itemGate } : {}),
     ...(audit.size ? { audit, auditMethod: "manual" as const } : {}),
   });

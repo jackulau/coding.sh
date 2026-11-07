@@ -24,6 +24,51 @@ export const DEFAULT_INCLUDE = [
 
 const SKIP_DIRS = new Set([".git", "node_modules"]);
 
+/**
+ * Files an agent reads as instructions on every turn: context files, skills,
+ * rules and system-prompt overrides. A `~/` path matches the same globs after
+ * the prefix (`~/.claude/CLAUDE.md` matches `**\/CLAUDE.md`).
+ */
+export const INSTRUCTION_GLOBS: readonly string[] = [
+  "**/CLAUDE.md",
+  "**/CLAUDE.local.md",
+  "**/AGENTS.md",
+  "**/GEMINI.md",
+  "**/SKILL.md",
+  ".claude/rules/**",
+  ".cursor/rules/**",
+  ".github/copilot-instructions.md",
+  ".github/instructions/**",
+  ".pi/{SYSTEM,APPEND_SYSTEM}.md",
+  ".prime/agent/{SYSTEM,APPEND_SYSTEM}.md",
+];
+
+/** Whether a bundle path (repo-relative or `~/`) is an instruction file. */
+export function isInstructionPath(path: string): boolean {
+  const p = path.startsWith("~/") ? path.slice(2) : path;
+  return INSTRUCTION_GLOBS.some((g) => matchGlob(p, g));
+}
+
+/** Bytes of instruction text a bundle puts in front of the agent. */
+export interface InstructionSurface {
+  bytes: number;
+  /** Instruction file path → bytes. */
+  files: Record<string, number>;
+}
+
+/** The instruction files in a bundle and their sizes (blobs that are missing count as 0 bytes). */
+export async function instructionSurface(bundle: Pick<HarnessBundle, "files">, blobs: Pick<BlobStore, "get">): Promise<InstructionSurface> {
+  const files: Record<string, number> = {};
+  let bytes = 0;
+  for (const [path, ref] of Object.entries(bundle.files)) {
+    if (!isInstructionPath(path)) continue;
+    const n = (await blobs.get(ref))?.byteLength ?? 0;
+    files[path] = n;
+    bytes += n;
+  }
+  return { bytes, files };
+}
+
 function stable(v: unknown): unknown {
   if (Array.isArray(v)) return v.map(stable);
   if (v && typeof v === "object") {
