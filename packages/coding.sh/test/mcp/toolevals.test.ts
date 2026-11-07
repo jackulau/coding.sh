@@ -49,9 +49,10 @@ describe("tool evals against the coding.sh MCP server", () => {
     const target = cfg.targets.get(TARGET) as McpTarget;
     const env = { HOME: join(root, "home"), CODING_SH_HOME: join(root, "surface-data") };
     const s = await measureSurface({ ...target, env }, { name: "base" }, { cwd: root });
-    assert.equal(s.items.length, 13);
+    assert.equal(s.items.length, 14);
     // Every tool definition (name, description, input + output schema) costs context in every turn.
-    assert.ok(s.surfaceBytes < 24_000, `surface is ${s.surfaceBytes} bytes`);
+    // 24 KB for 13 tools; harness_compare (the 14th) adds about 1.3 KB.
+    assert.ok(s.surfaceBytes < 25_500, `surface is ${s.surfaceBytes} bytes`);
     assert.ok(s.descriptionBytes < 9_000, `descriptions are ${s.descriptionBytes} bytes`);
     for (const it of s.items) assert.ok(it.bytes < 4_000, `${it.name} is ${it.bytes} bytes`);
   });

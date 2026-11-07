@@ -72,6 +72,7 @@ describe("handshake (legacy era)", () => {
       "experiment_compare",
       "experiments_list",
       "failures",
+      "harness_compare",
       "latency",
       "search",
       "session_current",
@@ -255,6 +256,11 @@ describe("tools", () => {
     assert.match(await callError("experiment_compare", { baseline: SEED.expA, candidate: "exp-missing" }), /No experiment with id "exp-missing"/);
   });
 
+  it("harness_compare lists no harness A/B runs in a store without any", async () => {
+    assert.deepEqual(await call("harness_compare"), { experiments: [] });
+    assert.match(await callError("harness_compare", { experiment: "exp_none" }), /No harness A\/B experiment "exp_none"/);
+  });
+
   it("status reports capture health and update availability", async () => {
     const s = await call("status");
     assert.equal(s.home, w.env.CODING_SH_HOME);
@@ -360,7 +366,7 @@ describe("modern era (2026-07-28)", () => {
     try {
       assert.equal(client.era, "2026-07-28");
       assert.equal(client.serverInfo?.name, "coding.sh");
-      assert.equal((await client.listTools()).length, 13);
+      assert.equal((await client.listTools()).length, 14);
       const r = await client.callTool("session_get", { sessionId: SEED.b });
       assert.equal((r.structuredContent as { session: { agent: string } }).session.agent, "codex");
     } finally {

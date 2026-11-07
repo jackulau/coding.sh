@@ -693,7 +693,8 @@ function stratify(pooled: CompareGate, cells: readonly { id: string; a: boolean;
 }
 
 /** The gate's headline. With `--without`, B is A minus a component: accepting means drop it. */
-function gateLine(g: CompareGate, ab: AblationReport | undefined): string {
+/** The gate's one-line answer: Ship it / Hold / Don't ship (Drop it / Keep it for an ablation), naming a blocking task group. */
+export function gateLine(g: CompareGate, ab: AblationReport | undefined): string {
   const blocked = g.strata?.filter((s) => g.blockedBy?.includes(s.group)) ?? [];
   if (blocked.length) {
     const what = blocked.map((s) => `${s.lost.length} of ${s.gate.solved} ${s.group} task${s.gate.solved === 1 ? "" : "s"}`).join(" and ");
@@ -798,6 +799,12 @@ const ITEM_PASS = new Set(["KEEP", "ACCEPT"]);
 const ITEM_FAIL = new Set(["KILL", "REJECT"]);
 
 /** `item gate k=3 τ=.34 m=2: KEEP · G=1.67 net +4 runs D=.33 fired 11/36 · S=9 tasks`, then reasons. */
+/** The item gate's first line: `item gate k=3 τ=.34 m=2: KEEP · G=1.00 net +3 runs D=0 fired 3/6 · S=1 task`. */
+export function itemGateLine(g: ItemGateReport): string {
+  const id = (s: string) => s;
+  return itemGateLines(g, "", { good: id, bad: id, bold: id, dim: id })[0] as string;
+}
+
 function itemGateLines(g: ItemGateReport, arms: string, p: Record<"good" | "bad" | "bold" | "dim", (s: string) => string>): string[] {
   const v = ITEM_PASS.has(g.verdict) ? p.good(g.verdict) : ITEM_FAIL.has(g.verdict) ? p.bad(g.verdict) : p.bold(g.verdict);
   const net = `net ${g.kN > 0 ? "+" : g.kN < 0 ? "−" : ""}${Math.abs(g.kN)} run${Math.abs(g.kN) === 1 ? "" : "s"}`;

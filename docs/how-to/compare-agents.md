@@ -63,6 +63,10 @@ coding.sh compare claude codex --experiment <experiment-id> --json
 Every run is also a captured session, so `coding.sh sessions` and `coding.sh ui` show what each agent
 did.
 
+Agents can read the results too: the MCP tool `harness_compare` lists these experiments, newest
+first, and with an experiment id returns its report: pass rates, the ship gate (`by` gates each task
+group), the item gate and the own-tests split.
+
 ## Ship it or not?
 
 A higher pass rate can still hide tasks B broke. Add `--gate` for a yes or no answer:

@@ -10,14 +10,15 @@ import { getAdapter } from "../../adapters/index.ts";
 import { defaultGateway, gatewayConfig, gatewaySettings, type GatewayConfig } from "../../integrations/gateway/config.ts";
 import { GATEWAYS, resolveGatewayName, type GatewayId } from "../../integrations/gateway/providers.ts";
 import { gatewayRoute, routableAgents, routeVia, ROUTABLE_AGENTS, ROUTABLE_GATEWAYS } from "../../integrations/gateway/route.ts";
-import { ablateBundle, diffBundles, type Ablation } from "../../runner/bundle.ts";
-import { harnessItem, itemExposure, type ExposureState } from "../../core/exposure.ts";
+import { ablateBundle, type Ablation } from "../../runner/bundle.ts";
+import { harnessItem } from "../../core/exposure.ts";
 import { singleItemChange } from "../../runner/gate-item.ts";
+import { bundleItemChange, harnessReport, tagPrefixProblem } from "../../runner/harness-report.ts";
 import { git } from "../../runner/git.ts";
 import { hasGlob } from "../../runner/glob.ts";
 import type { AgentRoute } from "../../runner/run.ts";
 import type { EvalTask, HarnessBundle, RunResult } from "../../core/types.ts";
-import { compare, type CompareOpts, formatCompare, loadRunEvents, loadRunSessions, PARETO_NEEDS_COST, runExperiment } from "../../runner/experiment.ts";
+import { formatCompare, PARETO_NEEDS_COST, runExperiment } from "../../runner/experiment.ts";
 import { sortableId } from "../../core/ids.ts";
 import { jobConfig } from "../../jobs/config.ts";
 import { positiveInt, UsageError } from "../args.ts";
@@ -149,33 +150,12 @@ export async function run(c: CommandContext): Promise<number> {
       // Pull in the sessions the runs' hooks captured.
       await ctx.ingest().catch(() => undefined);
     }
-    const sessions = await loadRunSessions(ctx.index, results);
-    const events = await loadRunEvents(ctx.index, sessions);
-    let itemGate: CompareOpts["itemGate"];
-    if (change) {
-      const holder = change.mode === "add" ? B : A;
-      const ref = holder.files[change.path];
-      const item = harnessItem(change.path, (ref && (await ctx.blobs.getText(ref))) ?? "")!;
-      const exposure = new Map<string, ExposureState>();
-      for (const r of results) {
-        if (r.bundleId !== holder.id) continue;
-        const s = sessions.get(r.id);
-        exposure.set(r.id, s ? itemExposure(item, events.get(r.id) ?? [], { cwd: s.cwd }).state : "unknown");
-      }
-      const agentVersions = new Map(results.map((r) => [r.id, sessions.get(r.id)?.agentVersion]));
-      itemGate = { mode: change.mode, exposure, agentVersions, item: { path: item.path, kind: item.kind, tier: item.tier } };
-    }
-    const report = compare(results, {
-      baseline: A.id,
-      candidate: B.id,
-      sessions,
-      events,
-      bundles: { baseline: A, candidate: B },
+    const report = await harnessReport(ctx, A, B, results, {
       ...(ablation ? { ablation: { paths: ablation.paths, dropped: ablation.dropped, unmatched: ablation.unmatched } } : {}),
       ...(gate ? { gate } : {}),
       ...(gateBy ? { gateBy, taskTags } : {}),
       ...(promote ? { pareto: promote } : {}),
-      ...(itemGate ? { itemGate } : {}),
+      ...(change ? { change } : {}),
     });
     if (out.json) out.data({ experimentId, report, ...resume });
     else {
@@ -196,10 +176,8 @@ export async function run(c: CommandContext): Promise<number> {
  * usage error that lists the prefixes the tasks do have (before any run).
  */
 function byTagPrefix(tasks: readonly EvalTask[], prefix: string): Map<string, string[]> {
-  if (!tasks.some((t) => t.tags.some((g) => g.startsWith(prefix)))) {
-    const seen = [...new Set(tasks.flatMap((t) => t.tags.map((g) => (g.includes(":") ? g.slice(0, g.indexOf(":") + 1) : g))))].sort();
-    throw new UsageError(`--by ${prefix}: no task has a tag starting with it; ${seen.length ? `prefixes seen: ${seen.join(", ")}` : "the tasks have no tags"}`, { reason: "invalid_argument" });
-  }
+  const problem = tagPrefixProblem(tasks, prefix);
+  if (problem) throw new UsageError(`--by ${prefix}: ${problem}`, { reason: "invalid_argument" });
   return new Map(tasks.map((t) => [t.id, t.tags]));
 }
 
@@ -212,14 +190,6 @@ function withoutItem(ab: Ablation): { mode: "remove"; path: string } | undefined
   }
   const only = ab.unmatched.length === 1 ? (ab.unmatched[0] as string) : undefined;
   return only && harnessItem(only, "")?.kind === "context" ? { mode: "remove", path: only } : undefined;
-}
-
-/** B is A plus (or minus) exactly one instruction item, and nothing else differs. */
-function bundleItemChange(A: HarnessBundle, B: HarnessBundle): { mode: "add" | "remove"; path: string } | undefined {
-  const d = diffBundles(A, B);
-  const other =
-    !!d.agent || !!d.model || !!d.flags || d.files.changed.length > 0 || d.env.added.length + d.env.removed.length + d.env.changed.length > 0 || d.remove.added.length + d.remove.removed.length > 0;
-  return singleItemChange(d.files, other);
 }
 
 /**

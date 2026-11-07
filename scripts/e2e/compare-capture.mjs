@@ -17,7 +17,8 @@
 //             (Claude Code: .claude/rules/style.md; Codex: AGENTS.md).
 // Expected per agent: base vs good → KEEP (S = {sum}: the item never loads on mul);
 // base vs bad → KILL (mul breaks); good vs base re-analysed → REJECT. Base fails
-// on sum are silent misses: own tests green, verifier red.
+// on sum are silent misses: own tests green, verifier red. The MCP harness_compare
+// tool (`coding.sh mcp` over stdio) returns the same gates.
 //
 //   node scripts/e2e/compare-capture.mjs [--agent claude-code|codex]... [--tarball coding.sh-x.y.z.tgz] [--k 3] [--keep]
 //
@@ -110,6 +111,34 @@ function run(file, args, { cwd, env, timeoutMs = 900_000, quiet = false } = {}) 
       if (!quiet && code !== 0 && code !== 1) log(`${file} ${args.join(" ")} exited ${code}\n--- stdout\n${stdout.slice(-4000)}\n--- stderr\n${stderr.slice(-4000)}`);
       done({ code, stdout, stderr });
     });
+  });
+}
+
+/** Calls one tool on `coding.sh mcp` over stdio (newline-delimited JSON-RPC); resolves to its structuredContent. */
+function mcpCall(env, cwd, name, args) {
+  return new Promise((done, fail) => {
+    const child = spawn("coding.sh", ["mcp"], { cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    let buf = "";
+    const send = (o) => child.stdin.write(`${JSON.stringify(o)}\n`);
+    const timer = setTimeout(() => (child.kill(), fail(new Error(`mcp ${name}: timed out`))), 60_000);
+    child.stdout.on("data", (d) => {
+      buf += d;
+      for (let i = buf.indexOf("\n"); i >= 0; i = buf.indexOf("\n")) {
+        const msg = JSON.parse(buf.slice(0, i));
+        buf = buf.slice(i + 1);
+        if (msg.id === 1) {
+          send({ jsonrpc: "2.0", method: "notifications/initialized" });
+          send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } });
+        } else if (msg.id === 2) {
+          clearTimeout(timer);
+          child.kill();
+          if (msg.error || msg.result?.isError) fail(new Error(`mcp ${name}: ${JSON.stringify(msg.error ?? msg.result.content)}`));
+          else done(msg.result.structuredContent);
+        }
+      }
+    });
+    child.on("error", fail);
+    send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "compare-capture", version: "0" } } });
   });
 }
 
@@ -270,6 +299,7 @@ try {
   const taskArgs = Object.values(taskIds).flatMap((id) => ["-t", id]);
   const nameOf = Object.fromEntries(Object.entries(taskIds).map(([t, id]) => [id, t]));
   const gateSummary = (g) => g && { verdict: g.verdict, mode: g.mode, item: g.item, S: g.S.map((id) => nameOf[id] ?? id), f: g.f, kN: g.kN, D: g.D, reasons: g.reasons };
+  const experiments = [];
   for (const agent of opts.agents) {
     const A = AGENTS[agent];
     const tag = (what) => `${agent}: ${what}`;
@@ -303,6 +333,7 @@ try {
     // 1. The good item: KEEP, scored on sum only (it never loads on mul).
     const calls = stub.requests.length;
     const g = await compareRun(base, good);
+    experiments.push({ agent, id: g.experimentId, verdict: "KEEP" });
     const runs = g.report.baseline.runs + g.report.candidate.runs;
     check(runs === 2 * 2 * opts.k, tag("base vs good: every run finished"), runs);
     check(stub.requests.length > calls, tag("the agent called the stub model"));
@@ -323,6 +354,7 @@ try {
 
     // 2. The bad item: KILL (it breaks mul, which base always solved).
     const b = await compareRun(base, bad);
+    experiments.push({ agent, id: b.experimentId, verdict: "KILL" });
     const g2 = b.report.itemGate;
     log(`item gate ${JSON.stringify(gateSummary(g2))}`);
     check(g2?.verdict === "KILL" && g2?.mode === "add" && g2?.item?.path === A.bad.path && g2?.item?.tier === "always", tag(`base vs bad: item gate KILL on ${A.bad.path}`), gateSummary(g2));
@@ -334,6 +366,16 @@ try {
     const rm = json(await cs(["compare", good, base, "--experiment", g.experimentId, "--json"]), `compare ${good} ${base}`);
     check(rm.report.itemGate?.mode === "remove" && rm.report.itemGate?.verdict === "REJECT", tag("good vs base (re-analysed): removal REJECT"), gateSummary(rm.report.itemGate));
     check(stub.requests.length === before, tag("re-analysis ran no agent"));
+  }
+
+  // 4. The MCP harness_compare tool: the list names every experiment, and each report carries the same gates.
+  const listed = await mcpCall(env, root, "harness_compare", { limit: 50 });
+  check(experiments.every((e) => listed.experiments.some((x) => x.id === e.id)), "MCP harness_compare lists every experiment", listed);
+  for (const e of experiments) {
+    const r = await mcpCall(env, root, "harness_compare", { experiment: e.id });
+    log(`MCP ${e.id}: ${r.itemGate?.summary} · own tests A ${JSON.stringify(r.ownTests?.baseline)}`);
+    check(r.itemGate?.verdict === e.verdict, `${e.agent}: MCP harness_compare ${e.id}: item gate ${e.verdict}`, r.itemGate);
+    if (e.verdict === "KEEP") check(r.ownTests?.baseline?.green === opts.k && r.ownTests?.baseline?.fails === opts.k, `${e.agent}: MCP own tests: base fails are own-tests green`, r.ownTests);
   }
 } catch (e) {
   log(`error: ${e instanceof Error ? e.stack : e}`);
