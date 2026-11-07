@@ -1,0 +1,48 @@
+packages/coding.sh/src/cli/commands/refine.ts
+  s_8e040dbdf13565::t_a929fbd84cd43c 34
+  s_8e040dbdf13565::t_fae2ccb56c2341 5-6
+packages/coding.sh/src/refine/match.ts
+  s_8e040dbdf13565::t_908f9559b78f27 73
+  s_8e040dbdf13565::t_cd4f7569560965 1-72,74-433
+CHANGELOG.md
+  s_8e040dbdf13565::t_2b51a96b3d003c 42
+packages/coding.sh/src/refine/index.ts
+  s_8e040dbdf13565::t_9eb54d799e2d2f 12
+packages/coding.sh/src/cli/commands/refine-score.ts
+  s_8e040dbdf13565::t_329ef8aed2eee7 62,112
+  s_8e040dbdf13565::t_0520034beac2cb 63,115,128
+  s_8e040dbdf13565::t_541e9198f118a8 1-41,43-61,64-111,113-114,116-127,129-159,161-164
+  s_8e040dbdf13565::t_78d889b3f51b1b 42,160
+packages/coding.sh/test/refine/match.test.ts
+  s_8e040dbdf13565::t_7cbcf5ee0e9273 1-71,73,75-232
+  s_8e040dbdf13565::t_42988eec8ad10c 72,74
+docs/guides/evals.md
+  s_8e040dbdf13565::t_50fbc1b2f4bfd3 906-970
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_8e77b498344e78 195
+packages/coding.sh/test/cli/refine-score.test.ts
+  s_8e040dbdf13565::t_de4c98ff446e47 38
+  s_8e040dbdf13565::t_514a14c6020ae3 1-37,39-85,87-137
+  s_8e040dbdf13565::t_329ef8aed2eee7 86
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_cda085e20a7670 978
+  s_8e040dbdf13565::t_29cda25f8080c4 964-970
+docs/reference/cli.md
+  s_8e040dbdf13565::t_118f25afb9f202 1770,1777,1978-1999
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2798548246454cf951a698e603369dd017f9e48d",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
