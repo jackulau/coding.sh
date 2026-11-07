@@ -9,6 +9,6 @@ Allow: /
 Sitemap: https://coding.sh/sitemap-index.xml
 
 # Plain-text corpora for LLMs: an index plus the full site text.
-# Every page also serves a Markdown copy at <page>.md
+# Every page also serves a Markdown copy at <page>.md (the home page at /index.md)
 # llms.txt: https://coding.sh/llms.txt
 # llms-full.txt: https://coding.sh/llms-full.txt

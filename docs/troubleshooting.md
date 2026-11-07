@@ -98,8 +98,9 @@ For an agent sending over OpenTelemetry or the SDK:
   stored. See [Configuration](reference/config.md#capture).
 - **Cursor headless runs have no prompt or reply.** `cursor-agent -p` does not fire the prompt and
   response hooks. This is a Cursor limitation.
-- **`eval new` fails with `has no repo state`.** Only sessions recorded with `coding.sh run --` have
-  repo snapshots today. See [Turn a session into an eval](how-to/session-to-eval.md).
+- **`eval new` fails with `has no repo state`.** The session did not run inside a git repository,
+  so there is no start state to replay. Record it with `coding.sh run --` from inside the repository.
+  See [Turn a session into an eval](how-to/session-to-eval.md).
 
 ## Errors by reason
 
@@ -157,7 +158,7 @@ The command ran and something failed.
 | `conflict` | `Can't export to …: the directory is not empty` | Pick an empty directory, or add `--force`. |
 | `no_agents` | `No supported agents found on this machine` | Install a supported agent, or use `coding.sh run -- <cmd>`. |
 | `hook_missing` | `Can't find hook.mjs to install` | From a source checkout, run `npm run build` first. |
-| `draft_failed` | `Couldn't draft a task from …: session … has no repo state; cannot build a task` | Record the session with `coding.sh run --`. |
+| `draft_failed` | `Couldn't draft a task from …: session … has no repo state; cannot build a task` | Record the session inside a git repository, ideally with `coding.sh run --`. |
 | `no_tasks` | `No validated tasks to run` | `coding.sh eval new` then `eval validate`, or add tool-eval tasks. |
 | `unsupported_agent` | `Agent aider has no headless driver, so bundle … can't be run` | Use an agent that can run headless. |
 | `nothing_to_ablate` | `nothing to ablate: … is in neither bundle base nor any selected task's repo` (exit 2) | Check the `--without` path against `coding.sh harness list --json`. |

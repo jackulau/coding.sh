@@ -10,9 +10,10 @@ change to your prompt, harness or model is checked against it. There are two kin
 
 ## Repo task: from a session to a validated task
 
-A repo task needs the repo as it was when the session started. `coding.sh run --` snapshots it
-before and after the command, so record the run with it. (Sessions captured only by hooks have no
-snapshot yet; drafting from them fails with `draft_failed: ... has no repo state`.)
+A repo task needs the repo as it was when the session started. `coding.sh run --` snapshots the
+whole working tree before and after the command, so it is the exact way to record one. Sessions
+captured by hooks work too when they ran inside a git repository: they start from the commit that
+was checked out, so uncommitted changes at that point are missing, and `eval new` says so.
 
 ```sh
 cd coding.sh
@@ -30,7 +31,8 @@ coding.sh eval new latest --name output-test-fix \
   --tag cli
 ```
 
-The instruction defaults to the session's first prompt. Pass `--instruction 'text'` or
+The instruction defaults to the session's first prompt (for `coding.sh run --`, the command's
+prompt argument, such as `-p` or `--message`). Pass `--instruction 'text'` or
 `--instruction @prompt.md` to change it, and `--setup 'npm ci'` (repeatable) for setup commands.
 
 Check that the task is fair:

@@ -51,11 +51,29 @@ One trace becomes one session. Spans with the same `gen_ai.conversation.id` or `
 turns of one session. Model-call spans become model calls with tokens and latency; tool spans
 become tool calls.
 
+In Node, set the service name on the resource. A bare `NodeTracerProvider` ignores
+`OTEL_SERVICE_NAME`, and the session is then recorded under the agent name `otel`:
+
+```js
+import { BatchSpanProcessor, NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
+import { resourceFromAttributes } from "@opentelemetry/resources";
+
+const provider = new NodeTracerProvider({
+  resource: resourceFromAttributes({ "service.name": "support-agent" }),
+  spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter())],
+});
+provider.register();
+// ... your agent ...
+await provider.shutdown(); // flushes spans before a short script exits
+```
+
 To check the collector without an agent, post one OTLP JSON file to it:
 
 ```sh
-curl -s -X POST -H 'content-type: application/json' \
-  --data @packages/coding.sh/test/fixtures/otel/genai-semconv.json \
+curl -fsSL -o genai-semconv.json \
+  https://raw.githubusercontent.com/jackulau/coding.sh/main/packages/coding.sh/test/fixtures/otel/genai-semconv.json
+curl -s -X POST -H 'content-type: application/json' --data @genai-semconv.json \
   http://127.0.0.1:4318/v1/traces
 coding.sh sessions
 ```

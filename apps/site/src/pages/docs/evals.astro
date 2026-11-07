@@ -206,10 +206,9 @@ const COMPARE = [
   <Code code={replay} />
   <div class="note">
     <p>
-      <strong>Known gap.</strong> Drafting needs a session with both a first prompt and a pre-agent snapshot. Today hook-captured sessions carry
-      no repository snapshot (<code>eval new</code> stops with "has no repo state"), and <code>coding.sh run --</code> sessions have a snapshot
-      but no prompt. Taking a snapshot when a hooked session starts is planned. Validation, bundles and compare are built and tested on fixture
-      tasks.
+      <strong>Known gap.</strong> A hook-captured session starts from the commit that was checked out when it began, so uncommitted changes at
+      that point are missing and <code>eval new</code> warns. <code>coding.sh run --</code> snapshots the whole working tree before and after,
+      and takes the instruction from the command's prompt argument, or from <code>--instruction</code>.
     </p>
   </div>
 </DocsLayout>

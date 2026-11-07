@@ -50,7 +50,7 @@ CODING_SH_NO_UI=1 skips the viewer, CODING_SH_VERSION=v0.1.0 pins a release,
 CODING_SH_SOURCE=github skips npm.
 From source: \`${SOURCE_STEPS.join(" && ")}\`; the CLI builds to ${CLI_PATH}.
 
-Full prose for every page is at ${abs("/llms-full.txt")}; each page also serves a Markdown copy at <page>.md.
+Full prose for every page is at ${abs("/llms-full.txt")}; each page also serves a Markdown copy at <page>.md (the home page at /index.md).
 Screenshots and terminal output on the landing page come from the real CLI and viewer, run on a throwaway home where coding.sh works on its own repo; terminals in the docs marked as real output were captured from the CLI.
 
 ## Pages
@@ -68,13 +68,12 @@ but on your machine. Pre-alpha: what is built is covered by the package's tests;
 
 1. Record (built): a local OTLP receiver (\`coding.sh collector\`, ${OTLP_ENDPOINT}) for ${FRAMEWORKS.join(", ")};
    model-call latency per call. Coding agents are first-class: hooks capture prompts, tool calls, file changes
-   and subagents (as child sessions). Repository snapshots are taken by \`coding.sh run --\`; snapshots for
-   hook-captured sessions are planned.
+   and subagents (as child sessions). \`coding.sh run --\` snapshots the working tree before and after;
+   hook-captured sessions in a git repository start from the commit checked out at session start.
 2. Evals (built): datasets with deterministic graders, command graders and LLM judges; judges are calibrated
    against human labels with Cohen's kappa on a held-out split, and uncalibrated judges are flagged in every
    report. Repo-replay tasks (partial): validation (do-nothing fails, reference passes k of k, near-misses
-   fail, no leakage), harness bundles and compare are built; drafting a task from a captured session is not
-   working yet.
+   fail, no leakage), harness bundles, compare and drafting a task from a captured session are built.
 3. Compare (built): two experiments paired by case, with a paired bootstrap CI of the difference and McNemar's
    test on flipped cases; harness compare adds per-arm Wilson intervals and the first step where traces diverge.
 4. Storage (built): SQLite index and a content-addressed, zstd-compressed blob store by default; OTLP and HTTP
