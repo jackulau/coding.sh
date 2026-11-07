@@ -18,3 +18,5 @@ export { MIN_LOOK_CASES, obrienFlemingBounds, obrienFlemingSpend, pairedScoreInt
 export type { LookResult, SequentialOutcome, SequentialPlan } from "./sequential.ts";
 export { dominates, frontierSupport, paretoSupport } from "./pareto.ts";
 export type { FrontierOpts, FrontierPoint, ParetoCase, ParetoOpts, ParetoSupport, QC } from "./pareto.ts";
+export { allocateProportional, binStrata, hoeffdingBudget, judgeBreakEven, labelEfficiency, stratifiedMean } from "./stratified.ts";
+export type { LabelEfficiency, StratifiedEstimate, StratumBin, StratumCount } from "./stratified.ts";
