@@ -2,15 +2,24 @@ name: Release
 
 # Push a tag vX.Y.Z (matching packages/coding.sh/package.json) to release.
 #
-#   verify       checks and tests every package, then packs the npm tarballs and
-#                builds the Python sdist and wheel once. Later jobs publish these
-#                exact files, so npm, PyPI, the GitHub release, install.sh and
-#                `coding.sh update` all get identical bytes.
-#   publish-npm  waits for approval in the "release" environment, then publishes
-#                coding.sh, @coding.sh/sdk, coding.sh-store-postgres and
-#                coding.sh-store-s3 in that order (the stores peer-depend on
-#                coding.sh), and creates the GitHub release vX.Y.Z.
-#   publish-pypi waits for the same approval, then publishes coding-sh.
+#   verify          checks and tests every package, then packs the npm tarballs and
+#                   builds the Python sdist and wheel once. Later jobs publish these
+#                   exact files, so npm, PyPI, the GitHub release, install.sh and
+#                   `coding.sh update` all get identical bytes.
+#   github-release  runs right after verify, with no approval and no credentials
+#                   beyond the workflow token: creates the GitHub release vX.Y.Z
+#                   with the verified coding.sh-X.Y.Z.tgz and the CHANGELOG section
+#                   as notes. install.sh installs from it at once.
+#   publish-npm     waits for approval in the "release" environment and for
+#                   github-release, then publishes coding.sh, @coding.sh/sdk,
+#                   coding.sh-store-postgres and coding.sh-store-s3 in that order
+#                   (the stores peer-depend on coding.sh).
+#   publish-pypi    waits for the same approval and for github-release, then
+#                   publishes coding-sh.
+#
+# So a tag gives a GitHub release as soon as verify passes. The npm and PyPI
+# jobs wait for approval, and need the credentials below; until those exist,
+# leave them waiting or reject them. The GitHub release stands either way.
 #
 # Auth: npm trusted publishing (OIDC) and PyPI trusted publishing, so no
 # long-lived token is needed. For the very first npm publish (npm can only
@@ -18,7 +27,9 @@ name: Release
 # NPM_TOKEN secret in the "release" environment; see docs/RELEASE.md.
 #
 # Re-running is safe: a version already on npm or PyPI is skipped, and an
-# existing GitHub release is reused if its tarball matches.
+# existing GitHub release is reused if its tarball matches. A release that holds
+# a different tarball fails github-release, and then neither npm nor PyPI
+# publishes, so the registries never disagree with it.
 #
 # Every job runs on GitHub-hosted runners. Trusted publishing does not support
 # self-hosted runners, and release code never runs on the desk runner.
@@ -139,20 +150,63 @@ jobs:
           path: ${{ runner.temp }}/pypi/*
           if-no-files-found: error
 
-  publish-npm:
+  github-release:
     needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write   # create the GitHub release
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-tarballs
+          path: npm
+
+      # An existing release must carry the same tarball, so npm and install.sh
+      # never disagree about vX.Y.Z. Both publish jobs need this one, so a
+      # mismatch stops them too.
+      - name: Create or reuse the GitHub release
+        run: |
+          asset="coding.sh-$VERSION.tgz"
+          if gh release view "v$VERSION" --json tagName >/dev/null 2>&1; then
+            if gh release download "v$VERSION" -p "$asset" -D existing 2>/dev/null; then
+              if ! cmp -s "existing/$asset" "npm/$asset"; then
+                echo "::error::release v$VERSION already has a different $asset (built from another commit). Delete it (gh release delete v$VERSION --cleanup-tag) or release a new version. Nothing was published."
+                exit 1
+              fi
+              echo "release v$VERSION exists with the same tarball"
+            else
+              echo "release v$VERSION exists without $asset; uploading it"
+              gh release upload "v$VERSION" "npm/$asset"
+            fi
+            exit 0
+          fi
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { on = 1; next }
+            on && /^## \[/ { exit }
+            on && /^\[[^]]+\]: / { next }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          gh release create "v$VERSION" "npm/$asset" \
+            --title "coding.sh $VERSION" --notes-file notes.md --verify-tag
+
+  publish-npm:
+    needs: [verify, github-release]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
       name: release
       url: https://www.npmjs.com/package/coding.sh/v/${{ needs.verify.outputs.version }}
     permissions:
-      contents: write   # create the GitHub release
       id-token: write   # npm trusted publishing and provenance
-    env:
-      VERSION: ${{ needs.verify.outputs.version }}
-      GH_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -175,23 +229,6 @@ jobs:
           name: npm-tarballs
           path: npm
 
-      # Before anything is published: an existing GitHub release must carry the
-      # same tarball, so npm and install.sh never disagree about vX.Y.Z.
-      - name: Check an existing GitHub release
-        run: |
-          asset="coding.sh-$VERSION.tgz"
-          if gh release view "v$VERSION" --json tagName >/dev/null 2>&1; then
-            if gh release download "v$VERSION" -p "$asset" -D existing 2>/dev/null; then
-              if ! cmp -s "existing/$asset" "npm/$asset"; then
-                echo "::error::release v$VERSION already has a different $asset (built from another commit). Delete it (gh release delete v$VERSION --cleanup-tag) or release a new version. Nothing was published."
-                exit 1
-              fi
-              echo "release v$VERSION exists with the same tarball"
-            else
-              echo "release v$VERSION exists without $asset; it will be uploaded"
-            fi
-          fi
-
       - name: Publish to npm (dependency order, skips versions already published)
         env:
           # Empty once trusted publishing is configured; npm then uses OIDC.
@@ -211,24 +248,8 @@ jobs:
             npm publish "$tgz" --access public --provenance
           done
 
-      - name: Create the GitHub release
-        run: |
-          asset="coding.sh-$VERSION.tgz"
-          if gh release view "v$VERSION" --json tagName >/dev/null 2>&1; then
-            [ -f "existing/$asset" ] || gh release upload "v$VERSION" "npm/$asset"
-            exit 0
-          fi
-          awk -v v="$VERSION" '
-            $0 ~ "^## \\[" v "\\]" { on = 1; next }
-            on && /^## \[/ { exit }
-            on && /^\[[^]]+\]: / { next }
-            on { print }
-          ' CHANGELOG.md > notes.md
-          gh release create "v$VERSION" "npm/$asset" \
-            --title "coding.sh $VERSION" --notes-file notes.md --verify-tag
-
   publish-pypi:
-    needs: verify
+    needs: [verify, github-release]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
