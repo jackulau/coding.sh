@@ -2,6 +2,7 @@
 // subagent tree (child sessions linked by parent.sessionId).
 import { costNote } from "../../core/pricing.ts";
 import type { AgentEvent, Session } from "../../core/types.ts";
+import type { DurableStats } from "../../schema/index.ts";
 import { positiveInt } from "../args.ts";
 import { autoIngest, oneLine, resolveSession, sessionJson, withContext } from "../common.ts";
 import { ago, clean, duration, localTime, tokens, usd, type Output } from "../output.ts";
@@ -101,6 +102,54 @@ function describe(e: AgentEvent, starts: Map<string, AgentEvent>): string | unde
   }
 }
 
+const RESUME_TEXT = { crash: "a crash", deploy: "a deploy", restart: "a worker restart", wait: "a wait" } as const;
+
+/** Header rows for a durable workflow run: what ran, and where the time went. */
+export function durableRows(d: DurableStats): [string, string][] {
+  const steps = d.stepCount ?? d.steps.length;
+  const parts = [`${steps} ${steps === 1 ? "step" : "steps"}`, `${d.retries} ${d.retries === 1 ? "retry" : "retries"}`];
+  if (d.waits.length) parts.push(`${d.waits.length} ${d.waits.length === 1 ? "wait" : "waits"}`);
+  if (d.replays) parts.push(`${d.replays} replayed`);
+  if (d.instances > 1) parts.push(`${d.instances} processes`);
+  const rows: [string, string][] = [
+    ["Workflow", `${d.engine}${d.workflow ? ` ${d.workflow}` : ""} (run ${d.runId}): ${parts.join(", ")}`],
+    // idleMs includes the waits; shown apart, the three parts add up to the wall time.
+    ["Time", `wall ${duration(d.wallMs)}: busy ${duration(d.activeMs)}, ${d.waitMs ? `waiting ${duration(d.waitMs)}, ` : ""}idle ${duration(Math.max(0, d.idleMs - d.waitMs))}`],
+  ];
+  const resumes = d.resumes.filter((r) => r.reason !== "wait");
+  if (resumes.length) {
+    const text = resumes.map((r) => {
+      const v = r.fromVersion && r.toVersion ? ` (${r.fromVersion} → ${r.toVersion})` : "";
+      return `after ${RESUME_TEXT[r.reason]}${v}${r.step ? ` at ${clean(r.step)}` : ""}${r.afterMs ? `, ${duration(r.afterMs)} later` : ""}`;
+    });
+    rows.push(["Resumed", text.join("; ")]);
+  }
+  if (d.replayedCalls) rows.push(["Replayed", `${d.replayedCalls} model ${d.replayedCalls === 1 ? "call" : "calls"} re-run from history, not counted in tokens`]);
+  return rows;
+}
+
+/** One line per durable step: its attempts in order, failures with their error, lost attempts. */
+export function durableSteps(d: DurableStats, t0: number): string[] {
+  const width = Math.min(24, Math.max(6, ...d.steps.map((s) => clean(s.name).length)));
+  const rel = (t: number) => `+${duration(Math.max(0, t - t0))}`.padStart(8);
+  const lines: [number, string][] = d.steps.map((s) => {
+    const attempts: string[] = [];
+    if (s.unreported) attempts.push(`${s.unreported} lost${s.unreportedMs ? ` ${duration(s.unreportedMs)}` : ""} (never reported: its process stopped)`);
+    for (const a of s.attempts) {
+      const what = a.replay ? "replayed" : a.ok ? "ok" : "failed";
+      const err = !a.ok && a.error ? ` (${oneLine(clean(a.error), 50)})` : "";
+      attempts.push(`#${a.n} ${what} ${duration(a.endedAt - a.startedAt)}${err}`);
+    }
+    const t = (s.attempts[0]?.startedAt ?? t0) - (s.unreportedMs ?? 0);
+    return [t, `${rel(t)}  ${oneLine(clean(s.name), width).padEnd(width)}  ${s.ok ? "ok    " : "failed"}  ${attempts.join(" → ")}`];
+  });
+  for (const w of d.waits) {
+    const status = (w.endedAt !== undefined ? "done" : "open").padEnd(6);
+    lines.push([w.startedAt, `${rel(w.startedAt)}  ${"(wait)".padEnd(width)}  ${status}  ${clean(w.name ?? "wait")} ${w.endedAt !== undefined ? duration(w.endedAt - w.startedAt) : "still waiting"}`]);
+  }
+  return lines.sort((a, b) => a[0] - b[0]).map(([, l]) => l);
+}
+
 function printTree(out: Output, t: Tree[], depth = 1): void {
   for (const x of t) {
     const s = x.session;
@@ -188,8 +237,15 @@ export async function run(c: CommandContext): Promise<number> {
       rows.push(["Snapshot", `${from} → ${changes.end.slice(0, 7)}: ${changes.files.length} ${changes.files.length === 1 ? "file" : "files"} (+${add} -${del})${list}`]);
     }
     if (s.parent) rows.push(["Parent", s.parent.sessionId]);
+    const d = s.stats.durable;
+    if (d) rows.push(...durableRows(d));
     for (const [k, v] of rows) out.print(`  ${k.padEnd(14)}${v}`);
     out.print();
+    if (d?.steps.length) {
+      out.print(out.style("Steps", "bold"));
+      for (const l of durableSteps(d, s.startedAt)) out.print(`  ${l}`);
+      out.print();
+    }
     const starts = new Map<string, AgentEvent>();
     for (const e of events) {
       const line = describe(e, starts);

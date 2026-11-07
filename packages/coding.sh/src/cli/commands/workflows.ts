@@ -16,17 +16,18 @@ import { replayWorkflow } from "../../workflows/replay.ts";
 import { extractFindings, matchFindings, type Finding, type FindingsScore } from "../../workflows/score/findings.ts";
 import { verifyConfusion, type VerifyEntry, type VerifyScore } from "../../workflows/score/verify.ts";
 import { WorkflowStore } from "../../workflows/store.ts";
+import { buildWorkflowTree } from "../../workflows/tree.ts";
 import { totalTokens } from "../../workflows/metrics.ts";
 import type { WorkflowCase, WorkflowDriver, WorkflowFramework, WorkflowNode, WorkflowRun, WorkflowVariant } from "../../workflows/types.ts";
 import { sortableId } from "../../core/ids.ts";
 import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
-import { jsonArg, num, oneLine, list, requireConsent, str, withContext } from "../common.ts";
+import { jsonArg, num, oneLine, list, requireConsent, resolveSession, str, withContext } from "../common.ts";
 import { ago, clean, CliError, duration, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
-const FRAMEWORKS: WorkflowFramework[] = ["claude-code-workflow", "claude-agent-sdk", "openai-agents", "langgraph", "crewai", "mastra", "otel", "command"];
+const FRAMEWORKS: WorkflowFramework[] = ["claude-code-workflow", "claude-agent-sdk", "openai-agents", "langgraph", "crewai", "mastra", "otel", "command", "vercel-workflow", "temporal", "inngest", "restate", "dbos"];
 
 export async function run(c: CommandContext): Promise<number> {
   switch (c.action) {
@@ -66,6 +67,23 @@ async function getRunOrFail(store: WorkflowStore, id: string): Promise<{ run: Wo
   const r = await store.getRun(id);
   if (!r) throw new CliError(`Can't find workflow run ${JSON.stringify(id)}`, { reason: "not_found", next: ["List workflow runs:", "coding.sh workflows list"] });
   return r;
+}
+
+/**
+ * A stored workflow run, else the tree of a captured durable workflow session
+ * (OTLP spans from Vercel Workflow, Temporal, …: Session.stats.durable), built
+ * from its events on the fly.
+ */
+async function getRunOrSession(c: CommandContext, id: string): Promise<{ run: WorkflowRun; nodes: WorkflowNode[] }> {
+  const stored = await storeOf(c).getRun(id);
+  if (stored) return stored;
+  const fromSession = await withContext(c, async (ctx) => {
+    const s = await resolveSession(ctx, id).catch(() => undefined);
+    if (!s?.stats.durable) return undefined;
+    const spans = (await ctx.index.listEvents(s.id)).filter((e) => e.spanId);
+    return spans.length ? buildWorkflowTree({ spans, runId: s.id }) : undefined;
+  });
+  return fromSession ?? getRunOrFail(storeOf(c), id);
 }
 
 function wallOf(run: WorkflowRun): number | undefined {
@@ -176,7 +194,11 @@ const DETAIL_KINDS = new Set<WorkflowNode["kind"]>(["subagent", "tool", "llm"]);
 
 function nodeLine(n: WorkflowNode): string {
   const dur = n.startedAt !== undefined && n.endedAt !== undefined ? duration(n.endedAt - n.startedAt) : "-";
-  const parts = [`${n.kind} ${clean(n.name) || "(unnamed)"}`, n.status, dur];
+  const attempt = n.attempt !== undefined && (n.attempts ?? 1) > 1 ? ` #${n.attempt}` : "";
+  const label = n.kind === "wait" && n.name === "wait" ? "wait" : `${n.kind} ${clean(n.name) || "(unnamed)"}${attempt}`;
+  const parts = [label, n.status, dur];
+  if (n.resume) parts.push(n.resume === "wait" ? "resumed after wait" : `resumed after ${n.resume}`);
+  if (n.lost) parts.push("lost");
   if (n.usage?.costUsd !== undefined) parts.push(usd(n.usage.costUsd));
   const t = totalTokens(n.usage);
   if (t) parts.push(`${tokens(t)} tok`);
@@ -209,7 +231,7 @@ async function show(c: CommandContext): Promise<number> {
   const { out } = c;
   const id = c.positionals[0];
   if (!id) throw new UsageError("Missing <run>", { reason: "missing_argument" });
-  const { run, nodes } = await getRunOrFail(storeOf(c), id);
+  const { run, nodes } = await getRunOrSession(c, id);
   const gantt = buildGantt(run, nodes);
   if (out.json) {
     const full = c.flags.tree === true;
@@ -226,6 +248,13 @@ async function show(c: CommandContext): Promise<number> {
   out.row("Wall", `${duration(wallOf(run))}${run.stats.criticalPathMs !== undefined ? `, critical path ${duration(run.stats.criticalPathMs)}${run.stats.criticalPathExact ? "" : " (approx)"}` : ""}`);
   out.row("Cost", `${usd(run.stats.costUsd)}, ${tokens(totalTokens(run.stats.tokens))} tokens`);
   if (run.resumedFrom) out.row("Resumed from", `${run.resumedFrom} (${run.stats.cacheHits} cached)`);
+  if (run.stats.stepRetries !== undefined || run.stats.waitMs !== undefined) {
+    const resumes = nodes.filter((n) => n.resume && n.resume !== "wait").map((n) => `${n.resume} at ${clean(n.name)}`);
+    const bits = [plural(run.stats.stepRetries ?? 0, "retry", "retries")];
+    if (run.stats.waitMs) bits.push(`${duration(run.stats.waitMs)} waiting`);
+    if (resumes.length) bits.push(`resumed after ${resumes.join(", ")}`);
+    out.row("Durable", bits.join(", "));
+  }
   out.note();
   for (const l of renderTree(nodes, c.flags.tree === true)) out.print(l);
   return 0;
@@ -237,7 +266,7 @@ async function stats(c: CommandContext): Promise<number> {
   const { out } = c;
   const id = c.positionals[0];
   if (!id) throw new UsageError("Missing <run>", { reason: "missing_argument" });
-  const { run } = await getRunOrFail(storeOf(c), id);
+  const { run } = await getRunOrSession(c, id);
   const s = run.stats;
   if (out.json) {
     out.data({ runId: run.id, stats: s });
@@ -247,6 +276,8 @@ async function stats(c: CommandContext): Promise<number> {
     ["wall", duration(s.wallMs)],
     ["critical path", `${duration(s.criticalPathMs)}${s.criticalPathExact ? " (exact)" : " (approx)"}`],
     ["orchestration gap", duration(s.orchestrationGapMs)],
+    ...(s.waitMs !== undefined ? [["durable waits", duration(s.waitMs)] as [string, string]] : []),
+    ...(s.stepRetries !== undefined ? [["step retries", String(s.stepRetries)] as [string, string]] : []),
     ["agent time", duration(s.agentMs)],
     ["parallelism", s.parallelism !== undefined ? s.parallelism.toFixed(2) : "-"],
     ["utilization", `${pct(s.utilization)}${run.concurrencyCap !== undefined ? ` of cap ${run.concurrencyCap}` : ""}`],
