@@ -201,32 +201,7 @@ Then add the custom domain `coding.sh` under the project's *Custom domains*. `_h
 immutable caching for `/_astro/*`, UTF-8 text for `/install`, `/install.sh`, `*.txt` and `*.md`,
 and the Atom type for `/changelog.xml`.
 
-### Vercel (alternative; uses `apps/site/vercel.json`)
-
-Dashboard: **Add New → Project → Import jackulau/coding.sh**.
-
-| Setting | Value |
-|---|---|
-| Root Directory | `apps/site` |
-| Include files outside the root directory | enabled (the build imports `../../install.sh` and `../../CHANGELOG.md`) |
-| Framework preset | Astro |
-| Build command | `npm run build` |
-| Output directory | `dist` |
-| Node.js version | 22.x |
-
-Or from your machine:
-
-```sh
-cd apps/site
-npx vercel link          # choose the scope and project
-npx vercel --prod
-```
-
-Vercel ignores `_headers`. `vercel.json` sets the content types for `/install`, `/install.sh`,
-`/changelog.xml`, `llms.txt` and `llms-full.txt`. Port the cache rules from `_headers` into
-`vercel.json` if you want them on Vercel too.
-
-After either deploy, check:
+After deploying, check:
 
 ```sh
 curl -sI https://coding.sh/install | grep -i content-type     # text/plain; charset=utf-8
