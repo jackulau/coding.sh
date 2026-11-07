@@ -1,0 +1,51 @@
+packages/coding.sh/src/runner/gate-item.ts
+  s_8e040dbdf13565::t_e4193f37451b4d 1-240
+packages/coding.sh/src/runner/index.ts
+  s_8e040dbdf13565::t_59fa18c74e5fec 11
+packages/coding.sh/test/cli/compare-without.test.ts
+  s_8e040dbdf13565::t_26144c98b8b7e8 149-179
+docs/how-to/compare-agents.md
+  s_8e040dbdf13565::t_41d652f2970d65 120-134
+packages/coding.sh/test/runner/gate-item.test.ts
+  s_8e040dbdf13565::t_9cbb72f9d35040 1-230
+docs/reference/cli.md
+  s_8e040dbdf13565::t_55d8b9411f6e9f 1394,1402
+packages/coding.sh/src/runner/experiment.ts
+  s_8e040dbdf13565::t_f70cad97aaa576 660
+  s_8e040dbdf13565::t_59fa18c74e5fec 9,259-264,316-317,512-513,652-659,661-666,669-670,778
+docs/guides/evals.md
+  s_8e040dbdf13565::t_cf38d3553eef02 225-243
+apps/site/src/pages/docs/evals.astro
+  s_8e040dbdf13565::t_3e9984b50d6fac 268-274
+packages/coding.sh/src/core/exposure.ts
+  s_8e040dbdf13565::t_bcd54e79191165 1-8,10-129,131-152,154-157,160,164-168,170-179
+  s_8e040dbdf13565::t_0142cf7b18566d 9,130,153,158-159,161-163,169
+packages/coding.sh/src/cli/commands/compare.ts
+  s_8e040dbdf13565::t_5b842a5690c38f 6-7,12-14,19,50-55,120-133,143,147,152-154,159-176
+  s_8e040dbdf13565::t_8af189f4b4cb0f 177
+packages/coding.sh/test/runner/experiment.test.ts
+  s_8e040dbdf13565::t_f5e38872bb2b9a 653-690
+CHANGELOG.md
+  s_8e040dbdf13565::t_4dbef012414221 22
+packages/coding.sh/test/core/exposure.test.ts
+  s_8e040dbdf13565::t_6e4a00746de3c7 1-77
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_70f41bbd7210fb 632-636
+  s_8e040dbdf13565::t_54597c4e532c31 644
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "96db869a10c873c6b16043ca11e865eedfdb990b",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
