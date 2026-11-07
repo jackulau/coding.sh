@@ -8,6 +8,7 @@ import { pairedBootstrap, wilson, type BootstrapResult, type Interval } from "..
 import { mean } from "../stats/summary.ts";
 import { gateDetail, gateHeadline, gateVerdict, idList, type GateVerdict } from "../stats/gate.ts";
 import { acceptanceGate, mcnemar, type GateOpts, type GateResult, type McNemarResult } from "../stats/tests.ts";
+import { paretoSupport, type ParetoOpts, type ParetoSupport } from "../stats/pareto.ts";
 import { failureAnatomy, nestedVarianceShares, type ArmAnatomy, type VarianceShares } from "./anatomy.ts";
 import { diffBundles, formatBundleDiff, type BundleDiff } from "./bundle.ts";
 import { firstDivergence, type Divergence } from "./divergence.ts";
@@ -249,6 +250,18 @@ export interface CompareReport {
   ablation?: AblationReport;
   /** Set by `compare --gate`: ship B or keep A (SAGE accept-or-abstain on per-task majority outcomes). */
   gate?: CompareGate;
+  /**
+   * Set by `compare --promote` when cost (else tokens) is known on enough runs:
+   * Pareto support that B is credible progress in quality or cost (ParetoSaddler).
+   */
+  pareto?: ComparePareto;
+}
+
+/** The Pareto promotion gate: quality = pass (1/0) per run, cost = USD per run, else tokens. */
+export interface ComparePareto extends ParetoSupport {
+  unit: "usd" | "tokens";
+  /** Which branch carried the promotion; "none" when held. */
+  reason: "quality-gain" | "cost-cut" | "both" | "none";
 }
 
 /**
@@ -291,6 +304,8 @@ export interface CompareOpts {
   ablation?: Pick<AblationReport, "paths" | "dropped" | "unmatched">;
   /** Add the acceptance gate (`compare --gate`) with these settings. */
   gate?: GateOpts;
+  /** Add the Pareto promotion gate (`compare --promote`) with these settings; its seed defaults to `seed`. */
+  pareto?: Pick<ParetoOpts, "gamma" | "epsQ" | "epsC" | "draws">;
 }
 
 type Extract = (r: RunResult, s: Session | undefined) => number | undefined;
@@ -460,6 +475,12 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
   } else if (failed) {
     notes.push(`${k <= 1 ? "k=1" : "some tasks ran once"}: bad runs and beyond-ability failures look the same; rerun with --k 3 (arXiv 2611.08285)`);
   }
+  let pareto: ComparePareto | undefined;
+  if (opts.pareto) {
+    const p = paretoGate(ta, tb, pairedIds, metrics, opts.sessions, { ...opts.pareto, seed: opts.seed });
+    if (typeof p === "string") notes.push(p);
+    else pareto = p;
+  }
   return {
     baseline: sa,
     candidate: sb,
@@ -478,7 +499,42 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
     ...(anatomy ? { anatomy } : {}),
     ...(opts.ablation ? { ablation: { ...opts.ablation, effect: { mean: -boot.mean, lo: -boot.hi, hi: -boot.lo } } } : {}),
     ...(opts.gate ? { gate: compareGate(acceptanceGate({ wins: won.length, losses: lost.length, solved }, opts.gate), lost, won) } : {}),
+    ...(pareto ? { pareto } : {}),
   };
+}
+
+/** Why `compare --promote` has no Pareto gate. */
+export const PARETO_NEEDS_COST = `pareto gate needs cost or tokens on >=${Math.round(COST_COVERAGE_MIN * 100)}% of runs per arm`;
+
+/**
+ * The Pareto promotion gate on paired tasks: per run q = pass (1/0) and c =
+ * cost in USD when cost is known on enough runs per arm (Z-19's rule), else
+ * tokens. Runs without the value are left out. A string says why there is none.
+ */
+function paretoGate(
+  ta: ReadonlyMap<string, RunResult[]>,
+  tb: ReadonlyMap<string, RunResult[]>,
+  taskIds: readonly string[],
+  metrics: readonly MetricDelta[],
+  sessions: Map<string, Session> | undefined,
+  o: ParetoOpts,
+): ComparePareto | string {
+  const usd = metrics.find((m) => m.key === "cost");
+  const tokens = metrics.find((m) => m.key === "tokens");
+  const unit = usd && covered(usd) ? "usd" : tokens && covered(tokens) ? "tokens" : undefined;
+  if (!unit) return PARETO_NEEDS_COST;
+  const get = METRICS.find((m) => m.key === (unit === "usd" ? "cost" : "tokens"))!.get;
+  const qc = (rs: readonly RunResult[]) => rs.map((r) => ({ q: r.pass ? 1 : 0, c: get(r, sessions?.get(r.id)) ?? NaN }));
+  const p = paretoSupport(
+    taskIds.map((id) => ({ id, base: qc(ta.get(id) ?? []), cand: qc(tb.get(id) ?? []) })),
+    o,
+  );
+  const k = Math.max(0, ...taskIds.flatMap((id) => [ta.get(id)?.length ?? 0, tb.get(id)?.length ?? 0]));
+  const notes = k < 2 ? [...p.notes.filter((n) => !n.startsWith("no within-case replicates")), "k=1: pareto support uses case-level resampling only; run --k 3 for the paper's within-task replicates"] : [...p.notes];
+  if (unit === "tokens") notes.unshift(`cost is known on too few runs, so the cost side is tokens per run`);
+  const s = p.branchShares;
+  const reason = !p.promote ? "none" : s.quality >= 0.5 && s.cost >= 0.5 ? "both" : s.cost > s.quality ? "cost-cut" : "quality-gain";
+  return { ...p, notes, unit, reason };
 }
 
 function compareGate(g: GateResult, lost: string[], won: string[]): CompareGate {
@@ -680,6 +736,16 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
     out.push(`${label} ${g.verdict === "ship" ? good(head) : g.verdict === "dont-ship" ? bad(head) : bold(head)}`);
     out.push(dim(`${indent}${gateDetail(g)}`));
     if (g.lost.length) out.push(`${indent}lost: ${idList(g.lost)}`);
+  }
+  if (r.pareto) {
+    const x = r.pareto;
+    const what = x.unit === "usd" ? "cost" : "tokens";
+    const cv = (v: number) =>
+      !Number.isFinite(v) ? "—" : x.dC.scale === "relative" ? `${v > 0 ? "+" : ""}${(v * 100).toFixed(0)}%` : `${v > 0 ? "+" : ""}${fmtValue(v, x.unit === "usd" ? "usd" : "count")}`;
+    const head = `support ${x.support.toFixed(2)} ${x.promote ? "≥" : "<"} ${x.gamma.toFixed(2)} → ${x.promote ? "promote" : "hold"}`;
+    const detail = `(${x.reason === "none" ? "" : `${x.reason}: `}${what} ${cv(x.dC.mean)} [${cv(x.dC.lo)}, ${cv(x.dC.hi)}], quality ${pp(x.dQ.mean)} [${pp(x.dQ.lo).replace(" pp", "")}, ${pp(x.dQ.hi)}])`;
+    out.push(`pareto: ${x.promote ? good(head) : bold(head)} ${detail}`);
+    for (const n of x.notes) out.push(dim(`        ${n}`));
   }
   if (ab) {
     const e = ab.effect;

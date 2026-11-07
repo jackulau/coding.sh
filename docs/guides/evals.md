@@ -205,6 +205,23 @@ arXiv 2609.36043). The paper reports no default settings; these are ours. B pass
 with tests count as fails for the gate only. With `--without`, the line is labelled `drop-it gate`
 and reads "Drop it" or "Keep it".
 
+`coding.sh compare A B --promote` asks a different question: is B credible progress on quality or
+on cost? A harness 40% cheaper at the same pass rate reads "no significant difference" in the
+verdict, and `--gate` holds it, but it is still worth keeping. Each run gives a quality (pass = 1)
+and a cost: USD when cost is known on at least 80% of each arm's runs, else tokens (with a note),
+else no gate. A Bayesian bootstrap draws Dirichlet weights on each task's attempts (quality and cost
+move together) and on the tasks, 10,000 times (`--draws`). A draw counts when B gains quality and
+its cost rises by at most `--eps-c` (relative, default `inf`), or when B is cheaper and gives up at
+most `--eps-q` of pass rate (default 0.1). The share of draws that count is the support. B is
+promoted when it is at least `--gamma` (default 0.7). The line reads `pareto: support 0.86 ≥ 0.70 →
+promote (cost-cut: cost -38% [-45%, -30%], quality -1.2 pp [-6.0, +3.0 pp])`, or `→ hold`.
+`--promote` exits 0 only when B is promoted. With `--gate` too, both must pass. `--json` carries
+`report.pareto`: `support`, `promote`, `reason` (`quality-gain`, `cost-cut`, `both` or `none`),
+`unit`, `pQualityGain`, `pCostCut`, `dQ`, `dC`, the settings and notes (`epsC: null` means no
+limit). With `--k 1` there are no repeat attempts to resample, so the note says to run `--k 3`. This
+is ParetoSaddler's promotion gate (Qian et al., arXiv 2611.02079). The paper weights tasks equally;
+coding.sh also resamples tasks, so one lucky run on one task can't promote B.
+
 With `--k 2` or more, compare sorts each arm's failed runs three ways. A bad run failed on a task the
 same arm passed in another attempt, so a retry would help. A beyond-arm failure is on a task only
 the other arm solved. Unsolved-by-all is a task neither arm solved; check the task itself. It also

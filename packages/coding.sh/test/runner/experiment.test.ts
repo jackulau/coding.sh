@@ -582,3 +582,71 @@ describe("compare --gate", () => {
     assert.equal(lines.join("\n"), text);
   });
 });
+
+describe("compare --promote (AA-18)", () => {
+  type U = { costUsd?: number; inputTokens?: number; outputTokens?: number };
+  const usage = (u: U) => ({ agent: { exitCode: 0, timedOut: false, durationMs: 1000, stdoutTail: "", stderrTail: "", usage: u } });
+  /** n tasks × k attempts per arm. */
+  const grid = (n: number, k: number, pass: (t: number, arm: "A" | "B", a: number) => boolean, u: (arm: "A" | "B", t: number, a: number) => U): RunResult[] => {
+    const rs: RunResult[] = [];
+    for (let t = 0; t < n; t++) for (let a = 1; a <= k; a++) for (const arm of ["A", "B"] as const) rs.push(run(`t${t}`, arm, a, pass(t, arm, a), usage(u(arm, t, a))));
+    return rs;
+  };
+
+  it("same pass rate, $0.06 vs $0.10: no difference, but promote via cost-cut", () => {
+    const rs = grid(12, 3, (t) => t < 8, (arm) => ({ costUsd: arm === "A" ? 0.1 : 0.06 }));
+    const r = compare(rs, { baseline: "A", candidate: "B", iters: 500, seed: 1, pareto: {} });
+    assert.equal(r.verdict.kind, "no-difference");
+    const p = r.pareto!;
+    assert.equal(p.promote, true);
+    assert.equal(p.reason, "cost-cut");
+    assert.equal(p.unit, "usd");
+    assert.ok(Math.abs(p.dC.mean + 0.4) < 1e-9);
+    assert.match(formatCompare(r), /^pareto: support 1\.00 ≥ 0\.70 → promote \(cost-cut: cost -40% \[-40%, -40%\], quality \+0\.0 pp \[\+0\.0, \+0\.0 pp\]\)$/m);
+  });
+
+  it("+2 passes on one task at +60% cost: promoted under εC=inf, held with εC=0.2", () => {
+    const pass = (t: number, arm: "A" | "B", a: number) => t < 6 || (arm === "B" && t === 6 && a <= 2);
+    const rs = grid(12, 3, pass, (arm) => ({ costUsd: arm === "A" ? 0.1 : 0.16 }));
+    const free = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 1, pareto: {} }).pareto!;
+    assert.ok(free.support >= 0.7 && free.promote);
+    assert.equal(free.reason, "quality-gain");
+    const capped = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 1, pareto: { epsC: 0.2 } });
+    assert.equal(capped.pareto!.promote, false);
+    assert.equal(capped.pareto!.reason, "none");
+    assert.match(formatCompare(capped), /^pareto: support 0\.00 < 0\.70 → hold \(cost \+60%/m);
+  });
+
+  it("10% cheaper at −20 pp: hold", () => {
+    const rs = grid(10, 3, (t, arm) => (arm === "A" ? t < 8 : t < 6), (arm) => ({ costUsd: arm === "A" ? 0.1 : 0.09 }));
+    assert.equal(compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 1, pareto: {} }).pareto!.promote, false);
+  });
+
+  it("cost on half of B's runs, tokens on all: the cost side is tokens, with a note", () => {
+    const rs = grid(8, 2, (t) => t < 4, (arm, t) => ({ inputTokens: arm === "A" ? 1000 : 600, outputTokens: 100, ...(arm === "A" || t % 2 ? { costUsd: 0.1 } : {}) }));
+    const r = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 1, pareto: {} });
+    assert.equal(r.pareto!.unit, "tokens");
+    assert.match(r.pareto!.notes[0]!, /cost side is tokens per run/);
+    assert.match(formatCompare(r), /^pareto: .*\(cost-cut: tokens -36%/m);
+  });
+
+  it("no cost or tokens: no pareto field, a note says why", () => {
+    const rs = grid(6, 1, (t) => t < 3, () => ({}));
+    const r = compare(rs, { baseline: "A", candidate: "B", iters: 200, pareto: {} });
+    assert.equal(r.pareto, undefined);
+    assert.ok(r.notes.includes("pareto gate needs cost or tokens on >=80% of runs per arm"));
+  });
+
+  it("k=1 notes case-level resampling; a seed reproduces; without the option nothing changes", () => {
+    const rs = grid(10, 1, (t, arm) => t < 5 || (arm === "B" && t === 5), () => ({ costUsd: 0.1 }));
+    const a = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 4, pareto: { draws: 2000 } });
+    const b = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 4, pareto: { draws: 2000 } });
+    assert.deepEqual(a.pareto, b.pareto);
+    assert.deepEqual(a.pareto!.notes, ["k=1: pareto support uses case-level resampling only; run --k 3 for the paper's within-task replicates"]);
+    const plain = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 4 });
+    assert.equal("pareto" in plain, false);
+    const { pareto: _p, ...rest } = a;
+    assert.deepEqual(rest, plain);
+    assert.doesNotMatch(formatCompare(plain), /pareto/);
+  });
+});

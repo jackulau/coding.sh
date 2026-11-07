@@ -273,6 +273,38 @@ export function gateFlags(flags: Record<string, FlagValue>): GateOpts | undefine
   return { ...(lambda !== undefined ? { lambda } : {}), ...(alpha !== undefined ? { alpha } : {}), ...(tau !== undefined ? { tau } : {}) };
 }
 
+/** The Pareto promotion gate's settings (`compare --promote`). */
+export interface PromoteOpts {
+  gamma?: number;
+  epsQ?: number;
+  epsC?: number;
+  draws?: number;
+}
+
+/**
+ * `--promote [--gamma G] [--eps-q Q] [--eps-c C|inf] [--draws N]`: the Pareto
+ * promotion gate's settings, undefined without --promote. The tuning flags
+ * alone are a usage error.
+ */
+export function promoteFlags(flags: Record<string, FlagValue>): PromoteOpts | undefined {
+  const gamma = num(flags.gamma);
+  const epsQ = num(flags["eps-q"]);
+  const rawC = str(flags["eps-c"]);
+  const draws = num(flags.draws);
+  if (flags.promote !== true) {
+    for (const [name, v] of [["gamma", gamma], ["eps-q", epsQ], ["eps-c", rawC], ["draws", draws]] as const) {
+      if (v !== undefined) throw new UsageError(`--${name} needs --promote`, { reason: "invalid_argument" });
+    }
+    return undefined;
+  }
+  const epsC = rawC === undefined ? undefined : /^\+?inf(inity)?$/i.test(rawC.trim()) ? Infinity : Number(rawC);
+  if (gamma !== undefined && !(gamma > 0 && gamma <= 1)) throw new UsageError(`--gamma must be above 0 and at most 1, got ${gamma}`, { reason: "invalid_argument" });
+  if (epsQ !== undefined && !(epsQ >= 0 && epsQ <= 1)) throw new UsageError(`--eps-q must be between 0 and 1, got ${epsQ}`, { reason: "invalid_argument" });
+  if (epsC !== undefined && !(epsC >= 0)) throw new UsageError(`--eps-c must be a number of at least 0 or inf, got ${JSON.stringify(rawC)}`, { reason: "invalid_argument" });
+  if (draws !== undefined && !(Number.isInteger(draws) && draws >= 100 && draws <= 1_000_000)) throw new UsageError(`--draws must be a whole number from 100 to 1000000, got ${draws}`, { reason: "invalid_argument" });
+  return { ...(gamma !== undefined ? { gamma } : {}), ...(epsQ !== undefined ? { epsQ } : {}), ...(epsC !== undefined ? { epsC } : {}), ...(draws !== undefined ? { draws } : {}) };
+}
+
 /** `--port` as a TCP port (0 = any free port), else a usage error. */
 export function port(v: FlagValue, fallback: number): number {
   const p = num(v) ?? fallback;

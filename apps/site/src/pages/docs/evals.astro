@@ -258,6 +258,13 @@ const COMPARE = [
     default 0.05), and B may break at most 10% of the tasks A solved (<code>--tau</code>). This is the SAGE accept-or-abstain rule
     (<a href="https://arxiv.org/abs/2609.36043">arXiv 2609.36043</a>). Passes that tampered with tests count as fails for the gate.
   </p>
+  <p id="promote">
+    <code>compare A B --promote</code> keeps a B that is cheaper at the same quality, which the verdict calls "no significant difference". It
+    prints <code>pareto: support 0.86 ≥ 0.70 → promote (cost-cut: cost -38% …)</code> or <code>→ hold</code>, and exits 0 only on promote.
+    The support is the share of bootstrap draws (over tasks and attempts) where B gains quality without costing more than
+    <code>--eps-c</code>, or costs less while losing at most <code>--eps-q</code> of pass rate. Cost is USD, or tokens when too few runs are
+    priced. Method: ParetoSaddler (<a href="https://arxiv.org/abs/2611.02079">arXiv 2611.02079</a>).
+  </p>
   <Code code={replay} />
   <div class="note">
     <p>

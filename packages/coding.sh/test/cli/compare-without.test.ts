@@ -130,6 +130,30 @@ describe("compare --without", () => {
     assert.equal("gate" in (JSON.parse(plain.stdout) as { report: object }).report, false);
   });
 
+  it("--promote without cost or tokens: exit 1, a warning, no report.pareto, the reason in notes (AA-18)", (t) => {
+    if (!gitBin) return t.skip("needs git");
+    const live = cli(["compare", "base", "--without", ".claude/skills/pdf", "-t", "sum", "--yes", "--promote", "--eps-c", "inf", "--json"]);
+    assert.equal(live.status, 1, live.stdout + live.stderr);
+    const { experimentId, report } = JSON.parse(live.stdout) as { experimentId: string; report: { pareto?: unknown; notes: string[] } };
+    assert.equal(report.pareto, undefined);
+    assert.ok(report.notes.includes("pareto gate needs cost or tokens on >=80% of runs per arm"));
+    const text = cli(["compare", "base", "--without", ".claude/skills/pdf", "--experiment", experimentId, "--promote"]);
+    assert.equal(text.status, 1);
+    assert.match(text.stderr, /--promote: pareto gate needs cost or tokens on >=80% of runs per arm, so nothing is promoted/);
+    // Without --promote the same runs exit 0 and carry no note.
+    const plain = cli(["compare", "base", "--without", ".claude/skills/pdf", "--experiment", experimentId, "--json"]);
+    assert.equal(plain.status, 0);
+    assert.ok(!(JSON.parse(plain.stdout) as { report: { notes: string[] } }).report.notes.some((n) => n.startsWith("pareto")));
+  });
+
+  it("--gamma, --eps-q, --eps-c and --draws need --promote; bad values are usage errors before any run", (t) => {
+    if (!gitBin) return t.skip("needs git");
+    for (const args of [["--gamma", "0.8"], ["--eps-q", "0"], ["--eps-c", "inf"], ["--draws", "500"], ["--promote", "--gamma", "0"], ["--promote", "--eps-c", "x"], ["--promote", "--draws", "5"]]) {
+      const r = cli(["compare", "base", "--without", ".claude/skills/pdf", "-t", "sum", "--yes", ...args]);
+      assert.equal(r.status, 2, `${args.join(" ")}: ${r.stdout}${r.stderr}`);
+    }
+  });
+
   it("--lambda, --gate-alpha and --tau need --gate; bad values are usage errors before any run", (t) => {
     if (!gitBin) return t.skip("needs git");
     for (const args of [["--lambda", "1"], ["--gate-alpha", "0.1"], ["--tau", "0"], ["--gate", "--lambda", "0.5"], ["--gate", "--gate-alpha", "0"], ["--gate", "--tau", "2"]]) {

@@ -2,6 +2,7 @@
 // (src/runner/experiment.ts), or re-analyse the stored runs of an experiment.
 // `compare <a> --without <path>` derives B as A minus a skill, AGENTS.md or MCP config.
 // `--gate` adds a ship-or-hold decision and exits 1 unless it accepts.
+// `--promote` adds the Pareto promotion gate (quality or cost) and exits 1 unless it promotes.
 import { getAdapter } from "../../adapters/index.ts";
 import { defaultGateway, gatewayConfig, gatewaySettings, type GatewayConfig } from "../../integrations/gateway/config.ts";
 import { GATEWAYS, resolveGatewayName, type GatewayId } from "../../integrations/gateway/providers.ts";
@@ -11,9 +12,9 @@ import { git } from "../../runner/git.ts";
 import { hasGlob } from "../../runner/glob.ts";
 import type { AgentRoute } from "../../runner/run.ts";
 import type { EvalTask, HarnessBundle, RunResult } from "../../core/types.ts";
-import { compare, formatCompare, loadRunEvents, loadRunSessions, runExperiment } from "../../runner/experiment.ts";
+import { compare, formatCompare, loadRunEvents, loadRunSessions, PARETO_NEEDS_COST, runExperiment } from "../../runner/experiment.ts";
 import { positiveInt, UsageError } from "../args.ts";
-import { gateFlags, list, requireConsent, resolveTask, str, withContext } from "../common.ts";
+import { gateFlags, list, promoteFlags, requireConsent, resolveTask, str, withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -23,6 +24,7 @@ export async function run(c: CommandContext): Promise<number> {
   const gateway = c.flags.gateway === undefined || c.flags.gateway === false ? undefined : requireGateway(c.env, c.flags.gateway === true ? defaultGateway(c.env) : String(c.flags.gateway));
   // Before running anything: a typo in the gate flags must not cost a full A/B.
   const gate = gateFlags(c.flags);
+  const promote = promoteFlags(c.flags);
   return withContext(c, async (ctx) => {
     const without = list(c.flags.without);
     if (without.length && c.positionals.length > 1) throw new UsageError("--without derives the second arm from the first; pass one bundle", { reason: "invalid_argument" });
@@ -113,14 +115,18 @@ export async function run(c: CommandContext): Promise<number> {
       bundles: { baseline: A, candidate: B },
       ...(ablation ? { ablation: { paths: ablation.paths, dropped: ablation.dropped, unmatched: ablation.unmatched } } : {}),
       ...(gate ? { gate } : {}),
+      ...(promote ? { pareto: promote } : {}),
     });
     if (out.json) out.data({ experimentId, report });
     else {
       out.print(formatCompare(report, { color: out.color }));
       out.print(experimentId);
     }
-    // --gate: exit 0 only when the gate accepts (ship B, or with --without drop the component).
-    return report.gate && report.gate.decision !== "accept" ? 1 : 0;
+    if (promote && !report.pareto) out.warn(`--promote: ${PARETO_NEEDS_COST}, so nothing is promoted`);
+    // Each requested gate must pass for exit 0: --gate accepts (ship B, or with
+    // --without drop the component), --promote promotes.
+    const failed = (report.gate && report.gate.decision !== "accept") || (promote && !report.pareto?.promote);
+    return failed ? 1 : 0;
   });
 }
 

@@ -86,6 +86,23 @@ method is SAGE (Wang et al., [arXiv 2609.36043](https://arxiv.org/abs/2609.36043
 `--gate` also works with `--experiment`, and `--json` carries it as `report.gate`. Without `--gate`,
 the report and the exit code are unchanged.
 
+## Cheaper counts too
+
+`--gate` only ships quality wins. A B that passes the same tasks for 40% less is still progress. Add
+`--promote` to keep it:
+
+```sh
+coding.sh compare claude claude-haiku --k 3 --promote
+```
+
+It prints `pareto: support 0.93 ≥ 0.70 → promote (cost-cut: cost -41% [...], quality +0.0 pp [...])`
+or `→ hold`, and exits 0 only on promote. Support is the share of bootstrap draws where B is better
+without costing more than `--eps-c` (default: any cost), or cheaper while losing at most `--eps-q`
+of pass rate (default 0.1, so 10 points). Cost is USD per run, or tokens when fewer than 80% of runs
+have a price. Use `--k 3`: with one attempt per task the support comes from resampling tasks only.
+The method is ParetoSaddler (Qian et al., [arXiv 2611.02079](https://arxiv.org/abs/2611.02079)).
+With `--gate` and `--promote` together, exit 0 needs both to pass.
+
 ## Does a skill help?
 
 To test one part of a setup, compare a bundle with itself minus that part:

@@ -1386,12 +1386,18 @@ coding.sh compare <A> [b] [options]
 | `--lambda <N>` | `2` | With --gate: what breaking one solved item costs, in fixed items. |
 | `--gate-alpha <A>` | `0.05` | With --gate: one-sided significance level. |
 | `--tau <T>` | `0.10` | With --gate: largest share of solved items B may break. |
+| `--promote` |  | Pareto promotion gate: exit 0 when B is credibly better on quality or cheaper (cost, else tokens), 1 otherwise. |
+| `--gamma <G>` | `0.7` | With --promote: support needed to promote. |
+| `--eps-q <Q>` | `0.1` | With --promote: pass rate a cheaper B may give up. |
+| `--eps-c <C|inf>` | `inf` | With --promote: relative cost rise a better B may take (0.2 = +20%) |
+| `--draws <N>` | `10000` | With --promote: bootstrap draws. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. |
 
 ```sh
 coding.sh compare base candidate --k 3
 coding.sh compare base candidate --experiment exp_01
 coding.sh compare base candidate --k 3 --gate
+coding.sh compare base candidate --k 3 --promote
 coding.sh compare sonnet gpt5 --gateway
 coding.sh compare sonnet gpt5 --gateway openrouter
 ```
