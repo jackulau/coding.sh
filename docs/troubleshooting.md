@@ -160,6 +160,8 @@ The command line was wrong. Nothing ran.
 | `invalid_arms` | (toolevals compare) a baseline or candidate that is not `<variant>@<driver>` | Use arm names from the experiment. |
 | `unsupported_target` | `compress works on MCP targets; gh is cli` | Run `compress` on an MCP target. |
 | `no_control` | `A continuation task needs a control arm: …` (exp run) | Run the recorded config as A and your change as B (`--arm control=… --arm cand=…`), or use `coding.sh exp ab`. `--no-control` runs it alone, without a noise floor. |
+| `bad_arg` | `export what? one of sessions, events, labels` | Use one of the listed values. |
+| `read_only` | `DELETE is not allowed: coding.sh sql is read-only`, `only one statement is allowed (found text after ';')` | `coding.sh sql` only reads. Change data with the command that owns it. |
 
 ### Errors (exit 1)
 
@@ -178,6 +180,9 @@ The command ran and something failed.
 | `cancelled_experiment` | `Experiment base (…) was cancelled after 3 case runs; comparing a partial result is misleading` | Re-run the experiment, or pass `--force` to `exp compare` to compare the partial result. |
 | `arm_failed` | `arm cand: the first run failed: …` (exp metrics) | Run that arm's command by hand. It must exit 0 and print a JSON object of numbers. |
 | `no_pairs` | `No pair finished in both arms, so there is nothing to compare` (exp metrics) | Read the run errors in the report, fix the arm, and rerun. |
+| `unsupported_store` | `coding.sh sql reads the SQLite index; this store is postgres://…@db/csh` | Use `coding.sh export`, which reads every store, or query the database with its own client. |
+| `timeout` | `the query ran past 10s and was stopped` (sql) | Narrow the query, or pass a longer `--timeout`. |
+| `sql_error` | `SQLite: no such column: foo` (sql) | List the tables and columns: `coding.sh sql "select name, sql from sqlite_schema"`. See [Query and export](reference/query.md). |
 | `judge_error` | `The pairwise judge failed on every case: …` | Check the judge's `provider`, `model`, `baseURL` and API key variable, then re-run `exp compare --pairwise`. |
 | `unsafe_edit` | `Can't set capture.mode: the edit would change other settings too` | Edit the config file by hand; the message prints its path. |
 | `no_budget` | `answers has no budget_usd, so it can't be scheduled` | Add `budget_usd = 5` (or your cap) to the benchmark file. Printing the schedule works without one. |

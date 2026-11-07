@@ -86,6 +86,13 @@ interface Sink {
     through the built-in <code>node:sqlite</code>, in WAL mode, with an FTS5 table over prompt, reply and tool text for
     <code>coding.sh search</code>. Writes are idempotent on event id, so re-ingesting the same spool changes nothing.
   </p>
+  <p>
+    <code>coding.sh sql "select …"</code> runs one read-only query against it: one <code>SELECT</code> or <code>WITH</code> statement, on a
+    read-only connection with <code>query_only</code> on, stopped after <code>--timeout</code> seconds and capped at <code>--limit</code> rows.
+    <code>coding.sh export sessions|events|labels</code> streams rows as JSONL or CSV with the same filters as <code>coding.sh sessions</code>, and
+    works on every store. The tables and columns are listed in
+    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md">Query and export</a>.
+  </p>
 
   <h2 id="blobs">Blobs <Tag status="built" /></h2>
   <p>

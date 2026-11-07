@@ -7,8 +7,13 @@ coding.sh sessions                 # recent sessions (--agent, --repo, --since, 
 coding.sh show latest              # timeline with turns, tools, subagents and latency
 coding.sh search "rate limit"      # full-text search over prompts, replies and tool calls
 coding.sh usage --by model         # tokens, cost, turns and cache hits by agent, model, day or repo
+coding.sh sql "select …"           # one read-only SQL query against the SQLite index
+coding.sh export events --since 7d # stream sessions, events or labels as JSONL or CSV
 coding.sh ui                       # local viewer on 127.0.0.1 (token-protected URL)
 ```
+
+`sql` and `export` are described, with the index's tables and columns, in
+[Query and export](../reference/query.md).
 
 Every command takes `--json` and `--help`. `coding.sh` with no command runs `init` until capture
 is set up, then opens the viewer.

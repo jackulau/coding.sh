@@ -44,6 +44,8 @@ Every command accepts these.
 | [`show`](#codingsh-show) | Explore | Show a session timeline with subagents and latency |
 | [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies and tool calls |
 | [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day |
+| [`sql`](#codingsh-sql) | Explore | Run one read-only SQL query against the SQLite index |
+| [`export`](#codingsh-export) | Explore | Stream sessions, events or labels as JSONL or CSV |
 | [`ui`](#codingsh-ui) | Explore | Open the local session viewer |
 | [`mcp`](#codingsh-mcp) | Explore | Serve captured sessions to agents over MCP (stdio) |
 | [`eval`](#codingsh-eval) | Evaluate | Turn sessions into replayable eval tasks |
@@ -380,6 +382,69 @@ coding.sh usage
 coding.sh usage --by agent-model --since 90d
 coding.sh usage --by model --reprice
 ```
+
+## `coding.sh sql`
+
+Run one read-only SQL query against the SQLite index.
+
+```text
+coding.sh sql <QUERY>... [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `query` | yes | One SELECT or WITH statement. Takes the rest of the arguments. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--csv` |  | Print CSV instead of a table. |
+| `-n, --limit <N>` | `1000` | Most rows to return. |
+| `--timeout <SECONDS>` | `10` | Stop the query after this long. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh sql "select agent, count(*) as n from sessions group by agent"
+coding.sh sql "select tool, count(*) from events where kind = 'tool.end' and ok = 0 group by tool order by 2 desc" --csv
+coding.sh sql "select name, sql from sqlite_schema where type = 'table'"
+```
+
+- Read-only: the index is opened read-only with query_only on, and only one SELECT or WITH statement is accepted. INSERT, UPDATE, DELETE, ATTACH, PRAGMA statements and a second statement exit 2.
+- Postgres and ClickHouse stores are not supported here: use coding.sh export, or the database's own client.
+- Tables and columns: docs/reference/query.md. Events keep their payload as JSON text: json_extract(payload, '$.command').
+
+## `coding.sh export`
+
+Stream sessions, events or labels as JSONL or CSV.
+
+```text
+coding.sh export <WHAT> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `what` | yes | sessions, events or labels. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--format <FORMAT>` | `jsonl` | Output format. One of: `jsonl`, `csv`. |
+| `-a, --agent <AGENT>` |  | Only sessions from this agent. |
+| `-r, --repo <PATH>` |  | Only sessions in this repo root. |
+| `--since <WHEN>` |  | Only after this time: 7d, 12h, 30m or a date. |
+| `--flag <NAME>` |  | Only sessions with this flag or tag, as in coding.sh sessions --flag. |
+| `--subagents` |  | Include subagent sessions (and their events and labels) |
+| `--project <ID>` |  | Only sessions in this serve project (default: all) |
+| `-n, --limit <N>` |  | Only the N newest matching sessions (default: all) |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh export sessions --since 30d --format csv > sessions.csv
+coding.sh export events --agent codex --since 7d > events.jsonl
+coding.sh export labels --format csv
+```
+
+- JSONL rows are the stored objects, one per line. CSV has fixed columns (docs/reference/query.md); event payloads are a JSON column.
+- Text cells that start with = + - or @ get a leading ' in CSV so a spreadsheet does not run them as formulas.
+- Works on every store, Postgres and ClickHouse included. Rows are streamed, so memory stays flat.
 
 ## `coding.sh ui`
 

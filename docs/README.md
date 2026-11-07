@@ -58,6 +58,7 @@ Short recipes you can run as written.
 | [reference/cli.md](reference/cli.md) | every command and option, generated from the CLI registry |
 | [reference/sdk.md](reference/sdk.md) | the TypeScript and Python SDKs, generated from their source |
 | [reference/api.md](reference/api.md) | the REST API of `coding.sh serve` |
+| [reference/query.md](reference/query.md) | `coding.sh sql` and `coding.sh export`, and the index's tables and columns |
 | [reference/config.md](reference/config.md) | every config key and environment variable |
 | [troubleshooting.md](troubleshooting.md) | doctor checks, missing sessions, every error reason |
 | [concepts.md](concepts.md) | the terms: session, event, flag, dataset, experiment, judge and more |
