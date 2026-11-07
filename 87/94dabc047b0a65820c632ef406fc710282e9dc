@@ -1,9 +1,9 @@
 packages/coding.sh/src/judge/predicates.ts
-  s_8e040dbdf13565::t_9b13a3eba2fc8f 227-296
+  s_8e040dbdf13565::t_9b13a3eba2fc8f 227-296,227-235,236-243,245-246,248-256,257-296
   s_8e040dbdf13565::t_8ab199966bbccb 13
   s_8e040dbdf13565::t_cdadca47ae1fa1 96-138
 packages/coding.sh/src/core/rules.ts
-  s_8e040dbdf13565::t_06a2bdce0974d6 1-265
+  s_8e040dbdf13565::t_06a2bdce0974d6 1-265,1-32,34-265
 ---
 {
   "schema_version": "authorship/3.0.0",
