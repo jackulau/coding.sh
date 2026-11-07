@@ -10,6 +10,7 @@
 //   import { startStub } from "./stub-model.mjs"; const s = await startStub(); s.url
 //   startStub({ decide: (body) => ({ tool: { name, args } }) | ({ text }) | undefined })  # a scenario; undefined falls back
 //   ({ text, tool }) answers with the text and then the tool call in one response.
+//   (Anthropic only: a decision's `usage` replaces the prompt-side usage, e.g. cache_read_input_tokens.)
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 
@@ -96,8 +97,10 @@ function anthropic(body, res, d) {
   // Text first (an agent saying what it is about to do), then the tool call; either may be absent.
   const content = [...(d.text ? [{ type: "text", text: d.text }] : []), ...(d.tool ? [{ type: "tool_use", id: toolId, name: d.tool.name, input: d.tool.args }] : [])];
   const stop = d.tool ? "tool_use" : "end_turn";
-  if (!body.stream) return json(res, { id: mid, type: "message", role: "assistant", model, content, stop_reason: stop, stop_sequence: null, usage: { input_tokens: 120, output_tokens: 30 } });
-  const ev = [{ type: "message_start", message: { id: mid, type: "message", role: "assistant", model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 120, output_tokens: 1 } } }];
+  // A scenario may set the prompt side of usage (cache reads and writes) to script cache behaviour.
+  const prompt = d.usage ?? { input_tokens: 120 };
+  if (!body.stream) return json(res, { id: mid, type: "message", role: "assistant", model, content, stop_reason: stop, stop_sequence: null, usage: { ...prompt, output_tokens: 30 } });
+  const ev = [{ type: "message_start", message: { id: mid, type: "message", role: "assistant", model, content: [], stop_reason: null, stop_sequence: null, usage: { ...prompt, output_tokens: 1 } } }];
   content.forEach((c, index) => {
     if (c.type === "tool_use") {
       ev.push({ type: "content_block_start", index, content_block: { type: "tool_use", id: toolId, name: c.name, input: {} } });

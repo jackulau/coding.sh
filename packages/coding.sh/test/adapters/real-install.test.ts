@@ -1,7 +1,7 @@
 // Payloads captured from real agent binaries (installed under a throwaway HOME, driven
 // against a local stub model that returns one tool call, then text). Paths are scrubbed
 // to /work/demo and /home/user. Versions: OpenCode 1.19.5, Goose 1.57.0, Pi 1.5.0,
-// Copilot CLI 1.0.107, Factory Droid 1.6.0, Aider 0.86.2 (via `coding.sh run`).
+// Copilot CLI 1.0.107, Factory Droid 1.6.0, Aider 0.86.2 (via `coding.sh run`), Claude Code 2.1.319.
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -233,6 +233,48 @@ describe("real install: Aider 0.86.2", () => {
     const raw = [...blobs.values()].find((b) => b.includes("--openai-api-key"))!;
     assert.match(raw, /"--openai-api-key","\[redacted:secret-flag\]"/);
     assert.doesNotMatch(JSON.stringify(events) + [...blobs.values()].join(""), /"--openai-api-key","stub"/);
+  });
+});
+
+// scripts/e2e/claude-transcript-capture.mjs: one scripted session with Bash edits, a nested
+// CLAUDE.md, the Skill tool, a cache break and /compact (which restores the invoked skill).
+describe("real install: Claude Code 2.1.319", () => {
+  let env: TmpEnv;
+  let events: AgentEvent[];
+  before(async () => {
+    env = tmpEnv();
+    process.env.CLAUDE_CONFIG_DIR = join(FIXTURES, "claude-code", "real", "config");
+    events = await collect(claudeCode.backfill!(testCtx().ctx));
+    assertWellFormed(events);
+  });
+  after(() => env.restore());
+  const loads = () => events.filter((e) => e.kind === "notification" && e.payload.kind === "harness.loaded").map((e) => e.payload);
+
+  it("Bash edits (sed -i, a heredoc, tee) are file changes with their diffs", () => {
+    assert.deepEqual(
+      events.filter((e) => e.kind === "file.change").map((e) => [e.payload.path, e.payload.op, e.payload.additions, e.payload.deletions]),
+      [
+        ["notes.txt", "modify", 1, 1],
+        ["gen.txt", "add", 2, 0],
+        ["out.txt", "add", 1, 0],
+      ],
+    );
+    assert.match(String(events.find((e) => e.kind === "file.change")!.payload.diff), /-alpha\n\+beta\n/);
+  });
+
+  it("the nested CLAUDE.md, the listed nested skills, the Skill load and the restored skill are harness loads", () => {
+    assert.deepEqual(loads(), [
+      { kind: "harness.loaded", loadedBy: "nested_memory", paths: ["/work/demo/sub/CLAUDE.md"], memoryType: "Project" },
+      { kind: "harness.loaded", loadedBy: "dynamic_skill", dir: "/work/demo/sub/.claude/skills", skills: ["subskill"] },
+      { kind: "harness.loaded", loadedBy: "skill", skills: ["greet"], sources: ["/work/demo/.claude/skills/greet"], toolUseId: loads()[2]!.toolUseId },
+      { kind: "harness.loaded", loadedBy: "invoked_skills", skills: ["greet"], sources: ["projectSettings:greet"] },
+    ]);
+  });
+
+  it("the session: three files changed, and the host stays claude-code", () => {
+    const s = buildSession(events);
+    assert.equal(s.stats.filesChanged, 3);
+    assert.equal(s.agent, "claude-code", "harness loads never name the host (payload.via)");
   });
 });
 

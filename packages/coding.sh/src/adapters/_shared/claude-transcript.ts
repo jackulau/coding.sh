@@ -181,6 +181,7 @@ export class ClaudeTranscriptConverter {
   async add(entry: unknown, lineNo: number): Promise<void> {
     if (!isObj(entry)) return;
     const type = entry.type;
+    if (type === "attachment") return this.attachment(entry, lineNo);
     if (type !== "user" && type !== "assistant" && type !== "system") return;
     if (entry.isSidechain === true && !this.opts.sidechain) return;
     const ts = toMs(entry.timestamp, this.lastTs);
@@ -263,6 +264,8 @@ export class ClaudeTranscriptConverter {
       });
       return;
     }
+    // Hooks never see what the harness loaded, so live windows record it too.
+    if (e.isMeta === true && e.sourceToolUseID !== undefined) await this.skillBase(e, ts, lineNo);
     if (this.opts.mode !== "full") return;
     const em = this.em(ts, lineNo);
     for (const b of arr(obj(e.message).content)) {
@@ -342,6 +345,54 @@ export class ClaudeTranscriptConverter {
     if (this.opts.mode !== "full") return;
     const em = this.em(c.ts, c.lineNo);
     em.emit("notification", { kind: "command", command: c.command, args: c.args?.slice(0, 500) }, { key: [c.uuid], turnId: undefined });
+    this.push(em);
+  }
+
+  /**
+   * Instructions Claude Code loaded mid-session, as a
+   * `notification` with `payload.kind: "harness.loaded"`. Only names and paths
+   * are kept, never the loaded text:
+   * - nested_memory (a CLAUDE.md under a directory the agent touched):
+   *   `{loadedBy: "nested_memory", paths: [path], memoryType}`;
+   * - dynamic_skill (a nested skills dir became available): `{loadedBy, dir, skills}`;
+   * - invoked_skills (skills restored after a compaction or resume): `{loadedBy, skills, sources}`,
+   *   sources as Claude Code names them (`projectSettings:<name>`, `userSettings:<name>`,
+   *   `plugin:<plugin>:<name>`, `bundled:<name>`, or a path).
+   * Other attachment types (instructions, skill_listing, reminders, environment) are skipped.
+   * Both modes: hooks never see attachments, and the uuid key dedupes the two copies.
+   */
+  private async attachment(e: Record<string, unknown>, lineNo: number): Promise<void> {
+    if (e.isSidechain === true && !this.opts.sidechain) return;
+    const a = obj(e.attachment);
+    let payload: Record<string, unknown> | undefined;
+    if (a.type === "nested_memory" && str(a.path)) payload = { paths: [a.path], memoryType: str(obj(a.content).type) };
+    else if (a.type === "dynamic_skill") payload = { dir: str(a.skillDir), skills: names(a.skillNames) };
+    else if (a.type === "invoked_skills") {
+      const skills = arr(a.skills).map(obj);
+      payload = { skills: names(skills.map((s) => s.name)), sources: names(skills.map((s) => s.path)) };
+    }
+    if (!payload) return;
+    const em = this.em(toMs(e.timestamp, this.lastTs), lineNo);
+    em.emit("notification", fitPayload({ kind: "harness.loaded", loadedBy: a.type, ...payload }), { key: [str(e.uuid) ?? `line-${lineNo}`, "harness"] });
+    this.push(em);
+  }
+
+  /**
+   * The Skill tool's result: Claude Code adds a meta user entry, linked to the
+   * call by sourceToolUseID, that opens with "Base directory for this skill: <dir>".
+   * Recorded as harness.loaded `{loadedBy: "skill", skills: [name], sources: [dir], toolUseId}`
+   * (the directory only, never the skill's text), so skill scope is known.
+   */
+  private async skillBase(e: Record<string, unknown>, ts: number, lineNo: number): Promise<void> {
+    const id = str(e.sourceToolUseID);
+    const c = obj(e.message).content;
+    const text = typeof c === "string" ? c : str(obj(arr(c)[0]).text);
+    const dir = id && text ? /^Base directory for this skill: ([^\n]+)/.exec(text)?.[1]?.trim() : undefined;
+    if (!id || !dir) return;
+    const input = obj(this.tools.get(id)?.input);
+    const name = str(input.skill) ?? str(input.name) ?? dir.split(/[\\/]/).pop()!;
+    const em = this.em(ts, lineNo);
+    em.emit("notification", fitPayload({ kind: "harness.loaded", loadedBy: "skill", skills: [name], sources: [dir], toolUseId: id }), { key: [str(e.uuid) ?? `line-${lineNo}`, "harness"] });
     this.push(em);
   }
 
@@ -429,6 +480,26 @@ export class ClaudeTranscriptConverter {
     }
     return this.out;
   }
+}
+
+/** Cap on each list in a harness.loaded payload, and on the payload's JSON size. */
+const HARNESS_LIST_MAX = 50;
+const HARNESS_PAYLOAD_MAX = 2048;
+
+/** The strings in `v`, at most HARNESS_LIST_MAX. */
+const names = (v: unknown): string[] => arr(v).filter((x): x is string => typeof x === "string" && x !== "").slice(0, HARNESS_LIST_MAX);
+
+/** `p` with its lists cut from the end until its JSON fits HARNESS_PAYLOAD_MAX bytes (`truncated: true` when cut). */
+function fitPayload(p: Record<string, unknown>): Record<string, unknown> {
+  const size = () => Buffer.byteLength(JSON.stringify(p));
+  const lists = Object.keys(p).filter((k) => Array.isArray(p[k]));
+  while (size() > HARNESS_PAYLOAD_MAX) {
+    const k = lists.filter((x) => (p[x] as unknown[]).length > 0).sort((a, b) => (p[b] as unknown[]).length - (p[a] as unknown[]).length)[0];
+    if (!k) break;
+    p[k] = (p[k] as unknown[]).slice(0, -1);
+    p.truncated = true;
+  }
+  return p;
 }
 
 /** "mcp__server__tool" → "server". */

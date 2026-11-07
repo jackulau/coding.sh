@@ -101,9 +101,28 @@ function describe(e: AgentEvent, starts: Map<string, AgentEvent>): string | unde
     case "turn.end":
     case "context.compact":
     case "notification":
+      if (p.kind === "harness.loaded") return `harness     ${oneLine(clean(harnessText(p)), 90)}`;
       return `${`${e.kind} `.padEnd(12)}${oneLine(clean(str(p.text) ?? str(p.message) ?? str(p.reason) ?? ""), 80)}`;
     default:
       return `${`${e.kind} `.padEnd(12)}${oneLine(clean(str(p.name) ?? ""), 80)}`;
+  }
+}
+
+const list = (v: unknown): string => (Array.isArray(v) ? v.filter((x) => typeof x === "string").join(", ") : "");
+
+/** A mid-session harness load (Claude Code attachments): what reached the agent's context. */
+function harnessText(p: Record<string, unknown>): string {
+  switch (p.loadedBy) {
+    case "nested_memory":
+      return `loaded ${list(p.paths)}`;
+    case "dynamic_skill":
+      return `skills listed: ${list(p.skills)}${str(p.dir) ? ` (${str(p.dir)})` : ""}`;
+    case "skill":
+      return `skill ${list(p.skills)} loaded${list(p.sources) ? ` from ${list(p.sources)}` : ""}`;
+    case "invoked_skills":
+      return `skills restored: ${list(p.skills)}`;
+    default:
+      return `loaded ${list(p.paths) || list(p.skills)}`;
   }
 }
 

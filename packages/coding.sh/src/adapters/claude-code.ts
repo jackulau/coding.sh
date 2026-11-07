@@ -489,7 +489,7 @@ export const claudeCode: Adapter = {
   displayName: "Claude Code",
   tier: "A",
   // 2 (0.1.2): one session.end (idle end) and one compaction across hooks and backfill.
-  // 3 (0.1.2): file.change from Bash edits.
+  // 3 (0.1.2): harness.loaded (nested CLAUDE.md, skills) and file.change from Bash edits.
   parseVersion: 3,
 
   detect() {

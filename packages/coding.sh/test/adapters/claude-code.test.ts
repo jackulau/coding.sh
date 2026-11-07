@@ -236,8 +236,9 @@ describe("claude-code transcript service tier", () => {
   });
 });
 
-describe("claude-code Bash edits", () => {
+describe("claude-code harness loads and Bash edits", () => {
   const TS = "2026-11-07T20:48:10.000Z";
+  const att = (uuid: string, attachment: Record<string, unknown>, more: Record<string, unknown> = {}) => ({ type: "attachment", uuid, timestamp: TS, sessionId: "cc-h", cwd: "/w", attachment, ...more });
   const convert = async (lines: Record<string, unknown>[], mode: "full" | "assistant" = "full", sidechain = false) => {
     const { ctx } = testCtx();
     const conv = new ClaudeTranscriptConverter(ctx, { agent: "claude-code", mode, sessionId: "cc-h", source: "cc-h.jsonl", ...(sidechain ? { sidechain: true } : {}) });
@@ -246,6 +247,56 @@ describe("claude-code Bash edits", () => {
     assertWellFormed(events);
     return events;
   };
+  const loads = (events: { kind: string; payload: Record<string, unknown> }[]) => events.filter((e) => e.kind === "notification" && e.payload.kind === "harness.loaded").map((e) => e.payload);
+  const lines = [
+    att("a1", { type: "nested_memory", path: "/w/sub/CLAUDE.md", displayPath: "sub/CLAUDE.md", content: { path: "/w/sub/CLAUDE.md", type: "Project", content: "SECRET-RULE text" } }),
+    att("a2", { type: "dynamic_skill", skillDir: "/w/sub/.claude/skills", skillNames: ["subskill"], displayPath: "sub/.claude/skills" }),
+    att("a3", { type: "invoked_skills", skills: [{ name: "greet", path: "projectSettings:greet", content: "Run hi.js" }, { name: "eve", path: "plugin:vercel:eve", content: "x" }] }),
+    att("a4", { type: "date", date: "2026-11-07" }),
+    att("a5", { type: "environment", cwd: "/w" }),
+  ];
+
+  it("nested CLAUDE.md, a listed skills dir and restored skills become harness.loaded, without their text", async () => {
+    const events = await convert(lines);
+    assert.deepEqual(loads(events), [
+      { kind: "harness.loaded", loadedBy: "nested_memory", paths: ["/w/sub/CLAUDE.md"], memoryType: "Project" },
+      { kind: "harness.loaded", loadedBy: "dynamic_skill", dir: "/w/sub/.claude/skills", skills: ["subskill"] },
+      { kind: "harness.loaded", loadedBy: "invoked_skills", skills: ["greet", "eve"], sources: ["projectSettings:greet", "plugin:vercel:eve"] },
+    ]);
+    assert.ok(!JSON.stringify(events).includes("SECRET-RULE"), "memory content is not copied");
+    assert.equal(events.filter((e) => e.kind === "notification").length, 3, "date and environment attachments give nothing");
+  });
+
+  it("live windows read them too, keyed so a re-read or a backfill dedupes", async () => {
+    const full = await convert(lines);
+    const live = await convert(lines, "assistant");
+    assert.deepEqual(
+      loads(live).map((p) => p.loadedBy),
+      ["nested_memory", "dynamic_skill", "invoked_skills"],
+    );
+    const ids = (es: typeof full) => es.filter((e) => e.payload.kind === "harness.loaded").map((e) => e.id);
+    assert.deepEqual(ids(live), ids(full));
+  });
+
+  it("subagent attachments stay out unless sidechains are read; long lists are cut to fit", async () => {
+    const side = att("s1", { type: "nested_memory", path: "/w/x/CLAUDE.md", content: { type: "Project" } }, { isSidechain: true });
+    assert.equal(loads(await convert([side])).length, 0);
+    assert.equal(loads(await convert([side], "full", true)).length, 1);
+    const many = att("m1", { type: "invoked_skills", skills: Array.from({ length: 200 }, (_, i) => ({ name: `skill-with-a-long-name-${i}`, path: `projectSettings:skill-with-a-long-name-${i}` })) });
+    const [p] = loads(await convert([many]));
+    assert.equal(p!.truncated, true);
+    assert.ok(JSON.stringify(p).length <= 2048);
+  });
+
+  it("a Skill call's loaded skill names its base directory", async () => {
+    const events = await convert([
+      { type: "user", uuid: "u1", timestamp: TS, message: { role: "user", content: "greet" } },
+      { type: "assistant", uuid: "a1", timestamp: TS, message: { id: "m1", role: "assistant", model: "claude-sonnet-4-5", content: [{ type: "tool_use", id: "toolu_s", name: "Skill", input: { skill: "greet" } }], usage: { input_tokens: 5, output_tokens: 2 } } },
+      { type: "user", uuid: "u2", timestamp: TS, message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_s", content: "Launching skill: greet" }] }, toolUseResult: { success: true, commandName: "greet" } },
+      { type: "user", uuid: "u3", timestamp: TS, isMeta: true, sourceToolUseID: "toolu_s", message: { role: "user", content: [{ type: "text", text: "Base directory for this skill: /w/.claude/skills/greet\n\nRun scripts/hi.js." }] } },
+    ]);
+    assert.deepEqual(loads(events), [{ kind: "harness.loaded", loadedBy: "skill", skills: ["greet"], sources: ["/w/.claude/skills/greet"], toolUseId: "toolu_s" }]);
+  });
 
   it("a Bash call that edited files and then failed still reports the edits", async () => {
     const events = await convert([

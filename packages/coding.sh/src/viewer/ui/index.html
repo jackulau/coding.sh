@@ -2689,6 +2689,16 @@ function eventView(ev) {
     }
     case "error": return { name: "Error", arg: clip(oneLine(p.message || p.text), 160), label: clip(oneLine(p.message || p.text) || "Error", 90), tone: "fail", kindText: ev.kind };
     case "context.compact": return { name: "Context compacted", arg: p.trigger ? String(p.trigger) : "", label: "Context compacted" + (p.trigger ? " (" + p.trigger + ")" : ""), tone: "muted", kindText: ev.kind };
+    case "notification": {
+      // Claude Code loading a nested CLAUDE.md or a skill mid-session.
+      if (p.kind !== "harness.loaded") return { name: KIND_LABEL[ev.kind], arg: "", label: KIND_LABEL[ev.kind], tone: "muted", kindText: ev.kind };
+      const names = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string") : []);
+      const arg = p.loadedBy === "nested_memory" ? names(p.paths).map((x) => relPath(x) || x).join(", ")
+        : p.loadedBy === "dynamic_skill" ? "skills listed: " + names(p.skills).join(", ")
+        : p.loadedBy === "invoked_skills" ? "skills restored: " + names(p.skills).join(", ")
+        : "skill " + names(p.skills).join(", ");
+      return { name: "Loaded", arg: clip(arg, 160), label: "Loaded " + clip(arg, 90), tone: "muted", kindText: "harness.loaded · " + p.loadedBy };
+    }
     case "span": {
       // Durable workflow spans: step attempts, waits, and the engine's own run/schedule spans.
       const d = p.durable;
