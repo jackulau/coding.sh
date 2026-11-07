@@ -98,7 +98,7 @@ jobs:
         run: |
           if command -v google-chrome >/dev/null; then path=$(command -v google-chrome)
           else
-            npx -y playwright@1.56.1 install chromium
+            npx -y playwright@1.65.0 install chromium
             path=$(find "$HOME/.cache/ms-playwright" -path '*/chromium-*/chrome-linux*/chrome' -type f | sort -V | tail -1)
           fi
           echo "CHROME_PATH=$path" >> "$GITHUB_ENV"
