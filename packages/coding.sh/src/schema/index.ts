@@ -215,6 +215,10 @@ export interface Session {
     llmErrors?: LlmErrors;
     /** Set when the session is one run of a durable workflow engine (Vercel Workflow, Temporal, …). */
     durable?: DurableStats;
+    /** Where the session went off the rails (looping, failure-streak, churn, no-progress, stalled, context-thrash), earliest first. */
+    derails?: SessionDerail[];
+    /** The session's phases (core/outline.ts) when it has more than one: start, resumes, compactions, long idle gaps. */
+    phases?: SessionPhase[];
   };
   /** Detected failure patterns, e.g. "premature-completion". */
   flags: string[];
@@ -326,6 +330,49 @@ export interface DurableStats {
   waitMs: number;
   /** wallMs − activeMs: waits, retry backoff, queueing and downtime. */
   idleMs: number;
+}
+
+/** One phase of a long session on Session.stats.phases (core/outline.ts). */
+export interface SessionPhase {
+  /** 1-based. */
+  n: number;
+  kind: "start" | "resume" | "compaction" | "idle";
+  /** compaction: "auto" or "manual". */
+  trigger?: string;
+  /** idle/resume: the gap before it, ms. */
+  gapMs?: number;
+  startTs: number;
+  /** ts of its last event. */
+  endTs: number;
+  /** Index range [from, to) into the time-sorted events, and the first event's id (a deep link). */
+  from: number;
+  to: number;
+  eventId: string;
+  events: number;
+  prompts: number;
+  toolCalls: number;
+  toolErrors: number;
+  filesChanged: number;
+  /** Last test result in the phase. */
+  tests?: { passed: number; failed: number };
+  tokens: number;
+  costUsd?: number;
+  /** First prompt in the phase, up to 120 characters. */
+  title?: string;
+}
+
+/** One derail episode on Session.stats.derails: where it started and what happened. */
+export interface SessionDerail {
+  /** "looping", "failure-streak", "churn", "no-progress", "stalled" or "context-thrash". */
+  flag: string;
+  /** Onset time (ms epoch) and event. */
+  ts: number;
+  eventId: string;
+  /** Index of the onset event in the session's events sorted by time. */
+  index: number;
+  /** When it was last seen. */
+  endTs: number;
+  detail: string;
 }
 
 /** Latency aggregates kept on Session.stats.latency. All milliseconds. */

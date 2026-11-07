@@ -2,6 +2,8 @@
 // session's full event list, so re-running them after every ingest is exact
 // (no incremental state to drift).
 import { GATEWAY_FLAG, gatewayFlags } from "../integrations/gateway/ids.ts";
+import { DERAIL_FLAGS, detectDerails, type Derail } from "./derail.ts";
+import { phasesToStore, sessionOutline } from "./outline.ts";
 import type { AgentEvent, DuplicateUsage, LatencyStats, LlmErrors, Session, Usage } from "../schema/index.ts";
 import { DURABLE_FLAGS, durableFlags, durableStats } from "./durable.ts";
 
@@ -16,6 +18,8 @@ export const FLAGS = {
   resumed: DURABLE_FLAGS.resumed,
   /** A tag, not a failure: model calls went through Vercel AI Gateway. Other gateways get "gateway:<id>". */
   gateway: GATEWAY_FLAG,
+  /** Derails (core/derail.ts): where the session went off the rails. */
+  ...DERAIL_FLAGS,
 } as const;
 
 /** Flags that name a failure pattern. Namespaced flags ("gateway:vercel") are tags. */
@@ -424,6 +428,7 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   }
 
   const { usage, duplicate } = rollupUsage(sorted);
+  const derails = detectDerails(sorted);
   // A session.end followed by later captured activity was reopened (resumed
   // under the same id): it is not ended, whatever an earlier build stored.
   const reopened = endedAt !== undefined && lastActivity !== undefined && lastActivity > endedAt + REOPEN_SLACK_MS;
@@ -443,7 +448,7 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
       toolErrors,
       filesChanged: files.size,
     },
-    flags: detectFlags(sorted),
+    flags: detectFlags(sorted, derails),
   };
   const durable = durableStats(sorted);
   if (durable) {
@@ -451,6 +456,9 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
     session.flags.push(...durableFlags(durable));
     if (durable.workflow) fallbackTitle ??= durable.workflow;
   }
+  if (derails.length) session.stats.derails = derails;
+  const phases = phasesToStore(sessionOutline(sorted));
+  if (phases) session.stats.phases = phases;
   if (lastTest) {
     session.stats.testsPassed = lastTest.passed;
     session.stats.testsFailed = lastTest.failed;
@@ -596,13 +604,15 @@ export function latencyStats(sorted: AgentEvent[], endedAt?: number): LatencySta
 
 // ---------------------------------------------------------------- detectors
 
-export function detectFlags(events: AgentEvent[]): string[] {
+/** Failure flags for a session. `derails` (already detected on the same events) saves detecting them again. */
+export function detectFlags(events: AgentEvent[], derails?: readonly Derail[]): string[] {
   const sorted = byTime(events);
   const flags: string[] = [];
   if (detectPrematureCompletion(sorted)) flags.push(FLAGS.prematureCompletion);
   if (detectRepeatedToolFailure(sorted)) flags.push(FLAGS.repeatedToolFailure);
   if (detectNoVerification(sorted)) flags.push(FLAGS.noVerification);
   if (sorted.some((e) => e.kind === "context.compact")) flags.push(FLAGS.compaction);
+  for (const d of derails ?? detectDerails(sorted)) if (!flags.includes(d.flag)) flags.push(d.flag);
   flags.push(...gatewayFlags(sorted));
   return flags;
 }

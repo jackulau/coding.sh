@@ -169,7 +169,8 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
   switch (event) {
     case "SessionStart":
       // Same key as the transcript's session.start: a backfill of a hooked session adds no second start.
-      em.emit("session.start", { source: str(raw.source), transcriptPath: str(raw.transcript_path), permissionMode: str(raw.permission_mode) }, { key: ["start"] });
+      // A `claude --resume` start keeps its own row: it marks where the session picked up again.
+      em.emit("session.start", { source: str(raw.source), transcriptPath: str(raw.transcript_path), permissionMode: str(raw.permission_mode) }, raw.source === "resume" ? {} : { key: ["start"] });
       break;
     case "UserPromptSubmit": {
       const t = await clipText(ctx, str(raw.prompt) ?? "");
