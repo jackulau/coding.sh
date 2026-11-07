@@ -361,9 +361,20 @@ export const COMMANDS: CommandSpec[] = [
     actions: [
       {
         name: "run",
-        summary: "Run an experiment",
+        summary: "Run an experiment, or two tasks as one interleaved A/B",
         args: [{ name: "spec", desc: "Experiment spec JSON file (fields can be overridden by options)" }],
-        flags: EXP_RUN_FLAGS,
+        flags: [
+          ...EXP_RUN_FLAGS,
+          { name: "arm", type: "list", value: "<NAME=JSON|FILE>", desc: "One arm's task spec; give two (A then B) to interleave them case by case in one run" },
+          { name: "stop-early", type: "boolean", desc: "With --arm: stop once a group sequential test (O'Brien-Fleming) is decisive" },
+          { name: "looks", type: "number", value: "<N>", desc: "With --stop-early: planned looks over the case budget", default: "4" },
+          { name: "max-cases", type: "number", value: "<N>", desc: "With --arm: run at most N cases (a random subset)" },
+          { name: "seed", type: "number", value: "<N>", desc: "With --arm: seed for the case and arm order (default random, recorded)" },
+        ],
+        examples: [
+          "coding.sh exp run -d smoke -g '{\"kind\":\"exact\"}' --arm base=base.json --arm cand=cand.json",
+          "coding.sh exp run -d smoke -g '{\"kind\":\"exact\"}' --arm base=base.json --arm cand=cand.json --stop-early --max-cases 400",
+        ],
       },
       {
         name: "compare",

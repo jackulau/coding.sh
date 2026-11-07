@@ -34,10 +34,27 @@ test on flipped cases and the minimum detectable effect. It also reports:
   uneven split at p < 0.01.
 - **Noise floor.** When an A/A run exists for the baseline config, it prints the A/A flip rate,
   and the minimum detectable effect never goes below what that noise allows.
+- **Timing.** When the two runs were not interleaved and ran one after the other, it warns and
+  says how far apart they were. Provider drift, rate limits and time of day can look like a change.
 
-`coding.sh exp aa --dataset D --task T --grader G` runs one config twice and stores its run-to-run
-noise: the A/A delta, flipped cases, the SD of per-case differences, and the cases needed to detect
-a 5pp or 10pp change. `coding.sh exp aa A B` measures it from two stored runs instead.
+`coding.sh exp run --arm base=a.json --arm cand=b.json` runs two task configs as one A/B. Cases go
+in a random order, and each case runs in both arms back to back, in random arm order, so drift
+hits both arms the same. Both arms are stored (as `<name>-base` and `<name>-cand`) and share a pair
+id. `--seed` fixes the order, `--max-cases N` runs a random N cases.
+
+Add `--stop-early` to stop once the answer is clear. It is a group sequential test with
+O'Brien-Fleming alpha spending at `--looks` (default 4) evenly spaced points of the case budget,
+never before 20 paired cases. Early looks need very strong evidence, so the last look is close to
+the fixed-n test. The output says why it stopped (a boundary was crossed, or the budget ran out),
+and the interval it prints is a repeated confidence interval, which stays valid however the run
+stopped. After an early stop, the stored arms hold only the cases the deciding look saw, and
+`exp compare` on them uses the sequential verdict and warns that its bootstrap interval is too
+narrow.
+
+`coding.sh exp aa --dataset D --task T --grader G` runs one config twice, interleaved like `--arm`,
+and stores its run-to-run noise: the A/A delta, flipped cases, the SD of per-case differences, and
+the cases needed to detect a 5pp or 10pp change. `coding.sh exp aa A B` measures it from two
+stored runs instead, and warns when they were not interleaved.
 
 ## Judges
 

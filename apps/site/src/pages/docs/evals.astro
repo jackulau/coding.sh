@@ -150,7 +150,14 @@ const COMPARE = [
       <code>exp aa</code> runs one config twice and stores its run-to-run noise. Compare then prints the A/A flip rate, and the minimum
       detectable effect never goes below that noise.
     </li>
+    <li>Compare warns when the two runs ran one after the other, and says how far apart they were.</li>
   </ul>
+  <p>
+    To avoid that, run both configs in one job: <code>exp run --arm base=a.json --arm cand=b.json</code>. Each case runs in both arms back
+    to back, in random order, so drift during the run hits both arms the same. Add <code>--stop-early</code> to stop once the answer is clear.
+    It checks at a few planned points (an O'Brien-Fleming group sequential test, never before 20 cases), says why it stopped, and reports an
+    interval that stays valid after stopping. <code>--max-cases</code> caps the run.
+  </p>
 
   <h2 id="judges">LLM judges <Tag status="built" /></h2>
   <p>

@@ -19,7 +19,7 @@ import type {
 import { mapPool } from "../judge/limit.ts";
 import { pairedBootstrap, wilson } from "../stats/interval.ts";
 import { summarize } from "../stats/summary.ts";
-import { resolveTask, type TaskSpec } from "./task.ts";
+import { resolveTask, type ResolvedTask, type TaskSpec } from "./task.ts";
 
 /** A task may return `withTrace(output, events)` to hand graders (judges) the agent's trace. */
 const TRACED = Symbol.for("coding.sh/traced-output");
@@ -103,17 +103,149 @@ function jsonSafe(v: unknown): unknown {
   }
 }
 
-export async function runExperiment(opts: RunExperimentOpts): Promise<ExperimentResult> {
-  const trials = opts.trials ?? 1;
-  if (!(Number.isInteger(trials) && trials >= 1)) throw new RangeError(`trials must be a positive integer (got ${trials})`);
+/** Check grader ids are unique and, with a store, sync LLM judges (see syncJudges). */
+export async function prepareGraders(graders: readonly Grader[], store?: FileEvalStore): Promise<readonly Grader[]> {
   const ids = new Set<string>();
-  for (const g of opts.graders) {
+  for (const g of graders) {
     if (ids.has(g.id)) throw new Error(`two graders share the id ${JSON.stringify(g.id)}; give one a distinct name`);
     ids.add(g.id);
   }
-  const graders = opts.store ? await syncJudges(opts.graders, opts.store) : opts.graders;
-  const want = opts.split === undefined ? undefined : new Set<Split>(typeof opts.split === "string" ? [opts.split] : opts.split);
-  const cases = opts.dataset.cases.filter((c) => (!want || (c.split !== undefined && want.has(c.split))) && (!opts.filter || opts.filter(c)));
+  return store ? syncJudges(graders, store) : graders;
+}
+
+/** The dataset's cases in the given split(s) that pass the filter, in dataset order. */
+export function selectCases(dataset: Dataset, split?: Split | readonly Split[], filter?: (c: Case) => boolean): Case[] {
+  const want = split === undefined ? undefined : new Set<Split>(typeof split === "string" ? [split] : split);
+  return dataset.cases.filter((c) => (!want || (c.split !== undefined && want.has(c.split))) && (!filter || filter(c)));
+}
+
+/** What one case-trial needs: the experiment it belongs to, its task and graders. */
+export interface TrialEnv {
+  runId: string;
+  task: ResolvedTask;
+  graders: readonly Grader[];
+  signal?: AbortSignal;
+  /** Each finished case-trial is appended to the experiment's progress log here. */
+  store?: FileEvalStore;
+}
+
+/**
+ * Run and grade one case-trial. Undefined when the signal aborted it, before
+ * it started or part way (a killed task says nothing about the agent).
+ */
+export async function runTrial(env: TrialEnv, c: Case, trial: number): Promise<CaseRun | undefined> {
+  const { signal, task, graders } = env;
+  if (signal?.aborted) return undefined; // cancelled before it started: not a run
+  const startedAt = Date.now();
+  const t0 = performance.now();
+  let output: unknown;
+  let trace: TraceEvent[] | undefined;
+  let error: string | undefined;
+  try {
+    const raw = await task.run(c.input, {
+      runId: env.runId,
+      caseId: c.id,
+      trial,
+      ...(c.metadata ? { metadata: c.metadata } : {}),
+      ...(signal ? { signal } : {}),
+    });
+    if (isTraced(raw)) {
+      output = raw.output;
+      trace = raw.trace;
+    } else output = raw;
+  } catch (e) {
+    error = errMessage(e);
+  }
+  const latencyMs = Math.round((performance.now() - t0) * 100) / 100;
+  const grades: GraderOutcome[] =
+    error !== undefined || signal?.aborted
+      ? []
+      : await Promise.all(
+          graders.map(async (g): Promise<GraderOutcome> => {
+            try {
+              const result = await g.grade({
+                input: c.input,
+                output,
+                expected: c.expected,
+                caseId: c.id,
+                ...(c.metadata ? { metadata: c.metadata } : {}),
+                ...(trace ? { trace } : {}),
+                ...(signal ? { signal } : {}),
+              });
+              return { graderId: g.id, result };
+            } catch (e) {
+              return { graderId: g.id, error: errMessage(e) };
+            }
+          }),
+        );
+  // The abort cut this case-trial short (killed task or grader): its outcome says nothing about the agent.
+  if (signal?.aborted) return undefined;
+  const ungraded = error === undefined && grades.some((g) => g.error !== undefined);
+  const run: CaseRun = {
+    caseId: c.id,
+    trial,
+    latencyMs,
+    grades,
+    pass: error === undefined && !ungraded && grades.every((g) => g.result?.pass === true),
+    startedAt,
+  };
+  if (ungraded) run.ungraded = true;
+  const safe = jsonSafe(output);
+  if (safe !== undefined) run.output = safe;
+  if (error !== undefined) run.error = error;
+  if (env.store) await env.store.appendExperimentLog(env.runId, { type: "run", run });
+  return run;
+}
+
+/** The stored record of a finished (or cancelled) run. */
+export function experimentResult(o: {
+  id: string;
+  name: string;
+  status: ExperimentStatus;
+  dataset: Dataset;
+  split?: Split | readonly Split[];
+  task: ResolvedTask["info"];
+  graders: readonly Grader[];
+  trials: number;
+  createdAt: number;
+  runs: CaseRun[];
+  boot: { iters: number; seed: number };
+  metadata?: Record<string, unknown>;
+}): ExperimentResult {
+  const result: ExperimentResult = {
+    id: o.id,
+    name: o.name,
+    status: o.status,
+    dataset: {
+      id: o.dataset.id,
+      name: o.dataset.name,
+      version: o.dataset.version,
+      ...(typeof o.split === "string" ? { split: o.split } : {}),
+    },
+    task: o.task,
+    graders: o.graders.map((g) => ({ id: g.id, version: g.version, kind: g.kind, ...(g.calibration ? { calibration: g.calibration } : {}) })),
+    trials: o.trials,
+    createdAt: o.createdAt,
+    finishedAt: Date.now(),
+    runs: o.runs,
+    summary: summarizeRuns(o.runs, o.graders, o.trials, o.boot),
+  };
+  if (o.metadata) result.metadata = o.metadata;
+  return result;
+}
+
+/** Store the final record and drop its progress log (the record now holds every run). */
+export async function storeResult(store: FileEvalStore, result: ExperimentResult): Promise<void> {
+  await store.appendExperimentLog(result.id, { type: "end", status: result.status ?? "completed" });
+  await store.putExperiment(result);
+  await store.removeExperimentLog(result.id);
+}
+
+export async function runExperiment(opts: RunExperimentOpts): Promise<ExperimentResult> {
+  const trials = opts.trials ?? 1;
+  if (!(Number.isInteger(trials) && trials >= 1)) throw new RangeError(`trials must be a positive integer (got ${trials})`);
+  const graders = await prepareGraders(opts.graders, opts.store);
+  const cases = selectCases(opts.dataset, opts.split, opts.filter);
   const task = resolveTask(opts.task);
   const id = opts.id ?? sortableId("exp_");
   const createdAt = Date.now();
@@ -123,98 +255,27 @@ export async function runExperiment(opts: RunExperimentOpts): Promise<Experiment
   const store = opts.store;
   if (store) await store.appendExperimentLog(id, { type: "start", status: "running", id, name: opts.name, total: jobs.length, createdAt });
   let done = 0;
-
-  const settled = await mapPool(jobs, opts.concurrency ?? 4, async ({ c, trial }): Promise<CaseRun | undefined> => {
-    if (signal?.aborted) return undefined; // cancelled before it started: not a run
-    const startedAt = Date.now();
-    const t0 = performance.now();
-    let output: unknown;
-    let trace: TraceEvent[] | undefined;
-    let error: string | undefined;
-    try {
-      const raw = await task.run(c.input, {
-        runId: id,
-        caseId: c.id,
-        trial,
-        ...(c.metadata ? { metadata: c.metadata } : {}),
-        ...(signal ? { signal } : {}),
-      });
-      if (isTraced(raw)) {
-        output = raw.output;
-        trace = raw.trace;
-      } else output = raw;
-    } catch (e) {
-      error = errMessage(e);
-    }
-    const latencyMs = Math.round((performance.now() - t0) * 100) / 100;
-    const grades: GraderOutcome[] =
-      error !== undefined || signal?.aborted
-        ? []
-        : await Promise.all(
-            graders.map(async (g): Promise<GraderOutcome> => {
-              try {
-                const result = await g.grade({
-                  input: c.input,
-                  output,
-                  expected: c.expected,
-                  caseId: c.id,
-                  ...(c.metadata ? { metadata: c.metadata } : {}),
-                  ...(trace ? { trace } : {}),
-                  ...(signal ? { signal } : {}),
-                });
-                return { graderId: g.id, result };
-              } catch (e) {
-                return { graderId: g.id, error: errMessage(e) };
-              }
-            }),
-          );
-    // The abort cut this case-trial short (killed task or grader): its outcome says nothing about the agent.
-    if (signal?.aborted) return undefined;
-    const ungraded = error === undefined && grades.some((g) => g.error !== undefined);
-    const run: CaseRun = {
-      caseId: c.id,
-      trial,
-      latencyMs,
-      grades,
-      pass: error === undefined && !ungraded && grades.every((g) => g.result?.pass === true),
-      startedAt,
-    };
-    if (ungraded) run.ungraded = true;
-    const safe = jsonSafe(output);
-    if (safe !== undefined) run.output = safe;
-    if (error !== undefined) run.error = error;
-    if (store) await store.appendExperimentLog(id, { type: "run", run });
-    done++;
-    opts.onProgress?.(run, done, jobs.length);
+  const env: TrialEnv = { runId: id, task, graders, ...(signal ? { signal } : {}), ...(store ? { store } : {}) };
+  const settled = await mapPool(jobs, opts.concurrency ?? 4, async ({ c, trial }) => {
+    const run = await runTrial(env, c, trial);
+    if (run) opts.onProgress?.(run, ++done, jobs.length);
     return run;
   });
-  const runs = settled.filter((r): r is CaseRun => r !== undefined);
-  const status: ExperimentStatus = signal?.aborted ? "cancelled" : "completed";
-
-  const result: ExperimentResult = {
+  const result = experimentResult({
     id,
     name: opts.name,
-    status,
-    dataset: {
-      id: opts.dataset.id,
-      name: opts.dataset.name,
-      version: opts.dataset.version,
-      ...(typeof opts.split === "string" ? { split: opts.split } : {}),
-    },
+    status: signal?.aborted ? "cancelled" : "completed",
+    dataset: opts.dataset,
+    ...(opts.split !== undefined ? { split: opts.split } : {}),
     task: task.info,
-    graders: graders.map((g) => ({ id: g.id, version: g.version, kind: g.kind, ...(g.calibration ? { calibration: g.calibration } : {}) })),
+    graders,
     trials,
     createdAt,
-    finishedAt: Date.now(),
-    runs,
-    summary: summarizeRuns(runs, graders, trials, { iters: opts.bootstrapIters ?? 2000, seed: opts.seed ?? 0x5eed }),
-  };
-  if (opts.metadata) result.metadata = opts.metadata;
-  if (store) {
-    await store.appendExperimentLog(id, { type: "end", status });
-    await store.putExperiment(result);
-    await store.removeExperimentLog(id); // the stored result now holds every run
-  }
+    runs: settled.filter((r): r is CaseRun => r !== undefined),
+    boot: { iters: opts.bootstrapIters ?? 2000, seed: opts.seed ?? 0x5eed },
+    ...(opts.metadata ? { metadata: opts.metadata } : {}),
+  });
+  if (store) await storeResult(store, result);
   return result;
 }
 

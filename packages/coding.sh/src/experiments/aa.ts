@@ -50,6 +50,9 @@ export function aaNoise(first: ExperimentResult, second: ExperimentResult, opts:
   if (first.dataset.id !== second.dataset.id || first.dataset.version !== second.dataset.version) {
     warnings.push(`the two runs used different dataset versions (${first.dataset.version} vs ${second.dataset.version})`);
   }
+  if (!c.timing.interleaved && c.timing.warning) {
+    warnings.push("the two runs were not interleaved, so drift between them counts as noise here; run exp aa with a spec (not two stored runs) to interleave them");
+  }
   if (c.verdict !== "inconclusive") {
     warnings.push("the A/A difference is significant: something besides chance differs between the two runs (order, caching, rate limits, time of day)");
   }

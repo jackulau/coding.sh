@@ -135,7 +135,9 @@ describe("compareExperiments", () => {
     // With the size threshold lowered, a clear effect gets no warning at all.
     const quiet = compareExperiments(a, b, { seed: 2, minPaired: 20 });
     assert.deepEqual(quiet.power.warnings, []);
-    assert.doesNotMatch(renderComparison(quiet, { color: false }), /^! /m);
+    // Only the timing note (the two runs ran back to back, not interleaved) remains.
+    assert.match(quiet.timing.warning ?? "", /one after the other, not interleaved/);
+    assert.deepEqual(renderComparison(quiet, { color: false }).match(/^! .*/gm), [`! ${quiet.timing.warning}`]);
     // Stricter alpha or higher power needs a larger effect.
     assert.ok(compareExperiments(a, b, { seed: 2, alpha: 0.01 }).power.mde > better.power.mde);
     assert.ok(compareExperiments(a, b, { seed: 2, power: 0.9 }).power.mde > better.power.mde);

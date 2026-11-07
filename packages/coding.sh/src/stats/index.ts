@@ -11,3 +11,6 @@ export { clusteredBootstrap } from "./cluster.ts";
 export type { ClusteredBootstrapResult } from "./cluster.ts";
 export { betaCdf, pairedPosterior } from "./posterior.ts";
 export type { PairedPosterior, PairedPosteriorOpts } from "./posterior.ts";
+export { normalCdf, normalQuantile } from "./normal.ts";
+export { MIN_LOOK_CASES, obrienFlemingBounds, obrienFlemingSpend, pairedScoreInterval, pairedScoreZ, planSequential, sequentialLook, sequentialOutcome } from "./sequential.ts";
+export type { LookResult, SequentialOutcome, SequentialPlan } from "./sequential.ts";

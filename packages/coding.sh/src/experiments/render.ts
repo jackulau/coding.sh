@@ -4,6 +4,7 @@
 import type { CalibrationStatus, ExperimentResult } from "../datasets/types.ts";
 import { calibrationBadge } from "../judge/render.ts";
 import type { RoganGladenResult } from "../stats/interval.ts";
+import type { SequentialOutcome } from "../stats/sequential.ts";
 import type { AaResult } from "./aa.ts";
 import type { ArmAttrition, Comparison } from "./compare.ts";
 import { fixed, ms, paint, pct, pValue, signedPct, table, truncate, type RenderOpts } from "./text.ts";
@@ -119,6 +120,7 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   out.push(`${paint("B", "bold", color)} ${c.b.name} ${paint(c.b.id, "dim", color)}  pass ${pct(c.b.passRate)}${partial(opts.b)}`);
   if (c.datasetWarning) out.push(paint(`! ${c.datasetWarning}`, "yellow", color));
   if (c.gradeWarning) out.push(paint(`! ${c.gradeWarning}`, "yellow", color));
+  if (c.timing.warning) out.push(paint(`! ${c.timing.warning}`, "yellow", color));
   const vColor = c.verdict === "better" ? "green" : c.verdict === "worse" ? "red" : "dim";
   out.push("");
   out.push(
@@ -149,7 +151,10 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
         `${signedPct(c.passK.diff)} ${paint("(cases where every trial passed)", "dim", color)}`,
     );
   }
-  out.push(`verdict ${paint(c.verdict === "inconclusive" ? "inconclusive (CI includes 0)" : `B is ${c.verdict}`, vColor, color)}`);
+  if (c.sequential) out.push(...renderSequential(c.sequential, color));
+  if (c.sequentialWarning) out.push(paint(`! ${c.sequentialWarning}`, "yellow", color));
+  const why = c.sequential ? (c.verdict === "inconclusive" ? "no boundary crossed" : "group sequential test") : "CI includes 0";
+  out.push(`verdict ${paint(c.verdict === "inconclusive" ? `inconclusive (${why})` : `B is ${c.verdict}${c.sequential ? ` (${why})` : ""}`, vColor, color)}`);
   const p = c.power;
   out.push(
     `power   MDE ${Number.isFinite(p.mde) ? `${(p.mde * 100).toFixed(1)}pp` : "—"} ` +
@@ -212,6 +217,27 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   list("regressions", c.regressions, "red");
   list("improvements", c.improvements, "green");
   return out.join("\n");
+}
+
+/** The plan, where a group sequential A/B stopped and why, and its repeated CI. */
+export function renderSequential(s: SequentialOutcome, color: boolean): string[] {
+  const p = s.plan;
+  const K = p.looks.length;
+  const last = s.history.at(-1);
+  const out = [`plan    group sequential, ${K} look${K === 1 ? "" : "s"} at ${p.looks.join("/")} paired cases ${paint(`(O'Brien–Fleming spending, α ${p.alpha})`, "dim", color)}`];
+  const z = (l: NonNullable<typeof last>) => `|z| ${fixed(Math.abs(l.z))} ${l.crossed ? "≥" : "<"} ${fixed(l.bound)}`;
+  if (!last) out.push(`stopped cancelled before the first look (${p.looks[0]} paired cases)`);
+  else if (s.reason === "crossed") {
+    out.push(`stopped ${s.early ? "early, " : ""}look ${s.history.length} of ${K} at ${s.stoppedAt} paired cases: B is ${s.verdict} ${paint(`(${z(last)})`, "dim", color)}`);
+  } else if (s.reason === "budget") out.push(`stopped at the case budget (${p.maxCases}), no boundary crossed ${paint(`(${z(last)})`, "dim", color)}`);
+  else out.push(`stopped cancelled after look ${s.history.length} of ${K} (${s.stoppedAt} paired cases) ${paint(`(${z(last)})`, "dim", color)}`);
+  if (last) {
+    out.push(
+      `seq Δ   ${signedPct(s.diff.mean)} [${signedPct(s.diff.lo)}, ${signedPct(s.diff.hi)}] ` +
+        paint(`(${last.n} paired cases, ${Math.round((1 - p.alpha) * 100)}% repeated CI: valid however the run stopped)`, "dim", color),
+    );
+  }
+  return out;
 }
 
 /** `exp aa`: the noise one config shows against itself. */

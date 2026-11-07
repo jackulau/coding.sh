@@ -558,7 +558,7 @@ coding.sh exp <action>
 
 | Action | What it does |
 |---|---|
-| [`run`](#codingsh-exp-run) | Run an experiment |
+| [`run`](#codingsh-exp-run) | Run an experiment, or two tasks as one interleaved A/B |
 | [`compare`](#codingsh-exp-compare) | Compare two experiments case by case |
 | [`aa`](#codingsh-exp-aa) | Run one config twice (A/A) and store its run-to-run noise |
 | [`show`](#codingsh-exp-show) | Show a stored experiment: pass rate, graders and failures |
@@ -566,7 +566,7 @@ coding.sh exp <action>
 
 ### `coding.sh exp run`
 
-Run an experiment.
+Run an experiment, or two tasks as one interleaved A/B.
 
 ```text
 coding.sh exp run [spec] [options]
@@ -585,6 +585,16 @@ coding.sh exp run [spec] [options]
 | `--trials <N>` | `1` | Attempts per case. |
 | `-c, --concurrency <N>` | `4` | Parallel case runs. |
 | `--split <SPLIT>` |  | Only cases in this split. One of: `train`, `dev`, `test`. |
+| `--arm <NAME=JSON|FILE>` |  | One arm's task spec; give two (A then B) to interleave them case by case in one run. Repeatable. |
+| `--stop-early` |  | With --arm: stop once a group sequential test (O'Brien-Fleming) is decisive. |
+| `--looks <N>` | `4` | With --stop-early: planned looks over the case budget. |
+| `--max-cases <N>` |  | With --arm: run at most N cases (a random subset) |
+| `--seed <N>` |  | With --arm: seed for the case and arm order (default random, recorded) |
+
+```sh
+coding.sh exp run -d smoke -g '{"kind":"exact"}' --arm base=base.json --arm cand=cand.json
+coding.sh exp run -d smoke -g '{"kind":"exact"}' --arm base=base.json --arm cand=cand.json --stop-early --max-cases 400
+```
 
 ### `coding.sh exp compare`
 

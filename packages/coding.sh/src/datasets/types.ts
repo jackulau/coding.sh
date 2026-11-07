@@ -2,6 +2,7 @@
 // experiments over ANY agent (not only coding agents replayed from a repo).
 // Kept separate from src/core/types.ts so this engine can evolve without a
 // cross-module contract change; see FileEvalStore for persistence.
+import type { SequentialOutcome } from "../stats/sequential.ts";
 
 // ---------------------------------------------------------------- datasets
 
@@ -235,6 +236,24 @@ export type ExperimentLogEntry =
   | { type: "run"; run: CaseRun }
   | { type: "end"; status: ExperimentStatus };
 
+/**
+ * Set on both arms of an interleaved A/B run (`exp run --arm`, `exp aa`):
+ * one job queue ran (case, trial, arm) in a seeded order, so drift over the
+ * run hit both arms alike.
+ */
+export interface ExperimentPair {
+  /** Shared by both arms. */
+  id: string;
+  /** This arm's name. */
+  arm: string;
+  /** Experiment ids, A first. */
+  experiments: [string, string];
+  /** Seed of the case order and of the arm order within each case-trial. */
+  seed: number;
+  /** With --stop-early: the group sequential plan and where it stopped. */
+  sequential?: SequentialOutcome;
+}
+
 export interface ExperimentResult {
   id: string;
   name: string;
@@ -248,4 +267,6 @@ export interface ExperimentResult {
   runs: CaseRun[];
   summary: ExperimentSummary;
   metadata?: Record<string, unknown>;
+  /** Present when this run is one arm of an interleaved A/B. */
+  pair?: ExperimentPair;
 }

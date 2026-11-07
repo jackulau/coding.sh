@@ -6,6 +6,7 @@ import type { Case, CaseRun, ExperimentResult } from "../datasets/types.ts";
 import { clusteredBootstrap } from "../stats/cluster.ts";
 import { pairedBootstrap, roganGladen, type BootstrapOpts, type RoganGladenResult } from "../stats/interval.ts";
 import { pairedPosterior, type PairedPosterior } from "../stats/posterior.ts";
+import type { SequentialOutcome } from "../stats/sequential.ts";
 import { fisherExact, mcnemar, type McNemarResult } from "../stats/tests.ts";
 import { pairedPower, passHatK, type NoisePrior, type PowerAnalysis } from "./power.ts";
 import { caseRates } from "./run.ts";
@@ -49,6 +50,40 @@ export const MIN_CLUSTERS = 10;
 export const POSTERIOR_BELOW = 100;
 /** Attrition p-value below which compare warns. */
 export const ATTRITION_ALPHA = 0.01;
+/** A gap between two runs above which compare says how far apart they ran. */
+export const TIMING_GAP_MS = 24 * 3600_000;
+
+/** When A and B ran relative to each other. */
+export interface Timing {
+  /** Both arms came from one interleaved run (`exp run --arm`, `exp aa`). */
+  interleaved: boolean;
+  /** Time between the first run's end and the second's start; 0 when they overlapped. */
+  gapMs: number;
+  /** Set when the two runs were not interleaved and did not overlap. */
+  warning?: string;
+}
+
+function duration(ms: number): string {
+  const h = ms / 3600_000;
+  if (h >= 48) return `${Math.round(h / 24)} days`;
+  if (h >= 1) return `${Math.round(h)} h`;
+  return `${Math.max(1, Math.round(ms / 60_000))} min`;
+}
+
+/** Interleaved, overlapping, or one after the other (with how far apart). */
+export function runTiming(a: Pick<ExperimentResult, "createdAt" | "finishedAt" | "pair">, b: Pick<ExperimentResult, "createdAt" | "finishedAt" | "pair">): Timing {
+  const interleaved = !!a.pair && a.pair.id === b.pair?.id;
+  const start = Math.max(a.createdAt, b.createdAt);
+  const end = Math.min(a.finishedAt, b.finishedAt);
+  const out: Timing = { interleaved, gapMs: Math.max(0, start - end) };
+  if (interleaved || start < end) return out;
+  const fix = "run both in one interleaved job: coding.sh exp run --arm a=<TASK> --arm b=<TASK>";
+  out.warning =
+    out.gapMs > TIMING_GAP_MS
+      ? `A and B ran ${duration(out.gapMs)} apart: provider drift, rate limits and time of day may differ between them and show up as a difference; ${fix}`
+      : `A and B ran one after the other, not interleaved, so drift during the runs lands on one arm; ${fix}`;
+  return out;
+}
 
 export interface ClusterInfo {
   /** Case metadata field the cases were grouped by. */
@@ -152,8 +187,18 @@ export interface Comparison {
   attrition: Attrition;
   /** On per-case majority outcomes: b = A pass → B fail (regressions), c = A fail → B pass. */
   mcnemar: McNemarResult;
-  /** "better" / "worse" when the CI excludes 0; otherwise "inconclusive". */
+  /**
+   * "better" / "worse" when the CI excludes 0; otherwise "inconclusive". For
+   * a group sequential A/B (`sequential`), the sequential test's verdict: the
+   * fixed-n interval is not valid for that design.
+   */
   verdict: "better" | "worse" | "inconclusive";
+  /** Whether A and B were interleaved, and how far apart they ran if not. */
+  timing: Timing;
+  /** Present when A and B are the two arms of one `exp run --arm … --stop-early` run. */
+  sequential?: SequentialOutcome;
+  /** Set when that run stopped early: the paired bootstrap above assumes a fixed n. */
+  sequentialWarning?: string;
   regressions: CaseDelta[];
   improvements: CaseDelta[];
   graders: GraderDelta[];
@@ -240,7 +285,9 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     if (pa && !pb) regress++;
     else if (!pa && pb) improve++;
   }
-  const verdict: Comparison["verdict"] = d.n > 0 && d.lo > 0 ? "better" : d.n > 0 && d.hi < 0 ? "worse" : "inconclusive";
+  const timing = runTiming(a, b);
+  const seq = timing.interleaved && a.pair?.experiments[0] === a.id && b.pair?.experiments[1] === b.id ? a.pair.sequential : undefined;
+  const verdict: Comparison["verdict"] = seq ? seq.verdict : d.n > 0 && d.lo > 0 ? "better" : d.n > 0 && d.hi < 0 ? "worse" : "inconclusive";
   const byDelta = (x: CaseDelta, y: CaseDelta) => x.delta - y.delta || (x.caseId < y.caseId ? -1 : 1);
   const rateOf = (r: Map<string, number>) => {
     const v = [...r.values()];
@@ -283,6 +330,7 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     diff: { mean: d.mean, lo: d.lo, hi: d.hi, iters: d.iters },
     mcnemar: mcnemar(regress, improve),
     verdict,
+    timing,
     regressions: deltas.filter((x) => x.delta < 0).sort(byDelta),
     improvements: deltas.filter((x) => x.delta > 0).sort((x, y) => y.delta - x.delta || (x.caseId < y.caseId ? -1 : 1)),
     graders,
@@ -292,6 +340,12 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
       { alpha: boot.alpha, power: opts.power, minPaired: opts.minPaired, significant: verdict !== "inconclusive", ...(opts.noise ? { noise: opts.noise } : {}) },
     ),
   };
+  if (seq) {
+    out.sequential = seq;
+    if (seq.early) {
+      out.sequentialWarning = `this A/B stopped early at look ${seq.history.length} of ${seq.plan.looks.length}; the paired bootstrap interval assumes a fixed number of cases and is too narrow here, so read the repeated confidence interval instead`;
+    }
+  }
   if (cl) {
     const clusters = new Set(ids.map(clusterOf)).size;
     const info: ClusterInfo = { key: cl.key, clusters, missing: ids.filter((id) => !cl.of.has(id)).length };

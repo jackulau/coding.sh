@@ -43,7 +43,9 @@ describe("aaNoise", () => {
     assert.equal(r.noise.ts, 5);
     const z = 1.959963984540054 + 0.8416212335729143;
     assert.equal(r.plan.for10, Math.ceil(((z * r.noise.sd) / 0.1) ** 2));
-    assert.deepEqual(r.warnings, []);
+    // Two runs made one after the other: flagged, since drift between them counts as noise.
+    assert.equal(r.warnings.length, 1);
+    assert.match(r.warnings[0]!, /not interleaved/);
     const text = renderAa(r, { color: false });
     assert.match(text, /^flips {3}3 of 20 cases \(15\.0%\): 2 passed only in the first run, 1 only in the second {2}mcnemar p=1\.000$/m);
     assert.match(text, /^plan {4}paired cases to detect 5pp: \d+, 10pp: \d+ /m);
@@ -104,6 +106,10 @@ describe("exp aa and exp compare from the CLI", () => {
     for (let i = 1; i <= 12; i++) cases.push("--case", JSON.stringify({ input: `q${i}`, expected: `q${i}`, metadata: { repo: `r${(i % 3) + 1}` } }));
     const add = cli(["dataset", "add", "ds", ...cases]);
     assert.equal(add.status, 0, add.stderr);
+    const big: string[] = [];
+    for (let i = 1; i <= 60; i++) big.push("--case", JSON.stringify({ input: `q${i}`, expected: `q${i}` }));
+    const addBig = cli(["dataset", "add", "big", ...big]);
+    assert.equal(addBig.status, 0, addBig.stderr);
     writeFileSync(
       join(home, "agent.mjs"),
       `let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const q=JSON.parse(s);if((process.env.FAIL||"").split(",").includes(q)){process.stderr.write("boom");process.exit(3)}process.stdout.write(JSON.stringify(q))});\n`,
@@ -143,5 +149,41 @@ describe("exp aa and exp compare from the CLI", () => {
     assert.match(text.stdout, /^noise {3}A\/A flip rate on this dataset 0\.0%/m);
     assert.match(text.stdout, /^bayes {3}P\(B>A\)=/m);
     assert.match(text.stdout, /^lost {4}A 1\/12 \(1 agent error\) {2}B 4\/12 \(4 agent errors\)/m);
+    // The A/A arms were interleaved; a candidate run later was not.
+    assert.equal(aa.comparison.timing.interleaved, true);
+    assert.equal(cmp.timing.interleaved, false);
+    assert.match(text.stdout, /^! A and B ran one after the other, not interleaved/m);
+  });
+
+  it("exp run --arm interleaves two tasks and --stop-early stops at a look", () => {
+    // Base fails all but one case (an arm where every run errors exits 1, like exp run).
+    const failing = Array.from({ length: 59 }, (_, i) => `q${i + 1}`);
+    const r = json(["exp", "run", "-d", "big", "-g", '{"kind":"exact"}', "--name", "ab", "--arm", `base=${task(failing)}`, "--arm", `cand=${task([])}`, "--stop-early", "--seed", "7", "-c", "4"]);
+    assert.equal(r.outcome, "completed");
+    assert.equal(r.pair.seed, 7);
+    assert.deepEqual(r.experiments.map((e: any) => e.name), ["ab-base", "ab-cand"]);
+    assert.deepEqual(r.sequential.plan.looks, [30, 45, 60]);
+    assert.equal(r.sequential.reason, "crossed");
+    assert.equal(r.sequential.early, true);
+    assert.equal(r.sequential.stoppedAt, 30);
+    for (const e of r.experiments) {
+      assert.equal(e.summary.cases, 30);
+      assert.equal(e.pair.id, r.pair.id);
+    }
+    assert.equal(r.comparison.verdict, "better");
+    assert.equal(r.comparison.timing.interleaved, true);
+    assert.match(r.comparison.sequentialWarning, /stopped early/);
+    // Stored: compare finds the pair again by name.
+    const cmp = json(["exp", "compare", "ab-base", "ab-cand"]).comparison;
+    assert.equal(cmp.sequential.stoppedAt, 30);
+  });
+
+  it("exp run rejects the A/B flags without two arms", () => {
+    const bad = cli(["exp", "run", "-d", "big", "-g", '{"kind":"exact"}', "--task", task([]), "--stop-early"]);
+    assert.equal(bad.status, 2, bad.stderr);
+    assert.match(bad.stderr, /--stop-early needs two --arm options/);
+    const one = cli(["exp", "run", "-d", "big", "-g", '{"kind":"exact"}', "--arm", `a=${task([])}`]);
+    assert.equal(one.status, 2, one.stderr);
+    assert.match(one.stderr, /--arm takes exactly two arms/);
   });
 });
