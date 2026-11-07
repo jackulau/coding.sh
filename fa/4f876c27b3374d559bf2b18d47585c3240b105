@@ -1,0 +1,82 @@
+apps/site/src/pages/docs/how-to/test-claude-md-change.astro
+  s_8e040dbdf13565::t_ab7848d0303046 1-9
+packages/coding.sh/test/cli/exp-ab.test.ts
+  s_8e040dbdf13565::t_ed8eb9eff509ee 162
+  s_8e040dbdf13565::t_46c480e89a4618 211
+  s_8e040dbdf13565::t_1d1456f543f01a 50
+  s_8e040dbdf13565::t_8c58805e0042a5 245
+  s_8e040dbdf13565::t_f270fec105d815 1-49,51-161,163-197,214-244,246-252
+  s_8e040dbdf13565::t_9f3e6d6ef8e5f8 198-210,212-213
+packages/coding.sh/src/cli/main.ts
+  s_8e040dbdf13565::t_c65a84ed92c533 286-287,293,317-319,324,327
+apps/site/src/components/docs/markdown.ts
+  s_8e040dbdf13565::t_638c22d8c4e147 28
+apps/site/src/components/docs/nav.ts
+  s_8e040dbdf13565::t_48943bfc2abf80 104
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_2a2f3b29e6b048 158
+  s_8e040dbdf13565::t_e540ddfccd3042 197-198
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_3da524016bc8ed 465-470
+  s_8e040dbdf13565::t_c54c0ff3f60e49 420-453
+  s_8e040dbdf13565::t_648ba08ef08ef9 419
+packages/coding.sh/src/cli/commands/exp-ab.ts
+  s_8e040dbdf13565::t_25e7f1e1f530a7 1-11,13-16,18-82,84-175,177-180,182-202,208-366,370-537,539-629,631-690,692-709,711,713-715,717-755,757,759,762-767
+  s_8e040dbdf13565::t_dfaa9424c3367b 17
+  s_8e040dbdf13565::t_b3c73c1d4f8600 367-369
+  s_8e040dbdf13565::t_aa6faaf1251ca0 12,83,176,181,203-207,538,691,710,712,716,756,758,760-761
+  s_8e040dbdf13565::t_e466f195661daf 630
+docs/guides/evals.md
+  s_8e040dbdf13565::t_6147a54411034e 422-514
+apps/site/src/pages/docs/evals.astro
+  s_8e040dbdf13565::t_641fd5ec528b91 83
+  s_8e040dbdf13565::t_db13255654db3d 77,80-82,84-93
+  s_8e040dbdf13565::t_d66b79cb59bf67 78-79
+  s_8e040dbdf13565::t_06f499aa9fbd28 238-256
+  s_8e040dbdf13565::t_3d3e253f59ab55 257
+docs/reference/cli.md
+  s_8e040dbdf13565::t_fe031c1265a0ef 630,640-687,714
+packages/coding.sh/src/cli/types.ts
+  s_8e040dbdf13565::t_ca7cc24fd6048e 23-27
+scripts/e2e/exp-ab-capture.mjs
+  s_8e040dbdf13565::t_7b03bcd0b48f8d 248,253-257,259,261-271
+  s_8e040dbdf13565::t_6c14a1c1294e09 1-17,20-247,249-252,258,260,272-275,302-318
+  s_8e040dbdf13565::t_f9f5022e3a3a2c 276-287,289-290,292-297,299-301
+  s_8e040dbdf13565::t_06a808fc73ab5d 18-19
+  s_8e040dbdf13565::t_eb3777e2ce41ff 298
+  s_8e040dbdf13565::t_70af7f6cd94b75 288,291
+packages/coding.sh/src/cli/commands/exp.ts
+  s_8e040dbdf13565::t_6d0355836c80c4 54,292,337
+  s_8e040dbdf13565::t_90d771d4659a43 123-130
+  s_8e040dbdf13565::t_38f78bd8d75645 456-459
+  s_8e040dbdf13565::t_8bb64e53b9b48a 145
+  s_8e040dbdf13565::t_33403dbb962d19 21,482-484
+  s_8e040dbdf13565::t_5387c3c6758ef6 556-561
+docs/how-to/test-claude-md-change.md
+  s_8e040dbdf13565::t_af98aa469bb2dd 1-49,52-54,56-59,63,65-98,100-118
+  s_8e040dbdf13565::t_caee12d9f5f6ed 55,99
+  s_8e040dbdf13565::t_6acece0fa3668f 60-62,64
+  s_8e040dbdf13565::t_b21165e875c679 50-51
+docs/README.md
+  s_8e040dbdf13565::t_285c7e90d0cb20 30
+CHANGELOG.md
+  s_8e040dbdf13565::t_ad1721bbb86f57 37-38
+.github/workflows/ci.yml
+  s_8e040dbdf13565::t_4d3085d67f21b6 235-241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fa4f876c27b3374d559bf2b18d47585c3240b105",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
