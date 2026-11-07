@@ -1,0 +1,29 @@
+packages/coding.sh/test/judge/checklist.test.ts
+  s_8e040dbdf13565::t_4ff99836cf9117 375-395
+packages/coding.sh/test/judge/predicates.test.ts
+  s_8e040dbdf13565::t_5727e6466f80d2 139-194
+apps/site/src/pages/docs/evals.astro
+  s_8e040dbdf13565::t_4ff80e9d605fc9 134
+CHANGELOG.md
+  s_8e040dbdf13565::t_6783f726b7b8bc 44
+docs/guides/evals.md
+  s_8e040dbdf13565::t_4ff80e9d605fc9 291-306
+packages/coding.sh/src/judge/predicates.ts
+  s_8e040dbdf13565::t_e1e229c46379a7 14,197-225
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5dedc29621f68825a8088c70847b9d1e984fbf1",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "unknown"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
