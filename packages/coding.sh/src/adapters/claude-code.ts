@@ -486,6 +486,8 @@ export const claudeCode: Adapter = {
   id: CLAUDE_AGENT,
   displayName: "Claude Code",
   tier: "A",
+  // 2 (0.1.2): one session.end (idle end) and one compaction across hooks and backfill.
+  parseVersion: 2,
 
   detect() {
     const dir = claudeConfigDir();
