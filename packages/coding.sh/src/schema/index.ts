@@ -213,6 +213,8 @@ export interface Session {
     latency?: LatencyStats;
     /** Failed model calls: llm.call with `ok: false` or an HTTP status of 400 or more. Unset when none failed. */
     llmErrors?: LlmErrors;
+    /** Set when the session is one run of a durable workflow engine (Vercel Workflow, Temporal, …). */
+    durable?: DurableStats;
   };
   /** Detected failure patterns, e.g. "premature-completion". */
   flags: string[];
@@ -239,6 +241,91 @@ export interface Session {
    * A store keeps the stored value when an upsert leaves it unset.
    */
   parseVersion?: number;
+}
+
+/** One attempt of a durable workflow step (DurableStats.steps[].attempts). Times are ms since epoch. */
+export interface DurableAttempt {
+  /** Attempt number: as the engine reported it, else by start order. */
+  n: number;
+  startedAt: number;
+  endedAt: number;
+  ok: boolean;
+  error?: string;
+  /** The engine re-ran recorded history here; nothing under it is counted again. */
+  replay?: boolean;
+  /** Process that ran it (service.instance.id, faas.instance, host:pid). */
+  instance?: string;
+  version?: string;
+  /** Span id, for linking to the timeline. */
+  spanId?: string;
+}
+
+/** A durable workflow step and its attempts, in start order. */
+export interface DurableStep {
+  name: string;
+  /** Stable step id (step.id, activity id) when the engine gives one. */
+  id?: string;
+  attempts: DurableAttempt[];
+  /** Attempts the run made but never reported (a gap in attempt numbers, or time before the first reported attempt). */
+  unreported?: number;
+  /** Time between scheduling and the first reported attempt, when an earlier attempt went unreported. */
+  unreportedMs?: number;
+  ok: boolean;
+}
+
+/** A point where the run continued after a break: a crash, a deploy, a worker restart or a durable wait. */
+export interface DurableResume {
+  at: number;
+  reason: "crash" | "deploy" | "restart" | "wait";
+  /** Step the run resumed at, and the span of the attempt that ran first. */
+  step?: string;
+  spanId?: string;
+  fromInstance?: string;
+  toInstance?: string;
+  fromVersion?: string;
+  toVersion?: string;
+  /** How long the run was stopped before it resumed. */
+  afterMs?: number;
+}
+
+/** A durable sleep or wait for an event (not busy time). */
+export interface DurableWait {
+  startedAt: number;
+  endedAt?: number;
+  name?: string;
+}
+
+/**
+ * One durable workflow run (Session.stats.durable), folded from the
+ * payload.durable tags the OTLP mapper puts on its spans (src/otel/durable.ts).
+ */
+export interface DurableStats {
+  engine: string;
+  /** The engine's run id. */
+  runId: string;
+  workflow?: string;
+  steps: DurableStep[];
+  /** Steps in the run when `steps` keeps only some of them (retried, failed and unreported first). */
+  stepCount?: number;
+  /** Step attempts beyond each step's first, reported or not. */
+  retries: number;
+  failedAttempts: number;
+  /** Replayed spans seen (history re-run; not counted as new work). */
+  replays: number;
+  /** Model calls under replay spans, left out of usage. */
+  replayedCalls?: number;
+  waits: DurableWait[];
+  resumes: DurableResume[];
+  /** Processes that worked on the run. */
+  instances: number;
+  /** First to last activity of the run. */
+  wallMs: number;
+  /** Time something ran: the union of step attempts, invocations and model/tool calls. */
+  activeMs: number;
+  /** Time inside explicit durable waits. */
+  waitMs: number;
+  /** wallMs − activeMs: waits, retry backoff, queueing and downtime. */
+  idleMs: number;
 }
 
 /** Latency aggregates kept on Session.stats.latency. All milliseconds. */

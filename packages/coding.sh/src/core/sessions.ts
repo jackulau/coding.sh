@@ -3,12 +3,17 @@
 // (no incremental state to drift).
 import { GATEWAY_FLAG, gatewayFlags } from "../integrations/gateway/ids.ts";
 import type { AgentEvent, DuplicateUsage, LatencyStats, LlmErrors, Session, Usage } from "../schema/index.ts";
+import { DURABLE_FLAGS, durableFlags, durableStats } from "./durable.ts";
 
 export const FLAGS = {
   prematureCompletion: "premature-completion",
   repeatedToolFailure: "repeated-tool-failure",
   noVerification: "no-verification",
   compaction: "compaction",
+  /** Durable workflow runs (Session.stats.durable): a step ran again after failing. */
+  stepRetried: DURABLE_FLAGS.stepRetried,
+  /** Durable workflow runs: the run continued after a crash, a deploy or a worker restart. */
+  resumed: DURABLE_FLAGS.resumed,
   /** A tag, not a failure: model calls went through Vercel AI Gateway. Other gateways get "gateway:<id>". */
   gateway: GATEWAY_FLAG,
 } as const;
@@ -226,7 +231,8 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     raw += tokens(e.usage!);
     rawCost += num(e.usage!.costUsd) ?? 0;
     const rid = typeof e.payload?.responseId === "string" && e.payload.responseId ? e.payload.responseId : undefined;
-    if (nested.has(e) || (rid && responses.has(rid))) {
+    // A durable engine replaying recorded history re-emits calls it already made (payload.replay).
+    if (nested.has(e) || (rid && responses.has(rid)) || e.payload?.replay === true) {
       calls++;
       dropped.add(e.id);
       continue;
@@ -425,7 +431,8 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
 
   const session: Session = {
     id,
-    agent: via ?? first?.agent ?? prev!.agent,
+    // Durable engine spans (workflow.start, steps) can precede the agent's own events; they don't name it.
+    agent: via ?? (sorted.find((e) => e.payload.durable === undefined) ?? first)?.agent ?? prev!.agent,
     startedAt: first?.ts ?? prev!.startedAt,
     stats: {
       events: sorted.length,
@@ -438,6 +445,12 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
     },
     flags: detectFlags(sorted),
   };
+  const durable = durableStats(sorted);
+  if (durable) {
+    session.stats.durable = durable;
+    session.flags.push(...durableFlags(durable));
+    if (durable.workflow) fallbackTitle ??= durable.workflow;
+  }
   if (lastTest) {
     session.stats.testsPassed = lastTest.passed;
     session.stats.testsFailed = lastTest.failed;
