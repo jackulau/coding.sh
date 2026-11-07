@@ -1,0 +1,89 @@
+apps/site/src/pages/docs/evals.astro
+  s_8e040dbdf13565::t_c56063052dade2 303-309
+scripts/e2e/stub-model.mjs
+  s_8e040dbdf13565::t_fc9b4d7f5497f2 96-97,101-110
+  s_8e040dbdf13565::t_b359222bcb5b03 117-121,123,125-130
+  s_8e040dbdf13565::t_a4888e8c395775 12
+  s_8e040dbdf13565::t_7ca8b77dd2e049 76,82,87
+scripts/e2e/compare-capture.mjs
+  s_8e040dbdf13565::t_6dc0306d0155be 201
+  s_8e040dbdf13565::t_31b8bc611b403f 436-442
+  s_8e040dbdf13565::t_46882a3701e6aa 306-307
+  s_8e040dbdf13565::t_f544d1289c1406 46-52
+  s_8e040dbdf13565::t_96b72653b84e9c 79
+  s_8e040dbdf13565::t_b4dffb8849dd23 78
+  s_8e040dbdf13565::t_4587f39369ac05 161-162,165-167,169
+  s_8e040dbdf13565::t_c8d32a072b274c 22-24
+  s_8e040dbdf13565::t_8427661650736c 180-183
+  s_8e040dbdf13565::t_5e790a2e329fc1 65-66
+  s_8e040dbdf13565::t_1eefabfc82ce27 323-333
+  s_8e040dbdf13565::t_d5d55c664f200d 405-428
+docs/how-to/compare-agents.md
+  s_8e040dbdf13565::t_36bb2e49a0ac3b 167-172
+packages/coding.sh/src/core/intent.ts
+  s_8e040dbdf13565::t_d6a34088cc0112 98,100-102
+packages/coding.sh/src/cli/commands/eval.ts
+  s_8e040dbdf13565::t_4a8a58ce3a88fc 126
+packages/coding.sh/src/runner/run.ts
+  s_8e040dbdf13565::t_f5dde1a13cc9a8 196
+  s_8e040dbdf13565::t_bac40bc0e5a58f 49-54
+packages/coding.sh/test/runner/run.test.ts
+  s_8e040dbdf13565::t_bcd7bf59683289 40-54
+docs/guides/evals.md
+  s_8e040dbdf13565::t_63a77b8fe60af1 368-385
+packages/coding.sh/src/runner/tamper.ts
+  s_8e040dbdf13565::t_87499595bb8d09 203-235
+  s_8e040dbdf13565::t_fb942c6aec8417 5-6
+packages/coding.sh/src/mcp/harness.ts
+  s_8e040dbdf13565::t_6d587dd52c91d7 84
+  s_8e040dbdf13565::t_240ceb0a3085dc 169
+  s_8e040dbdf13565::t_16a2cd836596ac 71-83,85-96
+  s_8e040dbdf13565::t_1c5b21e05122a9 125
+  s_8e040dbdf13565::t_f87c6cf1e5b19c 8
+packages/coding.sh/src/mcp/tools.ts
+  s_8e040dbdf13565::t_156f90a38b2adc 618,626
+packages/coding.sh/src/cli/commands/compare.ts
+  s_8e040dbdf13565::t_0ac37468d79ecf 127-128
+packages/coding.sh/src/runner/experiment.ts
+  s_8e040dbdf13565::t_6d587dd52c91d7 916
+  s_8e040dbdf13565::t_9d60fa7da8ceda 287-290
+  s_8e040dbdf13565::t_24f05a4ff92b35 900
+  s_8e040dbdf13565::t_ee18fdb524caf9 508-509
+  s_8e040dbdf13565::t_e8da1951876dfe 919
+  s_8e040dbdf13565::t_c3a9314cd2335c 631-636,638
+  s_8e040dbdf13565::t_be4bdb5e719580 354-363
+  s_8e040dbdf13565::t_9ad747313bc3f0 892-896
+  s_8e040dbdf13565::t_ba9648b6eef33d 21
+  s_8e040dbdf13565::t_aee0427a9c30be 473-492,496-497
+  s_8e040dbdf13565::t_b6adb7cb5586ad 55-56
+  s_8e040dbdf13565::t_e97681e601b3e7 686
+  s_8e040dbdf13565::t_ec5d6b62c81c69 200
+  s_8e040dbdf13565::t_b1903f44bcc3e8 889-891,897-899,901-915,917-918,920-932
+  s_8e040dbdf13565::t_14221a4f7cfe0c 1004
+  s_8e040dbdf13565::t_308523de0b7885 612-615
+CHANGELOG.md
+  s_8e040dbdf13565::t_cb142587db5107 42
+  s_8e040dbdf13565::t_0c055ef056c8d7 57
+packages/coding.sh/test/runner/tamper.test.ts
+  s_8e040dbdf13565::t_e8da1951876dfe 336-338
+  s_8e040dbdf13565::t_da6b6e7de34269 5,9
+  s_8e040dbdf13565::t_4114f07404f440 260-335,339-349
+packages/coding.sh/test/mcp/harness.test.ts
+  s_8e040dbdf13565::t_a096368ab612be 118-156
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b62fdf275790bec1ddf958d7905379647a5dbdf8",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
