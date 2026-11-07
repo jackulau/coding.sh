@@ -5,6 +5,8 @@
     "suite:interpretation",
     "scenario:s05"
   ],
+  "live": false,
+  "liveNote": "the evidence is a synthetic page capture of the synthetic team; the run never reads the account",
   "setup": [
     "python3 \"$SKILL_EVAL/bin/vstub-setup\" s05"
   ],

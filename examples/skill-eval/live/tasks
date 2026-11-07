@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Copy the tasks that can run live, naming the live team and project.
+
+  tasks <dest> <scope> [<project>]
+
+Copies every $SKILL_EVAL/tasks/*/ whose task.json does not say "live": false (the
+reason is in "liveNote") to
+<dest>/, adds "-live" to its name and the tag "live", and in instruction.md and the start tree's Markdown
+replaces the synthetic team slug `harbor-synth` with <scope> and the project
+`web-app` with <project>. Hostnames such as shop.harbor-synth.example.test stay as
+they are, so the checks that forbid touching them still apply. Prints each copied
+task dir, one per line, and the skipped ones to stderr.
+"""
+import json
+import os
+import re
+import shutil
+import sys
+
+SLUG = re.compile(r"harbor-synth(?![\w.-])")
+PROJECT = re.compile(r"(?<![\w.-])web-app(?![\w-])")
+
+
+def rewrite(path, scope, project):
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    text = SLUG.sub(scope, text)
+    if project:
+        text = PROJECT.sub(project, text)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def main(argv):
+    if len(argv) not in (2, 3):
+        sys.stderr.write("usage: tasks <dest> <scope> [<project>]\n")
+        return 2
+    dest, scope = argv[0], argv[1]
+    project = argv[2] if len(argv) == 3 and argv[2] else None
+    src = os.path.join(os.environ.get("SKILL_EVAL", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tasks")
+    shutil.rmtree(dest, ignore_errors=True)
+    os.makedirs(dest)
+    for name in sorted(os.listdir(src)):
+        task_dir = os.path.join(src, name)
+        try:
+            with open(os.path.join(task_dir, "task.json"), encoding="utf-8") as f:
+                task = json.load(f)
+        except OSError:
+            continue
+        if task.get("live") is False:
+            sys.stderr.write(f"live: skipping {name}: {task.get('liveNote', 'not run live')}\n")
+            continue
+        out = os.path.join(dest, name)
+        shutil.copytree(task_dir, out)
+        task["name"] = f"{task['name']}-live"
+        task["tags"] = [*task.get("tags", []), "live"]
+        with open(os.path.join(out, "task.json"), "w", encoding="utf-8") as f:
+            json.dump(task, f, indent=2)
+            f.write("\n")
+        rewrite(os.path.join(out, "instruction.md"), scope, project)
+        for root, _, files in os.walk(os.path.join(out, "repo")):
+            for fn in files:
+                if fn.endswith(".md"):
+                    rewrite(os.path.join(root, fn), scope, project)
+        print(out)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

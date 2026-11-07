@@ -5,6 +5,8 @@
     "suite:delivery",
     "scenario:s12"
   ],
+  "live": false,
+  "liveNote": "the evidence summary describes the synthetic team; the run never reads the account",
   "setup": [
     "python3 \"$SKILL_EVAL/bin/vstub-setup\" s12"
   ],

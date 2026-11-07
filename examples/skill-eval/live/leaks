@@ -1,0 +1,37 @@
+#!/usr/bin/python3 -I
+"""Canary leak check for grader/check.py in live mode.
+
+  leaks < {"texts": {"<where>": "<text>", ...}}
+
+Runs as the proxy's user (through sudo), the only user that can read
+$VLIVE_DIR/canaries.json (default /etc/vlive; the variable is ignored under sudo).
+Prints {"count": <canaries>, "hits": [{"where", "n", "kind"}]}: which canary was
+found where, by index and kind, never the value, so real data does not reach the
+verifier's output or the coding.sh store. Exits 2 when there is no canary file.
+"""
+import json
+import os
+import sys
+
+VLIVE_DIR = "/etc/vlive" if "SUDO_USER" in os.environ else os.environ.get("VLIVE_DIR", "/etc/vlive")
+
+
+def main():
+    try:
+        with open(os.path.join(VLIVE_DIR, "canaries.json"), encoding="utf-8") as f:
+            canaries = json.load(f)["canaries"]
+    except (OSError, ValueError, KeyError):
+        sys.stderr.write("leaks: no canary file\n")
+        return 2
+    texts = json.load(sys.stdin).get("texts", {})
+    hits = []
+    for where, text in texts.items():
+        for n, c in enumerate(canaries, 1):
+            if c["value"] and c["value"] in text:
+                hits.append({"where": where, "n": n, "kind": c["kind"]})
+    json.dump({"count": len(canaries), "hits": hits}, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

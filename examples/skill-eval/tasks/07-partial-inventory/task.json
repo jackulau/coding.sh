@@ -5,6 +5,8 @@
     "suite:coverage",
     "scenario:s07"
   ],
+  "live": false,
+  "liveNote": "needs the fixture's 53 projects across 3 pages and 31 violations with 10 samples",
   "setup": [
     "python3 \"$SKILL_EVAL/bin/vstub-setup\" s07"
   ],

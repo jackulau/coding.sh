@@ -38,6 +38,14 @@ marker shows up in a saved file, raw output was saved.
 The example's stub is [bin/vercel](../../examples/skill-eval/bin/vercel). A task's `setup`
 commands write that run's fixture.
 
+To run against a real account later, replace the stub with a proxy that forwards only the reads
+and keeps the credential where the agent can't read it. The example's `run.sh --live` does this
+for a Vercel team: the proxy runs as a separate user that alone can read the token, refuses
+everything the stub refuses, logs to the same call log, and tags answers with the same marker.
+Before the agent starts, the harness reads the account's member emails, token names and firewall
+values as canaries for the leak check. Only scenarios whose grading doesn't depend on fixture
+facts run live. See [Live run](../../examples/skill-eval/README.md#live-run-a-real-vercel-team-read-only).
+
 ## 3. Write one task per scenario
 
 A task is a directory:

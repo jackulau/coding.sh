@@ -6,6 +6,7 @@
 Merges fixtures/base.json with fixtures/<scenario>.json (top-level keys replace,
 "secrets" lists add up) and writes $VSTUB_STATE/$CODING_SH_RUN_ID/fixture.json,
 outside the agent's work tree. The stub `vercel` reads it from there.
+Does nothing in live mode (SKILL_EVAL_LIVE=1).
 """
 import json
 import os
@@ -36,6 +37,8 @@ def main(argv):
     if len(argv) != 1:
         sys.stderr.write("usage: vstub-setup <scenario>\n")
         return 2
+    if os.environ.get("SKILL_EVAL_LIVE") == "1":
+        return 0  # live mode: the real team answers, and the proxy owns $VSTUB_STATE
     base, scen = load("base"), load(argv[0])
     fx = {**base, **scen}
     fx["secrets"] = sorted(set(base.get("secrets", [])) | set(scen.get("secrets", [])))

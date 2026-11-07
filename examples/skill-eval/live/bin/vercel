@@ -1,0 +1,4 @@
+#!/bin/sh
+# Live mode's `vercel`: the read-only proxy (live/vercel-live), run as the vproxy user,
+# the only user that can read the Vercel token. See /etc/sudoers.d/skill-eval.
+exec sudo -n -u vproxy /opt/skill-eval/live/vercel-live "$@"

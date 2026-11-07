@@ -5,6 +5,8 @@
     "suite:interpretation",
     "scenario:s09"
   ],
+  "live": false,
+  "liveNote": "the stated facts (legacy-site, the Git namespace) belong to the synthetic team",
   "setup": [
     "python3 \"$SKILL_EVAL/bin/vstub-setup\" s09"
   ],

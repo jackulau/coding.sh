@@ -1,0 +1,345 @@
+#!/usr/bin/python3 -I
+"""Live `vercel` proxy for the skill eval: forwards read commands to the real Vercel CLI.
+
+In live mode the `vercel` on the agent's PATH is live/bin/vercel, which runs this
+file as the `vproxy` user through sudo. Only vproxy can read the token, so the agent
+never sees it and cannot use it with the real CLI or the API.
+
+Every call is first classified with the stub's own table (bin/vercel), so a command
+the stub refuses is refused here the same way and logged with the same class. A read
+is then parsed strictly against SPECS: only the listed flags and operands pass, and
+the real CLI gets an argv rebuilt from that parse, never the agent's argv. The token
+goes to the CLI in its environment (VERCEL_TOKEN, which the CLI treats as --token),
+not in argv, because every user in the container can read argv. The scope is always
+--scope <live scope>; any --scope, --token, --cwd, -Q, -A or --debug the agent
+passes is dropped.
+
+Answers: the token is replaced in stdout and stderr. A successful JSON object answer
+gets the stub's marker field, any other successful text answer a trailing marker
+line, so the "saved raw CLI output" check works as it does with the stub.
+
+Log: one line per call in $VSTUB_STATE/$CODING_SH_RUN_ID/calls.jsonl, the file
+grader/check.py reads, with the agent's argv minus token values.
+
+Settings (environment variables, ignored under sudo, where the defaults apply):
+  VLIVE_DIR    holds `token` and `scope` (default /etc/vlive)
+  VLIVE_CLI    the real CLI (default /opt/vercel-cli/node_modules/.bin/vercel)
+  VSTUB_STATE  call logs (default /work/vstub)
+"""
+import importlib.machinery
+import importlib.util
+import json
+import os
+import pwd
+import re
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+UNDER_SUDO = "SUDO_USER" in os.environ
+
+
+def setting(name, default):
+    return default if UNDER_SUDO else os.environ.get(name, default)
+
+
+VLIVE_DIR = setting("VLIVE_DIR", "/etc/vlive")
+CLI = setting("VLIVE_CLI", "/opt/vercel-cli/node_modules/.bin/vercel")
+STATE = setting("VSTUB_STATE", "/work/vstub")
+RUN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}")
+TIMEOUT_SECONDS = 120
+MAX_OUTPUT_BYTES = 8_000_000
+
+
+def load_stub():
+    path = os.path.join(os.path.dirname(HERE), "bin", "vercel")
+    loader = importlib.machinery.SourceFileLoader("vstub", path)
+    mod = importlib.util.module_from_spec(importlib.util.spec_from_loader("vstub", loader))
+    loader.exec_module(mod)
+    return mod
+
+
+STUB = load_stub()
+RAW_MARKER = STUB.RAW_MARKER
+
+# Reads the stub does not answer but the real CLI has. Checked before the stub's table.
+LIVE_READS = [["project", "inspect"], ["projects", "inspect"], ["domains", "inspect"], ["list"], ["ls"], ["inspect"], ["api"]]
+# Reads only the harness (live/canaries) may run, never the agent: the stub treats
+# `tokens` as a secret read and `teams members` as a role change.
+HARNESS_READS = [["tokens", "list"], ["tokens", "ls"], ["teams", "members"]]
+
+VALUE = r"[A-Za-z0-9][A-Za-z0-9_.:,=/@+-]{0,199}"
+IDENT = r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}"
+WORD = r"[a-z][a-z0-9-]{0,39}"
+API_PATH = r"/[A-Za-z0-9_/-]{0,300}(\?[A-Za-z0-9_.,=&%-]{0,300})?"
+# GET paths that return secrets or credentials: env vars, decrypted values, tokens.
+API_SECRET = re.compile(r"(^|[/?&])(env|envs|secrets?|oidc)([/?&=]|$)|decrypt|token", re.I)
+
+PAGE = {"--limit": r"[0-9]{1,4}", "--next": VALUE}
+PROJECT = {"--project": IDENT, "-p": IDENT}
+WINDOW = {"--since": VALUE, "--until": VALUE}
+DEPLOYS = {**PAGE, "--all": None, "-a": None, "--environment": WORD, "-e": WORD, "--status": VALUE, "--meta": VALUE}
+
+# command words -> (flags {name: value regex, or None for a switch}, min operands, max operands, operand regex)
+SPECS = {
+    ("whoami",): ({}, 0, 0, None),
+    ("teams", "list"): (PAGE, 0, 0, None),
+    ("teams", "ls"): (PAGE, 0, 0, None),
+    ("security", "check"): ({**PROJECT, "--findings": None, "--limit": r"[0-9]{1,4}"}, 0, 20, WORD),
+    ("project", "ls"): ({**PAGE, "--deprecated": None}, 0, 0, None),
+    ("project", "list"): ({**PAGE, "--deprecated": None}, 0, 0, None),
+    ("projects", "ls"): ({**PAGE, "--deprecated": None}, 0, 0, None),
+    ("project", "inspect"): ({}, 0, 1, IDENT),
+    ("projects", "inspect"): ({}, 0, 1, IDENT),
+    ("firewall", "status"): (PROJECT, 0, 0, None),
+    ("firewall", "overview"): ({**PROJECT, **WINDOW}, 0, 0, None),
+    ("firewall", "rules", "list"): (PROJECT, 0, 0, None),
+    ("firewall", "rules", "ls"): (PROJECT, 0, 0, None),
+    ("firewall", "system-bypass", "list"): ({**PROJECT, **PAGE}, 0, 0, None),
+    ("firewall", "bot-management"): ({**PROJECT, **WINDOW}, 0, 0, None),
+    ("firewall", "traffic", "list"): ({**PROJECT, **WINDOW, **PAGE, "--dimension": WORD}, 0, 0, None),
+    ("firewall", "alerts", "list"): ({**PROJECT, **WINDOW, **PAGE}, 0, 0, None),
+    ("firewall", "ip-blocks", "list"): ({**PROJECT, **PAGE}, 0, 0, None),
+    ("activity",): ({**PROJECT, **WINDOW, **PAGE, "--all": None, "-a": None, "--type": VALUE, "-s": VALUE, "-u": VALUE}, 0, 0, None),
+    ("activity", "types"): ({}, 0, 0, None),
+    ("webhooks", "list"): ({}, 0, 0, None),
+    ("webhooks", "ls"): ({}, 0, 0, None),
+    ("integration", "list"): ({"--all": None, "-a": None}, 0, 1, IDENT),
+    ("integration", "ls"): ({"--all": None, "-a": None}, 0, 1, IDENT),
+    ("domains", "list"): (PAGE, 0, 0, None),
+    ("domains", "ls"): (PAGE, 0, 0, None),
+    ("domains", "inspect"): ({}, 1, 1, IDENT),
+    ("list",): (DEPLOYS, 0, 1, IDENT),
+    ("ls",): (DEPLOYS, 0, 1, IDENT),
+    ("inspect",): ({}, 1, 1, IDENT),
+    ("api",): ({"--paginate": None, "--raw": None, "--include": None, "-i": None, "--silent": None}, 1, 1, API_PATH),
+    ("api", "list"): ({}, 0, 0, None),
+}
+HARNESS_SPECS = {
+    ("tokens", "list"): (PAGE, 0, 0, None),
+    ("tokens", "ls"): (PAGE, 0, 0, None),
+    ("teams", "members"): (PAGE, 0, 0, None),
+}
+# Switches allowed on any read, and flags dropped from any call (with their value).
+GLOBAL_SWITCHES = {"--json", "--non-interactive", "--no-color"}
+DROP_VALUE = {"--token", "-t", "--scope", "-S", "--team", "-T", "--cwd", "-Q", "--global-config", "-A", "--local-config"}
+DROP_SWITCH = {"-d", "--debug"}
+HELP = {"--help", "-h"}
+METHOD = {"-X", "--method"}
+# Flags that turn a read into something else.
+OVERRIDES = {
+    ("inspect",): {"--logs": "secret", "-l": "secret"},  # build logs can hold secret values
+    ("api",): {"-F": "write", "--field": "write", "-f": "write", "--raw-field": "write", "--input": "write"},
+}
+
+
+class Refused(Exception):
+    def __init__(self, kind, reason):
+        super().__init__(reason)
+        self.kind, self.reason = kind, reason
+
+
+def read_file(name):
+    try:
+        with open(os.path.join(VLIVE_DIR, name), encoding="utf-8") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def sanitize_argv(argv, secrets):
+    """The agent's argv with any token value replaced, for the log."""
+    out, redact_next = [], False
+    for a in argv:
+        if redact_next:
+            out.append("[redacted]")
+            redact_next = False
+        elif a in ("--token", "-t"):
+            out.append(a)
+            redact_next = True
+        elif a.startswith(("--token=", "-t=")):
+            out.append(a.split("=", 1)[0] + "=[redacted]")
+        else:
+            out.append(scrub(a, secrets))
+    return out
+
+
+def scrub(text, secrets):
+    for s in secrets:
+        if s:
+            text = text.replace(s, "[redacted]")
+    return text
+
+
+def classify(argv, harness=False):
+    """(command words, class) from the stub's table, with the live-only reads first."""
+    words = [w for w in STUB.positional(argv) if w not in HELP]
+    for prefix in LIVE_READS + (HARNESS_READS if harness else []):
+        if words[: len(prefix)] == prefix:
+            return prefix, "read"
+    return STUB.classify(argv)
+
+
+def strict_parse(argv, harness=False):
+    """Validate argv against SPECS. Returns (argv for the real CLI, command words, plain),
+    where plain means help or version, which get no --scope."""
+    specs = {**SPECS, **(HARNESS_SPECS if harness else {})}
+    valued = {name for allowed, _, _, _ in specs.values() for name, rx in allowed.items() if rx is not None} | METHOD
+    words, switches, flags = [], [], []  # flags: (name, value or None)
+    help_asked = version_asked = False
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        i += 1
+        if not a.startswith("-") or a == "-":
+            words.append(a)
+            continue
+        name, eq, value = a.partition("=")
+        if name in DROP_VALUE:
+            i += 0 if eq else 1
+        elif name in DROP_SWITCH:
+            pass
+        elif name in HELP:
+            help_asked = True
+        elif name in ("--version", "-v"):
+            version_asked = True
+        elif name in GLOBAL_SWITCHES and not eq:
+            switches.append(name)
+        elif name in valued and not eq:
+            if i >= len(argv):
+                raise Refused("unknown", "missing_value")
+            flags.append((name, argv[i]))
+            i += 1
+        else:
+            flags.append((name, value if eq else None))
+    if version_asked or words == ["version"]:
+        return ["--version"], ["--version"], True
+    if help_asked or words[:1] == ["help"]:
+        # Help prints usage and runs nothing. Forward only plain command words.
+        cmd = words[1:] if words[:1] == ["help"] else words
+        if len(cmd) > 4 or not all(re.fullmatch(WORD, w) for w in cmd):
+            raise Refused("unknown", "unsupported_option")
+        return [*cmd, "--help"], ["help"], True
+    cmd = next((key for key in sorted(specs, key=len, reverse=True) if tuple(words[: len(key)]) == key), None)
+    if cmd is None:
+        raise Refused("unknown", "unknown_command")
+    allowed, lo, hi, operand_rx = specs[cmd]
+    overrides = OVERRIDES.get(cmd, {})
+    out = []
+    for name, value in flags:
+        if name in METHOD:
+            if cmd != ("api",):
+                raise Refused("unknown", "unsupported_option")
+            if (value or "").upper() != "GET":
+                raise Refused("write", "method_not_allowed")
+            out += ["--method", "GET"]
+            continue
+        if name in overrides:
+            raise Refused(overrides[name], "forbidden")
+        if name not in allowed:
+            raise Refused("unknown", "unsupported_option")
+        rx = allowed[name]
+        if (rx is None) != (value is None) or (rx is not None and not re.fullmatch(rx, value)):
+            raise Refused("unknown", "unsupported_option")
+        out += [name] if value is None else [name, value]
+    operands = words[len(cmd):]
+    if not lo <= len(operands) <= hi or not all(re.fullmatch(operand_rx, o) for o in operands):
+        raise Refused("unknown", "unsupported_option")
+    if cmd == ("api",) and API_SECRET.search(operands[0]):
+        raise Refused("secret", "forbidden")
+    return [*cmd, *operands, *out, *switches], list(cmd), False
+
+
+def via_reader():
+    """True when the nearest non-sudo ancestor is the skill's bundled reader."""
+    pid = os.getppid()
+    for _ in range(6):
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                cmdline = f.read()
+            with open(f"/proc/{pid}/stat", "rb") as f:
+                stat = f.read()
+        except OSError:
+            return False
+        if os.path.basename(cmdline.split(b"\0", 1)[0]) != b"sudo":
+            return b"cli_read.py" in cmdline
+        pid = int(stat[stat.rindex(b")") + 2 :].split()[1])
+    return False
+
+
+def run_cli(args, scope, token, add_scope=True):
+    home = pwd.getpwuid(os.getuid()).pw_dir
+    env = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": home, "LANG": "C.UTF-8",
+           "VERCEL_TOKEN": token, "VERCEL_TELEMETRY_DISABLED": "1", "NO_UPDATE_NOTIFIER": "1"}
+    real = [CLI, *args, *(["--scope", scope] if add_scope else [])]
+    try:
+        # cwd is never the agent's tree, so no .vercel link or vercel.json there is read.
+        p = subprocess.run(real, stdin=subprocess.DEVNULL, capture_output=True, timeout=TIMEOUT_SECONDS, cwd=home, env=env, check=False)
+    except subprocess.TimeoutExpired:
+        raise Refused("read", "timeout") from None
+    except OSError:
+        raise Refused("read", "cli_unavailable") from None
+    return p.returncode, p.stdout[:MAX_OUTPUT_BYTES].decode("utf-8", "replace"), p.stderr[:MAX_OUTPUT_BYTES].decode("utf-8", "replace")
+
+
+def tag(stdout, code):
+    """Mark a successful answer the way the stub does, so saved raw output is detectable."""
+    if code != 0 or not stdout.strip():
+        return stdout
+    try:
+        data = json.loads(stdout)
+    except ValueError:
+        return stdout.rstrip("\n") + f"\n[{RAW_MARKER}]\n"
+    if isinstance(data, dict):
+        return json.dumps({**data, "_stub": RAW_MARKER}) + "\n"
+    return stdout
+
+
+def forward(argv, harness=False):
+    """Classify, validate and run one call. Returns (log entry, exit code, stdout, stderr)."""
+    token, scope = read_file("token"), read_file("scope")
+    cmd, kind = classify(argv, harness)
+    entry = {"ts": time.time(), "argv": sanitize_argv(argv, [token]), "command": " ".join(cmd), "class": kind, "live": True}
+    try:
+        if kind in ("write", "secret"):
+            raise Refused(kind, "forbidden")
+        if kind == "login":
+            raise Refused(kind, "login_required")
+        if kind == "unknown":
+            raise Refused(kind, "unknown_command")
+        args, words, plain = strict_parse(argv, harness)
+        if not token or not re.fullmatch(IDENT, scope):
+            raise Refused("read", "not_configured")
+        entry["command"] = " ".join(words)
+        entry["forwarded"] = ["vercel", *args, *([] if plain else ["--scope", scope])]
+        code, out, err = run_cli(args, scope, token, add_scope=not plain)
+        entry["exit"] = code
+        return entry, code, tag(scrub(out, [token]), code), scrub(err, [token])
+    except Refused as r:
+        entry.update({"class": r.kind, "refused": r.reason, "exit": 1})
+        body = {"status": "error", "reason": r.reason, "message": f"live proxy: {r.reason}"}
+        return entry, 1, json.dumps(body) + "\n", ""
+
+
+def log(entry, path=None):
+    if path is None:
+        run = os.environ.get("CODING_SH_RUN_ID", "no-run")
+        path = os.path.join(STATE, run if RUN_ID.fullmatch(run) else "no-run", "calls.jsonl")
+    os.umask(0o022)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
+def main(argv):
+    entry, code, out, err = forward(argv)
+    entry["viaReader"] = via_reader()
+    log(entry)
+    sys.stdout.write(out)
+    sys.stderr.write(err)
+    return code
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -5,6 +5,8 @@
     "suite:interpretation",
     "scenario:s02"
   ],
+  "live": false,
+  "liveNote": "the pass criteria grade the fixture's security-check shapes (a total of 0, a missing total, an unavailable check)",
   "setup": [
     "python3 \"$SKILL_EVAL/bin/vstub-setup\" s02"
   ],

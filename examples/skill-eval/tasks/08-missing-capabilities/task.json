@@ -5,6 +5,8 @@
     "suite:coverage",
     "scenario:s08"
   ],
+  "live": false,
+  "liveNote": "needs the fixture's plan_upgrade_required errors for 30-day reads",
   "setup": [
     "python3 \"$SKILL_EVAL/bin/vstub-setup\" s08"
   ],
