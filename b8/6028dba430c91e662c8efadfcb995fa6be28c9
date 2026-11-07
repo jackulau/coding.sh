@@ -1,0 +1,38 @@
+docs/how-to/expensive-sessions.md
+  s_8e040dbdf13565::t_e2f49cb975c29a 16-17
+  s_8e040dbdf13565::t_7937f97aebc12a 54-74
+docs/production/compose.md
+  s_8e040dbdf13565::t_a0c480c430f23f 45
+docs/reference/cli.md
+  s_8e040dbdf13565::t_f8f5716d019fb7 46,355,367,372
+docs/guides/benchmarks.md
+  s_8e040dbdf13565::t_a0c480c430f23f 70
+docs/reference/config.md
+  s_8e040dbdf13565::t_e54cfe25ca06c4 101,103-107,110,117-119
+  s_8e040dbdf13565::t_6d9f1221b4aff2 28
+docs/guides/explore.md
+  s_8e040dbdf13565::t_e2f49cb975c29a 9
+CHANGELOG.md
+  s_8e040dbdf13565::t_d7aff1da8afeb3 113-115
+docs/PRODUCTION.md
+  s_8e040dbdf13565::t_a0c480c430f23f 187
+docs/reference/api.md
+  s_8e040dbdf13565::t_c9fe9bc90e176e 428
+  s_8e040dbdf13565::t_3d2973778b2712 431-436
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b86028dba430c91e662c8efadfcb995fa6be28c9",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
