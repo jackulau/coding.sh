@@ -86,7 +86,8 @@ export function harnessItem(path: string, text: string): HarnessItem | undefined
     const globs = globsOf(fm.paths);
     return { id, path, kind: "rule", name: (rule[1] as string).split("/").pop() as string, tier: globs.length ? "path" : "always", globs };
   }
-  const skill = /(?:^|\/)\.claude\/skills\/([^/]+)\/SKILL\.md$/.exec(p);
+  // Every agent's skill dir: .claude/, .agents/, .codex/, .cursor/, ~/.config/opencode/ … skills/<name>/SKILL.md.
+  const skill = /(?:^|\/)skills\/([^/]+)\/SKILL\.md$/.exec(p);
   if (skill) {
     const globs = globsOf(fm.paths);
     return { id, path, kind: "skill", name: typeof fm.name === "string" && fm.name ? fm.name : (skill[1] as string), tier: globs.length ? "path" : "always", globs };

@@ -205,3 +205,9 @@ jobs:
       # each driven through one session against a local stub model.
       - name: Real agents against a stub model
         run: node scripts/e2e/real-capture.mjs
+
+      # Harness compare on real Claude Code and Codex sessions against a scripted stub model: the
+      # one-item gate gives KEEP, KILL and REJECT from captured exposure, and failed runs split by own tests.
+      - name: Harness compare with real agents
+        if: runner.os == 'Linux'
+        run: node scripts/e2e/compare-capture.mjs

@@ -7,6 +7,7 @@
 //
 //   node scripts/e2e/stub-model.mjs            # listens on PORT (default 8787)
 //   import { startStub } from "./stub-model.mjs"; const s = await startStub(); s.url
+//   startStub({ decide: (body) => ({ tool: { name, args } }) | ({ text }) | undefined })  # a scenario; undefined falls back
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 
@@ -18,7 +19,7 @@ const usage = { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 };
 let n = 0;
 const id = (p) => `${p}_${Date.now().toString(36)}${(n++).toString(36)}`;
 
-const toolNames = (body) => (body.tools || []).map((x) => x.name || x.function?.name).filter(Boolean);
+export const toolNames = (body) => (body.tools || []).map((x) => x.name || x.function?.name).filter(Boolean);
 
 function pickTool(names) {
   const prefs = [
@@ -57,8 +58,7 @@ function sse(res, chunks, named) {
   res.end();
 }
 
-function chat(body, res) {
-  const d = decide(body);
+function chat(body, res, d) {
   const base = { id: id("chatcmpl"), created: Math.floor(Date.now() / 1000), model: MODEL };
   const callId = id("call");
   if (!body.stream) {
@@ -81,8 +81,7 @@ function chat(body, res) {
   sse(res, chunks, false);
 }
 
-function anthropic(body, res) {
-  const d = decide(body);
+function anthropic(body, res, d) {
   const mid = id("msg");
   const toolId = id("toolu");
   const model = body.model || MODEL;
@@ -103,8 +102,7 @@ function anthropic(body, res) {
   sse(res, ev, true);
 }
 
-function responses(body, res) {
-  const d = decide(body);
+function responses(body, res, d) {
   const item = d.tool
     ? { type: "function_call", id: id("fc"), call_id: id("call"), name: d.tool.name, arguments: JSON.stringify(d.tool.args), status: "completed" }
     : { type: "message", id: id("msg"), role: "assistant", status: "completed", content: [{ type: "output_text", text: d.text, annotations: [] }] };
@@ -122,7 +120,8 @@ function responses(body, res) {
 }
 
 /** Starts the stub on 127.0.0.1 (port 0 = any free port). `requests` logs what each call asked for. */
-export function startStub({ port = 0 } = {}) {
+export function startStub({ port = 0, decide: custom } = {}) {
+  const pick = (body) => (custom && custom(body)) || decide(body);
   const requests = [];
   const server = createServer((req, res) => {
     let buf = "";
@@ -135,9 +134,9 @@ export function startStub({ port = 0 } = {}) {
       const url = req.url.split("?")[0];
       requests.push({ method: req.method, url, model: body.model, tools: toolNames(body).length, toolResult: hasToolResult(body) });
       if (req.method === "GET" && /models$/.test(url)) return json(res, { object: "list", data: [{ id: MODEL, object: "model", owned_by: "stub" }] });
-      if (/chat\/completions$/.test(url)) return chat(body, res);
-      if (/messages$/.test(url)) return anthropic(body, res);
-      if (/responses$/.test(url)) return responses(body, res);
+      if (/chat\/completions$/.test(url)) return chat(body, res, pick(body));
+      if (/messages$/.test(url)) return anthropic(body, res, pick(body));
+      if (/responses$/.test(url)) return responses(body, res, pick(body));
       res.writeHead(404, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: { message: `stub: no route ${url}` } }));
     });

@@ -37,6 +37,8 @@ describe("harnessItem", () => {
     assert.equal(harnessItem(".github/instructions/py.instructions.md", "---\napplyTo: '**/*.py'\n---\n")?.tier, "path");
     assert.equal(harnessItem(".github/instructions/all.instructions.md", "---\napplyTo: '**'\n---\n")?.tier, "always");
     assert.equal(harnessItem(".claude/skills/pdf/fill.py", ""), undefined);
+    // Every agent's skill dir, not only Claude Code's.
+    for (const p of [".agents/skills/sum/SKILL.md", ".codex/skills/sum/SKILL.md", "~/.config/opencode/skills/sum/SKILL.md"]) assert.deepEqual([harnessItem(p, "")?.kind, harnessItem(p, "")?.name], ["skill", "sum"], p);
     assert.equal(harnessItem(".mcp.json", ""), undefined);
     assert.equal(harnessItem("CLAUDE.md", "")?.id.length, 12);
   });
@@ -70,6 +72,10 @@ describe("itemExposure", () => {
     assert.equal(itemExposure(skill, [tool("Read", { file_path: "x" }, { skill: "pdf" })]).state, "in-context");
     assert.equal(itemExposure(skill, [tool("Read", { file_path: "/repo/.claude/skills/pdf/fill.py" })], { cwd: "/repo" }).state, "in-context");
     assert.equal(itemExposure(skill, [tool("Skill", { skill: "docx" }), tool("Read", { file_path: "/repo/a.ts" })], { cwd: "/repo" }).state, "listed");
+    // A shell agent (Codex exec_command) reading the skill file.
+    const codexSkill = harnessItem(".agents/skills/sum/SKILL.md", "")!;
+    assert.equal(itemExposure(codexSkill, [tool("exec_command", { cmd: "cat .agents/skills/sum/SKILL.md" })], { cwd: "/repo" }).state, "in-context");
+    assert.equal(itemExposure(codexSkill, [tool("exec_command", { cmd: "cat sum.js" })], { cwd: "/repo" }).state, "listed");
     const gated = harnessItem(".claude/skills/pdf/SKILL.md", "---\npaths: docs/**\n---\n")!;
     assert.equal(itemExposure(gated, [tool("Read", { file_path: "/repo/a.ts" })], { cwd: "/repo" }).state, "not");
     assert.equal(itemExposure(gated, [tool("Read", { file_path: "/repo/docs/a.md" })], { cwd: "/repo" }).state, "listed");
