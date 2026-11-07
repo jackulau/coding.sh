@@ -1,6 +1,7 @@
-# coding.sh architecture (draft v0)
+# coding.sh architecture
 
-coding.sh is an open-source, local-first lab for coding-agent harnesses:
+coding.sh is an open-source, local-first lab for agent harnesses. The same code also runs as a
+server for API apps in production ([Production mode](#production-mode-codingsh-serve)):
 
 ```
 capture ──▶ spool ──▶ ingest ──▶ store (index + blobs) ──▶ viewer / evals / compare
@@ -8,8 +9,12 @@ capture ──▶ spool ──▶ ingest ──▶ store (index + blobs) ──�
    └──────────── runner (replays tasks under a harness) ◀──────┘
 ```
 
-Status: design draft. Nothing here is implemented yet. Agent-specific details live in
-[`docs/ADAPTERS.md`](./ADAPTERS.md) once the integration research is folded in.
+Status: implemented, pre-1.0. This page started as the design draft. The capture, ingest, store,
+viewer and eval sections describe what ships in `packages/coding.sh`; where the code differs from the
+draft (for example the exact `IndexStore` methods), the code in `src/core/types.ts` wins. Production
+mode, where the same code runs as a server for API apps, is described under
+[Production mode](#production-mode-codingsh-serve) and in full in [`docs/PRODUCTION.md`](../PRODUCTION.md).
+Agent-specific details live in [`docs/ADAPTERS.md`](../ADAPTERS.md).
 
 ## Principles
 
@@ -28,20 +33,31 @@ Status: design draft. Nothing here is implemented yet. Agent-specific details li
 
 ## Packages (npm workspaces)
 
-| Package | Role |
+The draft split the core into many packages. It shipped as one package with zero runtime
+dependencies; the parts below are folders under `packages/coding.sh/src`.
+
+| Package or folder | Role |
 |---|---|
-| `packages/schema` | `coding.sh/trace` v0 types, JSON Schema, OTel mapping, version migrations |
-| `packages/spool` | The hook entrypoint: a dependency-free script that appends stdin to the spool |
-| `packages/core` | Ingest, normalization, redaction, repo snapshots, storage interfaces |
-| `packages/store-sqlite` | Default index (`node:sqlite`) |
-| `packages/store-fs` | Default blob store (filesystem, zstd, sha256-addressed) |
-| `packages/adapters` | One module per agent: detect, install, ingest, backfill, run, overlay |
-| `packages/cli` | `coding.sh` binary: `init`, `doctor`, `sessions`, `ui`, `eval`, `run`, `compare` |
-| `packages/viewer` | Local web UI served by `coding.sh ui` |
+| `packages/coding.sh` | The `coding.sh` CLI (npm). Zero runtime deps, Node 22.15+. |
+| `src/schema` | `coding.sh/trace` v0 types |
+| `src/spool` | The hook entrypoint: appends stdin to the spool |
+| `src/core` | Ingest, normalization, sessions, redaction, repo snapshots, config, storage interfaces |
+| `src/store` | Store factory by URL scheme, `sqlite://`, `file://` and `memory://` stores, the conformance suite |
+| `src/adapters` | One module per agent: detect, install, normalize, backfill, run |
+| `src/otel` | OTLP/HTTP receiver: protobuf and JSON decode, gen_ai / OpenInference / AI SDK mapping |
+| `src/server` | `coding.sh serve`: auth, projects, the write queue, metrics, retention, native ingest |
+| `src/sinks` | Built-in `otlp` and `http` sinks |
+| `src/viewer`, `src/mcp` | The web viewer (`ui`, and `serve`) and the MCP server |
+| `src/datasets`, `src/eval`, `src/experiments`, `src/graders`, `src/judge` | Evals, experiments and judges |
+| `packages/store-postgres` | `coding.sh-store-postgres`: index and blob store for `postgres://` (depends on `pg`) |
+| `packages/blob-s3` | `coding.sh-store-s3`: blob store for `s3://` (S3, R2, MinIO), SigV4 with no SDK |
+| `packages/sdk` | `@coding.sh/sdk`: TypeScript SDK for API apps |
+| `packages/sdk-python` | `coding-sh`: Python SDK for API apps |
 | `apps/site` | coding.sh website (Astro) |
 
-Sinks for Postgres, S3/R2/GCS, OTLP and HTTP live in their own packages (`store-postgres`,
-`blob-s3`, `sink-otlp`, `sink-http`), so the default install stays small.
+Drivers with dependencies live in their own packages (`coding.sh-store-<scheme>`,
+`coding.sh-sink-<kind>`), so the core install stays dependency-free. None of these packages are on npm
+or PyPI yet.
 
 ## Capture
 
@@ -139,6 +155,38 @@ interface Sink {                                          // write-only mirror (
   file-read blobs older than 90 days while keeping diffs and eval tasks).
 - SQLite settings: `journal_mode=WAL`, `synchronous=NORMAL`, batched transactions of about 500
   events, prepared statements, FTS5 over prompt and assistant text only.
+
+## Production mode (`coding.sh serve`)
+
+The same core runs as a long-lived server for API apps and agents in production. The full contract,
+including routes, env vars, auth and limits, is [`docs/PRODUCTION.md`](../PRODUCTION.md). Deploy
+recipes are in [`docs/production/`](../production/README.md).
+
+```
+ API apps ──SDK (TS / Python)──▶ POST /v1/ingest ─┐
+ OTel apps, AI SDK, Gateway ──▶ POST /v1/traces    ├─▶ bounded queue ─▶ writer ─▶ IndexStore (sqlite | postgres)
+                                POST /v1/logs     ─┘   429 when full    1 tx/tick   BlobStore  (file | postgres | s3)
+ people ─▶ /  /api/*  (viewer)     ops ─▶ /healthz /readyz /metrics      CLI + MCP ─▶ same store URL
+```
+
+- **One process, one port.** `coding.sh serve` (default port 4318) takes OTLP/HTTP and native SDK
+  batches, and serves the viewer, its API and Prometheus metrics. It is configured by a store URL:
+  `CODING_SH_STORE_URL` (`sqlite://` or `postgres://`) and optionally `CODING_SH_BLOB_URL`
+  (`file://`, `postgres://` or `s3://`). With a Postgres index, blobs default to the same database.
+- **Same code path as local mode.** Requests go through the `src/otel` decoders and mappers and the
+  same redaction and `buildSession` used by hooks and the collector. Local mode (`ui`, `collector`,
+  hooks, `~/.coding.sh`) is unchanged.
+- **Ack after commit.** A request gets 200 only after its events are committed. A full queue answers
+  429 with `Retry-After`. Event ids are deterministic or client-supplied and `putEvents` is
+  idempotent, so retries never duplicate.
+- **One writer.** The writing replica holds `IndexStore.acquireWriterLock` (a session advisory lock on
+  Postgres, a lock file next to the SQLite database). `/readyz` stays 503 until it has the lock. Read-only replicas run
+  `--role viewer`.
+- **Projects and keys.** Ingest keys (`csh_ik_…`) decide the project, and read keys (`csh_rk_…`) or
+  basic auth open the viewer. Session ids are stored as `<project>/<sessionId>`. Serve refuses a
+  public bind without keys unless `--insecure` is set.
+- **Same tools on top.** `sessions`, `show`, `search`, `mcp`, `dataset` and `exp` take `--store`
+  (or `CODING_SH_STORE_URL`) and work on the production database.
 
 ## Trace format (`coding.sh/trace` v0)
 

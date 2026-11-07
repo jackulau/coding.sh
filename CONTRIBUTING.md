@@ -34,8 +34,9 @@ there is no compile step for development.
 | `src/eval/`, `src/datasets/`, `src/graders/`, `src/judge/`, `src/experiments/` | evals and experiments |
 | `src/cli/registry.ts` | every command, flag and help text |
 
-Design docs: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/ADAPTERS.md](docs/ADAPTERS.md),
-[docs/TOOL-EVALS.md](docs/TOOL-EVALS.md), [docs/WORKFLOWS.md](docs/WORKFLOWS.md).
+Docs index: [docs/README.md](docs/README.md). Start with [docs/design/architecture.md](docs/design/architecture.md),
+[docs/ADAPTERS.md](docs/ADAPTERS.md), [docs/TOOL-EVALS.md](docs/TOOL-EVALS.md) and
+[docs/design/workflows.md](docs/design/workflows.md).
 
 ## Rules
 

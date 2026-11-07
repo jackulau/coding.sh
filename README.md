@@ -1,246 +1,133 @@
-# coding.sh
+<p align="center">
+  <img src=".github/assets/banner.png" alt="coding.sh: every agent run, recorded and measurable. Local-first observability and evals for any AI agent." width="100%">
+</p>
 
-Local-first observability and evals for any AI agent. Coding agents are first-class.
+<p align="center">
+  <a href="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml"><img src="https://github.com/jackulau/coding.sh/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/node-%3E%3D22.15-brightgreen" alt="Node 22.15 or newer">
+</p>
 
-coding.sh records what your agents do (prompts, tool calls, file changes, model calls, latency and
-token usage) into a SQLite index on your machine. You browse it in a local viewer, query it from
-the CLI or from your agents over MCP, turn failures into evals, and compare prompt, harness and
-model changes with paired statistics. MIT licensed, zero runtime dependencies, Node 22.15+.
+<p align="center">
+  Local-first observability and evals for any AI agent. Coding agents come first.<br>
+  <a href="https://coding.sh/docs/">Docs</a> ·
+  <a href="https://coding.sh/docs/quickstart/">Quickstart</a> ·
+  <a href="https://coding.sh/changelog/">Changelog</a>
+</p>
 
-It covers the same ground as LangSmith, Braintrust or Judgment Labs, but runs locally: capture,
-storage and the viewer stay on your machine unless you add a remote sink.
+coding.sh records what your agents do: prompts, tool calls, file changes, model calls, latency and
+tokens. It all goes into a SQLite index on your machine. You browse it in a local viewer, query it
+from the CLI or from your agents over MCP, turn failures into evals, and compare changes with
+paired statistics. It does the job of LangSmith or Braintrust, and capture, storage and the viewer
+stay on your machine unless you add a remote sink. For API apps in production, the same tools run as
+one server on SQLite or Postgres (see [Production](#what-you-get) below).
 
-Status: 0.1.0, the first public release. Expect rough edges and say so in an issue.
+MIT licensed, zero runtime dependencies, Node 22.15 or newer. Version 0.1.0 is the first public
+release, so expect rough edges and tell us about them in an issue.
 
-## Quickstart
-
-Once `coding.sh` is on npm:
-
-```sh
-npm install -g coding.sh   # or run any command with npx coding.sh
-coding.sh init             # finds your agents, shows one plan, asks once (Y/n)
-coding.sh                  # opens the viewer
-```
-
-Or use the installer (Node 22.15+ required). It installs the latest GitHub release, runs `init`,
-then opens the viewer:
+## Install
 
 ```sh
 curl -fsSL https://coding.sh/install | sh
 ```
 
-`init` points each detected agent's hooks at `~/.coding.sh/bin/hook.mjs` and registers the
-coding.sh MCP server with the agents that support MCP. Every edited config file is backed up to
-`~/.coding.sh/backups` first. Use `coding.sh init --dry-run` to see the exact changes without
-writing anything. After that, use your agents as usual. Sessions show up in the viewer, in
-`coding.sh sessions` and over MCP. You never need an ingest step, because read commands, the
-viewer and the MCP server pick up new events on their own.
+The installer downloads the latest GitHub release, runs `coding.sh init`, then opens the viewer.
+`init` finds your agents, shows one plan and asks once. It points their hooks at coding.sh,
+registers the MCP server where the agent supports it, and backs up every config file it edits.
+Run `coding.sh init --dry-run` to see the changes without writing anything.
 
-`npx coding.sh init` also works. The hook is copied to a stable path, but the MCP entry points at
-the npx cache copy of the CLI. Install globally if you want the MCP server to survive
-`npm cache clean`.
+Then use your agents as usual. Sessions show up on their own, with no ingest step.
 
-### From source (before the npm release)
+npm, from source, updates and uninstall: [docs/guides/install.md](docs/guides/install.md).
+
+## What you get
+
+**Record.** Hooks and transcripts capture each session, including subagents.
+`coding.sh run -- <cmd>` wraps any other agent and snapshots the repo before and after.
+`coding.sh collector` takes OpenTelemetry from agent frameworks and apps. Past sessions import
+with `coding.sh ingest --backfill`.
+
+**Measure.** Every session has its turns, tool calls, model calls, tokens, latency and outcome.
 
 ```sh
-git clone https://github.com/jackulau/coding.sh && cd coding.sh
-npm install && npm run build -w coding.sh
-npm install -g ./packages/coding.sh   # puts `coding.sh` on PATH (a symlink to this checkout)
-coding.sh init
-coding.sh
+coding.sh sessions             # recent sessions
+coding.sh show latest          # timeline with turns, tools, subagents and latency
+coding.sh search "rate limit"  # full-text search over prompts, replies and tool calls
+coding.sh usage --by model     # tokens, turns and cache hits
+coding.sh ui                   # the local viewer
 ```
 
-Or skip the global install and run `node packages/coding.sh/dist/cli.mjs <command>` directly.
+Every command takes `--json`. `coding.sh mcp` gives your agents the same data as MCP tools.
+More in [docs/guides/explore.md](docs/guides/explore.md).
 
-### Updates
+**Compare.** Turn a failed session into a replayable eval with `coding.sh eval new`, and check
+that its verifier is fair with `coding.sh eval validate`. Run experiments over versioned datasets
+with code graders or calibrated LLM judges. `coding.sh exp compare` and `coding.sh compare` A/B
+prompts, harness files and models with paired statistics. Tool evals and multi-agent workflow
+runs are covered too. More in [docs/guides/evals.md](docs/guides/evals.md).
 
-Commands print one dim line on stderr when a newer release is out. The check runs in the
-background at most once a day, and commands never wait on it. `coding.sh update` installs the new
-release. The check is off when `CI` is set, or with `NO_UPDATE_NOTIFIER=1`,
-`CODING_SH_NO_UPDATE_CHECK=1` or `[update] check = false` in `~/.coding.sh/config.toml`.
+**Production.** `coding.sh serve` runs ingest, the viewer and the API on one port, backed by
+SQLite or Postgres. Your API apps send traces with the TypeScript SDK (`@coding.sh/sdk`), the
+Python SDK (`coding-sh`) or plain OpenTelemetry. `coding.sh gateway` links Vercel AI Gateway
+calls to their billed cost. The SDKs and store plugins are not published yet. Start with
+[docs/production/README.md](docs/production/README.md).
 
 ## Supported agents
 
-| Agent | Capture | History import | MCP registered by `init` | Status |
-|---|---|---|---|---|
-| Claude Code | hooks + transcript, subagents | yes | yes | Verified on real sessions |
-| Codex CLI | hooks + rollout files, subagents | yes | yes | Verified on real sessions. Codex runs new hooks only after you approve them once with `/hooks`. |
-| Antigravity CLI (`agy`) | hooks + transcript | yes | no | Verified on real sessions |
-| OpenCode 2.x | plugin + session database | yes | yes | Fixture-tested |
-| Cursor CLI | hooks + transcript | yes | yes | Fixture-tested. In `-p` mode Cursor does not fire `stop` or `beforeSubmitPrompt`. |
-| Gemini CLI | hooks + chat files, subagents | yes | yes | Fixture-tested |
-| GitHub Copilot CLI | hooks + session state | yes | no | Fixture-tested |
-| Factory Droid | hooks + transcript | yes | no | Fixture-tested |
-| Goose | plugin hooks + session database | yes | no | Fixture-tested |
-| Pi | extension + transcript | yes | no | Fixture-tested |
-| Amp | plugin | no | no | Fixture-tested |
-| T3 Code | reads its local store on every ingest | yes | no | Fixture-tested |
-| Aider | wrapper (`coding.sh run -- aider …`); eval runs parse its token and cost lines | no | no | Fixture-tested |
-| Anything else | `coding.sh run -- <cmd>`: shadow-git snapshots before and after | no | no | Tested |
-| Any OpenTelemetry exporter | `coding.sh collector` (OTLP/HTTP) | no | n/a | Tested |
+| Agent | How it records | Status |
+|---|---|---|
+| Claude Code | hooks, transcript, subagents | Verified on real sessions |
+| Codex CLI | hooks, rollout files, subagents | Verified on real sessions |
+| Antigravity CLI (formerly Gemini CLI) | hooks, transcript | Verified on real sessions |
+| OpenCode | plugin, session database | Fixture-tested |
+| Cursor CLI | hooks, transcript | Fixture-tested |
+| GitHub Copilot CLI | hooks, session state | Fixture-tested |
+| Factory Droid | hooks, transcript | Fixture-tested |
+| Goose | plugin hooks, session database | Fixture-tested |
+| Pi | extension, transcript | Fixture-tested |
+| Amp | plugin | Fixture-tested |
+| T3 Code | its local store | Fixture-tested |
+| Aider | `coding.sh run -- aider …` | Fixture-tested |
+| Any other command | `coding.sh run -- <cmd>` | Tested |
 
-What the statuses mean:
-
-- **Verified on real sessions**: checked against sessions captured from a live install of the
-  agent during development, in addition to the CI tests.
-- **Fixture-tested**: CI tests the adapter against hook payloads, transcripts or session stores
-  that follow the agent's documented format, plus its install and uninstall. It has not yet been
-  checked against a live install of that agent. Reports are welcome.
-- **Tested**: covered by CI tests; there is no third-party agent to verify against.
-
-Import past sessions with `coding.sh ingest --backfill [--since 30d]`. Check your setup with
-`coding.sh doctor`. See [docs/ADAPTERS.md](docs/ADAPTERS.md) for each agent's hook config, payload
-ids and known breakage.
-
-## Any agent over OpenTelemetry
-
-`coding.sh collector` starts an OTLP/HTTP receiver on `127.0.0.1:4318` and prints the environment
-that points an exporter at it:
-
-```sh
-coding.sh collector
-# export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
-# export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
-# export OTEL_TRACES_EXPORTER=otlp
-# export OTEL_LOGS_EXPORTER=otlp
-# export CLAUDE_CODE_ENABLE_TELEMETRY=1
-```
-
-It accepts `POST /v1/traces` and `/v1/logs` as protobuf or JSON. `/v1/metrics` is accepted and
-ignored. It understands OTel GenAI semantic conventions, OpenInference, Vercel AI SDK spans and the
-Claude Code, Codex and Gemini CLI log events. Every model call becomes an `llm.call` event with
-model, token usage, duration and time to first token. Point any SDK at the base URL, or set a
-signal-specific endpoint such as `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces`.
-
-## Explore
-
-```sh
-coding.sh sessions                 # recent sessions (--agent, --repo, --since, --subagents)
-coding.sh show latest              # timeline with turns, tools, subagents and latency
-coding.sh search "rate limit"      # full-text search over prompts, replies and tool calls
-coding.sh usage --by model         # tokens, turns and cache hits by agent, model, day or repo
-coding.sh ui                       # local viewer on 127.0.0.1 (token-protected URL)
-```
-
-Every command takes `--json`.
-
-**MCP.** `coding.sh mcp` serves your captured data to agents over stdio, with the tools
-`sessions_list`, `session_get`, `session_current`, `search`, `failures`, `latency`, `usage`,
-`subagents`, `eval_from_session`, `experiments_list`, `experiment_compare` and `status`.
-`coding.sh init` registers it with Claude Code, Codex, Cursor, OpenCode and Gemini CLI
-(`--no-mcp` skips this). `coding.sh mcp config` prints the snippet for any other client.
-
-## Evals
-
-- **Session to eval.** `coding.sh eval new <session> --verifier "<cmd>"` drafts a replayable task
-  that starts from the repo snapshot taken before the agent ran. `coding.sh eval validate <task>`
-  checks that the verifier is fair: a do-nothing attempt fails, the reference fix passes k of k,
-  near-misses fail, an impossible variant fails, and no future history leaks. `eval export
-  --format harbor` writes a Harbor-format task.
-- **Datasets and experiments.** `coding.sh dataset add|import` keeps versioned cases with stable
-  train/dev/test splits. `coding.sh exp run` runs a command or HTTP task over a dataset with
-  deterministic graders (exact, contains, regex, numeric, similarity, JSON schema, JSON path),
-  command graders or LLM judges. `coding.sh exp compare A B` reports the paired
-  bootstrap CI of the difference, an exact McNemar test on flipped cases and the minimum detectable
-  effect.
-- **Judges.** `coding.sh judge calibrate` measures judge and human agreement (Cohen's kappa) on a
-  held-out split. Uncalibrated judges are flagged in every report.
-- **Harness A/B.** `coding.sh harness snapshot` bundles an agent's harness files (CLAUDE.md,
-  AGENTS.md, skills, hooks, MCP config). `coding.sh compare A B` runs both bundles on eval tasks in
-  isolated config directories, with per-arm Wilson intervals and the first step where the traces
-  diverge.
-- **Tool evals.** `coding.sh toolevals` measures how well agents use a CLI, MCP server or HTTP API:
-  surface size, schema checks, per-task tool-call metrics in a sandbox, variant comparisons and
-  MCP description compression. See [docs/TOOL-EVALS.md](docs/TOOL-EVALS.md).
-- **Workflows.** `coding.sh workflows` imports multi-agent workflow runs and reports the run tree,
-  critical path, concurrency, cost and paired variant comparisons. See
-  [docs/WORKFLOWS.md](docs/WORKFLOWS.md).
-
-Eval runs that drive a real agent or an LLM judge call that agent or provider, with your
-credentials and at your cost.
-
-## Storage and sinks
-
-Everything lives in `~/.coding.sh` (override it with `CODING_SH_HOME`):
-
-| Path | What |
-|---|---|
-| `index.db` | SQLite index of sessions and events (`node:sqlite`, no native deps) |
-| `blobs/` | content-addressed, zstd-compressed blobs (large prompts and tool output) |
-| `spool/` | raw hook payloads waiting to be ingested |
-| `repos/` | shadow git objects for repo snapshots (your repository's refs are never touched) |
-| `bin/hook.mjs` | the hook agents run |
-| `backups/` | copies of every agent config file before coding.sh edited it |
-| `config.toml` | settings (`coding.sh config get` / `set`) |
-
-Store URLs are pluggable: `sqlite://` and `file://` are built in. Other schemes load a plugin
-package named `coding.sh-store-<scheme>` (this repo has `coding.sh-store-postgres` and
-`coding.sh-store-s3`, which are not published yet).
-
-To mirror events somewhere else, add a sink. Sinks send **metadata only** unless you set
-`mode = "full"`. Metadata means ids, timestamps, kinds, durations, token counts and short labels.
-It excludes prompts, code and tool output.
-
-```toml
-# ~/.coding.sh/config.toml
-[[sinks]]
-kind = "otlp"                      # or "http"
-endpoint = "http://localhost:4318"
-mode = "metadata"                  # default; "full" sends content
-headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
-```
+Fixture-tested means CI checks the adapter against the agent's documented formats, but nobody has
+run it against a live install yet. Reports are welcome. Per-agent details, including which agents
+get the MCP server, are in [docs/guides/agents.md](docs/guides/agents.md).
 
 ## Privacy
 
-- **Nothing leaves your machine by default.** With no sinks configured, no session data is sent
-  anywhere. The only default network request is the daily update check: a GET to
-  `api.github.com` (falling back to `registry.npmjs.org`) whose User-Agent includes the coding.sh
-  version. Turn it off as described under [Updates](#updates).
-- **What is captured** (full mode, the default): prompts, assistant replies, tool calls with
-  inputs and outputs, file changes, errors, subagent links, model names, token usage, latency and
-  a snapshot of the working tree before and after a session.
-- **Redaction** runs at ingest, before anything is written to the index, blobs or sinks. Built-in
-  rules catch private keys, vendor API keys and tokens (Anthropic, OpenAI, GitHub, GitLab, Slack,
-  AWS, Google, Stripe, npm and more), JWTs, bearer and basic auth, and values next to secret-looking
-  names. Add `redact = ["secrets", "env"]` to also replace the literal values of secret-looking
-  environment variables, and `redactPatterns` for your own regexes.
-- **Metadata mode.** `[capture] mode = "metadata"` stores structure and numbers only, with no
-  prompts, code or tool output.
-- **Exclusions.** `[capture] exclude = ["~/work/secret-client/**"]` drops events from matching
-  directories.
-- **Repo-level config can only add privacy.** A `.coding.sh/config.toml` inside a repository may
-  add redaction rules or switch to metadata mode. It can never add sinks or move the stores, so a
-  cloned repo cannot exfiltrate your sessions.
-- **Raw spool.** The hook writes the agent's raw payload to `~/.coding.sh/spool` (mode 600), and
-  redaction happens when that file is ingested. `coding.sh gc` deletes ingested spool files older
-  than 7 days (`[retention] keepSpoolDays`).
-- **The viewer** binds to 127.0.0.1 and requires the per-process token in the URL it prints.
+With no sinks configured, no session data leaves your machine. The only default network request is
+a daily update check, which you can turn off. Secrets are redacted at ingest, before anything is
+written. Remote sinks send metadata only unless you opt in to full content. Details in
+[docs/guides/privacy.md](docs/guides/privacy.md).
 
-## Uninstall
+## Docs
 
-```sh
-coding.sh uninstall --dry-run   # show what would change
-coding.sh uninstall --yes       # remove hooks and MCP entries from every agent
-npm uninstall -g coding.sh
-rm -rf ~/.coding.sh             # optional: delete captured data
+- [coding.sh/docs](https://coding.sh/docs/): quickstart, agents, CLI, MCP, evals, OpenTelemetry,
+  storage and the trace format.
+- [docs/](docs/README.md): the same guides in Markdown, plus production, design specs and
+  research.
+
+## Repository layout
+
 ```
-
-`uninstall` restores each agent config file byte-for-byte if nothing else has edited it since
-`init`. Otherwise it removes only the coding.sh entries.
-
-## Repository
-
-| Path | What |
-|---|---|
-| `packages/coding.sh` | the CLI, hook, adapters, OTLP receiver, viewer, MCP server and evals (published to npm) |
-| `packages/sdk`, `packages/sdk-python` | client SDKs (not published yet) |
-| `packages/store-postgres`, `packages/blob-s3` | store plugins (not published yet) |
-| `apps/site` | the coding.sh website (Astro, static) |
-| `docs/` | architecture, adapters, tool evals, workflows, release |
+packages/
+  coding.sh/        the CLI, hook, adapters, OTLP receiver, viewer, MCP server and evals (npm)
+  sdk/              TypeScript SDK for API apps
+  sdk-python/       Python SDK
+  store-postgres/   Postgres store plugin
+  blob-s3/          S3 blob store plugin
+apps/site/          coding.sh website (Astro, static)
+docs/               guides, production, reference and design docs
+examples/           an eve agent and production app examples
+deploy/             deploy recipes for Compose, Fly and Railway (Render uses render.yaml)
+evals/              coding.sh's own CLI eval suite
+scripts/dogfood/    the scorecard coding.sh runs on itself
+```
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues go through [SECURITY.md](SECURITY.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues through [SECURITY.md](SECURITY.md).
 Release steps are in [docs/RELEASE.md](docs/RELEASE.md).
 
 ## License

@@ -495,7 +495,7 @@ no git commits.
 | 8 | `harvest.mjs` + replay of promoted tasks | `replay.success` |
 | 9 | Lighthouse + council scripts | `site.*` |
 | 10 | `tick.mjs`, `pick.mjs`, `brief.mjs`, `keep.mjs`. Three ticks supervised by hand, then `/loop`, then launchd after human approval | the loop |
-| 11 | Workflow scoring of `coding-sh-improve.js` (docs/WORKFLOWS.md §9) | `workflow.*` (reported, weight 0 at first) |
+| 11 | Workflow scoring of `coding-sh-improve.js` (docs/design/workflows.md §9) | `workflow.*` (reported, weight 0 at first) |
 
 Each step lands with its tests and produces at least one scorecard line, so the history starts at
 step 2 and every later step shows up as a change in the scorecard.
@@ -515,4 +515,4 @@ loop first:
 
 Snapshots go to `~/.coding.sh/dogfood/traces-<n>.json`, each with a diff against round n-1. One
 round costs about 120 to 150 k tokens. Numbers, storage choice and budget:
-[docs/research/trace-loop.md](research/trace-loop.md).
+[docs/research/trace-loop.md](../research/trace-loop.md).

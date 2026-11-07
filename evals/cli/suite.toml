@@ -1,5 +1,5 @@
 # CLI effectiveness suite for coding.sh's own CLI.
-# Contract: docs/DOGFOOD.md §3.1 and docs/TOOL-EVALS.md §3 (task format).
+# Contract: docs/design/dogfood.md §3.1 and docs/TOOL-EVALS.md §3 (task format).
 # Runner: scripts/dogfood/cli-suite.mjs (validate | run).
 #
 # Splits:

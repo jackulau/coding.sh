@@ -1,0 +1,45 @@
+name: Feature request
+description: Suggest an improvement to capture, the viewer, the CLI, MCP, evals or experiments
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Capture and agents
+        - CLI (sessions, show, search, usage)
+        - Viewer
+        - MCP server
+        - Evals, datasets and experiments
+        - OpenTelemetry collector
+        - Production server, SDKs and stores
+        - Docs
+        - Something else
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What would you like coding.sh to do? The commands, flags or output you have in mind help a lot.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Workarounds or other tools you have tried.
+  - type: dropdown
+    id: pr
+    attributes:
+      label: Would you send a PR?
+      options:
+        - "Yes"
+        - Maybe, with some pointers
+        - "No"

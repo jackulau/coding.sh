@@ -1,6 +1,10 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/jackulau/coding.sh/main/.github/assets/banner.png" alt="coding.sh: every agent run, recorded and measurable. Local-first observability and evals for any AI agent." width="100%">
+</p>
+
 # coding.sh
 
-Local-first observability and evals for any AI agent. Coding agents are first-class.
+Local-first observability and evals for any AI agent. Coding agents come first.
 
 coding.sh records what your agents do (prompts, tool calls, file changes, model calls, latency and
 token usage) into a SQLite index on your machine. You browse it in a local viewer, query it from
@@ -16,7 +20,7 @@ coding.sh          # opens the viewer
 ```
 
 `init` points each detected agent's hooks at `~/.coding.sh/bin/hook.mjs` and registers the
-coding.sh MCP server with Claude Code, Codex, Cursor, OpenCode and Gemini CLI. Every config file it
+coding.sh MCP server with Claude Code, Codex, Cursor and OpenCode. Every config file it
 edits is backed up first. `coding.sh init --dry-run` shows the exact changes without writing
 anything. After that, use your agents as usual. New sessions appear without an ingest step.
 
@@ -30,11 +34,11 @@ day). `coding.sh update` installs it. Turn the check off with `NO_UPDATE_NOTIFIE
 ## Agents
 
 Verified on real sessions: **Claude Code**, **Codex CLI** (approve the hooks once with `/hooks`),
-**Antigravity CLI**.
-Fixture-tested: OpenCode 2.x, Cursor CLI, Gemini CLI, GitHub Copilot CLI, Factory Droid, Goose, Pi,
-Amp, T3 Code, Aider.
-Anything else: `coding.sh run -- <cmd>` takes shadow-git snapshots before and after, and
-`coding.sh collector` receives OpenTelemetry from any exporter.
+**Antigravity CLI** (formerly Gemini CLI).
+Fixture-tested: OpenCode 2.x, Cursor CLI, GitHub Copilot CLI, Factory Droid, Goose, Pi, Amp,
+T3 Code, Aider.
+Any other command: `coding.sh run -- <cmd>` takes shadow-git snapshots before and after.
+Agent frameworks and apps can also send OpenTelemetry to `coding.sh collector`.
 
 ## Any agent over OpenTelemetry
 
@@ -78,5 +82,5 @@ npm uninstall -g coding.sh
 `coding.sh/schema` exports the trace schema constants: `SCHEMA_ID`, `SCHEMA_VERSION`, `EVENT_KINDS`,
 `KNOWN_AGENTS` and `isEventKind()`. TypeScript types are not shipped yet.
 
-Full docs, the agent matrix and the privacy details:
+Docs: [coding.sh/docs](https://coding.sh/docs/). Source, the agent matrix and the privacy details:
 [github.com/jackulau/coding.sh](https://github.com/jackulau/coding.sh). MIT licensed.

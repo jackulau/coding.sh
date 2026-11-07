@@ -195,7 +195,7 @@ A workflow case is `{id, args, start?: RepoState snapshot, truth, split}`, store
 | Verify stage | The same matching labels each finding that entered verify as real or spurious | Confusion matrix of survived/refuted vs real/spurious: `refuteAccuracy`, `falseKillRate` (real bugs refuted), `falseKeepRate` (spurious kept), κ against truth, and per-skeptic accuracy |
 | Fix | Each case's `EvalTask` verifier (repo tests) | pass rate, regressions (previously passing tests that fail) |
 | Synthesis / research | Rubric | Calibrated judge (`src/judge`); flagged `uncalibrated` below the κ threshold |
-| Council / design loops | Programmatic budgets first (Lighthouse etc.), council relative score second | As in docs/DOGFOOD.md §3.4 |
+| Council / design loops | Programmatic budgets first (Lighthouse etc.), council relative score second | As in docs/design/dogfood.md §3.4 |
 
 Seeded cases are validated before use: on the seeded snapshot, each bug's own test fails; with the
 bug patch reverted, it passes. The truth file lives in `hidden/` and is never readable from the
@@ -281,7 +281,7 @@ Route `/workflows/:runId`, data from `GET /api/workflows/:runId/gantt` (`GanttDa
 `.claude/workflows/coding-sh-improve.js` is our own build/verify/improve workflow. Its phases are
 Integrate, Build (4 parallel builders), Review (6 lenses, pipelined into 2 skeptics per finding),
 Fix (one fixer per module), Site (QA + council loop), and Score. Every run is captured (the project
-hooks from docs/DOGFOOD.md §1 cover the host session; the journal and transcripts are picked up at
+hooks from docs/design/dogfood.md §1 cover the host session; the journal and transcripts are picked up at
 ingest) and scored.
 
 Per-run record, appended to `tasks/dogfood/workflows.jsonl`:
@@ -296,7 +296,7 @@ Per-run record, appended to `tasks/dogfood/workflows.jsonl`:
 | `wf.verify.falseKillRate`, `wf.verify.falseKeepRate` | Seeded mode |
 | `wf.fix.regressions` | Tests failing after Fix that passed before |
 | `wf.site.roundsToTarget`, `wf.site.costPerPoint` | Council loop: rounds used, and Δ(min score) per USD |
-| `wf.score.headlineDelta` | docs/DOGFOOD.md scorecard, before vs after the run |
+| `wf.score.headlineDelta` | docs/design/dogfood.md scorecard, before vs after the run |
 
 **Seeded mode.** `args.seeded = "<case id>"` points Review at a worktree of the package with N
 known bugs applied and skips Integrate, Build, Site and Score (`args.skip`). The script needs one

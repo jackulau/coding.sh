@@ -320,7 +320,7 @@ otherwise.
 | Others | Transcript timestamp deltas, marked `approx` | no |
 
 The run overlay sets these variables through the overlay's `--settings` file or the env. Project
-`.claude/settings.json` cannot set them; see docs/DOGFOOD.md §1.2. `latencySource` is reported
+`.claude/settings.json` cannot set them; see docs/design/dogfood.md §1.2. `latencySource` is reported
 per arm, and compare refuses to diff latency between arms whose sources differ.
 
 ## 7. Subagents
@@ -598,7 +598,7 @@ evals/toolevals/<target>/
 
 `coding.sh.toml` holds eval definitions and is committed. `.coding.sh/config.toml` remains the
 local capture and store override. A `heldout` path may point outside the repo (`heldoutDir`), so
-agents improving the target cannot read those tasks (see docs/DOGFOOD.md §3).
+agents improving the target cannot read those tasks (see docs/design/dogfood.md §3).
 
 Each trial is also written as a `RunResult` through `IndexStore.putRun`, with `taskId`,
 `bundleId = sha256(arm)`, `experimentId`, `pass` and `agent`. Existing run listings show it, and

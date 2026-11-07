@@ -244,7 +244,7 @@ Every key has a visible control. One roving-tabindex ARIA tree; a polite live re
 
 ## 7. Benches
 
-Nouns from docs/BENCH-CLI.md: **bench** (tasks + grading), **run** (one setup over a bench), **verdict** (B vs A),
+Nouns from docs/design/bench-cli.md: **bench** (tasks + grading), **run** (one setup over a bench), **verdict** (B vs A),
 **matrix** (≥3 runs). "Experiment", "bundle" and "arm" stay internal.
 
 ```

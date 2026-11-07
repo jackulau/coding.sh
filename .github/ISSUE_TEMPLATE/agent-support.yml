@@ -1,0 +1,46 @@
+name: Agent support
+description: Ask for a new agent, or tell us whether a fixture-tested adapter works on a live install
+labels: [adapter]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Eight adapters are fixture-tested but nobody has run them against a live install yet: OpenCode, Cursor CLI, GitHub Copilot CLI, Factory Droid, Goose, Pi, Amp and T3 Code (Aider through `coding.sh run`).
+        A short "it works" report helps as much as a bug report. We'll move the agent to "Verified" in the README and credit you.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Request
+      options:
+        - Live install works (verification report)
+        - Live install breaks
+        - New agent
+    validations:
+      required: true
+  - type: input
+    id: agent
+    attributes:
+      label: Agent and version
+      placeholder: Goose 1.12.0
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: coding.sh version
+      description: Output of `coding.sh --version`
+  - type: input
+    id: env
+    attributes:
+      label: OS and Node version
+      placeholder: macOS 15.5, Node 22.15.0
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: |
+        For a report: after one real session, what `coding.sh doctor` and `coding.sh show latest` print, and anything that looks wrong or missing (tool calls, tokens, subagents, file changes).
+        For a new agent: links to its hook, plugin or OpenTelemetry docs, and where it keeps session history on disk.
+      render: text
+    validations:
+      required: true
