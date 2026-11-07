@@ -33,7 +33,7 @@ rm -rf ~/.coding.sh             # optional: delete captured data too`;
   <ul>
     <li><strong>Node.js 22.15 or newer.</strong> The index uses the built-in <code>node:sqlite</code>, and blobs use the built-in zstd in <code>node:zlib</code>, so there are no native dependencies to compile.</li>
     <li><strong>git</strong>, for repository snapshots.</li>
-    <li>It is developed on macOS. Linux and Windows are not tested yet.</li>
+    <li>CI runs on Linux, macOS and Windows. On Windows, run the installer from Git Bash (it comes with <a href="https://gitforwindows.org">Git for Windows</a>). Eval task commands need its <code>sh</code> too. Capture from real agent sessions has not been checked on Windows yet.</li>
   </ul>
 
   <h2 id="npm">With npm</h2>

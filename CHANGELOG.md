@@ -7,6 +7,14 @@ follow [Semantic Versioning](https://semver.org/) from the first npm release.
 Each release opens with a short summary. The list under it has one line per change,
 grouped by area, with links to the docs for the details.
 
+## [0.1.2] - Unreleased
+
+coding.sh runs on Windows, and CI tests it there.
+
+### Added
+
+- **Install.** Windows: run the installer from Git Bash. Hook commands use `C:/…` paths that cmd.exe, PowerShell and Git Bash all run. CI runs the tests and the installer on Windows. [Install guide](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#windows).
+
 ## [0.1.1] - 2026-11-07
 
 Daily benchmarks for any AI agent: `coding.sh bench` runs every contender on fresh cases each day,
@@ -126,5 +134,6 @@ It also runs as a server on SQLite or Postgres, with SDKs for apps that call mod
 - **Docs.** README with a quickstart, the agent matrix, OTLP setup, storage, privacy and uninstall.
 - **Docs.** CONTRIBUTING, SECURITY and a release checklist in docs/RELEASE.md.
 
+[0.1.2]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.2
 [0.1.1]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.1
 [0.1.0]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.0

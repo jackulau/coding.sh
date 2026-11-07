@@ -36,6 +36,21 @@ coding.sh
 
 Or skip the global install and run `node packages/coding.sh/dist/cli.mjs <command>` directly.
 
+## Windows
+
+Run the installer from Git Bash, which comes with [Git for Windows](https://gitforwindows.org).
+The source install above works from PowerShell too. Under WSL, coding.sh behaves as it does on
+Linux and records the agents you run inside WSL.
+
+- Hooks run `node "C:/Users/you/.coding.sh/bin/hook.mjs" <agent> <event>`. The forward slashes
+  and quotes work in cmd.exe, PowerShell and Git Bash, and with spaces in the path.
+- Eval task `setup` and verifier commands run in `sh`, so they need Git for Windows.
+- `bench schedule --install-cron` needs cron. On Windows, run the printed command from Task
+  Scheduler, or use `--workflow-out` for a GitHub Actions schedule.
+
+CI runs the test suite and this installer on Windows. Capture from real agent sessions has not
+been checked on Windows yet.
+
 ## What `init` changes
 
 `init` points each detected agent's hooks at `~/.coding.sh/bin/hook.mjs` and registers the
