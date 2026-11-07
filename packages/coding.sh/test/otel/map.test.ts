@@ -510,6 +510,59 @@ describe("token usage: cached input is not counted twice", () => {
   });
 });
 
+// core/pricing.ts callTier prices a call at batch/flex/priority/fast rates from payload.serviceTier and payload.speed.
+describe("service tier on model calls", () => {
+  const T = "c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1c1";
+  const callOfSpan = async (attrs: ReturnType<typeof sAttr>[]) => {
+    const req = otlpTraces("tier-test", [otlpSpan(T, "d100000000000001", "d100000000000000", "chat gpt-6", [sAttr("gen_ai.operation.name", "chat"), iAttr("gen_ai.usage.input_tokens", 10), ...attrs], 0, 1000)]);
+    return ofKind((await mapTraces(decodeTraceJson(req), ctx())).events, "llm.call")[0]!;
+  };
+
+  it("reads the response's service tier, lowercased", async () => {
+    assert.equal((await callOfSpan([sAttr("openai.response.service_tier", "Flex")])).payload.serviceTier, "flex");
+    assert.equal((await callOfSpan([sAttr("gen_ai.openai.response.service_tier", "priority")])).payload.serviceTier, "priority");
+  });
+
+  it("the tier the response says it ran at beats the one requested; standard tiers are left out", async () => {
+    const c = await callOfSpan([sAttr("openai.request.service_tier", "flex"), sAttr("openai.response.service_tier", "default")]);
+    assert.equal(c.payload.serviceTier, undefined);
+    assert.equal((await callOfSpan([sAttr("gen_ai.openai.request.service_tier", "flex")])).payload.serviceTier, "flex");
+    assert.equal((await callOfSpan([])).payload.serviceTier, undefined);
+  });
+
+  it("AI SDK provider metadata: OpenAI serviceTier and Anthropic usage.service_tier", async () => {
+    const meta = (m: unknown) => sAttr("ai.response.providerMetadata", JSON.stringify(m));
+    assert.equal((await callOfSpan([meta({ openai: { serviceTier: "flex" } })])).payload.serviceTier, "flex");
+    assert.equal((await callOfSpan([meta({ anthropic: { usage: { service_tier: "batch" } } })])).payload.serviceTier, "batch");
+    assert.equal((await callOfSpan([meta({ openai: { serviceTier: "auto" } })])).payload.serviceTier, undefined);
+  });
+
+  it("Claude Code api_request logs carry speed for fast mode", async () => {
+    const log = {
+      resourceLogs: [
+        {
+          resource: { attributes: [sAttr("service.name", "claude-code")] },
+          scopeLogs: [
+            {
+              scope: { name: "com.anthropic.claude_code.events" },
+              logRecords: [
+                {
+                  timeUnixNano: "1767225600000000000",
+                  body: { stringValue: "claude_code.api_request" },
+                  attributes: [sAttr("event.name", "api_request"), sAttr("session.id", "cc-2"), sAttr("model", "claude-opus-5-5"), iAttr("input_tokens", 15), sAttr("speed", "fast")],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const call = ofKind((await mapLogs(decodeLogsJson(log), ctx())).events, "llm.call")[0]!;
+    assert.equal(call.payload.speed, "fast");
+    assert.equal(call.payload.serviceTier, undefined);
+  });
+});
+
 describe("GenAI semconv nested invoke_agent", () => {
   const T = "9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a9a";
   const ROOT = "e000000000000001";

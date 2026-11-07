@@ -612,13 +612,16 @@ export class SqliteIndexStore implements IndexStore {
 
   async setEventCosts(costs: EventCost[]): Promise<number> {
     if (!costs.length) return 0;
-    // Only usage, payload.costEstimated and payload.pricedAs: message text (the FTS source) never changes here.
+    // Only usage, payload.costEstimated, payload.pricedAs and payload.priceTier: message text (the FTS source) never changes here.
     const update = this.stmt(
-      "UPDATE events SET usage = json_set(coalesce(usage, '{}'), '$.costUsd', ?), payload = CASE WHEN ? IS NULL THEN json_set(json_remove(payload, '$.pricedAs'), '$.costEstimated', json('true')) ELSE json_set(payload, '$.costEstimated', json('true'), '$.pricedAs', ?) END WHERE id = ?",
+      "UPDATE events SET usage = json_set(coalesce(usage, '{}'), '$.costUsd', ?), payload = json_patch(json_set(json_remove(payload, '$.pricedAs', '$.priceTier'), '$.costEstimated', json('true')), ?) WHERE id = ?",
     );
     return this.tx(() => {
       let found = 0;
-      for (const { id, costUsd, pricedAs } of costs) found += Number(update.run(costUsd, pricedAs ?? null, pricedAs ?? null, id).changes);
+      for (const { id, costUsd, pricedAs, priceTier } of costs) {
+        const set = JSON.stringify({ ...(pricedAs ? { pricedAs } : {}), ...(priceTier ? { priceTier } : {}) });
+        found += Number(update.run(costUsd, set, id).changes);
+      }
       return found;
     });
   }

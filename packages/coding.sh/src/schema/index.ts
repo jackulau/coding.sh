@@ -73,7 +73,15 @@ export interface Usage {
    * prices rather than reported (events say so with `payload.costEstimated`).
    */
   estimatedCostUsd?: number;
+  /**
+   * Session totals only: the part of `estimatedCostUsd` priced at non-standard
+   * rates, keyed by the calls' `payload.priceTier` (`batch`, `long-context`, ...).
+   */
+  estimatedCostByTier?: Record<string, number>;
 }
+
+/** The Usage fields that are plain numbers (token counts and costs). */
+export type UsageNumberKey = Exclude<keyof Usage, "estimatedCostByTier">;
 
 /** Usage a session did not count because another model call already covered it (a nested span, a repeated response id). */
 export interface DuplicateUsage {

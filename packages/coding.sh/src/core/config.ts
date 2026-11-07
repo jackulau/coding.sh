@@ -7,6 +7,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Config, SinkConfig } from "./types.ts";
+import { PRICE_TIERS, type Price, type Prices, type Rates, type TierRates } from "./pricing.ts";
 import { dataHome, expandHome, paths } from "./paths.ts";
 import { parseToml, stringifyToml, TomlError, type TomlTable } from "./toml.ts";
 
@@ -247,27 +248,68 @@ function applyUserConfig(base: Config, root: TomlTable, file: string, env: NodeJ
   return out;
 }
 
-/** `[prices."<model>"] input, output, cache_read?, cache_write?` in USD per 1M tokens. */
-function parsePricing(t: TomlTable, file: string, table: string): NonNullable<Config["pricing"]> {
-  const out: NonNullable<Config["pricing"]> = {};
+/**
+ * `[prices."<model>"]`: `input`, `output`, `cache_read?`, `cache_write?` in USD per 1M tokens; an
+ * optional `long_context` table (`above` = prompt tokens, plus its own rates); and an optional table
+ * per service tier (`batch`, `flex`, `priority`, `fast`, `ultrafast`) with its rates and its own
+ * optional `long_context` (`above` defaults to the model's).
+ */
+function parsePricing(t: TomlTable, file: string, table: string): Prices {
+  const out: Prices = {};
   for (const [model, v] of Object.entries(t)) {
     const where = `${table}.${JSON.stringify(model)}`;
-    if (typeof v !== "object" || v === null || Array.isArray(v)) throw new ConfigError(`${where} must be a table with input and output prices`, file);
-    const p = v as TomlTable;
-    const num = (key: string, alt: string): number | undefined => {
-      const x = p[key] ?? p[alt];
-      if (x === undefined) return undefined;
-      if (typeof x !== "number" || !Number.isFinite(x) || x < 0) throw new ConfigError(`${where}.${key} must be a number >= 0 (USD per 1M tokens), got ${JSON.stringify(x)}`, file);
-      return x;
-    };
-    const input = num("input", "input");
-    const output = num("output", "output");
-    if (input === undefined || output === undefined) throw new ConfigError(`${where} needs both input and output (USD per 1M tokens)`, file);
-    const cacheRead = num("cache_read", "cacheRead");
-    const cacheWrite = num("cache_write", "cacheWrite");
-    out[model] = { input, output, ...(cacheRead !== undefined ? { cacheRead } : {}), ...(cacheWrite !== undefined ? { cacheWrite } : {}) };
+    const p = rateTable(v, where, file);
+    const price: Price = parseRates(p, where, file);
+    const lc = p.long_context ?? p.longContext;
+    if (lc !== undefined) {
+      const { above, ...rates } = parseLong(lc, `${where}.long_context`, file);
+      if (above === undefined) throw new ConfigError(`${where}.long_context needs above (the prompt tokens past which these rates apply)`, file);
+      price.longContext = { above, ...rates };
+    }
+    for (const tier of PRICE_TIERS) {
+      if (p[tier] === undefined) continue;
+      const tw = `${where}.${tier}`;
+      const tp = rateTable(p[tier], tw, file);
+      const rates: TierRates = parseRates(tp, tw, file);
+      const tlc = tp.long_context ?? tp.longContext;
+      if (tlc !== undefined) {
+        const long = parseLong(tlc, `${tw}.long_context`, file);
+        if (long.above === undefined && !price.longContext) throw new ConfigError(`${tw}.long_context needs above, or ${where}.long_context must set it`, file);
+        rates.longContext = long;
+      }
+      (price.tiers ??= {})[tier] = rates;
+    }
+    out[model] = price;
   }
   return out;
+}
+
+function rateTable(v: unknown, where: string, file: string): TomlTable {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) throw new ConfigError(`${where} must be a table with input and output prices`, file);
+  return v as TomlTable;
+}
+
+function parseRates(p: TomlTable, where: string, file: string): Rates {
+  const num = (key: string, alt: string): number | undefined => {
+    const x = p[key] ?? p[alt];
+    if (x === undefined) return undefined;
+    if (typeof x !== "number" || !Number.isFinite(x) || x < 0) throw new ConfigError(`${where}.${key} must be a number >= 0 (USD per 1M tokens), got ${JSON.stringify(x)}`, file);
+    return x;
+  };
+  const input = num("input", "input");
+  const output = num("output", "output");
+  if (input === undefined || output === undefined) throw new ConfigError(`${where} needs both input and output (USD per 1M tokens)`, file);
+  const cacheRead = num("cache_read", "cacheRead");
+  const cacheWrite = num("cache_write", "cacheWrite");
+  return { input, output, ...(cacheRead !== undefined ? { cacheRead } : {}), ...(cacheWrite !== undefined ? { cacheWrite } : {}) };
+}
+
+function parseLong(v: unknown, where: string, file: string): Rates & { above?: number } {
+  const p = rateTable(v, where, file);
+  const above = p.above;
+  if (above !== undefined && (typeof above !== "number" || !Number.isFinite(above) || above <= 0))
+    throw new ConfigError(`${where}.above must be a number of prompt tokens > 0, got ${JSON.stringify(above)}`, file);
+  return { ...parseRates(p, where, file), ...(above !== undefined ? { above } : {}) };
 }
 
 function parseSink(s: TomlTable, i: number, r: Reader, env: NodeJS.ProcessEnv, file: string): SinkConfig {

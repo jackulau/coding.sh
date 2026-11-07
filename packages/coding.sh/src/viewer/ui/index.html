@@ -1282,13 +1282,18 @@ function usageCost(usage, model) {
   const part = est && u.estimatedCostUsd < u.costUsd - 1e-9;
   return { text: (est ? "~" : "") + fmtCost(u.costUsd), est, title: !est ? "Reported cost" : part ? fmtCost(u.estimatedCostUsd) + " of it estimated from list prices, the rest reported" : EST_TITLE };
 }
-/** One model call's cost; `as` is the sibling model whose list price was used. Undefined when the call carries none. */
+/** "batch+long-context" → "batch, long-context rates". */
+function tierRates(tier) {
+  return tier.split("+").join(", ") + " rates";
+}
+/** One model call's cost; `as` is the sibling model whose list price was used, `tier` the non-standard rates (payload.priceTier). Undefined when the call carries none. */
 function callCost(ev) {
   const u = ev.usage || {}, p = ev.payload || {};
   if (typeof u.costUsd !== "number") return undefined;
   const est = p.costEstimated === true;
   const as = est && typeof p.pricedAs === "string" && p.pricedAs ? p.pricedAs : "";
-  return { text: (est ? "~" : "") + fmtCost(u.costUsd), est, as, title: est ? EST_TITLE + (as ? ", priced as " + as : "") : "Reported cost" };
+  const tier = est && typeof p.priceTier === "string" && p.priceTier ? p.priceTier : "";
+  return { text: (est ? "~" : "") + fmtCost(u.costUsd), est, as, tier, title: est ? EST_TITLE + (as ? ", priced as " + as : "") + (tier ? ", at " + tierRates(tier) : "") : "Reported cost" };
 }
 function fmtDuration(ms) {
   if (ms === undefined || ms === null || !isFinite(ms) || ms < 0) return "";
@@ -3773,7 +3778,7 @@ function renderPane(pane, item, session, ctx) {
           cost ? kpi("cost", cost.text, "", cost.title) : prompt || u.outputTokens ? kpi("cost", "—", "", noPriceWhy(model, u)) : null,
           typeof p.stopReason === "string" ? kpi("stop", p.stopReason) : null));
         const metaLine = [p.provider ? "provider · " + p.provider : "", p.requestModel && p.requestModel !== p.responseModel ? "requested " + p.requestModel : "",
-          cost && cost.est ? "cost estimated from list prices" + (cost.as ? ", priced as " + cost.as : "") : ""].filter(Boolean).join(" · ");
+          cost && cost.est ? "cost estimated from list prices" + (cost.as ? ", priced as " + cost.as : "") + (cost.tier ? ", at " + tierRates(cost.tier) : "") : ""].filter(Boolean).join(" · ");
         if (metaLine) nodes.push(h("p", { class: "meta call-meta" }, metaLine));
         break;
       }

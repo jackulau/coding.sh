@@ -124,11 +124,11 @@ export class MemoryIndexStore implements IndexStore {
 
   async setEventCosts(costs: EventCost[]): Promise<number> {
     let found = 0;
-    for (const { id, costUsd, pricedAs } of costs) {
+    for (const { id, costUsd, pricedAs, priceTier } of costs) {
       const r = this.events.get(id);
       if (!r) continue;
-      const { pricedAs: _was, ...payload } = r.event.payload;
-      r.event = { ...r.event, usage: { ...r.event.usage, costUsd }, payload: { ...payload, costEstimated: true, ...(pricedAs ? { pricedAs } : {}) } };
+      const { pricedAs: _was, priceTier: _tier, ...payload } = r.event.payload;
+      r.event = { ...r.event, usage: { ...r.event.usage, costUsd }, payload: { ...payload, costEstimated: true, ...(pricedAs ? { pricedAs } : {}), ...(priceTier ? { priceTier } : {}) } };
       found++;
     }
     return found;

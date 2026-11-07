@@ -4,7 +4,8 @@
 // face of the MCP usage tool (same numbers). `--by agent-model` compares
 // harnesses at a fixed model, e.g. T3 Code driving Codex vs Codex directly.
 // Costs are reported or gateway-billed where the agent gave one, else tokens
-// times list price (marked `~`). `--reprice` recomputes those estimates from the
+// times list price (marked `~`), at the rates each call ran at (batch, flex,
+// priority, long context: `estimatedCostByTier`). `--reprice` recomputes those estimates from the
 // current price table first (it also runs by itself when the table changes).
 import { repriceStored } from "../../core/reprice.ts";
 import { parseSince, positiveInt } from "../args.ts";
@@ -25,6 +26,7 @@ interface Row {
   cacheReadShare?: number;
   costUsd?: number;
   estimatedCostUsd?: number;
+  estimatedCostByTier?: Record<string, number>;
   costPartial?: boolean;
 }
 
@@ -64,6 +66,8 @@ export async function run(c: CommandContext): Promise<number> {
     );
     out.note("CACHE READ = cache reads / all prompt tokens. Subagent sessions count.");
     if (r.groups.some((g) => g.estimatedCostUsd)) out.note("~ = includes cost estimated from tokens × list price (no reported cost). + = some sessions have no cost.");
+    const tiers = Object.entries(r.total.estimatedCostByTier ?? {});
+    if (tiers.length) out.note(`Estimated at non-standard rates: ${tiers.map(([t, v]) => `${t} ${usd(v)}`).join(", ")}`);
     const unpriced = Object.entries(r.unpricedModels ?? {});
     if (unpriced.length) out.note(`No price for ${unpriced.map(([m]) => m).slice(0, 6).join(", ")}: add [prices."<model>"] to config.toml`);
     return 0;

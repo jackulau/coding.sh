@@ -81,8 +81,9 @@ for (const [name, open] of [["memory", async () => new MemoryIndexStore()], ["sq
     it("prices stored 2026 models, records the sibling a fallback used, and drops it when the model gets its own row", async () => {
       const store = await open();
       const evs = [
-        ev("exact", { model: "gpt-6.1-sol", usage: { inputTokens: M, cacheWriteTokens: M } }), // 2 + 2.5
-        ev("sibling", { model: "gpt-6.2-sol", usage: { inputTokens: M } }), // as gpt-6.1-sol: 2
+        // Prompts under OpenAI's 272K long-context threshold.
+        ev("exact", { model: "gpt-6.1-sol", usage: { inputTokens: 125_000, cacheWriteTokens: 100_000 } }), // 0.25 + 0.25
+        ev("sibling", { model: "gpt-6.2-sol", usage: { inputTokens: 125_000 } }), // as gpt-6.1-sol: 0.25
         ev("paid", { model: "gpt-6.1-sol", usage: { inputTokens: M, costUsd: 1 } }),
       ];
       await store.putEvents(evs);
@@ -90,15 +91,44 @@ for (const [name, open] of [["memory", async () => new MemoryIndexStore()], ["sq
       assert.deepEqual(await repriceStored(store), { ran: true, events: 2, sessions: 1 });
       const byId = async () => Object.fromEntries((await store.listEvents("s1")).map((e) => [e.id, e]));
       let e = await byId();
-      assert.deepEqual([e.exact!.usage?.costUsd, e.sibling!.usage?.costUsd, e.paid!.usage?.costUsd], [4.5, 2, 1]);
+      assert.deepEqual([e.exact!.usage?.costUsd, e.sibling!.usage?.costUsd, e.paid!.usage?.costUsd], [0.5, 0.25, 1]);
       assert.deepEqual([e.exact!.payload.pricedAs, e.sibling!.payload.pricedAs, e.sibling!.payload.costEstimated], [undefined, "gpt-6.1-sol", true]);
       let u = (await store.getSession("s1"))!.stats.usage!;
-      assert.deepEqual([u.costUsd, u.estimatedCostUsd], [7.5, 6.5]);
+      assert.deepEqual([u.costUsd, u.estimatedCostUsd], [1.75, 0.75]);
       await repriceStored(store, { "gpt-6.2-sol": { input: 3, output: 3 } });
       e = await byId();
-      assert.deepEqual([e.sibling!.usage?.costUsd, e.sibling!.payload.pricedAs, e.sibling!.payload.costEstimated], [3, undefined, true]);
+      assert.deepEqual([e.sibling!.usage?.costUsd, e.sibling!.payload.pricedAs, e.sibling!.payload.costEstimated], [0.375, undefined, true]);
       u = (await store.getSession("s1"))!.stats.usage!;
-      assert.deepEqual([u.costUsd, u.estimatedCostUsd], [8.5, 7.5]);
+      assert.deepEqual([u.costUsd, u.estimatedCostUsd], [1.875, 0.875]);
+      await store.close();
+    });
+
+    it("reprices stored calls at their tier and long-context rates, records payload.priceTier, and totals it per tier", async () => {
+      const store = await open();
+      // Estimated before tiers, at standard short-context rates.
+      const evs = [
+        ev("batch", { model: "claude-opus-4-5", usage: { inputTokens: M, costUsd: 5 }, payload: { costEstimated: true, serviceTier: "batch" } }), // 2.5
+        ev("long", { model: "gpt-6.1-sol", usage: { inputTokens: 300_000, costUsd: 0.6 }, payload: { costEstimated: true } }), // 300k × 4 = 1.2
+        ev("short", { model: "gpt-6.1-sol", usage: { inputTokens: 100_000 } }), // 0.2, standard
+        ev("snap", { kind: "notification", model: "gpt-6.1-sol", payload: { type: "usage-summary" }, usage: { inputTokens: 400_000 } }), // 0.8: running totals stay standard
+      ];
+      await store.putEvents(evs);
+      await store.upsertSession(buildSession(evs));
+      assert.deepEqual(await repriceStored(store, undefined, { force: true }), { ran: true, events: 4, sessions: 1 });
+      const e = Object.fromEntries((await store.listEvents("s1")).map((x) => [x.id, x]));
+      assert.deepEqual([e.batch!.usage?.costUsd, e.batch!.payload.priceTier, e.batch!.payload.serviceTier], [2.5, "batch", "batch"]);
+      assert.deepEqual([e.long!.usage?.costUsd, e.long!.payload.priceTier], [1.2, "long-context"]);
+      assert.deepEqual([e.short!.usage?.costUsd, e.short!.payload.priceTier], [0.2, undefined]);
+      assert.deepEqual([e.snap!.usage?.costUsd, e.snap!.payload.priceTier], [0.8, undefined]);
+      const u = (await store.getSession("s1"))!.stats.usage!;
+      assert.equal(u.estimatedCostByTier?.batch, 2.5);
+      assert.ok(Math.abs(u.estimatedCostByTier!["long-context"]! - 1.2) < 1e-9);
+      assert.deepEqual(Object.keys(u.estimatedCostByTier!).sort(), ["batch", "long-context"]);
+      // An override with no batch rates prices the batch call at its standard rate and drops the tier.
+      await repriceStored(store, { "claude-opus-4-5": { input: 4, output: 4 } });
+      const b = (await store.listEvents("s1")).find((x) => x.id === "batch")!;
+      assert.deepEqual([b.usage?.costUsd, b.payload.priceTier, b.payload.costEstimated], [4, undefined, true]);
+      assert.equal((await store.getSession("s1"))!.stats.usage!.estimatedCostByTier?.batch, undefined);
       await store.close();
     });
 

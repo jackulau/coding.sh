@@ -12,7 +12,7 @@
 // needs no telemetry setup. For persistent capture prefer OTel (map.ts):
 // the two paths describe the same work with different ids, so ingest one per
 // session, not both.
-import type { AgentEvent, EventKind, Usage } from "../../schema/index.ts";
+import type { AgentEvent, EventKind, Usage, UsageNumberKey } from "../../schema/index.ts";
 import { SCHEMA_VERSION } from "../../schema/index.ts";
 import { hashParts } from "../../core/ids.ts";
 import { EVE_AGENT_ID } from "./map.ts";
@@ -54,7 +54,7 @@ export function isTransportRecord(line: EveStreamLine): boolean {
 function usageOf(v: unknown): Usage | undefined {
   if (!isObj(v)) return undefined;
   const u: Usage = {};
-  const map: [keyof Usage, string][] = [
+  const map: [UsageNumberKey, string][] = [
     ["inputTokens", "inputTokens"],
     ["outputTokens", "outputTokens"],
     ["cacheReadTokens", "cacheReadTokens"],

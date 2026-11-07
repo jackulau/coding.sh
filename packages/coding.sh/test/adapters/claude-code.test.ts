@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
+import { ClaudeTranscriptConverter } from "../../src/adapters/_shared/claude-transcript.ts";
 import { hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { backfill, backfillCursorKey } from "../../src/core/ingest.ts";
@@ -199,5 +200,28 @@ describe("claude-code overlay + harness", () => {
     assert.ok(s.hooks.PostToolUse[0].hooks[0].command.includes("claude-code PostToolUse"));
     assert.ok(!existsSync(join(env.home, ".claude")), "user config untouched");
     assert.ok(claudeCode.harnessFiles!().project.includes("CLAUDE.md"));
+  });
+});
+
+// core/pricing.ts callTier reads these to price a call at batch or fast-mode rates.
+describe("claude-code transcript service tier", () => {
+  const callFor = async (usage: Record<string, unknown>) => {
+    const { ctx } = testCtx();
+    const conv = new ClaudeTranscriptConverter(ctx, { agent: "claude-code", mode: "assistant", sessionId: "cc-tier", source: "cc-tier.jsonl" });
+    await conv.add({ type: "user", uuid: "u1", timestamp: "2026-01-01T00:00:00.000Z", message: { role: "user", content: "hi" } }, 1);
+    await conv.add({ type: "assistant", uuid: "a1", timestamp: "2026-01-01T00:00:02.000Z", message: { id: "msg_tier_1", role: "assistant", model: "claude-opus-5-5", content: [{ type: "text", text: "hello" }], usage: { input_tokens: 5, output_tokens: 2, ...usage } } }, 2);
+    return (await conv.finish()).find((e) => e.kind === "llm.call")!;
+  };
+
+  it("keeps usage.service_tier and usage.speed when they are not standard", async () => {
+    const batch = await callFor({ service_tier: "batch" });
+    assert.equal(batch.payload.serviceTier, "batch");
+    const fast = await callFor({ service_tier: "priority", speed: "fast" });
+    assert.deepEqual([fast.payload.serviceTier, fast.payload.speed], ["priority", "fast"]);
+  });
+
+  it("leaves standard tiers out of the payload", async () => {
+    const c = await callFor({ service_tier: "standard", speed: "standard" });
+    assert.ok(!("serviceTier" in c.payload) && !("speed" in c.payload));
   });
 });

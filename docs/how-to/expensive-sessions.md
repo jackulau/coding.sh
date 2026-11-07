@@ -69,10 +69,30 @@ price at all keeps no cost, never $0, and `usage` names it.
 
 The built-in table covers current Claude, OpenAI, Gemini (which Antigravity runs) and common open
 models, with each provider's page and the date it was checked in
-[`src/core/pricing.ts`](../../packages/coding.sh/src/core/pricing.ts). Short-context list prices
-only: no batch, priority or long-context rates. To match your bill, set your own prices (see
-[Configuration](../reference/config.md#prices)). Estimates refresh by themselves when the table
-changes; `coding.sh usage --reprice` recomputes them now.
+[`src/core/pricing.ts`](../../packages/coding.sh/src/core/pricing.ts). Each call is priced at the
+rates it actually ran at:
+
+- **Long context.** A call whose prompt (input plus cache reads and writes) goes over the model's
+  threshold is priced at its long-context rates: OpenAI above 272K tokens, Gemini Pro above 200K,
+  Claude Haiku 5.5 above 100K, Claude Sonnet 4.5 and 4 (1M beta) above 200K. This is decided per
+  call, so one long call doesn't reprice the rest of the session. Claude 4.6 and later have no
+  long-context surcharge.
+- **Batch, flex, priority and fast.** The call's service tier comes from what the agent or
+  instrumentation records: Claude Code's `usage.service_tier` and `usage.speed` (fast mode), an
+  OpenTelemetry span's `openai.response.service_tier` (or `gen_ai.*.service_tier`, or AI SDK provider
+  metadata), and Claude Code's `api_request` log `speed`. A response's tier beats the one that was
+  requested. Batch is half price at every provider. OpenAI Flex is half price, and Fast (once called
+  Priority) is about 2x. Gemini Priority is 1.8x. Claude fast mode uses its own rates. Anthropic's
+  Priority Tier is a commitment rather than a per-token price, so those calls keep standard rates.
+
+A call priced at a non-standard rate says so in `payload.priceTier` (`batch`, `flex`, `priority`,
+`fast`, `ultrafast`, `long-context`, or a combination like `batch+long-context`), which shows next
+to `pricedAs` in `show` and in the viewer's cost tooltip. Session totals break the tiered part of
+the estimate out in `estimatedCostByTier`, as `usage --json` and the MCP `usage` tool do. Codex
+rollouts don't record a service tier, so their calls are priced at standard rates (long context
+still applies, call by call). To match your bill, set your own prices, including long-context and
+tier rates (see [Configuration](../reference/config.md#prices)). Estimates refresh by themselves
+when the table changes; `coding.sh usage --reprice` recomputes them now.
 
 ## Ask your agent
 

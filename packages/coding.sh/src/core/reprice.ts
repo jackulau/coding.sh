@@ -54,7 +54,9 @@ export async function repriceStored(index: IndexStore, overrides?: Prices, opts:
       if (priced === e || typeof cost !== "number") continue;
       estimates = true;
       const pricedAs = typeof priced.payload.pricedAs === "string" ? priced.payload.pricedAs : undefined;
-      if (cost !== e.usage?.costUsd || pricedAs !== e.payload?.pricedAs) costs.push({ id: e.id, costUsd: cost, ...(pricedAs ? { pricedAs } : {}) });
+      const priceTier = typeof priced.payload.priceTier === "string" ? priced.payload.priceTier : undefined;
+      if (cost !== e.usage?.costUsd || pricedAs !== e.payload?.pricedAs || priceTier !== e.payload?.priceTier)
+        costs.push({ id: e.id, costUsd: cost, ...(pricedAs ? { pricedAs } : {}), ...(priceTier ? { priceTier } : {}) });
     }
     // Sessions folded before session totals said which part is estimated are refolded once.
     const unmarked = estimates && prev.stats.usage?.estimatedCostUsd === undefined;
@@ -69,7 +71,7 @@ export async function repriceStored(index: IndexStore, overrides?: Prices, opts:
 
 function withoutCost(e: AgentEvent): AgentEvent {
   const { costUsd: _drop, ...usage } = e.usage ?? {};
-  const { pricedAs: _was, ...payload } = e.payload ?? {};
+  const { pricedAs: _was, priceTier: _tier, ...payload } = e.payload ?? {};
   return { ...e, usage, payload };
 }
 

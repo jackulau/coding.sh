@@ -567,12 +567,14 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     costUsd: number;
     /** Part of costUsd computed from the price table. */
     estimatedCostUsd: number;
+    /** Part of estimatedCostUsd at tier or long-context rates, by `payload.priceTier`. */
+    estimatedCostByTier: Record<string, number>;
     /** Sessions that have a cost (reported or estimated). */
     priced: number;
     /** Sessions with tokens but no reported cost. */
     unpriced: number;
   }
-  const zero = (): Acc => ({ sessions: 0, turns: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, estimatedCostUsd: 0, priced: 0, unpriced: 0 });
+  const zero = (): Acc => ({ sessions: 0, turns: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, estimatedCostUsd: 0, estimatedCostByTier: {}, priced: 0, unpriced: 0 });
   const tokens = (s: Session) => {
     const u = s.stats.usage ?? {};
     return (u.inputTokens ?? 0) + (u.outputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
@@ -588,6 +590,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     if (typeof u.costUsd === "number" && Number.isFinite(u.costUsd)) {
       a.costUsd += u.costUsd;
       a.estimatedCostUsd += u.estimatedCostUsd ?? 0;
+      for (const [k, v] of Object.entries(u.estimatedCostByTier ?? {})) if (typeof v === "number" && Number.isFinite(v)) a.estimatedCostByTier[k] = (a.estimatedCostByTier[k] ?? 0) + v;
       a.priced++;
     } else if (tokens(s) > 0) a.unpriced++;
   };
@@ -611,13 +614,15 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   // cost is unknown, not $0. Partial coverage is flagged as a lower bound.
   // tokensPerTurn and cacheReadShare (cache reads / all prompt tokens) compare
   // harnesses at a fixed model: same work, fewer tokens or more cache hits.
-  const fix = ({ priced, unpriced, costUsd, estimatedCostUsd, ...a }: Acc) => {
+  const fix = ({ priced, unpriced, costUsd, estimatedCostUsd, estimatedCostByTier, ...a }: Acc) => {
+    const tiers = Object.entries(estimatedCostByTier).sort((x, y) => y[1] - x[1]);
     const totalTokens = a.inputTokens + a.outputTokens + a.cacheReadTokens + a.cacheWriteTokens;
     const prompt = a.inputTokens + a.cacheReadTokens + a.cacheWriteTokens;
     return {
       ...a,
       ...(priced ? { costUsd: round4(costUsd) } : {}),
       ...(priced && estimatedCostUsd > 0 ? { estimatedCostUsd: round4(estimatedCostUsd) } : {}),
+      ...(priced && tiers.length ? { estimatedCostByTier: Object.fromEntries(tiers.map(([k, v]) => [k, round4(v)])) } : {}),
       ...(priced && unpriced ? { costPartial: true, unpricedSessions: unpriced } : {}),
       totalTokens,
       ...(a.turns ? { tokensPerTurn: Math.round(totalTokens / a.turns) } : {}),
@@ -639,6 +644,8 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   if (!anyCost && total.unpriced) notes.push("No session in this window has a cost (none reported one and their models have no price), so costUsd is omitted rather than shown as $0. Compare spend by totalTokens; topSessions is ranked by output tokens.");
   else if (total.unpriced) notes.push(`${total.unpriced} of ${total.sessions} sessions have tokens but no cost (none reported, no price for the model); costUsd counts only the priced ones (a lower bound) and rows with unpriced sessions say costPartial.`);
   if (total.estimatedCostUsd > 0) notes.push(`$${round4(total.estimatedCostUsd)} of costUsd is estimated: token counts times list prices (estimatedCostUsd), not a bill. Reported and gateway-billed costs are used as is.`);
+  const tierUsd = Object.values(total.estimatedCostByTier).reduce((x, y) => x + y, 0);
+  if (tierUsd > 0) notes.push(`$${round4(tierUsd)} of the estimate used batch, flex, priority, fast or long-context rates rather than standard ones (estimatedCostByTier, by the calls' payload.priceTier).`);
   if (unpricedModels.size) notes.push(`No price for: ${[...unpricedModels].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([m, n]) => `${m} (${n})`).join(", ")}. Add [prices."<model>"] to config.toml to price them.`);
   return {
     window: windowOf(q, sessions.length, truncated),

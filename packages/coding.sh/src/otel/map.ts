@@ -30,9 +30,10 @@
 // Usage is only taken from model-call spans: agent/chain spans (invoke_agent,
 // ai.generateText) often repeat the sum of their children, and counting both
 // would double the session's tokens. Their reported totals stay in payload.
-import type { AgentEvent, AgentId, BlobRef, EventKind, Usage } from "../schema/index.ts";
+import type { AgentEvent, AgentId, BlobRef, EventKind, Usage, UsageNumberKey } from "../schema/index.ts";
 import { SCHEMA_VERSION } from "../schema/index.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
+import { tierValue } from "../core/pricing.ts";
 import {
   type Attrs,
   nanosDiffMs,
@@ -465,7 +466,7 @@ const CACHE_WRITE = ["gen_ai.usage.cache_write.input_tokens", "gen_ai.usage.cach
 
 function usageOf(a: Attrs): Usage | undefined {
   const u: Usage = {};
-  const set = (k: keyof Usage, v: number | undefined) => {
+  const set = (k: UsageNumberKey, v: number | undefined) => {
     if (v !== undefined && v >= 0) u[k] = v;
   };
   const total = num(a, ...INPUT_TOTAL);
@@ -486,6 +487,23 @@ function usageOf(a: Attrs): Usage | undefined {
 
 const requestModel = (a: Attrs) => str(a, "gen_ai.request.model", "llm.model_name", "ai.model.id", "model");
 const responseModel = (a: Attrs) => str(a, "gen_ai.response.model", "ai.response.model");
+
+// The service tier a call ran at (payload.serviceTier, priced by pricing.ts callTier). A response
+// attribute, when there is one, says what was served (a `flex` request can be served `default`).
+const TIER_RESPONSE = ["openai.response.service_tier", "gen_ai.openai.response.service_tier", "gen_ai.response.service_tier"];
+const TIER_REQUEST = ["openai.request.service_tier", "gen_ai.openai.request.service_tier", "gen_ai.request.service_tier", "service_tier"];
+function serviceTier(a: Attrs): string | undefined {
+  const res = str(a, ...TIER_RESPONSE);
+  if (res !== undefined) return tierValue(res);
+  // AI SDK: providerMetadata.openai.serviceTier, or Anthropic's raw usage.service_tier.
+  const meta = maybeJson(a["ai.response.providerMetadata"]);
+  if (isObj(meta)) {
+    const openai = isObj(meta.openai) ? meta.openai.serviceTier : undefined;
+    const anthropic = isObj(meta.anthropic) && isObj(meta.anthropic.usage) ? meta.anthropic.usage.service_tier : undefined;
+    if (typeof openai === "string" || typeof anthropic === "string") return tierValue(openai ?? anthropic);
+  }
+  return tierValue(str(a, ...TIER_REQUEST));
+}
 
 function finishReason(a: Attrs): string | undefined {
   const fr = maybeJson(a["gen_ai.response.finish_reasons"]);
@@ -723,6 +741,7 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
       .set("provider", str(a, "gen_ai.provider.name", "gen_ai.system", "llm.provider", "llm.system", "ai.model.provider"))
       .set("requestModel", req)
       .set("responseModel", res)
+      .set("serviceTier", serviceTier(a))
       .set("operation", klass === "embedding" ? "embeddings" : (str(a, "gen_ai.operation.name") ?? "chat"))
       .set("name", span.name)
       .set("ttftMs", ttftMs(span))
@@ -1030,6 +1049,8 @@ async function mapLog(rec: OtelLogRecord, resource: Attrs, scope: OtelScope, ctx
       .set("ok", true)
       .set("statusCode", num(a, "status_code"))
       .set("requestId", requestId)
+      .set("serviceTier", serviceTier(a))
+      .set("speed", tierValue(str(a, "speed")))
       .set("event", name);
     emit(0, "llm.call", startTs, d, { ...timing, ...(model ? { model } : {}), usage }, requestId ? ccLlmId(sessionId, requestId, "call") : undefined);
   } else if (suffix === "api_error") {

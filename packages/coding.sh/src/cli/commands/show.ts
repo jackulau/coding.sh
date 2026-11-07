@@ -30,12 +30,16 @@ function str(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() ? v : undefined;
 }
 
-/** " $0.0123" for a reported cost, " $0.0123 est" from the price table, " $0.0123 est (as <model>)" from a sibling model's price. */
+/**
+ * " $0.0123" for a reported cost, " $0.0123 est" from the price table, " $0.0123 est (as <model>)"
+ * from a sibling model's price, " $0.0123 est (batch+long-context)" at tier or long-context rates.
+ */
 function callCost(e: AgentEvent): string {
   const c = e.usage?.costUsd;
   if (c === undefined) return "";
   if (e.payload.costEstimated !== true) return ` ${usd(c)}`;
-  return ` ${usd(c)} est${typeof e.payload.pricedAs === "string" ? ` (as ${e.payload.pricedAs})` : ""}`;
+  const how = [typeof e.payload.pricedAs === "string" ? `as ${e.payload.pricedAs}` : "", typeof e.payload.priceTier === "string" ? e.payload.priceTier : ""].filter(Boolean);
+  return ` ${usd(c)} est${how.length ? ` (${how.join(", ")})` : ""}`;
 }
 
 /** Short description of a tool input (command, path, pattern…). */

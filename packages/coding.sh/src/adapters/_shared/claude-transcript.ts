@@ -15,6 +15,7 @@
 // duration ≈ last block line − start. Approximate (line write times), but
 // derived only from the transcript, so deterministic.
 import type { AgentEvent, AgentId, Usage } from "../../schema/index.ts";
+import { tierValue } from "../../core/pricing.ts";
 import type { NormalizeContext } from "../../core/types.ts";
 import { virtualModelId } from "../../integrations/gateway/ids.ts";
 import { toMs } from "./jsonl.ts";
@@ -55,6 +56,9 @@ interface PendingCall {
   /** provider_metadata.gateway.routing on responses through Vercel AI Gateway, when the transcript keeps it. */
   gatewaySessionId?: string;
   servedProvider?: string;
+  /** usage.service_tier when not standard ("priority", "batch"), and usage.speed when not standard ("fast"). */
+  serviceTier?: string;
+  speed?: string;
 }
 
 interface ToolUse {
@@ -209,6 +213,8 @@ export class ClaudeTranscriptConverter {
       this.pending.lastTs = ts;
       if (model && !SKIP_MODELS.has(model)) this.pending.model = model;
       this.pending.usage = anthropicUsage(m.usage) ?? this.pending.usage;
+      this.pending.serviceTier = tierValue(obj(m.usage).service_tier) ?? this.pending.serviceTier;
+      this.pending.speed = tierValue(obj(m.usage).speed) ?? this.pending.speed;
       this.pending.stopReason = str(m.stop_reason) ?? this.pending.stopReason;
       const routing = obj(obj(obj(m.provider_metadata).gateway).routing);
       this.pending.gatewaySessionId = str(routing.clientSessionId) ?? this.pending.gatewaySessionId;
@@ -390,6 +396,9 @@ export class ClaudeTranscriptConverter {
         servedProvider: p.servedProvider,
         virtualModel: virtualModelId(p.requestModel),
         resolvedModel: virtualModelId(p.requestModel) ? p.model : undefined,
+        // Priced at these rates (pricing.ts callTier): Priority Tier, a batch result, fast mode.
+        serviceTier: p.serviceTier,
+        speed: p.speed,
       },
       { key: [p.msgId], durationMs, usage: p.usage, model: p.model ?? this.model },
     );

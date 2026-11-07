@@ -57,6 +57,8 @@ const SESSION_ID = { type: "string", minLength: 1, description: 'Session id from
 
 const input = (properties: Obj, required: string[] = []): Obj => ({ type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false });
 const out = (properties: Obj, required: string[] = []): Obj => ({ type: "object", properties, ...(required.length ? { required } : {}) });
+/** USD by price tier (`batch`, `long-context`, `priority+long-context`, ...). */
+const BY_TIER: Obj = { type: "object", additionalProperties: { type: "number" } };
 
 const S = { type: "string" };
 const N = { type: "number" };
@@ -376,8 +378,8 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         {
           window: WINDOW_OUT,
           groupBy: S,
-          total: out({ costUsd: N, estimatedCostUsd: N, totalTokens: N }),
-          groups: arr(out({ key: S, costUsd: N, estimatedCostUsd: N, totalTokens: N }, ["key"])),
+          total: out({ costUsd: N, estimatedCostUsd: N, estimatedCostByTier: BY_TIER, totalTokens: N }),
+          groups: arr(out({ key: S, costUsd: N, estimatedCostUsd: N, estimatedCostByTier: BY_TIER, totalTokens: N }, ["key"])),
           topSessions: arr(out({ id: S, costUsd: N, costEstimated: { type: "boolean" } }, ["id"])),
           topSessionsRankedBy: { type: "string", enum: ["costUsd", "outputTokens"] },
           notes: arr(S),

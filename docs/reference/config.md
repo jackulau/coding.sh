@@ -118,6 +118,30 @@ cache_write = 3.75
 input price. `[pricing."<model>"]`, the older spelling, still works; `[prices]` wins a model set in
 both. Stored estimates are recomputed the next time the index opens after a change.
 
+Long-context and service-tier rates are optional sub-tables:
+
+```toml
+[prices."my-finetune".long_context]   # prompts over `above` tokens (input + cache)
+above = 200000
+input = 6.0
+output = 22.5
+
+[prices."my-finetune".batch]          # also flex, priority, fast, ultrafast
+input = 1.5
+output = 7.5
+
+[prices."my-finetune".batch.long_context]   # `above` defaults to the model's threshold
+input = 3.0
+output = 11.25
+```
+
+Each sub-table takes the same `input`, `output`, `cache_read` and `cache_write` keys. A call goes to
+a tier from its recorded service tier (`batch`, `flex`, `priority`), or `fast` for Claude fast mode
+(`fast` falls back to `priority` rates when it has no table of its own). A tier with no table is
+priced at the standard rates. An override replaces the whole built-in row, tiers included, so
+add the tier tables you want to keep. See
+[Where cost comes from](../how-to/expensive-sessions.md#where-cost-comes-from).
+
 ## `[gateway]`
 
 For LLM gateways (`coding.sh gateway`, `compare --gateway`, and `gateway` judges). The top-level keys are for

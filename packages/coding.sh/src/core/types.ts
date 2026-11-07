@@ -3,6 +3,7 @@
 // and cli/ all build against these types.
 import type { AgentEvent, AgentId, BlobRef, RepoState, Session, Usage } from "../schema/index.ts";
 import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "../datasets/types.ts";
+import type { Prices } from "./pricing.ts";
 
 // ---------------------------------------------------------------- spool
 
@@ -97,6 +98,8 @@ export interface EventCost {
   costUsd: number;
   /** The sibling model whose price was used, when the event's own model has no row. */
   pricedAs?: string;
+  /** Non-standard rates the call was priced at (`batch`, `long-context`, `priority+long-context`, ...). */
+  priceTier?: string;
 }
 
 /** The queryable index. Default: SQLite. Must be idempotent on ids. */
@@ -175,8 +178,8 @@ export interface IndexStore {
 
   /**
    * Sets an estimated cost on stored events in place (`usage.costUsd`,
-   * `payload.costEstimated = true`, and `payload.pricedAs` when given, removed
-   * when not); ids and everything else stay. Used by the reprice pass over events
+   * `payload.costEstimated = true`, and `payload.pricedAs` and `payload.priceTier`
+   * when given, removed when not); ids and everything else stay. Used by the reprice pass over events
    * stored before local pricing or under older prices. Returns how many it found.
    */
   setEventCosts?(costs: EventCost[]): Promise<number>;
@@ -307,7 +310,7 @@ export interface Config {
     check: boolean;
   };
   /** `[prices."<model>"]` (or the older `[pricing."<model>"]`) overrides of the built-in price table (USD per 1M tokens). */
-  pricing?: Record<string, { input: number; output: number; cacheRead?: number; cacheWrite?: number }>;
+  pricing?: Prices;
 }
 
 export interface SinkConfig {

@@ -116,6 +116,12 @@ function addUsage(sum: Usage, u: Usage | undefined): void {
 
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 
+/** Estimated USD by `payload.priceTier`. */
+type Tiers = Record<string, number>;
+const addTiers = (into: Tiers, from: Tiers): void => {
+  for (const [k, v] of Object.entries(from)) into[k] = (into[k] ?? 0) + v;
+};
+
 /** Parent walks stop after this many hops (and on a cycle). */
 const MAX_PARENT_HOPS = 64;
 
@@ -167,8 +173,14 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     }
   }
   const estimatedOf = (e: AgentEvent): number => (e.payload?.costEstimated === true && !billed.has(e.id) ? (num(e.usage?.costUsd) ?? 0) : 0);
+  // The estimate of a call priced at tier or long-context rates, under its `payload.priceTier`.
+  const tiersOf = (e: AgentEvent): Tiers => {
+    const est = estimatedOf(e);
+    const t = e.payload?.priceTier;
+    return est > 0 && typeof t === "string" && t ? { [t]: est } : {};
+  };
   // A call's usage with its nested calls folded in: own value per field, else the nested sum.
-  const fold = (c: AgentEvent, depth = 0): { u: Usage; est: number } => {
+  const fold = (c: AgentEvent, depth = 0): { u: Usage; est: number; tiers: Tiers } => {
     const kids = depth < MAX_PARENT_HOPS ? (children.get(c) ?? []).map((k) => fold(k, depth + 1)) : [];
     const u: Usage = {};
     for (const k of TOKEN_KEYS) {
@@ -184,14 +196,17 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     const kidsReported = kidCost !== undefined && kidCost - kidEst > 0;
     if (own !== undefined && (ownEst === 0 || !kidsReported || billed.has(c.id))) {
       u.costUsd = own;
-      return { u, est: ownEst };
+      return { u, est: ownEst, tiers: tiersOf(c) };
     }
     if (kidCost !== undefined) u.costUsd = kidCost;
-    return { u, est: kidCost !== undefined ? kidEst : 0 };
+    const tiers: Tiers = {};
+    if (kidCost !== undefined) for (const k of kids) addTiers(tiers, k.tiers);
+    return { u, est: kidCost !== undefined ? kidEst : 0, tiers };
   };
 
   const usage: Usage = {};
   let estimated = 0;
+  const byTier: Tiers = {};
   let snapshot: AgentEvent | undefined;
   const responses = new Set<string>();
   const dropped = new Set<string>();
@@ -222,9 +237,10 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     if (isUsageSnapshot(e)) continue;
     if (carriesUsage(e)) {
       if (dropped.has(e.id)) continue;
-      const f = children.has(e) ? fold(e) : { u: e.usage!, est: estimatedOf(e) };
+      const f = children.has(e) ? fold(e) : { u: e.usage!, est: estimatedOf(e), tiers: tiersOf(e) };
       addUsage(usage, f.u);
       estimated += f.est;
+      addTiers(byTier, f.tiers);
       counted += tokens(f.u);
       countedCost += num(f.u.costUsd) ?? 0;
       continue;
@@ -236,12 +252,16 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     }
     addUsage(usage, e.usage);
     estimated += estimatedOf(e);
+    addTiers(byTier, tiersOf(e));
   }
   if (snapshot) {
     addUsage(usage, snapshot.usage);
     estimated += estimatedOf(snapshot);
   }
-  if (estimated > 0 && usage.costUsd !== undefined) usage.estimatedCostUsd = Math.min(estimated, usage.costUsd);
+  if (estimated > 0 && usage.costUsd !== undefined) {
+    usage.estimatedCostUsd = Math.min(estimated, usage.costUsd);
+    if (Object.keys(byTier).length) usage.estimatedCostByTier = byTier;
+  }
   if (!calls) return { usage };
   const dupCost = Math.round((rawCost - countedCost) * 1e9) / 1e9;
   return { usage, duplicate: { calls, tokens: Math.max(0, raw - counted), ...(dupCost > 0 ? { costUsd: dupCost } : {}) } };
