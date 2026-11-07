@@ -53,12 +53,25 @@ packages/coding.sh/src/core/sessions.ts
   s_8e040dbdf13565::t_62276ff9b9f88d 847,850-858,863
   s_8e040dbdf13565::t_471666ba731c8f 871-872,879,889
   s_8e040dbdf13565::t_701d6a0287bd2c 11
+  s_8e040dbdf13565::t_07616f91060073 13-15,472-474,502-504,530-532,628,633,654,659,661
 packages/coding.sh/src/store/sqlite.ts
   s_8e040dbdf13565::t_e2602cecc7be8e 849-855
   s_8e040dbdf13565::t_1c8a89aac9d019 380-382,584,623-624,629-631,1041,1047
   s_8e040dbdf13565::t_111826426a038a 846-848,856-874
 docs/guides/explore.md
   s_8e040dbdf13565::t_32e3b317f9d486 64
+  s_8e040dbdf13565::t_cfc744fa792c0a 60-63
+packages/coding.sh/src/core/waste.ts
+  s_8e040dbdf13565::t_43740c661e6938 241-242,278-282,310-311,313-315,327-329,344-345
+  s_8e040dbdf13565::t_9305c3be8b09e0 16-18,221-240,243-277,283-309,312,316-326,330-343,346-354
+packages/coding.sh/test/core/skills-use.test.ts
+  s_8e040dbdf13565::t_4114aeef2e62a8 4,17-24
+packages/coding.sh/test/core/waste.test.ts
+  s_8e040dbdf13565::t_4114aeef2e62a8 4,23-33,141-153
+packages/coding.sh/src/core/cache-breaks.ts
+  s_8e040dbdf13565::t_16d572449e0b2c 6,60,62,66-69,72-111,114-116
+packages/coding.sh/src/core/skills-use.ts
+  s_8e040dbdf13565::t_2beae44fede163 255-294
 ---
 {
   "schema_version": "authorship/3.0.0",
