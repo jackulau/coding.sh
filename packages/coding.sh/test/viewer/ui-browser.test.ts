@@ -1022,6 +1022,33 @@ describe("viewer UI: failed requests and the top bar", { skip: chrome ? false : 
     });
   }
 
+  // Regression: at 1024px the filter sidebar took its share and the session column fell to 20px.
+  for (const w of [900, 1024, 1180, 1280, 1440]) {
+    test(`at ${w}px the session column keeps 12rem and the header lines up with the cells`, async () => {
+      const page = await open(w);
+      try {
+        const m = await page.eval(`(() => {
+          const shown = (els) => [...els].filter((e) => getComputedStyle(e).display !== 'none');
+          const head = document.querySelector('[role=listbox]').parentElement.querySelector(':scope > .thead');
+          return [...document.querySelectorAll('[role=option]')].map((r) => ({
+            title: r.querySelector('.row-main').getBoundingClientRect().width,
+            head: shown(head.children).map((e) => Math.round(e.getBoundingClientRect().left)).join(),
+            cells: [r.children[0], r.children[1], ...shown(r.querySelector('.row-cells').children)].map((e) => Math.round(e.getBoundingClientRect().left)).join(),
+            sw: document.documentElement.scrollWidth,
+          }));
+        })()`);
+        assert.ok(m.length > 0);
+        for (const r of m) {
+          assert.ok(r.title >= 191.5, `session column is ${r.title}px`);
+          assert.equal(r.cells, r.head, "cells sit under their headers");
+          assert.ok(r.sw <= w, `page is ${r.sw}px wide`);
+        }
+      } finally {
+        await page.close();
+      }
+    });
+  }
+
   // Regression: between 641 and 700px the bar ran out of room and squeezed the theme button to 16px.
   for (const w of [320, 360, 390, 641, 700, 768, 1024]) {
     test(`at ${w}px the top bar fits with 44px targets, pills shown or not`, async () => {

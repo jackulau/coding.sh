@@ -404,7 +404,10 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .live-pill[hidden] { display: none; }
 
 .table { overflow: clip; }
-.thead, .row { display: grid; align-items: center; gap: 0 0.9rem; grid-template-columns: 12px minmax(0, 1fr) 9.5rem 6rem 9rem 4.5rem 3.75rem 4.5rem 4.5rem; padding: 0 0.85rem; }
+.session-table { container-type: inline-size; }
+/* Columns: dot, session, agent · model, repo, activity, tokens, cost, duration, started. A column
+   set to nothing (--c-tok: ;) drops its track, and its cells are hidden to match. */
+.thead, .row { display: grid; align-items: center; gap: 0 0.9rem; grid-template-columns: 12px var(--c-title, minmax(0, 1fr)) 9.5rem var(--c-repo, 6rem) var(--c-act, 9rem) var(--c-tok, 4.5rem) 3.75rem var(--c-dur, 4.5rem) 4.5rem; padding: 0 0.85rem; }
 .thead { height: 32px; font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); box-shadow: inset 0 -1px 0 var(--line); position: sticky; top: var(--top); z-index: 2; background: var(--surface); border-radius: var(--radius) var(--radius) 0 0; }
 .thead .num, .row .num { text-align: right; }
 .list:focus-visible { outline-offset: 3px; border-radius: var(--radius); }
@@ -438,8 +441,16 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .row-title { min-width: 0; }
   .row-badges { height: 18px; flex: none; }
   .row-badges .badge, .row-badges .sub-toggle { height: 18px; font-size: 10.5px; padding: 0 0.4rem; }
-  .table.one-repo > .thead, .table.one-repo .row { grid-template-columns: 12px minmax(0, 1fr) 9.5rem 9rem 4.5rem 3.75rem 4.5rem 4.5rem; }
-  .table.one-repo > .thead > :nth-child(4), .table.one-repo .repo-cell { display: none; }
+  .table.one-repo { --c-repo: ; }
+  .table.one-repo .repo-cell { display: none; }
+  /* The session title keeps 12rem however narrow the list gets (the filter sidebar takes
+     its share from 1024px up): the less telling columns go first, tokens, then duration,
+     then repo, then activity. The widths are where the other columns plus 12rem stop fitting. */
+  .session-table { --c-title: minmax(12rem, 1fr); }
+  @container (width < 63.4rem) { .session-table > * { --c-tok: ; } .session-table .tok-cell { display: none; } }
+  @container (width < 58rem) { .session-table > * { --c-dur: ; } .session-table .dur-cell { display: none; } }
+  @container (width < 52.6rem) { .session-table > * { --c-repo: ; } .session-table .repo-cell { display: none; } }
+  @container (width < 45.7rem) { .session-table > * { --c-act: ; } .session-table .act-cell { display: none; } }
 }
 /* Agent over model, so neither is cut to a prefix. */
 .agent-cell { display: grid; line-height: 1.3; }
@@ -2297,10 +2308,10 @@ function sessionList(view) {
       h("div", { class: "row-cells" },
         h("span", { class: "cell agent-cell", title: [s.agent, s.model].filter(Boolean).join(" · ") }, h("span", null, s.parent && s.parent.type ? s.parent.type : s.agent), s.model ? h("span", { class: "sub" }, " " + s.model) : null),
         h("span", { class: "cell muted repo-cell" + (s.repo && s.repo.root ? "" : " is-none"), title: s.repo && s.repo.root }, s.repo && s.repo.root ? basename(s.repo.root) : "—"),
-        h("span", { class: "cell" }, act, actErr ? h("span", { class: "err" }, " · " + actErr) : null),
-        h("span", { class: "cell num muted" }, rowTokens(st.usage).replace(" tokens", " tok")),
+        h("span", { class: "cell act-cell" }, act, actErr ? h("span", { class: "err" }, " · " + actErr) : null),
+        h("span", { class: "cell num muted tok-cell" }, rowTokens(st.usage).replace(" tokens", " tok")),
         h("span", { class: "cell num cost-cell" + (cost.none ? " muted opt" : ""), title: cost.title }, cost.text),
-        h("span", { class: "cell num muted" }, dur),
+        h("span", { class: "cell num muted dur-cell" }, dur),
         h("span", { class: "cell num muted", title: new Date(s.startedAt).toLocaleString() }, fmtRel(s.startedAt))));
     if (depth) row.style.setProperty("--depth", String(depth));
     lb.append(row);
@@ -2316,10 +2327,10 @@ function sessionList(view) {
   });
   // One repo in the whole index (or one picked): the column would repeat it on every row.
   const oneRepo = !!list.filters.repo || Object.keys((list.stats && list.stats.byRepo) || {}).length <= 1;
-  const table = h("div", { class: "panel table" + (oneRepo ? " one-repo" : "") },
+  const table = h("div", { class: "panel table session-table" + (oneRepo ? " one-repo" : "") },
     h("div", { class: "thead", "aria-hidden": "true" },
-      h("span"), h("span", null, "session"), h("span", null, "agent · model"), h("span", null, "repo"), h("span", null, "activity"),
-      h("span", { class: "num" }, "tokens"), h("span", { class: "num" }, "cost"), h("span", { class: "num" }, "duration"), h("span", { class: "num" }, "started")),
+      h("span"), h("span", null, "session"), h("span", null, "agent · model"), h("span", { class: "repo-cell" }, "repo"), h("span", { class: "act-cell" }, "activity"),
+      h("span", { class: "num tok-cell" }, "tokens"), h("span", { class: "num" }, "cost"), h("span", { class: "num dur-cell" }, "duration"), h("span", { class: "num" }, "started")),
     lb);
   if (list.hasMore) {
     table.append(h("div", { class: "more" }, h("button", {
