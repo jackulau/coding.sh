@@ -57,6 +57,7 @@ export const DOC_GROUPS: DocGroup[] = [
         title: "Record any agent with OpenTelemetry",
         summary: "Point the Vercel AI SDK, Claude Agent SDK, OpenAI Agents SDK, LangGraph or any OTLP exporter at the local receiver.",
       },
+      { path: "/docs/how-to/trace-durable-workflow", label: "Durable workflows", title: "Trace a durable workflow", summary: "Record a Vercel Workflow or Temporal run as one session across crashes, deploys and days, with each step's attempts, waits and resume points." },
       { path: "/docs/ai-gateway", label: "Gateways", title: "LLM gateways", summary: "Agents routed through Vercel AI Gateway, OpenRouter, LiteLLM, Cloudflare, Portkey, Helicone and others: tagged sessions, billed cost per call, and A/B runs across models with one key." },
       { path: "/docs/production", label: "Production", title: "Production: API apps", summary: "Run coding.sh serve on SQLite or Postgres and send traces from API apps with the SDKs or OpenTelemetry." },
       {

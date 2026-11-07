@@ -40,7 +40,10 @@ its own session with a parent id. `coding.sh sessions --subagents` lists them, a
 - `no-verification`: files changed, but no test, type check, lint or build ran.
 - `compaction`: the agent's context was compacted.
 
-A flag with a colon, such as `gateway:vercel`, is a tag rather than a failure.
+A flag with a colon, such as `gateway:vercel`, is a tag rather than a failure. Durable workflow runs
+get two notes rather than failures: `step-retried` (a step took more than one attempt) and `resumed`
+(the run continued after a crash, a deploy or a restart). See
+[Trace a durable workflow](how-to/trace-durable-workflow.md).
 
 **Spool, index and blobs.** Hooks append raw events to `~/.coding.sh/spool`. Ingest moves them into
 the SQLite index (`index.db`); payloads larger than `capture.maxInlineBytes` go to the

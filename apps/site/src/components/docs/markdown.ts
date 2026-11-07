@@ -22,6 +22,7 @@ const SITE_PAGES: Record<string, string> = {
   "guides/workflows.md": "/docs/workflows",
   "reference/api.md": "/docs/api",
   "how-to/trace-your-agent.md": "/docs/how-to/trace-your-agent",
+  "how-to/trace-durable-workflow.md": "/docs/how-to/trace-durable-workflow",
   "how-to/compare-agents.md": "/docs/how-to/compare-agents",
   "how-to/ci-regressions.md": "/docs/how-to/ci-regressions",
   "how-to/expensive-sessions.md": "/docs/how-to/expensive-sessions",

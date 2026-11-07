@@ -26,6 +26,7 @@ Short recipes you can run as written.
 | Doc | What |
 |---|---|
 | [how-to/trace-your-agent.md](how-to/trace-your-agent.md) | trace your own agent with OpenTelemetry or the SDKs, then eval and compare it |
+| [how-to/trace-durable-workflow.md](how-to/trace-durable-workflow.md) | trace a Vercel Workflow or Temporal run as one session, with attempts, waits and resumes |
 | [how-to/compare-agents.md](how-to/compare-agents.md) | compare two coding agents on your repo |
 | [how-to/ci-regressions.md](how-to/ci-regressions.md) | catch a regression in CI |
 | [how-to/expensive-sessions.md](how-to/expensive-sessions.md) | find your most expensive sessions |
