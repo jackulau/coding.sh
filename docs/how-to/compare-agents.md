@@ -93,8 +93,9 @@ only appears when each arm has a known cost for at least 80% of its runs.
 ## Same agent, two models
 
 To compare models rather than agents, snapshot the same agent twice with different `--model`
-values. If you use Vercel AI Gateway, `--gateway` routes both arms through it with one key
-(`AI_GATEWAY_API_KEY`) and records billed cost. See [AI Gateway](https://coding.sh/docs/ai-gateway).
+values. If you use a gateway, `--gateway` routes both arms through it with one key and records billed
+cost: `--gateway` for Vercel AI Gateway (`AI_GATEWAY_API_KEY`), or `--gateway openrouter`, `litellm` or
+`ramp`. See [LLM gateways](https://coding.sh/docs/ai-gateway).
 
 ## Notes
 

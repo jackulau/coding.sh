@@ -3,7 +3,7 @@ import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Code from "../../components/docs/Code.astro";
 import Tag from "../../components/docs/Tag.astro";
 
-// Follows docs/integrations/ai-gateway.md and packages/coding.sh/src/integrations/gateway.
+// Follows docs/integrations/ai-gateway.md and packages/coding.sh/src/integrations/gateway (providers.ts lists the gateways).
 const claude = `// ~/.claude/settings.json
 { "env": {
   "ANTHROPIC_BASE_URL": "https://ai-gateway.vercel.sh/claude-code",
@@ -27,20 +27,77 @@ const aiSdk = `const { text } = await generateText({
   experimental_telemetry: { isEnabled: true },
 });`;
 
-const cmds = `coding.sh gateway status          # which agents route through the gateway, key set or not
+const cmds = `coding.sh gateway status          # which agents route through a gateway, keys set or not
 coding.sh gateway enrich          # billed cost + serving provider per call (last 30 days)
-coding.sh sessions --flag gateway:vercel
-coding.sh compare sonnet gpt5 --gateway --k 3`;
+coding.sh sessions --flag gateway:openrouter
+coding.sh compare sonnet gpt5 --gateway --k 3
+coding.sh compare sonnet gpt5 --gateway openrouter`;
+
+const config = `# ~/.coding.sh/config.toml (only needed to change the defaults)
+[gateway]
+default = "openrouter"            # what a bare compare --gateway uses
+
+[gateway.litellm]
+baseUrl = "http://localhost:4000"  # or LITELLM_PROXY_API_BASE
+
+[gateway.cloudflare]
+accountId = "<32 hex>"             # or CLOUDFLARE_ACCOUNT_ID
+gatewayId = "prod"`;
+
+const GATEWAY_ROWS = [
+  { name: "Vercel AI Gateway", enrich: "/v1/generation", compare: "vercel", key: "AI_GATEWAY_API_KEY" },
+  { name: "OpenRouter", enrich: "/api/v1/generation", compare: "openrouter", key: "OPENROUTER_API_KEY" },
+  { name: "LiteLLM proxy", enrich: "/spend/logs", compare: "litellm", key: "LITELLM_PROXY_API_KEY" },
+  { name: "Cloudflare AI Gateway", enrich: "logs API", compare: "", key: "CLOUDFLARE_API_TOKEN" },
+  { name: "Portkey", enrich: "/v1/logs", compare: "", key: "PORTKEY_API_KEY" },
+  { name: "Helicone", enrich: "/v1/request", compare: "", key: "HELICONE_API_KEY" },
+  { name: "Ramp Router (router.com)", enrich: "cost from the response", compare: "ramp", key: "RAMP_ROUTER_API_KEY" },
+  { name: "Requesty", enrich: "cost from the response", compare: "", key: "REQUESTY_API_KEY" },
+  { name: "TrueFoundry, Kong, Bifrost, Martian", enrich: "", compare: "", key: "" },
+];
 ---
 
 <DocsLayout>
   <p>
-    <a href="https://vercel.com/docs/ai-gateway">Vercel AI Gateway</a> gives you one key for hundreds of models. coding.sh tags sessions
-    that went through it, adds what each call cost and which provider served it, and runs A/B experiments across models with that one key.
+    An LLM gateway gives you one key for many models. coding.sh tags sessions that went through one, adds what each call cost and which
+    provider served it, and runs A/B experiments across models with that one key.
   </p>
 
+  <h2 id="supported">Supported gateways</h2>
+  <div class="doc-table doc-table--stack">
+    <table>
+      <thead>
+        <tr>
+          <th>Gateway</th>
+          <th><code>gateway enrich</code></th>
+          <th><code>compare --gateway</code></th>
+          <th>Key</th>
+        </tr>
+      </thead>
+      <tbody>
+        {
+          GATEWAY_ROWS.map((g) => (
+            <tr>
+              <td>
+                <strong>{g.name}</strong>
+              </td>
+              <td data-label="gateway enrich">{!g.enrich ? "detect only" : g.enrich.startsWith("/") ? <code>{g.enrich}</code> : g.enrich}</td>
+              <td data-label="compare --gateway">{g.compare ? <code>{g.compare}</code> : "no"}</td>
+              <td data-label="Key">{g.key ? <code>{g.key}</code> : ""}</td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+  <p>
+    Every gateway in the table is detected: sessions get a <code>gateway:&lt;name&gt;</code> tag. Keys come from the standard variable, or
+    from a <code>[gateway.&lt;name&gt;]</code> table:
+  </p>
+  <Code title="toml" code={config} />
+
   <h2 id="setup">Route your agent</h2>
-  <p>Export <code>AI_GATEWAY_API_KEY</code>, then point the agent at the gateway.</p>
+  <p>Point the agent's base URL at the gateway. The examples below use Vercel AI Gateway with <code>AI_GATEWAY_API_KEY</code>. For OpenRouter, use <code>https://openrouter.ai/api</code> as Claude Code's base URL and your OpenRouter key.</p>
   <h3 id="claude-code">Claude Code</h3>
   <Code title="json" code={claude} />
   <h3 id="codex">Codex</h3>
@@ -48,19 +105,22 @@ coding.sh compare sonnet gpt5 --gateway --k 3`;
   <h3 id="ai-sdk">AI SDK</h3>
   <p>Send its telemetry to <code>coding.sh collector</code>, as on the <a href="/docs/otel">OpenTelemetry</a> page.</p>
   <Code title="ts" code={aiSdk} />
-  <p>OpenCode uses its built-in <code>vercel</code> provider, and Pi uses <code>vercel-ai-gateway</code>.</p>
+  <p>OpenCode uses its built-in <code>vercel</code> or <code>openrouter</code> provider, and Pi uses <code>vercel-ai-gateway</code> or <code>openrouter</code>.</p>
 
   <h2 id="use">Use it <Tag status="built" /></h2>
   <Code code={cmds} />
   <p>
-    Detection is read-only. coding.sh never prints or stores your key. Re-running <code>enrich</code> makes no new API calls. Calls through
-    a <code>vmc/</code> virtual model record the model it resolved to.
+    Detection is read-only. coding.sh never prints or stores your keys. Re-running <code>enrich</code> makes no new API calls. OpenRouter
+    and Requesty calls link by their response id. LiteLLM calls link through its OpenTelemetry export. Cloudflare, Portkey and Helicone
+    need the log id their response header carries, which agents don't keep. Calls through a Vercel <code>vmc/</code> virtual model record
+    the model it resolved to.
   </p>
 
   <h2 id="drains">Trace drains <Tag status="partial" /></h2>
   <p>
-    Pro and Enterprise plans can drain one OpenTelemetry trace per gateway request. Tunnel to <code>coding.sh collector</code> and use
+    Vercel Pro and Enterprise plans can drain one OpenTelemetry trace per gateway request. Tunnel to <code>coding.sh collector</code> and use
     <code>&lt;tunnel&gt;/v1/traces</code> as the drain URL. Each request becomes one model call with its billed cost. Failovers are not
-    counted as extra calls. <code>enrich</code> then links each request to the agent session that made it.
+    counted as extra calls. <code>enrich</code> then links each request to the agent session that made it. LiteLLM, Cloudflare, Portkey,
+    OpenRouter (Broadcast), TrueFoundry and Bifrost exports are tagged with their gateway and cost.
   </p>
 </DocsLayout>

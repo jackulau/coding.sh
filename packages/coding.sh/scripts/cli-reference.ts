@@ -28,7 +28,7 @@ const sentence = (s: string) => (/[.?!)]$/.test(s) ? s : `${s}.`);
 const anchor = (name: string) => name.replace(/\s+/g, "-");
 
 function flagSyntax(f: FlagSpec): string {
-  const long = f.type === "boolean" ? `--${f.name}` : `--${f.name} ${f.value ?? "<VALUE>"}`;
+  const long = f.type === "boolean" ? `--${f.name}` : f.optionalValue ? `--${f.name} [${f.value ?? "<VALUE>"}]` : `--${f.name} ${f.value ?? "<VALUE>"}`;
   return f.short ? `-${f.short}, ${long}` : long;
 }
 

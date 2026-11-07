@@ -55,7 +55,7 @@ Every command accepts these.
 | [`bench`](#codingsh-bench) | Evaluate | Dynamic benchmarks: fresh cases every run, same set for every contender |
 | [`harness`](#codingsh-harness) | Harness | Snapshot and list agent harness bundles |
 | [`compare`](#codingsh-compare) | Harness | A/B two harness bundles on eval tasks |
-| [`gateway`](#codingsh-gateway) | Maintain | Vercel AI Gateway: detect routing, enrich sessions with billed cost |
+| [`gateway`](#codingsh-gateway) | Maintain | LLM gateways: detect routing, enrich sessions with billed cost |
 | [`gc`](#codingsh-gc) | Maintain | Delete expired spool files, blobs and judge cache |
 | [`config`](#codingsh-config) | Maintain | Read and write ~/.coding.sh/config.toml |
 | [`update`](#codingsh-update) | Maintain | Install the latest coding.sh release |
@@ -1367,18 +1367,19 @@ coding.sh compare <A> [b] [options]
 | `-c, --concurrency <N>` |  | Parallel runs. |
 | `--experiment <ID>` |  | Compare the stored runs of this experiment instead of running. |
 | `--without <PATH>` |  | Ablation: B is A without this file, dir or glob (repeatable) |
-| `--gateway` |  | Route both arms through Vercel AI Gateway (key in AI_GATEWAY_API_KEY) |
+| `--gateway [<NAME>]` |  | Route both arms through a gateway. Without a name: [gateway] default, else the one with a key, else vercel. One of: `vercel`, `openrouter`, `litellm`, `ramp`. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. |
 
 ```sh
 coding.sh compare base candidate --k 3
 coding.sh compare base candidate --experiment exp_01
 coding.sh compare sonnet gpt5 --gateway
+coding.sh compare sonnet gpt5 --gateway openrouter
 ```
 
 ## `coding.sh gateway`
 
-Vercel AI Gateway: detect routing, enrich sessions with billed cost.
+LLM gateways: detect routing, enrich sessions with billed cost.
 
 ```text
 coding.sh gateway <action>
@@ -1386,15 +1387,15 @@ coding.sh gateway <action>
 
 | Action | What it does |
 |---|---|
-| [`status`](#codingsh-gateway-status) | Show which agents route through the gateway, the key source and tagged sessions |
-| [`enrich`](#codingsh-gateway-enrich) | Attach billed cost and serving provider to llm calls with a gateway generation id |
+| [`status`](#codingsh-gateway-status) | Show which agents route through a gateway, key sources and tagged sessions |
+| [`enrich`](#codingsh-gateway-enrich) | Attach billed cost and serving provider to llm calls with a gateway request id |
 
-- The key comes from AI_GATEWAY_API_KEY (or [gateway] apiKeyEnv / apiKey in config.toml) and is never printed or stored.
-- Lookups use GET /v1/generation; results are cached in the index, so re-runs make no calls.
+- Keys come from each gateway's standard env var (AI_GATEWAY_API_KEY, OPENROUTER_API_KEY, LITELLM_PROXY_API_KEY, CLOUDFLARE_API_TOKEN, PORTKEY_API_KEY, HELICONE_API_KEY) or [gateway] / [gateway.&lt;name&gt;] apiKeyEnv / apiKey in config.toml, and are never printed or stored.
+- Lookups use each gateway's per-request API (Vercel and OpenRouter /generation, LiteLLM /spend/logs, Cloudflare logs, Portkey logs, Helicone /v1/request); results are cached in the index, so re-runs make no calls.
 
 ### `coding.sh gateway status`
 
-Show which agents route through the gateway, the key source and tagged sessions.
+Show which agents route through a gateway, key sources and tagged sessions.
 
 ```text
 coding.sh gateway status [options]
@@ -1402,11 +1403,17 @@ coding.sh gateway status [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--credits` |  | Also fetch the credit balance (needs the key) |
+| `--gateway <NAME>` |  | Only this gateway. One of: `vercel`, `openrouter`, `litellm`, `cloudflare`, `portkey`, `helicone`, `requesty`, `ramp`, `truefoundry`, `kong`, `bifrost`, `martian`. |
+| `--credits` |  | Also fetch the credit balance (Vercel, OpenRouter; needs the key) |
+
+```sh
+coding.sh gateway status
+coding.sh gateway status --gateway openrouter --credits
+```
 
 ### `coding.sh gateway enrich`
 
-Attach billed cost and serving provider to llm calls with a gateway generation id.
+Attach billed cost and serving provider to llm calls with a gateway request id.
 
 ```text
 coding.sh gateway enrich [options]
@@ -1414,6 +1421,7 @@ coding.sh gateway enrich [options]
 
 | Option | Default | Description |
 |---|---|---|
+| `--gateway <NAME>` |  | Only this gateway. One of: `vercel`, `openrouter`, `litellm`, `cloudflare`, `portkey`, `helicone`, `requesty`, `ramp`, `truefoundry`, `kong`, `bifrost`, `martian`. |
 | `-s, --session <ID>` |  | Only this session (repeatable; or latest) |
 | `--since <WHEN>` | `30d` | Sessions after this time: 7d, 12h, 30m or a date. |
 | `-n, --limit <N>` | `500` | Maximum rows. |
@@ -1423,6 +1431,7 @@ coding.sh gateway enrich [options]
 ```sh
 coding.sh gateway enrich
 coding.sh gateway enrich --session latest --dry-run
+coding.sh gateway enrich --gateway openrouter
 ```
 
 ## `coding.sh gc`

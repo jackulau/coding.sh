@@ -10,7 +10,11 @@
 // - a gateway provider name (Codex `model_provider = "vercel"`, OpenCode's
 //   `vercel` provider, the AI SDK's `gateway` provider, Pi's
 //   `vercel-ai-gateway`) or a gateway-only model id (`claude-code/…`, `vmc/…`).
+//
+// Other gateways (providers.ts) are spotted the same way, by host, id shape or
+// provider name; gatewayOfEvent says which one.
 import type { AgentEvent } from "../../schema/index.ts";
+import { gatewayFlag, gatewayForId, gatewayForProvider, gatewayForUrl, GATEWAYS, isGatewayId, type GatewayId } from "./providers.ts";
 
 export const GATEWAY_HOST = "ai-gateway.vercel.sh";
 export const GATEWAY_API_BASE = `https://${GATEWAY_HOST}/v1`;
@@ -22,9 +26,9 @@ export const GATEWAY_ID = "vercel";
 export const GATEWAY_AGENT = "ai-gateway";
 
 /** `gen_` + a 26-char Crockford base32 ULID, e.g. gen_01ARZ3NDEKTSV4RRFFQ69G5FAV. */
-export const GENERATION_ID = /^gen_[0-9A-HJKMNP-TV-Z]{26}$/i;
+export const GENERATION_ID = GATEWAYS.vercel.idPattern!;
 
-const PROVIDERS = new Set(["vercel", "vercel-ai-gateway", "vercel-gateway", "ai-gateway", "gateway", "vercel.ai_gateway"]);
+const PROVIDERS = new Set(GATEWAYS.vercel.providers);
 const GATEWAY_MODEL = /^(claude-code|vmc)\//;
 
 /** `vmc/<slug>` for a virtual-model id, with or without Claude Code's `claude-code/` prefix. */
@@ -47,9 +51,17 @@ export function isGatewayUrl(url: unknown): boolean {
   }
 }
 
-/** "vercel" when any base-URL env var points at the gateway, else undefined. Reads names, never key values. */
-export function gatewayFromEnv(env: NodeJS.ProcessEnv): typeof GATEWAY_ID | undefined {
-  return BASE_URL_VARS.some((k) => isGatewayUrl(env[k])) ? GATEWAY_ID : undefined;
+/**
+ * The gateway a base-URL env var points at ("vercel", "openrouter", ...), else
+ * undefined. Vercel wins when several are set. Reads URLs, never key values.
+ */
+export function gatewayFromEnv(env: NodeJS.ProcessEnv): GatewayId | undefined {
+  if (BASE_URL_VARS.some((k) => isGatewayUrl(env[k]))) return GATEWAY_ID;
+  for (const k of BASE_URL_VARS) {
+    const g = gatewayForUrl(env[k], env);
+    if (g) return g;
+  }
+  return undefined;
 }
 
 export const isGenerationId = (v: unknown): v is string => typeof v === "string" && GENERATION_ID.test(v);
@@ -65,14 +77,67 @@ export function generationIdOf(e: Pick<AgentEvent, "payload">): string | undefin
   return undefined;
 }
 
-/** True when this event shows a model call (or capture) that went through the gateway. */
+/** True when this event shows a model call (or capture) that went through Vercel AI Gateway. */
 export function isGatewayEvent(e: AgentEvent): boolean {
   if (e.agent === GATEWAY_AGENT) return true;
   const p = e.payload;
   if (p.gateway === GATEWAY_ID || p.gateway === true) return true;
+  if (isGatewayId(p.gateway)) return false;
   if (e.kind !== "llm.call" && e.kind !== "session.start") return false;
   if (generationIdOf(e)) return true;
   if (typeof p.gatewaySessionId === "string" && p.gatewaySessionId) return true;
   if (isGatewayProvider(p.provider)) return true;
   return [e.model, p.requestModel, p.responseModel].some((m) => typeof m === "string" && GATEWAY_MODEL.test(m));
+}
+
+/** `openrouter/<creator>/<model>` (OpenCode's built-in provider) and similar gateway-prefixed model ids. */
+const PREFIXED_MODEL = /^(openrouter|requesty|litellm_proxy|portkey|helicone|martian)\//;
+
+/** Which gateway this event's model call went through, if any. */
+export function gatewayOfEvent(e: AgentEvent): GatewayId | undefined {
+  if (isGatewayEvent(e)) return GATEWAY_ID;
+  const p = e.payload;
+  if (isGatewayId(p.gateway)) return p.gateway;
+  if (e.kind !== "llm.call" && e.kind !== "session.start") return undefined;
+  for (const k of ["gatewayGenerationId", "generationId", "responseId", "messageId", "requestId", "id"]) {
+    const g = gatewayForId(p[k]);
+    if (g) return g;
+  }
+  const byProvider = gatewayForProvider(p.provider);
+  if (byProvider) return byProvider;
+  for (const m of [e.model, p.requestModel, p.responseModel]) {
+    const hit = typeof m === "string" ? PREFIXED_MODEL.exec(m) : null;
+    if (hit) return gatewayForProvider(hit[1]);
+  }
+  return undefined;
+}
+
+/** Gateway flags ("gateway:<id>") for a session's events, in registry order. */
+export function gatewayFlags(events: readonly AgentEvent[]): string[] {
+  const seen = new Set<GatewayId>();
+  for (const e of events) {
+    const g = gatewayOfEvent(e);
+    if (g) seen.add(g);
+  }
+  return [...seen].sort((a, b) => Object.keys(GATEWAYS).indexOf(a) - Object.keys(GATEWAYS).indexOf(b)).map(gatewayFlag);
+}
+
+/**
+ * The (gateway, request id) an event can be looked up by: an explicit
+ * payload.gatewayGenerationId with payload.gateway naming the gateway, or an id
+ * whose shape belongs to one gateway.
+ */
+export function gatewayRequestOf(e: Pick<AgentEvent, "payload">): { gateway: GatewayId; id: string } | undefined {
+  const p = e.payload;
+  const explicit = typeof p.gatewayGenerationId === "string" && p.gatewayGenerationId ? p.gatewayGenerationId : undefined;
+  if (explicit && isGatewayId(p.gateway)) {
+    const shaped = gatewayForId(explicit);
+    // An id with a known shape always belongs to that gateway.
+    return { gateway: shaped ?? p.gateway, id: explicit };
+  }
+  for (const k of ["gatewayGenerationId", "generationId", "responseId", "messageId", "requestId", "id"]) {
+    const g = gatewayForId(p[k]);
+    if (g) return { gateway: g, id: p[k] as string };
+  }
+  return undefined;
 }

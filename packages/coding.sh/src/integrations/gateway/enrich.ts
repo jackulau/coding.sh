@@ -1,6 +1,14 @@
 // `coding.sh gateway enrich`: attach what the gateway billed, and which provider
 // served it, to captured llm.call events.
 //
+// Vercel AI Gateway has the most ways to link (below). Other gateways
+// (providers.ts) link by request id only: an id with the gateway's shape
+// (OpenRouter `gen-…`, Requesty `rqsty-…`) or payload.gatewayGenerationId with
+// payload.gateway naming the gateway (set by OTLP enrichment, e.g. LiteLLM's
+// litellm.call_id). Their records come from the cache, then the gateway's
+// lookup API (lookups.ts), or, for gateways without one, from the cost the
+// call itself carried (payload.billedCostUsd).
+//
 // Linking an llm.call to a gateway generation:
 // 1. by generation id: payload.gatewayGenerationId, or a responseId /
 //    messageId / requestId that is a `gen_<ulid>` (the gateway returns the
@@ -29,11 +37,15 @@ import type { IndexStore } from "../../core/types.ts";
 import type { AgentEvent, Session } from "../../schema/index.ts";
 import { pool } from "../../runner/experiment.ts";
 import { billedCostUsd, type GatewayClient, type GenerationInfo } from "./client.ts";
-import { GATEWAY_AGENT, GATEWAY_ID, generationIdOf, isGenerationId, virtualModelId } from "./ids.ts";
+import { GATEWAY_AGENT, GATEWAY_ID, gatewayRequestOf, generationIdOf, isGenerationId, virtualModelId } from "./ids.ts";
+import { GATEWAYS, type GatewayId } from "./providers.ts";
 
 export const ENRICH_SOURCE = "gateway";
 export const GENERATION_SPAN = "vercel.ai_gateway.generation";
-export const genCacheKey = (id: string): string => `gateway:gen:${id}`;
+/** kv cache key for a generation record (Vercel keeps the original, unprefixed key). */
+export const genCacheKey = (id: string, gateway: GatewayId = "vercel"): string => (gateway === "vercel" ? `gateway:gen:${id}` : `gateway:${gateway}:gen:${id}`);
+/** Name of the companion span for a gateway. */
+export const generationSpanName = (gateway: GatewayId): string => (gateway === "vercel" ? GENERATION_SPAN : `${gateway}.generation`);
 /** Max distance between a drained request and an agent call joined by session id. */
 export const SESSION_JOIN_MS = 5 * 60_000;
 type LinkedBy = "generation-id" | "provider-response-id" | "client-session-id";
@@ -42,8 +54,12 @@ export interface EnrichOptions {
   index: IndexStore;
   /** Sessions to enrich (gateway drain sessions are skipped). */
   sessions: Session[];
-  /** REST client; omit to use only the cache and drained traces (no network). */
+  /** Vercel AI Gateway REST client; omit to use only the cache and drained traces (no network). */
   client?: GatewayClient;
+  /** Lookup clients for other gateways (and Vercel, overriding `client`). */
+  clients?: Partial<Record<GatewayId, GatewayClient>>;
+  /** Only link calls through this gateway. */
+  only?: GatewayId;
   /** Parallel lookups. Default 4. */
   concurrency?: number;
   /** Cap on REST lookups per run. Default 1000. */
@@ -68,6 +84,12 @@ export interface EnrichReport {
   pending: number;
   /** Linkable calls left alone because no key was given and nothing local had the record. */
   needKey: number;
+  /** needKey by gateway. */
+  needKeyBy: Record<string, number>;
+  /** Linked calls through a gateway with no lookup API and no cost on the call. */
+  noLookup: number;
+  /** Newly enriched calls by gateway. */
+  byGateway: Record<string, number>;
   /** Sum of billed cost over newly enriched calls. */
   billedUsd: number;
   /** Provider that served each newly enriched call → count. */
@@ -140,13 +162,26 @@ async function loadDrain(index: IndexStore, since: number | undefined): Promise<
 }
 
 function emptyReport(): EnrichReport {
-  return { sessions: 0, calls: 0, linkable: 0, enriched: 0, alreadyEnriched: 0, fromCache: 0, fromDrain: 0, fetched: 0, pending: 0, needKey: 0, billedUsd: 0, providers: {}, touchedSessions: [], errors: [] };
+  return { sessions: 0, calls: 0, linkable: 0, enriched: 0, alreadyEnriched: 0, fromCache: 0, fromDrain: 0, fetched: 0, pending: 0, needKey: 0, needKeyBy: {}, noLookup: 0, byGateway: {}, billedUsd: 0, providers: {}, touchedSessions: [], errors: [] };
+}
+
+/** A record from what the call itself carried (gateways that return cost in-band but have no lookup API). */
+function fromCallPayload(call: AgentEvent, id: string): GenerationInfo | undefined {
+  const p = call.payload;
+  const cost = num(p.billedCostUsd);
+  if (cost === undefined) return undefined;
+  const g: GenerationInfo = { id, totalCostUsd: cost };
+  const provider = s(p.servedProvider);
+  if (provider) g.provider = provider;
+  const model = s(p.responseModel) ?? call.model;
+  if (model) g.model = model;
+  return g;
 }
 
 /** The companion event for one linked llm.call. */
-export function generationEvent(call: AgentEvent, g: GenerationInfo, linkedBy: LinkedBy): AgentEvent {
+export function generationEvent(call: AgentEvent, g: GenerationInfo, linkedBy: LinkedBy, gateway: GatewayId = GATEWAY_ID): AgentEvent {
   const billed = billedCostUsd(g);
-  const p: Record<string, unknown> = { name: GENERATION_SPAN, gateway: GATEWAY_ID, generationId: g.id, llmEventId: call.id, linkedBy };
+  const p: Record<string, unknown> = { name: generationSpanName(gateway), gateway, generationId: g.id, llmEventId: call.id, linkedBy };
   const set = (k: string, v: unknown) => {
     if (v !== undefined) p[k] = v;
   };
@@ -199,12 +234,14 @@ export async function enrichSessions(o: EnrichOptions): Promise<EnrichReport> {
   r.sessions = sessions.length;
   if (!sessions.length) return r;
   const since = Math.min(...sessions.map((x) => x.startedAt));
-  const drain = await loadDrain(index, since);
+  const vercel = !o.only || o.only === GATEWAY_ID;
+  const drain: DrainIndex = vercel ? await loadDrain(index, since) : { byGen: new Map(), byResponseId: new Map(), bySession: new Map() };
 
   // 1. Link calls.
   interface Pending {
     call: AgentEvent;
     gen: string;
+    gateway: GatewayId;
     linkedBy: LinkedBy;
   }
   const todo: Pending[] = [];
@@ -217,6 +254,7 @@ export async function enrichSessions(o: EnrichOptions): Promise<EnrichReport> {
       if (call.kind !== "llm.call") continue;
       r.calls++;
       let gen = generationIdOf(call);
+      let gateway: GatewayId = GATEWAY_ID;
       let linkedBy: LinkedBy = "generation-id";
       if (!gen) {
         for (const k of ["messageId", "responseId", "requestId"]) {
@@ -230,6 +268,15 @@ export async function enrichSessions(o: EnrichOptions): Promise<EnrichReport> {
         }
       }
       if (!gen || !isGenerationId(gen)) {
+        const other = gatewayRequestOf(call);
+        if (other && other.gateway !== GATEWAY_ID) {
+          gen = other.id;
+          gateway = other.gateway;
+        }
+      }
+      if (o.only && gen && gateway !== o.only && (gateway !== GATEWAY_ID || isGenerationId(gen))) continue;
+      if (!gen || (gateway === GATEWAY_ID && !isGenerationId(gen))) {
+        if (!vercel) continue;
         if (!done.has(call.id)) unlinked.push(call);
         else {
           // Linked on an earlier run by client session id.
@@ -244,7 +291,7 @@ export async function enrichSessions(o: EnrichOptions): Promise<EnrichReport> {
         r.alreadyEnriched++;
         continue;
       }
-      todo.push({ call, gen, linkedBy });
+      todo.push({ call, gen, gateway, linkedBy });
     }
     // Session affinity join: drained requests in this session (by client session id), each to the
     // nearest unlinked call within SESSION_JOIN_MS. The call's own gatewaySessionId, when the agent
@@ -261,64 +308,84 @@ export async function enrichSessions(o: EnrichOptions): Promise<EnrichReport> {
       unlinked.splice(unlinked.indexOf(best), 1);
       takenGens.add(q.gen);
       r.linkable++;
-      todo.push({ call: best, gen: q.gen, linkedBy: "client-session-id" });
+      todo.push({ call: best, gen: q.gen, gateway: GATEWAY_ID, linkedBy: "client-session-id" });
     }
   }
 
-  // 2. Resolve generation records: cache → drain → REST.
+  // 2. Resolve generation records: cache → drain (Vercel) → lookup API, or the call's own cost.
+  const rkey = (gateway: GatewayId, id: string) => `${gateway}\u0000${id}`;
   const records = new Map<string, GenerationInfo>();
-  const toFetch: string[] = [];
-  for (const id of new Set(todo.map((t) => t.gen))) {
-    const cached = index.kvGet ? await index.kvGet(genCacheKey(id)) : undefined;
+  const toFetch: { gateway: GatewayId; id: string }[] = [];
+  const firstCall = new Map<string, AgentEvent>();
+  for (const t of todo) if (!firstCall.has(rkey(t.gateway, t.gen))) firstCall.set(rkey(t.gateway, t.gen), t.call);
+  for (const [key, call] of firstCall) {
+    const [gateway, id] = key.split("\u0000") as [GatewayId, string];
+    const cached = index.kvGet ? await index.kvGet(genCacheKey(id, gateway)) : undefined;
     if (cached) {
       try {
-        records.set(id, JSON.parse(cached) as GenerationInfo);
+        records.set(key, JSON.parse(cached) as GenerationInfo);
         r.fromCache++;
         continue;
       } catch {
         // corrupt entry: refetch
       }
     }
-    const d = drain.byGen.get(id);
+    const d = gateway === GATEWAY_ID ? drain.byGen.get(id) : undefined;
     if (d) {
-      records.set(id, d);
+      records.set(key, d);
       r.fromDrain++;
       if (!o.dryRun && index.kvSet) await index.kvSet(genCacheKey(id), JSON.stringify(d));
       continue;
     }
-    toFetch.push(id);
+    if (!GATEWAYS[gateway].lookup) {
+      // No lookup API: the cost the call carried is the record (nothing to cache).
+      const own = fromCallPayload(call, id);
+      if (own) records.set(key, own);
+      else r.noLookup++;
+      continue;
+    }
+    toFetch.push({ gateway, id });
   }
-  if (o.client) {
-    const client = o.client;
-    const capped = toFetch.slice(0, o.maxLookups ?? 1000);
-    r.pending += toFetch.length - capped.length;
-    await pool(capped, o.concurrency ?? 4, async (id) => {
-      if (o.signal?.aborted) return;
-      try {
-        const res = await client.generation(id, o.signal);
-        if (res.status === "pending") {
-          r.pending++;
-          return;
-        }
-        records.set(id, res.info);
-        r.fetched++;
-        if (!o.dryRun && index.kvSet) await index.kvSet(genCacheKey(id), JSON.stringify(res.info));
-      } catch (e) {
-        if (r.errors.length < 5) r.errors.push(e instanceof Error ? e.message : String(e));
+  const clientFor = (gateway: GatewayId): GatewayClient | undefined => o.clients?.[gateway] ?? (gateway === GATEWAY_ID ? o.client : undefined);
+  const fetchable = toFetch.filter((f) => {
+    if (clientFor(f.gateway)) return true;
+    r.needKey++;
+    r.needKeyBy[f.gateway] = (r.needKeyBy[f.gateway] ?? 0) + 1;
+    return false;
+  });
+  const capped = fetchable.slice(0, o.maxLookups ?? 1000);
+  r.pending += fetchable.length - capped.length;
+  await pool(capped, o.concurrency ?? 4, async ({ gateway, id }) => {
+    if (o.signal?.aborted) return;
+    try {
+      const res = await clientFor(gateway)!.generation(id, o.signal);
+      if (res.status === "pending") {
+        r.pending++;
+        return;
       }
-    });
-  } else r.needKey += toFetch.length;
+      records.set(rkey(gateway, id), res.info);
+      r.fetched++;
+      if (!o.dryRun && index.kvSet) await index.kvSet(genCacheKey(id, gateway), JSON.stringify(res.info));
+    } catch (e) {
+      if (r.errors.length < 5) r.errors.push(e instanceof Error ? e.message : String(e));
+    }
+  });
 
   // 3. Write companion events and rebuild touched sessions.
   const out: AgentEvent[] = [];
   for (const t of todo) {
-    const g = records.get(t.gen);
+    const g = records.get(rkey(t.gateway, t.gen));
     if (!g) continue;
-    const e = generationEvent(t.call, g, t.linkedBy);
+    const e = generationEvent(t.call, g, t.linkedBy, t.gateway);
     out.push(e);
     const billed = num(e.payload.billedCostUsd);
     if (billed !== undefined) r.billedUsd += billed;
-    if (g.provider) r.providers[g.provider] = (r.providers[g.provider] ?? 0) + 1;
+    if (g.provider) {
+      // Gateways spell providers differently ("Anthropic", "anthropic"); count them as one.
+      const key = Object.keys(r.providers).find((k) => k.toLowerCase() === g.provider!.toLowerCase()) ?? g.provider;
+      r.providers[key] = (r.providers[key] ?? 0) + 1;
+    }
+    r.byGateway[t.gateway] = (r.byGateway[t.gateway] ?? 0) + 1;
   }
   r.enriched = out.length;
   r.billedUsd = Math.round(r.billedUsd * 1e6) / 1e6;

@@ -1,7 +1,7 @@
 // Session aggregation and failure-pattern detection. Pure functions over a
 // session's full event list, so re-running them after every ingest is exact
 // (no incremental state to drift).
-import { GATEWAY_FLAG, isGatewayEvent } from "../integrations/gateway/ids.ts";
+import { GATEWAY_FLAG, gatewayFlags } from "../integrations/gateway/ids.ts";
 import type { AgentEvent, DuplicateUsage, LatencyStats, Session, Usage } from "../schema/index.ts";
 
 export const FLAGS = {
@@ -9,7 +9,7 @@ export const FLAGS = {
   repeatedToolFailure: "repeated-tool-failure",
   noVerification: "no-verification",
   compaction: "compaction",
-  /** A tag, not a failure: model calls went through Vercel AI Gateway. */
+  /** A tag, not a failure: model calls went through Vercel AI Gateway. Other gateways get "gateway:<id>". */
   gateway: GATEWAY_FLAG,
 } as const;
 
@@ -551,7 +551,7 @@ export function detectFlags(events: AgentEvent[]): string[] {
   if (detectRepeatedToolFailure(sorted)) flags.push(FLAGS.repeatedToolFailure);
   if (detectNoVerification(sorted)) flags.push(FLAGS.noVerification);
   if (sorted.some((e) => e.kind === "context.compact")) flags.push(FLAGS.compaction);
-  if (sorted.some(isGatewayEvent)) flags.push(FLAGS.gateway);
+  flags.push(...gatewayFlags(sorted));
   return flags;
 }
 

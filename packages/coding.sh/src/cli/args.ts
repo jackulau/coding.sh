@@ -15,6 +15,12 @@ export interface FlagSpec {
   /** Shown as "(default: X)". */
   default?: string;
   choices?: readonly string[];
+  /**
+   * String flag whose value may be left out (the flag is then `true`). A
+   * following token is taken as its value only when it is one of `choices`,
+   * so `--gateway a b` keeps `a` and `b` as positionals.
+   */
+  optionalValue?: boolean;
   /** Accepted but left out of help, `--help --json` and the CLI reference (internal plumbing). */
   hidden?: boolean;
 }
@@ -106,6 +112,10 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
       else throw new UsageError(`${label} takes no value, got ${JSON.stringify(raw)}`);
       return;
     }
+    if (raw === undefined && spec.optionalValue) {
+      flags[spec.name] = true;
+      return;
+    }
     if (raw === undefined) throw new UsageError(`${token} needs a value${spec.value ? ` ${spec.value}` : ""}`, { reason: "missing_value" });
     if (spec.choices && !spec.choices.includes(raw)) {
       throw new UsageError(`${label} must be one of ${spec.choices.join(", ")}, got ${JSON.stringify(raw)}`, { suggestion: suggest(raw, spec.choices) ? `${label} ${suggest(raw, spec.choices)}` : undefined });
@@ -143,7 +153,12 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
       }
       if (!spec) unknown(token);
       spec = spec!;
-      if (spec.type !== "boolean" && inline === undefined) {
+      if (spec.optionalValue && inline === undefined) {
+        const next = argv[i + 1];
+        const take = next !== undefined && spec.choices?.includes(next) === true;
+        if (take) i++;
+        assign(spec, take ? next : undefined, token);
+      } else if (spec.type !== "boolean" && inline === undefined) {
         const next = argv[i + 1];
         if (next === undefined || (next.startsWith("-") && next !== "-" && !/^-\d/.test(next))) throw new UsageError(`${token} needs a value${spec.value ? ` ${spec.value}` : ""}`, { reason: "missing_value" });
         i++;

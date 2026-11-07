@@ -1,17 +1,99 @@
-# Vercel AI Gateway
+# LLM gateways
 
-[AI Gateway](https://vercel.com/docs/ai-gateway) is one endpoint and one key for hundreds of models. coding.sh works with it in four ways:
+coding.sh works with the common LLM gateways. It tags sessions whose model calls went through one, adds what each
+call cost and which provider served it, and can run A/B experiments through a gateway with one key.
+
+| Gateway | Detect | `gateway enrich` | OTel spans | `compare --gateway` | Key |
+| --- | --- | --- | --- | --- | --- |
+| Vercel AI Gateway | yes | `/v1/generation` | trace drains, AI SDK | `vercel` | `AI_GATEWAY_API_KEY` |
+| OpenRouter | yes | `/api/v1/generation` | Broadcast, AI SDK | `openrouter` | `OPENROUTER_API_KEY` |
+| LiteLLM proxy | by URL | `/spend/logs` | yes | `litellm` | `LITELLM_PROXY_API_KEY` |
+| Cloudflare AI Gateway | yes | logs API | yes | no | `CLOUDFLARE_API_TOKEN` |
+| Portkey | yes | `/v1/logs/{id}` | yes | no | `PORTKEY_API_KEY` |
+| Helicone | yes | `/v1/request/{id}` | no | no | `HELICONE_API_KEY` |
+| Ramp Router (router.com) | yes | cost from the response | no | `ramp` | `RAMP_ROUTER_API_KEY` |
+| Requesty | yes | cost from the response | no | no | `REQUESTY_API_KEY` |
+| TrueFoundry, Kong, Bifrost, Martian | yes | no | TrueFoundry, Bifrost | no | |
+
+Sources and response shapes: [docs/research/gateways.md](../research/gateways.md).
 
 | What | How | Code |
 | --- | --- | --- |
-| Detect | Sessions whose calls went through the gateway get the tag `gateway:vercel`. `coding.sh doctor` and `coding.sh gateway status` show which agent configs route through it. | `src/integrations/gateway/ids.ts`, `config.ts` |
-| Cost | `coding.sh gateway enrich` adds the billed cost and the serving provider to each linked llm call. | `enrich.ts`, `client.ts` |
-| Traces | The OTLP receiver maps gateway trace drains and AI SDK `gateway` spans. | `otel.ts` |
-| Experiments | `coding.sh compare a b --gateway` runs both arms through the gateway. LLM graders take `"provider": "gateway"`. | `route.ts` |
+| Detect | Sessions get a `gateway:<name>` tag, e.g. `gateway:openrouter`. `coding.sh gateway status` and `coding.sh doctor` show which agent configs route through a gateway. | `src/integrations/gateway/providers.ts`, `ids.ts`, `config.ts` |
+| Cost | `coding.sh gateway enrich` adds the billed cost and the serving provider to each linked llm call. | `enrich.ts`, `client.ts`, `lookups.ts` |
+| Traces | The OTLP receiver tags spans exported by a gateway or sent by an app that called one. | `otel.ts` |
+| Experiments | `coding.sh compare a b --gateway [name]` runs both arms through a gateway. LLM graders take `"provider": "gateway"` (Vercel). | `route.ts` |
 
-Tests mock the gateway API with a local server. Nothing in the test suite calls Vercel.
+Tests stub every gateway API. Nothing in the test suite makes a network call to a gateway.
 
-## Route an agent through the gateway
+## Keys and config
+
+Each gateway reads its standard env var (table above). To read a key from elsewhere, or to set a self-hosted URL,
+add a table to `~/.coding.sh/config.toml`:
+
+```toml
+[gateway]                 # Vercel AI Gateway
+apiKeyEnv = "AI_GATEWAY_API_KEY"
+default = "openrouter"    # what a bare `compare --gateway` uses
+
+[gateway.openrouter]
+apiKeyEnv = "MY_OPENROUTER_KEY"
+
+[gateway.litellm]
+baseUrl = "http://localhost:4000"   # or LITELLM_PROXY_API_BASE
+
+[gateway.cloudflare]
+apiKey = "${CLOUDFLARE_API_TOKEN}"
+accountId = "<32 hex>"              # or CLOUDFLARE_ACCOUNT_ID
+gatewayId = "prod"
+```
+
+Cloudflare's account and gateway id also come from a base URL like
+`https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/…`. LiteLLM also accepts `LITELLM_API_KEY` or
+`LITELLM_MASTER_KEY`; spend logs need a key that can read them. coding.sh never prints, logs or stores a key.
+
+## How calls link to a gateway record
+
+- **Vercel**: by generation id, by the provider's response id in drained traces, or by client session id (below).
+- **OpenRouter** and **Requesty**: the response id is the gateway id (`gen-…`, `rqsty-…`), so Codex, the SDKs and
+  OpenAI-compatible clients link without extra setup.
+- **LiteLLM**: by `litellm.call_id` from its OTel export.
+- **Cloudflare, Portkey, Helicone**: by `payload.gatewayGenerationId` with `payload.gateway` set, for apps that
+  record the `cf-aig-log-id`, Portkey log id or `helicone-id` header themselves. Agents do not keep response
+  headers, so for these gateways detection works out of the box and enrichment needs that id.
+- **Ramp Router, Requesty**: no lookup API. A cost the call already carried (`usage.cost` in the response, mapped to
+  `billedCostUsd`) is used as the record.
+
+```sh
+coding.sh gateway status                       # gateways with a key, config, routing or sessions
+coding.sh gateway status --gateway openrouter --credits
+coding.sh gateway enrich                       # every gateway with a key
+coding.sh gateway enrich --gateway litellm --dry-run
+coding.sh sessions --flag gateway:openrouter
+```
+
+## Other gateways in agent configs
+
+Point the agent's base URL at the gateway. For example, Claude Code through OpenRouter:
+
+```json
+{ "env": {
+  "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+  "ANTHROPIC_AUTH_TOKEN": "<your OpenRouter key>",
+  "ANTHROPIC_API_KEY": ""
+} }
+```
+
+OpenCode's `openrouter/<model>` and Pi's `openrouter` provider are detected too. A self-hosted gateway is detected
+when its URL env var (`LITELLM_PROXY_API_BASE`, `LITELLM_PROXY_URL`, `KONG_PROXY_URL`, `BIFROST_URL`) names the
+same host as the agent's base URL.
+
+## Vercel AI Gateway
+
+[AI Gateway](https://vercel.com/docs/ai-gateway) has the deepest support: trace drains, session joins and routes for
+four agents.
+
+### Route an agent through the gateway
 
 Create a key at vercel.com/ai-gateway and export it as `AI_GATEWAY_API_KEY` ([coding agents docs](https://vercel.com/docs/ai-gateway/coding-agents)).
 
@@ -48,7 +130,7 @@ wire_api = "responses"
 const { text } = await generateText({ model: "openai/gpt-5", prompt, experimental_telemetry: { isEnabled: true } });
 ```
 
-## Detection
+### Detection
 
 Detection is read-only. coding.sh reads agent configs and env var names, never key values.
 
@@ -60,7 +142,7 @@ A session is tagged `gateway:vercel` on any of these signals:
 
 The tag is not a failure. `failures` and `--flagged` ignore namespaced flags. To list tagged sessions, run `coding.sh sessions --flag gateway:vercel`.
 
-## Cost and provider per call
+### Cost and provider per call
 
 ```sh
 coding.sh gateway enrich              # last 30 days
@@ -84,7 +166,7 @@ For `vmc/<slug>` virtual models, each call records `virtualModel` and the `resol
 
 The key comes from `AI_GATEWAY_API_KEY` by default. To read it from elsewhere, set `[gateway] apiKeyEnv = "NAME"` or `apiKey = "${NAME}"` in `~/.coding.sh/config.toml`. coding.sh never prints, logs or stores the key. Captured `vck_…` keys are redacted.
 
-## Trace drains
+### Trace drains
 
 [Trace drains](https://vercel.com/docs/ai-gateway/observability-and-spend/trace-drains) need a Pro or Enterprise plan. They export one OTLP trace per request, and the endpoint must be publicly reachable. Tunnel to the local collector (`coding.sh collector`) and set the drain URL to `<tunnel>/v1/traces`.
 
@@ -94,7 +176,7 @@ The receiver maps each request as follows:
 - **Routing and attempt spans**: plain spans, so failovers don't count as extra calls.
 - **Session**: requests carry no conversation id, so they group into a daily session `ai-gateway-YYYY-MM-DD`. `gateway enrich` links them back to agent sessions.
 
-## A/B across models with one key
+### A/B across models with one key
 
 ```sh
 coding.sh compare sonnet gpt5 --gateway --k 3
@@ -109,18 +191,23 @@ Each arm runs its bundle's model through the gateway:
 
 The route applies to the agent only, never to setup or the verifier.
 
+Other gateways: `--gateway openrouter` routes Claude Code (Anthropic endpoint at `https://openrouter.ai/api`), Codex
+(Responses API), OpenCode and Pi. `--gateway litellm` routes Claude Code and Codex through the proxy URL, and
+`--gateway ramp` routes them through `https://api.router.com`. A bare `--gateway` uses `[gateway] default`, else
+Vercel when its key is set, else the one other gateway with a key.
+
 For `coding.sh exp`, give the command task the model in its env and run once per model. Then use `exp compare`.
 
 ```sh
 coding.sh exp run --dataset qa --task '{"kind":"command","command":"node agent.mjs","env":{"MODEL":"anthropic/claude-sonnet-4.5"}}' --grader '{"kind":"llm","provider":"gateway","model":"openai/gpt-5"}'
 ```
 
-## T3 Code
+### T3 Code
 
 T3 Code drives Claude Code and Codex, so gateway routing comes from those agents' own config, set as above. Detection works per event, so T3 Code sessions get tagged and enriched as long as the T3 Code adapter keeps `provider`, `responseId` and `messageId` on its llm calls.
 
-## Limits
+### Limits
 
-- **Logs**: the gateway does not expose request logs over its API. Per-call data comes from `/v1/generation` or drains.
+- **Logs**: Vercel does not expose request logs over its API. Per-call data comes from `/v1/generation` or drains.
 - **Claude Code ids**: Claude Code message ids are provider ids, not generation ids. Without a drain, Claude Code calls link only by client session id, and only if the transcript keeps `provider_metadata.gateway.routing`.
 - **Session id in drains**: drain spans have no client session id attribute as of November 2026. coding.sh reads `session.id` if one appears.

@@ -2,8 +2,9 @@
 // (src/runner/experiment.ts), or re-analyse the stored runs of an experiment.
 // `compare <a> --without <path>` derives B as A minus a skill, AGENTS.md or MCP config.
 import { getAdapter } from "../../adapters/index.ts";
-import { gatewaySettings } from "../../integrations/gateway/config.ts";
-import { gatewayRoute, ROUTABLE_AGENTS } from "../../integrations/gateway/route.ts";
+import { defaultGateway, gatewayConfig, gatewaySettings, type GatewayConfig } from "../../integrations/gateway/config.ts";
+import { GATEWAYS, resolveGatewayName, type GatewayId } from "../../integrations/gateway/providers.ts";
+import { gatewayRoute, routableAgents, routeVia, ROUTABLE_AGENTS, ROUTABLE_GATEWAYS } from "../../integrations/gateway/route.ts";
 import { ablateBundle, type Ablation } from "../../runner/bundle.ts";
 import { git } from "../../runner/git.ts";
 import { hasGlob } from "../../runner/glob.ts";
@@ -18,7 +19,7 @@ import type { CommandContext } from "../types.ts";
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
   // Fail on a missing gateway key before touching the store or running anything.
-  const gatewayKey = c.flags.gateway === true ? requireGatewayKey(c.env) : undefined;
+  const gateway = c.flags.gateway === undefined || c.flags.gateway === false ? undefined : requireGateway(c.env, c.flags.gateway === true ? defaultGateway(c.env) : String(c.flags.gateway));
   return withContext(c, async (ctx) => {
     const without = list(c.flags.without);
     if (without.length && c.positionals.length > 1) throw new UsageError("--without derives the second arm from the first; pass one bundle", { reason: "invalid_argument" });
@@ -67,7 +68,7 @@ export async function run(c: CommandContext): Promise<number> {
         throw new UsageError(`nothing to ablate: ${ablation.unmatched.join(", ")} is in neither bundle ${A.name} nor any selected task's repo`, { reason: "nothing_to_ablate" });
       }
       for (const b of bundles) if (!getAdapter(b.agent)?.run) throw new CliError(`Agent ${b.agent} has no headless driver, so bundle ${b.name} can't be run`, { reason: "unsupported_agent" });
-      const route = gatewayKey ? gatewayRouteFor(bundles, gatewayKey) : undefined;
+      const route = gateway ? gatewayRouteFor(bundles, gateway) : undefined;
       const k = positiveInt(c.flags.k, "k") ?? 1;
       const runs = tasks.length * 2 * k;
       await requireConsent(c, `Run ${plural(runs, "agent session")} (${plural(tasks.length, "task")} x 2 arms x ${k})?`, `coding.sh compare ${arms} --yes`);
@@ -135,17 +136,35 @@ async function anyInTaskRepo(tasks: readonly EvalTask[], paths: readonly string[
   return false;
 }
 
-/** `--gateway`: the AI Gateway key from AI_GATEWAY_API_KEY (or [gateway] in config). */
-function requireGatewayKey(env: NodeJS.ProcessEnv): string {
-  const g = gatewaySettings(env);
-  if (!g.apiKey) throw new CliError(`--gateway needs an AI Gateway key in $${g.apiKeyEnv}`, { reason: "missing_key", next: ["Create one at vercel.com/ai-gateway, then:", `export ${g.apiKeyEnv}=...`] });
-  return g.apiKey;
+/**
+ * `--gateway [name]`: the gateway's settings, with its key. Vercel's key comes
+ * from AI_GATEWAY_API_KEY (or [gateway] in config); the others from their
+ * standard env var or [gateway.<name>].
+ */
+function requireGateway(env: NodeJS.ProcessEnv, name: string): GatewayConfig {
+  const id: GatewayId | undefined = resolveGatewayName(name);
+  if (!id || !ROUTABLE_GATEWAYS.includes(id)) {
+    throw new UsageError(`--gateway can route through ${ROUTABLE_GATEWAYS.join(", ")}; got ${JSON.stringify(name)}`, { reason: "unsupported_gateway" });
+  }
+  if (id === "vercel") {
+    const g = gatewaySettings(env);
+    if (!g.apiKey) throw new CliError(`--gateway needs an AI Gateway key in $${g.apiKeyEnv}`, { reason: "missing_key", next: ["Create one at vercel.com/ai-gateway, then:", `export ${g.apiKeyEnv}=...`] });
+    return gatewayConfig("vercel", env);
+  }
+  const c = gatewayConfig(id, env);
+  if (!c.apiKey) throw new CliError(`--gateway ${id} needs a key in $${c.apiKeyEnv} (${GATEWAYS[id].name})`, { reason: "missing_key", next: [`export ${c.apiKeyEnv}=...`] });
+  return c;
 }
 
-/** Runs both arms through Vercel AI Gateway, each with its bundle's model. */
-function gatewayRouteFor(bundles: HarnessBundle[], key: string): AgentRoute {
+/** Runs both arms through the gateway, each with its bundle's model. */
+function gatewayRouteFor(bundles: HarnessBundle[], c: GatewayConfig): AgentRoute {
+  const agents = c.id === "vercel" ? [...ROUTABLE_AGENTS] : routableAgents(c.id);
   for (const b of bundles) {
-    if (!(ROUTABLE_AGENTS as readonly string[]).includes(b.agent)) throw new CliError(`--gateway can't route ${b.agent} (bundle ${b.name}); supported: ${ROUTABLE_AGENTS.join(", ")}`, { reason: "unsupported_agent" });
+    if (!agents.includes(b.agent)) throw new CliError(`--gateway${c.id === "vercel" ? "" : ` ${c.id}`} can't route ${b.agent} (bundle ${b.name}); supported: ${agents.join(", ")}`, { reason: "unsupported_agent" });
   }
-  return (b) => gatewayRoute(b.agent, b.model, key);
+  if (c.id === "vercel") {
+    const key = c.apiKey!;
+    return (b) => gatewayRoute(b.agent, b.model, key);
+  }
+  return (b) => routeVia(c, b.agent, b.model);
 }

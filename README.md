@@ -97,8 +97,9 @@ fails. More in [docs/guides/benchmarks.md](docs/guides/benchmarks.md).
 
 **Production.** `coding.sh serve` runs ingest, the viewer and the API on one port, backed by
 SQLite or Postgres. Your API apps send traces with the TypeScript SDK (`@coding.sh/sdk`), the
-Python SDK (`coding-sh`) or plain OpenTelemetry. `coding.sh gateway` links Vercel AI Gateway
-calls to their billed cost. The SDKs and store plugins are not published yet. Start with
+Python SDK (`coding-sh`) or plain OpenTelemetry. `coding.sh gateway` links calls made through LLM
+gateways (Vercel AI Gateway, OpenRouter, LiteLLM, Cloudflare, Portkey, Helicone) to their billed
+cost. The SDKs and store plugins are not published yet. Start with
 [docs/production/README.md](docs/production/README.md).
 
 ## Supported agents

@@ -1,4 +1,4 @@
-// Minimal client for the AI Gateway REST API
+// Minimal client for the Vercel AI Gateway REST API (other gateways: lookups.ts)
 // (vercel.com/docs/ai-gateway/sdks-and-apis/rest-api):
 //   GET /v1/generation?id=gen_…  → cost, provider, latency, tokens of one generation
 //   GET /v1/credits               → { balance, total_used }
@@ -43,7 +43,8 @@ export interface GatewayClient {
   readonly baseUrl: string;
   /** "pending" when the gateway has no record yet (usage is ingested asynchronously) or never will. */
   generation(id: string, signal?: AbortSignal): Promise<GenerationLookup>;
-  credits(signal?: AbortSignal): Promise<Credits>;
+  /** Credit balance, for gateways that have one (Vercel, OpenRouter). */
+  credits?(signal?: AbortSignal): Promise<Credits>;
 }
 
 export interface GatewayClientOpts {
@@ -92,7 +93,7 @@ export function billedCostUsd(g: GenerationInfo): number | undefined {
   return (g.totalCostUsd ?? 0) + (g.isByok ? (g.upstreamCostUsd ?? 0) : 0);
 }
 
-export function createGatewayClient(o: GatewayClientOpts): GatewayClient {
+export function createGatewayClient(o: GatewayClientOpts): Required<GatewayClient> {
   const baseUrl = o.baseUrl.replace(/\/+$/, "");
   const get = (path: string, signal?: AbortSignal) =>
     fetchJson(

@@ -59,4 +59,4 @@ model, token usage, duration and time to first token.
 Point any SDK at the base URL, or set a signal-specific endpoint such as
 `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces`.
 
-Framework notes: [Vercel AI Gateway](../integrations/ai-gateway.md), [eve](../integrations/eve.md).
+Framework notes: [LLM gateways](../integrations/ai-gateway.md), [eve](../integrations/eve.md).

@@ -21,10 +21,22 @@
 //    a gateway generation id: the llm.call is tagged payload.gateway = "vercel"
 //    and payload.gatewayGenerationId, and a cost from providerMetadata.gateway
 //    fills usage.costUsd when the span reported none.
+//
+// 3. Other gateways (providers.ts), from their own OTel export or from app
+//    spans that called them. Recognized by resource service.name (portkey,
+//    bifrost, tfy-llm-gateway, litellm), gateway attribute prefixes
+//    (litellm.*, portkey.*, tfy.*, span.metadata.openrouter_*), Cloudflare's
+//    gen_ai.prompt_json / gen_ai.completion_json, an AI SDK provider
+//    (`openrouter.chat`), a response id with a gateway's shape, or a
+//    server.address on a gateway host. The llm.call gets payload.gateway, the
+//    request id `gateway enrich` can look up, the serving provider and the
+//    gateway's cost (gen_ai.cost.total_cost, gen_ai.usage.cost_usd,
+//    providerMetadata.openrouter.usage.cost).
 import type { OtelSpan, OtelValue } from "../../otel/model.ts";
 import type { SpanEnrichInfo } from "../../otel/map.ts";
 import type { AgentEvent, Usage } from "../../schema/index.ts";
 import { GATEWAY_AGENT, GATEWAY_ID, isGatewayProvider, isGenerationId, virtualModelId } from "./ids.ts";
+import { gatewayForId, gatewayForProvider, gatewayForUrl, GATEWAYS, type GatewayId } from "./providers.ts";
 
 type Attrs = Record<string, OtelValue>;
 
@@ -132,8 +144,8 @@ function enrichDrain(span: OtelSpan, events: AgentEvent[]): AgentEvent[] {
   return out;
 }
 
-/** providerMetadata.gateway from an AI SDK span (JSON string or object attribute). */
-function providerMetadata(a: Attrs): Record<string, unknown> | undefined {
+/** providerMetadata.<key> from an AI SDK span (JSON string or object attribute). */
+function providerMetadata(a: Attrs, key = "gateway"): Record<string, unknown> | undefined {
   const raw = a["ai.response.providerMetadata"];
   let v: unknown = raw;
   if (typeof raw === "string") {
@@ -143,16 +155,79 @@ function providerMetadata(a: Attrs): Record<string, unknown> | undefined {
       return undefined;
     }
   }
-  return isObj(v) && isObj(v.gateway) ? v.gateway : undefined;
+  return isObj(v) && isObj(v[key]) ? v[key] : undefined;
 }
 
-function enrichApp(span: OtelSpan, events: AgentEvent[]): AgentEvent[] {
+/** resource service.name values gateways export under. */
+const SERVICE_NAMES: Record<string, GatewayId> = { portkey: "portkey", bifrost: "bifrost", "tfy-llm-gateway": "truefoundry", litellm: "litellm", "litellm-proxy": "litellm" };
+/** Attribute prefixes only one gateway writes. */
+const ATTR_PREFIXES: [string, GatewayId][] = [
+  ["litellm.", "litellm"],
+  ["portkey.", "portkey"],
+  ["tfy.", "truefoundry"],
+  ["span.metadata.openrouter_", "openrouter"],
+];
+
+/** The non-Vercel gateway a span belongs to, and whether the gateway itself exported it. */
+function otherGateway(a: Attrs, resource: Attrs): { id: GatewayId; exported: boolean } | undefined {
+  const service = str(resource, "service.name")?.toLowerCase();
+  if (service && SERVICE_NAMES[service]) return { id: SERVICE_NAMES[service], exported: true };
+  if (service && /cloudflare/.test(service)) return { id: "cloudflare", exported: true };
+  const keys = Object.keys(a);
+  for (const [prefix, id] of ATTR_PREFIXES) if (keys.some((k) => k.startsWith(prefix))) return { id, exported: true };
+  // Cloudflare's exporter writes prompt and completion as *_json attributes.
+  if (a["gen_ai.prompt_json"] !== undefined || a["gen_ai.completion_json"] !== undefined) return { id: "cloudflare", exported: true };
+  const viaProvider = gatewayForProvider(str(a, "ai.model.provider")) ?? gatewayForProvider(str(a, "gen_ai.provider.name")) ?? gatewayForProvider(str(a, "gen_ai.system"));
+  if (viaProvider && viaProvider !== GATEWAY_ID) return { id: viaProvider, exported: false };
+  const byId = gatewayForId(str(a, "gen_ai.response.id") ?? str(a, "ai.response.id"));
+  if (byId && byId !== GATEWAY_ID) return { id: byId, exported: false };
+  const host = str(a, "server.address");
+  const byUrl = gatewayForUrl(host ? `https://${host}` : (str(a, "url.full") ?? str(a, "http.url")));
+  if (byUrl && byUrl !== GATEWAY_ID) return { id: byUrl, exported: false };
+  return undefined;
+}
+
+function enrichOther(span: OtelSpan, events: AgentEvent[], resource: Attrs): AgentEvent[] {
+  const a = span.attributes;
+  const gw = otherGateway(a, resource);
+  if (!gw) return events;
+  const responseId = str(a, "gen_ai.response.id") ?? str(a, "ai.response.id");
+  // The id the gateway's lookup API takes: LiteLLM's call id, or a response id with the gateway's shape.
+  const requestId = gw.id === "litellm" ? str(a, "litellm.call_id") : responseId && gatewayForId(responseId) === gw.id ? responseId : undefined;
+  const sdk = gw.id === "openrouter" ? providerMetadata(a, "openrouter") : undefined;
+  const sdkUsage = isObj(sdk?.usage) ? sdk.usage : undefined;
+  const gatewayNames = new Set(GATEWAYS[gw.id].providers);
+  const upstream = [typeof sdk?.provider === "string" ? sdk.provider : undefined, gw.exported ? (str(a, "gen_ai.provider.name") ?? str(a, "gen_ai.model.provider") ?? str(a, "gen_ai.system")) : undefined].find(
+    (x): x is string => typeof x === "string" && x !== "" && !gatewayNames.has(x.toLowerCase()),
+  );
+  const cost = num(a["gen_ai.cost.total_cost"]) ?? num(a["gen_ai.usage.cost_usd"]) ?? num(sdkUsage?.cost) ?? num(a["gen_ai.usage.cost"]);
+  // Portkey's own cost attribute: kept as reported, its unit is not documented for OTel.
+  const portkeyCost = num(a["portkey.usage.cost"]);
+  for (const e of events) {
+    if (e.kind !== "llm.call") continue;
+    e.payload.gateway = gw.id;
+    if (requestId) e.payload.gatewayGenerationId = requestId;
+    if (upstream) e.payload.servedProvider = upstream;
+    if (portkeyCost !== undefined) {
+      e.payload.gatewayCost = portkeyCost;
+      const cur = str(a, "portkey.usage.cost_currency");
+      if (cur) e.payload.gatewayCostCurrency = cur;
+    }
+    if (cost !== undefined) {
+      e.payload.billedCostUsd = cost;
+      if (e.usage?.costUsd === undefined) e.usage = { ...(e.usage ?? {}), costUsd: cost };
+    }
+  }
+  return events;
+}
+
+function enrichApp(span: OtelSpan, events: AgentEvent[], resource: Attrs = {}): AgentEvent[] {
   const a = span.attributes;
   const meta = providerMetadata(a);
   const responseId = str(a, "gen_ai.response.id") ?? str(a, "ai.response.id");
   const viaProvider = isGatewayProvider(str(a, "ai.model.provider")?.split(".")[0]);
   const genId = [meta?.generationId, responseId].find(isGenerationId);
-  if (!viaProvider && !meta && !genId) return events;
+  if (!viaProvider && !meta && !genId) return enrichOther(span, events, resource);
   const routing = isObj(meta?.routing) ? meta.routing : undefined;
   const served = [routing?.finalProvider, routing?.resolvedProvider].find((x): x is string => typeof x === "string" && x !== "");
   const cost = num(meta?.cost);
@@ -184,5 +259,5 @@ function enrichApp(span: OtelSpan, events: AgentEvent[]): AgentEvent[] {
 /** SpanEnricher for gateway traffic. Returns `events` unchanged for unrelated spans. */
 export function enrichGatewaySpan(span: OtelSpan, events: AgentEvent[], info: SpanEnrichInfo): AgentEvent[] {
   if (isGatewayDrainSpan(info.resource)) return enrichDrain(span, events);
-  return enrichApp(span, events);
+  return enrichApp(span, events, info.resource);
 }

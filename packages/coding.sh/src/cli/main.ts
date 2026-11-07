@@ -41,7 +41,7 @@ function rows(items: [string, string][], indent = 2, min = 14): string[] {
 }
 
 function flagSyntax(f: FlagSpec): string {
-  const long = f.type === "boolean" ? `--${f.name}` : `--${f.name} ${f.value ?? "<VALUE>"}`;
+  const long = f.type === "boolean" ? `--${f.name}` : f.optionalValue ? `--${f.name} [${f.value ?? "<VALUE>"}]` : `--${f.name} ${f.value ?? "<VALUE>"}`;
   return f.short ? `-${f.short}, ${long}` : `    ${long}`;
 }
 

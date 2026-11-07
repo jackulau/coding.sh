@@ -182,7 +182,8 @@ The command ran and something failed.
 | `no_tasks` | `No validated tasks to run` | `coding.sh eval new` then `eval validate`, or add tool-eval tasks. |
 | `unsupported_agent` | `Agent aider has no headless driver, so bundle … can't be run` | Use an agent that can run headless. |
 | `nothing_to_ablate` | `nothing to ablate: … is in neither bundle base nor any selected task's repo` (exit 2) | Check the `--without` path against `coding.sh harness list --json`. |
-| `missing_key` | `--gateway needs an AI Gateway key in $AI_GATEWAY_API_KEY` | `export AI_GATEWAY_API_KEY=…`, or set `[gateway] apiKeyEnv`. |
+| `unsupported_gateway` | `--gateway can route through vercel, openrouter, litellm, ramp; got "helicone"` | Pick one of those; other gateways are detect and enrich only. |
+| `missing_key` | `--gateway needs an AI Gateway key in $AI_GATEWAY_API_KEY` (or `--gateway openrouter needs a key in $OPENROUTER_API_KEY`) | Export the named variable, or set `[gateway] apiKeyEnv` / `[gateway.<name>] apiKeyEnv`. |
 | `missing_api_key` | `Driver model:anthropic/claude-sonnet-5 needs $ANTHROPIC_API_KEY` | Export the variable it names. |
 | `invalid_file` | `Couldn't import cases.csv: …` | Fix the file. Datasets accept JSONL, JSON and CSV. |
 | `invalid_config` | `Can't read config: …`, `Invalid serve configuration: …` (exit 2) | Fix the file or variable named in the message. See [Configuration](reference/config.md). |

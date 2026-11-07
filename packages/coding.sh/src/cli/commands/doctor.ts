@@ -12,7 +12,8 @@ import { MCP_CONFIG_NAME } from "../../mcp/launch.ts";
 import { hookBinHealth } from "../hookbin.ts";
 import { openContext } from "../../core/context.ts";
 import { paths } from "../../core/paths.ts";
-import { detectGatewaySetups, gatewaySettings } from "../../integrations/gateway/config.ts";
+import { allGatewayConfigs, detectGatewaySetups, gatewaySettings } from "../../integrations/gateway/config.ts";
+import { GATEWAYS } from "../../integrations/gateway/providers.ts";
 import { GATEWAY_FLAG } from "../../integrations/gateway/ids.ts";
 import { list, port as portFlag } from "../common.ts";
 import { ago, LABEL_WIDTH } from "../output.ts";
@@ -176,9 +177,13 @@ export async function run(c: CommandContext): Promise<number> {
   );
   const receiver = { port, listening: await listening(port) };
   const problems = (spool.ok ? 0 : 1) + (store.ok ? 0 : 1);
-  // Vercel AI Gateway: read-only config scan; the key is reported as set or not, never shown.
+  // LLM gateways: read-only config scan; keys are reported as set or not, never shown.
+  // `key` and `sessions` are Vercel AI Gateway's; `others` lists other gateways with a key set.
   const gs = gatewaySettings(env);
-  const gateway = { configured: detectGatewaySetups(env, c.cwd), key: gs.apiKey ? { set: true, source: gs.keySource } : { set: false, env: gs.apiKeyEnv }, sessions: gatewaySessions };
+  const others = allGatewayConfigs(env)
+    .filter((g) => g.id !== "vercel" && g.apiKey)
+    .map((g) => ({ id: g.id, key: { set: true, source: g.keySource } }));
+  const gateway = { configured: detectGatewaySetups(env, c.cwd), key: gs.apiKey ? { set: true, source: gs.keySource } : { set: false, env: gs.apiKeyEnv }, sessions: gatewaySessions, others };
 
   if (out.json) {
     out.data({ ok: problems === 0, agents, hook: hookBin, mcp, spool, store, receiver, gateway });
@@ -215,10 +220,11 @@ export async function run(c: CommandContext): Promise<number> {
   out.row("Spool", spool.ok ? `${spool.path} writable` : `${spool.path} not writable: ${spool.error}`, spool.ok ? "ok" : "fail");
   out.row("Store", store.ok ? `${store.kind} ${store.url}` : `can't open: ${store.error}`, store.ok ? "ok" : "fail");
   out.row("Receiver", receiver.listening ? `port ${port} in use (collector running?)` : `port ${port} free; start with coding.sh collector`, receiver.listening ? "ok" : "none");
-  const routed = [...new Set(gateway.configured.filter((f) => f.active).map((f) => f.agent))];
+  const routed = [...new Set(gateway.configured.filter((f) => f.active).map((f) => (f.gateway === "vercel" ? f.agent : `${f.agent} via ${f.gateway}`)))];
   const gwParts = [routed.length ? `routes ${routed.join(", ")}` : "not configured", gateway.key.set ? `key set (${gateway.key.source})` : "no key", `${gateway.sessions >= 1000 ? "1000+" : gateway.sessions} tagged sessions`];
   out.row("AI Gateway", gwParts.join(", "), routed.length || gateway.key.set || gateway.sessions ? "ok" : "none");
-  for (const f of gateway.configured) out.note(`${f.detail} (${f.where}${f.active ? "" : ", not selected"})`);
+  if (others.length) out.row("Gateways", `keys set for ${others.map((g) => GATEWAYS[g.id].name).join(", ")}`, "ok");
+  for (const f of gateway.configured) out.note(`${f.gateway === "vercel" ? "" : `${GATEWAYS[f.gateway].name}: `}${f.detail} (${f.where}${f.active ? "" : ", not selected"})`);
   const unhooked = shown.filter((a) => a.capture === "hooks" && !a.hooked);
   if (unhooked.length) out.next("Capture the agents without hooks", `coding.sh init ${unhooked.map((a) => `--agent ${a.id}`).join(" ")}`);
   out.print(problems ? "problems found" : "ok");

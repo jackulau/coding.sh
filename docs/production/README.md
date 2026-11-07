@@ -1,7 +1,7 @@
 # coding.sh in production
 
 Run one `coding.sh serve` process, point it at a database, and send traces to it from your API apps:
-OpenAI, Anthropic, the AI SDK, the Vercel AI Gateway, or any OpenTelemetry app. The viewer, CLI, MCP
+OpenAI, Anthropic, the AI SDK, an LLM gateway (Vercel AI Gateway, OpenRouter, LiteLLM, ...), or any OpenTelemetry app. The viewer, CLI, MCP
 tools, datasets and experiments run on the same database.
 
 The full contract is [docs/PRODUCTION.md](../PRODUCTION.md). This page is the short version.

@@ -39,7 +39,7 @@ Short recipes you can run as written.
 | [production/README.md](production/README.md) | run `coding.sh serve` on a database, in three steps |
 | [production/](production/) | deploy recipes: Compose, Fly, Railway, Render, serverless |
 | [PRODUCTION.md](PRODUCTION.md) | the full serve, SDK and store contract |
-| [integrations/ai-gateway.md](integrations/ai-gateway.md) | Vercel AI Gateway: routing, billed cost, experiments |
+| [integrations/ai-gateway.md](integrations/ai-gateway.md) | LLM gateways (Vercel, OpenRouter, LiteLLM, Cloudflare, Portkey, Helicone, ...): routing, billed cost, experiments |
 | [integrations/eve.md](integrations/eve.md) | eve agents: live spans, imports and evals |
 
 ## Reference

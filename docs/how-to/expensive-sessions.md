@@ -54,7 +54,8 @@ session as a timeline.
 Coding agents' transcripts carry tokens, not dollars, and most OpenTelemetry instrumentations do
 too. Each model call's cost comes from the first of:
 
-1. the bill: calls through Vercel AI Gateway after `coding.sh gateway enrich`;
+1. the bill: calls through an LLM gateway (Vercel AI Gateway, OpenRouter, LiteLLM, Cloudflare, Portkey,
+   Helicone) after `coding.sh gateway enrich`;
 2. a cost the agent reports: Claude Code headless runs (`total_cost_usd`), OpenCode, Pi, or an
    OpenTelemetry span with `gen_ai.usage.cost` or `cost_usd`;
 3. an estimate: input, output, cache-read and cache-write tokens times the model's list price.

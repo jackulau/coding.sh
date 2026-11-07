@@ -31,7 +31,7 @@ coding.sh search "timeout" --store postgres://…`;
 <DocsLayout>
   <p>
     Run one <code>coding.sh serve</code> process, point it at a database, and send traces from your API apps: OpenAI, Anthropic, the AI SDK,
-    the Vercel AI Gateway or any OpenTelemetry app. The viewer, CLI, MCP tools, datasets and experiments work on the same database.
+    an LLM gateway such as Vercel AI Gateway or OpenRouter, or any OpenTelemetry app. The viewer, CLI, MCP tools, datasets and experiments work on the same database.
   </p>
 
   <h2 id="run">Run serve <Tag status="built" /></h2>
@@ -58,7 +58,7 @@ coding.sh search "timeout" --store postgres://…`;
   <h2 id="send">Send traces</h2>
   <p>Node, with <code>@coding.sh/sdk</code>:</p>
   <Code title="ts" code={sdk} />
-  <p>Python: <code>coding_sh.observe(client)</code>. Any OpenTelemetry SDK, or an AI Gateway trace drain:</p>
+  <p>Python: <code>coding_sh.observe(client)</code>. Any OpenTelemetry SDK, a Vercel AI Gateway trace drain, or a gateway's own OpenTelemetry export (LiteLLM, Cloudflare, Portkey):</p>
   <Code code={otel} />
   <p>The key decides the project. Group a conversation with <code>sessionId</code> or <code>gen_ai.conversation.id</code>.</p>
 

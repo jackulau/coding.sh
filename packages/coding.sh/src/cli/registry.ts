@@ -3,6 +3,7 @@
 // help and typo suggestions never touch stores, adapters or the network.
 import type { FlagSpec } from "./args.ts";
 import type { CommandModule } from "./types.ts";
+import { GATEWAY_IDS } from "../integrations/gateway/providers.ts";
 import { WORKFLOWS_COMMAND } from "../workflows/cli-spec.ts";
 import { BENCH_COMMAND } from "../bench/cli-spec.ts";
 
@@ -54,6 +55,7 @@ const FRESH: FlagSpec = { name: "fresh", type: "boolean", desc: "Wait for every 
 /** What a read answered before every capture was indexed says, for --json readers. */
 const PENDING_NOTE = 'With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.';
 const LIMIT = (d: number): FlagSpec => ({ name: "limit", short: "n", type: "number", value: "<N>", desc: "Maximum rows", default: String(d) });
+const GATEWAY_NAME: FlagSpec = { name: "gateway", type: "string", value: "<NAME>", choices: GATEWAY_IDS, desc: "Only this gateway" };
 
 /** Flags that describe an experiment run (exp run, exp aa). */
 const EXP_RUN_FLAGS: FlagSpec[] = [
@@ -594,39 +596,48 @@ export const COMMANDS: CommandSpec[] = [
       { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel runs" },
       { name: "experiment", type: "string", value: "<ID>", desc: "Compare the stored runs of this experiment instead of running" },
       { name: "without", type: "list", value: "<PATH>", desc: "Ablation: B is A without this file, dir or glob (repeatable)" },
-      { name: "gateway", type: "boolean", desc: "Route both arms through Vercel AI Gateway (key in AI_GATEWAY_API_KEY)" },
+      {
+        name: "gateway",
+        type: "string",
+        optionalValue: true,
+        value: "<NAME>",
+        choices: ["vercel", "openrouter", "litellm", "ramp"],
+        desc: "Route both arms through a gateway. Without a name: [gateway] default, else the one with a key, else vercel",
+      },
       YES,
     ],
-    examples: ["coding.sh compare base candidate --k 3", "coding.sh compare base candidate --experiment exp_01", "coding.sh compare sonnet gpt5 --gateway"],
+    examples: ["coding.sh compare base candidate --k 3", "coding.sh compare base candidate --experiment exp_01", "coding.sh compare sonnet gpt5 --gateway", "coding.sh compare sonnet gpt5 --gateway openrouter"],
     load: () => import("./commands/compare.ts"),
   },
   // ---------------------------------------------------------- Maintain
   {
     name: "gateway",
     group: "Maintain",
-    summary: "Vercel AI Gateway: detect routing, enrich sessions with billed cost",
+    summary: "LLM gateways: detect routing, enrich sessions with billed cost",
     actions: [
       {
         name: "status",
-        summary: "Show which agents route through the gateway, the key source and tagged sessions",
-        flags: [{ name: "credits", type: "boolean", desc: "Also fetch the credit balance (needs the key)" }],
+        summary: "Show which agents route through a gateway, key sources and tagged sessions",
+        flags: [GATEWAY_NAME, { name: "credits", type: "boolean", desc: "Also fetch the credit balance (Vercel, OpenRouter; needs the key)" }],
+        examples: ["coding.sh gateway status", "coding.sh gateway status --gateway openrouter --credits"],
       },
       {
         name: "enrich",
-        summary: "Attach billed cost and serving provider to llm calls with a gateway generation id",
+        summary: "Attach billed cost and serving provider to llm calls with a gateway request id",
         flags: [
+          GATEWAY_NAME,
           { name: "session", short: "s", type: "list", value: "<ID>", desc: "Only this session (repeatable; or latest)" },
           { name: "since", type: "string", value: "<WHEN>", desc: "Sessions after this time: 7d, 12h, 30m or a date", default: "30d" },
           LIMIT(500),
           { name: "offline", type: "boolean", desc: "Use only the cache and drained traces; no API calls" },
           DRY_RUN,
         ],
-        examples: ["coding.sh gateway enrich", "coding.sh gateway enrich --session latest --dry-run"],
+        examples: ["coding.sh gateway enrich", "coding.sh gateway enrich --session latest --dry-run", "coding.sh gateway enrich --gateway openrouter"],
       },
     ],
     notes: [
-      "The key comes from AI_GATEWAY_API_KEY (or [gateway] apiKeyEnv / apiKey in config.toml) and is never printed or stored.",
-      "Lookups use GET /v1/generation; results are cached in the index, so re-runs make no calls.",
+      "Keys come from each gateway's standard env var (AI_GATEWAY_API_KEY, OPENROUTER_API_KEY, LITELLM_PROXY_API_KEY, CLOUDFLARE_API_TOKEN, PORTKEY_API_KEY, HELICONE_API_KEY) or [gateway] / [gateway.<name>] apiKeyEnv / apiKey in config.toml, and are never printed or stored.",
+      "Lookups use each gateway's per-request API (Vercel and OpenRouter /generation, LiteLLM /spend/logs, Cloudflare logs, Portkey logs, Helicone /v1/request); results are cached in the index, so re-runs make no calls.",
     ],
     load: () => import("./commands/gateway.ts"),
   },

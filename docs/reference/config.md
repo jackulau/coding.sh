@@ -120,15 +120,19 @@ both. Stored estimates are recomputed the next time the index opens after a chan
 
 ## `[gateway]`
 
-For Vercel AI Gateway (`coding.sh gateway`, `compare --gateway`, and `gateway` judges).
+For LLM gateways (`coding.sh gateway`, `compare --gateway`, and `gateway` judges). The top-level keys are for
+Vercel AI Gateway. Other gateways get their own table, `[gateway.<name>]`, with the same keys. Names: `openrouter`,
+`litellm`, `cloudflare`, `portkey`, `helicone`, `requesty`, `ramp`, `truefoundry`, `kong`, `bifrost`, `martian`.
 
 | Key | Default | What |
 |---|---|---|
-| `apiKeyEnv` | `"AI_GATEWAY_API_KEY"` | Environment variable that holds the key. |
+| `apiKeyEnv` | the gateway's standard variable, e.g. `"AI_GATEWAY_API_KEY"`, `"OPENROUTER_API_KEY"` | Environment variable that holds the key. |
 | `apiKey` | | The key itself, usually `"${SOME_VAR}"`. Used only when the variable above is empty. |
-| `baseUrl` | `https://ai-gateway.vercel.sh/v1` | API base. `CODING_SH_GATEWAY_URL` overrides it. |
+| `baseUrl` | the gateway's API, e.g. `https://ai-gateway.vercel.sh/v1` | API base. For Vercel, `CODING_SH_GATEWAY_URL` overrides it. Required for self-hosted LiteLLM unless `LITELLM_PROXY_API_BASE` is set. |
+| `default` | | Top level only: the gateway a bare `compare --gateway` uses. |
+| `accountId`, `gatewayId` | | `[gateway.cloudflare]` only: where the logs live. `CLOUDFLARE_ACCOUNT_ID` also works. |
 
-The key is never printed or stored.
+Keys are never printed or stored. See [LLM gateways](../integrations/ai-gateway.md).
 
 ## `[serve]`
 
@@ -209,7 +213,8 @@ Read these in your agent or script to tie its output to a run.
 | `ANTHROPIC_API_KEY` | LLM judges with `"provider":"anthropic"` (the default). A grader's `apiKeyEnv` names another variable. |
 | `OPENAI_API_KEY` | LLM judges with `"provider":"openai"`. |
 | `AI_GATEWAY_API_KEY` | Vercel AI Gateway: `gateway enrich`, `gateway status --credits`, `compare --gateway`, `gateway` judges. |
-| `CODING_SH_GATEWAY_URL` | AI Gateway API base. |
+| `CODING_SH_GATEWAY_URL` | Vercel AI Gateway API base. |
+| `OPENROUTER_API_KEY`, `LITELLM_PROXY_API_KEY`, `CLOUDFLARE_API_TOKEN`, `PORTKEY_API_KEY`, `HELICONE_API_KEY`, `RAMP_ROUTER_API_KEY` | Other gateways: `gateway enrich` lookups and `compare --gateway <name>`. |
 | `CODING_SH_CONFIRM_ABOVE_USD` | `workflows run` and `replay` ask before running above this estimated cost. Default `1`. |
 | `GITHUB_TOKEN`, `GH_TOKEN` | `bench` GitHub sources. Falls back to `gh auth token`. |
 

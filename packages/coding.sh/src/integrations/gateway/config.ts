@@ -1,5 +1,6 @@
-// Gateway settings (the [gateway] table in ~/.coding.sh/config.toml) and a
-// read-only scan of agent configs for gateway routing. Nothing here writes a
+// Gateway settings (the [gateway] table in ~/.coding.sh/config.toml, plus one
+// [gateway.<name>] table per other gateway) and a read-only scan of agent
+// configs for gateway routing. Nothing here writes a
 // file or returns a key value: findings name where routing was seen, and the
 // key is reported only as "set" plus where it came from.
 import { existsSync, readFileSync } from "node:fs";
@@ -7,7 +8,8 @@ import { join } from "node:path";
 import { interpolateEnv } from "../../core/config.ts";
 import { paths, userHome } from "../../core/paths.ts";
 import { parseToml, type TomlTable } from "../../core/toml.ts";
-import { BASE_URL_VARS, GATEWAY_API_BASE, isGatewayUrl } from "./ids.ts";
+import { BASE_URL_VARS, GATEWAY_API_BASE } from "./ids.ts";
+import { gatewayForProvider, gatewayForUrl, GATEWAY_IDS, GATEWAYS, isGatewayId, type GatewayId } from "./providers.ts";
 
 export const DEFAULT_KEY_ENV = "AI_GATEWAY_API_KEY";
 
@@ -33,6 +35,87 @@ function gatewayTable(env: NodeJS.ProcessEnv): TomlTable {
   } catch {
     return {}; // `coding.sh doctor` reports a broken config
   }
+}
+
+/** Settings for any gateway. Vercel's come from gatewaySettings(); the rest from [gateway.<id>]. */
+export interface GatewayConfig {
+  id: GatewayId;
+  name: string;
+  /** Lookup API base, when the gateway has one (self-hosted: its URL from config or env). */
+  baseUrl?: string;
+  apiKeyEnv: string;
+  /** The key itself. Never print, log or persist it. */
+  apiKey?: string;
+  keySource?: string;
+  /** Cloudflare only: account and gateway the logs live under. */
+  accountId?: string;
+  gatewayId?: string;
+  /** A [gateway.<id>] table exists in config.toml. */
+  configured: boolean;
+}
+
+const tableStr = (t: TomlTable, k: string): string | undefined => (typeof t[k] === "string" && (t[k] as string).trim() ? (t[k] as string).trim() : undefined);
+
+/** Account and gateway id from a https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/… URL. */
+export function cloudflareIdsFromUrl(url: unknown): { accountId: string; gatewayId: string } | undefined {
+  if (typeof url !== "string") return undefined;
+  const m = /^https:\/\/gateway\.ai\.cloudflare\.com\/v1\/([0-9a-f]{32})\/([A-Za-z0-9_-]+)/i.exec(url);
+  return m ? { accountId: m[1]!, gatewayId: m[2]! } : undefined;
+}
+
+function keyFrom(env: NodeJS.ProcessEnv, t: TomlTable, apiKeyEnv: string, label: string): { apiKey?: string; keySource?: string } {
+  const fromEnv = env[apiKeyEnv]?.trim();
+  if (fromEnv) return { apiKey: fromEnv, keySource: `env ${apiKeyEnv}` };
+  const raw = tableStr(t, "apiKey");
+  if (!raw) return {};
+  try {
+    const v = interpolateEnv(raw, env, `${label}.apiKey`).trim();
+    return v ? { apiKey: v, keySource: `config ${label}.apiKey` } : {};
+  } catch {
+    return {}; // ${VAR} unset: no key
+  }
+}
+
+/** Effective settings for one gateway. Key order: env var ([gateway.<id>] apiKeyEnv or the gateway's standard one), then apiKey. */
+export function gatewayConfig(id: GatewayId, env: NodeJS.ProcessEnv = process.env): GatewayConfig {
+  const def = GATEWAYS[id];
+  const root = gatewayTable(env);
+  if (id === "vercel") {
+    const v = gatewaySettings(env);
+    return { id, name: def.name, baseUrl: v.baseUrl, apiKeyEnv: v.apiKeyEnv, ...(v.apiKey ? { apiKey: v.apiKey, keySource: v.keySource! } : {}), configured: isTable(root.vercel) || Object.keys(root).some((k) => !isTable(root[k]) && k !== "default") };
+  }
+  const t = isTable(root[id]) ? root[id] : {};
+  const named = tableStr(t, "apiKeyEnv");
+  // The standard var, then the gateway's other conventions (LiteLLM: LITELLM_API_KEY, LITELLM_MASTER_KEY).
+  const apiKeyEnv = named ?? [def.keyEnv, ...(def.keyEnvFallbacks ?? [])].find((k) => env[k]?.trim()) ?? def.keyEnv;
+  const urlFromEnv = def.urlEnv.map((k) => env[k]?.trim()).find(Boolean);
+  const baseUrl = (tableStr(t, "baseUrl") ?? urlFromEnv ?? def.apiBase)?.replace(/\/+$/, "");
+  const c: GatewayConfig = { id, name: def.name, apiKeyEnv, ...keyFrom(env, t, apiKeyEnv, `gateway.${id}`), configured: isTable(root[id]) };
+  if (baseUrl) c.baseUrl = baseUrl;
+  if (id === "cloudflare") {
+    const fromUrl = BASE_URL_VARS.map((k) => cloudflareIdsFromUrl(env[k])).find(Boolean);
+    const accountId = tableStr(t, "accountId") ?? env.CLOUDFLARE_ACCOUNT_ID?.trim() ?? fromUrl?.accountId;
+    const gatewayId = tableStr(t, "gatewayId") ?? env.CLOUDFLARE_GATEWAY_ID?.trim() ?? fromUrl?.gatewayId;
+    if (accountId) c.accountId = accountId;
+    if (gatewayId) c.gatewayId = gatewayId;
+  }
+  return c;
+}
+
+/** Settings for every known gateway, in registry order. */
+export const allGatewayConfigs = (env: NodeJS.ProcessEnv = process.env): GatewayConfig[] => GATEWAY_IDS.map((id) => gatewayConfig(id, env));
+
+/**
+ * The gateway `--gateway` without a name means: [gateway] default when set,
+ * else Vercel when its key is set, else the one other gateway with a key, else
+ * Vercel (whose missing-key error then says what to export).
+ */
+export function defaultGateway(env: NodeJS.ProcessEnv = process.env): GatewayId {
+  const d = gatewayTable(env).default;
+  if (isGatewayId(d)) return d;
+  if (gatewaySettings(env).apiKey) return "vercel";
+  const keyed = GATEWAY_IDS.filter((id) => id !== "vercel" && gatewayConfig(id, env).apiKey);
+  return keyed.length === 1 ? keyed[0]! : "vercel";
 }
 
 /**
@@ -65,6 +148,8 @@ export function gatewaySettings(env: NodeJS.ProcessEnv = process.env): GatewaySe
 // ---------------------------------------------------------------- config scan
 
 export interface GatewayFinding {
+  /** Gateway the setting routes through. */
+  gateway: GatewayId;
   /** Agent the setting routes, or "any" for shared env. */
   agent: string;
   /** File or "env", never a value. */
@@ -104,6 +189,16 @@ function shortUrl(url: string): string {
   }
 }
 
+/** String values of a settings env block (URL-type vars only end up compared by host). */
+function stringsOf(t: TomlTable): Record<string, string> {
+  const o: Record<string, string> = {};
+  for (const [k, v] of Object.entries(t)) if (typeof v === "string") o[k] = v;
+  return o;
+}
+
+/** Hosted gateway hosts, for a plain-text search of configs we can't parse. */
+const HOSTED = GATEWAY_IDS.flatMap((id) => GATEWAYS[id].hosts.filter((h) => !h.startsWith(".")).map((h) => [id, h] as const));
+
 function claudeFindings(env: NodeJS.ProcessEnv, cwd: string | undefined, out: GatewayFinding[]): void {
   const dir = env.CLAUDE_CONFIG_DIR || join(userHome(env), ".claude");
   const files = [join(dir, "settings.json")];
@@ -112,9 +207,10 @@ function claudeFindings(env: NodeJS.ProcessEnv, cwd: string | undefined, out: Ga
     const e = readJson(file)?.env;
     if (!isTable(e)) continue;
     const base = e.ANTHROPIC_BASE_URL;
-    if (!isGatewayUrl(base)) continue;
-    const headers = typeof e.ANTHROPIC_CUSTOM_HEADERS === "string" && /x-ai-gateway-api-key/i.test(e.ANTHROPIC_CUSTOM_HEADERS);
-    out.push({ agent: "claude-code", where: file, detail: `ANTHROPIC_BASE_URL → ${shortUrl(base as string)}${headers ? " (Claude subscription + gateway key header)" : ""}`, active: true });
+    const gateway = gatewayForUrl(base, { ...env, ...stringsOf(e) });
+    if (!gateway) continue;
+    const headers = gateway === "vercel" && typeof e.ANTHROPIC_CUSTOM_HEADERS === "string" && /x-ai-gateway-api-key/i.test(e.ANTHROPIC_CUSTOM_HEADERS);
+    out.push({ gateway, agent: "claude-code", where: file, detail: `ANTHROPIC_BASE_URL → ${shortUrl(base as string)}${headers ? " (Claude subscription + gateway key header)" : ""}`, active: true });
   }
 }
 
@@ -127,7 +223,9 @@ function codexFindings(env: NodeJS.ProcessEnv, out: GatewayFinding[]): void {
     doc = parseToml(text, file);
   } catch {
     // Unparseable here (newer TOML than our parser): fall back to a plain search.
-    if (/base_url\s*=\s*["']https:\/\/ai-gateway\.vercel\.sh/i.test(text)) out.push({ agent: "codex", where: file, detail: "a model provider's base_url → ai-gateway.vercel.sh", active: true });
+    for (const [gateway, host] of HOSTED) {
+      if (new RegExp(`base_url\\s*=\\s*["']https://${host.replace(/\./g, "\\.")}`, "i").test(text)) out.push({ gateway, agent: "codex", where: file, detail: `a model provider's base_url → ${host}`, active: true });
+    }
     return;
   }
   const providers = isTable(doc.model_providers) ? doc.model_providers : {};
@@ -135,9 +233,10 @@ function codexFindings(env: NodeJS.ProcessEnv, out: GatewayFinding[]): void {
   if (typeof doc.model_provider === "string") selected.add(doc.model_provider);
   if (isTable(doc.profiles)) for (const p of Object.values(doc.profiles)) if (isTable(p) && typeof p.model_provider === "string") selected.add(p.model_provider);
   for (const [name, p] of Object.entries(providers)) {
-    if (!isTable(p) || !isGatewayUrl(p.base_url)) continue;
+    const gateway = isTable(p) ? gatewayForUrl(p.base_url, env) : undefined;
+    if (!isTable(p) || !gateway) continue;
     const keyEnv = typeof p.env_key === "string" ? `, key from $${p.env_key}` : "";
-    out.push({ agent: "codex", where: file, detail: `model_providers.${name}.base_url → ${shortUrl(p.base_url as string)}${keyEnv}`, active: selected.has(name) });
+    out.push({ gateway, agent: "codex", where: file, detail: `model_providers.${name}.base_url → ${shortUrl(p.base_url as string)}${keyEnv}`, active: selected.has(name) });
   }
 }
 
@@ -147,17 +246,20 @@ function opencodeFindings(env: NodeJS.ProcessEnv, out: GatewayFinding[]): void {
     const file = join(dir, name);
     const text = readText(file);
     if (text === undefined) continue;
-    const model = /"model"\s*:\s*"vercel\/([^"]+)"/.exec(text);
-    const base = /"baseURL"\s*:\s*"(https:\/\/ai-gateway\.vercel\.sh[^"]*)"/i.exec(text);
-    if (model) out.push({ agent: "opencode", where: file, detail: `model → vercel/${model[1]} (built-in Vercel AI Gateway provider)`, active: true });
-    else if (base) out.push({ agent: "opencode", where: file, detail: `provider baseURL → ${shortUrl(base[1]!)}`, active: true });
+    // Built-in providers: `vercel/…`, `openrouter/…`, `requesty/…`.
+    const model = /"model"\s*:\s*"(vercel|openrouter|requesty|helicone)\/([^"]+)"/.exec(text);
+    const base = [...text.matchAll(/"baseURL"\s*:\s*"(https?:\/\/[^"]+)"/gi)].map((m) => [m[1]!, gatewayForUrl(m[1], env)] as const).find(([, g]) => g);
+    const viaModel = model ? gatewayForProvider(model[1]) : undefined;
+    if (model && viaModel) out.push({ gateway: viaModel, agent: "opencode", where: file, detail: `model → ${model[1]}/${model[2]} (built-in ${GATEWAYS[viaModel].name} provider)`, active: true });
+    else if (base) out.push({ gateway: base[1]!, agent: "opencode", where: file, detail: `provider baseURL → ${shortUrl(base[0])}`, active: true });
   }
 }
 
 function piFindings(env: NodeJS.ProcessEnv, out: GatewayFinding[]): void {
   const file = join(env.PI_CODING_AGENT_DIR || join(userHome(env), ".pi", "agent"), "settings.json");
   const s = readJson(file);
-  if (s && s.defaultProvider === "vercel-ai-gateway") out.push({ agent: "pi", where: file, detail: "defaultProvider → vercel-ai-gateway", active: true });
+  const gateway = s ? gatewayForProvider(s.defaultProvider) : undefined;
+  if (s && gateway) out.push({ gateway, agent: "pi", where: file, detail: `defaultProvider → ${String(s.defaultProvider)}`, active: true });
 }
 
 /** Read-only scan of env and agent configs. `env` is the process env to inspect (names and URLs only). */
@@ -165,7 +267,8 @@ export function detectGatewaySetups(env: NodeJS.ProcessEnv = process.env, cwd?: 
   const out: GatewayFinding[] = [];
   for (const k of BASE_URL_VARS) {
     const v = env[k];
-    if (isGatewayUrl(v)) out.push({ agent: k.startsWith("ANTHROPIC") ? "claude-code" : "any", where: "env", detail: `${k} → ${shortUrl(v!)}`, active: true });
+    const gateway = gatewayForUrl(v, env);
+    if (gateway) out.push({ gateway, agent: k.startsWith("ANTHROPIC") ? "claude-code" : "any", where: "env", detail: `${k} → ${shortUrl(v!)}`, active: true });
   }
   claudeFindings(env, cwd, out);
   codexFindings(env, out);
