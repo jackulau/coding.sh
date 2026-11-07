@@ -108,20 +108,23 @@ calls to their billed cost. The SDKs and store plugins are not published yet. St
 | Claude Code | hooks, transcript, subagents | Verified on real sessions |
 | Codex CLI | hooks, rollout files, subagents | Verified on real sessions |
 | Antigravity CLI (formerly Gemini CLI) | hooks, transcript | Verified on real sessions |
-| OpenCode | plugin, session database | Fixture-tested |
+| OpenCode | plugin, session database | Verified on a real install |
 | Cursor CLI | hooks, transcript | Fixture-tested |
-| GitHub Copilot CLI | hooks, session state | Fixture-tested |
-| Factory Droid | hooks, transcript | Fixture-tested |
-| Goose | plugin hooks, session database | Fixture-tested |
-| Pi | extension, transcript | Fixture-tested |
+| GitHub Copilot CLI | hooks, session state | Verified on a real install |
+| Factory Droid | hooks, transcript | Verified on a real install |
+| Goose | plugin hooks, session database | Verified on a real install |
+| Pi | extension, transcript | Verified on a real install |
 | Amp | plugin | Fixture-tested |
-| T3 Code | its local store | Fixture-tested |
-| Aider | `coding.sh run -- aider …` | Fixture-tested |
+| T3 Code | its local store | Verified on a real install |
+| Aider | `coding.sh run -- aider …` | Verified on a real install |
 | Any other command | `coding.sh run -- <cmd>` | Tested |
 | Your own agent or app (Vercel AI SDK, Claude Agent SDK, OpenAI Agents SDK, LangGraph and more) | OpenTelemetry into `coding.sh collector`, or the TypeScript and Python SDKs | Tested |
 
-Fixture-tested means CI checks the adapter against the agent's documented formats, but nobody has
-run it against a live install yet. If you use one of these, a short
+Verified on a real install means the agent's current release was installed and run through a
+session against a local stub model, its hooks fired and the recorded session was checked, and the
+captured payloads are now CI fixtures. Fixture-tested means CI checks the adapter against the
+agent's documented formats, but nobody has run it against a live install yet. Cursor CLI and Amp
+are still in that state because both need an account login. If you use one of them, a short
 [agent support report](https://github.com/jackulau/coding.sh/issues/new?template=agent-support.yml)
 saying whether it works moves it to "Verified". Per-agent details, including which agents get the
 MCP server, are in [docs/guides/agents.md](docs/guides/agents.md).
@@ -151,7 +154,7 @@ content. Details in [docs/guides/privacy.md](docs/guides/privacy.md).
   remains is the maintainer's account setup and tag ([First publish](docs/RELEASE.md#first-publish)).
   The curl installer and source installs work today.
 - Windows is untested. CI runs on Linux and macOS.
-- Nine adapters are fixture-tested only (see [Supported agents](#supported-agents)).
+- Two adapters, Cursor CLI and Amp, are fixture-tested only (see [Supported agents](#supported-agents)).
 
 Changes are listed in [CHANGELOG.md](CHANGELOG.md) and on the
 [releases page](https://github.com/jackulau/coding.sh/releases).

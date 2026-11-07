@@ -14,7 +14,9 @@ const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>  
     during those runs so your own setup is never touched.
   </p>
   <p>
-    <strong>Verified on real sessions</strong> means the adapter has been run against a live install of the agent.
+    <strong>Verified on real sessions</strong> means the adapter has been checked against real sessions of the agent.
+    <strong>Verified on a real install</strong> means the agent's current release was installed and run through a session against a local
+    stub model, its hooks fired and the recorded session was checked, and the captured payloads are now CI fixtures.
     <strong>Fixture-tested</strong> means CI checks it against the agent's documented and recorded formats, but nobody has run it on a
     live install yet. If you use one of those, an <a href="https://github.com/jackulau/coding.sh/issues/new?template=agent-support.yml">agent support report</a>
     saying whether it worked moves it to verified. Agents without hooks are recorded by wrapping the command: <code>coding.sh run -- &lt;cmd&gt;</code>.

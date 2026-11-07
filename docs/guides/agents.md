@@ -11,21 +11,24 @@ agent's hook config, payload ids and known breakage, see [ADAPTERS.md](../ADAPTE
 | Codex CLI | hooks + rollout files, subagents | yes | yes | Verified on real sessions. Codex runs new hooks only after you approve them once with `/hooks`. |
 | Antigravity CLI (`agy`, formerly Gemini CLI) | hooks + transcript | yes | no | Verified on real sessions |
 | Gemini CLI, older installs | hooks + chat files, subagents | yes | yes | Fixture-tested |
-| OpenCode 2.x | plugin + session database | yes | yes | Fixture-tested |
-| Cursor CLI | hooks + transcript | yes | yes | Fixture-tested. In `-p` mode Cursor does not fire `stop` or `beforeSubmitPrompt`. |
-| GitHub Copilot CLI | hooks + session state | yes | no | Fixture-tested |
-| Factory Droid | hooks + transcript | yes | no | Fixture-tested |
-| Goose | plugin hooks + session database | yes | no | Fixture-tested |
-| Pi | extension + transcript | yes | no | Fixture-tested |
-| Amp | plugin | no | no | Fixture-tested |
-| T3 Code | reads its local store on every ingest | yes | no | Fixture-tested |
-| Aider | wrapper (`coding.sh run -- aider …`); eval runs parse its token and cost lines | no | no | Fixture-tested |
+| OpenCode | plugin + session database | yes | yes | Verified on a real install (1.19.5) |
+| Cursor CLI | hooks + transcript | yes | yes | Fixture-tested. In `-p` mode Cursor does not fire `stop` or `beforeSubmitPrompt`. Not run live: `agent` needs a Cursor login or `CURSOR_API_KEY`, and it only talks to Cursor's own API, so a local model can't stand in. |
+| GitHub Copilot CLI | hooks + session state | yes | no | Verified on a real install (1.0.107) |
+| Factory Droid | hooks + transcript | yes | no | Verified on a real install (1.6.0). `droid exec` fires no `UserPromptSubmit`, so the prompt comes from the transcript. |
+| Goose | plugin hooks + session database | yes | no | Verified on a real install (1.57.0). Hooks carry no model or tool output; history import adds them. |
+| Pi | extension + transcript | yes | no | Verified on a real install (1.5.0) |
+| Amp | plugin | no | no | Fixture-tested. Not run live: `amp` needs an ampcode.com login and has no local model option. |
+| T3 Code | reads its local store on every ingest | yes | no | Verified on a real install (0.1.7, driving Pi) |
+| Aider | wrapper (`coding.sh run -- aider …`); eval runs parse its token and cost lines | no | no | Verified on a real install (0.86.2) |
 | Anything else | `coding.sh run -- <cmd>`: shadow-git snapshots before and after | no | no | Tested |
 
 What the statuses mean:
 
 - **Verified on real sessions**: checked against sessions captured from a live install of the
   agent during development, in addition to the CI tests.
+- **Verified on a real install**: the agent's current release was installed and run through a
+  session against a local stub model, its hooks fired and the recorded session was checked, and
+  the captured payloads are now CI fixtures.
 - **Fixture-tested**: CI tests the adapter against hook payloads, transcripts or session stores
   that follow the agent's documented format, plus its install and uninstall. It has not yet been
   checked against a live install of that agent. Reports are welcome.

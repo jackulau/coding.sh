@@ -2,14 +2,16 @@
 // (registry: src/adapters/index.ts + src/adapters/more/index.ts), checked
 // against each adapter's header comment and docs/ADAPTERS.md on 2026-11-06.
 // Every adapter here has fixture tests under test/adapters. "verified" means it
-// has also been run against a live install of the agent.
+// has also been checked on real sessions; "real-install" means its current release
+// was installed and run against a local stub model, with the captured payloads kept
+// as fixtures (2026-11-07).
 
 export interface AdapterRow {
   name: string;
   /** Agent id used by --agent and in the trace. */
   id: string;
-  /** verified: run against a live install; fixture-tested: checked against recorded payloads only. */
-  status: "verified" | "fixture-tested" | "tested";
+  /** verified: real sessions; real-install: real binary against a stub model; fixture-tested: recorded payloads only. */
+  status: "verified" | "real-install" | "fixture-tested" | "tested";
   /** How live events reach the spool. */
   live: string;
   /** Where `ingest --backfill` reads history from; undefined = no backfill. */
@@ -42,9 +44,9 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "OpenCode",
     id: "opencode",
-    status: "fixture-tested",
+    status: "real-install",
     live: "plugin (2.x and 1.x)",
-    backfill: "opencode.db (2.x), JSON storage (1.x)",
+    backfill: "opencode.db (1.x and 2.x), JSON storage (older 1.x)",
     headless: "opencode run --format json",
     subagents: "Child sessions, linked to the parent session",
   },
@@ -60,7 +62,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "T3 Code",
     id: "t3code",
-    status: "fixture-tested",
+    status: "real-install",
     live: "its Codex and Claude Code hooks, tagged as T3",
     backfill: "~/.t3/userdata/statev2.sqlite (and v1 state.sqlite)",
     headless: "none (desktop app; it runs codex app-server or the Claude Agent SDK)",
@@ -87,7 +89,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "GitHub Copilot CLI",
     id: "copilot-cli",
-    status: "fixture-tested",
+    status: "real-install",
     live: "hooks/coding-sh.json",
     backfill: "session-state/<id>/events.jsonl",
     headless: "copilot -p --output-format=json",
@@ -104,7 +106,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Pi",
     id: "pi",
-    status: "fixture-tested",
+    status: "real-install",
     live: "extension",
     backfill: "sessions/--<cwd>--/*.jsonl",
     headless: "pi -p --mode json",
@@ -113,7 +115,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Factory Droid",
     id: "droid",
-    status: "fixture-tested",
+    status: "real-install",
     live: "hooks.json",
     backfill: "sessions/-<cwd>/*.jsonl",
     headless: "droid exec -o json",
@@ -122,7 +124,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Goose",
     id: "goose",
-    status: "fixture-tested",
+    status: "real-install",
     live: "plugin hooks.json",
     backfill: "sessions.db",
     headless: "goose run --output-format stream-json",
@@ -131,7 +133,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Aider",
     id: "aider",
-    status: "fixture-tested",
+    status: "real-install",
     live: "coding.sh run -- aider …",
     headless: "aider --message",
     subagents: "None",
@@ -151,6 +153,7 @@ export const PLANNED_AGENTS = ["Cline CLI", "Kiro CLI", "Qwen Code", "Crush"] as
 
 export const STATUS_LABEL: Record<AdapterRow["status"], string> = {
   verified: "Verified on real sessions",
+  "real-install": "Verified on a real install",
   "fixture-tested": "Fixture-tested",
   tested: "Tested",
 };

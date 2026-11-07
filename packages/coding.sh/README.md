@@ -35,8 +35,9 @@ day). `coding.sh update` installs it. Turn the check off with `NO_UPDATE_NOTIFIE
 
 Verified on real sessions: **Claude Code**, **Codex CLI** (approve the hooks once with `/hooks`),
 **Antigravity CLI** (formerly Gemini CLI).
-Fixture-tested: OpenCode 2.x, Cursor CLI, GitHub Copilot CLI, Factory Droid, Goose, Pi, Amp,
-T3 Code, Aider.
+Verified on a real install (current release against a local stub model): OpenCode, GitHub
+Copilot CLI, Factory Droid, Goose, Pi, T3 Code, Aider.
+Fixture-tested: Cursor CLI, Amp (both need an account login).
 Any other command: `coding.sh run -- <cmd>` takes shadow-git snapshots before and after.
 Agent frameworks and apps can also send OpenTelemetry to `coding.sh collector`.
 

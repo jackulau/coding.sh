@@ -30,7 +30,8 @@ It also runs as a server on SQLite or Postgres, with SDKs for apps that call mod
 - **Capture.** `coding.sh collector` takes OTLP/HTTP traces and logs, protobuf or JSON, on 127.0.0.1:4318. [OTLP setup](https://coding.sh/docs/otel).
 - **Capture.** The receiver reads OTel GenAI semconv, OpenInference, the Vercel AI SDK, and Claude Code, Codex and Gemini CLI logs.
 - **Agents.** Verified on real sessions: Claude Code, Codex and Antigravity. [Agent matrix](https://coding.sh/docs/agents).
-- **Agents.** Fixture-tested so far: opencode, cursor, gemini-cli, copilot-cli, amp, pi, droid, goose, t3code, aider, the wrapper.
+- **Agents.** Verified on a real install against a local stub model: opencode, copilot-cli, droid, goose, pi, t3code, aider.
+- **Agents.** Fixture-tested so far: cursor, amp (both need an account login), gemini-cli.
 - **Agents.** Every adapter has fixture tests, and an `ingest --backfill` path where the agent keeps history.
 - **Agents.** Antigravity backfill reads agy transcripts and conversation DBs: model, tokens, cache reads and latency per call.
 - **Agents.** agy tool steps missing from its transcript count as failures, prompts drop agy's wrapper, and hooks reply `{}`.
