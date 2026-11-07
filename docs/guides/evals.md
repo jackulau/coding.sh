@@ -670,6 +670,67 @@ ordinary dataset (named `dp-…`), and a `continuation` task replays a frozen se
 `exp run` with a continuation task needs a control arm: run it as an A/B with `--arm`, or pass
 `--no-control` to run one arm alone, and the comparison then warns that it has no noise floor.
 
+## Protected safety lines
+
+A pass-rate A/B can't see the harm of dropping a safety rule. If no decision point needed
+"Never run `git push --force`", deleting it costs nothing in the batch, and the gate may even call
+the shorter file a win. Rewording a rule into a conditional ("only ask when the path is
+ambiguous") or adding an exception next to it is just as invisible ("Masked Erosion",
+arXiv 2610.38392). So harness edits are checked by text, before any model call.
+
+```sh
+$ coding.sh refine protected
+WHERE        WHY     LINE
+AGENTS.md:3  auto    Never run `git push --force`.
+AGENTS.md:4  auto    Ask the owner before deleting anything under `prod/`.
+AGENTS.md:9  marker  Keep answers short.
+  3 protected lines in 1 file (current files; auto-protect on, 0 patterns)
+
+$ coding.sh refine check
+protected-line: AGENTS.md:3 "Never run `git push --force`." (auto)
+relaxes-protected: "Only ask the owner when the path is ambiguous." vs AGENTS.md:4 (added at AGENTS.md:5)
+✗ 2 protected-line problems from A (git:HEAD) to B (your edits); a pass-rate A/B can't see this harm
+
+  Restore the line, or allow this edit on purpose:
+    coding.sh refine check --allow-protected-edit AGENTS.md:3
+```
+
+A line is protected when it is:
+
+- inside a `<!-- coding.sh:protect -->` … `<!-- coding.sh:protect end -->` block (`marker`),
+- matched by a `[refine] protect` regex, tested against the line without its list marker or bold
+  (`config`), or
+- a sentence of at most 240 characters with a gate word and a safety topic (`auto`). The gate
+  words are never, do not, don't and must not anywhere in the sentence, and only, before, ask,
+  confirm, verify, check and require at its start. The topics are credentials, secrets, access
+  tokens, private keys, `.env`, prod, deploy, push, `--force`, force-push, destructive,
+  `--no-verify`, `rm -rf`, delete, drop table, `reset --hard`, migrations, permissions, sudo, chmod,
+  payments, PII, personal data, another user, owner, dry-run and backups. Headings, table rows,
+  fenced code and frontmatter are never auto-protected.
+
+`refine check` runs two critics on an edit. By default the edit is git `HEAD` against your working
+tree, and `--a`/`--b` take the same values as `exp ab`.
+
+- **protected-line**: a protected line of A is gone from the same file in B. Deleting it,
+  rewording it and moving it to another file all count. Case and spacing don't.
+- **relaxes-protected**: B adds a line with a relaxing cue (skip, no need, unnecessary, only …
+  when/if, unless, without asking, already verified …) that shares a backticked token, a safety
+  topic or a word with a protected line.
+
+It exits 1 when either fires. `--json` gives `ok`, the protected `lines`, the `rejections` (each
+with `critic`, `reason`, the `protected` line and, for a relaxing one, the `added` line) and the
+`overridden` ones. To make such an edit on purpose, name the protected line:
+`--allow-protected-edit AGENTS.md:3` (repeatable; `--force` never implies it).
+
+`exp ab` runs the same check on its arms. It warns before any model call, adds a `Protected:` line
+to the report and `protected` to `--json`, and with `--gate` a protected-line problem fails the run
+whatever the verdict. `--allow-protected-edit` works there too.
+
+Set `[refine] autoProtect = false` in your user config to keep only markers and patterns. A repo's
+`.coding.sh/config.toml` can add `protect` patterns but can't turn auto-protection off, since an
+agent editing the repo could otherwise unprotect a rule and then delete it. See
+[`[refine]`](../reference/config.md#refine).
+
 ## Tool evals
 
 `coding.sh toolevals` measures how well agents use a CLI, MCP server or HTTP API: surface size,

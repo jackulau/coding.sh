@@ -214,6 +214,37 @@ describe("cli exp ab", () => {
     assert.match((JSON.parse(cmp.stdout) as { comparison: { controlWarning?: string } }).comparison.controlWarning ?? "", /without a control arm/);
   });
 
+  it("warns before any model call when B deletes a protected line, reports it, and --allow-protected-edit waives it", async () => {
+    const e = await setup("protect");
+    const git = (...a: string[]) => assert.equal(spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: e.repo, env: e.env }).status, 0, a.join(" "));
+    writeFileSync(join(e.repo, "CLAUDE.md"), "Keep answers short.\nNever run `git push --force`.\n");
+    git("commit", "-qam", "rule");
+    writeFileSync(join(e.repo, "CLAUDE.md"), `Keep answers short.\n${MARKER}: run npm test before you say you are done.\n`);
+
+    const before = hits.length;
+    const dry = await cli(e, ["exp", "ab", "--dry-run", "--json"]);
+    assert.equal(dry.status, 0, dry.stderr);
+    assert.equal(hits.length, before);
+    const p = (JSON.parse(dry.stdout) as { protected: { ok: boolean; count: number; rejections: { critic: string; reason: string }[] } }).protected;
+    assert.equal(p.ok, false);
+    assert.equal(p.count, 1);
+    assert.deepEqual(
+      p.rejections.map((r) => r.reason),
+      ['protected-line: CLAUDE.md:2 "Never run `git push --force`." (auto)'],
+    );
+
+    const text = await cli(e, ["exp", "ab", "--gate"]);
+    assert.equal(text.status, 1, text.stderr);
+    assert.match(text.stderr, /protected-line: CLAUDE\.md:2 .*\n.*can't see the harm of dropping a safety rule, so --gate will fail\. Allow it on purpose: --allow-protected-edit CLAUDE\.md:2/);
+    assert.match(text.stdout, /^Protected: B deletes, rewords or relaxes 1 protected line; --gate fails \(coding\.sh refine check lists them\)$/m);
+
+    const allowed = await cli(e, ["exp", "ab", "--json", "--allow-protected-edit", "CLAUDE.md:2"]);
+    assert.equal(allowed.status, 0, allowed.stderr);
+    const q = (JSON.parse(allowed.stdout) as { protected: { ok: boolean; overridden: unknown[] } }).protected;
+    assert.equal(q.ok, true);
+    assert.equal(q.overridden.length, 1);
+  });
+
   it("refuses to start over --max-cost", async () => {
     const e = await setup("cap");
     writeFileSync(join(e.repo, "CLAUDE.md"), `${MARKER}\n`);

@@ -12,7 +12,8 @@ Later layers win:
 3. `<repo>/.coding.sh/config.toml`, the nearest one above the working directory. A repo file arrives
    with `git clone`, so it may only make capture more private: it can set `capture` and `snapshot`
    keys, redaction lists are merged rather than replaced, `capture.mode` can only become
-   `metadata`, and `capture.maxInlineBytes` can only go down. It can never set sinks or stores.
+   `metadata`, and `capture.maxInlineBytes` can only go down. It can add `refine.protect` patterns
+   but not turn `refine.autoProtect` off. It can never set sinks or stores.
 4. Environment variables (`CODING_SH_STORE_URL`, `CODING_SH_BLOB_URL`, and the server variables).
 5. Command-line flags (`--store`, `--blobs`, and each command's own options).
 
@@ -166,6 +167,21 @@ Vercel AI Gateway. Other gateways get their own table, `[gateway.<name>]`, with 
 | `accountId`, `gatewayId` | | `[gateway.cloudflare]` only: where the logs live. `CLOUDFLARE_ACCOUNT_ID` also works. |
 
 Keys are never printed or stored. See [LLM gateways](../integrations/ai-gateway.md).
+
+## `[refine]`
+
+Which harness lines an edit may not delete, reword or relax (`coding.sh refine check` and
+`exp ab`). See [Protected safety lines](../guides/evals.md#protected-safety-lines).
+
+| Key | Default | What |
+|---|---|---|
+| `protect` | `[]` | Regexes. A CLAUDE.md, AGENTS.md, rule or skill line matching one is protected; the line is tested without its list marker or bold, so `"^Use pnpm"` matches `- Use pnpm`. A repo config's patterns are added to yours. |
+| `autoProtect` | `true` | Protect gate-word + safety-topic lines ("Never run `git push --force`") automatically. Honoured only in your user config. |
+
+```toml
+[refine]
+protect = ["^Use pnpm", "staging"]
+```
 
 ## `[serve]`
 

@@ -82,6 +82,9 @@ const EXP_RUN_FLAGS: FlagSpec[] = [
   { name: "split", type: "string", value: "<SPLIT>", choices: ["train", "dev", "test"], desc: "Only cases in this split" },
 ];
 
+/** Waive the protected-line check for one protected line (refine check, exp ab). */
+const PROTECTED_EDIT: FlagSpec = { name: "allow-protected-edit", type: "list", value: "<PATH:LINE>", desc: "Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force)" };
+
 const SCOPE: FlagSpec = { name: "scope", type: "string", value: "<SCOPE>", choices: ["user", "project"], desc: "Install into user or project config", default: "user" };
 
 /** Global options accepted by every command (handled in main.ts). */
@@ -459,6 +462,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "cache", type: "boolean", desc: "Reuse stored model responses (--no-cache to ask the model again)", default: "true" },
           { name: "name", type: "string", value: "<NAME>", desc: "Experiment name (default: the dataset's)" },
           ...GATE_FLAGS,
+          PROTECTED_EDIT,
           ...durableFlags("A/B"),
         ],
         graceful: true,
@@ -800,6 +804,35 @@ export const COMMANDS: CommandSpec[] = [
       "coding.sh compare sonnet gpt5 --gateway openrouter",
     ],
     load: () => import("./commands/compare.ts"),
+  },
+  {
+    name: "refine",
+    group: "Harness",
+    summary: "Protect the safety rules in your harness from edits that delete, reword or relax them",
+    actions: [
+      {
+        name: "protected",
+        summary: "List the harness lines an edit may not delete, reword or relax",
+        flags: [{ name: "a", type: "string", value: "<FILE|DIR|git:REV|BUNDLE>", desc: "Harness to read (default: the repo's current CLAUDE.md, AGENTS.md, GEMINI.md, rules and skills)" }],
+        examples: ["coding.sh refine protected", "coding.sh refine protected --a git:main --json"],
+      },
+      {
+        name: "check",
+        summary: "Check a harness edit for deleted, reworded or relaxed protected lines; exit 1 when it has any",
+        flags: [
+          { name: "a", type: "string", value: "<FILE|DIR|git:REV|BUNDLE|none>", desc: "Before (default: git HEAD when B is omitted, else the repo's current files)" },
+          { name: "b", type: "string", value: "<FILE|DIR|git:REV|BUNDLE|none>", desc: "After; a file replaces the file of the same path in A (default: your uncommitted edits)" },
+          PROTECTED_EDIT,
+        ],
+        examples: ["coding.sh refine check", "coding.sh refine check --b ./drafts/AGENTS.md", "coding.sh refine check --a git:main --b . --json", "coding.sh refine check --allow-protected-edit AGENTS.md:12"],
+      },
+    ],
+    notes: [
+      "A protected line is inside a <!-- coding.sh:protect --> … <!-- coding.sh:protect end --> block, matches a [refine] protect regex, or pairs a gate word (never, don't, must not, only, before, ask, confirm, verify, check, require) with a safety topic (credentials, secrets, access tokens, private keys, .env, prod, deploy, push, --force, force-push, destructive, --no-verify, rm -rf, delete, drop table, reset --hard, migrations, permissions, sudo, chmod, payments, PII, another user, owner, dry-run, backups). Set [refine] autoProtect = false in your user config to keep only markers and patterns.",
+      "check rejects an edit that deletes or rewords a protected line (protected-line), or adds a line that waives one (skip, no need, only … when, unless, without asking, already verified …) and shares a backticked token, a word or a safety topic with it (relaxes-protected).",
+      "exp ab runs the same check on its arms and warns; with --gate a protected-line problem fails the run.",
+    ],
+    load: () => import("./commands/refine.ts"),
   },
   // ---------------------------------------------------------- Maintain
   {

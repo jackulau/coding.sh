@@ -55,6 +55,7 @@ Every command accepts these.
 | [`bench`](#codingsh-bench) | Evaluate | Dynamic benchmarks: fresh cases every run, same set for every contender |
 | [`harness`](#codingsh-harness) | Harness | Snapshot and list agent harness bundles |
 | [`compare`](#codingsh-compare) | Harness | A/B two harness bundles on eval tasks |
+| [`refine`](#codingsh-refine) | Harness | Protect the safety rules in your harness from edits that delete, reword or relax them |
 | [`gateway`](#codingsh-gateway) | Maintain | LLM gateways: detect routing, enrich sessions with billed cost |
 | [`gc`](#codingsh-gc) | Maintain | Delete expired spool files, blobs and judge cache |
 | [`config`](#codingsh-config) | Maintain | Read and write ~/.coding.sh/config.toml |
@@ -701,6 +702,7 @@ coding.sh exp ab [spec] [options]
 | `--lambda <N>` | `2` | With --gate: what breaking one solved item costs, in fixed items. |
 | `--gate-alpha <A>` | `0.05` | With --gate: one-sided significance level. |
 | `--tau <T>` | `0.10` | With --gate: largest share of solved items B may break. |
+| `--allow-protected-edit <PATH:LINE>` |  | Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force) |
 | `--resume [<ID>]` |  | Continue an interrupted A/B: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
@@ -1650,6 +1652,61 @@ coding.sh compare base candidate --k 3 --promote
 coding.sh compare base --without .claude/rules/clock.md --k 3 --item-gate
 coding.sh compare sonnet gpt5 --gateway
 coding.sh compare sonnet gpt5 --gateway openrouter
+```
+
+## `coding.sh refine`
+
+Protect the safety rules in your harness from edits that delete, reword or relax them.
+
+```text
+coding.sh refine <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`protected`](#codingsh-refine-protected) | List the harness lines an edit may not delete, reword or relax |
+| [`check`](#codingsh-refine-check) | Check a harness edit for deleted, reworded or relaxed protected lines; exit 1 when it has any |
+
+- A protected line is inside a &lt;!-- coding.sh:protect --&gt; … &lt;!-- coding.sh:protect end --&gt; block, matches a [refine] protect regex, or pairs a gate word (never, don't, must not, only, before, ask, confirm, verify, check, require) with a safety topic (credentials, secrets, access tokens, private keys, .env, prod, deploy, push, --force, force-push, destructive, --no-verify, rm -rf, delete, drop table, reset --hard, migrations, permissions, sudo, chmod, payments, PII, another user, owner, dry-run, backups). Set [refine] autoProtect = false in your user config to keep only markers and patterns.
+- check rejects an edit that deletes or rewords a protected line (protected-line), or adds a line that waives one (skip, no need, only … when, unless, without asking, already verified …) and shares a backticked token, a word or a safety topic with it (relaxes-protected).
+- exp ab runs the same check on its arms and warns; with --gate a protected-line problem fails the run.
+
+### `coding.sh refine protected`
+
+List the harness lines an edit may not delete, reword or relax.
+
+```text
+coding.sh refine protected [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--a <FILE|DIR|git:REV|BUNDLE>` |  | Harness to read (default: the repo's current CLAUDE.md, AGENTS.md, GEMINI.md, rules and skills) |
+
+```sh
+coding.sh refine protected
+coding.sh refine protected --a git:main --json
+```
+
+### `coding.sh refine check`
+
+Check a harness edit for deleted, reworded or relaxed protected lines; exit 1 when it has any.
+
+```text
+coding.sh refine check [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--a <FILE|DIR|git:REV|BUNDLE|none>` |  | Before (default: git HEAD when B is omitted, else the repo's current files) |
+| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | After; a file replaces the file of the same path in A (default: your uncommitted edits) |
+| `--allow-protected-edit <PATH:LINE>` |  | Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force) |
+
+```sh
+coding.sh refine check
+coding.sh refine check --b ./drafts/AGENTS.md
+coding.sh refine check --a git:main --b . --json
+coding.sh refine check --allow-protected-edit AGENTS.md:12
 ```
 
 ## `coding.sh gateway`

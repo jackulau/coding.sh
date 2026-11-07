@@ -24,10 +24,12 @@ import { FileJudgeCache } from "../../judge/cache.ts";
 import type { ChatProvider } from "../../judge/providers.ts";
 import { itemGate, singleItemChange } from "../../runner/gate-item.ts";
 import { itemGateLine } from "../../runner/experiment.ts";
+import { checkProtected, type ProtectCheck } from "../../refine/protect.ts";
 import { gateHeadline } from "../../stats/gate.ts";
 import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { autoIngest, gateFlags, jsonArg, list, num, readIngest, str } from "../common.ts";
 import { resumeField, resumeNote } from "../jobs.ts";
+import { protectJson, protectOptions, protectOverrides, rejectionLines } from "../protect.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { cancelledWarning, runArms } from "./exp.ts";
@@ -534,6 +536,21 @@ function caseLines(title: string, ids: readonly string[], cases: ReadonlyMap<str
   return out;
 }
 
+/** One line for the report when B deletes, rewords or relaxes protected lines. */
+function protectedHeadline(g: ProtectCheck, gated: boolean): string {
+  return `Protected: B deletes, rewords or relaxes ${plural(g.rejections.length, "protected line")}${gated ? "; --gate fails" : ""} (coding.sh refine check lists them)`;
+}
+
+/** Before any model call: each protected-line problem, and how to allow it on purpose. */
+function warnProtected(c: CommandContext, g: ProtectCheck): void {
+  const { out } = c;
+  for (const v of g.unusedOverrides) out.warn(`--allow-protected-edit ${v}: no rejection names that protected line`);
+  if (g.ok) return;
+  for (const l of rejectionLines(g.rejections)) out.warn(l);
+  const p = g.rejections[0]!.protected;
+  out.warn(`A pass-rate A/B can't see the harm of dropping a safety rule${c.flags.gate === true ? ", so --gate will fail" : ""}. Allow it on purpose: --allow-protected-edit ${p.path}:${p.line}`);
+}
+
 // ---------------------------------------------------------------- the command
 
 export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Context): Promise<number> {
@@ -546,6 +563,13 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
   let [armA, armB] = await resolveArms(o, c, repoRoot, root !== undefined, ctx);
   // The acceptance gate is always computed (it is the headline); --gate only makes it the exit code.
   const gate = gateFlags({ ...c.flags, gate: true })!;
+  // Protected safety lines (Z-13): a pass-rate A/B can't see the harm of deleting or waiving one,
+  // so the edit is checked before any model call; with --gate a problem fails the run.
+  const { protect, autoProtect } = protectOptions(c);
+  const allowProtected = protectOverrides(c.flags["allow-protected-edit"]);
+  const protectFor = (b: Arm): ProtectCheck => checkProtected(armA.files, b.files, { protect, autoProtect, allow: allowProtected });
+  let guard = protectFor(armB);
+  if (!out.json) warnProtected(c, guard);
 
   await autoIngest(ctx, readIngest(c));
   const repoKey = o.repo ? (basename(o.repo).toLowerCase().replace(/[^a-z0-9._-]+/g, "-") || "repo") : "all";
@@ -607,7 +631,7 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
   if (o.dryRun) {
     const est = estimate([taskFor(armA), taskFor(armB)], cases, o.trials, judgeModel);
     if (out.json) {
-      out.data({ dryRun: true, dataset: { id: dataset.id, version: dataset.version, cases: cases.length }, perAnchor: mined.perAnchor, dropped: mined.dropped, arms: { a: armA.label, b: armB.label }, model, estimate: est });
+      out.data({ dryRun: true, dataset: { id: dataset.id, version: dataset.version, cases: cases.length }, perAnchor: mined.perAnchor, dropped: mined.dropped, arms: { a: armA.label, b: armB.label }, model, estimate: est, protected: protectJson(guard) });
       return 0;
     }
     out.print(`${plural(cases.length, "decision point")} from ${plural(mined.sessions, "session")} since ${o.sinceText}`);
@@ -680,12 +704,14 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
         cacheHits: { model: r.spend.cached, of: r.spend.calls, judgeCalls: r.spend.judgeCalls },
         perAnchor: mined.perAnchor,
         dropped: mined.dropped,
+        protected: protectJson(guard),
         ...(r.resume ? { resume: r.resume } : {}),
       });
       return;
     }
     out.print(`A: ${armA.label}   B: ${armB.label}   model: ${model}`);
     for (const l of summaryLines(r, mined)) out.print(l);
+    if (!guard.ok) out.print(protectedHeadline(guard, c.flags.gate === true));
     const more = [...caseLines("Fixed (A failed, B passed):", r.fixed, caseMap), ...caseLines("Broke (A passed, B failed):", r.broke, caseMap)];
     if (more.length) out.print("");
     for (const l of more) out.print(l);
@@ -696,16 +722,18 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
   const first = await runOnce(armA, armB, false);
   if (!first) return 1;
   report(first);
-  const exitFor = (r: Outcome) => (c.flags.gate === true && r.comparison.gate?.decision !== "accept" ? 1 : 0);
+  const exitFor = (r: Outcome) => (c.flags.gate === true && (r.comparison.gate?.decision !== "accept" || !guard.ok) ? 1 : 0);
   if (!o.watch) return exitFor(first);
   return watchLoop(c, armB, async (next) => {
     armB = next;
     if (sameFiles(armA.files, next.files)) return "B is back to A's files; nothing to compare";
+    guard = protectFor(next);
     const r = await runOnce(armA, next, true);
     if (!r) return "stopped";
     const s = r.spend;
     const verdict = r.comparison.gate ? gateHeadline(r.comparison.gate, "decision point").split(":")[0] : r.comparison.verdict;
-    return `A ${r.passA}/${cases.length} -> B ${r.passB}/${cases.length} | fixed ${r.fixed.length}, broke ${r.broke.length} | ${verdict} | ${money(s.usd + s.judgeUsd)}, ${s.calls - s.cached} new calls`;
+    const prot = guard.ok ? "" : ` | ${guard.rejections[0]!.reason}${guard.rejections.length > 1 ? ` (+${guard.rejections.length - 1} more)` : ""}`;
+    return `A ${r.passA}/${cases.length} -> B ${r.passB}/${cases.length} | fixed ${r.fixed.length}, broke ${r.broke.length} | ${verdict}${prot} | ${money(s.usd + s.judgeUsd)}, ${s.calls - s.cached} new calls`;
   }, async () => {
     // Re-read B the way it was given.
     if (o.b === undefined) return { ...armB, files: harnessFilesIn(repoRoot) };

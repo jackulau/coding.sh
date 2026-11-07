@@ -102,6 +102,12 @@ the hidden tests do not leak. See [Turn a session into an eval](how-to/session-t
 `coding.sh harness snapshot` makes one; `coding.sh compare <a> <b>` runs two on the same eval tasks.
 See [Compare two agents](how-to/compare-agents.md).
 
+**Protected line.** A harness line an edit may not delete, reword or relax: inside a
+`<!-- coding.sh:protect -->` block, matching a `[refine] protect` regex, or pairing a gate word with
+a safety topic ("Never run `git push --force`"). `coding.sh refine check` and `exp ab` reject an
+edit that drops one, since a pass-rate A/B can't see that harm. See
+[Protected safety lines](guides/evals.md#protected-safety-lines).
+
 **Benchmark.** A definition in `bench/<name>.toml` that samples fresh cases on every run, freezes
 them as a dataset, and runs every contender on that same set. `coding.sh bench show` prints the
 leaderboard; `bench history` tracks it over time.

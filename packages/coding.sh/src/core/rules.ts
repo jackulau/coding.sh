@@ -59,7 +59,7 @@ const RUN_VERB = /\b(?:run|execute|invoke)\s*$/i;
 const normalize = (s: string): string => s.replace(/\s+/g, " ").trim();
 
 /** The line's prose: list marker, numbering, quote and heading marks, and bold dropped. */
-function stripLine(raw: string): string {
+export function stripLine(raw: string): string {
   return raw
     .replace(/^\s*(?:>\s*)*/, "")
     .replace(/^#{1,6}\s+/, "")
