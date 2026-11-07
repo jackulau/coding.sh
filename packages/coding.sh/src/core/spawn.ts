@@ -158,6 +158,12 @@ export function posixShell(env: NodeJS.ProcessEnv = process.env): string | undef
       if (isFile(p)) return resolve(p);
     }
   }
+  // The git on PATH can be a MinGit bundled with some tool (no bash), with Git for Windows
+  // installed in its default place.
+  for (const base of [env.ProgramW6432, env.ProgramFiles, env.LOCALAPPDATA && join(env.LOCALAPPDATA, "Programs")]) {
+    const p = base && join(base, "Git", "bin", "bash.exe");
+    if (p && isFile(p)) return p;
+  }
   return undefined;
 }
 

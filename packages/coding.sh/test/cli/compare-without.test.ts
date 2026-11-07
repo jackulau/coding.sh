@@ -9,9 +9,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { which } from "../../src/adapters/_shared/detect.ts";
+import { pathOf } from "../_bin.ts";
+import { posixShell } from "../../src/core/spawn.ts";
 
 const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
-const gitBin = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+const gitBin = which("git") ?? "";
 let root = "";
 let home = "";
 let repo = "";
@@ -29,10 +32,12 @@ before(() => {
   for (const d of [home, repo, join(root, "tmp")]) mkdirSync(d);
   env = {
     HOME: home,
+    USERPROFILE: home,
     CODING_SH_HOME: join(home, ".coding.sh"),
     XDG_CONFIG_HOME: join(home, ".config"),
     XDG_DATA_HOME: join(home, ".local", "share"),
-    PATH: `${dirname(process.execPath)}:${dirname(gitBin)}:/usr/bin:/bin`,
+    // The verifier runs in sh; on Windows that is Git's bash, which may not sit next to the git on PATH.
+    PATH: pathOf(dirname(process.execPath), dirname(gitBin), process.platform === "win32" ? dirname(posixShell() ?? "") : undefined, "/usr/bin", "/bin"),
     TMPDIR: join(root, "tmp"),
     NO_COLOR: "1",
     CODING_SH_NO_UPDATE_CHECK: "1",
