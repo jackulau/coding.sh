@@ -120,12 +120,16 @@ export const COMMANDS: CommandSpec[] = [
     summary: "Move captured hook events from the spool into the index",
     flags: [
       { name: "backfill", type: "boolean", desc: "Also import agents' local transcript history" },
+      { name: "rebuild", type: "boolean", desc: "Re-parse every stored session (of --agent) from its transcript and spool with the current adapters" },
       AGENT_LIST,
       SINCE,
       { name: "background", type: "boolean", desc: "Don't wait for another ingest; exit quietly if one is running" },
     ],
-    examples: ["coding.sh ingest", "coding.sh ingest --backfill --since 30d"],
-    notes: ["Rarely needed: read commands, the viewer and the MCP server ingest first, and the hook starts one when a session ends."],
+    examples: ["coding.sh ingest", "coding.sh ingest --backfill --since 30d", "coding.sh ingest --rebuild --agent pi"],
+    notes: [
+      "Rarely needed: read commands, the viewer and the MCP server ingest first, and the hook starts one when a session ends.",
+      "After an upgrade, sessions stored by an older adapter parse are re-parsed in the background. --rebuild does it for every session now; a session whose transcript and spool lines are gone keeps its rows, minus duplicates.",
+    ],
     load: () => import("./commands/ingest.ts"),
   },
   {

@@ -111,6 +111,16 @@ export class MemoryIndexStore implements IndexStore {
     return { inserted };
   }
 
+  async replaceSessionEvents(sessionId: string, removeIds: string[], add: AgentEvent[]): Promise<{ removed: number; inserted: number }> {
+    let removed = 0;
+    for (const id of new Set(removeIds)) {
+      if (this.events.get(id)?.event.sessionId !== sessionId) continue;
+      this.events.delete(id);
+      removed++;
+    }
+    return { removed, ...(await this.putEvents(add)) };
+  }
+
   async setEventCosts(costs: { id: string; costUsd: number }[]): Promise<number> {
     let found = 0;
     for (const { id, costUsd } of costs) {
@@ -150,7 +160,11 @@ export class MemoryIndexStore implements IndexStore {
   }
 
   async upsertSession(s: Session): Promise<void> {
-    this.sessions.set(s.id, normProject(clone(s)));
+    const prev = this.sessions.get(s.id)?.parseVersion;
+    const next = normProject(clone(s));
+    // Unset keeps the stored parse version (IndexStore contract, as the SQL stores' coalesce).
+    if (next.parseVersion === undefined && prev !== undefined) next.parseVersion = prev;
+    this.sessions.set(s.id, next);
   }
 
   async getSession(id: string): Promise<Session | undefined> {

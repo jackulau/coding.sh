@@ -293,6 +293,31 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.equal(await s.kvGet("otel:trace:abc"), undefined);
     }));
 
+    it("session parseVersion round-trips and survives an upsert that leaves it unset", withStore(async (s) => {
+      const base: Session = { id: "pv", agent: "codex", startedAt: 1, stats: { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] };
+      await s.upsertSession(base);
+      assert.equal((await s.getSession("pv"))?.parseVersion, undefined);
+      await s.upsertSession({ ...base, parseVersion: 2 });
+      await s.upsertSession({ ...base, title: "later" });
+      assert.equal((await s.getSession("pv"))?.parseVersion, 2);
+      assert.equal((await s.getSession("pv"))?.title, "later");
+    }));
+
+    it("optional replaceSessionEvents swaps one session's rows atomically", withStore(async (s) => {
+      if (!s.replaceSessionEvents) return;
+      const a1 = fixtureEvent({ sessionId: "ra", kind: "user.message", payload: { text: "zebra crossing" } });
+      const a2 = fixtureEvent({ sessionId: "ra" });
+      const b1 = fixtureEvent({ sessionId: "rb" });
+      await s.putEvents([a1, a2, b1]);
+      const a3 = fixtureEvent({ sessionId: "ra", kind: "user.message", payload: { text: "giraffe" } });
+      const r = await s.replaceSessionEvents("ra", [a1.id, b1.id, "missing"], [a3]);
+      assert.deepEqual(r, { removed: 1, inserted: 1 });
+      assert.deepEqual((await s.listEvents("ra")).map((e) => e.id).sort(), [a2.id, a3.id].sort());
+      assert.deepEqual((await s.listEvents("rb")).map((e) => e.id), [b1.id], "another session's id is ignored");
+      assert.deepEqual(await s.search("zebra"), []);
+      assert.deepEqual((await s.search("giraffe")).map((h) => h.event.id), [a3.id]);
+    }));
+
     it("optional datasets are immutable per version with a latest pointer", withStore(async (s) => {
       if (!s.putDataset || !s.getDataset || !s.listDatasets) return;
       const v1 = { id: "qa", name: "QA", version: "v1", cases: [{ id: "c1", input: "a" }] };

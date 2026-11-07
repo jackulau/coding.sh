@@ -149,14 +149,45 @@ interface LineEvents {
   events: AgentEvent[];
 }
 
-interface CaptureProfile {
+export interface CaptureProfile {
   config: Config;
   redactor: Redactor;
 }
 
+/** Per-cwd capture settings (repo overrides), cached for one run. A bad repo config falls back to the user one. */
+export function profileCache(config: Config, env: NodeJS.ProcessEnv, error: (e: IngestError) => void): (cwd: string | undefined) => CaptureProfile {
+  const profiles = new Map<string, CaptureProfile>();
+  return (cwd) => {
+    const key = cwd ?? "";
+    let p = profiles.get(key);
+    if (!p) {
+      let cfg = config;
+      if (cwd) {
+        try {
+          cfg = resolveRepoConfig(config, cwd, env);
+        } catch (err) {
+          error({ message: `ignoring repo config for ${cwd}: ${(err as Error).message}` });
+        }
+      }
+      p = { config: cfg, redactor: createRedactor({ redact: cfg.capture.redact, patterns: cfg.capture.redactPatterns, env }) };
+      profiles.set(key, p);
+    }
+    return p;
+  };
+}
+
+/**
+ * Adapter.parseVersion for a session's agent (default 1). A name with no
+ * adapter of its own is a `coding.sh run --agent <name>` wrapper session.
+ */
+export function parseVersionFor(adapters: ReadonlyMap<string, Adapter>, agent: string): number | undefined {
+  const a = adapters.get(agent) ?? adapters.get("wrapper");
+  return a ? (a.parseVersion ?? 1) : undefined;
+}
+
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
-function validEvent(e: AgentEvent): string | undefined {
+export function validEvent(e: AgentEvent): string | undefined {
   if (!e || typeof e !== "object") return "adapter returned a non-object event";
   if (typeof e.id !== "string" || !e.id) return "event has no id";
   if (typeof e.sessionId !== "string" || !e.sessionId) return `event ${e.id} has no sessionId`;
@@ -243,28 +274,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     else droppedErrors++;
   };
 
-  // Per-cwd capture settings (repo overrides), cached for the run.
-  const profiles = new Map<string, CaptureProfile>();
-  const profileFor = (cwd: string | undefined): CaptureProfile => {
-    const key = cwd ?? "";
-    let p = profiles.get(key);
-    if (!p) {
-      let cfg = config;
-      if (cwd) {
-        try {
-          cfg = resolveRepoConfig(config, cwd, env);
-        } catch (err) {
-          error({ message: `ignoring repo config for ${cwd}: ${(err as Error).message}` });
-        }
-      }
-      p = {
-        config: cfg,
-        redactor: createRedactor({ redact: cfg.capture.redact, patterns: cfg.capture.redactPatterns, env }),
-      };
-      profiles.set(key, p);
-    }
-    return p;
-  };
+  const profileFor = profileCache(config, env, error);
   // Fail fast on a bad user config (e.g. invalid redact pattern) before touching anything.
   profileFor(undefined);
 
@@ -282,54 +292,13 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   const sinkBatchSize = (sink: Sink) => config.sinks.find((s) => (s.name ?? s.kind) === sink.name)?.batchSize ?? DEFAULT_SINK_BATCH;
   const touchedAll = new Set<string>();
 
-  const normalize = async (line: SpoolLine, source: string, offset: number): Promise<AgentEvent[]> => {
-    const profile = profileFor(line.cwd);
-    const capture = profile.config.capture;
-    if (line.cwd && isExcluded(line.cwd, capture.exclude, env)) {
-      result.excluded++;
-      return [];
-    }
-    // `coding.sh run --agent my-agent -- …` spools under any name: an id with no
-    // adapter of its own is still a wrapper session, recorded under that name.
-    const adapter = adapters.get(line.agent) ?? (isWrapperLine(line) ? adapters.get("wrapper") : undefined);
-    if (!adapter) {
-      error({ source, offset, message: `no adapter registered for agent ${JSON.stringify(line.agent)}; line skipped` });
-      return [];
-    }
-    const metadata = capture.mode === "metadata";
-    const ctx = normalizeContext(profile, blobs, metadata, { file: source, offset });
-    let raw: AgentEvent[];
-    try {
-      raw = await adapter.normalize(line, ctx);
-    } catch (err) {
-      error({ source, offset, message: `${adapter.id}.normalize failed: ${(err as Error).message}` });
-      return [];
-    }
-    const capturePath = line.agent === "wrapper" || adapter.id === "wrapper" ? "wrapper" : "hook";
-    const out: AgentEvent[] = [];
-    for (const e of raw) {
-      const problem = validEvent(e);
-      if (problem) {
-        error({ source, offset, message: `${adapter.id}: ${problem}` });
-        continue;
-      }
-      let ev = e;
-      if (ev.runId === undefined && line.runId) ev = { ...ev, runId: line.runId };
-      if (ev.source === undefined) ev = { ...ev, source: capturePath };
-      // Gateway routing seen in the hook's env: mark model calls, and the line's
-      // first event so the session is tagged even when no call is in this line.
-      if (line.gateway && ev.payload.gateway === undefined && (ev.kind === "llm.call" || out.length === 0)) ev = { ...ev, payload: { ...ev.payload, gateway: line.gateway } };
-      // Host app (T3 Code) that launched the agent: buildSession attributes the session to it.
-      if (line.host && ev.payload.via === undefined) ev = { ...ev, payload: { ...ev.payload, via: line.host.id, ...(line.host.thread ? { hostThreadId: line.host.thread } : {}) } };
-      out.push(finishEvent(ev, profile, metadata));
-    }
-    return out;
-  };
+  const normalize = spoolNormalizer({ adapters, blobs, env, profileFor, error, excluded: () => result.excluded++ });
 
   const durations = toolDurationFiller(index);
 
   const linker = childLinker(index);
   const repo = repoResolver();
+  const versionFor = (agent: string) => parseVersionFor(adapters, agent);
   // Latest live end-of-turn/session ts per session, from lines new in this run.
   const freshEnds = new Map<string, number>();
   const endSnapshot = async (s: Session) => {
@@ -349,7 +318,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   };
   const recompute = async (ids: Iterable<string>) => {
     for (const id of ids) {
-      if (await recomputeSession(index, id, linker, repo, endSnapshot)) touchedAll.add(id);
+      if (await recomputeSession(index, id, { linker, repo, enrich: endSnapshot, versionFor })) touchedAll.add(id);
     }
   };
 
@@ -541,7 +510,70 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
 
 // ---------------------------------------------------------------- shared steps
 
-function normalizeContext(profile: CaptureProfile, blobs: BlobStore, metadata: boolean, source?: { file: string; offset: number }): NormalizeContext {
+export interface SpoolNormalizerOptions {
+  adapters: Map<string, Adapter>;
+  blobs: BlobStore;
+  env: NodeJS.ProcessEnv;
+  profileFor: (cwd: string | undefined) => CaptureProfile;
+  error: (e: IngestError) => void;
+  /** A line skipped because its cwd matched capture.exclude. */
+  excluded: () => void;
+}
+
+/**
+ * Spool line → stored-form events: the line's adapter (a `coding.sh run` line
+ * with no adapter of its own goes to the wrapper), then the enrichment every
+ * event gets (runId, capture-path source, gateway, host), redaction, metadata
+ * stripping and list prices. Invalid events and adapter failures are reported.
+ */
+export function spoolNormalizer(o: SpoolNormalizerOptions): (line: SpoolLine, source: string, offset: number) => Promise<AgentEvent[]> {
+  const { adapters, blobs, env, profileFor, error } = o;
+  return async (line, source, offset) => {
+    const profile = profileFor(line.cwd);
+    const capture = profile.config.capture;
+    if (line.cwd && isExcluded(line.cwd, capture.exclude, env)) {
+      o.excluded();
+      return [];
+    }
+    // `coding.sh run --agent my-agent -- …` spools under any name: an id with no
+    // adapter of its own is still a wrapper session, recorded under that name.
+    const adapter = adapters.get(line.agent) ?? (isWrapperLine(line) ? adapters.get("wrapper") : undefined);
+    if (!adapter) {
+      error({ source, offset, message: `no adapter registered for agent ${JSON.stringify(line.agent)}; line skipped` });
+      return [];
+    }
+    const metadata = capture.mode === "metadata";
+    const ctx = normalizeContext(profile, blobs, metadata, { file: source, offset });
+    let raw: AgentEvent[];
+    try {
+      raw = await adapter.normalize(line, ctx);
+    } catch (err) {
+      error({ source, offset, message: `${adapter.id}.normalize failed: ${(err as Error).message}` });
+      return [];
+    }
+    const capturePath = line.agent === "wrapper" || adapter.id === "wrapper" ? "wrapper" : "hook";
+    const out: AgentEvent[] = [];
+    for (const e of raw) {
+      const problem = validEvent(e);
+      if (problem) {
+        error({ source, offset, message: `${adapter.id}: ${problem}` });
+        continue;
+      }
+      let ev = e;
+      if (ev.runId === undefined && line.runId) ev = { ...ev, runId: line.runId };
+      if (ev.source === undefined) ev = { ...ev, source: capturePath };
+      // Gateway routing seen in the hook's env: mark model calls, and the line's
+      // first event so the session is tagged even when no call is in this line.
+      if (line.gateway && ev.payload.gateway === undefined && (ev.kind === "llm.call" || out.length === 0)) ev = { ...ev, payload: { ...ev.payload, gateway: line.gateway } };
+      // Host app (T3 Code) that launched the agent: buildSession attributes the session to it.
+      if (line.host && ev.payload.via === undefined) ev = { ...ev, payload: { ...ev.payload, via: line.host.id, ...(line.host.thread ? { hostThreadId: line.host.thread } : {}) } };
+      out.push(finishEvent(ev, profile, metadata));
+    }
+    return out;
+  };
+}
+
+export function normalizeContext(profile: CaptureProfile, blobs: BlobStore, metadata: boolean, source?: { file: string; offset: number }): NormalizeContext {
   const ctx: NormalizeContext = {
     maxInlineBytes: profile.config.capture.maxInlineBytes,
     id: (...parts) => hashParts(...parts),
@@ -561,7 +593,7 @@ function normalizeContext(profile: CaptureProfile, blobs: BlobStore, metadata: b
  * no-verification detector needs), then a list-price cost on model calls that
  * report tokens but no cost (built-in prices, `[pricing]` overrides), as serve does.
  */
-function finishEvent(e: AgentEvent, profile: CaptureProfile, metadata: boolean): AgentEvent {
+export function finishEvent(e: AgentEvent, profile: CaptureProfile, metadata: boolean): AgentEvent {
   let ev = profile.redactor.event(e);
   if (metadata) {
     const verify = isVerifyToolStart(ev);
@@ -579,8 +611,8 @@ function finishEvent(e: AgentEvent, profile: CaptureProfile, metadata: boolean):
  * run (another hook process's file read after this one), as long as that is
  * before the next checkpoint stores it: settle() marks that point.
  */
-type DurationFiller = ((events: AgentEvent[]) => Promise<AgentEvent[]>) & { settle(): void };
-function toolDurationFiller(index: IndexStore): DurationFiller {
+export type DurationFiller = ((events: AgentEvent[]) => Promise<AgentEvent[]>) & { settle(): void };
+export function toolDurationFiller(index: IndexStore): DurationFiller {
   const starts = new Map<string, Map<string, number>>();
   const loaded = new Set<string>();
   // sessionId → toolUseId → tool.end still waiting for its start (not yet stored).
@@ -635,7 +667,7 @@ function toolDurationFiller(index: IndexStore): DurationFiller {
   return Object.assign(fill, { settle: () => orphans.clear() });
 }
 
-interface ChildLinker {
+export interface ChildLinker {
   /** Remember links named by these (parent) events. */
   observe(parentId: string, events: AgentEvent[]): Promise<void>;
   /** A pending link for a session that has none, if any. */
@@ -649,7 +681,7 @@ interface ChildLinker {
  * Kept in memory for this run and, when the store has kv, durably, so a child
  * ingested in a later run than its parent is still linked.
  */
-function childLinker(index: IndexStore): ChildLinker {
+export function childLinker(index: IndexStore): ChildLinker {
   const links = new Map<string, NonNullable<Session["parent"]>>();
   const kv = index.kvGet && index.kvSet ? { get: index.kvGet.bind(index), set: index.kvSet.bind(index) } : undefined;
   return {
@@ -691,17 +723,25 @@ function childLinker(index: IndexStore): ChildLinker {
   };
 }
 
-async function recomputeSession(
-  index: IndexStore,
-  id: string,
-  linker: ChildLinker,
-  repo: RepoResolver,
-  enrich?: (session: Session) => Promise<void>,
-): Promise<boolean> {
+export interface RecomputeOptions {
+  linker: ChildLinker;
+  repo: RepoResolver;
+  enrich?: (session: Session) => Promise<void>;
+  /** Parse version a session new to the index is stamped with (an existing one keeps its own). */
+  versionFor?: (agent: string) => number | undefined;
+  /** Stamp this parse version whatever the stored one (re-parse). */
+  parseVersion?: number;
+}
+
+/** Folds a session's stored events into its row and upserts it. False when it has no events. */
+export async function recomputeSession(index: IndexStore, id: string, o: RecomputeOptions): Promise<boolean> {
+  const { linker, repo, enrich } = o;
   const events = await index.listEvents(id);
   if (!events.length) return false;
   const prev = await index.getSession(id);
   const session = buildSession(events, prev);
+  const version = o.parseVersion ?? (prev ? undefined : o.versionFor?.(session.agent));
+  if (version !== undefined) session.parseVersion = version;
   if (!session.parent) {
     const link = await linker.pending(id);
     if (link) session.parent = link;
@@ -756,24 +796,7 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   const { config, index, blobs } = opts;
   const env = opts.env ?? process.env;
   const result: BackfillResult = { events: 0, duplicates: 0, sessions: 0, excluded: 0, errors: [], agents: [], pendingFiles: 0 };
-  const profiles = new Map<string, CaptureProfile>();
-  const profileFor = (cwd: string | undefined): CaptureProfile => {
-    const key = cwd ?? "";
-    let p = profiles.get(key);
-    if (!p) {
-      let cfg = config;
-      if (cwd) {
-        try {
-          cfg = resolveRepoConfig(config, cwd, env);
-        } catch (err) {
-          result.errors.push({ message: `ignoring repo config for ${cwd}: ${(err as Error).message}` });
-        }
-      }
-      p = { config: cfg, redactor: createRedactor({ redact: cfg.capture.redact, patterns: cfg.capture.redactPatterns, env }) };
-      profiles.set(key, p);
-    }
-    return p;
-  };
+  const profileFor = profileCache(config, env, (e) => result.errors.push(e));
   const base = profileFor(undefined);
   const metadata = base.config.capture.mode === "metadata";
   // Blobs are redacted with the user-level profile: backfill can't know an event's cwd before normalizing it.
@@ -836,18 +859,12 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
     const adapterOpts = opts.since !== undefined ? { since: opts.since, changed } : { changed };
     try {
       for await (const e of adapter.backfill(ctx, adapterOpts)) {
-        const problem = validEvent(e);
-        if (problem) {
-          if (result.errors.length < MAX_ERRORS) result.errors.push({ message: `${adapter.id}: ${problem}` });
+        const ev = backfillEvent(e, profileFor, metadata, env);
+        if (typeof ev === "string") {
+          if (ev === "excluded") result.excluded++;
+          else if (result.errors.length < MAX_ERRORS) result.errors.push({ message: `${adapter.id}: ${ev}` });
           continue;
         }
-        const profile = profileFor(e.cwd);
-        if (e.cwd && isExcluded(e.cwd, profile.config.capture.exclude, env)) {
-          result.excluded++;
-          continue;
-        }
-        // Compared in stored form (redacted, metadata-stripped), the form a live copy was stored in.
-        const ev = finishEvent(e.source === undefined ? { ...e, source: "transcript" } : e, profile, metadata);
         if (await copies.isCopy(ev)) {
           result.duplicates++;
           continue;
@@ -866,8 +883,10 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   }
   const linker = childLinker(index);
   const repo = repoResolver();
+  const byId = new Map(opts.adapters.map((a) => [a.id, a]));
+  const versionFor = (agent: string) => parseVersionFor(byId, agent);
   const updated = new Set<string>();
-  for (const id of touched) if (await recomputeSession(index, id, linker, repo)) updated.add(id);
+  for (const id of touched) if (await recomputeSession(index, id, { linker, repo, versionFor })) updated.add(id);
   for (const id of await linker.apply()) updated.add(id);
   for (const { agent, file } of fileCursors) {
     await index.setCursor(backfillCursorKey(agent, file.path, "size"), file.size);
@@ -877,6 +896,19 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   }
   result.sessions = updated.size;
   return result;
+}
+
+/**
+ * A backfilled event in stored form (source "transcript" unless the adapter
+ * set one, redacted, metadata-stripped, priced), the form a live copy was
+ * stored in; "excluded" for a capture.exclude cwd, or why it is invalid.
+ */
+export function backfillEvent(e: AgentEvent, profileFor: (cwd: string | undefined) => CaptureProfile, metadata: boolean, env: NodeJS.ProcessEnv): AgentEvent | string {
+  const problem = validEvent(e);
+  if (problem) return problem;
+  const profile = profileFor(e.cwd);
+  if (e.cwd && isExcluded(e.cwd, profile.config.capture.exclude, env)) return "excluded";
+  return finishEvent(e.source === undefined ? { ...e, source: "transcript" } : e, profile, metadata);
 }
 
 async function sessionsFor(index: IndexStore, batch: AgentEvent[]): Promise<Session[]> {

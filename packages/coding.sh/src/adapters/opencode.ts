@@ -631,6 +631,8 @@ export const opencode: Adapter = {
   id: OPENCODE_AGENT,
   displayName: "OpenCode",
   tier: "A",
+  // 2 (0.1.2): backfill reads the 1.x SQLite tables.
+  parseVersion: 2,
 
   async detect() {
     const r = await detectAgent({

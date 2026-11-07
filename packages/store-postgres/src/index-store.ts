@@ -143,6 +143,7 @@ function rowToSession(r: Row): Session {
   set("parent", parse(r.parent));
   set("traceIds", parse(r.trace_ids));
   if (typeof r.project_id === "string" && r.project_id !== DEFAULT_PROJECT) s.project = r.project_id;
+  set("parseVersion", num(r.parse_version));
   return s;
 }
 
@@ -259,43 +260,56 @@ export class PgIndexStore implements IndexStore {
       unique.push(e);
     }
     if (!unique.length) return { inserted: 0 };
+    return withTx(this.pool, async (c) => ({ inserted: await this.insertEvents(c, unique) }));
+  }
+
+  async replaceSessionEvents(sessionId: string, removeIds: string[], add: AgentEvent[]): Promise<{ removed: number; inserted: number }> {
+    const seen = new Set<string>();
+    const unique = add.filter((e) => !seen.has(e.id) && (seen.add(e.id), true));
     return withTx(this.pool, async (c) => {
-      // seq keeps batch order for events with equal ts (as SQLite's rowid does),
-      // while rows are inserted in id order: concurrent writers with overlapping
-      // ids then take row locks in the same order and cannot deadlock.
-      const { rows } = await c.query<{ v: number }>(`SELECT nextval('${this.t("events_seq")}') AS v FROM generate_series(1, $1::int)`, [unique.length]);
-      const seqs = rows.map((r) => r.v).sort((a, b) => a - b);
-      const ordered = unique.map((e, i) => ({ e, seq: seqs[i]! })).sort((a, b) => (a.e.id < b.e.id ? -1 : a.e.id > b.e.id ? 1 : 0));
-      let inserted = 0;
-      for (let i = 0; i < ordered.length; i += INSERT_CHUNK) {
-        const chunk = ordered.slice(i, i + INSERT_CHUNK);
-        // Column-wise arrays for unnest(): one fixed statement whatever the chunk size.
-        const cols: unknown[][] = Array.from({ length: 26 }, () => []);
-        for (const { e, seq } of chunk) {
-          const p = e.payload ?? {};
-          const values = [
-            txt(e.id), seq, txt(projectOf(e.project)), txt(e.sessionId), txt(e.turnId), txt(e.parentId), e.ts, e.durationMs ?? null,
-            txt(e.traceId), txt(e.spanId), txt(e.parentSpanId), txt(e.subagentId), txt(e.agent), txt(e.agentVersion), txt(e.model),
-            txt(e.kind), typeof p.tool === "string" ? txt(p.tool) : null, typeof p.ok === "boolean" ? p.ok : null, txt(e.runId),
-            txt(e.cwd), json(e.repo), JSON.stringify(p), e.blobs?.length ? JSON.stringify(e.blobs) : null, json(e.usage),
-            txt(e.source), searchFolded(e),
-          ];
-          values.forEach((v, k) => cols[k]!.push(v));
-        }
-        const r = await c.query(
-          `INSERT INTO ${this.t("events")} (id, seq, project_id, session_id, turn_id, parent_id, ts, duration_ms, trace_id, span_id,
-             parent_span_id, subagent_id, agent, agent_version, model, kind, tool, ok, run_id, cwd, repo, payload, blobs, usage,
-             source, search_folded)
-           SELECT * FROM unnest($1::text[], $2::bigint[], $3::text[], $4::text[], $5::text[], $6::text[], $7::float8[], $8::float8[],
-             $9::text[], $10::text[], $11::text[], $12::text[], $13::text[], $14::text[], $15::text[], $16::text[], $17::text[],
-             $18::boolean[], $19::text[], $20::text[], $21::text[], $22::text[], $23::text[], $24::text[], $25::text[], $26::text[])
-           ON CONFLICT (id) DO NOTHING RETURNING id`,
-          cols,
-        );
-        inserted += r.rowCount ?? 0;
-      }
-      return { inserted };
+      const del = await c.query(`DELETE FROM ${this.t("events")} WHERE session_id = $1 AND id = ANY($2::text[])`, [sessionId, [...new Set(removeIds)]]);
+      const inserted = unique.length ? await this.insertEvents(c, unique) : 0;
+      return { removed: del.rowCount ?? 0, inserted };
     });
+  }
+
+  /** Inserts distinct-id events on the caller's transaction; returns rows inserted. */
+  private async insertEvents(c: pg.PoolClient, unique: AgentEvent[]): Promise<number> {
+    // seq keeps batch order for events with equal ts (as SQLite's rowid does),
+    // while rows are inserted in id order: concurrent writers with overlapping
+    // ids then take row locks in the same order and cannot deadlock.
+    const { rows } = await c.query<{ v: number }>(`SELECT nextval('${this.t("events_seq")}') AS v FROM generate_series(1, $1::int)`, [unique.length]);
+    const seqs = rows.map((r) => r.v).sort((a, b) => a - b);
+    const ordered = unique.map((e, i) => ({ e, seq: seqs[i]! })).sort((a, b) => (a.e.id < b.e.id ? -1 : a.e.id > b.e.id ? 1 : 0));
+    let inserted = 0;
+    for (let i = 0; i < ordered.length; i += INSERT_CHUNK) {
+      const chunk = ordered.slice(i, i + INSERT_CHUNK);
+      // Column-wise arrays for unnest(): one fixed statement whatever the chunk size.
+      const cols: unknown[][] = Array.from({ length: 26 }, () => []);
+      for (const { e, seq } of chunk) {
+        const p = e.payload ?? {};
+        const values = [
+          txt(e.id), seq, txt(projectOf(e.project)), txt(e.sessionId), txt(e.turnId), txt(e.parentId), e.ts, e.durationMs ?? null,
+          txt(e.traceId), txt(e.spanId), txt(e.parentSpanId), txt(e.subagentId), txt(e.agent), txt(e.agentVersion), txt(e.model),
+          txt(e.kind), typeof p.tool === "string" ? txt(p.tool) : null, typeof p.ok === "boolean" ? p.ok : null, txt(e.runId),
+          txt(e.cwd), json(e.repo), JSON.stringify(p), e.blobs?.length ? JSON.stringify(e.blobs) : null, json(e.usage),
+          txt(e.source), searchFolded(e),
+        ];
+        values.forEach((v, k) => cols[k]!.push(v));
+      }
+      const r = await c.query(
+        `INSERT INTO ${this.t("events")} (id, seq, project_id, session_id, turn_id, parent_id, ts, duration_ms, trace_id, span_id,
+           parent_span_id, subagent_id, agent, agent_version, model, kind, tool, ok, run_id, cwd, repo, payload, blobs, usage,
+           source, search_folded)
+         SELECT * FROM unnest($1::text[], $2::bigint[], $3::text[], $4::text[], $5::text[], $6::text[], $7::float8[], $8::float8[],
+           $9::text[], $10::text[], $11::text[], $12::text[], $13::text[], $14::text[], $15::text[], $16::text[], $17::text[],
+           $18::boolean[], $19::text[], $20::text[], $21::text[], $22::text[], $23::text[], $24::text[], $25::text[], $26::text[])
+         ON CONFLICT (id) DO NOTHING RETURNING id`,
+        cols,
+      );
+      inserted += r.rowCount ?? 0;
+    }
+    return inserted;
   }
 
   async listEvents(sessionId: string, opts: { kinds?: string[]; limit?: number; offset?: number } = {}): Promise<AgentEvent[]> {
@@ -331,20 +345,21 @@ export class PgIndexStore implements IndexStore {
 
   async upsertSession(s: Session): Promise<void> {
     await this.pool.query(
-      `INSERT INTO ${this.t("sessions")} (id, project_id, agent, agent_version, model, cwd, repo, repo_root, title, started_at, ended_at,
-         stats, flags, run_id, end_snapshot, parent, parent_session_id, trace_ids)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+      `INSERT INTO ${this.t("sessions")} AS cur (id, project_id, agent, agent_version, model, cwd, repo, repo_root, title, started_at, ended_at,
+         stats, flags, run_id, end_snapshot, parent, parent_session_id, trace_ids, parse_version)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
        ON CONFLICT (id) DO UPDATE SET
          project_id = excluded.project_id, agent = excluded.agent, agent_version = excluded.agent_version, model = excluded.model,
          cwd = excluded.cwd, repo = excluded.repo, repo_root = excluded.repo_root, title = excluded.title,
          started_at = excluded.started_at, ended_at = excluded.ended_at, stats = excluded.stats, flags = excluded.flags,
          run_id = excluded.run_id, end_snapshot = excluded.end_snapshot, parent = excluded.parent,
-         parent_session_id = excluded.parent_session_id, trace_ids = excluded.trace_ids`,
+         parent_session_id = excluded.parent_session_id, trace_ids = excluded.trace_ids,
+         parse_version = coalesce(excluded.parse_version, cur.parse_version)`,
       [
         txt(s.id), txt(projectOf(s.project)), txt(s.agent), txt(s.agentVersion), txt(s.model), txt(s.cwd), json(s.repo), txt(s.repo?.root),
         txt(s.title), s.startedAt, s.endedAt ?? null, JSON.stringify(s.provider ? { ...s.stats, provider: s.provider } : s.stats),
         JSON.stringify(s.flags ?? []), txt(s.runId), txt(s.endSnapshot), json(s.parent), txt(s.parent?.sessionId),
-        s.traceIds?.length ? JSON.stringify(s.traceIds) : null,
+        s.traceIds?.length ? JSON.stringify(s.traceIds) : null, s.parseVersion ?? null,
       ],
     );
   }

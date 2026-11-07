@@ -925,6 +925,8 @@ export const codex: Adapter = {
   id: CODEX_AGENT,
   displayName: "Codex CLI",
   tier: "A",
+  // 2 (0.1.2): code-mode exec cells parent their commands and count once; one compaction across hooks and backfill.
+  parseVersion: 2,
 
   detect() {
     const home = codexHome();

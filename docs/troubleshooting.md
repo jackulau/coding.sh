@@ -102,6 +102,23 @@ For an agent sending over OpenTelemetry or the SDK:
   so there is no start state to replay. Record it with `coding.sh run --` from inside the repository.
   See [Turn a session into an eval](how-to/session-to-eval.md).
 
+## Old sessions show doubled counts
+
+Sessions captured before an upgrade keep the rows the older coding.sh parsed. When an adapter's
+parsing changes, coding.sh re-parses that agent's stored sessions in the background, from their
+transcripts and from the hook lines still in the spool. This runs on the next session end, read
+or viewer start after the upgrade. Each session is swapped in one step, so reads never wait or see
+it half done.
+
+- **Do it now.** `coding.sh ingest --rebuild` re-parses every session. Add `--agent pi` for one
+  agent. It prints how many sessions it re-parsed and how many it kept.
+- **Some sessions were kept.** A session whose transcript is gone, and whose hook lines gc removed
+  (`retention.keepSpoolDays`, 7 days by default), keeps its rows. Rows that repeat another row
+  of the same call or prompt are still removed. `coding.sh ingest --rebuild --json` lists each
+  kept session with the reason.
+- **Nothing happens.** Re-parse needs the local SQLite index (or a store plugin that supports it),
+  and `CODING_SH_NO_AUTO_INGEST=1` turns off the background run. `--rebuild` still works.
+
 ## Errors by reason
 
 Every error prints a message and, usually, the next command to try. With `--json` it is one line on

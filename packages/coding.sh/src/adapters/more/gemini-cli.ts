@@ -378,6 +378,8 @@ export const geminiCliAdapter: Adapter = {
   id: ID,
   displayName: "Gemini CLI",
   tier: "A",
+  // 2 (0.1.2): hooks find call ids and turns in the chat file.
+  parseVersion: 2,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["gemini"]);
     const dir = geminiDir();

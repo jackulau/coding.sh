@@ -531,6 +531,8 @@ export const antigravityAdapter: Adapter = {
   id: ID,
   displayName: "Antigravity CLI",
   tier: "A",
+  // 2 (0.1.2): calls named by their result step, turns by the last planner step, as hooks do.
+  parseVersion: 2,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["agy"]);
     const dir = agyCliDir();

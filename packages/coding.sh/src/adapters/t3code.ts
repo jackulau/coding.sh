@@ -707,6 +707,8 @@ export const t3code: Adapter = {
   id: T3_AGENT,
   displayName: "T3 Code",
   tier: "B",
+  // 2 (0.1.2): Pi's native id links to the Pi session.
+  parseVersion: 2,
 
   async detect() {
     const env = process.env;

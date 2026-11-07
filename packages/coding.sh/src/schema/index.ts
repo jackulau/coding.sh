@@ -196,6 +196,15 @@ export interface Session {
   traceIds?: string[];
   /** Project, copied from the events by buildSession. Unset means "default". */
   project?: string;
+  /**
+   * Adapter.parseVersion of the code that produced this session's rows, set when
+   * ingest first creates the session and kept as later events arrive (so it is
+   * the oldest parse in the session). Older than the adapter's: re-parsed from
+   * its transcript or spool (core/reparse.ts). Unset: not produced by an
+   * adapter's ingest (OTel, SDK batches), never re-parsed automatically.
+   * A store keeps the stored value when an upsert leaves it unset.
+   */
+  parseVersion?: number;
 }
 
 /** Latency aggregates kept on Session.stats.latency. All milliseconds. */

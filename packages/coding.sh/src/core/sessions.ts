@@ -320,6 +320,7 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   set("parent", parentOf(sorted) ?? prev?.parent);
   const project = sorted.find((e) => e.project)?.project ?? prev?.project;
   if (project && project !== "default") session.project = project;
+  set("parseVersion", prev?.parseVersion);
   return session;
 }
 

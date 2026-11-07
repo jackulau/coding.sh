@@ -39,6 +39,8 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     judgeCache: join(root, "judge-cache"),
     /** Cross-process ingest lock (see core/lock.ts). */
     ingestLock: join(root, "spool", ".ingest.lock"),
+    /** Held for a whole re-parse run (core/reparse.ts), so one runs at a time. */
+    reparseLock: join(root, "reparse.lock"),
     /** Hook ownership for agents whose config files carry no coding.sh marker. */
     installs: join(root, "installs.json"),
   };

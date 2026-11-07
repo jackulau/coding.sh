@@ -382,6 +382,8 @@ export const gooseAdapter: Adapter = {
   id: ID,
   displayName: "Goose",
   tier: "A",
+  // 2 (0.1.2): hook and transcript copies share ids; sessions.db times are UTC; hidden context is not a prompt.
+  parseVersion: 2,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["goose"]);
     const cfg = gooseConfigDir();

@@ -306,6 +306,15 @@ CREATE VIRTUAL TABLE events_fts USING fts5(
 `,
     after: (db) => db.exec("INSERT INTO events_fts(events_fts) VALUES ('rebuild')"),
   },
+  {
+    // Adapter parse version per session (Session.parseVersion). Sessions stored
+    // before versioning came from parse version 1 (coding.sh 0.1.1 and earlier).
+    version: 6,
+    sql: `
+ALTER TABLE sessions ADD COLUMN parse_version INTEGER;
+UPDATE sessions SET parse_version = 1;
+`,
+  },
 ];
 
 export const SQLITE_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
@@ -401,6 +410,7 @@ function rowToSession(r: Row): Session {
   set("parent", parse(r.parent));
   set("traceIds", parse(r.trace_ids));
   set("project", projectField(r.project_id));
+  set("parseVersion", num(r.parse_version));
   return s;
 }
 
@@ -493,32 +503,49 @@ export class SqliteIndexStore implements IndexStore {
 
   async putEvents(batch: AgentEvent[]): Promise<{ inserted: number }> {
     if (!batch.length) return { inserted: 0 };
+    return this.tx(() => ({ inserted: this.insertEvents(batch) }));
+  }
+
+  async replaceSessionEvents(sessionId: string, removeIds: string[], add: AgentEvent[]): Promise<{ removed: number; inserted: number }> {
+    // External-content FTS: drop each row's index entry with the text it was indexed under (see deleteBefore).
+    const ftsDelete = this.stmt("INSERT INTO events_fts(events_fts, rowid, text) SELECT 'delete', rowid, text FROM events WHERE id = ? AND session_id = ? AND text IS NOT NULL AND text <> ''");
+    const del = this.stmt("DELETE FROM events WHERE id = ? AND session_id = ?");
+    return this.tx(() => {
+      let removed = 0;
+      for (const id of new Set(removeIds)) {
+        ftsDelete.run(id, sessionId);
+        removed += Number(del.run(id, sessionId).changes);
+      }
+      return { removed, inserted: this.insertEvents(add) };
+    });
+  }
+
+  /** INSERT OR IGNORE plus FTS rows; the caller holds the transaction. Returns rows inserted. */
+  private insertEvents(batch: AgentEvent[]): number {
     const insert = this.stmt(`INSERT OR IGNORE INTO events
       (id, session_id, turn_id, parent_id, ts, duration_ms, trace_id, span_id, parent_span_id, subagent_id,
        agent, agent_version, model, kind, tool, ok, run_id, cwd, repo, payload, blobs, usage, source, search_extra, project_id)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const fts = this.stmt("INSERT INTO events_fts (rowid, text) VALUES (?, ?)");
-    return this.tx(() => {
-      let inserted = 0;
-      for (const e of batch) {
-        const p = e.payload ?? {};
-        const tool = typeof p.tool === "string" ? p.tool : null;
-        const ok = typeof p.ok === "boolean" ? (p.ok ? 1 : 0) : null;
-        const r = insert.run(
-          e.id, e.sessionId, e.turnId ?? null, e.parentId ?? null, e.ts, e.durationMs ?? null, e.traceId ?? null,
-          e.spanId ?? null, e.parentSpanId ?? null, e.subagentId ?? null, e.agent, e.agentVersion ?? null,
-          e.model ?? null, e.kind, tool, ok, e.runId ?? null, e.cwd ?? null, json(e.repo), JSON.stringify(p),
-          e.blobs?.length ? JSON.stringify(e.blobs) : null, json(e.usage), e.source ?? null, storedSearchText(e) ?? null,
-          projectCol(e.project),
-        );
-        if (Number(r.changes) === 0) continue;
-        inserted++;
-        // Must equal the generated events.text, which the external-content FTS reads for snippets.
-        const text = searchableText(e);
-        if (text !== undefined) fts.run(r.lastInsertRowid, text);
-      }
-      return { inserted };
-    });
+    let inserted = 0;
+    for (const e of batch) {
+      const p = e.payload ?? {};
+      const tool = typeof p.tool === "string" ? p.tool : null;
+      const ok = typeof p.ok === "boolean" ? (p.ok ? 1 : 0) : null;
+      const r = insert.run(
+        e.id, e.sessionId, e.turnId ?? null, e.parentId ?? null, e.ts, e.durationMs ?? null, e.traceId ?? null,
+        e.spanId ?? null, e.parentSpanId ?? null, e.subagentId ?? null, e.agent, e.agentVersion ?? null,
+        e.model ?? null, e.kind, tool, ok, e.runId ?? null, e.cwd ?? null, json(e.repo), JSON.stringify(p),
+        e.blobs?.length ? JSON.stringify(e.blobs) : null, json(e.usage), e.source ?? null, storedSearchText(e) ?? null,
+        projectCol(e.project),
+      );
+      if (Number(r.changes) === 0) continue;
+      inserted++;
+      // Must equal the generated events.text, which the external-content FTS reads for snippets.
+      const text = searchableText(e);
+      if (text !== undefined) fts.run(r.lastInsertRowid, text);
+    }
+    return inserted;
   }
 
   async setEventCosts(costs: { id: string; costUsd: number }[]): Promise<number> {
@@ -570,18 +597,19 @@ export class SqliteIndexStore implements IndexStore {
   async upsertSession(s: Session): Promise<void> {
     this.stmt(`INSERT INTO sessions
       (id, agent, agent_version, model, cwd, repo, repo_root, title, started_at, ended_at, stats, flags, run_id, end_snapshot,
-       parent, parent_session_id, trace_ids, project_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       parent, parent_session_id, trace_ids, project_id, parse_version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         agent = excluded.agent, agent_version = excluded.agent_version, model = excluded.model, cwd = excluded.cwd,
         repo = excluded.repo, repo_root = excluded.repo_root, title = excluded.title, started_at = excluded.started_at,
         ended_at = excluded.ended_at, stats = excluded.stats, flags = excluded.flags, run_id = excluded.run_id,
         end_snapshot = excluded.end_snapshot, parent = excluded.parent, parent_session_id = excluded.parent_session_id,
-        trace_ids = excluded.trace_ids, project_id = excluded.project_id`).run(
+        trace_ids = excluded.trace_ids, project_id = excluded.project_id,
+        parse_version = coalesce(excluded.parse_version, sessions.parse_version)`).run(
       s.id, s.agent, s.agentVersion ?? null, s.model ?? null, s.cwd ?? null, json(s.repo), s.repo?.root ?? null,
       s.title ?? null, s.startedAt, s.endedAt ?? null, JSON.stringify(s.provider ? { ...s.stats, provider: s.provider } : s.stats), JSON.stringify(s.flags ?? []),
       s.runId ?? null, s.endSnapshot ?? null, json(s.parent), s.parent?.sessionId ?? null,
-      s.traceIds?.length ? JSON.stringify(s.traceIds) : null, projectCol(s.project),
+      s.traceIds?.length ? JSON.stringify(s.traceIds) : null, projectCol(s.project), s.parseVersion ?? null,
     );
   }
 

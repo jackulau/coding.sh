@@ -85,6 +85,8 @@ export const aiderAdapter: Adapter = {
   id: ID,
   displayName: "Aider",
   tier: "C",
+  // 2 (0.1.2): prompt and model from aider's argv.
+  parseVersion: 2,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["aider"]);
     const r: DetectResult = { installed: !!binary, hooked: false, notes: ["Aider has no hooks. Capture with `coding.sh run -- aider …`."] };

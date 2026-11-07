@@ -116,6 +116,8 @@ export const wrapperAdapter: Adapter = {
   id: "wrapper",
   displayName: "Any command (coding.sh run --)",
   tier: "C",
+  // 2 (0.1.2): secret-named argv flags redacted.
+  parseVersion: 2,
   async detect(): Promise<DetectResult> {
     return { installed: true, hooked: false, notes: ["Built in: capture any agent with `coding.sh run -- <cmd>`. Nothing to install."] };
   },

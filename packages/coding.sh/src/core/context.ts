@@ -6,10 +6,13 @@ import { paths } from "./paths.ts";
 import { openStores } from "../store/factory.ts";
 import type { BackfillResult, IngestOptions, IngestResult } from "./ingest.ts";
 import type { GcOptions, GcResult } from "./gc.ts";
+import type { ReparseOptions, ReparseResult } from "./reparse.ts";
 
 export interface Context {
   config: Config;
   paths: ReturnType<typeof paths>;
+  /** The environment the context was opened with (paths, child processes). */
+  env: NodeJS.ProcessEnv;
   index: IndexStore;
   blobs: BlobStore;
   sinks: Sink[];
@@ -23,6 +26,10 @@ export interface Context {
   ingest(opts?: Pick<IngestOptions, "lock" | "checkpointEvents" | "now" | "deadline" | "signal" | "onProgress">): Promise<IngestResult>;
   /** Imports agents' local transcript history (adapter.backfill), skipping copies live capture already has. */
   backfill(opts?: { agents?: string[]; since?: number; deadline?: number }): Promise<BackfillResult>;
+  /** Rebuilds sessions stored by an older adapter parse (or every one with `all`) from their transcripts and spool. */
+  reparse(opts?: Pick<ReparseOptions, "all" | "agents" | "onProgress" | "runLock">): Promise<ReparseResult>;
+  /** True when sessions stored by an older adapter parse wait for an automatic re-parse (cheap once none do). */
+  reparseDue(): Promise<boolean>;
   /** Blob/spool/judge-cache garbage collection with the effective config. */
   gc(opts?: Pick<GcOptions, "dryRun" | "compact" | "minBlobAgeMs" | "judgeCacheMaxBytes">): Promise<GcResult>;
   close(): Promise<void>;
@@ -45,6 +52,7 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
   return {
     config,
     paths: p,
+    env,
     index,
     blobs,
     sinks,
@@ -58,6 +66,14 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
       const [{ backfill }, { ADAPTERS }] = await Promise.all([import("./ingest.ts"), import("../adapters/index.ts")]);
       const chosen = o.agents?.length ? ADAPTERS.filter((a) => o.agents!.includes(a.id)) : ADAPTERS;
       return backfill({ config, index, blobs, env, adapters: chosen, ...(o.since !== undefined ? { since: o.since } : {}), ...(o.deadline !== undefined ? { deadline: o.deadline } : {}) });
+    },
+    async reparse(o = {}) {
+      const [{ reparse }, { ADAPTERS }] = await Promise.all([import("./reparse.ts"), import("../adapters/index.ts")]);
+      return reparse({ ...o, config, index, blobs, env, spoolDir: p.spool, adapters: new Map(ADAPTERS.map((a) => [a.id, a])) });
+    },
+    async reparseDue() {
+      const [{ reparseDue }, { ADAPTERS }] = await Promise.all([import("./reparse.ts"), import("../adapters/index.ts")]);
+      return reparseDue(index, new Map(ADAPTERS.map((a) => [a.id, a])));
     },
     async gc(o = {}) {
       const { gc } = await import("./gc.ts");

@@ -323,6 +323,8 @@ export const piAdapter: Adapter = {
   id: ID,
   displayName: "Pi",
   tier: "A",
+  // 2 (0.1.2): hook and transcript copies share ids; tokens counted once.
+  parseVersion: 2,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["pi"]);
     const dir = piAgentDir();

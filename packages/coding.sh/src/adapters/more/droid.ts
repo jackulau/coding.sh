@@ -368,6 +368,8 @@ export const droidAdapter: Adapter = {
   id: ID,
   displayName: "Factory Droid",
   tier: "A",
+  // 2 (0.1.2): hook and transcript copies share ids; tool hooks paired through the transcript's tool_use id.
+  parseVersion: 2,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["droid"]);
     const dir = factoryDir();

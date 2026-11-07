@@ -350,6 +350,8 @@ export const cursor: Adapter = {
   id: CURSOR_AGENT,
   displayName: "Cursor CLI",
   tier: "B",
+  // 2 (0.1.2): prompts and replies paired without timestamps; one session start/end across hooks and backfill.
+  parseVersion: 2,
 
   async detect() {
     const dir = cursorConfigDir();

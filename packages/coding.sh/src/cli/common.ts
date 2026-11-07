@@ -96,8 +96,30 @@ export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promi
     const env = o.env ?? process.env;
     const started = !busy && env.CODING_SH_NO_AUTO_INGEST !== "1" && spawnBackgroundIngest(ingestCli(ctx.paths.cliPointer), env);
     o.out?.note(`${plural(pending, "file")} not yet ingested${started ? ", indexing in the background" : ""}; showing what is indexed so far (--fresh waits for all)`);
+    if (started) reparseKicked = true; // that ingest re-parses too when due
   }
+  await kickReparse(ctx, o.env ?? process.env);
   return { pendingFiles: pending };
+}
+
+let reparseKicked = false;
+
+/**
+ * Sessions stored by an older adapter parse (after an upgrade) are rebuilt by
+ * a detached `ingest --background`, once per process, never in the read
+ * itself. Skipped while one runs, without a CLI to start, and when
+ * CODING_SH_NO_AUTO_INGEST=1. Never fails a read.
+ */
+async function kickReparse(ctx: Context, env: NodeJS.ProcessEnv): Promise<void> {
+  if (reparseKicked || env.CODING_SH_NO_AUTO_INGEST === "1") return;
+  try {
+    if (!(await ctx.reparseDue())) return;
+    reparseKicked = true;
+    const { isLocked } = await import("../core/lock.ts");
+    if (!isLocked(ctx.paths.reparseLock)) spawnBackgroundIngest(ingestCli(ctx.paths.cliPointer), env);
+  } catch {
+    // a store that can't answer must not break `coding.sh sessions`
+  }
 }
 
 /** The CLI a background ingest runs: this one (the bundle, or src/cli/main.ts from source), else the one init recorded. */

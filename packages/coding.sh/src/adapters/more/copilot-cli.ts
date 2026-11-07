@@ -348,6 +348,8 @@ export const copilotCliAdapter: Adapter = {
   id: ID,
   displayName: "GitHub Copilot CLI",
   tier: "A",
+  // 2 (0.1.2): hook and transcript copies share ids; no duplicate initial prompt; one llm.call per usage record.
+  parseVersion: 2,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["copilot"]);
     const dir = copilotHome();

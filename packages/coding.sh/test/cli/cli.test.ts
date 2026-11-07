@@ -3,7 +3,7 @@
 // directory, so no real agent binary runs and no real config is touched.
 import assert from "node:assert/strict";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -577,6 +577,61 @@ describe("cli zero setup", () => {
     const second = parseJson(cli(h, ["ingest", "--background", "--json"]).stdout, "second") as { spool: { lines: number } };
     assert.equal(first.spool.lines, 1, "the skipped lines are still there");
     assert.equal(second.spool.lines, 0, "and are ingested exactly once");
+  });
+});
+
+describe("cli ingest re-parse", () => {
+  interface Reparse { sessions: number; reparsed: number; kept: number; removed: number; inserted: number; errors: unknown[] }
+  const fixtures = join(import.meta.dirname, "..", "fixtures", "adapters", "pi", "real");
+
+  it("re-parses sessions an older parse stored, automatically and with --rebuild --agent", async () => {
+    const h = tmpHome();
+    // A real Pi session: its transcript under ~/.pi and the extension's spool lines.
+    cpSync(join(fixtures, "home", ".pi"), join(h.home, ".pi"), { recursive: true });
+    const spool = join(h.data, "spool", "pi");
+    mkdirSync(spool, { recursive: true });
+    const lines = readFileSync(join(fixtures, "extension.spool.jsonl"), "utf8").split("${FIXTURES}/pi/real/home").join(JSON.stringify(h.home).slice(1, -1));
+    writeFileSync(join(spool, "2026-11-07.1.jsonl"), lines);
+    const first = cli(h, ["ingest", "--backfill", "--agent", "pi", "--json"]);
+    assert.equal(first.status, 0, first.stderr);
+
+    const { loadSqlite } = await import("../../src/store/sqlite.ts");
+    const { DatabaseSync } = await loadSqlite();
+    const db = (fn: (d: InstanceType<typeof DatabaseSync>) => unknown) => {
+      const d = new DatabaseSync(join(h.data, "index.db"));
+      try {
+        return fn(d);
+      } finally {
+        d.close();
+      }
+    };
+    const rows = () => db((d) => d.prepare("SELECT id, parse_version AS v, stats FROM sessions WHERE agent = 'pi' ORDER BY id").all()) as { id: string; v: number; stats: string }[];
+    const fresh = rows();
+    assert.ok(fresh.length >= 1);
+    assert.ok(fresh.every((r) => r.v === 2), "ingest stamps the adapter's parse version");
+    // As a 0.1.1 index looks after the upgrade: version 1 rows, no stamp for the new versions.
+    db((d) => d.exec("UPDATE sessions SET parse_version = 1; DELETE FROM cursors WHERE source = 'reparse:stamp'"));
+
+    const auto = cli(h, ["ingest", "--json"]);
+    assert.equal(auto.status, 0, auto.stderr);
+    const a = (parseJson(auto.stdout, "auto") as { outcome: string; reparse: Reparse }).reparse;
+    assert.equal(a.reparsed, fresh.length, "the next ingest re-parses them");
+    assert.deepEqual(a.errors, []);
+    assert.deepEqual(rows(), fresh, "same rows and counts as a fresh v2 ingest");
+
+    const human = cli(h, ["ingest", "--rebuild", "--agent", "pi"]);
+    assert.equal(human.status, 0, human.stderr);
+    assert.match(human.stdout + human.stderr, new RegExp(`Re-parsed\\s+${fresh.length} session`));
+    assert.match(human.stdout + human.stderr, /Kept\s+0 sessions without a source/);
+    const again = cli(h, ["ingest", "--rebuild", "--agent", "pi", "--json"]);
+    assert.equal(again.status, 0, again.stderr);
+    const out = parseJson(again.stdout, "rebuild") as { outcome: string; reparse: Reparse };
+    assert.equal(out.outcome, "rebuilt");
+    assert.deepEqual([out.reparse.reparsed, out.reparse.kept, out.reparse.removed, out.reparse.inserted], [fresh.length, 0, 0, 0], "idempotent");
+    assert.deepEqual(rows(), fresh);
+
+    const none = cli(h, ["ingest", "--rebuild", "--agent", "codex", "--json"]);
+    assert.equal((parseJson(none.stdout, "codex") as { reparse: Reparse }).reparse.sessions, 0);
   });
 });
 

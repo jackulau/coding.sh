@@ -149,6 +149,13 @@ export interface IndexStore {
    * Eval assets (tasks, datasets, experiments, judges) are never touched.
    */
   deleteBefore?(cutoffMs: number, opts?: { project?: string }): Promise<{ sessions: number; events: number }>;
+  /**
+   * Atomically deletes these events of one session (ids of other sessions are
+   * ignored) and inserts `add` (idempotent on id, as putEvents), so a reader
+   * sees the session's rows either before or after, never half re-parsed.
+   * Used by re-parse (core/reparse.ts); without it sessions are not re-parsed.
+   */
+  replaceSessionEvents?(sessionId: string, removeIds: string[], add: AgentEvent[]): Promise<{ removed: number; inserted: number }>;
   /** Distinct project ids that have sessions ("default" for unscoped ones). Optional: serve falls back to scanning sessions. */
   listProjects?(): Promise<string[]>;
 
@@ -375,6 +382,13 @@ export interface Adapter {
   displayName: string;
   /** "A" hooks+transcript+headless, "B" transcript+headless, "C" wrapper only. */
   tier: "A" | "B" | "C";
+  /**
+   * Version of what normalize/backfill produce (default 1). Bump it whenever a
+   * change alters the rows stored for the same input (ids, kinds, payloads,
+   * dedupe): sessions stored by an older version are then re-parsed from their
+   * transcript or spool on the next background ingest (core/reparse.ts).
+   */
+  parseVersion?: number;
   detect(): Promise<DetectResult>;
   install(opts: InstallOpts): Promise<FileChange[]>;
   uninstall(opts: Omit<InstallOpts, "hookCommand">): Promise<FileChange[]>;

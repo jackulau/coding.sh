@@ -130,6 +130,7 @@ coding.sh ingest [options]
 | Option | Default | Description |
 |---|---|---|
 | `--backfill` |  | Also import agents' local transcript history. |
+| `--rebuild` |  | Re-parse every stored session (of --agent) from its transcript and spool with the current adapters. |
 | `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
 | `--since <WHEN>` |  | Only after this time: 7d, 12h, 30m or a date. |
 | `--background` |  | Don't wait for another ingest; exit quietly if one is running. |
@@ -137,9 +138,11 @@ coding.sh ingest [options]
 ```sh
 coding.sh ingest
 coding.sh ingest --backfill --since 30d
+coding.sh ingest --rebuild --agent pi
 ```
 
 - Rarely needed: read commands, the viewer and the MCP server ingest first, and the hook starts one when a session ends.
+- After an upgrade, sessions stored by an older adapter parse are re-parsed in the background. --rebuild does it for every session now; a session whose transcript and spool lines are gone keeps its rows, minus duplicates.
 
 ## `coding.sh run`
 

@@ -312,6 +312,15 @@ CREATE TABLE ${s}.blobs (
 ALTER TABLE ${s}.blobs ALTER COLUMN data SET STORAGE EXTERNAL;
 `,
   },
+  {
+    // Adapter parse version per session (Session.parseVersion), as SQLite v6.
+    // Sessions stored before versioning came from parse version 1.
+    version: 2,
+    sql: (s) => `
+ALTER TABLE ${s}.sessions ADD COLUMN parse_version integer;
+UPDATE ${s}.sessions SET parse_version = 1;
+`,
+  },
 ];
 
 export const PG_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
