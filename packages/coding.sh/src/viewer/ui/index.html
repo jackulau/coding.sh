@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark light">
 <meta name="referrer" content="no-referrer">
 <title>coding.sh</title>
@@ -33,11 +33,11 @@
   --warn: #e8b04a;
   --warn-ink: #f2cd85;
   --warn-wash: rgba(232, 176, 74, 0.11);
-  --bar: rgba(255, 255, 255, 0.22);
-  --bar-strong: rgba(255, 255, 255, 0.5);
+  --bar: rgba(255, 255, 255, 0.34);
+  --bar-strong: rgba(255, 255, 255, 0.62);
   /* Chart series: identity only, kept apart from the pass / fail / warn signals. */
   --s1: #3987e5;
-  --s2: #d55181;
+  --s2: #0fa8a0;
   --s3: #9085e9;
   --s4: #c98500;
   --shadow: 0 18px 50px -18px rgba(0, 0, 0, 0.85);
@@ -75,10 +75,10 @@
   --warn: #c98a12;
   --warn-ink: #8a5a06;
   --warn-wash: rgba(201, 138, 18, 0.12);
-  --bar: rgba(0, 0, 0, 0.2);
-  --bar-strong: rgba(0, 0, 0, 0.5);
+  --bar: rgba(0, 0, 0, 0.28);
+  --bar-strong: rgba(0, 0, 0, 0.58);
   --s1: #2a78d6;
-  --s2: #d55181;
+  --s2: #0d9a93;
   --s3: #6250d6;
   --s4: #b07400;
   --shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.3);
@@ -391,6 +391,13 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .cell .err { color: var(--fail-ink); }
 .cell .sub { color: var(--text-muted); }
 @media (min-width: 861px) {
+  /* Title gets the full column; badges sit on a second line, using the height the agent/model cell already takes. */
+  .row-main { flex-direction: column; align-items: stretch; justify-content: center; gap: 3px; padding: 6px 0; }
+  /* One height for every row, badges or not, so the list reads as an even grid. */
+  .list > .row { min-height: 52px; contain-intrinsic-size: auto 52px; }
+  .row-title { min-width: 0; }
+  .row-badges { height: 18px; flex: none; }
+  .row-badges .badge, .row-badges .sub-toggle { height: 18px; font-size: 10.5px; padding: 0 0.4rem; }
   .table.one-repo > .thead, .table.one-repo .row { grid-template-columns: 12px minmax(0, 1fr) 9.5rem 9rem 4.5rem 3.75rem 4.5rem 4.5rem; }
   .table.one-repo > .thead > :nth-child(4), .table.one-repo .repo-cell { display: none; }
 }
@@ -428,8 +435,13 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .row-cells .cell:empty, .row-cells .cell.opt { display: none; }
   .row-cells .agent-cell { display: block; }
   /* Phone meta reads as separate facts: agent model · repo · activity · … */
-  .row-cells { gap: 0 0.45rem; }
-  .row-cells .cell:not(:last-child)::after { content: "\00a0·"; color: var(--text-faint); }
+  /* Each fact carries its "·" in front, hung in the gap; a fact that starts a line pushes its dot
+     past the left edge, where it is clipped, so no line starts or ends with a stray dot. */
+  .row-cells { gap: 0 1.1em; overflow: hidden; }
+  .row-cells .cell::before { content: "·"; display: inline-block; width: 1.1em; margin-left: -1.1em; text-align: center; color: var(--text-faint); }
+  .row-cells .cell { overflow: visible; }
+  /* Every badge stays, wrapping to a second line instead of being clipped. */
+  .row-badges { height: auto; overflow: visible; gap: 0.3rem; }
   .table.one-repo .repo-cell { display: none; }
   .row-cells .agent-cell .sub { font-size: inherit; }
   .row-cells .num { text-align: left; }
@@ -455,6 +467,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .facts dt { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
 .facts dd { margin: 0; font-family: var(--font-mono); font-size: 12px; color: var(--text-2); overflow-wrap: anywhere; }
 .facts dd.none { color: var(--text-faint); }
+.facts .lat-short { display: none; }
+@media (max-width: 560px) { .facts .lat-full { display: none; } .facts .lat-short { display: inline; } }
 .head-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1.25rem; }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
 .label-group { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; min-width: 0; }
@@ -495,7 +509,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   padding: 0 0.75rem 0 0.5rem; font-size: 13px; color: var(--text-2); cursor: default; user-select: none;
   contain: layout style;
 }
-.tl.wf-on { --wf: clamp(6rem, 22%, 15rem); }
+.tl.wf-on { --wf: clamp(7rem, 28%, 18rem); }
 .st .t { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); text-align: right; white-space: nowrap; }
 .st .lbl { display: flex; align-items: center; gap: 0.5rem; min-width: 0; padding-left: var(--indent, 0.9rem); }
 .st .lbl .dot { width: 6px; height: 6px; }
@@ -507,7 +521,16 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .st .d { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
 .st .wf { position: relative; height: 100%; display: none; }
 .tl.wf-on .st .wf { display: block; }
-.st .wf::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: var(--line); }
+.st .wf::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: color-mix(in srgb, var(--line) 55%, transparent); }
+/* A midline so a bar's start and length can be read against the turn's ruler (0 · half · end). */
+.st .wf { --guide: color-mix(in srgb, var(--line) 45%, transparent); background: linear-gradient(var(--guide), var(--guide)) 50% 0 / 1px 100% no-repeat; }
+.st .d .add { color: var(--pass); }
+.st .d .del { color: var(--fail); }
+.st .wf.ruler { background: none; display: none; grid-template-columns: 1fr auto 1fr; align-items: center; font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); }
+.tl.wf-on .st .wf.ruler { display: grid; }
+.st .wf.ruler b:last-child { text-align: right; }
+.st .wf.ruler::before { display: none; }
+.st .wf.ruler b { font-weight: 400; }
 .st .wf i { position: absolute; top: calc(50% - 4px); height: 8px; min-width: 3px; border-radius: 2px; background: var(--bar); }
 .st.k-llm .wf i { background: var(--bar-strong); }
 .st.is-fail .wf i { background: var(--fail); }
@@ -643,11 +666,16 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .tl.wf-on { --wf: 0px; }
   .st .wf { display: none !important; }
   .actions { width: 100%; }
-  .make-eval { flex-wrap: wrap; width: 100%; }
+  /* Outcome buttons and the eval command share one line; the command scrolls in its box. */
+  .actions { flex-wrap: nowrap; gap: 0.6rem; }
+  .actions .outcome-lbl, .actions .label-by { display: none; }
+  .label-group { flex: none; flex-wrap: nowrap; }
+  .make-eval { flex: 1 1 auto; }
+  .detail-head .badges .badge { height: 18px; font-size: 10.5px; }
   .wf-btn { display: none; }
   .find { flex: 1 1 auto; }
   .find .field { width: 100%; }
-  .make-eval .cmd { flex: 1 1 100%; width: 100%; }
+  .make-eval .cmd { flex: 1 1 auto; }
   .make-eval > .meta { display: none; }
   /* Phones keep the facts that answer "what ran and what did it cost". */
   .facts [data-fact="snapshot"], .facts [data-fact="started"] { display: none; }
@@ -661,7 +689,6 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .facts [data-fact="repo"] { order: 2; }
   .facts [data-fact="tokens"] { order: 3; }
   .facts [data-fact="latency"] { order: 4; }
-  .facts [data-fact="latency"] dd { white-space: normal; }
   .detail-head { gap: 0.45rem; padding-top: 0.6rem; padding-bottom: 0.6rem; }
   /* Count, failures and the fold toggle on one line; find gets the full width below. */
   .tl-tools { gap: 0.5rem 0.6rem; }
@@ -688,13 +715,13 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .rate .meta { grid-column: 1 / -1; font-size: 11px; }
 .rate-num { font-family: var(--font-mono); font-size: 12px; color: var(--text); white-space: nowrap; }
 .bar { position: relative; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--text) 9%, transparent); }
-.bar.has-ci { margin-bottom: 6px; }
+.bar.has-ci { margin-bottom: 5px; }
 /* Benchmarks: a bar wears its contender's colour, the same as its line in the charts. */
 .bar.tinted > i { background: var(--c); }
 .bar > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--pass); border-radius: 3px; }
 /* The 95% interval: a whisker under the bar, so it never reads as a second fill. */
-.bar > u { position: absolute; top: 9px; height: 1px; background: var(--text-muted); }
-.bar > u::before, .bar > u::after { content: ""; position: absolute; top: -2px; width: 1px; height: 5px; background: var(--text-muted); }
+.bar > u { position: absolute; top: 8px; height: 1px; background: var(--text-muted); }
+.bar > u::before, .bar > u::after { content: ""; position: absolute; top: -2px; width: 1px; height: 4px; background: var(--text-muted); }
 .bar > u::before { left: 0; }
 .bar > u::after { right: 0; }
 .check {
@@ -704,6 +731,10 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .check:active { transform: scale(0.9); }
 .check[aria-checked="true"] { background: var(--text); box-shadow: none; }
 .check[aria-checked="true"]::after { content: ""; width: 7px; height: 4px; border-left: 1.5px solid var(--bg); border-bottom: 1.5px solid var(--bg); transform: translateY(-1px) rotate(-45deg); }
+@media (max-width: 640px) {
+  .check { width: 18px; height: 18px; border-radius: 5px; box-shadow: inset 0 0 0 1.5px var(--text-faint); }
+  .check[aria-checked="true"]::after { width: 8px; height: 5px; }
+}
 .compare-bar {
   position: sticky; bottom: 1rem; z-index: 8; margin: 0.75rem auto 0; width: max-content; max-width: 100%;
   display: flex; align-items: center; gap: 0.75rem; padding: 0.4rem 0.4rem 0.4rem 0.9rem; border-radius: var(--radius);
@@ -713,7 +744,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 }
 .compare-bar[hidden] { display: none; }
 .arms { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.7rem; }
-.arm { display: grid; grid-template-columns: minmax(8rem, 14rem) minmax(0, 36rem) auto; justify-content: start; align-items: center; gap: 0.3rem 1rem; }
+/* Name | bar filling the row | number at the card edge, so no row ends in empty space. */
+.arm { display: grid; grid-template-columns: minmax(8rem, 14rem) minmax(0, 1fr) 7.5rem; align-items: center; gap: 0.3rem 1rem; }
 .arm .arm-num { min-width: 7rem; }
 .arm-name { font-family: var(--font-mono); font-size: 12.5px; color: var(--text); }
 .exp-head h3 { color: var(--text); font-size: 13px; }
@@ -730,13 +762,18 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .exp-top .crumbs { margin-bottom: 0.15rem; }
 .fact-line { display: flex; flex-wrap: wrap; gap: 0 0.45rem; }
 .fact-line > span { white-space: nowrap; }
-@media (max-width: 640px) { .task-line { white-space: normal; overflow-wrap: anywhere; } }
+@media (max-width: 640px) { .task-line { white-space: normal; } .task-line .tok { display: inline-block; max-width: 100%; overflow-wrap: anywhere; } }
 .fact-line > span + span::before { content: "·"; margin-right: 0.45rem; color: var(--text-faint); }
+/* Phones: a wrapped line never starts with a dot; the dot hangs in the gap and clips at the edge. */
+@media (max-width: 640px) {
+  .fact-line { gap: 0 1.5em; overflow: hidden; }
+  .fact-line > span + span::before { display: inline-block; width: 1.5em; margin: 0 0 0 -1.5em; text-align: center; }
+}
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 1px; background: var(--line); border-radius: var(--radius); overflow: hidden; box-shadow: inset 0 0 0 1px var(--line); }
 .tile { background: var(--surface); padding: 0.8rem 1rem; display: grid; gap: 0.25rem; align-content: start; min-width: 0; }
 .tile .big { font-family: var(--font-mono); font-size: 1.5rem; letter-spacing: -0.03em; line-height: 1.15; color: var(--text); }
 .tile .big small { font-size: 0.8125rem; color: var(--text-muted); letter-spacing: 0; }
-.tile .meta .nw, .tile .big small { white-space: nowrap; }
+.nw, .tile .big small { white-space: nowrap; }
 .ci-ends { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); margin-top: -0.2rem; }
 .ci { position: relative; height: 18px; margin-top: 0.15rem; }
 .ci .track { position: absolute; left: 0; right: 0; top: 8px; height: 2px; border-radius: 1px; background: var(--raised-2); }
@@ -819,6 +856,11 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .case-tools .field { width: 100%; }
   .case-tools .grp:last-child { width: 100%; }
   .vs .pct { font-size: 1.375rem; }
+  .vs { gap: 0.5rem 1.25rem; }
+  .vs .diff-side { display: flex; align-items: baseline; gap: 0.6rem; }
+  .verdict { padding: 0.9rem 1rem; gap: 0.7rem; }
+  .tile { padding: 0.6rem 0.8rem; gap: 0.15rem; }
+  .tile .big { font-size: 1.25rem; }
 }
 
 /* ---------- benchmarks ---------- */
@@ -834,12 +876,16 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .bench-card.row::before { top: 14px; bottom: 14px; }
 .bench-card-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.25rem 1rem; }
 .bench-title { display: grid; gap: 0.2rem; min-width: 0; }
-.bench-title h2 { font-size: 0.9375rem; }
+.bench-title h2 { font-size: 0.9375rem; display: flex; align-items: center; gap: 0.35rem; }
+.bench-title .chev { color: var(--text-muted); font-weight: 400; transition: transform 160ms var(--ease-out), color var(--hover-out) ease-out; }
+.bench-card[aria-selected="true"] .chev { color: var(--text-2); }
 .bench-title p, .bench-desc { font-size: 13px; color: var(--text-2); max-width: 60rem; }
 .bench-card-body { display: grid; grid-template-columns: minmax(0, 1fr) 15rem; gap: 1rem 2rem; align-items: start; }
-.bench-card .arm { grid-template-columns: minmax(10rem, 16rem) minmax(0, 30rem) auto; }
+.bench-card .arm { grid-template-columns: minmax(10rem, 16rem) minmax(0, 1fr) 7.5rem; }
 .bench-card .arm-name { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; }
 .bench-card .arm-name .meta { font-size: 11px; }
+/* The contender name never gives way; the model id truncates first. */
+.bench-card .arm-name > .truncate:not(.meta) { flex: none; max-width: 62%; }
 .spark-fig { margin: 0; display: grid; gap: 0.3rem; }
 .arms-wrap { display: grid; gap: 0.6rem; min-width: 0; }
 .arms-cap { font-size: 11px; }
@@ -876,8 +922,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .note-line { font-family: var(--font-sans); font-size: 12.5px; }
 .warn-line { display: flex; align-items: baseline; gap: 0.5rem; margin: 0.8rem 0 0; color: var(--text-2); }
 .warn-line .dot { color: var(--warn); transform: translateY(-1px); }
-.bench-board .thead, .bench-row { grid-template-columns: 1.5rem minmax(10rem, 1.3fr) minmax(11rem, 1.5fr) 7rem 5.5rem 4.5rem 4.5rem 6rem 6.5rem; }
-.bench-board.no-anchor .thead, .bench-board.no-anchor .bench-row { grid-template-columns: 1.5rem minmax(10rem, 1.3fr) minmax(11rem, 1.5fr) 7rem 5.5rem 4.5rem 6rem 6.5rem; }
+.bench-board .thead, .bench-row { grid-template-columns: 2.6rem minmax(10rem, 1.3fr) minmax(11rem, 1.5fr) 7rem 7rem 4.5rem 4.5rem 6rem 6.5rem; }
+.bench-board.no-anchor .thead, .bench-board.no-anchor .bench-row { grid-template-columns: 2.6rem minmax(10rem, 1.3fr) minmax(11rem, 1.5fr) 7rem 7rem 4.5rem 6rem 6.5rem; }
 .bench-row .delta.flat, .pooled-row .delta.flat, .gap-now .delta.flat { color: var(--text-2); }
 /* Short lists with rows taller than the 40px guess: render them all so nothing shifts. */
 .bench-row, .pooled-row, .fail-row, .bench-card { content-visibility: visible; }
@@ -902,9 +948,15 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .pool-axis span:nth-child(1) { grid-column: 2; grid-row: 1; justify-self: start; }
 .pool-axis span:nth-child(2) { grid-column: 2; grid-row: 1; justify-self: center; }
 .pool-axis span:nth-child(3) { grid-column: 2; grid-row: 1; justify-self: end; }
+.pool-key { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; padding: 0.55rem 0.85rem; box-shadow: inset 0 1px 0 var(--line); font-size: 11px; }
+.pool-key span { display: inline-flex; align-items: center; gap: 0.4rem; white-space: nowrap; }
+.pool-key i { width: 14px; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--text) 25%, transparent); }
+.pool-key i.k-worse { background: color-mix(in srgb, var(--fail) 45%, transparent); }
+.pool-key i.k-better { background: color-mix(in srgb, var(--pass) 45%, transparent); }
 .fail-table .thead, .fail-row { grid-template-columns: 12px minmax(7rem, 0.7fr) minmax(7rem, 0.6fr) minmax(0, 2.2fr) 4.5rem 5.5rem; }
 .fail-row .open-sess { justify-self: end; font-size: 12.5px; color: var(--text); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; transition: text-decoration-color var(--hover-out) ease-out; }
-.fail-row .no-sess { justify-self: end; color: var(--text-muted); }
+.fail-row .no-sess { justify-self: end; font-size: 12px; color: var(--text-faint); }
+.fail-row .f-dur { display: none; }
 .kv-panel { padding: 0.9rem 1.15rem; }
 .kv { display: grid; grid-template-columns: 9rem minmax(0, 1fr); gap: 0.6rem 1rem; margin: 0; font-size: 13px; }
 .kv dt { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); padding-top: 1px; }
@@ -917,7 +969,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .checks li { display: flex; align-items: baseline; gap: 0.5rem; }
 .checks .dot { width: 6px; height: 6px; transform: translateY(-1px); }
 @media (max-width: 1100px) {
-  .bench-board .thead, .bench-row, .bench-board.no-anchor .thead, .bench-board.no-anchor .bench-row { grid-template-columns: 1.5rem minmax(9rem, 1fr) minmax(10rem, 1.3fr) 6rem 5rem 4.5rem 5.5rem; }
+  .bench-board .thead, .bench-row, .bench-board.no-anchor .thead, .bench-board.no-anchor .bench-row { grid-template-columns: 2.6rem minmax(9rem, 1fr) minmax(10rem, 1.3fr) 6rem 7rem 4.5rem 5.5rem; }
   .bench-row > :nth-child(7), .bench-board .thead > :nth-child(7) { display: none; }
   .bench-board.no-anchor .bench-row > :nth-child(6), .bench-board.no-anchor .thead > :nth-child(6) { display: none; }
 }
@@ -925,7 +977,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .bench-card-body { grid-template-columns: minmax(0, 1fr); }
   .spark { height: 40px; }
   .bench-card .arm { grid-template-columns: minmax(0, 1fr) auto; }
-  .bench-card .arm-name .meta { display: none; }
+  .bench-card .arm-name .meta { min-width: 0; }
   .bench-row, .bench-board.no-anchor .bench-row { grid-template-columns: 1.25rem minmax(0, 1fr); gap: 0.35rem 0.6rem; align-items: start; }
   .bench-row .opt { display: none !important; }
   .bench-row .rate, .bench-row .mob { grid-column: 2; }
@@ -938,6 +990,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .pool-axis { display: none; }
   .fail-row { grid-template-columns: 12px minmax(0, 1fr) auto; }
   .fail-row .who-name { grid-column: 2; grid-row: 2; font-size: 12px; }
+  .fail-row .f-dur { display: inline; flex: none; }
+  .fail-row .f-dur::before { content: "·"; margin-right: 0.35em; }
   .fail-row .why { grid-column: 2 / -1; grid-row: 3; white-space: normal; }
   .fail-row .open-sess, .fail-row .no-sess { grid-column: 3; grid-row: 1; }
   .gap-grid { grid-template-columns: minmax(0, 1fr); }
@@ -952,7 +1006,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .overlay[hidden] { display: none; }
 .dialog { width: 100%; max-width: 36rem; max-height: 72vh; display: flex; flex-direction: column; overflow: hidden; border-radius: 12px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow); }
 .dialog-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.75rem 1rem; box-shadow: inset 0 -1px 0 var(--line); }
-.palette input { width: 100%; height: 46px; padding: 0 1rem; border: 0; background: transparent; font-size: 14.5px; color: var(--text); box-shadow: inset 0 -1px 0 var(--line); }
+.palette input { flex: none; width: 100%; height: 46px; padding: 0 1rem; border: 0; background: transparent; font-size: 14.5px; color: var(--text); box-shadow: inset 0 -1px 0 var(--line); }
 .palette input:focus { outline: none; }
 .palette-list { overflow-y: auto; padding: 0.35rem; }
 .palette-group { padding: 0.5rem 0.6rem 0.2rem; }
@@ -977,6 +1031,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .toast[data-hidden] { opacity: 0; transform: translate(-50%, 6px); pointer-events: none; transition-duration: 130ms; }
 
 @media (hover: hover) and (pointer: fine) {
+  .bench-card:hover .chev { transform: translateX(2px); color: var(--text); }
   .nav a:hover:not([aria-current="page"]) { color: var(--text); transition-duration: var(--hover-in); }
   .cmdk:hover { box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--text-2); transition-duration: var(--hover-in); }
   .icon-btn:hover { background: var(--hover); color: var(--text); transition-duration: var(--hover-in); }
@@ -1005,11 +1060,66 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .fail-row .open-sess:hover { text-decoration-color: var(--text-2); transition-duration: var(--hover-in); }
 }
 
+/* ---------- phones: touch targets, filter sheet, safe areas ---------- */
+/* Notched phones: content stays inside the safe area (needs viewport-fit=cover). */
+.topbar { padding-left: max(var(--gutter), env(safe-area-inset-left)); padding-right: max(var(--gutter), env(safe-area-inset-right)); }
+.wrap { padding-bottom: calc(4rem + env(safe-area-inset-bottom)); }
+.toast { bottom: calc(1.25rem + env(safe-area-inset-bottom)); }
+.compare-bar { bottom: calc(1rem + env(safe-area-inset-bottom)); }
+.sheet-head { display: none; }
+@media (max-width: 640px) {
+  :root { --row: 44px; }
+  /* Every control gets a 44px hit area. The box keeps its size; an invisible
+     ::before grows the area around it, so layout and desktop stay as they are. */
+  :where(.nav a, .brand, .cmdk, .icon-btn, .btn, .chip, .back, .copy-id, .sub-toggle, .check, .vs a.pct, .seg button, .facets-toggle, .open-sess, .row-sub button, .hist-head button, .list-col .meta button, .bench-title h2 a) { position: relative; }
+  :where(.nav a, .brand, .cmdk, .icon-btn, .btn, .chip, .back, .copy-id, .sub-toggle, .check, .vs a.pct, .seg button, .facets-toggle, .open-sess, .list-col .meta button, .bench-title h2 a)::before {
+    content: ""; position: absolute;
+    top: min(0px, calc((100% - 44px) / 2)); bottom: min(0px, calc((100% - 44px) / 2));
+    left: min(0px, calc((100% - 44px) / 2)); right: min(0px, calc((100% - 44px) / 2));
+  }
+  .cmdk, .icon-btn, .brand { flex: none; }
+  @media (max-width: 400px) { .topbar { gap: 0.25rem; } .nav a { padding: 0 0.35rem; } }
+  @media (hover: none) { .key-hint { display: none; } }
+  .facets-toggle { height: 40px; }
+  /* 16px text stops iOS zooming the page when a field takes focus. */
+  .search input, .field, .palette input { height: 44px; font-size: 16px; }
+  .find .field, .view .field { height: 44px; font-size: 16px; }
+  .case-row, .cmp-row { min-height: 44px; }
+  .task > .truncate, .task .meta.truncate { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
+  .task .meta a { display: inline-block; padding: 13px 0; margin: -13px 0; }
+  .palette-item { height: 44px; font-size: 14px; }
+  .overlay { padding-top: calc(0.75rem + env(safe-area-inset-top)); }
+  .dialog { max-height: calc(100svh - 1.5rem - env(safe-area-inset-top)); }
+  .seg button { height: 30px; }
+
+  /* Filters open as a bottom sheet instead of pushing the list down. */
+  .facets[data-open="true"]::after { content: ""; position: fixed; inset: 0; z-index: 40; background: color-mix(in srgb, #000 60%, transparent); }
+  .facets[data-open="true"] .facet-groups {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 41; max-height: min(78svh, 40rem); overflow-y: auto; overscroll-behavior: contain;
+    padding: 0 max(var(--gutter), env(safe-area-inset-right)) calc(1rem + env(safe-area-inset-bottom)) max(var(--gutter), env(safe-area-inset-left));
+    background: var(--surface); border-radius: 14px 14px 0 0; box-shadow: inset 0 1px 0 var(--line-strong), var(--shadow);
+  }
+  .facets.opening[data-open="true"] .facet-groups { animation: sheet-in 260ms var(--ease-out); }
+  .facets.opening[data-open="true"]::after { animation: fade-in 200ms ease-out; }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 1; height: 52px; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); background: var(--surface); box-shadow: inset 0 -1px 0 var(--line); }
+  .sheet-head h2 { font-size: 15px; }
+  .facets[data-open="true"] .facet .chip { height: 36px; padding: 0 0.75rem; font-size: 14px; }
+  .facets[data-open="true"] .facet-list { gap: 0.5rem; }
+  html:has(.facets[data-open="true"]) { overflow: hidden; }
+}
+@keyframes sheet-in { from { transform: translateY(100%); } }
+@keyframes fade-in { from { opacity: 0; } }
+
+/* Tap or long-press shows what a hover title would. */
+.tip { position: fixed; z-index: 70; max-width: min(20rem, calc(100vw - 1.5rem)); padding: 0.45rem 0.65rem; border-radius: var(--radius-sm); font-size: 12.5px; line-height: 1.4; color: var(--text); background: var(--raised-2); box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow); pointer-events: none; white-space: pre-line; overflow-wrap: anywhere; animation: fade-in 120ms ease-out; }
+.tip[hidden] { display: none; }
+
 @media (prefers-reduced-motion: reduce) {
   .loading-bar::after { animation: none; }
   .btn:active, .chip:active, .update-pill:active, .cmdk:active, .icon-btn:active, .check:active, .live-pill:active { transform: none; }
   .toast, .toast[data-hidden] { transform: translate(-50%, 0); }
   .back .nudge, .sub-toggle .caret, .json details > summary::before { transition: none; }
+  .facets.opening[data-open="true"] .facet-groups, .facets.opening[data-open="true"]::after, .tip { animation: none; }
 }
 </style>
 </head>
@@ -1082,6 +1192,10 @@ const main = $("#main");
 
 // ------------------------------------------------------------ formatting
 
+/** Phone layout: matches the 640px breakpoint in the CSS. */
+const PHONE = matchMedia("(max-width: 640px)");
+/** A fine pointer usually means a keyboard too; touch-only screens skip key hints. */
+const KEYBOARD = matchMedia("(hover: hover) and (pointer: fine)");
 const SHA_RE = /^[0-9a-f]{64}$/;
 const nf = new Intl.NumberFormat();
 function fmtNum(n) { return nf.format(n ?? 0); }
@@ -1439,13 +1553,14 @@ function openPalette() {
   const lb = h("div", { class: "palette-list", role: "listbox", id: "palette-list", "aria-label": "Results" });
   const d = h("div", { class: "dialog palette", role: "dialog", "aria-modal": "true", "aria-label": "Command menu" }, input, lb);
   const commands = [
-    { group: "Go to", label: "Sessions", hint: "g s", run: () => { location.hash = listHref(); } },
-    { group: "Go to", label: "Experiments", hint: "g e", run: () => { location.hash = "#/experiments"; } },
-    { group: "Go to", label: "Benchmarks", hint: "g b", run: () => { location.hash = "#/benchmarks"; } },
+    // Touch screens get no key hints and no shortcuts sheet: there is no keyboard to use them with.
+    { group: "Go to", label: "Sessions", hint: KEYBOARD.matches ? "g s" : "", run: () => { location.hash = listHref(); } },
+    { group: "Go to", label: "Experiments", hint: KEYBOARD.matches ? "g e" : "", run: () => { location.hash = "#/experiments"; } },
+    { group: "Go to", label: "Benchmarks", hint: KEYBOARD.matches ? "g b" : "", run: () => { location.hash = "#/benchmarks"; } },
     { group: "Commands", label: theme.get() === "light" ? "Switch to dark theme" : "Switch to light theme", run: () => theme.toggle() },
-    { group: "Commands", label: "Keyboard shortcuts", hint: "?", run: () => setTimeout(openHelp, 0) },
+    KEYBOARD.matches ? { group: "Commands", label: "Keyboard shortcuts", hint: "?", run: () => setTimeout(openHelp, 0) } : null,
     ...(viewKeys.palette || []),
-  ];
+  ].filter(Boolean);
   if (!expCache) api("/api/experiments", null, true).then((b) => { expCache = b.items; if (overlayOpen() && d.isConnected) render(); }, () => { expCache = []; });
   if (!benchCache) api("/api/benchmarks", null, true).then((b) => { benchCache = b.items; if (overlayOpen() && d.isConnected) render(); }, () => { benchCache = []; });
   function results() {
@@ -1779,7 +1894,7 @@ function summaryLine(s) {
 function skeletonTable() {
   const widths = [[46, 12], [38, 14], [52, 10], [30, 13], [44, 11], [36, 12]];
   return h("div", { class: "panel table", "aria-busy": "true", "aria-label": "Loading sessions" },
-    h("div", { class: "thead" }, h("span"), h("span", null, "Session")),
+    h("div", { class: "thead" }, h("span"), h("span", null, "session")),
     widths.map(([a, b]) => {
       const row = h("div", { class: "skeleton" }, h("span", { class: "dot tone-muted" }), h("i"), h("i"));
       const [x, y] = row.querySelectorAll("i");
@@ -1878,9 +1993,23 @@ function facetPanel(view) {
   const on = ["agent", "model", "repo", "flag", "scope"].filter((k) => list.filters[k]).length;
   const toggle = h("button", {
     class: "facets-toggle", type: "button", "aria-expanded": String(list.facetsOpen), "aria-controls": "facet-groups",
-    onclick: () => { list.facetsOpen = !list.facetsOpen; aside.dataset.open = String(list.facetsOpen); toggle.setAttribute("aria-expanded", String(list.facetsOpen)); },
+    onclick: () => setOpen(!list.facetsOpen),
   }, svg("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "2", "stroke-linecap": "round", "aria-hidden": "true" }, svg("path", { d: "M3 6h18M6 12h12M10 18h4" })), h("span", null, "Filters"), on ? h("span", { class: "count" }, on + " on") : null);
-  const aside = h("aside", { class: "facets", "aria-label": "Filters", "data-open": String(list.facetsOpen) }, toggle, h("div", { class: "facet-groups", id: "facet-groups" },
+  // On phones the open groups are a bottom sheet: the backdrop (the aside's ::after), Done and Escape close it.
+  function setOpen(open) {
+    list.facetsOpen = open;
+    aside.classList.toggle("opening", open);
+    aside.dataset.open = String(open);
+    toggle.setAttribute("aria-expanded", String(open));
+    if (open && PHONE.matches) $(".sheet-head .btn", aside)?.focus({ preventScroll: true });
+    else if (!open && aside.contains(document.activeElement)) toggle.focus({ preventScroll: true });
+  }
+  const aside = h("aside", {
+    class: "facets", "aria-label": "Filters", "data-open": String(list.facetsOpen),
+    onclick: (e) => { if (e.target === aside && list.facetsOpen && PHONE.matches) setOpen(false); },
+    onkeydown: (e) => { if (e.key === "Escape" && list.facetsOpen && PHONE.matches) { e.stopPropagation(); setOpen(false); } },
+  }, toggle, h("div", { class: "facet-groups", id: "facet-groups" },
+    h("div", { class: "sheet-head" }, h("h2", null, "Filters"), h("button", { class: "btn btn-sm", type: "button", onclick: () => setOpen(false) }, "Done")),
     group("Agent", "agent", s.byAgent),
     group("Model", "model", s.byModel),
     group("Repository", "repo", s.byRepo, basename),
@@ -1919,7 +2048,7 @@ function histogramPanel(view, hist) {
       fh ? svg("rect", { class: "bf", x, y: H - fh, width: w, height: fh, rx: Math.min(1.5, w / 2) }) : null);
     g.append(cell);
   }
-  const plot = h("div", { class: "hist-plot", role: "img", "aria-label": "Sessions over time: " + plural(buckets.reduce((a, b) => a + b.n, 0), "session") + " from " + fmtDay(buckets[0].t) + " to " + fmtDay(buckets[n - 1].t + hist.step) + ". Drag to filter by time." },
+  const plot = h("div", { class: "hist-plot", role: "img", "aria-label": "Sessions over time: " + plural(buckets.reduce((a, b) => a + b.n, 0), "session") + " from " + fmtDay(buckets[0].t, hist.step < 86400e3) + " to " + fmtDay(buckets[n - 1].t + hist.step, hist.step < 86400e3) + ". Drag to filter by time." },
     svg("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", "aria-hidden": "true" }, g, svg("line", { class: "base", x1: 0, x2: W, y1: H - 0.5, y2: H - 0.5 })));
   const sel = h("div", { class: "hist-sel", hidden: true });
   const tip = h("div", { class: "hist-tip", hidden: true });
@@ -1972,7 +2101,19 @@ function histogramPanel(view, hist) {
     h("div", { class: "hist-head" }, rangeText,
       since || until ? h("button", { class: "btn btn-sm", type: "button", onclick: () => { list.filters.since = ""; list.filters.until = ""; filtersChanged(view); } }, "Clear range") : legend),
     plot,
-    h("div", { class: "hist-axis meta" }, h("span", null, fmtDay(buckets[0].t)), h("span", null, fmtDay(buckets[Math.floor(n / 2)].t)), h("span", null, fmtDay(buckets[n - 1].t + hist.step - 1))));
+    h("div", { class: "hist-axis meta" }, ...axisLabels([buckets[0].t, (buckets[0].t + buckets[n - 1].t + hist.step) / 2, buckets[n - 1].t + hist.step]).map((t) => h("span", null, t))));
+}
+
+/** Labels for time-axis ticks. Under about two days, times of day (with the date where the day
+ *  changes); otherwise dates, blanking any repeat so no two ticks read the same. */
+function axisLabels(ts) {
+  const span = ts[ts.length - 1] - ts[0];
+  const dayKey = (t) => new Date(t).toDateString();
+  if (span <= 2.2 * 86400e3) {
+    const time = (t) => new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+    return ts.map((t, i) => (i === 0 || dayKey(t) !== dayKey(ts[i - 1]) ? fmtDay(t) + ", " : "") + time(t));
+  }
+  return ts.map((t, i) => (i > 0 && dayKey(t) === dayKey(ts[i - 1]) ? "" : fmtDay(t)));
 }
 
 function sessionList(view) {
@@ -2038,8 +2179,8 @@ function sessionList(view) {
   const oneRepo = !!list.filters.repo || Object.keys((list.stats && list.stats.byRepo) || {}).length <= 1;
   const table = h("div", { class: "panel table" + (oneRepo ? " one-repo" : "") },
     h("div", { class: "thead", "aria-hidden": "true" },
-      h("span"), h("span", null, "Session"), h("span", null, "Agent · model"), h("span", null, "Repo"), h("span", null, "Activity"),
-      h("span", { class: "num" }, "Tokens"), h("span", { class: "num" }, "Cost"), h("span", { class: "num" }, "Duration"), h("span", { class: "num" }, "Started")),
+      h("span"), h("span", null, "session"), h("span", null, "agent · model"), h("span", null, "repo"), h("span", null, "activity"),
+      h("span", { class: "num" }, "tokens"), h("span", { class: "num" }, "cost"), h("span", { class: "num" }, "duration"), h("span", { class: "num" }, "started")),
     lb);
   if (list.hasMore) {
     table.append(h("div", { class: "more" }, h("button", {
@@ -2120,7 +2261,7 @@ function hitsList(view) {
             h("span", null, ev.agent),
             h("span", { title: ev.sessionId }, "session " + clip(ev.sessionId, 14)),
             h("span", null, fmtRel(ev.ts))))),
-      h("span", { class: "meta" }, "↵")));
+      h("span", { class: "meta key-hint" }, "↵")));
   });
   lb.setAttribute("aria-activedescendant", "opt-" + list.active);
   lb.addEventListener("keydown", (e) => {
@@ -2244,7 +2385,9 @@ const SHOWN_KEYS = {
 const EVENTS_PAGE = 5000;
 const INPUT_KEYS = ["file_path", "path", "command", "cmd", "pattern", "url", "query", "description", "prompt", "notebook_path"];
 const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "apply_patch", "str_replace_based_edit_tool", "edit", "write", "create_file", "replace"]);
-const ROW = 30;
+// Step rows are 30px, or 44px on phones so each one is a full-size tap target (matches --row in the CSS).
+const rowHeight = () => (PHONE.matches ? 44 : 30);
+let ROW = rowHeight();
 const OVERSCAN = 40;
 const FOLD_MIN = 6;
 
@@ -2322,6 +2465,11 @@ function itemView(item) {
   if (v.label === undefined) v.label = v.name + (v.arg ? " " + v.arg : "");
   return v;
 }
+/** Where a step's timing bar starts. Turn and subagent ends are stamped when they finish and
+ *  carry the whole span, so their bar runs back from the stamp instead of past it. */
+function barStart(it, v) {
+  return (it.type === "turn.end" || it.type === "subagent.end") && v.dur ? it.ts - v.dur : it.ts;
+}
 /** A bare path keeps its file name: the folders give way first. */
 function argNode(arg) {
   const m = typeof arg === "string" ? /^(\S*\/)([^/\s]+)((?:\s+[+−-]\d+)*)$/.exec(arg) || /^(.*[\s/])([^\s/]+\.[A-Za-z0-9]{1,8})$/.exec(arg) : null;
@@ -2353,10 +2501,12 @@ function eventView(ev) {
     case "user.message": return { name: "Prompt", arg: clip(oneLine(p.text), 200), label: clip(oneLine(p.text), 90) || "Prompt", tone: "text", kindText: ev.kind };
     case "assistant.message": return { name: "Assistant", arg: clip(oneLine(p.text), 200), label: clip(oneLine(p.text), 90) || "Assistant", tone: "muted", kindText: ev.kind };
     case "file.change": {
-      const delta = (p.additions !== undefined ? " +" + p.additions : "") + (p.deletions !== undefined ? " −" + p.deletions : "");
-      const verb = p.op === "add" ? "Add" : p.op === "delete" ? "Delete" : "Edit";
+      // The recorded result of an edit, so it reads in the past tense and its line counts
+      // sit where a tool call shows its duration.
+      const delta = [p.additions !== undefined ? "+" + p.additions : "", p.deletions !== undefined ? "−" + p.deletions : ""].filter(Boolean).join(" ");
+      const verb = p.op === "add" ? "Added" : p.op === "delete" ? "Deleted" : "Changed";
       const path = relPath(p.path) || basename(p.path);
-      return { name: verb, arg: path + delta, label: verb + " " + path + delta, tone: "text", kindText: ev.kind };
+      return { name: verb, arg: path, meta: delta, adds: p.additions, dels: p.deletions, label: verb + " " + path + (delta ? " " + delta : ""), tone: "text", kindText: ev.kind };
     }
     case "test.result": {
       const failed = Number(p.failed || 0);
@@ -2479,7 +2629,7 @@ async function showSession(seq, id, eventId) {
       const ev = it.start || it.end || it.ev;
       const isTurn = it.type === "user.message";
       if (isTurn || turn < 0) { turn++; turnStart = it.ts; turns.push({ start: it.ts, end: it.ts, index: i }); if (isTurn) prompts++; }
-      const end = it.ts + (v.dur || 0);
+      const end = barStart(it, v) + (v.dur || 0);
       if (end > turns[turn].end) turns[turn].end = end;
       const tool = it.type === "tool" ? String(((it.start || it.end).payload || {}).tool || "") : "";
       const fail = v.tone === "fail";
@@ -2507,6 +2657,7 @@ async function showSession(seq, id, eventId) {
   let findQ = "";
   let matchOnly = false;
   let matches = [];
+  ROW = rowHeight();
   // rows: item index (>= 0) or a fold object { key, from, to }.
   let rows = [];
   let rowOf = new Int32Array(0);
@@ -2627,10 +2778,12 @@ async function showSession(seq, id, eventId) {
     const cls = "st" + (m.isTurn ? " turn" + (m.turn === 0 && x === 0 ? " first" : "") : "") + (m.fail ? " is-fail" : "") + (v.tone === "pass" ? " is-pass" : "")
       + (m.api ? " k-llm" : "") + (m.test ? " k-test" : "") + (it.type === "assistant.message" ? " k-msg" : "")
       + (findQ && m.text.includes(findQ) ? " is-match" : "");
-    const wf = h("span", { class: "wf" });
-    if (v.dur !== undefined || it.type === "tool" || m.api) {
+    const wf = h("span", { class: "wf" + (m.isTurn ? " ruler" : "") });
+    // Each turn has its own time scale, so its header row labels that scale.
+    if (m.isTurn) wf.append(h("b", null, "0"), h("b", null, fmtDuration(m.span / 2)), h("b", null, fmtDuration(m.span)));
+    else if (v.dur !== undefined || it.type === "tool" || m.api) {
       const bar = h("i");
-      const left = ((it.ts - m.t0) / m.span) * 100;
+      const left = ((barStart(it, v) - m.t0) / m.span) * 100;
       bar.style.left = Math.min(99, Math.max(0, left)) + "%";
       bar.style.width = Math.max(0.6, Math.min(100 - left, ((v.dur || 0) / m.span) * 100)) + "%";
       wf.append(bar);
@@ -2639,7 +2792,9 @@ async function showSession(seq, id, eventId) {
       onclick: () => selectRow(r, true) },
       h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, m.isTurn ? "Turn " + m.prompt : fmtClock(it.ts - session.startedAt)),
       h("span", { class: "lbl" }, h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }), m.isTurn ? null : h("span", { class: "name" }, v.name), m.isTurn ? h("span", { class: "arg" }, v.arg || "Prompt") : argNode(v.arg)),
-      h("span", { class: "d" }, v.meta || ""), wf);
+      h("span", { class: "d" }, v.adds !== undefined || v.dels !== undefined
+        ? [v.adds !== undefined ? h("span", { class: "add" }, "+" + v.adds) : null, v.adds !== undefined && v.dels !== undefined ? " " : null, v.dels !== undefined ? h("span", { class: "del" }, "−" + v.dels) : null]
+        : v.meta || ""), wf);
     el.style.transform = "translateY(" + top + "px)";
     return el;
   }
@@ -2878,7 +3033,10 @@ async function showSession(seq, id, eventId) {
   selectItem(activeItem, !!eventId);
   if (!eventId) tl.scrollTop = 0, renderWindow(true);
   announce("Session loaded, " + plural(items.length, "step") + (failIdx.length ? ", " + plural(failIdx.length, "failure") : "") + (hasMore ? ", more events available" : ""));
-  const onResize = () => { renderWindow(true); renderMap(); };
+  const onResize = () => {
+    if (rowHeight() !== ROW) { ROW = rowHeight(); rebuildRows(); return; }
+    renderWindow(true); renderMap();
+  };
   window.addEventListener("resize", onResize);
   cleanup = () => { clearInterval(tailTimer); window.removeEventListener("resize", onResize); };
 }
@@ -2887,11 +3045,15 @@ function latencyText(lat) {
   if (!lat) return "";
   const parts = [];
   if (lat.llmCalls) {
-    parts.push(plural(lat.llmCalls, "llm call") + (lat.llmP50Ms !== undefined ? ", p50 " + fmtDuration(lat.llmP50Ms) + ", p95 " + fmtDuration(lat.llmP95Ms) : ""));
+    parts.push(plural(lat.llmCalls, "llm call") + (lat.llmP50Ms !== undefined ? " · p50 " + fmtDuration(lat.llmP50Ms) + " · p95 " + fmtDuration(lat.llmP95Ms) : ""));
   }
   if (lat.ttftP50Ms !== undefined) parts.push("ttft p50 " + fmtDuration(lat.ttftP50Ms));
   if (lat.toolMs !== undefined) parts.push("tools " + fmtDuration(lat.toolMs) + (lat.toolP95Ms !== undefined ? " (p95 " + fmtDuration(lat.toolP95Ms) + ")" : ""));
   return parts.join(" · ");
+}
+function latencyShort(lat) {
+  if (!lat || !lat.llmCalls) return latencyText(lat);
+  return [plural(lat.llmCalls, "llm call"), lat.llmP50Ms !== undefined ? "p50 " + fmtDuration(lat.llmP50Ms) : "", lat.llmP95Ms !== undefined ? "p95 " + fmtDuration(lat.llmP95Ms) : ""].filter(Boolean).join(" · ");
 }
 /** "342k in · 2.5k out · 95% cached": prompt tokens include cache reads and writes. */
 function tokensText(usage) {
@@ -2939,7 +3101,8 @@ function sessionHeader(s, labels, rel) {
       fact("tokens", tokensText(usage)),
       // Local agents have no pricing yet: a dash keeps the slot so it fills in later.
       typeof usage.costUsd === "number" ? fact("cost", fmtCost(usage.costUsd)) : fact("cost", "—", NO_PRICE, "none"),
-      fact("latency", latencyText(st.latency)),
+      // Phones get the model-call summary alone, so the line stays whole instead of cut mid-word.
+      latencyText(st.latency) ? fact("latency", [h("span", { class: "lat-full" }, latencyText(st.latency)), h("span", { class: "lat-short" }, latencyShort(st.latency))], latencyText(st.latency)) : null,
       fact("snapshot", repo.snapshot ? short(repo.snapshot, 12) + (repo.partial ? " · partial" : "") : "", repo.snapshot)),
     h("div", { class: "head-foot" },
       h("div", { class: "badges" },
@@ -2956,7 +3119,7 @@ function sessionHeader(s, labels, rel) {
         flagBadges(s.flags)),
       h("div", { class: "actions" },
         h("div", { class: "label-group", role: "group", "aria-label": "Label outcome" },
-          h("span", { class: "meta" }, "Outcome"),
+          h("span", { class: "meta outcome-lbl" }, "Outcome"),
           labelBtn("pass", "Pass", "p"),
           labelBtn("fail", "Fail", "f"),
           h("span", { class: "meta label-by" }, outcome ? "by " + outcome.by + " · " + fmtRel(outcome.ts) : "")),
@@ -3408,7 +3571,7 @@ function renderPane(pane, item, session, ctx) {
   const rawBtn = h("button", { class: "btn btn-sm btn-ghost", type: "button", "aria-pressed": String(!!ctx.raw), "aria-keyshortcuts": "r", title: "Raw event JSON (r)",
     onclick: () => { ctx.raw = !ctx.raw; renderPane(pane, item, session, ctx); } }, "Raw");
   nodes.push(h("div", { class: "pane-top" },
-    h("p", { class: "meta truncate", title: v.kindText }, fmtClock(ts - session.startedAt) + " into the session · " + new Date(ts).toLocaleTimeString()),
+    h("p", { class: "meta truncate", title: v.kindText }, fmtClock(ts - session.startedAt), h("span", { class: "wide-only" }, " into the session · " + new Date(ts).toLocaleTimeString())),
     h("div", { class: "pane-tools" },
       h("button", { class: "btn btn-sm to-steps", type: "button", onclick: ctx.backToSteps }, h("span", { "aria-hidden": "true" }, "↑"), "Steps"),
       rawBtn,
@@ -3621,9 +3784,12 @@ async function showExperiments(seq) {
     groups.get(key).push(r);
   }
   const caseRuns = exps.items.reduce((n, e) => n + (e.runCount || 0), 0);
+  // Counted the way the page lists them: dataset experiments as rows, harness runs as groups.
   const total = groups.size + exps.items.length;
-  $(".page-head .meta", view).textContent =
-    plural(total, "experiment") + " · " + plural(runs.items.length + caseRuns, "run") + " · " + plural(tasks.items.length, "task");
+  $(".page-head .meta", view).textContent = [
+    exps.items.length ? plural(exps.items.length, "experiment") : "",
+    groups.size ? plural(groups.size, "harness group") : "",
+    plural(runs.items.length + caseRuns, "run"), plural(tasks.items.length, "task")].filter(Boolean).join(" · ");
 
   const body = h("div");
   if (runs.items.length === 0 && exps.items.length === 0) {
@@ -3693,7 +3859,7 @@ async function showExperiments(seq) {
       h("span", { class: "cell num muted opt", title: s.latencyMs ? "p90 " + fmtDuration(s.latencyMs.p90) : undefined }, s.latencyMs ? fmtDuration(s.latencyMs.median) : ""),
       h("span", { class: "cell num muted opt", title: new Date(e.createdAt || 0).toLocaleString() }, fmtRel(e.finishedAt || e.createdAt || 0)),
       // Phones drop the number columns; this line carries them.
-      h("span", { class: "meta mob" }, [plural(s.cases || 0, "case") + ((e.trials || 1) > 1 ? " × " + plural(e.trials, "trial") : ""), s.latencyMs ? fmtDuration(s.latencyMs.median) + " median" : "", fmtRel(e.finishedAt || e.createdAt || 0)].filter(Boolean).join(" · ")));
+      h("span", { class: "meta mob" }, [plural(s.cases || 0, "case") + ((e.trials || 1) > 1 ? " × " + plural(e.trials, "trial") : ""), s.latencyMs ? fmtDuration(s.latencyMs.median) + " median" : "", fmtRel(e.finishedAt || e.createdAt || 0)].filter(Boolean).map(nb).join(" · ")));
     rowEls.push(row);
     lb.append(row);
   }
@@ -3704,7 +3870,7 @@ async function showExperiments(seq) {
       else if (ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); toggleSel(active); }
     });
     body.append(
-      h("div", { class: "section-head" }, h("h2", null, "Dataset experiments", oneDs ? h("span", { class: "meta h-sub" }, "  " + datasetText(items[0])) : null), h("span", { class: "meta" }, "Select two to compare")),
+      h("div", { class: "section-head" }, h("h2", null, "Dataset experiments", oneDs ? h("span", { class: "meta h-sub nw" }, "  " + datasetText(items[0])) : null), h("span", { class: "meta" }, "Select two to compare")),
       h("div", { class: "panel table exp-table" + (oneDs ? " one-ds" : "") },
         h("div", { class: "thead", "aria-hidden": "true" }, h("span"), h("span", null, "experiment"), oneDs ? null : h("span", null, "dataset"), h("span", null, "pass rate"), h("span", { class: "num opt" }, items.some((e) => (e.trials || 1) > 1) ? "cases × trials" : "cases"), h("span", { class: "num opt" }, "median"), h("span", { class: "num opt" }, "finished")),
         lb),
@@ -3859,7 +4025,9 @@ async function showExperiment(seq, id) {
         h("div", { class: "badges" }, d.status === "cancelled" ? h("span", { class: "badge warn" }, "cancelled · partial") : null, copyBtn(d.id, "Copy experiment id", "experiment id", "Copy id"))),
       // Facts wrap between items, never inside one; the task command gets its own line.
       h("p", { class: "meta fact-line" }, ...[datasetText(d), (d.trials || 1) > 1 ? plural(d.trials, "trial") + " per case" : "", fmtDate(d.createdAt || 0)].filter(Boolean).map((t) => h("span", null, t))),
-      d.task ? h("p", { class: "meta mono truncate task-line", title: d.task.kind + " " + d.task.ref }, d.task.kind + " " + d.task.ref) : null),
+      d.task ? h("p", { class: "meta mono truncate task-line", title: d.task.kind + " " + d.task.ref },
+        // Each argument wraps as a whole, so a phone never splits "agents-md-v2" at its hyphen.
+        ...(d.task.kind + " " + d.task.ref).split(" ").flatMap((t, i) => [i ? " " : null, h("span", { class: "tok" }, t)])) : null),
     h("div", { class: "tiles" },
       h("div", { class: "tile" }, h("span", { class: "meta" }, "pass rate"),
         h("span", { class: "big" }, pct(pr.p), h("small", null, "  " + fmtNum(s.passed) + "/" + fmtNum((s.n || 0) - (s.ungraded || 0)))),
@@ -3872,13 +4040,13 @@ async function showExperiment(seq, id) {
       lat ? h("div", { class: "tile" }, h("span", { class: "meta" }, "latency"), h("span", { class: "big" }, fmtDuration(lat.median), h("small", null, "  median")),
         h("span", { class: "meta" }, h("span", { class: "nw" }, "p90 " + fmtDuration(lat.p90)), " · ", h("span", { class: "nw" }, "max " + fmtDuration(lat.max)))) : null),
     (s.graders || []).length ? h("div", null,
-      h("div", { class: "section-head" }, h("h2", null, "Graders"), h("span", { class: "meta" }, plural(s.graders.length, "grader"))),
+      h("div", { class: "section-head" }, h("h2", null, "Graders"), h("span", { class: "meta" }, plural(s.graders.length, "grader") + " · bars show pass rate, 95% CI")),
       h("div", { class: "panel exp" }, h("ul", { class: "arms" }, s.graders.map((g) => {
         const gp = g.passRate || { p: 0, lo: 0, hi: 0 };
         return h("li", { class: "arm" },
           h("span", { class: "arm-name truncate", title: g.kind }, g.id),
           rateBar(gp.p, gp.lo, gp.hi, g.id + ": " + g.passed + " of " + g.n + " passed"),
-          h("span", { class: "arm-num" }, fmtNum(g.passed) + "/" + fmtNum(g.n) + " · " + pct(gp.p)),
+          h("span", { class: "arm-num" }, fmtNum(g.passed) + "/" + fmtNum(g.n) + " passed · " + pct(gp.p)),
           h("span", { class: "meta arm-sub" }, [g.kind, "mean score " + (Math.round((g.meanScore || 0) * 100) / 100), g.errors ? fmtNum(g.errors) + " errored" : "", g.calibration && g.calibration.state !== "calibrated" ? g.calibration.state : ""].filter(Boolean).join(" · ")));
       })))) : null,
     peers.length ? h("div", { class: "section-head inline" }, h("h2", null, "Compare with"),
@@ -3976,8 +4144,10 @@ function niceSpan(x) { return [0.1, 0.2, 0.25, 0.5, 1].find((v) => v >= x * 1.1)
 function side(cls, role, e) {
   const name = e.name || e.id;
   return h("div", { class: "side " + cls }, h("span", { class: "meta" }, name.toLowerCase() === role ? role : role + " · " + name),
-    h("a", { class: "pct", href: expHref(e.id), title: e.id }, pct(e.passRate)));
+    h("a", { class: "pct", href: expHref(e.id), title: e.id }, pct1(e.passRate)));
 }
+/** One decimal, so both sides add up to the difference shown in tenths of a point. */
+function pct1(x) { return ((x || 0) * 100).toFixed(1) + "%"; }
 /** Power warnings in plain words; the exact statement stays in the tooltip. */
 function powerText(w, c) {
   const pts = (x) => Math.round(x * 1000) / 10 + " pts";
@@ -4046,14 +4216,14 @@ async function showCompare(seq, aId, bId) {
   if (c.graders && c.graders.length) {
     // One scale for every grader, so the bars compare by eye.
     const gspan = niceSpan(Math.max(...c.graders.map((g) => Math.max(Math.abs(g.diff.lo), Math.abs(g.diff.hi)))));
-    view.append(h("div", { class: "section-head" }, h("h2", null, "Graders"), h("span", { class: "meta" }, "mean score, baseline → candidate")),
+    view.append(h("div", { class: "section-head" }, h("h2", null, "Graders"), h("span", { class: "meta" }, "mean score, baseline → candidate · bars show the difference, pts")),
       h("div", { class: "panel exp" }, h("div", { class: "graders" }, ...c.graders.map((g) => {
         const t = g.diff.lo > 0 ? "better" : g.diff.hi < 0 ? "worse" : "";
         return h("div", { class: "arm" },
           h("span", { class: "arm-name truncate" }, g.id),
           ciBar(g.diff.mean, g.diff.lo, g.diff.hi, [-gspan, gspan], t),
           h("span", { class: "arm-num" }, (Math.round(g.meanA * 100) / 100) + " → " + (Math.round(g.meanB * 100) / 100)),
-          h("span", { class: "meta arm-sub" }, "n " + fmtNum(g.n) + " · " + signedPts(g.diff.mean) + " (" + signedPts(g.diff.lo) + " to " + signedPts(g.diff.hi) + ")"));
+          h("span", { class: "meta arm-sub", title: "Pairs where both runs got a score; errored or ungraded runs drop out" }, [plural(g.n, "scored pair"), " · ", signedPts(g.diff.mean), " · ", h("span", { class: "nw" }, "95% CI " + signedPts(g.diff.lo).replace(" pts", "") + " to " + signedPts(g.diff.hi))]));
       }), h("div", { class: "arm arm-axis", "aria-hidden": "true" }, h("span"), h("div", { class: "ci-axis meta" }, h("span", null, signedPts(-gspan)), h("span", null, "0"), h("span", null, signedPts(gspan))), h("span")))));
   }
 
@@ -4382,7 +4552,7 @@ function benchCard(it, i) {
   const spark = len > 1 ? sparkChart(names.map((n) => ({ cls: color.get(n), values: it.trend[n] }))) : null;
   return h("div", { class: "panel bench-card row", role: "option", id: "bench-" + i, "aria-selected": String(i === 0), "data-benchmark": it.name, onclick: () => { location.hash = benchHref(it.name); } },
     h("div", { class: "bench-card-head" },
-      h("div", { class: "bench-title" }, h("h2", null, h("a", { href: benchHref(it.name), tabindex: "-1" }, it.name)), it.description ? h("p", { class: "dim" }, it.description) : null),
+      h("div", { class: "bench-title" }, h("h2", null, h("a", { href: benchHref(it.name), tabindex: "-1" }, it.name), h("span", { class: "chev", "aria-hidden": "true" }, "›")), it.description ? h("p", { class: "dim" }, it.description) : null),
       h("span", { class: "meta" }, "latest " + shortDate(it.latest.date) + " · " + plural(it.latest.cases, "case") + " · " + plural(it.counted, "day"))),
     h("div", { class: "bench-card-body" },
       h("div", { class: "arms-wrap" }, h("ul", { class: "arms" }, lines), h("p", { class: "meta arms-cap" }, "Pass rate on " + shortDate(it.latest.date) + ", line under each bar: 95% CI" + (len > 1 ? ". Trend: last " + len + " days, 0–100%." : "."))),
@@ -4452,7 +4622,7 @@ async function showBenchmark(seq, name) {
   const tied = (p) => sums.filter((x) => x.place === p).length > 1;
   const hasAnchor = anchorSum.size > 0;
   const board = h("div", { class: "panel table bench-board" + (hasAnchor ? "" : " no-anchor") },
-    h("div", { class: "thead", "aria-hidden": "true" }, h("span", { class: "num" }, "#"), h("span", null, "contender"), h("span", null, "pass rate"),
+    h("div", { class: "thead", "aria-hidden": "true" }, h("span", { class: "num", title: "Place in today's run" }, "today"), h("span", null, "contender"), h("span", null, "pass rate"),
       h("span", { class: "num opt", title: ref ? "Today's gap to " + ref + ", paired by case" : undefined }, "vs " + (ref || "ref")),
       h("span", { class: "num opt", title: "Gap pooled over the last " + r.window + " days" }, "pooled"),
       hasAnchor ? h("span", { class: "num opt", title: "The fixed anchor set, scored apart from the fresh cases" }, "anchor") : null,
@@ -4468,7 +4638,7 @@ async function showBenchmark(seq, name) {
     const tok = s.tokensIn && (s.tokensIn.known || (s.tokensOut && s.tokensOut.known)) ? (s.tokensIn.known ? fmtCompact(Math.round(s.tokensIn.mean)) : "—") + " / " + (s.tokensOut && s.tokensOut.known ? fmtCompact(Math.round(s.tokensOut.mean)) : "—") : s.tokens && s.tokens.known ? fmtCompact(Math.round(s.tokens.mean)) : "—";
     const src = costSources(s.costUsd);
     const gapText = s.contender === ref ? "reference" : gap ? gapPts(gap.value) : "—";
-    const mob = [gapText !== "—" ? (s.contender === ref ? "reference" : gapText + " vs " + ref) : "", an && an.n ? "anchor " + pct(an.passRate.p) : "", lat !== "—" ? "p50 " + lat : "", cost !== "—" ? cost + "/run" : ""].filter(Boolean).map(nb).join(" · ");
+    const mob = [gapText !== "—" ? (s.contender === ref ? "reference" : gapText + " vs " + ref) : "", pr && s.contender !== ref ? "pooled " + gapPts(pr.mean) + ", " + plural(pool.k, "day") : "", an && an.n ? "anchor " + pct(an.passRate.p) : "", lat !== "—" ? "p50 " + lat : "", cost !== "—" ? cost + "/run" + (src ? ", " + src : "") : ""].filter(Boolean).map(nb).join(" · ");
     board.append(h("div", { class: "row bench-row", "data-contender": s.contender },
       h("span", { class: "num place", title: tied(s.place) ? "Tied: the gaps between these contenders are within noise" : undefined }, s.place ? s.place + (tied(s.place) ? "=" : "") : ""),
       h("div", { class: "who" }, h("span", { class: "who-name" }, swatch(cOf(s.contender)), h("b", { class: "truncate" }, s.contender)), h("span", { class: "meta truncate" }, [c.model, c.version].filter(Boolean).join(" · ") || c.kind || "")),
@@ -4476,7 +4646,7 @@ async function showBenchmark(seq, name) {
         h("span", { class: "rate-num" }, fmtNum(s.passed) + "/" + fmtNum(s.n) + " · " + pct(s.passRate.p)),
         h("span", { class: "meta" }, ciText(s.passRate) + (s.errors ? " · " + fmtNum(s.errors) + " errored" : ""))),
       h("span", { class: "cell num opt stack-num" }, h("span", { class: "delta " + (s.contender === ref ? "flat" : gapTone(gap)) }, gapText), gap ? h("span", { class: "meta" }, gapRange(gap)) : null),
-      h("span", { class: "cell num opt stack-num", title: pool ? "Random-effects mean over " + pool.k + " days (" + fmtNum(pool.cases) + " paired cases)" : undefined }, h("span", { class: "delta " + gapTone(pr) }, s.contender === ref ? "—" : pr ? gapPts(pr.mean) : "—"), pr ? h("span", { class: "meta" }, plural(pool.k, "day")) : null),
+      h("span", { class: "cell num opt stack-num", title: pool ? "Random-effects mean over " + pool.k + " days (" + fmtNum(pool.cases) + " paired cases)" : undefined }, h("span", { class: "delta " + gapTone(pr) }, s.contender === ref ? "—" : pr ? gapPts(pr.mean) : "—"), pr ? h("span", { class: "meta" }, (pr.hi < 0 ? "behind · " : pr.lo > 0 ? "ahead · " : "") + plural(pool.k, "day")) : null),
       hasAnchor ? h("span", { class: "cell num opt stack-num" }, h("span", null, an && an.n ? pct(an.passRate.p) : "—"), an && an.n ? h("span", { class: "meta" }, an.passed + "/" + an.n) : null) : null,
       h("span", { class: "cell num opt" }, lat),
       h("span", { class: "cell num opt stack-num", title: src ? "Cost source: " + src : undefined }, h("span", null, cost), src ? h("span", { class: "meta" }, src) : null),
@@ -4537,8 +4707,12 @@ async function showBenchmark(seq, name) {
       h("span", { class: "cell num opt", title: "Where one more day's gap should land, 95% of the time" }, p.predict ? gapRange(p.predict) : "—"),
       h("span", { class: "cell num opt", title: fmtNum(p.cases) + " paired cases" }, String(p.k)),
       h("span", { class: "cell num opt" }, typeof p.i2 === "number" ? Math.round(p.i2 * 100) + "%" : "—"),
-      h("span", { class: "meta mob" }, [p.predict ? "next day " + gapRange(p.predict) : "", plural(p.k, "day"), typeof p.i2 === "number" ? "I² " + Math.round(p.i2 * 100) + "%" : ""].filter(Boolean).join(" · ")))),
-    h("div", { class: "pool-axis meta", "aria-hidden": "true" }, h("span", null, ptsTick(-span) + " pts"), h("span", null, "0"), h("span", null, ptsTick(span) + " pts"))) : null;
+      h("span", { class: "meta mob" }, [p.predict ? "likely next day " + gapRange(p.predict) : "", plural(p.k, "day"), typeof p.i2 === "number" ? "I² " + Math.round(p.i2 * 100) + "%" : ""].filter(Boolean).join(" · ")))),
+    h("div", { class: "pool-axis meta", "aria-hidden": "true" }, h("span", null, ptsTick(-span) + " pts"), h("span", null, "0"), h("span", null, ptsTick(span) + " pts")),
+    h("div", { class: "pool-key meta" },
+      h("span", null, h("i", { class: "k-worse", "aria-hidden": "true" }), "behind " + ref),
+      h("span", null, h("i", { class: "k-flat", "aria-hidden": "true" }), "within noise"),
+      h("span", null, h("i", { class: "k-better", "aria-hidden": "true" }), "ahead of " + ref))) : null;
 
   // ---- difficulty: mean pass rate over everyone, fresh vs anchor
   let difficulty = null;
@@ -4549,8 +4723,7 @@ async function showBenchmark(seq, name) {
     difficulty = h("div", { class: "panel chart-card" },
       lineChart({ dates, series: ds, y: ax.y, ticks: ax.ticks, breaks: r.protocolBreaks, small: true, fmtTick: (t) => Math.round(t * 100) + "%", fmtValue: pct, label: "Mean pass rate per day over all contenders, fresh cases" + (r.difficulty.anchor ? " and anchor set" : "") }),
       h("div", { class: "legend" }, ds.map((s) => h("span", null, swatch(s.cls, s.dashed), s.name))),
-      h("p", { class: "meta note-line" }, r.difficulty.anchor ? "Fresh and anchor means side by side, for context on daily swings. A fresh drop alone points at that day's cases." : "Add an anchor set to tell a harder day from a worse field."),
-      ...(r.difficulty.anchor && anchorChanges.length ? [anchorNote()] : []));
+      h("p", { class: "meta note-line" }, r.difficulty.anchor ? "Fresh and anchor means side by side, for context on daily swings. A fresh drop alone points at that day's cases." + (anchorChanges.length ? " The anchor line breaks where its cases were revised." : "") : "Add an anchor set to tell a harder day from a worse field."));
   }
 
   // ---- anchor set
@@ -4565,7 +4738,7 @@ async function showBenchmark(seq, name) {
         h("span", { class: "arm-name" }, swatch(cOf(n)), h("span", { class: "truncate" }, n)),
         rateBar(s.passRate.p, s.passRate.lo, s.passRate.hi, n + " on the anchor set: " + s.passed + " of " + s.n + " passed", cOf(n)),
         h("span", { class: "arm-num" }, fmtNum(s.passed) + "/" + fmtNum(s.n) + " · " + pct(s.passRate.p)),
-        h("span", { class: "meta arm-sub" }, n === ref ? "reference" : g ? nb(gapPts(g.value) + " vs " + ref) + " · " + nb("95% CI " + gapRange(g)) : ""));
+        h("span", { class: "meta arm-sub" }, n === ref ? "reference" : g ? nb("paired gap " + gapPts(g.value) + " vs " + ref) + " · " + nb("95% CI " + gapRange(g)) : ""));
     })), ...(anchorChanges.length ? [anchorNote()] : []))) : null;
 
   // ---- failed cases
@@ -4596,10 +4769,10 @@ async function showBenchmark(seq, name) {
     flb.replaceChildren(...shown.map((f, i) => h("div", { class: "row case-row fail-row", role: "option", id: "bf-" + i, "aria-selected": String(i === factive), "aria-expanded": "false", onclick: () => { setFActive(i); toggleF(i); } },
       h("span", { class: "dot tone-" + (f.failure === "timeout" || f.failure === "error" ? "warn" : "fail"), "aria-hidden": "true" }),
       h("span", { class: "cid", title: f.caseId }, f.caseId),
-      h("span", { class: "who-name" }, swatch(cOf(f.contender)), h("span", { class: "truncate" }, f.contender)),
+      h("span", { class: "who-name" }, swatch(cOf(f.contender)), h("span", { class: "truncate" }, f.contender), f.latencyMs ? h("span", { class: "meta f-dur" }, fmtDuration(f.latencyMs)) : null),
       h("span", { class: "why", title: f.detail || "" }, h("span", { class: "g" }, f.failure || "failed"), h("span", { class: "sr-only" }, ": "), clip(oneLine(f.detail || ""), 200)),
       h("span", { class: "cell num muted opt" }, f.latencyMs ? fmtDuration(f.latencyMs) : ""),
-      f.sessionId && f.hasSession ? h("a", { class: "open-sess", href: sessionHref(f.sessionId), onclick: (e) => e.stopPropagation() }, "Open session") : h("span", { class: "no-sess", title: f.sessionId ? "Session " + f.sessionId + " is not in this index" : "No session recorded", "aria-label": "No session" }, "—"))));
+      f.sessionId && f.hasSession ? h("a", { class: "open-sess", href: sessionHref(f.sessionId), onclick: (e) => e.stopPropagation() }, "Open session") : h("span", { class: "no-sess", title: f.sessionId ? "Session " + f.sessionId + " is not in this index" : "No session recorded", }, "no session"))));
     if (!shown.length) flb.append(h("p", { class: "meta list-note" }, "No failed cases in this group."));
     flb.setAttribute("aria-activedescendant", shown.length ? "bf-" + factive : "");
   }
@@ -4655,7 +4828,7 @@ async function showBenchmark(seq, name) {
     changes.length > 10 ? h("div", { class: "meta" }, "and " + (changes.length - 10) + " more") : null);
 
   view.append(
-    h("div", { class: "section-head" }, h("h2", null, "Leaderboard", h("span", { class: "meta h-sub" }, shortDate(L.date))), h("span", { class: "meta" }, "Places from today's run. 1= means tied within noise")),
+    h("div", { class: "section-head" }, h("h2", null, "Leaderboard", h("span", { class: "meta h-sub" }, shortDate(L.date))), h("span", { class: "meta" }, sums.length > 1 && sums.every((x) => x.place === sums[0].place) ? "No clear leader today: every gap is within noise. The pooled column covers every day." : "Places from today's run; 1= means tied within noise. The pooled column covers every day.")),
     board,
     h("div", { class: "section-head" }, h("h2", null, "Pass rate by day"), r.anchor ? seg : null),
     h("div", { class: "panel chart-card" }, chartSlot),
@@ -4708,10 +4881,53 @@ async function loadUpdate() {
   pill.hidden = false;
 }
 
+// ------------------------------------------------------------ touch titles
+
+// Touch screens never show title tooltips. A tap on plain text with a title, or a
+// long press on a control with one, shows the same text in a small tip.
+function touchTitles() {
+  const tip = h("div", { class: "tip", role: "tooltip", hidden: true });
+  document.body.append(tip);
+  const CONTROL = "a[href], button, input, select, textarea, summary, [role=option], [role=button], [role=checkbox], [role=tab]";
+  let timer = 0, start = null, touch = false, swallow = false;
+  function show(el) {
+    const text = el.getAttribute("title");
+    if (!text) return;
+    tip.textContent = text;
+    tip.hidden = false;
+    const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect();
+    tip.style.left = Math.max(12, Math.min(innerWidth - t.width - 12, r.left + r.width / 2 - t.width / 2)) + "px";
+    tip.style.top = (r.top - t.height - 8 >= 8 ? r.top - t.height - 8 : r.bottom + 8) + "px";
+  }
+  function hide() { clearTimeout(timer); timer = 0; tip.hidden = true; }
+  document.addEventListener("pointerdown", (e) => {
+    touch = e.pointerType === "touch";
+    hide();
+    if (!touch) return;
+    const el = e.target.closest && e.target.closest("[title]");
+    if (!el || !el.closest(CONTROL)) return;
+    start = [e.clientX, e.clientY];
+    timer = setTimeout(() => { timer = 0; swallow = true; show(el); }, 450);
+  }, true);
+  document.addEventListener("pointermove", (e) => { if (timer && start && Math.hypot(e.clientX - start[0], e.clientY - start[1]) > 10) hide(); }, true);
+  document.addEventListener("pointercancel", () => { clearTimeout(timer); timer = 0; }, true);
+  document.addEventListener("pointerup", () => { clearTimeout(timer); timer = 0; }, true);
+  document.addEventListener("contextmenu", (e) => { if (swallow) e.preventDefault(); }, true);
+  document.addEventListener("click", (e) => {
+    // A long press shows the tip; the click that follows it should not also navigate.
+    if (swallow) { swallow = false; e.preventDefault(); e.stopPropagation(); return; }
+    if (!touch) return;
+    const el = e.target.closest && e.target.closest("[title]");
+    if (el && !el.closest(CONTROL)) show(el);
+  }, true);
+  addEventListener("scroll", () => { if (!tip.hidden) hide(); }, { capture: true, passive: true });
+}
+
 // ------------------------------------------------------------ boot
 
 route();
 loadUpdate();
+touchTitles();
 </script>
 </body>
 </html>

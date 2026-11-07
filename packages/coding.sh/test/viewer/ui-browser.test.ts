@@ -214,7 +214,7 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
       assert.match(pane, /ttft\s+3\.2s/);
       const head: string = await page.eval("document.querySelector('.detail-head .facts').innerText");
       assert.match(head, /latency/);
-      assert.match(head, /293 llm calls, p50 6\.5s, p95 34s/);
+      assert.match(head, /293 llm calls · p50 6\.5s · p95 34s/);
       assert.match(head, /ttft p50 4\.0s/);
     } finally {
       await page.close();
@@ -290,6 +290,44 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
       assert.ok((await page.eval("scrollY")) > 0, "the page scrolled to the detail");
       // The pane offers a way back to the step list on narrow screens.
       assert.equal(await page.eval("getComputedStyle(document.querySelector('#event-pane .to-steps')).display === 'none'"), false);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("at 390px steps and controls are 44px tap targets, titles show on tap, and Filters open as a sheet", async () => {
+    await open(sessionHash(PARENT), true);
+    try {
+      const m = await page.eval(`(() => {
+        // A control's hit area is its box grown by an absolutely placed ::before.
+        const hit = (el) => { const r = el.getBoundingClientRect(), b = getComputedStyle(el, "::before"), px = (v) => parseFloat(v) || 0;
+          return b.content !== "none" && b.position === "absolute" ? [r.width - px(b.left) - px(b.right), r.height - px(b.top) - px(b.bottom)] : [r.width, r.height]; };
+        return { step: document.querySelector('#steps .st').getBoundingClientRect().height,
+          small: [...document.querySelectorAll('.topbar a, .topbar button:not([hidden]), .detail-head a, .detail-head button')].filter((e) => e.getClientRects().length)
+            .map((e) => [e.className || e.textContent.trim(), ...hit(e).map(Math.round)]).filter(([, w, h]) => w < 44 || h < 44) };
+      })()`);
+      assert.equal(m.step, 44, "step rows are 44px on a phone");
+      assert.deepEqual(m.small, [], "every header control has a 44px hit area");
+      // Touch screens never show title tooltips: a tap on text with a title shows it instead.
+      const tip = await page.eval(`(() => {
+        const dd = [...document.querySelectorAll('.facts dd[title]')][0];
+        dd.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'touch', bubbles: true }));
+        dd.click();
+        const t = document.querySelector('.tip');
+        return [dd.getAttribute('title'), t && !t.hidden ? t.textContent : null];
+      })()`);
+      assert.equal(tip[1], tip[0], "the tip repeats the title");
+
+      await page.eval("location.hash = '#/'");
+      await page.waitFor("document.querySelector('.facets-toggle')", "filters button");
+      await page.eval("document.querySelector('.facets-toggle').click()");
+      const sheet = await page.eval(`(() => { const g = document.querySelector('.facet-groups');
+        g.getAnimations().forEach((a) => a.finish());
+        const r = g.getBoundingClientRect();
+        return { pos: getComputedStyle(g).position, bottom: Math.round(r.bottom), focus: document.activeElement.textContent }; })()`);
+      assert.deepEqual(sheet, { pos: "fixed", bottom: 844, focus: "Done" }, "Filters open as a bottom sheet with Done focused");
+      await page.eval("document.querySelector('.sheet-head .btn').click()");
+      assert.equal(await page.eval("document.querySelector('.facets').dataset.open"), "false", "Done closes the sheet");
     } finally {
       await page.close();
     }
@@ -573,7 +611,28 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
       const heights: number[] = await page.eval("[...document.querySelectorAll('[role=listbox] [role=option]')].map((r) => Math.round(r.getBoundingClientRect().height))");
       assert.equal(new Set(heights).size, 1, `rows with and without a repo are the same height: ${heights.join(", ")}`);
       assert.ok(await page.eval("!!document.querySelector('.hist-plot')"), "the time histogram renders");
+      const ticks: string[] = await page.eval("[...document.querySelectorAll('.hist-axis span')].map((s) => s.textContent).filter(Boolean)");
+      assert.equal(new Set(ticks).size, ticks.length, `axis ticks are distinct: ${ticks.join(" | ")}`);
+      // Under two days the ticks are times of day, dated where the day changes.
+      const t = new Date(2026, 10, 6, 13, 0).getTime();
+      const short: string[] = await page.eval(`axisLabels([${t}, ${t + 6 * 3600e3}, ${t + 12 * 3600e3}])`);
+      assert.equal(new Set(short).size, 3, short.join(" | "));
+      assert.match(short[0]!, /Nov 6, 1:00/);
+      assert.match(short[2]!, /^Nov 7, 1:00/, "a tick on the next day carries its date");
+      assert.doesNotMatch(short[1]!, /Nov/, "a tick on the same day shows only the time");
       assert.ok(await page.eval("!!document.querySelector('[data-filter=agent] .chip')"), "agent facets render");
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("a file change reads as the result of an edit, with its line counts in the duration column", async () => {
+    await open("#/");
+    try {
+      const v = await page.eval(`eventView({ kind: "file.change", payload: { path: "/work/api/src/a.ts", op: "edit", additions: 3, deletions: 1 } })`);
+      assert.equal(v.name, "Changed");
+      assert.equal(v.meta, "+3 −1");
+      assert.doesNotMatch(v.arg, /\+3/, "the counts are not repeated after the path");
     } finally {
       await page.close();
     }
