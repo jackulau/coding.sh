@@ -439,6 +439,10 @@ enclosing call or an earlier copy of the same response already counted it. `stat
 (`count`, plus the first failure's `statusCode` and `error`) counts `llm.call` events with
 `ok: false` or a status of 400 or more; it is absent when none failed.
 
+`stats.waste` (`duplicateFetches`, `duplicateFetchTokens`, `readOnlyCalls`) counts read-only calls
+that repeated an earlier call in the same context with the same result, and the tokens they sent
+again (output length / 4). It is absent when none repeated.
+
 A missing session, or one outside a scoped key's project, gets 404:
 
 ```sh

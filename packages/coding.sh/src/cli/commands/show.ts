@@ -126,6 +126,14 @@ function harnessText(p: Record<string, unknown>): string {
   }
 }
 
+/** Header rows for waste: repeated read-only calls. */
+export function wasteRows(s: Session): [string, string][] {
+  const rows: [string, string][] = [];
+  const w = s.stats.waste;
+  if (w) rows.push(["Re-fetches", `${w.duplicateFetches} of ${w.readOnlyCalls} read-only calls repeated with the same result (~${tokens(w.duplicateFetchTokens)} tokens re-sent)`]);
+  return rows;
+}
+
 const RESUME_TEXT = { crash: "a crash", deploy: "a deploy", restart: "a worker restart", wait: "a wait" } as const;
 
 /** Header rows for a durable workflow run: what ran, and where the time went. */
@@ -281,6 +289,7 @@ export async function run(c: CommandContext): Promise<number> {
     const d = s.stats.durable;
     if (d) rows.push(...durableRows(d));
     if (outline && outline.phases.length > 1) rows.push(["Phases", phaseCounts(outline)]);
+    rows.push(...wasteRows(s));
     if (derails.length) rows.push(["Derails", derails.slice(0, 4).map((d) => `${d.flag} at +${duration(Math.max(0, d.ts - s.startedAt))}`).join(", ") + (derails.length > 4 ? ` +${derails.length - 4} more` : "")]);
     for (const [k, v] of rows) out.print(`  ${k.padEnd(14)}${v}`);
     out.print();

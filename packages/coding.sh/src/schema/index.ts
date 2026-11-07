@@ -90,6 +90,19 @@ export interface DuplicateUsage {
   costUsd?: number;
 }
 
+/**
+ * Session.stats.waste: duplicate fetches, read-only tool calls (Read, Grep, a
+ * `cat`, an MCP get) repeated while the first result was still in context and
+ * unchanged, so the repeat re-sent tokens the model already had.
+ */
+export interface WasteStats {
+  duplicateFetches: number;
+  /** Estimated tokens the repeats re-sent: output characters / 4. */
+  duplicateFetchTokens: number;
+  /** All read-only calls in the session, the base for a duplicate share. */
+  readOnlyCalls: number;
+}
+
 /** Session.stats.llmErrors: how many model calls failed, and why the first one did. */
 export interface LlmErrors {
   count: number;
@@ -219,6 +232,8 @@ export interface Session {
     derails?: SessionDerail[];
     /** The session's phases (core/outline.ts) when it has more than one: start, resumes, compactions, long idle gaps. */
     phases?: SessionPhase[];
+    /** Read-only calls repeated with an unchanged result (core/waste.ts). Unset when none repeated. */
+    waste?: WasteStats;
   };
   /** Detected failure patterns, e.g. "premature-completion". */
   flags: string[];

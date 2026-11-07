@@ -7,6 +7,8 @@ import { phasesToStore, sessionOutline } from "./outline.ts";
 import type { AgentEvent, DuplicateUsage, LatencyStats, LlmErrors, Session, Usage } from "../schema/index.ts";
 import { DURABLE_FLAGS, durableFlags, durableStats } from "./durable.ts";
 import { detectTestTamper } from "./intent.ts";
+// waste.ts imports commandOf and FLAGS back from here, inside functions only.
+import { wasteOf } from "./waste.ts";
 
 export const FLAGS = {
   prematureCompletion: "premature-completion",
@@ -21,6 +23,8 @@ export const FLAGS = {
   resumed: DURABLE_FLAGS.resumed,
   /** A tag, not a failure: model calls went through Vercel AI Gateway. Other gateways get "gateway:<id>". */
   gateway: GATEWAY_FLAG,
+  /** Three or more read-only calls repeated with an unchanged result in one context (core/waste.ts, Session.stats.waste). */
+  duplicateFetch: "duplicate-fetch",
   /** Derails (core/derail.ts): where the session went off the rails. */
   ...DERAIL_FLAGS,
 } as const;
@@ -462,6 +466,11 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   if (derails.length) session.stats.derails = derails;
   const phases = phasesToStore(sessionOutline(sorted));
   if (phases) session.stats.phases = phases;
+  const waste = wasteOf(sorted);
+  if (waste) {
+    session.stats.waste = waste.stats;
+    session.flags.push(...waste.flags);
+  }
   if (lastTest) {
     session.stats.testsPassed = lastTest.passed;
     session.stats.testsFailed = lastTest.failed;
