@@ -1,0 +1,37 @@
+apps/site/src/components/docs/markdown.ts
+  s_8e040dbdf13565::t_2c0e235c4a1729 24
+docs/research/durable-workflows.md
+  s_8e040dbdf13565::t_98dcc330c85b4a 2,4,6,8,10,20,22,24-26,28,30,32,38,40,42,44,53,55,57,59,64,66,68,70,76,78,80,82,84,86,88,90,92,94-96,98,100,102,104,106,108
+  s_8e040dbdf13565::t_5cf7b304aa7117 71
+  s_8e040dbdf13565::t_3f8d79f5473651 1,3,5,7,9,11-19,21,23,27,29,31,33-37,39,41,43,45-51,54,56,58,60-63,65,67,69,72-75,77,79,81,83,85,87,89,91,93,97,99,101,103,105,107,109-113
+  s_8e040dbdf13565::t_4cbfbc0d6f907d 52
+docs/README.md
+  s_8e040dbdf13565::t_80135282db1370 29
+apps/site/src/components/docs/nav.ts
+  s_8e040dbdf13565::t_8ef797c015527a 60
+docs/concepts.md
+  s_8e040dbdf13565::t_fa98e1f26a5643 43-46
+apps/site/src/pages/docs/how-to/trace-durable-workflow.astro
+  s_8e040dbdf13565::t_d04d56650bae66 1-9
+CHANGELOG.md
+  s_8e040dbdf13565::t_c55e92f1bea95c 23
+docs/how-to/trace-durable-workflow.md
+  s_8e040dbdf13565::t_483f0dabdeca33 139-141
+  s_8e040dbdf13565::t_91e749a6311efd 1-138,142-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "620256f1572cc6bd93edea00f51fbf7af0041a32",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
