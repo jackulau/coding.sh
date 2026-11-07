@@ -1,0 +1,64 @@
+docs/README.md
+  s_8e040dbdf13565::t_f048fd033c044b 1-51
+docs/guides/install.md
+  s_8e040dbdf13565::t_0b8eed89b0d3f7 1-71
+.github/ISSUE_TEMPLATE/agent-support.yml
+  s_8e040dbdf13565::t_c330bdfd55882b 1-46
+README.md
+  s_8e040dbdf13565::t_2efa643aa56a86 45-47
+  s_8e040dbdf13565::t_d7d40d37f5d894 1-20,22-28,34-36,53-57,60-61,63-67,69-73,75-95,99-102,104,106-109,111,113-121,123-125
+  s_8e040dbdf13565::t_cc3cc48399d2b5 21,37,39,41,43,48,50,122,126,130
+docs/guides/privacy.md
+  s_8e040dbdf13565::t_f7e1b4d3210443 1-60
+.github/assets/banner.html
+  s_8e040dbdf13565::t_2c4cfe5a4ca619 1-189
+.github/ISSUE_TEMPLATE/bug.yml
+  s_8e040dbdf13565::t_a5f6d58aff4b38 1-86
+docs/guides/agents.md
+  s_8e040dbdf13565::t_0efa5573a75cfa 1-59
+docs/guides/explore.md
+  s_8e040dbdf13565::t_a4bd369c99d30a 18-19
+  s_8e040dbdf13565::t_097f5fed34fd20 1-17,20-28
+docs/guides/evals.md
+  s_8e040dbdf13565::t_f4f6ea095a0f28 1-47
+.github/ISSUE_TEMPLATE/config.yml
+  s_8e040dbdf13565::t_f1c6fd9d0e0cfc 6-8
+.github/ISSUE_TEMPLATE/feature.yml
+  s_8e040dbdf13565::t_07df8e96765227 2,12-27,32,38-45
+.github/PULL_REQUEST_TEMPLATE.md
+  s_8e040dbdf13565::t_41ad71f94204c4 1-15
+CONTRIBUTING.md
+  s_8e040dbdf13565::t_28d35b90089a5d 37-39
+docs/TOOL-EVALS.md
+  s_8e040dbdf13565::t_5876437fd4a508 323,601
+docs/design/architecture.md
+  s_8e040dbdf13565::t_047ef629df4774 1,3-4,12-17,36-39,41-55,58-60,159-190
+docs/design/dogfood.md
+  s_8e040dbdf13565::t_62c511899620cf 498,518
+docs/design/viewer.md
+  s_8e040dbdf13565::t_c297b5c9965588 247
+docs/design/workflows.md
+  s_8e040dbdf13565::t_54ceb467f1f77a 198,284,299
+docs/guides/team.md
+  s_8e040dbdf13565::t_020adaa5c6ae4f 1-133
+evals/cli/suite.toml
+  s_8e040dbdf13565::t_8631d4c77ea3f1 2
+packages/coding.sh/README.md
+  s_8e040dbdf13565::t_be900bf09bf845 1-4,7,23,37-41,85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "33a46a8e2831c06c1478f238604b9676b074e2d1",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "unknown"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
