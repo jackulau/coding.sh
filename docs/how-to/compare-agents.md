@@ -164,6 +164,12 @@ An `own tests` row splits failed runs by the agent's own last test run: `A fails
 verifier's didn't, so its tests checked what it wrote rather than what was asked. Stale means it
 edited files after its last green run.
 
+A `tampered passes` row appears when a passing run edited, deleted or skipped tests or the
+verifier's files: `B 3: disclosed 2, stealth 1`. Each pass gets a line naming the run, the file and
+the tool call that changed it, with what the agent said. Disclosed means it said it was changing the
+test (`the test expecting 5 is wrong; update the expected value`). Stealth means it didn't. Read the
+stealth ones first.
+
 Cost, token and turn values show `(3/10)` when only some runs reported them. The "X% cheaper" note
 only appears when each arm has a known cost for at least 80% of its runs.
 

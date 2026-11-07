@@ -70,6 +70,21 @@ describe("runTask", () => {
     assert.equal(await readGraderUsage("/nonexistent/grader-usage.jsonl"), undefined);
   });
 
+  it("ingests before removing the run dir, so the agent's transcript in it can still be read; an ingest error never fails the run", async () => {
+    const w = await toyWorld();
+    const seen: boolean[] = [];
+    const ingest = async () => {
+      const [dir] = await readdir(w.runsDir);
+      seen.push(!!dir && existsSync(join(w.runsDir, dir, "work")));
+      throw new Error("ingest down");
+    };
+    const r = await runTask({ task: w.task, bundle: await w.mkBundle("fixer", "always fix bugs"), adapter: obedientAgent(), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, ingest });
+    assert.deepEqual(seen, [true]);
+    assert.equal(r.pass, true);
+    assert.equal(r.error, undefined);
+    assert.deepEqual(await readdir(w.runsDir), []);
+  });
+
   it("records a failing attempt without throwing", async () => {
     const w = await toyWorld();
     const r = await runTask({ task: w.task, bundle: await w.mkBundle("half", "half effort"), adapter: obedientAgent(), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });

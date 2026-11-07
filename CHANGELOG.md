@@ -42,6 +42,7 @@ coding.sh runs on Windows, and CI tests it there.
 - **Tool evals.** `toolevals compare` prints `p (perm)` beside McNemar: a task-paired permutation test on the per-task differences, exact over all sign flips up to 20 tasks and seeded Monte Carlo above. It holds its level at the 5-11 tasks a suite often has, where bootstrap intervals are too narrow (AT-AT, arXiv 2610.34679). `--json` carries `report.permutation`; verdicts are unchanged. [Tool evals](https://coding.sh/docs/tool-evals#experiments).
 - **Site.** Pages are ready about 0.5 s sooner on a slow phone, with half the font bytes and less layout shift. A Lighthouse A/B with budgets runs on every site change. [Site speed](https://coding.sh/docs/perf).
 - **Sessions.** New `test-tamper` flag: the agent added a skip marker to a test, deleted a test file while tests failed, or changed an assertion and that edit alone turned a failing run green. It reads Edit/Write/apply_patch changes and shell writes (`sed -i`, `>`, `tee`, `rm`, `mv`, `git checkout`), and covers test-runner configs and CI files. New tests and files the agent created itself are not flagged. On 3,957 local sessions it flags 13 (EPISTEME, arXiv 2611.06563). [Concepts](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md).
+- **Harness A/B.** `compare` links each tamper flag to the tool call that made the change and splits tampered passes by whether the agent said it was changing the test: `tampered passes  B 3: disclosed 2, stealth 1`, then one line per pass with the run, file, tool, event id and the agent's words. `--json` adds `tamperAttribution` per run, and the MCP `harness_compare` tool a `tamper` field. [Evals guide](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#harness-ab).
 
 ### Fixed
 
@@ -56,6 +57,7 @@ coding.sh runs on Windows, and CI tests it there.
 - **Cost.** `coding.sh collector` prices model calls with tokens and no cost, as `serve` and `ingest` do, using your `[prices]`.
 - **Viewer.** The top bar fits a 360px phone.
 - **MCP.** Tool calls no longer wait for a big ingest: they answer within 1.5 s from what is indexed, with `pending: {files, indexing}` in the result. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-mcp).
+- **Harness A/B.** `compare` and `eval crosscheck` runs keep the agent's text from mid-turn: the run dir, which holds the agent's own transcript, was removed before it was ingested, so the session kept only the final reply.
 - **CLI.** `status`, `sessions` and `search` with `--json` carry `"pending": {"files", "indexing"}` while captures are still waiting, instead of dropping the note. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-status).
 
 ## [0.1.1] - 2026-11-07

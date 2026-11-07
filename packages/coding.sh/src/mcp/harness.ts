@@ -5,7 +5,7 @@
 import type { Context } from "../core/context.ts";
 import type { EvalTask, HarnessBundle, RunResult } from "../core/types.ts";
 import { gateHeadline } from "../stats/gate.ts";
-import { gateLine, itemGateLine, type ArmSummary } from "../runner/experiment.ts";
+import { gateLine, itemGateLine, decidingChange, type ArmSummary, type CompareReport } from "../runner/experiment.ts";
 import { bundleItemChange, harnessReport, tagPrefixProblem } from "../runner/harness-report.ts";
 import type { SelfCheckSummary } from "../runner/selfcheck.ts";
 import { clip, iso } from "./data.ts";
@@ -68,6 +68,32 @@ export async function harnessCompareList(ctx: Context, env: NodeJS.ProcessEnv, o
 
 const ownTests = (s: SelfCheckSummary) => ({ fails: s.fails, green: s.green, red: s.red, stale: s.stale, none: s.none, unknown: s.unknown });
 const armOut = (a: ArmSummary) => ({ bundle: a.name, id: a.bundleId, runs: a.runs, passes: a.passes, passRate: round(a.passRate.p), errors: a.errors });
+const tamperArm = (a: ArmSummary) => ({
+  runs: a.tampered,
+  passes: a.tamperedPasses,
+  ...(a.tamperedPassesDisclosed !== undefined ? { disclosed: a.tamperedPassesDisclosed, stealth: a.tamperedPassesStealth ?? 0 } : {}),
+});
+
+/** Tamper-flagged runs per arm and each tampered pass linked to the tool call that changed the test (absent when no run tampered). */
+function tamperOut(r: CompareReport, n: number): Obj | undefined {
+  if (!r.baseline.tampered && !r.candidate.tampered) return undefined;
+  const passes = Object.entries(r.tamperAttribution ?? {})
+    .filter(([, x]) => x.pass)
+    .slice(0, n)
+    .map(([run, x]) => {
+      const c = decidingChange(x);
+      const f = c?.finding;
+      return {
+        run,
+        arm: x.arm,
+        task: x.taskId,
+        disclosure: x.disclosure,
+        ...(c ? { change: `${c.kind} ${c.path}` } : {}),
+        ...(f ? { tool: f.tool ?? f.via, eventId: f.eventId, ...(f.intent ? { intent: f.intent } : {}) } : {}),
+      };
+    });
+  return { baseline: tamperArm(r.baseline), candidate: tamperArm(r.candidate), ...(passes.length ? { passes } : {}) };
+}
 
 /** One harness A/B experiment: pass rates, the ship gate (per task group with `by`), the one-item gate and the own-tests split. */
 export async function harnessCompareGet(ctx: Context, env: NodeJS.ProcessEnv, experimentId: string, o: { baseline?: string; by?: string; limit: number }): Promise<Obj> {
@@ -96,6 +122,7 @@ export async function harnessCompareGet(ctx: Context, env: NodeJS.ProcessEnv, ex
   const g = r.gate;
   const ig = r.itemGate;
   const files = r.bundleDiff?.files;
+  const tamper = tamperOut(r, n);
   return {
     experimentId,
     baseline: armOut(r.baseline),
@@ -139,6 +166,7 @@ export async function harnessCompareGet(ctx: Context, env: NodeJS.ProcessEnv, ex
         }
       : {}),
     ownTests: { baseline: ownTests(r.baseline.selfCheck), candidate: ownTests(r.candidate.selfCheck) },
+    ...(tamper ? { tamper } : {}),
     ...(files ? { changes: { added: files.added.slice(0, n), removed: files.removed.slice(0, n), changed: files.changed.slice(0, n) } } : {}),
     warnings: [...r.power.warnings.map((w) => w.message), ...r.notes].slice(0, n),
   };

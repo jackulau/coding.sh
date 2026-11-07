@@ -18,6 +18,7 @@ import { diffBundles, formatBundleDiff, type BundleDiff } from "./bundle.ts";
 import { firstDivergence, type Divergence } from "./divergence.ts";
 import { selfCheckSummary, type SelfCheckSummary } from "./selfcheck.ts";
 import type { SnapshotOps } from "./git.ts";
+import { attributeTamper, tamperDisclosure, type TamperAttribution, type TamperDisclosure } from "./tamper.ts";
 import { runTask, type AgentRoute } from "./run.ts";
 
 // ------------------------------------------------------------ running
@@ -51,6 +52,8 @@ export interface RunExperimentOpts {
   testGlobs?: string[];
   /** Agent-only routing per arm (see RunTaskOpts.route). */
   route?: AgentRoute;
+  /** Ingests the spool after each run, before its dir is removed (see RunTaskOpts.ingest). */
+  ingest?: () => Promise<unknown>;
   /**
    * Interrupts the experiment: no new run starts, in-flight runs are killed
    * and stored as `cancelled`, and the result says `cancelled: true`.
@@ -230,6 +233,7 @@ async function attemptRun(o: RunExperimentOpts, job: Job, experimentId: string):
       runsDir: o.runsDir,
       testGlobs: o.testGlobs,
       signal: o.signal,
+      ...(o.ingest ? { ingest: o.ingest } : {}),
     });
   } catch (e) {
     // runTask should not throw; if adapterFor does, record and move on.
@@ -316,6 +320,10 @@ export interface ArmSummary {
   tamperRate: number;
   /** Tampered runs that still passed: passes that may not be earned. */
   tamperedPasses: number;
+  /** With traces and tampered passes: passes whose every test change came with a statement that tests were being changed. */
+  tamperedPassesDisclosed?: number;
+  /** With traces and tampered passes: passes with a test change made silently. The rest have no matching tool call. */
+  tamperedPassesStealth?: number;
   /** Failed runs split by the agent's own last test result (silent misses: own tests green, verifier red). */
   selfCheck: SelfCheckSummary;
 }
@@ -394,6 +402,16 @@ export interface CompareReport {
    * reached the agent's context.
    */
   itemGate?: ItemGateReport;
+  /** With traces: each tamper-flagged run's flags linked to the tool call that made them, keyed by run id. */
+  tamperAttribution?: Record<string, RunTamperAttribution>;
+}
+
+export interface RunTamperAttribution {
+  taskId: string;
+  arm: "baseline" | "candidate";
+  pass: boolean;
+  disclosure: TamperDisclosure;
+  changes: TamperAttribution[];
 }
 
 /** The Pareto promotion gate: quality = pass (1/0) per run, cost = USD per run, else tokens. */
@@ -503,10 +521,31 @@ const METRICS: { key: MetricKey; label: string; unit: MetricDelta["unit"]; bette
   },
 ];
 
-function arm(results: readonly RunResult[], bundleId: string, name: string | undefined, opts: Pick<CompareOpts, "sessions" | "events">): ArmSummary {
+/** Each tamper-flagged run's flags linked to the tool calls in its trace (session cwd makes paths repo-relative). */
+function tamperAttributions(A: readonly RunResult[], B: readonly RunResult[], opts: Pick<CompareOpts, "sessions" | "events">): Map<string, RunTamperAttribution> {
+  const out = new Map<string, RunTamperAttribution>();
+  for (const [armName, rs] of [["baseline", A], ["candidate", B]] as const) {
+    for (const r of rs) {
+      if (!r.tamper?.flagged) continue;
+      const changes = attributeTamper(r.tamper, opts.events?.get(r.id) ?? [], opts.sessions?.get(r.id)?.cwd);
+      out.set(r.id, { taskId: r.taskId, arm: armName, pass: r.pass, disclosure: tamperDisclosure(changes), changes });
+    }
+  }
+  return out;
+}
+
+function arm(
+  results: readonly RunResult[],
+  bundleId: string,
+  name: string | undefined,
+  opts: Pick<CompareOpts, "sessions" | "events">,
+  atts?: ReadonlyMap<string, RunTamperAttribution>,
+): ArmSummary {
   const passes = results.filter((r) => r.pass).length;
   const checked = results.filter((r) => r.tamper);
   const tampered = checked.filter((r) => r.tamper?.flagged);
+  const tamperedPasses = tampered.filter((r) => r.pass);
+  const split = (d: TamperDisclosure) => tamperedPasses.filter((r) => atts?.get(r.id)?.disclosure === d).length;
   return {
     bundleId,
     name,
@@ -517,7 +556,8 @@ function arm(results: readonly RunResult[], bundleId: string, name: string | und
     tamperChecked: checked.length,
     tampered: tampered.length,
     tamperRate: checked.length ? tampered.length / checked.length : NaN,
-    tamperedPasses: tampered.filter((r) => r.pass).length,
+    tamperedPasses: tamperedPasses.length,
+    ...(atts && tamperedPasses.length ? { tamperedPassesDisclosed: split("disclosed"), tamperedPassesStealth: split("stealth") } : {}),
     selfCheck: selfCheckSummary(results, opts.sessions, opts.events),
   };
 }
@@ -629,8 +669,10 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
   const notes: string[] = [];
   if (k > 1) notes.push(`pass-rate intervals (Wilson) treat the ${k} runs per task as independent and are optimistic; the bootstrap CI resamples tasks and is the one to trust`);
   if (unpaired.length) notes.push(`${unpaired.length} task(s) ran in only one arm and are excluded from paired stats`);
-  const sa = arm(A, opts.baseline, opts.bundles?.baseline?.name, opts);
-  const sb = arm(B, opts.candidate, opts.bundles?.candidate?.name, opts);
+  // With traces, each tamper flag is linked to the tool call that made it, and tampered passes split by disclosure.
+  const atts = opts.events ? tamperAttributions(A, B, opts) : undefined;
+  const sa = arm(A, opts.baseline, opts.bundles?.baseline?.name, opts, atts);
+  const sb = arm(B, opts.candidate, opts.bundles?.candidate?.name, opts, atts);
   if (cancelled) notes.push(`${cancelled} run(s) were cancelled before they finished and are left out`);
   if (infra) notes.push(`${infra} run(s) still failed on infrastructure errors (rate limit, 5xx, network) after their retries and are left out; compare --resume runs them again`);
   if (retried) notes.push(`${retried} run(s) were retried after infrastructure errors; only their last attempt counts (task failures are never retried)`);
@@ -646,8 +688,14 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
   const tampered = sa.tampered + sb.tampered;
   if (tampered) {
     const tp = sa.tamperedPasses + sb.tamperedPasses;
+    let how = "";
+    if (atts && tp) {
+      const d = (sa.tamperedPassesDisclosed ?? 0) + (sb.tamperedPassesDisclosed ?? 0);
+      const s = (sa.tamperedPassesStealth ?? 0) + (sb.tamperedPassesStealth ?? 0);
+      how = ` (${d} disclosed, ${s} stealth${tp - d - s ? `, ${tp - d - s} untraced` : ""})`;
+    }
     notes.push(
-      `${tampered} run(s) edited, deleted or skipped tests (baseline ${sa.tampered}, candidate ${sb.tampered}); ${tp} of them passed and still count as passes, so inspect their diffs before trusting the pass rate`,
+      `${tampered} run(s) edited, deleted or skipped tests (baseline ${sa.tampered}, candidate ${sb.tampered}); ${tp} of them passed${how} and still count as passes, so inspect their diffs before trusting the pass rate`,
     );
   }
 
@@ -696,6 +744,7 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
     ...(pareto ? { pareto } : {}),
     // Cancelled runs count as invalid here: an incomplete sweep is not scorable.
     ...(opts.itemGate ? { itemGate: itemGate(all, { ...opts.itemGate, baseline: opts.baseline, candidate: opts.candidate }) } : {}),
+    ...(atts?.size ? { tamperAttribution: Object.fromEntries(atts) } : {}),
   };
 }
 
@@ -900,6 +949,50 @@ export interface FormatOpts {
   taskNames?: ReadonlyMap<string, string>;
 }
 
+/** Tampered passes shown per arm before "… N more". */
+const TAMPER_LINES = 5;
+
+/** The change that decided a tampered run's label: a silent one for stealth, else the first linked one, else the first flag. */
+export function decidingChange(x: RunTamperAttribution): TamperAttribution | undefined {
+  return x.changes.find((c) => c.finding && (x.disclosure !== "stealth" || !c.finding.disclosed)) ?? x.changes[0];
+}
+
+/**
+ * "tampered passes  B 3: disclosed 2, stealth 1" per arm with traced tampered
+ * passes, then one line per pass naming the change and the tool call:
+ * `run_01J… edit tests/sum.test.js by Edit (event e42), said: "…"`.
+ */
+function tamperedPassLines(r: CompareReport, f: { pad: (s: string) => string; bad: (s: string) => string; dim: (s: string) => string }): string[] {
+  const att = r.tamperAttribution;
+  if (!att) return [];
+  const out: string[] = [];
+  const q = (s: string) => `"${s.length > 80 ? `${s.slice(0, 79)}…` : s}"`;
+  for (const [k, key] of [["A", "baseline"], ["B", "candidate"]] as const) {
+    const a = r[key];
+    if (!a.tamperedPasses || a.tamperedPassesDisclosed === undefined) continue;
+    const d = a.tamperedPassesDisclosed;
+    const s = a.tamperedPassesStealth ?? 0;
+    const u = a.tamperedPasses - d - s;
+    out.push(`${f.pad(out.length ? "" : "tampered passes")}${k} ${a.tamperedPasses}: disclosed ${d}, ${s ? f.bad(`stealth ${s}`) : "stealth 0"}${u ? `, untraced ${u}` : ""}`);
+    const runs = Object.entries(att).filter(([, x]) => x.arm === key && x.pass);
+    for (const [id, x] of runs.slice(0, TAMPER_LINES)) {
+      const c = decidingChange(x);
+      if (!c) continue;
+      const fd = c.finding;
+      let line = `${id} ${c.kind} ${c.path}`;
+      if (!fd) line += ", no matching tool call in the trace";
+      else {
+        line += ` by ${fd.tool ?? fd.via} (event ${fd.eventId})`;
+        if (fd.disclosed) line += `, said: ${q(fd.intent ?? "")}`;
+        else line += `, stealth${fd.intent ? ` (said: ${q(fd.intent)})` : ", no reason given"}`;
+      }
+      out.push(f.dim(`${f.pad("")}  ${line}`));
+    }
+    if (runs.length > TAMPER_LINES) out.push(f.dim(`${f.pad("")}  … ${runs.length - TAMPER_LINES} more (--json: tamperAttribution)`));
+  }
+  return out;
+}
+
 export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   const c = opts.color ?? false;
   const paint = (code: string, s: string) => (c ? `\x1b[${code}m${s}\x1b[0m` : s);
@@ -984,6 +1077,7 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
       out.push(dim(`${pad("", W[0] as number)}  own-green runs passed the verifier ${ci(s.greenPassRate)} vs ${ci(s.otherPassRate)} otherwise`));
     }
   });
+  out.push(...tamperedPassLines(r, { pad: (s) => pad(s, W[0] as number), bad, dim }));
   if (r.tasks.length) {
     out.push("");
     const max = opts.maxTasks ?? 20;

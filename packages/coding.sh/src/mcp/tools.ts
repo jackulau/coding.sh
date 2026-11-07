@@ -615,7 +615,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       name: "harness_compare",
       title: "Harness A/B results",
       description:
-        "Harness A/B results (`coding.sh compare`). No experiment: list them, newest first. With one: pass rates, ship gate (per tag group with by), one-item gate, failed runs split by the agent's own tests.",
+        "Harness A/B results (`coding.sh compare`). No experiment: list them, newest first. With one: pass rates, ship gate (per tag group with by), one-item gate, failed runs split by the agent's own tests, tampered passes split disclosed/stealth.",
       inputSchema: input({
         experiment: { type: "string", description: "Experiment id; omit to list." },
         baseline: { type: "string", description: "Arm A's bundle id or name, if not recorded." },
@@ -623,7 +623,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         limit: LIMIT(10, 50),
         cursor: CURSOR,
       }),
-      outputSchema: out({ experiments: arr(out({ id: S }, ["id"])), nextCursor: S, gate: out({ verdict: S }), itemGate: out({ verdict: S }), ownTests: out({}) }),
+      outputSchema: out({ experiments: arr(out({ id: S }, ["id"])), nextCursor: S, gate: out({ verdict: S }), itemGate: out({ verdict: S }), ownTests: out({}), tamper: out({}) }),
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();

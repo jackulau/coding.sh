@@ -48,6 +48,12 @@ export interface RunTaskOpts {
    * result is marked `cancelled`. The work dir is still removed unless `keep`.
    */
   signal?: AbortSignal;
+  /**
+   * Ingests the spool before runs/<id>/ is removed. The agent's Stop hook names
+   * its transcript under the run's HOME; read after the removal, only the final
+   * reply survives, and what the agent said mid-turn (why it changed a test) is lost.
+   */
+  ingest?: () => Promise<unknown>;
 }
 
 export type AgentRoute = (bundle: HarnessBundle) => { env: Record<string, string>; flags: string[]; model?: string } | undefined;
@@ -251,6 +257,7 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
       result.error = "cancelled";
     }
     result.endedAt = Date.now();
+    if (!opts.keep && !signal?.aborted && opts.ingest) await opts.ingest().catch(() => {});
     if (!opts.keep) await rmrf(layout.root).catch(() => {});
     forgetDir();
     try {

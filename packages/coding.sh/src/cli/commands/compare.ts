@@ -138,6 +138,8 @@ export async function run(c: CommandContext): Promise<number> {
             ...(timeoutMs !== undefined ? { timeoutMs } : {}),
             ...(typeof maxCost === "number" ? { maxCostUsd: maxCost } : {}),
             signal: c.signal,
+            // Each run's hooks are ingested before its dir (and the agent's transcript in it) is removed.
+            ingest: () => ctx.ingest(),
             ...(c.drain ? { drain: c.drain } : {}),
             job: job.scope(),
             retry: retryFlag(c),

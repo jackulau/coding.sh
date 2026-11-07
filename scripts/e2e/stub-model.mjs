@@ -9,6 +9,7 @@
 //   node scripts/e2e/stub-model.mjs            # listens on PORT (default 8787)
 //   import { startStub } from "./stub-model.mjs"; const s = await startStub(); s.url
 //   startStub({ decide: (body) => ({ tool: { name, args } }) | ({ text }) | undefined })  # a scenario; undefined falls back
+//   ({ text, tool }) answers with the text and then the tool call in one response.
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 
@@ -72,20 +73,18 @@ function chat(body, res, d) {
   const callId = id("call");
   if (!body.stream) {
     const message = d.tool
-      ? { role: "assistant", content: null, tool_calls: [{ id: callId, type: "function", function: { name: d.tool.name, arguments: JSON.stringify(d.tool.args) } }] }
+      ? { role: "assistant", content: d.text ?? null, tool_calls: [{ id: callId, type: "function", function: { name: d.tool.name, arguments: JSON.stringify(d.tool.args) } }] }
       : { role: "assistant", content: d.text };
     return json(res, { ...base, object: "chat.completion", choices: [{ index: 0, message, finish_reason: d.tool ? "tool_calls" : "stop" }], usage });
   }
   const chunk = (delta, finish_reason = null) => ({ ...base, object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason }] });
   const chunks = [chunk({ role: "assistant", content: "" })];
+  if (d.text) chunks.push(chunk({ content: d.text }));
   if (d.tool) {
     chunks.push(chunk({ tool_calls: [{ index: 0, id: callId, type: "function", function: { name: d.tool.name, arguments: "" } }] }));
     chunks.push(chunk({ tool_calls: [{ index: 0, function: { arguments: JSON.stringify(d.tool.args) } }] }));
     chunks.push(chunk({}, "tool_calls"));
-  } else {
-    chunks.push(chunk({ content: d.text }));
-    chunks.push(chunk({}, "stop"));
-  }
+  } else chunks.push(chunk({}, "stop"));
   chunks.push({ ...base, object: "chat.completion.chunk", choices: [], usage });
   sse(res, chunks, false);
 }
@@ -94,36 +93,41 @@ function anthropic(body, res, d) {
   const mid = id("msg");
   const toolId = id("toolu");
   const model = body.model || MODEL;
-  const content = d.tool ? [{ type: "tool_use", id: toolId, name: d.tool.name, input: d.tool.args }] : [{ type: "text", text: d.text }];
+  // Text first (an agent saying what it is about to do), then the tool call; either may be absent.
+  const content = [...(d.text ? [{ type: "text", text: d.text }] : []), ...(d.tool ? [{ type: "tool_use", id: toolId, name: d.tool.name, input: d.tool.args }] : [])];
   const stop = d.tool ? "tool_use" : "end_turn";
   if (!body.stream) return json(res, { id: mid, type: "message", role: "assistant", model, content, stop_reason: stop, stop_sequence: null, usage: { input_tokens: 120, output_tokens: 30 } });
   const ev = [{ type: "message_start", message: { id: mid, type: "message", role: "assistant", model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 120, output_tokens: 1 } } }];
-  if (d.tool) {
-    ev.push({ type: "content_block_start", index: 0, content_block: { type: "tool_use", id: toolId, name: d.tool.name, input: {} } });
-    ev.push({ type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: JSON.stringify(d.tool.args) } });
-  } else {
-    ev.push({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
-    ev.push({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: d.text } });
-  }
-  ev.push({ type: "content_block_stop", index: 0 });
+  content.forEach((c, index) => {
+    if (c.type === "tool_use") {
+      ev.push({ type: "content_block_start", index, content_block: { type: "tool_use", id: toolId, name: c.name, input: {} } });
+      ev.push({ type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: JSON.stringify(c.input) } });
+    } else {
+      ev.push({ type: "content_block_start", index, content_block: { type: "text", text: "" } });
+      ev.push({ type: "content_block_delta", index, delta: { type: "text_delta", text: c.text } });
+    }
+    ev.push({ type: "content_block_stop", index });
+  });
   ev.push({ type: "message_delta", delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: 30 } });
   ev.push({ type: "message_stop" });
   sse(res, ev, true);
 }
 
 function responses(body, res, d) {
-  const item = d.tool
-    ? { type: "function_call", id: id("fc"), call_id: id("call"), name: d.tool.name, arguments: JSON.stringify(d.tool.args), status: "completed" }
-    : { type: "message", id: id("msg"), role: "assistant", status: "completed", content: [{ type: "output_text", text: d.text, annotations: [] }] };
-  const u = { input_tokens: 120, output_tokens: 30, total_tokens: 150, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } };
-  const resp = { id: id("resp"), object: "response", created_at: Math.floor(Date.now() / 1000), model: body.model || MODEL, status: "completed", output: [item], usage: u };
-  if (!body.stream) return json(res, resp);
-  const ev = [
-    { type: "response.created", response: { ...resp, status: "in_progress", output: [] } },
-    { type: "response.output_item.added", output_index: 0, item: { ...item, status: "in_progress" } },
+  // A message item first (when there is text), then the function call.
+  const output = [
+    ...(d.text ? [{ type: "message", id: id("msg"), role: "assistant", status: "completed", content: [{ type: "output_text", text: d.text, annotations: [] }] }] : []),
+    ...(d.tool ? [{ type: "function_call", id: id("fc"), call_id: id("call"), name: d.tool.name, arguments: JSON.stringify(d.tool.args), status: "completed" }] : []),
   ];
-  if (!d.tool) ev.push({ type: "response.output_text.delta", output_index: 0, content_index: 0, item_id: item.id, delta: d.text });
-  ev.push({ type: "response.output_item.done", output_index: 0, item });
+  const u = { input_tokens: 120, output_tokens: 30, total_tokens: 150, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } };
+  const resp = { id: id("resp"), object: "response", created_at: Math.floor(Date.now() / 1000), model: body.model || MODEL, status: "completed", output, usage: u };
+  if (!body.stream) return json(res, resp);
+  const ev = [{ type: "response.created", response: { ...resp, status: "in_progress", output: [] } }];
+  output.forEach((item, i) => {
+    ev.push({ type: "response.output_item.added", output_index: i, item: { ...item, status: "in_progress" } });
+    if (item.type === "message") ev.push({ type: "response.output_text.delta", output_index: i, content_index: 0, item_id: item.id, delta: d.text });
+    ev.push({ type: "response.output_item.done", output_index: i, item });
+  });
   ev.push({ type: "response.completed", response: resp });
   sse(res, ev, true);
 }

@@ -95,10 +95,11 @@ const clip = (s: string, n = INTENT_MAX) => {
   return t.length > n ? `${t.slice(0, n - 1)}…` : t;
 };
 
-/** Repo-relative, forward slashes, no leading "./". */
+/** Repo-relative, forward slashes, no leading "./". macOS `/private/var/…` and `/var/…` are one root. */
 export function normalizeTracePath(p: string, cwd?: string): string {
-  let s = p.replace(/\\/g, "/");
-  const root = cwd?.replace(/\\/g, "/").replace(/\/+$/, "");
+  const unprivate = (x: string) => x.replace(/^\/private(?=\/(?:var|tmp|etc)\/)/, "");
+  let s = unprivate(p.replace(/\\/g, "/"));
+  const root = cwd ? unprivate(cwd.replace(/\\/g, "/").replace(/\/+$/, "")) : undefined;
   if (root && (s === root || s.startsWith(`${root}/`))) s = s.slice(root.length + 1);
   return s.replace(/^(?:\.\/)+/, "");
 }
