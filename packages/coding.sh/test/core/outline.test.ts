@@ -102,6 +102,16 @@ describe("session outline", () => {
     assert.deepEqual(o.phases.map((p) => p.kind), ["start"]);
     assert.deepEqual(o.days, []);
   });
+
+  it("events within REOPEN_SLACK_MS of a session.end belong to it; later ones resume", () => {
+    n = 0;
+    clock = T0 - 10 * 3600_000;
+    // An SDK trace's last span closes just after its session.end; a transcript window reads past its hook.
+    const late = [ev("session.start", {}), ev("llm.call", {}), ev("session.end", {}), ev("llm.call", {}, { gap: 0 }), ev("tool.end", { toolUseId: "x" }, { gap: 4000 })];
+    assert.deepEqual(sessionOutline(late).phases.map((p) => p.kind), ["start"]);
+    const resumed = [...late, ev("llm.call", {}, { gap: 2000 })];
+    assert.deepEqual(sessionOutline(resumed).phases.map((p) => [p.kind, p.from]), [["start", 0], ["resume", 5]]);
+  });
 });
 
 describe("claude --resume capture", () => {

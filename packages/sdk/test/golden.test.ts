@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import OpenAI from "openai";
 import Anthropic from "@anthropic-ai/sdk";
-import type { AgentEvent } from "../../coding.sh/src/schema/index.ts";
+import type { AgentEvent, Session } from "../../coding.sh/src/schema/index.ts";
 import { mapTraces } from "../../coding.sh/src/otel/map.ts";
 import type { ResourceSpans, OtelSpan, Attrs } from "../../coding.sh/src/otel/model.ts";
 import { buildSession } from "../../coding.sh/src/core/sessions.ts";
@@ -37,6 +37,12 @@ after(async () => {
 
 const ns = (ms: number) => (BigInt(Math.round(ms * 1000)) * 1000n).toString();
 const msgs = (role: string, text: string) => JSON.stringify([{ role, parts: [{ type: "text", content: text }] }]);
+/**
+ * Session.stats to compare across the two paths. A phase points at its first
+ * event by id, and each path mints its own event ids, so the id is left out;
+ * the phase's place in the session (`from`, `to`) and its counts still match.
+ */
+const parity = (stats: Session["stats"]) => ({ ...stats, ...(stats.phases ? { phases: stats.phases.map(({ eventId: _, ...p }) => p) } : {}) });
 
 /** Rebuilds the OTel spans an instrumentation would have exported for these SDK events. */
 function toOtlp(events: AgentEvent[], conversation: string | undefined): ResourceSpans[] {
@@ -141,7 +147,9 @@ test("a multi-turn conversation: SDK and OTel build equal Session.stats", async 
   const otel = await viaOtel(sdk, "golden");
   const a = buildSession(sdk);
   const b = buildSession(otel);
-  assert.deepEqual(a.stats, b.stats);
+  assert.deepEqual(parity(a.stats), parity(b.stats));
+  // Turn 2 (a second session.start) is a second run: both paths split the session there.
+  assert.deepEqual(a.stats.phases?.map((p) => [p.kind, p.from, p.title]), [["start", 0, "where is order 42"], ["resume", 10, "thanks"]]);
   // and the shape is what we expect
   assert.equal(a.stats.turns, 2);
   assert.equal(a.stats.toolCalls, 1);
@@ -169,7 +177,7 @@ test("a one-call trace (session = trace) matches too, including session.end", as
     assert.equal(otel[0]!.sessionId, id, "OTel session = trace id = SDK session id");
     const a = buildSession(sdk);
     const b = buildSession(otel);
-    assert.deepEqual(a.stats, b.stats, id);
+    assert.deepEqual(parity(a.stats), parity(b.stats), id);
     assert.equal(a.endedAt, b.endedAt);
     assert.ok(sdk.some((e) => e.kind === "session.end"));
   }

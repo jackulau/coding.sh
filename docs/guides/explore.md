@@ -20,7 +20,7 @@ one timeline and splits it into phases:
 
 - **start**: the first run.
 - **resumed after 47 min**: `claude --resume` (the hook's SessionStart says so), or new events
-  after the session had ended.
+  more than 5 seconds after the session ended.
 - **compacted (auto)** or **compacted (manual)**: the context was compacted.
 - **back after 35 min idle**: no events from the main agent for 30 minutes or more.
 

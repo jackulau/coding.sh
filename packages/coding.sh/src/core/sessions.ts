@@ -5,7 +5,7 @@
 import { GATEWAY_FLAG, gatewayFlagsOf, gatewayOfEvent } from "../integrations/gateway/ids.ts";
 import type { GatewayId } from "../integrations/gateway/providers.ts";
 import { DERAIL_FLAGS, derailsOf, derailState, detectDerails, foldDerails, type Derail, type DerailState } from "./derail.ts";
-import { foldOutline, outlineOf, outlineState, phasesToStore, type OutlineState } from "./outline.ts";
+import { foldOutline, outlineOf, outlineState, phasesToStore, REOPEN_SLACK_MS, type OutlineState } from "./outline.ts";
 import type { AgentEvent, DuplicateUsage, LatencyStats, LlmErrors, Session, Usage } from "../schema/index.ts";
 import { DURABLE_FLAGS, durableFlags, durableStats } from "./durable.ts";
 import { detectTestTamper, foldTamper, tamperState, type TamperState } from "./intent.ts";
@@ -13,6 +13,8 @@ import { detectTestTamper, foldTamper, tamperState, type TamperState } from "./i
 import { cacheBreakState, cacheBreaksOf, foldCacheBreaks, type CacheBreakState } from "./cache-breaks.ts";
 import { foldSkills, skillFlags, skillState, skillUseOf, type SkillState } from "./skills-use.ts";
 import { foldWaste, wasteState, wasteStatsOf, type WasteState } from "./waste.ts";
+
+export { REOPEN_SLACK_MS };
 
 export const FLAGS = {
   prematureCompletion: "premature-completion",
@@ -374,13 +376,6 @@ export const isUsageSnapshot = (e: AgentEvent): boolean => e.kind === "notificat
 
 const tokenTotal = (u: Usage | undefined): number => (u?.inputTokens ?? 0) + (u?.outputTokens ?? 0) + (u?.cacheReadTokens ?? 0) + (u?.cacheWriteTokens ?? 0);
 
-/**
- * Activity this long after a session.end reopens the session (a resume under
- * the same id, or more work after a guessed idle end). The slack covers events
- * stamped just after the end they belong to: hook transcript windows read up
- * to 2 s past their hook's time.
- */
-export const REOPEN_SLACK_MS = 5_000;
 
 /**
  * Turns from turn.end rows. One capture path: every row is a turn. Both paths,

@@ -47,6 +47,14 @@ export function sessionOutline(sorted: readonly AgentEvent[], derails: readonly 
 }
 
 /**
+ * Activity this long after a session.end reopens the session (a resume under
+ * the same id, or more work after a guessed idle end). The slack covers events
+ * stamped just after the end they belong to: hook transcript windows read up
+ * to 2 s past their hook's time, and an SDK trace's last spans close after it.
+ */
+export const REOPEN_SLACK_MS = 5_000;
+
+/**
  * The outline so far, as a fold: phases, the open phase's files, the last
  * main-agent event. Plain data, so live ingest can save it between appends.
  */
@@ -55,7 +63,8 @@ export interface OutlineState {
   /** Files already counted in the open phase. */
   files: Set<string>;
   lastMainTs?: number;
-  ended: boolean;
+  /** ts of the last session.end, until activity past REOPEN_SLACK_MS reopens the session. */
+  endedAt?: number;
   /** Day marks, when asked for (they depend on the local time zone, so ingest leaves them out). */
   days?: DayMark[];
   day: string;
@@ -63,7 +72,7 @@ export interface OutlineState {
 }
 
 export function outlineState(opts: { days?: boolean; idleMs?: number } = {}): OutlineState {
-  return { phases: [], files: new Set(), ended: false, ...(opts.days === false ? {} : { days: [] }), day: "", idleMs: opts.idleMs ?? IDLE_PHASE_MS };
+  return { phases: [], files: new Set(), ...(opts.days === false ? {} : { days: [] }), day: "", idleMs: opts.idleMs ?? IDLE_PHASE_MS };
 }
 
 /** The outline of the events folded so far, with derails placed in their phases. Leaves the state as it was. */
@@ -96,12 +105,15 @@ export function foldOutline(s: OutlineState, e: AgentEvent, i: number): void {
   if (!e.subagentId) {
     const cur = s.phases.at(-1);
     const gap = s.lastMainTs !== undefined ? e.ts - s.lastMainTs : 0;
+    const reopens = s.endedAt !== undefined && e.kind !== "session.end" && e.ts > s.endedAt + REOPEN_SLACK_MS;
     if (!cur) open("start");
     else if (e.kind === "session.start" && e.payload.source !== "compact" && cur.events > 0) open("resume", { gapMs: gap });
-    else if (s.ended && e.kind !== "session.end") open("resume", { gapMs: gap });
+    else if (reopens) open("resume", { gapMs: gap });
     else if (e.kind === "context.compact") open("compaction", { trigger: e.payload.trigger === "manual" ? "manual" : "auto" });
     else if (gap >= s.idleMs && e.kind !== "session.end") open("idle", { gapMs: gap });
-    s.ended = e.kind === "session.end";
+    // Events just after the end still belong to it (sessionOf's reopened uses the same slack).
+    if (e.kind === "session.end") s.endedAt = e.ts;
+    else if (reopens) s.endedAt = undefined;
     s.lastMainTs = e.ts;
   } else if (!s.phases.length) open("start");
   const p = s.phases.at(-1)!;
