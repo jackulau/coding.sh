@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { buildSession, failureFlags } from "../../src/core/sessions.ts";
-import { findDuplicateFetches, isReadOnlyCommand, isReadOnlyToolStart, wasteOf } from "../../src/core/waste.ts";
+import { findDuplicateFetches, foldWaste, isReadOnlyCommand, isReadOnlyToolStart, WASTE_LATE_END_CALLS, wasteOf, wasteState, wasteStatsOf } from "../../src/core/waste.ts";
 import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
 
 let n = 0;
@@ -20,7 +20,17 @@ const call = (tool: string, input: unknown, o: { output?: unknown; ok?: boolean;
 };
 const read = (path: string, o: Parameters<typeof call>[2] = {}) => call("Read", { file_path: path }, { output: `contents of ${path}`, ...o });
 const bash = (command: string, o: Parameters<typeof call>[2] = {}) => call("Bash", { command }, o);
-const dups = (events: AgentEvent[]) => findDuplicateFetches(events).length;
+/** The fold live ingest keeps (foldWaste), one event at a time. */
+const folded = (events: AgentEvent[]) => {
+  const s = wasteState();
+  for (const e of events) foldWaste(s, e);
+  return wasteStatsOf(s);
+};
+/** Duplicates found, checking that the fold finds the same. */
+const dups = (events: AgentEvent[]) => {
+  assert.deepEqual(folded(events), wasteOf(events), "foldWaste agrees with wasteOf");
+  return findDuplicateFetches(events).length;
+};
 const start = (tool: string, input: unknown) => ev("tool.start", { tool, toolUseId: "x", input });
 
 describe("isReadOnlyToolStart", () => {
@@ -126,5 +136,20 @@ describe("duplicate fetches", () => {
     assert.ok(s3.flags.includes("duplicate-fetch"));
     assert.ok(failureFlags(s3.flags).includes("duplicate-fetch"));
     assert.equal(wasteOf([...two, ...read("/w/a.ts", { at: { subagentId: "a1" } }), ...read("/w/a.ts", { at: { subagentId: "a1" } })])?.flags.length, 0, "2 + 1 across contexts");
+  });
+});
+
+describe("foldWaste", () => {
+  it("waits for a read's end, and counts a read whose end comes too late as unfinished", () => {
+    const first = read("/w/a.ts");
+    const second = read("/w/a.ts");
+    const greps = (k: number) => Array.from({ length: k }, (_, i) => call("Grep", { pattern: `p${i}` })).flat();
+    // The repeat's end comes after 10 more calls: still joined.
+    const joined = [...first, second[0]!, ...greps(10), second[1]!];
+    assert.equal(dups(joined), 1);
+    // After 64 more calls in its context: unfinished, like a call that never ended.
+    const late = [...first, second[0]!, ...greps(WASTE_LATE_END_CALLS.scope), second[1]!];
+    assert.equal(findDuplicateFetches(late).length, 1);
+    assert.equal(folded(late), undefined);
   });
 });

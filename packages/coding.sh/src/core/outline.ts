@@ -5,7 +5,7 @@
 // session.end), a compaction (the model's context was summarized), or a long
 // idle gap (the user went away; a transcript-only capture shows a resume this
 // way). Days are marked too, so a run that crosses midnight reads in order.
-// Pure, over time-sorted events; `coding.sh show`, the viewer and MCP share it.
+// A fold over time-sorted events; `coding.sh show`, the viewer, MCP and ingest share it.
 import type { AgentEvent, Session, SessionDerail, SessionPhase } from "../schema/index.ts";
 
 /** A gap this long between two events of the main agent opens a new phase. */
@@ -41,61 +41,87 @@ export function localDate(ts: number): string {
 
 /** Phases and day marks of one session. `sorted` must be sorted by time (as listEvents returns them). */
 export function sessionOutline(sorted: readonly AgentEvent[], derails: readonly SessionDerail[] = [], idleMs = IDLE_PHASE_MS): Outline {
-  const phases: Phase[] = [];
-  const days: DayMark[] = [];
-  let cur: Phase | undefined;
-  let lastMain: AgentEvent | undefined;
-  let ended = false;
-  let day = "";
-  const files = new Set<string>();
-  const open = (kind: PhaseKind, e: AgentEvent, i: number, extra: Partial<Phase> = {}) => {
-    if (cur) cur.to = i;
-    files.clear();
-    cur = { n: phases.length + 1, kind, startTs: e.ts, endTs: e.ts, from: i, to: i, eventId: e.id, events: 0, prompts: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0, tokens: 0, derails: [], ...extra };
-    phases.push(cur);
-  };
-  for (let i = 0; i < sorted.length; i++) {
-    const e = sorted[i]!;
-    const d = localDate(e.ts);
-    if (d !== day) {
-      if (day) days.push({ date: d, ts: e.ts, index: i, eventId: e.id });
-      day = d;
-    }
-    // Boundaries come from the main agent's own events; a subagent's work sits inside its parent's phase.
-    if (!e.subagentId) {
-      const gap = lastMain ? e.ts - lastMain.ts : 0;
-      if (!cur) open("start", e, i);
-      else if (e.kind === "session.start" && e.payload.source !== "compact" && cur.events > 0) open("resume", e, i, { gapMs: gap });
-      else if (ended && e.kind !== "session.end") open("resume", e, i, { gapMs: gap });
-      else if (e.kind === "context.compact") open("compaction", e, i, { trigger: e.payload.trigger === "manual" ? "manual" : "auto" });
-      else if (gap >= idleMs && e.kind !== "session.end") open("idle", e, i, { gapMs: gap });
-      ended = e.kind === "session.end";
-      lastMain = e;
-    } else if (!cur) open("start", e, i);
-    const p = cur!;
-    p.events++;
-    p.endTs = Math.max(p.endTs, e.ts);
-    p.to = i + 1;
-    if (e.kind === "user.message") {
-      p.prompts++;
-      if (p.title === undefined && typeof e.payload.text === "string" && e.payload.text.trim()) p.title = e.payload.text.replace(/\s+/g, " ").trim().slice(0, 120);
-    } else if (e.kind === "tool.start" && e.payload.wrapper !== true) p.toolCalls++;
-    else if (e.kind === "tool.end" && e.payload.ok === false && e.payload.wrapper !== true) p.toolErrors++;
-    else if (e.kind === "file.change" && typeof e.payload.path === "string" && !files.has(e.payload.path)) {
-      files.add(e.payload.path);
-      p.filesChanged++;
-    } else if (e.kind === "test.result") p.tests = { passed: num(e.payload.passed), failed: num(e.payload.failed) };
-    const u = e.usage;
-    if (u) {
-      p.tokens += num(u.inputTokens) + num(u.outputTokens) + num(u.cacheReadTokens) + num(u.cacheWriteTokens);
-      if (u.costUsd !== undefined) p.costUsd = (p.costUsd ?? 0) + num(u.costUsd);
-    }
-  }
+  const s = outlineState({ idleMs });
+  for (let i = 0; i < sorted.length; i++) foldOutline(s, sorted[i]!, i);
+  return outlineOf(s, derails);
+}
+
+/**
+ * The outline so far, as a fold: phases, the open phase's files, the last
+ * main-agent event. Plain data, so live ingest can save it between appends.
+ */
+export interface OutlineState {
+  phases: SessionPhase[];
+  /** Files already counted in the open phase. */
+  files: Set<string>;
+  lastMainTs?: number;
+  ended: boolean;
+  /** Day marks, when asked for (they depend on the local time zone, so ingest leaves them out). */
+  days?: DayMark[];
+  day: string;
+  idleMs: number;
+}
+
+export function outlineState(opts: { days?: boolean; idleMs?: number } = {}): OutlineState {
+  return { phases: [], files: new Set(), ended: false, ...(opts.days === false ? {} : { days: [] }), day: "", idleMs: opts.idleMs ?? IDLE_PHASE_MS };
+}
+
+/** The outline of the events folded so far, with derails placed in their phases. Leaves the state as it was. */
+export function outlineOf(s: OutlineState, derails: readonly SessionDerail[] = []): Outline {
+  const phases: Phase[] = s.phases.map((p) => ({ ...p, ...(p.tests ? { tests: { ...p.tests } } : {}), derails: [] }));
   for (const d of derails) {
     const p = phases.findLast((x) => x.startTs <= d.ts) ?? phases[0];
     p?.derails.push(d);
   }
-  return { phases, days };
+  return { phases, days: [...(s.days ?? [])] };
+}
+
+/** Folds the event at index `i` of the session's time-sorted events into the outline. */
+export function foldOutline(s: OutlineState, e: AgentEvent, i: number): void {
+  if (s.days) {
+    const d = localDate(e.ts);
+    if (d !== s.day) {
+      if (s.day) s.days.push({ date: d, ts: e.ts, index: i, eventId: e.id });
+      s.day = d;
+    }
+  }
+  const open = (kind: PhaseKind, extra: Partial<SessionPhase> = {}) => {
+    const cur = s.phases.at(-1);
+    if (cur) cur.to = i;
+    s.files.clear();
+    s.phases.push({ n: s.phases.length + 1, kind, startTs: e.ts, endTs: e.ts, from: i, to: i, eventId: e.id, events: 0, prompts: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0, tokens: 0, ...extra });
+  };
+  const files = s.files;
+  // Boundaries come from the main agent's own events; a subagent's work sits inside its parent's phase.
+  if (!e.subagentId) {
+    const cur = s.phases.at(-1);
+    const gap = s.lastMainTs !== undefined ? e.ts - s.lastMainTs : 0;
+    if (!cur) open("start");
+    else if (e.kind === "session.start" && e.payload.source !== "compact" && cur.events > 0) open("resume", { gapMs: gap });
+    else if (s.ended && e.kind !== "session.end") open("resume", { gapMs: gap });
+    else if (e.kind === "context.compact") open("compaction", { trigger: e.payload.trigger === "manual" ? "manual" : "auto" });
+    else if (gap >= s.idleMs && e.kind !== "session.end") open("idle", { gapMs: gap });
+    s.ended = e.kind === "session.end";
+    s.lastMainTs = e.ts;
+  } else if (!s.phases.length) open("start");
+  const p = s.phases.at(-1)!;
+  p.events++;
+  p.endTs = Math.max(p.endTs, e.ts);
+  p.to = i + 1;
+  if (e.kind === "user.message") {
+    p.prompts++;
+    if (p.title === undefined && typeof e.payload.text === "string" && e.payload.text.trim()) p.title = e.payload.text.replace(/\s+/g, " ").trim().slice(0, 120);
+  } else if (e.kind === "tool.start" && e.payload.wrapper !== true) p.toolCalls++;
+  else if (e.kind === "tool.end" && e.payload.ok === false && e.payload.wrapper !== true) p.toolErrors++;
+  else if (e.kind === "file.change" && typeof e.payload.path === "string" && !files.has(e.payload.path)) {
+    files.add(e.payload.path);
+    p.filesChanged++;
+  } else if (e.kind === "test.result") p.tests = { passed: num(e.payload.passed), failed: num(e.payload.failed) };
+  const u = e.usage;
+  if (u) {
+    p.tokens += num(u.inputTokens) + num(u.outputTokens) + num(u.cacheReadTokens) + num(u.cacheWriteTokens);
+    if (u.costUsd !== undefined) p.costUsd = (p.costUsd ?? 0) + num(u.costUsd);
+  }
 }
 
 /**

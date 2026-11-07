@@ -1,16 +1,18 @@
-// Session aggregation and failure-pattern detection. Pure functions over a
-// session's full event list, so re-running them after every ingest is exact
-// (no incremental state to drift).
-import { GATEWAY_FLAG, gatewayFlags } from "../integrations/gateway/ids.ts";
-import { DERAIL_FLAGS, detectDerails, type Derail } from "./derail.ts";
-import { phasesToStore, sessionOutline } from "./outline.ts";
+// Session aggregation and failure-pattern detection. A fold over a session's
+// events in time order (SessionState): buildSession folds them all; live
+// ingest saves the state and folds only what was appended since (see
+// recomputeSession in core/ingest.ts). Both give the same row.
+import { GATEWAY_FLAG, gatewayFlagsOf, gatewayOfEvent } from "../integrations/gateway/ids.ts";
+import type { GatewayId } from "../integrations/gateway/providers.ts";
+import { DERAIL_FLAGS, derailsOf, derailState, detectDerails, foldDerails, type Derail, type DerailState } from "./derail.ts";
+import { foldOutline, outlineOf, outlineState, phasesToStore, type OutlineState } from "./outline.ts";
 import type { AgentEvent, DuplicateUsage, LatencyStats, LlmErrors, Session, Usage } from "../schema/index.ts";
 import { DURABLE_FLAGS, durableFlags, durableStats } from "./durable.ts";
-import { detectTestTamper } from "./intent.ts";
+import { detectTestTamper, foldTamper, tamperState, type TamperState } from "./intent.ts";
 // waste.ts and skills-use.ts import commandOf and FLAGS back from here, inside functions only.
-import { cacheBreakStats, findCacheBreaks } from "./cache-breaks.ts";
-import { skillFlags, skillUse } from "./skills-use.ts";
-import { wasteOf } from "./waste.ts";
+import { cacheBreakState, cacheBreaksOf, foldCacheBreaks, type CacheBreakState } from "./cache-breaks.ts";
+import { foldSkills, skillFlags, skillState, skillUseOf, type SkillState } from "./skills-use.ts";
+import { foldWaste, wasteState, wasteStatsOf, type WasteState } from "./waste.ts";
 
 export const FLAGS = {
   prematureCompletion: "premature-completion",
@@ -82,7 +84,8 @@ export function isVerifyToolStart(e: AgentEvent): boolean {
   return isVerifyCommand(commandOf(e.payload.input));
 }
 
-const byTime = (events: AgentEvent[]): AgentEvent[] =>
+/** Events in time order; ties keep their order. */
+export const byTime = (events: AgentEvent[]): AgentEvent[] =>
   events.map((e, i) => ({ e, i })).sort((a, b) => a.e.ts - b.e.ts || a.i - b.i).map((x) => x.e);
 
 function makeTitle(text: string): string {
@@ -102,6 +105,9 @@ const COMMAND_PROMPT = /^\s*<command-(?:name|message|args)>/;
 export function isSyntheticPrompt(text: string): boolean {
   return SYNTHETIC_PROMPT.test(text) || COMMAND_PROMPT.test(text);
 }
+
+/** A prompt the user typed to the main agent: not a harness notice, a slash-command echo or a subagent's prompt. */
+export const isRealPrompt = (e: AgentEvent): boolean => e.kind === "user.message" && !e.subagentId && typeof e.payload.text === "string" && !isSyntheticPrompt(e.payload.text);
 
 /** "/model opus" from a slash-command echo, else undefined. */
 function commandTitle(text: string): string | undefined {
@@ -275,18 +281,89 @@ export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
     estimated += estimatedOf(e);
     addTiers(byTier, tiersOf(e));
   }
-  if (snapshot) {
-    addUsage(usage, snapshot.usage);
-    estimated += estimatedOf(snapshot);
+  return usageResult({ usage, estimated, byTier, ...(snapshot ? { snapshot: { usage: snapshot.usage ?? {}, est: estimatedOf(snapshot) } } : {}), calls, raw, rawCost, counted, countedCost });
+}
+
+/** Totals of a usage rollup before the snapshot is added (see rollupUsage). */
+interface UsageTotals {
+  usage: Usage;
+  estimated: number;
+  byTier: Tiers;
+  snapshot?: { usage: Usage; est: number };
+  calls: number;
+  raw: number;
+  rawCost: number;
+  counted: number;
+  countedCost: number;
+}
+
+function usageResult(t: UsageTotals): UsageRollup {
+  const usage: Usage = { ...t.usage };
+  const byTier: Tiers = { ...t.byTier };
+  let estimated = t.estimated;
+  if (t.snapshot) {
+    addUsage(usage, t.snapshot.usage);
+    estimated += t.snapshot.est;
   }
   if (estimated > 0 && usage.costUsd !== undefined) {
     usage.estimatedCostUsd = Math.min(estimated, usage.costUsd);
     if (Object.keys(byTier).length) usage.estimatedCostByTier = byTier;
   }
-  if (!calls) return { usage };
-  const dupCost = Math.round((rawCost - countedCost) * 1e9) / 1e9;
-  return { usage, duplicate: { calls, tokens: Math.max(0, raw - counted), ...(dupCost > 0 ? { costUsd: dupCost } : {}) } };
+  if (!t.calls) return { usage };
+  const dupCost = Math.round((t.rawCost - t.countedCost) * 1e9) / 1e9;
+  return { usage, duplicate: { calls: t.calls, tokens: Math.max(0, t.raw - t.counted), ...(dupCost > 0 ? { costUsd: dupCost } : {}) } };
 }
+
+/**
+ * rollupUsage as a fold, for sessions with no spans and no enrichment events
+ * (SessionState.simple): no call nests in another and none is billed by a
+ * companion, so each event is counted, or dropped as a repeat, as it comes.
+ */
+interface UsageState extends UsageTotals {
+  /** Latest snapshot so far, and its token total (equal times keep the larger). */
+  snapshotTs?: number;
+  snapshotTokens: number;
+  responses: Set<string>;
+}
+
+const usageState = (): UsageState => ({ usage: {}, estimated: 0, byTier: {}, calls: 0, raw: 0, rawCost: 0, counted: 0, countedCost: 0, snapshotTokens: 0, responses: new Set() });
+
+const simpleEstimate = (e: AgentEvent): number => (e.payload?.costEstimated === true ? (num(e.usage?.costUsd) ?? 0) : 0);
+const simpleTiers = (e: AgentEvent): Tiers => {
+  const est = simpleEstimate(e);
+  const t = e.payload?.priceTier;
+  return est > 0 && typeof t === "string" && t ? { [t]: est } : {};
+};
+const usageTokens = (u: Usage) => TOKEN_KEYS.reduce((s, k) => s + (num(u[k]) ?? 0), 0);
+
+function foldUsage(s: UsageState, e: AgentEvent): void {
+  if (isUsageSnapshot(e)) {
+    const total = tokenTotal(e.usage);
+    if (s.snapshotTs === undefined || e.ts > s.snapshotTs || (e.ts === s.snapshotTs && total >= s.snapshotTokens)) {
+      s.snapshotTs = e.ts;
+      s.snapshotTokens = total;
+      s.snapshot = { usage: { ...e.usage }, est: simpleEstimate(e) };
+    }
+    return;
+  }
+  if (carriesUsage(e)) {
+    s.raw += usageTokens(e.usage!);
+    s.rawCost += num(e.usage!.costUsd) ?? 0;
+    const rid = typeof e.payload?.responseId === "string" && e.payload.responseId ? e.payload.responseId : undefined;
+    if ((rid && s.responses.has(rid)) || e.payload?.replay === true) {
+      s.calls++;
+      return;
+    }
+    if (rid) s.responses.add(rid);
+    s.counted += usageTokens(e.usage!);
+    s.countedCost += num(e.usage!.costUsd) ?? 0;
+  }
+  addUsage(s.usage, e.usage);
+  s.estimated += simpleEstimate(e);
+  addTiers(s.byTier, simpleTiers(e));
+}
+
+const usageOf = (s: UsageState): UsageRollup => usageResult(s);
 
 /**
  * A usage snapshot: running session totals (T3 Code v1 threads, OpenCode
@@ -320,148 +397,251 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
   return Math.max(t.live, t.backfill);
 }
 
-/** The agent a host ran: the first event from another agent, else what the host's own events name. */
-function hostProvider(sorted: AgentEvent[], via: string): string | undefined {
-  const native = sorted.find((e) => e.agent !== via && !isEnrichment(e));
-  if (native) return native.agent;
-  for (const e of sorted) if (typeof e.payload.provider === "string" && e.payload.provider) return e.payload.provider;
-  return undefined;
-}
+/**
+ * Bumped whenever SessionState (or anything folded into it) changes shape or
+ * meaning: a saved fold of another version is dropped and the session rebuilt
+ * from all its events.
+ */
+export const SESSION_FOLD_VERSION = 1;
 
 /**
- * Folds a session's events into a Session row. Fields the events can't
- * provide (e.g. endSnapshot set by the snapshotter) are carried over from `prev`.
+ * A session's events folded so far: everything buildSession needs from them,
+ * as plain data (maps, sets, arrays), so live ingest can save it after one
+ * append and fold only the next append's events into it (core/ingest.ts)
+ * instead of reading and rebuilding a long session every time.
  */
-export function buildSession(events: AgentEvent[], prev?: Session): Session {
-  const sorted = byTime(events);
-  const first = sorted[0];
-  if (!first && !prev) throw new Error("buildSession needs at least one event or an existing session");
-  const id = first?.sessionId ?? prev!.id;
+export interface SessionState {
+  v: number;
+  /** Events folded (the next one's index in the session's sorted events). */
+  n: number;
+  first?: { ts: number; sessionId: string; agent: string };
+  /** Agent of the first event that is not a durable engine span. */
+  agent?: string;
+  /** ts of the last event folded: a later append must not sort before it. */
+  lastTs?: number;
+  /** ts of the last prompt the user typed (isRealPrompt). */
+  lastPromptTs?: number;
+  /**
+   * No spans and no enrichment events: every part streams. Span nesting
+   * (rollupUsage), durable runs (durableStats) and gateway companions need the
+   * whole event list, so sessionOf() is then given it. So does a test-tamper
+   * call only the whole list can settle (TamperState.needsEvents).
+   */
+  simple: boolean;
+  via?: string;
+  /** Distinct agents of captured events, in order (the agent a host ran), and the first payload.provider. */
+  agents: string[];
+  provider?: string;
+  /** Distinct trace ids in order, up to twice MAX_TRACE_IDS (enough to fill up whatever the previous row kept). */
+  traceIds: Set<string>;
+  lastEnd?: number;
+  lastActivity?: number;
+  captured: number;
+  allLive: boolean;
+  allTranscript: boolean;
+  /** Any event captured live (not replayed from a transcript), and the first session.start's git facts (repo state at the start). */
+  live: boolean;
+  gitStart?: Record<string, unknown>;
+  model?: string;
+  agentVersion?: string;
+  cwd?: string;
+  runId?: string;
+  /** Earliest repo state from the events (see sessionOf for how it meets the previous row's). */
+  repo?: Session["repo"];
+  endedAt?: number;
+  endSnapshot?: Session["endSnapshot"];
+  parent?: Session["parent"];
+  project?: string;
+  files: Set<string>;
+  turnEnds: { live: number; backfill: number; liveIdless: number; backfillIdless: number };
+  turnIds: Set<string>;
+  userMessages: number;
+  toolIds: Set<string>;
+  idlessStarts: number;
+  idlessEnds: number;
+  toolErrors: number;
+  llmErrors?: LlmErrors;
+  lastTest?: { passed: number; failed: number };
+  title?: string;
+  fallbackTitle?: string;
+  usage: UsageState;
+  latency: LatencyState;
+  flags: FlagState;
+  derails: DerailState;
+  outline: OutlineState;
+  waste: WasteState;
+  cacheBreaks: CacheBreakState;
+  skills: SkillState;
+}
 
-  const files = new Set<string>();
-  // Turn ends per capture path. A session seen live (hooks) and from its
-  // transcript (backfill) has two turn.end rows per turn wherever the two paths
-  // share no natural key (most hook payloads name no turn the transcript knows).
-  const turnEnds = { live: 0, backfill: 0, liveIdless: 0, backfillIdless: 0 };
-  const turnIds = new Set<string>();
-  let userMessages = 0;
-  // Tool calls by toolUseId (a call seen only by its start or only by its end
-  // still counts once); calls without an id are counted by start/end events.
-  const toolIds = new Set<string>();
-  let idlessStarts = 0;
-  let idlessEnds = 0;
-  let toolErrors = 0;
-  let llmErrors: LlmErrors | undefined;
-  let lastActivity: number | undefined;
-  let lastTest: { passed: number; failed: number } | undefined;
-  let title: string | undefined;
-  let fallbackTitle: string | undefined;
-  let model: string | undefined;
-  let agentVersion: string | undefined;
-  let cwd: string | undefined;
-  let repo = prev?.repo;
-  let runId: string | undefined;
-  let endedAt: number | undefined;
-  let endSnapshot = prev?.endSnapshot;
-  const traceIds = new Set<string>(prev?.traceIds ?? []);
-  let lastEnd: number | undefined;
-  const captured = sorted.filter((e) => !isEnrichment(e));
-  // Live-ingested (OTel or the SDKs' native batches): no adapter emits a session.end.
-  let allLive = captured.length > 0;
-  let allTranscript = captured.length > 0;
+/** A fresh fold: no events seen. */
+export function sessionState(): SessionState {
+  return {
+    v: SESSION_FOLD_VERSION,
+    n: 0,
+    simple: true,
+    agents: [],
+    traceIds: new Set(),
+    captured: 0,
+    allLive: true,
+    allTranscript: true,
+    live: false,
+    files: new Set(),
+    turnEnds: { live: 0, backfill: 0, liveIdless: 0, backfillIdless: 0 },
+    turnIds: new Set(),
+    userMessages: 0,
+    toolIds: new Set(),
+    idlessStarts: 0,
+    idlessEnds: 0,
+    toolErrors: 0,
+    usage: usageState(),
+    latency: latencyState(),
+    flags: flagState(),
+    derails: derailState(),
+    outline: outlineState({ days: false }),
+    waste: wasteState(),
+    cacheBreaks: cacheBreakState(),
+    skills: skillState(),
+  };
+}
 
+/** Folds the session's next event (in time order) into the state. */
+export function foldSession(s: SessionState, e: AgentEvent): void {
+  const index = s.n++;
+  s.first ??= { ts: e.ts, sessionId: e.sessionId, agent: e.agent };
+  if (s.agent === undefined && e.payload.durable === undefined) s.agent = e.agent;
+  s.lastTs = e.ts;
+  if (isRealPrompt(e)) s.lastPromptTs = e.ts;
+  if (e.spanId || e.parentSpanId || isEnrichment(e)) s.simple = false;
+  if (s.provider === undefined && typeof e.payload.provider === "string" && e.payload.provider) s.provider = e.payload.provider;
+  if (s.project === undefined && e.project) s.project = e.project;
+  if (!s.parent && e.kind === "session.start" && typeof e.payload.parentSessionId === "string") s.parent = parentOf([e]);
+  if (!isBackfillEvent(e)) s.live = true;
+  if (!s.gitStart && e.kind === "session.start") {
+    const { gitBranch, gitCommit, git } = e.payload;
+    s.gitStart = { gitBranch, gitCommit, git };
+  }
+  foldUsage(s.usage, e);
+  foldLatency(s.latency, e);
+  foldFlags(s.flags, e);
+  if (s.flags.tamper.needsEvents) s.simple = false;
+  foldDerails(s.derails, e, index);
+  foldOutline(s.outline, e, index);
+  foldWaste(s.waste, e);
+  foldCacheBreaks(s.cacheBreaks, e);
+  foldSkills(s.skills, e);
+  if (isEnrichment(e)) return;
+
+  s.captured++;
+  if (!s.agents.includes(e.agent)) s.agents.push(e.agent);
   // Host app that drove the agent (T3 Code): set on events by the host's adapter
   // or the hook's env marker. The session belongs to the host; the agent it ran
   // stays on the session as provider.
-  let via: string | undefined;
-  for (const e of sorted) {
-    if (isEnrichment(e)) continue;
-    if (typeof e.payload.via === "string" && e.payload.via) via ??= e.payload.via;
-    if (e.traceId && traceIds.size < MAX_TRACE_IDS) traceIds.add(e.traceId);
-    const end = eventEnd(e);
-    if (lastEnd === undefined || end > lastEnd) lastEnd = end;
-    // When it was stamped, not when it ended: a span that began before the end is not a resume.
-    if (e.kind !== "session.end" && (lastActivity === undefined || e.ts > lastActivity)) lastActivity = e.ts;
-    if (!e.source?.startsWith("otel") && e.source !== "sdk") allLive = false;
-    if (!isBackfillEvent(e)) allTranscript = false;
-    if (e.model) model = e.model;
-    if (e.agentVersion) agentVersion = e.agentVersion;
-    cwd ??= e.cwd;
-    runId ??= e.runId;
-    // Keep the earliest repo state (the pre-agent snapshot evals replay from).
-    // session.end carries the end snapshot, which must not become the start state.
-    if (e.repo && e.kind !== "session.end" && (!repo || !repo.snapshot)) repo = { ...e.repo };
-    switch (e.kind) {
-      case "user.message": {
-        const text = typeof e.payload.text === "string" ? e.payload.text : undefined;
-        // Harness-injected notices (task completions, command output) are not user turns.
-        if (text !== undefined && SYNTHETIC_PROMPT.test(text)) break;
-        userMessages++;
-        if (title !== undefined || !text?.trim()) break;
-        if (COMMAND_PROMPT.test(text)) fallbackTitle ??= commandTitle(text);
-        else title = makeTitle(text);
-        break;
-      }
-      case "turn.end":
-        // A Stop that fired because a Stop hook blocked the previous one continues the same turn.
-        if (e.payload.stopHookActive === true) break;
-        if (isBackfillEvent(e)) turnEnds.backfill++;
-        else turnEnds.live++;
-        if (e.turnId) turnIds.add(e.turnId);
-        else if (isBackfillEvent(e)) turnEnds.backfillIdless++;
-        else turnEnds.liveIdless++;
-        break;
-      case "tool.start":
-      case "tool.end": {
-        // A wrapper (Codex code-mode cell) runs other tool calls; those are the ones counted.
-        if (e.payload.wrapper === true) break;
-        const id = e.payload.toolUseId;
-        if (typeof id === "string" && id) toolIds.add(id);
-        else if (e.kind === "tool.start") idlessStarts++;
-        else idlessEnds++;
-        if (e.kind === "tool.end" && e.payload.ok === false) toolErrors++;
-        break;
-      }
-      case "llm.call":
-        if (llmCallFailed(e.payload)) llmErrors = addLlmError(llmErrors, e.payload);
-        break;
-      case "file.change":
-        if (typeof e.payload.path === "string") files.add(e.payload.path);
-        break;
-      case "test.result":
-        lastTest = { passed: num(e.payload.passed) ?? 0, failed: num(e.payload.failed) ?? 0 };
-        break;
-      case "session.end":
-        endedAt = e.ts;
-        if (e.repo?.snapshot) endSnapshot = e.repo.snapshot;
-        break;
+  if (typeof e.payload.via === "string" && e.payload.via) s.via ??= e.payload.via;
+  if (e.traceId && s.traceIds.size < 2 * MAX_TRACE_IDS) s.traceIds.add(e.traceId);
+  const end = eventEnd(e);
+  if (s.lastEnd === undefined || end > s.lastEnd) s.lastEnd = end;
+  // When it was stamped, not when it ended: a span that began before the end is not a resume.
+  if (e.kind !== "session.end" && (s.lastActivity === undefined || e.ts > s.lastActivity)) s.lastActivity = e.ts;
+  // Live-ingested (OTel or the SDKs' native batches): no adapter emits a session.end.
+  if (!e.source?.startsWith("otel") && e.source !== "sdk") s.allLive = false;
+  if (!isBackfillEvent(e)) s.allTranscript = false;
+  if (e.model) s.model = e.model;
+  if (e.agentVersion) s.agentVersion = e.agentVersion;
+  s.cwd ??= e.cwd;
+  s.runId ??= e.runId;
+  // Keep the earliest repo state (the pre-agent snapshot evals replay from).
+  // session.end carries the end snapshot, which must not become the start state.
+  if (e.repo && e.kind !== "session.end" && (!s.repo || !s.repo.snapshot)) s.repo = { ...e.repo };
+  switch (e.kind) {
+    case "user.message": {
+      const text = typeof e.payload.text === "string" ? e.payload.text : undefined;
+      // Harness-injected notices (task completions, command output) are not user turns.
+      if (text !== undefined && SYNTHETIC_PROMPT.test(text)) break;
+      s.userMessages++;
+      if (s.title !== undefined || !text?.trim()) break;
+      if (COMMAND_PROMPT.test(text)) s.fallbackTitle ??= commandTitle(text);
+      else s.title = makeTitle(text);
+      break;
     }
+    case "turn.end":
+      // A Stop that fired because a Stop hook blocked the previous one continues the same turn.
+      // Turn ends per capture path: a session seen live (hooks) and from its
+      // transcript (backfill) has two turn.end rows per turn wherever the two paths
+      // share no natural key (most hook payloads name no turn the transcript knows).
+      if (e.payload.stopHookActive === true) break;
+      if (isBackfillEvent(e)) s.turnEnds.backfill++;
+      else s.turnEnds.live++;
+      if (e.turnId) s.turnIds.add(e.turnId);
+      else if (isBackfillEvent(e)) s.turnEnds.backfillIdless++;
+      else s.turnEnds.liveIdless++;
+      break;
+    case "tool.start":
+    case "tool.end": {
+      // A wrapper (Codex code-mode cell) runs other tool calls; those are the ones counted.
+      // Tool calls by toolUseId (a call seen only by its start or only by its end
+      // still counts once); calls without an id are counted by start/end events.
+      if (e.payload.wrapper === true) break;
+      const id = e.payload.toolUseId;
+      if (typeof id === "string" && id) s.toolIds.add(id);
+      else if (e.kind === "tool.start") s.idlessStarts++;
+      else s.idlessEnds++;
+      if (e.kind === "tool.end" && e.payload.ok === false) s.toolErrors++;
+      break;
+    }
+    case "llm.call":
+      if (llmCallFailed(e.payload)) s.llmErrors = addLlmError(s.llmErrors, e.payload);
+      break;
+    case "file.change":
+      if (typeof e.payload.path === "string") s.files.add(e.payload.path);
+      break;
+    case "test.result":
+      s.lastTest = { passed: num(e.payload.passed) ?? 0, failed: num(e.payload.failed) ?? 0 };
+      break;
+    case "session.end":
+      s.endedAt = e.ts;
+      if (e.repo?.snapshot) s.endSnapshot = e.repo.snapshot;
+      break;
   }
+}
 
-  const { usage, duplicate } = rollupUsage(sorted);
-  const derails = detectDerails(sorted);
+/**
+ * The Session row for the events folded so far. Fields the events can't
+ * provide (e.g. endSnapshot set by the snapshotter) are carried over from
+ * `prev`. A state that is not `simple` needs `sorted`, the same events in time
+ * order. Leaves the state as it was.
+ */
+export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly AgentEvent[]): Session {
+  const first = s.first;
+  if (!first && !prev) throw new Error("buildSession needs at least one event or an existing session");
+  if (!s.simple && !sorted) throw new Error("sessionOf needs the events of a session with spans or enrichment");
+  const id = first?.sessionId ?? prev!.id;
+  const { usage, duplicate } = s.simple ? usageOf(s.usage) : rollupUsage(sorted!);
+  const derails = derailsOf(s.derails);
   // A session.end followed by later captured activity was reopened (resumed
   // under the same id): it is not ended, whatever an earlier build stored.
-  const reopened = endedAt !== undefined && lastActivity !== undefined && lastActivity > endedAt + REOPEN_SLACK_MS;
+  let endedAt = s.endedAt;
+  const reopened = endedAt !== undefined && s.lastActivity !== undefined && s.lastActivity > endedAt + REOPEN_SLACK_MS;
   if (reopened) endedAt = undefined;
+  let fallbackTitle = s.fallbackTitle;
 
-  const durable = durableStats(sorted);
+  const durable = s.simple ? undefined : durableStats(sorted!);
   const session: Session = {
     id,
     // Durable engine spans (workflow.start, steps) can precede the agent's own events; they don't name it.
     // Nor does the client that started a durable run (a Restate ingress call): the code making model calls does.
-    agent: via ?? (durable ? sorted.find((e) => e.kind === "llm.call") : undefined)?.agent ?? (sorted.find((e) => e.payload.durable === undefined) ?? first)?.agent ?? prev!.agent,
+    agent: s.via ?? (durable ? sorted!.find((e) => e.kind === "llm.call") : undefined)?.agent ?? s.agent ?? first?.agent ?? prev!.agent,
     startedAt: first?.ts ?? prev!.startedAt,
     stats: {
-      events: sorted.length,
+      events: s.n,
       // Agents without a turn-end hook still have one turn per prompt.
-      turns: turnCount(turnEnds, turnIds) || userMessages,
+      turns: turnCount(s.turnEnds, s.turnIds) || s.userMessages,
       // A crashed tool has a start without an end, a lost hook line an end without a start.
-      toolCalls: toolIds.size + Math.max(idlessStarts, idlessEnds),
-      toolErrors,
-      filesChanged: files.size,
+      toolCalls: s.toolIds.size + Math.max(s.idlessStarts, s.idlessEnds),
+      toolErrors: s.toolErrors,
+      filesChanged: s.files.size,
     },
-    flags: detectFlags(sorted, derails),
+    flags: flagsOf(s.flags, derails, sorted),
   };
   if (durable) {
     session.stats.durable = durable;
@@ -469,34 +649,41 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
     fallbackTitle ??= durable.workflow ?? `${durable.engine} run ${durable.runId}`;
   }
   if (derails.length) session.stats.derails = derails;
-  const phases = phasesToStore(sessionOutline(sorted));
+  const phases = phasesToStore(outlineOf(s.outline));
   if (phases) session.stats.phases = phases;
-  const waste = wasteOf(sorted);
+  const waste = wasteStatsOf(s.waste);
   if (waste) {
     session.stats.waste = waste.stats;
     session.flags.push(...waste.flags);
   }
-  const cacheBreaks = cacheBreakStats(findCacheBreaks(sorted));
+  const cacheBreaks = cacheBreaksOf(s.cacheBreaks);
   if (cacheBreaks) session.stats.cacheBreaks = cacheBreaks;
-  session.flags.push(...skillFlags(skillUse(sorted, { cwd: cwd ?? prev?.cwd })));
-  if (lastTest) {
-    session.stats.testsPassed = lastTest.passed;
-    session.stats.testsFailed = lastTest.failed;
+  session.flags.push(...skillFlags(skillUseOf(s.skills, s.cwd ?? prev?.cwd)));
+  if (s.lastTest) {
+    session.stats.testsPassed = s.lastTest.passed;
+    session.stats.testsFailed = s.lastTest.failed;
   }
   if (Object.keys(usage).length) session.stats.usage = usage;
   if (duplicate) session.stats.duplicateUsage = duplicate;
-  if (llmErrors) session.stats.llmErrors = llmErrors;
-  const latency = latencyStats(sorted, endedAt);
+  if (s.llmErrors) session.stats.llmErrors = { ...s.llmErrors };
+  const latency = latencyOf(s.latency, endedAt);
   if (Object.keys(latency).length) session.stats.latency = latency;
   const set = <K extends keyof Session>(k: K, v: Session[K] | undefined) => {
     if (v !== undefined) session[k] = v;
   };
-  set("agentVersion", agentVersion ?? prev?.agentVersion);
-  if (via) set("provider", hostProvider(sorted, via) ?? prev?.provider);
-  set("model", model ?? prev?.model);
-  set("cwd", cwd ?? prev?.cwd);
-  set("repo", repo);
-  set("title", title ?? fallbackTitle ?? prev?.title);
+  set("agentVersion", s.agentVersion ?? prev?.agentVersion);
+  // The agent a host ran: the first event from another agent, else what the host's own events name.
+  if (s.via) set("provider", s.agents.find((a) => a !== s.via) ?? s.provider ?? prev?.provider);
+  set("model", s.model ?? prev?.model);
+  set("cwd", s.cwd ?? prev?.cwd);
+  // The earliest repo state wins; one with a snapshot is never replaced (see foldSession).
+  set("repo", prev?.repo?.snapshot ? prev.repo : (s.repo ?? prev?.repo));
+  set("title", s.title ?? fallbackTitle ?? prev?.title);
+  const traceIds = new Set<string>(prev?.traceIds ?? []);
+  for (const t of s.traceIds) {
+    if (traceIds.size >= MAX_TRACE_IDS) break;
+    traceIds.add(t);
+  }
   // Sessions that never get a session.end end at their last activity seen so far
   // (see Session.endedAt), a value that moves forward as more events arrive:
   // - conversation-keyed OTel sessions (id is a conversation id, not one of its
@@ -506,16 +693,29 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   // - sessions known only from a recorded transcript (backfill): a transcript
   //   is history, and it has no end marker.
   // Trace-keyed OTel sessions end with the root span's session.end.
+  const allLive = s.captured > 0 && s.allLive;
+  const allTranscript = s.captured > 0 && s.allTranscript;
   const endsAtLastActivity = (allLive && !traceIds.has(id)) || allTranscript;
-  set("endedAt", endedAt ?? (endsAtLastActivity ? lastEnd : undefined) ?? (reopened ? undefined : prev?.endedAt));
+  set("endedAt", endedAt ?? (endsAtLastActivity ? s.lastEnd : undefined) ?? (reopened ? undefined : prev?.endedAt));
   if (traceIds.size) session.traceIds = [...traceIds];
-  set("runId", runId ?? prev?.runId);
-  set("endSnapshot", endSnapshot);
-  set("parent", parentOf(sorted) ?? prev?.parent);
-  const project = sorted.find((e) => e.project)?.project ?? prev?.project;
+  set("runId", s.runId ?? prev?.runId);
+  set("endSnapshot", s.endSnapshot ?? prev?.endSnapshot);
+  set("parent", s.parent ?? prev?.parent);
+  const project = s.project ?? prev?.project;
   if (project && project !== "default") session.project = project;
   set("parseVersion", prev?.parseVersion);
   return session;
+}
+
+/**
+ * Folds a session's events into a Session row. Fields the events can't
+ * provide (e.g. endSnapshot set by the snapshotter) are carried over from `prev`.
+ */
+export function buildSession(events: AgentEvent[], prev?: Session): Session {
+  const sorted = byTime(events);
+  const s = sessionState();
+  for (const e of sorted) foldSession(s, e);
+  return sessionOf(s, prev, sorted);
 }
 
 /** A model call that failed: `ok: false`, or an HTTP status of 400 or more. */
@@ -559,99 +759,156 @@ export function percentile(values: number[], p: number): number | undefined {
 
 const round = (n: number) => Math.round(n * 10) / 10;
 
+/** Latency inputs folded so far (see latencyStats). */
+interface LatencyState {
+  firstTs?: number;
+  lastTs?: number;
+  /** Latest end of any event (eventEnd). */
+  maxEnd?: number;
+  llmCalls: number;
+  llm: number[];
+  ttft: number[];
+  toolStartTs: Map<string, number>;
+  tools: number[];
+  subagents: Set<string>;
+  anonymousSubagents: number;
+}
+
+const latencyState = (): LatencyState => ({ llmCalls: 0, llm: [], ttft: [], toolStartTs: new Map(), tools: [], subagents: new Set(), anonymousSubagents: 0 });
+
+function foldLatency(s: LatencyState, e: AgentEvent): void {
+  s.firstTs ??= e.ts;
+  s.lastTs = e.ts;
+  const end = eventEnd(e);
+  s.maxEnd = s.maxEnd === undefined ? end : Math.max(s.maxEnd, end);
+  if (e.kind === "llm.call") {
+    s.llmCalls++;
+    const d = num(e.durationMs);
+    if (d !== undefined) s.llm.push(d);
+    const t = num(e.payload.ttftMs);
+    if (t !== undefined) s.ttft.push(t);
+  } else if (e.kind === "tool.start") {
+    if (typeof e.payload.toolUseId === "string") s.toolStartTs.set(e.payload.toolUseId, e.ts);
+  } else if (e.kind === "tool.end" && e.payload.wrapper !== true) {
+    let d = num(e.durationMs) ?? num(e.payload.durationMs);
+    if (d === undefined && typeof e.payload.toolUseId === "string") {
+      const startTs = s.toolStartTs.get(e.payload.toolUseId);
+      if (startTs !== undefined && e.ts >= startTs) d = e.ts - startTs;
+    }
+    if (d !== undefined) s.tools.push(d);
+  } else if (e.kind === "subagent.start") {
+    const id = typeof e.payload.subagentId === "string" ? e.payload.subagentId : e.subagentId;
+    if (id) s.subagents.add(id);
+    else s.anonymousSubagents++;
+  }
+}
+
+function latencyOf(s: LatencyState, endedAt?: number): LatencyStats {
+  const out: LatencyStats = {};
+  if (s.firstTs !== undefined && s.lastTs !== undefined) out.wallMs = Math.max(0, Math.max(endedAt ?? s.lastTs, s.maxEnd!) - s.firstTs);
+  if (s.llmCalls) {
+    out.llmCalls = s.llmCalls;
+    if (s.llm.length) {
+      out.llmMs = round(s.llm.reduce((a, b) => a + b, 0));
+      out.llmP50Ms = percentile(s.llm, 50);
+      out.llmP95Ms = percentile(s.llm, 95);
+    }
+    if (s.ttft.length) out.ttftP50Ms = percentile(s.ttft, 50);
+  }
+  if (s.tools.length) {
+    out.toolMs = round(s.tools.reduce((a, b) => a + b, 0));
+    out.toolP95Ms = percentile(s.tools, 95);
+  }
+  const subagentCount = s.subagents.size + s.anonymousSubagents;
+  if (subagentCount) out.subagents = subagentCount;
+  return out;
+}
+
 /**
  * Latency aggregates. Tool durations come from tool.end (event.durationMs,
  * then payload.durationMs, then end − matching tool.start ts).
  */
 export function latencyStats(sorted: AgentEvent[], endedAt?: number): LatencyStats {
-  const out: LatencyStats = {};
-  const first = sorted[0];
-  const last = sorted[sorted.length - 1];
-  if (first && last) {
-    let end = endedAt ?? last.ts;
-    for (const e of sorted) end = Math.max(end, eventEnd(e));
-    out.wallMs = Math.max(0, end - first.ts);
-  }
-
-  const llm: number[] = [];
-  const ttft: number[] = [];
-  let llmCalls = 0;
-  const toolStartTs = new Map<string, number>();
-  const tools: number[] = [];
-  const subagents = new Set<string>();
-  let anonymousSubagents = 0;
-
-  for (const e of sorted) {
-    if (e.kind === "llm.call") {
-      llmCalls++;
-      const d = num(e.durationMs);
-      if (d !== undefined) llm.push(d);
-      const t = num(e.payload.ttftMs);
-      if (t !== undefined) ttft.push(t);
-    } else if (e.kind === "tool.start") {
-      if (typeof e.payload.toolUseId === "string") toolStartTs.set(e.payload.toolUseId, e.ts);
-    } else if (e.kind === "tool.end" && e.payload.wrapper !== true) {
-      let d = num(e.durationMs) ?? num(e.payload.durationMs);
-      if (d === undefined && typeof e.payload.toolUseId === "string") {
-        const startTs = toolStartTs.get(e.payload.toolUseId);
-        if (startTs !== undefined && e.ts >= startTs) d = e.ts - startTs;
-      }
-      if (d !== undefined) tools.push(d);
-    } else if (e.kind === "subagent.start") {
-      const id = typeof e.payload.subagentId === "string" ? e.payload.subagentId : e.subagentId;
-      if (id) subagents.add(id);
-      else anonymousSubagents++;
-    }
-  }
-
-  if (llmCalls) {
-    out.llmCalls = llmCalls;
-    if (llm.length) {
-      out.llmMs = round(llm.reduce((a, b) => a + b, 0));
-      out.llmP50Ms = percentile(llm, 50);
-      out.llmP95Ms = percentile(llm, 95);
-    }
-    if (ttft.length) out.ttftP50Ms = percentile(ttft, 50);
-  }
-  if (tools.length) {
-    out.toolMs = round(tools.reduce((a, b) => a + b, 0));
-    out.toolP95Ms = percentile(tools, 95);
-  }
-  const subagentCount = subagents.size + anonymousSubagents;
-  if (subagentCount) out.subagents = subagentCount;
-  return out;
+  const s = latencyState();
+  for (const e of sorted) foldLatency(s, e);
+  return latencyOf(s, endedAt);
 }
 
 // ---------------------------------------------------------------- detectors
 
+/** What the failure-pattern detectors carry from one event to the next. */
+interface FlagState {
+  premature: PrematureState;
+  repeated: RepeatedFailureState;
+  fileChange: boolean;
+  verified: boolean;
+  compaction: boolean;
+  gateways: Set<GatewayId>;
+  tamper: TamperState;
+}
+
+const flagState = (): FlagState => ({
+  premature: { failing: false, endedWhileFailing: false },
+  repeated: repeatedFailureState(),
+  fileChange: false,
+  verified: false,
+  compaction: false,
+  gateways: new Set(),
+  tamper: tamperState(),
+});
+
+function foldFlags(s: FlagState, e: AgentEvent): void {
+  foldPremature(s.premature, e);
+  foldRepeatedFailure(s.repeated, e);
+  foldTamper(s.tamper, e);
+  if (e.kind === "file.change") s.fileChange = true;
+  if (e.kind === "test.result" || isVerifyToolStart(e)) s.verified = true;
+  if (e.kind === "context.compact") s.compaction = true;
+  const g = gatewayOfEvent(e);
+  if (g) s.gateways.add(g);
+}
+
+/** `sorted` (the events folded, in time order) is needed only when the tamper fold can't settle on its own. */
+function flagsOf(s: FlagState, derails: readonly Derail[], sorted?: readonly AgentEvent[]): string[] {
+  const flags: string[] = [];
+  if (s.premature.endedWhileFailing) flags.push(FLAGS.prematureCompletion);
+  if (s.repeated.found) flags.push(FLAGS.repeatedToolFailure);
+  if (s.fileChange && !s.verified) flags.push(FLAGS.noVerification);
+  if (s.compaction) flags.push(FLAGS.compaction);
+  for (const d of derails) if (!flags.includes(d.flag)) flags.push(d.flag);
+  if (s.tamper.high || (s.tamper.needsEvents && detectTestTamper(sorted!))) flags.push(FLAGS.testTamper);
+  flags.push(...gatewayFlagsOf(s.gateways));
+  return flags;
+}
+
 /** Failure flags for a session. `derails` (already detected on the same events) saves detecting them again. */
 export function detectFlags(events: AgentEvent[], derails?: readonly Derail[]): string[] {
   const sorted = byTime(events);
-  const flags: string[] = [];
-  if (detectPrematureCompletion(sorted)) flags.push(FLAGS.prematureCompletion);
-  if (detectRepeatedToolFailure(sorted)) flags.push(FLAGS.repeatedToolFailure);
-  if (detectNoVerification(sorted)) flags.push(FLAGS.noVerification);
-  if (sorted.some((e) => e.kind === "context.compact")) flags.push(FLAGS.compaction);
-  for (const d of derails ?? detectDerails(sorted)) if (!flags.includes(d.flag)) flags.push(d.flag);
-  if (detectTestTamper(sorted)) flags.push(FLAGS.testTamper);
-  flags.push(...gatewayFlags(sorted));
-  return flags;
+  const s = flagState();
+  for (const e of sorted) foldFlags(s, e);
+  return flagsOf(s, derails ?? detectDerails(sorted), sorted);
+}
+
+interface PrematureState {
+  failing: boolean;
+  endedWhileFailing: boolean;
+}
+
+function foldPremature(s: PrematureState, e: AgentEvent): void {
+  if (e.kind === "test.result") {
+    s.failing = (num(e.payload.failed) ?? 0) > 0;
+    // A later green run means the work was eventually finished.
+    if (!s.failing) s.endedWhileFailing = false;
+  } else if ((e.kind === "turn.end" || e.kind === "session.end") && s.failing) {
+    s.endedWhileFailing = true;
+  }
 }
 
 /** The agent ended a turn/session while the latest test run was failing, and tests never went green afterwards. */
 export function detectPrematureCompletion(sorted: AgentEvent[]): boolean {
-  let failing = false;
-  let endedWhileFailing = false;
-  for (const e of sorted) {
-    if (e.kind === "test.result") {
-      failing = (num(e.payload.failed) ?? 0) > 0;
-      // A later green run means the work was eventually finished.
-      if (!failing) endedWhileFailing = false;
-    } else if ((e.kind === "turn.end" || e.kind === "session.end") && failing) {
-      endedWhileFailing = true;
-    }
-  }
-  return endedWhileFailing;
+  const s: PrematureState = { failing: false, endedWhileFailing: false };
+  for (const e of sorted) foldPremature(s, e);
+  return s.endedWhileFailing;
 }
 
 function signature(tool: string, input: unknown): string {
@@ -676,24 +933,48 @@ export function similarInputs(a: string, b: string): boolean {
   return inter / (ta.size + tb.size - inter) >= 0.6;
 }
 
+interface RepeatedFailureState {
+  /** Signature of each started call's input, by toolUseId (a tool.end often leaves its input out). */
+  inputs: Map<string, string>;
+  streaks: Map<string, { count: number; sig: string }>;
+  found: boolean;
+}
+
+const repeatedFailureState = (): RepeatedFailureState => ({ inputs: new Map(), streaks: new Map(), found: false });
+
+function foldRepeatedFailure(s: RepeatedFailureState, e: AgentEvent, threshold = 3): void {
+  if (s.found) return;
+  const id = typeof e.payload.toolUseId === "string" ? e.payload.toolUseId : undefined;
+  if (e.kind === "tool.start" && id) {
+    // signature() only names the tool when there is no input at all.
+    if (e.payload.input === undefined) s.inputs.delete(id);
+    else s.inputs.set(id, signature("", e.payload.input));
+  }
+  if (e.kind !== "tool.end") return;
+  const tool = typeof e.payload.tool === "string" ? e.payload.tool : "?";
+  if (e.payload.ok !== false) {
+    s.streaks.delete(tool);
+    return;
+  }
+  const input = e.payload.input;
+  const sig = input !== undefined && input !== null ? signature(tool, input) : ((id ? s.inputs.get(id) : undefined) ?? signature(tool, input ?? undefined));
+  const prev = s.streaks.get(tool);
+  const count = prev && similarInputs(prev.sig, sig) ? prev.count + 1 : 1;
+  if (count >= threshold) {
+    s.found = true;
+    s.inputs.clear();
+    s.streaks.clear();
+    return;
+  }
+  s.streaks.set(tool, { count, sig });
+}
+
 /** ≥3 consecutive failures of the same tool with similar input (the agent is stuck retrying). */
 export function detectRepeatedToolFailure(sorted: AgentEvent[], threshold = 3): boolean {
-  const inputs = new Map<string, unknown>();
-  const streaks = new Map<string, { count: number; sig: string }>();
+  const s = repeatedFailureState();
   for (const e of sorted) {
-    const id = typeof e.payload.toolUseId === "string" ? e.payload.toolUseId : undefined;
-    if (e.kind === "tool.start" && id) inputs.set(id, e.payload.input);
-    if (e.kind !== "tool.end") continue;
-    const tool = typeof e.payload.tool === "string" ? e.payload.tool : "?";
-    if (e.payload.ok !== false) {
-      streaks.delete(tool);
-      continue;
-    }
-    const sig = signature(tool, e.payload.input ?? (id ? inputs.get(id) : undefined));
-    const prev = streaks.get(tool);
-    const count = prev && similarInputs(prev.sig, sig) ? prev.count + 1 : 1;
-    if (count >= threshold) return true;
-    streaks.set(tool, { count, sig });
+    foldRepeatedFailure(s, e, threshold);
+    if (s.found) return true;
   }
   return false;
 }

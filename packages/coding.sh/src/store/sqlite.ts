@@ -377,6 +377,9 @@ async function switchToWal(db: DatabaseSync): Promise<void> {
   }
 }
 
+/** kv key of a session's saved fold (IndexStore.getSessionFold). */
+const foldKey = (sessionId: string): string => `fold:${sessionId}`;
+
 function rowToEvent(r: Row): AgentEvent {
   const e: AgentEvent = {
     id: r.id as string,
@@ -578,6 +581,7 @@ export class SqliteIndexStore implements IndexStore {
         ftsDelete.run(id, sessionId);
         removed += Number(del.run(id, sessionId).changes);
       }
+      this.stmt("DELETE FROM kv WHERE key = ?").run(foldKey(sessionId));
       return { removed, inserted: this.insertEvents(add) };
     });
   }
@@ -616,11 +620,15 @@ export class SqliteIndexStore implements IndexStore {
     const update = this.stmt(
       "UPDATE events SET usage = json_set(coalesce(usage, '{}'), '$.costUsd', ?), payload = json_patch(json_set(json_remove(payload, '$.pricedAs', '$.priceTier'), '$.costEstimated', json('true')), ?) WHERE id = ?",
     );
+    // Folds hold the old costs: drop those of the sessions touched.
+    const dropFold = this.stmt("DELETE FROM kv WHERE key = (SELECT 'fold:' || session_id FROM events WHERE id = ?)");
     return this.tx(() => {
       let found = 0;
       for (const { id, costUsd, pricedAs, priceTier } of costs) {
         const set = JSON.stringify({ ...(pricedAs ? { pricedAs } : {}), ...(priceTier ? { priceTier } : {}) });
-        found += Number(update.run(costUsd, set, id).changes);
+        const n = Number(update.run(costUsd, set, id).changes);
+        if (n) dropFold.run(id);
+        found += n;
       }
       return found;
     });
@@ -835,6 +843,35 @@ export class SqliteIndexStore implements IndexStore {
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(key, value, Date.now());
   }
 
+  // ------------------------------------------------------------ session folds
+
+  // The rowid is the seq: SQLite gives each new row one above the highest in the table.
+  async listEventsSince(sessionId: string, since: { seq: number; ts: number }): Promise<{ events: AgentEvent[]; seq: number }> {
+    const rows = (
+      since.seq > 0
+        ? this.stmt("SELECT rowid AS seq_, * FROM events WHERE session_id = ? AND (ts > ? OR rowid > ?) ORDER BY ts, rowid").all(sessionId, Number.isFinite(since.ts) ? since.ts : -Number.MAX_VALUE, since.seq)
+        : this.stmt("SELECT rowid AS seq_, * FROM events WHERE session_id = ? ORDER BY ts, rowid").all(sessionId)
+    ) as Row[];
+    let seq = since.seq;
+    for (const r of rows) seq = Math.max(seq, Number(r.seq_));
+    return { events: rows.map(rowToEvent), seq };
+  }
+
+  // Kept in kv under fold:<session id>, as a blob.
+  async getSessionFold(sessionId: string): Promise<Uint8Array | undefined> {
+    const r = this.stmt("SELECT value FROM kv WHERE key = ?").get(foldKey(sessionId)) as Row | undefined;
+    return r?.value instanceof Uint8Array ? r.value : undefined;
+  }
+
+  async putSessionFold(sessionId: string, fold: Uint8Array | undefined): Promise<void> {
+    if (!fold) {
+      this.stmt("DELETE FROM kv WHERE key = ?").run(foldKey(sessionId));
+      return;
+    }
+    this.stmt(`INSERT INTO kv (key, value, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).run(foldKey(sessionId), fold, Date.now());
+  }
+
   // ------------------------------------------------------------ datasets / experiments / judges
 
   async putDataset(ds: Dataset, opts: { note?: string; now?: number } = {}): Promise<{ version: string; created: boolean }> {
@@ -1001,11 +1038,13 @@ export class SqliteIndexStore implements IndexStore {
       const delEvents = this.stmt("DELETE FROM events WHERE session_id = ?");
       const delLabels = this.stmt("DELETE FROM labels WHERE session_id = ?");
       const delSession = this.stmt("DELETE FROM sessions WHERE id = ?");
+      const delFold = this.stmt("DELETE FROM kv WHERE key = ?");
       for (const id of ids) {
         ftsDelete.run(id);
         events += Number(delEvents.run(id).changes);
         delLabels.run(id);
         delSession.run(id);
+        delFold.run(foldKey(id));
       }
       return { sessions: ids.length, events };
     });

@@ -432,3 +432,99 @@ function intentOf(ev: readonly AgentEvent[], c: Candidate): Pick<TestTamperFindi
 export function detectTestTamper(sorted: readonly AgentEvent[]): boolean {
   return detectTestTamperTrace(sorted).some((f) => f.severity === "high");
 }
+
+/**
+ * What foldTamper carries from one event to the next: enough to tell whether
+ * any change is high severity without the event list, so live ingest updates
+ * the `test-tamper` flag from new events only. Serializable (node:v8).
+ */
+export interface TamperState {
+  /** Files the agent created so far (detectTestTamperTrace's `created`). */
+  created: Set<string>;
+  high: boolean;
+  /**
+   * A shell command created a test file, and the next run went green: whether
+   * the file existed before (so the change counts) depends on every earlier
+   * call, so detectTestTamper decides from the events.
+   */
+  needsEvents: boolean;
+  /** `failed` of the last test.result, if there was one. */
+  lastFailed?: number;
+  /** Since the last test.result: a change that is high if the next run goes green, or one that might be. */
+  flipCand: boolean;
+  flipMaybe: boolean;
+  /** Writes to unprotected paths since the last test.result: none, all from one tool call (its id), or several (true). */
+  unprotected: string | true | null;
+}
+
+export const tamperState = (): TamperState => ({ created: new Set(), high: false, needsEvents: false, flipCand: false, flipMaybe: false, unprotected: null });
+
+/** Folds the next event, in time order, into a TamperState: the rules of detectTestTamperTrace with no options. */
+export function foldTamper(s: TamperState, e: AgentEvent): void {
+  if (s.high) return;
+  const p = e.payload ?? {};
+  const cwd = e.cwd;
+  const outsideRepo = (path: string) => !!cwd && /^(?:\/|[A-Za-z]:\/|~|\.\.\/)/.test(path);
+  const red = (s.lastFailed ?? 0) > 0;
+  const write = (prot: boolean, id: string | undefined) => {
+    if (!prot) s.unprotected = s.unprotected === null && id !== undefined ? id : s.unprotected === id ? id : true;
+  };
+  // Only a change the agent didn't make itself: a skip is high at once, a delete while tests
+  // fail too, a weaken or unknown change only when the next run turns the failing tests green.
+  const candidate = (shape: TamperShape) => {
+    if (shape === "skip" || (shape === "delete" && red)) s.high = true;
+    else if ((shape === "weaken" || shape === "unknown") && red) s.flipCand = true;
+  };
+  if (e.kind === "tool.start") {
+    const id = str(p.toolUseId);
+    const cmd = shellCommand(str(p.tool), p.input);
+    if (cmd === undefined) return;
+    const skips = hasSkip([cmd]);
+    for (const w of shellWrites(cmd)) {
+      const path = normalizeTracePath(w.path, cwd);
+      const prot = isProtectedPath(path);
+      write(prot, id);
+      const own = s.created.has(path) || (/[*?]/.test(path) && [...s.created].some((c) => globRe(path).test(c)));
+      if (w.op === "create") s.created.add(path);
+      else if (w.op === "delete") s.created.delete(path);
+      if (!prot || outsideRepo(path) || own) continue;
+      if (w.renamedTo !== undefined && isProtectedPath(normalizeTracePath(w.renamedTo, cwd))) continue;
+      if (w.op === "create") {
+        // New (the agent's own) unless an earlier call named it: left to the events, if it matters.
+        if (red) s.flipMaybe = true;
+      } else candidate(w.op === "delete" ? "delete" : w.op === "append" ? "additive" : skips && w.op === "modify" ? "skip" : "unknown");
+    }
+  } else if (e.kind === "file.change") {
+    const raw = str(p.path);
+    if (!raw) return;
+    const path = normalizeTracePath(raw, cwd);
+    const prot = isProtectedPath(path);
+    write(prot, str(p.toolUseId));
+    const op = str(p.op);
+    if (prot && !outsideRepo(path) && !s.created.has(path)) {
+      const d = str(p.diff);
+      const { added, removed } = d ? diffLines(d) : { added: [], removed: [] };
+      if (op === "delete") candidate("delete");
+      else if (op === "add") candidate("additive");
+      else if (!d) candidate(num(p.deletions) === 0 && (num(p.additions) ?? 0) > 0 ? "additive" : "unknown");
+      else if (hasSkip(added)) candidate("skip");
+      else if (removed.some((l) => ASSERTION.test(l))) candidate("weaken");
+      else if (removed.length) candidate("unknown");
+    }
+    if (op === "add") s.created.add(path);
+    if (op === "delete") s.created.delete(path);
+  } else if (e.kind === "test.result") {
+    const failed = num(p.failed) ?? 0;
+    if (red && failed === 0 && (s.flipCand || s.flipMaybe)) {
+      // The run that went green may write its own output (pytest > log); that's not a fix.
+      const tool = str(p.toolUseId);
+      if (s.unprotected === null || (tool !== undefined && s.unprotected === tool)) {
+        if (s.flipCand) s.high = true;
+        else s.needsEvents = true;
+      }
+    }
+    s.lastFailed = failed;
+    s.flipCand = s.flipMaybe = false;
+    s.unprotected = null;
+  }
+}

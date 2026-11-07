@@ -197,6 +197,23 @@ export interface IndexStore {
   kvGet?(key: string): Promise<string | undefined>;
   kvSet?(key: string, value: string | undefined): Promise<void>;
 
+  /**
+   * A session's events stored after `since.seq` or stamped after `since.ts`,
+   * in listEvents order, and the highest seq of all the session's events (at
+   * least since.seq). A seq orders inserts across the store: every new row
+   * gets a higher one. With the two below, live ingest folds only what a
+   * session got since its last fold (core/ingest.ts recomputeSession); all
+   * three or none.
+   */
+  listEventsSince?(sessionId: string, since: { seq: number; ts: number }): Promise<{ events: AgentEvent[]; seq: number }>;
+  /**
+   * A session's saved fold: opaque bytes. The store drops it whenever the
+   * session's stored events change other than by an insert (replaceSessionEvents,
+   * setEventCosts, deleteBefore), so a fold never outlives the rows it was made from.
+   */
+  getSessionFold?(sessionId: string): Promise<Uint8Array | undefined>;
+  putSessionFold?(sessionId: string, fold: Uint8Array | undefined): Promise<void>;
+
   /** Stores an immutable dataset version and points "latest" at it. Same content → `created: false`. */
   putDataset?(ds: Dataset, opts?: { note?: string; now?: number }): Promise<{ version: string; created: boolean }>;
   /** A stored version; "latest" (default) follows the latest pointer. */

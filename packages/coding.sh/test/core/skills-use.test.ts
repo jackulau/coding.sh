@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { buildSession, failureFlags } from "../../src/core/sessions.ts";
-import { skillFlags, skillUse } from "../../src/core/skills-use.ts";
+import { foldSkills, skillFlags, skillState, skillUse } from "../../src/core/skills-use.ts";
 import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
 
 const CWD = "/Users/dev/proj";
@@ -14,7 +14,14 @@ const ev = (kind: EventKind, payload: Record<string, unknown> = {}): AgentEvent 
 };
 const start = (tool: string, input: unknown, extra: Record<string, unknown> = {}) => ev("tool.start", { tool, toolUseId: `tu${n + 1}`, input, ...extra });
 const bash = (command: string) => start("Bash", { command });
-const use = (events: AgentEvent[]) => skillUse(events, { cwd: CWD, home: HOME });
+/** skillUse, checking that the events the fold keeps (foldSkills) give the same report. */
+const use = (events: AgentEvent[]) => {
+  const r = skillUse(events, { cwd: CWD, home: HOME });
+  const s = skillState();
+  for (const { e } of events.map((e, i) => ({ e, i })).sort((a, b) => a.e.ts - b.e.ts || a.i - b.i)) foldSkills(s, e);
+  assert.deepEqual(skillUse(s.events, { cwd: CWD, home: HOME }), r, "foldSkills keeps every event skillUse reads");
+  return r;
+};
 const brief = (events: AgentEvent[]) => use(events).used.map((u) => [u.name, u.scope, u.via.join("+"), u.beforeFirstChange]);
 
 describe("skill use", () => {

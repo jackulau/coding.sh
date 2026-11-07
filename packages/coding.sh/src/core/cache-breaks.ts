@@ -3,7 +3,7 @@
 // rate instead of the cache-read rate, so a context rewrite can cost more than
 // it saves ("The Hidden Costs of Forgetting", arXiv 2610.35496: total tokens
 // fell in 31 of 42 trajectory-deletion configs, caching-aware cost in none).
-// Pure over a session's events.
+// Pure over a session's events, as a fold (foldCacheBreaks) live ingest keeps.
 //
 // Per scope (sessionId, subagentId), over llm.call events with usage, P = input
 // + cache reads + cache writes. A call breaks the cache when the previous call
@@ -57,46 +57,63 @@ function extraRate(e: AgentEvent, prices: Prices): number | undefined {
   return ((1 - long) * w5 + long * (rates.cacheWrite1h ?? w5) - read) / 1e6;
 }
 
+/** The previous call in a scope: what the next call is measured against. */
 interface Prev {
-  e: AgentEvent;
+  id: string;
   p: number;
   end: number;
   compacted: boolean;
+  /** It reported cache reads or writes, wrote to the 1-hour cache, and its model. */
+  cache: boolean;
+  long: boolean;
+  model?: string;
 }
+
+/** What foldCacheBreaks carries from one event to the next. Serializable (node:v8), so live ingest can keep it. */
+export interface CacheBreakState {
+  last: Map<string, Prev>;
+  breaks: CacheBreak[];
+}
+
+export const cacheBreakState = (): CacheBreakState => ({ last: new Map(), breaks: [] });
+
+/** Folds the next event, in time order, priced from `prices` (the built-in table by default). */
+export function foldCacheBreaks(s: CacheBreakState, e: AgentEvent, prices: Prices = pricesFor()): void {
+  const scope = `${e.sessionId}\u0000${e.subagentId ?? ""}`;
+  if (e.kind === "context.compact") {
+    const prev = s.last.get(scope);
+    if (prev) prev.compacted = true;
+    return;
+  }
+  // Gateway companions repeat a call's usage; replayed calls were never sent again.
+  if (e.kind !== "llm.call" || !e.usage || e.payload.replay === true || e.source === "gateway") return;
+  const u = e.usage;
+  const p = promptTokens(u);
+  if (p <= 0) return;
+  const prev = s.last.get(scope);
+  const model = modelOf(e);
+  s.last.set(scope, { id: e.id, p, end: e.ts + (num(e.durationMs) ?? 0), compacted: false, cache: hasCacheField(u), long: cacheWrite1h(e.payload) > 0, ...(model ? { model } : {}) });
+  if (!prev || !prev.cache || prev.p <= CACHE_BREAK_MIN_PREV) return;
+  const read = num(u.cacheReadTokens) ?? 0;
+  const lost = Math.min(prev.p, p) - read;
+  if (read >= CACHE_BREAK_READ_SHARE * prev.p || lost <= CACHE_BREAK_MIN_LOST) return;
+  const gapMs = Math.max(0, e.ts - prev.end);
+  const ttl = prev.long ? CACHE_TTL_1H_MS : CACHE_TTL_MS;
+  const cause: CacheBreakCause = prev.compacted ? "compaction" : model && prev.model && model !== prev.model ? "model-switch" : gapMs >= ttl ? "idle" : "other";
+  const rate = extraRate(e, prices);
+  const b: CacheBreak = { eventId: e.id, prevEventId: prev.id, cause, lostTokens: lost, gapMs };
+  if (rate !== undefined) b.extraUsd = Math.max(0, lost * rate);
+  s.breaks.push(b);
+}
+
+/** Session.stats.cacheBreaks for the events folded so far. */
+export const cacheBreaksOf = (s: CacheBreakState): CacheBreakStats | undefined => cacheBreakStats(s.breaks);
 
 /** Cache breaks in time-sorted events, priced from `prices` (the built-in table by default). */
 export function findCacheBreaks(sorted: readonly AgentEvent[], prices: Prices = pricesFor()): CacheBreak[] {
-  const last = new Map<string, Prev>();
-  const out: CacheBreak[] = [];
-  for (const e of sorted) {
-    const scope = `${e.sessionId}\u0000${e.subagentId ?? ""}`;
-    if (e.kind === "context.compact") {
-      const prev = last.get(scope);
-      if (prev) prev.compacted = true;
-      continue;
-    }
-    // Gateway companions repeat a call's usage; replayed calls were never sent again.
-    if (e.kind !== "llm.call" || !e.usage || e.payload.replay === true || e.source === "gateway") continue;
-    const u = e.usage;
-    const p = promptTokens(u);
-    if (p <= 0) continue;
-    const prev = last.get(scope);
-    last.set(scope, { e, p, end: e.ts + (num(e.durationMs) ?? 0), compacted: false });
-    if (!prev || !hasCacheField(prev.e.usage!) || prev.p <= CACHE_BREAK_MIN_PREV) continue;
-    const read = num(u.cacheReadTokens) ?? 0;
-    const lost = Math.min(prev.p, p) - read;
-    if (read >= CACHE_BREAK_READ_SHARE * prev.p || lost <= CACHE_BREAK_MIN_LOST) continue;
-    const gapMs = Math.max(0, e.ts - prev.end);
-    const ttl = cacheWrite1h(prev.e.payload) > 0 ? CACHE_TTL_1H_MS : CACHE_TTL_MS;
-    const model = modelOf(e);
-    const prevModel = modelOf(prev.e);
-    const cause: CacheBreakCause = prev.compacted ? "compaction" : model && prevModel && model !== prevModel ? "model-switch" : gapMs >= ttl ? "idle" : "other";
-    const rate = extraRate(e, prices);
-    const b: CacheBreak = { eventId: e.id, prevEventId: prev.e.id, cause, lostTokens: lost, gapMs };
-    if (rate !== undefined) b.extraUsd = Math.max(0, lost * rate);
-    out.push(b);
-  }
-  return out;
+  const s = cacheBreakState();
+  for (const e of sorted) foldCacheBreaks(s, e, prices);
+  return s.breaks;
 }
 
 const round6 = (n: number) => Math.round(n * 1e6) / 1e6;

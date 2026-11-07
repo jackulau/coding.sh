@@ -57,6 +57,11 @@ What is never flagged: polling a background job (BashOutput, TaskOutput, `sleep`
 driving a browser or desktop through MCP (clicks, key presses, screenshots), waiting on a
 subagent or on the user, and long tool calls that succeed.
 
+Ingest finds derails, flags and stats as events arrive and saves where each detector was, so a
+live update reads the new events, not the whole session. For `looping`, `failure-streak`, `churn`,
+`no-progress` and `duplicate-fetch`, a call whose end arrives after 64 more calls of the same agent
+(or 1,024 in all) counts as unfinished. `stalled` still sees its late end.
+
 To keep false positives low, the thresholds were checked on three sets of sessions:
 
 | Set | Sessions | Flagged |

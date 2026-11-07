@@ -12,22 +12,25 @@
 //
 // No snapshot: the working tree at session start is gone by the time ingest
 // runs, so this is a HEAD-only start state (eval drafting marks it partial).
-import type { AgentEvent, RepoState, Session } from "../schema/index.ts";
+import type { RepoState, Session } from "../schema/index.ts";
 import { branch as currentBranch, head as currentHead, headAt, repoRoot } from "./git.ts";
-import { isBackfillEvent } from "./sessions.ts";
+
+/** What a session's events say about its repo: the first session.start's payload (its git facts), and whether any event was captured live. */
+export interface RepoFacts {
+  start?: Record<string, unknown>;
+  live: boolean;
+}
 
 export interface RepoResolver {
   /** Start repo state for a session that has none, or undefined (no cwd, not a git work tree). */
-  start(session: Session, events: readonly AgentEvent[]): Promise<RepoState | undefined>;
+  start(session: Session, facts: RepoFacts): Promise<RepoState | undefined>;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v.trim() : undefined);
 
 /** Git facts an adapter recorded on session.start (payload.gitBranch / gitCommit, or a nested payload.git). */
-function startMeta(events: readonly AgentEvent[]): { branch?: string; commit?: string } {
-  const start = events.find((e) => e.kind === "session.start");
-  if (!start) return {};
-  const p = start.payload;
+function startMeta(p: Record<string, unknown> | undefined): { branch?: string; commit?: string } {
+  if (!p) return {};
   const git = typeof p.git === "object" && p.git !== null ? (p.git as Record<string, unknown>) : {};
   const out: { branch?: string; commit?: string } = {};
   const branch = str(p.gitBranch) ?? str(git.branch);
@@ -47,12 +50,12 @@ export function repoResolver(): RepoResolver {
   };
   const quiet = <T>(p: Promise<T>): Promise<T | undefined> => p.catch(() => undefined);
   return {
-    async start(session, events) {
+    async start(session, facts) {
       if (session.repo || !session.cwd) return undefined;
       const root = await rootOf(session.cwd);
       if (!root) return undefined;
-      const meta = startMeta(events);
-      const live = events.some((e) => !isBackfillEvent(e));
+      const meta = startMeta(facts.start);
+      const live = facts.live;
       let head = meta.commit ?? (await quiet(headAt(root, session.startedAt)));
       if (head === undefined && live) head = await quiet(currentHead(root));
       const state: RepoState = { root, head: head ?? "" };

@@ -13,6 +13,9 @@
 // - a shell call that is not read-only drops search and listing keys (Grep,
 //   Glob, LS, shell rg/ls/find/git status/diff): it may have created files.
 // A first call that failed never seeds; a repeat whose output differs is not one.
+// foldWaste is the same rules as a fold live ingest keeps; a call whose end comes
+// after 64 more calls in its scope (or 1,024 in all) can count as unfinished.
+import { createHash } from "node:crypto";
 import type { AgentEvent, WasteStats } from "../schema/index.ts";
 import { commandOf, FLAGS } from "./sessions.ts";
 
@@ -213,5 +216,139 @@ export function wasteOf(sorted: readonly AgentEvent[], opts?: DuplicateFetchOpts
   return {
     stats: { duplicateFetches: dups.length, duplicateFetchTokens: dups.reduce((s, d) => s + d.estTokens, 0), readOnlyCalls },
     flags: [...perScope.values()].some((n) => n >= DUPLICATE_FETCH_FLAG_AT) ? [FLAGS.duplicateFetch] : [],
+  };
+}
+
+/** Calls after a read whose end is still missing, in its scope or in all, before it counts as unfinished (as derail.ts LATE_END_CALLS). */
+export const WASTE_LATE_END_CALLS = { scope: 64, all: 1024 } as const;
+
+/** One event that findDuplicateFetches acts on, waiting its turn in WasteState.queue. */
+type WasteItem =
+  | { t: "compact"; scope: string }
+  | { t: "change"; path: string }
+  /** A call that is not read-only: an edit naming `path`, or a shell command. */
+  | { t: "write"; scope: string; path?: string; shell: boolean }
+  /** A read-only call, waiting for its end (`out`: a hash of the output; `ok: false` or no end never seeds). */
+  | { t: "read"; scope: string; join: string; key: string; seq: number; scopeSeq: number; end?: { ok: boolean; out: string; chars: number } };
+
+/**
+ * What foldWaste carries from one event to the next. A read-only call needs its
+ * end to count, so events wait in `queue`, in time order, until the read before
+ * them has ended (or counts as unfinished). Serializable (node:v8).
+ */
+export interface WasteState {
+  queue: WasteItem[];
+  /** Reads in the queue by session + toolUseId, for joining their ends (a start captured twice is two reads). */
+  open: Map<string, (WasteItem & { t: "read" })[]>;
+  calls: number;
+  scopeCalls: Map<string, number>;
+  /** Per scope: fetch key → a hash of the first call's output. */
+  scopes: Map<string, Map<string, string>>;
+  dups: number;
+  tokens: number;
+  perScope: Map<string, number>;
+  readOnly: number;
+}
+
+export function wasteState(): WasteState {
+  return { queue: [], open: new Map(), calls: 0, scopeCalls: new Map(), scopes: new Map(), dups: 0, tokens: 0, perScope: new Map(), readOnly: 0 };
+}
+
+const scopeKey = (e: AgentEvent) => `${e.sessionId}\u0000${e.subagentId ?? ""}`;
+
+/** Applies the queue's first item, as findDuplicateFetches does at its event. */
+function applyWaste(s: WasteState, x: WasteItem): void {
+  const scope = (k: string) => {
+    let m = s.scopes.get(k);
+    if (!m) s.scopes.set(k, (m = new Map()));
+    return m;
+  };
+  const dropPath = (path: string) => {
+    for (const m of s.scopes.values()) for (const k of [...m.keys()]) if (k.includes(path)) m.delete(k);
+  };
+  if (x.t === "compact") scope(x.scope).clear();
+  else if (x.t === "change") dropPath(x.path);
+  else if (x.t === "write") {
+    if (x.path) dropPath(x.path);
+    if (x.shell) {
+      const m = scope(x.scope);
+      for (const k of [...m.keys()]) if (isSearchKey(k)) m.delete(k);
+    }
+  } else {
+    const open = s.open.get(x.join);
+    if (open?.includes(x)) {
+      if (open.length > 1) open.splice(open.indexOf(x), 1);
+      else s.open.delete(x.join);
+    }
+    if (!x.end?.ok) return;
+    const m = scope(x.scope);
+    if (m.get(x.key) === x.end.out) {
+      s.dups++;
+      s.tokens += Math.ceil(x.end.chars / 4);
+      s.perScope.set(x.scope, (s.perScope.get(x.scope) ?? 0) + 1);
+    } else m.set(x.key, x.end.out);
+  }
+}
+
+/** Applies queued items from the front while they are ready: everything but a read with no end yet, unless `all`. */
+function drainWaste(s: WasteState, all: boolean): void {
+  let n = 0;
+  for (; n < s.queue.length; n++) {
+    const x = s.queue[n]!;
+    if (!all && x.t === "read" && !x.end && (s.scopeCalls.get(x.scope) ?? 0) - x.scopeSeq - 1 < WASTE_LATE_END_CALLS.scope && s.calls - x.seq - 1 < WASTE_LATE_END_CALLS.all) break;
+    applyWaste(s, x);
+  }
+  if (n) s.queue.splice(0, n);
+}
+
+/** Folds the next event, in time order, into a WasteState. */
+export function foldWaste(s: WasteState, e: AgentEvent): void {
+  if (e.kind === "context.compact") s.queue.push({ t: "compact", scope: scopeKey(e) });
+  else if (e.kind === "file.change") {
+    if (typeof e.payload.path === "string" && e.payload.path) s.queue.push({ t: "change", path: e.payload.path });
+  } else if (e.kind === "tool.end") {
+    const reads = typeof e.payload.toolUseId === "string" ? s.open.get(`${e.sessionId}\u0000${e.payload.toolUseId}`) : undefined;
+    if (reads) {
+      const text = typeof e.payload.output === "string" ? e.payload.output : canonical(e.payload.output);
+      // outputOf, hashed: equal outputs give equal hashes. A later end of the same call replaces an earlier one.
+      const end = { ok: e.payload.ok !== false, out: createHash("sha1").update(`${text}\u0000${(e.blobs ?? []).join(",")}`).digest("base64"), chars: text.length };
+      for (const r of reads) r.end = end;
+    }
+  } else if (e.kind === "tool.start" && e.payload.wrapper !== true) {
+    const scope = scopeKey(e);
+    const seq = s.calls++;
+    const scopeSeq = s.scopeCalls.get(scope) ?? 0;
+    s.scopeCalls.set(scope, scopeSeq + 1);
+    const tool = toolOf(e);
+    if (isReadOnlyToolStart(e)) {
+      s.readOnly++;
+      if (typeof e.payload.toolUseId === "string") {
+        const r = { t: "read" as const, scope, join: `${e.sessionId}\u0000${e.payload.toolUseId}`, key: fetchKey(e), seq, scopeSeq };
+        const open = s.open.get(r.join);
+        if (open) open.push(r);
+        else s.open.set(r.join, [r]);
+        s.queue.push(r);
+      }
+    } else {
+      const path = EDIT_TOOLS.test(tool.toLowerCase()) ? pathOf(e.payload.input) : undefined;
+      const shell = isShell(tool);
+      if (path || shell) s.queue.push({ t: "write", scope, ...(path ? { path } : {}), shell });
+    }
+  }
+  if (s.queue.length) drainWaste(s, false);
+}
+
+/** Session.stats.waste and its flags for the events folded so far; reads still waiting for their end count as unfinished. */
+export function wasteStatsOf(state: WasteState): { stats: WasteStats; flags: string[] } | undefined {
+  let s = state;
+  // What is still queued waits on a read's end: apply it to a copy, that read unfinished.
+  if (s.queue.length) {
+    s = structuredClone(state);
+    drainWaste(s, true);
+  }
+  if (!s.dups) return undefined;
+  return {
+    stats: { duplicateFetches: s.dups, duplicateFetchTokens: s.tokens, readOnlyCalls: s.readOnly },
+    flags: [...s.perScope.values()].some((n) => n >= DUPLICATE_FETCH_FLAG_AT) ? [FLAGS.duplicateFetch] : [],
   };
 }

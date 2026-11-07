@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { before, describe, it } from "node:test";
-import { DERAIL_THRESHOLDS, detectDerails, progressMetrics } from "../../src/core/derail.ts";
+import { deserialize, serialize } from "node:v8";
+import { DERAIL_THRESHOLDS, derailsOf, derailState, detectDerails, foldDerails, LATE_END_CALLS, progressMetrics, type DerailState } from "../../src/core/derail.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import { createGrader } from "../../src/graders/index.ts";
 import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
@@ -193,6 +194,51 @@ describe("derail detection", () => {
     assert.equal(s.stats.derails?.length, 1);
     assert.equal(s.stats.derails![0]!.index, 2);
     assert.equal(buildSession(read("a.ts")).stats.derails, undefined, "unset when clean");
+  });
+
+  it("a call whose end comes after 64 more calls of its agent counts as unfinished", () => {
+    reset();
+    // Five failures in a row, the middle one's end arriving late: on time it closes nothing, late it is unfinished (skipped).
+    const late = (gapCalls: number) => {
+      reset();
+      const head = [ev("user.message", { text: "go" }), ...call("Bash", { command: "a" }, { ok: false }), ...call("Bash", { command: "b" }, { ok: false })];
+      const start = ev("tool.start", { tool: "Bash", toolUseId: "slow", input: { command: "c" } });
+      const tail = [...call("Bash", { command: "d" }, { ok: false }), ...call("Bash", { command: "e" }, { ok: false }), ...call("Bash", { command: "f" }, { ok: false })];
+      const between = Array.from({ length: gapCalls }, (_, i) => call("Read", { file_path: `r${i}.ts` }, { output: `r${i}` })).flat();
+      const end = ev("tool.end", { tool: "Bash", toolUseId: "slow", ok: true });
+      return [...head, start, ...tail, ...between, end];
+    };
+    // On time: the successful call splits the run (2 + 3 failures, no streak).
+    assert.deepEqual(flags(late(LATE_END_CALLS.stream - 4)), []);
+    // Too late: judged unfinished when the 64th later call started, so the five failures run together.
+    assert.deepEqual(flags(late(LATE_END_CALLS.stream)), ["failure-streak"]);
+  });
+
+  it("folding in chunks, saving the state in between, gives what one pass gives", () => {
+    reset();
+    const events = [
+      ev("session.start"),
+      ev("user.message", { text: "go" }),
+      ...Array.from({ length: 6 }, (_, i) => call("Bash", { command: `c${i}` }, { ok: false })).flat(),
+      ...edit("src/c.ts", "ttl = 30", "ttl = 60"),
+      ...edit("src/c.ts", "ttl = 60", "ttl = 30"),
+      ...edit("src/c.ts", "ttl = 30", "ttl = 60"),
+      ...Array.from({ length: 12 }, () => read("src/a.ts")).flat(),
+      ev("tool.start", { tool: "Bash", toolUseId: "hang", input: { command: "npm run dev" } }),
+      ev("notification", {}, { gap: 20 * MIN }),
+      ev("context.compact", { trigger: "auto" }),
+      ev("context.compact", { trigger: "auto" }, { gap: MIN }),
+    ];
+    const whole = detectDerails(events);
+    assert.deepEqual(new Set(whole.map((d) => d.flag)), new Set(["failure-streak", "churn", "looping", "stalled", "context-thrash"]));
+    for (let cut = 0; cut <= events.length; cut += 3) {
+      let s = derailState();
+      events.slice(0, cut).forEach((e, i) => foldDerails(s, e, i));
+      s = deserialize(serialize(s)) as DerailState;
+      assert.deepEqual(derailsOf(s), detectDerails(events.slice(0, cut)), `prefix of ${cut}`);
+      events.slice(cut).forEach((e, i) => foldDerails(s, e, cut + i));
+      assert.deepEqual(derailsOf(s), whole, `cut at ${cut}`);
+    }
   });
 
   it("progressMetrics: time to first derail, or the whole run when it never derailed", () => {

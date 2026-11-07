@@ -55,11 +55,12 @@ import type { Adapter, BackfillFile, BlobStore, Config, IndexStore, NormalizeCon
 import { resolveRepoConfig, isExcluded } from "./config.ts";
 import { acquireLock, LockBusyError, wakeMarker, type Lock, type LockOptions } from "./lock.ts";
 import { existsSync, rmSync } from "node:fs";
+import { deserialize, serialize } from "node:v8";
 import { join } from "node:path";
 import { hashParts, sha256Hex } from "./ids.ts";
 import { paths } from "./paths.ts";
 import { createRedactor, sessionToMetadata, toMetadata, type Redactor } from "./redact.ts";
-import { buildSession, isBackfillEvent, isVerifyToolStart } from "./sessions.ts";
+import { byTime, foldSession, isBackfillEvent, isRealPrompt, isVerifyToolStart, SESSION_FOLD_VERSION, sessionOf, sessionState, type SessionState } from "./sessions.ts";
 import { copyFilter } from "./message-copies.ts";
 import { priceEvent, pricesFor } from "./pricing.ts";
 import { listSpoolFiles, readSpoolFile, type SpoolFile } from "./spool-read.ts";
@@ -727,7 +728,8 @@ export function childLinker(index: IndexStore): ChildLinker {
         const subagentId = typeof e.payload.subagentId === "string" ? e.payload.subagentId : e.subagentId;
         if (subagentId) link.subagentId = subagentId;
         if (typeof e.payload.type === "string") link.type = e.payload.type;
-        if (links.has(child) && e.kind !== "subagent.start") continue;
+        // A start names the link; an end only when nothing has (in this run, or stored by an earlier one).
+        if (e.kind !== "subagent.start" && (links.has(child) || (kv && (await kv.get(childLinkKey(child)))))) continue;
         const prev = links.get(child);
         links.set(child, link);
         if (kv && JSON.stringify(prev) !== JSON.stringify(link)) await kv.set(childLinkKey(child), JSON.stringify(link));
@@ -769,10 +771,11 @@ export interface RecomputeOptions {
 /** Folds a session's stored events into its row and upserts it. False when it has no events. */
 export async function recomputeSession(index: IndexStore, id: string, o: RecomputeOptions): Promise<boolean> {
   const { linker, repo } = o;
-  const events = await index.listEvents(id);
-  if (!events.length) return false;
   const prev = await index.getSession(id);
-  const session = buildSession(events, prev);
+  const folded = await foldStoredSession(index, id, prev, o.parseVersion !== undefined);
+  if (!folded) return false;
+  const { state } = folded;
+  const session = sessionOf(state, prev, folded.events);
   const version = o.parseVersion ?? (prev ? undefined : o.versionFor?.(session.agent));
   if (version !== undefined) session.parseVersion = version;
   if (!session.parent) {
@@ -780,12 +783,91 @@ export async function recomputeSession(index: IndexStore, id: string, o: Recompu
     if (link) session.parent = link;
   }
   if (!session.repo) {
-    const state = await repo.start(session, events);
-    if (state) session.repo = state;
+    const start = await repo.start(session, { start: state.gitStart, live: state.live });
+    if (start) session.repo = start;
   }
   await index.upsertSession(session);
-  await linker.observe(id, events);
+  await linker.observe(id, folded.read);
   return true;
+}
+
+/**
+ * How far a saved session fold stays behind the newest event. Events are not
+ * always stored in time order: at a Stop, the Claude Code hook reads the turn's
+ * transcript, whose model calls are stamped from the prompt on, after the turn's
+ * tool calls were stored. So a fold ends before the last prompt the user typed,
+ * and at least this long before the newest event; what comes after is folded
+ * again on every recompute. An event stamped before the fold's end still means
+ * a rebuild from all the session's events.
+ */
+export const FOLD_LAG_MS = 15 * 60_000;
+/** A prompt's transcript entry and its hook event are stamped this close. */
+const PROMPT_SLACK_MS = 5_000;
+
+/** A saved fold: the state of every event stored up to seq and stamped up to upTo. */
+interface SavedFold {
+  v: number;
+  seq: number;
+  upTo: number;
+  state: SessionState;
+}
+
+function readFold(bytes: Uint8Array | undefined): SavedFold | undefined {
+  if (!bytes) return undefined;
+  try {
+    const f = deserialize(bytes) as SavedFold;
+    return f?.v === SESSION_FOLD_VERSION && f.state?.v === SESSION_FOLD_VERSION ? f : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+type FoldStore = IndexStore & Required<Pick<IndexStore, "listEventsSince" | "getSessionFold" | "putSessionFold">>;
+const canFold = (index: IndexStore): index is FoldStore => !!(index.listEventsSince && index.getSessionFold && index.putSessionFold);
+
+/**
+ * A session's stored events folded (SessionState), for sessionOf. With a
+ * store that keeps folds: from the saved fold plus the events stored or
+ * stamped after it, when one applies, else from all events; the fold is then
+ * saved again, up to FOLD_LAG_MS (and the last prompt) behind the newest event.
+ * `events` (all of them, in time order) is set when the state needs them (see
+ * sessionOf); `read` is what was read from the store. Undefined: no events.
+ */
+async function foldStoredSession(index: IndexStore, id: string, prev: Session | undefined, rebuild: boolean): Promise<{ state: SessionState; events?: AgentEvent[]; read: AgentEvent[] } | undefined> {
+  const all = (events: AgentEvent[]) => {
+    const state = sessionState();
+    for (const e of events) foldSession(state, e);
+    return { state, events, read: events };
+  };
+  if (!canFold(index)) {
+    const events = await index.listEvents(id);
+    return events.length ? all(byTime(events)) : undefined;
+  }
+  let saved = rebuild || !prev ? undefined : readFold(await index.getSessionFold(id));
+  let tail = saved ? await index.listEventsSince(id, { seq: saved.seq, ts: saved.upTo }) : undefined;
+  // Stamped before the fold's end: it belongs in the middle of what was folded.
+  if (saved && tail!.events.length && tail!.events[0]!.ts < saved.upTo) saved = undefined;
+  if (!saved) tail = await index.listEventsSince(id, { seq: 0, ts: -Infinity });
+  const { events, seq } = tail!;
+  if (!saved && !events.length) {
+    await index.putSessionFold(id, undefined);
+    return undefined;
+  }
+  const state = saved?.state ?? sessionState();
+  let lastPrompt = state.lastPromptTs;
+  for (const e of events) if (isRealPrompt(e)) lastPrompt = e.ts;
+  const lastTs = Math.max(state.lastTs ?? -Infinity, events.at(-1)?.ts ?? -Infinity);
+  const from = saved?.upTo ?? -Infinity;
+  const upTo = Math.max(from, Math.min(lastTs - FOLD_LAG_MS, lastPrompt === undefined ? Infinity : lastPrompt - PROMPT_SLACK_MS));
+  let i = 0;
+  for (; i < events.length && events[i]!.ts <= upTo; i++) foldSession(state, events[i]!);
+  if (state.simple && (!saved || i > 0 || seq !== saved.seq || upTo !== from)) await index.putSessionFold(id, serialize({ v: SESSION_FOLD_VERSION, seq, upTo, state } satisfies SavedFold));
+  for (; i < events.length; i++) foldSession(state, events[i]!);
+  if (state.simple) return { state, read: events };
+  // Spans or enrichment: sessionOf needs every event, and no fold is kept.
+  await index.putSessionFold(id, undefined);
+  if (!saved) return { state, events, read: events };
+  return all((await index.listEventsSince(id, { seq: 0, ts: -Infinity })).events);
 }
 
 // ---------------------------------------------------------------- backfill

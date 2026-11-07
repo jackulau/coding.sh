@@ -119,7 +119,12 @@ export function gatewayFlags(events: readonly AgentEvent[]): string[] {
     const g = gatewayOfEvent(e);
     if (g) seen.add(g);
   }
-  return [...seen].sort((a, b) => Object.keys(GATEWAYS).indexOf(a) - Object.keys(GATEWAYS).indexOf(b)).map(gatewayFlag);
+  return gatewayFlagsOf(seen);
+}
+
+/** Gateway flags for the gateways seen, in registry order. */
+export function gatewayFlagsOf(seen: Iterable<GatewayId>): string[] {
+  return [...new Set(seen)].sort((a, b) => Object.keys(GATEWAYS).indexOf(a) - Object.keys(GATEWAYS).indexOf(b)).map(gatewayFlag);
 }
 
 /**

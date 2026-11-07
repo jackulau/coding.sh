@@ -358,6 +358,48 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.deepEqual((await s.search("giraffe")).map((h) => h.event.id), [a3.id]);
     }));
 
+    it("optional session folds: events since a seq or a time, and a fold dropped when stored events change in place", withStore(async (s) => {
+      if (!s.listEventsSince || !s.getSessionFold || !s.putSessionFold) return;
+      const a1 = fixtureEvent({ sessionId: "fa", ts: 1000 });
+      const a2 = fixtureEvent({ sessionId: "fa", ts: 2000 });
+      await s.putEvents([a1, a2, fixtureEvent({ sessionId: "fb", ts: 1500 })]);
+      const all = await s.listEventsSince("fa", { seq: 0, ts: -Infinity });
+      assert.deepEqual(all.events.map((e) => e.id), [a1.id, a2.id]);
+      const a0 = fixtureEvent({ sessionId: "fa", ts: 500 });
+      await s.putEvents([a0]);
+      const since = await s.listEventsSince("fa", { seq: all.seq, ts: 1500 });
+      assert.deepEqual(since.events.map((e) => e.id), [a0.id, a2.id], "stored after the seq, or stamped after the time; in time order");
+      assert.ok(since.seq > all.seq);
+      assert.deepEqual((await s.listEventsSince("fa", { seq: since.seq, ts: 3000 })).events, []);
+
+      const fold = new Uint8Array([1, 2, 3]);
+      const put = async () => {
+        await s.putSessionFold!("fa", fold);
+        assert.deepEqual(await s.getSessionFold!("fa"), fold);
+      };
+      await put();
+      await s.putSessionFold("fa", undefined);
+      assert.equal(await s.getSessionFold("fa"), undefined);
+      await put();
+      await s.putSessionFold("fb", fold);
+      if (s.replaceSessionEvents) {
+        await s.replaceSessionEvents("fa", [a0.id], []);
+        assert.equal(await s.getSessionFold("fa"), undefined, "re-parse drops the fold");
+        assert.deepEqual(await s.getSessionFold("fb"), fold, "another session's fold stays");
+        await put();
+      }
+      if (s.setEventCosts) {
+        await s.setEventCosts([{ id: a1.id, costUsd: 0.5 }]);
+        assert.equal(await s.getSessionFold("fa"), undefined, "repricing drops the fold");
+        await put();
+      }
+      if (s.deleteBefore) {
+        await s.upsertSession({ id: "fa", agent: "claude-code", startedAt: 1000, stats: { events: 2, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] });
+        await s.deleteBefore(Date.now() + 1e12);
+        assert.equal(await s.getSessionFold("fa"), undefined, "retention drops the fold");
+      }
+    }));
+
     it("optional datasets are immutable per version with a latest pointer", withStore(async (s) => {
       if (!s.putDataset || !s.getDataset || !s.listDatasets) return;
       const v1 = { id: "qa", name: "QA", version: "v1", cases: [{ id: "c1", input: "a" }] };

@@ -252,3 +252,43 @@ export function skillFlags(r: SkillUseReport): string[] {
   if ([...roots.values()].some((s) => s.size > 1)) flags.push(FLAGS.skillCopyConflict);
   return flags;
 }
+
+/**
+ * What foldSkills keeps of a session's events for skillUse: the events that can
+ * name a skill, the first file change or edit call, and the first cwd. It grows
+ * with the session's skill use, not its length. Serializable (node:v8).
+ */
+export interface SkillState {
+  events: AgentEvent[];
+  /** The first event's cwd (skillUse's fallback when the session has none). */
+  cwd?: string;
+  changed: boolean;
+}
+
+export function skillState(): SkillState {
+  return { events: [], changed: false };
+}
+
+/** Folds the next event, in time order: keeps it when skillUse could read a skill from it. */
+export function foldSkills(s: SkillState, e: AgentEvent): void {
+  if (!s.cwd && e.cwd) s.cwd = e.cwd;
+  if (e.kind === "notification") {
+    if (e.payload.kind === "harness.loaded") s.events.push(e);
+    return;
+  }
+  if (e.kind !== "tool.start" && e.kind !== "file.change") return;
+  if (e.kind === "file.change" || (e.payload.wrapper !== true && EDIT_TOOLS.test(toolOf(e).toLowerCase()))) {
+    // Only the first one's time matters (beforeFirstChange).
+    if (!s.changed) s.events.push(e);
+    s.changed = true;
+    return;
+  }
+  if (e.payload.wrapper === true) return;
+  // Every hit names `skills/` in a path or command, or comes from the Skill tool or a skill tag.
+  if (toolOf(e).toLowerCase() === "skill" || e.payload.skill !== undefined || e.payload.skills !== undefined || JSON.stringify(e.payload.input ?? null).includes("skills")) s.events.push(e);
+}
+
+/** skillUse over the events folded so far, for a session whose cwd is `cwd`. */
+export function skillUseOf(s: SkillState, cwd?: string): SkillUseReport {
+  return skillUse(s.events, { cwd: cwd ?? s.cwd });
+}
