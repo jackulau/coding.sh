@@ -79,6 +79,9 @@ html {
   -webkit-text-size-adjust: 100%;
   -webkit-tap-highlight-color: transparent;
   scroll-padding-top: calc(var(--nav-h) + 0.5rem);
+  /* A classic scrollbar that appears after first paint would shift the
+     centered column; reserve its gutter from the start. */
+  scrollbar-gutter: stable;
 }
 @media (prefers-reduced-motion: no-preference) {
   html:focus-within {

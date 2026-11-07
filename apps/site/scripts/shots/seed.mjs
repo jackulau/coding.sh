@@ -234,7 +234,7 @@ const TEST_FAIL = `
   ✔ opens a new index at the current schema (7.9ms)
   ✔ upgrades a v2 index in place (12.4ms)
   ✔ keeps events when a session is re-ingested (5.1ms)
-  ✖ applies each migration once with two processes (38.6ms)
+  ✖ applies each migration once
     SqliteError: duplicate column name: cost_usd
         at SqliteIndexStore.migrate (src/store/sqlite.ts:428:17)
         at SqliteIndexStore.open (src/store/sqlite.ts:392:11)
@@ -255,7 +255,7 @@ const TEST_OK = `
   ✔ opens a new index at the current schema (7.6ms)
   ✔ upgrades a v2 index in place (11.9ms)
   ✔ keeps events when a session is re-ingested (5.3ms)
-  ✔ applies each migration once with two processes (41.2ms)
+  ✔ applies each migration once (41.2ms)
 ▶ SqliteIndexStore (41 more)
 ℹ tests 42
 ℹ suites 3
@@ -276,7 +276,7 @@ const hero = claude({
   steps: [
     { at: 4, text: "I'll start with how the store opens the index and runs migrations.", tool: { name: "Read", input: { file_path: P("src/store/sqlite.ts") }, out: "  380\t  static async open(path: string, opts: SqliteIndexOptions = {}) {\n  381\t    const db = new DatabaseSync(path);\n  …" }, u: [3, 310, 18200, 9400] },
     { at: 11, tool: { name: "Agent", input: { description: "Find user_version reads", prompt: "Find every place that reads or writes PRAGMA user_version or the migrations table", subagent_type: "Explore" }, out: "Two places: SqliteIndexStore.migrate reads MAX(version) from migrations before BEGIN IMMEDIATE, and writes it inside the transaction.", dur: 52 }, u: [4, 180, 27600, 1900] },
-    { at: 68, text: "The version is read before the write lock, so the hook's background ingest and the CLI can both run migration 3. I'll add a test that opens a new index from two processes.", tool: { name: "Edit", input: { file_path: P("test/store/sqlite.test.ts"), old_string: "describe(\"SqliteIndexStore\", () => {", new_string: "describe(\"SqliteIndexStore\", () => {\n  it(\"applies each migration once with two processes\", async () => {\n    const path = join(await tmp(), \"index.db\");\n    await Promise.all([openInChild(path), openInChild(path)]);\n    assert.equal(await schemaVersion(path), SQLITE_SCHEMA_VERSION);\n  });" } }, u: [5, 640, 29800, 2400] },
+    { at: 68, text: "The version is read before the write lock, so the hook's background ingest and the CLI can both run migration 3. I'll add a test that opens a new index from two processes.", tool: { name: "Edit", input: { file_path: P("test/store/sqlite.test.ts"), old_string: "describe(\"SqliteIndexStore\", () => {", new_string: "describe(\"SqliteIndexStore\", () => {\n  it(\"applies each migration once\", async () => {\n    const path = join(await tmp(), \"index.db\");\n    await Promise.all([openInChild(path), openInChild(path)]);\n    assert.equal(await schemaVersion(path), SQLITE_SCHEMA_VERSION);\n  });" } }, u: [5, 640, 29800, 2400] },
     { at: 82, tool: { name: "Bash", input: { command: "npm test -- test/store/sqlite.test.ts", description: "Run the store tests" }, out: TEST_FAIL, error: true, dur: 21 }, u: [3, 120, 32400, 800] },
     { at: 112, text: "Reproduced: the second process fails with duplicate column name: cost_usd. I'll re-check the version inside the transaction.", tool: { name: "Edit", input: { file_path: P("src/store/sqlite.ts"), old_string: "      this.tx(() => {\n        this.db.exec(m.sql);", new_string: "      this.tx(() => {\n        // Another process may have applied this version between the read above and taking the write lock.\n        if (applied.get(m.version)) return;\n        this.db.exec(m.sql);" } }, u: [4, 520, 33900, 1600] },
     { at: 131, tool: { name: "Edit", input: { file_path: P("src/store/sqlite.ts"), old_string: "    for (const m of MIGRATIONS) {", new_string: "    const applied = this.db.prepare(\"SELECT 1 FROM migrations WHERE version = ?\");\n    for (const m of MIGRATIONS) {" } }, u: [3, 210, 35100, 700] },
@@ -517,50 +517,42 @@ const ui = await start(["ui", "--port", process.env.SHOTS_UI_PORT || "4319", "--
 const serve = await start(["serve", "--port", "0"], { CODING_SH_HOME: PROD });
 
 // Production: 8 runs of a bot that labels issues on jackulau/coding.sh, as
-// OTLP/JSON gen_ai spans: one chat request (the SDK's observe()), then the
-// add_labels tool call that applies its answer (the SDK's span("tool", …)).
-// One run fails: the model picked a label the repo doesn't have, and GitHub
-// rejected the call. It is the second-newest, so the phone crop shows it too.
+// OTLP/JSON gen_ai spans: one chat request per issue, the way the SDK's
+// observe() records it. The prompt is the issue title (the instructions are the
+// system message), so each run is titled by its issue. One request fails: the
+// provider rate-limited it (429), so it has no tokens and no answer. It is the
+// second-newest, so the phone crop shows it too.
+const SYSTEM = "Pick labels for this GitHub issue from the repo's label list. Answer with the labels only.";
 const ISSUES = [
-  ["gpt-5-mini", "Label this issue: coding.sh usage shows $0.00 for Cursor sessions", "question, usage", 1620, 31, 1.4],
-  ["claude-haiku-4-5", "Label this issue: viewer search misses tool output", "bug, viewer", 2210, 38, 2.2],
-  ["gpt-5-mini", "Label this issue: add a Kiro CLI adapter", "enhancement, adapters", 1490, 29, 1.2],
-  ["claude-haiku-4-5", "Label this issue: serve returns 413 for large OTLP batches", "bug, serve", 2650, 33, 1.9],
-  ["gpt-5-mini", "Label this issue: docs link to /docs/otel is broken", "docs", 1310, 22, 1.1],
-  ["claude-haiku-4-5", "Label this issue: eval new fails on a detached HEAD", "bug, evals", 2380, 41, 2.6],
-  ["gpt-5-mini", "Label this issue: hook exits 1 on Windows when the spool dir is missing", "bug, windows, hooks", 1840, 46, 1.9, '422 Validation Failed: label "windows" does not exist'],
-  ["gpt-5-mini", "Label this issue: support Postgres 17", "enhancement, store", 1550, 27, 1.3],
+  ["gpt-5-mini", "coding.sh usage shows $0.00 for Cursor sessions", "question, usage", 1620, 31, 1.4],
+  ["claude-haiku-4-5", "Viewer search misses tool output", "bug, viewer", 2210, 38, 2.2],
+  ["gpt-5-mini", "Add a Kiro CLI adapter", "enhancement, adapters", 1490, 29, 1.2],
+  ["claude-haiku-4-5", "serve returns 413 for large OTLP batches", "bug, serve", 2650, 33, 1.9],
+  ["gpt-5-mini", "Docs link to /docs/otel is broken", "docs", 1310, 22, 1.1],
+  ["claude-haiku-4-5", "eval new fails on a detached HEAD", "bug, evals", 2380, 41, 2.6],
+  ["gpt-5-mini", "Hook exits 1 on Windows", "", 0, 0, 0.3, "429 Rate limit exceeded"],
+  ["gpt-5-mini", "Support Postgres 17", "enhancement, store", 1550, 27, 1.3],
 ];
 const hex = (n, seed) => createHash("sha256").update(seed).digest("hex").slice(0, n);
 const attr = (key, v) => ({ key, value: typeof v === "number" ? { intValue: String(v) } : { stringValue: String(v) } });
 const spans = [];
-ISSUES.forEach(([model, prompt, labels, inTok, outTok, secs, toolError], i) => {
-  const traceId = hex(32, "trace" + i);
+ISSUES.forEach(([model, issue, labels, inTok, outTok, secs, error], i) => {
   const t0 = BigInt(NOW - (ISSUES.length - i) * 7 * MIN) * 1_000_000n;
   const t1 = t0 + BigInt(Math.round(secs * 1e9));
-  const t2 = t1 + 380_000_000n;
   const provider = model.startsWith("gpt") ? "openai" : "anthropic";
-  const chatId = hex(16, "chat" + i);
-  // One run = one root chat span, the way the SDK's observe() records it.
   spans.push({
-    traceId, spanId: chatId, name: `chat ${model}`, kind: 3, startTimeUnixNano: String(t0), endTimeUnixNano: String(t1),
+    traceId: hex(32, "trace" + i), spanId: hex(16, "chat" + i), name: `chat ${model}`, kind: 3, startTimeUnixNano: String(t0), endTimeUnixNano: String(t1),
     attributes: [
-      attr("gen_ai.operation.name", "chat"), attr("gen_ai.provider.name", provider), attr("gen_ai.request.model", model), attr("gen_ai.response.model", model),
-      attr("gen_ai.usage.input_tokens", inTok), attr("gen_ai.usage.output_tokens", outTok),
-      attr("gen_ai.input.messages", JSON.stringify([{ role: "user", parts: [{ type: "text", content: prompt }] }])),
-      attr("gen_ai.output.messages", JSON.stringify([{ role: "assistant", parts: [{ type: "text", content: labels }], finish_reason: "stop" }])),
+      attr("gen_ai.operation.name", "chat"), attr("gen_ai.provider.name", provider), attr("gen_ai.request.model", model),
+      attr("gen_ai.input.messages", JSON.stringify([{ role: "system", parts: [{ type: "text", content: SYSTEM }] }, { role: "user", parts: [{ type: "text", content: issue }] }])),
+      ...(error
+        ? [attr("error.type", "429")]
+        : [
+          attr("gen_ai.response.model", model), attr("gen_ai.usage.input_tokens", inTok), attr("gen_ai.usage.output_tokens", outTok),
+          attr("gen_ai.output.messages", JSON.stringify([{ role: "assistant", parts: [{ type: "text", content: labels }], finish_reason: "stop" }])),
+        ]),
     ],
-    status: { code: 1 },
-  });
-  // Then the tool call that applies the labels.
-  spans.push({
-    traceId, spanId: hex(16, "tool" + i), parentSpanId: chatId, name: "execute_tool add_labels", kind: 1, startTimeUnixNano: String(t1), endTimeUnixNano: String(t2),
-    attributes: [
-      attr("gen_ai.operation.name", "execute_tool"), attr("gen_ai.tool.name", "add_labels"),
-      attr("gen_ai.tool.call.arguments", JSON.stringify({ repo: "jackulau/coding.sh", labels: labels.split(", ") })),
-      ...(toolError ? [attr("error.type", "422")] : [attr("gen_ai.tool.call.result", JSON.stringify({ ok: true }))]),
-    ],
-    status: toolError ? { code: 2, message: toolError } : { code: 1 },
+    status: error ? { code: 2, message: error } : { code: 1 },
   });
 });
 const body = { resourceSpans: [{ resource: { attributes: [attr("service.name", "coding-sh-triage"), attr("service.version", "0.4.2")] }, scopeSpans: [{ scope: { name: "@coding.sh/sdk", version: "0.1.0" }, spans }] }] };

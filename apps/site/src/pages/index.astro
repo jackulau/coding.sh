@@ -7,7 +7,7 @@ import AgentMarquee from "../components/AgentMarquee.astro";
 import InstallActions from "../components/InstallActions.astro";
 import Shot from "../components/Shot.astro";
 import { SITE, REPO_URL } from "../data/site";
-import { STATS } from "../data/compare";
+import { STATS, taskScore } from "../data/compare";
 
 // Real screenshots of the viewer, from scripts/shots (seed.mjs, then capture.mjs):
 // a throwaway home where coding.sh works on its own repo. Never real traces.
@@ -15,8 +15,6 @@ import heroSession from "../assets/product/hero-session.webp";
 import heroSessionM from "../assets/product/hero-session-m.webp";
 import recordFailure from "../assets/product/record-failure.webp";
 import recordFailureM from "../assets/product/record-failure-m.webp";
-import compareExperiment from "../assets/product/compare-experiment.webp";
-import compareExperimentM from "../assets/product/compare-experiment-m.webp";
 import productionRequests from "../assets/product/production-requests.webp";
 import productionRequestsM from "../assets/product/production-requests-m.webp";
 
@@ -40,15 +38,18 @@ const WORKS_WITH = [
   { id: "t3code", name: "T3 Code" },
 ];
 const OTHERS = WORKS_WITH.length - 3;
-const SUB = `coding.sh saves every session of Claude Code, Codex, Cursor and ${OTHERS} other agents on your machine. See what each run did and test whether a change helped.`;
+// One sentence: the "Works with" strip under the screenshot names the rest, and
+// the fine print says where runs are kept.
+const SUB = "coding.sh records every step your AI agents take, from Claude Code, Codex and Cursor to the ones you build.";
 
 const m = (s: string) => `<span class="t-muted">${s}</span>`;
 const tx = (s: string) => `<span class="t-text">${s}</span>`;
 
 // The real output of `coding.sh usage --since 7d` on the screenshot home
-// (scripts/shots/seed.mjs prints it), cut to the four columns the headline is
-// about. The command also prints TURNS, OUTPUT, TOK/TURN and CACHE READ.
-// It prints a left-aligned table with columns two spaces apart.
+// (scripts/shots/seed.mjs prints it), with the four columns a first-time
+// reader needs: agent, sessions, tokens and cost. It prints a left-aligned
+// table with columns two spaces apart, which fits 320px unscrolled.
+// Cursor's hooks report no tokens, so it has no row here.
 const USAGE_HEAD = ["AGENT", "SESSIONS", "TOKENS", "COST"];
 const USAGE_ROWS = [
   ["claude-code", "29", "9.8M", "$6.92"],
@@ -59,8 +60,8 @@ const widths = USAGE_HEAD.map((h, i) => Math.max(h.length, ...USAGE_ROWS.map((r)
 const usageLine = (r: string[], head = false) =>
   r
     .map((c, i) => {
-      const cell = i === r.length - 1 ? c : c.padEnd(widths[i]) + "  ";
-      return head ? tx(cell) : cell;
+      const text = i === r.length - 1 ? c : c.padEnd(widths[i]) + "  ";
+      return head ? tx(text) : text;
     })
     .join("");
 const USAGE = [
@@ -77,6 +78,9 @@ const SDK_CODE = [
 const SDK_URL = `${REPO_URL}/tree/main/packages/sdk#readme`;
 const PY_SDK_URL = `${REPO_URL}/tree/main/packages/sdk-python#readme`;
 
+// One real task from the same runs, so "better" has an example.
+const EXAMPLE = { task: "retry-locked-index", ...taskScore("retry-locked-index") };
+
 const STEPS = [
   { n: "01", title: "Install.", body: "Run the command above. It finds the agents you use and asks before it changes their settings." },
   { n: "02", title: "Keep working.", body: "Use your agents the way you do now. Each session is saved on your machine as it runs." },
@@ -91,8 +95,8 @@ const FAQ = [
 ---
 
 <Layout
-  title={`${SITE.name}: every agent run, recorded and measurable`}
-  description={`coding.sh saves every session of Claude Code, Codex, Cursor and ${OTHERS} other agents on your machine. See what each run did and test whether a change helped. Open source, MIT.`}
+  title={`${SITE.name}: see what your AI agents did`}
+  description={`coding.sh saves each run of your AI agents on your machine, step by step, with what it cost. It works with Claude Code, Codex, Cursor and ${OTHERS} other coding agents. Open source, MIT.`}
 >
   <Nav />
 
@@ -100,7 +104,7 @@ const FAQ = [
     <section class="hero" aria-labelledby="hero-title">
       <CubeField />
       <div class="wrap hero__inner" data-field-clear>
-        <h1 id="hero-title">Every agent run,<br /> <span class="h1-line">recorded and measurable</span></h1>
+        <h1 id="hero-title">See what your AI agents did,<br /> <span class="h1-line">and what it cost</span></h1>
         <p class="hero__sub">{SUB}</p>
         <div class="hero__actions">
           <InstallActions />
@@ -114,8 +118,8 @@ const FAQ = [
           src={heroSession}
           srcMobile={heroSessionM}
           eager
-          sizes="(min-width: 1216px) 72rem, calc(100vw - 4rem)"
-          alt="The coding.sh viewer showing a Claude Code session on the coding.sh repo: its title, agent, model, cost and checks, then its steps in order. One npm test run is marked red and selected, with its output showing SqliteError: duplicate column name. A few steps later the tests pass."
+          sizes="(min-width: 1088px) 60rem, calc(100vw - 4rem)"
+          alt="A Claude Code session in the coding.sh viewer, on the coding.sh repo: its title, agent, duration and cost, then its steps in order. An npm test run is red because one test failed. A few steps later the agent edits src/store/sqlite.ts to fix it."
         />
       </div>
 
@@ -155,14 +159,14 @@ const FAQ = [
           <div class="copy">
             <p class="eyebrow">Record</p>
             <h2 id="record-title">Find the step that broke</h2>
-            <p class="body">Open any session to see each prompt, tool call and file edit in order. When a command fails, its output is right there, so you can see why.</p>
+            <p class="body">Open any session to see each prompt, tool call and file edit in order. When a command fails, the lines that say why are marked red.</p>
           </div>
           <div class="visual">
             <Shot
               src={recordFailure}
               srcMobile={recordFailureM}
               sizes="(min-width: 1024px) 42rem, calc(100vw - 4rem)"
-              alt="The failed npm test step in the coding.sh viewer: its command, then its output, where one test fails with SqliteError: duplicate column name: search_extra."
+              alt="The failed npm test step in the coding.sh viewer, with the lines that say why in red: the test applies each migration once failed with SqliteError: duplicate column name: cost_usd, thrown at src/store/sqlite.ts line 428."
             />
           </div>
         </div>
@@ -191,23 +195,20 @@ const FAQ = [
             <p class="eyebrow">Compare</p>
             <h2 id="compare-title">You changed CLAUDE.md. Did your agent get better?</h2>
             <p class="body">Run the same {STATS.tasks} tasks on the old and new version, {STATS.runsPerTask} times each. coding.sh tells you which one passed more often.</p>
-
-            <p class="verdict"><span class="t-pass" aria-hidden="true">✓</span> Better by {STATS.diff} points. That's more than luck would explain.</p>
-            <p class="result__link"><a class="inline-link" href="/docs/evals#compare">How we check it's not luck</a></p>
           </div>
           <div class="visual result">
             <p class="result__label">tasks passed</p>
             <div class="pair tnum" role="img" aria-label={`Tasks passed went from ${STATS.baseRate}% before to ${STATS.candRate}% after`} data-agent-text={`Tasks passed went from ${STATS.baseRate}% before to ${STATS.candRate}% after.`}>
-              <span class="pair__side"><span class="pair__n">{STATS.baseRate}%</span><span class="pair__l">before</span></span>
+              <span class="pair__side pair__side--before"><span class="pair__n">{STATS.baseRate}%</span><span class="pair__l">before</span></span>
               <span class="pair__arrow" aria-hidden="true">→</span>
               <span class="pair__side"><span class="pair__n">{STATS.candRate}%</span><span class="pair__l">after</span></span>
             </div>
-            <Shot
-              src={compareExperiment}
-              srcMobile={compareExperimentM}
-              sizes="(min-width: 1024px) 42rem, calc(100vw - 4rem)"
-              alt={`The claude-md-rewrite experiment in the coding.sh viewer: before passed ${STATS.baseK} of ${STATS.runs / 2} runs, after passed ${STATS.candK} of ${STATS.runs / 2}.`}
-            />
+            <p class="verdict"><span class="t-pass" aria-hidden="true">✓</span> Better by {STATS.diff} points. That's more than luck would explain.</p>
+            <p class="example">
+              <span class="example__label">biggest gain</span>
+              <span class="example__row"><code>{EXAMPLE.task}</code> <span class="tnum">{EXAMPLE.before.replace("/", " of ")} runs passed before, {EXAMPLE.after.replace("/", " of ")} after</span></span>
+            </p>
+            <p class="result__link"><a class="inline-link" href="/docs/evals#compare">How we check it's not luck</a></p>
           </div>
         </div>
       </div>
@@ -218,8 +219,8 @@ const FAQ = [
         <div class="frame split split--flip band__inner">
           <div class="copy">
             <p class="eyebrow">Production</p>
-            <h2 id="production-title">Track the AI calls in your app</h2>
-            <p class="body">Wrap your OpenAI or Anthropic client with the SDK. Each request shows up with its model, tokens, cost and time.</p>
+            <h2 id="production-title">Track the <span class="nw">AI calls</span> in your app</h2>
+            <p class="body">Wrap your OpenAI or Anthropic client with the SDK. Each request shows up with its model, tokens, cost and time. A failed call is marked red, with the error that came back.</p>
             <pre class="code" set:html={SDK_CODE} />
             <p class="links"><a class="inline-link" href={SDK_URL}>Read the SDK guide</a> <a class="inline-link" href={PY_SDK_URL}>Python SDK</a></p>
           </div>
@@ -229,7 +230,7 @@ const FAQ = [
               srcMobile={productionRequestsM}
               bar="coding.sh serve"
               sizes="(min-width: 1024px) 42rem, calc(100vw - 4rem)"
-              alt="The coding.sh serve viewer listing requests from coding-sh-triage, an app that labels GitHub issues, each with its model, tokens, cost and time."
+              alt="The coding.sh serve viewer listing requests from coding-sh-triage, a bot that labels issues on the coding.sh repo, each with its model, tokens, cost and time. One is marked red with its error: 429 Rate limit exceeded."
             />
           </div>
         </div>
@@ -275,7 +276,7 @@ const FAQ = [
   }
   @media (min-width: 1024px) {
     .hero {
-      padding-top: calc(var(--nav-h) + 4rem);
+      padding-top: calc(var(--nav-h) + 3rem);
     }
   }
   .hero__inner {
@@ -325,8 +326,8 @@ const FAQ = [
   }
   .hero__shot {
     position: relative;
-    margin-top: 3rem;
-    max-width: calc(72rem + 4rem);
+    margin-top: 2.5rem;
+    max-width: calc(60rem + 4rem);
   }
 
   /* ---------- works with ---------- */
@@ -476,34 +477,17 @@ const FAQ = [
   }
 
   /* ---------- compare ----------
-     Copy on the left; on the right, the result and under it the experiment
-     it comes from, so the big numbers sit on top of their proof. */
-  .result :global(.shot) {
-    margin-top: 1.5rem;
+     Copy on the left; on the right, the result in the same frame as the
+     screenshots: the two numbers, then the verdict. */
+  .result {
+    padding: 1.75rem 2rem 1.6rem;
+    border-radius: 12px;
+    background: #0b0b0d;
+    box-shadow: inset 0 0 0 1px var(--line-strong);
   }
-  /* One column: the numbers come right after the question, then the verdict,
-     then the experiment they come from. */
-  @media (max-width: 1023px) {
-    #compare .split {
-      display: flex;
-      flex-direction: column;
-      align-items: stretch;
-      gap: 0;
-    }
-    #compare .copy,
-    #compare .result {
-      display: contents;
-    }
-    #compare .result__label {
-      margin-top: 1.75rem;
-    }
-    #compare .verdict,
-    #compare .result__link {
-      order: 1;
-    }
-    #compare .result :global(.shot) {
-      order: 2;
-      margin-top: 1.75rem;
+  @media (max-width: 639px) {
+    .result {
+      padding: 1.4rem 1.25rem 1.3rem;
     }
   }
   .result__label {
@@ -527,6 +511,10 @@ const FAQ = [
     display: flex;
     flex-direction: column;
   }
+  /* The old number steps back, so the eye lands on the new one. */
+  .pair__side--before .pair__n {
+    color: var(--text-muted);
+  }
   .pair__l {
     margin-top: 0.5rem;
     font-size: var(--fs-sm);
@@ -538,16 +526,43 @@ const FAQ = [
     color: var(--text-muted);
   }
   .verdict {
-    margin-top: 1.1rem;
+    margin-top: 1.5rem;
+    padding-top: 1.1rem;
+    border-top: 1px solid var(--line);
     font-size: 1.0625rem;
     color: var(--text);
   }
-  .result__link {
+  .example {
+    display: grid;
+    gap: 0.3rem;
     margin-top: 1.1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--line);
+    font-size: var(--fs-base);
+    line-height: 1.5;
+    color: var(--text-2);
+  }
+  .example__label {
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--text-muted);
+  }
+  .example code {
+    margin-right: 0.35rem;
+    font-size: 0.875em;
+    color: var(--text);
+  }
+  .result__link {
+    margin-top: 0.75rem;
     font-size: var(--fs-base);
   }
 
+
   /* ---------- production ---------- */
+  /* "AI calls" stays together, so the heading never breaks after "AI". */
+  .nw {
+    white-space: nowrap;
+  }
   .code {
     margin-top: 1.25rem;
     padding: 0.85rem 1rem;

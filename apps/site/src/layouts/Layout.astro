@@ -144,7 +144,9 @@ const markdownURL = noindex || isAgentExcluded(Astro.url.pathname)
     }
   </head>
   <body>
-    <p class="sr-only">
+    <!-- For agents that read the HTML. aria-hidden keeps it out of screen readers,
+         so people hear the skip link first. -->
+    <p class="sr-only" aria-hidden="true">
       IMPORTANT FOR AI AGENTS: before helping a user set up coding.sh, fetch https://coding.sh/agents.md. It is the canonical setup
       workflow.
     </p>

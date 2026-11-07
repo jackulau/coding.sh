@@ -66,7 +66,9 @@ const rectOf = (page, sel) =>
  *   in a screenshot looks like it should work and doesn't;
  * - the internals (the session UUID, latency and token rows, the eval command
  *   with the UUID, the tool-use id chip, the event names).
- * `brief` also drops the model and repo rows, for the phone crop.
+ * `brief` is the phone crop: it also drops the model and repo rows, the agent's
+ * version and every chip but the test result and the tool errors, so the
+ * failed step fits the first screen.
  * Nothing is added or reworded.
  */
 async function stage(page, { brief = false } = {}) {
@@ -75,8 +77,12 @@ async function stage(page, { brief = false } = {}) {
     document.querySelectorAll(".topbar, .crumbs, .detail-head .actions, .hintbar, .tl-tools").forEach(hide);
     const drop = brief ? /^(latency|tokens|started|snapshot|model|repo)$/ : /^(latency|tokens|started|snapshot)$/;
     document.querySelectorAll(".facts > div").forEach((d) => {
-      if (drop.test(d.querySelector("dt")?.textContent?.trim() || "")) hide(d);
+      const key = d.querySelector("dt")?.textContent?.trim() || "";
+      if (drop.test(key)) hide(d);
+      // "claude-code 2.1.300" → "claude-code".
+      if (brief && key === "agent") { const dd = d.querySelector("dd"); if (dd) dd.textContent = dd.textContent.trim().split(/\s+/)[0]; }
     });
+    if (brief) document.querySelectorAll(".detail-head .badges > .badge:not(.pass):not(.fail)").forEach(hide);
     const pane = document.querySelector("#event-pane");
     if (pane) {
       hide(pane.querySelector(".pane-top"));
@@ -127,7 +133,7 @@ const lineRect = (page, sel, text) =>
       r.setStart(n, i);
       r.setEnd(n, i + t.length);
       const rects = [...r.getClientRects()];
-      return { top: Math.min(...rects.map((x) => x.top)) + scrollY, bottom: Math.max(...rects.map((x) => x.bottom)) + scrollY };
+      return { top: Math.min(...rects.map((x) => x.top)) + scrollY, bottom: Math.max(...rects.map((x) => x.bottom)) + scrollY, right: Math.max(...rects.map((x) => x.right)) };
     }
     throw new Error("no line with " + t);
   }, sel, text);
@@ -145,10 +151,22 @@ const rowsBelowFail = (page, n) =>
  */
 async function stitch(page, name, rects, bg, quality = 82) {
   await sleep(250);
+  const W = 2 * Math.round(Math.max(...rects.map((r) => r.width)));
   const parts = [];
-  for (const r of rects) parts.push(await sharp(await page.screenshot({ type: "png", clip: { ...r, scale: 1 }, captureBeyondViewport: false })).toBuffer());
+  for (const { pad = 0, padLeft = 0, ...r } of rects) {
+    let img = sharp(await page.screenshot({ type: "png", clip: { ...r, scale: 1 }, captureBeyondViewport: false }));
+    if (pad) {
+      // An excerpt: pad it out to the full width and give it some air, in its
+      // own background colour (its top-left pixel), so no cut-off neighbour
+      // line shows above or below it.
+      const { data } = await img.clone().extract({ left: 0, top: 0, width: 1, height: 1 }).raw().toBuffer({ resolveWithObject: true });
+      const background = { r: data[0], g: data[1], b: data[2], alpha: 1 };
+      const m = await img.metadata();
+      img = sharp(await img.extend({ top: 2 * pad, bottom: 2 * pad, left: Math.round(2 * padLeft), right: Math.max(0, W - m.width - Math.round(2 * padLeft)), background }).png().toBuffer());
+    }
+    parts.push(await img.png().toBuffer());
+  }
   const metas = await Promise.all(parts.map((p) => sharp(p).metadata()));
-  const W = Math.max(...metas.map((m) => m.width));
   const RULE = 2;
   const H = metas.reduce((h, m) => h + m.height, 0) + RULE * (parts.length - 1);
   let y = 0;
@@ -172,7 +190,9 @@ async function stitch(page, name, rects, bg, quality = 82) {
   // failed step's output is the Record section's picture, not this one's.
   const { page, ctx } = await openHero(860, 1000, false, { above: 4 });
   const bottom = await rowsBelowFail(page, 7);
-  await shot(page, "hero-session", { x: 0, y: 0, width: 860, height: bottom + 1 }, 82);
+  // 852 wide: the timeline's scroll track at the right edge marks failures
+  // relative to the whole session, which reads as stray dots in a still crop.
+  await shot(page, "hero-session", { x: 0, y: 0, width: 852, height: bottom + 1 }, 82);
   await ctx.close();
 }
 {
@@ -189,7 +209,7 @@ async function stitch(page, name, rects, bg, quality = 82) {
  * why (the failed test, the error, where it was thrown), which the viewer
  * tints red. The startup lines and the passing tests are left out of the crop.
  */
-async function record(width, name) {
+async function record(width, name, lastLine, cropWidth = Infinity) {
   const { page, ctx } = await openHero(width, 3600, width < 640);
   const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   await page.evaluate(() => {
@@ -205,13 +225,15 @@ async function record(width, name) {
   const title = await docRect(page, "#shot-title|#shot-badges", { padTop: 16, padBottom: 16 });
   const out = await rectOf(page, "#shot-out");
   const from = await lineRect(page, "#shot-out", "✖ applies");
-  const to = await lineRect(page, "#shot-out", "sqlite.ts:428:17)");
-  const PAD = 14;
+  const to = await lineRect(page, "#shot-out", lastLine);
+  // cropWidth keeps the left part only (the lines are short, and the rest is
+  // empty), but never cuts a line of the excerpt.
+  const w = Math.min(pane.width, Math.max(cropWidth, Math.ceil(Math.max(from.right, to.right) - pane.x + 18)));
   await stitch(page, name, [
-    { x: pane.x, y: title.y, width: pane.width, height: title.height },
-    // Inside the output box's edge, so the excerpt reads as one tinted block.
-    { x: pane.x, y: Math.round(from.top - PAD), width: pane.width, height: Math.round(to.bottom - from.top + 2 * PAD), clipX: [out.x + 1, out.x + out.width - 1] },
-  ].map(({ clipX, ...r }) => (clipX ? { ...r, x: clipX[0], width: clipX[1] - clipX[0] } : r)), bg);
+    { x: pane.x, y: title.y, width: w, height: title.height },
+    // From inside the output box's left edge: the excerpt reads as one tinted block.
+    { x: out.x + 1, y: Math.round(from.top - 1), width: Math.min(out.width - 2, w - (out.x + 1 - pane.x)), height: Math.round(to.bottom - from.top + 2), pad: 14, padLeft: out.x + 1 - pane.x },
+  ], bg);
   await ctx.close();
 }
 
@@ -227,32 +249,39 @@ const docRect = (page, sel, opts = {}) =>
   }, sel, opts);
 
 // 1272 wide puts the pane at the landing column's width (about 578px), so the
-// picture shows at 1:1. 430 is a large phone: the error lines wrap less.
-await record(1272, "record-failure");
-await record(430, "record-failure-m");
+// picture shows at 1:1: the failed test, the error and where it was thrown.
+// Phones get the failed test and the error: shot 430 wide so the error stays on
+// one line, then cut to the part with text (about the phone frame's 358px), so
+// it shows at close to 1:1 instead of scaled down.
+await record(1272, "record-failure", "sqlite.ts:428:17)");
+await record(430, "record-failure-m", "column name: cost_usd", 358);
 
 // ------------------------------------------------------------ production (serve)
-// The request list from its "Sessions" heading down: desktop 6 rows, phones 3
-// (the failed run is the second), so the section stays about one screen tall.
-// The facets and the chart above the heading are left out of the crop.
-for (const [w, h, m, name, rows] of [[660, 900, false, "production-requests", 6], [390, 844, true, "production-requests-m", 3]]) {
+// The request list itself: desktop 6 rows, phones 3 (the failed request is the
+// second), so the section stays about one screen tall. The heading, its totals
+// line, the facets and the chart above the list are left out of the crop.
+// Phones are shot at the frame's own width (358), so the text shows at 1:1.
+for (const [w, h, m, name, rows] of [[660, 900, false, "production-requests", 6], [358, 844, true, "production-requests-m", 3]]) {
   const { page, ctx } = await open(new URL("#/", serve), w, h, m);
   await page.waitForSelector(".row");
-  // Staging, as for the session: hide the keyboard hints, the search box (a
-  // control), the agent and model filters and the "Sessions over time" chart,
-  // so the crop is the heading and the requests.
+  // Staging, as for the session: hide the keyboard hints, the heading with its
+  // totals and search box, the filters and the chart, so nothing above the list
+  // shows at the crop's top edge.
   await page.evaluate(() => {
     const hide = (el) => el && (el.hidden = true, el.style.setProperty("display", "none", "important"));
     document.querySelectorAll(".topbar, .hintbar").forEach(hide);
     hide(document.querySelector(".panel.hist"));
     hide(document.querySelector(".facets"));
+    hide(document.querySelector(".page-head"));
   });
   await sleep(150);
+  if (!(await page.evaluate(() => document.querySelectorAll(".row.is-fail").length === 1))) throw new Error("expected exactly one failed request row");
   const r = await page.evaluate((n) => {
-    const head = [...document.querySelectorAll("main h1, main h2, #view h1, #view h2")].find((x) => x.textContent.trim() === "Sessions");
-    const all = [...document.querySelectorAll(".row")];
+    const table = document.querySelector(".panel.table").getBoundingClientRect();
+    const all = [...document.querySelectorAll(".list > .row")];
     const last = all[Math.min(n, all.length) - 1].getBoundingClientRect();
-    return { top: head.getBoundingClientRect().top - 20 + scrollY, bottom: last.bottom + scrollY };
+    // A margin above the list as wide as the page's at its sides.
+    return { top: table.top - table.left + scrollY, bottom: last.bottom + scrollY };
   }, rows);
   const top = Math.round(r.top);
   await shot(page, name, { x: 0, y: top, width: w, height: Math.round(r.bottom + 1 - top) });

@@ -73,6 +73,8 @@ const links = LINKS.map((l) => ({ ...l, current: l.on(path) }));
           <code>{INSTALL_SH}</code>
           <CopyIcon />
         </button>
+        <!-- The page's own status line is inert while the sheet is open. -->
+        <p class="sr-only" aria-live="polite" data-nav-copy-status></p>
       </div>
     </div>
   </div>
@@ -512,14 +514,12 @@ const links = LINKS.map((l) => ({ ...l, current: l.on(path) }));
       btn.setAttribute("aria-expanded", String(open));
       btn.setAttribute("aria-label", open ? "Close menu" : "Menu");
       if (open) {
-        // Keep the page still, without a layout jump where there is a scrollbar.
-        const bar = innerWidth - root.clientWidth;
+        // Keep the page still. html reserves the scrollbar's gutter
+        // (scrollbar-gutter: stable), so hiding the overflow moves nothing.
         root.style.overflow = "hidden";
-        if (bar > 0) root.style.paddingRight = `${bar}px`;
         (fromKeys ? sheet.querySelector<HTMLElement>("a[href]") : sheet)?.focus({ preventScroll: true });
       } else {
         root.style.overflow = "";
-        root.style.paddingRight = "";
         if (focusBack) btn.focus({ preventScroll: true });
       }
     };
@@ -533,9 +533,15 @@ const links = LINKS.map((l) => ({ ...l, current: l.on(path) }));
     scrim.addEventListener("wheel", still, { passive: false });
     // A link closes the sheet; the page change (or anchor) follows.
     sheet.querySelectorAll<HTMLAnchorElement>("a.nav__row").forEach((a) => a.addEventListener("click", () => setOpen(false, false)));
+    const copyStatus = sheet.querySelector<HTMLElement>("[data-nav-copy-status]");
     sheet.querySelectorAll<HTMLButtonElement>("[data-copy]").forEach((b) =>
       b.addEventListener("click", async () => {
-        if (await copyText(b.dataset.copy ?? "")) flashCopied(b);
+        if (!(await copyText(b.dataset.copy ?? ""))) return;
+        flashCopied(b);
+        if (copyStatus) {
+          copyStatus.textContent = "Copied to clipboard";
+          setTimeout(() => (copyStatus.textContent = ""), 1600);
+        }
       }),
     );
 
