@@ -1,0 +1,31 @@
+packages/coding.sh/src/adapters/more/_util.ts
+  s_8e040dbdf13565::t_6c567fd557a0d6 712-723,725-726
+packages/coding.sh/test/adapters/more/util.test.ts
+  s_8e040dbdf13565::t_59a028224e9a26 2-3,6,30-45
+  s_8e040dbdf13565::t_eb905f4d3a4e41 46-47
+packages/coding.sh/test/adapters/more/goose.test.ts
+  s_8e040dbdf13565::t_edf5897b0777ea 122-131
+  s_8e040dbdf13565::t_eb5bacea5d532e 6
+scripts/e2e/real-capture.mjs
+  s_8e040dbdf13565::t_6471835da401ef 486-491
+  s_8e040dbdf13565::t_61c49e7186dd39 480-485,492-493
+packages/coding.sh/src/adapters/more/goose.ts
+  s_8e040dbdf13565::t_e0bd31a4201291 90
+  s_8e040dbdf13565::t_48d7e1bc127303 91-95,97-98,101,104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6905c846d0c9a5d7933168ad8af14f4d60777ff8",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
