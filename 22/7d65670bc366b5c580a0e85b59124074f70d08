@@ -1,0 +1,27 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_a1c5c866264066 17,34
+README.md
+  s_8e040dbdf13565::t_a1c5c866264066 126-127,159-161
+docs/guides/agents.md
+  s_8e040dbdf13565::t_a1c5c866264066 31-34
+docs/guides/install.md
+  s_8e040dbdf13565::t_a1c5c866264066 51-55
+apps/site/src/pages/docs/install.astro
+  s_8e040dbdf13565::t_1042b58eca6915 36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "227d65670bc366b5c580a0e85b59124074f70d08",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
