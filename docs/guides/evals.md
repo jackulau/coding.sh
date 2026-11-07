@@ -366,7 +366,8 @@ compression. See [TOOL-EVALS.md](../TOOL-EVALS.md).
 ## Workflows
 
 `coding.sh workflows` imports multi-agent workflow runs and reports the run tree, critical path,
-concurrency, cost and paired variant comparisons. See [design/workflows.md](../design/workflows.md).
+concurrency, cost and paired variant comparisons. See the [workflow experiments guide](workflows.md)
+and [design/workflows.md](../design/workflows.md).
 
 A variant can resume from a recorded run (`"resumeFromRunId"`), so only the stages after the edit
 run again. Compare it against a control variant that resumes the unedited script from the same

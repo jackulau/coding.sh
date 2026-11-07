@@ -19,6 +19,7 @@ const SITE_PAGES: Record<string, string> = {
   "reference/cli.md": "/docs/cli",
   "reference/sdk.md": "/docs/sdk",
   "guides/benchmarks.md": "/docs/benchmarks",
+  "guides/workflows.md": "/docs/workflows",
   "reference/api.md": "/docs/api",
   "how-to/trace-your-agent.md": "/docs/how-to/trace-your-agent",
   "how-to/compare-agents.md": "/docs/how-to/compare-agents",
