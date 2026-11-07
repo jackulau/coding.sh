@@ -251,6 +251,7 @@ describe("spend cap", () => {
     const task = { ...w.task, verifier: { ...w.task.verifier, command: `printf '{"model":"j","costUsd":0.1}\\n' >> "$CODING_SH_GRADER_USAGE"; ${w.task.verifier.command}` } };
     const r = await runExperiment({ tasks: [task, { ...task, id: "t2" }], bundles: [A, B], adapterFor: () => obedientAgent(), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, concurrency: 1, maxCostUsd: 1 });
     assert.equal(r.results.length, 2, "0.6 after one run, 1.2 after two: the third never starts");
+    assert.equal(r.cancelled, false, "runs the cap kept from starting are not a cancellation");
     assert.deepEqual({ ...r.budget, spentUsd: Number(r.budget?.spentUsd.toFixed(2)) }, { capUsd: 1, spentUsd: 1.2, skipped: 2, unpriced: 0 });
     assert.ok(r.results.every((x) => x.graderUsage?.calls === 1 && Math.abs((x.graderUsage?.costUsd ?? 0) - 0.1) < 1e-9));
     const report = compare(r.results, { baseline: A.id, candidate: B.id });
