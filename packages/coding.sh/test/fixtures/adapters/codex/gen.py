@@ -1,6 +1,7 @@
 # Synthetic Codex fixtures (no real user content): two rollout generations, a
 # subagent thread, and hook spool lines as hook.mjs would write them.
-import json, os
+import json
+import os
 from datetime import datetime, timezone
 T0 = 1793527200000; CWD = "/work/demo"
 SID = "0193aaaa-1111-7222-8333-444455556666"; SUB = "0193bbbb-1111-7222-8333-444455556666"; OLD = "0193cccc-1111-7222-8333-444455556666"
@@ -93,3 +94,52 @@ spool = [
  H(9900, "SessionEnd", {"reason": "other"}),
 ]
 open("codex/hooks.spool.jsonl", "w").write("".join(json.dumps(x) + "\n" for x in spool))
+
+# Code mode (codex-rs tools/code_mode): the model calls one `exec` tool with JS; each
+# tool the cell calls is a nested call `exec-<uuid>` with its own item_completed, written
+# between the exec call and its output. Cell 1 runs two commands and prints only the
+# first; the second exits 2 and its record lands just after the cell's output. Cell 2 yields ("Script running with cell
+# ID 7"); its command finishes during `wait`. Cell 3's MCP call fails and the script goes on.
+CM = "0193dddd-1111-7222-8333-444455556666"; TC = "turn-cm-01"
+EA = "exec-0a0a0a0a-0000-4000-8000-000000000001"; EB = "exec-0b0b0b0b-0000-4000-8000-000000000002"; EC = "exec-0c0c0c0c-0000-4000-8000-000000000003"; ED = "exec-0d0d0d0d-0000-4000-8000-000000000004"
+def cmd(id, c, code, out): return {"type": "CommandExecution", "id": id, "command": ["/bin/zsh", "-lc", c], "cwd": CWD, "source": "unified_exec_startup", "status": "completed", "exit_code": code, "aggregated_output": out}
+def cell_out(status, *chunks): return [{"type": "input_text", "text": f"{status}\nWall time 0.1 seconds\nOutput:\n"}] + [{"type": "input_text", "text": json.dumps(c)} for c in chunks]
+LINT = "text(await tools.exec_command({cmd:\"npm run lint\"}));\nawait tools.exec_command({cmd:\"npm test\"});\n"
+BUILD = "text(await tools.exec_command({cmd:\"make build\", yield_time_ms: 100}));\n"
+SEARCH = "try { text(await tools.mcp__docs__search({q:\"lint rules\"})); } catch { text(\"no results\"); }\n"
+cm = [
+ (0, "session_meta", {"id": CM, "session_id": CM, "timestamp": iso(T0), "cwd": CWD, "originator": "codex_exec", "cli_version": "0.166.0", "source": "exec", "model_provider": "openai"}),
+ (1, "turn_context", {"turn_id": TC, "cwd": CWD, "model": "gpt-5.5"}),
+ (2, "event_msg", {"type": "task_started", "turn_id": TC}),
+ (10,) + item(10, {"type": "UserMessage", "id": "um-cm", "content": [{"type": "text", "text": "Run lint and tests"}]}, turn=TC, thread=CM),
+ (1000, "response_item", {"type": "custom_tool_call", "status": "completed", "id": "ctc_c1", "call_id": "call_c1", "name": "exec", "input": LINT}),
+ (1050, "token_usage_record", {"thread_id": CM, "turn_id": TC, "session_id": CM, "response_id": "resp_c1", "usage": usage(3000, 2000, 60)}),
+ (1500,) + item(1500, cmd(EA, "npm run lint", 0, "lint ok\n"), 1100, 1500, turn=TC, thread=CM),
+ (3010, "response_item", {"type": "custom_tool_call_output", "call_id": "call_c1", "output": cell_out("Script completed", {"exit_code": 0, "output": "lint ok\n"})}),
+ (3020,) + item(3020, cmd(EB, "npm test", 2, "1 test failed\n"), 1600, 3000, turn=TC, thread=CM),
+ (4000, "response_item", {"type": "custom_tool_call", "status": "completed", "id": "ctc_c2", "call_id": "call_c2", "name": "exec", "input": BUILD}),
+ (4050, "token_usage_record", {"thread_id": CM, "turn_id": TC, "session_id": CM, "response_id": "resp_c2", "usage": usage(3500, 3000, 40)}),
+ (4200, "response_item", {"type": "custom_tool_call_output", "call_id": "call_c2", "output": cell_out("Script running with cell ID 7")}),
+ (6000, "response_item", {"type": "function_call", "status": "completed", "id": "fc_w1", "call_id": "call_w1", "name": "wait", "arguments": json.dumps({"cell_id": "7", "yield_time_ms": 5000})}),
+ (8000,) + item(8000, cmd(EC, "make build", 0, "built\n"), 4100, 8000, turn=TC, thread=CM),
+ (8010, "response_item", {"type": "function_call_output", "call_id": "call_w1", "output": cell_out("Script completed", {"exit_code": 0, "output": "built\n"})}),
+ (8500, "response_item", {"type": "custom_tool_call", "status": "completed", "id": "ctc_c3", "call_id": "call_c3", "name": "exec", "input": SEARCH}),
+ (8700,) + item(8700, {"type": "McpToolCall", "id": ED, "server": "docs", "tool": "search", "arguments": {"q": "lint rules"}, "status": "failed", "error": {"message": "search unavailable"}}, 8550, 8700, turn=TC, thread=CM),
+ (8710, "response_item", {"type": "custom_tool_call_output", "call_id": "call_c3", "output": cell_out("Script completed", "no results")}),
+ (9000, "token_usage_record", {"thread_id": CM, "turn_id": TC, "session_id": CM, "response_id": "resp_c3", "usage": usage(4000, 3500, 30)}),
+ (9100,) + item(9100, {"type": "AgentMessage", "id": "am-cm", "content": [{"type": "Text", "text": "Lint passes; one test fails; the build works."}], "phase": "final_answer"}, turn=TC, thread=CM),
+ (9200, "event_msg", {"type": "task_complete", "turn_id": TC, "duration_ms": 9200}),
+]
+write(f"codex/code-mode/rollout-2026-11-01T10-00-00-{CM}.jsonl", cm)
+FC = "${FIXTURES}/codex/code-mode"
+def HC(t, ev, raw): return H(t, ev, {"session_id": CM, "transcript_path": f"{FC}/rollout-2026-11-01T10-00-00-{CM}.jsonl", "turn_id": TC, **raw})
+cm_spool = [
+ HC(1101, "PreToolUse", {"tool_name": "Bash", "tool_use_id": EA, "tool_input": {"command": "npm run lint"}}),
+ HC(1501, "PostToolUse", {"tool_name": "Bash", "tool_use_id": EA, "tool_input": {"command": "npm run lint"}, "tool_response": {"exit_code": 0, "output": "lint ok\n"}}),
+ HC(1601, "PreToolUse", {"tool_name": "Bash", "tool_use_id": EB, "tool_input": {"command": "npm test"}}),
+ HC(3001, "PostToolUse", {"tool_name": "Bash", "tool_use_id": EB, "tool_input": {"command": "npm test"}, "tool_response": {"exit_code": 2, "output": "1 test failed\n"}}),
+ HC(4101, "PreToolUse", {"tool_name": "Bash", "tool_use_id": EC, "tool_input": {"command": "make build"}}),
+ HC(8001, "PostToolUse", {"tool_name": "Bash", "tool_use_id": EC, "tool_input": {"command": "make build"}, "tool_response": {"exit_code": 0, "output": "built\n"}}),
+ HC(8551, "PreToolUse", {"tool_name": "mcp__docs__search", "tool_use_id": ED, "tool_input": {"q": "lint rules"}}),
+]
+open("codex/code-mode/hooks.spool.jsonl", "w").write("".join(json.dumps(x) + "\n" for x in cm_spool))

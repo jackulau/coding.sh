@@ -338,8 +338,8 @@ export function turnIndex(turns: AgentEvent[][], startedAt: number): TurnInfo[] 
       turn: i + 1,
       prompt: clip(prompt?.payload.text, 100),
       at: Math.max(0, first.ts - startedAt),
-      toolCalls: t.filter((e) => e.kind === "tool.end").length,
-      toolErrors: t.filter((e) => e.kind === "tool.end" && e.payload.ok === false).length,
+      toolCalls: t.filter((e) => e.kind === "tool.end" && e.payload.wrapper !== true).length,
+      toolErrors: t.filter((e) => e.kind === "tool.end" && e.payload.wrapper !== true && e.payload.ok === false).length,
       durationMs: Math.max(0, last.ts + (last.durationMs ?? 0) - first.ts),
     };
   });

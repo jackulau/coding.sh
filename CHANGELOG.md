@@ -21,6 +21,7 @@ coding.sh runs on Windows, and CI tests it there.
 ### Fixed
 
 - **Windows.** `coding.sh update` and the MCP launcher run npm and `coding.sh` without a shell, so paths with spaces or `&` arrive intact.
+- **Codex.** Code mode: a command run inside an `exec` cell now points at the cell, the cell fails when a command in it fails, and session stats count each command once instead of twice (hooks and backfill agree).
 
 ## [0.1.1] - 2026-11-07
 

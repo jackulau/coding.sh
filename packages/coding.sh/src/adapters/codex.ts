@@ -201,6 +201,8 @@ interface Call {
   tool: string;
   input: unknown;
   ts: number;
+  /** A code-mode exec cell. */
+  wrapper?: true;
 }
 
 const MODEL_OUTPUT = new Set(["reasoning", "function_call", "custom_tool_call", "local_shell_call"]);
@@ -260,6 +262,87 @@ function fileDiff(rel: string, op: "add" | "modify" | "delete", c: Record<string
   return undefined;
 }
 
+/** First line of a tool output (string, or content items as code-mode cells write them). */
+function statusLine(output: unknown): string {
+  return (typeof output === "string" ? output : textOf(output)).split("\n", 1)[0] ?? "";
+}
+
+const runningCell = (status: string) => /^Script running with cell ID (\S+)/.exec(status)?.[1];
+
+/** A cell's output chunk for a command that exited nonzero (`text(await tools.exec_command(…))` prints the result JSON). */
+function cellChunkFailed(output: unknown): boolean {
+  return arr(output).some((c) => {
+    const v = parseMaybeJson(obj(c).text);
+    return isObj(v) && (num(v.exit_code) ?? 0) !== 0;
+  });
+}
+
+/**
+ * Code mode: Codex runs commands through an `exec` call, a JS cell whose tool
+ * calls are nested calls with their own ids (`exec-<uuid>`) and item_completed
+ * records, written between the exec call and its output (the last one can land
+ * just after it). A cell that outlives its call ("Script running with cell ID
+ * N") keeps running, and a later `wait {cell_id}` polls it until it reports
+ * done. Feed rollout records in order; parent() is the exec call a nested call
+ * made now belongs to.
+ */
+class CodeCells {
+  private open?: string;
+  private polled?: string;
+  /** The cell that finished last: a nested record written after its output belongs to it. */
+  private closed?: string;
+  /** Cell id → the exec call that started it, while the cell runs past its call. */
+  private readonly running = new Map<string, string>();
+  /** Open `wait` call id → the cell it polls. */
+  private readonly waits = new Map<string, string>();
+
+  static isExec(p: Record<string, unknown>): boolean {
+    return p.type === "custom_tool_call" && p.name === "exec" && !p.namespace;
+  }
+
+  add(rec: unknown): void {
+    if (!isObj(rec) || rec.type !== "response_item") return;
+    const p = obj(rec.payload);
+    const id = str(p.call_id);
+    if (!id) return;
+    if (CodeCells.isExec(p)) this.open = id;
+    else if (p.type === "custom_tool_call_output" && id === this.open) {
+      this.open = undefined;
+      const cell = runningCell(statusLine(p.output));
+      if (cell) this.running.set(cell, id);
+      else this.closed = id;
+    } else if (p.type === "function_call" && p.name === "wait") {
+      const a = obj(parseMaybeJson(p.arguments));
+      const cell = str(a.cell_id) ?? num(a.cell_id)?.toString();
+      if (cell === undefined) return;
+      this.waits.set(id, cell);
+      this.polled = this.running.get(cell);
+    } else if (p.type === "function_call_output" && this.waits.has(id)) {
+      const cell = this.waits.get(id)!;
+      this.waits.delete(id);
+      this.polled = undefined;
+      const exec = this.running.get(cell);
+      if (exec && !runningCell(statusLine(p.output))) {
+        this.running.delete(cell);
+        this.closed = exec;
+      }
+    }
+  }
+
+  parent(): string | undefined {
+    const live = this.open ?? this.polled;
+    if (live) return live;
+    if (this.running.size) return this.running.size === 1 ? this.running.values().next().value : undefined;
+    return this.closed;
+  }
+}
+
+/** Codex ids the tools a code-mode cell calls `exec-<uuid>` (codex-rs tools/code_mode/delegate.rs); top-level calls are `call_…`. */
+const isNested = (id: string) => id.startsWith("exec-");
+
+/** parentId of a nested call: the exec call's tool.start (keyed by its call id on both capture paths). */
+const execStartId = (ctx: NormalizeContext, sessionId: string, execCallId: string) => ctx.id(CODEX_AGENT, sessionId, "tool.start", execCallId);
+
 /**
  * Converts rollout records to events. Handles both rollout generations:
  * - ≥0.160: event_msg item_completed (UserMessage/AgentMessage/CommandExecution/
@@ -292,6 +375,11 @@ export class CodexRolloutConverter {
   /** A compaction was recorded and no model or user line followed yet (one compaction writes a `compacted` item and a context_compacted event). */
   private compacted = false;
   private readonly calls = new Map<string, Call>();
+  private readonly cells = new CodeCells();
+  /** Exec (code-mode) calls with a failed nested call. */
+  private readonly failedCells = new Set<string>();
+  /** Exec calls' tool.end: a nested call recorded after its cell's output (or a yielded cell's) can still fail it. */
+  private readonly cellEnds = new Map<string, AgentEvent>();
   private readonly prompts = new Map<string, number>();
   private readonly seen = new Set<string>();
   readonly events: AgentEvent[] = [];
@@ -424,6 +512,7 @@ export class CodexRolloutConverter {
       this.markInput(ts);
       if (full && fresh) em.emit("context.compact", { windowNumber: num(p.window_number) }, { key: ["compact", str(p.window_id) ?? ord] });
     } else if (type === "response_item") {
+      this.cells.add(rec);
       if (pt && MODEL_OUTPUT.has(pt)) this.firstOutputTs ??= ts;
       // Inter-agent mail: only what this thread sends is model output; a message from another agent is input.
       if (pt === "agent_message") {
@@ -486,22 +575,27 @@ export class CodexRolloutConverter {
       }
     }
     if (!full) return;
+    const cell = isNested(id) ? this.cells.parent() : undefined;
+    const parentId = cell ? execStartId(this.ctx, this.sessionId, cell) : undefined;
     switch (it.type) {
       case "CommandExecution": {
         const input = { command: shellCommandOf("shell", { command: it.command }) ?? "" };
         const ok = it.status === "completed" && (num(it.exit_code) ?? 0) === 0;
         const text = str(it.aggregated_output) ?? [str(it.stdout), str(it.stderr)].filter(Boolean).join("\n");
-        await this.toolPair(em, { id, tool: "Bash", input, t0, t1, ok, text, turn, exitCode: num(it.exit_code) });
+        await this.toolPair(em, { id, tool: "Bash", input, t0, t1, ok, text, turn, exitCode: num(it.exit_code), cell });
         return;
       }
       case "McpToolCall": {
         const tool = `mcp__${str(it.server) ?? "unknown"}__${str(it.tool) ?? "unknown"}`;
         const ok = it.status === "completed" && it.error == null;
-        await this.toolPair(em, { id, tool, input: it.arguments, t0, t1, ok, text: ok ? (outputText(obj(it.result).content) ?? "") : JSON.stringify(it.error ?? "").slice(0, 2000), turn, server: str(it.server) });
+        await this.toolPair(em, { id, tool, input: it.arguments, t0, t1, ok, text: ok ? (outputText(obj(it.result).content) ?? "") : JSON.stringify(it.error ?? "").slice(0, 2000), turn, server: str(it.server), cell });
         return;
       }
       case "FileChange": {
-        if (it.status === "failed" || it.status === "declined") return;
+        if (it.status === "failed" || it.status === "declined") {
+          if (cell) this.failCell(cell);
+          return;
+        }
         for (const [path, ch] of Object.entries(obj(it.changes))) {
           const c = obj(ch);
           const op = c.type === "add" ? "add" : c.type === "delete" ? "delete" : "modify";
@@ -512,7 +606,7 @@ export class CodexRolloutConverter {
           em.emit(
             "file.change",
             { path: rel, op, ...stats, movedTo: moved && moved !== "None" ? relPath(moved, this.cwd) : undefined, tool: "apply_patch", toolUseId: id, diff: d.diff, diffTruncated: d.diffTruncated },
-            { key: [id, rel], ts: t1, turnId: turn, blobs: blobList(d.blob) },
+            { key: [id, rel], ts: t1, turnId: turn, parentId, blobs: blobList(d.blob) },
           );
         }
         return;
@@ -520,11 +614,20 @@ export class CodexRolloutConverter {
     }
   }
 
-  private async toolPair(em: Emitter, o: { id: string; tool: string; input: unknown; t0: number; t1: number; ok: boolean; text: string; turn?: string; server?: string; exitCode?: number }): Promise<void> {
+  private failCell(cell: string): void {
+    this.failedCells.add(cell);
+    const end = this.cellEnds.get(cell);
+    if (end) end.payload.ok = false;
+  }
+
+  /** `cell`: the exec (code-mode) call that made this call. */
+  private async toolPair(em: Emitter, o: { id: string; tool: string; input: unknown; t0: number; t1: number; ok: boolean; text: string; turn?: string; server?: string; exitCode?: number; cell?: string }): Promise<void> {
+    const parentId = o.cell ? execStartId(this.ctx, this.sessionId, o.cell) : undefined;
+    if (o.cell && !o.ok) this.failCell(o.cell);
     const inp = await clipValue(this.ctx, o.input);
-    em.emit("tool.start", { tool: o.tool, toolUseId: o.id, input: inp.value, server: o.server }, { key: [o.id], ts: o.t0, turnId: o.turn, blobs: blobList(inp.blob) });
+    em.emit("tool.start", { tool: o.tool, toolUseId: o.id, input: inp.value, server: o.server }, { key: [o.id], ts: o.t0, turnId: o.turn, parentId, blobs: blobList(inp.blob) });
     const out = await clipText(this.ctx, o.text);
-    em.emit("tool.end", { tool: o.tool, toolUseId: o.id, ok: o.ok, durationMs: o.t1 - o.t0, output: out.value, exitCode: o.exitCode }, { key: [o.id], ts: o.t1, turnId: o.turn, durationMs: o.t1 - o.t0, blobs: blobList(out.blob) });
+    em.emit("tool.end", { tool: o.tool, toolUseId: o.id, ok: o.ok, durationMs: o.t1 - o.t0, output: out.value, exitCode: o.exitCode }, { key: [o.id], ts: o.t1, turnId: o.turn, durationMs: o.t1 - o.t0, parentId, blobs: blobList(out.blob) });
     await emitDerived(em, { tool: o.tool === "Bash" ? "shell" : o.tool, toolUseId: o.id, input: o.input, output: o.text, ok: o.ok, cwd: this.cwd, extra: { ts: o.t1, turnId: o.turn } });
   }
 
@@ -534,9 +637,11 @@ export class CodexRolloutConverter {
       if (!id) return;
       const { tool, server, namespace } = toolName(p);
       const input = pt === "function_call" ? parseMaybeJson(p.arguments) : pt === "custom_tool_call" ? p.input : obj(p.action);
-      this.calls.set(id, { tool, input, ts });
+      // A code-mode cell wraps the tools it calls: they are counted, not it.
+      const wrapper = CodeCells.isExec(p) || undefined;
+      this.calls.set(id, { tool, input, ts, wrapper });
       const inp = await clipValue(this.ctx, input);
-      em.emit("tool.start", { tool, toolUseId: id, input: inp.value, server, namespace }, { key: [id], blobs: blobList(inp.blob) });
+      em.emit("tool.start", { tool, toolUseId: id, input: inp.value, server, namespace, wrapper }, { key: [id], blobs: blobList(inp.blob) });
     } else if (pt === "function_call_output" || pt === "custom_tool_call_output" || pt === "local_shell_call_output") {
       const id = str(p.call_id);
       if (!id) return;
@@ -546,11 +651,17 @@ export class CodexRolloutConverter {
       const parsed = parseMaybeJson(p.output);
       const meta = obj(obj(parsed).metadata);
       const exit = num(meta.exit_code) ?? num(obj(parsed).exit_code);
-      const ok = (exit ?? 0) === 0 && obj(p.output).success !== false;
+      const wrapper = call?.wrapper;
+      // A cell is ok when its script finished (or still runs) and every tool it called succeeded:
+      // no failed nested record (now or later, see failCell) and no printed result with a nonzero exit.
+      const ok = wrapper
+        ? /^Script (completed|running)\b/.test(statusLine(p.output)) && !this.failedCells.has(id) && !cellChunkFailed(p.output)
+        : (exit ?? 0) === 0 && obj(p.output).success !== false;
       const text = (isObj(parsed) && typeof parsed.output === "string" ? parsed.output : outputText(parsed)) ?? "";
       const o = await clipText(this.ctx, text);
       const durationMs = call ? ts - call.ts : undefined;
-      em.emit("tool.end", { tool, toolUseId: id, ok, durationMs, output: o.value, exitCode: exit }, { key: [id], durationMs, blobs: blobList(o.blob) });
+      const e = em.emit("tool.end", { tool, toolUseId: id, ok, durationMs, output: o.value, exitCode: exit, wrapper }, { key: [id], durationMs, blobs: blobList(o.blob) });
+      if (wrapper) this.cellEnds.set(id, e);
       await emitDerived(em, { tool, toolUseId: id, input: call?.input, output: text, ok, cwd: this.cwd });
     }
   }
@@ -603,14 +714,7 @@ const CALL_TAIL_BYTES = 2 * 1024 * 1024;
  * duration is PostToolUse ts − that record's timestamp. Best effort: undefined
  * when the call is not in the transcript tail.
  */
-async function callStartTs(path: string | undefined, callId: string, endTs: number): Promise<number | undefined> {
-  if (!path) return undefined;
-  let recs: unknown[];
-  try {
-    recs = await readJsonlTail(path, CALL_TAIL_BYTES);
-  } catch {
-    return undefined;
-  }
+function callStartTs(recs: unknown[], callId: string, endTs: number): number | undefined {
   for (let i = recs.length - 1; i >= 0; i--) {
     const r = obj(recs[i]);
     const p = obj(r.payload);
@@ -620,6 +724,28 @@ async function callStartTs(path: string | undefined, callId: string, endTs: numb
     }
   }
   return undefined;
+}
+
+/** The rollout tail, read at most once per hook line. */
+function transcriptTail(path: string | undefined): () => Promise<unknown[]> {
+  let recs: Promise<unknown[]> | undefined;
+  return () => (recs ??= path ? readJsonlTail(path, CALL_TAIL_BYTES).catch(() => []) : Promise.resolve([]));
+}
+
+/**
+ * The exec (code-mode) call a hooked tool call runs inside, from the rollout
+ * tail: the cell running now, or the one running when the call's
+ * item_completed was written (the point the backfill reads it at).
+ */
+function execCellOf(recs: unknown[], callId: string): string | undefined {
+  const cells = new CodeCells();
+  for (const r of recs) {
+    const p = obj(obj(r).payload);
+    if (obj(r).type === "response_item" && p.call_id === callId) return undefined; // a top-level call
+    if (p.type === "item_completed" && obj(p.item).id === callId) break;
+    cells.add(r);
+  }
+  return cells.parent();
 }
 
 export async function normalizeCodexLine(line: SpoolLine, ctx: NormalizeContext): Promise<AgentEvent[]> {
@@ -641,6 +767,11 @@ export async function normalizeCodexLine(line: SpoolLine, ctx: NormalizeContext)
   const tool = str(raw.tool_name) ?? "unknown";
   const toolUseId = str(raw.tool_use_id) ?? ctx.id(sessionId, "tool", ...lineKey(line, ctx));
   const extra: AgentEvent[] = [];
+  const tail = transcriptTail(str(raw.transcript_path));
+  const nestedParent = async () => {
+    const cell = isNested(toolUseId) ? execCellOf(await tail(), toolUseId) : undefined;
+    return cell ? execStartId(ctx, sessionId, cell) : undefined;
+  };
 
   switch (event) {
     case "SessionStart":
@@ -653,7 +784,7 @@ export async function normalizeCodexLine(line: SpoolLine, ctx: NormalizeContext)
     }
     case "PreToolUse": {
       const inp = await clipValue(ctx, raw.tool_input);
-      em.emit("tool.start", { tool, toolUseId, input: inp.value, server: mcpServerOf(tool) }, { key: [toolUseId], blobs: blobList(inp.blob) });
+      em.emit("tool.start", { tool, toolUseId, input: inp.value, server: mcpServerOf(tool) }, { key: [toolUseId], parentId: await nestedParent(), blobs: blobList(inp.blob) });
       break;
     }
     case "PostToolUse": {
@@ -663,8 +794,8 @@ export async function normalizeCodexLine(line: SpoolLine, ctx: NormalizeContext)
       const ok = (exit ?? 0) === 0 && r.success !== false && r.error == null;
       const text = outputText(resp) ?? "";
       const o = await clipText(ctx, text);
-      const durationMs = num(r.duration_ms) ?? num(raw.duration_ms) ?? (await callStartTs(str(raw.transcript_path), toolUseId, line.ts));
-      em.emit("tool.end", { tool, toolUseId, ok, durationMs, output: o.value, exitCode: exit }, { key: [toolUseId], durationMs, blobs: blobList(o.blob) });
+      const durationMs = num(r.duration_ms) ?? num(raw.duration_ms) ?? callStartTs(await tail(), toolUseId, line.ts);
+      em.emit("tool.end", { tool, toolUseId, ok, durationMs, output: o.value, exitCode: exit }, { key: [toolUseId], durationMs, parentId: await nestedParent(), blobs: blobList(o.blob) });
       await emitDerived(em, { tool, toolUseId, input: raw.tool_input, output: text, ok, cwd: em.base.cwd });
       break;
     }

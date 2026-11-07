@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { CODEX_HOOK_EVENTS, codex, codexExecArgs, codexTrustHash, codexUsage, untrustedHooks } from "../../src/adapters/codex.ts";
+import { CODEX_HOOK_EVENTS, codex, codexExecArgs, codexTrustHash, codexUsage, convertRollout, untrustedHooks } from "../../src/adapters/codex.ts";
+import { buildSession } from "../../src/core/sessions.ts";
+import type { AgentEvent } from "../../src/schema/index.ts";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
@@ -117,6 +120,84 @@ describe("codex backfill (rollouts)", () => {
   it("honors since", async () => {
     const events = await collect(codex.backfill!(testCtx().ctx, { since: T0 + 5000 }));
     assert.ok(events.length > 0 && events.every((e) => e.ts >= T0 + 5000));
+  });
+});
+
+describe("codex code mode (exec cells)", () => {
+  const CM = "0193dddd-1111-7222-8333-444455556666";
+  const EA = "exec-0a0a0a0a-0000-4000-8000-000000000001";
+  const EB = "exec-0b0b0b0b-0000-4000-8000-000000000002";
+  const EC = "exec-0c0c0c0c-0000-4000-8000-000000000003";
+  const ED = "exec-0d0d0d0d-0000-4000-8000-000000000004";
+  const rollout = join(FIXTURES, "codex", "code-mode", `rollout-2026-11-01T10-00-00-${CM}.jsonl`);
+  const end = (events: AgentEvent[], id: string) => events.find((e) => e.kind === "tool.end" && e.payload.toolUseId === id)!;
+  const start = (events: AgentEvent[], id: string) => events.find((e) => e.kind === "tool.start" && e.payload.toolUseId === id)!;
+
+  it("backfill: nested calls point at their cell, the cell fails with them, stats count each call once", async () => {
+    const events = await convertRollout(testCtx().ctx, rollout, { mode: "full" });
+    assertWellFormed(events);
+    const c1 = start(events, "call_c1");
+    const c2 = start(events, "call_c2");
+    assert.equal(c1.payload.wrapper, true);
+    assert.deepEqual([end(events, "call_c1").payload.ok, end(events, "call_c1").payload.wrapper], [false, true], "npm test exited 2 inside the cell");
+    assert.equal(end(events, "call_c2").payload.ok, true);
+    for (const id of [EA, EB]) {
+      assert.equal(start(events, id).parentId, c1.id, `${id} start`);
+      assert.equal(end(events, id).parentId, c1.id, `${id} end`);
+    }
+    assert.equal(end(events, EB).payload.ok, false);
+    assert.equal(end(events, EC).parentId, c2.id, "a yielded cell's command finishing during wait");
+    assert.equal(start(events, "call_w1").parentId, undefined);
+    assert.equal(end(events, ED).parentId, start(events, "call_c3").id);
+    assert.equal(end(events, "call_c3").payload.ok, false, "a failed MCP call fails its cell though the script caught it");
+
+    const s = buildSession(events);
+    // Three commands, one MCP call and the wait call; the three cells are not counted again.
+    assert.deepEqual([s.stats.toolCalls, s.stats.toolErrors], [5, 2]);
+  });
+
+  it("a cell whose printed result has a nonzero exit fails, with no nested record seen", async () => {
+    const path = join(mkdtempSync(join(tmpdir(), "codex-cm-")), `rollout-${CM}.jsonl`);
+    const rec = (type: string, payload: Record<string, unknown>) => JSON.stringify({ timestamp: "2026-11-01T10:00:00.000Z", type, payload });
+    const out = (chunk: Record<string, unknown>) => [{ type: "input_text", text: "Script completed\nWall time 0.1 seconds\nOutput:\n" }, { type: "input_text", text: JSON.stringify(chunk) }];
+    writeFileSync(
+      path,
+      [
+        rec("session_meta", { id: CM, cwd: "/work/demo" }),
+        rec("response_item", { type: "custom_tool_call", call_id: "call_x", name: "exec", input: "text(await tools.exec_command({cmd:\"false\"}));" }),
+        rec("response_item", { type: "custom_tool_call_output", call_id: "call_x", output: out({ exit_code: 1, output: "" }) }),
+        rec("response_item", { type: "custom_tool_call", call_id: "call_y", name: "exec", input: "text(await tools.exec_command({cmd:\"cat log.json\"}));" }),
+        rec("response_item", { type: "custom_tool_call_output", call_id: "call_y", output: out({ exit_code: 0, output: '{"exit_code": 1}' }) }),
+      ].join("\n") + "\n",
+    );
+    const events = await convertRollout(testCtx().ctx, path, { mode: "full" });
+    assert.deepEqual([end(events, "call_x").payload.ok, end(events, "call_y").payload.ok], [false, true], "only the printed result's own exit_code counts");
+  });
+
+  it("a plain exec_command rollout has no wrappers or parents", async () => {
+    const events = await convertRollout(testCtx().ctx, join(FIXTURES, "codex", "home", "sessions", "2026", "11", "01", `rollout-2026-11-01T10-00-00-${SID}.jsonl`), { mode: "full" });
+    const tools = events.filter((e) => e.kind === "tool.start" || e.kind === "tool.end");
+    assert.ok(tools.length > 0 && tools.every((e) => e.parentId === undefined && e.payload.wrapper === undefined));
+  });
+
+  it("hooks: nested calls get the same parent as the backfill, from the rollout as it stood", async () => {
+    const { ctx } = testCtx();
+    const live: AgentEvent[] = [];
+    for (const line of loadSpool("codex/code-mode/hooks.spool.jsonl")) live.push(...(await codex.normalize(line, ctx)));
+    const backfilled = new Map((await convertRollout(ctx, rollout, { mode: "full" })).map((e) => [e.id, e]));
+    for (const e of live.filter((x) => x.kind === "tool.start" || x.kind === "tool.end")) {
+      assert.ok(e.parentId, `${e.kind} ${e.payload.toolUseId} has a parent`);
+      assert.equal(e.parentId, backfilled.get(e.id)?.parentId, `${e.kind} ${e.payload.toolUseId} matches the backfilled copy`);
+    }
+
+    // At PreToolUse time the rollout ends mid-cell: the open cell is the parent.
+    const lines = readFileSync(rollout, "utf8").split("\n");
+    const cut = lines.findIndex((l) => l.includes('"custom_tool_call_output"') && l.includes('"call_c1"'));
+    const partial = join(mkdtempSync(join(tmpdir(), "codex-cm-")), "rollout.jsonl");
+    writeFileSync(partial, lines.slice(0, cut).join("\n") + "\n");
+    const pre = loadSpool("codex/code-mode/hooks.spool.jsonl")[2]!;
+    const [e] = await codex.normalize({ ...pre, raw: { ...(pre.raw as object), transcript_path: partial } }, ctx);
+    assert.equal(e!.parentId, backfilled.get(e!.id)?.parentId);
   });
 });
 

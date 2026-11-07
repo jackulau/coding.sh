@@ -105,6 +105,8 @@ export interface AgentEvent {
    * - subagent.end:   { subagentId, ok?, result? (truncated), childSessionId? }
    * - tool.start: { tool, toolUseId, input, server? (MCP server name) }
    * - tool.end:   { tool, toolUseId, ok, durationMs?, output? (truncated) }
+   *   (both: wrapper? — a call that runs other tool calls, e.g. a Codex code-mode
+   *   cell; its calls point at it by parentId and only they count in session stats)
    * - file.change: { path, op: "add"|"modify"|"delete", additions?, deletions? }
    * - test.result: { runner?, passed, failed, skipped? }
    * - context.compact: { trigger: "auto"|"manual", tokensBefore? }

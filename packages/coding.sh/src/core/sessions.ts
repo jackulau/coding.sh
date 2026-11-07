@@ -244,6 +244,8 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
         break;
       case "tool.start":
       case "tool.end": {
+        // A wrapper (Codex code-mode cell) runs other tool calls; those are the ones counted.
+        if (e.payload.wrapper === true) break;
         const id = e.payload.toolUseId;
         if (typeof id === "string" && id) toolIds.add(id);
         else if (e.kind === "tool.start") idlessStarts++;
@@ -379,7 +381,7 @@ export function latencyStats(sorted: AgentEvent[], endedAt?: number): LatencySta
       if (t !== undefined) ttft.push(t);
     } else if (e.kind === "tool.start") {
       if (typeof e.payload.toolUseId === "string") toolStartTs.set(e.payload.toolUseId, e.ts);
-    } else if (e.kind === "tool.end") {
+    } else if (e.kind === "tool.end" && e.payload.wrapper !== true) {
       let d = num(e.durationMs) ?? num(e.payload.durationMs);
       if (d === undefined && typeof e.payload.toolUseId === "string") {
         const startTs = toolStartTs.get(e.payload.toolUseId);
