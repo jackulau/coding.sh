@@ -8,7 +8,7 @@
 // - GIT_OPTIONAL_LOCKS=0 so read-only commands never refresh/rewrite the
 //   user's index behind their back.
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { killTree } from "./spawn.ts";
 
@@ -198,10 +198,27 @@ export async function git(args: string[], opts: GitRunOptions = {}): Promise<str
 /** Top-level directory of the work tree containing `cwd`, or undefined when not inside one. */
 export async function repoRoot(cwd: string): Promise<string | undefined> {
   if (!existsSync(cwd)) return undefined;
-  const r = await run(["rev-parse", "--show-toplevel"], { cwd, allowFail: true });
-  const root = r.stdout.trim();
-  // resolve(): git prints C:/Users/… on Windows; callers compare against native paths.
-  return r.code === 0 && root ? resolve(root) : undefined;
+  const r = await run(["rev-parse", "--show-toplevel", "--show-prefix"], { cwd, allowFail: true });
+  const [root, prefix] = r.stdout.split("\n").map((l) => l.trim());
+  return r.code === 0 && root ? nativeRoot(cwd, root, prefix) : undefined;
+}
+
+/**
+ * The work-tree root as a native path. On Windows git prints C:/… with long
+ * names, while the caller's cwd may use 8.3 short names (C:\Users\RUNNER~1, as
+ * in a default TEMP), so the root is rebuilt from cwd and git's --show-prefix to
+ * keep the caller's spelling, as long as both name the same directory.
+ */
+function nativeRoot(cwd: string, gitRoot: string, prefix: string | undefined): string {
+  const root = resolve(gitRoot);
+  if (process.platform !== "win32" || prefix === undefined) return root;
+  const fromCwd = resolve(cwd, ...prefix.split("/").filter(Boolean).map(() => ".."));
+  if (fromCwd === root) return root;
+  try {
+    return realpathSync.native(fromCwd).toLowerCase() === realpathSync.native(root).toLowerCase() ? fromCwd : root;
+  } catch {
+    return root;
+  }
 }
 
 export async function isRepo(cwd: string): Promise<boolean> {
@@ -246,16 +263,16 @@ export interface RepoLayout {
 /** Locations of a repo's git dirs. Handles linked worktrees and submodules (gitdir files). */
 export async function layout(cwd: string): Promise<RepoLayout | undefined> {
   if (!existsSync(cwd)) return undefined;
-  const r = await run(["rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir", "--show-object-format"], {
+  const r = await run(["rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir", "--show-object-format", "--show-prefix"], {
     cwd,
     allowFail: true,
   });
   if (r.code !== 0) return undefined;
-  const [root, gitDir, commonDir, fmt] = r.stdout.split("\n").map((l) => l.trim());
+  const [root, gitDir, commonDir, fmt, prefix] = r.stdout.split("\n").map((l) => l.trim());
   if (!root || !gitDir || !commonDir) return undefined;
   // resolve() also turns git's C:/… output into a native path on Windows.
   const abs = (p: string) => resolve(cwd, p);
-  return { root: resolve(root), gitDir: abs(gitDir), commonDir: abs(commonDir), objectFormat: fmt === "sha256" ? "sha256" : "sha1" };
+  return { root: nativeRoot(cwd, root, prefix), gitDir: abs(gitDir), commonDir: abs(commonDir), objectFormat: fmt === "sha256" ? "sha256" : "sha1" };
 }
 
 export const EMPTY_TREE_SHA1 = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";

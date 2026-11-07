@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, chmodSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, chmodSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { diffSnapshots, diffWorkdir, ensureShadow, materialize, shadowRepoPath, snapshot } from "../../src/core/snapshot.ts";
-import { branch, head, isRepo, repoRoot, run } from "../../src/core/git.ts";
+import { branch, head, isRepo, layout, repoRoot, run } from "../../src/core/git.ts";
 import { gitDirFingerprint, gitc, isolate, makeRepo, removeTmp, tmp, treeHash, write } from "../capture/_helpers.ts";
 import { median, timeMs } from "../helpers-timing.ts";
 
@@ -40,6 +40,20 @@ describe("git helpers", () => {
     const unborn = makeRepo();
     assert.equal(await head(unborn), "");
     assert.equal(await branch(unborn), "main");
+  });
+
+  // A default Windows TEMP can use an 8.3 short name (C:\Users\RUNNER~1); git prints long names.
+  test("repoRoot and layout keep the caller's spelling of the root (8.3 short names)", { skip: process.platform !== "win32" && "8.3 short names exist only on Windows" }, async (t) => {
+    const root = makeRepo({ "f.txt": "x" });
+    const long = join(root, "a long directory name");
+    mkdirSync(join(long, "sub"), { recursive: true });
+    gitc(long, "init", "-q");
+    const out = spawnSync("cmd.exe", ["/d", "/s", "/c", `for %I in ("${long}") do @echo %~sI`], { encoding: "utf8", windowsVerbatimArguments: true });
+    const short = out.stdout.trim();
+    if (!short || short.toLowerCase() === long.toLowerCase()) return t.skip("8.3 names are off on this volume");
+    assert.equal(await repoRoot(join(short, "sub")), short);
+    assert.equal((await layout(join(short, "sub")))?.root, short);
+    assert.equal(await repoRoot(join(long, "sub")), long);
   });
 
   test("run reports useful errors and times out", async () => {
@@ -149,7 +163,8 @@ describe("snapshot", () => {
     assert.ok(s?.snapshot);
     assert.equal(s.branch, "feature");
     const alt = readFileSync(join(shadowRepoPath(s.root), "objects", "info", "alternates"), "utf8").trim();
-    assert.equal(alt, join(root, ".git", "objects"));
+    // Same directory; on Windows git may spell it with long names where tmp() has 8.3 ones.
+    assert.equal(realpathSync.native(alt), realpathSync.native(join(root, ".git", "objects")));
     assert.equal(gitc(s.root, "--git-dir", shadowRepoPath(s.root), "show", `${s.snapshot}:f.txt`), "2");
   });
 

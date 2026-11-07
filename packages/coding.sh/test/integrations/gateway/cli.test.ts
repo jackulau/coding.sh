@@ -126,12 +126,14 @@ describe("hook records gateway routing", () => {
     const { env } = home();
     const run = (extra: Record<string, string>) =>
       spawnSync(process.execPath, [HOOK, "claude-code", "Stop"], { input: JSON.stringify({ session_id: "s1", hook_event_name: "Stop" }), env: { ...env, ...extra }, encoding: "utf8" });
-    assert.equal(run({ ANTHROPIC_BASE_URL: "https://ai-gateway.vercel.sh/claude-code", ANTHROPIC_AUTH_TOKEN: TEST_KEY, CODING_SH_NO_AUTO_INGEST: "1" }).status, 0);
-    assert.equal(run({ ANTHROPIC_BASE_URL: "https://api.anthropic.com", CODING_SH_NO_AUTO_INGEST: "1" }).status, 0);
     const dir = join(env.CODING_SH_HOME!, "spool", "claude-code");
-    const text = readdirSync(dir).map((f) => readFileSync(join(dir, f), "utf8")).join("");
-    const lines = text.split("\n").filter(Boolean).map((l) => JSON.parse(l) as SpoolLine);
-    assert.deepEqual(lines.map((l) => l.gateway), ["vercel", undefined]);
-    assert.ok(!text.includes(TEST_KEY));
+    const spool = () => readdirSync(dir).map((f) => readFileSync(join(dir, f), "utf8")).join("");
+    const gateways = () => spool().split("\n").filter(Boolean).map((l) => (JSON.parse(l) as SpoolLine).gateway);
+    // Checked after each run: the two runs may write separate spool files, listed in any order.
+    assert.equal(run({ ANTHROPIC_BASE_URL: "https://ai-gateway.vercel.sh/claude-code", ANTHROPIC_AUTH_TOKEN: TEST_KEY, CODING_SH_NO_AUTO_INGEST: "1" }).status, 0);
+    assert.deepEqual(gateways(), ["vercel"]);
+    assert.equal(run({ ANTHROPIC_BASE_URL: "https://api.anthropic.com", CODING_SH_NO_AUTO_INGEST: "1" }).status, 0);
+    assert.deepEqual(gateways().sort(), [undefined, "vercel"].sort());
+    assert.ok(!spool().includes(TEST_KEY));
   });
 });
