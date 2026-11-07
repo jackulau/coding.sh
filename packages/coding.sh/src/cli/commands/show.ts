@@ -5,6 +5,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { sessionOutline, phaseLabel, storedOutline, type Outline, type Phase } from "../../core/outline.ts";
 import { costNote } from "../../core/pricing.ts";
+import { SKILL_EVENT_KINDS, SKILL_TAG_PREFIX, skillUse, type SkillUseReport } from "../../core/skills-use.ts";
 import type { AgentEvent, Session } from "../../core/types.ts";
 import type { DurableStats } from "../../schema/index.ts";
 import { positiveInt } from "../args.ts";
@@ -126,6 +127,20 @@ function harnessText(p: Record<string, unknown>): string {
   }
 }
 
+const VIA_TEXT = { invoke: "invoked", read: "read", run: "ran" } as const;
+
+/** "pdf (project, invoked, first, before any edit) · pdf-tools (personal, read)". */
+export function skillsText(r: SkillUseReport): string {
+  return r.used
+    .map((u, i) => {
+      const parts: string[] = [u.scope, ...u.via.map((v) => VIA_TEXT[v])];
+      if (i === 0) parts.push("first");
+      if (u.beforeFirstChange) parts.push("before any edit");
+      return `${u.name} (${parts.join(", ")})`;
+    })
+    .join(" · ");
+}
+
 /** Header rows for waste: repeated read-only calls and prompt-cache breaks. */
 export function wasteRows(s: Session): [string, string][] {
   const rows: [string, string][] = [];
@@ -141,6 +156,12 @@ export function wasteRows(s: Session): [string, string][] {
     rows.push(["Cache breaks", `${b.count}: ${tokens(b.lostTokens)} prompt tokens billed again${cost} (${causes})`]);
   }
   return rows;
+}
+
+/** Skill use recomputed from the session's events (only the `skill:` tags are stored); undefined when it has none. */
+async function sessionSkills(index: IndexStore, s: Session): Promise<SkillUseReport | undefined> {
+  if (!s.flags.some((f) => f.startsWith(SKILL_TAG_PREFIX))) return undefined;
+  return skillUse(await index.listEvents(s.id, { kinds: SKILL_EVENT_KINDS }), { cwd: s.cwd });
 }
 
 const RESUME_TEXT = { crash: "a crash", deploy: "a deploy", restart: "a worker restart", wait: "a wait" } as const;
@@ -263,8 +284,9 @@ export async function run(c: CommandContext): Promise<number> {
     // A HEAD-based diff can include edits from before the session; count it only against a real start snapshot.
     if (changes?.startKind === "snapshot") for (const f of changes.files) changed.add(f.path);
     const filesChanged = Math.max(s.stats.filesChanged, changed.size);
+    const skills = await sessionSkills(ctx.index, s);
     if (out.json) {
-      out.data({ session: sessionJson(s), snapshot: changes ?? null, events: all ? full : events, phases: outline?.phases ?? [], days: outline?.days ?? [], subagents: treeJson(tree) });
+      out.data({ session: sessionJson(s), snapshot: changes ?? null, events: all ? full : events, phases: outline?.phases ?? [], days: outline?.days ?? [], subagents: treeJson(tree), skills: skills?.used ?? [] });
       return 0;
     }
     const lat = s.stats.latency;
@@ -299,6 +321,7 @@ export async function run(c: CommandContext): Promise<number> {
     if (d) rows.push(...durableRows(d));
     if (outline && outline.phases.length > 1) rows.push(["Phases", phaseCounts(outline)]);
     rows.push(...wasteRows(s));
+    if (skills?.used.length) rows.push(["Skills", skillsText(skills)]);
     if (derails.length) rows.push(["Derails", derails.slice(0, 4).map((d) => `${d.flag} at +${duration(Math.max(0, d.ts - s.startedAt))}`).join(", ") + (derails.length > 4 ? ` +${derails.length - 4} more` : "")]);
     for (const [k, v] of rows) out.print(`  ${k.padEnd(14)}${v}`);
     out.print();

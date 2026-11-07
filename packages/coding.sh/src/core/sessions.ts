@@ -7,8 +7,9 @@ import { phasesToStore, sessionOutline } from "./outline.ts";
 import type { AgentEvent, DuplicateUsage, LatencyStats, LlmErrors, Session, Usage } from "../schema/index.ts";
 import { DURABLE_FLAGS, durableFlags, durableStats } from "./durable.ts";
 import { detectTestTamper } from "./intent.ts";
-// waste.ts imports commandOf and FLAGS back from here, inside functions only.
+// waste.ts and skills-use.ts import commandOf and FLAGS back from here, inside functions only.
 import { cacheBreakStats, findCacheBreaks } from "./cache-breaks.ts";
+import { skillFlags, skillUse } from "./skills-use.ts";
 import { wasteOf } from "./waste.ts";
 
 export const FLAGS = {
@@ -26,6 +27,8 @@ export const FLAGS = {
   gateway: GATEWAY_FLAG,
   /** Three or more read-only calls repeated with an unchanged result in one context (core/waste.ts, Session.stats.waste). */
   duplicateFetch: "duplicate-fetch",
+  /** One skill name loaded from two directories, e.g. a project copy and a personal copy (core/skills-use.ts). */
+  skillCopyConflict: "skill-copy-conflict",
   /** Derails (core/derail.ts): where the session went off the rails. */
   ...DERAIL_FLAGS,
 } as const;
@@ -474,6 +477,7 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   }
   const cacheBreaks = cacheBreakStats(findCacheBreaks(sorted));
   if (cacheBreaks) session.stats.cacheBreaks = cacheBreaks;
+  session.flags.push(...skillFlags(skillUse(sorted, { cwd: cwd ?? prev?.cwd })));
   if (lastTest) {
     session.stats.testsPassed = lastTest.passed;
     session.stats.testsFailed = lastTest.failed;

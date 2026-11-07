@@ -271,8 +271,17 @@ describe("real install: Claude Code 2.1.319", () => {
     ]);
   });
 
-  it("the session: three files changed, and the host stays claude-code", () => {
+  it("the session: one duplicate read, a cache break and a compaction break, two skills used", () => {
     const s = buildSession(events);
+    assert.deepEqual(s.stats.waste, { duplicateFetches: 1, duplicateFetchTokens: s.stats.waste!.duplicateFetchTokens, readOnlyCalls: 5 });
+    const cb = s.stats.cacheBreaks!;
+    assert.deepEqual([cb.count, cb.lostTokens, cb.byCause.other?.lostTokens, cb.byCause.compaction?.lostTokens], [2, 31_480, 22_440, 9_040]);
+    // claude-sonnet-4-5: cache write $3.75/M, cache read $0.30/M.
+    assert.ok(Math.abs(cb.extraUsd! - (31_480 * 3.45) / 1e6) < 1e-6, String(cb.extraUsd));
+    assert.deepEqual(
+      s.flags.filter((f) => f.startsWith("skill")),
+      ["skill:greet", "skill:hello"],
+    );
     assert.equal(s.stats.filesChanged, 3);
     assert.equal(s.agent, "claude-code", "harness loads never name the host (payload.via)");
   });

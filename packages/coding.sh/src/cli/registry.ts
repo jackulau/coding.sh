@@ -242,7 +242,7 @@ export const COMMANDS: CommandSpec[] = [
       LIMIT(20),
       { name: "subagents", type: "boolean", desc: "Include subagent sessions" },
       { name: "project", type: "string", value: "<ID>", desc: "Only sessions in this serve project (default: all)" },
-      { name: "flag", type: "string", value: "<NAME>", desc: "Only sessions with this flag: looping, failure-streak, churn, no-progress, stalled, context-thrash, premature-completion, duplicate-fetch, …" },
+      { name: "flag", type: "string", value: "<NAME>", desc: "Only sessions with this flag: looping, failure-streak, churn, no-progress, stalled, context-thrash, premature-completion, duplicate-fetch, …, or a tag such as skill:<name>" },
       FRESH,
     ],
     examples: ["coding.sh sessions", "coding.sh sessions --agent codex --since 7d", "coding.sh sessions --flag looping --since 7d", "coding.sh sessions --store postgres://… --project demo"],

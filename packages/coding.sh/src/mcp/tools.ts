@@ -212,7 +212,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         repo: REPO,
         since: SINCE("all time"),
         until: UNTIL,
-        flag: { type: "string", description: "Only sessions with this flag: premature-completion, repeated-tool-failure, no-verification, compaction, test-tamper, duplicate-fetch, or a derail: looping, failure-streak, churn, no-progress, stalled, context-thrash." },
+        flag: { type: "string", description: "Only sessions with this flag: premature-completion, repeated-tool-failure, no-verification, compaction, test-tamper, duplicate-fetch, skill-copy-conflict, a derail (looping, failure-streak, churn, no-progress, stalled, context-thrash), or a tag such as skill:<name>." },
         flagged: { type: "boolean", description: "Only sessions with any failure flag." },
         includeSubagents: { type: "boolean", default: false, description: "Also list subagent (child) sessions. Default false." },
         project: PROJECT,
@@ -238,7 +238,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       name: "session_get",
       title: "Get a session",
       description:
-        "One session as a digest: summary (with waste: repeated reads and prompt-cache breaks), per-turn index, and a timeline of prompts, replies, tool calls (with failures and durations), model calls, file changes and tests. Pass turn to zoom into one turn; page with cursor.",
+        "One session as a digest: summary (with waste: repeated reads and prompt-cache breaks), skills used, per-turn index, and a timeline of prompts, replies, tool calls (with failures and durations), model calls, file changes and tests. Pass turn to zoom into one turn; page with cursor.",
       inputSchema: input(
         {
           sessionId: SESSION_ID,

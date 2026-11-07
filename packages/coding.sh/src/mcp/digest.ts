@@ -1,6 +1,7 @@
 // Session digests: the structured one session_get returns and the markdown
 // one the codingsh://session/<id> resource serves.
 import { costNote } from "../core/pricing.ts";
+import { SKILL_EVENT_KINDS, SKILL_TAG_PREFIX, skillUse } from "../core/skills-use.ts";
 import type { IndexStore, Session } from "../core/types.ts";
 import { clip, countNodes, fmtMs, isRunning, iso, lastActivity, sessionSummary, splitTurns, subagentTree, timeline, turnIndex, type SubagentNode, type TimelineEntry, type TurnInfo } from "./data.ts";
 
@@ -50,6 +51,8 @@ export async function sessionDigest(index: IndexStore, s: Session, o: DigestOpts
   const page = all.slice(start, start + o.limit);
   const kids = await index.listSessions({ parentSessionId: s.id, limit: 500 });
   const subagentEvents = events.filter((e) => e.kind === "subagent.start").length;
+  // Only the skill: tags are stored; the rollup is recomputed from the events that feed it.
+  const skills = s.flags.some((f) => f.startsWith(SKILL_TAG_PREFIX)) ? skillUse(await index.listEvents(s.id, { kinds: SKILL_EVENT_KINDS }), { cwd: s.cwd }).used : [];
   // The turn index is capped so a 300-turn session still fits in a reply.
   const TURN_CAP = 40;
   return {
@@ -63,6 +66,7 @@ export async function sessionDigest(index: IndexStore, s: Session, o: DigestOpts
     ...(o.from !== "tail" && start + o.limit < all.length ? { nextCursor: String(start + o.limit) } : {}),
     ...(events.length >= DIGEST_EVENT_CAP ? { eventsTruncated: true } : {}),
     subagents: kids.length + subagentEvents ? { childSessions: kids.length, spawned: subagentEvents } : undefined,
+    ...(skills.length ? { skills } : {}),
   };
 }
 

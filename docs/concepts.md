@@ -45,8 +45,12 @@ its own session with a parent id. `coding.sh sessions --subagents` lists them, a
   unflagged.
 - `duplicate-fetch`: three or more read-only calls (Read, Grep, `cat`, `git diff`, …) in one context
   returned the same result as an earlier call, with no edit or compaction in between.
+- `skill-copy-conflict`: the session used two copies of one skill, for example the project's and a
+  personal one.
 
-A flag with a colon, such as `gateway:vercel`, is a tag rather than a failure. Durable workflow runs
+A flag with a colon, such as `gateway:vercel`, is a tag rather than a failure. Each skill a session
+used (through the Skill tool, or by reading or running a file in the skill's folder) adds a
+`skill:<name>` tag, so `coding.sh sessions --flag skill:pdf` lists the sessions that used it. Durable workflow runs
 get two notes rather than failures: `step-retried` (a step took more than one attempt) and `resumed`
 (the run continued after a crash, a deploy or a restart). See
 [Trace a durable workflow](how-to/trace-durable-workflow.md).
