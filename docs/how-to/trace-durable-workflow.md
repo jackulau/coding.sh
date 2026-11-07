@@ -8,9 +8,10 @@ and the points where the run resumed.
 Site version: [coding.sh/docs/how-to/trace-durable-workflow](https://coding.sh/docs/how-to/trace-durable-workflow).
 
 This page sets it up for the Vercel Workflow SDK and Temporal, then for Inngest, Restate, DBOS,
-LangGraph and Cloudflare Workflows. Each sends OpenTelemetry to the local collector; nothing else is
-needed on the coding.sh side. Every engine here was checked with a real run: a step that fails once,
-a worker killed in the middle of a step, a sleep, and a restart on a new version.
+LangGraph and Cloudflare Workflows, in TypeScript and, for Temporal, Restate and DBOS, in Python.
+Each sends OpenTelemetry to the local collector; nothing else is needed on the coding.sh side.
+Every engine here was checked with a real run: a step that fails once, a worker killed in the
+middle of a step, a sleep, and a restart on a new version.
 
 ## Start the collector
 
@@ -114,6 +115,36 @@ Activities are the steps. The session id is `temporal:<workflow id>:<run id>`. I
 activity interceptors are installed, each activity is its own trace; the run still comes out as
 one session, because every activity span names its workflow.
 
+**Python.** Build the global provider with `create_tracer_provider()` from
+`temporalio.contrib.opentelemetry`, then pass `OpenTelemetryPlugin(add_temporal_spans=True)` to
+`Client.connect` only; the worker inherits it. `add_temporal_spans` defaults to `False`, and then
+the plugin emits no Temporal spans at all, so each model call becomes an unrelated trace. The
+Python client's start span names no run id: when it reaches the collector before any worker's
+span, the session id is the run's trace id instead.
+
+**Sleeps.** Temporal exports no timer span. A workflow interceptor in TypeScript wraps every
+`sleep()` in one; register the module with `interceptors: { workflowModules: [...] }` on the
+worker. The worker copies the workflow and run ids onto the span, so it joins the run:
+
+```js
+// sleep-spans.mjs
+import { trace } from "@opentelemetry/api";
+export const interceptors = () => ({ outbound: [{ async startTimer(input, next) {
+  const name = input.options?.summary ?? "sleep";
+  const span = trace.getTracer("workflow-sleep").startSpan(`sleep ${name}`, { startTime: Date.now(), attributes: { "workflow.wait.name": name, "workflow.wait.duration": input.durationMs } });
+  try { return await next(input); } finally { span.end(Date.now()); }
+} }] });
+```
+
+Python has no timer interceptor, so wrap the sleep and name the run yourself. The span starts at
+workflow time when the sleep began, and the worker that wakes it up ends it, even after a deploy:
+
+```python
+info = workflow.info()
+with opentelemetry.trace.get_tracer(__name__).start_as_current_span("sleep pause", attributes={"workflow.wait.name": "pause", "temporalWorkflowID": info.workflow_id, "temporalRunID": info.run_id}):
+    await workflow.sleep(timedelta(seconds=6))
+```
+
 ## Other engines
 
 Whatever the engine, register a tracer provider in each process with its own `service.instance.id`
@@ -131,6 +162,16 @@ provider without saying so:
 Steps show up through the spans made inside them, such as AI SDK model calls. The session id is
 `inngest:<run id>`.
 
+Inngest exports no sleep, and its middleware never sees one. To show a sleep as a wait, keep its
+start time in a step and make the span in a step after it, which runs in whichever process wakes
+up:
+
+```js
+const t0 = await step.run("pause:start", () => Date.now());
+await step.sleep("pause", "6s");
+await step.run("pause:woke", () => trace.getTracer("app").startSpan("sleep pause", { startTime: t0, attributes: { "workflow.wait.name": "pause" } }).end());
+```
+
 **Restate.** Point the server at the collector, with the path:
 `RESTATE_TRACING_ENDPOINT=otlp+json+http://127.0.0.1:4318/v1/traces`. In the service, add the SDK's
 hook, which needs version 2 of the OpenTelemetry JS SDK:
@@ -140,11 +181,36 @@ import { openTelemetryHook } from "@restatedev/restate-sdk-opentelemetry";
 // restate.workflow({ name, handlers, options: { hooks: [openTelemetryHook({ tracer })] } })
 ```
 
-`ctx.run` closures are the steps, and the session id is `restate:<invocation id>`.
+`ctx.run` closures are the steps. One invocation is one trace, so the session id is its trace id;
+`coding.sh show` names the invocation id. A sleep is a wait, from the server's journal.
+
+In Python, the SDK makes no spans. Wrap your provider in `RestateTracerProvider` from
+`restate.ext.tracing` and make model calls through its tracer, so they join the server's trace.
+The steps then come from the server's journal: each `ctx.run` that an attempt started and finished.
 
 **DBOS.** Register your own provider and set `tracingEnabled: true` and `enableOTLP: false` in
 `DBOS.setConfig`. DBOS's own exporter sends only its spans, so model calls inside steps would be
-missing. Steps are the step functions; the session id is `dbos:<workflow id>`.
+missing. Steps are the step functions; the session id is `dbos:<workflow id>`. In Python, set your
+provider as the global one and pass `enable_otlp: True` with no `otlp_traces_endpoints`; DBOS then
+makes its spans on your provider.
+
+DBOS TypeScript exports no sleep (DBOS Python marks where one starts). To show it as a wait, take
+a checkpointed start time, so a recovered run keeps the first one, and make the span in a step
+after the sleep:
+
+```js
+const t0 = await DBOS.now();
+await DBOS.sleep(6000);
+await DBOS.runStep(async () => trace.getTracer("app").startSpan("sleep cooldown", { startTime: t0, attributes: { "workflow.wait.name": "cooldown", "dbos.operation.workflow_id": DBOS.workflowID } }).end(), { name: "cooldown:woke" });
+```
+
+The same in Python:
+
+```python
+t0 = DBOS.run_step({"name": "sleep_start"}, time.time_ns)
+DBOS.sleep(6)
+trace.get_tracer("app").start_span("sleep cool-down", start_time=t0, attributes={"workflow.wait.name": "cool-down", "dbos.operation.workflow_id": DBOS.workflow_id}).end()
+```
 
 **LangGraph.** Use a checkpointer and a tracer: OpenInference
 (`LangChainInstrumentor().instrument(tracer_provider=provider)`) or LangSmith in
@@ -200,22 +266,26 @@ where the run resumed. Click a bar to jump to that attempt's span.
 Durable engines re-run the workflow function from its history to find where it left off. The
 Vercel SDK marks those runs (`workflow.execution.mode=replay`), and coding.sh leaves model calls
 made under them out of the session's tokens and cost, so a resumed run isn't billed twice.
-DBOS marks replayed steps `cached`, and they show as replayed. Temporal and Restate don't export
-replayed spans at all.
+DBOS TypeScript marks replayed steps `cached`, and they show as replayed. DBOS Python doesn't, but
+it never runs a finished step twice, so a later span of one is read as a replay. Temporal and
+Restate don't export replayed spans at all.
 
 ## Limits
 
 - No engine exports an attempt killed with its process. coding.sh infers it, and counts as busy
   only the time its process was still seen; the rest is lost to the crash.
-- Temporal, Inngest and DBOS (TypeScript) export no sleep, so a sleep shows as idle time, not as
-  a wait. Temporal and LangGraph put no attempt number on spans; coding.sh numbers attempts by
-  order.
+- Temporal, Inngest and DBOS TypeScript export no sleep, so without the snippets above a sleep
+  shows as idle time, not as a wait. The Inngest and DBOS snippets add a short step after the
+  sleep. Temporal, Restate and LangGraph put no attempt number on spans; coding.sh numbers
+  attempts by order.
 - Inngest exports no error text for a failed step, and its session is titled by run id, since
-  spans name the function only by an internal id.
-- A DBOS process killed in the middle of a step looks like one that stopped cleanly, so the run
-  shows a resume after a restart, not a crash.
-- Restate's client span is its own session, and running the same workflow key again adds to the
-  earlier run's session, because Restate gives it the same invocation id.
+  spans name the function only by an internal id. The Restate server records no error text
+  either, only "transient failure".
+- A DBOS TypeScript process killed in the middle of a step looks like one that stopped cleanly,
+  so the run shows a resume after a restart, not a crash. DBOS Python's sleep marker tells the two
+  apart.
+- With DBOS's native exporter (`otlp_traces_endpoints`, or `enableOTLP` in TypeScript), your own
+  spans are dropped, the model calls among them.
 - A local Cloudflare Workflow doesn't pick a run up again after `wrangler dev` restarts until you
   call `pause()` and `resume()` on the instance, so a local run shows that wait as downtime.
 

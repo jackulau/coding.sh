@@ -12,9 +12,12 @@ Trace id is not a run key. Vercel starts a new trace per queue delivery by defau
 |---|---|---|---|---|---|---|
 | Vercel Workflow 5.4 | `workflow.run.id` (`wrun_…`) | `step.execute <name>`: `step.name`, `step.id` | `step.attempt`, failed attempts only | `world.events.create wait_created` / `wait_completed` spans | `workflow.run` `workflow.execution.mode=replay` | real run, linked and continuous trace modes |
 | Temporal TS 1.25 | `temporalWorkflowId` + `run_id` | `StartActivity:<type>` (schedule) → `RunActivity:<type>` (attempt) | none | none (a timer is a gap) | not exported | real run, plugin and activity-interceptor setups |
+| Temporal Python 1.35 | `temporalWorkflowID` + `temporalRunID` (the client's start span has no run id) | as TS | none | none | not exported | real run, `OpenTelemetryPlugin` and the legacy `TracingInterceptor` |
 | Inngest 4.26 | `sdk.run.id` | your spans inside a step carry `inngest.step.id` | `inngest.step.attempt` (from 0) | none exported | none | real run, Dev Server 1.51 |
-| Restate 1.8 | `restate.invocation.id` | SDK `run (<name>)`, with only `restate.run.name` | none (one server `invocation-attempt` span each) | `Command/Sleep` event on `invocation-attempt` | none; replayed `run` closures emit nothing | real run, server 1.8.1 and TS SDK 1.18 |
+| Restate 1.8 | `restate.invocation.id`; one invocation is one trace | SDK `run (<name>)`, with only `restate.run.name` | none (one server `invocation-attempt` span each) | `Command/Sleep` event on `invocation-attempt` | none; replayed `run` closures emit nothing | real run, server 1.8.1 and TS SDK 1.18 |
+| Restate Python 1.4 | as above | none: journal events on `invocation-attempt` | none | as above | none | real run, server 1.8.1 and `restate-sdk` 1.4.2 |
 | DBOS TS 5.4 | `operationUUID` / `dbos.operation.workflow_id` | span with `operationType=step` | span events `Step attempt N failed` | none in TS | `cached: true` | real run, Postgres 16 |
+| DBOS Python 3.4 | as TS | as TS | span events `Step attempt N failed` (N from 0) | a `sleep` span as the sleep starts | none | real run, Postgres 16 |
 | LangGraph 1.2 | `thread_id` (`langsmith.metadata.thread_id`, `session.id`) | `langgraph_node` | none | `GraphInterrupt` exception on the node span | n/a | real run, SQLite checkpointer, OpenInference and LangSmith tracers |
 | Cloudflare Workflows | none built in | none | none (`ctx.attempt` in code) | none | none | real run under `wrangler dev` 4.158, with the attributes below set by the Worker |
 
@@ -62,7 +65,7 @@ Pinned: temporalio/sdk-typescript @ `615a684a` (`@temporalio/interceptors-opente
 | `StartActivity:<type>` | workflow | as above; parent of every attempt of that activity |
 | `RunActivity:<type>` | activity worker | `temporalActivityId`; `temporalWorkflowId` and `run_id` when run from a workflow |
 
-The `_tracer-data` header lives in workflow history, so every later worker continues the same trace: one execution is one trace id across days. Workflow spans leave the sandbox through a sink that is not called during replay, so replays are not exported. `info.attempt` exists on the activity context but is not written to the span. History (`handle.fetchHistory()`, `temporal workflow show --output json`) has the attempt numbers and the timers. Python (`temporalio.contrib.opentelemetry`) uses the same span names with `temporalWorkflowID` / `temporalRunID` keys ([_interceptor.py](https://github.com/temporalio/sdk-python/blob/72406f85e259e81ce165fc686f60e19a28b5c667/temporalio/contrib/opentelemetry/_interceptor.py)); unverified by a run.
+The `_tracer-data` header lives in workflow history, so every later worker continues the same trace: one execution is one trace id across days. Workflow spans leave the sandbox through a sink that is not called during replay, so replays are not exported. `info.attempt` exists on the activity context but is not written to the span. History (`handle.fetchHistory()`, `temporal workflow show --output json`) has the attempt numbers and the timers. Python (`temporalio.contrib.opentelemetry`) uses the same span names with `temporalWorkflowID` / `temporalRunID` keys ([_interceptor.py](https://github.com/temporalio/sdk-python/blob/72406f85e259e81ce165fc686f60e19a28b5c667/temporalio/contrib/opentelemetry/_interceptor.py)); see [Temporal (Python)](#temporal-python).
 
 Export: `new OpenTelemetryPlugin({ resource, spanProcessor })` on both the Client and the Worker, with an OTLP/HTTP exporter.
 
@@ -72,7 +75,19 @@ Export: `new OpenTelemetryPlugin({ resource, spanProcessor })` on both the Clien
 - With the plugin on client and worker, the whole run is one trace. With only the activity interceptors, each activity is its own trace; the run id still joins them.
 - No span says which attempt an activity is. A retry is a second `RunActivity` under the same `StartActivity`.
 - The killed attempt's `RunActivity` span never arrives. What remains is a `StartActivity` that opens 14 s before its only reported attempt, which runs on a different worker. coding.sh reads a lead of 2 s or more on a new worker as an attempt lost with its process.
-- `workflow.sleep` is a gap between activities; nothing marks it as a timer.
+- `workflow.sleep` is a gap between activities; nothing marks it as a timer. A workflow outbound interceptor (`startTimer`) can wrap every sleep in a span with `workflow.wait.name`; the worker copies the workflow info onto it, and coding.sh reads it as a wait. Checked with a real run: the span starts with the workflow task where the sleep began and ends with the one after `TimerFired`, exported by the version-2 worker that woke it.
+
+## Temporal (Python)
+
+**What the real run showed** (`temporalio` 1.35.0, Temporal CLI 1.10.0 dev server, OTel Python 1.45.2, Python 3.12, the same scenario):
+
+- The SDK README calls `OpenTelemetryPlugin` the recommended path. It needs the global provider from `create_tracer_provider()` (else ValueError) and goes on the client only; the worker inherits it, and adding it to both duplicates spans. `add_temporal_spans` defaults to `False`, and then no Temporal span is made and no context is propagated: each model call is its own trace, five unrelated sessions and no run.
+- With `add_temporal_spans=True` the run is one trace with the TS span names, keyed `temporalWorkflowID`, `temporalRunID` and `temporalActivityID`. There is no attempt number and no activity type attribute; a retry is a second `RunActivity` under the same `StartActivity`, and the failed attempt has status ERROR `RuntimeError: search API returned 503`.
+- `RunWorkflow` is sent once, by the worker that finishes the run, with its real start from workflow time. Replayed spans are never sent.
+- The client's `StartWorkflow` has `temporalWorkflowID` only. coding.sh gives it its trace's run; when the client's batch arrives before any worker's, the trace id keys the session, so two runs of one workflow id don't merge.
+- The killed attempt left no `RunActivity`; its `StartActivity` opened 6.8 s before the next attempt, on a new worker. coding.sh's TS rule applies unchanged: read lost, then a crash and a deploy resume.
+- The legacy `TracingInterceptor` gives the same steps; its workflow spans have no duration. Resources carry only `service.*` and `telemetry.sdk.*`.
+- No timer interceptor exists in Python (`WorkflowOutboundInterceptor` has none). A span the workflow opens around `workflow.sleep`, with the run's ids and `workflow.wait.name`, is replay-safe: it started on the worker that began the sleep and was exported by the version-2 worker that woke it, 6045 ms for a 6 s timer. The legacy `completed_span()` makes an instant, which coding.sh closes at the next step.
 
 ## Inngest
 
@@ -105,15 +120,23 @@ Server spans `ingress <target>`, `invocation-start`, one `invocation-attempt <ta
 - `invocation-attempt` has events `restate.invocation.lifecycle.new_command` (`Command/Run`, `Command/Sleep` with its name), `run_ended` and `suspended`. The sleep is exact from them: from `Command/Sleep` to the next attempt.
 - The killed attempt's SDK spans never arrived, but its server `invocation-attempt` did: it ends with "transient failure" and its last event is `new_command Run read` with no `run_ended`. coding.sh shows that as the lost attempt of `read`, seen from that event to the attempt's end.
 - The server only says "transient failure"; the error text is on the SDK `attempt` and `run` spans.
-- The client's own span is the root of the trace and carries no invocation id, so it stays a separate session.
-- Workflow invocation ids are deterministic per workflow and key: three runs of the same key on fresh servers got the same id, so re-running a key adds to the same session.
+- The client's own span is the root of the trace and carries no invocation id. coding.sh keys a Restate session by trace id, so it joins the run.
+- Workflow invocation ids are deterministic per workflow and key: three runs of the same key on fresh servers got the same id. Each run is its own trace, so each is its own session.
+
+**What the Python run showed** (`restate-sdk` 1.4.2 on hypercorn 0.18, restate-server 1.8.1, OTel Python 1.45.2):
+
+- The SDK makes no spans. `RestateTracerProvider` (`restate.ext.tracing`) parents your spans on the server's `invocation-attempt`, flat, and returns no-op spans while the handler replays. There is no `run` span and no SDK attempt span.
+- The steps are in the server's journal events: each `new_command Command/Run <name>` opens a run, and `run_ended` closes it. A run that failed and was retried shows only `run_ended` at the start of the next attempt. coding.sh builds the steps from these events and takes each attempt's process from the spans under it.
+- The killed attempt ended with `run read` open, and the next attempt ran on another process: coding.sh shows it as lost with that process. Both failed attempts say "transient failure", the thrown error and the broken pipe alike; the error text appears nowhere in OTLP.
+- Your model spans reached the collector about 5 s before the server's own; the trace keys the session, so they join the run.
+- Five attempts, three processes, the deploy and the sleep (exact from `Command/Sleep` to the next attempt) all came out as with the TS SDK.
 - Setup: the tracing endpoint needs the `/v1/traces` path (without it the server posts to `/`), and plain `http://` means gRPC. The hook needs `@opentelemetry/core` 2.6 or later. `sys_invocation.retry_count` was empty on the completed run; `sys_journal_events` has the errors.
 
 ## DBOS
 
 Pinned: dbos-transact-ts @ `306b7324`, dbos-transact-py @ `236142bd`. Sources: [traces.ts](https://github.com/dbos-inc/dbos-transact-ts/blob/306b7324a050d3fc661aec4c4eef774c8bd38336/src/telemetry/traces.ts), [_tracer.py](https://github.com/dbos-inc/dbos-transact-py/blob/236142bd7a99ff77d04becf5f405a60d6f330591/dbos/_tracer.py).
 
-Tracer `dbos-tracer`; spans are named after the function. Keys: `operationUUID` / `dbos.operation.workflow_id`, `operationType` (`workflow`, `step`, `transaction`), `operationName`, `executorID`, `applicationVersion`. Retries stay inside one step span as events `Step attempt N failed`. A step answered from the system database on recovery has `cached: true`. Python keeps the trace context in workflow attributes, so a recovered workflow continues its trace (unverified by a run).
+Tracer `dbos-tracer`; spans are named after the function. Keys: `operationUUID` / `dbos.operation.workflow_id`, `operationType` (`workflow`, `step`, `transaction`), `operationName`, `executorID`, `applicationVersion`. Retries stay inside one step span as events `Step attempt N failed`. A step answered from the system database on recovery has `cached: true` in TS.
 
 **What the real run showed** (`@dbos-inc/dbos-sdk` 5.4.0, TypeScript, Postgres 16, OTel JS SDK 2.12):
 
@@ -121,10 +144,20 @@ Tracer `dbos-tracer`; spans are named after the function. Keys: `operationUUID` 
 - `executorID` is `local` in every process, so it says nothing about the process; coding.sh ignores it.
 - A retried step is one span. Each failure is an event (`Step attempt 2 failed` for the first one: the number is one ahead) with `error` and `retryIntervalSeconds`. coding.sh splits the span into attempts at the events.
 - Each process is a new trace; TS keeps no trace context in the database. Replayed steps (`cached: true`, 1 to 3 ms) carry no function id, so coding.sh matches them by name and order under their workflow span.
-- `DBOS.sleep` has no span in TS; the sleep is idle time.
+- `DBOS.sleep` has no span in TS; the sleep is idle time. A span made in a step after the sleep, started at a checkpointed `DBOS.now()` and carrying `dbos.operation.workflow_id` and `workflow.wait.name`, shows it as a wait (checked with a real run; the version-2 process made it). DBOS's own exporter drops it, like every user span.
 - Nothing is exported for the killed attempt, and nothing tells it from a graceful stop: the next process replays and runs the step, which shows as a resume after a restart.
 - At launch DBOS emits a `probe` span (scope `otel-bootstrap-check`); coding.sh skips it. The workflow span keeps the attribute `status: "PENDING"` from its start; the span status is the outcome.
 - Setup: DBOS loads OTel and `winston-transport` without declaring them. Recovery only picks up workflows with the same executor id and `applicationVersion`; the version-2 process took the run over with `cancelWorkflow` and `rewindWorkflow(id, { startStep, applicationVersion: "2" })`, which keeps the workflow id.
+
+**What the Python run showed** (`dbos` 3.4.0, Python 3.12, Postgres 16, OTel Python 1.45.2):
+
+- DBOS makes spans only with `enable_otlp: True`. With no `otlp_traces_endpoints` it uses your global provider, so your spans and resource come along; with endpoints it builds its own exporter, which loses the resource and your spans.
+- Step spans as in TS. The retried search is one span with the event `Step attempt 0 failed`: Python counts from 0.
+- Replayed steps carry no `cached` attribute (2 to 6 ms each). DBOS never runs a finished step again, so coding.sh reads a later span of a step that already succeeded as a replay.
+- `DBOS.sleep` makes a `sleep` span of a few ms: the checkpoint write as the sleep begins, from the process that started it, and a 2 ms one when a recovered run enters it again. coding.sh reads the first as the start of a wait that lasts until the run next does work.
+- That marker also tells a kill from a stop: the process killed during `read` was last seen after `search`, not entering a sleep, so its `read` is lost and the resume is a crash. The process stopped during the sleep was last seen entering it.
+- Each process starts a new trace unless the workflow is started inside `SetWorkflowID` with `PropagateOtelContext()`; then the caller's span becomes the root of the run's first trace only.
+- The `sleep_start` step and the span after `DBOS.sleep` in the how-to give a named wait (`cool-down`) covering the whole sleep, from the process that woke up.
 
 ## LangGraph
 
@@ -155,15 +188,15 @@ Workers tracing documents no instance id, workflow name, step name or attempt. S
 
 ## A killed attempt
 
-No engine exports the attempt that died with its process. coding.sh finds it from what the engine does report: a schedule with no attempt on its process (Temporal), a skipped attempt number on a new process (Inngest, Cloudflare), a recovery span (Vercel), a server attempt that ended inside a run (Restate), or a recovered invocation (LangGraph). It is drawn from where it started to where its process was last seen: that process's last export, or for Restate the end of the server's attempt. Only that part counts as busy time. The rest, until the next attempt, is time lost to the crash: `workflows stats` shows it on its own row and leaves it out of agent time and orchestration overhead.
+No engine exports the attempt that died with its process. coding.sh finds it from what the engine does report: a schedule with no attempt on its process (Temporal), a skipped attempt number on a new process (Inngest, Cloudflare), a recovery span (Vercel), a server attempt that ended inside a run (Restate), a recovered invocation (LangGraph), or a recovery whose old process was last seen outside a sleep (DBOS Python). It is drawn from where it started to where its process was last seen: that process's last export, or for Restate the end of the server's attempt. Only that part counts as busy time. The rest, until the next attempt, is time lost to the crash: `workflows stats` shows it on its own row and leaves it out of agent time and orchestration overhead.
 
 ## Gaps
 
 1. Temporal: no attempt number and no timer on spans. Attempts come from the `StartActivity` → `RunActivity` structure, and the lost one is inferred from timing.
 2. A killed attempt's real length is unknown everywhere but Restate; coding.sh counts only what its process was seen doing.
-3. Temporal, Inngest and DBOS TS export no sleep; it shows as idle time.
-4. DBOS: a kill shows as a restart, not a crash.
-5. Restate: the client span is a separate session, and re-running a workflow key joins the earlier run's session.
+3. Temporal, Inngest and DBOS TS export no sleep; it shows as idle time unless the user adds a span with `workflow.wait.name` (Temporal TS through a `startTimer` interceptor; the others with a few lines in the workflow).
+4. DBOS TS: a kill shows as a restart, not a crash. DBOS Python's `sleep` span lets coding.sh tell the two apart.
+5. Restate: the error text of a failed attempt is only on SDK spans; the Python SDK has none, so it reads "transient failure".
 6. Every capture used a recorder that forwarded each OTLP request to the collector before replying. Spans buffered in a process when it was killed are lost either way; the kill tests may have lost a little more than a real exporter would.
-7. Temporal replays are never exported; the replay path was checked with Vercel's `workflow.execution.mode=replay` and DBOS's `cached` steps.
-8. The Python SDKs of Temporal, DBOS and Restate were not run.
+7. Temporal and Restate replays are never exported; the replay path was checked with Vercel's `workflow.execution.mode=replay` and DBOS's replayed steps (`cached` in TS, inferred in Python).
+8. Only Temporal, Restate and DBOS were run in Python. LangGraph was run in Python only.
