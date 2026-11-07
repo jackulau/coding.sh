@@ -1039,6 +1039,99 @@ describe("cli QA regressions", () => {
   });
 });
 
+describe("doctor on a dogfood machine", () => {
+  // Dogfood: hooks wired in <project>/.claude/settings.local.json, events
+  // arriving, and doctor said "! Claude Code v2.1.319, not hooked, last event 2s ago".
+  function claudeHome(): { h: Home; PATH: string; proj: string; run: (cwd: string, args: string[], extra?: NodeJS.ProcessEnv) => SpawnSyncReturns<string>; hook: (cwd: string) => void } {
+    const h = tmpHome();
+    const bin = join(h.root, "bin");
+    printBin(bin, "claude", "2.1.319 (Claude Code)");
+    const PATH = pathOf(bin, h.env.PATH);
+    const proj = join(h.root, "work", "demo");
+    mkdirSync(proj, { recursive: true });
+    const envOf = (extra: NodeJS.ProcessEnv) => {
+      const env: Record<string, string> = {};
+      for (const [k, v] of Object.entries({ ...h.env, PATH, CODING_SH_NO_AUTO_INGEST: "1", ...extra })) if (v !== undefined) env[k] = v;
+      return env;
+    };
+    const run = (cwd: string, args: string[], extra: NodeJS.ProcessEnv = {}) => spawnSync(process.execPath, [CLI, ...args], { env: envOf(extra), cwd, encoding: "utf8", timeout: 30_000 });
+    const hook = (cwd: string) => {
+      const r = spawnSync(process.execPath, [HOOK, "claude-code", "SessionStart"], { env: envOf({}), cwd, encoding: "utf8", input: JSON.stringify({ session_id: "dog-1", cwd, hook_event_name: "SessionStart" }) });
+      assert.equal(r.status, 0, r.stderr);
+    };
+    return { h, PATH, proj, run, hook };
+  }
+
+  it("reports hooks in a project's .claude/settings.local.json, from the project and from the spooled events' cwd", () => {
+    const { h, proj, run, hook } = claudeHome();
+    const init = run(proj, ["init", "--scope", "project", "--agent", "claude-code", "--yes"]);
+    assert.equal(init.status, 0, init.stderr);
+    const file = join(proj, ".claude", "settings.local.json");
+    assert.ok(existsSync(file));
+    const row = new RegExp(`^✓ Claude Code\\s+v2\\.1\\.319, hooked in ${file.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} \\(project\\), `, "m");
+
+    const inProj = run(proj, ["doctor", "--agent", "claude-code"]);
+    assert.match(inProj.stderr, row);
+    assert.doesNotMatch(inProj.stderr, /not hooked|Capture the agents without hooks/);
+
+    // From elsewhere, the project is known from where the agent's events ran.
+    hook(proj);
+    const elsewhere = run(h.home, ["doctor", "--agent", "claude-code"]);
+    assert.match(elsewhere.stderr, row);
+    const doc = parseJson(run(h.home, ["doctor", "--json", "--agent", "claude-code"]).stdout, "doctor") as { agents: { id: string; hooked: boolean; projectHooks: string[] }[] };
+    const a = doc.agents.find((x) => x.id === "claude-code")!;
+    assert.equal(a.hooked, false, "hooked stays about the user config");
+    assert.deepEqual(a.projectHooks, [file]);
+  });
+
+  it("never says 'not hooked' while events arrive", () => {
+    const { h, run, hook } = claudeHome();
+    const before = run(h.home, ["doctor", "--agent", "claude-code"]);
+    assert.match(before.stderr, /^! Claude Code\s+v2\.1\.319, not hooked, no events yet/m);
+    const other = join(h.root, "elsewhere");
+    mkdirSync(other);
+    hook(other);
+    const r = run(h.home, ["doctor", "--agent", "claude-code"]);
+    assert.match(r.stderr, /^✓ Claude Code\s+v2\.1\.319, events arriving, hook not in user config, last event /m);
+    assert.doesNotMatch(r.stderr, /Capture the agents without hooks/);
+  });
+
+  it("a stale hook bin gets `update --refresh-bin`, not init, and the next ingest refreshes it", () => {
+    const { h, run } = claudeHome();
+    const binDir = join(h.data, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const hookFile = join(binDir, "hook.mjs");
+    writeFileSync(hookFile, "// hook from the previous version\n");
+    writeFileSync(join(binDir, "cli-path"), CLI + "\n");
+    const r = run(h.home, ["doctor"]);
+    assert.match(r.stderr, /^! Hook\s+.*hook\.mjs is stale \(differs from the hook this CLI ships\); run coding\.sh update --refresh-bin$/m);
+    assert.doesNotMatch(r.stderr, /stale.*coding\.sh init/);
+
+    // `npm i -g` of a newer version: the hook's session-end ingest runs the new CLI.
+    assert.equal(run(h.home, ["ingest", "--background"]).status, 0);
+    assert.equal(readFileSync(hookFile, "utf8"), readFileSync(HOOK, "utf8"));
+    assert.match(run(h.home, ["doctor"]).stderr, /^✓ Hook\s+.*hook\.mjs$/m);
+  });
+
+  it("ingest leaves the bin alone when init never ran, or when cli-path names another install", () => {
+    const fresh = claudeHome();
+    assert.equal(fresh.run(fresh.h.home, ["ingest"]).status, 0);
+    assert.equal(existsSync(join(fresh.h.data, "bin", "hook.mjs")), false);
+
+    const { h, run } = claudeHome();
+    const binDir = join(h.data, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const otherCli = join(h.root, "other", "dist", "cli.mjs");
+    mkdirSync(dirname(otherCli), { recursive: true });
+    writeFileSync(otherCli, "");
+    writeFileSync(join(binDir, "hook.mjs"), "// another install's hook\n");
+    writeFileSync(join(binDir, "cli-path"), otherCli + "\n");
+    assert.equal(run(h.home, ["ingest"]).status, 0);
+    assert.equal(readFileSync(join(binDir, "hook.mjs"), "utf8"), "// another install's hook\n");
+    assert.equal(readFileSync(join(binDir, "cli-path"), "utf8"), otherCli + "\n");
+  });
+});
+
 describe("cli QA fixes", () => {
   it("duration rounds before splitting, so a carry moves up a unit", async () => {
     const { duration } = await import("../../src/cli/output.ts");

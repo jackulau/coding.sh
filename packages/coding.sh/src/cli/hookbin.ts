@@ -73,6 +73,27 @@ export async function refreshHookBin(env: NodeJS.ProcessEnv = process.env, cli: 
   return "refreshed";
 }
 
+/**
+ * Self-heal after `npm i -g` of a newer coding.sh, run by `ingest` (the hook
+ * starts `ingest --background` through cli-path at every session end, so the
+ * new CLI's first background ingest brings the bin up to date). Refreshes only
+ * when cli-path names this CLI or a CLI that is gone, so an older install run
+ * by hand never downgrades the bin, and never where init did not install it.
+ * Never throws: an ingest must not fail over the bin.
+ */
+export async function healHookBin(env: NodeJS.ProcessEnv = process.env, cli: string | undefined = runningCli()): Promise<"refreshed" | "current" | "skipped"> {
+  if (cli === undefined) return "skipped"; // running from source: no shipped hook to install
+  try {
+    const p = paths(env);
+    if (!existsSync(p.hook)) return "skipped";
+    const pointer = readOr(p.cliPointer)?.trim();
+    if (pointer && pointer !== cli && existsSync(pointer)) return "skipped";
+    return (await refreshHookBin(env, cli)) === "refreshed" ? "refreshed" : "current";
+  } catch {
+    return "skipped";
+  }
+}
+
 export interface HookBinHealth {
   /** hook.mjs matches the hook this CLI ships (null: no bundled hook to compare with). */
   hookCurrent: boolean | null;

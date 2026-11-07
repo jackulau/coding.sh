@@ -13,6 +13,7 @@ import { CliError, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import type { Context } from "../../core/context.ts";
 import type { ReparseResult } from "../../core/reparse.ts";
+import { healHookBin } from "../hookbin.ts";
 import { pickAdapters } from "./init.ts";
 
 export async function run(c: CommandContext): Promise<number> {
@@ -22,6 +23,8 @@ export async function run(c: CommandContext): Promise<number> {
   const since = str(c.flags.since) !== undefined ? parseSince(str(c.flags.since)!) : undefined;
   const background = c.flags.background === true;
   const rebuild = c.flags.rebuild === true;
+  // After `npm i -g` of a newer version, bring ~/.coding.sh/bin up to this CLI.
+  await healHookBin(c.env);
   return withContext(c, async (ctx) => {
     if (background) {
       try {
