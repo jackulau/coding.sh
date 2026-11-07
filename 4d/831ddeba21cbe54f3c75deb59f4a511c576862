@@ -1,0 +1,77 @@
+packages/coding.sh/src/adapters/more/aider.ts
+  s_8e040dbdf13565::t_4ff0f13d17cdf7 10-11,16,52-83,104
+packages/coding.sh/src/adapters/more/copilot-cli.ts
+  s_8e040dbdf13565::t_2692a23b7cc537 25-27,144,261-266,268-269,356
+packages/coding.sh/src/adapters/more/droid.ts
+  s_8e040dbdf13565::t_d7fd60e19ca6d3 22,124-209,227,252-254,307-309
+packages/coding.sh/src/adapters/more/goose.ts
+  s_8e040dbdf13565::t_7ebcf41f6c5978 174-190,223-224,244,320
+packages/coding.sh/src/adapters/opencode.ts
+  s_8e040dbdf13565::t_7deeef405f6f44 2,358,477-499,509-514,520,532
+packages/coding.sh/src/adapters/t3code.ts
+  s_8e040dbdf13565::t_1948c0b4cf75d5 60-67,236-238,240
+packages/coding.sh/src/cli/commands/init.ts
+  s_8e040dbdf13565::t_0d995d82c6c1cf 292-293
+packages/coding.sh/src/cli/commands/run.ts
+  s_8e040dbdf13565::t_4ff50f289cc578 4,11-17,27
+packages/coding.sh/src/cli/commands/show.ts
+  s_8e040dbdf13565::t_2c3a5d26c4c255 85,87
+packages/coding.sh/test/adapters/more/wrapper-aider.test.ts
+  s_8e040dbdf13565::t_67113d8019d465 41,44-47
+packages/coding.sh/test/adapters/real-install.test.ts
+  s_8e040dbdf13565::t_391cb071779215 1-214
+packages/coding.sh/test/adapters/t3code.test.ts
+  s_8e040dbdf13565::t_f4f2e16e55d47d 369-415
+packages/coding.sh/test/cli/cli.test.ts
+  s_205423208cb2cf::t_2920fc6225b5c0 263-274
+packages/coding.sh/test/fixtures/adapters/copilot-cli/golden/hooks.golden.json
+  s_8e040dbdf13565::t_6f700ccdee8dcd 18,22-25
+packages/coding.sh/test/fixtures/adapters/copilot-cli/hooks.spool.jsonl
+  s_8e040dbdf13565::t_142ebcb055dfbd 2
+packages/coding.sh/test/fixtures/adapters/copilot-cli/real/home/.copilot/session-state/6dfe9f80-9dd6-4735-999d-2c7950f95132/events.jsonl
+  s_8e040dbdf13565::t_b8c6b3129acf53 1-25
+packages/coding.sh/test/fixtures/adapters/copilot-cli/real/hooks.spool.jsonl
+  s_8e040dbdf13565::t_3d8cf57a10b941 1-5
+packages/coding.sh/test/fixtures/adapters/droid/real/home/.factory/sessions/-work-demo/d85436df-cb26-457a-b68e-db3d9efef556.jsonl
+  s_8e040dbdf13565::t_d058d5169cd07e 1-13
+packages/coding.sh/test/fixtures/adapters/droid/real/home/.factory/sessions/-work-demo/d85436df-cb26-457a-b68e-db3d9efef556.settings.json
+  s_8e040dbdf13565::t_ebdf194e380b49 1-44
+packages/coding.sh/test/fixtures/adapters/droid/real/hooks.spool.jsonl
+  s_8e040dbdf13565::t_cdc8126899d6a2 1-5
+packages/coding.sh/test/fixtures/adapters/goose/real/hooks.spool.jsonl
+  s_8e040dbdf13565::t_ca72e0cab3c74a 1-7
+packages/coding.sh/test/fixtures/adapters/goose/real/sessions.db.json
+  s_8e040dbdf13565::t_58cd442a01c2cc 1-132
+packages/coding.sh/test/fixtures/adapters/opencode/real/hooks.spool.jsonl
+  s_8e040dbdf13565::t_7db485460afa12 1-8
+packages/coding.sh/test/fixtures/adapters/opencode/real/opencode.db.json
+  s_8e040dbdf13565::t_6f0d5c78949c23 1-123
+packages/coding.sh/test/fixtures/adapters/pi/real/extension.spool.jsonl
+  s_8e040dbdf13565::t_e69227e25e8148 1-8
+packages/coding.sh/test/fixtures/adapters/wrapper/real/aider.spool.jsonl
+  s_8e040dbdf13565::t_388ff51c6a5311 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4d831ddeba21cbe54f3c75deb59f4a511c576862",
+  "prompts": {},
+  "sessions": {
+    "s_205423208cb2cf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fa040c47-97d9-47b1-a08e-a50442d2aef9",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    },
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
