@@ -1,11 +1,13 @@
-// coding.sh eval new|validate|crosscheck|list|export
+// coding.sh eval new|import|validate|crosscheck|list|export
 import { existsSync, readdirSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { paths } from "../../core/paths.ts";
+import { snapshotDir } from "../../core/snapshot.ts";
 import type { EvalTask, RunResult } from "../../core/types.ts";
 import { crossCheckMeta, crossCheckVerifier, DEFAULT_CROSSCHECK_MAX, formatCrossCheck } from "../../eval/crosscheck.ts";
-import { draftTaskFromSession, exportHarbor, exportTaskDir, readInstructionArg } from "../../eval/task.ts";
+import { draftTaskFromSession, exportHarbor, exportTaskDir, importTaskDir, readInstructionArg } from "../../eval/task.ts";
 import { formatValidation, validateTask } from "../../eval/validate.ts";
 import { providerFromSpec, type LlmProviderSpec } from "../../graders/index.ts";
 import { positiveInt, UsageError } from "../args.ts";
@@ -16,6 +18,26 @@ import type { Context } from "../../core/context.ts";
 
 /** By id or unique name. */
 const getTask = (ctx: Context, ref: string): Promise<EvalTask> => resolveTask(ctx, ref);
+
+/**
+ * One task dir: an exported task (task.json with a start snapshot), or a
+ * hand-written one whose repo/ dir is the start tree (none: an empty tree).
+ */
+async function importDir(dir: string, ctx: Context, env: NodeJS.ProcessEnv): Promise<EvalTask> {
+  if (!existsSync(join(dir, "task.json"))) throw new Error("no task.json in it");
+  const repo = join(dir, "repo");
+  let start: EvalTask["start"] | undefined;
+  if (existsSync(repo)) start = await snapshotDir(repo, env);
+  else {
+    const json = JSON.parse(await readFile(join(dir, "task.json"), "utf8")) as { start?: { snapshot?: string } };
+    if (!json.start?.snapshot) {
+      const empty = join(paths(env).repos, "empty-start");
+      await mkdir(empty, { recursive: true });
+      start = await snapshotDir(empty, env);
+    }
+  }
+  return importTaskDir(dir, ctx.blobs, start ? { start } : {});
+}
 
 function taskJson(t: EvalTask): Record<string, unknown> {
   return { id: t.id, name: t.name, status: t.status, sourceSessionId: t.sourceSessionId ?? null, repo: t.start.repoRoot, verifier: t.verifier, tags: t.tags, createdAt: new Date(t.createdAt).toISOString(), validation: t.validation ?? null, ...(t.meta?.crossCheck ? { crossCheck: t.meta.crossCheck } : {}) };
@@ -168,6 +190,28 @@ export async function run(c: CommandContext): Promise<number> {
           ["ID", "NAME", "STATUS", "CREATED", "REPO"],
           tasks.map((t) => [t.id, oneLine(clean(t.name), 50), t.status, ago(t.createdAt), t.start.repoRoot]),
         );
+        return 0;
+      }
+      case "import": {
+        if (!c.positionals.length) throw new UsageError("Missing argument <DIR>. Usage: coding.sh eval import <DIR>...", { reason: "missing_argument" });
+        const imported: EvalTask[] = [];
+        for (const arg of c.positionals) {
+          const dir = resolve(c.cwd, arg);
+          let task: EvalTask;
+          try {
+            task = await importDir(dir, ctx, c.env);
+          } catch (e) {
+            throw new CliError(`Couldn't import ${arg}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_file" });
+          }
+          await ctx.index.putTask(task);
+          imported.push(task);
+        }
+        if (out.json) {
+          out.data({ outcome: "imported", tasks: imported.map(taskJson) });
+          return 0;
+        }
+        for (const t of imported) out.ok(`${t.name}  ${t.id}`);
+        out.next("Run them in a harness A/B", `coding.sh compare <A> <B>${imported[0]?.tags[0] ? ` --tag ${imported[0].tags[0]}` : ` --task ${imported[0]?.id}`}`);
         return 0;
       }
       case "export": {

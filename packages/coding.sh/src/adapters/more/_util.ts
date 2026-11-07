@@ -20,6 +20,7 @@ import type { AgentEvent, AgentId, EventKind, Usage } from "../../schema/index.t
 import { paths, userHome } from "../../core/paths.ts";
 import { sha256Hex } from "../../core/ids.ts";
 import { supervise } from "../../core/children.ts";
+import { teeFile } from "../../core/tee.ts";
 import { commandOf, isVerifyCommand } from "../../core/sessions.ts";
 import { exactUninstall, existedBeforeInstall, forgetInstall, recordInstall, restoreForInstall } from "../_shared/installs.ts";
 import { resolveWriteTarget } from "../_shared/files.ts";
@@ -779,6 +780,8 @@ export interface SpawnOpts {
   tailBytes?: number;
   /** Stop the agent's process group on abort (default: the ambient signal, see core/children.ts). */
   signal?: AbortSignal;
+  /** Also append the whole stdout here (RunSpec.stdoutFile). */
+  stdoutFile?: string;
 }
 
 export interface SpawnResult {
@@ -815,8 +818,10 @@ export function spawnAgent(o: SpawnOpts): Promise<SpawnResult> {
   }
   child.stdout?.setEncoding("utf8");
   child.stderr?.setEncoding("utf8");
+  const tee = teeFile(o.stdoutFile);
   child.stdout?.on("data", (s: string) => {
     out.push(s);
+    tee.write(s);
     if (!o.onLine) return;
     partial += s;
     let i: number;
@@ -829,8 +834,9 @@ export function spawnAgent(o: SpawnOpts): Promise<SpawnResult> {
   child.stderr?.on("data", (s: string) => err.push(s));
   child.stdin?.on("error", () => {}); // the agent may exit without reading stdin
   if (o.stdin !== undefined) child.stdin?.end(o.stdin);
-  return supervise(child, { group: posix, timeoutMs: o.timeoutMs, termGraceMs: 3000, signal: o.signal }).then((r) => {
+  return supervise(child, { group: posix, timeoutMs: o.timeoutMs, termGraceMs: 3000, signal: o.signal }).then(async (r) => {
     if (o.onLine && partial.trim()) safeCall(o.onLine, partial);
+    await tee.close();
     const extraErr = r.error ? r.error.message : r.aborted ? "aborted" : undefined;
     return {
       exitCode: r.error ? (r.error.code === "ENOENT" ? 127 : 126) : r.code,

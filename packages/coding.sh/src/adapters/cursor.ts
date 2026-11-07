@@ -317,6 +317,7 @@ export async function runCursor(spec: RunSpec): Promise<AgentRunOutput> {
   args.push(...spec.flags, spec.instruction);
   let sessionId: string | undefined;
   const res = await runHeadless({
+    stdoutFile: spec.stdoutFile,
     bin,
     args,
     cwd: spec.cwd,

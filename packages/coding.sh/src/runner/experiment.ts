@@ -66,6 +66,22 @@ export interface RunExperimentOpts {
   job?: JobScope;
   /** Re-run a run that failed on an infrastructure error (rate limit, 5xx, network) after a backoff. Task failures are never retried. */
   retry?: RetryPolicy;
+  /**
+   * Spend cap in USD over the agent cost each run reports plus its verifier's
+   * `judge grade` calls: once the finished runs reach it, no new run starts. Runs already in flight finish, so the
+   * total can pass the cap by up to `concurrency` runs. Runs that report no
+   * cost count as $0 and are counted in `budget.unpriced`.
+   */
+  maxCostUsd?: number;
+}
+
+export interface BudgetReport {
+  capUsd: number;
+  spentUsd: number;
+  /** Jobs never started because the cap was reached. */
+  skipped: number;
+  /** Finished runs whose agent reported no cost. */
+  unpriced: number;
 }
 
 /** The checkpoint key of one (task, bundle, attempt). */
@@ -118,7 +134,7 @@ export function defaultConcurrency(): number {
   return Math.max(1, Math.min(4, Math.floor(availableParallelism() / 2)));
 }
 
-export async function runExperiment(o: RunExperimentOpts): Promise<{ experimentId: string; results: RunResult[]; cancelled: boolean }> {
+export async function runExperiment(o: RunExperimentOpts): Promise<{ experimentId: string; results: RunResult[]; cancelled: boolean; budget?: BudgetReport }> {
   const jobScope = o.job;
   const experimentId = jobScope?.state<string>("experimentId") ?? o.experimentId ?? sortableId("exp_");
   if (jobScope && jobScope.state("experimentId") === undefined) {
@@ -135,9 +151,28 @@ export async function runExperiment(o: RunExperimentOpts): Promise<{ experimentI
     return id ? stored.get(id) : undefined;
   });
   let done = prior.filter(Boolean).length;
+  const cap = o.maxCostUsd;
+  const budget: BudgetReport | undefined = cap === undefined ? undefined : { capUsd: cap, spentUsd: 0, skipped: 0, unpriced: 0 };
+  /** Add a finished run's agent and judge cost to the budget. */
+  const charge = (r: RunResult) => {
+    if (!budget) return;
+    const cost = r.agent.usage?.costUsd;
+    if (typeof cost === "number" && Number.isFinite(cost)) budget.spentUsd += cost;
+    else budget.unpriced++;
+    budget.spentUsd += r.graderUsage?.costUsd ?? 0;
+  };
+  // A resumed comparison counts what its recorded runs already spent.
+  for (const r of prior) if (r) charge(r);
+  // Jobs the cap kept from starting: not runs, and not a cancellation either.
+  const capped = new Set<number>();
   const settled = await pool(jobs, o.concurrency ?? defaultConcurrency(), async (job, i): Promise<RunResult | undefined> => {
     if (prior[i]) return prior[i];
     if (o.signal?.aborted || o.drain?.aborted) return undefined; // never started: not a run
+    if (budget && budget.spentUsd >= budget.capUsd) {
+      budget.skipped++;
+      capped.add(i);
+      return undefined;
+    }
     const t0 = Date.now();
     let last: RunResult | undefined;
     const tried = await withRetries(
@@ -155,6 +190,7 @@ export async function runExperiment(o: RunExperimentOpts): Promise<{ experimentI
       if (tried.infra) result.infra = tried.infra;
       await o.index.putRun(result).catch(() => {});
     }
+    charge(result);
     if (result.cancelled) return result; // killed mid-run: kept as cancelled in the index, not a finished run
     if (jobScope) {
       const cost = result.agent.usage?.costUsd;
@@ -172,7 +208,7 @@ export async function runExperiment(o: RunExperimentOpts): Promise<{ experimentI
     return result;
   });
   const results = settled.filter((r): r is RunResult => r !== undefined);
-  return { experimentId, results, cancelled: settled.some((r) => r === undefined || r.cancelled === true) };
+  return { experimentId, results, cancelled: settled.some((r, i) => (r === undefined && !capped.has(i)) || r?.cancelled === true), ...(budget ? { budget } : {}) };
 }
 
 /** One attempt of one job, stored in the index (runTask never throws for what the agent does). */
@@ -295,6 +331,19 @@ export interface TaskOutcome {
 
 export type VerdictKind = "better" | "worse" | "no-difference" | "inconclusive";
 
+export interface ArmSpend {
+  /** Agent cost, summed over the runs whose cost is known. */
+  usd: number;
+  /** Runs with a known agent cost. */
+  priced: number;
+  runs: number;
+  /** What the verifiers' `judge grade` model calls cost (priced calls only). */
+  graderUsd: number;
+  /** Judge model calls, and how many of them had no price. */
+  graderCalls: number;
+  graderUnpriced: number;
+}
+
 export interface CompareReport {
   baseline: ArmSummary;
   candidate: ArmSummary;
@@ -318,6 +367,8 @@ export interface CompareReport {
    */
   power: PowerAnalysis;
   metrics: MetricDelta[];
+  /** Total agent spend per arm (reported by the agent, else priced from the session), cancelled runs included. */
+  spend: { baseline: ArmSpend; candidate: ArmSpend };
   verdict: { kind: VerdictKind; text: string };
   notes: string[];
   bundleDiff?: BundleDiff;
@@ -565,6 +616,15 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
     }
     metrics.push(md);
   }
+  // Total agent spend, cancelled runs included: a killed run was still billed for what it did.
+  const costOf = (r: RunResult) => r.agent.usage?.costUsd ?? opts.sessions?.get(r.id)?.stats.usage?.costUsd;
+  const spendOf = (id: string): ArmSpend => {
+    const rs = all.filter((r) => r.bundleId === id);
+    const known = rs.map(costOf).filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+    const sum = (f: (u: NonNullable<RunResult["graderUsage"]>) => number) => rs.reduce((s, r) => s + (r.graderUsage ? f(r.graderUsage) : 0), 0);
+    return { usd: known.reduce((s, x) => s + x, 0), priced: known.length, runs: rs.length, graderUsd: sum((u) => u.costUsd), graderCalls: sum((u) => u.calls), graderUnpriced: sum((u) => u.unpriced) };
+  };
+  const spend = { baseline: spendOf(opts.baseline), candidate: spendOf(opts.candidate) };
 
   const notes: string[] = [];
   if (k > 1) notes.push(`pass-rate intervals (Wilson) treat the ${k} runs per task as independent and are optimistic; the bootstrap CI resamples tasks and is the one to trust`);
@@ -625,6 +685,7 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
     mcnemar: mcn,
     power: pairedPower(diffs, { alpha }),
     metrics,
+    spend,
     verdict: { kind: verdict.kind, text: verdict.text },
     notes,
     bundleDiff: opts.bundles?.baseline && opts.bundles.candidate ? diffBundles(opts.bundles.baseline, opts.bundles.candidate) : undefined,
@@ -835,6 +896,8 @@ export interface FormatOpts {
   arms?: string;
   /** Max per-task rows (default 20). */
   maxTasks?: number;
+  /** Task names by id: per-task rows show the name instead of the id. */
+  taskNames?: ReadonlyMap<string, string>;
 }
 
 export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
@@ -850,10 +913,10 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   const W = [18, 22, 22, 26];
   // A cell that fills (or overflows) its column still gets one space, so
   // adjacent cells never run together.
-  const row = (cells: string[]) =>
+  const row = (cells: string[], widths: readonly number[] = W) =>
     cells
       .map((x, i) => {
-        const w = W[i] ?? 10;
+        const w = widths[i] ?? 10;
         return vis(x) >= w ? `${x} ` : pad(x, w);
       })
       .join("")
@@ -890,6 +953,19 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
     const val = (v: number, n: number, runs: number) => (n > 0 && n < runs ? `${fmtValue(v, m.unit)} ${dim(`(${n}/${runs})`)}` : fmtValue(v, m.unit));
     out.push(row([m.label, val(m.baseline, m.n.baseline, m.runs.baseline), val(m.candidate, m.n.candidate, m.runs.candidate), covered(m) ? signed(m.delta, m.better !== "higher", d) : d]));
   }
+  const sp = r.spend;
+  if (sp && sp.baseline.priced + sp.candidate.priced > 0) {
+    const priced = sp.baseline.priced + sp.candidate.priced;
+    const runs = sp.baseline.runs + sp.candidate.runs;
+    const usd = (x: number) => `$${x.toFixed(2)}`;
+    out.push(row(["agent spend", usd(sp.baseline.usd), usd(sp.candidate.usd), `${usd(sp.baseline.usd + sp.candidate.usd)} total${priced < runs ? dim(` (${priced}/${runs} runs priced)`) : ""}`]));
+  }
+  if (sp && sp.baseline.graderCalls + sp.candidate.graderCalls > 0) {
+    const usd = (x: number) => `$${x.toFixed(2)}`;
+    const calls = sp.baseline.graderCalls + sp.candidate.graderCalls;
+    const unpriced = sp.baseline.graderUnpriced + sp.candidate.graderUnpriced;
+    out.push(row(["grader spend", usd(sp.baseline.graderUsd), usd(sp.candidate.graderUsd), `${usd(sp.baseline.graderUsd + sp.candidate.graderUsd)} total · ${calls} judge calls${unpriced ? dim(` (${unpriced} unpriced)`) : ""}`]));
+  }
   if (r.anatomy) {
     const fa = (a: ArmAnatomy) =>
       `${a.fails} (bad-run ${a.badRun} · beyond-arm ${a.beyondArm} · unsolved-by-all ${a.unsolvedByAll}${a.infra ? ` · infra ${a.infra}` : ""})`;
@@ -910,16 +986,21 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   });
   if (r.tasks.length) {
     out.push("");
-    out.push(dim(row(["task", "baseline", "candidate", "first divergence"])));
     const max = opts.maxTasks ?? 20;
-    for (const t of [...r.tasks].sort((x, y) => Math.abs(y.diff) - Math.abs(x.diff)).slice(0, max)) {
+    const shown = [...r.tasks].sort((x, y) => Math.abs(y.diff) - Math.abs(x.diff)).slice(0, max);
+    const labels = shown.map((t) => opts.taskNames?.get(t.taskId) || t.taskId);
+    // Names widen the first column (up to 50) so names that share a prefix stay apart; bare ids keep 18.
+    const tw = opts.taskNames?.size ? Math.min(50, Math.max(W[0] as number, ...labels.map((l) => l.length + 3))) : (W[0] as number);
+    const widths = [tw, ...W.slice(1)];
+    out.push(dim(row(["task", "baseline", "candidate", "first divergence"], widths)));
+    shown.forEach((t, i) => {
       const mark = t.diff > 0 ? good("▲") : t.diff < 0 ? bad("▼") : " ";
       const div = t.divergence ? `step ${t.divergence.index + 1}: ${t.divergence.a?.tool ?? "(end)"} vs ${t.divergence.b?.tool ?? "(end)"}` : "";
-      // "▲ " + id must leave at least one space in the first column.
-      const idW = (W[0] as number) - 3;
-      const id = t.taskId.length > idW ? `${t.taskId.slice(0, idW - 1)}…` : t.taskId;
-      out.push(row([`${mark} ${id}`, `${t.baseline.passes}/${t.baseline.runs}`, `${t.candidate.passes}/${t.candidate.runs}`, div]));
-    }
+      // "▲ " + label must leave at least one space in the first column.
+      const label = labels[i] as string;
+      const id = label.length > tw - 3 ? `${label.slice(0, tw - 4)}…` : label;
+      out.push(row([`${mark} ${id}`, `${t.baseline.passes}/${t.baseline.runs}`, `${t.candidate.passes}/${t.candidate.runs}`, div], widths));
+    });
     if (r.tasks.length > max) out.push(dim(`… ${r.tasks.length - max} more`));
   }
   if (r.bundleDiff) {

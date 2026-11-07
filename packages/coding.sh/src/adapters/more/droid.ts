@@ -430,7 +430,7 @@ export const droidAdapter: Adapter = {
       sessionId = str(o.session_id) ?? sessionId;
       if (o.type === "result" || o.type === "completion") usage = usageFrom(o.usage) ?? usage;
     };
-    const r = await spawnAgent({ bin, args, cwd: spec.cwd, env: runEnv(spec), timeoutMs: spec.timeoutMs, onLine: jsonLines(take) });
+    const r = await spawnAgent({ bin, args, cwd: spec.cwd, stdoutFile: spec.stdoutFile, env: runEnv(spec), timeoutMs: spec.timeoutMs, onLine: jsonLines(take) });
     if (!sessionId) {
       // Pretty-printed result object: parse the tail as a whole.
       try {

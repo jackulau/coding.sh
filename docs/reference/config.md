@@ -226,6 +226,8 @@ Read these in your agent or script to tie its output to a run.
 |---|---|---|
 | `CODING_SH_SESSION_ID` | `run --` | The session id of the wrapped command. |
 | `CODING_SH_RUN_ID` | `exp run`, `compare`, `bench`, `workflows` | Run id. Hook events carrying it are tagged with the run, and the hook skips its own background ingest. You can set it yourself to tag a run. |
+| `CODING_SH_AGENT`, `CODING_SH_AGENT_OUTPUT`, `CODING_SH_AGENT_STDOUT` | `compare`, `exp run` eval tasks (verifier only) | The agent adapter id, a file with the agent's final answer, and a file with its whole stdout (for Claude Code, stream-json with every tool call). The files sit outside the work tree. `CODING_SH_SESSION_ID` is set too when the run produced a session. |
+| `CODING_SH_GRADER_USAGE` | `compare`, `exp run` eval tasks (verifier only) | A JSONL file. `judge grade` appends one row per model call (model, tokens, cost) so the run's judge spend counts in `compare`'s spend lines and `--max-cost`. |
 | `CODING_SH_CASE_ID`, `CODING_SH_TRIAL` | `exp run` command tasks | The case id and trial number. |
 | `CODING_SH_WORKFLOW_RUN_ID` | `workflows run`, `workflows replay` | Workflow run id. |
 | `CODING_SH_BENCH`, `CODING_SH_BENCH_SEED`, `CODING_SH_BENCH_DATE`, `CODING_SH_BENCH_RUN_ID`, `CODING_SH_BENCH_CASES` | `bench run` command sources | Benchmark name, seed, date, run id and number of cases to print. |

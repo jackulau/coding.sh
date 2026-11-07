@@ -169,6 +169,23 @@ describe("formatCompare", () => {
     const header = text.split("\n").find((l) => /^task\s+baseline/.test(l)) ?? "";
     assert.equal(line.indexOf("1/3"), header.indexOf("baseline"), `${header}\n${line}`);
   });
+  it("task names replace ids and widen the column, so names with a shared prefix stay apart", () => {
+    const rs = [run("t1", "A", 1, false), run("t1", "B", 1, true), run("t2", "A", 1, true), run("t2", "B", 1, true)];
+    const taskNames = new Map([
+      ["t1", "skill-eval-01-scope-before-collection"],
+      ["t2", "skill-eval-02-cli-success-not-passing"],
+    ]);
+    const text = formatCompare(compare(rs, { baseline: "A", candidate: "B" }), { taskNames });
+    const header = text.split("\n").find((l) => /^task\s+baseline/.test(l)) ?? "";
+    for (const name of taskNames.values()) {
+      const line = text.split("\n").find((l) => l.includes(name));
+      assert.ok(line, text);
+      assert.equal(line.search(/[01]\/1/), header.indexOf("baseline"), `${header}\n${line}`);
+    }
+    assert.doesNotMatch(text, /^. t1 /m);
+    const long = formatCompare(compare(rs, { baseline: "A", candidate: "B" }), { taskNames: new Map([["t1", "x".repeat(80)]]) });
+    assert.match(long, new RegExp(`x{46}…\\s+0/1`), "names past 50 columns are cut");
+  });
   it("prints the same power / MDE line and warnings as exp compare", () => {
     const rs: RunResult[] = [];
     for (let i = 0; i < 6; i++) rs.push(run(`t${i}`, "A", 1, i < 2), run(`t${i}`, "B", 1, i < 4));
@@ -222,6 +239,32 @@ describe("runExperiment (end to end with a fake agent)", () => {
     const text = formatCompare(r);
     assert.match(text, /lazy \(/);
     assert.match(text, /~ CLAUDE\.md/);
+  });
+});
+
+describe("spend cap", () => {
+  it("maxCostUsd: no new run starts once finished runs reach the cap; spend shows per arm", async () => {
+    const w = await toyWorld();
+    const A = await w.mkBundle("lazy", "half effort");
+    const B = await w.mkBundle("diligent", "always fix bugs");
+    // Each run costs $0.50 (agent) and its verifier logs a $0.10 judge call.
+    const task = { ...w.task, verifier: { ...w.task.verifier, command: `printf '{"model":"j","costUsd":0.1}\\n' >> "$CODING_SH_GRADER_USAGE"; ${w.task.verifier.command}` } };
+    const r = await runExperiment({ tasks: [task, { ...task, id: "t2" }], bundles: [A, B], adapterFor: () => obedientAgent(), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, concurrency: 1, maxCostUsd: 1 });
+    assert.equal(r.results.length, 2, "0.6 after one run, 1.2 after two: the third never starts");
+    assert.deepEqual({ ...r.budget, spentUsd: Number(r.budget?.spentUsd.toFixed(2)) }, { capUsd: 1, spentUsd: 1.2, skipped: 2, unpriced: 0 });
+    assert.ok(r.results.every((x) => x.graderUsage?.calls === 1 && Math.abs((x.graderUsage?.costUsd ?? 0) - 0.1) < 1e-9));
+    const report = compare(r.results, { baseline: A.id, candidate: B.id });
+    assert.deepEqual(report.spend.baseline, { usd: 0.5, priced: 1, runs: 1, graderUsd: 0.1, graderCalls: 1, graderUnpriced: 0 });
+    const text = formatCompare(report);
+    assert.match(text, /agent spend\s+\$0\.50\s+\$0\.50\s+\$1\.00 total/);
+    assert.match(text, /grader spend\s+\$0\.10\s+\$0\.10\s+\$0\.20 total · 2 judge calls$/m);
+  });
+
+  it("without a cap there is no budget report", async () => {
+    const w = await toyWorld();
+    const r = await runExperiment({ tasks: [w.task], bundles: [await w.mkBundle("a", "fix"), await w.mkBundle("b", "half")], adapterFor: () => obedientAgent(), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.results.length, 2);
+    assert.equal(r.budget, undefined);
   });
 });
 

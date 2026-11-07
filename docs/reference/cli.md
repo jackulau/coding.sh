@@ -49,7 +49,7 @@ Every command accepts these.
 | [`eval`](#codingsh-eval) | Evaluate | Turn sessions into replayable eval tasks |
 | [`dataset`](#codingsh-dataset) | Evaluate | Manage versioned datasets of cases |
 | [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset, compare experiments and sweep configs |
-| [`judge`](#codingsh-judge) | Evaluate | Check an LLM judge or a test verifier against human labels |
+| [`judge`](#codingsh-judge) | Evaluate | Grade one output, or check an LLM judge or a test verifier against human labels |
 | [`toolevals`](#codingsh-toolevals) | Evaluate | Measure how well agents use a CLI, MCP server or API |
 | [`workflows`](#codingsh-workflows) | Evaluate | Capture, measure and A/B-test multi-agent workflow runs |
 | [`bench`](#codingsh-bench) | Evaluate | Dynamic benchmarks: fresh cases every run, same set for every contender |
@@ -433,6 +433,7 @@ coding.sh eval <action>
 | Action | What it does |
 |---|---|
 | [`new`](#codingsh-eval-new) | Draft a task from a captured session |
+| [`import`](#codingsh-eval-import) | Add tasks from task directories (hand-written, or from eval export) |
 | [`validate`](#codingsh-eval-validate) | Check the reference passes, near-misses fail and nothing leaks |
 | [`crosscheck`](#codingsh-eval-crosscheck) | Ask a model whether stored solutions are valid and count where the verifier disagrees |
 | [`list`](#codingsh-eval-list) | List eval tasks |
@@ -462,6 +463,22 @@ coding.sh eval new <SESSION> [options]
 ```sh
 coding.sh eval new latest --verifier 'npm test'
 coding.sh eval new latest --instruction @prompt.md --verifier 'npm test'
+```
+
+### `coding.sh eval import`
+
+Add tasks from task directories (hand-written, or from eval export).
+
+```text
+coding.sh eval import <DIR>...
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `dir` | yes | Task directory: task.json, instruction.md, optional repo/ (the start tree) and tests/ (hidden verifier files) Takes the rest of the arguments. |
+
+```sh
+coding.sh eval import tasks/*/
 ```
 
 ### `coding.sh eval validate`
@@ -824,7 +841,7 @@ coding.sh exp status exp_01JC3T6Z2Q8W1S5V0R7N4K9M2D --json
 
 ## `coding.sh judge`
 
-Check an LLM judge or a test verifier against human labels.
+Grade one output, or check an LLM judge or a test verifier against human labels.
 
 ```text
 coding.sh judge <action>
@@ -832,7 +849,31 @@ coding.sh judge <action>
 
 | Action | What it does |
 |---|---|
+| [`grade`](#codingsh-judge-grade) | Run one grader on one output and trace (exit 0 on pass); inside a verifier both default to the agent's |
 | [`calibrate`](#codingsh-judge-calibrate) | Measure judge-human agreement (Cohen's kappa) on a held-out split, or a verifier's precision |
+
+- judge grade appends each model call's tokens and price to $CODING_SH_GRADER_USAGE when it is set. coding.sh compare sets it for every verifier, so judge spend counts toward --max-cost.
+
+### `coding.sh judge grade`
+
+Run one grader on one output and trace (exit 0 on pass); inside a verifier both default to the agent's.
+
+```text
+coding.sh judge grade [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-g, --grader <JSON|FILE>` |  | Grader spec, the same JSON as `exp run --grader` (llm, llm-checklist with trace checks, contains, regex, …) |
+| `--output <FILE|->` |  | The output to grade (default: $CODING_SH_AGENT_OUTPUT, the agent's final answer in a verifier) |
+| `--trace <FILE>` |  | Claude stream-json or transcript, or coding.sh events as JSONL (default: $CODING_SH_AGENT_STDOUT) |
+| `--input <TEXT|@FILE>` |  | The task input shown to a judge. |
+| `--metadata <JSON|FILE>` |  | Case metadata, e.g. {"instructions": "…"} for follows-rules. |
+
+```sh
+coding.sh judge grade --grader checklist.json
+coding.sh judge grade --grader judge.json --output answer.txt --trace stream.jsonl --json
+```
 
 ### `coding.sh judge calibrate`
 
@@ -1464,8 +1505,10 @@ coding.sh compare <A> [b] [options]
 | Option | Default | Description |
 |---|---|---|
 | `-t, --task <ID>` |  | Task id (repeatable; default: all validated tasks) |
+| `--tag <TAG>` |  | Run every non-archived task with this tag, drafts included (e.g. the tag given to eval import) |
 | `--k <N>` | `1` | Attempts per task and arm. |
 | `-c, --concurrency <N>` |  | Parallel runs. |
+| `--max-cost <USD>` |  | Spend cap: once finished runs (agent plus judge grade calls) reach it, no new run starts. |
 | `--experiment <ID>` |  | Compare the stored runs of this experiment instead of running. |
 | `--without <PATH>` |  | Ablation: B is A without this file, dir or glob (repeatable) |
 | `--gateway [<NAME>]` |  | Route both arms through a gateway. Without a name: [gateway] default, else the one with a key, else vercel. One of: `vercel`, `openrouter`, `litellm`, `ramp`. |
@@ -1491,6 +1534,7 @@ coding.sh compare base candidate --k 3 --resume
 coding.sh compare base candidate --experiment exp_01
 coding.sh compare base candidate --k 3 --gate
 coding.sh compare base candidate --k 3 --gate --by suite:
+coding.sh compare no-skill with-skill --tag skill-eval --gate --by suite: --max-cost 15
 coding.sh compare base candidate --k 3 --promote
 coding.sh compare base --without .claude/rules/clock.md --k 3 --item-gate
 coding.sh compare sonnet gpt5 --gateway

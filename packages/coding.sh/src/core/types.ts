@@ -403,6 +403,11 @@ export interface RunSpec {
   /** Extra CLI flags from the harness bundle. */
   flags: string[];
   runId: string;
+  /**
+   * Append the agent's whole stdout here (the runner sets it outside the work
+   * tree and hands it to the verifier as CODING_SH_AGENT_STDOUT).
+   */
+  stdoutFile?: string;
 }
 
 export interface AgentRunOutput {
@@ -414,6 +419,11 @@ export interface AgentRunOutput {
   usage?: Usage;
   stdoutTail: string;
   stderrTail: string;
+  /**
+   * The agent's final answer (the last stream-json `result`, else its stdout),
+   * clipped. Set by the runner; the verifier reads it from CODING_SH_AGENT_OUTPUT.
+   */
+  finalText?: string;
 }
 
 export interface Adapter {
@@ -667,6 +677,11 @@ export interface RunResult {
   infra?: "rate-limit" | "server" | "network" | "tempfail";
   /** Tool-eval trials: the tap log (tool calls seen on the wire) as NDJSON. Referenced so blob gc keeps it. */
   tapBlob?: BlobRef;
+  /**
+   * Model calls the verifier made through `coding.sh judge grade` (CODING_SH_GRADER_USAGE).
+   * costUsd sums the calls whose model has a price; `unpriced` counts the others.
+   */
+  graderUsage?: { calls: number; costUsd: number; unpriced: number; inputTokens: number; outputTokens: number };
 }
 
 export type { AgentEvent, AgentId, BlobRef, RepoState, Session, Usage };

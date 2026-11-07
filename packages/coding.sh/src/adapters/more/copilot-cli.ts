@@ -417,7 +417,7 @@ export const copilotCliAdapter: Adapter = {
       if (o.type === "assistant.usage") streamed = addUsage(streamed, usageFrom({ inputTokens: d.inputTokens, outputTokens: d.outputTokens, cacheReadTokens: d.cacheReadTokens, cacheWriteTokens: d.cacheWriteTokens, costUsd: d.cost }));
       if (o.type === "session.shutdown") shutdown = metricsUsage(d.modelMetrics).usage ?? shutdown;
     });
-    const r = await spawnAgent({ bin, args, cwd: spec.cwd, env: runEnv(spec), timeoutMs: spec.timeoutMs, onLine });
+    const r = await spawnAgent({ bin, args, cwd: spec.cwd, stdoutFile: spec.stdoutFile, env: runEnv(spec), timeoutMs: spec.timeoutMs, onLine });
     return toRunOutput(r, sessionId, shutdown ?? streamed);
   },
   harnessFiles() {

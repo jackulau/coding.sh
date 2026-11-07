@@ -446,7 +446,7 @@ export const gooseAdapter: Adapter = {
       if (o.type === "complete") usage = usageFrom({ input_tokens: o.input_tokens, output_tokens: o.output_tokens, cache_read_input_tokens: o.cache_read_input_tokens, cache_write_tokens: o.cache_write_input_tokens, cost_usd: o.cost_usd });
     });
     const env = runEnv(spec, { GOOSE_MODE: "auto" });
-    const r = await spawnAgent({ bin, args, cwd: spec.cwd, env, timeoutMs: spec.timeoutMs, onLine });
+    const r = await spawnAgent({ bin, args, cwd: spec.cwd, stdoutFile: spec.stdoutFile, env, timeoutMs: spec.timeoutMs, onLine });
     // The stream has no session id: look the named session up (best effort).
     let sessionId: string | undefined;
     const db = await openSqliteCopy(gooseSessionsDb(env as NodeJS.ProcessEnv));

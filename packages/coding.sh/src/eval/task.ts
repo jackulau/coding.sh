@@ -472,14 +472,24 @@ async function walkFiles(root: string, sub = ""): Promise<string[]> {
   return out;
 }
 
+export interface ImportTaskOpts {
+  /** The start tree, when task.json has none (a hand-written task's repo/ dir, snapshotted by the caller). */
+  start?: EvalTask["start"];
+}
+
 /**
  * Read a task dir. Blob refs are sha256 of content (the BlobStore contract),
  * so they are correct with or without `blobs`; pass `blobs` to also store them.
+ *
+ * A hand-written task.json may leave out `format`, `id` and `start`: the id is
+ * then `task_<hash of name>`, and the start comes from `opts.start`.
  */
-export async function importTaskDir(dir: string, blobs?: BlobStore): Promise<EvalTask> {
+export async function importTaskDir(dir: string, blobs?: BlobStore, opts: ImportTaskOpts = {}): Promise<EvalTask> {
   const json = JSON.parse(await readFile(join(dir, "task.json"), "utf8")) as Partial<TaskJson>;
-  if (json.format !== TASK_FORMAT) throw new Error(`${dir}/task.json: unsupported format ${JSON.stringify(json.format)} (want ${TASK_FORMAT})`);
-  if (!json.id || !json.start?.snapshot || !json.verifier) throw new Error(`${dir}/task.json: missing id, start.snapshot or verifier`);
+  if (json.format !== undefined && json.format !== TASK_FORMAT) throw new Error(`${dir}/task.json: unsupported format ${JSON.stringify(json.format)} (want ${TASK_FORMAT})`);
+  if (opts.start) json.start = opts.start;
+  if (!json.id && json.name) json.id = `task_${sha256Hex(json.name).slice(0, 16)}`;
+  if (!json.id || !json.start?.snapshot || !json.verifier) throw new Error(`${dir}/task.json: missing ${!json.id ? "name" : !json.verifier ? "verifier" : "start.snapshot (add a repo/ dir)"}`);
   const store = async (data: Uint8Array): Promise<BlobRef> => (blobs ? blobs.put(data) : sha256Hex(data));
   const instruction = (await readFile(join(dir, "instruction.md"), "utf8")).replace(/\n$/, "");
   const hiddenFiles: Record<string, BlobRef> = {};

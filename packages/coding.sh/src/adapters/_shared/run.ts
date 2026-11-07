@@ -3,6 +3,7 @@
 // and bounded stdout/stderr tails.
 import { spawn } from "../../core/spawn.ts";
 import { supervise } from "../../core/children.ts";
+import { teeFile } from "../../core/tee.ts";
 import type { AgentRunOutput, RunSpec } from "../../core/types.ts";
 
 const DEFAULT_TAIL = 16 * 1024;
@@ -37,6 +38,8 @@ export interface HeadlessOpts {
   tailBytes?: number;
   /** Kill the process group on abort (default: the ambient signal, see core/children.ts). */
   signal?: AbortSignal;
+  /** Also append the whole stdout here (RunSpec.stdoutFile). */
+  stdoutFile?: string;
 }
 
 export type HeadlessResult = Pick<AgentRunOutput, "exitCode" | "timedOut" | "durationMs" | "stdoutTail" | "stderrTail">;
@@ -47,6 +50,7 @@ export function runHeadless(o: HeadlessOpts): Promise<HeadlessResult> {
   const max = o.tailBytes ?? DEFAULT_TAIL;
   const out = new Tail(max);
   const err = new Tail(max);
+  const tee = teeFile(o.stdoutFile);
   let buf = "";
   const group = process.platform !== "win32";
   const child = spawn(o.bin, o.args, {
@@ -70,6 +74,7 @@ export function runHeadless(o: HeadlessOpts): Promise<HeadlessResult> {
   child.stderr?.setEncoding("utf8");
   child.stdout?.on("data", (s: string) => {
     out.push(s);
+    tee.write(s);
     buf += s;
     let i: number;
     while ((i = buf.indexOf("\n")) >= 0) {
@@ -81,8 +86,9 @@ export function runHeadless(o: HeadlessOpts): Promise<HeadlessResult> {
   child.stderr?.on("data", (s: string) => err.push(s));
   child.stdin?.on("error", () => {}); // the agent may exit without reading stdin
   if (o.stdin !== undefined) child.stdin?.end(o.stdin);
-  return supervise(child, { group, timeoutMs: o.timeoutMs, signal: o.signal }).then((r) => {
+  return supervise(child, { group, timeoutMs: o.timeoutMs, signal: o.signal }).then(async (r) => {
     if (buf) feed(buf);
+    await tee.close();
     const note = r.error ? r.error.message : r.aborted ? "aborted" : undefined;
     return {
       exitCode: r.error ? 127 : r.code,

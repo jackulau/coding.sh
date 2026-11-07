@@ -116,6 +116,7 @@ export const aiderAdapter: Adapter = {
     args.push(...spec.flags);
     let all = "";
     const r = await spawnAgent({
+      stdoutFile: spec.stdoutFile,
       bin,
       args,
       cwd: spec.cwd,

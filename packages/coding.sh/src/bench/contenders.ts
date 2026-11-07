@@ -10,6 +10,7 @@
 // tokens and a model but no cost, the runner prices the call from the price table.
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { agentAnswerText } from "../core/answer.ts";
 import type { Adapter, BlobStore, HarnessBundle, Usage } from "../core/types.ts";
 import { resolveTask, safeUrl, type ResolvedTask, type TaskSpec } from "../experiments/task.ts";
 import type { AgentContender, ContenderSpec, TokenUsage } from "./types.ts";
@@ -119,23 +120,7 @@ export function renderPrompt(template: string, input: unknown, metadata?: Record
   });
 }
 
-/** The agent's final answer from its headless stdout (stream-json result lines, else the raw tail). */
-export function agentAnswerText(stdoutTail: string): string {
-  const lines = stdoutTail.trim().split("\n");
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const l = lines[i]!.trim();
-    if (!l.startsWith("{")) continue;
-    try {
-      const o = JSON.parse(l) as Record<string, unknown>;
-      for (const k of ["result", "text", "message", "content"]) if (typeof o[k] === "string") return o[k] as string;
-      const item = o.item as Record<string, unknown> | undefined;
-      if (item && typeof item.text === "string") return item.text;
-    } catch {
-      // not JSON: keep looking
-    }
-  }
-  return stdoutTail.trim();
-}
+export { agentAnswerText };
 
 function agentContender(spec: AgentContender & { name: string }, deps: ContenderDeps): ResolvedContender {
   const ref = `${spec.agent}${spec.model ? `:${spec.model}` : ""}${spec.harness ? ` +${spec.harness}` : ""}`;

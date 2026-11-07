@@ -18,12 +18,13 @@ import { git } from "../../runner/git.ts";
 import { hasGlob } from "../../runner/glob.ts";
 import type { AgentRoute } from "../../runner/run.ts";
 import type { EvalTask, HarnessBundle, RunResult } from "../../core/types.ts";
-import { formatCompare, PARETO_NEEDS_COST, runExperiment } from "../../runner/experiment.ts";
+import { formatCompare, PARETO_NEEDS_COST, runExperiment, type BudgetReport } from "../../runner/experiment.ts";
 import { sortableId } from "../../core/ids.ts";
 import { jobConfig } from "../../jobs/config.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
 import { gateFlags, list, promoteFlags, requireConsent, resolveTask, str, withContext } from "../common.ts";
+import { ensureHookBin } from "../hookbin.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -73,17 +74,20 @@ export async function run(c: CommandContext): Promise<number> {
     let experimentId = str(c.flags.experiment);
     let resume: { resume?: string } = {};
     let taskTags: Map<string, string[]> | undefined;
+    let taskNames: Map<string, string> | undefined;
     let results: RunResult[];
+    let budget: BudgetReport | undefined;
     if (experimentId) {
       results = (await ctx.index.listRuns({ experimentId })).filter((r) => r.bundleId === A.id || r.bundleId === B.id);
       if (!results.length) throw new CliError(`Experiment ${experimentId} has no runs for these bundles`, { reason: "not_found" });
-      if (gateBy) {
-        const stored = await Promise.all([...new Set(results.map((r) => r.taskId))].map((id) => ctx.index.getTask(id)));
-        taskTags = byTagPrefix(stored.filter((t): t is EvalTask => !!t), gateBy);
-      }
+      const stored = (await Promise.all([...new Set(results.map((r) => r.taskId))].map((id) => ctx.index.getTask(id)))).filter((t): t is EvalTask => !!t);
+      if (gateBy) taskTags = byTagPrefix(stored, gateBy);
+      taskNames = new Map(stored.map((t) => [t.id, t.name]));
       await storeAblation();
     } else {
       const ids = list(c.flags.task);
+      const tag = str(c.flags.tag);
+      if (ids.length && tag) throw new UsageError("Pass --task or --tag, not both", { reason: "invalid_argument" });
       let tasks: EvalTask[];
       if (ids.length) {
         tasks = [];
@@ -91,9 +95,16 @@ export async function run(c: CommandContext): Promise<number> {
           const t = await resolveTask(ctx, id);
           tasks.push(t);
         }
+      } else if (tag) {
+        // Hand-written behaviour tasks have no reference patch to validate, so a tag selects drafts too.
+        tasks = (await ctx.index.listTasks({ tag })).filter((t) => t.status !== "archived");
+        if (!tasks.length) throw new CliError(`No tasks tagged ${JSON.stringify(tag)}`, { reason: "no_tasks", next: ["List tasks and their tags:", "coding.sh eval list --json"] });
       } else tasks = await ctx.index.listTasks({ status: "validated" });
       if (!tasks.length) throw new CliError("No validated tasks to run", { reason: "no_tasks", next: ["Draft and validate one first:", "coding.sh eval new latest"] });
+      const maxCost = c.flags["max-cost"];
+      if (maxCost !== undefined && (typeof maxCost !== "number" || !(maxCost > 0))) throw new UsageError("--max-cost needs a positive amount in USD, e.g. --max-cost 15", { reason: "invalid_argument" });
       if (gateBy) taskTags = byTagPrefix(tasks, gateBy);
+      taskNames = new Map(tasks.map((t) => [t.id, t.name]));
       if (ablation && !ablation.dropped.length && !(await anyInTaskRepo(tasks, ablation.unmatched, c.env))) {
         throw new UsageError(`nothing to ablate: ${ablation.unmatched.join(", ")} is in neither bundle ${A.name} nor any selected task's repo`, { reason: "nothing_to_ablate" });
       }
@@ -110,6 +121,8 @@ export async function run(c: CommandContext): Promise<number> {
       const routed = route ? [A, B].map((b) => route(b)).map((x) => (x ? { flags: x.flags, model: x.model, env: Object.keys(x.env).sort() } : null)) : undefined;
       const config = jobConfig({ bundles: [A.id, B.id], tasks, k, timeoutMs, route: routed });
       const job = await openJob(c, { kind: "compare", name: `${A.name} vs ${B.name}`, config, newId: () => sortableId("exp_"), concurrency: concurrency ?? 4 });
+      // The isolated agent configs call the hook bin; without it no run is captured (no turns, tokens, divergence or item gate).
+      if ((await ensureHookBin(c.env)) === "unavailable") out.warn("The coding.sh hook bin is missing and can't be written, so these runs won't be captured: turns, tokens, trace divergence and the item gate need captured sessions. Run `coding.sh init` first.");
       const spin = out.spin(`Running 0/${runs}…`);
       const r = await job
         .guard(() =>
@@ -123,6 +136,7 @@ export async function run(c: CommandContext): Promise<number> {
             ...(concurrency ? { concurrency } : {}),
             ...(route ? { route } : {}),
             ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+            ...(typeof maxCost === "number" ? { maxCostUsd: maxCost } : {}),
             signal: c.signal,
             ...(c.drain ? { drain: c.drain } : {}),
             job: job.scope(),
@@ -135,6 +149,13 @@ export async function run(c: CommandContext): Promise<number> {
       await finishJob(job, r.cancelled);
       experimentId = r.experimentId;
       results = r.results;
+      budget = r.budget;
+      if (budget) {
+        const b = budget;
+        const line = `spent $${b.spentUsd.toFixed(2)} of the $${b.capUsd.toFixed(2)} cap${b.unpriced ? `; ${plural(b.unpriced, "run")} reported no cost and count as $0` : ""}`;
+        if (b.skipped) out.warn(`Stopped at the spend cap: ${line}; ${plural(b.skipped, "run")} not started. The comparison covers the runs that finished.`);
+        else if (!out.json) out.note(line);
+      }
       if (r.cancelled) {
         // A partial A/B is not a comparison; main.ts exits 130 (143 for SIGTERM).
         const finished = job.lines.size;
@@ -157,9 +178,9 @@ export async function run(c: CommandContext): Promise<number> {
       ...(promote ? { pareto: promote } : {}),
       ...(change ? { change } : {}),
     });
-    if (out.json) out.data({ experimentId, report, ...resume });
+    if (out.json) out.data({ experimentId, report, ...resume, ...(budget ? { budget } : {}) });
     else {
-      out.print(formatCompare(report, { color: out.color, arms }));
+      out.print(formatCompare(report, { color: out.color, arms, taskNames }));
       out.print(experimentId);
     }
     if (promote && !report.pareto) out.warn(`--promote: ${PARETO_NEEDS_COST}, so nothing is promoted`);

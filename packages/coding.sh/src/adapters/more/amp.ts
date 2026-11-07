@@ -271,7 +271,7 @@ export const ampAdapter: Adapter = {
     if (isOurPlugin(readText(ampPluginPath({ scope: "user" }))) && !hasFlag(spec.flags, "--plugin-ready-timeout")) args.push("--plugin-ready-timeout", "10");
     args.push(...spec.flags);
     const p = ampStreamParser();
-    const r = await spawnAgent({ bin, args, cwd: spec.cwd, env: runEnv(spec, { AMP_SKIP_UPDATE_CHECK: "1" }), timeoutMs: spec.timeoutMs, onLine: p.onLine });
+    const r = await spawnAgent({ bin, args, cwd: spec.cwd, stdoutFile: spec.stdoutFile, env: runEnv(spec, { AMP_SKIP_UPDATE_CHECK: "1" }), timeoutMs: spec.timeoutMs, onLine: p.onLine });
     if (note) r.stderrTail = note + r.stderrTail;
     return toRunOutput(r, p.sessionId(), p.usage());
   },

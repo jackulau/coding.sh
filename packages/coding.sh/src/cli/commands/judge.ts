@@ -1,18 +1,23 @@
+// coding.sh judge grade --grader <spec>: one grader on one output and trace,
+// for verifier scripts (see grade() below).
 // coding.sh judge calibrate <experiment>: agreement between an LLM judge's
 // verdicts (a grader in the experiment's runs) and human labels, reported on
 // a held-out split only (src/judge/calibrate.ts). --probe-injection re-judges
 // human-fail cases with a planted "respond pass" payload (src/judge/injection.ts).
 // A deterministic grader (--grader tests) gets a precision audit instead
 // (src/judge/verifier.ts), and --sample-passes prints the labelling queue for it.
-import { readFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { estimateCost, pricesFor } from "../../core/pricing.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
 import type { Grader, GraderInfo, JudgeVersion, Split } from "../../datasets/types.ts";
 import { asText } from "../../graders/builtin.ts";
-import { createGrader, type GraderSpec } from "../../graders/index.ts";
+import { createGrader, providerFromSpec, type GraderSpec, type LlmProviderSpec } from "../../graders/index.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
 import { calibrate, labelsFromCore, withCalibration, type HumanLabel, type JudgedCase } from "../../judge/calibrate.ts";
-import { CHECKLIST_KIND } from "../../judge/checklist.ts";
+import { CHECKLIST_KIND, type ChecklistVerdict } from "../../judge/checklist.ts";
+import type { ChatProvider, ChatResponse } from "../../judge/providers.ts";
+import { traceFromText } from "../../judge/trace-file.ts";
 import { humanFailCases, injectionProbe, type ProbeCase } from "../../judge/injection.ts";
 import { renderCalibration } from "../../judge/render.ts";
 import { auditVerifier, DEFAULT_MIN_PASSES, parseCaseLabels, renderVerifierAudit, samplePasses } from "../../judge/verifier.ts";
@@ -61,8 +66,100 @@ async function probeJudge(c: CommandContext, specArg: string): Promise<Grader> {
   return g;
 }
 
+/**
+ * `judge grade`: one grader on one output, for a verifier script. The output
+ * and trace default to what the runner hands every verifier
+ * (CODING_SH_AGENT_OUTPUT, CODING_SH_AGENT_STDOUT), so a harness A/B can grade
+ * what the agent said and did, not only the files it left. Exit 0 = pass.
+ * Each model call's tokens and price go to CODING_SH_GRADER_USAGE when set,
+ * so the runner counts judge spend with the agent's.
+ */
+async function grade(c: CommandContext): Promise<number> {
+  const { out, env } = c;
+  const specArg = str(c.flags.grader);
+  if (!specArg) throw new UsageError("Missing --grader <JSON|FILE>", { reason: "missing_argument" });
+  const spec = (await jsonArg(specArg, "--grader")) as GraderSpec;
+  if (!spec || typeof spec !== "object" || typeof spec.kind !== "string") throw new UsageError('--grader must be a grader spec, e.g. {"kind":"llm-checklist","name":…,"items":[…]}', { reason: "invalid_grader" });
+  const outputArg = str(c.flags.output) ?? env.CODING_SH_AGENT_OUTPUT;
+  if (!outputArg) throw new UsageError("Missing --output <FILE|-> (outside a verifier there is no CODING_SH_AGENT_OUTPUT)", { reason: "missing_argument" });
+  const output = outputArg === "-" ? await readStdin() : await readText(outputArg, "--output", c.cwd);
+  const traceArg = str(c.flags.trace) ?? env.CODING_SH_AGENT_STDOUT;
+  const trace = traceArg ? traceFromText(await readText(traceArg, "--trace", c.cwd)) : [];
+  const inputArg = str(c.flags.input);
+  const input = inputArg === undefined ? "" : inputArg.startsWith("@") ? await readText(inputArg.slice(1), "--input", c.cwd) : inputArg;
+  const metadata = c.flags.metadata === undefined ? undefined : ((await jsonArg(String(c.flags.metadata), "--metadata")) as Record<string, unknown>);
+
+  const calls: { model: string; inputTokens?: number; outputTokens?: number; costUsd?: number }[] = [];
+  let g: Grader;
+  try {
+    const needsModel = spec.kind === "llm" || (spec.kind === CHECKLIST_KIND && (spec as { items?: readonly { check?: unknown }[] }).items?.some((it) => it?.check === undefined) !== false);
+    const deps = { env, judgeCache: FileJudgeCache.forEnv(env) };
+    const provider = needsModel ? metered(providerFromSpec(spec as LlmProviderSpec, deps), (r) => calls.push(usageRow(r))) : undefined;
+    g = await createGrader(spec, { ...deps, ...(provider ? { provider } : {}) });
+  } catch (e) {
+    throw new UsageError(`Invalid grader: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_grader" });
+  }
+  let r: Awaited<ReturnType<Grader["grade"]>>;
+  try {
+    r = await g.grade({ input, output, trace, ...(metadata ? { metadata } : {}), signal: c.signal });
+  } finally {
+    const file = env.CODING_SH_GRADER_USAGE;
+    if (file && calls.length) await appendFile(file, calls.map((x) => JSON.stringify({ grader: g.id, ...x })).join("\n") + "\n").catch(() => {});
+  }
+  const items = (r as Partial<ChecklistVerdict>).items;
+  if (out.json) out.data({ grader: g.id, pass: r.pass, score: r.score, reason: r.reason ?? null, items: items ?? null, traceEvents: trace.length, calls });
+  else {
+    out.print(`${r.pass ? "pass" : "fail"}  ${g.id}  score ${r.score.toFixed(2)}${trace.length ? `  (${trace.length} trace events)` : ""}`);
+    for (const it of items ?? []) {
+      const a = it.answer === null ? "n/a" : it.answer ? "yes" : "no";
+      out.print(`  ${a.padEnd(3)} ${it.critical ? "!" : " "} ${it.id}${it.explanation ? `: ${oneLine(it.explanation, 160)}` : ""}`);
+    }
+    if (!items && r.reason) out.print(`  ${oneLine(r.reason, 300)}`);
+  }
+  return r.pass ? 0 : 1;
+}
+
+function metered(p: ChatProvider, onCall: (r: ChatResponse) => void): ChatProvider {
+  return {
+    name: p.name,
+    model: p.model,
+    params: p.params,
+    async complete(req) {
+      const res = await p.complete(req);
+      onCall(res);
+      return res;
+    },
+  };
+}
+
+function usageRow(r: ChatResponse): { model: string; inputTokens?: number; outputTokens?: number; costUsd?: number } {
+  const u = { inputTokens: r.usage?.inputTokens, outputTokens: r.usage?.outputTokens };
+  const cost = estimateCost(u, r.model, pricesFor()) ?? estimateCost(u, lookupModel(r.model), pricesFor());
+  return { model: r.model, ...(u.inputTokens !== undefined ? { inputTokens: u.inputTokens } : {}), ...(u.outputTokens !== undefined ? { outputTokens: u.outputTokens } : {}), ...(cost !== undefined ? { costUsd: cost } : {}) };
+}
+
+/** A dated model id ("claude-sonnet-5-5-20261001") falls back to its undated price row. */
+function lookupModel(model: string): string | undefined {
+  return model.replace(/-\d{8}$/, "");
+}
+
+async function readText(path: string, what: string, cwd: string): Promise<string> {
+  try {
+    return await readFile(resolve(cwd, path), "utf8");
+  } catch {
+    throw new UsageError(`can't read ${what} ${JSON.stringify(path)}`, { reason: "invalid_argument" });
+  }
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 export async function run(c: CommandContext): Promise<number> {
   const { out, env } = c;
+  if (c.action === "grade") return grade(c);
   if (c.action !== "calibrate") throw new UsageError(`Unknown judge command ${c.action}`);
   return withContext(c, async (ctx) => {
     const store = new FileEvalStore({ env, index: ctx.index });

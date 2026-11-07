@@ -142,7 +142,7 @@ export const wrapperAdapter: Adapter = {
     let substituted = false;
     const args = argv.map((a) => (a.includes("{instruction}") ? ((substituted = true), a.replaceAll("{instruction}", spec.instruction)) : a));
     if (!substituted) args.push(spec.instruction);
-    const r = await spawnAgent({ bin, args, cwd: spec.cwd, env: runEnv(spec), timeoutMs: spec.timeoutMs });
+    const r = await spawnAgent({ bin, args, cwd: spec.cwd, stdoutFile: spec.stdoutFile, env: runEnv(spec), timeoutMs: spec.timeoutMs });
     return toRunOutput(r, undefined, undefined);
   },
 };

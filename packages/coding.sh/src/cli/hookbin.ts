@@ -47,6 +47,21 @@ export async function writeHookBin(env: NodeJS.ProcessEnv = process.env, cli: st
 }
 
 /**
+ * Isolated runs (`compare`) point the agent's hooks at the hook bin, so a run is
+ * captured only when the bin exists. Writes it when missing; agent configs are
+ * not touched, so this does not install capture for the user's own sessions.
+ */
+export async function ensureHookBin(env: NodeJS.ProcessEnv = process.env): Promise<"present" | "written" | "unavailable"> {
+  if (existsSync(paths(env).hook)) return "present";
+  try {
+    await writeHookBin(env);
+    return "written";
+  } catch {
+    return "unavailable";
+  }
+}
+
+/**
  * Rewrites the hook, launcher and CLI pointer from this install, but only
  * where `coding.sh init` set them up before (an update must not install
  * capture for someone who never ran init).

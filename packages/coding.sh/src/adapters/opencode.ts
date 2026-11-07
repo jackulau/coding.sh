@@ -595,6 +595,7 @@ export async function runOpencode(spec: RunSpec): Promise<AgentRunOutput> {
   let sessionId: string | undefined;
   let usage: Usage | undefined;
   const res = await runHeadless({
+    stdoutFile: spec.stdoutFile,
     bin,
     args,
     cwd: spec.cwd,

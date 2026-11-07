@@ -596,7 +596,7 @@ export const antigravityAdapter: Adapter = {
       sessionId ??= str(o.conversation_id) ?? str(o.session_id) ?? str(o.conversationId);
       if (o.type === "result") usage = usageFrom(o.usage) ?? usage;
     });
-    const r = await spawnAgent({ bin, args, cwd: spec.cwd, env: runEnv(spec, { AGY_CLI_DISABLE_AUTO_UPDATE: "1" }), timeoutMs: spec.timeoutMs, onLine });
+    const r = await spawnAgent({ bin, args, cwd: spec.cwd, stdoutFile: spec.stdoutFile, env: runEnv(spec, { AGY_CLI_DISABLE_AUTO_UPDATE: "1" }), timeoutMs: spec.timeoutMs, onLine });
     return toRunOutput(r, sessionId, usage);
   },
   harnessFiles() {

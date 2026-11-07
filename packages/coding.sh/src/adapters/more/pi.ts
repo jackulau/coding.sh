@@ -373,7 +373,7 @@ export const piAdapter: Adapter = {
       if (o.type === "session") sessionId ??= str(o.id);
       if (o.type === "message_end" && get(o, "message", "role") === "assistant") usage = addUsage(usage, piUsage(get(o, "message", "usage")));
     });
-    const r = await spawnAgent({ bin, args, cwd: spec.cwd, env: runEnv(spec, { PI_SKIP_VERSION_CHECK: "1" }), timeoutMs: spec.timeoutMs, onLine });
+    const r = await spawnAgent({ bin, args, cwd: spec.cwd, stdoutFile: spec.stdoutFile, env: runEnv(spec, { PI_SKIP_VERSION_CHECK: "1" }), timeoutMs: spec.timeoutMs, onLine });
     return toRunOutput(r, sessionId, usage);
   },
   harnessFiles() {

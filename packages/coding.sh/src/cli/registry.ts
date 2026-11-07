@@ -333,6 +333,12 @@ export const COMMANDS: CommandSpec[] = [
         examples: ["coding.sh eval new latest --verifier 'npm test'", "coding.sh eval new latest --instruction @prompt.md --verifier 'npm test'"],
       },
       {
+        name: "import",
+        summary: "Add tasks from task directories (hand-written, or from eval export)",
+        args: [{ name: "dir", desc: "Task directory: task.json, instruction.md, optional repo/ (the start tree) and tests/ (hidden verifier files)", required: true, variadic: true }],
+        examples: ["coding.sh eval import tasks/*/"],
+      },
+      {
         name: "validate",
         summary: "Check the reference passes, near-misses fail and nothing leaks",
         args: [{ name: "task", desc: "Task id or name", required: true }],
@@ -520,8 +526,20 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "judge",
     group: "Evaluate",
-    summary: "Check an LLM judge or a test verifier against human labels",
+    summary: "Grade one output, or check an LLM judge or a test verifier against human labels",
     actions: [
+      {
+        name: "grade",
+        summary: "Run one grader on one output and trace (exit 0 on pass); inside a verifier both default to the agent's",
+        flags: [
+          { name: "grader", short: "g", type: "string", value: "<JSON|FILE>", desc: "Grader spec, the same JSON as `exp run --grader` (llm, llm-checklist with trace checks, contains, regex, …)" },
+          { name: "output", type: "string", value: "<FILE|->", desc: "The output to grade (default: $CODING_SH_AGENT_OUTPUT, the agent's final answer in a verifier)" },
+          { name: "trace", type: "string", value: "<FILE>", desc: "Claude stream-json or transcript, or coding.sh events as JSONL (default: $CODING_SH_AGENT_STDOUT)" },
+          { name: "input", type: "string", value: "<TEXT|@FILE>", desc: "The task input shown to a judge" },
+          { name: "metadata", type: "string", value: "<JSON|FILE>", desc: "Case metadata, e.g. {\"instructions\": \"…\"} for follows-rules" },
+        ],
+        examples: ["coding.sh judge grade --grader checklist.json", "coding.sh judge grade --grader judge.json --output answer.txt --trace stream.jsonl --json"],
+      },
       {
         name: "calibrate",
         summary: "Measure judge-human agreement (Cohen's kappa) on a held-out split, or a verifier's precision",
@@ -547,6 +565,7 @@ export const COMMANDS: CommandSpec[] = [
         ],
       },
     ],
+    notes: ["judge grade appends each model call's tokens and price to $CODING_SH_GRADER_USAGE when it is set. coding.sh compare sets it for every verifier, so judge spend counts toward --max-cost."],
     load: () => import("./commands/judge.ts"),
   },
   {
@@ -658,8 +677,10 @@ export const COMMANDS: CommandSpec[] = [
     ],
     flags: [
       { name: "task", short: "t", type: "list", value: "<ID>", desc: "Task id (repeatable; default: all validated tasks)" },
+      { name: "tag", type: "string", value: "<TAG>", desc: "Run every non-archived task with this tag, drafts included (e.g. the tag given to eval import)" },
       { name: "k", type: "number", value: "<N>", desc: "Attempts per task and arm", default: "1" },
       { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel runs" },
+      { name: "max-cost", type: "number", value: "<USD>", desc: "Spend cap: once finished runs (agent plus judge grade calls) reach it, no new run starts" },
       { name: "experiment", type: "string", value: "<ID>", desc: "Compare the stored runs of this experiment instead of running" },
       { name: "without", type: "list", value: "<PATH>", desc: "Ablation: B is A without this file, dir or glob (repeatable)" },
       {
@@ -692,6 +713,7 @@ export const COMMANDS: CommandSpec[] = [
       "coding.sh compare base candidate --experiment exp_01",
       "coding.sh compare base candidate --k 3 --gate",
       "coding.sh compare base candidate --k 3 --gate --by suite:",
+      "coding.sh compare no-skill with-skill --tag skill-eval --gate --by suite: --max-cost 15",
       "coding.sh compare base candidate --k 3 --promote",
       "coding.sh compare base --without .claude/rules/clock.md --k 3 --item-gate",
       "coding.sh compare sonnet gpt5 --gateway",

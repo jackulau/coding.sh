@@ -30,6 +30,39 @@ counts are stored at `task.meta.crossCheck`, in the same shape as a human verifi
 
 `coding.sh eval export --format harbor` writes a Harbor-format task.
 
+### Hand-written tasks
+
+Some behaviour has no session to start from, such as "asks which team before collecting
+anything". You can write those tasks as directories and load them with `coding.sh eval import
+tasks/*/`:
+
+```
+tasks/asks-for-scope/
+  task.json        {"name": "asks-for-scope", "tags": ["skill-eval", "suite:scope"],
+                    "setup": ["…"], "verifier": {"command": "sh grader/verify.sh"}}
+  instruction.md   the prompt the agent gets
+  repo/            the start tree (optional; without it the task starts empty)
+  tests/           hidden files, copied into the work tree only for the verifier
+```
+
+The task id comes from the name, so importing again updates the task in place. Imported tasks are
+drafts. A draft has no reference patch for `eval validate` to check, so `compare` skips drafts by
+default. Use `compare --tag <tag>` to run them.
+
+The verifier can grade more than the work tree. It gets these environment variables:
+
+- `CODING_SH_AGENT_OUTPUT`: a file with the agent's final answer.
+- `CODING_SH_AGENT_STDOUT`: a file with the agent's whole stdout. For Claude Code this is
+  stream-json, with every tool call and its result.
+- `CODING_SH_AGENT`: the agent's adapter id.
+
+Both files live outside the work tree, so the agent can't edit what gets graded. A verifier can
+`grep` them, or hand them to `coding.sh judge grade` (see [Checklists and trace
+checks](#checklists-and-trace-checks)).
+
+[Evaluate an Agent Skill](../how-to/evaluate-a-skill.md) walks through a full set of hand-written
+tasks, from a stub CLI to the compare report.
+
 ## Datasets and experiments
 
 `coding.sh dataset add|import` keeps versioned cases with stable train/dev/test splits.
@@ -252,6 +285,17 @@ into scope)`. When no rule came into scope, the answer is N/A.
 ]}
 ```
 
+`"negate": true` on a check turns it around, so a check can require that a command never ran:
+`{"name": "ran-command", "args": {"command": "vercel env pull"}, "negate": true}`. N/A stays N/A.
+
+`coding.sh judge grade --grader <JSON|FILE>` grades one output with any grader and exits 0 on
+pass. It reads the output from `--output <FILE|->` and the trace from `--trace <FILE>`. The trace
+can be Claude stream-json, a Claude transcript, or coding.sh events as JSONL. Inside a task
+verifier, both default to the agent's files (`CODING_SH_AGENT_OUTPUT` and
+`CODING_SH_AGENT_STDOUT`), so `coding.sh judge grade --grader grader/checklist.json` is a complete
+verifier for a behaviour task. Each model call it makes is appended to `$CODING_SH_GRADER_USAGE`.
+`compare` adds those calls up into the run's grader spend.
+
 ### Auditing a test verifier
 
 A passing test suite does not prove the change is right. METR found that test-passing SWE-bench
@@ -368,6 +412,12 @@ both rates under `baseline.selfCheck` and `candidate.selfCheck`.
 A cost, token or turn value shows `(3/10)` when only 3 of the arm's 10 runs reported it. The
 "X% cheaper" note needs a known cost for at least 80% of each arm's runs. Below that, the report
 says how many runs were priced instead.
+
+The report ends its metrics with what each arm spent in total: an `agent spend` row, and a `grader
+spend` row when verifiers called `judge grade`. `--max-cost 15` caps a live run in USD. Once the
+finished runs reach the cap (agent plus grader cost), no new run starts. Runs already going finish,
+so the total can pass the cap by what the runs in flight cost. The compare then covers the runs that
+finished. Runs that report no cost count as $0 and are listed as such. `--json` carries `budget`.
 
 ## Tool evals
 

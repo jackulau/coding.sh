@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { readFile, readdir } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { RunSpec } from "../../src/core/types.ts";
-import { runTask } from "../../src/runner/run.ts";
+import { readGraderUsage, runTask } from "../../src/runner/run.ts";
 import { cleanupWorlds, fakeAdapter, obedientAgent, toyWorld } from "../helpers-eval.ts";
 
 after(cleanupWorlds);
@@ -35,6 +35,39 @@ describe("runTask", () => {
     assert.match(diff, /src\/mul\.js/);
     assert.doesNotMatch(diff, /CLAUDE\.md|README|build\.log|add\.test\.js/);
     assert.deepEqual(await readdir(w.runsDir), [], "run dir cleaned up");
+    assert.equal(r.agent.finalText, "done", "no stdout file: the answer comes from the tail");
+  });
+
+  it("hands the verifier the agent's answer and whole stdout, outside the work tree, and sums its judge spend", async () => {
+    const w = await toyWorld();
+    const stream = [
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "Bash", input: { command: "vercel whoami" } }] } }),
+      JSON.stringify({ type: "result", result: "Which Vercel team should I audit?" }),
+    ];
+    const adapter = fakeAdapter({
+      act: async (spec) => {
+        assert.ok(spec.stdoutFile, "the runner asks the adapter to tee stdout");
+        await writeFile(spec.stdoutFile, stream.join("\n") + "\n");
+      },
+    });
+    const verifier = [
+      'test "$CODING_SH_AGENT" = fake',
+      'test "$(cat "$CODING_SH_AGENT_OUTPUT")" = "Which Vercel team should I audit?"',
+      'grep -q "vercel whoami" "$CODING_SH_AGENT_STDOUT"',
+      'test "$CODING_SH_SESSION_ID" = "sess-$CODING_SH_RUN_ID"',
+      'case "$CODING_SH_AGENT_OUTPUT" in "$PWD"/*) exit 3;; esac',
+      `printf '%s\\n' '{"model":"m","costUsd":0.25,"inputTokens":10,"outputTokens":5}' '{"model":"unknown"}' 'not json' >> "$CODING_SH_GRADER_USAGE"`,
+    ].join(" && ");
+    const task = { ...w.task, setup: [], verifier: { command: verifier, hiddenFiles: {}, timeoutMs: 30_000 } };
+    const r = await runTask({ task, bundle: await w.mkBundle("x", "x"), adapter, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.verifierExit, 0, r.error);
+    assert.equal(r.pass, true);
+    assert.equal(r.agent.finalText, "Which Vercel team should I audit?");
+    assert.deepEqual(r.graderUsage, { calls: 2, costUsd: 0.25, unpriced: 1, inputTokens: 10, outputTokens: 5 });
+  });
+
+  it("readGraderUsage: a missing file is no usage", async () => {
+    assert.equal(await readGraderUsage("/nonexistent/grader-usage.jsonl"), undefined);
   });
 
   it("records a failing attempt without throwing", async () => {

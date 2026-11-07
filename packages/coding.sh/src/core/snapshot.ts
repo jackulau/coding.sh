@@ -279,6 +279,39 @@ export async function snapshot(cwd: string, opts: SnapshotOptions = {}): Promise
   }
 }
 
+/**
+ * Snapshot a plain directory, git repo or not, as the start tree of a
+ * hand-written eval task (`eval import`). The commit lives in a shadow repo
+ * keyed by the directory's real path with every object stored there, so the
+ * task replays even after the directory moves or changes. Every file is
+ * taken, ignored or not; a nested .git directory is skipped by git itself.
+ */
+export async function snapshotDir(dir: string, env: NodeJS.ProcessEnv = process.env): Promise<{ repoRoot: string; snapshot: string; head: string }> {
+  const root = realRoot(dir);
+  if (!statSync(root, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`snapshotDir: not a directory: ${dir}`);
+  const shadow = shadowRepoPath(root, env);
+  if (!existsSync(join(shadow, "HEAD"))) {
+    mkdirSync(shadow, { recursive: true, mode: 0o700 });
+    await run(["init", "--bare", "-q", shadow], { cwd: shadow });
+  }
+  const idx = join(shadow, `tmp-index-${process.pid}-${randomBytes(6).toString("hex")}`);
+  // GIT_DIR + GIT_WORK_TREE: never discovers an enclosing repo, and writes every object into the shadow.
+  const genv: Record<string, string> = { GIT_DIR: shadow, GIT_INDEX_FILE: idx, GIT_WORK_TREE: root };
+  const cfg = ["-c", "core.splitIndex=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "core.autocrlf=false"];
+  try {
+    await run([...cfg, "add", "-A", "-f", "."], { cwd: root, env: genv, timeoutMs: MATERIALIZE_TIMEOUT_MS });
+    const tree = await git([...cfg, "write-tree"], { cwd: root, env: genv });
+    const commit = await git([...cfg, "commit-tree", tree, "-m", "coding.sh task start"], { cwd: root, env: { ...genv, ...CODING_SH_IDENTITY } });
+    const refDir = join(shadow, "refs", "snapshots");
+    mkdirSync(refDir, { recursive: true });
+    writeFileSync(join(refDir, commit), commit + "\n");
+    return { repoRoot: root, snapshot: commit, head: commit };
+  } finally {
+    rmQuiet(idx);
+    rmQuiet(idx + ".lock");
+  }
+}
+
 function emptyTreeFor(sha: string): string {
   return sha.length === 64 ? EMPTY_TREE_SHA256 : EMPTY_TREE_SHA1;
 }

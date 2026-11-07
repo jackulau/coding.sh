@@ -443,7 +443,7 @@ export const geminiCliAdapter: Adapter = {
       if (o.type === "init") sessionId ??= str(o.session_id);
       if (o.type === "result" && isObj(o.stats)) usage = usageFrom({ input_tokens: o.stats.input_tokens, output_tokens: o.stats.output_tokens, cached: o.stats.cached });
     });
-    const r = await spawnAgent({ bin, args, cwd: spec.cwd, env: runEnv(spec, { GEMINI_CLI_TRUST_WORKSPACE: "true" }), timeoutMs: spec.timeoutMs, onLine });
+    const r = await spawnAgent({ bin, args, cwd: spec.cwd, stdoutFile: spec.stdoutFile, env: runEnv(spec, { GEMINI_CLI_TRUST_WORKSPACE: "true" }), timeoutMs: spec.timeoutMs, onLine });
     return toRunOutput(r, sessionId, usage);
   },
   harnessFiles() {

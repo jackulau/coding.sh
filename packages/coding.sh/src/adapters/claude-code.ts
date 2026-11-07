@@ -439,6 +439,7 @@ export async function runClaude(spec: RunSpec): Promise<AgentRunOutput> {
   args.push(...spec.flags);
   let usage: Usage | undefined;
   const res = await runHeadless({
+    stdoutFile: spec.stdoutFile,
     bin,
     args,
     cwd: spec.cwd,

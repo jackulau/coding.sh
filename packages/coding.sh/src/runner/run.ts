@@ -3,8 +3,10 @@
 //   diff → tamper check → hidden files → verifier → RunResult.
 // Never throws for anything the agent, setup or verifier does; those become
 // `error` on the result. The work dir is removed unless `keep`.
-import { mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { agentAnswerText } from "../core/answer.ts";
 import { removeOnExit, withAbortSignal } from "../core/children.ts";
 import { sortableId } from "../core/ids.ts";
 import { paths } from "../core/paths.ts";
@@ -54,11 +56,33 @@ export interface RunLayout {
   root: string;
   work: string;
   home: string;
+  /** The agent's stdout and final answer, outside the work tree so the agent can't edit what the verifier reads. */
+  agent: string;
 }
 
 export function runLayout(runId: string, runsDir = paths().runs): RunLayout {
   const root = join(runsDir, runId);
-  return { root, work: join(root, "work"), home: join(root, "home") };
+  return { root, work: join(root, "work"), home: join(root, "home"), agent: join(root, "agent") };
+}
+
+/** The stored run keeps this many characters of the final answer; CODING_SH_AGENT_OUTPUT has all of it. */
+export const FINAL_TEXT_MAX = 16 * 1024;
+
+/**
+ * What the verifier gets to read besides the work tree: CODING_SH_AGENT (adapter id),
+ * CODING_SH_AGENT_OUTPUT (the final answer, a file), CODING_SH_AGENT_STDOUT (the whole
+ * stdout, e.g. Claude's stream-json with every tool call) and CODING_SH_SESSION_ID.
+ * A task whose answer is what the agent says (asked for scope, declined a request)
+ * can only be graded from these.
+ */
+export function verifierEnv(adapterId: string, layout: RunLayout, agent: AgentRunOutput): Record<string, string> {
+  const env: Record<string, string> = { CODING_SH_AGENT: adapterId };
+  const stdout = join(layout.agent, "stdout");
+  if (existsSync(stdout)) env.CODING_SH_AGENT_STDOUT = stdout;
+  const output = join(layout.agent, "output.txt");
+  if (agent.finalText !== undefined && existsSync(output)) env.CODING_SH_AGENT_OUTPUT = output;
+  if (agent.sessionId) env.CODING_SH_SESSION_ID = agent.sessionId;
+  return env;
 }
 
 class RunCancelled extends Error {
@@ -70,6 +94,29 @@ class RunCancelled extends Error {
 
 function emptyAgent(note = ""): AgentRunOutput {
   return { exitCode: null, timedOut: false, durationMs: 0, stdoutTail: "", stderrTail: note };
+}
+
+/** Sum of the JSONL rows `judge grade` appended ({costUsd?, inputTokens?, outputTokens?} per model call). */
+export async function readGraderUsage(file: string): Promise<RunResult["graderUsage"]> {
+  const text = await readFile(file, "utf8").catch(() => "");
+  const u = { calls: 0, costUsd: 0, unpriced: 0, inputTokens: 0, outputTokens: 0 };
+  for (const line of text.split("\n")) {
+    if (!line.trim()) continue;
+    let row: Record<string, unknown>;
+    try {
+      row = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+    u.calls++;
+    const cost = n(row.costUsd);
+    if (cost === undefined) u.unpriced++;
+    else u.costUsd += cost;
+    u.inputTokens += n(row.inputTokens) ?? 0;
+    u.outputTokens += n(row.outputTokens) ?? 0;
+  }
+  return u.calls ? u : undefined;
 }
 
 export async function runTask(opts: RunTaskOpts): Promise<RunResult> {
@@ -135,6 +182,8 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
       await mkdir(layout.home, { recursive: true });
       env.HOME = layout.home;
     }
+    await mkdir(layout.agent, { recursive: true });
+    const stdoutFile = join(layout.agent, "stdout");
     try {
       result.agent = await adapter.run({
         cwd: layout.work,
@@ -144,10 +193,18 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
         timeoutMs: opts.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
         flags: [...bundle.flags, ...overlay.flags, ...(route?.flags ?? [])],
         runId,
+        stdoutFile,
       });
     } catch (e) {
       result.agent = emptyAgent(e instanceof Error ? e.message : String(e));
       result.error = `agent failed: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    // The final answer, from the whole stdout when the adapter wrote it (else the tail).
+    const stdout = existsSync(stdoutFile) ? await readFile(stdoutFile, "utf8").catch(() => result.agent.stdoutTail) : result.agent.stdoutTail;
+    if (stdout.trim()) {
+      const answer = agentAnswerText(stdout);
+      await writeFile(join(layout.agent, "output.txt"), answer);
+      result.agent.finalText = answer.slice(0, FINAL_TEXT_MAX);
     }
     checkpoint();
     result.sessionId = result.agent.sessionId;
@@ -170,7 +227,14 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
       result.error ??= "task has no verifier command";
     } else {
       checkpoint();
-      const v = await sh(task.verifier.command, { cwd: layout.work, env: baseEnv, timeoutMs: task.verifier.timeoutMs });
+      const usageFile = join(layout.agent, "grader-usage.jsonl");
+      const v = await sh(task.verifier.command, {
+        cwd: layout.work,
+        env: { ...baseEnv, ...verifierEnv(adapter.id, layout, result.agent), CODING_SH_GRADER_USAGE: usageFile },
+        timeoutMs: task.verifier.timeoutMs,
+      });
+      const graderUsage = await readGraderUsage(usageFile);
+      if (graderUsage) result.graderUsage = graderUsage;
       checkpoint();
       result.verifierExit = v.exitCode;
       result.pass = v.exitCode === 0 && !v.timedOut;
