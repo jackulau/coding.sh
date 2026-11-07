@@ -1,7 +1,8 @@
-// Crash-safe file replacement: temp file, fsync, rename, fsync the directory.
+// Crash-safe file replacement: temp file, flushed, rename, fsync the directory.
 // After a crash or power loss the path holds the old content or the new, never
 // a torn or empty file, and a completed write survives.
 import { randomBytes } from "node:crypto";
+import { constants } from "node:fs";
 import { open, rename, unlink } from "node:fs/promises";
 import { dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -16,15 +17,8 @@ export interface DurableWriteOpts {
 
 /** Atomically replaces `path` with `data` and makes the result durable. */
 export async function writeFileDurable(path: string, data: Uint8Array | string, opts: DurableWriteOpts = {}): Promise<void> {
-  const tmp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  const tmp = await writeTemp(path, data);
   try {
-    const fh = await open(tmp, "wx");
-    try {
-      await fh.writeFile(data);
-      await fh.sync();
-    } finally {
-      await fh.close();
-    }
     await renameOver(tmp, path, opts.existingIsGood);
   } catch (err) {
     await unlink(tmp).catch(() => {});
@@ -32,6 +26,39 @@ export async function writeFileDurable(path: string, data: Uint8Array | string, 
   }
   await syncDir(dirname(path));
 }
+
+/**
+ * The first half of writeFileDurable: `data` in a new temp file next to `path`
+ * (`<path>.<pid>.<hex>.tmp`), written out to the device. Returns its path;
+ * renameOver it into place, then syncDir. Nothing is left behind when it fails.
+ *
+ * Small files are opened O_DSYNC, so the write itself is the flush (one call,
+ * not write + fsync). On macOS that pushes the data to the drive but not
+ * through its cache: the F_FULLFSYNC of the syncDir that follows does that for
+ * every file written before it. Windows has no O_DSYNC here: fsync.
+ */
+export async function writeTemp(path: string, data: Uint8Array | string): Promise<string> {
+  const tmp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
+  const dsync = O_DSYNC !== undefined && (typeof data === "string" ? data.length * 3 : data.byteLength) <= DSYNC_MAX_BYTES;
+  try {
+    const fh = await open(tmp, dsync ? constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | O_DSYNC : "wx");
+    try {
+      await fh.writeFile(data);
+      if (!dsync) await fh.sync();
+    } finally {
+      await fh.close();
+    }
+  } catch (err) {
+    await unlink(tmp).catch(() => {});
+    throw err;
+  }
+  return tmp;
+}
+
+/** Undefined where Node does not expose it (Windows). */
+const O_DSYNC: number | undefined = (constants as { O_DSYNC?: number }).O_DSYNC;
+/** Larger writes go out in chunks, each a flush under O_DSYNC: one fsync at the end is cheaper. */
+const DSYNC_MAX_BYTES = 256 * 1024;
 
 const BUSY = new Set(["EPERM", "EACCES", "EBUSY"]);
 

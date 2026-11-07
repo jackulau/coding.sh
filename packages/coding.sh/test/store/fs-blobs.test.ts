@@ -84,8 +84,8 @@ describe("FsBlobStore", () => {
     assert.deepEqual(readFileSync(s.pathFor(ref)), full);
   });
 
-  it("fsyncs the blob file and its directory before put resolves", async () => {
-    const s = fresh();
+  /** Counts FileHandle.sync calls (fsync; F_FULLFSYNC on macOS) while `fn` runs. */
+  async function countSyncs(fn: () => Promise<unknown>): Promise<number> {
     const probe = await open(import.meta.filename, "r");
     const proto = Object.getPrototypeOf(probe); // FileHandle.prototype
     await probe.close();
@@ -96,14 +96,53 @@ describe("FsBlobStore", () => {
       return sync.call(this);
     };
     try {
-      await s.put("durable");
-      assert.ok(calls >= 2, `fsync calls: ${calls} (file + directory)`);
-      calls = 0;
-      await s.put("durable");
-      assert.equal(calls, 0, "a verified dedupe hit writes nothing");
+      await fn();
     } finally {
       proto.sync = sync;
     }
+    return calls;
+  }
+
+  it("syncs the blob's directory (and, without O_DSYNC, the file) before put resolves", async () => {
+    const s = fresh();
+    // The temp file is opened O_DSYNC where Node has it (the write is the flush), else fsynced.
+    const expected = process.platform === "win32" ? 2 : 1;
+    assert.ok((await countSyncs(() => s.put("durable"))) >= expected, `at least ${expected} fsync calls`);
+    assert.equal(await countSyncs(() => s.put("durable")), 0, "a verified dedupe hit writes nothing");
+  });
+
+  it("batch: blobs reach their path only on flush, which syncs each directory once (macOS: the root once)", async () => {
+    const s = fresh();
+    const b = s.batch();
+    const texts = Array.from({ length: 60 }, (_, i) => `blob ${i}`);
+    const refs = await Promise.all(texts.map((t) => b.put(t)));
+    assert.equal(await b.getText(refs[7]!), texts[7], "readable through the batch before the flush");
+    // Every temp file written (Windows fsyncs each one), so only the flush's own syncs are counted below.
+    await Promise.all(refs.map((r) => b.get(r)));
+    assert.ok(refs.every((r) => !existsSync(s.pathFor(r))), "nothing at a blob path before the flush");
+    const dirs = new Set(refs.map((r) => join(s.root, r.slice(0, 2), r.slice(2, 4))));
+    const parents = new Set(refs.map((r) => join(s.root, r.slice(0, 2))));
+    const syncs = await countSyncs(() => b.flush());
+    if (process.platform === "darwin") assert.equal(syncs, 1);
+    // Each blob directory, each new ab/ (in the root), and the new root itself (in its parent).
+    else assert.ok(syncs <= dirs.size + parents.size + 2, `${syncs} syncs for ${dirs.size} directories`);
+    for (const [i, r] of refs.entries()) assert.equal(await s.getText(r), texts[i]);
+    const tmp = readdirSync(s.root, { recursive: true }).filter((f) => String(f).endsWith(".tmp"));
+    assert.deepEqual(tmp, []);
+  });
+
+  it("batch: flush rejects with a write error, and the batch's other blobs still land", async () => {
+    const s = fresh();
+    const good = await s.put("already here"); // creates the root
+    const b = s.batch();
+    const ok = await b.put("lands");
+    // A file where the blob's directory must go: its write fails.
+    const bad = sha256Hex("cannot land");
+    writeFileSync(join(s.root, bad.slice(0, 2)), "not a directory");
+    assert.equal(await b.put("cannot land"), bad);
+    await assert.rejects(b.flush());
+    assert.equal(await s.getText(ok), "lands");
+    assert.equal(await s.getText(good), "already here");
   });
 
   it("sweepTmp removes orphan temp files older than the age guard", async () => {

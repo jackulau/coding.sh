@@ -24,6 +24,7 @@ coding.sh runs on Windows, and CI tests it there.
 - **Windows.** `coding.sh update` and the MCP launcher run npm and `coding.sh` without a shell, so paths with spaces or `&` arrive intact.
 - **Codex.** Code mode: a command run inside an `exec` cell now points at the cell, the cell fails when a command in it fails, and session stats count each command once instead of twice (hooks and backfill agree).
 - **Viewer.** A big ingest no longer blanks reads: `coding.sh ui` opens at once (0.3 s, was 41 s on a 25k-line spool) and indexes in a background worker with an "Indexing N files…" pill, and `status`, `sessions` and `search` answer within 1.5 s, noting what is still pending (`--fresh` waits). [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md).
+- **Capture.** A full ingest of a 25k-line spool takes 4 s instead of 294 s on macOS, and 39 s instead of 153 s on Linux: blobs are made durable once per checkpoint instead of with two fsyncs per line, and each checkpoint commits its events, session rows and spool cursors in one transaction, so a crash mid-drain neither loses nor duplicates events.
 
 ## [0.1.1] - 2026-11-07
 

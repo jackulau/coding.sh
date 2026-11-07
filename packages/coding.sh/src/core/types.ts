@@ -166,6 +166,15 @@ export interface IndexStore {
    */
   setEventCosts?(costs: { id: string; costUsd: number }[]): Promise<number>;
 
+  /**
+   * Runs `fn` as one transaction: every write it makes commits together when it
+   * resolves, or none does when it throws. Ingest commits each checkpoint's
+   * events, session rows and spool cursors this way. Writes made on the same
+   * connection by anything else while `fn` is pending join it. Without it,
+   * ingest writes rows before cursors, so a crash re-reads lines (idempotent).
+   */
+  transaction?<T>(fn: () => Promise<T>): Promise<T>;
+
   /** Small durable key/value state (e.g. the OTLP trace → session map). */
   kvGet?(key: string): Promise<string | undefined>;
   kvSet?(key: string, value: string | undefined): Promise<void>;
@@ -215,6 +224,18 @@ export interface BlobStore {
   size?(): Promise<number>;
   /** Stored size and age of one blob (gc uses age; stores without it are never swept). */
   stat?(ref: BlobRef): Promise<{ size: number; mtimeMs: number } | undefined>;
+  /**
+   * A write-behind view for bulk writers (ingest): puts return their ref without
+   * waiting for the write, and `flush()` makes them all durable together. Write
+   * no index row that references a blob of the batch before `flush()` resolves.
+   */
+  batch?(): BlobBatch;
+}
+
+/** See BlobStore.batch. Reads through the batch see its unflushed puts. */
+export interface BlobBatch extends BlobStore {
+  /** Resolves once every put made through this batch is durable and readable through the store; rejects with the first write error. */
+  flush(): Promise<void>;
 }
 
 export interface SinkAck {

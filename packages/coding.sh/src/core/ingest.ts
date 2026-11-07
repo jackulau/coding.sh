@@ -238,6 +238,13 @@ export async function ingest(opts: IngestOptions): Promise<IngestResult> {
   return total!;
 }
 
+/** Spool files whose local cursor is short of their end: what an ingest has yet to read (without taking the lock). */
+export async function spoolBacklog(index: IndexStore, spoolDir: string): Promise<number> {
+  let n = 0;
+  for (const f of await listSpoolFiles(spoolDir)) if ((await index.getCursor(f.source)) < f.size) n++;
+  return n;
+}
+
 function mergeResults(a: IngestResult, b: IngestResult): IngestResult {
   const sinks = a.sinks.map((s) => ({ ...s }));
   for (const s of b.sinks) {
@@ -278,6 +285,10 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   // Fail fast on a bad user config (e.g. invalid redact pattern) before touching anything.
   profileFor(undefined);
 
+  // Blob puts write behind; checkpoint() flushes them before any row that references them.
+  const blobBatch = blobs.batch?.();
+  const blobStore = blobBatch ?? blobs;
+
   // Sinks currently allowed to send (not backing off).
   const sinkStates = new Map<Sink, SinkReport & { failed: boolean }>();
   for (const sink of opts.sinks ?? []) {
@@ -292,7 +303,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   const sinkBatchSize = (sink: Sink) => config.sinks.find((s) => (s.name ?? s.kind) === sink.name)?.batchSize ?? DEFAULT_SINK_BATCH;
   const touchedAll = new Set<string>();
 
-  const normalize = spoolNormalizer({ adapters, blobs, env, profileFor, error, excluded: () => result.excluded++ });
+  const normalize = spoolNormalizer({ adapters, blobs: blobStore, env, profileFor, error, excluded: () => result.excluded++ });
 
   const durations = toolDurationFiller(index);
 
@@ -318,9 +329,23 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   };
   const recompute = async (ids: Iterable<string>) => {
     for (const id of ids) {
-      if (await recomputeSession(index, id, { linker, repo, enrich: endSnapshot, versionFor })) touchedAll.add(id);
+      if (await recomputeSession(index, id, { linker, repo, versionFor })) touchedAll.add(id);
     }
   };
+  // After the checkpoint commits: git can take seconds, too long to hold the index's write lock.
+  const snapshotEnded = async () => {
+    for (const id of [...freshEnds.keys()]) {
+      const s = await index.getSession(id);
+      if (!s) {
+        freshEnds.delete(id);
+        continue;
+      }
+      const before = s.endSnapshot;
+      await endSnapshot(s);
+      if (s.endSnapshot !== before) await index.upsertSession(s);
+    }
+  };
+  const atomically = <T>(fn: () => Promise<T>): Promise<T> => (index.transaction ? index.transaction(fn) : fn());
 
   const sendToSink = async (sink: Sink, file: SpoolFile, window: LineEvents[], readPos: number) => {
     const state = sinkStates.get(sink)!;
@@ -344,7 +369,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
         fence();
         let ack;
         try {
-          ack = await sink.write(meta ? batch.map(toMetadata) : batch, meta ? sessions.map(sessionToMetadata) : sessions, blobs);
+          ack = await sink.write(meta ? batch.map(toMetadata) : batch, meta ? sessions.map(sessionToMetadata) : sessions, blobStore);
         } catch (err) {
           ack = { ok: false, error: (err as Error).message };
         }
@@ -388,20 +413,29 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   let windowEvents = 0;
   const touched = new Set<string>();
   const checkpoint = async () => {
-    for (let i = 0; i < pending.length; i += PUT_BATCH) {
-      const { inserted } = await index.putEvents(pending.slice(i, i + PUT_BATCH));
-      result.events += inserted;
-    }
-    pending = [];
-    durations.settle();
-    await recompute(touched);
-    touched.clear();
-    for (const f of open) {
-      if (f.readPos > f.local) {
+    // Durable blobs first: no committed row may reference one a power loss could take back.
+    await blobBatch?.flush();
+    // Events, the session rows folded from them and the cursors past their lines commit
+    // as one transaction (when the store has them), so a crash leaves the index exactly
+    // at the previous checkpoint and the next run re-reads from there.
+    const inserted = await atomically(async () => {
+      let n = 0;
+      for (let i = 0; i < pending.length; i += PUT_BATCH) n += (await index.putEvents(pending.slice(i, i + PUT_BATCH))).inserted;
+      durations.settle();
+      await recompute(touched);
+      for (const f of open) {
+        if (f.readPos <= f.local) continue;
         fence();
-        f.local = f.readPos;
-        await index.setCursor(f.file.source, f.local);
+        await index.setCursor(f.file.source, f.readPos);
       }
+      return n;
+    });
+    result.events += inserted;
+    pending = [];
+    touched.clear();
+    for (const f of open) f.local = Math.max(f.local, f.readPos);
+    await snapshotEnded();
+    for (const f of open) {
       for (const sink of f.active) await sendToSink(sink, f.file, f.window, f.readPos);
       f.window = [];
     }
@@ -726,7 +760,6 @@ export function childLinker(index: IndexStore): ChildLinker {
 export interface RecomputeOptions {
   linker: ChildLinker;
   repo: RepoResolver;
-  enrich?: (session: Session) => Promise<void>;
   /** Parse version a session new to the index is stamped with (an existing one keeps its own). */
   versionFor?: (agent: string) => number | undefined;
   /** Stamp this parse version whatever the stored one (re-parse). */
@@ -735,7 +768,7 @@ export interface RecomputeOptions {
 
 /** Folds a session's stored events into its row and upserts it. False when it has no events. */
 export async function recomputeSession(index: IndexStore, id: string, o: RecomputeOptions): Promise<boolean> {
-  const { linker, repo, enrich } = o;
+  const { linker, repo } = o;
   const events = await index.listEvents(id);
   if (!events.length) return false;
   const prev = await index.getSession(id);
@@ -750,7 +783,6 @@ export async function recomputeSession(index: IndexStore, id: string, o: Recompu
     const state = await repo.start(session, events);
     if (state) session.repo = state;
   }
-  await enrich?.(session);
   await index.upsertSession(session);
   await linker.observe(id, events);
   return true;
@@ -800,7 +832,9 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   const base = profileFor(undefined);
   const metadata = base.config.capture.mode === "metadata";
   // Blobs are redacted with the user-level profile: backfill can't know an event's cwd before normalizing it.
-  const ctx = normalizeContext(base, blobs, metadata);
+  // Puts write behind and are flushed before the rows that reference them.
+  const blobBatch = blobs.batch?.();
+  const ctx = normalizeContext(base, blobBatch ?? blobs, metadata);
   const copies = copyFilter(index);
   const durations = toolDurationFiller(index);
   // Sessions to recompute: those that received new events, plus every session
@@ -822,6 +856,7 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
       const batch = await durations(pending);
       durations.settle(); // stored next: a later start can no longer fill these in place
       pending = [];
+      await blobBatch?.flush();
       // Per session, so a session is recomputed only when it actually gained rows.
       const bySession = new Map<string, AgentEvent[]>();
       for (const e of batch) {
@@ -881,6 +916,8 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
       result.errors.push({ message: `${adapter.id}.backfill failed: ${report.error}` });
     }
   }
+  // Blobs whose events were all dropped: renamed into place (unreferenced, gc removes them) rather than left as temp files.
+  await blobBatch?.flush();
   const linker = childLinker(index);
   const repo = repoResolver();
   const byId = new Map(opts.adapters.map((a) => [a.id, a]));

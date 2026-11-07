@@ -459,6 +459,18 @@ export class SqliteIndexStore implements IndexStore {
   }
 
   private tx<T>(fn: () => T): T {
+    // Inside transaction(): a savepoint, so a failed write still undoes only itself.
+    if (this.txDepth) {
+      this.db.exec("SAVEPOINT w");
+      try {
+        const out = fn();
+        this.db.exec("RELEASE w");
+        return out;
+      } catch (err) {
+        this.db.exec("ROLLBACK TO w; RELEASE w");
+        throw err;
+      }
+    }
     // IMMEDIATE takes the write lock up front, avoiding SQLITE_BUSY on lock upgrade.
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -468,6 +480,25 @@ export class SqliteIndexStore implements IndexStore {
     } catch (err) {
       this.db.exec("ROLLBACK");
       throw err;
+    }
+  }
+
+  private txDepth = 0;
+
+  /** See IndexStore.transaction. Nested calls join the outer transaction. */
+  async transaction<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.txDepth) return fn();
+    this.db.exec("BEGIN IMMEDIATE");
+    this.txDepth++;
+    try {
+      const out = await fn();
+      this.db.exec("COMMIT");
+      return out;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    } finally {
+      this.txDepth--;
     }
   }
 

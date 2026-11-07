@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { AgentEvent, EventKind, Session } from "../../src/schema/index.ts";
-import type { Adapter, Config, Sink, SinkAck } from "../../src/core/types.ts";
+import type { Adapter, BlobBatch, BlobStore, Config, Sink, SinkAck } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { backfill, ingest, sinkCursorKey, sinkRetryKey } from "../../src/core/ingest.ts";
 import { acquireLock, isStale, LockBusyError, LockLostError } from "../../src/core/lock.ts";
@@ -284,6 +284,33 @@ describe("ingest", () => {
     const r = await ingest(opts);
     assert.equal(r.events, 2);
     assert.equal((await flaky.getSession("s"))?.stats.turns, 1);
+  });
+
+  it("writes blobs through a batch flushed before each checkpoint commits the rows that reference them", async () => {
+    const t = setup();
+    for (let i = 0; i < 12; i++) t.write(t.line({ session: `s${i % 3}`, kind: "tool.end", blob: `output ${i}` }));
+    const log: string[] = [];
+    const blobs: BlobStore = new MemoryBlobStore();
+    blobs.batch = () => {
+      const b = Object.create(blobs) as BlobBatch;
+      b.put = async (data) => {
+        log.push("blob");
+        return blobs.put(data);
+      };
+      b.flush = async () => void log.push("flush");
+      return b;
+    };
+    const index = new MemoryIndexStore();
+    const put = index.putEvents.bind(index);
+    index.putEvents = async (batch) => {
+      log.push("rows");
+      return put(batch);
+    };
+    const r = await ingest({ config: t.config, index, blobs, adapters, env: t.env, checkpointEvents: 5 });
+    assert.equal(r.events, 12);
+    assert.ok(log.includes("rows"));
+    // Every rows write follows a flush, with no blob put between them.
+    for (const [i, step] of log.entries()) if (step === "rows") assert.equal(log.slice(0, i).filter((s) => s !== "rows").at(-1), "flush", log.join(" "));
   });
 
   it("fans out to sinks with their own cursors, backs off on failure and catches up", async () => {

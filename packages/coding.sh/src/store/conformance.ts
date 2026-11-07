@@ -293,6 +293,40 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.equal(await s.kvGet("otel:trace:abc"), undefined);
     }));
 
+    it("optional transaction commits everything on resolve and nothing on throw", withStore(async (s) => {
+      if (!s.transaction) return;
+      const kept = fixtureEvent({ sessionId: "tx-ok" });
+      const out = await s.transaction(async () => {
+        await s.putEvents([kept]);
+        await s.upsertSession(fixtureSession({ id: "tx-ok" }));
+        await s.setCursor("claude-code/tx.jsonl", 10);
+        // Reads inside see the transaction's own writes.
+        assert.equal((await s.listEvents("tx-ok")).length, 1);
+        return "done";
+      });
+      assert.equal(out, "done");
+      const lost = fixtureEvent({ sessionId: "tx-bad" });
+      await assert.rejects(
+        s.transaction(async () => {
+          await s.putEvents([lost]);
+          await s.upsertSession(fixtureSession({ id: "tx-bad" }));
+          await s.setCursor("claude-code/tx.jsonl", 20);
+          // A nested transaction joins the outer one and is undone with it.
+          await s.transaction!(async () => s.setCursor("claude-code/nested.jsonl", 5));
+          throw new Error("crash");
+        }),
+        /crash/,
+      );
+      assert.equal((await s.listEvents("tx-ok")).length, 1);
+      assert.ok(await s.getSession("tx-ok"));
+      assert.equal(await s.getCursor("claude-code/tx.jsonl"), 10);
+      assert.equal((await s.listEvents("tx-bad")).length, 0);
+      assert.equal(await s.getSession("tx-bad"), undefined);
+      assert.equal(await s.getCursor("claude-code/nested.jsonl"), 0);
+      // The store is usable afterwards (no transaction left open).
+      assert.deepEqual(await s.putEvents([lost]), { inserted: 1 });
+    }));
+
     it("session parseVersion round-trips and survives an upsert that leaves it unset", withStore(async (s) => {
       const base: Session = { id: "pv", agent: "codex", startedAt: 1, stats: { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] };
       await s.upsertSession(base);
@@ -621,6 +655,24 @@ export function runBlobStoreConformance(name: string, make: () => Promise<BlobSt
     it("rejects malformed refs instead of touching arbitrary paths", withStore(async (s) => {
       await assert.rejects(() => s.get("../../etc/passwd"));
       await assert.rejects(() => s.delete("not-a-ref"));
+    }));
+
+    it("optional batch: puts return refs at once, read back through the batch, and land on flush", withStore(async (s) => {
+      if (!s.batch) return;
+      const b = s.batch();
+      const texts = Array.from({ length: 40 }, (_, i) => `batched blob ${i} ${Math.random()}`);
+      const refs = await Promise.all(texts.map((t) => b.put(t)));
+      assert.deepEqual(refs, texts.map((t) => sha256Hex(t)));
+      assert.equal(await b.put(texts[0]!), refs[0], "a repeat put in the batch is the same ref");
+      assert.equal(await b.getText(refs[3]!), texts[3]);
+      assert.deepEqual(await b.has([refs[5]!, sha256Hex("never stored")]), [true, false]);
+      await b.flush();
+      for (const [i, ref] of refs.entries()) assert.equal(await s.getText(ref), texts[i]);
+      await b.flush(); // nothing left: a no-op
+      // The batch stays usable after a flush.
+      const later = await b.put("after the flush");
+      await b.flush();
+      assert.equal(await s.getText(later), "after the flush");
     }));
   });
 }
