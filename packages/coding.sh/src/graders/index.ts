@@ -5,6 +5,7 @@ import type { JudgeCache } from "../judge/cache.ts";
 import type { FetchLike, RetryOpts } from "../judge/http.ts";
 import { CHECKLIST_KIND, checklistGrader, createChecklistJudge, type ChecklistItem, type ChecklistMode } from "../judge/checklist.ts";
 import { createJudge, judgeGrader } from "../judge/judge.ts";
+import { createPairwiseJudge, PAIRWISE_KIND, type PairwiseJudge } from "../judge/pairwise.ts";
 import { anthropicProvider, openAICompatibleProvider, type ChatProvider } from "../judge/providers.ts";
 import {
   containsGrader,
@@ -75,6 +76,19 @@ export interface LlmChecklistGraderSpec extends LlmProviderSpec {
   calibration?: CalibrationStatus;
 }
 
+/** Pairwise judge (src/judge/pairwise.ts): compares two experiments' outputs, so it runs in `exp compare --pairwise`, not as a per-run grader. */
+export interface PairwiseGraderSpec extends LlmProviderSpec {
+  kind: typeof PAIRWISE_KIND;
+  name: string;
+  rubric: string;
+  criterion?: string;
+  template?: string;
+  system?: string;
+  tunedOn?: Split[];
+  concurrency?: number;
+  calibration?: CalibrationStatus;
+}
+
 export type GraderSpec =
   | ExactSpec
   | ContainsSpec
@@ -86,7 +100,8 @@ export type GraderSpec =
   | CommandGraderSpec
   | ModuleGraderSpec
   | LlmGraderSpec
-  | LlmChecklistGraderSpec;
+  | LlmChecklistGraderSpec
+  | PairwiseGraderSpec;
 
 export interface GraderDeps {
   /** Resolve relative module paths against this directory. */
@@ -190,9 +205,31 @@ export async function createGrader(spec: GraderSpec, deps: GraderDeps = {}): Pro
       });
       return checklistGrader(judge);
     }
+    case PAIRWISE_KIND:
+      throw new Error(`a "${PAIRWISE_KIND}" judge compares two experiments; use it with: coding.sh exp compare A B --pairwise <JSON|FILE>`);
     default:
       throw new Error(`unknown grader kind ${JSON.stringify(kind)}`);
   }
+}
+
+/** Build a pairwise judge from its spec (same provider options as "llm"). */
+export function createPairwiseJudgeFromSpec(spec: PairwiseGraderSpec, deps: GraderDeps = {}): PairwiseJudge {
+  if (spec.kind !== PAIRWISE_KIND) throw new Error(`expected kind "${PAIRWISE_KIND}" (got ${JSON.stringify(spec.kind)})`);
+  if (typeof spec.name !== "string" || !spec.name.trim()) throw new Error("a pairwise judge needs a name");
+  if (typeof spec.rubric !== "string" || !spec.rubric.trim()) throw new Error("a pairwise judge needs a rubric");
+  const provider = providerFromSpec(spec, deps);
+  return createPairwiseJudge({
+    name: spec.name,
+    rubric: spec.rubric,
+    provider,
+    ...(spec.criterion ? { criterion: spec.criterion } : {}),
+    ...(spec.template ? { template: spec.template } : {}),
+    ...(spec.system ? { system: spec.system } : {}),
+    ...(spec.tunedOn ? { tunedOn: spec.tunedOn } : {}),
+    ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
+    ...(spec.calibration ? { calibration: spec.calibration } : {}),
+    ...cacheFor(provider, deps),
+  });
 }
 
 export * from "./builtin.ts";

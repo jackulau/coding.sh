@@ -7,6 +7,8 @@ import type { RoganGladenResult } from "../stats/interval.ts";
 import type { SequentialOutcome } from "../stats/sequential.ts";
 import type { AaResult } from "./aa.ts";
 import type { ArmAttrition, Comparison } from "./compare.ts";
+import type { PairwiseSummary } from "./pairwise.ts";
+import type { SweepResult } from "./sweep.ts";
 import { fixed, ms, paint, pct, pValue, signedPct, table, truncate, type RenderOpts } from "./text.ts";
 
 const trusted = (c: CalibrationStatus | undefined) => c === undefined || c.state === "calibrated";
@@ -255,5 +257,91 @@ export function renderAa(r: AaResult, opts: RenderOpts & { first?: ExperimentRes
   out.push(`sd      ${fixed(n.sd)} ${paint("(per-case Δ between the two runs)", "dim", color)}`);
   const cases = (x: number) => (Number.isFinite(x) ? String(x) : "—");
   out.push(`plan    paired cases to detect 5pp: ${cases(r.plan.for5)}, 10pp: ${cases(r.plan.for10)} ${paint("(α 0.05, power 80%, at this noise)", "dim", color)}`);
+  return out.join("\n");
+}
+
+/** `exp compare --pairwise`: B's win rate from a both-order pairwise judge. */
+export function renderPairwise(s: PairwiseSummary, opts: RenderOpts): string {
+  const color = opts.color;
+  const out: string[] = [];
+  const star = s.judge.calibration?.state === "calibrated" ? "" : paint("*", "yellow", color);
+  out.push(`${paint("pairwise", "bold", color)} ${s.judge.id}${star} ${paint(`(both orders, ${s.n} case${s.n === 1 ? "" : "s"})`, "dim", color)}`);
+  if (!s.n) {
+    out.push(paint("no case was judged", "yellow", color));
+  } else {
+    out.push(`wins    B ${s.wins.b}, A ${s.wins.a}, ties ${s.ties}${s.inconsistent ? ` (${s.inconsistent} from order flips)` : ""}`);
+    const vColor = s.verdict === "better" ? "green" : s.verdict === "worse" ? "red" : "dim";
+    out.push(
+      `B wins  ${paint(pct(s.winRate.b), vColor, color)} ${ci(s.winRate.lo, s.winRate.hi)} ` +
+        paint(`(ties count half, 95% ${s.cluster ? `cluster bootstrap over ${s.cluster.clusters} ${s.cluster.key} clusters` : "paired bootstrap"})`, "dim", color) +
+        `  sign test p=${pValue(s.signTest.p)}`,
+    );
+    const b = s.positionBias;
+    out.push(
+      `order   answer changed with the order on ${s.inconsistent} of ${s.n} (${pct(b.rate)})` +
+        (b.first || b.second ? `: ${b.first} favored the first response, ${b.second} the second` : ""),
+    );
+    out.push(`verdict ${paint(s.verdict === "inconclusive" ? "inconclusive (CI includes 50%)" : `B is ${s.verdict}`, vColor, color)}`);
+  }
+  const skipped = s.skipped.noOutput;
+  if (skipped) out.push(paint(`${skipped} shared case(s) not judged: no output on one side (task error)`, "dim", color));
+  for (const w of s.warnings) out.push(paint(`! ${w}`, "yellow", color));
+  return out.join("\n");
+}
+
+/** `exp sweep`: the race, the winner's held-out score and the optimism gap. */
+export function renderSweep(r: SweepResult, opts: RenderOpts): string {
+  const color = opts.color;
+  const out: string[] = [];
+  const sp = r.splits;
+  out.push(
+    `${paint("sweep", "bold", color)} ${r.name}  ${r.configs.length} configs, sequential halving, budget ${r.budget} (used ${r.used}) ` +
+      paint(`seed ${r.seed}`, "dim", color),
+  );
+  out.push(
+    `splits  race on ${sp.select} (${sp.selectCases} cases), held out ${sp.heldOut} (${sp.heldOutCases} cases)` +
+      (sp.source === "random" ? paint(" (random split: the dataset has no splits)", "dim", color) : ""),
+  );
+  out.push("");
+  out.push(
+    table(
+      [{ header: "round" }, { header: "config" }, { header: "cases", align: "right" }, { header: "pass", align: "right" }, { header: "result" }],
+      r.rounds.flatMap((rd) =>
+        rd.configs.map((c, i) => [
+          i === 0 ? String(rd.round) : "",
+          c.config,
+          String(c.n),
+          pct(c.passRate),
+          c.kept
+            ? "kept"
+            : paint(`dropped, ${signedPct(c.vsLeader?.mean ?? NaN)} [${signedPct(c.vsLeader?.lo ?? NaN)}, ${signedPct(c.vsLeader?.hi ?? NaN)}] vs leader`, "dim", color),
+        ]),
+      ),
+      { color },
+    ),
+  );
+  for (const n of r.notes) out.push(paint(`! ${n}`, "yellow", color));
+  if (r.status === "cancelled") {
+    out.push(paint("cancelled: no winner was re-scored on the held-out split", "yellow", color));
+    return out.join("\n");
+  }
+  const w = r.winner;
+  if (!w) return out.join("\n");
+  out.push("");
+  out.push(`winner  ${paint(w.name, "bold", color)}  ${sp.select} ${pct(w.train.passRate)} (${w.train.n} cases)  held-out ${pct(w.heldOut.p)} ${ci(w.heldOut.lo, w.heldOut.hi)} (${w.heldOut.n} cases)`);
+  const gColor = w.optimismGap > 0.05 ? "yellow" : "dim";
+  out.push(`gap     ${paint(signedPct(w.optimismGap), gColor, color)} ${paint(`optimism (${sp.select} − held-out): how much the race overstates the winner`, "dim", color)}`);
+  if (r.start && r.start.name !== w.name) {
+    out.push(`start   ${r.start.name}  held-out ${pct(r.start.heldOut.p)} ${ci(r.start.heldOut.lo, r.start.heldOut.hi)}`);
+  } else out.push(paint("start   the start config won; nothing to compare it against", "dim", color));
+  if (r.comparison) {
+    const c = r.comparison;
+    const vColor = c.verdict === "better" ? "green" : c.verdict === "worse" ? "red" : "dim";
+    out.push(
+      `held-out B − A ${paint(signedPct(c.diff.mean), vColor, color)} [${signedPct(c.diff.lo)}, ${signedPct(c.diff.hi)}] ` +
+        paint(`(winner vs start, ${c.paired} paired cases)`, "dim", color) +
+        `  verdict ${paint(c.verdict === "inconclusive" ? "inconclusive" : `winner is ${c.verdict}`, vColor, color)}`,
+    );
+  }
   return out.join("\n");
 }

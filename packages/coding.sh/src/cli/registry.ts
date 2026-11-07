@@ -357,7 +357,7 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "exp",
     group: "Evaluate",
-    summary: "Run a task over a dataset and compare experiments",
+    summary: "Run a task over a dataset, compare experiments and sweep configs",
     actions: [
       {
         name: "run",
@@ -386,8 +386,10 @@ export const COMMANDS: CommandSpec[] = [
         flags: [
           { name: "force", type: "boolean", desc: "Compare a cancelled (partial) experiment too" },
           { name: "cluster", type: "string", value: "<KEY>", desc: "Case metadata field (e.g. repo, session) whose clusters the bootstrap resamples instead of single cases" },
+          { name: "pairwise", type: "string", value: "<JSON|FILE>", desc: 'Pairwise judge spec, {"kind":"pairwise","name":…,"rubric":…}: judges A and B\'s outputs side by side, in both orders' },
+          { name: "labels", type: "string", value: "<FILE>", desc: 'With --pairwise: human labels (JSON array or JSONL of {"caseId","winner":"a"|"b"|"tie"}) to calibrate the judge on the test split' },
         ],
-        examples: ["coding.sh exp compare base cand", "coding.sh exp compare base cand --cluster repo"],
+        examples: ["coding.sh exp compare base cand", "coding.sh exp compare base cand --cluster repo", "coding.sh exp compare base cand --pairwise judge.json"],
       },
       {
         name: "aa",
@@ -398,6 +400,19 @@ export const COMMANDS: CommandSpec[] = [
         ],
         flags: EXP_RUN_FLAGS,
         examples: ["coding.sh exp aa --dataset smoke --task '{\"kind\":\"command\",\"command\":\"node agent.mjs\"}' --grader '{\"kind\":\"exact\"}'", "coding.sh exp aa smoke-aa1 smoke-aa2"],
+      },
+      {
+        name: "sweep",
+        summary: "Race task configs with sequential halving, then re-score the winner on held-out cases",
+        args: [{ name: "configs", desc: "Task configs, [NAME=]<JSON|FILE>; the first is the start config", required: true, variadic: true }],
+        flags: [
+          ...EXP_RUN_FLAGS.filter((f) => ["dataset", "grader", "name", "concurrency"].includes(f.name)),
+          { name: "budget", type: "number", value: "<N>", desc: "Case runs for the race, over all configs (default: each race case used once by the last round)" },
+          { name: "split", type: "string", value: "<SPLIT>", choices: ["train", "dev", "test"], desc: "Split the race runs on", default: "train" },
+          { name: "held-out", type: "string", value: "<SPLIT>", choices: ["train", "dev", "test"], desc: "Split the winner is re-scored on (a seeded 30% when the dataset has no splits)", default: "test" },
+          { name: "seed", type: "number", value: "<N>", desc: "Seed for the case and job order (default random, recorded)" },
+        ],
+        examples: ["coding.sh exp sweep base=base.json t2=temp2.json t5=temp5.json -d smoke -g '{\"kind\":\"exact\"}' --budget 300"],
       },
       {
         name: "show",

@@ -6,6 +6,7 @@ export * from "./extract.ts";
 export * from "./http.ts";
 export * from "./judge.ts";
 export * from "./limit.ts";
+export * from "./pairwise.ts";
 export * from "./predicates.ts";
 export * from "./prompt.ts";
 export * from "./providers.ts";

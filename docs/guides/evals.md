@@ -56,11 +56,31 @@ and stores its run-to-run noise: the A/A delta, flipped cases, the SD of per-cas
 the cases needed to detect a 5pp or 10pp change. `coding.sh exp aa A B` measures it from two
 stored runs instead, and warns when they were not interleaved.
 
+`coding.sh exp sweep base=a.json b.json c.json -d D -g G` picks the best of several task configs.
+It uses sequential halving (Karnin et al., ICML 2013): the budget is split over log2(N) rounds,
+each round runs every surviving config on the same fresh cases from the train split, and the
+better half goes on. Dropped configs show their gap to the leader with a CI, so you can see which
+drops were close. Then the winner and the first (start) config run on the test split, which the
+race never saw. The output prints the winner's train and held-out scores and the optimism gap
+(train minus held-out). The winner of a race tends to be the luckiest config, so its train score
+runs high; the held-out score is the one to trust. `--budget N` caps case runs for the race
+(default: each train case used once), `--split` and `--held-out` pick the splits, and a dataset
+with no splits gets a seeded 30% held out. Every run is stored as a normal experiment.
+
 ## Judges
 
 `coding.sh judge calibrate` measures judge and human agreement (Cohen's kappa) on a held-out split.
 Every report flags judges that are not calibrated. It also stores the judge's held-out sensitivity
 and specificity, so later `exp compare` runs show a bias-corrected (Rogan-Gladen) judge pass rate.
+
+`coding.sh exp compare A B --pairwise judge.json` adds a pairwise judge
+(`{"kind":"pairwise","name":…,"rubric":…}` with the same provider options as `llm`). For each
+shared case it shows the judge both outputs, then asks again with the order swapped. A side wins
+only when both orders agree. When the answer changes with the order, the case is a tie, and the
+share of such cases is printed as the position-bias rate (Wang et al., 2023). It reports B's win
+rate (ties count half) with a bootstrap CI, a sign test on the decisive cases, and the ties.
+`--labels labels.jsonl` (rows of `{"caseId","winner":"a"|"b"|"tie"}`) calibrates it the same way
+as `judge calibrate`: kappa on the test split, with judge ties left out, stored on the judge.
 
 ## Harness A/B
 

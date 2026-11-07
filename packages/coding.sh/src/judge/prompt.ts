@@ -63,7 +63,8 @@ function clip(s: string, max: number): string {
   return `${s.slice(0, head)}\n…[${s.length - max} characters omitted]…\n${s.slice(s.length - tail)}`;
 }
 
-function block(tag: string, v: unknown, max: number): string {
+/** `<tag>…</tag>` around a value as text, clipped to `max` chars; "" for undefined. */
+export function block(tag: string, v: unknown, max: number): string {
   if (v === undefined) return "";
   return `<${tag}>\n${clip(asText(v), max)}\n</${tag}>`;
 }

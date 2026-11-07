@@ -7,6 +7,7 @@
 //  - llm judge verdict        → {"score", "pass", "reason", "citations"}
 //  - llm-checklist item       → {"answer", "explanation", "citations"}
 //  - llm-checklist batched    → {"answers": [{"id", …}]} for every `- [id]` question line
+//  - pairwise judge           → {"winner": "tie"} (it never picks a side)
 //
 // Its name and model are "mock", so its judge versions never collide with (or
 // inherit calibration from) a real model's.
@@ -44,6 +45,7 @@ export function mockProvider(opts: MockProviderOpts = {}): ChatProvider {
     async complete(req: ChatRequest): Promise<ChatResponse> {
       let body: unknown;
       if (wants(req.jsonSchema, "answers")) body = { answers: batchIds(req.user).map((id) => ({ id, answer, explanation: REASON, citations: [] })) };
+      else if (wants(req.jsonSchema, "winner")) body = { winner: "tie", reason: REASON };
       else if (wants(req.jsonSchema, "answer")) body = { answer, explanation: REASON, citations: [] };
       else body = { score: yes ? 1 : 0, pass: yes, reason: REASON, citations: [] };
       return { text: JSON.stringify(body), model: "mock", stopReason: "end_turn" };

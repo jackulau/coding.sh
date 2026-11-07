@@ -48,7 +48,7 @@ Every command accepts these.
 | [`mcp`](#codingsh-mcp) | Explore | Serve captured sessions to agents over MCP (stdio) |
 | [`eval`](#codingsh-eval) | Evaluate | Turn sessions into replayable eval tasks |
 | [`dataset`](#codingsh-dataset) | Evaluate | Manage versioned datasets of cases |
-| [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset and compare experiments |
+| [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset, compare experiments and sweep configs |
 | [`judge`](#codingsh-judge) | Evaluate | Check an LLM judge against human labels |
 | [`toolevals`](#codingsh-toolevals) | Evaluate | Measure how well agents use a CLI, MCP server or API |
 | [`workflows`](#codingsh-workflows) | Evaluate | Capture, measure and A/B-test multi-agent workflow runs |
@@ -550,7 +550,7 @@ coding.sh dataset list
 
 ## `coding.sh exp`
 
-Run a task over a dataset and compare experiments.
+Run a task over a dataset, compare experiments and sweep configs.
 
 ```text
 coding.sh exp <action>
@@ -561,6 +561,7 @@ coding.sh exp <action>
 | [`run`](#codingsh-exp-run) | Run an experiment, or two tasks as one interleaved A/B |
 | [`compare`](#codingsh-exp-compare) | Compare two experiments case by case |
 | [`aa`](#codingsh-exp-aa) | Run one config twice (A/A) and store its run-to-run noise |
+| [`sweep`](#codingsh-exp-sweep) | Race task configs with sequential halving, then re-score the winner on held-out cases |
 | [`show`](#codingsh-exp-show) | Show a stored experiment: pass rate, graders and failures |
 | [`list`](#codingsh-exp-list) | List experiments |
 
@@ -613,10 +614,13 @@ coding.sh exp compare <A> <B> [options]
 |---|---|---|
 | `--force` |  | Compare a cancelled (partial) experiment too. |
 | `--cluster <KEY>` |  | Case metadata field (e.g. repo, session) whose clusters the bootstrap resamples instead of single cases. |
+| `--pairwise <JSON|FILE>` |  | Pairwise judge spec, {"kind":"pairwise","name":…,"rubric":…}: judges A and B's outputs side by side, in both orders. |
+| `--labels <FILE>` |  | With --pairwise: human labels (JSON array or JSONL of {"caseId","winner":"a"\|"b"\|"tie"}) to calibrate the judge on the test split. |
 
 ```sh
 coding.sh exp compare base cand
 coding.sh exp compare base cand --cluster repo
+coding.sh exp compare base cand --pairwise judge.json
 ```
 
 ### `coding.sh exp aa`
@@ -645,6 +649,33 @@ coding.sh exp aa [a] [b] [options]
 ```sh
 coding.sh exp aa --dataset smoke --task '{"kind":"command","command":"node agent.mjs"}' --grader '{"kind":"exact"}'
 coding.sh exp aa smoke-aa1 smoke-aa2
+```
+
+### `coding.sh exp sweep`
+
+Race task configs with sequential halving, then re-score the winner on held-out cases.
+
+```text
+coding.sh exp sweep <CONFIGS>... [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `configs` | yes | Task configs, [NAME=]&lt;JSON\|FILE&gt;; the first is the start config. Takes the rest of the arguments. |
+
+| Option | Default | Description |
+|---|---|---|
+| `-d, --dataset <ID>` |  | Dataset id. |
+| `-g, --grader <JSON|FILE>` |  | Grader spec, e.g. {"kind":"exact"} (repeatable) |
+| `--name <NAME>` |  | Experiment name. |
+| `-c, --concurrency <N>` | `4` | Parallel case runs. |
+| `--budget <N>` |  | Case runs for the race, over all configs (default: each race case used once by the last round) |
+| `--split <SPLIT>` | `train` | Split the race runs on. One of: `train`, `dev`, `test`. |
+| `--held-out <SPLIT>` | `test` | Split the winner is re-scored on (a seeded 30% when the dataset has no splits) One of: `train`, `dev`, `test`. |
+| `--seed <N>` |  | Seed for the case and job order (default random, recorded) |
+
+```sh
+coding.sh exp sweep base=base.json t2=temp2.json t5=temp5.json -d smoke -g '{"kind":"exact"}' --budget 300
 ```
 
 ### `coding.sh exp show`

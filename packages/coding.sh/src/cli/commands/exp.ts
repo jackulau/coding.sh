@@ -1,17 +1,25 @@
-// coding.sh exp run|compare|aa|show|list: generic dataset experiments (src/experiments).
+// coding.sh exp run|compare|aa|sweep|show|list: generic dataset experiments (src/experiments).
 // `exp run --arm a=… --arm b=…` runs two tasks as one interleaved A/B, optionally
-// stopping early (group sequential, src/stats/sequential.ts).
-import { dirname, resolve } from "node:path";
+// stopping early (group sequential, src/stats/sequential.ts). `exp compare
+// --pairwise` adds a both-order pairwise judge (src/experiments/pairwise.ts);
+// `exp sweep` races configs with sequential halving (src/experiments/sweep.ts).
+import { readFile } from "node:fs/promises";
+import { basename, dirname, extname, resolve } from "node:path";
 import { FileEvalStore } from "../../datasets/store.ts";
-import type { Dataset, ExperimentResult, Grader, Split } from "../../datasets/types.ts";
+import type { Case, Dataset, ExperimentResult, Grader, Split } from "../../datasets/types.ts";
 import { aaNoise, taskKey } from "../../experiments/aa.ts";
 import { runAb, type AbArm, type AbResult, type RunAbOpts } from "../../experiments/ab.ts";
 import { clusterMap, compareExperiments, type CompareOpts } from "../../experiments/compare.ts";
-import { renderAa, renderComparison, renderExperiment } from "../../experiments/render.ts";
+import { runPairwise, summarizePairwise, type PairwiseSummary } from "../../experiments/pairwise.ts";
+import { renderAa, renderComparison, renderExperiment, renderPairwise, renderSweep } from "../../experiments/render.ts";
 import { runExperiment } from "../../experiments/run.ts";
+import { runSweep, type SweepConfig } from "../../experiments/sweep.ts";
 import type { TaskSpec } from "../../experiments/task.ts";
-import { createGrader, type GraderSpec } from "../../graders/index.ts";
+import { createGrader, createPairwiseJudgeFromSpec, type GraderSpec, type PairwiseGraderSpec } from "../../graders/index.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
+import { withCalibration } from "../../judge/calibrate.ts";
+import { calibratePairwise, PAIRWISE_KIND, parsePairLabels, type PairCalibration, type PairwiseJudge } from "../../judge/pairwise.ts";
+import { renderCalibration } from "../../judge/render.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { jsonArg, list, num, str, withContext } from "../common.ts";
 import { ago, CliError, plural } from "../output.ts";
@@ -92,21 +100,127 @@ async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string
   return result;
 }
 
+const NAME = /^[\w.-]+$/;
+
+/**
+ * `NAME=<JSON|FILE>` (or, with `fallback`, a bare `<JSON|FILE>` named by the
+ * file or the fallback). The JSON is a task spec, or an exp spec with a task.
+ */
+async function namedTask(v: string, what: string, fallback?: string): Promise<{ name: string; task: TaskSpec }> {
+  const eq = v.indexOf("=");
+  let name = eq > 0 && NAME.test(v.slice(0, eq)) ? v.slice(0, eq) : "";
+  const ref = name ? v.slice(eq + 1) : v;
+  if (!name && fallback !== undefined) name = ref.trim().startsWith("{") ? fallback : basename(ref, extname(ref));
+  if (!NAME.test(name)) throw new UsageError(`${what} must be NAME=<JSON|FILE>, e.g. base=task.json (got ${JSON.stringify(v)})`, { reason: "invalid_argument" });
+  let task = await jsonArg(ref, `${what} ${name}`);
+  if (isObj(task) && task.kind === undefined && isObj(task.task)) task = task.task;
+  if (!isObj(task)) throw new UsageError(`${what} ${name} must be a task spec object`, { reason: "invalid_argument" });
+  return { name, task: task as unknown as TaskSpec };
+}
+
 /** `--arm NAME=<JSON|FILE>`, exactly two. */
 async function parseArms(values: string[]): Promise<[AbArm, AbArm]> {
   if (values.length !== 2) throw new UsageError(`--arm takes exactly two arms, A then B (got ${values.length})`, { reason: "invalid_argument" });
-  const arms = await Promise.all(
-    values.map(async (v): Promise<AbArm> => {
-      const eq = v.indexOf("=");
-      const name = eq > 0 ? v.slice(0, eq) : "";
-      if (!/^[\w.-]+$/.test(name)) throw new UsageError(`--arm must be NAME=<JSON|FILE>, e.g. --arm base=task.json (got ${JSON.stringify(v)})`, { reason: "invalid_argument" });
-      const task = await jsonArg(v.slice(eq + 1), `--arm ${name}`);
-      if (!isObj(task)) throw new UsageError(`--arm ${name} must be a task spec object`, { reason: "invalid_argument" });
-      return { name, task: task as unknown as TaskSpec };
-    }),
-  );
+  const arms = await Promise.all(values.map((v) => namedTask(v, "--arm")));
   if (arms[0]!.name === arms[1]!.name) throw new UsageError(`the two --arm names must differ (both ${JSON.stringify(arms[0]!.name)})`, { reason: "invalid_argument" });
   return arms as [AbArm, AbArm];
+}
+
+/** `exp sweep` configs: `[NAME=]<JSON|FILE>`, at least two, distinct names. */
+async function parseConfigs(values: string[]): Promise<SweepConfig[]> {
+  if (values.length < 2) throw new UsageError(`exp sweep needs at least two configs (got ${values.length})`, { reason: "missing_argument" });
+  const configs = await Promise.all(values.map((v, i) => namedTask(v, "config", `c${i + 1}`)));
+  const seen = new Set<string>();
+  for (const c of configs) {
+    if (seen.has(c.name)) throw new UsageError(`two configs are named ${JSON.stringify(c.name)}; name them with NAME=<JSON|FILE>`, { reason: "invalid_argument" });
+    seen.add(c.name);
+  }
+  return configs;
+}
+
+/** `--seed`: a non-negative integer, or undefined. */
+function seedFlag(c: CommandContext): number | undefined {
+  const seed = c.flags.seed === undefined ? undefined : num(c.flags.seed);
+  if (seed !== undefined && !(Number.isInteger(seed) && seed >= 0)) throw new UsageError(`--seed must be a non-negative integer, got ${JSON.stringify(c.flags.seed)}`);
+  return seed;
+}
+
+/** Human pairwise labels: a JSON array or JSONL rows. */
+async function readPairLabels(file: string) {
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch {
+    throw new UsageError(`can't read --labels ${JSON.stringify(file)}`, { reason: "invalid_argument" });
+  }
+  try {
+    const t = text.trim();
+    const rows = t.startsWith("[") ? (JSON.parse(t) as unknown[]) : t.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l) as unknown);
+    return parsePairLabels(rows);
+  } catch (e) {
+    throw new UsageError(`--labels ${file}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_argument" });
+  }
+}
+
+/**
+ * `exp compare --pairwise`: judge both experiments' outputs side by side.
+ * The judge version is stored on first use (like an llm grader's), a stored
+ * calibration wins, and `--labels` measures and stores a new one.
+ */
+async function pairwiseCompare(
+  c: CommandContext,
+  store: FileEvalStore,
+  a: ExperimentResult,
+  b: ExperimentResult,
+  specArg: string,
+  labelsFile: string | undefined,
+  cluster: CompareOpts["cluster"],
+): Promise<{ summary: PairwiseSummary; calibration?: PairCalibration }> {
+  const spec = await jsonArg(specArg, "--pairwise");
+  if (!isObj(spec) || spec.kind !== PAIRWISE_KIND) {
+    throw new UsageError(`--pairwise must be a pairwise judge spec, e.g. {"kind":"pairwise","name":"quality","rubric":"…","provider":"openai","model":"…"}`, { reason: "invalid_grader" });
+  }
+  let judge: PairwiseJudge;
+  try {
+    judge = createPairwiseJudgeFromSpec(spec as unknown as PairwiseGraderSpec, { env: c.env, judgeCache: FileJudgeCache.forEnv(c.env) });
+  } catch (e) {
+    throw new UsageError(`Invalid pairwise judge: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_grader" });
+  }
+  const labels = labelsFile ? await readPairLabels(resolve(c.cwd, labelsFile)) : undefined;
+  const stored = await store.getJudge(judge.version.id);
+  if (!stored) await store.putJudge(judge.version);
+  const version = stored ?? judge.version;
+  // Inputs and splits from the datasets; B's cases win where both versions have one.
+  const cases = new Map<string, Case>();
+  for (const x of [a, b]) {
+    const ds = await store.getDataset(x.dataset.id, x.dataset.version);
+    for (const cs of ds?.cases ?? []) cases.set(cs.id, cs);
+  }
+  const spin = c.out.spin("Judging pairs in both orders…");
+  const opts = cluster ? { cluster } : {};
+  let summary = await runPairwise(judge, a, b, {
+    cases,
+    signal: c.signal,
+    ...opts,
+    ...(version.calibration ? { calibration: version.calibration } : {}),
+    onProgress: (done, total) => spin.update(`Judging pairs in both orders… ${done}/${total}`),
+  });
+  spin.stop();
+  if (!summary.n && summary.skipped.judgeErrors) {
+    throw new CliError(`The pairwise judge failed on every case: ${summary.skipped.firstError ?? "unknown error"}`, { reason: "judge_error" });
+  }
+  if (!labels) return { summary };
+  const splits = new Map<string, Split>();
+  for (const cs of cases.values()) if (cs.split) splits.set(cs.id, cs.split);
+  const calibration = calibratePairwise({
+    judge: { id: version.id, tunedOn: version.tunedOn, criterion: version.criterion },
+    labels,
+    verdicts: new Map(summary.cases.map((x) => [x.caseId, x])),
+    splits,
+  });
+  await store.putJudge(withCalibration(version, calibration.report));
+  summary = summarizePairwise(summary.cases, { id: version.id, calibration: calibration.report.status }, summary.skipped, opts);
+  return { summary, calibration };
 }
 
 /** Run two tasks as one interleaved A/B (exp run --arm, exp aa). */
@@ -148,8 +262,7 @@ export async function run(c: CommandContext): Promise<number> {
         const stopEarly = c.flags["stop-early"] === true;
         const maxCases = positiveInt(c.flags["max-cases"], "max-cases");
         const looks = positiveInt(c.flags.looks, "looks");
-        const seed = c.flags.seed === undefined ? undefined : num(c.flags.seed);
-        if (seed !== undefined && !(Number.isInteger(seed) && seed >= 0)) throw new UsageError(`--seed must be a non-negative integer, got ${JSON.stringify(c.flags.seed)}`);
+        const seed = seedFlag(c);
         if (!armFlags.length) {
           for (const [flag, set] of [["stop-early", stopEarly], ["max-cases", maxCases !== undefined], ["looks", looks !== undefined], ["seed", seed !== undefined]] as const) {
             if (set) throw new UsageError(`--${flag} needs two --arm options (an interleaved A/B)`, { reason: "invalid_argument" });
@@ -199,6 +312,9 @@ export async function run(c: CommandContext): Promise<number> {
       case "compare": {
         const [ida, idb] = c.positionals as [string, string];
         const force = c.flags.force === true;
+        const pairSpec = str(c.flags.pairwise);
+        const labelsFile = str(c.flags.labels);
+        if (labelsFile && !pairSpec) throw new UsageError("--labels needs --pairwise", { reason: "invalid_argument" });
         // Without --force a name resolves to its newest completed experiment; when only a
         // cancelled one has that name, find it anyway so the error can say why it is refused.
         const find = async (ref: string) => (await store.resolveExperiment(ref, { includeCancelled: force })) ?? (force ? undefined : await store.resolveExperiment(ref, { includeCancelled: true }));
@@ -229,8 +345,17 @@ export async function run(c: CommandContext): Promise<number> {
         const noise = (await store.getNoise(a!.dataset.id, taskKey(a!.task))) ?? (a!.dataset.id === b!.dataset.id ? await store.getNoise(b!.dataset.id, taskKey(b!.task)) : undefined);
         if (noise) opts.noise = noise;
         const cmp = compareExperiments(a!, b!, opts);
-        if (out.json) out.data({ comparison: cmp });
-        else out.print(renderComparison(cmp, { color: out.color, a: a!, b: b! }));
+        const pw = pairSpec ? await pairwiseCompare(c, store, a!, b!, pairSpec, labelsFile, opts.cluster) : undefined;
+        if (out.json) {
+          out.data({ comparison: cmp, ...(pw ? { pairwise: pw.summary } : {}), ...(pw?.calibration ? { pairwiseCalibration: { ...pw.calibration.report, abstained: pw.calibration.abstained } } : {}) });
+        } else {
+          out.print(renderComparison(cmp, { color: out.color, a: a!, b: b! }));
+          if (pw) out.print(`\n${renderPairwise(pw.summary, { color: out.color })}`);
+          if (pw?.calibration) {
+            out.print(`\n${renderCalibration(pw.calibration.report, { color: out.color })}`);
+            if (pw.calibration.abstained) out.print(`${pw.calibration.abstained} human-decisive case(s) the judge called a tie were left out of kappa`);
+          }
+        }
         return 0;
       }
       case "aa": {
@@ -265,6 +390,46 @@ export async function run(c: CommandContext): Promise<number> {
         await store.putNoise(aa.noise);
         if (out.json) out.data({ noise: aa.noise, plan: aa.plan, warnings: aa.warnings, comparison: aa.comparison });
         else out.print(renderAa(aa, { color: out.color, first, second }));
+        return 0;
+      }
+      case "sweep": {
+        const configs = await parseConfigs(c.positionals);
+        const budget = positiveInt(c.flags.budget, "budget");
+        const seed = seedFlag(c);
+        const select = (str(c.flags.split) ?? "train") as Split;
+        const heldOut = (str(c.flags["held-out"]) ?? "test") as Split;
+        if (select === heldOut) throw new UsageError(`--split and --held-out are both ${select}; the held-out split must be one the race never sees`, { reason: "invalid_argument" });
+        const { spec, dataset, graders } = await loadSpec(c, store, undefined, false);
+        const name = spec.name ?? `${dataset.name}-sweep-${new Date().toISOString().slice(0, 10)}`;
+        const spin = c.out.spin(`Sweeping ${configs.length} configs on ${dataset.name}…`);
+        let result;
+        try {
+          result = await runSweep({
+            name,
+            dataset,
+            configs,
+            graders,
+            select,
+            heldOut,
+            store,
+            signal: c.signal,
+            ...(budget !== undefined ? { budget } : {}),
+            ...(seed !== undefined ? { seed } : {}),
+            ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
+            onProgress: (stage, done, total) => spin.update(`Sweeping ${dataset.name}: ${stage} ${done}/${total}`),
+          });
+        } catch (e) {
+          if (e instanceof RangeError) throw new UsageError(e.message, { reason: "invalid_argument" });
+          throw e;
+        } finally {
+          spin.stop();
+        }
+        if (out.json) out.data({ outcome: result.status, sweep: result });
+        else out.print(renderSweep(result, { color: out.color }));
+        if (result.status === "cancelled") {
+          out.warn("Cancelled: the race stopped before a winner was re-scored on held-out cases; finished runs are stored");
+          return 1;
+        }
         return 0;
       }
       case "show": {

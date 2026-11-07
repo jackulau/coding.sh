@@ -159,6 +159,18 @@ const COMPARE = [
     interval that stays valid after stopping. <code>--max-cases</code> caps the run.
   </p>
 
+  <h2 id="sweep">Sweeping configs <Tag status="built" /></h2>
+  <p>
+    <code>exp sweep base=a.json b.json c.json -d smoke -g G</code> picks the best of several task configs. It uses sequential halving: each
+    round runs the surviving configs on the same fresh train cases and keeps the better half, so weak configs stop costing runs early. Dropped
+    configs show their gap to the leader with an interval.
+  </p>
+  <p>
+    The race winner tends to be the luckiest config, so its train score runs high. The winner and the first config then run on the test
+    split, which the race never saw. The output prints both scores for the winner and the <strong>optimism gap</strong> (train minus
+    held-out). <code>--budget</code> caps the race's case runs.
+  </p>
+
   <h2 id="judges">LLM judges <Tag status="built" /></h2>
   <p>
     An <code>llm</code> grader calls Anthropic's Messages API or any OpenAI-compatible endpoint (OpenAI, OpenRouter, Ollama, LM Studio, vLLM
@@ -169,6 +181,12 @@ const COMPARE = [
   <p>
     Each judge is versioned as <code>name@hash</code> over model, prompt template, rubric, criterion and parameters. Judge verdicts can cite the
     trace; citations are checked against what the judge was shown.
+  </p>
+  <p>
+    A <code>pairwise</code> judge compares two experiments: <code>exp compare A B --pairwise judge.json</code>. It sees both outputs for each
+    case, twice, with the order swapped. A side wins only when both orders agree; when the answer changes with the order, the case is a tie
+    and counts toward the printed position-bias rate. It reports B's win rate with an interval and a sign test. <code>--labels</code> takes
+    human A/B/tie labels and calibrates the judge like any other.
   </p>
 
   <h2 id="calibration">Judge calibration <Tag status="built" /></h2>
