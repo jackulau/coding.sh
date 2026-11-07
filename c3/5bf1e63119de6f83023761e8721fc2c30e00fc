@@ -1,6 +1,7 @@
 packages/coding.sh/src/cli/registry.ts
   s_8e040dbdf13565::t_0a6f591c694dac 615,618-622,624
   s_8e040dbdf13565::t_78a78ccb449b76 60-67
+  s_8e040dbdf13565::t_f18aa36fc0049e 623
 packages/coding.sh/test/runner/experiment.test.ts
   s_8e040dbdf13565::t_6204aa7d6c3611 579-582
   s_8e040dbdf13565::t_753ac7514c12e5 490-578,583-584
