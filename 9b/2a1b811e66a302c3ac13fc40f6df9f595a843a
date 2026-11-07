@@ -1,0 +1,80 @@
+packages/sdk/src/context.ts
+  s_8e040dbdf13565::t_38452745a08cf2 332-335,359,370-372
+  s_8e040dbdf13565::t_5ec4f027e7194b 18
+packages/sdk-python/src/coding_sh/_gateway_table.py
+  s_8e040dbdf13565::t_cc6dbdde285d11 1-109
+packages/sdk/src/observe.ts
+  s_8e040dbdf13565::t_22d189d0ef52bd 17,42,45,47,49,57,63,68,83-84,88-93,115,117,135,153-161,163-168
+  s_8e040dbdf13565::t_38452745a08cf2 162
+  s_8e040dbdf13565::t_433e204a4e762d 169-170
+packages/sdk-python/tests/test_gateway.py
+  s_8e040dbdf13565::t_4d90baad158ba1 1-178,181,184-220
+  s_8e040dbdf13565::t_6703ef56f7209b 179-180,182-183
+packages/sdk/test/gateway.test.ts
+  s_8e040dbdf13565::t_c563c28b78b109 1-180
+packages/coding.sh/src/integrations/gateway/providers.ts
+  s_8e040dbdf13565::t_475cee39981762 29-36,57-58,73-74,87-89,102-103,115,127-128,151,170-171
+packages/sdk/src/gateway-table.ts
+  s_8e040dbdf13565::t_cc6dbdde285d11 1-32
+packages/sdk-python/src/coding_sh/_llm.py
+  s_8e040dbdf13565::t_0aa2c060b9c517 14,91-94,143-147,158-160
+packages/sdk-python/src/coding_sh/_providers.py
+  s_8e040dbdf13565::t_f37e235e516eb7 537-538,541,545-546
+  s_8e040dbdf13565::t_0aa2c060b9c517 18,321-322,338-339,364-365,367-368,373,380,413-414,421,430,457-458,474,490,532-533
+  s_8e040dbdf13565::t_3a8a4136cec40d 531
+packages/coding.sh/test/integrations/gateway/sdk-tables.test.ts
+  s_8e040dbdf13565::t_bffd2110057bde 1-30,32-37
+  s_8e040dbdf13565::t_4872a442e3a0ba 31
+packages/sdk/README.md
+  s_8e040dbdf13565::t_98764b675e2c4d 48,93-107
+  s_8e040dbdf13565::t_febb21b54c5b60 108
+packages/sdk/src/fetch.ts
+  s_8e040dbdf13565::t_5ec4f027e7194b 4-6,182,187,199
+CHANGELOG.md
+  s_8e040dbdf13565::t_776bf34229ddd0 19
+packages/sdk/test/anthropic.test.ts
+  s_8e040dbdf13565::t_12e53766af4007 7,34
+packages/sdk/test/openai.test.ts
+  s_8e040dbdf13565::t_12e53766af4007 7,37,86
+packages/sdk/test/fetch.test.ts
+  s_8e040dbdf13565::t_86eec12525a608 7,38-39
+packages/sdk/test/helpers/mock-llm.ts
+  s_8e040dbdf13565::t_9a535af355685a 48-49,64,89,114
+  s_8e040dbdf13565::t_49e3f02e905ea5 153-155
+  s_8e040dbdf13565::t_96f4b23f73806a 140-145
+  s_8e040dbdf13565::t_86eec12525a608 12-13,47,54
+packages/coding.sh/scripts/sdk-gateways.ts
+  s_8e040dbdf13565::t_41326f19a97728 1-137
+apps/site/src/pages/docs/ai-gateway.astro
+  s_8e040dbdf13565::t_98764b675e2c4d 30-35,121,125-137
+  s_8e040dbdf13565::t_5af3e2824aad9f 138
+packages/sdk-python/tests/support.py
+  s_8e040dbdf13565::t_6acc9cdd5aee94 127-128,138-141,145,153
+packages/sdk/src/gateway.ts
+  s_8e040dbdf13565::t_033d5959b8fe1f 1-104
+docs/research/gateways.md
+  s_8e040dbdf13565::t_723d64245d0416 103-106
+packages/sdk-python/README.md
+  s_8e040dbdf13565::t_98764b675e2c4d 43-58
+packages/sdk-python/src/coding_sh/_gateway.py
+  s_8e040dbdf13565::t_e651bb13582e9f 1-156
+docs/integrations/ai-gateway.md
+  s_8e040dbdf13565::t_723d64245d0416 61-64,76-103
+  s_8e040dbdf13565::t_6b70877876d5be 104
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9b2a1b811e66a302c3ac13fc40f6df9f595a843a",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
