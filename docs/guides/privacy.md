@@ -51,6 +51,15 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
   provider still saw it. Each session counts what was redacted by kind (`coding.sh show` prints a
   `Redacted` row), and a session that held a vendor token gets the `secret:exposed` tag:
   `coding.sh sessions --flag secret:exposed` lists the sessions whose credentials to rotate.
+- **Remove a leaked secret.** When a value got past redaction, put it in a file (one value per
+  line) and run `coding.sh purge --literal leaked.txt`; `--literal -` reads stdin. Add
+  `--dry-run` first to count the copies. Every copy becomes `[redacted:purged]`: event payloads
+  and the search index, session titles and stats, labels, eval docs and settings. Blobs holding
+  the value are rewritten under a new hash and every reference follows. Spool and judge-cache
+  files keep their length (the value becomes asterisks). The index is then VACUUMed, so the old
+  bytes leave the file. Values shorter than 8 characters are refused, the values are never
+  printed, and only the SQLite store is supported. Rotate the secret as well: the agent's own
+  transcripts, shell history and git are not touched.
 - **Metadata mode.** `[capture] mode = "metadata"` stores structure and numbers only, with no
   prompts, code or tool output.
 - **Exclusions.** `[capture] exclude = ["~/work/secret-client/**"]` drops events from matching

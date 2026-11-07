@@ -60,6 +60,7 @@ Every command accepts these.
 | [`refine`](#codingsh-refine) | Harness | Improve CLAUDE.md, AGENTS.md and skills in tested rounds, and protect their safety rules |
 | [`gateway`](#codingsh-gateway) | Maintain | LLM gateways: detect routing, enrich sessions with billed cost |
 | [`gc`](#codingsh-gc) | Maintain | Delete expired spool files, blobs and judge cache |
+| [`purge`](#codingsh-purge) | Maintain | Remove a leaked secret from the store: events, search, blobs, spool |
 | [`config`](#codingsh-config) | Maintain | Read and write ~/.coding.sh/config.toml |
 | [`update`](#codingsh-update) | Maintain | Install the latest coding.sh release |
 | [`version`](#codingsh-version) | Maintain | Print the version |
@@ -2192,6 +2193,28 @@ coding.sh gc [options]
 |---|---|---|
 | `--compact` |  | Also compact the index (VACUUM) |
 | `--dry-run` |  | Show the exact changes without writing anything. |
+
+## `coding.sh purge`
+
+Remove a leaked secret from the store: events, search, blobs, spool.
+
+```text
+coding.sh purge [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--literal <FILE|->` |  | File with the values to remove, one per line (- reads stdin); never pass them as arguments. |
+| `--dry-run` |  | Count the copies without changing anything. |
+
+```sh
+coding.sh purge --literal leaked.txt --dry-run
+pbpaste | coding.sh purge --literal -
+```
+
+- Every copy becomes [redacted:purged]: event payloads (the full-text index is updated), session titles and stats, labels, eval docs and settings. Blobs holding a value are rewritten under their new hash and every reference follows. Spool and judge-cache files keep their length (the value becomes asterisks) so ingest offsets stay valid.
+- Then the search index is merged and the database VACUUMed, so the old bytes leave the file. Values shorter than 8 characters are refused. Only the SQLite store is supported.
+- Rotate the secret as well: copies in the agent's own transcripts, shell history or git are not touched.
 
 ## `coding.sh config`
 

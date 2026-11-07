@@ -161,6 +161,7 @@ The command line was wrong. Nothing ran.
 | `unsupported_target` | `compress works on MCP targets; gh is cli` | Run `compress` on an MCP target. |
 | `no_control` | `A continuation task needs a control arm: …` (exp run) | Run the recorded config as A and your change as B (`--arm control=… --arm cand=…`), or use `coding.sh exp ab`. `--no-control` runs it alone, without a noise floor. |
 | `bad_arg` | `export what? one of sessions, events, labels` | Use one of the listed values. |
+| `too_short` | `1 value shorter than 8 characters; a short value would rewrite ordinary text` (purge) | Put the whole secret on its line, not a fragment. |
 | `read_only` | `DELETE is not allowed: coding.sh sql is read-only`, `only one statement is allowed (found text after ';')` | `coding.sh sql` only reads. Change data with the command that owns it. |
 
 ### Errors (exit 1)
@@ -176,11 +177,11 @@ The command ran and something failed.
 | `bad_flag` | (usage) `--by must be one of agent, model, agent-model, day, repo` | Use one of the listed values. |
 | `config_changed` | `Can't resume exp_…: its config changed since it started (dataset, task)` | `--resume` refuses when the dataset version, graders, trials, task, agent script or timeouts differ from the interrupted run. Restore them, or start a new run without `--resume`. |
 | `already_complete` | `exp_… already finished; nothing to resume` | The run is done: `coding.sh exp show <id>`. |
-| `busy` | `exp_… is still running (pid 4182 on desk); stop it first` | Another process is running it. Stop that process, or wait; `coding.sh exp status` shows its progress. |
+| `busy` | `exp_… is still running (pid 4182 on desk); stop it first`, `an ingest is running and holds the store: …` (purge) | Another process is running it. Stop that process, or wait; `coding.sh exp status` shows its progress. For purge, try again in a minute. |
 | `cancelled_experiment` | `Experiment base (…) was cancelled after 3 case runs; comparing a partial result is misleading` | Re-run the experiment, or pass `--force` to `exp compare` to compare the partial result. |
 | `arm_failed` | `arm cand: the first run failed: …` (exp metrics) | Run that arm's command by hand. It must exit 0 and print a JSON object of numbers. |
 | `no_pairs` | `No pair finished in both arms, so there is nothing to compare` (exp metrics) | Read the run errors in the report, fix the arm, and rerun. |
-| `unsupported_store` | `coding.sh sql reads the SQLite index; this store is postgres://…@db/csh` | Use `coding.sh export`, which reads every store, or query the database with its own client. |
+| `unsupported_store` | `coding.sh sql reads the SQLite index; this store is postgres://…@db/csh`, `coding.sh purge rewrites the SQLite index; …` | For sql, use `coding.sh export`, which reads every store, or query the database with its own client. For purge, remove the value with the database's own tools. |
 | `timeout` | `the query ran past 10s and was stopped` (sql) | Narrow the query, or pass a longer `--timeout`. |
 | `sql_error` | `SQLite: no such column: foo` (sql) | List the tables and columns: `coding.sh sql "select name, sql from sqlite_schema"`. See [Query and export](reference/query.md). |
 | `judge_error` | `The pairwise judge failed on every case: …` | Check the judge's `provider`, `model`, `baseURL` and API key variable, then re-run `exp compare --pairwise`. |

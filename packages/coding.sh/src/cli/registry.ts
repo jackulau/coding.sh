@@ -1109,6 +1109,22 @@ export const COMMANDS: CommandSpec[] = [
     load: () => import("./commands/gc.ts"),
   },
   {
+    name: "purge",
+    group: "Maintain",
+    summary: "Remove a leaked secret from the store: events, search, blobs, spool",
+    flags: [
+      { name: "literal", type: "string", value: "<FILE|->", desc: "File with the values to remove, one per line (- reads stdin); never pass them as arguments" },
+      { name: "dry-run", type: "boolean", desc: "Count the copies without changing anything" },
+    ],
+    examples: ["coding.sh purge --literal leaked.txt --dry-run", "pbpaste | coding.sh purge --literal -"],
+    notes: [
+      "Every copy becomes [redacted:purged]: event payloads (the full-text index is updated), session titles and stats, labels, eval docs and settings. Blobs holding a value are rewritten under their new hash and every reference follows. Spool and judge-cache files keep their length (the value becomes asterisks) so ingest offsets stay valid.",
+      "Then the search index is merged and the database VACUUMed, so the old bytes leave the file. Values shorter than 8 characters are refused. Only the SQLite store is supported.",
+      "Rotate the secret as well: copies in the agent's own transcripts, shell history or git are not touched.",
+    ],
+    load: () => import("./commands/purge.ts"),
+  },
+  {
     name: "config",
     group: "Maintain",
     summary: "Read and write ~/.coding.sh/config.toml",
