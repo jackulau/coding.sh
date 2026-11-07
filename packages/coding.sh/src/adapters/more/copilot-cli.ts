@@ -126,6 +126,9 @@ const EVENT_ALIASES: Record<string, string> = {
   Notification: "notification",
 };
 
+/** Turn key for an agentStop hook run: its input timestamp, which the transcript's hook.start record repeats. */
+const agentStopKey = (ts: unknown): string | undefined => (num(ts) !== undefined ? `agentStop:${num(ts)}` : undefined);
+
 export async function normalizeCopilot(line: SpoolLine, ctx: NormalizeContext): Promise<AgentEvent[]> {
   if (isWrapperEvent(line.event)) return normalizeWrapperLine(line, ctx);
   const raw: Json = isObj(line.raw) ? line.raw : {};
@@ -134,7 +137,7 @@ export async function normalizeCopilot(line: SpoolLine, ctx: NormalizeContext): 
   const ts = toMs(raw.timestamp) ?? line.ts;
   const agentId = str(pick(raw, "agentId", "agent_id"));
   const ev = EVENT_ALIASES[line.event] ?? line.event;
-  const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, runId: line.runId, subagentId: agentId }, spoolIdParts(line, sessionId, ctx));
+  const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, runId: line.runId, subagentId: agentId }, spoolIdParts(line, sessionId, ctx), { toolKeys: true });
   const tool = str(pick(raw, "toolName", "tool_name")) ?? "unknown";
   const input = pick(raw, "toolArgs", "tool_input");
   // Hooks carry no call id; postToolUse synthesizes both halves, so pair them with a stable one.
@@ -167,7 +170,7 @@ export async function normalizeCopilot(line: SpoolLine, ctx: NormalizeContext): 
       break;
     }
     case "agentStop":
-      em.push("turn.end", { stopReason: str(pick(raw, "stopReason", "stop_reason")), transcriptPath: str(pick(raw, "transcriptPath", "transcript_path")) });
+      em.turnEnd({ stopReason: str(pick(raw, "stopReason", "stop_reason")), transcriptPath: str(pick(raw, "transcriptPath", "transcript_path")) }, agentStopKey(raw.timestamp));
       break;
     case "subagentStart":
     case "subagentStop": {
@@ -238,7 +241,7 @@ export async function* copilotSessionEvents(file: string, ctx: NormalizeContext,
       }
     }
     const sub = str(r.agentId);
-    const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, model, subagentId: sub }, ["copilot-file", sessionId, str(r.id) ?? lineNo]);
+    const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, model, subagentId: sub }, ["copilot-file", sessionId, str(r.id) ?? lineNo], { toolKeys: true });
     switch (type) {
       case "session.start":
         em.push("session.start", { source: "transcript", copilotVersion: str(d.copilotVersion), producer: str(d.producer) }, repo ? { repo } : {});
@@ -249,6 +252,16 @@ export async function* copilotSessionEvents(file: string, ctx: NormalizeContext,
           if (sawUser) em.push("turn.end", {});
           sawUser = true;
           await emitText(em, ctx, "user.message", text);
+        }
+        break;
+      }
+      case "hook.start": {
+        // The transcript records each hook run with its input: an agentStop ends the turn,
+        // keyed like the hook's own turn.end so a session seen both ways keeps one.
+        const key = d.hookType === "agentStop" ? agentStopKey(get(d, "input", "timestamp")) : undefined;
+        if (key) {
+          em.turnEnd({ stopReason: str(get(d, "input", "stopReason")) }, key);
+          sawUser = false;
         }
         break;
       }

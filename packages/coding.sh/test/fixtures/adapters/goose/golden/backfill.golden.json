@@ -49,7 +49,7 @@
         "new_str": "+"
       }
     },
-    "id": "84df45f2e190ca99b0453155af17319091f99ff1a403e7b6e47402b89b20dac4",
+    "id": "8f65bc33720faea141629c87b882fd7092ec2316647bbb63ba8db9073a03ce85",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -65,7 +65,7 @@
       },
       "verify": true
     },
-    "id": "ed40b79b8e2e8fd07ee39f483e85812f63c17ad3113d20495b197e7962336689",
+    "id": "8ca87fb0c6c69560226c36cdea78eafb7df0d8b8a5f8d039d27e7a46ff5266c0",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -80,7 +80,7 @@
       "durationMs": 2000,
       "output": "edited"
     },
-    "id": "e0475bb1f1493302fa94620f56ff05c18ef4011f5609595f8b4f03ff34657458",
+    "id": "3b89e31a0270d6aaf5723605663113a83d958600254fb095f24cbf064b331e00",
     "model": "claude-sonnet-4-5",
     "durationMs": 2000,
     "cwd": "/work/demo"
@@ -95,7 +95,7 @@
       "tool": "developer__text_editor",
       "toolUseId": "tc-g1"
     },
-    "id": "f4716dc415d00700e1a4eb6873793809d07811590dcb6ba2c54567ae58e41bdb",
+    "id": "9c83a8d6d0fd260a9699b26e31f8626badfa1a4e6538c4128e0b889b2158f0c9",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -111,7 +111,7 @@
       "output": "--- PASS: TestAdd (0.00s)\n--- FAIL: TestSub (0.00s)\nFAIL",
       "error": "tool error"
     },
-    "id": "04d4471c51b190aa40bfd2a890945c9d9d69ee204c539899d694262d16aa3388",
+    "id": "8cbe851d6c2c099d50ffbcf7e491ac4f3acedadfb087f18a9c001397da420dfc",
     "model": "claude-sonnet-4-5",
     "durationMs": 2000,
     "cwd": "/work/demo"
@@ -126,7 +126,7 @@
       "failed": 1,
       "toolUseId": "tc-g2"
     },
-    "id": "542883d65303cb7d7f9d3ca5306b2210dc0bc25411a84b26e61fe85022600d88",
+    "id": "45704d1dd2183b4c4437d9712303d45eb943eb0dd69562d37e1c99af5168ab82",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -184,7 +184,8 @@
     "sessionId": "20260921_1",
     "ts": 1790000005000,
     "payload": {},
-    "id": "1524652d09bdf3fbe8d2aa6cb77b4435b56adc182d712aee9db33499389c7551",
+    "id": "eb39ffff5eacc64d5acca1ba2f38f648025896654dfa8232fdd5a298da92afaa",
+    "turnId": "35de75062ebf49b468177594a491f5c0159f5d95653b1bb41700abfab92622fa",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -232,7 +233,8 @@
     "sessionId": "20260921_2",
     "ts": 1790000003000,
     "payload": {},
-    "id": "92a8282c9401f289c59502eedf05b21064881b1bec61783733fdd38176827762",
+    "id": "98a4f35f74ca814e455de539d59d73a8f8d882cccd718e52f278cf8740dff9fd",
+    "turnId": "be2ef2a077e059fa78f684c7b4df3474a41d5b74720ec8bd96f4193a5e3e475f",
     "model": "claude-haiku-4-5",
     "cwd": "/work/demo"
   },

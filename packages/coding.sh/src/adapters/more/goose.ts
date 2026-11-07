@@ -35,6 +35,7 @@ import {
   binVersion,
   columns,
   copyPrivate,
+  emitFileChange,
   emitText,
   emitToolEnd,
   emitToolStart,
@@ -61,6 +62,7 @@ import {
   runEnv,
   spawnAgent,
   spoolIdParts,
+  stableJson,
   str,
   toJson,
   toMs,
@@ -113,7 +115,7 @@ export async function normalizeGoose(line: SpoolLine, ctx: NormalizeContext): Pr
   const raw: Json = isObj(line.raw) ? line.raw : {};
   const sessionId = str(raw.session_id) ?? `goose-unknown-${line.ppid ?? line.pid}`;
   const cwd = str(raw.working_dir) ?? line.cwd;
-  const em = new Emitter(ctx, { agent: ID, sessionId, ts: line.ts, cwd, runId: line.runId }, spoolIdParts(line, sessionId, ctx));
+  const em = new Emitter(ctx, { agent: ID, sessionId, ts: line.ts, cwd, runId: line.runId }, spoolIdParts(line, sessionId, ctx), { toolKeys: true });
   const ev = str(raw.event) ?? line.event;
   const tool = str(raw.tool_name) ?? "unknown";
   const toolUseId = str(raw.tool_call_id);
@@ -142,13 +144,16 @@ export async function normalizeGoose(line: SpoolLine, ctx: NormalizeContext): Pr
     }
     case "AfterFileEdit": {
       const p = str(raw.matcher_context) ?? str(get(raw, "tool_input", "path")) ?? str(get(raw, "tool_input", "file_path"));
-      if (p) em.push("file.change", { path: relPath(p, cwd), op: "modify", tool, toolUseId });
+      if (!p) break;
+      // No call id on this hook: the tool request in sessions.db has it.
+      const id = toolUseId ?? (await gooseSession(sessionId, line.ts))?.toolUseId(tool, raw.tool_input, line.ts);
+      emitFileChange(em, { path: relPath(p, cwd), op: "modify", tool, toolUseId: id });
       break;
     }
     case "Stop": {
       const t = str(raw.last_assistant_message);
       if (t) await emitText(em, ctx, "assistant.message", t);
-      em.push("turn.end", {});
+      em.turnEnd({}, (await gooseSession(sessionId, line.ts))?.turnKey(line.ts));
       break;
     }
     default:
@@ -199,6 +204,78 @@ function resultText(tr: unknown): { ok: boolean; output: unknown; error?: string
 
 type Row = Record<string, unknown>;
 
+const messageKey = (m: Row): string => String(m.message_id ?? m.id);
+
+/** A user message that opens a turn (text, no tool responses, not hidden context). */
+function isPrompt(m: Row): boolean {
+  if (str(m.role) !== "user" || hiddenMessage(m)) return false;
+  const bs = contentBlocks(m.content_json);
+  return !bs.some((b) => b.type === "toolResponse") && bs.some((b) => b.type === "text" && !!str(b.text)?.trim());
+}
+
+const msgOrder = (mc: Set<string>): string => `ORDER BY ${mc.has("created_timestamp") ? "created_timestamp, " : ""}id`;
+const toolKey = (tool: string | undefined, input: unknown): string => `${tool ?? ""} ${stableJson(input)}`;
+
+interface GooseSession {
+  readAt: number;
+  /** The turn a Stop hook at `ts` closes, keyed like gooseDbEvents keys its turn.end. */
+  turnKey(ts: number): string | undefined;
+  /** The call id of the latest request for this tool and input by `ts`. */
+  toolUseId(tool: string, input: unknown, ts: number): string | undefined;
+}
+
+const gooseSessions = new Map<string, GooseSession>();
+
+/**
+ * What hooks that name no message or call (Stop, AfterFileEdit) need from sessions.db.
+ * Read from a copy, and read again only for a hook newer than the last read: one
+ * ingest run copies the database once per session.
+ */
+async function gooseSession(sessionId: string, ts: number): Promise<GooseSession | undefined> {
+  const path = gooseSessionsDb();
+  const k = `${path}\0${sessionId}`;
+  const hit = gooseSessions.get(k);
+  if (hit && ts <= hit.readAt) return hit;
+  const readAt = Date.now();
+  const h = await openSqliteCopy(path);
+  if (!h) return undefined;
+  const msgs: { key: string; ts: number; prompt: boolean }[] = [];
+  const calls: { id: string; key: string; ts: number }[] = [];
+  try {
+    const mc = new Set(columns(h.db, "messages"));
+    if (!mc.has("session_id")) return undefined;
+    for (const m of h.db.prepare(`SELECT * FROM messages WHERE session_id = ? ${msgOrder(mc)}`).all(sessionId) as Row[]) {
+      if (hiddenMessage(m)) continue;
+      const mts = toMs(m.created_timestamp) ?? 0;
+      msgs.push({ key: messageKey(m), ts: mts, prompt: isPrompt(m) });
+      if (str(m.role) !== "assistant") continue;
+      for (const b of contentBlocks(m.content_json)) {
+        const id = str(b.id);
+        if (b.type === "toolRequest" && id) calls.push({ id, key: toolKey(str(get(b, "toolCall", "value", "name")), get(b, "toolCall", "value", "arguments")), ts: mts });
+      }
+    }
+  } finally {
+    h.close();
+  }
+  const s: GooseSession = {
+    readAt,
+    turnKey(at) {
+      let last: (typeof msgs)[number] | undefined;
+      for (const m of msgs) if (m.ts <= at) last = m;
+      return last && !last.prompt ? last.key : undefined;
+    },
+    toolUseId(tool, input, at) {
+      const key = toolKey(tool, input);
+      let id: string | undefined;
+      for (const c of calls) if (c.key === key && c.ts <= at) id = c.id;
+      return id;
+    },
+  };
+  if (gooseSessions.size >= 16) gooseSessions.delete(gooseSessions.keys().next().value!);
+  gooseSessions.set(k, s);
+  return s;
+}
+
 /** Events for every session in a goose sessions.db (read from a copy). */
 export async function* gooseDbEvents(dbPath: string, ctx: NormalizeContext, since?: number): AsyncGenerator<AgentEvent> {
   const h = await openSqliteCopy(dbPath);
@@ -209,7 +286,7 @@ export async function* gooseDbEvents(dbPath: string, ctx: NormalizeContext, sinc
     if (!sc.has("id") || !mc.has("session_id")) return;
     const hasLedger = columns(h.db, "usage_ledger").length > 0;
     const sessions = h.db.prepare("SELECT * FROM sessions ORDER BY created_at").all() as Row[];
-    const msgStmt = h.db.prepare(`SELECT * FROM messages WHERE session_id = ? ORDER BY ${mc.has("created_timestamp") ? "created_timestamp, " : ""}id`);
+    const msgStmt = h.db.prepare(`SELECT * FROM messages WHERE session_id = ? ${msgOrder(mc)}`);
     const ledgerStmt = hasLedger ? h.db.prepare("SELECT * FROM usage_ledger WHERE session_id = ? ORDER BY created_timestamp, id") : undefined;
     for (const s of sessions) {
       const sessionId = String(s.id);
@@ -231,18 +308,22 @@ export async function* gooseDbEvents(dbPath: string, ctx: NormalizeContext, sinc
       out.push(...head.events);
       const calls = new Map<string, { tool: string; input: unknown; ts: number }>();
       let sawUser = false;
+      // The turn's last visible message keys its turn.end (gooseSession().turnKey finds the same one for a Stop hook).
+      let last: string | undefined;
       let lastTs = startTs;
       for (const m of msgStmt.all(sessionId) as Row[]) {
         const ts = toMs(m.created_timestamp) ?? lastTs;
         lastTs = ts;
-        const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, model }, ["goose-db", sessionId, String(m.message_id ?? m.id)]);
+        const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, model }, ["goose-db", sessionId, messageKey(m)], { toolKeys: true });
         const bs = contentBlocks(m.content_json);
         const text = bs.filter((b) => b.type === "text").map((b) => str(b.text) ?? "").join("\n").trim();
         const role = str(m.role);
+        const prompt = isPrompt(m);
+        if (prompt && sawUser) em.turnEnd({}, last);
+        if (!hiddenMessage(m)) last = prompt ? undefined : messageKey(m);
         if (role === "user") {
           const responses = bs.filter((b) => b.type === "toolResponse");
-          if (text && responses.length === 0 && !hiddenMessage(m)) {
-            if (sawUser) em.push("turn.end", {});
+          if (prompt) {
             sawUser = true;
             await emitText(em, ctx, "user.message", text);
           }
@@ -265,7 +346,7 @@ export async function* gooseDbEvents(dbPath: string, ctx: NormalizeContext, sinc
         out.push(...em.events);
       }
       const tail = new Emitter(ctx, { agent: ID, sessionId, ts: lastTs, cwd, model }, ["goose-db", sessionId, "tail"]);
-      if (sawUser) tail.push("turn.end", {});
+      if (sawUser) tail.turnEnd({}, last);
       const ledger = ledgerStmt ? (ledgerStmt.all(sessionId) as Row[]) : [];
       if (ledger.length) {
         // One llm.call per ledger row: exact per-call usage.

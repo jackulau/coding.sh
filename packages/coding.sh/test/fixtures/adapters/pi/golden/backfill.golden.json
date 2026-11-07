@@ -31,7 +31,7 @@
     "payload": {
       "text": "Make cargo test pass"
     },
-    "id": "234d68e0cab8e719112b63f5dc4e26524565f355f67b87dea50942b9a86dcab5",
+    "id": "06b96e720a518d548ff6355f264832cb896cfa5e0c555e1d699d1970f55ae29a",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -46,7 +46,7 @@
       "stopReason": "toolUse",
       "ok": true
     },
-    "id": "6f3587181c14abc3ca2ce35a3d5b8acf6a918c5f90c87cd2b85aa261ced25e1a",
+    "id": "0737c013cf8c3cc8107418ea484a32dc5b8f164740b71253266544d11ce2feb1",
     "model": "claude-sonnet-4-5",
     "durationMs": 800,
     "usage": {
@@ -65,7 +65,7 @@
     "payload": {
       "text": "Let me fix it."
     },
-    "id": "ea7117620e2098d21f387ba5a9ff7f806f8eeb30a9d94fe3d2d3755d42f8e061",
+    "id": "2a89518aca1b0773a93e48439e659826990bb435783f281b7268cb54aa2c5a92",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -82,7 +82,7 @@
         "newText": "a + b"
       }
     },
-    "id": "733e8fc417ab7d91e16f26d3eadc458750e76de04fdcbca6f9c7997be93efe43",
+    "id": "8af051de1c585ba3b6b16a67d170ed6b61afb00b44dd24044718c7c9b8d5a271",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -98,7 +98,7 @@
       },
       "verify": true
     },
-    "id": "36aec2ec50d34d9e7b64d006272e2f1340f9c594d25dfc0ed27de4ca28860554",
+    "id": "9f6a1844cc3dff4ee3d246ea4c85be8c1c1f31de4b9add117272cc728aabedb5",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -113,7 +113,7 @@
       "durationMs": 50,
       "output": "Successfully replaced text."
     },
-    "id": "b65c196d52cac292e84b7c9ad9c859de3396a98fc3ee8167b750930e03112575",
+    "id": "ad8d20b24d33239a2d148318c7556ce0f3c937f9febcf117d8cec1920fd2a4d6",
     "model": "claude-sonnet-4-5",
     "durationMs": 50,
     "cwd": "/work/demo"
@@ -128,7 +128,7 @@
       "tool": "edit",
       "toolUseId": "call_1"
     },
-    "id": "98d936118f1ec2df435aa86dd9c6ae47a5ff0644fb6a4cef9bffb93ba824f8c0",
+    "id": "8409c5b9c57899541c594b85e4de9a6bd91e5a9fffa89526d3eb1475cf95febf",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -143,7 +143,7 @@
       "durationMs": 2000,
       "output": "test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out"
     },
-    "id": "7715fc998bff17f24d8267169870eff7d3056a2b555d884ad5a1dc0084873627",
+    "id": "aed37cb01310c61b471f6815b19d36f9314da512ae39f638fa198e130455e7e8",
     "model": "claude-sonnet-4-5",
     "durationMs": 2000,
     "cwd": "/work/demo"
@@ -159,7 +159,7 @@
       "skipped": 0,
       "toolUseId": "call_2"
     },
-    "id": "4d2bf34ef4f04925faeb06b2e0991b482d6a41a92a40a37c7825b96a0bc5bf64",
+    "id": "0a76732bbf3a89d870b33d71e9d257db442b4c663fdf755e8246fc93c389a0c4",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -174,7 +174,7 @@
       "stopReason": "stop",
       "ok": true
     },
-    "id": "ef9b207c0d71dca3d0fdfb6fa1f3725894fee122a8bcc113f260211a168b7c7c",
+    "id": "d297363760c584fe6ee73fb7272b8d0edc649a52314654f91c35a32921a8e41f",
     "model": "claude-sonnet-4-5",
     "durationMs": 700,
     "usage": {
@@ -193,7 +193,7 @@
     "payload": {
       "text": "One test still fails."
     },
-    "id": "1cbd2d4d0d05f0dc05d7f1a58d979229bf39641e41f884bd331b09d9002dd8a2",
+    "id": "d37651bf52e58efa2229df3b5db99747af9bb0ff12234f4241adbbc8acafdafb",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -204,7 +204,8 @@
     "payload": {
       "stopReason": "stop"
     },
-    "id": "6ab83ccadadea0f1a74c31c707699ee28dac2893a66882ed4af94e69b68ca9cf",
+    "id": "4e323326e69539e9d2f324e60c2b405d18981784df02bf67dbe36b546bcafa4b",
+    "turnId": "4ece5f135b35dad37f22e95b412bd150806e31aacf0ad004fcdde12d6b117b6c",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -219,7 +220,7 @@
         "command": "git status --short"
       }
     },
-    "id": "f42fa56dc84c087eb570a3e8c6dd67a7049e8582b22c9d3593e476c1d5c00aa9",
+    "id": "15153771ab6d1b5426b9f74389be90ba9054fb109444f9a26952a72f77fb7e05",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -233,7 +234,7 @@
       "ok": true,
       "output": " M src/lib.rs\n"
     },
-    "id": "d5aaa14c2fcd4c8d17db6c6666df6a08530210bf7f1ff1a99b1666833e2f1fe9",
+    "id": "45b87053bb4c16167042ce9d78a207e9dfb3dce93ac2fd1c7125f48b0cd3e88d",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },

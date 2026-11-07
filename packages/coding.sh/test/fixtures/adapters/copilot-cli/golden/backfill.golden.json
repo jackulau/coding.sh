@@ -46,7 +46,7 @@
         "file_text": "# Demo\n"
       }
     },
-    "id": "0e7be6527800a0b4e486c01bd8898ba4d9da8f0694767b153d9ac3deb099afe0",
+    "id": "2bf1ab905c1147e51ed880ad6e4d838479694c06e6967ae17f9379af9d449815",
     "model": "claude-sonnet-4.5",
     "cwd": "/work/demo"
   },
@@ -61,7 +61,7 @@
       "durationMs": 300,
       "output": "Created file"
     },
-    "id": "8e29a050611abd45dac6d1f8b12e69911ec51cb59c09201905b5011009bbca80",
+    "id": "49b6cb25a45523a2027782ead02c5a5e95dc72679a6118d6269e89b463faa2cf",
     "model": "claude-sonnet-4.5",
     "durationMs": 300,
     "cwd": "/work/demo"
@@ -76,7 +76,7 @@
       "tool": "create",
       "toolUseId": "call-1"
     },
-    "id": "675450f522f4e3f43ece3d7cd65ac7b360c7bfb57ca35697cc563385d5865d1a",
+    "id": "9527abb3c1ff451e2e2d081e00e65a3a8f7bf234ba22fe21f42bf3f0b938aea9",
     "model": "claude-sonnet-4.5",
     "cwd": "/work/demo"
   },
@@ -92,7 +92,7 @@
       },
       "verify": true
     },
-    "id": "029491c2a6290591f8f6c20ddb461cdcbf7113ff9d2bba59b2b44629b8953dc9",
+    "id": "b0ac150a804b88737b438542ff9c9d83d50687cb3e52c7f4f2e49eb066f0f423",
     "model": "claude-sonnet-4.5",
     "cwd": "/work/demo"
   },
@@ -108,7 +108,7 @@
       "output": "  2 passing (8ms)\n  1 failing\n",
       "error": "exit code 1"
     },
-    "id": "16e4d0885908adfc87bc6c3983cf9212551a0005ddfa9d1997d7a8f51f1873a3",
+    "id": "2513457a1cf1635f03c937731b4c571086b224670176f8a15d02fc3c6fd936ac",
     "model": "claude-sonnet-4.5",
     "durationMs": 2000,
     "cwd": "/work/demo"
@@ -123,7 +123,7 @@
       "failed": 1,
       "toolUseId": "call-2"
     },
-    "id": "14b89689224421ea5506ccf9fc72cb81dd9d573f24824974255a7ab6f590f82d",
+    "id": "54f03de80da188a3ac5f3f3bac06ef8d45cddd939a3c7dd9f4f7310a737a9cc3",
     "model": "claude-sonnet-4.5",
     "cwd": "/work/demo"
   },
@@ -153,7 +153,7 @@
       },
       "server": "github"
     },
-    "id": "a09360e10be9956ff3efdc596eebd4eeaf535caab93e459e827e3de303a52304",
+    "id": "c9a42f3cc906af5c6f787da2c001bd7181973683765966be275500d2474dd9aa",
     "subagentId": "sub-a1",
     "model": "claude-sonnet-4.5",
     "cwd": "/work/demo"
@@ -169,7 +169,7 @@
       "durationMs": 500,
       "output": "2 hits"
     },
-    "id": "e9bb4829648b9cf36b2d3f1674f2706b63142869d19c39c6d087a8efe5239078",
+    "id": "65ddd3f016b79b853dc781a404a1aac8b214de497a0e27955bd61d6334b73b87",
     "subagentId": "sub-a1",
     "model": "claude-sonnet-4.5",
     "durationMs": 500,

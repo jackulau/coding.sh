@@ -37,6 +37,7 @@ import {
   home,
   isObj,
   jsonLines,
+  jsonlTail,
   mtimeMs,
   num,
   overlayHome,
@@ -53,7 +54,7 @@ import {
   usageFrom,
   walkFiles,
 } from "./_util.ts";
-import type { Json } from "./_util.ts";
+import type { EventExtra, Json } from "./_util.ts";
 import { isWrapperEvent, normalizeWrapperLine } from "./wrapper.ts";
 
 const ID = "pi";
@@ -160,8 +161,35 @@ function piUsage(u: unknown): Usage | undefined {
   return usageFrom({ input: u.input, output: u.output, cacheRead: u.cacheRead, cacheWrite: num(u.cacheWrite) !== undefined || num(u.cacheWrite1h) !== undefined ? (num(u.cacheWrite) ?? 0) + (num(u.cacheWrite1h) ?? 0) : undefined, costUsd: get(u, "cost", "total") });
 }
 
+/**
+ * Natural key of a Pi message: its creation time, which the extension's message_end
+ * and the session file's entry carry alike (message_end has no entry id).
+ */
+const messageKey = (msg: Json): EventExtra => (num(msg.timestamp) !== undefined ? { key: ["msg", num(msg.timestamp)!] } : {});
+
+/** Message entries of a session file: entry id, time, and whether the entry ends a turn. */
+function piMessageEntries(file: string): { id: string; ts: number; final: boolean }[] {
+  return jsonlTail("pi-messages", file, (e) => {
+    if (e.type !== "message" || !isObj(e.message) || !str(e.id)) return [];
+    const stop = str(e.message.stopReason);
+    return [{ id: str(e.id)!, ts: toMs(e.timestamp) ?? 0, final: e.message.role === "assistant" && !!stop && stop !== "toolUse" }];
+  });
+}
+
+/**
+ * The session-file entry that ended the run settling at `ts` (agent_settled names none):
+ * the last message entry written by then, when it is a reply that ends a turn. The
+ * session file keys its turn.end by the same entry, so the two copies dedupe.
+ */
+export function piTurnEntry(file: string | undefined, ts: number): string | undefined {
+  if (!file) return undefined;
+  let last: { id: string; final: boolean } | undefined;
+  for (const e of piMessageEntries(file)) if (e.ts <= ts) last = e;
+  return last?.final ? last.id : undefined;
+}
+
 /** llm.call + assistant.message for a Pi assistant message. */
-async function emitAssistant(em: Emitter, ctx: NormalizeContext, msg: Json, provider: string | undefined, requestModel: string | undefined, extra: Json = {}, durationMs?: number): Promise<string | undefined> {
+async function emitAssistant(em: Emitter, ctx: NormalizeContext, msg: Json, provider: string | undefined, requestModel: string | undefined, extra: EventExtra = {}, durationMs?: number): Promise<string | undefined> {
   const model = str(msg.responseModel) ?? str(msg.model) ?? requestModel;
   const usage = piUsage(msg.usage);
   const stop = str(msg.stopReason);
@@ -183,7 +211,7 @@ export async function normalizePi(line: SpoolLine, ctx: NormalizeContext): Promi
   const ts = toMs(raw.ts) ?? line.ts;
   const provider = str(get(raw, "model", "provider"));
   const modelId = str(get(raw, "model", "id"));
-  const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, runId: line.runId, model: modelId }, spoolIdParts(line, sessionId, ctx));
+  const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, runId: line.runId, model: modelId }, spoolIdParts(line, sessionId, ctx), { toolKeys: true });
   const ev = str(raw.hook_event_name) ?? line.event;
   switch (ev) {
     case "session_start":
@@ -192,7 +220,7 @@ export async function normalizePi(line: SpoolLine, ctx: NormalizeContext): Promi
     case "message_end": {
       const msg = isObj(raw.message) ? raw.message : {};
       const mts = toMs(msg.timestamp);
-      const extra = mts ? { ts: mts } : {};
+      const extra = { ...(mts ? { ts: mts } : {}), ...messageKey(msg) };
       if (msg.role === "user") {
         const text = contentText(msg.content).trim();
         if (text) await emitText(em, ctx, "user.message", text, extra);
@@ -221,7 +249,7 @@ export async function normalizePi(line: SpoolLine, ctx: NormalizeContext): Promi
       em.push("notification", { kind: "model_select", provider: str(get(raw, "selected", "provider")), model: str(get(raw, "selected", "id")), source: str(raw.source) });
       break;
     case "agent_settled":
-      em.push("turn.end", { aborted: raw.aborted === true });
+      em.turnEnd({ aborted: raw.aborted === true }, piTurnEntry(str(raw.sessionFile), ts));
       break;
     case "session_shutdown":
       em.push("session.end", { reason: str(raw.reason) });
@@ -246,7 +274,7 @@ export async function* piSessionEvents(file: string, ctx: NormalizeContext, sinc
       cwd = str(e.cwd);
     }
     if (!sessionId) continue;
-    const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, model }, ["pi-file", sessionId, str(e.id) ?? lineNo]);
+    const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, model }, ["pi-file", sessionId, str(e.id) ?? lineNo], { toolKeys: true });
     if (e.type === "session") {
       em.push("session.start", { source: "transcript", version: num(e.version), parentSession: str(e.parentSession), file });
     } else if (e.type === "model_change") {
@@ -259,11 +287,11 @@ export async function* piSessionEvents(file: string, ctx: NormalizeContext, sinc
       const msg = e.message;
       if (msg.role === "user") {
         const text = contentText(msg.content).trim();
-        if (text) await emitText(em, ctx, "user.message", text);
+        if (text) await emitText(em, ctx, "user.message", text, messageKey(msg));
       } else if (msg.role === "assistant") {
         const start = toMs(msg.timestamp);
         const done = toMs(e.timestamp);
-        model = (await emitAssistant(em, ctx, msg, provider, model, {}, start !== undefined && done !== undefined && done > start ? done - start : undefined)) ?? model;
+        model = (await emitAssistant(em, ctx, msg, provider, model, messageKey(msg), start !== undefined && done !== undefined && done > start ? done - start : undefined)) ?? model;
         provider = str(msg.provider) ?? provider;
         for (const b of Array.isArray(msg.content) ? msg.content.filter(isObj) : []) {
           if (b.type !== "toolCall") continue;
@@ -273,7 +301,7 @@ export async function* piSessionEvents(file: string, ctx: NormalizeContext, sinc
           await emitToolStart(em, ctx, tool, id, b.arguments);
         }
         const stop = str(msg.stopReason);
-        if (stop && stop !== "toolUse") em.push("turn.end", { stopReason: stop });
+        if (stop && stop !== "toolUse") em.turnEnd({ stopReason: stop }, str(e.id));
       } else if (msg.role === "toolResult") {
         const id = str(msg.toolCallId);
         const call = id ? calls.get(id) : undefined;

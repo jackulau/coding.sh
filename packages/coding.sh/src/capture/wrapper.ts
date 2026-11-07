@@ -33,6 +33,7 @@ import { isatty } from "node:tty";
 import type { SpoolLine } from "../core/types.ts";
 import { gatewayFromEnv } from "../integrations/gateway/ids.ts";
 import type { RepoState } from "../schema/index.ts";
+import { redactArgv } from "../core/redact.ts";
 import { diffSnapshots, snapshot } from "../core/snapshot.ts";
 import type { DiffResult, SnapshotOptions } from "../core/snapshot.ts";
 import { appendSpool, isDisabled, logSpoolError } from "../spool/write.ts";
@@ -109,7 +110,8 @@ export async function wrapRunDetailed(opts: WrapRunOptions): Promise<WrapRunResu
   };
 
   const start = await snap("start");
-  spool("session.start", { cmd: opts.cmd, args, cwd, repo: start });
+  // Secret flag values (--openai-api-key X) never reach the spool; ingest redacts them again.
+  spool("session.start", { cmd: opts.cmd, args: redactArgv(args), cwd, repo: start });
 
   const t0 = Date.now();
   const { exitCode, signal, error } = await new Promise<{ exitCode: number; signal?: NodeJS.Signals; error?: string }>((resolve) => {

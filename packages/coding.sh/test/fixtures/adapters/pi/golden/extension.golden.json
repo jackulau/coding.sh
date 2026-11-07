@@ -23,7 +23,7 @@
     "payload": {
       "text": "Make cargo test pass"
     },
-    "id": "26be7852b6b873404650a2a7ee149133a3cfcd313d4e053faf9a8fa858934817",
+    "id": "7a220ed6c41bc1afb06acdb9430e54ad4c944e77458bc2ed9bf9cc44fea13217",
     "model": "claude-sonnet-4-5",
     "blobs": [
       "a488c712da1d8938477b1c6a643a39a842cfd1d5e4b6f5758d75f4a3ea07e0eb"
@@ -43,7 +43,7 @@
         "newText": "a + b"
       }
     },
-    "id": "e70012c6cba4fe562f0349fc57d41d5e0993c23f39532c82f58e4c452808b95c",
+    "id": "8af051de1c585ba3b6b16a67d170ed6b61afb00b44dd24044718c7c9b8d5a271",
     "model": "claude-sonnet-4-5",
     "blobs": [
       "3fba8e8b11668f9ab7b85b4693644c5c7784b27491c552976b4cf7ba4c04ca00"
@@ -61,7 +61,7 @@
       "durationMs": 12,
       "output": "Successfully replaced text in src/lib.rs."
     },
-    "id": "c262220c733188bce79e83b8b8e828125eab8aa9906f5ac9cf8929cdb899c6f6",
+    "id": "ad8d20b24d33239a2d148318c7556ce0f3c937f9febcf117d8cec1920fd2a4d6",
     "model": "claude-sonnet-4-5",
     "durationMs": 12,
     "blobs": [
@@ -79,7 +79,7 @@
       "tool": "edit",
       "toolUseId": "call_1"
     },
-    "id": "3cfc209e6417fd8755dcc55fbed8d0c5e4a2d4ec8c0afabf98f274bc7ccd313b",
+    "id": "8409c5b9c57899541c594b85e4de9a6bd91e5a9fffa89526d3eb1475cf95febf",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -94,7 +94,7 @@
       "durationMs": 1800,
       "output": "running 8 tests\ntest result: ok. 7 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out\n"
     },
-    "id": "35993f8a86485b09de107639ba3528de9bbea00d8bcdab2a8a16dbb7b66a3b78",
+    "id": "aed37cb01310c61b471f6815b19d36f9314da512ae39f638fa198e130455e7e8",
     "model": "claude-sonnet-4-5",
     "durationMs": 1800,
     "blobs": [
@@ -113,7 +113,7 @@
       "skipped": 1,
       "toolUseId": "call_2"
     },
-    "id": "92b3e99bdcf57af722b272c6c75e10f3e1a65cd04b17191c8c88716136a9f225",
+    "id": "0a76732bbf3a89d870b33d71e9d257db442b4c663fdf755e8246fc93c389a0c4",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },
@@ -128,7 +128,7 @@
       "stopReason": "stop",
       "ok": true
     },
-    "id": "8e87e71c9524b0395e6b87aa661110098e67c94eb4485b10287d77209ebfc09b",
+    "id": "dac526e36fac4b6e89659af32efaa4810a71474116a58321a7826bf241a72969",
     "model": "claude-sonnet-4-5",
     "durationMs": 100,
     "usage": {
@@ -150,7 +150,7 @@
     "payload": {
       "text": "Fixed the sign; 7 tests pass."
     },
-    "id": "d6d717028b2fa76084b18edc86f670ccd00d34c994b85d6bd49127f72d2ee21a",
+    "id": "6dea2aab93222206b5cd8c8e057334db8a410b1f2c934f9cfd4fc02f9928c174",
     "model": "claude-sonnet-4-5",
     "cwd": "/work/demo"
   },

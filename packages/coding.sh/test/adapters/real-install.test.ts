@@ -3,7 +3,7 @@
 // to /work/demo and /home/user. Versions: OpenCode 1.19.5, Goose 1.57.0, Pi 1.5.0,
 // Copilot CLI 1.0.107, Factory Droid 1.6.0, Aider 0.86.2 (via `coding.sh run`).
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
@@ -13,10 +13,14 @@ import { droidAdapter, droidSessionEvents } from "../../src/adapters/more/droid.
 import { gooseAdapter, gooseDbEvents } from "../../src/adapters/more/goose.ts";
 import { piAdapter } from "../../src/adapters/more/pi.ts";
 import { opencode } from "../../src/adapters/opencode.ts";
+import { defaultConfig } from "../../src/core/config.ts";
+import { backfill, ingest } from "../../src/core/ingest.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { Adapter } from "../../src/core/types.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
+import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { FIXTURES, assertWellFormed, collect, loadSpool, testCtx, tmpEnv, type TmpEnv } from "./_helpers.ts";
+import { moreEnv } from "./more/_helpers.ts";
 
 const PROMPT = "create hello.txt";
 const REPLY = "Done. I wrote hello.txt.";
@@ -211,4 +215,89 @@ describe("real install: Aider 0.86.2", () => {
     assert.equal(s.stats.turns, 1);
     assert.equal(events.find((e) => e.kind === "session.end")!.payload.exitCode, 0);
   });
+
+  it("`--openai-api-key <key>` on aider's argv is stored redacted, in events and the raw blob", async () => {
+    // This line predates the wrapper redacting argv: ingest must catch it.
+    const { ctx, blobs } = testCtx();
+    const events: AgentEvent[] = [];
+    for (const line of loadSpool("wrapper/real/aider.spool.jsonl")) events.push(...(await aiderAdapter.normalize({ ...line, agent: "aider" }, ctx)));
+    const start = events.find((e) => e.kind === "session.start")!;
+    const args = start.payload.args as string[];
+    assert.equal(args[args.indexOf("--openai-api-key") + 1], "[redacted:secret-flag]");
+    const raw = [...blobs.values()].find((b) => b.includes("--openai-api-key"))!;
+    assert.match(raw, /"--openai-api-key","\[redacted:secret-flag\]"/);
+    assert.doesNotMatch(JSON.stringify(events) + [...blobs.values()].join(""), /"--openai-api-key","stub"/);
+  });
+});
+
+// A session the hooks captured live, then `ingest --backfill` from the agent's own history,
+// stores each tool call, model call, prompt, reply and turn once, and counts tokens once.
+// (session.start/session.end stay one per capture path: each carries what its path saw.)
+describe("real install: hook capture + backfill of one session store it once", () => {
+  // Pi's session file is rebuilt from the extension's message_end payloads (same message
+  // objects, entry timestamps at each event); the capture did not keep it.
+  const cases: { adapter: Adapter; spool: string; session: string; setup: (root: string) => void }[] = [
+    { adapter: piAdapter, spool: "pi/real/extension.spool.jsonl", session: "01a1b4fa-1a11-7283-b288-2d5c05020dce", setup: () => (process.env.PI_CODING_AGENT_DIR = join(FIXTURES, "pi", "real", "home", ".pi", "agent")) },
+    {
+      adapter: gooseAdapter,
+      spool: "goose/real/hooks.spool.jsonl",
+      session: "20261107_1",
+      setup: (root) => {
+        process.env.GOOSE_PATH_ROOT = join(root, "goose");
+        loadDb("goose/real/sessions.db.json", join(root, "goose", "data", "sessions", "sessions.db"));
+      },
+    },
+    { adapter: copilotCliAdapter, spool: "copilot-cli/real/hooks.spool.jsonl", session: "6dfe9f80-9dd6-4735-999d-2c7950f95132", setup: () => (process.env.COPILOT_HOME = join(FIXTURES, "copilot-cli", "real", "home", ".copilot")) },
+    { adapter: droidAdapter, spool: "droid/real/hooks.spool.jsonl", session: "d85436df-cb26-457a-b68e-db3d9efef556", setup: () => (process.env.HOME = join(FIXTURES, "droid", "real", "home")) },
+  ];
+  const KINDS = ["user.message", "assistant.message", "llm.call", "tool.start", "tool.end", "file.change", "test.result", "turn.end"];
+
+  type Step = "hooks" | "backfill";
+  /** Stores the session through `steps` into a fresh index; returns rows per kind and the session. */
+  async function capture(c: (typeof cases)[number], steps: Step[]) {
+    const env = moreEnv();
+    try {
+      c.setup(env.root);
+      const spoolDir = join(env.dataHome, "spool");
+      mkdirSync(join(spoolDir, c.adapter.id), { recursive: true });
+      writeFileSync(join(spoolDir, c.adapter.id, "2026-11-07.1.jsonl"), loadSpool(c.spool).map((l) => JSON.stringify(l) + "\n").join(""));
+      const config = defaultConfig({ ...process.env });
+      config.snapshot.enabled = false;
+      const index = new MemoryIndexStore();
+      const blobs = new MemoryBlobStore();
+      for (const step of steps) {
+        if (step === "hooks") await ingest({ config, index, blobs, adapters: new Map([[c.adapter.id, c.adapter]]), env: { ...process.env }, spoolDir, lock: false });
+        else await backfill({ config, index, blobs, adapters: [c.adapter], env: { ...process.env } });
+      }
+      const rows = Object.fromEntries(KINDS.map((k) => [k, 0]));
+      for (const e of await index.listEvents(c.session)) if (e.kind in rows) rows[e.kind]!++;
+      const s = (await index.getSession(c.session))!;
+      // A second backfill finds nothing new.
+      const again = await backfill({ config, index, blobs, adapters: [c.adapter], env: { ...process.env } });
+      return { rows, usage: s.stats.usage ?? {}, turns: s.stats.turns, toolCalls: s.stats.toolCalls, again: again.events };
+    } finally {
+      delete process.env.GOOSE_PATH_ROOT;
+      env.restore();
+    }
+  }
+
+  for (const c of cases) {
+    it(c.adapter.id, async () => {
+      const hooks = await capture(c, ["hooks"]);
+      const transcript = await capture(c, ["backfill"]);
+      assert.ok(hooks.rows["tool.end"]! > 0 && transcript.rows["tool.end"]! > 0, "both paths see the tool call");
+      // Either path alone has the session's tokens (or none): together they count once.
+      const tokens = [hooks.usage, transcript.usage].filter((u) => (u.inputTokens ?? 0) > 0);
+      if (tokens.length === 2) assert.deepEqual(hooks.usage, transcript.usage);
+      for (const order of [["hooks", "backfill"], ["backfill", "hooks"]] as Step[][]) {
+        const both = await capture(c, order);
+        const label = `${c.adapter.id} (${order.join(", ")})`;
+        assert.deepEqual(both.rows, Object.fromEntries(KINDS.map((k) => [k, Math.max(hooks.rows[k]!, transcript.rows[k]!)])), `${label}: rows per kind`);
+        assert.deepEqual(both.usage, tokens[0] ?? {}, `${label}: tokens`);
+        assert.equal(both.turns, transcript.turns, `${label}: turns`);
+        assert.equal(both.toolCalls, transcript.toolCalls, `${label}: tool calls`);
+        assert.equal(both.again, 0, `${label}: a second backfill is a no-op`);
+      }
+    });
+  }
 });

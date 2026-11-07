@@ -10,7 +10,7 @@
 //   - transcripts: JSONL readers, directory walks, read-only SQLite copies
 import { spawn, execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync, chmodSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync, chmodSync } from "node:fs";
 import { createReadStream } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -318,25 +318,49 @@ export interface EventBase {
   subagentId?: string | undefined;
 }
 
-export type EventExtra = Partial<Omit<AgentEvent, "id" | "v" | "kind" | "payload" | "agent" | "sessionId">>;
+export type EventExtra = Partial<Omit<AgentEvent, "id" | "v" | "kind" | "payload" | "agent" | "sessionId">> & {
+  /**
+   * Natural key (a tool call id, a message id): the id becomes
+   * ctx.id(agent, session, kind, …key), so the same event seen by a hook and in
+   * a backfilled transcript gets one id and is stored once.
+   */
+  key?: (string | number)[];
+};
+
+export interface EmitterOptions {
+  /** Key tool.start/tool.end (and their file.change/test.result) by toolUseId. */
+  toolKeys?: boolean;
+}
 
 /**
- * Builds events with deterministic ids: ctx.id(...idParts, index). Same input
- * → same ids, so re-ingesting a spool line or transcript record is a no-op.
+ * Builds events with deterministic ids: ctx.id(...idParts, index), or a natural
+ * key when one is given. Same input → same ids, so re-ingesting a spool line or
+ * transcript record is a no-op.
  */
 export class Emitter {
   readonly events: AgentEvent[] = [];
+  readonly toolKeys: boolean;
   private readonly ctx: NormalizeContext;
   private readonly base: EventBase;
   private readonly idParts: (string | number)[];
-  constructor(ctx: NormalizeContext, base: EventBase, idParts: (string | number)[]) {
+  constructor(ctx: NormalizeContext, base: EventBase, idParts: (string | number)[], opts: EmitterOptions = {}) {
     this.ctx = ctx;
     this.base = base;
     this.idParts = idParts;
+    this.toolKeys = opts.toolKeys === true;
   }
-  push(kind: EventKind, payload: Json, extra: EventExtra = {}): AgentEvent {
+  /**
+   * turn.end keyed by the turn's last assistant message when it is known, with a
+   * matching turnId: the hook's and the transcript's copy of one turn share an
+   * id, and buildSession counts the turn once whichever path stored it.
+   */
+  turnEnd(payload: Json, lastMessage: string | number | undefined, extra: EventExtra = {}): AgentEvent {
+    if (lastMessage === undefined) return this.push("turn.end", payload, extra);
+    return this.push("turn.end", payload, { ...extra, key: ["last", lastMessage], turnId: this.ctx.id(this.base.agent, this.base.sessionId, "turn", lastMessage) });
+  }
+  push(kind: EventKind, payload: Json, { key, ...extra }: EventExtra = {}): AgentEvent {
     const e: AgentEvent = {
-      id: this.ctx.id(...this.idParts, this.events.length),
+      id: key ? this.ctx.id(this.base.agent, this.base.sessionId, kind, ...key) : this.ctx.id(...this.idParts, this.events.length),
       v: 0,
       sessionId: this.base.sessionId,
       ts: this.base.ts,
@@ -621,15 +645,23 @@ export interface ToolEndArgs {
   extra?: EventExtra;
 }
 
+/** Natural key for an event of a tool call, when the emitter keys tools by call id. */
+const toolKey = (em: Emitter, toolUseId: string | undefined, ...rest: string[]): EventExtra => (em.toolKeys && toolUseId ? { key: [toolUseId, ...rest] } : {});
+
 /** tool.end + derived file.change / test.result events. */
 export async function emitToolEnd(em: Emitter, ctx: NormalizeContext, a: ToolEndArgs, cwd: string | undefined): Promise<void> {
   const text = textOf(a.output);
   const out = await clip(ctx, text ?? a.output);
   const payload: Json = { tool: a.tool, toolUseId: a.toolUseId, ok: a.ok, durationMs: a.durationMs, output: out.value, error: a.error };
-  em.push("tool.end", payload, { ...(a.durationMs !== undefined ? { durationMs: a.durationMs } : {}), ...a.extra, blobs: [...(a.extra?.blobs ?? []), ...(out.blob ? [out.blob] : [])] });
-  if (a.ok) for (const f of fileTouches(a.tool, a.input, cwd)) em.push("file.change", { path: f.path, op: f.op, tool: a.tool, toolUseId: a.toolUseId }, a.extra);
+  em.push("tool.end", payload, { ...(a.durationMs !== undefined ? { durationMs: a.durationMs } : {}), ...a.extra, blobs: [...(a.extra?.blobs ?? []), ...(out.blob ? [out.blob] : [])], ...toolKey(em, a.toolUseId) });
+  if (a.ok) for (const f of fileTouches(a.tool, a.input, cwd)) emitFileChange(em, { path: f.path, op: f.op, tool: a.tool, toolUseId: a.toolUseId }, a.extra);
   const tr = testResultFor(a.input, text);
-  if (tr) em.push("test.result", { ...tr, toolUseId: a.toolUseId }, a.extra);
+  if (tr) em.push("test.result", { ...tr, toolUseId: a.toolUseId }, { ...a.extra, ...toolKey(em, a.toolUseId) });
+}
+
+/** file.change of a tool call, keyed like the rest of the call. */
+export function emitFileChange(em: Emitter, payload: { path: string; op: string; tool?: string | undefined; toolUseId?: string | undefined }, extra: EventExtra = {}): void {
+  em.push("file.change", payload, { ...extra, ...toolKey(em, payload.toolUseId, payload.path) });
 }
 
 /** tool.start with a clipped input. */
@@ -639,7 +671,7 @@ export async function emitToolStart(em: Emitter, ctx: NormalizeContext, tool: st
   if (isVerifyCommand(commandOf(input))) payload.verify = true;
   const mcp = /^mcp__([^_]+(?:_[^_]+)*?)__/.exec(tool);
   if (mcp) payload.server = mcp[1];
-  em.push("tool.start", payload, { ...extra, blobs: [...(extra.blobs ?? []), ...(c.blob ? [c.blob] : [])] });
+  em.push("tool.start", payload, { ...extra, blobs: [...(extra.blobs ?? []), ...(c.blob ? [c.blob] : [])], ...toolKey(em, toolUseId) });
 }
 
 /** Text event (user/assistant message) with clipping. */
@@ -867,6 +899,59 @@ export function copyPrivate(src: string, dst: string): boolean {
 }
 
 // ---------------------------------------------------------------- transcripts
+
+const jsonlTails = new Map<string, { size: number; rest: Buffer; items: unknown[] }>();
+
+/**
+ * Items picked from each record of a transcript that only grows, read
+ * incrementally: a call reads just the bytes appended since the last one, so
+ * normalize can consult the transcript for every hook line of a long session.
+ * A file that shrank is read again from the start. `tag` names the picker.
+ */
+export function jsonlTail<T>(tag: string, path: string, pick: (record: Json) => T[]): T[] {
+  let size: number;
+  try {
+    size = statSync(path).size;
+  } catch {
+    return [];
+  }
+  const key = `${tag}\0${path}`;
+  let c = jsonlTails.get(key);
+  if (!c || size < c.size) {
+    if (jsonlTails.size >= 64) jsonlTails.delete(jsonlTails.keys().next().value!);
+    c = { size: 0, rest: Buffer.alloc(0), items: [] };
+    jsonlTails.set(key, c);
+  }
+  if (size === c.size) return c.items as T[];
+  const buf = Buffer.alloc(size - c.size);
+  const fd = openSync(path, "r");
+  try {
+    readSync(fd, buf, 0, buf.length, c.size);
+  } finally {
+    closeSync(fd);
+  }
+  c.size = size;
+  const data = Buffer.concat([c.rest, buf]);
+  const end = data.lastIndexOf(0x0a);
+  c.rest = Buffer.from(data.subarray(end + 1));
+  for (const l of data.subarray(0, end + 1).toString("utf8").split("\n")) {
+    let r: unknown;
+    try {
+      r = JSON.parse(l);
+    } catch {
+      continue;
+    }
+    if (isObj(r)) c.items.push(...pick(r));
+  }
+  return c.items as T[];
+}
+
+/** Order-independent JSON, for matching a hook's tool input to a transcript's. */
+export function stableJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
+  if (isObj(v)) return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${stableJson(v[k])}`).join(",")}}`;
+  return JSON.stringify(v) ?? "null";
+}
 
 export interface JsonlRecord {
   lineNo: number;

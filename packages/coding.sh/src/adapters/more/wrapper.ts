@@ -15,6 +15,7 @@ import type { Adapter, AgentRunOutput, DetectResult, FileChange, NormalizeContex
 import type { AgentEvent, RepoState } from "../../schema/index.ts";
 import { Emitter, attachRaw, clip, isObj, num, parseTestSummary, rawBlob, runEnv, spawnAgent, spoolIdParts, str, toRunOutput } from "./_util.ts";
 import type { Json } from "./_util.ts";
+import { redactArgv } from "../../core/redact.ts";
 
 const START = new Set(["session.start", "process.start"]);
 const END = new Set(["session.end", "process.end"]);
@@ -58,7 +59,7 @@ export async function normalizeWrapperLine(line: SpoolLine, ctx: NormalizeContex
   const ev = line.event;
 
   if (START.has(ev)) {
-    const args = Array.isArray(raw.args) ? raw.args.filter((a): a is string => typeof a === "string") : [];
+    const args = redactArgv(Array.isArray(raw.args) ? raw.args.filter((a): a is string => typeof a === "string") : []);
     const c = await clip(ctx, args);
     em.push("session.start", { source: "wrapper", cmd: str(raw.cmd), args: c.value }, { ...(repo ? { repo } : {}), ...(c.blob ? { blobs: [c.blob] } : {}) });
   } else if (ev === "file.change") {
@@ -99,7 +100,9 @@ export async function normalizeWrapperLine(line: SpoolLine, ctx: NormalizeContex
   } else {
     return [];
   }
-  return attachRaw(em.events, await rawBlob(ctx, line.raw));
+  // Spool lines from before the wrapper redacted argv can still carry --api-key values.
+  const kept = Array.isArray(raw.args) ? { ...raw, args: redactArgv(raw.args) } : line.raw;
+  return attachRaw(em.events, await rawBlob(ctx, kept));
 }
 
 /** Split "cmd --flag 'quoted arg'" respecting simple quotes (for `wrapper` run flags given as one string). */

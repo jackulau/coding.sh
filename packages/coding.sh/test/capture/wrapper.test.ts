@@ -68,6 +68,20 @@ describe("wrapRun", () => {
     assert.match(String(end.patch), /\+edited by agent/);
   });
 
+  test("spools secret flag values redacted, and passes them to the agent as given", async () => {
+    const h = join(tmp(), "home");
+    const dir = tmp("csh-argv-");
+    const script = "require('fs').writeFileSync('argv.json', JSON.stringify(process.argv.slice(1)))";
+    const args = ["-e", script, "--", "--openai-api-key", "plainsecretvalue", "--api-key=hunterhunter", "--model", "gpt-5"];
+    const code = await wrapRun({ cmd: process.execPath, args, cwd: dir, env: { CODING_SH_HOME: h }, agentId: "aider" });
+    assert.equal(code, 0);
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, "argv.json"), "utf8")), ["--openai-api-key", "plainsecretvalue", "--api-key=hunterhunter", "--model", "gpt-5"]);
+    const start = lines("aider", h).find((l) => l.event === "session.start")!;
+    const text = JSON.stringify(start);
+    assert.doesNotMatch(text, /plainsecretvalue|hunterhunter/);
+    assert.deepEqual((resolveRaw(start) as { args: string[] }).args.slice(2), ["--", "--openai-api-key", "[redacted:secret-flag]", "--api-key=[redacted:secret-flag]", "--model", "gpt-5"]);
+  });
+
   test("works outside a git repo (no repo state, no file changes)", async () => {
     const h = join(tmp(), "home");
     const dir = tmp("csh-norepo-");

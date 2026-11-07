@@ -50,7 +50,7 @@
         "file_text": "# Demo\n"
       }
     },
-    "id": "ac91dceebe7ee4176a2d8a415d9f598634beec764caec3efa2f5f3c9380818a1",
+    "id": "e8eb297cdd7b3e74402f528900bb239c002c22486bd24bd569275b6bcd67ae69",
     "blobs": [
       "9cec92ce65f3871239bab69c15cc509aa6596c4ab75b371885a99133ba5243ca"
     ],
@@ -66,7 +66,7 @@
       "ok": true,
       "output": "Created file /work/demo/README.md"
     },
-    "id": "645d89d4748994a67fe7424d1246d57260b0f3cdd9866d2590cfb7ecc5d55a02",
+    "id": "8185614125c25f955b4ad5755b016c668652606c754c349089150b5665c3f284",
     "cwd": "/work/demo"
   },
   {
@@ -79,7 +79,7 @@
       "tool": "create",
       "toolUseId": "hook-426c1e6d11344a14"
     },
-    "id": "6f24f483d03d0106779e7292ba9422b3333ff5aaba958af9fc5a69f482321c94",
+    "id": "134f21a77d48d0c979a4d87eb1089c8bd28af17ef8efcb02d228ccc90970eb04",
     "cwd": "/work/demo"
   },
   {
@@ -95,7 +95,7 @@
       },
       "verify": true
     },
-    "id": "1457f9df1342a1296d3c5aae7f9cb88ba894adb834a7b9281cf99a1b5158470e",
+    "id": "2d15cda49a814c304c91071a9df1235ae86cbb9df7c3ff35d29dc0ed1414a1bf",
     "blobs": [
       "cdd497b031b3db3e50010bdb11214922ed8da20ff5410545d0db7955314628fc"
     ],
@@ -111,7 +111,7 @@
       "ok": true,
       "output": " RUN  v3.2.0\n\n Test Files  1 failed | 2 passed (3)\n      Tests  1 failed | 4 passed (5)\n"
     },
-    "id": "9ed8983c291c45c0ced669d4f6a92ee9cc9cfd72aae8ee9580695d03bd1d30a3",
+    "id": "bec20aff4191aa72a281676efb34a7c52c1c4156565af78aa96e091b6d6992c1",
     "cwd": "/work/demo"
   },
   {
@@ -125,7 +125,7 @@
       "skipped": 0,
       "toolUseId": "hook-c63b183405d1ff78"
     },
-    "id": "71fec50e39757d074d25d0a69316c85d6d87bb710e43015c6edd720d26d1d71a",
+    "id": "b5d4c900ba5617cd9bed86d47578865beb5ffea84bee9e64de1fd42c7fa921bf",
     "cwd": "/work/demo"
   },
   {
@@ -139,7 +139,7 @@
         "path": "/work/demo/nope.md"
       }
     },
-    "id": "443640eaf308ba433495820e5e4a40b1fceb983b378928b8106f4945ed7eb3c4",
+    "id": "c2377b9b0f3560494d889d65e983756d080c73c0873c955068b7f6ad9d4233aa",
     "blobs": [
       "7f8bda5dea41df7508da48b0e74945182cbd9dece7a474b3e88285661f274724"
     ],
@@ -156,7 +156,7 @@
       "output": "ENOENT: no such file",
       "error": "ENOENT: no such file"
     },
-    "id": "fde911ad8d7803f72973ad587de5064f90604a286c1905c218bc61fd4f2b0c0a",
+    "id": "fab72e11796202c7893babc884ef65b369453120161c4362e58a6f9089f7f739",
     "cwd": "/work/demo"
   },
   {
@@ -234,7 +234,7 @@
         "new_str": "y"
       }
     },
-    "id": "1bbb845e9955c6ea42cd75d1a17b5c909aa1432538da0e7f5f4301875c4d7537",
+    "id": "6c9fbca516e5e2d528c6b85eea731fcb7cfa8cbe59327b9360a684a93a1186bb",
     "blobs": [
       "f61104078cb6ab80ce805d8354ee50c10585a69b97b9206cf55f6757d7111f0f"
     ],
@@ -250,7 +250,7 @@
       "ok": true,
       "output": "Edited"
     },
-    "id": "5c428512e786e53082344f0ad33565a8935ea785837afff105031d12513079a8",
+    "id": "93706bfd25e750e9922c19be481a7c34787302a0f3f30a2c8bcd340df275c3fb",
     "cwd": "/work/demo"
   },
   {
@@ -263,7 +263,7 @@
       "tool": "edit",
       "toolUseId": "hook-0388b6fd9055fab9"
     },
-    "id": "21f5c72f5e0116a1abc91eedec0b668a7e049b4b5a6fb41d79c3a0b79fe9f0a0",
+    "id": "34512d743608cd36b7a9bd806e144086859c7043dc2dee3ad7a60d447625bbdd",
     "cwd": "/work/demo"
   },
   {
@@ -274,7 +274,8 @@
       "stopReason": "end_turn",
       "transcriptPath": "/home/dev/.copilot/session-state/cop-sess-1/events.jsonl"
     },
-    "id": "e5b2b0a7c69fcd710ca270e3cc3dd648edcb0fd3346ee66ed058ac2262000bbc",
+    "id": "ef29fbe8f42de05d728b93eb2aceea45511367f483f9c76df604fd0bfd6e7a98",
+    "turnId": "c28354968b6bcdbadf52b583c304b5ef3d0f0916fa8d17a63619c93e18afbfaa",
     "blobs": [
       "7e7924c77adfb10b8abec63517544252071adf7a43ea036ae3771e5c923adc46"
     ],

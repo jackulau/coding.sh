@@ -19,7 +19,7 @@
 // - Headless: `droid exec "<prompt>" -o json --auto high --cwd d -m M` → one result object
 //   {type:"result",session_id,usage{input_tokens,output_tokens,cache_read_input_tokens,…}}.
 // - Isolation: no config-dir env var; override HOME.
-import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Adapter, AgentRunOutput, DetectResult, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../../core/types.ts";
 import type { AgentEvent, Usage } from "../../schema/index.ts";
@@ -42,6 +42,7 @@ import {
   isEmptyObject,
   isObj,
   isOurCommand,
+  jsonlTail,
   jsonLines,
   mergeClaudeHooks,
   mtimeMs,
@@ -54,6 +55,7 @@ import {
   runEnv,
   spawnAgent,
   spoolIdParts,
+  stableJson,
   str,
   stripClaudeHooks,
   textOf,
@@ -121,65 +123,20 @@ export function droidSidecar(transcriptPath: string | undefined): Json | undefin
   }
 }
 
-/** Order-independent JSON for matching a hook's tool_input to a transcript tool_use input. */
-function stableJson(v: unknown): string {
-  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
-  if (isObj(v)) return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${stableJson(v[k])}`).join(",")}}`;
-  return JSON.stringify(v) ?? "null";
-}
-
 interface ToolUse {
   id: string;
   key: string;
   ts: number;
 }
 
-/** tool_use blocks per transcript, read incrementally (normalize sees many tool hooks of one session). */
-const toolUseCache = new Map<string, { size: number; rest: Buffer; seen: Set<string>; uses: ToolUse[] }>();
-
+/** tool_use blocks of a transcript (normalize sees many tool hooks of one session). */
 function transcriptToolUses(path: string): ToolUse[] {
-  let size: number;
-  try {
-    size = statSync(path).size;
-  } catch {
-    return [];
-  }
-  let c = toolUseCache.get(path);
-  if (!c || size < c.size) {
-    if (toolUseCache.size >= 64) toolUseCache.delete(toolUseCache.keys().next().value!);
-    c = { size: 0, rest: Buffer.alloc(0), seen: new Set(), uses: [] };
-    toolUseCache.set(path, c);
-  }
-  if (size === c.size) return c.uses;
-  const buf = Buffer.alloc(size - c.size);
-  const fd = openSync(path, "r");
-  try {
-    readSync(fd, buf, 0, buf.length, c.size);
-  } finally {
-    closeSync(fd);
-  }
-  c.size = size;
-  const data = Buffer.concat([c.rest, buf]);
-  const end = data.lastIndexOf(0x0a);
-  c.rest = Buffer.from(data.subarray(end + 1));
-  for (const l of data.subarray(0, end + 1).toString("utf8").split("\n")) {
-    let r: unknown;
-    try {
-      r = JSON.parse(l);
-    } catch {
-      continue;
-    }
+  return jsonlTail<ToolUse>("droid-tool-uses", path, (r) => {
     const m = get(r, "message");
-    if (!isObj(m) || m.role !== "assistant") continue;
+    if (!isObj(m) || m.role !== "assistant") return [];
     const ts = toMs(get(r, "timestamp")) ?? 0;
-    for (const b of blocks(m.content)) {
-      const id = str(b.id);
-      if (b.type !== "tool_use" || !id || c.seen.has(id)) continue;
-      c.seen.add(id);
-      c.uses.push({ id, key: toolKey(str(b.name), b.input), ts });
-    }
-  }
-  return c.uses;
+    return blocks(m.content).flatMap((b) => (b.type === "tool_use" && str(b.id) ? [{ id: str(b.id)!, key: toolKey(str(b.name), b.input), ts }] : []));
+  });
 }
 
 const toolKey = (tool: string | undefined, input: unknown): string => `${tool ?? ""} ${stableJson(input)}`;
@@ -195,6 +152,44 @@ export function droidToolUseId(transcriptPath: string | undefined, tool: string,
   let id: string | undefined;
   for (const u of transcriptToolUses(transcriptPath)) if (u.key === key && u.ts <= ts) id = u.id;
   return id;
+}
+
+const lineTs = (r: Json): number | undefined => toMs(r.timestamp) ?? toMs(get(r, "message", "timestamp")) ?? toMs(get(r, "message", "created_at"));
+
+/**
+ * The conversation message of a transcript line. Not conversation: UI-only notices and hook
+ * bookkeeping (visibility "user_only"), and injected context (system reminders) whose line id
+ * starts with "context-".
+ */
+function conversationMessage(r: Json): Json | undefined {
+  const m = isObj(r.message) ? r.message : r.role ? r : undefined;
+  if (!m || m.visibility === "user_only" || str(r.id)?.startsWith("context-")) return undefined;
+  return m;
+}
+
+const messageKey = (r: Json, m: Json): string | undefined => str(m.id) ?? str(r.id);
+
+/** A user message that opens a turn (text, no tool results). */
+function isPrompt(m: Json): boolean {
+  if (m.role !== "user") return false;
+  const bs = blocks(m.content);
+  return !bs.some((b) => b.type === "tool_result") && bs.some((b) => b.type === "text" && !!str(b.text)?.trim());
+}
+
+/**
+ * The turn a Stop hook closes, keyed like the transcript keys its turn.end: by the last
+ * conversation message written by then (none when that is the prompt itself).
+ */
+export function droidTurnKey(transcriptPath: string | undefined, ts: number): string | undefined {
+  if (!transcriptPath) return undefined;
+  let last: { key: string; prompt: boolean } | undefined;
+  const msgs = jsonlTail<{ key: string; ts: number; prompt: boolean }>("droid-messages", transcriptPath, (r) => {
+    const m = conversationMessage(r);
+    const key = m && messageKey(r, m);
+    return m && key ? [{ key, ts: lineTs(r) ?? 0, prompt: isPrompt(m) }] : [];
+  });
+  for (const x of msgs) if (x.ts <= ts) last = x;
+  return last && !last.prompt ? last.key : undefined;
 }
 
 /** tool_response arrives as a JSON string on 1.6.0. */
@@ -221,7 +216,7 @@ export async function normalizeDroid(line: SpoolLine, ctx: NormalizeContext): Pr
   const sessionId = str(raw.session_id) ?? `droid-unknown-${line.ppid ?? line.pid}`;
   const cwd = str(raw.cwd) ?? line.cwd;
   const model = str(droidSidecar(str(raw.transcript_path))?.model);
-  const em = new Emitter(ctx, { agent: ID, sessionId, ts: line.ts, cwd, runId: line.runId, model }, spoolIdParts(line, sessionId, ctx));
+  const em = new Emitter(ctx, { agent: ID, sessionId, ts: line.ts, cwd, runId: line.runId, model }, spoolIdParts(line, sessionId, ctx), { toolKeys: true });
   const ev = str(raw.hook_event_name) ?? line.event;
   const tool = str(raw.tool_name) ?? "unknown";
   const toolUseId = str(raw.tool_use_id) ?? str(raw.tool_call_id) ?? (TOOL_EVENTS.has(ev) ? droidToolUseId(str(raw.transcript_path), tool, raw.tool_input, line.ts) : undefined);
@@ -256,7 +251,7 @@ export async function normalizeDroid(line: SpoolLine, ctx: NormalizeContext): Pr
     }
     case "Stop": {
       const el = num(raw.elapsed_time);
-      em.push("turn.end", { toolExecutions: num(raw.tool_execution_count), elapsedTime: el });
+      em.turnEnd({ toolExecutions: num(raw.tool_execution_count), elapsedTime: el }, droidTurnKey(str(raw.transcript_path), line.ts));
       break;
     }
     case "SubagentStop": {
@@ -291,10 +286,10 @@ export async function* droidSessionEvents(file: string, ctx: NormalizeContext, s
   let title: string | undefined;
   let startTs: number | undefined;
   // Streaming can rewrite a message: keep the last version, in first-seen order.
-  const msgs = new Map<string, { ts: number; m: Json }>();
+  const msgs = new Map<string, { ts: number; m: Json; natural: boolean }>();
   let n = 0;
   for await (const { lineNo, value: r } of readJsonl(file)) {
-    const ts = toMs(r.timestamp) ?? toMs(get(r, "message", "timestamp")) ?? toMs(get(r, "message", "created_at"));
+    const ts = lineTs(r);
     if (r.type === "session_start") {
       sessionId = str(r.id) ?? str(r.sessionId) ?? sessionId;
       cwd = str(r.cwd);
@@ -302,14 +297,12 @@ export async function* droidSessionEvents(file: string, ctx: NormalizeContext, s
       startTs = ts;
       continue;
     }
-    const m = isObj(r.message) ? r.message : r.role ? r : undefined;
+    const m = conversationMessage(r);
     if (!m) continue;
-    // Not conversation: UI-only notices and hook bookkeeping (visibility "user_only"), and
-    // injected context (system reminders) whose line id starts with "context-".
-    if (m.visibility === "user_only" || str(r.id)?.startsWith("context-")) continue;
-    const key = str(m.id) ?? str(r.id) ?? `line-${lineNo}`;
+    const natural = messageKey(r, m);
+    const key = natural ?? `line-${lineNo}`;
     const prev = msgs.get(key);
-    msgs.set(key, { ts: ts ?? prev?.ts ?? startTs ?? mtimeMs(file) + n++, m });
+    msgs.set(key, { ts: ts ?? prev?.ts ?? startTs ?? mtimeMs(file) + n++, m, natural: natural !== undefined });
   }
   const sidecar = droidSidecar(file);
   const model = str(sidecar?.model);
@@ -319,17 +312,21 @@ export async function* droidSessionEvents(file: string, ctx: NormalizeContext, s
   out.push(...head.events);
   const calls = new Map<string, { tool: string; input: unknown; ts: number }>();
   let sawUser = false;
+  // The turn's last message, which keys its turn.end (droidTurnKey finds the same one for a Stop hook).
+  let last: string | undefined;
   let lastTs = head.events[0]!.ts;
-  for (const [key, { ts, m }] of msgs) {
+  for (const [key, { ts, m, natural }] of msgs) {
     lastTs = ts;
-    const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, model }, ["droid-file", sessionId, key]);
+    const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, model }, ["droid-file", sessionId, key], { toolKeys: true });
     const role = str(m.role);
     const bs = blocks(m.content);
+    const prompt = isPrompt(m);
+    if (prompt && sawUser) em.turnEnd({}, last);
+    last = prompt || !natural ? undefined : key;
     if (role === "user") {
       const results = bs.filter((b) => b.type === "tool_result");
       const text = bs.filter((b) => b.type === "text").map((b) => str(b.text) ?? "").join("\n").trim();
-      if (text && results.length === 0) {
-        if (sawUser) em.push("turn.end", {});
+      if (prompt) {
         sawUser = true;
         await emitText(em, ctx, "user.message", text);
       }
@@ -351,7 +348,7 @@ export async function* droidSessionEvents(file: string, ctx: NormalizeContext, s
     out.push(...em.events);
   }
   const tail = new Emitter(ctx, { agent: ID, sessionId, ts: lastTs, cwd, model }, ["droid-file", sessionId, "tail"]);
-  if (sawUser) tail.push("turn.end", {});
+  if (sawUser) tail.turnEnd({}, last);
   // Session totals from the sidecar: on one event with a stable id, so re-backfill never double counts.
   const tu = isObj(sidecar?.tokenUsage) ? sidecar.tokenUsage : undefined;
   const usage: Usage | undefined = tu ? usageFrom({ inputTokens: tu.inputTokens, outputTokens: (num(tu.outputTokens) ?? 0) + (num(tu.thinkingTokens) ?? 0), cacheReadTokens: tu.cacheReadTokens, cacheWriteTokens: tu.cacheCreationTokens }) : undefined;

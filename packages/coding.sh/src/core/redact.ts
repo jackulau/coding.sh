@@ -313,10 +313,35 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
   };
 }
 
+/** A command-line flag whose value is a secret: --api-key, --openai-api-key, --db-password, -token. */
+const SECRET_FLAG = new RegExp(`^(--?(?:[a-z0-9]+[_-])*${SECRET_NAME})(=.*)?$`, "i");
+
+/**
+ * Redacts the values of secret-named flags in an argv array: `--openai-api-key X`
+ * and `--api-key=X`, whatever X looks like. Other elements are left as is.
+ */
+export function redactArgv<T>(args: readonly T[]): T[] {
+  const out = [...args];
+  for (let i = 0; i < out.length; i++) {
+    const a = out[i];
+    if (typeof a !== "string") continue;
+    const m = SECRET_FLAG.exec(a);
+    if (!m) continue;
+    if (m[2] !== undefined) {
+      if (m[2].length > 1 && !isAlreadyRedacted(m[2].slice(1))) out[i] = `${m[1]}=${marker("secret-flag")}` as T;
+      continue;
+    }
+    const next = out[i + 1];
+    if (typeof next === "string" && next !== "" && !next.startsWith("-") && !isAlreadyRedacted(next)) out[++i] = marker("secret-flag") as T;
+  }
+  return out;
+}
+
 function walk(v: unknown, redact: (s: string) => string, depth: number): unknown {
   if (typeof v === "string") return redact(v);
   if (depth > 64 || v === null || typeof v !== "object") return v;
-  if (Array.isArray(v)) return v.map((x) => walk(x, redact, depth + 1));
+  // Arrays may be argv (wrapper session.start args, tool command vectors).
+  if (Array.isArray(v)) return redactArgv(v).map((x) => walk(x, redact, depth + 1));
   if (v instanceof Uint8Array) return v;
   const out: Record<string, unknown> = {};
   for (const [k, x] of Object.entries(v as Record<string, unknown>)) {

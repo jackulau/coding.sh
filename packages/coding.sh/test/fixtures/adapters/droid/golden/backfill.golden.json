@@ -45,7 +45,7 @@
         "content": "print('hi')\n"
       }
     },
-    "id": "2bee83652b951f36842c4bfd55a3e5e85499882fae6fa01ae48305e1bdc8668d",
+    "id": "4cf17c4f88a49dcde29781b722cc63523a0c744a36b64eaf82a53963fa41e975",
     "model": "claude-opus-4-1",
     "cwd": "/work/demo"
   },
@@ -61,7 +61,7 @@
       },
       "verify": true
     },
-    "id": "2a49de8d6c0c174d386c926fc89a31acc2fef938ca6087abe5639677b18d818e",
+    "id": "6743624e3075256dec14f03761e24a170282c971da3a3a0500eb5ef70df4d36c",
     "model": "claude-opus-4-1",
     "cwd": "/work/demo"
   },
@@ -76,7 +76,7 @@
       "durationMs": 100,
       "output": "File created"
     },
-    "id": "9cfe24dd34b2cc8719f02455f9b8cf198a6fdc7688e15739aa3b8ded15f8d1db",
+    "id": "52fef9c020e65623a22230ba8a38c7f023606cb70ae5dde8d7b2d916587c6a81",
     "model": "claude-opus-4-1",
     "durationMs": 100,
     "cwd": "/work/demo"
@@ -91,7 +91,7 @@
       "tool": "Create",
       "toolUseId": "toolu_d1"
     },
-    "id": "a049fc1911bf7c5bfa0648b0045e715b875fbc10c53defc35654370d3e239ba8",
+    "id": "e06497c54bedeed06a60329b6ad9d7dbe4fad6f9568d719211d1d9495265b972",
     "model": "claude-opus-4-1",
     "cwd": "/work/demo"
   },
@@ -106,7 +106,7 @@
       "durationMs": 2000,
       "output": "==== 3 passed in 0.10s ===="
     },
-    "id": "31a750fd61da56e17db3dacaa9215ff652f328190f5b3f02c24e1f2561920b20",
+    "id": "66e0444c9bc69590e311e72a4b952df3185705ec432b129e988a26239f8328c1",
     "model": "claude-opus-4-1",
     "durationMs": 2000,
     "cwd": "/work/demo"
@@ -122,7 +122,7 @@
       "skipped": 0,
       "toolUseId": "toolu_d2"
     },
-    "id": "9b2443aafce1d23574e14a6b70a725a539f211a5a18a3269ca238f411ea77bc9",
+    "id": "654ce4a3374777739ddf63df59e1963806274cc27bc3bdd95f7a31a8e2ad2656",
     "model": "claude-opus-4-1",
     "cwd": "/work/demo"
   },
@@ -142,7 +142,8 @@
     "sessionId": "droid-sess-1",
     "ts": 1789984860000,
     "payload": {},
-    "id": "681682a8bb1e793172d970fd1826594944fc1a5962c9bd334347de3d58ba64b5",
+    "id": "154942b47c5c2e4b92d178b2bf0ae4b58a0a3adaa939af7871f63657d18b19df",
+    "turnId": "729e5ccc607e45bbfdee65d622430734317b3a9cd4d4931ee34f0d36b23f6968",
     "model": "claude-opus-4-1",
     "cwd": "/work/demo"
   },

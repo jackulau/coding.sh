@@ -132,14 +132,18 @@ const tokenTotal = (u: Usage | undefined): number => (u?.inputTokens ?? 0) + (u?
 export const REOPEN_SLACK_MS = 5_000;
 
 /**
- * Turns from turn.end rows. One capture path: every row is a turn. Both paths:
- * rows with a turnId count once per turn (both paths key them alike, so either
- * may hold a given turn); rows without one are each path's own count of the same
- * turns, so the larger count wins (a hook installed mid-session saw fewer).
+ * Turns from turn.end rows. One capture path: every row is a turn. Both paths,
+ * each with keyed rows: rows with a turnId count once per turn (both paths key
+ * them alike and the store keeps one copy, so either may hold a given turn);
+ * rows without one are each path's own count of the turns it could not key.
+ * Otherwise a path that keys none of its turns (an older agent version, a
+ * transcript that does not record what the hook keys by) counted the same turns
+ * its own way, so the larger count wins (a hook installed mid-session saw fewer).
  */
 function turnCount(t: { live: number; backfill: number; liveIdless: number; backfillIdless: number }, turnIds: Set<string>): number {
   if (t.live === 0 || t.backfill === 0) return t.live + t.backfill;
-  return turnIds.size + Math.max(t.liveIdless, t.backfillIdless);
+  if (t.live > t.liveIdless && t.backfill > t.backfillIdless) return turnIds.size + Math.max(t.liveIdless, t.backfillIdless);
+  return Math.max(t.live, t.backfill);
 }
 
 /** The agent a host ran: the first event from another agent, else what the host's own events name. */

@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { AgentEvent, Session } from "../../src/schema/index.ts";
-import { createRedactor, sessionToMetadata, toMetadata } from "../../src/core/redact.ts";
+import { createRedactor, redactArgv, sessionToMetadata, toMetadata } from "../../src/core/redact.ts";
 import { originalSecretRedact } from "../fixtures/redact/original-secret-rules.ts";
 import { median, timeMs } from "../helpers-timing.ts";
 
@@ -147,6 +147,15 @@ describe("redact: secrets", () => {
     assert.throws(() => createRedactor({ patterns: ["("] }), /redactPatterns\[0\] is not a valid regular expression/);
     assert.throws(() => createRedactor({ patterns: ["a*"] }), /matches the empty string/);
     assert.throws(() => createRedactor({ redact: ["nope"] }), /unknown redactor "nope"/);
+  });
+
+  it("redacts secret flag values in argv arrays", () => {
+    const args = ["--model", "gpt-5", "--openai-api-key", "plainvalue", "--api-key=hunterhunter", "--anthropic-api-key", "x", "--db-password=p", "--token", "--yes", "-k", "kept", "--max-tokens", "100", "--api-key="];
+    const want = ["--model", "gpt-5", "--openai-api-key", "[redacted:secret-flag]", "--api-key=[redacted:secret-flag]", "--anthropic-api-key", "[redacted:secret-flag]", "--db-password=[redacted:secret-flag]", "--token", "--yes", "-k", "kept", "--max-tokens", "100", "--api-key="];
+    assert.deepEqual(redactArgv(args), want);
+    assert.deepEqual(r.value({ args }), { args: want }, "the ingest redactor applies it to any array");
+    assert.deepEqual(redactArgv(want), want, "idempotent");
+    assert.equal(args[3], "plainvalue", "input not mutated");
   });
 
   it("redacts a large string quickly", () => {
