@@ -1,0 +1,37 @@
+packages/coding.sh/src/viewer/ui/index.html
+  s_8e040dbdf13565::t_b6a554b0dc8d42 509-526,528
+  s_8e040dbdf13565::t_8763a2a153189a 2743
+  s_8e040dbdf13565::t_e1ab2c1964030c 527
+  s_8e040dbdf13565::t_37f3f7b9d610f3 3383
+  s_8e040dbdf13565::t_f8ae34d2115a9b 3196-3200
+  s_8e040dbdf13565::t_646e13d0590e6f 3369
+  s_8e040dbdf13565::t_4a5f6750d455cc 3376-3377
+  s_8e040dbdf13565::t_659dfc5fa7c9dd 3348
+  s_8e040dbdf13565::t_4577715fd4da98 2665-2667,2669-2681
+  s_8e040dbdf13565::t_03f30e44cadb43 3356
+  s_8e040dbdf13565::t_6b0c5e2b22e094 3368
+  s_8e040dbdf13565::t_0d9b5ea9b09301 2668
+  s_8e040dbdf13565::t_3194d56eebf5ba 3337-3338
+  s_8e040dbdf13565::t_8efca65a2e971b 3317-3336,3339-3347,3349-3355,3357-3362,3366-3367,3370-3375,3378-3382,3384-3387
+  s_8e040dbdf13565::t_240d40b7427571 2535-2537
+  s_8e040dbdf13565::t_957376c3f5fc15 3290-3291
+  s_8e040dbdf13565::t_9b10e98339853e 3363-3365
+  s_8e040dbdf13565::t_d61c56a1e2aee6 2526-2534,2538-2542
+  s_8e040dbdf13565::t_d5fb984754ba2b 3388
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7c5b3f90bb585d18943b8a71367fc9a879f0a1c4",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
