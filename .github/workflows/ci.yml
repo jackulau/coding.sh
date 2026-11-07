@@ -106,6 +106,7 @@ jobs:
           CODING_SH_TEST_CH_URL: clickhouse://coding:ci@127.0.0.1:8123/coding
         run: npm run check
 
+  windows:
     name: node ${{ matrix.node }} / windows-latest
     # Always GitHub-hosted: the self-hosted desk runner is Linux only.
     runs-on: windows-latest
