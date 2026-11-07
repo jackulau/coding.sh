@@ -4,32 +4,34 @@
 
 export interface TaskRow {
   task: string;
+  /** What the task asks for, in words. The landing shows this, not the id. */
+  label: string;
   /** One char per run, "1" = pass. */
   base: string;
   cand: string;
 }
 
 export const TASKS: TaskRow[] = [
-  { task: "retry-locked-index", base: "00100", cand: "11111" },
-  { task: "parse-since-flag", base: "11011", cand: "11110" },
-  { task: "usage-by-repo", base: "11111", cand: "11111" },
-  { task: "paginate-sessions-api", base: "10010", cand: "11011" },
-  { task: "debounce-viewer-search", base: "01101", cand: "11101" },
-  { task: "fix-flaky-hook-test", base: "00000", cand: "01001" },
-  { task: "otlp-body-limit", base: "11110", cand: "11111" },
-  { task: "rename-tok-turn-column", base: "11111", cand: "11111" },
-  { task: "blob-cache-eviction", base: "10110", cand: "11110" },
-  { task: "empty-spool-ingest", base: "11101", cand: "11101" },
-  { task: "upgrade-esbuild", base: "01010", cand: "01011" },
-  { task: "sessions-json-output", base: "11111", cand: "11111" },
-  { task: "fix-n-plus-one-subagents", base: "00010", cand: "11011" },
-  { task: "timezone-in-usage", base: "11100", cand: "10110" },
-  { task: "redact-bearer-tokens", base: "11011", cand: "11111" },
-  { task: "idempotent-ingest", base: "00110", cand: "10111" },
-  { task: "plural-helper", base: "11111", cand: "11111" },
-  { task: "stream-large-blobs", base: "11010", cand: "10010" },
-  { task: "viewer-memory-leak", base: "11110", cand: "01110" },
-  { task: "codex-adapter-tokens", base: "10111", cand: "10101" },
+  { task: "retry-locked-index", label: "Retry when the database is locked", base: "00100", cand: "11111" },
+  { task: "parse-since-flag", label: "Parse the --since flag", base: "11011", cand: "11110" },
+  { task: "usage-by-repo", label: "Show usage by repo", base: "11111", cand: "11111" },
+  { task: "paginate-sessions-api", label: "Paginate the sessions API", base: "10010", cand: "11011" },
+  { task: "debounce-viewer-search", label: "Debounce search in the viewer", base: "01101", cand: "11101" },
+  { task: "fix-flaky-hook-test", label: "Fix a flaky hook test", base: "00000", cand: "01001" },
+  { task: "otlp-body-limit", label: "Cap the size of OTLP request bodies", base: "11110", cand: "11111" },
+  { task: "rename-tok-turn-column", label: "Rename a database column", base: "11111", cand: "11111" },
+  { task: "blob-cache-eviction", label: "Evict old entries from the blob cache", base: "10110", cand: "11110" },
+  { task: "empty-spool-ingest", label: "Ingest with an empty spool", base: "11101", cand: "11101" },
+  { task: "upgrade-esbuild", label: "Upgrade esbuild", base: "01010", cand: "01011" },
+  { task: "sessions-json-output", label: "JSON output for the sessions command", base: "11111", cand: "11111" },
+  { task: "fix-n-plus-one-subagents", label: "Fix slow subagent queries", base: "00010", cand: "11011" },
+  { task: "timezone-in-usage", label: "Use the local time zone in usage", base: "11100", cand: "10110" },
+  { task: "redact-bearer-tokens", label: "Redact bearer tokens", base: "11011", cand: "11111" },
+  { task: "idempotent-ingest", label: "Make ingest safe to run twice", base: "00110", cand: "10111" },
+  { task: "plural-helper", label: "Add a plural helper", base: "11111", cand: "11111" },
+  { task: "stream-large-blobs", label: "Stream large blobs", base: "11010", cand: "10010" },
+  { task: "viewer-memory-leak", label: "Fix a memory leak in the viewer", base: "11110", cand: "01110" },
+  { task: "codex-adapter-tokens", label: "Count tokens in the Codex adapter", base: "10111", cand: "10101" },
 ];
 
 const passes = (s: string) => [...s].filter((c) => c === "1").length;
@@ -92,9 +94,9 @@ if (STATS.verdict !== "better" || STATS.baseRate !== 64 || STATS.candRate !== 79
   throw new Error(`compare.ts: the landing copy expects 64% → 79% and a "better" verdict, got ${STATS.baseRate}% → ${STATS.candRate}% (${STATS.verdict})`);
 }
 
-/** Passes out of runs for one task, before and after: "1/5". */
+/** One task's label and its passes out of runs, before and after: "1/5". */
 export function taskScore(name: string) {
   const t = TASKS.find((x) => x.task === name);
   if (!t) throw new Error(`compare.ts: no task ${name}`);
-  return { before: `${passes(t.base)}/${t.base.length}`, after: `${passes(t.cand)}/${t.cand.length}`, worse: passes(t.cand) < passes(t.base) };
+  return { label: t.label, before: `${passes(t.base)}/${t.base.length}`, after: `${passes(t.cand)}/${t.cand.length}`, worse: passes(t.cand) < passes(t.base) };
 }

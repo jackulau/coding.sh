@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/assets/banner.png" alt="coding.sh: every agent run, recorded and measurable. Open-source, local-first observability and evals for any AI agent." width="100%">
+  <img src=".github/assets/banner.png" alt="coding.sh: see what your AI agents did, and what it cost. Local-first observability and evals for any AI agent." width="100%">
 </p>
 
 <p align="center">

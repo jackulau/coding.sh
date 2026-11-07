@@ -79,7 +79,7 @@ const SDK_URL = `${REPO_URL}/tree/main/packages/sdk#readme`;
 const PY_SDK_URL = `${REPO_URL}/tree/main/packages/sdk-python#readme`;
 
 // One real task from the same runs, so "better" has an example.
-const EXAMPLE = { task: "retry-locked-index", ...taskScore("retry-locked-index") };
+const EXAMPLE = taskScore("retry-locked-index");
 
 const STEPS = [
   { n: "01", title: "Install.", body: "Run the command above. It finds the agents you use and asks before it changes their settings." },
@@ -207,7 +207,7 @@ const FAQ = [
             <p class="verdict"><span class="t-pass" aria-hidden="true">✓</span> Better by {STATS.diff} points. That's more than luck would explain.</p>
             <p class="example">
               <span class="example__label">biggest gain</span>
-              <span class="example__row"><code>{EXAMPLE.task}</code> <span class="tnum">{EXAMPLE.before.replace("/", " of ")} runs passed before, {EXAMPLE.after.replace("/", " of ")} after</span></span>
+              <span class="example__row"><span class="example__task">{EXAMPLE.label}:</span> <span class="tnum">{EXAMPLE.before.replace("/", " of ")} runs passed before, {EXAMPLE.after.replace("/", " of ")} after</span></span>
             </p>
             <p class="result__link"><a class="inline-link hit" href="/docs/evals#compare">How we check it's not luck</a></p>
           </div>
@@ -554,9 +554,7 @@ const FAQ = [
     font-size: var(--fs-sm);
     color: var(--text-muted);
   }
-  .example code {
-    margin-right: 0.35rem;
-    font-size: 0.875em;
+  .example__task {
     color: var(--text);
   }
   .result__link {
