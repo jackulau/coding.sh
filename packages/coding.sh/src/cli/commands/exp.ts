@@ -244,6 +244,8 @@ export async function run(c: CommandContext): Promise<number> {
             found.push(x);
           }
           [first, second] = found as [ExperimentResult, ExperimentResult];
+          // One run against itself has zero noise by construction and would store a floor of 0.
+          if (first.id === second.id) throw new UsageError(`exp aa needs two different runs of the same config; both refer to ${first.id}`);
         } else {
           // Same config twice as one interleaved A/B (each arm is stored like exp run's).
           const loaded = await loadSpec(c, store, c.positionals[0]);

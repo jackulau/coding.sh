@@ -129,6 +129,10 @@ describe("exp aa and exp compare from the CLI", () => {
     const again = json(["exp", "aa", "base-aa1", "base-aa2"]);
     assert.equal(again.noise.taskKey, aa.noise.taskKey);
     assert.deepEqual(again.noise.experiments, aa.noise.experiments);
+    // A run against itself is refused: it would store a noise floor of zero.
+    const self = cli(["exp", "aa", "base-aa1", aa.noise.experiments[0]]);
+    assert.equal(self.status, 2, self.stderr);
+    assert.match(self.stderr, /two different runs/);
 
     // B: same task (same key), so compare picks the floor up. Fails q1..q4.
     const b = json(["exp", "run", "-d", "ds", "--task", task(["q1", "q2", "q3", "q4"]), "-g", '{"kind":"exact"}', "--name", "cand"]);
