@@ -135,7 +135,16 @@ input = 3.0
 output = 11.25
 ```
 
-Each sub-table takes the same `input`, `output`, `cache_read` and `cache_write` keys. A call goes to
+Each sub-table takes the same `input`, `output`, `cache_read` and `cache_write` keys, plus
+`cache_write_1h` for Anthropic 1-hour cache writes (it defaults to `cache_write`). A `geo` table
+multiplies every rate for calls that ran in that inference geography:
+
+```toml
+[prices."my-finetune".geo]   # payload.inferenceGeo, from Anthropic's usage.inference_geo
+us = 1.1
+```
+
+A call goes to
 a tier from its recorded service tier (`batch`, `flex`, `priority`), or `fast` for Claude fast mode
 (`fast` falls back to `priority` rates when it has no table of its own). A tier with no table is
 priced at the standard rates. An override replaces the whole built-in row, tiers included, so

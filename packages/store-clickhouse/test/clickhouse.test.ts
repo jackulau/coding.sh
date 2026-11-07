@@ -188,7 +188,7 @@ describe("clickhouse store", { skip: SKIP }, () => {
   it("setEventCosts writes a new version in place", async () => {
     const s = await open();
     try {
-      const e = ev({ id: "call", kind: "llm.call", ts: 7, usage: { inputTokens: 10 }, payload: { model: "m", pricedAs: "old" } });
+      const e = ev({ id: "call", kind: "llm.call", ts: 7, usage: { inputTokens: 10 }, payload: { model: "m", pricedAs: "old", priceTier: "batch" } });
       await s.putEvents([e, ev({ id: "later", ts: 7 })]);
       assert.equal(await s.setEventCosts([{ id: "call", costUsd: 0.5 }, { id: "missing", costUsd: 1 }]), 1);
       const [first, second] = await s.listEvents("s1");
@@ -197,6 +197,8 @@ describe("clickhouse store", { skip: SKIP }, () => {
       assert.deepEqual(first?.payload, { model: "m", costEstimated: true });
       assert.equal(second?.id, "later");
       assert.equal(await s.countEvents(), 2);
+      await s.setEventCosts([{ id: "call", costUsd: 0.25, priceTier: "long-context" }]);
+      assert.deepEqual((await s.listEvents("s1"))[0]?.payload, { model: "m", costEstimated: true, priceTier: "long-context" });
     } finally {
       await s.close();
     }

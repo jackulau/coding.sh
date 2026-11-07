@@ -33,7 +33,8 @@
 import type { AgentEvent, AgentId, BlobRef, EventKind, Usage, UsageNumberKey } from "../schema/index.ts";
 import { SCHEMA_VERSION } from "../schema/index.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
-import { tierValue } from "../core/pricing.ts";
+import { geoValue, tierValue } from "../core/pricing.ts";
+import { anthropicPriceHints } from "../adapters/_shared/normalize.ts";
 import {
   type Attrs,
   nanosDiffMs,
@@ -480,7 +481,10 @@ function usageOf(a: Attrs): Usage | undefined {
   }
   set("outputTokens", num(a, "gen_ai.usage.output_tokens", "gen_ai.usage.completion_tokens", "llm.token_count.completion", "ai.usage.outputTokens", "ai.usage.completionTokens", "output_tokens", "output_token_count"));
   set("cacheReadTokens", read ?? num(a, "cache_read_tokens", "cached_content_token_count", "cached_token_count"));
-  set("cacheWriteTokens", write ?? num(a, "cache_creation_tokens"));
+  // Claude Code api_request: cache_creation_tokens, else its 5-minute + 1-hour split.
+  const m5 = num(a, "cache_creation_5m_tokens");
+  const h1 = num(a, "cache_creation_1h_tokens");
+  set("cacheWriteTokens", write ?? num(a, "cache_creation_tokens") ?? (m5 || h1 ? (m5 ?? 0) + (h1 ?? 0) : undefined));
   set("costUsd", num(a, "gen_ai.usage.cost", "llm.cost.total", "cost_usd"));
   return Object.keys(u).length ? u : undefined;
 }
@@ -503,6 +507,20 @@ function serviceTier(a: Attrs): string | undefined {
     if (typeof openai === "string" || typeof anthropic === "string") return tierValue(openai ?? anthropic);
   }
   return tierValue(str(a, ...TIER_REQUEST));
+}
+
+/**
+ * Price hints for the llm.call payload (pricing.ts priceEvent): `cacheWrite1hTokens`,
+ * the 1-hour part of the cache writes (Claude Code api_request `cache_creation_1h_tokens`,
+ * or AI SDK provider metadata `anthropic.usage.cache_creation.ephemeral_1h_input_tokens`),
+ * and `inferenceGeo` (`inference_geo`, or the same metadata's `usage.inference_geo`).
+ */
+function priceHints(a: Attrs): { cacheWrite1hTokens?: number; inferenceGeo?: string } {
+  const meta = maybeJson(a["ai.response.providerMetadata"]);
+  const fromMeta = isObj(meta) && isObj(meta.anthropic) ? anthropicPriceHints(meta.anthropic.usage) : {};
+  const h1 = num(a, "cache_creation_1h_tokens");
+  const geo = geoValue(str(a, "inference_geo", "gen_ai.anthropic.inference_geo"));
+  return { ...fromMeta, ...(h1 ? { cacheWrite1hTokens: h1 } : {}), ...(geo ? { inferenceGeo: geo } : {}) };
 }
 
 function finishReason(a: Attrs): string | undefined {
@@ -737,11 +755,14 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
     const req = requestModel(a);
     const res = responseModel(a);
     const usage = usageOf(a);
+    const hints = priceHints(a);
     const d = draft()
       .set("provider", str(a, "gen_ai.provider.name", "gen_ai.system", "llm.provider", "llm.system", "ai.model.provider"))
       .set("requestModel", req)
       .set("responseModel", res)
       .set("serviceTier", serviceTier(a))
+      .set("cacheWrite1hTokens", hints.cacheWrite1hTokens)
+      .set("inferenceGeo", hints.inferenceGeo)
       .set("operation", klass === "embedding" ? "embeddings" : (str(a, "gen_ai.operation.name") ?? "chat"))
       .set("name", span.name)
       .set("ttftMs", ttftMs(span))
@@ -1043,6 +1064,7 @@ async function mapLog(rec: OtelLogRecord, resource: Attrs, scope: OtelScope, ctx
   } else if ((suffix === "api_request" || suffix === "api_response" || suffix === "sse_event") && usage) {
     // A completed model call. Gemini CLI's and Codex's api_request carry no
     // tokens and fall through to notification, so each call is counted once.
+    const hints = priceHints(a);
     const d = draft()
       .set("provider", cc ? "anthropic" : str(a, "gen_ai.provider.name", "gen_ai.system", "provider"))
       .set("requestModel", model)
@@ -1051,6 +1073,8 @@ async function mapLog(rec: OtelLogRecord, resource: Attrs, scope: OtelScope, ctx
       .set("requestId", requestId)
       .set("serviceTier", serviceTier(a))
       .set("speed", tierValue(str(a, "speed")))
+      .set("cacheWrite1hTokens", hints.cacheWrite1hTokens)
+      .set("inferenceGeo", hints.inferenceGeo)
       .set("event", name);
     emit(0, "llm.call", startTs, d, { ...timing, ...(model ? { model } : {}), usage }, requestId ? ccLlmId(sessionId, requestId, "call") : undefined);
   } else if (suffix === "api_error") {

@@ -645,7 +645,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   else if (total.unpriced) notes.push(`${total.unpriced} of ${total.sessions} sessions have tokens but no cost (none reported, no price for the model); costUsd counts only the priced ones (a lower bound) and rows with unpriced sessions say costPartial.`);
   if (total.estimatedCostUsd > 0) notes.push(`$${round4(total.estimatedCostUsd)} of costUsd is estimated: token counts times list prices (estimatedCostUsd), not a bill. Reported and gateway-billed costs are used as is.`);
   const tierUsd = Object.values(total.estimatedCostByTier).reduce((x, y) => x + y, 0);
-  if (tierUsd > 0) notes.push(`$${round4(tierUsd)} of the estimate used batch, flex, priority, fast or long-context rates rather than standard ones (estimatedCostByTier, by the calls' payload.priceTier).`);
+  if (tierUsd > 0) notes.push(`$${round4(tierUsd)} of the estimate used batch, flex, priority, fast, long-context or US-only rates rather than standard ones (estimatedCostByTier, by the calls' payload.priceTier).`);
   if (unpricedModels.size) notes.push(`No price for: ${[...unpricedModels].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([m, n]) => `${m} (${n})`).join(", ")}. Add [prices."<model>"] to config.toml to price them.`);
   return {
     window: windowOf(q, sessions.length, truncated),

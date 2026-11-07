@@ -221,7 +221,17 @@ describe("claude-code transcript service tier", () => {
   });
 
   it("leaves standard tiers out of the payload", async () => {
-    const c = await callFor({ service_tier: "standard", speed: "standard" });
-    assert.ok(!("serviceTier" in c.payload) && !("speed" in c.payload));
+    const c = await callFor({ service_tier: "standard", speed: "standard", inference_geo: "global" });
+    assert.ok(!("serviceTier" in c.payload) && !("speed" in c.payload) && !("inferenceGeo" in c.payload));
+  });
+
+  it("keeps the 1-hour cache writes and US-only inference for pricing", async () => {
+    const c = await callFor({ cache_creation_input_tokens: 300, cache_creation: { ephemeral_5m_input_tokens: 100, ephemeral_1h_input_tokens: 200 }, inference_geo: "us" });
+    assert.equal(c.usage?.cacheWriteTokens, 300);
+    assert.deepEqual([c.payload.cacheWrite1hTokens, c.payload.inferenceGeo], [200, "us"]);
+    // Only the split: its sum is the total.
+    const split = await callFor({ cache_creation: { ephemeral_5m_input_tokens: 40, ephemeral_1h_input_tokens: 0 } });
+    assert.equal(split.usage?.cacheWriteTokens, 40);
+    assert.ok(!("cacheWrite1hTokens" in split.payload));
   });
 });

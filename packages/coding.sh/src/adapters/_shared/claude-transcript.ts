@@ -19,7 +19,7 @@ import { tierValue } from "../../core/pricing.ts";
 import type { NormalizeContext } from "../../core/types.ts";
 import { virtualModelId } from "../../integrations/gateway/ids.ts";
 import { toMs } from "./jsonl.ts";
-import { Emitter, anthropicUsage, arr, blobList, clipText, clipValue, isObj, num, obj, outputText, str } from "./normalize.ts";
+import { Emitter, anthropicPriceHints, anthropicUsage, arr, blobList, clipText, clipValue, isObj, num, obj, outputText, str } from "./normalize.ts";
 import { emitDerived } from "./tools.ts";
 
 export interface ClaudeConvertOpts {
@@ -59,6 +59,9 @@ interface PendingCall {
   /** usage.service_tier when not standard ("priority", "batch"), and usage.speed when not standard ("fast"). */
   serviceTier?: string;
   speed?: string;
+  /** usage.cache_creation.ephemeral_1h_input_tokens and usage.inference_geo (not global), for pricing. */
+  cacheWrite1hTokens?: number;
+  inferenceGeo?: string;
 }
 
 interface ToolUse {
@@ -215,6 +218,7 @@ export class ClaudeTranscriptConverter {
       this.pending.usage = anthropicUsage(m.usage) ?? this.pending.usage;
       this.pending.serviceTier = tierValue(obj(m.usage).service_tier) ?? this.pending.serviceTier;
       this.pending.speed = tierValue(obj(m.usage).speed) ?? this.pending.speed;
+      if (isObj(m.usage)) Object.assign(this.pending, anthropicPriceHints(m.usage));
       this.pending.stopReason = str(m.stop_reason) ?? this.pending.stopReason;
       const routing = obj(obj(obj(m.provider_metadata).gateway).routing);
       this.pending.gatewaySessionId = str(routing.clientSessionId) ?? this.pending.gatewaySessionId;
@@ -399,6 +403,9 @@ export class ClaudeTranscriptConverter {
         // Priced at these rates (pricing.ts callTier): Priority Tier, a batch result, fast mode.
         serviceTier: p.serviceTier,
         speed: p.speed,
+        // 1-hour cache writes (2x input, not 1.25x) and US-only inference (1.1x on Claude 4.6+).
+        cacheWrite1hTokens: p.cacheWrite1hTokens,
+        inferenceGeo: p.inferenceGeo,
       },
       { key: [p.msgId], durationMs, usage: p.usage, model: p.model ?? this.model },
     );

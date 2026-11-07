@@ -561,6 +561,26 @@ describe("service tier on model calls", () => {
     assert.equal(call.payload.speed, "fast");
     assert.equal(call.payload.serviceTier, undefined);
   });
+
+  it("Claude Code api_request logs: the 1-hour cache writes, and the 5m + 1h split as the total when that is all there is", async () => {
+    const callOfLog = async (attrs: ReturnType<typeof sAttr>[]) => {
+      const log = { resourceLogs: [{ resource: { attributes: [sAttr("service.name", "claude-code")] }, scopeLogs: [{ scope: { name: "com.anthropic.claude_code.events" }, logRecords: [{ timeUnixNano: "1767225600000000000", body: { stringValue: "claude_code.api_request" }, attributes: [sAttr("event.name", "api_request"), sAttr("session.id", "cc-3"), sAttr("model", "claude-opus-5-5"), iAttr("input_tokens", 15), ...attrs] }] }] }] };
+      return ofKind((await mapLogs(decodeLogsJson(log), ctx())).events, "llm.call")[0]!;
+    };
+    let c = await callOfLog([iAttr("cache_creation_tokens", 300), iAttr("cache_creation_5m_tokens", 100), iAttr("cache_creation_1h_tokens", 200)]);
+    assert.deepEqual([c.usage?.cacheWriteTokens, c.payload.cacheWrite1hTokens], [300, 200]);
+    c = await callOfLog([iAttr("cache_creation_5m_tokens", 100), iAttr("cache_creation_1h_tokens", 200)]);
+    assert.deepEqual([c.usage?.cacheWriteTokens, c.payload.cacheWrite1hTokens], [300, 200]);
+    // Both 0 when the response doesn't report the split.
+    c = await callOfLog([iAttr("cache_creation_tokens", 300), iAttr("cache_creation_5m_tokens", 0), iAttr("cache_creation_1h_tokens", 0)]);
+    assert.deepEqual([c.usage?.cacheWriteTokens, c.payload.cacheWrite1hTokens], [300, undefined]);
+  });
+
+  it("AI SDK Anthropic metadata: the 1-hour cache writes and the inference geography", async () => {
+    const meta = sAttr("ai.response.providerMetadata", JSON.stringify({ anthropic: { usage: { cache_creation: { ephemeral_5m_input_tokens: 10, ephemeral_1h_input_tokens: 90 }, inference_geo: "us" } } }));
+    const c = await callOfSpan([meta]);
+    assert.deepEqual([c.payload.cacheWrite1hTokens, c.payload.inferenceGeo], [90, "us"]);
+  });
 });
 
 describe("GenAI semconv nested invoke_agent", () => {

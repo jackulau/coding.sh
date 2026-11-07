@@ -3,6 +3,7 @@
 // and small type guards for untyped agent JSON.
 import type { AgentEvent, AgentId, BlobRef, EventKind, Usage } from "../../schema/index.ts";
 import { SCHEMA_VERSION } from "../../schema/index.ts";
+import { geoValue } from "../../core/pricing.ts";
 import type { BackfillFile, NormalizeContext, SpoolLine } from "../../core/types.ts";
 import { resolveRaw } from "../../spool/write.ts";
 
@@ -154,9 +155,33 @@ export function anthropicUsage(u: unknown): Usage | undefined {
   if (num(u.output_tokens) !== undefined) out.outputTokens = u.output_tokens as number;
   if (num(u.cache_read_input_tokens) !== undefined) out.cacheReadTokens = u.cache_read_input_tokens as number;
   if (num(u.cache_creation_input_tokens) !== undefined) out.cacheWriteTokens = u.cache_creation_input_tokens as number;
+  else {
+    // Only the 5-minute / 1-hour split: its sum is the total.
+    const { m5, h1 } = cacheSplit(u);
+    if (m5 !== undefined || h1 !== undefined) out.cacheWriteTokens = (m5 ?? 0) + (h1 ?? 0);
+  }
   const cost = num(u.total_cost_usd) ?? num(u.cost_usd) ?? num(u.costUsd);
   if (cost !== undefined) out.costUsd = cost;
   return Object.keys(out).length ? out : undefined;
+}
+
+const cacheSplit = (u: Record<string, unknown>): { m5?: number; h1?: number } => {
+  const c = isObj(u.cache_creation) ? u.cache_creation : {};
+  return { m5: num(c.ephemeral_5m_input_tokens), h1: num(c.ephemeral_1h_input_tokens) };
+};
+
+/**
+ * What Anthropic usage says about a call's price beyond token counts, for the
+ * llm.call payload (pricing.ts priceEvent): `cacheWrite1hTokens`, the part of the
+ * cache writes that went to a 1-hour cache (`cache_creation.ephemeral_1h_input_tokens`;
+ * the rest, `ephemeral_5m_input_tokens`, is the 5-minute default), and `inferenceGeo`
+ * (`inference_geo` when not global, e.g. "us").
+ */
+export function anthropicPriceHints(u: unknown): { cacheWrite1hTokens?: number; inferenceGeo?: string } {
+  if (!isObj(u)) return {};
+  const { h1 } = cacheSplit(u);
+  const geo = geoValue(u.inference_geo);
+  return { ...(h1 ? { cacheWrite1hTokens: h1 } : {}), ...(geo ? { inferenceGeo: geo } : {}) };
 }
 
 /**

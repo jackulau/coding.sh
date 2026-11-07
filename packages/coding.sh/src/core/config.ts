@@ -279,6 +279,16 @@ function parsePricing(t: TomlTable, file: string, table: string): Prices {
       }
       (price.tiers ??= {})[tier] = rates;
     }
+    if (p.geo !== undefined) {
+      if (typeof p.geo !== "object" || p.geo === null || Array.isArray(p.geo)) throw new ConfigError(`${where}.geo must be a table of multipliers by inference geography (us = 1.1)`, file);
+      const g = p.geo as TomlTable;
+      const geo: Record<string, number> = {};
+      for (const [k, x] of Object.entries(g)) {
+        if (typeof x !== "number" || !Number.isFinite(x) || x <= 0) throw new ConfigError(`${where}.geo.${k} must be a price multiplier > 0 (e.g. us = 1.1), got ${JSON.stringify(x)}`, file);
+        geo[k.toLowerCase()] = x;
+      }
+      price.geo = geo;
+    }
     out[model] = price;
   }
   return out;
@@ -301,7 +311,14 @@ function parseRates(p: TomlTable, where: string, file: string): Rates {
   if (input === undefined || output === undefined) throw new ConfigError(`${where} needs both input and output (USD per 1M tokens)`, file);
   const cacheRead = num("cache_read", "cacheRead");
   const cacheWrite = num("cache_write", "cacheWrite");
-  return { input, output, ...(cacheRead !== undefined ? { cacheRead } : {}), ...(cacheWrite !== undefined ? { cacheWrite } : {}) };
+  const cacheWrite1h = num("cache_write_1h", "cacheWrite1h");
+  return {
+    input,
+    output,
+    ...(cacheRead !== undefined ? { cacheRead } : {}),
+    ...(cacheWrite !== undefined ? { cacheWrite } : {}),
+    ...(cacheWrite1h !== undefined ? { cacheWrite1h } : {}),
+  };
 }
 
 function parseLong(v: unknown, where: string, file: string): Rates & { above?: number } {

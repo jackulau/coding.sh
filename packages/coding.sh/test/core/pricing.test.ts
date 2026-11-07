@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { loadConfig } from "../../src/core/config.ts";
-import { applyPricing, BUILTIN_PRICES, callRates, callTier, costFrom, costNote, lookupPrice, priceEvent, pricesFor, promptTokens, resolvePrice, tierValue } from "../../src/core/pricing.ts";
+import { applyPricing, BUILTIN_PRICES, callRates, callTier, costFrom, costNote, geoValue, lookupPrice, priceEvent, pricesFor, promptTokens, resolvePrice, tierValue } from "../../src/core/pricing.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 
 const M = 1_000_000;
@@ -313,6 +313,50 @@ describe("tier and long-context pricing", () => {
   });
 });
 
+describe("Claude 1-hour cache writes and US-only inference", () => {
+  const priced = (model: string, usage: AgentEvent["usage"], payload: Record<string, unknown> = {}) => priceEvent(call({ model, usage, payload }), table);
+  const check = (e: AgentEvent, usd: number, tier: string | undefined) => {
+    close(e.usage?.costUsd, usd);
+    assert.equal(e.payload.priceTier, tier);
+  };
+
+  it("bills the 1-hour part of the cache writes at 2x input and the rest at 1.25x", () => {
+    // Opus 4.5: 5-minute write $6.25, 1-hour write $10.
+    check(priced("claude-opus-4-5", { cacheWriteTokens: M }, { cacheWrite1hTokens: 400_000 }), 0.6 * 6.25 + 0.4 * 10, undefined);
+    check(priced("claude-opus-4-5", { cacheWriteTokens: M }), 6.25, undefined);
+    // More 1-hour tokens than writes: capped at the writes.
+    check(priced("claude-opus-4-5", { cacheWriteTokens: M }, { cacheWrite1hTokens: 2 * M }), 10, undefined);
+    assert.deepEqual([BUILTIN_PRICES["claude-opus-5-5"]!.cacheWrite1h, BUILTIN_PRICES["claude-haiku-5-5"]!.cacheWrite1h, BUILTIN_PRICES["claude-sonnet-4-6"]!.cacheWrite1h], [8, 0.2, 6]);
+  });
+
+  it("stacks the 1-hour multiplier with batch, fast mode and long context", () => {
+    check(priced("claude-opus-4-5", { cacheWriteTokens: M }, { cacheWrite1hTokens: M, serviceTier: "batch" }), 5, "batch");
+    check(priced("claude-opus-5-5", { cacheWriteTokens: M }, { cacheWrite1hTokens: M, speed: "fast" }), 16, "fast");
+    // Haiku 5.5 over 100K: 1-hour write $1.
+    check(priced("claude-haiku-5-5", { cacheWriteTokens: 200_000 }, { cacheWrite1hTokens: 200_000 }), 0.2, "long-context");
+  });
+
+  it("models with no 1-hour rate bill those tokens as ordinary cache writes", () => {
+    check(priced("gpt-6.1-sol", { cacheWriteTokens: 100_000 }, { cacheWrite1hTokens: 100_000 }), 100_000 * 2.5 / M, undefined);
+    close(costFrom({ cacheWriteTokens: M }, { input: 1, output: 1 }, M), 1);
+  });
+
+  it("bills Claude 4.6+ US-only inference at 1.1x on every token type, on top of tier and long-context rates", () => {
+    check(priced("claude-opus-4-6", { inputTokens: M, outputTokens: M, cacheReadTokens: M, cacheWriteTokens: M }, { inferenceGeo: "us" }), (5 + 25 + 0.5 + 6.25) * 1.1, "us-only");
+    check(priced("claude-opus-5-5", { inputTokens: M }, { inferenceGeo: "us", speed: "fast" }), 8 * 1.1, "fast+us-only");
+    check(priced("claude-opus-4-6", { cacheWriteTokens: M }, { inferenceGeo: "us", cacheWrite1hTokens: M }), 10 * 1.1, "us-only");
+    check(priced("claude-haiku-5-5", { inputTokens: 200_000 }, { inferenceGeo: "us", serviceTier: "batch" }), 200_000 * 0.25 * 1.1 / M, "batch+long-context+us-only");
+  });
+
+  it("older Claude models, global routing and other providers keep standard rates", () => {
+    check(priced("claude-opus-4-5", { inputTokens: M }, { inferenceGeo: "us" }), 5, undefined);
+    check(priced("claude-sonnet-4-5", { inputTokens: 100_000 }, { inferenceGeo: "us" }), 0.3, undefined);
+    check(priced("claude-opus-4-6", { inputTokens: M }, { inferenceGeo: "global" }), 5, undefined);
+    check(priced("gpt-5.5", { inputTokens: 100_000 }, { inferenceGeo: "us" }), 0.5, undefined);
+    assert.deepEqual(["us", "US", "global", "not_available", "", undefined, 3].map(geoValue), ["us", "us", undefined, undefined, undefined, undefined, undefined]);
+  });
+});
+
 describe("tier price overrides", () => {
   const roots: string[] = [];
   after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
@@ -373,6 +417,25 @@ cache_write = 7.5
     const t = pricesFor({ "gpt-6.1-sol": { input: 1, output: 1 } });
     const e = priceEvent(call({ model: "gpt-6.1-sol", usage: { inputTokens: 300_000 }, payload: { serviceTier: "batch" } }), t);
     assert.deepEqual([e.usage?.costUsd, e.payload.priceTier], [0.3, undefined]);
+  });
+
+  it("reads cache_write_1h and a geo table", () => {
+    const c = load(`
+[prices."house-claude"]
+input = 2
+output = 10
+cache_write = 2.5
+cache_write_1h = 4
+
+[prices."house-claude".geo]
+US = 1.1
+`)();
+    assert.deepEqual(c.pricing!["house-claude"], { input: 2, output: 10, cacheWrite: 2.5, cacheWrite1h: 4, geo: { us: 1.1 } });
+    const e = priceEvent(call({ model: "house-claude", usage: { cacheWriteTokens: M }, payload: { cacheWrite1hTokens: 500_000, inferenceGeo: "us" } }), pricesFor(c.pricing));
+    close(e.usage?.costUsd, (0.5 * 2.5 + 0.5 * 4) * 1.1);
+    assert.equal(e.payload.priceTier, "us-only");
+    assert.throws(load(`[prices."m"]\ninput = 1\noutput = 1\n[prices."m".geo]\nus = 0\n`), /prices\."m"\.geo\.us must be a price multiplier > 0/);
+    assert.throws(load(`[prices."m"]\ninput = 1\noutput = 1\ngeo = 1.1\n`), /prices\."m"\.geo must be a table of multipliers/);
   });
 
   it("rejects incomplete tier tables", () => {

@@ -84,9 +84,17 @@ rates it actually ran at:
   requested. Batch is half price at every provider. OpenAI Flex is half price, and Fast (once called
   Priority) is about 2x. Gemini Priority is 1.8x. Claude fast mode uses its own rates. Anthropic's
   Priority Tier is a commitment rather than a per-token price, so those calls keep standard rates.
+- **Claude 1-hour cache writes.** Anthropic bills a write to the 5-minute cache at 1.25x input and
+  a write to the 1-hour cache at 2x, at every tier. The 1-hour part comes from Claude Code's
+  `usage.cache_creation.ephemeral_1h_input_tokens` (the rest, `ephemeral_5m_input_tokens`, is
+  5-minute), its `api_request` log's `cache_creation_1h_tokens`, or AI SDK provider metadata, and
+  the call keeps it in `payload.cacheWrite1hTokens`.
+- **US-only inference.** Claude 4.6 and later bill 1.1x on every token type, on top of any tier or
+  long-context rate, when the call ran with `inference_geo: "us"` (Claude Code's
+  `usage.inference_geo`, kept in `payload.inferenceGeo`). Global routing, the default, is standard.
 
 A call priced at a non-standard rate says so in `payload.priceTier` (`batch`, `flex`, `priority`,
-`fast`, `ultrafast`, `long-context`, or a combination like `batch+long-context`), which shows next
+`fast`, `ultrafast`, `long-context`, `us-only`, or a combination like `batch+long-context`), which shows next
 to `pricedAs` in `show` and in the viewer's cost tooltip. Session totals break the tiered part of
 the estimate out in `estimatedCostByTier`, as `usage --json` and the MCP `usage` tool do. Codex
 rollouts don't record a service tier, so their calls are priced at standard rates (long context

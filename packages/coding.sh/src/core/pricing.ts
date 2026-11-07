@@ -5,7 +5,9 @@
 // with `[prices."<model>"]` (or the older `[pricing."<model>"]`) from config.
 // `priceEvent` prices each model call at the rates it ran at: its service tier
 // (`callTier`: batch, flex, priority, fast, ultrafast) and, when its own prompt is
-// over the model's threshold, long-context rates (`callRates`).
+// over the model's threshold, long-context rates (`callRates`); its 1-hour cache
+// writes (`payload.cacheWrite1hTokens`) at their own rate; and the model's
+// data-residency multiplier for `payload.inferenceGeo` (Claude 4.6+ US-only, 1.1x).
 import type { AgentEvent, Usage } from "../schema/index.ts";
 
 /** Per-million-token rates. */
@@ -14,8 +16,10 @@ export interface Rates {
   output: number;
   /** Defaults to `input` when unset. */
   cacheRead?: number;
-  /** Defaults to `input` when unset. */
+  /** Defaults to `input` when unset. The default write: Anthropic's 5-minute cache, OpenAI's cache write. */
   cacheWrite?: number;
+  /** Anthropic 1-hour cache writes. Defaults to `cacheWrite` when unset. */
+  cacheWrite1h?: number;
 }
 
 /**
@@ -43,6 +47,11 @@ export interface Price extends Rates {
   longContext?: LongContextRates;
   /** Rates per service tier. A call at a tier with no row here is billed at the standard rates. */
   tiers?: Partial<Record<PriceTier, TierRates>>;
+  /**
+   * Multiplier on every rate (any tier, long context included) by the call's inference
+   * geography (`payload.inferenceGeo`): `{ us: 1.1 }` for Claude 4.6+ US-only inference.
+   */
+  geo?: Record<string, number>;
 }
 
 /** Prices in USD per million tokens, keyed by model id. */
@@ -55,9 +64,15 @@ export function estimateCost(u: Usage, model: string | undefined, prices: Prices
   return p ? costFrom(u, p) : undefined;
 }
 
-/** USD for one usage record at one set of rates. `inputTokens` counts uncached input. */
-export function costFrom(u: Usage, p: Rates): number {
-  return ((u.inputTokens ?? 0) * p.input + (u.outputTokens ?? 0) * p.output + (u.cacheReadTokens ?? 0) * (p.cacheRead ?? p.input) + (u.cacheWriteTokens ?? 0) * (p.cacheWrite ?? p.input)) / 1e6;
+/**
+ * USD for one usage record at one set of rates. `inputTokens` counts uncached input.
+ * `cacheWrite1h` is the part of `cacheWriteTokens` written to a 1-hour cache.
+ */
+export function costFrom(u: Usage, p: Rates, cacheWrite1h = 0): number {
+  const write = u.cacheWriteTokens ?? 0;
+  const long = Math.min(Math.max(cacheWrite1h, 0), write);
+  const writeRate = p.cacheWrite ?? p.input;
+  return ((u.inputTokens ?? 0) * p.input + (u.outputTokens ?? 0) * p.output + (u.cacheReadTokens ?? 0) * (p.cacheRead ?? p.input) + (write - long) * writeRate + long * (p.cacheWrite1h ?? writeRate)) / 1e6;
 }
 
 /** Where each group of rows comes from and when it was last checked against that page. */
@@ -74,8 +89,9 @@ export const PRICE_SOURCES: Record<string, { url: string; updated: string }> = {
  * Bumped when the lookup rules change (not the table), so stored estimates are
  * recomputed once: reprice.ts hashes it into its stamp with the table.
  * 3: per-call long-context and service-tier rates (`payload.priceTier`).
+ * 4: 1-hour cache writes at their own rate, and the US-only data-residency multiplier.
  */
-export const PRICING_RULES_VERSION = 3;
+export const PRICING_RULES_VERSION = 4;
 
 /** `r` times `k`, field by field. */
 const scale = (r: Rates, k: number): Rates => ({
@@ -83,6 +99,7 @@ const scale = (r: Rates, k: number): Rates => ({
   output: r.output * k,
   ...(r.cacheRead !== undefined ? { cacheRead: r.cacheRead * k } : {}),
   ...(r.cacheWrite !== undefined ? { cacheWrite: r.cacheWrite * k } : {}),
+  ...(r.cacheWrite1h !== undefined ? { cacheWrite1h: r.cacheWrite1h * k } : {}),
 });
 /** `p` plus tier rows: a number is that multiple of the row (its long-context rates scaled too), rates are taken as given. */
 function tiers(p: Price, t: Partial<Record<PriceTier, number | TierRates>>): Price {
@@ -93,14 +110,22 @@ function tiers(p: Price, t: Partial<Record<PriceTier, number | TierRates>>): Pri
   return { ...p, tiers: out };
 }
 
-// Anthropic: cache write = 5-minute TTL (1.25x input); cache read 0.1x input
-// unless the model's row says otherwise.
-const anthropicRates = (input: number, output: number, cacheRead = input / 10): Rates => ({ input, output, cacheRead, cacheWrite: input * 1.25 });
+// Anthropic (PRICE_SOURCES.anthropic, "Prompt caching"): a 5-minute cache write is 1.25x base
+// input, a 1-hour cache write 2x; cache read 0.1x input unless the model's row says otherwise.
+// "These multipliers stack with other pricing modifiers, including the Batch API discount and
+// data residency", and with fast mode and long-context rates, so every row carries both writes.
+const anthropicRates = (input: number, output: number, cacheRead = input / 10): Rates => ({ input, output, cacheRead, cacheWrite: input * 1.25, cacheWrite1h: input * 2 });
 // Every Claude model: the Batch API is 50% off each token type, and the cache multipliers apply on
 // top (PRICE_SOURCES.anthropic, "Batch processing" and "Prompt caching"). Priority Tier is billed
 // by capacity commitment, not per token, so a `service_tier: "priority"` call keeps standard rates.
 const anthropic = (input: number, output: number, cacheRead?: number, more: { longContext?: LongContextRates; fast?: Rates } = {}): Price =>
   tiers({ ...anthropicRates(input, output, cacheRead), ...(more.longContext ? { longContext: more.longContext } : {}) }, { batch: 0.5, ...(more.fast ? { fast: more.fast } : {}) });
+// Claude 4.6 and later (PRICE_SOURCES.anthropic, "Data residency pricing"): `inference_geo: "us"`
+// "incurs a 1.1x multiplier on all token pricing categories, including input tokens, output tokens,
+// cache writes, and cache reads", on Haiku 5.5's long-context prices and on fast mode too. Global
+// routing (the default) is standard. Older models have no US-only option.
+const usOnly = (p: Price): Price => ({ ...p, geo: { us: 1.1 } });
+const anthropic46 = (...a: Parameters<typeof anthropic>): Price => usOnly(anthropic(...a));
 // OpenAI gpt-6.x and gpt-5.6: a cache-write column at 1.25x input (the 30-minute write).
 const cached125 = (input: number, output: number, cacheRead: number): Price => ({ input, output, cacheRead, cacheWrite: input * 1.25 });
 // OpenAI up to gpt-5.5, Google, Z.ai and MiniMax bill no separate cache write: writes cost plain input.
@@ -181,21 +206,21 @@ export const BUILTIN_PRICES: Prices = {
   // same rate at any prompt length. Long context: Claude 4.6+ bills the whole 1M window at standard
   // rates, except Haiku 5.5, whose prompts over 100,000 tokens (cache reads and writes included,
   // per request) pay $0.50/$2.50.
-  "claude-fable-5-1": anthropic(10, 50, 0.25),
-  "claude-mythos-5-1": anthropic(10, 50, 0.25),
-  "claude-fable-5": anthropic(10, 50),
-  "claude-mythos-5": anthropic(10, 50),
-  "claude-opus-5-5": anthropic(4, 20, 0.2, { fast: anthropicRates(8, 40, 0.4) }),
-  "claude-opus-5": anthropic(5, 25, undefined, { fast: anthropicRates(10, 50) }),
-  "claude-opus-4-8": anthropic(5, 25, undefined, { fast: anthropicRates(10, 50) }),
-  "claude-opus-4-7": anthropic(5, 25),
-  "claude-opus-4-6": anthropic(5, 25),
+  "claude-fable-5-1": anthropic46(10, 50, 0.25),
+  "claude-mythos-5-1": anthropic46(10, 50, 0.25),
+  "claude-fable-5": anthropic46(10, 50),
+  "claude-mythos-5": anthropic46(10, 50),
+  "claude-opus-5-5": anthropic46(4, 20, 0.2, { fast: anthropicRates(8, 40, 0.4) }),
+  "claude-opus-5": anthropic46(5, 25, undefined, { fast: anthropicRates(10, 50) }),
+  "claude-opus-4-8": anthropic46(5, 25, undefined, { fast: anthropicRates(10, 50) }),
+  "claude-opus-4-7": anthropic46(5, 25),
+  "claude-opus-4-6": anthropic46(5, 25),
   "claude-opus-4-5": anthropic(5, 25),
   "claude-opus-4-1": anthropic(15, 75),
   "claude-opus-4": anthropic(15, 75),
-  "claude-sonnet-5-5": anthropic(2, 10, 0.1),
-  "claude-sonnet-5": anthropic(2, 10),
-  "claude-sonnet-4-6": anthropic(3, 15),
+  "claude-sonnet-5-5": anthropic46(2, 10, 0.1),
+  "claude-sonnet-5": anthropic46(2, 10),
+  "claude-sonnet-4-6": anthropic46(3, 15),
   // Sonnet 4.5 and 4 reached past 200K only with the 1M-context beta, which billed prompts over
   // 200K tokens at $6/$22.50, cache multipliers on top, batch 50% off: Sonnet 4 per
   // https://claude.com/blog/1m-context, Sonnet 4.5 per https://vercel.com/ai-gateway/models/claude-sonnet-4.5
@@ -203,7 +228,7 @@ export const BUILTIN_PRICES: Prices = {
   // lists Sonnet 4.5 with a 200K window.
   "claude-sonnet-4-5": anthropic(3, 15, undefined, { longContext: { above: 200_000, ...anthropicRates(6, 22.5) } }),
   "claude-sonnet-4": anthropic(3, 15, undefined, { longContext: { above: 200_000, ...anthropicRates(6, 22.5) } }),
-  "claude-haiku-5-5": anthropic(0.1, 0.5, undefined, { longContext: { above: 100_000, ...anthropicRates(0.5, 2.5) } }),
+  "claude-haiku-5-5": anthropic46(0.1, 0.5, undefined, { longContext: { above: 100_000, ...anthropicRates(0.5, 2.5) } }),
   "claude-haiku-4-5": anthropic(1, 5),
 
   // Google Gemini (PRICE_SOURCES.google, paid tier, as of 2026-11-07): Standard, Batch, Flex and
@@ -399,6 +424,23 @@ export function tierValue(v: unknown): string | undefined {
   return s && !STANDARD_TIERS.has(s) ? s : undefined;
 }
 
+const DEFAULT_GEOS = new Set(["global", "not_available", "unknown", "none", "default"]);
+/**
+ * An inference geography as adapters keep it on a model call (`payload.inferenceGeo`,
+ * from Anthropic's `usage.inference_geo`): lowercased, undefined for global routing
+ * (the default) and for "not_available".
+ */
+export function geoValue(v: unknown): string | undefined {
+  const s = typeof v === "string" ? v.trim().toLowerCase() : "";
+  return s && !DEFAULT_GEOS.has(s) ? s : undefined;
+}
+
+/** `payload.cacheWrite1hTokens`: the part of a call's cache writes that went to a 1-hour cache. */
+export const cacheWrite1h = (payload: Record<string, unknown> | undefined): number => {
+  const v = payload?.cacheWrite1hTokens;
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0;
+};
+
 const isTier = (v: unknown): v is PriceTier => typeof v === "string" && (PRICE_TIERS as readonly string[]).includes(v);
 const tierName = (v: unknown): PriceTier | undefined => {
   const s = typeof v === "string" ? v.trim().toLowerCase() : undefined;
@@ -424,32 +466,36 @@ export const promptTokens = (u: Usage | undefined): number => (u?.inputTokens ??
 /** The rates one call pays, and which non-standard ones they are (`payload.priceTier`). */
 export interface CallRates {
   rates: Rates;
-  /** `batch`, `long-context`, `batch+long-context`, ...; undefined at standard short-context rates. */
+  /** `batch`, `long-context`, `us-only`, `batch+long-context`, ...; undefined at standard short-context rates. */
   tier?: string;
 }
 
 /**
  * Rates for one model call: the tier's row when the price has one (`fast` falls
  * back to `priority`; a tier with no row keeps standard rates), then that row's
- * long-context rates when `prompt` (this call's prompt tokens) is over the threshold.
+ * long-context rates when `prompt` (this call's prompt tokens) is over the threshold,
+ * then the price's multiplier for `geo` (the call's inference geography), if it has one.
  */
-export function callRates(p: Price, tier?: PriceTier, prompt?: number): CallRates {
+export function callRates(p: Price, tier?: PriceTier, prompt?: number, geo?: string): CallRates {
   const key: PriceTier | undefined = tier && p.tiers?.[tier] ? tier : tier === "fast" && p.tiers?.priority ? "priority" : undefined;
   const row: TierRates = key ? p.tiers![key]! : p;
   const lc = row.longContext;
   const above = lc?.above ?? p.longContext?.above;
   const long = lc && above !== undefined && (prompt ?? 0) > above ? lc : undefined;
-  const labels = [...(key ? [key] : []), ...(long ? ["long-context"] : [])];
-  return { rates: long ?? row, ...(labels.length ? { tier: labels.join("+") } : {}) };
+  const k = geo ? p.geo?.[geo] : undefined;
+  const labels = [...(key ? [key] : []), ...(long ? ["long-context"] : []), ...(k !== undefined ? [`${geo}-only`] : [])];
+  const rates: Rates = long ?? row;
+  return { rates: k !== undefined ? scale(rates, k) : rates, ...(labels.length ? { tier: labels.join("+") } : {}) };
 }
 
 /**
  * Fills `usage.costUsd` on a model call (or usage snapshot) that carries tokens
  * but no cost, from its model's price, and marks it `payload.costEstimated = true`
  * (plus `payload.pricedAs = <key>` when a sibling model's price was used, and
- * `payload.priceTier` when tier or long-context rates were). A model call is
- * priced on its own: its tier and its own prompt size. A usage snapshot holds
- * running session totals, so it is priced at standard short-context rates.
+ * `payload.priceTier` when tier, long-context or data-residency rates were). A
+ * model call is priced on its own: its tier, its own prompt size, its 1-hour cache
+ * writes and its inference geography. A usage snapshot holds running session
+ * totals, so it is priced at standard short-context rates.
  * A cost the agent or gateway reported always wins. Returns `e` itself when unchanged, else a copy.
  */
 export function priceEvent(e: AgentEvent, prices: Prices): AgentEvent {
@@ -467,13 +513,13 @@ export function priceEvent(e: AgentEvent, prices: Prices): AgentEvent {
   }
   if (!r) return e;
   const call = e.kind === "llm.call";
-  const { rates, tier } = call ? callRates(r.price, callTier(pl), promptTokens(e.usage)) : { rates: r.price, tier: undefined };
+  const { rates, tier } = call ? callRates(r.price, callTier(pl), promptTokens(e.usage), geoValue(pl.inferenceGeo)) : { rates: r.price, tier: undefined };
   const payload: Record<string, unknown> = { ...e.payload, costEstimated: true };
   if (r.fallback) payload.pricedAs = r.key;
   else delete payload.pricedAs;
   if (tier) payload.priceTier = tier;
   else delete payload.priceTier;
-  return { ...e, usage: { ...e.usage, costUsd: costFrom(e.usage, rates) }, payload };
+  return { ...e, usage: { ...e.usage, costUsd: costFrom(e.usage, rates, call ? cacheWrite1h(pl) : 0) }, payload };
 }
 
 /**
