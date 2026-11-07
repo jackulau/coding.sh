@@ -1,0 +1,78 @@
+packages/coding.sh/src/store/conformance.ts
+  s_8e040dbdf13565::t_9d2085bc1562cc 397
+  s_8e040dbdf13565::t_680b26fff3bc42 361-396,398-402
+packages/coding.sh/test/core/intent.test.ts
+  s_8e040dbdf13565::t_576663cfbe9f60 51-64
+  s_8e040dbdf13565::t_aa3afb3dd3cbbf 190-199
+  s_8e040dbdf13565::t_20519de032600e 72,98,106,114,119,124,131,145,153-155,158,162,165-166,170-175,179,186-187,212,221,229,233
+  s_8e040dbdf13565::t_a73ae540795e5f 3-15
+  s_8e040dbdf13565::t_e3f84a03b8e8cc 188-189
+packages/coding.sh/src/core/outline.ts
+  s_8e040dbdf13565::t_35b8045b1bf3aa 107-123
+  s_8e040dbdf13565::t_76f0c9d44a1761 8
+  s_8e040dbdf13565::t_c7e5b2ecceab71 44-71,76-106,124
+packages/coding.sh/src/core/repo-state.ts
+  s_8e040dbdf13565::t_7ba17f1145d1b4 15
+  s_8e040dbdf13565::t_4e6ce1062c4971 17
+  s_8e040dbdf13565::t_6f587ab2b143e2 18-22,26,32-33,53,57-58
+packages/coding.sh/src/core/intent.ts
+  s_8e040dbdf13565::t_01799bc277487c 435-530
+packages/coding.sh/src/integrations/gateway/ids.ts
+  s_8e040dbdf13565::t_25214379808574 122-127
+packages/coding.sh/test/cli/longrun.test.ts
+  s_8e040dbdf13565::t_6d7daa811119cd 186-188,190-191,199-200,202-203,206-211
+  s_8e040dbdf13565::t_378d8a5841b39b 133-185,189,192-198,201,204-205,212-228
+  s_8e040dbdf13565::t_36c51d499ffadf 8-10
+  s_8e040dbdf13565::t_65f7dd6aaf088f 18,20,22
+CHANGELOG.md
+  s_8e040dbdf13565::t_9b9f19ce101857 40
+packages/coding.sh/src/core/derail.ts
+  s_8e040dbdf13565::t_c16cea78b81ade 2-4,10,72,97-112,114-128,130,136-240,269,271,273,276-283,285,294-295,297-299,303-304,307,311,313,318-319,322,348-380,382-455,457-525,527-543,545-546,548,551-561,563,565-580,582,584-585,587-591,594-602,605-609,611-643,645-676,678-687,690-705,708,710-760
+packages/coding.sh/src/core/types.ts
+  s_8e040dbdf13565::t_aa483ac0062598 200,207,209-216
+  s_8e040dbdf13565::t_e2602cecc7be8e 201-206,208
+scripts/perf/longrun-budgets.json
+  s_8e040dbdf13565::t_9b9f19ce101857 5-6
+packages/coding.sh/test/core/derail.test.ts
+  s_8e040dbdf13565::t_e6d278ed2618e9 5-6
+  s_8e040dbdf13565::t_6a13a71ffb3b89 199-225,227-243
+  s_8e040dbdf13565::t_9b52e4f65f9fb9 226
+docs/perf.md
+  s_8e040dbdf13565::t_9b9f19ce101857 121-122
+  s_8e040dbdf13565::t_5b1b010beab443 127,138-143
+packages/coding.sh/src/core/ingest.ts
+  s_8e040dbdf13565::t_1662f4531705c5 872
+  s_8e040dbdf13565::t_e2602cecc7be8e 58,63,731-732,775-778,786-787,790,794-871
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_e1b3b13efb0a4c 644
+  s_8e040dbdf13565::t_e67bd48b7fba4f 427-428
+  s_8e040dbdf13565::t_4c3f0217257e55 5-6
+  s_8e040dbdf13565::t_0f1412ff1f21fe 527
+  s_8e040dbdf13565::t_7cfbcc481571e0 1-4,7-8,284-306,312-363,366-367,400-405,408-411,413-421,424-426,429-471,475,477-501,505-506,508-513,515-526,528-529,533-536,540-590,592-604,606,608-620,623-624,626,636,638,640-642,652,662-664,668-669,674-686,696-697,699,701-704,710-720,762-775,777-796,798-802,804,806-814,816,818-820,822,827-836,839-846,848-849,859-862,864-870,873-878,880-883,887-888,890-904,909-911,936-971,974,976-977
+  s_8e040dbdf13565::t_6f587ab2b143e2 87-88,109-111,422-423,514
+  s_8e040dbdf13565::t_62276ff9b9f88d 847,850-858,863
+  s_8e040dbdf13565::t_471666ba731c8f 871-872,879,889
+  s_8e040dbdf13565::t_701d6a0287bd2c 11
+packages/coding.sh/src/store/sqlite.ts
+  s_8e040dbdf13565::t_e2602cecc7be8e 849-855
+  s_8e040dbdf13565::t_1c8a89aac9d019 380-382,584,623-624,629-631,1041,1047
+  s_8e040dbdf13565::t_111826426a038a 846-848,856-874
+docs/guides/explore.md
+  s_8e040dbdf13565::t_32e3b317f9d486 64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8eb3e449addbb85fb7ba80951f5fe12d1fa553c4",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
