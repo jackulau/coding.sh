@@ -1,0 +1,64 @@
+docs/guides/agents.md
+  s_8e040dbdf13565::t_dfff2509d0b476 31-34
+README.md
+  s_8e040dbdf13565::t_dfff2509d0b476 127-128,159-161
+  s_8e040dbdf13565::t_a1c5c866264066 126
+docs/guides/install.md
+  s_8e040dbdf13565::t_dfff2509d0b476 52-55
+  s_8e040dbdf13565::t_a1c5c866264066 51
+.github/workflows/ci.yml
+  s_8e040dbdf13565::t_17443806296f8c 204-209
+  s_8e040dbdf13565::t_367468abac1208 181
+scripts/e2e/real-capture.mjs
+  s_8e040dbdf13565::t_8cea9ff2537958 460
+  s_8e040dbdf13565::t_6471835da401ef 486-491
+  s_8e040dbdf13565::t_61c49e7186dd39 480-485,492-493
+  s_8e040dbdf13565::t_12f0cd1902268c 312-314,316-321
+  s_8e040dbdf13565::t_f5198b6b8f5e63 225-235
+  s_8e040dbdf13565::t_2ae526d704a954 261-263,268,276
+  s_8e040dbdf13565::t_bcbcb261adc9df 352-355,358-359
+  s_8e040dbdf13565::t_cb511918c7410e 372-401,406-408
+  s_8e040dbdf13565::t_34c4ffd714098d 3-7,14-15
+  s_8e040dbdf13565::t_172b3cf5e4d159 95-96,105-106
+  s_8e040dbdf13565::t_76ea3245b254d2 18
+  s_8e040dbdf13565::t_c174f8e5e94165 58-94,97-104,107-124
+packages/coding.sh/test/adapters/more/goose.test.ts
+  s_8e040dbdf13565::t_eb5bacea5d532e 6
+  s_8e040dbdf13565::t_7d42a7948cd7ba 185-186
+  s_8e040dbdf13565::t_edf5897b0777ea 122-131
+scripts/e2e/stub-model.mjs
+  s_8e040dbdf13565::t_aed8330b677464 6-7,29,44-49,52
+packages/coding.sh/test/adapters/more/util.test.ts
+  s_8e040dbdf13565::t_eb905f4d3a4e41 46-47
+  s_8e040dbdf13565::t_59a028224e9a26 2-3,6,30-45
+CHANGELOG.md
+  s_8e040dbdf13565::t_a1c5c866264066 17,42
+  s_8e040dbdf13565::t_d20bb3ba2ce425 43
+packages/coding.sh/src/adapters/more/_util.ts
+  s_8e040dbdf13565::t_6c567fd557a0d6 712-723,725-726
+apps/site/src/pages/docs/install.astro
+  s_8e040dbdf13565::t_1042b58eca6915 36
+packages/coding.sh/src/adapters/more/goose.ts
+  s_8e040dbdf13565::t_e0bd31a4201291 90
+  s_8e040dbdf13565::t_48d7e1bc127303 91-95,97-98,101,104
+packages/coding.sh/src/adapters/more/aider.ts
+  s_8e040dbdf13565::t_8ff761bf5fb8da 7-8,112
+packages/coding.sh/test/adapters/more/wrapper-aider.test.ts
+  s_8e040dbdf13565::t_2cc6076166a164 85
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0695556de58b1d6b768f7ae708bc4bf77b75a665",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
