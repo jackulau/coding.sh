@@ -68,6 +68,20 @@ and specificity, so later `exp compare` runs show a bias-corrected (Rogan-Gladen
 MCP config). `coding.sh compare A B` runs both bundles on eval tasks in isolated config
 directories. It reports per-arm Wilson intervals and the first step where the traces diverge.
 
+`coding.sh compare A --without .claude/skills/pdf` tests one piece of a harness. B is A minus that
+path: a skill, `AGENTS.md`, `CLAUDE.md` or `.mcp.json`. The path is also deleted from each task's
+repo. The report adds `effect of <path> = A − B` with its CI. `--without` can be repeated.
+
+With `--k 2` or more, compare sorts each arm's failed runs three ways. A bad run failed on a task the
+same arm passed in another attempt, so a retry would help. A beyond-arm failure is on a task only
+the other arm solved. Unsolved-by-all is a task neither arm solved; check the task itself. It also
+splits the outcome variance into task, arm and run-to-run shares. With `--k 1` these can't be told
+apart, and the report says so.
+
+A cost, token or turn value shows `(3/10)` when only 3 of the arm's 10 runs reported it. The
+"X% cheaper" note needs a known cost for at least 80% of each arm's runs. Below that, the report
+says how many runs were priced instead.
+
 ## Tool evals
 
 `coding.sh toolevals` measures how well agents use a CLI, MCP server or HTTP API: surface size,

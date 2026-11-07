@@ -534,13 +534,14 @@ export const COMMANDS: CommandSpec[] = [
     summary: "A/B two harness bundles on eval tasks",
     args: [
       { name: "a", desc: "Baseline bundle id or name", required: true },
-      { name: "b", desc: "Candidate bundle id or name", required: true },
+      { name: "b", desc: "Candidate bundle id or name (omit with --without)" },
     ],
     flags: [
       { name: "task", short: "t", type: "list", value: "<ID>", desc: "Task id (repeatable; default: all validated tasks)" },
       { name: "k", type: "number", value: "<N>", desc: "Attempts per task and arm", default: "1" },
       { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel runs" },
       { name: "experiment", type: "string", value: "<ID>", desc: "Compare the stored runs of this experiment instead of running" },
+      { name: "without", type: "list", value: "<PATH>", desc: "Ablation: B is A without this file, dir or glob (repeatable)" },
       { name: "gateway", type: "boolean", desc: "Route both arms through Vercel AI Gateway (key in AI_GATEWAY_API_KEY)" },
       YES,
     ],

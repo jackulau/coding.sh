@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
-import { applyBundle, bundleFromDir, bundleFromToml, bundleId, diffBundles, formatBundleDiff } from "../../src/runner/bundle.ts";
+import { ablateBundle, applyBundle, bundleFromDir, bundleFromToml, bundleId, diffBundles, formatBundleDiff, normalizeBundlePath } from "../../src/runner/bundle.ts";
 import { MemBlobs, tempDir } from "../helpers-eval.ts";
 
 const dirs: string[] = [];
@@ -142,5 +142,63 @@ describe("diffBundles", () => {
     assert.doesNotMatch(text, /secret/);
     assert.match(text, /~ CLAUDE\.md/);
     assert.equal(diffBundles(base, { ...base, id: "c", name: "c" }).same, true);
+  });
+});
+
+describe("ablateBundle", () => {
+  async function pdfBundle(blobs: MemBlobs) {
+    const files = {
+      ".claude/skills/pdf/SKILL.md": await blobs.put("pdf skill"),
+      ".claude/skills/pdf/forms.md": await blobs.put("forms"),
+      ".claude/skills/pdfx/SKILL.md": await blobs.put("not under pdf/"),
+      "AGENTS.md": await blobs.put("agents"),
+      "~/.claude/skills/pdf/SKILL.md": await blobs.put("user pdf skill"),
+    };
+    const body = { name: "base", agent: "claude-code", flags: [], env: {}, files, remove: [] as string[] };
+    return { id: bundleId(body), createdAt: 1, ...body };
+  }
+
+  it("drops the dir's files, keeps the rest, adds the path to remove, deterministic id", async () => {
+    const blobs = new MemBlobs();
+    const b = await pdfBundle(blobs);
+    const a = ablateBundle(b, ["./.claude/skills/pdf/"], { now: 5 });
+    assert.deepEqual(a.paths, [".claude/skills/pdf"]);
+    assert.deepEqual(a.dropped, [".claude/skills/pdf/SKILL.md", ".claude/skills/pdf/forms.md"]);
+    assert.deepEqual(a.unmatched, []);
+    assert.deepEqual(Object.keys(a.bundle.files).sort(), [".claude/skills/pdfx/SKILL.md", "AGENTS.md", "~/.claude/skills/pdf/SKILL.md"]);
+    assert.ok(a.bundle.remove.includes(".claude/skills/pdf"));
+    assert.equal(a.bundle.name, "base-without-claude-skills-pdf");
+    assert.match(a.bundle.note ?? "", /ablation of base: without \.claude\/skills\/pdf/);
+    assert.equal(a.bundle.id, bundleId(a.bundle));
+    assert.notEqual(a.bundle.id, b.id);
+    assert.equal(ablateBundle(b, [".claude/skills/pdf"], { now: 99 }).bundle.id, a.bundle.id, "same input, same id");
+    assert.deepEqual(b.remove, [], "input untouched");
+  });
+
+  it("~/ paths drop only user-level keys; globs match keys and stay globs in remove", async () => {
+    const blobs = new MemBlobs();
+    const b = await pdfBundle(blobs);
+    const home = ablateBundle(b, ["~/.claude/skills/pdf"]);
+    assert.deepEqual(home.dropped, ["~/.claude/skills/pdf/SKILL.md"]);
+    assert.deepEqual(home.bundle.remove, ["~/.claude/skills/pdf"]);
+    const glob = ablateBundle(b, [".claude/skills/*/SKILL.md"]);
+    assert.deepEqual(glob.dropped, [".claude/skills/pdf/SKILL.md", ".claude/skills/pdfx/SKILL.md"]);
+    assert.deepEqual(glob.bundle.remove, [".claude/skills/*/SKILL.md"]);
+    const some = ablateBundle(b, ["src/notes.md", "AGENTS.md"]);
+    assert.deepEqual(some.dropped, ["AGENTS.md"]);
+    assert.deepEqual(some.unmatched, ["src/notes.md"]);
+    assert.equal(normalizeBundlePath("a\\b\\..\\c/"), "a/c");
+    assert.equal(normalizeBundlePath("~/./.claude//x/"), "~/.claude/x");
+  });
+
+  it("applyBundle of the ablation removes the dir from the repo and keeps AGENTS.md", async () => {
+    const blobs = new MemBlobs();
+    const b = await pdfBundle(blobs);
+    const run = await tree({ ".claude/skills/pdf/SKILL.md": "repo copy", ".claude/skills/pdf/extra.md": "repo only", "src/a.ts": "x" });
+    const r = await applyBundle(ablateBundle(b, [".claude/skills/pdf"]).bundle, run, blobs, { home: join(run, ".h") });
+    assert.equal(existsSync(join(run, ".claude/skills/pdf")), false, "removed, and the bundle's own copy is not written back");
+    assert.equal(await readFile(join(run, "AGENTS.md"), "utf8"), "agents");
+    assert.equal(existsSync(join(run, ".claude/skills/pdfx/SKILL.md")), true);
+    assert.ok(r.removed.includes(".claude/skills/pdf"));
   });
 });

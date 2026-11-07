@@ -63,6 +63,33 @@ coding.sh compare claude codex --experiment <experiment-id> --json
 Every run is also a captured session, so `coding.sh sessions` and `coding.sh ui` show what each agent
 did.
 
+## Does a skill help?
+
+To test one part of a setup, compare a bundle with itself minus that part:
+
+```sh
+coding.sh compare claude --without .claude/skills/pdf --k 3
+```
+
+B is `claude` without the skill. The path is also deleted from each task's repo, so the agent can't
+find a copy there. The same works for `AGENTS.md`, `CLAUDE.md` or `.mcp.json`, and `--without` can
+be repeated. The report adds a line like `effect of .claude/skills/pdf = A − B: +20.0 pp [...]`.
+The derived bundle is stored, so `--experiment` finds it again.
+
+## Why runs failed
+
+With `--k 2` or more, the report counts each arm's failed runs:
+
+- **bad-run**: the same arm passed this task in another attempt. Retries would help.
+- **beyond-arm**: only the other arm solved the task.
+- **unsolved-by-all**: neither arm solved it. Check the task with `coding.sh eval validate`.
+
+A `variance` row splits the outcome variance into task, arm and run-to-run shares. If run-to-run is
+bigger than arm, add attempts before reading much into the difference.
+
+Cost, token and turn values show `(3/10)` when only some runs reported them. The "X% cheaper" note
+only appears when each arm has a known cost for at least 80% of its runs.
+
 ## Same agent, two models
 
 To compare models rather than agents, snapshot the same agent twice with different `--model`

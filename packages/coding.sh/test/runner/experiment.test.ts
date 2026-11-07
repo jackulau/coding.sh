@@ -333,3 +333,146 @@ describe("hard exit mid-run", () => {
     }
   });
 });
+
+// Z-19: a cost delta over different subsets of runs is not a verdict.
+describe("compare cost coverage", () => {
+  const agent = (costUsd?: number, tokens?: number) => ({
+    exitCode: 0,
+    timedOut: false,
+    durationMs: 1000,
+    stdoutTail: "",
+    stderrTail: "",
+    ...(costUsd !== undefined || tokens !== undefined ? { usage: { ...(costUsd !== undefined ? { costUsd } : {}), ...(tokens !== undefined ? { inputTokens: tokens } : {}) } } : {}),
+  });
+  /** 10 tasks; baseline always costs $1; candidate costs $0.10 on its first `priced` runs. */
+  const arms = (priced: number) => {
+    const out: RunResult[] = [];
+    for (let i = 0; i < 10; i++) {
+      out.push(run(`t${i}`, "A", 1, true, { agent: agent(1) }));
+      out.push(run(`t${i}`, "B", 1, true, { agent: agent(i < priced ? 0.1 : undefined) }));
+    }
+    return out;
+  };
+
+  it("one arm priced on 2 of 10 runs: no 'cheaper' claim, a coverage note and a (2/10) mark", () => {
+    const r = compare(arms(2), { baseline: "A", candidate: "B" });
+    const cost = r.metrics.find((m) => m.key === "cost");
+    assert.deepEqual([cost?.n, cost?.runs], [{ baseline: 10, candidate: 2 }, { baseline: 10, candidate: 10 }]);
+    assert.ok(!r.notes.some((n) => /cheaper|more expensive/.test(n)));
+    assert.ok(r.notes.includes("cost is known for 10/10 baseline and 2/10 candidate runs; the cost delta compares different subsets of runs and is not a verdict"));
+    const line = formatCompare(r).split("\n").find((l) => l.startsWith("cost / run")) ?? "";
+    assert.match(line, /^cost \/ run +\$1\.00 +\$0\.100 \(2\/10\) +-\$0\.900/);
+    assert.doesNotMatch(formatCompare(r, { color: true }).split("\n").find((l) => l.includes("cost / run")) ?? "", /\x1b\[3[12]m/, "delta uncoloured under the threshold");
+  });
+
+  it("one arm never priced: NaN, no claim, still a coverage note", () => {
+    const r = compare(arms(0), { baseline: "A", candidate: "B" });
+    const cost = r.metrics.find((m) => m.key === "cost");
+    assert.ok(Number.isNaN(cost?.candidate));
+    assert.ok(!r.notes.some((n) => /cheaper/.test(n)));
+    assert.ok(r.notes.some((n) => n.startsWith("cost is known for 10/10 baseline and 0/10 candidate runs")));
+    assert.match(formatCompare(r), /^cost \/ run +\$1\.00 +— /m);
+  });
+
+  it("exactly 8 of 10 priced is enough for the claim", () => {
+    const r = compare(arms(8), { baseline: "A", candidate: "B" });
+    assert.ok(r.notes.some((n) => /candidate is 90% cheaper per run/.test(n)));
+    assert.ok(!r.notes.some((n) => n.startsWith("cost is known")));
+    assert.match(formatCompare(r), /\(8\/10\)/);
+  });
+
+  it("full coverage: no marks", () => {
+    const r = compare(arms(10), { baseline: "A", candidate: "B" });
+    assert.ok(r.notes.some((n) => /90% cheaper/.test(n)));
+    assert.doesNotMatch(formatCompare(r), /\(\d+\/\d+\)/);
+    assert.deepEqual(r.metrics.find((m) => m.key === "cost")?.costEstimatedRuns, { baseline: 0, candidate: 0 });
+  });
+
+  it("price-table costs from sessions count as known and are counted as estimated", () => {
+    const results = arms(10).map((r, i) => (r.bundleId === "B" && i % 4 === 1 ? { ...r, agent: agent(undefined) } : r));
+    const priced = (costUsd: number): Session => ({ id: "s", agent: "x", startedAt: 0, stats: { events: 0, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { costUsd } }, flags: [] });
+    const sessions = new Map(results.filter((r) => r.bundleId === "B" && r.agent.usage === undefined).map((r) => [r.id, priced(0.1)]));
+    const r = compare(results, { baseline: "A", candidate: "B", sessions });
+    const cost = r.metrics.find((m) => m.key === "cost");
+    assert.deepEqual(cost?.n, { baseline: 10, candidate: 10 });
+    assert.deepEqual(cost?.costEstimatedRuns, { baseline: 0, candidate: sessions.size });
+    assert.ok(sessions.size > 0);
+    assert.match(formatCompare(r), new RegExp(`cost: ${sessions.size} of 20 runs estimated from the price table`));
+  });
+
+  it("partial token coverage is marked too", () => {
+    const results: RunResult[] = [];
+    for (let i = 0; i < 4; i++) {
+      results.push(run(`t${i}`, "A", 1, true, { agent: agent(1, 100) }));
+      results.push(run(`t${i}`, "B", 1, true, { agent: agent(1, i === 0 ? 50 : undefined) }));
+    }
+    const text = formatCompare(compare(results, { baseline: "A", candidate: "B" }));
+    assert.match(text, /^tokens \/ run +100 +50 \(1\/4\)/m);
+  });
+});
+
+// Z-10: why each arm's runs failed (arXiv 2611.08285).
+describe("compare failure anatomy", () => {
+  const fixture = (outcomes: Record<string, [string, string]>) =>
+    Object.entries(outcomes).flatMap(([t, [a, b]]) => [...[...a].map((c, i) => run(t, "A", i + 1, c === "1")), ...[...b].map((c, i) => run(t, "B", i + 1, c === "1"))]);
+
+  it("k=3: per-arm split, variance shares, notes and rows", () => {
+    const results = fixture({ t1: ["100", "111"], t2: ["000", "011"], t3: ["000", "000"], t4: ["111", "111"] });
+    const r = compare(results, { baseline: "A", candidate: "B", iters: 500 });
+    const a = r.anatomy;
+    assert.ok(a);
+    assert.deepEqual([a.baseline.fails, a.baseline.badRun, a.baseline.beyondArm, a.baseline.unsolvedByAll], [8, 2, 3, 3]);
+    assert.deepEqual([a.candidate.fails, a.candidate.badRun, a.candidate.beyondArm, a.candidate.unsolvedByAll], [4, 1, 0, 3]);
+    assert.ok(Math.abs(a.variance.task + a.variance.arm + a.variance.run - 1) < 1e-12);
+    assert.equal(a.variance.n, 24);
+    assert.ok(r.notes.includes("1 task failed every attempt in both arms (50% of failed runs): check them with coding.sh eval validate / eval curate"));
+    assert.ok(!r.notes.some((n) => /bad runs/.test(n)), "B's failures are mostly not bad runs");
+    const text = formatCompare(r);
+    assert.match(text, /^failures {10}A 8 \(bad-run 2 · beyond-arm 3 · unsolved-by-all 3\)$/m);
+    assert.match(text, /^ {18}B 4 \(bad-run 1 · beyond-arm 0 · unsolved-by-all 3\)$/m);
+    assert.match(text, /^variance {10}task \d+% · arm \d+% · run-to-run \d+%$/m);
+    assert.deepEqual(compare(results, { baseline: "A", candidate: "B", iters: 500 }), r, "deterministic");
+  });
+
+  it("notes when most of B's failures are bad runs, and when run noise beats the arm effect", () => {
+    const r = compare(fixture({ t1: ["111", "100"], t2: ["111", "110"], t3: ["111", "111"] }), { baseline: "A", candidate: "B", iters: 200 });
+    assert.equal(r.anatomy?.candidate.badRun, 3);
+    assert.ok(r.notes.some((n) => n.startsWith("most of B's failures are bad runs (3 of 3")));
+    assert.ok(r.notes.some((n) => /^run-to-run noise \(\d+%\) outweighs the harness effect \(\d+%\)$/.test(n)));
+  });
+
+  it("k=1: no anatomy, a note to rerun with -k 3", () => {
+    const r = compare(fixture({ t1: ["1", "0"], t2: ["0", "0"] }), { baseline: "A", candidate: "B" });
+    assert.equal(r.anatomy, undefined);
+    assert.ok(r.notes.includes("k=1: bad runs and beyond-ability failures look the same; rerun with --k 3 (arXiv 2611.08285)"));
+    assert.doesNotMatch(formatCompare(r), /^failures/m);
+  });
+
+  it("no variance prints as such", () => {
+    const r = compare(fixture({ t1: ["11", "11"] }), { baseline: "A", candidate: "B" });
+    assert.match(formatCompare(r), /^variance {10}no variance/m);
+  });
+});
+
+// Z-9: `compare A --without <path>` reports the effect of the path.
+describe("compare ablation report", () => {
+  it("flips the sign of the diff into an effect line and names what B dropped", () => {
+    const results: RunResult[] = [];
+    for (let i = 0; i < 6; i++) results.push(run(`t${i}`, "A", 1, true), run(`t${i}`, "B", 1, i < 2));
+    const bundle = (id: string, name: string) => ({ id, name, agent: "x", flags: [], env: {}, files: {}, remove: [], createdAt: 0 });
+    const r = compare(results, {
+      baseline: "A",
+      candidate: "B",
+      iters: 500,
+      bundles: { baseline: bundle("A", "base"), candidate: bundle("B", "base-without-claude-skills-pdf") },
+      ablation: { paths: [".claude/skills/pdf"], dropped: [".claude/skills/pdf/SKILL.md", ".claude/skills/pdf/forms.md"], unmatched: [] },
+    });
+    assert.ok(r.ablation);
+    assert.ok(Math.abs(r.ablation.effect.mean - -r.diff.mean) < 1e-12);
+    assert.deepEqual([r.ablation.effect.lo, r.ablation.effect.hi], [-r.diff.hi, -r.diff.lo]);
+    const text = formatCompare(r);
+    assert.match(text, /^A = base · B = base without \.claude\/skills\/pdf \(2 files dropped\)$/m);
+    assert.match(text, /^effect of \.claude\/skills\/pdf = A − B: \+66\.7 pp \[/m);
+    assert.equal(compare(results, { baseline: "A", candidate: "B" }).ablation, undefined);
+  });
+});

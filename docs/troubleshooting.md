@@ -160,6 +160,7 @@ The command ran and something failed.
 | `draft_failed` | `Couldn't draft a task from …: session … has no repo state; cannot build a task` | Record the session with `coding.sh run --`. |
 | `no_tasks` | `No validated tasks to run` | `coding.sh eval new` then `eval validate`, or add tool-eval tasks. |
 | `unsupported_agent` | `Agent aider has no headless driver, so bundle … can't be run` | Use an agent that can run headless. |
+| `nothing_to_ablate` | `nothing to ablate: … is in neither bundle base nor any selected task's repo` (exit 2) | Check the `--without` path against `coding.sh harness list --json`. |
 | `missing_key` | `--gateway needs an AI Gateway key in $AI_GATEWAY_API_KEY` | `export AI_GATEWAY_API_KEY=…`, or set `[gateway] apiKeyEnv`. |
 | `missing_api_key` | `Driver model:anthropic/claude-sonnet-5 needs $ANTHROPIC_API_KEY` | Export the variable it names. |
 | `invalid_file` | `Couldn't import cases.csv: …` | Fix the file. Datasets accept JSONL, JSON and CSV. |

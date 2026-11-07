@@ -7,6 +7,7 @@ import { pairedPower, type PowerAnalysis } from "../experiments/power.ts";
 import { pairedBootstrap, wilson, type BootstrapResult, type Interval } from "../stats/interval.ts";
 import { mean } from "../stats/summary.ts";
 import { mcnemar, type McNemarResult } from "../stats/tests.ts";
+import { failureAnatomy, nestedVarianceShares, type ArmAnatomy, type VarianceShares } from "./anatomy.ts";
 import { diffBundles, formatBundleDiff, type BundleDiff } from "./bundle.ts";
 import { firstDivergence, type Divergence } from "./divergence.ts";
 import type { SnapshotOps } from "./git.ts";
@@ -168,8 +169,19 @@ export interface MetricDelta {
   delta: number;
   /** delta / baseline (NaN when baseline is 0 or unknown). */
   relative: number;
+  /** Runs where the metric is known. */
   n: { baseline: number; candidate: number };
+  /** Runs per arm (after dropping cancelled runs); n < runs means partial coverage. */
+  runs: { baseline: number; candidate: number };
+  /** Cost only: runs whose cost came from the price table (session usage), not the agent. */
+  costEstimatedRuns?: { baseline: number; candidate: number };
 }
+
+/** A metric delta is a verdict only when each arm knows it for at least this share of runs. */
+export const COST_COVERAGE_MIN = 0.8;
+
+const covered = (m: MetricDelta) =>
+  m.runs.baseline > 0 && m.runs.candidate > 0 && m.n.baseline / m.runs.baseline >= COST_COVERAGE_MIN && m.n.candidate / m.runs.candidate >= COST_COVERAGE_MIN;
 
 export interface ArmSummary {
   bundleId: string;
@@ -226,6 +238,24 @@ export interface CompareReport {
   notes: string[];
   bundleDiff?: BundleDiff;
   alpha: number;
+  /**
+   * Why each arm's runs failed and where the outcome variance sits. Only when
+   * every paired task has 2+ attempts in both arms (with k=1 a bad run and a
+   * task beyond the arm look the same).
+   */
+  anatomy?: { baseline: ArmAnatomy; candidate: ArmAnatomy; variance: VarianceShares };
+  /** Set by `compare A --without <path>`: B is A without `paths`. */
+  ablation?: AblationReport;
+}
+
+export interface AblationReport {
+  paths: string[];
+  /** Bundle files B dropped. */
+  dropped: string[];
+  /** Paths that matched no bundle file (removed from the task repo only). */
+  unmatched: string[];
+  /** Effect of having `paths` = A − B pass rate (the bootstrap diff, sign flipped). */
+  effect: { mean: number; lo: number; hi: number };
 }
 
 export interface CompareOpts {
@@ -240,6 +270,8 @@ export interface CompareOpts {
   alpha?: number;
   iters?: number;
   seed?: number;
+  /** B is an ablation of A (`compare --without`). */
+  ablation?: Pick<AblationReport, "paths" | "dropped" | "unmatched">;
 }
 
 type Extract = (r: RunResult, s: Session | undefined) => number | undefined;
@@ -342,7 +374,23 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
     if (!va.length && !vb.length) continue;
     const a = mean(va);
     const b = mean(vb);
-    metrics.push({ key: m.key, label: m.label, unit: m.unit, baseline: a, candidate: b, delta: b - a, relative: a ? (b - a) / a : NaN, n: { baseline: va.length, candidate: vb.length } });
+    const md: MetricDelta = {
+      key: m.key,
+      label: m.label,
+      unit: m.unit,
+      baseline: a,
+      candidate: b,
+      delta: b - a,
+      relative: a ? (b - a) / a : NaN,
+      n: { baseline: va.length, candidate: vb.length },
+      runs: { baseline: A.length, candidate: B.length },
+    };
+    if (m.key === "cost") {
+      // Reported by the agent vs priced from the session's tokens.
+      const est = (rs: readonly RunResult[]) => rs.filter((r) => r.agent.usage?.costUsd === undefined && Number.isFinite(opts.sessions?.get(r.id)?.stats.usage?.costUsd)).length;
+      md.costEstimatedRuns = { baseline: est(A), candidate: est(B) };
+    }
+    metrics.push(md);
   }
 
   const notes: string[] = [];
@@ -370,6 +418,21 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
 
   const verdict = decide(diffs.length, boot, mcn, alpha, metrics);
   if (verdict.extra) notes.push(verdict.extra);
+
+  const pairedIds = tasks.map((t) => t.taskId);
+  const failed = pairedIds.some((id) => (ta.get(id) ?? []).some((r) => !r.pass) || (tb.get(id) ?? []).some((r) => !r.pass));
+  let anatomy: CompareReport["anatomy"];
+  if (pairedIds.length && pairedIds.every((id) => (ta.get(id)?.length ?? 0) >= 2 && (tb.get(id)?.length ?? 0) >= 2)) {
+    const fa = failureAnatomy(ta, tb, pairedIds);
+    const cells = pairedIds.flatMap((id) => [
+      ...(ta.get(id) ?? []).map((r) => ({ group: id, sub: "A", y: r.pass ? 1 : 0 })),
+      ...(tb.get(id) ?? []).map((r) => ({ group: id, sub: "B", y: r.pass ? 1 : 0 })),
+    ]);
+    anatomy = { ...fa, variance: nestedVarianceShares(cells) };
+    notes.push(...anatomyNotes(anatomy));
+  } else if (failed) {
+    notes.push(`${k <= 1 ? "k=1" : "some tasks ran once"}: bad runs and beyond-ability failures look the same; rerun with --k 3 (arXiv 2611.08285)`);
+  }
   return {
     baseline: sa,
     candidate: sb,
@@ -385,7 +448,29 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
     notes,
     bundleDiff: opts.bundles?.baseline && opts.bundles.candidate ? diffBundles(opts.bundles.baseline, opts.bundles.candidate) : undefined,
     alpha,
+    ...(anatomy ? { anatomy } : {}),
+    ...(opts.ablation ? { ablation: { ...opts.ablation, effect: { mean: -boot.mean, lo: -boot.hi, hi: -boot.lo } } } : {}),
   };
+}
+
+const share = (x: number) => `${Math.round(x * 100)}%`;
+
+function anatomyNotes(a: NonNullable<CompareReport["anatomy"]>): string[] {
+  const out: string[] = [];
+  const b = a.candidate;
+  const real = b.fails - b.infra;
+  if (real > 0 && b.badRun / real >= 0.5) {
+    out.push(`most of B's failures are bad runs (${b.badRun} of ${real}: the same task passed in another attempt): retries, pass@k or a verify-and-retry loop pay off before another harness change`);
+  }
+  const fails = a.baseline.fails + b.fails;
+  const unsolved = a.baseline.unsolvedByAll + b.unsolvedByAll;
+  if (fails > 0 && unsolved / fails >= 0.3) {
+    const n = a.baseline.tasks.unsolvedByAll.length;
+    out.push(`${n} task${n === 1 ? "" : "s"} failed every attempt in both arms (${share(unsolved / fails)} of failed runs): check them with coding.sh eval validate / eval curate`);
+  }
+  const v = a.variance;
+  if (Number.isFinite(v.run) && v.run > v.arm) out.push(`run-to-run noise (${share(v.run)}) outweighs the harness effect (${share(v.arm)})`);
+  return out;
 }
 
 const pp = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)} pp`;
@@ -405,10 +490,15 @@ function decide(
   const mcSig = mcn.p < alpha;
   const small = paired < 10 ? ` (only ${paired} task${paired === 1 ? "" : "s"}; underpowered)` : "";
   const cost = metrics.find((m) => m.key === "cost");
-  const costNote =
-    cost && Number.isFinite(cost.relative) && Math.abs(cost.relative) >= 0.05
-      ? `pass rates aside, candidate is ${Math.abs(cost.relative * 100).toFixed(0)}% ${cost.relative < 0 ? "cheaper" : "more expensive"} per run`
-      : undefined;
+  let costNote: string | undefined;
+  if (cost && !covered(cost)) {
+    // Means over different subsets of runs (e.g. one arm on an unpriced model) are not comparable.
+    if (cost.n.baseline > 0 || cost.n.candidate > 0) {
+      costNote = `cost is known for ${cost.n.baseline}/${cost.runs.baseline} baseline and ${cost.n.candidate}/${cost.runs.candidate} candidate runs; the cost delta compares different subsets of runs and is not a verdict`;
+    }
+  } else if (cost && Number.isFinite(cost.relative) && Math.abs(cost.relative) >= 0.05) {
+    costNote = `pass rates aside, candidate is ${Math.abs(cost.relative * 100).toFixed(0)}% ${cost.relative < 0 ? "cheaper" : "more expensive"} per run`;
+  }
   if (bootSig && mcSig) {
     const better = boot.mean > 0;
     return { kind: better ? "better" : "worse", text: `candidate ${better ? "better" : "worse"}: ${pp(boot.mean)} pass rate, ${ci}, McNemar ${pval(mcn.p)}`, extra: costNote };
@@ -480,6 +570,11 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   out.push(bold("coding.sh compare"));
   out.push(`baseline   ${name(r.baseline)}`);
   out.push(`candidate  ${name(r.candidate)}`);
+  const ab = r.ablation;
+  if (ab) {
+    const a = r.baseline.name ?? r.baseline.bundleId.slice(0, 8);
+    out.push(`A = ${a} · B = ${a} without ${ab.paths.join(", ")} (${ab.dropped.length} file${ab.dropped.length === 1 ? "" : "s"} dropped)`);
+  }
   out.push(dim(`${r.pairedTasks} paired task(s) · k=${r.k} · ${r.baseline.runs} vs ${r.candidate.runs} runs`));
   out.push("");
   out.push(dim(row(["", "baseline", "candidate", "delta"])));
@@ -495,7 +590,17 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   for (const m of r.metrics) {
     const rel = Number.isFinite(m.relative) ? ` (${m.relative >= 0 ? "+" : ""}${(m.relative * 100).toFixed(0)}%)` : "";
     const d = `${m.delta >= 0 && Number.isFinite(m.delta) ? "+" : ""}${fmtValue(m.delta, m.unit)}${rel}`;
-    out.push(row([m.label, fmtValue(m.baseline, m.unit), fmtValue(m.candidate, m.unit), signed(m.delta, true, d)]));
+    // "(3/10)": the mean covers only the runs where the metric is known.
+    const val = (v: number, n: number, runs: number) => (n > 0 && n < runs ? `${fmtValue(v, m.unit)} ${dim(`(${n}/${runs})`)}` : fmtValue(v, m.unit));
+    out.push(row([m.label, val(m.baseline, m.n.baseline, m.runs.baseline), val(m.candidate, m.n.candidate, m.runs.candidate), covered(m) ? signed(m.delta, true, d) : d]));
+  }
+  if (r.anatomy) {
+    const fa = (a: ArmAnatomy) =>
+      `${a.fails} (bad-run ${a.badRun} · beyond-arm ${a.beyondArm} · unsolved-by-all ${a.unsolvedByAll}${a.infra ? ` · infra ${a.infra}` : ""})`;
+    out.push(`${pad("failures", W[0] as number)}A ${fa(r.anatomy.baseline)}`);
+    out.push(`${pad("", W[0] as number)}B ${fa(r.anatomy.candidate)}`);
+    const v = r.anatomy.variance;
+    out.push(`${pad("variance", W[0] as number)}${Number.isFinite(v.task) ? `task ${share(v.task)} · arm ${share(v.arm)} · run-to-run ${share(v.run)}` : "no variance (every run had the same outcome)"}`);
   }
   if (r.tasks.length) {
     out.push("");
@@ -520,6 +625,10 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   const v = r.verdict;
   const vtext = v.kind === "better" ? good(v.text) : v.kind === "worse" ? bad(v.text) : bold(v.text);
   out.push(`verdict: ${vtext}`);
+  if (ab) {
+    const e = ab.effect;
+    out.push(`effect of ${ab.paths.join(", ")} = A − B: ${pp(e.mean)} [${pp(e.lo).replace(" pp", "")}, ${pp(e.hi)}]`);
+  }
   const p = r.power;
   out.push(
     `power   MDE ${Number.isFinite(p.mde) ? `${(p.mde * 100).toFixed(1)}pp` : "—"} ` +
@@ -527,5 +636,9 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   );
   for (const w of p.warnings) out.push(paint("33", `! ${w.message}`));
   for (const n of r.notes) out.push(dim(`note: ${n}`));
+  const est = r.metrics.find((m) => m.key === "cost")?.costEstimatedRuns;
+  if (est && est.baseline + est.candidate > 0) {
+    out.push(dim(`cost: ${est.baseline + est.candidate} of ${r.baseline.runs + r.candidate.runs} runs estimated from the price table`));
+  }
   return `${out.join("\n")}\n`;
 }

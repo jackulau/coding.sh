@@ -1276,13 +1276,13 @@ coding.sh harness list
 A/B two harness bundles on eval tasks.
 
 ```text
-coding.sh compare <A> <B> [options]
+coding.sh compare <A> [b] [options]
 ```
 
 | Argument | Required | Description |
 |---|---|---|
 | `a` | yes | Baseline bundle id or name. |
-| `b` | yes | Candidate bundle id or name. |
+| `b` | no | Candidate bundle id or name (omit with --without) |
 
 | Option | Default | Description |
 |---|---|---|
@@ -1290,6 +1290,7 @@ coding.sh compare <A> <B> [options]
 | `--k <N>` | `1` | Attempts per task and arm. |
 | `-c, --concurrency <N>` |  | Parallel runs. |
 | `--experiment <ID>` |  | Compare the stored runs of this experiment instead of running. |
+| `--without <PATH>` |  | Ablation: B is A without this file, dir or glob (repeatable) |
 | `--gateway` |  | Route both arms through Vercel AI Gateway (key in AI_GATEWAY_API_KEY) |
 | `-y, --yes` |  | Answer yes to confirmation prompts. |
 

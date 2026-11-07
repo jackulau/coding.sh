@@ -2,7 +2,7 @@
 // model, flags, env, removals) plus overlay files stored as blobs; its id is
 // the sha256 of that content, so "same harness" is decidable.
 import { lstat, readFile, readdir, rm, stat } from "node:fs/promises";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, posix, resolve } from "node:path";
 import { userHome } from "../core/paths.ts";
 import { sha256Hex } from "../core/ids.ts";
 import { parseToml } from "../core/toml.ts";
@@ -253,6 +253,59 @@ export async function applyBundle(bundle: HarnessBundle, runDir: string, blobs: 
     written.push(p);
   }
   return { written, removed, home, usesHome };
+}
+
+export interface Ablation {
+  bundle: HarnessBundle;
+  /** Normalized paths (or globs) that were ablated, in the order given. */
+  paths: string[];
+  /** File keys removed from the bundle. */
+  dropped: string[];
+  /** Paths that matched no bundle file; they only remove from the task's repo. */
+  unmatched: string[];
+}
+
+/** POSIX-normalize a bundle path: "./a/b/" → "a/b"; a "~/" prefix is kept. */
+export function normalizeBundlePath(p: string): string {
+  const s = p.replace(/\\/g, "/");
+  const home = s.startsWith("~/");
+  const rest = posix.normalize(home ? s.slice(2) : s).replace(/^(\.\/)+/, "").replace(/\/+$/, "");
+  return home ? `~/${rest}` : rest;
+}
+
+const slug = (p: string) =>
+  p
+    .replace(/^~\//, "home-")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+/**
+ * The same bundle without `paths` (a skill dir, AGENTS.md, .mcp.json, …):
+ * file keys equal to a path or under it are dropped, and the path joins
+ * `remove`, so it is also deleted from the task's repo. Globs drop keys via
+ * matchGlob and go to `remove` unchanged. Pure; the id is deterministic.
+ */
+export function ablateBundle(b: HarnessBundle, paths: readonly string[], opts: { now?: number } = {}): Ablation {
+  const norm = [...new Set(paths.map(normalizeBundlePath).filter((p) => p && p !== "." && p !== "~/" && p !== "~/."))];
+  const files: Record<string, BlobRef> = {};
+  const dropped: string[] = [];
+  const hit = new Set<string>();
+  for (const [key, ref] of Object.entries(b.files)) {
+    const by = norm.filter((p) => matchGlob(key, p));
+    if (by.length) {
+      dropped.push(key);
+      for (const p of by) hit.add(p);
+    } else files[key] = ref;
+  }
+  const remove = [...new Set([...b.remove, ...norm])];
+  const body = { name: `${b.name}-without-${norm.map(slug).join("-")}`, agent: b.agent, model: b.model, flags: b.flags, env: b.env, files, remove };
+  return {
+    bundle: { id: bundleId(body), ...body, createdAt: opts.now ?? Date.now(), note: `ablation of ${b.name}: without ${norm.join(", ")}` },
+    paths: norm,
+    dropped: dropped.sort(),
+    unmatched: norm.filter((p) => !hit.has(p)),
+  };
 }
 
 export interface BundleDiff {
