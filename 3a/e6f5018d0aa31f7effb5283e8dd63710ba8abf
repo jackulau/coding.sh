@@ -1,0 +1,19 @@
+docs/research/experimentation-methods.md
+  s_0f0bf5f2244630::t_df7886c7589789 1-556
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3ae6f5018d0aa31f7effb5283e8dd63710ba8abf",
+  "prompts": {},
+  "sessions": {
+    "s_0f0bf5f2244630": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a97a02221531f6311",
+        "model": "unknown"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
