@@ -67,7 +67,7 @@ Each call's cost records where it came from, checked in this order:
 1. **reported**: the contender's own `costUsd`.
 2. **costPerRun**: the fixed price in the definition.
 3. **price table**: tokens times the model's list price. This uses the same table as the rest of
-   coding.sh, with your `[pricing."<model>"]` overrides from the config. The run records when the
+   coding.sh, with your `[prices."<model>"]` overrides from the config. The run records when the
    table's prices were last checked.
 4. **unknown**: no cost, no price and no tokens to price. These calls count as unknown, not as free.
 

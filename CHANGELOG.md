@@ -110,6 +110,9 @@ It also runs as a server on SQLite or Postgres, with SDKs for apps that call mod
 - **Agents.** Every adapter has fixture tests, and an `ingest --backfill` path where the agent keeps history.
 - **Agents.** T3 Code threads import from its local store; Codex and Claude Code runs in T3 count once, agent in `provider`.
 - **Agents.** `coding.sh usage --by agent-model` compares tokens per turn and cache-read share across harnesses.
+- **Cost.** Calls with tokens and no cost get one from a dated price table (Claude, OpenAI, Gemini, open models), marked estimated; billed and reported costs win. [Where cost comes from](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/expensive-sessions.md#where-cost-comes-from).
+- **Cost.** `[prices."<model>"]` in config.toml sets your own rates; `usage --reprice` recomputes stored estimates.
+- **Cost.** A model call nested in another, or a repeated response id, counts once in session totals.
 - **Storage.** One SQLite index (node:sqlite, no native deps) and a content-addressed, zstd-compressed blob store. [Storage](https://coding.sh/docs/storage).
 - **Storage.** OTLP and HTTP sinks send metadata only by default.
 - **Viewer.** `coding.sh ui` serves a local viewer: sessions, search, a timeline of turns, tools and subagents, and outcome labels.

@@ -13,7 +13,8 @@ coding.sh usage --since 7d --by day
 ```
 
 Each row shows sessions, turns, total and output tokens, tokens per turn and the cache-read share.
-A `COST` column appears when at least one session in the window has a cost. Subagent sessions count
+A `COST` column appears when at least one session in the window has a cost: `~` marks a cost that
+includes an estimate, `+` a row where some sessions have none. Subagent sessions count
 toward their row.
 
 ## 2. The top sessions
@@ -50,19 +51,27 @@ session as a timeline.
 
 ## Where cost comes from
 
-Many sessions have tokens and no cost: coding agents' transcripts carry tokens, not dollars, and most OpenTelemetry instrumentations do too.
-coding.sh shows an unknown cost as missing, never as $0. A session gets a cost when:
+Coding agents' transcripts carry tokens, not dollars, and most OpenTelemetry instrumentations do
+too. Each model call's cost comes from the first of:
 
-- the agent reports one: Claude Code headless runs (`total_cost_usd`), OpenCode and Pi do;
-- an OpenTelemetry span carries `gen_ai.usage.cost` or `cost_usd`, for example Claude Code with its
-  OTel export turned on (see [OpenTelemetry](https://coding.sh/docs/otel#claude-code));
-- the model calls went through Vercel AI Gateway and you run `coding.sh gateway enrich`, which
-  attaches the billed cost;
-- events are ingested by `coding.sh serve` (the SDKs send there), which prices tokens from a built-in price list plus
-  any `[pricing."<model>"]` table in your config (see [Configuration](../reference/config.md#pricing)).
+1. the bill: calls through Vercel AI Gateway after `coding.sh gateway enrich`;
+2. a cost the agent reports: Claude Code headless runs (`total_cost_usd`), OpenCode, Pi, or an
+   OpenTelemetry span with `gen_ai.usage.cost` or `cost_usd`;
+3. an estimate: input, output, cache-read and cache-write tokens times the model's list price.
 
-Until then, compare spend by tokens: `usage --by agent-model` at a fixed model is a fair comparison
-between harnesses.
+Estimates are marked everywhere they show: `~` in `usage`, `est` on a call and `(estimated)` on the
+session in `show`, `estimatedCostUsd` in `--json`, the MCP `usage` tool and the viewer API
+(`stats.usage.estimatedCostUsd` on a session, `payload.costEstimated` on a call). A model with no
+price row of its own is priced like its nearest sibling in the same family and major version
+(`gpt-6.2-sol` as `gpt-6.1-sol`), and the call says so in `payload.pricedAs`. A model with no
+price at all keeps no cost, never $0, and `usage` names it.
+
+The built-in table covers current Claude, OpenAI, Gemini (which Antigravity runs) and common open
+models, with each provider's page and the date it was checked in
+[`src/core/pricing.ts`](../../packages/coding.sh/src/core/pricing.ts). Short-context list prices
+only: no batch, priority or long-context rates. To match your bill, set your own prices (see
+[Configuration](../reference/config.md#prices)). Estimates refresh by themselves when the table
+changes; `coding.sh usage --reprice` recomputes them now.
 
 ## Ask your agent
 

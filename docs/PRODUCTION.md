@@ -184,7 +184,7 @@ them from there). It also adds:
 
 - a small built-in table for current OpenAI, Anthropic and Google models, with source URLs and an
   `updated` date;
-- `[pricing."<model>"] input, output, cache_read, cache_write`, all in USD per 1M tokens, which
+- `[prices."<model>"] input, output, cache_read, cache_write`, all in USD per 1M tokens, which
   overrides the table.
 
 In serve, an `llm.call` that has tokens but no `costUsd` gets

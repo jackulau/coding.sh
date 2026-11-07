@@ -6,7 +6,7 @@
 coding.sh sessions                 # recent sessions (--agent, --repo, --since, --subagents)
 coding.sh show latest              # timeline with turns, tools, subagents and latency
 coding.sh search "rate limit"      # full-text search over prompts, replies and tool calls
-coding.sh usage --by model         # tokens, turns and cache hits by agent, model, day or repo
+coding.sh usage --by model         # tokens, cost, turns and cache hits by agent, model, day or repo
 coding.sh ui                       # local viewer on 127.0.0.1 (token-protected URL)
 ```
 

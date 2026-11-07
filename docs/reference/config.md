@@ -25,7 +25,7 @@ coding.sh config set capture.redact '["secrets","env"]'
 ```
 
 `config set` accepts the keys marked **settable** below, parses numbers, `true`/`false` and JSON
-arrays, and keeps the rest of the file as it is. Edit the file by hand for sinks, pricing, gateway
+arrays, and keeps the rest of the file as it is. Edit the file by hand for sinks, prices, gateway
 and serve settings.
 
 String values in `store.*`, `sinks.*.endpoint`, `sinks.*.headers` and `gateway.apiKey` may use
@@ -98,20 +98,25 @@ headers = { Authorization = "Bearer ${CODING_SH_INGEST_KEY}" }
 | `batchSize` | | Events per request. |
 | `headers` | | Table of HTTP headers. |
 
-## `[pricing]`
+## `[prices]`
 
-One `[pricing."<model>"]` table per model, with prices in USD per million tokens. `coding.sh serve` uses them to estimate cost for model calls that
-report tokens but no cost; they override the built-in list for that model.
+One `[prices."<model>"]` table per model, with prices in USD per million tokens. Ingest and
+`coding.sh serve` use them to estimate cost for model calls that report tokens but no cost. They
+replace the built-in row for that model, add models it lacks, and also price newer versions in the
+same family (`[prices."house-coder-2"]` prices `house-coder-2.1` too). A cost the agent or gateway
+reported is never replaced.
 
 ```toml
-[pricing."my-finetune"]
+[prices."my-finetune"]
 input = 3.0
 output = 15.0
 cache_read = 0.3
 cache_write = 3.75
 ```
 
-`input` and `output` are required. `cache_read` and `cache_write` are optional.
+`input` and `output` are required. `cache_read` and `cache_write` are optional and default to the
+input price. `[pricing."<model>"]`, the older spelling, still works; `[prices]` wins a model set in
+both. Stored estimates are recomputed the next time the index opens after a change.
 
 ## `[gateway]`
 

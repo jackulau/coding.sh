@@ -42,7 +42,7 @@ To add your own app, append a key to `CODING_SH_INGEST_KEYS` in `docker-compose.
   works. To use a managed bucket instead, set `CODING_SH_BLOB_URL=s3://…` and real `AWS_*` values, and
   delete the two services.
 - **Prices.** `deploy/compose/config.toml` is mounted as the server config. It pins the mock models
-  used by the acceptance tests. Add `[pricing."<model>"]` tables there to override the built-in prices.
+  used by the acceptance tests. Add `[prices."<model>"]` tables there to override the built-in prices.
 - **TLS.** Put Caddy, nginx or a cloud load balancer in front of `127.0.0.1:4318` and add
   `CODING_SH_TRUST_PROXY: "1"` to the `coding-sh` environment.
 - **Health.** The `coding-sh` healthcheck uses `/readyz`, so `--wait` returns once migrations are done

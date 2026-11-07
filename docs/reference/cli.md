@@ -43,7 +43,7 @@ Every command accepts these.
 | [`sessions`](#codingsh-sessions) | Explore | List captured sessions |
 | [`show`](#codingsh-show) | Explore | Show a session timeline with subagents and latency |
 | [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies and tool calls |
-| [`usage`](#codingsh-usage) | Explore | Tokens, turns and cache hits by agent, model or day |
+| [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day |
 | [`ui`](#codingsh-ui) | Explore | Open the local session viewer |
 | [`mcp`](#codingsh-mcp) | Explore | Serve captured sessions to agents over MCP (stdio) |
 | [`eval`](#codingsh-eval) | Evaluate | Turn sessions into replayable eval tasks |
@@ -352,7 +352,7 @@ coding.sh search 'flaky test'
 
 ## `coding.sh usage`
 
-Tokens, turns and cache hits by agent, model or day.
+Tokens, cost, turns and cache hits by agent, model or day.
 
 ```text
 coding.sh usage [options]
@@ -364,10 +364,12 @@ coding.sh usage [options]
 | `-a, --agent <AGENT>` |  | Only sessions from this agent. |
 | `--since <WHEN>` | `30d` | Only after this time: 7d, 12h, 30m or a date. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
+| `--reprice` |  | Recompute estimated costs from the current price table first. |
 
 ```sh
 coding.sh usage
 coding.sh usage --by agent-model --since 90d
+coding.sh usage --by model --reprice
 ```
 
 ## `coding.sh ui`
