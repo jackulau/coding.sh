@@ -646,6 +646,8 @@ interface SpanCtx {
   durable?: DurableTag;
   /** The span sits under a durable replay span. */
   replayed?: boolean;
+  /** service.instance.id of a span whose parent ran in another process (payload.instance on its first event). */
+  instance?: string;
 }
 
 export const spanEventId = (traceId: string, spanId: string, slot: number): string => hashParts("otel", traceId, spanId, slot);
@@ -872,6 +874,8 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
     const stepLike = c.durable.role === "step" || c.durable.role === "wait";
     out[0].payload.durable = stepLike && klass !== "other" && klass !== "agent" ? { ...c.durable, role: "other" } : c.durable;
   }
+  // Where a span from another process runs (code a Restate server attempt invoked): core/durable.ts reads the attempt's process off it.
+  if (c.instance && out[0]) out[0].payload.instance = c.instance;
 
   // ---- span events: exceptions become error events; content events were folded in above.
   for (const [i, ev] of span.events.entries()) {
@@ -944,7 +948,9 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
         else if (d) {
           if (sp.traceId && !traceRunId.has(sp.traceId)) traceRunId.set(sp.traceId, d.run);
           durable.set(sp, d);
-          const sid = durableSessionId(d);
+          // One Restate invocation is one trace, and the user's spans in it can arrive
+          // before any server span names the invocation: the trace keys the session.
+          const sid = d.engine === "restate" && sp.traceId ? sp.traceId : durableSessionId(d);
           if (sp.traceId && !traceRun.has(sp.traceId)) traceRun.set(sp.traceId, sid);
           // Traces a run span links to belong to the run too (Vercel continuous mode
           // links each invocation to its HTTP handler's own trace).
@@ -960,7 +966,10 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
   for (const [sp, d] of unkeyed) {
     const known = sp.traceId ? ctx.traceSessions?.get(sp.traceId) : undefined;
     const run = (sp.traceId && traceRunId.get(sp.traceId)) || (known?.startsWith(`${d.engine}:`) ? known.slice(d.engine.length + 1) : undefined);
-    if (run) durable.set(sp, { ...d, run });
+    durable.set(sp, run ? { ...d, run } : d);
+    // No run known yet (a client's start span exported before any worker's): the
+    // trace keys the session, so the run's spans that come later join it.
+    if (!run && sp.traceId && !known && !traceRun.has(sp.traceId) && !traceConv.has(sp.traceId)) traceRun.set(sp.traceId, sp.traceId);
   }
   for (const [t, s] of traceConv) ctx.traceSessions?.set(t, s);
   // A trace already keyed (an explicit conversation, or an earlier batch) keeps its session.
@@ -969,6 +978,10 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
   for (const rs of batch) {
     const resource = rs.resource.attributes;
     const resourceConv = conversationOf(resource);
+    const instance = str(resource, "service.instance.id");
+    const local = instance ? new Set(rs.scopeSpans.flatMap((ss) => ss.spans.map((sp) => sp.spanId))) : undefined;
+    // The Restate server's version is not the app's.
+    const ownVersion = str(resource, "service.namespace") === "Restate" ? undefined : str(resource, "service.version");
     for (const ss of rs.scopeSpans) {
       // DBOS checks the global tracer at launch with an empty "probe" span: nothing happened.
       if (ss.scope.name === "otel-bootstrap-check") continue;
@@ -991,8 +1004,9 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
           conversation: conv !== undefined && conv !== span.traceId,
           agent,
         };
-        const version = str(resource, "service.version") ?? str(span.attributes, "app.version");
+        const version = ownVersion ?? str(span.attributes, "app.version");
         if (version) c.agentVersion = version;
+        if (instance && span.parentSpanId && !local!.has(span.parentSpanId)) c.instance = instance;
         const runId = str(span.attributes, ...RUN_KEYS) ?? str(resource, ...RUN_KEYS);
         if (runId) c.runId = runId;
         const d = durable.get(span);

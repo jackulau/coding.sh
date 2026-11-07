@@ -53,6 +53,8 @@ function engineFramework(engine: string): WorkflowFramework {
 }
 
 interface AttemptInfo {
+  /** The step's name. */
+  name: string;
   n: number;
   attempts: number;
   ok: boolean;
@@ -66,33 +68,39 @@ interface AttemptInfo {
   lostMs?: number;
   /** Of lostMs, how long its process was still seen working. */
   ranMs?: number;
-  /** Earlier attempts inside the same span (DBOS retries a step within one span). */
+  /** Earlier attempts inside the same span (DBOS retries a step within one span; a Restate invocation attempt runs several). */
   before?: AttemptInfo[];
 }
 
 /** Step attempts of a durable run by span id, with the step's attempt count and where the run resumed. */
 function attemptsBySpan(d: DurableStats): Map<string, AttemptInfo> {
-  const out = new Map<string, AttemptInfo>();
+  const bySpan = new Map<string, AttemptInfo[]>();
   for (const step of d.steps) {
     const attempts = Math.max(0, ...step.attempts.map((a) => a.n));
     step.attempts.forEach((a, i) => {
       if (!a.spanId) return;
-      const info: AttemptInfo = { n: a.n, attempts, ok: a.ok, startedAt: a.startedAt, endedAt: a.endedAt };
+      const info: AttemptInfo = { name: step.name, n: a.n, attempts, ok: a.ok, startedAt: a.startedAt, endedAt: a.endedAt };
       if (a.error) info.error = a.error;
       if (a.replay) info.replay = true;
       if (a.instance) info.instance = a.instance;
-      // A crash, deploy or restart says more than the wait that may end at the same attempt.
-      // Attempts sharing a span (DBOS): the resume belongs to the first.
-      const prev = out.get(a.spanId);
-      const resume = prev ? undefined : d.resumes.filter((r) => r.spanId === a.spanId).sort((x, y) => Number(x.reason === "wait") - Number(y.reason === "wait"))[0];
-      if (resume) info.resume = resume.reason;
       if (i === 0 && step.unreportedMs !== undefined && a.n > 1) {
         info.lostMs = step.unreportedMs;
         if (step.unreportedRanMs !== undefined) info.ranMs = step.unreportedRanMs;
       }
-      if (prev) info.before = [...(prev.before ?? []), { ...prev, before: undefined }];
-      out.set(a.spanId, info);
+      bySpan.set(a.spanId, [...(bySpan.get(a.spanId) ?? []), info]);
     });
+  }
+  // Attempts sharing a span (DBOS retries, a Restate invocation attempt's runs):
+  // the latest holds the others, and the resume belongs to the first.
+  const out = new Map<string, AttemptInfo>();
+  for (const [spanId, infos] of bySpan) {
+    infos.sort((x, y) => x.startedAt - y.startedAt);
+    // A crash, deploy or restart says more than the wait that may end at the same attempt.
+    const resume = d.resumes.filter((r) => r.spanId === spanId).sort((x, y) => Number(x.reason === "wait") - Number(y.reason === "wait"))[0];
+    if (resume) infos[0]!.resume = resume.reason;
+    const latest = infos.pop()!;
+    if (infos.length) latest.before = infos;
+    out.set(spanId, latest);
   }
   return out;
 }
@@ -264,27 +272,43 @@ export function otelTree(events: readonly AgentEvent[], opts: { runId?: string; 
       next = { ...ctx, inAgent: true };
     } else if (s.durable) {
       // A step attempt is a step node; the engine's other spans (start, run,
-      // schedule, invocation, waits, a step's inner spans) are dropped.
-      const a = s.durable.role === "step" ? attemptOf.get(s.spanId) : undefined;
+      // schedule, invocation, waits, a step's inner spans) are dropped, unless
+      // the engine records attempts on them (a Restate invocation attempt's journal).
+      const a = s.durable.role === "step" || s.durable.role === "invocation" ? attemptOf.get(s.spanId) : undefined;
       if (a) {
-        const name = s.durable.step ?? s.name;
-        if (a.lostMs !== undefined) {
+        const name = (i: AttemptInfo) => (s.durable!.role === "step" ? (s.durable!.step ?? s.name) : i.name);
+        const lostBefore = (i: AttemptInfo, at: number) => {
+          if (i.lostMs === undefined) return;
           // It counts as work only until its process was last seen; the rest is downtime.
-          const ran = Math.min(a.ranMs ?? a.lostMs, a.lostMs);
-          const lost: WorkflowNode = { ...base("step", name), id: `${nodeId(s)}/lost`, startedAt: s.start - a.lostMs, endedAt: s.start - a.lostMs + ran, status: "failed", attempt: a.n - 1, attempts: a.attempts, lost: true };
-          if (a.lostMs > ran) lost.lostMs = a.lostMs - ran;
+          const ran = Math.min(i.ranMs ?? i.lostMs, i.lostMs);
+          const lost: WorkflowNode = { ...base("step", name(i)), id: i === (a.before?.[0] ?? a) ? `${nodeId(s)}/lost` : `${nodeId(s)}/${i.name}/${i.n}/lost`, startedAt: at - i.lostMs, endedAt: at - i.lostMs + ran, status: "failed", attempt: i.n - 1, attempts: i.attempts, lost: true };
+          if (i.lostMs > ran) lost.lostMs = i.lostMs - ran;
           lost.error = "never reported: the process running it stopped";
           nodes.push(lost);
-        }
-        for (const b of a.before ?? []) {
-          const part: WorkflowNode = { ...base("step", name), id: `${nodeId(s)}/${b.n}`, startedAt: b.startedAt, endedAt: b.endedAt, attempt: b.n, attempts: a.attempts, status: b.ok ? "ok" : "failed" };
+        };
+        lostBefore(a.before?.[0] ?? a, s.start);
+        for (const [k, b] of (a.before ?? []).entries()) {
+          if (k > 0) lostBefore(b, b.startedAt);
+          const id = s.durable.role === "invocation" ? `${nodeId(s)}/${b.name}/${b.n}` : `${nodeId(s)}/${b.n}`;
+          const part: WorkflowNode = { ...base("step", name(b)), id, startedAt: b.startedAt, endedAt: b.endedAt, attempt: b.n, attempts: b.attempts, status: b.ok ? "ok" : "failed" };
           if (!b.ok && b.error) part.error = b.error;
           else delete part.error;
+          if (b.resume) part.resume = b.resume;
+          if (b.instance) part.instance = b.instance;
           parts.push(part);
           nodes.push(part);
         }
-        node = base("step", name);
-        if (parts.length) node.startedAt = a.startedAt;
+        if (a.before?.length) lostBefore(a, a.startedAt);
+        node = base("step", name(a));
+        if (parts.length || s.durable.role === "invocation") {
+          node.startedAt = a.startedAt;
+          node.endedAt = a.endedAt;
+          // The span's outcome is its last attempt's (a Restate attempt that ran search, then failed in read).
+          if (a.ok) {
+            node.status = "ok";
+            delete node.error;
+          }
+        }
         node.attempt = a.n;
         node.attempts = a.attempts;
         // The attempt's outcome as core/durable.ts read it (Vercel leaves a failed attempt's span OK).

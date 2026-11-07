@@ -445,10 +445,12 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   const reopened = endedAt !== undefined && lastActivity !== undefined && lastActivity > endedAt + REOPEN_SLACK_MS;
   if (reopened) endedAt = undefined;
 
+  const durable = durableStats(sorted);
   const session: Session = {
     id,
     // Durable engine spans (workflow.start, steps) can precede the agent's own events; they don't name it.
-    agent: via ?? (sorted.find((e) => e.payload.durable === undefined) ?? first)?.agent ?? prev!.agent,
+    // Nor does the client that started a durable run (a Restate ingress call): the code making model calls does.
+    agent: via ?? (durable ? sorted.find((e) => e.kind === "llm.call") : undefined)?.agent ?? (sorted.find((e) => e.payload.durable === undefined) ?? first)?.agent ?? prev!.agent,
     startedAt: first?.ts ?? prev!.startedAt,
     stats: {
       events: sorted.length,
@@ -461,7 +463,6 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
     },
     flags: detectFlags(sorted, derails),
   };
-  const durable = durableStats(sorted);
   if (durable) {
     session.stats.durable = durable;
     session.flags.push(...durableFlags(durable));

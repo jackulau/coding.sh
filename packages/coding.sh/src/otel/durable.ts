@@ -14,17 +14,22 @@
 //   vercel-workflow   workflow.run.id                   step.execute <name>               step.attempt
 //   temporal          temporal:<workflowId>:<runId>     RunActivity:<type>                inferred from order
 //   inngest           inngest:<sdk.run.id>              spans with inngest.step.id        inngest.step.attempt
-//   restate           restate:<restate.invocation.id>   run (<name>)                      inferred from order
+//   restate           the invocation's trace id         run (<name>), else journal events inferred from order
 //   dbos              dbos:<workflow id>                operationType step/transaction    "Step attempt N failed" events
 //   langgraph         thread_id                         node spans (langgraph_node)       inferred from order
 //   workflow          workflow.run.id (any other app)   spans with step.name              step.attempt
 //
-// Restate run spans carry only restate.run.name: their run is their trace's
-// (one invocation is one trace), filled in by map.ts (run "" here).
+// One Restate invocation is one trace, so the trace keys its session: the
+// user's spans in it can arrive before any server span names the invocation.
+// Restate run spans carry only restate.run.name: their run is their trace's,
+// filled in by map.ts (run "" here), and so is the Python Temporal client's
+// StartWorkflow (it names no run id).
 //
 // The last row is a convention any engine can follow by hand (Cloudflare
 // Workflows exposes no run identity on its spans): set workflow.run.id on the
-// spans of a run, step.name (+ step.id, step.attempt) on step spans.
+// spans of a run, step.name (+ step.id, step.attempt) on step spans. A span
+// around a sleep with workflow.wait.name (or named "sleep <name>") is a wait in
+// any engine's run: Temporal, Inngest and DBOS TS export none of their own.
 import { type Attrs, nanosToMs, type OtelScope, type OtelSpan, type OtelValue } from "./model.ts";
 
 export type DurableEngine = "vercel-workflow" | "temporal" | "inngest" | "restate" | "dbos" | "langgraph" | "workflow";
@@ -79,6 +84,13 @@ export interface DurableTag {
   waitName?: string;
   /** A step this invocation attempt started and never finished before it failed (Restate journal events). */
   inFlight?: { step: string; at: number };
+  /**
+   * The runs (ctx.run) an invocation attempt journaled, in order (Restate, for
+   * SDKs that trace no run span): a new run names its step; a run carried over
+   * from the attempt before (re-run after a failure) names none and starts with
+   * the attempt; a run still open when the attempt ended has no end.
+   */
+  journal?: { step?: string; at: number; end?: number }[];
   /** Process that emitted the span. */
   instance?: string;
   /** Deployment or code version that emitted the span. */
@@ -114,6 +126,32 @@ const suffix = (name: string, sep: string): string | undefined => {
 
 /** "workflow//./workflows/research//researchAgent" → "researchAgent"; other names as they are. */
 const shortName = (s: string | undefined): string | undefined => (s?.includes("//") ? s.slice(s.lastIndexOf("//") + 2) || s : s);
+
+const WAIT_SPAN = /^(?:workflow\.)?(?:sleep|wait)\b\s*(.*)$/i;
+
+/**
+ * A wait by the generic convention, which a user can add where an engine exports
+ * no sleep: workflow.wait.name (or wait.name, workflow.wait.duration) on a span
+ * around the sleep, or a span named "sleep <name>". Undefined when it is not one.
+ */
+function genericWait(span: OtelSpan, a: Attrs): { name?: string } | undefined {
+  const named = str(a, "workflow.wait.name", "wait.name");
+  const m = WAIT_SPAN.exec(span.name);
+  if (!named && !m && str(a, "workflow.wait.duration", "wait.duration") === undefined) return undefined;
+  const name = named ?? (m?.[1]?.trim() || undefined);
+  return name ? { name } : {};
+}
+
+/** Tags a generic wait span; one with no duration (an instant where the sleep began) waits until the run next does something. */
+function asWait(t: Partial0, span: OtelSpan, w: { name?: string }): Partial0 {
+  t.role = "wait";
+  if (w.name) t.step = w.name;
+  if (span.startTimeUnixNano === span.endTimeUnixNano) {
+    t.waitEdge = "start";
+    t.waitName = w.name ?? "sleep";
+  }
+  return t;
+}
 
 /** Session id of a durable run. Vercel run ids are already unique ("wrun_…"); other engines get a prefix. */
 export function durableSessionId(t: Pick<DurableTag, "engine" | "run">): string {
@@ -191,10 +229,9 @@ function vercel(span: OtelSpan, scope: OtelScope, a: Attrs): Partial0 | undefine
   } else if (/\bwait_completed$/.test(name)) {
     t.role = "wait";
     t.waitEdge = "end";
-  } else if (str(a, "workflow.wait.duration", "wait.duration", "workflow.wait.name", "wait.name") !== undefined || /^(workflow\.)?(sleep|wait)\b/i.test(name)) {
-    t.role = "wait";
-    const wait = str(a, "workflow.wait.name", "wait.name") ?? /^(?:workflow\.)?(?:sleep|wait)\s+(.+)$/i.exec(name)?.[1];
-    if (wait) t.step = wait;
+  } else {
+    const w = genericWait(span, a);
+    if (w) asWait(t, span, w);
   }
   return t;
 }
@@ -202,11 +239,17 @@ function vercel(span: OtelSpan, scope: OtelScope, a: Attrs): Partial0 | undefine
 const TEMPORAL_SPAN = /^(StartWorkflow|SignalWithStartWorkflow|UpdateWithStartWorkflow|StartUpdateWithStartWorkflow|RunWorkflow|StartActivity|RunActivity|StartChildWorkflow|ContinueAsNew|HandleSignal|HandleQuery|HandleUpdate|ValidateUpdate|SignalWorkflow|QueryWorkflow|StartWorkflowUpdate|CompleteWorkflow|SignalChildWorkflow|SignalExternalWorkflow|StartNexusOperation|RunStartNexusOperation|RunCancelNexusOperation)(:|$)/;
 
 function temporal(span: OtelSpan, scope: OtelScope, a: Attrs): Partial0 | undefined {
-  if (!scope.name.startsWith("@temporalio/") && !scope.name.startsWith("temporalio") && !TEMPORAL_SPAN.test(span.name)) return undefined;
+  const own = scope.name.startsWith("@temporalio/") || scope.name.startsWith("temporalio") || TEMPORAL_SPAN.test(span.name);
+  // Temporal exports no timer span: a span the workflow wraps around its sleep is
+  // the wait, whatever tracer made it, when it names the run with Temporal's keys.
+  const wait = own ? undefined : str(a, "temporalWorkflowId", "temporalWorkflowID", "workflowId") && str(a, "temporalRunID", "temporalRunId", "runId") ? genericWait(span, a) : undefined;
+  if (!own && !wait) return undefined;
   const wfId = str(a, "temporalWorkflowId", "temporalWorkflowID", "workflowId");
   if (!wfId) return undefined;
   const runId = str(a, "run_id", "temporalRunID", "temporalRunId", "runId");
-  const t: Partial0 = { engine: "temporal", run: runId ? `${wfId}:${runId}` : wfId, role: "other" };
+  // The Python client's StartWorkflow names no run: unkeyed, it takes its trace's (map.ts).
+  const t: Partial0 = { engine: "temporal", run: runId ? `${wfId}:${runId}` : "", role: "other" };
+  if (wait) return asWait(t, span, wait);
   const kind = /^([A-Za-z]+)/.exec(span.name)?.[1] ?? "";
   const type = suffix(span.name, ":");
   const wfType = str(a, "workflowType");
@@ -257,6 +300,9 @@ function inngest(span: OtelSpan, a: Attrs): Partial0 | undefined {
   // sys.function.id is an internal UUID in Inngest 4 (the function's slug never reaches spans).
   const fn = str(a, "sys.function.id");
   if (fn && !UUID.test(fn)) t.workflow = fn;
+  // A span the user wraps around step.sleep (Inngest exports no sleep), even inside the step that ends it.
+  const wait = span.name === "inngest.execution" ? undefined : genericWait(span, a);
+  if (wait) return asWait(t, span, wait);
   const stepId = str(a, "inngest.step.id");
   if (stepId) {
     t.role = "step";
@@ -292,21 +338,29 @@ function restate(span: OtelSpan, a: Attrs): Partial0 | undefined {
   else if (name.startsWith("invocation-attempt")) {
     t.role = "invocation";
     let open: { step: string; at: number } | undefined;
+    const journal: { step?: string; at: number; end?: number }[] = [];
     for (const e of span.events) {
       if (!e.name.startsWith(RESTATE_EVENT)) continue;
       const what = e.name.slice(RESTATE_EVENT.length);
       const type = str(e.attributes, "restate.journal.command.type");
       const cmd = str(e.attributes, "restate.journal.command.name");
       const at = nanosToMs(e.timeUnixNano);
-      if (what === "new_command" && type === "Command/Run" && cmd) open = { step: cmd, at };
-      else if (what === "run_ended") open = undefined;
-      else if (what === "new_command" && type === "Command/Sleep") {
+      if (what === "new_command" && type === "Command/Run") {
+        open = { step: cmd ?? "run", at };
+        journal.push({ ...open });
+      } else if (what === "run_ended") {
+        const last = journal[journal.length - 1];
+        if (open && last && last.end === undefined) last.end = at;
+        else journal.push({ at: nanosToMs(span.startTimeUnixNano), end: at });
+        open = undefined;
+      } else if (what === "new_command" && type === "Command/Sleep") {
         t.waitEdge = "start";
         t.waitAt = at;
         t.waitName = cmd ?? "sleep";
       }
     }
     if (open && span.status.code === 2) t.inFlight = open;
+    if (journal.length) t.journal = journal;
   } else if (name.startsWith("attempt ")) t.role = "invocation";
   else if (runName || name.startsWith("run")) {
     t.role = "step";
@@ -345,7 +399,15 @@ function dbos(span: OtelSpan, scope: OtelScope, a: Attrs): Partial0 | undefined 
         return f;
       });
     if (failures.length) t.failures = failures;
-  } else if (span.name === "sleep") t.role = "wait";
+  } else if (span.name === "sleep" && str(a, "workflow.wait.name", "wait.name") === undefined) {
+    // DBOS Python's own sleep span is the checkpoint write as DBOS.sleep begins: the wait starts there.
+    t.role = "wait";
+    t.waitEdge = "start";
+    t.waitName = "sleep";
+  } else {
+    const w = genericWait(span, a);
+    if (w) asWait(t, span, w);
+  }
   if (a.cached === true) t.replay = true;
   return t;
 }
