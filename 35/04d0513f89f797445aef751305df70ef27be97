@@ -1,0 +1,36 @@
+packages/coding.sh/src/core/tool-paths.ts
+  s_8e040dbdf13565::t_99d7302da349bd 1-19
+apps/site/src/pages/docs/evals.astro
+  s_8e040dbdf13565::t_a1808a8e7784e2 133
+CHANGELOG.md
+  s_8e040dbdf13565::t_a1808a8e7784e2 33
+packages/coding.sh/test/judge/predicates.test.ts
+  s_8e040dbdf13565::t_e38e6348bbeafc 81-95
+packages/coding.sh/test/core/rules.test.ts
+  s_8e040dbdf13565::t_e38e6348bbeafc 128-169
+packages/coding.sh/src/core/exposure.ts
+  s_8e040dbdf13565::t_7d7a3e630d3617 9,107-116,135,138,143,149-160,167,179,190
+docs/guides/evals.md
+  s_8e040dbdf13565::t_a1808a8e7784e2 228-235
+packages/coding.sh/src/core/rules.ts
+  s_8e040dbdf13565::t_7d7a3e630d3617 9-15,18-20,29-35,48-49,83-84,120,163-166,170-174,176-177,260-265,280-291,295
+packages/coding.sh/src/judge/predicates.ts
+  s_8e040dbdf13565::t_23222704c496eb 282-283,285
+  s_8e040dbdf13565::t_293f2520a31706 294-299,302
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3504d0513f89f797445aef751305df70ef27be97",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
