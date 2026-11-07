@@ -88,11 +88,18 @@ describe("runToolExperiment cancellation", () => {
     assert.deepEqual(readdirSync(r.dir).sort(), ["experiment.json"], "no trial dir, no trials.jsonl");
     const pids = readFileSync(pidFile, "utf8").trim().split("\n").map(Number);
     assert.equal(pids.length, 1, "no trial started after the abort");
+    // The agent is a grandchild (/bin/sh forks it): once killed it stays a
+    // zombie, still answering signal 0, until init reaps it, which can lag on
+    // a loaded machine. A surviving agent would sleep for 30 s.
+    const until = Date.now() + 3000;
     let alive = true;
-    try {
-      process.kill(pids[0]!, 0);
-    } catch {
-      alive = false;
+    while (alive && Date.now() < until) {
+      try {
+        process.kill(pids[0]!, 0);
+        await new Promise((res) => setTimeout(res, 20));
+      } catch {
+        alive = false;
+      }
     }
     assert.equal(alive, false, "agent killed");
     const runs = await index.listRuns({ experimentId: r.experimentId });
