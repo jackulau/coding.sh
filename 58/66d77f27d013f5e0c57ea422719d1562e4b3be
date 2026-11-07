@@ -48,6 +48,7 @@ packages/coding.sh/src/adapters/opencode.ts
   s_8e040dbdf13565::t_0548daca3c6ab7 16
 packages/coding.sh/test/core/snapshot.test.ts
   s_8e040dbdf13565::t_7555c91ed58fe7 177-178,293,296,298
+  s_8e040dbdf13565::t_42c735d473bd2f 294-295
 packages/coding.sh/test/mcp/helpers.ts
   s_8e040dbdf13565::t_4a84bb2667a9e1 4,38
 packages/coding.sh/test/adapters/more/amp.test.ts
