@@ -489,7 +489,8 @@ export const claudeCode: Adapter = {
   displayName: "Claude Code",
   tier: "A",
   // 2 (0.1.2): one session.end (idle end) and one compaction across hooks and backfill.
-  parseVersion: 2,
+  // 3 (0.1.2): file.change from Bash edits.
+  parseVersion: 3,
 
   detect() {
     const dir = claudeConfigDir();

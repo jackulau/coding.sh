@@ -269,7 +269,7 @@ export function unifiedDiff(path: string, before: string, after: string, op: "ad
 }
 
 /** Claude Code's structuredPatch ([{oldStart, oldLines, newStart, newLines, lines}]) as a unified diff. */
-export function structuredPatchDiff(path: string, patch: unknown, op: "add" | "modify" = "modify"): string | undefined {
+export function structuredPatchDiff(path: string, patch: unknown, op: "add" | "modify" | "delete" = "modify"): string | undefined {
   if (!Array.isArray(patch) || !patch.length) return undefined;
   const out: string[] = [];
   for (const h of patch) {

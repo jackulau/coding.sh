@@ -85,6 +85,26 @@ describe("file-change derivation", () => {
     assert.deepEqual(fileChangesOf("Read", { file_path: "/w/a" }), []);
   });
 
+  it("Claude Code Bash edits (toolUseResult.bashEditDiff) → one change per file", () => {
+    const diff = {
+      files: [
+        { filePath: "/w/notes.txt", hunks: [{ oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, lines: ["-alpha", "+beta", " bravo"] }] },
+        { filePath: "/w/gen.txt", created: true, hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 2, lines: ["+one", "+two"] }] },
+        { filePath: "/w/old.txt", deleted: true, hunks: [{ oldStart: 1, oldLines: 1, newStart: 0, newLines: 0, lines: ["-x"] }] },
+      ],
+      moreFiles: 1,
+      changedFiles: ["/w/notes.txt", "/w/gen.txt", "/w/old.txt", "/w/big.bin"],
+    };
+    assert.deepEqual(fileChangesOf("Bash", { command: "sh edit.sh" }, { stdout: "", bashEditDiff: diff }, "/w"), [
+      { path: "notes.txt", op: "modify", additions: 1, deletions: 1, diff: "--- a/notes.txt\n+++ b/notes.txt\n@@ -1,2 +1,2 @@\n-alpha\n+beta\n bravo\n" },
+      { path: "gen.txt", op: "add", additions: 2, deletions: 0, diff: "--- /dev/null\n+++ b/gen.txt\n@@ -0,0 +1,2 @@\n+one\n+two\n" },
+      { path: "old.txt", op: "delete", additions: 0, deletions: 1, diff: "--- a/old.txt\n+++ /dev/null\n@@ -1,1 +0,0 @@\n-x\n" },
+      { path: "big.bin", op: "modify" },
+    ]);
+    assert.deepEqual(fileChangesOf("Bash", { command: "x" }, { bashEditDiff: { unavailable: true, files: [] } }, "/w"), []);
+    assert.deepEqual(fileChangesOf("Bash", { command: "ls" }, { stdout: "a" }, "/w"), [], "no diff, no change");
+  });
+
   it("unwraps shell commands", () => {
     assert.equal(shellCommandOf("shell", { command: ["bash", "-lc", "npm test"] }), "npm test");
     assert.equal(shellCommandOf("Bash", { command: "ls -la" }), "ls -la");

@@ -104,6 +104,7 @@ export function fileChangesOf(tool: string, input: unknown, output?: unknown, cw
     return [{ path: relPath(path, cwd), op: "modify" }];
   }
   if (DELETE_TOOLS.has(t) && path) return [{ path: relPath(path, cwd), op: "delete" }];
+  if (SHELL_TOOLS.has(t) && isObj(out.bashEditDiff)) return bashEditChanges(out.bashEditDiff, cwd);
   if (PATCH_TOOLS.has(t)) {
     const text = patchTextOf(input);
     if (!text) return [];
@@ -111,6 +112,43 @@ export function fileChangesOf(tool: string, input: unknown, output?: unknown, cw
     return parsePatch(text).map((c) => withDiff({ ...c, path: relPath(c.path, cwd) }, diffs.get(c.path)));
   }
   return [];
+}
+
+/**
+ * Files a Claude Code Bash call changed (`sed -i`, a heredoc, `tee`, a script),
+ * from its result's `bashEditDiff`: `files[{filePath, hunks, created?, deleted?}]`
+ * with structuredPatch-style hunks, plus `changedFiles` naming every changed
+ * path when `files` was cut short (`moreFiles` > 0). `unavailable: true` (no
+ * diff could be taken) gives nothing. Hooks see the same object as tool_response.
+ */
+function bashEditChanges(diff: Record<string, unknown>, cwd?: string): FileChangeInfo[] {
+  if (diff.unavailable === true) return [];
+  const out: FileChangeInfo[] = [];
+  const seen = new Set<string>();
+  for (const f of arr(diff.files)) {
+    const o = obj(f);
+    const path = str(o.filePath);
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    const rel = relPath(path, cwd);
+    const op = o.created === true ? "add" : o.deleted === true ? "delete" : "modify";
+    let additions = 0;
+    let deletions = 0;
+    for (const h of arr(o.hunks)) {
+      for (const l of arr(obj(h).lines)) {
+        if (typeof l !== "string") continue;
+        if (l.startsWith("+")) additions++;
+        else if (l.startsWith("-")) deletions++;
+      }
+    }
+    out.push(withDiff({ path: rel, op, additions, deletions }, structuredPatchDiff(rel, o.hunks, op)));
+  }
+  for (const p of arr(diff.changedFiles)) {
+    if (typeof p !== "string" || !p || seen.has(p)) continue;
+    seen.add(p);
+    out.push({ path: relPath(p, cwd), op: "modify" });
+  }
+  return out;
 }
 
 export interface DerivedOpts {
@@ -146,7 +184,8 @@ export async function clipDiff(ctx: Emitter["ctx"], diff: string | undefined): P
  * live and in a backfilled transcript dedupes.
  */
 export async function emitDerived(em: Emitter, o: DerivedOpts): Promise<void> {
-  if (o.ok) {
+  // A shell call that failed after editing files still edited them (Claude Code's bashEditDiff says which).
+  if (o.ok || isObj(obj(o.output).bashEditDiff)) {
     for (const c of fileChangesOf(o.tool, o.input, o.output, o.cwd)) {
       const d = await clipDiff(em.ctx, c.diff);
       em.emit(

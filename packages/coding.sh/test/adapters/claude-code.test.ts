@@ -235,3 +235,36 @@ describe("claude-code transcript service tier", () => {
     assert.ok(!("cacheWrite1hTokens" in split.payload));
   });
 });
+
+describe("claude-code Bash edits", () => {
+  const TS = "2026-11-07T20:48:10.000Z";
+  const convert = async (lines: Record<string, unknown>[], mode: "full" | "assistant" = "full", sidechain = false) => {
+    const { ctx } = testCtx();
+    const conv = new ClaudeTranscriptConverter(ctx, { agent: "claude-code", mode, sessionId: "cc-h", source: "cc-h.jsonl", ...(sidechain ? { sidechain: true } : {}) });
+    for (const [i, l] of lines.entries()) await conv.add(l, i + 1);
+    const events = await conv.finish();
+    assertWellFormed(events);
+    return events;
+  };
+
+  it("a Bash call that edited files and then failed still reports the edits", async () => {
+    const events = await convert([
+      { type: "user", uuid: "u1", timestamp: TS, cwd: "/w", message: { role: "user", content: "go" } },
+      { type: "assistant", uuid: "a1", timestamp: TS, cwd: "/w", message: { id: "m1", role: "assistant", model: "claude-sonnet-4-5", content: [{ type: "tool_use", id: "toolu_b", name: "Bash", input: { command: "sed -i s/a/b/ x.txt && false" } }], usage: { input_tokens: 5, output_tokens: 2 } } },
+      {
+        type: "user",
+        uuid: "u2",
+        timestamp: TS,
+        cwd: "/w",
+        message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_b", content: "Exit code 1", is_error: true }] },
+        toolUseResult: { stdout: "", stderr: "", bashEditDiff: { files: [{ filePath: "/w/x.txt", hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, lines: ["-a", "+b"] }] }], moreFiles: 0, changedFiles: ["/w/x.txt"] } },
+      },
+    ]);
+    const end = events.find((e) => e.kind === "tool.end")!;
+    assert.equal(end.payload.ok, false);
+    assert.deepEqual(
+      events.filter((e) => e.kind === "file.change").map((e) => [e.payload.path, e.payload.op, e.payload.additions, e.payload.deletions]),
+      [["x.txt", "modify", 1, 1]],
+    );
+  });
+});
