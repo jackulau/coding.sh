@@ -654,14 +654,15 @@ export async function emitToolEnd(em: Emitter, ctx: NormalizeContext, a: ToolEnd
   const out = await clip(ctx, text ?? a.output);
   const payload: Json = { tool: a.tool, toolUseId: a.toolUseId, ok: a.ok, durationMs: a.durationMs, output: out.value, error: a.error };
   em.push("tool.end", payload, { ...(a.durationMs !== undefined ? { durationMs: a.durationMs } : {}), ...a.extra, blobs: [...(a.extra?.blobs ?? []), ...(out.blob ? [out.blob] : [])], ...toolKey(em, a.toolUseId) });
-  if (a.ok) for (const f of fileTouches(a.tool, a.input, cwd)) emitFileChange(em, { path: f.path, op: f.op, tool: a.tool, toolUseId: a.toolUseId }, a.extra);
+  // Keyed by the path as the call gave it: the two capture paths may know different cwds.
+  if (a.ok) for (const f of fileTouches(a.tool, a.input)) emitFileChange(em, { path: relPath(f.path, cwd), op: f.op, tool: a.tool, toolUseId: a.toolUseId }, a.extra, f.path);
   const tr = testResultFor(a.input, text);
   if (tr) em.push("test.result", { ...tr, toolUseId: a.toolUseId }, { ...a.extra, ...toolKey(em, a.toolUseId) });
 }
 
-/** file.change of a tool call, keyed like the rest of the call. */
-export function emitFileChange(em: Emitter, payload: { path: string; op: string; tool?: string | undefined; toolUseId?: string | undefined }, extra: EventExtra = {}): void {
-  em.push("file.change", payload, { ...extra, ...toolKey(em, payload.toolUseId, payload.path) });
+/** file.change of a tool call, keyed like the rest of the call plus the path as the call named it (`keyPath`). */
+export function emitFileChange(em: Emitter, payload: { path: string; op: string; tool?: string | undefined; toolUseId?: string | undefined }, extra: EventExtra = {}, keyPath = payload.path): void {
+  em.push("file.change", payload, { ...extra, ...toolKey(em, payload.toolUseId, keyPath) });
 }
 
 /** tool.start with a clipped input. */

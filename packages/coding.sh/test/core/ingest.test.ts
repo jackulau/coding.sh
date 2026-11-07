@@ -404,6 +404,49 @@ describe("ingest", () => {
     assert.deepEqual([again.events, again.duplicates], [0, 2]);
   });
 
+  it("stores one session.start and session.end across live and backfill, in either order", async () => {
+    const base = 1_700_000_000_000;
+    const ev = (sessionId: string, kind: EventKind, ts: number, payload: Record<string, unknown> = {}): AgentEvent => ({ id: `t-${sessionId}-${kind}-${ts}`, v: 0, sessionId, ts: base + ts, agent: "fake", kind, payload });
+    const historian = (events: AgentEvent[]): Adapter => ({
+      ...fakeAdapter,
+      id: "hist",
+      async *backfill() {
+        yield* events;
+      },
+    });
+    const kinds = async (index: MemoryIndexStore, id: string) => (await index.listEvents(id)).map((e) => `${e.kind}:${e.source}`);
+
+    // Live first: the transcript's start and idle end are copies; a child's start that alone links its parent is kept.
+    const t = setup();
+    t.write(
+      t.line({ session: "a", kind: "session.start" }, { ts: base + 1000 }),
+      t.line({ session: "a", kind: "notification" }, { ts: base + 2000 }),
+      t.line({ session: "a", kind: "session.end" }, { ts: base + 3000 }),
+      t.line({ session: "c", kind: "session.start" }, { ts: base + 4000 }),
+    );
+    await ingest({ config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env });
+    const r = await backfill({ config: t.config, index: t.index, blobs: t.blobs, env: t.env, adapters: [historian([ev("a", "session.start", 1500), ev("a", "session.end", 2500), ev("c", "session.start", 4000, { parentSessionId: "a" })])] });
+    assert.deepEqual([r.events, r.duplicates], [1, 2]);
+    assert.deepEqual(await kinds(t.index, "a"), ["session.start:hook", "notification:hook", "session.end:hook"]);
+    assert.deepEqual(await kinds(t.index, "c"), ["session.start:hook", "session.start:transcript"]);
+
+    // Backfill first: the hook's start is a copy, and so is its end with nothing after the
+    // transcript's idle end; a session resumed after that idle end keeps its live end.
+    const u = setup();
+    await backfill({ config: u.config, index: u.index, blobs: u.blobs, env: u.env, adapters: [historian(["b", "r"].flatMap((s) => [ev(s, "session.start", 500), ev(s, "notification", 600), ev(s, "session.end", 900)]))] });
+    u.write(
+      u.line({ session: "b", kind: "session.start" }, { ts: base + 1000 }),
+      u.line({ session: "b", kind: "session.end" }, { ts: base + 60_000 }),
+      u.line({ session: "r", kind: "session.start" }, { ts: base + 1000 }),
+      u.line({ session: "r", kind: "notification" }, { ts: base + 120_000 }),
+      u.line({ session: "r", kind: "session.end" }, { ts: base + 130_000 }),
+    );
+    await ingest({ config: u.config, index: u.index, blobs: u.blobs, adapters, env: u.env });
+    assert.deepEqual(await kinds(u.index, "b"), ["session.start:transcript", "notification:transcript", "session.end:transcript"]);
+    assert.deepEqual(await kinds(u.index, "r"), ["session.start:transcript", "notification:transcript", "session.end:transcript", "notification:hook", "session.end:hook"]);
+    assert.equal((await u.index.getSession("r"))!.endedAt, base + 130_000);
+  });
+
   it("does nothing when there is no spool", async () => {
     const t = setup();
     rmSync(join(t.env.CODING_SH_HOME, "spool"), { recursive: true });

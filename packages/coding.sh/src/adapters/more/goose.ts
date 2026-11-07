@@ -147,7 +147,7 @@ export async function normalizeGoose(line: SpoolLine, ctx: NormalizeContext): Pr
       if (!p) break;
       // No call id on this hook: the tool request in sessions.db has it.
       const id = toolUseId ?? (await gooseSession(sessionId, line.ts))?.toolUseId(tool, raw.tool_input, line.ts);
-      emitFileChange(em, { path: relPath(p, cwd), op: "modify", tool, toolUseId: id });
+      emitFileChange(em, { path: relPath(p, cwd), op: "modify", tool, toolUseId: id }, {}, p);
       break;
     }
     case "Stop": {

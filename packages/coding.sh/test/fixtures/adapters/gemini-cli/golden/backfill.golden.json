@@ -56,7 +56,8 @@
     "sessionId": "gem-sub-1",
     "ts": 1789984802800,
     "payload": {},
-    "id": "7932509b9349a7cd8300fe21fa29b4087cca0518a7bbfeba797184de7349344f",
+    "id": "aa3e9978afde18b977e715d5f3ebf01802cc75b09602645879d25271c3b83a96",
+    "turnId": "b352b702e6d7c3a2abce5997d6b6421a9acc8ebe7413655926b5b9558978edb1",
     "cwd": "/work/demo"
   },
   {
@@ -149,7 +150,7 @@
       },
       "verify": true
     },
-    "id": "eb629cd08f9e16b013c9d767694865c01f859107ba267e969f067fcff67df81b",
+    "id": "9556f6cea9e3787d12e075d363e571890b5d45bad4981e6b37ab1e5e287d0338",
     "model": "gemini-2.5-pro",
     "cwd": "/work/demo"
   },
@@ -163,7 +164,7 @@
       "ok": true,
       "output": "# pass 3\n# fail 1"
     },
-    "id": "4662cfe25e2feef92a42ed48816ce3dacf3273b371a40378ce9009ebd4fbdd9d",
+    "id": "a5bc6ee96897c1d4e6838ac7ab9e844b3ea7b3dd4152688dcd0c4c69c4f107b9",
     "model": "gemini-2.5-pro",
     "cwd": "/work/demo"
   },
@@ -177,7 +178,7 @@
       "failed": 1,
       "toolUseId": "tc1"
     },
-    "id": "674c3ad153393f72f3f3f2a9ae6f9f8525128f1a7058294fcc134c45bd28df94",
+    "id": "bf0c2d404287f70715f2e52c8d17e2dd255814759930e3afdea307a8356cca34",
     "model": "gemini-2.5-pro",
     "cwd": "/work/demo"
   },
@@ -223,7 +224,7 @@
         "new_string": "a + b"
       }
     },
-    "id": "949de885fe19bc9a41f105de365e00e3fe4415da699d7efbc0f490470017545d",
+    "id": "fbbf743cab68c6d9ed6b17565732358febe366916a3915cc20f5669bf8b7ba7d",
     "model": "gemini-2.5-pro",
     "cwd": "/work/demo"
   },
@@ -237,7 +238,7 @@
       "ok": true,
       "output": "Successfully modified file"
     },
-    "id": "b1fb529e6322bf314c47c4cd127400419e28c765e2a82890db102d5a36c2e86f",
+    "id": "55a1e3a2f9cfa877b96b36f8466e2d9e35c1e9bc34231e67f81fd3dac04b67e6",
     "model": "gemini-2.5-pro",
     "cwd": "/work/demo"
   },
@@ -251,7 +252,7 @@
       "tool": "replace",
       "toolUseId": "tc2"
     },
-    "id": "df9383d41baa27fd0462beef38baae98bb7b6692e85459e5812771e0f64b07c1",
+    "id": "e089ea67e29d5fc781a980fc01669d2521913655061339f1746abee2ea0b193d",
     "model": "gemini-2.5-pro",
     "cwd": "/work/demo"
   },
@@ -266,7 +267,7 @@
         "absolute_path": "/work/demo/nope.ts"
       }
     },
-    "id": "c9aa6db7ff6e265c819e475ecbed34fde6116bfc7f9dde9bb92f86ca2c26893d",
+    "id": "12e48cf5e3e1307490474db041fc5e96e7acde91131f7a8ce07957bbe7fdb7b6",
     "model": "gemini-2.5-pro",
     "cwd": "/work/demo"
   },
@@ -281,7 +282,7 @@
       "output": "File not found",
       "error": "error"
     },
-    "id": "5507447ad1d78285c14c70e63ade83e89509d19584518edc8cd456ce1b9147c9",
+    "id": "8eed06709256b5355e151ad739cad704af2052a9ab72901157db862b1a534de3",
     "model": "gemini-2.5-pro",
     "cwd": "/work/demo"
   },
@@ -290,7 +291,8 @@
     "sessionId": "gem-sess-1",
     "ts": 1789984860000,
     "payload": {},
-    "id": "ade24f7669235ea4f4688a7cf8628f10c104f92ad0f67dc65382075a1e3dac18",
+    "id": "58fe81ffbd2c611fe22360d610c4758499e6095e035371909a32b1ba4e922841",
+    "turnId": "745501b6b9e77540c964cf841c76970da8f067202dd59b5bd465e09bdfdf62ca",
     "cwd": "/work/demo"
   },
   {
@@ -347,7 +349,8 @@
     "sessionId": "gem-sess-1",
     "ts": 1789984862000,
     "payload": {},
-    "id": "db498b02766640f2f2b19a9ef55fbd1cdf189d0af06a213d28c7a750dcd6609f",
+    "id": "927261c551f8e51a098955241b797797d520d9b465617a4b439b4d40e8287a56",
+    "turnId": "b6461c77b7f4bc36fede775c34b9cd67aa0b60ef5b599fab995b278a4a0ca4b6",
     "cwd": "/work/demo"
   },
   {
@@ -400,7 +403,8 @@
     "sessionId": "gem-legacy-1",
     "ts": 1735689602000,
     "payload": {},
-    "id": "558a4518e30ea755ed39fed6a5e9330fb34d87143a27bce63e157673e99cbfce",
+    "id": "975f7d50becb633a3e281e5931192622a49f283730440c75145371f9c67bcda7",
+    "turnId": "a9fd995401d79ea48e36ac4bba3cd82d88268fe52dde34717ac3a115263c458d",
     "cwd": "/work/legacy"
   }
 ]

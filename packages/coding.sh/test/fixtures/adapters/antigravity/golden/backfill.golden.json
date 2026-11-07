@@ -42,7 +42,7 @@
     "ts": 1789984802000,
     "payload": {
       "tool": "write_to_file",
-      "toolUseId": "step-1-0",
+      "toolUseId": "step-2",
       "input": {
         "TargetFile": "/work/demo/src/parse.ts",
         "CodeContent": "if (!s) throw new Error()",
@@ -51,7 +51,7 @@
         "toolSummary": "guard"
       }
     },
-    "id": "4df22beec2c35a9ac0539bb587102b366c5bf5d1bc01d565452289122d81fe69"
+    "id": "c63eddd8b2ef68ec7bd3af417b38cf6e931f10866db035f923d4a0c25738546c"
   },
   {
     "kind": "tool.end",
@@ -59,12 +59,12 @@
     "ts": 1789984802500,
     "payload": {
       "tool": "write_to_file",
-      "toolUseId": "step-1-0",
+      "toolUseId": "step-2",
       "ok": true,
       "durationMs": 500,
       "output": "Created file /work/demo/src/parse.ts"
     },
-    "id": "b400936e830e5902e4c52492f98c6ec1676df184c0a290cd4a3045847a3857f1",
+    "id": "e142b5acda477441e0a509d52feba431755b382d6764a40719c10bc139613280",
     "durationMs": 500
   },
   {
@@ -75,9 +75,9 @@
       "path": "/work/demo/src/parse.ts",
       "op": "modify",
       "tool": "write_to_file",
-      "toolUseId": "step-1-0"
+      "toolUseId": "step-2"
     },
-    "id": "c91dac317c08c95bdfff6dbde8c0fbcf4c9a130435550ee8a54ca4c313e68111"
+    "id": "7af6fad79b1bb0aa212aef5c514191d45385907f32722ed072bebada2b971767"
   },
   {
     "kind": "llm.call",
@@ -95,7 +95,7 @@
     "ts": 1789984803000,
     "payload": {
       "tool": "run_command",
-      "toolUseId": "step-3-0",
+      "toolUseId": "step-4",
       "input": {
         "CommandLine": "npm test",
         "Cwd": "/work/demo",
@@ -104,7 +104,7 @@
       },
       "verify": true
     },
-    "id": "35fe5205402171edd6fcff5169140205db7b4461968f6c9a7297a6957b1ea052"
+    "id": "f6f0348c2acd6f9be9d960a029af66baa3d2866a7ae97e47f157fb5f8541dd7b"
   },
   {
     "kind": "tool.end",
@@ -112,12 +112,12 @@
     "ts": 1789984805000,
     "payload": {
       "tool": "run_command",
-      "toolUseId": "step-3-0",
+      "toolUseId": "step-4",
       "ok": true,
       "durationMs": 2000,
       "output": "# tests 3\n# pass 2\n# fail 1"
     },
-    "id": "f452487e91fc78011d2d7b6bebf9c8531541a8bddf1333c105f84569d6232bd3",
+    "id": "918b2b93881fce68f0985957197ad7bb4e0dc78b7076dcce890324decd5b9830",
     "durationMs": 2000
   },
   {
@@ -128,9 +128,9 @@
       "runner": "node",
       "passed": 2,
       "failed": 1,
-      "toolUseId": "step-3-0"
+      "toolUseId": "step-4"
     },
-    "id": "3375163a59ec4592ba97cc7f3fb4ef1dc77fb5d4992e2c95299cca3c4318621a"
+    "id": "a37840bdc0676ebd582e7f9e94d742b4588dc11c72de8f55e4b194e1e1e746e6"
   },
   {
     "kind": "error",
@@ -155,7 +155,8 @@
     "sessionId": "agy-conv-1",
     "ts": 1789984808000,
     "payload": {},
-    "id": "bd25f9d38c0fcad182452e5469a9b82b033e7dbe656e22796218898a812343ee"
+    "id": "e00068853ebe45740aa0f6a04f5f6ce0bfbf65355832de22ed7f41ffb90e79c9",
+    "turnId": "3e28ccfe9dce7ec44beaffd0126dab78b7dfca3d2ddf8731ed7a73722da5e245"
   },
   {
     "kind": "user.message",
@@ -190,12 +191,12 @@
     "sessionId": "agy-conv-1",
     "ts": 1789984809000,
     "payload": {
-      "subagentId": "step-8-0",
+      "subagentId": "step-9",
       "type": "researcher",
       "description": "Find other parse() callers"
     },
-    "id": "fd081b0adc31bc71a80dfd5cf79f02c06393724a2d060617a88e024b8b16a80c",
-    "subagentId": "step-8-0"
+    "id": "476af5e43c17365e9e4daecb2960ab75e6b486fa6cc931d8b5c36f82ddfa59d1",
+    "subagentId": "step-9"
   },
   {
     "kind": "tool.start",
@@ -203,13 +204,13 @@
     "ts": 1789984809000,
     "payload": {
       "tool": "invoke_subagent",
-      "toolUseId": "step-8-0",
+      "toolUseId": "step-9",
       "input": {
         "name": "researcher",
         "task": "Find other parse() callers"
       }
     },
-    "id": "28cdb270934cec2f335586d0a732cc16240d58c5489722ae94cb477550135ec2"
+    "id": "88935e41a4a5a488b64ff27de98c9501c6374b817bb4d27d2ca27b3d21722f8d"
   },
   {
     "kind": "tool.end",
@@ -217,12 +218,12 @@
     "ts": 1789984812000,
     "payload": {
       "tool": "invoke_subagent",
-      "toolUseId": "step-8-0",
+      "toolUseId": "step-9",
       "ok": true,
       "durationMs": 3000,
       "output": "No other callers."
     },
-    "id": "089a6964c5854f658c26c62b42d08dbc238797cf61ccfd321c4cc3f6e2ed1e8f",
+    "id": "746db9f6de907a9b692383f01d77911ac7c916e10605e0897f6c986dab52449a",
     "durationMs": 3000
   },
   {
@@ -230,12 +231,12 @@
     "sessionId": "agy-conv-1",
     "ts": 1789984812000,
     "payload": {
-      "subagentId": "step-8-0",
+      "subagentId": "step-9",
       "type": "researcher",
       "ok": true
     },
-    "id": "234bca8c4d349b9f43ffbfa8c43efbc7df0dab777671420f97e29d2f57846315",
-    "subagentId": "step-8-0",
+    "id": "ba19cdb136c26b148572b37341a8a1357ff22802c0dd03c0ea54769649d502f9",
+    "subagentId": "step-9",
     "durationMs": 3000
   },
   {
@@ -262,6 +263,7 @@
     "sessionId": "agy-conv-1",
     "ts": 1789984813000,
     "payload": {},
-    "id": "21200361589426eaf3ee90ee709a2606e1afae9d82cc9b6cc77c6e65dca26f83"
+    "id": "6f9673d91400c073d79275a51e38c307c3cadee55edd203b74c9a41057a64ef2",
+    "turnId": "5a57e54636e3440e3505e249b814f7584d1893f39bbb087ea265244e205288b9"
   }
 ]

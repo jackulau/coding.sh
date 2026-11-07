@@ -52,11 +52,13 @@ import {
   parseJsonc,
   rawBlob,
   readJsonObject,
+  jsonlTail,
   readJsonl,
   readText,
   runEnv,
   spawnAgent,
   spoolIdParts,
+  stableJson,
   str,
   stripClaudeHooks,
   textOf,
@@ -109,10 +111,12 @@ export async function normalizeGemini(line: SpoolLine, ctx: NormalizeContext): P
   const cwd = str(raw.cwd) ?? line.cwd;
   const ts = toMs(raw.timestamp) ?? line.ts;
   const model = str(get(raw, "llm_request", "model"));
-  const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, runId: line.runId, model }, spoolIdParts(line, sessionId, ctx));
+  const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, runId: line.runId, model }, spoolIdParts(line, sessionId, ctx), { toolKeys: true });
   const ev = str(raw.hook_event_name) ?? line.event;
   const tool = str(raw.tool_name) ?? "unknown";
-  const toolUseId = str(raw.tool_call_id) ?? str(raw.tool_use_id);
+  const transcript = str(raw.transcript_path);
+  // Tool hooks carry no call id: the chat file's record of the call has it.
+  const toolUseId = str(raw.tool_call_id) ?? str(raw.tool_use_id) ?? (TOOL_EVENTS.has(ev) ? geminiToolUseId(transcript, tool, raw.tool_input, ts) : undefined);
   switch (ev) {
     case "SessionStart":
       em.push("session.start", { source: str(raw.source), transcriptPath: str(raw.transcript_path) });
@@ -128,7 +132,7 @@ export async function normalizeGemini(line: SpoolLine, ctx: NormalizeContext): P
     case "AfterAgent": {
       const r = str(raw.prompt_response);
       if (r) await emitText(em, ctx, "assistant.message", r);
-      em.push("turn.end", { stopHookActive: raw.stop_hook_active === true ? true : undefined });
+      em.turnEnd({ stopHookActive: raw.stop_hook_active === true ? true : undefined }, geminiTurnKey(transcript, ts));
       break;
     }
     case "BeforeTool":
@@ -166,6 +170,51 @@ export async function normalizeGemini(line: SpoolLine, ctx: NormalizeContext): P
 }
 
 // ---------------------------------------------------------------- transcripts
+
+const geminiChats = new Map<string, { records: number; messages: Json[] }>();
+
+/** A chat file's messages, replayed again only when the file grew. */
+function geminiChatMessages(path: string | undefined): Json[] {
+  if (!path?.endsWith(".jsonl")) return [];
+  const records = jsonlTail<Json>("gemini-chat", path, (r) => [r]);
+  const hit = geminiChats.get(path);
+  if (hit && hit.records === records.length) return hit.messages;
+  const { messages } = replayGeminiChat(records);
+  if (geminiChats.size >= 16) geminiChats.delete(geminiChats.keys().next().value!);
+  geminiChats.set(path, { records: records.length, messages });
+  return messages;
+}
+
+/** Call id of the chat file's call of `tool` with this input nearest to `ts`. */
+export function geminiToolUseId(path: string | undefined, tool: string, input: unknown, ts: number): string | undefined {
+  const key = stableJson(input);
+  let best: string | undefined;
+  let bestGap = Infinity;
+  for (const m of geminiChatMessages(path)) {
+    if (m.type !== "gemini" || !Array.isArray(m.toolCalls)) continue;
+    for (const tc of m.toolCalls.filter(isObj)) {
+      const id = str(tc.id);
+      if (!id || str(tc.name) !== tool || stableJson(tc.args) !== key) continue;
+      const gap = Math.abs((toMs(tc.timestamp) ?? toMs(m.timestamp) ?? ts) - ts);
+      if (gap < bestGap) [best, bestGap] = [id, gap];
+    }
+  }
+  return best;
+}
+
+/**
+ * The turn an AfterAgent hook at `ts` closes, keyed like geminiChatEvents keys
+ * its turn.end: the id of the turn's last model message.
+ */
+export function geminiTurnKey(path: string | undefined, ts: number): string | undefined {
+  let last: string | undefined;
+  for (const m of geminiChatMessages(path)) {
+    if ((toMs(m.timestamp) ?? -Infinity) > ts) break;
+    if (m.type === "user") last = undefined;
+    else if (m.type === "gemini") last = str(m.id);
+  }
+  return last;
+}
 
 /** Text of a stored tool result: Part[] with functionResponse.response {output|error}, or plain text. */
 function toolResultText(result: unknown): string | undefined {
@@ -271,18 +320,22 @@ export async function* geminiChatEvents(file: string, ctx: NormalizeContext, opt
   head.push("session.start", { source: "transcript", kind: str(meta.kind), parentSessionId: parent, subagentId, subagentType, summary: str(meta.summary) });
   out.push(...head.events);
   let sawUser = false;
+  // The turn's last model message keys its turn.end (geminiTurnKey finds the same one for an AfterAgent hook).
+  let last: string | undefined;
   let lastTs = startTs;
   for (const m of messages) {
     const ts = toMs(m.timestamp) ?? lastTs;
     lastTs = ts;
     const model = str(m.model);
-    const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, model }, ["gemini-file", sessionId, str(m.id)!]);
+    const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, model }, ["gemini-file", sessionId, str(m.id)!], { toolKeys: true });
     const text = partsText(m.content).trim();
     if (m.type === "user") {
-      if (sawUser) em.push("turn.end", {});
+      if (sawUser) em.turnEnd({}, last);
       sawUser = true;
+      last = undefined;
       if (text) await emitText(em, ctx, "user.message", text);
     } else if (m.type === "gemini") {
+      last = str(m.id);
       const t = isObj(m.tokens) ? m.tokens : undefined;
       const usage: Usage | undefined = t ? usageFrom({ input: t.input, output: (num(t.output) ?? 0) + (num(t.thoughts) ?? 0), cached: t.cached }) : undefined;
       em.push("llm.call", { provider: "google", responseModel: model, ok: true }, usage ? { usage } : {});
@@ -306,7 +359,7 @@ export async function* geminiChatEvents(file: string, ctx: NormalizeContext, opt
   }
   if (sawUser) {
     const tail = new Emitter(ctx, { agent: ID, sessionId, ts: lastTs, cwd }, ["gemini-file", sessionId, "tail"]);
-    tail.push("turn.end", {});
+    tail.turnEnd({}, last);
     out.push(...tail.events);
   }
   if (parent && subagentId) {

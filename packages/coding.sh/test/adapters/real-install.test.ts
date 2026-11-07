@@ -5,11 +5,16 @@
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
+import { claudeCode } from "../../src/adapters/claude-code.ts";
+import { codex } from "../../src/adapters/codex.ts";
 import { aiderAdapter } from "../../src/adapters/more/aider.ts";
+import { antigravityAdapter } from "../../src/adapters/more/antigravity.ts";
 import { copilotCliAdapter, copilotSessionEvents } from "../../src/adapters/more/copilot-cli.ts";
 import { droidAdapter, droidSessionEvents } from "../../src/adapters/more/droid.ts";
+import { geminiCliAdapter } from "../../src/adapters/more/gemini-cli.ts";
 import { gooseAdapter, gooseDbEvents } from "../../src/adapters/more/goose.ts";
 import { piAdapter } from "../../src/adapters/more/pi.ts";
 import { opencode } from "../../src/adapters/opencode.ts";
@@ -231,11 +236,11 @@ describe("real install: Aider 0.86.2", () => {
 });
 
 // A session the hooks captured live, then `ingest --backfill` from the agent's own history,
-// stores each tool call, model call, prompt, reply and turn once, and counts tokens once.
-// (session.start/session.end stay one per capture path: each carries what its path saw.)
-describe("real install: hook capture + backfill of one session store it once", () => {
-  // Pi's session file is rebuilt from the extension's message_end payloads (same message
-  // objects, entry timestamps at each event); the capture did not keep it.
+// stores each tool call, model call, prompt, reply, turn, start and end once, and counts
+// tokens once.
+describe("hook capture + backfill of one session store it once", () => {
+  // Real installs. Pi's session file is rebuilt from the extension's message_end payloads
+  // (same message objects, entry timestamps at each event); the capture did not keep it.
   const cases: { adapter: Adapter; spool: string; session: string; setup: (root: string) => void }[] = [
     { adapter: piAdapter, spool: "pi/real/extension.spool.jsonl", session: "01a1b4fa-1a11-7283-b288-2d5c05020dce", setup: () => (process.env.PI_CODING_AGENT_DIR = join(FIXTURES, "pi", "real", "home", ".pi", "agent")) },
     {
@@ -249,8 +254,14 @@ describe("real install: hook capture + backfill of one session store it once", (
     },
     { adapter: copilotCliAdapter, spool: "copilot-cli/real/hooks.spool.jsonl", session: "6dfe9f80-9dd6-4735-999d-2c7950f95132", setup: () => (process.env.COPILOT_HOME = join(FIXTURES, "copilot-cli", "real", "home", ".copilot")) },
     { adapter: droidAdapter, spool: "droid/real/hooks.spool.jsonl", session: "d85436df-cb26-457a-b68e-db3d9efef556", setup: () => (process.env.HOME = join(FIXTURES, "droid", "real", "home")) },
+    // Hand-written: Claude Code and Codex hook spools with their transcripts.
+    { adapter: claudeCode, spool: "claude-code/hooks.spool.jsonl", session: "11111111-2222-4333-8444-555555555555", setup: () => (process.env.CLAUDE_CONFIG_DIR = join(FIXTURES, "claude-code", "config")) },
+    { adapter: codex, spool: "codex/hooks.spool.jsonl", session: "0193aaaa-1111-7222-8333-444455556666", setup: () => (process.env.CODEX_HOME = join(FIXTURES, "codex", "home")) },
+    // Hand-written in the documented formats, hooks and transcript of one session (paired/).
+    { adapter: geminiCliAdapter, spool: "gemini-cli/paired/hooks.spool.jsonl", session: "b7e2c4a1-5d3f-4e8a-9c6b-1f2e3d4c5b6a", setup: () => (process.env.GEMINI_CLI_HOME = join(FIXTURES, "gemini-cli", "paired", "home")) },
+    { adapter: antigravityAdapter, spool: "antigravity/paired/hooks.spool.jsonl", session: "3f9a1c2e-7b4d-4e6f-8a1b-2c3d4e5f6a7b", setup: () => (process.env.HOME = join(FIXTURES, "antigravity", "paired", "home")) },
   ];
-  const KINDS = ["user.message", "assistant.message", "llm.call", "tool.start", "tool.end", "file.change", "test.result", "turn.end"];
+  const KINDS = ["session.start", "user.message", "assistant.message", "llm.call", "tool.start", "tool.end", "file.change", "test.result", "subagent.start", "subagent.end", "turn.end", "session.end"];
 
   type Step = "hooks" | "backfill";
   /** Stores the session through `steps` into a fresh index; returns rows per kind and the session. */
@@ -286,14 +297,13 @@ describe("real install: hook capture + backfill of one session store it once", (
       const hooks = await capture(c, ["hooks"]);
       const transcript = await capture(c, ["backfill"]);
       assert.ok(hooks.rows["tool.end"]! > 0 && transcript.rows["tool.end"]! > 0, "both paths see the tool call");
-      // Either path alone has the session's tokens (or none): together they count once.
+      // Either path alone has the session's tokens (or none): together they count once, never summed.
       const tokens = [hooks.usage, transcript.usage].filter((u) => (u.inputTokens ?? 0) > 0);
-      if (tokens.length === 2) assert.deepEqual(hooks.usage, transcript.usage);
       for (const order of [["hooks", "backfill"], ["backfill", "hooks"]] as Step[][]) {
         const both = await capture(c, order);
         const label = `${c.adapter.id} (${order.join(", ")})`;
         assert.deepEqual(both.rows, Object.fromEntries(KINDS.map((k) => [k, Math.max(hooks.rows[k]!, transcript.rows[k]!)])), `${label}: rows per kind`);
-        assert.deepEqual(both.usage, tokens[0] ?? {}, `${label}: tokens`);
+        assert.ok(tokens.length ? tokens.some((u) => isDeepStrictEqual(u, both.usage)) : isDeepStrictEqual(both.usage, {}), `${label}: tokens ${JSON.stringify(both.usage)}`);
         assert.equal(both.turns, transcript.turns, `${label}: turns`);
         assert.equal(both.toolCalls, transcript.toolCalls, `${label}: tool calls`);
         assert.equal(both.again, 0, `${label}: a second backfill is a no-op`);

@@ -127,17 +127,17 @@ describe("antigravity history import with the conversation DB", () => {
       ends.map((e) => [e.payload.tool, e.payload.toolUseId, e.payload.ok, e.payload.error, e.durationMs]),
       [
         // Step 2 is not in the transcript; the DB says it failed. It must not take view_file's result.
-        ["run_command", "step-1-0", false, "exit status 1", 5000],
-        ["view_file", "step-3-0", true, undefined, 1000],
-        ["replace_file_content", "step-5-0", true, undefined, 1000],
-        ["run_command", "step-7-0", true, undefined, 3000],
+        ["run_command", "step-2", false, "exit status 1", 5000],
+        ["view_file", "step-4", true, undefined, 1000],
+        ["replace_file_content", "step-6", true, undefined, 1000],
+        ["run_command", "step-8", true, undefined, 3000],
         // RUNNING: the command went to the background; the model got this result back.
-        ["run_command", "step-9-0", true, undefined, 1000],
+        ["run_command", "step-10", true, undefined, 1000],
       ],
     );
     assert.equal(ends[0]!.model, "gemini-3.8-flash");
-    assert.ok(events.some((e) => e.kind === "tool.start" && e.payload.toolUseId === "step-15-0"), "the call still waiting is a tool.start");
-    assert.ok(!ends.some((e) => e.payload.toolUseId === "step-15-0"));
+    assert.ok(events.some((e) => e.kind === "tool.start" && e.payload.toolUseId === "step-16"), "the call still waiting is a tool.start");
+    assert.ok(!ends.some((e) => e.payload.toolUseId === "step-16"));
     assert.deepEqual(events.filter((e) => e.kind === "file.change").map((e) => e.payload.path), ["src/parse.ts"], "relative to the workspace");
     const tr = events.find((e) => e.kind === "test.result")!;
     assert.deepEqual([tr.payload.passed, tr.payload.failed], [2, 0]);

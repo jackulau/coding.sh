@@ -51,6 +51,7 @@ import {
   isObj,
   isOurCommand,
   jsonLines,
+  jsonlTail,
   mtimeMs,
   num,
   openSqliteCopy,
@@ -146,7 +147,7 @@ export async function normalizeAgy(line: SpoolLine, ctx: NormalizeContext): Prom
   const cwd = ws ?? line.cwd;
   // "auto" is agy's model router, not a model id.
   const model = raw.modelName === "auto" ? undefined : str(raw.modelName);
-  const em = new Emitter(ctx, { agent: ID, sessionId, ts: line.ts, cwd, runId: line.runId, model }, spoolIdParts(line, sessionId, ctx));
+  const em = new Emitter(ctx, { agent: ID, sessionId, ts: line.ts, cwd, runId: line.runId, model }, spoolIdParts(line, sessionId, ctx), { toolKeys: true });
   switch (line.event) {
     case "SessionStart":
       em.push("session.start", { source: "hook", transcriptPath: str(raw.transcriptPath) });
@@ -171,16 +172,16 @@ export async function normalizeAgy(line: SpoolLine, ctx: NormalizeContext): Prom
       const input = commonArgs(args);
       const err = str(raw.error);
       const sub = subagentInfo(tool, id, args);
-      if (sub) em.push("subagent.start", sub, { subagentId: id });
+      if (sub) em.push("subagent.start", sub, { subagentId: id, key: [id] });
       await agyToolStart(em, ctx, tool, id, args);
       await emitToolEnd(em, ctx, { tool, toolUseId: id, input, output: err, ok: !err, error: err }, cwd);
-      if (sub) em.push("subagent.end", { subagentId: id, type: sub.type, ok: !err }, { subagentId: id });
+      if (sub) em.push("subagent.end", { subagentId: id, type: sub.type, ok: !err }, { subagentId: id, key: [id] });
       break;
     }
     case "Stop": {
       const err = str(raw.error);
       if (err) em.push("error", { message: err });
-      em.push("turn.end", { reason: str(raw.terminationReason), fullyIdle: typeof raw.fullyIdle === "boolean" ? raw.fullyIdle : undefined });
+      em.turnEnd({ reason: str(raw.terminationReason), fullyIdle: typeof raw.fullyIdle === "boolean" ? raw.fullyIdle : undefined }, agyTurnKey(agyTranscriptOf(raw, sessionId), line.ts));
       break;
     }
     default:
@@ -377,6 +378,29 @@ async function loadAgyConversation(dbPath: string): Promise<AgyConversation | un
 /** brain/<conversationId>/.system_generated/logs/<file> → conversationId. */
 const agyConversationOf = (file: string): string => basename(dirname(dirname(dirname(file))));
 
+/** A hook's conversation transcript: its transcriptPath, else the conversation's dir in each product's data dir. */
+function agyTranscriptOf(raw: Json, conversationId: string): string | undefined {
+  const given = str(raw.transcriptPath);
+  const dirs = given ? [dirname(given)] : AGY_PRODUCT_DIRS.map((d) => join(home(), ".gemini", d, "brain", conversationId, ".system_generated", "logs"));
+  for (const d of dirs) for (const f of ["transcript_full.jsonl", "transcript.jsonl"]) if (existsSync(join(d, f))) return join(d, f);
+  return undefined;
+}
+
+/**
+ * The turn a Stop hook at `ts` closes, keyed like agyTranscriptEvents keys its
+ * turn.end: the step index of the turn's last planner response.
+ */
+export function agyTurnKey(path: string | undefined, ts: number): number | undefined {
+  if (!path) return undefined;
+  let last: number | undefined;
+  for (const r of jsonlTail("agy-steps", path, (r) => [{ type: r.type, step: num(r.step_index), ts: toMs(r.created_at) }])) {
+    if ((r.ts ?? -Infinity) > ts) break;
+    if (r.type === "USER_INPUT") last = undefined;
+    else if (r.type === "PLANNER_RESPONSE") last = r.step;
+  }
+  return last;
+}
+
 /** One transcript per conversation: transcript_full.jsonl when present (nothing truncated), else transcript.jsonl. */
 export function agyTranscriptFiles(dataDir: string): string[] {
   const found = walkFiles(join(dataDir, "brain"), (n, full) => (n === "transcript.jsonl" || n === "transcript_full.jsonl") && basename(dirname(full)) === "logs" && basename(dirname(dirname(full))) === ".system_generated", 4);
@@ -395,6 +419,8 @@ export async function* agyTranscriptEvents(file: string, ctx: NormalizeContext, 
   const cwd = conv?.cwd;
   let started = false;
   let sawUser = false;
+  // The turn's last planner step keys its turn.end (agyTurnKey finds the same one for a Stop hook).
+  let last: number | undefined;
   let lastTs = mtimeMs(file);
   type Call = { id: string; tool: string; args: unknown; ts: number; resultStep?: number; model?: string };
   // Tool calls of the latest planner step that have no result yet.
@@ -409,7 +435,7 @@ export async function* agyTranscriptEvents(file: string, ctx: NormalizeContext, 
     const durationMs = Math.max(0, ts - call.ts) || undefined;
     await emitToolEnd(em, ctx, { tool: call.tool, toolUseId: call.id, input: commonArgs(call.args), output: output || err, ok: !err, error: err, durationMs }, cwd);
     const sub = subagentInfo(call.tool, call.id, call.args);
-    if (sub) em.push("subagent.end", { subagentId: call.id, type: sub.type, ok: !err }, { subagentId: call.id, durationMs });
+    if (sub) em.push("subagent.end", { subagentId: call.id, type: sub.type, ok: !err }, { subagentId: call.id, durationMs, key: [call.id] });
   };
   /** Ends the calls a newer step left without a result: failed ones from the DB; the rest stay a bare tool.start. */
   const dropPending = async (ts: number): Promise<AgentEvent[]> => {
@@ -417,7 +443,7 @@ export async function* agyTranscriptEvents(file: string, ctx: NormalizeContext, 
     for (const call of pending) {
       const err = call.resultStep !== undefined ? conv?.failedSteps.get(call.resultStep) : undefined;
       if (!err) continue;
-      const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, model: call.model }, ["agy-file", sessionId, call.resultStep!, "failed"]);
+      const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, model: call.model }, ["agy-file", sessionId, call.resultStep!, "failed"], { toolKeys: true });
       await toolEnd(em, call, ts, "", err);
       out.push(...em.events);
     }
@@ -430,7 +456,7 @@ export async function* agyTranscriptEvents(file: string, ctx: NormalizeContext, 
     const stepIdx = num(r.step_index);
     const step = stepIdx ?? `l${lineNo}`;
     const gen = stepIdx !== undefined ? conv?.generations.get(stepIdx) : undefined;
-    const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, model: gen?.model }, ["agy-file", sessionId, step]);
+    const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, model: gen?.model }, ["agy-file", sessionId, step], { toolKeys: true });
     if (!started) {
       em.push("session.start", { source: "transcript" });
       started = true;
@@ -439,20 +465,23 @@ export async function* agyTranscriptEvents(file: string, ctx: NormalizeContext, 
     const dropped = r.type === "GENERIC" ? [] : await dropPending(ts);
     switch (r.type) {
       case "USER_INPUT":
-        if (sawUser) em.push("turn.end", {});
+        if (sawUser) em.turnEnd({}, last);
         sawUser = true;
+        last = undefined;
         const prompt = agyUserText(text);
         if (prompt) await emitText(em, ctx, "user.message", prompt);
         break;
       case "PLANNER_RESPONSE":
+        last = stepIdx;
         llmCall(em, gen && !emitted.has(gen) ? gen : undefined, !str(r.error), str(r.error));
         if (text) await emitText(em, ctx, "assistant.message", text);
         for (const [i, tc] of (Array.isArray(r.tool_calls) ? r.tool_calls.filter(isObj) : []).entries()) {
-          const id = `step-${step}-${i}`;
+          // The id of the tool step that will hold its result: hooks name a call by that step (stepIdx).
+          const id = stepIdx !== undefined ? `step-${stepIdx + 1 + i}` : `step-${step}-${i}`;
           const tool = str(tc.name) ?? "unknown";
           pending.push({ id, tool, args: tc.args, ts, ...(stepIdx !== undefined ? { resultStep: stepIdx + 1 + i } : {}), ...(gen?.model ? { model: gen.model } : {}) });
           const sub = subagentInfo(tool, id, tc.args);
-          if (sub) em.push("subagent.start", sub, { subagentId: id });
+          if (sub) em.push("subagent.start", sub, { subagentId: id, key: [id] });
           await agyToolStart(em, ctx, tool, id, tc.args);
         }
         break;
@@ -477,7 +506,7 @@ export async function* agyTranscriptEvents(file: string, ctx: NormalizeContext, 
     for (const e of [...dropped, ...em.events]) if (since === undefined || e.ts >= since) yield e;
   }
   const tail = new Emitter(ctx, { agent: ID, sessionId, ts: lastTs, cwd }, ["agy-file", sessionId, "tail"]);
-  if (sawUser) tail.push("turn.end", {});
+  if (sawUser) tail.turnEnd({}, last);
   for (const e of [...(await dropPending(lastTs)), ...tail.events]) if (since === undefined || e.ts >= since) yield e;
 }
 

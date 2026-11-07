@@ -38,9 +38,9 @@ describe("antigravity backfill", () => {
     assert.equal(events.filter((e) => e.kind === "turn.end").length, 2);
     assert.equal(events.filter((e) => e.kind === "llm.call").length, 4, "one per planner step");
     const ends = events.filter((e) => e.kind === "tool.end");
-    assert.deepEqual(ends.map((e) => [e.payload.tool, e.payload.toolUseId, e.durationMs]), [["write_to_file", "step-1-0", 500], ["run_command", "step-3-0", 2000], ["invoke_subagent", "step-8-0", 3000]]);
+    assert.deepEqual(ends.map((e) => [e.payload.tool, e.payload.toolUseId, e.durationMs]), [["write_to_file", "step-2", 500], ["run_command", "step-4", 2000], ["invoke_subagent", "step-9", 3000]]);
     const subEnd = events.find((e) => e.kind === "subagent.end")!;
-    assert.deepEqual([subEnd.payload.subagentId, subEnd.payload.type, subEnd.payload.ok, subEnd.durationMs], ["step-8-0", "researcher", true, 3000]);
+    assert.deepEqual([subEnd.payload.subagentId, subEnd.payload.type, subEnd.payload.ok, subEnd.durationMs], ["step-9", "researcher", true, 3000]);
     assert.equal(events.find((e) => e.kind === "file.change")!.payload.path, "/work/demo/src/parse.ts");
     const tr = events.find((e) => e.kind === "test.result")!;
     assert.deepEqual([tr.payload.passed, tr.payload.failed], [2, 1]);

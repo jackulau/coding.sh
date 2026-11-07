@@ -74,7 +74,8 @@ It also runs as a server on SQLite or Postgres, with SDKs for apps that call mod
 - **Capture.** Hooks record prompts, tool calls, file changes, turns and errors to a local spool, then ingest them into sessions.
 - **Capture.** Secrets are redacted before anything is stored. [Privacy](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md).
 - **Capture.** `run` spools secret flag values (`--openai-api-key X`, `--api-key=X`) redacted, and ingest redacts them in any argv.
-- **Capture.** Pi, Goose, Copilot CLI and Droid sessions seen by hooks and by `ingest --backfill` store each call, reply and turn once, and count tokens once.
+- **Capture.** Pi, Goose, Copilot CLI, Droid, Gemini CLI and Antigravity sessions seen by hooks and by `ingest --backfill` store each call, reply and turn once, and count tokens once.
+- **Capture.** A session seen by hooks and by `ingest --backfill` keeps one session start and one end, for every agent.
 - **Capture.** `coding.sh run -- <cmd>` wraps any agent and snapshots the tree before and after in shadow git, not your repo.
 - **Capture.** Every model call becomes an `llm.call` event with model, tokens, duration and time to first token.
 - **Capture.** Subagent starts and ends are captured and linked to their child sessions.
