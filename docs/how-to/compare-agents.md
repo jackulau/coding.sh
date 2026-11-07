@@ -155,6 +155,11 @@ With `--k 2` or more, the report counts each arm's failed runs:
 A `variance` row splits the outcome variance into task, arm and run-to-run shares. If run-to-run is
 bigger than arm, add attempts before reading much into the difference.
 
+An `own tests` row splits failed runs by the agent's own last test run: `A fails 12: own tests green
+7 (58%), red 3, stale 1, none 1`. Green fails are silent misses: the agent's tests passed, the
+verifier's didn't, so its tests checked what it wrote rather than what was asked. Stale means it
+edited files after its last green run.
+
 Cost, token and turn values show `(3/10)` when only some runs reported them. The "X% cheaper" note
 only appears when each arm has a known cost for at least 80% of its runs.
 

@@ -13,6 +13,7 @@ import { paretoSupport, type ParetoOpts, type ParetoSupport } from "../stats/par
 import { failureAnatomy, nestedVarianceShares, type ArmAnatomy, type VarianceShares } from "./anatomy.ts";
 import { diffBundles, formatBundleDiff, type BundleDiff } from "./bundle.ts";
 import { firstDivergence, type Divergence } from "./divergence.ts";
+import { selfCheckSummary, type SelfCheckSummary } from "./selfcheck.ts";
 import type { SnapshotOps } from "./git.ts";
 import { runTask, type AgentRoute } from "./run.ts";
 
@@ -201,6 +202,8 @@ export interface ArmSummary {
   tamperRate: number;
   /** Tampered runs that still passed: passes that may not be earned. */
   tamperedPasses: number;
+  /** Failed runs split by the agent's own last test result (silent misses: own tests green, verifier red). */
+  selfCheck: SelfCheckSummary;
 }
 
 export interface TaskOutcome {
@@ -362,7 +365,7 @@ const METRICS: { key: MetricKey; label: string; unit: MetricDelta["unit"]; get: 
   { key: "ttftP50", label: "TTFT p50", unit: "ms", get: (_r, s) => s?.stats.latency?.ttftP50Ms },
 ];
 
-function arm(results: readonly RunResult[], bundleId: string, name?: string): ArmSummary {
+function arm(results: readonly RunResult[], bundleId: string, name: string | undefined, opts: Pick<CompareOpts, "sessions" | "events">): ArmSummary {
   const passes = results.filter((r) => r.pass).length;
   const checked = results.filter((r) => r.tamper);
   const tampered = checked.filter((r) => r.tamper?.flagged);
@@ -377,6 +380,7 @@ function arm(results: readonly RunResult[], bundleId: string, name?: string): Ar
     tampered: tampered.length,
     tamperRate: checked.length ? tampered.length / checked.length : NaN,
     tamperedPasses: tampered.filter((r) => r.pass).length,
+    selfCheck: selfCheckSummary(results, opts.sessions, opts.events),
   };
 }
 
@@ -472,8 +476,8 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
   const notes: string[] = [];
   if (k > 1) notes.push(`pass-rate intervals (Wilson) treat the ${k} runs per task as independent and are optimistic; the bootstrap CI resamples tasks and is the one to trust`);
   if (unpaired.length) notes.push(`${unpaired.length} task(s) ran in only one arm and are excluded from paired stats`);
-  const sa = arm(A, opts.baseline, opts.bundles?.baseline?.name);
-  const sb = arm(B, opts.candidate, opts.bundles?.candidate?.name);
+  const sa = arm(A, opts.baseline, opts.bundles?.baseline?.name, opts);
+  const sb = arm(B, opts.candidate, opts.bundles?.candidate?.name, opts);
   if (cancelled) notes.push(`${cancelled} run(s) were cancelled before they finished and are left out`);
   const errored = [...A, ...B].filter((r) => r.error);
   if (errored.length) {
@@ -792,6 +796,16 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
     const v = r.anatomy.variance;
     out.push(`${pad("variance", W[0] as number)}${Number.isFinite(v.task) ? `task ${share(v.task)} · arm ${share(v.arm)} · run-to-run ${share(v.run)}` : "no variance (every run had the same outcome)"}`);
   }
+  // Only arms with a failed run whose own test result is known.
+  const self = (["A", "B"] as const).map((k) => [k, k === "A" ? r.baseline.selfCheck : r.candidate.selfCheck] as const).filter(([, s]) => s && s.fails > s.unknown);
+  self.forEach(([k, s], i) => {
+    const rest = (["red", "stale", "none", "unknown"] as const).filter((x) => s[x] > 0).map((x) => `${x} ${s[x]}`);
+    out.push(`${pad(i === 0 ? "own tests" : "", W[0] as number)}${k} fails ${s.fails}: own tests green ${s.green} (${share(s.green / s.fails)})${rest.length ? `, ${rest.join(", ")}` : ""}`);
+    if (s.greenRuns >= 5 && s.otherRuns >= 5) {
+      const ci = (x: Interval) => `${share(x.p)} [${share(x.lo).replace("%", "")}–${share(x.hi)}]`;
+      out.push(dim(`${pad("", W[0] as number)}  own-green runs passed the verifier ${ci(s.greenPassRate)} vs ${ci(s.otherPassRate)} otherwise`));
+    }
+  });
   if (r.tasks.length) {
     out.push("");
     out.push(dim(row(["task", "baseline", "candidate", "first divergence"])));

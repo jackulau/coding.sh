@@ -286,6 +286,16 @@ the other arm solved. Unsolved-by-all is a task neither arm solved; check the ta
 splits the outcome variance into task, arm and run-to-run shares. With `--k 1` these can't be told
 apart, and the report says so.
 
+Compare also splits each arm's failed runs by what the agent's own tests said last, read from the
+run's captured session: `A fails 12: own tests green 7 (58%), red 3, stale 1, none 1`. Green means
+the agent's last test run passed and it changed no file after; stale means it changed files after a
+green run; red means its last run had failures; none means it never ran tests coding.sh could parse.
+Green fails are silent misses: the agent thought it was done. When both groups have at least 5 runs,
+a second line compares how often a run with green own tests passed the verifier with every other
+run (`own-green runs passed the verifier 71% [..] vs 40% [..] otherwise`); in BOBA (arXiv
+2611.02207) a green local run barely changed the hidden-test pass rate. `--json` has the counts and
+both rates under `baseline.selfCheck` and `candidate.selfCheck`.
+
 A cost, token or turn value shows `(3/10)` when only 3 of the arm's 10 runs reported it. The
 "X% cheaper" note needs a known cost for at least 80% of each arm's runs. Below that, the report
 says how many runs were priced instead.

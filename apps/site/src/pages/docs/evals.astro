@@ -266,7 +266,9 @@ const COMPARE = [
     default 0.05), and B may break at most 10% of the tasks A solved (<code>--tau</code>). This is the SAGE accept-or-abstain rule
     (<a href="https://arxiv.org/abs/2609.36043">arXiv 2609.36043</a>). Passes that tampered with tests count as fails for the gate.
     <code>--gate --by suite:</code> also gates each group of tasks (by their first tag with that prefix), so a pooled "Ship it" can't hide
-    one suite collapsing: any group's "Don't ship" blocks.
+    one suite collapsing: any group's "Don't ship" blocks. The report also splits each arm's failed runs by the agent's own last test run
+    (<code>A fails 12: own tests green 7 (58%), red 3, stale 1, none 1</code>): green fails are silent misses, where the agent's tests passed
+    and the verifier's did not.
   </p>
   <p id="promote">
     <code>compare A B --promote</code> keeps a B that is cheaper at the same quality, which the verdict calls "no significant difference". It
