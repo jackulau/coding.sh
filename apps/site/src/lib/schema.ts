@@ -22,7 +22,7 @@ export function breadcrumbSchema(trail: { name: string; path: string }[]) {
       "@type": "ListItem",
       position: i + 1,
       name: item.name,
-      item: `${SITE_URL}${item.path}`,
+      item: new URL(item.path, SITE_URL).toString(),
     })),
   };
 }
@@ -57,5 +57,27 @@ export function organizationSchema() {
     url: SITE_URL,
     logo: `${SITE_URL}/icon-512.png`,
     sameAs: [REPO_URL],
+  };
+}
+
+// One docs page. `path` is the canonical route (/docs/quickstart); dateModified
+// is the last commit to its source (src/lib/lastmod.mjs).
+export function techArticleSchema(page: { path: string; title: string; summary: string; dateModified: string; image?: string }) {
+  const url = new URL(page.path, SITE_URL).toString();
+  return {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "@id": `${url}#article`,
+    headline: page.title,
+    description: page.summary,
+    url,
+    mainEntityOfPage: url,
+    inLanguage: "en-US",
+    dateModified: page.dateModified,
+    image: new URL(page.image ?? "/og-image.png", SITE_URL).toString(),
+    author: { "@type": "Organization", name: SITE.name, url: SITE_URL },
+    publisher: { "@type": "Organization", name: SITE.name, url: SITE_URL, logo: `${SITE_URL}/icon-512.png` },
+    isPartOf: { "@id": `${SITE_URL}/#website` },
+    about: { "@id": `${SITE_URL}/#software` },
   };
 }

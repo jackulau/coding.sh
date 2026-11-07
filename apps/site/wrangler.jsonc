@@ -4,14 +4,24 @@
 // The coding.sh / www.coding.sh custom domains are attached to this worker.
 // Rollback: `npx wrangler rollback` (previous version) — or reattach the domains
 // to the old `coding-sh-placeholder` worker.
+//
+// worker/index.ts runs first on every request: www and http 301 to
+// https://coding.sh, /sitemap.xml points at the sitemap index, /404 gets a 404
+// status. Everything else falls through to the static assets (and _headers).
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "coding-sh-site",
   "compatibility_date": "2026-11-01",
+  "main": "worker/index.ts",
   "assets": {
     "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": true,
     "not_found_handling": "404-page",
-    "html_handling": "auto-trailing-slash"
+    // Pages live at /docs/quickstart (no trailing slash): the form every
+    // internal link, the canonical tags and the sitemap use (trailingSlash:
+    // "never" in astro.config.mjs). /docs/quickstart/ redirects to it.
+    "html_handling": "drop-trailing-slash"
   },
   "routes": [
     { "pattern": "coding.sh", "custom_domain": true },

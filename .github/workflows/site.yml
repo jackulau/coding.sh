@@ -30,6 +30,9 @@ jobs:
       url: https://coding.sh
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history: each sitemap <lastmod> is the last commit to that page's source.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -66,7 +69,14 @@ jobs:
       - name: Smoke test
         if: steps.creds.outputs.ok == 'true'
         run: |
-          for p in / /docs/quickstart/ /install /llms.txt; do
+          for p in / /docs/quickstart /install /llms.txt; do
             code=$(curl -s -o /dev/null -w "%{http_code}" "https://coding.sh$p")
             echo "$p $code"; [ "$code" = 200 ] || exit 1
           done
+
+      # Ping IndexNow (Bing, Yandex and others) with every URL in the live sitemap.
+      - name: IndexNow
+        if: steps.creds.outputs.ok == 'true'
+        continue-on-error: true
+        working-directory: apps/site
+        run: node scripts/indexnow.mjs

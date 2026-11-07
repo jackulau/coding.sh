@@ -41,8 +41,8 @@ export const DOC_GROUPS: DocGroup[] = [
       {
         path: "/docs/quickstart",
         label: "Quickstart",
-        title: "Quickstart: coding agents",
-        summary: "Install capture hooks into Claude Code, Codex and other coding agents, then list, inspect and search sessions.",
+        title: "Quickstart",
+        summary: "Record Claude Code, Codex and other coding agents with no code changes, then list, inspect and search their sessions.",
       },
     ],
   },

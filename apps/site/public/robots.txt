@@ -1,68 +1,9 @@
 # coding.sh
 #
-# Everything here is public and meant to be read — by people, search crawlers,
-# and AI agents alike. The named agents below are listed explicitly because
-# several of them ignore a wildcard Allow and look for their own token.
+# Everything here is public and meant to be read, by people, search crawlers
+# and AI agents alike.
 
 User-agent: *
-Allow: /
-
-# Answer engines / assistant browsing
-User-agent: GPTBot
-Allow: /
-
-User-agent: OAI-SearchBot
-Allow: /
-
-User-agent: ChatGPT-User
-Allow: /
-
-User-agent: ClaudeBot
-Allow: /
-
-User-agent: Claude-User
-Allow: /
-
-User-agent: Claude-SearchBot
-Allow: /
-
-User-agent: anthropic-ai
-Allow: /
-
-User-agent: PerplexityBot
-Allow: /
-
-User-agent: Perplexity-User
-Allow: /
-
-User-agent: Google-Extended
-Allow: /
-
-User-agent: Applebot
-Allow: /
-
-User-agent: Applebot-Extended
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
-User-agent: Amazonbot
-Allow: /
-
-User-agent: DuckAssistBot
-Allow: /
-
-User-agent: meta-externalagent
-Allow: /
-
-User-agent: cohere-ai
-Allow: /
-
-User-agent: YouBot
-Allow: /
-
-User-agent: CCBot
 Allow: /
 
 Sitemap: https://coding.sh/sitemap-index.xml

@@ -8,12 +8,14 @@ import Layout from "../../layouts/Layout.astro";
 import Nav from "../Nav.astro";
 import { SITE } from "../../data/site";
 import { DOC_GROUPS, docPage, neighbours } from "./nav";
+import { techArticleSchema } from "../../lib/schema";
+import { pageLastmod } from "../../lib/lastmod.mjs";
 
 const path = Astro.url.pathname.length > 1 ? Astro.url.pathname.replace(/\/+$/, "") : Astro.url.pathname;
 const page = docPage(path);
 const { prev, next } = neighbours(path);
 const isIndex = page.path === "/docs";
-const title = isIndex ? `Docs · ${SITE.name}` : `${page.title} · ${SITE.name} docs`;
+const title = isIndex ? `${SITE.name} docs: observability and evals for any AI agent` : `${page.title} · ${SITE.name} docs`;
 const breadcrumbs = isIndex
   ? [{ name: "Docs", path: "/docs" }]
   : [
@@ -24,6 +26,7 @@ const breadcrumbs = isIndex
 const ogCard = `/og/${isIndex ? "docs" : `docs-${page.path.slice("/docs/".length).replace(/\//g, "-")}`}.png`;
 // A page added since the cards were last generated falls back to the site card.
 const ogImage = existsSync(join(process.cwd(), "public", ogCard)) ? ogCard : "/og-image.png";
+const article = techArticleSchema({ ...page, image: ogImage, dateModified: pageLastmod(page.path) });
 
 // Headings link to themselves (#id), rendered into the HTML, so no script needed.
 const body = (await Astro.slots.render("default")).replace(
@@ -32,7 +35,7 @@ const body = (await Astro.slots.render("default")).replace(
 );
 ---
 
-<Layout title={title} description={page.summary} breadcrumbs={breadcrumbs} image={ogImage}>
+<Layout title={title} description={page.summary} breadcrumbs={breadcrumbs} image={ogImage} schemas={[article]}>
   <Nav />
   <div class="wrap docs">
     <aside class="docs__side" aria-label="Docs">
