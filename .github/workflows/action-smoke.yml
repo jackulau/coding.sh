@@ -30,7 +30,7 @@ jobs:
       matrix:
         source: [local, release]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: evals
         uses: ./
         with:
@@ -60,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Break multiplication in this checkout only; the baseline checkout stays clean.
       - run: touch evals/action-smoke/BREAK
       - id: evals
@@ -93,7 +93,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: evals
         uses: ./
         with:
@@ -110,3 +110,26 @@ jobs:
         run: |
           set -x
           [ "$VERDICT" = "none" ] && [ "$RATE" = "1" ] && [ "$REGRESSED" = "false" ]
+
+  old-node:
+    name: sets up Node when the runner's is too old
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - id: evals
+        uses: ./
+        with:
+          experiment: evals/action-smoke/experiment.json
+          cases: evals/action-smoke/cases.jsonl
+          baseline-ref: none
+      - name: Check outputs
+        env:
+          RATE: ${{ steps.evals.outputs.pass-rate }}
+        run: |
+          set -x
+          [ "$RATE" = "1" ]
+          node -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 22 ? 0 : 1)'

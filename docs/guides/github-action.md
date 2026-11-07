@@ -46,7 +46,7 @@ jobs:
   evals:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: jackulau/coding.sh@v0.1.1
         with:
           experiment: evals/smoke/experiment.json
@@ -117,7 +117,7 @@ scale), `regressions` (count), `regressed` (`true` when a gate tripped), `report
 markdown report) and `home` (the `CODING_SH_HOME` with both runs). To keep the runs:
 
 ```yaml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coding.sh-runs

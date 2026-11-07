@@ -20,15 +20,18 @@ const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const rate = (e) => `${pct(e.summary.passRate.p)} (${e.summary.passed}/${e.summary.n})`;
 const ci = (e) => `${pct(e.summary.passRate.lo)} – ${pct(e.summary.passRate.hi)}`;
 
+// A full SHA as the baseline ref reads better shortened.
+const baseRef = /^[0-9a-f]{40}$/.test(env.BASE_REF || "") ? env.BASE_REF.slice(0, 7) : env.BASE_REF;
+
 // ---- gate ---------------------------------------------------------------
 const gate = env.GATE || "regressions";
 if (!["regressions", "worse", "pass-rate"].includes(gate)) throw new Error(`gate must be regressions, worse or pass-rate, got "${gate}"`);
 const why = [];
 if (cmp) {
   if (gate === "regressions" && cmp.regressions.length > 0)
-    why.push(`${cmp.regressions.length} case(s) that passed on ${env.BASE_REF} now fail`);
+    why.push(`${cmp.regressions.length} case(s) that passed on ${baseRef} now fail`);
   if (gate === "worse" && cmp.verdict === "worse")
-    why.push(`pass rate is worse than ${env.BASE_REF} with 95% confidence (${pp(cmp.diff.mean)})`);
+    why.push(`pass rate is worse than ${baseRef} with 95% confidence (${pp(cmp.diff.mean)})`);
   if (gate === "pass-rate" && cmp.b.passRate < cmp.a.passRate)
     why.push(`pass rate dropped from ${pct(cmp.a.passRate)} to ${pct(cmp.b.passRate)}`);
 }
@@ -54,7 +57,7 @@ else headline = "no regression";
 md.push(`### coding.sh evals: ${headline}`, "");
 md.push(
   `\`${env.SPEC}\` on dataset \`${ds}\`, ${head.summary.cases} cases × ${head.trials} trial(s)` +
-    (base ? `. Base \`${env.BASE_REF}\` (${env.BASE_SHA}) vs this commit (${sha}).` : "."),
+    (base ? `. Base \`${baseRef}\`${baseRef === env.BASE_SHA ? "" : ` (${env.BASE_SHA})`} vs this commit (${sha}).` : "."),
   "",
 );
 
