@@ -1,0 +1,113 @@
+packages/coding.sh/src/runner/exec.ts
+  s_8e040dbdf13565::t_d3f0a90c22fb13 4,21-22,51-71
+packages/coding.sh/src/graders/proc.ts
+  s_8e040dbdf13565::t_e566779e187a92 6,30-31,37,48-71,74-96,98-100,108
+packages/coding.sh/test/toolevals/cli.test.ts
+  s_8e040dbdf13565::t_73842232cecc21 95,101-105,110
+packages/coding.sh/test/toolevals/experiment.test.ts
+  s_8e040dbdf13565::t_d850e7a80faa4a 1-93
+packages/coding.sh/src/datasets/store.ts
+  s_6c560d8af9f20c::t_673ca6d856229c 7,17,19,21,24,33,35-58,138-169,190,219-222,224,231-262,270,272
+packages/coding.sh/src/datasets/types.ts
+  s_8e040dbdf13565::t_47d7acb8126c7d 161-166,192,194-196,210-228,232
+packages/coding.sh/src/eval/validate.ts
+  s_8e040dbdf13565::t_c2df21666040b3 14,80-85,211-215,217-218,238-244,247,249,253,260-263,267,277,475,525
+packages/coding.sh/src/experiments/compare.ts
+  s_8e040dbdf13565::t_910e2541eb68ef 62-65,96-107,124,129-133,171,175,195-197
+packages/coding.sh/src/experiments/render.ts
+  s_8e040dbdf13565::t_9d6d33a00db168 47-50,54,56,58,91-96,98,102,106,115-118,120
+packages/coding.sh/src/experiments/run.ts
+  s_8e040dbdf13565::t_a9546cedb1716f 11,50-54,58-62,122-124,127-128,140,151,163,171-173,179,182,186,191-192,197,213-217,221,225,243-244,249,254,281,284
+packages/coding.sh/src/graders/external.ts
+  s_8e040dbdf13565::t_e06442d12d43be 66-71,84-87,103
+packages/coding.sh/src/runner/experiment.ts
+  s_8e040dbdf13565::t_c0275df17c4b4e 46-50,87,91-92,110,134-135,286,288-290,353-362
+packages/coding.sh/src/runner/run.ts
+  s_8e040dbdf13565::t_86d3c279eeb98e 8,43-48,64-70,76-80,82,100-106,108,115,131,152,172,174,183-188,191
+packages/coding.sh/src/toolevals/drivers/model.ts
+  s_8e040dbdf13565::t_5c2a7814f5f818 5,29-36,46-47,67
+packages/coding.sh/src/toolevals/experiment.ts
+  s_8e040dbdf13565::t_72e5be823c391a 8,20,40-46,124-130,152-154,198,259-262,264-265,279-281,287,312-313,315,321-322
+packages/coding.sh/src/toolevals/mcp/stdio.ts
+  s_8e040dbdf13565::t_4d8d3d11cc4747 5,46
+packages/coding.sh/src/toolevals/model/loop.ts
+  s_8e040dbdf13565::t_1262455d962683 33-34,97-101,113-116,137,139-142,158-161,198-201,209
+packages/coding.sh/src/toolevals/sandbox.ts
+  s_8e040dbdf13565::t_dafdb7293e8ee1 61-65,67
+packages/coding.sh/src/toolevals/tap/mcp-proxy.ts
+  s_8e040dbdf13565::t_c8084583108449 14,221
+packages/coding.sh/src/workflows/cases.ts
+  s_8e040dbdf13565::t_35d84a52a4a857 1
+packages/coding.sh/src/workflows/cli-spec.ts
+  s_8e040dbdf13565::t_af463c47f1db08 1
+packages/coding.sh/src/workflows/critical-path.ts
+  s_8e040dbdf13565::t_26b8fd3f46cf06 1
+packages/coding.sh/src/workflows/drivers/claude-workflow.ts
+  s_8e040dbdf13565::t_a2f80c732d4077 1
+packages/coding.sh/src/workflows/drivers/command.ts
+  s_8e040dbdf13565::t_49375c32041e74 1
+packages/coding.sh/src/workflows/experiment.ts
+  s_8e040dbdf13565::t_c44a535fba66d8 1,152,155-158
+packages/coding.sh/src/workflows/gantt.ts
+  s_8e040dbdf13565::t_b4b2c06372a458 2
+packages/coding.sh/src/workflows/metrics.ts
+  s_8e040dbdf13565::t_ee55b9537bad97 1
+packages/coding.sh/src/workflows/replay.ts
+  s_8e040dbdf13565::t_7ba20c15d2509f 1
+packages/coding.sh/src/workflows/score/findings.ts
+  s_8e040dbdf13565::t_f4844c1841cda7 1
+packages/coding.sh/src/workflows/score/verify.ts
+  s_8e040dbdf13565::t_1c37603997e702 1
+packages/coding.sh/src/workflows/seed/bugs.ts
+  s_8e040dbdf13565::t_134e076ef18812 1
+packages/coding.sh/src/workflows/sources/claude-workflow.ts
+  s_8e040dbdf13565::t_c6fdca7096dbdb 1
+packages/coding.sh/src/workflows/sources/otel-frameworks.ts
+  s_8e040dbdf13565::t_e930f90fa004b4 1
+packages/coding.sh/src/workflows/sources/otel.ts
+  s_8e040dbdf13565::t_5211e22d5c8631 1
+packages/coding.sh/src/workflows/store.ts
+  s_8e040dbdf13565::t_5b931357ef4f19 1,5-9,43-45,163-171,174-219,223,225,229,244
+packages/coding.sh/src/workflows/tree.ts
+  s_8e040dbdf13565::t_45b63b60b28df8 1
+packages/coding.sh/src/workflows/types.ts
+  s_8e040dbdf13565::t_aad2f9a1bb0059 1
+packages/coding.sh/test/datasets/store.test.ts
+  s_8e040dbdf13565::t_90f33cd21283bc 1-70
+packages/coding.sh/test/eval/validate.test.ts
+  s_8e040dbdf13565::t_4372e83ff1031c 61-88
+packages/coding.sh/test/experiments/run.test.ts
+  s_8e040dbdf13565::t_9c5d00e38038df 11,168,174-249
+packages/coding.sh/test/graders/graders.test.ts
+  s_8e040dbdf13565::t_57df6d8e044e2e 211-227
+packages/coding.sh/test/runner/experiment.test.ts
+  s_8e040dbdf13565::t_4eaaebd1ee83e2 227-335
+packages/coding.sh/test/toolevals/model.test.ts
+  s_8e040dbdf13565::t_e887ec4b073135 6-7,131-163
+packages/coding.sh/test/workflows/experiment.test.ts
+  s_8e040dbdf13565::t_a41d13d8cbac1a 283-357
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "00fbb7050dbd97cc84790b12127bf05384cc2610",
+  "prompts": {},
+  "sessions": {
+    "s_6c560d8af9f20c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e15284d6-58db-4e09-a5ea-c625f5ac88ba",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    },
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
