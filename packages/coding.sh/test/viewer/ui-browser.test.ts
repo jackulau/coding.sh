@@ -672,7 +672,7 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
       assert.match(verdict, /1 improvement/);
       const rows: string[] = await page.eval("[...document.querySelectorAll('.cmp-row')].map((e) => e.textContent)");
       assert.equal(rows.length, 1, "opens on regressions");
-      assert.match(rows[0]!, /^c1.*pass.*fail.*expected 4.*−100 pts$/);
+      assert.match(rows[0]!, /^c1.*pass.*fail.*expected 4.*regressed$/);
       await page.eval("document.querySelector('.cmp-row').click()");
       const sides = await page.waitFor("document.querySelector('.cmp-row .side-by-side')?.textContent", "side-by-side outputs");
       assert.match(sides, /baseline/);

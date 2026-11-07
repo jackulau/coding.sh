@@ -332,6 +332,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 @media (max-width: 640px) {
   .wide-only { display: none; }
   .hist-plot { height: 44px; }
+  .list-col > .page-head { margin-bottom: 0; gap: 0.6rem 1rem; }
+  .hist { padding-top: 0.55rem; }
 }
 .hist { padding: 0.7rem 0.85rem 0.55rem; position: relative; }
 .hist-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; min-height: 24px; margin-bottom: 0.35rem; }
@@ -388,6 +390,10 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .cell.muted { color: var(--text-muted); }
 .cell .err { color: var(--fail-ink); }
 .cell .sub { color: var(--text-muted); }
+@media (min-width: 861px) {
+  .table.one-repo > .thead, .table.one-repo .row { grid-template-columns: 12px minmax(0, 1fr) 9.5rem 9rem 4.5rem 3.75rem 4.5rem 4.5rem; }
+  .table.one-repo > .thead > :nth-child(4), .table.one-repo .repo-cell { display: none; }
+}
 /* Agent over model, so neither is cut to a prefix. */
 .agent-cell { display: grid; line-height: 1.3; }
 .agent-cell > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -421,6 +427,10 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .row-cells .cell { font-size: 11.5px; color: var(--text-muted); flex: none; max-width: 100%; }
   .row-cells .cell:empty, .row-cells .cell.opt { display: none; }
   .row-cells .agent-cell { display: block; }
+  /* Phone meta reads as separate facts: agent model · repo · activity · … */
+  .row-cells { gap: 0 0.45rem; }
+  .row-cells .cell:not(:last-child)::after { content: "\00a0·"; color: var(--text-faint); }
+  .table.one-repo .repo-cell { display: none; }
   .row-cells .agent-cell .sub { font-size: inherit; }
   .row-cells .num { text-align: left; }
 }
@@ -492,7 +502,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .st .name { color: var(--text); font-weight: 500; flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .st .arg { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-family: var(--font-mono); font-size: 12px; }
 .st .arg-path { display: flex; }
-.arg-path .pdir { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.arg-path .pdir { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
 .arg-path .pbase { flex: none; color: var(--text-2); }
 .st .d { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
 .st .wf { position: relative; height: 100%; display: none; }
@@ -645,7 +655,13 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .facts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.2rem 1rem; }
   .facts div { overflow: hidden; }
   .facts dd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; min-width: 0; }
-  .facts [data-fact="tokens"], .facts [data-fact="repo"] { grid-column: 1 / -1; }
+  .facts [data-fact="tokens"], .facts [data-fact="repo"], .facts [data-fact="latency"] { grid-column: 1 / -1; }
+  /* Pairs first (agent, model / duration, cost), then the long facts on their own lines. */
+  .facts [data-fact="duration"], .facts [data-fact="cost"] { order: 1; }
+  .facts [data-fact="repo"] { order: 2; }
+  .facts [data-fact="tokens"] { order: 3; }
+  .facts [data-fact="latency"] { order: 4; }
+  .facts [data-fact="latency"] dd { white-space: normal; }
   .detail-head { gap: 0.45rem; padding-top: 0.6rem; padding-bottom: 0.6rem; }
   /* Count, failures and the fold toggle on one line; find gets the full width below. */
   .tl-tools { gap: 0.5rem 0.6rem; }
@@ -659,12 +675,13 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; margin: 1.75rem 0 0.6rem; }
 .section-head.inline { justify-content: start; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
 @media (max-width: 640px) { .section-head:not(.inline) { flex-direction: column; gap: 0.2rem; } }
-.exp-table .thead, .exp-row { grid-template-columns: 1.25rem minmax(0, 1.4fr) minmax(0, 1fr) minmax(11rem, 1.2fr) 4rem 5.5rem 6.5rem; }
+.exp-table .thead, .exp-row { grid-template-columns: 1.25rem minmax(0, 1.4fr) minmax(0, 1fr) minmax(11rem, 1.2fr) 6.5rem 5.5rem 6.5rem; }
 /* Every row on one dataset: the column moves into the section heading. */
-.exp-table.one-ds .thead, .exp-table.one-ds .exp-row { grid-template-columns: 1.25rem minmax(0, 1.3fr) minmax(12rem, 1.4fr) 4.5rem 5.5rem 6.5rem; }
+.exp-table.one-ds .thead, .exp-table.one-ds .exp-row { grid-template-columns: 1.25rem minmax(0, 1.3fr) minmax(12rem, 1.4fr) 6.5rem 5.5rem 6.5rem; }
 /* A handful of rows: render them all, so a guessed height never shifts the sections below. */
 .exp-row { min-height: 52px; padding-top: 0.45rem; padding-bottom: 0.45rem; content-visibility: visible; }
 .exp-name { display: grid; min-width: 0; }
+.exp-row .mob { display: none; }
 .exp-name b { font-weight: 520; font-size: 13.5px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .exp-name .meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rate { display: grid; grid-template-columns: minmax(3rem, 1fr) auto; align-items: center; gap: 0.15rem 0.6rem; min-width: 0; }
@@ -672,6 +689,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .rate-num { font-family: var(--font-mono); font-size: 12px; color: var(--text); white-space: nowrap; }
 .bar { position: relative; height: 6px; border-radius: 3px; background: color-mix(in srgb, var(--text) 9%, transparent); }
 .bar.has-ci { margin-bottom: 6px; }
+/* Benchmarks: a bar wears its contender's colour, the same as its line in the charts. */
+.bar.tinted > i { background: var(--c); }
 .bar > i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--pass); border-radius: 3px; }
 /* The 95% interval: a whisker under the bar, so it never reads as a second fill. */
 .bar > u { position: absolute; top: 9px; height: 1px; background: var(--text-muted); }
@@ -709,6 +728,10 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .task a { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
 .exp-top { display: grid; gap: 0.35rem; margin-bottom: 1rem; }
 .exp-top .crumbs { margin-bottom: 0.15rem; }
+.fact-line { display: flex; flex-wrap: wrap; gap: 0 0.45rem; }
+.fact-line > span { white-space: nowrap; }
+@media (max-width: 640px) { .task-line { white-space: normal; overflow-wrap: anywhere; } }
+.fact-line > span + span::before { content: "·"; margin-right: 0.45rem; color: var(--text-faint); }
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 1px; background: var(--line); border-radius: var(--radius); overflow: hidden; box-shadow: inset 0 0 0 1px var(--line); }
 .tile { background: var(--surface); padding: 0.8rem 1rem; display: grid; gap: 0.25rem; align-content: start; min-width: 0; }
 .tile .big { font-family: var(--font-mono); font-size: 1.5rem; letter-spacing: -0.03em; line-height: 1.15; color: var(--text); }
@@ -726,7 +749,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .ci.worse .pt { background: var(--fail); }
 .graders { display: grid; gap: 0.55rem; }
 .arm-axis .ci-axis, .delta-ci .ci-axis { display: flex; justify-content: space-between; font-size: 10.5px; }
-.arm-axis { margin-top: -0.35rem; }
+.arm-axis { margin-top: 0.1rem; padding-top: 0.45rem; box-shadow: inset 0 1px 0 var(--line); }
 .case-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; margin: 1.5rem 0 0.6rem; }
 .case-tools .field { width: 14rem; height: 28px; }
 .case-tools .grp { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; min-width: 0; }
@@ -735,11 +758,10 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .case-table .thead, .case-row { grid-template-columns: 12px minmax(6rem, 8rem) minmax(0, 1fr) 5rem 4.5rem; }
 .why .g { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); margin-right: 0.4rem; }
 .why .g:not(:first-child) { margin-left: 0.9rem; }
-.case-row { min-height: 38px; }
-.case-row .why { color: var(--text-2); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.case-row .why:has(.why-line) { display: grid; gap: 0.1rem; }
+.case-row { min-height: 38px; padding-top: 0.4rem; padding-bottom: 0.4rem; }
+.case-row .why { color: var(--text); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.case-row .why:has(.why-line) { display: grid; gap: 0.15rem; line-height: 1.35; }
 .why-line { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.why-line .g { display: inline-block; min-width: 4.5rem; }
 .why .why-line .g:not(:first-child) { margin-left: 0; }
 .why-line .more-g { margin-left: 0.4rem; }
 .cid { font-family: var(--font-mono); font-size: 12.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -756,6 +778,9 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .vs .side { min-width: 0; display: grid; gap: 0.1rem; }
 .vs .arrow { padding-bottom: 0.2rem; }
 .vs a.pct { text-decoration: none; }
+.vs .diff-side { margin-left: 0.75rem; padding-left: 1.5rem; box-shadow: inset 1px 0 0 var(--line); }
+@media (max-width: 640px) { .vs .diff-side { margin-left: 0; padding-left: 0; box-shadow: none; flex-basis: 100%; } }
+.vs .delta-big.up { color: var(--pass-ink); } .vs .delta-big.down { color: var(--fail-ink); }
 .vs .pct { font-family: var(--font-mono); font-size: 1.75rem; letter-spacing: -0.03em; line-height: 1.1; color: var(--text); }
 .vs .arrow { font-family: var(--font-mono); color: var(--text-muted); font-size: 1.25rem; }
 .delta-ci { display: grid; gap: 0.3rem; }
@@ -768,7 +793,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .more-g { flex: none; margin-left: 0.1rem; padding: 0 0.3rem; border-radius: 4px; font-family: var(--font-mono); font-size: 10.5px; line-height: 16px; color: var(--text-muted); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .cmp-row { min-height: 38px; }
 .res { display: inline-flex; align-items: center; gap: 0.4rem; min-width: 0; font-size: 12.5px; color: var(--text-2); }
-.res .why { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; color: var(--text-muted); }
+.res .why { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; color: var(--text-2); }
 .delta { font-family: var(--font-mono); font-size: 12px; text-align: right; }
 .delta.up { color: var(--pass-ink); } .delta.down { color: var(--fail-ink); } .delta.flat { color: var(--text-faint); }
 .side-by-side { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.6rem; }
@@ -777,6 +802,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .exp-row, .exp-table.one-ds .exp-row { grid-template-columns: 1.25rem minmax(0, 1fr); gap: 0.3rem 0.7rem; align-items: start; }
   .exp-row > :nth-child(n+3) { grid-column: 2; }
   .exp-row .cell.opt { display: none; }
+  .exp-row .mob { display: block; font-size: 11px; }
   .case-row { grid-template-columns: 12px minmax(0, 1fr) auto; }
   .case-row .why { grid-column: 2 / -1; grid-row: 2; white-space: normal; }
   .case-row .why-line { white-space: normal; }
@@ -815,6 +841,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .bench-card .arm-name { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; }
 .bench-card .arm-name .meta { font-size: 11px; }
 .spark-fig { margin: 0; display: grid; gap: 0.3rem; }
+.arms-wrap { display: grid; gap: 0.6rem; min-width: 0; }
+.arms-cap { font-size: 11px; }
 .spark { display: block; width: 100%; height: 56px; overflow: visible; }
 .spark .grid, .chart .grid { stroke: var(--line); stroke-width: 1; }
 .ln { fill: none; stroke: var(--c); stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
@@ -870,7 +898,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .pooled-row { min-height: 52px; padding-top: 0.45rem; padding-bottom: 0.45rem; }
 .pool-ci { display: grid; gap: 0.1rem; min-width: 0; }
 .pool-ci .meta { font-size: 10.5px; }
-.pool-axis { display: grid; grid-template-columns: minmax(8rem, 0.8fr) minmax(12rem, 2fr) 5.5rem 8.5rem 3.5rem 6rem; gap: 0 0.9rem; padding: 0.35rem 0.85rem 0.6rem; font-size: 10.5px; }
+.pool-axis { display: grid; grid-template-columns: minmax(8rem, 0.8fr) minmax(12rem, 2fr) 5.5rem 10rem 3.5rem 6.5rem; gap: 0 0.9rem; padding: 0.35rem 0.85rem 0.6rem; font-size: 10.5px; }
 .pool-axis span:nth-child(1) { grid-column: 2; grid-row: 1; justify-self: start; }
 .pool-axis span:nth-child(2) { grid-column: 2; grid-row: 1; justify-self: center; }
 .pool-axis span:nth-child(3) { grid-column: 2; grid-row: 1; justify-self: end; }
@@ -895,7 +923,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 }
 @media (max-width: 860px) {
   .bench-card-body { grid-template-columns: minmax(0, 1fr); }
-  .spark-fig { display: none; }
+  .spark { height: 40px; }
   .bench-card .arm { grid-template-columns: minmax(0, 1fr) auto; }
   .bench-card .arm-name .meta { display: none; }
   .bench-row, .bench-board.no-anchor .bench-row { grid-template-columns: 1.25rem minmax(0, 1fr); gap: 0.35rem 0.6rem; align-items: start; }
@@ -1988,7 +2016,7 @@ function sessionList(view) {
         h("span", { class: "row-badges" }, toggle, testsBadge(s), rowFlags(s.flags))),
       h("div", { class: "row-cells" },
         h("span", { class: "cell agent-cell", title: [s.agent, s.model].filter(Boolean).join(" · ") }, h("span", null, s.parent && s.parent.type ? s.parent.type : s.agent), s.model ? h("span", { class: "sub" }, " " + s.model) : null),
-        h("span", { class: "cell muted" + (s.repo && s.repo.root ? "" : " is-none"), title: s.repo && s.repo.root }, s.repo && s.repo.root ? basename(s.repo.root) : "—"),
+        h("span", { class: "cell muted repo-cell" + (s.repo && s.repo.root ? "" : " is-none"), title: s.repo && s.repo.root }, s.repo && s.repo.root ? basename(s.repo.root) : "—"),
         h("span", { class: "cell" }, act, actErr ? h("span", { class: "err" }, " · " + actErr) : null),
         h("span", { class: "cell num muted" }, rowTokens(st.usage).replace(" tokens", " tok")),
         h("span", { class: "cell num" + (cost ? "" : " muted opt"), title: cost ? undefined : NO_PRICE }, cost || "—"),
@@ -2006,7 +2034,9 @@ function sessionList(view) {
       if (r) location.hash = sessionHref(r.s.id);
     }
   });
-  const table = h("div", { class: "panel table" },
+  // One repo in the whole index (or one picked): the column would repeat it on every row.
+  const oneRepo = !!list.filters.repo || Object.keys((list.stats && list.stats.byRepo) || {}).length <= 1;
+  const table = h("div", { class: "panel table" + (oneRepo ? " one-repo" : "") },
     h("div", { class: "thead", "aria-hidden": "true" },
       h("span"), h("span", null, "Session"), h("span", null, "Agent · model"), h("span", null, "Repo"), h("span", null, "Activity"),
       h("span", { class: "num" }, "Tokens"), h("span", { class: "num" }, "Cost"), h("span", { class: "num" }, "Duration"), h("span", { class: "num" }, "Started")),
@@ -2294,9 +2324,9 @@ function itemView(item) {
 }
 /** A bare path keeps its file name: the folders give way first. */
 function argNode(arg) {
-  const m = typeof arg === "string" && !/\s/.test(arg) ? /^(.*\/)([^/]+)$/.exec(arg) : null;
+  const m = typeof arg === "string" ? /^(\S*\/)([^/\s]+)((?:\s+[+−-]\d+)*)$/.exec(arg) || /^(.*[\s/])([^\s/]+\.[A-Za-z0-9]{1,8})$/.exec(arg) : null;
   if (!m) return h("span", { class: "arg" }, arg);
-  return h("span", { class: "arg arg-path" }, h("span", { class: "pdir" }, m[1]), h("span", { class: "pbase" }, m[2]));
+  return h("span", { class: "arg arg-path" }, h("span", { class: "pdir" }, m[1]), h("span", { class: "pbase" }, m[2] + (m[3] || "")));
 }
 function llmModel(ev) {
   const p = ev.payload || {};
@@ -3526,9 +3556,9 @@ function distinctParts(values) {
   while (suf < min - pre - 1 && words.every((w) => w[w.length - 1 - suf] === words[0][words[0].length - 1 - suf])) suf++;
   return words.map((w) => w.slice(pre, w.length - suf).join(" "));
 }
-function rateBar(p, lo, hi, label) {
+function rateBar(p, lo, hi, label, series) {
   const ci = lo !== undefined && hi !== undefined;
-  const bar = h("div", { class: "bar" + (ci ? " has-ci" : ""), role: "img", "aria-label": label });
+  const bar = h("div", { class: "bar" + (ci ? " has-ci" : "") + (series ? " tinted " + series : ""), role: "img", "aria-label": label });
   if (ci) {
     const u = h("u");
     u.style.left = (lo * 100).toFixed(1) + "%";
@@ -3555,7 +3585,7 @@ function ciBar(p, lo, hi, axis, tone) {
 }
 function signedPts(d) {
   const v = Math.round(d * 1000) / 10;
-  return (v > 0 ? "+" : v < 0 ? "−" : "±") + Math.abs(v) + " pts";
+  return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v) + " pts";
 }
 
 async function showExperiments(seq) {
@@ -3661,7 +3691,9 @@ async function showExperiments(seq) {
         h("span", { class: "meta" }, ciText(pr) + (s.errors ? " · " + fmtNum(s.errors) + " errored" : ""))),
       h("span", { class: "cell num muted opt", title: (e.trials || 1) > 1 ? plural(e.trials, "trial") + " per case" : undefined }, fmtNum(s.cases || 0) + ((e.trials || 1) > 1 ? " × " + e.trials : "")),
       h("span", { class: "cell num muted opt", title: s.latencyMs ? "p90 " + fmtDuration(s.latencyMs.p90) : undefined }, s.latencyMs ? fmtDuration(s.latencyMs.median) : ""),
-      h("span", { class: "cell num muted opt", title: new Date(e.createdAt || 0).toLocaleString() }, fmtRel(e.finishedAt || e.createdAt || 0)));
+      h("span", { class: "cell num muted opt", title: new Date(e.createdAt || 0).toLocaleString() }, fmtRel(e.finishedAt || e.createdAt || 0)),
+      // Phones drop the number columns; this line carries them.
+      h("span", { class: "meta mob" }, [plural(s.cases || 0, "case") + ((e.trials || 1) > 1 ? " × " + plural(e.trials, "trial") : ""), s.latencyMs ? fmtDuration(s.latencyMs.median) + " median" : "", fmtRel(e.finishedAt || e.createdAt || 0)].filter(Boolean).join(" · ")));
     rowEls.push(row);
     lb.append(row);
   }
@@ -3674,7 +3706,7 @@ async function showExperiments(seq) {
     body.append(
       h("div", { class: "section-head" }, h("h2", null, "Dataset experiments", oneDs ? h("span", { class: "meta h-sub" }, "  " + datasetText(items[0])) : null), h("span", { class: "meta" }, "Select two to compare")),
       h("div", { class: "panel table exp-table" + (oneDs ? " one-ds" : "") },
-        h("div", { class: "thead", "aria-hidden": "true" }, h("span"), h("span", null, "experiment"), oneDs ? null : h("span", null, "dataset"), h("span", null, "pass rate"), h("span", { class: "num opt" }, "cases"), h("span", { class: "num opt" }, "median"), h("span", { class: "num opt" }, "finished")),
+        h("div", { class: "thead", "aria-hidden": "true" }, h("span"), h("span", null, "experiment"), oneDs ? null : h("span", null, "dataset"), h("span", null, "pass rate"), h("span", { class: "num opt" }, items.some((e) => (e.trials || 1) > 1) ? "cases × trials" : "cases"), h("span", { class: "num opt" }, "median"), h("span", { class: "num opt" }, "finished")),
         lb),
       bar);
     renderBar();
@@ -3774,14 +3806,14 @@ function caseWhyNodes(r, q, firstOnly) {
   if (firstOnly) return one(failed[0]);
   // One line per grader, up to two; the detail panel lists every grade.
   const lines = failed.slice(0, 2).map((g) => h("span", { class: "why-line" }, ...one(g)));
-  if (failed.length > 2) lines[1].append(h("span", { class: "more-g", title: plural(failed.length - 2, "more grader") + " failed" }, "+" + (failed.length - 2)));
+  if (failed.length > 2) lines[1].append(h("span", { class: "more-g", title: plural(failed.length - 2, "more grader") + " failed" }, "+" + plural(failed.length - 2, "grader")));
   return lines;
 }
 /** "+1" after a clipped reason, kept outside the ellipsis so it is never cut. */
 function moreGraders(r) {
   if (r.error) return null;
   const n = (r.grades || []).filter((g) => g.error || (g.result && !g.result.pass)).length - 1;
-  return n > 0 ? h("span", { class: "more-g", title: plural(n, "more grader") + " failed" }, "+" + n) : null;
+  return n > 0 ? h("span", { class: "more-g", title: plural(n, "more grader") + " failed" }, "+" + plural(n, "grader")) : null;
 }
 function caseState(r) { return r.ungraded ? "ungraded" : r.error ? "errored" : r.pass ? "pass" : "fail"; }
 function caseDetail(r) {
@@ -3825,7 +3857,9 @@ async function showExperiment(seq, id) {
     h("div", { class: "exp-top" }, crumbs,
       h("div", { class: "head-row" }, h("h1", { title: d.id }, d.name || d.id),
         h("div", { class: "badges" }, d.status === "cancelled" ? h("span", { class: "badge warn" }, "cancelled · partial") : null, copyBtn(d.id, "Copy experiment id", "experiment id", "Copy id"))),
-      h("p", { class: "meta truncate", title: d.task ? d.task.kind + " " + d.task.ref : undefined }, [datasetText(d), plural(d.trials || 1, "trial"), fmtDate(d.createdAt || 0), d.task ? d.task.kind + " " + d.task.ref : ""].filter(Boolean).join(" · "))),
+      // Facts wrap between items, never inside one; the task command gets its own line.
+      h("p", { class: "meta fact-line" }, ...[datasetText(d), (d.trials || 1) > 1 ? plural(d.trials, "trial") + " per case" : "", fmtDate(d.createdAt || 0)].filter(Boolean).map((t) => h("span", null, t))),
+      d.task ? h("p", { class: "meta mono truncate task-line", title: d.task.kind + " " + d.task.ref }, d.task.kind + " " + d.task.ref) : null),
     h("div", { class: "tiles" },
       h("div", { class: "tile" }, h("span", { class: "meta" }, "pass rate"),
         h("span", { class: "big" }, pct(pr.p), h("small", null, "  " + fmtNum(s.passed) + "/" + fmtNum((s.n || 0) - (s.ungraded || 0)))),
@@ -3893,7 +3927,7 @@ async function showExperiment(seq, id) {
     }));
     if (!shownRows.length) lb.append(h("p", { class: "meta list-note" }, q ? "No cases match “" + q + "”." : "No cases in this group."));
     lb.setAttribute("aria-activedescendant", shownRows.length ? "case-" + active : "");
-    caseMeta.textContent = plural(all.length, "case run") + (d.runsTruncated ? " · first " + fmtNum((d.runs || []).length) + " of " + fmtNum(d.runCount) + " loaded" : "");
+    caseMeta.textContent = (all.length === runs.length ? plural(all.length, "case run") : "showing " + fmtNum(all.length) + " of " + fmtNum(runs.length)) + (d.runsTruncated ? " · first " + fmtNum((d.runs || []).length) + " of " + fmtNum(d.runCount) + " loaded" : "");
     more.replaceChildren();
     more.hidden = all.length <= limit;
     if (all.length > limit) more.append(h("button", { class: "btn btn-sm", type: "button", onclick: () => { limit += PAGE_CASES; renderCases(); } }, "Show " + fmtNum(Math.min(PAGE_CASES, all.length - limit)) + " more"));
@@ -3948,7 +3982,7 @@ function side(cls, role, e) {
 function powerText(w, c) {
   const pts = (x) => Math.round(x * 1000) / 10 + " pts";
   const mde = c.power && Number.isFinite(c.power.mde) ? pts(c.power.mde) : "";
-  if (w.code === "small-n") return "Only " + fmtNum(c.paired) + " paired cases" + (mde ? ", so only changes of " + mde + " or more show up" : ", so only big changes show up") + ". Add cases or trials before reading this as no difference.";
+  if (w.code === "small-n") return "With " + fmtNum(c.paired) + " paired cases, changes smaller than " + (mde ? "about " + mde : "a large gap") + " may go undetected. Add cases or trials before reading this as no difference.";
   if (w.code === "below-mde" && mde) return "The gap (" + pts(Math.abs(c.diff.mean)) + ") is smaller than the " + mde + " this suite can reliably detect.";
   if (w.code === "near-mde" && mde) return "The direction holds, but at " + fmtNum(c.paired) + " cases the size of the gap is probably overstated (reliable from " + mde + ").";
   const m = String(w.message || "");
@@ -3991,13 +4025,14 @@ async function showCompare(seq, aId, bId) {
     h("div", { class: "exp-top" }, crumbs),
     h("section", { class: "panel verdict " + tone, "aria-label": "Verdict" },
       h("div", { class: "verdict-line" }, h("h1", null, headline),
-        h("span", { class: "meta" }, plural(c.paired, "paired case") + " · McNemar p = " + (c.mcnemar.p < 0.001 ? "<0.001" : (Math.round(c.mcnemar.p * 1000) / 1000)) + (mde ? " · " + mde : ""))),
+        h("span", { class: "meta" }, plural(c.paired, "paired case") + " · McNemar p = " + (c.mcnemar.p < 0.001 ? "<0.001" : (Math.round(c.mcnemar.p * 1000) / 1000)) + (mde && !smallN ? " · " + mde : ""))),
       h("div", { class: "vs" },
         side("a", "baseline", c.a),
         h("span", { class: "arrow", "aria-hidden": "true" }, "→"),
-        side("b", "candidate", c.b)),
+        side("b", "candidate", c.b),
+        h("div", { class: "side diff-side" }, h("span", { class: "meta" }, "difference"), h("span", { class: "pct delta-big " + (tone === "better" ? "up" : tone === "worse" ? "down" : "") }, signedPts(c.diff.mean)))),
       h("div", { class: "delta-ci" },
-        h("div", { class: "section-label" }, h("span", { class: "meta" }, "difference " + signedPts(c.diff.mean) + " · 95% CI " + signedPts(c.diff.lo) + " to " + signedPts(c.diff.hi))),
+        h("div", { class: "section-label" }, h("span", { class: "meta" }, "95% CI " + signedPts(c.diff.lo) + " to " + signedPts(c.diff.hi))),
         ciBar(c.diff.mean, c.diff.lo, c.diff.hi, [-span, span], tone),
         h("div", { class: "ci-axis meta" }, h("span", null, signedPts(-span)), h("span", null, "0"), h("span", null, signedPts(span)))),
       h("div", { class: "badges" },
@@ -4066,7 +4101,7 @@ async function showCompare(seq, aId, bId) {
       h("span", { class: "cid mono truncate", title: r.caseId }, r.caseId),
       res(ra.get(r.caseId), r.a),
       res(rb.get(r.caseId), r.b),
-      h("span", { class: "delta " + (r.delta > 0 ? "up" : r.delta < 0 ? "down" : "flat") }, r.delta ? signedPts(r.delta) : "same"))));
+      h("span", { class: "delta " + (r.delta > 0 ? "up" : r.delta < 0 ? "down" : "flat"), title: r.delta ? signedPts(r.delta) : undefined }, r.delta === -1 ? "regressed" : r.delta === 1 ? "fixed" : r.delta ? signedPts(r.delta) : "same"))));
     if (!shown.length) lb.append(h("p", { class: "meta list-note" }, filter === "regression" ? "No regressions. Every case that passed in the baseline still passes." : "No cases in this group."));
     lb.setAttribute("aria-activedescendant", shown.length ? "cmp-" + active : "");
   }
@@ -4130,6 +4165,8 @@ function seriesOf(names) {
   return m;
 }
 function swatch(cls, dashed) { return h("span", { class: "sw " + cls + (dashed ? " dashed" : ""), "aria-hidden": "true" }); }
+/** Non-breaking spaces, so a "·" segment wraps as one piece. */
+function nb(s) { return String(s).replace(/ /g, "\u00a0"); }
 function shortDate(d) {
   const t = Date.parse(d + "T12:00:00Z");
   return isFinite(t) ? new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" }) : d;
@@ -4145,7 +4182,7 @@ function costSources(c) {
 }
 function gapTone(p) { return !p ? "flat" : p.lo > 0 ? "up" : p.hi < 0 ? "down" : "flat"; }
 /** Gaps in whole points: a 30-case day cannot resolve tenths. */
-function gapPts(d) { const v = Math.round(d * 100); return (v > 0 ? "+" : v < 0 ? "−" : "±") + Math.abs(v) + " pts"; }
+function gapPts(d) { const v = Math.round(d * 100); return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v) + " pts"; }
 function gapRange(p) { return gapPts(p.lo).replace(" pts", "") + " to " + gapPts(p.hi); }
 function lastPoint(arr) { for (let i = (arr || []).length - 1; i >= 0; i--) if (arr[i] && arr[i].value !== null && arr[i].value !== undefined) return arr[i]; return null; }
 
@@ -4338,7 +4375,7 @@ function benchCard(it, i) {
   const lines = ranked.map((c) => h("li", { class: "arm" },
     h("span", { class: "arm-name" }, swatch(color.get(c.name) || "s-x"), h("span", { class: "truncate" }, c.name), c.name === it.reference ? h("span", { class: "ref", title: "Reference: gaps are measured against it" }, "ref") : null,
       c.model ? h("span", { class: "meta truncate" }, c.model) : null),
-    rateBar(c.passRate.p, c.passRate.lo, c.passRate.hi, c.name + ": " + c.passed + " of " + c.n + " passed"),
+    rateBar(c.passRate.p, c.passRate.lo, c.passRate.hi, c.name + ": " + c.passed + " of " + c.n + " passed", color.get(c.name) || "s-x"),
     h("span", { class: "arm-num" }, fmtNum(c.passed) + "/" + fmtNum(c.n) + " · " + pct(c.passRate.p))));
   // Last 30 days, one line per contender.
   const len = Math.max(0, ...names.map((n) => it.trend[n].length));
@@ -4348,8 +4385,8 @@ function benchCard(it, i) {
       h("div", { class: "bench-title" }, h("h2", null, h("a", { href: benchHref(it.name), tabindex: "-1" }, it.name)), it.description ? h("p", { class: "dim" }, it.description) : null),
       h("span", { class: "meta" }, "latest " + shortDate(it.latest.date) + " · " + plural(it.latest.cases, "case") + " · " + plural(it.counted, "day"))),
     h("div", { class: "bench-card-body" },
-      h("ul", { class: "arms" }, lines),
-      spark ? h("figure", { class: "spark-fig" }, spark, h("figcaption", { class: "meta" }, "pass rate 0–100%, last " + len + " days")) : null));
+      h("div", { class: "arms-wrap" }, h("ul", { class: "arms" }, lines), h("p", { class: "meta arms-cap" }, "Pass rate on " + shortDate(it.latest.date) + ", line under each bar: 95% CI" + (len > 1 ? ". Trend: last " + len + " days, 0–100%." : "."))),
+      spark ? h("figure", { class: "spark-fig" }, spark) : null));
 }
 /** A tiny multi-line chart on a 0–100% axis. Decoration for the card; the numbers sit beside it. */
 function sparkChart(series) {
@@ -4407,8 +4444,8 @@ async function showBenchmark(seq, name) {
         sc ? h("span", { class: "badge " + (sc.ok ? "pass" : "fail"), title: sc.checks.map((c) => (c.ok ? "ok: " : "failed: ") + c.detail).join("\n") }, sc.ok ? "seed verified" : "seed check failed") : null,
         L.status !== "complete" ? h("span", { class: "badge warn" }, L.status) : null)),
     r.description ? h("p", { class: "dim bench-desc" }, r.description) : null,
-    h("p", { class: "meta truncate" }, facts.join(" · "),
-      next ? h("span", { class: "nw", title: "The next run's secret seed is committed before it runs: sha256(salt) = " + next.commitment }, " · next seed " + shortDate(next.date) + " " + short(next.commitment, 12)) : null)));
+    h("p", { class: "meta fact-line" }, ...facts.map((t) => h("span", null, t)),
+      next ? h("span", { title: "The next run's secret seed is committed before it runs: sha256(salt) = " + next.commitment }, "next seed " + shortDate(next.date) + " " + short(next.commitment, 12)) : null)));
 
   // ---- leaderboard
   const sums = L.summaries.slice().sort((a, b) => a.place - b.place || b.passRate.p - a.passRate.p);
@@ -4431,11 +4468,11 @@ async function showBenchmark(seq, name) {
     const tok = s.tokensIn && (s.tokensIn.known || (s.tokensOut && s.tokensOut.known)) ? (s.tokensIn.known ? fmtCompact(Math.round(s.tokensIn.mean)) : "—") + " / " + (s.tokensOut && s.tokensOut.known ? fmtCompact(Math.round(s.tokensOut.mean)) : "—") : s.tokens && s.tokens.known ? fmtCompact(Math.round(s.tokens.mean)) : "—";
     const src = costSources(s.costUsd);
     const gapText = s.contender === ref ? "reference" : gap ? gapPts(gap.value) : "—";
-    const mob = [gapText !== "—" ? (s.contender === ref ? "reference" : gapText + " vs " + ref) : "", an && an.n ? "anchor " + pct(an.passRate.p) : "", lat !== "—" ? "p50 " + lat : "", cost !== "—" ? cost + "/run" : ""].filter(Boolean).join(" · ");
+    const mob = [gapText !== "—" ? (s.contender === ref ? "reference" : gapText + " vs " + ref) : "", an && an.n ? "anchor " + pct(an.passRate.p) : "", lat !== "—" ? "p50 " + lat : "", cost !== "—" ? cost + "/run" : ""].filter(Boolean).map(nb).join(" · ");
     board.append(h("div", { class: "row bench-row", "data-contender": s.contender },
       h("span", { class: "num place", title: tied(s.place) ? "Tied: the gaps between these contenders are within noise" : undefined }, s.place ? s.place + (tied(s.place) ? "=" : "") : ""),
       h("div", { class: "who" }, h("span", { class: "who-name" }, swatch(cOf(s.contender)), h("b", { class: "truncate" }, s.contender)), h("span", { class: "meta truncate" }, [c.model, c.version].filter(Boolean).join(" · ") || c.kind || "")),
-      h("div", { class: "rate" }, rateBar(s.passRate.p, s.passRate.lo, s.passRate.hi, s.contender + ": " + s.passed + " of " + s.n + " passed"),
+      h("div", { class: "rate" }, rateBar(s.passRate.p, s.passRate.lo, s.passRate.hi, s.contender + ": " + s.passed + " of " + s.n + " passed", cOf(s.contender)),
         h("span", { class: "rate-num" }, fmtNum(s.passed) + "/" + fmtNum(s.n) + " · " + pct(s.passRate.p)),
         h("span", { class: "meta" }, ciText(s.passRate) + (s.errors ? " · " + fmtNum(s.errors) + " errored" : ""))),
       h("span", { class: "cell num opt stack-num" }, h("span", { class: "delta " + (s.contender === ref ? "flat" : gapTone(gap)) }, gapText), gap ? h("span", { class: "meta" }, gapRange(gap)) : null),
@@ -4449,6 +4486,9 @@ async function showBenchmark(seq, name) {
 
   // ---- anchor content changes, shown next to every anchor number
   const anchorChanges = (r.contentChanges || []).filter((x) => x.anchor);
+  // The line breaks where the anchor content changed, so no stretch joins two versions.
+  const anchorCuts = [...new Set(anchorChanges.map((x) => x.to.date))].sort();
+  const cutAnchor = (pts) => anchorCuts.length ? pts.map((p) => p && { ...p, segment: String(p.segment ?? 0) + ":" + anchorCuts.filter((d) => p.date >= d).length }) : pts;
   const anchorNote = () => anchorChanges.length ? h("p", { class: "meta note-line warn-line" }, h("span", { class: "dot tone-warn", "aria-hidden": "true" }),
     anchorChanges.length === 1
       ? "Anchor case " + clip(anchorChanges[0].key, 40) + " changed on " + shortDate(anchorChanges[0].to.date) + ". Earlier days scored the old version."
@@ -4460,10 +4500,10 @@ async function showBenchmark(seq, name) {
   const legendFor = (dashed) => h("div", { class: "legend" }, order.map((n) => h("span", null, swatch(cOf(n), dashed), n)));
   function renderTrend() {
     const src = mode === "anchor" && r.anchor ? r.anchor.history : (r.history && r.history.pass) || {};
-    const series = order.filter((n) => src[n]).map((n) => ({ name: n, cls: cOf(n), dashed: mode === "anchor", points: src[n] }));
+    const series = order.filter((n) => src[n]).map((n) => ({ name: n, cls: cOf(n), dashed: mode === "anchor", points: mode === "anchor" ? cutAnchor(src[n]) : src[n] }));
     const ax = rateAxis(series.flatMap((s) => s.points.map((p) => p && p.value)));
     chartSlot.replaceChildren(lineChart({ dates, series, y: ax.y, ticks: ax.ticks, breaks: r.protocolBreaks, fmtTick: (t) => Math.round(t * 100) + "%", fmtValue: pct, fmtRange: (p) => pct(p.lo) + "–" + pct(p.hi),
-      label: "Pass rate by day" + (mode === "anchor" ? " on the anchor set" : "") + " for " + order.join(", ") }), legendFor(mode === "anchor"), mode === "anchor" ? anchorNote() : null);
+      label: "Pass rate by day" + (mode === "anchor" ? " on the anchor set" : "") + " for " + order.join(", ") }), legendFor(mode === "anchor"), ...(mode === "anchor" && anchorChanges.length ? [anchorNote()] : []));
     for (const b of seg.children) b.setAttribute("aria-pressed", String(b.dataset.mode === mode));
   }
   const seg = h("div", { class: "seg", role: "group", "aria-label": "Cases shown" },
@@ -4504,28 +4544,29 @@ async function showBenchmark(seq, name) {
   let difficulty = null;
   if (r.difficulty && r.difficulty.fresh && r.difficulty.fresh.length > 1) {
     const ds = [{ name: "fresh cases", cls: "s-ink", points: r.difficulty.fresh }];
-    if (r.difficulty.anchor) ds.push({ name: "anchor set", cls: "s-ink", dashed: true, points: r.difficulty.anchor });
+    if (r.difficulty.anchor) ds.push({ name: "anchor set", cls: "s-ink", dashed: true, points: cutAnchor(r.difficulty.anchor) });
     const ax = rateAxis(ds.flatMap((s) => s.points.map((p) => p.value)));
     difficulty = h("div", { class: "panel chart-card" },
       lineChart({ dates, series: ds, y: ax.y, ticks: ax.ticks, breaks: r.protocolBreaks, small: true, fmtTick: (t) => Math.round(t * 100) + "%", fmtValue: pct, label: "Mean pass rate per day over all contenders, fresh cases" + (r.difficulty.anchor ? " and anchor set" : "") }),
       h("div", { class: "legend" }, ds.map((s) => h("span", null, swatch(s.cls, s.dashed), s.name))),
-      h("p", { class: "meta note-line" }, r.difficulty.anchor ? "When both lines drop, the agents got worse. When only fresh drops, that day's cases were harder." : "Add an anchor set to tell a harder day from a worse field."));
+      h("p", { class: "meta note-line" }, r.difficulty.anchor ? "Fresh and anchor means side by side, for context on daily swings. A fresh drop alone points at that day's cases." : "Add an anchor set to tell a harder day from a worse field."),
+      ...(r.difficulty.anchor && anchorChanges.length ? [anchorNote()] : []));
   }
 
   // ---- anchor set
   const A = r.anchor;
   const anchorSec = A && L.anchor ? h("section", { "aria-labelledby": "anchor-h" },
-    h("div", { class: "section-head" }, h("h2", { id: "anchor-h" }, "Anchor set", h("span", { class: "meta h-sub" }, plural(A.cases, "fixed case") + ", scored apart")),
-      h("span", { class: "meta", title: "sha256 " + A.sha256 }, A.version + " · frozen by " + clip(A.frozenBy, 28) + " · " + short(A.sha256, 12))),
+    h("div", { class: "section-head" }, h("h2", { id: "anchor-h" }, "Anchor set", h("span", { class: "meta h-sub" }, plural(A.cases, "reference case") + ", scored apart")),
+      h("span", { class: "meta", title: "sha256 " + A.sha256 }, A.version + (anchorCuts.length ? ", revised " + anchorCuts.map(shortDate).join(", ") : "") + " · frozen by " + clip(A.frozenBy, 28) + " · " + short(A.sha256, 12))),
     h("div", { class: "panel exp" }, h("ul", { class: "arms" }, order.filter((n) => anchorSum.has(n)).map((n) => {
       const s = anchorSum.get(n);
       const g = n === ref ? null : lastPoint((A.vsReference || {})[n]);
       return h("li", { class: "arm" },
         h("span", { class: "arm-name" }, swatch(cOf(n)), h("span", { class: "truncate" }, n)),
-        rateBar(s.passRate.p, s.passRate.lo, s.passRate.hi, n + " on the anchor set: " + s.passed + " of " + s.n + " passed"),
+        rateBar(s.passRate.p, s.passRate.lo, s.passRate.hi, n + " on the anchor set: " + s.passed + " of " + s.n + " passed", cOf(n)),
         h("span", { class: "arm-num" }, fmtNum(s.passed) + "/" + fmtNum(s.n) + " · " + pct(s.passRate.p)),
-        h("span", { class: "meta arm-sub" }, n === ref ? "reference" : g ? gapPts(g.value) + " vs " + ref + " · 95% CI " + gapRange(g) : ""));
-    })), anchorNote())) : null;
+        h("span", { class: "meta arm-sub" }, n === ref ? "reference" : g ? nb(gapPts(g.value) + " vs " + ref) + " · " + nb("95% CI " + gapRange(g)) : ""));
+    })), ...(anchorChanges.length ? [anchorNote()] : []))) : null;
 
   // ---- failed cases
   const unsolved = new Set((r.unsolved || []).map((u) => u.caseId));
@@ -4545,7 +4586,7 @@ async function showBenchmark(seq, name) {
     fchips.replaceChildren(
       h("button", { class: "chip", type: "button", "aria-pressed": String(ffilter === "all"), onclick: () => { ffilter = "all"; flimit = FAIL_PAGE; renderFails(); } }, "All", h("span", { class: "count" }, fmtNum(fails.length))),
       ...order.filter((n) => count((f) => f.contender === n)).map((n) => h("button", { class: "chip", type: "button", "aria-pressed": String(ffilter === "c:" + n), onclick: () => { ffilter = "c:" + n; flimit = FAIL_PAGE; renderFails(); } }, swatch(cOf(n)), n, h("span", { class: "count" }, fmtNum(count((f) => f.contender === n))))),
-      unsolved.size ? h("button", { class: "chip is-fail", type: "button", "aria-pressed": String(ffilter === "unsolved"), title: "Cases no contender passed", onclick: () => { ffilter = "unsolved"; flimit = FAIL_PAGE; renderFails(); } }, "Nobody passed", h("span", { class: "count" }, fmtNum(unsolved.size))) : null);
+      unsolved.size ? h("button", { class: "chip is-fail", type: "button", "aria-pressed": String(ffilter === "unsolved"), title: "Cases no contender passed", onclick: () => { ffilter = "unsolved"; flimit = FAIL_PAGE; renderFails(); } }, "Nobody passed", h("span", { class: "count" }, plural(unsolved.size, "case"))) : null);
     const all = fails.filter((f) => ffilter === "all" || (ffilter === "unsolved" ? unsolved.has(f.caseId) : "c:" + f.contender === ffilter));
     shown = all.slice(0, flimit);
     fmore.replaceChildren();
@@ -4610,7 +4651,7 @@ async function showBenchmark(seq, name) {
   if (L.definition) kv("definition", h("code", null, L.definition.file));
   const changes = r.contentChanges || [];
   if (changes.length) kv("changed content", h("ul", { class: "checks" }, changes.slice(0, 10).map((x) => h("li", null, h("span", { class: "dot tone-warn", "aria-hidden": "true" }),
-    (x.anchor ? "Anchor case " : "Case ") + clip(x.key, 60) + " changed between " + shortDate(x.from.date) + " and " + shortDate(x.to.date) + ". Scores on each side measure different content."))),
+    (x.anchor ? "Anchor case " : "Case ") + clip(x.key, 60) + " changed on " + shortDate(x.to.date) + ". Earlier days scored the old version."))),
     changes.length > 10 ? h("div", { class: "meta" }, "and " + (changes.length - 10) + " more") : null);
 
   view.append(
@@ -4625,7 +4666,7 @@ async function showBenchmark(seq, name) {
     difficulty ? h("div", { class: "section-head" }, h("h2", null, "Difficulty"), h("span", { class: "meta" }, "Mean pass rate over all contenders")) : null,
     difficulty,
     anchorSec,
-    h("div", { class: "case-tools" }, h("div", { class: "grp" }, h("h2", null, "Failed cases", h("span", { class: "meta h-sub" }, shortDate(L.date)))), h("div", { class: "grp" }, fchips)),
+    h("div", { class: "case-tools" }, h("div", { class: "grp" }, h("h2", null, "Failed cases", h("span", { class: "meta h-sub" }, plural(fails.length, "failed run") + (A && L.anchor ? ", fresh and anchor" : "") + " · " + shortDate(L.date)))), h("div", { class: "grp" }, fchips)),
     h("div", { class: "panel table case-table fail-table" },
       h("div", { class: "thead", "aria-hidden": "true" }, h("span"), h("span", null, "case"), h("span", null, "contender"), h("span", null, "reason"), h("span", { class: "num opt" }, "latency"), h("span", { class: "num" }, "session")),
       flb, fmore),

@@ -80,13 +80,13 @@ Status values: `open`, `fixing`, `fixed` (regression test added), `deferred` (re
 
 | id | severity | confirmed | finding | status |
 |---|---|---|---|---|
-| VWR-1 | medium | yes | Sessions 'Load more' offset pagination repeats rows when sessions are ingested between pages | fixing |
-| VWR-2 | medium | yes | 'Load more' response is appended to a different filter's list (no load sequencing) | fixing |
-| VWR-3 | medium | yes | A failed search leaves list.error set, so later successful searches still render the error panel | fixing |
+| VWR-1 | medium | yes | Sessions 'Load more' offset pagination repeats rows when sessions are ingested between pages | fixed (regression tests in test/viewer) |
+| VWR-2 | medium | yes | 'Load more' response is appended to a different filter's list (no load sequencing) | fixed (regression tests in test/viewer) |
+| VWR-3 | medium | yes | A failed search leaves list.error set, so later successful searches still render the error panel | fixed (regression tests in test/viewer) |
 | VWR-6 | medium | yes | Workflow experiment record loses writes (score during a run; concurrent job rewrites) | fixed (append-only runs log; regression tests) |
-| VWR-4 | low | yes | Expanded subagents persist into the flat 'Include subagents' scope, duplicating child rows | fixing |
-| VWR-5 | low | yes | Search results ignore the flag, repo and scope filters while their chips show as pressed | fixing |
-| VWR-7 | low | yes | Partially ingested sessions: events are visible and searchable before the session row exists or is recomputed | fixing |
+| VWR-4 | low | yes | Expanded subagents persist into the flat 'Include subagents' scope, duplicating child rows | fixed (regression tests in test/viewer) |
+| VWR-5 | low | yes | Search results ignore the flag, repo and scope filters while their chips show as pressed | fixed (regression tests in test/viewer) |
+| VWR-7 | low | yes | Partially ingested sessions: events are visible and searchable before the session row exists or is recomputed | fixed (regression tests in test/viewer) |
 | VWR-8 | low | yes | MCP resources/list offset cursor repeats or skips sessions during concurrent ingest | fixed (keyset cursor; regression tests) |
 
 ## Machines by subsystem
@@ -1072,7 +1072,7 @@ Importing the same run twice does **not** create duplicate runs. The id is deter
 
 ### VWR-1: Sessions 'Load more' offset pagination repeats rows when sessions are ingested between pages
 
-- **Severity:** medium; confirmed: yes; status: fixing
+- **Severity:** medium; confirmed: yes; status: fixed (regression tests in test/viewer)
 - **Impact:** `coding.sh ui` ingests every 3 s and the client caches the list (showSessions never refreshes when loaded), so any session that lands after page 1 shifts ORDER BY started_at DESC and page 2 repeats the boundary row(s). A gc or delete shifts the other way and silently skips rows. Duplicate ids also confuse aria ids and the active-row index.
 - **Evidence:** index.html:669 offset = list.items.length; 671 concat; server.ts:600-619 offset paging; store/sqlite.ts:547 ORDER BY started_at DESC, id LIMIT ? OFFSET ?; ui.ts setInterval autoIngest 3000. Repro r2-offset-drift.ts against the real CLI viewer: {page1:50,page2:11,shown:61,unique:60,duplicates:["s10"],newShown:false}.
 - **Fix:** Keyset pagination: return nextCursor=(started_at,id) of the last row and query WHERE (started_at,id) < cursor. Until then, dedupe by id on append in loadSessions.
@@ -1080,7 +1080,7 @@ Importing the same run twice does **not** create duplicate runs. The id is deter
 
 ### VWR-2: 'Load more' response is appended to a different filter's list (no load sequencing)
 
-- **Severity:** medium; confirmed: yes; status: fixing
+- **Severity:** medium; confirmed: yes; status: fixed (regression tests in test/viewer)
 - **Impact:** Load more does not enter the loading state, so the chips stay clickable. A chip click starts loadSessions(false). When it resolves first, the stale load-more page (old filter, offset 50) is concatenated onto it and overwrites hasMore. The user sees rows that violate the pressed filter, plus duplicates.
 - **Evidence:** index.html:923-936 Load more (navSeq-only guard); 818-833 chip handler; 668-675 loadSessions mutates list.items/hasMore/loaded unconditionally with no request token. Repro r-browser.ts loadMoreThenFilter: pressedChip 'codex', 15 rows = CX-0..4, CC-0..4, CX-0..4 (5 claude-code rows, 5 duplicates).
 - **Fix:** Add a listSeq (or AbortController) incremented on every filter, refresh or showSessions load. loadSessions captures it and discards its result when stale. Load more also records the filter key and drops its page if the filters changed.
@@ -1088,7 +1088,7 @@ Importing the same run twice does **not** create duplicate runs. The id is deter
 
 ### VWR-3: A failed search leaves list.error set, so later successful searches still render the error panel
 
-- **Severity:** medium; confirmed: yes; status: fixing
+- **Severity:** medium; confirmed: yes; status: fixed (regression tests in test/viewer)
 - **Impact:** Live search gets stuck on 'Something went wrong' after any search error (q > 500 chars returns 400, or a transient 5xx), even after the query is fixed and returns hits. Only the 'Try again' button or navigation clears it.
 - **Evidence:** index.html:777-780 catch sets list.error; success path 773-776 never clears it; renderSessions 733 prefers list.error. The input has no maxlength, while server.ts:434 rejects > 500. Repro r-browser.ts searchErrorSticky: firstError 'q is too long'; after typing 'hello' (which matches), errorPanelShown=true and hitsShown=0.
 - **Fix:** In search(), set list.error = null after a successful runSearch (changed !== false). Also add maxlength=500 to the input.
@@ -1096,7 +1096,7 @@ Importing the same run twice does **not** create duplicate runs. The id is deter
 
 ### VWR-4: Expanded subagents persist into the flat 'Include subagents' scope, duplicating child rows
 
-- **Severity:** low; confirmed: yes; status: fixing
+- **Severity:** low; confirmed: yes; status: fixed (regression tests in test/viewer)
 - **Impact:** After switching scope, the child shows both nested under its parent and as its own row. In the 'all' scope the sub-toggle and ArrowLeft collapse are disabled, so the duplicate can't be removed without switching back.
 - **Evidence:** index.html:628-639 visibleRows walks list.expanded regardless of scope; chip handler 818-833 does not clear expanded/children (refreshSessions 711-712 does); 885 and 1045 disable toggling outside topLevelOnly(). Repro r-browser.ts expandedThenScopeAll: rows [CHILD, PARENT, CHILD], toggleButtons 0.
 - **Fix:** Walk expanded only when topLevelOnly() in visibleRows, or clear list.expanded on scope change.
@@ -1104,7 +1104,7 @@ Importing the same run twice does **not** create duplicate runs. The id is deter
 
 ### VWR-5: Search results ignore the flag, repo and scope filters while their chips show as pressed
 
-- **Severity:** low; confirmed: yes; status: fixing
+- **Severity:** low; confirmed: yes; status: fixed (regression tests in test/viewer)
 - **Impact:** With a flag or repo chip pressed, hits come from every session, so filter state and results disagree. A chip click re-runs the search with identical results.
 - **Evidence:** index.html:681 runSearch sends only {q, agent}; server.ts:429-439 /api/search accepts only agent and project; store/sqlite.ts:491-506.
 - **Fix:** Pass flag, repo and scope to /api/search and filter (join sessions in SQL, or post-filter by session). Otherwise hide or disable the non-agent chips while hits are shown.
@@ -1120,7 +1120,7 @@ Importing the same run twice does **not** create duplicate runs. The id is deter
 
 ### VWR-7: Partially ingested sessions: events are visible and searchable before the session row exists or is recomputed
 
-- **Severity:** low; confirmed: yes; status: fixing
+- **Severity:** low; confirmed: yes; status: fixed (regression tests in test/viewer)
 - **Impact:** During an ingest window (every 3 s in `ui`, or a hook-triggered ingest), /api/search returns hits whose session has no row yet; clicking one shows 'Session not found'. /api/sessions/:id/events can return more events than session.stats reports. The state is transient but user-visible on new sessions.
 - **Evidence:** core/ingest.ts:377 flush every 500 events vs recompute at checkpoint 346-356 (session row written in recomputeSession, 523-543); workflows/import.ts:68-69 writes events before sessions; store/sqlite.ts:491-506 search has no sessions join; index.html:1218 maps 404 to 'Session not found'. The ordering is unambiguous; the timing window was not reproduced.
 - **Fix:** Upsert the session row (or a stub) in the same transaction as each events batch, or have the search join sessions. In the client, treat a 404 reached from a search hit as 'still importing' and retry once.

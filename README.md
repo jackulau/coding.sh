@@ -70,7 +70,7 @@ source, updates and uninstall: [docs/guides/install.md](docs/guides/install.md).
 Sessions that edited code and never ran a check get a `no-verification` flag.
 
 <p align="center">
-  <img src=".github/assets/viewer-sessions.png" alt="The coding.sh session list: six Claude Code sessions with model, duration, tokens and tool counts. Three show a green 'passed' test badge and one shows a red no-verification flag." width="100%">
+  <img src=".github/assets/viewer-sessions.png" alt="The coding.sh session list: thirteen sessions from Claude Code, Codex and a support-ticket triage bot sending OpenTelemetry traces, with agent, model, tokens, cost, duration and tool counts. Four show a green 'passed' test badge, one shows an amber no-verification flag and one has a failed tool call. A histogram above the list shows sessions over time." width="100%">
 </p>
 
 ```sh
