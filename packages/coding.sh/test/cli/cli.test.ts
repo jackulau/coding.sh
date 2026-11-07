@@ -1211,3 +1211,51 @@ describe("cli exp regrade", () => {
     assert.match(none.stderr, /Missing graders/);
   });
 });
+
+describe("cli exp run matrix", () => {
+  it("--plan stores nothing, a run stores one experiment per cell with Holm p, and a vary violation exits 2", () => {
+    const h = tmpHome();
+    assert.equal(cli(h, ["dataset", "add", "up", ...["a", "b", "c", "d"].flatMap((q) => ["--case", JSON.stringify({ id: q, input: q, expected: q.toUpperCase() })])]).status, 0);
+    // Upper-cases its input, except under MODEL=bad.
+    writeFileSync(join(h.home, "up.mjs"), 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{const q=JSON.parse(s);process.stdout.write(JSON.stringify(process.env.MODEL==="bad"?q:q.toUpperCase()))});\n');
+    const base = { name: "mx", dataset: "up", task: { kind: "command", command: "node up.mjs", env: { MODEL: "good" } }, graders: [{ kind: "exact" }] };
+    writeFileSync(join(h.home, "matrix.json"), JSON.stringify({ ...base, matrix: { model: { path: "/task/env/MODEL", values: ["good", "bad", "also-good"] } }, baseline: { model: "good" } }));
+    const plan = cli(h, ["exp", "run", "matrix.json", "--plan", "--json"]);
+    assert.equal(plan.status, 0, plan.stderr);
+    const p = parseJson(plan.stdout, "plan") as { plan: { baseline: string; vary: string[]; cells: { name: string; baseline?: boolean }[] } };
+    assert.deepEqual(p.plan.cells.map((c) => c.name), ["model=good", "model=bad", "model=also-good"]);
+    assert.deepEqual(p.plan.vary, ["/task/env/MODEL"]);
+    assert.equal(p.plan.cells[0]!.baseline, true);
+    const listOf = () => (parseJson(cli(h, ["exp", "list", "--json"]).stdout, "list") as { experiments: { name: string }[] }).experiments;
+    assert.equal(listOf().length, 0, "--plan stores nothing");
+
+    const run = cli(h, ["exp", "run", "matrix.json", "--seed", "3", "--json"]);
+    assert.equal(run.status, 0, run.stderr);
+    const r = parseJson(run.stdout, "run") as { outcome: string; matrix: { id: string; seed: number }; experiments: Record<string, string>; comparisons: Record<string, { pHolm: number; mcnemar: { p: number; b: number } }> };
+    assert.equal(r.outcome, "completed");
+    assert.match(r.matrix.id, /^mx_/);
+    assert.equal(r.matrix.seed, 3);
+    assert.deepEqual(Object.keys(r.experiments), ["model=good", "model=bad", "model=also-good"]);
+    assert.deepEqual(Object.keys(r.comparisons), ["model=bad", "model=also-good"]);
+    assert.equal(r.comparisons["model=bad"]!.mcnemar.b, 4);
+    for (const c of Object.values(r.comparisons)) assert.ok(c.pHolm >= c.mcnemar.p);
+    assert.deepEqual(listOf().map((e) => e.name).sort(), ["mx/model=also-good", "mx/model=bad", "mx/model=good"]);
+
+    writeFileSync(join(h.home, "variants.json"), JSON.stringify({ ...base, vary: ["/task/env/MODEL"], variants: { a: {}, b: { "/task/env/MODEL": "bad", "/task/timeoutMs": 5000 } }, baseline: "a" }));
+    const bad = cli(h, ["exp", "run", "variants.json"]);
+    assert.equal(bad.status, 2);
+    assert.match(bad.stderr, /outside "vary" \(\/task\/env\/MODEL\): b: \/task\/timeoutMs/);
+    assert.equal(cli(h, ["exp", "run", "variants.json", "--plan"]).status, 2, "--plan validates too");
+    writeFileSync(join(h.home, "graders.json"), JSON.stringify({ ...base, vary: ["/graders/0"], variants: { a: {}, b: { "/graders/0": { kind: "contains", value: "A" } } }, baseline: "a" }));
+    assert.match(cli(h, ["exp", "run", "graders.json"]).stderr, /graders and dataset are not overridable/);
+    assert.equal(listOf().length, 3, "nothing stored by the refused specs");
+
+    writeFileSync(join(h.home, "plain.json"), JSON.stringify(base));
+    const noMatrix = cli(h, ["exp", "run", "plain.json", "--plan"]);
+    assert.equal(noMatrix.status, 2);
+    assert.match(noMatrix.stderr, /--plan/);
+    const arm = cli(h, ["exp", "run", "matrix.json", "--arm", "x=y.json"]);
+    assert.equal(arm.status, 2);
+    assert.match(arm.stderr, /--arm does not combine with a matrix spec/);
+  });
+});

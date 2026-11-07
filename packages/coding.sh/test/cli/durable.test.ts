@@ -140,6 +140,30 @@ describe("durable exp run", { skip: process.platform === "win32" && "signals sen
     assert.match(again.stderr, /already finished/);
   });
 
+  it("a matrix spec: SIGKILL mid-run, then --resume runs only the unfinished case-trials and keeps the cell ids", async () => {
+    const pids = join(root, "matrix.pids");
+    const spec = join(home, "matrix.json");
+    const t = JSON.parse(task({ delay: 150, pids })) as Record<string, unknown>;
+    writeFileSync(spec, JSON.stringify({ name: "mx", dataset: "ds", task: t, graders: [JSON.parse(GRADER)], vary: ["/task/env/MODE"], variants: { base: {}, same: { "/task/env/MODE": "same" } }, baseline: "base" }));
+    const args = ["exp", "run", spec, "--seed", "5", "--concurrency", "2", "--json"];
+    const killed = await interrupt(args, pids, ["SIGKILL"], 7);
+    assert.equal(killed.code, -1);
+    const job = (JSON.parse(cli(["exp", "status", "--json"]).stdout) as { runs: Status[] }).runs.find((r) => r.kind === "exp matrix" && r.status === "interrupted")!;
+    assert.ok(job, "the killed matrix is listed as interrupted");
+    assert.equal(job.total, 2 * N);
+    assert.ok(job.done >= 4 && job.done < 2 * N, `finished case-trials were checkpointed (${job.done})`);
+    const before = pidsIn(pids).length;
+    const resumed = cli([...args, "--resume"]);
+    assert.equal(resumed.status, 0, resumed.stderr);
+    const r = JSON.parse(resumed.stdout) as { matrix: { seed: number }; experiments: Record<string, string>; comparisons: Record<string, { diff: { mean: number } }> };
+    assert.equal(pidsIn(pids).length - before, 2 * N - job.done, "only unfinished case-trials ran again");
+    assert.equal(r.matrix.seed, 5);
+    assert.equal(r.comparisons.same!.diff.mean, 0, "same answers in both cells");
+    const listed = (JSON.parse(cli(["exp", "list", "--json", "--limit", "100"]).stdout) as { experiments: { id: string; name: string }[] }).experiments.filter((e) => e.name.startsWith("mx/"));
+    assert.deepEqual(listed.map((e) => e.id).sort(), Object.values(r.experiments).sort(), "one stored experiment per cell, under the ids the first attempt chose");
+    assert.equal(statusOf(job.id).status, "completed");
+  });
+
   it("first Ctrl-C lets the trials in flight finish and keeps them; --resume completes the run", async () => {
     const pids = join(root, "int.pids");
     const t = task({ delay: 700, pids });

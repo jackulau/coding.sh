@@ -687,6 +687,8 @@ Present only when they apply: `graders[].versionChanged` (`{"a","b"}` versions) 
 `gradersOnlyIn` (`{"a":[…],"b":[…]}`) when the sides were graded differently, with
 `instrumentWarning` saying so; `ungradedCases` for cases that ran on both sides but have no graded
 run on one.
+`timing.interleaved` is also true for two cells of one `exp run` matrix (both carry the same
+`metadata.matrix.id`).
 
 A missing or malformed id gets 400 `{"error":"a and b must be experiment ids","status":400}`; an
 unknown one gets 404 `{"error":"experiment not found","status":404}`.

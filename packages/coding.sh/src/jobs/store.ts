@@ -24,7 +24,7 @@ import { paths } from "../core/paths.ts";
 import { writeFileDurable } from "../store/durable.ts";
 import type { InfraKind } from "./retry.ts";
 
-export type JobKind = "exp run" | "exp ab" | "exp aa" | "exp sweep" | "compare" | "bench run" | "workflows run";
+export type JobKind = "exp run" | "exp ab" | "exp aa" | "exp sweep" | "exp matrix" | "compare" | "bench run" | "workflows run";
 
 /**
  * running: the owner is alive. interrupted: stopped before every trial ran

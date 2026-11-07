@@ -656,7 +656,7 @@ coding.sh exp <action>
 | Action | What it does |
 |---|---|
 | [`ab`](#codingsh-exp-ab) | A/B a CLAUDE.md, AGENTS.md, rule or skill edit on the decision points your agent recently got wrong |
-| [`run`](#codingsh-exp-run) | Run an experiment, or two tasks as one interleaved A/B |
+| [`run`](#codingsh-exp-run) | Run an experiment, two tasks as one interleaved A/B, or a matrix of cells against a baseline cell |
 | [`session`](#codingsh-exp-session) | Group runs into a session: new, note &lt;text&gt;, summary. exp run in it prints the delta against the previous run |
 | [`compare`](#codingsh-exp-compare) | Compare two experiments case by case |
 | [`regrade`](#codingsh-exp-regrade) | Grade a stored experiment's outputs again with new graders, without calling the task, and show what flipped |
@@ -719,7 +719,7 @@ coding.sh exp ab --watch
 
 ### `coding.sh exp run`
 
-Run an experiment, or two tasks as one interleaved A/B.
+Run an experiment, two tasks as one interleaved A/B, or a matrix of cells against a baseline cell.
 
 ```text
 coding.sh exp run [spec] [options]
@@ -727,7 +727,7 @@ coding.sh exp run [spec] [options]
 
 | Argument | Required | Description |
 |---|---|---|
-| `spec` | no | Experiment spec JSON file (fields can be overridden by options) |
+| `spec` | no | Experiment spec JSON file (fields can be overridden by options); with "matrix" or "variants" it runs every cell. |
 
 | Option | Default | Description |
 |---|---|---|
@@ -742,7 +742,9 @@ coding.sh exp run [spec] [options]
 | `--stop-early` |  | With --arm: stop once a group sequential test (O'Brien-Fleming) is decisive. |
 | `--looks <N>` | `4` | With --stop-early: planned looks over the case budget. |
 | `--max-cases <N>` |  | With --arm: run at most N cases (a random subset) |
-| `--seed <N>` |  | With --arm: seed for the case and arm order (default random, recorded) |
+| `--seed <N>` |  | With --arm or a matrix spec: seed for the case and arm order (default random, recorded) |
+| `--plan` |  | With a matrix spec: print the cells and what each changes, check them, and run nothing. |
+| `--cell <NAME>` |  | With a matrix spec: run only this cell (repeatable); the baseline cell always runs. |
 | `--control` | `true` | A continuation task needs a control arm (A, the recorded config) to measure replay noise; --no-control runs one task alone and marks the result. |
 | `--series <NAME>` |  | Tag the experiment as the next round of an iteration loop and print whether the loop should stop (see exp plateau) |
 | `--watch` |  | Rerun on every change to the spec, the task's script, grader files or --watch-path; a grader-only change regrades the stored outputs. Enter reruns, q quits. |
@@ -756,6 +758,8 @@ coding.sh exp run [spec] [options]
 coding.sh exp run spec.json --watch
 coding.sh exp run -d smoke -g '{"kind":"exact"}' --arm base=base.json --arm cand=cand.json --stop-early --max-cases 400
 coding.sh exp run spec.json --resume
+coding.sh exp run matrix.json --plan
+coding.sh exp run matrix.json --cell model=opus,prompt=short
 ```
 
 ### `coding.sh exp session`

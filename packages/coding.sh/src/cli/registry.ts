@@ -504,15 +504,17 @@ export const COMMANDS: CommandSpec[] = [
       },
       {
         name: "run",
-        summary: "Run an experiment, or two tasks as one interleaved A/B",
-        args: [{ name: "spec", desc: "Experiment spec JSON file (fields can be overridden by options)" }],
+        summary: "Run an experiment, two tasks as one interleaved A/B, or a matrix of cells against a baseline cell",
+        args: [{ name: "spec", desc: "Experiment spec JSON file (fields can be overridden by options); with \"matrix\" or \"variants\" it runs every cell" }],
         flags: [
           ...EXP_RUN_FLAGS,
           { name: "arm", type: "list", value: "<NAME=JSON|FILE>", desc: "One arm's task spec; give two (A then B) to interleave them case by case in one run" },
           { name: "stop-early", type: "boolean", desc: "With --arm: stop once a group sequential test (O'Brien-Fleming) is decisive" },
           { name: "looks", type: "number", value: "<N>", desc: "With --stop-early: planned looks over the case budget", default: "4" },
           { name: "max-cases", type: "number", value: "<N>", desc: "With --arm: run at most N cases (a random subset)" },
-          { name: "seed", type: "number", value: "<N>", desc: "With --arm: seed for the case and arm order (default random, recorded)" },
+          { name: "seed", type: "number", value: "<N>", desc: "With --arm or a matrix spec: seed for the case and arm order (default random, recorded)" },
+          { name: "plan", type: "boolean", desc: "With a matrix spec: print the cells and what each changes, check them, and run nothing" },
+          { name: "cell", type: "list", value: "<NAME>", desc: "With a matrix spec: run only this cell (repeatable); the baseline cell always runs" },
           {
             name: "control",
             type: "boolean",
@@ -530,6 +532,8 @@ export const COMMANDS: CommandSpec[] = [
           "coding.sh exp run spec.json --watch",
           "coding.sh exp run -d smoke -g '{\"kind\":\"exact\"}' --arm base=base.json --arm cand=cand.json --stop-early --max-cases 400",
           "coding.sh exp run spec.json --resume",
+          "coding.sh exp run matrix.json --plan",
+          "coding.sh exp run matrix.json --cell model=opus,prompt=short",
         ],
       },
       {

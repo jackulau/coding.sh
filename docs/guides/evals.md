@@ -189,6 +189,67 @@ caps case runs for the race (default: each train case used once), `--split` and 
 the splits, and a dataset with no splits gets a seeded 30% held out. Every run is stored as a
 normal experiment.
 
+### Matrix
+
+A spec with `"matrix"` runs every combination of its axes against one baseline cell. Each axis is
+a JSON Pointer into the spec and a list of values; a value is a scalar (labelled by its string
+form) or a one-key `{label: value}` map. `"baseline"` names one label per axis:
+
+```json
+{
+  "name": "shout-matrix",
+  "dataset": "qa",
+  "task": { "kind": "command", "command": "node agent.mjs", "env": { "MODEL": "stub-small", "PROMPT": "plain.md" } },
+  "graders": [{ "kind": "regex", "name": "caps", "pattern": "^[A-Z]+$" }],
+  "matrix": {
+    "model": { "path": "/task/env/MODEL", "values": [{ "small": "stub-small" }, { "big": "stub-big" }] },
+    "prompt": { "path": "/task/env/PROMPT", "values": [{ "plain": "plain.md" }, { "shout": "shout.md" }] }
+  },
+  "baseline": { "model": "small", "prompt": "plain" }
+}
+```
+
+`"variants"` names the cells by hand instead: `{"short": {"/task/env/PROMPT": "short.md"}, ...}`,
+with `"baseline"` naming one variant and `"vary"` listing the pointers the variants may change.
+Overrides follow merge rules: a scalar or array replaces, a map merges, `null` deletes. A cell may
+change only `/task/…` and `/trials`; graders, dataset and split define the comparison and are
+refused. Before anything runs, every cell is checked against the baseline: a cell that differs
+anywhere outside `vary` (with a matrix, the axis paths) is refused and named, and the command exits
+2. `--plan` prints the cells and what each changes, and runs nothing:
+
+```
+model=small,prompt=plain  (baseline)
+model=small,prompt=shout  /task/env/PROMPT="shout.md"
+model=big,prompt=plain    /task/env/MODEL="stub-big"
+model=big,prompt=shout    /task/env/MODEL="stub-big" /task/env/PROMPT="shout.md"
+```
+
+`exp run matrix.json` runs the cells interleaved like `--arm`: cases in a seeded random order, and
+for each case and trial every cell in a random order, back to back. Each cell is stored as its own
+experiment, `<name>/<cell>`, with `metadata.matrix` (the shared matrix id, the cell, its labels,
+the baseline, `vary` and the seed). Each other cell is compared with the baseline as `exp compare`
+would, and the McNemar p-values are Holm-adjusted over the cells, so a 16-cell sweep doesn't
+produce a winner by chance:
+
+```
+matrix mx_01M6W60VZVFBRTE56QWZGMJV56  4 cells, interleaved (seed 11); baseline model=small,prompt=plain
+
+cell                        pass     B − A  95% CI                    p  p (Holm)  regressed  improved  verdict
+------------------------  ------  --------  --------------------  -----  --------  ---------  --------  ------------
+model=small,prompt=plain    0.0%  baseline
+model=small,prompt=shout  100.0%  +100.0pp  [+100.0pp, +100.0pp]  0.008     0.023          0         8  better
+model=big,prompt=plain     50.0%   +50.0pp  [+12.5pp, +87.5pp]    0.125     0.125          0         4  inconclusive
+model=big,prompt=shout    100.0%  +100.0pp  [+100.0pp, +100.0pp]  0.008     0.023          0         8  better
+p: exact McNemar on flipped cases, Holm-adjusted over 3 comparisons with the baseline; verdict at Holm p < 0.05; CI: paired bootstrap, unadjusted
+```
+
+The verdict is `better` or `worse` when the Holm p is below 0.05, else `inconclusive`. `exp
+compare <baseline cell> <cell>` gives the per-case diff of one cell, and treats the two as
+interleaved. `--cell NAME` (repeatable) runs some cells; the baseline always runs. `--seed` fixes
+the order, `--resume` picks up an interrupted matrix, and `--json` returns `matrix`, `plan`,
+`experiments` (cell to id) and `comparisons` (each with `pHolm` and `holmVerdict`). Up to 256
+cells.
+
 ### When to stop a loop
 
 A loop that tries one candidate after another (prompt tuning, self-improvement) also needs a stop

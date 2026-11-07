@@ -7,6 +7,7 @@ import { formatVerifierAudit, verifierCorrected, type VerifierAudit, type Verifi
 import type { RoganGladenResult } from "../stats/interval.ts";
 import type { SequentialOutcome } from "../stats/sequential.ts";
 import type { AaResult } from "./aa.ts";
+import type { MatrixResult } from "./matrix-run.ts";
 import { gateDetail, gateHeadline, idList } from "../stats/gate.ts";
 import type { ArmAttrition, Comparison, ComparisonGate, ComparisonNonInferiority, ComparisonTurnover } from "./compare.ts";
 import type { PairwiseSummary } from "./pairwise.ts";
@@ -514,5 +515,67 @@ export function renderSessionSummary(s: Pick<ExpSession, "id" | "name">, blocks:
     }
   }
   if (exps) out.push(paint(`${exps} experiment${exps === 1 ? "" : "s"}`, "dim", color));
+  return out.join("\n");
+}
+
+/** `exp run` over a matrix spec: one row per cell against the baseline cell, with Holm-adjusted p-values. */
+export function renderMatrixRun(r: MatrixResult, opts: RenderOpts): string {
+  const color = opts.color;
+  const out: string[] = [];
+  const names = Object.keys(r.experiments);
+  const base = r.experiments[r.plan.baseline]!;
+  const comps = Object.values(r.comparisons);
+  const vColor = (v: string) => (v === "better" ? "green" : v === "worse" ? "red" : "dim");
+  out.push(`${paint("matrix", "bold", color)} ${paint(r.id, "dim", color)}  ${paint(`${names.length} cells, interleaved (seed ${r.seed}); baseline ${r.plan.baseline}`, "dim", color)}`);
+  out.push("");
+  out.push(
+    table(
+      [
+        { header: "cell" },
+        { header: "pass", align: "right" },
+        { header: "B − A", align: "right" },
+        { header: "95% CI" },
+        { header: "p", align: "right" },
+        { header: "p (Holm)", align: "right" },
+        { header: "regressed", align: "right" },
+        { header: "improved", align: "right" },
+        { header: "verdict" },
+      ],
+      names.map((n) => {
+        const pass = pct(r.experiments[n]!.summary.passRate.p);
+        const c = r.comparisons[n];
+        if (!c) return [n, pass, paint("baseline", "dim", color), "", "", "", "", "", ""];
+        return [
+          n,
+          pass,
+          paint(signedPct(c.diff.mean), vColor(c.verdict), color),
+          `[${signedPct(c.diff.lo)}, ${signedPct(c.diff.hi)}]`,
+          pValue(c.mcnemar.p),
+          pValue(c.pHolm),
+          String(c.mcnemar.b),
+          String(c.mcnemar.c),
+          paint(c.holmVerdict, vColor(c.holmVerdict), color),
+        ];
+      }),
+      { color },
+    ),
+  );
+  out.push(
+    paint(
+      `p: exact McNemar on flipped cases, Holm-adjusted over ${comps.length} comparison${comps.length === 1 ? "" : "s"} with the baseline; verdict at Holm p < 0.05; CI: paired bootstrap, unadjusted`,
+      "dim",
+      color,
+    ),
+  );
+  for (const n of names) {
+    const c = r.comparisons[n];
+    if (!c) continue;
+    for (const w of [c.gradeWarning, c.attrition.warning, c.datasetWarning]) if (w) out.push(paint(`! ${n}: ${w}`, "yellow", color));
+  }
+  out.push("");
+  const w = Math.max(...names.map((n) => n.length));
+  for (const n of names) out.push(`${n.padEnd(w)}  ${r.experiments[n]!.id}`);
+  const first = names.find((n) => n !== r.plan.baseline);
+  if (first) out.push(paint(`per-case diff of a cell: coding.sh exp compare ${base.id} ${r.experiments[first]!.id}`, "dim", color));
   return out.join("\n");
 }

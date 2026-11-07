@@ -81,7 +81,7 @@ export const TIMING_GAP_MS = 24 * 3600_000;
 
 /** When A and B ran relative to each other. */
 export interface Timing {
-  /** Both arms came from one interleaved run (`exp run --arm`, `exp aa`). */
+  /** Both arms came from one interleaved run (`exp run --arm`, `exp aa`, or two cells of one matrix run). */
   interleaved: boolean;
   /** Time between the first run's end and the second's start; 0 when they overlapped. */
   gapMs: number;
@@ -97,8 +97,12 @@ function duration(ms: number): string {
 }
 
 /** Interleaved, overlapping, or one after the other (with how far apart). */
-export function runTiming(a: Pick<ExperimentResult, "createdAt" | "finishedAt" | "pair">, b: Pick<ExperimentResult, "createdAt" | "finishedAt" | "pair">): Timing {
-  const interleaved = !!a.pair && a.pair.id === b.pair?.id;
+type Timed = Pick<ExperimentResult, "createdAt" | "finishedAt" | "pair" | "metadata">;
+const matrixOf = (r: Timed) => (r.metadata?.matrix as { id?: unknown } | undefined)?.id;
+
+export function runTiming(a: Timed, b: Timed): Timing {
+  const ma = matrixOf(a);
+  const interleaved = (!!a.pair && a.pair.id === b.pair?.id) || (typeof ma === "string" && ma === matrixOf(b));
   const start = Math.max(a.createdAt, b.createdAt);
   const end = Math.min(a.finishedAt, b.finishedAt);
   const out: Timing = { interleaved, gapMs: Math.max(0, start - end) };

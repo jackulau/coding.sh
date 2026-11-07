@@ -41,6 +41,24 @@ coding.sh eval export <task> --out ./tasks/retry --format harbor
 coding.sh harness snapshot --agent claude-code --name base
 coding.sh compare base candidate --k 3`;
 
+const matrix = `{
+  "name": "shout-matrix",
+  "dataset": "qa",
+  "task": { "kind": "command", "command": "node agent.mjs", "env": { "MODEL": "stub-small", "PROMPT": "plain.md" } },
+  "graders": [{ "kind": "regex", "pattern": "^[A-Z]+$" }],
+  "matrix": {
+    "model": { "path": "/task/env/MODEL", "values": [{ "small": "stub-small" }, { "big": "stub-big" }] },
+    "prompt": { "path": "/task/env/PROMPT", "values": [{ "plain": "plain.md" }, { "shout": "shout.md" }] }
+  },
+  "baseline": { "model": "small", "prompt": "plain" }
+}`;
+
+const matrixOut = `cell                        pass     B − A    p  p (Holm)  verdict
+model=small,prompt=plain    0.0%  baseline
+model=small,prompt=shout  100.0%  +100.0pp  0.008     0.023  better
+model=big,prompt=plain     50.0%   +50.0pp  0.125     0.125  inconclusive
+model=big,prompt=shout    100.0%  +100.0pp  0.008     0.023  better`;
+
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const m = (s: string) => `<span class="t-muted">${esc(s)}</span>`;
 const t = (s: string) => `<span class="t-text">${esc(s)}</span>`;
@@ -248,6 +266,22 @@ const REFINE = [
     held-out). On those held-out cases the same gate as <code>exp compare --gate</code> prints <code>adopt &lt;winner&gt;</code> or
     <code>keep &lt;start&gt;</code> with the reason. <code>--budget</code> caps the race's case runs.
   </p>
+
+  <h2 id="matrix">Matrix <Tag status="built" /></h2>
+  <p>
+    A spec with <code>"matrix"</code> runs every combination of its axes against one baseline cell. Each axis is a JSON Pointer into the
+    spec and a list of values. <code>"variants"</code> names cells by hand instead, with <code>"vary"</code> listing the pointers they may
+    change. A cell may change only <code>/task/…</code> and <code>/trials</code>; graders, dataset and split are refused. A cell that differs
+    from the baseline anywhere else is refused before anything runs, and <code>--plan</code> prints the cells without running them.
+  </p>
+  <Code title="matrix.json" code={matrix} />
+  <p>
+    <code>exp run matrix.json</code> runs the cells interleaved, case by case in random order. Each cell is stored as its own experiment and
+    compared with the baseline, and the McNemar p-values are Holm-adjusted over the cells, so a big sweep doesn't produce a winner by chance.
+    <code>exp compare</code> on the baseline and a cell gives its per-case diff. <code>--cell</code> runs some cells and
+    <code>--resume</code> picks up an interrupted matrix.
+  </p>
+  <Code code={matrixOut} />
 
   <h2 id="plateau">When to stop a loop <Tag status="built" /></h2>
   <p>

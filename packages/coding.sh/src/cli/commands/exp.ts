@@ -24,6 +24,7 @@ import { plateau, plateauLine, renderPlateau, type PlateauGate, type PlateauResu
 import { regradeExperiment, runExperiment } from "../../experiments/run.ts";
 import { regradeDiff, renderRegradeDiff } from "../../experiments/regrade.ts";
 import { runSweep, type SweepConfig } from "../../experiments/sweep.ts";
+import type { MatrixSpec } from "../../experiments/matrix.ts";
 import type { TaskSpec } from "../../experiments/task.ts";
 import { createGrader, createPairwiseJudgeFromSpec, type GraderSpec, type PairwiseGraderSpec } from "../../graders/index.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
@@ -50,10 +51,25 @@ interface ExpSpec {
   split?: Split;
   /** Extra files (globs, relative to the spec) whose change reruns `exp run --watch`. */
   watch?: string[];
+  /** Matrix specs (src/experiments/matrix.ts): one controlled comparison over cells. */
+  vary?: MatrixSpec["vary"];
+  variants?: MatrixSpec["variants"];
+  matrix?: MatrixSpec["matrix"];
+  baseline?: MatrixSpec["baseline"];
 }
 
 function isObj(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+/** Whether a spec file defines a matrix or variants. Unreadable files are left for loadSpec to report. */
+async function isMatrixFile(file: string): Promise<boolean> {
+  try {
+    const v = JSON.parse(await readFile(file, "utf8")) as unknown;
+    return isObj(v) && (v.matrix !== undefined || v.variants !== undefined);
+  } catch {
+    return false;
+  }
 }
 
 export interface LoadedSpec {
@@ -73,7 +89,7 @@ export interface LoadedSpec {
  * caller (tasks, seed, stopping rule). Concurrency, retries and the name are
  * left out: they change how fast it runs, not what it measures.
  */
-function specConfig(c: CommandContext, loaded: LoadedSpec, parts: Record<string, unknown>) {
+export function specConfig(c: CommandContext, loaded: LoadedSpec, parts: Record<string, unknown>) {
   const { spec, dataset, graders } = loaded;
   return jobConfig({
     dataset: `${dataset.id}@${dataset.version}`,
@@ -86,7 +102,7 @@ function specConfig(c: CommandContext, loaded: LoadedSpec, parts: Record<string,
 }
 
 /** The durable-run options a runner takes: the job, the graceful-stop signal, retries and the trial timeout. */
-function durable(c: CommandContext, job: Job) {
+export function durable(c: CommandContext, job: Job) {
   const timeoutMs = trialTimeout(c);
   return { job: job.scope(), ...(c.drain ? { drain: c.drain } : {}), retry: retryFlag(c), ...(timeoutMs !== undefined ? { timeoutMs } : {}) };
 }
@@ -310,7 +326,7 @@ async function seriesStatus(store: FileEvalStore, name: string | undefined): Pro
 }
 
 /** `--seed`: a non-negative integer, or undefined. */
-function seedFlag(c: CommandContext): number | undefined {
+export function seedFlag(c: CommandContext): number | undefined {
   const seed = c.flags.seed === undefined ? undefined : num(c.flags.seed);
   if (seed !== undefined && !(Number.isInteger(seed) && seed >= 0)) throw new UsageError(`--seed must be a non-negative integer, got ${JSON.stringify(c.flags.seed)}`);
   return seed;
@@ -584,6 +600,12 @@ export async function run(c: CommandContext): Promise<number> {
         const maxCases = positiveInt(c.flags["max-cases"], "max-cases");
         const looks = positiveInt(c.flags.looks, "looks");
         const seed = seedFlag(c);
+        // A spec with "matrix" or "variants" runs every cell against its baseline cell.
+        if (c.positionals[0] && (await isMatrixFile(resolve(c.cwd, c.positionals[0])))) {
+          const { matrixRun } = await import("./exp-matrix.ts");
+          return matrixRun(c, store, c.positionals[0]);
+        }
+        if (c.flags.plan === true || list(c.flags.cell).length) throw new UsageError(`--${c.flags.plan === true ? "plan" : "cell"} needs a spec file with "matrix" or "variants"`, { reason: "invalid_argument" });
         if (!armFlags.length) {
           for (const [flag, set] of [["stop-early", stopEarly], ["max-cases", maxCases !== undefined], ["looks", looks !== undefined], ["seed", seed !== undefined]] as const) {
             if (set) throw new UsageError(`--${flag} needs two --arm options (an interleaved A/B)`, { reason: "invalid_argument" });

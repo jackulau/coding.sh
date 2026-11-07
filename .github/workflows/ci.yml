@@ -252,6 +252,13 @@ jobs:
         if: runner.os == 'Linux'
         run: node scripts/e2e/exp-session-watch.mjs
 
+      # exp run with a 2x2 matrix spec on a command agent answered by the stub: --plan stores
+      # nothing, the cells run interleaved and are stored one experiment each, the p-values are
+      # Holm-adjusted, exp compare on two cells matches, and a vary violation exits 2 before any call.
+      - name: Experiment matrix
+        if: runner.os == 'Linux'
+        run: node scripts/e2e/exp-matrix.mjs
+
       # The refine loop on synthetic sessions, with the proposer, the next turn and the judge
       # answered by the stub: one edit is kept and applied, a later edit that drops it wins its own
       # decision points but is rejected by the guard, and a rollback restores CLAUDE.md byte for byte.
