@@ -65,7 +65,6 @@ const markdownURL = noindex || isAgentExcluded(Astro.url.pathname)
 
     <!-- Self-hosted Geist (our voice) and Geist Mono (the machine's). Preloaded so
          text never waits on a third-party stylesheet; @font-face is in global.css. -->
-    <link rel="preload" href="/fonts/geist-serif-latin.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/geist-mono-latin.woff2" as="font" type="font/woff2" crossorigin />
     <script is:inline>document.documentElement.classList.add("js");</script>
