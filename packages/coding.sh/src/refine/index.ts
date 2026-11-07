@@ -3,3 +3,4 @@
 export * from "./taxonomy.ts";
 export * from "./severity.ts";
 export * from "./keep.ts";
+export * from "./guard.ts";
