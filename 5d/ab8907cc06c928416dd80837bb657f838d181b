@@ -1,0 +1,27 @@
+.github/assets/sample-sessions.mjs
+  s_8e040dbdf13565::t_08c67a4ee46606 1-7,9-19,24-28,30-33,37-38,40,43,46,49-50,52,55-56,60,65,87-257
+README.md
+  s_8e040dbdf13565::t_cf555477baf27e 73
+docs/design/state-machines.md
+  s_8e040dbdf13565::t_c1243cd47547cb 83-85,87-89,1075,1083,1091,1099,1107,1123
+packages/coding.sh/src/viewer/ui/index.html
+  s_8e040dbdf13565::t_a950bc09f9eea4 335-336,393-396,430-433,505,658-664,678,680,684,692-693,731-734,752,761-763,781-783,796,805,844-845,901,926,2019,2037-2039,2327,2329,3559,3561,3588,3694-3696,3709,3809,3816,3860-3862,3930,3985,4028,4032-4033,4035,4104,4168-4169,4185,4378,4388-4389,4447-4448,4471,4475,4489-4491,4503,4506,4547,4552-4553,4559-4560,4566,4568-4569,4589,4654,4669
+packages/coding.sh/test/viewer/ui-browser.test.ts
+  s_8e040dbdf13565::t_dff783484e0be2 675
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5dab8907cc06c928416dd80837bb657f838d181b",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "unknown"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
