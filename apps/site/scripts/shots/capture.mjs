@@ -257,8 +257,9 @@ await record(1272, "record-failure", "sqlite.ts:428:17)");
 await record(430, "record-failure-m", "column name: cost_usd", 358);
 
 // ------------------------------------------------------------ production (serve)
-// The request list itself: desktop 6 rows, phones 3 (the failed request is the
-// second), so the section stays about one screen tall. The heading, its totals
+// The request list itself: desktop 6 rows, phones 3, each with its model,
+// tokens and cost (~ where it is estimated from list prices), so the section
+// stays about one screen tall. The heading, its totals
 // line, the facets and the chart above the list are left out of the crop.
 // Phones are shot at the frame's own width (358), so the text shows at 1:1.
 for (const [w, h, m, name, rows] of [[660, 900, false, "production-requests", 6], [358, 844, true, "production-requests-m", 3]]) {
@@ -275,7 +276,7 @@ for (const [w, h, m, name, rows] of [[660, 900, false, "production-requests", 6]
     hide(document.querySelector(".page-head"));
   });
   await sleep(150);
-  if (!(await page.evaluate(() => document.querySelectorAll(".row.is-fail").length === 1))) throw new Error("expected exactly one failed request row");
+  if (!(await page.evaluate((n) => [...document.querySelectorAll(".list > .row")].slice(0, n).some((r) => /\$\d/.test(r.innerText)), rows))) throw new Error("expected a request row with its cost");
   const r = await page.evaluate((n) => {
     const table = document.querySelector(".panel.table").getBoundingClientRect();
     const all = [...document.querySelectorAll(".list > .row")];

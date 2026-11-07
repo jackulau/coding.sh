@@ -520,8 +520,7 @@ const serve = await start(["serve", "--port", "0"], { CODING_SH_HOME: PROD });
 // OTLP/JSON gen_ai spans: one chat request per issue, the way the SDK's
 // observe() records it. The prompt is the issue title (the instructions are the
 // system message), so each run is titled by its issue. One request fails: the
-// provider rate-limited it (429), so it has no tokens and no answer. It is the
-// second-newest, so the phone crop shows it too.
+// provider rate-limited it (429), so it has no tokens, no cost and no answer.
 const SYSTEM = "Pick labels for this GitHub issue from the repo's label list. Answer with the labels only.";
 const ISSUES = [
   ["gpt-5-mini", "coding.sh usage shows $0.00 for Cursor sessions", "question, usage", 1620, 31, 1.4],

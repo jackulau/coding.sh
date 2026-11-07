@@ -49,12 +49,13 @@ const tx = (s: string) => `<span class="t-text">${s}</span>`;
 // (scripts/shots/seed.mjs prints it), with the four columns a first-time
 // reader needs: agent, sessions, tokens and cost. It prints a left-aligned
 // table with columns two spaces apart, which fits 320px unscrolled.
-// Cursor's hooks report no tokens, so it has no row here.
+// Cursor's hooks report no tokens, so it has no row here. ~ marks a cost
+// estimated from tokens and list prices (local agents report no cost).
 const USAGE_HEAD = ["AGENT", "SESSIONS", "TOKENS", "COST"];
 const USAGE_ROWS = [
-  ["claude-code", "29", "9.8M", "$6.92"],
-  ["codex", "14", "4.0M", "$2.08"],
-  ["opencode", "5", "1.1M", "$0.79"],
+  ["claude-code", "29", "9.8M", "~$6.92"],
+  ["codex", "14", "4.0M", "~$2.08"],
+  ["opencode", "5", "1.1M", "~$1.07"],
 ];
 const widths = USAGE_HEAD.map((h, i) => Math.max(h.length, ...USAGE_ROWS.map((r) => r[i].length)));
 const usageLine = (r: string[], head = false) =>
@@ -120,7 +121,7 @@ const FAQ = [
           eager
           timing="first-viewer-row"
           sizes="(min-width: 1088px) 60rem, calc(100vw - 4rem)"
-          alt="A Claude Code session in the coding.sh viewer, on the coding.sh repo: its title, agent, duration and cost, then its steps in order. An npm test run is red because one test failed. A few steps later the agent edits src/store/sqlite.ts to fix it."
+          alt="A Claude Code session in the coding.sh viewer, on the coding.sh repo: its title, agent, duration and estimated cost, then its steps in order, with what each model call cost. An npm test run is red because one test failed. A few steps later the agent edits src/store/sqlite.ts to fix it."
         />
       </div>
 
@@ -180,7 +181,7 @@ const FAQ = [
           <div class="copy">
             <p class="eyebrow">Measure</p>
             <h2 id="measure-title">See what each agent costs</h2>
-            <p class="body">Run <code>coding.sh usage</code> to add up tokens and dollars by agent, model, repo or day.</p>
+            <p class="body">Run <code>coding.sh usage</code> to add up tokens and dollars by agent, model, repo or day. A <code>~</code> means the cost is estimated from list prices.</p>
           </div>
           <Terminal title="~/coding.sh" label="Output of coding.sh usage" class="usage-term">
             <pre set:html={USAGE} />
@@ -231,7 +232,7 @@ const FAQ = [
               srcMobile={productionRequestsM}
               bar="coding.sh serve"
               sizes="(min-width: 1024px) 42rem, calc(100vw - 4rem)"
-              alt="The coding.sh serve viewer listing requests from coding-sh-triage, a bot that labels issues on the coding.sh repo, each with its model, tokens, cost and time. One is marked red with its error: 429 Rate limit exceeded."
+              alt="The coding.sh serve viewer listing requests from coding-sh-triage, a bot that labels issues on the coding.sh repo, each with its model, tokens, estimated cost and time."
             />
           </div>
         </div>
@@ -473,6 +474,13 @@ const FAQ = [
   }
 
   /* ---------- measure ---------- */
+  /* The ~ on estimated costs makes the table 1ch wider; this keeps it unscrolled at 320px. */
+  @media (max-width: 359px) {
+    #measure :global(.usage-term .term__body) {
+      padding-inline: 0.75rem;
+      font-size: 11.5px;
+    }
+  }
   @media (min-width: 1024px) {
     #measure :global(.usage-term) {
       font-size: 0.9375rem;

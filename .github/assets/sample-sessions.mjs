@@ -2,7 +2,7 @@
 // viewer-sessions.png), so the viewer shows a mix of agents and no real session data:
 //   - six Claude Code transcripts   $HOME/.claude/projects/-home-dev-coding-sh/<id>.jsonl
 //   - three Codex CLI rollouts      $HOME/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<id>.jsonl
-//   - four Vercel AI SDK traces from a support-ticket triage bot (service.name "support-triage"),
+//   - four Vercel AI SDK traces from a bot that labels coding.sh issues (service.name "coding-sh-triage"),
 //     as OTLP/JSON in $HOME/otlp-traces.json, POSTed to <collector>/v1/traces when a URL is given
 // Everything is timed relative to now (the last six hours).
 //
@@ -15,8 +15,10 @@
 //   node .github/assets/sample-sessions.mjs "$HOME" "$(node -p "require('$R/collector.json').url")"
 //   kill $C
 //   node $CLI ingest --backfill
-//   node $CLI sessions      # 13 sessions: 6 claude-code, 3 codex, 4 support-triage
-//   node $CLI ui            # 1280 wide, 2x, dark; session 1, its file.change step
+//   node $CLI sessions      # 13 sessions: 6 claude-code, 3 codex, 4 coding-sh-triage
+//   node $CLI ui --port 4320 --no-open & U=$!
+//   node .github/assets/capture-readme.mjs http://127.0.0.1:4320/   # 1280 wide, 2x, dark
+//   kill $U
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -164,28 +166,28 @@ codex.forEach((s, i) => {
 });
 console.log(`wrote ${codex.length} Codex sessions to ${join(home, ".codex", "sessions")}`);
 
-// ---------------------------------------------------------------- support-triage (OTel, Vercel AI SDK)
-// One trace per ticket: ai.generateText (root) → ai.generateText.doGenerate model calls and
+// ---------------------------------------------------------------- coding-sh-triage (OTel, Vercel AI SDK)
+// One trace per GitHub issue: ai.generateText (root) → ai.generateText.doGenerate model calls and
 // ai.toolCall spans as its children. No conversation id, so each trace is its own session.
 
-const MODEL = "gpt-6.1-mini";
+const MODEL = "gpt-6.1-terra";
 const tickets = [
-  { mins: 175, prompt: "Ticket #4821: \"I was charged twice for the Team plan this month. Please refund one of them.\"",
-    tools: [["lookupCustomer", { ticket: 4821 }, { id: "cus_8812", plan: "team", seats: 12, invoices: ["in_3301 $240 Nov 1", "in_3302 $240 Nov 1"] }],
-      ["searchDocs", { query: "duplicate charge refund policy" }, [{ title: "Refunds for duplicate charges", url: "/help/billing/refunds" }]]],
-    answer: "Category: billing. Priority: high. Two identical invoices (in_3301, in_3302) on Nov 1 confirm a duplicate charge. Route to Billing with the duplicate-charge refund macro." },
-  { mins: 228, prompt: "Ticket #4822: \"How do I export all my orders to CSV?\"",
-    tools: [["searchDocs", { query: "export orders csv" }, [{ title: "Exporting data", url: "/help/data/export" }]]],
-    answer: "Category: how-to. Priority: low. Answered by \"Exporting data\" (/help/data/export). Auto-reply with the article and close." },
-  { mins: 262, prompt: "Ticket #4823: \"The magic login link says it expired the moment I click it. I'm locked out.\"",
-    tools: [["lookupCustomer", { ticket: 4823 }, { error: "upstream timeout after 5000ms" }, true],
-      ["lookupCustomer", { ticket: 4823 }, { id: "cus_9140", plan: "pro", sso: false, lastLogin: "14 days ago" }],
-      ["searchDocs", { query: "magic link expired immediately" }, [{ title: "Login links and email scanners", url: "/help/account/login-links" }]]],
-    answer: "Category: account access. Priority: high. Likely an email security scanner opening the link first. Send the login-links article and offer a one-time code; escalate to Auth if it persists." },
-  { mins: 335, prompt: "Ticket #4824: \"Can we get SAML SSO on the Pro plan?\"",
-    tools: [["lookupCustomer", { ticket: 4824 }, { id: "cus_7710", plan: "pro", seats: 48 }],
-      ["searchDocs", { query: "SAML SSO plans" }, [{ title: "Single sign-on", url: "/help/security/sso" }]]],
-    answer: "Category: sales. Priority: medium. SSO is on Enterprise only; 48 seats on Pro. Route to Sales as an upgrade lead." },
+  { mins: 175, prompt: "Issue #412: coding.sh usage shows $0.00 for Cursor sessions",
+    tools: [["getIssue", { number: 412 }, { title: "coding.sh usage shows $0.00 for Cursor sessions", author: "dvdk", comments: 2 }],
+      ["searchDocs", { query: "cursor hooks tokens cost" }, [{ title: "Agents: Cursor", url: "/docs/agents#cursor" }]]],
+    answer: "Labels: question, usage. Cursor's hooks report no tokens, so there is nothing to price. Reply with the Cursor section of the agents page." },
+  { mins: 228, prompt: "Issue #413: Docs link to /docs/otel is broken",
+    tools: [["searchDocs", { query: "otel" }, [{ title: "OpenTelemetry", url: "/docs/otel" }]]],
+    answer: "Labels: docs. The page lives at /docs/otel; the README links /docs/otel/. Fix the trailing slash." },
+  { mins: 262, prompt: "Issue #414: serve returns 413 for large OTLP batches",
+    tools: [["getIssue", { number: 414 }, { error: "GitHub API timeout after 5000ms" }, true],
+      ["getIssue", { number: 414 }, { title: "serve returns 413 for large OTLP batches", author: "mira-o", comments: 4 }],
+      ["searchDocs", { query: "OTLP body limit" }, [{ title: "Production: limits", url: "/docs/production#limits" }]]],
+    answer: "Labels: bug, serve. Batches over the 8 MB body limit get 413. Point to the limits section and suggest a smaller exporter batch size." },
+  { mins: 335, prompt: "Issue #415: Add a Kiro CLI adapter",
+    tools: [["getIssue", { number: 415 }, { title: "Add a Kiro CLI adapter", author: "tq", comments: 1 }],
+      ["searchDocs", { query: "Kiro" }, [{ title: "Agents: Kiro", url: "/docs/agents#kiro" }]]],
+    answer: "Labels: enhancement, adapters. Kiro is captured today without prompts or tool calls; an adapter would read its local session files." },
 ];
 
 const hex = (n, len) => n.toString(16).padStart(len, "0");
@@ -199,13 +201,13 @@ tickets.forEach((tk, i) => {
   const sid = () => `b${hex(i + 1, 3)}${hex(++n, 12)}`;
   const start = base + tk.mins * 60_000;
   let t = start + 5;
-  const common = [attr("ai.model.id", MODEL), attr("ai.model.provider", "openai.responses"), attr("ai.telemetry.functionId", "triage-ticket"), attr("resource.name", "triage-ticket")];
+  const common = [attr("ai.model.id", MODEL), attr("ai.model.provider", "openai.responses"), attr("ai.telemetry.functionId", "label-issue"), attr("resource.name", "label-issue")];
   let prompt = 820, totalIn = 0, totalOut = 0;
-  const messages = [{ role: "system", content: "You triage support tickets. Return a category, a priority and a routing decision." }, { role: "user", content: [{ type: "text", text: tk.prompt }] }];
+  const messages = [{ role: "system", content: "You label GitHub issues on jackulau/coding.sh. Pick labels from the repo's label list and say why in one line." }, { role: "user", content: [{ type: "text", text: tk.prompt }] }];
   const doGenerate = (toolCall, text) => {
     const out = toolCall ? 38 : 96;
     const s = { traceId, spanId: sid(), parentSpanId: rootId, name: "ai.generateText.doGenerate", kind: 3, startTimeUnixNano: nanos(t), endTimeUnixNano: nanos(t += toolCall ? 900 : 1700),
-      attributes: [...common, attr("ai.operationId", "ai.generateText.doGenerate"), attr("operation.name", "ai.generateText.doGenerate triage-ticket"),
+      attributes: [...common, attr("ai.operationId", "ai.generateText.doGenerate"), attr("operation.name", "ai.generateText.doGenerate label-issue"),
         attr("ai.prompt.messages", messages), attr("ai.response.finishReason", toolCall ? "tool-calls" : "stop"),
         ...(toolCall ? [attr("ai.response.toolCalls", [{ toolCallType: "function", toolCallId: toolCall.id, toolName: toolCall.name, args: JSON.stringify(toolCall.args) }])] : [attr("ai.response.text", text)]),
         attr("ai.usage.promptTokens", prompt), attr("ai.usage.completionTokens", out),
@@ -220,7 +222,7 @@ tickets.forEach((tk, i) => {
     doGenerate(call);
     t += 10;
     const s = { traceId, spanId: sid(), parentSpanId: rootId, name: "ai.toolCall", kind: 1, startTimeUnixNano: nanos(t), endTimeUnixNano: nanos(t += failed ? 5000 : 180 + k * 60),
-      attributes: [attr("ai.operationId", "ai.toolCall"), attr("operation.name", "ai.toolCall triage-ticket"), attr("ai.toolCall.name", name), attr("ai.toolCall.id", call.id), attr("ai.toolCall.args", args),
+      attributes: [attr("ai.operationId", "ai.toolCall"), attr("operation.name", "ai.toolCall label-issue"), attr("ai.toolCall.name", name), attr("ai.toolCall.id", call.id), attr("ai.toolCall.args", args),
         ...(failed ? [] : [attr("ai.toolCall.result", result)])],
       status: failed ? { code: 2, message: result.error } : { code: 0 },
       events: failed ? [{ timeUnixNano: nanos(t), name: "exception", attributes: [attr("exception.type", "TimeoutError"), attr("exception.message", result.error)] }] : [] };
@@ -230,7 +232,7 @@ tickets.forEach((tk, i) => {
   });
   doGenerate(undefined, tk.answer);
   spans.push({ traceId, spanId: rootId, name: "ai.generateText", kind: 1, startTimeUnixNano: nanos(start), endTimeUnixNano: nanos(t + 20),
-    attributes: [...common, attr("ai.operationId", "ai.generateText"), attr("operation.name", "ai.generateText triage-ticket"),
+    attributes: [...common, attr("ai.operationId", "ai.generateText"), attr("operation.name", "ai.generateText label-issue"),
       attr("ai.prompt", { system: messages[0].content, prompt: tk.prompt }), attr("ai.response.text", tk.answer), attr("ai.response.finishReason", "stop"),
       attr("ai.usage.promptTokens", totalIn), attr("ai.usage.completionTokens", totalOut)],
     status: { code: 0 }, events: [] });
@@ -238,13 +240,13 @@ tickets.forEach((tk, i) => {
 
 const otlp = {
   resourceSpans: [{
-    resource: { attributes: [attr("service.name", "support-triage"), attr("service.version", "1.4.0"), attr("deployment.environment", "production")] },
+    resource: { attributes: [attr("service.name", "coding-sh-triage"), attr("service.version", "0.4.2"), attr("deployment.environment", "production")] },
     scopeSpans: [{ scope: { name: "ai", version: "6.0.0" }, spans }],
   }],
 };
 const otlpFile = join(home, "otlp-traces.json");
 writeFileSync(otlpFile, JSON.stringify(otlp, null, 2) + "\n");
-console.log(`wrote ${tickets.length} support-triage traces (${spans.length} spans) to ${otlpFile}`);
+console.log(`wrote ${tickets.length} coding-sh-triage traces (${spans.length} spans) to ${otlpFile}`);
 
 if (collector) {
   const res = await fetch(new URL("/v1/traces", collector), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(otlp) });
