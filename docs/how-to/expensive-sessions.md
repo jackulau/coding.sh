@@ -14,8 +14,11 @@ coding.sh usage --since 7d --by day
 
 Each row shows sessions, turns, total and output tokens, tokens per turn and the cache-read share.
 A `COST` column appears when at least one session in the window has a cost: `~` marks a cost that
-includes an estimate, `+` a row where some sessions have none. Subagent sessions count
-toward their row.
+includes an estimate, and `≥` marks a lower bound: some sessions in the row have tokens but no
+cost, and the figure counts only the priced ones. A row with no priced session shows `-`. Below
+the table, `usage` says how many sessions have tokens but no cost and names their models (up to
+five) with the fix: a `[prices."<model>"]` table in config.toml. Subagent sessions count toward
+their row.
 
 ## 2. The top sessions
 

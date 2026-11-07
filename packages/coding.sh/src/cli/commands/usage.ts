@@ -36,8 +36,8 @@ interface Row {
   cacheBreakUsd?: number;
 }
 
-/** `$1.23`, `~$1.23` when part of it is estimated, `$1.23+` when some sessions in the row have no cost. */
-const costCell = (g: Row): string => (g.costUsd === undefined ? "-" : `${g.estimatedCostUsd ? "~" : ""}${usd(g.costUsd)}${g.costPartial ? "+" : ""}`);
+/** `$1.23`, `~$1.23` when part of it is estimated, `≥$1.23` (a lower bound) when some sessions in the row have tokens but no cost. */
+const costCell = (g: Row): string => (g.costUsd === undefined ? "-" : `${g.costPartial ? "≥" : ""}${g.estimatedCostUsd ? "~" : ""}${usd(g.costUsd)}`);
 
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
@@ -71,14 +71,20 @@ export async function run(c: CommandContext): Promise<number> {
       r.groups.map((g) => [g.key, String(g.sessions), String(g.turns), fmt(g.totalTokens), fmt(g.outputTokens), fmt(g.tokensPerTurn), pct(g.cacheReadShare), ...(cost ? [costCell(g)] : [])]),
     );
     out.note("CACHE READ = cache reads / all prompt tokens. Subagent sessions count.");
-    if (r.groups.some((g) => g.estimatedCostUsd)) out.note("~ = includes cost estimated from tokens × list price (no reported cost). + = some sessions have no cost.");
+    if (r.groups.some((g) => g.estimatedCostUsd)) out.note("~ = includes cost estimated from tokens × list price (no reported cost).");
+    if (r.groups.some((g) => g.costPartial)) out.note("≥ = some sessions in the row have tokens but no price; the cost is a lower bound.");
     const tiers = Object.entries(r.total.estimatedCostByTier ?? {});
     if (tiers.length) out.note(`Estimated at non-standard rates: ${tiers.map(([t, v]) => `${t} ${usd(v)}`).join(", ")}`);
     const t = r.total;
     if (t.cacheBreaks) out.note(`Cache breaks: ${t.cacheBreaks}, ${fmt(t.cacheBreakTokens)} prompt tokens billed again${t.cacheBreakUsd ? ` (~${usd(t.cacheBreakUsd)} extra)` : ""}. Causes per session: coding.sh show <id>.`);
     if (t.duplicateFetches) out.note(`Re-fetches: ${t.duplicateFetches} read-only ${t.duplicateFetches === 1 ? "call" : "calls"} repeated with the same result (~${fmt(t.duplicateFetchTokens)} tokens re-sent).`);
-    const unpriced = Object.entries(r.unpricedModels ?? {});
-    if (unpriced.length) out.note(`No price for ${unpriced.map(([m]) => m).slice(0, 6).join(", ")}: add [prices."<model>"] to config.toml`);
+    const unpriced = Object.entries(r.unpricedModels ?? {}).sort((a, b) => b[1] - a[1]);
+    if (unpriced.length) {
+      const n = unpriced.reduce((s, [, k]) => s + k, 0);
+      out.note(cost ? `${n} of ${t.sessions} sessions have tokens but no reported cost; COST counts only the priced ones` : `No session in this window has a cost (none reported one, and their models have no price), so COST is left out; compare TOKENS instead`);
+      const named = unpriced.slice(0, 5).map(([m, k]) => `${m} (${k})`).join(", ");
+      out.note(`No price for ${named}${unpriced.length > 5 ? ` +${unpriced.length - 5} more` : ""}: add [prices."<model>"] with input and output in USD per 1M tokens to config.toml (coding.sh config path prints where)`);
+    }
     return 0;
   });
 }
