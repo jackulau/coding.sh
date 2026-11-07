@@ -1,14 +1,15 @@
 // Coding-agent adapters as they exist in packages/coding.sh/src/adapters
 // (registry: src/adapters/index.ts + src/adapters/more/index.ts), checked
 // against each adapter's header comment and docs/ADAPTERS.md on 2026-11-06.
-// Every adapter here has fixture tests under test/adapters; none is marked
-// "verified on every agent version" because the nightly live check is planned.
+// Every adapter here has fixture tests under test/adapters. "verified" means it
+// has also been run against a live install of the agent.
 
 export interface AdapterRow {
   name: string;
   /** Agent id used by --agent and in the trace. */
   id: string;
-  tier: "A" | "B" | "C";
+  /** verified: run against a live install; fixture-tested: checked against recorded payloads only. */
+  status: "verified" | "fixture-tested" | "tested";
   /** How live events reach the spool. */
   live: string;
   /** Where `ingest --backfill` reads history from; undefined = no backfill. */
@@ -23,7 +24,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Claude Code",
     id: "claude-code",
-    tier: "A",
+    status: "verified",
     live: "settings.json hooks",
     backfill: "projects/<slug>/<session>.jsonl transcripts",
     headless: "claude -p --output-format stream-json",
@@ -32,7 +33,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Codex CLI",
     id: "codex",
-    tier: "A",
+    status: "verified",
     live: "hooks.json hooks (you approve them with /hooks)",
     backfill: "sessions/**/rollout-*.jsonl",
     headless: "codex exec --json",
@@ -41,7 +42,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "OpenCode",
     id: "opencode",
-    tier: "A",
+    status: "fixture-tested",
     live: "plugin (2.x and 1.x)",
     backfill: "opencode.db (2.x), JSON storage (1.x)",
     headless: "opencode run --format json",
@@ -50,7 +51,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Cursor CLI",
     id: "cursor",
-    tier: "B",
+    status: "fixture-tested",
     live: "hooks.json, partial in -p mode",
     backfill: "agent-transcripts/*.jsonl (undocumented format)",
     headless: "agent -p --output-format stream-json",
@@ -59,7 +60,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "T3 Code",
     id: "t3code",
-    tier: "B",
+    status: "fixture-tested",
     live: "its Codex and Claude Code hooks, tagged as T3",
     backfill: "~/.t3/userdata/statev2.sqlite (and v1 state.sqlite)",
     headless: "none (desktop app; it runs codex app-server or the Claude Agent SDK)",
@@ -68,7 +69,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Antigravity CLI (formerly Gemini CLI)",
     id: "antigravity",
-    tier: "A",
+    status: "verified",
     live: "hooks.json",
     backfill: "brain/<id>/…/transcript.jsonl",
     headless: "agy -p --output-format stream-json",
@@ -77,7 +78,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Gemini CLI, older installs",
     id: "gemini-cli",
-    tier: "A",
+    status: "fixture-tested",
     live: "settings.json hooks",
     backfill: "tmp/<slug>/chats/*.jsonl",
     headless: "gemini -p -o stream-json",
@@ -86,7 +87,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "GitHub Copilot CLI",
     id: "copilot-cli",
-    tier: "A",
+    status: "fixture-tested",
     live: "hooks/coding-sh.json",
     backfill: "session-state/<id>/events.jsonl",
     headless: "copilot -p --output-format=json",
@@ -95,7 +96,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Amp",
     id: "amp",
-    tier: "A",
+    status: "fixture-tested",
     live: "plugin",
     headless: "amp -x --stream-json",
     subagents: "Task, oracle, librarian, finder tool calls span the subagent",
@@ -103,7 +104,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Pi",
     id: "pi",
-    tier: "A",
+    status: "fixture-tested",
     live: "extension",
     backfill: "sessions/--<cwd>--/*.jsonl",
     headless: "pi -p --mode json",
@@ -112,7 +113,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Factory Droid",
     id: "droid",
-    tier: "A",
+    status: "fixture-tested",
     live: "hooks.json",
     backfill: "sessions/-<cwd>/*.jsonl",
     headless: "droid exec -o json",
@@ -121,7 +122,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Goose",
     id: "goose",
-    tier: "A",
+    status: "fixture-tested",
     live: "plugin hooks.json",
     backfill: "sessions.db",
     headless: "goose run --output-format stream-json",
@@ -130,7 +131,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Aider",
     id: "aider",
-    tier: "C",
+    status: "fixture-tested",
     live: "coding.sh run -- aider …",
     headless: "aider --message",
     subagents: "None",
@@ -138,7 +139,7 @@ export const ADAPTER_ROWS: AdapterRow[] = [
   {
     name: "Any other command",
     id: "wrapper",
-    tier: "C",
+    status: "tested",
     live: "coding.sh run -- <cmd>",
     headless: "the command itself",
     subagents: "None",
@@ -147,3 +148,9 @@ export const ADAPTER_ROWS: AdapterRow[] = [
 
 /** Researched in docs/ADAPTERS.md, no adapter in code yet. */
 export const PLANNED_AGENTS = ["Cline CLI", "Kiro CLI", "Qwen Code", "Crush"] as const;
+
+export const STATUS_LABEL: Record<AdapterRow["status"], string> = {
+  verified: "Verified on real sessions",
+  "fixture-tested": "Fixture-tested",
+  tested: "Tested",
+};

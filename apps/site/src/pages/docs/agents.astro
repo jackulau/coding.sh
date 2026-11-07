@@ -1,7 +1,7 @@
 ---
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Code from "../../components/docs/Code.astro";
-import { ADAPTER_ROWS, PLANNED_AGENTS } from "../../components/docs/agents";
+import { ADAPTER_ROWS, PLANNED_AGENTS, STATUS_LABEL } from "../../components/docs/agents";
 import AgentLogo from "../../components/AgentLogo.astro";
 
 const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>   # absolute, quoted path`;
@@ -13,20 +13,12 @@ const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>  
     the <a href="/docs/trace-format">trace format</a>, imports past sessions, drives the agent headless for eval runs, and isolates its config
     during those runs so your own setup is never touched.
   </p>
-  <div class="note">
-    <p>
-      <strong>Status:</strong> every adapter below exists in code and is tested against recorded fixtures of that agent's payloads. Agents
-      change their formats often; a nightly job that runs the latest version of each agent is planned, so expect breakage on new versions
-      and please report it.
-    </p>
-  </div>
-
-  <h2 id="tiers">Tiers</h2>
-  <ul>
-    <li><strong>A</strong>: live hooks or a plugin, local transcripts, and a headless mode.</li>
-    <li><strong>B</strong>: the same, but with gaps. Cursor's hooks don't all fire in <code>-p</code> mode and its transcript format is undocumented.</li>
-    <li><strong>C</strong>: no hooks. Capture by wrapping the command: <code>coding.sh run -- &lt;cmd&gt;</code>.</li>
-  </ul>
+  <p>
+    <strong>Verified on real sessions</strong> means the adapter has been run against a live install of the agent.
+    <strong>Fixture-tested</strong> means CI checks it against the agent's documented and recorded formats, but nobody has run it on a
+    live install yet. If you use one of those, an <a href="https://github.com/jackulau/coding.sh/issues/new?template=agent-support.yml">agent support report</a>
+    saying whether it worked moves it to verified. Agents without hooks are recorded by wrapping the command: <code>coding.sh run -- &lt;cmd&gt;</code>.
+  </p>
 
   <h2 id="matrix">Matrix</h2>
   <div class="doc-table">
@@ -34,7 +26,7 @@ const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>  
       <thead>
         <tr>
           <th>Agent</th>
-          <th>Tier</th>
+          <th>Status</th>
           <th>Live capture</th>
           <th>Backfill</th>
           <th>Headless runs</th>
@@ -49,7 +41,7 @@ const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>  
                 <br />
                 <code class="t-muted">{a.id}</code>
               </td>
-              <td>{a.tier}</td>
+              <td>{STATUS_LABEL[a.status]}</td>
               <td>{a.live}</td>
               <td>{a.backfill ?? "None"}</td>
               <td>
@@ -106,7 +98,7 @@ const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>  
     <li><strong>Amp</strong> keeps threads server-side, so there is no local backfill.</li>
     <li><strong>Aider</strong> has no hooks or session ids. Run it through <code>coding.sh run -- aider …</code>; token and cost lines are parsed from its output during eval runs.</li>
     <li>
-      <strong>Kiro CLI</strong> has no adapter yet, so it is captured at tier C:
+      <strong>Kiro CLI</strong> has no adapter yet, so record it with the wrapper:
       <code>coding.sh run -- kiro-cli chat --v3 --no-interactive --trust-all-tools "…"</code> records the session's start, end, exit code,
       duration and file changes, but not its prompts, tool calls or tokens. Kiro's OpenTelemetry export is a daily, admin-configured
       push of account totals to a public endpoint, not per-session spans, so the local OTLP receiver can't use it. The Kiro IDE is not
@@ -115,8 +107,8 @@ const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>  
     <li><strong>Antigravity CLI</strong> (<code>agy</code>) replaced Gemini CLI. Record it with the <code>antigravity</code> adapter; <code>gemini-cli</code> still reads sessions from older installs.</li>
   </ul>
 
-  <h2 id="planned">Planned</h2>
-  <p>Researched, with no adapter yet: {PLANNED_AGENTS.join(", ")}. Until then, <code>coding.sh run --</code> captures them at tier C.</p>
+  <h2 id="other-agents">Other agents</h2>
+  <p>{PLANNED_AGENTS.join(", ")} have no adapter yet. Record them with <code>coding.sh run -- &lt;cmd&gt;</code>, which keeps the start, end, exit code, duration and file changes.</p>
 </DocsLayout>
 
 <style>

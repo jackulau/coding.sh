@@ -11,7 +11,7 @@ interface Props {
   src: ImageMetadata;
   srcMobile: ImageMetadata;
   alt: string;
-  /** Centered in the title bar. */
+  /** Optional label centered in the title bar. */
   bar?: string;
   /** Hero image: load first, at high priority. */
   eager?: boolean;
@@ -20,7 +20,7 @@ interface Props {
   class?: string;
 }
 
-const { src, srcMobile, alt, bar = "localhost:4319", eager = false, sizes = "(min-width: 1024px) 42rem, 100vw", class: klass } = Astro.props;
+const { src, srcMobile, alt, bar, eager = false, sizes = "(min-width: 1024px) 42rem, 100vw", class: klass } = Astro.props;
 
 // Both files are 2x captures, so their CSS size is half their pixel size.
 const half = (m: ImageMetadata) => ({ w: Math.round(m.width / 2), h: Math.round(m.height / 2) });
@@ -33,7 +33,7 @@ const phone = await getImage({ src: srcMobile, widths: [p.w, srcMobile.width], f
 <figure class:list={["shot", klass]}>
   <div class="shot__bar" aria-hidden="true">
     <span class="shot__dots"><i></i><i></i><i></i></span>
-    <span class="shot__title">{bar}</span>
+    {bar && <span class="shot__title">{bar}</span>}
   </div>
   <picture>
     <source media="(max-width: 639px)" srcset={phone.srcSet.attribute} sizes="calc(100vw - 2rem)" width={p.w} height={p.h} />

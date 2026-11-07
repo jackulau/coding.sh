@@ -2,7 +2,7 @@
 import { SITE_URL, SITE, NAV_PAGES, REPO_URL, LICENSE, SOURCE_STEPS, CLI_PATH, INSTALL_SH, RELEASE_TGZ } from "../data/site";
 import { FRAMEWORKS, OTLP_ENDPOINT } from "../data/agents";
 import { DOC_PAGES } from "../components/docs/nav";
-import { ADAPTER_ROWS, PLANNED_AGENTS } from "../components/docs/agents";
+import { ADAPTER_ROWS, PLANNED_AGENTS, STATUS_LABEL } from "../components/docs/agents";
 import { cliReference } from "../components/docs/cli-help";
 
 const abs = (path: string) => new URL(path, SITE_URL).toString();
@@ -82,7 +82,7 @@ but on your machine. Pre-alpha: what is built is covered by the package's tests;
 
 ## Coding agents (adapters in code)
 
-${ADAPTER_ROWS.map((a) => `- ${a.name} (\`${a.id}\`, tier ${a.tier}): capture: ${a.live}; backfill: ${a.backfill ?? "none"}; subagents: ${a.subagents}`).join("\n")}
+${ADAPTER_ROWS.map((a) => `- ${a.name} (\`${a.id}\`, ${STATUS_LABEL[a.status].toLowerCase()}): capture: ${a.live}; backfill: ${a.backfill ?? "none"}; subagents: ${a.subagents}`).join("\n")}
 
 Planned, no adapter yet: ${PLANNED_AGENTS.join(", ")}.
 

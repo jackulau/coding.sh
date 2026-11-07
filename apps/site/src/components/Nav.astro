@@ -22,9 +22,8 @@ import { REPO_URL, INSTALL_SH } from "../data/site";
 
 const path = Astro.url.pathname.replace(/\/+$/, "") || "/";
 const LINKS = [
-  { href: "/docs", label: "Docs", on: (p: string) => p === "/docs" || (p.startsWith("/docs/") && p !== "/docs/agents") },
-  { href: "/docs/agents", label: "Agents", on: (p: string) => p === "/docs/agents" },
-  { href: "/changelog", label: "Changelog", on: (p: string) => p === "/changelog" },
+  { href: "/docs", label: "Docs", on: (p: string) => p === "/docs" || p.startsWith("/docs/") },
+  { href: "/changelog", label: "Changelog", on: (p: string) => p === "/changelog" || p.startsWith("/changelog/") },
 ];
 const links = LINKS.map((l) => ({ ...l, current: l.on(path) }));
 ---
@@ -490,6 +489,14 @@ const links = LINKS.map((l) => ({ ...l, current: l.on(path) }));
     sheet.hidden = false;
     const focusables = () => [btn, ...sheet.querySelectorAll<HTMLElement>("a[href], button:not([disabled])")];
     const isOpen = () => nav.classList.contains("is-open");
+    // Everything outside the nav (the page, the footer, the skip link): inert
+    // while the sheet is open, so a screen reader's swipe can't leave it either.
+    const outside = () => {
+      const out: HTMLElement[] = [];
+      for (let el: HTMLElement | null = nav; el && el.parentElement && el !== document.body; el = el.parentElement)
+        for (const sib of el.parentElement.children) if (sib !== el && sib instanceof HTMLElement && !(sib instanceof HTMLScriptElement)) out.push(sib);
+      return out;
+    };
 
     // `fromKeys`: opened with Enter/Space or closed with Escape. That path has
     // no motion, and the first link takes focus; after a tap the sheet itself
@@ -501,6 +508,7 @@ const links = LINKS.map((l) => ({ ...l, current: l.on(path) }));
         requestAnimationFrame(() => requestAnimationFrame(() => nav.classList.remove("is-instant")));
       }
       nav.classList.toggle("is-open", open);
+      for (const el of outside()) el.inert = open;
       btn.setAttribute("aria-expanded", String(open));
       btn.setAttribute("aria-label", open ? "Close menu" : "Menu");
       if (open) {
