@@ -230,6 +230,7 @@ Read by `curl -fsSL https://coding.sh/install | sh`.
 | `CODING_SH_NO_UI=1` | Don't open the viewer. |
 | `CODING_SH_VERSION` | Install this release, e.g. `v0.1.0`. |
 | `CODING_SH_TARBALL` | Install this tarball (path or URL) instead. |
+| `CODING_SH_SOURCE` | `npm` or `github`. By default the installer uses npm when the registry has the version and the GitHub release tarball otherwise. |
 
 ### SDKs
 

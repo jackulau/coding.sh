@@ -44,9 +44,10 @@ coding.sh init --yes    # non-interactive: install hooks into every detected age
 coding.sh doctor --json # check the install
 \`\`\`
 
-The installer is ${abs("/install")} (plain text; read it before piping it to sh). It runs \`npm install -g\` on the
-release tarball, e.g. \`npm i -g ${RELEASE_TGZ}\`. Env: CODING_SH_YES=1 skips the prompt, CODING_SH_NO_INIT=1 installs only,
-CODING_SH_NO_UI=1 skips the viewer, CODING_SH_VERSION=v0.1.0 pins a release.
+The installer is ${abs("/install")} (plain text; read it before piping it to sh). It runs \`npm install -g\`: from npm when
+the registry has coding.sh, otherwise on the release tarball, e.g. \`npm i -g ${RELEASE_TGZ}\`. Env: CODING_SH_YES=1 skips the prompt, CODING_SH_NO_INIT=1 installs only,
+CODING_SH_NO_UI=1 skips the viewer, CODING_SH_VERSION=v0.1.0 pins a release,
+CODING_SH_SOURCE=github skips npm.
 From source: \`${SOURCE_STEPS.join(" && ")}\`; the CLI builds to ${CLI_PATH}.
 
 Full prose for every page is at ${abs("/llms-full.txt")}; each page also serves a Markdown copy at <page>.md.

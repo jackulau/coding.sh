@@ -2,12 +2,14 @@
 # coding.sh installer:  curl -fsSL https://coding.sh/install | sh
 #
 # 1. Checks for Node >= 22.15.
-# 2. Installs the latest coding.sh release from GitHub (npm i -g <release tarball>).
+# 2. Installs coding.sh: from npm when the registry has it (npm i -g coding.sh@<version>),
+#    otherwise the tarball attached to the GitHub release. Both are the same bytes.
 # 3. Runs `coding.sh init`: detects your agents, shows one plan (capture hooks +
 #    the coding.sh MCP server for each agent), asks once (Y/n) before writing.
 # 4. Opens the local viewer.
 #
 # Env: CODING_SH_VERSION=v0.1.0 pins a release. CODING_SH_TARBALL=<path or url> installs that tarball. CODING_SH_YES=1 skips the prompt.
+#      CODING_SH_SOURCE=npm|github forces a source (default: npm if published, else github).
 #      CODING_SH_NO_INIT=1 installs only. CODING_SH_NO_UI=1 skips opening the viewer.
 set -eu
 
@@ -23,19 +25,43 @@ const [maj, min] = process.versions.node.split(".").map(Number);
 process.exit(maj > 22 || (maj === 22 && min >= 15) ? 0 : 1);
 ' || die "Node $(node -v) found; coding.sh needs 22.15 or newer."
 
+SOURCE="${CODING_SH_SOURCE:-auto}"
+case "$SOURCE" in auto|npm|github) ;; *) die "CODING_SH_SOURCE must be npm or github, got $SOURCE." ;; esac
+
+# Prints the version npm would install for coding.sh@$1, or nothing when the
+# registry (your configured one, so mirrors work) does not have it.
+npm_has() {
+  npm view "coding.sh@$1" version --fetch-retries=1 --fetch-timeout=15000 2>/dev/null \
+    | tail -n 1 | awk '{print $NF}' | tr -d "'"
+}
+
 if [ -n "${CODING_SH_TARBALL:-}" ]; then
   # Local or custom tarball (tests, mirrors, air-gapped installs).
   URL="$CODING_SH_TARBALL"
   VERSION="from $URL"
 else
   VERSION="${CODING_SH_VERSION:-}"
-  if [ -z "$VERSION" ]; then
-    VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-      | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1) || true
-    [ -n "$VERSION" ] || die "Could not find the latest release of $REPO."
+  URL=
+  if [ "$SOURCE" != "github" ]; then
+    SPEC="${VERSION#v}"
+    NPM_VERSION=$(npm_has "${SPEC:-latest}")
+    case "$NPM_VERSION" in [0-9]*.[0-9]*.[0-9]*) ;; *) NPM_VERSION= ;; esac
+    if [ -n "$NPM_VERSION" ]; then
+      VERSION="v$NPM_VERSION"
+      URL="coding.sh@$NPM_VERSION"
+    elif [ "$SOURCE" = "npm" ]; then
+      die "npm has no coding.sh${VERSION:+ $VERSION}. Unset CODING_SH_SOURCE to install from GitHub."
+    fi
   fi
-  NUM="${VERSION#v}"
-  URL="https://github.com/$REPO/releases/download/$VERSION/coding.sh-$NUM.tgz"
+  if [ -z "$URL" ]; then
+    if [ -z "$VERSION" ]; then
+      VERSION=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
+        | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1) || true
+      [ -n "$VERSION" ] || die "Could not find the latest release of $REPO."
+    fi
+    NUM="${VERSION#v}"
+    URL="https://github.com/$REPO/releases/download/$VERSION/coding.sh-$NUM.tgz"
+  fi
 fi
 
 say "Installing coding.sh $VERSION"

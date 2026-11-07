@@ -8,7 +8,8 @@ const npmTgz = `npm i -g ${RELEASE_TGZ}\ncoding.sh init`;
 const env = `CODING_SH_YES=1 sh -c "$(curl -fsSL https://coding.sh/install)"   # no prompt (init --yes)
 CODING_SH_VERSION=v0.1.0 ...   # pin a release
 CODING_SH_NO_INIT=1 ...        # install only, run init later
-CODING_SH_NO_UI=1 ...          # don't open the viewer`;
+CODING_SH_NO_UI=1 ...          # don't open the viewer
+CODING_SH_SOURCE=github ...    # skip npm, install the GitHub release tarball`;
 const alias = `# from the repository root: put the CLI on your shell
 alias coding.sh="node $PWD/${CLI_PATH}"
 coding.sh --version`;
@@ -22,7 +23,7 @@ rm -rf ~/.coding.sh             # optional: delete captured data too`;
   <h2 id="one-line">One line</h2>
   <Code code={INSTALL_SH} />
   <p>
-    The script checks for Node 22.15+, installs the latest release with <code>npm i -g</code>, runs <code>coding.sh init</code> (it detects your
+    The script checks for Node 22.15+, installs the latest release with <code>npm i -g</code> (from npm once the package is published there, otherwise the GitHub release tarball), runs <code>coding.sh init</code> (it detects your
     agents, shows the plan and asks before writing anything), then opens the viewer. Read it first at <a href="/install">coding.sh/install</a>.
   </p>
   <Code title="options" code={env} />
