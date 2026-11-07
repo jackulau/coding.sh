@@ -1,6 +1,7 @@
 // Tiny headless-Chrome driver for viewer UI tests, over the DevTools protocol
 // with Node's built-in WebSocket (no dependencies). Tests skip when no Chrome
-// or Chromium is installed; set CODING_SH_TEST_CHROME to pick a binary.
+// or Chromium is installed; set CODING_SH_TEST_CHROME to pick a binary (CI does,
+// and then a missing binary fails the run instead of skipping the tests).
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,7 +9,10 @@ import { join } from "node:path";
 
 export function findChrome(): string | undefined {
   const env = process.env.CODING_SH_TEST_CHROME;
-  if (env) return existsSync(env) ? env : undefined;
+  if (env) {
+    if (!existsSync(env)) throw new Error(`CODING_SH_TEST_CHROME=${env} does not exist`);
+    return env;
+  }
   return [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
     "/Applications/Chromium.app/Contents/MacOS/Chromium",
