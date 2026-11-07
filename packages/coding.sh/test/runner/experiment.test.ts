@@ -487,3 +487,98 @@ describe("compare ablation report", () => {
     assert.equal(compare(results, { baseline: "A", candidate: "B" }).ablation, undefined);
   });
 });
+
+describe("compare --gate", () => {
+  /** 12 paired tasks; A solves s0..s5. B solves s0..s5 except the first `losses`, and the first `wins` of f0..f5. */
+  const twelve = (wins: number, losses: number): RunResult[] => {
+    const rs: RunResult[] = [];
+    for (let i = 0; i < 6; i++) rs.push(run(`s${i}`, "A", 1, true), run(`s${i}`, "B", 1, i >= losses));
+    for (let i = 0; i < 6; i++) rs.push(run(`f${i}`, "A", 1, false), run(`f${i}`, "B", 1, i < wins));
+    return rs;
+  };
+
+  it("6 wins, 0 losses: λ=1 → p = 1/64, ship", () => {
+    const r = compare(twelve(6, 0), { baseline: "A", candidate: "B", iters: 500, gate: { lambda: 1 } });
+    const g = r.gate!;
+    assert.deepEqual([g.wins, g.losses, g.solved], [6, 0, 6]);
+    assert.ok(Math.abs(g.p - 1 / 64) < 1e-12);
+    assert.equal(g.decision, "accept");
+    assert.equal(g.verdict, "ship");
+    assert.deepEqual(g.won, ["f0", "f1", "f2", "f3", "f4", "f5"]);
+    assert.match(formatCompare(r), /^gate: Ship it: B wins 6 tasks, loses 0$/m);
+  });
+
+  it("same at the default λ=2 → p ≈ 0.088, hold, needs 8 clean wins", () => {
+    const r = compare(twelve(6, 0), { baseline: "A", candidate: "B", iters: 500, gate: {} });
+    const g = r.gate!;
+    assert.ok(Math.abs(g.p - (2 / 3) ** 6) < 1e-12);
+    assert.deepEqual(g.reasons, ["not-significant"]);
+    assert.equal(g.verdict, "hold");
+    const text = formatCompare(r);
+    assert.match(text, /^gate: Hold: not enough evidence \(B wins 6, loses 0; needs 8\+ wins with no losses\)$/m);
+    assert.match(text, /^ {6}abstain \(not-significant\) · 6 won, 0 lost of 6 solved \(0%\) · net \+6 at λ=2 · p = 0\.088 ≥ α 0\.05 · needs ≥8 clean wins$/m);
+    // The gate line sits under the verdict.
+    assert.ok(text.indexOf("verdict:") < text.indexOf("gate:"));
+  });
+
+  it("6 wins, 3 losses of 6 solved → don't ship, net gain 0, regression cap, lost ids listed", () => {
+    const r = compare(twelve(6, 3), { baseline: "A", candidate: "B", iters: 500, gate: {} });
+    const g = r.gate!;
+    assert.equal(g.netGain, 0);
+    assert.ok(g.reasons.includes("net-gain"));
+    assert.ok(g.reasons.includes("regression-fraction"));
+    assert.equal(g.regressionFraction, 0.5);
+    assert.deepEqual(g.lost, ["s0", "s1", "s2"]);
+    const text = formatCompare(r);
+    assert.match(text, /^gate: Don't ship: B breaks 3 tasks A solved \(and wins 6\)$/m);
+    assert.match(text, /^ {6}lost: s0, s1, s2$/m);
+  });
+
+  it("lists at most 5 lost tasks", () => {
+    const rs: RunResult[] = [];
+    for (let i = 0; i < 7; i++) rs.push(run(`s${i}`, "A", 1, true), run(`s${i}`, "B", 1, false));
+    assert.match(formatCompare(compare(rs, { baseline: "A", candidate: "B", iters: 200, gate: {} })), /^ {6}lost: s0, s1, s2, s3, s4 \(\+2 more\)$/m);
+  });
+
+  it("a B task passed only by tamper-flagged attempts is a loss for the gate; pass rates keep the passes", () => {
+    const dirty = { flagged: true, flags: [{ kind: "edit" as const, path: "test/a.test.js", why: "test-glob" as const }] };
+    const clean = { flagged: false, flags: [] };
+    const rs: RunResult[] = [];
+    for (let a = 1; a <= 3; a++) {
+      rs.push(run("t", "A", a, true, { tamper: clean }));
+      // B passes 2 of 3, both by editing tests.
+      rs.push(run("t", "B", a, a <= 2, { tamper: a <= 2 ? dirty : clean }));
+    }
+    const plain = compare(rs, { baseline: "A", candidate: "B", iters: 200 });
+    const gated = compare(rs, { baseline: "A", candidate: "B", iters: 200, gate: {} });
+    assert.deepEqual([gated.mcnemar.b, gated.mcnemar.c], [0, 0], "McNemar still counts the passes");
+    assert.equal(gated.candidate.passes, 2);
+    assert.deepEqual([gated.gate!.losses, gated.gate!.lost], [1, ["t"]]);
+    const row = (t: string) => t.split("\n").find((l) => l.startsWith("pass rate"));
+    assert.equal(row(formatCompare(gated)), row(formatCompare(plain)));
+  });
+
+  it("with --without the line reads drop it / keep it", () => {
+    const rs: RunResult[] = [];
+    for (let i = 0; i < 6; i++) rs.push(run(`t${i}`, "A", 1, true), run(`t${i}`, "B", 1, i >= 2));
+    const ablation = { paths: [".claude/skills/pdf"], dropped: [".claude/skills/pdf/SKILL.md"], unmatched: [] };
+    const text = formatCompare(compare(rs, { baseline: "A", candidate: "B", iters: 200, ablation, gate: {} }));
+    assert.match(text, /^drop-it gate: Keep it: dropping \.claude\/skills\/pdf breaks 2 tasks A solved$/m);
+    assert.match(text, /^ {14}lost: t0, t1$/m);
+  });
+
+  it("without the gate option nothing changes: no gate key, same text", () => {
+    const rs = twelve(6, 0);
+    const r = compare(rs, { baseline: "A", candidate: "B", iters: 500 });
+    assert.equal("gate" in r, false);
+    const text = formatCompare(r);
+    assert.doesNotMatch(text, /gate/);
+    const g = compare(rs, { baseline: "A", candidate: "B", iters: 500, gate: {} });
+    const { gate: _gate, ...rest } = g;
+    assert.deepEqual(rest, r);
+    const lines = formatCompare(g).split("\n");
+    const at = lines.findIndex((l) => l.startsWith("gate:"));
+    lines.splice(at, 2); // headline and detail (no losses, so no lost line)
+    assert.equal(lines.join("\n"), text);
+  });
+});

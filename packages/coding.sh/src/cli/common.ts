@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { openContext, type Context } from "../core/context.ts";
 import type { IngestError } from "../core/ingest.ts";
 import type { EvalTask, Session } from "../core/types.ts";
+import type { GateOpts } from "../stats/tests.ts";
 import { runningCli } from "../mcp/launch.ts";
 import { spawnBackgroundIngest } from "../spool/kick.ts";
 import { UsageError, type FlagValue } from "./args.ts";
@@ -250,6 +251,26 @@ export function list(v: FlagValue): string[] {
 
 export function num(v: FlagValue): number | undefined {
   return typeof v === "number" ? v : undefined;
+}
+
+/**
+ * `--gate [--lambda N] [--gate-alpha A] [--tau T]`: the acceptance gate's
+ * settings, undefined without --gate. The tuning flags alone are a usage error.
+ */
+export function gateFlags(flags: Record<string, FlagValue>): GateOpts | undefined {
+  const lambda = num(flags.lambda);
+  const alpha = num(flags["gate-alpha"]);
+  const tau = num(flags.tau);
+  if (flags.gate !== true) {
+    for (const [name, v] of [["lambda", lambda], ["gate-alpha", alpha], ["tau", tau]] as const) {
+      if (v !== undefined) throw new UsageError(`--${name} needs --gate`, { reason: "invalid_argument" });
+    }
+    return undefined;
+  }
+  if (lambda !== undefined && !(lambda >= 1 && Number.isFinite(lambda))) throw new UsageError(`--lambda must be a number of at least 1, got ${lambda}`, { reason: "invalid_argument" });
+  if (alpha !== undefined && !(alpha > 0 && alpha <= 1)) throw new UsageError(`--gate-alpha must be above 0 and at most 1, got ${alpha}`, { reason: "invalid_argument" });
+  if (tau !== undefined && !(tau >= 0 && tau <= 1)) throw new UsageError(`--tau must be between 0 and 1, got ${tau}`, { reason: "invalid_argument" });
+  return { ...(lambda !== undefined ? { lambda } : {}), ...(alpha !== undefined ? { alpha } : {}), ...(tau !== undefined ? { tau } : {}) };
 }
 
 /** `--port` as a TCP port (0 = any free port), else a usage error. */

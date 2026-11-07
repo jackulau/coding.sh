@@ -116,6 +116,18 @@ directories. It reports per-arm Wilson intervals and the first step where the tr
 path: a skill, `AGENTS.md`, `CLAUDE.md` or `.mcp.json`. The path is also deleted from each task's
 repo. The report adds `effect of <path> = A − B` with its CI. `--without` can be repeated.
 
+`coding.sh compare A B --gate` adds a ship-or-hold answer under the verdict: `Ship it: B wins 9
+tasks, loses 0`, `Hold: not enough evidence`, or `Don't ship: B breaks 3 tasks A solved` with the
+broken task ids. It exits 0 only for "Ship it", so it can gate a harness change in CI. It works on
+each task's majority outcome. A task B fixed is a win, a task A solved that B failed is a loss, and
+ties are ignored. B ships when three things hold. First, wins minus λ times losses is positive (λ =
+`--lambda`, default 2, so one break cancels two fixes). Second, an exact one-sided binomial test on
+the wins and losses beats break-even at `--gate-alpha` (default 0.05). Third, B breaks at most
+`--tau` (default 10%) of the tasks A solved. This is SAGE's accept-or-abstain rule (Wang et al.,
+arXiv 2609.36043). The paper reports no default settings; these are ours. B passes that tampered
+with tests count as fails for the gate only. With `--without`, the line is labelled `drop-it gate`
+and reads "Drop it" or "Keep it".
+
 With `--k 2` or more, compare sorts each arm's failed runs three ways. A bad run failed on a task the
 same arm passed in another attempt, so a retry would help. A beyond-arm failure is on a task only
 the other arm solved. Unsolved-by-all is a task neither arm solved; check the task itself. It also

@@ -103,6 +103,41 @@ describe("compare --without", () => {
     assert.deepEqual(list.bundles.map((b) => b.name).sort(), ["base", "base-without-claude-skills-pdf"]);
   });
 
+  it("--gate: keep the skill (exit 1), the --experiment path gives the same gate, a lenient gate accepts (exit 0)", (t) => {
+    if (!gitBin) return t.skip("needs git");
+    const live = cli(["compare", "base", "--without", ".claude/skills/pdf", "-t", "sum", "--yes", "--gate", "--json"]);
+    assert.equal(live.status, 1, live.stdout + live.stderr);
+    const { experimentId, report } = JSON.parse(live.stdout) as { experimentId: string; report: { gate: { decision: string; verdict: string; lost: string[]; losses: number; solved: number } } };
+    assert.deepEqual([report.gate.decision, report.gate.verdict, report.gate.losses, report.gate.solved], ["abstain", "dont-ship", 1, 1]);
+    assert.equal(report.gate.lost.length, 1);
+
+    const again = cli(["compare", "base", "--without", ".claude/skills/pdf", "--experiment", experimentId, "--gate", "--json"]);
+    assert.equal(again.status, 1, again.stdout + again.stderr);
+    assert.deepEqual((JSON.parse(again.stdout) as { report: { gate: unknown } }).report.gate, report.gate);
+
+    const text = cli(["compare", "base", "--without", ".claude/skills/pdf", "--experiment", experimentId, "--gate"]);
+    assert.equal(text.status, 1);
+    assert.match(text.stdout, /^drop-it gate: Keep it: dropping \.claude\/skills\/pdf breaks 1 task A solved$/m);
+
+    // Arms swapped (B = base, which keeps the skill) with a lenient gate: one win is enough.
+    const swapped = cli(["compare", "base-without-claude-skills-pdf", "base", "--experiment", experimentId, "--gate", "--lambda", "1", "--gate-alpha", "1", "--tau", "1"]);
+    assert.equal(swapped.status, 0, swapped.stdout + swapped.stderr);
+    assert.match(swapped.stdout, /^gate: Ship it: B wins 1 task, loses 0$/m);
+
+    // No --gate: no gate key, exit 0.
+    const plain = cli(["compare", "base", "--without", ".claude/skills/pdf", "--experiment", experimentId, "--json"]);
+    assert.equal(plain.status, 0);
+    assert.equal("gate" in (JSON.parse(plain.stdout) as { report: object }).report, false);
+  });
+
+  it("--lambda, --gate-alpha and --tau need --gate; bad values are usage errors before any run", (t) => {
+    if (!gitBin) return t.skip("needs git");
+    for (const args of [["--lambda", "1"], ["--gate-alpha", "0.1"], ["--tau", "0"], ["--gate", "--lambda", "0.5"], ["--gate", "--gate-alpha", "0"], ["--gate", "--tau", "2"]]) {
+      const r = cli(["compare", "base", "--without", ".claude/skills/pdf", "-t", "sum", "--yes", ...args]);
+      assert.equal(r.status, 2, `${args.join(" ")}: ${r.stdout}${r.stderr}`);
+    }
+  });
+
   it("warns on a path only in the task repo; refuses one that is nowhere, and a second bundle", (t) => {
     if (!gitBin) return t.skip("needs git");
     const repoOnly = cli(["compare", "base", "--without", "test.js", "-t", "sum", "--yes"]);

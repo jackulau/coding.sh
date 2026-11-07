@@ -63,6 +63,29 @@ coding.sh compare claude codex --experiment <experiment-id> --json
 Every run is also a captured session, so `coding.sh sessions` and `coding.sh ui` show what each agent
 did.
 
+## Ship it or not?
+
+A higher pass rate can still hide tasks B broke. Add `--gate` for a yes or no answer:
+
+```sh
+coding.sh compare claude claude-new --k 3 --gate
+```
+
+It looks only at tasks where the two arms disagree (by majority over the attempts) and prints one of:
+
+- `Ship it: B wins 9 tasks, loses 0`. Exit code 0.
+- `Hold: not enough evidence (...)`. B may be better, but too few tasks changed to tell. Exit code 1.
+- `Don't ship: B breaks 3 tasks A solved`. Exit code 1. The broken tasks are listed below.
+
+The line under it has the numbers. One broken task cancels two fixed ones (`--lambda`, default 2),
+the wins must clear a one-sided exact test at `--gate-alpha` (default 0.05), and B may break at most
+`--tau` (default 10%) of the tasks A solved. With the defaults, B needs at least 8 fixes and no
+breaks to ship. A B pass that edited, deleted or skipped tests counts as a fail for the gate. The
+method is SAGE (Wang et al., [arXiv 2609.36043](https://arxiv.org/abs/2609.36043)).
+
+`--gate` also works with `--experiment`, and `--json` carries it as `report.gate`. Without `--gate`,
+the report and the exit code are unchanged.
+
 ## Does a skill help?
 
 To test one part of a setup, compare a bundle with itself minus that part:
@@ -74,7 +97,8 @@ coding.sh compare claude --without .claude/skills/pdf --k 3
 B is `claude` without the skill. The path is also deleted from each task's repo, so the agent can't
 find a copy there. The same works for `AGENTS.md`, `CLAUDE.md` or `.mcp.json`, and `--without` can
 be repeated. The report adds a line like `effect of .claude/skills/pdf = A − B: +20.0 pp [...]`.
-The derived bundle is stored, so `--experiment` finds it again.
+The derived bundle is stored, so `--experiment` finds it again. With `--gate` the line reads
+`drop-it gate: Keep it: ...` or `drop-it gate: Drop it: ...`, and only "Drop it" exits 0.
 
 ## Why runs failed
 

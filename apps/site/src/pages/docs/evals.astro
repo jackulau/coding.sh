@@ -233,6 +233,13 @@ const COMPARE = [
     intervals, a paired bootstrap interval, McNemar's test, cost, token, turn and latency deltas, and the first step where the two traces diverge. Tasks export
     in coding.sh's own layout or Harbor's.
   </p>
+  <p id="gate">
+    <code>compare A B --gate</code> answers "should I ship B?" in one line: <code>Ship it: B wins 9 tasks, loses 0</code>,
+    <code>Hold: not enough evidence</code>, or <code>Don't ship: B breaks 3 tasks A solved</code>, with the broken tasks listed. It exits 0
+    only for "Ship it". A break costs two fixes (<code>--lambda</code>), the wins must clear a one-sided exact test (<code>--gate-alpha</code>,
+    default 0.05), and B may break at most 10% of the tasks A solved (<code>--tau</code>). This is the SAGE accept-or-abstain rule
+    (<a href="https://arxiv.org/abs/2609.36043">arXiv 2609.36043</a>). Passes that tampered with tests count as fails for the gate.
+  </p>
   <Code code={replay} />
   <div class="note">
     <p>

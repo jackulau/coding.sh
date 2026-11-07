@@ -57,6 +57,14 @@ const PENDING_NOTE = 'With --json, an answer given before every capture was inde
 const LIMIT = (d: number): FlagSpec => ({ name: "limit", short: "n", type: "number", value: "<N>", desc: "Maximum rows", default: String(d) });
 const GATEWAY_NAME: FlagSpec = { name: "gateway", type: "string", value: "<NAME>", choices: GATEWAY_IDS, desc: "Only this gateway" };
 
+/** The acceptance gate (compare --gate, exp compare --gate). */
+const GATE_FLAGS: FlagSpec[] = [
+  { name: "gate", type: "boolean", desc: "Ship-or-hold decision: exit 0 when B wins enough without breaking what A solved, 1 otherwise" },
+  { name: "lambda", type: "number", value: "<N>", desc: "With --gate: what breaking one solved item costs, in fixed items", default: "2" },
+  { name: "gate-alpha", type: "number", value: "<A>", desc: "With --gate: one-sided significance level", default: "0.05" },
+  { name: "tau", type: "number", value: "<T>", desc: "With --gate: largest share of solved items B may break", default: "0.10" },
+];
+
 /** Flags that describe an experiment run (exp run, exp aa). */
 const EXP_RUN_FLAGS: FlagSpec[] = [
   { name: "dataset", short: "d", type: "string", value: "<ID>", desc: "Dataset id" },
@@ -604,9 +612,16 @@ export const COMMANDS: CommandSpec[] = [
         choices: ["vercel", "openrouter", "litellm", "ramp"],
         desc: "Route both arms through a gateway. Without a name: [gateway] default, else the one with a key, else vercel",
       },
+      ...GATE_FLAGS,
       YES,
     ],
-    examples: ["coding.sh compare base candidate --k 3", "coding.sh compare base candidate --experiment exp_01", "coding.sh compare sonnet gpt5 --gateway", "coding.sh compare sonnet gpt5 --gateway openrouter"],
+    examples: [
+      "coding.sh compare base candidate --k 3",
+      "coding.sh compare base candidate --experiment exp_01",
+      "coding.sh compare base candidate --k 3 --gate",
+      "coding.sh compare sonnet gpt5 --gateway",
+      "coding.sh compare sonnet gpt5 --gateway openrouter",
+    ],
     load: () => import("./commands/compare.ts"),
   },
   // ---------------------------------------------------------- Maintain

@@ -1368,11 +1368,16 @@ coding.sh compare <A> [b] [options]
 | `--experiment <ID>` |  | Compare the stored runs of this experiment instead of running. |
 | `--without <PATH>` |  | Ablation: B is A without this file, dir or glob (repeatable) |
 | `--gateway [<NAME>]` |  | Route both arms through a gateway. Without a name: [gateway] default, else the one with a key, else vercel. One of: `vercel`, `openrouter`, `litellm`, `ramp`. |
+| `--gate` |  | Ship-or-hold decision: exit 0 when B wins enough without breaking what A solved, 1 otherwise. |
+| `--lambda <N>` | `2` | With --gate: what breaking one solved item costs, in fixed items. |
+| `--gate-alpha <A>` | `0.05` | With --gate: one-sided significance level. |
+| `--tau <T>` | `0.10` | With --gate: largest share of solved items B may break. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. |
 
 ```sh
 coding.sh compare base candidate --k 3
 coding.sh compare base candidate --experiment exp_01
+coding.sh compare base candidate --k 3 --gate
 coding.sh compare sonnet gpt5 --gateway
 coding.sh compare sonnet gpt5 --gateway openrouter
 ```

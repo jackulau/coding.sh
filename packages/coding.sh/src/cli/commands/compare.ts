@@ -1,6 +1,7 @@
 // coding.sh compare <a> <b>: A/B two harness bundles on eval tasks
 // (src/runner/experiment.ts), or re-analyse the stored runs of an experiment.
 // `compare <a> --without <path>` derives B as A minus a skill, AGENTS.md or MCP config.
+// `--gate` adds a ship-or-hold decision and exits 1 unless it accepts.
 import { getAdapter } from "../../adapters/index.ts";
 import { defaultGateway, gatewayConfig, gatewaySettings, type GatewayConfig } from "../../integrations/gateway/config.ts";
 import { GATEWAYS, resolveGatewayName, type GatewayId } from "../../integrations/gateway/providers.ts";
@@ -12,7 +13,7 @@ import type { AgentRoute } from "../../runner/run.ts";
 import type { EvalTask, HarnessBundle, RunResult } from "../../core/types.ts";
 import { compare, formatCompare, loadRunEvents, loadRunSessions, runExperiment } from "../../runner/experiment.ts";
 import { positiveInt, UsageError } from "../args.ts";
-import { list, requireConsent, resolveTask, str, withContext } from "../common.ts";
+import { gateFlags, list, requireConsent, resolveTask, str, withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -20,6 +21,8 @@ export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
   // Fail on a missing gateway key before touching the store or running anything.
   const gateway = c.flags.gateway === undefined || c.flags.gateway === false ? undefined : requireGateway(c.env, c.flags.gateway === true ? defaultGateway(c.env) : String(c.flags.gateway));
+  // Before running anything: a typo in the gate flags must not cost a full A/B.
+  const gate = gateFlags(c.flags);
   return withContext(c, async (ctx) => {
     const without = list(c.flags.without);
     if (without.length && c.positionals.length > 1) throw new UsageError("--without derives the second arm from the first; pass one bundle", { reason: "invalid_argument" });
@@ -109,13 +112,15 @@ export async function run(c: CommandContext): Promise<number> {
       events,
       bundles: { baseline: A, candidate: B },
       ...(ablation ? { ablation: { paths: ablation.paths, dropped: ablation.dropped, unmatched: ablation.unmatched } } : {}),
+      ...(gate ? { gate } : {}),
     });
     if (out.json) out.data({ experimentId, report });
     else {
       out.print(formatCompare(report, { color: out.color }));
       out.print(experimentId);
     }
-    return 0;
+    // --gate: exit 0 only when the gate accepts (ship B, or with --without drop the component).
+    return report.gate && report.gate.decision !== "accept" ? 1 : 0;
   });
 }
 

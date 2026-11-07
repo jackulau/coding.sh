@@ -6,7 +6,8 @@ import type { Adapter, AgentEvent, BlobStore, EvalTask, HarnessBundle, IndexStor
 import { pairedPower, type PowerAnalysis } from "../experiments/power.ts";
 import { pairedBootstrap, wilson, type BootstrapResult, type Interval } from "../stats/interval.ts";
 import { mean } from "../stats/summary.ts";
-import { mcnemar, type McNemarResult } from "../stats/tests.ts";
+import { gateDetail, gateHeadline, gateVerdict, idList, type GateVerdict } from "../stats/gate.ts";
+import { acceptanceGate, mcnemar, type GateOpts, type GateResult, type McNemarResult } from "../stats/tests.ts";
 import { failureAnatomy, nestedVarianceShares, type ArmAnatomy, type VarianceShares } from "./anatomy.ts";
 import { diffBundles, formatBundleDiff, type BundleDiff } from "./bundle.ts";
 import { firstDivergence, type Divergence } from "./divergence.ts";
@@ -246,6 +247,22 @@ export interface CompareReport {
   anatomy?: { baseline: ArmAnatomy; candidate: ArmAnatomy; variance: VarianceShares };
   /** Set by `compare A --without <path>`: B is A without `paths`. */
   ablation?: AblationReport;
+  /** Set by `compare --gate`: ship B or keep A (SAGE accept-or-abstain on per-task majority outcomes). */
+  gate?: CompareGate;
+}
+
+/**
+ * The acceptance gate on per-task majority outcomes. wins: tasks A failed and
+ * B passed; losses: tasks A passed and B failed; solved: paired tasks A passed.
+ * A tamper-flagged B attempt counts as a fail here only (pass rates keep it).
+ */
+export interface CompareGate extends GateResult {
+  /** ship (accept), hold (not enough evidence) or dont-ship (B breaks solved tasks). */
+  verdict: GateVerdict;
+  /** Tasks A solved that B lost. */
+  lost: string[];
+  /** Tasks A failed that B solved. */
+  won: string[];
 }
 
 export interface AblationReport {
@@ -272,6 +289,8 @@ export interface CompareOpts {
   seed?: number;
   /** B is an ablation of A (`compare --without`). */
   ablation?: Pick<AblationReport, "paths" | "dropped" | "unmatched">;
+  /** Add the acceptance gate (`compare --gate`) with these settings. */
+  gate?: GateOpts;
 }
 
 type Extract = (r: RunResult, s: Session | undefined) => number | undefined;
@@ -337,6 +356,9 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
   let mb = 0;
   let mc = 0;
   let k = 0;
+  const lost: string[] = [];
+  const won: string[] = [];
+  let solved = 0;
   for (const id of taskIds) {
     const ra = ta.get(id) ?? [];
     const rb = tb.get(id) ?? [];
@@ -357,6 +379,11 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
     const y = pb / rb.length >= 0.5;
     if (x && !y) mb++;
     else if (!x && y) mc++;
+    // The gate does not credit B for passes that edited, deleted or skipped tests.
+    const yg = rb.filter((r) => r.pass && !r.tamper?.flagged).length / rb.length >= 0.5;
+    if (x) solved++;
+    if (x && !yg) lost.push(id);
+    else if (!x && yg) won.push(id);
     let divergence: Divergence | undefined;
     const ea = opts.events?.get((ra[0] as RunResult).id);
     const eb = opts.events?.get((rb[0] as RunResult).id);
@@ -450,7 +477,27 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
     alpha,
     ...(anatomy ? { anatomy } : {}),
     ...(opts.ablation ? { ablation: { ...opts.ablation, effect: { mean: -boot.mean, lo: -boot.hi, hi: -boot.lo } } } : {}),
+    ...(opts.gate ? { gate: compareGate(acceptanceGate({ wins: won.length, losses: lost.length, solved }, opts.gate), lost, won) } : {}),
   };
+}
+
+function compareGate(g: GateResult, lost: string[], won: string[]): CompareGate {
+  return { ...g, verdict: gateVerdict(g), lost, won };
+}
+
+/** The gate's headline. With `--without`, B is A minus a component: accepting means drop it. */
+function gateLine(g: CompareGate, ab: AblationReport | undefined): string {
+  if (!ab) return gateHeadline(g, "task");
+  const what = ab.paths.join(", ");
+  const tasks = (n: number) => `${n} task${n === 1 ? "" : "s"}`;
+  switch (g.verdict) {
+    case "ship":
+      return `Drop it: without ${what}, B wins ${tasks(g.wins)}, loses ${g.losses}`;
+    case "dont-ship":
+      return `Keep it: dropping ${what} breaks ${tasks(g.losses)} A solved`;
+    default:
+      return `Keep it: not enough evidence that dropping ${what} helps (B wins ${g.wins}, loses ${g.losses})`;
+  }
 }
 
 const share = (x: number) => `${Math.round(x * 100)}%`;
@@ -625,6 +672,15 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   const v = r.verdict;
   const vtext = v.kind === "better" ? good(v.text) : v.kind === "worse" ? bad(v.text) : bold(v.text);
   out.push(`verdict: ${vtext}`);
+  if (r.gate) {
+    const g = r.gate;
+    const head = gateLine(g, ab);
+    const label = ab ? "drop-it gate:" : "gate:";
+    const indent = " ".repeat(label.length + 1);
+    out.push(`${label} ${g.verdict === "ship" ? good(head) : g.verdict === "dont-ship" ? bad(head) : bold(head)}`);
+    out.push(dim(`${indent}${gateDetail(g)}`));
+    if (g.lost.length) out.push(`${indent}lost: ${idList(g.lost)}`);
+  }
   if (ab) {
     const e = ab.effect;
     out.push(`effect of ${ab.paths.join(", ")} = A − B: ${pp(e.mean)} [${pp(e.lo).replace(" pp", "")}, ${pp(e.hi)}]`);
