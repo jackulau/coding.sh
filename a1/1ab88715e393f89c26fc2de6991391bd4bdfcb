@@ -1,0 +1,27 @@
+scripts/e2e/stub-model.mjs
+  s_8e040dbdf13565::t_e5eee4ed03afc1 1-157
+scripts/e2e/real-capture.mjs
+  s_8e040dbdf13565::t_20e82d33023311 309
+  s_8e040dbdf13565::t_ca49e47993d5f3 185-187,310
+  s_8e040dbdf13565::t_381d29daf60302 1-84,88-184,188-201,203-206,208-308,311-316
+  s_8e040dbdf13565::t_524b0cfcf74dbf 202,207
+  s_8e040dbdf13565::t_0950122a232103 85-87
+.github/workflows/ci.yml
+  s_8e040dbdf13565::t_6da5140090137f 145-176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a11ab88715e393f89c26fc2de6991391bd4bdfcb",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
