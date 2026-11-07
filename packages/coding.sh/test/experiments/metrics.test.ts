@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
@@ -215,7 +215,7 @@ describe("coding.sh exp metrics", () => {
     env = {
       HOME: join(root, "home"),
       CODING_SH_HOME: join(root, "home", ".coding.sh"),
-      PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
+      PATH: [dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter),
       NO_COLOR: "1",
     };
     // Prints {lcp_ms, js_bytes} shifted by argv[2]; checks its stdin names the arm.
