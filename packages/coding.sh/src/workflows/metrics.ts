@@ -1,4 +1,4 @@
-// Workflow metrics (docs/WORKFLOWS.md §4). Pure: nodes in, numbers out.
+// Workflow metrics (docs/design/workflows.md §4). Pure: nodes in, numbers out.
 // Times are ms. "Agents" are nodes of kind agent or step that ran
 // (status ≠ cached), unless noted.
 import type { AgentEvent, Usage } from "../schema/index.ts";

@@ -1,5 +1,5 @@
 // Gantt data for the viewer route /workflows/:runId and the TSV fallback
-// (`workflows show --gantt`), docs/WORKFLOWS.md §8.
+// (`workflows show --gantt`), docs/design/workflows.md §8.
 import { criticalPath, timedAgents } from "./critical-path.ts";
 import { barrierIdle, concurrencySeries, isAgentNode } from "./metrics.ts";
 import type { GanttData, GanttRow, WorkflowNode, WorkflowRun } from "./types.ts";

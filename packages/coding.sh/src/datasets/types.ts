@@ -158,6 +158,12 @@ export interface CaseRun {
   grades: GraderOutcome[];
   /** Task succeeded and every grader passed. */
   pass: boolean;
+  /**
+   * A grader errored (judge outage, crashed scorer), so whether this run passed
+   * is unknown. `pass` is false, but the run is left out of pass rates and
+   * paired comparisons instead of counting as a failure.
+   */
+  ungraded?: true;
   startedAt: number;
 }
 
@@ -183,7 +189,11 @@ export interface ExperimentSummary {
   n: number;
   cases: number;
   passed: number;
+  /** Runs whose task errored (they count as failures). */
   errors: number;
+  /** Runs with a grader error: outcome unknown, left out of `passRate` (absent on older records). */
+  ungraded?: number;
+  /** Over graded runs: passed / (n − ungraded). */
   passRate: Interval;
   /** "wilson" for one trial per case; "cluster-bootstrap" (over cases) for several. */
   ciMethod: "wilson" | "cluster-bootstrap";
@@ -197,9 +207,29 @@ export interface TaskInfo {
   ref: string;
 }
 
+/**
+ * "completed": every case-trial ran. "cancelled": interrupted (Ctrl-C,
+ * SIGTERM); `runs` holds only the case-trials that finished before that, and
+ * compare refuses it unless forced. Absent on older records = completed.
+ */
+export type ExperimentStatus = "completed" | "cancelled";
+
+/**
+ * One line of an experiment's append-only progress log
+ * (`<root>/experiments/<id>.runs.jsonl`): a start line, one line per finished
+ * case-trial as it finishes, and an end line. The log is removed once the
+ * final ExperimentResult is stored, so one left behind (start but no end)
+ * holds the finished work of a run that was killed.
+ */
+export type ExperimentLogEntry =
+  | { type: "start"; status: "running"; id: string; name: string; total: number; createdAt: number }
+  | { type: "run"; run: CaseRun }
+  | { type: "end"; status: ExperimentStatus };
+
 export interface ExperimentResult {
   id: string;
   name: string;
+  status?: ExperimentStatus;
   dataset: { id: string; name: string; version: string; split?: Split };
   task: TaskInfo;
   graders: GraderInfo[];

@@ -43,6 +43,11 @@ export interface RunExperimentOpts {
   testGlobs?: string[];
   /** Agent-only routing per arm (see RunTaskOpts.route). */
   route?: AgentRoute;
+  /**
+   * Interrupts the experiment: no new run starts, in-flight runs are killed
+   * and stored as `cancelled`, and the result says `cancelled: true`.
+   */
+  signal?: AbortSignal;
 }
 
 export interface Job {
@@ -79,11 +84,12 @@ export function defaultConcurrency(): number {
   return Math.max(1, Math.min(4, Math.floor(availableParallelism() / 2)));
 }
 
-export async function runExperiment(o: RunExperimentOpts): Promise<{ experimentId: string; results: RunResult[] }> {
+export async function runExperiment(o: RunExperimentOpts): Promise<{ experimentId: string; results: RunResult[]; cancelled: boolean }> {
   const experimentId = o.experimentId ?? sortableId("exp_");
   const jobs = scheduleJobs(o.tasks, o.bundles, Math.max(1, o.k ?? 1));
   let done = 0;
-  const results = await pool(jobs, o.concurrency ?? defaultConcurrency(), async (job) => {
+  const settled = await pool(jobs, o.concurrency ?? defaultConcurrency(), async (job): Promise<RunResult | undefined> => {
+    if (o.signal?.aborted) return undefined; // never started: not a run
     let result: RunResult;
     try {
       result = await runTask({
@@ -101,6 +107,7 @@ export async function runExperiment(o: RunExperimentOpts): Promise<{ experimentI
         git: o.git,
         runsDir: o.runsDir,
         testGlobs: o.testGlobs,
+        signal: o.signal,
       });
     } catch (e) {
       // runTask should not throw; if adapterFor does, record and move on.
@@ -124,7 +131,8 @@ export async function runExperiment(o: RunExperimentOpts): Promise<{ experimentI
     o.onProgress?.({ done, total: jobs.length, result, task: job.task, bundle: job.bundle });
     return result;
   });
-  return { experimentId, results };
+  const results = settled.filter((r): r is RunResult => r !== undefined);
+  return { experimentId, results, cancelled: o.signal?.aborted === true };
 }
 
 /** Sessions captured for runs (via hooks, tagged with CODING_SH_RUN_ID), keyed by run id. */
@@ -275,8 +283,11 @@ function arm(results: readonly RunResult[], bundleId: string, name?: string): Ar
   };
 }
 
-export function compare(results: readonly RunResult[], opts: CompareOpts): CompareReport {
+export function compare(all: readonly RunResult[], opts: CompareOpts): CompareReport {
   const alpha = opts.alpha ?? 0.05;
+  // Interrupted runs were killed mid-flight: their outcome says nothing about either harness.
+  const results = all.filter((r) => !r.cancelled);
+  const cancelled = all.filter((r) => r.cancelled && (r.bundleId === opts.baseline || r.bundleId === opts.candidate)).length;
   const A = results.filter((r) => r.bundleId === opts.baseline);
   const B = results.filter((r) => r.bundleId === opts.candidate);
   const byTask = (rs: readonly RunResult[]) => {
@@ -339,8 +350,16 @@ export function compare(results: readonly RunResult[], opts: CompareOpts): Compa
   if (unpaired.length) notes.push(`${unpaired.length} task(s) ran in only one arm and are excluded from paired stats`);
   const sa = arm(A, opts.baseline, opts.bundles?.baseline?.name);
   const sb = arm(B, opts.candidate, opts.bundles?.candidate?.name);
-  const errs = sa.errors + sb.errors;
-  if (errs) notes.push(`${errs} run(s) recorded an error (setup, agent or verifier); they count as failures`);
+  if (cancelled) notes.push(`${cancelled} run(s) were cancelled before they finished and are left out`);
+  const errored = [...A, ...B].filter((r) => r.error);
+  if (errored.length) {
+    const passed = errored.filter((r) => r.pass).length;
+    notes.push(
+      passed
+        ? `${errored.length} run(s) recorded an error (setup, agent or verifier); ${passed} of them still passed the verifier and count as passes${passed < errored.length ? `, the other ${errored.length - passed} count as failures` : ""}`
+        : `${errored.length} run(s) recorded an error (setup, agent or verifier); they count as failures`,
+    );
+  }
   const tampered = sa.tampered + sb.tampered;
   if (tampered) {
     const tp = sa.tamperedPasses + sb.tamperedPasses;

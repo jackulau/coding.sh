@@ -2,6 +2,7 @@
 // stderr kept (first 8 KB) for the tap. Shutdown: close stdin, wait 2 s,
 // SIGTERM, wait 2 s, SIGKILL.
 import { spawn, type ChildProcess } from "node:child_process";
+import { trackChild } from "../../core/children.ts";
 import { isRequest, isResponse, LineSplitter, RPC, type RpcNotification, type RpcRequest, type RpcResponse } from "./jsonrpc.ts";
 
 export interface Transport {
@@ -42,6 +43,7 @@ export class StdioTransport implements Transport {
     if (!file) throw new Error("MCP stdio command is empty");
     this.graceMs = opts.graceMs ?? 2000;
     this.child = spawn(file, args, { cwd: opts.cwd, env: (opts.env ?? process.env) as NodeJS.ProcessEnv, stdio: ["pipe", "pipe", "pipe"] });
+    trackChild(this.child);
     this.exitPromise = new Promise((resolve) => {
       const done = (why: string) => {
         if (this.exited) return;

@@ -1,4 +1,4 @@
-// A/B of workflow variants (docs/WORKFLOWS.md §6).
+// A/B of workflow variants (docs/design/workflows.md §6).
 //
 // runWorkflowExperiment schedules (case, attempt, variant) jobs interleaved
 // across variants (like runner/experiment.ts scheduleJobs), concurrency 1 by
@@ -149,14 +149,13 @@ export async function runWorkflowExperiment(o: RunWorkflowExperimentOpts): Promi
     } catch {
       s = undefined;
     }
-    if (typeof s === "number" && Number.isFinite(s)) {
-      scores.set(run.id, s);
-      record.scores[run.id] = s;
-    }
+    if (typeof s === "number" && Number.isFinite(s)) scores.set(run.id, s);
     await o.store.putRun(run, tree.nodes, { outputs: tree.outputs, runOutput: res.output ?? tree.runOutput, ...(res.sources?.script !== undefined ? { script: res.sources.script } : {}) });
     runs.push(run);
-    record.runIds.push(run.id);
-    await o.store.putExperiment(record);
+    // Append, never rewrite the record: a rewrite from this in-memory copy would
+    // erase a `workflows score` written meanwhile, and concurrent jobs' rewrites
+    // could land out of order and drop a run (VWR-6).
+    await o.store.addExperimentRun(experimentId, run.id, scores.get(run.id));
     done++;
     o.onProgress?.({ done, total: jobs.length, run, ...(s !== undefined ? { score: s } : {}) });
   });

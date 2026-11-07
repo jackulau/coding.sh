@@ -1,8 +1,12 @@
-// Workflow persistence until the IndexStore additions (docs/WORKFLOWS.md §3)
+// Workflow persistence until the IndexStore additions (docs/design/workflows.md §3)
 // land: ~/.coding.sh/workflows/
 //   index.jsonl          one line per put (last line per id wins), run summaries
 //   runs/<id>.json       { run, nodes }
-//   experiments/<id>.json
+//   experiments/<id>.json        the record as created (variants, cases, k)
+//   experiments/<id>.runs.jsonl  one appended line per stored run or score;
+//                                getExperiment folds them into runIds/scores, so
+//                                concurrent jobs and `workflows score` never
+//                                overwrite each other (VWR-6)
 //   blobs/               agent and workflow return values (content-addressed)
 //
 // The blobs live in their own FsBlobStore, not the main one: the main store's
@@ -35,6 +39,9 @@ export interface RunFilter {
   experimentId?: string;
   limit?: number;
 }
+
+/** One appended line of an experiment's membership and score log. */
+type ExperimentLogLine = { runId: string; score?: number };
 
 interface IndexLine {
   id: string;
@@ -153,17 +160,73 @@ export class WorkflowStore {
     return (await this.lines()).get(id)?.run.source?.signature;
   }
 
+  private experimentFile(id: string, ext: ".json" | ".runs.jsonl"): string {
+    return join(this.root, "experiments", `${enc(id)}${ext}`);
+  }
+
+  /**
+   * Writes the experiment record. Runs and scores added later go through
+   * addExperimentRun / setExperimentScore, which append instead of rewriting,
+   * so a later putExperiment of a stale copy cannot drop them.
+   */
   async putExperiment(e: WorkflowExperimentRecord): Promise<void> {
     await mkdir(join(this.root, "experiments"), { recursive: true });
-    await writeAtomic(join(this.root, "experiments", `${enc(e.id)}.json`), JSON.stringify(e));
+    await writeAtomic(this.experimentFile(e.id, ".json"), JSON.stringify(e));
+  }
+
+  /** Records that `runId` belongs to the experiment, with its score when it has one. */
+  async addExperimentRun(experimentId: string, runId: string, score?: number): Promise<void> {
+    await this.appendExperimentLog(experimentId, score !== undefined && Number.isFinite(score) ? { runId, score } : { runId });
+  }
+
+  /** Sets (or replaces) the score of one of the experiment's runs. */
+  async setExperimentScore(experimentId: string, runId: string, score: number): Promise<void> {
+    await this.appendExperimentLog(experimentId, { runId, score });
+  }
+
+  private async appendExperimentLog(experimentId: string, line: ExperimentLogLine): Promise<void> {
+    await mkdir(join(this.root, "experiments"), { recursive: true });
+    // One small O_APPEND write per line: concurrent writers interleave whole lines.
+    await appendFile(this.experimentFile(experimentId, ".runs.jsonl"), JSON.stringify(line) + "\n");
+  }
+
+  /** The record with its appended runs and scores folded in (the last score per run wins). */
+  private async withLog(e: WorkflowExperimentRecord): Promise<WorkflowExperimentRecord> {
+    let text = "";
+    try {
+      text = await readFile(this.experimentFile(e.id, ".runs.jsonl"), "utf8");
+    } catch {
+      return e;
+    }
+    const runIds = [...e.runIds];
+    const seen = new Set(runIds);
+    const scores = { ...e.scores };
+    for (const l of text.split("\n")) {
+      if (!l.trim()) continue;
+      let v: ExperimentLogLine;
+      try {
+        v = JSON.parse(l) as ExperimentLogLine;
+      } catch {
+        continue; // torn last line from a crash
+      }
+      if (!v || typeof v.runId !== "string") continue;
+      if (!seen.has(v.runId)) {
+        seen.add(v.runId);
+        runIds.push(v.runId);
+      }
+      if (typeof v.score === "number" && Number.isFinite(v.score)) scores[v.runId] = v.score;
+    }
+    return { ...e, runIds, scores };
   }
 
   async getExperiment(id: string): Promise<WorkflowExperimentRecord | undefined> {
+    let e: WorkflowExperimentRecord;
     try {
-      return JSON.parse(await readFile(join(this.root, "experiments", `${enc(id)}.json`), "utf8")) as WorkflowExperimentRecord;
+      e = JSON.parse(await readFile(this.experimentFile(id, ".json"), "utf8")) as WorkflowExperimentRecord;
     } catch {
       return undefined;
     }
+    return this.withLog(e);
   }
 
   /** Newest first. */
@@ -178,7 +241,7 @@ export class WorkflowStore {
     for (const f of files) {
       if (!f.endsWith(".json")) continue;
       try {
-        out.push(JSON.parse(await readFile(join(this.root, "experiments", f), "utf8")) as WorkflowExperimentRecord);
+        out.push(await this.withLog(JSON.parse(await readFile(join(this.root, "experiments", f), "utf8")) as WorkflowExperimentRecord));
       } catch {
         // partial write: skip
       }

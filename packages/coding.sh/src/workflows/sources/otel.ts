@@ -1,4 +1,4 @@
-// OTel span tree → workflow nodes (docs/WORKFLOWS.md §2.2).
+// OTel span tree → workflow nodes (docs/design/workflows.md §2.2).
 //
 // Input is what the receiver stored: AgentEvents carrying traceId, spanId and
 // parentSpanId (src/otel/map.ts). One span maps to one or more events (an

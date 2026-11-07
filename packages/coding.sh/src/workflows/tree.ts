@@ -1,4 +1,4 @@
-// Merge capture sources into one workflow tree (docs/WORKFLOWS.md §2):
+// Merge capture sources into one workflow tree (docs/design/workflows.md §2):
 // workflow → phase → (group →) agent → subagent → tool / llm.
 //
 // Claude Code workflows: journal (call order, labels, phases, results, cache

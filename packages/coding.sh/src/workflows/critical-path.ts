@@ -1,4 +1,4 @@
-// Critical path over a workflow's agent nodes (docs/WORKFLOWS.md §4).
+// Critical path over a workflow's agent nodes (docs/design/workflows.md §4).
 //
 // Exact: when the source gives explicit dependencies (node.deps, pipeline
 // item chains, or journal-recorded group structure), the path is the longest

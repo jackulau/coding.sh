@@ -59,6 +59,10 @@ export interface Comparison {
   b: { id: string; name: string; passRate: number };
   /** Set when A and B ran on different dataset versions (pairing still by case id). */
   datasetWarning?: string;
+  /** Runs left out because a grader errored (outcome unknown), per side. */
+  ungraded: { a: number; b: number };
+  /** Set when either side has ungraded runs: the comparison covers only graded runs. */
+  gradeWarning?: string;
   paired: number;
   onlyInA: string[];
   onlyInB: string[];
@@ -89,6 +93,18 @@ export interface CompareOpts {
   power?: number;
   /** Warn when fewer paired cases than this. Default 200. */
   minPaired?: number;
+  /** Compare a cancelled experiment anyway (its unfinished cases are missing, not failed). */
+  force?: boolean;
+}
+
+/** Thrown when a side of a comparison is a cancelled (partial) experiment and `force` is not set. */
+export class IncompleteExperimentError extends Error {
+  readonly experimentId: string;
+  constructor(r: Pick<ExperimentResult, "id" | "name" | "runs">) {
+    super(`experiment ${r.name} (${r.id}) was cancelled after ${r.runs.length} case run(s); its result is partial`);
+    this.name = "IncompleteExperimentError";
+    this.experimentId = r.id;
+  }
 }
 
 function graderMeans(r: ExperimentResult, graderId: string): Map<string, number> {
@@ -105,12 +121,16 @@ function graderMeans(r: ExperimentResult, graderId: string): Map<string, number>
 }
 
 export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opts: CompareOpts = {}): Comparison {
+  if (!opts.force) for (const x of [a, b]) if (x.status === "cancelled") throw new IncompleteExperimentError(x);
   const boot = { iters: opts.iters ?? 10_000, seed: opts.seed ?? 0x5eed, alpha: opts.alpha ?? 0.05 };
   const ra = caseRates(a.runs);
   const rb = caseRates(b.runs);
   const ids = [...ra.keys()].filter((id) => rb.has(id)).sort();
-  const onlyInA = [...ra.keys()].filter((id) => !rb.has(id)).sort();
-  const onlyInB = [...rb.keys()].filter((id) => !ra.has(id)).sort();
+  // "Only in" means the case ran on one side only; a case that ran on both but is ungraded on one is just left out.
+  const ranA = new Set(a.runs.map((r) => r.caseId));
+  const ranB = new Set(b.runs.map((r) => r.caseId));
+  const onlyInA = [...ranA].filter((id) => !ranB.has(id)).sort();
+  const onlyInB = [...ranB].filter((id) => !ranA.has(id)).sort();
   const deltas: CaseDelta[] = ids.map((caseId) => {
     const x = ra.get(caseId) as number;
     const y = rb.get(caseId) as number;
@@ -148,9 +168,11 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     if (ca || cb) out.corrected = { ...(ca ? { a: ca } : {}), ...(cb ? { b: cb } : {}) };
     return out;
   });
+  const ungraded = { a: a.runs.filter((r) => r.ungraded).length, b: b.runs.filter((r) => r.ungraded).length };
   const out: Comparison = {
     a: { id: a.id, name: a.name, passRate: rateOf(ra) },
     b: { id: b.id, name: b.name, passRate: rateOf(rb) },
+    ungraded,
     paired: ids.length,
     onlyInA,
     onlyInB,
@@ -169,6 +191,9 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     const pa = passHatK(a.runs, ids);
     const pb = passHatK(b.runs, ids);
     out.passK = { a: { k: a.trials, rate: pa }, b: { k: b.trials, rate: pb }, diff: pb - pa };
+  }
+  if (ungraded.a || ungraded.b) {
+    out.gradeWarning = `${ungraded.a + ungraded.b} run(s) had a grader error (A ${ungraded.a}, B ${ungraded.b}); their outcome is unknown, so they are left out and only graded runs are compared. Re-run them before trusting the verdict`;
   }
   if (a.dataset.id !== b.dataset.id || a.dataset.version !== b.dataset.version) {
     out.datasetWarning = `A ran on ${a.dataset.id}@${a.dataset.version}, B on ${b.dataset.id}@${b.dataset.version}; only the ${ids.length} shared case id(s) are compared`;

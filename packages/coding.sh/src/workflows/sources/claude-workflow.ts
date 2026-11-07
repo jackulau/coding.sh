@@ -1,4 +1,4 @@
-// Claude Code Workflow tool runs (docs/WORKFLOWS.md §2.1): journal +
+// Claude Code Workflow tool runs (docs/design/workflows.md §2.1): journal +
 // agent transcripts + meta.json → nodes.
 //
 // On disk (Claude Code 2.1.3xx):

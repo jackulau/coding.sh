@@ -11,6 +11,7 @@
 // work from src/ and from the dist bundle alike. `tap/main.ts mcp` runs the
 // same tap as a standalone stdio process.
 import { spawn } from "node:child_process";
+import { trackChild } from "../../core/children.ts";
 import { appendFileSync } from "node:fs";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -217,6 +218,7 @@ export function bridgeStdio(tap: McpTap, client: { input: Readable; output: Writ
   if (!file) return Promise.reject(new Error("MCP command is empty"));
   const grace = o.graceMs ?? 2000;
   const child = spawn(file, args, { cwd: up.cwd, env: (up.env ?? process.env) as NodeJS.ProcessEnv, stdio: ["pipe", "pipe", "pipe"] });
+  trackChild(child);
   let stderr = "";
   const write = (stream: Writable, m: unknown) => {
     if (stream.writable) stream.write(JSON.stringify(m) + "\n");

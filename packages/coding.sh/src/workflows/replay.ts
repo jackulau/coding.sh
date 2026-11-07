@@ -1,4 +1,4 @@
-// Replay from journal (docs/WORKFLOWS.md §7). Claude Code resumes a run with
+// Replay from journal (docs/design/workflows.md §7). Claude Code resumes a run with
 // resumeFromRunId: the longest unchanged prefix of agent() calls, in call
 // order, returns cached results; the first changed call and everything after
 // it run live.

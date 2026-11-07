@@ -1,4 +1,4 @@
-// Workflow runs as trees (docs/WORKFLOWS.md §3, §10). These types are the
+// Workflow runs as trees (docs/design/workflows.md §3, §10). These types are the
 // proposed contract additions; until src/schema and src/core/types.ts accept
 // them they live here, and src/workflows/store.ts persists them.
 import type { BlobRef, LatencyStats, Usage } from "../schema/index.ts";

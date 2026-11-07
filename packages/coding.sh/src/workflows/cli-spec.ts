@@ -1,4 +1,4 @@
-// `coding.sh workflows` command metadata (docs/WORKFLOWS.md §10), ready for
+// `coding.sh workflows` command metadata (docs/design/workflows.md §10), ready for
 // src/cli/registry.ts: `import { WORKFLOWS_COMMAND } from "../workflows/cli-spec.ts"`
 // and add it to COMMANDS under "Evaluate". Type-only imports keep `--help`
 // free of store and adapter code; the command module loads lazily.

@@ -8,6 +8,7 @@ import { createDataset } from "../../src/datasets/dataset.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
 import type { Grader } from "../../src/datasets/types.ts";
 import { exactGrader, jsonPathGrader } from "../../src/graders/builtin.ts";
+import { compareExperiments, IncompleteExperimentError } from "../../src/experiments/compare.ts";
 import { renderExperiment } from "../../src/experiments/render.ts";
 import { runExperiment, withTrace } from "../../src/experiments/run.ts";
 import { resolveTask, safeUrl, splitCommandLine } from "../../src/experiments/task.ts";
@@ -164,13 +165,88 @@ describe("runExperiment: function task", () => {
     assert.equal(r.runs[0]?.pass, true);
   });
 
-  it("aborted runs are marked, not executed", async () => {
+  it("an experiment aborted before it starts runs nothing and is cancelled", async () => {
     const ctrl = new AbortController();
     ctrl.abort();
     let calls = 0;
     const r = await runExperiment({ name: "ab", dataset: ds, task: () => calls++, graders: [], signal: ctrl.signal });
     assert.equal(calls, 0);
-    assert.ok(r.runs.every((x) => x.error === "aborted" && !x.pass));
+    assert.equal(r.status, "cancelled");
+    assert.deepEqual(r.runs, [], "never-started cases are not runs");
+    const text = renderExperiment(r, { color: false });
+    assert.match(text, /cancelled before any case run finished: nothing was graded/);
+    assert.doesNotMatch(text, /pass|latency/, "no empty pass rate or grader table");
+  });
+
+  // EXP-6: a grader error makes the outcome unknown, not a failure.
+  it("grader errors leave runs ungraded, out of the pass rate and of compare", async () => {
+    const flaky = (fail: (id: string) => boolean): Grader => ({
+      id: "judge",
+      version: "1",
+      kind: "custom",
+      grade: async (ctx) => {
+        if (fail(ctx.caseId ?? "")) throw new Error("HTTP 529 overloaded");
+        return { score: 1, pass: true };
+      },
+    });
+    const cases = Array.from({ length: 12 }, (_, i) => ({ id: `c${i}`, input: { q: `c${i}` }, expected: `C${i}` }));
+    const big = createDataset({ name: "big", createdAt: 1, cases });
+    const a = await runExperiment({ name: "A", dataset: big, task: upper, graders: [flaky(() => false)] });
+    const b = await runExperiment({ name: "B", dataset: big, task: upper, graders: [flaky((id) => Number(id.slice(1)) % 2 === 0)] });
+    assert.equal(b.summary.ungraded, 6);
+    assert.equal(b.summary.errors, 0);
+    assert.equal(b.summary.passRate.p, 1, "pass rate over graded runs only");
+    assert.ok(b.runs.filter((r) => r.ungraded).every((r) => !r.pass && r.grades[0]?.error));
+    const cmp = compareExperiments(a, b, { iters: 500 });
+    assert.notEqual(cmp.verdict, "worse");
+    assert.equal(cmp.regressions.length, 0);
+    assert.deepEqual(cmp.ungraded, { a: 0, b: 6 });
+    assert.equal(cmp.paired, 6);
+    assert.match(cmp.gradeWarning ?? "", /6 run\(s\) had a grader error/);
+    assert.match(renderExperiment(b, { color: false }), /ungraded 6 run\(s\) with a grader error/);
+  });
+});
+
+// EXP-1 / EXP-3: an interrupted experiment is stored as cancelled with only its finished runs,
+// its progress is on disk while it runs, and compare refuses it unless forced.
+describe("runExperiment: cancellation", () => {
+  it("an abort mid-run stores status cancelled with only finished runs; compare and name lookup refuse it", async () => {
+    const root = await mkdtemp(join(tmpdir(), "coding-sh-exp-cancel-"));
+    try {
+      const store = new FileEvalStore({ root });
+      const done = await runExperiment({ name: "same", dataset: ds, task: upper, graders: [exactGrader()], store });
+      const ctrl = new AbortController();
+      let started = 0;
+      let logged: Awaited<ReturnType<FileEvalStore["readExperimentLog"]>> = [];
+      const task = async (input: unknown, ctx: { signal?: AbortSignal }) => {
+        started++;
+        if (started <= 2) return upper(input);
+        // Third case hangs until aborted, like an agent mid-run; capture the progress log first.
+        logged = await store.readExperimentLog(id);
+        setTimeout(() => ctrl.abort(), 10);
+        await new Promise((_, reject) => ctx.signal?.addEventListener("abort", () => reject(new Error("killed")), { once: true }));
+        return "never";
+      };
+      const id = "exp_cancel_test";
+      const r = await runExperiment({ name: "same", dataset: ds, task, graders: [exactGrader()], store, id, concurrency: 1, signal: ctrl.signal });
+      assert.equal(r.status, "cancelled");
+      assert.deepEqual(r.runs.map((x) => x.caseId), ["a", "b"], "only the finished case-trials");
+      assert.ok(r.runs.every((x) => x.error === undefined && x.pass));
+      assert.equal(r.summary.n, 2);
+      // While running, finished case-trials were already on disk, with a running status.
+      assert.deepEqual(logged.map((e) => e.type), ["start", "run", "run"]);
+      assert.equal((logged[0] as { status: string }).status, "running");
+      assert.deepEqual(await store.readExperimentLog(id), [], "log removed once the result is stored");
+      const back = await store.getExperiment(id);
+      assert.equal(back?.status, "cancelled");
+      // By name, the cancelled run never shadows the last complete one.
+      assert.equal((await store.resolveExperiment("same"))?.id, done.id);
+      assert.equal((await store.resolveExperiment("same", { includeCancelled: true }))?.id, id);
+      assert.throws(() => compareExperiments(done, back!), IncompleteExperimentError);
+      assert.equal(compareExperiments(done, back!, { force: true }).paired, 2);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

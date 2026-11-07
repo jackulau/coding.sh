@@ -5,6 +5,7 @@
 // RunResult through IndexStore.putRun.
 import { mkdir, readFile, rm, writeFile, appendFile } from "node:fs/promises";
 import { join } from "node:path";
+import { removeOnExit, withAbortSignal } from "../core/children.ts";
 import { sha256Hex, sortableId } from "../core/ids.ts";
 import { paths } from "../core/paths.ts";
 import type { Adapter, AgentRunOutput, BlobStore, HarnessBundle, IndexStore, RunResult, Session } from "../core/types.ts";
@@ -16,7 +17,7 @@ import { runModelTrial } from "./drivers/model.ts";
 import { computeMetrics } from "./metrics.ts";
 import { openapiPaths, startHttpTap } from "./tap/http-proxy.ts";
 import { startMcpProxy } from "./tap/mcp-proxy.ts";
-import { prepareSandbox, suiteDirOf } from "./sandbox.ts";
+import { prepareSandbox, sandboxDir, suiteDirOf } from "./sandbox.ts";
 import { armKey, driverKey, type Driver, type JudgeFn, type Prices, type TapRecord, type Target, type ToolTask, type TrialResult, type Variant } from "./types.ts";
 
 export interface ExperimentDeps {
@@ -36,6 +37,13 @@ export interface ExperimentDeps {
   bundleFor?: (ref: string) => Promise<HarnessBundle | undefined>;
   env?: NodeJS.ProcessEnv;
   otelEndpoint?: string;
+  /**
+   * Interrupts the experiment: no new trial starts; running setup, tap,
+   * agent and check processes are killed (through the ambient signal). A trial
+   * the abort cut short is stored as a cancelled run but kept out of
+   * trials.jsonl and the returned trials.
+   */
+  signal?: AbortSignal;
 }
 
 export interface ExperimentOpts extends ExperimentDeps {
@@ -113,7 +121,13 @@ function lastAssistantText(events: readonly AgentEvent[], rootId: string | undef
 
 const emptyRun = (note = ""): AgentRunOutput => ({ exitCode: null, timedOut: false, durationMs: 0, stdoutTail: "", stderrTail: note });
 
-export async function runTrial(o: ExperimentDeps & { job: ToolJob; target: Target; experimentId: string; expDir: string; trialId?: string }): Promise<TrialResult> {
+type TrialOpts = ExperimentDeps & { job: ToolJob; target: Target; experimentId: string; expDir: string; trialId?: string };
+
+export async function runTrial(o: TrialOpts): Promise<TrialResult> {
+  return withAbortSignal(o.signal, () => runTrialInner(o));
+}
+
+async function runTrialInner(o: TrialOpts): Promise<TrialResult> {
   const { job, target } = o;
   const trialId = o.trialId ?? sortableId("trial_");
   const dKey = driverKey(job.driver);
@@ -135,13 +149,14 @@ export async function runTrial(o: ExperimentDeps & { job: ToolJob; target: Targe
   let run: AgentRunOutput = emptyRun();
   let finalText = "";
   let driverBudget: TrialResult["metrics"]["budgetExceeded"];
-  let sbRoot: string | undefined;
+  // Known before the sandbox exists: prepareSandbox creates it and then may fail (setup command, missing file).
+  const sbRoot = sandboxDir(o.expDir, trialId);
+  const forgetSandbox = o.keep ? () => {} : removeOnExit(sbRoot);
   let tap: TapRecord[] = [];
   let trace: { sessions: Session[]; events: AgentEvent[] } = { sessions: [], events: [] };
   const closers: (() => Promise<void>)[] = [];
   try {
     const sb = await prepareSandbox(job.task, target, job.variant, trialId, o.expDir);
-    sbRoot = sb.root;
     let mcpStdio: string[] | undefined;
     let mcpUrl: string | undefined;
     let httpUrl: string | undefined;
@@ -180,6 +195,7 @@ export async function runTrial(o: ExperimentDeps & { job: ToolJob; target: Targe
         httpUrl,
         prices: o.prices,
         env: o.env,
+        ...(o.signal ? { signal: o.signal } : {}),
       });
       run = out;
       finalText = out.finalText;
@@ -240,8 +256,13 @@ export async function runTrial(o: ExperimentDeps & { job: ToolJob; target: Targe
       // blob store unavailable: trials.jsonl still has the metrics
     }
   }
+  if (o.signal?.aborted) {
+    result.pass = false;
+    result.error = "cancelled";
+  }
   result.endedAt = Date.now();
-  if (sbRoot && !o.keep) await rm(sbRoot, { recursive: true, force: true }).catch(() => {});
+  if (!o.keep) await rm(sbRoot, { recursive: true, force: true }).catch(() => {});
+  forgetSandbox();
   const runResult: RunResult = {
     id: trialId,
     experimentId: o.experimentId,
@@ -255,12 +276,15 @@ export async function runTrial(o: ExperimentDeps & { job: ToolJob; target: Targe
     endedAt: result.endedAt,
     ...(result.sessionId ? { sessionId: result.sessionId } : {}),
     ...(result.error ? { error: result.error } : {}),
+    // On the run too, not only in trials.jsonl, so blob gc sees the reference.
+    ...(result.tapBlob ? { tapBlob: result.tapBlob } : {}),
+    ...(o.signal?.aborted ? { cancelled: true as const } : {}),
   };
   await o.index.putRun(runResult).catch(() => {});
   return result;
 }
 
-export async function runToolExperiment(o: ExperimentOpts): Promise<{ experimentId: string; trials: TrialResult[]; dir: string }> {
+export async function runToolExperiment(o: ExperimentOpts): Promise<{ experimentId: string; trials: TrialResult[]; dir: string; cancelled: boolean }> {
   const experimentId = o.experimentId ?? sortableId("texp_");
   const dir = join(o.root ?? toolevalsRoot(o.env), experimentId);
   await mkdir(dir, { recursive: true });
@@ -285,14 +309,17 @@ export async function runToolExperiment(o: ExperimentOpts): Promise<{ experiment
   );
   const trialsFile = join(dir, "trials.jsonl");
   let done = 0;
-  const trials = await pool(jobs, o.concurrency ?? defaultConcurrency(), async (job) => {
+  const settled = await pool(jobs, o.concurrency ?? defaultConcurrency(), async (job): Promise<TrialResult | undefined> => {
+    if (o.signal?.aborted) return undefined; // never started
     const t = await runTrial({ ...o, job, target: o.target, experimentId, expDir: dir });
+    if (o.signal?.aborted) return undefined; // cut short: not a trial result
     await appendFile(trialsFile, JSON.stringify(t) + "\n");
     done++;
     o.onProgress?.(done, jobs.length, t);
     return t;
   });
-  return { experimentId, trials, dir };
+  const trials = settled.filter((t): t is TrialResult => t !== undefined);
+  return { experimentId, trials, dir, cancelled: o.signal?.aborted === true };
 }
 
 /** Trials of a stored experiment. */

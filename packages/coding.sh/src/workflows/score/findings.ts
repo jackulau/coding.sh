@@ -1,4 +1,4 @@
-// Review/find workflows scored against a seeded-bug set (docs/WORKFLOWS.md §5).
+// Review/find workflows scored against a seeded-bug set (docs/design/workflows.md §5).
 //
 // One finding ↔ one bug, greedy by line distance: same file, finding line
 // within [a − slack, b + slack] (slack 5). A finding with no line can match

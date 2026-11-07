@@ -1,4 +1,4 @@
-// `command` driver (docs/WORKFLOWS.md §6): any program, e.g. a LangGraph or
+// `command` driver (docs/design/workflows.md §6): any program, e.g. a LangGraph or
 // Mastra app. Called as `<cmd…> --args <json>` with CODING_SH_WORKFLOW_RUN_ID
 // (and CODING_SH_RUN_ID) set; prints its output JSON on stdout. Its spans go
 // to the receiver, tagged with the run id through the inherited env.

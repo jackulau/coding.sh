@@ -280,3 +280,78 @@ describe("replay prediction", () => {
     assert.equal(changed.prediction.hits, 0);
   });
 });
+
+// VWR-6: the experiment record used to be rewritten from an in-memory copy after
+// every job, erasing a score written meanwhile and, with concurrency, dropping runs.
+describe("workflow experiment record (VWR-6)", () => {
+  const kase = (id: string): WorkflowCase => ({ ...cases[0]!, id });
+  const okDriver = (delay: () => Promise<void>): WorkflowDriver => ({
+    id: "command",
+    async run(_v, _c, env) {
+      await delay();
+      return { runId: env.CODING_SH_WORKFLOW_RUN_ID!, output: null, exitCode: 0, startedAt: Date.now(), endedAt: Date.now() };
+    },
+  });
+
+  it("keeps a score written while the experiment is still running", async () => {
+    const store = new WorkflowStore(join(root, "vwr6-score"));
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let calls = 0;
+    let first = "";
+    let second = "";
+    const p = runWorkflowExperiment({
+      workflow: "review",
+      variants: [{ name: "A" }, { name: "B" }, { name: "C" }],
+      cases: [kase("c1")],
+      k: 1,
+      driver: okDriver(() => (++calls === 2 ? gate : Promise.resolve())),
+      store,
+      experimentId: "wfx_vwr6",
+      score: () => undefined,
+      onProgress: ({ run, done }) => {
+        if (done === 1) first = run.id;
+      },
+    });
+    while (!first) await new Promise((r) => setTimeout(r, 5));
+    // A stale read-modify-write of the whole record (the old `workflows score` path)...
+    const e = (await store.getExperiment("wfx_vwr6"))!;
+    e.scores[first] = 0.9;
+    await store.putExperiment(e);
+    release();
+    const res = await p;
+    const done = (await store.getExperiment("wfx_vwr6"))!;
+    assert.equal(done.scores[first], 0.9, "score written mid-run survives the later jobs");
+    assert.deepEqual(new Set(done.runIds), new Set(res.runs.map((r) => r.id)));
+    assert.equal(done.runIds.length, 3);
+    // The append `workflows score` uses now, plus a stale whole-record write after it.
+    second = res.runs[1]!.id;
+    await store.setExperimentScore("wfx_vwr6", second, 0.4);
+    await store.putExperiment(done);
+    const fin = (await store.getExperiment("wfx_vwr6"))!;
+    assert.equal(fin.scores[second], 0.4, "an appended score survives a stale record write");
+    assert.equal(fin.scores[first], 0.9);
+  });
+
+  it("records every run with concurrency 8 (40 jobs, 20 tries)", async () => {
+    for (let t = 0; t < 20; t++) {
+      const store = new WorkflowStore(join(root, `vwr6-conc-${t}`));
+      const res = await runWorkflowExperiment({
+        workflow: "review",
+        variants: [{ name: "A" }, { name: "B" }],
+        cases: Array.from({ length: 20 }, (_, i) => kase(`c${i}`)),
+        k: 1,
+        driver: okDriver(() => new Promise((r) => setTimeout(r, Math.random() * 3))),
+        store,
+        concurrency: 8,
+        experimentId: "wfx_conc",
+        score: () => 1,
+      });
+      const fin = (await store.getExperiment("wfx_conc"))!;
+      assert.equal(res.runs.length, 40);
+      assert.equal(fin.runIds.length, 40, `try ${t}: every run is in the record`);
+      assert.equal(Object.keys(fin.scores).length, 40, `try ${t}: every score is in the record`);
+      assert.equal((await store.listExperiments())[0]?.runIds.length, 40, "listExperiments folds the log too");
+    }
+  });
+});

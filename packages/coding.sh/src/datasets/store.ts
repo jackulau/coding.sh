@@ -4,6 +4,7 @@
 //   <root>/datasets/<id>/latest                    text: the latest version id
 //   <root>/datasets/<id>/history.jsonl             append-only version log
 //   <root>/experiments/<id>.json                   one ExperimentResult per run
+//   <root>/experiments/<id>.runs.jsonl             append-only progress of a run in flight
 //   <root>/judges/<id>.json                        JudgeVersion (status, calibration)
 //   <root>/judge-cache/…                           see src/judge/cache.ts
 //
@@ -13,13 +14,14 @@
 // experiment / judge methods (sqlite and memory do), those are used instead of
 // the JSON files, so evals live next to sessions in one queryable index. The
 // judge cache always stays on disk under <root>/judge-cache.
-import { randomBytes } from "node:crypto";
-import { appendFile, mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { acquireLock } from "../core/lock.ts";
 import { paths } from "../core/paths.ts";
+import { writeFileDurable } from "../store/durable.ts";
 import type { DatasetListing, IndexStore } from "../core/types.ts";
 import { datasetVersion } from "./dataset.ts";
-import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "./types.ts";
+import type { Dataset, DatasetVersionInfo, ExperimentLogEntry, ExperimentResult, JudgeVersion } from "./types.ts";
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,199}$/;
 
@@ -28,10 +30,32 @@ function safeId(kind: string, id: string): string {
   return id;
 }
 
+/** Atomic and durable: a crash leaves the old or the new file, never a torn one. */
 export async function writeFileAtomic(path: string, data: string): Promise<void> {
-  const tmp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
-  await writeFile(tmp, data, "utf8");
-  await rename(tmp, path);
+  await writeFileDurable(path, data);
+}
+
+/**
+ * history.jsonl entries, first occurrence of each version. Unparsable lines are
+ * skipped: older versions appended in place, so a crash could leave a torn line
+ * (and a later append could land after it).
+ */
+function parseHistory(text: string | undefined): DatasetVersionInfo[] {
+  const out: DatasetVersionInfo[] = [];
+  const seen = new Set<string>();
+  for (const line of (text ?? "").split("\n")) {
+    if (!line.trim()) continue;
+    let info: DatasetVersionInfo;
+    try {
+      info = JSON.parse(line) as DatasetVersionInfo;
+    } catch {
+      continue;
+    }
+    if (typeof info?.version !== "string" || seen.has(info.version)) continue;
+    seen.add(info.version);
+    out.push(info);
+  }
+  return out;
 }
 
 async function readJson<T>(path: string): Promise<T | undefined> {
@@ -111,23 +135,39 @@ export class FileEvalStore {
     }
     const dir = join(this.datasetsDir, id);
     await mkdir(join(dir, "versions"), { recursive: true });
-    const file = join(dir, "versions", `${version}.json`);
-    const existing = await readJson<Dataset>(file);
-    const createdAt = opts.now ?? Date.now();
-    let created = false;
-    if (existing) {
-      if (datasetVersion(existing.cases) !== version) throw new Error(`dataset ${id}@${version}: stored file is corrupt`);
-    } else {
-      const stored: Dataset = { id, name: ds.name, version, cases: ds.cases, createdAt };
-      if (ds.description !== undefined) stored.description = ds.description;
-      await writeFileAtomic(file, JSON.stringify(stored, null, 2) + "\n");
-      const info: DatasetVersionInfo = { version, cases: ds.cases.length, createdAt };
-      if (opts.note) info.note = opts.note;
-      await appendFile(join(dir, "history.jsonl"), JSON.stringify(info) + "\n", "utf8");
-      created = true;
+    // One writer per dataset: the version file, the history entry and `latest` change together.
+    const lock = await acquireLock(join(dir, ".lock"));
+    try {
+      const file = join(dir, "versions", `${version}.json`);
+      const existing = await readJson<Dataset>(file);
+      let createdAt = opts.now ?? Date.now();
+      let created = false;
+      if (existing) {
+        if (datasetVersion(existing.cases) !== version) throw new Error(`dataset ${id}@${version}: stored file is corrupt`);
+        createdAt = existing.createdAt ?? createdAt;
+      } else {
+        const stored: Dataset = { id, name: ds.name, version, cases: ds.cases, createdAt };
+        if (ds.description !== undefined) stored.description = ds.description;
+        await writeFileAtomic(file, JSON.stringify(stored, null, 2) + "\n");
+        created = true;
+      }
+      // The history entry is the commit point. It is added whenever it is missing, not
+      // only for a new file, so a put that crashed after writing the version file heals
+      // on retry; the whole file is rewritten atomically so it can never be torn.
+      const historyFile = join(dir, "history.jsonl");
+      const history = parseHistory(await readText(historyFile));
+      if (!history.some((h) => h.version === version)) {
+        const info: DatasetVersionInfo = { version, cases: ds.cases.length, createdAt };
+        if (opts.note) info.note = opts.note;
+        history.push(info);
+        await writeFileAtomic(historyFile, history.map((h) => JSON.stringify(h) + "\n").join(""));
+        created = true;
+      }
+      await writeFileAtomic(join(dir, "latest"), version + "\n");
+      return { version, created };
+    } finally {
+      lock.release();
     }
-    await writeFileAtomic(join(dir, "latest"), version + "\n");
-    return { version, created };
   }
 
   /** A stored version; `"latest"` (default) follows the latest pointer. */
@@ -147,12 +187,7 @@ export class FileEvalStore {
 
   async listDatasetVersions(id: string): Promise<DatasetVersionInfo[]> {
     if (this.index) return this.index.listDatasetVersions!(safeId("dataset", id));
-    const t = await readText(join(this.datasetsDir, safeId("dataset", id), "history.jsonl"));
-    if (!t) return [];
-    return t
-      .split("\n")
-      .filter((l) => l.trim())
-      .map((l) => JSON.parse(l) as DatasetVersionInfo);
+    return parseHistory(await readText(join(this.datasetsDir, safeId("dataset", id), "history.jsonl")));
   }
 
   async listDatasets(): Promise<DatasetListing[]> {
@@ -181,17 +216,50 @@ export class FileEvalStore {
   }
 
   /**
-   * By id, else the newest experiment with that name (`exp run --name` is
-   * what users remember, and re-running a name is how they iterate).
+   * By id, else the newest completed experiment with that name (`exp run
+   * --name` is what users remember, and re-running a name is how they
+   * iterate). A cancelled run never shadows the last complete one of the same
+   * name unless `includeCancelled`; by id it is returned as is.
    */
-  async resolveExperiment(ref: string): Promise<ExperimentResult | undefined> {
+  async resolveExperiment(ref: string, opts: { includeCancelled?: boolean } = {}): Promise<ExperimentResult | undefined> {
     let byId: ExperimentResult | undefined;
     try {
       byId = await this.getExperiment(ref);
     } catch {
       // not a valid id (e.g. a name with spaces): try it as a name
     }
-    return byId ?? (await this.listExperiments({ name: ref, limit: 1 }))[0];
+    if (byId) return byId;
+    if (opts.includeCancelled) return (await this.listExperiments({ name: ref, limit: 1 }))[0];
+    return (await this.listExperiments({ name: ref })).find((e) => (e.status ?? "completed") === "completed");
+  }
+
+  // Append-only progress log of an experiment in flight (see ExperimentLogEntry).
+  experimentLogPath(id: string): string {
+    return join(this.experimentsDir, `${safeId("experiment", id)}.runs.jsonl`);
+  }
+
+  async appendExperimentLog(id: string, entry: ExperimentLogEntry): Promise<void> {
+    await mkdir(this.experimentsDir, { recursive: true });
+    await appendFile(this.experimentLogPath(id), JSON.stringify(entry) + "\n", "utf8");
+  }
+
+  /** The log's entries; a torn last line (killed mid-write) is skipped. Empty when there is none. */
+  async readExperimentLog(id: string): Promise<ExperimentLogEntry[]> {
+    const text = (await readText(this.experimentLogPath(id))) ?? "";
+    const out: ExperimentLogEntry[] = [];
+    for (const line of text.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        out.push(JSON.parse(line) as ExperimentLogEntry);
+      } catch {
+        // partial line
+      }
+    }
+    return out;
+  }
+
+  async removeExperimentLog(id: string): Promise<void> {
+    await rm(this.experimentLogPath(id), { force: true });
   }
 
   /** Newest first (ids are time-sortable). */
@@ -199,13 +267,14 @@ export class FileEvalStore {
     if (this.index) return this.index.listExperiments!(filter);
     const files = (await listDir(this.experimentsDir)).filter((f) => f.endsWith(".json")).sort().reverse();
     const out: ExperimentResult[] = [];
+    const limit = filter.limit !== undefined && filter.limit >= 0 ? filter.limit : Infinity; // 0 → none
     for (const f of files) {
+      if (out.length >= limit) break;
       const r = await readJson<ExperimentResult>(join(this.experimentsDir, f));
       if (!r) continue;
       if (filter.datasetId && r.dataset.id !== filter.datasetId) continue;
       if (filter.name && r.name !== filter.name) continue;
       out.push(r);
-      if (filter.limit && out.length >= filter.limit) break;
     }
     return out;
   }

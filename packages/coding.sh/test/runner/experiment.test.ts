@@ -224,3 +224,112 @@ describe("runExperiment (end to end with a fake agent)", () => {
     assert.match(text, /~ CLAUDE\.md/);
   });
 });
+
+// EXP-8: errored runs that still passed the verifier count as passes, and the note says so.
+describe("compare notes", () => {
+  it("says errored runs that passed the verifier count as passes", () => {
+    const r = compare([run("t1", "A", 1, false), run("t1", "B", 1, true, { error: "agent timed out" }), run("t2", "B", 1, false, { error: "setup failed" })], { baseline: "A", candidate: "B" });
+    assert.equal(r.candidate.passes, 1);
+    const note = r.notes.find((n) => n.includes("recorded an error")) ?? "";
+    assert.match(note, /2 run\(s\) recorded an error/);
+    assert.match(note, /1 of them still passed the verifier and count as passes/);
+    assert.doesNotMatch(note, /they count as failures/);
+  });
+  it("errored runs that all failed still read as failures", () => {
+    const r = compare([run("t1", "A", 1, true), run("t1", "B", 1, false, { error: "agent timed out" })], { baseline: "A", candidate: "B" });
+    assert.ok(r.notes.some((n) => /1 run\(s\) recorded an error \(setup, agent or verifier\); they count as failures/.test(n)));
+  });
+  it("cancelled runs are left out of the comparison", () => {
+    const r = compare([run("t1", "A", 1, true), run("t1", "B", 1, true), run("t2", "A", 1, true), run("t2", "B", 1, false, { cancelled: true, error: "cancelled" })], { baseline: "A", candidate: "B" });
+    assert.equal(r.candidate.runs, 1);
+    assert.deepEqual(r.unpairedTasks, ["t2"]);
+    assert.ok(r.notes.some((n) => /1 run\(s\) were cancelled/.test(n)));
+  });
+});
+
+// EXP-2: an abort reaches the agent's process group through runExperiment → runTask → adapter.run → spawnAgent.
+describe("runExperiment cancellation", () => {
+  it("an abort kills running agents, cleans their work dirs, marks them cancelled and starts nothing new", async () => {
+    const { mkdtempSync, readFileSync, readdirSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { wrapperAdapter } = await import("../../src/adapters/more/wrapper.ts");
+    const w = await toyWorld();
+    const dir = mkdtempSync(join(tmpdir(), "csh-cancel-"));
+    const pidFile = join(dir, "pids");
+    try {
+      const agent = ["/bin/sh", "-c", `echo $$ >> ${pidFile}; sleep 30`];
+      const A = await w.mkBundle("A", "fix", { agent: "wrapper", flags: agent });
+      const B = await w.mkBundle("B", "fix", { agent: "wrapper", flags: agent, env: { ARM: "b" } });
+      const ac = new AbortController();
+      setTimeout(() => ac.abort(), 1500);
+      const t0 = Date.now();
+      const r = await runExperiment({ tasks: [w.task], bundles: [A, B], k: 2, adapterFor: () => wrapperAdapter, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, concurrency: 2, timeoutMs: 60_000, signal: ac.signal });
+      assert.ok(Date.now() - t0 < 6000, `resolved in ${Date.now() - t0}ms`);
+      assert.equal(r.cancelled, true);
+      assert.equal(r.results.length, 2, "the 2 queued jobs never started");
+      assert.ok(r.results.every((x) => x.cancelled === true && !x.pass && x.error === "cancelled"));
+      assert.deepEqual(readdirSync(w.runsDir), [], "work dirs removed");
+      const stored = await w.index.listRuns({ experimentId: r.experimentId });
+      assert.ok(stored.length === 2 && stored.every((x) => x.cancelled));
+      const pids = readFileSync(pidFile, "utf8").trim().split("\n").map(Number);
+      assert.equal(pids.length, 2);
+      for (const pid of pids) {
+        let alive = true;
+        try {
+          process.kill(pid, 0);
+        } catch {
+          alive = false;
+        }
+        if (alive) process.kill(pid, "SIGKILL");
+        assert.equal(alive, false, `agent ${pid} killed`);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("hard exit mid-run", () => {
+  it("kills the agent and removes the work dir even though no abort reached the run", async () => {
+    const { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } = await import("node:fs");
+    const { spawn } = await import("node:child_process");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "csh-hardexit-"));
+    const runsDir = join(dir, "runs");
+    const pidFile = join(dir, "pid");
+    const src = (p: string) => JSON.stringify(new URL(p, import.meta.url).pathname);
+    // runTask with no signal (a caller that never threads one), then a hard exit
+    // (second Ctrl-C) while the agent runs: its finally never executes.
+    const code = `
+      import { toyWorld } from ${src("../helpers-eval.ts")};
+      import { runTask } from ${src("../../src/runner/run.ts")};
+      import { wrapperAdapter } from ${src("../../src/adapters/more/wrapper.ts")};
+      import { existsSync } from "node:fs";
+      const w = await toyWorld();
+      const bundle = await w.mkBundle("A", "fix", { agent: "wrapper", flags: ["/bin/sh", "-c", "echo $$ > ${pidFile}; sleep 30"] });
+      runTask({ task: w.task, bundle, adapter: wrapperAdapter, blobs: w.blobs, index: w.index, git: w.git, runsDir: ${JSON.stringify(runsDir)}, timeoutMs: 60_000 });
+      const t = setInterval(() => { if (existsSync(${JSON.stringify(pidFile)})) { clearInterval(t); setTimeout(() => process.exit(130), 100); } }, 20);
+    `;
+    try {
+      const child = spawn(process.execPath, ["--no-warnings", "--input-type=module", "-e", code], { stdio: ["ignore", "ignore", "pipe"] });
+      let err = "";
+      child.stderr.on("data", (d) => (err += d));
+      assert.equal(await new Promise<number | null>((r) => child.on("close", r)), 130, err);
+      const pid = Number(readFileSync(pidFile, "utf8").trim());
+      await new Promise((r) => setTimeout(r, 100));
+      let alive = true;
+      try {
+        process.kill(pid, 0);
+      } catch {
+        alive = false;
+      }
+      if (alive) process.kill(pid, "SIGKILL");
+      assert.equal(alive, false, "agent killed");
+      assert.deepEqual(existsSync(runsDir) ? readdirSync(runsDir) : [], [], "work dir removed by the exit hook");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

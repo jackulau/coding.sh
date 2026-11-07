@@ -1,4 +1,4 @@
-// Framework step spans → workflow nodes (docs/WORKFLOWS.md §2.2).
+// Framework step spans → workflow nodes (docs/design/workflows.md §2.2).
 //
 // Keyed by instrumentation scope name, with attribute fallbacks for
 // exporters that use a generic scope (OpenInference, LangSmith). Each entry

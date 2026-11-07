@@ -63,10 +63,12 @@ export interface CommandGraderSpec extends CommandSpec {
 
 /**
  * Runs `command args…` once per grade with `{input, output, expected,
- * metadata, caseId, trace}` as JSON on stdin. If stdout holds JSON (a number,
- * boolean, or `{score, pass, reason}`) that is the grade; otherwise exit 0 is
- * a pass and anything else a fail. A timeout or a command that cannot start
- * is an error (the grade is unknown), never a silent fail.
+ * metadata, caseId, trace}` as JSON on stdin. On exit 0, JSON on stdout (a
+ * number, boolean, or `{score, pass, reason}`) is the grade, and no JSON is a
+ * pass. A non-zero exit is a fail whatever stdout says: a grader that printed
+ * a value and then crashed has not graded. A timeout, a kill by a signal
+ * (OOM, Ctrl-C) or a command that cannot start is an error (the grade is
+ * unknown), never a silent fail or pass.
  */
 export function commandGrader(spec: Omit<CommandGraderSpec, "kind">): Grader {
   const { name, env, ...rest } = spec;
@@ -79,7 +81,10 @@ export function commandGrader(spec: Omit<CommandGraderSpec, "kind">): Grader {
     async grade(ctx: GradeContext): Promise<GradeResult> {
       const payload = { input: ctx.input, output: ctx.output, expected: ctx.expected, metadata: ctx.metadata, caseId: ctx.caseId, trace: ctx.trace };
       const r = await runProcess({ ...spec, stdin: JSON.stringify(payload), ...(ctx.signal ? { signal: ctx.signal } : {}) });
-      if (r.spawnError || r.timedOut) throw new GraderError(`${formatArgv(spec)}: ${describeFailure(r, spec.timeoutMs)}`);
+      if (r.spawnError || r.timedOut || r.aborted || r.signal !== null || ctx.signal?.aborted) {
+        throw new GraderError(`${formatArgv(spec)}: ${ctx.signal?.aborted && !r.timedOut ? "aborted" : describeFailure(r, spec.timeoutMs)}`);
+      }
+      if (r.exitCode !== 0) return result(0, false, describeFailure(r));
       const out = r.stdout.trim();
       if (out) {
         let parsed: unknown;
@@ -95,8 +100,7 @@ export function commandGrader(spec: Omit<CommandGraderSpec, "kind">): Grader {
         }
         if (parsed !== undefined && (typeof parsed !== "string")) return coerceGrade(parsed, spec.passThreshold ?? 0.5, formatArgv(spec));
       }
-      if (r.exitCode === 0) return result(1, true);
-      return result(0, false, describeFailure(r));
+      return result(1, true);
     },
   };
 }

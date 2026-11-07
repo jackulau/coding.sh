@@ -3,6 +3,7 @@
 // command grader and the command task so ANY agent or scorer in any language
 // plugs in through the same, well-defined interface.
 import { spawn } from "node:child_process";
+import { supervise } from "../core/children.ts";
 
 export interface CommandSpec {
   /** Executable (resolved on PATH). */
@@ -26,11 +27,14 @@ export interface ProcResult {
   truncated: boolean;
   /** Set when the process could not be started (ENOENT, EACCES, …). */
   spawnError?: string;
+  /** The abort signal fired before the process exited (it was killed). */
+  aborted?: boolean;
 }
 
 export interface RunProcessOpts extends CommandSpec {
   stdin?: string;
   maxOutputBytes?: number;
+  /** Kill the process group on abort (default: the ambient signal, see core/children.ts). */
   signal?: AbortSignal;
 }
 
@@ -41,89 +45,59 @@ export function runProcess(opts: RunProcessOpts): Promise<ProcResult> {
   const started = Date.now();
   const max = opts.maxOutputBytes ?? DEFAULT_MAX_OUTPUT;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT;
-  return new Promise((resolve) => {
-    const out: Buffer[] = [];
-    const err: Buffer[] = [];
-    let outBytes = 0;
-    let errBytes = 0;
-    let truncated = false;
-    let timedOut = false;
-    let settled = false;
-    const detached = process.platform !== "win32";
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(opts.command, opts.args ?? [], {
-        cwd: opts.cwd,
-        env: { ...process.env, ...(opts.env ?? {}) },
-        stdio: ["pipe", "pipe", "pipe"],
-        detached,
-        windowsHide: true,
-      });
-    } catch (e) {
-      resolve({ exitCode: null, signal: null, timedOut: false, stdout: "", stderr: "", durationMs: 0, truncated: false, spawnError: (e as Error).message });
+  const out: Buffer[] = [];
+  const err: Buffer[] = [];
+  let outBytes = 0;
+  let errBytes = 0;
+  let truncated = false;
+  const detached = process.platform !== "win32";
+  let child: ReturnType<typeof spawn>;
+  try {
+    child = spawn(opts.command, opts.args ?? [], {
+      cwd: opts.cwd,
+      env: { ...process.env, ...(opts.env ?? {}) },
+      stdio: ["pipe", "pipe", "pipe"],
+      detached,
+      windowsHide: true,
+    });
+  } catch (e) {
+    return Promise.resolve({ exitCode: null, signal: null, timedOut: false, stdout: "", stderr: "", durationMs: 0, truncated: false, spawnError: (e as Error).message });
+  }
+  child.stdout?.on("data", (b: Buffer) => {
+    if (outBytes + b.length > max) {
+      truncated = true;
+      const room = max - outBytes;
+      if (room > 0) out.push(b.subarray(0, room));
+      outBytes = max;
       return;
     }
-    const kill = () => {
-      try {
-        if (detached && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
-        else child.kill("SIGKILL");
-      } catch {
-        // already exited
-      }
+    out.push(b);
+    outBytes += b.length;
+  });
+  child.stderr?.on("data", (b: Buffer) => {
+    if (errBytes + b.length > max) {
+      truncated = true;
+      return;
+    }
+    err.push(b);
+    errBytes += b.length;
+  });
+  // The child may exit without reading stdin; EPIPE is not our failure.
+  child.stdin?.on("error", () => {});
+  child.stdin?.end(opts.stdin ?? "");
+  return supervise(child, { group: detached, timeoutMs, signal: opts.signal }).then((s) => {
+    const r: ProcResult = {
+      exitCode: s.code,
+      signal: s.signal,
+      timedOut: s.timedOut,
+      stdout: Buffer.concat(out).toString("utf8"),
+      stderr: Buffer.concat(err).toString("utf8"),
+      durationMs: Date.now() - started,
+      truncated,
     };
-    const timer = timeoutMs > 0 ? setTimeout(() => ((timedOut = true), kill()), timeoutMs) : undefined;
-    const onAbort = () => kill();
-    opts.signal?.addEventListener("abort", onAbort, { once: true });
-
-    child.stdout?.on("data", (b: Buffer) => {
-      if (outBytes + b.length > max) {
-        truncated = true;
-        const room = max - outBytes;
-        if (room > 0) out.push(b.subarray(0, room));
-        outBytes = max;
-        return;
-      }
-      out.push(b);
-      outBytes += b.length;
-    });
-    child.stderr?.on("data", (b: Buffer) => {
-      if (errBytes + b.length > max) {
-        truncated = true;
-        return;
-      }
-      err.push(b);
-      errBytes += b.length;
-    });
-    // The child may exit without reading stdin; EPIPE is not our failure.
-    child.stdin?.on("error", () => {});
-    child.stdin?.end(opts.stdin ?? "");
-
-    const finish = (exitCode: number | null, signal: NodeJS.Signals | null, spawnError?: string) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      opts.signal?.removeEventListener("abort", onAbort);
-      if (detached && child.pid !== undefined) {
-        try {
-          process.kill(-child.pid, "SIGKILL"); // reap leftover grandchildren
-        } catch {
-          // group already gone
-        }
-      }
-      const r: ProcResult = {
-        exitCode: timedOut ? null : exitCode,
-        signal,
-        timedOut,
-        stdout: Buffer.concat(out).toString("utf8"),
-        stderr: Buffer.concat(err).toString("utf8"),
-        durationMs: Date.now() - started,
-        truncated,
-      };
-      if (spawnError) r.spawnError = spawnError;
-      resolve(r);
-    };
-    child.on("error", (e) => finish(null, null, e.message));
-    child.on("close", (code, sig) => finish(code, sig));
+    if (s.error) r.spawnError = s.error.message;
+    if (s.aborted) r.aborted = true;
+    return r;
   });
 }
 
@@ -131,6 +105,7 @@ export function runProcess(opts: RunProcessOpts): Promise<ProcResult> {
 export function describeFailure(r: ProcResult, timeoutMs?: number): string {
   if (r.spawnError) return `could not start: ${r.spawnError}`;
   if (r.timedOut) return `timed out after ${timeoutMs ?? DEFAULT_TIMEOUT} ms`;
+  if (r.aborted) return "aborted";
   const tail = r.stderr.trim().split("\n").slice(-3).join(" | ").slice(0, 500);
   const how = r.signal ? `killed by ${r.signal}` : `exited ${r.exitCode}`;
   return tail ? `${how}: ${tail}` : how;

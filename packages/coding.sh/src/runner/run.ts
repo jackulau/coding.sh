@@ -5,6 +5,7 @@
 // `error` on the result. The work dir is removed unless `keep`.
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { removeOnExit, withAbortSignal } from "../core/children.ts";
 import { sortableId } from "../core/ids.ts";
 import { paths } from "../core/paths.ts";
 import type { Adapter, AgentRunOutput, BlobStore, EvalTask, HarnessBundle, IndexStore, RunResult } from "../core/types.ts";
@@ -39,6 +40,12 @@ export interface RunTaskOpts {
   testGlobs?: string[];
   /** Agent-only routing (e.g. through AI Gateway): env and flags applied after the overlay, and a model override. Setup and verifier don't see it. */
   route?: AgentRoute;
+  /**
+   * Interrupts the run: setup, agent (through the ambient signal its adapter's
+   * spawn picks up) and verifier are killed, no further step starts, and the
+   * result is marked `cancelled`. The work dir is still removed unless `keep`.
+   */
+  signal?: AbortSignal;
 }
 
 export type AgentRoute = (bundle: HarnessBundle) => { env: Record<string, string>; flags: string[]; model?: string } | undefined;
@@ -54,12 +61,25 @@ export function runLayout(runId: string, runsDir = paths().runs): RunLayout {
   return { root, work: join(root, "work"), home: join(root, "home") };
 }
 
+class RunCancelled extends Error {
+  constructor() {
+    super("cancelled");
+    this.name = "RunCancelled";
+  }
+}
+
 function emptyAgent(note = ""): AgentRunOutput {
   return { exitCode: null, timedOut: false, durationMs: 0, stdoutTail: "", stderrTail: note };
 }
 
 export async function runTask(opts: RunTaskOpts): Promise<RunResult> {
+  // Every child spawned below (git, setup, the adapter's agent, the verifier) is killed on abort.
+  return withAbortSignal(opts.signal, () => runTaskInner(opts));
+}
+
+async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
   const { task, bundle, adapter, blobs, index } = opts;
+  const signal = opts.signal;
   const runId = opts.runId ?? sortableId("run_");
   const layout = runLayout(runId, opts.runsDir);
   const startedAt = Date.now();
@@ -77,13 +97,22 @@ export async function runTask(opts: RunTaskOpts): Promise<RunResult> {
   };
   const baseEnv = commandEnv({ ...(opts.env ?? {}), CODING_SH_RUN_ID: runId });
 
+  /** Stop here when interrupted; the catch below records it. */
+  const checkpoint = () => {
+    if (signal?.aborted) throw new RunCancelled();
+  };
+
+  // A hard exit (second Ctrl-C) skips the finally below; the exit hook removes the dir then.
+  const forgetDir = opts.keep ? () => {} : removeOnExit(layout.root);
   try {
+    checkpoint();
     await mkdir(layout.root, { recursive: true });
     const ops = await snapshotOps(opts.git);
     await ops.materialize({ root: task.start.repoRoot, head: task.start.head, snapshot: task.start.snapshot }, layout.work);
 
     for (const cmd of task.setup) {
       const r = await sh(cmd, { cwd: layout.work, env: baseEnv, timeoutMs: SETUP_TIMEOUT_MS });
+      checkpoint();
       if (r.exitCode !== 0) {
         result.error = `setup \`${cmd}\` ${r.timedOut ? "timed out" : `exited ${r.exitCode}`}: ${r.stderrTail.slice(-500)}`;
         return result;
@@ -99,6 +128,7 @@ export async function runTask(opts: RunTaskOpts): Promise<RunResult> {
       result.error = `adapter ${adapter.id} has no headless run()`;
       return result;
     }
+    checkpoint();
     const route = opts.route?.(bundle);
     const env: Record<string, string> = { ...bundle.env, ...(opts.env ?? {}), ...overlay.env, ...(route?.env ?? {}), CODING_SH_RUN_ID: runId };
     if (applied.usesHome && !overlay.env.HOME) {
@@ -119,6 +149,7 @@ export async function runTask(opts: RunTaskOpts): Promise<RunResult> {
       result.agent = emptyAgent(e instanceof Error ? e.message : String(e));
       result.error = `agent failed: ${e instanceof Error ? e.message : String(e)}`;
     }
+    checkpoint();
     result.sessionId = result.agent.sessionId;
     if (result.agent.timedOut) result.error ??= "agent timed out";
 
@@ -138,7 +169,9 @@ export async function runTask(opts: RunTaskOpts): Promise<RunResult> {
     if (!task.verifier.command.trim()) {
       result.error ??= "task has no verifier command";
     } else {
+      checkpoint();
       const v = await sh(task.verifier.command, { cwd: layout.work, env: baseEnv, timeoutMs: task.verifier.timeoutMs });
+      checkpoint();
       result.verifierExit = v.exitCode;
       result.pass = v.exitCode === 0 && !v.timedOut;
       if (v.timedOut) result.error ??= "verifier timed out";
@@ -147,8 +180,15 @@ export async function runTask(opts: RunTaskOpts): Promise<RunResult> {
     result.error = e instanceof Error ? e.message : String(e);
     result.pass = false;
   } finally {
+    // Interrupted at any step (or a step failed because the abort killed it): the outcome is not a result.
+    if (signal?.aborted) {
+      result.cancelled = true;
+      result.pass = false;
+      result.error = "cancelled";
+    }
     result.endedAt = Date.now();
     if (!opts.keep) await rmrf(layout.root).catch(() => {});
+    forgetDir();
     try {
       await index.putRun(result);
     } catch (e) {

@@ -1,6 +1,7 @@
 // Shell execution with a hard timeout that kills the whole process group, so a
 // hung `npm test` (or an agent's grandchildren) cannot outlive the run.
 import { spawn } from "node:child_process";
+import { supervise } from "../core/children.ts";
 
 export interface ExecResult {
   exitCode: number | null;
@@ -17,6 +18,8 @@ export interface ExecOpts {
   /** Bytes of stdout/stderr to keep (from the end). */
   tailBytes?: number;
   stdin?: string;
+  /** Kill the process group on abort (default: the ambient signal, see core/children.ts). */
+  signal?: AbortSignal;
 }
 
 const DEFAULT_TAIL = 8 * 1024;
@@ -45,57 +48,28 @@ class Tail {
 export function execFileTail(file: string, args: string[], opts: ExecOpts): Promise<ExecResult> {
   const started = Date.now();
   const max = opts.tailBytes ?? DEFAULT_TAIL;
-  return new Promise((resolve) => {
-    const out = new Tail(max);
-    const err = new Tail(max);
-    let timedOut = false;
-    let settled = false;
-    const child = spawn(file, args, {
-      cwd: opts.cwd,
-      env: (opts.env ?? process.env) as NodeJS.ProcessEnv,
-      stdio: [opts.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-      detached: process.platform !== "win32",
-    });
-    const kill = () => {
-      try {
-        if (child.pid !== undefined && process.platform !== "win32") process.kill(-child.pid, "SIGKILL");
-        else child.kill("SIGKILL");
-      } catch {
-        // already gone
-      }
+  const out = new Tail(max);
+  const err = new Tail(max);
+  const group = process.platform !== "win32";
+  const child = spawn(file, args, {
+    cwd: opts.cwd,
+    env: (opts.env ?? process.env) as NodeJS.ProcessEnv,
+    stdio: [opts.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+    detached: group,
+  });
+  child.stdout?.on("data", (b: Buffer) => out.push(b));
+  child.stderr?.on("data", (b: Buffer) => err.push(b));
+  child.stdin?.on("error", () => {}); // the child may exit without reading stdin
+  if (opts.stdin !== undefined) child.stdin?.end(opts.stdin);
+  return supervise(child, { group, timeoutMs: opts.timeoutMs, signal: opts.signal }).then((r) => {
+    const extraErr = r.error ? `\n${r.error.message}` : "";
+    return {
+      exitCode: r.error ? 127 : r.code,
+      timedOut: r.timedOut,
+      durationMs: Date.now() - started,
+      stdoutTail: out.text(),
+      stderrTail: `${err.text()}${extraErr}`,
     };
-    const timer =
-      opts.timeoutMs && opts.timeoutMs > 0
-        ? setTimeout(() => {
-            timedOut = true;
-            kill();
-          }, opts.timeoutMs)
-        : undefined;
-    child.stdout?.on("data", (b: Buffer) => out.push(b));
-    child.stderr?.on("data", (b: Buffer) => err.push(b));
-    if (opts.stdin !== undefined) child.stdin?.end(opts.stdin);
-    const finish = (exitCode: number | null, extraErr?: string) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      // Reap any background grandchildren left in the group.
-      if (process.platform !== "win32" && child.pid !== undefined) {
-        try {
-          process.kill(-child.pid, "SIGKILL");
-        } catch {
-          // group already empty
-        }
-      }
-      resolve({
-        exitCode: timedOut ? null : exitCode,
-        timedOut,
-        durationMs: Date.now() - started,
-        stdoutTail: out.text(),
-        stderrTail: extraErr ? `${err.text()}${extraErr}` : err.text(),
-      });
-    };
-    child.on("error", (e) => finish(127, `\n${e.message}`));
-    child.on("close", (code) => finish(code));
   });
 }
 

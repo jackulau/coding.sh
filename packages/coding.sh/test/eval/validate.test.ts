@@ -58,6 +58,34 @@ describe("validateTask", () => {
     assert.match(formatValidation(o), /→ validated/);
   });
 
+  // EXP-2: Ctrl-C reaches the running verifier, nothing further runs, dirs are removed, the task is not written.
+  it("an abort kills the running verifier, stops, cleans up and leaves the task unwritten", async () => {
+    const pidDir = await tempDir("csh-validate-pid-");
+    dirs.push(pidDir);
+    const pidFile = join(pidDir, "pid");
+    const { blobs, git, task, workRoot } = await setup({ verifier: `echo $$ >> ${pidFile}; sleep 30` });
+    const index = new MemIndex();
+    const ac = new AbortController();
+    const steps: string[] = [];
+    setTimeout(() => ac.abort(), 700);
+    const t0 = Date.now();
+    await assert.rejects(validateTask({ task, blobs, git, workRoot, k: 3, index, passToPass: false, signal: ac.signal, onStep: (st) => steps.push(st.label) }), { name: "AbortError" });
+    assert.ok(Date.now() - t0 < 5000, `stopped in ${Date.now() - t0}ms`);
+    assert.deepEqual(steps, [], "the killed no-op step is not recorded as a result");
+    assert.deepEqual(await readdir(workRoot), [], "step dirs are cleaned up");
+    assert.equal(await index.getTask("t1"), undefined, "task status not written");
+    const { readFileSync } = await import("node:fs");
+    const pids = readFileSync(pidFile, "utf8").trim().split("\n").map(Number);
+    assert.equal(pids.length, 1, "no step after the abort");
+    let alive = true;
+    try {
+      process.kill(pids[0]!, 0);
+    } catch {
+      alive = false;
+    }
+    assert.equal(alive, false, "verifier killed");
+  });
+
   it("catches a verifier that accepts an incomplete fix (near-miss passes)", async () => {
     const weak = 'import assert from "node:assert/strict";\nimport { add } from "../src/add.js";\nassert.equal(add(2, 3), 5);\n';
     const { blobs, git, task, workRoot } = await setup({ hidden: weak });

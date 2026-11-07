@@ -1,4 +1,4 @@
-// Workflow cases: evals/workflows/<workflow>/cases/*.toml (docs/WORKFLOWS.md §5).
+// Workflow cases: evals/workflows/<workflow>/cases/*.toml (docs/design/workflows.md §5).
 //
 //   id = "seeded-1"
 //   split = "dev"                    # or "heldout"

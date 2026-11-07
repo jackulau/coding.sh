@@ -30,6 +30,8 @@ export interface LoopOpts {
   prices?: Prices;
   emit: (e: AgentEvent) => void;
   sleep?: (ms: number) => Promise<void>;
+  /** Cancels the loop: aborts the in-flight model request and stops with error "cancelled". */
+  signal?: AbortSignal;
 }
 
 export interface LoopResult {
@@ -92,6 +94,11 @@ export async function runModelLoop(o: LoopOpts): Promise<LoopResult> {
   const ctrl = new AbortController();
   const timer = deadline !== undefined ? setTimeout(() => ctrl.abort(), Math.max(0, deadline - Date.now())) : undefined;
   timer?.unref?.();
+  // The caller's cancel aborts the same controller as the wall budget; cancelled() tells them apart.
+  const cancelled = () => o.signal?.aborted === true;
+  const onCancel = () => ctrl.abort();
+  if (cancelled()) ctrl.abort();
+  else o.signal?.addEventListener("abort", onCancel, { once: true });
 
   ev("session.start", { driver: `model:${o.driver.provider}/${o.driver.model}` });
   ev("user.message", { text: o.instruction });
@@ -103,6 +110,10 @@ export async function runModelLoop(o: LoopOpts): Promise<LoopResult> {
 
   try {
     for (;;) {
+      if (cancelled()) {
+        stop("error", { error: "cancelled" });
+        break;
+      }
       if (o.budget.turns !== undefined && turns >= o.budget.turns) {
         stop("budget", { budgetExceeded: "turns" });
         break;
@@ -123,8 +134,12 @@ export async function runModelLoop(o: LoopOpts): Promise<LoopResult> {
           break;
         } catch (e) {
           const durationMs = Math.round((performance.now() - t0) * 10) / 10;
-          const msg = ctrl.signal.aborted ? "wall budget exceeded" : e instanceof Error ? e.message : String(e);
+          const msg = cancelled() ? "cancelled" : ctrl.signal.aborted ? "wall budget exceeded" : e instanceof Error ? e.message : String(e);
           ev("llm.call", { provider: o.driver.provider, requestModel: o.driver.model, ok: false, error: msg.slice(0, 500), ...(e instanceof ProviderHttpError ? { status: e.status } : {}) }, { ts: callTs, durationMs });
+          if (cancelled()) {
+            stop("error", { error: "cancelled" });
+            return result;
+          }
           if (ctrl.signal.aborted) {
             stop("budget", { budgetExceeded: "wallMs" });
             return result;
@@ -140,6 +155,10 @@ export async function runModelLoop(o: LoopOpts): Promise<LoopResult> {
               return result;
             }
             await sleep(wait);
+            if (cancelled()) {
+              stop("error", { error: "cancelled" });
+              return result;
+            }
             continue;
           }
           stop("error", { error: msg });
@@ -176,6 +195,10 @@ export async function runModelLoop(o: LoopOpts): Promise<LoopResult> {
         results.push({ id: call.id, content: r.content, isError: r.isError });
       }
       conv.pushToolResults(turn, results);
+      if (cancelled()) {
+        stop("error", { error: "cancelled" });
+        break;
+      }
       if (ctrl.signal.aborted) {
         stop("budget", { budgetExceeded: "wallMs" });
         break;
@@ -183,6 +206,7 @@ export async function runModelLoop(o: LoopOpts): Promise<LoopResult> {
     }
   } finally {
     if (timer) clearTimeout(timer);
+    o.signal?.removeEventListener("abort", onCancel);
     ev("session.end", { reason: result.stopped, ...(result.budgetExceeded ? { budgetExceeded: result.budgetExceeded } : {}), ...(result.error ? { error: result.error } : {}) });
   }
   return result;

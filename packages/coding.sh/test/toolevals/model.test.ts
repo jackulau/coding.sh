@@ -3,6 +3,8 @@
 // a tool round trip through the tapped tool, and the turn budget.
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { after, describe, it } from "node:test";
 import { runModelTrial } from "../../src/toolevals/drivers/model.ts";
 import { prepareSandbox } from "../../src/toolevals/sandbox.ts";
@@ -124,5 +126,38 @@ describe("model driver: retries and MCP tools", () => {
       calls.map((r) => [r.tool, r.class]),
       [["echo", "ok"]],
     );
+  });
+});
+
+describe("model driver: cancellation", () => {
+  it("an abort cancels the in-flight model request and stops the loop", async () => {
+    // A provider that accepts the request and never answers.
+    let closed!: () => void;
+    const requestClosed = new Promise<void>((r) => (closed = r));
+    let requests = 0;
+    const server = createServer((req) => {
+      requests++;
+      req.resume();
+      req.socket.on("close", closed);
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const t = task();
+      const sb = await prepareSandbox(t, cliTarget(), { name: "base" }, "trial_cancel", tmp());
+      const ac = new AbortController();
+      setTimeout(() => ac.abort(), 300);
+      const t0 = Date.now();
+      const out = await runModelTrial({ driver: driverFor("anthropic", url), task: t, target: cliTarget(), sandbox: sb, index: new MemoryIndexStore(), trialId: "trial_cancel", env: { FAKE_KEY: "k" }, signal: ac.signal });
+      assert.ok(Date.now() - t0 < 5000, `returned in ${Date.now() - t0}ms`);
+      assert.equal(out.loop.stopped, "error");
+      assert.equal(out.loop.error, "cancelled");
+      assert.equal(out.timedOut, false, "a cancel is not a wall-budget timeout");
+      assert.equal(requests, 1, "no retry after the abort");
+      await requestClosed; // the client dropped the connection
+    } finally {
+      server.closeAllConnections();
+      await new Promise((r) => server.close(r));
+    }
   });
 });

@@ -11,6 +11,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, realpath } from "node:fs/promises";
 import { join } from "node:path";
+import { removeOnExit, withAbortSignal } from "../core/children.ts";
 import { sha256Hex } from "../core/ids.ts";
 import type { BlobRef, BlobStore, EvalTask, IndexStore, ValidationReport } from "../core/types.ts";
 import { commandEnv, sh, type ExecResult } from "../runner/exec.ts";
@@ -76,6 +77,12 @@ export interface ValidateOpts {
   index?: IndexStore;
   keep?: boolean;
   onStep?: (s: StepResult) => void;
+  /**
+   * Interrupts validation: running setup/verifier/suite commands are killed,
+   * no further step starts, step dirs are still cleaned up, and validateTask
+   * rejects with the abort reason without writing the task back.
+   */
+  signal?: AbortSignal;
 }
 
 export interface ValidationOutcome {
@@ -201,7 +208,14 @@ async function scanTree(dir: string, task: EvalTask, refPatch: string | undefine
 }
 
 export async function validateTask(opts: ValidateOpts): Promise<ValidationOutcome> {
+  // Every command spawned below is killed on abort.
+  return withAbortSignal(opts.signal, () => validateTaskInner(opts));
+}
+
+async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome> {
   const { task, blobs } = opts;
+  /** A step the abort cut short has no meaning: stop instead of recording it. */
+  const checkpoint = () => opts.signal?.throwIfAborted();
   const k = Math.max(1, opts.k ?? 5);
   const ops = await snapshotOps(opts.git);
   const env = commandEnv(opts.env);
@@ -221,24 +235,36 @@ export async function validateTask(opts: ValidateOpts): Promise<ValidationOutcom
   if (!task.verifier.command.trim()) errors.push("task has no verifier command");
   if (!refPatch) errors.push("task has no reference patch; cannot check that the verifier can pass");
 
+  /** Dirs prepare() made, each removed by the exit hook if a hard exit skips cleanup(). */
+  const forgetOnExit = new Map<string, () => void>();
+  const removeDir = async (dir: string) => {
+    await rmrf(dir);
+    forgetOnExit.get(dir)?.();
+    forgetOnExit.delete(dir);
+  };
   /** Fresh dir at the start state, optionally patched, set up. */
   const prepare = async (label: string, patch?: string): Promise<{ dir: string; applied: boolean; setup: { ok: boolean; error?: string; out: string } }> => {
+    checkpoint();
     const dir = await mkdtemp(join(opts.workRoot, `${label.replace(/[^a-z0-9]+/gi, "-").slice(0, 40)}-`));
+    if (!opts.keep) forgetOnExit.set(dir, removeOnExit(dir));
     try {
       await ops.materialize({ root: task.start.repoRoot, head: task.start.head, snapshot: task.start.snapshot }, dir);
     } catch (e) {
-      await rmrf(dir);
+      await removeDir(dir);
       throw e;
     }
     if (patch !== undefined) {
       const a = await applyPatch(dir, patch);
       if (!a.ok) return { dir, applied: false, setup: { ok: false, error: `patch did not apply: ${a.error}`, out: "" } };
     }
-    const setup = await runSetup(dir, task, env, setupTimeout);
+    const setup = await runSetup(dir, task, env, setupTimeout).finally(async () => {
+      if (opts.signal?.aborted && !opts.keep) await removeDir(dir);
+    });
+    checkpoint();
     return { dir, applied: true, setup };
   };
   const cleanup = async (dir: string) => {
-    if (!opts.keep) await rmrf(dir);
+    if (!opts.keep) await removeDir(dir);
   };
   const verifyStep = async (
     kind: StepKind,
@@ -248,6 +274,7 @@ export async function validateTask(opts: ValidateOpts): Promise<ValidationOutcom
     run: () => Promise<ExecResult> = () => runVerifier(dir, task, blobs, env),
   ): Promise<StepResult> => {
     const r = await run();
+    checkpoint();
     const s: StepResult = {
       kind,
       label,
@@ -445,6 +472,7 @@ export async function validateTask(opts: ValidateOpts): Promise<ValidationOutcom
               break;
             }
             const r = await sh(command, { cwd: p.dir, env: suiteEnv, timeoutMs, tailBytes: SUITE_OUTPUT_BYTES });
+            checkpoint();
             record({ kind: "pass-to-pass", label, applied: true, setupOk: true, pass: r.exitCode === 0 && !r.timedOut, exitCode: r.exitCode, timedOut: r.timedOut, durationMs: r.durationMs, outputTail: tail(r) });
             if (r.timedOut) notes.push(`pass-to-pass: ${label} timed out after ${timeoutMs}ms`);
             runs.push({ exitCode: r.exitCode, timedOut: r.timedOut, output: await relativizeOutput(`${r.stdoutTail}\n${r.stderrTail}`, p.dir) });
@@ -494,6 +522,7 @@ export async function validateTask(opts: ValidateOpts): Promise<ValidationOutcom
       (!passToPass || passToPass.passed === passToPass.of),
     ts: Date.now(),
   };
+  checkpoint();
   const status: EvalTask["status"] = task.status === "archived" ? "archived" : report.ok ? "validated" : "draft";
   const updated: EvalTask = { ...task, validation: report, status };
   if (opts.index) await opts.index.putTask(updated);

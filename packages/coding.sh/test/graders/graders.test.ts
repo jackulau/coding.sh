@@ -208,6 +208,23 @@ describe("command grader", () => {
   it("a missing executable is an error", async () => {
     await assert.rejects(commandGrader({ command: "/nonexistent/scorer-bin" }).grade(ctx("a")), /could not start/);
   });
+  // EXP-4: a stdout grade counts only from a clean exit; a signal or abort is an unknown grade.
+  const shGrader = (script: string) => commandGrader({ command: "/bin/sh", args: ["-c", `cat >/dev/null; ${script}`] });
+  it("a grade printed before a non-zero exit is a fail, not a pass", async () => {
+    const r = await shGrader("echo 1; exit 3").grade(ctx("a"));
+    assert.equal(r.pass, false);
+    assert.match(r.reason ?? "", /exited 3/);
+    assert.equal((await shGrader(`echo '{"pass":true}'; exit 1`).grade(ctx("a"))).pass, false);
+  });
+  it("a grader killed by a signal is an error, even after printing a grade", async () => {
+    await assert.rejects(shGrader("echo true; kill -9 $$").grade(ctx("a")), (e: Error) => e.name === "GraderError" && /SIGKILL/.test(e.message));
+  });
+  it("an aborted grade is an error, not a fail", async () => {
+    const ac = new AbortController();
+    const p = shGrader("sleep 30").grade(ctx("a", undefined, { signal: ac.signal }));
+    setTimeout(() => ac.abort(), 100);
+    await assert.rejects(p, (e: Error) => e.name === "GraderError" && /aborted/.test(e.message));
+  });
   it("env values stay out of the version hash", () => {
     const a = commandGrader({ command: "x", env: { TOKEN: "secret-1" } });
     const b = commandGrader({ command: "x", env: { TOKEN: "secret-2" } });

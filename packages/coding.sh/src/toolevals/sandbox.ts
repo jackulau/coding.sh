@@ -58,8 +58,13 @@ export function checkEnv(sb: Sandbox): Record<string, string | undefined> {
   return base;
 }
 
+/** A trial's sandbox dir under the experiment dir. */
+export function sandboxDir(root: string, trialId: string): string {
+  return resolve(root, trialId);
+}
+
 export async function prepareSandbox(task: ToolTask, target: Target, variant: Variant, trialId: string, root: string): Promise<Sandbox> {
-  const dir = resolve(root, trialId);
+  const dir = sandboxDir(root, trialId);
   const suite = suiteDirOf(task);
   const sb: Sandbox = {
     root: dir,

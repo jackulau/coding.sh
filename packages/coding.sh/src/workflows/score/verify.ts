@@ -1,4 +1,4 @@
-// Verify stage scored against truth (docs/WORKFLOWS.md §5): each finding that
+// Verify stage scored against truth (docs/design/workflows.md §5): each finding that
 // entered verify is real or spurious (from findings matching); verify kept it
 // (survived) or refuted it.
 import { cohenKappa } from "../../stats/index.ts";

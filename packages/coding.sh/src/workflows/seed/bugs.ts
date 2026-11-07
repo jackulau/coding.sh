@@ -1,4 +1,4 @@
-// Seeded-bug cases (docs/WORKFLOWS.md §5): start from a clean tree, apply N
+// Seeded-bug cases (docs/design/workflows.md §5): start from a clean tree, apply N
 // bug patches, record {id, file, lines, category, severity} as truth, and
 // validate each bug before use: on the seeded tree its own test fails, and
 // with only that bug's patch reverted it passes.

@@ -44,12 +44,18 @@ export function renderExperiment(r: ExperimentResult, opts: RenderOpts): string 
   const out: string[] = [];
   out.push(`${paint(r.name, "bold", color)}  ${paint(r.id, "dim", color)}`);
   out.push(`dataset ${r.dataset.name}@${r.dataset.version}${r.dataset.split ? ` (${r.dataset.split})` : ""}  task ${r.task.kind}: ${r.task.ref}  trials ${r.trials}`);
+  if (r.status === "cancelled" && s.n === 0) {
+    out.push(paint("cancelled before any case run finished: nothing was graded", "yellow", color));
+    return out.join("\n");
+  }
   const rateColor = s.passRate.p >= 0.8 ? "green" : s.passRate.p >= 0.5 ? "yellow" : "red";
   out.push(
     `pass    ${paint(pct(s.passRate.p), rateColor, color)}${star(!anyUntrusted)} ${ci(s.passRate.lo, s.passRate.hi)} ` +
-      `${paint(`(${s.passed}/${s.n}${r.trials > 1 ? ` over ${s.cases} cases` : ""}, 95% ${s.ciMethod === "wilson" ? "Wilson" : "cluster bootstrap"})`, "dim", color)}`,
+      `${paint(`(${s.passed}/${s.n - (s.ungraded ?? 0)}${r.trials > 1 ? ` over ${s.cases} cases` : ""}, 95% ${s.ciMethod === "wilson" ? "Wilson" : "cluster bootstrap"})`, "dim", color)}`,
   );
+  if (r.status === "cancelled") out.push(paint(`cancelled: only ${s.n} case run${s.n === 1 ? "" : "s"} finished before the interrupt; this result is partial`, "yellow", color));
   if (s.errors) out.push(paint(`errors  ${s.errors} task error(s)`, "red", color));
+  if (s.ungraded) out.push(paint(`ungraded ${s.ungraded} run(s) with a grader error: outcome unknown, left out of the pass rate`, "yellow", color));
   out.push(`latency median ${ms(s.latencyMs.median)}, p90 ${ms(s.latencyMs.p90)}, max ${ms(s.latencyMs.max)}`);
   if (s.graders.length) {
     out.push("");
@@ -82,18 +88,22 @@ export function renderExperiment(r: ExperimentResult, opts: RenderOpts): string 
   }
   const legend = untrustedLegend(r, color);
   if (legend.length) out.push("", ...legend);
-  const failed = r.runs.filter((x) => !x.pass);
-  if (failed.length) {
+  // Failures, then ungraded runs (a grader errored: outcome unknown, not a failure).
+  for (const [title, rows] of [
+    ["failures", r.runs.filter((x) => !x.pass && !x.ungraded)],
+    ["ungraded", r.runs.filter((x) => x.ungraded)],
+  ] as const) {
+    if (!rows.length) continue;
     out.push("");
-    out.push(`${paint("failures", "bold", color)} ${failed.length}`);
+    out.push(`${paint(title, "bold", color)} ${rows.length}`);
     out.push(
       table(
         [{ header: "case" }, ...(r.trials > 1 ? [{ header: "trial", align: "right" as const }] : []), { header: "reason" }],
-        failed.slice(0, limit).map((x) => [x.caseId, ...(r.trials > 1 ? [String(x.trial)] : []), truncate(failureReason(x), 100)]),
+        rows.slice(0, limit).map((x) => [x.caseId, ...(r.trials > 1 ? [String(x.trial)] : []), truncate(failureReason(x), 100)]),
         { color },
       ),
     );
-    if (failed.length > limit) out.push(paint(`… ${failed.length - limit} more (use --json for all)`, "dim", color));
+    if (rows.length > limit) out.push(paint(`… ${rows.length - limit} more (use --json for all)`, "dim", color));
   }
   return out.join("\n");
 }
@@ -102,9 +112,12 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   const color = opts.color;
   const limit = opts.limit ?? 20;
   const out: string[] = [];
-  out.push(`${paint("A", "bold", color)} ${c.a.name} ${paint(c.a.id, "dim", color)}  pass ${pct(c.a.passRate)}`);
-  out.push(`${paint("B", "bold", color)} ${c.b.name} ${paint(c.b.id, "dim", color)}  pass ${pct(c.b.passRate)}`);
+  // A forced compare of a cancelled experiment keeps saying it is partial.
+  const partial = (e?: ExperimentResult) => (e?.status === "cancelled" ? `  ${paint(`cancelled: ${e.runs.length} case run${e.runs.length === 1 ? "" : "s"} only`, "yellow", color)}` : "");
+  out.push(`${paint("A", "bold", color)} ${c.a.name} ${paint(c.a.id, "dim", color)}  pass ${pct(c.a.passRate)}${partial(opts.a)}`);
+  out.push(`${paint("B", "bold", color)} ${c.b.name} ${paint(c.b.id, "dim", color)}  pass ${pct(c.b.passRate)}${partial(opts.b)}`);
   if (c.datasetWarning) out.push(paint(`! ${c.datasetWarning}`, "yellow", color));
+  if (c.gradeWarning) out.push(paint(`! ${c.gradeWarning}`, "yellow", color));
   const vColor = c.verdict === "better" ? "green" : c.verdict === "worse" ? "red" : "dim";
   out.push("");
   out.push(

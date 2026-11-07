@@ -1,4 +1,4 @@
-// `claude-code-workflow` driver (docs/WORKFLOWS.md §6):
+// `claude-code-workflow` driver (docs/design/workflows.md §6):
 //   claude -p --output-format json [--settings <otel+hooks>] \
 //     "Run the workflow script at <path> with args <json>. Return its result as JSON and nothing else."
 // The run is found afterwards from the host session id Claude prints: the
