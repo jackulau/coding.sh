@@ -215,3 +215,70 @@ describe("calibration → judge version", () => {
     assert.ok(/\u001b\[/.test(renderCalibration(r, { color: true })));
   });
 });
+
+// AB-17: label efficiency η and the cost break-even (Choi et al., arXiv 2610.35698, Eq.6-8).
+describe("calibrate: label efficiency", () => {
+  const weakJudge = { tp: 299, fp: 312, fn: 201, tn: 1688 };
+
+  it("the paper's pooled point (s 0.844, α 0.402, θ 0.8): η ≈ 0.207, a reason, status untouched", () => {
+    // pass recall 1688/2000 = 0.844; false-pass 201/500 = 0.402; judge pass 1889/2500 → Rogan–Gladen θ = 0.8.
+    const r = calibrate({ judge, ...block("t", "test", weakJudge), kappaThreshold: 0.3, bootstrapIters: 200 });
+    const e = r.efficiency!;
+    close(e.sensitivity, 0.844);
+    close(e.alpha, 0.402);
+    close(e.gap, 0.442);
+    close(e.theta, 0.8);
+    assert.equal(e.thetaFrom, "corrected-judge");
+    assert.equal(e.judged, 2500);
+    close(e.eta!, 0.2073, 1e-3);
+    assert.equal(r.state, "calibrated");
+    assert.equal(r.status.state, "calibrated");
+    assert.ok(r.reasons.some((x) => /label efficiency η = 0\.21 < 1: auditing outputs directly needs ~4\.8x fewer/.test(x)), r.reasons.join("\n"));
+    assert.equal(e.judgeCost, undefined);
+    const text = renderCalibration(r, { color: false });
+    assert.match(text, /discrimination gap 0\.44 \(pass-recall 0\.84, false-pass 0\.40\)/);
+    assert.match(text, /label efficiency η 0\.21 · auditing outputs directly needs ~4\.8x fewer human labels for the same precision \(at pass rate 0\.80, corrected over 2500 judged test cases\)/);
+  });
+
+  it("a sharp judge (s = sp = 0.95, θ 0.5): η ≈ 4.26, no reason, break-even ≈ $0.0046 at $0.001 per call", () => {
+    const r = calibrate({ judge, ...block("t", "test", { tp: 190, fp: 10, fn: 10, tn: 190 }), judgeCost: 0.001, bootstrapIters: 200 });
+    const e = r.efficiency!;
+    close(e.theta, 0.5);
+    close(e.eta!, 4.263, 1e-3);
+    close(e.n1Share!, 0.5);
+    close(e.breakEvenHumanCost!, 0.004643, 1e-5);
+    assert.ok(!r.reasons.some((x) => /efficiency|discrimination/.test(x)));
+    const text = renderCalibration(r, { color: false });
+    assert.match(text, /label efficiency η 4\.26 · calibrating this judge needs ~0\.23x the labels a direct audit would/);
+    assert.match(text, /judge pays off when a human label costs more than \$0\.0046 \(judge call \$0\.001\)/);
+    // η < 1 never breaks even.
+    const weak = calibrate({ judge, ...block("t", "test", weakJudge), judgeCost: 0.001, bootstrapIters: 200 });
+    assert.equal(weak.efficiency!.breakEvenHumanCost, null);
+    assert.match(renderCalibration(weak, { color: false }), /no break-even: the judge never saves labels at this accuracy/);
+  });
+
+  it("no discrimination (gap 0): no η, θ from human labels, a reason, no throw", () => {
+    const r = calibrate({ judge, ...block("t", "test", { tp: 20, fp: 20, fn: 20, tn: 20 }), judgeCost: 0.001, bootstrapIters: 200 });
+    const e = r.efficiency!;
+    close(e.gap, 0);
+    assert.equal(e.eta, undefined);
+    assert.equal(e.thetaFrom, "human-labels");
+    close(e.theta, 0.5);
+    assert.equal(e.breakEvenHumanCost, null);
+    assert.ok(r.reasons.some((x) => /gap ≤ 0/.test(x)));
+    assert.match(renderCalibration(r, { color: false }), /discrimination gap 0\.00/);
+  });
+
+  it("a small gap adds a discrimination reason", () => {
+    // s = 30/40 = 0.75, α = 25/40 = 0.625 → gap 0.125.
+    const r = calibrate({ judge, ...block("t", "test", { tp: 15, fp: 10, fn: 25, tn: 30 }), kappaThreshold: 0, bootstrapIters: 200 });
+    close(r.efficiency!.gap, 0.125);
+    assert.ok(r.reasons.some((x) => /discrimination gap 0\.13 < 0\.2/.test(x)), r.reasons.join("\n"));
+  });
+
+  it("in-sample reports carry no efficiency (in-sample rates flatter the judge)", () => {
+    const r = calibrate({ judge, ...block("d", "dev", { tp: 190, fp: 10, fn: 10, tn: 190 }), reportSplit: "dev", bootstrapIters: 200 });
+    assert.equal(r.efficiency, undefined);
+    assert.ok(!/label efficiency/.test(renderCalibration(r, { color: false })));
+  });
+});

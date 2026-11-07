@@ -264,6 +264,8 @@ export async function run(c: CommandContext): Promise<number> {
       return audit.state === "audited" ? 0 : 1;
     }
 
+    const judgeCost = num(c.flags["judge-cost"]);
+    if (judgeCost !== undefined && !(judgeCost >= 0 && Number.isFinite(judgeCost))) throw new UsageError(`--judge-cost must be a number of dollars ≥ 0, got ${judgeCost}`, { reason: "invalid_argument" });
     const report = calibrate({
       judge: { id: grader.version, tunedOn, ...(criterion ? { criterion } : {}) },
       labels,
@@ -272,6 +274,7 @@ export async function run(c: CommandContext): Promise<number> {
       reportSplit: (str(c.flags.split) ?? "test") as Split,
       ...(num(c.flags.threshold) !== undefined ? { kappaThreshold: num(c.flags.threshold)! } : {}),
       ...(num(c.flags["min-n"]) !== undefined ? { minN: num(c.flags["min-n"])! } : {}),
+      ...(judgeCost !== undefined ? { judgeCost } : {}),
     });
     if (stored) await store.putJudge(withCalibration(stored, report));
 

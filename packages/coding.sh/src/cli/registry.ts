@@ -598,9 +598,11 @@ export const COMMANDS: CommandSpec[] = [
           { name: "labels", type: "string", value: "<FILE>", desc: 'Extra human labels (JSON array or JSONL of {"caseId","value":"pass"|"fail"|"skip"}); they replace stored labels for the cases they name' },
           { name: "sample-passes", type: "number", value: "<N>", desc: "Print N unlabelled passing cases to label (a seeded sample) instead of measuring" },
           { name: "seed", type: "number", value: "<N>", desc: "With --sample-passes: sample seed", default: "0" },
+          { name: "judge-cost", type: "number", value: "<USD>", desc: "Cost of one judge call: also print the human label cost above which calibrating the judge pays off" },
         ],
         examples: [
           "coding.sh judge calibrate my-exp --tuned-on dev",
+          "coding.sh judge calibrate my-exp --judge-cost 0.002",
           "coding.sh judge calibrate my-exp --probe-injection judge.json",
           "coding.sh judge calibrate my-exp --grader tests --sample-passes 40",
           "coding.sh judge calibrate my-exp --grader tests --labels labels.jsonl",

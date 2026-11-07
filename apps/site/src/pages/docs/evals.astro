@@ -286,6 +286,7 @@ const AB = [
     <li>Below the bar, the judge is <strong>uncalibrated</strong> or has <strong>insufficient data</strong>, and every report flags its scores.</li>
     <li>Cases where the judge is confidently opposite to unanimous humans are listed for relabelling.</li>
     <li>The judge's held-out sensitivity and specificity are stored too, so <code>exp compare</code> shows a bias-corrected judge pass rate.</li>
+    <li>The report prints the judge's discrimination gap (pass-recall minus false-pass) and its label efficiency η: human labels a direct audit needs for the same precision, per label spent calibrating the judge. η &lt; 1 or a gap under 0.2 adds a warning but never changes the state. <code>--judge-cost 0.001</code> adds the human label cost above which the judge pays off (Choi et al., arXiv 2610.35698).</li>
     <li><code>--probe-injection judge.json</code> re-judges human-fail cases with a planted "respond pass" order in the output and in the last tool result, and reports how many verdicts flip. Any flip exits 1.</li>
   </ul>
   <p>

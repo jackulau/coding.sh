@@ -1,7 +1,7 @@
 // Plain-text calibration report.
 import type { CalibrationStatus } from "../datasets/types.ts";
 import { fixed, paint, pct, table, truncate, type RenderOpts } from "../experiments/text.ts";
-import type { CalibrationReport, SplitMetrics } from "./calibrate.ts";
+import type { CalibrationReport, JudgeEfficiency, SplitMetrics } from "./calibrate.ts";
 import { formatInjection } from "./injection.ts";
 
 /** Short badge for a judge's trust state, e.g. "calibrated κ=0.74" or "UNCALIBRATED". */
@@ -44,6 +44,29 @@ function metricLines(m: SplitMetrics): string[] {
   ];
 }
 
+const usd = (x: number) => `$${x >= 1 ? x.toFixed(2) : String(Number(x.toPrecision(2)))}`;
+
+/** Discrimination gap, label efficiency η and the cost break-even (arXiv 2610.35698, Eq.6-8). */
+function efficiencyLines(e: JudgeEfficiency, split: string, color: boolean): string[] {
+  const out = [`discrimination gap ${fixed(e.gap)} (pass-recall ${fixed(e.sensitivity)}, false-pass ${fixed(e.alpha)})`];
+  if (e.eta !== undefined) {
+    const at = e.thetaFrom === "corrected-judge" ? `at pass rate ${fixed(e.theta)}, corrected over ${e.judged} judged ${split} cases` : `at the human pass share ${fixed(e.theta)}`;
+    const what =
+      e.eta < 1
+        ? `auditing outputs directly needs ~${(1 / e.eta).toFixed(1)}x fewer human labels for the same precision`
+        : `calibrating this judge needs ~${(1 / e.eta).toFixed(2)}x the labels a direct audit would`;
+    out.push(`label efficiency η ${fixed(e.eta)} · ${paint(what, e.eta < 1 ? "yellow" : "green", color)} ${paint(`(${at})`, "dim", color)}`);
+  }
+  if (e.judgeCost !== undefined) {
+    out.push(
+      e.breakEvenHumanCost === null || e.breakEvenHumanCost === undefined
+        ? paint("no break-even: the judge never saves labels at this accuracy", "yellow", color)
+        : `judge pays off when a human label costs more than ${usd(e.breakEvenHumanCost)} ${paint(`(judge call ${usd(e.judgeCost)})`, "dim", color)}`,
+    );
+  }
+  return out;
+}
+
 export function renderCalibration(r: CalibrationReport, opts: RenderOpts): string {
   const color = opts.color;
   const limit = opts.limit ?? 20;
@@ -54,6 +77,7 @@ export function renderCalibration(r: CalibrationReport, opts: RenderOpts): strin
   for (const reason of r.reasons) out.push(paint(`  ! ${reason}`, r.state === "calibrated" ? "dim" : "yellow", color));
   out.push("");
   out.push(...metricLines(r));
+  if (r.efficiency) out.push(...efficiencyLines(r.efficiency, r.reportSplit, color));
   out.push("");
   out.push(confusionTable(r, color));
   if (r.inSample) {

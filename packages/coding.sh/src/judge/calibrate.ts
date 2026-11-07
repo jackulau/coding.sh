@@ -11,7 +11,9 @@
 import type { Label } from "../core/types.ts";
 import type { CalibrationState, CalibrationStatus, Dataset, JudgeVersion, Split } from "../datasets/types.ts";
 import { cohenKappa } from "../stats/agreement.ts";
+import { roganGladen } from "../stats/interval.ts";
 import { mulberry32 } from "../stats/prng.ts";
+import { judgeBreakEven, labelEfficiency } from "../stats/stratified.ts";
 import { quantileSorted } from "../stats/summary.ts";
 import type { InjectionReport } from "./injection.ts";
 
@@ -100,7 +102,42 @@ export interface CalibrationReport extends SplitMetrics {
   ts: number;
   /** Prompt-injection probe on human-fail cases (`judge calibrate --probe-injection`); never changes `status`. */
   injection?: InjectionReport;
+  /** Is calibrating this judge worth the human labels? Present with held-out sensitivity and specificity; never changes `status`. */
+  efficiency?: JudgeEfficiency;
 }
+
+/**
+ * Label efficiency of correcting this judge versus auditing outputs directly
+ * (Choi et al., arXiv 2610.35698, Eq.6-8; see stats/stratified.ts).
+ */
+export interface JudgeEfficiency {
+  /** Held-out pass-recall s = P(judge pass | human pass). */
+  sensitivity: number;
+  /** Held-out false-pass rate α = 1 − specificity = P(judge pass | human fail). */
+  alpha: number;
+  /** Discrimination gap s − α. */
+  gap: number;
+  /**
+   * Pass rate η is evaluated at, clamped to [0.01, 0.99]: the Rogan-Gladen
+   * corrected judge pass rate over `judged` cases in the report split, or the
+   * held-out human pass share when gap ≤ 0.
+   */
+  theta: number;
+  thetaFrom: "corrected-judge" | "human-labels";
+  /** Judged cases in the report split. */
+  judged: number;
+  /** θ(1 − θ) / A_v (Eq.7); absent when gap ≤ 0. Below 1, auditing outputs directly needs fewer human labels. */
+  eta?: number;
+  /** Oracle share of the human labels to spend on human-pass cases (Eq.7); absent when gap ≤ 0. */
+  n1Share?: number;
+  /** USD per judge call, from `judgeCost`. */
+  judgeCost?: number;
+  /** Human label cost (USD) above which the judge pays off (Eq.8); null when it never does (η ≤ 1). */
+  breakEvenHumanCost?: number | null;
+}
+
+/** Discrimination gap below which calibrate notes that the judge barely separates passes from fails. */
+export const MIN_GAP = 0.2;
 
 export interface CalibrateOpts {
   judge: Pick<JudgeVersion, "id" | "tunedOn"> & { criterion?: string };
@@ -125,6 +162,8 @@ export interface CalibrateOpts {
   confidentAt?: number;
   /** Throw instead of reporting when reportSplit was used for tuning. Default false (report, flagged in-sample). */
   strict?: boolean;
+  /** USD per judge call: adds the human-label cost break-even to `efficiency`. */
+  judgeCost?: number;
   now?: number;
 }
 
@@ -342,9 +381,54 @@ export function calibrate(opts: CalibrateOpts): CalibrationReport {
     ts: status.ts as number,
   };
   if (criterion !== undefined) report.criterion = criterion;
+  if (status.sensitivity !== undefined && status.specificity !== undefined) {
+    let judged = 0;
+    let judgedPass = 0;
+    for (const [id, v] of verdicts) {
+      if (splitOf(id) !== reportSplit) continue;
+      judged++;
+      if (v.pass) judgedPass++;
+    }
+    report.efficiency = efficiency(status, judged, judgedPass, m, opts.judgeCost);
+    const e = report.efficiency;
+    if (e.eta === undefined) reasons.push("the judge passes human-fail cases as often as human-pass ones (gap ≤ 0): its pass rate can't be corrected, audit outputs directly");
+    else {
+      if (e.eta < 1) reasons.push(`label efficiency η = ${e.eta.toFixed(2)} < 1: auditing outputs directly needs ~${(1 / e.eta).toFixed(1)}x fewer human labels than correcting this judge's pass rate`);
+      if (e.gap < MIN_GAP) reasons.push(`discrimination gap ${e.gap.toFixed(2)} < ${MIN_GAP}: the judge barely separates passes from fails, so its corrected pass rate is noisy`);
+    }
+  }
   const tuneSplits = tunedOn.filter((s) => s !== reportSplit);
   if (tuning.length) report.inSample = metrics(tuning, tuneSplits, iters, seed, alpha);
   return report;
+}
+
+/**
+ * η and the cost break-even at the held-out s and α. θ is the corrected judge
+ * pass rate over the report split's judged cases; with no discrimination it
+ * falls back to the held-out human pass share. Clamped to [0.01, 0.99] so a
+ * split that is all pass or all fail still gets a finite η.
+ */
+function efficiency(status: CalibrationStatus, judged: number, judgedPass: number, m: SplitMetrics, judgeCost: number | undefined): JudgeEfficiency {
+  const s = status.sensitivity as number;
+  const sp = status.specificity as number;
+  const alpha = 1 - sp;
+  const gap = s - alpha;
+  const clamp = (x: number) => Math.min(0.99, Math.max(0.01, x));
+  const human = (m.confusion.tn + m.confusion.fp) / m.n;
+  const corrected = gap > 1e-12 && judged > 0;
+  const theta = clamp(corrected ? roganGladen(judgedPass / judged, s, sp, judged, { positives: status.positives ?? 0, negatives: status.negatives ?? 0 }).p : human);
+  const out: JudgeEfficiency = { sensitivity: s, alpha, gap, theta, thetaFrom: corrected ? "corrected-judge" : "human-labels", judged };
+  if (gap > 1e-12) {
+    const e = labelEfficiency(theta, s, alpha);
+    out.eta = e.eta;
+    out.n1Share = e.n1Share;
+  }
+  if (judgeCost !== undefined) {
+    out.judgeCost = judgeCost;
+    const be = judgeBreakEven(theta, s, alpha, judgeCost);
+    out.breakEvenHumanCost = Number.isFinite(be) ? be : null;
+  }
+  return out;
 }
 
 /** JudgeVersion with this calibration attached (persist with FileEvalStore.putJudge). */

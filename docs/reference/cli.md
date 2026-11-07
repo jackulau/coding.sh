@@ -950,9 +950,11 @@ coding.sh judge calibrate <EXPERIMENT> [options]
 | `--labels <FILE>` |  | Extra human labels (JSON array or JSONL of {"caseId","value":"pass"\|"fail"\|"skip"}); they replace stored labels for the cases they name. |
 | `--sample-passes <N>` |  | Print N unlabelled passing cases to label (a seeded sample) instead of measuring. |
 | `--seed <N>` | `0` | With --sample-passes: sample seed. |
+| `--judge-cost <USD>` |  | Cost of one judge call: also print the human label cost above which calibrating the judge pays off. |
 
 ```sh
 coding.sh judge calibrate my-exp --tuned-on dev
+coding.sh judge calibrate my-exp --judge-cost 0.002
 coding.sh judge calibrate my-exp --probe-injection judge.json
 coding.sh judge calibrate my-exp --grader tests --sample-passes 40
 coding.sh judge calibrate my-exp --grader tests --labels labels.jsonl

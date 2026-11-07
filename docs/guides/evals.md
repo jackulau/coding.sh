@@ -220,6 +220,26 @@ worse, for CI gates. scripts/perf/ uses it to gate the coding.sh site on Lightho
 Every report flags judges that are not calibrated. It also stores the judge's held-out sensitivity
 and specificity, so later `exp compare` runs show a bias-corrected (Rogan-Gladen) judge pass rate.
 
+A calibrated judge can still cost more human labels than it saves. Its corrected pass rate is only
+as precise as the labels behind its sensitivity s and false-pass rate α, and when s − α (the
+discrimination gap) is small, those labels buy little. The report prints the gap and the label
+efficiency η: how many human labels a direct audit of the outputs needs for the same precision,
+per label spent calibrating the judge (Choi et al., arXiv 2610.35698, Eq.6-7).
+
+```
+discrimination gap 0.44 (pass-recall 0.84, false-pass 0.40)
+label efficiency η 0.21 · auditing outputs directly needs ~4.8x fewer human labels for the same precision (at pass rate 0.80, corrected over 2500 judged test cases)
+```
+
+η < 1 or a gap under 0.2 adds a warning, but never changes the calibration state. `--judge-cost
+0.001` (dollars per judge call) adds the human label cost above which the judge pays off (Eq.8):
+`judge pays off when a human label costs more than $0.0046 (judge call $0.001)`, or "no
+break-even" when η ≤ 1. `--json` carries `calibration.efficiency` with `eta`, `gap`, `theta`,
+`n1Share` (the share of labels to spend on human-pass cases) and `breakEvenHumanCost`. The same
+paper's stratified estimator, proportional allocation and Hoeffding label budget are in the stats
+API (`stratifiedMean`, `allocateProportional`, `hoeffdingBudget`); a CLI that plans an audit from
+them is still to come.
+
 Judges read untrusted text: the agent writes the output they grade. Every judge prompt escapes the
 data tags inside that text (`</output>` becomes `<\/output>`), so an output can't close its block
 and append orders. The system prompts also say that everything inside the data tags is untrusted
