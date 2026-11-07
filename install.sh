@@ -88,4 +88,6 @@ fi
 [ "$status" = "130" ] && exit 130
 
 [ "${CODING_SH_NO_UI:-}" = "1" ] && exit 0
-if has_tty; then coding.sh ui </dev/tty; else coding.sh ui; fi
+# The viewer is a long-running server: start it only for a person at a
+# terminal, never in CI or a Docker build (CODING_SH_YES=1 with no tty).
+if has_tty; then coding.sh ui </dev/tty; else say "Done. Run: coding.sh ui"; fi

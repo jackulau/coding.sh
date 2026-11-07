@@ -84,3 +84,27 @@ describe("install.sh source", () => {
     assert.match(r.installed, / \/tmp\/x\.tgz$/);
   });
 });
+
+// CODING_SH_YES=1 with no terminal is CI or a Docker build: init runs, but the
+// viewer (a server that never exits) must not start. setsid drops the
+// controlling terminal; without it (macOS) the test can't build the case.
+const setsid = spawnSync("sh", ["-c", "command -v setsid"]).status === 0;
+describe("install.sh without a terminal", () => {
+  test("CODING_SH_YES=1 runs init --yes and does not start the viewer", { skip: !setsid && "needs setsid" }, () => {
+    const bin = mkdtempSync(join(tmpdir(), "csh-install-"));
+    const calls = join(bin, "calls.log");
+    writeFileSync(join(bin, "npm"), `#!/bin/sh\ncase "$1" in view) exit 1 ;; prefix) echo /nonexistent ;; esac\nexit 0\n`);
+    writeFileSync(join(bin, "curl"), `#!/bin/sh\necho '{"tag_name": "v0.3.0"}'\n`);
+    writeFileSync(join(bin, "coding.sh"), `#!/bin/sh\necho "$*" >> "${calls}"\n[ "$1" = ui ] && sleep 30\nexit 0\n`);
+    for (const f of ["npm", "curl", "coding.sh"]) chmodSync(join(bin, f), 0o755);
+    const r = spawnSync("setsid", ["sh", INSTALL_SH], {
+      encoding: "utf8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { PATH: `${bin}:${process.env.PATH}`, HOME: bin, CODING_SH_YES: "1" },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(readFileSync(calls, "utf8").trim().split("\n"), ["init --yes"]);
+    assert.match(r.stderr, /Run: coding\.sh ui/);
+  });
+});
