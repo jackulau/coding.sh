@@ -279,9 +279,10 @@ export const BUILTIN_PREDICATES: Readonly<Record<string, TracePredicate>> = Obje
     },
   },
   "follows-rules": {
-    version: "1",
+    // 2: path-scoped rule files (paths:, globs:, applyTo:) are graded only once in scope.
+    version: "2",
     description:
-      "Every checkable rule (an imperative line naming a backticked command, flag, path or identifier) in args.text or metadata.instructions was acted on: required tokens used, forbidden ones not. N/A with no rules or no tool calls.",
+      "Every checkable rule (an imperative line naming a backticked command, flag, path or identifier) in args.text or metadata.instructions was acted on: required tokens used, forbidden ones not. Path-scoped rule files count only once the agent touches a matching file. N/A with no rules, no tool calls or no rule in scope.",
     validateArgs(args) {
       validateRulesArgs(args);
     },
@@ -290,10 +291,15 @@ export const BUILTIN_PREDICATES: Readonly<Record<string, TracePredicate>> = Obje
       const rules = rulesOf(ctx, args).filter((d) => (only === "all" || d.polarity === only) && !(args.skipConditional === true && d.conditional));
       if (!rules.length) return { answer: null, explanation: "no checkable rules" };
       if (!ctx.trace.some((e) => e.kind === "tool.start")) return { answer: null, explanation: "no tool calls to check the rules against" };
-      const scored = rules.map((d) => ({ d, o: directiveOutcome(d, ctx.trace) })).filter((x) => x.o.acted !== null);
+      const outcomes = rules.map((d) => ({ d, o: directiveOutcome(d, ctx.trace) }));
+      // Path-scoped or requested rules the agent never brought into scope are not scored.
+      const scored = outcomes.filter((x) => x.o.acted !== null);
+      const idle = outcomes.length - scored.length;
+      const idleNote = idle ? ` (${idle} scoped rule(s) never came into scope)` : "";
+      if (!scored.length) return { answer: null, explanation: `no rule in scope: ${idle} scoped rule(s) never triggered` };
       const failing = scored.filter((x) => x.o.acted === false);
       if (!failing.length) {
-        return { answer: true, explanation: `acted on all ${scored.length} rule(s)`, eventIds: [...new Set(scored.flatMap((x) => x.o.eventIds))] };
+        return { answer: true, explanation: `acted on all ${scored.length} rule(s)${idleNote}`, eventIds: [...new Set(scored.flatMap((x) => x.o.eventIds))] };
       }
       const lines = failing.map(({ d }) => `${d.id} ${d.polarity === "forbid" ? "broke" : "skipped"} "${clip80(d.text)}"${d.conditional ? " (conditional, low confidence)" : ""}`);
       return { answer: false, explanation: `${failing.length} of ${scored.length} rule(s) not followed: ${lines.join("; ")}`, eventIds: [...new Set(failing.flatMap((x) => x.o.eventIds))] };

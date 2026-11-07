@@ -225,6 +225,14 @@ picks which rules to grade, and `args.skipConditional` drops rules with if/when/
 those rules fail they are marked "(conditional, low confidence)", because actions alone can't tell
 whether the condition held. The answer is N/A when there are no rules or no tool calls.
 
+Rule files can be path-scoped, and `follows-rules` reads their frontmatter. These are Claude Code
+`.claude/rules/*.md` with `paths:`, Cursor `.cursor/rules/*.mdc` with `globs:` or
+`alwaysApply:`, and Copilot `.github/instructions/*.instructions.md` with `applyTo:`. A scoped rule
+is graded only once the trace touches a matching file. A Cursor rule with neither globs nor
+`alwaysApply` is graded once its file is opened. Until then, the agent never saw the rule, so it
+is left out and counted in the explanation: `acted on all 1 rule(s) (2 scoped rule(s) never came
+into scope)`. When no rule came into scope, the answer is N/A.
+
 ```json
 {"kind": "llm-checklist", "name": "rules", "items": [
   {"id": "tests", "question": "Ran the tests and they passed?", "check": {"name": "ran-command", "args": {"command": "npm test", "ok": true}}},

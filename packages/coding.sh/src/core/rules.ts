@@ -6,14 +6,31 @@
 //
 // Pure: no I/O. extractDirectives reads text, diffDirectives compares two
 // harness versions, directiveOutcome reads a trace.
+//
+// A rule file's frontmatter sets when the agent sees it: Claude Code
+// `.claude/rules/*.md` with `paths:`, Cursor `.cursor/rules/*.mdc` with
+// `globs:` / `alwaysApply:`, Copilot `.github/instructions/*.instructions.md`
+// with `applyTo:`. A path-scoped rule applies only once the agent touches a
+// matching file, so a rule that never came into scope is not scored.
+import { harnessItem, itemExposure } from "./exposure.ts";
 import { sha256Hex } from "./ids.ts";
 import { commandOf } from "./sessions.ts";
+import { inputPaths, pathEndsWith } from "./tool-paths.ts";
+
+export { inputPaths, pathEndsWith };
 
 export type DirectiveTokenKind = "command" | "flag" | "path" | "identifier";
 
 export interface DirectiveToken {
   kind: DirectiveTokenKind;
   value: string;
+}
+
+/** When a rule file reaches the agent (from its frontmatter; src/core/exposure.ts). */
+export interface DirectiveScope {
+  /** always: every session; path: once a file matching `globs` is touched; requested: when the agent or user asks for it. */
+  tier: "always" | "path" | "requested";
+  globs: string[];
 }
 
 export interface Directive {
@@ -28,6 +45,8 @@ export interface Directive {
   /** The line has if/when/unless/before/after: compliance from actions alone is less certain. */
   conditional: boolean;
   tokens: DirectiveToken[];
+  /** Set for rule files (.claude/rules, .cursor/rules/*.mdc, .github/instructions). Absent for CLAUDE.md, AGENTS.md, SKILL.md and inline text. */
+  scope?: DirectiveScope;
 }
 
 const LEADING_VERBS = new Set(["run", "use", "call", "invoke", "execute", "read", "check", "add", "prefer", "keep", "put", "write", "import", "update", "set", "pass", "avoid", "edit", "create", "open", "install"]);
@@ -61,6 +80,8 @@ function tokenKind(value: string, before: string): DirectiveTokenKind {
 export function extractDirectives(text: string, path: string): Directive[] {
   const lines = text.split(/\r?\n/);
   const out: Directive[] = [];
+  const item = harnessItem(path, text);
+  const scope: DirectiveScope | undefined = item?.kind === "rule" ? { tier: item.tier, globs: item.globs } : undefined;
   let i = 0;
   if (lines[0]?.trim() === "---") {
     const end = lines.findIndex((l, j) => j > 0 && l.trim() === "---");
@@ -96,6 +117,7 @@ export function extractDirectives(text: string, path: string): Directive[] {
       polarity: FORBID.test(line) ? "forbid" : "require",
       conditional: CONDITIONAL.test(line),
       tokens,
+      ...(scope ? { scope } : {}),
     });
   }
   return out;
@@ -138,33 +160,26 @@ export interface RuleEvent {
 export type DirectiveSeen = "inline" | "displayed" | "not-displayed" | "not-loaded" | "unknown";
 
 export interface DirectiveOutcome {
-  /** require: some token was used; forbid: none was. null when the trace has no tool calls. */
+  /**
+   * require: some token was used; forbid: none was. null when the trace has no tool calls,
+   * or the rule is path-scoped or requested and never came into scope.
+   */
   acted: boolean | null;
   /** require: the events that used a token; forbid: the violating events. */
   eventIds: string[];
-  /** Whether the agent could have seen the rule. */
+  /**
+   * Whether the agent could have seen the rule. inline: always in context. displayed: shown
+   * in a tool result (a SKILL.md read), or a scoped rule that came into scope. not-loaded:
+   * never loaded (a scoped rule whose files the agent never touched).
+   */
   seen: DirectiveSeen;
+  /** A scoped rule's trigger: the events that touched a matching file or opened the rule. */
+  scopeEventIds?: string[];
 }
 
-const PATH_KEYS = ["file_path", "path", "notebook_path", "filePath"];
 const WRITE_KEYS = ["content", "new_string", "new_source", "newString", "text"];
 const obj = (v: unknown): Record<string, unknown> | undefined => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : undefined);
 const strOf = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
-
-/** `full` ends with `suffix` at a path boundary (`/repo/docs/A.md` ends with `docs/A.md`, not `cs/A.md`). */
-export function pathEndsWith(full: string, suffix: string): boolean {
-  const f = full.replaceAll("\\", "/");
-  const s = suffix.replaceAll("\\", "/").replace(/^\.\//, "");
-  if (!s || !f.endsWith(s)) return false;
-  return f.length === s.length || f[f.length - s.length - 1] === "/" || s.startsWith("/");
-}
-
-/** Paths a tool call's input names (Read, Edit, Write, NotebookEdit and look-alikes). */
-export function inputPaths(input: unknown): string[] {
-  const o = obj(input);
-  if (!o) return [];
-  return PATH_KEYS.map((k) => strOf(o[k])).filter((x): x is string => !!x);
-}
 
 /** A tool.start's shell command, whitespace-collapsed. */
 export function commandText(e: RuleEvent): string | undefined {
@@ -242,6 +257,12 @@ function skillRead(d: Directive, events: readonly RuleEvent[]): boolean {
   });
 }
 
+/** A scoped rule's exposure: in scope once a matching file is touched (or the rule file opened). */
+function scopeOf(d: Directive, scope: DirectiveScope, events: readonly RuleEvent[]): { seen: DirectiveSeen; eventIds: string[] } {
+  const x = itemExposure({ id: "", path: d.path, kind: "rule", name: "", tier: scope.tier, globs: scope.globs }, events);
+  return { seen: x.state === "in-context" ? "displayed" : x.state === "not" ? "not-loaded" : "unknown", eventIds: x.eventIds };
+}
+
 function seenOf(d: Directive, events: readonly RuleEvent[]): DirectiveSeen {
   const path = d.path.replaceAll("\\", "/");
   if (INLINE.test(path)) return "inline";
@@ -256,10 +277,20 @@ function seenOf(d: Directive, events: readonly RuleEvent[]): DirectiveSeen {
 
 /** Did the trace act on the directive, and could the agent have seen it? */
 export function directiveOutcome(d: Directive, events: readonly RuleEvent[]): DirectiveOutcome {
-  const seen = seenOf(d, events);
-  if (!events.some((e) => e.kind === "tool.start")) return { acted: null, eventIds: [], seen };
+  if (d.scope?.tier === "always") return { ...actedOf(d, events), seen: "inline" };
+  if (d.scope) {
+    const s = scopeOf(d, d.scope, events);
+    // Never in scope: the agent was never shown the rule, so there is nothing to score.
+    if (s.seen === "not-loaded") return { acted: null, eventIds: [], seen: s.seen, scopeEventIds: [] };
+    return { ...actedOf(d, events), seen: s.seen, scopeEventIds: s.eventIds };
+  }
+  return { ...actedOf(d, events), seen: seenOf(d, events) };
+}
+
+function actedOf(d: Directive, events: readonly RuleEvent[]): Pick<DirectiveOutcome, "acted" | "eventIds"> {
+  if (!events.some((e) => e.kind === "tool.start")) return { acted: null, eventIds: [] };
   const ids = new Set<string>();
   for (const t of d.tokens) for (const e of tokenUses(t, events)) ids.add(e.id);
   const eventIds = [...ids];
-  return { acted: d.polarity === "require" ? eventIds.length > 0 : eventIds.length === 0, eventIds, seen };
+  return { acted: d.polarity === "require" ? eventIds.length > 0 : eventIds.length === 0, eventIds };
 }

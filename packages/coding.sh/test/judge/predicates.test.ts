@@ -78,6 +78,21 @@ describe("follows-rules", () => {
     assert.deepEqual([r.answer, r.explanation, r.eventIds], [true, "acted on all 2 rule(s)", ["b1"]]);
   });
 
+  it("skips path-scoped rules that never came into scope (Cursor globs, Claude Code paths)", () => {
+    const instructions = {
+      "CLAUDE.md": "Always run `npm test`.",
+      ".cursor/rules/sql.mdc": '---\nglobs: "db/**/*.sql"\n---\nNever run `psql`.',
+      ".claude/rules/api.md": "---\npaths:\n  - src/api/**\n---\nAlways run `npm run api:check`.",
+    };
+    const r = check("follows-rules", {}, [bash("b1", "npm test"), bash("b2", "psql -c 'select 1'")], { instructions });
+    assert.deepEqual([r.answer, r.explanation], [true, "acted on all 1 rule(s) (2 scoped rule(s) never came into scope)"]);
+    const api = check("follows-rules", {}, [readEv("r1", "/repo/src/api/users.ts"), bash("b1", "npm test")], { instructions });
+    assert.equal(api.answer, false);
+    assert.match(api.explanation!, /1 of 2 rule\(s\) not followed: [0-9a-f]{12} skipped "Always run `npm run api:check`\."/);
+    const idle = check("follows-rules", { text: instructions[".cursor/rules/sql.mdc"], path: ".cursor/rules/sql.mdc" }, [bash("b1", "psql")]);
+    assert.deepEqual([idle.answer, idle.explanation], [null, "no rule in scope: 1 scoped rule(s) never triggered"]);
+  });
+
   it("is n/a with no rules or no tool calls", () => {
     assert.equal(check("follows-rules", { text: "" }, [bash("b1", "ls")]).answer, null);
     assert.equal(check("follows-rules", { text }, [{ id: "m", kind: "assistant.message", payload: { text: "hi" } }]).answer, null);

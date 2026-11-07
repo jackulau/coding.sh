@@ -125,7 +125,48 @@ describe("directiveOutcome", () => {
     assert.equal(directiveOutcome(rule, [{ id: "s1", kind: "tool.start", payload: { tool: "Skill", input: { skill: "lint" } } }, end("s1", "Launching skill")]).seen, "not-displayed");
     assert.equal(directiveOutcome(rule, [bash("e1", "make lint")]).seen, "unknown", "no tool output at all");
     assert.equal(one("Run `make` now", ".cursor/rules/build.mdc").path, ".cursor/rules/build.mdc");
-    assert.equal(directiveOutcome(one("Run `make` now", ".cursor/rules/build.mdc"), []).seen, "inline");
+  });
+});
+
+describe("scoped rule files", () => {
+  const cursor = (fm: string, line = "- Always run `pnpm vitest` after edits.") => one(`---\n${fm}\n---\n${line}`, ".cursor/rules/tests.mdc");
+  const write = (id: string, file_path: string): RuleEvent => ({ id, kind: "tool.start", payload: { tool: "Write", toolUseId: id, input: { file_path, content: "x" } } });
+
+  it("reads the scope from frontmatter: Cursor globs / alwaysApply, Claude Code paths, Copilot applyTo", () => {
+    assert.deepEqual(cursor('globs: "src/**/*.test.ts"').scope, { tier: "path", globs: ["src/**/*.test.ts"] });
+    assert.deepEqual(cursor("globs: src/**/*.ts, test/**\nalwaysApply: false").scope, { tier: "path", globs: ["src/**/*.ts", "test/**"] });
+    assert.deepEqual(cursor("alwaysApply: true").scope, { tier: "always", globs: [] });
+    assert.deepEqual(cursor("description: Testing conventions").scope, { tier: "requested", globs: [] });
+    const claude = one("---\npaths:\n  - \"src/api/**/*.ts\"\n---\n- Never call `fetch` directly.", ".claude/rules/api.md");
+    assert.deepEqual(claude.scope, { tier: "path", globs: ["src/api/**/*.ts"] });
+    assert.equal(claude.line, 5, "lines count the frontmatter");
+    assert.deepEqual(one("- Use `pnpm` for installs.", ".claude/rules/tools.md").scope, { tier: "always", globs: [] });
+    assert.deepEqual(one("---\napplyTo: \"**/*.py\"\n---\nAlways run `ruff check`.", ".github/instructions/py.instructions.md").scope, { tier: "path", globs: ["**/*.py"] });
+    assert.equal(one("- Always run `npm test`.").scope, undefined, "CLAUDE.md has no scope");
+  });
+
+  it("a path-scoped rule is in scope only after a matching file is touched; until then it is not scored", () => {
+    const rule = cursor('globs: "src/**/*.test.ts"');
+    const idle = directiveOutcome(rule, [write("w1", "/repo/src/a.ts"), bash("b1", "npm run build")]);
+    assert.deepEqual(idle, { acted: null, eventIds: [], seen: "not-loaded", scopeEventIds: [] });
+    const touched = [write("w1", "/repo/src/a.test.ts"), bash("b1", "pnpm vitest run")];
+    assert.deepEqual(directiveOutcome(rule, touched), { acted: true, eventIds: ["b1"], seen: "displayed", scopeEventIds: ["w1"] });
+    const skipped = directiveOutcome(rule, [write("w1", "/repo/src/a.test.ts"), bash("b1", "npm run build")]);
+    assert.deepEqual([skipped.acted, skipped.seen], [false, "displayed"]);
+    // With the session's cwd, the glob is matched against the repo-relative path.
+    const cwd = (e: RuleEvent) => ({ ...e, cwd: "/repo" });
+    assert.equal(directiveOutcome(rule, [cwd(write("w1", "/repo/lib/src/a.test.ts")), cwd(bash("b1", "ls"))]).seen, "not-loaded");
+    assert.equal(directiveOutcome(rule, [cwd(write("w1", "/repo/src/x/a.test.ts")), cwd(bash("b1", "ls"))]).seen, "displayed");
+  });
+
+  it("an always-on rule is inline; a requested rule counts once its file is opened", () => {
+    assert.deepEqual(directiveOutcome(cursor("alwaysApply: true"), [bash("b1", "pnpm vitest")]), { acted: true, eventIds: ["b1"], seen: "inline" });
+    const req = cursor("description: Testing conventions");
+    assert.equal(directiveOutcome(req, [bash("b1", "ls")]).acted, null);
+    assert.equal(directiveOutcome(req, [bash("b1", "ls")]).seen, "not-loaded");
+    const opened = directiveOutcome(req, [read("r1", "/repo/.cursor/rules/tests.mdc"), bash("b1", "ls")]);
+    assert.deepEqual([opened.acted, opened.seen, opened.scopeEventIds], [false, "displayed", ["r1"]]);
+    assert.equal(directiveOutcome(req, []).seen, "unknown", "no events: exposure unknown, not 'never loaded'");
   });
 });
 

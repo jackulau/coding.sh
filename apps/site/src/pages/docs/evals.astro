@@ -130,7 +130,7 @@ const COMPARE = [
         <tr><td><code>command</code></td><td>Your script, any language: JSON on stdin; a boolean, a score or <code>&#123;score, pass, reason&#125;</code> on stdout, or the exit code.</td></tr>
         <tr><td><code>module</code></td><td>A JS module's exported grade function returns pass.</td></tr>
         <tr><td><code>llm</code></td><td>A model judge returns pass on your rubric. See below.</td></tr>
-        <tr><td><code>llm-checklist</code></td><td>Yes/no questions, each answered by the model or by a trace check. Rule checks need no model: <code>ran-command</code>, <code>read-path</code>, <code>wrote-identifier</code> and <code>follows-rules</code> (every backticked command, flag, path or identifier a rule requires was used, and none it forbids).</td></tr>
+        <tr><td><code>llm-checklist</code></td><td>Yes/no questions, each answered by the model or by a trace check. Rule checks need no model: <code>ran-command</code>, <code>read-path</code>, <code>wrote-identifier</code> and <code>follows-rules</code> (every backticked command, flag, path or identifier a rule requires was used, and none it forbids). A path-scoped rule (Claude Code <code>paths:</code>, Cursor <code>globs:</code>) counts only once the agent touches a matching file.</td></tr>
       </tbody>
     </table>
   </div>

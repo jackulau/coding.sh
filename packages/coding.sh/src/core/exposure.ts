@@ -6,8 +6,7 @@
 // usage` (AA-1) builds on it. Pure: no I/O.
 import { createHash } from "node:crypto";
 import { commandOf } from "./sessions.ts";
-import { inputPaths, pathEndsWith } from "./rules.ts";
-import type { AgentEvent } from "../schema/index.ts";
+import { inputPaths, pathEndsWith } from "./tool-paths.ts";
 import { matchGlob } from "../runner/glob.ts";
 
 export type FrontmatterValue = string | boolean | string[];
@@ -105,6 +104,16 @@ export function harnessItem(path: string, text: string): HarnessItem | undefined
   return undefined;
 }
 
+/** The fields of an event exposure reads (AgentEvent, the eval TraceEvent and rules.ts's RuleEvent all fit). */
+export interface ExposureEvent {
+  id: string;
+  kind: string;
+  payload?: unknown;
+  cwd?: string;
+}
+
+const payloadOf = (e: ExposureEvent): Record<string, unknown> => (e.payload && typeof e.payload === "object" ? (e.payload as Record<string, unknown>) : {});
+
 export type ExposureState = "in-context" | "listed" | "not" | "unknown";
 
 export interface Exposure {
@@ -123,28 +132,39 @@ function rel(p: string, cwd: string | undefined): string {
 }
 
 /** Paths an event touched: tool inputs, path-like tokens in a shell command, @mentions in a user message. */
-function touched(e: AgentEvent, cwd: string | undefined): string[] {
+function touched(e: ExposureEvent, cwd: string | undefined): string[] {
   const out: string[] = [];
   if (e.kind === "tool.start") {
-    const input = (e.payload as { input?: unknown }).input;
+    const input = payloadOf(e).input;
     for (const v of inputPaths(input)) out.push(rel(v, cwd));
     const cmd = commandOf(input);
     if (cmd) for (const tok of cmd.split(/\s+/)) if (/[/.]/.test(tok) && !tok.startsWith("-")) out.push(rel(tok.replace(/^['"]|['"]$/g, ""), cwd));
   } else if (e.kind === "user.message") {
-    const text = (e.payload as { text?: unknown }).text;
+    const text = payloadOf(e).text;
     if (typeof text === "string") for (const m of text.matchAll(/(?:^|\s)@([^\s]+)/g)) out.push(rel(m[1] as string, cwd));
   }
   return out;
 }
 
-const hasInput = (e: AgentEvent) => e.kind === "tool.start" && (e.payload as { input?: unknown }).input !== undefined;
+const hasInput = (e: ExposureEvent) => e.kind === "tool.start" && payloadOf(e).input !== undefined;
+
+/**
+ * A glob hit for a touched path. Globs are repo-relative; when the session's cwd is unknown,
+ * an absolute path is matched by its tail (`/repo/src/a.ts` against `src/**`).
+ */
+function globHit(f: string, glob: string, cwdKnown: boolean): boolean {
+  if (matchGlob(f, glob)) return true;
+  if (cwdKnown || !/^(?:\/|[A-Za-z]:\/)/.test(f)) return false;
+  const tail = f.replace(/^(?:[A-Za-z]:)?\/+/, "");
+  return matchGlob(tail, glob.startsWith("**/") ? glob : `**/${glob}`);
+}
 
 /**
  * Whether `item` reached the agent's context in one session's events.
  * "unknown" (never "not") when the session has no events, or, for an item
  * that loads on a file touch or a request, no tool call that carries its input.
  */
-export function itemExposure(item: HarnessItem, events: readonly AgentEvent[], o: { cwd?: string } = {}): Exposure {
+export function itemExposure(item: HarnessItem, events: readonly ExposureEvent[], o: { cwd?: string } = {}): Exposure {
   if (!events.length) return { state: "unknown", via: null, eventIds: [] };
   if (item.kind !== "skill" && item.tier === "always") return { state: "in-context", via: "always", eventIds: [] };
   const cwd = o.cwd ?? events.find((e) => e.cwd)?.cwd;
@@ -156,7 +176,7 @@ export function itemExposure(item: HarnessItem, events: readonly AgentEvent[], o
   for (const e of events) {
     if (item.kind === "skill" && e.kind === "tool.start") {
       // payload.skill: the adapter's skill-load tag (#20); else a Skill tool call naming it.
-      const p = e.payload as { tool?: unknown; input?: unknown; skill?: unknown };
+      const p = payloadOf(e) as { tool?: unknown; input?: unknown; skill?: unknown };
       const input = p.input as Record<string, unknown> | undefined;
       const names = [item.name, dirName];
       const named = (v: unknown) => typeof v === "string" && names.includes(v);
@@ -167,7 +187,7 @@ export function itemExposure(item: HarnessItem, events: readonly AgentEvent[], o
     }
     for (const f of touched(e, cwd)) {
       if (pathEndsWith(f, itemPath) || (skillDir && (f.startsWith(skillDir) || f.includes(`/${skillDir}`)))) opened.push(e.id);
-      else if (item.globs.some((g) => matchGlob(f, g))) matched.push(e.id);
+      else if (item.globs.some((g) => globHit(f, g, !!cwd))) matched.push(e.id);
     }
   }
   const known = events.some(hasInput) || events.some((e) => e.kind === "user.message");
