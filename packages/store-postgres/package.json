@@ -1,9 +1,32 @@
 {
   "name": "coding.sh-store-postgres",
-  "version": "0.0.1",
-  "description": "Postgres index and blob store for coding.sh: point CODING_SH_STORE_URL at postgres:// and run serve, the CLI, MCP and evals on one database.",
+  "version": "0.1.0",
+  "description": "Postgres store for coding.sh, observability and evals for any AI agent: point CODING_SH_STORE_URL at postgres:// and run serve, the CLI, MCP and evals on one database.",
   "license": "MIT",
+  "author": "coding.sh contributors",
   "type": "module",
+  "homepage": "https://coding.sh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jackulau/coding.sh.git",
+    "directory": "packages/store-postgres"
+  },
+  "bugs": {
+    "url": "https://github.com/jackulau/coding.sh/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "observability",
+    "evals",
+    "opentelemetry",
+    "llm",
+    "claude-code",
+    "codex",
+    "coding.sh",
+    "postgres",
+    "postgresql",
+    "store"
+  ],
   "main": "./dist/index.mjs",
   "exports": {
     ".": "./dist/index.mjs",
@@ -28,7 +51,7 @@
     "pg": "^8.13.1"
   },
   "peerDependencies": {
-    "coding.sh": ">=0.0.1"
+    "coding.sh": ">=0.1.0"
   },
   "peerDependenciesMeta": {
     "coding.sh": {
@@ -40,5 +63,8 @@
     "@types/pg": "^8.11.10",
     "esbuild": "^0.25.0",
     "typescript": "^5.9.3"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

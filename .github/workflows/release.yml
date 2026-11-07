@@ -1,10 +1,27 @@
 name: Release
 
-# Push a tag like v0.1.0 to release. The verify job runs the full check on the
-# tagged commit. The publish job waits for approval in the "release"
-# environment (Settings → Environments → release → Required reviewers), then
-# publishes the exact tarball it attaches to the GitHub release, so npm and
-# install.sh / `coding.sh update` install identical bytes.
+# Push a tag vX.Y.Z (matching packages/coding.sh/package.json) to release.
+#
+#   verify       checks and tests every package, then packs the npm tarballs and
+#                builds the Python sdist and wheel once. Later jobs publish these
+#                exact files, so npm, PyPI, the GitHub release, install.sh and
+#                `coding.sh update` all get identical bytes.
+#   publish-npm  waits for approval in the "release" environment, then publishes
+#                coding.sh, @coding.sh/sdk, coding.sh-store-postgres and
+#                coding.sh-store-s3 in that order (the stores peer-depend on
+#                coding.sh), and creates the GitHub release vX.Y.Z.
+#   publish-pypi waits for the same approval, then publishes coding-sh.
+#
+# Auth: npm trusted publishing (OIDC) and PyPI trusted publishing, so no
+# long-lived token is needed. For the very first npm publish (npm can only
+# attach a trusted publisher to a package that exists), set a short-lived
+# NPM_TOKEN secret in the "release" environment; see docs/RELEASE.md.
+#
+# Re-running is safe: a version already on npm or PyPI is skipped, and an
+# existing GitHub release is reused if its tarball matches.
+#
+# Every job runs on GitHub-hosted runners. Trusted publishing does not support
+# self-hosted runners, and release code never runs on the desk runner.
 
 on:
   push:
@@ -23,13 +40,28 @@ jobs:
     timeout-minutes: 30
     outputs:
       version: ${{ steps.version.outputs.version }}
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: release
+          POSTGRES_DB: coding
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
           node-version: 24.x
           cache: npm
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Tag matches package version
         id: version
@@ -42,32 +74,72 @@ jobs:
           grep -q "^## \[$version\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no [$version] section"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
+      # Some tests make throwaway commits in temp repos.
       - name: Git identity
         run: |
           git config --global user.name "coding.sh CI"
           git config --global user.email "ci@coding.sh.invalid"
 
-      - run: npm ci
+      - run: npm ci --no-audit --no-fund
 
-      - name: Typecheck and test
+      - name: coding.sh typecheck and test
         working-directory: packages/coding.sh
         run: npm run check
 
-      - name: Build and pack
-        working-directory: packages/coding.sh
+      - name: "@coding.sh/sdk typecheck and test"
+        working-directory: packages/sdk
+        run: npm run check
+
+      - name: coding.sh-store-postgres typecheck and test (real Postgres)
+        working-directory: packages/store-postgres
+        env:
+          CODING_SH_TEST_PG_URL: postgres://postgres:release@127.0.0.1:5432/coding
+        run: npm run check
+
+      - name: coding.sh-store-s3 typecheck and test
+        working-directory: packages/blob-s3
+        run: npm run check
+
+      - name: coding-sh (Python) test
+        working-directory: packages/sdk-python
+        run: python -m unittest discover -s tests
+
+      - name: Build and pack the npm packages
         run: |
-          npm run build
-          NO_UPDATE_NOTIFIER=1 node dist/cli.mjs --version
-          npm pack
-          ls -l coding.sh-*.tgz
+          mkdir -p "$RUNNER_TEMP/npm"
+          for p in coding.sh sdk store-postgres blob-s3; do
+            (cd "packages/$p" && { [ ! -f scripts/build.mjs ] || node scripts/build.mjs; } && npm pack --pack-destination "$RUNNER_TEMP/npm")
+          done
+          NO_UPDATE_NOTIFIER=1 node packages/coding.sh/dist/cli.mjs --version
+          ls -l "$RUNNER_TEMP/npm"
+          test -f "$RUNNER_TEMP/npm/coding.sh-${{ steps.version.outputs.version }}.tgz"
+
+      - name: Build the Python sdist and wheel
+        run: |
+          python -m pip install --disable-pip-version-check -q build twine
+          python -m build --outdir "$RUNNER_TEMP/pypi" packages/sdk-python
+          python -m twine check --strict "$RUNNER_TEMP"/pypi/*
+
+      - name: Smoke test the packed artifacts
+        env:
+          CODING_SH_SMOKE_NPM_DIR: ${{ runner.temp }}/npm
+          CODING_SH_SMOKE_PY_DIR: ${{ runner.temp }}/pypi
+          CODING_SH_SMOKE_PG_URL: postgres://postgres:release@127.0.0.1:5432/coding
+        run: scripts/release/smoke.sh
 
       - uses: actions/upload-artifact@v4
         with:
-          name: tarball
-          path: packages/coding.sh/coding.sh-${{ steps.version.outputs.version }}.tgz
+          name: npm-tarballs
+          path: ${{ runner.temp }}/npm/*.tgz
           if-no-files-found: error
 
-  publish:
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: ${{ runner.temp }}/pypi/*
+          if-no-files-found: error
+
+  publish-npm:
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -76,36 +148,100 @@ jobs:
       url: https://www.npmjs.com/package/coding.sh/v/${{ needs.verify.outputs.version }}
     permissions:
       contents: write   # create the GitHub release
-      id-token: write   # npm provenance (and trusted publishing)
+      id-token: write   # npm trusted publishing and provenance
     env:
       VERSION: ${{ needs.verify.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v4
         with:
           node-version: 24.x
           registry-url: https://registry.npmjs.org
 
+      - name: npm 11.5.1+ (trusted publishing)
+        run: |
+          if ! node -e 'const [a,b,c]=process.argv[1].split(".").map(Number); process.exit(a>11||(a===11&&(b>5||(b===5&&c>=1)))?0:1)' "$(npm --version)"; then
+            npm install -g npm@11
+          fi
+          npm --version
+
       - uses: actions/download-artifact@v4
         with:
-          name: tarball
+          name: npm-tarballs
+          path: npm
 
-      - name: Publish to npm with provenance
+      # Before anything is published: an existing GitHub release must carry the
+      # same tarball, so npm and install.sh never disagree about vX.Y.Z.
+      - name: Check an existing GitHub release
+        run: |
+          asset="coding.sh-$VERSION.tgz"
+          if gh release view "v$VERSION" --json tagName >/dev/null 2>&1; then
+            if gh release download "v$VERSION" -p "$asset" -D existing 2>/dev/null; then
+              if ! cmp -s "existing/$asset" "npm/$asset"; then
+                echo "::error::release v$VERSION already has a different $asset (built from another commit). Delete it (gh release delete v$VERSION --cleanup-tag) or release a new version. Nothing was published."
+                exit 1
+              fi
+              echo "release v$VERSION exists with the same tarball"
+            else
+              echo "release v$VERSION exists without $asset; it will be uploaded"
+            fi
+          fi
+
+      - name: Publish to npm (dependency order, skips versions already published)
         env:
-          # Leave the secret unset when npm trusted publishing is configured.
+          # Empty once trusted publishing is configured; npm then uses OIDC.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npm publish "./coding.sh-$VERSION.tgz" --provenance --access public
+        run: |
+          for name in coding.sh @coding.sh/sdk coding.sh-store-postgres coding.sh-store-s3; do
+            base=${name#@}
+            tgz=$(ls "npm/${base/\//-}-"[0-9]*.tgz)
+            v=$(tar -xzOf "$tgz" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/${name/\//%2f}/$v")
+            case "$code" in
+              200) echo "$name@$v is already on npm, skipping"; continue ;;
+              404) ;;
+              *) echo "::error::registry returned $code for $name@$v"; exit 1 ;;
+            esac
+            echo "publishing $name@$v"
+            npm publish "$tgz" --access public --provenance
+          done
 
       - name: Create the GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
+          asset="coding.sh-$VERSION.tgz"
+          if gh release view "v$VERSION" --json tagName >/dev/null 2>&1; then
+            [ -f "existing/$asset" ] || gh release upload "v$VERSION" "npm/$asset"
+            exit 0
+          fi
           awk -v v="$VERSION" '
             $0 ~ "^## \\[" v "\\]" { on = 1; next }
             on && /^## \[/ { exit }
             on && /^\[[^]]+\]: / { next }
             on { print }
           ' CHANGELOG.md > notes.md
-          gh release create "v$VERSION" "coding.sh-$VERSION.tgz" \
+          gh release create "v$VERSION" "npm/$asset" \
             --title "coding.sh $VERSION" --notes-file notes.md --verify-tag
+
+  publish-pypi:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: release
+      url: https://pypi.org/project/coding-sh/
+    permissions:
+      id-token: write   # PyPI trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-dist
+          path: dist
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true

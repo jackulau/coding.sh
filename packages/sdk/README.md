@@ -109,9 +109,9 @@ reading it.
 
 ## Examples
 
-- [`examples/production/node-openai`](../../examples/production/node-openai): a script (`app.mjs`) and
+- [`examples/production/node-openai`](https://github.com/jackulau/coding.sh/tree/main/examples/production/node-openai): a script (`app.mjs`) and
   an HTTP API (`api.mjs`).
-- [`examples/production/ai-sdk`](../../examples/production/ai-sdk): AI SDK through plain OTel and
+- [`examples/production/ai-sdk`](https://github.com/jackulau/coding.sh/tree/main/examples/production/ai-sdk): AI SDK through plain OTel and
   through `aiSdkTracer()`.
 
 ## Development

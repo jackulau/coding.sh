@@ -147,8 +147,9 @@ content. Details in [docs/guides/privacy.md](docs/guides/privacy.md).
 
 0.1.0 is the first public release, so expect rough edges. What isn't done yet:
 
-- npm: the `coding.sh` package and the SDKs are not published. The curl installer and source
-  installs work today.
+- npm and PyPI: nothing is published yet. The packages and the release workflow are ready; what
+  remains is the maintainer's account setup and tag ([First publish](docs/RELEASE.md#first-publish)).
+  The curl installer and source installs work today.
 - Windows is untested. CI runs on Linux and macOS.
 - Nine adapters are fixture-tested only (see [Supported agents](#supported-agents)).
 

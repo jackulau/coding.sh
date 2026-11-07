@@ -1,26 +1,54 @@
 {
   "name": "coding.sh-store-s3",
-  "version": "0.0.1",
-  "description": "S3 / R2 / MinIO blob store for coding.sh (s3:// URLs). Zero dependencies.",
+  "version": "0.1.0",
+  "description": "S3, R2 and MinIO blob store for coding.sh, observability and evals for any AI agent (s3:// URLs). Zero dependencies.",
   "license": "MIT",
+  "author": "coding.sh contributors",
   "type": "module",
+  "homepage": "https://coding.sh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jackulau/coding.sh.git",
+    "directory": "packages/blob-s3"
+  },
+  "bugs": {
+    "url": "https://github.com/jackulau/coding.sh/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "observability",
+    "evals",
+    "opentelemetry",
+    "llm",
+    "claude-code",
+    "codex",
+    "coding.sh",
+    "s3",
+    "r2",
+    "minio",
+    "store"
+  ],
   "exports": {
     ".": "./src/index.js",
     "./package.json": "./package.json"
   },
   "files": [
     "src",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=22.15"
   },
   "peerDependencies": {
-    "coding.sh": ">=0.0.1"
+    "coding.sh": ">=0.1.0"
   },
   "scripts": {
     "test": "node --no-warnings --test \"test/**/*.test.js\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check": "npm run typecheck && npm test"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

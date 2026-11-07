@@ -1,22 +1,25 @@
 [build-system]
-requires = ["setuptools>=64"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "coding-sh"
 version = "0.1.0"
-description = "Send LLM calls, traces and tool spans from Python apps to a coding.sh server."
+description = "Trace any AI agent or LLM app from Python: send model calls, traces and tool spans to a coding.sh server."
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "coding.sh contributors" }]
 requires-python = ">=3.9"
 dependencies = []
-keywords = ["observability", "llm", "openai", "anthropic", "opentelemetry", "tracing", "evals"]
+keywords = ["ai agents", "observability", "evals", "opentelemetry", "llm", "claude code", "codex", "openai", "anthropic", "tracing"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
-  "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Topic :: System :: Monitoring",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Typing :: Typed",
 ]
 
 [project.optional-dependencies]
@@ -24,9 +27,12 @@ openai = ["openai>=1.0"]
 anthropic = ["anthropic>=0.30"]
 otel = ["opentelemetry-sdk>=1.20", "opentelemetry-exporter-otlp-proto-http>=1.20"]
 
-
 [project.urls]
 Homepage = "https://coding.sh"
+Repository = "https://github.com/jackulau/coding.sh"
+Source = "https://github.com/jackulau/coding.sh/tree/main/packages/sdk-python"
+Issues = "https://github.com/jackulau/coding.sh/issues"
+Changelog = "https://github.com/jackulau/coding.sh/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]
