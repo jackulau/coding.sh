@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { harnessItem, itemExposure, type ExposureState } from "../../core/exposure.ts";
+import { nativeRoot } from "../../core/git.ts";
 import { DEFAULT_MODELS, lookupPrice, pricesFor } from "../../core/pricing.ts";
 import type { Context } from "../../core/context.ts";
 import type { RunResult } from "../../core/types.ts";
@@ -134,8 +135,10 @@ function git(root: string, args: string[]): string | undefined {
   }
 }
 
+/** The work-tree root as a native path (git prints C:/… on Windows; session cwds use C:\…). */
 export function gitRoot(cwd: string): string | undefined {
-  return git(cwd, ["rev-parse", "--show-toplevel"])?.trim() || undefined;
+  const [root, prefix] = (git(cwd, ["rev-parse", "--show-toplevel", "--show-prefix"]) ?? "").split("\n").map((l) => l.trim());
+  return root ? nativeRoot(cwd, root, prefix) : undefined;
 }
 
 /** The harness files at a git revision. */

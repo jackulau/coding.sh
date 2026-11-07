@@ -209,7 +209,7 @@ export async function repoRoot(cwd: string): Promise<string | undefined> {
  * in a default TEMP), so the root is rebuilt from cwd and git's --show-prefix to
  * keep the caller's spelling, as long as both name the same directory.
  */
-function nativeRoot(cwd: string, gitRoot: string, prefix: string | undefined): string {
+export function nativeRoot(cwd: string, gitRoot: string, prefix: string | undefined): string {
   const root = resolve(gitRoot);
   if (process.platform !== "win32" || prefix === undefined) return root;
   const fromCwd = resolve(cwd, ...prefix.split("/").filter(Boolean).map(() => ".."));
