@@ -699,6 +699,13 @@ export interface RunResult {
    * costUsd sums the calls whose model has a price; `unpriced` counts the others.
    */
   graderUsage?: { calls: number; costUsd: number; unpriced: number; inputTokens: number; outputTokens: number };
+  /**
+   * Content key of what this run measured (runner/cells.ts): task, bundle, agent version,
+   * attempt, timeout, env and route. Absent on runs from before X-16.
+   */
+  cellKey?: string;
+  /** Copied from this earlier run by `compare --reuse` instead of running the agent again. */
+  reusedFrom?: string;
 }
 
 export type { AgentEvent, AgentId, BlobRef, RepoState, Session, Usage };

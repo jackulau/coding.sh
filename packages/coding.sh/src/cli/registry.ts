@@ -941,6 +941,16 @@ export const COMMANDS: CommandSpec[] = [
       { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel runs" },
       { name: "max-cost", type: "number", value: "<USD>", desc: "Spend cap: once finished runs (agent plus judge grade calls) reach it, no new run starts" },
       { name: "experiment", type: "string", value: "<ID>", desc: "Compare the stored runs of this experiment instead of running" },
+      {
+        name: "reuse",
+        type: "string",
+        value: "<ARMS>",
+        choices: ["baseline", "both", "none"],
+        default: "none",
+        desc: "Copy finished runs of the same task, bundle, agent version, attempt and timeout from earlier comparisons instead of running them again",
+      },
+      { name: "reuse-max-age", type: "string", value: "<AGE>", default: "7d", desc: "With --reuse: only runs that finished this recently (30m, 12h, 7d, 2w)" },
+      { name: "dry-run", type: "boolean", desc: "Print how many runs each arm would reuse and run, and run nothing" },
       { name: "without", type: "list", value: "<PATH>", desc: "Ablation: B is A without this file, dir or glob (repeatable)" },
       {
         name: "gateway",
@@ -970,6 +980,7 @@ export const COMMANDS: CommandSpec[] = [
     examples: [
       "coding.sh compare base candidate --k 3",
       "coding.sh compare base candidate --k 3 --resume",
+      "coding.sh compare base candidate2 --k 3 --reuse baseline --dry-run",
       "coding.sh compare base candidate --experiment exp_01",
       "coding.sh compare base candidate --experiment exp_01 --audited",
       "coding.sh compare base candidate --k 3 --gate",

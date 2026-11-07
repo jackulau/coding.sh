@@ -763,7 +763,9 @@ Eval tasks (`coding.sh eval`), runs (`coding.sh compare`) and harness bundles (`
 answer `{"items":[…]}` and are empty for a scoped key.
 
 - `/api/tasks` filters: `status` (`draft`, `validated` or `archived`) and `tag`.
-- `/api/runs` filters: `experimentId`, `taskId` and `bundleId`.
+- `/api/runs` filters: `experimentId`, `taskId` and `bundleId`. A run carries `cellKey` (the content key
+  `compare --reuse` matches on; absent on older runs) and, when `compare --reuse` copied it, `reusedFrom`
+  (the id of the run it was copied from).
 - `/api/bundles` returns `id`, `name`, `agent`, `model`, `createdAt` and `note` only; overlay files stay behind `/api/blobs`.
 
 ```sh

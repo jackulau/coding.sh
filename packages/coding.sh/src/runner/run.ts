@@ -38,6 +38,8 @@ export interface RunTaskOpts {
   /** Override paths().runs (tests). */
   runsDir?: string;
   runId?: string;
+  /** Stamped on the result (runner/cells.ts), so a later `compare --reuse` can find it. */
+  cellKey?: string;
   /** Extra test globs for the tamper check (on top of the defaults and task.meta.testGlobs). */
   testGlobs?: string[];
   /** Agent-only routing (e.g. through AI Gateway): env and flags applied after the overlay, and a model override. Setup and verifier don't see it. */
@@ -150,6 +152,7 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
     agent: emptyAgent(),
     startedAt,
     endedAt: startedAt,
+    ...(opts.cellKey ? { cellKey: opts.cellKey } : {}),
   };
   const baseEnv = commandEnv({ ...(opts.env ?? {}), CODING_SH_RUN_ID: runId });
 

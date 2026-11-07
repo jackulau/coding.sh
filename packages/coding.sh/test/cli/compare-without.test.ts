@@ -246,3 +246,46 @@ describe("compare --without", () => {
     assert.equal(one.status, 2, one.stdout + one.stderr);
   });
 });
+
+describe("compare --reuse (X-16)", () => {
+  it("--reuse baseline copies A's finished runs, runs only B, and says the arms were not interleaved; --dry-run counts first", (t) => {
+    if (!gitBin) return t.skip("needs git");
+    const log = () => readFileSync(join(root, "runs.log"), "utf8").trim().split("\n");
+    // A fresh A run (k=2) that later comparisons can reuse.
+    const first = cli(["compare", "base", "--without", ".claude/skills/pdf", "-t", "sum", "--k", "2", "--yes", "--json"]);
+    assert.equal(first.status, 0, first.stdout + first.stderr);
+    const before = log().length;
+
+    const dry = cli(["compare", "base", "--without", "AGENTS.md", "-t", "sum", "--k", "2", "--reuse", "baseline", "--dry-run", "--json"]);
+    assert.equal(dry.status, 0, dry.stdout + dry.stderr);
+    const plan = JSON.parse(dry.stdout) as { dryRun: boolean; runs: number; toRun: number; baseline: { reused: number; toRun: number }; candidate: { reused: number; toRun: number }; unknownVersion?: string[] };
+    assert.deepEqual([plan.runs, plan.toRun, plan.baseline.reused, plan.baseline.toRun, plan.candidate.reused, plan.candidate.toRun], [4, 2, 2, 0, 0, 2]);
+    assert.deepEqual(plan.unknownVersion, ["wrapper"], "the wrapper agent reports no version");
+    const dryText = cli(["compare", "base", "--without", "AGENTS.md", "-t", "sum", "--k", "2", "--reuse", "baseline", "--dry-run"]);
+    assert.match(dryText.stdout, /^dry run: 4 runs \(1 task x 2 arms x 2\), 2 reused, 2 to run$/m);
+    assert.match(dryText.stderr, /agent version unknown for wrapper/);
+    assert.equal(log().length, before, "--dry-run runs nothing");
+
+    const r = cli(["compare", "base", "--without", "AGENTS.md", "-t", "sum", "--k", "2", "--reuse", "baseline", "--yes", "--json"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.deepEqual(log().slice(before), ["with", "with"], "only B (no AGENTS.md) ran");
+    const { experimentId, report } = JSON.parse(r.stdout) as { experimentId: string; report: { reused: { baseline: number; candidate: number }; baseline: { runs: number; passes: number }; notes: string[] } };
+    assert.deepEqual(report.reused, { baseline: 2, candidate: 0 });
+    assert.deepEqual([report.baseline.runs, report.baseline.passes], [2, 2]);
+    assert.ok(report.notes.some((n) => /^reused runs from earlier comparisons \(baseline 2\/2\).*not balanced/.test(n)), report.notes.join("\n"));
+    assert.ok(report.notes.includes("agent version unknown for wrapper: a reused run may come from another version of the agent"));
+    const again = cli(["compare", "base", "--without", "AGENTS.md", "--experiment", experimentId, "--json"]);
+    assert.deepEqual((JSON.parse(again.stdout) as { report: { reused: unknown; baseline: { runs: number } } }).report.reused, { baseline: 2, candidate: 0 }, "--experiment sees the copies");
+
+    const plain = cli(["compare", "base", "--without", "AGENTS.md", "-t", "sum", "--k", "2", "--yes", "--json"]);
+    assert.equal(plain.status, 0, plain.stdout + plain.stderr);
+    assert.equal(log().length, before + 6, "--reuse none (the default) runs both arms");
+    assert.equal((JSON.parse(plain.stdout) as { report: { reused?: unknown } }).report.reused, undefined);
+
+    for (const bad of [["--reuse", "all"], ["--reuse-max-age", "7d"], ["--reuse", "baseline", "--reuse-max-age", "soon"], ["--experiment", experimentId, "--reuse", "baseline"]]) {
+      const u = cli(["compare", "base", "--without", "AGENTS.md", "-t", "sum", ...bad]);
+      assert.equal(u.status, 2, `${bad.join(" ")}: ${u.stderr}`);
+    }
+    assert.equal(log().length, before + 6);
+  });
+});

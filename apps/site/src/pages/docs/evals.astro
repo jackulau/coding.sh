@@ -570,6 +570,13 @@ const TRIGGER = [
     the report shows both as <code>agent spend</code> and <code>grader spend</code>. The <a href="/docs/how-to/evaluate-a-skill">Evaluate an
     Agent Skill</a> guide walks through it.
   </p>
+  <p id="reuse">
+    <code>compare A B --reuse baseline</code> copies A's finished runs from earlier comparisons instead of running them again, so comparing
+    several candidates against one baseline pays for the baseline once. A run is reused only when its task (instruction, verifier, hidden
+    files), bundle, agent version, attempt and timeout are all the same, keyed by content, and only when it finished without an error inside
+    <code>--reuse-max-age</code> (default 7 days). <code>--dry-run</code> prints how many runs each arm would reuse and run. The report notes
+    that reused runs did not run interleaved with the new ones.
+  </p>
   <Code code={replay} />
   <div class="note">
     <p>

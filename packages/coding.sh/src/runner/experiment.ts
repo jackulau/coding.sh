@@ -20,6 +20,7 @@ import { selfCheckSummary, type SelfCheckSummary } from "./selfcheck.ts";
 import type { SnapshotOps } from "./git.ts";
 import { attributeTamper, tamperDisclosure, type TamperAttribution, type TamperDisclosure } from "./tamper.ts";
 import { runTask, type AgentRoute } from "./run.ts";
+import { cellKey, DEFAULT_REUSE_MAX_AGE_MS, newestByCell, type ReuseOpts } from "./cells.ts";
 
 // ------------------------------------------------------------ running
 
@@ -76,6 +77,65 @@ export interface RunExperimentOpts {
    * cost count as $0 and are counted in `budget.unpriced`.
    */
   maxCostUsd?: number;
+  /**
+   * Copy finished runs of the same cell (runner/cells.ts) from earlier
+   * comparisons instead of running them again, for these bundles only.
+   */
+  reuse?: ReuseOpts;
+  /** The agent version a bundle runs under, for the cell key. Default: its adapter's detect(). */
+  agentVersion?: (bundle: HarnessBundle) => Promise<string | undefined>;
+}
+
+/** Which jobs a stored run can stand in for, and which must run. */
+export interface CellPlan {
+  /** The jobs, in scheduleJobs order. */
+  jobs: Job[];
+  /** Cell key per job. */
+  keys: string[];
+  /** Job index → the stored run that will be copied. */
+  cached: Map<number, RunResult>;
+  /** Job indexes that must run. */
+  missing: number[];
+  /** With reuse: agents whose version is unknown, so an upgrade can't change the key. */
+  unknownVersion: string[];
+}
+
+/** The cell key of every job, and with `reuse` the stored runs that can stand in for them. */
+export async function planCells(o: Pick<RunExperimentOpts, "tasks" | "bundles" | "adapterFor" | "index" | "k" | "timeoutMs" | "env" | "route" | "reuse" | "agentVersion">, excludeExperiment?: string): Promise<CellPlan> {
+  const jobs = scheduleJobs(o.tasks, o.bundles, Math.max(1, o.k ?? 1));
+  const versions = new Map<string, { adapter: string; version: string | undefined }>();
+  for (const b of o.bundles) {
+    let adapter = b.agent;
+    let version: string | undefined;
+    try {
+      const a = o.adapterFor(b);
+      adapter = a.id;
+      version = o.agentVersion ? await o.agentVersion(b) : (await a.detect()).version;
+    } catch {
+      // no adapter or no version: the key says unknown
+    }
+    versions.set(b.id, { adapter, version });
+  }
+  const keys = jobs.map((j) => {
+    const v = versions.get(j.bundle.id)!;
+    return cellKey({ task: j.task, bundle: j.bundle, adapter: v.adapter, agentVersion: v.version, attempt: j.attempt, timeoutMs: o.timeoutMs, env: o.env, route: o.route });
+  });
+  const cached = new Map<number, RunResult>();
+  const unknownVersion = new Set<string>();
+  if (o.reuse?.bundleIds.length) {
+    const notBefore = (o.reuse.now ?? Date.now)() - (o.reuse.maxAgeMs ?? DEFAULT_REUSE_MAX_AGE_MS);
+    const byCell = new Map<string, RunResult>();
+    for (const id of new Set(o.reuse.bundleIds)) {
+      if (!o.bundles.some((b) => b.id === id)) continue;
+      if (versions.get(id)?.version === undefined) unknownVersion.add(versions.get(id)!.adapter);
+      for (const [k, r] of newestByCell(await o.index.listRuns({ bundleId: id }), notBefore, excludeExperiment)) byCell.set(k, r);
+    }
+    jobs.forEach((j, i) => {
+      const hit = o.reuse!.bundleIds.includes(j.bundle.id) ? byCell.get(keys[i] as string) : undefined;
+      if (hit) cached.set(i, hit);
+    });
+  }
+  return { jobs, keys, cached, missing: jobs.map((_, i) => i).filter((i) => !cached.has(i)), unknownVersion: [...unknownVersion] };
 }
 
 export interface BudgetReport {
@@ -137,7 +197,9 @@ export function defaultConcurrency(): number {
   return Math.max(1, Math.min(4, Math.floor(availableParallelism() / 2)));
 }
 
-export async function runExperiment(o: RunExperimentOpts): Promise<{ experimentId: string; results: RunResult[]; cancelled: boolean; budget?: BudgetReport }> {
+export async function runExperiment(
+  o: RunExperimentOpts,
+): Promise<{ experimentId: string; results: RunResult[]; cancelled: boolean; budget?: BudgetReport; reuse?: { reused: number; unknownVersion: string[] } }> {
   const jobScope = o.job;
   const experimentId = jobScope?.state<string>("experimentId") ?? o.experimentId ?? sortableId("exp_");
   if (jobScope && jobScope.state("experimentId") === undefined) {
@@ -154,11 +216,14 @@ export async function runExperiment(o: RunExperimentOpts): Promise<{ experimentI
     return id ? stored.get(id) : undefined;
   });
   let done = prior.filter(Boolean).length;
+  const cells = await planCells(o, experimentId);
+  let reused = prior.filter((r) => r?.reusedFrom).length;
   const cap = o.maxCostUsd;
   const budget: BudgetReport | undefined = cap === undefined ? undefined : { capUsd: cap, spentUsd: 0, skipped: 0, unpriced: 0 };
   /** Add a finished run's agent and judge cost to the budget. */
   const charge = (r: RunResult) => {
-    if (!budget) return;
+    // A reused run was paid for by the comparison that ran it.
+    if (!budget || r.reusedFrom) return;
     const cost = r.agent.usage?.costUsd;
     if (typeof cost === "number" && Number.isFinite(cost)) budget.spentUsd += cost;
     else budget.unpriced++;
@@ -171,6 +236,17 @@ export async function runExperiment(o: RunExperimentOpts): Promise<{ experimentI
   const settled = await pool(jobs, o.concurrency ?? defaultConcurrency(), async (job, i): Promise<RunResult | undefined> => {
     if (prior[i]) return prior[i];
     if (o.signal?.aborted || o.drain?.aborted) return undefined; // never started: not a run
+    const src = cells.cached.get(i);
+    if (src) {
+      // The same cell finished in an earlier comparison: copy it under this experiment, no agent call.
+      const copy: RunResult = { ...src, id: sortableId("run_"), experimentId, reusedFrom: src.id };
+      await o.index.putRun(copy);
+      await jobScope?.record(runKey(job), { ms: 0, outcome: copy.pass ? "pass" : "fail", data: { runId: copy.id, reusedFrom: src.id } });
+      reused++;
+      done++;
+      o.onProgress?.({ done, total: jobs.length, result: copy, task: job.task, bundle: job.bundle });
+      return copy;
+    }
     if (budget && budget.spentUsd >= budget.capUsd) {
       budget.skipped++;
       capped.add(i);
@@ -182,7 +258,7 @@ export async function runExperiment(o: RunExperimentOpts): Promise<{ experimentI
       async () => {
         // A retried attempt stays in the index for the record, marked so comparisons leave it out.
         if (last) await o.index.putRun({ ...last, superseded: true }).catch(() => {});
-        last = await attemptRun(o, job, experimentId);
+        last = await attemptRun(o, job, experimentId, cells.keys[i]);
         return last;
       },
       { policy: o.retry ?? { retries: 0, baseMs: 0, maxMs: 0 }, errorOf: (r) => r.error, classify: runInfra, stop: [o.signal, o.drain] },
@@ -211,13 +287,20 @@ export async function runExperiment(o: RunExperimentOpts): Promise<{ experimentI
     return result;
   });
   const results = settled.filter((r): r is RunResult => r !== undefined);
-  return { experimentId, results, cancelled: settled.some((r, i) => (r === undefined && !capped.has(i)) || r?.cancelled === true), ...(budget ? { budget } : {}) };
+  return {
+    experimentId,
+    results,
+    cancelled: settled.some((r, i) => (r === undefined && !capped.has(i)) || r?.cancelled === true),
+    ...(budget ? { budget } : {}),
+    ...(o.reuse ? { reuse: { reused, unknownVersion: cells.unknownVersion } } : {}),
+  };
 }
 
 /** One attempt of one job, stored in the index (runTask never throws for what the agent does). */
-async function attemptRun(o: RunExperimentOpts, job: Job, experimentId: string): Promise<RunResult> {
+async function attemptRun(o: RunExperimentOpts, job: Job, experimentId: string, key?: string): Promise<RunResult> {
   try {
     return await runTask({
+      ...(key ? { cellKey: key } : {}),
       task: job.task,
       bundle: job.bundle,
       adapter: o.adapterFor(job.bundle),
@@ -261,7 +344,8 @@ export async function loadRunSessions(index: IndexStore, results: readonly RunRe
   const out = new Map<string, Session>();
   for (const r of results) {
     let s = r.sessionId ? await index.getSession(r.sessionId) : undefined;
-    if (!s) s = (await index.listSessions({ runId: r.id, limit: 1 }))[0];
+    // A reused run's session was captured under the run it was copied from.
+    if (!s) s = (await index.listSessions({ runId: r.reusedFrom ?? r.id, limit: 1 }))[0];
     if (s) out.set(r.id, s);
   }
   return out;
@@ -426,6 +510,8 @@ export interface CompareReport {
    * when both bundles were given. relative = (B − A) / A (NaN when A has none).
    */
   surface?: { baseline: InstructionSurface; candidate: InstructionSurface; relative: number };
+  /** Runs per arm copied from earlier comparisons (`compare --reuse`); absent when none were. */
+  reused?: { baseline: number; candidate: number };
 }
 
 /** A candidate whose instruction surface grows by more than this gets the bloat note. */
@@ -758,6 +844,16 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
   if (cancelled) notes.push(`${cancelled} run(s) were cancelled before they finished and are left out`);
   if (infra) notes.push(`${infra} run(s) still failed on infrastructure errors (rate limit, 5xx, network) after their retries and are left out; compare --resume runs them again`);
   if (retried) notes.push(`${retried} run(s) were retried after infrastructure errors; only their last attempt counts (task failures are never retried)`);
+  const reused = { baseline: A.filter((r) => r.reusedFrom).length, candidate: B.filter((r) => r.reusedFrom).length };
+  if (reused.baseline || reused.candidate) {
+    const copies = [...A, ...B].filter((r) => r.reusedFrom);
+    const fresh = [...A, ...B].filter((r) => !r.reusedFrom);
+    const gap = fresh.length ? Math.max(...fresh.map((r) => r.startedAt)) - Math.min(...copies.map((r) => r.endedAt)) : 0;
+    const which = [reused.baseline ? `baseline ${reused.baseline}/${A.length}` : "", reused.candidate ? `candidate ${reused.candidate}/${B.length}` : ""].filter(Boolean).join(", ");
+    notes.push(
+      `reused runs from earlier comparisons (${which})${gap > 0 ? `, finished up to ${ageText(gap)} before the new ones` : ""}: the arms did not run interleaved, so drift since then (model updates, API latency, rate limits) is not balanced across them`,
+    );
+  }
   const errored = [...A, ...B].filter((r) => r.error);
   if (errored.length) {
     const passed = errored.filter((r) => r.pass).length;
@@ -834,6 +930,7 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     ...(opts.itemGate ? { itemGate: itemGate(all, { ...opts.itemGate, baseline: opts.baseline, candidate: opts.candidate }) } : {}),
     ...(atts?.size ? { tamperAttribution: Object.fromEntries(atts) } : {}),
     ...(surface ? { surface } : {}),
+    ...(reused.baseline || reused.candidate ? { reused } : {}),
   };
 }
 
@@ -992,6 +1089,14 @@ function decide(
 }
 
 // ------------------------------------------------------------ formatting
+
+/** A coarse age: 40s, 12m, 5h, 3d. */
+function ageText(ms: number): string {
+  if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}s`;
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`;
+  if (ms < 2 * 86_400_000) return `${Math.round(ms / 3_600_000)}h`;
+  return `${Math.round(ms / 86_400_000)}d`;
+}
 
 export function formatDuration(ms: number): string {
   if (!Number.isFinite(ms)) return "—";

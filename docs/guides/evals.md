@@ -816,6 +816,37 @@ finished runs reach the cap (agent plus grader cost), no new run starts. Runs al
 so the total can pass the cap by what the runs in flight cost. The compare then covers the runs that
 finished. Runs that report no cost count as $0 and are listed as such. `--json` carries `budget`.
 
+### Reuse finished runs
+
+Comparing three candidates against one baseline runs the baseline three times. `--reuse baseline`
+copies A's finished runs from earlier comparisons instead (`--reuse both` copies B's too). A run is
+reused only when everything it measured is the same, keyed by content, never by path: the task's
+start snapshot, setup, instruction and verifier (hidden files included), the bundle (its id hashes
+its files), the agent's version, the attempt number, the trial timeout, and the gateway route.
+Editing a hidden test or a CLAUDE.md, or upgrading the agent, runs it again. So does a run that
+recorded an error, was cancelled or failed on infrastructure, and one older than
+`--reuse-max-age` (default `7d`). Every run stores its key as `cellKey`, and a copy stores
+`reusedFrom`, the run it was copied from. Copies count $0 toward `--max-cost`.
+
+`--dry-run` prints what would run and runs nothing:
+
+```
+dry run: 4 runs (1 task x 2 arms x 2), 2 reused, 2 to run
+baseline   base                    2 reused, 0 to run
+candidate  base-without-agents-md  0 reused, 2 to run
+```
+
+Reused runs did not run next to the new ones, so drift (a model update, API latency) is not
+balanced across the arms. The report says so, with how much earlier they finished:
+
+```
+note: reused runs from earlier comparisons (baseline 2/2), finished up to 3h before the new ones: the arms did not run interleaved, so drift since then (model updates, API latency, rate limits) is not balanced across them
+```
+
+When the agent can't report its version, an upgrade can't change the key; the dry run and the
+report warn about it. `--json` carries `report.reused` (`{"baseline", "candidate"}`), present only
+when runs were reused.
+
 ## A/B a harness edit on your own sessions
 
 `coding.sh compare` needs eval tasks with verifiers. Often you don't have those yet. You have a

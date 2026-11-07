@@ -1843,6 +1843,9 @@ coding.sh compare <A> [b] [options]
 | `-c, --concurrency <N>` |  | Parallel runs. |
 | `--max-cost <USD>` |  | Spend cap: once finished runs (agent plus judge grade calls) reach it, no new run starts. |
 | `--experiment <ID>` |  | Compare the stored runs of this experiment instead of running. |
+| `--reuse <ARMS>` | `none` | Copy finished runs of the same task, bundle, agent version, attempt and timeout from earlier comparisons instead of running them again. One of: `baseline`, `both`, `none`. |
+| `--reuse-max-age <AGE>` | `7d` | With --reuse: only runs that finished this recently (30m, 12h, 7d, 2w) |
+| `--dry-run` |  | Print how many runs each arm would reuse and run, and run nothing. |
 | `--without <PATH>` |  | Ablation: B is A without this file, dir or glob (repeatable) |
 | `--gateway [<NAME>]` |  | Route both arms through a gateway. Without a name: [gateway] default, else the one with a key, else vercel. One of: `vercel`, `openrouter`, `litellm`, `ramp`. |
 | `--gate` |  | Ship-or-hold decision: exit 0 when B wins enough without breaking what A solved, 1 otherwise. |
@@ -1865,6 +1868,7 @@ coding.sh compare <A> [b] [options]
 ```sh
 coding.sh compare base candidate --k 3
 coding.sh compare base candidate --k 3 --resume
+coding.sh compare base candidate2 --k 3 --reuse baseline --dry-run
 coding.sh compare base candidate --experiment exp_01
 coding.sh compare base candidate --experiment exp_01 --audited
 coding.sh compare base candidate --k 3 --gate

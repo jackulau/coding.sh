@@ -18,7 +18,7 @@ import { git } from "../../runner/git.ts";
 import { hasGlob } from "../../runner/glob.ts";
 import type { AgentRoute } from "../../runner/run.ts";
 import type { EvalTask, HarnessBundle, RunResult } from "../../core/types.ts";
-import { formatCompare, PARETO_NEEDS_COST, runExperiment, type BudgetReport } from "../../runner/experiment.ts";
+import { formatCompare, PARETO_NEEDS_COST, planCells, runExperiment, type BudgetReport } from "../../runner/experiment.ts";
 import { sortableId } from "../../core/ids.ts";
 import { jobConfig } from "../../jobs/config.ts";
 import { positiveInt, UsageError } from "../args.ts";
@@ -38,6 +38,11 @@ export async function run(c: CommandContext): Promise<number> {
   const gateBy = str(c.flags.by);
   if (c.flags.by !== undefined && !gate) throw new UsageError("--by needs --gate", { reason: "invalid_argument" });
   if (c.flags.by !== undefined && !gateBy) throw new UsageError("--by needs a tag prefix, e.g. --by suite:", { reason: "invalid_argument" });
+  const reuseWhat = str(c.flags.reuse) ?? "none";
+  if (!["none", "baseline", "both"].includes(reuseWhat)) throw new UsageError(`--reuse takes baseline, both or none, got ${JSON.stringify(reuseWhat)}`, { reason: "invalid_argument" });
+  const reuseMaxAgeMs = c.flags["reuse-max-age"] === undefined ? undefined : ageMs(String(c.flags["reuse-max-age"]));
+  if (reuseMaxAgeMs !== undefined && reuseWhat === "none") throw new UsageError("--reuse-max-age needs --reuse baseline or --reuse both", { reason: "invalid_argument" });
+  if (c.flags.experiment !== undefined && (reuseWhat !== "none" || c.flags["dry-run"] === true)) throw new UsageError("--reuse and --dry-run plan new runs; --experiment re-analyses stored ones", { reason: "invalid_argument" });
   return withContext(c, async (ctx) => {
     const without = list(c.flags.without);
     if (without.length && c.positionals.length > 1) throw new UsageError("--without derives the second arm from the first; pass one bundle", { reason: "invalid_argument" });
@@ -77,6 +82,7 @@ export async function run(c: CommandContext): Promise<number> {
     let taskNames: Map<string, string> | undefined;
     let results: RunResult[];
     let budget: BudgetReport | undefined;
+    let versionNote: string | undefined;
     if (experimentId) {
       results = (await ctx.index.listRuns({ experimentId })).filter((r) => r.bundleId === A.id || r.bundleId === B.id);
       if (!results.length) throw new CliError(`Experiment ${experimentId} has no runs for these bundles`, { reason: "not_found" });
@@ -112,10 +118,32 @@ export async function run(c: CommandContext): Promise<number> {
       const route = gateway ? gatewayRouteFor(bundles, gateway) : undefined;
       const k = positiveInt(c.flags.k, "k") ?? 1;
       const runs = tasks.length * 2 * k;
-      await requireConsent(c, `Run ${plural(runs, "agent session")} (${plural(tasks.length, "task")} x 2 arms x ${k})?`, `coding.sh compare ${arms} --yes`);
+      const timeoutMs = trialTimeout(c);
+      // Finished runs of the same cell (task, bundle, agent version, attempt, timeout, route) from earlier comparisons.
+      const reuse = reuseWhat === "none" ? undefined : { bundleIds: reuseWhat === "both" ? [A.id, B.id] : [A.id], ...(reuseMaxAgeMs !== undefined ? { maxAgeMs: reuseMaxAgeMs } : {}) };
+      const versions = new Map<string, Promise<string | undefined>>();
+      const agentVersion = (b: HarnessBundle) => {
+        if (!versions.has(b.agent)) versions.set(b.agent, getAdapter(b.agent)!.detect().then((d) => d.version).catch(() => undefined));
+        return versions.get(b.agent)!;
+      };
+      const cellOpts = { tasks, bundles: [A, B], adapterFor: (b: HarnessBundle) => getAdapter(b.agent)!, index: ctx.index, k, agentVersion, ...(route ? { route } : {}), ...(timeoutMs !== undefined ? { timeoutMs } : {}), ...(reuse ? { reuse } : {}) };
+      const plan = reuse || c.flags["dry-run"] === true ? await planCells(cellOpts) : undefined;
+      const cachedIn = (b: HarnessBundle) => [...(plan?.cached.keys() ?? [])].filter((i) => plan!.jobs[i]!.bundle.id === b.id).length;
+      const cached = plan?.cached.size ?? 0;
+      if (c.flags["dry-run"] === true) {
+        const arm = (b: HarnessBundle) => ({ bundle: b.id, name: b.name, reused: cachedIn(b), toRun: runs / 2 - cachedIn(b) });
+        if (out.json) out.data({ dryRun: true, runs, toRun: runs - cached, baseline: arm(A), candidate: arm(B), ...(plan?.unknownVersion.length ? { unknownVersion: plan.unknownVersion } : {}) });
+        else {
+          out.print(`dry run: ${plural(runs, "run")} (${plural(tasks.length, "task")} x 2 arms x ${k}), ${cached} reused, ${runs - cached} to run`);
+          const w = Math.max(A.name.length, B.name.length);
+          for (const [label, b] of [["baseline ", A], ["candidate", B]] as const) out.print(`${label}  ${b.name.padEnd(w)}  ${cachedIn(b)} reused, ${runs / 2 - cachedIn(b)} to run`);
+          if (plan?.unknownVersion.length) out.warn(`agent version unknown for ${plan.unknownVersion.join(", ")}: a reused run may come from another version of the agent`);
+        }
+        return 0;
+      }
+      await requireConsent(c, `Run ${plural(runs - cached, "agent session")} (${plural(tasks.length, "task")} x 2 arms x ${k}${cached ? `, ${cached} reused` : ""})?`, `coding.sh compare ${arms} --yes`);
       await storeAblation();
       const concurrency = positiveInt(c.flags.concurrency, "concurrency");
-      const timeoutMs = trialTimeout(c);
       // Durable: each finished run is checkpointed; --resume continues an interrupted comparison.
       // Gateway routing changes what runs (model, flags); its env values (keys) stay out of the hash.
       const routed = route ? [A, B].map((b) => route(b)).map((x) => (x ? { flags: x.flags, model: x.model, env: Object.keys(x.env).sort() } : null)) : undefined;
@@ -144,6 +172,8 @@ export async function run(c: CommandContext): Promise<number> {
             job: job.scope(),
             retry: retryFlag(c),
             experimentId: job.id,
+            agentVersion,
+            ...(reuse ? { reuse } : {}),
             onProgress: (p) => spin.update(`Running ${p.done}/${p.total}…`),
           }),
         )
@@ -152,6 +182,7 @@ export async function run(c: CommandContext): Promise<number> {
       experimentId = r.experimentId;
       results = r.results;
       budget = r.budget;
+      if (r.reuse?.reused && r.reuse.unknownVersion.length) versionNote = `agent version unknown for ${r.reuse.unknownVersion.join(", ")}: a reused run may come from another version of the agent`;
       if (budget) {
         const b = budget;
         const line = `spent $${b.spentUsd.toFixed(2)} of the $${b.capUsd.toFixed(2)} cap${b.unpriced ? `; ${plural(b.unpriced, "run")} reported no cost and count as $0` : ""}`;
@@ -181,6 +212,7 @@ export async function run(c: CommandContext): Promise<number> {
       ...(change ? { change } : {}),
       ...(c.flags.audited === true ? { audited: true } : {}),
     });
+    if (versionNote) report.notes.push(versionNote);
     if (out.json) out.data({ experimentId, report, ...resume, ...(budget ? { budget } : {}) });
     else {
       out.print(formatCompare(report, { color: out.color, arms, taskNames }));
@@ -264,4 +296,11 @@ function gatewayRouteFor(bundles: HarnessBundle[], c: GatewayConfig): AgentRoute
     return (b) => gatewayRoute(b.agent, b.model, key);
   }
   return (b) => routeVia(c, b.agent, b.model);
+}
+
+/** `--reuse-max-age`: a duration such as 30m, 12h, 7d or 2w. */
+function ageMs(v: string): number {
+  const m = /^(\d+(?:\.\d+)?)\s*(s|m|h|d|w)$/.exec(v.trim());
+  if (!m || !(Number(m[1]) > 0)) throw new UsageError(`--reuse-max-age needs a duration such as 12h, 7d or 2w, got ${JSON.stringify(v)}`, { reason: "invalid_argument" });
+  return Number(m[1]) * { s: 1e3, m: 60e3, h: 3600e3, d: 86400e3, w: 7 * 86400e3 }[m[2] as "s" | "m" | "h" | "d" | "w"];
 }
