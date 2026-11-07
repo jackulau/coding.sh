@@ -5,10 +5,12 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { after, describe, it } from "node:test";
 import { acquireLock, isLocked, isStale, LockBusyError, LockLostError } from "../../src/core/lock.ts";
 
-const LOCK_TS = join(import.meta.dirname, "..", "..", "src", "core", "lock.ts");
+// A file URL: a bare Windows path is not an import specifier.
+const LOCK_TS = pathToFileURL(join(import.meta.dirname, "..", "..", "src", "core", "lock.ts")).href;
 const roots: string[] = [];
 after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
 function dir(): string {

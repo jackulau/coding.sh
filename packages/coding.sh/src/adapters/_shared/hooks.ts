@@ -18,9 +18,18 @@ export function quoteArg(s: string): string {
   return `"${s.replace(/(["\\$`])/g, "\\$1")}"`;
 }
 
+/**
+ * A Windows path (C:\Users\…) with forward slashes. Node, cmd.exe, PowerShell
+ * and Git Bash all accept C:/Users/…, and the command line then has no
+ * backslashes for a shell to eat or double. Other paths are returned as is.
+ */
+export function hookPathForCommand(hookPath: string): string {
+  return /^[A-Za-z]:\\/.test(hookPath) ? hookPath.replace(/\\/g, "/") : hookPath;
+}
+
 /** `node "<hook>" <agent> <event> [extra…]` — the path is always quoted. */
 export function buildHookCommand(hookPath: string, agent: string, event: string, extra: string[] = []): string {
-  const quoted = `"${hookPath.replace(/(["\\$`])/g, "\\$1")}"`;
+  const quoted = `"${hookPathForCommand(hookPath).replace(/(["\\$`])/g, "\\$1")}"`;
   return ["node", quoted, agent, event, ...extra.map(quoteArg)].join(" ");
 }
 

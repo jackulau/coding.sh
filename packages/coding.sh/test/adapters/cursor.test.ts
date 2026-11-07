@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { CURSOR_HOOK_EVENTS, cursor, cursorVersionHasHooks } from "../../src/adapters/cursor.ts";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { PROBE_TIMEOUT_MS } from "../../src/adapters/_shared/detect.ts";
+import { hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
+import { nodeBin } from "../_bin.ts";
 import { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 
 const CID = "c0ffee00-1111-4222-8333-444455556666";
@@ -66,9 +68,9 @@ describe("cursor install", () => {
     assert.equal(c[0]!.action, "modify");
     const cfg = JSON.parse(readFileSync(file(), "utf8"));
     assert.equal(cfg.hooks.afterFileEdit[0].command, "./hooks/format.sh");
-    assert.equal(cfg.hooks.afterFileEdit[1].command, `node "${hookCommand()}" cursor afterFileEdit`);
+    assert.equal(cfg.hooks.afterFileEdit[1].command, `node "${hookPathForCommand(hookCommand())}" cursor afterFileEdit`);
     assert.equal(cfg.hooks.afterFileEdit[1]._codingsh, undefined, "no unknown keys in Cursor entries");
-    assert.equal(cfg.hooks.beforeSubmitPrompt[0].command, `node "${hookCommand()}" cursor beforeSubmitPrompt --echo-continue`);
+    assert.equal(cfg.hooks.beforeSubmitPrompt[0].command, `node "${hookPathForCommand(hookCommand())}" cursor beforeSubmitPrompt --echo-continue`);
     assert.equal((await cursor.detect()).hooked, true);
     assert.deepEqual(await cursor.install({ hookCommand: hookCommand(), scope: "user", dryRun: false }), []);
 
@@ -100,7 +102,7 @@ describe("cursor install", () => {
       for (const e of CURSOR_HOOK_EVENTS) {
         const ours = cfg.hooks[e.event]!.filter((h) => h.command.includes("hook.mjs"));
         assert.equal(ours.length, 1, `${e.event}: exactly one coding.sh entry`);
-        assert.ok(ours[0]!.command.includes(hookCommand()), `${e.event}: the current home's hook`);
+        assert.ok(ours[0]!.command.includes(hookPathForCommand(hookCommand())), `${e.event}: the current home's hook`);
       }
       assert.deepEqual(cfg.hooks.sessionStart![0], userEntry, "the user's hook is kept, first");
       await cursor.uninstall({ scope: "user", dryRun: false });
@@ -134,15 +136,13 @@ describe("cursor detect", () => {
   // budget, the probe came back empty, and init skipped an installed Cursor.
   it("keeps cursor-agent when its version probe yields nothing, but not a generic `agent`", async () => {
     const bin = join(env.root, "bin");
-    writeFile(join(bin, "agent"), "#!/bin/sh\nexit 1\n");
-    chmodSync(join(bin, "agent"), 0o755);
+    nodeBin(bin, "agent", "process.exitCode = 1;\n");
     process.env.PATH = bin;
     assert.equal((await cursor.detect()).installed, false, "an unknown `agent` binary is not Cursor");
-    writeFile(join(bin, "cursor-agent"), "#!/bin/sh\nexit 1\n");
-    chmodSync(join(bin, "cursor-agent"), 0o755);
+    const p = nodeBin(bin, "cursor-agent", "process.exitCode = 1;\n");
     const r = await cursor.detect();
     assert.equal(r.installed, true);
-    assert.equal(r.binary, join(bin, "cursor-agent"));
+    assert.equal(r.binary, process.platform === "win32" ? `${p}.cmd` : p, "Windows runs the .cmd shim");
   });
 
   it("gives version probes a budget that survives a busy machine", () => {

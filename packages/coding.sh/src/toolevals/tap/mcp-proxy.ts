@@ -10,7 +10,7 @@
 // Streamable HTTP endpoint. Both keep the whole tap in this process, so they
 // work from src/ and from the dist bundle alike. `tap/main.ts mcp` runs the
 // same tap as a standalone stdio process.
-import { spawn } from "node:child_process";
+import { spawn } from "../../core/spawn.ts";
 import { trackChild } from "../../core/children.ts";
 import { appendFileSync } from "node:fs";
 import { chmod, mkdir, writeFile } from "node:fs/promises";

@@ -8,7 +8,7 @@
 //     usage/test/file-change heuristics shared across agents
 //   - processes: binary lookup, version probe, headless spawn with a group-kill timeout
 //   - transcripts: JSONL readers, directory walks, read-only SQLite copies
-import { spawn, execFile } from "node:child_process";
+import { spawn, execFile } from "../../core/spawn.ts";
 import { randomBytes } from "node:crypto";
 import { closeSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync, chmodSync } from "node:fs";
 import { createReadStream } from "node:fs";
@@ -23,6 +23,7 @@ import { supervise } from "../../core/children.ts";
 import { commandOf, isVerifyCommand } from "../../core/sessions.ts";
 import { exactUninstall, existedBeforeInstall, forgetInstall, recordInstall, restoreForInstall } from "../_shared/installs.ts";
 import { resolveWriteTarget } from "../_shared/files.ts";
+import { hookPathForCommand } from "../_shared/hooks.ts";
 import { editJsonc, parseJsonc as parseJsoncShared } from "../_shared/jsonc.ts";
 
 export type Json = Record<string, unknown>;
@@ -87,7 +88,7 @@ export function xdg(kind: "config" | "data" | "state" | "cache", env: NodeJS.Pro
 
 /** The one hook command every adapter installs: node "<hook.mjs>" <agent> <Event>. */
 export function hookCmd(hookCommand: string, agent: AgentId, event: string, extra = ""): string {
-  return `node "${hookCommand}" ${agent} ${event}${extra ? ` ${extra}` : ""}`;
+  return `node "${hookPathForCommand(hookCommand)}" ${agent} ${event}${extra ? ` ${extra}` : ""}`;
 }
 
 /** True when a command string is a coding.sh hook for `agent` (works without the marker). */
@@ -705,7 +706,8 @@ export function attachRaw(events: AgentEvent[], ref: string | undefined): AgentE
  * version manager can be a versioned path that later disappears).
  */
 export function resolveNodePath(env: NodeJS.ProcessEnv = process.env): string {
-  return findBinary(["node"], env) ?? process.execPath;
+  // Windows: only node.exe. The plugins call child_process.spawn directly, which cannot run a node.cmd shim.
+  return findBinary(["node"], process.platform === "win32" ? { ...env, PATHEXT: ".EXE" } : env) ?? process.execPath;
 }
 
 export function findBinary(names: readonly string[], env: NodeJS.ProcessEnv = process.env, extra: readonly string[] = []): string | undefined {

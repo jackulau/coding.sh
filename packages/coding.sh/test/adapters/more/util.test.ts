@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileTouches, isOurCommand, parseJsonc, parseTestSummary, spawnAgent, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { fakeBinary, moreEnv } from "./_helpers.ts";
+import { nodeBin } from "../../_bin.ts";
 
 describe("parseTestSummary", () => {
   const cases: [string, string, unknown][] = [
@@ -80,26 +81,39 @@ describe("spawnAgent", () => {
   after(() => env.restore());
 
   it("times out, kills the process group and keeps output tails", async () => {
-    const bin = join(env.root, "bin");
-    mkdirSync(bin, { recursive: true });
-    // A sh script, not node: it prints at once, so "started" is out long before the
-    // timeout even on a loaded machine (a node binary's startup alone can take
-    // seconds there). The background sleeper checks the whole group is killed.
-    const p = join(bin, "slow");
+    // A node agent that starts a node child and records the child's real pid (an MSYS
+    // shell's pids are not Windows pids), then prints. The timeout leaves room for two
+    // node startups on a loaded machine; the child checks the whole tree/group is killed.
     const pidFile = join(env.root, "slow.bg.pid");
-    writeFileSync(p, `#!/bin/sh\necho started\nsleep 60 &\necho $! > ${JSON.stringify(pidFile)}\nwait\n`);
-    chmodSync(p, 0o755);
+    const p = nodeBin(
+      join(env.root, "bin"),
+      "slow",
+      `const c = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(c.pid));
+console.log("started");
+setTimeout(() => {}, 60000);
+`,
+    );
     mkdirSync(join(env.root, "w"), { recursive: true });
-    const r = await spawnAgent({ bin: p, args: [], cwd: join(env.root, "w"), env: { ...process.env }, timeoutMs: 2000 });
+    const r = await spawnAgent({ bin: p, args: [], cwd: join(env.root, "w"), env: { ...process.env }, timeoutMs: 8000 });
     assert.equal(r.timedOut, true);
     assert.match(r.stdoutTail, /started/);
     assert.ok(r.durationMs < 30_000, `took ${r.durationMs}ms`);
     const bg = Number(readFileSync(pidFile, "utf8").trim());
-    let alive = true;
-    try {
-      process.kill(bg, 0);
-    } catch {
-      alive = false;
+    // The child was killed with the agent, but its pipes can close before it has been
+    // reaped (it is reparented first), so give it a moment instead of checking once.
+    const isAlive = () => {
+      try {
+        process.kill(bg, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    let alive = isAlive();
+    for (let i = 0; alive && i < 50; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      alive = isAlive();
     }
     if (alive) process.kill(bg, "SIGKILL");
     assert.equal(alive, false, "background child of the agent killed with its group");

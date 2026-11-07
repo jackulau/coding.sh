@@ -191,7 +191,10 @@ export function computeMetrics(i: MetricsInput): ToolMetrics {
       shellBinHelp += u.binHelp;
     } else if (c.category === "read" && c.path && target.docs?.length) {
       const cwd = e.cwd ?? "";
-      const rel = cwd && c.path.startsWith(cwd + "/") ? c.path.slice(cwd.length + 1) : c.path.replace(/^\.\//, "");
+      // Docs globs use "/": a Windows path (C:\work\docs\x.md) is matched with forward slashes.
+      const p = c.path.replace(/\\/g, "/");
+      const base = cwd.replace(/\\/g, "/");
+      const rel = base && p.startsWith(base + "/") ? p.slice(base.length + 1) : p.replace(/^\.\//, "");
       if (matchAny(rel, target.docs)) {
         docReads++;
         docBytes += outBytes(e);

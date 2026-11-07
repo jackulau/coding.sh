@@ -72,7 +72,9 @@ describe("pi install + extension", () => {
     const saved = process.env.PATH;
     try {
       const bin = join(env.root, "node-bin");
-      const node = fakeBinary(bin, "node", "");
+      let node = fakeBinary(bin, "node", "");
+      // Windows: the plugin spawns node without a shell, so only node.exe counts (not the .cmd shim).
+      if (process.platform === "win32") writeFile((node = join(bin, "node.exe")), "");
       process.env.PATH = bin;
       const [onPath] = await piAdapter.install({ hookCommand: HOOK, scope: "user", dryRun: true });
       assert.ok(onPath?.after?.includes(`const NODE = ${JSON.stringify(node)};`), "uses node from PATH");

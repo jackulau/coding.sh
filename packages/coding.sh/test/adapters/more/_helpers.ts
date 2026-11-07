@@ -2,11 +2,12 @@
 // isolates every agent-specific config variable these adapters read, so no test
 // ever reads or writes the real ~.
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join, relative, sep } from "node:path";
 import type { Adapter, AgentRunOutput, RunSpec } from "../../../src/core/types.ts";
 import type { AgentEvent } from "../../../src/schema/index.ts";
 import { loadSpool, testCtx, tmpEnv, type TmpEnv } from "../_helpers.ts";
+import { nodeBin, pathOf } from "../../_bin.ts";
 
 export { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, writeFile } from "../_helpers.ts";
 
@@ -48,7 +49,7 @@ export async function normalizeFixture(adapter: Adapter, rel: string): Promise<A
   return out;
 }
 
-/** Snapshot of every file under dir: relative path → content. */
+/** Snapshot of every file under dir: relative path ("/"-separated) → content. */
 export function snapshotDir(dir: string): Record<string, string> {
   const out: Record<string, string> = {};
   const walk = (d: string) => {
@@ -56,7 +57,7 @@ export function snapshotDir(dir: string): Record<string, string> {
     for (const e of readdirSync(d, { withFileTypes: true })) {
       const full = join(d, e.name);
       if (e.isDirectory()) walk(full);
-      else out[relative(dir, full)] = readFileSync(full, "utf8");
+      else out[relative(dir, full).split(sep).join("/")] = readFileSync(full, "utf8");
     }
   };
   walk(dir);
@@ -99,18 +100,14 @@ const prefix = (o: Record<string, string>, p: string) => Object.fromEntries(Obje
 
 /** A fake agent binary (a node script) that records argv/env and prints `stdout`. */
 export function fakeBinary(dir: string, name: string, script: string): string {
-  mkdirSync(dir, { recursive: true });
-  const p = join(dir, name);
-  writeFileSync(
-    p,
-    `#!/usr/bin/env node
-const fs = require("node:fs");
+  return nodeBin(
+    dir,
+    name,
+    `const fs = require("node:fs");
 fs.writeFileSync(${JSON.stringify(join(dir, `${name}.argv.json`))}, JSON.stringify({ argv: process.argv.slice(2), runId: process.env.CODING_SH_RUN_ID, cwd: process.cwd(), env: { CI: process.env.CI, NO_COLOR: process.env.NO_COLOR, GOOSE_MODE: process.env.GOOSE_MODE, GEMINI_CLI_TRUST_WORKSPACE: process.env.GEMINI_CLI_TRUST_WORKSPACE } }));
 ${script}
 `,
   );
-  chmodSync(p, 0o755);
-  return p;
 }
 
 export function readArgv(dir: string, name: string): { argv: string[]; runId: string; cwd: string; env: Record<string, string | undefined> } {
@@ -118,7 +115,7 @@ export function readArgv(dir: string, name: string): { argv: string[]; runId: st
 }
 
 export function runSpec(cwd: string, binDir: string, over: Partial<RunSpec> = {}): RunSpec {
-  return { cwd, instruction: "fix the bug", env: { PATH: `${binDir}:${process.env.PATH ?? ""}` }, timeoutMs: 20_000, flags: [], runId: "run-42", ...over };
+  return { cwd, instruction: "fix the bug", env: { PATH: pathOf(binDir, process.env.PATH) }, timeoutMs: 20_000, flags: [], runId: "run-42", ...over };
 }
 
 export function assertRunOk(r: AgentRunOutput): void {

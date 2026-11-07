@@ -101,8 +101,12 @@ describe("coding.sh serve (CLI)", () => {
     const hc = run(["serve", "healthcheck", "--url", `${url}/readyz`], env);
     assert.equal(hc.status, 0, hc.stderr);
     child.kill("SIGTERM");
-    assert.equal(await exited, 0, stderr);
-    assert.match(stderr, /"msg":"stopped","drained":true/);
+    const code = await exited;
+    // On Windows SIGTERM terminates the server outright: no handler runs, so no drain to check.
+    if (process.platform !== "win32") {
+      assert.equal(code, 0, stderr);
+      assert.match(stderr, /"msg":"stopped","drained":true/);
+    }
     assert.equal(run(["serve", "healthcheck", "--url", `${url}/healthz`, "--timeout", "500"], env).status, 1);
 
     // Another HOME reads the server's database through --store (and ingests nothing of its own).

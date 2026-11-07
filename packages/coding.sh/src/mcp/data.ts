@@ -1,7 +1,7 @@
 // Read-side queries behind the MCP tools: small, model-sized summaries over
 // the index (never raw event dumps). Pure functions of an IndexStore so they
 // test against the memory store.
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { AgentEvent, IndexStore, Session, SessionFilter } from "../core/types.ts";
 import { failureFlags, percentile } from "../core/sessions.ts";
@@ -740,11 +740,21 @@ export function countNodes(t: SubagentNode[]): number {
 
 // ------------------------------------------------------------ current session
 
-/** Nearest directory at or above `dir` holding .git, else undefined. */
+/** A `.git` git itself accepts: a gitdir file (worktree, submodule) or a dir with HEAD (not a stray empty dir). */
+function hasGit(d: string): boolean {
+  const g = join(d, ".git");
+  try {
+    return statSync(g).isFile() || existsSync(join(g, "HEAD"));
+  } catch {
+    return false;
+  }
+}
+
+/** Nearest directory at or above `dir` holding a .git, else undefined. */
 export function gitRoot(dir: string): string | undefined {
   let d = resolve(dir);
   for (let i = 0; i < 64; i++) {
-    if (existsSync(join(d, ".git"))) return d;
+    if (hasGit(d)) return d;
     const up = dirname(d);
     if (up === d) return undefined;
     d = up;

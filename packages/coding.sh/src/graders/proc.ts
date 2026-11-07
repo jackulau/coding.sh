@@ -2,7 +2,7 @@
 // stdout/stderr, and kill the whole process group on timeout. Shared by the
 // command grader and the command task so ANY agent or scorer in any language
 // plugs in through the same, well-defined interface.
-import { spawn } from "node:child_process";
+import { spawn } from "../core/spawn.ts";
 import { supervise } from "../core/children.ts";
 
 export interface CommandSpec {

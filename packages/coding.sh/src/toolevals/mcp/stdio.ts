@@ -1,7 +1,8 @@
 // MCP stdio transport (§10): one JSON message per line on stdin/stdout,
 // stderr kept (first 8 KB) for the tap. Shutdown: close stdin, wait 2 s,
 // SIGTERM, wait 2 s, SIGKILL.
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawn } from "../../core/spawn.ts";
 import { trackChild } from "../../core/children.ts";
 import { isRequest, isResponse, LineSplitter, RPC, type RpcNotification, type RpcRequest, type RpcResponse } from "./jsonrpc.ts";
 

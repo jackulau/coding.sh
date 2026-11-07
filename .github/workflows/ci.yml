@@ -89,9 +89,7 @@ jobs:
         # bash (Git for Windows) keeps the quoted test glob and /dev/null the same as on Linux.
         shell: bash
     steps:
-      - name: Keep LF line endings
-        run: git config --global core.autocrlf false
-
+      # .gitattributes keeps LF in the checkout, whatever core.autocrlf says.
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -126,3 +124,21 @@ jobs:
         run: |
           node dist/cli.mjs --version
           node dist/cli.mjs --help > /dev/null
+
+      # install.sh in Git Bash, into a throwaway npm prefix and home, then init + doctor.
+      - name: Installer (Git Bash)
+        env:
+          CODING_SH_YES: "1"
+          CODING_SH_NO_UI: "1"
+          CODING_SH_NO_UPDATE_CHECK: "1"
+        run: |
+          T=$(cygpath -u "$RUNNER_TEMP")
+          mkdir -p "$T/home/.claude" "$T/npm-global"
+          export CODING_SH_TARBALL="$PWD/packages/coding.sh/$(cd packages/coding.sh && npm pack --silent | tail -n 1)"
+          export npm_config_prefix="$(cygpath -w "$T/npm-global")" PATH="$T/npm-global:$PATH"
+          export HOME="$T/home" USERPROFILE="$(cygpath -w "$T/home")" CODING_SH_HOME="$T/home/.coding.sh"
+          sh install.sh
+          coding.sh --version
+          coding.sh init --agent claude-code --yes --no-mcp
+          grep 'hook.mjs\\" claude-code' "$HOME/.claude/settings.json"
+          coding.sh doctor --agent claude-code

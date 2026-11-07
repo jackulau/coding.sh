@@ -6,7 +6,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createDataset } from "../../src/datasets/dataset.ts";
@@ -97,7 +97,7 @@ describe("exp aa and exp compare from the CLI", () => {
       CODING_SH_HOME: join(home, ".coding.sh"),
       XDG_CONFIG_HOME: join(home, ".config"),
       XDG_DATA_HOME: join(home, ".local", "share"),
-      PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
+      PATH: [dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter),
       TMPDIR: join(root, "tmp"),
       NO_COLOR: "1",
       CODING_SH_NO_UPDATE_CHECK: "1",

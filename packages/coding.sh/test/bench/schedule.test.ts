@@ -1,15 +1,19 @@
 // Schedule output: cron line, a pinned workflow with a secrets env block and
 // artifact-backed history, and crontab merging that keeps other lines.
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import { describe, test } from "node:test";
-import { parseDefinition } from "../../src/bench/define.ts";
-import { cronLine, envRefs, installCron, mergeCrontab, parseAt, workflowYaml } from "../../src/bench/schedule.ts";
+import { benchHome, parseDefinition } from "../../src/bench/define.ts";
+import { cronLine, envRefs, installCron, mergeCrontab, parseAt, shq, workflowYaml } from "../../src/bench/schedule.ts";
 
 const o = { name: "daily", cwd: "/srv/proj", cli: ["coding.sh"], env: { CODING_SH_HOME: "/h/.coding.sh" } };
 
 describe("bench schedule", () => {
   test("cron line runs from the project and marks itself", () => {
-    assert.equal(cronLine({ ...o, at: "07:05" }), "5 7 * * * cd /srv/proj && coding.sh bench run daily >> /h/.coding.sh/benchmarks/daily/cron.log 2>&1 # coding.sh bench daily");
+    // The log is a native path: on Windows /h resolves to C:\h and gets quoted.
+    const log = shq(join(benchHome(o.env), "daily", "cron.log"));
+    if (process.platform !== "win32") assert.equal(log, "/h/.coding.sh/benchmarks/daily/cron.log");
+    assert.equal(cronLine({ ...o, at: "07:05" }), `5 7 * * * cd /srv/proj && coding.sh bench run daily >> ${log} 2>&1 # coding.sh bench daily`);
     assert.throws(() => parseAt("25:00"), /HH:MM/);
   });
 

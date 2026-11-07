@@ -63,7 +63,9 @@ describe("validateTask", () => {
     const pidDir = await tempDir("csh-validate-pid-");
     dirs.push(pidDir);
     const pidFile = join(pidDir, "pid");
-    const { blobs, git, task, workRoot } = await setup({ verifier: `echo $$ >> ${pidFile}; sleep 30` });
+    // The verifier records its pid with node (a real pid on Windows too, unlike an MSYS shell's $$), then sleeps.
+    const verifier = `'${process.execPath}' -e "require('fs').appendFileSync(process.argv[1], process.pid + '\\n'); setTimeout(() => {}, 30000)" '${pidFile}'`;
+    const { blobs, git, task, workRoot } = await setup({ verifier });
     const index = new MemIndex();
     const ac = new AbortController();
     const steps: string[] = [];

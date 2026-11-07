@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -26,7 +26,7 @@ before(() => {
     CODING_SH_HOME: join(home, ".coding.sh"),
     XDG_CONFIG_HOME: join(home, ".config"),
     XDG_DATA_HOME: join(home, ".local", "share"),
-    PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
+    PATH: [dirname(process.execPath), "/usr/bin", "/bin"].join(delimiter),
     TMPDIR: join(root, "tmp"),
     NO_COLOR: "1",
     CODING_SH_NO_UPDATE_CHECK: "1",
@@ -73,7 +73,8 @@ async function interrupt(name: string, delay: number, sig: NodeJS.Signals, after
   return { code, stdout, pids: pidsIn(pidFile) };
 }
 
-describe("exp run interrupted", () => {
+// On Windows process.kill(pid, "SIGINT" | "SIGTERM") terminates the CLI outright: no handler runs.
+describe("exp run interrupted", { skip: process.platform === "win32" && "signals sent with process.kill can't be caught on Windows" }, () => {
   it("Ctrl-C stores a cancelled experiment with only finished runs; compare refuses it unless --force", async () => {
     const full = cli(runArgs("v1", 0, join(root, "v1.pids")));
     assert.equal(full.status, 0, full.stderr);

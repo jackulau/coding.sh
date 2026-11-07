@@ -5,7 +5,7 @@
 // and concurrent puts of the same content are harmless (identical bytes win).
 // Reads verify the sha256: a copy that does not match its ref reads as missing,
 // and the next put of that content rewrites it.
-import { link, mkdir, readdir, readFile, rename, stat, unlink, utimes } from "node:fs/promises";
+import { link, mkdir, readdir, readFile, stat, unlink, utimes } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { constants, zstdCompressSync, zstdDecompressSync } from "node:zlib";
@@ -13,7 +13,7 @@ import type { BlobRef } from "../schema/index.ts";
 import type { BlobMeta, BlobStore } from "../core/types.ts";
 import { sha256Hex } from "../core/ids.ts";
 import { assertBlobRef, blobPath, toBytes } from "./common.ts";
-import { syncDir, writeFileDurable } from "./durable.ts";
+import { renameOver, syncDir, writeFileDurable } from "./durable.ts";
 
 /** Temp files put and recompress write before the rename: `<sha>.zst.<pid>.<hex>.tmp`. */
 const TMP_NAME = /^[0-9a-f]{64}\.zst\.\d+\.[0-9a-f]+\.tmp$/;
@@ -49,7 +49,8 @@ export class FsBlobStore implements BlobStore {
     const dir = dirname(file);
     const created = await mkdir(dir, { recursive: true });
     const compressed = zstdCompressSync(bytes, { params: { [constants.ZSTD_c_compressionLevel]: this.level } });
-    await writeFileDurable(file, compressed);
+    // A concurrent put of the same content may win the rename; its verified copy is as good as ours.
+    await writeFileDurable(file, compressed, { existingIsGood: async () => (await this.read(ref, file)) !== undefined });
     // Directories mkdir just made (ab/, ab/cd/) must be durable in their parents too.
     if (created !== undefined) for (let d = dir; d.length >= created.length; d = dirname(d)) await syncDir(dirname(d));
     return ref;
@@ -132,7 +133,7 @@ export class FsBlobStore implements BlobStore {
     const file = this.pathFor(ref);
     const trash = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
     try {
-      await rename(file, trash);
+      await renameOver(file, trash);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw err;

@@ -1,12 +1,12 @@
 // Case generators. Each one returns the candidate pool for one run; sampling
 // (src/bench/sample.ts) picks from it. Every source is read fresh on every
 // run, which is what makes a benchmark dynamic.
-import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { parseSince } from "../cli/args.ts";
 import { which } from "../adapters/_shared/detect.ts";
+import { execFileSync } from "../core/spawn.ts";
 import type { IndexStore } from "../core/types.ts";
 import { caseFromSession, normalizeCase, slugify } from "../datasets/dataset.ts";
 import { hashUnit, shortHash } from "../datasets/hash.ts";

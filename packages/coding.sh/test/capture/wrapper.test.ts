@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { after, before, describe, test } from "node:test";
 import type { SpoolLine } from "../../src/core/types.ts";
 import { wrapRun, wrapRunDetailed } from "../../src/capture/wrapper.ts";
@@ -13,6 +14,9 @@ before(() => {
   home = isolate();
 });
 after(() => removeTmp());
+
+/** wrapper.ts as an import specifier for driver scripts (a file URL: a bare Windows path is not one). */
+const WRAPPER = JSON.stringify(pathToFileURL(join(PKG_ROOT, "src", "capture", "wrapper.ts")).href);
 
 function lines(agent: string, h = home): SpoolLine[] {
   const dir = join(h, "spool", agent);
@@ -118,11 +122,10 @@ describe("wrapRun", () => {
   test("stdoutToStderr sends the child's stdout to fd 2 and leaves stdout empty", { timeout: 150_000 }, async () => {
     const dir = tmp("csh-stdout-");
     const driver = join(dir, "driver.ts");
-    const wrapper = JSON.stringify(join(PKG_ROOT, "src", "capture", "wrapper.ts"));
     const run = (toStderr: boolean) => {
       writeFileSync(
         driver,
-        `import { wrapRun } from ${wrapper};
+        `import { wrapRun } from ${WRAPPER};
 process.exit(await wrapRun({ cmd: process.execPath, args: ["-e", "console.log('child-out'); console.error('child-err')"], cwd: ${JSON.stringify(dir)}, stdoutToStderr: ${toStderr} }));
 `,
       );
@@ -146,14 +149,16 @@ process.exit(await wrapRun({ cmd: process.execPath, args: ["-e", "console.log('c
     assert.equal(existsSync(h), false);
   });
 
-  test("child killed by a signal → 128 + signo", async () => {
+  // Windows has no signal exits: a process killing itself just exits with code 1.
+  test("child killed by a signal → 128 + signo", { skip: process.platform === "win32" && "no signal exits on Windows" }, async () => {
     const h = join(tmp(), "home");
     const code = await wrapRun({ cmd: process.execPath, args: ["-e", "process.kill(process.pid, 'SIGKILL')"], cwd: tmp(), env: { CODING_SH_HOME: h } });
     assert.equal(code, 137);
     assert.equal((lines("wrapper", h).pop()!.raw as { signal?: string }).signal, "SIGKILL");
   });
 
-  test("forwards SIGTERM to the child and returns the child's exit code", { timeout: 150_000 }, async (t) => {
+  // On Windows process.kill(pid, "SIGTERM") terminates the wrapper outright; no handler runs.
+  test("forwards SIGTERM to the child and returns the child's exit code", { timeout: 150_000, skip: process.platform === "win32" && "SIGTERM can't be caught on Windows" }, async (t) => {
     const dir = tmp("csh-sig-");
     const h = join(dir, "home");
     const ready = join(dir, "ready");
@@ -170,7 +175,7 @@ setTimeout(() => process.exit(99), 120_000);
     const driver = join(dir, "driver.ts");
     writeFileSync(
       driver,
-      `import { wrapRun } from ${JSON.stringify(join(PKG_ROOT, "src", "capture", "wrapper.ts"))};
+      `import { wrapRun } from ${WRAPPER};
 process.exit(await wrapRun({ cmd: process.execPath, args: [${JSON.stringify(child)}], cwd: ${JSON.stringify(dir)} }));
 `,
     );
@@ -215,8 +220,8 @@ process.exit(await wrapRun({ cmd: process.execPath, args: [${JSON.stringify(chil
     writeFileSync(
       driver,
       `import { existsSync } from "node:fs";
-import { wrapRun } from ${JSON.stringify(join(PKG_ROOT, "src", "capture", "wrapper.ts"))};
-void wrapRun({ cmd: "/bin/sh", args: ["-c", "echo $$ > ${pidFile}; exec sleep 120"], cwd: ${JSON.stringify(dir)} });
+import { wrapRun } from ${WRAPPER};
+void wrapRun({ cmd: process.execPath, args: ["-e", ${JSON.stringify(`require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 120_000);`)}], cwd: ${JSON.stringify(dir)} });
 const t = setInterval(() => { if (existsSync(${JSON.stringify(pidFile)})) { clearInterval(t); setTimeout(() => process.exit(3), 50); } }, 20);
 `,
     );

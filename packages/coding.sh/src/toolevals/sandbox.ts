@@ -7,7 +7,7 @@
 //     tap.jsonl    one TapRecord per target call
 //     hidden/      answers.json and hidden check files (never under work/)
 import { cp, mkdir, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { commandEnv, sh } from "../runner/exec.ts";
 import { safeJoin } from "../runner/fsutil.ts";
 import { writeCliShim } from "./tap/cli.ts";
@@ -53,8 +53,8 @@ export function suiteDirOf(task: ToolTask): string {
 /** Env for setup commands and checks: inherited env + sandbox env, with the untapped bin first. */
 export function checkEnv(sb: Sandbox): Record<string, string | undefined> {
   const base = commandEnv(sb.env);
-  const path = (process.env.PATH ?? "").split(":").filter((p) => p && p !== sb.bin);
-  base.PATH = [sb.checkBin, ...path].join(":");
+  const path = (process.env.PATH ?? "").split(delimiter).filter((p) => p && p !== sb.bin);
+  base.PATH = [sb.checkBin, ...path].join(delimiter);
   return base;
 }
 
@@ -78,7 +78,9 @@ export async function prepareSandbox(task: ToolTask, target: Target, variant: Va
     vars: {},
     toolEnv: {},
   };
-  sb.vars = { sandbox: dir, work: sb.work, home: sb.home, hidden: sb.hidden, bin: sb.bin, fixtures: join(suite, "fixtures"), suite };
+  // Vars land in sh command lines, where a backslash is an escape: Windows paths use forward slashes.
+  const v = (p: string) => (process.platform === "win32" ? p.replace(/\\/g, "/") : p);
+  sb.vars = { sandbox: v(dir), work: v(sb.work), home: v(sb.home), hidden: v(sb.hidden), bin: v(sb.bin), fixtures: v(join(suite, "fixtures")), suite: v(suite) };
   for (const d of [sb.work, sb.home, sb.bin, sb.hidden, sb.checkBin]) await mkdir(d, { recursive: true });
   await writeFile(sb.tapLog, "");
 
@@ -93,7 +95,7 @@ export async function prepareSandbox(task: ToolTask, target: Target, variant: Va
 
   sb.toolEnv = { ...expandRecord(target.env, sb.vars), ...expandRecord(variant.env, sb.vars) };
   const setupEnv = expandRecord(task.setup.env, sb.vars);
-  sb.env = { ...setupEnv, PATH: `${sb.bin}:${process.env.PATH ?? ""}`, CODING_SH_RUN_ID: trialId };
+  sb.env = { ...setupEnv, PATH: `${sb.bin}${delimiter}${process.env.PATH ?? ""}`, CODING_SH_RUN_ID: trialId };
 
   if (target.kind === "cli") {
     const command = (variant.command ?? target.command).map((a) => expandVars(a, sb.vars));

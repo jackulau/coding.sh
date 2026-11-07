@@ -1,20 +1,25 @@
 // Shared helpers for adapter conformance tests. Every test runs with HOME and
 // CODING_SH_HOME pointed at throwaway dirs, so the real ~ is never touched.
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { hashParts, sha256Hex } from "../../src/core/ids.ts";
 import type { NormalizeContext, SpoolLine } from "../../src/core/types.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
+import { printBin } from "../_bin.ts";
 
 export const PKG_ROOT = realpathSync(join(import.meta.dirname, "..", ".."));
 export const FIXTURES = join(PKG_ROOT, "test", "fixtures", "adapters");
 const TOKEN = "${FIXTURES}";
 
 /** Replace the machine-specific fixture root with a token (and back). */
-export const portable = (s: string) => s.split(FIXTURES).join(TOKEN);
-export const local = (s: string) => s.split(TOKEN).join(FIXTURES);
+export const portable = (s: string) => posixAfterToken(s.split(FIXTURES).join(TOKEN).split(JSON.stringify(FIXTURES).slice(1, -1)).join(TOKEN));
+/** Windows: the rest of a ${FIXTURES} path with "/" (raw `\` or JSON-escaped `\\`), so goldens match every OS. */
+const posixAfterToken = (s: string) =>
+  process.platform !== "win32" ? s : s.replace(/\$\{FIXTURES\}[^\s"'`]*/g, (m) => (m.includes("\\\\") ? m.replaceAll("\\\\", "/") : m.replaceAll("\\", "/")));
+/** Expand ${FIXTURES} in JSON text (the path is JSON-escaped: Windows backslashes). */
+export const local = (s: string) => s.split(TOKEN).join(JSON.stringify(FIXTURES).slice(1, -1));
 
 export interface TestCtx {
   ctx: NormalizeContext;
@@ -127,15 +132,12 @@ export function summarize(events: AgentEvent[]): unknown[] {
 }
 
 /**
- * Put a fake `name` executable (a /bin/sh script printing `stdout`) on an
+ * Put a fake `name` executable (a node script printing `stdout`) on an
  * isolated PATH that contains nothing else, so a real install is never found.
  */
 export function fakeBin(env: TmpEnv, name: string, stdout: string): string {
   const dir = join(env.root, "bin");
-  const path = join(dir, name);
-  // printf is a shell builtin: the isolated PATH has no coreutils.
-  writeFile(path, `#!/bin/sh\nprintf '%s\\n' '${stdout.replaceAll("'", "'\\''")}'\n`);
-  chmodSync(path, 0o755);
+  const path = printBin(dir, name, stdout);
   process.env.PATH = dir;
   return path;
 }

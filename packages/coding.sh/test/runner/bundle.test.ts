@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { ablateBundle, applyBundle, bundleFromDir, bundleFromToml, bundleId, diffBundles, formatBundleDiff, normalizeBundlePath } from "../../src/runner/bundle.ts";
 import { MemBlobs, tempDir } from "../helpers-eval.ts";
@@ -91,7 +91,7 @@ describe("applyBundle", () => {
   it("removes, then writes; ~/ goes to the isolated home", async () => {
     const blobs = new MemBlobs();
     const run = await tree({ "AGENTS.md": "old", ".claude/old.json": "x", "src/a.ts": "a" });
-    const home = join(run, "..", `${run.split("/").pop()}-home`);
+    const home = join(run, "..", `${basename(run)}-home`);
     dirs.push(home);
     const b = {
       id: "x",

@@ -17,6 +17,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { ChildProcess } from "node:child_process";
 import { rmSync } from "node:fs";
+import { killTree } from "./spawn.ts";
 
 const ambient = new AsyncLocalStorage<AbortSignal>();
 
@@ -69,6 +70,8 @@ export function removeOnExit(dir: string): () => void {
 }
 
 function sendTo(pid: number, group: boolean, sig: NodeJS.Signals): void {
+  // Windows has no process groups or catchable signals: end the whole tree.
+  if (process.platform === "win32") return killTree(pid);
   try {
     process.kill(group ? -pid : pid, sig);
   } catch {
@@ -79,7 +82,9 @@ function sendTo(pid: number, group: boolean, sig: NodeJS.Signals): void {
 /** SIGKILL every live child (whole groups for detached ones). Returns how many were signalled. */
 export function killLiveChildren(): number {
   const n = live.size;
-  for (const [pid, group] of live) sendTo(pid, group, "SIGKILL");
+  // One synchronous taskkill for all of them: this runs in the 'exit' handler.
+  if (process.platform === "win32") killTree([...live.keys()], true);
+  else for (const [pid, group] of live) sendTo(pid, group, "SIGKILL");
   live.clear();
   return n;
 }
@@ -113,7 +118,7 @@ export interface SuperviseOpts {
   group: boolean;
   /** Wall-clock limit; 0 or undefined disables it. */
   timeoutMs?: number;
-  /** On timeout or abort send SIGTERM first and SIGKILL this many ms later; default SIGKILL at once. */
+  /** On timeout or abort send SIGTERM first and SIGKILL this many ms later; default SIGKILL at once (always on Windows). */
   termGraceMs?: number;
   /** Explicit cancellation; defaults to the ambient signal. */
   signal?: AbortSignal;
@@ -144,7 +149,7 @@ export function supervise(child: ChildProcess, o: SuperviseOpts): Promise<Settle
     let killTimer: NodeJS.Timeout | undefined;
     let graceTimer: NodeJS.Timeout | undefined;
     const send = (sig: NodeJS.Signals) => {
-      if (group) sendTo(pid!, true, sig);
+      if (group || (process.platform === "win32" && pid !== undefined)) sendTo(pid!, group, sig);
       else {
         try {
           child.kill(sig);
@@ -154,7 +159,8 @@ export function supervise(child: ChildProcess, o: SuperviseOpts): Promise<Settle
       }
     };
     const stop = () => {
-      if (o.termGraceMs && o.termGraceMs > 0) {
+      // No SIGTERM to wait on under Windows: every kill there is already a tree kill.
+      if (o.termGraceMs && o.termGraceMs > 0 && process.platform !== "win32") {
         send("SIGTERM");
         killTimer ??= setTimeout(() => send("SIGKILL"), o.termGraceMs);
       } else send("SIGKILL");
@@ -175,6 +181,10 @@ export function supervise(child: ChildProcess, o: SuperviseOpts): Promise<Settle
       stop();
     };
 
+    // After the child exits, its group can still be signalled on POSIX. On Windows the
+    // tree is found from a live root, so there is nothing left to aim taskkill at
+    // (and the pid may already be reused).
+    const reapGroup = group && process.platform !== "win32";
     const finish = (r: { code: number | null; signal: NodeJS.Signals | null; error?: NodeJS.ErrnoException }) => {
       if (settled) return;
       settled = true;
@@ -182,7 +192,7 @@ export function supervise(child: ChildProcess, o: SuperviseOpts): Promise<Settle
       if (killTimer) clearTimeout(killTimer);
       if (graceTimer) clearTimeout(graceTimer);
       signal?.removeEventListener("abort", onAbort);
-      if (group) sendTo(pid!, true, "SIGKILL"); // reap leftover grandchildren
+      if (reapGroup) sendTo(pid!, true, "SIGKILL"); // reap leftover grandchildren
       if (pid !== undefined) live.delete(pid);
       // A pipe still held by an escaped grandchild (own session) must not keep us alive.
       child.stdout?.destroy();
@@ -198,7 +208,7 @@ export function supervise(child: ChildProcess, o: SuperviseOpts): Promise<Settle
       if (timer) clearTimeout(timer);
       if (killTimer) clearTimeout(killTimer);
       // Kill what the child left behind so the pipes it holds close, then give 'close' a moment.
-      if (group) sendTo(pid!, true, "SIGKILL");
+      if (reapGroup) sendTo(pid!, true, "SIGKILL");
       graceTimer = setTimeout(() => finish(exited!), o.closeGraceMs ?? 1000);
     });
     child.on("close", (code, sig) => finish(exited ?? { code, signal: sig }));

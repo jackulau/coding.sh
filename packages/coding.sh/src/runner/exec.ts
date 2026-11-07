@@ -1,6 +1,6 @@
 // Shell execution with a hard timeout that kills the whole process group, so a
 // hung `npm test` (or an agent's grandchildren) cannot outlive the run.
-import { spawn } from "node:child_process";
+import { posixShell, spawn } from "../core/spawn.ts";
 import { supervise } from "../core/children.ts";
 
 export interface ExecResult {
@@ -73,9 +73,16 @@ export function execFileTail(file: string, args: string[], opts: ExecOpts): Prom
   });
 }
 
-/** Run a shell command line via /bin/sh -c. */
+/**
+ * Run a shell command line via `sh -c`: /bin/sh, or on Windows the sh or bash
+ * that Git for Windows installs. Task commands are written in sh syntax, so
+ * there is no cmd.exe fallback.
+ */
 export function sh(command: string, opts: ExecOpts): Promise<ExecResult> {
-  return execFileTail("/bin/sh", ["-c", command], opts);
+  const shell = posixShell(opts.env ?? process.env);
+  if (shell) return execFileTail(shell, ["-c", command], opts);
+  const msg = "no POSIX shell found to run this command; on Windows, install Git for Windows (it ships bash)";
+  return Promise.resolve({ exitCode: 127, timedOut: false, durationMs: 0, stdoutTail: "", stderrTail: msg });
 }
 
 /** Environment for setup/verifier commands: inherit, force non-interactive test runners, no git trace2 side effects. */

@@ -1,24 +1,22 @@
 // Binary discovery and version probing. PATH is scanned directly (no shell),
 // so shell functions/aliases named like the agent never confuse detection.
-import { execFile } from "node:child_process";
+import { execFile, resolveWindowsCommand } from "../../core/spawn.ts";
 import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import type { DetectResult } from "../../core/types.ts";
 
 /** Absolute path of the first executable `bin` on PATH, else undefined. */
 export function which(bin: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
-  const dirs = (env.PATH ?? env.Path ?? "").split(delimiter).filter(Boolean);
-  const exts = process.platform === "win32" ? ["", ...(env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";").map((e) => e.toLowerCase())] : [""];
-  for (const d of dirs) {
-    for (const e of exts) {
-      const p = join(d, bin + e);
-      try {
-        if (!statSync(p).isFile()) continue;
-        if (process.platform !== "win32") accessSync(p, constants.X_OK);
-        return p;
-      } catch {
-        // not here
-      }
+  // Windows runs only PATHEXT files (an extensionless script is not a command there).
+  if (process.platform === "win32") return resolveWindowsCommand(bin, env);
+  for (const d of (env.PATH ?? "").split(delimiter).filter(Boolean)) {
+    const p = join(d, bin);
+    try {
+      if (!statSync(p).isFile()) continue;
+      accessSync(p, constants.X_OK);
+      return p;
+    } catch {
+      // not here
     }
   }
   return undefined;

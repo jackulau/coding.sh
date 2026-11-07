@@ -1,8 +1,8 @@
 // Daily runs: a cron line and a GitHub Actions workflow. Printing is the
 // default; the crontab is only edited with an explicit --install-cron, and
 // then only our own marked line is added or replaced.
-import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { spawnSync } from "../core/spawn.ts";
 import { benchHome } from "./define.ts";
 
 export interface ScheduleOpts {
@@ -150,7 +150,10 @@ export function systemCrontab(env: NodeJS.ProcessEnv = process.env): CrontabIo {
   return {
     read() {
       const r = spawnSync("crontab", ["-l"], { encoding: "utf8", env });
-      if (r.error) throw new Error(`crontab is not available: ${r.error.message}`);
+      if (r.error) {
+        const hint = process.platform === "win32" ? ". Windows has no cron: run the printed command daily with Task Scheduler (schtasks), or use the GitHub Actions workflow (--workflow-out)" : "";
+        throw new Error(`crontab is not available: ${r.error.message}${hint}`);
+      }
       // "no crontab for user" exits 1 with nothing on stdout: an empty table.
       return r.status === 0 ? r.stdout : "";
     },

@@ -60,6 +60,12 @@ async function runInit(flags: Record<string, string | boolean | string[]>, opts:
   } catch (e) {
     cap.error = e;
   }
+  // Human output uses native separators (~\.claude\settings.json on Windows); match one spelling.
+  if (process.platform === "win32") {
+    cap.stdout = cap.stdout.replaceAll("\\", "/");
+    cap.stderr = cap.stderr.replaceAll("\\", "/");
+    cap.atPrompt = cap.atPrompt?.replaceAll("\\", "/");
+  }
   return cap;
 }
 

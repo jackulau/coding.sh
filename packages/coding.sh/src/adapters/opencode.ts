@@ -13,7 +13,7 @@
 // message roles, parent sessions) so each forwarded payload is self-contained
 // and normalize() stays stateless. It never blocks OpenCode: each event is a
 // fire-and-forget child process.
-import { execFile } from "node:child_process";
+import { execFile } from "../core/spawn.ts";
 import { existsSync } from "node:fs";
 import { copyFile, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

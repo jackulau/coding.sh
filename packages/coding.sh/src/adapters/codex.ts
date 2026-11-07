@@ -18,7 +18,7 @@
 // - Codex has no per-call timing in hooks (PostModelRequest carries usage but no
 //   latency), so llm.call events come from the rollout at Stop time, keyed by
 //   response_id so live and backfilled copies dedupe.
-import { execFile } from "node:child_process";
+import { execFile } from "../core/spawn.ts";
 import { createHash } from "node:crypto";
 import { basename, isAbsolute, join, relative } from "node:path";
 import { paths, userHome } from "../core/paths.ts";

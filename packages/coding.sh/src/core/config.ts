@@ -5,7 +5,7 @@
 // redactors and patterns are unioned, never removed. It can never add sinks or
 // move the stores, which would let a repository exfiltrate your sessions.
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { Config, SinkConfig } from "./types.ts";
 import { dataHome, expandHome, paths } from "./paths.ts";
 import { parseToml, stringifyToml, TomlError, type TomlTable } from "./toml.ts";
@@ -354,9 +354,17 @@ function applyRepoConfig(base: Config, root: TomlTable, file: string): Config {
 
 // ---------------------------------------------------------------- exclude globs
 
+const isWin = process.platform === "win32";
+
+/** Windows paths with `/` only, so `C:/work/**` and `~\x` globs match native `C:\work\…` paths. */
+const slashed = (p: string): string => (isWin ? p.replaceAll("\\", "/") : p);
+
 /** Converts a path glob (`*`, `**`, `?`, leading `~`) to an anchored RegExp. */
 export function globToRegExp(glob: string, env: NodeJS.ProcessEnv = process.env): RegExp {
-  const g = expandHome(glob, env).replace(/\/+$/, "");
+  let g = expandHome(glob, env);
+  // Windows: give a rooted glob (`/work/**`) the drive resolve() gives paths.
+  if (isWin && isAbsolute(g)) g = resolve(g);
+  g = slashed(g).replace(/\/+$/, "");
   let re = "";
   for (let i = 0; i < g.length; i++) {
     const c = g[i]!;
@@ -369,7 +377,8 @@ export function globToRegExp(glob: string, env: NodeJS.ProcessEnv = process.env)
     } else if (c === "?") re += "[^/]";
     else re += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
   }
-  return new RegExp(`^${re}$`);
+  // NTFS paths are case-insensitive.
+  return new RegExp(`^${re}$`, isWin ? "i" : "");
 }
 
 /** True when `path` or any of its ancestors matches one of the exclude globs. */
@@ -378,7 +387,7 @@ export function isExcluded(path: string, globs: readonly string[], env: NodeJS.P
   const res = globs.map((g) => globToRegExp(g, env));
   let p = resolve(path);
   for (;;) {
-    if (res.some((re) => re.test(p))) return true;
+    if (res.some((re) => re.test(slashed(p)))) return true;
     const parent = dirname(p);
     if (parent === p) return false;
     p = parent;

@@ -5,7 +5,7 @@
 // the real table layout and synthetic protobufs.
 import assert from "node:assert/strict";
 import { cpSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
 import { agyTranscriptFiles, agyUserText, antigravityAdapter, pbFields, readAgyConversation } from "../../../src/adapters/more/antigravity.ts";
@@ -98,7 +98,7 @@ describe("antigravity history import with the conversation DB", () => {
   });
 
   it("reads transcript_full.jsonl over the truncated transcript.jsonl", () => {
-    assert.deepEqual(agyTranscriptFiles(cli).map((f) => f.split("/").pop()), ["transcript_full.jsonl"]);
+    assert.deepEqual(agyTranscriptFiles(cli).map((f) => basename(f)), ["transcript_full.jsonl"]);
     const prompt = events.find((e) => e.kind === "user.message")!;
     assert.equal(prompt.payload.text, "The parser test fails on empty input. Find out why and fix it without changing the public API.");
   });
@@ -186,7 +186,7 @@ describe("antigravity history import with the conversation DB", () => {
     const skipped = await collect(antigravityAdapter.backfill!(testCtx().ctx, { changed: async (f) => (seen.push(f), false) }));
     assert.deepEqual(skipped, []);
     assert.equal(seen.length, 1);
-    assert.match(seen[0]!.path, /agy-conv-2\/\.system_generated\/logs\/transcript_full\.jsonl$/);
+    assert.match(seen[0]!.path.replaceAll("\\", "/"), /agy-conv-2\/\.system_generated\/logs\/transcript_full\.jsonl$/);
     assert.ok(seen[0]!.size > 2000, "transcript + DB bytes");
   });
 });

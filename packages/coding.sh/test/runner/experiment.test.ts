@@ -250,29 +250,37 @@ describe("compare notes", () => {
 // EXP-2: an abort reaches the agent's process group through runExperiment → runTask → adapter.run → spawnAgent.
 describe("runExperiment cancellation", () => {
   it("an abort kills running agents, cleans their work dirs, marks them cancelled and starts nothing new", async () => {
-    const { mkdtempSync, readFileSync, readdirSync, rmSync } = await import("node:fs");
+    const { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
     const { wrapperAdapter } = await import("../../src/adapters/more/wrapper.ts");
     const w = await toyWorld();
     const dir = mkdtempSync(join(tmpdir(), "csh-cancel-"));
     const pidFile = join(dir, "pids");
+    const pidsSoFar = () => (existsSync(pidFile) ? readFileSync(pidFile, "utf8").trim().split("\n").map(Number) : []);
+    // Abort once both running agents have started.
+    const ac = new AbortController();
+    let abortedAt = 0;
+    const started = setInterval(() => {
+      if (pidsSoFar().length < 2) return;
+      clearInterval(started);
+      abortedAt = Date.now();
+      ac.abort();
+    }, 20);
     try {
-      const agent = ["/bin/sh", "-c", `echo $$ >> ${pidFile}; sleep 30`];
+      // Records its pid (a real one on Windows too, unlike an MSYS shell's $$), then sleeps.
+      const agent = [process.execPath, "-e", `require("node:fs").appendFileSync(${JSON.stringify(pidFile)}, process.pid + "\\n"); setTimeout(() => {}, 30000)`];
       const A = await w.mkBundle("A", "fix", { agent: "wrapper", flags: agent });
       const B = await w.mkBundle("B", "fix", { agent: "wrapper", flags: agent, env: { ARM: "b" } });
-      const ac = new AbortController();
-      setTimeout(() => ac.abort(), 1500);
-      const t0 = Date.now();
       const r = await runExperiment({ tasks: [w.task], bundles: [A, B], k: 2, adapterFor: () => wrapperAdapter, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, concurrency: 2, timeoutMs: 60_000, signal: ac.signal });
-      assert.ok(Date.now() - t0 < 6000, `resolved in ${Date.now() - t0}ms`);
+      assert.ok(abortedAt > 0 && Date.now() - abortedAt < 4500, `resolved ${Date.now() - abortedAt}ms after the abort`);
       assert.equal(r.cancelled, true);
       assert.equal(r.results.length, 2, "the 2 queued jobs never started");
       assert.ok(r.results.every((x) => x.cancelled === true && !x.pass && x.error === "cancelled"));
       assert.deepEqual(readdirSync(w.runsDir), [], "work dirs removed");
       const stored = await w.index.listRuns({ experimentId: r.experimentId });
       assert.ok(stored.length === 2 && stored.every((x) => x.cancelled));
-      const pids = readFileSync(pidFile, "utf8").trim().split("\n").map(Number);
+      const pids = pidsSoFar();
       assert.equal(pids.length, 2);
       for (const pid of pids) {
         let alive = true;
@@ -285,6 +293,7 @@ describe("runExperiment cancellation", () => {
         assert.equal(alive, false, `agent ${pid} killed`);
       }
     } finally {
+      clearInterval(started);
       rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -299,7 +308,9 @@ describe("hard exit mid-run", () => {
     const dir = mkdtempSync(join(tmpdir(), "csh-hardexit-"));
     const runsDir = join(dir, "runs");
     const pidFile = join(dir, "pid");
-    const src = (p: string) => JSON.stringify(new URL(p, import.meta.url).pathname);
+    const src = (p: string) => JSON.stringify(new URL(p, import.meta.url).href);
+    // The agent records its pid (a real one on Windows too, unlike an MSYS shell's $$), then sleeps.
+    const agent = [process.execPath, "-e", `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setTimeout(() => {}, 30000)`];
     // runTask with no signal (a caller that never threads one), then a hard exit
     // (second Ctrl-C) while the agent runs: its finally never executes.
     const code = `
@@ -308,7 +319,7 @@ describe("hard exit mid-run", () => {
       import { wrapperAdapter } from ${src("../../src/adapters/more/wrapper.ts")};
       import { existsSync } from "node:fs";
       const w = await toyWorld();
-      const bundle = await w.mkBundle("A", "fix", { agent: "wrapper", flags: ["/bin/sh", "-c", "echo $$ > ${pidFile}; sleep 30"] });
+      const bundle = await w.mkBundle("A", "fix", { agent: "wrapper", flags: ${JSON.stringify(agent)} });
       runTask({ task: w.task, bundle, adapter: wrapperAdapter, blobs: w.blobs, index: w.index, git: w.git, runsDir: ${JSON.stringify(runsDir)}, timeoutMs: 60_000 });
       const t = setInterval(() => { if (existsSync(${JSON.stringify(pidFile)})) { clearInterval(t); setTimeout(() => process.exit(130), 100); } }, 20);
     `;

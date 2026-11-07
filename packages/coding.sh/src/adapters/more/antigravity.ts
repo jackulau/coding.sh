@@ -356,7 +356,12 @@ export function readAgyConversation(db: DatabaseSync): AgyConversation {
     try {
       conv.cwd = fileURLToPath(uri);
     } catch {
-      // not a local path
+      try {
+        // A POSIX URI (file:///work/x) read on Windows: keep the path as agy wrote it.
+        conv.cwd = fileURLToPath(uri, { windows: false });
+      } catch {
+        // not a local path
+      }
     }
     break;
   }

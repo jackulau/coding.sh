@@ -4,9 +4,10 @@
 // directory can be cached or copied (CI) and still rebuild everything.
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { writeFileAtomic } from "../datasets/store.ts";
+import { renameOver } from "../store/durable.ts";
 import { benchHome, checkName } from "./define.ts";
 import type { BenchRun, ContenderSummary, Metric, PairComparison, SeriesPoint } from "./types.ts";
 
@@ -65,8 +66,14 @@ export async function putBlob(name: string, data: string | Uint8Array, env?: Nod
   if (!existsSync(file)) {
     await mkdir(dir, { recursive: true });
     const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-    await writeFile(tmp, data);
-    await rename(tmp, file);
+    try {
+      await writeFile(tmp, data);
+      // A concurrent put of the same content may win the rename; the name is the hash, so its copy will do.
+      await renameOver(tmp, file, async () => existsSync(file));
+    } catch (err) {
+      await unlink(tmp).catch(() => {});
+      throw err;
+    }
   }
   return sha;
 }

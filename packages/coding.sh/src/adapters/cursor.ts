@@ -23,7 +23,7 @@
 // - Unknown keys in hooks.json entries are undocumented, so no `_codingsh`
 //   marker: our entries are recognized by their command.
 // - In -p mode beforeSubmitPrompt, afterAgentResponse and stop do not fire.
-import { execFile } from "node:child_process";
+import { execFile } from "../core/spawn.ts";
 import { stat } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import { paths, userHome } from "../core/paths.ts";

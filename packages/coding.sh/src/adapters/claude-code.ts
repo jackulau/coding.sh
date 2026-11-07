@@ -330,7 +330,8 @@ class WorkflowIndex {
   }
 }
 
-const WORKFLOW_DIR_RE = /subagents[\\/]workflows[\\/](wf_[^\s\\/"'`]+)/;
+// `[\\/]+`: the cheap filter runs on raw JSON lines, where a Windows separator is `\\`.
+const WORKFLOW_DIR_RE = /subagents[\\/]+workflows[\\/]+(wf_[^\s\\/"'`]+)/;
 
 async function scanWorkflowCalls(parentFile: string): Promise<Map<string, { toolUseId: string; ts: number }[]>> {
   const out = new Map<string, { toolUseId: string; ts: number }[]>();

@@ -9,7 +9,8 @@
 //   user's index behind their back.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { resolve } from "node:path";
+import { killTree } from "./spawn.ts";
 
 export const DEFAULT_GIT_TIMEOUT_MS = 30_000;
 
@@ -33,7 +34,7 @@ export interface GitRunOptions {
   env?: Record<string, string | undefined>;
   /** Written to git's stdin, which is then closed. Stdin is always closed. */
   input?: string | Uint8Array;
-  /** Kill git (SIGKILL) after this many ms. Default 30 s. */
+  /** Kill git (SIGKILL; the process tree on Windows) after this many ms. Default 30 s. */
   timeoutMs?: number;
   /** Resolve instead of throwing on a non-zero exit (timeouts and spawn errors still throw). */
   allowFail?: boolean;
@@ -121,9 +122,12 @@ export function run(args: string[], opts: GitRunOptions = {}): Promise<GitResult
     let overflow = false;
     let settled = false;
     let stopped = false;
+    // On Windows, git.exe on PATH is often a launcher (Git\cmd\git.exe) whose real git, and any
+    // hook or alias it runs, would outlive a plain kill and hold the pipes open until done.
+    const kill = () => (process.platform === "win32" && child.pid !== undefined ? killTree(child.pid) : child.kill("SIGKILL"));
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      kill();
     }, timeoutMs);
     timer.unref?.();
 
@@ -138,14 +142,14 @@ export function run(args: string[], opts: GitRunOptions = {}): Promise<GitResult
         }
         if (keepGoing === false) {
           stopped = true;
-          child.kill("SIGKILL");
+          kill();
         }
         return;
       }
       outBytes += c.length;
       if (outBytes > maxBuffer) {
         overflow = true;
-        child.kill("SIGKILL");
+        kill();
         return;
       }
       out.push(c);
@@ -196,7 +200,8 @@ export async function repoRoot(cwd: string): Promise<string | undefined> {
   if (!existsSync(cwd)) return undefined;
   const r = await run(["rev-parse", "--show-toplevel"], { cwd, allowFail: true });
   const root = r.stdout.trim();
-  return r.code === 0 && root ? root : undefined;
+  // resolve(): git prints C:/Users/… on Windows; callers compare against native paths.
+  return r.code === 0 && root ? resolve(root) : undefined;
 }
 
 export async function isRepo(cwd: string): Promise<boolean> {
@@ -248,8 +253,9 @@ export async function layout(cwd: string): Promise<RepoLayout | undefined> {
   if (r.code !== 0) return undefined;
   const [root, gitDir, commonDir, fmt] = r.stdout.split("\n").map((l) => l.trim());
   if (!root || !gitDir || !commonDir) return undefined;
-  const abs = (p: string) => (isAbsolute(p) ? p : resolve(cwd, p));
-  return { root, gitDir: abs(gitDir), commonDir: abs(commonDir), objectFormat: fmt === "sha256" ? "sha256" : "sha1" };
+  // resolve() also turns git's C:/… output into a native path on Windows.
+  const abs = (p: string) => resolve(cwd, p);
+  return { root: resolve(root), gitDir: abs(gitDir), commonDir: abs(commonDir), objectFormat: fmt === "sha256" ? "sha256" : "sha1" };
 }
 
 export const EMPTY_TREE_SHA1 = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";

@@ -366,6 +366,11 @@ describe("modern era (2026-07-28)", () => {
 describe("freshness", () => {
   it("ingests newly spooled hook events before answering", async () => {
     const f = makeWorld();
+    // In process, the store-based imports (T3's store, unhooked Codex transcripts) read process.env: point them at the world's HOME too.
+    const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, T3CODE_HOME: process.env.T3CODE_HOME, CODEX_HOME: process.env.CODEX_HOME };
+    Object.assign(process.env, { HOME: f.env.HOME, USERPROFILE: f.env.HOME });
+    delete process.env.T3CODE_HOME;
+    delete process.env.CODEX_HOME;
     const { createCodingShMcp } = await import("../../src/mcp/server.ts");
     const mcp = createCodingShMcp({ env: f.env, cwd: f.root, ingestIntervalMs: 0, log: () => {} });
     const callIt = async (name: string, args: Record<string, unknown> = {}) => {
@@ -385,6 +390,10 @@ describe("freshness", () => {
       assert.equal(s[0]!.title, "Speed up the build");
     } finally {
       await mcp.close();
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
     }
   });
 });

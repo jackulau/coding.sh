@@ -22,7 +22,7 @@
 //   events init{session_id,model}, message, tool_use, tool_result, error, result{stats}.
 // - Isolation: GEMINI_CLI_HOME replaces ~ (config, tmp, creds, extensions move with it).
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import type { Adapter, AgentRunOutput, DetectResult, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../../core/types.ts";
 import type { AgentEvent, Usage } from "../../schema/index.ts";
 import {
@@ -422,7 +422,7 @@ export const geminiCliAdapter: Adapter = {
   async *backfill(ctx: NormalizeContext, opts?: { since?: number }): AsyncIterable<AgentEvent> {
     const gdir = geminiDir();
     const registry = projectPaths(gdir);
-    const files = walkFiles(join(gdir, "tmp"), (n, full) => /^session-.*\.jsonl?$/.test(n) || (n.endsWith(".jsonl") && full.includes(`${"/"}chats${"/"}`)), 4);
+    const files = walkFiles(join(gdir, "tmp"), (n, full) => /^session-.*\.jsonl?$/.test(n) || (n.endsWith(".jsonl") && full.includes(`${sep}chats${sep}`)), 4);
     for (const f of files) {
       if (opts?.since !== undefined && mtimeMs(f) < opts.since) continue;
       yield* geminiChatEvents(f, ctx, { since: opts?.since, cwd: projectRootOf(f, registry) });

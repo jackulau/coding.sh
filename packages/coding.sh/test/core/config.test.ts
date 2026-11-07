@@ -32,8 +32,8 @@ describe("config", () => {
     const { env, home } = setup();
     const c = defaultConfig(env);
     assert.equal(c.home, home);
-    assert.equal(c.store.index, `sqlite://${home}/index.db`);
-    assert.equal(c.store.blobs, `file://${home}/blobs`);
+    assert.equal(c.store.index, `sqlite://${join(home, "index.db")}`);
+    assert.equal(c.store.blobs, `file://${join(home, "blobs")}`);
     assert.deepEqual(c.capture, { mode: "full", redact: ["secrets"], redactPatterns: [], exclude: [], maxInlineBytes: 4096 });
     assert.deepEqual(c.snapshot, { enabled: true, maxFiles: 20000, timeoutMs: 2000 });
     assert.deepEqual(c.retention, { keepSpoolDays: 7, toolOutputDays: 90 });
@@ -69,8 +69,8 @@ mode = "full"
 batchSize = 100
 `);
     const c = loadConfig({ env: { ...env, TOKEN: "t0k" } });
-    assert.equal(c.store.index, `sqlite://${join(root, "user")}/idx.db`);
-    assert.equal(c.store.blobs, `file://${join(root, "user")}/blobs`);
+    assert.equal(c.store.index, `sqlite://${join(root, "user", "idx.db")}`);
+    assert.equal(c.store.blobs, `file://${join(root, "user", "blobs")}`);
     assert.equal(c.capture.mode, "metadata");
     assert.deepEqual(c.capture.redact, ["secrets", "env"]);
     assert.deepEqual(c.capture.redactPatterns, ["TICKET-[0-9]+"]);
@@ -166,7 +166,8 @@ maxFiles = 50
     const text = readFileSync(first.path, "utf8");
     assert.ok(parseToml(text));
     assert.match(text, /# \[\[sinks\]\]/);
-    assert.equal(statSync(first.path).mode & 0o777, 0o600);
+    // Windows has no POSIX modes (the file reads back as 0o666).
+    if (process.platform !== "win32") assert.equal(statSync(first.path).mode & 0o777, 0o600);
     assert.deepEqual(loadConfig({ env }), defaultConfig(env));
     assert.equal(writeDefaultConfig(env).written, false);
     assert.equal(writeDefaultConfig(env, { force: true }).written, true);
@@ -174,7 +175,7 @@ maxFiles = 50
 
   it("expands store URLs and matches exclude globs against ancestors", () => {
     const env = { HOME: "/home/u" };
-    assert.equal(expandStoreUrl("sqlite://~/x.db", env), "sqlite:///home/u/x.db");
+    assert.equal(expandStoreUrl("sqlite://~/x.db", env), `sqlite://${join("/home/u", "x.db")}`);
     assert.equal(expandStoreUrl("postgres://host/db", env), "postgres://host/db");
     assert.ok(isExcluded("/home/u/secret/repo/src", ["~/secret/*"], env));
     assert.ok(isExcluded("/home/u/secret", ["~/secret"], env));

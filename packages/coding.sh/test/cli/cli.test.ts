@@ -9,6 +9,9 @@ import { dirname, join, relative } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { bundle } from "../../scripts/bundle.mjs";
 import { assertStartupBudget } from "../helpers-timing.ts";
+import { which } from "../../src/adapters/_shared/detect.ts";
+import { hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
+import { pathOf, printBin } from "../_bin.ts";
 
 let distDir = "";
 let CLI = "";
@@ -272,9 +275,9 @@ describe("cli exit codes", () => {
 describe("cli eval new from a `coding.sh run` session", () => {
   it("drafts a task with --instruction, or from the wrapped command's prompt argument", () => {
     const h = tmpHome();
-    const gitBin = spawnSync("git", ["--version"]).status === 0 ? spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim() : "";
+    const gitBin = which("git") ?? "";
     if (!gitBin) return; // snapshots need git
-    const extra = { PATH: `${dirname(process.execPath)}:${dirname(gitBin)}`, GIT_CONFIG_NOSYSTEM: "1" };
+    const extra = { PATH: pathOf(dirname(process.execPath), dirname(gitBin)), GIT_CONFIG_NOSYSTEM: "1" };
     const repo = join(h.root, "repo");
     mkdirSync(repo);
     writeFileSync(join(repo, "sum.js"), "module.exports = (a, b) => a - b;\n");
@@ -387,7 +390,7 @@ describe("cli init/uninstall round trip", () => {
     assert.ok(existsSync(res.hook), "hook bin copied");
     assert.ok(res.hook.startsWith(h.data), "hook bin under CODING_SH_HOME");
     const installed = readFileSync(settings, "utf8");
-    assert.ok(installed.includes(res.hook), "settings point at the hook bin");
+    assert.ok(installed.includes(hookPathForCommand(res.hook)), "settings point at the hook bin");
     assert.match(installed, /echo mine/);
     assert.ok(existsSync(join(h.data, "config.toml")), "default config written");
 
@@ -744,13 +747,13 @@ describe("cli QA regressions", () => {
     // Regression: Claude Code created hello.txt through Bash; show said
     // "0 files changed" and never mentioned the end snapshot that held it.
     const h = tmpHome();
-    const gitBin = spawnSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).stdout.trim();
+    const gitBin = which("git") ?? "";
     if (!gitBin) return; // snapshots need git
     const repo = join(h.root, "repo");
     mkdirSync(repo);
     writeFileSync(join(repo, "README.md"), "# demo\n");
     const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries({ ...h.env, PATH: `${dirname(process.execPath)}:${dirname(gitBin)}`, GIT_CONFIG_NOSYSTEM: "1", CODING_SH_NO_AUTO_INGEST: "1" })) if (v !== undefined) env[k] = v;
+    for (const [k, v] of Object.entries({ ...h.env, PATH: pathOf(dirname(process.execPath), dirname(gitBin)), GIT_CONFIG_NOSYSTEM: "1", CODING_SH_NO_AUTO_INGEST: "1" })) if (v !== undefined) env[k] = v;
     for (const a of [["init", "-q"], ["add", "-A"], ["commit", "-qm", "init"]]) assert.equal(spawnSync(gitBin, ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: repo, env }).status, 0);
     const hook = (event: string) => {
       const r = spawnSync(process.execPath, [HOOK, "claude-code", event], { env, cwd: repo, encoding: "utf8", input: JSON.stringify({ session_id: "snap-1", cwd: repo, hook_event_name: event }) });
@@ -777,8 +780,8 @@ describe("cli QA regressions", () => {
     const h = tmpHome();
     const bin = join(h.root, "bin");
     mkdirSync(bin);
-    writeFileSync(join(bin, "cursor-agent"), "#!/bin/sh\necho 2025.09.18-7ae6800\n", { mode: 0o755 });
-    const PATH = `${bin}:${h.env.PATH}`;
+    printBin(bin, "cursor-agent", "2025.09.18-7ae6800");
+    const PATH = pathOf(bin, h.env.PATH);
     assert.equal(cli(h, ["init", "--yes", "--agent", "cursor"], { PATH }).status, 0);
     const r = cli(h, ["doctor", "--agent", "cursor"], { PATH });
     assert.match(r.stderr, /^! Cursor CLI\s+v2025\.09\.18-7ae6800, hooked but not firing/m);
@@ -790,9 +793,9 @@ describe("cli QA regressions", () => {
     const bin = join(h.root, "bin");
     mkdirSync(bin);
     for (const [name, v] of [["cursor-agent", "2025.09.18-7ae6800"], ["agy", "1.2.14"]] as const) {
-      writeFileSync(join(bin, name), `#!/bin/sh\necho ${v}\n`, { mode: 0o755 });
+      printBin(bin, name, v);
     }
-    const PATH = `${bin}:${h.env.PATH}`;
+    const PATH = pathOf(bin, h.env.PATH);
     const r = cli(h, ["init", "--yes", "--agent", "cursor", "--agent", "antigravity"], { PATH });
     assert.equal(r.status, 0, r.stderr);
     // The blocker is part of the plan, ahead of the Y/n prompt, not a surprise after the writes.

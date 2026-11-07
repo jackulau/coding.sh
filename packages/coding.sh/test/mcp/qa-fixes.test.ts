@@ -219,7 +219,8 @@ describe("usage", () => {
 });
 
 describe("coding.sh mcp (stdio serve)", () => {
-  it("exits 130 on the first Ctrl-C", { timeout: 20_000 }, async () => {
+  // On Windows process.kill(pid, "SIGINT") terminates the server outright: no handler runs.
+  it("exits 130 on the first Ctrl-C", { timeout: 20_000, skip: process.platform === "win32" && "SIGINT can't be caught on Windows" }, async () => {
     const child = spawn(process.execPath, ["--no-warnings", join(PKG, "src", "cli", "main.ts"), "mcp"], { env: { ...w.env, CODING_SH_NO_UPDATE_CHECK: "1" }, cwd: w.root, stdio: ["pipe", "pipe", "pipe"] });
     const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((r) => child.on("exit", (code, signal) => r({ code, signal })));
     try {

@@ -25,7 +25,7 @@
 //   stream lines {type:"message"|"notification"|"error"|"complete"}; complete carries
 //   input_tokens/output_tokens/cache_*_input_tokens/cost_usd. No session id in the stream.
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { Adapter, AgentRunOutput, DetectResult, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../../core/types.ts";
 import type { AgentEvent, Usage } from "../../schema/index.ts";
 import {
@@ -79,7 +79,7 @@ export const GOOSE_HOOK_EVENTS = ["SessionStart", "SessionEnd", "UserPromptSubmi
 
 function rootOrHome(env: NodeJS.ProcessEnv): string {
   const r = env.GOOSE_PATH_ROOT;
-  return r && r.startsWith("/") ? r : home(env);
+  return r && isAbsolute(r) ? r : home(env);
 }
 
 export function goosePluginDir(opts: { scope: "user" | "project"; projectDir?: string | undefined }, env: NodeJS.ProcessEnv = process.env): string {
@@ -89,12 +89,12 @@ export function goosePluginDir(opts: { scope: "user" | "project"; projectDir?: s
 
 export function gooseConfigDir(env: NodeJS.ProcessEnv = process.env): string {
   const r = env.GOOSE_PATH_ROOT;
-  return r && r.startsWith("/") ? join(r, "config") : join(xdg("config", env), "goose");
+  return r && isAbsolute(r) ? join(r, "config") : join(xdg("config", env), "goose");
 }
 
 export function gooseSessionsDb(env: NodeJS.ProcessEnv = process.env): string {
   const r = env.GOOSE_PATH_ROOT;
-  if (r && r.startsWith("/")) return join(r, "data", "sessions", "sessions.db");
+  if (r && isAbsolute(r)) return join(r, "data", "sessions", "sessions.db");
   if (process.platform === "win32") return join(env.APPDATA ?? join(home(env), "AppData", "Roaming"), "Block", "goose", "data", "sessions", "sessions.db");
   return join(xdg("data", env), "goose", "sessions", "sessions.db");
 }

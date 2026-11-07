@@ -86,7 +86,12 @@ export default function (amp: any) {
 	try {
 		const root = amp?.system?.workspaceRoot;
 		if (root) cwd = amp.helpers?.filePathFromURI ? amp.helpers.filePathFromURI(root) : fileURLToPath(String(root));
-	} catch {}
+	} catch {
+		// A POSIX URI (file:///work/x) on Windows: keep the path as written.
+		try {
+			cwd = fileURLToPath(String(amp.system.workspaceRoot), { windows: false });
+		} catch {}
+	}
 	const send = (event: string, payload: unknown): Promise<void> =>
 		new Promise((resolve) => {
 			const body = JSON.stringify({ ...(payload as object), hook_event_name: event, cwd, ts: Date.now() });

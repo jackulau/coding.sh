@@ -25,7 +25,8 @@
 //
 // Capture failures (snapshot, spool I/O) are logged to spool/errors.log and never
 // change the command's exit code.
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawn } from "../core/spawn.ts";
 import { randomUUID } from "node:crypto";
 import { trackChild } from "../core/children.ts";
 import { constants } from "node:os";

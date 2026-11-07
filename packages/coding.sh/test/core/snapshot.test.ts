@@ -174,7 +174,8 @@ describe("materialize / diff", () => {
     const root = dirtyRepo();
     write(root, { "bin/run.sh": "#!/bin/sh\necho hi\n" });
     chmodSync(join(root, "bin/run.sh"), 0o755);
-    symlinkSync("a.txt", join(root, "link-to-a"));
+    // Git for Windows checks symlinks out as plain files (core.symlinks=false), so only POSIX round-trips one.
+    if (process.platform !== "win32") symlinkSync("a.txt", join(root, "link-to-a"));
     const s = await snapshot(root);
     assert.ok(s);
     const dest = join(tmp(), "task");
@@ -289,8 +290,12 @@ describe("performance", () => {
     // fresh clone without a warm index (stat cache empty) still within budget
     const m = await materialize(cold!, join(tmp(), "big"));
     rmSync(join(m.dir, ".git", "index"));
+    // Without a stat cache git reads and hashes all 5k files: a constant handful of git
+    // calls, but on Windows (per-file open cost, Defender) that alone takes 3-5 s, past the
+    // default 2 s budget, so it would come back partial. within() still compares to plain git.
+    const noIndexBudget = process.platform === "win32" ? 15_000 : 2000;
     t = performance.now();
-    const noIndex = await snapshot(m.dir);
+    const noIndex = await snapshot(m.dir, { timeoutMs: noIndexBudget });
     const noIndexMs = performance.now() - t;
     console.log(`# snapshot 5k files without index: ${noIndexMs.toFixed(0)} ms`);
     assert.equal(noIndex?.partial, false);

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { CODEX_HOOK_EVENTS, codex, codexExecArgs, codexTrustHash, codexUsage, untrustedHooks } from "../../src/adapters/codex.ts";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
+import { hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 
 const T0 = 1793527200000;
@@ -134,7 +135,7 @@ describe("codex install", () => {
 
     const original = JSON.stringify({ description: "mine", hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "./guard.sh" }] }] } }, null, 2) + "\n";
     writeFile(file(), original);
-    writeFile(join(env.home, ".codex", "config.toml"), `model = "gpt-5.5"\n\n[hooks.state."${file()}:pre_tool_use:0:0"]\ntrusted_hash = "sha256:abc"\n`);
+    writeFile(join(env.home, ".codex", "config.toml"), `model = "gpt-5.5"\n\n[hooks.state.${JSON.stringify(`${file()}:pre_tool_use:0:0`)}]\ntrusted_hash = "sha256:abc"\n`);
     const configBefore = readFileSync(join(env.home, ".codex", "config.toml"), "utf8");
 
     const c = await codex.install({ hookCommand: hookCommand(), scope: "user", dryRun: false });
@@ -144,7 +145,7 @@ describe("codex install", () => {
     assert.equal(cfg.hooks.PreToolUse[0].hooks[0].command, "./guard.sh", "user hook keeps index 0 (trust state is positional)");
     const ours = cfg.hooks.PreToolUse[1];
     assert.equal(ours.matcher, undefined, "no matcher = all tools");
-    assert.deepEqual(ours.hooks[0], { type: "command", command: `node "${hookCommand()}" codex PreToolUse`, timeout: 10, _codingsh: true });
+    assert.deepEqual(ours.hooks[0], { type: "command", command: `node "${hookPathForCommand(hookCommand())}" codex PreToolUse`, timeout: 10, _codingsh: true });
     assert.equal(cfg.hooks.SessionEnd[0].hooks[0].timeout, 3, "SessionEnd is capped at 3s");
     assert.equal(readFileSync(join(env.home, ".codex", "config.toml"), "utf8"), configBefore, "never writes trust state");
 
@@ -161,7 +162,7 @@ describe("codex install", () => {
     const f = join(env.root, "t", "hooks.json");
     const handler = { type: "command", command: "node x/.coding.sh/bin/hook.mjs codex Stop", timeout: 10, _codingsh: true };
     writeFile(f, JSON.stringify({ hooks: { Stop: [{ hooks: [handler] }] } }));
-    writeFile(join(env.home, ".codex", "config.toml"), `[hooks.state."${f}:stop:0:0"]\ntrusted_hash = "${codexTrustHash("Stop", undefined, handler)}"\n`);
+    writeFile(join(env.home, ".codex", "config.toml"), `[hooks.state.${JSON.stringify(`${f}:stop:0:0`)}]\ntrusted_hash = "${codexTrustHash("Stop", undefined, handler)}"\n`);
     assert.deepEqual(untrustedHooks(f), []);
     writeFile(join(env.home, ".codex", "config.toml"), "");
     assert.deepEqual(untrustedHooks(f), ["Stop"]);
@@ -183,7 +184,7 @@ describe("codex install", () => {
     const cfg = JSON.parse(readFileSync(file(), "utf8")) as { hooks: Record<string, { matcher?: string; hooks: Record<string, unknown>[] }[]> };
     const snake = (e: string) => e.replace(/([a-z])([A-Z])/g, "$1_$2").toLowerCase();
     const state = Object.entries(cfg.hooks).flatMap(([event, groups]) =>
-      groups.flatMap((g, gi) => g.hooks.map((h, hi) => `[hooks.state."${file()}:${snake(event)}:${gi}:${hi}"]\ntrusted_hash = "${codexTrustHash(event, g.matcher, h)}"\n`)),
+      groups.flatMap((g, gi) => g.hooks.map((h, hi) => `[hooks.state.${JSON.stringify(`${file()}:${snake(event)}:${gi}:${hi}`)}]\ntrusted_hash = "${codexTrustHash(event, g.matcher, h)}"\n`)),
     );
     writeFile(cfgPath, state.join("\n"));
     assert.deepEqual(untrustedHooks(file()), []);

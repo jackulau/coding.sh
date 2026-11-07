@@ -1,7 +1,7 @@
 // Headless driver plumbing: spawn (argv, no shell) in its own process group,
 // hard timeout that kills the group, stdout parsed as JSONL as it streams,
 // and bounded stdout/stderr tails.
-import { spawn } from "node:child_process";
+import { spawn } from "../../core/spawn.ts";
 import { supervise } from "../../core/children.ts";
 import type { AgentRunOutput, RunSpec } from "../../core/types.ts";
 

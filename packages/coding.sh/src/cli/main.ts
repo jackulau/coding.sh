@@ -11,6 +11,7 @@
 // `coding.sh` alone, in a terminal, sets up capture on first run (init) and
 // opens the viewer after that (ui). Piped or in CI it prints help.
 import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { paths } from "../core/paths.ts";
 import { parseArgs, suggest, UsageError, visibleFlags, type FlagSpec } from "./args.ts";
 import { Output } from "./output.ts";
@@ -319,7 +320,7 @@ function isMain(): boolean {
   const entry = process.argv[1];
   if (!entry) return false;
   try {
-    const self = new URL(import.meta.url).pathname;
+    const self = fileURLToPath(import.meta.url);
     return entry === self || /(?:^|[\\/])(cli\.mjs|main\.ts|coding\.sh|codingsh)$/.test(entry);
   } catch {
     return false;

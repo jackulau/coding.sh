@@ -8,7 +8,7 @@ import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { after, before, describe, test } from "node:test";
 import { build } from "esbuild";
 import { cacheFile, scheduleUpdateCheck } from "../../src/update/index.ts";
@@ -64,7 +64,7 @@ describe("background refresh child", () => {
     try {
       const outfile = join(dir, "update.mjs");
       await build({
-        entryPoints: [new URL("../../src/update/index.ts", import.meta.url).pathname],
+        entryPoints: [fileURLToPath(new URL("../../src/update/index.ts", import.meta.url))],
         bundle: true,
         platform: "node",
         format: "esm",

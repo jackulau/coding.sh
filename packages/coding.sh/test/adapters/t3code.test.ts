@@ -273,7 +273,7 @@ describe("T3 live capture", () => {
     const lines = readFileSync(join(FIXTURES, "claude-code", "hooks.spool.jsonl"), "utf8")
       .split("\n")
       .filter(Boolean)
-      .map((l) => JSON.parse(l.split("${FIXTURES}/claude-code/config/projects/-work-demo/" + `${CLAUDE_ID}.jsonl`).join(claude)))
+      .map((l) => JSON.parse(l.split("${FIXTURES}/claude-code/config/projects/-work-demo/" + `${CLAUDE_ID}.jsonl`).join(JSON.stringify(claude).slice(1, -1))))
       .map((l) => J({ ...l, host: { id: "t3code", thread: "thr-claude" } }));
     const cenv = { ...process.env };
     const spool = join(env.dataHome, "spool", "claude-code");

@@ -1,16 +1,21 @@
 // §15.8: `coding.sh toolevals` end to end against a fresh esbuild bundle, with
-// a temp HOME / CODING_SH_HOME and a PATH holding only node's directory.
+// a temp HOME / CODING_SH_HOME and a PATH holding only node's directory (plus sh on Windows).
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
 import { bundle } from "../../scripts/bundle.mjs";
 import { startFakeProvider, type FakeProvider } from "./fixtures/fake-provider.mjs";
+import { posixShell } from "../../src/core/spawn.ts";
+import { nodeBin, pathOf } from "../_bin.ts";
 import { FAKE_CLI } from "./helpers.ts";
 import { assertStartupBudget } from "../helpers-timing.ts";
 
+// Task commands run in sh; on Windows that is Git's bash, which a node-only PATH would hide.
+const SHELL_DIR = process.platform === "win32" ? dirname(posixShell() ?? "") : undefined;
 let distDir = "";
 let CLI = "";
 const dirs: string[] = [];
@@ -38,7 +43,7 @@ function tmpHome(): Home {
   mkdirSync(repo, { recursive: true });
   mkdirSync(join(root, "tmp"));
   const data = join(home, ".coding.sh");
-  return { home, data, repo, env: { HOME: home, USERPROFILE: home, CODING_SH_HOME: data, XDG_CONFIG_HOME: join(home, ".config"), XDG_DATA_HOME: join(home, ".local", "share"), PATH: dirname(process.execPath), TMPDIR: join(root, "tmp") } };
+  return { home, data, repo, env: { HOME: home, USERPROFILE: home, CODING_SH_HOME: data, XDG_CONFIG_HOME: join(home, ".config"), XDG_DATA_HOME: join(home, ".local", "share"), PATH: pathOf(dirname(process.execPath), SHELL_DIR), TMPDIR: join(root, "tmp") } };
 }
 
 const cli = (h: Home, args: string[], extra: Record<string, string> = {}): SpawnSyncReturns<string> => spawnSync(process.execPath, [CLI, ...args], { env: { ...h.env, ...extra }, cwd: h.repo, encoding: "utf8", timeout: 60_000 });
@@ -108,9 +113,7 @@ describe("toolevals CLI", () => {
 
   it("init --dry-run writes nothing; init writes the target and three draft starter tasks", () => {
     const h = tmpHome();
-    const wrapper = join(h.home, "fake-cli");
-    writeFileSync(wrapper, `#!/bin/sh\nexec ${q(process.execPath)} ${q(FAKE_CLI)} "$@"\n`);
-    chmodSync(wrapper, 0o755);
+    const wrapper = nodeBin(h.home, "fake-cli", `import ${q(pathToFileURL(FAKE_CLI).href)};\n`);
     const dry = cli(h, ["toolevals", "init", "--cli", wrapper, "--dry-run", "--json"]);
     assert.equal(dry.status, 0, dry.stderr);
     const plan = one(dry.stdout, "init --dry-run");

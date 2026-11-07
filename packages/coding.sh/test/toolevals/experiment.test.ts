@@ -1,7 +1,7 @@
 // Tool-eval trial lifecycle: sandbox cleanup (EXP-7), the tap blob on the stored
 // run (STO-3) and cancellation (EXP-2), with a fake command agent.
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { Adapter, RunSpec } from "../../src/core/types.ts";
@@ -59,8 +59,16 @@ describe("runToolExperiment cancellation", () => {
     const pidFile = join(tmp(), "pids");
     const index = new MemIndex();
     const ac = new AbortController();
-    setTimeout(() => ac.abort(), 800);
-    const t0 = Date.now();
+    // Abort once the agent is running.
+    let abortedAt = 0;
+    const started = setInterval(() => {
+      if (!existsSync(pidFile)) return;
+      clearInterval(started);
+      abortedAt = Date.now();
+      ac.abort();
+    }, 20);
+    // The agent records its pid with node (a real pid on Windows too, unlike an MSYS shell's $$), then sleeps.
+    const agent = `'${process.execPath}' -e "require('fs').appendFileSync(process.argv[1], process.pid + '\\n'); setTimeout(() => {}, 30000)" '${pidFile}'`;
     const r = await runToolExperiment({
       tasks: [task()],
       target: cliTarget(),
@@ -71,10 +79,10 @@ describe("runToolExperiment cancellation", () => {
       root,
       index,
       blobs: new MemBlobs(),
-      adapterFor: () => shellAgent(`echo $$ >> ${pidFile}; sleep 30`),
+      adapterFor: () => shellAgent(agent),
       signal: ac.signal,
-    });
-    assert.ok(Date.now() - t0 < 5000, `stopped in ${Date.now() - t0}ms`);
+    }).finally(() => clearInterval(started));
+    assert.ok(Date.now() - abortedAt < 4000, `stopped ${Date.now() - abortedAt}ms after the abort`);
     assert.equal(r.cancelled, true);
     assert.deepEqual(r.trials, []);
     assert.deepEqual(readdirSync(r.dir).sort(), ["experiment.json"], "no trial dir, no trials.jsonl");

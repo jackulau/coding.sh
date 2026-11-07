@@ -1,7 +1,7 @@
 // Shared fixtures for the MCP server tests: a temp HOME/CODING_SH_HOME seeded
 // through the real store, and a raw line-level stdio client.
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,6 +35,7 @@ export function worldAt(root: string, data = join(root, "home", ".coding.sh")): 
   const home = join(root, "home");
   const repo = join(root, "repos", "parser");
   mkdirSync(join(repo, ".git"), { recursive: true });
+  writeFileSync(join(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
   mkdirSync(join(root, "repos", "docs"), { recursive: true });
   mkdirSync(data, { recursive: true });
   const env: Record<string, string> = {

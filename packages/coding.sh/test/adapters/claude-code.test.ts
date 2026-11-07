@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
+import { hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { backfill, backfillCursorKey } from "../../src/core/ingest.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
@@ -153,7 +154,7 @@ describe("claude-code install", () => {
     const ours = cfg.hooks.PreToolUse[1];
     assert.equal(ours.matcher, "*");
     assert.equal(ours.hooks[0]._codingsh, true);
-    assert.equal(ours.hooks[0].command, `node "${hookCommand()}" claude-code PreToolUse`);
+    assert.equal(ours.hooks[0].command, `node "${hookPathForCommand(hookCommand())}" claude-code PreToolUse`);
     assert.ok(readFileSync(settings(), "utf8").startsWith('{\n    "model"'), "indent preserved");
     assert.equal(readdirSync(join(env.dataHome, "backups", "claude-code")).length, 1, "backup written");
     assert.equal((await claudeCode.detect()).hooked, true);

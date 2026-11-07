@@ -1,14 +1,15 @@
 // §15.1: the CLI shim records one classified TapRecord per call, passes I/O
 // through unchanged, and its durationMs excludes shim startup.
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { posixShell, spawn, spawnSync } from "../../src/core/spawn.ts";
 import { classifyCli, DEFAULT_USAGE_PATTERNS, writeCliShim } from "../../src/toolevals/tap/cli.ts";
 import type { TapRecord } from "../../src/toolevals/types.ts";
+import { pathOf } from "../_bin.ts";
 
 const FIX = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 const FAKE = join(FIX, "fake-cli.mjs");
@@ -53,9 +54,9 @@ describe("CLI shim", () => {
     const tapLog = join(d, "tap.jsonl");
     writeFileSync(tapLog, "");
     await writeCliShim(bin, "fake-cli", { command: [process.execPath, FAKE], env: {}, tapLog, ...cfg });
-    // A scripted "agent": four calls through PATH.
+    // A scripted "agent": four calls through PATH (Git Bash on Windows runs the extensionless shim).
     const script = "fake-cli --help >/dev/null; fake-cli greet --name ada; fake-cli greet --bogus; fake-cli fail; true";
-    const r = spawnSync("/bin/sh", ["-c", script], { env: { PATH: `${bin}:${process.env.PATH}` }, encoding: "utf8", cwd: d });
+    const r = spawnSync(posixShell()!, ["-c", script], { env: { ...process.env, PATH: pathOf(bin, process.env.PATH) }, cwd: d });
     assert.equal(r.status, 0);
     assert.match(r.stdout, /hello ada/);
     assert.match(r.stderr, /unknown option '--bogus'/);
@@ -76,7 +77,7 @@ describe("CLI shim", () => {
   it("without a tap log passes through and records nothing", async () => {
     const d = tmp();
     await writeCliShim(join(d, "checkbin"), "fake-cli", { command: [process.execPath, FAKE], env: {}, ...cfg });
-    const r = spawnSync(join(d, "checkbin", "fake-cli"), ["sum", "2", "3"], { encoding: "utf8" });
+    const r = spawnSync(join(d, "checkbin", "fake-cli"), ["sum", "2", "3"]);
     assert.equal(r.status, 0);
     assert.equal(r.stdout, "5\n");
   });
@@ -89,7 +90,7 @@ describe("CLI shim", () => {
     const tapLog = join(d, "tap.jsonl");
     writeFileSync(tapLog, "");
     await writeCliShim(bin, "fake-cli", { command: ["fake-cli"], env: {}, tapLog, ...cfg });
-    const r = spawnSync("fake-cli", ["greet"], { env: { PATH: `${bin}:${real}:${dirname(process.execPath)}` }, encoding: "utf8", timeout: 10_000 });
+    const r = spawnSync("fake-cli", ["greet"], { env: { ...process.env, PATH: pathOf(bin, real, dirname(process.execPath)) }, timeout: 10_000 });
     assert.equal(r.status, 0);
     assert.equal(r.stdout, "hello world\n");
     assert.equal(readTap(tapLog).length, 1);

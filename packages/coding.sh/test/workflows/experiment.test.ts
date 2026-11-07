@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { buildSession } from "../../src/core/sessions.ts";
 import { decodeTraceJson } from "../../src/otel/json.ts";
@@ -16,6 +16,7 @@ import { loadClaudeWorkflowDir } from "../../src/workflows/sources/claude-workfl
 import { WorkflowStore } from "../../src/workflows/store.ts";
 import { buildWorkflowTree, type WorkflowTree } from "../../src/workflows/tree.ts";
 import type { WorkflowCase, WorkflowDriver, WorkflowVariant } from "../../src/workflows/types.ts";
+import { nodeBin } from "../_bin.ts";
 import { MemBlobs, MemIndex } from "../otel/_memstore.ts";
 import { langGraph, RESUMED, RUN, SCRIPT, SID, writeClaudeWorkflowFixture, writeReviewCases } from "./_fixtures.ts";
 
@@ -78,25 +79,24 @@ describe("claude-code-workflow driver", () => {
   it("builds the -p prompt and argv", () => {
     const argv = claudeArgv({ name: "v", script: "wf/review.js", resumeFromRunId: "wf_1" }, cases[0]!, { cwd: "/repo", settings: "/tmp/s.json" });
     assert.deepEqual(argv.slice(0, 5), ["-p", "--output-format", "json", "--settings", "/tmp/s.json"]);
-    assert.match(argv[5]!, /^Run the workflow script at \/repo\/wf\/review\.js with args \{"target":"src","seeded":"seeded-1"\}\. Resume from run wf_1/);
+    // The script path is native (C:\repo\wf\review.js on Windows).
+    assert.ok(argv[5]!.startsWith(`Run the workflow script at ${resolve("/repo", "wf/review.js")} with args {"target":"src","seeded":"seeded-1"}. Resume from run wf_1`), argv[5]);
     assert.equal(workflowPrompt("/s.js", {}), "Run the workflow script at /s.js with args {}. Return its result as JSON and nothing else.");
     assert.throws(() => claudeArgv({ name: "v" }, cases[0]!), /has no script/);
   });
 
   it("runs a (fake) claude binary and finds the run dir by the printed session id", async () => {
-    const bin = join(root, "fake-claude.mjs");
     const argvLog = join(root, "claude-argv.json");
-    writeFileSync(
-      bin,
-      `#!${process.execPath}
-import { utimesSync, writeFileSync } from "node:fs";
+    const bin = nodeBin(
+      root,
+      "fake-claude",
+      `import { utimesSync, writeFileSync } from "node:fs";
 writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)));
 const t = new Date(Date.now() + 60_000);
 utimesSync(${JSON.stringify(join(resumedDir, "journal.jsonl"))}, t, t);
 console.log(JSON.stringify({ type: "result", session_id: ${JSON.stringify(SID)}, result: "Here you go:\\n" + JSON.stringify({ findings: [] }), is_error: false }));
 `,
     );
-    chmodSync(bin, 0o755);
     const d = claudeWorkflowDriver({ bin, cwd: root, env: { CLAUDE_CONFIG_DIR: join(root, "claude"), HOME: root } });
     const r = await d.run({ name: "v", script: "wf.js" }, cases[0]!, { CODING_SH_WORKFLOW_RUN_ID: "wfr_c" });
     assert.equal(r.exitCode, 0);

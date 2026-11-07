@@ -4,11 +4,12 @@
 // crontab on PATH; the real one is never touched).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { buildTools, type ToolCtx } from "../../src/mcp/tools.ts";
+import { nodeBin, pathOf } from "../_bin.ts";
 import { cleanup, project } from "./helpers.ts";
 
 after(cleanup);
@@ -126,12 +127,11 @@ describe("bench e2e", () => {
     assert.doesNotMatch(s.workflow, /actions\/cache/);
 
     const bin = join(root, "fakebin");
-    mkdirSync(bin, { recursive: true });
     const tab = join(root, "crontab.txt");
     writeFileSync(tab, "0 1 * * * echo keep-me\n");
-    writeFileSync(join(bin, "crontab"), `#!/bin/sh\nif [ "$1" = "-l" ]; then cat "${tab}"; else cat > "${tab}"; fi\n`);
-    chmodSync(join(bin, "crontab"), 0o755);
-    const fake = { PATH: `${bin}:${env.PATH}` };
+    const fs = `require("node:fs")`;
+    nodeBin(bin, "crontab", `const tab = ${JSON.stringify(tab)};\nif (process.argv[2] === "-l") process.stdout.write(${fs}.readFileSync(tab));\nelse ${fs}.writeFileSync(tab, ${fs}.readFileSync(0));\n`);
+    const fake = { PATH: pathOf(bin, env.PATH) };
 
     const refused = run(["bench", "schedule", "daily", "--install-cron", "--yes"], fake);
     assert.notEqual(refused.status, 0);

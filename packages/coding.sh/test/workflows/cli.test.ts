@@ -1,7 +1,7 @@
 // `coding.sh workflows` through the command module's run(), with a fake
 // Output and a temp HOME / CODING_SH_HOME / CLAUDE_CONFIG_DIR.
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -10,6 +10,7 @@ import { confirmAboveUsd, parseVariant, renderTree, run, verifyEntries } from ".
 import { Output } from "../../src/cli/output.ts";
 import { WORKFLOWS_COMMAND } from "../../src/workflows/cli-spec.ts";
 import type { WorkflowNode } from "../../src/workflows/types.ts";
+import { nodeBin } from "../_bin.ts";
 import { RESUMED, RUN, RUN_OUTPUT, SCRIPT, SID, writeClaudeWorkflowFixture, writeReviewCases } from "./_fixtures.ts";
 
 let root = "";
@@ -161,7 +162,7 @@ describe("coding.sh workflows", () => {
   it("run asks before spending above the threshold, then runs the experiment", async () => {
     const flags = {
       driver: "command",
-      variant: [JSON.stringify({ name: "bad", command: [process.execPath, join(root, "fake-wf.mjs"), "bad"] }), `good=${process.execPath} ${join(root, "fake-wf.mjs")} good`],
+      variant: [JSON.stringify({ name: "bad", command: [process.execPath, join(root, "fake-wf.mjs"), "bad"] }), `good=node ${join(root, "fake-wf.mjs")} good`],
       split: "dev",
       k: 1,
     };
@@ -210,17 +211,15 @@ describe("coding.sh workflows", () => {
 
     await assert.rejects(cli("replay", [RUN], { script: edited }, { env: { CODING_SH_CONFIRM_ABOVE_USD: "0.01" } }), (e: Error & { reason?: string }) => e.reason === "confirmation_required");
 
-    const bin = join(root, "fake-claude.mjs");
-    writeFileSync(
-      bin,
-      `#!${process.execPath}
-import { utimesSync } from "node:fs";
+    const bin = nodeBin(
+      root,
+      "fake-claude",
+      `import { utimesSync } from "node:fs";
 const t = new Date(Date.now() + 120_000);
 utimesSync(${JSON.stringify(join(resumedDir, "journal.jsonl"))}, t, t);
 console.log(JSON.stringify({ session_id: ${JSON.stringify(SID)}, result: JSON.stringify({ findings: [] }), is_error: false }));
 `,
     );
-    chmodSync(bin, 0o755);
     const live = await json("replay", [RUN], { script: edited, bin });
     assert.equal(live.run.id, RESUMED);
     assert.ok(live.run.tags.includes("replay"));

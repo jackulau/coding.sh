@@ -276,7 +276,8 @@ describe("exportHarbor", () => {
     assert.match(testSh, /\/logs\/verifier\/reward\.txt/);
     assert.match(testSh, /'node test\/add\.test\.js'/);
     assert.equal(await readFile(join(dir, "tests/files/test/add.test.js"), "utf8"), HIDDEN_TEST);
-    assert.ok(((await stat(join(dir, "solution/solve.sh"))).mode & 0o111) !== 0);
+    // Windows has no exec bit to check (Harbor runs the task in a Linux container anyway).
+    if (process.platform !== "win32") assert.ok(((await stat(join(dir, "solution/solve.sh"))).mode & 0o111) !== 0);
     assert.ok(existsSync(join(dir, "solution/reference.patch")));
     assert.equal(await readFile(join(dir, "instruction.md"), "utf8"), `${t.instruction}\n`);
   });

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -15,6 +15,7 @@ import { resolveTask, safeUrl, splitCommandLine } from "../../src/experiments/ta
 import { createJudge, judgeGrader } from "../../src/judge/judge.ts";
 import type { ChatProvider } from "../../src/judge/providers.ts";
 import { wilson } from "../../src/stats/interval.ts";
+import { nodeBin } from "../_bin.ts";
 
 const AGENT = fileURLToPath(new URL("./fixtures/agent.mjs", import.meta.url));
 const ANSI = /\u001b\[/;
@@ -299,17 +300,16 @@ describe("runExperiment: command task", () => {
     });
     assert.equal(r.summary.errors, 0, r.runs[0]?.error);
     assert.equal(r.summary.passed, 3);
-    assert.match(r.task.ref, /agent\.mjs$/);
-    assert.doesNotMatch(r.task.ref, /^"/);
+    // The ref is the split argv (two words), not the whole line as one quoted program name.
+    assert.deepEqual(splitCommandLine(r.task.ref), [process.execPath, AGENT]);
   });
 
   it("a command that is an existing path with spaces is not split", async () => {
     const root = await mkdtemp(join(tmpdir(), "coding-sh-cmd-"));
     try {
       await mkdir(join(root, "my agent"));
-      const script = join(root, "my agent", "run me");
-      await writeFile(script, `#!${process.execPath}\nprocess.stdout.write(JSON.stringify("spaced"));\n`);
-      await chmod(script, 0o755);
+      // Windows runs the npm-style `run me.cmd` shim nodeBin writes next to the script.
+      const script = nodeBin(join(root, "my agent"), "run me", `process.stdout.write(JSON.stringify("spaced"));\n`) + (process.platform === "win32" ? ".cmd" : "");
       const one = createDataset({ name: "one", cases: [{ id: "a", input: 1, expected: "spaced" }] });
       const r = await runExperiment({ name: "spaced", dataset: one, task: { kind: "command", command: script, timeoutMs: 20_000 }, graders: [exactGrader()] });
       assert.equal(r.runs[0]?.error, undefined);

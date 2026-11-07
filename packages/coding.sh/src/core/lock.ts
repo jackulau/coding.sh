@@ -195,12 +195,30 @@ function breakStale(path: string, staleMs: number, nonce: string): boolean {
   return true;
 }
 
-function tryCreate(path: string, info: LockInfo): boolean {
+/** True unless `path` is definitely absent (a file Windows is still deleting fails stat with EPERM). */
+function present(path: string): boolean {
+  try {
+    statSync(path);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code !== "ENOENT";
+  }
+}
+
+function tryCreate(path: string, info: LockInfo, retry = true): boolean {
   let fd: number;
   try {
     fd = openSync(path, "wx", 0o600);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "EEXIST") return false;
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") return false;
+    // Windows: a released lock that another process still has open (reading
+    // it) lingers as delete-pending, and creating over it fails with EPERM.
+    // That is a busy lock; EPERM with nothing there (twice) is a real error.
+    if (code === "EPERM" && process.platform === "win32") {
+      if (present(path)) return false;
+      if (retry) return tryCreate(path, info, false);
+    }
     throw e;
   }
   try {
