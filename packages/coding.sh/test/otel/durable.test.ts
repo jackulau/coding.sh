@@ -30,6 +30,18 @@
 // - cloudflare-workflows.jsonl: a Workflow under wrangler 4.158 dev, spans
 //   emitted by the Worker itself with the hand-rolled convention (wrangler dev
 //   exports none); local instances resume only after pause()/resume().
+// - temporal-python.jsonl (protobuf): temporalio 1.35 with OpenTelemetryPlugin
+//   (add_temporal_spans=True), the same scenario; the client's StartWorkflow
+//   names no run id. temporal-python-wait.jsonl adds a span around the sleep.
+// - restate-python.jsonl (protobuf + JSON): restate-sdk 1.4 against
+//   restate-server 1.8.1; the SDK traces no run span, so steps come from the
+//   server's journal events; the model calls arrive before the server's spans.
+// - dbos-python.jsonl (protobuf): dbos 3.4 on Postgres 16; replays carry no
+//   `cached` mark and DBOS's own "sleep" span is an instant as the sleep begins.
+//   dbos-python-wait.jsonl adds a span around the sleep.
+// - temporal-wait.jsonl / inngest-wait.jsonl / dbos-wait.jsonl: the TS SDKs
+//   above with the how-to's sleep snippet (a workflow interceptor on Temporal,
+//   a span from a step after the sleep on Inngest and DBOS).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
@@ -248,13 +260,37 @@ async function collect(name: string) {
 }
 
 const LOST_READ = "read:+12";
-const ENGINES: { name: string; engine: string; steps: string[]; waits: string[]; resumes: string[]; title: string; failed: string }[] = [
+const PY_FAILED = "RuntimeError: search API returned 503";
+type EngineCase = {
+  name: string;
+  engine: string;
+  steps: string[];
+  waits: string[];
+  resumes: string[];
+  title: string;
+  failed: string;
+  /** Default research-app. */
+  agent?: string;
+  /** Processes in the run (default 3: two killed or stopped, one on version 2). */
+  instances?: number;
+  /** Steps that call no model (default review, which only waits for the human). */
+  noModel?: string[];
+};
+const ENGINES: EngineCase[] = [
   { name: "inngest", engine: "inngest", steps: ["plan:1", "search:1✗,2", LOST_READ, "write:1"], waits: [], resumes: ["crash@read", "deploy@write 1→2"], title: "inngest run 01M6VTR3561VS97TPW0AB6AZ4V", failed: "" },
   { name: "restate", engine: "restate", steps: ["plan:1", "search:1✗,2", LOST_READ, "write:1"], waits: ["cooldown"], resumes: ["crash@read", "deploy@write 1→2"], title: "researchAgent", failed: "search API returned 503" },
   { name: "dbos", engine: "dbos", steps: ["plan:1,1,1", "search:1✗,2,2,2", "read:1,1", "write:1"], waits: [], resumes: ["restart@read", "deploy@write 1→2"], title: "researchAgent", failed: "search API returned 503" },
   { name: "langgraph-openinference", engine: "langgraph", steps: ["plan:1", "search:1✗,2", LOST_READ, "review:1", "write:1"], waits: ["interrupt"], resumes: ["crash@read", "deploy@review 1→2"], title: "researchAgent", failed: "search API returned 503" },
   { name: "langgraph-langsmith", engine: "langgraph", steps: ["plan:1", "search:1✗,2", LOST_READ, "review:1", "write:1"], waits: ["interrupt"], resumes: ["crash@read", "deploy@review 1→2"], title: "researchAgent", failed: "search API returned 503" },
   { name: "cloudflare-workflows", engine: "workflow", steps: ["plan:1", "search:1✗,2", LOST_READ, "write:1"], waits: ["pause"], resumes: ["crash@read", "deploy@write 1→2"], title: "researchAgent", failed: "search API returned 503" },
+  // The Python SDKs. Temporal's client counts as a process; its StartWorkflow names no run.
+  { name: "temporal-python", engine: "temporal", steps: ["plan:1", "search:1✗,2", LOST_READ, "write:1"], waits: [], resumes: ["crash@read", "deploy@write 1→2"], title: "researchAgent", failed: PY_FAILED, agent: "research-worker", instances: 4 },
+  { name: "temporal-python-wait", engine: "temporal", steps: ["plan:1", "search:1✗,2", LOST_READ, "write:1"], waits: ["pause"], resumes: ["crash@read", "deploy@write 1→2"], title: "researchAgent", failed: PY_FAILED, agent: "research-worker", instances: 4 },
+  // No run span: steps come from the server's journal events; the server names no error.
+  { name: "restate-python", engine: "restate", steps: ["plan:1", "search:1✗,2", LOST_READ, "write:1"], waits: ["cooldown"], resumes: ["crash@read", "deploy@write 1→2"], title: "researchAgent", failed: "transient failure" },
+  // No `cached` mark on replays; DBOS's own sleep span is an instant at the sleep's start.
+  { name: "dbos-python", engine: "dbos", steps: ["plan:1,1,1", "search:1✗,2,2,2", "read:+12,2", "write:1"], waits: ["sleep"], resumes: ["crash@read", "deploy@write 1→2"], title: "researchAgent", failed: "search API returned 503" },
+  { name: "dbos-python-wait", engine: "dbos", steps: ["plan:1,1,1", "search:1✗,2,2,2", "read:+12,2", "sleep_start:1,1", "write:1"], waits: ["cool-down"], resumes: ["crash@read", "deploy@write 1→2"], title: "researchAgent", failed: "search API returned 503", noModel: ["sleep_start"] },
 ];
 
 describe("durable workflow runs from real captures of the other engines", () => {
@@ -264,16 +300,15 @@ describe("durable workflow runs from real captures of the other engines", () => 
       const s = sessions[0]!;
       const d = s.stats.durable!;
       assert.equal(d.engine, x.engine);
-      // Restate's client span is the user's own, exported before any span names the run.
-      assert.equal(sessions.filter((o) => o.stats.durable).length, 1, sessions.map((o) => o.id).join(", "));
-      assert.equal(sessions.length, x.name === "restate" ? 2 : 1, sessions.map((o) => o.id).join(", "));
+      // Spans exported before any span names the run (a client's start span) join it by trace.
+      assert.equal(sessions.length, 1, sessions.map((o) => o.id).join(", "));
       assert.equal(s.title, x.title);
-      assert.equal(s.agent, "research-app");
+      assert.equal(s.agent, x.agent ?? "research-app");
       assert.deepEqual(shape(d), x.steps);
       assert.deepEqual(d.waits.map((w) => w.name), x.waits);
       for (const w of d.waits) assert.ok(w.endedAt! - w.startedAt >= 5_900, `${w.name} ${w.endedAt! - w.startedAt}`);
       assert.deepEqual(resumes(d).filter((r) => !r.startsWith("wait")), x.resumes);
-      assert.equal(d.instances, 3);
+      assert.equal(d.instances, x.instances ?? 3);
       assert.deepEqual(s.flags.filter((f) => f === "step-retried" || f === "resumed"), ["step-retried", "resumed"]);
       assert.deepEqual(s.stats.usage && { i: s.stats.usage.inputTokens, o: s.stats.usage.outputTokens }, { i: 3100, o: 540 });
       const failed = d.steps.flatMap((st) => st.attempts).filter((a) => !a.ok);
@@ -285,8 +320,8 @@ describe("durable workflow runs from real captures of the other engines", () => 
 
       const t = buildWorkflowTree({ spans: await store.listEvents(s.id), runId: s.id });
       assert.equal(t.run.framework, x.engine === "workflow" ? "otel" : x.engine);
-      // Every step but review (it only waits for the human) calls the model.
-      assert.ok(t.nodes.filter((n) => n.kind === "step" && !n.lost && n.status !== "cached" && n.name !== "review").every((n) => (n.usage?.inputTokens ?? 0) > 0), "model calls under their step attempts");
+      const noModel = new Set(x.noModel ?? ["review"]);
+      assert.ok(t.nodes.filter((n) => n.kind === "step" && !n.lost && n.status !== "cached" && !noModel.has(n.name)).every((n) => (n.usage?.inputTokens ?? 0) > 0), "model calls under their step attempts");
       // The failed search attempt is its own node, even when the engine keeps both attempts in one span (DBOS).
       const search = t.nodes.filter((n) => n.kind === "step" && n.name === "search" && n.status !== "cached");
       assert.deepEqual(search.map((n) => `${n.attempt}:${n.status}`), ["1:failed", "2:ok"]);
@@ -296,6 +331,21 @@ describe("durable workflow runs from real captures of the other engines", () => 
       if (read.unreported) assert.equal(t.run.stats.lostMs, read.unreportedMs! - read.unreportedRanMs!);
     });
   }
+
+  it("a span the user wraps around a sleep is a wait where the engine exports none (Temporal, Inngest, DBOS)", async () => {
+    for (const [name, wait] of [["temporal-wait", "cooldown"], ["inngest-wait", "pause"], ["dbos-wait", "cooldown"]] as const) {
+      const { sessions } = await collect(name);
+      assert.equal(sessions.length, 1, name);
+      const d = sessions[0]!.stats.durable!;
+      assert.deepEqual(d.waits.map((w) => w.name), [wait], name);
+      const ms = d.waits[0]!.endedAt! - d.waits[0]!.startedAt;
+      // Started by the process that began the sleep, ended by the one that woke from it (version 2).
+      assert.ok(ms >= 5_900 && ms < 7_000, `${name}: ${ms}`);
+      assert.equal(d.waitMs, ms, name);
+      assert.ok(d.activeMs < d.wallMs - d.waitMs, `${name}: a wait is not busy time`);
+      assert.ok(d.steps.every((s) => !s.name.includes(wait) || s.name.endsWith(":woke")), `${name}: the wait span is no step attempt`);
+    }
+  });
 
   it("DBOS: the failed attempt ends at its event and the retry starts after the retry interval", async () => {
     const { sessions } = await collect("dbos");
@@ -340,6 +390,20 @@ describe("durable workflow runs from hand-written spans", () => {
     assert.equal(s.stats.usage?.inputTokens, 1000);
     assert.equal(s.stats.duplicateUsage?.calls, 1);
     assert.equal(s.stats.durable?.replayedCalls, 1);
+  });
+
+  it("a Temporal Python client's StartWorkflow (no run id) joins its trace's run; reusing the workflow id is a new session", async () => {
+    const wf: A = ["temporalWorkflowID", "wf-1"];
+    const scope = "temporalio.contrib.opentelemetry._otel_interceptor";
+    const bodies: J[] = [];
+    for (const [t, run] of [["t1", "run-1"], ["t2", "run-2"]] as const) {
+      // The client exports first, before any worker span names the run.
+      bodies.push(body(scope, [["service.name", "client"]], [span(t, `c-${t}`, undefined, "StartWorkflow:flow", [wf], 0, 10)]));
+      bodies.push(body(scope, [["service.name", "worker"], ["service.instance.id", "w"]], [span(t, `r-${t}`, `c-${t}`, "RunActivity:plan", [wf, ["temporalRunID", run], ["temporalActivityID", "1"]], 20, 100)]));
+    }
+    const by = await mapBodies(bodies);
+    assert.equal(by.size, 2);
+    assert.deepEqual([...by.values()].map((evs) => buildSession(evs).stats.durable!.runId).sort(), ["wf-1:run-1", "wf-1:run-2"]);
   });
 
   it("an explicit conversation id outranks the run id", async () => {
