@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, chmodSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, chmodSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { diffSnapshots, diffWorkdir, ensureShadow, materialize, shadowRepoPath, snapshot } from "../../src/core/snapshot.ts";
@@ -261,38 +261,51 @@ describe("materialize / diff", () => {
   });
 });
 
-describe("performance", () => {
-  // The budget is 2 s, or 3x what plain git takes at the same moment to hash
-  // the whole tree into a fresh index (`add -A`, then `write-tree`), whichever
-  // is larger. A snapshot never does more than that plus a few small git calls
-  // (with a seeded index it does much less), so load slows both alike, and a
-  // regression that adds per-file work or extra passes over the tree fails.
+describe("performance (5k files)", () => {
+  // Each budget is 2 s, or 3x what plain git takes at the same moment, on the same
+  // machine, to hash the whole tree into a fresh index (`add -A`, then `write-tree`),
+  // whichever is larger. A snapshot never does more than that plus a few small git
+  // calls (with a seeded index it does much less), so load and slow disks stretch both
+  // alike, and a regression that adds per-file work or extra passes over the tree fails.
+  const GIT_TIMEOUT_MS = 120_000;
   const plainGitMs = (dir: string) =>
     median(
       [0, 1, 2].map(() => {
         const env = { ...process.env, GIT_INDEX_FILE: join(tmp(), "index") };
         return timeMs(() => {
-          for (const args of [["add", "-A"], ["write-tree"]]) assert.equal(spawnSync("git", args, { cwd: dir, env }).status, 0, args.join(" "));
+          for (const args of [["add", "-A"], ["write-tree"]]) {
+            const r = spawnSync("git", args, { cwd: dir, env, timeout: GIT_TIMEOUT_MS });
+            assert.equal(r.status, 0, `git ${args.join(" ")}: ${r.error?.message ?? r.stderr}`);
+          }
         });
       }),
     );
-  const within = (label: string, ms: number, dir: string) => {
+  const budgetMs = (baseMs: number) => Math.max(2000, 3 * baseMs);
+  const within = (label: string, ms: number, dir: string, baseMs?: number) => {
     if (ms < 2000) return;
-    const base = plainGitMs(dir);
-    assert.ok(ms < 3 * base, `${label} took ${ms.toFixed(0)} ms; plain git add -A + write-tree into a fresh index took ${base.toFixed(0)} ms`);
+    const base = baseMs ?? plainGitMs(dir);
+    assert.ok(ms < budgetMs(base), `${label} took ${ms.toFixed(0)} ms; plain git add -A + write-tree into a fresh index took ${base.toFixed(0)} ms`);
   };
 
-  // Setting up 5k files (writes, a commit, a materialize) is slow on Windows runners, where a
-  // virus scanner reads every new file; the budgets below are on the snapshots alone.
-  test("5k-file repo snapshot < 2 s (or 3x plain git on a loaded machine)", { timeout: process.platform === "win32" ? 300_000 : 120_000 }, async () => {
-    const root = makeRepo();
-    for (let d = 0; d < 50; d++) {
-      mkdirSync(join(root, `dir${d}`));
-      for (let f = 0; f < 100; f++) writeFileSync(join(root, `dir${d}`, `f${f}.txt`), `file ${d}/${f}\n`.repeat(20));
-    }
-    gitc(root, "add", "-A");
-    gitc(root, "commit", "-q", "-m", "5k");
-    write(root, { "dir0/f0.txt": "changed\n", "untracked.txt": "u\n" });
+  // Building the repo (5k writes and a commit) is untimed, and on Windows runners, where a
+  // virus scanner reads every new file, it alone can take minutes. It gets its own generous
+  // limit, so the tests' limits cover only the work they measure.
+  let root = "";
+  before(
+    () => {
+      root = makeRepo();
+      for (let d = 0; d < 50; d++) {
+        mkdirSync(join(root, `dir${d}`));
+        for (let f = 0; f < 100; f++) writeFileSync(join(root, `dir${d}`, `f${f}.txt`), `file ${d}/${f}\n`.repeat(20));
+      }
+      gitc(root, "add", "-A");
+      gitc(root, "commit", "-q", "-m", "5k");
+      write(root, { "dir0/f0.txt": "changed\n", "untracked.txt": "u\n" });
+    },
+    { timeout: process.platform === "win32" ? 900_000 : 300_000 },
+  );
+
+  test("first and second snapshot < 2 s (or 3x plain git on a loaded machine)", { timeout: 300_000 }, async () => {
     let t = performance.now();
     const cold = await snapshot(root);
     const coldMs = performance.now() - t;
@@ -304,18 +317,27 @@ describe("performance", () => {
     assert.ok(warm?.snapshot);
     within("first snapshot", coldMs, root);
     within("second snapshot", warmMs, root);
-    // fresh clone without a warm index (stat cache empty) still within budget
-    const m = await materialize(cold!, join(tmp(), "big"));
-    rmSync(join(m.dir, ".git", "index"));
-    // Without a stat cache git reads and hashes all 5k files: a constant handful of git
-    // calls, but on Windows (per-file open cost, Defender) that alone takes 3-5 s, past the
-    // default 2 s budget, so it would come back partial. within() still compares to plain git.
-    const noIndexBudget = process.platform === "win32" ? 15_000 : 2000;
-    t = performance.now();
-    const noIndex = await snapshot(m.dir, { timeoutMs: noIndexBudget });
-    const noIndexMs = performance.now() - t;
-    console.log(`# snapshot 5k files without index: ${noIndexMs.toFixed(0)} ms`);
-    assert.equal(noIndex?.partial, false);
-    within("no-index snapshot", noIndexMs, m.dir);
+  });
+
+  // Without the repo's index (a fresh clone: no stat cache) git reads and hashes all 5k
+  // files. That is a constant handful of git calls, but on Windows (per-file open cost,
+  // the virus scanner) it takes seconds, past the default 2 s snapshot budget, so the
+  // snapshot gets the same budget as the check, measured from plain git first.
+  test("snapshot without an index (fresh clone) < 2 s (or 3x plain git)", { timeout: 300_000 }, async () => {
+    const index = join(root, ".git", "index");
+    const aside = join(tmp(), "index");
+    renameSync(index, aside);
+    try {
+      const base = plainGitMs(root);
+      const t = performance.now();
+      const noIndex = await snapshot(root, { timeoutMs: budgetMs(base) });
+      const noIndexMs = performance.now() - t;
+      console.log(`# snapshot 5k files without index: ${noIndexMs.toFixed(0)} ms (plain git ${base.toFixed(0)} ms)`);
+      assert.equal(noIndex?.partial, false, `no-index snapshot ran out of its ${budgetMs(base).toFixed(0)} ms budget (plain git ${base.toFixed(0)} ms)`);
+      assert.ok(noIndex?.snapshot);
+      within("no-index snapshot", noIndexMs, root, base);
+    } finally {
+      renameSync(aside, index);
+    }
   });
 });
