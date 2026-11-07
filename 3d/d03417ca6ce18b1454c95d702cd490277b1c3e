@@ -1,0 +1,23 @@
+packages/coding.sh/src/viewer/ui/index.html
+  s_8e040dbdf13565::t_8a74d39050f4db 23,65,140,334-342,356,420,475,479,523,605,608,691-692,788,846,853,942,970,996-999,1004-1006,1085,1090-1091,1099,1122-1127,1288-1293,1888-1889,1920,2045-2048,2289,3116-3125,3136,3148,3831-3833,3836,3906,3917,4085,4270,4600,4665-4674,4677,4684,4694-4700,4702,4713,4764,4769,4800,4890
+packages/coding.sh/test/viewer/fakes.ts
+  s_8e040dbdf13565::t_b1253d1cceddb8 69-73
+packages/coding.sh/test/viewer/ui-browser.test.ts
+  s_8e040dbdf13565::t_23bba9efc47e51 155,320-328,332-333,340,515-516,826-832,854-856
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3dd03417ca6ce18b1454c95d702cd490277b1c3e",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
