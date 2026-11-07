@@ -171,5 +171,7 @@ describe("cursor backfill", () => {
       ],
     );
     assert.ok(events.every((e, i) => i === 0 || e.ts >= events[i - 1]!.ts));
+    // Messages say by when they were written (the file's mtime), for matching hook copies.
+    assert.ok(events.slice(1).every((e) => typeof e.payload.untimed === "number"));
   });
 });

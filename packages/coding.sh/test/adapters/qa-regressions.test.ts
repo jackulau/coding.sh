@@ -149,6 +149,29 @@ describe("codex rollout: multi-agent TTFT", () => {
   });
 });
 
+describe("codex rollout: compaction", () => {
+  it("one compaction is one context.compact, though the rollout writes a compacted item and a context_compacted event", async () => {
+    const rid = "01a1a555-b594-7121-9ed2-cd46a64fd277";
+    const file = join(env.root, `rollout-2026-11-04T00-00-00-${rid}.jsonl`);
+    const rec = (dt: number, type: string, payload: Record<string, unknown>) => ({ timestamp: iso(dt), type, payload });
+    writeFile(
+      file,
+      jsonl([
+        rec(0, "session_meta", { id: rid, cwd: "/w", cli_version: "0.166.0" }),
+        rec(1, "turn_context", { turn_id: "t1", model: "gpt-5.5" }),
+        rec(2, "event_msg", { type: "task_started", turn_id: "t1" }),
+        rec(10_000, "compacted", { message: "", window_number: 2, window_id: "w2" }),
+        rec(10_001, "event_msg", { type: "context_compacted" }),
+        rec(10_002, "event_msg", { type: "warning", message: "long conversation" }),
+        rec(12_000, "response_item", { type: "reasoning", summary: [] }),
+        rec(30_000, "event_msg", { type: "context_compacted" }),
+      ]),
+    );
+    const events = await convertRollout(testCtx().ctx, file, { mode: "full" });
+    assert.deepEqual(events.filter((e) => e.kind === "context.compact").map((e) => e.ts - T0), [10_000, 30_000]);
+  });
+});
+
 describe("clipped tool inputs keep their shape", () => {
   it("long string fields are cut, the object stays an object, the full JSON goes to a blob", async () => {
     const { ctx, blobs } = testCtx();

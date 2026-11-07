@@ -447,6 +447,69 @@ describe("ingest", () => {
     assert.equal((await u.index.getSession("r"))!.endedAt, base + 130_000);
   });
 
+  it("pairs prompts with an untimed transcript's (no timestamps) by text and position, in either order", async () => {
+    const base = 1_700_000_000_000;
+    // Untimed transcript lines all carry the file's birth time + line number, and the time it was last written.
+    const historian = (texts: string[], written: number): Adapter => ({
+      ...fakeAdapter,
+      id: "hist",
+      async *backfill() {
+        yield* texts.map((text, i): AgentEvent => ({ id: `t-untimed-${i}`, v: 0, sessionId: "a", ts: base + i, agent: "fake", kind: "user.message", payload: { text, untimed: base + written } }));
+      },
+    });
+    const rows = async (index: MemoryIndexStore) => (await index.listEvents("a")).map((e) => `${e.payload.text}:${e.source}`).sort();
+    const prompt = (t: ReturnType<typeof setup>, text: string, at: number) => t.line({ session: "a", kind: "user.message", text }, { ts: base + at });
+
+    // Hooks first; the transcript also has a third "yes" the hooks missed.
+    const t = setup();
+    t.write(prompt(t, "yes", 60_000), prompt(t, "yes", 300_000), prompt(t, "hi", 360_000));
+    await ingest({ config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env });
+    await backfill({ config: t.config, index: t.index, blobs: t.blobs, env: t.env, adapters: [historian(["yes", "hi", "yes", "yes"], 400_000)] });
+    assert.deepEqual(await rows(t.index), ["hi:hook", "yes:hook", "yes:hook", "yes:transcript"]);
+
+    // Transcript first (read at 150s): the live "yes" prompts before then are its two, across ingest runs; the third is new.
+    const u = setup();
+    await backfill({ config: u.config, index: u.index, blobs: u.blobs, env: u.env, adapters: [historian(["yes", "yes"], 150_000)] });
+    u.write(prompt(u, "yes", 60_000));
+    await ingest({ config: u.config, index: u.index, blobs: u.blobs, adapters, env: u.env });
+    u.write(prompt(u, "yes", 120_000), prompt(u, "yes", 300_000));
+    await ingest({ config: u.config, index: u.index, blobs: u.blobs, adapters, env: u.env });
+    assert.deepEqual(await rows(u.index), ["yes:hook", "yes:transcript", "yes:transcript"]);
+  });
+
+  it("stores each compaction once across a PreCompact hook and the transcript, in either order", async () => {
+    const base = 1_700_000_000_000;
+    const min = 60_000;
+    const ev = (ts: number): AgentEvent => ({ id: `t-compact-${ts}`, v: 0, sessionId: "a", ts: base + ts, agent: "fake", kind: "context.compact", payload: {} });
+    const historian = (tss: number[]): Adapter => ({
+      ...fakeAdapter,
+      id: "hist",
+      async *backfill() {
+        yield* tss.map(ev);
+      },
+    });
+    const sources = async (index: MemoryIndexStore) => (await index.listEvents("a")).map((e) => `${(e.ts - base) / 1000}:${e.source}`);
+
+    // Hook first: the transcript records each compaction after its hook (90s, 20s later); one with no hook is kept.
+    const t = setup();
+    t.write(t.line({ session: "a", kind: "context.compact" }, { ts: base + 10_000 }), t.line({ session: "a", kind: "context.compact" }, { ts: base + 30 * min }));
+    await ingest({ config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env });
+    const r = await backfill({ config: t.config, index: t.index, blobs: t.blobs, env: t.env, adapters: [historian([100_000, 30 * min + 20_000, 50 * min])] });
+    assert.deepEqual([r.events, r.duplicates], [1, 2]);
+    assert.deepEqual(await sources(t.index), ["10:hook", "1800:hook", "3000:transcript"]);
+
+    // Transcript first: a hook pairs with the next transcript compaction within the window, once.
+    const u = setup();
+    await backfill({ config: u.config, index: u.index, blobs: u.blobs, env: u.env, adapters: [historian([100_000, 40 * min])] });
+    u.write(
+      u.line({ session: "a", kind: "context.compact" }, { ts: base + 30_000 }),
+      u.line({ session: "a", kind: "context.compact" }, { ts: base + 60_000 }),
+      u.line({ session: "a", kind: "context.compact" }, { ts: base + 20 * min }),
+    );
+    await ingest({ config: u.config, index: u.index, blobs: u.blobs, adapters, env: u.env });
+    assert.deepEqual(await sources(u.index), ["60:hook", "100:transcript", "1200:hook", "2400:transcript"]);
+  });
+
   it("does nothing when there is no spool", async () => {
     const t = setup();
     rmSync(join(t.env.CODING_SH_HOME, "spool"), { recursive: true });

@@ -289,6 +289,8 @@ export class CodexRolloutConverter {
   /** A task_started not yet closed by task_complete/turn_aborted. */
   private turnOpen = false;
   private lastTotal?: number;
+  /** A compaction was recorded and no model or user line followed yet (one compaction writes a `compacted` item and a context_compacted event). */
+  private compacted = false;
   private readonly calls = new Map<string, Call>();
   private readonly prompts = new Map<string, number>();
   private readonly seen = new Set<string>();
@@ -376,6 +378,10 @@ export class CodexRolloutConverter {
       return;
     }
     const em = this.emitter(ts, ord);
+    const compaction = type === "compacted" || (type === "event_msg" && pt === "context_compacted");
+    const fresh = compaction && !this.compacted;
+    if (compaction) this.compacted = true;
+    else if (type === "response_item" || pt === "task_started" || pt === "user_message") this.compacted = false;
     if (type === "event_msg") {
       if (pt === "task_started") {
         this.turnOpen = true;
@@ -407,7 +413,7 @@ export class CodexRolloutConverter {
           this.lastTotal = total;
           this.llmCall(em, ts, info.last_token_usage, ["tc", ord]);
         }
-      } else if (pt === "context_compacted" && full) {
+      } else if (pt === "context_compacted" && full && fresh) {
         em.emit("context.compact", {}, { key: ["compact", ord] });
       } else if (pt === "error" && full) {
         em.emit("error", { message: (str(p.message) ?? "error").slice(0, 1000) });
@@ -416,7 +422,7 @@ export class CodexRolloutConverter {
       if (this.inTurn(str(p.turn_id))) this.llmCall(em, ts, p.usage, [str(p.response_id) ?? `ord:${ord}`], str(p.turn_id), str(p.response_id));
     } else if (type === "compacted") {
       this.markInput(ts);
-      if (full) em.emit("context.compact", { windowNumber: num(p.window_number) }, { key: ["compact", str(p.window_id) ?? ord] });
+      if (full && fresh) em.emit("context.compact", { windowNumber: num(p.window_number) }, { key: ["compact", str(p.window_id) ?? ord] });
     } else if (type === "response_item") {
       if (pt && MODEL_OUTPUT.has(pt)) this.firstOutputTs ??= ts;
       // Inter-agent mail: only what this thread sends is model output; a message from another agent is input.

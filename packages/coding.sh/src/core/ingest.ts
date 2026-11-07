@@ -34,8 +34,8 @@
 // - Backfilled (transcript) copies of prompts/replies that a live capture
 //   path already recorded for the same session are dropped: live wins. A live
 //   prompt a backfill already stored is kept out of the local index. A
-//   session.start or session.end the other path already stored for the
-//   session is dropped too (./message-copies.ts).
+//   session.start, session.end or compaction the other path already stored
+//   for the session is dropped too (./message-copies.ts).
 // - Model calls with tokens but no cost get a list-price costUsd (built-in
 //   prices with `[pricing]` overrides, ./pricing.ts), as serve does.
 // - Adapters keep the raw source payload as blobs[0] on the FIRST event each

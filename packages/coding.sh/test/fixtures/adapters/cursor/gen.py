@@ -14,7 +14,7 @@ spool = [
  L(9500,"postToolUseFailure",{"tool_name":"Shell","tool_input":{"command":"rm -rf build"},"tool_use_id":"call_s2","cwd":CWD,"error_message":"Command rejected by user","failure_type":"permission_denied","duration":5,"is_interrupt":False}),
  L(9800,"postToolUse",{"tool_name":"Delete","tool_input":{"path":"/work/demo/tmp.txt"},"tool_use_id":"call_d1","cwd":CWD,"tool_output":"{}","duration":3}),
  L(15000,"subagentStop",{"subagent_type":"explore","status":"completed","task":"Find other users of b","description":"Search for b","summary":"Only src/b.test.js uses b.","duration_ms":4000,"message_count":3,"tool_call_count":2,"loop_count":0,"modified_files":[],"agent_transcript_path":"/home/dev/.cursor/projects/work-demo/agent-transcripts/sub-9999.jsonl"}),
- L(16000,"afterAgentResponse",{"text":"Fixed: b is now 2 and the jest suite passes except one skipped test."}),
+ L(16000,"afterAgentResponse",{"text":"Fixed: b is now 2."}),
  L(16010,"stop",{"status":"completed","loop_count":0}),
  L(17000,"preCompact",{"trigger":"auto","context_usage_percent":91.5,"context_tokens":183000,"context_window_size":200000,"message_count":44,"messages_to_compact":30,"is_first_compaction":True}),
  L(30000,"sessionEnd",{"session_id":CID,"reason":"user_exit","duration_ms":30000,"is_background_agent":False,"final_status":"completed"}),

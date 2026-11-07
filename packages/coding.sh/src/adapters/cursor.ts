@@ -232,13 +232,16 @@ async function* backfillCursor(ctx: NormalizeContext, opts: { since?: number } =
   for await (const f of walkFiles(root, { match: (n, p) => n.endsWith(".jsonl") && /[\\/]agent-transcripts[\\/]/.test(p), maxDepth: 4, since: opts.since })) {
     const sessionId = basename(f.path, ".jsonl");
     let born = f.mtimeMs;
+    let written = f.mtimeMs;
     try {
       const st = await stat(f.path);
       born = st.birthtimeMs > 0 ? st.birthtimeMs : st.mtimeMs;
+      written = st.mtimeMs;
     } catch {
       // keep mtime
     }
     born = Math.floor(born);
+    written = Math.ceil(written);
     const out: AgentEvent[] = [];
     let first = true;
     for await (const r of readJsonl(f.path)) {
@@ -258,7 +261,8 @@ async function* backfillCursor(ctx: NormalizeContext, opts: { since?: number } =
         if (!isObj(b)) continue;
         if (b.type === "text" && str(b.text) && (role === "user" || role === "assistant")) {
           const t = await clipText(ctx, b.text as string);
-          em.emit(role === "user" ? "user.message" : "assistant.message", { text: t.value, truncated: t.truncated || undefined }, { blobs: blobList(t.blob), key: [r.lineNo, i] });
+          // The time is made up: `untimed` says by when the line was written, for matching hook copies (../core/message-copies.ts).
+          em.emit(role === "user" ? "user.message" : "assistant.message", { text: t.value, truncated: t.truncated || undefined, untimed: written }, { blobs: blobList(t.blob), key: [r.lineNo, i] });
         } else if (b.type === "tool_use" || b.type === "tool_call") {
           const id = str(b.id) ?? str(b.call_id) ?? `${r.lineNo}:${i}`;
           const inp = await clipValue(ctx, b.input ?? b.args);

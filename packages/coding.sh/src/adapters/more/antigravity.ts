@@ -477,6 +477,9 @@ export async function* agyTranscriptEvents(file: string, ctx: NormalizeContext, 
         if (text) await emitText(em, ctx, "assistant.message", text);
         for (const [i, tc] of (Array.isArray(r.tool_calls) ? r.tool_calls.filter(isObj) : []).entries()) {
           // The id of the tool step that will hold its result: hooks name a call by that step (stepIdx).
+          // In the conversation DB that step (type 132) carries the call, the planner step only the
+          // reply; a planner step has one call (2545 of 2545 local calls, agy 1.5.x). No hook payload
+          // was available to check stepIdx against.
           const id = stepIdx !== undefined ? `step-${stepIdx + 1 + i}` : `step-${step}-${i}`;
           const tool = str(tc.name) ?? "unknown";
           pending.push({ id, tool, args: tc.args, ts, ...(stepIdx !== undefined ? { resultStep: stepIdx + 1 + i } : {}), ...(gen?.model ? { model: gen.model } : {}) });

@@ -10,6 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { codex } from "../../src/adapters/codex.ts";
+import { cursor } from "../../src/adapters/cursor.ts";
 import { aiderAdapter } from "../../src/adapters/more/aider.ts";
 import { antigravityAdapter } from "../../src/adapters/more/antigravity.ts";
 import { copilotCliAdapter, copilotSessionEvents } from "../../src/adapters/more/copilot-cli.ts";
@@ -257,11 +258,13 @@ describe("hook capture + backfill of one session store it once", () => {
     // Hand-written: Claude Code and Codex hook spools with their transcripts.
     { adapter: claudeCode, spool: "claude-code/hooks.spool.jsonl", session: "11111111-2222-4333-8444-555555555555", setup: () => (process.env.CLAUDE_CONFIG_DIR = join(FIXTURES, "claude-code", "config")) },
     { adapter: codex, spool: "codex/hooks.spool.jsonl", session: "0193aaaa-1111-7222-8333-444455556666", setup: () => (process.env.CODEX_HOME = join(FIXTURES, "codex", "home")) },
+    // Cursor's transcript has no timestamps: its prompt and reply pair with the hooks' by text and position.
+    { adapter: cursor, spool: "cursor/hooks.spool.jsonl", session: "c0ffee00-1111-4222-8333-444455556666", setup: () => (process.env.CURSOR_DATA_DIR = join(FIXTURES, "cursor", "config")) },
     // Hand-written in the documented formats, hooks and transcript of one session (paired/).
     { adapter: geminiCliAdapter, spool: "gemini-cli/paired/hooks.spool.jsonl", session: "b7e2c4a1-5d3f-4e8a-9c6b-1f2e3d4c5b6a", setup: () => (process.env.GEMINI_CLI_HOME = join(FIXTURES, "gemini-cli", "paired", "home")) },
     { adapter: antigravityAdapter, spool: "antigravity/paired/hooks.spool.jsonl", session: "3f9a1c2e-7b4d-4e6f-8a1b-2c3d4e5f6a7b", setup: () => (process.env.HOME = join(FIXTURES, "antigravity", "paired", "home")) },
   ];
-  const KINDS = ["session.start", "user.message", "assistant.message", "llm.call", "tool.start", "tool.end", "file.change", "test.result", "subagent.start", "subagent.end", "turn.end", "session.end"];
+  const KINDS = ["session.start", "user.message", "assistant.message", "llm.call", "tool.start", "tool.end", "file.change", "test.result", "subagent.start", "subagent.end", "turn.end", "context.compact", "session.end"];
 
   type Step = "hooks" | "backfill";
   /** Stores the session through `steps` into a fresh index; returns rows per kind and the session. */
@@ -288,6 +291,7 @@ describe("hook capture + backfill of one session store it once", () => {
       return { rows, usage: s.stats.usage ?? {}, turns: s.stats.turns, toolCalls: s.stats.toolCalls, again: again.events };
     } finally {
       delete process.env.GOOSE_PATH_ROOT;
+      delete process.env.CURSOR_DATA_DIR;
       env.restore();
     }
   }
@@ -296,7 +300,7 @@ describe("hook capture + backfill of one session store it once", () => {
     it(c.adapter.id, async () => {
       const hooks = await capture(c, ["hooks"]);
       const transcript = await capture(c, ["backfill"]);
-      assert.ok(hooks.rows["tool.end"]! > 0 && transcript.rows["tool.end"]! > 0, "both paths see the tool call");
+      assert.ok(hooks.rows["tool.end"]! > 0 && transcript.rows["user.message"]! > 0, "both paths see the session");
       // Either path alone has the session's tokens (or none): together they count once, never summed.
       const tokens = [hooks.usage, transcript.usage].filter((u) => (u.inputTokens ?? 0) > 0);
       for (const order of [["hooks", "backfill"], ["backfill", "hooks"]] as Step[][]) {
@@ -304,8 +308,8 @@ describe("hook capture + backfill of one session store it once", () => {
         const label = `${c.adapter.id} (${order.join(", ")})`;
         assert.deepEqual(both.rows, Object.fromEntries(KINDS.map((k) => [k, Math.max(hooks.rows[k]!, transcript.rows[k]!)])), `${label}: rows per kind`);
         assert.ok(tokens.length ? tokens.some((u) => isDeepStrictEqual(u, both.usage)) : isDeepStrictEqual(both.usage, {}), `${label}: tokens ${JSON.stringify(both.usage)}`);
-        assert.equal(both.turns, transcript.turns, `${label}: turns`);
-        assert.equal(both.toolCalls, transcript.toolCalls, `${label}: tool calls`);
+        assert.equal(both.turns, Math.max(hooks.turns, transcript.turns), `${label}: turns`);
+        assert.equal(both.toolCalls, Math.max(hooks.toolCalls, transcript.toolCalls), `${label}: tool calls`);
         assert.equal(both.again, 0, `${label}: a second backfill is a no-op`);
       }
     });
