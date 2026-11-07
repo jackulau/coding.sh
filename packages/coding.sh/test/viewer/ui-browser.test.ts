@@ -221,23 +221,16 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
     }
   });
 
-  test("sessions with more than one page of events can load the rest", async () => {
+  // The first page (5,000 events) goes on screen, and the rest streams in behind it.
+  test("sessions with more than one page of events load the rest in the background", async () => {
     await open(sessionHash(BIG));
     try {
-      // Virtualized: a few dozen rows in the DOM, 5,000 in the list.
-      assert.equal(await page.eval("document.querySelector('#steps .st').getAttribute('aria-setsize')"), "5000");
-      assert.ok((await page.eval(`${STEPS}.length`)) < 400, "only rows near the viewport render");
-      const label = await page.waitFor("document.querySelector('#load-events')?.textContent", "load-more button");
-      assert.equal(label, "Load the remaining 10 events");
-      assert.equal(await page.eval("document.querySelector('.timeline-head').textContent"), "5,000 steps5,000 of 5,010 events");
-      await page.eval("document.querySelector('#load-events').click()");
       await page.waitFor(`document.querySelector('#steps .st').getAttribute('aria-setsize') === "${BIG_EVENTS}"`, "all steps", 10_000);
+      // Virtualized: a few dozen rows in the DOM, 5,010 in the list.
+      assert.ok((await page.eval(`${STEPS}.length`)) < 400, "only rows near the viewport render");
       assert.equal(await page.eval("document.querySelector('#load-events')"), null);
       assert.equal(await page.eval("document.querySelector('.timeline-head').textContent"), "5,010 steps");
       assert.equal(await page.eval("document.querySelector('.timeline-more').getBoundingClientRect().height"), 0, "the empty load bar is hidden");
-      // The first newly loaded step is selected, with focus on the list.
-      assert.match(await page.eval(`${selected}.textContent`), /prompt 5000/);
-      assert.equal(await page.eval("document.activeElement.id"), "steps");
       await page.eval("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))");
       assert.match(await page.waitFor(`${selected}?.textContent`, "last step"), /prompt 5009/);
     } finally {
