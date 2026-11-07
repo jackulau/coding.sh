@@ -1,7 +1,7 @@
 # Contributing to coding.sh
 
 Thanks for helping. Bug reports, adapter verification reports ("agent X works on a live install")
-and pull requests are all welcome.
+and pull requests are all welcome. Coding agents working on the repo: read [AGENTS.md](AGENTS.md).
 
 ## Setup
 
