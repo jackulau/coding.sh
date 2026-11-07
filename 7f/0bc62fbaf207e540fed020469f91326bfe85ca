@@ -31,6 +31,7 @@ packages/coding.sh/src/cli/commands/compare.ts
   s_8e040dbdf13565::t_6957bf9b67ed24 77,83-85,107,183
   s_8e040dbdf13565::t_2a4d1780f2b44c 27,124-125
   s_8e040dbdf13565::t_02562251d3b057 79,152-154
+  s_8e040dbdf13565::t_e897b5f5b55380 21,139,181
 packages/coding.sh/src/adapters/more/copilot-cli.ts
   s_8e040dbdf13565::t_4675dfb970ebb6 420
 packages/coding.sh/src/adapters/more/droid.ts
@@ -54,6 +55,8 @@ packages/coding.sh/src/runner/experiment.ts
   s_8e040dbdf13565::t_9f13f6b6850b0b 137,154-155,171-172,174-175
   s_8e040dbdf13565::t_e04184652fa719 961-962,964
   s_8e040dbdf13565::t_1f7b11f619c4a6 196,205
+  s_8e040dbdf13565::t_e897b5f5b55380 156-165,193
+  s_8e040dbdf13565::t_0c948ce18ca98e 166-167,173,211
 packages/coding.sh/src/adapters/codex.ts
   s_8e040dbdf13565::t_4675dfb970ebb6 889
 packages/coding.sh/src/adapters/more/amp.ts
@@ -71,6 +74,7 @@ packages/coding.sh/src/cli/commands/eval.ts
   s_8e040dbdf13565::t_05c94fd36f4914 3,6-7,10
   s_8e040dbdf13565::t_b7e88ddf5fe6ec 22-41
   s_8e040dbdf13565::t_a8ff3b6e4b81be 195-216
+  s_8e040dbdf13565::t_e897b5f5b55380 1
 packages/coding.sh/src/cli/registry.ts
   s_8e040dbdf13565::t_08cfc8842bde47 335,529,531-542
   s_8e040dbdf13565::t_ad02c4c4f9dd40 336-337,339-340
