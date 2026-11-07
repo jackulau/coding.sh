@@ -48,6 +48,8 @@ packages/coding.sh/test/core/intent.test.ts
   s_8e040dbdf13565::t_036c1c14cf992c 84,87,103,105
   s_8e040dbdf13565::t_1a387c74dc3995 243-244
   s_8e040dbdf13565::t_6dfaa4f5f36c3c 246-247,253
+packages/coding.sh/src/mcp/tools.ts
+  s_8e040dbdf13565::t_0e1e7fb6972999 215
 ---
 {
   "schema_version": "authorship/3.0.0",
