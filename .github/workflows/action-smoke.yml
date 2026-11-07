@@ -1,0 +1,112 @@
+name: Action smoke
+
+# Tests the GitHub Action in action.yml on the fixture in evals/action-smoke.
+# GitHub-hosted runners only: this runs pull request code.
+
+on:
+  pull_request:
+    paths:
+      - action.yml
+      - action/**
+      - evals/action-smoke/**
+      - .github/workflows/action-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: action-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pass:
+    name: no regression (${{ matrix.source }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        source: [local, release]
+    steps:
+      - uses: actions/checkout@v4
+      - id: evals
+        uses: ./
+        with:
+          source: ${{ matrix.source }}
+          experiment: evals/action-smoke/experiment.json
+          cases: evals/action-smoke/cases.jsonl
+          # Same commit on both sides, so the baseline has the fixture too.
+          baseline-ref: ${{ github.sha }}
+          comment: ${{ matrix.source == 'local' }}
+      - name: Check outputs
+        env:
+          VERDICT: ${{ steps.evals.outputs.verdict }}
+          RATE: ${{ steps.evals.outputs.pass-rate }}
+          BASE: ${{ steps.evals.outputs.baseline-pass-rate }}
+          REGRESSIONS: ${{ steps.evals.outputs.regressions }}
+          REGRESSED: ${{ steps.evals.outputs.regressed }}
+          REPORT: ${{ steps.evals.outputs.report }}
+        run: |
+          set -x
+          [ "$VERDICT" = "inconclusive" ]
+          [ "$RATE" = "1" ] && [ "$BASE" = "1" ]
+          [ "$REGRESSIONS" = "0" ] && [ "$REGRESSED" = "false" ]
+          grep -q "no regression" "$REPORT"
+
+  regression:
+    name: catches a regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      # Break multiplication in this checkout only; the baseline checkout stays clean.
+      - run: touch evals/action-smoke/BREAK
+      - id: evals
+        uses: ./
+        continue-on-error: true
+        with:
+          source: local
+          experiment: evals/action-smoke/experiment.json
+          cases: evals/action-smoke/cases.jsonl
+          baseline-ref: ${{ github.sha }}
+          fail-on-regression: true
+      - name: Check that it failed for the right reason
+        env:
+          OUTCOME: ${{ steps.evals.outcome }}
+          VERDICT: ${{ steps.evals.outputs.verdict }}
+          RATE: ${{ steps.evals.outputs.pass-rate }}
+          REGRESSIONS: ${{ steps.evals.outputs.regressions }}
+          REGRESSED: ${{ steps.evals.outputs.regressed }}
+          REPORT: ${{ steps.evals.outputs.report }}
+        run: |
+          set -x
+          [ "$OUTCOME" = "failure" ]
+          [ "$VERDICT" = "worse" ]
+          [ "$RATE" = "0.5" ]
+          [ "$REGRESSIONS" = "3" ] && [ "$REGRESSED" = "true" ]
+          grep -q 'expected "9", got "10"' "$REPORT"
+
+  first-run:
+    name: no baseline yet
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - id: evals
+        uses: ./
+        with:
+          source: local
+          experiment: evals/action-smoke/experiment.json
+          cases: evals/action-smoke/cases.jsonl
+          baseline-ref: none
+          min-pass-rate: "0.9"
+      - name: Check outputs
+        env:
+          VERDICT: ${{ steps.evals.outputs.verdict }}
+          RATE: ${{ steps.evals.outputs.pass-rate }}
+          REGRESSED: ${{ steps.evals.outputs.regressed }}
+        run: |
+          set -x
+          [ "$VERDICT" = "none" ] && [ "$RATE" = "1" ] && [ "$REGRESSED" = "false" ]
