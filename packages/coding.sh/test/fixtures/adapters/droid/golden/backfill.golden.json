@@ -1,0 +1,187 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "droid-sess-1",
+    "ts": 1789984800000,
+    "payload": {
+      "source": "transcript",
+      "title": "Create hello.py"
+    },
+    "id": "3c20e01d3fb4dbd51f3c679a65cac66d289df0f396403f478cae40cc5a24d86a",
+    "model": "claude-opus-4-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "droid-sess-1",
+    "ts": 1789984801000,
+    "payload": {
+      "text": "Create hello.py and run pytest"
+    },
+    "id": "d1828454beb27174dcc962482615884c602b1bcfbef435cf3d377208256b0031",
+    "model": "claude-opus-4-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "droid-sess-1",
+    "ts": 1789984802000,
+    "payload": {
+      "text": "Creating the file."
+    },
+    "id": "629ace33865ed2b6aeab29b1d315fcddba2cfaeaaafc44b21bbed8b28ad103b8",
+    "model": "claude-opus-4-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "droid-sess-1",
+    "ts": 1789984802000,
+    "payload": {
+      "tool": "Create",
+      "toolUseId": "toolu_d1",
+      "input": {
+        "file_path": "/work/demo/hello.py",
+        "content": "print('hi')\n"
+      }
+    },
+    "id": "2bee83652b951f36842c4bfd55a3e5e85499882fae6fa01ae48305e1bdc8668d",
+    "model": "claude-opus-4-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "droid-sess-1",
+    "ts": 1789984802000,
+    "payload": {
+      "tool": "Execute",
+      "toolUseId": "toolu_d2",
+      "input": {
+        "command": "pytest -q"
+      },
+      "verify": true
+    },
+    "id": "2a49de8d6c0c174d386c926fc89a31acc2fef938ca6087abe5639677b18d818e",
+    "model": "claude-opus-4-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "droid-sess-1",
+    "ts": 1789984802100,
+    "payload": {
+      "tool": "Create",
+      "toolUseId": "toolu_d1",
+      "ok": true,
+      "durationMs": 100,
+      "output": "File created"
+    },
+    "id": "9cfe24dd34b2cc8719f02455f9b8cf198a6fdc7688e15739aa3b8ded15f8d1db",
+    "model": "claude-opus-4-1",
+    "durationMs": 100,
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "droid-sess-1",
+    "ts": 1789984802100,
+    "payload": {
+      "path": "hello.py",
+      "op": "add",
+      "tool": "Create",
+      "toolUseId": "toolu_d1"
+    },
+    "id": "a049fc1911bf7c5bfa0648b0045e715b875fbc10c53defc35654370d3e239ba8",
+    "model": "claude-opus-4-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "droid-sess-1",
+    "ts": 1789984804000,
+    "payload": {
+      "tool": "Execute",
+      "toolUseId": "toolu_d2",
+      "ok": true,
+      "durationMs": 2000,
+      "output": "==== 3 passed in 0.10s ===="
+    },
+    "id": "31a750fd61da56e17db3dacaa9215ff652f328190f5b3f02c24e1f2561920b20",
+    "model": "claude-opus-4-1",
+    "durationMs": 2000,
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "droid-sess-1",
+    "ts": 1789984804000,
+    "payload": {
+      "runner": "pytest",
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "toolUseId": "toolu_d2"
+    },
+    "id": "9b2443aafce1d23574e14a6b70a725a539f211a5a18a3269ca238f411ea77bc9",
+    "model": "claude-opus-4-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "droid-sess-1",
+    "ts": 1789984805000,
+    "payload": {
+      "text": "Done: 3 tests pass."
+    },
+    "id": "b694222d66edd4336ea9a84a26965a728ef74e216b80b54c00b65edbf736d40e",
+    "model": "claude-opus-4-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "droid-sess-1",
+    "ts": 1789984860000,
+    "payload": {},
+    "id": "681682a8bb1e793172d970fd1826594944fc1a5962c9bd334347de3d58ba64b5",
+    "model": "claude-opus-4-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "droid-sess-1",
+    "ts": 1789984860000,
+    "payload": {
+      "text": "thanks"
+    },
+    "id": "8d107b851deda5408451b75342237b8e0bdb9e9d0cad26f8042e548259971984",
+    "model": "claude-opus-4-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "droid-sess-1",
+    "ts": 1789984860000,
+    "payload": {},
+    "id": "c8f44f9cd79e585f4cccb356139d0dbd608a8b70382d5e1ff17bb80c4367b7ee",
+    "model": "claude-opus-4-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "notification",
+    "sessionId": "droid-sess-1",
+    "ts": 1789984860000,
+    "payload": {
+      "kind": "usage.total",
+      "source": "settings.json"
+    },
+    "id": "40ffb43f3704bdba9ab2fb4f261c7c5dbcf60fe483d9f3fb59f8da4e3c932517",
+    "model": "claude-opus-4-1",
+    "usage": {
+      "inputTokens": 4200,
+      "outputTokens": 350,
+      "cacheReadTokens": 2600,
+      "cacheWriteTokens": 800
+    },
+    "cwd": "/work/demo"
+  }
+]

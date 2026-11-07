@@ -1,0 +1,372 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527200000,
+    "payload": {
+      "source": "hook",
+      "mode": "agent"
+    },
+    "id": "6e6f03dee214749b38f05616f4535f2710e443d8df801696aae6b99d49dbae30",
+    "model": "gpt-5.1-codex",
+    "blobs": [
+      "a33ef3d516558b8c22b10b140ae19f6d412fde62834a7aa4be56958e99bcb3b6"
+    ],
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527200100,
+    "payload": {
+      "text": "Fix the failing test in b.test.js",
+      "generationId": "c0ffee00-1111-4222-8333-444455556666-g1"
+    },
+    "id": "1a301a30e68a53b8756db358b7ed48ccae92d46fc853e9206a22aafcadbd1eff",
+    "model": "gpt-5.1-codex",
+    "blobs": [
+      "8b40ec03011727211cf76f47762bd18ca4967c1549f95939650fea0a19328a90"
+    ],
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527202060,
+    "payload": {
+      "tool": "Read",
+      "toolUseId": "call_r1",
+      "input": {
+        "path": "/work/demo/src/b.js"
+      },
+      "reconstructed": true
+    },
+    "id": "a8a35123e992dcd598d2472cd661c879e4e144ccdc1119e25888043c58ad5ef0",
+    "model": "gpt-5.1-codex",
+    "blobs": [
+      "6c9a82f5395d867b23e9ba07142c70f98faa0c139097a2ed828bd3721948595d"
+    ],
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527202100,
+    "payload": {
+      "tool": "Read",
+      "toolUseId": "call_r1",
+      "ok": true,
+      "durationMs": 40,
+      "output": "export const b = 1;\n"
+    },
+    "id": "0d07b1c1cd7e425a733aeb46b0c7732ff483b12ad97263f7b43accb0a41acbdc",
+    "model": "gpt-5.1-codex",
+    "durationMs": 40,
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527204000,
+    "payload": {
+      "path": "src/b.js",
+      "op": "modify",
+      "additions": 2,
+      "deletions": 1,
+      "generationId": "c0ffee00-1111-4222-8333-444455556666-g1"
+    },
+    "id": "73ea43e3edb953d80a745f6edb03dd47ca2942aeafa00439724d53307b291175",
+    "model": "gpt-5.1-codex",
+    "blobs": [
+      "c927a2e74c40a33a66f7cdc83a82b90ec8c399bc3ecfc09cbb25f9ff190c03a2"
+    ],
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527205500,
+    "payload": {
+      "tool": "Shell",
+      "toolUseId": "call_s1",
+      "input": {
+        "command": "npx jest"
+      },
+      "reconstructed": true
+    },
+    "id": "f14edb853b8dc947aadec10f954c0d19cbfa6d291d5a5ca2210af30ac45df899",
+    "model": "gpt-5.1-codex",
+    "blobs": [
+      "67848a34cebe51316e94a8ec05b3cad473572e53e49d3221ab94b473e20eada3"
+    ],
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527209000,
+    "payload": {
+      "tool": "Shell",
+      "toolUseId": "call_s1",
+      "ok": true,
+      "durationMs": 3500,
+      "output": "PASS src/a.test.js\nFAIL src/b.test.js\n\nTests:       1 failed, 1 skipped, 7 passed, 9 total\nTime:        1.2 s\n"
+    },
+    "id": "145552f7e5b03072f8ba208f2dfb29a6796b5b8ff2ebfbbf169bad250c178592",
+    "model": "gpt-5.1-codex",
+    "durationMs": 3500,
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527209000,
+    "payload": {
+      "runner": "jest",
+      "passed": 7,
+      "failed": 1,
+      "skipped": 1,
+      "toolUseId": "call_s1"
+    },
+    "id": "10c166e306261c2a3db78ad9c8bda860fed008d693c1f6a23182c89ece91cda4",
+    "model": "gpt-5.1-codex",
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527209495,
+    "payload": {
+      "tool": "Shell",
+      "toolUseId": "call_s2",
+      "input": {
+        "command": "rm -rf build"
+      },
+      "reconstructed": true
+    },
+    "id": "bcae43d6f2e6d0ac6f5df9e9fea952fbde3a2b21d5f1ea81251432a246975062",
+    "model": "gpt-5.1-codex",
+    "blobs": [
+      "fa93faaaac519db4e0835011110d4b6d8cdcb6b3b669c8a1a5ae94ec0de8301e"
+    ],
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527209500,
+    "payload": {
+      "tool": "Shell",
+      "toolUseId": "call_s2",
+      "ok": false,
+      "durationMs": 5,
+      "output": "Command rejected by user",
+      "failureType": "permission_denied"
+    },
+    "id": "5542fc10c3348f25dc00af9035422647ae84441ec53f067be716b7dedc57bfdc",
+    "model": "gpt-5.1-codex",
+    "durationMs": 5,
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527209797,
+    "payload": {
+      "tool": "Delete",
+      "toolUseId": "call_d1",
+      "input": {
+        "path": "/work/demo/tmp.txt"
+      },
+      "reconstructed": true
+    },
+    "id": "b80b9ac90e6e45deaed67dbe7ac0f997e5168be8aca215b7157b89d7b24623d7",
+    "model": "gpt-5.1-codex",
+    "blobs": [
+      "bcce1a8304ce2bc7f5a3cef4861179e2a5374b044b504e18cdffc65efdd87de1"
+    ],
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527209800,
+    "payload": {
+      "tool": "Delete",
+      "toolUseId": "call_d1",
+      "ok": true,
+      "durationMs": 3,
+      "output": "{}"
+    },
+    "id": "52048853db6c14c5ac925d53000bcd7cfd8187c503fe28df97a73d1e46e12c70",
+    "model": "gpt-5.1-codex",
+    "durationMs": 3,
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527209800,
+    "payload": {
+      "path": "tmp.txt",
+      "op": "delete",
+      "tool": "Delete",
+      "toolUseId": "call_d1"
+    },
+    "id": "75659b5a87c641078993210fab5d6652e6638ce8272561c41cd96252f9250153",
+    "model": "gpt-5.1-codex",
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "subagent.start",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527211000,
+    "payload": {
+      "subagentId": "sub-9999",
+      "type": "explore",
+      "description": "Search for b",
+      "prompt": "Find other users of b",
+      "childSessionId": "sub-9999"
+    },
+    "id": "9cba4357974de252b3ad25f4ff67e635d0541debaca339d0892d75e56e8d0eae",
+    "model": "gpt-5.1-codex",
+    "blobs": [
+      "c5befd84fde6d9b2f284b39f397469ba3bf01912907255a9049d950709803dbb"
+    ],
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "session.start",
+    "sessionId": "sub-9999",
+    "ts": 1793527211000,
+    "payload": {
+      "source": "subagent",
+      "parentSessionId": "c0ffee00-1111-4222-8333-444455556666",
+      "parentEventId": "9cba4357974de252b3ad25f4ff67e635d0541debaca339d0892d75e56e8d0eae",
+      "subagentId": "sub-9999",
+      "subagentType": "explore"
+    },
+    "id": "9a6c3462a225b8050b9f8ed523b4a5807e783f4eabc965572d98027e64219017",
+    "subagentId": "sub-9999",
+    "model": "gpt-5.1-codex",
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "subagent.end",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527215000,
+    "payload": {
+      "subagentId": "sub-9999",
+      "type": "explore",
+      "ok": true,
+      "status": "completed",
+      "result": "Only src/b.test.js uses b.",
+      "childSessionId": "sub-9999",
+      "toolCalls": 2,
+      "messages": 3
+    },
+    "id": "680ad34425700a6fcfe3ceb6d2a49617bdfaaea020ab5b4ce43056f281575fee",
+    "model": "gpt-5.1-codex",
+    "durationMs": 4000,
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "sub-9999",
+    "ts": 1793527215000,
+    "payload": {
+      "reason": "subagent-stop"
+    },
+    "id": "5cdd870403b9701bba1937bb450624d61f68ef338fb370cbbf73079d03e5953d",
+    "subagentId": "sub-9999",
+    "model": "gpt-5.1-codex",
+    "durationMs": 4000,
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527216000,
+    "payload": {
+      "text": "Fixed: b is now 2 and the jest suite passes except one skipped test.",
+      "generationId": "c0ffee00-1111-4222-8333-444455556666-g1"
+    },
+    "id": "e8a0c668de996e437ccda75c838fab2c3e3988098d712a344e06dda391aa351f",
+    "model": "gpt-5.1-codex",
+    "blobs": [
+      "cc1dbfc64635b72ccc17140102363c61c442956630bed383bdcae27e31bf0742"
+    ],
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527216010,
+    "payload": {
+      "ok": true,
+      "status": "completed",
+      "loopCount": 0,
+      "generationId": "c0ffee00-1111-4222-8333-444455556666-g1"
+    },
+    "id": "b73eae856386877f98a2deec93af64deac5de72561bb15c77d88b728db17a492",
+    "model": "gpt-5.1-codex",
+    "blobs": [
+      "1d8763a2e02c35496a165700f6799b55b0256d6edb7b3acd8ab2ba6bd913d323"
+    ],
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "context.compact",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527217000,
+    "payload": {
+      "trigger": "auto",
+      "tokensBefore": 183000,
+      "contextWindow": 200000,
+      "usagePercent": 91.5
+    },
+    "id": "fe73b4f350df5da2b08b7971659dff8329d5b7644efe1429ddf162c3a3e75e30",
+    "model": "gpt-5.1-codex",
+    "blobs": [
+      "f73451aa44865dcb03eb95af9bb2b283d90d53ddc78cc37be4440ec388ac5894"
+    ],
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "c0ffee00-1111-4222-8333-444455556666",
+    "ts": 1793527230000,
+    "payload": {
+      "reason": "user_exit",
+      "status": "completed"
+    },
+    "id": "2186e1f57275b7bb8b75b1b1010d47784195087c74536917f681700c1300072f",
+    "model": "gpt-5.1-codex",
+    "durationMs": 30000,
+    "blobs": [
+      "d377b68e5c0e5f6fb8293ba0c15054eb1a8ad2bba7acc3aada33a0801e06fffd"
+    ],
+    "cwd": "/work/demo",
+    "agentVersion": "2026.10.30-abc1234"
+  }
+]

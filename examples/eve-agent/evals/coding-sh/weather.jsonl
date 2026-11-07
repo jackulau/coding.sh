@@ -1,0 +1,5 @@
+{"id":"paris","input":{"message":"What is the weather in Paris?"},"expected":{"reply":"Paris: Sunny, 21°C","tools":{"get_weather":true},"subagent":"forecaster"},"tags":["weather"]}
+{"id":"tokyo","input":{"message":"What is the weather in Tokyo?"},"expected":{"reply":"Tokyo: Cloudy, 18°C","tools":{"get_weather":true},"subagent":"forecaster"},"tags":["weather"]}
+{"id":"san-francisco","input":{"message":"What is the weather in San Francisco?"},"expected":{"reply":"San Francisco: Fog, 16°C","tools":{"get_weather":true},"subagent":"forecaster"},"tags":["weather"]}
+{"id":"london-follow-up","input":{"messages":["What is the weather in Paris?","And the weather in London?"]},"expected":{"reply":"London: Rain, 14°C","tools":{"get_weather":true},"subagent":"forecaster"},"tags":["weather","multi-turn"]}
+{"id":"atlantis","input":{"message":"What is the weather in Atlantis?"},"expected":{"reply":"no weather data","tools":{"get_weather":false},"subagent":null},"tags":["weather","error"]}

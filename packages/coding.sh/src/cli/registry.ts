@@ -1,0 +1,583 @@
+// Static command metadata: everything `--help` needs, with no imports beyond
+// types. Command modules load lazily through `load()` only after dispatch, so
+// help and typo suggestions never touch stores, adapters or the network.
+import type { FlagSpec } from "./args.ts";
+import type { CommandModule } from "./types.ts";
+import { WORKFLOWS_COMMAND } from "../workflows/cli-spec.ts";
+
+export interface ArgSpec {
+  name: string;
+  desc: string;
+  required?: boolean;
+  /** Takes the rest of the positionals. */
+  variadic?: boolean;
+}
+
+export interface ActionSpec {
+  name: string;
+  summary: string;
+  args?: ArgSpec[];
+  flags?: FlagSpec[];
+  examples?: string[];
+}
+
+export interface CommandSpec {
+  name: string;
+  aliases?: string[];
+  group: "Capture" | "Explore" | "Evaluate" | "Harness" | "Maintain";
+  summary: string;
+  args?: ArgSpec[];
+  flags?: FlagSpec[];
+  /** Subcommands (`eval new`, `config get`, …). */
+  actions?: ActionSpec[];
+  /** Takes `-- <cmd> [args...]`. */
+  passthrough?: boolean;
+  /** With actions: also runs with none (`serve` vs `serve keygen`); the command's own flags apply then. */
+  actionOptional?: boolean;
+  /** Handles SIGINT/SIGTERM itself (graceful shutdown) and returns its own exit code. */
+  handlesSignals?: boolean;
+  examples?: string[];
+  notes?: string[];
+  load(): Promise<CommandModule>;
+}
+
+// ------------------------------------------------------------ shared flags
+
+export const YES: FlagSpec = { name: "yes", short: "y", type: "boolean", desc: "Answer yes to confirmation prompts" };
+export const DRY_RUN: FlagSpec = { name: "dry-run", type: "boolean", desc: "Show the exact changes without writing anything" };
+export const FORCE: FlagSpec = { name: "force", type: "boolean", desc: "Replace the named target when it already exists" };
+const AGENT_LIST: FlagSpec = { name: "agent", short: "a", type: "list", value: "<AGENT>", desc: "Only this agent (repeatable)" };
+const AGENT_ONE: FlagSpec = { name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Only sessions from this agent" };
+const SINCE: FlagSpec = { name: "since", type: "string", value: "<WHEN>", desc: "Only after this time: 7d, 12h, 30m or a date" };
+const LIMIT = (d: number): FlagSpec => ({ name: "limit", short: "n", type: "number", value: "<N>", desc: "Maximum rows", default: String(d) });
+const SCOPE: FlagSpec = { name: "scope", type: "string", value: "<SCOPE>", choices: ["user", "project"], desc: "Install into user or project config", default: "user" };
+
+/** Global options accepted by every command (handled in main.ts). */
+export const GLOBAL_FLAGS: FlagSpec[] = [
+  { name: "json", type: "boolean", desc: "Print one JSON document on stdout" },
+  { name: "no-color", type: "boolean", desc: "Disable color (also NO_COLOR=1)" },
+  { name: "debug", type: "boolean", desc: "Show stack traces on errors" },
+  { name: "help", short: "h", type: "boolean", desc: "Show help" },
+  { name: "store", type: "string", value: "<URL>", desc: "Read and write this index store instead of the configured one (also CODING_SH_STORE_URL); skips auto-ingest" },
+  { name: "blobs", type: "string", value: "<URL>", desc: "Blob store to use with --store (also CODING_SH_BLOB_URL; a postgres:// index keeps blobs in the same DB)" },
+];
+
+export const COMMANDS: CommandSpec[] = [
+  // ---------------------------------------------------------- Capture
+  {
+    name: "init",
+    group: "Capture",
+    summary: "Set up capture hooks and the MCP server for every detected agent",
+    flags: [AGENT_LIST, SCOPE, { name: "mcp", type: "boolean", desc: "Register the coding.sh MCP server too (--no-mcp to skip)", default: "true" }, YES, DRY_RUN],
+    examples: ["coding.sh init", "coding.sh init --agent claude-code --yes", "coding.sh init --dry-run"],
+    notes: [
+      "Copies the hook to ~/.coding.sh/bin/hook.mjs and points each agent at it.",
+      "Registers the MCP server with Claude Code, Codex, Cursor, OpenCode and Gemini CLI (user scope only).",
+      "Every edited file is backed up to ~/.coding.sh/backups first; uninstall reverts it.",
+    ],
+    load: () => import("./commands/init.ts"),
+  },
+  {
+    name: "doctor",
+    group: "Capture",
+    summary: "Check agents, hooks, spool, store and the OTLP port",
+    flags: [AGENT_LIST, { name: "port", type: "number", value: "<PORT>", desc: "OTLP receiver port to check", default: "4318" }],
+    examples: ["coding.sh doctor", "coding.sh doctor --json"],
+    load: () => import("./commands/doctor.ts"),
+  },
+  {
+    name: "status",
+    group: "Capture",
+    summary: "Show capture totals and the latest session",
+    load: () => import("./commands/status.ts"),
+  },
+  {
+    name: "ingest",
+    group: "Capture",
+    summary: "Move captured hook events from the spool into the index",
+    flags: [
+      { name: "backfill", type: "boolean", desc: "Also import agents' local transcript history" },
+      AGENT_LIST,
+      SINCE,
+      { name: "background", type: "boolean", desc: "Don't wait for another ingest; exit quietly if one is running" },
+    ],
+    examples: ["coding.sh ingest", "coding.sh ingest --backfill --since 30d"],
+    notes: ["Rarely needed: read commands, the viewer and the MCP server ingest first, and the hook starts one when a session ends."],
+    load: () => import("./commands/ingest.ts"),
+  },
+  {
+    name: "run",
+    group: "Capture",
+    summary: "Run any agent command and capture the session",
+    passthrough: true,
+    args: [{ name: "cmd", desc: "Command and arguments after --", required: true, variadic: true }],
+    flags: [{ name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Agent id to record", default: "wrapper" }],
+    examples: ["coding.sh run -- aider --message 'fix the tests'"],
+    notes: ["Exits with the command's exit code."],
+    load: () => import("./commands/run.ts"),
+  },
+  {
+    name: "collector",
+    aliases: ["otel"],
+    group: "Capture",
+    summary: "Start a local OTLP/HTTP receiver for agents that export traces",
+    flags: [
+      { name: "port", short: "p", type: "number", value: "<PORT>", desc: "Port to listen on (0 = any free port)", default: "4318" },
+      { name: "host", type: "string", value: "<HOST>", desc: "Interface to bind", default: "127.0.0.1" },
+    ],
+    examples: ["coding.sh collector", "coding.sh otel --port 0"],
+    notes: ["Prints the OTEL_* environment to stdout; status goes to stderr."],
+    load: () => import("./commands/collector.ts"),
+  },
+  {
+    name: "serve",
+    group: "Capture",
+    summary: "Production server: OTLP + native ingest, viewer, health and metrics on one port",
+    actionOptional: true,
+    handlesSignals: true,
+    flags: [
+      { name: "host", type: "string", value: "<HOST>", desc: "Interface to bind (also CODING_SH_HOST)", default: "127.0.0.1" },
+      { name: "port", short: "p", type: "number", value: "<PORT>", desc: "Port to listen on, 0 = any free port (also CODING_SH_PORT, PORT)", default: "4318" },
+      { name: "config", type: "string", value: "<FILE>", desc: "Config file instead of ~/.coding.sh/config.toml" },
+      { name: "role", type: "string", value: "<ROLE>", choices: ["all", "viewer"], desc: "viewer: a read replica with no ingest and no writer lock", default: "all" },
+      { name: "insecure", type: "boolean", desc: "Allow a non-loopback bind with no keys (also CODING_SH_INSECURE=1)" },
+    ],
+    actions: [
+      {
+        name: "keygen",
+        summary: "Print a new ingest (or read) key once, plus the sha256 line for a config file",
+        flags: [
+          { name: "project", type: "string", value: "<ID>", desc: "Project the key belongs to (read keys: * for all)", default: "default" },
+          { name: "read", type: "boolean", desc: "A read key (viewer, /api, /metrics) instead of an ingest key" },
+        ],
+        examples: ["coding.sh serve keygen --project demo", "coding.sh serve keygen --read --project '*'"],
+      },
+      {
+        name: "healthcheck",
+        summary: "Exit 0 when the server answers 200, 1 otherwise (Docker HEALTHCHECK)",
+        flags: [
+          { name: "url", type: "string", value: "<URL>", desc: "URL to probe (default http://127.0.0.1:<port>/healthz)" },
+          { name: "timeout", type: "number", value: "<MS>", desc: "Give up after this many milliseconds", default: "3000" },
+        ],
+        examples: ["coding.sh serve healthcheck", "coding.sh serve healthcheck --url http://127.0.0.1:4318/readyz"],
+      },
+    ],
+    examples: [
+      "coding.sh serve",
+      "CODING_SH_STORE_URL=postgres://… CODING_SH_INGEST_KEYS=demo:$KEY CODING_SH_READ_KEYS='*:'$READ coding.sh serve --host 0.0.0.0",
+      "coding.sh serve --role viewer --host 0.0.0.0",
+    ],
+    notes: [
+      "Routes: POST /v1/traces, /v1/logs, /v1/metrics (OTLP/HTTP), POST /v1/ingest (native), GET / and /api/* (viewer), /healthz, /readyz, /metrics.",
+      "Precedence: flags > env > --config file > defaults. See docs/PRODUCTION.md for every setting.",
+      "A non-loopback bind needs an ingest key and a read key (or basic auth), or --insecure; on loopback with no keys, ingest is open to project default.",
+      "Prints the URL (or one JSON document with --json) on stdout once ready; logs go to stderr. SIGTERM/SIGINT drain the queue (25s) and exit 0.",
+    ],
+    load: () => import("./commands/serve.ts"),
+  },
+  {
+    name: "uninstall",
+    group: "Capture",
+    summary: "Remove coding.sh hooks and MCP entries from every agent",
+    flags: [AGENT_LIST, SCOPE, YES, DRY_RUN],
+    examples: ["coding.sh uninstall --dry-run", "coding.sh uninstall --yes"],
+    notes: ["Captured data in ~/.coding.sh is kept."],
+    load: () => import("./commands/uninstall.ts"),
+  },
+  // ---------------------------------------------------------- Explore
+  {
+    name: "sessions",
+    group: "Explore",
+    summary: "List captured sessions",
+    flags: [
+      AGENT_ONE,
+      { name: "repo", short: "r", type: "string", value: "<PATH>", desc: "Only sessions in this repo root" },
+      SINCE,
+      LIMIT(20),
+      { name: "subagents", type: "boolean", desc: "Include subagent sessions" },
+      { name: "project", type: "string", value: "<ID>", desc: "Only sessions in this serve project (default: all)" },
+    ],
+    examples: ["coding.sh sessions", "coding.sh sessions --agent codex --since 7d", "coding.sh sessions --store postgres://… --project demo"],
+    load: () => import("./commands/sessions.ts"),
+  },
+  {
+    name: "show",
+    group: "Explore",
+    summary: "Show a session timeline with subagents and latency",
+    args: [{ name: "session", desc: "Session id, or 'latest'", required: true }],
+    flags: [LIMIT(200)],
+    examples: ["coding.sh show latest"],
+    load: () => import("./commands/show.ts"),
+  },
+  {
+    name: "search",
+    group: "Explore",
+    summary: "Full-text search over prompts, replies and tool calls",
+    args: [{ name: "text", desc: "Search text", required: true, variadic: true }],
+    flags: [AGENT_ONE, LIMIT(20), { name: "project", type: "string", value: "<ID>", desc: "Only matches in this serve project (default: all)" }],
+    examples: ["coding.sh search 'flaky test'"],
+    load: () => import("./commands/search.ts"),
+  },
+  {
+    name: "usage",
+    group: "Explore",
+    summary: "Tokens, turns and cache hits by agent, model or day",
+    flags: [
+      { name: "by", type: "string", value: "<GROUP>", choices: ["agent", "model", "agent-model", "day", "repo"], desc: "Group rows by", default: "agent" },
+      AGENT_ONE,
+      { ...SINCE, default: "30d" },
+      LIMIT(20),
+    ],
+    examples: ["coding.sh usage", "coding.sh usage --by agent-model --since 90d"],
+    load: () => import("./commands/usage.ts"),
+  },
+  {
+    name: "ui",
+    group: "Explore",
+    summary: "Open the local session viewer",
+    flags: [
+      { name: "port", short: "p", type: "number", value: "<PORT>", desc: "First port to try (0 = any free port)", default: "4319" },
+      { name: "host", type: "string", value: "<HOST>", desc: "Interface to bind", default: "127.0.0.1" },
+      { name: "open", type: "boolean", desc: "Open the browser (--no-open to skip)", default: "true" },
+    ],
+    examples: ["coding.sh ui", "coding.sh ui --no-open --port 0"],
+    notes: ["Running coding.sh with no command opens the viewer (or sets up capture first)."],
+    load: () => import("./commands/ui.ts"),
+  },
+  {
+    name: "mcp",
+    group: "Explore",
+    summary: "Serve captured sessions to agents over MCP (stdio)",
+    args: [{ name: "action", desc: "serve (default): run the server; config: print how to register it" }],
+    examples: ["coding.sh mcp config", "coding.sh mcp"],
+    notes: ["Agents start this themselves once coding.sh init has registered it.", "stdout carries MCP frames only."],
+    load: () => import("./commands/mcp.ts"),
+  },
+  // ---------------------------------------------------------- Evaluate
+  {
+    name: "eval",
+    group: "Evaluate",
+    summary: "Turn sessions into replayable eval tasks",
+    actions: [
+      {
+        name: "new",
+        summary: "Draft a task from a captured session",
+        args: [{ name: "session", desc: "Session id, or 'latest'", required: true }],
+        flags: [
+          { name: "name", type: "string", value: "<NAME>", desc: "Task name" },
+          { name: "instruction", type: "string", value: "<TEXT|@FILE>", desc: "What the agent is asked to do (default: the session's first prompt)" },
+          { name: "verifier", type: "string", value: "<CMD>", desc: "Command that passes only when the task is solved" },
+          { name: "setup", type: "list", value: "<CMD>", desc: "Setup command (repeatable)" },
+          { name: "hidden-test", type: "list", value: "<GLOB>", desc: "Test files to hide from the agent (repeatable)" },
+          { name: "tag", type: "list", value: "<TAG>", desc: "Tag (repeatable)" },
+        ],
+        examples: ["coding.sh eval new latest --verifier 'npm test'", "coding.sh eval new latest --instruction @prompt.md --verifier 'npm test'"],
+      },
+      {
+        name: "validate",
+        summary: "Check the reference passes, near-misses fail and nothing leaks",
+        args: [{ name: "task", desc: "Task id or name", required: true }],
+        flags: [
+          { name: "k", type: "number", value: "<N>", desc: "Reference must pass N of N runs", default: "5" },
+          { name: "keep", type: "boolean", desc: "Keep work directories" },
+        ],
+      },
+      {
+        name: "list",
+        summary: "List eval tasks",
+        flags: [
+          { name: "status", type: "string", value: "<STATUS>", choices: ["draft", "validated", "rejected"], desc: "Only tasks with this status" },
+          { name: "tag", type: "string", value: "<TAG>", desc: "Only tasks with this tag" },
+        ],
+      },
+      {
+        name: "export",
+        summary: "Write a task to a directory",
+        args: [{ name: "task", desc: "Task id or name", required: true }],
+        flags: [
+          { name: "out", short: "o", type: "string", value: "<DIR>", desc: "Output directory (required)" },
+          { name: "format", type: "string", value: "<FORMAT>", choices: ["coding.sh", "harbor"], desc: "Directory layout", default: "coding.sh" },
+          FORCE,
+        ],
+      },
+    ],
+    load: () => import("./commands/eval.ts"),
+  },
+  {
+    name: "dataset",
+    group: "Evaluate",
+    summary: "Manage versioned datasets of cases",
+    actions: [
+      {
+        name: "add",
+        summary: "Add cases to a dataset (creates it when missing)",
+        args: [{ name: "name", desc: "Dataset name", required: true }],
+        flags: [
+          { name: "case", type: "list", value: "<JSON>", desc: 'Case as JSON: {"input":…,"expected":…} (repeatable)' },
+          { name: "session", type: "list", value: "<ID>", desc: "Case from a captured session (repeatable)" },
+          { name: "split", type: "string", value: "<SPLIT>", choices: ["train", "dev", "test"], desc: "Split for the added cases (default: stable hash of the case id, 60/20/20)" },
+          { name: "note", type: "string", value: "<TEXT>", desc: "Version note" },
+        ],
+        examples: ['coding.sh dataset add smoke --case \'{"input":"2+2","expected":"4"}\'', "coding.sh dataset add labelled --session <ID> --split test"],
+      },
+      {
+        name: "import",
+        summary: "Import cases from a JSONL, JSON or CSV file",
+        args: [{ name: "file", desc: "Path to the file", required: true }],
+        flags: [
+          { name: "name", type: "string", value: "<NAME>", desc: "Dataset name (default: file name)" },
+          { name: "note", type: "string", value: "<TEXT>", desc: "Version note" },
+        ],
+      },
+      { name: "list", summary: "List datasets" },
+    ],
+    load: () => import("./commands/dataset.ts"),
+  },
+  {
+    name: "exp",
+    group: "Evaluate",
+    summary: "Run a task over a dataset and compare experiments",
+    actions: [
+      {
+        name: "run",
+        summary: "Run an experiment",
+        args: [{ name: "spec", desc: "Experiment spec JSON file (fields can be overridden by options)" }],
+        flags: [
+          { name: "dataset", short: "d", type: "string", value: "<ID>", desc: "Dataset id" },
+          { name: "task", type: "string", value: "<JSON|FILE>", desc: 'Task spec: {"kind":"command","command":"…"} or {"kind":"http","url":"…"}' },
+          { name: "grader", short: "g", type: "list", value: "<JSON|FILE>", desc: 'Grader spec, e.g. {"kind":"exact"} (repeatable)' },
+          { name: "name", type: "string", value: "<NAME>", desc: "Experiment name" },
+          { name: "trials", type: "number", value: "<N>", desc: "Attempts per case", default: "1" },
+          { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel case runs", default: "4" },
+          { name: "split", type: "string", value: "<SPLIT>", choices: ["train", "dev", "test"], desc: "Only cases in this split" },
+        ],
+      },
+      {
+        name: "compare",
+        summary: "Compare two experiments case by case",
+        args: [
+          { name: "a", desc: "Baseline experiment id or name (newest)", required: true },
+          { name: "b", desc: "Candidate experiment id or name (newest)", required: true },
+        ],
+      },
+      { name: "list", summary: "List experiments", flags: [LIMIT(20)] },
+    ],
+    load: () => import("./commands/exp.ts"),
+  },
+  {
+    name: "judge",
+    group: "Evaluate",
+    summary: "Check an LLM judge against human labels",
+    actions: [
+      {
+        name: "calibrate",
+        summary: "Measure judge-human agreement (Cohen's kappa) on a held-out split",
+        args: [{ name: "experiment", desc: "Experiment id or name whose runs hold the judge's verdicts", required: true }],
+        flags: [
+          { name: "grader", short: "g", type: "string", value: "<ID>", desc: "Judge grader id (default: the only llm grader)" },
+          { name: "criterion", type: "string", value: "<NAME>", desc: "Label criterion" },
+          { name: "split", type: "string", value: "<SPLIT>", choices: ["train", "dev", "test"], desc: "Held-out split to report on", default: "test" },
+          { name: "tuned-on", type: "list", value: "<SPLIT>", desc: "Splits the prompt was tuned on, when the judge is not stored (repeatable)" },
+          { name: "threshold", type: "number", value: "<KAPPA>", desc: "Minimum kappa", default: "0.6" },
+          { name: "min-n", type: "number", value: "<N>", desc: "Minimum held-out cases", default: "20" },
+        ],
+      },
+    ],
+    load: () => import("./commands/judge.ts"),
+  },
+  {
+    name: "toolevals",
+    group: "Evaluate",
+    summary: "Measure how well agents use a CLI, MCP server or API",
+    actions: [
+      {
+        name: "init",
+        summary: "Add a target to coding.sh.toml and write starter tasks",
+        flags: [
+          { name: "cli", type: "string", value: "<BIN>", desc: "CLI binary to evaluate" },
+          { name: "mcp", type: "string", value: "<CMD>", desc: "MCP server command (stdio)" },
+          { name: "mcp-url", type: "string", value: "<URL>", desc: "MCP server URL (Streamable HTTP)" },
+          { name: "http", type: "string", value: "<URL>", desc: "HTTP API base URL" },
+          { name: "name", type: "string", value: "<NAME>", desc: "Target name (default: from the binary or host)" },
+          DRY_RUN,
+        ],
+        examples: ["coding.sh toolevals init --cli gh", 'coding.sh toolevals init --mcp "npx -y @acme/mcp" --name acme'],
+      },
+      {
+        name: "surface",
+        summary: "Surface bytes, description bytes and tokens per tool or subcommand",
+        args: [{ name: "target", desc: "Target name (default: the only one)" }],
+        flags: [{ name: "variant", type: "string", value: "<VARIANT>", desc: "Variant to measure", default: "base" }],
+      },
+      {
+        name: "validate",
+        summary: "Check no-op trials fail, references pass and nothing leaks",
+        args: [{ name: "target", desc: "Target name (default: all)" }],
+      },
+      {
+        name: "run",
+        summary: "Run tasks x variants x drivers x k and summarize each arm",
+        args: [{ name: "target", desc: "Target name (default: the only one)" }],
+        flags: [
+          { name: "driver", short: "d", type: "list", value: "<DRIVER>", desc: "agent:<id>[:model] or model:<provider>/<model> (repeatable)" },
+          { name: "variant", type: "list", value: "<VARIANT>", desc: "Variant (repeatable; default: base)" },
+          { name: "k", short: "k", type: "number", value: "<N>", desc: "Trials per task and arm", default: "3" },
+          { name: "split", type: "string", value: "<SPLIT>", choices: ["dev", "heldout", "all"], desc: "Task split", default: "dev" },
+          { name: "task", short: "t", type: "list", value: "<ID>", desc: "Only this task (repeatable)" },
+          { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel trials" },
+          { name: "keep", type: "boolean", desc: "Keep trial sandboxes" },
+          YES,
+        ],
+        examples: ["coding.sh toolevals run gh --driver agent:claude-code -k 3", "coding.sh toolevals run acme --driver model:anthropic/claude-sonnet-5 --variant base --variant terse"],
+      },
+      {
+        name: "compare",
+        summary: "Compare two arms of an experiment (paired by task)",
+        args: [{ name: "experiment", desc: "Experiment id", required: true }],
+        flags: [
+          { name: "baseline", type: "string", value: "<ARM>", desc: "Baseline arm, <variant>@<driver>" },
+          { name: "candidate", type: "string", value: "<ARM>", desc: "Candidate arm, <variant>@<driver>" },
+        ],
+      },
+      {
+        name: "compress",
+        summary: "Shorten MCP tool descriptions without losing success",
+        args: [{ name: "target", desc: "MCP target name (default: the only one)" }],
+        flags: [
+          { name: "driver", short: "d", type: "string", value: "<DRIVER>", desc: "Driver to evaluate with" },
+          { name: "k", short: "k", type: "number", value: "<N>", desc: "Trials per task", default: "3" },
+          { name: "margin", type: "number", value: "<DELTA>", desc: "Allowed success drop (CI lower bound)", default: "0.03" },
+          { name: "max-evals", type: "number", value: "<N>", desc: "Maximum candidate evaluations", default: "40" },
+          { name: "batch", type: "boolean", desc: "Compress every tool at one level per step" },
+          YES,
+        ],
+      },
+      {
+        name: "show",
+        summary: "Show a trial's metrics, tap records and session tree",
+        args: [{ name: "trial", desc: "Trial id", required: true }],
+      },
+    ],
+    notes: ["Arms are named <variant>@<driver>.", "Runs above [toolevals] confirmAboveUsd (default $5) need --yes when not on a TTY."],
+    load: () => import("./commands/toolevals.ts"),
+  },
+  WORKFLOWS_COMMAND,
+  // ---------------------------------------------------------- Harness
+  {
+    name: "harness",
+    group: "Harness",
+    summary: "Snapshot and list agent harness bundles",
+    actions: [
+      {
+        name: "snapshot",
+        summary: "Snapshot an agent's harness files into a bundle",
+        flags: [
+          { name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Agent id (required)" },
+          { name: "name", type: "string", value: "<NAME>", desc: "Bundle name (default: agent and date)" },
+          { name: "dir", type: "string", value: "<DIR>", desc: "Project directory (default: current directory)" },
+          { name: "file", type: "string", value: "<TOML>", desc: "Build the bundle from a harness TOML instead" },
+          { name: "model", type: "string", value: "<MODEL>", desc: "Model to record" },
+        ],
+      },
+      { name: "list", summary: "List harness bundles" },
+    ],
+    load: () => import("./commands/harness.ts"),
+  },
+  {
+    name: "compare",
+    group: "Harness",
+    summary: "A/B two harness bundles on eval tasks",
+    args: [
+      { name: "a", desc: "Baseline bundle id or name", required: true },
+      { name: "b", desc: "Candidate bundle id or name", required: true },
+    ],
+    flags: [
+      { name: "task", short: "t", type: "list", value: "<ID>", desc: "Task id (repeatable; default: all validated tasks)" },
+      { name: "k", type: "number", value: "<N>", desc: "Attempts per task and arm", default: "1" },
+      { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel runs" },
+      { name: "experiment", type: "string", value: "<ID>", desc: "Compare the stored runs of this experiment instead of running" },
+      { name: "gateway", type: "boolean", desc: "Route both arms through Vercel AI Gateway (key in AI_GATEWAY_API_KEY)" },
+      YES,
+    ],
+    examples: ["coding.sh compare base candidate --k 3", "coding.sh compare base candidate --experiment exp_01", "coding.sh compare sonnet gpt5 --gateway"],
+    load: () => import("./commands/compare.ts"),
+  },
+  // ---------------------------------------------------------- Maintain
+  {
+    name: "gateway",
+    group: "Maintain",
+    summary: "Vercel AI Gateway: detect routing, enrich sessions with billed cost",
+    actions: [
+      {
+        name: "status",
+        summary: "Show which agents route through the gateway, the key source and tagged sessions",
+        flags: [{ name: "credits", type: "boolean", desc: "Also fetch the credit balance (needs the key)" }],
+      },
+      {
+        name: "enrich",
+        summary: "Attach billed cost and serving provider to llm calls with a gateway generation id",
+        flags: [
+          { name: "session", short: "s", type: "list", value: "<ID>", desc: "Only this session (repeatable; or latest)" },
+          { name: "since", type: "string", value: "<WHEN>", desc: "Sessions after this time: 7d, 12h, 30m or a date", default: "30d" },
+          LIMIT(500),
+          { name: "offline", type: "boolean", desc: "Use only the cache and drained traces; no API calls" },
+          DRY_RUN,
+        ],
+        examples: ["coding.sh gateway enrich", "coding.sh gateway enrich --session latest --dry-run"],
+      },
+    ],
+    notes: [
+      "The key comes from AI_GATEWAY_API_KEY (or [gateway] apiKeyEnv / apiKey in config.toml) and is never printed or stored.",
+      "Lookups use GET /v1/generation; results are cached in the index, so re-runs make no calls.",
+    ],
+    load: () => import("./commands/gateway.ts"),
+  },
+  {
+    name: "gc",
+    group: "Maintain",
+    summary: "Delete expired spool files, blobs and judge cache",
+    flags: [{ name: "compact", type: "boolean", desc: "Also compact the index (VACUUM)" }, DRY_RUN],
+    load: () => import("./commands/gc.ts"),
+  },
+  {
+    name: "config",
+    group: "Maintain",
+    summary: "Read and write ~/.coding.sh/config.toml",
+    actions: [
+      { name: "get", summary: "Print the effective config or one key", args: [{ name: "key", desc: "Dotted key, e.g. capture.mode" }] },
+      {
+        name: "set",
+        summary: "Set one key",
+        args: [
+          { name: "key", desc: "Dotted key, e.g. capture.mode", required: true },
+          { name: "value", desc: "Value (numbers, true/false and JSON arrays are parsed)", required: true },
+        ],
+        flags: [DRY_RUN],
+      },
+      { name: "path", summary: "Print the config file path" },
+    ],
+    load: () => import("./commands/config.ts"),
+  },
+  {
+    name: "update",
+    group: "Maintain",
+    summary: "Install the latest coding.sh release",
+    flags: [{ name: "check", type: "boolean", desc: "Only report whether an update is available" }, DRY_RUN],
+    examples: ["coding.sh update", "coding.sh update --check"],
+    notes: [
+      "Other commands print one line when a newer release is out (checked at most daily, in the background).",
+      "Turn that off with NO_UPDATE_NOTIFIER=1, CODING_SH_NO_UPDATE_CHECK=1 or `[update] check = false` in ~/.coding.sh/config.toml.",
+    ],
+    load: () => import("./commands/update.ts"),
+  },
+  {
+    name: "version",
+    group: "Maintain",
+    summary: "Print the version",
+    load: () => import("./commands/version.ts"),
+  },
+];
+
+export function findCommand(name: string): CommandSpec | undefined {
+  return COMMANDS.find((c) => c.name === name || c.aliases?.includes(name));
+}

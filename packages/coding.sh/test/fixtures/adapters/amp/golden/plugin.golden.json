@@ -1,0 +1,294 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000000000,
+    "payload": {
+      "threadId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+      "source": "plugin"
+    },
+    "id": "d6e4e98762caea679d90ece29c39abe2a47a1da4bbbfaa7fddcee27e5639c2b2",
+    "blobs": [
+      "9d70185b9e7be2c3e22b2387e0137a9678514f395ba0c87e3e208645d0b2b9f7"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000001000,
+    "payload": {
+      "text": "Rename foo() to bar() and run the tests"
+    },
+    "id": "48d730b007ba1f0b92aa1f497ee81ba9c9b93fe7308fda089ca2f2ec572d706b",
+    "turnId": "turn-1",
+    "blobs": [
+      "fb0e140a6389f17f28eb6dac1f548ee9eec789769a2ca0db72d099ce2845e389"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000002000,
+    "payload": {
+      "tool": "edit_file",
+      "toolUseId": "toolu_01",
+      "input": {
+        "path": "/work/demo/src/foo.ts",
+        "old_str": "foo(",
+        "new_str": "bar("
+      }
+    },
+    "id": "0c1c6e74e33a85d1b3bf070c908449a081ef02e083abc17c8175381a2ff0739e",
+    "blobs": [
+      "c76cfcbc0c0a7a7ece85708c00411a49dbda266fc0777565d7e6c109f36efbde"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000002000,
+    "payload": {
+      "tool": "edit_file",
+      "toolUseId": "toolu_01",
+      "ok": true,
+      "output": "Edited src/foo.ts"
+    },
+    "id": "c1a476ad480dcaf52a446a2b58713d085fa33185fe9aa5c92a351851f5331992",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000002000,
+    "payload": {
+      "path": "src/foo.ts",
+      "op": "modify",
+      "tool": "edit_file",
+      "toolUseId": "toolu_01"
+    },
+    "id": "9c6ed46aa1643a665645b09692b486b73a771d5be547b25a2e98b512904d1e41",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000003000,
+    "payload": {
+      "tool": "Bash",
+      "toolUseId": "toolu_02",
+      "input": {
+        "cmd": "pnpm test"
+      },
+      "verify": true
+    },
+    "id": "91ee60ae8e4a72b860da0ece4331f4d8072cdb099d68fcf42fa518e4340eafaa",
+    "blobs": [
+      "72e968469a13ee3158f35b03767126a12a481647519b0845c62a367a0714f8ad"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000003000,
+    "payload": {
+      "tool": "Bash",
+      "toolUseId": "toolu_02",
+      "ok": true,
+      "output": "PASS src/foo.test.ts\nTests:       12 passed, 12 total\n"
+    },
+    "id": "36801b191e31bd8989f0b3b72b69477ea99f33ba74459e19a0838efe5380219f",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000003000,
+    "payload": {
+      "runner": "jest",
+      "passed": 12,
+      "failed": 0,
+      "skipped": 0,
+      "toolUseId": "toolu_02"
+    },
+    "id": "7d0dc67c87ac894e3c6e455cbe10e291a6e19e20b18387ce7ca5d78d797f7498",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000004000,
+    "payload": {
+      "tool": "create_file",
+      "toolUseId": "toolu_03",
+      "input": {
+        "path": "/work/demo/secret.txt",
+        "content": "x"
+      }
+    },
+    "id": "254b7ff4d29048f0824de2c291a8bf53b443ca3bd7c41aaf3f17884232a2bd47",
+    "blobs": [
+      "0bbfc13c650032776befbd5b6a49f598cb27ea1daccc494270388e384f2e3f07"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000004000,
+    "payload": {
+      "tool": "create_file",
+      "toolUseId": "toolu_03",
+      "ok": false,
+      "error": "rejected-by-user"
+    },
+    "id": "851d113813cb83776e25b578f3bfa09ec600806cd5e3ebe678911764ff9b4556",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000004500,
+    "payload": {
+      "tool": "oracle",
+      "toolUseId": "toolu_04",
+      "input": {
+        "task": "Double-check the rename",
+        "description": "review"
+      }
+    },
+    "id": "273e90cecb879bda2ee39b1f212c2e7e61fe4184abb40008fae5a8ffa615c6e6",
+    "blobs": [
+      "384d065d96c0e8a000774e02898119e2a9dd0fa79a61a74d74355afa1784dd64"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "subagent.start",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000004500,
+    "payload": {
+      "subagentId": "toolu_04",
+      "type": "oracle",
+      "description": "review"
+    },
+    "id": "4a6c49d7825ec955663c4d1796df918a24adcce3fe8d14d252852f1a787d4250",
+    "subagentId": "toolu_04",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000004500,
+    "payload": {
+      "tool": "oracle",
+      "toolUseId": "toolu_04",
+      "ok": true,
+      "output": "Looks correct."
+    },
+    "id": "f47bcb82dce04246b0d2573ae1e5b3b9054c248c9a4c912e9595331496c224e5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "subagent.end",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000004500,
+    "payload": {
+      "subagentId": "toolu_04",
+      "type": "oracle",
+      "ok": true
+    },
+    "id": "70ab3452bc1e04dcfbee63decc09cdaa86215c4c4984c29548ed220c313e2661",
+    "subagentId": "toolu_04",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000002500,
+    "payload": {
+      "responseModel": "claude-sonnet-4-5",
+      "stopReason": "tool_use",
+      "ok": true,
+      "messageId": "msg-2"
+    },
+    "id": "e1a49e800d0311fdbd76bfa68f0ab21339b3b1207783d9687c637e86aeaaa378",
+    "turnId": "turn-1",
+    "model": "claude-sonnet-4-5",
+    "usage": {
+      "inputTokens": 900,
+      "outputTokens": 40,
+      "cacheReadTokens": 500,
+      "cacheWriteTokens": 100
+    },
+    "blobs": [
+      "36f118a822d9983385143f0484c4f4f8e6337a88a2919afc1601f0e0e5aad361"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000004800,
+    "payload": {
+      "responseModel": "claude-sonnet-4-5",
+      "stopReason": "end_turn",
+      "ok": true,
+      "messageId": "msg-3"
+    },
+    "id": "14a6e75c06732824255d10fad31bf7de1a53acaf25e5b90118545f05d2841cde",
+    "turnId": "turn-1",
+    "model": "claude-sonnet-4-5",
+    "usage": {
+      "inputTokens": 1100,
+      "outputTokens": 25,
+      "cacheReadTokens": 1400
+    },
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000004800,
+    "payload": {
+      "text": "Renamed foo() to bar(); all 12 tests pass."
+    },
+    "id": "eefaf36cd151e3b8e55019e188254ac073f5ff3941d068a5f5461d63192ccff0",
+    "turnId": "turn-1",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000005000,
+    "payload": {
+      "status": "done",
+      "messages": 3,
+      "model": "claude-sonnet-4-5",
+      "inputTokens": 2000,
+      "outputTokens": 65
+    },
+    "id": "ab507db77dcd2024c8c1fe9c516668f5c760861f8905eb212e04033660b0f62a",
+    "turnId": "turn-1",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "notification",
+    "sessionId": "T-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0",
+    "ts": 1790000006000,
+    "payload": {
+      "kind": "changes.prompt",
+      "workflow": "review"
+    },
+    "id": "10be75e58cb3f688840051e494e08a8877f70dfb97743606b4ee446024417b12",
+    "blobs": [
+      "0e67e5029038ff3ff973a3a71c1fadf855203074f08d14d583877dd1153939e6"
+    ],
+    "cwd": "/work/demo"
+  }
+]

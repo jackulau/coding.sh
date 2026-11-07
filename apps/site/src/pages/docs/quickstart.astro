@@ -1,0 +1,104 @@
+---
+import DocsLayout from "../../components/docs/DocsLayout.astro";
+import Code from "../../components/docs/Code.astro";
+import Terminal from "../../components/Terminal.astro";
+import { INSTALL_SH } from "../../data/site";
+
+const init = `coding.sh init --dry-run              # print every file edit, write nothing
+coding.sh init                        # install hooks into every detected agent
+coding.sh init --agent claude-code    # or just one`;
+const explore = `coding.sh sessions --since 7d         # newest first
+coding.sh show latest                 # one session's timeline
+coding.sh search 'flaky test'         # full text over prompts, replies, tool calls
+coding.sh ui                          # local viewer on 127.0.0.1:4319`;
+const backfill = `coding.sh ingest --backfill --since 30d`;
+const wrap = `coding.sh run -- aider --message 'fix the failing test'
+coding.sh run --agent my-agent -- ./my-agent --task 42`;
+
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const m = (s: string) => `<span class="t-muted">${esc(s)}</span>`;
+const t = (s: string) => `<span class="t-text">${esc(s)}</span>`;
+const SHOW = [
+  `${m("$")} ${t("coding.sh show latest")}`,
+  t("add() returns the wrong result, fix it"),
+  `  ${m("Session ")}      22222222-2222-3333-4444-555555555555`,
+  `  ${m("Agent   ")}      claude-code  claude-sonnet-4-5`,
+  `  ${m("Repo    ")}      ~/acme/calc`,
+  `  ${m("Turns   ")}      1, 2 tool calls, 0 files changed`,
+  `  ${m("Latency ")}      tools 57ms (p95 29ms)`,
+  "",
+  `    ${m("+0ms")}  session.start`,
+  `   ${m("+29ms")}  user        add() returns the wrong result, fix it`,
+  `   ${m("+85ms")}  tool        Read ~/acme/calc/add.js  ok 28ms`,
+  `  ${m("+143ms")}  tool        Bash node test.js  ok 29ms`,
+  `  ${m("+173ms")}  turn.end`,
+].join("\n");
+---
+
+<DocsLayout>
+  <Code code={INSTALL_SH} />
+  <p>
+    That installs the CLI, runs <code>init</code> and opens the viewer. Other ways to install are on <a href="/docs/install">Install</a>. For
+    agent frameworks rather than coding agents, see <a href="/docs/otel">OpenTelemetry</a>.
+  </p>
+
+  <h2 id="init">1. Install the hooks</h2>
+  <p>
+    <code>init</code> detects the agents on your machine and adds one hook command to each agent's config. Every file it edits is backed up to
+    <code>~/.coding.sh/backups</code> first, and its entries are marked so <code>uninstall</code> removes only them.
+  </p>
+  <Code code={init} />
+  <p>
+    <code>--scope project</code> writes to the repository's agent config (for example <code>.claude/settings.json</code>) instead of your user
+    config.
+  </p>
+  <div class="note">
+    <p>
+      <strong>Codex:</strong> Codex runs a new hook only after you trust it. Open Codex and approve the coding.sh entries with
+      <code>/hooks</code>. coding.sh never writes trust state for you; <code>doctor</code> tells you when hooks are still untrusted.
+    </p>
+  </div>
+
+  <h2 id="use">2. Use your agent as usual</h2>
+  <p>
+    Each hook appends one line to <code>~/.coding.sh/spool</code> and exits 0. It makes no network calls and prints nothing, because several
+    agents read hook output as a decision or as text for the model. If capture fails, the failure goes to <code>spool/errors.log</code> and
+    the agent carries on.
+  </p>
+
+  <h2 id="explore">3. Look at what was captured</h2>
+  <p>Read commands ingest the spool first, so a session shows up as soon as its events are written.</p>
+  <Code code={explore} />
+  <Terminal title="~/acme/calc" label="Output of coding.sh show latest">
+    <pre set:html={SHOW} />
+  </Terminal>
+  <p>
+    Subagents are child sessions: <code>sessions --subagents</code> lists them, and <code>show</code> places them on the parent's timeline.
+    Every command takes <code>--json</code>.
+  </p>
+
+  <h2 id="backfill">4. Import past sessions</h2>
+  <p>Most agents keep local transcripts. <code>--backfill</code> imports them, so history from before <code>init</code> shows up too. Re-running it inserts nothing new: event ids are deterministic.</p>
+  <Code code={backfill} />
+
+  <h2 id="wrap">Agents without hooks</h2>
+  <p>
+    <code>coding.sh run -- &lt;cmd&gt;</code> works with anything. It snapshots the repository before and after the command, records each changed
+    file, and exits with the command's exit code.
+  </p>
+  <Code code={wrap} />
+
+  <h2 id="latency">Model-call latency</h2>
+  <p>
+    Hooks see tool calls, not model calls. Most adapters recover one <code>llm.call</code> event per model call from the agent's transcript,
+    with timing derived from message timestamps. For measured durations and time to first token from Claude Code, turn on its OpenTelemetry
+    export and run <code>coding.sh collector</code>: see <a href="/docs/otel#claude-code">Claude Code over OTel</a>.
+  </p>
+
+  <h2 id="next">Next</h2>
+  <ul>
+    <li><a href="/docs/agents">Coding agents</a>: what each adapter captures.</li>
+    <li><a href="/docs/evals">Evals</a>: datasets, graders and paired comparisons.</li>
+    <li><a href="/docs/cli">CLI reference</a>: every command and flag.</li>
+  </ul>
+</DocsLayout>

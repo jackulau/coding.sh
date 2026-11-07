@@ -1,0 +1,207 @@
+---
+// Atmosphere behind a page head: the brand cube, many times, floating in the
+// dark. Depth comes from size, brightness, drift speed and blur: far cubes are
+// small, dim and slow, near ones large and bright, and one large, slightly
+// out-of-focus cube is cropped by the left edge. Layers, back to front:
+//   stars (SVG), cubes (one canvas, slow tumble + drift), the near cube (SVG,
+//   2px blur), then a vignette and a dark pool behind the text.
+// The grid language comes from the framed bands below, not from here.
+// Cubes never sit on the content of an element marked [data-field-clear]
+// (text: far cubes dim) or [data-field-clear="hard"] (a product frame: nothing
+// is drawn over or touching it). When the viewer's waterfall plays a pass or a
+// fail it fires a "cs:signal" event and one stream cube blinks that colour, so
+// the field reads as the event stream, not decoration. The canvas is
+// absolutely positioned (no layout shift); its loop pauses off-screen and in
+// hidden tabs, and draws one still frame under prefers-reduced-motion.
+// Without JS the stars and the near cube still render.
+import { cubeSvg, mulberry32 } from "../lib/cube";
+
+interface Props {
+  /** "hero": cubes around centred text. "side": cubes on the right, for left-aligned page heads. */
+  variant?: "hero" | "side";
+}
+const { variant = "hero" } = Astro.props;
+
+const rand = mulberry32(0x5eed);
+const r = (a: number, b: number) => a + rand() * (b - a);
+const stars = Array.from({ length: 140 }, () => ({
+  cx: +r(0, 1000).toFixed(1),
+  cy: +r(0, 700).toFixed(1),
+  rad: +r(0.45, 1.25).toFixed(2),
+  o: +r(0.1, 0.5).toFixed(2),
+}));
+
+// One near cube, a little out of focus, half off the left edge: close to the
+// camera, clear of the nav, the headline and the viewer.
+const FORE =
+  variant === "hero"
+    ? [{ x: -0.5, y: 40, s: 34, yaw: 0.62, pitch: 0.56, blur: 1.5, o: 0.85 }]
+    : [{ x: 98, y: 70, s: 52, yaw: 0.9, pitch: 0.58, blur: 2, o: 0.85 }];
+const fore = FORE.map((f) => ({ ...f, svg: cubeSvg(f.yaw, f.pitch, f.s) }));
+---
+
+<div class:list={["field", `field--${variant}`]} data-field={variant} aria-hidden="true">
+  <svg class="field__stars" viewBox="0 0 1000 700" preserveAspectRatio="xMidYMid slice">
+    {stars.map((s) => <circle cx={s.cx} cy={s.cy} r={s.rad} fill="#fff" opacity={s.o} />)}
+  </svg>
+  <canvas class="field__canvas"></canvas>
+  {
+    fore.map((f, i) => (
+      <span
+        class="field__fore"
+        data-i={i}
+        style={`left:${f.x}%;top:${f.y}%;width:${f.svg.width}px;height:${f.svg.height}px;opacity:${f.o};filter:blur(${f.blur}px);--dur:${34 + i * 9}s;--dx:${i % 2 ? -14 : 12}px;--dy:${i % 2 ? 18 : -16}px`}
+      >
+        <svg width={f.svg.width} height={f.svg.height} viewBox={`0 0 ${f.svg.width} ${f.svg.height}`} set:html={f.svg.body} />
+      </span>
+    ))
+  }
+  <div class="field__vignette"></div>
+</div>
+
+<style>
+  .field {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 100%;
+    overflow: hidden;
+    pointer-events: none;
+    contain: strict;
+    mask-image: linear-gradient(to bottom, #000 0%, #000 70%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 70%, transparent 100%);
+  }
+  .field--hero {
+    height: min(100%, 80rem);
+  }
+  @media (max-width: 767px) {
+    .field--hero {
+      height: min(100%, 52rem);
+    }
+  }
+  .field__stars,
+  .field__canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .field__fore {
+    position: absolute;
+    translate: -50% -50%;
+  }
+  .field__fore svg {
+    display: block;
+  }
+  .field__vignette {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 34% 30% at 50% 31%, rgba(0, 0, 0, 0.82), rgba(0, 0, 0, 0) 100%),
+      radial-gradient(ellipse 85% 75% at 50% 40%, rgba(0, 0, 0, 0) 55%, rgba(0, 0, 0, 0.55) 100%);
+  }
+  .field--side .field__vignette {
+    background: radial-gradient(ellipse 60% 70% at 15% 50%, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0) 100%);
+  }
+  @media (max-width: 767px) {
+    .field__fore {
+      scale: 0.55;
+    }
+    /* Phones: the viewer spans the full width, so the near cube would sit on it. */
+    .field--hero .field__fore {
+      display: none;
+    }
+    .field__vignette {
+      background:
+        radial-gradient(ellipse 75% 30% at 50% 30%, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0) 100%),
+        radial-gradient(ellipse 100% 80% at 50% 40%, rgba(0, 0, 0, 0) 60%, rgba(0, 0, 0, 0.5) 100%);
+    }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .field__fore {
+      animation: fore-drift var(--dur) ease-in-out infinite alternate;
+    }
+  }
+  @keyframes fore-drift {
+    to {
+      transform: translate3d(var(--dx), var(--dy), 0);
+    }
+  }
+</style>
+
+<script>
+  // The moving cubes are drawn in a worker on an OffscreenCanvas
+  // (src/lib/field-worker.ts), started after load, so they never compete with
+  // the page for the main thread. The SVG layers above render with no JS at all.
+  // No OffscreenCanvas, or reduced motion: the field stays the static SVG layers.
+  import type { Msg, Zone } from "../lib/field-worker";
+
+  function start(field: HTMLElement) {
+    const canvas = field.querySelector("canvas");
+    if (!canvas || !("transferControlToOffscreen" in canvas)) return;
+    const still = matchMedia("(prefers-reduced-motion: reduce)");
+    const worker = new Worker(new URL("../lib/field-worker.ts", import.meta.url), { type: "module" });
+    const post = (m: Msg, transfer: Transferable[] = []) => worker.postMessage(m, transfer);
+    const off = canvas.transferControlToOffscreen();
+    post({ type: "init", canvas: off, variant: field.dataset.field ?? "hero" }, [off]);
+
+    let visible = true;
+    const size = () => {
+      const rect = field.getBoundingClientRect();
+      // Each zone is the union of the marked element's children, so a
+      // full-width wrapper still only clears what it holds.
+      const clear: Zone[] = [];
+      for (const zone of field.parentElement?.querySelectorAll<HTMLElement>("[data-field-clear]") ?? []) {
+        const rects = [...zone.children].map((el) => el.getBoundingClientRect()).filter((b) => b.width);
+        if (!rects.length) continue;
+        clear.push({
+          left: Math.min(...rects.map((b) => b.left)) - rect.left,
+          right: Math.max(...rects.map((b) => b.right)) - rect.left,
+          top: Math.min(...rects.map((b) => b.top)) - rect.top,
+          bottom: Math.max(...rects.map((b) => b.bottom)) - rect.top,
+          hard: zone.dataset.fieldClear === "hard",
+        });
+      }
+      post({ type: "size", W: rect.width, H: rect.height, dpr: Math.min(devicePixelRatio || 1, 2), clear });
+    };
+    const run = () => post({ type: "run", on: visible && !document.hidden && !still.matches });
+    const onSignal = (e: Event) => {
+      const tone = (e as CustomEvent<string>).detail;
+      if (tone === "pass" || tone === "fail") post({ type: "signal", tone });
+    };
+    document.addEventListener("cs:signal", onSignal);
+
+    size();
+    run();
+    const ro = new ResizeObserver(size);
+    ro.observe(field);
+    const io = new IntersectionObserver(([e]) => {
+      visible = e.isIntersecting;
+      run();
+    });
+    io.observe(field);
+    document.addEventListener("visibilitychange", run);
+    still.addEventListener("change", run);
+    document.addEventListener(
+      "astro:before-swap",
+      () => {
+        worker.terminate();
+        ro.disconnect();
+        io.disconnect();
+        document.removeEventListener("visibilitychange", run);
+        document.removeEventListener("cs:signal", onSignal);
+        still.removeEventListener("change", run);
+      },
+      { once: true },
+    );
+  }
+
+  function setup() {
+    const idle = (cb: () => void) => ("requestIdleCallback" in window ? requestIdleCallback(cb, { timeout: 1500 }) : setTimeout(cb, 300));
+    for (const field of document.querySelectorAll<HTMLElement>("[data-field]")) {
+      if (field.dataset.bound) continue;
+      field.dataset.bound = "1";
+      idle(() => start(field));
+    }
+  }
+  document.addEventListener("astro:page-load", setup);
+</script>

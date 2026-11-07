@@ -1,0 +1,173 @@
+import assert from "node:assert/strict";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { after, before, describe, it } from "node:test";
+import { claudeCode } from "../../src/adapters/claude-code.ts";
+import { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
+
+const SID = "11111111-2222-4333-8444-555555555555";
+
+describe("claude-code normalize", () => {
+  it("maps hook payloads to golden events", async () => {
+    const { ctx } = testCtx();
+    const events = [];
+    for (const line of loadSpool("claude-code/hooks.spool.jsonl")) events.push(...(await claudeCode.normalize(line, ctx)));
+    assertWellFormed(events);
+    assertGolden("claude-code/golden/hooks.golden.json", summarize(events));
+
+    const kinds = events.map((e) => e.kind);
+    for (const k of ["session.start", "user.message", "tool.start", "tool.end", "file.change", "test.result", "llm.call", "assistant.message", "turn.end", "subagent.start", "subagent.end", "context.compact", "notification", "session.end"]) {
+      assert.ok(kinds.includes(k as never), `missing ${k}`);
+    }
+    const test = events.find((e) => e.kind === "test.result")!;
+    assert.deepEqual({ ...test.payload, toolUseId: undefined }, { runner: "vitest", passed: 3, failed: 1, toolUseId: undefined });
+    const child = `${SID}:sub:abc123`;
+    assert.ok(events.some((e) => e.sessionId === child && e.kind === "tool.start" && e.subagentId === "abc123"), "subagent tool goes to child session");
+    const childStart = events.find((e) => e.sessionId === child && e.kind === "session.start")!;
+    assert.deepEqual([childStart.payload.parentSessionId, childStart.payload.subagentId, childStart.payload.subagentType], [SID, "abc123", "Explore"]);
+    assert.equal(childStart.payload.parentEventId, events.find((e) => e.kind === "subagent.start" && e.sessionId === SID)!.id, "parentEventId → the parent's subagent.start");
+    const calls = events.filter((e) => e.kind === "llm.call" && e.sessionId === SID);
+    assert.equal(calls.length, 5, "one llm.call per API message in the turn");
+    assert.ok(calls.every((c) => c.durationMs !== undefined && c.usage?.outputTokens !== undefined));
+  });
+
+  it("drops Claude-format payloads fired by Cursor", async () => {
+    const { ctx } = testCtx();
+    const foreign = loadSpool("claude-code/hooks.spool.jsonl").at(-1)!;
+    assert.deepEqual(await claudeCode.normalize(foreign, ctx), []);
+  });
+
+  it("is deterministic (same line → same ids)", async () => {
+    const lines = loadSpool("claude-code/hooks.spool.jsonl");
+    const a = await claudeCode.normalize(lines[3]!, testCtx().ctx);
+    const b = await claudeCode.normalize(lines[3]!, testCtx().ctx);
+    assert.deepEqual(a, b);
+  });
+});
+
+describe("claude-code backfill", () => {
+  let env: TmpEnv;
+  before(() => {
+    env = tmpEnv();
+    process.env.CLAUDE_CONFIG_DIR = join(FIXTURES, "claude-code", "config");
+  });
+  after(() => env.restore());
+
+  it("imports transcripts + subagent transcripts to golden events", async () => {
+    const { ctx } = testCtx();
+    const events = await collect(claudeCode.backfill!(ctx));
+    assertWellFormed(events);
+    assertGolden("claude-code/golden/backfill.golden.json", summarize(events));
+    const sub = events.find((e) => e.kind === "subagent.start")!;
+    assert.equal(sub.sessionId, SID);
+    assert.equal(sub.parentId, ctx.id("claude-code", SID, "tool.start", "toolu_04"));
+    assert.ok(events.some((e) => e.kind === "context.compact" && e.payload.tokensBefore === 120000));
+  });
+
+  it("dedupes with live capture on natural keys (tool calls, llm calls)", async () => {
+    const { ctx } = testCtx();
+    const live = [];
+    for (const line of loadSpool("claude-code/hooks.spool.jsonl")) live.push(...(await claudeCode.normalize(line, ctx)));
+    const back = await collect(claudeCode.backfill!(ctx));
+    const ids = new Set(back.map((e) => e.id));
+    for (const kind of ["tool.start", "tool.end", "llm.call", "subagent.start", "file.change"]) {
+      const l = live.filter((e) => e.kind === kind);
+      assert.ok(l.length > 0);
+      for (const e of l) assert.ok(ids.has(e.id), `${kind} ${JSON.stringify(e.payload).slice(0, 80)} not deduped`);
+    }
+  });
+
+  it("honors since", async () => {
+    const { ctx } = testCtx();
+    const all = await collect(claudeCode.backfill!(ctx));
+    const cut = Date.parse("2026-11-01T10:00:25.000Z");
+    const some = await collect(claudeCode.backfill!(ctx, { since: cut }));
+    assert.ok(some.length > 0 && some.length < all.length);
+    assert.ok(some.every((e) => e.ts >= cut));
+  });
+});
+
+describe("claude-code install", () => {
+  let env: TmpEnv;
+  before(() => (env = tmpEnv()));
+  after(() => env.restore());
+  const hookCommand = () => join(env.dataHome, "bin", "hook.mjs");
+  const settings = () => join(env.home, ".claude", "settings.json");
+
+  it("dry run writes nothing", async () => {
+    const changes = await claudeCode.install({ hookCommand: hookCommand(), scope: "user", dryRun: true });
+    assert.equal(changes.length, 1);
+    assert.equal(changes[0]!.action, "create");
+    assert.ok(!existsSync(settings()));
+  });
+
+  it("merges into existing settings, keeps user hooks, backs up, is idempotent, uninstalls cleanly", async () => {
+    const original = JSON.stringify(
+      {
+        model: "opus",
+        hooks: {
+          PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "~/.claude/hooks/guard.sh" }] }],
+          Stop: [{ hooks: [{ type: "command", command: "say done" }] }],
+        },
+      },
+      null,
+      4,
+    ) + "\n";
+    writeFile(settings(), original);
+
+    const c1 = await claudeCode.install({ hookCommand: hookCommand(), scope: "user", dryRun: false });
+    assert.equal(c1.length, 1);
+    assert.equal(c1[0]!.action, "modify");
+    const cfg = JSON.parse(readFileSync(settings(), "utf8"));
+    assert.equal(cfg.model, "opus");
+    assert.equal(cfg.hooks.PreToolUse[0].hooks[0].command, "~/.claude/hooks/guard.sh", "user hook stays first");
+    const ours = cfg.hooks.PreToolUse[1];
+    assert.equal(ours.matcher, "*");
+    assert.equal(ours.hooks[0]._codingsh, true);
+    assert.equal(ours.hooks[0].command, `node "${hookCommand()}" claude-code PreToolUse`);
+    assert.ok(readFileSync(settings(), "utf8").startsWith('{\n    "model"'), "indent preserved");
+    assert.equal(readdirSync(join(env.dataHome, "backups", "claude-code")).length, 1, "backup written");
+    assert.equal((await claudeCode.detect()).hooked, true);
+
+    const c2 = await claudeCode.install({ hookCommand: hookCommand(), scope: "user", dryRun: false });
+    assert.deepEqual(c2, [], "second install is a no-op");
+
+    const u = await claudeCode.uninstall({ scope: "user", dryRun: false });
+    assert.equal(u.length, 1);
+    assert.deepEqual(JSON.parse(readFileSync(settings(), "utf8")), JSON.parse(original));
+    assert.deepEqual(await claudeCode.uninstall({ scope: "user", dryRun: false }), []);
+    assert.equal((await claudeCode.detect()).hooked, false);
+  });
+
+  it("creates and deletes a settings file it fully owns; project scope uses settings.local.json", async () => {
+    const proj = join(env.root, "proj");
+    const c = await claudeCode.install({ hookCommand: hookCommand(), scope: "project", projectDir: proj, dryRun: false });
+    assert.equal(c[0]!.path, join(proj, ".claude", "settings.local.json"));
+    const u = await claudeCode.uninstall({ scope: "project", projectDir: proj, dryRun: false });
+    assert.equal(u[0]!.action, "delete");
+    assert.ok(!existsSync(join(proj, ".claude", "settings.local.json")));
+  });
+
+  it("refuses to modify unparseable settings", async () => {
+    writeFile(settings(), "{ not json");
+    await assert.rejects(claudeCode.install({ hookCommand: hookCommand(), scope: "user", dryRun: false }), /refusing to modify/);
+    assert.equal(readFileSync(settings(), "utf8"), "{ not json");
+  });
+});
+
+describe("claude-code overlay + harness", () => {
+  let env: TmpEnv;
+  before(() => (env = tmpEnv()));
+  after(() => env.restore());
+
+  it("isolates CLAUDE_CONFIG_DIR next to the work dir with our hooks", async () => {
+    const work = join(env.root, "runs", "r1", "work");
+    const bundle = { id: "b", name: "b", agent: "claude-code", flags: [], env: {}, files: {}, remove: [], createdAt: 0 };
+    const o = await claudeCode.overlay!(bundle, work);
+    assert.equal(o.env.CLAUDE_CONFIG_DIR, join(env.root, "runs", "r1", "home", ".claude"));
+    const s = JSON.parse(readFileSync(join(o.env.CLAUDE_CONFIG_DIR!, "settings.json"), "utf8"));
+    assert.ok(s.hooks.PostToolUse[0].hooks[0].command.includes("claude-code PostToolUse"));
+    assert.ok(!existsSync(join(env.home, ".claude")), "user config untouched");
+    assert.ok(claudeCode.harnessFiles!().project.includes("CLAUDE.md"));
+  });
+});

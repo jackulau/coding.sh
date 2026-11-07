@@ -1,0 +1,11 @@
+{
+ "id": "ses_v1",
+ "projectID": "prj_1",
+ "directory": "/work/demo",
+ "title": "Add README",
+ "version": "1.0.150",
+ "time": {
+  "created": 1793527200000,
+  "updated": 1793527201600
+ }
+}

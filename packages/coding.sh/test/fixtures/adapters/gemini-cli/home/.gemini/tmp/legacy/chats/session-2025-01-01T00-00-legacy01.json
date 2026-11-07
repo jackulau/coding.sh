@@ -1,0 +1,1 @@
+{"sessionId":"gem-legacy-1","projectHash":"legacy","startTime":"2025-01-01T00:00:00.000Z","messages":[{"id":"l1","timestamp":"2025-01-01T00:00:01.000Z","type":"user","content":"hello"},{"id":"l2","timestamp":"2025-01-01T00:00:02.000Z","type":"gemini","content":"Hi.","tokens":{"input":10,"output":2}}]}

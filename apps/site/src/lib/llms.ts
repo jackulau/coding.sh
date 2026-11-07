@@ -1,0 +1,92 @@
+// Agent-facing text, shared by /llms.txt and the AGENT view on the home page,
+// so what an agent reads on the page and at /llms.txt is the same document.
+import { SITE_URL, SITE, NAV_PAGES, REPO_URL, LICENSE, SOURCE_STEPS, CLI_PATH, INSTALL_SH, RELEASE_TGZ } from "../data/site";
+import { FRAMEWORKS, OTLP_ENDPOINT } from "../data/agents";
+import { DOC_PAGES } from "../components/docs/nav";
+import { ADAPTER_ROWS, PLANNED_AGENTS } from "../components/docs/agents";
+import { cliReference } from "../components/docs/cli-help";
+
+const abs = (path: string) => new URL(path, SITE_URL).toString();
+
+/** What an agent should paste-and-run to install coding.sh and record its own session. */
+export const AGENT_PROMPT = `Install coding.sh and start recording this session: run \`${INSTALL_SH}\` then \`coding.sh init --yes\`. Docs for agents: ${abs("/llms.txt")}`;
+
+function cliSection(): string {
+  const ref = cliReference();
+  const commands = ref
+    ? ref.groups.flatMap((g) => g.commands.map((c) => `- \`coding.sh ${c.name}\` (${g.label.toLowerCase()}): ${c.summary}`)).join("\n")
+    : `- Run \`coding.sh --help\` for the command list (the reference is generated from the CLI at build time).`;
+  return `## CLI
+
+${commands}
+
+Full reference: ${abs("/docs/cli")}
+
+## Output and exit codes
+
+- Every command takes \`--json\`: one JSON document on stdout. Errors go to stderr as one JSON line:
+  \`{"status":"error","reason":"<reason>","message":"<text>","next":["<suggested command>"]}\`.
+- Exit codes: 0 success, 1 error, 2 usage error (unknown option, bad value, missing \`--yes\`), 130 canceled.
+- Commands that write config ask first; pass \`--yes\` to confirm without a prompt (\`init --dry-run\` prints every edit and writes nothing).`;
+}
+
+export function llmsText(): string {
+  return `# ${SITE.name}
+
+> ${SITE.description}
+
+Status: ${SITE.version}, ${LICENSE} licensed. Source: ${REPO_URL}
+
+## Install
+
+\`\`\`sh
+${INSTALL_SH}      # checks Node 22.15+, installs the latest release, runs init, opens the viewer
+coding.sh init --yes    # non-interactive: install hooks into every detected agent
+coding.sh doctor --json # check the install
+\`\`\`
+
+The installer is ${abs("/install")} (plain text; read it before piping it to sh). It runs \`npm install -g\` on the
+release tarball, e.g. \`npm i -g ${RELEASE_TGZ}\`. Env: CODING_SH_YES=1 skips the prompt, CODING_SH_NO_INIT=1 installs only,
+CODING_SH_NO_UI=1 skips the viewer, CODING_SH_VERSION=v0.1.0 pins a release.
+From source: \`${SOURCE_STEPS.join(" && ")}\`; the CLI builds to ${CLI_PATH}.
+
+Full prose for every page is at ${abs("/llms-full.txt")}; each page also serves a Markdown copy at <page>.md.
+Terminals on the landing page show sample output; terminals in the docs marked as real output were captured from the CLI.
+
+## Pages
+
+${NAV_PAGES.map((p) => `- [${p.title}](${abs(p.path)}): ${p.summary}`).join("\n")}
+
+## Docs
+
+${DOC_PAGES.map((p) => `- [${p.title}](${abs(p.path)}): ${p.summary}`).join("\n")}
+
+## What it is for
+
+Open-source, local-first observability and evals for AI agents: like LangSmith, Braintrust or Judgment Labs,
+but on your machine. Pre-alpha: what is built is covered by the package's tests; items marked planned do not exist yet.
+
+1. Record (built): a local OTLP receiver (\`coding.sh collector\`, ${OTLP_ENDPOINT}) for ${FRAMEWORKS.join(", ")};
+   model-call latency per call. Coding agents are first-class: hooks capture prompts, tool calls, file changes
+   and subagents (as child sessions). Repository snapshots are taken by \`coding.sh run --\`; snapshots for
+   hook-captured sessions are planned.
+2. Evals (built): datasets with deterministic graders, command graders and LLM judges; judges are calibrated
+   against human labels with Cohen's kappa on a held-out split, and uncalibrated judges are flagged in every
+   report. Repo-replay tasks (partial): validation (do-nothing fails, reference passes k of k, near-misses
+   fail, no leakage), harness bundles and compare are built; drafting a task from a captured session is not
+   working yet.
+3. Compare (built): two experiments paired by case, with a paired bootstrap CI of the difference and McNemar's
+   test on flipped cases; harness compare adds per-arm Wilson intervals and the first step where traces diverge.
+4. Storage (built): SQLite index and a content-addressed, zstd-compressed blob store by default; OTLP and HTTP
+   sinks, metadata-only by default; third-party stores and sinks load as npm plugins. Postgres and S3 stores:
+   planned. One npm package, Node 22.15 or newer.
+
+## Coding agents (adapters in code)
+
+${ADAPTER_ROWS.map((a) => `- ${a.name} (\`${a.id}\`, tier ${a.tier}): capture: ${a.live}; backfill: ${a.backfill ?? "none"}; subagents: ${a.subagents}`).join("\n")}
+
+Planned, no adapter yet: ${PLANNED_AGENTS.join(", ")}.
+
+${cliSection()}
+`;
+}

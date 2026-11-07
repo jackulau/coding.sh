@@ -1,0 +1,283 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000000000,
+    "payload": {
+      "source": "startup",
+      "transcriptPath": "${FIXTURES}/droid/home/.factory/sessions/-work-demo/droid-sess-1.jsonl",
+      "permissionMode": "auto-high"
+    },
+    "id": "e4af25a24ec156c861ecb032034b33777acb5e82a89190e7f996e10267757e33",
+    "model": "claude-opus-4-1",
+    "blobs": [
+      "ef37ee91d91a34a74dba3f281b2fbdc0cde647b62871614a5ea132ec7eacf210"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000001000,
+    "payload": {
+      "text": "Create hello.py and run pytest"
+    },
+    "id": "ea655be3f49b7e61163b396871b29daa8ccd7f6932d677f95ae80124e047edf4",
+    "model": "claude-opus-4-1",
+    "blobs": [
+      "88f28eb2fb1a894368f910048adfb0122204b90490f279d2b575265924c8a2ba"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000002000,
+    "payload": {
+      "tool": "Create",
+      "toolUseId": "toolu_d1",
+      "input": {
+        "file_path": "/work/demo/hello.py",
+        "content": "print('hi')\n"
+      }
+    },
+    "id": "d02cc9a04c83554dbc03bd29925041a34344b8f735b138cc9c0ca00e68627a34",
+    "model": "claude-opus-4-1",
+    "blobs": [
+      "f1a938f1f0d7a3138a37711f3b67d6b424fc92a482b20988f1a5e4b8cf064ad7"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000002100,
+    "payload": {
+      "tool": "Create",
+      "toolUseId": "toolu_d1",
+      "ok": true,
+      "output": "File created"
+    },
+    "id": "5a88fa30874575b6bc2fcb2f308211e4b93c4db184f4b033e7ff0f97093cd02b",
+    "model": "claude-opus-4-1",
+    "blobs": [
+      "ca371a2015fe12af2d0bb77dfd2e31ef9754d2bb385242ad0548430670cb25b0"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000002100,
+    "payload": {
+      "path": "hello.py",
+      "op": "add",
+      "tool": "Create",
+      "toolUseId": "toolu_d1"
+    },
+    "id": "06add882d628ae3e188605bafd6a3ae7123ab844726bc7626c90d2948bb1745b",
+    "model": "claude-opus-4-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000004000,
+    "payload": {
+      "tool": "Execute",
+      "toolUseId": "toolu_d2",
+      "ok": true,
+      "output": "..F\n=========================== 1 failed, 2 passed in 0.12s ===========================\n"
+    },
+    "id": "369505207380f891839b0b45db953852fc8d6a4dc656b561acdd553796fa8d1d",
+    "model": "claude-opus-4-1",
+    "blobs": [
+      "bf4f6a430dd9c20ef990932a1f5abe4edb2a1520c973a18be42bd3ba46d35425"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000004000,
+    "payload": {
+      "runner": "pytest",
+      "passed": 2,
+      "failed": 1,
+      "skipped": 0,
+      "toolUseId": "toolu_d2"
+    },
+    "id": "f050cc9e5a94cea2a91bd92803575c49f85dd7a3b424d7e76a87ed40b57fdf46",
+    "model": "claude-opus-4-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000005000,
+    "payload": {
+      "tool": "ApplyPatch",
+      "toolUseId": "toolu_d3",
+      "ok": true,
+      "output": "{\"success\":true}"
+    },
+    "id": "0cd8cb34921c94069dccba044b44d2c85a9adb0e8d885a0d677877b347c9a2d0",
+    "model": "claude-opus-4-1",
+    "blobs": [
+      "f351e5b37ca51b6885466ab1bb124d3d2f9f853d3bfa43fbd1b617ec636b83c9"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000005000,
+    "payload": {
+      "path": "hello.py",
+      "op": "modify",
+      "tool": "ApplyPatch",
+      "toolUseId": "toolu_d3"
+    },
+    "id": "36221f3f844fcc3168dec6470ce3cbbfd96d377d778d692a4852f1fcb87f415f",
+    "model": "claude-opus-4-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000005000,
+    "payload": {
+      "path": "old.py",
+      "op": "delete",
+      "tool": "ApplyPatch",
+      "toolUseId": "toolu_d3"
+    },
+    "id": "9cfc270724353547a0167a4dff51cf30222fe7164a49d0a26d49ae4a9d69de9a",
+    "model": "claude-opus-4-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000005500,
+    "payload": {
+      "tool": "Read",
+      "toolUseId": "toolu_d4",
+      "ok": false,
+      "output": "File not found",
+      "error": "File not found"
+    },
+    "id": "f22ec1911fd9ad843360e0e8d5b2df664b45805e5fb299bb13ae5d6b6b42fce7",
+    "blobs": [
+      "cf94c4aa48d5cd8a18e63aa16b7e66c47acadc20a678a30ebd8d4000655d30ac"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000005800,
+    "payload": {
+      "tool": "Task",
+      "toolUseId": "toolu_d5",
+      "input": {
+        "subagent_type": "code-reviewer",
+        "description": "Review hello.py",
+        "prompt": "Review the change"
+      }
+    },
+    "id": "faaee4b487445da5cf9d05086001adab6c0f314f40710cb0961db7de8f97af1d",
+    "blobs": [
+      "f29fb25a645d91e2a1990d712f170c1f4665d24dfcb65e1cfa50b2c45506dcbf"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "subagent.start",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000005800,
+    "payload": {
+      "subagentId": "code-reviewer",
+      "type": "code-reviewer",
+      "description": "Review hello.py",
+      "toolUseId": "toolu_d5"
+    },
+    "id": "0c2dc66668c0b783e8dbf55bf0de79b175d45f06f70722644648cbebf2fc1399",
+    "subagentId": "code-reviewer",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "subagent.end",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000006000,
+    "payload": {
+      "subagentId": "code-reviewer",
+      "type": "code-reviewer",
+      "ok": true,
+      "result": "Looks good."
+    },
+    "id": "f9efc236dd5a1ac807198c4535a34b2c5c15fd9d78cb2827cbc9d160f3cb05a0",
+    "subagentId": "code-reviewer",
+    "blobs": [
+      "5b0c639be2e44138992a7de744f4680a6fffc1921460327ac20fde7fc8bc5adb"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "context.compact",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000007000,
+    "payload": {
+      "trigger": "manual",
+      "tokensBefore": 98000
+    },
+    "id": "83d0e795ec4e8ca31993221aed054cdcbae91a8c22a386a0b7d2dd1f47a04788",
+    "blobs": [
+      "c3085e51c60e6f010cc00b93e43165c4e3082a43c03b3ac1e7f32dcb6c076a8b"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "notification",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000008000,
+    "payload": {
+      "kind": "notification",
+      "message": "Droid is waiting for your input"
+    },
+    "id": "93ad8a0d13fb17d4d1687345105f5fa369854dcb426c2d6c48d2a94292c10f65",
+    "blobs": [
+      "ab75318d104efd326fc2498a2e899784f60f1ca5eb123fbd570759a7c854f3b2"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000009000,
+    "payload": {
+      "toolExecutions": 4,
+      "elapsedTime": 9
+    },
+    "id": "629ed05a1ed2b7a2ca32e68c632b635d4832214e1510c20ce03e69452ee37a80",
+    "blobs": [
+      "f755ae412ab50cb47adaec44798ea9e08ba7c10a824f35e08b9cc0939d037054"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "droid-sess-1",
+    "ts": 1790000010000,
+    "payload": {
+      "reason": "exit",
+      "messageCount": 6
+    },
+    "id": "8a04783f02b069f66655558444c58907835993cc5417ee7ba506ccb07f55ef98",
+    "durationMs": 10000,
+    "blobs": [
+      "5d11ea8a01ac8807a2ac87fd8264f3a94b3d388fafb4d3d525086c48fa965846"
+    ],
+    "cwd": "/work/demo"
+  }
+]

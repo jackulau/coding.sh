@@ -1,0 +1,22 @@
+{
+ "id": "msg_a1",
+ "sessionID": "ses_v1",
+ "role": "assistant",
+ "modelID": "gpt-5",
+ "providerID": "openai",
+ "time": {
+  "created": 1793527200020,
+  "completed": 1793527201505
+ },
+ "tokens": {
+  "input": 800,
+  "output": 120,
+  "reasoning": 0,
+  "cache": {
+   "read": 0,
+   "write": 0
+  }
+ },
+ "cost": 0.004,
+ "finish": "stop"
+}

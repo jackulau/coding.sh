@@ -1,0 +1,45 @@
+# build output
+dist/
+# generated types + check bundle
+.astro/
+# dependencies
+node_modules/
+# logs
+npm-debug.log*
+# environment
+.env
+.env.*
+!.env.example
+# macOS
+.DS_Store
+# editors
+.idea/
+.claude-workspace/
+.playwright-mcp/
+
+# personal infra helpers
+.claude/bin/
+
+# packed tarballs
+*.tgz
+# python caches
+.ruff_cache/
+__pycache__/
+# scratch / test temp dirs
+/scratch/
+/tmp/
+/.tmp/
+coverage/
+
+# private: agent harness, personal queue/lessons, research on the owner's own traces
+.claude/
+.codex/
+tasks/
+scripts/traces/
+docs/research/my-traces.md
+docs/research/rodev-*.md
+docs/research/trace-loop.md
+docs/research/round-1-self.md
+docs/research/digest-*.md
+docs/research/seen.md
+docs/research/telemetry-efficiency-audit.md

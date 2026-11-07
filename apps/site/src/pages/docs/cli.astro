@@ -1,0 +1,105 @@
+---
+import DocsLayout from "../../components/docs/DocsLayout.astro";
+import Terminal from "../../components/Terminal.astro";
+import { cliReference } from "../../components/docs/cli-help";
+
+const ref = cliReference();
+const anchor = (name: string) => `cmd-${name.replace(/\s+/g, "-")}`;
+---
+
+<DocsLayout>
+  {
+    ref ? (
+      <>
+        <p>
+          Generated at build time from <code>coding.sh --help</code> (version {ref.version}). Run <code>coding.sh &lt;command&gt; --help</code>{" "}
+          for the same text in your terminal, or add <code>--json</code> for machine-readable metadata.
+        </p>
+
+        <h2 id="global">Global options</h2>
+        <p>Every command accepts these.</p>
+        <Terminal title="global options" label="Global options of coding.sh">
+          <pre>{ref.globalOptions}</pre>
+        </Terminal>
+        <p>
+          With <code>--json</code>, a command prints one JSON document on stdout and errors as one JSON line on stderr. Usage errors exit with
+          code 2.
+        </p>
+
+        <h2 id="commands">Commands</h2>
+        <div class="doc-table">
+          <table>
+            <thead>
+              <tr>
+                <th>Command</th>
+                <th>Group</th>
+                <th>What it does</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ref.groups.flatMap((g) =>
+                g.commands.map((c) => (
+                  <tr>
+                    <td class="nowrap">
+                      <a href={`#${anchor(c.name)}`}>
+                        <code>{c.name}</code>
+                      </a>
+                    </td>
+                    <td class="nowrap">{g.label}</td>
+                    <td>{c.summary}</td>
+                  </tr>
+                )),
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {ref.groups.map((g) => (
+          <>
+            <h2 id={`group-${g.label.toLowerCase()}`}>{g.label}</h2>
+            {g.commands.map((c) => (
+              <>
+                <h3 id={anchor(c.name)}>
+                  <code>coding.sh {c.name}</code>
+                </h3>
+                <p>
+                  {c.summary}.{c.aliases.length > 0 && <> Alias: <code>{c.aliases.join(", ")}</code>.</>}
+                </p>
+                <Terminal title={`coding.sh ${c.name} --help`} label={`Help for coding.sh ${c.name}`}>
+                  <pre>{c.help}</pre>
+                </Terminal>
+                {c.actions.map((a) => (
+                  <>
+                    <h3 id={anchor(a.name)}>
+                      <code>coding.sh {a.name}</code>
+                    </h3>
+                    <Terminal title={`coding.sh ${a.name} --help`} label={`Help for coding.sh ${a.name}`}>
+                      <pre>{a.help}</pre>
+                    </Terminal>
+                  </>
+                ))}
+              </>
+            ))}
+          </>
+        ))}
+      </>
+    ) : (
+      <div class="note">
+        <p>
+          <strong>Not generated.</strong> This page is built from the CLI's own <code>--help</code> output, and
+          <code>packages/coding.sh/dist/cli.mjs</code> was not built when the site was. Run <code>npm run build -w coding.sh</code> and rebuild
+          the site.
+        </p>
+      </div>
+    )
+  }
+</DocsLayout>
+
+<style>
+  .doc :global(.term) {
+    margin-top: 1rem;
+  }
+  .doc :global(h3 code) {
+    font-size: 0.9em;
+  }
+</style>

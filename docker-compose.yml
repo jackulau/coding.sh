@@ -1,0 +1,100 @@
+# coding.sh production stack on one machine: serve + Postgres (index and eval assets) + an
+# S3-compatible blob store. Everything is published on 127.0.0.1 only; put a TLS proxy in front.
+#
+#   deploy/compose/gen-env.sh          # writes .env (random secrets, mode 600), prints nothing secret
+#   docker compose up -d --build --wait
+#   curl -s http://127.0.0.1:4318/readyz
+#
+# The blob store services keep the names `minio` / `minio-init` from the contract, but MinIO's
+# upstream images are gone from Docker Hub and quay.io, so they run RustFS (Apache-2.0, S3 API,
+# conditional writes) and the AWS CLI. Any S3-compatible image works the same way.
+#
+# The project name is the directory name (no `name:`), so two checkouts on one host keep separate
+# containers and volumes. The published ports still collide, which fails loudly.
+
+x-blob-creds: &blob-creds
+  AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:?run deploy/compose/gen-env.sh first}
+  AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:?run deploy/compose/gen-env.sh first}
+  AWS_REGION: us-east-1
+
+services:
+  coding-sh:
+    build: .
+    image: coding-sh:local
+    command: ["/app/cli.mjs", "serve", "--config", "/etc/coding.sh/config.toml"]
+    ports:
+      - "127.0.0.1:4318:4318"
+    environment:
+      <<: *blob-creds
+      CODING_SH_STORE_URL: postgres://coding:${POSTGRES_PASSWORD:?run deploy/compose/gen-env.sh first}@postgres:5432/coding
+      CODING_SH_BLOB_URL: s3://coding-sh/blobs?endpoint=http://minio:9000
+      CODING_SH_INGEST_KEYS: demo:${INGEST_KEY_DEMO:?run deploy/compose/gen-env.sh first},flood:${INGEST_KEY_FLOOD:?run deploy/compose/gen-env.sh first}
+      CODING_SH_READ_KEYS: "*:${READ_KEY:?run deploy/compose/gen-env.sh first}"
+    volumes:
+      - ./deploy/compose/config.toml:/etc/coding.sh/config.toml:ro
+      - coding-sh-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      # /readyz, not /healthz: healthy means migrated, writer lock held and the queue has room.
+      test: ["CMD", "/nodejs/bin/node", "/app/cli.mjs", "serve", "healthcheck", "--url", "http://127.0.0.1:4318/readyz"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    stop_grace_period: 30s # serve drains its queue for up to 25 s on SIGTERM
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: coding
+      POSTGRES_DB: coding
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run deploy/compose/gen-env.sh first}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coding -d coding"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  minio:
+    image: rustfs/rustfs:1.0.4
+    environment:
+      RUSTFS_ACCESS_KEY: ${MINIO_ROOT_USER:?run deploy/compose/gen-env.sh first}
+      RUSTFS_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?run deploy/compose/gen-env.sh first}
+    ports:
+      - "127.0.0.1:9000:9000" # for the S3 store's conformance tests on the host
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "http://127.0.0.1:9000/health"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  minio-init:
+    image: amazon/aws-cli:2.27.50
+    environment:
+      <<: *blob-creds
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - aws --endpoint-url http://minio:9000 s3api head-bucket --bucket coding-sh 2>/dev/null
+        || aws --endpoint-url http://minio:9000 s3 mb s3://coding-sh
+    depends_on:
+      minio:
+        condition: service_healthy
+    restart: "no"
+
+volumes:
+  coding-sh-data:
+  pgdata:
+  minio-data:

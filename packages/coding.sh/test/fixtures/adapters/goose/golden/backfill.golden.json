@@ -1,0 +1,267 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "20260921_1",
+    "ts": 1790000000000,
+    "payload": {
+      "source": "sessions.db",
+      "name": "codingsh-run-42",
+      "provider": "anthropic",
+      "sessionType": "user"
+    },
+    "id": "ed7e918781c8172c33260436ee9408aa983f6de98a5d0206b797fd63848f51f4",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "20260921_1",
+    "ts": 1790000001000,
+    "payload": {
+      "text": "Fix the go test"
+    },
+    "id": "5cf3cc67f1040f933b2fb4cb767bf7059390da868d5a7af34ae016de2aea93d6",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "20260921_1",
+    "ts": 1790000002000,
+    "payload": {
+      "text": "Editing main.go."
+    },
+    "id": "cc9a34fd63d8e948430976773dc094ce96c9b2d455f6c9483b341833b0b58adf",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "20260921_1",
+    "ts": 1790000002000,
+    "payload": {
+      "tool": "developer__text_editor",
+      "toolUseId": "tc-g1",
+      "input": {
+        "command": "str_replace",
+        "path": "/work/demo/main.go",
+        "old_str": "-",
+        "new_str": "+"
+      }
+    },
+    "id": "84df45f2e190ca99b0453155af17319091f99ff1a403e7b6e47402b89b20dac4",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "20260921_1",
+    "ts": 1790000002000,
+    "payload": {
+      "tool": "developer__shell",
+      "toolUseId": "tc-g2",
+      "input": {
+        "command": "go test ./..."
+      },
+      "verify": true
+    },
+    "id": "ed40b79b8e2e8fd07ee39f483e85812f63c17ad3113d20495b197e7962336689",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "20260921_1",
+    "ts": 1790000004000,
+    "payload": {
+      "tool": "developer__text_editor",
+      "toolUseId": "tc-g1",
+      "ok": true,
+      "durationMs": 2000,
+      "output": "edited"
+    },
+    "id": "e0475bb1f1493302fa94620f56ff05c18ef4011f5609595f8b4f03ff34657458",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 2000,
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "20260921_1",
+    "ts": 1790000004000,
+    "payload": {
+      "path": "main.go",
+      "op": "modify",
+      "tool": "developer__text_editor",
+      "toolUseId": "tc-g1"
+    },
+    "id": "f4716dc415d00700e1a4eb6873793809d07811590dcb6ba2c54567ae58e41bdb",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "20260921_1",
+    "ts": 1790000004000,
+    "payload": {
+      "tool": "developer__shell",
+      "toolUseId": "tc-g2",
+      "ok": false,
+      "durationMs": 2000,
+      "output": "--- PASS: TestAdd (0.00s)\n--- FAIL: TestSub (0.00s)\nFAIL",
+      "error": "tool error"
+    },
+    "id": "04d4471c51b190aa40bfd2a890945c9d9d69ee204c539899d694262d16aa3388",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 2000,
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "20260921_1",
+    "ts": 1790000004000,
+    "payload": {
+      "runner": "go",
+      "passed": 1,
+      "failed": 1,
+      "toolUseId": "tc-g2"
+    },
+    "id": "542883d65303cb7d7f9d3ca5306b2210dc0bc25411a84b26e61fe85022600d88",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "20260921_1",
+    "ts": 1790000005000,
+    "payload": {
+      "text": "TestSub still fails."
+    },
+    "id": "a4ae89dab742e7e1edd703c3d4dad029999962179c7c876aedeba3a83f4295fa",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "20260921_1",
+    "ts": 1790000002000,
+    "payload": {
+      "responseModel": "claude-sonnet-4-5",
+      "ok": true
+    },
+    "id": "a5640593b90696c7630bd8ffbecfec084821088aad38e3a276a95630e20d0e2c",
+    "model": "claude-sonnet-4-5",
+    "usage": {
+      "inputTokens": 1400,
+      "outputTokens": 80,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 200,
+      "costUsd": 0.012
+    },
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "20260921_1",
+    "ts": 1790000005000,
+    "payload": {
+      "responseModel": "claude-sonnet-4-5",
+      "ok": true
+    },
+    "id": "214b0e7d14fde87d3d31e0c321ce3ab48cb3e9603813e73fb63cb6dbd8fbb17b",
+    "model": "claude-sonnet-4-5",
+    "usage": {
+      "inputTokens": 1600,
+      "outputTokens": 40,
+      "cacheReadTokens": 1000,
+      "cacheWriteTokens": 0,
+      "costUsd": 0.008
+    },
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "20260921_1",
+    "ts": 1790000005000,
+    "payload": {},
+    "id": "1524652d09bdf3fbe8d2aa6cb77b4435b56adc182d712aee9db33499389c7551",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "session.start",
+    "sessionId": "20260921_2",
+    "ts": 1790000002000,
+    "payload": {
+      "source": "sessions.db",
+      "name": "find tests",
+      "provider": "anthropic",
+      "sessionType": "sub_agent",
+      "parentSessionId": "20260921_1",
+      "subagentId": "20260921_2",
+      "subagentType": "sub_agent"
+    },
+    "id": "ba6f47dc2fbcd387e367bf5ced1d88646c494fccc574019199ad3689f2d2b98f",
+    "model": "claude-haiku-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "20260921_2",
+    "ts": 1790000002000,
+    "payload": {
+      "text": "List the test files"
+    },
+    "id": "e109dcae3d708a3715e5f91b6af0ab2c36191e4367ea29c04b9a1c9c6013d8e2",
+    "model": "claude-haiku-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "20260921_2",
+    "ts": 1790000003000,
+    "payload": {
+      "text": "main_test.go"
+    },
+    "id": "d8d39b999b0c950f63d83ee49f057af66290608f61555dd4b2c7084d776af8dc",
+    "model": "claude-haiku-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "20260921_2",
+    "ts": 1790000003000,
+    "payload": {},
+    "id": "92a8282c9401f289c59502eedf05b21064881b1bec61783733fdd38176827762",
+    "model": "claude-haiku-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "subagent.start",
+    "sessionId": "20260921_1",
+    "ts": 1790000002000,
+    "payload": {
+      "subagentId": "20260921_2",
+      "type": "sub_agent",
+      "childSessionId": "20260921_2",
+      "description": "find tests"
+    },
+    "id": "f536bda2f083f7fb47e13329e2bcda1a5322695328a3ecf033037bec89a76a33",
+    "subagentId": "20260921_2",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "subagent.end",
+    "sessionId": "20260921_1",
+    "ts": 1790000003000,
+    "payload": {
+      "subagentId": "20260921_2",
+      "childSessionId": "20260921_2",
+      "ok": true
+    },
+    "id": "dc580a6fd47ee6f604479c993d76198fb157eb0f19ede06fb1c2f6c53018e899",
+    "subagentId": "20260921_2",
+    "durationMs": 1000,
+    "cwd": "/work/demo"
+  }
+]

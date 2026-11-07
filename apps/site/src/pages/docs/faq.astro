@@ -1,0 +1,73 @@
+---
+import DocsLayout from "../../components/docs/DocsLayout.astro";
+import { REPO_URL, ISSUES_URL, LICENSE } from "../../data/site";
+
+const FAQ: { id: string; q: string; a: string }[] = [
+  {
+    id: "status",
+    q: "Can I use it today?",
+    a: `Yes, if you accept pre-alpha software: capture, the viewer, datasets, graders, judges and comparisons work, and the package's test suite passes. Nothing has a stable interface yet, and drafting repo-replay tasks from real sessions is still blocked (see <a href="/docs/evals#repo-replay">Evals</a>).`,
+  },
+  {
+    id: "network",
+    q: "Does anything leave my machine?",
+    a: `Not unless you configure a <a href="/docs/storage#sinks">sink</a>, and sinks default to metadata mode, which sends no prompts, code or tool output. The receiver binds to 127.0.0.1. LLM judges call the provider you configure, with your key, only when you run an experiment that uses one.`,
+  },
+  {
+    id: "secrets",
+    q: "What about secrets in my sessions?",
+    a: "Redaction runs before anything is written: API keys with known vendor prefixes, bearer tokens, and values next to secret-looking names (OPENAI_API_KEY=…, password: …) become [redacted:kind]. You can add your own patterns, exclude repositories entirely, or switch to metadata mode.",
+  },
+  {
+    id: "slow",
+    q: "Will the hooks slow my agent down?",
+    a: "The hook reads stdin, appends one line to a file and exits. It makes no network calls, runs no git commands, spawns nothing and parses nothing beyond JSON.parse. Normalization happens later, at ingest. If capture fails, the hook still exits 0 and logs the failure.",
+  },
+  {
+    id: "config",
+    q: "Will it mess with my agent configs?",
+    a: "init shows every edit with --dry-run, backs up each file before changing it, marks its own entries, and uninstall removes only those. It never answers a permission prompt for you. Eval runs use isolated config directories, so your global setup is not touched. For Codex, coding.sh never writes hook trust; you approve the hooks yourself.",
+  },
+  {
+    id: "vs",
+    q: "How is this different from LangSmith, Braintrust or Judgment Labs?",
+    a: "They are hosted platforms that capture and grade traces. coding.sh does the same on your machine, with no account, and it is MIT licensed. It also treats coding agents as first-class: adapters for a dozen agents, subagents as child sessions, and tasks that replay from the repository state before the agent ran, scored by a verifier that has itself been checked (drafting those tasks from captured sessions doesn't work yet).",
+  },
+  {
+    id: "otel",
+    q: "My agent isn't a coding agent. Does it work?",
+    a: `Yes. Anything that exports OpenTelemetry traces works through <code>coding.sh collector</code>: the Vercel AI SDK, the Claude Agent SDK, the OpenAI Agents SDK, LangGraph, or your own code. See <a href="/docs/otel">OpenTelemetry</a>. For evals, any program that reads JSON on stdin or answers HTTP can be the task.`,
+  },
+  {
+    id: "unsupported",
+    q: "My coding agent isn't supported.",
+    a: `Wrap it: <code>coding.sh run -- &lt;your agent command&gt;</code> records repository snapshots before and after and every changed file. If it has hooks, an adapter is the most useful contribution; a recorded session from it helps too. Open an <a href="${ISSUES_URL}">issue</a>.`,
+  },
+  {
+    id: "judge",
+    q: "Why does my LLM judge say uncalibrated?",
+    a: `A judge's scores count only after it agrees with human labels: Cohen's κ of at least 0.6 on 20 or more held-out cases it wasn't tuned on. Label sessions in <code>coding.sh ui</code> and run <code>coding.sh judge calibrate</code>. See <a href="/docs/evals#calibration">calibration</a>.`,
+  },
+  {
+    id: "data",
+    q: "Where is my data, and how do I delete it?",
+    a: `In <code>~/.coding.sh</code> (or <code>CODING_SH_HOME</code>). <code>coding.sh gc</code> applies retention; deleting the directory removes everything. <code>coding.sh uninstall</code> removes the hooks and keeps the data.`,
+  },
+  {
+    id: "license",
+    q: "What is the license?",
+    a: `${LICENSE}. The source is on <a href="${REPO_URL}">GitHub</a>.`,
+  },
+];
+---
+
+<DocsLayout>
+  {
+    FAQ.map((f) => (
+      <>
+        <h2 id={f.id}>{f.q}</h2>
+        <p set:html={f.a} />
+      </>
+    ))
+  }
+</DocsLayout>

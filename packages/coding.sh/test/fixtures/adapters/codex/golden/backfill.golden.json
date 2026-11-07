@@ -1,0 +1,730 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "0193cccc-1111-7222-8333-444455556666",
+    "ts": 1793527200000,
+    "payload": {
+      "source": "rollout",
+      "originator": "codex_cli_rs",
+      "launch": "cli",
+      "provider": "openai"
+    },
+    "id": "06cf595c3475ea88aaff78b4aa3c5b86a6ad94024354f29a60cf91562fa0752a",
+    "cwd": "/work/demo",
+    "agentVersion": "0.40.0"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "0193cccc-1111-7222-8333-444455556666",
+    "ts": 1793527200005,
+    "payload": {
+      "text": "Run the tests"
+    },
+    "id": "cefe7e8a64ed9a9e54b7f95320c1e68f558114b223752095153b579d50d8b201",
+    "model": "gpt-5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.40.0"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "0193cccc-1111-7222-8333-444455556666",
+    "ts": 1793527200700,
+    "payload": {
+      "tool": "shell",
+      "toolUseId": "call_o1",
+      "input": {
+        "command": [
+          "bash",
+          "-lc",
+          "pytest -q"
+        ]
+      }
+    },
+    "id": "82b99d1a1ed0bf2c03aa9803917ab033e933845a4676303a4fcc2f8205856cd7",
+    "model": "gpt-5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.40.0"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "0193cccc-1111-7222-8333-444455556666",
+    "ts": 1793527200005,
+    "payload": {
+      "provider": "openai",
+      "responseModel": "gpt-5",
+      "ok": true,
+      "ttftMs": 695,
+      "tokensPerSec": 26.8
+    },
+    "id": "a60880526cd0d2d6ded590be3a14cf6a8cfa038f317fb0e5f4b5469820eb8dda",
+    "model": "gpt-5",
+    "durationMs": 745,
+    "usage": {
+      "inputTokens": 800,
+      "cacheReadTokens": 0,
+      "outputTokens": 20
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "0.40.0"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "0193cccc-1111-7222-8333-444455556666",
+    "ts": 1793527201500,
+    "payload": {
+      "tool": "shell",
+      "toolUseId": "call_o1",
+      "ok": false,
+      "durationMs": 800,
+      "output": "F...\n1 failed, 3 passed in 0.20s\n",
+      "exitCode": 1
+    },
+    "id": "226ae7006802716f504d96eff19693059cbab79e661977a6aa4ab347c38a7103",
+    "model": "gpt-5",
+    "durationMs": 800,
+    "cwd": "/work/demo",
+    "agentVersion": "0.40.0"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "0193cccc-1111-7222-8333-444455556666",
+    "ts": 1793527201500,
+    "payload": {
+      "runner": "pytest",
+      "passed": 3,
+      "failed": 1,
+      "toolUseId": "call_o1"
+    },
+    "id": "5aa590b53b9ca852cb4486000d0d843e1d91d914ec8d8c2d0855c0465b2966f0",
+    "model": "gpt-5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.40.0"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "0193cccc-1111-7222-8333-444455556666",
+    "ts": 1793527201500,
+    "payload": {
+      "provider": "openai",
+      "responseModel": "gpt-5",
+      "ok": true,
+      "tokensPerSec": 30
+    },
+    "id": "6e144daebbf22f228623410613eac346d049adcfe3ae0fcc8d15eea352a85061",
+    "model": "gpt-5",
+    "durationMs": 1000,
+    "usage": {
+      "inputTokens": 400,
+      "cacheReadTokens": 600,
+      "outputTokens": 30
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "0.40.0"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "0193cccc-1111-7222-8333-444455556666",
+    "ts": 1793527202600,
+    "payload": {
+      "text": "One test fails: test_div."
+    },
+    "id": "3bf70ad93e9a05d23080ea671c989be9ab77645a6f60d6e75d19a0a4859a6782",
+    "model": "gpt-5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.40.0"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "0193cccc-1111-7222-8333-444455556666",
+    "ts": 1793527202700,
+    "payload": {
+      "ok": true
+    },
+    "id": "d51047357bbf0b3a20429dc4009bfd95024d05b51896c605f26cc3eddda76386",
+    "turnId": "old-turn",
+    "model": "gpt-5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.40.0"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "0193cccc-1111-7222-8333-444455556666",
+    "ts": 1793527202700,
+    "payload": {
+      "reason": "idle"
+    },
+    "id": "c70f9f1b0f1602ff24edf2fabf199e969a978d66bd88fdb734bc75de7ff646aa",
+    "model": "gpt-5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.40.0"
+  },
+  {
+    "kind": "session.start",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527200000,
+    "payload": {
+      "source": "rollout",
+      "originator": "codex_exec",
+      "launch": "exec",
+      "provider": "openai"
+    },
+    "id": "3262f3e44d2c87beb6e084772e1562ec6c6b6fd5475b7a685a773375800bb782",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527200010,
+    "payload": {
+      "text": "Fix the failing test"
+    },
+    "id": "3b31126925a7e5ce01e59f570cc2b478cd51b0d1074d279ccc7b4b7b1b621ebd",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527200900,
+    "payload": {
+      "tool": "exec_command",
+      "toolUseId": "call_1",
+      "input": {
+        "cmd": "npx vitest run"
+      }
+    },
+    "id": "fe9eb8f785af28cc9d2c06cafe77902e81b2f9ca894a6cac019f644d54b7c962",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527200010,
+    "payload": {
+      "provider": "openai",
+      "responseModel": "gpt-5.5",
+      "ok": true,
+      "ttftMs": 790,
+      "tokensPerSec": 127.7,
+      "responseId": "resp_1"
+    },
+    "id": "318090f2e9d4d75a81a6da2fb9955e762e62439336be98f17c602750f163c62c",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "durationMs": 940,
+    "usage": {
+      "inputTokens": 1000,
+      "cacheReadTokens": 4000,
+      "outputTokens": 120
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527203000,
+    "payload": {
+      "tool": "exec_command",
+      "toolUseId": "call_1",
+      "ok": true,
+      "durationMs": 2100,
+      "output": " FAIL  src/math.test.ts > add\n Test Files  1 failed (1)\n      Tests  1 failed | 5 passed (6)\n"
+    },
+    "id": "13a6e817c7d444cd8542c3527ad38300ffba139fa21d4ddf5c82240c2d8b0de8",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "durationMs": 2100,
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527203000,
+    "payload": {
+      "runner": "vitest",
+      "passed": 5,
+      "failed": 1,
+      "toolUseId": "call_1"
+    },
+    "id": "c2d8cfd3c7b65bbe1bd43780521295b98cc64c7f2d1ec02a0c6e5e75ef7f5947",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527204000,
+    "payload": {
+      "tool": "apply_patch",
+      "toolUseId": "call_2",
+      "input": "*** Begin Patch\n*** Update File: src/math.ts\n@@\n-  return a - b;\n+  return a + b;\n*** End Patch\n"
+    },
+    "id": "bc726c410fe5a12b7b017b9377913e5659c52a1a3d1dec0878860102d3ed8d41",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527203000,
+    "payload": {
+      "provider": "openai",
+      "responseModel": "gpt-5.5",
+      "ok": true,
+      "ttftMs": 600,
+      "tokensPerSec": 76.2,
+      "responseId": "resp_2"
+    },
+    "id": "1d689422721c183c1313520884eb812a9b4f7b0cbaca9e7b7c97141d4b4abb24",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "durationMs": 1050,
+    "usage": {
+      "inputTokens": 800,
+      "cacheReadTokens": 5000,
+      "cacheWriteTokens": 200,
+      "outputTokens": 80
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527204150,
+    "payload": {
+      "path": "src/math.ts",
+      "op": "modify",
+      "additions": 1,
+      "deletions": 1,
+      "tool": "apply_patch",
+      "toolUseId": "call_2",
+      "diff": "--- a/src/math.ts\n+++ b/src/math.ts\n@@ -1 +1 @@\n-  return a - b;\n+  return a + b;\n"
+    },
+    "id": "a2a3a9b9d2ccad4f6103b513602212d92ceddcbb53f6879a062921827a072eee",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527204200,
+    "payload": {
+      "tool": "apply_patch",
+      "toolUseId": "call_2",
+      "ok": true,
+      "durationMs": 200,
+      "output": "Success. Updated the following files:\nM src/math.ts"
+    },
+    "id": "d53f10389b8c06e3363a484a92d5a9eeb774ac2a2e205a65c23ae1ffffa6c164",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "durationMs": 200,
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527205000,
+    "payload": {
+      "tool": "Bash",
+      "toolUseId": "exec-1",
+      "input": {
+        "command": "npx vitest run"
+      }
+    },
+    "id": "20a46b117c6a8bcfbb68155ef31613e7bab80e88b42f31abbb321f2855b1210a",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527207000,
+    "payload": {
+      "tool": "Bash",
+      "toolUseId": "exec-1",
+      "ok": true,
+      "durationMs": 2000,
+      "output": " Test Files  1 passed (1)\n      Tests  6 passed (6)\n",
+      "exitCode": 0
+    },
+    "id": "118ae4dd247bad319e20541319ebdf8479e38b9c852a9f63ebc274aa00b93ff8",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "durationMs": 2000,
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527207000,
+    "payload": {
+      "runner": "vitest",
+      "passed": 6,
+      "failed": 0,
+      "toolUseId": "exec-1"
+    },
+    "id": "b388240eb8ec2b965db0b026a07d41391546cacbdb9c1f4fabf0cd48622f02f4",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527207500,
+    "payload": {
+      "tool": "spawn_agent",
+      "toolUseId": "call_3",
+      "input": {
+        "task_name": "audit"
+      },
+      "namespace": "collaboration"
+    },
+    "id": "1976ab01c4f95e5d43f649aef8739490a9d2b007994d04d68078a09366497b5e",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527207600,
+    "payload": {
+      "tool": "spawn_agent",
+      "toolUseId": "call_3",
+      "ok": true,
+      "durationMs": 100,
+      "output": "{\"task_name\":\"audit\"}"
+    },
+    "id": "5390c40438fbc9a801f9d0b8d3321606c3d76b912525151976a6064c56e77116",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "durationMs": 100,
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527208000,
+    "payload": {
+      "tool": "mcp__docs__search",
+      "toolUseId": "mcp-1",
+      "input": {
+        "q": "vitest"
+      },
+      "server": "docs"
+    },
+    "id": "c9ee1723654c15b60896ee5c1f81e67b3db31cc6b6222b373d1c57be0bc8947c",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527208300,
+    "payload": {
+      "tool": "mcp__docs__search",
+      "toolUseId": "mcp-1",
+      "ok": true,
+      "durationMs": 300,
+      "output": "found 2 pages"
+    },
+    "id": "cfdc5465927a70c9af1aafcfa8a7400b25002dbde8d04baf31230fc3832aff94",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "durationMs": 300,
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527207600,
+    "payload": {
+      "provider": "openai",
+      "responseModel": "gpt-5.5",
+      "ok": true,
+      "tokensPerSec": 28.6,
+      "responseId": "resp_3"
+    },
+    "id": "5bc3f5b66cff712eb0469c04cf07c48c92020dc5945da3ebd4ec5a99ca989ba3",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "durationMs": 1400,
+    "usage": {
+      "inputTokens": 500,
+      "cacheReadTokens": 6500,
+      "outputTokens": 40
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527209100,
+    "payload": {
+      "text": "Fixed: add() now adds; all 6 tests pass.",
+      "phase": "final_answer"
+    },
+    "id": "4ab41c46f24704b26df32b4bfca2583940bec5f8709f128787d3575b05b24093",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527209200,
+    "payload": {
+      "ok": true,
+      "ttftMs": 790
+    },
+    "id": "683816a2ca08d6d9002d54ca86b702462ac4f503ba3692d8d2e11ab5737c6fec",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "durationMs": 9200,
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "context.compact",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527209500,
+    "payload": {
+      "windowNumber": 2
+    },
+    "id": "f65e9486ca7cb70b52ebcf78133700fab267939a203568825e5b1781fb206a4a",
+    "turnId": "turn-0001",
+    "model": "gpt-5.5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527209600,
+    "payload": {
+      "reason": "idle"
+    },
+    "id": "aba67f63404ffdb36535505f5c9ae5cafdd299ea49422edd8facf7bc2b1a2b65",
+    "model": "gpt-5.5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "session.start",
+    "sessionId": "0193bbbb-1111-7222-8333-444455556666",
+    "ts": 1793527207550,
+    "payload": {
+      "source": "rollout",
+      "originator": "codex_exec",
+      "provider": "openai",
+      "parentSessionId": "0193aaaa-1111-7222-8333-444455556666",
+      "parentEventId": "efa5c66725b916028997d3a78d4fa2d40dd1b64a5f88ee7279079290eaca0174",
+      "subagentId": "0193bbbb-1111-7222-8333-444455556666",
+      "subagentType": "explorer"
+    },
+    "id": "011551a39a06f8936a0ba6b14ee5803242c25a5f671bbdf62d8bbc6c1e577ba9",
+    "subagentId": "0193bbbb-1111-7222-8333-444455556666",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "subagent.start",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527207550,
+    "payload": {
+      "subagentId": "0193bbbb-1111-7222-8333-444455556666",
+      "type": "explorer",
+      "description": "/root/audit",
+      "childSessionId": "0193bbbb-1111-7222-8333-444455556666"
+    },
+    "id": "efa5c66725b916028997d3a78d4fa2d40dd1b64a5f88ee7279079290eaca0174",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "0193bbbb-1111-7222-8333-444455556666",
+    "ts": 1793527207570,
+    "payload": {
+      "text": "Audit callers of add()"
+    },
+    "id": "948feaec9b0fdfd2e9670fc8b341a41bf5acfdb4be5537acc3bc2fd135d82f39",
+    "turnId": "turn-sub-01",
+    "subagentId": "0193bbbb-1111-7222-8333-444455556666",
+    "model": "gpt-5.5-mini",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "0193bbbb-1111-7222-8333-444455556666",
+    "ts": 1793527207900,
+    "payload": {
+      "tool": "exec_command",
+      "toolUseId": "call_s1",
+      "input": {
+        "cmd": "rg -n 'add\\('"
+      }
+    },
+    "id": "d928cc33b0445323a332d8f2c7c3615876001cd69c73e85793e56eb52fa066fd",
+    "turnId": "turn-sub-01",
+    "subagentId": "0193bbbb-1111-7222-8333-444455556666",
+    "model": "gpt-5.5-mini",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "0193bbbb-1111-7222-8333-444455556666",
+    "ts": 1793527207570,
+    "payload": {
+      "provider": "openai",
+      "responseModel": "gpt-5.5-mini",
+      "ok": true,
+      "ttftMs": 330,
+      "tokensPerSec": 78.9,
+      "responseId": "resp_s1"
+    },
+    "id": "f437350cc9afd0e4c348063699a3245b807dae6665be78acd2782a5dac693b1a",
+    "turnId": "turn-sub-01",
+    "subagentId": "0193bbbb-1111-7222-8333-444455556666",
+    "model": "gpt-5.5-mini",
+    "durationMs": 380,
+    "usage": {
+      "inputTokens": 900,
+      "cacheReadTokens": 0,
+      "outputTokens": 30
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "0193bbbb-1111-7222-8333-444455556666",
+    "ts": 1793527208100,
+    "payload": {
+      "tool": "exec_command",
+      "toolUseId": "call_s1",
+      "ok": true,
+      "durationMs": 200,
+      "output": "src/math.ts:1:export function add(a, b) {"
+    },
+    "id": "10c243d144bc256e4bdf521eb5249e6d7d0b743884fde183893d74393c83b9e5",
+    "turnId": "turn-sub-01",
+    "subagentId": "0193bbbb-1111-7222-8333-444455556666",
+    "model": "gpt-5.5-mini",
+    "durationMs": 200,
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "0193bbbb-1111-7222-8333-444455556666",
+    "ts": 1793527208100,
+    "payload": {
+      "provider": "openai",
+      "responseModel": "gpt-5.5-mini",
+      "ok": true,
+      "tokensPerSec": 83.3,
+      "responseId": "resp_s2"
+    },
+    "id": "643dc21983c2b5ed074082bddb1ff035915fa3d0024ff90af98a2b0b13a26f0d",
+    "turnId": "turn-sub-01",
+    "subagentId": "0193bbbb-1111-7222-8333-444455556666",
+    "model": "gpt-5.5-mini",
+    "durationMs": 300,
+    "usage": {
+      "inputTokens": 200,
+      "cacheReadTokens": 800,
+      "outputTokens": 25
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "0193bbbb-1111-7222-8333-444455556666",
+    "ts": 1793527208450,
+    "payload": {
+      "text": "One caller: src/math.ts.",
+      "phase": "final_answer"
+    },
+    "id": "61af5af2e30fa6b7c3057408a74118f61ae7102a5ce82a06bc18c7a6978a26f7",
+    "turnId": "turn-sub-01",
+    "subagentId": "0193bbbb-1111-7222-8333-444455556666",
+    "model": "gpt-5.5-mini",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "0193bbbb-1111-7222-8333-444455556666",
+    "ts": 1793527208500,
+    "payload": {
+      "ok": true
+    },
+    "id": "8afb36a98959826d9b708b03ed3a2246d9d2844ce8ad541d70100fcc640af862",
+    "turnId": "turn-sub-01",
+    "subagentId": "0193bbbb-1111-7222-8333-444455556666",
+    "model": "gpt-5.5-mini",
+    "durationMs": 939,
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "subagent.end",
+    "sessionId": "0193aaaa-1111-7222-8333-444455556666",
+    "ts": 1793527208500,
+    "payload": {
+      "subagentId": "0193bbbb-1111-7222-8333-444455556666",
+      "ok": true,
+      "childSessionId": "0193bbbb-1111-7222-8333-444455556666"
+    },
+    "id": "8804597c3ac2aaf297595d68eaf27c3dcd9f8489702341cb86769dcc96c73062",
+    "model": "gpt-5.5-mini",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "0193bbbb-1111-7222-8333-444455556666",
+    "ts": 1793527208500,
+    "payload": {
+      "reason": "idle"
+    },
+    "id": "838459c3127764179f7cfd399843bc09c91cf9f0c6a30f46c7b2824c085848fe",
+    "subagentId": "0193bbbb-1111-7222-8333-444455556666",
+    "model": "gpt-5.5-mini",
+    "cwd": "/work/demo",
+    "agentVersion": "0.166.0"
+  }
+]

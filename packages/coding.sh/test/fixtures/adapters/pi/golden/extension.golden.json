@@ -1,0 +1,215 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "pi-sess-1",
+    "ts": 1790000000000,
+    "payload": {
+      "reason": "startup",
+      "sessionFile": "/home/dev/.pi/agent/sessions/--work-demo--/2026-09-21T10-00-00-000Z_pi-sess-1.jsonl",
+      "provider": "anthropic",
+      "source": "extension"
+    },
+    "id": "bf71a5ac407d2b67b9008cb3b0f28ec5e96803379ff4373a2b90baddd1bd9971",
+    "model": "claude-sonnet-4-5",
+    "blobs": [
+      "1df503603b6d6b759463e5f530e7f521708b501b6292f37c74f0d71bcf8def88"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "pi-sess-1",
+    "ts": 1790000000900,
+    "payload": {
+      "text": "Make cargo test pass"
+    },
+    "id": "26be7852b6b873404650a2a7ee149133a3cfcd313d4e053faf9a8fa858934817",
+    "model": "claude-sonnet-4-5",
+    "blobs": [
+      "a488c712da1d8938477b1c6a643a39a842cfd1d5e4b6f5758d75f4a3ea07e0eb"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "pi-sess-1",
+    "ts": 1790000002000,
+    "payload": {
+      "tool": "edit",
+      "toolUseId": "call_1",
+      "input": {
+        "path": "src/lib.rs",
+        "oldText": "a - b",
+        "newText": "a + b"
+      }
+    },
+    "id": "e70012c6cba4fe562f0349fc57d41d5e0993c23f39532c82f58e4c452808b95c",
+    "model": "claude-sonnet-4-5",
+    "blobs": [
+      "3fba8e8b11668f9ab7b85b4693644c5c7784b27491c552976b4cf7ba4c04ca00"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "pi-sess-1",
+    "ts": 1790000002050,
+    "payload": {
+      "tool": "edit",
+      "toolUseId": "call_1",
+      "ok": true,
+      "durationMs": 12,
+      "output": "Successfully replaced text in src/lib.rs."
+    },
+    "id": "c262220c733188bce79e83b8b8e828125eab8aa9906f5ac9cf8929cdb899c6f6",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 12,
+    "blobs": [
+      "bd47c386b3ae61aa5050c191a60e3632c8a79f90f88252f7d2ffa7ce28b8501c"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "pi-sess-1",
+    "ts": 1790000002050,
+    "payload": {
+      "path": "src/lib.rs",
+      "op": "modify",
+      "tool": "edit",
+      "toolUseId": "call_1"
+    },
+    "id": "3cfc209e6417fd8755dcc55fbed8d0c5e4a2d4ec8c0afabf98f274bc7ccd313b",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "pi-sess-1",
+    "ts": 1790000004000,
+    "payload": {
+      "tool": "bash",
+      "toolUseId": "call_2",
+      "ok": true,
+      "durationMs": 1800,
+      "output": "running 8 tests\ntest result: ok. 7 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out\n"
+    },
+    "id": "35993f8a86485b09de107639ba3528de9bbea00d8bcdab2a8a16dbb7b66a3b78",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 1800,
+    "blobs": [
+      "19e112b8d2aaebf35e9e85152e81d02ee98a73b088c520ed9f6405449a141c6e"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "pi-sess-1",
+    "ts": 1790000004000,
+    "payload": {
+      "runner": "cargo",
+      "passed": 7,
+      "failed": 0,
+      "skipped": 1,
+      "toolUseId": "call_2"
+    },
+    "id": "92b3e99bdcf57af722b272c6c75e10f3e1a65cd04b17191c8c88716136a9f225",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "pi-sess-1",
+    "ts": 1790000004900,
+    "payload": {
+      "provider": "anthropic",
+      "requestModel": "claude-sonnet-4-5",
+      "responseModel": "claude-sonnet-4-5",
+      "stopReason": "stop",
+      "ok": true
+    },
+    "id": "8e87e71c9524b0395e6b87aa661110098e67c94eb4485b10287d77209ebfc09b",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 100,
+    "usage": {
+      "inputTokens": 2100,
+      "outputTokens": 60,
+      "cacheReadTokens": 1800,
+      "cacheWriteTokens": 200,
+      "costUsd": 0.0085
+    },
+    "blobs": [
+      "c11f5a5eac05f844c210124a7db8d4651d29913b65cce4f74713338ce48f9206"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "pi-sess-1",
+    "ts": 1790000004900,
+    "payload": {
+      "text": "Fixed the sign; 7 tests pass."
+    },
+    "id": "d6d717028b2fa76084b18edc86f670ccd00d34c994b85d6bd49127f72d2ee21a",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "context.compact",
+    "sessionId": "pi-sess-1",
+    "ts": 1790000006000,
+    "payload": {
+      "trigger": "auto",
+      "reason": "threshold",
+      "tokensBefore": 150000
+    },
+    "id": "3cde25ac850172504aebf65424855138480ddec55f2b0f378030d984478f857f",
+    "blobs": [
+      "6712f0e59881e979cd9d72a71f1d1d35094500675c0206afeae22e1a01ef640f"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "notification",
+    "sessionId": "pi-sess-1",
+    "ts": 1790000007000,
+    "payload": {
+      "kind": "model_select",
+      "provider": "openai",
+      "model": "gpt-5",
+      "source": "set"
+    },
+    "id": "eecd3e9900b2a4b6fd67ae76ea27dba7abc6acb9cf18db8b2e677fa6158673bc",
+    "model": "gpt-5",
+    "blobs": [
+      "7a0f22e03fca0df18a00e78e90fdffc584de879c1ca405500e123221cd108af3"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "pi-sess-1",
+    "ts": 1790000008000,
+    "payload": {
+      "aborted": false
+    },
+    "id": "73ca94c0592498217fd5620c02cc9f3fb4ae2f1060c14e4b151ecd6bc13b3f5a",
+    "blobs": [
+      "a22df8f1af733694e7373cff9dd6645ead5d3d5a48afb5e98ff79aa6bd0e29b7"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "pi-sess-1",
+    "ts": 1790000009000,
+    "payload": {
+      "reason": "quit"
+    },
+    "id": "cae0029453e616b80f678f8c5c72779cba36cd049f4c29a2da4bb30094672906",
+    "blobs": [
+      "04a9acc1ceb296bf4b62314ac05772d7921e9ba28a3ae3808333bdd401d44f42"
+    ],
+    "cwd": "/work/demo"
+  }
+]

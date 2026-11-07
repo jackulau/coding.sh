@@ -1,0 +1,252 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984800000,
+    "payload": {
+      "source": "transcript",
+      "version": 3,
+      "file": "${FIXTURES}/pi/agent/sessions/--work-demo--/2026-09-21T10-00-00-000Z_pi-sess-1.jsonl"
+    },
+    "id": "407fc99e03d3bc7f67ff2b4ba208e2902f3abeb32d1760bbabd09fe22c3e79df",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "notification",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984800100,
+    "payload": {
+      "kind": "model_change",
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5"
+    },
+    "id": "58cd843ba64dd7b72545dd8dc1fc1f71189cdf33c9f0f3fc70e72aad6e573493",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984801000,
+    "payload": {
+      "text": "Make cargo test pass"
+    },
+    "id": "234d68e0cab8e719112b63f5dc4e26524565f355f67b87dea50942b9a86dcab5",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984802000,
+    "payload": {
+      "provider": "anthropic",
+      "requestModel": "claude-sonnet-4-5",
+      "responseModel": "claude-sonnet-4-5",
+      "stopReason": "toolUse",
+      "ok": true
+    },
+    "id": "6f3587181c14abc3ca2ce35a3d5b8acf6a918c5f90c87cd2b85aa261ced25e1a",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 800,
+    "usage": {
+      "inputTokens": 2000,
+      "outputTokens": 80,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 1500,
+      "costUsd": 0.012
+    },
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984802000,
+    "payload": {
+      "text": "Let me fix it."
+    },
+    "id": "ea7117620e2098d21f387ba5a9ff7f806f8eeb30a9d94fe3d2d3755d42f8e061",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984802000,
+    "payload": {
+      "tool": "edit",
+      "toolUseId": "call_1",
+      "input": {
+        "path": "src/lib.rs",
+        "oldText": "a - b",
+        "newText": "a + b"
+      }
+    },
+    "id": "733e8fc417ab7d91e16f26d3eadc458750e76de04fdcbca6f9c7997be93efe43",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984802000,
+    "payload": {
+      "tool": "bash",
+      "toolUseId": "call_2",
+      "input": {
+        "command": "cargo test"
+      },
+      "verify": true
+    },
+    "id": "36aec2ec50d34d9e7b64d006272e2f1340f9c594d25dfc0ed27de4ca28860554",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984802050,
+    "payload": {
+      "tool": "edit",
+      "toolUseId": "call_1",
+      "ok": true,
+      "durationMs": 50,
+      "output": "Successfully replaced text."
+    },
+    "id": "b65c196d52cac292e84b7c9ad9c859de3396a98fc3ee8167b750930e03112575",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 50,
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984802050,
+    "payload": {
+      "path": "src/lib.rs",
+      "op": "modify",
+      "tool": "edit",
+      "toolUseId": "call_1"
+    },
+    "id": "98d936118f1ec2df435aa86dd9c6ae47a5ff0644fb6a4cef9bffb93ba824f8c0",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984804000,
+    "payload": {
+      "tool": "bash",
+      "toolUseId": "call_2",
+      "ok": false,
+      "durationMs": 2000,
+      "output": "test result: FAILED. 6 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out"
+    },
+    "id": "7715fc998bff17f24d8267169870eff7d3056a2b555d884ad5a1dc0084873627",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 2000,
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984804000,
+    "payload": {
+      "runner": "cargo",
+      "passed": 6,
+      "failed": 1,
+      "skipped": 0,
+      "toolUseId": "call_2"
+    },
+    "id": "4d2bf34ef4f04925faeb06b2e0991b482d6a41a92a40a37c7825b96a0bc5bf64",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984805000,
+    "payload": {
+      "provider": "anthropic",
+      "requestModel": "claude-sonnet-4-5",
+      "responseModel": "claude-sonnet-4-5",
+      "stopReason": "stop",
+      "ok": true
+    },
+    "id": "ef9b207c0d71dca3d0fdfb6fa1f3725894fee122a8bcc113f260211a168b7c7c",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 700,
+    "usage": {
+      "inputTokens": 2300,
+      "outputTokens": 20,
+      "cacheReadTokens": 1500,
+      "cacheWriteTokens": 0,
+      "costUsd": 0.004
+    },
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984805000,
+    "payload": {
+      "text": "One test still fails."
+    },
+    "id": "1cbd2d4d0d05f0dc05d7f1a58d979229bf39641e41f884bd331b09d9002dd8a2",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984805000,
+    "payload": {
+      "stopReason": "stop"
+    },
+    "id": "6ab83ccadadea0f1a74c31c707699ee28dac2893a66882ed4af94e69b68ca9cf",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984806000,
+    "payload": {
+      "tool": "user_bash",
+      "toolUseId": "bash-a7",
+      "input": {
+        "command": "git status --short"
+      }
+    },
+    "id": "f42fa56dc84c087eb570a3e8c6dd67a7049e8582b22c9d3593e476c1d5c00aa9",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984806000,
+    "payload": {
+      "tool": "user_bash",
+      "toolUseId": "bash-a7",
+      "ok": true,
+      "output": " M src/lib.rs\n"
+    },
+    "id": "d5aaa14c2fcd4c8d17db6c6666df6a08530210bf7f1ff1a99b1666833e2f1fe9",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "context.compact",
+    "sessionId": "pi-sess-1",
+    "ts": 1789984807000,
+    "payload": {
+      "trigger": "auto",
+      "tokensBefore": 120000
+    },
+    "id": "a812d159682dee986a04dc1313033523bcc79606b81366ce14be4bf369a25fe2",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo"
+  }
+]

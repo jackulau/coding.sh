@@ -1,0 +1,612 @@
+---
+import Layout from "../layouts/Layout.astro";
+import Nav from "../components/Nav.astro";
+import CubeField from "../components/CubeField.astro";
+import Viewer from "../components/Viewer.astro";
+import Terminal from "../components/Terminal.astro";
+import TaskDeltas from "../components/TaskDeltas.astro";
+import AgentLogo from "../components/AgentLogo.astro";
+import CopyIcon from "../components/CopyIcon.astro";
+import { SITE, INSTALL_SH } from "../data/site";
+import { STATS, TASKS, ARMS } from "../data/compare";
+
+// Adapter ids (logos in src/assets/logos). Aider has no published logo, so its
+// cell gets a neutral terminal glyph (AgentLogo) and every cell has a mark.
+// With the label cell that makes 14 cells: 7 x 2 on desktop, 2 x 7 on phones,
+// so the grid is always full.
+const WORKS_WITH = [
+  { id: "claude-code", name: "Claude Code" },
+  { id: "codex", name: "Codex" },
+  { id: "cursor", name: "Cursor" },
+  { id: "opencode", name: "OpenCode" },
+  { id: "gemini-cli", name: "Gemini CLI" },
+  { id: "copilot-cli", name: "GitHub Copilot" },
+  { id: "amp", name: "Amp" },
+  { id: "goose", name: "Goose" },
+  { id: "pi", name: "Pi" },
+  { id: "droid", name: "Factory Droid" },
+  { id: "kiro", name: "Kiro CLI" },
+  { id: "aider", name: "Aider" },
+  { id: "otel", name: "any OTel agent" },
+];
+
+const m = (s: string) => `<span class="t-muted">${s}</span>`;
+// The one run the page follows: recorded, turned into an eval, compared.
+const THREAD = "s_8f3a21";
+const sid = `<span class="sid">${THREAD}</span>`;
+// Timestamps drop on phones so each event fits the screen.
+const ts = (s: string) => `<span class="ts">${m(s)}  </span>`;
+const ok = (s: string) => `<span class="t-pass">${s}</span>`;
+const no = (s: string) => `<span class="t-fail">${s}</span>`;
+const tx = (s: string) => `<span class="t-text">${s}</span>`;
+// What the hooks hand over while the sample session above runs, plus the two
+// other ways in: OTLP spans and backfilled transcripts. Sample data.
+const RECORD = [
+  `${ts("12:02:11")}${m("hook")}  ${tx("SessionStart")}  claude-code ${sid}`,
+  `${ts("12:02:13")}${m("hook")}  ${tx("PostToolUse ")}  Read src/orders/client.ts`,
+  `${ts("12:02:28")}${m("hook")}  ${tx("SubagentStop")}  Explore ${m("12.2s")}`,
+  `${ts("12:02:50")}${m("hook")}  ${tx("PostToolUse ")}  Bash npm test ${no("exit 1")}`,
+  `${ts("12:03:14")}${m("hook")}  ${tx("PostToolUse ")}  Bash npm test ${ok("exit 0")}`,
+  `${ts("12:03:19")}${m("hook")}  ${tx("Stop        ")}  ${ok("12/12 tests")}`,
+  `${ts("12:05:40")}${m("otlp")}  ${tx("invoke_agent")}  support-triage ${m("5 spans")}`,
+  `${ts("12:06:02")}${m("file")}  ${tx("transcript  ")}  codex ${m("s_19be07")}`,
+].join("\n");
+
+// Every line fits 45 columns, so it reads on a phone without scrolling.
+const EVAL = [
+  `${m("$")} ${tx("coding.sh eval new")} ${sid} ${tx("\\")}`,
+  `    ${tx("--name add-retry-handling \\")}`,
+  `    ${tx("--verifier \"npm test\"")}`,
+  `${ok("✓")} task add-retry-handling`,
+  `  ${m("replays from the repo before the first edit")}`,
+  ``,
+  `${m("$")} ${tx("coding.sh eval validate add-retry-handling")}`,
+  `  do-nothing attempt  ${no("✕ 0/5")}  ${m("rejected")}`,
+  `  reference fix       ${ok("✓ 5/5")}  ${m("accepted")}`,
+  `  near-miss fix       ${no("✕ 0/5")}  ${m("rejected")}`,
+  `  leakage             ${ok("✓    ")}  ${m("no later commits")}`,
+  `${ok("✓")} add-retry-handling validated`,
+].join("\n");
+
+const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+---
+
+<Layout title={`${SITE.name}: traces and evals for AI agents`} description="Open-source, local-first traces and evals for AI agents. Record every run, turn failures into evals, prove a change helped. MIT licensed.">
+  <Nav />
+
+  <main id="main">
+    <section class="hero" aria-labelledby="hero-title">
+      <CubeField />
+      <div class="wrap hero__inner" data-field-clear>
+        <h1 id="hero-title">Every agent run,<br /> <span class="nowrap">recorded on</span> <span class="nowrap">your disk</span></h1>
+        <p class="hero__sub">Traces and evals for any AI agent, coding agents first. See where a run went wrong, and whether a fix helped.</p>
+
+        <div class="install-row">
+          <div class="install-row__main">
+            <button type="button" class="install" data-copy={INSTALL_SH} aria-label={`Copy the install command: ${INSTALL_SH}`}>
+              <span class="install__p" aria-hidden="true">$</span>
+              <code class="install__cmd">{INSTALL_SH}</code>
+              <CopyIcon />
+            </button>
+          </div>
+          <p class="install-row__fine">Finds your agents, wires up hooks and MCP, and opens the viewer. Tells you when an update ships.</p>
+        </div>
+
+        <p class="sr-only" aria-live="polite" data-copy-status></p>
+      </div>
+
+      <div class="wrap hero__sample" data-agent-skip data-field-clear="hard">
+        <Viewer />
+      </div>
+    </section>
+
+    <section class="works" aria-label="Works with">
+      <div class="wrap">
+        <div class="frame works__grid">
+          <p class="works__label works__box">Works with</p>
+          <ul class="works__list" role="list">
+            {WORKS_WITH.map((a) => <li class="works__cell works__box"><AgentLogo id={a.id} name={a.name} size={24} fallback class="works__logo" /></li>)}
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="record" class="band" aria-labelledby="record-title">
+      <div class="wrap">
+        <div class="frame split band__inner">
+          <div class="band__rail">
+            <p class="band__n">record <span class="sid">{THREAD}</span></p>
+            <h2 id="record-title">Record every run</h2>
+            <p class="band__line">Hooks, transcripts and a local OTLP receiver. Runs stay on your disk, in ~/.coding.sh.</p>
+          </div>
+          <Terminal title="~/.coding.sh" label="Sample of events as coding.sh records them">
+            <pre set:html={RECORD} />
+          </Terminal>
+        </div>
+      </div>
+    </section>
+
+    <section id="evals" class="band" aria-labelledby="evals-title">
+      <div class="wrap">
+        <div class="frame split split--flip band__inner">
+          <div class="band__rail">
+            <p class="band__n">eval <span class="sid">{THREAD}</span> → add-retry-handling</p>
+            <h2 id="evals-title">Turn failures into evals</h2>
+            <p class="band__line">The session above failed npm test once. That run becomes a task that replays from the repo snapshot, and its verifier must reject a do&#8209;nothing fix.</p>
+          </div>
+          <Terminal title="~/acme/api" label="Output of coding.sh eval validate">
+            <pre set:html={EVAL} />
+          </Terminal>
+        </div>
+      </div>
+    </section>
+
+    <section id="compare" class="band" aria-labelledby="compare-title">
+      <div class="wrap">
+        <div class="frame band__inner compare">
+          <div class="compare__head">
+            <div class="band__rail">
+              <p class="band__n">compare add-retry-handling <span class="t-muted">+ {STATS.tasks - 1} tasks</span></p>
+              <h2 id="compare-title">Know if it helped</h2>
+              <p class="band__line">Same {STATS.tasks} tasks, {STATS.runsPerTask} runs each, compared task by task, so one lucky run can't fake a win.</p>
+            </div>
+            <div class="compare__result">
+              <p class="score__label">pass rate</p>
+              <p class="score tnum" aria-label={`Pass rate went from ${STATS.baseRate}% to ${STATS.candRate}%`} data-agent-text={`Pass rate ${STATS.baseRate}% → ${STATS.candRate}%`}>
+                <span class="t-text">{STATS.baseRate}<span class="score__unit">%</span></span><span class="score__arrow" aria-hidden="true">→</span><span class="t-text">{STATS.candRate}<span class="score__unit">%</span></span>
+              </p>
+              <dl class="score__sub tnum">
+                <div><dt>change</dt><dd class="t-pass">{signed(STATS.diff)} points</dd></div>
+                <div><dt>95% CI</dt><dd>[{signed(STATS.diffCI[0])}, {signed(STATS.diffCI[1])}]</dd></div>
+                <div><dt>regressed</dt><dd>{STATS.regressed} tasks</dd></div>
+              </dl>
+              <dl class="arms">
+                <div><dt>{ARMS.base.name}</dt><dd>{ARMS.base.sub}</dd></div>
+                <div><dt>{ARMS.cand.name}</dt><dd>{ARMS.cand.sub}</dd></div>
+              </dl>
+            </div>
+          </div>
+          <div class="matrix-wrap">
+            <div class="legend">
+              <span>{STATS.tasks} tasks, {STATS.runsPerTask} runs each, paired by task</span>
+              <span class="legend__keys" aria-hidden="true"><i class="key key--pass"></i>pass <i class="key key--fail"></i>fail</span>
+            </div>
+            <TaskDeltas tasks={TASKS} limit={6} wide />
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</Layout>
+
+<style>
+  /* ---------- hero ---------- */
+  .hero {
+    position: relative;
+    isolation: isolate;
+    padding-top: calc(var(--nav-h) + 4.5rem);
+  }
+  @media (min-width: 1024px) {
+    .hero {
+      padding-top: calc(var(--nav-h) + 6.5rem);
+    }
+  }
+  .hero__inner {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+  .hero h1 {
+    margin-top: 0;
+    font-size: clamp(2.6rem, 1.3rem + 5vw, 5rem);
+    line-height: 0.98;
+    letter-spacing: -0.05em;
+  }
+  .nowrap {
+    white-space: nowrap;
+  }
+  .hero__sub {
+    margin-top: 1.25rem;
+    max-width: 30rem;
+    font-size: 1.125rem;
+    line-height: 1.55;
+    color: var(--text-2);
+  }
+  .btn-lg {
+    min-height: 2.875rem;
+    padding: 0 1.25rem;
+    font-size: 0.9375rem;
+  }
+  /* ---------- install ---------- */
+  .install-row {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: 1.25rem;
+  }
+  .install-row__main {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.75rem;
+  }
+  .install {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.8rem;
+    min-height: 2.875rem;
+    padding: 0 1rem 0 1.1rem;
+    border-radius: 12px;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    color: var(--text);
+    background: #0d0d0f;
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+    cursor: copy;
+    transition:
+      box-shadow var(--hover-out) ease,
+      transform 140ms var(--ease-out);
+  }
+  .install:active {
+    transform: scale(0.985);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .install:active {
+      transform: none;
+    }
+  }
+  .install__p {
+    color: var(--text-muted);
+    user-select: none;
+  }
+  .install__cmd {
+    font: inherit;
+    white-space: nowrap;
+    user-select: all;
+  }
+  .install .copyico {
+    color: var(--text-muted);
+  }
+  .install.is-copied .copyico {
+    color: var(--pass);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .install:hover {
+      box-shadow: inset 0 0 0 1px #3a3a40;
+      transition-duration: var(--hover-in);
+    }
+    .install:hover .copyico {
+      color: var(--text);
+    }
+  }
+  /* Prose, so our voice (Geist), not the machine's; only the command is mono. */
+  .install-row__fine {
+    margin-top: 0.9rem;
+    max-width: 30rem;
+    text-wrap: balance;
+    font-size: var(--fs-sm);
+    line-height: 1.5;
+    color: var(--text-muted);
+  }
+  @media (max-width: 479px) {
+    .install-row__main {
+      width: 100%;
+    }
+    .install {
+      width: 100%;
+      justify-content: space-between;
+      gap: 0.55rem;
+      padding: 0 0.8rem;
+      font-size: 0.75rem;
+    }
+    .install__cmd {
+      flex: 1;
+      text-align: left;
+    }
+  }
+  @media (max-width: 379px) {
+    .install {
+      font-size: 0.6875rem;
+      gap: 0.45rem;
+      padding: 0 0.65rem;
+    }
+  }
+
+  .hero__sample {
+    position: relative;
+    margin-top: 4rem;
+    max-width: 72rem;
+  }
+  @media (min-width: 1024px) {
+    .hero__sample {
+      margin-top: 5rem;
+    }
+  }
+
+  /* ---------- framed bands ----------
+     A document frame: two rails at the wrap edges, and horizontal rules that
+     stop at the rails instead of running the full viewport. */
+  .frame {
+    border-inline: 1px solid var(--line);
+  }
+  @media (max-width: 639px) {
+    .frame {
+      border-inline: 0;
+    }
+  }
+  .works {
+    margin-top: 4rem;
+  }
+  .works .frame {
+    border-block: 1px solid var(--line);
+  }
+  /* A hairline grid of equal cells: the label and 13 agents fill 7 x 2. */
+  .works__grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+  .works__list {
+    display: contents;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  /* Cell n of the grid is the label (1), then agent k at n = k + 1. */
+  .works__box {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 5.5rem;
+    margin: 0;
+    padding: 0.75rem 0.5rem;
+    text-align: center;
+    border-right: 1px solid var(--line);
+  }
+  .works__cell:nth-child(7n + 6) {
+    border-right: 0;
+  }
+  .works__cell:nth-child(n + 7) {
+    border-top: 1px solid var(--line);
+  }
+  .works__label {
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+  }
+  .works__cell {
+    font-size: var(--fs-sm);
+    font-weight: 500;
+    letter-spacing: -0.005em;
+    color: rgba(244, 244, 245, 0.62);
+    transition: color var(--hover-out) ease;
+  }
+  .works__cell :global(.works__logo) {
+    flex-direction: column;
+    gap: 0.55rem;
+    white-space: normal;
+  }
+  /* No published logo (Aider): keep the name on the same baseline as the rest. */
+  @media (hover: hover) and (pointer: fine) {
+    .works__cell:hover {
+      color: var(--text);
+      transition-duration: var(--hover-in);
+    }
+  }
+  @media (max-width: 767px) {
+    .works__grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .works__box,
+    .works__cell:nth-child(7n + 6) {
+      min-height: 3.5rem;
+      justify-content: flex-start;
+      padding-inline: 1rem;
+      border-right: 0;
+      border-top: 1px solid var(--line);
+    }
+    .works__label,
+    .works__cell:nth-child(even) {
+      border-right: 1px solid var(--line);
+    }
+    .works__label,
+    .works__cell:first-child {
+      border-top: 0;
+    }
+    .works__cell :global(.works__logo) {
+      flex-direction: row;
+      gap: 0.6rem;
+      text-align: left;
+    }
+  }
+
+  .band + .band .frame {
+    border-top: 1px solid var(--line);
+  }
+  /* Band 02 mirrors band 01: the terminal leads, the prose follows. */
+  @media (min-width: 1024px) {
+    .split--flip {
+      grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+    }
+    .split--flip > .band__rail {
+      order: 2;
+    }
+  }
+  /* The machine's timestamps drop on phones so each event fits on one line. */
+  .band :global(.ts) {
+    display: inline;
+  }
+  @media (max-width: 639px) {
+    .band :global(.ts) {
+      display: none;
+    }
+  }
+  .band__inner {
+    padding: 4rem 2rem;
+  }
+  @media (min-width: 1024px) {
+    .band__inner {
+      padding: 3.5rem 3rem;
+      align-items: center;
+    }
+  }
+  @media (max-width: 639px) {
+    .band__inner {
+      padding: 3.5rem 0;
+    }
+  }
+  .band__n {
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+    margin-bottom: 1rem;
+  }
+  .band__line {
+    margin-top: 0.9rem;
+    max-width: 24rem;
+    font-size: 1.0625rem;
+    line-height: 1.55;
+    color: var(--text-2);
+  }
+
+  /* compare: the result and its definitions in one row, the full matrix under it */
+  .compare {
+    display: flex;
+    flex-direction: column;
+    gap: 2.5rem;
+  }
+  .compare__head {
+    display: grid;
+    gap: 2rem;
+  }
+  @media (min-width: 1024px) {
+    .band__inner.compare {
+      align-items: stretch;
+    }
+    .compare__head {
+      grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+      gap: 4rem;
+      align-items: end;
+    }
+  }
+  .compare__result .score__label {
+    margin-top: 0;
+  }
+  .score {
+    margin-top: 2rem;
+    font-family: var(--font-mono);
+    font-size: clamp(3rem, 2rem + 4vw, 4.5rem);
+    line-height: 1;
+    letter-spacing: -0.04em;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  /* Same face and weight as the numerals, so the arrow reads as part of the figure. */
+  .score__arrow {
+    margin-inline: 0.18em;
+    color: var(--text-2);
+  }
+  .score__label {
+    margin-top: 2rem;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    color: var(--text-2);
+  }
+  .score__label + .score {
+    margin-top: 0.4rem;
+  }
+  .score__unit {
+    font-size: 0.45em;
+    margin-left: 0.06em;
+    vertical-align: baseline;
+    color: var(--text-2);
+    letter-spacing: 0;
+  }
+  .score__sub,
+  .arms {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1.4rem;
+    margin: 0.9rem 0 0;
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+  }
+  .score__sub div,
+  .arms div {
+    display: flex;
+    gap: 0.5rem;
+  }
+  .score__sub dt,
+  .arms dt {
+    color: var(--text-muted);
+  }
+  .score__sub dd,
+  .arms dd {
+    margin: 0;
+    color: var(--text-2);
+  }
+  .arms {
+    flex-direction: column;
+    margin-top: 1.25rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--line);
+  }
+  .arms dt {
+    min-width: 5.5rem;
+  }
+  .matrix-wrap {
+    min-width: 0;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+    margin-bottom: 1rem;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+  }
+  .legend__keys {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .key {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+  .key--pass {
+    background: var(--pass);
+  }
+  /* Matches TaskDeltas' failed run. */
+  .key--fail {
+    margin-left: 0.6rem;
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--fail) 62%, #000);
+  }
+
+</style>
+
+<script>
+  // Enhancement only: without JS the command is still plain, selectable text.
+  import { copyText, flashCopied } from "../lib/copy";
+
+  function setup() {
+    const status = document.querySelector<HTMLElement>("[data-copy-status]");
+    document.querySelectorAll<HTMLButtonElement>("[data-copy]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        if (!(await copyText(btn.dataset.copy ?? ""))) return;
+        flashCopied(btn);
+        if (status) {
+          status.textContent = "Copied to clipboard";
+          setTimeout(() => (status.textContent = ""), 1600);
+        }
+      }),
+    );
+  }
+  document.addEventListener("astro:page-load", setup);
+</script>

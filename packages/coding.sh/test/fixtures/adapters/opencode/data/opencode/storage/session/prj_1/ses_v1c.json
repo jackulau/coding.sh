@@ -1,0 +1,12 @@
+{
+ "id": "ses_v1c",
+ "projectID": "prj_1",
+ "parentID": "ses_v1",
+ "directory": "/work/demo",
+ "title": "Subtask",
+ "version": "1.0.150",
+ "time": {
+  "created": 1793527200700,
+  "updated": 1793527200900
+ }
+}

@@ -1,0 +1,11 @@
+# Mounted into the compose stack (and used by the SQLite journeys with --config).
+# Pinned prices, USD per 1M tokens, so the acceptance journeys get exact costs.
+# Real models are priced from the built-in table; add [pricing."<model>"] here to override it.
+
+[pricing."mock-gpt"]
+input = 1
+output = 2
+
+[pricing."mock-claude"]
+input = 3
+output = 15

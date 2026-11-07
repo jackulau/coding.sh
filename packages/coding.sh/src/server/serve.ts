@@ -1,0 +1,360 @@
+// `coding.sh serve`: one process, one port. OTLP/HTTP and native ingest go
+// through a bounded queue to a single writer; the viewer, its API, health and
+// Prometheus metrics are served next to them. See docs/PRODUCTION.md §1.
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
+import type { BlobStore, IndexStore, WriterLock } from "../core/types.ts";
+import { openBlobStore, openIndexStore, parseStoreUrl } from "../store/factory.ts";
+import type { SpanEnricher } from "../otel/map.ts";
+import { createOtlpHandler, decompress, hostOf, HttpError, isLoopbackHost, readBody, RPC, type Signal } from "../otel/receiver.ts";
+import { createViewerHandler } from "../viewer/server.ts";
+import type { UpdateStatus } from "../update/index.ts";
+import { createAuthenticator, READ_COOKIE } from "./auth.ts";
+import { DRAIN_TIMEOUT_MS, MAX_BODY_BYTES, type ServeConfig } from "./config.ts";
+import { createLogger, type Logger, safeUrl } from "./log.ts";
+import { ServeMetrics } from "./metrics.ts";
+import { parseNativeBatch } from "./native.ts";
+import { IngestQueue } from "./queue.ts";
+import { startRetention } from "./retention.ts";
+
+export interface ServeOptions {
+  log?: Logger;
+  /** Use these stores instead of opening config.core.store (tests). They are closed on shutdown. */
+  stores?: { index: IndexStore; blobs: BlobStore };
+  enrichSpan?: SpanEnricher | false;
+  /** Standby lock retry interval (default 5 s). */
+  lockRetryMs?: number;
+  /** Writer tick size (default 5,000 events; tests shrink it). */
+  tickEvents?: number;
+  /** Drain timeout on shutdown (default 25 s). */
+  drainMs?: number;
+}
+
+export interface ServeHandle {
+  url: string;
+  host: string;
+  port: number;
+  index: IndexStore;
+  blobs: BlobStore;
+  queue: IngestQueue;
+  metrics: ServeMetrics;
+  /** Readiness as /readyz reports it. */
+  ready(): Promise<{ status: number; body: ReadyBody }>;
+  /** Graceful shutdown: readyz 503, stop accepting, drain up to the timeout, close stores. Idempotent. */
+  shutdown(): Promise<{ drained: boolean }>;
+}
+
+export interface ReadyBody {
+  ok: boolean;
+  store: string;
+  writer: boolean;
+  role: "all" | "viewer";
+  queue: { events: number; max: number };
+  insecure: boolean;
+  reason?: string;
+}
+
+const ROUTE_LABELS = new Set(["/v1/traces", "/v1/logs", "/v1/metrics", "/v1/ingest", "/healthz", "/readyz", "/metrics", "/"]);
+const routeLabel = (path: string) => (ROUTE_LABELS.has(path) ? path : path.startsWith("/api/") ? "/api" : "other");
+const SIGNALS: Record<string, Signal> = { "/v1/traces": "traces", "/v1/logs": "logs", "/v1/metrics": "metrics" };
+
+function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
+  const json = JSON.stringify(body);
+  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": String(Buffer.byteLength(json)), "Cache-Control": "no-store", ...headers });
+  res.end(json);
+}
+
+// Servers never phone home (update.check is forced off).
+const noUpdates = async (): Promise<UpdateStatus> => ({
+  current: "",
+  latest: null,
+  updateAvailable: false,
+  url: null,
+  notes: null,
+  install: null,
+  checkedAt: null,
+  disabled: "coding.sh serve never checks for updates",
+  error: null,
+  command: "",
+});
+
+export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promise<ServeHandle> {
+  const log = o.log ?? createLogger({ format: cfg.log });
+  const metrics = new ServeMetrics();
+  const loopback = isLoopbackHost(cfg.host);
+  const open = loopback || cfg.insecure;
+  const auth = createAuthenticator(cfg.credentials, { openIngest: open, openRead: open });
+  const storeScheme = parseStoreUrl(cfg.core.store.index).scheme;
+
+  // ---- stores
+  let index: IndexStore;
+  let blobs: BlobStore;
+  if (o.stores) ({ index, blobs } = o.stores);
+  else {
+    index = await openIndexStore(cfg.core.store.index, cfg.core);
+    try {
+      blobs = await openBlobStore(cfg.core.store.blobs, cfg.core);
+    } catch (e) {
+      await index.close().catch(() => {});
+      throw e;
+    }
+  }
+  log.info("store opened", { index: safeUrl(cfg.core.store.index), blobs: safeUrl(cfg.core.store.blobs) });
+
+  const queue = new IngestQueue({
+    store: index,
+    blobs,
+    config: cfg.core,
+    maxEvents: cfg.queueMaxEvents,
+    maxBytes: cfg.queueMaxBytes,
+    metrics,
+    log,
+    ...(o.tickEvents !== undefined ? { tickEvents: o.tickEvents } : {}),
+    ...(o.enrichSpan !== undefined ? { enrichSpan: o.enrichSpan } : {}),
+  });
+
+  // ---- writer lock (role all): repair before taking traffic, standby retries every 5 s
+  let lock: WriterLock | undefined;
+  let lockTimer: NodeJS.Timeout | undefined;
+  let stopRetention: (() => void) | undefined;
+  let shuttingDown = false;
+  const becomeWriter = async (): Promise<boolean> => {
+    if (!index.acquireWriterLock) {
+      queue.setWritable(true);
+    } else {
+      lock = await index.acquireWriterLock({ waitMs: 0 });
+      if (!lock) return false;
+    }
+    const repaired = await queue.repair();
+    if (repaired) log.info("repaired sessions left dirty by a previous writer", { sessions: repaired });
+    queue.setWritable(true);
+    stopRetention = startRetention({ store: index, blobs, config: cfg.core, days: cfg.retentionDays, run: (fn) => queue.runExclusive(fn), log });
+    return true;
+  };
+  metrics.gauges = { queueEvents: () => queue.depth.events, queueBytes: () => queue.depth.bytes, writerLockHeld: () => queue.isWritable };
+  if (cfg.role === "all") {
+    try {
+      if (!(await becomeWriter())) {
+        log.warn("standby: another replica holds the writer lock; retrying every 5s");
+        const retry = () => {
+          lockTimer = setTimeout(async () => {
+            if (shuttingDown) return;
+            try {
+              if (await becomeWriter()) log.info("writer lock acquired");
+              else retry();
+            } catch (e) {
+              log.error("writer lock retry failed", { error: (e as Error).message });
+              retry();
+            }
+          }, o.lockRetryMs ?? 5000);
+          lockTimer.unref();
+        };
+        retry();
+      }
+    } catch (e) {
+      await index.close().catch(() => {});
+      throw e;
+    }
+    queue.start();
+  }
+
+  // ---- handlers
+  const otlp = createOtlpHandler<string>({
+    maxBodyBytes: MAX_BODY_BYTES,
+    allowRemote: !loopback,
+    corsOrigins: cfg.corsOrigins,
+    allowLocalOrigins: false,
+    authorize(req) {
+      const project = auth.ingest(req);
+      if (project === undefined) metrics.authFailures.inc({ route: (req.url ?? "").split("?")[0]! });
+      return project;
+    },
+    async submit({ signal, decoded, auth: project, bytes, items }) {
+      const r = await queue.submit({ kind: "otlp", project, signal, decoded, items: Math.max(items, 1), bytes });
+      return { rejected: r.rejected, message: r.message };
+    },
+    onError: (err) => log.error("otlp", { error: err.message }),
+  });
+
+  const native = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    try {
+      if (req.method !== "POST") throw new HttpError(405, RPC.UNIMPLEMENTED, "use POST");
+      const project = auth.ingest(req);
+      if (project === undefined) {
+        metrics.authFailures.inc({ route: "/v1/ingest" });
+        req.resume();
+        throw new HttpError(401, RPC.UNAUTHENTICATED, "missing or invalid ingest key; send Authorization: Bearer <key>", { "WWW-Authenticate": "Bearer" });
+      }
+      const ct = (req.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
+      if (ct !== "application/json") {
+        req.resume();
+        throw new HttpError(415, RPC.INVALID_ARGUMENT, "Content-Type must be application/json");
+      }
+      const raw = await readBody(req, MAX_BODY_BYTES);
+      const body = await decompress(raw, req.headers["content-encoding"], MAX_BODY_BYTES);
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(body.toString("utf8"));
+      } catch {
+        throw new HttpError(400, RPC.INVALID_ARGUMENT, "body is not valid JSON");
+      }
+      const batch = parseNativeBatch(parsed, project);
+      let inserted = 0;
+      if (batch.events.length) {
+        const r = await queue.submit({ kind: "native", project, events: batch.events, items: batch.events.length, bytes: body.byteLength });
+        inserted = r.inserted;
+      }
+      if (batch.rejected.length) metrics.ingestEvents.inc({ project, result: "rejected" }, batch.rejected.length);
+      sendJson(res, 200, { accepted: batch.events.length, inserted, rejected: batch.rejected });
+    } catch (err) {
+      const e = err instanceof HttpError ? err : new HttpError(500, RPC.INTERNAL, "internal error");
+      if (!(err instanceof HttpError)) log.error("ingest", { error: (err as Error).message });
+      if (res.headersSent) {
+        res.destroy();
+        return;
+      }
+      sendJson(res, e.status, { error: e.message, status: e.status }, e.headers);
+    }
+  };
+
+  const secureCookie = (req: IncomingMessage) => cfg.trustProxy && String(req.headers["x-forwarded-proto"] ?? "").split(",")[0]!.trim() === "https";
+  const viewer = await createViewerHandler({
+    index,
+    blobs,
+    authorize: (req) => auth.read(req),
+    // Loopback binds keep the DNS-rebinding guard; a public bind sits behind a platform's host routing.
+    checkHost: (h) => !loopback || isLoopbackHost(hostOf(h)),
+    exchangeToken: (t, req) =>
+      auth.readScope(t) !== undefined ? `${READ_COOKIE}=${t}; HttpOnly; SameSite=Strict; Path=/${secureCookie(req) ? "; Secure" : ""}` : undefined,
+    ...(cfg.credentials.basic ? { basicRealm: "coding.sh" } : {}),
+    unauthorizedText: "This coding.sh server needs a read key: open <code>/?t=&lt;read key&gt;</code> once, or sign in with the configured user.",
+    projects: () => cfg.projects,
+    updateStatus: noUpdates,
+  });
+
+  let storeOk = true;
+  const ready = async (): Promise<{ status: number; body: ReadyBody }> => {
+    let reason: string | undefined;
+    try {
+      await Promise.race([index.ping ? index.ping() : index.listSessions({ limit: 1 }), new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 2000).unref())]);
+      storeOk = true;
+    } catch {
+      storeOk = false;
+      reason = "store did not answer";
+    }
+    const depth = queue.depth;
+    if (!reason && shuttingDown) reason = "shutting down";
+    if (!reason && cfg.role === "all" && !queue.isWritable) reason = "standby: another replica holds the writer lock";
+    if (!reason && depth.events >= 0.9 * depth.max) reason = "ingest queue above 90%";
+    const body: ReadyBody = { ok: !reason, store: storeScheme, writer: queue.isWritable, role: cfg.role, queue: { events: depth.events, max: depth.max }, insecure: cfg.insecure };
+    if (reason) body.reason = reason;
+    return { status: reason ? 503 : 200, body };
+  };
+
+  const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const path = (req.url ?? "/").split("?")[0]!;
+    res.once("finish", () => metrics.httpRequests.inc({ route: routeLabel(path), status: String(res.statusCode) }));
+    if (path === "/healthz") return sendJson(res, 200, { ok: true });
+    if (path === "/readyz") {
+      const r = await ready();
+      return sendJson(res, r.status, r.body);
+    }
+    if (path === "/metrics") {
+      if (!auth.read(req)) {
+        res.setHeader("WWW-Authenticate", cfg.credentials.basic ? 'Basic realm="coding.sh"' : "Bearer");
+        return sendJson(res, 401, { error: "missing or invalid read key", status: 401 });
+      }
+      const text = metrics.render();
+      res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8", "Content-Length": String(Buffer.byteLength(text)), "Cache-Control": "no-store" });
+      res.end(text);
+      return;
+    }
+    if (SIGNALS[path] || path === "/v1/ingest") {
+      if (cfg.role === "viewer") return sendJson(res, 404, { error: "this replica runs --role viewer and takes no ingest", status: 404 });
+      return path === "/v1/ingest" ? native(req, res) : otlp(req, res);
+    }
+    return viewer(req, res);
+  };
+
+  const server = createServer((req, res) => {
+    handle(req, res).catch((err: unknown) => {
+      log.error("request failed", { error: (err as Error)?.message });
+      if (!res.headersSent) sendJson(res, 500, { error: "internal error", status: 500 });
+      else res.destroy();
+    });
+  });
+  server.headersTimeout = 20_000;
+  server.requestTimeout = 120_000;
+  server.keepAliveTimeout = 65_000;
+  server.on("clientError", (_err, socket) => {
+    if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(cfg.port, cfg.host, () => {
+        server.off("error", reject);
+        resolve();
+      });
+    });
+  } catch (e) {
+    stopRetention?.();
+    if (lockTimer) clearTimeout(lockTimer);
+    await lock?.release().catch(() => {});
+    await index.close().catch(() => {});
+    throw e;
+  }
+  const addr = server.address() as AddressInfo;
+  const urlHost = cfg.host === "0.0.0.0" || cfg.host === "::" ? "127.0.0.1" : addr.address.includes(":") ? `[${addr.address}]` : addr.address;
+  const url = `http://${urlHost}:${addr.port}`;
+  log.info("listening", { url, host: cfg.host, port: addr.port, role: cfg.role, store: storeScheme, projects: cfg.projects.length });
+  if (cfg.insecure) log.warn("running with --insecure: anyone who can reach this port can ingest and read", { host: cfg.host });
+
+  // ---- one summary line per minute
+  let last = { inserted: 0, throttled: 0 };
+  const sum = (c: { values: Map<string, { labels: Record<string, string>; value: number }> }, pred: (l: Record<string, string>) => boolean = () => true) =>
+    [...c.values.values()].filter((v) => pred(v.labels)).reduce((n, v) => n + v.value, 0);
+  const summary = setInterval(() => {
+    const inserted = sum(metrics.ingestEvents, (l) => l.result === "inserted");
+    const throttled = sum(metrics.throttled);
+    if (inserted !== last.inserted || throttled !== last.throttled || queue.depth.events) {
+      log.info("summary", { inserted: inserted - last.inserted, throttled: throttled - last.throttled, queueEvents: queue.depth.events, storeOk });
+    }
+    last = { inserted, throttled };
+  }, 60_000);
+  summary.unref();
+
+  let shutdown: Promise<{ drained: boolean }> | undefined;
+  return {
+    url,
+    host: addr.address,
+    port: addr.port,
+    index,
+    blobs,
+    queue,
+    metrics,
+    ready,
+    shutdown() {
+      shutdown ??= (async () => {
+        shuttingDown = true;
+        log.info("shutting down", { queueEvents: queue.depth.events });
+        clearInterval(summary);
+        if (lockTimer) clearTimeout(lockTimer);
+        const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+        server.closeIdleConnections();
+        const { drained } = cfg.role === "all" ? await queue.drain(o.drainMs ?? DRAIN_TIMEOUT_MS) : { drained: true };
+        stopRetention?.();
+        // Requests answered during the drain have flushed; drop what is left (keep-alive sockets).
+        server.closeAllConnections();
+        await closed;
+        await lock?.release().catch(() => {});
+        await index.close().catch((e: Error) => log.error("closing the store failed", { error: e.message }));
+        await (blobs as BlobStore & { close?: () => Promise<void> }).close?.().catch(() => {});
+        metrics.close();
+        log.info("stopped", { drained });
+        return { drained };
+      })();
+      return shutdown;
+    },
+  };
+}

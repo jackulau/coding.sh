@@ -1,0 +1,111 @@
+name: Release
+
+# Push a tag like v0.1.0 to release. The verify job runs the full check on the
+# tagged commit. The publish job waits for approval in the "release"
+# environment (Settings → Environments → release → Required reviewers), then
+# publishes the exact tarball it attaches to the GitHub release, so npm and
+# install.sh / `coding.sh update` install identical bytes.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Tag matches package version
+        id: version
+        run: |
+          version=$(node -p "require('./packages/coding.sh/package.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match packages/coding.sh version $version"
+            exit 1
+          fi
+          grep -q "^## \[$version\]" CHANGELOG.md || { echo "::error::CHANGELOG.md has no [$version] section"; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Git identity
+        run: |
+          git config --global user.name "coding.sh CI"
+          git config --global user.email "ci@coding.sh.invalid"
+
+      - run: npm ci
+
+      - name: Typecheck and test
+        working-directory: packages/coding.sh
+        run: npm run check
+
+      - name: Build and pack
+        working-directory: packages/coding.sh
+        run: |
+          npm run build
+          NO_UPDATE_NOTIFIER=1 node dist/cli.mjs --version
+          npm pack
+          ls -l coding.sh-*.tgz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball
+          path: packages/coding.sh/coding.sh-${{ steps.version.outputs.version }}.tgz
+          if-no-files-found: error
+
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: release
+      url: https://www.npmjs.com/package/coding.sh/v/${{ needs.verify.outputs.version }}
+    permissions:
+      contents: write   # create the GitHub release
+      id-token: write   # npm provenance (and trusted publishing)
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tarball
+
+      - name: Publish to npm with provenance
+        env:
+          # Leave the secret unset when npm trusted publishing is configured.
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish "./coding.sh-$VERSION.tgz" --provenance --access public
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v v="$VERSION" '
+            $0 ~ "^## \\[" v "\\]" { on = 1; next }
+            on && /^## \[/ { exit }
+            on && /^\[[^]]+\]: / { next }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          gh release create "v$VERSION" "coding.sh-$VERSION.tgz" \
+            --title "coding.sh $VERSION" --notes-file notes.md --verify-tag

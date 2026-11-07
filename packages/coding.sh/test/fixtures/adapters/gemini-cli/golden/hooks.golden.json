@@ -1,0 +1,217 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984800000,
+    "payload": {
+      "source": "startup",
+      "transcriptPath": "/home/dev/.gemini/tmp/demo/chats/session-2026-09-21T10-00-gemsess1.jsonl"
+    },
+    "id": "586e0e4a30bb53ce5fa00e17f992611de84213e167f21731e6c45a58aa4b097a",
+    "blobs": [
+      "9b241e2c03c1a53714929e8b5fcdedaffe8128ec3feb7bc2d26b10f88a64fdcf"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984801000,
+    "payload": {
+      "text": "Fix the failing test in src/math.ts"
+    },
+    "id": "9b01d91b8579e888f3b5a47b0bd84b96e0ec05286d595db561612116ffb6ab2b",
+    "blobs": [
+      "9d1efbce376c2f4a42d1ac5d5e450c2fa5f0a98159a3d1b40de8e499ab29ce72"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984802000,
+    "payload": {
+      "tool": "replace",
+      "input": {
+        "file_path": "/work/demo/src/math.ts",
+        "old_string": "return a - b;",
+        "new_string": "return a + b;"
+      }
+    },
+    "id": "6b17cc146b6cc70462582185d11d0f740cff1c4bb75dc6668c2c417b0fd33906",
+    "blobs": [
+      "9b26e6b5eccdda97953dfee2ad44d30873456a450082db0a9cca2690dc6a5cd2"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984803000,
+    "payload": {
+      "tool": "replace",
+      "ok": true,
+      "output": "Successfully modified file: /work/demo/src/math.ts (1 replacements)."
+    },
+    "id": "a6d479056a7be8619af827220c3c4fdfc238a29bbd4696c6d755eb8c94165250",
+    "blobs": [
+      "bb831f0a60a3349eef128579132397302cc1316870cc020c87d33412fcc06a97"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984803000,
+    "payload": {
+      "path": "src/math.ts",
+      "op": "modify",
+      "tool": "replace"
+    },
+    "id": "0216f85d11b0e6a5589fe84bcfe8185a706211b900676f94b9efa71225cac1b4",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984804000,
+    "payload": {
+      "tool": "run_shell_command",
+      "input": {
+        "command": "npm test"
+      },
+      "verify": true
+    },
+    "id": "1f816ca2e39dd05206dcd031697578f8f16224dfe6a37d516340cd30f91bb5c4",
+    "blobs": [
+      "5e222a00490f5013609a20e0b18fb293f54b0980e017dd93c6c4ffadc02807a2"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984805000,
+    "payload": {
+      "tool": "run_shell_command",
+      "ok": true,
+      "output": "Command: npm test\nOutput: # tests 4\n# pass 4\n# fail 0\nExit Code: 0"
+    },
+    "id": "2601d8271646d43f01933c2c0f4536255032af007aa82dc54cc4a41e3ae4c6f7",
+    "blobs": [
+      "36a8bff362f0ea48f2b447da1f2358a7b0ed0591d0ce13ef9fa158b5a016d97b"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984805000,
+    "payload": {
+      "runner": "node",
+      "passed": 4,
+      "failed": 0
+    },
+    "id": "b61115aa54039512903e52fe469e613e6faf724234d2e7d24392446b7192c1af",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984806000,
+    "payload": {
+      "tool": "read_file",
+      "ok": false,
+      "output": "",
+      "error": "File not found: /work/demo/missing.ts"
+    },
+    "id": "bef3d0962f96f3f85ff38ddfaef17b64acecb1f44d2fd0081146a7ecf73e909e",
+    "blobs": [
+      "131a64b17f1bfbdf17141edb900e4e4ed508211635b0fafcb4a13738ca78ac5d"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984807500,
+    "payload": {
+      "provider": "google",
+      "requestModel": "gemini-2.5-pro",
+      "stopReason": "STOP",
+      "ok": true
+    },
+    "id": "f3ecdb6f5b61a79bf95b0875b70fd5a9f455107c25386187173c547b0dd04e36",
+    "model": "gemini-2.5-pro",
+    "usage": {
+      "inputTokens": 1200,
+      "outputTokens": 80,
+      "cacheReadTokens": 600
+    },
+    "blobs": [
+      "ae10f4e622867f2632981ebd9b7830068e6b2e57a6f00fe4a05a87c6ff8d53a3"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984808000,
+    "payload": {
+      "text": "Fixed: add() subtracted instead of adding. All 4 tests pass."
+    },
+    "id": "d55f31f68e335ce2559ecfc6a16efe8602d6e272da83fd18ab3719c46db87170",
+    "blobs": [
+      "16224c97f5b6b867201b7c6bc8799cf4f5787a92e26c191b40fffc67e40f0daa"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984808000,
+    "payload": {},
+    "id": "624794b1deddb9dd687106db71aa3142566b6affc14d6ceb25ebab2252f2140c",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "context.compact",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984809000,
+    "payload": {
+      "trigger": "auto"
+    },
+    "id": "73f985ef67c306cd0cd6ec621c7a6ea9efad6604e9cea40a275148d85cc886eb",
+    "blobs": [
+      "428e27be6e8db6f16e865252d135f79b50fda941648ffe5c98784f3dd5737ca6"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "notification",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984810000,
+    "payload": {
+      "kind": "ToolPermission",
+      "message": "Gemini CLI needs your permission to use run_shell_command"
+    },
+    "id": "9f26c4e5a03cccdfb6bc0cb9168c11d5a8290713c9fe6e4eb36e9a7512ef9033",
+    "blobs": [
+      "757bd26b48e4c7cbe52d0213673dd17ad64826269839ff39889d57823c13797d"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984811000,
+    "payload": {
+      "reason": "exit"
+    },
+    "id": "593124afd6894cc73e6f15b172ed50da61069bcf219cc8feb9b13e4fa61508f3",
+    "blobs": [
+      "4bb289031982391c22b35e03e9aec816536ce9aa80d2e9f624e700079db6199f"
+    ],
+    "cwd": "/work/demo"
+  }
+]

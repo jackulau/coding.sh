@@ -1,0 +1,42 @@
+# coding.sh serve on Fly.io. Run from the repo root (see docs/production/fly.md):
+#   fly launch --no-deploy --copy-config --config deploy/fly.toml --name <your-app>
+#   fly volumes create coding_sh_data --size 3 --config deploy/fly.toml
+#   fly secrets set CODING_SH_INGEST_KEYS=myapp:csh_ik_… CODING_SH_READ_KEYS='*:csh_rk_…' --config deploy/fly.toml
+#   fly deploy --config deploy/fly.toml --dockerfile Dockerfile
+#
+# Default is SQLite on the /data volume: one machine, nothing else to run. For Postgres, set
+# `fly secrets set CODING_SH_STORE_URL=postgres://…` (blobs then go to the same database) and you
+# can drop [mounts].
+
+app = "coding-sh-change-me"
+primary_region = "iad"
+kill_signal = "SIGTERM"
+kill_timeout = 30 # serve drains its queue for up to 25 s
+
+[build]
+  # The repo-root Dockerfile, passed with --dockerfile (paths here resolve differently per flyctl version).
+
+[env]
+  CODING_SH_TRUST_PROXY = "1" # Fly's proxy terminates TLS and sets X-Forwarded-*
+
+[http_service]
+  internal_port = 4318
+  force_https = true
+  auto_stop_machines = "off" # ingest is always on; a stopped machine would drop exporter batches
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "15s"
+    interval = "15s"
+    method = "GET"
+    path = "/readyz"
+    timeout = "5s"
+
+[mounts]
+  source = "coding_sh_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"

@@ -1,0 +1,198 @@
+---
+import DocsLayout from "../../components/docs/DocsLayout.astro";
+import Code from "../../components/docs/Code.astro";
+import Terminal from "../../components/Terminal.astro";
+import Tag from "../../components/docs/Tag.astro";
+
+const dataset = `coding.sh dataset add smoke \\
+  --case '{"input":"2+2","expected":"4"}' \\
+  --case '{"input":"3*3","expected":"9"}'
+coding.sh dataset import cases.jsonl --name support   # JSONL, JSON or CSV
+coding.sh dataset add regressions --session <session-id>   # a case from a captured session`;
+
+const agent = `// agent.mjs: reads the case input as JSON on stdin, prints its answer
+let s = "";
+for await (const chunk of process.stdin) s += chunk;
+const input = JSON.parse(s);
+console.log(String(eval(input)));`;
+
+const run = `coding.sh exp run --dataset smoke --name base \\
+  --task '{"kind":"command","command":"node","args":["agent.mjs"]}' \\
+  --grader '{"kind":"exact"}'`;
+
+const spec = `{
+  "name": "support-v2",
+  "dataset": "support",
+  "split": "test",
+  "trials": 3,
+  "task": { "kind": "http", "url": "http://127.0.0.1:3000/api/agent", "responsePath": "$.output" },
+  "graders": [
+    { "kind": "contains", "value": ["refund"] },
+    { "kind": "llm", "name": "helpful", "rubric": "Pass if the reply resolves the customer's issue.", "tunedOn": ["dev"] }
+  ]
+}`;
+
+const judge = `coding.sh ui                                   # label sessions pass / fail
+coding.sh judge calibrate <experiment> --criterion outcome --split test`;
+
+const replay = `coding.sh eval new latest --verifier 'npm test' --hidden-test 'test/retry.spec.ts'
+coding.sh eval validate <task> --k 5
+coding.sh eval export <task> --out ./tasks/retry --format harbor
+coding.sh harness snapshot --agent claude-code --name base
+coding.sh compare base candidate --k 3`;
+
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const m = (s: string) => `<span class="t-muted">${esc(s)}</span>`;
+const t = (s: string) => `<span class="t-text">${esc(s)}</span>`;
+const ok = (s: string) => `<span class="t-pass">${esc(s)}</span>`;
+const no = (s: string) => `<span class="t-fail">${esc(s)}</span>`;
+
+// Real output of the commands above (run 2026-11-06 against a throwaway CODING_SH_HOME).
+const RUN = [
+  `${m("$")} ${t("coding.sh exp run --dataset smoke --name base …")}`,
+  `${t("base")}  exp_01M6SAJYC5RM7A5TCT65R3SFSM`,
+  `dataset smoke@8db025860cd0b8da  task command: node agent.mjs  trials 1`,
+  `pass    ${ok("100.0%")} [34.2%, 100.0%] (2/2, 95% Wilson)`,
+  `latency median 32ms, p90 32ms, max 32ms`,
+  "",
+  `grader  kind     pass  95% CI           mean score  errors  trust`,
+  m(`------  -----  ------  ---------------  ----------  ------  -------------`),
+  `exact   exact  ${ok("100.0%")}  [34.2%, 100.0%]        1.00       0  deterministic`,
+].join("\n");
+
+const COMPARE = [
+  `${m("$")} ${t("coding.sh exp compare exp_01M6SAJYC5RM7A5TCT65R3SFSM exp_01M6SAK893Z1DFH770KVNQC4BZ")}`,
+  `A base exp_01M6SAJYC5RM7A5TCT65R3SFSM  pass 100.0%`,
+  `B cand exp_01M6SAK893Z1DFH770KVNQC4BZ  pass 50.0%`,
+  "",
+  `B − A   ${no("-50.0pp")} [-100.0pp, 0.0pp] (2 paired cases, 95% paired bootstrap)`,
+  `mcnemar p=1.000  1 regressed, 0 improved`,
+  `verdict inconclusive (CI includes 0)`,
+  "",
+  `regressions 1`,
+  `case                   A   B       Δ`,
+  m(`------------------  ----  --  ------`),
+  `c_756966685591eb9b  100%  ${no("0%")}  -100pp`,
+].join("\n");
+---
+
+<DocsLayout>
+  <p>
+    There are two kinds of eval. <strong>Dataset experiments</strong> run any agent, in any language, over a set of cases and grade the outputs.
+    <strong>Repo-replay tasks</strong> re-run a coding agent from the repository state before a real session and check the result with a
+    validated verifier.
+  </p>
+
+  <h2 id="datasets">Datasets <Tag status="built" /></h2>
+  <p>
+    A dataset is a list of cases: <code>input</code>, optional <code>expected</code>, <code>tags</code>, <code>metadata</code> and a
+    <code>split</code> (<code>train</code>, <code>dev</code> or <code>test</code>). Every change makes a new version whose id is a hash of
+    the cases, so the same cases always give the same version and an experiment records exactly what it ran on.
+  </p>
+  <Code code={dataset} />
+
+  <h2 id="tasks">What gets run</h2>
+  <p>The task is the agent under test. Two kinds work from the CLI:</p>
+  <ul>
+    <li>
+      <strong><code>command</code></strong>: any executable. The case input arrives as JSON on stdin; stdout is the output (parsed as JSON when
+      it is JSON). <code>CODING_SH_RUN_ID</code>, <code>CODING_SH_CASE_ID</code> and <code>CODING_SH_TRIAL</code> are in its environment.
+    </li>
+    <li>
+      <strong><code>http</code></strong>: a POST of the input as JSON to a URL; the response (or a JSON path into it) is the output. Header
+      values can come from environment variables so secrets stay out of spec files.
+    </li>
+  </ul>
+  <Code title="agent.mjs" code={agent} />
+  <Code code={run} />
+  <Terminal title="~/smoke" label="Output of coding.sh exp run">
+    <pre set:html={RUN} />
+  </Terminal>
+  <p>
+    With one trial per case the interval is a Wilson interval; with <code>--trials</code> above 1 it is a bootstrap over cases. Options can also
+    live in a JSON spec file: <code>coding.sh exp run spec.json</code>.
+  </p>
+  <Code title="spec.json" code={spec} />
+
+  <h2 id="graders">Graders <Tag status="built" /></h2>
+  <p>Deterministic graders come first. Each grader's config is hashed into a version, so a changed grader is a different grader.</p>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Kind</th><th>Passes when</th></tr></thead>
+      <tbody>
+        <tr><td><code>exact</code></td><td>Output equals <code>expected</code> (structural for JSON, normalized for text).</td></tr>
+        <tr><td><code>contains</code></td><td>Output contains all (or any) of the strings; <code>negate</code> inverts it.</td></tr>
+        <tr><td><code>regex</code></td><td>Output matches a pattern.</td></tr>
+        <tr><td><code>json-schema</code></td><td>Output validates against a JSON Schema.</td></tr>
+        <tr><td><code>json-path</code></td><td>A JSON path into the output equals a value or the same path in <code>expected</code>.</td></tr>
+        <tr><td><code>numeric</code></td><td>The first number in the output is within an absolute or relative tolerance.</td></tr>
+        <tr><td><code>similarity</code></td><td>Normalized edit-distance similarity is at least the threshold (default 0.8).</td></tr>
+        <tr><td><code>command</code></td><td>Your script, any language: JSON on stdin; a boolean, a score or <code>&#123;score, pass, reason&#125;</code> on stdout, or the exit code.</td></tr>
+        <tr><td><code>module</code></td><td>A JS module's exported grade function returns pass.</td></tr>
+        <tr><td><code>llm</code></td><td>A model judge returns pass on your rubric. See below.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="compare">Comparing two experiments <Tag status="built" /></h2>
+  <p>
+    <code>exp compare</code> pairs the two runs by case. It reports the difference in pass rate with a paired bootstrap interval, McNemar's exact
+    test on cases that flipped, per-grader score deltas and the regressed cases. If the interval includes zero, the verdict says inconclusive.
+  </p>
+  <Terminal title="~/smoke" label="Output of coding.sh exp compare">
+    <pre set:html={COMPARE} />
+  </Terminal>
+
+  <h2 id="judges">LLM judges <Tag status="built" /></h2>
+  <p>
+    An <code>llm</code> grader calls Anthropic's Messages API or any OpenAI-compatible endpoint (OpenAI, OpenRouter, Ollama, LM Studio, vLLM
+    through <code>baseURL</code>). Keys are read from the environment (<code>ANTHROPIC_API_KEY</code>, <code>OPENAI_API_KEY</code> or
+    <code>apiKeyEnv</code>) at call time and never logged, hashed or cached. Verdicts are cached on disk, so re-grading an unchanged output costs
+    nothing.
+  </p>
+  <p>
+    Each judge is versioned as <code>name@hash</code> over model, prompt template, rubric, criterion and parameters. Judge verdicts can cite the
+    trace; citations are checked against what the judge was shown.
+  </p>
+
+  <h2 id="calibration">Judge calibration <Tag status="built" /></h2>
+  <p>
+    A judge's score counts only once it agrees with people. Label sessions pass or fail in the viewer, then measure agreement on a split the
+    judge's prompt was not tuned on.
+  </p>
+  <Code code={judge} />
+  <ul>
+    <li>Agreement is Cohen's κ with a bootstrap interval, plus the confusion matrix and precision and recall for the "fail" class. Raw agreement alone flatters a judge on imbalanced data.</li>
+    <li>A judge is <strong>calibrated</strong> at κ ≥ 0.6 on at least 20 held-out cases that have both a human label and a verdict. Both are flags: <code>--threshold</code>, <code>--min-n</code>.</li>
+    <li>κ measured on a split listed in the judge's <code>tunedOn</code> is reported as <strong>in-sample</strong>, never as calibrated.</li>
+    <li>Below the bar, the judge is <strong>uncalibrated</strong> or has <strong>insufficient data</strong>, and every report flags its scores.</li>
+    <li>Cases where the judge is confidently opposite to unanimous humans are listed for relabelling.</li>
+  </ul>
+
+  <h2 id="repo-replay">Repo-replay tasks <Tag status="partial" /></h2>
+  <p>
+    For coding agents, a task is the repository snapshot from before the agent ran, the first prompt as the instruction, setup commands and a
+    verifier command. Before a task counts, <code>eval validate</code> checks the verifier:
+  </p>
+  <ol>
+    <li>Doing nothing fails.</li>
+    <li>The reference solution (the session's own diff, or a later fix) passes <code>k</code> runs out of <code>k</code> (default 5), so flaky tests fail validation.</li>
+    <li>Near-miss variants of the reference, generated by mutating its patch, fail.</li>
+    <li>Nothing leaks: hidden test files are copied in only when the verifier runs, and follow-up prompts that steer toward the answer stay out of the instruction.</li>
+  </ol>
+  <p>
+    Harness bundles (agent, model, flags, env and files such as <code>CLAUDE.md</code> or <code>AGENTS.md</code>, identified by a content hash)
+    are what <code>compare</code> A/B tests: it runs both bundles on validated tasks in isolated worktrees and reports per-arm Wilson
+    intervals, a paired bootstrap interval, McNemar's test, cost, token, turn and latency deltas, and the first step where the two traces diverge. Tasks export
+    in coding.sh's own layout or Harbor's.
+  </p>
+  <Code code={replay} />
+  <div class="note">
+    <p>
+      <strong>Known gap.</strong> Drafting needs a session with both a first prompt and a pre-agent snapshot. Today hook-captured sessions carry
+      no repository snapshot (<code>eval new</code> stops with "has no repo state"), and <code>coding.sh run --</code> sessions have a snapshot
+      but no prompt. Taking a snapshot when a hooked session starts is planned. Validation, bundles and compare are built and tested on fixture
+      tasks.
+    </p>
+  </div>
+</DocsLayout>

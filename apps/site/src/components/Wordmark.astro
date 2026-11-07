@@ -1,0 +1,58 @@
+---
+// The wordmark, set in pixels: "CODING" in white, ".SH" in grey, drawn from a
+// 5x7 bitmap so it is crisp at 2px per pixel and needs no font file. The
+// accessible name is the plain text.
+interface Props {
+  class?: string;
+  /** CSS px per bitmap pixel. */
+  px?: number;
+}
+const { class: klass, px = 2 } = Astro.props;
+
+const GLYPHS: Record<string, string[]> = {
+  C: [".###.", "#...#", "#....", "#....", "#....", "#...#", ".###."],
+  O: [".###.", "#...#", "#...#", "#...#", "#...#", "#...#", ".###."],
+  D: ["####.", "#...#", "#...#", "#...#", "#...#", "#...#", "####."],
+  I: ["###", ".#.", ".#.", ".#.", ".#.", ".#.", "###"],
+  N: ["#...#", "##..#", "#.#.#", "#.#.#", "#..##", "#...#", "#...#"],
+  G: [".###.", "#...#", "#....", "#.###", "#...#", "#...#", ".###."],
+  ".": [".", ".", ".", ".", ".", ".", "#"],
+  S: [".###.", "#...#", "#....", ".###.", "....#", "#...#", ".###."],
+  H: ["#...#", "#...#", "#...#", "#####", "#...#", "#...#", "#...#"],
+};
+const GAP = 2;
+
+let x = 0;
+const parts: { d: string; dim: boolean }[] = [];
+for (const [i, ch] of [..."CODING.SH"].entries()) {
+  const g = GLYPHS[ch];
+  let d = "";
+  g.forEach((row, y) => {
+    for (let c = 0; c < row.length; c++) if (row[c] === "#") d += `M${x + c} ${y}h1v1h-1z`;
+  });
+  parts.push({ d, dim: i >= 6 });
+  x += g[0].length + GAP;
+}
+const W = x - GAP;
+const H = 7;
+---
+
+<svg
+  class:list={["wordmark", klass]}
+  width={W * px}
+  height={H * px}
+  viewBox={`0 0 ${W} ${H}`}
+  shape-rendering="crispEdges"
+  role="img"
+  aria-label="coding.sh"
+>
+  <path d={parts.filter((p) => !p.dim).map((p) => p.d).join("")} fill="var(--text)" />
+  <path d={parts.filter((p) => p.dim).map((p) => p.d).join("")} fill="var(--text-muted)" />
+</svg>
+
+<style>
+  .wordmark {
+    display: block;
+    flex: none;
+  }
+</style>

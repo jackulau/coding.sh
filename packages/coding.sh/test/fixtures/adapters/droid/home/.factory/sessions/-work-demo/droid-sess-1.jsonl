@@ -1,0 +1,8 @@
+{"type":"session_start","id":"droid-sess-1","title":"Create hello.py","cwd":"/work/demo","timestamp":"2026-09-21T10:00:00.000Z"}
+{"type":"message","timestamp":"2026-09-21T10:00:01.000Z","message":{"id":"dm1","role":"user","content":[{"type":"text","text":"Create hello.py and run pytest"}]}}
+{"type":"message","timestamp":"2026-09-21T10:00:02.000Z","message":{"id":"dm2","role":"assistant","content":[{"type":"text","text":"Creating"}]}}
+{"type":"message","timestamp":"2026-09-21T10:00:02.000Z","message":{"id":"dm2","role":"assistant","content":[{"type":"text","text":"Creating the file."},{"type":"tool_use","id":"toolu_d1","name":"Create","input":{"file_path":"/work/demo/hello.py","content":"print('hi')\n"}},{"type":"tool_use","id":"toolu_d2","name":"Execute","input":{"command":"pytest -q"}}]}}
+{"type":"message","timestamp":"2026-09-21T10:00:02.100Z","message":{"id":"dm3","role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_d1","content":"File created"}]}}
+{"type":"message","timestamp":"2026-09-21T10:00:04.000Z","message":{"id":"dm4","role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_d2","content":[{"type":"text","text":"==== 3 passed in 0.10s ===="}]}]}}
+{"type":"message","timestamp":"2026-09-21T10:00:05.000Z","message":{"id":"dm5","role":"assistant","content":[{"type":"text","text":"Done: 3 tests pass."}]}}
+{"type":"message","timestamp":"2026-09-21T10:01:00.000Z","message":{"id":"dm6","role":"user","content":"thanks"}}

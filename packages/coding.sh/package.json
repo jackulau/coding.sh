@@ -1,0 +1,79 @@
+{
+  "name": "coding.sh",
+  "version": "0.1.0",
+  "description": "Local-first observability and evals for any AI agent, with coding agents first-class: capture sessions from hooks or OpenTelemetry, browse them in a local viewer, turn failures into evals, and compare changes with paired statistics.",
+  "license": "MIT",
+  "author": "coding.sh contributors",
+  "type": "module",
+  "homepage": "https://coding.sh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jackulau/coding.sh.git",
+    "directory": "packages/coding.sh"
+  },
+  "bugs": {
+    "url": "https://github.com/jackulau/coding.sh/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "agent-observability",
+    "llm-observability",
+    "evals",
+    "llm-evals",
+    "opentelemetry",
+    "otlp",
+    "gen-ai",
+    "tracing",
+    "mcp",
+    "model-context-protocol",
+    "claude-code",
+    "codex",
+    "opencode",
+    "cursor",
+    "gemini-cli",
+    "coding-agents",
+    "local-first",
+    "cli"
+  ],
+  "bin": {
+    "coding.sh": "dist/cli.mjs",
+    "codingsh": "dist/cli.mjs"
+  },
+  "exports": {
+    "./schema": "./dist/schema.mjs",
+    "./store": {
+      "types": "./src/store/plugin-api.ts",
+      "source": "./src/store/plugin-api.ts",
+      "default": "./dist/store.mjs"
+    },
+    "./store/conformance": {
+      "types": "./src/store/conformance.ts",
+      "source": "./src/store/conformance.ts",
+      "default": "./dist/store-conformance.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/*.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.15"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --no-warnings --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "npm run typecheck && npm test",
+    "prepublishOnly": "npm run check && npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.3"
+  }
+}

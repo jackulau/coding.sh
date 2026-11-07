@@ -1,0 +1,32 @@
+# coding.sh serve on Render: a Docker web service plus a Postgres database.
+# Deploy button / Blueprint: https://render.com/deploy?repo=<your fork's URL>
+# Render prompts for the two key variables once (generate them with `coding.sh serve keygen`).
+# The index, the eval assets and the blobs all live in this one database.
+services:
+  - type: web
+    name: coding-sh
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: 0.5c-512mb
+    # /healthz, not /readyz: Render starts the new instance while the old one still holds the
+    # single-writer lock, so the new one stays in standby (readyz 503) until the old one stops.
+    healthCheckPath: /healthz
+    envVars:
+      - key: CODING_SH_STORE_URL
+        fromDatabase:
+          name: coding-sh-db
+          property: connectionString
+      - key: CODING_SH_TRUST_PROXY
+        value: "1"
+      - key: CODING_SH_INGEST_KEYS # myapp:csh_ik_… or myapp:sha256:<hex>, comma-separated
+        sync: false
+      - key: CODING_SH_READ_KEYS # *:csh_rk_… (all projects) or myapp:csh_rk_…
+        sync: false
+
+databases:
+  - name: coding-sh-db
+    databaseName: coding
+    user: coding
+    plan: 0.1c-256mb
+    postgresMajorVersion: "17"

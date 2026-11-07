@@ -1,0 +1,136 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "ses_v1",
+    "ts": 1793527200000,
+    "payload": {
+      "source": "hook",
+      "title": "Add README"
+    },
+    "id": "a0062aa49581de1944cc21a6aecb31fe5625af233d99aa9f983a0a94baae91b5",
+    "blobs": [
+      "5ddd28c2bf77e4a7e0dc2a9e8644d22d55a1b90db8f06e9af15d1bd158386a5d"
+    ],
+    "cwd": "/work/demo",
+    "agentVersion": "1.0.150"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "ses_v1",
+    "ts": 1793527200010,
+    "payload": {
+      "text": "Write a README"
+    },
+    "id": "bbf9191d946cf28a471f1bf415dc8a061ca7c322a690df7fac9056b8c5ba3cb5",
+    "blobs": [
+      "d67e5cf54cffbb9a1b34a022493f8e1acbd101a897219e8f4463f513793b693a"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "ses_v1",
+    "ts": 1793527200500,
+    "payload": {
+      "tool": "write",
+      "toolUseId": "call_v1",
+      "input": {
+        "filePath": "/work/demo/README.md",
+        "content": "# Demo\n\nHello.\n"
+      }
+    },
+    "id": "456aaf868baa02b600af1ed86e1e1a81f71491e0de17da265aa34d3cae4d0a8e",
+    "blobs": [
+      "961719de6adb6d9d43e6994d5aa279a40364e0c4efa3e64a2c4e32e8435dbc6d"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "ses_v1",
+    "ts": 1793527200600,
+    "payload": {
+      "tool": "write",
+      "toolUseId": "call_v1",
+      "ok": true,
+      "durationMs": 100,
+      "output": "",
+      "title": "README.md"
+    },
+    "id": "076be5b1ea71d66884ebe078e6dccbaac6e2340a47ad1a4f4b46403c8dd21966",
+    "durationMs": 100,
+    "blobs": [
+      "b33d40fb4ee666d7108b6428d1d70a14ec33c780d5595fc8dc7cd6214977582c"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "ses_v1",
+    "ts": 1793527200600,
+    "payload": {
+      "path": "README.md",
+      "op": "add",
+      "additions": 3,
+      "deletions": 0,
+      "tool": "write",
+      "toolUseId": "call_v1",
+      "diff": "--- /dev/null\n+++ b/README.md\n@@ -0,0 +1,3 @@\n+# Demo\n+\n+Hello.\n"
+    },
+    "id": "e3418fb3fd05f6fc7849f5bbd8f9730d8f125d07e8ef24cb1f96cf7944f410a8",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "ses_v1",
+    "ts": 1793527201500,
+    "payload": {
+      "text": "Added README.md."
+    },
+    "id": "c795d6946ce5b625de3a9f889bb30c2b3a9984bf96d26d4cbe68f9a7f17718b1",
+    "blobs": [
+      "74faa2026f2ab4cc70f3c745ef8abb88710bc10f6fe29663551601623e4ee71d"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "ses_v1",
+    "ts": 1793527200020,
+    "payload": {
+      "provider": "openai",
+      "responseModel": "gpt-5",
+      "stopReason": "stop",
+      "ok": true,
+      "tokensPerSec": 80.8,
+      "messageId": "msg_a1"
+    },
+    "id": "f41a7b8f971017a1cecaac429b3c4f84fd9ed3f29a0309b80d889a3056986684",
+    "model": "gpt-5",
+    "durationMs": 1485,
+    "usage": {
+      "inputTokens": 800,
+      "outputTokens": 120,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "costUsd": 0.004
+    },
+    "blobs": [
+      "51391ef5a60fc475b2c824ed54f4d6e2ae1d0dbe680b1b3c7839d3b8ecb2c2d7"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "ses_v1",
+    "ts": 1793527201600,
+    "payload": {
+      "ok": true
+    },
+    "id": "3c9ef648f55844a9b6a415100221f2eb547870c1d5fef007cf601c3720e290dc",
+    "blobs": [
+      "9815439c01c7a685ee15ee0784c74ef9c1271b288f80d7b7a5599a4aa75eda8e"
+    ],
+    "cwd": "/work/demo"
+  }
+]

@@ -1,0 +1,103 @@
+---
+// A copyable code block in the same frame as the install line: a title bar
+// with a Copy button, then a body that scrolls sideways inside its own box.
+// `code` is the exact text copied, so what you paste is what you read.
+interface Props {
+  code: string;
+  /** Title bar text: a file name, a shell, a language. */
+  title?: string;
+  class?: string;
+}
+const { code, title = "shell", class: klass } = Astro.props;
+const text = code.replace(/^\n+|\s+$/g, "");
+---
+
+<div class:list={["code", klass]}>
+  <div class="code__bar">
+    <span class="code__title">{title}</span>
+    <button type="button" class="code__copy ctl" data-code-copy aria-label={`Copy ${title}`} data-agent-skip>
+      <span data-code-label>Copy</span>
+    </button>
+    <span class="sr-only" role="status" data-code-status data-agent-skip></span>
+  </div>
+  <pre class="code__body" data-code-text><code>{text}</code></pre>
+</div>
+
+<style>
+  .code {
+    min-width: 0;
+  }
+  .code__bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    min-height: 2.5rem;
+    padding: 0 0.5rem 0 0.9rem;
+    border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+    background: var(--term-bar);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+  }
+  .code__title {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .code__copy {
+    flex: none;
+    min-width: 4.25rem;
+    justify-content: center;
+  }
+  .code__body {
+    margin: 0;
+    padding: 0.85rem 0.9rem;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+    background: var(--term);
+    box-shadow: inset 1px 0 0 var(--line-strong), inset -1px 0 0 var(--line-strong), inset 0 -1px 0 var(--line-strong);
+    font-family: var(--font-mono);
+    font-size: var(--fs-sm);
+    line-height: 1.7;
+    color: var(--text);
+    white-space: pre;
+    tab-size: 2;
+  }
+  .code__body code {
+    font: inherit;
+    color: inherit;
+  }
+</style>
+
+<script>
+  function setupCodeCopy() {
+    document.querySelectorAll<HTMLButtonElement>("[data-code-copy]").forEach((btn) => {
+      if (btn.dataset.bound) return;
+      btn.dataset.bound = "1";
+      const root = btn.closest(".code");
+      const label = btn.querySelector<HTMLElement>("[data-code-label]");
+      const status = root?.querySelector<HTMLElement>("[data-code-status]");
+      const pre = root?.querySelector<HTMLElement>("[data-code-text]");
+      let timer = 0;
+      btn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(pre?.textContent ?? "");
+          if (label) label.textContent = "Copied";
+          if (status) status.textContent = "Copied to clipboard";
+        } catch {
+          if (pre) getSelection()?.selectAllChildren(pre);
+          if (status) status.textContent = "Selected, copy it with your keyboard";
+        }
+        clearTimeout(timer);
+        timer = window.setTimeout(() => label && (label.textContent = "Copy"), 1600);
+      });
+    });
+  }
+  document.addEventListener("astro:page-load", setupCodeCopy);
+</script>

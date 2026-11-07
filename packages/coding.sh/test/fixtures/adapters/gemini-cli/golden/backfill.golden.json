@@ -1,0 +1,406 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "gem-sub-1",
+    "ts": 1789984802600,
+    "payload": {
+      "source": "transcript",
+      "kind": "subagent",
+      "parentSessionId": "gem-sess-1",
+      "subagentId": "gem-sub-1",
+      "subagentType": "subagent"
+    },
+    "id": "4a2143209955ce7f011192b4aac56a3124e76fac6aa893719d5f472c8edaafd1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "gem-sub-1",
+    "ts": 1789984802700,
+    "payload": {
+      "text": "Find the add function"
+    },
+    "id": "fe93a23dd1f9f547ac0243de325e1bbbbb37ba920d2d62f092c0f1251ec47555",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "gem-sub-1",
+    "ts": 1789984802800,
+    "payload": {
+      "provider": "google",
+      "responseModel": "gemini-2.5-flash",
+      "ok": true
+    },
+    "id": "06843bb77eb5c77690eda90efb9af51343dc1cc4724a001b354427142aa08f81",
+    "model": "gemini-2.5-flash",
+    "usage": {
+      "inputTokens": 300,
+      "outputTokens": 12
+    },
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "gem-sub-1",
+    "ts": 1789984802800,
+    "payload": {
+      "text": "It is in src/math.ts."
+    },
+    "id": "c7501dd6d1131893391f5ce647c1b0629d1909768a5aaaec339e42f59ee48a12",
+    "model": "gemini-2.5-flash",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "gem-sub-1",
+    "ts": 1789984802800,
+    "payload": {},
+    "id": "7932509b9349a7cd8300fe21fa29b4087cca0518a7bbfeba797184de7349344f",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "subagent.start",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984802600,
+    "payload": {
+      "subagentId": "gem-sub-1",
+      "type": "subagent",
+      "childSessionId": "gem-sub-1"
+    },
+    "id": "5e3d6d2a91bbded6fab4445e3f91d3ac222b4d179270f9f645f13cf7aa2b3d73",
+    "subagentId": "gem-sub-1",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "subagent.end",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984802800,
+    "payload": {
+      "subagentId": "gem-sub-1",
+      "childSessionId": "gem-sub-1",
+      "ok": true
+    },
+    "id": "13d10c8a28176ebccfbbd3f3fa1762246e055a6281c2c86c36a3b0e6d4b80eef",
+    "subagentId": "gem-sub-1",
+    "durationMs": 200,
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "session.start",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984800000,
+    "payload": {
+      "source": "transcript",
+      "kind": "main",
+      "summary": "Fix failing add() test"
+    },
+    "id": "4b8ac9eedb2b2d34207142b7189112c82f8482c3cd489fd9e3005060439140c8",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984801000,
+    "payload": {
+      "text": "Fix the failing test in src/math.ts"
+    },
+    "id": "b27d1ca733f9a72329b006216210ff5e65dc4880f1f8d6ad976f3060f5b6174a",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984802000,
+    "payload": {
+      "provider": "google",
+      "responseModel": "gemini-2.5-pro",
+      "ok": true
+    },
+    "id": "1f832da0fc20e32f26687566fd8bd1c7ce400d81faca0664bbe43546dbe67ecf",
+    "model": "gemini-2.5-pro",
+    "usage": {
+      "inputTokens": 1000,
+      "outputTokens": 60,
+      "cacheReadTokens": 200
+    },
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984802000,
+    "payload": {
+      "text": "Running the tests first."
+    },
+    "id": "d5a7f69daab819979e4edf797cdaaa1824af63ad25022b9fda80144b16d9d988",
+    "model": "gemini-2.5-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984802500,
+    "payload": {
+      "tool": "run_shell_command",
+      "toolUseId": "tc1",
+      "input": {
+        "command": "npm test"
+      },
+      "verify": true
+    },
+    "id": "eb629cd08f9e16b013c9d767694865c01f859107ba267e969f067fcff67df81b",
+    "model": "gemini-2.5-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984802500,
+    "payload": {
+      "tool": "run_shell_command",
+      "toolUseId": "tc1",
+      "ok": true,
+      "output": "# pass 3\n# fail 1"
+    },
+    "id": "4662cfe25e2feef92a42ed48816ce3dacf3273b371a40378ce9009ebd4fbdd9d",
+    "model": "gemini-2.5-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984802500,
+    "payload": {
+      "runner": "node",
+      "passed": 3,
+      "failed": 1,
+      "toolUseId": "tc1"
+    },
+    "id": "674c3ad153393f72f3f3f2a9ae6f9f8525128f1a7058294fcc134c45bd28df94",
+    "model": "gemini-2.5-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984803000,
+    "payload": {
+      "provider": "google",
+      "responseModel": "gemini-2.5-pro",
+      "ok": true
+    },
+    "id": "873271b68bd7457fad2e8dfbc12d7e799cc7a1a6934f68153f209acdf63cac07",
+    "model": "gemini-2.5-pro",
+    "usage": {
+      "inputTokens": 1300,
+      "outputTokens": 20,
+      "cacheReadTokens": 1000
+    },
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984803000,
+    "payload": {
+      "text": "Fixed add()."
+    },
+    "id": "f5e85f8dae053c7fe6543f92c979bd4ff60e78d346dda690e5badd988141fc51",
+    "model": "gemini-2.5-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984803200,
+    "payload": {
+      "tool": "replace",
+      "toolUseId": "tc2",
+      "input": {
+        "file_path": "/work/demo/src/math.ts",
+        "old_string": "a - b",
+        "new_string": "a + b"
+      }
+    },
+    "id": "949de885fe19bc9a41f105de365e00e3fe4415da699d7efbc0f490470017545d",
+    "model": "gemini-2.5-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984803200,
+    "payload": {
+      "tool": "replace",
+      "toolUseId": "tc2",
+      "ok": true,
+      "output": "Successfully modified file"
+    },
+    "id": "b1fb529e6322bf314c47c4cd127400419e28c765e2a82890db102d5a36c2e86f",
+    "model": "gemini-2.5-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984803200,
+    "payload": {
+      "path": "src/math.ts",
+      "op": "modify",
+      "tool": "replace",
+      "toolUseId": "tc2"
+    },
+    "id": "df9383d41baa27fd0462beef38baae98bb7b6692e85459e5812771e0f64b07c1",
+    "model": "gemini-2.5-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984803400,
+    "payload": {
+      "tool": "read_file",
+      "toolUseId": "tc3",
+      "input": {
+        "absolute_path": "/work/demo/nope.ts"
+      }
+    },
+    "id": "c9aa6db7ff6e265c819e475ecbed34fde6116bfc7f9dde9bb92f86ca2c26893d",
+    "model": "gemini-2.5-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984803400,
+    "payload": {
+      "tool": "read_file",
+      "toolUseId": "tc3",
+      "ok": false,
+      "output": "File not found",
+      "error": "error"
+    },
+    "id": "5507447ad1d78285c14c70e63ade83e89509d19584518edc8cd456ce1b9147c9",
+    "model": "gemini-2.5-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984860000,
+    "payload": {},
+    "id": "ade24f7669235ea4f4688a7cf8628f10c104f92ad0f67dc65382075a1e3dac18",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984860000,
+    "payload": {
+      "text": "thanks"
+    },
+    "id": "05a0cca30b46a1fcbc51b9e731e69ba3350acde79b72e6289987c6bf7d8f7002",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984861000,
+    "payload": {
+      "provider": "google",
+      "responseModel": "gemini-2.5-flash",
+      "ok": true
+    },
+    "id": "5dd14544682f39aa16c73cdcdba5d5be4974c9d3238579177757bb2847ee73ea",
+    "model": "gemini-2.5-flash",
+    "usage": {
+      "inputTokens": 1400,
+      "outputTokens": 5
+    },
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984861000,
+    "payload": {
+      "text": "You're welcome."
+    },
+    "id": "914155b69ee4f6d2e0548146e5b31fc07c8e9f8a494d3d8adff3e19cc7656919",
+    "model": "gemini-2.5-flash",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "notification",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984862000,
+    "payload": {
+      "kind": "info",
+      "message": "Switched to gemini-2.5-flash"
+    },
+    "id": "f9296adc2c10c4fe39b92515be6e5253b23fbf7cddcd0e6fbfbd7ffc6acd4b98",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "gem-sess-1",
+    "ts": 1789984862000,
+    "payload": {},
+    "id": "db498b02766640f2f2b19a9ef55fbd1cdf189d0af06a213d28c7a750dcd6609f",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "session.start",
+    "sessionId": "gem-legacy-1",
+    "ts": 1735689600000,
+    "payload": {
+      "source": "transcript"
+    },
+    "id": "19dce511ed8e8a7a83a728039c4c680373402defd54e30bee590c3c4d30676cd",
+    "cwd": "/work/legacy"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "gem-legacy-1",
+    "ts": 1735689601000,
+    "payload": {
+      "text": "hello"
+    },
+    "id": "b203427df5ff82084597c5669928fc229d83be89b5dd1393bea05f57feb92a4a",
+    "cwd": "/work/legacy"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "gem-legacy-1",
+    "ts": 1735689602000,
+    "payload": {
+      "provider": "google",
+      "ok": true
+    },
+    "id": "9a56943efb0aa10ad843d24b26f7bd08b2599bc3449ae9995dab7df425db7586",
+    "usage": {
+      "inputTokens": 10,
+      "outputTokens": 2
+    },
+    "cwd": "/work/legacy"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "gem-legacy-1",
+    "ts": 1735689602000,
+    "payload": {
+      "text": "Hi."
+    },
+    "id": "6f153b8a2c5a9947783e4c6817d3be498fef95953fe29c8d05e2be43f130ec19",
+    "cwd": "/work/legacy"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "gem-legacy-1",
+    "ts": 1735689602000,
+    "payload": {},
+    "id": "558a4518e30ea755ed39fed6a5e9330fb34d87143a27bce63e157673e99cbfce",
+    "cwd": "/work/legacy"
+  }
+]

@@ -1,0 +1,25 @@
+{
+  "name": "eve-agent-example",
+  "private": true,
+  "type": "module",
+  "description": "Minimal eve agent (one tool, one subagent) traced and evaluated with coding.sh.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "eve dev",
+    "serve": "eve dev --no-ui",
+    "info": "eve info --json",
+    "ask": "node scripts/ask.mjs",
+    "eval:eve": "eve eval",
+    "eval:coding-sh": "node evals/coding-sh/experiment.ts",
+    "import:traces": "node scripts/import-traces.ts"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "^1.9.0",
+    "@vercel/otel": "^2.3.0",
+    "ai": "^7.0.137",
+    "eve": "1.0.0-rc.6",
+    "zod": "^4.1.0"
+  }
+}

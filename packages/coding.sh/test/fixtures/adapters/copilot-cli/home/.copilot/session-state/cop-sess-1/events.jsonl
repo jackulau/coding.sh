@@ -1,0 +1,15 @@
+{"id":"e1","parentId":null,"timestamp":"2026-09-21T10:00:00.000Z","type":"session.start","data":{"sessionId":"cop-sess-1","copilotVersion":"1.0.12","producer":"copilot-agent","selectedModel":"claude-sonnet-4.5","context":{"cwd":"/work/demo","gitRoot":"/work/demo","branch":"main","headCommit":"0123456789abcdef0123456789abcdef01234567"}}}
+{"id":"e2","parentId":"e1","timestamp":"2026-09-21T10:00:01.000Z","type":"user.message","data":{"content":"Add a README and make the tests pass"}}
+{"id":"e3","parentId":"e2","timestamp":"2026-09-21T10:00:02.000Z","type":"assistant.message","data":{"content":"I'll create the README.","model":"claude-sonnet-4.5"}}
+{"id":"e4","parentId":"e3","timestamp":"2026-09-21T10:00:02.100Z","type":"tool.execution_start","data":{"toolCallId":"call-1","toolName":"create","arguments":{"path":"/work/demo/README.md","file_text":"# Demo\n"}}}
+{"id":"e5","parentId":"e4","timestamp":"2026-09-21T10:00:02.400Z","type":"tool.execution_complete","data":{"toolCallId":"call-1","success":true,"result":{"content":"Created file"}}}
+{"id":"e6","parentId":"e5","timestamp":"2026-09-21T10:00:03.000Z","type":"tool.execution_start","data":{"toolCallId":"call-2","toolName":"bash","arguments":{"command":"npm test"}}}
+{"id":"e7","parentId":"e6","timestamp":"2026-09-21T10:00:05.000Z","type":"tool.execution_complete","data":{"toolCallId":"call-2","success":false,"result":{"content":"  2 passing (8ms)\n  1 failing\n"},"error":{"message":"exit code 1"}}}
+{"id":"e7b","parentId":"e7","timestamp":"2026-09-21T10:00:05.500Z","type":"subagent.started","data":{"toolCallId":"call-sub","agentName":"explore","agentDisplayName":"Explore","agentDescription":"Explores the codebase"}}
+{"id":"e8","parentId":"e7","timestamp":"2026-09-21T10:00:06.000Z","type":"tool.execution_start","agentId":"sub-a1","data":{"toolCallId":"call-3","toolName":"mcp__github__search_code","arguments":{"query":"add"},"mcpServerName":"github"}}
+{"id":"e9","parentId":"e8","timestamp":"2026-09-21T10:00:06.500Z","type":"tool.execution_complete","agentId":"sub-a1","data":{"toolCallId":"call-3","success":true,"result":{"content":"2 hits"}}}
+{"id":"e9b","parentId":"e9","timestamp":"2026-09-21T10:00:06.800Z","type":"subagent.completed","data":{"toolCallId":"call-sub","agentName":"explore","agentDisplayName":"Explore","durationMs":1300,"totalTokens":900,"totalToolCalls":1}}
+{"id":"e10","parentId":"e9","timestamp":"2026-09-21T10:00:07.000Z","type":"session.model_change","data":{"previousModel":"claude-sonnet-4.5","newModel":"gpt-5"}}
+{"id":"e11","parentId":"e10","timestamp":"2026-09-21T10:00:08.000Z","type":"user.message","data":{"content":"thanks"}}
+{"id":"e12","parentId":"e11","timestamp":"2026-09-21T10:00:09.000Z","type":"session.compaction_start","data":{}}
+{"id":"e13","parentId":"e12","timestamp":"2026-09-21T10:00:10.000Z","type":"session.shutdown","data":{"currentModel":"gpt-5","totalApiDurationMs":4200,"modelMetrics":{"claude-sonnet-4.5":{"requests":{"count":3,"cost":0.02},"usage":{"inputTokens":3000,"outputTokens":200,"cacheReadTokens":1500,"cacheWriteTokens":100}},"gpt-5":{"requests":{"count":1,"cost":0.01},"usage":{"inputTokens":500,"outputTokens":20}}}}}

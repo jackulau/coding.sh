@@ -1,0 +1,33 @@
+# CLI effectiveness suite for coding.sh's own CLI.
+# Contract: docs/DOGFOOD.md §3.1 and docs/TOOL-EVALS.md §3 (task format).
+# Runner: scripts/dogfood/cli-suite.mjs (validate | run).
+#
+# Splits:
+#   dev      tasks/*.toml in this directory (committed; fix agents may read them)
+#   heldout  *.toml in heldoutDir, outside the repo, never committed. The headline
+#            score (cli.heldout.success) uses only this split.
+id = "codingsh"
+heldoutDir = "~/.coding.sh/dogfood/heldout"
+
+[target]
+kind = "cli"
+bin = "coding.sh"
+# ${cli} is the dist/cli.mjs of the build under test.
+command = ["node", "${cli}"]
+docs = ["docs/**/*.md", "README.md"]
+usageExitCodes = [2]
+usagePatterns = ["unknown (option|flag|command)", "unrecognized", "did you mean", "^usage:", "missing argument"]
+
+# Every task starts from the same deterministic world (see fixtures/make-home.mjs).
+[setup]
+commands = ["node ${fixtures}/make-home.mjs --seed ${seed} --out ${trial} --cli ${cli} --answers ${answersFile}"]
+
+[defaults.budget]
+turns = 25
+wallMs = 300000
+costUsd = 0.50
+
+[drivers]
+# Agent drivers run only with `--mode full` and when the driver's API key is set.
+list = ["agent:claude-code:sonnet", "agent:codex"]
+k = 3

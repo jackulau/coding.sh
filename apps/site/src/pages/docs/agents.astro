@@ -1,0 +1,129 @@
+---
+import DocsLayout from "../../components/docs/DocsLayout.astro";
+import Code from "../../components/docs/Code.astro";
+import { ADAPTER_ROWS, PLANNED_AGENTS } from "../../components/docs/agents";
+import AgentLogo from "../../components/AgentLogo.astro";
+
+const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>   # absolute, quoted path`;
+---
+
+<DocsLayout>
+  <p>
+    Each agent has an adapter in <code>packages/coding.sh/src/adapters</code>. An adapter installs capture, normalizes the agent's events into
+    the <a href="/docs/trace-format">trace format</a>, imports past sessions, drives the agent headless for eval runs, and isolates its config
+    during those runs so your own setup is never touched.
+  </p>
+  <div class="note">
+    <p>
+      <strong>Status:</strong> every adapter below exists in code and is tested against recorded fixtures of that agent's payloads. Agents
+      change their formats often; a nightly job that runs the latest version of each agent is planned, so expect breakage on new versions
+      and please report it.
+    </p>
+  </div>
+
+  <h2 id="tiers">Tiers</h2>
+  <ul>
+    <li><strong>A</strong>: live hooks or a plugin, local transcripts, and a headless mode.</li>
+    <li><strong>B</strong>: the same, but with gaps. Cursor's hooks don't all fire in <code>-p</code> mode and its transcript format is undocumented.</li>
+    <li><strong>C</strong>: no hooks. Capture by wrapping the command: <code>coding.sh run -- &lt;cmd&gt;</code>.</li>
+  </ul>
+
+  <h2 id="matrix">Matrix</h2>
+  <div class="doc-table">
+    <table>
+      <thead>
+        <tr>
+          <th>Agent</th>
+          <th>Tier</th>
+          <th>Live capture</th>
+          <th>Backfill</th>
+          <th>Headless runs</th>
+        </tr>
+      </thead>
+      <tbody>
+        {
+          ADAPTER_ROWS.map((a) => (
+            <tr>
+              <td>
+                <AgentLogo id={a.id} name={a.name} size={18} class="agent-cell" />
+                <br />
+                <code class="t-muted">{a.id}</code>
+              </td>
+              <td>{a.tier}</td>
+              <td>{a.live}</td>
+              <td>{a.backfill ?? "None"}</td>
+              <td>
+                <code>{a.headless}</code>
+              </td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="subagents">Subagents</h2>
+  <p>
+    A subagent appears as <code>subagent.start</code> and <code>subagent.end</code> events in the parent session, paired by
+    <code>subagentId</code>. When the agent keeps a separate transcript or session for the subagent, that becomes a child session whose
+    <code>parent</code> points back. <code>coding.sh sessions --subagents</code> lists child sessions.
+  </p>
+  <div class="doc-table">
+    <table>
+      <thead>
+        <tr>
+          <th>Agent</th>
+          <th>How subagents are captured</th>
+        </tr>
+      </thead>
+      <tbody>
+        {
+          ADAPTER_ROWS.filter((a) => a.id !== "wrapper").map((a) => (
+            <tr>
+              <td class="nowrap"><AgentLogo id={a.id} name={a.name} size={18} class="agent-cell" /></td>
+              <td>{a.subagents}</td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="hook">The hook command</h2>
+  <p>Every adapter installs the same command:</p>
+  <Code code={hook} />
+  <ul>
+    <li>It exits 0 every time and prints nothing, unless an agent's protocol requires a reply (Cursor's <code>beforeSubmitPrompt</code> gets <code>&#123;"continue":true&#125;</code>).</li>
+    <li>It never answers a permission question. Where an agent treats a hook's silence or exit code as a decision (Cursor's permission events, Copilot's <code>preToolUse</code>, Antigravity's <code>PreToolUse</code>, Amp's <code>tool.call</code>), that event is not registered at all.</li>
+    <li>Entries are marked (<code>"_codingsh": true</code> where the format allows) so <code>uninstall</code> removes only ours. Where a format has no room for a marker, ownership is recorded in <code>~/.coding.sh/installs.json</code>.</li>
+    <li>The original file is backed up to <code>~/.coding.sh/backups</code> before every edit.</li>
+  </ul>
+
+  <h2 id="notes">Agent notes</h2>
+  <ul>
+    <li><strong>Codex</strong> runs new hooks only after you trust them with <code>/hooks</code>. coding.sh never writes trust hashes; eval runs pass <code>--dangerously-bypass-hook-trust</code> inside an isolated <code>CODEX_HOME</code>.</li>
+    <li><strong>Cursor</strong> also runs Claude Code hooks from <code>.claude/settings.json</code>. Those payloads are dropped by the Claude Code adapter, so each Cursor event is captured once.</li>
+    <li><strong>Amp</strong> keeps threads server-side, so there is no local backfill.</li>
+    <li><strong>Aider</strong> has no hooks or session ids. Run it through <code>coding.sh run -- aider …</code>; token and cost lines are parsed from its output during eval runs.</li>
+    <li>
+      <strong>Kiro CLI</strong> has no adapter yet, so it is captured at tier C:
+      <code>coding.sh run -- kiro-cli chat --v3 --no-interactive --trust-all-tools "…"</code> records the session's start, end, exit code,
+      duration and file changes, but not its prompts, tool calls or tokens. Kiro's OpenTelemetry export is a daily, admin-configured
+      push of account totals to a public endpoint, not per-session spans, so the local OTLP receiver can't use it. The Kiro IDE is not
+      captured.
+    </li>
+    <li><strong>Gemini CLI</strong>'s consumer tiers moved to Antigravity CLI (<code>agy</code>), which has its own adapter.</li>
+  </ul>
+
+  <h2 id="planned">Planned</h2>
+  <p>Researched, with no adapter yet: {PLANNED_AGENTS.join(", ")}. Until then, <code>coding.sh run --</code> captures them at tier C.</p>
+</DocsLayout>
+
+<style>
+  :global(.agent-cell) {
+    color: var(--text);
+  }
+  :global(.agent-cell .alogo__mark) {
+    color: var(--text-2);
+  }
+</style>

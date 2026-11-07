@@ -1,0 +1,113 @@
+// Session digests: the structured one session_get returns and the markdown
+// one the codingsh://session/<id> resource serves.
+import type { IndexStore, Session } from "../core/types.ts";
+import { clip, countNodes, fmtMs, isRunning, iso, lastActivity, sessionSummary, splitTurns, subagentTree, timeline, turnIndex, type SubagentNode, type TimelineEntry, type TurnInfo } from "./data.ts";
+
+type Obj = Record<string, unknown>;
+
+/** Events read per session for a digest. Longer sessions say `eventsTruncated`. */
+export const DIGEST_EVENT_CAP = 20_000;
+
+export interface DigestOpts {
+  /** 1-based turn; negative counts from the end (-1 = last). */
+  turn?: number;
+  /** Timeline entries per page. */
+  limit: number;
+  offset: number;
+  /** "head" pages from the start; "tail" shows the last `limit` entries (offset ignored). */
+  from?: "head" | "tail";
+  /** Clock for the running/idle call (default Date.now()). */
+  now?: number;
+}
+
+export interface Digest extends Obj {
+  session: Obj;
+  turns: TurnInfo[];
+  timeline: TimelineEntry[];
+}
+
+export async function sessionDigest(index: IndexStore, s: Session, o: DigestOpts): Promise<Digest> {
+  const events = await index.listEvents(s.id, { limit: DIGEST_EVENT_CAP });
+  const turns = splitTurns(events);
+  const idx = turnIndex(turns, s.startedAt);
+  let scope = events;
+  let turnNo: number | undefined;
+  if (o.turn !== undefined && o.turn !== 0) {
+    turnNo = o.turn < 0 ? turns.length + 1 + o.turn : o.turn;
+    const t = turns[turnNo - 1];
+    if (!t) throw new RangeError(`session ${s.id} has ${turns.length} turn(s); turn ${o.turn} does not exist`);
+    scope = t;
+  }
+  const all = timeline(scope, s.startedAt);
+  const start = o.from === "tail" ? Math.max(0, all.length - o.limit) : o.offset;
+  const page = all.slice(start, start + o.limit);
+  const kids = await index.listSessions({ parentSessionId: s.id, limit: 500 });
+  const subagentEvents = events.filter((e) => e.kind === "subagent.start").length;
+  // The turn index is capped so a 300-turn session still fits in a reply.
+  const TURN_CAP = 40;
+  return {
+    session: sessionSummary(s, o.now ?? Date.now()),
+    ...(turnNo !== undefined ? { turn: turnNo } : {}),
+    turnCount: turns.length,
+    turns: turnNo !== undefined ? idx.slice(turnNo - 1, turnNo) : idx.length > TURN_CAP ? [...idx.slice(0, 10), ...idx.slice(-(TURN_CAP - 10))] : idx,
+    ...(turnNo === undefined && idx.length > TURN_CAP ? { turnsOmitted: idx.length - TURN_CAP } : {}),
+    timeline: page,
+    timelineTotal: all.length,
+    ...(o.from !== "tail" && start + o.limit < all.length ? { nextCursor: String(start + o.limit) } : {}),
+    ...(events.length >= DIGEST_EVENT_CAP ? { eventsTruncated: true } : {}),
+    subagents: kids.length + subagentEvents ? { childSessions: kids.length, spawned: subagentEvents } : undefined,
+  };
+}
+
+// ------------------------------------------------------------ markdown
+
+const esc = (s: string) => s.replace(/[\r\n]+/g, " ");
+
+function treeLines(t: SubagentNode[], depth: number, out: string[]): void {
+  for (const n of t) {
+    const bits = [n.type ?? "subagent", n.description ? `"${esc(n.description)}"` : "", n.durationMs !== undefined ? fmtMs(n.durationMs) : "", n.toolCalls !== undefined ? `${n.toolCalls} tools${n.toolErrors ? ` (${n.toolErrors} failed)` : ""}` : "", n.sessionId ? `session ${n.sessionId}` : "", n.ok === false ? "FAILED" : ""].filter(Boolean);
+    out.push(`${"  ".repeat(depth)}- ${bits.join(" · ")}`);
+    treeLines(n.children, depth + 1, out);
+  }
+}
+
+/** Markdown digest of a session: header, turns, the first `maxEntries` timeline lines, subagents. */
+export async function sessionMarkdown(index: IndexStore, s: Session, maxEntries = 120, now = Date.now()): Promise<string> {
+  const events = await index.listEvents(s.id, { limit: DIGEST_EVENT_CAP });
+  const turns = turnIndex(splitTurns(events), s.startedAt);
+  const tl = timeline(events, s.startedAt);
+  const u = s.stats.usage;
+  const lat = s.stats.latency;
+  const lines: string[] = [];
+  lines.push(`# ${esc(clip(s.title, 120) ?? s.id)}`, "");
+  const row = (k: string, v: string | undefined) => {
+    if (v) lines.push(`- **${k}:** ${v}`);
+  };
+  row("Session", `\`${s.id}\``);
+  row("Agent", [s.agent, s.agentVersion, s.model].filter(Boolean).join(" · "));
+  row("Repo", s.repo ? `${s.repo.root}${s.repo.branch ? ` (${s.repo.branch})` : ""}` : s.cwd);
+  row("Started", iso(s.startedAt));
+  const last = lastActivity(s);
+  row("Duration", s.endedAt !== undefined ? fmtMs(s.endedAt - s.startedAt) : isRunning(s, now) ? `running (no end seen; last activity ${iso(last)})` : `${fmtMs(last - s.startedAt)} (no end seen; idle since ${iso(last)})`);
+  row("Activity", `${s.stats.turns} turns, ${s.stats.toolCalls} tool calls${s.stats.toolErrors ? ` (${s.stats.toolErrors} failed)` : ""}, ${s.stats.filesChanged} files changed`);
+  if (s.stats.testsPassed !== undefined || s.stats.testsFailed !== undefined) row("Tests", `${s.stats.testsPassed ?? 0} passed, ${s.stats.testsFailed ?? 0} failed`);
+  if (u) row("Tokens", `in ${u.inputTokens ?? 0}, out ${u.outputTokens ?? 0}, cache read ${u.cacheReadTokens ?? 0}${u.costUsd !== undefined ? `, $${u.costUsd.toFixed(4)}` : ""}`);
+  if (lat?.llmCalls) row("Latency", `${lat.llmCalls} model calls, p50 ${fmtMs(lat.llmP50Ms)}, p95 ${fmtMs(lat.llmP95Ms)}${lat.ttftP50Ms !== undefined ? `, TTFT p50 ${fmtMs(lat.ttftP50Ms)}` : ""}`);
+  if (s.flags.length) row("Flags", s.flags.join(", "));
+  if (s.parent) row("Parent", `\`${s.parent.sessionId}\``);
+  if (turns.length > 1) {
+    lines.push("", "## Turns", "");
+    for (const t of turns.slice(0, 50)) lines.push(`${t.turn}. +${fmtMs(t.at)} ${t.prompt ? `"${esc(t.prompt)}"` : "(no prompt)"} · ${t.toolCalls} tools${t.toolErrors ? ` (${t.toolErrors} failed)` : ""}`);
+    if (turns.length > 50) lines.push(`… ${turns.length - 50} more turns`);
+  }
+  lines.push("", "## Timeline", "");
+  for (const e of tl.slice(0, maxEntries)) lines.push(`- \`+${fmtMs(e.at)}\` **${e.kind}** ${esc(e.text)}`);
+  if (tl.length > maxEntries) lines.push(`- … ${tl.length - maxEntries} more entries (use the session_get tool with a cursor)`);
+  if (!tl.length) lines.push("_No events._");
+  const tree = await subagentTree(index, s.id);
+  if (tree.length) {
+    lines.push("", `## Subagents (${countNodes(tree)})`, "");
+    treeLines(tree, 0, lines);
+  }
+  return lines.join("\n") + "\n";
+}

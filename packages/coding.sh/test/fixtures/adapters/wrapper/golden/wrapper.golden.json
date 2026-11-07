@@ -1,0 +1,139 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "wrap-sess-1",
+    "ts": 1790000000000,
+    "payload": {
+      "source": "wrapper",
+      "cmd": "my-agent",
+      "args": [
+        "--yes",
+        "fix the tests"
+      ]
+    },
+    "id": "fb01315032284e5832a74900e31ec85f60a3334604a752e726e0eff8902ac855",
+    "blobs": [
+      "6de83bd74499ffc6a640c11012506f9974a481c39bef39f9ab7ae10c8febc903"
+    ],
+    "runId": "run-123",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "notification",
+    "sessionId": "wrap-sess-1",
+    "ts": 1790000001000,
+    "payload": {
+      "kind": "output",
+      "stream": "stdout",
+      "text": "collected 5 items\n\n==================== 1 failed, 4 passed in 0.31s ====================\n"
+    },
+    "id": "38723fecb2b11e9911c3962c99a5526250f45f4b58922368c4807c47aba7317f",
+    "blobs": [
+      "5c09b2cec5daac658671cddca1d9186426ef7bcc147510c624c22364e5597653"
+    ],
+    "runId": "run-123",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "wrap-sess-1",
+    "ts": 1790000001000,
+    "payload": {
+      "runner": "pytest",
+      "passed": 4,
+      "failed": 1,
+      "skipped": 0,
+      "source": "output"
+    },
+    "id": "c3d584f3d4adc311cd71ec674d16ad8d635a02c9c9a0a36fa9ccca80998cd248",
+    "runId": "run-123",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "wrap-sess-1",
+    "ts": 1790000002000,
+    "payload": {
+      "path": "src/app.py",
+      "op": "modify",
+      "additions": 3,
+      "deletions": 1
+    },
+    "id": "7dbb078d06b86dc2933eb543f186be900dd6fc6bed29a4e870872cc7141834f6",
+    "blobs": [
+      "3947d956b2df77231375db7816d9b85778ef703a6f8986deaf7d1c4bb70752dc"
+    ],
+    "runId": "run-123",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "wrap-sess-1",
+    "ts": 1790000002000,
+    "payload": {
+      "path": "assets/logo.png",
+      "op": "add",
+      "additions": 0,
+      "deletions": 0,
+      "binary": true
+    },
+    "id": "d4126010b362b25418e45a8e4f309fbf7f67754141fd56603c50571976a12940",
+    "blobs": [
+      "f595f863149a8d5b77aa2f74d7f151b816fbc38e88d5e6c936afd6808e70dfd5"
+    ],
+    "runId": "run-123",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "error",
+    "sessionId": "wrap-sess-1",
+    "ts": 1790000003000,
+    "payload": {
+      "message": "my-agent exited with code 1",
+      "exitCode": 1
+    },
+    "id": "335028177007001d90bbae3e0538d963a91329ecfdd33c09a769e92cf736d6e8",
+    "blobs": [
+      "db9392576359da70689ce98409dae394e4811f83b9994e69c1894b48b0d2ef85"
+    ],
+    "runId": "run-123",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "wrap-sess-1",
+    "ts": 1790000003000,
+    "payload": {
+      "reason": "exit:1",
+      "exitCode": 1,
+      "startSnapshot": "aaaa",
+      "endSnapshot": "bbbb",
+      "patch": true
+    },
+    "id": "8ca2913fea5cba40ce86077f4af208311b0347bd3d524a8364a9e9c1c75f6c53",
+    "durationMs": 3000,
+    "blobs": [
+      "6c83e4dbcd93ecb0bce60c38bab8d8941e9ad3ee2b60599a3c39ed680e3c9b1d"
+    ],
+    "runId": "run-123",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "session.start",
+    "sessionId": "wrapper-1d203706417286aa4be42572",
+    "ts": 1790000004000,
+    "payload": {
+      "source": "wrapper",
+      "cmd": "aider",
+      "args": [
+        "--message",
+        "hi"
+      ]
+    },
+    "id": "2b3309262dc28bcd0cd68161a89f1abaf55130d69f63fba68a7a61f22fe97987",
+    "blobs": [
+      "d813c5f557b54fe32eece96452b8a01e49dc124f89e194c907994763e4230f1f"
+    ],
+    "cwd": "/work/demo"
+  }
+]

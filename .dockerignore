@@ -1,0 +1,17 @@
+# Whitelist: the image only needs the workspace manifests and the packages it builds.
+*
+!package.json
+!package-lock.json
+!packages/
+# npm ci checks every workspace against the lockfile, so keep the other manifests.
+!apps/*/package.json
+
+**/node_modules
+**/dist
+**/*.tgz
+**/.venv
+**/__pycache__
+**/*.pyc
+**/.env
+**/.env.*
+**/.DS_Store

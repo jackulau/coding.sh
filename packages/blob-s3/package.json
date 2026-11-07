@@ -1,0 +1,26 @@
+{
+  "name": "coding.sh-store-s3",
+  "version": "0.0.1",
+  "description": "S3 / R2 / MinIO blob store for coding.sh (s3:// URLs). Zero dependencies.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.15"
+  },
+  "peerDependencies": {
+    "coding.sh": ">=0.0.1"
+  },
+  "scripts": {
+    "test": "node --no-warnings --test \"test/**/*.test.js\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "npm run typecheck && npm test"
+  }
+}

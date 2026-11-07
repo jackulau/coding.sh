@@ -1,0 +1,25 @@
+{
+  "name": "@coding.sh/site",
+  "private": true,
+  "type": "module",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build && node scripts/gen-agent-text.mjs",
+    "preview": "astro preview",
+    "check": "astro check",
+    "og": "node scripts/gen-og.mjs",
+    "astro": "astro",
+    "icons": "node scripts/gen-icons.mjs"
+  },
+  "dependencies": {
+    "@astrojs/sitemap": "^3.6.0",
+    "@tailwindcss/vite": "^4.1.17",
+    "astro": "^5.16.4",
+    "tailwindcss": "^4.1.17"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.10",
+    "typescript": "^5.9.3"
+  }
+}

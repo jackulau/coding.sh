@@ -1,0 +1,511 @@
+---
+// Docs shell: the site Layout and Nav, a sidebar on wide screens, a disclosure
+// menu on narrow ones (works without JS), the page, then prev/next. Title and
+// description come from nav.ts so the sidebar, <title> and llms.txt agree.
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import Layout from "../../layouts/Layout.astro";
+import Nav from "../Nav.astro";
+import { SITE } from "../../data/site";
+import { DOC_GROUPS, docPage, neighbours } from "./nav";
+
+const path = Astro.url.pathname.length > 1 ? Astro.url.pathname.replace(/\/+$/, "") : Astro.url.pathname;
+const page = docPage(path);
+const { prev, next } = neighbours(path);
+const isIndex = page.path === "/docs";
+const title = isIndex ? `Docs · ${SITE.name}` : `${page.title} · ${SITE.name} docs`;
+const breadcrumbs = isIndex
+  ? [{ name: "Docs", path: "/docs" }]
+  : [
+      { name: "Docs", path: "/docs" },
+      { name: page.label, path: page.path },
+    ];
+// Title card from scripts/gen-og.mjs (npm run og).
+const ogCard = `/og/${isIndex ? "docs" : `docs-${page.path.slice("/docs/".length).replace(/\//g, "-")}`}.png`;
+// A page added since the cards were last generated falls back to the site card.
+const ogImage = existsSync(join(process.cwd(), "public", ogCard)) ? ogCard : "/og-image.png";
+
+// Headings link to themselves (#id), rendered into the HTML, so no script needed.
+const body = (await Astro.slots.render("default")).replace(
+  /<(h[23]) id="([^"]+)"([^>]*)>([\s\S]*?)<\/\1>/g,
+  (_, tag, id, rest, inner) => `<${tag} id="${id}"${rest}><a class="h-anchor" href="#${id}">${inner}</a></${tag}>`,
+);
+---
+
+<Layout title={title} description={page.summary} breadcrumbs={breadcrumbs} image={ogImage}>
+  <Nav />
+  <div class="wrap docs">
+    <aside class="docs__side" aria-label="Docs">
+      <nav class="docs__toc">
+        {
+          DOC_GROUPS.map((g) => (
+            <div class="docs__group">
+              <p class="docs__group-label">{g.label}</p>
+              <ul>
+                {g.pages.map((p) => (
+                  <li>
+                    <a href={p.path} class="docs__link" aria-current={p.path === page.path ? "page" : undefined}>
+                      {p.label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))
+        }
+      </nav>
+    </aside>
+
+    <div class="docs__body">
+      <details class="docs__menu" data-docs-menu>
+        <summary class="docs__menu-sum">
+          <span class="docs__menu-kicker">Docs</span>
+          <span class="docs__menu-current">{page.label}</span>
+          <svg class="docs__menu-chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
+            <path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path>
+          </svg>
+        </summary>
+        <nav class="docs__menu-list" aria-label="Docs">
+          {
+            DOC_GROUPS.map((g) => (
+              <div class="docs__group">
+                <p class="docs__group-label">{g.label}</p>
+                <ul>
+                  {g.pages.map((p) => (
+                    <li>
+                      <a href={p.path} class="docs__link" aria-current={p.path === page.path ? "page" : undefined}>
+                        {p.label}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))
+          }
+        </nav>
+      </details>
+
+      <main id="main" class="doc">
+        <h1>{page.title}</h1>
+        <p class="lede doc__lede">{page.summary}</p>
+        <Fragment set:html={body} />
+
+        {
+          (prev || next) && (
+            <nav class="pager" aria-label="Previous and next page" data-agent-skip>
+              {prev ? (
+                <a href={prev.path} class="pager__link" rel="prev">
+                  <span class="pager__dir">Previous</span>
+                  <span class="pager__title">{prev.label}</span>
+                </a>
+              ) : (
+                <span />
+              )}
+              {next && (
+                <a href={next.path} class="pager__link pager__link--next" rel="next">
+                  <span class="pager__dir">Next</span>
+                  <span class="pager__title">{next.label}</span>
+                </a>
+              )}
+            </nav>
+          )
+        }
+      </main>
+    </div>
+  </div>
+</Layout>
+
+<style>
+  .doc :global(.h-anchor) {
+    color: inherit;
+    text-decoration: none;
+  }
+  .doc :global(.h-anchor)::after {
+    content: "#";
+    margin-left: 0.4em;
+    color: var(--text-faint);
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+  .doc :global(.h-anchor:hover)::after,
+  .doc :global(.h-anchor:focus-visible)::after {
+    opacity: 1;
+  }
+
+  .docs {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    padding-top: calc(var(--nav-h) + 1.25rem);
+    padding-bottom: 5rem;
+  }
+  @media (min-width: 1024px) {
+    .docs {
+      grid-template-columns: 13rem minmax(0, 1fr);
+      gap: 4rem;
+      padding-top: calc(var(--nav-h) + 3rem);
+    }
+  }
+  .docs__body {
+    min-width: 0;
+  }
+
+  /* ---------- Sidebar (wide screens) ---------- */
+  .docs__side {
+    display: none;
+  }
+  @media (min-width: 1024px) {
+    .docs__side {
+      display: block;
+    }
+    .docs__toc {
+      position: sticky;
+      top: calc(var(--nav-h) + 3rem);
+      max-height: calc(100dvh - var(--nav-h) - 4rem);
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: var(--line-strong) transparent;
+      padding-bottom: 1rem;
+    }
+  }
+  .docs__group + .docs__group {
+    margin-top: 1.5rem;
+  }
+  .docs__group-label {
+    margin-bottom: 0.35rem;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+  }
+  .docs__group ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .docs__link {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-height: 2rem;
+    padding-left: 0.75rem;
+    margin-left: -0.75rem;
+    font-size: var(--fs-base);
+    color: var(--text-2);
+    border-radius: var(--radius-sm);
+    transition: color var(--hover-out) ease;
+  }
+  .docs__link[aria-current="page"] {
+    color: var(--text);
+    font-weight: 520;
+  }
+  .docs__link[aria-current="page"]::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.5rem;
+    bottom: 0.5rem;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--text);
+  }
+  @media (pointer: coarse) {
+    .docs__link {
+      min-height: 2.75rem;
+    }
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .docs__link:hover {
+      color: var(--text);
+      transition-duration: var(--hover-in);
+    }
+  }
+
+  /* ---------- Menu (narrow screens) ---------- */
+  .docs__menu {
+    margin-bottom: 2rem;
+    border-radius: var(--radius);
+    background: var(--term);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+  }
+  @media (min-width: 1024px) {
+    .docs__menu {
+      display: none;
+    }
+  }
+  .docs__menu-sum {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 2.75rem;
+    padding: 0 1rem;
+    cursor: pointer;
+    list-style: none;
+    font-size: var(--fs-base);
+    user-select: none;
+  }
+  .docs__menu-sum::-webkit-details-marker {
+    display: none;
+  }
+  .docs__menu-kicker {
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+  }
+  .docs__menu-current {
+    flex: 1;
+    min-width: 0;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .docs__menu-chev {
+    flex: none;
+    color: var(--text-muted);
+    transition: transform 200ms var(--ease-out);
+  }
+  .docs__menu[open] .docs__menu-chev {
+    transform: rotate(180deg);
+  }
+  .docs__menu-list {
+    padding: 0.25rem 1rem 1rem;
+    border-top: 1px solid var(--line);
+  }
+  .docs__menu-list .docs__group:first-child {
+    margin-top: 0.75rem;
+  }
+  .docs__menu-list .docs__link {
+    margin-left: 0;
+  }
+  .docs__menu-list .docs__link[aria-current="page"]::before {
+    left: -0.75rem;
+    margin-left: 0.75rem;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .docs__menu-chev,
+    .docs__link {
+      transition: none;
+    }
+  }
+
+  /* ---------- Pager ---------- */
+  .pager {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    margin-top: 4rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--line);
+  }
+  .pager__link {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+    transition:
+      background-color var(--hover-out) ease,
+      transform 140ms var(--ease-out);
+  }
+  .pager__link:active {
+    transform: scale(0.98);
+  }
+  .pager__link--next {
+    grid-column: 2;
+    text-align: right;
+  }
+  .pager__dir {
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+  }
+  .pager__title {
+    color: var(--text);
+    font-weight: 520;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .pager__link:hover {
+      background: var(--term);
+      transition-duration: var(--hover-in);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .pager__link {
+      transition: none;
+    }
+    .pager__link:active {
+      transform: none;
+    }
+  }
+</style>
+
+<style is:global>
+  /* Docs prose. Scoped to .doc so the landing page is untouched. */
+  .doc {
+    max-width: 46rem;
+    color: var(--text-2);
+    font-size: 1rem;
+    line-height: 1.7;
+  }
+  .doc h1 {
+    font-size: clamp(2rem, 1.5rem + 2vw, 2.75rem);
+    line-height: 1.08;
+    letter-spacing: -0.04em;
+  }
+  .doc__lede {
+    margin-top: 1rem;
+    max-width: 38rem;
+  }
+  .doc h2 {
+    margin-top: 3.25rem;
+    font-size: clamp(1.35rem, 1.15rem + 0.8vw, 1.625rem);
+    line-height: 1.2;
+    letter-spacing: -0.03em;
+  }
+  .doc h3 {
+    margin-top: 2rem;
+  }
+  .doc h2 + *,
+  .doc h3 + * {
+    margin-top: 0.75rem;
+  }
+  .doc > p,
+  .doc > ul,
+  .doc > ol,
+  .doc > .doc-table,
+  .doc > figure,
+  .doc > .code,
+  .doc > .note {
+    margin-top: 1rem;
+  }
+  .doc h2 + p,
+  .doc h3 + p {
+    margin-top: 0.6rem;
+  }
+  .doc strong {
+    color: var(--text);
+    font-weight: 520;
+  }
+  .doc a:not([class]) {
+    color: var(--text);
+    text-decoration: underline;
+    text-decoration-color: var(--line-strong);
+    text-underline-offset: 3px;
+    transition: text-decoration-color var(--hover-out) ease;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .doc a:not([class]):hover {
+      text-decoration-color: var(--text-2);
+      transition-duration: var(--hover-in);
+    }
+  }
+  .doc :not(pre) > code {
+    font-size: 0.875em;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+  .doc ul,
+  .doc ol {
+    padding-left: 1.25rem;
+  }
+  .doc ul {
+    list-style: disc;
+  }
+  .doc ol {
+    list-style: decimal;
+  }
+  .doc li + li {
+    margin-top: 0.4rem;
+  }
+  .doc li::marker {
+    color: var(--text-muted);
+  }
+
+  /* Tables scroll inside their own box, never the page. */
+  .doc-table {
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line-strong) transparent;
+    border-radius: var(--radius);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+  }
+  .doc-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--fs-base);
+    line-height: 1.5;
+  }
+  .doc-table th,
+  .doc-table td {
+    padding: 0.6rem 0.9rem;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--line);
+  }
+  .doc-table tr:last-child td {
+    border-bottom: 0;
+  }
+  .doc-table th {
+    font-weight: 520;
+    color: var(--text);
+    background: var(--term-bar);
+    white-space: nowrap;
+  }
+  .doc-table td:first-child {
+    color: var(--text);
+  }
+  .doc-table code {
+    font-size: 0.86em;
+  }
+  .doc-table .nowrap {
+    white-space: nowrap;
+  }
+
+  /* A short aside: status, caveats. */
+  .note {
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius);
+    background: var(--term);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+    font-size: var(--fs-base);
+    line-height: 1.6;
+  }
+  .note > * + * {
+    margin-top: 0.5rem;
+  }
+  .note strong:first-child {
+    color: var(--text);
+  }
+
+  /* Status, as bare mono text beside the feature: no box, no badge. Neutral
+     greys by design; pass/fail colours stay reserved for results. */
+  .tag {
+    display: inline;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    font-weight: 500;
+    white-space: nowrap;
+    vertical-align: 0.1em;
+    color: var(--text-2);
+  }
+  .tag--built {
+    color: var(--text);
+  }
+  .tag--planned {
+    color: var(--text-muted);
+  }
+  .doc h2 .tag,
+  .doc h3 .tag {
+    margin-left: 0.5rem;
+    letter-spacing: 0;
+  }
+  .doc figure {
+    margin-inline: 0;
+  }
+</style>

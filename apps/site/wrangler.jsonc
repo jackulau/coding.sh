@@ -1,0 +1,18 @@
+// coding.sh site: static Astro build served by Cloudflare Workers static assets.
+// Deploy: `npx wrangler deploy` from apps/site after `npm run build`
+// (CI does this on the self-hosted runner: .github/workflows/site.yml).
+// The coding.sh / www.coding.sh custom domains are attached to this worker.
+// Rollback: `npx wrangler rollback` (previous version) — or reattach the domains
+// to the old `coding-sh-placeholder` worker.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "coding-sh-site",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page",
+    "html_handling": "auto-trailing-slash"
+  },
+  "workers_dev": true,
+  "preview_urls": true
+}

@@ -1,0 +1,293 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000000000,
+    "payload": {
+      "source": "new"
+    },
+    "id": "251ed9a14c50862b06526a0d9d583993c47e0153c178bb69ddd1a47fadd4b76c",
+    "blobs": [
+      "d6e0b4a9d3e097d287c76a7b23bbf7d35aa268ac73016898998acb31764057f9"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000000000,
+    "payload": {
+      "text": "Add a README and make the tests pass"
+    },
+    "id": "6c3c43be16d9aea809d332cec4cc910c838820362d11c01a2995410f16d8db2a",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000001000,
+    "payload": {
+      "text": "Also keep it short"
+    },
+    "id": "6b216722b1d32954f87a1175c20b71ac9a33a9200c112b1405895c2e8a549c4e",
+    "blobs": [
+      "1462c75b9dc8fed14443e572f6d262753f0a184b65e40c21bacb716227772806"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000002000,
+    "payload": {
+      "tool": "create",
+      "toolUseId": "hook-426c1e6d11344a14",
+      "input": {
+        "path": "/work/demo/README.md",
+        "file_text": "# Demo\n"
+      }
+    },
+    "id": "ac91dceebe7ee4176a2d8a415d9f598634beec764caec3efa2f5f3c9380818a1",
+    "blobs": [
+      "9cec92ce65f3871239bab69c15cc509aa6596c4ab75b371885a99133ba5243ca"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000002000,
+    "payload": {
+      "tool": "create",
+      "toolUseId": "hook-426c1e6d11344a14",
+      "ok": true,
+      "output": "Created file /work/demo/README.md"
+    },
+    "id": "645d89d4748994a67fe7424d1246d57260b0f3cdd9866d2590cfb7ecc5d55a02",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000002000,
+    "payload": {
+      "path": "README.md",
+      "op": "add",
+      "tool": "create",
+      "toolUseId": "hook-426c1e6d11344a14"
+    },
+    "id": "6f24f483d03d0106779e7292ba9422b3333ff5aaba958af9fc5a69f482321c94",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000003000,
+    "payload": {
+      "tool": "bash",
+      "toolUseId": "hook-c63b183405d1ff78",
+      "input": {
+        "command": "npx vitest run",
+        "description": "run tests"
+      },
+      "verify": true
+    },
+    "id": "1457f9df1342a1296d3c5aae7f9cb88ba894adb834a7b9281cf99a1b5158470e",
+    "blobs": [
+      "cdd497b031b3db3e50010bdb11214922ed8da20ff5410545d0db7955314628fc"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000003000,
+    "payload": {
+      "tool": "bash",
+      "toolUseId": "hook-c63b183405d1ff78",
+      "ok": true,
+      "output": " RUN  v3.2.0\n\n Test Files  1 failed | 2 passed (3)\n      Tests  1 failed | 4 passed (5)\n"
+    },
+    "id": "9ed8983c291c45c0ced669d4f6a92ee9cc9cfd72aae8ee9580695d03bd1d30a3",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000003000,
+    "payload": {
+      "runner": "vitest",
+      "passed": 4,
+      "failed": 1,
+      "skipped": 0,
+      "toolUseId": "hook-c63b183405d1ff78"
+    },
+    "id": "71fec50e39757d074d25d0a69316c85d6d87bb710e43015c6edd720d26d1d71a",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000004000,
+    "payload": {
+      "tool": "view",
+      "toolUseId": "hook-aa48e5a9dccabec7",
+      "input": {
+        "path": "/work/demo/nope.md"
+      }
+    },
+    "id": "443640eaf308ba433495820e5e4a40b1fceb983b378928b8106f4945ed7eb3c4",
+    "blobs": [
+      "7f8bda5dea41df7508da48b0e74945182cbd9dece7a474b3e88285661f274724"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000004000,
+    "payload": {
+      "tool": "view",
+      "toolUseId": "hook-aa48e5a9dccabec7",
+      "ok": false,
+      "output": "ENOENT: no such file",
+      "error": "ENOENT: no such file"
+    },
+    "id": "fde911ad8d7803f72973ad587de5064f90604a286c1905c218bc61fd4f2b0c0a",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "subagent.start",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000005000,
+    "payload": {
+      "subagentId": "explore",
+      "type": "explore",
+      "description": "Explores the codebase"
+    },
+    "id": "54b885e8812ace4d0ba7fc823b868aa4f1a8fa47381def68cc17d378e1b74a6e",
+    "blobs": [
+      "89167eb92c44753f083c1a5fa5102d0833bbd91ad6fd566900e94c2e0d6306ce"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "subagent.end",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000006000,
+    "payload": {
+      "subagentId": "explore",
+      "agentId": "sub-a1",
+      "type": "explore",
+      "ok": true,
+      "stopReason": "end_turn",
+      "result": "Found 3 test files under test/."
+    },
+    "id": "d122a07020d012773c6f5a7d7fc40fb41c6ee94624af73686df8426ced2bf63b",
+    "subagentId": "sub-a1",
+    "blobs": [
+      "d4157337cbb87609089cd54ea7518c6f1ed288318046e6c3fa882ef0450990b5"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "error",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000007000,
+    "payload": {
+      "message": "rate limited",
+      "name": "RateLimitError",
+      "recoverable": true
+    },
+    "id": "a11651d8e214f171963ee8e3e2fde69417e24483f367700764e249030249c4ad",
+    "blobs": [
+      "dc855ceb6c822193aed959ce65e220983daa50aa493c804f58d7035624c0e568"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "context.compact",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000008000,
+    "payload": {
+      "trigger": "auto"
+    },
+    "id": "4db452432f561615a8f1291c1fbe26a05c9e910be40f2d8dcd024b836885298e",
+    "blobs": [
+      "917b9b3d2e567dd5e6357d1365c04ea1779e70b56957d3e22956eaf27075e184"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000009000,
+    "payload": {
+      "tool": "edit",
+      "toolUseId": "hook-0388b6fd9055fab9",
+      "input": {
+        "path": "/work/demo/src/a.ts",
+        "old_str": "x",
+        "new_str": "y"
+      }
+    },
+    "id": "1bbb845e9955c6ea42cd75d1a17b5c909aa1432538da0e7f5f4301875c4d7537",
+    "blobs": [
+      "f61104078cb6ab80ce805d8354ee50c10585a69b97b9206cf55f6757d7111f0f"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000009000,
+    "payload": {
+      "tool": "edit",
+      "toolUseId": "hook-0388b6fd9055fab9",
+      "ok": true,
+      "output": "Edited"
+    },
+    "id": "5c428512e786e53082344f0ad33565a8935ea785837afff105031d12513079a8",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000009000,
+    "payload": {
+      "path": "src/a.ts",
+      "op": "modify",
+      "tool": "edit",
+      "toolUseId": "hook-0388b6fd9055fab9"
+    },
+    "id": "21f5c72f5e0116a1abc91eedec0b668a7e049b4b5a6fb41d79c3a0b79fe9f0a0",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000010000,
+    "payload": {
+      "stopReason": "end_turn",
+      "transcriptPath": "/home/dev/.copilot/session-state/cop-sess-1/events.jsonl"
+    },
+    "id": "e5b2b0a7c69fcd710ca270e3cc3dd648edcb0fd3346ee66ed058ac2262000bbc",
+    "blobs": [
+      "7e7924c77adfb10b8abec63517544252071adf7a43ea036ae3771e5c923adc46"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "cop-sess-1",
+    "ts": 1790000011000,
+    "payload": {
+      "reason": "complete"
+    },
+    "id": "d0ed8ca78b938a837887f6ebe1777f33d523fdb68cdbf62b3e43dfcd6b693275",
+    "blobs": [
+      "d6a86e9b2f0a6418ab884d980550b3f7483646c6c512d9fbcb09004d7e47ce29"
+    ],
+    "cwd": "/work/demo"
+  }
+]

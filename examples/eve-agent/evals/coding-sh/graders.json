@@ -1,0 +1,7 @@
+[
+  { "kind": "json-path", "name": "turn-handled", "path": "$.outcome", "equals": "handled" },
+  { "kind": "module", "name": "reply", "module": "./trace-grader.mjs", "export": "reply" },
+  { "kind": "module", "name": "tools", "module": "./trace-grader.mjs", "export": "tools" },
+  { "kind": "module", "name": "delegation", "module": "./trace-grader.mjs", "export": "delegation" },
+  { "kind": "module", "name": "efficiency", "module": "./trace-grader.mjs", "export": "efficiency", "options": { "maxModelCalls": 5 } }
+]

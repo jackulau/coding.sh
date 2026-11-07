@@ -1,0 +1,267 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984801000,
+    "payload": {
+      "source": "transcript"
+    },
+    "id": "9866ce3e30bc380fcfb1f7d759d843ccae0bcc7d8a7849b20eb95b395ace7af2"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984801000,
+    "payload": {
+      "text": "Add input validation to parse()"
+    },
+    "id": "c66efdac7706eeac8e895a32d34e042d181d6e892b39f558d6cd97ad280e2df3"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984802000,
+    "payload": {
+      "provider": "google",
+      "ok": true
+    },
+    "id": "877b7a1fed71d218dfbe103f5814c17698656691f3d1108135c68fafbf513c6e"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984802000,
+    "payload": {
+      "text": "I'll add a guard clause."
+    },
+    "id": "68ebc013f0d9e6ea29526468f6ae9772d1c9b15bafbe4c615e06450c93c0e29d"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984802000,
+    "payload": {
+      "tool": "write_to_file",
+      "toolUseId": "step-1-0",
+      "input": {
+        "TargetFile": "/work/demo/src/parse.ts",
+        "CodeContent": "if (!s) throw new Error()",
+        "Overwrite": true,
+        "toolAction": "Editing",
+        "toolSummary": "guard"
+      }
+    },
+    "id": "4df22beec2c35a9ac0539bb587102b366c5bf5d1bc01d565452289122d81fe69"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984802500,
+    "payload": {
+      "tool": "write_to_file",
+      "toolUseId": "step-1-0",
+      "ok": true,
+      "durationMs": 500,
+      "output": "Created file /work/demo/src/parse.ts"
+    },
+    "id": "b400936e830e5902e4c52492f98c6ec1676df184c0a290cd4a3045847a3857f1",
+    "durationMs": 500
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984802500,
+    "payload": {
+      "path": "/work/demo/src/parse.ts",
+      "op": "modify",
+      "tool": "write_to_file",
+      "toolUseId": "step-1-0"
+    },
+    "id": "c91dac317c08c95bdfff6dbde8c0fbcf4c9a130435550ee8a54ca4c313e68111"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984803000,
+    "payload": {
+      "provider": "google",
+      "ok": true
+    },
+    "id": "9726bc8133e6fbbfbe257f25e7c3b223e1cae37595bc14aed67f2cd55aff1f78"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984803000,
+    "payload": {
+      "tool": "run_command",
+      "toolUseId": "step-3-0",
+      "input": {
+        "CommandLine": "npm test",
+        "Cwd": "/work/demo",
+        "toolAction": "Running",
+        "toolSummary": "tests"
+      },
+      "verify": true
+    },
+    "id": "35fe5205402171edd6fcff5169140205db7b4461968f6c9a7297a6957b1ea052"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984805000,
+    "payload": {
+      "tool": "run_command",
+      "toolUseId": "step-3-0",
+      "ok": true,
+      "durationMs": 2000,
+      "output": "# tests 3\n# pass 2\n# fail 1"
+    },
+    "id": "f452487e91fc78011d2d7b6bebf9c8531541a8bddf1333c105f84569d6232bd3",
+    "durationMs": 2000
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984805000,
+    "payload": {
+      "runner": "node",
+      "passed": 2,
+      "failed": 1,
+      "toolUseId": "step-3-0"
+    },
+    "id": "3375163a59ec4592ba97cc7f3fb4ef1dc77fb5d4992e2c95299cca3c4318621a"
+  },
+  {
+    "kind": "error",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984806000,
+    "payload": {
+      "message": "command exited with code 1"
+    },
+    "id": "569d33abbfa12f05e79663ed665f72c4ac31065f98680ec685d54d9b85a7223a"
+  },
+  {
+    "kind": "context.compact",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984807000,
+    "payload": {
+      "trigger": "auto"
+    },
+    "id": "bddbd437176fdf8c17530f0eef442d6e278cc07845213fc2a05ff64cce73ac35"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984808000,
+    "payload": {},
+    "id": "bd25f9d38c0fcad182452e5469a9b82b033e7dbe656e22796218898a812343ee"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984808000,
+    "payload": {
+      "text": "ok"
+    },
+    "id": "04d0815bcdd903adf7afe66abc4d87c51a5417230984d0543862407278f4a814"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984809000,
+    "payload": {
+      "provider": "google",
+      "ok": true
+    },
+    "id": "7bb9dec2dfe8761c71949f06ae7863ed4016e9e2acf4058e90e7c49a378070b9"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984809000,
+    "payload": {
+      "text": "Checking callers."
+    },
+    "id": "74e6e8fe896a7f0afdc44eee367dbdecc14f515d6dd2f2e01247d69652a8357b"
+  },
+  {
+    "kind": "subagent.start",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984809000,
+    "payload": {
+      "subagentId": "step-8-0",
+      "type": "researcher",
+      "description": "Find other parse() callers"
+    },
+    "id": "fd081b0adc31bc71a80dfd5cf79f02c06393724a2d060617a88e024b8b16a80c",
+    "subagentId": "step-8-0"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984809000,
+    "payload": {
+      "tool": "invoke_subagent",
+      "toolUseId": "step-8-0",
+      "input": {
+        "name": "researcher",
+        "task": "Find other parse() callers"
+      }
+    },
+    "id": "28cdb270934cec2f335586d0a732cc16240d58c5489722ae94cb477550135ec2"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984812000,
+    "payload": {
+      "tool": "invoke_subagent",
+      "toolUseId": "step-8-0",
+      "ok": true,
+      "durationMs": 3000,
+      "output": "No other callers."
+    },
+    "id": "089a6964c5854f658c26c62b42d08dbc238797cf61ccfd321c4cc3f6e2ed1e8f",
+    "durationMs": 3000
+  },
+  {
+    "kind": "subagent.end",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984812000,
+    "payload": {
+      "subagentId": "step-8-0",
+      "type": "researcher",
+      "ok": true
+    },
+    "id": "234bca8c4d349b9f43ffbfa8c43efbc7df0dab777671420f97e29d2f57846315",
+    "subagentId": "step-8-0",
+    "durationMs": 3000
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984813000,
+    "payload": {
+      "provider": "google",
+      "ok": true
+    },
+    "id": "07474514588a43157b811cc890cbc242b2fa0354a0fc763adb36cafc1f69a8e0"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984813000,
+    "payload": {
+      "text": "Done."
+    },
+    "id": "25487586e4bcc20b3571811ff8f9deeacbcf941eba989d5144feed27e58b49a5"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "agy-conv-1",
+    "ts": 1789984813000,
+    "payload": {},
+    "id": "21200361589426eaf3ee90ee709a2606e1afae9d82cc9b6cc77c6e65dca26f83"
+  }
+]

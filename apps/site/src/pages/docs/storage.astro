@@ -1,0 +1,156 @@
+---
+import DocsLayout from "../../components/docs/DocsLayout.astro";
+import Code from "../../components/docs/Code.astro";
+import Tag from "../../components/docs/Tag.astro";
+
+const config = `# ~/.coding.sh/config.toml  (coding.sh config get prints the effective values)
+[store]
+index = "sqlite://~/.coding.sh/index.db"
+blobs = "file://~/.coding.sh/blobs"
+
+[capture]
+mode = "full"                 # or "metadata": no prompts, code or tool output
+redact = ["secrets"]          # "secrets", "env", or "none"
+redactPatterns = []           # extra regexes
+exclude = []                  # repo globs never captured
+maxInlineBytes = 4096         # larger payloads move to blobs
+
+[retention]
+keepSpoolDays = 7
+toolOutputDays = 90`;
+
+const sinks = `[[sinks]]
+kind = "otlp"                           # OTLP/HTTP JSON traces to {endpoint}/v1/traces
+name = "collector"
+endpoint = "http://localhost:4318"
+mode = "metadata"                       # the default for every sink
+
+[[sinks]]
+kind = "http"                           # POSTs {schema, v, mode, events, sessions}
+endpoint = "https://relay.example.com/ingest"
+mode = "full"
+headers = { Authorization = "Bearer \${RELAY_TOKEN}" }   # read from the environment`;
+
+const plugin = `// coding.sh-store-postgres/index.mjs (hypothetical package)
+export function indexStore(url, config) {
+  return new PostgresIndexStore(url);   // implements IndexStore
+}
+
+// coding.sh-sink-kafka/index.mjs (hypothetical package)
+export function sink(sinkConfig, config) {
+  return { name: sinkConfig.name ?? "kafka", mode: sinkConfig.mode, async write(events, sessions, blobs) { /* … */ return { ok: true }; } };
+}`;
+
+const iface = `interface IndexStore {
+  readonly kind: string;
+  migrate(): Promise<void>;
+  close(): Promise<void>;
+  putEvents(batch: AgentEvent[]): Promise<{ inserted: number }>;   // idempotent on event.id
+  upsertSession(session: Session): Promise<void>;
+  getSession(id: string): Promise<Session | undefined>;
+  listSessions(filter?: SessionFilter): Promise<Session[]>;
+  listEvents(sessionId: string, opts?: { kinds?: string[]; limit?: number; offset?: number }): Promise<AgentEvent[]>;
+  search(text: string, opts?: { limit?: number; agent?: string }): Promise<SearchHit[]>;
+  getCursor(source: string): Promise<number>;
+  setCursor(source: string, offset: number): Promise<void>;
+  // plus tasks, harness bundles, runs, labels, referencedBlobs(),
+  // and optional datasets, experiments, judges, kv state and compact()
+}
+
+interface BlobStore {
+  readonly kind: string;
+  put(data: Uint8Array | string): Promise<string>;   // returns the sha256; dedupes
+  get(ref: string): Promise<Uint8Array | undefined>;
+  getText(ref: string): Promise<string | undefined>;
+  has(refs: string[]): Promise<boolean[]>;
+  list(): AsyncIterable<string>;
+  delete(ref: string): Promise<void>;
+}
+
+interface Sink {
+  readonly name: string;
+  readonly mode: "full" | "metadata";
+  write(batch: AgentEvent[], sessions: Session[], blobs: BlobStore): Promise<{ ok: boolean; error?: string; retryAfterMs?: number }>;
+}`;
+---
+
+<DocsLayout>
+  <p>
+    coding.sh keeps two stores with different shapes, plus any number of write-only mirrors. All three are interfaces
+    (<code>src/core/types.ts</code>), chosen by URL scheme in the config.
+  </p>
+
+  <h2 id="index">Index <Tag status="built" /></h2>
+  <p>
+    Small, queryable rows: sessions, events, eval tasks, harness bundles, runs, labels, datasets and experiments. The default is one SQLite file
+    through the built-in <code>node:sqlite</code>, in WAL mode, with an FTS5 table over prompt, reply and tool text for
+    <code>coding.sh search</code>. Writes are idempotent on event id, so re-ingesting the same spool changes nothing.
+  </p>
+
+  <h2 id="blobs">Blobs <Tag status="built" /></h2>
+  <p>
+    Large, write-once content: full tool output, raw source payloads, diffs. Each blob is keyed by the sha256 of its uncompressed bytes, stored
+    as <code>blobs/ab/cd/&lt;sha256&gt;.zst</code> with zstd level 3, and written to a temp file then renamed, so readers never see half a
+    blob. The same <code>CLAUDE.md</code> read in a thousand sessions is stored once. Event payloads larger than
+    <code>maxInlineBytes</code> (4 KB) move to a blob and the event keeps a reference.
+  </p>
+
+  <h2 id="config">Config</h2>
+  <Code title="config.toml" code={config} />
+  <p>
+    A repository can carry its own <code>.coding.sh/config.toml</code>, but because it arrives with <code>git clone</code> it is untrusted: it
+    may only tighten capture (add redaction, exclusions or metadata mode) and adjust snapshot settings. It can never add a sink or move a store, which would let a repository send your
+    sessions somewhere.
+  </p>
+
+  <h2 id="privacy">Redaction and metadata mode</h2>
+  <ul>
+    <li>Redaction runs before anything is written to the index, blobs or sinks. The built-in <code>secrets</code> rules key on vendor token prefixes and on secret-looking names next to values, so code, paths and hashes pass through.</li>
+    <li><code>capture.mode = "metadata"</code> keeps ids, timings, kinds, counts and usage, and drops prompts, code and tool output.</li>
+  </ul>
+
+  <h2 id="sinks">Sinks <Tag status="built" /></h2>
+  <p>
+    A sink mirrors events to somewhere else. Each sink keeps its own cursor and retries with backoff, so a remote that is down never blocks
+    local capture. Remote sinks default to <code>metadata</code> mode: content leaves your machine only when you set <code>mode = "full"</code>.
+  </p>
+  <Code title="config.toml" code={sinks} />
+  <ul>
+    <li><strong><code>otlp</code></strong>: OTLP/HTTP JSON. A session becomes an <code>invoke_agent</code> span, tools <code>execute_tool</code> spans and replies <code>chat</code> spans, with <code>gen_ai.*</code> attributes pinned to semconv 1.37.0. Span ids derive from event ids, so a resent batch de-duplicates.</li>
+    <li><strong><code>http</code></strong>: posts coding.sh/trace JSON as is, for a collector or relay that speaks it.</li>
+    <li>Sinks mirror hook events at ingest. Events from the <a href="/docs/otel">OTLP receiver</a> are not mirrored yet <Tag status="planned" />.</li>
+  </ul>
+
+  <h2 id="remote">Plugging in a remote store</h2>
+  <p>
+    Built-in schemes are <code>sqlite://</code> and <code>memory://</code> for the index, and <code>file://</code> and
+    <code>memory://</code> for blobs. For any other scheme the CLI imports an npm package by convention:
+  </p>
+  <ul>
+    <li><code>coding.sh-store-&lt;scheme&gt;</code> exporting <code>indexStore(url, config)</code> and/or <code>blobStore(url, config)</code>;</li>
+    <li><code>coding.sh-sink-&lt;kind&gt;</code> exporting <code>sink(sinkConfig, config)</code>.</li>
+  </ul>
+  <p>
+    The package must be resolvable from where coding.sh is installed. A missing package gives an error that names it; a package that fails to
+    load surfaces its own error.
+  </p>
+  <Code title="javascript" code={plugin} />
+  <p>
+    The interfaces a plugin implements, abridged. A test suite in <code>src/store/conformance.ts</code> runs against the built-in stores and
+    can be pointed at a new one.
+  </p>
+  <Code title="src/core/types.ts (abridged)" code={iface} />
+  <div class="note">
+    <p>
+      <strong>Planned:</strong> Postgres and S3/R2/GCS stores as separate packages. The plugin loading exists; those packages do not. The npm
+      package doesn't export the TypeScript types yet either, so a plugin copies them from the repository for now.
+    </p>
+  </div>
+
+  <h2 id="gc">Retention and gc</h2>
+  <p>
+    <code>coding.sh gc</code> deletes spool files older than <code>keepSpoolDays</code> once every sink has them, tool-output blobs older than
+    <code>toolOutputDays</code> (diffs and eval tasks are kept), and unreferenced blobs, and trims the judge cache to its size cap. <code>--compact</code> also runs
+    SQLite <code>VACUUM</code>; <code>--dry-run</code> shows what would go.
+  </p>
+</DocsLayout>

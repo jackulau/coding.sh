@@ -1,0 +1,117 @@
+// coding.sh exp run|compare|list: generic dataset experiments (src/experiments).
+import { dirname, resolve } from "node:path";
+import { FileEvalStore } from "../../datasets/store.ts";
+import type { Split } from "../../datasets/types.ts";
+import { compareExperiments } from "../../experiments/compare.ts";
+import { renderComparison, renderExperiment } from "../../experiments/render.ts";
+import { runExperiment } from "../../experiments/run.ts";
+import type { TaskSpec } from "../../experiments/task.ts";
+import { createGrader, type GraderSpec } from "../../graders/index.ts";
+import { FileJudgeCache } from "../../judge/cache.ts";
+import { positiveInt, UsageError } from "../args.ts";
+import { jsonArg, list, num, str, withContext } from "../common.ts";
+import { ago, CliError, plural } from "../output.ts";
+import type { CommandContext } from "../types.ts";
+
+interface ExpSpec {
+  name?: string;
+  dataset?: string;
+  task?: TaskSpec;
+  graders?: GraderSpec[];
+  trials?: number;
+  concurrency?: number;
+  split?: Split;
+}
+
+function isObj(v: unknown): v is Record<string, unknown> {
+  return !!v && typeof v === "object" && !Array.isArray(v);
+}
+
+export async function run(c: CommandContext): Promise<number> {
+  const { out, env } = c;
+  return withContext(c, async (ctx) => {
+    const store = new FileEvalStore({ env, index: ctx.index });
+    switch (c.action) {
+      case "run": {
+        let spec: ExpSpec = {};
+        let baseDir = c.cwd;
+        if (c.positionals[0]) {
+          const file = resolve(c.cwd, c.positionals[0]);
+          const v = await jsonArg(file, "spec");
+          if (!isObj(v)) throw new UsageError(`${file} must hold a JSON object`);
+          spec = v as ExpSpec;
+          baseDir = dirname(file);
+        }
+        if (str(c.flags.dataset)) spec.dataset = str(c.flags.dataset);
+        if (str(c.flags.name)) spec.name = str(c.flags.name);
+        if (str(c.flags.task)) spec.task = (await jsonArg(str(c.flags.task)!, "--task")) as TaskSpec;
+        if (list(c.flags.grader).length) spec.graders = (await Promise.all(list(c.flags.grader).map((g) => jsonArg(g, "--grader")))) as GraderSpec[];
+        if (num(c.flags.trials) !== undefined) spec.trials = positiveInt(c.flags.trials, "trials");
+        if (num(c.flags.concurrency) !== undefined) spec.concurrency = positiveInt(c.flags.concurrency, "concurrency");
+        if (str(c.flags.split)) spec.split = str(c.flags.split) as Split;
+        if (!spec.dataset) throw new UsageError("Missing --dataset <ID>", { reason: "missing_argument" });
+        if (!isObj(spec.task)) throw new UsageError('Missing --task, e.g. --task \'{"kind":"command","command":"./my-agent"}\'', { reason: "missing_argument" });
+        if (!spec.graders?.length) throw new UsageError('Missing --grader, e.g. --grader \'{"kind":"exact"}\'', { reason: "missing_argument" });
+        const dataset = await store.getDataset(spec.dataset);
+        if (!dataset) throw new CliError(`Can't find dataset ${JSON.stringify(spec.dataset)}`, { reason: "not_found", next: ["List datasets:", "coding.sh dataset list"] });
+        let graders;
+        try {
+          graders = await Promise.all(spec.graders.map((g) => createGrader(g, { baseDir, env, judgeCache: FileJudgeCache.forEnv(env) })));
+        } catch (e) {
+          throw new UsageError(`Invalid grader: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_grader" });
+        }
+        const spin = out.spin(`Running ${dataset.name}…`);
+        const result = await runExperiment({
+          name: spec.name ?? `${dataset.name}-${new Date().toISOString().slice(0, 10)}`,
+          dataset,
+          task: spec.task,
+          graders,
+          ...(spec.trials ? { trials: spec.trials } : {}),
+          ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
+          ...(spec.split ? { split: spec.split } : {}),
+          store,
+          signal: c.signal,
+          onProgress: (_r, done, total) => spin.update(`Running ${dataset.name}… ${done}/${total}`),
+        });
+        spin.stop();
+        if (out.json) out.data({ outcome: "completed", experiment: result });
+        else {
+          out.print(renderExperiment(result, { color: out.color }));
+          out.print(result.id);
+        }
+        // Every run failing to produce output means the task never worked: not a result.
+        return result.summary.n > 0 && result.summary.errors === result.summary.n ? 1 : 0;
+      }
+      case "compare": {
+        const [ida, idb] = c.positionals as [string, string];
+        const a = await store.resolveExperiment(ida);
+        const b = await store.resolveExperiment(idb);
+        for (const [id, x] of [[ida, a], [idb, b]] as const) {
+          if (!x) throw new CliError(`Can't find experiment ${JSON.stringify(id)}`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
+        }
+        const cmp = compareExperiments(a!, b!);
+        if (out.json) out.data({ comparison: cmp });
+        else out.print(renderComparison(cmp, { color: out.color, a: a!, b: b! }));
+        return 0;
+      }
+      case "list": {
+        const limit = positiveInt(c.flags.limit, "limit") ?? 20;
+        const all = await store.listExperiments({ limit });
+        if (out.json) {
+          out.data({ experiments: all.map((e) => ({ id: e.id, name: e.name, dataset: e.dataset, trials: e.trials, runs: e.runs.length, createdAt: new Date(e.createdAt).toISOString(), summary: e.summary })) });
+          return 0;
+        }
+        if (!all.length) {
+          out.note("No experiments");
+          return 0;
+        }
+        out.table(
+          ["ID", "NAME", "DATASET", "RUNS", "CREATED"],
+          all.map((e) => [e.id, e.name, `${e.dataset.name}@${e.dataset.version}`, plural(e.runs.length, "run"), ago(e.createdAt, { tty: out.stdoutTTY })]),
+        );
+        return 0;
+      }
+    }
+    throw new UsageError(`Unknown exp command ${c.action}`);
+  });
+}

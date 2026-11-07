@@ -1,0 +1,1776 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="referrer" content="no-referrer">
+<title>coding.sh</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='3' fill='%2308080a'/%3E%3Cpath d='M8 3l4 2.2v4.6L8 12 4 9.8V5.2z' fill='%23f4f4f5'/%3E%3Cpath d='M8 7.4L12 5.2v4.6L8 12z' fill='%236f6f76'/%3E%3Cpath d='M8 7.4L4 5.2v4.6L8 12z' fill='%23a8a8ae'/%3E%3C/svg%3E">
+<style nonce="__CSP_NONCE__">
+/* Same visual language as coding.sh: near-black ground, quiet surfaces,
+   hairlines, one signal pair (pass / fail). System font stacks so the viewer
+   works offline; Geist is used when it is installed locally. */
+:root {
+  --bg: #08080a;
+  --surface: #111114;
+  --raised: #18181c;
+  --raised-2: #202025;
+  --text: #f4f4f5;
+  --text-2: #a8a8ae;
+  --text-muted: #6f6f76;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.14);
+  --pass: #3ccf7a;
+  --pass-ink: #7ee2a8;
+  --pass-wash: rgba(60, 207, 122, 0.1);
+  --fail: #f0616a;
+  --fail-ink: #f59ba1;
+  --fail-wash: rgba(240, 97, 106, 0.1);
+  --radius-sm: 10px;
+  --radius: 14px;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --hover-in: 180ms;
+  --hover-out: 140ms;
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --gutter: 1rem;
+  color-scheme: dark;
+}
+@media (min-width: 768px) { :root { --gutter: 1.5rem; } }
+
+* { box-sizing: border-box; }
+html { background: var(--bg); -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.55;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: clip;
+}
+h1, h2, h3 { margin: 0; font-family: var(--font-mono); font-weight: 560; letter-spacing: -0.02em; text-wrap: balance; }
+h1 { font-size: 1.375rem; line-height: 1.2; letter-spacing: -0.035em; }
+h2 { font-size: 1rem; line-height: 1.3; }
+p { margin: 0; text-wrap: pretty; }
+a { color: inherit; text-decoration: none; }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+code, kbd, pre { font-family: var(--font-mono); }
+::selection { background: rgba(255, 255, 255, 0.9); color: var(--bg); }
+:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; border-radius: 6px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.meta { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
+.muted { color: var(--text-muted); }
+.dim { color: var(--text-2); }
+.mono { font-family: var(--font-mono); }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+/* ---------- surfaces ---------- */
+.panel {
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), inset 0 0 0 1px var(--line);
+}
+.dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; flex: none; }
+.tone-pass { color: var(--pass); }
+.tone-fail { color: var(--fail); }
+.tone-text { color: var(--text); }
+.tone-muted { color: var(--text-muted); }
+
+/* ---------- top bar ---------- */
+.topbar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; gap: 1.25rem;
+  height: 52px; padding: 0 var(--gutter);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  -webkit-backdrop-filter: blur(20px) saturate(1.1);
+  backdrop-filter: blur(20px) saturate(1.1);
+  box-shadow: inset 0 -1px 0 var(--line);
+}
+.brand { display: inline-flex; align-items: center; gap: 0.55rem; font-family: var(--font-mono); font-size: 13px; font-weight: 560; letter-spacing: -0.01em; }
+.brand svg { width: 18px; height: 18px; flex: none; }
+.nav { display: flex; gap: 0.25rem; }
+.nav a {
+  display: inline-flex; align-items: center; height: 30px; padding: 0 0.7rem;
+  border-radius: var(--radius-sm); font-size: 13px; color: var(--text-2);
+  transition: background-color var(--hover-out) ease-out, color var(--hover-out) ease-out;
+}
+.nav a[aria-current="page"] { background: var(--raised-2); color: var(--text); }
+.topbar .spacer { flex: 1; }
+.update-pill {
+  display: inline-flex; align-items: center; gap: 0.45rem; height: 26px; padding: 0 0.65rem;
+  border-radius: 999px; font-family: var(--font-mono); font-size: 11px; white-space: nowrap;
+  color: var(--text-2); box-shadow: inset 0 0 0 1px var(--line-strong);
+  transition: background-color var(--hover-out) ease-out, color var(--hover-out) ease-out, opacity 200ms ease-out, transform 160ms var(--ease-out);
+}
+.update-pill[hidden] { display: none; }
+.update-pill .dot { color: var(--pass); }
+.update-pill:active { transform: scale(0.97); }
+.loading-dot { display: inline-flex; align-items: center; gap: 0.45rem; opacity: 0; transition: opacity 160ms ease-out; }
+.loading-dot.on { opacity: 1; transition-delay: 120ms; }
+.loading-dot .dot { color: var(--text-2); animation: pulse 900ms ease-in-out infinite alternate; }
+@keyframes pulse { from { opacity: 0.25; } to { opacity: 1; } }
+
+/* ---------- layout ---------- */
+.wrap { max-width: 82rem; margin: 0 auto; padding: 1.5rem var(--gutter) 4rem; }
+.view { animation: view-in 200ms var(--ease-out); }
+@keyframes view-in { from { opacity: 0; transform: translateY(4px); } }
+.page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 1rem; margin-bottom: 1.1rem; }
+.page-head .meta { margin-top: 0.35rem; }
+
+/* ---------- controls ---------- */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem;
+  height: 32px; padding: 0 0.8rem; border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 520; white-space: nowrap; user-select: none;
+  color: var(--text); background: var(--raised);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), inset 0 0 0 1px var(--line-strong);
+  transition: background-color var(--hover-out) ease-out, box-shadow var(--hover-out) ease-out, color var(--hover-out) ease-out, transform 160ms var(--ease-out);
+}
+.btn:active { transform: scale(0.97); }
+.btn:disabled { opacity: 0.5; cursor: default; transform: none; }
+.btn-sm { height: 26px; padding: 0 0.6rem; font-size: 12px; }
+.btn-label[aria-pressed="true"].is-pass { background: var(--pass-wash); color: var(--pass-ink); box-shadow: inset 0 0 0 1px rgba(60, 207, 122, 0.45); }
+.btn-label[aria-pressed="true"].is-fail { background: var(--fail-wash); color: var(--fail-ink); box-shadow: inset 0 0 0 1px rgba(240, 97, 106, 0.45); }
+.search { position: relative; flex: 1 1 18rem; max-width: 26rem; }
+.search input {
+  width: 100%; height: 36px; padding: 0 2.4rem 0 0.85rem;
+  font: inherit; font-size: 13px; color: var(--text);
+  background: var(--surface); border: 0; border-radius: var(--radius-sm);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  transition: box-shadow var(--hover-out) ease-out;
+}
+.search input::placeholder { color: var(--text-muted); }
+.search input:focus { outline: none; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.4); }
+.search input::-webkit-search-cancel-button { display: none; }
+.search kbd {
+  position: absolute; right: 0.6rem; top: 50%; transform: translateY(-50%);
+  font-size: 11px; color: var(--text-muted); padding: 1px 6px; border-radius: 6px;
+  box-shadow: inset 0 0 0 1px var(--line-strong); pointer-events: none;
+}
+@media (hover: none) { .search kbd { display: none; } .search input { padding-right: 0.85rem; } }
+.filters { display: grid; gap: 0.5rem; margin-bottom: 1rem; }
+.filter-row { display: flex; align-items: center; gap: 0.4rem; overflow-x: auto; scrollbar-width: none; padding: 2px; margin: -2px; }
+.filter-row::-webkit-scrollbar { display: none; }
+.filter-row > .meta { flex: none; width: 3.4rem; }
+.chip {
+  flex: none; display: inline-flex; align-items: center; gap: 0.4rem;
+  height: 28px; padding: 0 0.7rem; border-radius: var(--radius-sm);
+  font-size: 12.5px; color: var(--text-2); background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: background-color var(--hover-out) ease-out, color var(--hover-out) ease-out, box-shadow var(--hover-out) ease-out, transform 160ms var(--ease-out);
+}
+.chip:active { transform: scale(0.97); }
+.chip .count { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+.chip[aria-pressed="true"] { background: var(--raised-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.chip[aria-pressed="true"] .count { color: var(--text-2); }
+
+@media (hover: hover) and (pointer: fine) {
+  .nav a:hover:not([aria-current="page"]) { background: rgba(255, 255, 255, 0.04); color: var(--text); transition-duration: var(--hover-in); }
+  .btn:hover:not(:disabled) { background: var(--raised-2); transition-duration: var(--hover-in); }
+  .update-pill:hover { background: rgba(255, 255, 255, 0.04); color: var(--text); transition-duration: var(--hover-in); }
+  .chip:hover:not([aria-pressed="true"]) { background: rgba(255, 255, 255, 0.04); color: var(--text); transition-duration: var(--hover-in); }
+  .row:hover { background: rgba(255, 255, 255, 0.03); transition-duration: var(--hover-in); }
+  .step:hover:not([aria-selected="true"]) { background: rgba(255, 255, 255, 0.04); color: var(--text); transition-duration: var(--hover-in); }
+  .back:hover { color: var(--text); transition-duration: var(--hover-in); }
+  .back:hover .nudge { transform: translateX(-3px); }
+  .sub-toggle:hover { background: rgba(255, 255, 255, 0.05); color: var(--text); transition-duration: var(--hover-in); }
+  .parent-link:hover { color: var(--text); transition-duration: var(--hover-in); }
+}
+
+/* ---------- badges ---------- */
+.badge {
+  display: inline-flex; align-items: center; gap: 0.35rem; height: 22px; padding: 0 0.5rem;
+  border-radius: 7px; font-family: var(--font-mono); font-size: 11px; white-space: nowrap;
+  color: var(--text-2); box-shadow: inset 0 0 0 1px var(--line);
+}
+.badge.pass { color: var(--pass-ink); background: var(--pass-wash); box-shadow: none; }
+.badge.fail { color: var(--fail-ink); background: var(--fail-wash); box-shadow: none; }
+.badge.flag .dot { color: var(--fail); }
+
+/* ---------- session list ---------- */
+.list { overflow: hidden; }
+.list:focus-visible { outline-offset: 3px; border-radius: var(--radius); }
+.row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0.85rem;
+  padding: 0.8rem 1rem; cursor: pointer; position: relative;
+  box-shadow: inset 0 -1px 0 var(--line);
+  transition: background-color var(--hover-out) ease-out;
+  content-visibility: auto; contain-intrinsic-size: auto 62px;
+}
+.row:last-child { box-shadow: none; }
+.row[aria-selected="true"] { background: rgba(255, 255, 255, 0.045); }
+.row[aria-selected="true"]::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 2px; border-radius: 2px; background: var(--text); }
+.row-title { font-size: 14px; color: var(--text); }
+.row-meta { display: flex; flex-wrap: wrap; gap: 0 0.5rem; margin-top: 2px; }
+.row-meta span + span::before { content: "·"; margin-right: 0.5rem; color: var(--line-strong); }
+.row-side { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 0.35rem; max-width: 22rem; }
+.row-side:empty { display: none; }
+.row.child { padding-left: calc(1rem + var(--depth, 1) * 1.4rem); background: rgba(255, 255, 255, 0.012); }
+.sub-mark { color: var(--text-muted); font-family: var(--font-mono); }
+.sub-toggle {
+  display: inline-flex; align-items: center; gap: 0.3rem; height: 22px; padding: 0 0.5rem;
+  border-radius: 7px; font-family: var(--font-mono); font-size: 11px; white-space: nowrap;
+  color: var(--text-2); box-shadow: inset 0 0 0 1px var(--line-strong);
+  transition: background-color var(--hover-out) ease-out, color var(--hover-out) ease-out;
+}
+.sub-toggle .caret { display: inline-block; transition: transform 160ms var(--ease-out); }
+.sub-toggle[aria-expanded="true"] { color: var(--text); background: var(--raised-2); }
+.sub-toggle[aria-expanded="true"] .caret { transform: rotate(90deg); }
+.hit-snippet { color: var(--text-2); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.more { display: flex; justify-content: center; margin-top: 1rem; }
+.skeleton { height: 62px; box-shadow: inset 0 -1px 0 var(--line); display: flex; align-items: center; gap: 0.85rem; padding: 0 1rem; }
+.skeleton i { display: block; height: 10px; border-radius: 4px; background: var(--raised); }
+
+/* ---------- empty state ---------- */
+.empty { padding: 2.5rem 1.5rem; display: grid; justify-items: start; gap: 0.75rem; max-width: 40rem; }
+.empty h2 { font-size: 1.0625rem; }
+.empty p { color: var(--text-2); }
+.cmd {
+  display: flex; align-items: center; gap: 0.75rem; max-width: 100%;
+  padding: 0.35rem 0.4rem 0.35rem 0.85rem; border-radius: var(--radius-sm); background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.cmd code { flex: 1 1 auto; min-width: 0; font-size: 12.5px; color: var(--text); overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
+.cmd code::before { content: "$ "; color: var(--text-muted); }
+.steps { margin: 0.25rem 0 0; padding-left: 1.2rem; color: var(--text-2); display: grid; gap: 0.35rem; }
+
+/* ---------- session detail ---------- */
+.back { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 13px; color: var(--text-2); margin-bottom: 0.9rem; transition: color var(--hover-out) ease-out; }
+.back .nudge { display: inline-block; transition: transform 220ms var(--ease-out); }
+.detail-head { padding: 1.1rem 1.25rem 1.2rem; margin-bottom: 1rem; display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.85rem; }
+.detail-head > * { min-width: 0; }
+.head-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 1rem; }
+.head-meta > * { min-width: 0; overflow-wrap: anywhere; }
+.parent-link { display: inline-flex; align-items: baseline; gap: 0.35rem; font-family: var(--font-mono); font-size: 12px; color: var(--text-2); transition: color var(--hover-out) ease-out; max-width: 100%; }
+.parent-link .truncate { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.detail-head h1 { font-size: 1.125rem; overflow-wrap: anywhere; }
+.facts { display: flex; flex-wrap: wrap; gap: 0.35rem 1.4rem; margin: 0; }
+.facts div { display: grid; min-width: 0; }
+.facts dt { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+.facts dd { margin: 0; font-family: var(--font-mono); font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
+.badges { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1.5rem; padding-top: 0.9rem; box-shadow: inset 0 1px 0 var(--line); }
+.label-group { display: flex; align-items: center; gap: 0.4rem; }
+.label-group .meta { margin-right: 0.25rem; }
+.make-eval { display: flex; align-items: center; gap: 0.6rem; min-width: 0; max-width: 100%; flex: 0 1 auto; }
+.make-eval > .meta { flex: none; }
+.label-group { flex-wrap: wrap; min-width: 0; }
+.make-eval .cmd { min-width: 0; flex: 0 1 auto; }
+.actions > * { min-width: 0; }
+
+.session-grid { display: grid; grid-template-columns: minmax(0, 21rem) minmax(0, 1fr); overflow: clip; min-height: 28rem; }
+.timeline { border-right: 1px solid var(--line); min-width: 0; display: flex; flex-direction: column; }
+.timeline-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; height: 42px; padding: 0 1rem; box-shadow: inset 0 -1px 0 var(--line); flex: none; }
+.steps-list { list-style: none; margin: 0; padding: 0.4rem; display: flex; flex-direction: column; gap: 1px; overflow-y: auto; max-height: calc(100vh - 140px); position: sticky; top: 60px; }
+.step {
+  display: flex; align-items: center; gap: 0.6rem; width: 100%; height: 34px; padding: 0 0.65rem;
+  border-radius: var(--radius-sm); font-size: 13px; color: var(--text-2); text-align: left;
+  transition: background-color var(--hover-out) ease-out, color var(--hover-out) ease-out;
+}
+.step[aria-selected="true"] { background: var(--raised-2); color: var(--text); }
+.step .meta { margin-left: auto; flex: none; }
+.step.turn-sep { margin-top: 0.35rem; }
+.pane { min-width: 0; padding: 1.25rem 1.4rem 1.6rem; scroll-margin-top: 60px; }
+.pane-top { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.to-steps { display: none; }
+.timeline-more[hidden] { display: none; }
+.timeline-more { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; padding: 0.55rem 1rem; box-shadow: inset 0 -1px 0 var(--line); }
+.child-link { align-self: flex-start; }
+.child-ref { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.85rem; }
+.pane > * + * { margin-top: 1rem; }
+.pane-title { font-size: 1.0rem; overflow-wrap: anywhere; margin-top: 0.4rem !important; }
+.section-label { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.45rem; }
+.code, .text-block {
+  margin: 0; padding: 0.85rem 1rem; border-radius: var(--radius-sm); background: var(--bg);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 12.5px; line-height: 1.6; color: var(--text-2); max-height: 34rem; overflow: auto;
+}
+.code { white-space: pre; tab-size: 2; }
+.text-block { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-sans); font-size: 13.5px; color: var(--text); }
+.diff { padding: 0.6rem 0; }
+.diff span { display: block; padding: 0 1rem; min-height: 1.6em; }
+.diff .add { color: var(--pass-ink); background: var(--pass-wash); }
+.diff .del { color: var(--fail-ink); background: var(--fail-wash); }
+.diff .hunk { color: var(--text-muted); }
+.diff .file { color: var(--text); }
+.blob { display: grid; gap: 0.45rem; }
+.blob-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.note { font-size: 12.5px; color: var(--text-2); }
+.err { color: var(--fail-ink); }
+.test-nums { display: flex; flex-wrap: wrap; gap: 0.6rem; }
+.num { padding: 0.75rem 1rem; border-radius: var(--radius-sm); background: var(--bg); box-shadow: inset 0 0 0 1px var(--line); min-width: 7rem; }
+.num b { display: block; font-family: var(--font-mono); font-size: 1.5rem; font-weight: 560; letter-spacing: -0.03em; line-height: 1.2; }
+.num.pass b { color: var(--pass); }
+.num.fail b { color: var(--fail); }
+
+/* ---------- experiments ---------- */
+.stack { display: grid; gap: 1rem; }
+.exp { padding: 1.1rem 1.25rem 1.25rem; }
+.exp-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 0.25rem 1rem; margin-bottom: 1rem; }
+.arms { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.85rem; }
+.arm { display: grid; grid-template-columns: minmax(8rem, 14rem) minmax(0, 1fr) auto; align-items: center; gap: 0.4rem 1rem; }
+.arm-name { font-family: var(--font-mono); font-size: 13px; color: var(--text); }
+.bar { height: 8px; border-radius: 4px; background: var(--fail-wash); overflow: hidden; }
+.bar > i { display: block; height: 100%; width: 0; background: var(--pass); border-radius: 4px; transform-origin: left; animation: bar-in 420ms var(--ease-out); }
+@keyframes bar-in { from { transform: scaleX(0.6); opacity: 0; } }
+.arm-num { font-family: var(--font-mono); font-size: 12px; color: var(--text-2); text-align: right; white-space: nowrap; }
+.arm-sub { grid-column: 1 / -1; margin-top: -0.25rem; }
+.tasks { overflow: hidden; }
+.task { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 0.25rem 1rem; padding: 0.75rem 1rem; box-shadow: inset 0 -1px 0 var(--line); }
+.task:last-child { box-shadow: none; }
+.task a { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+
+/* ---------- toast ---------- */
+.toast {
+  position: fixed; left: 50%; bottom: 1.25rem; z-index: 20; max-width: calc(100vw - 2rem);
+  padding: 0.55rem 0.9rem; border-radius: var(--radius-sm); font-size: 13px;
+  background: var(--raised-2); color: var(--text);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px var(--line-strong), 0 16px 40px -16px rgba(0, 0, 0, 0.8);
+  transform: translate(-50%, 0); opacity: 1;
+  transition: opacity 200ms var(--ease-out), transform 200ms var(--ease-out);
+}
+.toast[data-hidden] { opacity: 0; transform: translate(-50%, 8px); pointer-events: none; transition-duration: 140ms; }
+
+/* ---------- responsive ---------- */
+@media (max-width: 860px) {
+  .session-grid { grid-template-columns: minmax(0, 1fr); }
+  .timeline { border-right: 0; border-bottom: 1px solid var(--line); }
+  .steps-list { max-height: 42vh; position: static; }
+  .to-steps { display: inline-flex; }
+  .arm { grid-template-columns: minmax(0, 1fr) auto; }
+  .arm .bar { grid-column: 1 / -1; grid-row: 2; }
+}
+@media (max-width: 560px) {
+  .topbar { gap: 0.75rem; }
+  .brand span { display: none; }
+  .update-pill .long { display: none; }
+  .row { grid-template-columns: auto minmax(0, 1fr); }
+  .row-side { grid-column: 2; justify-content: flex-start; }
+  .search { max-width: none; }
+  .pane { padding: 1rem; }
+  .detail-head { padding: 1rem; }
+  .make-eval { flex-wrap: wrap; width: 100%; }
+  .make-eval .cmd { flex: 1 1 100%; width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view { animation: none; }
+  .bar > i { animation: none; }
+  .loading-dot .dot { animation: none; }
+  .btn:active, .chip:active, .update-pill:active { transform: none; }
+  .toast, .toast[data-hidden] { transform: translate(-50%, 0); }
+  .back .nudge { transition: none; }
+  .sub-toggle .caret { transition: none; }
+}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="#/" aria-label="coding.sh sessions">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5l4.6 2.6v5.8L8 13.5 3.4 10.9V5.1z" fill="#f4f4f5"/><path d="M8 7.7l4.6-2.6v5.8L8 13.5z" fill="#6f6f76"/><path d="M8 7.7L3.4 5.1v5.8L8 13.5z" fill="#a8a8ae"/></svg>
+    <span>coding.sh</span>
+  </a>
+  <nav class="nav" aria-label="Primary">
+    <a href="#/" data-nav="sessions">Sessions</a>
+    <a href="#/experiments" data-nav="experiments">Experiments</a>
+  </nav>
+  <span class="spacer"></span>
+  <button class="update-pill" id="update" type="button" hidden><span class="dot" aria-hidden="true"></span><span class="long">Update available</span><span class="ver"></span></button>
+  <span class="loading-dot meta" id="loading" aria-hidden="true"><span class="dot"></span>loading</span>
+  <span class="sr-only" id="status" role="status" aria-live="polite"></span>
+</header>
+<main id="main" tabindex="-1"></main>
+<div class="toast" id="toast" role="status" aria-live="polite" data-hidden></div>
+
+<script nonce="__CSP_NONCE__">
+"use strict";
+// Every string that came from a capture (prompts, tool input/output, paths,
+// snippets, blobs) is untrusted. This file builds DOM nodes and sets text with
+// textContent / append(string) only. Never use raw-HTML sinks here; a test
+// greps this file to enforce that.
+
+// ------------------------------------------------------------ dom helpers
+
+function h(tag, props, ...children) {
+  const el = document.createElement(tag);
+  if (props) {
+    for (const [k, v] of Object.entries(props)) {
+      if (v === undefined || v === null || v === false) continue;
+      if (k === "class") el.className = v;
+      else if (k === "text") el.textContent = String(v);
+      else if (k.startsWith("on") && typeof v === "function") el.addEventListener(k.slice(2), v);
+      else if (k === "href") {
+        if (typeof v !== "string" || !v.startsWith("#/")) throw new Error("only internal hash links");
+        el.setAttribute("href", v);
+      } else el.setAttribute(k, v === true ? "" : String(v));
+    }
+  }
+  append(el, children);
+  return el;
+}
+function append(el, children) {
+  for (const c of children.flat(Infinity)) {
+    if (c === undefined || c === null || c === false) continue;
+    el.append(c instanceof Node ? c : String(c));
+  }
+  return el;
+}
+const $ = (sel, root = document) => root.querySelector(sel);
+const main = $("#main");
+
+// ------------------------------------------------------------ formatting
+
+const SHA_RE = /^[0-9a-f]{64}$/;
+const nf = new Intl.NumberFormat();
+function fmtNum(n) { return nf.format(n ?? 0); }
+function plural(n, one, many) { return fmtNum(n) + " " + (n === 1 ? one : many || one + "s"); }
+function fmtCompact(n) {
+  if (!n) return "0";
+  if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + "k";
+  return String(n);
+}
+function fmtCost(usd) {
+  if (usd === undefined || usd === null) return "";
+  if (usd === 0) return "$0";
+  return usd < 0.01 ? "<$0.01" : "$" + usd.toFixed(usd < 10 ? 2 : 0);
+}
+function fmtDuration(ms) {
+  if (ms === undefined || ms === null || !isFinite(ms) || ms < 0) return "";
+  if (Math.round(ms) < 1000) return Math.round(ms) + "ms";
+  const tenths = Math.round(ms / 100);
+  if (tenths < 100) return (tenths / 10).toFixed(1) + "s";
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + "s";
+  const m = Math.floor(s / 60);
+  if (m < 60) return m + "m " + (s % 60) + "s";
+  const hr = Math.floor(m / 60);
+  return hr + "h " + (m % 60) + "m";
+}
+function fmtClock(ms) {
+  if (!isFinite(ms) || ms < 0) ms = 0;
+  const s = Math.floor(ms / 1000);
+  const hr = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, "0");
+  return hr ? hr + ":" + String(m).padStart(2, "0") + ":" + ss : m + ":" + ss;
+}
+function fmtRel(ts) {
+  if (!ts) return "";
+  const d = Date.now() - ts;
+  if (d < 60e3) return "just now";
+  if (d < 3600e3) return Math.floor(d / 60e3) + "m ago";
+  if (d < 86400e3) return Math.floor(d / 3600e3) + "h ago";
+  if (d < 7 * 86400e3) return Math.floor(d / 86400e3) + "d ago";
+  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric", year: new Date(ts).getFullYear() === new Date().getFullYear() ? undefined : "numeric" });
+}
+function fmtDate(ts) {
+  return ts ? new Date(ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+}
+function basename(p) {
+  if (!p) return "";
+  const parts = String(p).split(/[\\/]/).filter(Boolean);
+  return parts[parts.length - 1] || String(p);
+}
+function short(sha, n = 7) { return sha ? String(sha).slice(0, n) : ""; }
+function clip(s, n) { s = String(s ?? ""); return s.length > n ? s.slice(0, n - 1) + "…" : s; }
+function oneLine(s) { return String(s ?? "").replace(/\s+/g, " ").trim(); }
+function fmtBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1024 / 1024).toFixed(1) + " MB";
+}
+
+// ------------------------------------------------------------ api + status
+
+class ApiError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+let inflight = 0;
+function busy(delta) {
+  inflight = Math.max(0, inflight + delta);
+  $("#loading").classList.toggle("on", inflight > 0);
+}
+// One polite live region for the whole app. Every view announces its own state,
+// and the router clears it so a view never inherits the previous one's message.
+let announceSeq = 0;
+function announce(msg) {
+  const s = $("#status");
+  const n = ++announceSeq;
+  s.textContent = "";
+  requestAnimationFrame(() => { if (n === announceSeq) s.textContent = msg; });
+}
+function clearAnnouncement() {
+  announceSeq++;
+  $("#status").textContent = "";
+}
+async function request(path, init) {
+  busy(1);
+  try {
+    const res = await fetch(path, { credentials: "same-origin", ...init });
+    if (res.status === 401) throw new ApiError(401, "This viewer's token is no longer valid. Reopen the URL printed by coding.sh ui.");
+    return res;
+  } finally {
+    busy(-1);
+  }
+}
+async function api(path, init) {
+  const res = await request(path, { ...init, headers: { Accept: "application/json", ...(init && init.headers) } });
+  let body = null;
+  try { body = await res.json(); } catch { /* non-JSON error */ }
+  if (!res.ok) throw new ApiError(res.status, (body && body.error) || res.statusText || "request failed");
+  return body;
+}
+function qs(params) {
+  const u = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "") u.set(k, String(v));
+  const s = u.toString();
+  return s ? "?" + s : "";
+}
+
+let toastTimer = 0;
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.removeAttribute("data-hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.setAttribute("data-hidden", ""), 2200);
+}
+async function copy(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Copied");
+  } catch {
+    toast("Copy failed. Select the command and copy it manually.");
+  }
+}
+function cmdBlock(command, label) {
+  return h("div", { class: "cmd" },
+    h("code", { text: command }),
+    h("button", { class: "btn btn-sm", type: "button", "aria-label": label || "Copy command", onclick: () => copy(command) }, "Copy"));
+}
+function errorPanel(err, retry) {
+  return h("div", { class: "panel empty", role: "alert" },
+    h("h2", { text: err.status === 401 ? "Viewer locked" : "Something went wrong" }),
+    h("p", { text: err.message || String(err) }),
+    retry && h("button", { class: "btn", type: "button", onclick: retry }, "Try again"));
+}
+
+// ------------------------------------------------------------ router
+
+let navSeq = 0;
+let cleanup = null;
+function setView(node, focus) {
+  if (cleanup) { cleanup(); cleanup = null; }
+  main.replaceChildren(node);
+  if (focus) main.focus({ preventScroll: true });
+}
+function parseHash() {
+  const raw = location.hash.replace(/^#\/?/, "");
+  const parts = raw.split("/").map((p) => { try { return decodeURIComponent(p); } catch { return ""; } });
+  return parts;
+}
+function route() {
+  const seq = ++navSeq;
+  clearAnnouncement();
+  const parts = parseHash();
+  const section = parts[0] === "experiments" ? "experiments" : "sessions";
+  for (const a of document.querySelectorAll("[data-nav]")) {
+    if (a.dataset.nav === section) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
+  }
+  if (parts[0] === "s" && parts[1]) return showSession(seq, parts[1], parts[2] || "");
+  if (parts[0] === "experiments") return showExperiments(seq);
+  return showSessions(seq);
+}
+const current = (seq) => seq === navSeq;
+window.addEventListener("hashchange", route);
+
+// ------------------------------------------------------------ sessions list
+
+const PAGE = 50;
+const NO_FILTERS = { agent: "", flag: "", repo: "", scope: "" };
+const list = {
+  stats: null,
+  // scope "" = top-level sessions only (subagents nest under their parent); "all" = every session.
+  filters: { ...NO_FILTERS },
+  q: "",
+  items: [],
+  hits: null,
+  hasMore: false,
+  loaded: false,
+  active: 0,
+  error: null,
+  // Subagent sessions shown under their parent: parent id -> child sessions.
+  expanded: new Set(),
+  children: new Map(),
+  rows: [],
+};
+function topLevelOnly() { return list.filters.scope !== "all"; }
+function listParams() {
+  const { scope, ...rest } = list.filters;
+  return { ...rest, scope: scope === "all" ? "all" : "top" };
+}
+/** The rows the sessions list shows: top-level rows, each followed by its expanded subagents. */
+function visibleRows() {
+  const rows = [];
+  const walk = (items, depth) => {
+    for (const s of items) {
+      rows.push({ s, depth });
+      const kids = list.expanded.has(s.id) ? list.children.get(s.id) : null;
+      if (kids && depth < 8) walk(kids, depth + 1);
+    }
+  };
+  walk(list.items, 0);
+  return rows;
+}
+function announceList() {
+  if (list.error || !list.loaded) return;
+  if (list.hits) announce(fmtNum(list.hits.length) + (list.hits.length === 1 ? " match" : " matches"));
+  else announce(list.items.length ? plural(list.items.length, "session") + " loaded" : "No sessions");
+}
+function testsTone(s) {
+  const st = s.stats || {};
+  if ((st.testsFailed || 0) > 0) return "fail";
+  if ((st.testsPassed || 0) > 0) return "pass";
+  return "";
+}
+function testsBadge(s) {
+  const st = s.stats || {};
+  if (st.testsFailed === undefined && st.testsPassed === undefined) return null;
+  if ((st.testsFailed || 0) > 0) return h("span", { class: "badge fail", title: fmtNum(st.testsPassed || 0) + " passed" }, "✕ " + fmtNum(st.testsFailed) + " failed");
+  return h("span", { class: "badge pass" }, "✓ " + fmtNum(st.testsPassed || 0) + " passed");
+}
+function flagBadges(flags) {
+  return (flags || []).map((f) => h("span", { class: "badge flag" }, h("span", { class: "dot" }), f));
+}
+function sessionTitle(s) { return oneLine(s.title) || "Untitled session"; }
+function sessionHref(id, eventId) {
+  return "#/s/" + encodeURIComponent(id) + (eventId ? "/" + encodeURIComponent(eventId) : "");
+}
+
+async function loadStats() {
+  try { list.stats = await api("/api/stats" + qs({ scope: listParams().scope })); } catch (e) { if (e.status === 401) throw e; list.stats = null; }
+}
+async function loadSessions(append_) {
+  const offset = append_ ? list.items.length : 0;
+  const body = await api("/api/sessions" + qs({ ...listParams(), limit: PAGE, offset }));
+  list.items = append_ ? list.items.concat(body.items) : body.items;
+  list.hasMore = body.hasMore;
+  list.loaded = true;
+  if (!append_) list.active = 0;
+}
+let searchSeq = 0;
+async function runSearch() {
+  const seq = ++searchSeq;
+  const q = list.q.trim();
+  if (!q) { list.hits = null; return; }
+  const body = await api("/api/search" + qs({ q, agent: list.filters.agent, limit: 100 }));
+  if (seq !== searchSeq) return false;
+  list.hits = body.items;
+  list.active = 0;
+  return true;
+}
+
+async function showSessions(seq) {
+  const view = h("section", { class: "wrap view", "aria-labelledby": "sessions-h" });
+  setView(view, false);
+  renderSessions(view);
+  if (!list.loaded || list.error) {
+    list.error = null;
+    try {
+      await Promise.all([loadStats(), loadSessions(false)]);
+    } catch (e) {
+      list.error = e;
+    }
+    if (!current(seq)) return;
+    renderSessions(view);
+  }
+  announceList();
+  const onKey = (e) => listKeys(e, view);
+  document.addEventListener("keydown", onKey);
+  cleanup = () => document.removeEventListener("keydown", onKey);
+}
+
+function refreshSessions(view) {
+  list.loaded = false;
+  list.hits = null;
+  list.expanded.clear();
+  list.children.clear();
+  const seq = navSeq;
+  Promise.all([loadStats(), loadSessions(false), list.q ? runSearch() : null])
+    .then(() => { list.error = null; })
+    .catch((e) => { list.error = e; })
+    .then(() => { if (current(seq)) { renderSessions(view, true); announceList(); } });
+}
+
+function renderSessions(view, keepFocus) {
+  const focusedSearch = document.activeElement && document.activeElement.id === "q";
+  const stats = list.stats;
+  const total = stats ? stats.sessions : 0;
+  const head = h("div", { class: "page-head" },
+    h("div", null,
+      h("h1", { id: "sessions-h" }, "Sessions"),
+      h("p", { class: "meta" }, stats
+        ? plural(total, "session") + (stats.subagents ? " · " + plural(stats.subagents, "subagent") : "") + " · " + fmtNum(stats.toolCalls) + " tool calls" + (stats.costUsd ? " · " + fmtCost(stats.costUsd) : "")
+        : list.loaded ? "" : "Loading…")),
+    stats && stats.sessions === 0 && !stats.subagents ? null : searchBox(view));
+
+  const body = [];
+  if (list.error) {
+    body.push(errorPanel(list.error, () => refreshSessions(view)));
+  } else if (!list.loaded) {
+    body.push(h("div", { class: "panel list", "aria-busy": "true" },
+      [0, 1, 2, 3, 4].map((i) => h("div", { class: "skeleton" }, h("span", { class: "dot tone-muted" }),
+        h("i"), h("i")))));
+  } else if (total === 0 && stats && !stats.subagents) {
+    body.push(captureEmpty());
+  } else {
+    body.push(filterBar(view));
+    body.push(list.hits ? hitsList(view) : sessionList(view));
+  }
+  view.replaceChildren(head, ...body);
+  for (const [i, el] of view.querySelectorAll(".skeleton").entries()) {
+    const [a, b] = el.querySelectorAll("i");
+    a.style.width = 30 + ((i * 17) % 30) + "%";
+    b.style.width = 10 + ((i * 7) % 8) + "%";
+    b.style.marginLeft = "auto";
+  }
+  if (focusedSearch || keepFocus === "search") {
+    const input = $("#q", view);
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  }
+}
+
+let debounceTimer = 0;
+// The search the box has started but not yet rendered, so Enter can wait for it.
+let pendingSearch = null;
+function searchBox(view) {
+  const input = h("input", {
+    id: "q", type: "search", value: list.q, placeholder: "Search prompts and output",
+    "aria-label": "Search sessions", autocomplete: "off", spellcheck: "false",
+  });
+  input.value = list.q;
+  const search = () => {
+    debounceTimer = 0;
+    const seq = navSeq;
+    const p = (async () => {
+      try {
+        const changed = await runSearch();
+        if (changed === false || !current(seq)) return;
+        renderSessions(view, "search");
+        announceList();
+      } catch (e) {
+        if (!current(seq)) return;
+        list.error = e;
+        renderSessions(view, "search");
+      } finally {
+        if (pendingSearch === p) pendingSearch = null;
+      }
+    })();
+    pendingSearch = p;
+    return p;
+  };
+  input.addEventListener("input", () => {
+    list.q = input.value;
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(search, 200);
+  });
+  input.addEventListener("keydown", async (e) => {
+    if (e.key === "Escape") {
+      if (input.value) { input.value = ""; input.dispatchEvent(new Event("input")); }
+      else input.blur();
+    } else if (e.key === "ArrowDown" || e.key === "Enter") {
+      e.preventDefault();
+      // A query typed inside the debounce has not been searched yet: run it now,
+      // and wait for one already in flight, so focus lands on its hits rather
+      // than on the list it is about to replace.
+      if (debounceTimer) { clearTimeout(debounceTimer); search(); }
+      const seq = navSeq;
+      if (pendingSearch) await pendingSearch;
+      if (!current(seq)) return;
+      const lb = $("[role=listbox]", view);
+      if (lb) lb.focus();
+    }
+  });
+  return h("div", { class: "search", role: "search" }, input, h("kbd", { "aria-hidden": "true" }, "/"));
+}
+
+function filterBar(view) {
+  const s = list.stats || { byAgent: {}, byFlag: {}, byRepo: {} };
+  const chip = (key, value, text, count) => h("button", {
+    class: "chip", type: "button", "aria-pressed": String(list.filters[key] === value),
+    title: key === "scope" ? undefined : value || undefined,
+    onclick: () => {
+      list.filters[key] = list.filters[key] === value && value !== "" ? "" : value;
+      list.loaded = false;
+      const seq = navSeq;
+      renderSessions(view);
+      // Facet counts follow the scope, so a scope change reloads them too.
+      Promise.all([loadSessions(false), key === "scope" ? loadStats() : null, list.q ? runSearch() : null])
+        .then(() => { list.error = null; }, (e) => { list.error = e; })
+        .then(() => {
+          if (!current(seq)) return;
+          renderSessions(view);
+          announceList();
+          const b = $(`[data-filter="${key}"] [aria-pressed="true"]`, view);
+          if (b) b.focus();
+        });
+    },
+  }, text, count !== undefined ? h("span", { class: "count" }, fmtNum(count)) : null);
+  const row = (label, key, counts, display) => {
+    const entries = Object.entries(counts || {}).sort((a, b) => b[1] - a[1]);
+    if (entries.length === 0) return null;
+    return h("div", { class: "filter-row", role: "group", "aria-label": label + " filter", "data-filter": key },
+      h("span", { class: "meta" }, label),
+      chip(key, "", "All"),
+      entries.slice(0, 24).map(([v, n]) => chip(key, v, display ? display(v) : v, n)));
+  };
+  const scopeRow = s.subagents
+    ? h("div", { class: "filter-row", role: "group", "aria-label": "Subagent filter", "data-filter": "scope" },
+      h("span", { class: "meta" }, "Show"),
+      chip("scope", "", "Top-level"),
+      chip("scope", "all", "Include subagents", s.subagents))
+    : null;
+  return h("div", { class: "filters" },
+    row("Agent", "agent", s.byAgent),
+    row("Flag", "flag", s.byFlag),
+    row("Repo", "repo", s.byRepo, basename),
+    scopeRow);
+}
+
+function hasFilters() { return Object.values(list.filters).some(Boolean); }
+function clearFilters(view) {
+  list.filters = { ...NO_FILTERS };
+  list.q = "";
+  list.hits = null;
+  refreshSessions(view);
+}
+
+function sessionList(view) {
+  list.rows = [];
+  if (list.items.length === 0) {
+    return h("div", { class: "panel empty" },
+      h("h2", { text: "No sessions match these filters" }),
+      h("p", { text: "Try another agent, flag or repository." }),
+      h("button", { class: "btn", type: "button", onclick: () => clearFilters(view) }, "Clear filters"));
+  }
+  const lb = h("div", { class: "panel list", role: "listbox", tabindex: "0", "aria-label": "Sessions. j and k to move, Enter to open, right and left arrows to show or hide subagents." });
+  const rows = visibleRows();
+  list.rows = rows;
+  list.active = Math.min(list.active, rows.length - 1);
+  rows.forEach(({ s, depth }, i) => {
+    const dur = s.endedAt ? fmtDuration(s.endedAt - s.startedAt) : "";
+    const st = s.stats || {};
+    const tone = testsTone(s);
+    const kids = s.childCount || 0;
+    const expanded = list.expanded.has(s.id);
+    // Nested rows already sit under their parent; in the flat "all" scope the
+    // parent's subagents are separate rows, so the count is only a label.
+    const toggle = kids
+      ? topLevelOnly()
+        ? h("button", {
+          class: "sub-toggle", type: "button", tabindex: "-1", "aria-expanded": String(expanded),
+          "aria-label": (expanded ? "Hide " : "Show ") + plural(kids, "subagent"),
+          onclick: (e) => { e.stopPropagation(); list.active = i; toggleSubagents(view, s.id); },
+        }, h("span", { class: "caret", "aria-hidden": "true" }, "▸"), plural(kids, "subagent"))
+        : h("span", { class: "badge" }, plural(kids, "subagent"))
+      : null;
+    const row = h("div", {
+      class: "row" + (depth ? " child" : ""), role: "option", id: "opt-" + i, "aria-selected": String(i === list.active),
+      onclick: () => { list.active = i; location.hash = sessionHref(s.id); },
+    },
+      h("span", { class: "dot " + (tone ? "tone-" + tone : "tone-muted"), "aria-hidden": "true" }),
+      h("div", { class: "row-main" },
+        h("div", { class: "row-title truncate" }, depth ? h("span", { class: "sub-mark", "aria-hidden": "true" }, "↳ ") : null, sessionTitle(s)),
+        h("div", { class: "row-meta meta" },
+          s.parent ? h("span", { title: "Subagent of " + s.parent.sessionId }, "subagent" + (s.parent.type ? " · " + s.parent.type : "")) : null,
+          h("span", null, s.agent),
+          s.repo && s.repo.root ? h("span", { title: s.repo.root }, basename(s.repo.root)) : null,
+          dur ? h("span", null, dur) : null,
+          h("span", null, plural(st.toolCalls || 0, "tool") + (st.toolErrors ? " · " + fmtNum(st.toolErrors) + " failed" : "")),
+          h("span", { title: new Date(s.startedAt).toLocaleString() }, fmtRel(s.startedAt)))),
+      h("div", { class: "row-side" }, toggle, testsBadge(s), flagBadges(s.flags)));
+    if (depth) row.style.setProperty("--depth", String(depth));
+    lb.append(row);
+  });
+  lb.setAttribute("aria-activedescendant", "opt-" + list.active);
+  lb.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      const r = list.rows[list.active];
+      if (r) location.hash = sessionHref(r.s.id);
+    }
+  });
+  const nodes = [lb];
+  if (list.hasMore) {
+    nodes.push(h("div", { class: "more" }, h("button", {
+      class: "btn", type: "button",
+      onclick: async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        btn.textContent = "Loading…";
+        const seq = navSeq;
+        const prev = list.rows.length;
+        try { await loadSessions(true); } catch (err) { toast(err.message); }
+        if (!current(seq)) return;
+        list.active = Math.min(prev, visibleRows().length - 1);
+        renderSessions(view);
+        announceList();
+        const l = $("[role=listbox]", view);
+        if (l) { l.focus({ preventScroll: true }); syncActive(l); }
+      },
+    }, "Load more")));
+  }
+  return h("div", null, nodes);
+}
+
+/** Show or hide a session's subagents under its row, keeping the active row on the same session. */
+async function toggleSubagents(view, id) {
+  const activeRow = list.rows[list.active];
+  const activeId = activeRow ? activeRow.s.id : id;
+  const seq = navSeq;
+  if (list.expanded.has(id)) {
+    list.expanded.delete(id);
+  } else {
+    if (!list.children.has(id)) {
+      try {
+        const body = await api("/api/sessions" + qs({ parent: id, limit: 500 }));
+        list.children.set(id, body.items);
+      } catch (e) {
+        if (current(seq)) toast("Could not load subagents: " + e.message);
+        return;
+      }
+      if (!current(seq)) return;
+    }
+    list.expanded.add(id);
+  }
+  const rows = visibleRows();
+  const keep = rows.findIndex((r) => r.s.id === activeId);
+  list.active = keep >= 0 ? keep : Math.max(0, rows.findIndex((r) => r.s.id === id));
+  renderSessions(view);
+  const lb = $("[role=listbox]", view);
+  if (lb) { lb.focus({ preventScroll: true }); syncActive(lb); }
+  const kids = list.children.get(id) || [];
+  announce(list.expanded.has(id) ? plural(kids.length, "subagent") + " shown" : "Subagents hidden");
+}
+
+function hitsList(view) {
+  const hits = list.hits || [];
+  if (hits.length === 0) {
+    return h("div", { class: "panel empty" },
+      h("h2", { text: "No matches" }),
+      h("p", null, "Nothing in captured prompts or output matches ", h("span", { class: "mono" }, "“" + clip(list.q, 80) + "”"), "."));
+  }
+  const lb = h("div", { class: "panel list", role: "listbox", tabindex: "0", "aria-label": "Search results. j and k to move, Enter to open." });
+  list.active = Math.min(list.active, hits.length - 1);
+  hits.forEach((hit, i) => {
+    const ev = hit.event;
+    lb.append(h("div", {
+      class: "row", role: "option", id: "opt-" + i, "aria-selected": String(i === list.active),
+      onclick: () => { list.active = i; location.hash = sessionHref(ev.sessionId, ev.id); },
+    },
+      h("span", { class: "dot tone-muted", "aria-hidden": "true" }),
+      h("div", null,
+        h("div", { class: "hit-snippet" }, oneLine(hit.snippet) || oneLine(ev.payload && ev.payload.text) || ev.kind),
+        h("div", { class: "row-meta meta" },
+          h("span", null, ev.kind),
+          h("span", null, ev.agent),
+          h("span", { title: ev.sessionId }, "session " + clip(ev.sessionId, 14)),
+          h("span", null, fmtRel(ev.ts)))),
+      h("span")));
+  });
+  lb.setAttribute("aria-activedescendant", "opt-" + list.active);
+  lb.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      const hit = hits[list.active];
+      if (hit) location.hash = sessionHref(hit.event.sessionId, hit.event.id);
+    }
+  });
+  return lb;
+}
+
+function syncActive(lb) {
+  const opts = lb.querySelectorAll("[role=option]");
+  opts.forEach((o, i) => o.setAttribute("aria-selected", String(i === list.active)));
+  const el = opts[list.active];
+  if (el) {
+    lb.setAttribute("aria-activedescendant", el.id);
+    el.scrollIntoView({ block: "nearest" });
+  }
+}
+
+function typing(e) {
+  const t = e.target;
+  return t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
+}
+function listKeys(e, view) {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === "/" && !typing(e)) {
+    e.preventDefault();
+    const q = $("#q", view);
+    if (q) q.focus();
+    return;
+  }
+  if (typing(e)) return;
+  const lb = $("[role=listbox]", view);
+  if (!lb) return;
+  const n = lb.querySelectorAll("[role=option]").length;
+  if (!n) return;
+  let next = null;
+  if (e.key === "j" || e.key === "ArrowDown") next = Math.min(n - 1, list.active + 1);
+  else if (e.key === "k" || e.key === "ArrowUp") next = Math.max(0, list.active - 1);
+  else if (e.key === "Home") next = 0;
+  else if (e.key === "End") next = n - 1;
+  else if (e.key === "Enter" && document.activeElement === document.body) {
+    lb.focus();
+    lb.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    return;
+  }
+  else if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && !list.hits && topLevelOnly()) {
+    const r = list.rows[list.active];
+    if (!r) return;
+    const open = list.expanded.has(r.s.id);
+    if (e.key === "ArrowRight" && r.s.childCount && !open) { e.preventDefault(); toggleSubagents(view, r.s.id); return; }
+    if (e.key === "ArrowLeft" && open) { e.preventDefault(); toggleSubagents(view, r.s.id); return; }
+    if (e.key === "ArrowLeft" && r.depth) {
+      // Move to the parent row.
+      for (let j = list.active - 1; j >= 0; j--) if (list.rows[j].depth < r.depth) { next = j; break; }
+    }
+  }
+  if (next === null) return;
+  e.preventDefault();
+  list.active = next;
+  if (document.activeElement !== lb) lb.focus({ preventScroll: true });
+  syncActive(lb);
+}
+
+function captureEmpty() {
+  return h("div", { class: "panel empty" },
+    h("h2", { text: "No sessions captured yet" }),
+    h("p", { text: "coding.sh records sessions through your agent's hooks. Set it up once, then keep working as usual." }),
+    cmdBlock("npx coding.sh init", "Copy init command"),
+    h("ol", { class: "steps" },
+      h("li", null, "Run ", h("code", null, "npx coding.sh init"), " in a terminal. It detects installed agents and adds hooks."),
+      h("li", null, "Use Claude Code, Codex or another supported agent in any git repository."),
+      h("li", null, "Restart ", h("code", null, "coding.sh ui"), ". New sessions are ingested when the viewer starts.")),
+    h("button", { class: "btn", type: "button", onclick: () => { list.loaded = false; route(); } }, "Check again"));
+}
+
+// ------------------------------------------------------------ session detail
+
+const KIND_LABEL = {
+  "session.start": "Session starts",
+  "session.end": "Session ends",
+  "user.message": "Prompt",
+  "assistant.message": "Assistant",
+  "context.compact": "Context compacted",
+  "turn.end": "Turn ends",
+  "subagent.start": "Subagent starts",
+  "subagent.end": "Subagent ends",
+  "file.change": "File change",
+  "test.result": "Tests",
+  notification: "Notification",
+  error: "Error",
+};
+// Payload fields already rendered by a kind's pane; the rest is shown raw.
+const SHOWN_KEYS = {
+  "user.message": ["text"],
+  "assistant.message": ["text"],
+  "file.change": ["path", "op", "additions", "deletions", "diff"],
+  "test.result": ["passed", "failed", "skipped", "runner"],
+  "llm.call": ["ok", "ttftMs", "tokensPerSec", "stopReason"],
+};
+const EVENTS_PAGE = 5000;
+const INPUT_KEYS = ["file_path", "path", "command", "cmd", "pattern", "url", "query", "description", "prompt"];
+
+function pickInput(input) {
+  if (!input || typeof input !== "object") return typeof input === "string" ? input : "";
+  for (const k of INPUT_KEYS) if (typeof input[k] === "string" && input[k]) return input[k];
+  return "";
+}
+
+function buildTimeline(events) {
+  const items = [];
+  const open = new Map();
+  for (const ev of events) {
+    const p = ev.payload || {};
+    if (ev.kind === "tool.start") {
+      const item = { type: "tool", id: ev.id, ts: ev.ts, start: ev, end: null };
+      items.push(item);
+      if (p.toolUseId) open.set(String(p.toolUseId), item);
+    } else if (ev.kind === "tool.end") {
+      const key = p.toolUseId ? String(p.toolUseId) : "";
+      const item = key ? open.get(key) : undefined;
+      if (item) { item.end = ev; open.delete(key); }
+      else items.push({ type: "tool", id: ev.id, ts: ev.ts, start: null, end: ev });
+    } else {
+      items.push({ type: ev.kind, id: ev.id, ts: ev.ts, ev });
+    }
+  }
+  return items;
+}
+
+function itemView(item) {
+  if (item.type === "tool") {
+    const s = item.start ? item.start.payload || {} : {};
+    const e = item.end ? item.end.payload || {} : {};
+    const tool = String(s.tool || e.tool || "tool");
+    const arg = oneLine(pickInput(s.input));
+    const ok = item.end ? e.ok !== false : null;
+    const dur = item.end ? (typeof e.durationMs === "number" ? e.durationMs : item.start ? item.end.ts - item.start.ts : undefined) : undefined;
+    return {
+      label: tool + (arg ? " " + clip(arg, 90) : ""),
+      tone: ok === null ? "muted" : ok ? "pass" : "fail",
+      meta: dur !== undefined ? fmtDuration(dur) : "",
+      kindText: item.start && item.end ? "tool.start → tool.end" : item.start ? "tool.start (no end)" : "tool.end",
+    };
+  }
+  const v = eventView(item.ev);
+  // Any event that knows its own wall time (model calls, turns, subagents) shows
+  // it in place of the clock offset, the same way tool steps do.
+  if (!v.meta && typeof item.ev.durationMs === "number") v.meta = fmtDuration(item.ev.durationMs);
+  return v;
+}
+function llmModel(ev) {
+  const p = ev.payload || {};
+  return String(p.responseModel || p.requestModel || ev.model || "");
+}
+function subagentText(p) {
+  return oneLine([p.type, p.description || p.prompt].filter((x) => typeof x === "string" && x).join(" · "));
+}
+function eventView(ev) {
+  const p = ev.payload || {};
+  switch (ev.kind) {
+    case "llm.call": {
+      const model = llmModel(ev);
+      return { label: "LLM call" + (model ? " · " + model : ""), tone: p.ok === false ? "fail" : "muted", kindText: ev.kind };
+    }
+    case "subagent.start": {
+      const t = subagentText(p);
+      return { label: "Subagent starts" + (t ? " · " + clip(t, 80) : ""), tone: "muted", kindText: ev.kind };
+    }
+    case "subagent.end":
+      return { label: "Subagent ends" + (typeof p.type === "string" ? " · " + p.type : ""), tone: p.ok === false ? "fail" : "muted", kindText: ev.kind };
+    case "user.message": return { label: clip(oneLine(p.text), 90) || "Prompt", tone: "text", kindText: ev.kind };
+    case "assistant.message": return { label: clip(oneLine(p.text), 90) || "Assistant", tone: "muted", kindText: ev.kind };
+    case "file.change": {
+      const delta = (p.additions !== undefined ? " +" + p.additions : "") + (p.deletions !== undefined ? " −" + p.deletions : "");
+      return { label: (p.op === "add" ? "Add " : p.op === "delete" ? "Delete " : "Edit ") + basename(p.path) + delta, tone: "muted", kindText: ev.kind };
+    }
+    case "test.result": {
+      const failed = Number(p.failed || 0);
+      return { label: "Tests " + fmtNum(p.passed || 0) + " passed" + (failed ? " · " + fmtNum(failed) + " failed" : ""), tone: failed ? "fail" : "pass", kindText: ev.kind };
+    }
+    case "error": return { label: clip(oneLine(p.message || p.text) || "Error", 90), tone: "fail", kindText: ev.kind };
+    case "context.compact": return { label: "Context compacted" + (p.trigger ? " (" + p.trigger + ")" : ""), tone: "muted", kindText: ev.kind };
+    default: return { label: KIND_LABEL[ev.kind] || ev.kind, tone: "muted", kindText: ev.kind };
+  }
+}
+
+async function showSession(seq, id, eventId) {
+  const view = h("section", { class: "wrap view", "aria-label": "Session" });
+  view.append(h("a", { class: "back", href: "#/" }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), "Sessions"));
+  view.append(h("div", { class: "panel empty", "aria-busy": "true" }, h("p", { class: "meta", text: "Loading session…" })));
+  setView(view, true);
+  window.scrollTo(0, 0);
+
+  const eventsPath = "/api/sessions/" + encodeURIComponent(id) + "/events";
+  let session, events, labels, children, parent = null;
+  try {
+    [session, events, labels, children] = await Promise.all([
+      api("/api/sessions/" + encodeURIComponent(id)),
+      api(eventsPath + qs({ limit: EVENTS_PAGE })),
+      api("/api/labels" + qs({ sessionId: id })),
+      api("/api/sessions" + qs({ parent: id, limit: 500 })).catch((e) => { if (e.status === 401) throw e; return { items: [] }; }),
+    ]);
+    if (session.parent && session.parent.sessionId) {
+      parent = await api("/api/sessions/" + encodeURIComponent(session.parent.sessionId)).catch((e) => { if (e.status === 401) throw e; return null; });
+    }
+  } catch (e) {
+    if (!current(seq)) return;
+    view.lastChild.replaceWith(e.status === 404
+      ? h("div", { class: "panel empty" }, h("h2", { text: "Session not found" }), h("p", { class: "mono dim", text: id }))
+      : errorPanel(e, () => route()));
+    return;
+  }
+  if (!current(seq)) return;
+
+  // Sessions can outgrow one page of events. Later pages are fetched on demand
+  // (or until a deep-linked event is found) and the timeline is rebuilt, so tool
+  // start/end pairs that straddle a page boundary still join up.
+  let allEvents = events.items;
+  let hasMore = events.hasMore;
+  async function fetchMore() {
+    const body = await api(eventsPath + qs({ limit: EVENTS_PAGE, offset: allEvents.length }));
+    allEvents = allEvents.concat(body.items);
+    hasMore = body.hasMore && body.items.length > 0;
+  }
+  if (eventId) {
+    try {
+      for (let pages = 0; hasMore && pages < 40 && !allEvents.some((e) => e.id === eventId); pages++) {
+        await fetchMore();
+        if (!current(seq)) return;
+      }
+    } catch { /* show what we have */ }
+    if (!current(seq)) return;
+  }
+
+  const kids = children.items || [];
+  const ctx = {
+    childById: new Map(kids.map((c) => [c.id, c])),
+    childBySubagent: new Map(kids.filter((c) => c.parent && c.parent.subagentId).map((c) => [c.parent.subagentId, c])),
+    childByEvent: new Map(kids.filter((c) => c.parent && c.parent.eventId).map((c) => [c.parent.eventId, c])),
+    backToSteps: () => {
+      const el = tabEls()[active];
+      if (el) { el.focus({ preventScroll: true }); timeline.scrollIntoView({ block: "start", behavior: smoothScroll() }); }
+    },
+  };
+
+  let items = [];
+  let byEvent = new Map();
+  function reindex() {
+    items = buildTimeline(allEvents);
+    byEvent = new Map();
+    for (const it of items) {
+      byEvent.set(it.id, it);
+      if (it.start) byEvent.set(it.start.id, it);
+      if (it.end) byEvent.set(it.end.id, it);
+    }
+  }
+  reindex();
+  let active = Math.max(0, items.indexOf(byEvent.get(eventId)));
+
+  view.lastChild.replaceWith(sessionHeader(session, labels.items, { parent, children: kids }));
+  if (items.length === 0) {
+    view.append(h("div", { class: "panel empty" }, h("h2", { text: "No events" }), h("p", { text: "This session has no recorded events yet." })));
+    announce("Session loaded, no events");
+    return;
+  }
+
+  const tabs = h("ol", { class: "steps-list", role: "tablist", "aria-label": "Session events", "aria-orientation": "vertical" });
+  const pane = h("div", { class: "pane", role: "tabpanel", id: "event-pane", tabindex: "0" });
+  const head = h("div", { class: "timeline-head" });
+  const more = h("div", { class: "timeline-more" });
+  const timeline = h("div", { class: "timeline" }, head, more, tabs);
+  const narrow = window.matchMedia("(max-width: 860px)");
+
+  function renderSteps() {
+    let prevTurn;
+    tabs.replaceChildren(...items.map((it, i) => {
+      const v = itemView(it);
+      const turn = (it.start || it.end || it.ev).turnId;
+      const newTurn = prevTurn !== undefined && turn !== undefined && turn !== prevTurn;
+      prevTurn = turn;
+      return h("li", { role: "presentation" }, h("button", {
+        class: "step" + (newTurn ? " turn-sep" : ""), type: "button", role: "tab", id: "tab-" + i,
+        "aria-controls": "event-pane", "aria-selected": String(i === active), tabindex: i === active ? "0" : "-1",
+        onclick: () => select(i, false, true),
+      },
+        h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }),
+        h("span", { class: "truncate" }, v.label),
+        h("span", { class: "meta" }, v.meta || fmtClock(it.ts - session.startedAt))));
+    }));
+    const total = session.stats && session.stats.events;
+    const remaining = total && total > allEvents.length ? total - allEvents.length : 0;
+    head.replaceChildren(...[h("span", { class: "meta" }, plural(items.length, "step")),
+      hasMore ? h("span", { class: "meta", title: "More events are stored than are loaded" },
+        remaining ? fmtNum(allEvents.length) + " of " + fmtNum(total) + " events" : "first " + fmtNum(allEvents.length) + " events") : null].filter(Boolean));
+    more.hidden = !hasMore;
+    more.replaceChildren();
+    if (hasMore) {
+      const label = remaining && remaining <= EVENTS_PAGE ? "Load the remaining " + plural(remaining, "event") : "Load the next " + fmtNum(EVENTS_PAGE) + " events";
+      more.append(h("span", { class: "meta" }, "Newer events are not loaded yet."),
+        h("button", { class: "btn btn-sm", type: "button", id: "load-events", onclick: loadMoreEvents }, label));
+    }
+  }
+
+  async function loadMoreEvents(e) {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = "Loading…";
+    const activeId = items[active] && items[active].id;
+    const before = allEvents.length;
+    try {
+      await fetchMore();
+    } catch (err) {
+      if (!current(seq)) return;
+      btn.disabled = false;
+      btn.textContent = "Retry";
+      toast("Could not load events: " + err.message);
+      return;
+    }
+    if (!current(seq)) return;
+    const firstNew = allEvents[before];
+    reindex();
+    active = Math.max(0, items.indexOf(byEvent.get(activeId)));
+    renderSteps();
+    announce("Loaded " + plural(allEvents.length - before, "more event", "more events") + ", " + plural(items.length, "step"));
+    const next = firstNew ? items.indexOf(byEvent.get(firstNew.id)) : -1;
+    if (next >= 0) select(next, true);
+    else select(active, false);
+  }
+
+  const tabEls = () => tabs.querySelectorAll("[role=tab]");
+  function select(i, focus, fromPointer) {
+    i = Math.max(0, Math.min(items.length - 1, i));
+    const els = tabEls();
+    const prev = els[active];
+    if (prev) { prev.setAttribute("aria-selected", "false"); prev.tabIndex = -1; }
+    active = i;
+    const el = els[i];
+    el.setAttribute("aria-selected", "true");
+    el.tabIndex = 0;
+    pane.setAttribute("aria-labelledby", el.id);
+    el.scrollIntoView({ block: "nearest" });
+    if (focus) el.focus({ preventScroll: true });
+    renderPane(pane, items[i], session, ctx);
+    history.replaceState(null, "", sessionHref(session.id, items[i].id));
+    // Single-column layout: the detail sits below the step list, so a tap
+    // brings it into view. Keyboard stepping (j/k) leaves the scroll alone.
+    if (fromPointer && narrow.matches) pane.scrollIntoView({ block: "start", behavior: smoothScroll() });
+  }
+  tabs.addEventListener("keydown", (e) => {
+    const next = { ArrowDown: active + 1, ArrowUp: active - 1, j: active + 1, k: active - 1, Home: 0, End: items.length - 1 }[e.key];
+    if (next === undefined || e.metaKey || e.ctrlKey || e.altKey) return;
+    e.preventDefault();
+    e.stopPropagation();
+    select(next, true);
+  });
+
+  renderSteps();
+  view.append(h("div", { class: "panel session-grid" }, timeline, pane));
+  select(active, false);
+  if (eventId) tabEls()[active].scrollIntoView({ block: "center" });
+  announce("Session loaded, " + plural(items.length, "step") + (hasMore ? ", more events available" : ""));
+
+  const onKey = (e) => {
+    if (typing(e) || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === "Escape") { location.hash = "#/"; return; }
+    if (e.key === "j" || e.key === "k") {
+      e.preventDefault();
+      select(active + (e.key === "j" ? 1 : -1), true);
+    }
+  };
+  document.addEventListener("keydown", onKey);
+  cleanup = () => document.removeEventListener("keydown", onKey);
+}
+
+function smoothScroll() {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+}
+
+function latencyText(lat) {
+  if (!lat) return "";
+  const parts = [];
+  if (lat.llmCalls) {
+    parts.push(plural(lat.llmCalls, "llm call") + (lat.llmP50Ms !== undefined ? ", p50 " + fmtDuration(lat.llmP50Ms) + ", p95 " + fmtDuration(lat.llmP95Ms) : ""));
+  }
+  if (lat.ttftP50Ms !== undefined) parts.push("ttft p50 " + fmtDuration(lat.ttftP50Ms));
+  if (lat.toolMs !== undefined) parts.push("tools " + fmtDuration(lat.toolMs) + (lat.toolP95Ms !== undefined ? " (p95 " + fmtDuration(lat.toolP95Ms) + ")" : ""));
+  return parts.join(" · ");
+}
+
+function sessionHeader(s, labels, rel) {
+  const repo = s.repo || {};
+  const st = s.stats || {};
+  const usage = st.usage || {};
+  const fact = (dt, dd, title) => dd ? h("div", null, h("dt", null, dt), h("dd", { title }, dd)) : null;
+  const tokens = (usage.inputTokens || usage.outputTokens)
+    ? fmtCompact(usage.inputTokens || 0) + " in · " + fmtCompact(usage.outputTokens || 0) + " out" + (usage.cacheReadTokens ? " · " + fmtCompact(usage.cacheReadTokens) + " cached" : "")
+    : "";
+  const outcome = latestLabel(labels, "outcome");
+  const evalCmd = "coding.sh eval new " + s.id;
+  const kids = (rel && rel.children) || [];
+  const parent = rel && rel.parent;
+
+  const labelBtn = (value, text) => h("button", {
+    class: "btn btn-sm btn-label is-" + value, type: "button", "aria-pressed": String(outcome && outcome.value === value),
+    onclick: (e) => postLabel(s.id, value, e.currentTarget.closest(".label-group")),
+  }, text);
+
+  return h("div", { class: "panel detail-head" },
+    h("div", { class: "head-meta" },
+      h("p", { class: "meta", title: s.id }, (s.parent ? "subagent session " : "session ") + s.id),
+      s.parent ? h("a", { class: "parent-link", href: sessionHref(s.parent.sessionId, s.parent.eventId), title: s.parent.sessionId },
+        h("span", { "aria-hidden": "true" }, "↑"), "parent:",
+        h("span", { class: "truncate" }, parent ? sessionTitle(parent) : clip(s.parent.sessionId, 40))) : null),
+    h("h1", null, sessionTitle(s)),
+    h("dl", { class: "facts" },
+      fact("agent", s.agent + (s.agentVersion ? " " + s.agentVersion : "")),
+      fact("model", s.model),
+      fact("repo", repo.root ? basename(repo.root) + (repo.head ? "@" + short(repo.head) : "") + (repo.branch ? " (" + repo.branch + ")" : "") : "", repo.root),
+      fact("snapshot", repo.snapshot ? short(repo.snapshot, 12) + (repo.partial ? " · partial" : "") : "", repo.snapshot),
+      fact("started", fmtDate(s.startedAt), new Date(s.startedAt).toISOString()),
+      fact("duration", s.endedAt ? fmtDuration(s.endedAt - s.startedAt) : "no end recorded"),
+      fact("latency", latencyText(st.latency)),
+      fact("tokens", tokens),
+      fact("cost", fmtCost(usage.costUsd))),
+    h("div", { class: "badges" },
+      testsBadge(s),
+      h("span", { class: "badge" }, plural(st.toolCalls || 0, "tool call")),
+      st.toolErrors ? h("span", { class: "badge fail" }, plural(st.toolErrors, "tool error")) : null,
+      st.filesChanged ? h("span", { class: "badge" }, plural(st.filesChanged, "file") + " changed") : null,
+      st.turns ? h("span", { class: "badge" }, plural(st.turns, "turn")) : null,
+      kids.length ? h("span", { class: "badge" }, plural(kids.length, "subagent")) : null,
+      s.parent && s.parent.type ? h("span", { class: "badge" }, "subagent · " + s.parent.type) : null,
+      s.runId ? h("span", { class: "badge", title: s.runId }, "eval run") : null,
+      flagBadges(s.flags)),
+    h("div", { class: "actions" },
+      h("div", { class: "label-group", role: "group", "aria-label": "Label outcome" },
+        h("span", { class: "meta" }, "Label outcome"),
+        labelBtn("pass", "Pass"),
+        labelBtn("fail", "Fail"),
+        h("span", { class: "meta label-by" }, outcome ? "by " + outcome.by + " · " + fmtRel(outcome.ts) : "")),
+      h("div", { class: "make-eval" },
+        h("span", { class: "meta" }, "Make eval"),
+        cmdBlock(evalCmd, "Copy eval command"))));
+}
+
+function latestLabel(labels, criterion) {
+  let best = null;
+  for (const l of labels || []) if (l.criterion === criterion && (!best || l.ts > best.ts)) best = l;
+  return best;
+}
+
+async function postLabel(sessionId, value, group) {
+  const btns = group.querySelectorAll("button");
+  const before = [...btns].map((b) => b.getAttribute("aria-pressed"));
+  btns.forEach((b) => { b.setAttribute("aria-pressed", String(b.classList.contains("is-" + value))); b.disabled = true; });
+  try {
+    const label = await api("/api/labels", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId, criterion: "outcome", value }),
+    });
+    $(".label-by", group).textContent = "by " + label.by + " · just now";
+    toast("Labelled " + value);
+  } catch (e) {
+    btns.forEach((b, i) => b.setAttribute("aria-pressed", before[i]));
+    toast("Could not save label: " + e.message);
+  } finally {
+    btns.forEach((b) => { b.disabled = false; });
+  }
+}
+
+// ---- detail pane
+
+function section(label, content, extra) {
+  return h("div", null, h("div", { class: "section-label" }, h("span", { class: "meta" }, label), extra || null), content);
+}
+function textBlock(text) { return h("pre", { class: "text-block" }, String(text)); }
+function codeBlock(text) { return h("pre", { class: "code" }, h("code", null, String(text))); }
+function looksLikeDiff(text) {
+  return /^(diff --git |--- |\+\+\+ |@@ )/m.test(text) && /^[+-]/m.test(text);
+}
+function diffBlock(text) {
+  const pre = h("pre", { class: "code diff" });
+  const lines = String(text).split("\n");
+  const max = 20000;
+  for (const line of lines.slice(0, max)) {
+    let cls = "";
+    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("diff --git") || line.startsWith("index ")) cls = "file";
+    else if (line.startsWith("@@")) cls = "hunk";
+    else if (line.startsWith("+")) cls = "add";
+    else if (line.startsWith("-")) cls = "del";
+    pre.append(h("span", cls ? { class: cls } : null, line));
+  }
+  if (lines.length > max) pre.append(h("span", { class: "hunk" }, "… " + fmtNum(lines.length - max) + " more lines"));
+  return pre;
+}
+function smartBlock(text) {
+  text = String(text);
+  return looksLikeDiff(text) ? diffBlock(text) : codeBlock(text);
+}
+function json(v) {
+  if (typeof v === "string") return v;
+  try { return JSON.stringify(v, null, 2); } catch { return String(v); }
+}
+
+/** Blob refs from ev.blobs plus payload fields that hold a sha (named by their key). */
+function blobRefs(events) {
+  const out = [];
+  const seen = new Set();
+  for (const ev of events) {
+    if (!ev) continue;
+    const p = ev.payload || {};
+    for (const [k, v] of Object.entries(p)) {
+      if (typeof v === "string" && SHA_RE.test(v) && !seen.has(v)) { seen.add(v); out.push({ sha: v, name: k }); }
+    }
+    for (const [i, sha] of (ev.blobs || []).entries()) {
+      if (typeof sha === "string" && SHA_RE.test(sha) && !seen.has(sha)) { seen.add(sha); out.push({ sha, name: "blob " + (i + 1) }); }
+    }
+  }
+  return out;
+}
+
+function blobView(ref, auto) {
+  const body = h("div");
+  const loadBtn = h("button", { class: "btn btn-sm", type: "button" }, "Load");
+  const bar = h("div", { class: "blob-bar" }, h("span", { class: "meta", title: ref.sha }, ref.name + " · " + short(ref.sha, 12)), loadBtn);
+  const wrap = h("div", { class: "blob" }, bar, body);
+  async function load(full) {
+    loadBtn.disabled = true;
+    loadBtn.textContent = "Loading…";
+    try {
+      const res = await request("/api/blobs/" + ref.sha + (full ? "?full=1" : ""));
+      if (!res.ok) {
+        let msg = res.statusText;
+        try { msg = (await res.json()).error || msg; } catch { /* plain */ }
+        throw new ApiError(res.status, msg);
+      }
+      const text = await res.text();
+      const truncated = res.headers.get("X-Truncated") === "1";
+      const size = Number(res.headers.get("X-Blob-Size") || 0);
+      const nodes = [smartBlock(text)];
+      if (truncated) {
+        nodes.unshift(h("p", { class: "note" }, "Showing the first 2 MB of " + fmtBytes(size) + ". ",
+          h("button", { class: "btn btn-sm", type: "button", onclick: () => load(true) }, "Load all")));
+      }
+      body.replaceChildren(...nodes);
+      loadBtn.remove();
+      bar.append(h("span", { class: "meta" }, fmtBytes(size || text.length)));
+    } catch (e) {
+      loadBtn.disabled = false;
+      loadBtn.textContent = "Retry";
+      body.replaceChildren(h("p", { class: "note err" }, e.status === 404 ? "This blob is not in the local store (it may have been garbage-collected)." : e.message));
+    }
+  }
+  loadBtn.addEventListener("click", () => load(false));
+  if (auto) load(false);
+  return wrap;
+}
+
+/** The child session a subagent.start/end event belongs to: by childSessionId, subagent id, or the child's parent event. */
+function childFor(ev, ctx) {
+  const p = ev.payload || {};
+  if (typeof p.childSessionId === "string" && p.childSessionId) return { id: p.childSessionId, session: ctx.childById.get(p.childSessionId) || null };
+  const sub = typeof p.subagentId === "string" ? p.subagentId : ev.subagentId;
+  const c = (sub && ctx.childBySubagent.get(sub)) || ctx.childByEvent.get(ev.id);
+  return c ? { id: c.id, session: c } : null;
+}
+
+function renderPane(pane, item, session, ctx) {
+  const v = itemView(item);
+  const nodes = [];
+  const ts = item.ts;
+  nodes.push(h("div", { class: "pane-top" },
+    h("p", { class: "meta" }, v.kindText + " · " + fmtClock(ts - session.startedAt) + " · " + new Date(ts).toLocaleTimeString()),
+    h("button", { class: "btn btn-sm to-steps", type: "button", onclick: ctx.backToSteps }, h("span", { "aria-hidden": "true" }, "↑"), "Steps")));
+
+  if (item.type === "tool") {
+    const s = item.start ? item.start.payload || {} : {};
+    const e = item.end ? item.end.payload || {} : {};
+    const tool = String(s.tool || e.tool || "tool");
+    const arg = pickInput(s.input);
+    nodes.push(h("h2", { class: "pane-title" }, tool + (arg ? " · " + clip(oneLine(arg), 200) : "")));
+    nodes.push(h("div", { class: "badges" },
+      item.end ? h("span", { class: "badge " + (e.ok === false ? "fail" : "pass") }, e.ok === false ? "✕ failed" : "✓ ok") : h("span", { class: "badge" }, "no result recorded"),
+      v.meta ? h("span", { class: "badge" }, v.meta) : null,
+      s.toolUseId ? h("span", { class: "badge", title: String(s.toolUseId) }, clip(String(s.toolUseId), 24)) : null));
+    if (s.input !== undefined) nodes.push(section("input", codeBlock(json(s.input))));
+    if (e.output !== undefined && e.output !== null && e.output !== "") nodes.push(section("output" + (e.truncated ? " (truncated)" : ""), smartBlock(json(e.output))));
+    if (typeof e.diff === "string") nodes.push(section("diff", diffBlock(e.diff)));
+    const refs = blobRefs([item.start, item.end]);
+    if (refs.length) nodes.push(section("stored content", h("div", { class: "stack" }, refs.map((r) => blobView(r, false)))));
+  } else {
+    const ev = item.ev;
+    const p = ev.payload || {};
+    switch (item.type) {
+      case "user.message":
+      case "assistant.message":
+        nodes.push(h("h2", { class: "pane-title" }, item.type === "user.message" ? "Prompt" : "Assistant"));
+        nodes.push(p.text ? textBlock(p.text) : h("p", { class: "note" }, "No inline text."));
+        break;
+      case "file.change": {
+        nodes.push(h("h2", { class: "pane-title" }, String(p.path || "File change")));
+        nodes.push(h("div", { class: "badges" },
+          p.op ? h("span", { class: "badge" }, String(p.op)) : null,
+          p.additions !== undefined ? h("span", { class: "badge pass" }, "+" + fmtNum(p.additions)) : null,
+          p.deletions !== undefined ? h("span", { class: "badge fail" }, "−" + fmtNum(p.deletions)) : null));
+        if (typeof p.diff === "string") nodes.push(section("diff", diffBlock(p.diff)));
+        break;
+      }
+      case "test.result": {
+        const failed = Number(p.failed || 0);
+        nodes.push(h("h2", { class: "pane-title" }, failed ? fmtNum(failed) + " failing" : "All tests passed"));
+        nodes.push(h("div", { class: "test-nums" },
+          h("div", { class: "num pass" }, h("b", null, fmtNum(p.passed || 0)), h("span", { class: "meta" }, "passed")),
+          h("div", { class: "num " + (failed ? "fail" : "") }, h("b", null, fmtNum(failed)), h("span", { class: "meta" }, "failed")),
+          p.skipped !== undefined ? h("div", { class: "num" }, h("b", null, fmtNum(p.skipped)), h("span", { class: "meta" }, "skipped")) : null));
+        if (p.runner) nodes.push(h("p", { class: "meta" }, "runner · " + String(p.runner)));
+        break;
+      }
+      case "llm.call": {
+        const model = llmModel(ev);
+        nodes.push(h("h2", { class: "pane-title" }, "LLM call" + (model ? " · " + model : "")));
+        nodes.push(h("div", { class: "badges" },
+          p.ok === false ? h("span", { class: "badge fail" }, "✕ failed") : p.ok === true ? h("span", { class: "badge pass" }, "✓ ok") : null,
+          typeof ev.durationMs === "number" ? h("span", { class: "badge", title: "Model call duration" }, "duration " + fmtDuration(ev.durationMs)) : null,
+          typeof p.ttftMs === "number" ? h("span", { class: "badge", title: "Time to first token" }, "ttft " + fmtDuration(p.ttftMs)) : null,
+          typeof p.tokensPerSec === "number" ? h("span", { class: "badge" }, (Math.round(p.tokensPerSec * 10) / 10) + " tok/s") : null,
+          typeof p.stopReason === "string" ? h("span", { class: "badge" }, p.stopReason) : null));
+        break;
+      }
+      case "subagent.start":
+      case "subagent.end": {
+        nodes.push(h("h2", { class: "pane-title" }, v.label));
+        const child = childFor(ev, ctx);
+        if (child) {
+          const cs = child.session;
+          nodes.push(h("div", { class: "child-ref" },
+            h("a", { class: "btn btn-sm child-link", href: sessionHref(child.id) }, "Open subagent session", h("span", { "aria-hidden": "true" }, "→")),
+            h("span", { class: "meta truncate", title: child.id }, cs
+              ? sessionTitle(cs) + (cs.endedAt ? " · " + fmtDuration(cs.endedAt - cs.startedAt) : "") + " · " + plural((cs.stats && cs.stats.toolCalls) || 0, "tool call")
+              : clip(child.id, 60))));
+        } else {
+          nodes.push(h("p", { class: "note" }, "No separate session was captured for this subagent."));
+        }
+        if (typeof ev.durationMs === "number") nodes.push(h("div", { class: "badges" }, h("span", { class: "badge" }, "duration " + fmtDuration(ev.durationMs))));
+        break;
+      }
+      default:
+        nodes.push(h("h2", { class: "pane-title" }, v.label));
+        if (typeof ev.durationMs === "number") nodes.push(h("div", { class: "badges" }, h("span", { class: "badge" }, "duration " + fmtDuration(ev.durationMs))));
+    }
+    const shown = new Set(SHOWN_KEYS[item.type] || []);
+    const rest = Object.fromEntries(Object.entries(p).filter(([k]) => !shown.has(k)));
+    if (Object.keys(rest).length) nodes.push(section("payload", codeBlock(json(rest))));
+    if (ev.usage) nodes.push(section("usage", codeBlock(json(ev.usage))));
+    const refs = blobRefs([ev]);
+    if (refs.length) nodes.push(section("stored content", h("div", { class: "stack" }, refs.map((r, i) => blobView(r, item.type === "file.change" && typeof p.diff !== "string" && i === 0)))));
+  }
+  pane.replaceChildren(...nodes);
+}
+
+// ------------------------------------------------------------ experiments
+
+async function showExperiments(seq) {
+  const view = h("section", { class: "wrap view", "aria-labelledby": "exp-h" });
+  view.append(h("div", { class: "page-head" }, h("div", null, h("h1", { id: "exp-h" }, "Experiments"), h("p", { class: "meta" }, "Loading…"))));
+  setView(view, false);
+  let runs, bundles, tasks;
+  try {
+    [runs, bundles, tasks] = await Promise.all([api("/api/runs"), api("/api/bundles"), api("/api/tasks")]);
+  } catch (e) {
+    if (!current(seq)) return;
+    view.append(errorPanel(e, () => route()));
+    return;
+  }
+  if (!current(seq)) return;
+  const bundleName = new Map(bundles.items.map((b) => [b.id, b.name]));
+  const groups = new Map();
+  for (const r of runs.items) {
+    const key = r.experimentId || "";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  $(".page-head .meta", view).textContent =
+    plural(groups.size, "experiment") + " · " + plural(runs.items.length, "run") + " · " + plural(tasks.items.length, "task");
+
+  const stack = h("div", { class: "stack" });
+  if (runs.items.length === 0) {
+    stack.append(h("div", { class: "panel empty" },
+      h("h2", { text: "No runs yet" }),
+      h("p", { text: "Turn a captured session into an eval task, then run it under one or more harness bundles. Pass rates per bundle appear here." }),
+      cmdBlock("coding.sh eval new <sessionId>", "Copy eval command"),
+      h("p", { class: "meta" }, "Open any session to copy its exact command.")));
+  }
+  const sorted = [...groups.entries()].sort((a, b) => latest(b[1]) - latest(a[1]));
+  for (const [expId, rs] of sorted) stack.append(experimentCard(expId, rs, bundleName));
+  if (tasks.items.length) stack.append(tasksPanel(tasks.items));
+  view.append(stack);
+  announce(fmtNum(groups.size) + " experiments loaded");
+}
+function latest(rs) { return Math.max(...rs.map((r) => r.endedAt || r.startedAt || 0)); }
+
+function experimentCard(expId, rs, bundleName) {
+  const arms = new Map();
+  const taskIds = new Set();
+  for (const r of rs) {
+    taskIds.add(r.taskId);
+    let a = arms.get(r.bundleId);
+    if (!a) arms.set(r.bundleId, (a = { id: r.bundleId, runs: 0, pass: 0, errors: 0, cost: 0, costN: 0, ms: 0 }));
+    a.runs++;
+    if (r.pass) a.pass++;
+    if (r.error) a.errors++;
+    const c = r.agent && r.agent.usage && r.agent.usage.costUsd;
+    if (typeof c === "number") { a.cost += c; a.costN++; }
+    a.ms += Math.max(0, (r.endedAt || 0) - (r.startedAt || 0));
+  }
+  const list_ = [...arms.values()].sort((x, y) => y.pass / y.runs - x.pass / x.runs);
+  const ul = h("ul", { class: "arms" });
+  for (const a of list_) {
+    const rate = a.runs ? a.pass / a.runs : 0;
+    const fill = h("i");
+    fill.style.width = (rate * 100).toFixed(1) + "%";
+    const name = bundleName.get(a.id) || short(a.id, 12);
+    const sub = [
+      "avg " + fmtDuration(a.ms / a.runs),
+      a.costN ? "avg " + fmtCost(a.cost / a.costN) : "",
+      a.errors ? fmtNum(a.errors) + " errored" : "",
+    ].filter(Boolean).join(" · ");
+    ul.append(h("li", { class: "arm" },
+      h("span", { class: "arm-name truncate", title: a.id }, name),
+      h("div", { class: "bar", role: "img", "aria-label": name + ": " + a.pass + " of " + a.runs + " passed" }, fill),
+      h("span", { class: "arm-num" }, fmtNum(a.pass) + "/" + fmtNum(a.runs) + " · " + Math.round(rate * 100) + "%"),
+      h("span", { class: "meta arm-sub" }, sub)));
+  }
+  const first = Math.min(...rs.map((r) => r.startedAt || Infinity));
+  return h("section", { class: "panel exp" },
+    h("div", { class: "exp-head" },
+      h("h2", { class: "truncate", title: expId || undefined }, expId || "Runs without an experiment"),
+      h("span", { class: "meta" }, plural(taskIds.size, "task") + " · " + plural(rs.length, "run") + " · " + fmtDate(isFinite(first) ? first : 0))),
+    ul);
+}
+
+function tasksPanel(tasks) {
+  return h("section", { "aria-labelledby": "tasks-h" },
+    h("div", { class: "page-head" }, h("h2", { id: "tasks-h" }, "Eval tasks")),
+    h("div", { class: "panel tasks" }, tasks.slice().sort((a, b) => b.createdAt - a.createdAt).map((t) => {
+      const val = t.validation;
+      return h("div", { class: "task" },
+        h("div", { class: "truncate" }, h("span", null, t.name), h("div", { class: "meta truncate" },
+          t.id + (t.sourceSessionId ? " · from " : ""),
+          t.sourceSessionId ? h("a", { href: sessionHref(t.sourceSessionId) }, clip(t.sourceSessionId, 16)) : null,
+          t.tags && t.tags.length ? " · " + t.tags.join(", ") : "")),
+        h("div", { class: "badges" },
+          h("span", { class: "badge" + (t.status === "validated" ? " pass" : "") }, t.status),
+          val ? h("span", { class: "badge " + (val.ok ? "pass" : "fail") }, val.ok ? "verifier valid" : "verifier invalid") : null));
+    })));
+}
+
+// ------------------------------------------------------------ update pill
+
+// Quiet by design: one fetch per page load, no retries, no toasts on failure.
+// The server checks GitHub at most once a day; remote text never reaches the DOM,
+// only the version string, and only after a format check.
+async function loadUpdate() {
+  let u;
+  try {
+    const res = await fetch("/api/update", { credentials: "same-origin", headers: { Accept: "application/json" } });
+    if (!res.ok) return;
+    u = await res.json();
+  } catch { return; }
+  if (!u || !u.updateAvailable || typeof u.latest !== "string" || !/^[0-9A-Za-z.+-]{1,40}$/.test(u.latest)) return;
+  const pill = $("#update");
+  pill.querySelector(".ver").textContent = "v" + u.latest;
+  pill.title = "coding.sh " + u.latest + " is available (you have " + u.current + "). Click to copy: coding.sh update";
+  pill.setAttribute("aria-label", "Update available: coding.sh " + u.latest + ". Copy the update command.");
+  pill.addEventListener("click", () => copy("coding.sh update"));
+  pill.hidden = false;
+}
+
+// ------------------------------------------------------------ boot
+
+route();
+loadUpdate();
+</script>
+</body>
+</html>

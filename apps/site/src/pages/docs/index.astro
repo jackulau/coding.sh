@@ -1,0 +1,112 @@
+---
+import DocsLayout from "../../components/docs/DocsLayout.astro";
+import Tag from "../../components/docs/Tag.astro";
+import { DOC_GROUPS } from "../../components/docs/nav";
+import { REPO_URL, ISSUES_URL } from "../../data/site";
+
+const groups = DOC_GROUPS.map((g) => ({ ...g, pages: g.pages.filter((p) => p.path !== "/docs") })).filter((g) => g.pages.length);
+---
+
+<DocsLayout>
+  <div class="note">
+    <p><strong>Pre-alpha.</strong> Install it with <code>curl -fsSL https://coding.sh/install | sh</code>. Every command, flag and file format can still change. This page lists what exists in the code today and what is only planned.</p>
+  </div>
+
+  <h2 id="what">What it is</h2>
+  <p>
+    coding.sh is open-source, local-first observability and evals for AI agents. Think of a local LangSmith, Braintrust or
+    Judgment Labs: traces and evals stay on your disk, in one npm package with zero runtime dependencies, on Node 22.15 or newer.
+  </p>
+  <p>Coding agents are first-class. Adapters capture prompts, tool calls, model calls, file changes and subagents from Claude Code, Codex and ten other agents. Any other agent framework reports in over OpenTelemetry.</p>
+
+  <h2 id="status">What is built</h2>
+  <div class="doc-table">
+    <table>
+      <thead>
+        <tr><th>Area</th><th>Status</th><th>What exists</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Coding-agent capture</td>
+          <td><Tag status="built" /></td>
+          <td>Hook, plugin and extension adapters for 11 agents, and a wrapper for Aider and any other command. <a href="/docs/agents">Matrix</a>.</td>
+        </tr>
+        <tr>
+          <td>OTLP receiver</td>
+          <td><Tag status="built" /></td>
+          <td><code>coding.sh collector</code> on 127.0.0.1:4318: OTLP/HTTP, JSON or protobuf, GenAI, OpenInference and AI SDK attributes. <a href="/docs/otel">Setup</a>.</td>
+        </tr>
+        <tr>
+          <td>Explore</td>
+          <td><Tag status="built" /></td>
+          <td><code>sessions</code>, <code>show</code>, <code>search</code> (SQLite FTS5) and a local viewer, <code>coding.sh ui</code>.</td>
+        </tr>
+        <tr>
+          <td>Datasets and experiments</td>
+          <td><Tag status="built" /></td>
+          <td>Versioned datasets, nine deterministic grader kinds plus LLM judges, paired comparison with a bootstrap CI and McNemar's test. <a href="/docs/evals">Evals</a>.</td>
+        </tr>
+        <tr>
+          <td>Judge calibration</td>
+          <td><Tag status="built" /></td>
+          <td>Cohen's κ against human labels on a held-out split; uncalibrated judges are flagged.</td>
+        </tr>
+        <tr>
+          <td>Repo-replay tasks</td>
+          <td><Tag status="partial" /></td>
+          <td>Task drafting, verifier validation, harness bundles and A/B compare exist. Captured sessions don't carry a pre-agent snapshot yet, so drafting a task from a real session is blocked. <a href="/docs/evals#repo-replay">Details</a>.</td>
+        </tr>
+        <tr>
+          <td>Storage and sinks</td>
+          <td><Tag status="built" /></td>
+          <td>SQLite index, zstd blob store, OTLP and HTTP sinks, plugin loading for other stores. <a href="/docs/storage">Storage</a>.</td>
+        </tr>
+        <tr>
+          <td>Postgres, S3 stores</td>
+          <td><Tag status="planned" /></td>
+          <td>The plugin interface exists; no Postgres or S3 package does.</td>
+        </tr>
+        <tr>
+          <td>Tool evals</td>
+          <td><Tag status="planned" /></td>
+          <td>A design spec for scoring how well agents use a CLI, MCP server or API. <a href="/docs/tool-evals">Spec</a>.</td>
+        </tr>
+        <tr>
+          <td>npm package</td>
+          <td><Tag status="planned" /></td>
+          <td>The name is reserved in <code>package.json</code>; nothing is published.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="how">How it fits together</h2>
+  <ol>
+    <li><strong>Capture.</strong> An agent's hook runs <code>~/.coding.sh/bin/hook.mjs</code>, which appends one JSON line to a local spool file and exits 0. No network, no daemon, nothing parsed on the hot path.</li>
+    <li><strong>Ingest.</strong> <code>coding.sh ingest</code> (and every read command, before it reads) normalizes spool lines into <a href="/docs/trace-format">coding.sh/trace</a> events, redacts secrets, and writes them to the index and blob store.</li>
+    <li><strong>Explore.</strong> List, inspect and search sessions in the terminal or in the local viewer.</li>
+    <li><strong>Evaluate.</strong> Turn cases into datasets, run any agent over them, grade the outputs, and compare two runs case by case.</li>
+  </ol>
+
+  <h2 id="pages">Pages</h2>
+  {
+    groups.map((g) => (
+      <>
+        <h3>{g.label}</h3>
+        <ul>
+          {g.pages.map((p) => (
+            <li>
+              <a href={p.path}>{p.label}</a>: {p.summary}
+            </li>
+          ))}
+        </ul>
+      </>
+    ))
+  }
+
+  <h2 id="help">Help and contributing</h2>
+  <p>
+    The source is on <a href={REPO_URL}>GitHub</a>. Bugs and questions go to <a href={ISSUES_URL}>issues</a>. The most useful
+    contribution right now is a recorded session from an agent version the adapters haven't seen yet.
+  </p>
+</DocsLayout>

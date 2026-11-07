@@ -1,0 +1,11 @@
+---
+// Build status of a feature, stated next to the feature. "built" means the
+// code exists in packages/coding.sh and is covered by its tests; "partial"
+// means some of it is; "planned" means none of it is yet.
+interface Props {
+  status: "built" | "partial" | "planned";
+}
+const { status } = Astro.props;
+---
+
+<span class:list={["tag", `tag--${status}`]}><span class="sr-only">(</span>{status}<span class="sr-only">)</span></span>

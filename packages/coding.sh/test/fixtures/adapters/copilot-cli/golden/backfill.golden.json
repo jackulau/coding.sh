@@ -1,0 +1,271 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984800000,
+    "payload": {
+      "source": "transcript",
+      "copilotVersion": "1.0.12",
+      "producer": "copilot-agent"
+    },
+    "id": "cb2767540d4decdf9066dcac27bf7d1b0ecef58c2134371e0a4bbb0895e101d9",
+    "model": "claude-sonnet-4.5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984801000,
+    "payload": {
+      "text": "Add a README and make the tests pass"
+    },
+    "id": "fcd765daf410befb06750b9901d11800f1fdfeeea3b76defaf18ac67cf53a3b9",
+    "model": "claude-sonnet-4.5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984802000,
+    "payload": {
+      "text": "I'll create the README."
+    },
+    "id": "387902affe216823200a480362aef7f3db23914180df4715dbbe2cab8c395ef6",
+    "model": "claude-sonnet-4.5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984802100,
+    "payload": {
+      "tool": "create",
+      "toolUseId": "call-1",
+      "input": {
+        "path": "/work/demo/README.md",
+        "file_text": "# Demo\n"
+      }
+    },
+    "id": "0e7be6527800a0b4e486c01bd8898ba4d9da8f0694767b153d9ac3deb099afe0",
+    "model": "claude-sonnet-4.5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984802400,
+    "payload": {
+      "tool": "create",
+      "toolUseId": "call-1",
+      "ok": true,
+      "durationMs": 300,
+      "output": "Created file"
+    },
+    "id": "8e29a050611abd45dac6d1f8b12e69911ec51cb59c09201905b5011009bbca80",
+    "model": "claude-sonnet-4.5",
+    "durationMs": 300,
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984802400,
+    "payload": {
+      "path": "README.md",
+      "op": "add",
+      "tool": "create",
+      "toolUseId": "call-1"
+    },
+    "id": "675450f522f4e3f43ece3d7cd65ac7b360c7bfb57ca35697cc563385d5865d1a",
+    "model": "claude-sonnet-4.5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984803000,
+    "payload": {
+      "tool": "bash",
+      "toolUseId": "call-2",
+      "input": {
+        "command": "npm test"
+      },
+      "verify": true
+    },
+    "id": "029491c2a6290591f8f6c20ddb461cdcbf7113ff9d2bba59b2b44629b8953dc9",
+    "model": "claude-sonnet-4.5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984805000,
+    "payload": {
+      "tool": "bash",
+      "toolUseId": "call-2",
+      "ok": false,
+      "durationMs": 2000,
+      "output": "  2 passing (8ms)\n  1 failing\n",
+      "error": "exit code 1"
+    },
+    "id": "16e4d0885908adfc87bc6c3983cf9212551a0005ddfa9d1997d7a8f51f1873a3",
+    "model": "claude-sonnet-4.5",
+    "durationMs": 2000,
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "test.result",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984805000,
+    "payload": {
+      "runner": "mocha",
+      "passed": 2,
+      "failed": 1,
+      "toolUseId": "call-2"
+    },
+    "id": "14b89689224421ea5506ccf9fc72cb81dd9d573f24824974255a7ab6f590f82d",
+    "model": "claude-sonnet-4.5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "subagent.start",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984805500,
+    "payload": {
+      "subagentId": "call-sub",
+      "toolUseId": "call-sub",
+      "type": "explore",
+      "description": "Explores the codebase"
+    },
+    "id": "1b7fe33c845e17894ce0ef0c6f6322679e3fe83b637ef42b5aeb1443136f1b48",
+    "model": "claude-sonnet-4.5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984806000,
+    "payload": {
+      "tool": "mcp__github__search_code",
+      "toolUseId": "call-3",
+      "input": {
+        "query": "add"
+      },
+      "server": "github"
+    },
+    "id": "a09360e10be9956ff3efdc596eebd4eeaf535caab93e459e827e3de303a52304",
+    "subagentId": "sub-a1",
+    "model": "claude-sonnet-4.5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984806500,
+    "payload": {
+      "tool": "mcp__github__search_code",
+      "toolUseId": "call-3",
+      "ok": true,
+      "durationMs": 500,
+      "output": "2 hits"
+    },
+    "id": "e9bb4829648b9cf36b2d3f1674f2706b63142869d19c39c6d087a8efe5239078",
+    "subagentId": "sub-a1",
+    "model": "claude-sonnet-4.5",
+    "durationMs": 500,
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "subagent.end",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984806800,
+    "payload": {
+      "subagentId": "call-sub",
+      "toolUseId": "call-sub",
+      "type": "explore",
+      "ok": true,
+      "totalTokens": 900,
+      "totalToolCalls": 1
+    },
+    "id": "f4f82ea4004c62bb5cb809d63588f183495301800bdfc61ec6a78e5d6b954a81",
+    "model": "claude-sonnet-4.5",
+    "durationMs": 1300,
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "notification",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984807000,
+    "payload": {
+      "kind": "model_change",
+      "model": "gpt-5",
+      "previous": "claude-sonnet-4.5"
+    },
+    "id": "f32d7617092a3f3814fb4ed15bfcb8c6562cf4be3914f96d7d8437b54eba7b9f",
+    "model": "claude-sonnet-4.5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984808000,
+    "payload": {},
+    "id": "978b059dd4c668c24c56ca3f89191f037abab4ff76e44413c708732870cf0a6a",
+    "model": "gpt-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984808000,
+    "payload": {
+      "text": "thanks"
+    },
+    "id": "b06b414526bf040217a9972ca27c3f2f4d881c289112a83be526094af0ba7e3c",
+    "model": "gpt-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "context.compact",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984809000,
+    "payload": {
+      "trigger": "auto"
+    },
+    "id": "e0564282af0e16c913494a6c0fe859232f07795d318f5c3c5e35bea9629fa0ba",
+    "model": "gpt-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984810000,
+    "payload": {},
+    "id": "a61a34811b08da96ecfce38a17795dcb398db43287960be5a08242cb37d6bd3b",
+    "model": "gpt-5",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "cop-sess-1",
+    "ts": 1789984810000,
+    "payload": {
+      "reason": "shutdown",
+      "models": [
+        "claude-sonnet-4.5",
+        "gpt-5"
+      ],
+      "apiDurationMs": 4200
+    },
+    "id": "720e0760eec2d1b52dd868773e83ad752f460ecb716fe8914d5da7f9c90d6539",
+    "model": "gpt-5",
+    "usage": {
+      "inputTokens": 3500,
+      "outputTokens": 220,
+      "cacheReadTokens": 1500,
+      "cacheWriteTokens": 100,
+      "costUsd": 0.03
+    },
+    "cwd": "/work/demo"
+  }
+]

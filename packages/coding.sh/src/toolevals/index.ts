@@ -1,0 +1,34 @@
+// Tool evals (docs/TOOL-EVALS.md): public surface. tap/main.ts is a separate
+// entry (dist/tap.mjs) and is deliberately not re-exported here.
+export * from "./types.ts";
+export { schemaViolations } from "./jsonschema.ts";
+export { CONFIG_FILE, loadToolEvals, parseDescriptions, parseDriver, parseTarget, parseTask, ToolEvalsConfigError } from "./config.ts";
+export type { DriverConfig, ToolEvalsConfig } from "./config.ts";
+export { descriptionBytesOf, measureSurface, parseSubcommands, toolsSurface } from "./surface.ts";
+export { checkEnv, expandRecord, expandVars, prepareSandbox, suiteDirOf } from "./sandbox.ts";
+export type { Sandbox } from "./sandbox.ts";
+export { MCP_EVENT_NAMES, mountMcp, UnsupportedMountError } from "./mount.ts";
+export type { McpServerMount, MountResult } from "./mount.ts";
+export { classifyToolStart, effectiveArgv, parseMcpToolName, shellSegments, shellUse } from "./classify.ts";
+export type { CallCategory, Classified, ShellUse } from "./classify.ts";
+export { attributeTap, callIdentity, computeMetrics, estimateCost, totalTokens } from "./metrics.ts";
+export type { MetricsInput } from "./metrics.ts";
+export { extractJson, jsonPathValue, resolveText, runChecks } from "./checks.ts";
+export { loadExperiment, loadTrialTrace, readTap, runToolExperiment, runTrial, scheduleToolJobs, toolevalsRoot } from "./experiment.ts";
+export type { ExperimentDeps, ExperimentOpts, ToolJob } from "./experiment.ts";
+export { CONTINUOUS_METRICS, compareToolArms, metricValue, splitArm, summarizeArm, summarizeArms, trialArm } from "./compare.ts";
+export type { CompareToolOpts } from "./compare.ts";
+export { expectedOutputs, leakage, validateToolTask } from "./validate.ts";
+export type { TaskValidation } from "./validate.ts";
+export { compressDescriptions, descriptionsFile, modelRewriter, dropExamples, nonInferior, repeatsName, ruleCandidate, toolText, truncateSentences } from "./compress.ts";
+export type { CompressOpts, Evaluate, NonInferiority, ToolText } from "./compress.ts";
+export { formatArms, formatCompress, formatSurface, formatToolCompare, formatTrial } from "./report.ts";
+export { runAgentTrial, otelEnv } from "./drivers/agent.ts";
+export { runModelTrial } from "./drivers/model.ts";
+export { MODEL_AGENT, runModelLoop } from "./model/loop.ts";
+export type { LoopOpts, LoopResult } from "./model/loop.ts";
+export { connectMcp, resetEraCache, resultText, UnsupportedTransportError } from "./mcp/client.ts";
+export type { McpClient, McpConnectSpec } from "./mcp/client.ts";
+export { classifyCli, cliShimSource, writeCliShim } from "./tap/cli.ts";
+export { applyToolOverrides, McpTap, startMcpProxy } from "./tap/mcp-proxy.ts";
+export { classifyHttp, openapiPaths, pathMatcher, startHttpTap } from "./tap/http-proxy.ts";

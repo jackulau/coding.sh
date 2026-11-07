@@ -1,0 +1,66 @@
+---
+import DocsLayout from "../../components/docs/DocsLayout.astro";
+import Code from "../../components/docs/Code.astro";
+import Tag from "../../components/docs/Tag.astro";
+
+// Follows docs/integrations/ai-gateway.md and packages/coding.sh/src/integrations/gateway.
+const claude = `// ~/.claude/settings.json
+{ "env": {
+  "ANTHROPIC_BASE_URL": "https://ai-gateway.vercel.sh/claude-code",
+  "ANTHROPIC_AUTH_TOKEN": "<your AI Gateway key>",
+  "ANTHROPIC_API_KEY": ""
+} }`;
+
+const codex = `# ~/.codex/config.toml
+model_provider = "vercel"
+model = "openai/gpt-5"
+
+[model_providers.vercel]
+name = "Vercel AI Gateway"
+base_url = "https://ai-gateway.vercel.sh/codex/v1"
+env_key = "AI_GATEWAY_API_KEY"
+wire_api = "responses"`;
+
+const aiSdk = `const { text } = await generateText({
+  model: "openai/gpt-5", // any creator/model, billed through the gateway
+  prompt,
+  experimental_telemetry: { isEnabled: true },
+});`;
+
+const cmds = `coding.sh gateway status          # which agents route through the gateway, key set or not
+coding.sh gateway enrich          # billed cost + serving provider per call (last 30 days)
+coding.sh sessions --flag gateway:vercel
+coding.sh compare sonnet gpt5 --gateway --k 3`;
+---
+
+<DocsLayout>
+  <p>
+    <a href="https://vercel.com/docs/ai-gateway">Vercel AI Gateway</a> gives you one key for hundreds of models. coding.sh tags sessions
+    that went through it, adds what each call cost and which provider served it, and runs A/B experiments across models with that one key.
+  </p>
+
+  <h2 id="setup">Route your agent</h2>
+  <p>Export <code>AI_GATEWAY_API_KEY</code>, then point the agent at the gateway.</p>
+  <h3 id="claude-code">Claude Code</h3>
+  <Code title="json" code={claude} />
+  <h3 id="codex">Codex</h3>
+  <Code title="toml" code={codex} />
+  <h3 id="ai-sdk">AI SDK</h3>
+  <p>Send its telemetry to <code>coding.sh collector</code>, as on the <a href="/docs/otel">OpenTelemetry</a> page.</p>
+  <Code title="ts" code={aiSdk} />
+  <p>OpenCode uses its built-in <code>vercel</code> provider, and Pi uses <code>vercel-ai-gateway</code>.</p>
+
+  <h2 id="use">Use it <Tag status="built" /></h2>
+  <Code code={cmds} />
+  <p>
+    Detection is read-only. coding.sh never prints or stores your key. Re-running <code>enrich</code> makes no new API calls. Calls through
+    a <code>vmc/</code> virtual model record the model it resolved to.
+  </p>
+
+  <h2 id="drains">Trace drains <Tag status="partial" /></h2>
+  <p>
+    Pro and Enterprise plans can drain one OpenTelemetry trace per gateway request. Tunnel to <code>coding.sh collector</code> and use
+    <code>&lt;tunnel&gt;/v1/traces</code> as the drain URL. Each request becomes one model call with its billed cost. Failovers are not
+    counted as extra calls. <code>enrich</code> then links each request to the agent session that made it.
+  </p>
+</DocsLayout>

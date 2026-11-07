@@ -1,0 +1,12 @@
+{"sessionId":"gem-sess-1","projectHash":"demo","startTime":"2026-09-21T10:00:00.000Z","lastUpdated":"2026-09-21T10:05:00.000Z","kind":"main"}
+{"id":"m1","timestamp":"2026-09-21T10:00:01.000Z","type":"user","content":[{"text":"Fix the failing test in src/math.ts"}]}
+{"id":"m2","timestamp":"2026-09-21T10:00:02.000Z","type":"gemini","content":"","model":"gemini-2.5-pro","tokens":{"input":1000,"output":40,"cached":200,"thoughts":10,"total":1050},"toolCalls":[{"id":"tc1","name":"run_shell_command","args":{"command":"npm test"},"status":"executing","timestamp":"2026-09-21T10:00:02.500Z"}]}
+{"id":"m2","timestamp":"2026-09-21T10:00:02.000Z","type":"gemini","content":"Running the tests first.","model":"gemini-2.5-pro","tokens":{"input":1000,"output":50,"cached":200,"thoughts":10,"total":1060},"toolCalls":[{"id":"tc1","name":"run_shell_command","args":{"command":"npm test"},"status":"success","timestamp":"2026-09-21T10:00:02.500Z"}]}
+{"$patch":{"id":"m2","toolCalls":[{"id":"tc1","result":[{"functionResponse":{"id":"tc1","name":"run_shell_command","response":{"output":"# pass 3\n# fail 1"}}}]}]}}
+{"id":"m3","timestamp":"2026-09-21T10:00:03.000Z","type":"gemini","content":"Fixed add().","model":"gemini-2.5-pro","tokens":{"input":1300,"output":20,"cached":1000},"toolCalls":[{"id":"tc2","name":"replace","args":{"file_path":"/work/demo/src/math.ts","old_string":"a - b","new_string":"a + b"},"status":"success","timestamp":"2026-09-21T10:00:03.200Z","result":"Successfully modified file"},{"id":"tc3","name":"read_file","args":{"absolute_path":"/work/demo/nope.ts"},"status":"error","timestamp":"2026-09-21T10:00:03.400Z","result":"File not found"}]}
+{"$set":{"summary":"Fix failing add() test"}}
+{"id":"m4","timestamp":"2026-09-21T10:01:00.000Z","type":"user","content":"thanks"}
+{"id":"m5","timestamp":"2026-09-21T10:01:01.000Z","type":"gemini","content":"You're welcome.","model":"gemini-2.5-flash","tokens":{"input":1400,"output":5}}
+{"$rewindTo":"m4"}
+{"id":"m6","timestamp":"2026-09-21T10:01:02.000Z","type":"info","content":"Switched to gemini-2.5-flash"}
+not json at all

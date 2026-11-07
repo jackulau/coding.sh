@@ -1,0 +1,213 @@
+---
+import DocsLayout from "../../components/docs/DocsLayout.astro";
+import Code from "../../components/docs/Code.astro";
+import Terminal from "../../components/Terminal.astro";
+
+// Setup snippets follow the header comment of packages/coding.sh/src/otel/receiver.ts.
+const startReal = `coding.sh collector`;
+
+const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const m = (s: string) => `<span class="t-muted">${esc(s)}</span>`;
+const t = (s: string) => `<span class="t-text">${esc(s)}</span>`;
+const COLLECTOR = [
+  `${m("$")} ${t("coding.sh collector")}`,
+  "export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318",
+  "export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf",
+  "export OTEL_TRACES_EXPORTER=otlp",
+  "export OTEL_LOGS_EXPORTER=otlp",
+  "export CLAUDE_CODE_ENABLE_TELEMETRY=1",
+  m("  Ready on http://127.0.0.1:4318"),
+  m("  Press Ctrl-C to stop"),
+].join("\n");
+
+const claudeEnv = `export CLAUDE_CODE_ENABLE_TELEMETRY=1
+export OTEL_LOGS_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/json        # or http/protobuf
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+export OTEL_LOG_USER_PROMPTS=1         # prompt text (session titles); off by default
+export OTEL_LOG_TOOL_DETAILS=1         # tool_parameters (Bash commands, file paths)
+export OTEL_LOGS_EXPORT_INTERVAL=1000  # ms, default 5000
+# optional, beta: spans too. Model/tool calls seen in both logs and spans
+# are de-duplicated by request_id / tool_use_id.
+export CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1 OTEL_TRACES_EXPORTER=otlp`;
+
+const agentSdkTs = `// options.env replaces the environment, so spread process.env into it
+query({
+  prompt,
+  options: {
+    env: {
+      ...process.env,
+      CLAUDE_CODE_ENABLE_TELEMETRY: "1",
+      OTEL_LOGS_EXPORTER: "otlp",
+      OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf",
+      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:4318",
+    },
+  },
+});`;
+
+const aiSdkSetup = `// instrumentation.ts
+// npm i @opentelemetry/sdk-node @opentelemetry/exporter-trace-otlp-proto
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
+
+const sdk = new NodeSDK({
+  serviceName: "my-agent",
+  traceExporter: new OTLPTraceExporter({ url: "http://127.0.0.1:4318/v1/traces" }),
+});
+sdk.start(); // short scripts: await sdk.shutdown() before exit to flush`;
+
+const aiSdkCall = `// AI SDK 6 and earlier: per call
+await generateText({
+  model,
+  prompt,
+  experimental_telemetry: {
+    isEnabled: true,
+    functionId: "my-agent",
+    metadata: { sessionId: "chat-123" },
+  },
+});
+
+// AI SDK 7: once at startup (npm i @ai-sdk/otel); the per-call option is \`telemetry\`
+import { registerTelemetry } from "ai";
+import { OpenTelemetry } from "@ai-sdk/otel";
+registerTelemetry(new OpenTelemetry());`;
+
+const nextjs = `// Next.js: registerOTel from @vercel/otel, with the endpoint in the environment
+// OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318
+registerOTel({ serviceName: "my-agent" });`;
+
+const openaiPy = `# pip install openai-agents openinference-instrumentation-openai-agents \\
+#   opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
+from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+provider = TracerProvider(resource=Resource.create({"service.name": "my-agent"}))
+provider.add_span_processor(
+    BatchSpanProcessor(OTLPSpanExporter(endpoint="http://127.0.0.1:4318/v1/traces"))
+)
+OpenAIAgentsInstrumentor().instrument(tracer_provider=provider)
+# OPENAI_AGENTS_DISABLE_TRACING=1 also stops uploads to OpenAI's tracing backend.`;
+
+const openaiTs = `// npm i @arizeai/openinference-instrumentation-openai-agents \\
+//   @opentelemetry/exporter-trace-otlp-proto
+// Register a NodeTracerProvider with
+//   new BatchSpanProcessor(new OTLPTraceExporter({ url: "http://127.0.0.1:4318/v1/traces" }))
+// then:
+new OpenAIAgentsInstrumentation({ tracerProvider }).manuallyInstrument(agents);`;
+
+const langchain = `# OpenInference: pip install openinference-instrumentation-langchain
+# (plus the TracerProvider / OTLPSpanExporter setup from the OpenAI Agents SDK example)
+from openinference.instrumentation.langchain import LangChainInstrumentor
+LangChainInstrumentor().instrument(tracer_provider=provider)`;
+
+const langsmith = `# or LangSmith's OTel exporter: pip install "langsmith[otel]"
+export LANGSMITH_OTEL_ENABLED=true LANGSMITH_TRACING=true LANGSMITH_OTEL_ONLY=true
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 OTEL_SERVICE_NAME=my-agent
+# LangGraph thread_id metadata (langsmith.metadata.thread_id) groups traces into one session.`;
+
+const pythonEnv = `# pip install opentelemetry-sdk opentelemetry-exporter-otlp-proto-http
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318   # base URL: the SDK appends /v1/traces
+export OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf           # the Python HTTP exporter speaks protobuf only
+export OTEL_SERVICE_NAME=my-agent                          # becomes the agent id (kebab-cased)
+# A signal-specific OTEL_EXPORTER_OTLP_TRACES_ENDPOINT is used verbatim: include /v1/traces.`;
+
+const pythonCode = `from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
+
+provider = TracerProvider()
+provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+trace.set_tracer_provider(provider)
+# logs: from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter`;
+---
+
+<DocsLayout>
+  <p>
+    <code>coding.sh collector</code> (alias <code>otel</code>) runs a local OTLP/HTTP receiver. Anything that exports OpenTelemetry traces or
+    logs can send them there, and each run shows up as a session next to your coding-agent sessions.
+  </p>
+
+  <h2 id="start">Start the receiver</h2>
+  <Code code={startReal} />
+  <p>It runs in the foreground. The environment that points an exporter at it goes to stdout; status goes to stderr.</p>
+  <Terminal title="coding.sh collector" label="Output of coding.sh collector">
+    <pre set:html={COLLECTOR} />
+  </Terminal>
+  <ul>
+    <li>Routes: <code>POST /v1/traces</code>, <code>/v1/logs</code> (mapped to events) and <code>/v1/metrics</code> (accepted, then dropped).</li>
+    <li>Bodies: <code>application/x-protobuf</code> or <code>application/json</code>, optionally gzip, deflate or br encoded.</li>
+    <li>It binds to 127.0.0.1. <code>--host</code> changes the interface and <code>--port 0</code> picks any free port.</li>
+    <li>Secrets are redacted before anything is stored, the same as for hook events.</li>
+  </ul>
+
+  <h2 id="sessions">How runs become sessions</h2>
+  <p>
+    One trace is one session. When spans carry <code>gen_ai.conversation.id</code> or <code>session.id</code> (AI SDK:
+    <code>metadata.sessionId</code>), every trace with that id becomes a turn of one session. Spans arrive out of order, so after each batch the
+    touched sessions are rebuilt from all their events. Event ids derive from the trace and span ids, so exporter retries insert nothing.
+  </p>
+  <p>The receiver understands these attribute dialects:</p>
+  <ul>
+    <li>OpenTelemetry GenAI semantic conventions (<code>gen_ai.*</code>)</li>
+    <li>OpenInference (<code>openinference.span.kind</code>, <code>llm.*</code>, <code>tool.*</code>)</li>
+    <li>Vercel AI SDK (<code>ai.*</code>)</li>
+    <li>Claude Code, Codex and Gemini CLI log events (<code>claude_code.api_request</code> and similar)</li>
+  </ul>
+  <p>
+    Model-call spans become <code>llm.call</code> events with duration, model and token usage; tool spans become
+    <code>tool.start</code>/<code>tool.end</code>; nested agent spans become subagents with their own child session. Usage is read only from
+    model-call spans, because agent spans usually repeat their children's totals.
+  </p>
+
+  <h2 id="claude-code">Claude Code and the Claude Agent SDK</h2>
+  <p>The Agent SDK inherits Claude Code's environment variables.</p>
+  <Code code={claudeEnv} />
+  <p>Agent SDK in TypeScript:</p>
+  <Code title="typescript" code={agentSdkTs} />
+  <p>
+    In Python, <code>ClaudeAgentOptions(env=&#123;...&#125;)</code> takes the same keys and is merged over <code>os.environ</code>. Don't use the
+    console exporter under the SDK: it corrupts the SDK's stdout channel.
+  </p>
+
+  <h2 id="vercel-ai-sdk">Vercel AI SDK</h2>
+  <Code title="instrumentation.ts" code={aiSdkSetup} />
+  <Code title="typescript" code={aiSdkCall} />
+  <Code title="typescript" code={nextjs} />
+
+  <h2 id="openai-agents">OpenAI Agents SDK</h2>
+  <p>Through OpenInference. Python:</p>
+  <Code title="python" code={openaiPy} />
+  <p>TypeScript:</p>
+  <Code title="typescript" code={openaiTs} />
+
+  <h2 id="langgraph">LangChain and LangGraph</h2>
+  <Code title="python" code={langchain} />
+  <Code code={langsmith} />
+
+  <h2 id="python">Any Python app</h2>
+  <Code code={pythonEnv} />
+  <Code title="python" code={pythonCode} />
+
+  <h2 id="grouping">Sessions and eval runs</h2>
+  <ul>
+    <li>
+      Group traces into one multi-turn session by setting <code>gen_ai.conversation.id</code> (or <code>session.id</code>) on spans. With
+      OpenInference: <code>with using_session("chat-123"):</code>.
+    </li>
+    <li>Tag eval runs with <code>OTEL_RESOURCE_ATTRIBUTES=coding_sh.run_id=&lt;id&gt;</code>.</li>
+    <li>
+      Spans from <a href="https://github.com/vercel/eve">eve</a> agents are recognized and enriched.
+    </li>
+  </ul>
+
+  <div class="note">
+    <p>
+      <strong>Not yet:</strong> events received over OTLP are stored locally only. Configured <a href="/docs/storage#sinks">sinks</a> mirror
+      hook events at ingest; mirroring OTLP events to them is planned.
+    </p>
+  </div>
+</DocsLayout>

@@ -1,0 +1,103 @@
+---
+import DocsLayout from "../../components/docs/DocsLayout.astro";
+import Code from "../../components/docs/Code.astro";
+import { REPO_URL } from "../../data/site";
+
+const SPEC_URL = `${REPO_URL}/blob/main/docs/TOOL-EVALS.md`;
+
+const target = `[toolevals.targets.codingsh]
+kind = "cli"
+bin = "coding.sh"                              # the name the agent types
+command = ["node", "/abs/path/dist/cli.mjs"]   # the real binary plus prefix args
+docs = ["docs/**/*.md", "README.md"]           # reads of these count as doc lookups
+usageExitCodes = [2]                           # exit codes that mean "usage error"
+helpCrawl = true                               # crawl --help of every subcommand for surface size`;
+
+const task = `# evals/toolevals/codingsh/tasks/slowest-tool.toml
+id = "slowest-tool"
+target = "codingsh"
+split = "dev"                 # "dev" | "heldout"
+instruction = """
+Find the slowest tool call in yesterday's sessions. Reply with the session id and the tool name.
+"""
+
+[[check]]
+kind = "output"
+contains = ["\${answers.slowest.sessionId}", "\${answers.slowest.tool}"]
+
+[budget]
+turns = 25
+costUsd = 0.50
+
+[expect]
+minTargetCalls = 2            # reference count for the efficiency ratio`;
+
+const cli = `coding.sh toolevals init --cli <bin>
+coding.sh toolevals surface <target>
+coding.sh toolevals run <target> --driver agent:claude-code --driver model:anthropic/<model> -k 3
+coding.sh toolevals compare <experiment> --baseline base@agent:claude-code --candidate help-v2@agent:claude-code
+coding.sh toolevals compress <target> --driver agent:claude-code`;
+---
+
+<DocsLayout>
+  <div class="note">
+    <p>
+      <strong>Planned, not implemented.</strong> This page summarizes the design in <a href={SPEC_URL}>docs/TOOL-EVALS.md</a>. None of the
+      <code>toolevals</code> commands below exist yet. What it builds on does: adapters, the OTLP receiver, <code>llm.call</code> latency,
+      graders, judges and the paired statistics.
+    </p>
+  </div>
+
+  <h2 id="goal">The goal</h2>
+  <p>
+    Turn "agents misuse my tool" into a number. A tool eval runs tasks against one target (a CLI, an MCP server or an HTTP API), lets agents
+    attempt them, and scores how well they used the tool. Then you change the tool's help text, flag names, MCP descriptions or
+    <code>--json</code> output, and keep the changes that raise the score or hold it at lower cost.
+  </p>
+  <p>Every metric comes from captured traces plus an agent-independent tap on the tool. Nothing is self-reported by the agent.</p>
+
+  <h2 id="concepts">Concepts</h2>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+      <tbody>
+        <tr><td>Target</td><td>The tool under test: a CLI, an MCP server (stdio or HTTP), or an HTTP API.</td></tr>
+        <tr><td>Variant</td><td>A named version of the target's surface, such as <code>base</code> or <code>help-v2</code>.</td></tr>
+        <tr><td>Task</td><td>An instruction, sandbox setup, success checks and a budget. Each belongs to the <code>dev</code> or <code>heldout</code> split.</td></tr>
+        <tr><td>Driver</td><td>What attempts the task: a coding agent through its adapter (<code>agent:claude-code</code>) or a raw model in a built-in tool loop (<code>model:anthropic/…</code>).</td></tr>
+        <tr><td>Tap</td><td>A recorder between driver and target: a PATH shim for a CLI, a JSON-RPC proxy for MCP, a reverse proxy for HTTP.</td></tr>
+        <tr><td>Arm</td><td>A (variant, driver) pair. Comparisons pair arms by task.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="targets">Targets and tasks</h2>
+  <Code title="coding.sh.toml" code={target} />
+  <Code title="task.toml" code={task} />
+  <p>
+    Checks can be a <code>command</code> that must exit 0, <code>state</code> assertions on files or command output, the final
+    <code>output</code>, or a <code>judge</code> (flagged uncalibrated until it passes <a href="/docs/evals#calibration">calibration</a>).
+    Before use, a task must fail when nothing is done, pass a scripted reference, and not leak its answer in the instruction.
+  </p>
+
+  <h2 id="metrics">Metrics</h2>
+  <ul>
+    <li><strong>Success</strong>: pass rate with a Wilson interval, pass@k and pass^k.</li>
+    <li><strong>Correctness of calls</strong>: invalid calls and their reasons (unknown flag, unknown command, schema violation), retries, self-corrections, and whether the first call was right.</li>
+    <li><strong>Help seeking</strong>: <code>--help</code> calls, doc reads and bytes of help read.</li>
+    <li><strong>Cost</strong>: turns, tokens, dollars, wall time, model-call latency and the target's own latency.</li>
+    <li><strong>Surface</strong>: bytes and estimated tokens of the help pages or MCP tool descriptions an agent has to read.</li>
+    <li><strong>Subagents</strong>: target calls made inside subagents, and their share of tokens.</li>
+  </ul>
+
+  <h2 id="experiments">Experiments</h2>
+  <p>
+    An experiment is tasks × variants × drivers × k attempts, interleaved so provider drift hits every arm equally. Compare pairs by task and
+    uses the same paired bootstrap and McNemar's test as <a href="/docs/evals#compare">dataset experiments</a>. A description-compression mode
+    shortens MCP tool descriptions one tool at a time on the dev split, keeps each cut only if it is non-inferior, and confirms the result on
+    the held-out split.
+  </p>
+
+  <h2 id="cli">Proposed commands</h2>
+  <Code title="planned" code={cli} />
+</DocsLayout>

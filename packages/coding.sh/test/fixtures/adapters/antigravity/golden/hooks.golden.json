@@ -1,0 +1,187 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "agy-conv-1",
+    "ts": 1790000000000,
+    "payload": {
+      "source": "hook",
+      "transcriptPath": "/home/dev/.gemini/antigravity-cli/brain/agy-conv-1/.system_generated/logs/transcript.jsonl"
+    },
+    "id": "f92b3114917ec52ad59e295bd439f0c66ae50b46eeceda009e76c14f6bd69b10",
+    "model": "gemini-3-pro",
+    "blobs": [
+      "66645d0234523eb614b76fc0adb1664b15967c679d5cd1600ff3eb83b1f3a615"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "agy-conv-1",
+    "ts": 1790000001000,
+    "payload": {
+      "text": "Add input validation to parse()"
+    },
+    "id": "8f3515c83504ed80ba0cc24669a8eb349003cdf58d95166362e176feacc3a7fd",
+    "model": "gemini-3-pro",
+    "blobs": [
+      "c2a65355a5a6903e1011efcf9d3635246c943f724127738cea49491411c53b8c"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "agy-conv-1",
+    "ts": 1790000003000,
+    "payload": {
+      "tool": "replace_file_content",
+      "toolUseId": "step-4",
+      "input": {
+        "TargetFile": "/work/demo/src/parse.ts",
+        "ReplacementContent": "if (!s) throw new Error()"
+      }
+    },
+    "id": "fd2d6b75c5d6e29aeb81ebe138b8c435e64930151a76242f5c8da7b9df9585b7",
+    "model": "gemini-3-pro",
+    "blobs": [
+      "5390d0cbeaa2ade8b30e516b2d38c41acf1055f148bc1e8073147e50d50c1120"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "agy-conv-1",
+    "ts": 1790000003000,
+    "payload": {
+      "tool": "replace_file_content",
+      "toolUseId": "step-4",
+      "ok": true
+    },
+    "id": "90b307c67218069589ef681ee9e3cac23185cba648d5d7ee2c45918b72f599dd",
+    "model": "gemini-3-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "agy-conv-1",
+    "ts": 1790000003000,
+    "payload": {
+      "path": "src/parse.ts",
+      "op": "modify",
+      "tool": "replace_file_content",
+      "toolUseId": "step-4"
+    },
+    "id": "ec219371da92c18649a171d4fe721da85533b4518014f49af3da20c96531e7ae",
+    "model": "gemini-3-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "agy-conv-1",
+    "ts": 1790000004000,
+    "payload": {
+      "tool": "run_command",
+      "toolUseId": "step-5",
+      "input": {
+        "CommandLine": "npm test",
+        "Cwd": "/work/demo"
+      },
+      "verify": true
+    },
+    "id": "ead97e65040d21e4a645de4d5c2321d44d67f7018c47a8930966f92bae35fd6a",
+    "model": "gemini-3-pro",
+    "blobs": [
+      "f501831c43aa2f56def391397b34ac0a1d850b7cbc0f62ba2c06581cb85792bd"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "agy-conv-1",
+    "ts": 1790000004000,
+    "payload": {
+      "tool": "run_command",
+      "toolUseId": "step-5",
+      "ok": false,
+      "output": "command exited with code 1",
+      "error": "command exited with code 1"
+    },
+    "id": "a7763548d3a1706bea754afc084901f8ca7c86834608c76256dc691df7e663bb",
+    "model": "gemini-3-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "subagent.start",
+    "sessionId": "agy-conv-1",
+    "ts": 1790000004500,
+    "payload": {
+      "subagentId": "step-6",
+      "type": "researcher",
+      "description": "Find other parse() callers"
+    },
+    "id": "72d1add78343c759842b78afbc94dd00a1b46f370cdfebbb4b1c600246b7d97e",
+    "subagentId": "step-6",
+    "model": "gemini-3-pro",
+    "blobs": [
+      "b479f09fcce676192e46e6f59fd38e197b92f2c82548a9f9820f8434034828cf"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "agy-conv-1",
+    "ts": 1790000004500,
+    "payload": {
+      "tool": "invoke_subagent",
+      "toolUseId": "step-6",
+      "input": {
+        "name": "researcher",
+        "task": "Find other parse() callers"
+      }
+    },
+    "id": "1ccb0342ed0e2afd620b5c3f0e4256857225d4cdfcd2ff6c01e591269c348655",
+    "model": "gemini-3-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "agy-conv-1",
+    "ts": 1790000004500,
+    "payload": {
+      "tool": "invoke_subagent",
+      "toolUseId": "step-6",
+      "ok": true
+    },
+    "id": "41305652af229f450299f308b851a1da0158374375895fcb205e495049c6ab0a",
+    "model": "gemini-3-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "subagent.end",
+    "sessionId": "agy-conv-1",
+    "ts": 1790000004500,
+    "payload": {
+      "subagentId": "step-6",
+      "type": "researcher",
+      "ok": true
+    },
+    "id": "3307f7691ed73e29ec0779de6f6dc6f7c2b89c7b6244a63e4b304101fe4cf857",
+    "subagentId": "step-6",
+    "model": "gemini-3-pro",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "agy-conv-1",
+    "ts": 1790000005000,
+    "payload": {
+      "reason": "MODEL_DONE",
+      "fullyIdle": true
+    },
+    "id": "0bf4530ab1a31729ec969f83cafc9e1dd0aad0d44ee3f2aa15c89bfa4c38811d",
+    "model": "gemini-3-pro",
+    "blobs": [
+      "dcfbbfd1b26e1b01293b169310e01c9e179ee78ad38b574d8faf87dd4e306aed"
+    ],
+    "cwd": "/work/demo"
+  }
+]

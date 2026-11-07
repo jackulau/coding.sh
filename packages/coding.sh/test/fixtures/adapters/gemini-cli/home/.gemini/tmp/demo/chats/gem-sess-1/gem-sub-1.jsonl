@@ -1,0 +1,3 @@
+{"sessionId":"gem-sub-1","projectHash":"demo","startTime":"2026-09-21T10:00:02.600Z","kind":"subagent"}
+{"id":"s1","timestamp":"2026-09-21T10:00:02.700Z","type":"user","content":"Find the add function"}
+{"id":"s2","timestamp":"2026-09-21T10:00:02.800Z","type":"gemini","content":"It is in src/math.ts.","model":"gemini-2.5-flash","tokens":{"input":300,"output":12}}

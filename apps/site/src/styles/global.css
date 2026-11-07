@@ -1,0 +1,398 @@
+@import "tailwindcss";
+
+/* coding.sh. Pure black ground. Two voices: Geist (ours: headings, prose) and
+   Geist Mono (the machine's: terminals, data). Pass green and fail red are the
+   only signal colours. Prose sits on black; anything the machine produces sits
+   in a <Terminal>. Fonts are self-hosted and preloaded from Layout.astro. */
+
+@font-face {
+  font-family: "Geist";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/geist-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("/fonts/geist-mono-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Geist Mono";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("/fonts/geist-mono-box.woff2") format("woff2");
+  unicode-range: U+2000-2001, U+2004-2008, U+200A, U+23B8-23BD, U+2500-259F;
+}
+
+:root {
+  --bg: #000;
+  --term: #0a0a0b;
+  --term-bar: #0f0f11;
+  --raised: #161618;
+  --raised-2: #1e1e21;
+  --text: #f4f4f5;
+  --text-2: #b0b0b6;
+  --text-muted: #8b8b92;
+  --text-faint: #5c5c63; /* decorative only: rules, dimmed duplicate lines */
+  --line: #1f1f22;
+  --line-strong: #2c2c30;
+  --pass: #3ccf7a;
+  --pass-ink: #7ee2a8;
+  --fail: #f0616a;
+  --fail-ink: #ff9aa0;
+
+  --radius-sm: 6px;
+  --radius: 10px;
+
+  --fs-xs: 12px;
+  --fs-sm: 13px;
+  --fs-base: 14px;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --hover-in: 160ms;
+  --hover-out: 120ms;
+
+  --nav-h: 4rem;
+
+  --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background-color: var(--bg);
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  scroll-padding-top: calc(var(--nav-h) + 0.5rem);
+}
+@media (prefers-reduced-motion: no-preference) {
+  html:focus-within {
+    scroll-behavior: smooth;
+  }
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.6;
+  background-color: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow-x: clip;
+  font-feature-settings: "ss01" 0;
+}
+
+a,
+button,
+summary,
+[role="slider"] {
+  touch-action: manipulation;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-sans);
+  color: var(--text);
+  text-wrap: balance;
+}
+h1 {
+  font-size: clamp(2.35rem, 1.2rem + 4.4vw, 4.25rem);
+  line-height: 1;
+  letter-spacing: -0.045em;
+  font-weight: 600;
+}
+h2 {
+  font-size: clamp(1.75rem, 1.2rem + 1.9vw, 2.5rem);
+  line-height: 1.06;
+  letter-spacing: -0.035em;
+  font-weight: 600;
+}
+h3 {
+  font-size: 1.0625rem;
+  line-height: 1.35;
+  letter-spacing: -0.015em;
+  font-weight: 560;
+}
+p {
+  text-wrap: pretty;
+}
+
+code,
+kbd,
+pre,
+.font-mono {
+  font-family: var(--font-mono);
+}
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+::selection {
+  background: rgba(255, 255, 255, 0.92);
+  color: #000;
+}
+
+:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* ---------- Prose ---------- */
+
+.prose-block {
+  color: var(--text-2);
+  font-size: 1rem;
+  line-height: 1.65;
+  max-width: 34rem;
+}
+.prose-block > * + * {
+  margin-top: 1rem;
+}
+.prose-block strong {
+  color: var(--text);
+  font-weight: 520;
+}
+.prose-block code {
+  font-size: 0.875em;
+  color: var(--text);
+}
+.lede {
+  font-size: 1.125rem;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.fine {
+  font-size: var(--fs-sm);
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+.inline-link {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+  transition: text-decoration-color var(--hover-out) ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .inline-link:hover {
+    text-decoration-color: var(--text-2);
+    transition-duration: var(--hover-in);
+  }
+}
+
+/* ---------- Layout ---------- */
+
+.wrap {
+  width: 100%;
+  max-width: 76rem;
+  margin: 0 auto;
+  padding-inline: 1rem;
+}
+@media (min-width: 640px) {
+  .wrap {
+    padding-inline: 2rem;
+  }
+}
+.section {
+  position: relative;
+  padding-block: 4rem;
+}
+@media (min-width: 1024px) {
+  .section {
+    padding-block: 5.5rem;
+  }
+}
+.section + .section {
+  border-top: 1px solid var(--line);
+}
+
+/* Two-column section: prose rail on the left, machine output on the right. */
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2.5rem;
+  align-items: start;
+}
+.split > * {
+  min-width: 0;
+}
+@media (min-width: 1024px) {
+  .split {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+    gap: 4rem;
+  }
+  .split__rail {
+    position: sticky;
+    top: calc(var(--nav-h) + 2rem);
+  }
+}
+
+/* ---------- Buttons ---------- */
+
+.btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  padding: 0 1rem;
+  font-size: var(--fs-base);
+  font-weight: 520;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  user-select: none;
+  color: var(--text);
+  background: var(--raised);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  transition:
+    background-color var(--hover-out) ease,
+    transform 140ms var(--ease-out);
+}
+.btn:active {
+  transform: scale(0.97);
+}
+.btn-primary {
+  color: #000;
+  background: #e9e9ec;
+  box-shadow: none;
+}
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover {
+    background: var(--raised-2);
+    transition-duration: var(--hover-in);
+  }
+  .btn-primary:hover {
+    background: #fff;
+  }
+}
+
+/* Icon-sized control inside terminals (replay). 44px hit area on touch. */
+.ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  height: 1.75rem;
+  padding: 0 0.6rem;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  transition:
+    color var(--hover-out) ease,
+    background-color var(--hover-out) ease,
+    transform 140ms var(--ease-out);
+}
+.ctl:active {
+  transform: scale(0.97);
+}
+@media (hover: hover) and (pointer: fine) {
+  .ctl:hover {
+    color: var(--text);
+    background: var(--raised);
+    transition-duration: var(--hover-in);
+  }
+}
+@media (pointer: coarse) {
+  .ctl {
+    height: 2.75rem;
+    padding: 0 0.9rem;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .btn,
+  .ctl {
+    transition-property: background-color, color;
+  }
+  .btn:active,
+  .ctl:active {
+    transform: none;
+  }
+}
+
+/* ---------- Signal colours ---------- */
+
+.t-pass {
+  color: var(--pass-ink);
+}
+.t-fail {
+  color: var(--fail-ink);
+}
+.t-muted {
+  color: var(--text-muted);
+}
+.t-faint {
+  color: var(--text-faint);
+}
+.t-text {
+  color: var(--text);
+}
+/* The one session the landing page follows (s_8f3a21): recorded, turned into
+   an eval, compared. Same treatment wherever it appears, so the eye can follow it. */
+.sid {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--text) 40%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 60;
+  transform: translateY(-200%);
+}
+.skip-link:focus-visible {
+  transform: none;
+}
+
+/* View transitions: a plain cross-fade between pages. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 180ms;
+  animation-timing-function: ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
+}

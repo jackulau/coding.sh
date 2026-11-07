@@ -1,0 +1,126 @@
+---
+import DocsLayout from "../../components/docs/DocsLayout.astro";
+import Code from "../../components/docs/Code.astro";
+import Tag from "../../components/docs/Tag.astro";
+
+// Tool list and config shapes follow packages/coding.sh/src/mcp/tools.ts and
+// src/adapters/_shared/mcp.ts (what `coding.sh init` writes for each agent).
+const TOOLS: [string, string][] = [
+  ["session_current", "The session of the agent calling the tool: its summary and latest timeline."],
+  ["sessions_list", "Captured sessions, newest first, with turns, tool errors, tokens, cost and failure flags."],
+  ["session_get", "One session as a digest: per-turn index and a timeline of prompts, replies, tool calls and model calls."],
+  ["search", "Full-text search over prompts, replies and tool input/output across all sessions."],
+  ["failures", "What went wrong lately: flagged sessions, frequent tool errors, prompts where the user pushed back."],
+  ["latency", "Model-call p50/p95 and time to first token, plus the slowest tools and tool calls."],
+  ["usage", "Tokens and cost by day, agent, model or repo, with the most expensive sessions."],
+  ["subagents", "The subagents a session spawned, as a tree with durations and errors."],
+  ["experiments_list", "Dataset experiments with pass rate and confidence interval."],
+  ["experiment_compare", "Paired comparison of two experiments: difference, p-value, regressed and improved cases."],
+  ["eval_from_session", "Draft an eval task from a session. The only tool that writes; agents ask you first."],
+  ["status", "Health of coding.sh: version, available update, recent captures, pending spool, last error."],
+];
+
+const init = `coding.sh init          # hooks + MCP server for every detected agent
+coding.sh init --no-mcp # hooks only
+coding.sh mcp config    # print the server command for manual setup`;
+
+const claude = `claude mcp add -s user coding-sh -- coding.sh mcp`;
+
+const claudeJson = `// ~/.claude.json
+{
+  "mcpServers": {
+    "coding-sh": { "type": "stdio", "command": "coding.sh", "args": ["mcp"], "env": {} }
+  }
+}`;
+
+const codex = `# ~/.codex/config.toml
+[mcp_servers.coding-sh]
+command = "coding.sh"
+args = ["mcp"]`;
+
+const cursor = `// ~/.cursor/mcp.json
+{
+  "mcpServers": {
+    "coding-sh": { "command": "coding.sh", "args": ["mcp"] }
+  }
+}`;
+
+const opencode = `// ~/.config/opencode/opencode.json
+{
+  "mcp": {
+    "coding-sh": { "type": "local", "command": ["coding.sh", "mcp"], "enabled": true }
+  }
+}`;
+
+const gemini = `// ~/.gemini/settings.json
+{
+  "mcpServers": {
+    "coding-sh": { "command": "coding.sh", "args": ["mcp"] }
+  }
+}`;
+---
+
+<DocsLayout>
+  <p>
+    <code>coding.sh mcp</code> is a local MCP server over stdio. It gives an agent read access to the sessions coding.sh captured on this
+    machine, including the one it is running in, so it can answer "what failed last time?", "why was that slow?" or "what did this cost?"
+    from real traces. Nothing leaves your machine.
+  </p>
+
+  <h2 id="automatic">You don't set it up <Tag status="built" /></h2>
+  <p>
+    <code>coding.sh init</code> shows one plan: capture hooks and the MCP server for every agent it finds. You answer once. It registers the
+    server at user scope with Claude Code, Codex, Cursor, OpenCode and Gemini CLI, backing up each file first. The install script runs
+    <code>init</code> for you.
+  </p>
+  <Code code={init} />
+  <p>
+    The entry points at the installed CLI by absolute path, so agents started from a dock or an IDE find it without your shell's
+    <code>PATH</code>. <code>coding.sh uninstall</code> removes it. A config file nobody touched since init gets its original bytes back.
+    Otherwise only the <code>coding-sh</code> entry is removed.
+  </p>
+  <p>
+    Every call reads fresh data. The server ingests new hook events before it answers, and the hook starts a background ingest when a
+    session ends, so there is no <code>coding.sh ingest</code> step.
+  </p>
+
+  <h2 id="tools">Tools</h2>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Tool</th><th>What it returns</th></tr></thead>
+      <tbody>
+        {
+          TOOLS.map(([name, desc]) => (
+            <tr>
+              <td>
+                <code>{name}</code>
+              </td>
+              <td>{desc}</td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+  <p>
+    Resources: <code>codingsh://latest</code> and <code>codingsh://session/&lt;id&gt;</code>, each a Markdown digest of one session. When a
+    newer coding.sh is out, the server's instructions mention it once and the <code>status</code> tool has the details.
+  </p>
+
+  <h2 id="manual">Manual config</h2>
+  <p>
+    For a machine where you'd rather not run <code>init</code>, or a project-scoped setup. These use the <code>coding.sh</code> binary on
+    <code>PATH</code>; <code>coding.sh mcp config</code> prints the absolute-path form.
+  </p>
+  <h3 id="claude-code">Claude Code</h3>
+  <Code code={claude} />
+  <Code title="json" code={claudeJson} />
+  <h3 id="codex">Codex</h3>
+  <Code title="toml" code={codex} />
+  <h3 id="cursor">Cursor</h3>
+  <Code title="json" code={cursor} />
+  <h3 id="opencode">OpenCode</h3>
+  <Code title="json" code={opencode} />
+  <h3 id="gemini">Gemini CLI</h3>
+  <Code title="json" code={gemini} />
+</DocsLayout>

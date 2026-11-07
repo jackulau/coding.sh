@@ -1,0 +1,296 @@
+---
+// Per-task result of a paired A/B: regressions first, then improvements, then
+// the unchanged tasks. Each run is one square, with its count beside it, so
+// "2/5 → 5/5" reads without counting. Used by the compare band (wide) and by
+// the Experiments tab of the viewer, so both show the same thing.
+//   wide: on desktop the divergence note sits in its own column on the row.
+//   Phones: the task name gets the full width, the two strips sit under it,
+//   and the first note of each group stays visible.
+// Nothing is truncated: rows past `limit` fold into a "+N more" that opens
+// them in place (CSS only; without :has() they are simply all shown).
+import type { TaskRow } from "../data/compare";
+import { taskPasses } from "../data/compare";
+
+interface Props {
+  tasks: TaskRow[];
+  base?: string;
+  cand?: string;
+  /** Show the "first divergence" notes under annotated rows. */
+  notes?: boolean;
+  /** Rows shown per group; the rest fold into one "+N more" that expands. */
+  limit?: number;
+  /** Full-width layout: notes in a column of their own on wide screens. */
+  wide?: boolean;
+  class?: string;
+}
+const { tasks, base = "baseline", cand = "candidate", notes = true, limit = Infinity, wide = false, class: klass } = Astro.props;
+
+const rows = tasks.map((t) => ({ ...t, delta: taskPasses(t.cand) - taskPasses(t.base) }));
+const regressed = rows.filter((r) => r.delta < 0).sort((a, b) => a.delta - b.delta);
+const improved = rows.filter((r) => r.delta > 0).sort((a, b) => b.delta - a.delta);
+const same = rows.filter((r) => r.delta === 0);
+const groups = [
+  { key: "reg", label: `${regressed.length} regressed`, rows: regressed },
+  { key: "imp", label: `${improved.length} improved`, rows: improved },
+]
+  .filter((g) => g.rows.length)
+  .map((g) => {
+    // The first annotated row of each group keeps its note on phones.
+    const lead = notes ? g.rows.slice(0, limit).find((r) => r.note) : undefined;
+    return { ...g, rest: g.rows.slice(limit), lead };
+  });
+const k = tasks[0]?.base.length ?? 0;
+const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+const strip = (s: string) => [...s].map((c) => (c === "1" ? "is-pass" : "is-fail"));
+---
+
+<div class:list={["td", wide && "td--wide", klass]} style={`--k:${k}`}>
+  <div class="td__head" aria-hidden="true">
+    <span class="td__task-h">task</span>
+    <span class="td__arm">{base}</span>
+    <span class="td__arm">{cand}</span>
+    <span class="td__d">Δ</span>
+    {wide && notes && <span class="td__note-h">where the runs first diverge</span>}
+  </div>
+  {
+    groups.map((g) => (
+      <section class:list={["td__group", `is-${g.key}`]}>
+        <p class="td__label">{g.label}</p>
+        <ul class="td__rows" role="list">
+          {g.rows.map((r, i) => (
+            <li class:list={["td__row", r === g.lead && "is-lead", i >= limit && "is-extra"]}>
+              <span class="td__task">{r.task}</span>
+              <span class="td__runs" aria-hidden="true">
+                {strip(r.base).map((c) => <i class:list={["td__dot", c]} />)}
+                <b class="td__n tnum">{taskPasses(r.base)}/{k}</b>
+              </span>
+              <span class="td__runs" aria-hidden="true">
+                {strip(r.cand).map((c) => <i class:list={["td__dot", c]} />)}
+                <b class="td__n tnum">{taskPasses(r.cand)}/{k}</b>
+              </span>
+              <span class="td__d tnum">{signed(r.delta)}</span>
+              <span class="sr-only">
+                {base} {taskPasses(r.base)} of {k}, {cand} {taskPasses(r.cand)} of {k}
+              </span>
+              {notes && r.note && (
+                <span class="td__note">
+                  {/^first divergence at /.test(r.note) && <span class="td__note-pre">first divergence at </span>}
+                  {r.note.replace(/^first divergence at /, "")}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+        {g.rest.length > 0 && (
+          <details class="td__more" data-agent-skip>
+            <summary>
+              <span class="td__more-n">+{g.rest.length} more</span>
+              <span class="td__more-names">{g.rest.map((r) => r.task).join(", ")}</span>
+            </summary>
+          </details>
+        )}
+      </section>
+    ))
+  }
+  {
+    same.length > 0 && (
+      <p class="td__same">
+        <span class="td__label">{same.length} unchanged</span>
+        <span class="td__same-list">{same.map((r) => `${r.task} ${taskPasses(r.base)}/${k}`).join(", ")}</span>
+      </p>
+    )
+  }
+</div>
+
+<style>
+  .td {
+    --dot: 10px;
+    --arm: calc(var(--k, 5) * (var(--dot) + 3px) + 2.25rem);
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    min-width: 0;
+  }
+  .td__head,
+  .td__row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--arm) var(--arm) 2.25rem;
+    align-items: center;
+    column-gap: 1rem;
+  }
+  .td__head {
+    padding: 0 0 0.5rem;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--line);
+  }
+  .td__note-h {
+    display: none;
+  }
+  .td__d {
+    text-align: right;
+  }
+  .td__group {
+    padding-top: 0.75rem;
+  }
+  .td__label {
+    margin: 0 0 0.35rem;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+  }
+  .td__rows {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .td__row {
+    padding: 0.3rem 0;
+  }
+  .td__task {
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+  .td__runs {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .td__dot {
+    flex: none;
+    width: var(--dot);
+    height: var(--dot);
+    border-radius: 2px;
+  }
+  .td__dot.is-pass {
+    background: var(--pass);
+  }
+  /* A failed run is a red-edged empty square: clearly a result, not a gap. */
+  .td__dot.is-fail {
+    box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--fail) 62%, #000);
+  }
+  .td__n {
+    margin-left: 0.45rem;
+    font-weight: 400;
+    font-size: 0.75rem;
+    color: var(--text-2);
+  }
+  .is-reg .td__d {
+    color: var(--fail-ink);
+  }
+  .is-imp .td__d {
+    color: var(--pass-ink);
+  }
+  .td__note {
+    grid-column: 1 / -1;
+    max-width: 60ch;
+    padding: 0.2rem 0 0.1rem 0.75rem;
+    color: var(--text-muted);
+    font-family: var(--font-sans, inherit);
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    box-shadow: inset 1px 0 0 var(--line-strong);
+    margin-top: 0.25rem;
+  }
+  .td__more {
+    margin: 0.2rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.75rem;
+  }
+  .td__more summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0 0.6rem;
+    padding: 0.3rem 0;
+    list-style: none;
+    cursor: pointer;
+  }
+  .td__more summary::-webkit-details-marker {
+    display: none;
+  }
+  .td__more-n {
+    color: var(--text-2);
+    text-decoration: underline;
+    text-decoration-color: var(--line-strong);
+    text-underline-offset: 3px;
+  }
+  .td__more[open] .td__more-names {
+    display: none;
+  }
+  .td__more[open] .td__more-n::after {
+    content: ", less";
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .td__more summary:hover .td__more-n {
+      color: var(--text);
+      text-decoration-color: var(--text-2);
+    }
+  }
+  .td__group:has(.td__more:not([open])) .is-extra {
+    display: none;
+  }
+  .td__same {
+    margin: 0.75rem 0 0;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--line);
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+  .td__same .td__label {
+    display: block;
+  }
+  .td__same-list {
+    display: block;
+    font-size: 0.75rem;
+  }
+
+  /* Wide: the note gets its own column, so every row stays one line. */
+  @media (min-width: 1024px) {
+    .td--wide .td__head,
+    .td--wide .td__row {
+      grid-template-columns: minmax(11rem, 14rem) var(--arm) var(--arm) 2.25rem minmax(0, 1fr);
+      column-gap: 1.25rem;
+    }
+    .td--wide .td__note-h {
+      display: block;
+      padding-left: 0.75rem;
+    }
+    .td--wide .td__note {
+      grid-column: auto;
+      margin-top: 0;
+      padding-block: 0;
+    }
+    /* The column header already says it. */
+    .td--wide .td__note-pre {
+      display: none;
+    }
+  }
+
+  /* Phones: the name on its own line, the two strips and Δ under it. */
+  @media (max-width: 639px) {
+    .td__note {
+      display: none;
+    }
+    .is-lead .td__note {
+      display: block;
+    }
+  }
+  @media (max-width: 479px) {
+    .td {
+      --dot: 9px;
+      --arm: calc(var(--k, 5) * (var(--dot) + 3px) + 2rem);
+    }
+    .td__head,
+    .td__row {
+      grid-template-columns: var(--arm) var(--arm) minmax(0, 1fr);
+      column-gap: 1rem;
+      row-gap: 0.3rem;
+    }
+    .td__task-h {
+      display: none;
+    }
+    .td__task {
+      grid-column: 1 / -1;
+    }
+    .td__row {
+      padding: 0.45rem 0;
+    }
+  }
+</style>

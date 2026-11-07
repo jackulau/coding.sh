@@ -1,0 +1,43 @@
+{
+  "name": "coding.sh-store-postgres",
+  "version": "0.0.1",
+  "description": "Postgres index and blob store for coding.sh: point CODING_SH_STORE_URL at postgres:// and run serve, the CLI, MCP and evals on one database.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.mjs",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.15"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --conditions=source --no-warnings --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  },
+  "peerDependencies": {
+    "coding.sh": ">=0.0.1"
+  },
+  "peerDependenciesMeta": {
+    "coding.sh": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/pg": "^8.11.10",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.3"
+  }
+}

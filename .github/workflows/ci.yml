@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: node ${{ matrix.node }} / ${{ matrix.os }}
+    # Linux legs of trusted runs (push to main, manual) use the self-hosted desk
+    # runner. Pull requests, including forks, stay on GitHub-hosted runners: they are
+    # free for public repos, and untrusted PR code never runs on our own machine.
+    runs-on: ${{ (github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest') && fromJSON('["self-hosted","linux","desk"]') || matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        node: [22.x, 24.x]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # Some tests make throwaway commits in temp repos.
+      - name: Git identity
+        run: |
+          git config --global user.name "coding.sh CI"
+          git config --global user.email "ci@coding.sh.invalid"
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: packages/coding.sh
+        run: npx tsc -p tsconfig.json --noEmit
+
+      - name: Test
+        working-directory: packages/coding.sh
+        run: npm test
+
+      - name: Build
+        working-directory: packages/coding.sh
+        run: npm run build
+
+      - name: Smoke test the bundle
+        working-directory: packages/coding.sh
+        env:
+          NO_UPDATE_NOTIFIER: "1"
+        run: |
+          node dist/cli.mjs --version
+          node dist/cli.mjs --help > /dev/null
+
+      - name: Package contents
+        working-directory: packages/coding.sh
+        run: npm pack --dry-run
+
+      - name: Site build
+        working-directory: apps/site
+        run: npm run build
+
+      - name: Site check
+        working-directory: apps/site
+        run: npm run check

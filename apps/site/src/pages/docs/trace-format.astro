@@ -1,0 +1,130 @@
+---
+import DocsLayout from "../../components/docs/DocsLayout.astro";
+import Code from "../../components/docs/Code.astro";
+import Tag from "../../components/docs/Tag.astro";
+// The kinds come straight from the package, so this list can't drift from the code.
+import { EVENT_KINDS, KNOWN_AGENTS, SCHEMA_ID, SCHEMA_VERSION } from "../../../../../packages/coding.sh/src/schema/index.ts";
+
+const KIND_NOTES: Record<string, string> = {
+  "session.start": "A session began. A child session's payload names its parentSessionId and subagentId.",
+  "session.end": "{ reason? }",
+  "user.message": "{ text }",
+  "assistant.message": "{ text }",
+  "llm.call": "One model API call: { provider?, requestModel?, responseModel?, ttftMs?, stopReason?, tokensPerSec?, ok, error? }; durationMs on the event.",
+  "tool.start": "{ tool, toolUseId, input, server? } (server = MCP server name)",
+  "tool.end": "{ tool, toolUseId, ok, durationMs?, output? } (output truncated; full output in a blob)",
+  "context.compact": "{ trigger: auto | manual, tokensBefore? }",
+  "turn.end": "The agent finished responding to a prompt.",
+  "subagent.start": "{ subagentId, type?, description?, prompt? }",
+  "subagent.end": "{ subagentId, ok?, result?, childSessionId? }",
+  "file.change": "{ path, op: add | modify | delete, additions?, deletions? }",
+  "test.result": "{ runner?, passed, failed, skipped? }",
+  "notification": "An agent notification.",
+  "span": "{ name, attributes }: an OpenTelemetry span with no better mapping.",
+  "error": "An error, e.g. a span's exception event.",
+};
+
+const event = `interface AgentEvent {
+  id: string;            // deterministic sha256: re-ingesting the same source is a no-op
+  v: 0;
+  sessionId: string;
+  turnId?: string;
+  parentId?: string;     // parent event (subagent or nested tool)
+  ts: number;            // ms since epoch; for spans, the start time
+  durationMs?: number;   // wall time of the tool call, model call or turn
+  traceId?: string;      // OpenTelemetry ids, when the event came from a span
+  spanId?: string;
+  parentSpanId?: string;
+  subagentId?: string;   // the subagent this event belongs to
+  source?: string;       // "hook" | "transcript" | "otel-span" | "otel-log" | "wrapper" | …
+  agent: string;         // "claude-code", "codex", … or any kebab-case id
+  agentVersion?: string;
+  model?: string;
+  kind: EventKind;
+  cwd?: string;
+  repo?: { root: string; head: string; snapshot?: string; partial?: boolean; branch?: string };
+  payload: Record<string, unknown>;   // kind-specific, under 4 KB
+  blobs?: string[];      // sha256 refs: full output, diffs, raw payload ("raw" is blobs[0] when kept)
+  usage?: { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; costUsd?: number };
+  runId?: string;        // set when the event came from an eval run (CODING_SH_RUN_ID)
+}`;
+
+const session = `interface Session {
+  id: string;
+  agent: string;
+  model?: string;
+  cwd?: string;
+  repo?: RepoState;
+  title?: string;        // first prompt, truncated to 280 characters
+  startedAt: number;
+  endedAt?: number;
+  stats: {
+    events: number; turns: number; toolCalls: number; toolErrors: number; filesChanged: number;
+    testsPassed?: number; testsFailed?: number;
+    usage?: Usage;
+    latency?: LatencyStats; // wallMs, llmCalls, llmMs, llmP50Ms, llmP95Ms, ttftP50Ms, toolMs, toolP95Ms, subagents
+  };
+  flags: string[];       // detected failure patterns
+  parent?: { sessionId: string; eventId?: string; subagentId?: string; type?: string };
+  traceIds?: string[];
+  runId?: string;
+}`;
+
+const importSchema = `import { SCHEMA_ID, SCHEMA_VERSION, EVENT_KINDS, KNOWN_AGENTS, isEventKind } from "coding.sh/schema";`;
+---
+
+<DocsLayout>
+  <p>
+    Every adapter and the OTLP receiver normalize into one format, <code>{SCHEMA_ID}</code> version {SCHEMA_VERSION}. Its names follow
+    OpenTelemetry's GenAI conventions where they exist, and it exports to OTLP through the <a href="/docs/storage#sinks">otlp sink</a>.
+  </p>
+  <div class="note">
+    <p>
+      <strong>v0 is a draft.</strong> A breaking change will bump the version. Raw source payloads are kept as blobs, so events can always be
+      normalized again from source.
+    </p>
+  </div>
+
+  <h2 id="event">Events</h2>
+  <Code title="AgentEvent" code={event} />
+
+  <h2 id="kinds">Kinds</h2>
+  <div class="doc-table">
+    <table>
+      <thead><tr><th>Kind</th><th>Payload</th></tr></thead>
+      <tbody>
+        {
+          EVENT_KINDS.map((k) => (
+            <tr>
+              <td class="nowrap"><code>{k}</code></td>
+              <td>{KIND_NOTES[k] ?? ""}</td>
+            </tr>
+          ))
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="rules">Rules</h2>
+  <ul>
+    <li><strong>Pairing.</strong> <code>tool.start</code> and <code>tool.end</code> pair by session and <code>payload.toolUseId</code>; <code>subagent.start</code> and <code>subagent.end</code> by session and <code>payload.subagentId</code>. <code>llm.call</code> has no pair.</li>
+    <li><strong>Usage.</strong> An event's <code>usage</code> holds the tokens and cost of that event only, so summing a session's events gives its total. A running or final total an agent reports goes in <code>payload.reportedUsage</code>, never in <code>usage</code>, to avoid double counting.</li>
+    <li><strong>Size.</strong> Payloads stay under 4 KB. Anything larger moves to a blob, referenced from <code>blobs</code>.</li>
+    <li><strong>Subagents.</strong> A child session links to its parent through its <code>session.start</code> payload <code>&#123; parentSessionId, subagentId &#125;</code>, or through <code>childSessionId</code> on the parent's subagent events.</li>
+  </ul>
+
+  <h2 id="sessions">Sessions</h2>
+  <p>Ingest builds a session row from its events and keeps aggregates on it.</p>
+  <Code title="Session" code={session} />
+
+  <h2 id="agents">Agent ids</h2>
+  <p>Known ids: {KNOWN_AGENTS.map((a, i) => <>{i > 0 && ", "}<code>{a}</code></>)}, plus <code>antigravity</code>. A third-party adapter may use any other kebab-case id; OTLP sessions use the kebab-cased <code>service.name</code>.</p>
+
+  <h2 id="package">From code</h2>
+  <p>The CLI package exports the constants under <code>coding.sh/schema</code>:</p>
+  <Code title="javascript" code={importSchema} />
+  <p>
+    TypeScript types and a JSON Schema for the format are <Tag status="planned" />. Until then, the types live in
+    <code>packages/coding.sh/src/schema/index.ts</code>.
+  </p>
+</DocsLayout>
