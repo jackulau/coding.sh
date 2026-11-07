@@ -1,0 +1,102 @@
+packages/store-clickhouse/src/client.ts
+  s_8e040dbdf13565::t_942100108ece51 329,343,346-347
+  s_8e040dbdf13565::t_e7be86c4c40d6a 169,171
+  s_8e040dbdf13565::t_a8cac631108b59 1-168,170,172-328,330-342,344-345,348-409
+.github/workflows/ci.yml
+  s_8e040dbdf13565::t_06bacc5aef4c81 78-108
+packages/store-clickhouse/test/helpers.ts
+  s_8e040dbdf13565::t_bbdf6058548d8c 1-12
+packages/store-clickhouse/test/clickhouse.test.ts
+  s_8e040dbdf13565::t_3d6cff37a7856a 175
+  s_8e040dbdf13565::t_b97936be5ec05a 1-174,176-285
+deploy/compose/gen-env.sh
+  s_8e040dbdf13565::t_51745ef4595532 9,26
+deploy/compose/clickhouse.yml
+  s_8e040dbdf13565::t_c1241114d67172 1-43
+packages/store-clickhouse/src/index-store.ts
+  s_8e040dbdf13565::t_45229a0fdc5217 197
+  s_8e040dbdf13565::t_275ff259aea54d 332-337,345-346,349-352
+  s_8e040dbdf13565::t_0212be16668681 1-196,198-331,338-344,347-348,353-818
+README.md
+  s_8e040dbdf13565::t_f816dfa720f724 99,190
+packages/coding.sh/test/store/factory.test.ts
+  s_8e040dbdf13565::t_6c21eb5344748d 53-54
+docs/production/README.md
+  s_8e040dbdf13565::t_f816dfa720f724 58
+scripts/release/smoke.sh
+  s_8e040dbdf13565::t_e646fa5615ff73 8,29,35,72-73,75,77-79,163-174
+  s_8e040dbdf13565::t_05d9564a4800f9 175-178
+docs/how-to/self-host-team.md
+  s_8e040dbdf13565::t_aa458572a7e247 57-72,74-107,110-149,152-156,158-277
+  s_8e040dbdf13565::t_8af635433e1c75 73,108-109,150-151,157
+docs/PRODUCTION.md
+  s_8e040dbdf13565::t_f816dfa720f724 525-526
+packages/store-clickhouse/package.json
+  s_8e040dbdf13565::t_89275cec4d90d8 1-65
+deploy/test/clickhouse.test.mjs
+  s_8e040dbdf13565::t_3d4942a84a41d9 1-53,55-65,67-125
+  s_8e040dbdf13565::t_8a7073fcf42569 54,66
+packages/store-clickhouse/src/index.ts
+  s_8e040dbdf13565::t_2e3244c72627fa 1-17
+packages/store-clickhouse/test/conformance.test.ts
+  s_8e040dbdf13565::t_604fdc1ed52cf9 1-15
+packages/store-clickhouse/test/prepare.test.ts
+  s_8e040dbdf13565::t_c47ea84f859280 37-38
+  s_8e040dbdf13565::t_d6a5cbafe40221 1-36,39
+packages/store-clickhouse/LICENSE
+  s_8e040dbdf13565::t_4dfd429fb62528 1-21
+deploy/test/deploy.test.mjs
+  s_8e040dbdf13565::t_51745ef4595532 15
+  s_8e040dbdf13565::t_75717eaf5befbc 52,75,127-139
+  s_8e040dbdf13565::t_10c54697658a6c 140-141
+Dockerfile
+  s_8e040dbdf13565::t_51745ef4595532 13
+deploy/clickhouse/otel-collector.yaml
+  s_8e040dbdf13565::t_163cd0e2a1fbe4 1-34
+packages/store-clickhouse/scripts/build.mjs
+  s_8e040dbdf13565::t_043047552f64ef 1-49
+.github/workflows/release.yml
+  s_8e040dbdf13565::t_e646fa5615ff73 15-17,64-71,119-124,136,154,253
+packages/coding.sh/test/docs/clickhouse-howto.test.ts
+  s_8e040dbdf13565::t_27c4cb64c861ad 1-33,35-44,48-67
+  s_8e040dbdf13565::t_44f6b7c2744468 45
+  s_8e040dbdf13565::t_ccfdfbe84183db 34
+  s_8e040dbdf13565::t_6a3e0ac7849e4e 46-47
+packages/coding.sh/test/docs/clickhouse-fixture.ts
+  s_8e040dbdf13565::t_1a5a3e6ef49ff9 1-24,26-81
+  s_8e040dbdf13565::t_6a3e0ac7849e4e 25
+CHANGELOG.md
+  s_8e040dbdf13565::t_f816dfa720f724 24
+packages/store-clickhouse/tsconfig.json
+  s_8e040dbdf13565::t_4dfd429fb62528 1-21
+packages/store-clickhouse/README.md
+  s_8e040dbdf13565::t_145b880962e663 1-82
+deploy/clickhouse/docker-compose.yml
+  s_8e040dbdf13565::t_73e426907c6312 1-23,25-46
+  s_8e040dbdf13565::t_b50dc0e2af786e 24
+packages/store-clickhouse/test/exports.test.ts
+  s_8e040dbdf13565::t_d6a5cbafe40221 1-16
+docs/production/compose.md
+  s_8e040dbdf13565::t_0811314541522c 24,53-55
+packages/coding.sh/src/store/factory.ts
+  s_8e040dbdf13565::t_93ba83cff44e71 7-8
+  s_8e040dbdf13565::t_e4b5227a5083aa 72-77
+package-lock.json
+  s_8e040dbdf13565::t_616d2d555cc2dd 4622-4625,10180-10701
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "68cd202818ca650451584adcee8c709f7e33c474",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
