@@ -51,6 +51,8 @@ const AGENT_LIST: FlagSpec = { name: "agent", short: "a", type: "list", value: "
 const AGENT_ONE: FlagSpec = { name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Only sessions from this agent" };
 const SINCE: FlagSpec = { name: "since", type: "string", value: "<WHEN>", desc: "Only after this time: 7d, 12h, 30m or a date" };
 const FRESH: FlagSpec = { name: "fresh", type: "boolean", desc: "Wait for every pending capture to be ingested (default: answer after 1.5 s)" };
+/** What a read answered before every capture was indexed says, for --json readers. */
+const PENDING_NOTE = 'With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.';
 const LIMIT = (d: number): FlagSpec => ({ name: "limit", short: "n", type: "number", value: "<N>", desc: "Maximum rows", default: String(d) });
 
 /** Flags that describe an experiment run (exp run, exp aa). */
@@ -112,6 +114,7 @@ export const COMMANDS: CommandSpec[] = [
     group: "Capture",
     summary: "Show capture totals and the latest session",
     flags: [FRESH],
+    notes: [PENDING_NOTE],
     load: () => import("./commands/status.ts"),
   },
   {
@@ -226,6 +229,7 @@ export const COMMANDS: CommandSpec[] = [
       FRESH,
     ],
     examples: ["coding.sh sessions", "coding.sh sessions --agent codex --since 7d", "coding.sh sessions --store postgres://… --project demo"],
+    notes: [PENDING_NOTE],
     load: () => import("./commands/sessions.ts"),
   },
   {
@@ -244,6 +248,7 @@ export const COMMANDS: CommandSpec[] = [
     args: [{ name: "text", desc: "Search text", required: true, variadic: true }],
     flags: [AGENT_ONE, LIMIT(20), { name: "project", type: "string", value: "<ID>", desc: "Only matches in this serve project (default: all)" }, FRESH],
     examples: ["coding.sh search 'flaky test'"],
+    notes: [PENDING_NOTE],
     load: () => import("./commands/search.ts"),
   },
   {
@@ -278,7 +283,11 @@ export const COMMANDS: CommandSpec[] = [
     summary: "Serve captured sessions to agents over MCP (stdio)",
     args: [{ name: "action", desc: "serve (default): run the server; config: print how to register it" }],
     examples: ["coding.sh mcp config", "coding.sh mcp"],
-    notes: ["Agents start this themselves once coding.sh init has registered it.", "stdout carries MCP frames only."],
+    notes: [
+      "Agents start this themselves once coding.sh init has registered it.",
+      "stdout carries MCP frames only.",
+      "Tool calls ingest pending captures for up to 1.5 s (CODING_SH_READ_BUDGET_MS), then answer from what is indexed with a pending: {files, indexing} field.",
+    ],
     load: () => import("./commands/mcp.ts"),
   },
   // ---------------------------------------------------------- Evaluate

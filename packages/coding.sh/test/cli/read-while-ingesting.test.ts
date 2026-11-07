@@ -9,6 +9,8 @@ import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { run as status } from "../../src/cli/commands/status.ts";
 import { run as ui } from "../../src/cli/commands/ui.ts";
+import { run as sessions } from "../../src/cli/commands/sessions.ts";
+import { run as search } from "../../src/cli/commands/search.ts";
 import { startBackgroundIngest } from "../../src/cli/ingest-worker.ts";
 import { Output } from "../../src/cli/output.ts";
 import type { FlagValue } from "../../src/cli/args.ts";
@@ -83,6 +85,29 @@ describe("reads during ingest", () => {
     assert.doesNotMatch(fresh.stderr, /not yet ingested/);
     assert.match(fresh.stderr, /Last 24h\s+5 sessions/);
     assert.equal(await sessionCount(h.env), 5, "nothing lost between the budgeted and the full run");
+  });
+
+  test("--json reads carry a pending field while captures are still waiting, and none once all are indexed", async () => {
+    const h = home(5);
+    const env = { ...h.env, CODING_SH_READ_BUDGET_MS: "0", CODING_SH_NO_AUTO_INGEST: "1" };
+    const json = async (cmd: typeof status, positionals: string[] = [], flags: Record<string, FlagValue> = {}) => {
+      const io = { stdout: "", stderr: "" };
+      const out = new Output({ env, json: true, stdout: { write: (s: string) => (io.stdout += s), isTTY: false }, stderr: { write: (s: string) => (io.stderr += s), isTTY: false }, stdin: { isTTY: false } });
+      assert.equal(await cmd({ flags, positionals, rest: [], out, env, cwd: h.cwd, debug: false, signal: new AbortController().signal }), 0);
+      assert.equal(io.stderr, "", "--json keeps stderr empty");
+      return JSON.parse(io.stdout) as Record<string, unknown> & { pending?: { files: number; indexing: boolean } };
+    };
+    // Each read with a 0 ms budget ingests one more file (every run makes progress), then answers.
+    const st = await json(status);
+    assert.deepEqual(st.pending, { files: 4, indexing: false });
+    const ss = await json(sessions);
+    assert.deepEqual(ss.pending, { files: 3, indexing: false });
+    assert.equal((ss.sessions as unknown[]).length, 2);
+    const se = await json(search, ["fix"]);
+    assert.deepEqual(se.pending, { files: 2, indexing: false });
+    const all = await json(sessions, [], { fresh: true });
+    assert.equal("pending" in all, false, "no pending field once everything is indexed");
+    assert.equal((all.sessions as unknown[]).length, 5);
   });
 
   test("a read on the viewer's thread stays prompt while the background worker ingests", async () => {

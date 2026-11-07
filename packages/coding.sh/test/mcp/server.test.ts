@@ -396,4 +396,42 @@ describe("freshness", () => {
       }
     }
   });
+
+  it("answers within its ingest budget from what is indexed, with pending: { files, indexing }, until the backlog is gone", async () => {
+    const f = makeWorld();
+    const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, T3CODE_HOME: process.env.T3CODE_HOME, CODEX_HOME: process.env.CODEX_HOME };
+    Object.assign(process.env, { HOME: f.env.HOME, USERPROFILE: f.env.HOME });
+    delete process.env.T3CODE_HOME;
+    delete process.env.CODEX_HOME;
+    const dir = join(f.env.CODING_SH_HOME!, "spool", "claude-code");
+    mkdirSync(dir, { recursive: true });
+    const t = Date.now();
+    for (let i = 0; i < 4; i++) {
+      const sid = `11111111-2222-4333-8444-00000000000${i}`;
+      const line = (event: string, raw: Record<string, unknown>, ts: number) => JSON.stringify({ v: 0, agent: "claude-code", event, ts, pid: 5000 + i, ppid: 1, cwd: f.root, raw: { session_id: sid, cwd: f.root, hook_event_name: event, ...raw } });
+      writeFileSync(join(dir, `${new Date(t).toISOString().slice(0, 10)}.${5000 + i}.jsonl`), [line("SessionStart", { source: "startup" }, t + i), line("UserPromptSubmit", { prompt: `task ${i}` }, t + i + 1)].join("\n") + "\n");
+    }
+    const { createCodingShMcp } = await import("../../src/mcp/server.ts");
+    // A 0 ms budget: each call ingests one file (every run makes progress), then answers.
+    const mcp = createCodingShMcp({ env: { ...f.env, CODING_SH_NO_AUTO_INGEST: "1" }, cwd: f.root, ingestIntervalMs: 0, ingestBudgetMs: 0, log: () => {} });
+    const callIt = async (name: string, args: Record<string, unknown> = {}) => {
+      const r = await mcp.server.handle({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });
+      return (r!.result as { structuredContent: Record<string, unknown> }).structuredContent;
+    };
+    try {
+      const first = await callIt("sessions_list");
+      assert.equal((first.sessions as unknown[]).length, 1);
+      assert.deepEqual(first.pending, { files: 3, indexing: false });
+      let last = first;
+      for (let i = 0; i < 5 && last.pending; i++) last = await callIt("sessions_list");
+      assert.equal((last.sessions as unknown[]).length, 4);
+      assert.equal("pending" in last, false, "no pending field once everything is indexed");
+    } finally {
+      await mcp.close();
+      for (const [k, v] of Object.entries(saved)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
+    }
+  });
 });

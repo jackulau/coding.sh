@@ -119,6 +119,8 @@ coding.sh status [options]
 |---|---|---|
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
+- With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
+
 ## `coding.sh ingest`
 
 Move captured hook events from the spool into the index.
@@ -300,6 +302,8 @@ coding.sh sessions --agent codex --since 7d
 coding.sh sessions --store postgres://… --project demo
 ```
 
+- With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
+
 ## `coding.sh show`
 
 Show a session timeline with subagents and latency.
@@ -343,6 +347,8 @@ coding.sh search <TEXT>... [options]
 ```sh
 coding.sh search 'flaky test'
 ```
+
+- With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh usage`
 
@@ -404,6 +410,7 @@ coding.sh mcp
 
 - Agents start this themselves once coding.sh init has registered it.
 - stdout carries MCP frames only.
+- Tool calls ingest pending captures for up to 1.5 s (CODING_SH_READ_BUDGET_MS), then answer from what is indexed with a pending: {files, indexing} field.
 
 ## `coding.sh eval`
 

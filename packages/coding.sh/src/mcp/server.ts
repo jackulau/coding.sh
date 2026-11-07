@@ -1,9 +1,13 @@
 // Wires the coding.sh MCP server: one lazily opened store per process, the
 // spool ingested before reads (throttled) so answers include what was just
 // captured, and the stdio loop. stdout carries protocol frames only.
-import { existsSync } from "node:fs";
+//
+// The ingest before a read has the CLI reads' budget (1.5 s, CODING_SH_READ_BUDGET_MS):
+// past it the tool answers from what is indexed, a background `coding.sh ingest`
+// finishes the rest, and the answer carries `pending: { files, indexing }`, so a
+// big backlog never stalls the agent that called the tool.
 import { openContext, type Context } from "../core/context.ts";
-import { tailIngest } from "../cli/common.ts";
+import { autoIngest, pendingField, readBudgetMs, type IngestBacklog } from "../cli/common.ts";
 import { version } from "../cli/meta.ts";
 import { paths } from "../core/paths.ts";
 import { schemaViolations } from "../toolevals/jsonschema.ts";
@@ -18,6 +22,8 @@ export interface CodingShMcpOptions {
   cwd?: string;
   /** Minimum gap between spool ingests (default 2000 ms). */
   ingestIntervalMs?: number;
+  /** How long a tool call waits on ingest before answering from what is indexed (default: the CLI reads' budget). */
+  ingestBudgetMs?: number;
   now?: () => number;
   log?: (msg: string) => void;
 }
@@ -32,6 +38,7 @@ const BASE_INSTRUCTIONS = [
   "Start with session_current for the session you are in, sessions_list or search to find others, then session_get for a digest.",
   "For trends use failures (what went wrong lately), latency, usage (tokens/cost) and subagents. experiments_list and experiment_compare read eval results.",
   "eval_from_session is the only tool that writes; ask the user before calling it with confirm: true.",
+  'A result with pending: {files, indexing} was answered before every capture was indexed: it covers what is indexed so far; call again shortly for the rest.',
 ].join(" ");
 
 /** Server instructions, with a one-line notice when the update checker found a newer release. */
@@ -55,6 +62,8 @@ export function createCodingShMcp(o: CodingShMcpOptions = {}): CodingShMcp {
   let opened: Promise<Context> | undefined;
   let lastIngest = -Infinity;
   let ingesting: Promise<void> | undefined;
+  // What the last ingest left for the background; reported on every answer until an ingest finds none.
+  let backlog: IngestBacklog = { pendingFiles: 0, indexing: false };
 
   const open = (): Promise<Context> => {
     opened ??= openContext({ env, cwd }).catch((e: unknown) => {
@@ -64,20 +73,19 @@ export function createCodingShMcp(o: CodingShMcpOptions = {}): CodingShMcp {
     return opened;
   };
 
+  // The spool, then store-based agents (T3 Code) and agents whose hooks are not firing
+  // yet (untrusted Codex hooks): the same budgeted import CLI reads do. Another ingest
+  // holding the lock is ingesting for us; an unreadable spool still serves what is indexed.
   const ingest = async (ctx: Context): Promise<void> => {
-    if (ctx.storeOverridden) return;
-    if (existsSync(ctx.paths.spool)) {
-      try {
-        const r = await ctx.ingest({ lock: { waitMs: 1000 } });
-        if (r.errors.length) log(`ingest: ${r.errors.length} error(s), first: ${JSON.stringify(r.errors[0]).slice(0, 300)}`);
-      } catch (e) {
-        // Another process holds the ingest lock (it is ingesting for us) or the spool is unreadable: serve what is indexed.
-        if ((e as Error).name !== "LockBusyError") log(`ingest failed: ${(e as Error).message}`);
-      }
+    try {
+      backlog = await autoIngest(ctx, {
+        budgetMs: o.ingestBudgetMs ?? readBudgetMs(env),
+        env,
+        onErrors: (errors) => log(`ingest: ${errors.length} error(s), first: ${JSON.stringify(errors[0]).slice(0, 300)}`),
+      });
+    } catch (e) {
+      log(`ingest failed: ${(e as Error).message}`);
     }
-    // Store-based agents (T3 Code) and agents whose hooks are not firing yet
-    // (untrusted Codex hooks): the same import CLI reads do.
-    await tailIngest(ctx);
   };
 
   const store = async (): Promise<Context> => {
@@ -93,10 +101,15 @@ export function createCodingShMcp(o: CodingShMcpOptions = {}): CodingShMcp {
   };
 
   const ctx: ToolCtx = { env, cwd, now, store };
+  // Not in each outputSchema (every tool definition costs context on every turn): the instructions say it once.
+  const tools = buildTools().map((t) => ({
+    ...t,
+    run: async (args: Record<string, unknown>, c: ToolCtx) => ({ ...(await t.run(args, c)), ...pendingField(backlog) }),
+  }));
   const server = new McpServer<ToolCtx>({
     serverInfo: { name: SERVER_NAME, title: "coding.sh", version: version() },
     instructions: () => instructions(env),
-    tools: buildTools(),
+    tools,
     resources: buildResources(store),
     context: () => ctx,
     validate: (args, schema) => schemaViolations(args, schema, 10),

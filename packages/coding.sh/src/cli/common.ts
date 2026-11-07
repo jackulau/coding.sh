@@ -1,6 +1,7 @@
 // Helpers shared by command modules (loaded only after dispatch).
 import { existsSync, readFileSync } from "node:fs";
 import { openContext, type Context } from "../core/context.ts";
+import type { IngestError } from "../core/ingest.ts";
 import type { EvalTask, Session } from "../core/types.ts";
 import { runningCli } from "../mcp/launch.ts";
 import { spawnBackgroundIngest } from "../spool/kick.ts";
@@ -48,6 +49,30 @@ export interface AutoIngestOptions {
   signal?: AbortSignal;
   /** Spool files still holding unread lines, as the ingest goes. */
   onProgress?: (p: { filesPending: number }) => void;
+  /** Per-line problems the spool ingest reported (bad lines, adapter failures); the read goes on. */
+  onErrors?: (errors: IngestError[]) => void;
+}
+
+/** What autoIngest left undone: source files not yet indexed, and whether an ingest is now working on them. */
+export interface IngestBacklog {
+  pendingFiles: number;
+  /** A background ingest was started, or another ingest holds the lock. */
+  indexing: boolean;
+}
+
+/**
+ * The machine-readable form of a read's backlog: `{ pending: { files, indexing } }` while
+ * captures are still waiting to be indexed (the answer is partial), else nothing.
+ */
+export function pendingField(b: IngestBacklog): { pending?: { files: number; indexing: boolean } } {
+  return b.pendingFiles ? { pending: { files: b.pendingFiles, indexing: b.indexing } } : {};
+}
+
+/** The read budget: CODING_SH_READ_BUDGET_MS when it is a number >= 0, else READ_INGEST_BUDGET_MS. */
+export function readBudgetMs(env: NodeJS.ProcessEnv): number {
+  const raw = env.CODING_SH_READ_BUDGET_MS?.trim();
+  const v = Number(raw);
+  return raw && Number.isFinite(v) && v >= 0 ? v : READ_INGEST_BUDGET_MS;
 }
 
 /**
@@ -57,9 +82,7 @@ export interface AutoIngestOptions {
 export function readIngest(c: CommandContext): AutoIngestOptions {
   const base = { out: c.out, env: c.env };
   if (c.flags.fresh === true) return base;
-  const raw = c.env.CODING_SH_READ_BUDGET_MS?.trim();
-  const v = Number(raw);
-  return { ...base, budgetMs: raw && Number.isFinite(v) && v >= 0 ? v : READ_INGEST_BUDGET_MS };
+  return { ...base, budgetMs: readBudgetMs(c.env) };
 }
 
 /**
@@ -68,13 +91,15 @@ export function readIngest(c: CommandContext): AutoIngestOptions {
  * budget it stops at the next checkpoint once the budget is spent (cursors
  * cover exactly what was stored) and leaves the rest to a background ingest,
  * so a big backlog never blanks a read. Returns the source files still waiting.
+ * While another ingest holds the lock, the spool files it has yet to read count as waiting.
  */
-export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promise<{ pendingFiles: number }> {
+export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promise<IngestBacklog> {
   // A remote store (--store / CODING_SH_STORE_URL) is read as is: never push this machine's spool into it.
-  if (ctx.storeOverridden) return { pendingFiles: 0 };
+  if (ctx.storeOverridden) return { pendingFiles: 0, indexing: false };
   const deadline = o.budgetMs !== undefined ? Date.now() + o.budgetMs : undefined;
   let pending = 0;
   let busy = false;
+  let indexing = false;
   if (existsSync(ctx.paths.spool)) {
     try {
       const r = await ctx.ingest({
@@ -84,9 +109,12 @@ export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promi
         ...(o.onProgress ? { onProgress: o.onProgress } : {}),
       });
       pending += r.pendingFiles;
+      if (r.errors.length) o.onErrors?.(r.errors);
     } catch (e) {
       if (!lockContention(e)) throw e;
       busy = true;
+      const { spoolBacklog } = await import("../core/ingest.ts");
+      pending += await spoolBacklog(ctx.index, ctx.paths.spool).catch(() => 0);
     }
   }
   if (!o.signal?.aborted) pending += await tailIngest(ctx, deadline);
@@ -95,11 +123,12 @@ export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promi
     // (not with CODING_SH_NO_AUTO_INGEST=1, which also keeps the hook from starting them).
     const env = o.env ?? process.env;
     const started = !busy && env.CODING_SH_NO_AUTO_INGEST !== "1" && spawnBackgroundIngest(ingestCli(ctx.paths.cliPointer), env);
-    o.out?.note(`${plural(pending, "file")} not yet ingested${started ? ", indexing in the background" : ""}; showing what is indexed so far (--fresh waits for all)`);
+    indexing = busy || !!started;
+    o.out?.note(`${plural(pending, "file")} not yet ingested${indexing ? ", indexing in the background" : ""}; showing what is indexed so far (--fresh waits for all)`);
     if (started) reparseKicked = true; // that ingest re-parses too when due
   }
   await kickReparse(ctx, o.env ?? process.env);
-  return { pendingFiles: pending };
+  return { pendingFiles: pending, indexing };
 }
 
 let reparseKicked = false;
