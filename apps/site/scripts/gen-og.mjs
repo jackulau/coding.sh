@@ -2,15 +2,21 @@
 // public/og/<page>.png for the changelog and every docs page (title overlay).
 // Black background, the solid voxel cube, "coding.sh" and a title.
 // Needs rsvg-convert (brew install librsvg). Run: npm run og
-import { writeFileSync, readFileSync, mkdirSync, rmSync } from "node:fs";
+// rsvg-convert's PNGs are then re-encoded losslessly with sharp (zlib level 9,
+// no alpha channel since the background is opaque): pixel-identical, ~30% smaller.
+import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import sharp from "sharp";
 import { DOC_PAGES } from "../src/components/docs/nav.ts";
 import { cubeSvg } from "../src/lib/cube.ts";
 
 const PUBLIC = new URL("../public/", import.meta.url).pathname;
-const font = (f) => readFileSync(join(PUBLIC, "fonts", f)).toString("base64");
+// Full source fonts live in src/assets/fonts/source; public/fonts is the old home.
+const SOURCE_FONTS = new URL("../src/assets/fonts/source/", import.meta.url).pathname;
+const FONTS = existsSync(SOURCE_FONTS) ? SOURCE_FONTS : join(PUBLIC, "fonts");
+const font = (f) => readFileSync(join(FONTS, f)).toString("base64");
 const sans = font("geist-latin.woff2");
 const mono = font("geist-mono-latin.woff2");
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -48,17 +54,18 @@ ${tl.map((l, i) => `<text x="88" y="${top + i * size * 1.05}" font-family="G, Ge
 const tmp = join(tmpdir(), `og-${process.pid}`);
 mkdirSync(tmp, { recursive: true });
 mkdirSync(join(PUBLIC, "og"), { recursive: true });
-function png(name, spec) {
+async function png(name, spec) {
   const src = join(tmp, name.replace(/\//g, "_") + ".svg");
   writeFileSync(src, svg(spec));
-  execFileSync("rsvg-convert", ["-w", "1200", "-h", "630", "-o", join(PUBLIC, name + ".png"), src]);
+  const raw = execFileSync("rsvg-convert", ["-w", "1200", "-h", "630", src], { maxBuffer: 64 << 20 });
+  await sharp(raw).removeAlpha().png({ compressionLevel: 9 }).toFile(join(PUBLIC, name + ".png"));
 }
 
-png("og-image", { title: "Traces and evals for AI agents.", sub: "Open source, local-first, MIT licensed." });
-png("og/changelog", { kicker: "changelog", title: "Changelog", sub: "Every release, newest first." });
+await png("og-image", { title: "Traces and evals for AI agents.", sub: "Open source, local-first, MIT licensed." });
+await png("og/changelog", { kicker: "changelog", title: "Changelog", sub: "Every release, newest first." });
 for (const p of DOC_PAGES) {
   const slug = p.path === "/docs" ? "docs" : `docs-${p.path.slice("/docs/".length).replace(/\//g, "-")}`;
-  png(`og/${slug}`, { kicker: "docs", title: p.title, sub: "coding.sh docs" });
+  await png(`og/${slug}`, { kicker: "docs", title: p.title, sub: "coding.sh docs" });
 }
 rmSync(tmp, { recursive: true, force: true });
 rmSync(join(PUBLIC, "og-image.svg"), { force: true });

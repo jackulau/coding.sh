@@ -5,6 +5,7 @@
 // (see src/lib/changelog.ts), so the pages and the file can never disagree.
 import Layout from "../layouts/Layout.astro";
 import Nav from "../components/Nav.astro";
+import ChangelogRail from "../components/ChangelogRail.astro";
 import CubeField from "../components/CubeField.astro";
 import { REPO_URL } from "../data/site";
 import { releases } from "../lib/changelog";
@@ -85,7 +86,4 @@ const oldest = releases[releases.length - 1];
   </main>
 </Layout>
 
-<script>
-  import { setupRail } from "../lib/changelog-spy";
-  document.addEventListener("astro:page-load", setupRail);
-</script>
+<ChangelogRail />

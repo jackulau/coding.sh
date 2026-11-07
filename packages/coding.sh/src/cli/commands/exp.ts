@@ -3,6 +3,8 @@
 // stopping early (group sequential, src/stats/sequential.ts). `exp compare
 // --pairwise` adds a both-order pairwise judge (src/experiments/pairwise.ts);
 // `exp sweep` races configs with sequential halving (src/experiments/sweep.ts).
+// `exp metrics` A/Bs two commands that print numbers (src/experiments/metrics.ts).
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, extname, resolve } from "node:path";
 import { FileEvalStore } from "../../datasets/store.ts";
@@ -10,6 +12,7 @@ import type { Case, Dataset, ExperimentResult, Grader, Split } from "../../datas
 import { aaNoise, taskKey } from "../../experiments/aa.ts";
 import { runAb, type AbArm, type AbResult, type RunAbOpts } from "../../experiments/ab.ts";
 import { clusterMap, compareExperiments, type CompareOpts } from "../../experiments/compare.ts";
+import { MetricRunError, renderMetrics, runMetrics, type MetricArm } from "../../experiments/metrics.ts";
 import { runPairwise, summarizePairwise, type PairwiseSummary } from "../../experiments/pairwise.ts";
 import { renderAa, renderComparison, renderExperiment, renderPairwise, renderSweep } from "../../experiments/render.ts";
 import { runExperiment } from "../../experiments/run.ts";
@@ -252,8 +255,116 @@ function cancelledWarning(c: CommandContext, result: ExperimentResult): void {
   c.out.warn(`Cancelled: stored ${result.id} as cancelled ${kept}; exp compare refuses it unless --force. See it with: coding.sh exp show ${result.id}`);
 }
 
+/**
+ * `--arm NAME=…` for exp metrics: a task spec (JSON), a spec file, or a plain
+ * command line. Arms without their own timeout get `timeoutMs`.
+ */
+function parseMetricArm(v: string, cwd: string, timeoutMs: number): MetricArm {
+  const eq = v.indexOf("=");
+  const name = eq > 0 ? v.slice(0, eq) : "";
+  const body = v.slice(eq + 1).trim();
+  if (!/^[\w.-]+$/.test(name) || !body) {
+    throw new UsageError(`--arm must be NAME=<command|JSON|FILE>, e.g. --arm base='node bench.mjs' (got ${JSON.stringify(v)})`, { reason: "invalid_argument" });
+  }
+  let spec: unknown;
+  const file = resolve(cwd, body);
+  if (body.startsWith("{")) {
+    try {
+      spec = JSON.parse(body);
+    } catch (e) {
+      throw new UsageError(`--arm ${name} is not valid JSON: ${(e as Error).message}`, { reason: "invalid_argument" });
+    }
+  } else if (/\.json$/i.test(body)) {
+    if (!existsSync(file)) throw new UsageError(`--arm ${name}: can't read ${JSON.stringify(body)}`, { reason: "invalid_argument" });
+    try {
+      spec = JSON.parse(readFileSync(file, "utf8"));
+    } catch (e) {
+      throw new UsageError(`--arm ${name}: ${body} is not valid JSON: ${(e as Error).message}`, { reason: "invalid_argument" });
+    }
+  } else if (existsSync(file) && statSync(file).isFile() && !/\s/.test(body)) {
+    spec = { kind: "command", command: file };
+  } else {
+    spec = { kind: "command", command: body, cwd };
+  }
+  if (!isObj(spec) || (spec.kind !== "command" && spec.kind !== "http")) {
+    throw new UsageError(`--arm ${name} must be a command line or a {"kind":"command"} / {"kind":"http"} task spec`, { reason: "invalid_argument" });
+  }
+  if (spec.timeoutMs === undefined) spec.timeoutMs = timeoutMs;
+  return { name, task: spec as unknown as TaskSpec };
+}
+
+/** exp metrics: no dataset and no store, just two commands and their numbers. */
+async function runMetricsCmd(c: CommandContext): Promise<number> {
+  const { out } = c;
+  const timeout = num(c.flags.timeout) ?? 600;
+  if (!(timeout > 0)) throw new UsageError(`--timeout must be a positive number of seconds, got ${JSON.stringify(c.flags.timeout)}`, { reason: "invalid_argument" });
+  const values = list(c.flags.arm);
+  if (values.length !== 2) {
+    throw new UsageError(`exp metrics takes exactly two --arm options, A then B (got ${values.length})`, {
+      reason: "missing_argument",
+      suggestion: "coding.sh exp metrics --arm a='node bench.mjs' --arm b='node bench.mjs' (an A/A run gives one command twice)",
+    });
+  }
+  const arms = values.map((v) => parseMetricArm(v, c.cwd, Math.round(timeout * 1000))) as [MetricArm, MetricArm];
+  if (arms[0].name === arms[1].name) throw new UsageError(`the two --arm names must differ (both ${JSON.stringify(arms[0].name)})`, { reason: "invalid_argument" });
+  const pairs = positiveInt(c.flags.pairs, "pairs") ?? 11;
+  const warmupRaw = num(c.flags.warmup) ?? 0;
+  if (!(Number.isInteger(warmupRaw) && warmupRaw >= 0)) throw new UsageError(`--warmup must be a non-negative integer, got ${JSON.stringify(c.flags.warmup)}`, { reason: "invalid_argument" });
+  const seed = c.flags.seed === undefined ? undefined : num(c.flags.seed);
+  if (seed !== undefined && !(Number.isInteger(seed) && seed >= 0)) throw new UsageError(`--seed must be a non-negative integer, got ${JSON.stringify(c.flags.seed)}`, { reason: "invalid_argument" });
+  const total = 2 * (pairs + warmupRaw);
+  const spin = out.spin(`Running ${arms[0].name} vs ${arms[1].name}: ${pairs} pairs…`);
+  let result;
+  try {
+    result = await runMetrics({
+      ...(str(c.flags.name) ? { name: str(c.flags.name)! } : {}),
+      arms,
+      pairs,
+      warmup: warmupRaw,
+      ...(seed !== undefined ? { seed } : {}),
+      higher: list(c.flags.higher),
+      only: list(c.flags.metric),
+      correction: (str(c.flags.correction) as "holm" | "none" | undefined) ?? "holm",
+      signal: c.signal,
+      onRun: (r, done) => {
+        const what = `${r.warmup ? "warm-up" : `pair ${r.pair}`} ${arms[r.arm].name}`;
+        if (out.stdoutTTY) spin.update(`Running ${arms[0].name} vs ${arms[1].name}: ${done}/${total} (${what} ${r.error ? "failed" : `${Math.round(r.durationMs / 1000)}s`})`);
+        else out.note(`${done}/${total} ${what}: ${r.error ? `failed: ${r.error.slice(0, 200)}` : `ok in ${Math.round(r.durationMs / 1000)}s`}`);
+      },
+    });
+  } catch (e) {
+    spin.stop();
+    if (e instanceof MetricRunError) {
+      throw new CliError(e.message, {
+        reason: "arm_failed",
+        next: [`Run arm ${e.arm}'s command by hand; it must exit 0 and print a JSON object of numbers:`, `echo '{"arm":"${e.arm}","pair":1}' | <the arm's command>`],
+      });
+    }
+    throw e;
+  }
+  spin.stop();
+  if (out.json) out.data({ outcome: result.status, experiment: result });
+  else out.print(renderMetrics(result, { color: out.color }));
+  if (result.status === "cancelled") {
+    out.warn(`Cancelled after ${result.summary.pairsComplete} of ${result.pairs} pairs; the result above is partial`);
+    return 1;
+  }
+  if (!result.summary.pairsComplete) {
+    throw new CliError("No pair finished in both arms, so there is nothing to compare", {
+      reason: "no_pairs",
+      next: ["See why the runs failed (the errors are in the report), then rerun:", "coding.sh exp metrics --arm … --arm … --pairs 3"],
+    });
+  }
+  if (c.flags["fail-on-worse"] === true && result.summary.worse > 0) {
+    out.warn(`${result.summary.worse} metric(s) worse in ${arms[1].name}`);
+    return 1;
+  }
+  return 0;
+}
+
 export async function run(c: CommandContext): Promise<number> {
   const { out, env } = c;
+  if (c.action === "metrics") return runMetricsCmd(c);
   return withContext(c, async (ctx) => {
     const store = new FileEvalStore({ env, index: ctx.index });
     switch (c.action) {

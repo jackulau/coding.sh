@@ -4,6 +4,7 @@
 // with its own anchor. Rendered from CHANGELOG.md (see src/lib/changelog.ts).
 import Layout from "../../layouts/Layout.astro";
 import Nav from "../../components/Nav.astro";
+import ChangelogRail from "../../components/ChangelogRail.astro";
 import CubeField from "../../components/CubeField.astro";
 import { REPO_URL } from "../../data/site";
 import { releases, type Release } from "../../lib/changelog";
@@ -121,7 +122,4 @@ const title = `v${r.version}`;
   </main>
 </Layout>
 
-<script>
-  import { setupRail } from "../../lib/changelog-spy";
-  document.addEventListener("astro:page-load", setupRail);
-</script>
+<ChangelogRail />

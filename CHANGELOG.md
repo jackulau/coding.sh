@@ -15,6 +15,8 @@ coding.sh runs on Windows, and CI tests it there.
 
 - **Install.** Windows: run the installer from Git Bash. Hook commands use `C:/…` paths that cmd.exe, PowerShell and Git Bash all run. CI runs the tests and the installer on Windows. [Install guide](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#windows).
 - **Capture.** CI runs real OpenCode and Pi sessions on Linux and Windows against a stub model, checks the recorded prompt, tool call, file change and model, and checks that `ingest --backfill` adds no duplicates. [Install guide](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#windows).
+- **Experiments.** `exp metrics` A/Bs two commands that print numbers (ms, bytes) in interleaved pairs, with a 95% paired bootstrap CI and a sign test per metric. `--fail-on-worse` exits 1 for CI. [Evals](https://coding.sh/docs/evals#metrics).
+- **Site.** Pages are ready about 0.5 s sooner on a slow phone, with half the font bytes and less layout shift. A Lighthouse A/B with budgets runs on every site change. [Site speed](https://coding.sh/docs/perf).
 
 ### Fixed
 

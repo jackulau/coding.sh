@@ -46,6 +46,34 @@ export function mcnemar(b: number, c: number): McNemarResult {
   return { b, c, n, p: Math.min(1, 2 * binomCdfHalf(Math.min(b, c), n)) };
 }
 
+export interface SignTestResult {
+  /** Differences above zero. */
+  pos: number;
+  /** Differences below zero. */
+  neg: number;
+  /** Exact zeros (left out of the test, as usual). */
+  ties: number;
+  /** Exact two-sided p-value: 2 · P(X ≤ min(pos, neg)), X ~ Bin(pos + neg, 1/2). 1 when every difference is 0. */
+  p: number;
+}
+
+/**
+ * Exact sign test on paired differences (H0: the median difference is 0). It
+ * assumes nothing about their distribution, so it stays honest at small n,
+ * where bootstrap tails are too thin. Same test as McNemar on the signs.
+ */
+export function signTest(diffs: readonly number[]): SignTestResult {
+  let pos = 0;
+  let neg = 0;
+  let ties = 0;
+  for (const d of diffs) {
+    if (d > 0) pos++;
+    else if (d < 0) neg++;
+    else ties++;
+  }
+  return { pos, neg, ties, p: mcnemar(neg, pos).p };
+}
+
 /** McNemar from aligned pass/fail arrays (baseline[i] pairs with candidate[i]). */
 export function mcnemarPaired(baseline: readonly boolean[], candidate: readonly boolean[]): McNemarResult {
   if (baseline.length !== candidate.length) throw new RangeError("mcnemarPaired: arrays differ in length");

@@ -9,6 +9,7 @@
     "build": "astro build && pagefind --site dist --exclude-selectors \"[data-agent-skip]\" && node scripts/gen-agent-text.mjs",
     "preview": "astro preview",
     "check": "astro check",
+    "perf:budget": "node scripts/perf-budget.mjs",
     "og": "node scripts/gen-og.mjs",
     "astro": "astro",
     "icons": "node scripts/gen-icons.mjs",
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
+    "lighthouse": "13.6.0",
     "pagefind": "1.5.2",
     "typescript": "^5.9.3"
   }

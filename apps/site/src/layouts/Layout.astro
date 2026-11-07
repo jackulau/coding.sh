@@ -1,5 +1,7 @@
 ---
 import "../styles/global.css";
+import geistCore from "../assets/fonts/geist-core.woff2?url";
+import geistMonoCore from "../assets/fonts/geist-mono-core.woff2?url";
 import { ClientRouter } from "astro:transitions";
 import Wordmark from "../components/Wordmark.astro";
 import Mark from "../components/Mark.astro";
@@ -65,10 +67,10 @@ const markdownURL = noindex || isAgentExcluded(Astro.url.pathname)
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#000000" />
 
-    <!-- Self-hosted Geist (our voice) and Geist Mono (the machine's). Preloaded so
-         text never waits on a third-party stylesheet; @font-face is in global.css. -->
-    <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin />
-    <link rel="preload" href="/fonts/geist-mono-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <!-- Self-hosted Geist (our voice) and Geist Mono (the machine's). Only the core
+         subsets are preloaded; @font-face is in global.css. -->
+    <link rel="preload" href={geistCore} as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href={geistMonoCore} as="font" type="font/woff2" crossorigin />
     <!-- The client router copies the new page's <html> attributes over, which
          drops this class, and it doesn't re-run this script: put it back after
          every swap, before the new page paints. -->

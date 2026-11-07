@@ -562,6 +562,7 @@ coding.sh exp <action>
 | [`compare`](#codingsh-exp-compare) | Compare two experiments case by case |
 | [`aa`](#codingsh-exp-aa) | Run one config twice (A/A) and store its run-to-run noise |
 | [`sweep`](#codingsh-exp-sweep) | Race task configs with sequential halving, then re-score the winner on held-out cases |
+| [`metrics`](#codingsh-exp-metrics) | A/B two metric commands (ms, bytes) in interleaved pairs |
 | [`show`](#codingsh-exp-show) | Show a stored experiment: pass rate, graders and failures |
 | [`list`](#codingsh-exp-list) | List experiments |
 
@@ -676,6 +677,32 @@ coding.sh exp sweep <CONFIGS>... [options]
 
 ```sh
 coding.sh exp sweep base=base.json t2=temp2.json t5=temp5.json -d smoke -g '{"kind":"exact"}' --budget 300
+```
+
+### `coding.sh exp metrics`
+
+A/B two metric commands (ms, bytes) in interleaved pairs.
+
+```text
+coding.sh exp metrics [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--arm <NAME=CMD|JSON|FILE>` |  | One arm: a command line, a task spec or a spec file; give two (A then B). The command prints a JSON object of numbers. Repeatable. |
+| `--pairs <N>` | `11` | Interleaved pairs (each runs A and B once, in balanced random order) |
+| `--warmup <N>` | `0` | Runs of each arm before the pairs, not counted. |
+| `--higher <METRIC>` |  | Metric where higher is better (repeatable, \* wildcard); lower is better otherwise. |
+| `--metric <METRIC>` |  | Only report these metrics (repeatable, \* wildcard) |
+| `--correction <METHOD>` | `holm` | Multiple-comparison correction across metrics. One of: `holm`, `none`. |
+| `--timeout <SEC>` | `600` | Per-run timeout for arms that don't set timeoutMs. |
+| `--seed <N>` |  | Seed for the arm order (default random, recorded) |
+| `--name <NAME>` |  | Experiment name. |
+| `--fail-on-worse` |  | Exit 1 when any metric is worse in B. |
+
+```sh
+coding.sh exp metrics --arm base='node bench.mjs --dir a' --arm cand='node bench.mjs --dir b'
+coding.sh exp metrics --arm base=base.json --arm cand=cand.json --pairs 21 --higher score --json
 ```
 
 ### `coding.sh exp show`

@@ -47,27 +47,47 @@ export interface BootstrapResult {
  * makes the interval honest when attempts within a task are correlated.
  */
 export function pairedBootstrap(diffs: readonly number[], opts: BootstrapOpts = {}): BootstrapResult {
+  const n = diffs.length;
+  if (n === 0) return { mean: NaN, lo: NaN, hi: NaN, n, iters: 0 };
+  const { lo, hi, iters } = resample(diffs, opts, (xs) => {
+    let s = 0;
+    for (const x of xs) s += x;
+    return s / n;
+  });
+  return { mean: mean(diffs), lo, hi, n, iters };
+}
+
+/**
+ * Like pairedBootstrap, but for the median of the paired differences: robust
+ * to the odd slow run, which is what timing metrics (ms) need. `mean` is
+ * still the sample mean; `median` is the point estimate the CI goes with.
+ */
+export function pairedBootstrapMedian(diffs: readonly number[], opts: BootstrapOpts = {}): BootstrapResult & { median: number } {
+  const n = diffs.length;
+  if (n === 0) return { mean: NaN, median: NaN, lo: NaN, hi: NaN, n, iters: 0 };
+  const mid = (xs: Float64Array) => {
+    xs.sort();
+    return quantileSorted(xs as unknown as number[], 0.5);
+  };
+  const { lo, hi, iters } = resample(diffs, opts, mid);
+  return { mean: mean(diffs), median: mid(Float64Array.from(diffs)), lo, hi, n, iters };
+}
+
+/** Percentile CI of `stat` over `iters` seeded resamples (with replacement) of `xs`. */
+function resample(xs: readonly number[], opts: BootstrapOpts, stat: (sample: Float64Array) => number): { lo: number; hi: number; iters: number } {
   const iters = opts.iters ?? 10_000;
   const alpha = opts.alpha ?? 0.05;
-  const n = diffs.length;
-  const m = mean(diffs);
-  if (n === 0) return { mean: NaN, lo: NaN, hi: NaN, n, iters: 0 };
+  const n = xs.length;
   const rand = mulberry32(opts.seed ?? 0x5eed);
-  const means = new Float64Array(iters);
+  const stats = new Float64Array(iters);
+  const sample = new Float64Array(n);
   for (let i = 0; i < iters; i++) {
-    let s = 0;
-    for (let j = 0; j < n; j++) s += diffs[(rand() * n) | 0] as number;
-    means[i] = s / n;
+    for (let j = 0; j < n; j++) sample[j] = xs[(rand() * n) | 0] as number;
+    stats[i] = stat(sample);
   }
-  means.sort();
-  const sorted = Array.from(means);
-  return {
-    mean: m,
-    lo: quantileSorted(sorted, alpha / 2),
-    hi: quantileSorted(sorted, 1 - alpha / 2),
-    n,
-    iters,
-  };
+  stats.sort();
+  const sorted = Array.from(stats);
+  return { lo: quantileSorted(sorted, alpha / 2), hi: quantileSorted(sorted, 1 - alpha / 2), iters };
 }
 
 /** Calibration label counts: sensitivity is estimated on human-positive items, specificity on human-negative ones. */

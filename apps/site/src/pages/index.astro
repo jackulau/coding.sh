@@ -118,6 +118,7 @@ const FAQ = [
           src={heroSession}
           srcMobile={heroSessionM}
           eager
+          timing="first-viewer-row"
           sizes="(min-width: 1088px) 60rem, calc(100vw - 4rem)"
           alt="A Claude Code session in the coding.sh viewer, on the coding.sh repo: its title, agent, duration and cost, then its steps in order. An npm test run is red because one test failed. A few steps later the agent edits src/store/sqlite.ts to fix it."
         />
@@ -677,21 +678,19 @@ const FAQ = [
 </style>
 
 <script>
-  // Enhancement only: without JS the command is still plain, selectable text.
-  import { copyText, flashCopied } from "../lib/copy";
+  // The copy buttons ([data-copy]) are wired once, site-wide, by Nav's script.
 
-  function setup() {
-    const status = document.querySelector<HTMLElement>("[data-copy-status]");
-    document.querySelectorAll<HTMLButtonElement>("main [data-copy]").forEach((btn) =>
-      btn.addEventListener("click", async () => {
-        if (!(await copyText(btn.dataset.copy ?? ""))) return;
-        flashCopied(btn);
-        if (status) {
-          status.textContent = "Copied to clipboard";
-          setTimeout(() => (status.textContent = ""), 1600);
-        }
-      }),
-    );
+  // scripts/perf reads this mark: when the hero viewer screenshot, with its
+  // first rows, is painted (Element Timing on the image). No visible effect.
+  type ElementTiming = PerformanceEntry & { identifier: string; renderTime: number; loadTime: number };
+  if (typeof PerformanceObserver !== "undefined" && PerformanceObserver.supportedEntryTypes?.includes("element")) {
+    const po = new PerformanceObserver((list) => {
+      for (const e of list.getEntries() as ElementTiming[]) {
+        if (e.identifier !== "first-viewer-row") continue;
+        performance.mark("first-viewer-row", { startTime: e.renderTime || e.loadTime });
+        po.disconnect();
+      }
+    });
+    po.observe({ type: "element", buffered: true });
   }
-  document.addEventListener("astro:page-load", setup);
 </script>

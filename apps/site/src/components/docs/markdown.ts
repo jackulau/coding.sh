@@ -26,6 +26,7 @@ const SITE_PAGES: Record<string, string> = {
   "how-to/expensive-sessions.md": "/docs/how-to/expensive-sessions",
   "how-to/session-to-eval.md": "/docs/how-to/session-to-eval",
   "how-to/self-host-team.md": "/docs/how-to/self-host-team",
+  "perf.md": "/docs/perf",
 };
 
 const FENCE_TITLES: Record<string, string> = { sh: "shell", text: "output", toml: "config.toml" };

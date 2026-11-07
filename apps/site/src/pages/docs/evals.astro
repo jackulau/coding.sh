@@ -171,6 +171,18 @@ const COMPARE = [
     held-out). <code>--budget</code> caps the race's case runs.
   </p>
 
+  <h2 id="metrics">Metric A/B <Tag status="built" /></h2>
+  <p>
+    <code>exp metrics --arm base='node bench.mjs a' --arm cand='node bench.mjs b'</code> compares two commands that print numbers, such as
+    <code>&#123;"lcp_ms": 2310, "js_bytes": 48211&#125;</code>, instead of pass/fail. The arms run in interleaved pairs (11 by default), one run
+    at a time, with half the pairs running A first.
+  </p>
+  <p>
+    For each metric it prints both medians, the median paired difference with a 95% bootstrap interval, and a verdict. Lower is better unless
+    you name the metric in <code>--higher</code>. A change counts only when the interval excludes zero and a sign test still passes after
+    correcting for the number of metrics, so an A/A run stays quiet. <code>--fail-on-worse</code> exits 1 for CI.
+  </p>
+
   <h2 id="judges">LLM judges <Tag status="built" /></h2>
   <p>
     An <code>llm</code> grader calls Anthropic's Messages API or any OpenAI-compatible endpoint (OpenAI, OpenRouter, Ollama, LM Studio, vLLM

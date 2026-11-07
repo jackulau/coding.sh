@@ -415,6 +415,26 @@ export const COMMANDS: CommandSpec[] = [
         examples: ["coding.sh exp sweep base=base.json t2=temp2.json t5=temp5.json -d smoke -g '{\"kind\":\"exact\"}' --budget 300"],
       },
       {
+        name: "metrics",
+        summary: "A/B two metric commands (ms, bytes) in interleaved pairs",
+        flags: [
+          { name: "arm", type: "list", value: "<NAME=CMD|JSON|FILE>", desc: "One arm: a command line, a task spec or a spec file; give two (A then B). The command prints a JSON object of numbers" },
+          { name: "pairs", type: "number", value: "<N>", desc: "Interleaved pairs (each runs A and B once, in balanced random order)", default: "11" },
+          { name: "warmup", type: "number", value: "<N>", desc: "Runs of each arm before the pairs, not counted", default: "0" },
+          { name: "higher", type: "list", value: "<METRIC>", desc: "Metric where higher is better (repeatable, * wildcard); lower is better otherwise" },
+          { name: "metric", type: "list", value: "<METRIC>", desc: "Only report these metrics (repeatable, * wildcard)" },
+          { name: "correction", type: "string", value: "<METHOD>", choices: ["holm", "none"], desc: "Multiple-comparison correction across metrics", default: "holm" },
+          { name: "timeout", type: "number", value: "<SEC>", desc: "Per-run timeout for arms that don't set timeoutMs", default: "600" },
+          { name: "seed", type: "number", value: "<N>", desc: "Seed for the arm order (default random, recorded)" },
+          { name: "name", type: "string", value: "<NAME>", desc: "Experiment name" },
+          { name: "fail-on-worse", type: "boolean", desc: "Exit 1 when any metric is worse in B" },
+        ],
+        examples: [
+          "coding.sh exp metrics --arm base='node bench.mjs --dir a' --arm cand='node bench.mjs --dir b'",
+          "coding.sh exp metrics --arm base=base.json --arm cand=cand.json --pairs 21 --higher score --json",
+        ],
+      },
+      {
         name: "show",
         summary: "Show a stored experiment: pass rate, graders and failures",
         args: [{ name: "experiment", desc: "Experiment id or name (newest, cancelled ones included)", required: true }],

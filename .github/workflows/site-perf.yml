@@ -1,0 +1,135 @@
+name: Site perf
+
+# Lighthouse A/B for apps/site (docs/perf.md). Builds the base and head
+# commits, runs scripts/perf/ab.mjs (coding.sh exp metrics: interleaved pairs,
+# 95% paired bootstrap CI) and fails when a budget in scripts/perf/budgets.json
+# is broken or a gated metric gets worse.
+#
+# Pushes to main and manual runs use the self-hosted desk runner. Pull requests,
+# forks included, run on GitHub-hosted ubuntu-latest (free for public repos),
+# so PR code never runs on our own machine.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/site/**"
+      - "scripts/perf/**"
+      - ".github/workflows/site-perf.yml"
+  pull_request:
+    paths:
+      - "apps/site/**"
+      - "scripts/perf/**"
+      - ".github/workflows/site-perf.yml"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Commit or ref to compare against"
+        default: "HEAD~1"
+      pairs:
+        description: "Interleaved pairs (9 or more lets a noisy metric be called)"
+        default: "9"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: site-perf-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  perf:
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","linux","desk"]') }}
+    timeout-minutes: 120
+    env:
+      PAIRS: ${{ inputs.pairs || '9' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Base commit for the A/B, and each sitemap <lastmod> in both builds.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Pick the base commit
+        id: base
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          INPUT_BASE: ${{ inputs.base }}
+        run: |
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) ref="$PR_BASE" ;;
+            push) ref="$BEFORE" ;;
+            *) ref="${INPUT_BASE:-HEAD~1}" ;;
+          esac
+          # A new branch or a force push has no usable "before".
+          if [ -z "$ref" ] || ! git cat-file -e "$ref^{commit}" 2>/dev/null; then ref=HEAD~1; fi
+          sha=$(git rev-parse "$ref^{commit}")
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "base $sha, head $(git rev-parse HEAD)"
+
+      - name: Build head
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build -w @coding.sh/site
+          rm -rf "$RUNNER_TEMP/head-dist" && cp -r apps/site/dist "$RUNNER_TEMP/head-dist"
+
+      - name: Build base
+        env:
+          BASE: ${{ steps.base.outputs.sha }}
+        run: |
+          git worktree prune
+          rm -rf "$RUNNER_TEMP/base" && git worktree add --detach "$RUNNER_TEMP/base" "$BASE"
+          cd "$RUNNER_TEMP/base"
+          npm ci --no-audit --no-fund
+          npm run build -w @coding.sh/site
+          rm -rf "$RUNNER_TEMP/base-dist" && cp -r apps/site/dist "$RUNNER_TEMP/base-dist"
+
+      # ubuntu-latest ships Google Chrome. The desk uses Playwright's Chromium,
+      # downloaded once into the runner user's cache.
+      - name: Chromium
+        run: |
+          if command -v google-chrome >/dev/null; then path=$(command -v google-chrome)
+          else
+            npx -y playwright@1.56.1 install chromium
+            path=$(find "$HOME/.cache/ms-playwright" -path '*/chromium-*/chrome-linux*/chrome' -type f | sort -V | tail -1)
+          fi
+          echo "CHROME_PATH=$path" >> "$GITHUB_ENV"
+          "$path" --version
+
+      # The _ms budgets were set on the desk; a hosted runner checks the byte,
+      # request and layout-shift budgets and the A/B verdicts only.
+      - name: A/B and budgets
+        env:
+          SKIP: ${{ github.event_name == 'pull_request' && '--skip-budget *_ms' || '' }}
+        run: |
+          set -f  # $SKIP holds a pattern for ab.mjs, not for the shell
+          mkdir -p "$RUNNER_TEMP/perf"
+          # shellcheck disable=SC2086
+          node scripts/perf/ab.mjs --base "$RUNNER_TEMP/base-dist" --cand "$RUNNER_TEMP/head-dist" \
+            --pairs "$PAIRS" --warmup 1 --gate --budgets scripts/perf/budgets.json $SKIP \
+            --out "$RUNNER_TEMP/perf/result.json" | tee "$RUNNER_TEMP/perf/report.txt"
+
+      - name: Summary
+        if: always()
+        run: |
+          [ -f "$RUNNER_TEMP/perf/report.txt" ] || exit 0
+          { echo '### Site perf: base vs head'; echo '```text'; cat "$RUNNER_TEMP/perf/report.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: site-perf
+          path: ${{ runner.temp }}/perf
+          if-no-files-found: ignore
+
+      - name: Clean up
+        if: always()
+        run: git worktree remove --force "$RUNNER_TEMP/base" 2>/dev/null || true

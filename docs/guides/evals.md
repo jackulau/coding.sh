@@ -67,6 +67,30 @@ runs high; the held-out score is the one to trust. `--budget N` caps case runs f
 (default: each train case used once), `--split` and `--held-out` pick the splits, and a dataset
 with no splits gets a seeded 30% held out. Every run is stored as a normal experiment.
 
+## Metric A/B (ms, bytes)
+
+`coding.sh exp metrics --arm base='<cmd>' --arm cand='<cmd>'` compares two commands that print
+numbers instead of pass/fail. Each run prints one JSON object, such as
+`{"lcp_ms": 2310, "js_bytes": 48211}`. Nested objects flatten to dotted names
+(`mobile.home.lcp_ms`). An arm is a command line, a `{"kind":"command"}` task spec or a spec file.
+Each run gets `{"arm","pair","warmup"}` on stdin.
+
+The arms run in `--pairs` interleaved pairs (default 11), one run at a time. Half the pairs run A
+first and half B first, in a seeded random order, so a warm cache or a heating CPU hits both arms
+alike. `--warmup N` runs each arm N times first and drops those runs.
+
+For each metric it prints both arms' medians, the median paired delta (B − A) with a 95% paired
+bootstrap CI, and a verdict: better, worse or inconclusive. Lower is better unless the metric is
+named in `--higher` (`*` wildcards work). A verdict needs two things. The CI must exclude 0, and an
+exact sign test on the paired deltas must give p < 0.05 after a Holm correction across the metrics.
+At 11 pairs the bootstrap alone is too optimistic, and a page run reports dozens of metrics, so
+without the correction an A/A run would flag a few by chance. With 11 pairs, a noisy metric needs
+nearly every pair to agree; use `--pairs 21` to find smaller changes. A metric whose deltas are all
+the same, like the byte count of a fixed build, has no noise: a non-zero delta is a change.
+
+`--json` prints the whole result, runs included. `--fail-on-worse` exits 1 when any metric got
+worse, for CI gates. scripts/perf/ uses it to gate the coding.sh site on Lighthouse metrics.
+
 ## Judges
 
 `coding.sh judge calibrate` measures judge and human agreement (Cohen's kappa) on a held-out split.

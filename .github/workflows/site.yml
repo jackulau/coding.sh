@@ -50,6 +50,13 @@ jobs:
         working-directory: apps/site
         run: npm run check
 
+      # Reads dist only: page weight, preloaded fonts, startup scripts, image
+      # attributes, font subsets and OG card sizes. Over budget stops the deploy.
+      # Load times are checked by site-perf.yml.
+      - name: Perf budget
+        working-directory: apps/site
+        run: npm run perf:budget
+
       - name: Deploy credentials
         id: creds
         env:

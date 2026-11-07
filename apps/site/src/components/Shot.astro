@@ -2,8 +2,9 @@
 // A real screenshot of the coding.sh viewer in a plain window frame. The images
 // come from scripts/shots (seed.mjs, then capture.mjs): the real viewer on a
 // throwaway home with coding.sh working on its own repo. They are 2x captures;
-// Astro's image pipeline emits a 1x and a 2x file for each, with width and
-// height set so nothing shifts while they load. Phones get their own crop.
+// Astro's image pipeline emits a 1x and a 2x file for each (plus a slot-width
+// file for 1x desktops), with width and height set so nothing shifts while
+// they load. Phones get their own crop.
 import type { ImageMetadata } from "astro";
 import { getImage } from "astro:assets";
 
@@ -17,26 +18,44 @@ interface Props {
   eager?: boolean;
   /** `sizes` for the desktop image. */
   sizes?: string;
+  /** Element Timing id (`elementtiming`): the page turns its paint into a performance mark for scripts/perf. */
+  timing?: string;
   class?: string;
 }
 
-const { src, srcMobile, alt, bar, eager = false, sizes = "(min-width: 1024px) 42rem, 100vw", class: klass } = Astro.props;
+const { src, srcMobile, alt, bar, eager = false, sizes = "(min-width: 1024px) 42rem, 100vw", timing, class: klass } = Astro.props;
 
 // Both files are 2x captures, so their CSS size is half their pixel size.
 const half = (m: ImageMetadata) => ({ w: Math.round(m.width / 2), h: Math.round(m.height / 2) });
 const d = half(src);
 const p = half(srcMobile);
 const desk = await getImage({ src, widths: [d.w, src.width], format: "webp", quality: 82 });
+// A leading `(media) 60rem` entry in `sizes` is a fixed slot. It gets its own
+// <source> with a file at that width (960w), so a 1x desktop draws it 1:1
+// instead of downscaling the 2x capture. Its own source keeps the slot file
+// away from narrower windows, where it would be shrunk a few percent and blur.
+// 2x screens, tablets and phones still pick the same files as before.
+const slots: { media: string; sizes: string; srcset: string }[] = [];
+for (const entry of sizes.split(",")) {
+  const m = entry.trim().match(/^(\(.+\))\s+((\d*\.?\d+)(rem|px))$/);
+  const w = m ? Math.round(Number(m[3]) * (m[4] === "rem" ? 16 : 1)) : 0;
+  if (!m || w <= d.w || w >= src.width) break;
+  const img = await getImage({ src, widths: [w, src.width], format: "webp", quality: 82 });
+  slots.push({ media: m[1], sizes: m[2], srcset: img.srcSet.attribute });
+}
 const phone = await getImage({ src: srcMobile, widths: [p.w, srcMobile.width], format: "webp", quality: 82 });
+// astro's ImgHTMLAttributes has no `elementtiming` yet; an undefined value renders no attribute.
+const timingAttr: Record<string, string | undefined> = { elementtiming: timing };
 ---
 
-<figure class:list={["shot", klass]}>
+<figure class:list={["shot", klass]} style={`--shot-ratio:${src.width}/${src.height};--shot-ratio-m:${srcMobile.width}/${srcMobile.height}`}>
   <div class="shot__bar" aria-hidden="true">
     <span class="shot__dots"><i></i><i></i><i></i></span>
     {bar && <span class="shot__title">{bar}</span>}
   </div>
   <picture>
     <source media="(max-width: 639px)" srcset={phone.srcSet.attribute} sizes="calc(100vw - 2rem)" width={p.w} height={p.h} />
+    {slots.map((x) => <source media={x.media} srcset={x.srcset} sizes={x.sizes} width={d.w} height={d.h} />)}
     <img
       src={desk.src}
       srcset={desk.srcSet.attribute}
@@ -47,6 +66,7 @@ const phone = await getImage({ src: srcMobile, widths: [p.w, srcMobile.width], f
       loading={eager ? "eager" : "lazy"}
       decoding={eager ? "sync" : "async"}
       fetchpriority={eager ? "high" : "auto"}
+      {...timingAttr}
     />
   </picture>
 </figure>
@@ -95,9 +115,17 @@ const phone = await getImage({ src: srcMobile, widths: [p.w, srcMobile.width], f
     color: var(--text-muted);
     pointer-events: none;
   }
+  /* Pin the box to the capture's ratio. A resized file's height is rounded,
+     so its own ratio can be a fraction of a pixel off and nudge the page. */
   .shot img {
     display: block;
     width: 100%;
     height: auto;
+    aspect-ratio: var(--shot-ratio);
+  }
+  @media (max-width: 639px) {
+    .shot img {
+      aspect-ratio: var(--shot-ratio-m);
+    }
   }
 </style>

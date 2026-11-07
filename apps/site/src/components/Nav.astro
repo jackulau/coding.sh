@@ -542,17 +542,6 @@ const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
     scrim.addEventListener("wheel", still, { passive: false });
     // A link closes the sheet; the page change (or anchor) follows.
     sheet.querySelectorAll<HTMLAnchorElement>("a.nav__row").forEach((a) => a.addEventListener("click", () => setOpen(false, false)));
-    const copyStatus = sheet.querySelector<HTMLElement>("[data-nav-copy-status]");
-    sheet.querySelectorAll<HTMLButtonElement>("[data-copy]").forEach((b) =>
-      b.addEventListener("click", async () => {
-        if (!(await copyText(b.dataset.copy ?? ""))) return;
-        flashCopied(b);
-        if (copyStatus) {
-          copyStatus.textContent = "Copied to clipboard";
-          setTimeout(() => (copyStatus.textContent = ""), 1600);
-        }
-      }),
-    );
 
     const onKey = (e: KeyboardEvent) => {
       if (!isOpen()) return;
@@ -589,4 +578,22 @@ const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
     );
   }
   document.addEventListener("astro:page-load", setupNav);
+
+  // Every copy button on the site ([data-copy]: the hero, the closing CTA and
+  // the sheet's install row), wired once on the document so it survives page
+  // swaps without rebinding. Enhancement only: without JS the command is still
+  // plain, selectable text. The sheet announces in its own live region (the
+  // page's is inert while the sheet is open), everything else in the page's.
+  document.addEventListener("click", async (e) => {
+    const btn = (e.target as Element | null)?.closest<HTMLElement>("[data-copy]");
+    if (!btn || !(await copyText(btn.dataset.copy ?? ""))) return;
+    flashCopied(btn);
+    const status =
+      btn.closest("[data-nav-sheet]")?.querySelector<HTMLElement>("[data-nav-copy-status]") ??
+      document.querySelector<HTMLElement>("[data-copy-status]");
+    if (status) {
+      status.textContent = "Copied to clipboard";
+      setTimeout(() => (status.textContent = ""), 1600);
+    }
+  });
 </script>

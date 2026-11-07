@@ -1,0 +1,10 @@
+---
+// The changelog rail's scrollspy (lib/changelog-spy), shared by /changelog and
+// /changelog/<version>. One component, so both pages ship the same small
+// import-free script and Astro inlines it instead of emitting shared chunks.
+---
+
+<script>
+  import { setupRail } from "../lib/changelog-spy";
+  document.addEventListener("astro:page-load", setupRail);
+</script>
