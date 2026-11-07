@@ -1,0 +1,51 @@
+packages/coding.sh/src/cli/commands/show.ts
+  s_8e040dbdf13565::t_8dd028d86e5c78 8,130-143,161-166,287,289,324
+packages/coding.sh/test/core/skills-use.test.ts
+  s_8e040dbdf13565::t_0288632a67cf15 1-69,71-78,82-101
+  s_8e040dbdf13565::t_b840b6897fa04c 70,79
+  s_8e040dbdf13565::t_b16a028a0c9547 80-81
+packages/coding.sh/test/adapters/real-install.test.ts
+  s_8e040dbdf13565::t_8dd028d86e5c78 274,276-284
+packages/coding.sh/src/mcp/digest.ts
+  s_8e040dbdf13565::t_8dd028d86e5c78 4,54-55,69
+docs/reference/cli.md
+  s_8e040dbdf13565::t_8dd028d86e5c78 297
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_8dd028d86e5c78 244
+CHANGELOG.md
+  s_8e040dbdf13565::t_8dd028d86e5c78 42
+packages/coding.sh/src/core/skills-use.ts
+  s_8e040dbdf13565::t_4904f4665230c6 88-94
+  s_8e040dbdf13565::t_0172153934a1e6 1-11,13-41,45-55,61-87,95-185,187-251,253-254
+  s_8e040dbdf13565::t_d3b3b90aaf66dd 56-60
+  s_8e040dbdf13565::t_d8e33c54ef80be 12,252
+  s_8e040dbdf13565::t_b840b6897fa04c 186
+  s_8e040dbdf13565::t_d2dab14753150c 42-44
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_8dd028d86e5c78 10,12,30-31,480
+docs/concepts.md
+  s_8e040dbdf13565::t_8dd028d86e5c78 48-49,51-53
+packages/coding.sh/src/mcp/tools.ts
+  s_8e040dbdf13565::t_8dd028d86e5c78 215,241
+packages/coding.sh/test/cli/waste-skills.test.ts
+  s_8e040dbdf13565::t_8420c451e26afb 1-3,6-12,19-25,27-28,30,32-78,81-83,111-112
+  s_8e040dbdf13565::t_80f6e0a0862ced 26,29,31,79-80
+  s_8e040dbdf13565::t_41a7efe27193d9 105
+  s_8e040dbdf13565::t_429dec643230f9 4-5,13-18,84-104,106-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ee707cec8b70382d6162ba289e631912deb8f40e",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
