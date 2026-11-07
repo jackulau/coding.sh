@@ -141,6 +141,23 @@ const REFINE = [
   `1      r_3123c2cbef  ${ok("keep, applied")}  +100pp [+100pp, +100pp]  no tasks              $0.02  dev: Ship it: B wins 8 decision points, loses 0`,
   `2      r_b25de6ab68  ${no("reject")}         +100pp [+100pp, +100pp]  forgets r_3123c2cbef  $0.02  guard: forgets kept edit r_3123c2cbef`,
 ].join("\n");
+const TRIGGER = [
+  `${m("$")} ${t('coding.sh eval trigger skills/pdf --description "Use when the user mentions pdf, invoice, scanned." --yes')}`,
+  `A (current): pdf on claude-code, k=1`,
+  `  precision 67%  recall 50%  F1 0.57  accuracy 63%`,
+  `  missed:`,
+  `    should     loaded 0/1  "Make the invoice searchable"`,
+  `    should_not false trigger 1/1  "Explain in one line what a pdf is"`,
+  `  expected routes: docx 1/1`,
+  `B (--description): pdf on claude-code, k=1`,
+  `  precision 80%  recall 100%  F1 0.89  accuracy 88%`,
+  "",
+  `B vs A over 8 prompts: recall 2/4→4/4 · false triggers 1/4→1/4 · Δacc +25 pp (95% CI +0 to +63)`,
+  `  flip ${ok("better")} should     skipped → loaded  "Make the invoice searchable"`,
+  `  flip ${ok("better")} should     skipped → loaded  "OCR this scanned invoice"`,
+  `  ${m("note: 4 should and 4 should_not prompts: only a large change can show; aim for 10+ per side")}`,
+  `No clear difference`,
+].join("\n");
 ---
 
 <DocsLayout>
@@ -397,6 +414,24 @@ const REFINE = [
     propose, test and apply until <code>--rounds</code>, <code>--max-cost</code> or the plateau detector says stop. <code>--dry-run</code>
     shows the plan, the guard size and the cost first. See
     <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#refine-loop">Refine loop</a>.
+  </p>
+
+  <h2 id="triggers">Skill triggers <Tag status="built" /></h2>
+  <p>
+    A skill only helps when the agent loads it. <code>coding.sh eval trigger &lt;skill-dir&gt;</code> reads a <code>triggers.toml</code> next to
+    the skill with <code>[[should]]</code> prompts the skill is for and <code>[[should_not]]</code> near misses. It runs each prompt k times in a
+    fresh empty directory with the skill and its sibling skills installed, and reads from each captured session whether the agent loaded the
+    skill. It reports precision, recall, F1 and Wilson intervals, and lists the prompts it missed or loaded by mistake. A near miss can name the
+    sibling that should take it (<code>expect_skill</code>). <code>--description</code> or <code>--candidate DIR</code> runs a second arm with the
+    same prompts in the same order and adds a paired bootstrap CI on accuracy and the prompts that flipped.
+  </p>
+  <Terminal title="~/repo" label="Output of coding.sh eval trigger with a description A/B">
+    <Fragment set:html={TRIGGER} />
+  </Terminal>
+  <p>
+    The output above is the CI check with real Claude Code against a stub model. Eight prompts can't show a change of this size, so the verdict
+    holds. <code>--min-f1</code> and <code>--fail-on regression</code> set the exit code for CI. See
+    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/how-to/evaluate-a-skill.md#does-the-skill-load">Does the skill load?</a>.
   </p>
 
   <h2 id="judges">LLM judges <Tag status="built" /></h2>

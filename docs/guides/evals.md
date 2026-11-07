@@ -996,6 +996,26 @@ whole loop, proposer calls included), when the plateau detector says stop, or on
 when it applied an edit. `refine run --dry-run` shows the findings, the decision points, the guard
 size and the cost of one round.
 
+## Skill triggers
+
+`coding.sh eval trigger <skill-dir>` checks that the agent loads a skill when it should and leaves
+it alone when it shouldn't. It reads `triggers.toml` next to the skill: `[[should]]` and
+`[[should_not]]` prompts, each with an optional `weight` (1 or 0.5), and on near misses an
+`expect_skill` naming the sibling that should take the prompt. Each prompt runs k times (the spec's
+`k`, default 3) through the harness runner, in a fresh empty directory with the skill and its
+siblings installed in the agent's project skills dir. A run counts as loaded when its captured
+session has the skill load (Claude Code's Skill tool, or a read of the SKILL.md); without a session
+it reads the agent's stdout. Runs that error, or time out before loading, are left out of the
+metrics and counted.
+
+The report gives precision, recall, F1 and accuracy (weighted), Wilson intervals on recall and on
+the false-trigger rate, each missed prompt with x/k and a flaky mark, and the expected routes.
+`--description TEXT|@FILE` or `--candidate DIR` adds a second arm. Both arms run the same prompts,
+interleaved in a seeded order. The delta is a paired bootstrap CI on per-prompt accuracy, plus
+McNemar at k=1 and the prompts whose majority answer flipped. `--min-f1 X` exits 1 when the tested
+arm's F1 is under X. `--fail-on regression` exits 1 when B's CI is below 0. Results go to
+`~/.coding.sh/triggers/<skill>/`. See [Does the skill load?](../how-to/evaluate-a-skill.md#does-the-skill-load).
+
 ## Tool evals
 
 `coding.sh toolevals` measures how well agents use a CLI, MCP server or HTTP API: surface size,

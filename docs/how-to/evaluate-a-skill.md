@@ -174,3 +174,72 @@ With 12 tasks and one attempt each, the report's minimum detectable effect is ab
 a large change will show. Use `--k 3` so one unlucky run doesn't decide a task, and aim for at least
 8 tasks per suite if you want per-suite verdicts. The gate needs 8 or more wins with no losses to
 ship.
+
+## Does the skill load?
+
+The agent decides from the skill's `description` whether to load it at all. A skill that never loads
+can't help, and one that loads on the wrong prompts costs context. `coding.sh eval trigger` tests
+that decision before you test the body.
+
+Put a `triggers.toml` next to SKILL.md: prompts the skill is for, and near misses it should leave
+alone. A near miss can name the sibling skill that should take it.
+
+```toml
+k = 3            # runs per prompt
+timeout_s = 120
+
+[[should]]
+prompt = "Fill in the pdf form"
+
+[[should]]
+prompt = "OCR this scanned invoice"
+weight = 0.5     # a borderline case counts half
+
+[[should_not]]
+prompt = "Write a docx memo"
+expect_skill = "docx"
+```
+
+Aim for at least 10 prompts per side. Each run starts in a fresh empty directory with the skill
+and its sibling skills installed in the agent's project skills dir (`--siblings DIR` or
+`--no-siblings` to change that). coding.sh reads from the captured session whether the agent
+loaded the skill. Claude Code's Skill tool and Codex reading the SKILL.md both count. Without a
+session it falls back to the agent's stdout.
+
+```sh
+coding.sh eval trigger .claude/skills/pdf --yes
+coding.sh eval trigger .claude/skills/pdf --description "Use when the user mentions pdf, invoice, scanned." --yes
+```
+
+```
+B (--description): pdf on claude-code, k=1
+  precision 80%  recall 100%  F1 0.89  accuracy 88%
+  TP 4 FP 1 TN 3 FN 0
+  recall 100% [51%–100%] · false triggers 25% [5%–70%] (Wilson 95%, over 8 runs)
+  missed:
+    should_not false trigger 1/1  "Explain in one line what a pdf is"
+  expected routes: docx 1/1
+
+B vs A over 8 prompts: recall 2/4→4/4 · false triggers 1/4→1/4 · Δacc +25 pp (95% CI +0 to +63)
+  McNemar (k=1): B right where A wrong 2, the reverse 0, p = 0.500
+  flip better should     skipped → loaded  "Make the invoice searchable"
+  flip better should     skipped → loaded  "OCR this scanned invoice"
+  note: 4 should and 4 should_not prompts: only a large change can show; aim for 10+ per side
+No clear difference
+```
+
+- **precision** is the share of loads that were wanted. **recall** is the share of `should` prompts
+  that loaded it. Weights apply to both. Runs that errored or timed out before loading are left out
+  and listed.
+- **missed** lists each prompt the skill got wrong, with how many of k runs. A prompt right in some
+  runs and wrong in others is marked flaky.
+- **expected routes** counts the near misses that went to the sibling named in `expect_skill`.
+- **B vs A**: `--description` swaps only the frontmatter description, `--candidate DIR` installs
+  another version of the skill. Both arms run the same prompts in the same order. The CI is a paired
+  bootstrap over prompts. With 8 prompts it reaches down to 0, so the verdict holds. Use more prompts
+  before you trust it.
+
+`--min-f1 0.8` exits 1 when the tested arm's F1 is under 0.8. `--fail-on regression` exits 1 when
+B's CI is below 0. Each result is saved under `~/.coding.sh/triggers/<skill>/`. The item gate in
+step 7 reads `KILL` with `g5: never fired` when the skill didn't load in a real A/B. Run this to
+find out why.

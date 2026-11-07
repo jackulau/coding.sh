@@ -438,6 +438,7 @@ coding.sh eval <action>
 | [`validate`](#codingsh-eval-validate) | Check the reference passes, near-misses fail and nothing leaks |
 | [`crosscheck`](#codingsh-eval-crosscheck) | Ask a model whether stored solutions are valid and count where the verifier disagrees |
 | [`audit`](#codingsh-eval-audit) | Replay a witness test on an experiment's passing runs and count the passes it refutes |
+| [`trigger`](#codingsh-eval-trigger) | Check that the agent loads a skill when it should and not when it shouldn't |
 | [`list`](#codingsh-eval-list) | List eval tasks |
 | [`export`](#codingsh-eval-export) | Write a task to a directory |
 
@@ -549,6 +550,43 @@ coding.sh eval audit <TASK> [options]
 ```sh
 coding.sh eval audit add-neg --experiment exp_01J… --witness test/neg.test.js --witness-cmd 'node test/neg.test.js' --requirement 'handle negative numbers'
 coding.sh eval audit add-neg --experiment exp_01J…
+```
+
+### `coding.sh eval trigger`
+
+Check that the agent loads a skill when it should and not when it shouldn't.
+
+```text
+coding.sh eval trigger <SKILL> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `skill` | yes | Skill directory, or its SKILL.md; prompts come from triggers.toml next to it. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--spec <FILE>` |  | Trigger spec: [[should]] and [[should_not]] prompts (default: triggers.toml in the skill dir) |
+| `--candidate <DIR>` |  | A/B: another version of the skill, installed under the same name. |
+| `--description <TEXT|@FILE>` |  | A/B: the same skill with only its frontmatter description replaced. |
+| `-a, --agent <AGENT>` |  | Agent to probe (default: the --harness bundle's, else claude-code) |
+| `--model <MODEL>` |  | Model for the agent. |
+| `--harness <BUNDLE>` |  | Start each arm from this harness bundle (its files, flags, env and model) |
+| `-k, --k <N>` |  | Runs per prompt and arm (default: the spec's k, else 3) |
+| `-c, --concurrency <N>` | `4` | Parallel runs. |
+| `--seed <N>` | `1` | Seed for the run order and the bootstrap. |
+| `--timeout <SEC>` |  | Seconds per run (default: the spec's timeout_s, else 120) |
+| `--siblings <DIR>` |  | Install the skills in this dir in every arm (default: the skills next to &lt;SKILL&gt;) |
+| `--no-siblings` |  | Install only the skill under test. |
+| `--min-f1 <X>` |  | Exit 1 when the tested arm's F1 is under X (0 to 1) |
+| `--fail-on <WHAT>` |  | Exit 1 when B answers fewer prompts right than A, with the 95% CI below 0. One of: `regression`. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. |
+
+```sh
+coding.sh eval trigger .claude/skills/pdf -k 3 --yes
+coding.sh eval trigger .claude/skills/pdf --description @new-description.txt --fail-on regression --yes
+coding.sh eval trigger skills/pdf --candidate skills-next/pdf --min-f1 0.8 --yes
+coding.sh eval trigger .agents/skills/pdf -a codex --harness codex-base --yes
 ```
 
 ### `coding.sh eval list`

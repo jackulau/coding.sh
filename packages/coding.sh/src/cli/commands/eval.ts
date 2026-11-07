@@ -1,4 +1,4 @@
-// coding.sh eval new|import|validate|crosscheck|audit|list|export
+// coding.sh eval new|import|validate|crosscheck|audit|trigger|list|export
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -72,6 +72,8 @@ function taskJson(t: EvalTask): Record<string, unknown> {
 
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
+  // The spec and flags are checked before the store opens.
+  if (c.action === "trigger") return (await import("./eval-trigger.ts")).evalTrigger(c);
   return withContext(c, async (ctx) => {
     switch (c.action) {
       case "new": {
