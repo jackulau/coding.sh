@@ -9,6 +9,7 @@ import { failureFlags } from "../core/sessions.ts";
 import { parseSince } from "../cli/args.ts";
 import { version } from "../cli/meta.ts";
 import { isNewer } from "../update/semver.ts";
+import { gateHeadline } from "../stats/gate.ts";
 import {
   clip,
   collectSessions,
@@ -514,7 +515,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       name: "experiment_compare",
       title: "Compare experiments",
       description:
-        "Paired comparison of two experiments on the same cases: pass-rate difference with a bootstrap CI, McNemar p-value, verdict (better/worse/inconclusive), regressed and improved cases, per-grader deltas and power warnings.",
+        "Paired comparison of two experiments on the same cases: pass-rate difference with a bootstrap CI, McNemar p-value, verdict (better/worse/inconclusive), regressed and improved cases, per-grader deltas, power warnings and a ship/hold/dont-ship gate.",
       inputSchema: input(
         {
           baseline: { type: "string", minLength: 1, description: "Experiment id of the baseline (A)." },
@@ -533,6 +534,17 @@ export function buildTools(): ToolDef<ToolCtx>[] {
           mcnemar: out({ p: N }),
           regressions: arr(out({ caseId: S }, ["caseId"])),
           improvements: arr(out({ caseId: S }, ["caseId"])),
+          gate: out({
+            verdict: { type: "string", enum: ["ship", "hold", "dont-ship"] },
+            decision: { type: "string", enum: ["accept", "abstain"] },
+            summary: S,
+            wins: I,
+            losses: I,
+            solved: I,
+            p: N,
+            reasons: arr(S),
+            lostCases: arr(S),
+          }),
           warnings: arr(S),
         },
         ["baseline", "candidate", "verdict", "diff", "paired"],
@@ -547,7 +559,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         for (const [i, e] of [ea, eb].entries()) if (!e) throw new ToolError(`No experiment with id ${JSON.stringify(ids[i])}. Find ids with experiments_list.`);
         let cmp: ReturnType<typeof compareExperiments>;
         try {
-          cmp = compareExperiments(ea!, eb!, { iters: 2000 });
+          cmp = compareExperiments(ea!, eb!, { iters: 2000, gate: {} });
         } catch (e) {
           if (e instanceof IncompleteExperimentError) throw new ToolError(`${e.message}. Compare it with the CLI and --force to include it anyway.`);
           throw e;
@@ -555,6 +567,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         const limit = numArg(a, "limit", 10);
         const cases = (xs: { caseId: string; a: number; b: number }[]) => xs.slice(0, limit).map((x) => ({ caseId: x.caseId, baseline: round(x.a), candidate: round(x.b) }));
         const warnings = [...(cmp.datasetWarning ? [cmp.datasetWarning] : []), ...(cmp.gradeWarning ? [cmp.gradeWarning] : []), ...cmp.power.warnings.map((w) => w.message)];
+        const gate = cmp.gate;
         return {
           baseline: { id: cmp.a.id, name: cmp.a.name, passRate: round(cmp.a.passRate) },
           candidate: { id: cmp.b.id, name: cmp.b.name, passRate: round(cmp.b.passRate) },
@@ -567,6 +580,22 @@ export function buildTools(): ToolDef<ToolCtx>[] {
           regressions: cases(cmp.regressions),
           improvements: cases(cmp.improvements),
           graders: cmp.graders.slice(0, limit).map((g) => ({ id: g.id, meanBaseline: round(g.meanA), meanCandidate: round(g.meanB), diff: round(g.diff.mean), lo: round(g.diff.lo), hi: round(g.diff.hi) })),
+          ...(gate
+            ? {
+                gate: {
+                  verdict: gate.verdict,
+                  decision: gate.decision,
+                  summary: gateHeadline(gate, "case"),
+                  wins: gate.wins,
+                  losses: gate.losses,
+                  solved: gate.solved,
+                  p: round(gate.p),
+                  reasons: gate.reasons,
+                  lostCases: gate.lostCases.slice(0, limit),
+                  ...(gate.note ? { note: gate.note } : {}),
+                },
+              }
+            : {}),
           warnings,
         };
       },

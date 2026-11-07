@@ -7,7 +7,8 @@ import { clusteredBootstrap } from "../stats/cluster.ts";
 import { pairedBootstrap, roganGladen, type BootstrapOpts, type RoganGladenResult } from "../stats/interval.ts";
 import { pairedPosterior, type PairedPosterior } from "../stats/posterior.ts";
 import type { SequentialOutcome } from "../stats/sequential.ts";
-import { fisherExact, mcnemar, type McNemarResult } from "../stats/tests.ts";
+import { gateVerdict, type GateVerdict } from "../stats/gate.ts";
+import { acceptanceGate, fisherExact, mcnemar, type GateOpts, type GateResult, type McNemarResult } from "../stats/tests.ts";
 import { pairedPower, passHatK, type NoisePrior, type PowerAnalysis } from "./power.ts";
 import { caseRates } from "./run.ts";
 
@@ -209,6 +210,23 @@ export interface Comparison {
    * share of paired cases where every one of the k trials passed.
    */
   passK?: { a: { k: number; rate: number }; b: { k: number; rate: number }; diff: number };
+  /** Present with the gate option (`exp compare --gate`): adopt B or keep A. */
+  gate?: ComparisonGate;
+}
+
+/**
+ * The acceptance gate (SAGE) on per-case majority outcomes of paired, graded
+ * cases: wins = improved, losses = regressed, solved = cases A passes.
+ */
+export interface ComparisonGate extends GateResult {
+  /** ship (accept), hold (not enough evidence) or dont-ship (B breaks solved cases). */
+  verdict: GateVerdict;
+  /** Cases A solved that B lost. */
+  lostCases: string[];
+  /** Cases A failed that B solved. */
+  wonCases: string[];
+  /** Set when trials were lost to errors: the gate counts errored trials as failures. */
+  note?: string;
 }
 
 export interface CompareOpts {
@@ -226,6 +244,8 @@ export interface CompareOpts {
   cluster?: { key: string; of: ReadonlyMap<string, string> };
   /** A/A noise floor of this config on this dataset (`exp aa`); power planning uses it. */
   noise?: NoisePrior;
+  /** Add the acceptance gate with these settings. */
+  gate?: GateOpts;
 }
 
 /** Thrown when a side of a comparison is a cancelled (partial) experiment and `force` is not set. */
@@ -279,11 +299,20 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
   );
   let regress = 0;
   let improve = 0;
+  let solved = 0;
+  const lostCases: string[] = [];
+  const wonCases: string[] = [];
   for (const x of deltas) {
     const pa = x.a >= 0.5;
     const pb = x.b >= 0.5;
-    if (pa && !pb) regress++;
-    else if (!pa && pb) improve++;
+    if (pa) solved++;
+    if (pa && !pb) {
+      regress++;
+      lostCases.push(x.caseId);
+    } else if (!pa && pb) {
+      improve++;
+      wonCases.push(x.caseId);
+    }
   }
   const timing = runTiming(a, b);
   const seq = timing.interleaved && a.pair?.experiments[0] === a.id && b.pair?.experiments[1] === b.id ? a.pair.sequential : undefined;
@@ -365,6 +394,11 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
   }
   if (a.dataset.id !== b.dataset.id || a.dataset.version !== b.dataset.version) {
     out.datasetWarning = `A ran on ${a.dataset.id}@${a.dataset.version}, B on ${b.dataset.id}@${b.dataset.version}; only the ${ids.length} shared case id(s) are compared`;
+  }
+  if (opts.gate) {
+    const g = acceptanceGate({ wins: improve, losses: regress, solved }, opts.gate);
+    out.gate = { ...g, verdict: gateVerdict(g), lostCases, wonCases };
+    if (attrition.warning || out.gradeWarning) out.gate.note = "trials were lost to errors: the gate counts a task error as a failure and leaves ungraded runs out";
   }
   return out;
 }

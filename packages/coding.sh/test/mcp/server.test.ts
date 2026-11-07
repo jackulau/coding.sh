@@ -246,6 +246,12 @@ describe("tools", () => {
     assert.equal((cmp.mcnemar as { regressions: number }).regressions, 2);
     assert.ok(["better", "worse", "inconclusive"].includes(cmp.verdict as string));
     assert.ok((cmp.warnings as string[]).length > 0, "4 paired cases trigger a small-n warning");
+    const gate = cmp.gate as { verdict: string; decision: string; summary: string; losses: number; lostCases: string[] };
+    assert.equal(gate.decision, "abstain");
+    assert.equal(gate.verdict, "dont-ship");
+    assert.equal(gate.losses, 2);
+    assert.deepEqual([...gate.lostCases].sort(), ["c1", "c3"]);
+    assert.match(gate.summary, /^Don't ship: B breaks 2 cases A solved/);
     assert.match(await callError("experiment_compare", { baseline: SEED.expA, candidate: "exp-missing" }), /No experiment with id "exp-missing"/);
   });
 

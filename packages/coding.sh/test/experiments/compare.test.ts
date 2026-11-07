@@ -411,6 +411,108 @@ describe("compare: attrition (EM-4)", () => {
   });
 });
 
+describe("compare: acceptance gate (AA-5)", () => {
+  it("8 wins, 0 losses of 10 solved → ship; the line sits under the verdict", async () => {
+    const a = await run("a", new Set(range(1, 10)));
+    const b = await run("b", new Set(range(1, 18)));
+    const c = compareExperiments(a, b, { gate: {} });
+    const g = c.gate!;
+    assert.deepEqual([g.wins, g.losses, g.solved, g.decision, g.verdict], [8, 0, 10, "accept", "ship"]);
+    close(g.p, 256 / 6561, 1e-12);
+    assert.deepEqual(g.wonCases, range(11, 18));
+    const text = renderComparison(c, { color: false });
+    assert.match(text, /^verdict .*\ngate {4}Ship it: B wins 8 cases, loses 0\n {8}accept · 8 won, 0 lost of 10 solved \(0%\) · net \+8 at λ=2 · p = 0\.039 < α 0\.05$/m);
+  });
+
+  it("5 wins at λ=2 → hold (not-significant); the verdict line does not change", async () => {
+    const a = await run("a", new Set(range(1, 10)));
+    const b = await run("b", new Set(range(1, 15)));
+    const c = compareExperiments(a, b, { gate: {} });
+    assert.deepEqual(c.gate!.reasons, ["not-significant"]);
+    assert.equal(c.gate!.verdict, "hold");
+    const plain = renderComparison(compareExperiments(a, b), { color: false });
+    const gated = renderComparison(c, { color: false });
+    assert.equal(gated.match(/^verdict .*$/m)![0], plain.match(/^verdict .*$/m)![0]);
+    assert.match(gated, /^gate {4}Hold: not enough evidence \(B wins 5, loses 0; needs 8\+ wins with no losses\)$/m);
+  });
+
+  it("30 wins, 2 losses of 10 solved → regression-fraction, both lost cases listed", async () => {
+    const big = Array.from({ length: 42 }, (_, i) => `d${String(i + 1).padStart(2, "0")}`);
+    const dsBig = createDataset({ name: "big", createdAt: 1, cases: big.map((id) => ({ id, input: id })) });
+    const a = await run("a", new Set(big.slice(0, 10)), { dataset: dsBig });
+    const b = await run("b", new Set([...big.slice(2, 10), ...big.slice(10, 40)]), { dataset: dsBig });
+    const g = compareExperiments(a, b, { gate: {} }).gate!;
+    assert.deepEqual([g.wins, g.losses, g.solved], [30, 2, 10]);
+    assert.deepEqual(g.reasons, ["regression-fraction"]);
+    assert.deepEqual(g.lostCases, ["d01", "d02"]);
+    assert.equal(g.verdict, "dont-ship");
+    const text = renderComparison(compareExperiments(a, b, { gate: {} }), { color: false });
+    assert.match(text, /^gate {4}Don't ship: B breaks 2 cases A solved \(and wins 30\)$/m);
+    assert.match(text, /^ {8}lost: d01, d02$/m);
+  });
+
+  it("at λ=1, α=1, τ=1 it accepts exactly when improvements outnumber regressions", async () => {
+    const a = await run("a", new Set(range(1, 10)));
+    const b = await run("b", new Set([...range(4, 10), ...range(11, 17)]));
+    const loose = { lambda: 1, alpha: 1, tau: 1 };
+    assert.equal(compareExperiments(a, b, { gate: loose }).gate!.decision, "accept");
+    assert.equal(compareExperiments(b, a, { gate: loose }).gate!.decision, "abstain");
+  });
+
+  it("one-sided and ungraded cases never count; k=3 uses the majority outcome", async () => {
+    const a = await run("a", new Set(range(1, 10)));
+    const b = await run("b", new Set(range(1, 18)));
+    // B (forced, cancelled) ran only c01..c15: c16..c18 are only in A.
+    const partial = { ...b, status: "cancelled" as const, runs: b.runs.filter((r) => range(1, 15).includes(r.caseId)) };
+    const g = compareExperiments(a, partial, { force: true, gate: {} }).gate!;
+    assert.deepEqual([g.wins, g.losses, g.solved], [5, 0, 10]);
+    // An ungraded run is no outcome at all.
+    const ungraded = { ...b, runs: b.runs.map((r) => (r.caseId === "c11" ? { ...r, pass: false, ungraded: true as const } : r)) };
+    assert.deepEqual(compareExperiments(a, ungraded, { gate: {} }).gate!.wins, 7);
+    // k=3: c01 passes 2 of 3 in B (still solved), c02 passes 1 of 3 (lost).
+    let n1 = 0;
+    let n2 = 0;
+    const flaky: Grader = {
+      id: "ok",
+      version: "1",
+      kind: "custom",
+      grade: async (ctx) => {
+        const id = String(ctx.output);
+        const pass = id === "c01" ? n1++ !== 0 : id === "c02" ? n2++ === 0 : range(1, 10).includes(id);
+        return { score: pass ? 1 : 0, pass };
+      },
+    };
+    const k3 = await runExperiment({ name: "k3", dataset: ds, task: (i) => i, graders: [flaky], trials: 3, concurrency: 1 });
+    const gk = compareExperiments(a, k3, { gate: {} }).gate!;
+    assert.deepEqual([gk.wins, gk.losses, gk.solved, gk.lostCases], [0, 1, 10, ["c02"]]);
+  });
+
+  it("notes that errored trials count as failures when attrition is uneven", async () => {
+    const a = await run("a", new Set(ids));
+    const b = await runExperiment({
+      name: "b",
+      dataset: ds,
+      task: (input) => {
+        if (ids.indexOf(String(input)) < 9) throw new Error("timed out after 1000 ms");
+        return input;
+      },
+      graders: [passing(new Set(ids))],
+    });
+    const c = compareExperiments(a, b, { gate: {} });
+    assert.equal(c.gate!.losses, 9);
+    assert.match(c.gate!.note ?? "", /counts a task error as a failure/);
+    assert.match(renderComparison(c, { color: false }), /^! trials were lost to errors/m);
+  });
+
+  it("without the gate option there is no gate key and no gate line", async () => {
+    const a = await run("a", new Set(range(1, 10)));
+    const b = await run("b", new Set(range(1, 18)));
+    const c = compareExperiments(a, b);
+    assert.equal("gate" in c, false);
+    assert.doesNotMatch(renderComparison(c, { color: false }), /^gate/m);
+  });
+});
+
 describe("compare: A/A noise floor (EM-10)", () => {
   it("the noise floor sets the MDE when the observed spread is smaller, and compare notes the flip rate", async () => {
     const a = await run("a", new Set(range(1, 12)));

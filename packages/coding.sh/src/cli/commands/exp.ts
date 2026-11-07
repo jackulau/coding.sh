@@ -3,6 +3,7 @@
 // stopping early (group sequential, src/stats/sequential.ts). `exp compare
 // --pairwise` adds a both-order pairwise judge (src/experiments/pairwise.ts);
 // `exp sweep` races configs with sequential halving (src/experiments/sweep.ts).
+// `exp compare --gate` adds a ship-or-hold decision and exits 1 unless it accepts.
 // `exp metrics` A/Bs two commands that print numbers (src/experiments/metrics.ts).
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -24,7 +25,7 @@ import { withCalibration } from "../../judge/calibrate.ts";
 import { calibratePairwise, PAIRWISE_KIND, parsePairLabels, type PairCalibration, type PairwiseJudge } from "../../judge/pairwise.ts";
 import { renderCalibration } from "../../judge/render.ts";
 import { positiveInt, UsageError } from "../args.ts";
-import { jsonArg, list, num, str, withContext } from "../common.ts";
+import { gateFlags, jsonArg, list, num, str, withContext } from "../common.ts";
 import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -426,6 +427,7 @@ export async function run(c: CommandContext): Promise<number> {
         const pairSpec = str(c.flags.pairwise);
         const labelsFile = str(c.flags.labels);
         if (labelsFile && !pairSpec) throw new UsageError("--labels needs --pairwise", { reason: "invalid_argument" });
+        const gate = gateFlags(c.flags);
         // Without --force a name resolves to its newest completed experiment; when only a
         // cancelled one has that name, find it anyway so the error can say why it is refused.
         const find = async (ref: string) => (await store.resolveExperiment(ref, { includeCancelled: force })) ?? (force ? undefined : await store.resolveExperiment(ref, { includeCancelled: true }));
@@ -440,7 +442,7 @@ export async function run(c: CommandContext): Promise<number> {
             });
           }
         }
-        const opts: CompareOpts = { force };
+        const opts: CompareOpts = { force, ...(gate ? { gate } : {}) };
         const key = str(c.flags.cluster);
         if (key) {
           // Case metadata lives on the dataset; B's cases fill in ones A's version lacks.
@@ -467,7 +469,8 @@ export async function run(c: CommandContext): Promise<number> {
             if (pw.calibration.abstained) out.print(`${pw.calibration.abstained} human-decisive case(s) the judge called a tie were left out of kappa`);
           }
         }
-        return 0;
+        // --gate: exit 0 only when the gate accepts B.
+        return cmp.gate && cmp.gate.decision !== "accept" ? 1 : 0;
       }
       case "aa": {
         let first: ExperimentResult;

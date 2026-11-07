@@ -151,6 +151,11 @@ const COMPARE = [
       detectable effect never goes below that noise.
     </li>
     <li>Compare warns when the two runs ran one after the other, and says how far apart they were.</li>
+    <li>
+      <code>--gate</code> adds a ship-or-hold line: <code>Ship it: B wins 8 cases, loses 0</code>, <code>Hold: not enough evidence</code>, or
+      <code>Don't ship: B breaks 2 cases A solved</code> with the broken cases. It exits 0 only for "Ship it", so CI can use it. A break costs two
+      fixes, the wins must clear a one-sided exact test, and B may break at most 10% of what A solved (<a href="#gate">details</a>).
+    </li>
   </ul>
   <p>
     To avoid that, run both configs in one job: <code>exp run --arm base=a.json --arm cand=b.json</code>. Each case runs in both arms back
@@ -168,7 +173,8 @@ const COMPARE = [
   <p>
     The race winner tends to be the luckiest config, so its train score runs high. The winner and the first config then run on the test
     split, which the race never saw. The output prints both scores for the winner and the <strong>optimism gap</strong> (train minus
-    held-out). <code>--budget</code> caps the race's case runs.
+    held-out). On those held-out cases the same gate as <code>exp compare --gate</code> prints <code>adopt &lt;winner&gt;</code> or
+    <code>keep &lt;start&gt;</code> with the reason. <code>--budget</code> caps the race's case runs.
   </p>
 
   <h2 id="metrics">Metric A/B <Tag status="built" /></h2>

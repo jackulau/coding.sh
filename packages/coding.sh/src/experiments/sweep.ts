@@ -16,7 +16,9 @@
 //
 // The winner's score on the cases that picked it is biased upward: the most
 // lucky config tends to win. Re-scoring on cases the race never saw removes
-// that bias, and the difference is the optimism gap:
+// that bias, and the difference is the optimism gap. On the same held-out
+// cases, the acceptance gate (SAGE, stats/tests.ts) says adopt the winner or
+// keep the start config. The gap itself:
 //   Hu, Tang, "The Winner's Curse in LLM Self-Improvement Loops", 2026,
 //   https://arxiv.org/abs/2610.09239
 import { sortableId } from "../core/ids.ts";
@@ -26,7 +28,7 @@ import { mapPool } from "../judge/limit.ts";
 import { pairedBootstrap } from "../stats/interval.ts";
 import { mulberry32 } from "../stats/prng.ts";
 import { runAb } from "./ab.ts";
-import { compareExperiments, type Comparison } from "./compare.ts";
+import { compareExperiments, type Comparison, type ComparisonGate } from "./compare.ts";
 import { caseRates, experimentResult, prepareGraders, runExperiment, runTrial, selectCases, storeResult, type TrialEnv } from "./run.ts";
 import { resolveTask, type TaskSpec } from "./task.ts";
 
@@ -118,6 +120,11 @@ export interface SweepResult {
   start?: { name: string; heldOut: Interval & { n: number; experiment: string } };
   /** Winner (B) against the start config (A) on the held-out split, interleaved; absent when the start config won. */
   comparison?: Comparison;
+  /**
+   * Adopt the winner or keep the start config: the acceptance gate (default
+   * settings) on that held-out comparison. Absent when the start config won.
+   */
+  adopt?: ComparisonGate;
   notes: string[];
 }
 
@@ -323,7 +330,8 @@ export async function runSweep(opts: RunSweepOpts): Promise<SweepResult> {
       onProgress: (_r, _arm, done, total) => opts.onProgress?.("held-out", done, total),
     });
     [startHeld, winnerHeld] = [ab.a, ab.b];
-    out.comparison = compareExperiments(ab.a, ab.b, { force: true });
+    out.comparison = compareExperiments(ab.a, ab.b, { force: true, gate: {} });
+    out.adopt = out.comparison.gate;
   }
   if (winnerHeld.status === "cancelled") {
     out.status = "cancelled";

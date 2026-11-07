@@ -117,6 +117,32 @@ describe("runSweep", () => {
     await assert.rejects(runSweep({ ...base, dataset: dataset(10, 5), configs: [coin("a", 0.5), coin("b", 0.5), coin("c", 0.5)], budget: 3 }), /too small/);
   });
 
+  it("adopt or keep: the gate on the held-out comparison of winner vs start", async () => {
+    const fixed = (name: string, pass: (id: string) => boolean): SweepConfig => ({ name, task: { kind: "function", name, fn: (input) => pass(String(input)) } });
+    const num = (id: string) => Number(id.slice(2));
+    // good passes everything, base nothing: 30 held-out wins, no losses.
+    const adopt = await runSweep({ name: "a", dataset: dataset(20, 30), configs: [fixed("base", () => false), fixed("good", () => true)], graders: [truthy], seed: 1 });
+    assert.equal(adopt.winner?.name, "good");
+    assert.deepEqual([adopt.adopt?.decision, adopt.adopt?.wins, adopt.adopt?.losses], ["accept", 30, 0]);
+    assert.match(renderSweep(adopt, { color: false }), /^adopt {3}good: wins 30 cases, loses 0 on held-out$/m);
+
+    // flashy wins the race (every train case) but breaks the 10 test cases base solves.
+    const configs = [fixed("base", (id) => id.startsWith("te") && num(id) < 10), fixed("flashy", (id) => id.startsWith("tr") || num(id) >= 10)];
+    const keep = await runSweep({ name: "k", dataset: dataset(20, 30), configs, graders: [truthy], seed: 1 });
+    assert.equal(keep.winner?.name, "flashy");
+    assert.equal(keep.adopt?.verdict, "dont-ship");
+    assert.deepEqual([keep.adopt?.wins, keep.adopt?.losses, keep.adopt?.solved], [20, 10, 10]);
+    const text = renderSweep(keep, { color: false });
+    assert.match(text, /^keep {4}base: flashy breaks 10 cases base solved$/m);
+    assert.match(text, /^ {8}lost: te0, te1, te2, te3, te4 \(\+5 more\)$/m);
+
+    // The start config won: nothing to adopt.
+    const same = await runSweep({ name: "s", dataset: dataset(20, 30), configs: [fixed("base", () => true), fixed("worse", () => false)], graders: [truthy], seed: 1 });
+    assert.equal(same.winner?.name, "base");
+    assert.equal(same.adopt, undefined);
+    assert.doesNotMatch(renderSweep(same, { color: false }), /^(adopt|keep) /m);
+  });
+
   it("notes when the budget asks for more cases than the split has", async () => {
     const r = await runSweep({ name: "o", dataset: dataset(12, 5), configs: [coin("a", 0.5), coin("b", 0.6), coin("c", 0.4)], graders: [truthy], seed: 2, budget: 200 });
     assert.match(r.notes.join("\n"), /selection split ran out in round \d/);
@@ -217,6 +243,9 @@ describe("exp sweep from the CLI", () => {
     assert.equal(t.status, 0, t.stderr);
     assert.match(t.stdout, /^winner {2}best /m);
     assert.match(t.stdout, /^gap {5}0\.0pp optimism/m);
+    // best fixes base's 6 held-out failures and breaks none: too few to adopt at the default λ=2.
+    assert.deepEqual([s.adopt.decision, s.adopt.wins, s.adopt.losses], ["abstain", 6, 0]);
+    assert.match(t.stdout, /^keep {4}base: not enough evidence that best is better \(wins 6, loses 0; needs 8\+ wins with no losses\)$/m);
     // Usage errors.
     const one = cli(["exp", "sweep", cfg("solo", 0), "-d", "sw", "-g", '{"kind":"exact"}']);
     assert.equal(one.status, 2);

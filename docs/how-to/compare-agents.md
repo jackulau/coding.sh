@@ -126,4 +126,5 @@ cost: `--gateway` for Vercel AI Gateway (`AI_GATEWAY_API_KEY`), or `--gateway op
 - Both agents need a headless driver. Agents without one fail with `unsupported_agent`.
 - With `k = 1`, one lucky run decides a task. Use `--k 3` or more before trusting a difference.
 - For prompt-and-answer agents rather than repo edits, use datasets and `coding.sh exp` instead:
-  see [Catch a regression in CI](ci-regressions.md).
+  see [Catch a regression in CI](ci-regressions.md). `coding.sh exp compare A B --gate` gives the
+  same ship-or-hold answer per case.

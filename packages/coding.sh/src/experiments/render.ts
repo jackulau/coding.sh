@@ -6,7 +6,8 @@ import { calibrationBadge } from "../judge/render.ts";
 import type { RoganGladenResult } from "../stats/interval.ts";
 import type { SequentialOutcome } from "../stats/sequential.ts";
 import type { AaResult } from "./aa.ts";
-import type { ArmAttrition, Comparison } from "./compare.ts";
+import { gateDetail, gateHeadline, idList } from "../stats/gate.ts";
+import type { ArmAttrition, Comparison, ComparisonGate } from "./compare.ts";
 import type { PairwiseSummary } from "./pairwise.ts";
 import type { SweepResult } from "./sweep.ts";
 import { fixed, ms, paint, pct, pValue, signedPct, table, truncate, type RenderOpts } from "./text.ts";
@@ -157,6 +158,7 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   if (c.sequentialWarning) out.push(paint(`! ${c.sequentialWarning}`, "yellow", color));
   const why = c.sequential ? (c.verdict === "inconclusive" ? "no boundary crossed" : "group sequential test") : "CI includes 0";
   out.push(`verdict ${paint(c.verdict === "inconclusive" ? `inconclusive (${why})` : `B is ${c.verdict}${c.sequential ? ` (${why})` : ""}`, vColor, color)}`);
+  if (c.gate) out.push(...renderGate(c.gate, color));
   const p = c.power;
   out.push(
     `power   MDE ${Number.isFinite(p.mde) ? `${(p.mde * 100).toFixed(1)}pp` : "—"} ` +
@@ -219,6 +221,16 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   list("regressions", c.regressions, "red");
   list("improvements", c.improvements, "green");
   return out.join("\n");
+}
+
+const GATE_COLOR = { ship: "green", hold: "bold", "dont-ship": "red" } as const;
+
+/** `gate    Ship it: …`, the numbers under it, the lost cases and any note. */
+function renderGate(g: ComparisonGate, color: boolean): string[] {
+  const out = [`gate    ${paint(gateHeadline(g, "case"), GATE_COLOR[g.verdict], color)}`, `        ${paint(gateDetail(g), "dim", color)}`];
+  if (g.lostCases.length) out.push(`        lost: ${idList(g.lostCases)}`);
+  if (g.note) out.push(paint(`! ${g.note}`, "yellow", color));
+  return out;
 }
 
 /** The plan, where a group sequential A/B stopped and why, and its repeated CI. */
@@ -342,6 +354,18 @@ export function renderSweep(r: SweepResult, opts: RenderOpts): string {
         paint(`(winner vs start, ${c.paired} paired cases)`, "dim", color) +
         `  verdict ${paint(c.verdict === "inconclusive" ? "inconclusive" : `winner is ${c.verdict}`, vColor, color)}`,
     );
+  }
+  const g = r.adopt;
+  if (g && r.start) {
+    const cases = (n: number) => `${n} case${n === 1 ? "" : "s"}`;
+    const line =
+      g.verdict === "ship"
+        ? `adopt   ${paint(w.name, "green", color)}: wins ${cases(g.wins)}, loses ${g.losses} on held-out`
+        : g.verdict === "dont-ship"
+          ? `keep    ${paint(r.start.name, "bold", color)}: ${w.name} breaks ${cases(g.losses)} ${r.start.name} solved`
+          : `keep    ${paint(r.start.name, "bold", color)}: not enough evidence that ${w.name} is better (wins ${g.wins}, loses ${g.losses}; needs ${g.minCleanWins}+ wins with no losses)`;
+    out.push(line, `        ${paint(gateDetail(g), "dim", color)}`);
+    if (g.lostCases.length) out.push(`        lost: ${idList(g.lostCases)}`);
   }
   return out.join("\n");
 }

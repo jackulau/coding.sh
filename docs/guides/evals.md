@@ -37,6 +37,18 @@ test on flipped cases and the minimum detectable effect. It also reports:
 - **Timing.** When the two runs were not interleaved and ran one after the other, it warns and
   says how far apart they were. Provider drift, rate limits and time of day can look like a change.
 
+`coding.sh exp compare A B --gate` adds a ship-or-hold line under the verdict: `Ship it: B wins 8
+cases, loses 0`, `Hold: not enough evidence`, or `Don't ship: B breaks 2 cases A solved` with up to
+5 of the broken cases. It exits 0 only for "Ship it" and 1 otherwise, and `--json` carries
+`comparison.gate`. It uses each case's majority outcome over its trials (a 0.5 pass rate counts as
+a pass) and only cases both sides graded. A fixed case is a win and a broken one is a loss. B ships
+when wins minus λ times losses is positive (`--lambda`, default 2). The wins must also beat
+break-even in an exact one-sided binomial test at `--gate-alpha` (default 0.05), and B may break at
+most `--tau` (default 10%) of the cases A solved. This is SAGE's accept-or-abstain rule (Wang et
+al., arXiv 2609.36043). Plain "mean went up" accepts changes that break solved cases. At `--lambda
+1 --gate-alpha 1 --tau 1` the gate is exactly "more fixes than breaks". When trials were lost to
+errors unevenly, the gate notes that a task error counts as a failure.
+
 `coding.sh exp run --arm base=a.json --arm cand=b.json` runs two task configs as one A/B. Cases go
 in a random order, and each case runs in both arms back to back, in random arm order, so drift
 hits both arms the same. Both arms are stored (as `<name>-base` and `<name>-cand`) and share a pair
@@ -63,9 +75,12 @@ better half goes on. Dropped configs show their gap to the leader with a CI, so 
 drops were close. Then the winner and the first (start) config run on the test split, which the
 race never saw. The output prints the winner's train and held-out scores and the optimism gap
 (train minus held-out). The winner of a race tends to be the luckiest config, so its train score
-runs high; the held-out score is the one to trust. `--budget N` caps case runs for the race
-(default: each train case used once), `--split` and `--held-out` pick the splits, and a dataset
-with no splits gets a seeded 30% held out. Every run is stored as a normal experiment.
+runs high; the held-out score is the one to trust. On those held-out cases the same gate as
+`exp compare --gate` (default settings) decides: `adopt <winner>`, or `keep <start>` with the
+reason (not enough evidence, or the winner breaks cases the start config solved). `--budget N`
+caps case runs for the race (default: each train case used once), `--split` and `--held-out` pick
+the splits, and a dataset with no splits gets a seeded 30% held out. Every run is stored as a
+normal experiment.
 
 ## Metric A/B (ms, bytes)
 
