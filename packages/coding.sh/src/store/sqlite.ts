@@ -419,9 +419,13 @@ export class SqliteIndexStore implements IndexStore {
     if (current > SQLITE_SCHEMA_VERSION) {
       throw new Error(`${this.path} uses index schema v${current}, but this coding.sh only knows up to v${SQLITE_SCHEMA_VERSION}. Upgrade coding.sh.`);
     }
+    const applied = this.db.prepare("SELECT 1 FROM migrations WHERE version = ?");
     for (const m of MIGRATIONS) {
       if (m.version <= current) continue;
       this.tx(() => {
+        // Another process (the background hook ingest, a second CLI) may have applied
+        // this version between the read above and taking the write lock.
+        if (applied.get(m.version)) return;
         this.db.exec(m.sql);
         m.after?.(this.db);
         this.db.prepare("INSERT INTO migrations (version, applied_at) VALUES (?, ?)").run(m.version, Date.now());

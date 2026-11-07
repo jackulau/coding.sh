@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -108,6 +108,26 @@ describe("SqliteIndexStore", () => {
     assert.equal((await s.search("cafe")).length, 1);
     assert.equal((await s.search("fixing")).length, 0, "no stemming");
     await s.close();
+  });
+
+  it("several processes can open a new database at the same time", async () => {
+    // The hook's background ingest and the CLI often open a fresh index together.
+    // Each must apply a migration once, not race to ALTER the same table.
+    const path = join(root, "race.db");
+    const script = `import { SqliteIndexStore } from ${JSON.stringify(new URL("../../src/store/sqlite.ts", import.meta.url).href)};
+      const s = await SqliteIndexStore.open(process.argv[1]); await s.close();`;
+    const results = await Promise.all(Array.from({ length: 8 }, () => new Promise<{ code: number | null; err: string }>((done) => {
+      const p = spawn(process.execPath, ["--input-type=module", "-e", script, path], { stdio: ["ignore", "ignore", "pipe"] });
+      let err = "";
+      p.stderr.on("data", (d) => (err += d));
+      p.on("close", (code) => done({ code, err }));
+    })));
+    for (const r of results) assert.equal(r.code, 0, r.err);
+    const { DatabaseSync } = await loadSqlite();
+    const check = new DatabaseSync(path);
+    const versions = check.prepare("SELECT version FROM migrations ORDER BY version").all().map((r) => r.version);
+    check.close();
+    assert.deepEqual(versions, MIGRATIONS.map((m) => m.version));
   });
 
   it("loads node:sqlite without printing the ExperimentalWarning", () => {
