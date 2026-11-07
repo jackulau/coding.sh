@@ -32,7 +32,8 @@ export async function run(c: CommandContext): Promise<number> {
         .finally(() => (busy = false));
     }, 3000);
     if (out.json) out.data({ url: viewer.url, port: viewer.port });
-    else out.print(viewer.url);
+    // Piped: the URL alone on stdout for scripts. In a terminal the note below already shows it.
+    else if (!out.stdoutTTY) out.print(viewer.url);
     out.note(`Ready on ${viewer.url}`);
     out.note("Press Ctrl-C to stop");
     await new Promise<void>((resolve) => c.signal.addEventListener("abort", () => resolve(), { once: true }));

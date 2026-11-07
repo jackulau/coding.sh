@@ -209,7 +209,7 @@ export async function run(c: CommandContext): Promise<number> {
   if (plans.length === 0) {
     throw new CliError(named.length ? "None of the named agents can be installed" : "No supported agents found on this machine", {
       reason: "no_agents",
-      next: ["Capture any agent with the wrapper:", "coding.sh run -- <agent command>"],
+      next: ["Wrap any agent: coding.sh run -- <agent command>", "Trace an agent you built: https://coding.sh/docs/how-to/trace-your-agent"],
     });
   }
 
