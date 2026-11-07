@@ -19,6 +19,7 @@ packages/coding.sh/src/adapters/opencode.ts
   s_8e040dbdf13565::t_5ae5d326307f3c 634-635
 packages/coding.sh/src/cli/common.ts
   s_8e040dbdf13565::t_a9bfdfc79b33aa 103-109,111-112,115-117,120-122
+  s_8e040dbdf13565::t_43f34e33330692 99,101,110,113-114,118-119
 packages/coding.sh/src/core/sessions.ts
   s_8e040dbdf13565::t_bf8f27f87cef8d 323
 packages/coding.sh/src/adapters/more/aider.ts
