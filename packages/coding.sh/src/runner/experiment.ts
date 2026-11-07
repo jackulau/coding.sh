@@ -1,6 +1,7 @@
 // A/B experiments over harness bundles: run every (task, bundle, attempt),
 // then compare two arms with paired statistics and honest wording.
 import { availableParallelism } from "node:os";
+import { progressMetrics } from "../core/derail.ts";
 import { sortableId } from "../core/ids.ts";
 import type { Adapter, AgentEvent, BlobStore, EvalTask, HarnessBundle, IndexStore, RunResult, Session } from "../core/types.ts";
 import { pairedPower, type PowerAnalysis } from "../experiments/power.ts";
@@ -235,12 +236,14 @@ export async function loadRunEvents(index: IndexStore, sessions: Map<string, Ses
 
 // ------------------------------------------------------------ comparing
 
-export type MetricKey = "cost" | "tokens" | "turns" | "wall" | "agentTime" | "llmTime" | "llmP50" | "llmP95" | "ttftP50";
+export type MetricKey = "cost" | "tokens" | "turns" | "wall" | "agentTime" | "llmTime" | "llmP50" | "llmP95" | "ttftP50" | "derails" | "onTrack";
 
 export interface MetricDelta {
   key: MetricKey;
   label: string;
   unit: "usd" | "ms" | "count";
+  /** Set when a bigger number is the better one (time on track); lower is better otherwise. */
+  better?: "higher";
   /** Mean per run over runs where the metric is known. */
   baseline: number;
   candidate: number;
@@ -419,7 +422,7 @@ export interface CompareOpts {
 
 type Extract = (r: RunResult, s: Session | undefined) => number | undefined;
 
-const METRICS: { key: MetricKey; label: string; unit: MetricDelta["unit"]; get: Extract }[] = [
+const METRICS: { key: MetricKey; label: string; unit: MetricDelta["unit"]; better?: "higher"; get: Extract }[] = [
   { key: "cost", label: "cost / run", unit: "usd", get: (r, s) => r.agent.usage?.costUsd ?? s?.stats.usage?.costUsd },
   {
     key: "tokens",
@@ -438,6 +441,15 @@ const METRICS: { key: MetricKey; label: string; unit: MetricDelta["unit"]; get: 
   { key: "llmP50", label: "LLM call p50", unit: "ms", get: (_r, s) => s?.stats.latency?.llmP50Ms },
   { key: "llmP95", label: "LLM call p95", unit: "ms", get: (_r, s) => s?.stats.latency?.llmP95Ms },
   { key: "ttftP50", label: "TTFT p50", unit: "ms", get: (_r, s) => s?.stats.latency?.ttftP50Ms },
+  // Where a run went off the rails (core/derail.ts), from its captured session.
+  { key: "derails", label: "derails / run", unit: "count", get: (_r, s) => (s ? (s.stats.derails?.length ?? 0) : undefined) },
+  {
+    key: "onTrack",
+    label: "time to first derail",
+    unit: "ms",
+    better: "higher",
+    get: (_r, s) => (s && s.endedAt !== undefined ? progressMetrics(s.stats.derails ?? [], s.startedAt, s.endedAt).timeToFirstDerailMs : undefined),
+  },
 ];
 
 function arm(results: readonly RunResult[], bundleId: string, name: string | undefined, opts: Pick<CompareOpts, "sessions" | "events">): ArmSummary {
@@ -538,6 +550,7 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
       key: m.key,
       label: m.label,
       unit: m.unit,
+      ...(m.better ? { better: m.better } : {}),
       baseline: a,
       candidate: b,
       delta: b - a,
@@ -875,7 +888,7 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
     const d = `${m.delta >= 0 && Number.isFinite(m.delta) ? "+" : ""}${fmtValue(m.delta, m.unit)}${rel}`;
     // "(3/10)": the mean covers only the runs where the metric is known.
     const val = (v: number, n: number, runs: number) => (n > 0 && n < runs ? `${fmtValue(v, m.unit)} ${dim(`(${n}/${runs})`)}` : fmtValue(v, m.unit));
-    out.push(row([m.label, val(m.baseline, m.n.baseline, m.runs.baseline), val(m.candidate, m.n.candidate, m.runs.candidate), covered(m) ? signed(m.delta, true, d) : d]));
+    out.push(row([m.label, val(m.baseline, m.n.baseline, m.runs.baseline), val(m.candidate, m.n.candidate, m.runs.candidate), covered(m) ? signed(m.delta, m.better !== "higher", d) : d]));
   }
   if (r.anatomy) {
     const fa = (a: ArmAnatomy) =>

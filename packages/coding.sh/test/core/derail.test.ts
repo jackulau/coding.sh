@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { before, describe, it } from "node:test";
 import { DERAIL_THRESHOLDS, detectDerails, progressMetrics } from "../../src/core/derail.ts";
 import { buildSession } from "../../src/core/sessions.ts";
+import { createGrader } from "../../src/graders/index.ts";
 import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
 
 const MIN = 60_000;
@@ -198,6 +199,23 @@ describe("derail detection", () => {
     assert.deepEqual(progressMetrics([], 1000, 61_000), { derails: 0, timeToFirstDerailMs: 60_000, onTrack: 1 });
     const m = progressMetrics([{ flag: "stalled", ts: 31_000 }, { flag: "looping", ts: 16_000 }], 1000, 61_000);
     assert.deepEqual(m, { derails: 2, firstFlag: "looping", timeToFirstDerailMs: 15_000, onTrack: 0.25 });
+  });
+
+  it("the progress grader scores time on track from a run's trace", async () => {
+    reset();
+    const clean = [ev("session.start"), ...read("a.ts"), ev("session.end", {}, { gap: 60_000 })];
+    reset();
+    const looped = [ev("session.start"), ...Array.from({ length: 6 }, () => read("a.ts", "same")).flat(), ev("session.end", {}, { gap: 60_000 })];
+    const g = await createGrader({ kind: "progress" });
+    const ok = await g.grade({ input: null, output: null, trace: clean });
+    assert.deepEqual([ok.score, ok.pass, ok.reason], [1, true, "no derails"]);
+    const bad = await g.grade({ input: null, output: null, trace: looped });
+    assert.equal(bad.pass, false);
+    assert.ok(bad.score > 0 && bad.score < 0.2, String(bad.score));
+    assert.match(bad.reason!, /^1 derail; first looping at \ds/);
+    assert.equal((await (await createGrader({ kind: "progress", flags: ["stalled"] })).grade({ input: null, output: null, trace: looped })).pass, true);
+    assert.equal((await g.grade({ input: null, output: null })).pass, false, "no trace, no score");
+    await assert.rejects(createGrader({ kind: "progress", flags: ["nope"] }), /unknown derail flag/);
   });
 
   describe("no false positives on the adapter fixtures (real agent captures and goldens)", () => {

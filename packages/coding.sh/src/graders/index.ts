@@ -13,6 +13,7 @@ import {
   jsonPathGrader,
   jsonSchemaGrader,
   numericGrader,
+  progressGrader,
   regexGrader,
   similarityGrader,
   type ContainsSpec,
@@ -20,6 +21,7 @@ import {
   type JsonPathSpec,
   type JsonSchemaSpec,
   type NumericSpec,
+  type ProgressSpec,
   type RegexSpec,
   type SimilaritySpec,
 } from "./builtin.ts";
@@ -96,6 +98,7 @@ export type GraderSpec =
   | JsonSchemaSpec
   | JsonPathSpec
   | NumericSpec
+  | ProgressSpec
   | SimilaritySpec
   | CommandGraderSpec
   | ModuleGraderSpec
@@ -161,6 +164,8 @@ export async function createGrader(spec: GraderSpec, deps: GraderDeps = {}): Pro
       return jsonPathGrader(rest as Omit<JsonPathSpec, "kind">);
     case "numeric":
       return numericGrader(rest as Omit<NumericSpec, "kind">);
+    case "progress":
+      return progressGrader(rest as Omit<ProgressSpec, "kind">);
     case "similarity":
       return similarityGrader(rest as Omit<SimilaritySpec, "kind">);
     case "command":

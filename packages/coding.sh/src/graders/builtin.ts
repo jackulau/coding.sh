@@ -6,6 +6,8 @@ import type { GradeContext, GradeResult, Grader } from "../datasets/types.ts";
 import { maybeJson } from "../judge/extract.ts";
 import { formatSchemaErrors, validateJsonSchema, type JsonSchema } from "./json-schema.ts";
 import { queryJsonPath } from "./json-path.ts";
+import { detectDerails, DERAIL_FLAG_LIST, progressMetrics } from "../core/derail.ts";
+import type { AgentEvent } from "../schema/index.ts";
 
 export interface NormalizeOpts {
   /** Trim leading/trailing whitespace. Default true. */
@@ -288,5 +290,41 @@ export function similarityGrader(spec: Omit<SimilaritySpec, "kind"> = {}): Grade
     const sim = similarity(normalizeText(asText(ctx.output), spec.normalize), normalizeText(asText(want), spec.normalize));
     const pass = sim >= threshold;
     return result(sim, pass, `similarity ${sim.toFixed(3)} ${pass ? ">=" : "<"} ${threshold}`);
+  });
+}
+
+// ---------------------------------------------------------------- progress
+
+export interface ProgressSpec {
+  kind: "progress";
+  name?: string;
+  /** Count only these derail flags (looping, failure-streak, churn, no-progress, stalled, context-thrash). Default all. */
+  flags?: string[];
+  /** Pass with at most this many derails. Default 0. */
+  maxDerails?: number;
+}
+
+/**
+ * How long the agent stayed on track, from the run's trace: score = time to the
+ * first derail / wall time (1 when it never derailed), pass when it derailed at
+ * most maxDerails times. Graded on the trace, so `exp compare` compares it like
+ * any other grader.
+ */
+export function progressGrader(spec: Omit<ProgressSpec, "kind"> = {}): Grader {
+  const max = spec.maxDerails ?? 0;
+  if (!(Number.isInteger(max) && max >= 0)) throw new RangeError("progress maxDerails must be a whole number >= 0");
+  const only = spec.flags?.length ? new Set(spec.flags) : undefined;
+  for (const f of only ?? []) if (!(DERAIL_FLAG_LIST as readonly string[]).includes(f)) throw new RangeError(`unknown derail flag ${JSON.stringify(f)} (expected ${DERAIL_FLAG_LIST.join(", ")})`);
+  return makeGrader("progress", spec, (ctx) => {
+    const events = (ctx.trace ?? []).filter((e) => typeof e.ts === "number") as unknown as AgentEvent[];
+    if (!events.length) return result(0, false, "no timed trace to measure progress on");
+    const sorted = [...events].sort((a, b) => a.ts - b.ts);
+    const derails = detectDerails(sorted).filter((d) => !only || only.has(d.flag));
+    const p = progressMetrics(derails, sorted[0]!.ts, sorted.at(-1)!.ts);
+    const first = derails[0];
+    const why = first
+      ? `${p.derails} derail${p.derails === 1 ? "" : "s"}; first ${first.flag} at ${Math.round(p.timeToFirstDerailMs / 1000)}s (${Math.round(p.onTrack * 100)}% of the run on track): ${first.detail}`
+      : "no derails";
+    return result(p.onTrack, p.derails <= max, why);
   });
 }
