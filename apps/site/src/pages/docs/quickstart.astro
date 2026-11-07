@@ -79,6 +79,12 @@ const SHOW = [
     Subagents are child sessions: <code>sessions --subagents</code> lists them, and <code>show</code> places them on the parent's timeline.
     Every command takes <code>--json</code>.
   </p>
+  <p>
+    A session over 200 events shows one line per phase: the start, each resume, compaction and long idle gap, with any derails
+    (looping, failure-streak, churn, no-progress, stalled, context-thrash) under the phase they started in. <code>show --all</code> lists every
+    event, <code>show latest --follow</code> prints new events as a session runs, and <code>sessions --flag looping</code> finds sessions by derail.
+    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#long-sessions">Long sessions</a> has the thresholds.
+  </p>
 
   <h2 id="backfill">4. Import past sessions</h2>
   <p>Most agents keep local transcripts. <code>--backfill</code> imports them, so history from before <code>init</code> shows up too. Re-running it inserts nothing new: event ids are deterministic.</p>

@@ -71,7 +71,7 @@ prints an answer, or an HTTP endpoint. Not to be confused with an eval task (bel
 latency and errors. `coding.sh exp run` makes one; `coding.sh exp compare` pairs two by case.
 
 **Grader.** Scores one output. Built in: `exact`, `contains`, `regex`, `json-schema`, `json-path`,
-`numeric` and `similarity`. A `command` grader runs your script, a `module` grader loads your code,
+`numeric`, `similarity` and `progress` (how long a run stayed on track, from its trace). A `command` grader runs your script, a `module` grader loads your code,
 and an `llm` grader asks a model.
 
 **Judge.** An `llm` grader. A judge is trusted only after `coding.sh judge calibrate` measures its

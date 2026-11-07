@@ -35,7 +35,8 @@ counts are stored at `task.meta.crossCheck`, in the same shape as a human verifi
 `coding.sh dataset add|import` keeps versioned cases with stable train/dev/test splits.
 
 `coding.sh exp run` runs a command or HTTP task over a dataset. Graders can be deterministic
-(exact, contains, regex, numeric, similarity, JSON schema, JSON path), a command, or an LLM judge.
+(exact, contains, regex, numeric, similarity, JSON schema, JSON path, progress), a command, or an
+LLM judge. `progress` scores the run's trace: the share of the run before its first derail.
 
 `coding.sh exp compare A B` reports the paired bootstrap CI of the difference, an exact McNemar
 test on flipped cases and the minimum detectable effect. It also reports:

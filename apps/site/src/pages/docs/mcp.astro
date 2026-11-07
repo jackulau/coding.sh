@@ -7,7 +7,7 @@ import Tag from "../../components/docs/Tag.astro";
 // src/adapters/_shared/mcp.ts (what `coding.sh init` writes for each agent).
 const TOOLS: [string, string][] = [
   ["session_current", "The session of the agent calling the tool: its summary and latest timeline."],
-  ["sessions_list", "Captured sessions, newest first, with turns, tool errors, tokens, cost and failure flags."],
+  ["sessions_list", "Captured sessions, newest first, with turns, tool errors, tokens, cost, failure flags and derails. Filter with flag, e.g. looping."],
   ["session_get", "One session as a digest: per-turn index and a timeline of prompts, replies, tool calls and model calls."],
   ["search", "Full-text search over prompts, replies and tool input/output across all sessions."],
   ["failures", "What went wrong lately: flagged sessions, frequent tool errors, prompts where the user pushed back."],

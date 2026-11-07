@@ -127,6 +127,7 @@ const COMPARE = [
         <tr><td><code>json-path</code></td><td>A JSON path into the output equals a value or the same path in <code>expected</code>.</td></tr>
         <tr><td><code>numeric</code></td><td>The first number in the output is within an absolute or relative tolerance.</td></tr>
         <tr><td><code>similarity</code></td><td>Normalized edit-distance similarity is at least the threshold (default 0.8).</td></tr>
+        <tr><td><code>progress</code></td><td>The run's trace derailed at most <code>maxDerails</code> times (default 0). The score is the share of the run before its first derail: looping, failure-streak, churn, no-progress, stalled or context-thrash.</td></tr>
         <tr><td><code>command</code></td><td>Your script, any language: JSON on stdin; a boolean, a score or <code>&#123;score, pass, reason&#125;</code> on stdout, or the exit code.</td></tr>
         <tr><td><code>module</code></td><td>A JS module's exported grade function returns pass.</td></tr>
         <tr><td><code>llm</code></td><td>A model judge returns pass on your rubric. See below.</td></tr>
