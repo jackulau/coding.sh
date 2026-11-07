@@ -7,21 +7,22 @@
 //   the companion holds billed minus the cost the call had, so a new estimate
 //   would be counted twice;
 // - each changed session gets its usage totals refolded, nothing else.
-// It runs once per price table (built-in + `[pricing]` overrides): the table's
-// stamp is kept under a cursor, so later opens cost one read.
+// It runs once per price table (built-in + `[prices]` overrides) and lookup-rule
+// version: the stamp is kept under a cursor, so later opens cost one read.
+// `coding.sh usage --reprice` forces a pass.
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { sha256Hex } from "./ids.ts";
-import { priceEvent, pricesFor, type Prices } from "./pricing.ts";
+import { priceEvent, PRICING_RULES_VERSION, pricesFor, type Prices } from "./pricing.ts";
 import { buildSession } from "./sessions.ts";
-import type { IndexStore } from "./types.ts";
+import type { EventCost, IndexStore } from "./types.ts";
 
 export const REPRICE_CURSOR = "pricing:repriced";
 const KINDS = ["llm.call", "notification", "span"];
 
-/** Positive int that changes whenever the effective price table does. */
-export function priceStamp(prices: Prices): number {
-  const sorted = Object.keys(prices).sort().map((k) => [k, prices[k]]);
-  return parseInt(sha256Hex(JSON.stringify(sorted)).slice(0, 12), 16) || 1;
+/** Positive int that changes whenever the effective price table, or the rules that look it up, do. */
+export function priceStamp(prices: Prices, rules: number = PRICING_RULES_VERSION): number {
+  const table = Object.keys(prices).sort().map((k) => [k, prices[k]]);
+  return parseInt(sha256Hex(JSON.stringify({ rules, table })).slice(0, 12), 16) || 1;
 }
 
 export interface RepriceResult {
@@ -43,16 +44,22 @@ export async function repriceStored(index: IndexStore, overrides?: Prices, opts:
   for (const prev of await index.listSessions({})) {
     const stored = await index.listEvents(prev.id, { kinds: KINDS });
     const enriched = new Set(stored.filter((e) => e.source === "gateway" && e.parentId).map((e) => e.parentId!));
-    const costs: { id: string; costUsd: number }[] = [];
+    const costs: EventCost[] = [];
+    let estimates = false;
     for (const e of stored) {
       if (enriched.has(e.id)) continue;
       const ours = e.payload?.costEstimated === true;
       const priced = priceEvent(ours ? withoutCost(e) : e, prices);
       const cost = priced.usage?.costUsd;
-      if (priced !== e && typeof cost === "number" && cost !== e.usage?.costUsd) costs.push({ id: e.id, costUsd: cost });
+      if (priced === e || typeof cost !== "number") continue;
+      estimates = true;
+      const pricedAs = typeof priced.payload.pricedAs === "string" ? priced.payload.pricedAs : undefined;
+      if (cost !== e.usage?.costUsd || pricedAs !== e.payload?.pricedAs) costs.push({ id: e.id, costUsd: cost, ...(pricedAs ? { pricedAs } : {}) });
     }
-    if (!costs.length) continue;
-    events += await index.setEventCosts(costs);
+    // Sessions folded before session totals said which part is estimated are refolded once.
+    const unmarked = estimates && prev.stats.usage?.estimatedCostUsd === undefined;
+    if (!costs.length && !unmarked) continue;
+    if (costs.length) events += await index.setEventCosts(costs);
     await index.upsertSession(withUsage(prev, buildSession(await index.listEvents(prev.id), prev)));
     sessions++;
   }
@@ -62,10 +69,13 @@ export async function repriceStored(index: IndexStore, overrides?: Prices, opts:
 
 function withoutCost(e: AgentEvent): AgentEvent {
   const { costUsd: _drop, ...usage } = e.usage ?? {};
-  return { ...e, usage };
+  const { pricedAs: _was, ...payload } = e.payload ?? {};
+  return { ...e, usage, payload };
 }
 
 /** The stored session with only its usage totals refolded (links, repo state and the rest stay). */
 function withUsage(prev: Session, rebuilt: Session): Session {
-  return { ...prev, stats: { ...prev.stats, usage: rebuilt.stats.usage } };
+  const { usage: _u, duplicateUsage: _d, ...stats } = prev.stats;
+  const { usage, duplicateUsage } = rebuilt.stats;
+  return { ...prev, stats: { ...stats, ...(usage ? { usage } : {}), ...(duplicateUsage ? { duplicateUsage } : {}) } };
 }

@@ -254,14 +254,15 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "usage",
     group: "Explore",
-    summary: "Tokens, turns and cache hits by agent, model or day",
+    summary: "Tokens, cost, turns and cache hits by agent, model or day",
     flags: [
       { name: "by", type: "string", value: "<GROUP>", choices: ["agent", "model", "agent-model", "day", "repo"], desc: "Group rows by", default: "agent" },
       AGENT_ONE,
       { ...SINCE, default: "30d" },
       LIMIT(20),
+      { name: "reprice", type: "boolean", desc: "Recompute estimated costs from the current price table first" },
     ],
-    examples: ["coding.sh usage", "coding.sh usage --by agent-model --since 90d"],
+    examples: ["coding.sh usage", "coding.sh usage --by agent-model --since 90d", "coding.sh usage --by model --reprice"],
     load: () => import("./commands/usage.ts"),
   },
   {

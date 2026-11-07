@@ -8,6 +8,7 @@ import type {
   DatasetListing,
   BlobStore,
   EvalTask,
+  EventCost,
   HarnessBundle,
   IndexStore,
   Label,
@@ -121,12 +122,13 @@ export class MemoryIndexStore implements IndexStore {
     return { removed, ...(await this.putEvents(add)) };
   }
 
-  async setEventCosts(costs: { id: string; costUsd: number }[]): Promise<number> {
+  async setEventCosts(costs: EventCost[]): Promise<number> {
     let found = 0;
-    for (const { id, costUsd } of costs) {
+    for (const { id, costUsd, pricedAs } of costs) {
       const r = this.events.get(id);
       if (!r) continue;
-      r.event = { ...r.event, usage: { ...r.event.usage, costUsd }, payload: { ...r.event.payload, costEstimated: true } };
+      const { pricedAs: _was, ...payload } = r.event.payload;
+      r.event = { ...r.event, usage: { ...r.event.usage, costUsd }, payload: { ...payload, costEstimated: true, ...(pricedAs ? { pricedAs } : {}) } };
       found++;
     }
     return found;

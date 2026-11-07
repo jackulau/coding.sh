@@ -91,6 +91,14 @@ export interface Label {
   ts: number;
 }
 
+/** A price-table cost for one stored event (IndexStore.setEventCosts). */
+export interface EventCost {
+  id: string;
+  costUsd: number;
+  /** The sibling model whose price was used, when the event's own model has no row. */
+  pricedAs?: string;
+}
+
 /** The queryable index. Default: SQLite. Must be idempotent on ids. */
 export interface IndexStore {
   readonly kind: string;
@@ -160,11 +168,12 @@ export interface IndexStore {
   listProjects?(): Promise<string[]>;
 
   /**
-   * Sets an estimated cost on stored events in place (`usage.costUsd`, and
-   * `payload.costEstimated = true`); ids and everything else stay. Used by the
-   * one-time reprice of events stored before local pricing. Returns how many it found.
+   * Sets an estimated cost on stored events in place (`usage.costUsd`,
+   * `payload.costEstimated = true`, and `payload.pricedAs` when given, removed
+   * when not); ids and everything else stay. Used by the reprice pass over events
+   * stored before local pricing or under older prices. Returns how many it found.
    */
-  setEventCosts?(costs: { id: string; costUsd: number }[]): Promise<number>;
+  setEventCosts?(costs: EventCost[]): Promise<number>;
 
   /**
    * Runs `fn` as one transaction: every write it makes commits together when it
@@ -291,7 +300,7 @@ export interface Config {
     /** Check for a newer release in the background (at most daily). */
     check: boolean;
   };
-  /** `[pricing."<model>"]` overrides of the built-in price table (USD per 1M tokens). */
+  /** `[prices."<model>"]` (or the older `[pricing."<model>"]`) overrides of the built-in price table (USD per 1M tokens). */
   pricing?: Record<string, { input: number; output: number; cacheRead?: number; cacheWrite?: number }>;
 }
 

@@ -9,6 +9,7 @@ import {
   isVerifyCommand,
   latencyStats,
   percentile,
+  rollupUsage,
   similarInputs,
 } from "../../src/core/sessions.ts";
 
@@ -250,5 +251,77 @@ describe("harness-injected prompts (QA regression)", () => {
   it("isSyntheticPrompt", () => {
     for (const t of [clear, note, "<local-command-caveat>Caveat: …</local-command-caveat>", "  <system-reminder>x</system-reminder>"]) assert.ok(isSyntheticPrompt(t), t);
     for (const t of ["Fix <command-name> parsing", "hello", "<div>html question</div>"]) assert.ok(!isSyntheticPrompt(t), t);
+  });
+});
+
+describe("session usage rollup", () => {
+  const llm = (spanId: string, parentSpanId: string | undefined, usage: AgentEvent["usage"], payload: Record<string, unknown> = {}, o: Partial<AgentEvent> = {}) =>
+    ev("llm.call", payload, { traceId: "t1", spanId, ...(parentSpanId ? { parentSpanId } : {}), usage, ...o });
+  const span = (spanId: string, parentSpanId?: string) => ev("span", { name: "agent" }, { traceId: "t1", spanId, ...(parentSpanId ? { parentSpanId } : {}) });
+
+  it("counts a wrapper span and the provider span inside it once", () => {
+    const evs = [llm("a", undefined, { inputTokens: 100, outputTokens: 20, costUsd: 0.01 }), span("mid", "a"), llm("b", "mid", { inputTokens: 100, outputTokens: 20, costUsd: 0.01 })];
+    const r = rollupUsage(evs);
+    assert.deepEqual(r.usage, { inputTokens: 100, outputTokens: 20, costUsd: 0.01 });
+    assert.deepEqual(r.duplicate, { calls: 1, tokens: 120, costUsd: 0.01 });
+    assert.deepEqual(buildSession(evs).stats.duplicateUsage, r.duplicate);
+  });
+
+  it("sibling calls both count", () => {
+    const r = rollupUsage([span("root"), llm("a", "root", { inputTokens: 10 }), llm("b", "root", { inputTokens: 5 })]);
+    assert.deepEqual(r, { usage: { inputTokens: 15 } });
+  });
+
+  it("a wrapper with no cost (or only an estimate) takes the nested calls' reported cost", () => {
+    const r = rollupUsage([llm("a", undefined, { inputTokens: 100, outputTokens: 20 }), llm("b", "a", { inputTokens: 100, outputTokens: 20, costUsd: 0.01 })]);
+    assert.deepEqual(r.usage, { inputTokens: 100, outputTokens: 20, costUsd: 0.01 });
+    assert.deepEqual(r.duplicate, { calls: 1, tokens: 120 });
+    const est = rollupUsage([llm("a", undefined, { inputTokens: 100, costUsd: 0.5 }, { costEstimated: true }), llm("b", "a", { inputTokens: 100, costUsd: 0.01 })]);
+    assert.equal(est.usage.costUsd, 0.01);
+    assert.equal(est.usage.estimatedCostUsd, undefined);
+  });
+
+  it("fills fields the wrapper lacks from its nested calls", () => {
+    const r = rollupUsage([llm("a", undefined, { inputTokens: 100 }), llm("b", "a", { inputTokens: 90, cacheReadTokens: 10 }), llm("c", "a", { cacheReadTokens: 5 })]);
+    assert.deepEqual(r.usage, { inputTokens: 100, cacheReadTokens: 15 });
+    assert.equal(r.duplicate?.calls, 2);
+  });
+
+  it("a repeated response id counts once", () => {
+    const r = rollupUsage([ev("llm.call", { responseId: "resp_1" }, { usage: { outputTokens: 7 } }), ev("llm.call", { responseId: "resp_1" }, { usage: { outputTokens: 7 } }), ev("llm.call", { responseId: "resp_2" }, { usage: { outputTokens: 3 } })]);
+    assert.deepEqual(r, { usage: { outputTokens: 10 }, duplicate: { calls: 1, tokens: 7 } });
+  });
+
+  it("calls without trace ids sum as before, and a child seen before its parent folds on rebuild", () => {
+    assert.deepEqual(rollupUsage([ev("llm.call", {}, { usage: { inputTokens: 1 } }), ev("llm.call", {}, { usage: { inputTokens: 2 } })]), { usage: { inputTokens: 3 } });
+    const child = llm("b", "a", { inputTokens: 100, costUsd: 0.01 });
+    assert.equal(buildSession([child]).stats.usage?.inputTokens, 100);
+    assert.equal(buildSession([child, llm("a", undefined, { inputTokens: 100, costUsd: 0.01 })]).stats.usage?.inputTokens, 100);
+  });
+
+  it("keeps a parent walk bounded on a span cycle", () => {
+    const r = rollupUsage([span("x", "y"), span("y", "x"), llm("a", "x", { inputTokens: 1 })]);
+    assert.deepEqual(r, { usage: { inputTokens: 1 } });
+  });
+
+  it("says which part of the cost is estimated, and never counts a gateway-billed call as estimated", () => {
+    const reported = ev("llm.call", {}, { usage: { inputTokens: 10, costUsd: 1 } });
+    const estimated = ev("llm.call", { costEstimated: true }, { usage: { inputTokens: 10, costUsd: 0.25 } });
+    assert.deepEqual(rollupUsage([reported, estimated]).usage, { inputTokens: 20, costUsd: 1.25, estimatedCostUsd: 0.25 });
+    assert.equal(rollupUsage([reported]).usage.estimatedCostUsd, undefined);
+    // Gateway enrich: the companion holds billed minus the estimate, so the sum is the bill.
+    const gw = ev("span", {}, { source: "gateway", parentId: estimated.id, usage: { costUsd: 0.75 } });
+    assert.deepEqual(rollupUsage([estimated, gw]).usage, { inputTokens: 10, costUsd: 1 });
+    const snap = ev("notification", { type: "usage-summary", costEstimated: true }, { usage: { outputTokens: 5, costUsd: 0.5 } });
+    assert.deepEqual(rollupUsage([snap]).usage, { outputTokens: 5, costUsd: 0.5, estimatedCostUsd: 0.5 });
+  });
+
+  it("a gateway companion of a call that was not counted is dropped with it", () => {
+    const outer = llm("a", undefined, { inputTokens: 100, costUsd: 0.01 });
+    const inner = llm("b", "a", { inputTokens: 100, costUsd: 0.01 });
+    const gw = ev("span", {}, { source: "gateway", parentId: inner.id, usage: { costUsd: 0.02 } });
+    const r = rollupUsage([outer, inner, gw]);
+    assert.equal(r.usage.costUsd, 0.01);
+    assert.deepEqual(r.duplicate, { calls: 1, tokens: 100, costUsd: 0.03 });
   });
 });

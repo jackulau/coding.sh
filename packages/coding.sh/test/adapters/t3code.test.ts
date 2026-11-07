@@ -204,9 +204,10 @@ describe("t3code adapter", () => {
     const old = by["v1-codex-thread-not-on-disk"]!;
     assert.equal(old.title, "Old prompt");
     assert.equal(old.stats.toolCalls, 1);
-    const { costUsd, ...tokens } = old.stats.usage!;
+    const { costUsd, estimatedCostUsd, ...tokens } = old.stats.usage!;
     assert.deepEqual(tokens, { inputTokens: 300, cacheReadTokens: 500, outputTokens: 100 });
     assert.ok(Math.abs(costUsd! - 0.002375) < 1e-12, "priced locally at gpt-5.4");
+    assert.equal(estimatedCostUsd, costUsd, "a local price is an estimate");
   });
 
   it("emits well-formed events", async () => {

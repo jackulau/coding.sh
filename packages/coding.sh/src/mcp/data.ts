@@ -93,6 +93,7 @@ export function sessionSummary(s: Session, now: number = Date.now()): SessionSum
     tests: s.stats.testsPassed !== undefined || s.stats.testsFailed !== undefined ? { passed: s.stats.testsPassed ?? 0, failed: s.stats.testsFailed ?? 0 } : undefined,
     tokens: u && (u.inputTokens !== undefined || u.outputTokens !== undefined) ? { input: u.inputTokens ?? 0, output: u.outputTokens ?? 0, cacheRead: u.cacheReadTokens ?? 0 } : undefined,
     costUsd: u?.costUsd !== undefined ? round4(u.costUsd) : undefined,
+    costEstimated: (u?.estimatedCostUsd ?? 0) > 0 ? true : undefined,
     flags: s.flags.length ? s.flags : undefined,
     parentSessionId: s.parent?.sessionId,
     subagentType: s.parent?.type,
@@ -564,12 +565,14 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     cacheReadTokens: number;
     cacheWriteTokens: number;
     costUsd: number;
-    /** Sessions that reported a cost. */
+    /** Part of costUsd computed from the price table. */
+    estimatedCostUsd: number;
+    /** Sessions that have a cost (reported or estimated). */
     priced: number;
     /** Sessions with tokens but no reported cost. */
     unpriced: number;
   }
-  const zero = (): Acc => ({ sessions: 0, turns: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, priced: 0, unpriced: 0 });
+  const zero = (): Acc => ({ sessions: 0, turns: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, estimatedCostUsd: 0, priced: 0, unpriced: 0 });
   const tokens = (s: Session) => {
     const u = s.stats.usage ?? {};
     return (u.inputTokens ?? 0) + (u.outputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
@@ -584,13 +587,16 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     a.cacheWriteTokens += u.cacheWriteTokens ?? 0;
     if (typeof u.costUsd === "number" && Number.isFinite(u.costUsd)) {
       a.costUsd += u.costUsd;
+      a.estimatedCostUsd += u.estimatedCostUsd ?? 0;
       a.priced++;
     } else if (tokens(s) > 0) a.unpriced++;
   };
+  const unpricedModels = new Map<string, number>();
   const total = zero();
   const groups = new Map<string, Acc>();
   for (const s of sessions) {
     add(total, s);
+    if (typeof s.stats.usage?.costUsd !== "number" && tokens(s) > 0) unpricedModels.set(s.model ?? "unknown", (unpricedModels.get(s.model ?? "unknown") ?? 0) + 1);
     const key =
       groupBy === "day" ? localDay(s.startedAt)
       : groupBy === "agent" ? s.agent
@@ -605,12 +611,13 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   // cost is unknown, not $0. Partial coverage is flagged as a lower bound.
   // tokensPerTurn and cacheReadShare (cache reads / all prompt tokens) compare
   // harnesses at a fixed model: same work, fewer tokens or more cache hits.
-  const fix = ({ priced, unpriced, costUsd, ...a }: Acc) => {
+  const fix = ({ priced, unpriced, costUsd, estimatedCostUsd, ...a }: Acc) => {
     const totalTokens = a.inputTokens + a.outputTokens + a.cacheReadTokens + a.cacheWriteTokens;
     const prompt = a.inputTokens + a.cacheReadTokens + a.cacheWriteTokens;
     return {
       ...a,
       ...(priced ? { costUsd: round4(costUsd) } : {}),
+      ...(priced && estimatedCostUsd > 0 ? { estimatedCostUsd: round4(estimatedCostUsd) } : {}),
       ...(priced && unpriced ? { costPartial: true, unpricedSessions: unpriced } : {}),
       totalTokens,
       ...(a.turns ? { tokensPerTurn: Math.round(totalTokens / a.turns) } : {}),
@@ -627,10 +634,12 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     .filter((s) => cost(s) > 0 || out(s) > 0)
     .sort((a, b) => (anyCost ? cost(b) - cost(a) : 0) || out(b) - out(a))
     .slice(0, 5)
-    .map((s) => ({ id: s.id, agent: s.agent, title: clip(s.title, 80), costUsd: s.stats.usage?.costUsd !== undefined ? round4(s.stats.usage.costUsd) : undefined, outputTokens: s.stats.usage?.outputTokens }));
+    .map((s) => ({ id: s.id, agent: s.agent, title: clip(s.title, 80), costUsd: s.stats.usage?.costUsd !== undefined ? round4(s.stats.usage.costUsd) : undefined, costEstimated: (s.stats.usage?.estimatedCostUsd ?? 0) > 0 ? true : undefined, outputTokens: s.stats.usage?.outputTokens }));
   const notes: string[] = [];
-  if (!anyCost && total.unpriced) notes.push("No session in this window reported a cost (agent transcripts carry tokens, not dollars), so costUsd is omitted rather than shown as $0. Compare spend by totalTokens; topSessions is ranked by output tokens.");
-  else if (total.unpriced) notes.push(`${total.unpriced} of ${total.sessions} sessions have tokens but no reported cost; costUsd counts only the priced ones (a lower bound) and rows with unpriced sessions say costPartial.`);
+  if (!anyCost && total.unpriced) notes.push("No session in this window has a cost (none reported one and their models have no price), so costUsd is omitted rather than shown as $0. Compare spend by totalTokens; topSessions is ranked by output tokens.");
+  else if (total.unpriced) notes.push(`${total.unpriced} of ${total.sessions} sessions have tokens but no cost (none reported, no price for the model); costUsd counts only the priced ones (a lower bound) and rows with unpriced sessions say costPartial.`);
+  if (total.estimatedCostUsd > 0) notes.push(`$${round4(total.estimatedCostUsd)} of costUsd is estimated: token counts times list prices (estimatedCostUsd), not a bill. Reported and gateway-billed costs are used as is.`);
+  if (unpricedModels.size) notes.push(`No price for: ${[...unpricedModels].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([m, n]) => `${m} (${n})`).join(", ")}. Add [prices."<model>"] to config.toml to price them.`);
   return {
     window: windowOf(q, sessions.length, truncated),
     groupBy,
@@ -638,6 +647,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     groups: rows.slice(0, limit),
     topSessions: top,
     topSessionsRankedBy: anyCost ? "costUsd" : "outputTokens",
+    ...(unpricedModels.size ? { unpricedModels: Object.fromEntries(unpricedModels) } : {}),
     ...(notes.length ? { notes } : {}),
   };
 }

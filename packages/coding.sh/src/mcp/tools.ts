@@ -362,7 +362,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       name: "usage",
       title: "Token usage and cost",
       description:
-        "Tokens and cost over a window by day (local time), agent, model, agent-model or repo: totals, turns, tokensPerTurn, cacheReadShare, top sessions (by cost, else output tokens). costUsd is omitted when no session reported one (unknown, not $0). Subagents count. Default 7d by day.",
+        "Tokens and cost over a window by day (local time), agent, model, agent-model or repo: totals, turns, tokensPerTurn, cacheReadShare, top sessions. costUsd: reported cost, else tokens × list price (estimatedCostUsd is that part); omitted when unknown, never $0. Subagents count. Default 7d by day.",
       inputSchema: input({
         since: SINCE("7d"),
         until: UNTIL,
@@ -375,9 +375,9 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         {
           window: WINDOW_OUT,
           groupBy: S,
-          total: out({ costUsd: N, totalTokens: N }),
-          groups: arr(out({ key: S, costUsd: N, totalTokens: N }, ["key"])),
-          topSessions: arr(out({ id: S, costUsd: N }, ["id"])),
+          total: out({ costUsd: N, estimatedCostUsd: N, totalTokens: N }),
+          groups: arr(out({ key: S, costUsd: N, estimatedCostUsd: N, totalTokens: N }, ["key"])),
+          topSessions: arr(out({ id: S, costUsd: N, costEstimated: { type: "boolean" } }, ["id"])),
           topSessionsRankedBy: { type: "string", enum: ["costUsd", "outputTokens"] },
           notes: arr(S),
         },

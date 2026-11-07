@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { defaultConfig } from "../../src/core/config.ts";
-import { REPRICE_CURSOR, repriceStored } from "../../src/core/reprice.ts";
+import { PRICING_RULES_VERSION, pricesFor } from "../../src/core/pricing.ts";
+import { priceStamp, REPRICE_CURSOR, repriceStored } from "../../src/core/reprice.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { IndexStore } from "../../src/core/types.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
@@ -66,8 +67,62 @@ for (const [name, open] of [["memory", async () => new MemoryIndexStore()], ["sq
       assert.deepEqual([c.plain, c.stale, c.reported, c.billed], [1, 1, 9, undefined], "our estimates follow the table; reported and billed stay");
       await store.close();
     });
+
+    it("marks the session's estimated part: reported and gateway-billed costs are not estimates", async () => {
+      const store = await open();
+      await seed(store);
+      await repriceStored(store);
+      const u = (await store.getSession("s1"))!.stats.usage!;
+      assert.equal(u.costUsd, 61);
+      assert.equal(u.estimatedCostUsd, 5 + 25 + 15);
+      await store.close();
+    });
+
+    it("prices stored 2026 models, records the sibling a fallback used, and drops it when the model gets its own row", async () => {
+      const store = await open();
+      const evs = [
+        ev("exact", { model: "gpt-6.1-sol", usage: { inputTokens: M, cacheWriteTokens: M } }), // 2 + 2.5
+        ev("sibling", { model: "gpt-6.2-sol", usage: { inputTokens: M } }), // as gpt-6.1-sol: 2
+        ev("paid", { model: "gpt-6.1-sol", usage: { inputTokens: M, costUsd: 1 } }),
+      ];
+      await store.putEvents(evs);
+      await store.upsertSession(buildSession(evs));
+      assert.deepEqual(await repriceStored(store), { ran: true, events: 2, sessions: 1 });
+      const byId = async () => Object.fromEntries((await store.listEvents("s1")).map((e) => [e.id, e]));
+      let e = await byId();
+      assert.deepEqual([e.exact!.usage?.costUsd, e.sibling!.usage?.costUsd, e.paid!.usage?.costUsd], [4.5, 2, 1]);
+      assert.deepEqual([e.exact!.payload.pricedAs, e.sibling!.payload.pricedAs, e.sibling!.payload.costEstimated], [undefined, "gpt-6.1-sol", true]);
+      let u = (await store.getSession("s1"))!.stats.usage!;
+      assert.deepEqual([u.costUsd, u.estimatedCostUsd], [7.5, 6.5]);
+      await repriceStored(store, { "gpt-6.2-sol": { input: 3, output: 3 } });
+      e = await byId();
+      assert.deepEqual([e.sibling!.usage?.costUsd, e.sibling!.payload.pricedAs, e.sibling!.payload.costEstimated], [3, undefined, true]);
+      u = (await store.getSession("s1"))!.stats.usage!;
+      assert.deepEqual([u.costUsd, u.estimatedCostUsd], [8.5, 7.5]);
+      await store.close();
+    });
+
+    it("refolds a session stored before session totals marked estimates, without touching its events", async () => {
+      const store = await open();
+      const evs = [ev("old", { model: "claude-opus-4-5", usage: { inputTokens: M, costUsd: 5 }, payload: { costEstimated: true } })];
+      await store.putEvents(evs);
+      const s = buildSession(evs);
+      await store.upsertSession({ ...s, stats: { ...s.stats, usage: { inputTokens: M, costUsd: 5 } } });
+      assert.deepEqual(await repriceStored(store), { ran: true, events: 0, sessions: 1 });
+      assert.equal((await store.getSession("s1"))!.stats.usage?.estimatedCostUsd, 5);
+      await store.close();
+    });
   });
 }
+
+describe("priceStamp", () => {
+  it("changes with the table and with the lookup rules", () => {
+    const t = pricesFor();
+    assert.equal(priceStamp(t), priceStamp(pricesFor()));
+    assert.notEqual(priceStamp(t), priceStamp(t, PRICING_RULES_VERSION - 1));
+    assert.notEqual(priceStamp(t), priceStamp(pricesFor({ x: { input: 1, output: 1 } })));
+  });
+});
 
 describe("opening the index reprices it", () => {
   it("an index written before local pricing has costs after the next open", async () => {

@@ -950,6 +950,7 @@ async function computeStats(index: IndexStore, topLevelOnly = false, project?: s
   let toolCalls = 0;
   let toolErrors = 0;
   let costUsd = 0;
+  let estimatedCostUsd = 0;
   let priced = 0;
   let llmCalls = 0;
   let withTests = 0;
@@ -963,6 +964,7 @@ async function computeStats(index: IndexStore, topLevelOnly = false, project?: s
       llmCalls += s.stats.latency?.llmCalls ?? 0;
       if (typeof s.stats.usage?.costUsd === "number") {
         costUsd += s.stats.usage.costUsd;
+        estimatedCostUsd += s.stats.usage.estimatedCostUsd ?? 0;
         priced++;
       }
       if (s.parent) subagents++;
@@ -981,7 +983,7 @@ async function computeStats(index: IndexStore, topLevelOnly = false, project?: s
     }
   }
   return {
-    sessions, subagents, byAgent, byFlag, byRepo, byModel, toolCalls, toolErrors, llmCalls, costUsd, pricedSessions: priced,
+    sessions, subagents, byAgent, byFlag, byRepo, byModel, toolCalls, toolErrors, llmCalls, costUsd, estimatedCostUsd, pricedSessions: priced,
     withTests, testsFailing, histogram: histogram(starts),
   };
 }

@@ -107,8 +107,8 @@ before(async () => {
   sessions.push([ev(IDS.live, "codex", now - 10 * M, "session.start", {}, { cwd: join(w.root, "repos", "docs") }), ev(IDS.live, "codex", now - M, "user.message", { text: "Keep going" }, { cwd: join(w.root, "repos", "docs") })]);
   // Another unpriced session with fewer output tokens.
   sessions.push([
-    ev(IDS.noCost, "codex", now - 6 * H, "session.start", {}, { cwd: stale(), model: "gpt-6.1-sol" }),
-    ev(IDS.noCost, "codex", now - 6 * H + 1000, "llm.call", { ok: true }, { cwd: stale(), model: "gpt-6.1-sol", durationMs: 800, usage: { inputTokens: 900, outputTokens: 300 } }),
+    ev(IDS.noCost, "codex", now - 6 * H, "session.start", {}, { cwd: stale(), model: "zz-unpriced-model" }),
+    ev(IDS.noCost, "codex", now - 6 * H + 1000, "llm.call", { ok: true }, { cwd: stale(), model: "zz-unpriced-model", durationMs: 800, usage: { inputTokens: 900, outputTokens: 300 } }),
     ev(IDS.noCost, "codex", now - 6 * H + 2000, "session.end", {}, { cwd: stale() }),
   ]);
 

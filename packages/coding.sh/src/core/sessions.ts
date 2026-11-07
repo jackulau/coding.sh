@@ -2,7 +2,7 @@
 // session's full event list, so re-running them after every ingest is exact
 // (no incremental state to drift).
 import { GATEWAY_FLAG, isGatewayEvent } from "../integrations/gateway/ids.ts";
-import type { AgentEvent, LatencyStats, Session, Usage } from "../schema/index.ts";
+import type { AgentEvent, DuplicateUsage, LatencyStats, Session, Usage } from "../schema/index.ts";
 
 export const FLAGS = {
   prematureCompletion: "premature-completion",
@@ -104,15 +104,148 @@ export function eventEnd(e: AgentEvent): number {
 export const BACKFILL_SOURCES: readonly string[] = ["transcript", "backfill", "store"];
 export const isBackfillEvent = (e: AgentEvent): boolean => e.source !== undefined && BACKFILL_SOURCES.includes(e.source);
 
+const TOKEN_KEYS = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"] as const;
+
 function addUsage(sum: Usage, u: Usage | undefined): void {
   if (!u) return;
-  for (const k of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "costUsd"] as const) {
+  for (const k of [...TOKEN_KEYS, "costUsd"] as const) {
     const v = u[k];
     if (typeof v === "number" && Number.isFinite(v)) sum[k] = (sum[k] ?? 0) + v;
   }
 }
 
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+
+/** Parent walks stop after this many hops (and on a cycle). */
+const MAX_PARENT_HOPS = 64;
+
+const carriesUsage = (e: AgentEvent): boolean =>
+  e.kind === "llm.call" && !!e.usage && [...TOKEN_KEYS, "costUsd" as const].some((k) => (num(e.usage![k]) ?? 0) > 0);
+
+export interface UsageRollup {
+  usage: Usage;
+  duplicate?: DuplicateUsage;
+}
+
+/**
+ * Session usage totals from its events (sorted by time). Plain sums, except:
+ * - only the latest usage snapshot counts (they are running totals);
+ * - a model call nested inside another usage-carrying model call of the same
+ *   trace (a wrapper span over a provider span) is not counted again: the
+ *   outermost call takes, per field, its own value, else the sum over its
+ *   nearest nested calls. A reported nested cost beats the wrapper's estimate;
+ * - a model call repeating an earlier call's `payload.responseId` counts once;
+ * - `estimatedCostUsd` is the part of `costUsd` computed from the price table
+ *   (`payload.costEstimated`), unless a gateway companion billed that call.
+ * What was left out is returned as `duplicate`. Events without trace ids sum as before.
+ */
+export function rollupUsage(sorted: readonly AgentEvent[]): UsageRollup {
+  const billed = new Set<string>();
+  for (const e of sorted) if (isEnrichment(e) && e.parentId) billed.add(e.parentId);
+  const bySpan = new Map<string, AgentEvent>();
+  for (const e of sorted) {
+    const k = e.traceId && e.spanId ? `${e.traceId}\u0000${e.spanId}` : undefined;
+    if (k && !bySpan.has(k)) bySpan.set(k, e);
+  }
+  // Nearest usage-carrying model call above each one, within its trace.
+  const children = new Map<AgentEvent, AgentEvent[]>();
+  const nested = new Set<AgentEvent>();
+  for (const e of sorted) {
+    if (!e.traceId || !e.parentSpanId || !carriesUsage(e)) continue;
+    const seen = new Set<AgentEvent>([e]);
+    let cur = e;
+    for (let hop = 0; hop < MAX_PARENT_HOPS && cur.parentSpanId; hop++) {
+      const p = bySpan.get(`${e.traceId}\u0000${cur.parentSpanId}`);
+      if (!p || seen.has(p)) break;
+      if (carriesUsage(p)) {
+        nested.add(e);
+        children.set(p, [...(children.get(p) ?? []), e]);
+        break;
+      }
+      seen.add(p);
+      cur = p;
+    }
+  }
+  const estimatedOf = (e: AgentEvent): number => (e.payload?.costEstimated === true && !billed.has(e.id) ? (num(e.usage?.costUsd) ?? 0) : 0);
+  // A call's usage with its nested calls folded in: own value per field, else the nested sum.
+  const fold = (c: AgentEvent, depth = 0): { u: Usage; est: number } => {
+    const kids = depth < MAX_PARENT_HOPS ? (children.get(c) ?? []).map((k) => fold(k, depth + 1)) : [];
+    const u: Usage = {};
+    for (const k of TOKEN_KEYS) {
+      const own = num(c.usage?.[k]);
+      if (own !== undefined) u[k] = own;
+      else if (kids.some((x) => x.u[k] !== undefined)) u[k] = kids.reduce((s, x) => s + (x.u[k] ?? 0), 0);
+    }
+    const own = num(c.usage?.costUsd);
+    const ownEst = estimatedOf(c);
+    const kidCost = kids.some((x) => x.u.costUsd !== undefined) ? kids.reduce((s, x) => s + (x.u.costUsd ?? 0), 0) : undefined;
+    const kidEst = kids.reduce((s, x) => s + x.est, 0);
+    // A billed call keeps its own cost: its gateway companion holds billed minus that cost.
+    const kidsReported = kidCost !== undefined && kidCost - kidEst > 0;
+    if (own !== undefined && (ownEst === 0 || !kidsReported || billed.has(c.id))) {
+      u.costUsd = own;
+      return { u, est: ownEst };
+    }
+    if (kidCost !== undefined) u.costUsd = kidCost;
+    return { u, est: kidCost !== undefined ? kidEst : 0 };
+  };
+
+  const usage: Usage = {};
+  let estimated = 0;
+  let snapshot: AgentEvent | undefined;
+  const responses = new Set<string>();
+  const dropped = new Set<string>();
+  let raw = 0;
+  let rawCost = 0;
+  let counted = 0;
+  let countedCost = 0;
+  let calls = 0;
+  const tokens = (u: Usage) => TOKEN_KEYS.reduce((s, k) => s + (num(u[k]) ?? 0), 0);
+  for (const e of sorted) {
+    if (isUsageSnapshot(e)) {
+      // Latest snapshot wins; equal times keep the larger (running totals only grow).
+      if (!snapshot || e.ts > snapshot.ts || (e.ts === snapshot.ts && tokenTotal(e.usage) >= tokenTotal(snapshot.usage))) snapshot = e;
+      continue;
+    }
+    if (!carriesUsage(e)) continue;
+    raw += tokens(e.usage!);
+    rawCost += num(e.usage!.costUsd) ?? 0;
+    const rid = typeof e.payload?.responseId === "string" && e.payload.responseId ? e.payload.responseId : undefined;
+    if (nested.has(e) || (rid && responses.has(rid))) {
+      calls++;
+      dropped.add(e.id);
+      continue;
+    }
+    if (rid) responses.add(rid);
+  }
+  for (const e of sorted) {
+    if (isUsageSnapshot(e)) continue;
+    if (carriesUsage(e)) {
+      if (dropped.has(e.id)) continue;
+      const f = children.has(e) ? fold(e) : { u: e.usage!, est: estimatedOf(e) };
+      addUsage(usage, f.u);
+      estimated += f.est;
+      counted += tokens(f.u);
+      countedCost += num(f.u.costUsd) ?? 0;
+      continue;
+    }
+    // A gateway companion of a call that was not counted goes with it.
+    if (isEnrichment(e) && e.parentId && dropped.has(e.parentId)) {
+      rawCost += num(e.usage?.costUsd) ?? 0;
+      continue;
+    }
+    addUsage(usage, e.usage);
+    estimated += estimatedOf(e);
+  }
+  if (snapshot) {
+    addUsage(usage, snapshot.usage);
+    estimated += estimatedOf(snapshot);
+  }
+  if (estimated > 0 && usage.costUsd !== undefined) usage.estimatedCostUsd = Math.min(estimated, usage.costUsd);
+  if (!calls) return { usage };
+  const dupCost = Math.round((rawCost - countedCost) * 1e9) / 1e9;
+  return { usage, duplicate: { calls, tokens: Math.max(0, raw - counted), ...(dupCost > 0 ? { costUsd: dupCost } : {}) } };
+}
 
 /**
  * A usage snapshot: running session totals (T3 Code v1 threads, OpenCode
@@ -164,7 +297,6 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   if (!first && !prev) throw new Error("buildSession needs at least one event or an existing session");
   const id = first?.sessionId ?? prev!.id;
 
-  const usage: Usage = {};
   const files = new Set<string>();
   // Turn ends per capture path. A session seen live (hooks) and from its
   // transcript (backfill) has two turn.end rows per turn wherever the two paths
@@ -178,7 +310,6 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   let idlessStarts = 0;
   let idlessEnds = 0;
   let toolErrors = 0;
-  let snapshot: AgentEvent | undefined;
   let lastActivity: number | undefined;
   let lastTest: { passed: number; failed: number } | undefined;
   let title: string | undefined;
@@ -202,10 +333,6 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   // stays on the session as provider.
   let via: string | undefined;
   for (const e of sorted) {
-    if (isUsageSnapshot(e)) {
-      // Latest snapshot wins; equal times keep the larger (running totals only grow).
-      if (!snapshot || e.ts > snapshot.ts || (e.ts === snapshot.ts && tokenTotal(e.usage) >= tokenTotal(snapshot.usage))) snapshot = e;
-    } else addUsage(usage, e.usage);
     if (isEnrichment(e)) continue;
     if (typeof e.payload.via === "string" && e.payload.via) via ??= e.payload.via;
     if (e.traceId && traceIds.size < MAX_TRACE_IDS) traceIds.add(e.traceId);
@@ -266,7 +393,7 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
     }
   }
 
-  addUsage(usage, snapshot?.usage);
+  const { usage, duplicate } = rollupUsage(sorted);
   // A session.end followed by later captured activity was reopened (resumed
   // under the same id): it is not ended, whatever an earlier build stored.
   const reopened = endedAt !== undefined && lastActivity !== undefined && lastActivity > endedAt + REOPEN_SLACK_MS;
@@ -292,6 +419,7 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
     session.stats.testsFailed = lastTest.failed;
   }
   if (Object.keys(usage).length) session.stats.usage = usage;
+  if (duplicate) session.stats.duplicateUsage = duplicate;
   const latency = latencyStats(sorted, endedAt);
   if (Object.keys(latency).length) session.stats.latency = latency;
   const set = <K extends keyof Session>(k: K, v: Session[K] | undefined) => {

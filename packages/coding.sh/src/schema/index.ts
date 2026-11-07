@@ -66,6 +66,19 @@ export interface Usage {
   outputTokens?: number;
   cacheReadTokens?: number;
   cacheWriteTokens?: number;
+  /** Reported (agent or gateway) or, when `estimatedCostUsd` covers it, computed from the price table. */
+  costUsd?: number;
+  /**
+   * Session totals only: the part of `costUsd` computed from token counts and list
+   * prices rather than reported (events say so with `payload.costEstimated`).
+   */
+  estimatedCostUsd?: number;
+}
+
+/** Usage a session did not count because another model call already covered it (a nested span, a repeated response id). */
+export interface DuplicateUsage {
+  calls: number;
+  tokens: number;
   costUsd?: number;
 }
 
@@ -178,6 +191,8 @@ export interface Session {
     testsPassed?: number;
     testsFailed?: number;
     usage?: Usage;
+    /** Model-call usage left out of `usage` because an enclosing call or an earlier copy of the same response already counted it. */
+    duplicateUsage?: DuplicateUsage;
     latency?: LatencyStats;
   };
   /** Detected failure patterns, e.g. "premature-completion". */

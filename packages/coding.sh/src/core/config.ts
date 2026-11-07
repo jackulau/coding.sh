@@ -226,8 +226,10 @@ function applyUserConfig(base: Config, root: TomlTable, file: string, env: NodeJ
   const update = r.table("update");
   if (update) out.update.check = r.bool(update, "check", "update.check") ?? out.update.check;
 
+  // `[prices."<model>"]`; `[pricing."<model>"]` is the older spelling. Both may appear; `prices` wins a model in both.
   const pricing = r.table("pricing");
-  if (pricing) out.pricing = parsePricing(pricing, file);
+  const prices = r.table("prices");
+  if (pricing || prices) out.pricing = { ...(pricing ? parsePricing(pricing, file, "pricing") : {}), ...(prices ? parsePricing(prices, file, "prices") : {}) };
 
   const sinks = root.sinks;
   if (sinks !== undefined) {
@@ -245,11 +247,11 @@ function applyUserConfig(base: Config, root: TomlTable, file: string, env: NodeJ
   return out;
 }
 
-/** `[pricing."<model>"] input, output, cache_read?, cache_write?` in USD per 1M tokens. */
-function parsePricing(t: TomlTable, file: string): NonNullable<Config["pricing"]> {
+/** `[prices."<model>"] input, output, cache_read?, cache_write?` in USD per 1M tokens. */
+function parsePricing(t: TomlTable, file: string, table: string): NonNullable<Config["pricing"]> {
   const out: NonNullable<Config["pricing"]> = {};
   for (const [model, v] of Object.entries(t)) {
-    const where = `pricing.${JSON.stringify(model)}`;
+    const where = `${table}.${JSON.stringify(model)}`;
     if (typeof v !== "object" || v === null || Array.isArray(v)) throw new ConfigError(`${where} must be a table with input and output prices`, file);
     const p = v as TomlTable;
     const num = (key: string, alt: string): number | undefined => {

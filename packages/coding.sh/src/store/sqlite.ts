@@ -10,6 +10,7 @@ import type { DatabaseSync, StatementSync } from "node:sqlite";
 import type { AgentEvent, BlobRef, Session } from "../schema/index.ts";
 import type {
   EvalTask,
+  EventCost,
   HarnessBundle,
   IndexStore,
   Label,
@@ -579,13 +580,15 @@ export class SqliteIndexStore implements IndexStore {
     return inserted;
   }
 
-  async setEventCosts(costs: { id: string; costUsd: number }[]): Promise<number> {
+  async setEventCosts(costs: EventCost[]): Promise<number> {
     if (!costs.length) return 0;
-    // Only usage and payload.costEstimated: message text (the FTS source) never changes here.
-    const update = this.stmt("UPDATE events SET usage = json_set(coalesce(usage, '{}'), '$.costUsd', ?), payload = json_set(payload, '$.costEstimated', json('true')) WHERE id = ?");
+    // Only usage, payload.costEstimated and payload.pricedAs: message text (the FTS source) never changes here.
+    const update = this.stmt(
+      "UPDATE events SET usage = json_set(coalesce(usage, '{}'), '$.costUsd', ?), payload = CASE WHEN ? IS NULL THEN json_set(json_remove(payload, '$.pricedAs'), '$.costEstimated', json('true')) ELSE json_set(payload, '$.costEstimated', json('true'), '$.pricedAs', ?) END WHERE id = ?",
+    );
     return this.tx(() => {
       let found = 0;
-      for (const { id, costUsd } of costs) found += Number(update.run(costUsd, id).changes);
+      for (const { id, costUsd, pricedAs } of costs) found += Number(update.run(costUsd, pricedAs ?? null, pricedAs ?? null, id).changes);
       return found;
     });
   }

@@ -37,7 +37,7 @@
 //   session.start, session.end or compaction the other path already stored
 //   for the session is dropped too (./message-copies.ts).
 // - Model calls with tokens but no cost get a list-price costUsd (built-in
-//   prices with `[pricing]` overrides, ./pricing.ts), as serve does.
+//   prices with `[prices]` overrides, ./pricing.ts), as serve does.
 // - Adapters keep the raw source payload as blobs[0] on the FIRST event each
 //   spool line produces (not on every event), so one payload is stored once.
 // - A session with a cwd inside a git work tree but no repo state (hooks and
@@ -625,7 +625,7 @@ export function normalizeContext(profile: CaptureProfile, blobs: BlobStore, meta
 /**
  * Redaction, then metadata stripping (keeping the "a check ran" signal the
  * no-verification detector needs), then a list-price cost on model calls that
- * report tokens but no cost (built-in prices, `[pricing]` overrides), as serve does.
+ * report tokens but no cost (built-in prices, `[prices]` overrides), as serve does.
  */
 export function finishEvent(e: AgentEvent, profile: CaptureProfile, metadata: boolean): AgentEvent {
   let ev = profile.redactor.event(e);

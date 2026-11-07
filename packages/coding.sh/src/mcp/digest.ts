@@ -1,5 +1,6 @@
 // Session digests: the structured one session_get returns and the markdown
 // one the codingsh://session/<id> resource serves.
+import { costNote } from "../core/pricing.ts";
 import type { IndexStore, Session } from "../core/types.ts";
 import { clip, countNodes, fmtMs, isRunning, iso, lastActivity, sessionSummary, splitTurns, subagentTree, timeline, turnIndex, type SubagentNode, type TimelineEntry, type TurnInfo } from "./data.ts";
 
@@ -91,7 +92,7 @@ export async function sessionMarkdown(index: IndexStore, s: Session, maxEntries 
   row("Duration", s.endedAt !== undefined ? fmtMs(s.endedAt - s.startedAt) : isRunning(s, now) ? `running (no end seen; last activity ${iso(last)})` : `${fmtMs(last - s.startedAt)} (no end seen; idle since ${iso(last)})`);
   row("Activity", `${s.stats.turns} turns, ${s.stats.toolCalls} tool calls${s.stats.toolErrors ? ` (${s.stats.toolErrors} failed)` : ""}, ${s.stats.filesChanged} files changed`);
   if (s.stats.testsPassed !== undefined || s.stats.testsFailed !== undefined) row("Tests", `${s.stats.testsPassed ?? 0} passed, ${s.stats.testsFailed ?? 0} failed`);
-  if (u) row("Tokens", `in ${u.inputTokens ?? 0}, out ${u.outputTokens ?? 0}, cache read ${u.cacheReadTokens ?? 0}${u.costUsd !== undefined ? `, $${u.costUsd.toFixed(4)}` : ""}`);
+  if (u) row("Tokens", `in ${u.inputTokens ?? 0}, out ${u.outputTokens ?? 0}, cache read ${u.cacheReadTokens ?? 0}${u.costUsd !== undefined ? `, $${u.costUsd.toFixed(4)}${costNote(u)}` : ""}`);
   if (lat?.llmCalls) row("Latency", `${lat.llmCalls} model calls, p50 ${fmtMs(lat.llmP50Ms)}, p95 ${fmtMs(lat.llmP95Ms)}${lat.ttftP50Ms !== undefined ? `, TTFT p50 ${fmtMs(lat.ttftP50Ms)}` : ""}`);
   if (s.flags.length) row("Flags", s.flags.join(", "));
   if (s.parent) row("Parent", `\`${s.parent.sessionId}\``);

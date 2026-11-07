@@ -1,5 +1,6 @@
 // coding.sh show <session>: header, latency, the event timeline, and the
 // subagent tree (child sessions linked by parent.sessionId).
+import { costNote } from "../../core/pricing.ts";
 import type { AgentEvent, Session } from "../../core/types.ts";
 import { positiveInt } from "../args.ts";
 import { autoIngest, oneLine, resolveSession, sessionJson, withContext } from "../common.ts";
@@ -27,6 +28,14 @@ function treeJson(t: Tree[]): unknown[] {
 
 function str(v: unknown): string | undefined {
   return typeof v === "string" && v.trim() ? v : undefined;
+}
+
+/** " $0.0123" for a reported cost, " $0.0123 est" from the price table, " $0.0123 est (as <model>)" from a sibling model's price. */
+function callCost(e: AgentEvent): string {
+  const c = e.usage?.costUsd;
+  if (c === undefined) return "";
+  if (e.payload.costEstimated !== true) return ` ${usd(c)}`;
+  return ` ${usd(c)} est${typeof e.payload.pricedAs === "string" ? ` (as ${e.payload.pricedAs})` : ""}`;
 }
 
 /** Short description of a tool input (command, path, pattern…). */
@@ -66,7 +75,7 @@ function describe(e: AgentEvent, starts: Map<string, AgentEvent>): string | unde
       return `tool        ${str(p.tool) ?? str(start?.payload.tool) ?? "?"} ${oneLine(clean(toolArg(input)), 70)}  ${status} ${duration(e.durationMs)}`;
     }
     case "llm.call":
-      return `llm         ${e.model ?? str(p.model) ?? ""} ${duration(e.durationMs)} in ${tokens(e.usage?.inputTokens)} out ${tokens(e.usage?.outputTokens)}`;
+      return `llm         ${e.model ?? str(p.model) ?? ""} ${duration(e.durationMs)} in ${tokens(e.usage?.inputTokens)} out ${tokens(e.usage?.outputTokens)}${callCost(e)}`;
     case "subagent.start":
       return `subagent    start ${str(p.type) ?? str(p.subagentType) ?? ""} ${oneLine(clean(str(p.description) ?? str(p.prompt) ?? ""), 70)}`;
     case "subagent.end":
@@ -158,7 +167,7 @@ export async function run(c: CommandContext): Promise<number> {
       ["Duration", s.endedAt !== undefined ? duration(s.endedAt - s.startedAt) : "running or not ended"],
       ["Turns", `${s.stats.turns}, ${s.stats.toolCalls} tool calls${s.stats.toolErrors ? ` (${s.stats.toolErrors} failed)` : ""}, ${filesChanged} files changed`],
     ];
-    if (u) rows.push(["Tokens", `in ${tokens(u.inputTokens)}  out ${tokens(u.outputTokens)}  cache ${tokens(u.cacheReadTokens)}  ${usd(u.costUsd)}`]);
+    if (u) rows.push(["Tokens", `in ${tokens(u.inputTokens)}  out ${tokens(u.outputTokens)}  cache ${tokens(u.cacheReadTokens)}  ${usd(u.costUsd)}${costNote(u)}`]);
     if (lat) {
       const parts: string[] = [];
       if (lat.llmCalls) parts.push(`${lat.llmCalls} llm calls, p50 ${duration(lat.llmP50Ms)}, p95 ${duration(lat.llmP95Ms)}`);
