@@ -112,6 +112,39 @@ caps case runs for the race (default: each train case used once), `--split` and 
 the splits, and a dataset with no splits gets a seeded 30% held out. Every run is stored as a
 normal experiment.
 
+## Long runs: resume, retries, status
+
+`exp run` (and `--arm`), `exp aa`, `exp sweep`, `compare`, `bench run` and `workflows run` write
+each trial to a checkpoint as soon as it finishes. When a run stops early (Ctrl-C, a crash, a
+reboot, a killed remote job), run the same command again with `--resume`. Only the trials that
+had not finished run again. The schedule, the seed, the A/B arm order and each `--stop-early` look
+come from the checkpoint, so the resumed run reaches the same stopping decision, verdict and sweep
+rounds as a run that was never interrupted.
+
+- `--resume <id>` continues that run. `--resume` with no id continues the newest unfinished run of
+  the same command with the same config. Without the flag, if an unfinished run with the same
+  config exists, an interactive terminal asks whether to resume it; otherwise a note prints the
+  resume command and a new run starts.
+- The config hash covers the dataset version, split, graders, trials, task (including the agent
+  script a command task runs) and timeouts, not concurrency. If any of them changed, `--resume`
+  refuses and names the parts: `Can't resume exp_…: its config changed since it started
+  (dataset, task)`. Mixing trials of two configs would give a result of neither.
+- The first Ctrl-C starts no new trials and lets the ones in flight finish and be saved. The second
+  stops them. The exit code is 130, and the command to continue is printed (and is the `resume`
+  field of `--json` output).
+- `--retries N` (default 3) retries a trial after a rate limit, HTTP 5xx, network error or exit
+  code 75, with exponential backoff and jitter, honoring `Retry-After`. A task failure (wrong
+  answer, crash, its own timeout) is never retried, because retrying failures would bias the pass
+  rate up. Each run records its attempts. A trial still failing on infrastructure after its
+  retries counts as unknown, not as a failure: it is left out of the pass rate, the run ends
+  `incomplete`, and `--resume` runs those trials again.
+- `--trial-timeout <SEC>` caps each trial, retries included. A trial over it fails.
+
+`coding.sh exp status` lists the durable runs with progress, ETA (from this session's pace) and
+the cost so far (from the trials that report one). `coding.sh exp status <id>` shows one run and
+its resume command, and `--json` returns the same fields (`done`, `total`, `infra`, `retries`,
+`etaMs`, `costUsd`, `resume`). A run whose process died reads as `interrupted`.
+
 ## Metric A/B (ms, bytes)
 
 `coding.sh exp metrics --arm base='<cmd>' --arm cand='<cmd>'` compares two commands that print

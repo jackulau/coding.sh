@@ -184,6 +184,22 @@ const COMPARE = [
     <code>keep &lt;start&gt;</code> with the reason. <code>--budget</code> caps the race's case runs.
   </p>
 
+  <h2 id="resume">Long runs: resume and retries <Tag status="built" /></h2>
+  <p>
+    <code>exp run</code>, <code>exp aa</code>, <code>exp sweep</code>, <code>compare</code>, <code>bench run</code> and
+    <code>workflows run</code> save each trial as it finishes. After Ctrl-C, a crash or a reboot, run the same command with
+    <code>--resume</code> and only the unfinished trials run. The seed, order and <code>--stop-early</code> looks come from the checkpoint, so
+    the resumed run stops at the same point and gives the same verdict as one that was never interrupted. If the dataset, graders, task or
+    agent script changed, it refuses to resume and names what changed. The first Ctrl-C lets the trials in flight finish; the second stops
+    them.
+  </p>
+  <p>
+    <code>--retries N</code> (default 3) retries rate limits, 5xx and network errors with backoff. Task failures are never retried, since
+    that would inflate the pass rate. A trial that still hits infrastructure errors is left out of the pass rate and runs again on
+    <code>--resume</code>. <code>--trial-timeout</code> caps each trial. <code>exp status</code> shows each run's progress, ETA and cost so
+    far.
+  </p>
+
   <h2 id="metrics">Metric A/B <Tag status="built" /></h2>
   <p>
     <code>exp metrics --arm base='node bench.mjs a' --arm cand='node bench.mjs b'</code> compares two commands that print numbers, such as

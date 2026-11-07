@@ -248,6 +248,7 @@ Read these in your agent or script to tie its output to a run.
 | `AI_GATEWAY_API_KEY` | Vercel AI Gateway: `gateway enrich`, `gateway status --credits`, `compare --gateway`, `gateway` judges. |
 | `CODING_SH_GATEWAY_URL` | Vercel AI Gateway API base. |
 | `OPENROUTER_API_KEY`, `LITELLM_PROXY_API_KEY`, `CLOUDFLARE_API_TOKEN`, `PORTKEY_API_KEY`, `HELICONE_API_KEY`, `RAMP_ROUTER_API_KEY` | Other gateways: `gateway enrich` lookups and `compare --gateway <name>`. |
+| `CODING_SH_RETRY_BASE_MS` | First backoff (ms) before a trial is retried after a rate limit, 5xx or network error; it doubles per retry, with jitter. Default `2000`. Tests set `0`. |
 | `CODING_SH_CONFIRM_ABOVE_USD` | `workflows run` and `replay` ask before running above this estimated cost. Default `1`. |
 | `GITHUB_TOKEN`, `GH_TOKEN` | `bench` GitHub sources. Falls back to `gh auth token`. |
 
