@@ -41,7 +41,7 @@ Seven more agents are verified on a real install, the viewer and the site work o
 - **Site.** A new landing page, a changelog page and docs pages.
 - **Install.** `install.sh` installs from npm when the registry has the version, else from the GitHub release. `CODING_SH_SOURCE=npm|github` picks one.
 - **Release.** A tag creates its GitHub release as soon as the checks pass, so the installer gets it right away.
-- **Release.** One tag publishes all five packages to npm and PyPI with trusted publishing.
+- **Release.** The release workflow can publish all five packages to npm and PyPI with trusted publishing. Nothing is on npm or PyPI yet.
 - **Docs.** A new README, reference pages, how-to guides and a code of conduct.
 
 ### Fixed
