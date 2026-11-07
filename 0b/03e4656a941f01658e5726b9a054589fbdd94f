@@ -1,0 +1,66 @@
+packages/coding.sh/src/core/rules.ts
+  s_8e040dbdf13565::t_2a320ee1bd1dd2 62
+docs/reference/config.md
+  s_8e040dbdf13565::t_f8db6d1532ea6e 15-16,171-184
+  s_8e040dbdf13565::t_8984a962899e7d 185
+packages/coding.sh/src/refine/config.ts
+  s_8e040dbdf13565::t_e224fa20130002 1-57
+packages/coding.sh/test/cli/exp-ab.test.ts
+  s_8e040dbdf13565::t_5e6239d467f2d6 217-247
+packages/coding.sh/src/refine/protect.ts
+  s_8e040dbdf13565::t_3285e5aef20a9f 188
+  s_8e040dbdf13565::t_77881b157312cc 1-44,53-57,60-63,69-71,73,75-81,83-115,122-185,189-303
+  s_8e040dbdf13565::t_7e76816ef31892 58-59,64-65,72,74,82
+  s_8e040dbdf13565::t_ee772a84713949 116,119
+  s_8e040dbdf13565::t_1c63cdc1c1287f 45-52,121,186-187
+  s_8e040dbdf13565::t_b1160d8659cd9d 117-118,120
+  s_8e040dbdf13565::t_ad553c33af15bd 66-68
+packages/coding.sh/test/cli/refine.test.ts
+  s_8e040dbdf13565::t_512cae5a6a0da0 1-129
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_ad089a06960c4f 793
+  s_8e040dbdf13565::t_b6d691d76ba65a 85-87,448,770-792,794-797
+  s_8e040dbdf13565::t_7f72f53ce71588 798
+packages/coding.sh/test/refine/protect.test.ts
+  s_8e040dbdf13565::t_a0cfbae79d67d1 125
+  s_8e040dbdf13565::t_bfc96b77bb3a5b 99
+  s_8e040dbdf13565::t_1b0069d8f2f4e5 1-98,100-124,126-236
+packages/coding.sh/src/cli/commands/refine.ts
+  s_8e040dbdf13565::t_8d522f499d7149 85-86
+  s_8e040dbdf13565::t_ff4b484c2e26a3 1-7,11,13-31,33-38,40-84,87-89
+  s_8e040dbdf13565::t_01801b464285ed 8-9,12,32,39
+  s_8e040dbdf13565::t_ad089a06960c4f 10
+CHANGELOG.md
+  s_8e040dbdf13565::t_8c8412192786cf 39
+packages/coding.sh/src/cli/protect.ts
+  s_8e040dbdf13565::t_083739673ff29d 15
+  s_8e040dbdf13565::t_01801b464285ed 1-14,16-50
+docs/concepts.md
+  s_8e040dbdf13565::t_54c86717c2043d 105-110
+docs/guides/evals.md
+  s_8e040dbdf13565::t_86c47a03bf49e2 573-575
+  s_8e040dbdf13565::t_2e16fb5b33c53e 567
+  s_8e040dbdf13565::t_f8db6d1532ea6e 553-566,568-572,576-613
+packages/coding.sh/src/cli/commands/exp-ab.ts
+  s_8e040dbdf13565::t_a6c0a6ce047c58 27,32,539-553,566-572,634,707,714,725,730,735-736
+apps/site/src/pages/docs/evals.astro
+  s_8e040dbdf13565::t_f8db6d1532ea6e 258-273
+docs/reference/cli.md
+  s_8e040dbdf13565::t_c6b9d777ca4b5e 58,678,1596-1650
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b03e4656a941f01658e5726b9a054589fbdd94f",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
