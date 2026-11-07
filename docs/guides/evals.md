@@ -54,9 +54,11 @@ The verifier can grade more than the work tree. It gets these environment variab
 - `CODING_SH_AGENT_OUTPUT`: a file with the agent's final answer.
 - `CODING_SH_AGENT_STDOUT`: a file with the agent's whole stdout. For Claude Code this is
   stream-json, with every tool call and its result.
+- `CODING_SH_AGENT_DIFF`: a file with the agent's work-tree diff, taken before the hidden files
+  land. `judge grade` hands it to the [agent-slop](#agent-slop) grader.
 - `CODING_SH_AGENT`: the agent's adapter id.
 
-Both files live outside the work tree, so the agent can't edit what gets graded. A verifier can
+The files live outside the work tree, so the agent can't edit what gets graded. A verifier can
 `grep` them, or hand them to `coding.sh judge grade` (see [Checklists and trace
 checks](#checklists-and-trace-checks)).
 
@@ -68,8 +70,10 @@ tasks, from a stub CLI to the compare report.
 `coding.sh dataset add|import` keeps versioned cases with stable train/dev/test splits.
 
 `coding.sh exp run` runs a command or HTTP task over a dataset. Graders can be deterministic
-(exact, contains, regex, numeric, similarity, JSON schema, JSON path, progress), a command, or an
-LLM judge. `progress` scores the run's trace: the share of the run before its first derail.
+(exact, contains, regex, numeric, similarity, JSON schema, JSON path, progress, agent-slop), a
+command, or an LLM judge. `progress` scores the run's trace: the share of the run before its first
+derail. `agent-slop` flags placeholder code, type escapes, swallowed errors and other patterns in
+the lines a diff adds (see [Agent slop](#agent-slop)).
 
 `coding.sh exp compare A B` reports the paired bootstrap CI of the difference, an exact McNemar
 test on flipped cases and the minimum detectable effect. It also reports:
@@ -536,6 +540,90 @@ verifier, both default to the agent's files (`CODING_SH_AGENT_OUTPUT` and
 `CODING_SH_AGENT_STDOUT`), so `coding.sh judge grade --grader grader/checklist.json` is a complete
 verifier for a behaviour task. Each model call it makes is appended to `$CODING_SH_GRADER_USAGE`.
 `compare` adds those calls up into the run's grader spend.
+
+### Agent slop
+
+The `agent-slop` grader flags patterns that agents tend to leave in code: placeholder code, type
+check escapes, swallowed errors, leftover debugging, focused or skipped tests, barrel files,
+placeholder text and comments that narrate. It reads only the lines a diff adds, so code the agent
+did not write never counts. Rules live in `src/graders/slop.ts`.
+
+```json
+{"kind": "agent-slop", "rules": ["default", "unknown-param"], "exclude": ["debug-print"], "maxErrors": 0, "maxWarnings": 5}
+```
+
+- `rules` replaces the default rule set. `"default"` stands for the default rules and `"all"` for
+  every rule. An unknown id is an error.
+- `exclude` drops rules by id.
+- It passes with at most `maxErrors` error findings (default 0) and at most `maxWarnings` warnings
+  (default: no limit).
+- The score is `1 / (1 + d)`, where `d` is errors plus a quarter of the warnings, per 100 added
+  lines. A diff under 100 lines counts as 100 lines. No findings score 1, one error 0.5, one
+  warning 0.8.
+
+The grader looks for the diff in this order:
+
+1. The diff it is handed: `judge grade --diff <FILE|->`, which defaults to `$CODING_SH_AGENT_DIFF`
+   in a task verifier. That file holds the agent's work-tree diff, taken before the hidden files
+   land.
+2. The output, when it is a unified diff (a `---`/`+++` header and an `@@` hunk).
+3. The diffs on the trace's `file.change` events.
+
+With none of these it fails with "no diff to grade". An empty diff passes with score 1.
+
+| Rule | Severity | Where | Flags |
+| --- | --- | --- | --- |
+| `elided-code` | error | code | A comment that stands in for code: `// ... rest of the code`, `# existing code unchanged` |
+| `todo-implement` | error | code | A stub comment: `TODO: implement`, `implementation goes here` |
+| `not-implemented` | error | code | A stub body: `throw new Error("Not implemented")`, `NotImplementedException`, `todo!()`, `unimplemented!()`, `panic("not implemented")` |
+| `as-any` | error | TypeScript | An `as any` cast |
+| `as-unknown-as` | error | TypeScript | A chained `as unknown as T` cast |
+| `ts-ignore` | error | JS, TS | `@ts-ignore` or `@ts-nocheck` (`@ts-expect-error` is not flagged) |
+| `lint-disable` | warn | code | A lint suppression that names no rule: `eslint-disable`, `tslint:disable`, a bare `noqa` or `nolint` |
+| `type-ignore` | warn | Python | A bare `# type: ignore` or `# pyright: ignore` with no error code |
+| `empty-catch` | error | code | An error swallowed with no handling and no comment: `catch {}`, `.catch(() => {})`, `except: pass` |
+| `debugger` | error | code | `debugger`, `breakpoint()`, `pdb.set_trace()`, `binding.pry` |
+| `debug-print` | warn | code, not tests or `scripts/`, `bin/`, `tools/` | `console.log`/`debug`/`trace`/`dir`/`table`, `dbg!()`, `print("DEBUG …")` |
+| `focused-test` | error | test files | `it.only`, `describe.only`, `fit`, `{ only: true }` |
+| `skipped-test` | warn | test files | A skip with no condition: `.skip`, `.todo`, `xit`, `@pytest.mark.skip`/`xfail`, `@unittest.skip`, `t.Skip`, `#[ignore]`, `@Disabled` |
+| `barrel-export` | warn | JS, TS | `export * from` |
+| `placeholder-text` | warn | code and HTML, not tests or fixtures | lorem ipsum, "coming soon", "sample data", "dummy data", "placeholder text" |
+| `narrating-comment` | warn | code | A comment that restates the code: "increment i", "return the result", "loop through items" |
+| `changelog-comment` | warn | code | A change note: `// New:`, `// Updated:`, `// <- added`, "added by AI" |
+| `conditional-empty-spread` | warn, opt-in | JS, TS | `...(x ? { a } : {})`, `...(x && { a })` |
+| `unknown-param` | warn, opt-in | TypeScript | A function parameter typed `unknown` |
+
+"Code" is JavaScript, TypeScript, Python, Java, Kotlin, Scala, C#, Go, Rust, Swift, C, C++,
+Objective-C, Dart, PHP, Ruby, shell and Elixir files. Markdown is never read, so comment rules
+skip docs. Test files are paths under `test/`, `tests/`, `__tests__/` or `spec/`, and `*.test.*`,
+`*.spec.*`, `*_test.*` and `test_*.py` files. `node_modules/`, `vendor/` and `*.min.*` files are
+skipped. A comment that explains an empty catch (`catch { // optional cache }`) is not flagged, and
+neither is a skip behind a condition (`if (!git) return t.skip("needs git")`, `skipIf`).
+
+`coding.sh judge slop` runs the same rules on captured work, with no grader file:
+
+```sh
+coding.sh judge slop latest            # a session: the diffs on its file.change events and its subagents'
+coding.sh judge slop run_01JC…         # a run of compare: its stored work-tree diff
+coding.sh judge slop exp_01JC…         # a compare experiment: each run, and a rate per arm
+git diff main | coding.sh judge slop --diff -
+coding.sh judge slop --list-rules
+```
+
+It prints the score and one line per finding, with the rule, path and line. `--rules`,
+`--exclude`, `--max-errors` and `--max-warnings` work as in the spec, and `--json` prints the
+findings. It exits 0 on pass, 1 on fail, and 2 when there is nothing to grade (a session whose
+agent does not record diffs, an experiment with no stored runs). For an experiment it fails when
+any run fails, and per arm it prints the runs that pass, the findings, findings per 100 added
+lines and the mean score. A session's diffs are graded edit by edit, so a line one edit adds and
+a later edit removes still counts.
+
+```
+fail  agent-slop  score 0.31  dirty.diff  (2 errors, 1 warning in 3 added lines)
+  error  as-any          src/a.ts:1  const x = y as any;
+  warn   debug-print     src/a.ts:2  console.log("x");
+  error  todo-implement  src/a.ts:3  // TODO: implement
+```
 
 ### Auditing a test verifier
 

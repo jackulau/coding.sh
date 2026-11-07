@@ -1,5 +1,7 @@
 // coding.sh judge grade --grader <spec>: one grader on one output and trace,
 // for verifier scripts (see grade() below).
+// coding.sh judge slop [target]: the agent-slop rules over a session's, run's
+// or experiment's diffs (judge-slop.ts).
 // coding.sh judge calibrate <experiment>: agreement between an LLM judge's
 // verdicts (a grader in the experiment's runs) and human labels, reported on
 // a held-out split only (src/judge/calibrate.ts). --probe-injection re-judges
@@ -99,9 +101,13 @@ async function grade(c: CommandContext): Promise<number> {
   if (!specArg) throw new UsageError("Missing --grader <JSON|FILE>", { reason: "missing_argument" });
   const spec = (await jsonArg(specArg, "--grader")) as GraderSpec;
   if (!spec || typeof spec !== "object" || typeof spec.kind !== "string") throw new UsageError('--grader must be a grader spec, e.g. {"kind":"llm-checklist","name":…,"items":[…]}', { reason: "invalid_grader" });
+  const diffArg = str(c.flags.diff) ?? env.CODING_SH_AGENT_DIFF;
+  const diff = diffArg === undefined ? undefined : diffArg === "-" ? await readStdin() : await readText(diffArg, "--diff", c.cwd);
   const outputArg = str(c.flags.output) ?? env.CODING_SH_AGENT_OUTPUT;
-  if (!outputArg) throw new UsageError("Missing --output <FILE|-> (outside a verifier there is no CODING_SH_AGENT_OUTPUT)", { reason: "missing_argument" });
-  const output = outputArg === "-" ? await readStdin() : await readText(outputArg, "--output", c.cwd);
+  // agent-slop grades the diff, so it needs no output when it has one.
+  if (!outputArg && !(spec.kind === "agent-slop" && diff !== undefined)) throw new UsageError("Missing --output <FILE|-> (outside a verifier there is no CODING_SH_AGENT_OUTPUT)", { reason: "missing_argument" });
+  if (outputArg === "-" && diffArg === "-") throw new UsageError("--output and --diff can't both read stdin", { reason: "invalid_argument" });
+  const output = !outputArg ? "" : outputArg === "-" ? await readStdin() : await readText(outputArg, "--output", c.cwd);
   const traceArg = str(c.flags.trace) ?? env.CODING_SH_AGENT_STDOUT;
   const trace = traceArg ? traceFromText(await readText(traceArg, "--trace", c.cwd)) : [];
   const inputArg = str(c.flags.input);
@@ -120,7 +126,7 @@ async function grade(c: CommandContext): Promise<number> {
   }
   let r: Awaited<ReturnType<Grader["grade"]>>;
   try {
-    r = await g.grade({ input, output, trace, ...(metadata ? { metadata } : {}), signal: c.signal });
+    r = await g.grade({ input, output, trace, ...(diff !== undefined ? { diff } : {}), ...(metadata ? { metadata } : {}), signal: c.signal });
   } finally {
     const file = env.CODING_SH_GRADER_USAGE;
     if (file && calls.length) await appendFile(file, calls.map((x) => JSON.stringify({ grader: g.id, ...x })).join("\n") + "\n").catch(() => {});
@@ -179,6 +185,7 @@ async function readStdin(): Promise<string> {
 export async function run(c: CommandContext): Promise<number> {
   const { out, env } = c;
   if (c.action === "grade") return grade(c);
+  if (c.action === "slop") return (await import("./judge-slop.ts")).slop(c);
   if (c.action !== "calibrate" && c.action !== "sample") throw new UsageError(`Unknown judge command ${c.action}`);
   const sampling = c.action === "sample";
   const budget = positiveInt(c.flags.budget, "budget");

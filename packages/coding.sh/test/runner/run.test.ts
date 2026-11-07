@@ -48,10 +48,13 @@ describe("runTask", () => {
       act: async (spec) => {
         assert.ok(spec.stdoutFile, "the runner asks the adapter to tee stdout");
         await writeFile(spec.stdoutFile, stream.join("\n") + "\n");
+        await writeFile(join(spec.cwd, "notes.txt"), "asked for scope\n");
       },
     });
     const verifier = [
       'test "$CODING_SH_AGENT" = fake',
+      'grep -q "^+asked for scope" "$CODING_SH_AGENT_DIFF"',
+      'case "$CODING_SH_AGENT_DIFF" in "$PWD"/*) exit 4;; esac',
       'test "$(cat "$CODING_SH_AGENT_OUTPUT")" = "Which Vercel team should I audit?"',
       'grep -q "vercel whoami" "$CODING_SH_AGENT_STDOUT"',
       'test "$CODING_SH_SESSION_ID" = "sess-$CODING_SH_RUN_ID"',

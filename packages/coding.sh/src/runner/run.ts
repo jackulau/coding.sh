@@ -77,7 +77,8 @@ export const FINAL_TEXT_MAX = 16 * 1024;
 /**
  * What the verifier gets to read besides the work tree: CODING_SH_AGENT (adapter id),
  * CODING_SH_AGENT_OUTPUT (the final answer, a file), CODING_SH_AGENT_STDOUT (the whole
- * stdout, e.g. Claude's stream-json with every tool call) and CODING_SH_SESSION_ID.
+ * stdout, e.g. Claude's stream-json with every tool call), CODING_SH_AGENT_DIFF (the
+ * agent's work-tree diff, taken before hidden files land) and CODING_SH_SESSION_ID.
  * A task whose answer is what the agent says (asked for scope, declined a request)
  * can only be graded from these.
  */
@@ -87,6 +88,8 @@ export function verifierEnv(adapterId: string, layout: RunLayout, agent: AgentRu
   if (existsSync(stdout)) env.CODING_SH_AGENT_STDOUT = stdout;
   const output = join(layout.agent, "output.txt");
   if (agent.finalText !== undefined && existsSync(output)) env.CODING_SH_AGENT_OUTPUT = output;
+  const diff = join(layout.agent, "diff.patch");
+  if (existsSync(diff)) env.CODING_SH_AGENT_DIFF = diff;
   if (agent.sessionId) env.CODING_SH_SESSION_ID = agent.sessionId;
   return env;
 }
@@ -221,6 +224,7 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
     try {
       diff = await ops.diffWorkdir(layout.work);
       if (diff.patch.trim() !== "") result.diffBlob = await blobs.put(diff.patch, { contentType: "text/x-diff" });
+      await writeFile(join(layout.agent, "diff.patch"), diff.patch);
     } catch (e) {
       result.error ??= `diff failed: ${e instanceof Error ? e.message : String(e)}`;
     }

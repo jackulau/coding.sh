@@ -49,7 +49,7 @@ Every command accepts these.
 | [`eval`](#codingsh-eval) | Evaluate | Turn sessions into replayable eval tasks |
 | [`dataset`](#codingsh-dataset) | Evaluate | Manage versioned datasets of cases |
 | [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset, compare experiments and sweep configs |
-| [`judge`](#codingsh-judge) | Evaluate | Grade one output, or check an LLM judge or a test verifier against human labels |
+| [`judge`](#codingsh-judge) | Evaluate | Grade one output or the slop in captured diffs, or check an LLM judge or a test verifier against human labels |
 | [`toolevals`](#codingsh-toolevals) | Evaluate | Measure how well agents use a CLI, MCP server or API |
 | [`workflows`](#codingsh-workflows) | Evaluate | Capture, measure and A/B-test multi-agent workflow runs |
 | [`bench`](#codingsh-bench) | Evaluate | Dynamic benchmarks: fresh cases every run, same set for every contender |
@@ -1044,7 +1044,7 @@ coding.sh exp status exp_01JC3T6Z2Q8W1S5V0R7N4K9M2D --json
 
 ## `coding.sh judge`
 
-Grade one output, or check an LLM judge or a test verifier against human labels.
+Grade one output or the slop in captured diffs, or check an LLM judge or a test verifier against human labels.
 
 ```text
 coding.sh judge <action>
@@ -1053,6 +1053,7 @@ coding.sh judge <action>
 | Action | What it does |
 |---|---|
 | [`grade`](#codingsh-judge-grade) | Run one grader on one output and trace (exit 0 on pass); inside a verifier both default to the agent's |
+| [`slop`](#codingsh-judge-slop) | Flag agent-slop patterns (placeholder code, type escapes, swallowed errors, debug prints, focused tests) in the lines captured work added |
 | [`calibrate`](#codingsh-judge-calibrate) | Measure judge-human agreement (Cohen's kappa) on a held-out split, or a verifier's precision |
 | [`sample`](#codingsh-judge-sample) | Plan which cases to label next: a seeded random sample stratified by judge verdict and confidence |
 
@@ -1073,10 +1074,41 @@ coding.sh judge grade [options]
 | `--trace <FILE>` |  | Claude stream-json or transcript, or coding.sh events as JSONL (default: $CODING_SH_AGENT_STDOUT) |
 | `--input <TEXT|@FILE>` |  | The task input shown to a judge. |
 | `--metadata <JSON|FILE>` |  | Case metadata, e.g. {"instructions": "…"} for follows-rules. |
+| `--diff <FILE|->` |  | The agent's work as a unified diff, for agent-slop (default: $CODING_SH_AGENT_DIFF in a verifier) |
 
 ```sh
 coding.sh judge grade --grader checklist.json
 coding.sh judge grade --grader judge.json --output answer.txt --trace stream.jsonl --json
+coding.sh judge grade --grader '{"kind":"agent-slop","maxWarnings":5}'
+```
+
+### `coding.sh judge slop`
+
+Flag agent-slop patterns (placeholder code, type escapes, swallowed errors, debug prints, focused tests) in the lines captured work added.
+
+```text
+coding.sh judge slop [target] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `target` | no | Session id, prefix or 'latest' (default), a run id (run_…), or a compare experiment id (exp_…) for a rate per arm. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--diff <FILE|->` |  | Grade this unified diff instead of captured work. |
+| `--rules <ID>` |  | Rules to run instead of the defaults; 'default' and 'all' name those sets (repeatable) |
+| `--exclude <ID>` |  | Rule to leave out (repeatable) |
+| `--max-errors <N>` | `0` | Pass with at most N error findings. |
+| `--max-warnings <N>` |  | Pass with at most N warnings (default: no limit) |
+| `--list-rules` |  | Print the rule catalog and exit. |
+
+```sh
+coding.sh judge slop latest
+coding.sh judge slop exp_01JC3T6Z2Q8W1S5V0R7N4K9M2D --json
+git diff main | coding.sh judge slop --diff -
+coding.sh judge slop latest --rules default --rules unknown-param --exclude debug-print
+coding.sh judge slop --list-rules
 ```
 
 ### `coding.sh judge calibrate`

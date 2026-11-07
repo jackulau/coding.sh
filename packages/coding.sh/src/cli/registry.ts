@@ -694,7 +694,7 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "judge",
     group: "Evaluate",
-    summary: "Grade one output, or check an LLM judge or a test verifier against human labels",
+    summary: "Grade one output or the slop in captured diffs, or check an LLM judge or a test verifier against human labels",
     actions: [
       {
         name: "grade",
@@ -705,8 +705,33 @@ export const COMMANDS: CommandSpec[] = [
           { name: "trace", type: "string", value: "<FILE>", desc: "Claude stream-json or transcript, or coding.sh events as JSONL (default: $CODING_SH_AGENT_STDOUT)" },
           { name: "input", type: "string", value: "<TEXT|@FILE>", desc: "The task input shown to a judge" },
           { name: "metadata", type: "string", value: "<JSON|FILE>", desc: "Case metadata, e.g. {\"instructions\": \"…\"} for follows-rules" },
+          { name: "diff", type: "string", value: "<FILE|->", desc: "The agent's work as a unified diff, for agent-slop (default: $CODING_SH_AGENT_DIFF in a verifier)" },
         ],
-        examples: ["coding.sh judge grade --grader checklist.json", "coding.sh judge grade --grader judge.json --output answer.txt --trace stream.jsonl --json"],
+        examples: [
+          "coding.sh judge grade --grader checklist.json",
+          "coding.sh judge grade --grader judge.json --output answer.txt --trace stream.jsonl --json",
+          `coding.sh judge grade --grader '{"kind":"agent-slop","maxWarnings":5}'`,
+        ],
+      },
+      {
+        name: "slop",
+        summary: "Flag agent-slop patterns (placeholder code, type escapes, swallowed errors, debug prints, focused tests) in the lines captured work added",
+        args: [{ name: "target", desc: "Session id, prefix or 'latest' (default), a run id (run_…), or a compare experiment id (exp_…) for a rate per arm" }],
+        flags: [
+          { name: "diff", type: "string", value: "<FILE|->", desc: "Grade this unified diff instead of captured work" },
+          { name: "rules", type: "list", value: "<ID>", desc: "Rules to run instead of the defaults; 'default' and 'all' name those sets (repeatable)" },
+          { name: "exclude", type: "list", value: "<ID>", desc: "Rule to leave out (repeatable)" },
+          { name: "max-errors", type: "number", value: "<N>", desc: "Pass with at most N error findings", default: "0" },
+          { name: "max-warnings", type: "number", value: "<N>", desc: "Pass with at most N warnings (default: no limit)" },
+          { name: "list-rules", type: "boolean", desc: "Print the rule catalog and exit" },
+        ],
+        examples: [
+          "coding.sh judge slop latest",
+          "coding.sh judge slop exp_01JC3T6Z2Q8W1S5V0R7N4K9M2D --json",
+          "git diff main | coding.sh judge slop --diff -",
+          "coding.sh judge slop latest --rules default --rules unknown-param --exclude debug-print",
+          "coding.sh judge slop --list-rules",
+        ],
       },
       {
         name: "calibrate",

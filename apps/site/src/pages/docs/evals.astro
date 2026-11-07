@@ -212,6 +212,7 @@ const TRIGGER = [
         <tr><td><code>numeric</code></td><td>The first number in the output is within an absolute or relative tolerance.</td></tr>
         <tr><td><code>similarity</code></td><td>Normalized edit-distance similarity is at least the threshold (default 0.8).</td></tr>
         <tr><td><code>progress</code></td><td>The run's trace derailed at most <code>maxDerails</code> times (default 0). The score is the share of the run before its first derail: looping, failure-streak, churn, no-progress, stalled or context-thrash.</td></tr>
+        <tr><td><code>agent-slop</code></td><td>The lines the agent's diff adds have at most <code>maxErrors</code> error findings (default 0): placeholder or elided code, <code>as any</code>, <code>@ts-ignore</code>, empty catches, <code>debugger</code>, focused tests. Warnings (debug prints, skipped tests, barrel files, placeholder text, narrating comments) count against <code>maxWarnings</code> when set. The score falls with findings per 100 added lines. <code>coding.sh judge slop latest</code> runs the same rules on a captured session, run or experiment.</td></tr>
         <tr><td><code>command</code></td><td>Your script, any language: JSON on stdin; a boolean, a score or <code>&#123;score, pass, reason&#125;</code> on stdout, or the exit code.</td></tr>
         <tr><td><code>module</code></td><td>A JS module's exported grade function returns pass.</td></tr>
         <tr><td><code>llm</code></td><td>A model judge returns pass on your rubric. See below.</td></tr>

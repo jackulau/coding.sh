@@ -199,6 +199,7 @@ The command ran and something failed.
 | `surface_failed` | `Couldn't read the gh surface: …` | The CLI or MCP server could not be started or listed. Run it by hand to see why. |
 | `invalid_definition` | `bench/answers.toml: …` | Fix the benchmark file. |
 | `invalid_cases` / `no_cases` | `Can't read cases from …`, `No cases in …`, `No decision points in sessions since 14d` (exp ab, exit 2) | Check the workflow's cases directory. For `exp ab`, look further back (`--since 30d`) or in every repo (`--repo all`); the message lists what each behavior found. |
+| `no_diff` | `Session … has no captured diffs`, `No stored runs in experiment exp_…` (judge slop, exit 2) | The agent's capture records no diffs for its file changes, or the experiment is not a `compare` run (only those keep the agent's diff). Grade a diff directly: `git diff \| coding.sh judge slop --diff -`. |
 | `over_budget` | `Estimated cost $3.10 is over --max-cost $1.00` (exp ab) | Test fewer decision points (`--limit`), or raise `--max-cost`. A run that passes the cap partway stops and can be resumed. |
 | `bad_proposal` | `The proposer's reply is not a usable edit: …` (refine propose, refine run) | Try again, or write the edit yourself and run `refine test` on it. |
 | `not_kept` | `r_… was not kept (reject: …)` (refine apply) | Apply only kept candidates, or pass `--force` to apply it anyway (the ledger records it). |

@@ -8,6 +8,7 @@ import { formatSchemaErrors, validateJsonSchema, type JsonSchema } from "./json-
 import { queryJsonPath } from "./json-path.ts";
 import { detectDerails, DERAIL_FLAG_LIST, progressMetrics } from "../core/derail.ts";
 import type { AgentEvent } from "../schema/index.ts";
+import { looksLikeDiff, selectSlopRules, slopFindings, slopScore, slopSummary, traceDiffs } from "./slop.ts";
 
 export interface NormalizeOpts {
   /** Trim leading/trailing whitespace. Default true. */
@@ -326,5 +327,47 @@ export function progressGrader(spec: Omit<ProgressSpec, "kind"> = {}): Grader {
       ? `${p.derails} derail${p.derails === 1 ? "" : "s"}; first ${first.flag} at ${Math.round(p.timeToFirstDerailMs / 1000)}s (${Math.round(p.onTrack * 100)}% of the run on track): ${first.detail}`
       : "no derails";
     return result(p.onTrack, p.derails <= max, why);
+  });
+}
+
+// ---------------------------------------------------------------- agent slop
+
+export interface AgentSlopSpec {
+  kind: "agent-slop";
+  name?: string;
+  /** Rule ids to run instead of the default set; "default" and "all" stand for those sets. */
+  rules?: string[];
+  /** Rule ids to leave out. */
+  exclude?: string[];
+  /** Pass with at most this many error findings. Default 0. */
+  maxErrors?: number;
+  /** Pass with at most this many warnings. Default: no limit. */
+  maxWarnings?: number;
+}
+
+/** Where agent-slop finds the agent's diff: ctx.diff, else an output that is a unified diff, else the trace's file.change diffs. */
+export async function gradedDiffs(ctx: GradeContext): Promise<{ source: "diff" | "output" | "trace"; patches: string[] } | undefined> {
+  if (typeof ctx.diff === "string") return { source: "diff", patches: [ctx.diff] };
+  if (typeof ctx.output === "string" && looksLikeDiff(ctx.output)) return { source: "output", patches: [ctx.output] };
+  const t = await traceDiffs(ctx.trace ?? []);
+  return t.patches.length ? { source: "trace", patches: t.patches } : undefined;
+}
+
+/**
+ * Anti-slop rules (src/graders/slop.ts) over the lines the agent's diff adds:
+ * pass with at most maxErrors error findings (and maxWarnings warnings, when
+ * set); score from findings per 100 added lines (see slopScore).
+ */
+export function agentSlopGrader(spec: Omit<AgentSlopSpec, "kind"> = {}): Grader {
+  const rules = selectSlopRules(spec.rules, spec.exclude);
+  for (const [k, v] of [["maxErrors", spec.maxErrors], ["maxWarnings", spec.maxWarnings]] as const) {
+    if (v !== undefined && !(Number.isInteger(v) && v >= 0)) throw new RangeError(`agent-slop ${k} must be a whole number >= 0`);
+  }
+  return makeGrader("agent-slop", spec, async (ctx) => {
+    const found = await gradedDiffs(ctx);
+    if (!found) return result(0, false, "no diff to grade: the output is not a unified diff and the trace has no file.change diffs");
+    const r = slopFindings(found.patches, rules);
+    const s = slopScore(r, { ...(spec.maxErrors !== undefined ? { maxErrors: spec.maxErrors } : {}), ...(spec.maxWarnings !== undefined ? { maxWarnings: spec.maxWarnings } : {}) });
+    return result(s.score, s.pass, `${slopSummary(r)} (from the ${found.source})`);
   });
 }

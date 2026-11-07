@@ -8,6 +8,7 @@ import { createJudge, judgeGrader } from "../judge/judge.ts";
 import { createPairwiseJudge, PAIRWISE_KIND, type PairwiseJudge } from "../judge/pairwise.ts";
 import { anthropicProvider, openAICompatibleProvider, type ChatProvider } from "../judge/providers.ts";
 import {
+  agentSlopGrader,
   containsGrader,
   exactGrader,
   jsonPathGrader,
@@ -16,6 +17,7 @@ import {
   progressGrader,
   regexGrader,
   similarityGrader,
+  type AgentSlopSpec,
   type ContainsSpec,
   type ExactSpec,
   type JsonPathSpec,
@@ -100,6 +102,7 @@ export type GraderSpec =
   | NumericSpec
   | ProgressSpec
   | SimilaritySpec
+  | AgentSlopSpec
   | CommandGraderSpec
   | ModuleGraderSpec
   | LlmGraderSpec
@@ -168,6 +171,8 @@ export async function createGrader(spec: GraderSpec, deps: GraderDeps = {}): Pro
       return progressGrader(rest as Omit<ProgressSpec, "kind">);
     case "similarity":
       return similarityGrader(rest as Omit<SimilaritySpec, "kind">);
+    case "agent-slop":
+      return agentSlopGrader(rest as Omit<AgentSlopSpec, "kind">);
     case "command":
       return commandGrader(rest as Omit<CommandGraderSpec, "kind">);
     case "module":
@@ -243,3 +248,4 @@ export * from "./json-path.ts";
 export * from "./json-schema.ts";
 export * from "./mock.ts";
 export * from "./proc.ts";
+export * from "./slop.ts";

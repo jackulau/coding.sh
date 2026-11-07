@@ -60,6 +60,8 @@ export interface GradeContext {
   expected?: unknown;
   metadata?: Record<string, unknown>;
   trace?: readonly TraceEvent[];
+  /** The agent's work as a unified diff, when the caller has it (`judge grade --diff`, $CODING_SH_AGENT_DIFF in a verifier). */
+  diff?: string;
   /** Case id, when grading a dataset case (used for logs/caching only). */
   caseId?: string;
   signal?: AbortSignal;
