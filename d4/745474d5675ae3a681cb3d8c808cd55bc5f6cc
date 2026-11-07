@@ -4,6 +4,10 @@ apps/site/src/pages/docs/install.astro
   s_8e040dbdf13565::t_b622a740731090 36
 docs/guides/install.md
   s_8e040dbdf13565::t_00ba3ce1c59a65 39-53
+CHANGELOG.md
+  s_8e040dbdf13565::t_a1433773251ef9 134
+  s_8e040dbdf13565::t_852b41d0f3ca5c 10-12
+  s_8e040dbdf13565::t_b70f1ebf68b19d 13-17
 ---
 {
   "schema_version": "authorship/3.0.0",
