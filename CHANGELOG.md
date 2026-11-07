@@ -9,8 +9,8 @@ grouped by area, with links to the docs for the details.
 
 ## [0.1.0] - Unreleased
 
-The first public release, still pre-1.0. coding.sh records what your coding agents do on your
-own machine, shows it in a local viewer, and turns those sessions into evals and A/B experiments.
+The first public release, still pre-1.0. coding.sh records what your AI agents do, with coding
+agents first-class, on your own machine, shows it in a local viewer, and turns those sessions into evals and A/B experiments.
 It also runs as a server on SQLite or Postgres, with SDKs for apps that call model APIs.
 
 ### Added
