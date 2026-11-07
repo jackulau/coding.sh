@@ -1,0 +1,19 @@
+CHANGELOG.md
+  s_8c7df5b87ef8de::t_18dc520fccf597 12-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "01ecb5571eec05fc3ced276425730e8b1022b94f",
+  "prompts": {},
+  "sessions": {
+    "s_8c7df5b87ef8de": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a6c9ecfff1f78f95f",
+        "model": "unknown"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
