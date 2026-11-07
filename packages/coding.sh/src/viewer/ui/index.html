@@ -20,7 +20,7 @@
   --select: rgba(255, 255, 255, 0.065);
   --text: #ededef;
   --text-2: #a3a3aa;
-  --text-muted: #7c7c85;
+  --text-muted: #8e8e97;
   --text-faint: #47474e;
   --line: rgba(255, 255, 255, 0.075);
   --line-strong: rgba(255, 255, 255, 0.13);
@@ -62,7 +62,7 @@
   --select: rgba(0, 0, 0, 0.055);
   --text: #0c0c0e;
   --text-2: #4f4f57;
-  --text-muted: #6b6b74;
+  --text-muted: #62626a;
   --text-faint: #b4b4bb;
   --line: rgba(0, 0, 0, 0.08);
   --line-strong: rgba(0, 0, 0, 0.14);
@@ -137,7 +137,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .tone-fail { color: var(--fail); }
 .tone-warn { color: var(--warn); }
 .tone-text { color: var(--text); }
-.tone-muted { color: var(--text-faint); }
+.tone-muted { color: var(--text-muted); }
 
 /* ---------- top bar ---------- */
 .topbar {
@@ -331,7 +331,15 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 }
 @media (max-width: 640px) {
   .wide-only { display: none; }
-  .hist-plot { height: 44px; }
+  /* Search and the Filters button share a line, so the first session shows sooner. */
+  .sessions-layout { grid-template-columns: minmax(0, 1fr) auto; column-gap: 0.5rem; padding-bottom: calc(4rem + env(safe-area-inset-bottom)); }
+  .sessions-layout > *, .list-col > * { grid-column: 1 / -1; }
+  .list-col > * { order: 3; }
+  .list-col > .page-head { display: contents; }
+  .list-col > .page-head > :first-child { order: 0; grid-column: 1 / -1; }
+  .list-col > .page-head > .search { order: 1; grid-column: 1; max-width: none; }
+  .sessions-layout > .facets { order: 2; grid-column: 2; align-self: end; }
+  .facets-toggle { height: 44px; }
   .list-col > .page-head { margin-bottom: 0; gap: 0.6rem 1rem; }
   .hist { padding-top: 0.55rem; }
 }
@@ -345,6 +353,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .hist-plot .out .b { fill: var(--text-faint); opacity: 0.5; }
 .hist-plot .out .bf { opacity: 0.3; }
 .hist-plot .base { stroke: var(--line-strong); stroke-width: 1; }
+@media (max-width: 640px) { .hist-plot { height: 32px; } }
 .hist-sel { position: absolute; top: -4px; bottom: -4px; background: var(--select); box-shadow: inset 1px 0 0 var(--text-muted), inset -1px 0 0 var(--text-muted); border-radius: 2px; pointer-events: none; }
 .hist-axis { display: flex; justify-content: space-between; margin-top: 0.3rem; }
 .hist-tip {
@@ -408,7 +417,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .row-meta { display: none; }
 .row.child { background: color-mix(in srgb, var(--raised) 35%, transparent); }
 .row.child .row-main { padding-left: calc(var(--depth, 1) * 1.1rem); }
-.sub-mark { color: var(--text-faint); font-family: var(--font-mono); }
+.sub-mark { color: var(--text-muted); font-family: var(--font-mono); }
 .sub-toggle {
   display: inline-flex; align-items: center; gap: 0.25rem; height: 20px; padding: 0 0.4rem; flex: none;
   border-radius: 5px; font-family: var(--font-mono); font-size: 11px; white-space: nowrap;
@@ -463,10 +472,11 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .head-row { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.5rem 1.5rem; }
 .detail-head h1 { font-size: 1.0625rem; line-height: 1.35; font-weight: 540; letter-spacing: -0.01em; overflow-wrap: anywhere; flex: 1 1 24rem; min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .facts { display: flex; flex-wrap: wrap; gap: 0.25rem 1.25rem; margin: 0; }
+.facts-more { display: none; }
 .facts div { display: flex; gap: 0.4rem; align-items: baseline; min-width: 0; }
 .facts dt { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
 .facts dd { margin: 0; font-family: var(--font-mono); font-size: 12px; color: var(--text-2); overflow-wrap: anywhere; }
-.facts dd.none { color: var(--text-faint); }
+.facts dd.none { color: var(--text-muted); }
 .facts .lat-short { display: none; }
 @media (max-width: 560px) { .facts .lat-full { display: none; } .facts .lat-short { display: inline; } }
 .head-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1.25rem; }
@@ -510,7 +520,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   contain: layout style;
 }
 .tl.wf-on { --wf: clamp(7rem, 28%, 18rem); }
-.st .t { font-family: var(--font-mono); font-size: 11px; color: var(--text-faint); text-align: right; white-space: nowrap; }
+.st .t { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); text-align: right; white-space: nowrap; }
 .st .lbl { display: flex; align-items: center; gap: 0.5rem; min-width: 0; padding-left: var(--indent, 0.9rem); }
 .st .lbl .dot { width: 6px; height: 6px; }
 .st .name { color: var(--text); font-weight: 500; flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -592,10 +602,10 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .shell::before { content: "$ "; color: var(--text-muted); }
 .lines { display: grid; grid-template-columns: auto minmax(0, 1fr); padding: 0.5rem 0; }
 .lines > span { padding: 0 0.85rem; white-space: pre; min-height: 1.6em; }
-.lines .ln { color: var(--text-faint); text-align: right; user-select: none; padding-right: 0.6rem; box-shadow: inset -1px 0 0 var(--line); }
+.lines .ln { color: var(--text-muted); text-align: right; user-select: none; padding-right: 0.6rem; box-shadow: inset -1px 0 0 var(--line); }
 .diff { display: grid; grid-template-columns: auto auto 1ch minmax(0, 1fr); padding: 0.35rem 0; white-space: pre; }
 .diff > span { min-height: 1.6em; padding: 0 0.4rem; }
-.diff .ln { color: var(--text-faint); text-align: right; user-select: none; font-size: 11px; padding: 0 0.45rem; }
+.diff .ln { color: var(--text-muted); text-align: right; user-select: none; font-size: 11px; padding: 0 0.45rem; }
 .diff .sg { color: var(--text-faint); user-select: none; padding: 0; }
 .diff .tx { padding-right: 0.85rem; }
 .diff .add { background: var(--pass-wash); }
@@ -678,7 +688,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .make-eval .cmd { flex: 1 1 auto; }
   .make-eval > .meta { display: none; }
   /* Phones keep the facts that answer "what ran and what did it cost". */
-  .facts [data-fact="snapshot"], .facts [data-fact="started"] { display: none; }
+  .facts:not(.all) :is([data-fact="snapshot"], [data-fact="started"], [data-fact="repo"], [data-fact="tokens"], [data-fact="latency"]) { display: none; }
+  .facts-more { display: inline-flex; align-self: flex-start; font-size: 12.5px; color: var(--text-2); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
   /* Short facts in two columns; tokens get the full line. */
   .facts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.2rem 1rem; }
   .facts div { overflow: hidden; }
@@ -774,7 +785,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .tile .big { font-family: var(--font-mono); font-size: 1.5rem; letter-spacing: -0.03em; line-height: 1.15; color: var(--text); }
 .tile .big small { font-size: 0.8125rem; color: var(--text-muted); letter-spacing: 0; }
 .nw, .tile .big small { white-space: nowrap; }
-.ci-ends { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint); margin-top: -0.2rem; }
+.ci-ends { display: flex; justify-content: space-between; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted); margin-top: -0.2rem; }
 .ci { position: relative; height: 18px; margin-top: 0.15rem; }
 .ci .track { position: absolute; left: 0; right: 0; top: 8px; height: 2px; border-radius: 1px; background: var(--raised-2); }
 .ci .range { position: absolute; top: 5px; height: 8px; border-radius: 3px; background: color-mix(in srgb, var(--text) 25%, transparent); }
@@ -832,14 +843,14 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .res { display: inline-flex; align-items: center; gap: 0.4rem; min-width: 0; font-size: 12.5px; color: var(--text-2); }
 .res .why { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; color: var(--text-2); }
 .delta { font-family: var(--font-mono); font-size: 12px; text-align: right; }
-.delta.up { color: var(--pass-ink); } .delta.down { color: var(--fail-ink); } .delta.flat { color: var(--text-faint); }
+.delta.up { color: var(--pass-ink); } .delta.down { color: var(--fail-ink); } .delta.flat { color: var(--text-muted); }
 .side-by-side { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.6rem; }
 .side-by-side .code { max-height: 22rem; }
 @media (max-width: 860px) {
   .exp-row, .exp-table.one-ds .exp-row { grid-template-columns: 1.25rem minmax(0, 1fr); gap: 0.3rem 0.7rem; align-items: start; }
   .exp-row > :nth-child(n+3) { grid-column: 2; }
   .exp-row .cell.opt { display: none; }
-  .exp-row .mob { display: block; font-size: 11px; }
+  .exp-row .mob { display: flex; font-size: 11px; }
   .case-row { grid-template-columns: 12px minmax(0, 1fr) auto; }
   .case-row .why { grid-column: 2 / -1; grid-row: 2; white-space: normal; }
   .case-row .why-line { white-space: normal; }
@@ -928,6 +939,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 /* Short lists with rows taller than the 40px guess: render them all so nothing shifts. */
 .bench-row, .pooled-row, .fail-row, .bench-card { content-visibility: visible; }
 .h-sub { font-weight: 400; margin-left: 0.6rem; letter-spacing: 0; }
+@media (max-width: 640px) { .section-head h2 .h-sub, h2 > .h-sub { display: block; margin: 0.2rem 0 0; } }
 .arm-name:has(.sw) { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; }
 .bench-row { min-height: 56px; padding-top: 0.5rem; padding-bottom: 0.5rem; cursor: default; }
 .bench-row .place { font-family: var(--font-mono); font-size: 12px; color: var(--text-muted); }
@@ -955,7 +967,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .pool-key i.k-better { background: color-mix(in srgb, var(--pass) 45%, transparent); }
 .fail-table .thead, .fail-row { grid-template-columns: 12px minmax(7rem, 0.7fr) minmax(7rem, 0.6fr) minmax(0, 2.2fr) 4.5rem 5.5rem; }
 .fail-row .open-sess { justify-self: end; font-size: 12.5px; color: var(--text); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; transition: text-decoration-color var(--hover-out) ease-out; }
-.fail-row .no-sess { justify-self: end; font-size: 12px; color: var(--text-faint); }
+.fail-row .no-sess { justify-self: end; font-size: 12px; color: var(--text-muted); }
 .fail-row .f-dur { display: none; }
 .kv-panel { padding: 0.9rem 1.15rem; }
 .kv { display: grid; grid-template-columns: 9rem minmax(0, 1fr); gap: 0.6rem 1rem; margin: 0; font-size: 13px; }
@@ -981,13 +993,17 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .bench-row, .bench-board.no-anchor .bench-row { grid-template-columns: 1.25rem minmax(0, 1fr); gap: 0.35rem 0.6rem; align-items: start; }
   .bench-row .opt { display: none !important; }
   .bench-row .rate, .bench-row .mob { grid-column: 2; }
-  .bench-row .mob { display: block; font-size: 11px; }
+  .bench-row .mob-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.3rem 0.75rem; margin: 0.15rem 0 0; font-size: 11.5px; }
+  .mob-grid > div { display: grid; gap: 0.05rem; min-width: 0; }
+  .mob-grid dt { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted); }
+  .mob-grid dd { margin: 0; font-family: var(--font-mono); color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .bench-row .place { padding-top: 1px; }
   .pooled-row { grid-template-columns: minmax(0, 1fr) auto; gap: 0.35rem 0.75rem; }
   .pooled-row .pool-ci { grid-column: 1 / -1; grid-row: 2; }
   .pooled-row .opt { display: none; }
-  .pooled-row .mob { display: block; grid-column: 1 / -1; grid-row: 3; font-size: 11px; }
-  .pool-axis { display: none; }
+  .pooled-row .mob { display: flex; grid-column: 1 / -1; grid-row: 3; font-size: 11px; }
+  .pool-axis { grid-template-columns: minmax(0, 1fr); padding-top: 0.5rem; }
+  .pool-axis span:nth-child(n) { grid-column: 1; }
   .fail-row { grid-template-columns: 12px minmax(0, 1fr) auto; }
   .fail-row .who-name { grid-column: 2; grid-row: 2; font-size: 12px; }
   .fail-row .f-dur { display: inline; flex: none; }
@@ -1066,13 +1082,13 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .wrap { padding-bottom: calc(4rem + env(safe-area-inset-bottom)); }
 .toast { bottom: calc(1.25rem + env(safe-area-inset-bottom)); }
 .compare-bar { bottom: calc(1rem + env(safe-area-inset-bottom)); }
-.sheet-head { display: none; }
+.sheet-head, .sheet-foot { display: none; }
 @media (max-width: 640px) {
   :root { --row: 44px; }
   /* Every control gets a 44px hit area. The box keeps its size; an invisible
      ::before grows the area around it, so layout and desktop stay as they are. */
-  :where(.nav a, .brand, .cmdk, .icon-btn, .btn, .chip, .back, .copy-id, .sub-toggle, .check, .vs a.pct, .seg button, .facets-toggle, .open-sess, .row-sub button, .hist-head button, .list-col .meta button, .bench-title h2 a) { position: relative; }
-  :where(.nav a, .brand, .cmdk, .icon-btn, .btn, .chip, .back, .copy-id, .sub-toggle, .check, .vs a.pct, .seg button, .facets-toggle, .open-sess, .list-col .meta button, .bench-title h2 a)::before {
+  :where(.nav a, .brand, .cmdk, .icon-btn, .facts-more, .btn, .chip, .back, .copy-id, .sub-toggle, .check, .vs a.pct, .seg button, .facets-toggle, .open-sess, .row-sub button, .hist-head button, .list-col .meta button, .bench-title h2 a) { position: relative; }
+  :where(.nav a, .brand, .cmdk, .icon-btn, .facts-more, .btn, .chip, .back, .copy-id, .sub-toggle, .check, .vs a.pct, .seg button, .facets-toggle, .open-sess, .list-col .meta button, .bench-title h2 a)::before {
     content: ""; position: absolute;
     top: min(0px, calc((100% - 44px) / 2)); bottom: min(0px, calc((100% - 44px) / 2));
     left: min(0px, calc((100% - 44px) / 2)); right: min(0px, calc((100% - 44px) / 2));
@@ -1080,7 +1096,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .cmdk, .icon-btn, .brand { flex: none; }
   @media (max-width: 400px) { .topbar { gap: 0.25rem; } .nav a { padding: 0 0.35rem; } }
   @media (hover: none) { .key-hint { display: none; } }
-  .facets-toggle { height: 40px; }
+  .facets-toggle { height: 44px; }
   /* 16px text stops iOS zooming the page when a field takes focus. */
   .search input, .field, .palette input { height: 44px; font-size: 16px; }
   .find .field, .view .field { height: 44px; font-size: 16px; }
@@ -1103,6 +1119,12 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .facets.opening[data-open="true"]::after { animation: fade-in 200ms ease-out; }
   .sheet-head { display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 1; height: 52px; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); background: var(--surface); box-shadow: inset 0 -1px 0 var(--line); }
   .sheet-head h2 { font-size: 15px; }
+  /* A grab handle says "sheet"; the footer keeps the main action under the thumb. */
+  .sheet-head::before { content: ""; position: absolute; top: 6px; left: calc(50% - 18px); width: 36px; height: 4px; border-radius: 2px; background: var(--line-strong); }
+  .facets[data-open="true"] .facet-groups { padding-bottom: 0; }
+  .sheet-foot { display: flex; justify-content: flex-end; gap: 0.5rem; position: sticky; bottom: 0; z-index: 1; margin: 0 calc(-1 * var(--gutter)); padding: 0.6rem var(--gutter) calc(0.6rem + env(safe-area-inset-bottom)); background: var(--surface); box-shadow: inset 0 1px 0 var(--line); }
+  .sheet-foot .btn { height: 44px; padding: 0 1rem; font-size: 14px; }
+  .sheet-foot .btn-primary { flex: 1; }
   .facets[data-open="true"] .facet .chip { height: 36px; padding: 0 0.75rem; font-size: 14px; }
   .facets[data-open="true"] .facet-list { gap: 0.5rem; }
   html:has(.facets[data-open="true"]) { overflow: hidden; }
@@ -1263,6 +1285,12 @@ function fmtBytes(n) {
   return (n / 1024 / 1024).toFixed(1) + " MB";
 }
 function pct(x) { return Math.round((x || 0) * 100) + "%"; }
+/** Search snippets wrap their matches in «»; those become <mark>s. Other text falls back to highlight(). */
+function snippetMarks(text, q) {
+  text = String(text ?? "").replace(/^…\s+/, "…").replace(/\s+…$/, "…");
+  if (!/«[^»]*»/.test(text)) return highlight(text, q);
+  return text.split(/«([^»]*)»/).map((part, i) => (i % 2 ? h("mark", null, part) : part)).filter((x) => x !== "");
+}
 /** Splits text around case-insensitive matches of q into strings and <mark>s. */
 function highlight(text, q) {
   text = String(text ?? "");
@@ -1857,8 +1885,8 @@ function renderSessions(view, keepFocus) {
   const head = h("div", { class: "page-head" },
     h("div", null,
       h("h1", { id: "sessions-h" }, "Sessions"),
-      h("p", { class: "meta" }, stats ? summaryLine(stats) : list.loaded ? "" : "Loading…",
-        hasFilters() ? [" · ", h("button", { type: "button", onclick: () => clearFilters(view) }, "Clear filters")] : null)),
+      h("p", { class: "meta fact-line" }, ...(stats ? summaryLine(stats) : [list.loaded ? "" : "Loading…"]).filter(Boolean).map((t) => h("span", null, t)),
+        hasFilters() ? h("span", null, h("button", { type: "button", onclick: () => clearFilters(view) }, "Clear filters")) : null)),
     nothingCaptured ? null : searchBox(view));
 
   const body = [head];
@@ -1889,7 +1917,7 @@ function summaryLine(s) {
   if (s.toolCalls) parts.push(fmtNum(s.toolCalls) + " tool calls");
   if (s.llmCalls) parts.push(fmtCompact(s.llmCalls) + " model calls");
   if (s.costUsd) parts.push(fmtCost(s.costUsd) + (s.pricedSessions && s.pricedSessions < s.sessions ? " priced" : ""));
-  return parts.join(" · ");
+  return parts;
 }
 function skeletonTable() {
   const widths = [[46, 12], [38, 14], [52, 10], [30, 13], [44, 11], [36, 12]];
@@ -2014,7 +2042,10 @@ function facetPanel(view) {
     group("Model", "model", s.byModel),
     group("Repository", "repo", s.byRepo, basename),
     group("Flag", "flag", s.byFlag),
-    scope));
+    scope,
+    h("div", { class: "sheet-foot" },
+      hasFilters() ? h("button", { class: "btn btn-ghost", type: "button", onclick: () => clearFilters(view) }, "Clear") : null,
+      h("button", { class: "btn btn-primary", type: "button", onclick: () => setOpen(false) }, list.stats ? "Show " + plural(list.stats.sessions, "session") : "Done"))));
   return aside;
 }
 
@@ -2255,7 +2286,7 @@ function hitsList(view) {
       h("span", { class: "dot tone-muted", "aria-hidden": "true" }),
       h("div", { class: "row-main", style: null },
         h("div", { style: null },
-          h("div", { class: "hit-snippet" }, highlight(text, list.q)),
+          h("div", { class: "hit-snippet" }, snippetMarks(text, list.q)),
           h("div", { class: "hit-meta meta" },
             h("span", null, KIND_LABEL[ev.kind] || ev.kind),
             h("span", null, ev.agent),
@@ -3082,6 +3113,16 @@ function sessionHeader(s, labels, rel) {
     onclick: (e) => postLabel(s.id, value, e.currentTarget.closest(".label-group")),
   }, text);
 
+  // Phones show agent, model, duration and cost; "More" opens the rest and stays open next time.
+  const factsAll = prefs.get("facts", false);
+  const moreBtn = h("button", { class: "facts-more", type: "button", "aria-expanded": String(factsAll), "aria-controls": "facts", onclick: () => {
+    const on = !factsList.classList.contains("all");
+    factsList.classList.toggle("all", on);
+    moreBtn.setAttribute("aria-expanded", String(on));
+    moreBtn.textContent = on ? "Fewer details" : "More details";
+    prefs.set("facts", on);
+  } }, factsAll ? "Fewer details" : "More details");
+  let factsList;
   return h("header", { class: "detail-head" },
     h("div", { class: "crumbs" },
       h("a", { class: "back", href: listHref() }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), "Sessions"),
@@ -3092,7 +3133,7 @@ function sessionHeader(s, labels, rel) {
       h("span", { class: "sid truncate", title: s.id }, (s.parent ? "subagent " : "") + s.id),
       h("button", { class: "copy-id", type: "button", "aria-label": "Copy session id", onclick: () => copy(s.id, "session id") }, "copy")),
     h("div", { class: "head-row" }, h("h1", { title: sessionTitle(s) }, sessionTitle(s))),
-    h("dl", { class: "facts" },
+    factsList = h("dl", { class: "facts" + (factsAll ? " all" : ""), id: "facts" },
       fact("agent", s.agent + (s.agentVersion ? " " + s.agentVersion : "")),
       fact("model", s.model),
       fact("repo", repo.root ? basename(repo.root) + (repo.head ? "@" + short(repo.head) : "") + (repo.branch ? " (" + repo.branch + ")" : "") : "", repo.root),
@@ -3104,6 +3145,7 @@ function sessionHeader(s, labels, rel) {
       // Phones get the model-call summary alone, so the line stays whole instead of cut mid-word.
       latencyText(st.latency) ? fact("latency", [h("span", { class: "lat-full" }, latencyText(st.latency)), h("span", { class: "lat-short" }, latencyShort(st.latency))], latencyText(st.latency)) : null,
       fact("snapshot", repo.snapshot ? short(repo.snapshot, 12) + (repo.partial ? " · partial" : "") : "", repo.snapshot)),
+    moreBtn,
     h("div", { class: "head-foot" },
       h("div", { class: "badges" },
         testsBadge(s),
@@ -3786,10 +3828,12 @@ async function showExperiments(seq) {
   const caseRuns = exps.items.reduce((n, e) => n + (e.runCount || 0), 0);
   // Counted the way the page lists them: dataset experiments as rows, harness runs as groups.
   const total = groups.size + exps.items.length;
-  $(".page-head .meta", view).textContent = [
+  const pm = $(".page-head .meta", view);
+  pm.classList.add("fact-line");
+  pm.replaceChildren(...[
     exps.items.length ? plural(exps.items.length, "experiment") : "",
     groups.size ? plural(groups.size, "harness group") : "",
-    plural(runs.items.length + caseRuns, "run"), plural(tasks.items.length, "task")].filter(Boolean).join(" · ");
+    plural(runs.items.length + caseRuns, "run"), plural(tasks.items.length, "task")].filter(Boolean).map((t) => h("span", null, t)));
 
   const body = h("div");
   if (runs.items.length === 0 && exps.items.length === 0) {
@@ -3859,7 +3903,7 @@ async function showExperiments(seq) {
       h("span", { class: "cell num muted opt", title: s.latencyMs ? "p90 " + fmtDuration(s.latencyMs.p90) : undefined }, s.latencyMs ? fmtDuration(s.latencyMs.median) : ""),
       h("span", { class: "cell num muted opt", title: new Date(e.createdAt || 0).toLocaleString() }, fmtRel(e.finishedAt || e.createdAt || 0)),
       // Phones drop the number columns; this line carries them.
-      h("span", { class: "meta mob" }, [plural(s.cases || 0, "case") + ((e.trials || 1) > 1 ? " × " + plural(e.trials, "trial") : ""), s.latencyMs ? fmtDuration(s.latencyMs.median) + " median" : "", fmtRel(e.finishedAt || e.createdAt || 0)].filter(Boolean).map(nb).join(" · ")));
+      h("span", { class: "meta mob fact-line" }, ...[plural(s.cases || 0, "case") + ((e.trials || 1) > 1 ? " × " + plural(e.trials, "trial") : ""), s.latencyMs ? fmtDuration(s.latencyMs.median) + " median" : "", fmtRel(e.finishedAt || e.createdAt || 0)].filter(Boolean).map((t) => h("span", null, t))));
     rowEls.push(row);
     lb.append(row);
   }
@@ -3870,7 +3914,7 @@ async function showExperiments(seq) {
       else if (ev.key === " ") { ev.preventDefault(); ev.stopPropagation(); toggleSel(active); }
     });
     body.append(
-      h("div", { class: "section-head" }, h("h2", null, "Dataset experiments", oneDs ? h("span", { class: "meta h-sub nw" }, "  " + datasetText(items[0])) : null), h("span", { class: "meta" }, "Select two to compare")),
+      h("div", { class: "section-head" }, h("h2", null, "Dataset experiments", oneDs ? h("span", { class: "meta h-sub nw" }, datasetText(items[0])) : null), h("span", { class: "meta" }, "Select two to compare")),
       h("div", { class: "panel table exp-table" + (oneDs ? " one-ds" : "") },
         h("div", { class: "thead", "aria-hidden": "true" }, h("span"), h("span", null, "experiment"), oneDs ? null : h("span", null, "dataset"), h("span", null, "pass rate"), h("span", { class: "num opt" }, items.some((e) => (e.trials || 1) > 1) ? "cases × trials" : "cases"), h("span", { class: "num opt" }, "median"), h("span", { class: "num opt" }, "finished")),
         lb),
@@ -4038,7 +4082,7 @@ async function showExperiment(seq, id) {
       h("div", { class: "tile" }, h("span", { class: "meta" }, "errors"), h("span", { class: "big" + (s.errors ? " tone-fail" : "") }, fmtNum(s.errors || 0)),
         h("span", { class: "meta" }, s.ungraded ? fmtNum(s.ungraded) + " ungraded (left out of the rate)" : "errors count as failures")),
       lat ? h("div", { class: "tile" }, h("span", { class: "meta" }, "latency"), h("span", { class: "big" }, fmtDuration(lat.median), h("small", null, "  median")),
-        h("span", { class: "meta" }, h("span", { class: "nw" }, "p90 " + fmtDuration(lat.p90)), " · ", h("span", { class: "nw" }, "max " + fmtDuration(lat.max)))) : null),
+        h("span", { class: "meta fact-line" }, h("span", null, "p90 " + fmtDuration(lat.p90)), h("span", null, "max " + fmtDuration(lat.max)))) : null),
     (s.graders || []).length ? h("div", null,
       h("div", { class: "section-head" }, h("h2", null, "Graders"), h("span", { class: "meta" }, plural(s.graders.length, "grader") + " · bars show pass rate, 95% CI")),
       h("div", { class: "panel exp" }, h("ul", { class: "arms" }, s.graders.map((g) => {
@@ -4223,7 +4267,7 @@ async function showCompare(seq, aId, bId) {
           h("span", { class: "arm-name truncate" }, g.id),
           ciBar(g.diff.mean, g.diff.lo, g.diff.hi, [-gspan, gspan], t),
           h("span", { class: "arm-num" }, (Math.round(g.meanA * 100) / 100) + " → " + (Math.round(g.meanB * 100) / 100)),
-          h("span", { class: "meta arm-sub", title: "Pairs where both runs got a score; errored or ungraded runs drop out" }, [plural(g.n, "scored pair"), " · ", signedPts(g.diff.mean), " · ", h("span", { class: "nw" }, "95% CI " + signedPts(g.diff.lo).replace(" pts", "") + " to " + signedPts(g.diff.hi))]));
+          h("span", { class: "meta arm-sub fact-line", title: "Pairs where both runs got a score; errored or ungraded runs drop out" }, h("span", null, plural(g.n, "scored pair")), h("span", null, signedPts(g.diff.mean)), h("span", null, "95% CI " + signedPts(g.diff.lo).replace(" pts", "") + " to " + signedPts(g.diff.hi))));
       }), h("div", { class: "arm arm-axis", "aria-hidden": "true" }, h("span"), h("div", { class: "ci-axis meta" }, h("span", null, signedPts(-gspan)), h("span", null, "0"), h("span", null, signedPts(gspan))), h("span")))));
   }
 
@@ -4553,7 +4597,7 @@ function benchCard(it, i) {
   return h("div", { class: "panel bench-card row", role: "option", id: "bench-" + i, "aria-selected": String(i === 0), "data-benchmark": it.name, onclick: () => { location.hash = benchHref(it.name); } },
     h("div", { class: "bench-card-head" },
       h("div", { class: "bench-title" }, h("h2", null, h("a", { href: benchHref(it.name), tabindex: "-1" }, it.name), h("span", { class: "chev", "aria-hidden": "true" }, "›")), it.description ? h("p", { class: "dim" }, it.description) : null),
-      h("span", { class: "meta" }, "latest " + shortDate(it.latest.date) + " · " + plural(it.latest.cases, "case") + " · " + plural(it.counted, "day"))),
+      h("span", { class: "meta fact-line" }, ...["latest " + shortDate(it.latest.date), plural(it.latest.cases, "case"), plural(it.counted, "day")].map((t) => h("span", null, t)))),
     h("div", { class: "bench-card-body" },
       h("div", { class: "arms-wrap" }, h("ul", { class: "arms" }, lines), h("p", { class: "meta arms-cap" }, "Pass rate on " + shortDate(it.latest.date) + ", line under each bar: 95% CI" + (len > 1 ? ". Trend: last " + len + " days, 0–100%." : "."))),
       spark ? h("figure", { class: "spark-fig" }, spark) : null));
@@ -4618,17 +4662,26 @@ async function showBenchmark(seq, name) {
       next ? h("span", { title: "The next run's secret seed is committed before it runs: sha256(salt) = " + next.commitment }, "next seed " + shortDate(next.date) + " " + short(next.commitment, 12)) : null)));
 
   // ---- leaderboard
-  const sums = L.summaries.slice().sort((a, b) => a.place - b.place || b.passRate.p - a.passRate.p);
-  const tied = (p) => sums.filter((x) => x.place === p).length > 1;
+  // Places follow the pooled gaps when there are any: ahead of the reference, within noise, behind it.
+  // Everyone inside one band shares a place, so a contender far behind on every day is never "1=".
+  const poolOf = (n) => n === ref ? null : ((r.pooled || {})[n] || {}).random;
+  const usePooled = Object.values(r.pooled || {}).some((p) => p && p.random);
+  const band = (n) => { const pr = poolOf(n); return pr && pr.lo > 0 ? 0 : pr && pr.hi < 0 ? 2 : 1; };
+  const sums = L.summaries.slice().sort(usePooled
+    ? (a, b) => band(a.contender) - band(b.contender) || ((poolOf(b.contender) || {}).mean || 0) - ((poolOf(a.contender) || {}).mean || 0) || a.place - b.place
+    : (a, b) => a.place - b.place || b.passRate.p - a.passRate.p);
+  const placeOf = new Map(sums.map((s) => [s.contender, usePooled ? 1 + sums.filter((x) => band(x.contender) < band(s.contender)).length : s.place]));
+  const tied = (p) => [...placeOf.values()].filter((x) => x === p).length > 1;
   const hasAnchor = anchorSum.size > 0;
   const board = h("div", { class: "panel table bench-board" + (hasAnchor ? "" : " no-anchor") },
-    h("div", { class: "thead", "aria-hidden": "true" }, h("span", { class: "num", title: "Place in today's run" }, "today"), h("span", null, "contender"), h("span", null, "pass rate"),
+    h("div", { class: "thead", "aria-hidden": "true" }, h("span", { class: "num", title: usePooled ? "Place over every pooled day" : "Place in today's run" }, "place"), h("span", null, "contender"), h("span", null, "pass rate"),
       h("span", { class: "num opt", title: ref ? "Today's gap to " + ref + ", paired by case" : undefined }, "vs " + (ref || "ref")),
       h("span", { class: "num opt", title: "Gap pooled over the last " + r.window + " days" }, "pooled"),
       hasAnchor ? h("span", { class: "num opt", title: "The fixed anchor set, scored apart from the fresh cases" }, "anchor") : null,
       h("span", { class: "num opt" }, "p50"), h("span", { class: "num opt" }, "cost / run"), h("span", { class: "num opt" }, "tokens in / out")));
   for (const s of sums) {
     const c = meta.get(s.contender) || {};
+    const place = placeOf.get(s.contender);
     const gap = s.contender === ref ? null : lastPoint((r.vsReference || {})[s.contender]);
     const pool = (r.pooled || {})[s.contender];
     const pr = pool && pool.random;
@@ -4638,9 +4691,15 @@ async function showBenchmark(seq, name) {
     const tok = s.tokensIn && (s.tokensIn.known || (s.tokensOut && s.tokensOut.known)) ? (s.tokensIn.known ? fmtCompact(Math.round(s.tokensIn.mean)) : "—") + " / " + (s.tokensOut && s.tokensOut.known ? fmtCompact(Math.round(s.tokensOut.mean)) : "—") : s.tokens && s.tokens.known ? fmtCompact(Math.round(s.tokens.mean)) : "—";
     const src = costSources(s.costUsd);
     const gapText = s.contender === ref ? "reference" : gap ? gapPts(gap.value) : "—";
-    const mob = [gapText !== "—" ? (s.contender === ref ? "reference" : gapText + " vs " + ref) : "", pr && s.contender !== ref ? "pooled " + gapPts(pr.mean) + ", " + plural(pool.k, "day") : "", an && an.n ? "anchor " + pct(an.passRate.p) : "", lat !== "—" ? "p50 " + lat : "", cost !== "—" ? cost + "/run" + (src ? ", " + src : "") : ""].filter(Boolean).map(nb).join(" · ");
+    // Phones drop the number columns; a labelled grid carries them.
+    const mob = [
+      gapText !== "—" ? ["vs " + (s.contender === ref ? "ref" : ref), h("span", { class: s.contender === ref ? "" : "delta " + gapTone(gap) }, s.contender === ref ? "reference" : gapText)] : null,
+      pr && s.contender !== ref ? ["pooled", h("span", { class: "delta " + gapTone(pr) }, gapPts(pr.mean)), " · " + plural(pool.k, "day")] : null,
+      an && an.n ? ["anchor", pct(an.passRate.p)] : null,
+      lat !== "—" ? ["p50", lat] : null,
+      cost !== "—" ? ["cost / run", cost + (src ? " · " + src : "")] : null].filter(Boolean);
     board.append(h("div", { class: "row bench-row", "data-contender": s.contender },
-      h("span", { class: "num place", title: tied(s.place) ? "Tied: the gaps between these contenders are within noise" : undefined }, s.place ? s.place + (tied(s.place) ? "=" : "") : ""),
+      h("span", { class: "num place", title: tied(place) ? "Tied: the gaps between these contenders are within noise" : undefined }, place ? place + (tied(place) ? "=" : "") : ""),
       h("div", { class: "who" }, h("span", { class: "who-name" }, swatch(cOf(s.contender)), h("b", { class: "truncate" }, s.contender)), h("span", { class: "meta truncate" }, [c.model, c.version].filter(Boolean).join(" · ") || c.kind || "")),
       h("div", { class: "rate" }, rateBar(s.passRate.p, s.passRate.lo, s.passRate.hi, s.contender + ": " + s.passed + " of " + s.n + " passed", cOf(s.contender)),
         h("span", { class: "rate-num" }, fmtNum(s.passed) + "/" + fmtNum(s.n) + " · " + pct(s.passRate.p)),
@@ -4651,7 +4710,7 @@ async function showBenchmark(seq, name) {
       h("span", { class: "cell num opt" }, lat),
       h("span", { class: "cell num opt stack-num", title: src ? "Cost source: " + src : undefined }, h("span", null, cost), src ? h("span", { class: "meta" }, src) : null),
       h("span", { class: "cell num opt" }, tok),
-      mob ? h("span", { class: "meta mob" }, mob) : null));
+      mob.length ? h("dl", { class: "mob mob-grid" }, mob.map(([k, ...v]) => h("div", null, h("dt", null, k), h("dd", null, ...v)))) : null));
   }
 
   // ---- anchor content changes, shown next to every anchor number
@@ -4702,12 +4761,12 @@ async function showBenchmark(seq, name) {
     h("div", { class: "thead", "aria-hidden": "true" }, h("span", null, "contender"), h("span", null, "gap to " + ref + " · 95% CI"), h("span", { class: "num" }, "gap"), h("span", { class: "num opt" }, "next-day 95% range"), h("span", { class: "num opt" }, "days"), h("span", { class: "num opt", title: "I²: the share of the spread between days that is real, not noise" }, "spread (I²)")),
     pooledRows.map(([n, p]) => h("div", { class: "row pooled-row" },
       h("span", { class: "who-name" }, swatch(cOf(n)), h("b", { class: "truncate" }, n)),
-      h("div", { class: "pool-ci" }, ciBar(p.random.mean, p.random.lo, p.random.hi, [-span, span], p.random.lo > 0 ? "better" : p.random.hi < 0 ? "worse" : ""), h("span", { class: "meta" }, gapRange(p.random))),
+      h("div", { class: "pool-ci" }, ciBar(p.random.mean, p.random.lo, p.random.hi, [-span, span], p.random.lo > 0 ? "better" : p.random.hi < 0 ? "worse" : ""), h("span", { class: "meta" }, "95% CI " + gapRange(p.random))),
       h("span", { class: "delta num " + gapTone(p.random) }, gapPts(p.random.mean)),
       h("span", { class: "cell num opt", title: "Where one more day's gap should land, 95% of the time" }, p.predict ? gapRange(p.predict) : "—"),
       h("span", { class: "cell num opt", title: fmtNum(p.cases) + " paired cases" }, String(p.k)),
       h("span", { class: "cell num opt" }, typeof p.i2 === "number" ? Math.round(p.i2 * 100) + "%" : "—"),
-      h("span", { class: "meta mob" }, [p.predict ? "likely next day " + gapRange(p.predict) : "", plural(p.k, "day"), typeof p.i2 === "number" ? "I² " + Math.round(p.i2 * 100) + "%" : ""].filter(Boolean).join(" · ")))),
+      h("span", { class: "meta mob fact-line" }, ...[p.predict ? "next day, 95% range " + gapRange(p.predict) : "", plural(p.k, "day"), typeof p.i2 === "number" ? "I² " + Math.round(p.i2 * 100) + "%" : ""].filter(Boolean).map((t) => h("span", null, t))))),
     h("div", { class: "pool-axis meta", "aria-hidden": "true" }, h("span", null, ptsTick(-span) + " pts"), h("span", null, "0"), h("span", null, ptsTick(span) + " pts")),
     h("div", { class: "pool-key meta" },
       h("span", null, h("i", { class: "k-worse", "aria-hidden": "true" }), "behind " + ref),
@@ -4738,7 +4797,7 @@ async function showBenchmark(seq, name) {
         h("span", { class: "arm-name" }, swatch(cOf(n)), h("span", { class: "truncate" }, n)),
         rateBar(s.passRate.p, s.passRate.lo, s.passRate.hi, n + " on the anchor set: " + s.passed + " of " + s.n + " passed", cOf(n)),
         h("span", { class: "arm-num" }, fmtNum(s.passed) + "/" + fmtNum(s.n) + " · " + pct(s.passRate.p)),
-        h("span", { class: "meta arm-sub" }, n === ref ? "reference" : g ? nb("paired gap " + gapPts(g.value) + " vs " + ref) + " · " + nb("95% CI " + gapRange(g)) : ""));
+        h("span", { class: "meta arm-sub fact-line" }, n === ref ? "reference" : g ? [h("span", null, "paired gap " + gapPts(g.value) + " vs " + ref), h("span", null, "95% CI " + gapRange(g))] : ""));
     })), ...(anchorChanges.length ? [anchorNote()] : []))) : null;
 
   // ---- failed cases
@@ -4828,7 +4887,7 @@ async function showBenchmark(seq, name) {
     changes.length > 10 ? h("div", { class: "meta" }, "and " + (changes.length - 10) + " more") : null);
 
   view.append(
-    h("div", { class: "section-head" }, h("h2", null, "Leaderboard", h("span", { class: "meta h-sub" }, shortDate(L.date))), h("span", { class: "meta" }, sums.length > 1 && sums.every((x) => x.place === sums[0].place) ? "No clear leader today: every gap is within noise. The pooled column covers every day." : "Places from today's run; 1= means tied within noise. The pooled column covers every day.")),
+    h("div", { class: "section-head" }, h("h2", null, "Leaderboard", h("span", { class: "meta h-sub" }, shortDate(L.date))), h("span", { class: "meta" }, (usePooled ? "Places use every pooled day; = means tied within noise." : "Places from today's run; = means tied within noise.") + (usePooled && sums.length > 1 && sums.every((x) => x.place === sums[0].place) ? " Today's run alone can't separate them." : ""))),
     board,
     h("div", { class: "section-head" }, h("h2", null, "Pass rate by day"), r.anchor ? seg : null),
     h("div", { class: "panel chart-card" }, chartSlot),

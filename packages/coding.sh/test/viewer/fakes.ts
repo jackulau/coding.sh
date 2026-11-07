@@ -66,7 +66,11 @@ export class FakeIndex implements IndexStore {
     const hits: SearchHit[] = [];
     for (const e of this.events.values()) {
       const s = typeof e.payload.text === "string" ? e.payload.text : "";
-      if (s.toLowerCase().includes(t) && (!opts.agent || e.agent === opts.agent)) hits.push({ event: e, snippet: s.slice(0, 120) });
+      if (s.toLowerCase().includes(t) && (!opts.agent || e.agent === opts.agent)) {
+        // Like the real store, the snippet wraps the match in «».
+        const at = s.toLowerCase().indexOf(t);
+        hits.push({ event: e, snippet: (s.slice(0, at) + "«" + s.slice(at, at + t.length) + "»" + s.slice(at + t.length)).slice(0, 122) });
+      }
     }
     return hits.slice(0, opts.limit ?? 50);
   }

@@ -152,7 +152,7 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
     await open("#/");
     try {
       await page.eval(`location.hash = "#/experiments"`);
-      const meta = await page.waitFor("(() => { const m = document.querySelector('#exp-h + .meta'); return m && !/Loading/.test(m.textContent) && m.textContent; })()", "experiments meta");
+      const meta = await page.waitFor("(() => { const m = document.querySelector('#exp-h + .meta'); return m && !/Loading/.test(m.textContent) && [...m.children].map((e) => e.textContent).join(' · '); })()", "experiments meta");
       assert.match(meta, /^1 experiment · 2 runs · 0 tasks$/);
       const card = await page.eval("document.querySelector('[data-experiment=\"exp-prod-smoke\"]')?.textContent");
       assert.match(card ?? "", /prod-smoke/);
@@ -317,15 +317,27 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
         return [dd.getAttribute('title'), t && !t.hidden ? t.textContent : null];
       })()`);
       assert.equal(tip[1], tip[0], "the tip repeats the title");
+      // The phone header keeps the key facts; More details shows the rest.
+      const facts = () => page.eval("[...document.querySelectorAll('.facts [data-fact]')].filter((e) => e.getClientRects().length).map((e) => e.dataset.fact)");
+      const short: string[] = await facts();
+      assert.ok(!short.includes("tokens") && short.includes("duration"), "tokens wait behind More details: " + short.join(", "));
+      await page.eval("document.querySelector('.facts-more').click()");
+      const all: string[] = await facts();
+      assert.ok(all.length > short.length, "More details shows the rest: " + all.join(", "));
+      assert.equal(await page.eval("document.querySelector('.facts-more').getAttribute('aria-expanded')"), "true");
+      await page.eval("document.querySelector('.facts-more').click()");
 
       await page.eval("location.hash = '#/'");
       await page.waitFor("document.querySelector('.facets-toggle')", "filters button");
+      const row = await page.eval("(() => { const a = document.querySelector('#q').getBoundingClientRect(), b = document.querySelector('.facets-toggle').getBoundingClientRect(); return [Math.round(a.bottom), Math.round(b.bottom), a.right <= b.left]; })()");
+      assert.deepEqual(row, [row[0], row[0], true], "search and Filters share one line");
       await page.eval("document.querySelector('.facets-toggle').click()");
       const sheet = await page.eval(`(() => { const g = document.querySelector('.facet-groups');
         g.getAnimations().forEach((a) => a.finish());
         const r = g.getBoundingClientRect();
         return { pos: getComputedStyle(g).position, bottom: Math.round(r.bottom), focus: document.activeElement.textContent }; })()`);
       assert.deepEqual(sheet, { pos: "fixed", bottom: 844, focus: "Done" }, "Filters open as a bottom sheet with Done focused");
+      assert.match(await page.eval("document.querySelector('.sheet-foot .btn-primary').textContent"), /^Show \d+ sessions?$/, "the footer says how many sessions the filters leave");
       await page.eval("document.querySelector('.sheet-head .btn').click()");
       assert.equal(await page.eval("document.querySelector('.facets').dataset.open"), "false", "Done closes the sheet");
     } finally {
@@ -500,7 +512,8 @@ describe("viewer UI: sessions list state", { skip: chrome ? false : "no Chrome/C
         await page.eval(typeQ("hello"));
         await page.waitFor("document.querySelectorAll('.hit-snippet').length > 0", "hits");
         const snippets: string[] = await page.eval("[...document.querySelectorAll('.hit-snippet')].map((e) => e.textContent)");
-        assert.deepEqual(snippets, ["hello flagged"]);
+        assert.deepEqual(snippets, ["hello flagged"], "the «» match markers become a highlight");
+        assert.equal(await page.eval("document.querySelector('.hit-snippet mark')?.textContent"), "hello");
       },
     );
   });
@@ -810,6 +823,13 @@ describe("viewer UI: benchmarks", { skip: chrome ? false : "no Chrome/Chromium f
       assert.deepEqual(Object.keys(rows).sort(), ["bad", "good"]);
       assert.match(rows.bad!, /reference/);
       assert.match(rows.good!, /pts/, "gap to the reference in points");
+      // Places follow the pooled gap: ahead of the reference is a clear first, behind it never shares first.
+      const places: [string, string][] = await page.eval("[...document.querySelectorAll('.bench-row')].map((r) => [r.querySelector('.place').textContent, r.children[4].innerText])");
+      for (const [place, pooled] of places) {
+        if (/ahead/.test(pooled)) assert.equal(place, "1", "ahead on every pooled day is a clear first");
+        if (/behind/.test(pooled)) assert.doesNotMatch(place, /^1=?$/, "behind on the pooled days is not first");
+      }
+      assert.deepEqual(places.map(([p]) => parseInt(p)), places.map(([p]) => parseInt(p)).sort((a, b) => a - b), "rows run in place order");
       assert.ok(await page.eval("document.querySelectorAll('.chart .ln').length >= 2"), "trend lines");
       assert.ok(await page.eval("!!document.querySelector('.gap-card .band')"), "gap chart has a CI band");
       // Hover the trend: a tooltip with the day's values, no layout change.
@@ -831,6 +851,9 @@ describe("viewer UI: benchmarks", { skip: chrome ? false : "no Chrome/Chromium f
     try {
       await page.waitFor("document.querySelector('.bench-row')", "leaderboard");
       assert.equal(await page.eval("document.documentElement.scrollWidth <= innerWidth"), true);
+      // The number columns fold into a labelled grid under each contender.
+      const grid: string[] = await page.eval("[...document.querySelectorAll('.bench-row[data-contender=good] .mob-grid dt')].filter((e) => e.getClientRects().length).map((e) => e.textContent)");
+      assert.ok(grid.includes("vs bad"), "the gap is labelled: " + grid.join(", "));
     } finally {
       await page.close();
     }
