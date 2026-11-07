@@ -157,6 +157,15 @@ caps case runs for the race (default: each train case used once), `--split` and 
 the splits, and a dataset with no splits gets a seeded 30% held out. Every run is stored as a
 normal experiment.
 
+A loop that tries one candidate after another (prompt tuning, self-improvement) also needs a stop
+rule. The stats module has a restart e-detector for it (`createEDetector`, `eDetector`; Yin, Liu
+and Qi, arXiv 2610.04756): each round feeds the per-case differences candidate minus incumbent,
+and it alarms once the gains have fallen below ε (default 0.01) for long enough, returning the
+round the plateau started so the loop can keep the version before it. Its guarantee is an average
+run length of at least 1/δ rounds (20 at δ 0.05) before a false alarm while the loop still gains
+ε per round, not a familywise error rate. Small evals can't see a small ε:
+`plateauRoundsNeeded(12, 0.01)` is 51 rounds, against 4 at 200 cases. It is not on the CLI yet.
+
 ## Long runs: resume, retries, status
 
 `exp run` (and `--arm`), `exp aa`, `exp sweep`, `compare`, `bench run` and `workflows run` write
