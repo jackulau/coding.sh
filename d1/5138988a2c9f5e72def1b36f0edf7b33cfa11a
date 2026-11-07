@@ -1,0 +1,2501 @@
+SECURITY.md
+  s_8e040dbdf13565::t_edfe830568ff17 1-40,44-45
+  s_8e040dbdf13565::t_9f112214df5a35 41-43
+examples/production/python/README.md
+  s_8e040dbdf13565::t_1b9afbe04d7800 1-31
+packages/coding.sh/test/fixtures/adapters/codex/gen.py
+  s_8e040dbdf13565::t_c3d66106e80a89 79
+  s_8e040dbdf13565::t_6d661be1ddb2bf 1-78,80-95
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/c8e3f6cab3966fa7530e7fe12dc34934/segments/269553eebfde998b.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/c8e3f6cab3966fa7530e7fe12dc34934/segments/fd78516de7112c01.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+examples/eve-agent/README.md
+  s_8e040dbdf13565::t_58ce30f15a1ef9 38-39,62
+  s_8e040dbdf13565::t_0252a705f85d58 1-37,40-61,63-138
+examples/eve-agent/.gitignore
+  s_8e040dbdf13565::t_47f65c0f9a35a2 1-5
+packages/store-postgres/src/pool.ts
+  s_8e040dbdf13565::t_4fa14aa3a884fc 1-350
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/c8e3f6cab3966fa7530e7fe12dc34934/segments/83fe92888d71d5c4.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/sdk-python/src/coding_sh/_providers.py
+  s_8e040dbdf13565::t_6f8300092ccdaf 395-417,423-426,428-432,437-438,440-441,445-446,449-450,452,458-460
+  s_8e040dbdf13565::t_309ae053e25f7a 1-80,82-87,90-111,114-147,149-203,205-361,372-394,419-422,433-436,439,442-444,447-448,451,453-457,461-469,471-482,490-530,533-534,536-538,541-543
+  s_8e040dbdf13565::t_b51af660afafdb 81,88-89,112-113,148,204,362-371,418,427,470,483-489,531-532,535,539-540
+packages/sdk/src/client.ts
+  s_8e040dbdf13565::t_00bd9afbb343bc 1-87,92-94,99-110
+  s_8e040dbdf13565::t_84f0b05e7088dd 88-91,95-98
+apps/site/src/pages/docs/cli.astro
+  s_8e040dbdf13565::t_0a145e2051fe1e 1-20,22-67,69-75,77-105
+  s_8e040dbdf13565::t_921fe8bdd8c41c 21,68,76
+apps/site/src/pages/llms.txt.ts
+  s_8e040dbdf13565::t_1835fbeea48548 1-7
+packages/coding.sh/src/server/config.ts
+  s_8e040dbdf13565::t_6d04319bc4329d 1-220
+packages/blob-s3/test/url.test.js
+  s_8e040dbdf13565::t_ba5f48707bc1f5 1-107
+docs/production/compose.md
+  s_8e040dbdf13565::t_bed2660201b65b 1-54
+packages/coding.sh/src/adapters/_shared/install.ts
+  s_8e040dbdf13565::t_c984ed9353e88d 1-3,6-73,81-96,129-137,143-150,175
+  s_8e040dbdf13565::t_476d5fea2e26a1 4-5,74-80,97-128,138-142,151-174
+packages/coding.sh/src/judge/limit.ts
+  s_8e040dbdf13565::t_837ed2020c53f8 1-36
+packages/coding.sh/test/server/serve.test.ts
+  s_8e040dbdf13565::t_7505084f213d5e 260,328-330
+  s_8e040dbdf13565::t_18bcaaf3f68cb3 1-40,42-65,67-259,261-327,331-340
+  s_8e040dbdf13565::t_0cd3e36672b2cb 41
+  s_8e040dbdf13565::t_12d04413ea8f38 66
+packages/coding.sh/test/mcp/toolevals.test.ts
+  s_8e040dbdf13565::t_cd11d6dd2220d9 1-69
+deploy/compose/gen-env.sh
+  s_8e040dbdf13565::t_100408941fe218 1-35
+packages/coding.sh/test/adapters/codex.test.ts
+  s_8e040dbdf13565::t_4b116ce281b071 1,3-36,38-169,197-238
+  s_8e040dbdf13565::t_1f664b7d07d716 170-196
+  s_8e040dbdf13565::t_2a32fdd3b584f2 2,37
+packages/coding.sh/test/graders/graders.test.ts
+  s_8e040dbdf13565::t_a8cf4fbbb5c7aa 1-282,343
+  s_8e040dbdf13565::t_0ee1e37155c931 283-296,298-342
+  s_8e040dbdf13565::t_84858f1c925d00 297
+packages/coding.sh/src/runner/experiment.ts
+  s_8e040dbdf13565::t_263efe5c22e46f 6,211-215,363,446-455,488-490,504-509
+  s_8e040dbdf13565::t_b455ffc56e584a 13
+  s_8e040dbdf13565::t_434f284f3844e6 44-45,100
+  s_8e040dbdf13565::t_269ae9ed662f5c 206-209,309-316
+  s_8e040dbdf13565::t_a9fae2d40c1300 1-5,8-12,14-41,46-99,101-102,104-172,181-205,210,216-261,276-308,317-339,343,351-354,357-362,364-445,456-470,476-487,491-503,510-512
+  s_8e040dbdf13565::t_90ce68723e42df 42-43,103,173-180,262-275,340-342,344-350,355-356,471-475
+  s_8e040dbdf13565::t_5a5f3949594383 7
+packages/coding.sh/test/fixtures/adapters/codex/golden/hooks.golden.json
+  s_8e040dbdf13565::t_09775103a75896 9,15,30,49,61,67,69,103,115,121,123,158,194,213,230-256,258-261,263-268,270-278,280-294,298,300,304,309,311,313-327,329-334,336-339,342-344,348-359,361-364,366-370,372-392,405,419
+  s_8e040dbdf13565::t_02e8f6749b730c 137-138
+  s_8e040dbdf13565::t_4a3e0f82373e6a 1-8,10-14,16-29,31-48,50-60,62-66,68,70-102,104-114,116-120,122,124-136,139-157,159-193,195-212,214-229,279,295-297,299,301-303,305-308,310,312,328,345-346,393-404,406-418,420-423
+  s_8e040dbdf13565::t_4018c2fbca71e1 257,262,269,335,340-341,347,360,365,371
+packages/coding.sh/test/eval/impossible.test.ts
+  s_8e040dbdf13565::t_0858afbd857026 44
+  s_8e040dbdf13565::t_d3300a494db690 1-4,6-43,45-74,78-79,82-85,87,95-96
+  s_8e040dbdf13565::t_618be00fe8db7a 5,75-77,80-81,86,88-94
+packages/coding.sh/test/adapters/mcp.test.ts
+  s_8e040dbdf13565::t_c57c3abb43d3cc 9
+  s_8e040dbdf13565::t_f766dfc098d02f 1-8,10-161
+packages/coding.sh/src/graders/json-schema.ts
+  s_8e040dbdf13565::t_2d0f25c11eaef0 64-69
+  s_8e040dbdf13565::t_0dbae1ab580ea3 1-63,70-249
+packages/coding.sh/src/integrations/gateway/enrich.ts
+  s_8e040dbdf13565::t_da8da3deac39f5 1-9,15-31,33-82,85-112,114,118-119,138,140-146,148-154,159-207,209-213,216-219,221-231,239-241,243-247,259,263,265-334
+  s_8e040dbdf13565::t_e3e4c1565b77bc 234-238
+  s_8e040dbdf13565::t_3de414c683568e 10-14,32,83-84,113,115-117,120-137,139,147,155-158,208,214-215,220,232-233,242,248-258,260-262,264
+apps/site/src/components/Nav.astro
+  s_8e040dbdf13565::t_9b59880bfd467a 135
+  s_8e040dbdf13565::t_289ebcdb17054b 191,296
+  s_8e040dbdf13565::t_3c59ad7480a80b 224-225,233,239,244,246-248,264,267,271
+  s_8e040dbdf13565::t_fda854fd2f3e24 29,54-56,59,61,120,136,166,169,282,293,300,308-313,319,321,353
+  s_8e040dbdf13565::t_69a106e6820ff4 2-5,13-21,25,30,32,34-39,41-46,48,50-52,58,62,65-67,70-103,105-117,121,123,134,140-156,158-165,167,170-176,195-222,226,228-232,234-236,241,249-250,258,262-263,265-266,268-270,272-274,276-278,281,283-284,288-292,304-307,327-337,341-342,344-352
+  s_8e040dbdf13565::t_40bea69166110f 237,251-257,259-261,285-287
+  s_8e040dbdf13565::t_3de308dbca872c 10,24,26,31,33,57,60,63-64,68,104,118-119,122,125,127-130,138,168,314-317,320,322,338,354
+  s_8e040dbdf13565::t_66b885afbfaffa 6-9,40,49,177-190,192-194,223,227,238,240,242-243,245,275,279-280,294-295,297-299,301-303
+  s_8e040dbdf13565::t_6dfc2dff44efdd 47
+  s_8e040dbdf13565::t_c3ed797d5658ba 28,69,126,131-133,137,323-326,339-340,343
+  s_8e040dbdf13565::t_59275dc5980d40 11-12,27,124,139,157
+  s_8e040dbdf13565::t_f5985affe4db5e 1,22-23,53,318,355
+packages/coding.sh/src/graders/external.ts
+  s_8e040dbdf13565::t_344990fbc63b0c 1-163
+scripts/dogfood/lib/util.mjs
+  s_8e040dbdf13565::t_ddb892f124b3a4 1-212
+packages/coding.sh/LICENSE
+  s_8e040dbdf13565::t_d99f405395360a 1-21
+packages/coding.sh/test/toolevals/compare.test.ts
+  s_8e040dbdf13565::t_12cab8e99c2643 1-124
+packages/coding.sh/src/integrations/gateway/index.ts
+  s_8e040dbdf13565::t_28ab96a7ef026d 1-9
+apps/site/src/data/site.ts
+  s_8e040dbdf13565::t_1c300853359e9e 28-29,38,40
+  s_8e040dbdf13565::t_0b88f2bc9e36af 11,27,33-36,39,47-49,51
+  s_8e040dbdf13565::t_0f47bd41f05a52 6-10,12-14,16-26,57
+  s_8e040dbdf13565::t_fe4175228d6ffa 30-32
+  s_8e040dbdf13565::t_49bce788ca8b9f 43-45,50,52-56
+  s_8e040dbdf13565::t_22bb3a1776b18b 2,15
+  s_8e040dbdf13565::t_38532c55c751fc 1,3-5,37,41-42,46
+packages/coding.sh/src/toolevals/drivers/agent.ts
+  s_8e040dbdf13565::t_6bc38ef2e8b910 1-76
+docs/research/x-web-rewrite.md
+  s_8e040dbdf13565::t_e10897f2352d85 1-63
+packages/coding.sh/src/adapters/_shared/detect.ts
+  s_8e040dbdf13565::t_7068958f456d4c 48-55,62-67,80-81
+  s_8e040dbdf13565::t_b1cff7a12d3ff8 1-47,56-61,68-79,82-99
+packages/coding.sh/test/fixtures/adapters/cursor/golden/hooks.golden.json
+  s_8e040dbdf13565::t_78a50841d2d1ca 1-372
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/d229f0531a25ff4a05cd62e457df671b/segments/761e5a416cae38aa.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+apps/site/scripts/gen-og.mjs
+  s_8e040dbdf13565::t_57226c68de2621 1-5,7-10,12-16,18-36,39-43,46-60,63-65
+  s_8e040dbdf13565::t_3ac63a6c4f3b2f 6,11,17,38,44-45,62
+  s_8e040dbdf13565::t_e1d9a94fa849ce 37,61
+packages/coding.sh/test/adapters/more/wrapper-aider.test.ts
+  s_8e040dbdf13565::t_2c7be0afd31ccd 31-35
+  s_8e040dbdf13565::t_1de8818c19f5e8 1-30,36-96
+Dockerfile
+  s_8e040dbdf13565::t_909982f92e1f8a 1-45
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/d229f0531a25ff4a05cd62e457df671b/segments/988061d206a0a8b7.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+apps/site/src/components/GitHubIcon.astro
+  s_8e040dbdf13565::t_59275dc5980d40 1-11
+packages/store-postgres/test/pg.test.ts
+  s_8e040dbdf13565::t_ad9b2f472738bc 1-67,69-179,184-254
+  s_8e040dbdf13565::t_de45d52295ed72 68,180-183
+examples/eve-agent/agent/instructions.md
+  s_8e040dbdf13565::t_b6f7c16d2a8c4d 1-7
+.github/workflows/release.yml
+  s_8e040dbdf13565::t_a6e151e9634667 1-111
+packages/coding.sh/src/integrations/gateway/otel.ts
+  s_8e040dbdf13565::t_500b3316b00371 27,75-80,159-166,172-175
+  s_8e040dbdf13565::t_69768674b7de7b 118,186
+  s_8e040dbdf13565::t_1cb2ab84c85a35 1-26,28-74,81-97,100-106,108-117,119-158,167-171,176-185,187-188
+  s_8e040dbdf13565::t_82cac14ff73581 98-99,107
+packages/coding.sh/src/toolevals/index.ts
+  s_8e040dbdf13565::t_1e68dcdf87ac47 1-32
+  s_8e040dbdf13565::t_b9d50e22300cd7 33-34
+packages/coding.sh/src/cli/args.ts
+  s_8e040dbdf13565::t_70514ad07e3ba1 1-72,80-87,89-193
+  s_8e040dbdf13565::t_84858f1c925d00 73-79,88
+packages/coding.sh/src/cli/output.ts
+  s_8e040dbdf13565::t_4f12f8d7d1fb47 268,291-294,297-304
+  s_8e040dbdf13565::t_246fa871312d53 1-179,182-183,185-193,195-206,210,212-222,225-267,269-290,295-296,305-324
+  s_8e040dbdf13565::t_787afcec889029 180-181,184,194
+  s_8e040dbdf13565::t_e9e14936e71c6c 211,223-224
+  s_8e040dbdf13565::t_1f1e32f7aac029 207-209
+packages/coding.sh/src/core/ingest.ts
+  s_8e040dbdf13565::t_fb24394e21366a 379-382
+  s_8e040dbdf13565::t_ad7106bc70cda4 243-244
+  s_8e040dbdf13565::t_6c0313bb8a8f75 46,136-137
+  s_8e040dbdf13565::t_d6d1e9d6022a10 460,497,508,517,573-676,696,698-715
+  s_8e040dbdf13565::t_123cb38f7376fb 1-10,36-37,39-45,47,50-56,63-78,81-135,142-144,150-151,155-156,161-220,222-228,230-236,246-249,271-272,274-365,367-370,377-378,383-384,389-395,397,404-405,411,414,420-422,425,441,462,464-465,474,520-521,546,551-553,556,558,562,565-567,569,695,697,717-740
+  s_8e040dbdf13565::t_647d9c4906a2a8 11,15,27-35,38,48-49,57-62,253-270,273,371-376,427,431,457,476,480,523-542,681,686,692
+  s_8e040dbdf13565::t_65ac5aab101ac4 694
+  s_8e040dbdf13565::t_56c93983536747 385-387,490-492
+  s_8e040dbdf13565::t_3cac910c3e6d01 12-14,16-26,79-80,138-141,145-149,152-154,157-160,221,229,237-242,245,250-252,366,388,396,398-403,406-410,412-413,415-419,423-424,426,428-430,432-440,442-456,458-459,461,463,466-473,475,477-479,481-489,493-496,498-507,509-516,518-519,522,543-545,547-550,554-555,557,559-561,563-564,568,570-572,677-680,682-685,687-691,693,716
+packages/coding.sh/src/store/fs-blobs.ts
+  s_8e040dbdf13565::t_bdcf7456488729 1-167
+packages/coding.sh/test/mcp/qa-fixes.test.ts
+  s_8e040dbdf13565::t_83d3774bbfc4ee 33-34,36-37
+  s_8e040dbdf13565::t_fa97cbd8859bbd 1-32,35,38-246
+packages/coding.sh/test/fixtures/adapters/codex/hooks.spool.jsonl
+  s_8e040dbdf13565::t_c3d66106e80a89 1-12
+packages/coding.sh/src/stats/summary.ts
+  s_8e040dbdf13565::t_06c20a4bf3a2c5 1-71
+packages/blob-s3/test/conformance.js
+  s_8e040dbdf13565::t_c2f0d67c78729c 1-12
+packages/coding.sh/src/datasets/csv.ts
+  s_8e040dbdf13565::t_f6f2f7796701e3 1-77,79-144
+  s_8e040dbdf13565::t_158badecb4049d 78
+packages/coding.sh/src/adapters/_shared/index.ts
+  s_8e040dbdf13565::t_411f3ade35ca98 15
+  s_8e040dbdf13565::t_47194b95271b19 16
+  s_8e040dbdf13565::t_80fb2d4c3854e7 1-13
+  s_8e040dbdf13565::t_da5f025a784852 14
+packages/coding.sh/src/eval/suite.ts
+  s_8e040dbdf13565::t_41e42222e778b3 23
+  s_8e040dbdf13565::t_264e267217df18 1-22,24-31,34-123
+  s_8e040dbdf13565::t_0858afbd857026 32-33
+packages/coding.sh/test/update/refresh.test.ts
+  s_8e040dbdf13565::t_745ea5047e2c17 1-87
+package.json
+  s_8e040dbdf13565::t_b0995baa25bc86 2-12,18
+  s_8e040dbdf13565::t_a96ff6fc02de11 13-16,19
+  s_8e040dbdf13565::t_a26f99223b669d 1,17,20-21
+packages/coding.sh/src/cli/commands/search.ts
+  s_8e040dbdf13565::t_46430249f80cbf 1-13,16-31
+  s_8e040dbdf13565::t_da40372e53123e 14-15
+packages/coding.sh/src/spool/kick.ts
+  s_8e040dbdf13565::t_371e3822e6ea49 1-37
+packages/coding.sh/test/cli/output.test.ts
+  s_8e040dbdf13565::t_032310ef02e042 1-66
+deploy/test/deploy.test.mjs
+  s_8e040dbdf13565::t_24635624981051 1,3-188
+  s_8e040dbdf13565::t_ea7604a8bfe4e5 2
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/d229f0531a25ff4a05cd62e457df671b/segments/420275c4af2c6631.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/src/workflows/score/verify.ts
+  s_8e040dbdf13565::t_42b0a685a72b6f 1-67
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/d229f0531a25ff4a05cd62e457df671b/segments/a5c71ce1f7ba226f.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/src/cli/commands/compare.ts
+  s_8e040dbdf13565::t_87fa32eb130bdd 1-3,7-9,11-38,40-44,46-58,60-77,93
+  s_8e040dbdf13565::t_774d07f76c221d 4-6,59,78-79,82-92
+  s_8e040dbdf13565::t_0f893d670308e2 39
+  s_8e040dbdf13565::t_de8fc4a38f6477 10,45,80-81
+packages/coding.sh/src/workflows/critical-path.ts
+  s_8e040dbdf13565::t_7e9a08ce32e07a 1-186
+packages/sdk/test/openai.test.ts
+  s_8e040dbdf13565::t_b7a2524458311c 1-16,18-236
+  s_8e040dbdf13565::t_504acfb86a9673 17
+examples/production/node-openai/package.json
+  s_8e040dbdf13565::t_1300e42d3bf276 15
+  s_8e040dbdf13565::t_d376c36d3670a6 1-14,16-17
+examples/eve-agent/agent/tools/get_weather.ts
+  s_8e040dbdf13565::t_b6f7c16d2a8c4d 1-20
+packages/coding.sh/src/graders/builtin.ts
+  s_8e040dbdf13565::t_7d68d0e0d80942 1-292
+packages/coding.sh/src/adapters/_shared/claude-transcript.ts
+  s_8e040dbdf13565::t_bf25a26f567f4c 33-37,69,161
+  s_8e040dbdf13565::t_da5f025a784852 171
+  s_8e040dbdf13565::t_f243a52850424a 1-18,20-32,43-53,57-66,70-75,91,109-125,128-160,162-170,172-195,199,202-227,235,237-252,291,318-368,375-382,384,392-400
+  s_8e040dbdf13565::t_5922a246af759d 19
+  s_8e040dbdf13565::t_65ac5aab101ac4 38-42,67-68,76-90,92-108,126-127,200-201,228-234,236,254-290,292-317,383,385-391
+  s_8e040dbdf13565::t_691aa38aad052d 54-56,196-198,369-374
+  s_8e040dbdf13565::t_3f4796c98180aa 253
+examples/eve-agent/evals/coding-sh/trace-grader.mjs
+  s_8e040dbdf13565::t_d05e311cf6a1a8 1-7,9,18-28,30-31,33,35-42,45-48,50,52-56
+  s_8e040dbdf13565::t_bc46214e931a35 8,10-17,29,32,34,43-44,49,51
+packages/coding.sh/test/viewer/server.test.ts
+  s_8e040dbdf13565::t_6353155bc07768 326-329,332-333,335-371
+  s_8e040dbdf13565::t_f1cbab1e959eef 1-17,19-22,25-325,372-397,399-418
+  s_8e040dbdf13565::t_4ab024292a0092 18,23-24,398
+  s_8e040dbdf13565::t_dda825c4a1436e 330-331,334
+packages/coding.sh/src/workflows/seed/bugs.ts
+  s_8e040dbdf13565::t_c763cfdbc9183d 1-121
+apps/site/src/data/agents.ts
+  s_8e040dbdf13565::t_0b88f2bc9e36af 1-4,13,20-31,33-43
+  s_8e040dbdf13565::t_f9c464e40d2f2d 5-12,14-19,32
+packages/coding.sh/test/viewer/fakes.ts
+  s_8e040dbdf13565::t_f1fbb412d86414 50
+  s_8e040dbdf13565::t_a78b8af299716e 1-49,51-174
+packages/coding.sh/test/adapters/more/_helpers.ts
+  s_8e040dbdf13565::t_d9ce58db4f507c 93
+  s_8e040dbdf13565::t_94c9783a4fa24e 1-92,94-135
+packages/coding.sh/src/workflows/score/findings.ts
+  s_8e040dbdf13565::t_0bd617e04b2ff9 1-146
+packages/coding.sh/test/adapters/more/util.test.ts
+  s_8e040dbdf13565::t_89100be8b12e87 86
+  s_8e040dbdf13565::t_1de8818c19f5e8 1-85,87-104
+packages/coding.sh/src/toolevals/report.ts
+  s_8e040dbdf13565::t_b180b597741ca4 1-158
+packages/store-postgres/src/blob-store.ts
+  s_8e040dbdf13565::t_412dac561931a2 1-4,6-68,70-135
+  s_8e040dbdf13565::t_651c70c9bf8b7b 5,69
+packages/coding.sh/src/runner/glob.ts
+  s_8e040dbdf13565::t_53210e50aac407 1-62
+packages/coding.sh/package.json
+  s_8e040dbdf13565::t_5ed876789ffd35 44-53
+  s_8e040dbdf13565::t_c1194140000b17 65
+  s_8e040dbdf13565::t_e74147a3202c9d 3-37,41,55,57-64,66,71-73
+  s_8e040dbdf13565::t_f18f8c27757e24 1-2,38-40,42-43,54,56,67-70,74-79
+packages/coding.sh/src/integrations/gateway/client.ts
+  s_8e040dbdf13565::t_bc0b8266b7d7de 1-128
+packages/coding.sh/src/server/log.ts
+  s_8e040dbdf13565::t_c6eb4824c381e0 1-40
+packages/coding.sh/test/integrations/eve/fixtures/otlp-export.json
+  s_8e040dbdf13565::t_dd366856a70874 1-7040
+packages/blob-s3/src/sigv4.js
+  s_8e040dbdf13565::t_dd798bb43a7c39 1-116,120
+  s_8e040dbdf13565::t_ec697b11a73af8 117-119
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/d229f0531a25ff4a05cd62e457df671b/segments/72b8ee6f6485a97c.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/src/workflows/tree.ts
+  s_8e040dbdf13565::t_9a7f70ca1647b0 1-382
+apps/site/src/pages/docs/storage.astro
+  s_8e040dbdf13565::t_cd483a17bb4a4a 1-156
+packages/coding.sh/src/adapters/_shared/normalize.ts
+  s_8e040dbdf13565::t_0b2cac38d39b14 1-54,61-66,120-216,227-255,258,262-289,300-303
+  s_8e040dbdf13565::t_32f9812eb687f3 55-60,67-72,78-80,82-83,85-103
+  s_8e040dbdf13565::t_fb05cbefa9008a 256-257,259-261
+  s_8e040dbdf13565::t_52806a35f175dc 73-77,81,84,104-119
+  s_8e040dbdf13565::t_93fdb2bc16fedf 290-299
+  s_8e040dbdf13565::t_c15a40fedc2a05 217-226
+packages/coding.sh/test/adapters/more/_plugin-host.ts
+  s_8e040dbdf13565::t_6cb7657a526ffe 1-56
+packages/store-postgres/test/conformance.test.ts
+  s_8e040dbdf13565::t_4d287c00396116 1-25
+docs/research/landscape.md
+  s_8e040dbdf13565::t_63f0b2799f77d1 151-152,351,457-460
+  s_8e040dbdf13565::t_1a33d765ee7ecc 1-150,153-350,352-456,461-471
+examples/eve-agent/agent/subagents/forecaster/agent.ts
+  s_8e040dbdf13565::t_b6f7c16d2a8c4d 1-25
+packages/coding.sh/src/adapters/_shared/files.ts
+  s_8e040dbdf13565::t_becc73e00cf8ba 1-81,84-94,96,99-101,103-165
+  s_8e040dbdf13565::t_c9a0be1a7e484d 82-83,95,97-98,102
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/c8e3f6cab3966fa7530e7fe12dc34934/segments/6058adaa4139a8a0.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+apps/site/scripts/gen-icons.mjs
+  s_8e040dbdf13565::t_1f9921123a84df 1-134
+packages/coding.sh/test/workflows/otel-metrics.test.ts
+  s_8e040dbdf13565::t_376c08101fa2a2 1-220
+packages/coding.sh/src/eval/leakage.ts
+  s_8e040dbdf13565::t_53210e50aac407 1-36
+  s_8e040dbdf13565::t_3bf19a620efa17 37-54
+packages/coding.sh/test/experiments/power.test.ts
+  s_8e040dbdf13565::t_0fe70fa1424bf9 69-83
+  s_8e040dbdf13565::t_3aaa15062f9dd2 1-68,84-123
+packages/coding.sh/src/mcp/resources.ts
+  s_8e040dbdf13565::t_81ceedad99f275 1-56
+packages/coding.sh/src/adapters/_shared/mcp.ts
+  s_8e040dbdf13565::t_8bea5362f7daa7 1-9,11-157
+  s_8e040dbdf13565::t_47194b95271b19 10
+packages/sdk-python/tests/test_golden.py
+  s_8e040dbdf13565::t_6f49e17c5408dc 78-79,148-149
+  s_8e040dbdf13565::t_24573597b59a3f 1-77,80-147,150-159
+packages/coding.sh/src/toolevals/metrics.ts
+  s_8e040dbdf13565::t_e15a645c401451 1-8,10,13-76,78-94,96-348
+  s_8e040dbdf13565::t_9d15a3a5ab410c 9,11-12,77,95
+apps/site/src/pages/docs/evals.astro
+  s_8e040dbdf13565::t_da5109542f5109 1-107,109-141,143-185,187-198
+  s_8e040dbdf13565::t_921fe8bdd8c41c 108,142,186
+packages/coding.sh/test/fixtures/adapters/gemini-cli/golden/backfill.golden.json
+  s_8e040dbdf13565::t_245444bde75f70 164,167-180
+  s_8e040dbdf13565::t_99486376b4e9f9 1-8,12-59,87-163,165-166,181-406
+  s_8e040dbdf13565::t_ac83a5dc238ffc 9
+  s_8e040dbdf13565::t_0451933fb04396 10,67,71-72,80,84-85
+  s_8e040dbdf13565::t_99e76b1b45254b 11,60-66,68-70,73-79,81-83,86
+packages/coding.sh/test/judge/calibrate.test.ts
+  s_8e040dbdf13565::t_5a6c499fd06aa1 1-217
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/d229f0531a25ff4a05cd62e457df671b/segments/8386aa6c7951cb84.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/c8e3f6cab3966fa7530e7fe12dc34934/segments/c8e3f6cab3966fa7.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/6bc849d232dcc16384f706590d8c5d34/segments/627ade395b7d8b3b.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/src/runner/run.ts
+  s_8e040dbdf13565::t_21edf5a244b567 1-2,4-5,7-13,16-37,42-43,46-101,104-111,113-114,116-125,127,130-132,135-150,152-159
+  s_8e040dbdf13565::t_90ce68723e42df 3,6,14-15,38-39,126,128-129,133-134,151
+  s_8e040dbdf13565::t_434f284f3844e6 40-41,44-45,102-103,112,115
+docs/production/serverless.md
+  s_8e040dbdf13565::t_d9d4ab55132b97 1-49
+packages/coding.sh/test/adapters/more/antigravity.test.ts
+  s_8e040dbdf13565::t_6667435ea4e8c8 1-19,22-38,48-104
+  s_8e040dbdf13565::t_57d8cc4304b90c 20-21,39-43
+  s_8e040dbdf13565::t_4464f51e0da029 44-47
+packages/coding.sh/test/eval/validate.test.ts
+  s_8e040dbdf13565::t_636bb9279b9e8d 1,5-7,10-12,18-21,23,25-113,122-156,355-356
+  s_8e040dbdf13565::t_90f2326595e600 4,13-17,22,24,114-121
+  s_8e040dbdf13565::t_a7b6117b89a01b 3,9,157-325,327-354
+  s_8e040dbdf13565::t_68d24697e77abe 8,326
+  s_8e040dbdf13565::t_74c4cc77bb5d69 2
+packages/coding.sh/src/graders/index.ts
+  s_8e040dbdf13565::t_9793a72370525d 107-108,169,172-191
+  s_8e040dbdf13565::t_80857ecf902154 1-5,7-25,29,35-44,54-55,72-87,90-100,103,105,109-117,120-127,133-156,158-160,162-168,170-171,192-201,203
+  s_8e040dbdf13565::t_ccf8c43cf9ffb7 6,26,30-32,45-53,56-65,67-71,88-89,101,104,106,118,128-132,157,161,202
+  s_8e040dbdf13565::t_ccc97b2be0d6ca 27-28,33-34,66,102,119
+packages/coding.sh/test/otel/receiver.test.ts
+  s_8e040dbdf13565::t_051ec2425cb43c 93,175,178-179
+  s_8e040dbdf13565::t_e5530fc26ffd1d 393-429
+  s_8e040dbdf13565::t_8d43fa59edbc1c 430-453,456-457
+  s_8e040dbdf13565::t_d2da54e60fa7bd 23,246
+  s_8e040dbdf13565::t_e67f20c133e8bf 1-7,9-22,24-28,30-92,94-170,237-245,247-392
+  s_8e040dbdf13565::t_a6b6a79c1d0162 29
+  s_8e040dbdf13565::t_5fa54a47a09d8d 171-174,176-177,180-236
+  s_8e040dbdf13565::t_3f0c9db1cbced2 454-455
+  s_8e040dbdf13565::t_417d9622ea52f3 8
+packages/coding.sh/test/capture/_helpers.ts
+  s_8e040dbdf13565::t_ad060dafae3670 1-99
+packages/coding.sh/src/core/gc.ts
+  s_8e040dbdf13565::t_70234b41dd10cf 4-9,17-18,34-39,55-56,58-60,86,93-98,143-155,158-184
+  s_8e040dbdf13565::t_6e8f0b26e8a11c 1-3,10-16,19-33,40-54,57,61-85,87-92,99-142,156-157,185
+packages/coding.sh/test/experiments/fixtures/agent.mjs
+  s_8e040dbdf13565::t_d78b893e54b302 1-23
+packages/coding.sh/test/graders/fixtures/grader.mjs
+  s_8e040dbdf13565::t_d78b893e54b302 1-7
+packages/coding.sh/test/adapters/more/copilot-cli.test.ts
+  s_8e040dbdf13565::t_9322d2df8523e7 1-5,7-23,29-53,58-96,129-134
+  s_8e040dbdf13565::t_134697a1a07b8f 6
+  s_8e040dbdf13565::t_5c191a3714038d 24-28,54-57
+  s_8e040dbdf13565::t_e36606bda091f2 126
+  s_8e040dbdf13565::t_d8fdb1b1a7b3cd 97-125,127-128
+apps/site/src/assets/logos/goose.svg
+  s_8e040dbdf13565::t_6da9f2f37e6b30 1
+packages/sdk-python/src/coding_sh/otel.py
+  s_8e040dbdf13565::t_535108427cccd1 1-144
+packages/coding.sh/src/core/toml.ts
+  s_8e040dbdf13565::t_e84f849395fd30 56,204,216
+  s_8e040dbdf13565::t_8648ca691408d2 1-46,52-55,57-203,205-215,217-584
+  s_8e040dbdf13565::t_412296687973b1 47-51
+examples/production/python/app_api.py
+  s_8e040dbdf13565::t_60925656f7d88b 1-21,24-95,98-109
+  s_8e040dbdf13565::t_504acfb86a9673 22-23,96-97
+packages/coding.sh/src/toolevals/experiment.ts
+  s_8e040dbdf13565::t_039226e82229ed 1-310
+  s_8e040dbdf13565::t_74b0600c76a450 311
+packages/coding.sh/src/toolevals/mount.ts
+  s_8e040dbdf13565::t_b6e76e4ebb655f 1-94
+apps/site/src/components/docs/nav.ts
+  s_8e040dbdf13565::t_8e22a1b32280d0 4-9,65-75
+  s_8e040dbdf13565::t_a2cc6971ef7249 39
+  s_8e040dbdf13565::t_dadebc29eac618 58
+  s_8e040dbdf13565::t_c50f495501948e 1-3,10-38,40-57,59-64,76-139
+apps/site/src/pages/docs/install.astro
+  s_8e040dbdf13565::t_a2cc6971ef7249 4,7-11,22-29,34,37-41
+  s_8e040dbdf13565::t_47bde3c894edae 1-3,5-6,12-21,30-33,35-36,42-78
+docs/production/fly.md
+  s_8e040dbdf13565::t_cce6f7dd032c61 1-44
+packages/coding.sh/test/fixtures/adapters/droid/home/.factory/sessions/-work-demo/droid-sess-1.settings.json
+  s_8e040dbdf13565::t_5924976209bbd2 1
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/6bc849d232dcc16384f706590d8c5d34/segments/3b1cf2b19882202d.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/sdk-python/tests/fakes.py
+  s_8e040dbdf13565::t_54942bbd8e0203 1-331
+packages/blob-s3/src/index.js
+  s_8e040dbdf13565::t_f6b1c608b9d695 1-21
+packages/coding.sh/README.md
+  s_8e040dbdf13565::t_0272663b9a110c 1-77,80-82
+  s_8e040dbdf13565::t_7ff5a3bd177556 78-79
+packages/coding.sh/src/runner/exec.ts
+  s_8e040dbdf13565::t_668857cc90c22b 1-26,30-110
+  s_8e040dbdf13565::t_6a13e479f6d951 27-29
+packages/coding.sh/test/fixtures/adapters/gemini-cli/golden/hooks.golden.json
+  s_8e040dbdf13565::t_99486376b4e9f9 1-217
+packages/coding.sh/src/workflows/sources/claude-workflow.ts
+  s_8e040dbdf13565::t_f49c1b17b98758 1-520
+  s_8e040dbdf13565::t_239a75c02a2fc1 521
+packages/sdk/src/providers.ts
+  s_8e040dbdf13565::t_5ec39b1d62d3a6 1-177,182-345
+  s_8e040dbdf13565::t_fd892d05629881 178-181
+packages/coding.sh/test/fixtures/adapters/opencode/data/opencode/storage/session/prj_1/ses_v1.json
+  s_8e040dbdf13565::t_a339dee5da4592 1-11
+packages/coding.sh/src/experiments/task.ts
+  s_8e040dbdf13565::t_332fc31cb2ab5e 6-7,84-132
+  s_8e040dbdf13565::t_372e861b607946 1-5,8-83,134-227
+  s_8e040dbdf13565::t_52a9cab61659b6 133
+packages/coding.sh/test/capture/wrapper.test.ts
+  s_8e040dbdf13565::t_84858f1c925d00 2,88-124
+  s_8e040dbdf13565::t_d3da79d2612349 1,3-87,125-176
+docs/TOOL-EVALS.md
+  s_8e040dbdf13565::t_57d213fd711cb9 1-252,254-790
+  s_8e040dbdf13565::t_0e99dd09cceddb 253
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/c8e3f6cab3966fa7530e7fe12dc34934/segments/2c906694b037f848.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/test/judge/checklist.test.ts
+  s_8e040dbdf13565::t_7a12061f1ecf2c 285-301
+  s_8e040dbdf13565::t_2322756213bdbb 1-183,185-284,302-509
+  s_8e040dbdf13565::t_6fa7f162a6d4fd 184
+packages/sdk-python/tests/test_exit.py
+  s_8e040dbdf13565::t_983803d35de7ac 1-58
+packages/coding.sh/test/update/viewer.test.ts
+  s_8e040dbdf13565::t_01695225d47392 1-73
+packages/coding.sh/src/adapters/opencode.ts
+  s_8e040dbdf13565::t_10643fb60ca706 48-49,51
+  s_8e040dbdf13565::t_d8e6cb9c086bea 358,409-414,458,509
+  s_8e040dbdf13565::t_be22c99693eb9f 1-39,41-47,53-250,252-259,261-266,268-273,275-282,284-357,359-362,364-388,390-408,415-457,459-508,510-638,648-659
+  s_8e040dbdf13565::t_c266cb922c0da2 50
+  s_8e040dbdf13565::t_93fdb2bc16fedf 40,283,363
+  s_8e040dbdf13565::t_c15a40fedc2a05 251,260,267
+  s_8e040dbdf13565::t_47194b95271b19 639-647
+  s_8e040dbdf13565::t_c14f8b394cee66 52,274,389
+packages/coding.sh/test/fixtures/adapters/amp/plugin.spool.jsonl
+  s_8e040dbdf13565::t_5924976209bbd2 1-5,7-8
+  s_8e040dbdf13565::t_0276ba197d4f63 6
+packages/coding.sh/src/cli/commands/status.ts
+  s_8e040dbdf13565::t_46430249f80cbf 1-55
+packages/coding.sh/test/integrations/eve/helpers.ts
+  s_8e040dbdf13565::t_a58eee12cad66f 1-26
+packages/coding.sh/test/fixtures/adapters/opencode/data/opencode/storage/message/ses_v1/msg_a1.json
+  s_8e040dbdf13565::t_a339dee5da4592 1-22
+packages/coding.sh/src/core/paths.ts
+  s_8e040dbdf13565::t_d2ac479ef4153f 28-29
+  s_8e040dbdf13565::t_120f3531d28929 1-27,30-36,42-43
+  s_8e040dbdf13565::t_0658cecacbea85 39
+  s_8e040dbdf13565::t_d813add2e8d937 37-38,40-41
+packages/coding.sh/src/toolevals/mcp/jsonrpc.ts
+  s_8e040dbdf13565::t_7d1a81c39f5369 1-94
+packages/store-postgres/package.json
+  s_8e040dbdf13565::t_651c70c9bf8b7b 22
+  s_8e040dbdf13565::t_ee094021138169 1-13,16-21,23-43
+  s_8e040dbdf13565::t_af7e833ef37685 14-15
+examples/production/python/app_otel.py
+  s_8e040dbdf13565::t_308eb54fc002e1 14,42
+  s_8e040dbdf13565::t_61883cd902ec60 1-13,15-41,43-46
+examples/production/node-openai/api.mjs
+  s_8e040dbdf13565::t_1300e42d3bf276 1-58,60-67
+  s_8e040dbdf13565::t_20e497c3e8bfbd 59
+apps/site/src/components/CopyIcon.astro
+  s_8e040dbdf13565::t_de0e669137736d 1-47
+evals/cli/fixtures/make-home.mjs
+  s_8e040dbdf13565::t_e2da37a8cc86c7 1-466
+  s_8e040dbdf13565::t_4ed9e749fe68c9 467-470
+packages/sdk-python/tests/test_providers.py
+  s_8e040dbdf13565::t_591b01ddcad783 130-132,134-175,238,311
+  s_8e040dbdf13565::t_7adb6adc062a70 1-129,133,176-237,239-310,312-364
+packages/coding.sh/src/judge/predicates.ts
+  s_8e040dbdf13565::t_9451b1558c6ac8 1-199
+apps/site/src/pages/agents.md.ts
+  s_8e040dbdf13565::t_7b10e289f2fd96 1-6
+packages/coding.sh/test/integrations/gateway/detect.test.ts
+  s_8e040dbdf13565::t_58c9f7713587b0 1-6,8-71,74-122
+  s_8e040dbdf13565::t_2c417d1b2d9cc2 7,72-73
+packages/coding.sh/test/store/sqlite.test.ts
+  s_8e040dbdf13565::t_3a48bd71a62663 8,63-101
+  s_8e040dbdf13565::t_6698b823371311 56,62
+  s_8e040dbdf13565::t_1634b78ed32437 1-7,9-55,57-61,102-103,105,110-122
+  s_8e040dbdf13565::t_87c99ae0a08170 104,106-109
+packages/coding.sh/src/otel/map.ts
+  s_8e040dbdf13565::t_b2468ef588fbaa 902
+  s_8e040dbdf13565::t_dac25316f9211d 901,903-905
+  s_8e040dbdf13565::t_c646be5c349760 708
+  s_8e040dbdf13565::t_2d6161456d591e 833-837
+  s_8e040dbdf13565::t_340ff97d70ac1b 132-161
+  s_8e040dbdf13565::t_36ad7d2e1a9114 21,87-90,700,813-814,816,1000
+  s_8e040dbdf13565::t_568ac03aad87a0 613-618
+  s_8e040dbdf13565::t_a5426f5931267f 858-859,861,867-871
+  s_8e040dbdf13565::t_000b65a08524e5 604-605
+  s_8e040dbdf13565::t_8874432ac52ae9 18-20,60-68,71-79,609-612,619-639,728,785-787,789-791,793,796,798-811,828-832
+  s_8e040dbdf13565::t_54ec08088e8848 1-17,22-26,29-55,58-59,69-70,80-86,96-97,103-110,114,120-122,129-130,164-271,279-280,284-289,291-297,299,304-453,466-470,480,483-490,492,494-498,511-525,530-541,547-603,606-608,640,650-675,679-689,691,693-699,701-707,709-727,729-736,740-742,744-749,755-757,759-760,762-766,770-784,788,792,794-795,797,812,815,817-827,838-841,853-857,860,862-866,872-900,906-923,927-959,961-970,972-974,977-981,983-993,997,1001-1004,1007-1013,1019-1020,1024,1026-1027,1029-1031,1033,1035-1040,1043,1050-1051,1057,1059-1063,1067,1074,1076-1085,1087
+  s_8e040dbdf13565::t_f8e829570b6fea 491,493,641-649,676-678,690,692,737-739,743,750-754,758,761,767-769
+  s_8e040dbdf13565::t_d25d099a24080f 455-461,475,478,481-482
+  s_8e040dbdf13565::t_8d522618647637 56-57
+  s_8e040dbdf13565::t_d309f6144837a5 842-852
+  s_8e040dbdf13565::t_31ad1e8ea0c13d 27-28
+  s_8e040dbdf13565::t_3de308dbca872c 272-278,281-283,290,298,300-303,499-510
+  s_8e040dbdf13565::t_83a0e533af5426 454,462-465,471-474,476-477,479
+  s_8e040dbdf13565::t_673913d015cbc6 91-95,98,111-113,115-119,123-128,131,162-163
+  s_8e040dbdf13565::t_557bb5bc877581 99-102,526-529,542-546
+  s_8e040dbdf13565::t_5e88212392faaf 924-926,960,971,975-976,982,994-996,998-999,1005-1006,1014-1018,1021-1023,1025,1028,1032,1034,1041-1042,1044-1049,1052-1056,1058,1064-1066,1068-1073,1075,1086
+packages/coding.sh/test/fixtures/adapters/codex/golden/backfill.golden.json
+  s_8e040dbdf13565::t_02e8f6749b730c 150-161,313-314,524-536,713-725
+  s_8e040dbdf13565::t_4a3e0f82373e6a 1-149,162-312,315-523,537-712,726-730
+examples/eve-agent/agent/instrumentation/otel.ts
+  s_8e040dbdf13565::t_b6f7c16d2a8c4d 1-9
+examples/eve-agent/agent/instrumentation/coding-sh.ts
+  s_8e040dbdf13565::t_b6f7c16d2a8c4d 1-11
+packages/coding.sh/src/sinks/post.ts
+  s_8e040dbdf13565::t_2456f991bdb91a 1-65
+packages/coding.sh/src/otel/json.ts
+  s_8e040dbdf13565::t_de5281670a85db 1-251
+packages/coding.sh/test/fixtures/adapters/opencode/data/opencode/storage/part/msg_u1/prt_u1.json
+  s_8e040dbdf13565::t_a339dee5da4592 1-7
+packages/coding.sh/test/integrations/eve/task.test.ts
+  s_8e040dbdf13565::t_8a44c6358d6138 7,9,116-132,137,140-141
+  s_8e040dbdf13565::t_ebae45a55e945b 1-6,8,10-115,133-136,138-139,142-143
+apps/site/src/pages/docs/quickstart.astro
+  s_8e040dbdf13565::t_91469b5ef149bc 93-95
+  s_8e040dbdf13565::t_6c0e336bf216a8 1-4,6-38,40,43-71,73-92,96-104
+  s_8e040dbdf13565::t_b1d80ff7d1aacc 72
+  s_8e040dbdf13565::t_a2cc6971ef7249 5,39,41-42
+packages/coding.sh/src/workflows/drivers/command.ts
+  s_8e040dbdf13565::t_4736f80ddf1c37 1-64
+apps/site/src/lib/md-highlight.ts
+  s_8e040dbdf13565::t_efbcbd890f380f 17
+  s_8e040dbdf13565::t_fbe7d1b62d10d4 1-16,18-78
+packages/coding.sh/src/experiments/run.ts
+  s_8e040dbdf13565::t_87a2d224acf4d9 60-81,143,186,191
+  s_8e040dbdf13565::t_cb334a6006d4a8 1-59,82-103,105-142,144-185,187-190,192-263
+  s_8e040dbdf13565::t_edb59bffa0d974 104
+packages/coding.sh/src/cli/main.ts
+  s_8e040dbdf13565::t_2262907eb6a54f 116-118,133-141,188-197
+  s_8e040dbdf13565::t_b5a2e7be470e85 1-8,14-15,17-59,61-70,72-115,119-132,142-151,179-187,198-208,211-212,217-228,230-255,257-274,277-289,292-328
+  s_8e040dbdf13565::t_26b8fd70ff8553 60
+  s_8e040dbdf13565::t_053decfd3d4eca 174-178,213-216,256
+  s_8e040dbdf13565::t_fd42d1e645fb1a 9-13,152-173,209-210,291
+  s_8e040dbdf13565::t_38b0ce48faea15 16
+  s_8e040dbdf13565::t_7392c820678333 71,229,275-276,290
+packages/coding.sh/src/workflows/cases.ts
+  s_8e040dbdf13565::t_3e7f7a88f48bc2 1-35,39-43,45,47-113
+  s_8e040dbdf13565::t_fe4e3ddf50e2dc 36-38,44,46
+packages/coding.sh/src/toolevals/sandbox.ts
+  s_8e040dbdf13565::t_6dca16f19de8e6 1-106
+packages/coding.sh/test/fixtures/adapters/gemini-cli/hooks.spool.jsonl
+  s_8e040dbdf13565::t_24c2700e79f6ff 1-13
+packages/coding.sh/src/toolevals/surface.ts
+  s_8e040dbdf13565::t_ba8ad5eb15f104 1-151
+  s_8e040dbdf13565::t_84cd3626081924 152-157
+scripts/dogfood/score.mjs
+  s_8e040dbdf13565::t_1bef8f04d733f5 1-319
+packages/coding.sh/src/judge/checklist.ts
+  s_8e040dbdf13565::t_6a2c2f75ce40ed 1-20,22-583,586-600,608-609
+  s_8e040dbdf13565::t_f6ae77625786c1 21
+  s_8e040dbdf13565::t_acf45b72c4a4a0 584-585,601-607
+packages/coding.sh/test/eval/task.test.ts
+  s_8e040dbdf13565::t_5a222bf4823bff 3-230,234,237-238,253,255-256,260-261,265,267-268,282-283
+  s_8e040dbdf13565::t_9396f789b0c16d 1-2,231-233,235-236,239-252,254,257-259,262-264,266,269-281
+packages/coding.sh/src/server/project.ts
+  s_8e040dbdf13565::t_1f10f7e74c436b 1-44
+.github/ISSUE_TEMPLATE/agent_support.yml
+  s_8e040dbdf13565::t_b08464aa584b51 1-30
+packages/coding.sh/src/adapters/more/copilot-cli.ts
+  s_8e040dbdf13565::t_da6743dfb3d158 220,263,319-320
+  s_8e040dbdf13565::t_8094e089fba6b1 173-182
+  s_8e040dbdf13565::t_faf9089a66d33a 32,339-341,358-365,370-374
+  s_8e040dbdf13565::t_c15a40fedc2a05 135,139
+  s_8e040dbdf13565::t_c3bcdadeca4a34 1-6,9-31,33-129,131-134,136-137,140-172,183-219,221-262,266-283,300-318,321-338,342-357,366-369,375-416
+  s_8e040dbdf13565::t_aa127049c7839c 284-299
+  s_8e040dbdf13565::t_a649a926df6c45 7-8
+  s_8e040dbdf13565::t_99431476a7a1b5 264-265
+  s_8e040dbdf13565::t_533cd02642e5a6 130,138
+packages/coding.sh/src/workflows/sources/otel.ts
+  s_8e040dbdf13565::t_a347056e7b8d81 1-300
+packages/coding.sh/src/workflows/gantt.ts
+  s_8e040dbdf13565::t_02fe98a9c9c7c0 1-65
+packages/coding.sh/test/fixtures/adapters/pi/golden/backfill.golden.json
+  s_8e040dbdf13565::t_139d830fb7fb99 1-50,52-178,180-252
+  s_8e040dbdf13565::t_99e76b1b45254b 51,179
+packages/coding.sh/test/fixtures/adapters/copilot-cli/home/.copilot/session-state/cop-sess-1/events.jsonl
+  s_8e040dbdf13565::t_8094e089fba6b1 8,11
+  s_8e040dbdf13565::t_080a4e99c4eb7a 1-7,9-10,12-15
+packages/coding.sh/src/cli/commands/doctor.ts
+  s_8e040dbdf13565::t_87a2d224acf4d9 11,59
+  s_8e040dbdf13565::t_93ef7993730b8b 14,104-106,126-127,131,133
+  s_8e040dbdf13565::t_e98f511f5607c9 99-100,132,144
+  s_8e040dbdf13565::t_b11e3b24834538 1-8,13,15-58,60-68,70-78,80-98,101-103,107-113,117-118,120-125,128,134-139,145-148
+  s_8e040dbdf13565::t_5ee07decfd1caf 12,129-130
+  s_8e040dbdf13565::t_50ba9b8fda50a4 9-10,69,79,114-116,119,140-143
+examples/eve-agent/package.json
+  s_8e040dbdf13565::t_47f65c0f9a35a2 1-25
+packages/coding.sh/test/integrations/gateway/enrich.test.ts
+  s_8e040dbdf13565::t_fde3756b504493 1-98,101-209
+  s_8e040dbdf13565::t_e8fb10ed7990be 99-100
+packages/blob-s3/src/store.js
+  s_8e040dbdf13565::t_e6e94228d6860a 1-59,61-261,264-445
+  s_8e040dbdf13565::t_85dfb8516fa554 60,262-263
+packages/coding.sh/test/fixtures/adapters/copilot-cli/golden/backfill.golden.json
+  s_8e040dbdf13565::t_5c191a3714038d 131-144,176-192
+  s_8e040dbdf13565::t_9322d2df8523e7 1-130,145-175,193-271
+docs/integrations/eve.md
+  s_8e040dbdf13565::t_139a2277c481e6 1-71,73-77,81-177
+  s_8e040dbdf13565::t_07901658136009 72,78-80
+packages/coding.sh/test/core/gc.test.ts
+  s_8e040dbdf13565::t_caebd0388fba1d 1-40,42-46,79-133
+  s_8e040dbdf13565::t_40ef8ef291043f 41,47-78
+packages/coding.sh/src/judge/cache.ts
+  s_8e040dbdf13565::t_2d0f25c11eaef0 45,47,53
+  s_8e040dbdf13565::t_837ed2020c53f8 1-4,6-7,9-39,44,54-60,62,68-79,127,130
+  s_8e040dbdf13565::t_d813add2e8d937 5,8,40-43,46,48-52,61,63-67,80-126,128-129
+packages/sdk/test/ai-sdk.test.ts
+  s_8e040dbdf13565::t_db6bc017f761d1 1-24,26-53,57-71,74-117
+  s_8e040dbdf13565::t_504acfb86a9673 25
+  s_8e040dbdf13565::t_750f44b0f9fbd3 54-56,72-73
+packages/coding.sh/test/fixtures/adapters/opencode/data/opencode/storage/message/ses_v1/msg_u1.json
+  s_8e040dbdf13565::t_a339dee5da4592 1-8
+packages/coding.sh/test/helpers-eval.ts
+  s_8e040dbdf13565::t_bc13161de2fcba 326
+  s_8e040dbdf13565::t_faa376e17d05c1 1-24,26-153,155-165,169-289,296,314,318,320,331
+  s_8e040dbdf13565::t_76523b4794724a 25,154,166-168
+  s_8e040dbdf13565::t_eb29a48ad6c60d 290-295,297-313,315-317,319,321-325,327-330,332-333
+examples/eve-agent/evals/coding-sh/weather.jsonl
+  s_8e040dbdf13565::t_d05e311cf6a1a8 1-5
+packages/sdk/test/transport.test.ts
+  s_8e040dbdf13565::t_6177efbba508fc 1-14,19-148,150-164,182-201
+  s_8e040dbdf13565::t_504acfb86a9673 15-18
+  s_8e040dbdf13565::t_a39c1876a01d1d 149,165-172,174-181
+  s_8e040dbdf13565::t_ce793e18619e12 173
+packages/coding.sh/src/adapters/more/droid.ts
+  s_8e040dbdf13565::t_1e6469f999b97f 364-366
+  s_8e040dbdf13565::t_c15a40fedc2a05 138
+  s_8e040dbdf13565::t_43d5c645460def 1-134,136-137,139-155,157,163,165-308,310-319,321-363,367-369
+  s_8e040dbdf13565::t_e5ce5ed18c41df 156,158-162,164
+  s_8e040dbdf13565::t_f13c1ee7da2020 309,320
+  s_8e040dbdf13565::t_b8796d551b4131 135
+packages/coding.sh/test/fixtures/otel/vercel-ai.json
+  s_8e040dbdf13565::t_6ef858763bd3e0 1-351
+packages/coding.sh/src/adapters/more/antigravity.ts
+  s_8e040dbdf13565::t_414a4a9c7a9fcf 17-19,167-168,173,177-178,188,192,195-197,200,203-207,212-216,218
+  s_8e040dbdf13565::t_bb268943583239 27,109-115,138,144-145,149
+  s_8e040dbdf13565::t_f13c1ee7da2020 258
+  s_8e040dbdf13565::t_c8b743f89cae63 30,265-268
+  s_8e040dbdf13565::t_1a61da469d57b7 69-70,72-78,147-148,151,198-199,208-211
+  s_8e040dbdf13565::t_f7fed498f6ba68 1-16,20-26,28-29,31-68,71,79-108,116-118,120-122,124-137,139-143,146,150,152-166,169-172,174-176,179-187,189-191,193-194,201-202,217,219-257,259-264,269-302
+  s_8e040dbdf13565::t_c15a40fedc2a05 123
+  s_8e040dbdf13565::t_4762acf026b140 119
+scripts/dogfood/bench.mjs
+  s_8e040dbdf13565::t_396282658fba6f 1-366
+  s_8e040dbdf13565::t_7ea93cc8c9537b 367-380
+packages/sdk-python/pyproject.toml
+  s_8e040dbdf13565::t_42d47f1b8789b2 1-26,28-35
+  s_8e040dbdf13565::t_36a3cac10bee42 27
+docs/VIEWER-DESIGN.md
+  s_8e040dbdf13565::t_f20dd95a4e0dfb 1-2,5-7,44-46,49-51,53,59-60,63-66,68-69,72-77,81-83,86-87,92,97,101,105-110,113-115,117-118,120,122-124,128,133,136,139-142,144-146,149-151,153-158,160-164,169-172,174-183,185-188,190,192,196,198,222-224,226,228-229,232,234,236,244,246,249-255,260-261,263-279,288,290-297,300,302-311,315-317,319-326,334-336,338,340,342,345-346,369-371,373-375,381,388-390
+  s_8e040dbdf13565::t_b57ad23a1c4581 3-4,8-43,47-48,52,54-58,61-62,67,70-71,78-80,84-85,88-91,93-96,98-100,102-104,111-112,116,119,121,125-127,129-132,134-135,137-138,143,147-148,152,159,165-168,173,184,189,191,193-195,197,199-221,225,227,230-231,233,235,237-243,245,247-248,256-259,262,280-287,289,298-299,301,312-314,318,327-333,337,339,341,343-344,347-368,372,376-380,382-387,391-419
+packages/coding.sh/test/viewer/ui-browser.test.ts
+  s_8e040dbdf13565::t_71d79224c3c32e 161,165-166
+  s_8e040dbdf13565::t_f2c09807f85373 208,262,267
+  s_8e040dbdf13565::t_8cb40a6dd5bc02 196-197
+  s_8e040dbdf13565::t_49b4eff754c9d4 1-160,162-164,167-195,198-207,209-211,214-215,217-261,263-266,268-272
+  s_8e040dbdf13565::t_6353155bc07768 216
+  s_8e040dbdf13565::t_dcca260af6861d 212-213
+packages/coding.sh/src/stats/interval.ts
+  s_8e040dbdf13565::t_06c20a4bf3a2c5 1-71
+  s_8e040dbdf13565::t_2329d9f5ca97d8 72-151
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/c8e3f6cab3966fa7530e7fe12dc34934/segments/a2f7bcae200f2aaf.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/src/cli/commands/workflows.ts
+  s_8e040dbdf13565::t_388a1560ff0b6a 1-609,611,613-615,617-623,625-635
+  s_8e040dbdf13565::t_bf93d730f42cce 610,612,616,624
+packages/sdk/scripts/build.mjs
+  s_8e040dbdf13565::t_98afd47aac2be8 1,3-24
+  s_8e040dbdf13565::t_b04414082c0a06 2
+packages/coding.sh/test/mcp/toolevals/fixtures/has-task.ts
+  s_8e040dbdf13565::t_e71c18e03745cf 1-17
+packages/sdk/test/helpers/mock-llm.ts
+  s_8e040dbdf13565::t_6736beb6f28c84 1-140
+packages/coding.sh/src/toolevals/mcp/http.ts
+  s_8e040dbdf13565::t_935cda83d405a3 1-161
+apps/site/src/pages/docs/agents.astro
+  s_8e040dbdf13565::t_201f3702b57782 1-4,6,8-47,49-82,84-96,98-107,115-120
+  s_8e040dbdf13565::t_aa01835a8d3938 108-114
+  s_8e040dbdf13565::t_f4f142fa3b11f8 5,7,48,83,97,121-129
+docs/ADAPTERS.md
+  s_8e040dbdf13565::t_720cf77e3e96d9 15,17-23,28,50,52-68,121-123
+  s_8e040dbdf13565::t_6e07bd465b40c8 30,51,74-95
+  s_8e040dbdf13565::t_26f049249354b1 1-14,16,24-27,29,31-49,69-73,96-120,124-126
+packages/coding.sh/test/integrations/gateway/session-join.test.ts
+  s_8e040dbdf13565::t_e3e4c1565b77bc 94
+  s_8e040dbdf13565::t_1ed182ba9915a2 1-93,95-96
+examples/eve-agent/scripts/collector.ts
+  s_8e040dbdf13565::t_4908b3da856c2c 1-33
+packages/coding.sh/src/cli/commands/gc.ts
+  s_8e040dbdf13565::t_7e54df2f152c36 1-24
+packages/coding.sh/src/toolevals/classify.ts
+  s_8e040dbdf13565::t_c9859b4be68c28 1-164
+apps/site/src/assets/logos/codex.svg
+  s_8e040dbdf13565::t_6da9f2f37e6b30 1
+packages/coding.sh/src/toolevals/types.ts
+  s_8e040dbdf13565::t_9d15a3a5ab410c 240-241
+  s_8e040dbdf13565::t_41302d1c62eee8 1-239,242-377
+packages/coding.sh/src/stats/tests.ts
+  s_8e040dbdf13565::t_06c20a4bf3a2c5 1-59
+docs/production/README.md
+  s_8e040dbdf13565::t_8e75da0a5ff956 1-13,17-113
+  s_8e040dbdf13565::t_729f9b482aeb44 14-16
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/c8e3f6cab3966fa7530e7fe12dc34934/segments/4572ada6a1417c71.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/src/datasets/types.ts
+  s_8e040dbdf13565::t_c5d12a86292095 104-105
+  s_8e040dbdf13565::t_1b0fbe30b14baa 1-103,106-212
+packages/coding.sh/src/cli/changes.ts
+  s_8e040dbdf13565::t_4538a0a81918e5 1-60
+examples/eve-agent/evals/evals.config.ts
+  s_8e040dbdf13565::t_d05e311cf6a1a8 1-5
+packages/coding.sh/src/store/factory.ts
+  s_8e040dbdf13565::t_39c5cdb2c700d5 1-90,92-106,108-149
+  s_8e040dbdf13565::t_fc8bf206b373c0 91,107
+packages/coding.sh/test/core/spool-read.test.ts
+  s_8e040dbdf13565::t_4d557fdf1bbb11 1-104
+packages/coding.sh/src/toolevals/model/types.ts
+  s_8e040dbdf13565::t_a8ab9dc3940042 1-85
+packages/sdk-python/.gitignore
+  s_8e040dbdf13565::t_3c896040876801 1-4
+packages/coding.sh/src/cli/commands/eval.ts
+  s_8e040dbdf13565::t_7e41df386dbea9 7,31-36,38-39,47
+  s_8e040dbdf13565::t_84858f1c925d00 37
+  s_8e040dbdf13565::t_14757efc749560 57,82
+  s_8e040dbdf13565::t_d431969078b13f 1-6,8-9,11-14,17-30,40-46,48-56,58-81,83-139
+  s_8e040dbdf13565::t_0f893d670308e2 10,15-16
+packages/coding.sh/src/cli/commands/collector.ts
+  s_8e040dbdf13565::t_7e54df2f152c36 1-3,5-20,22-51
+  s_8e040dbdf13565::t_87a2d224acf4d9 4,21
+packages/coding.sh/src/toolevals/compare.ts
+  s_8e040dbdf13565::t_bd3d0e14512b82 1-292
+apps/site/src/data/sample.ts
+  s_8e040dbdf13565::t_308a4937ecb54c 106,114-118,127,137,147,157-163,172,182-185
+  s_8e040dbdf13565::t_80e9f5daab99ef 1-50,52-58,60-61,63-65,67-68,70,72-73,75-76,78-79,81-86,88-93,95-96,98-103,105,107-111,113,119-124,126,128-131,133,135,139-144,146,148-152,154,156,164-171,173-181,186-227
+  s_8e040dbdf13565::t_7be3cd471cbb48 87,94,97,125,132,134,136,138
+  s_8e040dbdf13565::t_b5c9f520862e58 51,59,62,66,69,71,74,77,80,104,112,145,153,155
+packages/coding.sh/src/viewer/ui/index.html
+  s_8e040dbdf13565::t_59eadb560fd548 1-103,113-154,156-174,176-180,183-211,224-237,239-244,251-259,265,267-277,285-343,345-350,352-356,359-364,366-367,369-382,384-430,432-444,448-498,502-503,505,507,512-579,581-595,597-598,601-607,612,636-656,658-660,662-692,694-701,704-707,709-718,720,722-728,731-750,753-758,763-766,768-771,774,783,785-789,797-805,826-830,833,840-842,845-848,850-855,857-862,868-870,886-888,891,893-895,897,901-905,908-918,920-921,923,925-930,961-1034,1046-1061,1064-1081,1091-1134,1149,1158,1161-1172,1174-1183,1186,1188,1190,1192,1195-1235,1240-1246,1248-1249,1251-1258,1265,1267-1270,1272-1273,1275-1277,1308-1309,1318-1320,1322-1332,1334,1338-1346,1349-1350,1352-1379,1381-1389,1392-1398,1404-1411,1413-1416,1423-1549,1560-1562,1566-1607,1636-1639,1641,1643-1674,1676-1728,1730-1748,1770-1772,1774-1776
+  s_8e040dbdf13565::t_1bf10e816821ee 212
+  s_8e040dbdf13565::t_fd0085a22b732e 266,729,889,1082-1087,1089,1642
+  s_8e040dbdf13565::t_6be92f56d57c84 445-447,499-501,504,506,508-511,580
+  s_8e040dbdf13565::t_fb677c3ac84dab 104-112,175,351,365,383,1144,1147,1749-1762,1764-1769,1773
+  s_8e040dbdf13565::t_99da90f4a27198 155,260-261,263-264,431,1417-1420,1675,1729
+  s_8e040dbdf13565::t_181746bf9ecbe5 181-182,213-223,238,245-250,262,278-280,282-284,344,357-358,368
+  s_8e040dbdf13565::t_476d5fea2e26a1 596,599-600,608-611,613-635,657,661,693,702-703,708,719,721,730,806-825,831-832,834-839,843-844,849
+  s_8e040dbdf13565::t_ed254b2c5b1d58 767,924
+  s_8e040dbdf13565::t_71d79224c3c32e 281,1282,1284
+  s_8e040dbdf13565::t_4fb85c232ccee0 896
+  s_8e040dbdf13565::t_b73e3eb66573a1 1062-1063
+  s_8e040dbdf13565::t_440d3421d5ea90 856,863-867,871-885,890,892,898-900,906-907,919,922,931-960,1035-1045
+  s_8e040dbdf13565::t_4fbc45cd4f7729 751-752,759-762,772-773,775-782,784,790-796
+  s_8e040dbdf13565::t_06619868e99993 1238,1247,1280-1281,1283,1311,1550-1559,1563-1565,1608-1635,1640
+  s_8e040dbdf13565::t_384ddb0773107e 1088,1090,1135-1143,1145-1146,1148,1150-1157,1159-1160,1173,1184-1185,1187,1189,1191,1193-1194,1236-1237,1239,1250,1259-1264,1266,1271,1274,1278-1279,1285-1307,1310,1312-1317,1321,1333,1335-1337,1347-1348,1351,1380,1390-1391,1399-1403,1412,1421-1422,1763
+packages/coding.sh/test/fixtures/adapters/opencode/data/opencode/storage/session/prj_1/ses_v1c.json
+  s_8e040dbdf13565::t_a339dee5da4592 1-12
+packages/coding.sh/src/cli/commands/gateway.ts
+  s_8e040dbdf13565::t_2d0a14e11e533f 1-84
+packages/coding.sh/src/capture/wrapper.ts
+  s_8e040dbdf13565::t_3fba1d66794f51 31,116-117,121
+  s_8e040dbdf13565::t_832c565e9e51dc 1-2,5-30,32-46,52-61,64-114,118-120,122-175
+  s_8e040dbdf13565::t_00c063a5abe5f2 3-4,47-51,62-63
+  s_8e040dbdf13565::t_2ea0408fcb36b9 115
+packages/store-postgres/scripts/build.mjs
+  s_8e040dbdf13565::t_ee094021138169 1-21,24-27
+  s_8e040dbdf13565::t_651c70c9bf8b7b 22-23
+packages/coding.sh/test/integrations/gateway/route.test.ts
+  s_8e040dbdf13565::t_86e23a2d28cd7e 1-49,51-129
+  s_8e040dbdf13565::t_4f541f721c82c0 50
+packages/coding.sh/test/fixtures/adapters/wrapper/golden/wrapper.golden.json
+  s_8e040dbdf13565::t_1de8818c19f5e8 1-139
+packages/coding.sh/test/fixtures/adapters/claude-code/golden/hooks.golden.json
+  s_8e040dbdf13565::t_78a50841d2d1ca 219-222
+  s_8e040dbdf13565::t_02e8f6749b730c 75-76,173-174
+  s_8e040dbdf13565::t_f0fb431e7715ff 1-74,77-172,175-218,223-590
+packages/coding.sh/src/update/semver.ts
+  s_8e040dbdf13565::t_6ee677ab778963 1-64
+packages/coding.sh/src/cli/commands/ingest.ts
+  s_8e040dbdf13565::t_47c351c6429683 7,22
+  s_8e040dbdf13565::t_7e54df2f152c36 6,8-16,18,31-58
+  s_8e040dbdf13565::t_d539550dae3ed8 1-5,17,19-21,23-30
+packages/coding.sh/src/experiments/compare.ts
+  s_8e040dbdf13565::t_b662bedca68c36 1-4,7,9-73,81-82,94-106,108-144,150-160,162,167,173-177
+  s_8e040dbdf13565::t_e0000c22453eab 161
+  s_8e040dbdf13565::t_1ab082152affd3 8,74-80,83-93,107,163-164,166,168-172
+  s_8e040dbdf13565::t_73c94c3462f9d6 5-6,145-149,165
+packages/coding.sh/src/toolevals/validate.ts
+  s_8e040dbdf13565::t_7806786d223e55 1-130
+packages/coding.sh/test/workflows/store-import.test.ts
+  s_8e040dbdf13565::t_94e7b6cf4cea23 1-125
+apps/site/src/components/Wordmark.astro
+  s_8e040dbdf13565::t_8e90246be0ae7b 2-37,40-51,55-56
+  s_8e040dbdf13565::t_bac654ce935d24 39,53-54,57-58
+  s_8e040dbdf13565::t_c9927716cfc891 1,38,52
+packages/coding.sh/test/fixtures/adapters/gemini-cli/home/.gemini/tmp/legacy/chats/session-2025-01-01T00-00-legacy01.json
+  s_8e040dbdf13565::t_24c2700e79f6ff 1
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/d229f0531a25ff4a05cd62e457df671b/segments/d7e0c9c5bbaa01e3.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+apps/site/src/pages/skill.md.ts
+  s_8e040dbdf13565::t_7b10e289f2fd96 1-6
+packages/coding.sh/test/fixtures/adapters/copilot-cli/golden/hooks.golden.json
+  s_8e040dbdf13565::t_5c191a3714038d 164,166,168,170,179-181,183,186,189
+  s_8e040dbdf13565::t_9322d2df8523e7 1-43,45-61,63-75,78-87,89-106,108-121,124-133,135-150,152-163,165,167,169,171-178,182,184-185,187-188,190-226,228-245,247-259,262-293
+  s_8e040dbdf13565::t_49714da2339132 44,62,76-77,88,107,122-123,134,151,227,246,260-261
+packages/coding.sh/test/update/command.test.ts
+  s_8e040dbdf13565::t_cbf458cafa5734 101,107
+  s_8e040dbdf13565::t_bd107d7cb17be3 1-99,110-112,114-139
+  s_8e040dbdf13565::t_a1d3315fd5b998 100,102-106,108-109,113
+apps/site/src/pages/404.astro
+  s_8e040dbdf13565::t_89616fc37dc309 1-6,8-44
+  s_8e040dbdf13565::t_d6b9c7dab4fafb 7
+apps/site/src/lib/schema.ts
+  s_8e040dbdf13565::t_b123762e61a713 3,30,34-35,39-59
+  s_8e040dbdf13565::t_21dadc6572d307 1-2,4-29,31-33,36-38,60-61
+packages/coding.sh/test/fixtures/adapters/goose/golden/hooks.golden.json
+  s_8e040dbdf13565::t_ded3b515acad97 1-127
+packages/coding.sh/test/core/ids.test.ts
+  s_8e040dbdf13565::t_54b88ac4ff13a1 1-39,43-44
+  s_8e040dbdf13565::t_66037f02c475af 40-42
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/6bc849d232dcc16384f706590d8c5d34/segments/c45d079f63b47dc7.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/test/otel/map.test.ts
+  s_8e040dbdf13565::t_fc12452ba7a12d 1-5,8-43,46-78,80-108,110-149,153-156,162-163,168-169,171-173,175-184,186,189-192,288-333,335-393,395-590
+  s_8e040dbdf13565::t_051ec2425cb43c 44-45,79,109,157-161,164-167,170,174,195-207,209-210
+  s_8e040dbdf13565::t_2d6161456d591e 334
+  s_8e040dbdf13565::t_36ad7d2e1a9114 185,187-188,394
+  s_8e040dbdf13565::t_8b4207dfda5109 150-152,193-194,208,212-287
+  s_8e040dbdf13565::t_0fe70fa1424bf9 211
+  s_8e040dbdf13565::t_edb5a0a1428a8e 6-7
+packages/coding.sh/src/spool/write.ts
+  s_8e040dbdf13565::t_976bc850f5e7ae 1-139
+packages/coding.sh/src/cli/commands/mcp.ts
+  s_8e040dbdf13565::t_e6feb54a738fdd 1-9,12-15,17-19,22-30,33-34
+  s_8e040dbdf13565::t_df496d51ca5e57 10-11
+  s_8e040dbdf13565::t_537925de2cec7a 16,20-21
+  s_8e040dbdf13565::t_27bc466c837f6b 31-32
+packages/coding.sh/test/mcp/toolevals/fixtures/call.mjs
+  s_8e040dbdf13565::t_e71c18e03745cf 1-40
+apps/site/src/pages/changelog.astro
+  s_8e040dbdf13565::t_80431c06daa369 11
+  s_8e040dbdf13565::t_8452ef9d4f46c9 16
+  s_8e040dbdf13565::t_d480677029fe40 21
+  s_8e040dbdf13565::t_f9729a0934a6d3 1-10,12-15,17-20,22-190
+packages/coding.sh/src/cli/commands/usage.ts
+  s_8e040dbdf13565::t_2beafec255f0f8 1-45
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/c8e3f6cab3966fa7530e7fe12dc34934/segments/d97c6b2d518a7935.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/blob-s3/tsconfig.json
+  s_8e040dbdf13565::t_f6b1c608b9d695 1-15
+packages/coding.sh/test/fixtures/adapters/pi/golden/extension.golden.json
+  s_8e040dbdf13565::t_139d830fb7fb99 1-132,134-215
+  s_8e040dbdf13565::t_99e76b1b45254b 133
+scripts/dogfood/tap.mjs
+  s_8e040dbdf13565::t_15e89f6600a8ca 1-61
+apps/site/package.json
+  s_8e040dbdf13565::t_b0995baa25bc86 1-11,14-25
+  s_8e040dbdf13565::t_888aa5440b90f2 12-13
+docs/research/round-1-papers.md
+  s_8e040dbdf13565::t_a524a23eb8b408 1-278
+scripts/dogfood/conformance.mjs
+  s_8e040dbdf13565::t_e1fe16b363ac31 1-90
+packages/coding.sh/test/toolevals/mcp.test.ts
+  s_8e040dbdf13565::t_fe812cc5398620 1-206
+packages/coding.sh/src/adapters/more/amp.ts
+  s_8e040dbdf13565::t_91840f4355c824 95
+  s_8e040dbdf13565::t_472dcd2fe584f2 1-37,39-54,57-68,72,74-94,96-149,152,154-157,159-177,182,184-247,249-300
+  s_8e040dbdf13565::t_e5ce5ed18c41df 55,178-181,183
+  s_8e040dbdf13565::t_d06832b227e54e 150-151
+  s_8e040dbdf13565::t_1035cdec88bc5a 38
+  s_8e040dbdf13565::t_390aa745424012 69-71,73,248
+  s_8e040dbdf13565::t_c15a40fedc2a05 158
+  s_8e040dbdf13565::t_71afdcfce2d9d8 56
+  s_8e040dbdf13565::t_fcbb94a6ec2690 153
+packages/coding.sh/test/runner/bundle.test.ts
+  s_8e040dbdf13565::t_a3b0eb2edd3ea3 1-146
+packages/coding.sh/test/fixtures/adapters/codex/home/sessions/2026/11/01/rollout-2026-11-01T09-00-00-0193cccc-1111-7222-8333-444455556666.jsonl
+  s_8e040dbdf13565::t_6d661be1ddb2bf 1-12
+packages/coding.sh/test/experiments/run.test.ts
+  s_8e040dbdf13565::t_fdead7ee15f0b9 159,162
+  s_8e040dbdf13565::t_187a41772db393 1,3-12,16-158,160-161,163-215,257-357,359-363,420-421
+  s_8e040dbdf13565::t_582f06af59898e 2,13-15,216-256,364-419
+  s_8e040dbdf13565::t_be8b5803e974b0 358
+packages/coding.sh/src/integrations/eve/map.ts
+  s_8e040dbdf13565::t_f4ba102e9805fd 1-120,129-176,181,188-264,270-314
+  s_8e040dbdf13565::t_0f49ac86665034 265-269
+  s_8e040dbdf13565::t_0a522781d0e9b6 121-128,177-180,182-187
+apps/site/src/components/docs/DocsLayout.astro
+  s_8e040dbdf13565::t_8452ef9d4f46c9 23,27,35
+  s_8e040dbdf13565::t_cb80c2b6238c2f 28-32,91,119-134
+  s_8e040dbdf13565::t_f10409a191c253 486-487,489,492,499-501
+  s_8e040dbdf13565::t_5c7dc94f90f63f 1-22,33-34,36-90,92-118,135-485,488,490-491,493-498,502-511
+  s_8e040dbdf13565::t_c9a87f769a9e61 24-26
+packages/coding.sh/src/workflows/experiment.ts
+  s_8e040dbdf13565::t_a1116f0088a207 1-373
+packages/coding.sh/src/toolevals/model/sse.ts
+  s_8e040dbdf13565::t_66708e2555a248 1-80
+apps/site/src/components/CubeField.astro
+  s_8e040dbdf13565::t_7ac29d641dbab8 1-2,14-15,17-33,36-37,40-51,53-107,112-131,176-178,184-186,193-198,200-202,204-207
+  s_8e040dbdf13565::t_ce3e6d27243619 3-5,9-13,34-35,38,136,150-171,191
+  s_8e040dbdf13565::t_e564156955c334 6-8,16,39,109-111
+  s_8e040dbdf13565::t_12a1174c87488e 52,108,132-135,137-149,172-175,179-183,187-190,192,199,203
+packages/coding.sh/src/otel/receiver.ts
+  s_8e040dbdf13565::t_27fb2f15dab95a 500-503
+  s_8e040dbdf13565::t_9919c5a01ea994 1-56,66-126,130-169,177-192,194-205,207-211,213-214,218-220,222-233,235-258,260-285,325,327-328,330,332-333,335,348-349,353-354,356,437-438,440-452,454-455,457-489,496-499,504-516,520-534,558,568,602-634
+  s_8e040dbdf13565::t_673913d015cbc6 336-344,346-347,352
+  s_8e040dbdf13565::t_233e1fddc202c7 57-65
+  s_8e040dbdf13565::t_9924e5a156ad6c 127,170,175-176
+  s_8e040dbdf13565::t_65e51b7044ae0d 331
+  s_8e040dbdf13565::t_52d17d2ac26b77 171-174
+  s_8e040dbdf13565::t_2e2dc3f9437a54 128,286-288,334
+  s_8e040dbdf13565::t_f9d86b02de8760 193,206,212,215-217,221,234,259,289-324,326,329,345,350-351,355,357-436,439,453,456,490-495,517-519,535-557,559-567,569-601
+  s_8e040dbdf13565::t_524a870eced2cb 129
+packages/coding.sh/test/toolevals/compress.test.ts
+  s_8e040dbdf13565::t_a6ea02f0630dbb 1-131
+packages/coding.sh/src/cli/commands/ui.ts
+  s_8e040dbdf13565::t_7e54df2f152c36 1-3,5-9,11-40
+  s_8e040dbdf13565::t_87a2d224acf4d9 4,10
+apps/site/src/lib/agent-routes.mjs
+  s_8e040dbdf13565::t_bcc724da4f0df4 4
+  s_8e040dbdf13565::t_d6b9c7dab4fafb 3
+  s_8e040dbdf13565::t_ea81003ac030de 1-2,5-6
+apps/site/src/lib/copy.ts
+  s_8e040dbdf13565::t_949c7f3ecd2a67 1-31
+packages/coding.sh/src/adapters/index.ts
+  s_8e040dbdf13565::t_7ed2a83fe97884 1-8,10-15,17-39
+  s_8e040dbdf13565::t_ac66adb3e4caf0 9,16,40
+packages/coding.sh/src/toolevals/model/loop.ts
+  s_8e040dbdf13565::t_4d5e629a62ea98 1-189
+apps/site/src/lib/logos.ts
+  s_8e040dbdf13565::t_ef43032241a3f3 9
+  s_8e040dbdf13565::t_13ada27896d25d 1-8,10-21
+.github/workflows/ci.yml
+  s_8e040dbdf13565::t_c0d23c7d0b0d5a 1-18,23-76
+  s_8e040dbdf13565::t_2bebd165ef92ba 19-22
+apps/site/src/components/docs/agents.ts
+  s_8e040dbdf13565::t_aeacff10b628da 60-64,66-68
+  s_8e040dbdf13565::t_f6a7329d21ab21 65
+  s_8e040dbdf13565::t_692f38a37a464a 1-59,69-149
+apps/site/src/data/experiments.ts
+  s_8e040dbdf13565::t_537be5945e82d1 1-87
+packages/store-postgres/test/helpers.ts
+  s_8e040dbdf13565::t_4d287c00396116 1-13
+packages/coding.sh/src/datasets/dataset.ts
+  s_8e040dbdf13565::t_430e82d5d676f3 1-422
+packages/coding.sh/src/workflows/sources/otel-frameworks.ts
+  s_8e040dbdf13565::t_6dbefa8dea3fdf 1-132
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_c48df0e0516d69 6,464
+  s_8e040dbdf13565::t_7392c820678333 35-38,131-176
+  s_8e040dbdf13565::t_7e41df386dbea9 268,274
+  s_8e040dbdf13565::t_ebfaf4eb8f549b 1-5,7-34,39-60,63-69,72,78-101,103-104,106-130,177-180,182-197,199,201-216,218-221,235-243,245,255-267,269-273,275-278,280-295,297-317,319-320,322-358,361-374,376-386,463,465-498,500-501,503-506,536-559,572-583
+  s_8e040dbdf13565::t_63513c7d9d493b 222-234
+  s_8e040dbdf13565::t_20026162887648 279,296
+  s_8e040dbdf13565::t_774d07f76c221d 499,502
+  s_8e040dbdf13565::t_f6b1c608b9d695 507-535
+  s_8e040dbdf13565::t_297f25e4aaf8dc 569
+  s_8e040dbdf13565::t_d539550dae3ed8 102,105,387-462
+  s_8e040dbdf13565::t_63a946e8819282 318,321
+  s_8e040dbdf13565::t_040a9fbb7cfd6f 70-71,73-77,181,244,246-254,560-568,570-571
+  s_8e040dbdf13565::t_c2ee28fdddc3e9 359-360,375
+  s_8e040dbdf13565::t_1df2142ec799ae 61-62,198,200,217
+packages/coding.sh/test/runner/integration.test.ts
+  s_8e040dbdf13565::t_2b0855134c87bc 104
+  s_8e040dbdf13565::t_66d31c2cd97d95 1-103,105-106
+packages/sdk-python/src/coding_sh/__init__.py
+  s_8e040dbdf13565::t_fa00daef462232 1-33
+docs/PRODUCTION.md
+  s_8e040dbdf13565::t_87eafd50a3a816 399-401
+  s_8e040dbdf13565::t_2e205050eea13f 46-47
+  s_8e040dbdf13565::t_dc6c2851accabc 470-483
+  s_8e040dbdf13565::t_8c4411ab848108 302-306,308-309,319-322,327,334,338,340-343
+  s_8e040dbdf13565::t_c4db210fd827aa 39,58,70,260
+  s_8e040dbdf13565::t_e38610ff905c36 296-297,509-510,517-519,533-535,537,539-542
+  s_8e040dbdf13565::t_4815010095aeaa 1-38,40-45,48-57,59-69,71-259,261-295,298-301,307,310-318,323-326,328-333,335-337,339,344-358,362-365,373,377-398,402-432,439-469,484-508,511-516,520-521,524-532,536,538,543-597,599-611,616-659,662,665-672,674-705,707-747
+  s_8e040dbdf13565::t_6cbc12bf5e0b52 598
+  s_8e040dbdf13565::t_98f4c4d448293d 615,673,706
+  s_8e040dbdf13565::t_d508bcd124d37b 359-361,366-372,374-376,433-438,522-523,612-614,660-661,663-664
+packages/coding.sh/src/otel/proto.ts
+  s_8e040dbdf13565::t_557bb5bc877581 59,63-64
+  s_8e040dbdf13565::t_9906411303708a 1-58,60-62,65-373,375-376,378,380-382,384-450,452-453,455,457-459,461-572
+  s_8e040dbdf13565::t_0b4c1b3732ffc2 374,377,379,383,451,454,456,460
+packages/coding.sh/src/store/sqlite.ts
+  s_8e040dbdf13565::t_d0acd6028edbbc 68-69
+  s_8e040dbdf13565::t_ce5c9d85e2085b 1-5,8-9,11-21,35-61,64-65,70-78,84-104,107-108,110,112-127,131-135,137-189,278-304,310-317,320-337,341-351,355-425,427-443,447-454,457,460-462,464-482,484-507,511-514,517,521-532,535-643,680,743-760,832-837
+  s_8e040dbdf13565::t_70234b41dd10cf 761-831
+  s_8e040dbdf13565::t_9ee7955ddc65c3 23-24,190-228,249-250,267,276-277,318,353,515,644-679,681-742
+  s_8e040dbdf13565::t_610f9221aeab97 338-340,518
+  s_8e040dbdf13565::t_ffc7f2af6fe189 79-83,105-106,128-130,136,305-309,352,444,455-456,508,519,533-534
+  s_8e040dbdf13565::t_87c99ae0a08170 109,111
+  s_8e040dbdf13565::t_87a2d224acf4d9 25-34,62-63,66-67,229-242,244-248,251-266,268,271,426,458,463
+  s_8e040dbdf13565::t_24595539541e51 6-7,10,22,243,269-270,272-275,319,354,445-446,459,483,509-510,516,520
+.github/ISSUE_TEMPLATE/feature_request.yml
+  s_8e040dbdf13565::t_b08464aa584b51 1-21
+packages/coding.sh/test/otel/decode.test.ts
+  s_8e040dbdf13565::t_21f21f2d92ca9a 1-170
+apps/site/src/components/ViewToggle.astro
+  s_8e040dbdf13565::t_32d08a7bb344a2 1,6-59,63-64,67-75,77-85,115-118,121-127,131-134,138,141-145,168-201,207-349,351-359,361-362,364-391,393-401,405,409-415,419-422,426-430,434-439,442-500
+  s_8e040dbdf13565::t_3c59ad7480a80b 65-66,350,392,406,417,425,433,441
+  s_8e040dbdf13565::t_09694bcf71bf24 423-424
+  s_8e040dbdf13565::t_6fa99d61d42930 60-62
+  s_8e040dbdf13565::t_9d0674579e8a34 2-5,76,86-114,119-120,135-137,139-140,146-154,157-167,202-206,360,363,402-404,407-408,416,418
+  s_8e040dbdf13565::t_1f51b9a1335181 128-130,431-432,440
+  s_8e040dbdf13565::t_289ebcdb17054b 155-156
+packages/coding.sh/test/judge/judge.test.ts
+  s_8e040dbdf13565::t_0c3212682cc0c6 364-407
+  s_8e040dbdf13565::t_48d47a6120035e 1-70,73-363
+  s_8e040dbdf13565::t_1d6b6800a1de81 71-72
+packages/coding.sh/src/eval/impossible.ts
+  s_8e040dbdf13565::t_618be00fe8db7a 81-85,107-108,124-126
+  s_8e040dbdf13565::t_e0b0b435f60a8a 1-80,86-106,109-123,127-153
+packages/coding.sh/test/integrations/gateway/_mock.ts
+  s_8e040dbdf13565::t_f2d5d4f2e91567 1-66
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_5d84eced29e68c 23-24,152-153,166,168-169,252
+  s_8e040dbdf13565::t_b7f133a35969e0 176-177
+  s_8e040dbdf13565::t_2e205050eea13f 256-257
+  s_8e040dbdf13565::t_6c0313bb8a8f75 103-105,170
+  s_8e040dbdf13565::t_0e44ab24f72abd 4,12-13,16-21,154-156,163-164,360
+  s_8e040dbdf13565::t_2fee8579360fdd 117-124,158-161,165,214,238
+  s_8e040dbdf13565::t_63635de242e749 5,232-233,255,259-296,299-348
+  s_8e040dbdf13565::t_62e76d984e7dd7 73-102,106,144,167,179-182,184-186,188,242-251,297-298
+  s_8e040dbdf13565::t_3695d64b3cd382 1-3,6-11,14-15,22,25-72,107-116,125-143,145-151,157,162,171-175,178,183,187,189-213,215-231,234-237,239-241,253-254,258,349-359,361-428
+packages/coding.sh/test/update/semver.test.ts
+  s_8e040dbdf13565::t_e0eabb3153f4f3 1-35
+packages/coding.sh/src/core/context.ts
+  s_8e040dbdf13565::t_679e8e20b05eda 1-6,9-15,28-43,45-46,48-50,66-74
+  s_8e040dbdf13565::t_ce41e5ee0c2a9f 7-8,22-27,44,47,52-65
+  s_8e040dbdf13565::t_621e662855a490 16-21,51
+packages/coding.sh/test/adapters/more/gemini-cli.test.ts
+  s_8e040dbdf13565::t_ec103d5725a4c9 1-66,68-70,75-144,146-150
+  s_8e040dbdf13565::t_0451933fb04396 71,73
+  s_8e040dbdf13565::t_99e76b1b45254b 67,72,74
+  s_8e040dbdf13565::t_6d17df15f0efdc 145
+packages/coding.sh/test/adapters/more/pi.test.ts
+  s_8e040dbdf13565::t_305363521e7c5c 8,69-84
+  s_8e040dbdf13565::t_139d830fb7fb99 1-7,9-17,19-51,53-68,85-151,153-157
+  s_8e040dbdf13565::t_99e76b1b45254b 18,52
+  s_8e040dbdf13565::t_5a8dc224eed6e8 152
+apps/site/src/components/docs/cli-help.ts
+  s_8e040dbdf13565::t_461738b39d8ef2 1-3,15-16,19-23,28-29,31-44,59-62,68,109-117,119-122,124-126
+  s_8e040dbdf13565::t_72b4230915fb06 4-14,17-18,24-27,30,45-58,63-67,69-72,94-108,127,129-132
+  s_8e040dbdf13565::t_f10409a191c253 73-93,118,123,128
+packages/coding.sh/src/toolevals/tap/cli.ts
+  s_8e040dbdf13565::t_ef58c6a1f793d9 1-114
+  s_8e040dbdf13565::t_4e16a709f15dd1 115-127
+packages/coding.sh/test/adapters/install-restore.test.ts
+  s_8e040dbdf13565::t_66921ac0e2851f 1-100
+packages/coding.sh/src/toolevals/checks.ts
+  s_8e040dbdf13565::t_33a48f66b6b830 1-171
+docs/research/vercel-nov-2026.md
+  s_8e040dbdf13565::t_47b7d6237408fc 1-58
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/d229f0531a25ff4a05cd62e457df671b/segments/6e3a972b110c88cf.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/test/adapters/opencode.test.ts
+  s_8e040dbdf13565::t_56487b6563242a 180
+  s_8e040dbdf13565::t_86abed1631a998 39,81
+  s_8e040dbdf13565::t_60a736f30f54e4 1-38,40-80,82-179,181-234
+packages/coding.sh/src/workflows/drivers/claude-workflow.ts
+  s_8e040dbdf13565::t_86723a1e8aa596 1-80
+packages/sdk-python/tests/test_transport.py
+  s_8e040dbdf13565::t_94bacdc4156588 1-203
+packages/coding.sh/src/graders/json-path.ts
+  s_8e040dbdf13565::t_e2867642b61c30 1-103
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/6bc849d232dcc16384f706590d8c5d34/segments/81289314eaca0f0b.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+apps/site/astro.config.mjs
+  s_8e040dbdf13565::t_f0fb431e7715ff 23-25
+  s_8e040dbdf13565::t_e1f66e4cd3416b 18-20
+  s_8e040dbdf13565::t_c55b41c00172fe 1-17,21-22,26-27
+packages/coding.sh/test/mcp/server.test.ts
+  s_8e040dbdf13565::t_4d9fef6d33d9c9 1-332,334-389
+  s_8e040dbdf13565::t_1d53d24c9b79bd 333
+packages/coding.sh/src/judge/render.ts
+  s_8e040dbdf13565::t_cacab24df359af 1-83
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/d229f0531a25ff4a05cd62e457df671b/segments/ee029227d44a6e1f.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+apps/site/src/pages/docs/otel.astro
+  s_8e040dbdf13565::t_921fe8bdd8c41c 137
+  s_8e040dbdf13565::t_5a2fdfd84f5ec1 1-136,138-213
+packages/coding.sh/src/cli/commands/toolevals.ts
+  s_8e040dbdf13565::t_94d4021eeb9a6e 1-5,7-12,14-308,320,322,324-354,356-473,475-568
+  s_8e040dbdf13565::t_87a2d224acf4d9 314,355
+  s_8e040dbdf13565::t_114f13b76c6612 6,13,309-313,315-319,321,323,474
+packages/coding.sh/src/datasets/hash.ts
+  s_8e040dbdf13565::t_6fa8f97a70ac06 1-63
+packages/coding.sh/test/update/update.test.ts
+  s_8e040dbdf13565::t_cbf458cafa5734 85
+  s_8e040dbdf13565::t_9b232f255be370 1-77,79,102,104-140,144-313
+  s_8e040dbdf13565::t_731fa54940b136 141-143
+  s_8e040dbdf13565::t_b04fb9921f70e1 78,80-84,86-101,103
+packages/coding.sh/test/workflows/cli.test.ts
+  s_8e040dbdf13565::t_4ca4ca1fbbd128 1-106,108,110-208,210-263
+  s_8e040dbdf13565::t_5ae51d47e26813 107,109,209
+packages/coding.sh/src/toolevals/tap/mcp-proxy.ts
+  s_8e040dbdf13565::t_1fd60ea70c87e5 1-441
+packages/coding.sh/src/adapters/_shared/heuristics.ts
+  s_8e040dbdf13565::t_35a93d648ad217 186-192,195-266,268-314,316-320
+  s_8e040dbdf13565::t_977aa08fde6269 267,315
+  s_8e040dbdf13565::t_7df06da94a8ed4 142-155
+  s_8e040dbdf13565::t_e75a02be1b6c75 1-124,127-141,156-185
+  s_8e040dbdf13565::t_1b25aa8de28961 125-126,193-194
+packages/coding.sh/src/runner/git.ts
+  s_8e040dbdf13565::t_76523b4794724a 25-26,96-105,107,110-114
+  s_8e040dbdf13565::t_668857cc90c22b 1-24,27-42,55-59,61-95,106,108-109,115
+  s_8e040dbdf13565::t_a9a09c2dbdde64 43-54,60
+apps/site/src/assets/logos/claude-code.svg
+  s_8e040dbdf13565::t_6da9f2f37e6b30 1
+packages/coding.sh/test/eval/judge.test.ts
+  s_8e040dbdf13565::t_7220a4732cf2a8 1-54,56-65,67-117
+  s_8e040dbdf13565::t_7b4e6b99f5aa63 55,66
+packages/sdk-python/src/coding_sh/_trace.py
+  s_8e040dbdf13565::t_ed5789b8606b7d 214,216-219,221-222,227-233,235,247-248,333,471,486
+  s_8e040dbdf13565::t_680e5e7200cd25 122-128,130-137,279,310-311
+  s_8e040dbdf13565::t_23c7400f8a7e2b 1-121,129,138-213,215,220,223-226,234,236-246,249-269,273-278,280-288,291-309,312-332,334-437,439-441,443-452,454-470,472-485,487,489-496,498-499,503-504,507-641
+  s_8e040dbdf13565::t_f6b1c608b9d695 270-272,289-290,497,500-502,505-506
+  s_8e040dbdf13565::t_f1711dcc7dbc92 438,442,453,488
+packages/coding.sh/src/core/offload.ts
+  s_8e040dbdf13565::t_1f10f7e74c436b 1-36
+examples/eve-agent/evals/coding-sh/graders.json
+  s_8e040dbdf13565::t_d05e311cf6a1a8 1-7
+packages/coding.sh/test/fixtures/adapters/antigravity/hooks.spool.jsonl
+  s_8e040dbdf13565::t_c76a8adc67fba6 6
+  s_8e040dbdf13565::t_74191da3669e67 1-5,7
+packages/coding.sh/test/adapters/more/amp.test.ts
+  s_8e040dbdf13565::t_305363521e7c5c 60-75
+  s_8e040dbdf13565::t_6cb7657a526ffe 1-26,29-59,76-97,100-129
+  s_8e040dbdf13565::t_0276ba197d4f63 27-28
+  s_8e040dbdf13565::t_fed8b915b647a8 98-99
+packages/coding.sh/src/cli/commands/update.ts
+  s_8e040dbdf13565::t_d1998254e61f6e 1-59,76-92,94-164
+  s_8e040dbdf13565::t_f67473f793a88c 66,71
+  s_8e040dbdf13565::t_b24c36a9384710 65,67,69-70,72-73
+  s_8e040dbdf13565::t_a0ba5cf8ea4146 63-64
+  s_8e040dbdf13565::t_4ad2c28e04b405 60-62,68,74-75,93
+packages/coding.sh/src/runner/fsutil.ts
+  s_8e040dbdf13565::t_fe230f5963f402 3
+  s_8e040dbdf13565::t_668857cc90c22b 1-2,4-55
+packages/sdk/src/ai-sdk.ts
+  s_8e040dbdf13565::t_0c34dc1479166b 1-100,105-106,112-230
+  s_8e040dbdf13565::t_fd892d05629881 101-104,107-111
+packages/coding.sh/src/toolevals/tap/http-proxy.ts
+  s_8e040dbdf13565::t_1a881d29db26b8 1-19,21-131
+  s_8e040dbdf13565::t_c6c25cfa44922b 20
+apps/site/src/pages/docs/trace-format.astro
+  s_8e040dbdf13565::t_064b8d0d5bf76f 1-64,66-130
+  s_8e040dbdf13565::t_d8e3ee10580e0b 65
+packages/coding.sh/src/adapters/_shared/run.ts
+  s_8e040dbdf13565::t_7594e10ff13fae 1-124
+packages/sdk/src/observe.ts
+  s_8e040dbdf13565::t_cf2ba6441a77bf 1-101,103-228
+  s_8e040dbdf13565::t_fd892d05629881 102
+packages/coding.sh/test/fixtures/adapters/gemini-cli/home/.gemini/tmp/demo/.project_root
+  s_8e040dbdf13565::t_24c2700e79f6ff 1
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/d229f0531a25ff4a05cd62e457df671b/segments/4d1806b28908f1be.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+apps/site/src/components/TaskDeltas.astro
+  s_8e040dbdf13565::t_6d19089e712e4c 85
+  s_8e040dbdf13565::t_bc0560d9413d6d 264,267-270
+  s_8e040dbdf13565::t_c5c07cfc4d5cbc 3-8,20-23,26,35-39,41,44,47,49,53,99,107-108,116,125-126,149,153,157,165,167-173,183,187,196-224,228,234,242-258,263,265-266,271-273,275,277-278,281-291,293
+  s_8e040dbdf13565::t_d4a4dd1e54dcd1 1-2,11-19,24-25,27-34,42-43,45-46,48,50-52,54-58,92-98,100-106,109-115,117-124,127-148,150-152,154-156,158-164,166,174-182,184-186,188-191,194-195,225,229-233,235-239,241,274,276,279-280,292,294-296
+  s_8e040dbdf13565::t_647786cc0b6e38 9-10,40,59-74,81-84,86-90,226-227
+  s_8e040dbdf13565::t_54d8dbdead9cae 75-80,259-262
+  s_8e040dbdf13565::t_a91ef2dd61fa87 91,192-193,240
+packages/sdk-python/tests/test_trace.py
+  s_8e040dbdf13565::t_21856843eeb50a 1-208
+docs/integrations/ai-gateway.md
+  s_8e040dbdf13565::t_5c034948302d17 1-126
+packages/store-postgres/src/index-store.ts
+  s_8e040dbdf13565::t_651c70c9bf8b7b 7
+  s_8e040dbdf13565::t_613dc13e9885ca 1-6,8-269,272-278,280-684
+  s_8e040dbdf13565::t_d2eec3997ad77f 270-271,279
+packages/coding.sh/test/toolevals/cli.test.ts
+  s_8e040dbdf13565::t_df52126fd3e037 72,87,161-180
+  s_8e040dbdf13565::t_59aa96d355bef7 1-71,73-86,88-160,181-252
+packages/coding.sh/test/integrations/eve/stream.test.ts
+  s_8e040dbdf13565::t_5da32809d7a86e 1-101
+packages/coding.sh/src/cli/commands/config.ts
+  s_8e040dbdf13565::t_4c8683c0296a3c 1-31,33-166
+  s_8e040dbdf13565::t_5a222bf4823bff 32
+packages/coding.sh/src/core/pricing.ts
+  s_8e040dbdf13565::t_19b20c9aa4c031 1-115,119-122
+  s_8e040dbdf13565::t_9d15a3a5ab410c 116-118
+packages/coding.sh/test/capture/kick.test.ts
+  s_8e040dbdf13565::t_03047ce75a8a38 1-52
+scripts/dogfood/lib/toml.mjs
+  s_8e040dbdf13565::t_9baae84b158214 1-239
+packages/coding.sh/test/core/redact.test.ts
+  s_8e040dbdf13565::t_d292c001a2a0e9 1-15,18-40,46-72,77-182
+  s_8e040dbdf13565::t_f77977971d3045 16-17,41-45,73-76
+docker-compose.yml
+  s_8e040dbdf13565::t_cbb62e4f1d5c95 1-11,14-100
+  s_8e040dbdf13565::t_66532d0e693c7a 12-13
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/c8e3f6cab3966fa7530e7fe12dc34934/segments/2e517445f42dfa1f.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+.github/ISSUE_TEMPLATE/config.yml
+  s_8e040dbdf13565::t_b08464aa584b51 1-5
+packages/coding.sh/src/integrations/eve/import.ts
+  s_8e040dbdf13565::t_865cda3c02254d 23,198-199
+  s_8e040dbdf13565::t_8be0e2754b24db 1-22,24-197,200-205,207-208
+  s_8e040dbdf13565::t_76fdbe0fcdce9a 206
+packages/coding.sh/src/toolevals/model/anthropic.ts
+  s_8e040dbdf13565::t_019c8fc14f30d4 1-107
+packages/coding.sh/test/adapters/more/registry.test.ts
+  s_8e040dbdf13565::t_1de8818c19f5e8 1-33
+packages/coding.sh/test/update/helpers.ts
+  s_8e040dbdf13565::t_ec1faa64edce52 1-72
+packages/coding.sh/test/mcp/toolevals/fixtures/seed.ts
+  s_8e040dbdf13565::t_e71c18e03745cf 1-15
+packages/coding.sh/src/cli/commands/serve.ts
+  s_8e040dbdf13565::t_0b1cdac76ec1e4 1-57,59-79,83-84,86,88,98-155
+  s_8e040dbdf13565::t_3043a9bee264ad 58,80-82,85,87,89-97
+packages/coding.sh/src/sinks/otlp.ts
+  s_8e040dbdf13565::t_4a97ff64f5b058 1-104,117,119,121-122,124-128,130-148,174,176-198,200-204,206,208-227,230-286
+  s_8e040dbdf13565::t_56c93983536747 105-109,129,149-173,175,228-229
+  s_8e040dbdf13565::t_fafc77bd796d14 110-116,118,120,123,199,205,207
+packages/coding.sh/test/runner/tamper.test.ts
+  s_8e040dbdf13565::t_e161ccdc32971c 127-140
+  s_8e040dbdf13565::t_1750377a143e23 1-8,10-126,141-259
+  s_8e040dbdf13565::t_c647a0a01d2276 9
+apps/site/src/data/compare.ts
+  s_8e040dbdf13565::t_eb8f00c07935cd 1-19,21-22,24,26-31,33-36,38-65,68-93,129,131-133
+  s_8e040dbdf13565::t_9bffbda6d4c085 20,23,25,32,37
+  s_8e040dbdf13565::t_fce67d3b9b0939 66-67,94-128,130
+packages/coding.sh/test/fixtures/adapters/droid/home/.factory/sessions/-work-demo/droid-sess-1.jsonl
+  s_8e040dbdf13565::t_5924976209bbd2 1-8
+packages/coding.sh/src/core/spool-read.ts
+  s_8e040dbdf13565::t_9eb2a0c0bc136e 1-39,42-137,139-160,162-170
+  s_8e040dbdf13565::t_44cd85e95faecd 40-41,138,161
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/d229f0531a25ff4a05cd62e457df671b/segments/2331a4ce145737a5.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/blob-s3/test/fake-s3.js
+  s_8e040dbdf13565::t_24a6e144c4033b 1-145
+packages/coding.sh/src/judge/prompt.ts
+  s_8e040dbdf13565::t_a3e1135ccf8cb5 1-154
+packages/sdk-python/README.md
+  s_8e040dbdf13565::t_fe00992837467b 1-92
+packages/coding.sh/src/experiments/text.ts
+  s_8e040dbdf13565::t_eb8e513eec20d6 1-79
+packages/coding.sh/src/workflows/import.ts
+  s_8e040dbdf13565::t_cefa86db412124 1-85
+  s_8e040dbdf13565::t_53a1db567e3760 86-93
+scripts/dogfood/cli-guidelines.mjs
+  s_8e040dbdf13565::t_bb9c0ab52a6463 1-136
+  s_8e040dbdf13565::t_913ba1c4d92991 137-141
+packages/coding.sh/test/fixtures/adapters/gemini-cli/home/.gemini/projects.json
+  s_8e040dbdf13565::t_24c2700e79f6ff 1
+packages/coding.sh/test/runner/experiment.test.ts
+  s_8e040dbdf13565::t_269ae9ed662f5c 84-86,89-104
+  s_8e040dbdf13565::t_3dd9dd36e985ed 1-59,61-83,87-88,105-226
+  s_8e040dbdf13565::t_113ab5da4c99d4 60
+packages/coding.sh/test/adapters/claude-code.test.ts
+  s_8e040dbdf13565::t_86abed1631a998 27-28
+  s_8e040dbdf13565::t_0d6fff23d2971c 1-26,29-173
+packages/coding.sh/src/schema/index.ts
+  s_8e040dbdf13565::t_2fee8579360fdd 43,144-148
+  s_8e040dbdf13565::t_86b2b74575941b 185-190
+  s_8e040dbdf13565::t_f0839f8221307b 101-105
+  s_8e040dbdf13565::t_32fe6e03d20ecb 158-160
+  s_8e040dbdf13565::t_1c6ea5998b02da 79,81-88
+  s_8e040dbdf13565::t_596592c417e3a1 1-14,16-24,26-42,44-78,80,91-100,106-110,126-143,149-155,167-177,179-184,209-213
+  s_8e040dbdf13565::t_4350d5c7714edf 25,89-90,111-112,193
+  s_8e040dbdf13565::t_4b08cb85e59c1f 15
+  s_8e040dbdf13565::t_d67996d775bf40 178
+  s_8e040dbdf13565::t_5d84eced29e68c 156-157,166,192
+  s_8e040dbdf13565::t_fbfb81ed0249ee 191,196-208
+  s_8e040dbdf13565::t_1b507c460b34dc 113-125
+  s_8e040dbdf13565::t_bd21a41616d850 161-165,194-195
+packages/coding.sh/src/cli/commands/dataset.ts
+  s_8e040dbdf13565::t_14757efc749560 1-2,4,6-14,22-25,31-43,46,51-52,54-95
+  s_8e040dbdf13565::t_63a946e8819282 3,5,26-30,44-45,47-48,50,53
+  s_8e040dbdf13565::t_5e6555331ee643 15-21,49
+packages/coding.sh/src/core/redact.ts
+  s_8e040dbdf13565::t_f77977971d3045 49-50,88-93,95
+  s_8e040dbdf13565::t_2e205050eea13f 57-58
+  s_8e040dbdf13565::t_ffc7f2af6fe189 211-217,240-242
+  s_3a31a0f3adfbbd::t_300444ffe1ec3e 59
+  s_8e040dbdf13565::t_964eaf06272a96 1-24,29-32,35-48,51-56,60-61,64-73,75-79,81-87,96-210,218-239,243-266
+  s_8e040dbdf13565::t_4868deef63d847 25-28,33-34,62-63,74,80
+  s_8e040dbdf13565::t_1b681cb03c0c74 94
+packages/coding.sh/test/fixtures/adapters/pi/extension.spool.jsonl
+  s_8e040dbdf13565::t_5924976209bbd2 1-10
+apps/site/src/assets/logos/amp.svg
+  s_8e040dbdf13565::t_6da9f2f37e6b30 1
+packages/coding.sh/src/eval/task.ts
+  s_8e040dbdf13565::t_69352bf7210a32 1-4,6,8-11,13-24,27-37,43-89,91-188,217,260-285,308-332,334-367,369-375,377-388,390-516,518-588,590-630
+  s_8e040dbdf13565::t_1651cb51270f3b 286-307
+  s_8e040dbdf13565::t_9e4863487e26d2 7,25-26,38-42,189-216,218-259,376,389
+  s_8e040dbdf13565::t_60cff112157558 5,12,90,333,368,517,589
+packages/coding.sh/src/integrations/eve/index.ts
+  s_8e040dbdf13565::t_43ac3ff3a7c207 1-8
+deploy/fly.toml
+  s_8e040dbdf13565::t_b2037c492e28bd 1-42
+packages/sdk-python/tests/golden/harness.ts
+  s_8e040dbdf13565::t_6f35e09e4e03ce 1-58
+packages/coding.sh/test/fixtures/adapters/droid/golden/hooks.golden.json
+  s_8e040dbdf13565::t_5d902fe36f5a79 1-10,12-24,26-43,45-60,62-77,79-91,93-109,111-123,125-140,142-154,156-169,171-176,210-218,220-233,235-247,249-261,263-275,277-283
+  s_8e040dbdf13565::t_0276ba197d4f63 177-188,190-204,206-209
+  s_8e040dbdf13565::t_a3e4ade957aa9b 11,25,44,61,78,92,110,124,141,155,170,189,205,219,234,248,262,276
+packages/coding.sh/src/stats/agreement.ts
+  s_8e040dbdf13565::t_06c20a4bf3a2c5 1-54
+packages/coding.sh/test/fixtures/otel/genai-semconv.json
+  s_8e040dbdf13565::t_6ef858763bd3e0 1-344
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/6bc849d232dcc16384f706590d8c5d34/segments/a7a654d6fa136e80.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/src/cli/commands/sessions.ts
+  s_8e040dbdf13565::t_46430249f80cbf 1-46
+packages/coding.sh/src/cli/meta.ts
+  s_8e040dbdf13565::t_38b0ce48faea15 1-13
+packages/coding.sh/test/integrations/eve/import.test.ts
+  s_8e040dbdf13565::t_b408c3e3dd84d8 1-107
+apps/site/src/assets/logos/opencode.svg
+  s_8e040dbdf13565::t_6da9f2f37e6b30 1
+deploy/compose/config.toml
+  s_8e040dbdf13565::t_316d7c058c4ec2 1-11
+packages/coding.sh/src/adapters/more/aider.ts
+  s_8e040dbdf13565::t_b845dba85fabd3 32
+  s_8e040dbdf13565::t_e5dd66a5c36588 1-31,33-103
+packages/coding.sh/test/core/config.test.ts
+  s_8e040dbdf13565::t_88c16ab662db22 1-185
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/d229f0531a25ff4a05cd62e457df671b/segments/ef792f48c6db38e1.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/test/fixtures/adapters/copilot-cli/hooks.spool.jsonl
+  s_8e040dbdf13565::t_8094e089fba6b1 6-7
+  s_8e040dbdf13565::t_080a4e99c4eb7a 1-5,8-12
+packages/coding.sh/test/adapters/more/droid.test.ts
+  s_8e040dbdf13565::t_0276ba197d4f63 30-31
+  s_8e040dbdf13565::t_5d902fe36f5a79 1-5,7,9-11,19-29,32-120
+  s_8e040dbdf13565::t_d414b6348d99d1 6,12-18
+  s_8e040dbdf13565::t_52e2c85a2d5a14 8
+examples/eve-agent/agent/subagents/forecaster/instructions.md
+  s_8e040dbdf13565::t_b6f7c16d2a8c4d 1
+packages/coding.sh/test/fixtures/adapters/opencode/gen.py
+  s_8e040dbdf13565::t_d8e6cb9c086bea 40
+  s_8e040dbdf13565::t_a339dee5da4592 1-39,41
+packages/sdk/src/transport.ts
+  s_8e040dbdf13565::t_b20f91a1556f92 1-76,82,86-193,201-202,204-209,211-213,215-228,230-232,234,236-240,242-263,265,273-311,318-319,322-335
+  s_8e040dbdf13565::t_fd892d05629881 77,81,83-85,210
+  s_8e040dbdf13565::t_d93e275dd7ec2d 78-80,195-200,203,214,229,233,235,241,264,266-272,312-317,320-321
+  s_8e040dbdf13565::t_10c4e4c060881d 194
+packages/store-postgres/README.md
+  s_8e040dbdf13565::t_459a4772a9e450 1-55
+packages/coding.sh/scripts/build.mjs
+  s_8e040dbdf13565::t_b41dcc3b0c4fc6 1-4
+  s_8e040dbdf13565::t_5d032427ec5a0b 5
+packages/coding.sh/test/datasets/csv.test.ts
+  s_8e040dbdf13565::t_efd8f810bbe456 1-104
+packages/coding.sh/test/adapters/_helpers.ts
+  s_8e040dbdf13565::t_753a72d16c064c 88,90
+  s_8e040dbdf13565::t_b974b8ae910c04 136-137
+  s_8e040dbdf13565::t_f86a40b07d8c00 4,127-135,138-140
+  s_8e040dbdf13565::t_215acbd477df9f 1-3,5-87,89,91-126,141
+packages/coding.sh/test/fixtures/adapters/droid/golden/backfill.golden.json
+  s_8e040dbdf13565::t_5d902fe36f5a79 1-187
+packages/coding.sh/src/update/refresh.ts
+  s_8e040dbdf13565::t_f67473f793a88c 47,51,135
+  s_8e040dbdf13565::t_8ed78f01466179 85
+  s_8e040dbdf13565::t_4f4d8965b3a086 1-46,53-64,70-81,92-98,100-117,119-130,132-134,137-138,140-152
+  s_8e040dbdf13565::t_bbd952940f8395 48-50,52,65-69,82-84,86-91,99,118,131,136,139
+packages/coding.sh/test/core/ingest.test.ts
+  s_8e040dbdf13565::t_0a522781d0e9b6 328
+  s_8e040dbdf13565::t_cd269b5b728d4e 1-8,11-16,18-27,29-296,378-386
+  s_8e040dbdf13565::t_9e1a9f4785364c 9-10,17,28,297-327,329-377
+docs/production/railway.md
+  s_8e040dbdf13565::t_27e3ea67447fd9 1-38
+packages/coding.sh/src/cli/common.ts
+  s_8e040dbdf13565::t_621e662855a490 31-32
+  s_8e040dbdf13565::t_47c351c6429683 33-44,46-48,55-56
+  s_8e040dbdf13565::t_590abeedbdb7fa 49-51,53-54
+  s_8e040dbdf13565::t_87a2d224acf4d9 99-105
+  s_8e040dbdf13565::t_388b6f22e052e8 154
+  s_8e040dbdf13565::t_4f6ec6d036f2fd 4,58-72
+  s_8e040dbdf13565::t_9b886bf734ddc8 1-3,5-30,45,57,73-98,106-110,112-115,117-153,156-168
+  s_8e040dbdf13565::t_e9e14936e71c6c 111,116
+  s_8e040dbdf13565::t_4ca45bd9d71d80 52
+  s_8e040dbdf13565::t_5fccf1f9e88524 155
+packages/coding.sh/src/toolevals/model/tools.ts
+  s_8e040dbdf13565::t_66181c73852bda 1-146
+packages/sdk/test/fetch.test.ts
+  s_8e040dbdf13565::t_2f0b989a13f8e8 107-108
+  s_8e040dbdf13565::t_5c2cc145694b7b 1-18,20-106,109
+  s_8e040dbdf13565::t_504acfb86a9673 19
+CONTRIBUTING.md
+  s_8e040dbdf13565::t_10f6e154e4708e 53
+  s_8e040dbdf13565::t_5844441742d41c 1-52,54-74
+docs/research/competitive-gap.md
+  s_8e040dbdf13565::t_b2b3826cb839c0 815-817
+  s_8e040dbdf13565::t_51cf3a303a9bb2 1,3-814
+  s_8e040dbdf13565::t_dc2b8de25bfb91 2
+packages/coding.sh/src/adapters/more/gemini-cli.ts
+  s_8e040dbdf13565::t_c15a40fedc2a05 111
+  s_8e040dbdf13565::t_9eb16dc61a032c 134
+  s_8e040dbdf13565::t_c8b743f89cae63 336-337
+  s_8e040dbdf13565::t_7b01951991431c 268-270,310-316
+  s_8e040dbdf13565::t_245444bde75f70 169-180,297
+  s_8e040dbdf13565::t_407d81d6ea6797 1-106,108-110,112-133,135-168,181-267,271-296,298-309,317-335,338-354,356-361,363,366-418
+  s_8e040dbdf13565::t_f13c1ee7da2020 355,362
+  s_8e040dbdf13565::t_47194b95271b19 364-365
+  s_8e040dbdf13565::t_c84b4b22204ec8 107
+packages/coding.sh/src/cli/commands/exp.ts
+  s_8e040dbdf13565::t_b4b217374b6707 1-73,75-81,84-86,89-117
+  s_8e040dbdf13565::t_c7a34f7a99ee44 82
+  s_8e040dbdf13565::t_787afcec889029 74
+  s_8e040dbdf13565::t_0b6c44d9b4873a 83
+  s_8e040dbdf13565::t_790c73a8e60092 87-88
+packages/coding.sh/src/mcp/protocol.ts
+  s_8e040dbdf13565::t_27bc466c837f6b 291,318,326-332,336,340-349,351,354-355
+  s_8e040dbdf13565::t_04646008fc8f11 1-210,213-290,292-317,319-325,333-335,337-339,350,352-353,356-357
+  s_8e040dbdf13565::t_54aeba01cf83ee 211-212
+packages/coding.sh/src/viewer/ui/html.d.ts
+  s_8e040dbdf13565::t_107864e9c45935 1-5
+packages/coding.sh/test/fixtures/otel/openinference.json
+  s_8e040dbdf13565::t_6ef858763bd3e0 1-391
+packages/coding.sh/src/cli/types.ts
+  s_8e040dbdf13565::t_73f40535eedb5c 1-22
+apps/site/src/components/docs/Code.astro
+  s_8e040dbdf13565::t_b7ef4e8c582379 1-103
+packages/coding.sh/test/eval/suite.test.ts
+  s_8e040dbdf13565::t_6cccd455e36b5b 1-50,52-103
+  s_8e040dbdf13565::t_0858afbd857026 51
+packages/coding.sh/src/cli/commands/version.ts
+  s_8e040dbdf13565::t_38b0ce48faea15 1
+  s_8e040dbdf13565::t_7e54df2f152c36 2-8
+packages/coding.sh/test/workflows/claude-workflow.test.ts
+  s_8e040dbdf13565::t_59488a32c9c1c2 1-206
+CHANGELOG.md
+  s_8e040dbdf13565::t_44b9d6a82259ff 1-8,10-11,18-19,22-31,34
+  s_8e040dbdf13565::t_cb80c2b6238c2f 12
+  s_8e040dbdf13565::t_aeacff10b628da 21
+  s_8e040dbdf13565::t_10f6e154e4708e 9,20,33,35
+  s_8e040dbdf13565::t_1b383514d549d1 13
+  s_8e040dbdf13565::t_b0cfdca8d53e82 14-17
+  s_8e040dbdf13565::t_0f22e0737b55ca 32
+packages/sdk/src/config.ts
+  s_8e040dbdf13565::t_a8d46baaab524e 1-79
+docs/production/render.md
+  s_8e040dbdf13565::t_a3278062e45394 1-27
+apps/site/src/components/Viewer.astro
+  s_8e040dbdf13565::t_e672066f3da5cd 7-12,75-77,92-93,108,137,166,185,238-240,460,577-582,652,795
+  s_8e040dbdf13565::t_b215f25b68d91f 487-489
+  s_8e040dbdf13565::t_7701cd82cf9f49 45,409,955
+  s_8e040dbdf13565::t_e062be1e2f7406 596,701-715,717-719,808-810,828,904-908,915,926,931-932,934-935,1162,1168-1219,1247-1250
+  s_8e040dbdf13565::t_4704d87f27643e 16-17,26,82-87,89,101-103,113,115-117,138,140,142,147-148,150-151,153-154,156,165,168,176,183,196,201,203,260,263-270,276-339,343-408,411-421,423-425,516,533,576,610,622,625,628,651,658,835,881,892,940,943,951,953
+  s_8e040dbdf13565::t_9e7b36e181167e 4-6,13-14,30-44,46-55,78,88,90-91,97,104,106-107,109-111,118-136,145-146,177-182,186-195,242-247,271-275
+  s_8e040dbdf13565::t_22a9a8fd3b3735 100,262,1008-1019
+  s_8e040dbdf13565::t_f549aa1f6e7392 1075-1081
+  s_8e040dbdf13565::t_4785325d270465 426,429-430,433,438-459,461-484,493-495,497,502,504,510,512,514,518,520,523,535,538,540,543,545-546,551,554,557,562,565,569,571,573,583-584,586,590,594,597,603-604,606,612,614,616,618-619,623,626,629-635,642,646,649,653-655,660-661,664,670-700,716,720-791,794,797-799,802,804,806,814-815,821,826,829,838,843-844,847-848,850-851,854-855,858,864,867,870,873,878,883,886,888-889,893,897-898,900,902,910,913,916,918,921,924,929,937,941,944,957,960,964,966,971-972,974-975,982,984-986,990,992-995,999-1007,1020-1057,1082,1099-1137,1139-1141,1144-1146,1150-1151,1303-1304
+  s_8e040dbdf13565::t_52e0db2e7ae135 152,558-560,965,996-998,1060-1066,1069-1074,1083-1085,1088-1090,1092-1098,1232,1234-1243,1252,1254-1255,1263-1285
+  s_8e040dbdf13565::t_0bf0ca3f1d0526 112
+  s_8e040dbdf13565::t_c4555792fb92f6 1-3,15,18-25,27-29,56-74,79-81,94-96,98-99,105,114,139,141,143-144,149,155,157-164,167,169-175,184,197-200,202,204-237,241,248-259,261,340-342,410,422,427-428,431-432,434-437,485-486,490-492,496,498-501,503,505-509,511,513,515,517,519,521-522,524-532,534,536-537,539,541-542,544,547-550,552-553,555-556,561,563-564,566-568,570,572,574-575,585,587-589,591-593,595,598-602,605,607-609,611,613,615,617,620-621,624,627,636-641,643-645,647-648,650,656-657,659,662-663,665-669,792-793,796,800-801,803,805,807,811-813,816-820,822-825,827,830-834,836-837,839-842,845-846,849,852-853,856-857,859-863,865-866,868-869,871-872,874-877,879-880,882,884-885,887,890-891,894-896,899,901,903,909,911-912,914,917,919-920,922-923,925,927-928,930,933,936,938-939,942,945-950,952,954,956,958-959,961-963,967-970,973,976-981,983,987-989,991,1058-1059,1067-1068,1086-1087,1091,1138,1142-1143,1147-1149,1152-1161,1163-1167,1220-1231,1233,1244-1246,1251,1253,1256-1262,1286-1302,1305-1306
+packages/sdk/src/util.ts
+  s_8e040dbdf13565::t_e1f2150d18c457 34-36,38-43
+  s_8e040dbdf13565::t_7034127386d3fc 1-33,37,44-125
+packages/coding.sh/src/adapters/codex.ts
+  s_8e040dbdf13565::t_a0ba5cf8ea4146 38,41,66,255-261,498-503
+  s_8e040dbdf13565::t_09775103a75896 679-680
+  s_8e040dbdf13565::t_4018c2fbca71e1 422,548
+  s_8e040dbdf13565::t_a180806fffda5d 21,23,68,409,433,441,550,713-717,736
+  s_8e040dbdf13565::t_47194b95271b19 809-811
+  s_8e040dbdf13565::t_4ca45bd9d71d80 814-822
+  s_8e040dbdf13565::t_10643fb60ca706 69-70,72
+  s_8e040dbdf13565::t_93fdb2bc16fedf 55,353,673
+  s_8e040dbdf13565::t_499382f590b5f6 1-20,22,24-25,28-32,35-37,39-40,42-54,56-65,67,74-254,262-350,356-408,410-421,423-432,434-440,442-497,504-514,516-540,542-547,549,556-622,624-625,627-649,651,653-672,674-678,681-698,700-702,705-712,718-735,737-801,803-805,807-808,812-813,823-835
+  s_8e040dbdf13565::t_c15a40fedc2a05 623,626
+  s_8e040dbdf13565::t_286897dc16fc02 27,351-352,699,703
+  s_8e040dbdf13565::t_b2cc7f5efad0a7 555
+  s_8e040dbdf13565::t_8c280cb36dbbc1 33-34,802,806
+  s_8e040dbdf13565::t_470f0f5ea4879f 354-355
+  s_8e040dbdf13565::t_2a565db447f90e 26
+  s_8e040dbdf13565::t_c266cb922c0da2 71
+  s_8e040dbdf13565::t_60452605f120cd 73,515,541,551-554,650,652,704
+packages/coding.sh/src/integrations/eve/attrs.ts
+  s_8e040dbdf13565::t_0a522781d0e9b6 52-53
+  s_8e040dbdf13565::t_7b23ebb755afe1 1-51,54-121
+packages/coding.sh/src/mcp/tools.ts
+  s_8e040dbdf13565::t_9c5f411d6f2d80 551,623-624
+  s_8e040dbdf13565::t_d2e0960bac869f 1-7,9-18,20-28,30-47,49-53,55-65,70-73,76-79,81-120,123-214,216-219,221-225,227-229,232-249,251-254,256-265,267-270,273-281,283-285,287,289-294,298-302,305-322,327-329,331-339,341-344,351-353,355-363,366-370,372-373,387-394,400-402,405,408-420,422-429,431-435,437-449,451-475,477-480,482-527,530-532,536-539,541-550,552-576,578-579,581,583-586,588-595,597-611,614-622
+  s_8e040dbdf13565::t_06619868e99993 19,230-231,255,266,282,286,288,349-350,364,381-382,395-398,403-404,406-407,596,612-613
+  s_8e040dbdf13565::t_d1c92a24a20fba 340
+  s_8e040dbdf13565::t_219a0ed9c34d47 8
+  s_8e040dbdf13565::t_1687c06020a7f3 54,121-122,215,295,303-304
+  s_8e040dbdf13565::t_08ba19a67914ca 66-69,74-75,80,220,250,271-272,296-297,323-326,330,345-348,354,374-380,383-386,399,430,436,476,481,528-529,533-535,540,577,580,582,587
+  s_8e040dbdf13565::t_0e44ab24f72abd 226
+  s_8e040dbdf13565::t_4798155c0eeee4 29,48,365,371,421,450
+packages/coding.sh/test/graders/fixtures/scorer.mjs
+  s_8e040dbdf13565::t_d78b893e54b302 1-21
+packages/coding.sh/src/datasets/store.ts
+  s_8e040dbdf13565::t_30e49e430227f2 1-10,16-19,21-63,65-67,73,81-92,94-106,112-134,138-148,150-158,160-172,174-178,180-182,197-198,200-215,217-221,223-226,228-250
+  s_8e040dbdf13565::t_790c73a8e60092 183-196
+  s_8e040dbdf13565::t_01328ff296e9f1 11-15,20,64,68-72,74-80,107-111,135-137,149,159,173,179,199,216,222,227
+  s_8e040dbdf13565::t_d813add2e8d937 93
+packages/coding.sh/test/capture/hook.test.ts
+  s_8e040dbdf13565::t_9e5b67ec1b562f 1-107,124-218
+  s_8e040dbdf13565::t_5fa0c33d8bfba7 108-123
+packages/coding.sh/src/mcp/server.ts
+  s_8e040dbdf13565::t_b8b8c4a7465f26 72
+  s_8e040dbdf13565::t_27bc466c837f6b 121,124,130
+  s_8e040dbdf13565::t_567333b595edb6 1-67,70-71,73-120,122-123,125-129,131-135
+  s_8e040dbdf13565::t_09e10a82664583 68-69
+apps/site/src/components/Terminal.astro
+  s_8e040dbdf13565::t_5ec8993c668f05 4-6,77-80,106,109-111,113-117
+  s_8e040dbdf13565::t_921fe8bdd8c41c 3
+  s_8e040dbdf13565::t_b1d80ff7d1aacc 15
+  s_8e040dbdf13565::t_8fed2b49fe9bc0 90-95
+  s_8e040dbdf13565::t_44042f59504b4f 25,45,58,63,69,76,81-84,89,99-100,102-105,107-108,112,118-126
+  s_8e040dbdf13565::t_b2ce1fca607043 1-2,7-14,16-24,26-44,46-57,59-62,64-68,70-75,85-88,96-98,101
+packages/sdk/src/fetch.ts
+  s_8e040dbdf13565::t_129bb60f9531b0 1-198,200-207
+  s_8e040dbdf13565::t_6543e198153130 199
+apps/site/src/assets/logos/opentelemetry.svg
+  s_8e040dbdf13565::t_6da9f2f37e6b30 1
+packages/coding.sh/src/toolevals/mcp/client.ts
+  s_8e040dbdf13565::t_ef4afcd301fa16 1-272
+docs/ARCHITECTURE.md
+  s_8e040dbdf13565::t_96026c5cab9aec 1-188,193-234
+  s_8e040dbdf13565::t_fcaa7be95de61e 189-192
+apps/site/src/pages/docs/index.astro
+  s_8e040dbdf13565::t_b123762e61a713 12,20,32,47
+  s_8e040dbdf13565::t_c8362e59620477 1-11,13-19,21-31,33-46,48-112
+packages/coding.sh/test/toolevals/metrics.test.ts
+  s_8e040dbdf13565::t_ed0e369d225cf0 1-135
+packages/coding.sh/test/workflows/score.test.ts
+  s_8e040dbdf13565::t_8bb7d16059cfec 1-170
+packages/coding.sh/src/experiments/render.ts
+  s_8e040dbdf13565::t_d8c6a30488a5b9 1-170
+packages/coding.sh/src/store/memory.ts
+  s_8e040dbdf13565::t_5237b6578dfe67 5,8,49-54,212-283
+  s_8e040dbdf13565::t_fe875fa4185ec1 4,16,18,33,56,60,62-92,111,117,148-149
+  s_8e040dbdf13565::t_6dd588bda44a0c 27
+  s_8e040dbdf13565::t_cef78b0bd67e95 1-3,6-7,9-15,17,19-26,28-32,39-48,55,57-59,61,93-96,98-110,112-116,118-130,132-142,144-147,150-211,284-369
+  s_8e040dbdf13565::t_5e0696fb322992 34-38,97,131
+  s_8e040dbdf13565::t_ffc7f2af6fe189 143
+packages/coding.sh/src/eval/validate.ts
+  s_8e040dbdf13565::t_3d07ba82213ccc 1-4,9-11,13-16,25-57,69-93,96-117,150-160,163-167,169-172,174-226,233-240,242,251-272,275-277,279-281,284-355,469-472,474-484,495-511,522-527
+  s_8e040dbdf13565::t_81573baa3718ce 118-149,243-250,273-274,278,283,356-426,437-444,446-468,485-494,512-521
+  s_8e040dbdf13565::t_8f0aba182a1b84 5-8,12,17-24,58-68,94-95,161-162,230,241,473
+  s_8e040dbdf13565::t_5cfa9bb08ff545 427-436
+  s_8e040dbdf13565::t_927ec8fdd881e0 168,173,227-229,231-232,282
+  s_8e040dbdf13565::t_f625863e9d8b55 445
+packages/coding.sh/test/fixtures/adapters/opencode/golden/v1.golden.json
+  s_8e040dbdf13565::t_02e8f6749b730c 77-78
+  s_8e040dbdf13565::t_56487b6563242a 1-76,79-136
+packages/coding.sh/src/workflows/types.ts
+  s_8e040dbdf13565::t_0631e4a838ee81 1-304
+apps/site/src/assets/logos/github-copilot.svg
+  s_8e040dbdf13565::t_6da9f2f37e6b30 1
+packages/coding.sh/test/fixtures/adapters/claude-code/golden/backfill.golden.json
+  s_8e040dbdf13565::t_78a50841d2d1ca 9-12
+  s_8e040dbdf13565::t_02e8f6749b730c 189-200,310-311,470-471,677-688
+  s_8e040dbdf13565::t_f0fb431e7715ff 1-8,13-188,201-309,312-469,472-676,689-692
+apps/site/vercel.json
+  s_8e040dbdf13565::t_e3bf6adeb94a1f 1-26
+.gitignore
+  s_8e040dbdf13565::t_a9035bad717f94 19-21
+  s_8e040dbdf13565::t_b0995baa25bc86 5-6
+  s_8e040dbdf13565::t_b9538c62c9b669 11-12,22-28,32
+  s_8e040dbdf13565::t_79d4e27334fe53 29-31
+  s_8e040dbdf13565::t_c344758fc36267 1-4,7-10,13-18,33-45
+packages/coding.sh/test/otel/_memstore.ts
+  s_8e040dbdf13565::t_116d26fdd38d0e 1-119
+apps/site/src/pages/docs/tool-evals.astro
+  s_8e040dbdf13565::t_29fdffd791b307 1-103
+.github/ISSUE_TEMPLATE/bug_report.yml
+  s_8e040dbdf13565::t_b08464aa584b51 1-74
+apps/site/src/lib/llms.ts
+  s_8e040dbdf13565::t_1835fbeea48548 1-92
+examples/production/python/app_sdk.py
+  s_8e040dbdf13565::t_66edf60357cf61 1-34
+packages/coding.sh/src/sinks/http.ts
+  s_8e040dbdf13565::t_d9e7580ba9a457 1-44
+packages/coding.sh/src/workflows/cli-spec.ts
+  s_8e040dbdf13565::t_f1cf903a6b8eac 1-103
+packages/coding.sh/test/fixtures/adapters/opencode/golden/backfill-v1.golden.json
+  s_8e040dbdf13565::t_56487b6563242a 1-69,72-73,86-120,124-138,151-154
+  s_8e040dbdf13565::t_d8e6cb9c086bea 74-85,139-150
+  s_8e040dbdf13565::t_02e8f6749b730c 70-71
+  s_8e040dbdf13565::t_78a50841d2d1ca 121-123
+packages/sdk/package.json
+  s_8e040dbdf13565::t_50ba9b8fda50a4 44-47
+  s_8e040dbdf13565::t_ed54fd69366c53 50
+  s_8e040dbdf13565::t_81dc437f5718e6 1-43,48-49,51-54
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/c8e3f6cab3966fa7530e7fe12dc34934/segments/ab00c57861587245.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/test/fixtures/adapters/amp/golden/plugin.golden.json
+  s_8e040dbdf13565::t_6cb7657a526ffe 1-151,209-294
+  s_8e040dbdf13565::t_0276ba197d4f63 152-208
+packages/coding.sh/src/experiments/power.ts
+  s_8e040dbdf13565::t_389791ea23cda7 35-40,75-80,110-112,114
+  s_8e040dbdf13565::t_5bd8ed0d5a7dd5 1-34,41-74,81-109,115-139
+  s_8e040dbdf13565::t_c89bb138ac0eb6 113
+scripts/dogfood/site.mjs
+  s_8e040dbdf13565::t_2ae2aabc2e7c39 1-103
+packages/coding.sh/test/fixtures/adapters/opencode/v1.spool.jsonl
+  s_8e040dbdf13565::t_a339dee5da4592 1-7
+apps/site/src/components/Mark.astro
+  s_8e040dbdf13565::t_f4efc666e4a38a 2-11
+  s_8e040dbdf13565::t_4da7cb98f6bcab 1,12-29
+packages/coding.sh/test/mcp/helpers.ts
+  s_8e040dbdf13565::t_dc501f3f553db0 1-29,35-37,40-42,44-153,155-252
+  s_8e040dbdf13565::t_f7e4c52267ab44 30-34,38-39,43
+  s_8e040dbdf13565::t_cd072b45965eab 154
+packages/coding.sh/test/toolevals/shim.test.ts
+  s_8e040dbdf13565::t_5d9a9183287de4 1-118,121-122,129,131-132
+  s_8e040dbdf13565::t_fa2c3d8062b17e 119-120,123-128,130
+packages/coding.sh/src/toolevals/jsonschema.ts
+  s_8e040dbdf13565::t_cb39b5c20431c4 1-12
+.dockerignore
+  s_8e040dbdf13565::t_4d2065e458bc38 1-17
+packages/coding.sh/src/judge/judge.ts
+  s_8e040dbdf13565::t_2cbfaf714b53ec 1-223
+packages/coding.sh/src/cli/commands/show.ts
+  s_8e040dbdf13565::t_e129ddbaf1d9e8 1-8,10-99,127-134,140,142-152,154-161,170-189
+  s_8e040dbdf13565::t_1956c3beda7d3a 9,100-120,122-126,135-136,139,141,153,162-167
+  s_8e040dbdf13565::t_4190187cb53769 121,137-138,168-169
+packages/sdk/test/anthropic.test.ts
+  s_8e040dbdf13565::t_504acfb86a9673 17
+  s_8e040dbdf13565::t_74e985f262479f 1-16,18-96
+packages/sdk-python/tests/test_real_sdks.py
+  s_8e040dbdf13565::t_f6c1db73eb7817 1-179
+packages/coding.sh/test/server/cli.test.ts
+  s_8e040dbdf13565::t_b533d88a3e9aba 1-123
+packages/coding.sh/test/fixtures/adapters/codex/home/sessions/2026/11/01/rollout-2026-11-01T10-00-07-0193bbbb-1111-7222-8333-444455556666.jsonl
+  s_8e040dbdf13565::t_6d661be1ddb2bf 1-12
+packages/store-postgres/tsconfig.json
+  s_8e040dbdf13565::t_ee094021138169 1-5,7-19
+  s_8e040dbdf13565::t_360c9f1c32d409 6
+packages/coding.sh/src/otel/model.ts
+  s_8e040dbdf13565::t_be98c0c9a236fa 1-137
+packages/coding.sh/test/workflows/experiment.test.ts
+  s_8e040dbdf13565::t_4a91b692d606d0 1-279
+  s_8e040dbdf13565::t_d81494bbcb93c4 280-282
+packages/coding.sh/src/store/conformance.ts
+  s_8e040dbdf13565::t_00c063a5abe5f2 164,167,177-203
+  s_8e040dbdf13565::t_5415ff0d19564d 1-136,138-163,165-166,168-169,171,174-176,204-236,238-283,294,319,350-351,440-513
+  s_8e040dbdf13565::t_85f9dd96a55296 170
+  s_8e040dbdf13565::t_3f3862cda4757a 172-173
+  s_8e040dbdf13565::t_b386bc4e9b9ae0 352-439
+  s_8e040dbdf13565::t_ba38f7f52e57f1 137,237,284-293,295-318,320-349
+apps/site/src/layouts/Layout.astro
+  s_8e040dbdf13565::t_542bdb44bc0f6f 6,54,78-90,160-164,167-168,191
+  s_8e040dbdf13565::t_0f3b65b734644c 8
+  s_8e040dbdf13565::t_4c416a9b9200c5 178-181,199,202-205,219-221,224-229,231-234
+  s_8e040dbdf13565::t_b123762e61a713 7,41,43
+  s_8e040dbdf13565::t_d6b9c7dab4fafb 25-26,38,75
+  s_8e040dbdf13565::t_dc96fd0120dc4f 3-4,33,60,65,67-71,131,172-173,182-183,187,194-196,198,201,206-207,211-212,217,235,241,246-247,249-250,252-255,257-261
+  s_8e040dbdf13565::t_ed7279ada13bc3 1-2,9-24,27-32,34-37,39-40,42,44-53,55-59,61-64,66,72-74,77,91-122,126,130,132-159,169-171,188-190,192-193
+  s_8e040dbdf13565::t_6fa99d61d42930 165-166
+  s_8e040dbdf13565::t_2e6027c4a6ef5a 5,76,123-125,127-129,174-177,184-186,197,200,208-210,213-216,218,222-223,230,236-240,242-245,248,251,256
+packages/coding.sh/src/adapters/more/goose.ts
+  s_8e040dbdf13565::t_9739f5b71e40dd 44-45
+  s_8e040dbdf13565::t_f21a4b916114a9 101,313,321-322,326
+  s_8e040dbdf13565::t_c15a40fedc2a05 116
+  s_8e040dbdf13565::t_7b01951991431c 211-213,267-273
+  s_8e040dbdf13565::t_f0f37db3f51028 264
+  s_8e040dbdf13565::t_75e3611a4056d8 139-140,343
+  s_8e040dbdf13565::t_ca78baf441b798 1-43,46-100,102-113,115,117-138,141-210,214-263,265-266,274-309,311-312,314-320,324-325,327-342,344-375
+  s_8e040dbdf13565::t_f13c1ee7da2020 310,323
+  s_8e040dbdf13565::t_08e913b4f8daea 114
+packages/coding.sh/src/core/snapshot.ts
+  s_8e040dbdf13565::t_d0982fe65906a2 39,158-166,323
+  s_8e040dbdf13565::t_799d0745b008ec 1-38,40-103,106-157,167-322,324-368
+  s_8e040dbdf13565::t_309c92ca68663b 104-105
+packages/coding.sh/test/fixtures/otel/claude-code-traces.json
+  s_8e040dbdf13565::t_6ef858763bd3e0 1-268
+packages/coding.sh/scripts/bundle.d.mts
+  s_8e040dbdf13565::t_b2566866fe9e6f 1-5,7-9
+  s_8e040dbdf13565::t_8f3f8364a4a6ec 6
+apps/site/src/lib/field-worker.ts
+  s_8e040dbdf13565::t_ee81408722ff83 92
+  s_8e040dbdf13565::t_605a1f06972d80 20-41,123,132-151,154-171,188,257-258
+  s_8e040dbdf13565::t_68517d8004bec6 4,43-91,93-112,115,128-131,172,186-187,197-203,205-230,241,265-266
+  s_8e040dbdf13565::t_7248f952096061 152-153,204
+  s_8e040dbdf13565::t_6bffa37fc8c484 1-3,5-19,42,113-114,116-122,124-127,173-185,189-196,231-240,242-256,259-264,267
+examples/eve-agent/evals/coding-sh/experiment.ts
+  s_8e040dbdf13565::t_4908b3da856c2c 1-46
+packages/coding.sh/test/fixtures/adapters/opencode/golden/v2.golden.json
+  s_8e040dbdf13565::t_78a50841d2d1ca 171-174
+  s_8e040dbdf13565::t_56487b6563242a 1-115,118-170,175-283
+  s_8e040dbdf13565::t_02e8f6749b730c 116-117
+packages/coding.sh/src/server/metrics.ts
+  s_8e040dbdf13565::t_c6eb4824c381e0 1-14,21-91
+  s_8e040dbdf13565::t_a93a2bbd956924 15-20
+docs/RELEASE.md
+  s_8e040dbdf13565::t_5b8480cc8d2c43 1-243
+  s_8e040dbdf13565::t_310ffc16e34a25 244-260
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/6bc849d232dcc16384f706590d8c5d34/segments/b757a061035440ba.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/test/fixtures/adapters/gemini-cli/home/.gemini/tmp/demo/chats/session-2026-09-21T10-00-gemsess1.jsonl
+  s_8e040dbdf13565::t_24c2700e79f6ff 1-12
+packages/store-postgres/test/exports.test.ts
+  s_8e040dbdf13565::t_3a90e1fb1d7e0c 1-16
+packages/coding.sh/src/server/native.ts
+  s_8e040dbdf13565::t_2b286cc1d0f025 1-36,38-100
+  s_8e040dbdf13565::t_9f112214df5a35 37
+packages/sdk/src/context.ts
+  s_8e040dbdf13565::t_e1f2150d18c457 137-138
+  s_8e040dbdf13565::t_48fab9f90c61cb 1-136,139-401
+packages/coding.sh/test/server/units.test.ts
+  s_8e040dbdf13565::t_d92f7bee545ba6 1-249
+packages/coding.sh/src/adapters/more/pi.ts
+  s_8e040dbdf13565::t_7282e88b3388c9 370
+  s_8e040dbdf13565::t_99431476a7a1b5 164,171,200-201,264-266
+  s_8e040dbdf13565::t_9eb16dc61a032c 20,30,207
+  s_8e040dbdf13565::t_306e639edb1693 46
+  s_8e040dbdf13565::t_390aa745424012 76,314
+  s_8e040dbdf13565::t_c15a40fedc2a05 186
+  s_8e040dbdf13565::t_c4fad00eae3af4 1-19,21-29,31-45,47-75,77-163,165-170,172-180,182-185,187-199,202-206,208-263,267-313,315-369,371-376
+  s_8e040dbdf13565::t_e50d45523bbc38 181
+packages/coding.sh/src/adapters/claude-code.ts
+  s_8e040dbdf13565::t_93fdb2bc16fedf 33,211,381
+  s_8e040dbdf13565::t_10643fb60ca706 48-49,51
+  s_8e040dbdf13565::t_0a94b259ea5dee 248
+  s_8e040dbdf13565::t_9d4cfc71815cf8 10
+  s_8e040dbdf13565::t_47194b95271b19 77-81,481-483
+  s_8e040dbdf13565::t_bf25a26f567f4c 134,374
+  s_8e040dbdf13565::t_8c11760f228ca9 90-94,97
+  s_8e040dbdf13565::t_a97142ea0be5b5 299
+  s_8e040dbdf13565::t_08683525aee7ac 1-4,6,11-15,17,20-32,34-47,53-76,82-89,95-96,98-133,135-140,143-161,163-164,166-189,191-210,212-241,249-250,257-258,260-273,354-355,366-373,375-376,380,383-384,390-391,394-473,475-478,480,484-519
+  s_8e040dbdf13565::t_40051412fe7927 256
+  s_8e040dbdf13565::t_c266cb922c0da2 50
+  s_8e040dbdf13565::t_c15a40fedc2a05 162,165
+  s_8e040dbdf13565::t_42f7abd910c7ad 5,7-8,16,242-247,251-255,259,274-283,286-294,296-298,300-306,308-339,342-345,349-353,356-365,377-379,382,385-386,392-393
+  s_8e040dbdf13565::t_79adbd80b6c762 284-285,295,307,340-341,346-348,387-389
+  s_8e040dbdf13565::t_8c280cb36dbbc1 18-19,474,479
+  s_8e040dbdf13565::t_f13ef0093b44b4 9,52,141-142,190
+packages/coding.sh/src/core/types.ts
+  s_8e040dbdf13565::t_9d4f1118ae5acf 372-375,377
+  s_8e040dbdf13565::t_590abeedbdb7fa 379-385
+  s_8e040dbdf13565::t_47c351c6429683 376,378
+  s_8e040dbdf13565::t_45387f2f74d43e 419-422
+  s_8e040dbdf13565::t_d6acc7036f5b89 423-455
+  s_8e040dbdf13565::t_0d511661420d48 476-477
+  s_8e040dbdf13565::t_449f47e89eb402 1-4,6-16,19-21,28,31-42,45-49,52-76,79-97,99-118,169-185,188-238,245-274,288-303,306-307,327-357,368-370,387-390,402-418,456-475,478-497,520-533,536-538
+  s_8e040dbdf13565::t_eb99d584f4693c 498-519,534-535
+  s_8e040dbdf13565::t_76cef35432264b 391-401
+  s_8e040dbdf13565::t_4ca45bd9d71d80 386
+  s_8e040dbdf13565::t_555f6a57c7fbcf 17-18
+  s_8e040dbdf13565::t_9b82f33806576b 22-23
+  s_8e040dbdf13565::t_76c091ef305c50 186-187
+  s_8e040dbdf13565::t_5a222bf4823bff 239-242
+  s_8e040dbdf13565::t_040bfb4a03bff3 27,29-30
+  s_8e040dbdf13565::t_3b55b76bdb0cc8 5,119-122,140-168
+  s_8e040dbdf13565::t_bf52a4bac459eb 43-44
+  s_8e040dbdf13565::t_537925de2cec7a 275
+  s_8e040dbdf13565::t_a52257a2423a70 276-287,358-367
+  s_8e040dbdf13565::t_93351d55a2aee0 77-78
+  s_8e040dbdf13565::t_70234b41dd10cf 123-139
+  s_8e040dbdf13565::t_7a33557fbb6252 304-305
+  s_8e040dbdf13565::t_d6d1e9d6022a10 308-326,371
+  s_8e040dbdf13565::t_87675ff5570eae 24-26,50-51,98,243-244
+docs/research/round-1-ecosystem.md
+  s_8e040dbdf13565::t_b5949a79f8bcfc 1-244
+packages/coding.sh/src/integrations/gateway/route.ts
+  s_8e040dbdf13565::t_b1922bd89cf581 1-74
+packages/coding.sh/src/server/serve.ts
+  s_8e040dbdf13565::t_14525bac704f32 67-79
+  s_8e040dbdf13565::t_26df5fc1a1fd41 310,340
+  s_8e040dbdf13565::t_d554fe25ea523e 1-66,80-309,311-339,341-360
+packages/coding.sh/src/server/auth.ts
+  s_8e040dbdf13565::t_f31cd95885014b 1-175
+packages/sdk-python/src/coding_sh/_llm.py
+  s_8e040dbdf13565::t_079f6b62e36b14 1-88,91-95,97-101,115,124-147,150,152-157,160-161,163-228,231-303,306-312
+  s_8e040dbdf13565::t_ed5789b8606b7d 158-159,162
+  s_8e040dbdf13565::t_591b01ddcad783 102
+  s_8e040dbdf13565::t_d5c311962eb40f 89-90,96,103-114,116-123,148-149,151,229-230,304-305
+packages/coding.sh/src/toolevals/compress.ts
+  s_8e040dbdf13565::t_30d0170687be4e 1-116,125-457
+  s_8e040dbdf13565::t_53a3f41107d72d 117-124
+packages/coding.sh/test/fixtures/adapters/antigravity/golden/backfill.golden.json
+  s_8e040dbdf13565::t_6667435ea4e8c8 1-20,23,31-36,38-43,45-46,52-53,62,91-94,96-97,99,104-106,114,134-137,139-141,152-155,157,159-162,164-166,187-188,202,264-267
+  s_8e040dbdf13565::t_c76a8adc67fba6 22,24-27,29-30,55-58,60,63,66,69-70,72,74,79,81-84,86-89,108-111,113,116,119,122-123,125,127,132,143-144,146,148,150,168-176,178-185,189-201,204-263
+  s_8e040dbdf13565::t_e078ba5622d32b 21,28,37,44,47-51,54,59,61,64-65,67-68,71,73,75-78,80,85,90,95,98,100-103,107,112,115,117-118,120-121,124,126,128-131,133,138,142,145,147,149,151,156,158,163,167,177,186,203
+packages/coding.sh/src/eval/patch.ts
+  s_8e040dbdf13565::t_fe230f5963f402 1-21,24-47,50-51,53-56,58-111,113-128,130-217
+  s_8e040dbdf13565::t_c5bc05f22e0202 22-23,48-49,52,57,112,129
+  s_8e040dbdf13565::t_c2916c57fa1bfd 218-236
+packages/coding.sh/src/adapters/_shared/toml-edit.ts
+  s_8e040dbdf13565::t_ae1ba276db24ee 1-26,32-40,44-57,59,74-182
+  s_8e040dbdf13565::t_7df06da94a8ed4 27-31,41-43,58,60-73
+packages/coding.sh/test/store/conformance.test.ts
+  s_8e040dbdf13565::t_1634b78ed32437 1-18
+packages/coding.sh/test/otel/_encode.ts
+  s_8e040dbdf13565::t_fd24ea9e47e688 1-142
+  s_8e040dbdf13565::t_6a30e33f590287 143-162
+packages/coding.sh/src/adapters/cursor.ts
+  s_8e040dbdf13565::t_17ea0fce6a2088 26,286-290
+  s_8e040dbdf13565::t_c15a40fedc2a05 125,146,197
+  s_8e040dbdf13565::t_0b8aca39035454 53
+  s_8e040dbdf13565::t_c266cb922c0da2 66-67
+  s_8e040dbdf13565::t_47194b95271b19 375-377
+  s_8e040dbdf13565::t_25849036123506 14-19
+  s_8e040dbdf13565::t_10643fb60ca706 64-65,68
+  s_8e040dbdf13565::t_26efc29cdf18ae 1-13,20-25,27-34,37-52,54-63,70-118,121-124,126-145,147-196,198-205,207-285,291-354,358-367,369-371,373-374,378-390
+  s_8e040dbdf13565::t_8c280cb36dbbc1 35-36,368,372
+  s_8e040dbdf13565::t_7068958f456d4c 355-357
+  s_8e040dbdf13565::t_93fdb2bc16fedf 206
+  s_8e040dbdf13565::t_ff48c654219909 69,119-120
+apps/site/src/assets/logos/cursor.svg
+  s_8e040dbdf13565::t_6da9f2f37e6b30 1
+docs/DOGFOOD.md
+  s_8e040dbdf13565::t_4d29ec45401217 1-14,16-501
+  s_8e040dbdf13565::t_a09f564e9b2f06 15
+  s_8e040dbdf13565::t_a20932c60abed0 502-518
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/c8e3f6cab3966fa7530e7fe12dc34934/segments/ec7efd5185e1a35d.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/test/fixtures/adapters/opencode/data/opencode/storage/part/msg_a1/prt_a1.json
+  s_8e040dbdf13565::t_a339dee5da4592 1-11
+packages/coding.sh/src/workflows/metrics.ts
+  s_8e040dbdf13565::t_56af85d53f602f 1-298
+  s_8e040dbdf13565::t_e8f0cbc601c9b2 299-311
+apps/site/src/assets/logos/gemini-cli.svg
+  s_8e040dbdf13565::t_6da9f2f37e6b30 1
+packages/blob-s3/test/minio.test.js
+  s_8e040dbdf13565::t_a022e9393761d8 15,18,26-28,70
+  s_8e040dbdf13565::t_12aadfd0696709 1-14,16-17,19-25,29-69,71-93
+packages/coding.sh/test/fixtures/adapters/goose/hooks.spool.jsonl
+  s_8e040dbdf13565::t_74191da3669e67 1-8
+packages/coding.sh/src/toolevals/model/openai.ts
+  s_8e040dbdf13565::t_31923ae48ee5cd 1-153
+apps/site/src/lib/cube.ts
+  s_8e040dbdf13565::t_bcd3931b63aeff 57,70
+  s_8e040dbdf13565::t_7c75b611d56ebb 1-56,58-69,71-85
+packages/coding.sh/test/runner/divergence.test.ts
+  s_8e040dbdf13565::t_3dd9dd36e985ed 1-48
+packages/coding.sh/src/cli/commands/judge.ts
+  s_8e040dbdf13565::t_acf45b72c4a4a0 7
+  s_8e040dbdf13565::t_87fa32eb130bdd 1-6,8-21,23-24,27-77
+  s_8e040dbdf13565::t_c4c08b3abefebc 25-26
+  s_8e040dbdf13565::t_790c73a8e60092 22
+packages/coding.sh/src/runner/tamper.ts
+  s_8e040dbdf13565::t_2c33395339dfd3 1-97,122-181,183-192,196-215
+  s_8e040dbdf13565::t_e9dbd440870167 98-121,182,193-195
+packages/coding.sh/test/fixtures/adapters/opencode/data/opencode/storage/part/msg_a1/prt_0t1.json
+  s_8e040dbdf13565::t_d8e6cb9c086bea 1-21
+apps/site/src/assets/logos/pi.svg
+  s_8e040dbdf13565::t_6b73730dbc0bf4 1
+packages/coding.sh/test/toolevals/status.test.ts
+  s_8e040dbdf13565::t_df52126fd3e037 4,14-17,31,36,40,43,48,52-53,58
+  s_8e040dbdf13565::t_2005dc1bbc0ac9 1-3,5-13,18-30,32-35,37-39,41-42,44-47,49-51,54-57,59-60
+packages/sdk-python/tests/support.py
+  s_8e040dbdf13565::t_2bd2ba606db169 1-40,43-44,46-123,125-126,128-295
+  s_8e040dbdf13565::t_8d1eabd5aa1b31 41-42,45,124,127
+packages/coding.sh/test/datasets/dataset.test.ts
+  s_8e040dbdf13565::t_a221658b07b7fc 1-25,29-264,299-305
+  s_8e040dbdf13565::t_fe43789014cc41 26-28,265-298
+packages/coding.sh/src/mcp/digest.ts
+  s_8e040dbdf13565::t_06619868e99993 4,19-20,49,75,90-91
+  s_8e040dbdf13565::t_0986cb5768c535 1-3,5-18,21-48,50-74,76-89,92-113
+packages/coding.sh/test/datasets/cli.test.ts
+  s_8e040dbdf13565::t_706bec0e9806f4 1-113
+packages/coding.sh/src/adapters/_shared/jsonl.ts
+  s_8e040dbdf13565::t_b96574b03b79a4 1-121
+install.sh
+  s_8e040dbdf13565::t_20c4aacf970fad 10
+  s_8e040dbdf13565::t_09f83e4c25dc36 26-38
+  s_8e040dbdf13565::t_8a37aa6beb67ee 1-5,8-9,11-25,39-47,53,57,59-60
+  s_8e040dbdf13565::t_6d8b837d80e04e 6-7,48-52,54-56,58,61-64
+  s_8e040dbdf13565::t_ac7070ba041b16 65
+docs/BENCH-CLI.md
+  s_8e040dbdf13565::t_d80ecdf3db76d5 107-124
+  s_8e040dbdf13565::t_992d59d4dd787c 1-106
+packages/coding.sh/test/adapters/shared.test.ts
+  s_8e040dbdf13565::t_9f1eebd1bcc27f 82-83
+  s_8e040dbdf13565::t_2d29bc61c5bcd2 1-81,84-157
+packages/coding.sh/src/workflows/store.ts
+  s_8e040dbdf13565::t_1c07ebfc88ff2e 1-183
+  s_8e040dbdf13565::t_114431889e2a32 184-188
+apps/site/src/pages/docs/faq.astro
+  s_8e040dbdf13565::t_b123762e61a713 9,29,34
+  s_8e040dbdf13565::t_8471b23dec8337 1-8,10-28,30-33,35-73
+apps/site/src/styles/global.css
+  s_8e040dbdf13565::t_bbc99823e622d5 41,47-49,54,58-60,63,66,75,79,87,90-97,112-115,118,120-121,126-127,129-130,132-135,141-142,145,148,150,155,157-159,185,231,241,252-260,264,266-267,271,274-278,282-283,285-287,291-292,295-296,303,312-313,315,317-318,324-325,336,338,341,344,346-347,362-363,375,388-389,391-398
+  s_8e040dbdf13565::t_2439ca41c6503a 326-335,352-356,358-361
+  s_8e040dbdf13565::t_c5db8701ba883f 3-40,42-46,50-53,55-57,61-62,65,67-73,80-86,98-111,116-117,119,122-125,128,131,137-140,143-144,153-154,160-184,186-230,232-240,242-251,261-263,265,268-270,272-273,279-281,284,288-290,293-294,297-302,304-311,314,316,319-323,337,339-340,342-343,345,348-351,357,364-374,376-387,390
+  s_8e040dbdf13565::t_8e90246be0ae7b 64
+  s_8e040dbdf13565::t_298f582caab7e3 1-2,74,76-78,88-89,136,146-147,149,151-152,156
+apps/site/src/assets/logos/antigravity.svg
+  s_8e040dbdf13565::t_6b73730dbc0bf4 1
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/d229f0531a25ff4a05cd62e457df671b/segments/7bcbc28f059e5cd0.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/test/stats/stats.test.ts
+  s_8e040dbdf13565::t_71ff8112cc7520 1-171,173-289
+  s_8e040dbdf13565::t_14dc4fad7f51ab 172
+packages/coding.sh/src/cli/commands/run.ts
+  s_8e040dbdf13565::t_7e54df2f152c36 1-19,22-24,33-34
+  s_8e040dbdf13565::t_00c063a5abe5f2 20,25-26,28-32
+  s_8e040dbdf13565::t_4a68a56fed14f1 21,27
+scripts/dogfood/cli-suite.mjs
+  s_8e040dbdf13565::t_34bc77a618f542 1-583
+packages/coding.sh/src/mcp/main.ts
+  s_8e040dbdf13565::t_b8b8c4a7465f26 1-6
+packages/coding.sh/src/spool/hook.ts
+  s_8e040dbdf13565::t_93a38ba1281e14 1-3,5-14,21-22,24-26,30,34-35,39-90,102-105,114-115,117-130,132-137,139-142,148-149,151-153,162,164,166-167,176-185
+  s_8e040dbdf13565::t_0f48b97ae054a6 4,15-20,106-113,138,154-161,163,165
+  s_8e040dbdf13565::t_57961a8da0b643 116,150,168-175
+  s_8e040dbdf13565::t_9b82f33806576b 23,37,143-144
+  s_8e040dbdf13565::t_371e3822e6ea49 27-29,31,38
+  s_8e040dbdf13565::t_b541b30fb585d1 91-101,131
+  s_8e040dbdf13565::t_9c7766f6c10a59 32-33,36,145-147
+packages/coding.sh/src/adapters/_shared/installs.ts
+  s_8e040dbdf13565::t_306fe308114ec8 1-14,22-62,65,67-77,93,98,110,112,126,129,137,154,156,158,160,163,165,167
+  s_8e040dbdf13565::t_dcdb20e05e71e3 15-21,63-64,66
+  s_8e040dbdf13565::t_2b3eaf01a53a4f 78-92,94-97,99-109,111,113-125,127-128,130-136,138-153,155,157,159,161-162,164,166
+LICENSE
+  s_8e040dbdf13565::t_d99f405395360a 1-21
+apps/site/src/pages/index.astro
+  s_8e040dbdf13565::t_ee81408722ff83 82
+  s_8e040dbdf13565::t_d36ad790861b8c 285,288,290-291,329-331,342-343,425,427-444,474-492,496,506,508-509,521-523,579-581,586,589
+  s_8e040dbdf13565::t_6d73105e08d767 133
+  s_8e040dbdf13565::t_c9965404dbfa31 11,171
+  s_8e040dbdf13565::t_c8de38267ba81b 4-5,17,32,63,68,79,96-97,99,103-104,114-117,121,129-130,132,136,138-139,141-145,168-170,172-173,184,186-188,192,195-200,204-206,210-211,214-216,218-221,309,318-328,332-341,344,356,359-360,370,374,376-378,381,397-398,407,417,422-424,426,445-450,452-461,464-473,500,591
+  s_8e040dbdf13565::t_39322234d2e67a 29
+  s_8e040dbdf13565::t_4d06348d622562 105-107,109-110,350-352,357-358,363,368,371,402-403,410-411,414-415
+  s_8e040dbdf13565::t_6883fe9ee44a63 60
+  s_8e040dbdf13565::t_94ac932bbf1ec1 14-16,34-38,45-52,55,57-59,61,64-67,92,98,118,131,146-167,174
+  s_8e040dbdf13565::t_968bb78d6044ee 190-191,193,212-213,497,507,559-560,562,572,582-584
+  s_8e040dbdf13565::t_aa5c9ed9d3e28f 310-316
+  s_8e040dbdf13565::t_439ea1ce5679e9 6,33,39-41,56,69-71,77-78,100,125,175-177,185,189,194,201-202,217,498-499,501-505,526,533-534,548,558,561,563-571,573-578,585,587-588,590,610
+  s_8e040dbdf13565::t_bc0560d9413d6d 7
+  s_8e040dbdf13565::t_cd264a949987f2 80
+  s_8e040dbdf13565::t_b4886f88f79307 108
+  s_8e040dbdf13565::t_8f0ad7d03de405 81
+  s_8e040dbdf13565::t_8860537d1552d2 203,255-259,345-349,353-355,361-362,364-367,369,372-373,375,379-380,382-383,385-389,393,399-401,404-406,408-409,412-413,416,418-421,451,462-463,510-520,524-525,527-532,535-547,549-557
+  s_8e040dbdf13565::t_a620d77213e264 12,73,75-76,93,101-102,111-113,126-127,140,178-183,592
+  s_8e040dbdf13565::t_13c82004273973 207-209
+  s_8e040dbdf13565::t_b5859405bc4ace 391
+  s_8e040dbdf13565::t_6afe81ecde14bf 137
+  s_8e040dbdf13565::t_4ca0223ca63fd1 10,13,42-44,53-54,62,119-120,122-124,134
+  s_8e040dbdf13565::t_644c26699f7877 135
+  s_8e040dbdf13565::t_767a0045114452 493-495
+  s_8e040dbdf13565::t_ef43032241a3f3 28
+  s_8e040dbdf13565::t_949c7f3ecd2a67 595-607
+  s_8e040dbdf13565::t_de0e669137736d 222-254,260-284,286-287,292-308,317,384,390,392,394-396
+  s_8e040dbdf13565::t_735027b6acda29 1-3,8-9,18-27,30-31,72,74,83-91,94-95,128,289,593-594,608-609,611-612
+packages/coding.sh/src/stats/index.ts
+  s_8e040dbdf13565::t_06c20a4bf3a2c5 1-3,6-9
+  s_8e040dbdf13565::t_2329d9f5ca97d8 4-5
+packages/coding.sh/src/mcp/launch.ts
+  s_8e040dbdf13565::t_df496d51ca5e57 1-2,4-9,15,24-34
+  s_8e040dbdf13565::t_94bb1816a82755 3,10-14,16-23
+packages/coding.sh/src/graders/mock.ts
+  s_8e040dbdf13565::t_e40f83c48d6922 1-52
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/c8e3f6cab3966fa7530e7fe12dc34934/segments/3005316add79005a.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/src/cli/commands/harness.ts
+  s_8e040dbdf13565::t_87fa32eb130bdd 1,3-50,55-60,62-75
+  s_8e040dbdf13565::t_83e07617c7f6f9 2,51-54,61
+packages/coding.sh/test/viewer/browser.ts
+  s_8e040dbdf13565::t_32f9812eb687f3 27-29
+  s_8e040dbdf13565::t_d86bae9e394cfa 1-26,30-172
+packages/blob-s3/test/sigv4.test.js
+  s_8e040dbdf13565::t_c4eb091efc4c28 1-103
+packages/coding.sh/src/eval/judge.ts
+  s_8e040dbdf13565::t_6317ade7c8288b 1-156
+packages/coding.sh/src/mcp/data.ts
+  s_8e040dbdf13565::t_c121b1bf0b29b7 567-570,573-576,585-588,604-605,612-614,622-625,627-628,631-642
+  s_8e040dbdf13565::t_898f4eb62a55a9 1-6,8-54,75-86,89-132,135-147,149-371,374,376,378-444,473-517,525-535,540,551-553,556-560,562-566,571,577-579,581-584,589-597,600-603,620-621,626,629-630,643-658,674-679,683-685,687,694,697,702-703,710-711,716-717,719-721,734-755,757-763,765-772
+  s_8e040dbdf13565::t_0e44ab24f72abd 372-373,375,377
+  s_8e040dbdf13565::t_219a0ed9c34d47 7
+  s_8e040dbdf13565::t_0cac8b3a7be284 659-673,680-682,686,688-693,695-696,698-701,704-709,712-715,718,722-733
+  s_8e040dbdf13565::t_f69424ad3cfb41 445-472,518-524,536-539,541-550
+  s_8e040dbdf13565::t_865adc343d9815 55-74,87-88,756,764
+  s_8e040dbdf13565::t_1687c06020a7f3 133-134,148
+  s_8e040dbdf13565::t_24e816551c2d0a 554-555,561,572,580,598-599,606-611,615-619
+packages/coding.sh/test/graders/json-schema.test.ts
+  s_8e040dbdf13565::t_6bfb29ca8a5966 1-163
+render.yaml
+  s_8e040dbdf13565::t_3d7142e0ac50c4 1-32
+packages/sdk/src/index.ts
+  s_8e040dbdf13565::t_0304b26993e990 1-18
+packages/coding.sh/src/cli/hookbin.ts
+  s_8e040dbdf13565::t_d2ac479ef4153f 3-4,8,19,21,23,25-33,38,40-43
+  s_8e040dbdf13565::t_5ee180ec4f115d 1-2,5-7,9-18,20,22,24,34-37,39,44
+packages/coding.sh/src/judge/providers.ts
+  s_8e040dbdf13565::t_a83fadd7d4f024 156-157
+  s_8e040dbdf13565::t_8525c3b746cae7 1-155,158-208
+README.md
+  s_8e040dbdf13565::t_1142ca258f4329 3-46,48-77,79-83,90-141,144-168,170-248
+  s_8e040dbdf13565::t_899f6a4876b522 47
+  s_8e040dbdf13565::t_1f10f7e74c436b 84-89,142-143,169
+  s_8e040dbdf13565::t_1aff0b5a42251b 78
+  s_8e040dbdf13565::t_6f6800adea8bca 1-2
+packages/coding.sh/src/core/config.ts
+  s_8e040dbdf13565::t_308eb54fc002e1 68,72-96,228-230,244-266
+  s_8e040dbdf13565::t_5a222bf4823bff 48,225-227
+  s_8e040dbdf13565::t_f691fdcf299880 7,14-15,18,106-107,110-113
+  s_8e040dbdf13565::t_95ce5f1a46591c 1-6,8-13,16-17,19-47,49-67,69-71,97-105,108-109,114-178,180-224,231-243,267-421
+  s_8e040dbdf13565::t_2e8b45d1d2bfcb 179
+packages/coding.sh/src/toolevals/mcp/stdio.ts
+  s_8e040dbdf13565::t_7bd807c8b65441 1-134
+examples/eve-agent/agent/agent.ts
+  s_8e040dbdf13565::t_0db6a0dbca182e 15-23,27,30-31,35-37,43-45,47
+  s_8e040dbdf13565::t_94a53dcd650d88 28
+  s_8e040dbdf13565::t_b6f7c16d2a8c4d 1-14,24-26,29,32-34,38-42,46,48-54
+  s_8e040dbdf13565::t_7680843666cdf3 55-65
+packages/coding.sh/test/core/sessions.test.ts
+  s_8e040dbdf13565::t_4d557fdf1bbb11 1-7,9-147
+  s_8e040dbdf13565::t_4ef0a971269e87 8,174-240
+  s_8e040dbdf13565::t_8958a30f4ba6a3 148-173,241-242
+packages/coding.sh/test/workflows/_fixtures.ts
+  s_8e040dbdf13565::t_39f4800f082645 1-244
+  s_8e040dbdf13565::t_b41cd615fc0ac4 245-322
+packages/coding.sh/scripts/bundle.mjs
+  s_8e040dbdf13565::t_b41dcc3b0c4fc6 1-34,41-46,50-52,54
+  s_8e040dbdf13565::t_a022e9393761d8 35-40
+  s_8e040dbdf13565::t_cf2ba6441a77bf 47-49,53
+packages/coding.sh/src/update/index.ts
+  s_8e040dbdf13565::t_71f1847552571a 1-268
+packages/sdk-python/tests/test_otel.py
+  s_8e040dbdf13565::t_c73056ad67bf5c 65-69
+  s_8e040dbdf13565::t_daaa5b7722dd6f 1-64,70-151
+docs/research/2606.27226.md
+  s_8e040dbdf13565::t_4d75a644577230 283-311
+  s_8e040dbdf13565::t_f22fffc345fa06 450-451
+  s_8e040dbdf13565::t_9ead6eca680c01 31-35,37-38
+  s_8e040dbdf13565::t_99fbfcedfaf635 1-30,36,39-282,312-449,452-497
+apps/site/src/assets/logos/factory.svg
+  s_8e040dbdf13565::t_0570ef508561ae 1
+examples/eve-agent/evals/weather.eval.ts
+  s_8e040dbdf13565::t_d05e311cf6a1a8 1-45
+packages/coding.sh/test/adapters/cursor.test.ts
+  s_8e040dbdf13565::t_86abed1631a998 29-30
+  s_8e040dbdf13565::t_fdf579480f3dec 1,3-6,8-28,31-84,110-135
+  s_8e040dbdf13565::t_308eb54fc002e1 2,7,85-109
+packages/coding.sh/test/experiments/compare.test.ts
+  s_8e040dbdf13565::t_7d88ae74c72a87 65-76,106-108,122-131,164-165,167-182,192
+  s_8e040dbdf13565::t_91c9af2da6592d 59-60,63
+  s_8e040dbdf13565::t_0fe70fa1424bf9 80-96,199
+  s_8e040dbdf13565::t_1d6a76bd201a8b 166
+  s_8e040dbdf13565::t_5556d33c329ba7 1-3,5-58,61-62,64,77-79,97-105,109-121,132-163,209-210
+  s_8e040dbdf13565::t_31ed094e51f67b 4,183-191,193-198,200-208
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/c8e3f6cab3966fa7530e7fe12dc34934/segments/e659c89f45d926bb.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/src/judge/calibrate.ts
+  s_8e040dbdf13565::t_4c292aaf2ac7cb 1-16,22-111,113,115-219,222-342
+  s_8e040dbdf13565::t_6317ade7c8288b 17-21,112,114,220-221
+packages/coding.sh/src/judge/checklist-diagnostics.ts
+  s_8e040dbdf13565::t_fc1d6256898a7e 1-301,304-403
+  s_8e040dbdf13565::t_ef613ec6957d93 302-303
+packages/coding.sh/src/adapters/more/_util.ts
+  s_8e040dbdf13565::t_2d1a962be2b309 292-293
+  s_8e040dbdf13565::t_58da3870057769 1-12,14-15,17-22,24-167,180-189,192-198,200-203,206,208-222,224-225,235-291,294-310,325-390,398-685,697-900,915-1043
+  s_8e040dbdf13565::t_c15a40fedc2a05 391-397
+  s_8e040dbdf13565::t_f73fbfc8988ff7 23,168-179,190-191,199,204-205,207,223,226-234
+  s_8e040dbdf13565::t_390aa745424012 686-696
+  s_8e040dbdf13565::t_7c73e27fcb6b81 901-914
+  s_8e040dbdf13565::t_c8b743f89cae63 13,16,311-324
+packages/coding.sh/src/graders/proc.ts
+  s_8e040dbdf13565::t_25f3578e21b901 1-142
+packages/coding.sh/src/core/git.ts
+  s_8e040dbdf13565::t_6c677d1e12416f 80-84
+  s_8e040dbdf13565::t_b9d0f650b2df0e 11,99-102,109,111,196-197,243,247-248
+  s_8e040dbdf13565::t_d0982fe65906a2 40-45,54-55,123,131-144,173
+  s_8e040dbdf13565::t_a4da2ded374808 1-10,12-39,46-53,56-79,85-98,103-108,110,112-122,124-130,145-172,174-195,198-242,244-246,249-264
+packages/coding.sh/test/integrations/eve/map.test.ts
+  s_8e040dbdf13565::t_c8b67ce36d5958 62-63,70
+  s_8e040dbdf13565::t_96946b8729ce4d 78
+  s_8e040dbdf13565::t_0a522781d0e9b6 80-82
+  s_8e040dbdf13565::t_9ff78c1035df94 1-14,19-25,27-61,64-69,71-77,79,88-152,155-185
+  s_8e040dbdf13565::t_dc7ae63126eb86 15-18,26,83-87,153-154
+apps/site/src/assets/logos/SOURCES.md
+  s_8e040dbdf13565::t_cc99881b480ee9 22-23,28-32
+  s_8e040dbdf13565::t_13ada27896d25d 1-2,7-21,24-27
+  s_8e040dbdf13565::t_9d99db62d15148 3-6
+packages/sdk/test/helpers/fake-serve.ts
+  s_8e040dbdf13565::t_7b95b6b9ada601 1-9,11,14-26,29-39,41-59,61-62,64-85,91,93-94,96-99,101,103-104,106-107,111-131,133-154
+  s_8e040dbdf13565::t_504acfb86a9673 13,27-28,132
+  s_8e040dbdf13565::t_6048646ee27d72 10,12,40,60,63,86-90,92,95,100,102,105,108-110
+apps/site/src/pages/install.sh.ts
+  s_8e040dbdf13565::t_e3bf6adeb94a1f 1-8
+packages/sdk/test/context.test.ts
+  s_8e040dbdf13565::t_504acfb86a9673 13-16
+  s_8e040dbdf13565::t_ffe31a8f35adde 1-12,17-78,80-116
+  s_8e040dbdf13565::t_7d8a7f441cc0e7 79
+apps/site/src/pages/changelog.xml.ts
+  s_8e040dbdf13565::t_80431c06daa369 1-37
+packages/coding.sh/src/integrations/gateway/config.ts
+  s_8e040dbdf13565::t_6fd3b658d3eeee 1-175
+packages/coding.sh/test/fixtures/adapters/goose/golden/backfill.golden.json
+  s_8e040dbdf13565::t_64393ad762db61 5
+  s_8e040dbdf13565::t_ded3b515acad97 1-4,6-189,266-267
+  s_8e040dbdf13565::t_99e76b1b45254b 190-265
+apps/site/wrangler.jsonc
+  s_8e040dbdf13565::t_f402fe64705cae 1-18
+packages/coding.sh/src/adapters/_shared/overlay.ts
+  s_8e040dbdf13565::t_a5faee5ec1cac9 1-4,6-10,13-39
+  s_8e040dbdf13565::t_ba28784c1959ef 5,11-12
+packages/coding.sh/src/judge/extract.ts
+  s_8e040dbdf13565::t_1a1baa70ab2ba0 1-94
+packages/coding.sh/src/mcp/index.ts
+  s_8e040dbdf13565::t_b8b8c4a7465f26 1-9
+  s_8e040dbdf13565::t_df496d51ca5e57 10
+packages/coding.sh/test/viewer/ui.test.ts
+  s_8e040dbdf13565::t_c9a4500c7fbe2a 1-61
+examples/production/node-openai/app.mjs
+  s_8e040dbdf13565::t_1300e42d3bf276 1-43
+packages/coding.sh/test/core/snapshot.test.ts
+  s_8e040dbdf13565::t_dc657b2cd432e4 1-47,49-91,93-277
+  s_8e040dbdf13565::t_53181d37ee69a0 48,92
+docs/research/prime-agent.md
+  s_8e040dbdf13565::t_c10e14e0d86f63 1-847
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/d229f0531a25ff4a05cd62e457df671b/segments/abcb2c5f8f8b98b0.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+apps/site/src/pages/docs/ai-gateway.astro
+  s_8e040dbdf13565::t_d968087fd4dcf7 1-66
+packages/coding.sh/test/fixtures/adapters/pi/agent/sessions/--work-demo--/2026-09-21T10-00-00-000Z_pi-sess-1.jsonl
+  s_8e040dbdf13565::t_5924976209bbd2 1-2,9
+  s_8e040dbdf13565::t_8694b44f156d61 3-8
+packages/coding.sh/test/fixtures/adapters/codex/home/sessions/2026/11/01/rollout-2026-11-01T10-00-00-0193aaaa-1111-7222-8333-444455556666.jsonl
+  s_8e040dbdf13565::t_6d661be1ddb2bf 1-22
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/c8e3f6cab3966fa7530e7fe12dc34934/segments/33fff7b955257974.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+apps/site/src/assets/logos/kiro.svg
+  s_8e040dbdf13565::t_0570ef508561ae 1
+packages/blob-s3/test/store.test.js
+  s_8e040dbdf13565::t_7a02a716f1e394 1-27,29-180
+  s_8e040dbdf13565::t_06d723bd22079a 28
+packages/coding.sh/test/integrations/eve/fixtures/app/.eve/traces/v1/d229f0531a25ff4a05cd62e457df671b/segments/f9b6765bf96d6ffd.otlp.json
+  s_8e040dbdf13565::t_dd366856a70874 1
+packages/coding.sh/src/spool/host.ts
+  s_8e040dbdf13565::t_0c3b6eb710f55d 1-30
+packages/coding.sh/src/cli/commands/uninstall.ts
+  s_8e040dbdf13565::t_249364e2998513 1-4,6-7,14-19,30,47,53,56,62,64
+  s_8e040dbdf13565::t_e9287bc6f73861 5,8-13,20-29,31-46,48-52,54-55,57-61,63,65-75
+packages/coding.sh/test/core/context.test.ts
+  s_8e040dbdf13565::t_caebd0388fba1d 1-34
+  s_8e040dbdf13565::t_ce41e5ee0c2a9f 35-58
+packages/coding.sh/src/stats/prng.ts
+  s_8e040dbdf13565::t_06c20a4bf3a2c5 1-13
+docs/WORKFLOWS.md
+  s_8e040dbdf13565::t_bccbaf5cb15ef6 1-405
+packages/coding.sh/src/integrations/eve/stream.ts
+  s_8e040dbdf13565::t_c8e01cbdcb4431 246,271,281
+  s_8e040dbdf13565::t_3309d4b62736e2 1-245,247-270,272-280,282-339
+apps/site/src/components/docs/Tag.astro
+  s_8e040dbdf13565::t_ec4ea00e675e68 1-11
+packages/coding.sh/src/judge/http.ts
+  s_8e040dbdf13565::t_b3c411aabf5ca3 1-150
+packages/coding.sh/test/integrations/gateway/cli.test.ts
+  s_8e040dbdf13565::t_4a9ada24764c71 1-101,106-118,121-128,131-137
+  s_8e040dbdf13565::t_2262907eb6a54f 102-105
+  s_8e040dbdf13565::t_bb7038ea7f2548 129-130
+  s_8e040dbdf13565::t_a135813c40315a 119-120
+packages/coding.sh/test/eval/patch.test.ts
+  s_8e040dbdf13565::t_158badecb4049d 72,85
+  s_8e040dbdf13565::t_aa8117611f13a7 1-71,73-84,86-153
+packages/sdk/test/golden.test.ts
+  s_8e040dbdf13565::t_d304dadb073dfc 1-31,33-176
+  s_8e040dbdf13565::t_504acfb86a9673 32
+packages/coding.sh/src/adapters/_shared/tools.ts
+  s_8e040dbdf13565::t_1b25aa8de28961 4,100
+  s_8e040dbdf13565::t_ed8877a87daf8a 5,57-61,64-65,72,76-79,85,90,92-94,97-98,101,109-111,125-139,143-146,148,151-156
+  s_8e040dbdf13565::t_63c71414c7a811 1-3,6-52,55-56,62-63,66-71,73-75,80-84,86-89,91,95-96,99,102-108,112-124,140-142,147,149-150,157-164
+  s_8e040dbdf13565::t_8c11760f228ca9 53-54
+packages/coding.sh/src/store/common.ts
+  s_8e040dbdf13565::t_3f3862cda4757a 93-97
+  s_8e040dbdf13565::t_84858f1c925d00 11-12,14-67,69-90,98-102,104
+  s_8e040dbdf13565::t_37fd23ab0d5a56 1-10,13,68,91-92,103,105-106,112-114,116-146
+  s_8e040dbdf13565::t_85f9dd96a55296 107-111,115
+  s_8e040dbdf13565::t_6dd588bda44a0c 147-174
+packages/coding.sh/test/toolevals/model.test.ts
+  s_8e040dbdf13565::t_2ad8a656228f3e 1-128
+packages/coding.sh/test/core/toml.test.ts
+  s_8e040dbdf13565::t_3f34ceb5e51f31 1-168
+packages/coding.sh/src/toolevals/config.ts
+  s_8e040dbdf13565::t_12b481b5d9c78a 1-5,7,9-33,36-190,246-380,382-410
+  s_8e040dbdf13565::t_2c0c6a5733427b 6,8,34-35,191-245,381
+deploy/railway.json
+  s_8e040dbdf13565::t_7903d0ca005ca9 1-14
+packages/coding.sh/test/fixtures/adapters/antigravity/home/.gemini/antigravity-cli/brain/agy-conv-1/.system_generated/logs/transcript.jsonl
+  s_8e040dbdf13565::t_c76a8adc67fba6 9-11
+  s_8e040dbdf13565::t_31ace1e2d4cf0e 1-8
+packages/coding.sh/src/cli/commands/init.ts
+  s_8e040dbdf13565::t_df0296010e3e55 1-7,12-13,21-22,32-36,46-66,96-97,100,111-114,116-120,129-136,138,141-146,151-156,158,161-162,164,167-170,179,181-187,189-191,193-198,200,202-204,207,218-219
+  s_8e040dbdf13565::t_b4eca0ab44bfa2 8-11,14-20,23-31,37-43,67-68,91-95,98-99,101-107,121-128,137,139-140,147-150,159-160,163,165-166,171-178,180,188,192,221
+  s_8e040dbdf13565::t_15506094479504 201,220
+  s_8e040dbdf13565::t_54191c491e976f 108-110
+  s_8e040dbdf13565::t_528334b205ab8d 44-45,69-90,115,157,199,205-206,208-214,217
+  s_8e040dbdf13565::t_ac2ffe909a4d72 215-216
+apps/site/src/pages/docs/mcp.astro
+  s_8e040dbdf13565::t_3b7f3dab44adee 1-126
+packages/coding.sh/src/toolevals/drivers/model.ts
+  s_8e040dbdf13565::t_0872f12ad12d0d 1-77
+examples/eve-agent/scripts/ask.mjs
+  s_8e040dbdf13565::t_bc46214e931a35 43-70
+  s_8e040dbdf13565::t_4908b3da856c2c 1-42,71
+apps/site/src/assets/logos/vercel.svg
+  s_8e040dbdf13565::t_6da9f2f37e6b30 1
+packages/sdk-python/src/coding_sh/_client.py
+  s_8e040dbdf13565::t_97226becb8f1e6 1-27,29-160,163,165-199,201-271,273-418
+  s_8e040dbdf13565::t_50ba9b8fda50a4 28,164,200,272
+  s_8e040dbdf13565::t_76c75894c1c742 161-162
+packages/coding.sh/test/adapters/more/goose.test.ts
+  s_8e040dbdf13565::t_99e76b1b45254b 21,46-47,91-95,102,113
+  s_8e040dbdf13565::t_ded3b515acad97 1-19,22-45,48-90,96-101,103-112,114-176,178-182
+  s_8e040dbdf13565::t_74ae8a3d45e106 20,177
+packages/coding.sh/test/integrations/gateway/_fixtures.ts
+  s_8e040dbdf13565::t_9764bf3665e793 1-11,13-16,18,20-88
+  s_8e040dbdf13565::t_1ed182ba9915a2 12,17,19
+packages/coding.sh/test/fixtures/adapters/antigravity/golden/hooks.golden.json
+  s_8e040dbdf13565::t_6667435ea4e8c8 1-39,41-85,87-112,173-187
+  s_8e040dbdf13565::t_c76a8adc67fba6 113-172
+  s_8e040dbdf13565::t_bb268943583239 40,86
+packages/coding.sh/src/adapters/more/index.ts
+  s_8e040dbdf13565::t_00bb568b0d1a29 1-2,4-12,14-16
+  s_8e040dbdf13565::t_44f3e0d1c6c732 3,13
+packages/coding.sh/test/fixtures/adapters/wrapper/wrapper.spool.jsonl
+  s_8e040dbdf13565::t_74191da3669e67 1-7
+packages/coding.sh/test/cli/cli.test.ts
+  s_8e040dbdf13565::t_0749aa07ebe1e4 116-124
+  s_8e040dbdf13565::t_20026162887648 313
+  s_8e040dbdf13565::t_032310ef02e042 643-731,777-780,782-796
+  s_8e040dbdf13565::t_d704a7a8fc2171 732-761
+  s_8e040dbdf13565::t_6a50db6dfe1a1f 781,806,814-817
+  s_8e040dbdf13565::t_7a12061f1ecf2c 607-641
+  s_8e040dbdf13565::t_a97ce4f0594972 762-776
+  s_8e040dbdf13565::t_4d81e0b7ac27f0 304-312
+  s_8e040dbdf13565::t_84858f1c925d00 288
+  s_8e040dbdf13565::t_36a6cea78f84f0 1-115,125-237,315-412,414-423
+  s_8e040dbdf13565::t_0892737df497c3 424-571
+  s_8e040dbdf13565::t_4c2065bbdca3b0 413
+  s_8e040dbdf13565::t_a0fa8f0b9f6b7b 797-805,807-813,818-844
+  s_8e040dbdf13565::t_afc4b9e8b34e71 572-593,602-606,642
+  s_8e040dbdf13565::t_6baa321b4efadc 594-601
+  s_8e040dbdf13565::t_31ebc195c56110 238-287,289-303,314
+apps/site/public/_headers
+  s_8e040dbdf13565::t_e3bf6adeb94a1f 14,38-50
+  s_8e040dbdf13565::t_c4db210fd827aa 25-31
+  s_8e040dbdf13565::t_78c7d662db78b5 1-13,15-24,32-37
+packages/coding.sh/test/fixtures/adapters/droid/hooks.spool.jsonl
+  s_8e040dbdf13565::t_5924976209bbd2 1-7,9-13
+  s_8e040dbdf13565::t_0276ba197d4f63 8
+apps/site/src/lib/changelog.ts
+  s_8e040dbdf13565::t_80431c06daa369 1-50
+packages/coding.sh/src/viewer/server.ts
+  s_8e040dbdf13565::t_a11be4d2abb885 1-15,17-30,35-48,51-92,99-100,102-103,121-122,124,129-134,136-142,146,148-151,153-164,168-171,181-182,184-327,333,342-373,375,377,379-415,418-465,474,482-483,485-489,498-502,504-525,541-542,545-549,553-554,562-581,588-591,593-597,604-612,614-631,633-664,666-670,673-676,678-733,735-737,740-746
+  s_8e040dbdf13565::t_389791ea23cda7 555-557
+  s_8e040dbdf13565::t_c6f7fcb7dd2e35 526-533,535,537-539,543-544,551-552,559-561,582,586,592,602-603,613
+  s_8e040dbdf13565::t_8989b5a9f4371f 16,31-34,172-174,180,329,490-497
+  s_8e040dbdf13565::t_ffd4b70843a970 583-585,599-601
+  s_8e040dbdf13565::t_18f9ef956e23a4 49-50,93-98,101,104-120,123,125-128,135,143-145,147,152,165-167,175-179,183,328,330-332,334-341,374,376,378,416-417,466-473,475-481,484,503,534,536,540,550,558,587,598,632,665,671-672,677,734,738-739
+packages/coding.sh/test/core/ingest-repo.test.ts
+  s_8e040dbdf13565::t_7444d27d12c833 37-41,43,53,61,90,94
+  s_8e040dbdf13565::t_61541af270d823 1-36,42,44-52,54-60,62-82,86-89,91-93,95-198
+  s_8e040dbdf13565::t_63759621e23ae0 83-85
+packages/coding.sh/test/adapters/t3code.test.ts
+  s_8e040dbdf13565::t_a1645b0ba61d40 1-330
+packages/coding.sh/test/fixtures/adapters/opencode/v2.spool.jsonl
+  s_8e040dbdf13565::t_a339dee5da4592 1-13
+packages/blob-s3/package.json
+  s_8e040dbdf13565::t_f6b1c608b9d695 1-26
+packages/coding.sh/src/adapters/more/wrapper.ts
+  s_8e040dbdf13565::t_c15a40fedc2a05 56
+  s_8e040dbdf13565::t_c68683d73a11e4 1-55,57-143
+examples/eve-agent/scripts/import-traces.ts
+  s_8e040dbdf13565::t_4908b3da856c2c 1-37
+packages/coding.sh/src/adapters/t3code.ts
+  s_8e040dbdf13565::t_ff6092b6854e88 1-37,39-179,184-339,341-614,619-737,741
+  s_8e040dbdf13565::t_0d9141c1ed4bb9 340
+  s_8e040dbdf13565::t_737cc80b2fa6f6 180-183
+  s_8e040dbdf13565::t_9d4f1118ae5acf 38,615-618
+  s_8e040dbdf13565::t_47c351c6429683 738-740
+apps/site/src/lib/agent-docs.ts
+  s_8e040dbdf13565::t_8e22a1b32280d0 56-61
+  s_8e040dbdf13565::t_7b10e289f2fd96 1-11,14-55,62-133
+  s_8e040dbdf13565::t_7e8adacbb8a6d1 12-13
+packages/coding.sh/test/adapters/qa-regressions.test.ts
+  s_8e040dbdf13565::t_d21a901de925ce 1-51,55-57,61-62,64-69,71-110,114-166,172-234
+  s_8e040dbdf13565::t_049feb3a036e0c 111-113
+  s_8e040dbdf13565::t_f82da35e5fe303 167-171
+  s_8e040dbdf13565::t_478b7520766a0d 52-54,58-60,63,70
+packages/coding.sh/test/fixtures/otel/claude-code-logs.json
+  s_8e040dbdf13565::t_6ef858763bd3e0 1-630
+packages/coding.sh/src/adapters/_shared/hooks.ts
+  s_8e040dbdf13565::t_756f74d018b5b4 1-214
+packages/coding.sh/src/integrations/eve/task.ts
+  s_8e040dbdf13565::t_43ac3ff3a7c207 96-101
+  s_8e040dbdf13565::t_5426930aab7c37 1-95,102-199
+apps/site/src/components/AgentLogo.astro
+  s_8e040dbdf13565::t_b4886f88f79307 11-12,15,20,24-38
+  s_8e040dbdf13565::t_13ada27896d25d 1,3-10,13-14,16,21-23,39-52
+  s_8e040dbdf13565::t_2439ca41c6503a 2,17-19
+packages/coding.sh/src/workflows/replay.ts
+  s_8e040dbdf13565::t_63c798fd3f6863 1-236
+  s_8e040dbdf13565::t_6eb806e6028965 237
+packages/coding.sh/src/server/queue.ts
+  s_8e040dbdf13565::t_fd1b7182692989 1-286,288-341
+  s_8e040dbdf13565::t_a93a2bbd956924 287
+packages/coding.sh/src/core/lock.ts
+  s_8e040dbdf13565::t_7d1986b5ee5dff 1-129
+packages/coding.sh/src/core/ids.ts
+  s_8e040dbdf13565::t_bee32bb9e570c9 1-101
+packages/sdk/README.md
+  s_8e040dbdf13565::t_fcb0cd0ab7aa35 1-123
+examples/eve-agent/.env.example
+  s_8e040dbdf13565::t_47f65c0f9a35a2 1-14
+apps/site/src/pages/install.ts
+  s_8e040dbdf13565::t_e3bf6adeb94a1f 1-8
+packages/coding.sh/src/server/retention.ts
+  s_8e040dbdf13565::t_7b6a098c7e39fd 1-67
+packages/coding.sh/src/integrations/gateway/ids.ts
+  s_8e040dbdf13565::t_e3e4c1565b77bc 33
+  s_8e040dbdf13565::t_5922a246af759d 75,77
+  s_8e040dbdf13565::t_d5cc284bc9f06e 1-29,37-74,76,78
+  s_8e040dbdf13565::t_691aa38aad052d 30-32,34-36
+packages/coding.sh/src/toolevals/tap/main.ts
+  s_8e040dbdf13565::t_86f34bdfd0bf80 1-100
+packages/coding.sh/src/runner/bundle.ts
+  s_8e040dbdf13565::t_a21012b8d43714 1-321
+.github/workflows/site.yml
+  s_8e040dbdf13565::t_88be8ead217de3 1-62
+apps/site/public/favicon.svg
+  s_8e040dbdf13565::t_d6e739ee95fc32 1
+apps/site/public/site.webmanifest
+  s_8e040dbdf13565::t_2eca6bb30f2b28 1-14
+apps/site/tsconfig.json
+  s_8e040dbdf13565::t_5e22cfb01037b3 1-14
+evals/cli/fixtures/fake-agent.mjs
+  s_8e040dbdf13565::t_9826cb11b3260d 1-26
+evals/cli/fixtures/solver.mjs
+  s_8e040dbdf13565::t_2079fd1681ea70 1-28
+evals/cli/suite.toml
+  s_8e040dbdf13565::t_6105073c0538e2 1-33
+examples/eve-agent/package-lock.json
+  s_8e040dbdf13565::t_215a7b53af958a 1-884
+examples/production/ai-sdk/app.mjs
+  s_8e040dbdf13565::t_cbe22fa93add14 1-49
+examples/production/ai-sdk/package-lock.json
+  s_8e040dbdf13565::t_7fe071f153da6d 1-1063
+examples/production/ai-sdk/package.json
+  s_8e040dbdf13565::t_594d4dcaaada75 1-20
+examples/production/node-openai/package-lock.json
+  s_8e040dbdf13565::t_f7ab19be5a50e2 1-93
+package-lock.json
+  s_8e040dbdf13565::t_c748908e24ecc1 1-9199
+packages/blob-s3/README.md
+  s_8e040dbdf13565::t_c9b4619054dc44 1-23
+packages/coding.sh/src/core/repo-state.ts
+  s_8e040dbdf13565::t_3f3f20e3767d7f 1-64
+packages/coding.sh/src/datasets/index.ts
+  s_8e040dbdf13565::t_4277e243254eca 1-5
+packages/coding.sh/src/eval/index.ts
+  s_8e040dbdf13565::t_58574055bf2490 1-7
+packages/coding.sh/src/experiments/index.ts
+  s_8e040dbdf13565::t_82430d79e5f6ba 1-6
+packages/coding.sh/src/judge/index.ts
+  s_8e040dbdf13565::t_a0f9cbb8a95039 1-12
+packages/coding.sh/src/runner/divergence.ts
+  s_8e040dbdf13565::t_e0a156073a6683 1-102
+packages/coding.sh/src/runner/index.ts
+  s_8e040dbdf13565::t_d3792a9f04b6ad 1-9
+packages/coding.sh/src/store/plugin-api.ts
+  s_8e040dbdf13565::t_1e46a9bd95c33c 1-46
+packages/coding.sh/test/fixtures/adapters/claude-code/config/projects/-work-demo/11111111-2222-4333-8444-555555555555.jsonl
+  s_8e040dbdf13565::t_f795fb05b33a66 1-19
+packages/coding.sh/test/fixtures/adapters/claude-code/config/projects/-work-demo/11111111-2222-4333-8444-555555555555/subagents/agent-abc123.jsonl
+  s_8e040dbdf13565::t_acb44535211312 1-4
+packages/coding.sh/test/fixtures/adapters/claude-code/config/projects/-work-demo/11111111-2222-4333-8444-555555555555/subagents/agent-abc123.meta.json
+  s_8e040dbdf13565::t_9e45ad47afef34 1
+packages/coding.sh/test/fixtures/adapters/claude-code/gen.py
+  s_8e040dbdf13565::t_7c49e9113442ec 1-73
+packages/coding.sh/test/fixtures/adapters/claude-code/hooks.spool.jsonl
+  s_8e040dbdf13565::t_00c50c92156f71 1-19
+packages/coding.sh/test/fixtures/adapters/cursor/config/projects/work-demo/agent-transcripts/c0ffee00-1111-4222-8333-444455556666/c0ffee00-1111-4222-8333-444455556666.jsonl
+  s_8e040dbdf13565::t_ba23e916c98471 1-3
+packages/coding.sh/test/fixtures/adapters/cursor/gen.py
+  s_8e040dbdf13565::t_74615340d4ed48 1-30
+packages/coding.sh/test/fixtures/adapters/cursor/hooks.spool.jsonl
+  s_8e040dbdf13565::t_ee7f3f94b85db0 1-12
+packages/coding.sh/test/fixtures/adapters/gemini-cli/home/.gemini/tmp/demo/chats/gem-sess-1/gem-sub-1.jsonl
+  s_8e040dbdf13565::t_7bf54ae236ac9e 1-3
+packages/coding.sh/test/integrations/eve/fixtures/stream/atlantis-tool-error.ndjson
+  s_8e040dbdf13565::t_3f3928f2fcdbaf 1-14
+packages/coding.sh/test/integrations/eve/fixtures/stream/paris-london-2turns.ndjson
+  s_8e040dbdf13565::t_737ca23bac6e5d 1-58
+packages/coding.sh/test/runner/run.test.ts
+  s_8e040dbdf13565::t_24ea78f79a98fd 1-84
+packages/coding.sh/test/store/factory.test.ts
+  s_8e040dbdf13565::t_927bbe2f612267 1-78
+packages/coding.sh/test/store/fs-blobs.test.ts
+  s_8e040dbdf13565::t_b35689b0af6f3a 1-87
+packages/coding.sh/test/store/sinks.test.ts
+  s_8e040dbdf13565::t_b65882d3ca83a6 1-175
+packages/coding.sh/test/toolevals/fixtures/fake-cli.mjs
+  s_8e040dbdf13565::t_58e73f15b04a0f 1-46
+packages/coding.sh/test/toolevals/fixtures/fake-mcp-core.mjs
+  s_8e040dbdf13565::t_df8b4631f5f027 1-201
+packages/coding.sh/test/toolevals/fixtures/fake-mcp-legacy.mjs
+  s_8e040dbdf13565::t_df1bd9069c1dfa 1-4
+packages/coding.sh/test/toolevals/fixtures/fake-mcp-modern.mjs
+  s_8e040dbdf13565::t_6549bb87a352f8 1-4
+packages/coding.sh/test/toolevals/fixtures/fake-provider.d.mts
+  s_8e040dbdf13565::t_cc5bbc1c3dc7be 1-15
+packages/coding.sh/test/toolevals/fixtures/fake-provider.mjs
+  s_8e040dbdf13565::t_fc6433640377f3 1-115
+packages/coding.sh/test/toolevals/helpers.ts
+  s_8e040dbdf13565::t_871ba473705e62 1-92
+packages/coding.sh/tsconfig.json
+  s_8e040dbdf13565::t_44e44992771d8b 1-19
+packages/sdk/tsconfig.build.json
+  s_8e040dbdf13565::t_1b5810263006d7 1-18
+packages/sdk/tsconfig.json
+  s_8e040dbdf13565::t_52aa8ef59d37a5 1-28
+packages/store-postgres/LICENSE
+  s_8e040dbdf13565::t_0e67de10a1b846 1-21
+packages/store-postgres/src/index.ts
+  s_8e040dbdf13565::t_e49c3f68a1eb3b 1-20
+scripts/dogfood/bench-help.mjs
+  s_8e040dbdf13565::t_fb0f5d4e2e0c49 1-6
+scripts/dogfood/bench-hook.mjs
+  s_8e040dbdf13565::t_6165f77c4ec971 1-6
+scripts/dogfood/bench-ingest.mjs
+  s_8e040dbdf13565::t_f90cd90a173863 1-6
+scripts/dogfood/bench-store.mjs
+  s_8e040dbdf13565::t_2634e400665885 1-6
+scripts/dogfood/bench-viewer.mjs
+  s_8e040dbdf13565::t_ea8d107c1a14b0 1-6
+scripts/dogfood/claude-otel.json
+  s_8e040dbdf13565::t_6d0fca1490fd85 1-12
+scripts/dogfood/test/checks.test.mjs
+  s_8e040dbdf13565::t_7a37bf10bc6972 1-73
+scripts/dogfood/test/score.test.mjs
+  s_8e040dbdf13565::t_e0c0f83b1a9a7c 1-78
+scripts/dogfood/test/toml.test.mjs
+  s_8e040dbdf13565::t_cb642e92a7b922 1-47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d15138988a2c9f5e72def1b36f0edf7b33cfa11a",
+  "prompts": {},
+  "sessions": {
+    "s_3a31a0f3adfbbd": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a1b3ad-2509-74d3-957c-2edccf4f88b2",
+        "model": "gpt-6.1-sol"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    },
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
