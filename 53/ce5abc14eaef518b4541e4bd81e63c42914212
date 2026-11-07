@@ -1,0 +1,94 @@
+packages/coding.sh/src/refine/propose.ts
+  s_8e040dbdf13565::t_777e7342932137 1-142
+packages/coding.sh/src/refine/critics.ts
+  s_8e040dbdf13565::t_6ebaf2915a23fd 10-12,58,105-106,108-109,114
+  s_8e040dbdf13565::t_a671c72fa26816 1-9,13-57,59-104,107,110-113,115-131
+packages/coding.sh/src/cli/commands/refine.ts
+  s_8e040dbdf13565::t_1a485ebdc86860 29-30,32
+  s_8e040dbdf13565::t_60727058f70793 5
+.github/workflows/ci.yml
+  s_8e040dbdf13565::t_52704796a2884d 254-260
+packages/coding.sh/src/refine/ledger.ts
+  s_8e040dbdf13565::t_23f2c1fc40f0c4 1-276
+scripts/e2e/refine-loop.mjs
+  s_8e040dbdf13565::t_565368d1b3a9e5 221-222,224-225
+  s_8e040dbdf13565::t_5c4f886ac8774a 210
+  s_8e040dbdf13565::t_4f8741eb9e3942 1-32,34-102,104-122,124-192,194-209,211-220,223,226-247
+  s_8e040dbdf13565::t_e43618133ef5af 103
+  s_8e040dbdf13565::t_721b169f6c2788 193
+  s_8e040dbdf13565::t_d2cb8785b48c79 33,123
+packages/coding.sh/src/cli/commands/exp-ab.ts
+  s_8e040dbdf13565::t_b14c403a053f09 40,58,254-258,299,339,349,352,370,382,396,423,433,461
+  s_8e040dbdf13565::t_8eb2406da6542e 20-21,561-568,570-575,599,604-619,622,624-625,627-629,631-633,635,648-719,722,737,747-751
+packages/coding.sh/src/refine/index.ts
+  s_8e040dbdf13565::t_b5e9c74a5e6c63 1-2,7-11
+packages/coding.sh/test/cli/refine-loop.test.ts
+  s_8e040dbdf13565::t_a841af80cf589c 230
+  s_8e040dbdf13565::t_b03f676928a37d 1-107,109-126,128,130-131,133-154,156,160-161,163-166,168,171-173,175-181,183-192,194-202,204-205,207-212,215-216,218-222,224-228,232-241,243-248,250-269,271-275,277-282,284-295,297-304
+  s_8e040dbdf13565::t_665a0c867041e9 157,159
+  s_8e040dbdf13565::t_defa8b3a69e0c0 108,158,167,169-170,203,214,223,231
+  s_8e040dbdf13565::t_378ea84b88db5d 127,129,132
+  s_8e040dbdf13565::t_57638472bac5b3 155,162,174,182,193,206,213,217,229,242,249,270,276,283,296
+packages/coding.sh/test/refine/loop.test.ts
+  s_8e040dbdf13565::t_4c04a5cb1dd90c 151
+  s_8e040dbdf13565::t_8e0b9deabae988 45
+  s_8e040dbdf13565::t_bfdb32e0fbdfce 35,37,47,175
+  s_8e040dbdf13565::t_a4713eb823567b 1-34,36,38-44,46,48-150,152-174,176-254
+docs/guides/evals.md
+  s_8e040dbdf13565::t_21bfbbf3b270f0 796-876,878-895,897-905
+  s_8e040dbdf13565::t_1f19ec7cf3926b 877,896
+apps/site/src/pages/docs/evals.astro
+  s_8e040dbdf13565::t_caa47aab89d9c7 109-125
+  s_8e040dbdf13565::t_2b10d9d9ff8544 337-357
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_710be057a1230f 917
+  s_8e040dbdf13565::t_b04f13c94c9cb1 940-941
+  s_8e040dbdf13565::t_5bdf3e74604da3 88-116
+  s_8e040dbdf13565::t_61a0b6ec698b97 869,871-879,881-916,918
+  s_8e040dbdf13565::t_1a245d7a7a894a 880
+packages/coding.sh/src/refine/decide.ts
+  s_8e040dbdf13565::t_bb3459cf2c9a66 83
+  s_8e040dbdf13565::t_7f5706e29c156a 70-72
+  s_8e040dbdf13565::t_c653220a199220 14-15
+  s_8e040dbdf13565::t_1c652bbb84d349 1-13,16-69,73-82,84-86
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_c09b87ff9e36a6 199-203
+packages/coding.sh/src/refine/findings.ts
+  s_8e040dbdf13565::t_c254219585a94f 1-80
+packages/coding.sh/src/eval/decision.ts
+  s_8e040dbdf13565::t_6a14e9b1b695d7 473-474,501
+CHANGELOG.md
+  s_8e040dbdf13565::t_a8e85833e75998 40
+packages/coding.sh/src/cli/commands/refine-loop.ts
+  s_8e040dbdf13565::t_6cb353e0b9d50d 677
+  s_8e040dbdf13565::t_49525fbfdeddcd 10-11
+  s_8e040dbdf13565::t_a841af80cf589c 468
+  s_8e040dbdf13565::t_d3df22463fdfa4 1-9,12-56,58-60,62-136,166-179,182-231,239-462,464-467,469-522,524-544,546-644,646-649,651-676,678-736,738-769,771-825,827-852
+  s_8e040dbdf13565::t_6a14e9b1b695d7 57,523,545,770,826
+  s_8e040dbdf13565::t_d6199a988d530a 463,645
+  s_8e040dbdf13565::t_77b0b0f4edc29a 232,234-238
+  s_8e040dbdf13565::t_d2e602f2a8bbdb 137-165
+  s_8e040dbdf13565::t_3ea2018e2c0676 180-181
+  s_8e040dbdf13565::t_6862a86c24f0e0 61
+  s_8e040dbdf13565::t_e17baec66aa3d4 233,650,737
+docs/reference/config.md
+  s_8e040dbdf13565::t_7a8a7da69bed1d 173-175
+docs/reference/cli.md
+  s_8e040dbdf13565::t_f36472efc0f738 58,1716,1724-1729,1736-1898
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "53ce5abc14eaef518b4541e4bd81e63c42914212",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
