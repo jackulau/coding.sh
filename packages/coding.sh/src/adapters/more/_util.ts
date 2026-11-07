@@ -697,7 +697,6 @@ export function attachRaw(events: AgentEvent[], ref: string | undefined): AgentE
 
 // ---------------------------------------------------------------- processes
 
-/** Find a binary on PATH (plus `extra` absolute candidates). */
 /**
  * The node binary that agent plugins (Amp, Pi) spawn the hook with, resolved at
  * install time: the `node` on PATH first, because a stable entry such as
@@ -710,9 +709,21 @@ export function resolveNodePath(env: NodeJS.ProcessEnv = process.env): string {
   return findBinary(["node"], process.platform === "win32" ? { ...env, PATHEXT: ".EXE" } : env) ?? process.execPath;
 }
 
+/**
+ * A variable from an env object. Windows env names are case-insensitive, and a copy of
+ * process.env (`{ ...process.env, ...overrides }`) keeps Windows' own spelling ("Path"), so
+ * there the exact name wins, then any spelling.
+ */
+export function envVar(env: NodeJS.ProcessEnv, name: string, platform: NodeJS.Platform = process.platform): string | undefined {
+  if (env[name] !== undefined || platform !== "win32") return env[name];
+  const up = name.toUpperCase();
+  return Object.entries(env).find(([k]) => k.toUpperCase() === up)?.[1];
+}
+
+/** Find a binary on PATH (plus `extra` absolute candidates). */
 export function findBinary(names: readonly string[], env: NodeJS.ProcessEnv = process.env, extra: readonly string[] = []): string | undefined {
-  const exts = process.platform === "win32" ? (env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";").map((e) => e.toLowerCase()) : [""];
-  for (const dir of (env.PATH ?? "").split(delimiter).filter(Boolean)) {
+  const exts = process.platform === "win32" ? (envVar(env, "PATHEXT") ?? ".EXE;.CMD;.BAT").split(";").map((e) => e.toLowerCase()) : [""];
+  for (const dir of (envVar(env, "PATH") ?? "").split(delimiter).filter(Boolean)) {
     for (const n of names) for (const e of exts) {
       const p = join(dir, n + e);
       try {

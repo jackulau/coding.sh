@@ -1,20 +1,21 @@
 #!/usr/bin/env node
 // Real capture, end to end: install coding.sh from a tarball and real agent CLIs
-// from npm under a throwaway HOME, run `coding.sh init`, drive one non-interactive
-// session per agent against a local stub model (one tool call that writes
-// hello.txt, then text), and check what coding.sh recorded. The MCP server must
-// answer through ~/.coding.sh/bin/mcp.mjs, and `ingest --backfill` twice must add
-// no duplicate rows.
+// (npm, Goose's GitHub release, Aider through uv) under a throwaway HOME, run
+// `coding.sh init`, drive one non-interactive session per agent against a local stub
+// model (one tool call that writes hello.txt, then text; an edit for Aider), and check
+// what coding.sh recorded. The MCP server must answer through ~/.coding.sh/bin/mcp.mjs,
+// and `ingest --backfill` twice must add no duplicate rows.
 //
 //   node scripts/e2e/real-capture.mjs [--tarball coding.sh-x.y.z.tgz] [--agents opencode,pi] [--keep]
 //
 // Agents are spawned with coding.sh's own core/spawn.ts (node 22.18+ loads the .ts),
 // so on Windows they run through their npm .cmd shims as a user's would.
 // Without --tarball it packs packages/coding.sh (build it first: npm run build).
-// Needs network for npm. Never touches the real HOME: every path is under a temp dir.
+// Needs network, and uv on PATH for Aider. Never touches the real HOME: every path is
+// under a temp dir.
 // Exit codes: 0 all checks passed, 1 a check failed.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -53,6 +54,73 @@ const AGENTS = {
       writeFileSync(join(dir, "models.json"), JSON.stringify({ providers: { stub: { baseUrl: `${stub}/v1`, api: "openai-completions", apiKey: "stub", models: [model] } } }, null, 2));
     },
     args: ["-p", "--provider", "stub", "--model", MODEL, PROMPT],
+  },
+  goose: {
+    version: "1.57.0",
+    bin: "goose",
+    async install({ root, toolBin }) {
+      const asset = isWin ? "goose-x86_64-pc-windows-msvc.zip" : process.platform === "darwin" ? `goose-${process.arch === "arm64" ? "aarch64" : "x86_64"}-apple-darwin.tar.bz2` : "goose-x86_64-unknown-linux-gnu.tar.bz2";
+      const archive = join(root, asset);
+      const res = await fetch(`https://github.com/aaif-goose/goose/releases/download/v${this.version}/${asset}`);
+      if (!res.ok) throw new Error(`goose download: HTTP ${res.status}`);
+      writeFileSync(archive, Buffer.from(await res.arrayBuffer()));
+      const out = join(root, "goose-unpacked");
+      mkdirSync(out, { recursive: true });
+      // Windows' own bsdtar reads zip; Git Bash's GNU tar (first on PATH under bash) does not.
+      const tar = isWin ? join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : "tar";
+      execFileSync(tar, ["-xf", archive, "-C", out], { stdio: "pipe" });
+      const exe = isWin ? "goose.exe" : "goose";
+      const found = findFile(out, exe);
+      if (!found) throw new Error(`goose download: no ${exe} in ${asset}`);
+      copyFileSync(found, join(toolBin, exe));
+      chmodSync(join(toolBin, exe), 0o755);
+    },
+    configure() {},
+    // Provider and model through goose's env settings, so no config file location is assumed.
+    env: (stub) => ({ GOOSE_PROVIDER: "openai", GOOSE_MODEL: MODEL, OPENAI_HOST: stub, OPENAI_API_KEY: "stub", GOOSE_DISABLE_KEYRING: "1", GOOSE_MODE: "auto", GOOSE_TELEMETRY_ENABLED: "false" }),
+    args: ["run", "-t", PROMPT, "--with-builtin", "developer", "--output-format", "stream-json", "-q", "--max-turns", "5", "--provider", "openai", "--model", MODEL],
+    // Goose hooks carry no model: sessions.db adds it at backfill.
+    expect: { backfillOnly: ["model"] },
+  },
+  droid: {
+    pkg: "droid@1.6.0",
+    bin: "droid",
+    configure(home, stub) {
+      const dir = join(home, ".factory");
+      mkdirSync(dir, { recursive: true });
+      const customModels = [{ model: MODEL, displayName: "Stub", baseUrl: `${stub}/v1`, apiKey: "stub", provider: "generic-chat-completion-api", maxOutputTokens: 4096 }];
+      writeFileSync(join(dir, "settings.json"), JSON.stringify({ customModels }, null, 2));
+    },
+    args: ["exec", "--auto", "high", "-m", "custom:Stub-0", "-o", "json", PROMPT],
+    // `droid exec` fires no UserPromptSubmit and its Stop carries no text: the transcript adds both.
+    expect: { model: "custom:Stub-0", backfillOnly: ["prompt", "reply"] },
+  },
+  "copilot-cli": {
+    pkg: "@github/copilot@1.0.107",
+    bin: "copilot",
+    configure() {},
+    // BYOK against the stub, offline: no GitHub login.
+    env: (stub) => ({ COPILOT_PROVIDER_BASE_URL: `${stub}/v1`, COPILOT_PROVIDER_API_KEY: "stub", COPILOT_MODEL: MODEL, COPILOT_OFFLINE: "true", COPILOT_AUTO_UPDATE: "false" }),
+    args: ["-p", PROMPT, "--allow-all", "--no-ask-user", "--output-format=json", "--model", MODEL],
+    // Copilot hooks carry no model or reply: session-state/<id>/events.jsonl adds them.
+    expect: { backfillOnly: ["model", "reply"] },
+  },
+  aider: {
+    version: "0.86.2",
+    bin: "aider",
+    async install({ root, toolBin, env }) {
+      // uv fetches a Python aider supports (3.10-3.12) and keeps the tool under the temp root.
+      const uvEnv = { ...env, UV_TOOL_DIR: join(root, "uv-tools"), UV_TOOL_BIN_DIR: toolBin, UV_PYTHON_INSTALL_DIR: join(root, "uv-python"), UV_NO_MODIFY_PATH: "1" };
+      const r = await run("uv", ["tool", "install", "--python", "3.12", `aider-chat==${this.version}`], { env: uvEnv, cwd: root, timeoutMs: 900_000 });
+      if (r.code !== 0) throw new Error("uv tool install aider-chat failed");
+    },
+    configure() {},
+    env: () => ({ AIDER_CHECK_UPDATE: "false", AIDER_ANALYTICS: "false", PYTHONIOENCODING: "utf-8" }),
+    // No hooks: `coding.sh run --` records it, as a user would run it.
+    wrap: true,
+    args: ["--model", `openai/${MODEL}`, "--openai-api-base", "{stub}/v1", "--openai-api-key", "stub", "--edit-format", "whole", "--yes-always", "--no-auto-commits", "--no-stream", "--no-pretty", "--no-check-update", "--no-analytics", "--no-show-model-warnings", "--no-show-release-notes", "--no-gitignore", "--message", PROMPT],
+    // The wrapper sees argv and the repo, not tool calls or replies: one model call, no tools.
+    expect: { model: `openai/${MODEL}`, tool: false, reply: false, minCalls: 1 },
   },
 };
 
@@ -154,6 +222,17 @@ function parseJson(text, what) {
   }
 }
 
+function findFile(dir, name) {
+  for (const n of readdirSync(dir)) {
+    const p = join(dir, n);
+    if (statSync(p).isDirectory()) {
+      const hit = findFile(p, name);
+      if (hit) return hit;
+    } else if (n === name) return p;
+  }
+  return undefined;
+}
+
 function listTree(dir, depth = 4, prefix = "") {
   if (!existsSync(dir) || depth < 0) return [];
   const out = [];
@@ -179,11 +258,14 @@ mkdirSync(prefix, { recursive: true });
 // Snapshots and test repos commit; the CI's global git identity lives in the real HOME.
 writeFileSync(join(home, ".gitconfig"), "[user]\n\tname = coding.sh e2e\n\temail = e2e@coding.sh.invalid\n[init]\n\tdefaultBranch = main\n");
 const binDir = isWin ? prefix : join(prefix, "bin");
+// Agents that are not on npm (Goose, Aider) install their executables here.
+const toolBin = join(root, "tools-bin");
+mkdirSync(toolBin, { recursive: true });
 
 // A clean environment: nothing from the real HOME or agent configs leaks in.
 const env = {};
 for (const [k, v] of Object.entries(process.env)) {
-  if (/^(XDG_|OPENCODE|PI_|CODING_SH|npm_config_|NPM_CONFIG_)/i.test(k)) continue;
+  if (/^(XDG_|OPENCODE|PI_|GOOSE_|COPILOT_|FACTORY_|AIDER_|OPENAI_|ANTHROPIC_|GH_TOKEN$|GITHUB_TOKEN$|CODING_SH|npm_config_|NPM_CONFIG_)/i.test(k)) continue;
   env[k] = v;
 }
 const pathKey = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
@@ -191,7 +273,7 @@ Object.assign(env, {
   HOME: home,
   USERPROFILE: home,
   CODING_SH_HOME: csHome,
-  [pathKey]: [binDir, env[pathKey]].filter(Boolean).join(delimiter),
+  [pathKey]: [binDir, toolBin, env[pathKey]].filter(Boolean).join(delimiter),
   npm_config_prefix: prefix,
   npm_config_fund: "false",
   npm_config_audit: "false",
@@ -227,9 +309,16 @@ try {
     if (packed.code !== 0) throw new Error("npm pack failed");
     tarball = join(root, packed.stdout.trim().split(/\r?\n/).pop());
   }
-  log(`installing ${tarball} and ${opts.agents.map((a) => AGENTS[a].pkg).join(", ")}`);
-  const install = await run("npm", ["install", "-g", "--no-fund", "--no-audit", tarball, ...opts.agents.map((a) => AGENTS[a].pkg)], { env, cwd: root, timeoutMs: 600_000 });
+  const pkgs = opts.agents.map((a) => AGENTS[a].pkg).filter(Boolean);
+  log(`installing ${tarball} and ${pkgs.join(", ")}`);
+  const install = await run("npm", ["install", "-g", "--no-fund", "--no-audit", tarball, ...pkgs], { env, cwd: root, timeoutMs: 600_000 });
   if (install.code !== 0) throw new Error("npm install -g failed");
+  for (const a of opts.agents) {
+    const spec = AGENTS[a];
+    if (!spec.install) continue;
+    log(`installing ${a} ${spec.version}`);
+    await spec.install({ root, toolBin, env });
+  }
   const cs = (args, o = {}) => run("coding.sh", args, { env, cwd: root, ...o });
   const csJson = async (args, what = args.join(" ")) => {
     const r = await cs([...args, "--json"]);
@@ -260,11 +349,14 @@ try {
     git("add", ".");
     git("commit", "-q", "-m", "init");
     const before = stub.requests.length;
-    log(`running ${spec.bin} ${spec.args.join(" ")}`);
-    const r = await run(spec.bin, spec.args, { cwd: work, env, timeoutMs: 300_000 });
+    const args = spec.args.map((x) => x.replace("{stub}", stub.url));
+    const [file0, args0] = spec.wrap ? ["coding.sh", ["run", "--", spec.bin, ...args]] : [spec.bin, args];
+    log(`running ${file0} ${args0.join(" ")}`);
+    const r = await run(file0, args0, { cwd: work, env: { ...env, ...spec.env?.(stub.url) }, timeoutMs: 300_000 });
     check(r.code === 0, `${a} exited 0`, r.code);
     const calls = stub.requests.slice(before);
-    check(calls.length >= 2, `${a} called the stub model (tool call, then text)`, calls);
+    const minCalls = spec.expect?.minCalls ?? 2;
+    check(calls.length >= minCalls, `${a} called the stub model (${minCalls > 1 ? "tool call, then text" : "an edit"})`, calls);
     const file = join(work, "hello.txt");
     check(existsSync(file) && readFileSync(file, "utf8").includes("hello from stub"), `${a} wrote hello.txt`);
     sessionsByAgent[a] = { work };
@@ -277,27 +369,43 @@ try {
     for (const s of list) shows[s.id] = await csJson(["show", s.id, "--limit", "100000"], `show ${s.id}`);
     return { list, shows };
   };
+  // Each field the recorded session must hold; an agent's spec can drop one (`tool: false`) or
+  // move it after history import (`backfillOnly`).
+  const checkSession = (a, snap, fields, when = "") => {
+    const s = snap.list.find((x) => x.agent === a);
+    if (!s) return;
+    const spec = AGENTS[a];
+    const { session, events, snapshot } = snap.shows[s.id];
+    const kinds = (k) => events.filter((e) => e.kind === k);
+    const same = (p) => !!p && resolve(p).toLowerCase() === resolve(sessionsByAgent[a].work).toLowerCase();
+    for (const f of fields) {
+      if (f === "prompt") {
+        const prompts = kinds("user.message").map((e) => String(e.payload.text ?? ""));
+        check(prompts.some((t) => t.includes(PROMPT)), `${a}: the prompt${when}`, prompts);
+      } else if (f === "tool") {
+        const tools = events.filter((e) => e.kind === "tool.start" || e.kind === "tool.end").map((e) => e.payload.tool);
+        check(tools.some((t) => /write|create/i.test(String(t))), `${a}: the write tool call${when}`, tools);
+      } else if (f === "file") {
+        const changed = [...kinds("file.change").map((e) => String(e.payload.path)), ...(snapshot?.files ?? []).map((x) => x.path)];
+        check(changed.some((p) => /(^|[\\/])hello\.txt$/.test(p)), `${a}: the file change to hello.txt${when}`, changed);
+      } else if (f === "model") {
+        check(session.model === (spec.expect?.model ?? MODEL), `${a}: the model${when}`, session.model);
+      } else if (f === "reply") {
+        const replies = kinds("assistant.message").map((e) => String(e.payload.text ?? ""));
+        check(replies.some((t) => t.includes(TEXT)), `${a}: the reply${when}`, replies);
+      } else if (f === "cwd") check(same(session.cwd), `${a}: the cwd${when}`, [session.cwd, sessionsByAgent[a].work]);
+      else if (f === "repo") check(same(session.repo), `${a}: the git repo${when}`, [session.repo, sessionsByAgent[a].work]);
+    }
+  };
+  const FIELDS = ["prompt", "tool", "file", "model", "reply", "cwd", "repo"];
+  const liveFields = (a) => FIELDS.filter((f) => AGENTS[a].expect?.[f] !== false && !AGENTS[a].expect?.backfillOnly?.includes(f));
   const first = await showAll();
   for (const a of opts.agents) {
     const mine = first.list.filter((s) => s.agent === a);
     check(mine.length === 1, `${a}: one session recorded`, first.list.map((s) => [s.id, s.agent]));
-    const s = mine[0];
-    if (!s) continue;
-    sessionsByAgent[a].id = s.id;
-    const { session, events, snapshot } = first.shows[s.id];
-    const kinds = (k) => events.filter((e) => e.kind === k);
-    const prompts = kinds("user.message").map((e) => String(e.payload.text ?? ""));
-    check(prompts.some((t) => t.includes(PROMPT)), `${a}: the prompt`, prompts);
-    const tools = events.filter((e) => e.kind === "tool.start" || e.kind === "tool.end").map((e) => e.payload.tool);
-    check(tools.some((t) => /write/i.test(String(t))), `${a}: the write tool call`, tools);
-    const changed = [...kinds("file.change").map((e) => String(e.payload.path)), ...(snapshot?.files ?? []).map((f) => f.path)];
-    check(changed.some((p) => /(^|[\\/])hello\.txt$/.test(p)), `${a}: the file change to hello.txt`, changed);
-    check(session.model === MODEL, `${a}: the model`, session.model);
-    const replies = kinds("assistant.message").map((e) => String(e.payload.text ?? ""));
-    check(replies.some((t) => t.includes(TEXT)), `${a}: the reply`, replies);
-    const same = (p) => !!p && resolve(p).toLowerCase() === resolve(sessionsByAgent[a].work).toLowerCase();
-    check(same(session.cwd), `${a}: the cwd`, [session.cwd, sessionsByAgent[a].work]);
-    check(same(session.repo), `${a}: the git repo`, [session.repo, sessionsByAgent[a].work]);
+    if (!mine[0]) continue;
+    sessionsByAgent[a].id = mine[0].id;
+    checkSession(a, first, liveFields(a));
   }
 
   // 5. The MCP server agents launch (init registered `node ~/.coding.sh/bin/mcp.mjs` with OpenCode):
@@ -349,6 +457,7 @@ try {
   const second = await showAll();
   check(second.list.length === first.list.length, "backfill: no new sessions", second.list.map((s) => [s.id, s.agent]));
   check(dupes(second).length === 0, "backfill: no duplicate rows", dupes(second));
+  for (const a of opts.agents) if (AGENTS[a].expect?.backfillOnly) checkSession(a, second, AGENTS[a].expect.backfillOnly, " (after backfill)");
   log(`event counts after live capture ${JSON.stringify(counts(first))}`);
   log(`event counts after backfill     ${JSON.stringify(counts(second))}`);
   const bf2 = await cs(["ingest", "--backfill", "--json"]);
@@ -368,7 +477,19 @@ try {
     if (existsSync(errLog)) log(`hook errors:\n${readFileSync(errLog, "utf8").slice(-4000)}`);
     log(`${failures.length} check(s) failed: ${failures.join("; ")}`);
   } else log("all checks passed");
-  if (!opts.keep && !failures.length) rmSync(root, { recursive: true, force: true, maxRetries: 5 });
-  else log(`kept ${root}`);
+  if (!opts.keep && !failures.length) {
+    // Best effort: on Windows a process an agent leaves behind can still hold a file open.
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 5 });
+    } catch (e) {
+      log(`could not remove ${root}: ${e instanceof Error ? e.message : e}`);
+      if (isWin) {
+        try {
+          const ps = `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*${root.split(/[\\/]/).pop()}*' } | ForEach-Object { "$($_.ProcessId) $($_.Name) $($_.CommandLine)" }`;
+          log(`processes still using it:\n${execFileSync("powershell", ["-NoProfile", "-Command", ps], { encoding: "utf8" })}`);
+        } catch {}
+      }
+    }
+  } else log(`kept ${root}`);
 }
 process.exit(exitCode);

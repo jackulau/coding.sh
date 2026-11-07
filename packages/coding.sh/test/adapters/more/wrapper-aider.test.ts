@@ -82,6 +82,7 @@ describe("wrapper + aider run", () => {
     assert.deepEqual(a.argv.slice(0, 2), ["--message", "fix the bug"]);
     assert.ok(a.argv.includes("--yes-always") && a.argv.includes("--no-analytics") && a.argv.includes("--no-check-update"));
     assert.ok(!a.argv.includes("--analytics-disable"), "never the permanent opt-out");
+    assert.ok(a.argv.includes("--no-show-release-notes"), "--yes-always would open the release notes in a browser");
     assert.ok(!a.argv.includes("--no-auto-commits"), "a harness flag overrides our default");
     assert.deepEqual(a.argv.slice(-3), ["--model", "sonnet", "--auto-commits"]);
   });

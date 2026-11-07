@@ -4,6 +4,8 @@
 // Verified against aider 0.86.2 (2026-02-12) args.py / base_coder.py / io.py:
 // - Scripting: `aider --message "<prompt>" --yes-always --no-auto-commits --no-stream --no-pretty`
 //   (+ --no-check-update, --no-analytics for one run; --analytics-disable is PERMANENT, never use it).
+//   --no-show-release-notes too: on a version's first run --yes-always answers "see what's new?"
+//   and aider opens the release notes in a browser (seen on Windows CI).
 // - Per-message usage on stdout: "Tokens: 2.1k sent, 1.2k cache write, 3k cache hit, 345 received.
 //   Cost: $0.01 message, $0.02 session." (cache parts and Cost are optional; counts use k suffixes).
 // - .aider.chat.history.md has no session id and lives at each repo root, so there is no backfill.
@@ -107,7 +109,7 @@ export const aiderAdapter: Adapter = {
   async run(spec: RunSpec): Promise<AgentRunOutput> {
     const bin = findBinary(["aider"], { ...process.env, ...spec.env }) ?? "aider";
     const args = ["--message", spec.instruction];
-    for (const [flag, ...alts] of [["--yes-always"], ["--no-auto-commits", "--auto-commits"], ["--no-dirty-commits", "--dirty-commits"], ["--no-stream", "--stream"], ["--no-pretty", "--pretty"], ["--no-check-update", "--check-update"], ["--no-analytics", "--analytics"], ["--no-gitignore", "--gitignore"], ["--no-show-model-warnings", "--show-model-warnings"]] as const) {
+    for (const [flag, ...alts] of [["--yes-always"], ["--no-auto-commits", "--auto-commits"], ["--no-dirty-commits", "--dirty-commits"], ["--no-stream", "--stream"], ["--no-pretty", "--pretty"], ["--no-check-update", "--check-update"], ["--no-analytics", "--analytics"], ["--no-gitignore", "--gitignore"], ["--no-show-model-warnings", "--show-model-warnings"], ["--no-show-release-notes", "--show-release-notes"]] as const) {
       if (!hasFlag(spec.flags, flag, ...alts)) args.push(flag);
     }
     if (spec.model && !hasFlag(spec.flags, "--model")) args.push("--model", spec.model);

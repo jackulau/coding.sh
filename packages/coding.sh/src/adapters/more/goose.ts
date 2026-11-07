@@ -87,16 +87,21 @@ export function goosePluginDir(opts: { scope: "user" | "project"; projectDir?: s
   return join(base, ".agents", "plugins", PLUGIN);
 }
 
-export function gooseConfigDir(env: NodeJS.ProcessEnv = process.env): string {
-  const r = env.GOOSE_PATH_ROOT;
-  return r && isAbsolute(r) ? join(r, "config") : join(xdg("config", env), "goose");
+/** Goose's app dirs on Windows (etcetera's Windows strategy): %APPDATA%/Block/goose/{config,data}. */
+function gooseWinDir(kind: "config" | "data", env: NodeJS.ProcessEnv): string {
+  return join(env.APPDATA || join(home(env), "AppData", "Roaming"), "Block", "goose", kind);
 }
 
-export function gooseSessionsDb(env: NodeJS.ProcessEnv = process.env): string {
+export function gooseConfigDir(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
+  const r = env.GOOSE_PATH_ROOT;
+  if (r && isAbsolute(r)) return join(r, "config");
+  return platform === "win32" ? gooseWinDir("config", env) : join(xdg("config", env), "goose");
+}
+
+export function gooseSessionsDb(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
   const r = env.GOOSE_PATH_ROOT;
   if (r && isAbsolute(r)) return join(r, "data", "sessions", "sessions.db");
-  if (process.platform === "win32") return join(env.APPDATA ?? join(home(env), "AppData", "Roaming"), "Block", "goose", "data", "sessions", "sessions.db");
-  return join(xdg("data", env), "goose", "sessions", "sessions.db");
+  return join(platform === "win32" ? gooseWinDir("data", env) : join(xdg("data", env), "goose"), "sessions", "sessions.db");
 }
 
 const isOurs = (h: Json): boolean => isOurCommand(h.command, ID);

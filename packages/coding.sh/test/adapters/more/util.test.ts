@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileTouches, isOurCommand, parseJsonc, parseTestSummary, spawnAgent, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
+import { envVar, fileTouches, findBinary, isOurCommand, parseJsonc, parseTestSummary, spawnAgent, toMs, usageFrom } from "../../../src/adapters/more/_util.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { fakeBinary, moreEnv } from "./_helpers.ts";
 import { nodeBin } from "../../_bin.ts";
@@ -24,6 +25,24 @@ describe("parseTestSummary", () => {
     assert.deepEqual(parseTestSummary("Tests:  1 failed, 1 total\n\x1b[1mTests:\x1b[22m  2 passed, 2 total"), { runner: "jest", passed: 2, failed: 0, skipped: 0 });
   });
   it("returns undefined for non-test output", () => assert.equal(parseTestSummary("compiled successfully"), undefined));
+});
+
+describe("envVar / findBinary on Windows env copies", () => {
+  it("reads Windows' own spelling (Path) from a copy of process.env, and only on Windows", () => {
+    assert.equal(envVar({ Path: "C:\\bin" }, "PATH", "win32"), "C:\\bin");
+    assert.equal(envVar({ Path: "C:\\bin", PATH: "C:\\override" }, "PATH", "win32"), "C:\\override", "an override spelled PATH wins");
+    assert.equal(envVar({ Path: "/bin" }, "PATH", "linux"), undefined, "POSIX names are case-sensitive");
+  });
+
+  it("findBinary finds an .exe through { ...process.env, ...overrides } (key Path)", { skip: process.platform !== "win32" }, () => {
+    const dir = mkdtempSync(join(tmpdir(), "csh-findbin-"));
+    try {
+      writeFileSync(join(dir, "goose.exe"), "");
+      assert.equal(findBinary(["goose"], { Path: dir, PATHEXT: ".COM;.EXE" }), join(dir, "goose.exe"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("fileTouches", () => {

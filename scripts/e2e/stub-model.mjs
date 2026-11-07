@@ -3,7 +3,8 @@
 //
 // First request that offers tools -> one tool call that writes hello.txt (the
 // request's `write`-like tool, else a shell tool). Once a tool result is in the
-// conversation, or no tools are offered -> STUB_TEXT.
+// conversation, or no tools are offered -> STUB_TEXT. Aider (no tools, whole-file
+// edit format) -> STUB_TEXT plus a listing of hello.txt.
 //
 //   node scripts/e2e/stub-model.mjs            # listens on PORT (default 8787)
 //   import { startStub } from "./stub-model.mjs"; const s = await startStub(); s.url
@@ -24,6 +25,7 @@ function pickTool(names) {
   const prefs = [
     ["write", { filePath: "hello.txt", file_path: "hello.txt", path: "hello.txt", content: CONTENT }],
     ["Write", { file_path: "hello.txt", content: CONTENT }],
+    ["Create", { file_path: "hello.txt", content: CONTENT }],
     ["create", { path: "hello.txt", file_text: CONTENT }],
   ];
   for (const [name, args] of prefs) if (names.includes(name)) return { name, args };
@@ -38,8 +40,15 @@ function hasToolResult(body) {
   return (Array.isArray(body.input) ? body.input : []).some((i) => i?.type === "function_call_output");
 }
 
+/** Aider offers no tools: it edits from a reply in its edit format (whole: the file name, then a fenced listing). */
+function aiderWhole(body) {
+  const text = (body.messages || []).map((m) => (typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.map((c) => c?.text ?? "").join("") : "")).join("\n");
+  return /\*file listing\*/.test(text);
+}
+
 function decide(body) {
   const names = toolNames(body);
+  if (!names.length && aiderWhole(body)) return { text: `${TEXT}\n\nhello.txt\n\`\`\`\n${CONTENT}\`\`\`\n` };
   if (!names.length || hasToolResult(body)) return { text: TEXT };
   const tool = pickTool(names);
   return tool ? { tool } : { text: TEXT };

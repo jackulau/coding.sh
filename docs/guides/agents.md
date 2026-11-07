@@ -28,7 +28,10 @@ What the statuses mean:
   agent during development, in addition to the CI tests.
 - **Verified on a real install**: the agent's current release was installed and run through a
   session against a local stub model, its hooks fired and the recorded session was checked, and
-  the captured payloads are now CI fixtures.
+  the captured payloads are now CI fixtures. For OpenCode, Pi, Goose, Factory Droid, GitHub
+  Copilot CLI and Aider, CI repeats that run on Linux and Windows on every change
+  ([`scripts/e2e/real-capture.mjs`](../../scripts/e2e/real-capture.mjs)). The other agents have
+  not been checked on Windows yet.
 - **Fixture-tested**: CI tests the adapter against hook payloads, transcripts or session stores
   that follow the agent's documented format, plus its install and uninstall. It has not yet been
   checked against a live install of that agent. Reports are welcome.
