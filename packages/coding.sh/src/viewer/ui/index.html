@@ -506,6 +506,26 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .facts .lat-short { display: none; }
 @media (max-width: 560px) { .facts .lat-full { display: none; } .facts .lat-short { display: inline; } }
 .head-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1.25rem; }
+/* Durable workflow run: one lane per step, a bar per attempt, waits hatched, resumes ticked. */
+.wf-run { flex: none; display: grid; gap: 0.45rem; padding: 0.6rem var(--gutter) 0.7rem; box-shadow: inset 0 -1px 0 var(--line); }
+.wf-run-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 1rem; font-size: 12px; color: var(--text-2); }
+.wf-run-head b { font-weight: 540; color: var(--text); }
+.wf-run-head .warn { color: var(--warn-ink); }
+.wf-lanes { display: grid; grid-template-columns: minmax(3.5rem, max-content) minmax(0, 1fr); gap: 4px 0.75rem; max-height: 14rem; overflow-y: auto; }
+.wf-lane-label { font: 11px/16px var(--font-mono); color: var(--text-2); max-width: 11rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.wf-lane-label.wait { color: var(--text-muted); }
+.wf-track { position: relative; height: 16px; border-radius: 3px; background: var(--raised); }
+.wf-bar { position: absolute; top: 3px; bottom: 3px; min-width: 3px; padding: 0; border: 0; border-radius: 2px; background: var(--bar-strong); cursor: pointer; }
+.wf-bar.fail { background: var(--fail); }
+.wf-bar.replay { background: var(--text-faint); }
+.wf-bar.lost { background: repeating-linear-gradient(135deg, var(--fail-wash) 0 3px, transparent 3px 6px); box-shadow: inset 0 0 0 1px var(--fail); cursor: default; }
+.wf-bar.wait { background: repeating-linear-gradient(135deg, var(--line-strong) 0 3px, transparent 3px 6px); box-shadow: inset 0 0 0 1px var(--line-strong); cursor: default; }
+.wf-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 1px; }
+.wf-resume { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--warn); pointer-events: none; }
+.wf-legend { display: flex; flex-wrap: wrap; gap: 0.2rem 0.9rem; font-size: 11px; color: var(--text-muted); }
+.wf-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
+.wf-legend i { position: relative; top: auto; bottom: auto; display: inline-block; width: 14px; height: 8px; border-radius: 2px; cursor: default; }
+.wf-legend i.wf-resume { position: static; width: 2px; height: 10px; margin: 0; }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
 .label-group { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; min-width: 0; }
 .label-group .meta { margin-right: 0.2rem; }
@@ -2503,6 +2523,23 @@ const FOLD_MIN = 6;
 // Paths inside the session's repo (or cwd) read better relative to it:
 // "src/store/sqlite.ts", not the absolute checkout path.
 let pathBase = "";
+// Durable workflow sessions: step attempts by span id (from stats.durable), for step labels.
+let durableSpans = new Map();
+function indexDurable(d) {
+  const out = new Map();
+  if (!d) return out;
+  for (const s of d.steps || []) {
+    const attempts = Math.max(0, ...(s.attempts || []).map((a) => a.n));
+    for (const a of s.attempts || []) {
+      if (!a.spanId) continue;
+      const rs = (d.resumes || []).filter((x) => x.spanId === a.spanId);
+      const r = rs.find((x) => x.reason !== "wait") || rs[0];
+      out.set(a.spanId, { step: s.name, n: a.n, attempts, ok: a.ok, replay: !!a.replay, resume: r ? r.reason : "" });
+    }
+  }
+  return out;
+}
+const RESUME_TEXT = { crash: "a crash", deploy: "a deploy", restart: "a worker restart", wait: "a wait" };
 function relPath(text) {
   if (!pathBase || typeof text !== "string") return text;
   return text.split(pathBase + "/").join("");
@@ -2625,6 +2662,23 @@ function eventView(ev) {
     }
     case "error": return { name: "Error", arg: clip(oneLine(p.message || p.text), 160), label: clip(oneLine(p.message || p.text) || "Error", 90), tone: "fail", kindText: ev.kind };
     case "context.compact": return { name: "Context compacted", arg: p.trigger ? String(p.trigger) : "", label: "Context compacted" + (p.trigger ? " (" + p.trigger + ")" : ""), tone: "muted", kindText: ev.kind };
+    case "span": {
+      // Durable workflow spans: step attempts, waits, and the engine's own run/schedule spans.
+      const d = p.durable;
+      if (!d || typeof d !== "object") return { name: KIND_LABEL[ev.kind] || ev.kind, arg: "", label: KIND_LABEL[ev.kind] || ev.kind, tone: "muted", kindText: ev.kind };
+      const failed = p.ok === false;
+      const a = ev.spanId ? durableSpans.get(ev.spanId) : null;
+      if (a) {
+        const bits = [a.step, a.attempts > 1 ? "attempt " + a.n + " of " + a.attempts : "", a.replay ? "replayed" : "", a.resume ? "resumed after " + RESUME_TEXT[a.resume] : ""].filter(Boolean);
+        return { name: "Step", arg: bits.join(" · "), label: "Step " + bits.join(" · "), tone: failed ? "fail" : a.resume && a.resume !== "wait" ? "warn" : "muted", kindText: "span · " + d.engine + " step" };
+      }
+      if (d.role === "wait") {
+        const name = d.waitEdge === "end" ? "Wait ends" : d.waitEdge === "start" ? "Wait starts" : "Wait";
+        return { name, arg: d.step || "", label: name + (d.step ? " " + d.step : ""), tone: "muted", kindText: "span · " + d.engine + " wait" };
+      }
+      const name = typeof p.name === "string" ? p.name : d.engine;
+      return { name: "Workflow", arg: clip(oneLine(name), 160), label: "Workflow " + clip(oneLine(name), 90), tone: failed ? "fail" : "muted", kindText: "span · " + d.engine + " " + d.role };
+    }
     default: return { name: KIND_LABEL[ev.kind] || ev.kind, arg: "", label: KIND_LABEL[ev.kind] || ev.kind, tone: "muted", kindText: ev.kind };
   }
 }
@@ -2686,6 +2740,7 @@ async function showSession(seq, id, eventId) {
   }
   if (!current(seq)) return;
   pathBase = String((session.repo && session.repo.root) || session.cwd || "").replace(/[\\/]+$/, "");
+  durableSpans = indexDurable(session.stats && session.stats.durable);
 
   // Sessions can outgrow one page of events. Later pages are fetched on demand
   // (or until a deep-linked event is found) and the timeline is rebuilt, so tool
@@ -3138,7 +3193,11 @@ async function showSession(seq, id, eventId) {
   const hint = h("div", { class: "hintbar", "aria-hidden": "true" },
     KEYMAP.filter((k) => k.scope === "session" && k.hint).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.keys), k.id === "down" ? "move" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase())),
     h("span", { class: "spacer" }), h("span", null, keyCaps(["?"]), "all shortcuts"));
-  view.lastChild.replaceWith(tools, more, h("div", { class: "session-grid" }, timeline, pane), hint);
+  const pickSpan = (spanId) => {
+    const i = items.findIndex((it) => ((it.ev || it.start || it.end || {}).spanId) === spanId);
+    if (i >= 0) { selectItem(i, true); tl.focus({ preventScroll: true }); }
+  };
+  view.lastChild.replaceWith(...[durableStrip(session, pickSpan)].filter(Boolean), tools, more, h("div", { class: "session-grid" }, timeline, pane), hint);
   rebuildRows();
   selectItem(activeItem, !!eventId);
   if (!eventId) tl.scrollTop = 0, renderWindow(true);
@@ -3228,7 +3287,8 @@ function sessionHeader(s, labels, rel) {
       fact("cost", cost.text, cost.title, cost.none ? "none" : undefined),
       // Phones get the model-call summary alone, so the line stays whole instead of cut mid-word.
       latencyText(st.latency) ? fact("latency", [h("span", { class: "lat-full" }, latencyText(st.latency)), h("span", { class: "lat-short" }, latencyShort(st.latency))], latencyText(st.latency)) : null,
-      fact("snapshot", repo.snapshot ? short(repo.snapshot, 12) + (repo.partial ? " · partial" : "") : "", repo.snapshot)),
+      fact("snapshot", repo.snapshot ? short(repo.snapshot, 12) + (repo.partial ? " · partial" : "") : "", repo.snapshot),
+      st.durable ? fact("workflow", durableFact(st.durable), "Durable workflow run " + st.durable.runId) : null),
     moreBtn,
     h("div", { class: "head-foot" },
       h("div", { class: "badges" },
@@ -3252,6 +3312,78 @@ function sessionHeader(s, labels, rel) {
         h("div", { class: "make-eval" },
           h("span", { class: "meta" }, "Make eval"),
           cmdBlock(evalCmd, "Copy eval command")))));
+}
+
+/** "temporal researchAgent · 4 steps · 2 retries": the header fact for a durable workflow run. */
+function durableFact(d) {
+  const steps = d.stepCount || (d.steps || []).length;
+  return [d.engine + (d.workflow ? " " + d.workflow : ""), plural(steps, "step"), plural(d.retries || 0, "retry", "retries"), d.waits && d.waits.length ? plural(d.waits.length, "wait") : ""].filter(Boolean).join(" · ");
+}
+
+/**
+ * Durable workflow run strip: one lane per step with a bar per attempt (failed
+ * red, lost hatched red, replayed faint), sleeps and waits as hatched gaps, and
+ * an amber tick where the run resumed after a crash, a deploy or a restart.
+ * Clicking an attempt selects its span in the timeline.
+ */
+function durableStrip(s, pick) {
+  const d = s.stats && s.stats.durable;
+  if (!d || !(d.steps || []).length) return null;
+  const t0 = Math.min(s.startedAt, ...d.steps.flatMap((st) => st.attempts.map((a) => a.startedAt - (st.unreportedMs || 0))));
+  const t1 = Math.max(s.endedAt || 0, t0 + (d.wallMs || 0), ...d.steps.flatMap((st) => st.attempts.map((a) => a.endedAt)), ...(d.waits || []).map((w) => w.endedAt || 0));
+  const span = Math.max(1, t1 - t0);
+  const pct = (t) => (Math.max(0, Math.min(1, (t - t0) / span)) * 100).toFixed(3) + "%";
+  const width = (a, b) => (Math.max(0, Math.min(1, (b - a) / span)) * 100).toFixed(3) + "%";
+  // The page CSP allows no style attributes: position through the CSSOM.
+  const at = (el, from, to) => { el.style.left = pct(from); if (to !== undefined) el.style.width = width(from, to); return el; };
+  const lanes = [];
+  const lane = (label, cls, bars) => lanes.push(h("div", { class: "wf-lane-label" + (cls ? " " + cls : ""), title: label }, label), h("div", { class: "wf-track" }, bars));
+  const rows = d.steps.map((st) => ({ t: (st.attempts[0] ? st.attempts[0].startedAt : t0) - (st.unreportedMs || 0), st }))
+    .concat((d.waits || []).map((w) => ({ t: w.startedAt, w })))
+    .sort((a, b) => a.t - b.t);
+  for (const r of rows) {
+    if (r.w) {
+      const end = r.w.endedAt || t1;
+      const text = (r.w.name || "wait") + " · " + (r.w.endedAt ? fmtDuration(end - r.w.startedAt) : "still waiting");
+      lane(r.w.name || "wait", "wait", at(h("span", { class: "wf-bar wait", title: text, role: "img", "aria-label": text }), r.w.startedAt, end));
+      continue;
+    }
+    const st = r.st;
+    const bars = [];
+    if (st.unreported && st.unreportedMs && st.attempts[0]) {
+      const from = st.attempts[0].startedAt - st.unreportedMs;
+      const text = st.name + " · " + plural(st.unreported, "attempt") + " never reported (its process stopped) · " + fmtDuration(st.unreportedMs);
+      bars.push(at(h("span", { class: "wf-bar lost", title: text, role: "img", "aria-label": text }), from, st.attempts[0].startedAt));
+    }
+    const total = Math.max(0, ...st.attempts.map((a) => a.n));
+    for (const a of st.attempts) {
+      const state = a.replay ? "replayed" : a.ok ? "ok" : "failed";
+      const text = st.name + (total > 1 ? " #" + a.n : "") + " · " + state + " · " + fmtDuration(a.endedAt - a.startedAt) + (!a.ok && a.error ? " · " + clip(oneLine(a.error), 120) : "") + (a.instance ? " · on " + short(a.instance, 8) : "") + (a.version ? " v" + a.version : "");
+      const cls = "wf-bar" + (a.replay ? " replay" : a.ok ? "" : " fail");
+      bars.push(at(a.spanId
+        ? h("button", { type: "button", class: cls, title: text, "aria-label": text, onclick: () => pick(a.spanId) })
+        : h("span", { class: cls, title: text, role: "img", "aria-label": text }), a.startedAt, a.endedAt));
+    }
+    for (const x of d.resumes || []) {
+      const a = x.reason !== "wait" && st.attempts.find((y) => y.spanId && y.spanId === x.spanId);
+      if (a) bars.push(at(h("span", { class: "wf-resume", title: "Resumed after " + RESUME_TEXT[x.reason] }), a.startedAt));
+    }
+    lane(st.name + (total > 1 ? " ×" + total : ""), "", bars);
+  }
+  const resumes = (d.resumes || []).filter((x) => x.reason !== "wait");
+  const head = h("div", { class: "wf-run-head" },
+    h("b", null, durableFact(d)),
+    // idleMs includes the waits: shown apart, the parts add up to the wall time.
+    h("span", null, "busy " + (fmtDuration(d.activeMs) || "0ms") + (d.waitMs ? " · waiting " + fmtDuration(d.waitMs) : "") + " · idle " + (fmtDuration(Math.max(0, d.idleMs - (d.waitMs || 0))) || "0ms") + " of " + fmtDuration(d.wallMs)),
+    resumes.length ? h("span", { class: "warn" }, "resumed after " + resumes.map((x) => RESUME_TEXT[x.reason] + (x.step ? " at " + x.step : "")).join(", ")) : null,
+    d.replayedCalls ? h("span", { title: "Model calls re-run from recorded history; their tokens are not counted again" }, plural(d.replayedCalls, "replayed call")) : null);
+  const legend = h("div", { class: "wf-legend", "aria-hidden": "true" },
+    h("span", null, h("i", { class: "wf-bar" }), "attempt"),
+    h("span", null, h("i", { class: "wf-bar fail" }), "failed"),
+    d.steps.some((st) => st.unreported && st.unreportedMs) ? h("span", null, h("i", { class: "wf-bar lost" }), "lost") : null,
+    (d.waits || []).length ? h("span", null, h("i", { class: "wf-bar wait" }), "wait") : null,
+    resumes.length ? h("span", null, h("i", { class: "wf-resume" }), "resumed") : null);
+  return h("section", { class: "wf-run", "aria-label": "Workflow run" }, head, h("div", { class: "wf-lanes" }, lanes), legend);
 }
 
 function latestLabel(labels, criterion) {
