@@ -11,7 +11,7 @@ import type { AgentEvent, SessionFilter } from "../../src/core/types.ts";
 import { startViewer, type Viewer } from "../../src/viewer/server.ts";
 import { cleanup as benchCleanup, day, project } from "../bench/helpers.ts";
 import { findChrome, launchBrowser, type Browser, type Page } from "./browser.ts";
-import { FakeBlobs, FakeIndex, event, experimentResult, session } from "./fakes.ts";
+import { FakeBlobs, FakeIndex, costFixtures, event, experimentResult, session } from "./fakes.ts";
 
 const chrome = findChrome();
 const T0 = 1_762_400_000_000;
@@ -871,4 +871,110 @@ describe("viewer UI: benchmarks", { skip: chrome ? false : "no Chrome/Chromium f
       await page.close();
     }
   });
+});
+
+describe("viewer UI: cost marks", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
+  const index = new FakeIndex();
+  let v: Viewer;
+  let browser: Browser;
+  let page: Page;
+  const STEPS = "document.querySelectorAll('#steps .st')";
+  const stepWhere = (re: string) => `[...${STEPS}].find((t) => new RegExp(${JSON.stringify(re)}).test(t.querySelector('.lbl').textContent))`;
+  // [text, title] of an element, or null.
+  const tt = (expr: string) => `(() => { const e = ${expr}; return e ? [e.textContent, e.getAttribute('title')] : null; })()`;
+
+  before(async () => {
+    const { sessions, events } = costFixtures(T0);
+    for (const s of sessions) await index.upsertSession(s);
+    await index.putEvents(events);
+    v = await startViewer({ index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any });
+    browser = await launchBrowser(chrome!);
+  });
+  after(async () => {
+    await browser?.close();
+    await v?.close();
+  });
+  async function open(hash: string, width = 1280, height = 900, mobile = false) {
+    page = await browser.newPage();
+    await page.viewport(width, height, mobile);
+    await page.goto(v.url);
+    await page.waitFor("document.querySelector('[role=listbox]') && document.querySelector('.sum-cost')", "sessions list with its cost");
+    if (hash !== "#/") {
+      await page.eval(`location.hash = ${JSON.stringify(hash)}`);
+      await page.waitFor("document.querySelector('#steps .st')", "steps");
+    }
+  }
+  const rowCost = (title: string) => tt(`[...document.querySelectorAll('[role=option]')].find((r) => r.querySelector('.row-title').textContent === ${JSON.stringify(title)})?.querySelector('.cost-cell')`);
+
+  test("list: estimates carry ~ and say so, reported costs do not, unpriced is a dash that says why", async () => {
+    await open("#/");
+    try {
+      assert.deepEqual(await page.eval(rowCost("Price the session list from list prices")), ["~$0.42", "Estimated from list prices"]);
+      assert.deepEqual(await page.eval(rowCost("POST /api/summarize")), ["$1.10", "Reported cost"]);
+      assert.deepEqual(await page.eval(rowCost("Mixed reported and estimated cost")), ["~$0.30", "$0.10 of it estimated from list prices, the rest reported"]);
+      assert.deepEqual(await page.eval(rowCost("Unpriced model")), ["—", 'No list price for kimi-k3. Add [prices."kimi-k3"] to config.toml']);
+      // The total over the index: 3 of 4 sessions priced, part of it estimated.
+      const [sum, title] = await page.eval(tt("document.querySelector('.sum-cost')"));
+      assert.equal(sum, "~$1.82 priced");
+      assert.equal(title, "Cost of the 3 sessions with a price. $0.52 of it estimated from list prices");
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("session and calls: the header marks the estimate; calls show ~ and the model they were priced as", async () => {
+    await open("#/s/cost-est");
+    try {
+      assert.deepEqual(await page.eval(tt("document.querySelector('.facts [data-fact=cost] dd')")), ["~$0.42", "Estimated from list prices"]);
+      assert.match(await page.eval("document.querySelector('.facts [data-fact=tokens] dd').getAttribute('title')"), /^Not counted twice: 1 model call \(12k tokens, \$0\.05\)/);
+      assert.deepEqual(await page.eval(tt(`${stepWhere("sonnet-4-7")}?.querySelector('.cost')`)), ["~$0.03", "Estimated from list prices, priced as claude-sonnet-4-5"]);
+      assert.deepEqual(await page.eval(tt(`${stepWhere("gpt-6\\.1-sol")}?.querySelector('.cost')`)), ["$0.02", "Reported cost"]);
+      assert.equal(await page.eval(`!!${stepWhere("kimi-k3")}?.querySelector('.cost')`), false, "an unpriced call adds nothing to its row");
+
+      const kpi = "[...document.querySelectorAll('#event-pane .kpi')].find((k) => k.querySelector('span').textContent === 'cost')?.querySelector('b')";
+      await page.eval(`${stepWhere("sonnet-4-7")}.click()`);
+      await page.waitFor(`/sonnet-4-7/.test(document.querySelector('#event-pane .pane-title')?.textContent)`, "estimated call pane");
+      assert.equal(await page.eval(`${kpi}.textContent`), "~$0.03");
+      assert.match(await page.eval("document.querySelector('#event-pane .call-meta').textContent"), /cost estimated from list prices, priced as claude-sonnet-4-5/);
+      await page.eval(`${stepWhere("gpt-6\\.1-sol")}.click()`);
+      await page.waitFor(`/gpt-6\\.1-sol/.test(document.querySelector('#event-pane .pane-title')?.textContent)`, "reported call pane");
+      assert.equal(await page.eval(`${kpi}.textContent`), "$0.02");
+      assert.equal(await page.eval("!!document.querySelector('#event-pane .call-meta')"), false, "a reported cost needs no note");
+      await page.eval(`${stepWhere("kimi-k3")}.click()`);
+      await page.waitFor(`/kimi-k3/.test(document.querySelector('#event-pane .pane-title')?.textContent)`, "unpriced call pane");
+      assert.deepEqual(await page.eval(tt(`${kpi}.closest('.kpi')`)), ["cost—", 'No list price for kimi-k3. Add [prices."kimi-k3"] to config.toml']);
+    } finally {
+      await page.close();
+    }
+  });
+
+  for (const [w, hgt] of [[390, 844], [360, 780]] as const) {
+    test(`at ${w}px cost stays on screen: rows, header and calls, with no sideways scroll`, async () => {
+      await open("#/", w, hgt, true);
+      try {
+        const list = await page.eval(`(() => { const c = [...document.querySelectorAll('.cost-cell')].filter((e) => e.getClientRects().length);
+          return { sw: document.documentElement.scrollWidth, texts: c.map((e) => e.textContent), right: Math.max(...c.map((e) => e.getBoundingClientRect().right)) }; })()`);
+        assert.ok(list.sw <= w, `list is ${list.sw}px wide on a ${w}px screen`);
+        // The top bar's last control (theme) keeps its gutter, so its 44px hit area stays on screen too.
+        const theme: number = await page.eval("document.querySelector('#theme').getBoundingClientRect().right");
+        assert.ok(theme <= w - 7, `the theme button ends at ${theme}px`);
+        assert.ok(list.right <= w, `a cost cell ends at ${list.right}px`);
+        assert.ok(list.texts.includes("~$0.42") && list.texts.includes("$1.10"), "priced rows show their cost: " + list.texts.join(", "));
+        assert.ok(!list.texts.includes("—"), "an unpriced row drops the dash on a phone");
+
+        await page.eval("location.hash = '#/s/cost-est'");
+        await page.waitFor("document.querySelector('#steps .st')", "steps");
+        const m = await page.eval(`(() => { const cost = document.querySelector('.facts [data-fact=cost]'), step = ${stepWhere("sonnet-4-7")};
+          return { sw: document.documentElement.scrollWidth, cost: cost.getClientRects().length ? cost.textContent : null, costRight: cost.getBoundingClientRect().right,
+            step: step.getBoundingClientRect().height, callCost: step.querySelector('.cost').getBoundingClientRect().right,
+            right: Math.max(...[...document.querySelectorAll('main *')].map((e) => e.getBoundingClientRect().right)) }; })()`);
+        assert.ok(m.sw <= w && m.right <= w + 1, `session page is ${m.sw}px wide, content ends at ${m.right}px`);
+        assert.equal(m.cost, "cost~$0.42", "the phone header keeps the cost without More details");
+        assert.ok(m.costRight <= w && m.callCost <= w, `cost ends on screen (header ${m.costRight}px, call ${m.callCost}px)`);
+        assert.equal(m.step, 44, "step rows stay 44px");
+      } finally {
+        await page.close();
+      }
+    });
+  }
 });

@@ -20,6 +20,7 @@ coding.sh runs on Windows, and CI tests it there.
 - **Capture.** Sessions stored before an adapter's parsing changed are re-parsed from their transcripts and spool in the background, so this release's dedupe fixes reach data already captured. `coding.sh ingest --rebuild` does it now. [Troubleshooting](https://github.com/jackulau/coding.sh/blob/main/docs/troubleshooting.md#old-sessions-show-doubled-counts).
 - **Harness A/B.** `compare --gate` answers "ship B or not": `Ship it: B wins 9 tasks, loses 0`, `Hold: not enough evidence`, or `Don't ship: B breaks 3 tasks A solved` with the broken tasks listed. It exits 0 only for "Ship it" (SAGE, arXiv 2609.36043). [Compare agents](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/compare-agents.md#ship-it-or-not).
 - **Experiments.** `exp compare --gate` gives the same ship-or-hold answer per case and exits 1 unless it is "Ship it". `exp sweep` ends with `adopt <winner>` or `keep <start>` and the reason. The MCP `experiment_compare` tool returns the gate too. [Evals](https://coding.sh/docs/evals#compare).
+- **Viewer.** Cost shows in the session list, the session header and on each model call. Estimates read `~$0.04` (hover: "Estimated from list prices", and which price a call used); billed and reported costs have no mark; a call with no price shows `—` and says why.
 - **Site.** Pages are ready about 0.5 s sooner on a slow phone, with half the font bytes and less layout shift. A Lighthouse A/B with budgets runs on every site change. [Site speed](https://coding.sh/docs/perf).
 
 ### Fixed
@@ -28,6 +29,8 @@ coding.sh runs on Windows, and CI tests it there.
 - **Codex.** Code mode: a command run inside an `exec` cell now points at the cell, the cell fails when a command in it fails, and session stats count each command once instead of twice (hooks and backfill agree).
 - **Viewer.** A big ingest no longer blanks reads: `coding.sh ui` opens at once (0.3 s, was 41 s on a 25k-line spool) and indexes in a background worker with an "Indexing N files…" pill, and `status`, `sessions` and `search` answer within 1.5 s, noting what is still pending (`--fresh` waits). [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md).
 - **Capture.** A full ingest of a 25k-line spool takes 4 s instead of 294 s on macOS, and 39 s instead of 153 s on Linux: blobs are made durable once per checkpoint instead of with two fsyncs per line, and each checkpoint commits its events, session rows and spool cursors in one transaction, so a crash mid-drain neither loses nor duplicates events.
+- **Cost.** `coding.sh collector` prices model calls with tokens and no cost, as `serve` and `ingest` do, using your `[prices]`.
+- **Viewer.** The top bar fits a 360px phone.
 - **MCP.** Tool calls no longer wait for a big ingest: they answer within 1.5 s from what is indexed, with `pending: {files, indexing}` in the result. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-mcp).
 - **CLI.** `status`, `sessions` and `search` with `--json` carry `"pending": {"files", "indexing"}` while captures are still waiting, instead of dropping the note. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-status).
 

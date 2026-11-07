@@ -533,6 +533,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .arg-path .pdir { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
 .arg-path .pbase { flex: none; color: var(--text-2); }
 .st .d { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+.st .cost { flex: none; font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); white-space: nowrap; }
 .st .wf { position: relative; height: 100%; display: none; }
 .tl.wf-on .st .wf { display: block; }
 .st .wf::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 1px; background: color-mix(in srgb, var(--line) 55%, transparent); }
@@ -1099,6 +1100,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   }
   .cmdk, .icon-btn, .brand { flex: none; }
   @media (max-width: 400px) { .topbar { gap: 0.25rem; } .nav a { padding: 0 0.35rem; } }
+  /* 360px phones: the three tabs, search and theme still fit inside the gutters. */
+  @media (max-width: 370px) { .topbar { gap: 0.2rem; } .nav a { padding: 0 0.25rem; font-size: 12px; } }
   @media (hover: none) { .key-hint { display: none; } }
   .facets-toggle { height: 44px; }
   /* 16px text stops iOS zooming the page when a field takes focus. */
@@ -1240,7 +1243,29 @@ function fmtCost(usd) {
   if (usd < 0.0001) return "<$0.0001";
   return "$" + usd.toFixed(usd < 0.01 ? 4 : usd < 10 ? 2 : 0);
 }
-const NO_PRICE = "No price for this model yet";
+const EST_TITLE = "Estimated from list prices";
+/** Why a cost is missing: no tokens to price, or no list price for the model. */
+function noPriceWhy(model, usage) {
+  const u = usage || {};
+  if (!(u.inputTokens || u.outputTokens || u.cacheReadTokens || u.cacheWriteTokens)) return "No cost: no token counts were recorded";
+  return model ? "No list price for " + model + ". Add [prices.\"" + model + "\"] to config.toml" : "No cost: no model was recorded to price";
+}
+/** A session's cost. Reported or billed: "$0.04". Any part from list prices: "~$0.04". None: "—" saying why. */
+function usageCost(usage, model) {
+  const u = usage || {};
+  if (typeof u.costUsd !== "number") return { text: "—", title: noPriceWhy(model, u), none: true };
+  const est = u.estimatedCostUsd > 0;
+  const part = est && u.estimatedCostUsd < u.costUsd - 1e-9;
+  return { text: (est ? "~" : "") + fmtCost(u.costUsd), est, title: !est ? "Reported cost" : part ? fmtCost(u.estimatedCostUsd) + " of it estimated from list prices, the rest reported" : EST_TITLE };
+}
+/** One model call's cost; `as` is the sibling model whose list price was used. Undefined when the call carries none. */
+function callCost(ev) {
+  const u = ev.usage || {}, p = ev.payload || {};
+  if (typeof u.costUsd !== "number") return undefined;
+  const est = p.costEstimated === true;
+  const as = est && typeof p.pricedAs === "string" && p.pricedAs ? p.pricedAs : "";
+  return { text: (est ? "~" : "") + fmtCost(u.costUsd), est, as, title: est ? EST_TITLE + (as ? ", priced as " + as : "") : "Reported cost" };
+}
 function fmtDuration(ms) {
   if (ms === undefined || ms === null || !isFinite(ms) || ms < 0) return "";
   if (Math.round(ms) < 1000) return Math.round(ms) + "ms";
@@ -1890,7 +1915,7 @@ function renderSessions(view, keepFocus) {
   const head = h("div", { class: "page-head" },
     h("div", null,
       h("h1", { id: "sessions-h" }, "Sessions"),
-      h("p", { class: "meta fact-line" }, ...(stats ? summaryLine(stats) : [list.loaded ? "" : "Loading…"]).filter(Boolean).map((t) => h("span", null, t)),
+      h("p", { class: "meta fact-line" }, ...(stats ? summaryLine(stats) : [list.loaded ? "" : "Loading…"]).filter(Boolean).map((t) => typeof t === "string" ? h("span", null, t) : h("span", { class: "sum-cost", title: t.title }, t.text)),
         hasFilters() ? h("span", null, h("button", { type: "button", onclick: () => clearFilters(view) }, "Clear filters")) : null)),
     nothingCaptured ? null : searchBox(view));
 
@@ -1921,7 +1946,14 @@ function summaryLine(s) {
   if (s.subagents) parts.push(plural(s.subagents, "subagent"));
   if (s.toolCalls) parts.push(fmtNum(s.toolCalls) + " tool calls");
   if (s.llmCalls) parts.push(fmtCompact(s.llmCalls) + " model calls");
-  if (s.costUsd) parts.push(fmtCost(s.costUsd) + (s.pricedSessions && s.pricedSessions < s.sessions ? " priced" : ""));
+  if (s.costUsd) {
+    const est = s.estimatedCostUsd > 0;
+    const partial = s.pricedSessions && s.pricedSessions < s.sessions;
+    parts.push({
+      text: (est ? "~" : "") + fmtCost(s.costUsd) + (partial ? " priced" : ""),
+      title: [partial ? "Cost of the " + plural(s.pricedSessions, "session") + " with a price" : "", est ? (s.estimatedCostUsd < s.costUsd - 1e-9 ? fmtCost(s.estimatedCostUsd) + " of it estimated from list prices" : EST_TITLE) : ""].filter(Boolean).join(". ") || "Reported cost",
+    });
+  }
   return parts;
 }
 function skeletonTable() {
@@ -2171,7 +2203,7 @@ function sessionList(view) {
     const kids = s.childCount || 0;
     const expanded = list.expanded.has(s.id);
     const [act, actErr] = activityText(s);
-    const cost = st.usage && typeof st.usage.costUsd === "number" ? fmtCost(st.usage.costUsd) : "";
+    const cost = usageCost(st.usage, s.model);
     // Nested rows already sit under their parent; in the flat "all" scope the
     // parent's subagents are separate rows, so the count is only a label.
     const toggle = kids
@@ -2196,7 +2228,7 @@ function sessionList(view) {
         h("span", { class: "cell muted repo-cell" + (s.repo && s.repo.root ? "" : " is-none"), title: s.repo && s.repo.root }, s.repo && s.repo.root ? basename(s.repo.root) : "—"),
         h("span", { class: "cell" }, act, actErr ? h("span", { class: "err" }, " · " + actErr) : null),
         h("span", { class: "cell num muted" }, rowTokens(st.usage).replace(" tokens", " tok")),
-        h("span", { class: "cell num" + (cost ? "" : " muted opt"), title: cost ? undefined : NO_PRICE }, cost || "—"),
+        h("span", { class: "cell num cost-cell" + (cost.none ? " muted opt" : ""), title: cost.title }, cost.text),
         h("span", { class: "cell num muted" }, dur),
         h("span", { class: "cell num muted", title: new Date(s.startedAt).toLocaleString() }, fmtRel(s.startedAt))));
     if (depth) row.style.setProperty("--depth", String(depth));
@@ -2530,7 +2562,8 @@ function eventView(ev) {
       const model = llmModel(ev);
       const failed = llmFailed(p);
       const status = typeof p.statusCode === "number" && p.statusCode >= 400 ? "HTTP " + p.statusCode : failed ? "failed" : "";
-      return { name: "LLM call", arg: [model, status, failed && p.error ? clip(oneLine(p.error), 80) : ""].filter(Boolean).join(" · "), label: "LLM call" + (model ? " · " + model : "") + (status ? " · " + status : ""), tone: failed ? "fail" : "muted", kindText: ev.kind };
+      const cost = callCost(ev);
+      return { name: "LLM call", arg: [model, status, failed && p.error ? clip(oneLine(p.error), 80) : ""].filter(Boolean).join(" · "), cost, label: "LLM call" + (model ? " · " + model : "") + (status ? " · " + status : "") + (cost ? " · " + cost.text : ""), tone: failed ? "fail" : "muted", kindText: ev.kind };
     }
     case "subagent.start": {
       const t = subagentText(p);
@@ -2831,7 +2864,7 @@ async function showSession(seq, id, eventId) {
     const el = h("div", { class: cls, role: "option", id: "st-" + r, "aria-selected": String(r === activeRow), "aria-setsize": String(rows.length), "aria-posinset": String(r + 1),
       onclick: () => selectRow(r, true) },
       h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, m.isTurn ? "Turn " + m.prompt : fmtClock(it.ts - session.startedAt)),
-      h("span", { class: "lbl" }, h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }), m.isTurn ? null : h("span", { class: "name" }, v.name), m.isTurn ? h("span", { class: "arg" }, v.arg || "Prompt") : argNode(v.arg)),
+      h("span", { class: "lbl" }, h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }), m.isTurn ? null : h("span", { class: "name" }, v.name), m.isTurn ? h("span", { class: "arg" }, v.arg || "Prompt") : argNode(v.arg), v.cost ? h("span", { class: "cost", title: v.cost.title }, v.cost.text) : null),
       h("span", { class: "d" }, v.adds !== undefined || v.dels !== undefined
         ? [v.adds !== undefined ? h("span", { class: "add" }, "+" + v.adds) : null, v.adds !== undefined && v.dels !== undefined ? " " : null, v.dels !== undefined ? h("span", { class: "del" }, "−" + v.dels) : null]
         : v.meta || ""), wf);
@@ -3096,6 +3129,10 @@ function latencyShort(lat) {
   return [plural(lat.llmCalls, "llm call"), lat.llmP50Ms !== undefined ? "p50 " + fmtDuration(lat.llmP50Ms) : "", lat.llmP95Ms !== undefined ? "p95 " + fmtDuration(lat.llmP95Ms) : ""].filter(Boolean).join(" · ");
 }
 /** "342k in · 2.5k out · 95% cached": prompt tokens include cache reads and writes. */
+/** Model calls the session totals left out because another call already counted them. */
+function dupText(d) {
+  return d && d.calls ? "Not counted twice: " + plural(d.calls, "model call") + " (" + fmtCompact(d.tokens) + " tokens" + (d.costUsd ? ", " + fmtCost(d.costUsd) : "") + ") nested in or repeating another call" : undefined;
+}
 function tokensText(usage) {
   usage = usage || {};
   // With caching on, the uncached remainder alone ("34 in") would hide almost all of what the session sent.
@@ -3109,6 +3146,7 @@ function sessionHeader(s, labels, rel) {
   const repo = s.repo || {};
   const st = s.stats || {};
   const usage = st.usage || {};
+  const cost = usageCost(usage, s.model);
   const fact = (dt, dd, title, cls) => dd ? h("div", { "data-fact": dt }, h("dt", null, dt), h("dd", { title, class: cls }, dd)) : null;
   const outcome = latestLabel(labels, "outcome");
   const evalCmd = "coding.sh eval new " + s.id;
@@ -3148,9 +3186,9 @@ function sessionHeader(s, labels, rel) {
       fact("repo", repo.root ? basename(repo.root) + (repo.head ? "@" + short(repo.head) : "") + (repo.branch ? " (" + repo.branch + ")" : "") : "", repo.root),
       fact("started", fmtDate(s.startedAt), new Date(s.startedAt).toISOString()),
       fact("duration", s.endedAt ? fmtDuration(s.endedAt - s.startedAt) : "no end recorded"),
-      fact("tokens", tokensText(usage)),
-      // Local agents have no pricing yet: a dash keeps the slot so it fills in later.
-      typeof usage.costUsd === "number" ? fact("cost", fmtCost(usage.costUsd)) : fact("cost", "—", NO_PRICE, "none"),
+      fact("tokens", tokensText(usage), dupText(st.duplicateUsage)),
+      // No price: a dash that says why keeps the slot.
+      fact("cost", cost.text, cost.title, cost.none ? "none" : undefined),
       // Phones get the model-call summary alone, so the line stays whole instead of cut mid-word.
       latencyText(st.latency) ? fact("latency", [h("span", { class: "lat-full" }, latencyText(st.latency)), h("span", { class: "lat-short" }, latencyShort(st.latency))], latencyText(st.latency)) : null,
       fact("snapshot", repo.snapshot ? short(repo.snapshot, 12) + (repo.partial ? " · partial" : "") : "", repo.snapshot)),
@@ -3685,6 +3723,7 @@ function renderPane(pane, item, session, ctx) {
         const failed = llmFailed(p);
         const u = ev.usage || {};
         const prompt = (u.inputTokens || 0) + (u.cacheReadTokens || 0) + (u.cacheWriteTokens || 0);
+        const cost = callCost(ev);
         nodes.push(h("h2", { class: "pane-title" }, h("span", { class: "tool" }, "LLM call"), model ? h("span", { class: "arg" }, model) : null));
         if (failed) {
           nodes.push(h("div", { class: "alert", role: "note" },
@@ -3699,11 +3738,11 @@ function renderPane(pane, item, session, ctx) {
           prompt ? kpi("input", fmtCompact(prompt), "", fmtNum(prompt) + " prompt tokens") : null,
           u.outputTokens ? kpi("output", fmtCompact(u.outputTokens), "", fmtNum(u.outputTokens) + " output tokens") : null,
           u.cacheReadTokens && prompt ? kpi("cached", Math.round((u.cacheReadTokens / prompt) * 100) + "%") : null,
-          typeof u.costUsd === "number" ? kpi("cost", fmtCost(u.costUsd)) : null,
+          cost ? kpi("cost", cost.text, "", cost.title) : prompt || u.outputTokens ? kpi("cost", "—", "", noPriceWhy(model, u)) : null,
           typeof p.stopReason === "string" ? kpi("stop", p.stopReason) : null));
-        if (p.provider || (p.requestModel && p.responseModel && p.requestModel !== p.responseModel)) {
-          nodes.push(h("p", { class: "meta" }, [p.provider ? "provider · " + p.provider : "", p.requestModel && p.requestModel !== p.responseModel ? "requested " + p.requestModel : ""].filter(Boolean).join(" · ")));
-        }
+        const metaLine = [p.provider ? "provider · " + p.provider : "", p.requestModel && p.requestModel !== p.responseModel ? "requested " + p.requestModel : "",
+          cost && cost.est ? "cost estimated from list prices" + (cost.as ? ", priced as " + cost.as : "") : ""].filter(Boolean).join(" · ");
+        if (metaLine) nodes.push(h("p", { class: "meta call-meta" }, metaLine));
         break;
       }
       case "subagent.start":

@@ -205,3 +205,44 @@ export function experimentResult(id: string, over: Partial<import("../../src/dat
     ...over,
   };
 }
+
+/**
+ * Sessions and model calls covering each cost mark: estimated from list prices
+ * (one call priced as a sibling model), reported, partly estimated, and unpriced.
+ */
+export function costFixtures(t0: number): { sessions: Session[]; events: AgentEvent[] } {
+  const EST = "cost-est";
+  const sessions = [
+    session(EST, {
+      startedAt: t0, endedAt: t0 + 240_000, model: "claude-sonnet-4-7", title: "Price the session list from list prices",
+      stats: {
+        events: 4, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, latency: { llmCalls: 3 },
+        usage: { inputTokens: 40_000, cacheReadTokens: 210_000, outputTokens: 6_200, costUsd: 0.4231, estimatedCostUsd: 0.4231 },
+        duplicateUsage: { calls: 1, tokens: 12_000, costUsd: 0.05 },
+      },
+    }),
+    session("cost-billed", {
+      agent: "vercel-ai-sdk", startedAt: t0 - 60_000, endedAt: t0 - 50_000, model: "gpt-6.1-sol", title: "POST /api/summarize", repo: undefined,
+      stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0, latency: { llmCalls: 1 }, usage: { inputTokens: 9_000, outputTokens: 900, costUsd: 1.1 } },
+    }),
+    session("cost-mixed", {
+      startedAt: t0 - 120_000, endedAt: t0 - 90_000, model: "claude-opus-5-5", title: "Mixed reported and estimated cost",
+      stats: { events: 2, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { inputTokens: 5_000, outputTokens: 500, costUsd: 0.3, estimatedCostUsd: 0.1 } },
+    }),
+    session("cost-none", {
+      startedAt: t0 - 180_000, endedAt: t0 - 170_000, model: "kimi-k3", title: "Unpriced model",
+      stats: { events: 2, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { inputTokens: 3_000, outputTokens: 300 } },
+    }),
+  ];
+  const e = (n: number, over: Partial<AgentEvent>): AgentEvent => ({ ...event(EST, n), ts: t0 + n * 1000, ...over });
+  const events = [
+    e(1, { kind: "user.message", payload: { text: "price the list" } }),
+    e(2, {
+      kind: "llm.call", model: "claude-sonnet-4-7", durationMs: 2100, usage: { inputTokens: 20_000, outputTokens: 3_000, costUsd: 0.0312 },
+      payload: { ok: true, responseModel: "claude-sonnet-4-7", costEstimated: true, pricedAs: "claude-sonnet-4-5" },
+    }),
+    e(3, { kind: "llm.call", model: "gpt-6.1-sol", durationMs: 1500, usage: { inputTokens: 10_000, outputTokens: 1_000, costUsd: 0.02 }, payload: { ok: true, responseModel: "gpt-6.1-sol" } }),
+    e(4, { kind: "llm.call", model: "kimi-k3", durationMs: 900, usage: { inputTokens: 3_000, outputTokens: 300 }, payload: { ok: true, responseModel: "kimi-k3" } }),
+  ];
+  return { sessions, events };
+}
