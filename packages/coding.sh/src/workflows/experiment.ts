@@ -12,6 +12,8 @@
 // a Pareto report over every variant, and a per-stage breakdown.
 import { sortableId } from "../core/ids.ts";
 import type { IndexStore } from "../core/types.ts";
+import { infraKind, withRetries, type RetryPolicy } from "../jobs/retry.ts";
+import type { JobScope } from "../jobs/store.ts";
 import { pool } from "../runner/experiment.ts";
 import { mcnemarPaired, mean, median, pairedBootstrap, type BootstrapResult, type McNemarResult } from "../stats/index.ts";
 import { workflowStats } from "./metrics.ts";
@@ -67,8 +69,22 @@ export interface RunWorkflowExperimentOpts {
   experimentId?: string;
   score?: WorkflowScorer;
   onProgress?: (p: { done: number; total: number; run: WorkflowRun; score?: number }) => void;
+  /** No new job starts once aborted (a job already running is left to the process-exit kill). */
   signal?: AbortSignal;
+  /** Graceful stop: no new job starts, the ones running finish and are kept. */
+  drain?: AbortSignal;
+  /**
+   * Checkpoint and resume: each finished job is recorded here (run id and
+   * score), and jobs already recorded are kept instead of run again. The
+   * experiment id lives here too.
+   */
+  job?: JobScope;
+  /** Re-run a job whose driver failed on an infrastructure error (rate limit, 5xx, network); a failed workflow is never retried. */
+  retry?: RetryPolicy;
 }
+
+/** The checkpoint key of one (case, variant, attempt). */
+export const workflowJobKey = (j: WorkflowJob): string => `${j.case.id}\u0000${j.variant.name}\u0000${j.attempt}`;
 
 async function spansFor(index: IndexStore, runId: string): Promise<WorkflowTree | undefined> {
   const sessions = await index.listSessions({ runId, limit: 1000 });
@@ -98,12 +114,41 @@ function minimalRun(id: string, framework: WorkflowFramework, name: string, res:
 
 const FRAMEWORKS = new Set<WorkflowFramework>(["claude-code-workflow", "claude-agent-sdk", "openai-agents", "langgraph", "crewai", "mastra", "otel", "command"]);
 
-export async function runWorkflowExperiment(o: RunWorkflowExperimentOpts): Promise<{ experimentId: string; runs: WorkflowRun[]; scores: Map<string, number> }> {
-  const experimentId = o.experimentId ?? sortableId("wfx_");
+export async function runWorkflowExperiment(o: RunWorkflowExperimentOpts): Promise<{ experimentId: string; runs: WorkflowRun[]; scores: Map<string, number>; cancelled: boolean }> {
+  const jobScope = o.job;
+  const experimentId = jobScope?.state<string>("experimentId") ?? o.experimentId ?? sortableId("wfx_");
+  const resumed = jobScope?.state<string>("experimentId") !== undefined;
+  if (jobScope && !resumed) {
+    await jobScope.setState("experimentId", experimentId);
+    await jobScope.job.addRefs(experimentId);
+  }
   const jobs = scheduleWorkflowJobs(o.cases, o.variants, Math.max(1, o.k));
+  if (jobScope && jobScope.prefix === "") await jobScope.job.setTotal(jobs.length);
   const score = o.score ?? defaultScorer;
   const scores = new Map<string, number>();
   const runs: WorkflowRun[] = [];
+  // A resume keeps the jobs already recorded; their runs are in the store.
+  const kept = new Map<number, string>();
+  jobs.forEach((j, i) => {
+    const l = jobScope?.done(workflowJobKey(j));
+    const id = l && !l.infra ? (l.data as { runId?: string } | undefined)?.runId : undefined;
+    if (id) kept.set(i, id);
+  });
+  if (kept.size) {
+    const byId = new Map((await o.store.listRuns({ experimentId })).map((r) => [r.id, r]));
+    const rec = await o.store.getExperiment(experimentId);
+    for (const [i, id] of [...kept]) {
+      const r = byId.get(id);
+      if (!r) {
+        kept.delete(i); // recorded but not stored (killed between the two): run it again
+        continue;
+      }
+      runs.push(r);
+      const sc = rec?.scores[id];
+      if (typeof sc === "number") scores.set(id, sc);
+    }
+  }
+  let finished = 0;
   const record: WorkflowExperimentRecord = {
     id: experimentId,
     workflow: o.workflow,
@@ -115,19 +160,37 @@ export async function runWorkflowExperiment(o: RunWorkflowExperimentOpts): Promi
     scores: {},
     createdAt: Date.now(),
   };
-  await o.store.putExperiment(record);
-  let done = 0;
-  await pool(jobs, o.concurrency ?? 1, async (job) => {
-    if (o.signal?.aborted) return;
-    const ourId = sortableId("wfr_");
-    const env = { CODING_SH_RUN_ID: ourId, CODING_SH_WORKFLOW_RUN_ID: ourId };
-    let res: WorkflowDriverResult;
-    const t0 = Date.now();
-    try {
-      res = await o.driver.run(job.variant, job.case, env);
-    } catch (e) {
-      res = { runId: ourId, output: null, exitCode: null, startedAt: t0, endedAt: Date.now(), error: e instanceof Error ? e.message : String(e) };
+  if (!resumed) await o.store.putExperiment(record);
+  let done = kept.size;
+  await pool(jobs, o.concurrency ?? 1, async (job, i) => {
+    if (kept.has(i)) {
+      finished++;
+      return;
     }
+    if (o.signal?.aborted || o.drain?.aborted) return;
+    const t0 = Date.now();
+    let ourId = "";
+    const tried = await withRetries(
+      async (): Promise<WorkflowDriverResult> => {
+        ourId = sortableId("wfr_");
+        const env = { CODING_SH_RUN_ID: ourId, CODING_SH_WORKFLOW_RUN_ID: ourId };
+        const started = Date.now();
+        try {
+          return await o.driver.run(job.variant, job.case, env);
+        } catch (e) {
+          return { runId: ourId, output: null, exitCode: null, startedAt: started, endedAt: Date.now(), error: e instanceof Error ? e.message : String(e) };
+        }
+      },
+      {
+        policy: o.retry ?? { retries: 0, baseMs: 0, maxMs: 0 },
+        errorOf: (r) => r.error,
+        // Only a driver that failed (no clean exit) can have failed on infrastructure.
+        classify: (r) => (r.exitCode === 0 && !r.error ? undefined : infraKind(r.error ?? `exited ${r.exitCode}`)),
+        stop: [o.signal, o.drain],
+      },
+    );
+    const res = tried.result;
+    if (o.signal?.aborted) return; // killed mid-run: not a finished job
     let tree: WorkflowTree | undefined;
     try {
       if (res.sources) tree = buildWorkflowTree(res.sources);
@@ -144,6 +207,8 @@ export async function runWorkflowExperiment(o: RunWorkflowExperimentOpts): Promi
     run.attempt = job.attempt;
     run.tags = [...new Set([...run.tags, `variant:${job.variant.name}`, `case:${job.case.id}`])];
     if (res.error && run.status === "ok") run.status = "failed";
+    if (tried.attempts > 1) run.attempts = tried.attempts;
+    if (tried.infra) run.infra = tried.infra;
     let s: number | undefined;
     try {
       s = await score(run, res.output, job.case);
@@ -157,10 +222,21 @@ export async function runWorkflowExperiment(o: RunWorkflowExperimentOpts): Promi
     // erase a `workflows score` written meanwhile, and concurrent jobs' rewrites
     // could land out of order and drop a run (VWR-6).
     await o.store.addExperimentRun(experimentId, run.id, scores.get(run.id));
+    if (jobScope) {
+      await jobScope.record(workflowJobKey(job), {
+        ms: Date.now() - t0,
+        ...(tried.attempts > 1 ? { attempts: tried.attempts } : {}),
+        ...(typeof run.stats?.costUsd === "number" && Number.isFinite(run.stats.costUsd) ? { costUsd: run.stats.costUsd } : {}),
+        ...(tried.infra ? { infra: tried.infra } : {}),
+        outcome: run.status === "ok" ? "pass" : "fail",
+        data: { runId: run.id },
+      });
+    }
     done++;
+    finished++;
     o.onProgress?.({ done, total: jobs.length, run, ...(s !== undefined ? { score: s } : {}) });
   });
-  return { experimentId, runs, scores };
+  return { experimentId, runs, scores, cancelled: finished < jobs.length };
 }
 
 // ------------------------------------------------------------ comparing
@@ -341,8 +417,9 @@ function replayControl(A: readonly WorkflowRun[], B: readonly WorkflowRun[], sco
 export function compareWorkflowVariants(runs: WorkflowRun[], scores: Map<string, number>, o: CompareWorkflowOpts): WorkflowCompareReport {
   const alpha = o.alpha ?? 0.05;
   const boot = { ...(o.iters !== undefined ? { iters: o.iters } : {}), ...(o.seed !== undefined ? { seed: o.seed } : {}), alpha };
-  const A = runs.filter((r) => r.variant === o.baseline);
-  const B = runs.filter((r) => r.variant === o.candidate);
+  // A run that failed on infrastructure never measured the workflow.
+  const A = runs.filter((r) => r.variant === o.baseline && !r.infra);
+  const B = runs.filter((r) => r.variant === o.candidate && !r.infra);
   const ca = byCase(A);
   const cb = byCase(B);
   const all = [...new Set([...ca.keys(), ...cb.keys()])].sort();

@@ -12,8 +12,16 @@ export interface CommandContext {
   env: NodeJS.ProcessEnv;
   cwd: string;
   debug: boolean;
-  /** Aborted on the first Ctrl-C. */
+  /** Aborted on the first Ctrl-C (on the second for a graceful command, or on SIGTERM/SIGHUP): stop now. */
   signal: AbortSignal;
+  /**
+   * Graceful commands (long eval runs): aborted on the first Ctrl-C, meaning
+   * "start nothing new, let what is in flight finish". The same as `signal` for
+   * every other command (absent: use `signal`).
+   */
+  drain?: AbortSignal;
+  /** The command line as given (after the binary), when run from main(). */
+  argv?: readonly string[];
 }
 
 /** Return the exit code (default 0). Throw UsageError (2) or CliError (1) on failure. */

@@ -21,6 +21,8 @@ export interface FlagSpec {
    * so `--gateway a b` keeps `a` and `b` as positionals.
    */
   optionalValue?: boolean;
+  /** With optionalValue: a following token matching this is taken as the value too (`--resume exp_01H…`). */
+  valuePattern?: RegExp;
   /** Accepted but left out of help, `--help --json` and the CLI reference (internal plumbing). */
   hidden?: boolean;
 }
@@ -155,7 +157,7 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
       spec = spec!;
       if (spec.optionalValue && inline === undefined) {
         const next = argv[i + 1];
-        const take = next !== undefined && spec.choices?.includes(next) === true;
+        const take = next !== undefined && (spec.choices?.includes(next) === true || spec.valuePattern?.test(next) === true);
         if (take) i++;
         assign(spec, take ? next : undefined, token);
       } else if (spec.type !== "boolean" && inline === undefined) {

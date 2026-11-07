@@ -609,6 +609,7 @@ coding.sh exp <action>
 | [`metrics`](#codingsh-exp-metrics) | A/B two metric commands (ms, bytes) in interleaved pairs |
 | [`show`](#codingsh-exp-show) | Show a stored experiment: pass rate, graders and failures |
 | [`list`](#codingsh-exp-list) | List experiments |
+| [`status`](#codingsh-exp-status) | Progress, ETA and cost so far of long runs (exp, compare, bench, workflows), and how to resume them |
 
 ### `coding.sh exp run`
 
@@ -636,10 +637,14 @@ coding.sh exp run [spec] [options]
 | `--looks <N>` | `4` | With --stop-early: planned looks over the case budget. |
 | `--max-cases <N>` |  | With --arm: run at most N cases (a random subset) |
 | `--seed <N>` |  | With --arm: seed for the case and arm order (default random, recorded) |
+| `--resume [<ID>]` |  | Continue an interrupted experiment: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 
 ```sh
 coding.sh exp run -d smoke -g '{"kind":"exact"}' --arm base=base.json --arm cand=cand.json
 coding.sh exp run -d smoke -g '{"kind":"exact"}' --arm base=base.json --arm cand=cand.json --stop-early --max-cases 400
+coding.sh exp run spec.json --resume
 ```
 
 ### `coding.sh exp compare`
@@ -697,6 +702,9 @@ coding.sh exp aa [a] [b] [options]
 | `--trials <N>` | `1` | Attempts per case. |
 | `-c, --concurrency <N>` | `4` | Parallel case runs. |
 | `--split <SPLIT>` |  | Only cases in this split. One of: `train`, `dev`, `test`. |
+| `--resume [<ID>]` |  | Continue an interrupted A/A run: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 
 ```sh
 coding.sh exp aa --dataset smoke --task '{"kind":"command","command":"node agent.mjs"}' --grader '{"kind":"exact"}'
@@ -725,6 +733,9 @@ coding.sh exp sweep <CONFIGS>... [options]
 | `--split <SPLIT>` | `train` | Split the race runs on. One of: `train`, `dev`, `test`. |
 | `--held-out <SPLIT>` | `test` | Split the winner is re-scored on (a seeded 30% when the dataset has no splits) One of: `train`, `dev`, `test`. |
 | `--seed <N>` |  | Seed for the case and job order (default random, recorded) |
+| `--resume [<ID>]` |  | Continue an interrupted sweep: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 
 ```sh
 coding.sh exp sweep base=base.json t2=temp2.json t5=temp5.json -d smoke -g '{"kind":"exact"}' --budget 300
@@ -779,6 +790,27 @@ coding.sh exp list [options]
 | Option | Default | Description |
 |---|---|---|
 | `-n, --limit <N>` | `20` | Maximum rows. |
+
+### `coding.sh exp status`
+
+Progress, ETA and cost so far of long runs (exp, compare, bench, workflows), and how to resume them.
+
+```text
+coding.sh exp status [run] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `run` | no | One run: its id, or the id of an experiment it produced. |
+
+| Option | Default | Description |
+|---|---|---|
+| `-n, --limit <N>` | `20` | Maximum rows. |
+
+```sh
+coding.sh exp status
+coding.sh exp status exp_01JC3T6Z2Q8W1S5V0R7N4K9M2D --json
+```
 
 ## `coding.sh judge`
 
@@ -1100,11 +1132,15 @@ coding.sh workflows run <WORKFLOW> [options]
 | `--split <SPLIT>` |  | Only cases in this split. One of: `dev`, `heldout`. |
 | `--driver <DRIVER>` | `claude` | How a variant runs. One of: `claude`, `command`. |
 | `-j, --concurrency <N>` | `1` | Jobs at once (a workflow already fans out) |
+| `--resume [<ID>]` |  | Continue an interrupted workflow experiment: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 | `--bin <PATH>` |  | claude binary for the claude-code-workflow driver (default: claude on PATH) |
 | `-y, --yes` |  | Run without asking when the estimated cost is above the confirm threshold. |
 
 ```sh
 coding.sh workflows run coding-sh-improve -v base=wf/improve.js -v cand=wf/improve-v2.js -k 3 --split dev
+coding.sh workflows run coding-sh-improve -v base=wf/improve.js -v cand=wf/improve-v2.js -k 3 --resume
 ```
 
 ### `coding.sh workflows compare`
@@ -1221,7 +1257,7 @@ coding.sh bench run <NAME> [options]
 | `--adhoc` |  | Keep this run out of history and the freshness ledger. |
 | `--concurrency <N>` |  | Parallel calls (default: the definition's) |
 | `--dry-run` |  | Sample and print the cases, the detectable gap and the cost estimate; run nothing. |
-| `--resume` |  | Continue the latest incomplete run (budget stop or interrupt): same seed and cases, finished calls kept. |
+| `--resume [<RUN>]` |  | Continue an incomplete run (budget stop, Ctrl-C, crash): same seed and cases, finished calls kept. RUN: id or YYYY-MM-DD (default: the latest) |
 | `--run <RUN>` |  | With --resume: which incomplete run, by id or YYYY-MM-DD (default: the latest) |
 
 ```sh
@@ -1424,10 +1460,14 @@ coding.sh compare <A> [b] [options]
 | `--eps-c <C|inf>` | `inf` | With --promote: relative cost rise a better B may take (0.2 = +20%) |
 | `--draws <N>` | `10000` | With --promote: bootstrap draws. |
 | `--item-gate` |  | One-item gate (shown automatically when B adds or removes one rule, skill or context file): exit 0 on KEEP or ACCEPT, 1 otherwise; --no-item-gate hides it. |
+| `--resume [<ID>]` |  | Continue an interrupted comparison: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. |
 
 ```sh
 coding.sh compare base candidate --k 3
+coding.sh compare base candidate --k 3 --resume
 coding.sh compare base candidate --experiment exp_01
 coding.sh compare base candidate --k 3 --gate
 coding.sh compare base candidate --k 3 --gate --by suite:

@@ -42,6 +42,10 @@ export interface WorkflowRun {
   experimentId?: string;
   caseId?: string;
   attempt?: number;
+  /** Driver attempts when infrastructure errors (rate limit, 5xx, network) were retried; absent for one. */
+  attempts?: number;
+  /** The last attempt still failed on an infrastructure error: outcome unknown, left out of comparisons, re-run by `workflows run --resume`. */
+  infra?: "rate-limit" | "server" | "network" | "tempfail";
   /** Phase titles in script order (meta.phases), when known. */
   phases?: string[];
   /** Where the run was read from (journal path, trace id, driver), for re-import. */

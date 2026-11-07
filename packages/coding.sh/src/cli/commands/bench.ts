@@ -5,7 +5,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import { BenchDefError, benchHome, checkName, findDefinition, listDefinitions, loadDefinition, parseDefinition, renderDefinition } from "../../bench/define.ts";
 import { verifySeed, type SeedCheck } from "../../bench/commit.ts";
 import { buildReport, renderReportHtml } from "../../bench/report.ts";
-import { BenchRunError, regradeRun, resumeBench, runBench, type DryRunResult } from "../../bench/run.ts";
+import { BenchRunError, regradeRun, resumeBench, resumeTarget, runBench, type DryRunResult } from "../../bench/run.ts";
+import { JobStore } from "../../jobs/store.ts";
 import { cronLine, envRefs, installCron, systemCrontab, workflowYaml } from "../../bench/schedule.ts";
 import { SourceError } from "../../bench/sources.ts";
 import { pooledGap, powerPlan, type PowerPlan } from "../../bench/stats.ts";
@@ -19,7 +20,7 @@ import type { GraderSpec } from "../../graders/index.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { autoIngest, jsonArg, list, requireConsent, str, withContext } from "../common.ts";
-import { CliError, plural } from "../output.ts";
+import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 const pct = (x: number) => (Number.isFinite(x) ? `${(x * 100).toFixed(1)}%` : "-");
@@ -273,9 +274,10 @@ async function dispatch(c: CommandContext): Promise<number> {
       const cases = positiveInt(c.flags.cases, "cases");
       const concurrency = positiveInt(c.flags.concurrency, "concurrency");
       const dryRun = c.flags["dry-run"] === true;
-      const resume = c.flags.resume === true;
-      const resumeRef = str(c.flags.run);
-      if (resumeRef && !resume) throw new UsageError("--run picks which run to --resume; add --resume", { reason: "invalid_argument" });
+      let resume = c.flags.resume !== undefined && c.flags.resume !== false;
+      // --resume <run> and --resume --run <run> are the same.
+      const resumeRef = str(c.flags.resume) ?? str(c.flags.run);
+      if (str(c.flags.run) && !resume) throw new UsageError("--run picks which run to --resume; add --resume", { reason: "invalid_argument" });
       if (resume) {
         const clash = ["date", "seed", "cases", "adhoc", "dry-run"].filter((f) => c.flags[f] !== undefined && c.flags[f] !== false);
         if (clash.length) throw new UsageError(`--resume continues a stored run with its own seed and cases; drop ${clash.map((f) => `--${f}`).join(", ")}`, { reason: "invalid_argument" });
@@ -283,6 +285,22 @@ async function dispatch(c: CommandContext): Promise<number> {
       // Testing hook: pretend the run starts at this time (simulates daily runs).
       const clock = env.CODING_SH_BENCH_NOW ? (/^\d+$/.test(env.CODING_SH_BENCH_NOW) ? Number(env.CODING_SH_BENCH_NOW) : Date.parse(env.CODING_SH_BENCH_NOW)) : undefined;
       if (clock !== undefined && !Number.isFinite(clock)) throw new UsageError(`CODING_SH_BENCH_NOW must be an ISO time or epoch ms, got ${JSON.stringify(env.CODING_SH_BENCH_NOW)}`);
+      // An unfinished run of the same protocol and contenders (crash, Ctrl-C, budget stop): offer to continue it.
+      let offered: string | undefined;
+      if (!resume && !dryRun && !date && !seed && !cases && c.flags.adhoc !== true) {
+        const open = resumeTarget(await listRuns(def.name, env));
+        const same = open && open.definition.protocolHash === def.protocolHash && open.contenders.every((x) => !x.hash || x.hash === def.contenderHashes[x.name]) && open.contenders.length === def.contenders.length;
+        const live = same ? await JobStore.forEnv(env).get(open.id) : undefined;
+        if (same && live?.status !== "running") {
+          const what = `${open.id} (${open.date}, ${open.cells.length} calls finished, started ${ago(open.startedAt)})`;
+          if (out.interactive) {
+            if (await out.confirm(`${def.name} has an unfinished run with the same protocol: ${what}. Resume it?`, { defaultYes: true })) {
+              resume = true;
+              offered = open.id;
+            }
+          } else out.note(`${def.name} has an unfinished run with the same protocol: ${what}. Starting a new one; to continue it instead: coding.sh bench run ${def.name} --resume ${open.id}`);
+        }
+      }
       return withContext(c, async (ctx) => {
         if (def.source.kind === "sessions") await autoIngest(ctx);
         const evalStore = new FileEvalStore({ env, index: ctx.index });
@@ -303,11 +321,12 @@ async function dispatch(c: CommandContext): Promise<number> {
           graderDeps: { judgeCache: FileJudgeCache.forEnv(env) },
           prices: pricesFor(ctx.config.pricing),
           signal: c.signal,
+          ...(c.drain ? { drain: c.drain } : {}),
           onProgress: (done: number, total: number, phase: "sample" | "snapshot" | "run") => spin.update(phase === "sample" ? `Sampling ${def.name}…` : phase === "snapshot" ? `Fetching pages… ${done}/${total}` : `Running ${def.name}… ${done}/${total}`),
         };
         try {
           result = resume
-            ? await resumeBench({ ...shared, ...(resumeRef ? { run: resumeRef } : {}) })
+            ? await resumeBench({ ...shared, ...(offered ?? resumeRef ? { run: offered ?? resumeRef! } : {}) })
             : await runBench({
                 ...shared,
                 ...(date ? { date } : {}),

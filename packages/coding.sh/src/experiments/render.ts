@@ -66,7 +66,11 @@ export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verif
   );
   if (r.status === "cancelled") out.push(paint(`cancelled: only ${s.n} case run${s.n === 1 ? "" : "s"} finished before the interrupt; this result is partial`, "yellow", color));
   if (s.errors) out.push(paint(`errors  ${s.errors} task error(s)`, "red", color));
-  if (s.ungraded) out.push(paint(`ungraded ${s.ungraded} run(s) with a grader error: outcome unknown, left out of the pass rate`, "yellow", color));
+  const graderErrors = (s.ungraded ?? 0) - (s.infra ?? 0);
+  if (graderErrors > 0) out.push(paint(`ungraded ${graderErrors} run(s) with a grader error: outcome unknown, left out of the pass rate`, "yellow", color));
+  if (s.infra) out.push(paint(`infra ${s.infra} run(s) still hit a rate limit, 5xx or network error after retries: outcome unknown, left out of the pass rate; --resume runs them again`, "yellow", color));
+  const retried = r.runs.filter((x) => (x.attempts ?? 1) > 1);
+  if (retried.length) out.push(paint(`retried ${retried.length} run(s) after infrastructure errors (${retried.reduce((n, x) => n + (x.attempts ?? 1) - 1, 0)} extra attempts); failures are never retried`, "dim", color));
   out.push(`latency median ${ms(s.latencyMs.median)}, p90 ${ms(s.latencyMs.p90)}, max ${ms(s.latencyMs.max)}`);
   if (s.graders.length) {
     out.push("");

@@ -4,7 +4,6 @@
 //   <root>/datasets/<id>/latest                    text: the latest version id
 //   <root>/datasets/<id>/history.jsonl             append-only version log
 //   <root>/experiments/<id>.json                   one ExperimentResult per run
-//   <root>/experiments/<id>.runs.jsonl             append-only progress of a run in flight
 //   <root>/judges/<id>.json                        JudgeVersion (status, calibration)
 //   <root>/noise/<dataset>/<taskKey>.json          A/A noise floor per dataset and task (exp aa)
 //   <root>/judge-cache/…                           see src/judge/cache.ts
@@ -15,7 +14,7 @@
 // experiment / judge methods (sqlite and memory do), those are used instead of
 // the JSON files, so evals live next to sessions in one queryable index. The
 // judge cache always stays on disk under <root>/judge-cache.
-import { appendFile, mkdir, readFile, readdir, rm } from "node:fs/promises";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { acquireLock } from "../core/lock.ts";
 import { paths } from "../core/paths.ts";
@@ -24,7 +23,7 @@ import type { DatasetListing, IndexStore } from "../core/types.ts";
 import { datasetVersion } from "./dataset.ts";
 import type { NoiseFloor } from "../experiments/aa.ts";
 import type { VerifierAudit } from "../judge/verifier.ts";
-import type { Dataset, DatasetVersionInfo, ExperimentLogEntry, ExperimentResult, JudgeVersion } from "./types.ts";
+import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "./types.ts";
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,199}$/;
 
@@ -240,35 +239,6 @@ export class FileEvalStore {
     if (byId) return byId;
     if (opts.includeCancelled) return (await this.listExperiments({ name: ref, limit: 1 }))[0];
     return (await this.listExperiments({ name: ref })).find((e) => (e.status ?? "completed") === "completed");
-  }
-
-  // Append-only progress log of an experiment in flight (see ExperimentLogEntry).
-  experimentLogPath(id: string): string {
-    return join(this.experimentsDir, `${safeId("experiment", id)}.runs.jsonl`);
-  }
-
-  async appendExperimentLog(id: string, entry: ExperimentLogEntry): Promise<void> {
-    await mkdir(this.experimentsDir, { recursive: true });
-    await appendFile(this.experimentLogPath(id), JSON.stringify(entry) + "\n", "utf8");
-  }
-
-  /** The log's entries; a torn last line (killed mid-write) is skipped. Empty when there is none. */
-  async readExperimentLog(id: string): Promise<ExperimentLogEntry[]> {
-    const text = (await readText(this.experimentLogPath(id))) ?? "";
-    const out: ExperimentLogEntry[] = [];
-    for (const line of text.split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        out.push(JSON.parse(line) as ExperimentLogEntry);
-      } catch {
-        // partial line
-      }
-    }
-    return out;
-  }
-
-  async removeExperimentLog(id: string): Promise<void> {
-    await rm(this.experimentLogPath(id), { force: true });
   }
 
   /** Newest first (ids are time-sortable). */

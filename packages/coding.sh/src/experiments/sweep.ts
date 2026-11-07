@@ -24,12 +24,14 @@
 import { sortableId } from "../core/ids.ts";
 import type { FileEvalStore } from "../datasets/store.ts";
 import type { Case, CaseRun, Dataset, ExperimentResult, Grader, Interval, Split } from "../datasets/types.ts";
+import type { JobScope } from "../jobs/store.ts";
+import type { RetryPolicy } from "../jobs/retry.ts";
 import { mapPool } from "../judge/limit.ts";
 import { pairedBootstrap } from "../stats/interval.ts";
 import { mulberry32 } from "../stats/prng.ts";
 import { runAb } from "./ab.ts";
 import { compareExperiments, type Comparison, type ComparisonGate } from "./compare.ts";
-import { caseRates, experimentResult, prepareGraders, runExperiment, runTrial, selectCases, storeResult, type TrialEnv } from "./run.ts";
+import { caseRates, experimentResult, prepareGraders, priorRun, rememberIdentity, runExperiment, runTrial, selectCases, storeResult, type TrialEnv } from "./run.ts";
 import { resolveTask, type TaskSpec } from "./task.ts";
 
 /** Held-out share when the dataset has no splits and the sweep makes its own. */
@@ -55,6 +57,16 @@ export interface RunSweepOpts {
   concurrency?: number;
   store?: FileEvalStore;
   signal?: AbortSignal;
+  /** Graceful stop: no new case run starts, the ones in flight finish. */
+  drain?: AbortSignal;
+  /**
+   * Checkpoint and resume: each finished case run is recorded here, and a
+   * resume reuses the seed, ids and finished runs, so every round ranks (and
+   * drops) the same configs as the uninterrupted sweep would have.
+   */
+  job?: JobScope;
+  retry?: RetryPolicy;
+  timeoutMs?: number;
   /** Seed for the case order, the job order and rank ties. Default random (recorded). */
   seed?: number;
   bootstrapIters?: number;
@@ -180,7 +192,8 @@ export async function runSweep(opts: RunSweepOpts): Promise<SweepResult> {
   }
   const select = opts.select ?? "train";
   const heldOut = opts.heldOut ?? "test";
-  const seed = opts.seed ?? Math.floor(Math.random() * 2 ** 32);
+  const job = opts.job;
+  const seed = job?.state<number>("seed") ?? opts.seed ?? Math.floor(Math.random() * 2 ** 32);
   const rand = mulberry32(seed);
   const { sel, held, source } = splitCases(opts.dataset, select, heldOut, rand);
   const order = source === "dataset" ? shuffle([...sel], rand) : sel; // a random split is already shuffled
@@ -193,12 +206,36 @@ export async function runSweep(opts: RunSweepOpts): Promise<SweepResult> {
   }
   const graders = await prepareGraders(opts.graders, opts.store);
   const tasks = opts.configs.map((c) => resolveTask(c.task));
-  const ids = opts.configs.map(() => sortableId("exp_"));
+  if (job && job.state("seed") === undefined) await job.setState("seed", seed);
+  const scopes = opts.configs.map((_, i) => job?.scope(`c${i}:`));
+  const now = Date.now();
+  const ids: string[] = [];
+  for (const sc of scopes) ids.push((await rememberIdentity(sc, { id: sortableId("exp_"), createdAt: now })).id);
+  const createdAt = scopes[0]?.state<number>("createdAt") ?? now;
+  // The plan: race case runs per round (survivors are known ahead), plus a held-out A/B (revised once the race ends).
+  if (job && job.prefix === "") {
+    let raceRuns = 0;
+    let left = order.length;
+    for (const s of schedule) {
+      const take = Math.min(left, Math.max(1, Math.floor(budget / (s * R))));
+      left -= take;
+      raceRuns += take * s;
+    }
+    await job.job.setTotal(raceRuns + 2 * held.length);
+  }
   const expNames = opts.configs.map((c) => `${opts.name}-${c.name}`);
-  const createdAt = Date.now();
   const store = opts.store;
-  const signal = opts.signal;
-  const envs: TrialEnv[] = tasks.map((task, i) => ({ runId: ids[i]!, task, graders, ...(signal ? { signal } : {}), ...(store ? { store } : {}) }));
+  const { signal, drain } = opts;
+  const envs: TrialEnv[] = tasks.map((task, i) => ({
+    runId: ids[i]!,
+    task,
+    graders,
+    ...(signal ? { signal } : {}),
+    ...(drain ? { drain } : {}),
+    ...(scopes[i] ? { job: scopes[i] } : {}),
+    ...(opts.retry ? { retry: opts.retry } : {}),
+    ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+  }));
   // Random rank for exact ties, so no config (the start one included) wins ties by position.
   const tiebreak = shuffle(opts.configs.map((_, i) => i), rand);
   const tieRank = new Map(tiebreak.map((ci, r) => [ci, r]));
@@ -221,14 +258,19 @@ export async function runSweep(opts: RunSweepOpts): Promise<SweepResult> {
     next += batch.length;
     const jobs: { c: Case; ci: number }[] = [];
     for (const c of batch) for (const ci of shuffle([...survivors], rand)) jobs.push({ c, ci });
-    let done = 0;
-    await mapPool(jobs, opts.concurrency ?? 4, async (job) => {
-      const run = await runTrial(envs[job.ci]!, job.c, 1);
-      if (run) runs[job.ci]!.push(run);
-      opts.onProgress?.(`round ${r + 1}/${R}`, ++done, jobs.length);
+    // Recorded runs (a resume) are kept; the rest run now.
+    const prior = jobs.map((j) => priorRun(scopes[j.ci], j.c.id, 1));
+    let done = prior.filter(Boolean).length;
+    const got = await mapPool(jobs, opts.concurrency ?? 4, async (j, i) => {
+      if (prior[i]) return prior[i];
+      const run = await runTrial(envs[j.ci]!, j.c, 1);
+      if (run) opts.onProgress?.(`round ${r + 1}/${R}`, ++done, jobs.length);
+      return run;
     });
+    // Job order, not finish order: the ranking and its bootstrap CIs then come out the same however the runs interleaved.
+    got.forEach((run, i) => run && runs[jobs[i]!.ci]!.push(run));
     used += jobs.length;
-    if (signal?.aborted) {
+    if (got.some((x) => x === undefined)) {
       cancelled = true;
       break;
     }
@@ -300,6 +342,8 @@ export async function runSweep(opts: RunSweepOpts): Promise<SweepResult> {
   // Held-out re-score: the start config and the winner, interleaved, on cases the race never saw.
   const w = survivors[0]!;
   const heldIds = new Set(held.map((c) => c.id));
+  const heldJob = job?.scope("held:");
+  if (job && job.prefix === "") await job.job.setTotal(used + (w === 0 ? 1 : 2) * held.length);
   const common = {
     dataset: opts.dataset,
     graders: opts.graders,
@@ -308,6 +352,10 @@ export async function runSweep(opts: RunSweepOpts): Promise<SweepResult> {
     ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
     ...(store ? { store } : {}),
     ...(signal ? { signal } : {}),
+    ...(drain ? { drain } : {}),
+    ...(heldJob ? { job: heldJob } : {}),
+    ...(opts.retry ? { retry: opts.retry } : {}),
+    ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
     ...(opts.bootstrapIters ? { bootstrapIters: opts.bootstrapIters } : {}),
   };
   const heldName = `${opts.name}-heldout`;

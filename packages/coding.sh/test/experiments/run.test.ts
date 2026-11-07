@@ -14,6 +14,8 @@ import { runExperiment, withTrace } from "../../src/experiments/run.ts";
 import { resolveTask, safeUrl, splitCommandLine } from "../../src/experiments/task.ts";
 import { createJudge, judgeGrader } from "../../src/judge/judge.ts";
 import type { ChatProvider } from "../../src/judge/providers.ts";
+import { jobConfig } from "../../src/jobs/config.ts";
+import { JobStore, type TrialLine } from "../../src/jobs/store.ts";
 import { wilson } from "../../src/stats/interval.ts";
 import { nodeBin } from "../_bin.ts";
 
@@ -218,26 +220,29 @@ describe("runExperiment: cancellation", () => {
       const done = await runExperiment({ name: "same", dataset: ds, task: upper, graders: [exactGrader()], store });
       const ctrl = new AbortController();
       let started = 0;
-      let logged: Awaited<ReturnType<FileEvalStore["readExperimentLog"]>> = [];
+      let logged: TrialLine[] = [];
+      const jobs = new JobStore(root);
       const task = async (input: unknown, ctx: { signal?: AbortSignal }) => {
         started++;
         if (started <= 2) return upper(input);
         // Third case hangs until aborted, like an agent mid-run; capture the progress log first.
-        logged = await store.readExperimentLog(id);
+        logged = [...(await jobs.readLines(id)).values()];
         setTimeout(() => ctrl.abort(), 10);
         await new Promise((_, reject) => ctx.signal?.addEventListener("abort", () => reject(new Error("killed")), { once: true }));
         return "never";
       };
       const id = "exp_cancel_test";
-      const r = await runExperiment({ name: "same", dataset: ds, task, graders: [exactGrader()], store, id, concurrency: 1, signal: ctrl.signal });
+      const job = await jobs.create({ id, kind: "exp run", name: "same", config: jobConfig({ dataset: ds.version }), total: 0, concurrency: 1 });
+      const r = await runExperiment({ name: "same", dataset: ds, task, graders: [exactGrader()], store, id, concurrency: 1, signal: ctrl.signal, job: job.scope() });
+      await job.finish("interrupted");
       assert.equal(r.status, "cancelled");
       assert.deepEqual(r.runs.map((x) => x.caseId), ["a", "b"], "only the finished case-trials");
       assert.ok(r.runs.every((x) => x.error === undefined && x.pass));
       assert.equal(r.summary.n, 2);
       // While running, finished case-trials were already on disk, with a running status.
-      assert.deepEqual(logged.map((e) => e.type), ["start", "run", "run"]);
-      assert.equal((logged[0] as { status: string }).status, "running");
-      assert.deepEqual(await store.readExperimentLog(id), [], "log removed once the result is stored");
+      assert.deepEqual(logged.map((e) => e.outcome), ["pass", "pass"]);
+      assert.equal((await jobs.get(id))?.header.total, 4);
+      assert.equal((await jobs.get(id))?.status, "interrupted");
       const back = await store.getExperiment(id);
       assert.equal(back?.status, "cancelled");
       // By name, the cancelled run never shadows the last complete one.

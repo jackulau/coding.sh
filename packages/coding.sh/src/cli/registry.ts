@@ -6,6 +6,7 @@ import type { CommandModule } from "./types.ts";
 import { GATEWAY_IDS } from "../integrations/gateway/providers.ts";
 import { WORKFLOWS_COMMAND } from "../workflows/cli-spec.ts";
 import { BENCH_COMMAND } from "../bench/cli-spec.ts";
+import { durableFlags } from "../jobs/flags.ts";
 
 export interface ArgSpec {
   name: string;
@@ -21,6 +22,8 @@ export interface ActionSpec {
   args?: ArgSpec[];
   flags?: FlagSpec[];
   examples?: string[];
+  /** The first Ctrl-C lets trials in flight finish (c.drain); the second stops them (c.signal). */
+  graceful?: boolean;
 }
 
 export interface CommandSpec {
@@ -38,6 +41,8 @@ export interface CommandSpec {
   actionOptional?: boolean;
   /** Handles SIGINT/SIGTERM itself (graceful shutdown) and returns its own exit code. */
   handlesSignals?: boolean;
+  /** See ActionSpec.graceful (for a command without actions). */
+  graceful?: boolean;
   examples?: string[];
   notes?: string[];
   load(): Promise<CommandModule>;
@@ -410,10 +415,13 @@ export const COMMANDS: CommandSpec[] = [
           { name: "looks", type: "number", value: "<N>", desc: "With --stop-early: planned looks over the case budget", default: "4" },
           { name: "max-cases", type: "number", value: "<N>", desc: "With --arm: run at most N cases (a random subset)" },
           { name: "seed", type: "number", value: "<N>", desc: "With --arm: seed for the case and arm order (default random, recorded)" },
+          ...durableFlags("experiment"),
         ],
+        graceful: true,
         examples: [
           "coding.sh exp run -d smoke -g '{\"kind\":\"exact\"}' --arm base=base.json --arm cand=cand.json",
           "coding.sh exp run -d smoke -g '{\"kind\":\"exact\"}' --arm base=base.json --arm cand=cand.json --stop-early --max-cases 400",
+          "coding.sh exp run spec.json --resume",
         ],
       },
       {
@@ -446,7 +454,8 @@ export const COMMANDS: CommandSpec[] = [
           { name: "a", desc: "Spec JSON file to run twice, or the first of two stored runs of one config" },
           { name: "b", desc: "The second stored run (compares the two instead of running)" },
         ],
-        flags: EXP_RUN_FLAGS,
+        flags: [...EXP_RUN_FLAGS, ...durableFlags("A/A run")],
+        graceful: true,
         examples: ["coding.sh exp aa --dataset smoke --task '{\"kind\":\"command\",\"command\":\"node agent.mjs\"}' --grader '{\"kind\":\"exact\"}'", "coding.sh exp aa smoke-aa1 smoke-aa2"],
       },
       {
@@ -459,7 +468,9 @@ export const COMMANDS: CommandSpec[] = [
           { name: "split", type: "string", value: "<SPLIT>", choices: ["train", "dev", "test"], desc: "Split the race runs on", default: "train" },
           { name: "held-out", type: "string", value: "<SPLIT>", choices: ["train", "dev", "test"], desc: "Split the winner is re-scored on (a seeded 30% when the dataset has no splits)", default: "test" },
           { name: "seed", type: "number", value: "<N>", desc: "Seed for the case and job order (default random, recorded)" },
+          ...durableFlags("sweep"),
         ],
+        graceful: true,
         examples: ["coding.sh exp sweep base=base.json t2=temp2.json t5=temp5.json -d smoke -g '{\"kind\":\"exact\"}' --budget 300"],
       },
       {
@@ -488,6 +499,13 @@ export const COMMANDS: CommandSpec[] = [
         args: [{ name: "experiment", desc: "Experiment id or name (newest, cancelled ones included)", required: true }],
       },
       { name: "list", summary: "List experiments", flags: [LIMIT(20)] },
+      {
+        name: "status",
+        summary: "Progress, ETA and cost so far of long runs (exp, compare, bench, workflows), and how to resume them",
+        args: [{ name: "run", desc: "One run: its id, or the id of an experiment it produced" }],
+        flags: [LIMIT(20)],
+        examples: ["coding.sh exp status", "coding.sh exp status exp_01JC3T6Z2Q8W1S5V0R7N4K9M2D --json"],
+      },
     ],
     load: () => import("./commands/exp.ts"),
   },
@@ -656,10 +674,13 @@ export const COMMANDS: CommandSpec[] = [
         type: "boolean",
         desc: "One-item gate (shown automatically when B adds or removes one rule, skill or context file): exit 0 on KEEP or ACCEPT, 1 otherwise; --no-item-gate hides it",
       },
+      ...durableFlags("comparison"),
       YES,
     ],
+    graceful: true,
     examples: [
       "coding.sh compare base candidate --k 3",
+      "coding.sh compare base candidate --k 3 --resume",
       "coding.sh compare base candidate --experiment exp_01",
       "coding.sh compare base candidate --k 3 --gate",
       "coding.sh compare base candidate --k 3 --gate --by suite:",

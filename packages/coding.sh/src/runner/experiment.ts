@@ -4,6 +4,8 @@ import { availableParallelism } from "node:os";
 import { sortableId } from "../core/ids.ts";
 import type { Adapter, AgentEvent, BlobStore, EvalTask, HarnessBundle, IndexStore, RunResult, Session } from "../core/types.ts";
 import { pairedPower, type PowerAnalysis } from "../experiments/power.ts";
+import { infraKind, withRetries, type InfraKind, type RetryPolicy } from "../jobs/retry.ts";
+import type { JobScope } from "../jobs/store.ts";
 import { pairedBootstrap, wilson, type BootstrapResult, type Interval } from "../stats/interval.ts";
 import { mean } from "../stats/summary.ts";
 import { itemGate, dec, type ItemGateOpts, type ItemGateReport } from "./gate-item.ts";
@@ -53,6 +55,32 @@ export interface RunExperimentOpts {
    * and stored as `cancelled`, and the result says `cancelled: true`.
    */
   signal?: AbortSignal;
+  /** Graceful stop: no new run starts, the ones in flight finish; the result says `cancelled: true`. */
+  drain?: AbortSignal;
+  /**
+   * Checkpoint and resume: each finished run is recorded here (its id; the run
+   * itself is in the index), and runs already recorded are kept instead of run
+   * again. The experiment id lives here too.
+   */
+  job?: JobScope;
+  /** Re-run a run that failed on an infrastructure error (rate limit, 5xx, network) after a backoff. Task failures are never retried. */
+  retry?: RetryPolicy;
+}
+
+/** The checkpoint key of one (task, bundle, attempt). */
+export const runKey = (j: Job): string => `${j.task.id}\u0000${j.bundle.id}\u0000${j.attempt}`;
+
+/**
+ * Whether a failed run failed on infrastructure (rate limit, 5xx, network)
+ * rather than on the task: its error, or the tail of a failing agent's output.
+ * A pass, a cancelled run or the agent's own timeout never is.
+ */
+export function runInfra(r: RunResult): InfraKind | undefined {
+  if (r.pass || r.cancelled || r.agent.timedOut) return undefined;
+  const k = infraKind(r.error);
+  if (k) return k;
+  if (r.agent.exitCode === 0 || r.agent.exitCode === null) return undefined;
+  return infraKind(`exited ${r.agent.exitCode}: ${r.agent.stderrTail.slice(-2000)} ${r.agent.stdoutTail.slice(-500)}`);
 }
 
 export interface Job {
@@ -90,54 +118,101 @@ export function defaultConcurrency(): number {
 }
 
 export async function runExperiment(o: RunExperimentOpts): Promise<{ experimentId: string; results: RunResult[]; cancelled: boolean }> {
-  const experimentId = o.experimentId ?? sortableId("exp_");
+  const jobScope = o.job;
+  const experimentId = jobScope?.state<string>("experimentId") ?? o.experimentId ?? sortableId("exp_");
+  if (jobScope && jobScope.state("experimentId") === undefined) {
+    await jobScope.setState("experimentId", experimentId);
+    await jobScope.job.addRefs(experimentId);
+  }
   const jobs = scheduleJobs(o.tasks, o.bundles, Math.max(1, o.k ?? 1));
-  let done = 0;
-  const settled = await pool(jobs, o.concurrency ?? defaultConcurrency(), async (job): Promise<RunResult | undefined> => {
-    if (o.signal?.aborted) return undefined; // never started: not a run
-    let result: RunResult;
-    try {
-      result = await runTask({
-        task: job.task,
-        bundle: job.bundle,
-        adapter: o.adapterFor(job.bundle),
-        blobs: o.blobs,
-        index: o.index,
-        attempt: job.attempt,
-        experimentId,
-        timeoutMs: o.timeoutMs,
-        keep: o.keep,
-        env: o.env,
-        route: o.route,
-        git: o.git,
-        runsDir: o.runsDir,
-        testGlobs: o.testGlobs,
-        signal: o.signal,
-      });
-    } catch (e) {
-      // runTask should not throw; if adapterFor does, record and move on.
-      const now = Date.now();
-      result = {
-        id: sortableId("run_"),
-        experimentId,
-        taskId: job.task.id,
-        bundleId: job.bundle.id,
-        attempt: job.attempt,
-        pass: false,
-        verifierExit: null,
-        agent: { exitCode: null, timedOut: false, durationMs: 0, stdoutTail: "", stderrTail: "" },
-        startedAt: now,
-        endedAt: now,
-        error: e instanceof Error ? e.message : String(e),
-      };
+  if (jobScope && jobScope.prefix === "") await jobScope.job.setTotal(jobs.length);
+  // A resume keeps every run already recorded with a known outcome (the runs live in the index).
+  const stored = jobScope ? new Map((await o.index.listRuns({ experimentId })).map((r) => [r.id, r])) : new Map<string, RunResult>();
+  const prior = jobs.map((j) => {
+    const l = jobScope?.done(runKey(j));
+    const id = l && !l.infra ? (l.data as { runId?: string } | undefined)?.runId : undefined;
+    return id ? stored.get(id) : undefined;
+  });
+  let done = prior.filter(Boolean).length;
+  const settled = await pool(jobs, o.concurrency ?? defaultConcurrency(), async (job, i): Promise<RunResult | undefined> => {
+    if (prior[i]) return prior[i];
+    if (o.signal?.aborted || o.drain?.aborted) return undefined; // never started: not a run
+    const t0 = Date.now();
+    let last: RunResult | undefined;
+    const tried = await withRetries(
+      async () => {
+        // A retried attempt stays in the index for the record, marked so comparisons leave it out.
+        if (last) await o.index.putRun({ ...last, superseded: true }).catch(() => {});
+        last = await attemptRun(o, job, experimentId);
+        return last;
+      },
+      { policy: o.retry ?? { retries: 0, baseMs: 0, maxMs: 0 }, errorOf: (r) => r.error, classify: runInfra, stop: [o.signal, o.drain] },
+    );
+    const result = tried.result;
+    if (tried.attempts > 1 || tried.infra) {
+      if (tried.attempts > 1) result.attempts = tried.attempts;
+      if (tried.infra) result.infra = tried.infra;
       await o.index.putRun(result).catch(() => {});
+    }
+    if (result.cancelled) return result; // killed mid-run: kept as cancelled in the index, not a finished run
+    if (jobScope) {
+      const cost = result.agent.usage?.costUsd;
+      await jobScope.record(runKey(job), {
+        ms: Date.now() - t0,
+        ...(tried.attempts > 1 ? { attempts: tried.attempts } : {}),
+        ...(typeof cost === "number" ? { costUsd: cost } : {}),
+        ...(tried.infra ? { infra: tried.infra } : {}),
+        outcome: result.pass ? "pass" : result.error ? "error" : "fail",
+        data: { runId: result.id },
+      });
     }
     done++;
     o.onProgress?.({ done, total: jobs.length, result, task: job.task, bundle: job.bundle });
     return result;
   });
   const results = settled.filter((r): r is RunResult => r !== undefined);
-  return { experimentId, results, cancelled: o.signal?.aborted === true };
+  return { experimentId, results, cancelled: settled.some((r) => r === undefined || r.cancelled === true) };
+}
+
+/** One attempt of one job, stored in the index (runTask never throws for what the agent does). */
+async function attemptRun(o: RunExperimentOpts, job: Job, experimentId: string): Promise<RunResult> {
+  try {
+    return await runTask({
+      task: job.task,
+      bundle: job.bundle,
+      adapter: o.adapterFor(job.bundle),
+      blobs: o.blobs,
+      index: o.index,
+      attempt: job.attempt,
+      experimentId,
+      timeoutMs: o.timeoutMs,
+      keep: o.keep,
+      env: o.env,
+      route: o.route,
+      git: o.git,
+      runsDir: o.runsDir,
+      testGlobs: o.testGlobs,
+      signal: o.signal,
+    });
+  } catch (e) {
+    // runTask should not throw; if adapterFor does, record and move on.
+    const now = Date.now();
+    const result: RunResult = {
+      id: sortableId("run_"),
+      experimentId,
+      taskId: job.task.id,
+      bundleId: job.bundle.id,
+      attempt: job.attempt,
+      pass: false,
+      verifierExit: null,
+      agent: { exitCode: null, timedOut: false, durationMs: 0, stdoutTail: "", stderrTail: "" },
+      startedAt: now,
+      endedAt: now,
+      error: e instanceof Error ? e.message : String(e),
+    };
+    await o.index.putRun(result).catch(() => {});
+    return result;
+  }
 }
 
 /** Sessions captured for runs (via hooks, tagged with CODING_SH_RUN_ID), keyed by run id. */
@@ -386,9 +461,14 @@ function arm(results: readonly RunResult[], bundleId: string, name: string | und
 
 export function compare(all: readonly RunResult[], opts: CompareOpts): CompareReport {
   const alpha = opts.alpha ?? 0.05;
-  // Interrupted runs were killed mid-flight: their outcome says nothing about either harness.
-  const results = all.filter((r) => !r.cancelled);
-  const cancelled = all.filter((r) => r.cancelled && (r.bundleId === opts.baseline || r.bundleId === opts.candidate)).length;
+  // Interrupted runs were killed mid-flight, and runs that failed on infrastructure (rate
+  // limit, 5xx, network) never measured the agent: neither says anything about either harness.
+  // A superseded attempt was retried; its retry is the run that counts.
+  const mine = all.filter((r) => !r.superseded && (r.bundleId === opts.baseline || r.bundleId === opts.candidate));
+  const results = all.filter((r) => !r.cancelled && !r.superseded && !r.infra);
+  const cancelled = mine.filter((r) => r.cancelled).length;
+  const infra = mine.filter((r) => !r.cancelled && r.infra).length;
+  const retried = mine.filter((r) => (r.attempts ?? 1) > 1).length;
   const A = results.filter((r) => r.bundleId === opts.baseline);
   const B = results.filter((r) => r.bundleId === opts.candidate);
   const byTask = (rs: readonly RunResult[]) => {
@@ -479,6 +559,8 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
   const sa = arm(A, opts.baseline, opts.bundles?.baseline?.name, opts);
   const sb = arm(B, opts.candidate, opts.bundles?.candidate?.name, opts);
   if (cancelled) notes.push(`${cancelled} run(s) were cancelled before they finished and are left out`);
+  if (infra) notes.push(`${infra} run(s) still failed on infrastructure errors (rate limit, 5xx, network) after their retries and are left out; compare --resume runs them again`);
+  if (retried) notes.push(`${retried} run(s) were retried after infrastructure errors; only their last attempt counts (task failures are never retried)`);
   const errored = [...A, ...B].filter((r) => r.error);
   if (errored.length) {
     const passed = errored.filter((r) => r.pass).length;

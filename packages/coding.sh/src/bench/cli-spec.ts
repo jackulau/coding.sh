@@ -2,6 +2,7 @@
 // store and runner code; the command module loads lazily.
 import type { FlagSpec } from "../cli/args.ts";
 import type { CommandSpec } from "../cli/registry.ts";
+import { RESUME_ID } from "../jobs/flags.ts";
 
 const NAME = { name: "name", desc: "Benchmark name, or a path to its .toml", required: true };
 const RUN_REF: FlagSpec = { name: "run", type: "string", value: "<RUN>", desc: "A specific run: id or YYYY-MM-DD (default: latest)" };
@@ -45,9 +46,17 @@ export const BENCH_COMMAND: CommandSpec = {
         { name: "adhoc", type: "boolean", desc: "Keep this run out of history and the freshness ledger" },
         { name: "concurrency", type: "number", value: "<N>", desc: "Parallel calls (default: the definition's)" },
         { name: "dry-run", type: "boolean", desc: "Sample and print the cases, the detectable gap and the cost estimate; run nothing" },
-        { name: "resume", type: "boolean", desc: "Continue the latest incomplete run (budget stop or interrupt): same seed and cases, finished calls kept" },
+        {
+          name: "resume",
+          type: "string",
+          optionalValue: true,
+          valuePattern: RESUME_ID,
+          value: "<RUN>",
+          desc: "Continue an incomplete run (budget stop, Ctrl-C, crash): same seed and cases, finished calls kept. RUN: id or YYYY-MM-DD (default: the latest)",
+        },
         { name: "run", type: "string", value: "<RUN>", desc: "With --resume: which incomplete run, by id or YYYY-MM-DD (default: the latest)" },
       ],
+      graceful: true,
       examples: ["coding.sh bench run answers", "coding.sh bench run answers --dry-run", "coding.sh bench run answers --seed try-1 --cases 10", "coding.sh bench run answers --resume"],
     },
     {

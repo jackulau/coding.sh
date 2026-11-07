@@ -32,6 +32,9 @@ import { dateOf, resolveSeed, sampleCases, seededShuffle, type SampleResult } fr
 import { generateCases, snapshotPage, sourceRef, type FetchFn, type PageSnapshot } from "./sources.ts";
 import { assignPlaces, cellsToRuns, comparePairs, countedCells, discordanceOf, powerPlan, summarizeContender, type PowerPlan } from "./stats.ts";
 import { getBlob, historyRuns, ledger, listRuns, putBlob, putRun } from "./store.ts";
+import { jobConfig } from "../jobs/config.ts";
+import { infraKind, retryPolicy, withRetries, type InfraKind } from "../jobs/retry.ts";
+import { JobStore, type Job } from "../jobs/store.ts";
 import type { AnchorResult, BenchDef, BenchRun, Cell, ContenderRecord, ExcludeReason, FailureMode, FrozenCase, SeedCommit } from "./types.ts";
 
 export class BenchRunError extends Error {
@@ -62,6 +65,8 @@ export interface RunBenchOpts {
   graderDeps?: GraderDeps;
   fetch?: FetchFn;
   signal?: AbortSignal;
+  /** Graceful stop (first Ctrl-C): calls in flight finish and are kept, no new call starts. */
+  drain?: AbortSignal;
   /** Sample only: no freeze, no contender runs, nothing stored. */
   dryRun?: boolean;
   /** Price table for calls that report tokens but no cost (default: built-in prices). The CLI passes pricesFor(config.pricing). */
@@ -373,8 +378,17 @@ interface Executed {
   priced: boolean;
 }
 
+function cellKey(x: Pick<Cell, "caseId" | "contender" | "trial">): string {
+  return `${x.caseId}\u0000${x.contender}\u0000${x.trial}`;
+}
+
+/** The checkpoint of a bench run (one line per finished cell); its config is the protocol and the contenders. */
+function benchJobConfig(def: BenchDef) {
+  return jobConfig({ protocol: def.protocolHash, contenders: def.contenderHashes });
+}
+
 /** Run every job not already finished, in the seeded interleaved order. */
-async function execute(def: BenchDef, plan: Plan, opts: RunBenchOpts): Promise<Executed> {
+async function execute(def: BenchDef, plan: Plan, opts: RunBenchOpts, job?: Job): Promise<Executed> {
   const { env } = opts;
   const byName = new Map(def.contenders.map((c) => [c.name, c]));
   const contenders: ResolvedContender[] = plan.order.map((name) =>
@@ -404,8 +418,14 @@ async function execute(def: BenchDef, plan: Plan, opts: RunBenchOpts): Promise<E
       for (const who of seededShuffle(contenders, `${plan.seed}:${f.id}:${t}`)) all.push({ c, who, trial: t, position: all.length });
     }
   }
-  const finished = new Set(plan.kept.map((x) => `${x.caseId}\u0000${x.contender}\u0000${x.trial}`));
-  const jobs = all.filter((j) => !finished.has(`${j.c.id}\u0000${j.who.name}\u0000${j.trial}`));
+  const finished = new Set(plan.kept.map(cellKey));
+  const jobs = all.filter((j) => !finished.has(cellKey({ caseId: j.c.id, contender: j.who.name, trial: j.trial })));
+  const policy = retryPolicy(env, def.retries);
+  if (job) {
+    await job.setTotal(all.length);
+    // The record exists from the first call on, so a crash (SIGKILL, reboot) leaves a run to resume.
+    if (!job.resumed) await putRun(await assemble(def, plan, { cells: [...plan.kept], stopReason: "interrupted", spent: plan.spent, calls: 0, total: all.length, contenders, versions, graders, priced: false }, opts), env);
+  }
 
   const cap = def.budgetUsd;
   let spent = plan.spent;
@@ -414,7 +434,7 @@ async function execute(def: BenchDef, plan: Plan, opts: RunBenchOpts): Promise<E
   let done = 0;
   opts.onProgress?.(0, jobs.length, "run");
   const results = await mapPool(jobs, opts.concurrency ?? def.concurrency, async ({ c, who, trial, position }): Promise<Cell | null> => {
-    if (opts.signal?.aborted) {
+    if (opts.signal?.aborted || opts.drain?.aborted) {
       stopReason ??= "interrupted";
       return null;
     }
@@ -428,27 +448,39 @@ async function execute(def: BenchDef, plan: Plan, opts: RunBenchOpts): Promise<E
     reserved += est;
     const cell: Cell = { caseId: c.id, contender: who.name, trial, position, pass: false, score: 0, latencyMs: 0 };
     let answer: Answer | undefined;
+    let infra: InfraKind | undefined;
     try {
-      let attempt = 0;
-      for (;;) {
-        attempt++;
-        delete cell.error;
-        answer = undefined;
-        const t0 = performance.now();
-        try {
-          answer = await who.run(c.input, { runId: plan.runId, caseId: c.id, trial, ...(c.metadata ? { metadata: c.metadata } : {}), ...(opts.signal ? { signal: opts.signal } : {}) });
-        } catch (e) {
-          cell.error = (e instanceof Error ? e.message : String(e)).slice(0, 1000);
-        }
-        cell.latencyMs = Math.round((performance.now() - t0) * 100) / 100;
-        const retryable = cell.error !== undefined && !exclusionOf(cell.error) && !opts.signal?.aborted;
-        if (!retryable || attempt > def.retries) break;
-      }
-      cell.attempts = attempt;
+      // Only infrastructure errors (rate limit, 5xx, network, exit 75) are retried, with backoff: a crash,
+      // a timeout or a wrong answer is the contender's result, and retrying it would bias the comparison.
+      const r = await withRetries(
+        async () => {
+          const t0 = performance.now();
+          let a: Answer | undefined;
+          let error: string | undefined;
+          try {
+            a = await who.run(c.input, { runId: plan.runId, caseId: c.id, trial, ...(c.metadata ? { metadata: c.metadata } : {}), ...(opts.signal ? { signal: opts.signal } : {}) });
+          } catch (e) {
+            error = (e instanceof Error ? e.message : String(e)).slice(0, 1000);
+          }
+          return { answer: a, error, latencyMs: Math.round((performance.now() - t0) * 100) / 100 };
+        },
+        {
+          policy,
+          errorOf: (x) => x.error,
+          classify: (x) => (x.error !== undefined ? infraKind(x.error) : x.answer?.failure && /^rate-?limit(ed)?$/i.test(x.answer.failure) ? "rate-limit" : undefined),
+          stop: [opts.signal, opts.drain],
+        },
+      );
+      answer = r.result.answer;
+      if (r.result.error !== undefined) cell.error = r.result.error;
+      cell.latencyMs = r.result.latencyMs;
+      cell.attempts = r.attempts;
+      infra = r.infra;
     } finally {
       reserved -= est;
     }
-    const excluded = exclusionOf(cell.error, answer);
+    // A rate limit that outlasted the retries is a quota exclusion; a 5xx or network error that did is "infra".
+    const excluded = exclusionOf(cell.error, answer) ?? (infra && !opts.signal?.aborted ? "infra" : undefined);
     if (excluded) {
       cell.excluded = excluded;
       cell.failure = excluded;
@@ -490,11 +522,15 @@ async function execute(def: BenchDef, plan: Plan, opts: RunBenchOpts): Promise<E
     }
     spent += cell.costUsd ?? 0;
     if (cap !== undefined && spent > 0 && spent >= cap - 1e-9 && done + 1 < jobs.length) stopReason ??= "budget";
+    // Checkpoint: a call cut off by a hard stop runs again on resume; every other cell is final.
+    if (job && cell.excluded !== "aborted") {
+      await job.record({ key: cellKey(cell), at: Date.now(), ms: cell.latencyMs, ...(cell.attempts && cell.attempts > 1 ? { attempts: cell.attempts } : {}), ...(cell.costUsd !== undefined ? { costUsd: cell.costUsd } : {}), outcome: cell.excluded ? "error" : cell.pass ? "pass" : "fail", data: cell });
+    }
     opts.onProgress?.(++done, jobs.length, "run");
     return cell;
   });
   const fresh = results.filter((x): x is Cell => x !== null);
-  if (opts.signal?.aborted) stopReason = "interrupted";
+  if (opts.signal?.aborted || (opts.drain?.aborted && fresh.length < jobs.length)) stopReason = "interrupted";
   const cells = [...plan.kept, ...fresh].sort((a, b) => a.position - b.position);
   return { cells, ...(stopReason ? { stopReason } : {}), spent, calls: fresh.length, total: all.length, contenders, versions, graders, priced: priced || plan.kept.some((x) => x.costSource === "price-table") };
 }
@@ -815,9 +851,14 @@ export async function runBench(opts: RunBenchOpts): Promise<BenchRun | DryRunRes
     spent: 0,
     order: def.contenders.map((c) => c.name),
   };
-  const ex = await execute(def, p, opts);
+  const job = await JobStore.forEnv(env).create({ id: runId, kind: "bench run", name: def.name, config: benchJobConfig(def), total: 0, concurrency: opts.concurrency ?? def.concurrency });
+  const ex = await execute(def, p, opts, job).catch(async (e) => {
+    await job.finish("interrupted");
+    throw e;
+  });
   const run = await assemble(def, p, ex, opts);
   await putRun(run, env);
+  await job.finish(ex.stopReason === "interrupted" ? "interrupted" : ex.stopReason ? "incomplete" : "completed");
   if (ex.stopReason === "interrupted") throw new BenchRunError(`interrupted; the partial run is saved as ${runId} and kept out of history (bench run ${def.name} --resume continues it)`);
   return run;
 }
@@ -855,7 +896,16 @@ export async function resumeBench(opts: Omit<RunBenchOpts, "dryRun" | "seed" | "
     if (c.hash && c.hash !== def.contenderHashes[c.name]) throw new BenchRunError(`contender ${c.name} changed since run ${target.id}; start a new run instead`);
   }
   const now = opts.now ?? Date.now();
-  const kept = target.cells.filter((x) => x.excluded !== "aborted");
+  // Cells checkpointed after the record was last written (a crash, a SIGKILL) count too.
+  const store = JobStore.forEnv(env);
+  const prior = await store.get(target.id);
+  const byKey = new Map(target.cells.filter((x) => x.excluded !== "aborted").map((x) => [cellKey(x), x]));
+  for (const l of prior?.lines.values() ?? []) {
+    const c = l.data as Cell | undefined;
+    if (c && typeof c.caseId === "string" && c.excluded !== "aborted" && !byKey.has(cellKey(c))) byKey.set(cellKey(c), c);
+  }
+  const kept = [...byKey.values()];
+  if (prior?.status === "running") throw new BenchRunError(`run ${target.id} is still running (pid ${prior.header.sessions.at(-1)?.pid ?? "?"} on ${prior.header.sessions.at(-1)?.host ?? "?"}); stop it first`);
   const spent = target.budget?.spentUsd ?? kept.reduce((s, x) => s + (x.costUsd ?? 0), 0);
   if (def.budgetUsd !== undefined && spent >= def.budgetUsd - 1e-9) throw new BenchRunError(`run ${target.id} already spent $${spent.toFixed(4)} of budget_usd $${def.budgetUsd}; raise budget_usd to let it finish`);
   const others = past.filter((r) => r.id !== target.id);
@@ -886,7 +936,12 @@ export async function resumeBench(opts: Omit<RunBenchOpts, "dryRun" | "seed" | "
     order: target.contenders.map((c) => c.name),
     versions: Object.fromEntries(target.contenders.map((c) => [c.name, c.version])),
   };
-  const ex = await execute(def, p, opts);
+  const job = prior ? await store.resume(target.id, { ...(opts.concurrency ? { concurrency: opts.concurrency } : {}) }) : await store.create({ id: target.id, kind: "bench run", name: def.name, config: benchJobConfig(def), total: 0, concurrency: opts.concurrency ?? def.concurrency });
+  const ex = await execute(def, p, opts, job).catch(async (e) => {
+    await job.finish("interrupted");
+    throw e;
+  });
+  await job.finish(ex.stopReason === "interrupted" ? "interrupted" : ex.stopReason ? "incomplete" : "completed");
   p.resumed!.push({ at: now, calls: ex.calls });
   const run = await assemble(def, p, ex, opts);
   if (target.mode === "scheduled" && mode === "adhoc") run.warnings.unshift(`another run now counts for ${target.date}, so this resumed run is adhoc`);

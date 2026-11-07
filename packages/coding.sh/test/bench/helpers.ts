@@ -72,7 +72,7 @@ command = "node bad.cjs"
 kind = "exact"
 `;
   writeFileSync(file, base);
-  const env: NodeJS.ProcessEnv = { HOME: home, CODING_SH_HOME: join(home, ".coding.sh"), PATH: process.env.PATH, CODING_SH_NO_UPDATE_CHECK: "1" };
+  const env: NodeJS.ProcessEnv = { HOME: home, CODING_SH_HOME: join(home, ".coding.sh"), PATH: process.env.PATH, CODING_SH_NO_UPDATE_CHECK: "1", CODING_SH_RETRY_BASE_MS: "0" };
   return {
     root,
     env,

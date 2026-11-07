@@ -3,6 +3,7 @@
 // and add it to COMMANDS under "Evaluate". Type-only imports keep `--help`
 // free of store and adapter code; the command module loads lazily.
 import type { FlagSpec } from "../cli/args.ts";
+import { durableFlags } from "../jobs/flags.ts";
 import type { CommandSpec } from "../cli/registry.ts";
 
 const YES: FlagSpec = { name: "yes", short: "y", type: "boolean", desc: "Run without asking when the estimated cost is above the confirm threshold" };
@@ -69,10 +70,12 @@ export const WORKFLOWS_COMMAND: CommandSpec = {
         { name: "split", type: "string", value: "<SPLIT>", choices: ["dev", "heldout"], desc: "Only cases in this split" },
         { name: "driver", type: "string", value: "<DRIVER>", choices: ["claude", "command"], desc: "How a variant runs", default: "claude" },
         { name: "concurrency", short: "j", type: "number", value: "<N>", desc: "Jobs at once (a workflow already fans out)", default: "1" },
+        ...durableFlags("workflow experiment"),
         BIN,
         YES,
       ],
-      examples: ["coding.sh workflows run coding-sh-improve -v base=wf/improve.js -v cand=wf/improve-v2.js -k 3 --split dev"],
+      graceful: true,
+      examples: ["coding.sh workflows run coding-sh-improve -v base=wf/improve.js -v cand=wf/improve-v2.js -k 3 --split dev", "coding.sh workflows run coding-sh-improve -v base=wf/improve.js -v cand=wf/improve-v2.js -k 3 --resume"],
     },
     {
       name: "compare",

@@ -18,7 +18,10 @@ import { hasGlob } from "../../runner/glob.ts";
 import type { AgentRoute } from "../../runner/run.ts";
 import type { EvalTask, HarnessBundle, RunResult } from "../../core/types.ts";
 import { compare, type CompareOpts, formatCompare, loadRunEvents, loadRunSessions, PARETO_NEEDS_COST, runExperiment } from "../../runner/experiment.ts";
+import { sortableId } from "../../core/ids.ts";
+import { jobConfig } from "../../jobs/config.ts";
 import { positiveInt, UsageError } from "../args.ts";
+import { finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
 import { gateFlags, list, promoteFlags, requireConsent, resolveTask, str, withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -67,6 +70,7 @@ export async function run(c: CommandContext): Promise<number> {
     };
 
     let experimentId = str(c.flags.experiment);
+    let resume: { resume?: string } = {};
     let taskTags: Map<string, string[]> | undefined;
     let results: RunResult[];
     if (experimentId) {
@@ -98,30 +102,50 @@ export async function run(c: CommandContext): Promise<number> {
       const runs = tasks.length * 2 * k;
       await requireConsent(c, `Run ${plural(runs, "agent session")} (${plural(tasks.length, "task")} x 2 arms x ${k})?`, `coding.sh compare ${arms} --yes`);
       await storeAblation();
-      const spin = out.spin(`Running 0/${runs}…`);
       const concurrency = positiveInt(c.flags.concurrency, "concurrency");
-      const r = await runExperiment({
-        tasks,
-        bundles: [A, B],
-        adapterFor: (b) => getAdapter(b.agent)!,
-        blobs: ctx.blobs,
-        index: ctx.index,
-        k,
-        ...(concurrency ? { concurrency } : {}),
-        ...(route ? { route } : {}),
-        signal: c.signal,
-        onProgress: (p) => spin.update(`Running ${p.done}/${p.total}…`),
-      });
-      spin.stop();
+      const timeoutMs = trialTimeout(c);
+      // Durable: each finished run is checkpointed; --resume continues an interrupted comparison.
+      // Gateway routing changes what runs (model, flags); its env values (keys) stay out of the hash.
+      const routed = route ? [A, B].map((b) => route(b)).map((x) => (x ? { flags: x.flags, model: x.model, env: Object.keys(x.env).sort() } : null)) : undefined;
+      const config = jobConfig({ bundles: [A.id, B.id], tasks, k, timeoutMs, route: routed });
+      const job = await openJob(c, { kind: "compare", name: `${A.name} vs ${B.name}`, config, newId: () => sortableId("exp_"), concurrency: concurrency ?? 4 });
+      const spin = out.spin(`Running 0/${runs}…`);
+      const r = await job
+        .guard(() =>
+          runExperiment({
+            tasks,
+            bundles: [A, B],
+            adapterFor: (b) => getAdapter(b.agent)!,
+            blobs: ctx.blobs,
+            index: ctx.index,
+            k,
+            ...(concurrency ? { concurrency } : {}),
+            ...(route ? { route } : {}),
+            ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+            signal: c.signal,
+            ...(c.drain ? { drain: c.drain } : {}),
+            job: job.scope(),
+            retry: retryFlag(c),
+            experimentId: job.id,
+            onProgress: (p) => spin.update(`Running ${p.done}/${p.total}…`),
+          }),
+        )
+        .finally(() => spin.stop());
+      await finishJob(job, r.cancelled);
       experimentId = r.experimentId;
       results = r.results;
       if (r.cancelled) {
         // A partial A/B is not a comparison; main.ts exits 130 (143 for SIGTERM).
-        const finished = results.filter((x) => !x.cancelled).length;
-        if (out.json) out.data({ outcome: "cancelled", experimentId, finished, total: runs });
-        else out.warn(`Cancelled after ${finished}/${runs} runs; no comparison. Analyse the stored runs: coding.sh compare ${arms} --experiment ${experimentId}`);
+        const finished = job.lines.size;
+        if (out.json) out.data({ outcome: "cancelled", experimentId, finished, total: runs, ...resumeField(job) });
+        else {
+          out.warn(`Cancelled after ${finished}/${runs} runs; no comparison yet. Analyse the stored runs: coding.sh compare ${arms} --experiment ${experimentId}`);
+          resumeNote(c, job);
+        }
         return 1;
       }
+      if (!out.json) resumeNote(c, job);
+      resume = resumeField(job);
       // Pull in the sessions the runs' hooks captured.
       await ctx.ingest().catch(() => undefined);
     }
@@ -153,7 +177,7 @@ export async function run(c: CommandContext): Promise<number> {
       ...(promote ? { pareto: promote } : {}),
       ...(itemGate ? { itemGate } : {}),
     });
-    if (out.json) out.data({ experimentId, report });
+    if (out.json) out.data({ experimentId, report, ...resume });
     else {
       out.print(formatCompare(report, { color: out.color, arms }));
       out.print(experimentId);

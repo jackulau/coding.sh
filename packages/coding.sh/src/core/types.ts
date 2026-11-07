@@ -651,6 +651,20 @@ export interface RunResult {
    * leave cancelled runs out.
    */
   cancelled?: true;
+  /**
+   * This attempt failed on an infrastructure error (rate limit, 5xx, network)
+   * and was run again: the retry is the run that counts, so comparisons leave
+   * this one out. Kept for the record.
+   */
+  superseded?: true;
+  /** Attempts the run took when infrastructure errors were retried; absent for one. */
+  attempts?: number;
+  /**
+   * The last attempt still failed on an infrastructure error after its
+   * retries: the outcome is unknown, comparisons leave it out, and
+   * `compare --resume` runs it again.
+   */
+  infra?: "rate-limit" | "server" | "network" | "tempfail";
   /** Tool-eval trials: the tap log (tool calls seen on the wire) as NDJSON. Referenced so blob gc keeps it. */
   tapBlob?: BlobRef;
 }

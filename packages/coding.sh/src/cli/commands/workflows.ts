@@ -18,7 +18,10 @@ import { verifyConfusion, type VerifyEntry, type VerifyScore } from "../../workf
 import { WorkflowStore } from "../../workflows/store.ts";
 import { totalTokens } from "../../workflows/metrics.ts";
 import type { WorkflowCase, WorkflowDriver, WorkflowFramework, WorkflowNode, WorkflowRun, WorkflowVariant } from "../../workflows/types.ts";
+import { sortableId } from "../../core/ids.ts";
+import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
+import { finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
 import { jsonArg, num, oneLine, list, requireConsent, str, withContext } from "../common.ts";
 import { ago, clean, CliError, duration, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -440,7 +443,9 @@ async function confirmCost(c: CommandContext, what: string, est: number | undefi
 
 function driverFor(c: CommandContext, kind: "claude" | "command"): WorkflowDriver {
   const bin = str(c.flags.bin);
-  return kind === "claude" ? claudeWorkflowDriver({ cwd: c.cwd, env: c.env, ...(bin ? { bin } : {}) }) : commandDriver({ cwd: c.cwd });
+  const timeoutMs = trialTimeout(c);
+  const t = timeoutMs !== undefined ? { timeoutMs } : {};
+  return kind === "claude" ? claudeWorkflowDriver({ cwd: c.cwd, env: c.env, ...(bin ? { bin } : {}), ...t }) : commandDriver({ cwd: c.cwd, ...t });
 }
 
 async function runExperiment(c: CommandContext): Promise<number> {
@@ -478,33 +483,65 @@ async function runExperiment(c: CommandContext): Promise<number> {
   else out.note(`${plural(jobs, "run")}; no past runs of ${workflow} to estimate cost from`);
   await confirmCost(c, `Run ${plural(jobs, "workflow run")}`, est?.total, `coding.sh workflows run ${workflow} … --yes`);
   const driver = driverFor(c, driverKind);
+  // Durable: each finished run is checkpointed; --resume continues an interrupted experiment.
+  const config = jobConfig({
+    workflow,
+    driver: driverKind,
+    variants: variants.map((v) => ({ ...v, files: taskFingerprint({ kind: "command", command: v.script ?? v.command?.[0] ?? "", args: v.command?.slice(1) ?? [] }, c.cwd) })),
+    cases,
+    k,
+    timeoutMs: trialTimeout(c),
+  });
+  const job = await openJob(c, { kind: "workflows run", name: workflow, config, newId: () => sortableId("wfx_"), concurrency });
   const spin = out.spin(`Running ${plural(jobs, "workflow run")}`);
   let result: Awaited<ReturnType<typeof runWorkflowExperiment>>;
   try {
-    result = await withContext(c, (ctx) =>
-      runWorkflowExperiment({
-        workflow,
-        variants,
-        cases,
-        k,
-        driver,
-        store,
-        index: ctx.index,
-        concurrency,
-        signal: c.signal,
-        onProgress: (p) => spin.update(`Running workflow runs: ${p.done}/${p.total} (${p.run.variant} on ${p.run.caseId}: ${p.run.status}${p.score !== undefined ? `, score ${p.score.toFixed(2)}` : ""})`),
-      }),
+    result = await job.guard(() =>
+      withContext(c, (ctx) =>
+        runWorkflowExperiment({
+          workflow,
+          variants,
+          cases,
+          k,
+          driver,
+          store,
+          index: ctx.index,
+          concurrency,
+          signal: c.signal,
+          ...(c.drain ? { drain: c.drain } : {}),
+          job: job.scope(),
+          retry: retryFlag(c),
+          experimentId: job.id,
+          onProgress: (p) =>
+            spin.update(`Running workflow runs: ${p.done}/${p.total} (${p.run.variant} on ${p.run.caseId}: ${p.run.status}${p.score !== undefined ? `, score ${p.score.toFixed(2)}` : ""})`),
+        }),
+      ),
     );
   } finally {
     spin.stop();
   }
+  await finishJob(job, result.cancelled);
   const failed = result.runs.filter((r) => r.status === "failed").length;
+  const infra = result.runs.filter((r) => r.infra).length;
   if (out.json) {
-    out.data({ experimentId: result.experimentId, runs: result.runs.map((r) => ({ ...runJson(r), score: result.scores.get(r.id) ?? null })), failed });
-    return 0;
+    out.data({
+      outcome: result.cancelled ? "cancelled" : "completed",
+      experimentId: result.experimentId,
+      runs: result.runs.map((r) => ({ ...runJson(r), score: result.scores.get(r.id) ?? null })),
+      failed,
+      ...(infra ? { infra } : {}),
+      ...resumeField(job),
+    });
+    return result.cancelled ? 1 : 0;
   }
   out.print(result.experimentId);
-  out.ok(`Ran ${plural(result.runs.length, "workflow run")}${failed ? `, ${failed} failed` : ""}`);
+  if (result.cancelled) {
+    out.warn(`Cancelled after ${plural(result.runs.length, "workflow run")} of ${jobs}`);
+    resumeNote(c, job);
+    return 1;
+  }
+  out.ok(`Ran ${plural(result.runs.length, "workflow run")}${failed ? `, ${failed} failed` : ""}${infra ? `, ${infra} hit infrastructure errors` : ""}`);
+  resumeNote(c, job);
   if (variants.length >= 2) out.next("Compare two variants", `coding.sh workflows compare ${result.experimentId} --baseline ${variants[0]!.name} --candidate ${variants[1]!.name}`);
   return 0;
 }

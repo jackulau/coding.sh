@@ -275,11 +275,23 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
     // aborts c.signal (commands stop scheduling work, kill their child process
     // groups and record what finished); a second one exits at once, and the
     // process 'exit' hook in core/children.ts still SIGKILLs every live child group.
+    // A graceful command (a long eval run) gets one more step: the first Ctrl-C
+    // only aborts c.drain (no new trial starts, the ones in flight finish and
+    // are saved), the second aborts c.signal, a third exits. SIGTERM and SIGHUP
+    // (a killed desk job, a closed terminal) stop it at once as before.
     const controller = new AbortController();
+    const graceful = (action ? action.graceful : cmd.graceful) === true;
+    const drainer = graceful ? new AbortController() : controller;
     let stopCode = 0;
     const onStop = (sig: NodeJS.Signals) => {
-      if (stopCode) process.exit(SIGNAL_EXIT[sig] ?? stopCode);
+      if (controller.signal.aborted) process.exit(SIGNAL_EXIT[sig] ?? stopCode);
       stopCode = SIGNAL_EXIT[sig] ?? 130;
+      if (graceful && sig === "SIGINT" && !drainer.signal.aborted) {
+        drainer.abort();
+        process.stderr.write("\nFinishing the trials in flight; finished trials are saved. Press Ctrl-C again to stop them now.\n");
+        return;
+      }
+      drainer.abort();
       controller.abort();
     };
     const ownSignals = cmd.handlesSignals === true && !action;
@@ -299,6 +311,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
           cwd: process.cwd(),
           debug: globals.debug,
           signal: controller.signal,
+          drain: drainer.signal,
+          argv,
         });
       } catch (e) {
         // A command cut short by the abort may throw (AbortError, a killed step); that is the interrupt, not a failure.

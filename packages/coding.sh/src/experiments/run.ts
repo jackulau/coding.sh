@@ -16,6 +16,8 @@ import type {
   Split,
   TraceEvent,
 } from "../datasets/types.ts";
+import type { JobScope } from "../jobs/store.ts";
+import { withRetries, type RetryPolicy } from "../jobs/retry.ts";
 import { mapPool } from "../judge/limit.ts";
 import { pairedBootstrap, wilson } from "../stats/interval.ts";
 import { summarize } from "../stats/summary.ts";
@@ -47,11 +49,7 @@ export interface RunExperimentOpts {
   /** Only cases in these split(s). */
   split?: Split | readonly Split[];
   filter?: (c: Case) => boolean;
-  /**
-   * Persist the result here when given. Each finished case-trial is also
-   * appended to the experiment's progress log as it finishes, so a killed run
-   * leaves its finished work on disk.
-   */
+  /** Persist the result here when given. */
   store?: FileEvalStore;
   id?: string;
   metadata?: Record<string, unknown>;
@@ -61,6 +59,21 @@ export interface RunExperimentOpts {
    * that finished before the abort (never the ones it cut short).
    */
   signal?: AbortSignal;
+  /**
+   * Stops the run gracefully: no new case-trial starts, the ones in flight
+   * finish (and are kept), then the result is stored as "cancelled".
+   */
+  drain?: AbortSignal;
+  /**
+   * Checkpoint: each finished case-trial is recorded here as it finishes, and
+   * case-trials already recorded (a resume) are reused instead of run again.
+   * The experiment id and creation time live in it too.
+   */
+  job?: JobScope;
+  /** Retries for infrastructure errors (rate limits, 5xx, network); task failures are never retried. Default: none. */
+  retry?: RetryPolicy;
+  /** Per case-trial time limit (each attempt); a trial that hits it is a failure, not retried. */
+  timeoutMs?: number;
   onProgress?: (run: CaseRun, done: number, total: number) => void;
   /** For the cluster bootstrap when trials > 1. */
   bootstrapIters?: number;
@@ -124,38 +137,74 @@ export interface TrialEnv {
   runId: string;
   task: ResolvedTask;
   graders: readonly Grader[];
+  /** Kills the case-trial: it is dropped, not recorded. */
   signal?: AbortSignal;
-  /** Each finished case-trial is appended to the experiment's progress log here. */
-  store?: FileEvalStore;
+  /** No new case-trial (or retry) starts once aborted; one already running finishes. */
+  drain?: AbortSignal;
+  /** Each finished case-trial is recorded here (key: case id + trial). */
+  job?: JobScope;
+  retry?: RetryPolicy;
+  timeoutMs?: number;
 }
 
-/**
- * Run and grade one case-trial. Undefined when the signal aborted it, before
- * it started or part way (a killed task says nothing about the agent).
- */
-export async function runTrial(env: TrialEnv, c: Case, trial: number): Promise<CaseRun | undefined> {
-  const { signal, task, graders } = env;
-  if (signal?.aborted) return undefined; // cancelled before it started: not a run
-  const startedAt = Date.now();
-  const t0 = performance.now();
-  let output: unknown;
-  let trace: TraceEvent[] | undefined;
-  let error: string | undefined;
+/** The checkpoint key of a case-trial. */
+export const trialKey = (caseId: string, trial: number): string => `${caseId}\u0000${trial}`;
+
+/** A case-trial a resumed run can keep: recorded with a known outcome (not an infra error). */
+export function priorRun(job: JobScope | undefined, caseId: string, trial: number): CaseRun | undefined {
+  const l = job?.done(trialKey(caseId, trial));
+  return l && !l.infra && l.data && typeof l.data === "object" ? (l.data as CaseRun) : undefined;
+}
+
+/** What a task reported it cost: `costUsd` (or cost_usd, usage.costUsd) on its output object. */
+export function costOf(output: unknown): number | undefined {
+  if (!output || typeof output !== "object") return undefined;
+  const o = output as Record<string, unknown>;
+  const u = (o.usage && typeof o.usage === "object" ? o.usage : {}) as Record<string, unknown>;
+  for (const v of [o.costUsd, o.cost_usd, u.costUsd, u.cost_usd]) if (typeof v === "number" && Number.isFinite(v) && v >= 0) return v;
+  return undefined;
+}
+
+/** One attempt of the task: its output (and trace) or its error. A per-attempt timeout is the task's failure. */
+async function attemptTask(env: TrialEnv, c: Case, trial: number): Promise<{ output?: unknown; trace?: TraceEvent[]; error?: string }> {
+  const { signal, task } = env;
+  const timer = env.timeoutMs ? AbortSignal.timeout(env.timeoutMs) : undefined;
+  const sig = timer ? (signal ? AbortSignal.any([signal, timer]) : timer) : signal;
+  const timedOut = () => !!timer?.aborted && !signal?.aborted;
   try {
     const raw = await task.run(c.input, {
       runId: env.runId,
       caseId: c.id,
       trial,
       ...(c.metadata ? { metadata: c.metadata } : {}),
-      ...(signal ? { signal } : {}),
+      ...(sig ? { signal: sig } : {}),
     });
-    if (isTraced(raw)) {
-      output = raw.output;
-      trace = raw.trace;
-    } else output = raw;
+    if (timedOut()) return { error: `timed out after ${env.timeoutMs} ms (trial timeout)` };
+    return isTraced(raw) ? { output: raw.output, trace: raw.trace } : { output: raw };
   } catch (e) {
-    error = errMessage(e);
+    if (timedOut()) return { error: `timed out after ${env.timeoutMs} ms (trial timeout)` };
+    return { error: errMessage(e) };
   }
+}
+
+/**
+ * Run and grade one case-trial, retrying infrastructure errors with backoff.
+ * Undefined when it was not run (stopped before it started) or the signal
+ * killed it part way: a killed task says nothing about the agent. A trial whose
+ * last attempt still hit an infra error comes back with `infra` set and
+ * `ungraded`: outcome unknown, and a resume runs it again.
+ */
+export async function runTrial(env: TrialEnv, c: Case, trial: number): Promise<CaseRun | undefined> {
+  const { signal, graders } = env;
+  if (signal?.aborted || env.drain?.aborted) return undefined; // stopped before it started: not a run
+  const startedAt = Date.now();
+  const t0 = performance.now();
+  const tried = await withRetries(() => attemptTask(env, c, trial), {
+    policy: env.retry ?? { retries: 0, baseMs: 0, maxMs: 0 },
+    errorOf: (a) => a.error,
+    stop: [signal, env.drain],
+  });
+  const { output, trace, error } = tried.result;
   const latencyMs = Math.round((performance.now() - t0) * 100) / 100;
   const grades: GraderOutcome[] =
     error !== undefined || signal?.aborted
@@ -180,7 +229,7 @@ export async function runTrial(env: TrialEnv, c: Case, trial: number): Promise<C
         );
   // The abort cut this case-trial short (killed task or grader): its outcome says nothing about the agent.
   if (signal?.aborted) return undefined;
-  const ungraded = error === undefined && grades.some((g) => g.error !== undefined);
+  const ungraded = tried.infra !== undefined || (error === undefined && grades.some((g) => g.error !== undefined));
   const run: CaseRun = {
     caseId: c.id,
     trial,
@@ -190,10 +239,23 @@ export async function runTrial(env: TrialEnv, c: Case, trial: number): Promise<C
     startedAt,
   };
   if (ungraded) run.ungraded = true;
+  if (tried.infra) run.infra = tried.infra;
+  if (tried.attempts > 1) run.attempts = tried.attempts;
   const safe = jsonSafe(output);
   if (safe !== undefined) run.output = safe;
   if (error !== undefined) run.error = error;
-  if (env.store) await env.store.appendExperimentLog(env.runId, { type: "run", run });
+  const cost = costOf(output);
+  if (cost !== undefined) run.costUsd = cost;
+  if (env.job) {
+    await env.job.record(trialKey(c.id, trial), {
+      ms: latencyMs,
+      ...(run.attempts ? { attempts: run.attempts } : {}),
+      ...(cost !== undefined ? { costUsd: cost } : {}),
+      ...(run.infra ? { infra: run.infra } : {}),
+      outcome: run.error !== undefined ? "error" : run.pass ? "pass" : "fail",
+      data: run,
+    });
+  }
   return run;
 }
 
@@ -234,11 +296,25 @@ export function experimentResult(o: {
   return result;
 }
 
-/** Store the final record and drop its progress log (the record now holds every run). */
+/** Store the final record (a resumed run overwrites its cancelled one: same id). */
 export async function storeResult(store: FileEvalStore, result: ExperimentResult): Promise<void> {
-  await store.appendExperimentLog(result.id, { type: "end", status: result.status ?? "completed" });
   await store.putExperiment(result);
-  await store.removeExperimentLog(result.id);
+}
+
+/**
+ * The experiment id and creation time a job scope remembers (a resume reuses
+ * them), else `fresh` ones, which it remembers from now on.
+ */
+export async function rememberIdentity(job: JobScope | undefined, fresh: { id: string; createdAt: number }): Promise<{ id: string; createdAt: number }> {
+  const id = job?.state<string>("experimentId");
+  const createdAt = job?.state<number>("createdAt");
+  if (id && createdAt !== undefined) return { id, createdAt };
+  if (job) {
+    await job.setState("experimentId", fresh.id);
+    await job.setState("createdAt", fresh.createdAt);
+    await job.job.addRefs(fresh.id);
+  }
+  return fresh;
 }
 
 export async function runExperiment(opts: RunExperimentOpts): Promise<ExperimentResult> {
@@ -247,16 +323,27 @@ export async function runExperiment(opts: RunExperimentOpts): Promise<Experiment
   const graders = await prepareGraders(opts.graders, opts.store);
   const cases = selectCases(opts.dataset, opts.split, opts.filter);
   const task = resolveTask(opts.task);
-  const id = opts.id ?? sortableId("exp_");
-  const createdAt = Date.now();
+  const job = opts.job;
+  const { id, createdAt } = await rememberIdentity(job, { id: opts.id ?? sortableId("exp_"), createdAt: Date.now() });
   const jobs: { c: Case; trial: number }[] = [];
   for (const c of cases) for (let t = 1; t <= trials; t++) jobs.push({ c, trial: t });
-  const signal = opts.signal;
-  const store = opts.store;
-  if (store) await store.appendExperimentLog(id, { type: "start", status: "running", id, name: opts.name, total: jobs.length, createdAt });
-  let done = 0;
-  const env: TrialEnv = { runId: id, task, graders, ...(signal ? { signal } : {}), ...(store ? { store } : {}) };
-  const settled = await mapPool(jobs, opts.concurrency ?? 4, async ({ c, trial }) => {
+  if (job && job.prefix === "") await job.job.setTotal(jobs.length);
+  const { signal, drain } = opts;
+  // A resume keeps every case-trial already recorded with a known outcome.
+  const prior = jobs.map(({ c, trial }) => priorRun(job, c.id, trial));
+  let done = prior.filter(Boolean).length;
+  const env: TrialEnv = {
+    runId: id,
+    task,
+    graders,
+    ...(signal ? { signal } : {}),
+    ...(drain ? { drain } : {}),
+    ...(job ? { job } : {}),
+    ...(opts.retry ? { retry: opts.retry } : {}),
+    ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+  };
+  const settled = await mapPool(jobs, opts.concurrency ?? 4, async ({ c, trial }, i) => {
+    if (prior[i]) return prior[i];
     const run = await runTrial(env, c, trial);
     if (run) opts.onProgress?.(run, ++done, jobs.length);
     return run;
@@ -264,7 +351,8 @@ export async function runExperiment(opts: RunExperimentOpts): Promise<Experiment
   const result = experimentResult({
     id,
     name: opts.name,
-    status: signal?.aborted ? "cancelled" : "completed",
+    // Cancelled when some case-trial never ran or was cut short (infra-failed ones did run).
+    status: settled.some((r) => r === undefined) ? "cancelled" : "completed",
     dataset: opts.dataset,
     ...(opts.split !== undefined ? { split: opts.split } : {}),
     task: task.info,
@@ -275,7 +363,7 @@ export async function runExperiment(opts: RunExperimentOpts): Promise<Experiment
     boot: { iters: opts.bootstrapIters ?? 2000, seed: opts.seed ?? 0x5eed },
     ...(opts.metadata ? { metadata: opts.metadata } : {}),
   });
-  if (store) await storeResult(store, result);
+  if (opts.store) await storeResult(opts.store, result);
   return result;
 }
 
@@ -302,6 +390,7 @@ export function summarizeRuns(
   const passed = runs.filter((r) => r.pass).length;
   const errors = runs.filter((r) => r.error !== undefined).length;
   const ungraded = runs.filter((r) => r.ungraded).length;
+  const infra = runs.filter((r) => r.infra).length;
   const graded = n - ungraded;
   const rates = caseRates(runs);
   let passRate: ExperimentSummary["passRate"];
@@ -343,6 +432,7 @@ export function summarizeRuns(
     passed,
     errors,
     ungraded,
+    ...(infra ? { infra } : {}),
     passRate,
     ciMethod,
     graders: gs,

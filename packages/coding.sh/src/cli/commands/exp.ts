@@ -1,4 +1,5 @@
-// coding.sh exp run|compare|aa|sweep|show|list: generic dataset experiments (src/experiments).
+// coding.sh exp run|compare|aa|sweep|show|list|status: generic dataset experiments (src/experiments).
+// Runs are durable (src/cli/jobs.ts): each finished trial is checkpointed, --resume continues.
 // `exp run --arm a=… --arm b=…` runs two tasks as one interleaved A/B, optionally
 // stopping early (group sequential, src/stats/sequential.ts). `exp compare
 // --pairwise` adds a both-order pairwise judge (src/experiments/pairwise.ts);
@@ -25,7 +26,11 @@ import { withCalibration } from "../../judge/calibrate.ts";
 import { calibratePairwise, PAIRWISE_KIND, parsePairLabels, type PairCalibration, type PairwiseJudge } from "../../judge/pairwise.ts";
 import { renderCalibration } from "../../judge/render.ts";
 import type { VerifierAudit } from "../../judge/verifier.ts";
+import { sortableId } from "../../core/ids.ts";
+import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
+import type { Job, JobKind } from "../../jobs/store.ts";
 import { positiveInt, UsageError } from "../args.ts";
+import { finishJob, openJob, resumeField, resumeNote, retryFlag, statusCommand, trialTimeout } from "../jobs.ts";
 import { gateFlags, jsonArg, list, num, str, withContext } from "../common.ts";
 import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -50,6 +55,30 @@ interface LoadedSpec {
   graders: Grader[];
   /** Default experiment name: the spec's, else `<dataset>-<date>`. */
   name: string;
+}
+
+/**
+ * What a run of this spec measures, for the job's config hash: the dataset
+ * version, split, graders, trials and trial timeout, plus the parts of the
+ * caller (tasks, seed, stopping rule). Concurrency, retries and the name are
+ * left out: they change how fast it runs, not what it measures.
+ */
+function specConfig(c: CommandContext, loaded: LoadedSpec, parts: Record<string, unknown>) {
+  const { spec, dataset, graders } = loaded;
+  return jobConfig({
+    dataset: `${dataset.id}@${dataset.version}`,
+    split: spec.split,
+    graders: graders.map((g) => `${g.id}@${g.version}`),
+    trials: spec.trials ?? 1,
+    trialTimeoutMs: trialTimeout(c),
+    ...parts,
+  });
+}
+
+/** The durable-run options a runner takes: the job, the graceful-stop signal, retries and the trial timeout. */
+function durable(c: CommandContext, job: Job) {
+  const timeoutMs = trialTimeout(c);
+  return { job: job.scope(), ...(c.drain ? { drain: c.drain } : {}), retry: retryFlag(c), ...(timeoutMs !== undefined ? { timeoutMs } : {}) };
 }
 
 /** The experiment the spec file and flags describe (exp run, exp aa). `needTask` is false when --arm gives the tasks. */
@@ -86,23 +115,32 @@ async function loadSpec(c: CommandContext, store: FileEvalStore, specFile: strin
 }
 
 /** Run one experiment (exp run without --arm). */
-async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string | undefined): Promise<ExperimentResult> {
-  const { spec, dataset, graders, name } = await loadSpec(c, store, specFile);
+async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string | undefined): Promise<{ result: ExperimentResult; job: Job }> {
+  const loaded = await loadSpec(c, store, specFile);
+  const { spec, dataset, graders } = loaded;
+  const config = specConfig(c, loaded, { task: taskFingerprint(spec.task, c.cwd) });
+  const job = await openJob(c, { kind: "exp run", name: loaded.name, config, newId: () => sortableId("exp_"), concurrency: spec.concurrency ?? 4 });
   const spin = c.out.spin(`Running ${dataset.name}…`);
-  const result = await runExperiment({
-    name,
-    dataset,
-    task: spec.task!,
-    graders,
-    ...(spec.trials ? { trials: spec.trials } : {}),
-    ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
-    ...(spec.split ? { split: spec.split } : {}),
-    store,
-    signal: c.signal,
-    onProgress: (_r, done, total) => spin.update(`Running ${dataset.name}… ${done}/${total}`),
-  });
-  spin.stop();
-  return result;
+  const result = await job
+    .guard(() =>
+      runExperiment({
+        name: job.header.name,
+        id: job.id,
+        dataset,
+        task: spec.task!,
+        graders,
+        ...(spec.trials ? { trials: spec.trials } : {}),
+        ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
+        ...(spec.split ? { split: spec.split } : {}),
+        store,
+        signal: c.signal,
+        ...durable(c, job),
+        onProgress: (_r, done, total) => spin.update(`Running ${dataset.name}… ${done}/${total}`),
+      }),
+    )
+    .finally(() => spin.stop());
+  await finishJob(job, result.status === "cancelled");
+  return { result, job };
 }
 
 const NAME = /^[\w.-]+$/;
@@ -240,27 +278,49 @@ async function pairwiseCompare(
 }
 
 /** Run two tasks as one interleaved A/B (exp run --arm, exp aa). */
-async function runArms(c: CommandContext, store: FileEvalStore, loaded: LoadedSpec, arms: readonly [AbArm, AbArm], extra: Partial<RunAbOpts> = {}): Promise<AbResult> {
-  const { spec, dataset, graders, name } = loaded;
+async function runArms(
+  c: CommandContext,
+  store: FileEvalStore,
+  loaded: LoadedSpec,
+  arms: readonly [AbArm, AbArm],
+  kind: JobKind,
+  extra: Partial<RunAbOpts> = {},
+): Promise<{ result: AbResult; job: Job }> {
+  const { spec, dataset, graders } = loaded;
+  const config = specConfig(c, loaded, {
+    arms: arms.map((a) => ({ name: a.name, task: taskFingerprint(a.task, c.cwd) })),
+    seed: extra.seed,
+    maxCases: extra.maxCases,
+    stopEarly: extra.stopEarly,
+  });
+  const job = await openJob(c, { kind, name: loaded.name, config, newId: () => sortableId("pair_"), concurrency: spec.concurrency ?? 4 });
+  // The job id doubles as the pair id, so --resume takes either.
+  if (job.header.state.pairId === undefined) await job.scope().setState("pairId", job.id);
+  const name = job.header.name;
   const label = `${dataset.name} (${arms[0].name} vs ${arms[1].name}, interleaved)`;
   const spin = c.out.spin(`Running ${label}…`);
   let looked = "";
-  const result = await runAb({
-    name,
-    dataset,
-    arms,
-    graders,
-    ...(spec.trials ? { trials: spec.trials } : {}),
-    ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
-    ...(spec.split ? { split: spec.split } : {}),
-    store,
-    signal: c.signal,
-    ...extra,
-    onLook: (l) => (looked = `  look ${l.look}: |z| ${Math.abs(l.z).toFixed(2)} vs ${l.bound.toFixed(2)}`),
-    onProgress: (_r, _arm, done, total) => spin.update(`Running ${label}… ${done}/${total}${looked}`),
-  });
-  spin.stop();
-  return result;
+  const result = await job
+    .guard(() =>
+      runAb({
+        name,
+        dataset,
+        arms,
+        graders,
+        ...(spec.trials ? { trials: spec.trials } : {}),
+        ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
+        ...(spec.split ? { split: spec.split } : {}),
+        store,
+        signal: c.signal,
+        ...durable(c, job),
+        ...extra,
+        onLook: (l) => (looked = `  look ${l.look}: |z| ${Math.abs(l.z).toFixed(2)} vs ${l.bound.toFixed(2)}`),
+        onProgress: (_r, _arm, done, total) => spin.update(`Running ${label}… ${done}/${total}${looked}`),
+      }),
+    )
+    .finally(() => spin.stop());
+  await finishJob(job, result.a.status === "cancelled");
+  return { result, job };
 }
 
 function cancelledWarning(c: CommandContext, result: ExperimentResult): void {
@@ -378,6 +438,7 @@ async function runMetricsCmd(c: CommandContext): Promise<number> {
 export async function run(c: CommandContext): Promise<number> {
   const { out, env } = c;
   if (c.action === "metrics") return runMetricsCmd(c);
+  if (c.action === "status") return statusCommand(c);
   return withContext(c, async (ctx) => {
     const store = new FileEvalStore({ env, index: ctx.index });
     switch (c.action) {
@@ -397,7 +458,7 @@ export async function run(c: CommandContext): Promise<number> {
           if (str(c.flags.task)) throw new UsageError("Use either --task or two --arm options, not both", { reason: "invalid_argument" });
           const arms = await parseArms(armFlags);
           const loaded = await loadSpec(c, store, c.positionals[0], false);
-          const ab = await runArms(c, store, loaded, arms, {
+          const { result: ab, job } = await runArms(c, store, loaded, arms, "exp ab", {
             ...(seed !== undefined ? { seed } : {}),
             ...(maxCases !== undefined ? { maxCases } : {}),
             ...(stopEarly ? { stopEarly: looks !== undefined ? { looks } : true } : {}),
@@ -405,11 +466,12 @@ export async function run(c: CommandContext): Promise<number> {
           const cancelled = ab.a.status === "cancelled";
           const cmp = compareExperiments(ab.a, ab.b, { force: true });
           if (out.json) {
-            out.data({ outcome: cancelled ? "cancelled" : "completed", pair: { id: ab.pairId, seed: ab.seed }, experiments: [ab.a, ab.b], comparison: cmp, ...(ab.sequential ? { sequential: ab.sequential } : {}) });
+            out.data({ outcome: cancelled ? "cancelled" : "completed", pair: { id: ab.pairId, seed: ab.seed }, experiments: [ab.a, ab.b], comparison: cmp, ...(ab.sequential ? { sequential: ab.sequential } : {}), ...resumeField(job) });
           } else {
             out.print(renderComparison(cmp, { color: out.color, a: ab.a, b: ab.b }));
             out.print(`${ab.a.id} ${ab.b.id}`);
           }
+          resumeNote(c, job);
           if (cancelled) {
             cancelledWarning(c, ab.a);
             cancelledWarning(c, ab.b);
@@ -418,14 +480,15 @@ export async function run(c: CommandContext): Promise<number> {
           const broken = (r: ExperimentResult) => r.summary.n > 0 && r.summary.errors === r.summary.n;
           return broken(ab.a) || broken(ab.b) ? 1 : 0;
         }
-        const result = await runSpec(c, store, c.positionals[0]);
+        const { result, job } = await runSpec(c, store, c.positionals[0]);
         const cancelled = result.status === "cancelled";
-        if (out.json) out.data({ outcome: cancelled ? "cancelled" : "completed", experiment: result });
+        if (out.json) out.data({ outcome: cancelled ? "cancelled" : "completed", experiment: result, ...resumeField(job) });
         else {
           out.print(renderExperiment(result, { color: out.color }));
           out.print(result.id);
         }
         // main.ts exits 130 (or 143 for SIGTERM) after an interrupt; say what was kept.
+        resumeNote(c, job);
         if (cancelled) {
           cancelledWarning(c, result);
           return 1;
@@ -489,6 +552,7 @@ export async function run(c: CommandContext): Promise<number> {
       case "aa": {
         let first: ExperimentResult;
         let second: ExperimentResult;
+        let aaResume: { resume?: string } = {};
         if (c.positionals.length === 2) {
           const found: ExperimentResult[] = [];
           for (const ref of c.positionals) {
@@ -503,11 +567,20 @@ export async function run(c: CommandContext): Promise<number> {
           // Same config twice as one interleaved A/B (each arm is stored like exp run's).
           const loaded = await loadSpec(c, store, c.positionals[0]);
           const task = loaded.spec.task!;
-          const ab = await runArms(c, store, loaded, [
-            { name: "aa1", task },
-            { name: "aa2", task },
-          ]);
+          const { result: ab, job } = await runArms(
+            c,
+            store,
+            loaded,
+            [
+              { name: "aa1", task },
+              { name: "aa2", task },
+            ],
+            "exp aa",
+          );
+          resumeNote(c, job);
+          aaResume = resumeField(job);
           if (ab.a.status === "cancelled") {
+            if (out.json) out.data({ outcome: "cancelled", pair: { id: ab.pairId, seed: ab.seed }, experiments: [ab.a, ab.b], ...aaResume });
             cancelledWarning(c, ab.a);
             cancelledWarning(c, ab.b);
             return 1;
@@ -516,7 +589,7 @@ export async function run(c: CommandContext): Promise<number> {
         }
         const aa = aaNoise(first, second);
         await store.putNoise(aa.noise);
-        if (out.json) out.data({ noise: aa.noise, plan: aa.plan, warnings: aa.warnings, comparison: aa.comparison });
+        if (out.json) out.data({ noise: aa.noise, plan: aa.plan, warnings: aa.warnings, comparison: aa.comparison, ...aaResume });
         else out.print(renderAa(aa, { color: out.color, first, second }));
         return 0;
       }
@@ -527,33 +600,47 @@ export async function run(c: CommandContext): Promise<number> {
         const select = (str(c.flags.split) ?? "train") as Split;
         const heldOut = (str(c.flags["held-out"]) ?? "test") as Split;
         if (select === heldOut) throw new UsageError(`--split and --held-out are both ${select}; the held-out split must be one the race never sees`, { reason: "invalid_argument" });
-        const { spec, dataset, graders } = await loadSpec(c, store, undefined, false);
-        const name = spec.name ?? `${dataset.name}-sweep-${new Date().toISOString().slice(0, 10)}`;
+        const loaded = await loadSpec(c, store, undefined, false);
+        const { spec, dataset, graders } = loaded;
+        const config = specConfig(c, loaded, { configs: configs.map((x) => ({ name: x.name, task: taskFingerprint(x.task, c.cwd) })), budget, seed, select, heldOut });
+        const job = await openJob(c, {
+          kind: "exp sweep",
+          name: spec.name ?? `${dataset.name}-sweep-${new Date().toISOString().slice(0, 10)}`,
+          config,
+          newId: () => sortableId("sweep_"),
+          concurrency: spec.concurrency ?? 4,
+        });
+        const name = job.header.name;
         const spin = c.out.spin(`Sweeping ${configs.length} configs on ${dataset.name}…`);
         let result;
         try {
-          result = await runSweep({
-            name,
-            dataset,
-            configs,
-            graders,
-            select,
-            heldOut,
-            store,
-            signal: c.signal,
-            ...(budget !== undefined ? { budget } : {}),
-            ...(seed !== undefined ? { seed } : {}),
-            ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
-            onProgress: (stage, done, total) => spin.update(`Sweeping ${dataset.name}: ${stage} ${done}/${total}`),
-          });
+          result = await job.guard(() =>
+            runSweep({
+              name,
+              dataset,
+              configs,
+              graders,
+              select,
+              heldOut,
+              store,
+              signal: c.signal,
+              ...durable(c, job),
+              ...(budget !== undefined ? { budget } : {}),
+              ...(seed !== undefined ? { seed } : {}),
+              ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
+              onProgress: (stage, done, total) => spin.update(`Sweeping ${dataset.name}: ${stage} ${done}/${total}`),
+            }),
+          );
         } catch (e) {
           if (e instanceof RangeError) throw new UsageError(e.message, { reason: "invalid_argument" });
           throw e;
         } finally {
           spin.stop();
         }
-        if (out.json) out.data({ outcome: result.status, sweep: result });
+        await finishJob(job, result.status === "cancelled");
+        if (out.json) out.data({ outcome: result.status, sweep: result, ...resumeField(job) });
         else out.print(renderSweep(result, { color: out.color }));
+        resumeNote(c, job);
         if (result.status === "cancelled") {
           out.warn("Cancelled: the race stopped before a winner was re-scored on held-out cases; finished runs are stored");
           return 1;

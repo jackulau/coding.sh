@@ -175,6 +175,15 @@ export interface CaseRun {
    */
   ungraded?: true;
   startedAt: number;
+  /** Attempts the task took when infrastructure errors (rate limit, 5xx, network) were retried; absent for one. */
+  attempts?: number;
+  /**
+   * The last attempt still hit an infrastructure error after its retries: the
+   * outcome is unknown (also `ungraded`), and `--resume` runs it again.
+   */
+  infra?: "rate-limit" | "server" | "network" | "tempfail";
+  /** What the task reported it cost (`costUsd` on its output). */
+  costUsd?: number;
 }
 
 export interface Interval {
@@ -203,6 +212,8 @@ export interface ExperimentSummary {
   errors: number;
   /** Runs with a grader error: outcome unknown, left out of `passRate` (absent on older records). */
   ungraded?: number;
+  /** Of the ungraded runs, those whose task hit infrastructure errors after its retries (absent when none). */
+  infra?: number;
   /** Over graded runs: passed / (n − ungraded). */
   passRate: Interval;
   /** "wilson" for one trial per case; "cluster-bootstrap" (over cases) for several. */
@@ -223,18 +234,6 @@ export interface TaskInfo {
  * compare refuses it unless forced. Absent on older records = completed.
  */
 export type ExperimentStatus = "completed" | "cancelled";
-
-/**
- * One line of an experiment's append-only progress log
- * (`<root>/experiments/<id>.runs.jsonl`): a start line, one line per finished
- * case-trial as it finishes, and an end line. The log is removed once the
- * final ExperimentResult is stored, so one left behind (start but no end)
- * holds the finished work of a run that was killed.
- */
-export type ExperimentLogEntry =
-  | { type: "start"; status: "running"; id: string; name: string; total: number; createdAt: number }
-  | { type: "run"; run: CaseRun }
-  | { type: "end"; status: ExperimentStatus };
 
 /**
  * Set on both arms of an interleaved A/B run (`exp run --arm`, `exp aa`):

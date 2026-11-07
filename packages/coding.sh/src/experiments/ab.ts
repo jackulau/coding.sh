@@ -14,10 +14,12 @@
 import { sortableId } from "../core/ids.ts";
 import type { FileEvalStore } from "../datasets/store.ts";
 import type { Case, CaseRun, Dataset, ExperimentResult, Grader, Split } from "../datasets/types.ts";
+import type { JobScope } from "../jobs/store.ts";
+import type { RetryPolicy } from "../jobs/retry.ts";
 import { mapPool } from "../judge/limit.ts";
 import { mulberry32 } from "../stats/prng.ts";
 import { planSequential, sequentialLook, sequentialOutcome, type LookResult, type SequentialOutcome } from "../stats/sequential.ts";
-import { caseRates, experimentResult, prepareGraders, runTrial, selectCases, storeResult, type TrialEnv } from "./run.ts";
+import { caseRates, experimentResult, prepareGraders, priorRun, rememberIdentity, runTrial, selectCases, storeResult, type TrialEnv } from "./run.ts";
 import { resolveTask, type TaskSpec } from "./task.ts";
 
 export interface AbArm {
@@ -48,6 +50,17 @@ export interface RunAbOpts {
   filter?: (c: Case) => boolean;
   store?: FileEvalStore;
   signal?: AbortSignal;
+  /** Graceful stop: no new case-trial starts, the ones in flight finish. */
+  drain?: AbortSignal;
+  /**
+   * Checkpoint and resume (see RunExperimentOpts.job). A resume reuses the
+   * seed, ids and finished case-trials recorded here, so the schedule, the
+   * sequential looks and the stopping decision come out as they would have
+   * without the interruption.
+   */
+  job?: JobScope;
+  retry?: RetryPolicy;
+  timeoutMs?: number;
   /** Seed for the case order and the arm order. Default: random (recorded on both arms). */
   seed?: number;
   /** Run at most this many cases (a random subset, by the seed). */
@@ -95,14 +108,20 @@ export async function runAb(opts: RunAbOpts): Promise<AbResult> {
   if (armA.name === armB.name) throw new Error(`the two arms share the name ${JSON.stringify(armA.name)}`);
   if (opts.maxCases !== undefined && !(Number.isInteger(opts.maxCases) && opts.maxCases >= 1)) throw new RangeError(`maxCases must be a positive integer (got ${opts.maxCases})`);
   const graders = await prepareGraders(opts.graders, opts.store);
-  const seed = opts.seed ?? Math.floor(Math.random() * 2 ** 32);
+  const job = opts.job;
+  // A resume reuses the recorded seed (so the same schedule) and ids.
+  const seed = job?.state<number>("seed") ?? opts.seed ?? Math.floor(Math.random() * 2 ** 32);
+  if (job && job.state("seed") === undefined) await job.setState("seed", seed);
   const rand = mulberry32(seed);
   const cases = shuffle(selectCases(opts.dataset, opts.split, opts.filter), rand).slice(0, opts.maxCases);
   const tasks = [resolveTask(armA.task), resolveTask(armB.task)] as const;
-  const ids: [string, string] = [sortableId("exp_"), sortableId("exp_")];
+  const scopes = [job?.scope("a:"), job?.scope("b:")] as const;
+  const now = Date.now();
+  const ids = [(await rememberIdentity(scopes[0], { id: sortableId("exp_"), createdAt: now })).id, (await rememberIdentity(scopes[1], { id: sortableId("exp_"), createdAt: now })).id] as [string, string];
+  const createdAt = scopes[0]?.state<number>("createdAt") ?? now;
   const names = [`${opts.name}-${armA.name}`, `${opts.name}-${armB.name}`] as const;
-  const pairId = sortableId("pair_");
-  const createdAt = Date.now();
+  const pairId = job?.state<string>("pairId") ?? sortableId("pair_");
+  if (job && job.state("pairId") === undefined) await job.setState("pairId", pairId);
 
   const jobs: { ci: number; c: Case; trial: number; arm: 0 | 1 }[] = [];
   cases.forEach((c, ci) => {
@@ -118,12 +137,17 @@ export async function runAb(opts: RunAbOpts): Promise<AbResult> {
   const stop = new AbortController();
   const signal = opts.signal ? AbortSignal.any([opts.signal, stop.signal]) : stop.signal;
   const store = opts.store;
-  const envs: [TrialEnv, TrialEnv] = [0, 1].map((i) => ({ runId: ids[i]!, task: tasks[i]!, graders, signal, ...(store ? { store } : {}) })) as [TrialEnv, TrialEnv];
-  if (store) {
-    for (const i of [0, 1] as const) {
-      await store.appendExperimentLog(ids[i], { type: "start", status: "running", id: ids[i], name: names[i], total: jobs.length / 2, createdAt });
-    }
-  }
+  if (job && job.prefix === "") await job.job.setTotal(jobs.length);
+  const envs = ([0, 1] as const).map((i) => ({
+    runId: ids[i],
+    task: tasks[i],
+    graders,
+    signal,
+    ...(opts.drain ? { drain: opts.drain } : {}),
+    ...(scopes[i] ? { job: scopes[i] } : {}),
+    ...(opts.retry ? { retry: opts.retry } : {}),
+    ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+  })) as [TrialEnv, TrialEnv];
 
   const left = cases.map(() => 2 * trials); // case-trials still to finish, per case
   const finished: [CaseRun[], CaseRun[]] = [[], []];
@@ -145,18 +169,32 @@ export async function runAb(opts: RunAbOpts): Promise<AbResult> {
     }
   };
 
-  const settled = await mapPool(jobs, opts.concurrency ?? 4, async (job) => {
-    const run = await runTrial(envs[job.arm], job.c, job.trial);
+  // A resume first replays the case-trials already recorded, in schedule order,
+  // and takes every look they already allow: the same looks, on the same cases,
+  // as the uninterrupted run would have taken.
+  const prior = jobs.map((j) => priorRun(scopes[j.arm], j.c.id, j.trial));
+  prior.forEach((run, j) => {
+    if (!run) return;
+    finished[jobs[j]!.arm].push(run);
+    left[jobs[j]!.ci]!--;
+    done++;
+  });
+  take();
+
+  const settled = await mapPool(jobs, opts.concurrency ?? 4, async (j, i) => {
+    if (prior[i]) return prior[i];
+    const run = await runTrial(envs[j.arm], j.c, j.trial);
     if (!run) return undefined;
-    finished[job.arm].push(run);
-    left[job.ci]!--;
-    opts.onProgress?.(run, job.arm, ++done, jobs.length);
+    finished[j.arm].push(run);
+    left[j.ci]!--;
+    opts.onProgress?.(run, j.arm, ++done, jobs.length);
     take();
     return run;
   });
 
-  const cancelled = opts.signal?.aborted === true;
   const keep = stopAt ?? cases.length;
+  // Cancelled: some case-trial the result needs never ran (an early stop drops the rest on purpose).
+  const cancelled = settled.some((run, j) => run === undefined && jobs[j]!.ci < keep);
   const sequential = plan ? sequentialOutcome(plan, history) : undefined;
   const results = ([0, 1] as const).map((i) => {
     const r = experimentResult({

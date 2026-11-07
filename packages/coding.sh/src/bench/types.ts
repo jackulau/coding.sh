@@ -137,7 +137,7 @@ export interface BenchDef {
   concurrency: number;
   /** One time limit for every call of every contender. Default 300000 (5 min). */
   timeoutMs: number;
-  /** Retries after an error (crash, timeout, HTTP error), the same for every contender. Default 0. */
+  /** Retries after an infrastructure error (rate limit, 5xx, network, exit 75), with backoff, the same for every contender. A crash, timeout or wrong answer is never retried. Default 3. */
   retries: number;
   /** Spending cap per run in USD; the run refuses to start above it and stops at it. */
   budgetUsd?: number;
@@ -170,10 +170,11 @@ export type FailureMode = "timeout" | "http-error" | "crash" | "empty" | "wrong"
 /**
  * Why a cell doesn't count. An excluded case is dropped for every contender
  * (so the comparison stays paired): quota, auth and rate-limit answers
- * (HTTP 401/402/429), a grader that failed twice, or a call that never ran.
+ * (HTTP 401/402/429), a grader that failed twice, a 5xx or network error that
+ * outlasted the retries ("infra"), or a call that never ran.
  * Timeouts and crashes are not excluded; they are the contender's failures.
  */
-export type ExcludeReason = "quota" | "grader-error" | "aborted" | "budget";
+export type ExcludeReason = "quota" | "grader-error" | "aborted" | "budget" | "infra";
 
 export interface Cell {
   caseId: string;

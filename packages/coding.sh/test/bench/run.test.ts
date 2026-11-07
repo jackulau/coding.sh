@@ -44,7 +44,7 @@ describe("bench run: fairness", () => {
     assert.ok(r.cells.every((x) => x.error || x.outputSha256), "every answer is stored in full");
     const blob = await getBlob("arith", r.cells.find((x) => x.outputSha256)!.outputSha256!, p.env);
     assert.ok(blob && blob.length > 0);
-    assert.deepEqual(r.policy, { timeoutMs: 300_000, retries: 0 });
+    assert.deepEqual(r.policy, { timeoutMs: 300_000, retries: 3 });
   });
 
   test("a new day gets fresh cases; same-day reruns and --seed runs are adhoc and don't touch the ledger", async () => {
@@ -95,17 +95,39 @@ else console.log(JSON.stringify(i.a + i.b));`);
     assert.equal(exclusionOf(undefined, { failure: "quota" }), "quota");
   });
 
-  test("retries are shared: a flaky first call recovers with retries = 1", async () => {
+  test("retries are shared and infra-only: a 5xx first call recovers with retries = 1", async () => {
     const p = project();
     p.write("flaky.cjs", `const fs = require("fs"); const i = JSON.parse(fs.readFileSync(0, "utf8"));
 const f = require("path").join(__dirname, "seen-" + process.env.CODING_SH_CASE_ID);
-if (!fs.existsSync(f)) { fs.writeFileSync(f, "1"); process.exit(2); }
+if (!fs.existsSync(f)) { fs.writeFileSync(f, "1"); console.error("API error: 503 Service Unavailable"); process.exit(1); }
 console.log(JSON.stringify(i.a + i.b));`);
     const text = (await import("node:fs")).readFileSync(p.file, "utf8").replace("node bad.cjs", "node flaky.cjs").replace("cases = 12", "cases = 5\nretries = 1");
     const r = await run({ def: parseDefinition(text, p.file), env: p.env, now: day("2026-11-04") });
     const flaky = r.cells.filter((x) => x.contender === "bad");
     assert.ok(flaky.every((x) => x.pass && x.attempts === 2));
     assert.ok(r.cells.filter((x) => x.contender === "good").every((x) => x.attempts === 1));
+  });
+
+  test("a crash is the contender's failure: never retried, never excluded", async () => {
+    const p = project();
+    p.write("crash.cjs", `const fs = require("fs");
+const f = require("path").join(__dirname, "seen-" + process.env.CODING_SH_CASE_ID);
+if (!fs.existsSync(f)) { fs.writeFileSync(f, "1"); process.exit(2); }
+console.log(JSON.stringify(JSON.parse(fs.readFileSync(0, "utf8")).a));`);
+    const text = (await import("node:fs")).readFileSync(p.file, "utf8").replace("node bad.cjs", "node crash.cjs").replace("cases = 12", "cases = 5\nretries = 3");
+    const r = await run({ def: parseDefinition(text, p.file), env: p.env, now: day("2026-11-04") });
+    const crashed = r.cells.filter((x) => x.contender === "bad");
+    assert.ok(crashed.every((x) => !x.pass && x.attempts === 1 && x.failure === "crash" && !x.excluded));
+  });
+
+  test("a 5xx that outlasts the retries excludes the case as infra", async () => {
+    const p = project();
+    p.write("down.cjs", `console.error("HTTP 502 Bad Gateway"); process.exit(1);`);
+    const text = (await import("node:fs")).readFileSync(p.file, "utf8").replace("node bad.cjs", "node down.cjs").replace("cases = 12", "cases = 3\nretries = 2");
+    const r = await run({ def: parseDefinition(text, p.file), env: p.env, now: day("2026-11-04") });
+    const down = r.cells.filter((x) => x.contender === "bad");
+    assert.ok(down.every((x) => x.excluded === "infra" && x.attempts === 3));
+    assert.equal(r.excluded!.byReason.infra, 3);
   });
 
   test("budget: refuses above the estimate, stops at the cap, and an incomplete run stays out of history", async () => {
