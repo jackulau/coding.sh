@@ -8,10 +8,10 @@
 // installed (agents keep running those files, not the package).
 // Exit codes: 0 ok (updated, up to date, or reported), 1 check or install
 // failed, 130 interrupted.
-import { execFile, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { paths } from "../../core/paths.ts";
+import { execFile, spawn } from "../../core/spawn.ts";
 import { runningCli } from "../../mcp/launch.ts";
 import { refreshHookBin } from "../hookbin.ts";
 import { version } from "../meta.ts";
@@ -45,9 +45,9 @@ export interface UpdateDeps {
 
 function execText(cmd: string, args: string[], env: NodeJS.ProcessEnv, signal: AbortSignal, timeout: number): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    execFile(cmd, args, { env, signal, timeout, windowsHide: true, shell: process.platform === "win32" && cmd === "npm" }, (err, stdout, stderr) => {
+    execFile(cmd, args, { env, signal, timeout, windowsHide: true }, (err, stdout, stderr) => {
       const code = err ? (typeof (err as NodeJS.ErrnoException).code === "number" ? Number((err as NodeJS.ErrnoException).code) : 1) : 0;
-      resolve({ code, stdout: String(stdout), stderr: String(stderr) });
+      resolve({ code, stdout, stderr });
     });
   });
 }
@@ -89,13 +89,13 @@ function shellQuote(s: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-function npmInstall(args: string[], opts: { quiet: boolean; signal: AbortSignal; env: NodeJS.ProcessEnv }): Promise<InstallResult> {
+/** `npm <args>` (npm.cmd on Windows, run without a shell); exported for tests. */
+export function npmInstall(args: string[], opts: { quiet: boolean; signal: AbortSignal; env: NodeJS.ProcessEnv }): Promise<InstallResult> {
   return new Promise((resolve, reject) => {
     // npm's own output is progress, not the answer: it goes to stderr (or is captured under --json).
     const child = spawn("npm", args, {
       stdio: opts.quiet ? ["ignore", "pipe", "pipe"] : ["ignore", 2, 2],
       env: opts.env,
-      shell: process.platform === "win32",
       signal: opts.signal,
       windowsHide: true,
     });

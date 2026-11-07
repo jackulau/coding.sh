@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { runUpdate, type InstallResult, type UpdateDeps } from "../../src/cli/commands/update.ts";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { installedCli, npmInstall, runUpdate, type InstallResult, type UpdateDeps } from "../../src/cli/commands/update.ts";
 import { Output } from "../../src/cli/output.ts";
 import type { CommandContext } from "../../src/cli/types.ts";
 import type { CheckOptions, UpdateCache } from "../../src/update/index.ts";
+import { nodeBin, pathOf } from "../_bin.ts";
 import { tmpEnv, ttyStream } from "./helpers.ts";
 
 const TGZ = "https://github.com/jackulau/coding.sh/releases/download/v0.2.0/coding.sh-0.2.0.tgz";
@@ -135,5 +138,30 @@ describe("coding.sh update", () => {
       return { code: 130, output: "" };
     });
     assert.equal(await runUpdate(c, d), 130);
+  });
+});
+
+// npm is npm.cmd on Windows; both calls run it through core/spawn, with no shell in between.
+describe("npm without a shell", () => {
+  test("npmInstall hands npm every argument intact", async () => {
+    const env = tmpEnv();
+    const bin = join(env.HOME!, "npm bin");
+    const out = join(env.HOME!, "argv.json");
+    nodeBin(bin, "npm", `require("node:fs").writeFileSync(${JSON.stringify(out)}, JSON.stringify(process.argv.slice(2)));\nprocess.stdout.write("added 1 package\\n");\n`);
+    const args = ["install", "-g", join(env.HOME!, "dir with spaces & more", "coding.sh-0.2.0.tgz")];
+    const r = await npmInstall(args, { quiet: true, signal: new AbortController().signal, env: { ...env, PATH: pathOf(bin, process.env.PATH) } });
+    assert.deepEqual(r, { code: 0, output: "added 1 package\n" });
+    assert.deepEqual(JSON.parse(readFileSync(out, "utf8")), args);
+  });
+
+  test("installedCli finds dist/cli.mjs under `npm root -g`", async () => {
+    const env = tmpEnv();
+    const root = join(env.HOME!, "global root", "node_modules");
+    mkdirSync(join(root, "coding.sh", "dist"), { recursive: true });
+    const cli = join(root, "coding.sh", "dist", "cli.mjs");
+    writeFileSync(cli, "");
+    const bin = join(env.HOME!, "npm bin");
+    nodeBin(bin, "npm", `process.stdout.write(process.argv[2] === "root" ? ${JSON.stringify(root + "\n")} : "");\n`);
+    assert.equal(await installedCli({ ...env, PATH: pathOf(bin, process.env.PATH) }, new AbortController().signal), cli);
   });
 });

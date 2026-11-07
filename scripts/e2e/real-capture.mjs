@@ -105,6 +105,44 @@ function run(file, args, { cwd, env, timeoutMs = 300_000, quiet = false } = {}) 
   });
 }
 
+/** Starts `node <launcher>` as an agent would, lists the tools and calls sessions_list. */
+function mcpRoundTrip(launcher, env, cwd) {
+  return new Promise((resolveRpc) => {
+    const child = spawn(process.execPath, [launcher], { cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    const replies = new Map();
+    let buf = "";
+    let stderr = "";
+    const finish = (error) => {
+      clearTimeout(timer);
+      child.kill();
+      resolveRpc({ tools: replies.get(2)?.result?.tools?.map((t) => t.name) ?? [], sessions: replies.get(3)?.result, error: error ?? (stderr.trim() || undefined) });
+    };
+    const timer = setTimeout(() => finish("timed out"), 60_000);
+    child.stderr.on("data", (d) => (stderr += d));
+    child.stdout.on("data", (d) => {
+      buf += d;
+      let i;
+      while ((i = buf.indexOf("\n")) >= 0) {
+        const line = buf.slice(0, i).trim();
+        buf = buf.slice(i + 1);
+        if (!line) continue;
+        try {
+          const msg = JSON.parse(line);
+          if (msg.id !== undefined) replies.set(msg.id, msg);
+        } catch {}
+        if (replies.has(3)) return finish();
+      }
+    });
+    child.on("error", (e) => finish(String(e)));
+    child.on("exit", (code) => !replies.has(3) && finish(`exited ${code}: ${stderr}`));
+    const send = (o) => child.stdin.write(JSON.stringify({ jsonrpc: "2.0", ...o }) + "\n");
+    send({ id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "real-capture", version: "0" } } });
+    send({ method: "notifications/initialized" });
+    send({ id: 2, method: "tools/list", params: {} });
+    send({ id: 3, method: "tools/call", params: { name: "sessions_list", arguments: {} } });
+  });
+}
+
 function parseJson(text, what) {
   try {
     return JSON.parse(text);
@@ -254,10 +292,27 @@ try {
     check(session.model === MODEL, `${a}: the model`, session.model);
     const replies = kinds("assistant.message").map((e) => String(e.payload.text ?? ""));
     check(replies.some((t) => t.includes(TEXT)), `${a}: the reply`, replies);
-    check(session.cwd && resolve(session.cwd).toLowerCase() === resolve(sessionsByAgent[a].work).toLowerCase(), `${a}: the cwd`, [session.cwd, sessionsByAgent[a].work]);
+    const same = (p) => !!p && resolve(p).toLowerCase() === resolve(sessionsByAgent[a].work).toLowerCase();
+    check(same(session.cwd), `${a}: the cwd`, [session.cwd, sessionsByAgent[a].work]);
+    check(same(session.repo), `${a}: the git repo`, [session.repo, sessionsByAgent[a].work]);
   }
 
-  // 5. Backfill after live capture adds no duplicates, and a second backfill changes nothing.
+  // 5. The MCP server agents launch (init registered `node ~/.coding.sh/bin/mcp.mjs` with OpenCode):
+  //    through the installed CLI named in cli-path, then through the coding.sh on PATH.
+  const launcher = join(csHome, "bin", "mcp.mjs");
+  const mcpCheck = async (how) => {
+    const r = await mcpRoundTrip(launcher, env, root);
+    const text = JSON.stringify(r.sessions ?? null);
+    check(r.tools.includes("sessions_list") && opts.agents.every((a) => text.includes(sessionsByAgent[a].id ?? "?")), `MCP server via ${how}: tools/list and sessions_list`, r);
+  };
+  await mcpCheck("cli-path");
+  const cliPath = join(csHome, "bin", "cli-path");
+  const saved = readFileSync(cliPath, "utf8");
+  rmSync(cliPath);
+  await mcpCheck("coding.sh on PATH");
+  writeFileSync(cliPath, saved);
+
+  // 6. Backfill after live capture adds no duplicates, and a second backfill changes nothing.
   const counts = (snap) =>
     Object.fromEntries(
       snap.list.map((s) => {

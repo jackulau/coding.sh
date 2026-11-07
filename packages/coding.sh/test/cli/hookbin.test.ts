@@ -18,6 +18,7 @@ import type { CommandContext } from "../../src/cli/types.ts";
 import { mcpLaunchSpec, runningCli } from "../../src/mcp/launch.ts";
 import { cursor } from "../../src/adapters/cursor.ts";
 import { tmpEnv as adapterEnv } from "../adapters/_helpers.ts";
+import { nodeBin, pathOf } from "../_bin.ts";
 
 const MAIN = realpathSync(join(import.meta.dirname, "..", "..", "src", "cli", "main.ts"));
 const roots: string[] = [];
@@ -65,6 +66,17 @@ describe("MCP launch spec (INS-7)", () => {
     const launcher = join(e.CODING_SH_HOME!, "bin", "mcp.mjs");
     const argv = JSON.parse(execFileSync(process.execPath, [launcher, "--x"], { env: { ...process.env, ...e }, encoding: "utf8" })) as string[];
     assert.deepEqual(argv, [cli, "mcp", "--x"]);
+  });
+
+  test("with cli-path gone, the launcher runs the coding.sh on PATH (npm's .cmd shim on Windows, no shell)", async () => {
+    const e = env();
+    await writeHookBin(e, join(e.root, "gone", "cli.mjs"));
+    const bin = join(e.root, "path bin");
+    nodeBin(bin, "coding.sh", "process.stdout.write(JSON.stringify(process.argv.slice(2)));\n");
+    const launcher = join(e.CODING_SH_HOME!, "bin", "mcp.mjs");
+    const args = ["--x", "two words", "a&b"];
+    const argv = JSON.parse(execFileSync(process.execPath, [launcher, ...args], { env: { ...process.env, ...e, PATH: pathOf(bin, process.env.PATH) }, encoding: "utf8" })) as string[];
+    assert.deepEqual(argv, ["mcp", ...args]);
   });
 
   test("doctor flags a registered MCP entry whose script is gone", async () => {

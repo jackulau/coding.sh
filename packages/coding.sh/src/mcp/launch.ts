@@ -49,6 +49,7 @@ export function mcpLauncherSource(): string {
 // and updates. It starts the installed CLI named in cli-path next to it.
 import { existsSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 let cli;
 try {
@@ -59,8 +60,28 @@ if (cli && existsSync(cli)) {
   process.argv = [process.argv[0], cli, ...args];
   await import(pathToFileURL(cli).href);
 } else {
-  // No installed CLI recorded (or it is gone): the coding.sh on PATH.
-  const child = spawn("coding.sh", args, { stdio: "inherit", shell: process.platform === "win32" });
+  // No installed CLI recorded (or it is gone): the coding.sh on PATH. On Windows that is
+  // npm's coding.sh.cmd, which node can't start without a shell: run the script it names.
+  let file = "coding.sh";
+  let argv = args;
+  if (process.platform === "win32") {
+    for (const dir of (process.env.PATH ?? "").split(";").filter(Boolean)) {
+      let shim = "";
+      try {
+        shim = readFileSync(join(dir, "coding.sh.cmd"), "utf8");
+      } catch {
+        continue;
+      }
+      const m = /"%_prog%"\\s+"%dp0%\\\\([^"]+)"\\s+%\\*/i.exec(shim);
+      const target = m && join(dir, m[1]);
+      if (target && existsSync(target)) {
+        file = process.execPath;
+        argv = [target, ...args];
+      }
+      break;
+    }
+  }
+  const child = spawn(file, argv, { stdio: "inherit", windowsHide: true });
   child.on("error", () => {
     process.stderr.write("coding.sh: can't find the coding.sh CLI" + (cli ? " at " + cli : "") + "; run coding.sh init again\\n");
     process.exit(1);
