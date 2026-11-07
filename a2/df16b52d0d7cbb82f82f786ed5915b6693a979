@@ -1,0 +1,90 @@
+packages/coding.sh/src/bench/schedule.ts
+  s_8e040dbdf13565::t_682d9070fdd6f9 1-129
+  s_8e040dbdf13565::t_9d0b1c8e39cd12 130-179
+packages/coding.sh/src/bench/commit.ts
+  s_8e040dbdf13565::t_d4a8d3db742434 1-73
+packages/coding.sh/test/bench/commit.test.ts
+  s_8e040dbdf13565::t_11e80dfd374bfc 1-96
+  s_8e040dbdf13565::t_7fc12cc739de0b 97
+packages/coding.sh/test/bench/anchor.test.ts
+  s_8e040dbdf13565::t_b891a3eed783bd 1-115
+packages/coding.sh/src/bench/store.ts
+  s_8e040dbdf13565::t_0006c5914029dd 1-93
+  s_8e040dbdf13565::t_790de07fec9a21 94-255
+packages/coding.sh/src/bench/report.ts
+  s_8e040dbdf13565::t_1ed825f6fb81eb 1-655
+packages/coding.sh/src/bench/sample.ts
+  s_8e040dbdf13565::t_42114a3cbea35c 14,28,50-150,159
+  s_8e040dbdf13565::t_eef93263c2503f 1-13,15-27,29-49,151-158,160-180
+packages/coding.sh/test/bench/resume.test.ts
+  s_8e040dbdf13565::t_856668294df8dc 1-89
+  s_8e040dbdf13565::t_7d64f0e842e4c5 90-106
+docs/guides/benchmarks.md
+  s_8e040dbdf13565::t_802fb9ec68cfbf 1-275
+packages/coding.sh/src/bench/cli-spec.ts
+  s_8e040dbdf13565::t_2ed6c05db04318 1-114
+packages/coding.sh/src/bench/contenders.ts
+  s_8e040dbdf13565::t_82bad2f37c7c8d 1-228
+packages/coding.sh/src/bench/define.ts
+  s_8e040dbdf13565::t_fb6950d756fd84 1-326
+packages/coding.sh/src/bench/run.ts
+  s_8e040dbdf13565::t_a24d9a5a9cef0e 1-997
+packages/coding.sh/src/bench/sources.ts
+  s_d69b6794891adc::t_8b333d0bcfa236 1-368
+packages/coding.sh/src/bench/stats.ts
+  s_8e040dbdf13565::t_1417a20e8b7a8b 1-376
+packages/coding.sh/src/bench/types.ts
+  s_8e040dbdf13565::t_2cf7c2ea5cf355 1-415
+packages/coding.sh/src/cli/commands/bench.ts
+  s_8e040dbdf13565::t_447ae704303be8 1-557
+packages/coding.sh/test/bench/e2e.test.ts
+  s_8e040dbdf13565::t_b6dda922efab3e 1-157
+packages/coding.sh/test/bench/helpers.ts
+  s_d69b6794891adc::t_397f96ed1b6dac 1-90
+packages/coding.sh/test/bench/ledger.test.ts
+  s_8e040dbdf13565::t_20afe99c3579c9 1-123
+packages/coding.sh/test/bench/report.test.ts
+  s_8e040dbdf13565::t_a2dc0cefe6fbe1 1-122
+packages/coding.sh/test/bench/run.test.ts
+  s_8e040dbdf13565::t_fbc6f093be4184 1-265
+packages/coding.sh/test/bench/sample.test.ts
+  s_8e040dbdf13565::t_91fb4a1d6e7eb8 1-78
+packages/coding.sh/test/bench/schedule.test.ts
+  s_8e040dbdf13565::t_f469fed48a89fe 1-43
+packages/coding.sh/test/bench/window.test.ts
+  s_8e040dbdf13565::t_5c74fe4b801aa7 1-100
+packages/coding.sh/test/bench/cost.test.ts
+  s_0f0bf5f2244630::t_93cabf5c041fcf 1-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a2df16b52d0d7cbb82f82f786ed5915b6693a979",
+  "prompts": {},
+  "sessions": {
+    "s_0f0bf5f2244630": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-a97a02221531f6311",
+        "model": "unknown"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    },
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    },
+    "s_d69b6794891adc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "e20946f7-0f15-40df-a9ba-6472043956ee",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
