@@ -415,9 +415,16 @@ export const COMMANDS: CommandSpec[] = [
           { name: "cluster", type: "string", value: "<KEY>", desc: "Case metadata field (e.g. repo, session) whose clusters the bootstrap resamples instead of single cases" },
           { name: "pairwise", type: "string", value: "<JSON|FILE>", desc: 'Pairwise judge spec, {"kind":"pairwise","name":…,"rubric":…}: judges A and B\'s outputs side by side, in both orders' },
           { name: "labels", type: "string", value: "<FILE>", desc: 'With --pairwise: human labels (JSON array or JSONL of {"caseId","winner":"a"|"b"|"tie"}) to calibrate the judge on the test split' },
+          { name: "matrix", type: "boolean", desc: "Also print the success-count matrix: cases by passes out of k in A (rows) and B (columns)" },
           ...GATE_FLAGS,
         ],
-        examples: ["coding.sh exp compare base cand", "coding.sh exp compare base cand --cluster repo", "coding.sh exp compare base cand --gate", "coding.sh exp compare base cand --pairwise judge.json"],
+        examples: [
+          "coding.sh exp compare base cand",
+          "coding.sh exp compare base cand --cluster repo",
+          "coding.sh exp compare base cand --gate",
+          "coding.sh exp compare base cand --matrix",
+          "coding.sh exp compare base cand --pairwise judge.json",
+        ],
       },
       {
         name: "aa",

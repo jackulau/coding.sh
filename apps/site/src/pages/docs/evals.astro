@@ -156,6 +156,12 @@ const COMPARE = [
       <code>Don't ship: B breaks 2 cases A solved</code> with the broken cases. It exits 0 only for "Ship it", so CI can use it. A break costs two
       fixes, the wins must clear a one-sided exact test, and B may break at most 10% of what A solved (<a href="#gate">details</a>).
     </li>
+    <li id="coverage">
+      With 2+ trials per case it counts coverage on its own: cases B gained (A never passed, B passed at least once) and cases B lost (A passed
+      at least once, B never), listed under <code>lost coverage</code>. A net gain can hide lost cases. It also prints how many cases' pass rates
+      went up or down, and the change in each half of the trials, with a warning when the two halves disagree. <code>--matrix</code> prints the
+      cases by passes out of k in A and B. Method: EvoAudit (<a href="https://arxiv.org/abs/2611.07624">arXiv 2611.07624</a>).
+    </li>
   </ul>
   <p>
     To avoid that, run both configs in one job: <code>exp run --arm base=a.json --arm cand=b.json</code>. Each case runs in both arms back

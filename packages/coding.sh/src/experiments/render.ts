@@ -7,9 +7,10 @@ import type { RoganGladenResult } from "../stats/interval.ts";
 import type { SequentialOutcome } from "../stats/sequential.ts";
 import type { AaResult } from "./aa.ts";
 import { gateDetail, gateHeadline, idList } from "../stats/gate.ts";
-import type { ArmAttrition, Comparison, ComparisonGate } from "./compare.ts";
+import type { ArmAttrition, Comparison, ComparisonGate, ComparisonTurnover } from "./compare.ts";
 import type { PairwiseSummary } from "./pairwise.ts";
 import type { SweepResult } from "./sweep.ts";
+import type { Turnover } from "./turnover.ts";
 import { fixed, ms, paint, pct, pValue, signedPct, table, truncate, type RenderOpts } from "./text.ts";
 
 const trusted = (c: CalibrationStatus | undefined) => c === undefined || c.state === "calibrated";
@@ -113,7 +114,7 @@ export function renderExperiment(r: ExperimentResult, opts: RenderOpts): string 
   return out.join("\n");
 }
 
-export function renderComparison(c: Comparison, opts: RenderOpts & { a?: ExperimentResult; b?: ExperimentResult }): string {
+export function renderComparison(c: Comparison, opts: RenderOpts & { a?: ExperimentResult; b?: ExperimentResult; matrix?: boolean }): string {
   const color = opts.color;
   const limit = opts.limit ?? 20;
   const out: string[] = [];
@@ -154,6 +155,9 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
         `${signedPct(c.passK.diff)} ${paint("(cases where every trial passed)", "dim", color)}`,
     );
   }
+  // With one trial per case, coverage is the pass rate and gained/lost are McNemar's flips.
+  const multi = c.passK !== undefined;
+  if (multi && c.turnover.paired) out.push(...renderTurnover(c.turnover, color));
   if (c.sequential) out.push(...renderSequential(c.sequential, color));
   if (c.sequentialWarning) out.push(paint(`! ${c.sequentialWarning}`, "yellow", color));
   const why = c.sequential ? (c.verdict === "inconclusive" ? "no boundary crossed" : "group sequential test") : "CI includes 0";
@@ -218,9 +222,49 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
     );
     if (rows.length > limit) out.push(paint(`… ${rows.length - limit} more (use --json for all)`, "dim", color));
   };
+  if (opts.matrix && c.turnover.matrix) out.push("", ...renderMatrix(c.turnover, color));
+  if (multi && c.turnover.lost.length) {
+    const lost = new Set(c.turnover.lost);
+    list("lost coverage", c.regressions.filter((x) => lost.has(x.caseId)), "red");
+  }
   list("regressions", c.regressions, "red");
   list("improvements", c.improvements, "green");
   return out.join("\n");
+}
+
+const pp = (x: number) => signedPct(x);
+const span = (t: readonly [number, number]) => (t[0] === t[1] ? `trial ${t[0]}` : `trials ${t[0]}-${t[1]}`);
+
+/** Coverage (passed in any trial) gained and lost, the reliability shift and the trial-half check. */
+function renderTurnover(t: ComparisonTurnover, color: boolean): string[] {
+  const lost = t.lost.length ? paint(`lost ${t.lost.length}`, "red", color) : "lost 0";
+  const out = [
+    `coverage A ${pct(t.coverage.a)} → B ${pct(t.coverage.b)} (${pp(t.coverage.diff)})  gained ${t.gained.length}  ${lost}  kept ${t.keptCovered} ` +
+      paint(`(cases that passed in any of ${t.k ?? "k"} trials)`, "dim", color),
+    `         reliability ${t.reliability.up} up, ${t.reliability.down} down, ${t.reliability.same} same ${paint("(cases by per-case pass rate)", "dim", color)}`,
+  ];
+  const h = t.halves;
+  if (h) {
+    out.push(`halves  ${span(h.first.trials)} ${pp(h.first.avgDiff)}, ${span(h.second.trials)} ${pp(h.second.avgDiff)} ${paint("(B − A mean pass rate in each half of the trials)", "dim", color)}`);
+    if (t.warning) out.push(paint(`! ${t.warning}`, "yellow", color));
+    else if (h.reversed.avg) out.push(paint(`! the change reverses between trial halves (${span(h.first.trials)} vs ${span(h.second.trials)}); confirm with more trials`, "yellow", color));
+  }
+  return out;
+}
+
+/** `exp compare --matrix`: cases by passes in A (rows) and in B (columns); below the diagonal B passed fewer. */
+function renderMatrix(t: Turnover, color: boolean): string[] {
+  const m = t.matrix as number[][];
+  const k = m.length - 1;
+  const cell = (n: number, i: number, j: number) => (n === 0 ? paint("·", "dim", color) : i > j ? paint(String(n), "red", color) : j > i ? paint(String(n), "green", color) : String(n));
+  return [
+    `${paint("success counts", "bold", color)} ${paint(`(cases by passes out of ${k}: A in rows, B in columns)`, "dim", color)}`,
+    table(
+      [{ header: "A\\B" }, ...m.map((_, j) => ({ header: String(j), align: "right" as const }))],
+      m.map((r, i) => [String(i), ...r.map((n, j) => cell(n, i, j))]),
+      { color },
+    ),
+  ];
 }
 
 const GATE_COLOR = { ship: "green", hold: "bold", "dont-ship": "red" } as const;

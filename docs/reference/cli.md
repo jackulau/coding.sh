@@ -635,6 +635,7 @@ coding.sh exp compare <A> <B> [options]
 | `--cluster <KEY>` |  | Case metadata field (e.g. repo, session) whose clusters the bootstrap resamples instead of single cases. |
 | `--pairwise <JSON|FILE>` |  | Pairwise judge spec, {"kind":"pairwise","name":…,"rubric":…}: judges A and B's outputs side by side, in both orders. |
 | `--labels <FILE>` |  | With --pairwise: human labels (JSON array or JSONL of {"caseId","winner":"a"\|"b"\|"tie"}) to calibrate the judge on the test split. |
+| `--matrix` |  | Also print the success-count matrix: cases by passes out of k in A (rows) and B (columns) |
 | `--gate` |  | Ship-or-hold decision: exit 0 when B wins enough without breaking what A solved, 1 otherwise. |
 | `--lambda <N>` | `2` | With --gate: what breaking one solved item costs, in fixed items. |
 | `--gate-alpha <A>` | `0.05` | With --gate: one-sided significance level. |
@@ -644,6 +645,7 @@ coding.sh exp compare <A> <B> [options]
 coding.sh exp compare base cand
 coding.sh exp compare base cand --cluster repo
 coding.sh exp compare base cand --gate
+coding.sh exp compare base cand --matrix
 coding.sh exp compare base cand --pairwise judge.json
 ```
 

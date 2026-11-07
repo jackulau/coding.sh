@@ -462,7 +462,7 @@ export async function run(c: CommandContext): Promise<number> {
         if (out.json) {
           out.data({ comparison: cmp, ...(pw ? { pairwise: pw.summary } : {}), ...(pw?.calibration ? { pairwiseCalibration: { ...pw.calibration.report, abstained: pw.calibration.abstained } } : {}) });
         } else {
-          out.print(renderComparison(cmp, { color: out.color, a: a!, b: b! }));
+          out.print(renderComparison(cmp, { color: out.color, a: a!, b: b!, matrix: c.flags.matrix === true }));
           if (pw) out.print(`\n${renderPairwise(pw.summary, { color: out.color })}`);
           if (pw?.calibration) {
             out.print(`\n${renderCalibration(pw.calibration.report, { color: out.color })}`);

@@ -11,6 +11,7 @@ import { gateVerdict, type GateVerdict } from "../stats/gate.ts";
 import { acceptanceGate, fisherExact, mcnemar, type GateOpts, type GateResult, type McNemarResult } from "../stats/tests.ts";
 import { pairedPower, passHatK, type NoisePrior, type PowerAnalysis } from "./power.ts";
 import { caseRates } from "./run.ts";
+import { outcomesByCase, turnover, type Turnover } from "./turnover.ts";
 
 export interface CaseDelta {
   caseId: string;
@@ -212,6 +213,17 @@ export interface Comparison {
   passK?: { a: { k: number; rate: number }; b: { k: number; rate: number }; diff: number };
   /** Present with the gate option (`exp compare --gate`): adopt B or keep A. */
   gate?: ComparisonGate;
+  /**
+   * Coverage turnover on paired, graded cases: cases B gained or lost (passed
+   * in any of k trials), per-case reliability shift, the success-count matrix
+   * and the trial-half check.
+   */
+  turnover: ComparisonTurnover;
+}
+
+export interface ComparisonTurnover extends Turnover {
+  /** Set when the verdict is significant but the mean change reverses between trial halves. */
+  warning?: string;
 }
 
 /**
@@ -368,7 +380,13 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
       deltas.map((x) => x.delta),
       { alpha: boot.alpha, power: opts.power, minPaired: opts.minPaired, significant: verdict !== "inconclusive", ...(opts.noise ? { noise: opts.noise } : {}) },
     ),
+    turnover: turnover(outcomesByCase(a.runs), outcomesByCase(b.runs)),
   };
+  const hv = out.turnover.halves;
+  if (verdict !== "inconclusive" && hv?.reversed.avg) {
+    const span = (t: [number, number]) => (t[0] === t[1] ? `trial ${t[0]}` : `trials ${t[0]}-${t[1]}`);
+    out.turnover.warning = `B is ${verdict} overall, but the change reverses between trial halves (${span(hv.first.trials)} vs ${span(hv.second.trials)}); confirm with more trials`;
+  }
   if (seq) {
     out.sequential = seq;
     if (seq.early) {

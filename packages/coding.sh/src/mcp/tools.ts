@@ -515,7 +515,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       name: "experiment_compare",
       title: "Compare experiments",
       description:
-        "Paired comparison of two experiments on the same cases: pass-rate difference with a bootstrap CI, McNemar p-value, verdict (better/worse/inconclusive), regressed and improved cases, per-grader deltas, power warnings and a ship/hold/dont-ship gate.",
+        "Paired comparison of two experiments on the same cases: pass-rate difference with a bootstrap CI, McNemar p-value, verdict (better/worse/inconclusive), regressed and improved cases, cases gained and lost (passed in any trial), per-grader deltas, power warnings and a ship/hold/dont-ship gate.",
       inputSchema: input(
         {
           baseline: { type: "string", minLength: 1, description: "Experiment id of the baseline (A)." },
@@ -545,6 +545,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
             reasons: arr(S),
             lostCases: arr(S),
           }),
+          coverage: out({ baseline: N, candidate: N, gained: I, lost: I, kept: I, lostCases: arr(S) }),
           warnings: arr(S),
         },
         ["baseline", "candidate", "verdict", "diff", "paired"],
@@ -566,8 +567,14 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         }
         const limit = numArg(a, "limit", 10);
         const cases = (xs: { caseId: string; a: number; b: number }[]) => xs.slice(0, limit).map((x) => ({ caseId: x.caseId, baseline: round(x.a), candidate: round(x.b) }));
-        const warnings = [...(cmp.datasetWarning ? [cmp.datasetWarning] : []), ...(cmp.gradeWarning ? [cmp.gradeWarning] : []), ...cmp.power.warnings.map((w) => w.message)];
+        const warnings = [
+          ...(cmp.datasetWarning ? [cmp.datasetWarning] : []),
+          ...(cmp.gradeWarning ? [cmp.gradeWarning] : []),
+          ...cmp.power.warnings.map((w) => w.message),
+          ...(cmp.turnover.warning ? [cmp.turnover.warning] : []),
+        ];
         const gate = cmp.gate;
+        const t = cmp.turnover;
         return {
           baseline: { id: cmp.a.id, name: cmp.a.name, passRate: round(cmp.a.passRate) },
           candidate: { id: cmp.b.id, name: cmp.b.name, passRate: round(cmp.b.passRate) },
@@ -596,6 +603,8 @@ export function buildTools(): ToolDef<ToolCtx>[] {
                 },
               }
             : {}),
+          // Passed in any trial: cases B stopped solving at all, apart from reliability dips.
+          coverage: { baseline: round(t.coverage.a), candidate: round(t.coverage.b), gained: t.gained.length, lost: t.lost.length, kept: t.keptCovered, lostCases: t.lost.slice(0, limit) },
           warnings,
         };
       },

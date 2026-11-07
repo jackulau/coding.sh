@@ -36,6 +36,20 @@ test on flipped cases and the minimum detectable effect. It also reports:
   and the minimum detectable effect never goes below what that noise allows.
 - **Timing.** When the two runs were not interleaved and ran one after the other, it warns and
   says how far apart they were. Provider drift, rate limits and time of day can look like a change.
+- **Coverage turnover.** With 2+ trials per case, a case is covered when it passed in at least one
+  trial. The `coverage` line gives each arm's covered share, the cases B gained (A never passed, B
+  passed at least once), the cases B lost (A passed at least once, B never) and those covered in
+  both. Lost cases are listed under `lost coverage`, before the regressions. A net coverage gain
+  can hide lost cases, and the mean pass rate can move the other way from coverage, so gains and
+  losses are counted apart. The `reliability` line counts cases whose pass rate went up, down or
+  stayed the same. The `halves` line splits each case's trials in order (trials 1 to k/2, then the
+  rest) and gives B − A in each half. When the two halves have opposite signs it warns, and when the
+  verdict is significant the warning asks you to confirm with more trials. `--matrix` prints the
+  success-count matrix: cases by passes out of k in A (rows) and in B (columns), so the cells below
+  the diagonal are cases B passed less often. `--json` always carries `comparison.turnover`
+  (`gained`, `lost`, `keptCovered`, `neverCovered`, `reliability`, `matrix` when every case ran k
+  trials in both arms, `halves`). With one trial per case, coverage is the pass rate, so the text
+  output leaves these lines out. Method: EvoAudit (arXiv 2611.07624).
 
 `coding.sh exp compare A B --gate` adds a ship-or-hold line under the verdict: `Ship it: B wins 8
 cases, loses 0`, `Hold: not enough evidence`, or `Don't ship: B breaks 2 cases A solved` with up to

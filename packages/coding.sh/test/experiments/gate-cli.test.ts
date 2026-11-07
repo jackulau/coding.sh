@@ -68,6 +68,18 @@ describe("exp compare --gate from the CLI", () => {
     assert.equal("gate" in JSON.parse(plain.stdout).comparison, false);
   });
 
+  it("--matrix prints the success-count grid; --json always carries comparison.turnover (Y-1)", () => {
+    const r = cli(["exp", "compare", "a", "c", "--matrix"]);
+    assert.equal(r.status, 0, r.stderr);
+    // a solves 20 (not multiples of 3), c solves 24 (not multiples of 5): 4 lost, 8 gained, 16 kept, 2 never (15, 30).
+    assert.match(r.stdout, /^success counts \(cases by passes out of 1: A in rows, B in columns\)$/m);
+    assert.match(r.stdout, /^0 {4}2 {3}8$/m);
+    assert.match(r.stdout, /^1 {4}4 {2}16$/m);
+    const t = JSON.parse(cli(["exp", "compare", "a", "c", "--json"]).stdout).comparison.turnover;
+    assert.deepEqual([t.gained.length, t.lost.length, t.keptCovered, t.neverCovered], [8, 4, 16, 2]);
+    assert.deepEqual([...t.lost].sort(), ["c10", "c20", "c25", "c5"]);
+  });
+
   it("--lambda, --gate-alpha and --tau without --gate are usage errors", () => {
     for (const flag of ["--lambda", "--gate-alpha", "--tau"]) {
       const r = cli(["exp", "compare", "a", "b", flag, "1"]);
