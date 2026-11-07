@@ -142,3 +142,35 @@ jobs:
           coding.sh init --agent claude-code --yes --no-mcp
           grep 'hook.mjs\\" claude-code' "$HOME/.claude/settings.json"
           coding.sh doctor --agent claude-code
+
+  real-capture:
+    name: real capture / ${{ matrix.os }}
+    # Always GitHub-hosted: it installs third-party agents from npm and runs them.
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        working-directory: packages/coding.sh
+        run: npm run build
+
+      # coding.sh from its tarball plus pinned OpenCode and Pi from npm, under a temp HOME,
+      # each driven through one session against a local stub model.
+      - name: Real agents against a stub model
+        run: node scripts/e2e/real-capture.mjs
