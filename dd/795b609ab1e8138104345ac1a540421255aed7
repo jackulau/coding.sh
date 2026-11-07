@@ -1,0 +1,93 @@
+packages/coding.sh/test/mcp/toolevals/tasks/llm-p95.toml
+  s_8e040dbdf13565::t_e71c18e03745cf 1-7,9,15-21
+  s_8e040dbdf13565::t_2ab047969d47bd 10,13-14
+  s_8e040dbdf13565::t_244e78c1c7de44 8,11-12
+packages/coding.sh/test/mcp/toolevals/tasks/codex-cost.toml
+  s_8e040dbdf13565::t_244e78c1c7de44 8,11-12
+  s_8e040dbdf13565::t_e71c18e03745cf 1-7,9,15-21
+  s_8e040dbdf13565::t_3b8c6b9932dfb0 10,13-14
+packages/coding.sh/test/mcp/toolevals/tasks/subagent-count.toml
+  s_8e040dbdf13565::t_2ab047969d47bd 10,13-14
+  s_8e040dbdf13565::t_244e78c1c7de44 8,11-12
+  s_8e040dbdf13565::t_e71c18e03745cf 1-7,9,15-21
+packages/coding.sh/test/mcp/toolevals/tasks/latest-prompt.toml
+  s_8e040dbdf13565::t_244e78c1c7de44 8,11-12
+  s_8e040dbdf13565::t_2ab047969d47bd 10,13-14
+  s_8e040dbdf13565::t_e71c18e03745cf 1-7,9,15-21
+packages/coding.sh/test/mcp/toolevals/tasks/session-to-eval.toml
+  s_8e040dbdf13565::t_244e78c1c7de44 8,11-12
+  s_8e040dbdf13565::t_e71c18e03745cf 1-7,9,15-20
+  s_8e040dbdf13565::t_2ab047969d47bd 10,13-14
+packages/coding.sh/test/mcp/toolevals/tasks/failing-tool.toml
+  s_8e040dbdf13565::t_2ab047969d47bd 10,13-14
+  s_8e040dbdf13565::t_244e78c1c7de44 8,11-12
+  s_8e040dbdf13565::t_e71c18e03745cf 1-7,9,15-21
+.gitignore
+  s_8e040dbdf13565::t_7bf8ef62d2b1ca 35-38
+evals/cli/tasks/bundle-diff.toml
+  s_8e040dbdf13565::t_d6b30177c63b47 1-17
+evals/cli/tasks/compaction-sessions.toml
+  s_8e040dbdf13565::t_b98b90e0a46297 1-17
+evals/cli/tasks/compare-arms.toml
+  s_8e040dbdf13565::t_0ad802a06cb85c 1-26
+evals/cli/tasks/config-max-inline.toml
+  s_8e040dbdf13565::t_61a102803a1e8c 1-18
+evals/cli/tasks/dataset-add.toml
+  s_8e040dbdf13565::t_a581c2e13e1d4d 1-21
+evals/cli/tasks/doctor-codex.toml
+  s_8e040dbdf13565::t_ccadbfed197322 1-17
+evals/cli/tasks/export-harbor.toml
+  s_8e040dbdf13565::t_4b4c9b92a30068 1-18
+evals/cli/tasks/failed-tool-error.toml
+  s_8e040dbdf13565::t_3c88ee48130246 1-17
+evals/cli/tasks/latest-prompt.toml
+  s_8e040dbdf13565::t_0060529757d98a 1-18
+evals/cli/tasks/llm-p95.toml
+  s_8e040dbdf13565::t_1b0b1c1afe5031 1-19
+evals/cli/tasks/metadata-mode.toml
+  s_8e040dbdf13565::t_a93f10dc0ed699 1-18
+evals/cli/tasks/most-failed-tools.toml
+  s_8e040dbdf13565::t_e013e62a00af35 1-18
+evals/cli/tasks/otel-env.toml
+  s_8e040dbdf13565::t_b0351e67fe5d8e 1-17
+evals/cli/tasks/repo-sessions.toml
+  s_8e040dbdf13565::t_f15ee5a0bb458d 1-18
+evals/cli/tasks/search-prompt.toml
+  s_8e040dbdf13565::t_3a80a7aee1c6a2 1-18
+evals/cli/tasks/session-duration.toml
+  s_8e040dbdf13565::t_fd66424b46aa1e 1-18
+evals/cli/tasks/session-to-eval.toml
+  s_8e040dbdf13565::t_1a0ef29f107b3c 1-21
+evals/cli/tasks/sessions-by-agent.toml
+  s_8e040dbdf13565::t_731823cf4102da 1-17
+evals/cli/tasks/sessions-yesterday.toml
+  s_8e040dbdf13565::t_b3533c96adf6ba 1-18
+evals/cli/tasks/slowest-tool.toml
+  s_8e040dbdf13565::t_4ff5913a8ba10c 1-18
+evals/cli/tasks/subagent-types.toml
+  s_8e040dbdf13565::t_44d8eb74638718 1-17
+evals/cli/tasks/tokens-today.toml
+  s_8e040dbdf13565::t_cae43f4be66cfc 1-18
+evals/cli/tasks/uninstall-preview.toml
+  s_8e040dbdf13565::t_179bb32974c6b0 1-21
+evals/cli/tasks/validate-task.toml
+  s_8e040dbdf13565::t_0e4fcfc0138856 1-26
+evals/cli/tasks/why-run-failed.toml
+  s_8e040dbdf13565::t_6ca0e7a50fdc94 1-20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dd795b609ab1e8138104345ac1a540421255aed7",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
