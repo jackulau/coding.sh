@@ -2,8 +2,10 @@ CHANGELOG.md
   s_8e040dbdf13565::t_49fe2804a89b87 57
 packages/coding.sh/src/runner/harness-report.ts
   s_8e040dbdf13565::t_ae4c018d00ce7d 6,31,58
+  s_8e040dbdf13565::t_4b5a89225ce907 66
 packages/coding.sh/test/runner/experiment.test.ts
   s_8e040dbdf13565::t_b321bb72c866e6 820,898-920
+  s_8e040dbdf13565::t_3593cf507c4676 897
 docs/how-to/compare-agents.md
   s_8e040dbdf13565::t_c2d6661ff67a00 173-184
 packages/coding.sh/src/runner/experiment.ts
