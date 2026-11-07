@@ -244,3 +244,10 @@ jobs:
       - name: exp ab on real Claude Code sessions
         if: runner.os == 'Linux'
         run: node scripts/e2e/exp-ab-capture.mjs
+
+      # Experiment sessions and exp run --watch on a command agent and an LLM judge answered by
+      # the stub: the delta vs the previous run, a rubric-only edit regrades with 0 agent calls,
+      # a save mid-run aborts it and stores nothing, a broken spec keeps watching, Ctrl-C exits 0.
+      - name: Experiment sessions and exp run --watch
+        if: runner.os == 'Linux'
+        run: node scripts/e2e/exp-session-watch.mjs

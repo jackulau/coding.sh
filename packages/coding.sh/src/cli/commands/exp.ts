@@ -47,6 +47,8 @@ interface ExpSpec {
   trials?: number;
   concurrency?: number;
   split?: Split;
+  /** Extra files (globs, relative to the spec) whose change reruns `exp run --watch`. */
+  watch?: string[];
 }
 
 function isObj(v: unknown): v is Record<string, unknown> {
@@ -59,6 +61,9 @@ export interface LoadedSpec {
   graders: Grader[];
   /** Default experiment name: the spec's, else `<dataset>-<date>`. */
   name: string;
+  /** The spec file, when one was given, and its folder (else cwd): graders' relative paths resolve there. */
+  file?: string;
+  baseDir?: string;
 }
 
 /**
@@ -86,12 +91,12 @@ function durable(c: CommandContext, job: Job) {
 }
 
 /** The experiment the spec file and flags describe (exp run, exp aa). `needTask` is false when --arm gives the tasks. */
-async function loadSpec(c: CommandContext, store: FileEvalStore, specFile: string | undefined, needTask = true): Promise<LoadedSpec> {
+export async function loadSpec(c: CommandContext, store: FileEvalStore, specFile: string | undefined, needTask = true): Promise<LoadedSpec> {
   const { env } = c;
   let spec: ExpSpec = {};
   let baseDir = c.cwd;
-  if (specFile) {
-    const file = resolve(c.cwd, specFile);
+  const file = specFile ? resolve(c.cwd, specFile) : undefined;
+  if (file) {
     const v = await jsonArg(file, "spec");
     if (!isObj(v)) throw new UsageError(`${file} must hold a JSON object`);
     spec = v as ExpSpec;
@@ -115,11 +120,11 @@ async function loadSpec(c: CommandContext, store: FileEvalStore, specFile: strin
   } catch (e) {
     throw new UsageError(`Invalid grader: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_grader" });
   }
-  return { spec, dataset, graders, name: spec.name ?? `${dataset.name}-${new Date().toISOString().slice(0, 10)}` };
+  return { spec, dataset, graders, name: spec.name ?? `${dataset.name}-${new Date().toISOString().slice(0, 10)}`, baseDir, ...(file ? { file } : {}) };
 }
 
 /** Run one experiment (exp run without --arm). */
-async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string | undefined): Promise<{ result: ExperimentResult; job: Job }> {
+async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string | undefined): Promise<{ result: ExperimentResult; job: Job; loaded: LoadedSpec }> {
   const loaded = await loadSpec(c, store, specFile);
   const { spec, dataset, graders } = loaded;
   // EM-19: a next-turn experiment without a control arm has no replay noise floor to read B against.
@@ -153,7 +158,7 @@ async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string
     )
     .finally(() => spin.stop());
   await finishJob(job, result.status === "cancelled");
-  return { result, job };
+  return { result, job, loaded };
 }
 
 const NAME = /^[\w.-]+$/;
@@ -516,6 +521,10 @@ export async function run(c: CommandContext): Promise<number> {
         const { expAb } = await import("./exp-ab.ts");
         return expAb(c, store, ctx);
       }
+      case "session": {
+        const { sessionCommand } = await import("./exp-session.ts");
+        return sessionCommand(c, store);
+      }
       case "run": {
         const armFlags = list(c.flags.arm);
         const stopEarly = c.flags["stop-early"] === true;
@@ -531,6 +540,7 @@ export async function run(c: CommandContext): Promise<number> {
         if (armFlags.length && seriesFlag(c) !== undefined) throw new UsageError("--series tags one experiment per loop round; run the candidate alone", { reason: "invalid_argument" });
         if (armFlags.length) {
           if (str(c.flags.task)) throw new UsageError("Use either --task or two --arm options, not both", { reason: "invalid_argument" });
+          if (c.flags.watch === true) throw new UsageError("--watch reruns one task; for an A/B of harness edits on save use coding.sh exp ab --watch", { reason: "invalid_argument" });
           const arms = await parseArms(armFlags);
           const loaded = await loadSpec(c, store, c.positionals[0], false);
           const { result: ab, job } = await runArms(c, store, loaded, arms, "exp ab", {
@@ -557,13 +567,22 @@ export async function run(c: CommandContext): Promise<number> {
           const broken = (r: ExperimentResult) => r.summary.n > 0 && r.summary.errors === r.summary.n;
           return broken(ab.a) || broken(ab.b) ? 1 : 0;
         }
-        const { result, job } = await runSpec(c, store, c.positionals[0]);
+        const session = await import("./exp-session.ts");
+        if (c.flags.watch === true) {
+          if (seriesFlag(c) !== undefined) throw new UsageError("--series tags one experiment per loop round; it does not combine with --watch", { reason: "invalid_argument" });
+          return session.watchRun(c, store, c.positionals[0]);
+        }
+        if (list(c.flags["watch-path"]).length) throw new UsageError("--watch-path needs --watch", { reason: "invalid_argument" });
+        const { result, job, loaded } = await runSpec(c, store, c.positionals[0]);
         const cancelled = result.status === "cancelled";
         const series = cancelled ? undefined : await seriesStatus(store, seriesFlag(c));
-        if (out.json) out.data({ outcome: cancelled ? "cancelled" : "completed", experiment: result, ...(series ? { plateau: series } : {}), ...resumeField(job) });
+        // In an experiment session: the run joins its timeline and is compared with the previous one.
+        const joined = cancelled ? undefined : await session.recordRun(c, store, result, loaded);
+        if (out.json) out.data({ outcome: cancelled ? "cancelled" : "completed", experiment: result, ...(series ? { plateau: series } : {}), ...(joined ? { session: joined } : {}), ...resumeField(job) });
         else {
           out.print(renderExperiment(result, { color: out.color }));
           out.print(result.id);
+          if (joined) out.print(`\n${session.deltaText(c, joined)}`);
           if (series) out.note(plateauLine(seriesFlag(c)!, series));
         }
         // main.ts exits 130 (or 143 for SIGTERM) after an interrupt; say what was kept.

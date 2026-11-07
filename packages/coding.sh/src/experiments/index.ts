@@ -11,3 +11,5 @@ export * from "./task.ts";
 export * from "./text.ts";
 export * from "./metrics.ts";
 export * from "./turnover.ts";
+export * from "./session.ts";
+export * from "./watch.ts";

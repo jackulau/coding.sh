@@ -215,6 +215,50 @@ the cost so far (from the trials that report one). `coding.sh exp status <id>` s
 its resume command, and `--json` returns the same fields (`done`, `total`, `infra`, `retries`,
 `etaMs`, `costUsd`, `resume`). A run whose process died reads as `interrupted`.
 
+## Sessions: deltas, notes, watch
+
+An experiment session collects the runs of one investigation. `coding.sh exp session new --name
+<topic>` starts one in the current folder (it writes `.coding-sh/session.json`, with a
+`.gitignore` that keeps the folder out of version control). Every `exp run` in that folder or below
+then joins it, and as soon as a run finishes it is compared with the previous run on the same
+dataset. The delta prints under the result, with the numbers `exp compare` gives:
+
+```
+session shout: vs exp_01M6W03B3SPG7NSG4MEM9T032J  changed prompt.md
+pass    0.0% → 100.0%  Δ +100.0pp [+100.0pp, +100.0pp]  mcnemar p=0.125 (4 paired cases, 95% CI)
+grader  caps  score Δ +100.0pp [+100.0pp, +100.0pp]
+fixed   4: alpha, beta, delta, gamma
+broke   —
+```
+
+`changed` lists the files (spec, the task's script, grader files, `watch` globs) whose content
+differs from the previous run. Two runs on different dataset versions are not paired: the delta says
+so and shows no numbers. `--no-session` runs outside the session, and `CODING_SH_EXP_SESSION=<id>`
+picks a session without a `session.json`. `--json` output gains a `session` field with the block.
+
+- `coding.sh exp session note "<text>"` adds a note. Write the hypothesis before a run and the
+  reading after it, so the timeline shows what you expected next to what happened. Notes are
+  redacted like captured sessions and capped at 4000 characters.
+- `coding.sh exp session summary` prints the timeline oldest first: notes, the commands (redacted)
+  and one line per run with its delta. `--json` returns the blocks with the same numbers.
+
+`coding.sh exp run spec.json --watch` runs, then reruns whenever something the run reads changes:
+the spec file, the command task's script, command and module grader files, and the spec's `watch`
+entries (`"watch": ["prompt.md", "prompts/**"]`, or `--watch-path <GLOB>`). `.git`,
+`node_modules` and `.coding-sh` are ignored, and saves within 300 ms give one rerun. Each run
+prints one line and its delta against the run before it:
+
+```
+15:54:41  run     exp_01M6W03CN9P1ZE633C2RXPGVYQ  pass 100.0% (4/4)  4 case runs
+15:54:41  regrade exp_01M6W03D5H1YEKWWXWGNCGN7MF  pass 75.0% (3/4)  regrade of exp_01M6W03CN9P1ZE633C2RXPGVYQ, 0 task calls
+```
+
+- A change while a run is in flight aborts it. The aborted run is not stored, and the new one starts.
+- When only the graders changed (a rubric edit, a grader file), the stored outputs of the last run
+  are graded again with no task calls (`regrade`). The new experiment records `regradeOf`.
+- A spec that fails to parse is reported and watching goes on. Enter reruns, `q` quits, Ctrl-C
+  exits 0. `--watch` does not combine with `--json`, `--resume` or `--arm`.
+
 ## Metric A/B (ms, bytes)
 
 `coding.sh exp metrics --arm base='<cmd>' --arm cand='<cmd>'` compares two commands that print

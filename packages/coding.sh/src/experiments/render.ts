@@ -10,6 +10,7 @@ import type { AaResult } from "./aa.ts";
 import { gateDetail, gateHeadline, idList } from "../stats/gate.ts";
 import type { ArmAttrition, Comparison, ComparisonGate, ComparisonNonInferiority, ComparisonTurnover } from "./compare.ts";
 import type { PairwiseSummary } from "./pairwise.ts";
+import type { ExperimentBlock, ExpSession, SessionBlock } from "./session.ts";
 import { stabilityLine } from "./stability.ts";
 import type { SweepResult } from "./sweep.ts";
 import type { Turnover } from "./turnover.ts";
@@ -460,5 +461,56 @@ export function renderSweep(r: SweepResult, opts: RenderOpts): string {
     out.push(line, `        ${paint(gateDetail(g), "dim", color)}`);
     if (g.lostCases.length) out.push(`        lost: ${idList(g.lostCases)}`);
   }
+  return out.join("\n");
+}
+
+const NO_CI = { mean: NaN, lo: NaN, hi: NaN };
+const signedCi = (d: { mean: number; lo: number; hi: number }) => `${signedPct(d.mean)} [${signedPct(d.lo)}, ${signedPct(d.hi)}]`;
+const flipList = (ids: readonly string[] | undefined, count: number | undefined) =>
+  !count ? "—" : `${count}${ids?.length ? `: ${ids.join(", ")}${count > ids.length ? ", …" : ""}` : ""}`;
+
+/** The delta block `exp run` prints in a session: this run against the previous one on the dataset. */
+export function renderSessionDelta(b: ExperimentBlock, opts: RenderOpts & { session?: string }): string[] {
+  const color = opts.color;
+  const d = b.delta;
+  const head = opts.session ? `session ${opts.session}` : "previous run";
+  if (!d) return [paint(`${head}: first run on ${b.dataset.id}`, "dim", color)];
+  if (!d.paired) return [`${head}: vs ${d.vs} not paired ${paint(`(${d.reason ?? "different runs"})`, "dim", color)}`];
+  const vColor = d.verdict === "better" ? "green" : d.verdict === "worse" ? "red" : "dim";
+  const out = [`${head}: vs ${d.vs}${b.changed?.length ? paint(`  changed ${b.changed.join(", ")}`, "dim", color) : ""}`];
+  out.push(
+    `pass    ${pct(d.before ?? NaN)} → ${pct(d.after ?? NaN)}  Δ ${paint(signedCi(d.diff ?? NO_CI), vColor, color)}  mcnemar p=${pValue(d.p ?? NaN)} ` +
+      paint(`(${d.pairedCases ?? 0} paired cases, 95% CI)`, "dim", color),
+  );
+  for (const g of d.graders ?? []) {
+    // A grader's change is coloured only when its CI excludes 0.
+    const gColor = g.diff.lo > 0 ? "green" : g.diff.hi < 0 ? "red" : undefined;
+    const text = signedCi(g.diff);
+    out.push(`grader  ${g.id}  score Δ ${gColor ? paint(text, gColor, color) : text}`);
+  }
+  out.push(`fixed   ${flipList(d.fixed, d.fixedCount)}`);
+  out.push(`broke   ${flipList(d.broke, d.brokeCount)}`);
+  return out;
+}
+
+/** `exp session summary`: one line per experiment, note and command, oldest first. */
+export function renderSessionSummary(s: Pick<ExpSession, "id" | "name">, blocks: readonly SessionBlock[], opts: RenderOpts): string {
+  const color = opts.color;
+  const when = (at: number) => new Date(at).toISOString().slice(0, 16).replace("T", " ");
+  const out = [`${paint("session", "bold", color)} ${s.name ? `${s.name} ` : ""}${paint(s.id, "dim", color)}`];
+  if (!blocks.length) out.push(paint("no runs or notes yet; coding.sh exp run <spec> in this folder joins it", "dim", color));
+  let exps = 0;
+  for (const b of blocks) {
+    if (b.kind === "note") out.push(`${when(b.at)}  ${paint("note", "cyan", color)}  ${truncate(b.text, 160)}`);
+    else if (b.kind === "command") out.push(paint(`${when(b.at)}  $ ${truncate(b.command, 160)}`, "dim", color));
+    else {
+      exps++;
+      const d = b.delta;
+      const delta = !d ? "" : !d.paired ? `  not paired vs ${d.vs}` : `  Δ ${signedCi(d.diff ?? NO_CI)} p=${pValue(d.p ?? NaN)} fixed ${d.fixedCount ?? 0} broke ${d.brokeCount ?? 0}`;
+      const changed = b.changed?.length ? paint(`  changed ${b.changed.join(", ")}`, "dim", color) : "";
+      out.push(`${when(b.at)}  ${b.expId}  ${b.mode.padEnd(7)}  ${b.dataset.id}  ${pct(b.passRate.p)} (${b.passed}/${b.n - b.ungraded})${delta}${changed}`);
+    }
+  }
+  if (exps) out.push(paint(`${exps} experiment${exps === 1 ? "" : "s"}`, "dim", color));
   return out.join("\n");
 }

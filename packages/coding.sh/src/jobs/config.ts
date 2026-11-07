@@ -34,23 +34,42 @@ export function configChanges(was: JobConfig, now: JobConfig): string[] {
  */
 export function taskFingerprint(spec: unknown, cwd = process.cwd()): unknown {
   if (!spec || typeof spec !== "object" || Array.isArray(spec)) return spec;
-  const s = spec as { kind?: unknown; command?: unknown; args?: unknown; cwd?: unknown };
+  const s = spec as { kind?: unknown; command?: unknown };
   if (s.kind !== "command" || typeof s.command !== "string") {
     const entries = Object.entries(spec);
     return entries.some(([, v]) => typeof v === "function") ? Object.fromEntries(entries.filter(([, v]) => typeof v !== "function")) : spec;
   }
-  const base = typeof s.cwd === "string" ? resolve(cwd, s.cwd) : cwd;
   const files: Record<string, string> = {};
-  const words = [s.command, ...(Array.isArray(s.args) ? s.args : [])].filter((x): x is string => typeof x === "string");
-  // A one-string command line ("node agent.mjs") names its files as words.
-  for (const w of words.flatMap((x) => (x.includes(" ") && !existsSync(resolve(base, x)) ? x.split(/\s+/) : [x]))) {
-    const p = isAbsolute(w) ? w : resolve(base, w);
+  for (const { word, path } of commandFiles(spec, cwd)) {
     try {
-      if (!existsSync(p) || !statSync(p).isFile() || statSync(p).size > 16 * 1024 * 1024) continue;
-      files[w] = sha256Hex(readFileSync(p)).slice(0, 16);
+      files[word] = sha256Hex(readFileSync(path)).slice(0, 16);
     } catch {
       // unreadable: the spec alone
     }
   }
   return Object.keys(files).length ? { spec, files } : spec;
+}
+
+/**
+ * The files a command spec (a command task or grader) names: the program and
+ * every argument that is a file under 16 MB, relative to its `cwd` (default
+ * `cwd`). A one-string command line ("node agent.mjs") names its files as words.
+ */
+export function commandFiles(spec: unknown, cwd = process.cwd()): { word: string; path: string }[] {
+  if (!spec || typeof spec !== "object" || Array.isArray(spec)) return [];
+  const s = spec as { command?: unknown; args?: unknown; cwd?: unknown };
+  if (typeof s.command !== "string") return [];
+  const base = typeof s.cwd === "string" ? resolve(cwd, s.cwd) : cwd;
+  const out: { word: string; path: string }[] = [];
+  const words = [s.command, ...(Array.isArray(s.args) ? s.args : [])].filter((x): x is string => typeof x === "string");
+  for (const w of words.flatMap((x) => (x.includes(" ") && !existsSync(resolve(base, x)) ? x.split(/\s+/) : [x]))) {
+    const p = isAbsolute(w) ? w : resolve(base, w);
+    try {
+      if (!existsSync(p) || !statSync(p).isFile() || statSync(p).size > 16 * 1024 * 1024) continue;
+      out.push({ word: w, path: p });
+    } catch {
+      // unreadable: not a file we can watch
+    }
+  }
+  return out;
 }

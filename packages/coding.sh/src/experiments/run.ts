@@ -187,6 +187,28 @@ async function attemptTask(env: TrialEnv, c: Case, trial: number): Promise<{ out
   }
 }
 
+/** Every grader on one output; a grader that throws gives an error outcome, not a fail. Shared by runTrial and regradeExperiment. */
+export async function gradeOne(graders: readonly Grader[], c: Case, output: unknown, trace?: TraceEvent[], signal?: AbortSignal): Promise<GraderOutcome[]> {
+  return Promise.all(
+    graders.map(async (g): Promise<GraderOutcome> => {
+      try {
+        const result = await g.grade({
+          input: c.input,
+          output,
+          expected: c.expected,
+          caseId: c.id,
+          ...(c.metadata ? { metadata: c.metadata } : {}),
+          ...(trace ? { trace } : {}),
+          ...(signal ? { signal } : {}),
+        });
+        return { graderId: g.id, result };
+      } catch (e) {
+        return { graderId: g.id, error: errMessage(e) };
+      }
+    }),
+  );
+}
+
 /**
  * Run and grade one case-trial, retrying infrastructure errors with backoff.
  * Undefined when it was not run (stopped before it started) or the signal
@@ -206,27 +228,7 @@ export async function runTrial(env: TrialEnv, c: Case, trial: number): Promise<C
   });
   const { output, trace, error } = tried.result;
   const latencyMs = Math.round((performance.now() - t0) * 100) / 100;
-  const grades: GraderOutcome[] =
-    error !== undefined || signal?.aborted
-      ? []
-      : await Promise.all(
-          graders.map(async (g): Promise<GraderOutcome> => {
-            try {
-              const result = await g.grade({
-                input: c.input,
-                output,
-                expected: c.expected,
-                caseId: c.id,
-                ...(c.metadata ? { metadata: c.metadata } : {}),
-                ...(trace ? { trace } : {}),
-                ...(signal ? { signal } : {}),
-              });
-              return { graderId: g.id, result };
-            } catch (e) {
-              return { graderId: g.id, error: errMessage(e) };
-            }
-          }),
-        );
+  const grades: GraderOutcome[] = error !== undefined || signal?.aborted ? [] : await gradeOne(graders, c, output, trace, signal);
   // The abort cut this case-trial short (killed task or grader): its outcome says nothing about the agent.
   if (signal?.aborted) return undefined;
   const ungraded = tried.infra !== undefined || (error === undefined && grades.some((g) => g.error !== undefined));
@@ -364,6 +366,75 @@ export async function runExperiment(opts: RunExperimentOpts): Promise<Experiment
     ...(opts.metadata ? { metadata: opts.metadata } : {}),
   });
   if (opts.store) await storeResult(opts.store, result);
+  return result;
+}
+
+export interface RegradeOpts {
+  /** The stored experiment whose outputs are graded again. */
+  result: ExperimentResult;
+  /** Its dataset (any version with the same id; a different version only warns). */
+  dataset: Dataset;
+  graders: readonly Grader[];
+  concurrency?: number;
+  /** Aborting returns a "cancelled" result, which is never stored. */
+  signal?: AbortSignal;
+  store?: FileEvalStore;
+  id?: string;
+  name?: string;
+  onWarn?: (message: string) => void;
+  onProgress?: (done: number, total: number) => void;
+}
+
+/**
+ * Grade a stored experiment's outputs again with (new) graders, without
+ * calling the task: a grader change is a new measurement of the same outputs
+ * (X-21). Runs whose task errored or failed on infrastructure are copied as
+ * they were. Stored runs keep no trace, so graders that read one see none
+ * (`metadata.regradeNoTrace`). The result is a new experiment with
+ * `metadata.regradeOf` set; it is stored only when it completed.
+ */
+export async function regradeExperiment(o: RegradeOpts): Promise<ExperimentResult> {
+  const prev = o.result;
+  if (o.dataset.id !== prev.dataset.id) throw new Error(`experiment ${prev.id} ran on dataset ${prev.dataset.id}, not ${o.dataset.id}`);
+  if (o.dataset.version !== prev.dataset.version) o.onWarn?.(`dataset ${o.dataset.id} is at version ${o.dataset.version}; ${prev.id} ran on ${prev.dataset.version}, so expected values may differ`);
+  const graders = await prepareGraders(o.graders, o.store);
+  const cases = new Map(o.dataset.cases.map((c) => [c.id, c]));
+  let missing = 0;
+  let done = 0;
+  const createdAt = Date.now();
+  const settled = await mapPool(prev.runs, o.concurrency ?? 4, async (run): Promise<CaseRun | undefined> => {
+    if (o.signal?.aborted) return undefined;
+    const c = cases.get(run.caseId);
+    if (run.error !== undefined || run.infra || !c) {
+      if (!c && run.error === undefined && !run.infra) missing++;
+      o.onProgress?.(++done, prev.runs.length);
+      return run;
+    }
+    const grades = await gradeOne(graders, c, run.output, undefined, o.signal);
+    if (o.signal?.aborted) return undefined;
+    const ungraded = grades.some((g) => g.error !== undefined);
+    const { ungraded: _u, ...rest } = run;
+    const next: CaseRun = { ...rest, grades, pass: !ungraded && grades.every((g) => g.result?.pass === true) };
+    if (ungraded) next.ungraded = true;
+    o.onProgress?.(++done, prev.runs.length);
+    return next;
+  });
+  if (missing) o.onWarn?.(`${missing} run(s) name cases that are not in dataset ${o.dataset.id}@${o.dataset.version}; they keep their old grades`);
+  const result = experimentResult({
+    id: o.id ?? sortableId("exp_"),
+    name: o.name ?? prev.name,
+    status: settled.some((r) => r === undefined) ? "cancelled" : "completed",
+    dataset: o.dataset,
+    ...(prev.dataset.split ? { split: prev.dataset.split } : {}),
+    task: prev.task,
+    graders,
+    trials: prev.trials,
+    createdAt,
+    runs: settled.filter((r): r is CaseRun => r !== undefined),
+    boot: { iters: 2000, seed: 0x5eed },
+    metadata: { ...prev.metadata, regradeOf: prev.id, regradeNoTrace: true },
+  });
+  if (o.store && result.status === "completed") await storeResult(o.store, result);
   return result;
 }
 

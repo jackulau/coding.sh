@@ -491,14 +491,27 @@ export const COMMANDS: CommandSpec[] = [
             default: "true",
           },
           { name: "series", type: "string", value: "<NAME>", desc: "Tag the experiment as the next round of an iteration loop and print whether the loop should stop (see exp plateau)" },
+          { name: "watch", type: "boolean", desc: "Rerun on every change to the spec, the task's script, grader files or --watch-path; a grader-only change regrades the stored outputs. Enter reruns, q quits" },
+          { name: "watch-path", type: "list", value: "<GLOB>", desc: "With --watch: more files whose change reruns the task (repeatable; also the spec's \"watch\" field)" },
+          { name: "session", type: "boolean", desc: "In an experiment session (exp session new), add the run to its timeline and print the delta against the previous run; --no-session skips it", default: "true" },
           ...durableFlags("experiment"),
         ],
         graceful: true,
         examples: [
-          "coding.sh exp run -d smoke -g '{\"kind\":\"exact\"}' --arm base=base.json --arm cand=cand.json",
+          "coding.sh exp run spec.json --watch",
           "coding.sh exp run -d smoke -g '{\"kind\":\"exact\"}' --arm base=base.json --arm cand=cand.json --stop-early --max-cases 400",
           "coding.sh exp run spec.json --resume",
         ],
+      },
+      {
+        name: "session",
+        summary: "Group runs into a session: new, note <text>, summary. exp run in it prints the delta against the previous run",
+        args: [
+          { name: "command", desc: "new, note or summary", required: true },
+          { name: "text", desc: "With note: the note (hypothesis before a run, what you saw after it)", variadic: true },
+        ],
+        flags: [{ name: "name", type: "string", value: "<TOPIC>", desc: "With new: the session's name" }],
+        examples: ["coding.sh exp session new --name shorter-prompt", 'coding.sh exp session note "hypothesis: the shorter prompt fixes c3"', "coding.sh exp session summary --json"],
       },
       {
         name: "compare",

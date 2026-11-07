@@ -75,6 +75,21 @@ const COMPARE = [
   `c_756966685591eb9b  100%  ${no("0%")}  -100pp`,
 ].join("\n");
 
+// Real output of scripts/e2e/exp-session-watch.mjs (2026-11-07): a command agent and an LLM judge against a stub model.
+const SESSION = [
+  `${m("$")} ${t("coding.sh exp run spec.json")}`,
+  m("…"),
+  `session shout: vs exp_01M6W03B3SPG7NSG4MEM9T032J  ${m("changed prompt.md")}`,
+  `pass    0.0% → 100.0%  Δ ${ok("+100.0pp [+100.0pp, +100.0pp]")}  mcnemar p=0.125 ${m("(4 paired cases, 95% CI)")}`,
+  `grader  caps  score Δ ${ok("+100.0pp [+100.0pp, +100.0pp]")}`,
+  `fixed   4: alpha, beta, delta, gamma`,
+  `broke   —`,
+  "",
+  `${m("$")} ${t("coding.sh exp run spec.json --watch")}`,
+  `15:54:41  run     exp_01M6W03CN9P1ZE633C2RXPGVYQ  pass 100.0% (4/4)  4 case runs`,
+  `15:54:41  regrade exp_01M6W03D5H1YEKWWXWGNCGN7MF  pass 75.0% (3/4)  regrade of exp_01M6W03CN9P1ZE633C2RXPGVYQ, 0 task calls`,
+].join("\n");
+
 // Real output of scripts/e2e/exp-ab-capture.mjs (2026-11-07): three Claude Code sessions against a stub
 // model.
 const AB = [
@@ -235,6 +250,23 @@ const AB = [
     that would inflate the pass rate. A trial that still hits infrastructure errors is left out of the pass rate and runs again on
     <code>--resume</code>. <code>--trial-timeout</code> caps each trial. <code>exp status</code> shows each run's progress, ETA and cost so
     far.
+  </p>
+
+  <h2 id="sessions">Sessions and watch <Tag status="built" /></h2>
+  <p>
+    <code>coding.sh exp session new --name &lt;topic&gt;</code> starts a session in the current folder. Every <code>exp run</code> there or
+    below joins it and, as it finishes, is compared with the previous run on the same dataset, so the delta prints without an
+    <code>exp compare</code>. It names the files that changed since that run. Runs on different dataset versions are not paired.
+    <code>exp session note</code> records the hypothesis before a run and the reading after it, and <code>exp session summary</code> prints
+    the timeline. <code>--no-session</code> keeps a run out.
+  </p>
+  <Terminal title="~/shout" label="Output of coding.sh exp run in a session and with --watch">
+    <Fragment set:html={SESSION} />
+  </Terminal>
+  <p>
+    <code>exp run spec.json --watch</code> reruns whenever the spec, the agent script, a grader file or a <code>watch</code> entry changes.
+    A save mid-run aborts that run and stores nothing from it. A change to the graders alone regrades the last outputs with no agent calls.
+    A spec that fails to parse is reported and watching goes on. Enter reruns, <code>q</code> quits.
   </p>
 
   <h2 id="metrics">Metric A/B <Tag status="built" /></h2>

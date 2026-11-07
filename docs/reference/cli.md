@@ -657,6 +657,7 @@ coding.sh exp <action>
 |---|---|
 | [`ab`](#codingsh-exp-ab) | A/B a CLAUDE.md, AGENTS.md, rule or skill edit on the decision points your agent recently got wrong |
 | [`run`](#codingsh-exp-run) | Run an experiment, or two tasks as one interleaved A/B |
+| [`session`](#codingsh-exp-session) | Group runs into a session: new, note &lt;text&gt;, summary. exp run in it prints the delta against the previous run |
 | [`compare`](#codingsh-exp-compare) | Compare two experiments case by case |
 | [`aa`](#codingsh-exp-aa) | Run one config twice (A/A) and store its run-to-run noise |
 | [`sweep`](#codingsh-exp-sweep) | Race task configs with sequential halving, then re-score the winner on held-out cases |
@@ -743,14 +744,40 @@ coding.sh exp run [spec] [options]
 | `--seed <N>` |  | With --arm: seed for the case and arm order (default random, recorded) |
 | `--control` | `true` | A continuation task needs a control arm (A, the recorded config) to measure replay noise; --no-control runs one task alone and marks the result. |
 | `--series <NAME>` |  | Tag the experiment as the next round of an iteration loop and print whether the loop should stop (see exp plateau) |
+| `--watch` |  | Rerun on every change to the spec, the task's script, grader files or --watch-path; a grader-only change regrades the stored outputs. Enter reruns, q quits. |
+| `--watch-path <GLOB>` |  | With --watch: more files whose change reruns the task (repeatable; also the spec's "watch" field) |
+| `--session` | `true` | In an experiment session (exp session new), add the run to its timeline and print the delta against the previous run; --no-session skips it. |
 | `--resume [<ID>]` |  | Continue an interrupted experiment: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 
 ```sh
-coding.sh exp run -d smoke -g '{"kind":"exact"}' --arm base=base.json --arm cand=cand.json
+coding.sh exp run spec.json --watch
 coding.sh exp run -d smoke -g '{"kind":"exact"}' --arm base=base.json --arm cand=cand.json --stop-early --max-cases 400
 coding.sh exp run spec.json --resume
+```
+
+### `coding.sh exp session`
+
+Group runs into a session: new, note <text>, summary. exp run in it prints the delta against the previous run.
+
+```text
+coding.sh exp session <COMMAND> [text]... [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `command` | yes | new, note or summary. |
+| `text` | no | With note: the note (hypothesis before a run, what you saw after it) Takes the rest of the arguments. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--name <TOPIC>` |  | With new: the session's name. |
+
+```sh
+coding.sh exp session new --name shorter-prompt
+coding.sh exp session note "hypothesis: the shorter prompt fixes c3"
+coding.sh exp session summary --json
 ```
 
 ### `coding.sh exp compare`
