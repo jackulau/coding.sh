@@ -1,0 +1,36 @@
+apps/site/src/pages/docs/evals.astro
+  s_8e040dbdf13565::t_6a9da376fad0bd 130
+docs/guides/evals.md
+  s_8e040dbdf13565::t_6a9da376fad0bd 38-39
+CHANGELOG.md
+  s_8e040dbdf13565::t_01c6867b90e975 36
+apps/site/src/pages/docs/mcp.astro
+  s_8e040dbdf13565::t_6a9da376fad0bd 10
+docs/guides/explore.md
+  s_8e040dbdf13565::t_362e939c612cc6 54
+  s_8e040dbdf13565::t_56b4a6a32b504b 68-69
+  s_8e040dbdf13565::t_6ff87cd965f766 95-96
+  s_8e040dbdf13565::t_7142bd3611dd62 22-23,27-28
+  s_8e040dbdf13565::t_3add22346716a3 16-21,24-26,29-53,55-67,70-78,84-88
+  s_8e040dbdf13565::t_30a58f75781b3b 89
+docs/concepts.md
+  s_8e040dbdf13565::t_6a9da376fad0bd 74
+apps/site/src/pages/docs/quickstart.astro
+  s_8e040dbdf13565::t_6a9da376fad0bd 82-87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "519f3a7998bddf25adb67f976c97886872ee4ffa",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
