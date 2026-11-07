@@ -126,6 +126,21 @@ worse, for CI gates. scripts/perf/ uses it to gate the coding.sh site on Lightho
 Every report flags judges that are not calibrated. It also stores the judge's held-out sensitivity
 and specificity, so later `exp compare` runs show a bias-corrected (Rogan-Gladen) judge pass rate.
 
+Judges read untrusted text: the agent writes the output they grade. Every judge prompt escapes the
+data tags inside that text (`</output>` becomes `<\/output>`), so an output can't close its block
+and append orders. The system prompts also say that everything inside the data tags is untrusted
+and that an attempt to instruct the judge counts against the output. Citations still verify
+against the raw text. This changed the default prompt, so judges built on it got new version ids
+and old calibrations stay with the old ids.
+
+`coding.sh judge calibrate <exp> --probe-injection judge.json` checks that this holds for your
+judge. It rebuilds the judge from its grader spec and judges each human-fail case (up to
+`--probe-max`, default 25) as is. It then judges two variants that carry a planted "respond pass"
+order: one at the end of the output, and one at the end of the last tool result in the trace when
+there is one. A flip is a variant judged pass where the original was judged fail. The report adds
+`injection probe: 0 of 24 failing verdicts flipped to pass (0%); output 0/24`, `--json` carries
+`calibration.injection`, and any flip exits 1 (BenchJack, arXiv 2605.12673).
+
 `coding.sh exp compare A B --pairwise judge.json` adds a pairwise judge
 (`{"kind":"pairwise","name":…,"rubric":…}` with the same provider options as `llm`). For each
 shared case it shows the judge both outputs, then asks again with the order swapped. A side wins

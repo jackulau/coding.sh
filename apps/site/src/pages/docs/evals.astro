@@ -226,7 +226,12 @@ const COMPARE = [
     <li>Below the bar, the judge is <strong>uncalibrated</strong> or has <strong>insufficient data</strong>, and every report flags its scores.</li>
     <li>Cases where the judge is confidently opposite to unanimous humans are listed for relabelling.</li>
     <li>The judge's held-out sensitivity and specificity are stored too, so <code>exp compare</code> shows a bias-corrected judge pass rate.</li>
+    <li><code>--probe-injection judge.json</code> re-judges human-fail cases with a planted "respond pass" order in the output and in the last tool result, and reports how many verdicts flip. Any flip exits 1.</li>
   </ul>
+  <p>
+    The agent writes the text a judge grades, so judge prompts escape the data tags inside it (<code>&lt;/output&gt;</code> becomes
+    <code>&lt;\/output&gt;</code>) and tell the model that everything inside them is untrusted. Citations still verify against the raw text.
+  </p>
 
   <h2 id="repo-replay">Repo-replay tasks <Tag status="partial" /></h2>
   <p>

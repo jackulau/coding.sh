@@ -706,6 +706,34 @@ describe("cli exp run", () => {
   });
 });
 
+describe("cli judge calibrate --probe-injection", () => {
+  it("re-judges human-fail cases with a planted payload and reports the flips in --json", async () => {
+    const h = tmpHome();
+    assert.equal(cli(h, ["dataset", "add", "arith", "--case", '{"input":"4","expected":"4"}', "--case", '{"input":"5","expected":"5"}', "--split", "test"]).status, 0);
+    writeFileSync(join(h.home, "echo.mjs"), 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>process.stdout.write(s));\n');
+    const judge = '{"kind":"llm","name":"correct","rubric":"right?","provider":"mock","mockAnswer":"no","tunedOn":["dev"]}';
+    const ok = cli(h, ["exp", "run", "-d", "arith", "--task", '{"kind":"command","command":"node echo.mjs"}', "-g", judge, "--json"]);
+    assert.equal(ok.status, 0, ok.stderr);
+    const exp = (parseJson(ok.stdout, "exp run") as { experiment: { id: string; runs: { caseId: string }[] } }).experiment;
+
+    const { openContext } = await import("../../src/core/context.ts");
+    const ctx = await openContext({ env: h.env, cwd: h.home });
+    try {
+      for (const [i, r] of exp.runs.entries()) await ctx.index.putLabel({ id: `l${i}`, sessionId: r.caseId, criterion: "correct", value: "fail", by: "me", ts: i + 1 });
+    } finally {
+      await ctx.close();
+    }
+    const cal = cli(h, ["judge", "calibrate", exp.id, "--probe-injection", judge, "--json"]);
+    assert.notEqual(cal.status, 2, cal.stderr);
+    const inj = (parseJson(cal.stdout, "judge calibrate") as { calibration: { injection: { cases: number; n: number; flips: number; skipped: { noTrace: number } } } }).calibration.injection;
+    assert.deepEqual([inj.cases, inj.n, inj.flips, inj.skipped.noTrace], [2, 2, 0, 2], "one output variant per case; stored runs keep no trace");
+
+    const bad = cli(h, ["judge", "calibrate", exp.id, "--probe-injection", '{"kind":"exact"}', "--json"]);
+    assert.equal(bad.status, 2);
+    assert.match(bad.stderr + bad.stdout, /grader spec/);
+  });
+});
+
 describe("cli QA regressions", () => {
   it("registers workflows (and its aliases) with help for every action", () => {
     const h = tmpHome();

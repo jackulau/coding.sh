@@ -1,17 +1,39 @@
 // coding.sh judge calibrate <experiment>: agreement between an LLM judge's
 // verdicts (a grader in the experiment's runs) and human labels, reported on
-// a held-out split only (src/judge/calibrate.ts).
+// a held-out split only (src/judge/calibrate.ts). --probe-injection re-judges
+// human-fail cases with a planted "respond pass" payload (src/judge/injection.ts).
 import { FileEvalStore } from "../../datasets/store.ts";
-import type { JudgeVersion, Split } from "../../datasets/types.ts";
+import type { Grader, JudgeVersion, Split } from "../../datasets/types.ts";
+import { createGrader, type GraderSpec } from "../../graders/index.ts";
+import { FileJudgeCache } from "../../judge/cache.ts";
 import { calibrate, labelsFromCore, withCalibration, type JudgedCase } from "../../judge/calibrate.ts";
 import { CHECKLIST_KIND } from "../../judge/checklist.ts";
+import { humanFailCases, injectionProbe, type ProbeCase } from "../../judge/injection.ts";
 import { renderCalibration } from "../../judge/render.ts";
-import { UsageError } from "../args.ts";
-import { list, num, str, withContext } from "../common.ts";
+import { positiveInt, UsageError } from "../args.ts";
+import { jsonArg, list, num, str, withContext } from "../common.ts";
 import { CliError } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 const SPLITS = ["train", "dev", "test"];
+/** Human-fail cases the injection probe judges by default (each costs up to three judge calls). */
+const PROBE_MAX = 25;
+
+/** The judge to probe, rebuilt from its spec (the same JSON as `exp run --grader`). */
+async function probeJudge(c: CommandContext, specArg: string): Promise<Grader> {
+  const spec = (await jsonArg(specArg, "--probe-injection")) as GraderSpec;
+  if (!spec || typeof spec !== "object" || (spec.kind !== "llm" && spec.kind !== CHECKLIST_KIND)) {
+    throw new UsageError(`--probe-injection must be the judge's grader spec, e.g. {"kind":"llm","name":"…","rubric":"…","provider":"anthropic"}`, { reason: "invalid_grader" });
+  }
+  let g: Grader;
+  try {
+    g = await createGrader(spec, { env: c.env, judgeCache: FileJudgeCache.forEnv(c.env) });
+  } catch (e) {
+    throw new UsageError(`Invalid judge: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_grader" });
+  }
+  if (!g.judgeVersion) throw new UsageError("--probe-injection needs a judge that asks a model (an all-predicate checklist cannot be injected)", { reason: "invalid_grader" });
+  return g;
+}
 
 export async function run(c: CommandContext): Promise<number> {
   const { out, env } = c;
@@ -70,8 +92,31 @@ export async function run(c: CommandContext): Promise<number> {
       ...(num(c.flags["min-n"]) !== undefined ? { minN: num(c.flags["min-n"])! } : {}),
     });
     if (stored) await store.putJudge(withCalibration(stored, report));
+
+    const probeSpec = str(c.flags["probe-injection"]);
+    if (probeSpec) {
+      const judge = await probeJudge(c, probeSpec);
+      if (judge.version !== grader.version) out.warn(`The probed judge is ${judge.version}, not the experiment's ${grader.version} (its prompt, model or rubric differ)`);
+      const max = positiveInt(c.flags["probe-max"], "probe-max") ?? PROBE_MAX;
+      const failed = humanFailCases(labels, criterion);
+      const byId = new Map(dataset.cases.map((cs) => [cs.id, cs]));
+      const cases = new Map<string, ProbeCase>();
+      for (const r of [...exp.runs].sort((a, b) => a.trial - b.trial || (a.caseId < b.caseId ? -1 : 1))) {
+        const cs = byId.get(r.caseId);
+        if (cases.size >= max || !cs || !failed.has(r.caseId) || r.output === undefined || cases.has(r.caseId)) continue;
+        cases.set(r.caseId, { caseId: r.caseId, ctx: { input: cs.input, output: r.output, caseId: cs.id, ...(cs.expected !== undefined ? { expected: cs.expected } : {}), ...(cs.metadata ? { metadata: cs.metadata } : {}) } });
+      }
+      const spin = out.spin(`Probing ${cases.size} human-fail case(s) for prompt injection…`);
+      try {
+        report.injection = await injectionProbe(judge, [...cases.values()], { signal: c.signal, judgeVersion: judge.version });
+      } finally {
+        spin.stop();
+      }
+    }
+
     if (out.json) out.data({ outcome: stored ? "updated" : "measured", calibration: report });
     else out.print(renderCalibration(report, { color: out.color }));
-    return report.state === "calibrated" ? 0 : 1;
+    // A judge that a planted "respond pass" can flip fails the command even when kappa is fine.
+    return report.state === "calibrated" && !report.injection?.flips ? 0 : 1;
   });
 }

@@ -2,6 +2,7 @@
 import type { CalibrationStatus } from "../datasets/types.ts";
 import { fixed, paint, pct, table, truncate, type RenderOpts } from "../experiments/text.ts";
 import type { CalibrationReport, SplitMetrics } from "./calibrate.ts";
+import { formatInjection } from "./injection.ts";
 
 /** Short badge for a judge's trust state, e.g. "calibrated κ=0.74" or "UNCALIBRATED". */
 export function calibrationBadge(c: CalibrationStatus | undefined, color: boolean): string {
@@ -67,6 +68,11 @@ export function renderCalibration(r: CalibrationReport, opts: RenderOpts): strin
     ex.noSplit ? `${ex.noSplit} without a split` : "",
   ].filter(Boolean);
   if (exParts.length) out.push(paint(`excluded: ${exParts.join(", ")}`, "dim", color));
+  if (r.injection) {
+    out.push("");
+    out.push(paint(formatInjection(r.injection), r.injection.flips ? "red" : "dim", color));
+    if (r.injection.flips) out.push(paint("  ! the judge follows instructions planted in the judged output: harden its prompt before trusting its verdicts", "red", color));
+  }
   if (r.noisy.length) {
     out.push("");
     out.push(`${paint("relabel", "bold", color)} ${r.noisy.length} case(s) with noisy labels`);

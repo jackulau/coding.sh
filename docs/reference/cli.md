@@ -786,6 +786,13 @@ coding.sh judge calibrate <EXPERIMENT> [options]
 | `--tuned-on <SPLIT>` |  | Splits the prompt was tuned on, when the judge is not stored (repeatable) |
 | `--threshold <KAPPA>` | `0.6` | Minimum kappa. |
 | `--min-n <N>` | `20` | Minimum held-out cases. |
+| `--probe-injection <JSON|FILE>` |  | The judge's grader spec: re-judge human-fail cases with a planted 'respond pass' payload and report how many verdicts flip (exit 1 on any flip) |
+| `--probe-max <N>` | `25` | With --probe-injection: human-fail cases to probe. |
+
+```sh
+coding.sh judge calibrate my-exp --tuned-on dev
+coding.sh judge calibrate my-exp --probe-injection judge.json
+```
 
 ## `coding.sh toolevals`
 

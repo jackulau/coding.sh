@@ -13,6 +13,7 @@ import type { CalibrationState, CalibrationStatus, Dataset, JudgeVersion, Split 
 import { cohenKappa } from "../stats/agreement.ts";
 import { mulberry32 } from "../stats/prng.ts";
 import { quantileSorted } from "../stats/summary.ts";
+import type { InjectionReport } from "./injection.ts";
 
 /** Minimum held-out Cohen's κ for a judge to count as calibrated (one value, everywhere). */
 export const DEFAULT_KAPPA_THRESHOLD = 0.6;
@@ -97,6 +98,8 @@ export interface CalibrationReport extends SplitMetrics {
   noisy: NoisyCase[];
   status: CalibrationStatus;
   ts: number;
+  /** Prompt-injection probe on human-fail cases (`judge calibrate --probe-injection`); never changes `status`. */
+  injection?: InjectionReport;
 }
 
 export interface CalibrateOpts {

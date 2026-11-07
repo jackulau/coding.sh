@@ -40,6 +40,12 @@ export interface JudgeOptions extends RenderLimits {
   concurrency?: number;
   /** Extra attempts when the reply has no parseable verdict. Default 1. */
   parseRetries?: number;
+  /**
+   * Render untrusted data without escaping its tags. Never set this for a real
+   * judge: it exists so an injection probe can show what the escaping prevents.
+   * It is part of the version (params.noEscape), so it never shares a cache entry.
+   */
+  unsafeNoEscape?: boolean;
 }
 
 export interface Judge {
@@ -57,7 +63,7 @@ export function judgeVersionFor(opts: JudgeOptions): JudgeVersion {
   if (opts.maxFieldChars !== undefined) limits.maxFieldChars = opts.maxFieldChars;
   if (opts.maxEventChars !== undefined) limits.maxEventChars = opts.maxEventChars;
   if (opts.maxTraceChars !== undefined) limits.maxTraceChars = opts.maxTraceChars;
-  const params = { ...opts.provider.params, passThreshold, ...limits };
+  const params = { ...opts.provider.params, passThreshold, ...limits, ...(opts.unsafeNoEscape ? { noEscape: true } : {}) };
   const promptHash = sha256Hex(`${system}\u001f${template}`);
   const h = shortHash({ provider: opts.provider.name, model: opts.provider.model, promptHash, rubric: opts.rubric, criterion, params }, 12);
   const v: JudgeVersion = {
@@ -158,6 +164,7 @@ export function createJudge(opts: JudgeOptions): Judge {
           ...(opts.maxFieldChars !== undefined ? { maxFieldChars: opts.maxFieldChars } : {}),
           ...(opts.maxEventChars !== undefined ? { maxEventChars: opts.maxEventChars } : {}),
           ...(opts.maxTraceChars !== undefined ? { maxTraceChars: opts.maxTraceChars } : {}),
+          ...(opts.unsafeNoEscape ? { escape: false } : {}),
         },
         ctx,
       );
