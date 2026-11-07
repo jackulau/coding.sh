@@ -1,0 +1,58 @@
+packages/coding.sh/test/store/fs-blobs.test.ts
+  s_8e040dbdf13565::t_15caae605a400b 127-128
+  s_8e040dbdf13565::t_b87d40d4460877 87-88,99,103-119,122-126,129-145
+  s_8e040dbdf13565::t_81e6b4104b69dc 120-121
+packages/coding.sh/test/core/ingest.test.ts
+  s_8e040dbdf13565::t_4425d4cd052448 7,293,295
+  s_8e040dbdf13565::t_c5bd6067482806 289-292,294,296-315
+packages/coding.sh/src/store/fs-blobs.ts
+  s_8e040dbdf13565::t_0778faacd33f58 329-346
+  s_8e040dbdf13565::t_accafa02250a11 66-74,76-77,79-81,83-86,88,90,92,94,98-99,102,104-105,107-158
+  s_8e040dbdf13565::t_a397e3d853157d 8-10,17,23,26,31,33,35-41
+  s_8e040dbdf13565::t_1a46cf6bd13d30 3-7,11-16,34,75,87,89,91,93,95-97,100-101,103,106
+  s_8e040dbdf13565::t_c19c9db88f26d6 32
+  s_8e040dbdf13565::t_230e79d196d5c1 42
+packages/coding.sh/src/core/ingest.ts
+  s_8e040dbdf13565::t_4cc8d87746cdd9 332-345,372,416-433,436-437,835-837,859
+  s_8e040dbdf13565::t_d4c8f84912c5e4 348
+  s_8e040dbdf13565::t_c764a7e48a924b 771,919-920
+  s_8e040dbdf13565::t_dfe41750276e74 241-247
+  s_8e040dbdf13565::t_67303002f041f0 288-291,306
+packages/coding.sh/src/store/sqlite.ts
+  s_8e040dbdf13565::t_6dc4ba9f42f5a8 462-473,486-502
+  s_8e040dbdf13565::t_b046e0dd921c19 503-504
+CHANGELOG.md
+  s_8e040dbdf13565::t_e26a86fe0cf2cf 27
+packages/coding.sh/src/store/conformance.ts
+  s_8e040dbdf13565::t_c88c3c8b33bd50 659-676
+  s_8e040dbdf13565::t_1bc4a3625d0f6c 296-329
+packages/coding.sh/src/core/types.ts
+  s_8e040dbdf13565::t_3610ef0f90b166 169-177
+  s_8e040dbdf13565::t_84f8cf70a0af70 227-238
+packages/coding.sh/test/core/ingest-crash.test.ts
+  s_8e040dbdf13565::t_25a4342406549d 1,8-88,95,97-108,111-116,118-127,140-145,149-157
+  s_8e040dbdf13565::t_61b2c6474720f4 2-7,89-94,96,109-110,117,128-139,146-148
+packages/coding.sh/test/core/fixtures/ingest-child.ts
+  s_8e040dbdf13565::t_fbc94676661451 2-4,8-18
+  s_8e040dbdf13565::t_b3035e7a5ff94d 1,5-7,19-21
+packages/coding.sh/src/store/durable.ts
+  s_8e040dbdf13565::t_196ec1f0103ea2 1,5,31-38,42,44,47,58-61
+  s_8e040dbdf13565::t_a84cd75c53d80f 20-30,39-40,55
+  s_8e040dbdf13565::t_a3c3ad8b356606 62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "24304ff405f5221d19422d0ac36bdf99b9f11a0b",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
