@@ -14,6 +14,8 @@ import { findChrome, launchBrowser, type Browser, type Page } from "./browser.ts
 import { FakeBlobs, FakeIndex, costFixtures, event, experimentResult, failedRequestFixtures, session } from "./fakes.ts";
 
 const chrome = findChrome();
+// Every CI leg (Linux, macOS, Windows) has a Chrome: there, a skipped viewer suite is a bug.
+if (!chrome && process.env.GITHUB_ACTIONS) throw new Error("no Chrome found on CI; set CODING_SH_TEST_CHROME");
 const T0 = 1_762_400_000_000;
 // Real-looking ids: long enough that the eval command overflows a phone screen.
 const PARENT = "4b9889a2-c0d2-4046-9d28-6b07d00c01a8";

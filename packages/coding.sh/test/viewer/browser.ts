@@ -7,20 +7,31 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-export function findChrome(): string | undefined {
-  const env = process.env.CODING_SH_TEST_CHROME;
-  if (env) {
-    if (!existsSync(env)) throw new Error(`CODING_SH_TEST_CHROME=${env} does not exist`);
-    return env;
+/** Where Chrome installs on Windows: machine-wide (64- and 32-bit) and per user. */
+export function windowsChromePaths(env: NodeJS.ProcessEnv = process.env): string[] {
+  return [env.PROGRAMFILES, env["PROGRAMFILES(X86)"], env.LOCALAPPDATA]
+    .filter((d): d is string => !!d)
+    .map((d) => join(d, "Google", "Chrome", "Application", "chrome.exe"));
+}
+
+export function findChrome(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string | undefined {
+  const pick = env.CODING_SH_TEST_CHROME;
+  if (pick) {
+    if (!existsSync(pick)) throw new Error(`CODING_SH_TEST_CHROME=${pick} does not exist`);
+    return pick;
   }
-  return [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "/usr/bin/google-chrome",
-    "/usr/bin/google-chrome-stable",
-    "/usr/bin/chromium",
-    "/usr/bin/chromium-browser",
-  ].find((p) => existsSync(p));
+  const known =
+    platform === "win32"
+      ? windowsChromePaths(env)
+      : [
+          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+          "/Applications/Chromium.app/Contents/MacOS/Chromium",
+          "/usr/bin/google-chrome",
+          "/usr/bin/google-chrome-stable",
+          "/usr/bin/chromium",
+          "/usr/bin/chromium-browser",
+        ];
+  return known.find((p) => existsSync(p));
 }
 
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
@@ -170,7 +181,10 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
           resolve();
         });
       });
-      rmSync(dir, { recursive: true, force: true });
+      // On Windows, Chrome's helpers can hold the profile for a moment after it exits.
+      try {
+        rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+      } catch {}
     },
   };
 }
