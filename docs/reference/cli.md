@@ -659,6 +659,7 @@ coding.sh exp <action>
 | [`run`](#codingsh-exp-run) | Run an experiment, or two tasks as one interleaved A/B |
 | [`session`](#codingsh-exp-session) | Group runs into a session: new, note &lt;text&gt;, summary. exp run in it prints the delta against the previous run |
 | [`compare`](#codingsh-exp-compare) | Compare two experiments case by case |
+| [`regrade`](#codingsh-exp-regrade) | Grade a stored experiment's outputs again with new graders, without calling the task, and show what flipped |
 | [`aa`](#codingsh-exp-aa) | Run one config twice (A/A) and store its run-to-run noise |
 | [`sweep`](#codingsh-exp-sweep) | Race task configs with sequential halving, then re-score the winner on held-out cases |
 | [`metrics`](#codingsh-exp-metrics) | A/B two metric commands (ms, bytes) in interleaved pairs |
@@ -813,6 +814,30 @@ coding.sh exp compare base cand --cluster repo
 coding.sh exp compare base cand --gate
 coding.sh exp compare base cand --matrix
 coding.sh exp compare base cand --pairwise judge.json
+```
+
+### `coding.sh exp regrade`
+
+Grade a stored experiment's outputs again with new graders, without calling the task, and show what flipped.
+
+```text
+coding.sh exp regrade <EXPERIMENT> [spec] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `experiment` | yes | Experiment id or name (newest) |
+| `spec` | no | Experiment spec JSON file whose graders to use (--grader overrides) |
+
+| Option | Default | Description |
+|---|---|---|
+| `-g, --grader <JSON|FILE>` |  | Grader spec (repeatable); replaces the spec's graders. |
+| `--name <NAME>` |  | Name of the regraded experiment (default: the original's) |
+| `-c, --concurrency <N>` | `4` | Parallel grader runs. |
+
+```sh
+coding.sh exp regrade base spec.json
+coding.sh exp regrade base -g strict.json --json
 ```
 
 ### `coding.sh exp aa`

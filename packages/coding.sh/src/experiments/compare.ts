@@ -45,6 +45,8 @@ export interface GraderDelta {
    * resample of the per-case score differences keeps the sign, and n*.
    */
   stability?: DirectionStability;
+  /** Set when A and B graded with different versions of this grader: its B − A mixes the change with a new measurement. */
+  versionChanged?: { a: string; b: string };
 }
 
 const unit = (x: unknown): x is number => typeof x === "number" && x >= 0 && x <= 1;
@@ -195,6 +197,17 @@ export interface Comparison {
   ungraded: { a: number; b: number };
   /** Set when either side has ungraded runs: the comparison covers only graded runs. */
   gradeWarning?: string;
+  /** Cases that ran on both sides but have no graded run on at least one, so they are not paired. Absent when none. */
+  ungradedCases?: string[];
+  /** Grader ids that graded only one side. Absent when both sides used the same graders. */
+  gradersOnlyIn?: { a: string[]; b: string[] };
+  /**
+   * Set when the two sides were not measured with the same instrument: a
+   * grader changed version, or graded one side only. The pass rate is a
+   * conjunction of every grader, so B − A then mixes the change under test
+   * with a change of measurement (regrade A with B's graders to separate them).
+   */
+  instrumentWarning?: string;
   paired: number;
   onlyInA: string[];
   onlyInB: string[];
@@ -381,6 +394,8 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     }
   }
   const timing = runTiming(a, b);
+  // A regrade reuses the other side's outputs: when it ran says nothing about drift.
+  if (b.metadata?.regradeOf === a.id || a.metadata?.regradeOf === b.id) delete timing.warning;
   const seq = timing.interleaved && a.pair?.experiments[0] === a.id && b.pair?.experiments[1] === b.id ? a.pair.sequential : undefined;
   const verdict: Comparison["verdict"] = seq ? seq.verdict : d.n > 0 && d.lo > 0 ? "better" : d.n > 0 && d.hi < 0 ? "worse" : "inconclusive";
   const byDelta = (x: CaseDelta, y: CaseDelta) => x.delta - y.delta || (x.caseId < y.caseId ? -1 : 1);
@@ -411,6 +426,14 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     return out;
   });
   const ungraded = { a: a.runs.filter((r) => r.ungraded).length, b: b.runs.filter((r) => r.ungraded).length };
+  const versionOf = (r: ExperimentResult, id: string) => r.graders.find((g) => g.id === id)?.version;
+  for (const g of graders) {
+    const va = versionOf(a, g.id);
+    const vb = versionOf(b, g.id);
+    if (va !== undefined && vb !== undefined && va !== vb) g.versionChanged = { a: va, b: vb };
+  }
+  const onlyA = a.graders.map((g) => g.id).filter((id) => !gIds.includes(id));
+  const onlyB = b.graders.map((g) => g.id).filter((id) => !gIds.includes(id));
   // Cases that ran on one side only are lost trials only when both sides ran the same cases.
   const sameData = a.dataset.id === b.dataset.id && a.dataset.version === b.dataset.version;
   const attA = armAttrition(a.runs, sameData ? onlyInB.length * a.trials : 0);
@@ -444,6 +467,13 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     ),
     turnover: turnover(outcomesByCase(a.runs), outcomesByCase(b.runs)),
   };
+  const ungradedCases = [...ranA].filter((id) => ranB.has(id) && !(ra.has(id) && rb.has(id))).sort();
+  if (ungradedCases.length) out.ungradedCases = ungradedCases;
+  if (onlyA.length || onlyB.length) out.gradersOnlyIn = { a: onlyA, b: onlyB };
+  // One side regrades the other's stored outputs: the same task outputs, so the grader change is all B − A measures.
+  const regrade = b.metadata?.regradeOf === a.id || a.metadata?.regradeOf === b.id;
+  const instrument = instrumentText(graders, onlyA, onlyB, regrade);
+  if (instrument) out.instrumentWarning = instrument;
   const hv = out.turnover.halves;
   if (verdict !== "inconclusive" && hv?.reversed.avg) {
     const span = (t: [number, number]) => (t[0] === t[1] ? `trial ${t[0]}` : `trials ${t[0]}-${t[1]}`);
@@ -496,7 +526,25 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
   if (opts.gate) {
     const g = acceptanceGate({ wins: improve, losses: regress, solved }, opts.gate);
     out.gate = { ...g, verdict: gateVerdict(g), lostCases, wonCases };
-    if (attrition.warning || out.gradeWarning) out.gate.note = "trials were lost to errors: the gate counts a task error as a failure and leaves ungraded runs out";
+    const notes = [
+      ...(attrition.warning || out.gradeWarning ? ["trials were lost to errors: the gate counts a task error as a failure and leaves ungraded runs out"] : []),
+      ...(out.instrumentWarning ? ["the arms were graded with different graders, so the gate also counts the grader change"] : []),
+    ];
+    if (notes.length) out.gate.note = notes.join("; ");
   }
   return out;
+}
+
+const shortVersion = (v: string) => (v.length > 12 ? v.slice(0, 12) : v);
+
+/** The instrument warning: graders that changed version or graded one side only; undefined when A and B were graded alike. */
+function instrumentText(graders: readonly GraderDelta[], onlyA: readonly string[], onlyB: readonly string[], regrade: boolean): string | undefined {
+  const parts: string[] = [];
+  const changed = graders.filter((g) => g.versionChanged);
+  if (changed.length) parts.push(`${changed.map((g) => `${g.id} (A ${shortVersion(g.versionChanged!.a)}, B ${shortVersion(g.versionChanged!.b)})`).join(", ")} changed version`);
+  if (onlyA.length) parts.push(`${onlyA.join(", ")} graded only A`);
+  if (onlyB.length) parts.push(`${onlyB.join(", ")} graded only B`);
+  if (!parts.length) return undefined;
+  if (regrade) return `A and B were not graded alike: ${parts.join("; ")}. One is a regrade of the other's outputs (the task did not run again), so B − A is the grader change alone`;
+  return `A and B were not graded alike: ${parts.join("; ")}. Re-grading is a new measurement, so B − A mixes your change with the grader change; regrade A with B's graders (coding.sh exp regrade <A> <spec>) and compare that instead`;
 }

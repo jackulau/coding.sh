@@ -1179,3 +1179,35 @@ describe("cli QA fixes", () => {
     assert.doesNotMatch(bad.next[0]!, /connection/);
   });
 });
+
+describe("cli exp regrade", () => {
+  it("grades stored outputs again without the task, prints the flips, and compare warns on the grader change", () => {
+    const h = tmpHome();
+    assert.equal(cli(h, ["dataset", "add", "arith", "--case", '{"input":"4","expected":"4"}', "--case", '{"input":"5","expected":"5"}', "--case", '{"input":"6","expected":"6"}']).status, 0);
+    const counter = join(h.home, "calls.txt");
+    writeFileSync(join(h.home, "echo.mjs"), `import{appendFileSync}from"node:fs";appendFileSync(${JSON.stringify(counter)},"x");let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>process.stdout.write(s));\n`);
+    const ran = cli(h, ["exp", "run", "-d", "arith", "--task", '{"kind":"command","command":"node echo.mjs"}', "-g", '{"kind":"exact"}', "--name", "base", "--json"]);
+    assert.equal(ran.status, 0, ran.stderr);
+    const baseId = (parseJson(ran.stdout, "run") as { experiment: { id: string } }).experiment.id;
+    const calls = readFileSync(counter, "utf8").length;
+    writeFileSync(join(h.home, "spec.json"), JSON.stringify({ graders: [{ kind: "regex", pattern: "^[45]$" }] }));
+    const human = cli(h, ["exp", "regrade", "base", "spec.json"]);
+    assert.equal(human.status, 0, human.stderr);
+    assert.match(human.stdout, /flips {3}1 of 3 runs: 1 pass → fail, 0 fail → pass/);
+    assert.match(human.stdout, /100\.0% → 66\.7%/);
+    assert.equal(readFileSync(counter, "utf8").length, calls, "the task was never called");
+    const regexId = human.stdout.trim().split("\n").find((l) => /^exp_/.test(l))!;
+    const json = cli(h, ["exp", "regrade", baseId, "-g", '{"kind":"exact"}', "--name", "same", "--json"]);
+    assert.equal(json.status, 0, json.stderr);
+    const out = parseJson(json.stdout, "regrade") as { experiment: { id: string; metadata: { regradeOf: string } }; diff: { flips: unknown[] } };
+    assert.equal(out.diff.flips.length, 0);
+    assert.equal(out.experiment.metadata.regradeOf, baseId);
+    const same = cli(h, ["exp", "compare", baseId, "same", "--json"]);
+    assert.equal((parseJson(same.stdout, "compare") as { comparison: { instrumentWarning?: string } }).comparison.instrumentWarning, undefined);
+    const warned = cli(h, ["exp", "compare", baseId, regexId]);
+    assert.match(warned.stdout, /not graded alike: exact graded only A; regex graded only B/);
+    const none = cli(h, ["exp", "regrade", "base"]);
+    assert.equal(none.status, 2);
+    assert.match(none.stderr, /Missing graders/);
+  });
+});

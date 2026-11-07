@@ -142,6 +142,8 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   out.push(`${paint("B", "bold", color)} ${c.b.name} ${paint(c.b.id, "dim", color)}  pass ${pct(c.b.passRate)}${partial(opts.b)}`);
   if (c.datasetWarning) out.push(paint(`! ${c.datasetWarning}`, "yellow", color));
   if (c.gradeWarning) out.push(paint(`! ${c.gradeWarning}`, "yellow", color));
+  if (c.ungradedCases) out.push(paint(`unpaired because ungraded on a side: ${idList(c.ungradedCases)}`, "dim", color));
+  if (c.instrumentWarning) out.push(paint(`! ${c.instrumentWarning}`, "yellow", color));
   if (c.timing.warning) out.push(paint(`! ${c.timing.warning}`, "yellow", color));
   const vColor = c.verdict === "better" ? "green" : c.verdict === "worse" ? "red" : "dim";
   out.push("");

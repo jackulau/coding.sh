@@ -683,6 +683,11 @@ curl -sS "$CSH/api/compare?a=$EXP_A&b=$EXP_B" -H "Authorization: Bearer $READ_KE
 }
 ```
 
+Present only when they apply: `graders[].versionChanged` (`{"a","b"}` versions) and
+`gradersOnlyIn` (`{"a":[…],"b":[…]}`) when the sides were graded differently, with
+`instrumentWarning` saying so; `ungradedCases` for cases that ran on both sides but have no graded
+run on one.
+
 A missing or malformed id gets 400 `{"error":"a and b must be experiment ids","status":400}`; an
 unknown one gets 404 `{"error":"experiment not found","status":404}`.
 

@@ -218,7 +218,17 @@ const REFINE = [
       went up or down, and the change in each half of the trials, with a warning when the two halves disagree. <code>--matrix</code> prints the
       cases by passes out of k in A and B. Method: EvoAudit (<a href="https://arxiv.org/abs/2611.07624">arXiv 2611.07624</a>).
     </li>
+    <li id="grader-versions">
+      Compare pins grader versions. When a grader changed version between A and B, or graded only one side, it warns above the verdict: the
+      pass rate then mixes your change with a change of measurement. A grader error leaves that run ungraded, not failed, and cases with no
+      graded run on one side are listed and left out of the pairing.
+    </li>
   </ul>
+  <p id="regrade">
+    <code>exp regrade &lt;experiment&gt; spec.json</code> grades a stored experiment's outputs again with the spec's graders (or
+    <code>--grader</code>), without calling the task. It stores a new experiment with <code>regradeOf</code> set and prints the pass rate before
+    and after, each grader's version change and every run whose outcome flipped. Regrade A with B's graders, then compare like with like.
+  </p>
   <p>
     To avoid that, run both configs in one job: <code>exp run --arm base=a.json --arm cand=b.json</code>. Each case runs in both arms back
     to back, in random order, so drift during the run hits both arms the same. Add <code>--stop-early</code> to stop once the answer is clear.

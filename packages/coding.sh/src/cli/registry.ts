@@ -568,6 +568,20 @@ export const COMMANDS: CommandSpec[] = [
         ],
       },
       {
+        name: "regrade",
+        summary: "Grade a stored experiment's outputs again with new graders, without calling the task, and show what flipped",
+        args: [
+          { name: "experiment", desc: "Experiment id or name (newest)", required: true },
+          { name: "spec", desc: "Experiment spec JSON file whose graders to use (--grader overrides)" },
+        ],
+        flags: [
+          { name: "grader", short: "g", type: "list", value: "<JSON|FILE>", desc: "Grader spec (repeatable); replaces the spec's graders" },
+          { name: "name", type: "string", value: "<NAME>", desc: "Name of the regraded experiment (default: the original's)" },
+          { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel grader runs", default: "4" },
+        ],
+        examples: ["coding.sh exp regrade base spec.json", "coding.sh exp regrade base -g strict.json --json"],
+      },
+      {
         name: "aa",
         summary: "Run one config twice (A/A) and store its run-to-run noise",
         args: [

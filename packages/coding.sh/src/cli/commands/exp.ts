@@ -1,4 +1,4 @@
-// coding.sh exp run|compare|aa|sweep|show|list|status: generic dataset experiments (src/experiments).
+// coding.sh exp run|compare|regrade|aa|sweep|show|list|status: generic dataset experiments (src/experiments).
 // Runs are durable (src/cli/jobs.ts): each finished trial is checkpointed, --resume continues.
 // `exp run --arm a=… --arm b=…` runs two tasks as one interleaved A/B, optionally
 // stopping early (group sequential, src/stats/sequential.ts). `exp compare
@@ -21,7 +21,8 @@ import { runPairwise, summarizePairwise, type PairwiseSummary } from "../../expe
 import { renderAa, renderComparison, renderExperiment, renderPairwise, renderSweep } from "../../experiments/render.ts";
 import { replayNoise } from "../../experiments/continuation.ts";
 import { plateau, plateauLine, renderPlateau, type PlateauGate, type PlateauResult } from "../../experiments/plateau.ts";
-import { runExperiment } from "../../experiments/run.ts";
+import { regradeExperiment, runExperiment } from "../../experiments/run.ts";
+import { regradeDiff, renderRegradeDiff } from "../../experiments/regrade.ts";
 import { runSweep, type SweepConfig } from "../../experiments/sweep.ts";
 import type { TaskSpec } from "../../experiments/task.ts";
 import { createGrader, createPairwiseJudgeFromSpec, type GraderSpec, type PairwiseGraderSpec } from "../../graders/index.ts";
@@ -114,13 +115,65 @@ export async function loadSpec(c: CommandContext, store: FileEvalStore, specFile
   if (!spec.graders?.length) throw new UsageError('Missing --grader, e.g. --grader \'{"kind":"exact"}\'', { reason: "missing_argument" });
   const dataset = await store.getDataset(spec.dataset);
   if (!dataset) throw new CliError(`Can't find dataset ${JSON.stringify(spec.dataset)}`, { reason: "not_found", next: ["List datasets:", "coding.sh dataset list"] });
-  let graders: Grader[];
+  const graders = await buildGraders(c, spec.graders, baseDir);
+  return { spec, dataset, graders, name: spec.name ?? `${dataset.name}-${new Date().toISOString().slice(0, 10)}`, baseDir, ...(file ? { file } : {}) };
+}
+
+/** Graders from their specs; relative paths resolve against `baseDir`. */
+async function buildGraders(c: CommandContext, specs: readonly GraderSpec[], baseDir: string): Promise<Grader[]> {
   try {
-    graders = await Promise.all(spec.graders.map((g) => createGrader(g, { baseDir, env, judgeCache: FileJudgeCache.forEnv(env) })));
+    return await Promise.all(specs.map((g) => createGrader(g, { baseDir, env: c.env, judgeCache: FileJudgeCache.forEnv(c.env) })));
   } catch (e) {
     throw new UsageError(`Invalid grader: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_grader" });
   }
-  return { spec, dataset, graders, name: spec.name ?? `${dataset.name}-${new Date().toISOString().slice(0, 10)}`, baseDir, ...(file ? { file } : {}) };
+}
+
+/** `exp regrade <experiment> [spec]`: grade the stored outputs again with the spec's (or --grader's) graders. */
+async function regradeCmd(c: CommandContext, store: FileEvalStore): Promise<number> {
+  const { out } = c;
+  const [ref, specFile] = c.positionals as [string, string | undefined];
+  const prev = await store.resolveExperiment(ref);
+  if (!prev) throw new CliError(`Can't find a completed experiment ${JSON.stringify(ref)}`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
+  let specs: GraderSpec[] = [];
+  let baseDir = c.cwd;
+  if (specFile) {
+    const file = resolve(c.cwd, specFile);
+    const v = await jsonArg(file, "spec");
+    if (!isObj(v)) throw new UsageError(`${file} must hold a JSON object`);
+    if (Array.isArray(v.graders)) specs = v.graders as GraderSpec[];
+    baseDir = dirname(file);
+  }
+  if (list(c.flags.grader).length) specs = (await Promise.all(list(c.flags.grader).map((g) => jsonArg(g, "--grader")))) as GraderSpec[];
+  if (!specs.length) throw new UsageError("Missing graders: pass a spec file with \"graders\" or --grader", { reason: "missing_argument", suggestion: `coding.sh exp regrade ${ref} spec.json` });
+  const graders = await buildGraders(c, specs, baseDir);
+  // The exact dataset version the experiment ran on; the latest one only when that version is gone (it warns).
+  const dataset = (await store.getDataset(prev.dataset.id, prev.dataset.version)) ?? (await store.getDataset(prev.dataset.id));
+  if (!dataset) throw new CliError(`Can't find dataset ${prev.dataset.id}, which ${prev.id} ran on`, { reason: "not_found" });
+  const concurrency = positiveInt(c.flags.concurrency, "concurrency");
+  const spin = out.spin(`Regrading ${prev.name}…`);
+  const result = await regradeExperiment({
+    result: prev,
+    dataset,
+    graders,
+    store,
+    signal: c.signal,
+    ...(concurrency ? { concurrency } : {}),
+    ...(str(c.flags.name) ? { name: str(c.flags.name) } : {}),
+    onWarn: (m) => out.warn(m),
+    onProgress: (done, total) => spin.update(`Regrading ${prev.name}… ${done}/${total}`),
+  }).finally(() => spin.stop());
+  if (result.status === "cancelled") {
+    out.warn("Cancelled: the regrade stopped before every run was graded; nothing was stored");
+    return 1;
+  }
+  const diff = regradeDiff(prev, result);
+  if (out.json) out.data({ outcome: "completed", experiment: result, diff });
+  else {
+    out.print(renderRegradeDiff(diff, { color: out.color }));
+    out.print(result.id);
+    out.note(`Compare the old and new graders on the same outputs: coding.sh exp compare ${prev.id} ${result.id}`);
+  }
+  return 0;
 }
 
 /** Run one experiment (exp run without --arm). */
@@ -753,6 +806,8 @@ export async function run(c: CommandContext): Promise<number> {
         }
         return 0;
       }
+      case "regrade":
+        return regradeCmd(c, store);
       case "plateau":
         return plateauCmd(c, store);
       case "show": {

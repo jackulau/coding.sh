@@ -82,6 +82,14 @@ test on flipped cases and the minimum detectable effect. It also reports:
 - **Attrition.** Per arm, trials lost to task errors, grader errors or missing runs, split into
   infra errors (timeouts, network, HTTP 429/5xx) and agent errors. Fisher's exact test flags an
   uneven split at p < 0.01.
+- **Grader versions.** Each grader's version is part of the comparison. When a grader changed
+  version between A and B, or graded only one side, a yellow line above the verdict says so: the
+  pass rate requires every grader to pass, so B − A then mixes the change under test with a change
+  of measurement. `--json` carries `comparison.instrumentWarning`, `graders[].versionChanged` and
+  `gradersOnlyIn`. When one side is a regrade of the other, the line says B − A is the grader
+  change alone and the timing warning is dropped. A grader that throws leaves its run ungraded:
+  it is neither a pass nor a fail and is left out. Cases that ran on both sides but have no graded
+  run on one are listed in `comparison.ungradedCases`.
 - **Noise floor.** When an A/A run exists for the baseline config, it prints the A/A flip rate,
   and the minimum detectable effect never goes below what that noise allows.
 - **Timing.** When the two runs were not interleaved and ran one after the other, it warns and
@@ -123,6 +131,30 @@ passed on every trial that B now passes at most a third of the time, which a mea
 margin can hide. It exits 1 unless B is non-inferior; `--json` carries
 `comparison.nonInferiority` (`mean`, `lower`, `delta`, `nonInferior`, `n`, `alpha`,
 `hardRegressions`). The test itself is `nonInferiority(diffs, delta)` in `src/stats/tests.ts`.
+
+### Regrade
+
+`coding.sh exp regrade <experiment> spec.json` grades a stored experiment's outputs again with the
+spec's graders (`--grader` replaces them), without calling the task. Task errors are copied as
+they were. Stored runs keep no trace, so a grader that reads one sees none
+(`metadata.regradeNoTrace`). The new experiment is stored with `metadata.regradeOf` and the
+dataset version the original ran on. The report pairs runs by case and trial:
+
+```
+regrade exp_01M6W58AXWD3B0NNC8RYE0CEDZ of exp_01M6W58A7Z9RK200RS3ECT750K; the task was not called
+pass    100.0% → 75.0% (-25.0pp) (4/4 → 3/4 graded runs)
+grader  exact 48fe67515f98 → 056582bb6eee (changed)
+flips   1 of 4 runs: 1 pass → fail, 0 fail → pass
+
+case                trial  before  after
+------------------  -----  ------  -----
+c_85f4e1caf09f1000      1  pass    fail
+```
+
+A rubric fix can reverse orderings on its own (arXiv 2611.04399 finds "re-grading is a new
+measurement"). To compare two configs graded by different grader versions, regrade the older one
+with the newer graders and compare that. `--json` returns the new `experiment` and the `diff`
+(`flips`, `toFail`, `toPass`, `toUngraded`, `fromUngraded`, `graders`).
 
 `coding.sh exp run --arm base=a.json --arm cand=b.json` runs two task configs as one A/B. Cases go
 in a random order, and each case runs in both arms back to back, in random arm order, so drift
