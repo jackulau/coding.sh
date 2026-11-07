@@ -1,0 +1,30 @@
+packages/coding.sh/test/viewer/fakes.ts
+  s_8e040dbdf13565::t_2b9777ae478933 208-248
+CHANGELOG.md
+  s_8e040dbdf13565::t_2a3584be57aca8 23,32-33
+packages/coding.sh/src/viewer/ui/index.html
+  s_8e040dbdf13565::t_2b7416ac1afa9a 536,1246-1268,1918,1949-1956,2206,2231,2565-2566,2867,3132-3133,3135,3149,3189-3191,3726,3741,3743-3745
+  s_8e040dbdf13565::t_9992105c7ceff3 3134
+  s_8e040dbdf13565::t_8560dc199205fb 1103-1104
+packages/coding.sh/test/viewer/ui-browser.test.ts
+  s_8e040dbdf13565::t_5c57034145a803 957-960
+  s_8e040dbdf13565::t_4b00835bb5e2ed 14
+  s_8e040dbdf13565::t_00ec339580ed95 875-956,961-979
+  s_8e040dbdf13565::t_3fb7949b627f0a 980
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d82be60111c3b5f59eacd74a47f34b6126280c78",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
