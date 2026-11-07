@@ -83,7 +83,17 @@ describe("exp compare --pairwise from the CLI", () => {
     assert.equal(p.judge.calibration, undefined);
     assert.match(p.warnings.join("\n"), /changed its answer with the order on 60% of cases/);
     assert.match(p.warnings.join("\n"), /uncalibrated/);
-    const c12 = p.cases.find((x: { caseId: string }) => x.caseId === "c12");
+    // 8 B wins, 4 A wins, 18 ties: B leads, but a resample of 30 keeps that in well under 95%.
+    assert.equal(p.stability.direction, "b");
+    assert.equal(p.stability.stable, false);
+    assert.equal(p.stability.nStar, "censored");
+    assert.deepEqual(
+      p.stability.bySize.map((x: { m: number }) => x.m),
+      [25, 30],
+    );
+    assert.match(p.warnings.join("\n"), /B's lead held in only \d+% of resamples at n=30; more cases help only if the judge is calibrated/);
+    assert.match(p.warnings.join("\n"), /unresolved: pick or calibrate the judge before collecting more verdicts/);
+    const c12 =p.cases.find((x: { caseId: string }) => x.caseId === "c12");
     assert.equal(c12.winner, "b");
     assert.deepEqual(c12.orders, ["b", "b"]);
 
@@ -115,6 +125,7 @@ describe("exp compare --pairwise from the CLI", () => {
     const t = cli(["exp", "compare", "a", "b", "--pairwise", judgeSpec()]);
     assert.equal(t.status, 0, t.stderr);
     assert.match(t.stdout, /^wins {4}B 8, A 4, ties 18 \(18 from order flips\)$/m);
+    assert.match(t.stdout, /^unstable {2}B better in \d+% of resamples \(n\* censored\)$/m);
     assert.match(t.stdout, /^order {3}answer changed with the order on 18 of 30 \(60\.0%\): 18 favored the first response, 0 the second$/m);
 
     // Usage errors.

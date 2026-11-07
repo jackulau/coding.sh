@@ -13,6 +13,7 @@ import { acceptanceGate, fisherExact, hardRegressions, mcnemar, nonInferiority, 
 import type { ReplayNoise } from "./continuation.ts";
 import { pairedPower, passHatK, type NoisePrior, type PowerAnalysis } from "./power.ts";
 import { caseRates } from "./run.ts";
+import { directionStability, type DirectionStability } from "./stability.ts";
 import { outcomesByCase, turnover, type Turnover } from "./turnover.ts";
 
 export interface CaseDelta {
@@ -39,6 +40,11 @@ export interface GraderDelta {
    * <verifier>`), per side, present when that side's grader version has a stored audit.
    */
   verifier?: { a?: VerifierCorrection; b?: VerifierCorrection };
+  /**
+   * Judge graders only (kind "llm", or calibrated on either side): how often a
+   * resample of the per-case score differences keeps the sign, and n*.
+   */
+  stability?: DirectionStability;
 }
 
 const unit = (x: unknown): x is number => typeof x === "number" && x >= 0 && x <= 1;
@@ -397,6 +403,11 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     const va = verifierRate(a, gid, opts.verifiers);
     const vb = verifierRate(b, gid, opts.verifiers);
     if (va || vb) out.verifier = { ...(va ? { a: va } : {}), ...(vb ? { b: vb } : {}) };
+    const infoA = a.graders.find((g) => g.id === gid);
+    const infoB = b.graders.find((g) => g.id === gid);
+    if (common.length && (infoA?.kind === "llm" || infoB?.kind === "llm" || infoA?.calibration || infoB?.calibration)) {
+      out.stability = directionStability(diffs, { seed: boot.seed, ...(cl ? { clusterIds: common.map(clusterOf) } : {}) });
+    }
     return out;
   });
   const ungraded = { a: a.runs.filter((r) => r.ungraded).length, b: b.runs.filter((r) => r.ungraded).length };

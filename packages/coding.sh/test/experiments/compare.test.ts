@@ -210,14 +210,25 @@ describe("compareExperiments", () => {
     assert.equal(g?.corrected?.b?.corrected, false);
     const text = renderComparison(c, { color: false, a, b });
     assert.match(text, /^judge bias-corrected pass {2}A 42\.9% \[\d+\.\d%, \d+\.\d%\] {2}B refused \(sensitivity \+ specificity ≤ 1\) \(Rogan–Gladen, 95%\)$/m);
+    // Direction stability on the judge's per-case score differences (AB-14): B gains 4 of 20,
+    // so a resample of 20 keeps B ahead unless it draws none of the 4: 1 − 0.8^20 ≈ 0.988.
+    assert.equal(g?.stability?.direction, "b");
+    assert.ok(Math.abs(g!.stability!.share - (1 - 0.8 ** 20)) < 0.015, `share ${g?.stability?.share}`);
+    assert.equal(g?.stability?.nStar, 20);
+    assert.equal(g?.stability?.stable, true);
+    assert.match(text, /^judge stable {2}B better in 9\d% of resamples \(n\*=20\)$/m);
 
     // Calibration without confusion rates (records from before judge calibrate stored them): no correction, no line.
     const plain = await runExperiment({ name: "p", dataset: ds, task: (i) => i, graders: [judge(new Set(range(1, 10)), { state: "calibrated", kappa: 0.8, n: 200 })] });
     const c2 = compareExperiments(plain, plain);
     assert.equal(c2.graders[0]?.corrected, undefined);
     assert.doesNotMatch(renderComparison(c2, { color: false }), /bias-corrected/);
+    assert.equal(c2.graders[0]?.stability?.direction, "none");
+    assert.match(renderComparison(c2, { color: false }), /^judge unstable {2}no direction in 0% of resamples \(n\* censored\)$/m);
     // Deterministic graders never get one.
-    assert.equal(compareExperiments(await run("x", new Set(range(1, 5))), await run("y", new Set(range(1, 5)))).graders[0]?.corrected, undefined);
+    const det = compareExperiments(await run("x", new Set(range(1, 5))), await run("y", new Set(range(1, 5)))).graders[0];
+    assert.equal(det?.corrected, undefined);
+    assert.equal(det?.stability, undefined);
   });
 });
 

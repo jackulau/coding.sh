@@ -9,6 +9,7 @@ import type { PairVerdict, PairwiseJudge } from "../judge/pairwise.ts";
 import { clusteredBootstrap } from "../stats/cluster.ts";
 import { pairedBootstrap } from "../stats/interval.ts";
 import { mcnemar, type McNemarResult } from "../stats/tests.ts";
+import { directionStability, type DirectionStability } from "./stability.ts";
 
 /** Position-bias rate above which the summary warns. */
 export const POSITION_BIAS_WARN = 0.2;
@@ -35,6 +36,8 @@ export interface PairwiseSummary {
   signTest: McNemarResult;
   /** "better" / "worse" when the win-rate CI excludes 50%. */
   verdict: "better" | "worse" | "inconclusive";
+  /** How often a resample of the cases (or clusters) picks the same winner, and n* (arXiv 2611.04090). */
+  stability: DirectionStability;
   /** Shared cases not judged: no output on one side (task error), or the judge failed. */
   skipped: { noOutput: number; judgeErrors: number; firstError?: string };
   cluster?: { key: string; clusters: number };
@@ -139,7 +142,14 @@ export function summarizePairwise(
       `the judge changed its answer with the order on ${(rate * 100).toFixed(0)}% of cases; those count as ties, so the win rate is diluted toward 50%. Tighten the rubric or use a stronger judge model`,
     );
   }
+  const stability = directionStability(centered, { seed: boot.seed, ...(cl ? { clusterIds } : {}) });
   const cal = judge.calibration;
+  if (n > 0 && !stability.stable && verdict === "inconclusive" && stability.direction !== "none") {
+    warnings.push(
+      `${stability.direction === "b" ? "B" : "A"}'s lead held in only ${Math.round(stability.share * 100)}% of resamples at n=${stability.bySize.at(-1)?.m}; more cases help only if the judge is calibrated`,
+    );
+  }
+  if (n > 0 && stability.nStar === "censored" && cal?.state !== "calibrated") warnings.push("unresolved: pick or calibrate the judge before collecting more verdicts");
   if (!cal) warnings.push("the pairwise judge is uncalibrated: its picks are not validated against human pairwise labels (add --labels)");
   else if (cal.state !== "calibrated") warnings.push(`the pairwise judge is ${cal.state}: ${cal.reason ?? "its picks are not validated against human pairwise labels"}`);
   if (skipped.judgeErrors) warnings.push(`${skipped.judgeErrors} case(s) left out after a judge error: ${skipped.firstError ?? "unknown error"}`);
@@ -153,6 +163,7 @@ export function summarizePairwise(
     winRate: { b: 0.5 + d.mean, lo: 0.5 + d.lo, hi: 0.5 + d.hi, iters: d.iters },
     signTest: mcnemar(wins.a, wins.b),
     verdict,
+    stability,
     skipped,
     warnings,
     cases: sorted,

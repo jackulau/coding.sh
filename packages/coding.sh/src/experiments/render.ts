@@ -10,6 +10,7 @@ import type { AaResult } from "./aa.ts";
 import { gateDetail, gateHeadline, idList } from "../stats/gate.ts";
 import type { ArmAttrition, Comparison, ComparisonGate, ComparisonNonInferiority, ComparisonTurnover } from "./compare.ts";
 import type { PairwiseSummary } from "./pairwise.ts";
+import { stabilityLine } from "./stability.ts";
 import type { SweepResult } from "./sweep.ts";
 import type { Turnover } from "./turnover.ts";
 import { fixed, ms, paint, pct, pValue, signedPct, table, truncate, type RenderOpts } from "./text.ts";
@@ -225,6 +226,7 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
       ),
     );
     if (untrusted.size) out.push(paint("* uncalibrated judge: score differences are not validated against human labels", "yellow", color));
+    for (const g of c.graders) if (g.stability) out.push(paint(`${g.id} ${stabilityLine(g.stability)}`, "dim", color));
     const side = (r: RoganGladenResult | undefined) =>
       r === undefined ? "—" : r.corrected ? `${pct(r.p)} ${ci(r.lo, r.hi)}` : "refused (sensitivity + specificity ≤ 1)";
     for (const g of c.graders) {
@@ -384,6 +386,7 @@ export function renderPairwise(s: PairwiseSummary, opts: RenderOpts): string {
         (b.first || b.second ? `: ${b.first} favored the first response, ${b.second} the second` : ""),
     );
     out.push(`verdict ${paint(s.verdict === "inconclusive" ? "inconclusive (CI includes 50%)" : `B is ${s.verdict}`, vColor, color)}`);
+    out.push(paint(stabilityLine(s.stability), "dim", color));
   }
   const skipped = s.skipped.noOutput;
   if (skipped) out.push(paint(`${skipped} shared case(s) not judged: no output on one side (task error)`, "dim", color));

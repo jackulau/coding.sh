@@ -272,6 +272,13 @@ const AB = [
     and counts toward the printed position-bias rate. It reports B's win rate with an interval and a sign test. <code>--labels</code> takes
     human A/B/tie labels and calibrates the judge like any other.
   </p>
+  <p>
+    An inconclusive win rate can mean "needs more cases" or "this judge flips". The report resamples the cases and prints how often a
+    resample picks the same winner, and n*, the smallest size where that holds 95% of the time: <code>stable  B better in 97% of resamples
+    (n*=50)</code> or <code>unstable  B better in 61% of resamples (n* censored)</code>. An uncalibrated judge that never settles is flagged
+    "unresolved: pick or calibrate the judge before collecting more verdicts" (arXiv 2611.04090). Judge graders get the same line in
+    <code>exp compare</code>.
+  </p>
 
   <h2 id="calibration">Judge calibration <Tag status="built" /></h2>
   <p>

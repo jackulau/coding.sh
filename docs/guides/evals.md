@@ -273,6 +273,24 @@ rate (ties count half) with a bootstrap CI, a sign test on the decisive cases, a
 `--labels labels.jsonl` (rows of `{"caseId","winner":"a"|"b"|"tie"}`) calibrates it the same way
 as `judge calibrate`: kappa on the test split, with judge ties left out, stored on the judge.
 
+An inconclusive win rate can mean "needs more cases" or "this judge flips". To tell them apart,
+the report resamples the cases 1,000 times at 25, 50, 100 and all of them, and prints how often a
+resample picks the same winner as the full data, and n*, the smallest size at which that holds
+95% of the time (arXiv 2611.04090: with a poorly aligned judge, 26-70% of system pairs never
+settled within 100 verdicts):
+
+```
+stable  B better in 97% of resamples (n*=50)
+unstable  B better in 61% of resamples (n* censored)
+```
+
+Unstable and inconclusive adds a warning that more cases help only if the judge is calibrated; an
+uncalibrated judge whose direction never settles adds "unresolved: pick or calibrate the judge
+before collecting more verdicts". Judge graders (`llm`, or any calibrated grader) get the same
+line in `exp compare`, from per-case score differences. With `--cluster`, whole clusters are
+resampled and the sizes count clusters. `--json` carries `stability` with `share`, `bySize` and
+`nStar`.
+
 ### Checklists and trace checks
 
 An `llm-checklist` grader asks yes/no questions instead of one rating. An item can be `critical`
