@@ -49,7 +49,7 @@ describe("tool evals against the coding.sh MCP server", () => {
     const target = cfg.targets.get(TARGET) as McpTarget;
     const env = { HOME: join(root, "home"), CODING_SH_HOME: join(root, "surface-data") };
     const s = await measureSurface({ ...target, env }, { name: "base" }, { cwd: root });
-    assert.equal(s.items.length, 12);
+    assert.equal(s.items.length, 13);
     // Every tool definition (name, description, input + output schema) costs context in every turn.
     assert.ok(s.surfaceBytes < 24_000, `surface is ${s.surfaceBytes} bytes`);
     assert.ok(s.descriptionBytes < 9_000, `descriptions are ${s.descriptionBytes} bytes`);

@@ -1,0 +1,14 @@
+{
+  // npm run build: declaration files for the published entry points
+  // (coding.sh/schema, coding.sh/store, coding.sh/store/conformance) into dist/types.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "rootDir": "src",
+    "outDir": "dist/types"
+  },
+  "include": [],
+  "files": ["src/schema/index.ts", "src/store/plugin-api.ts", "src/store/conformance.ts"]
+}

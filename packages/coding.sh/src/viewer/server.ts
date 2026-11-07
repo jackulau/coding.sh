@@ -8,11 +8,18 @@
 // only ever returns them as JSON or text/plain (sandboxed, nosniff), and the
 // client renders them with textContent.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { userInfo } from "node:os";
+import { benchHome, loadDefinition, NAME_RE } from "../bench/define.ts";
+import { buildReport } from "../bench/report.ts";
+import { historyRuns, listRuns } from "../bench/store.ts";
+import type { BenchRun } from "../bench/types.ts";
 import type { BlobStore, IndexStore, Label, Session, SessionFilter } from "../core/types.ts";
+import type { ExperimentResult } from "../datasets/types.ts";
+import { compareExperiments } from "../experiments/compare.ts";
 import { getUpdateStatus, type UpdateStatus } from "../update/index.ts";
 
 export interface ViewerOptions {
@@ -32,6 +39,53 @@ export interface ViewerOptions {
   env?: NodeJS.ProcessEnv;
   /** Update status source (tests). Default: getUpdateStatus(env), which checks at most once per 24 h. */
   updateStatus?: () => Promise<UpdateStatus>;
+  /** Where dataset experiments live (`coding.sh exp run`). Default: the index, when it stores them. */
+  experiments?: ExperimentSource;
+  /** Benchmark run records behind /api/benchmarks. Default: `coding.sh bench`'s folder under env's data dir. */
+  benchmarks?: BenchmarkSource;
+}
+
+/** Read side of the dataset experiment store (FileEvalStore and every full IndexStore fit). */
+export interface ExperimentSource {
+  listExperiments(filter?: { datasetId?: string; name?: string; limit?: number }): Promise<ExperimentResult[]>;
+  getExperiment(id: string): Promise<ExperimentResult | undefined>;
+}
+
+/** Read side of `coding.sh bench`: run records per benchmark name. */
+export interface BenchmarkSource {
+  /** Benchmark names that have a runs folder. */
+  names(): Promise<string[]>;
+  /** Every run record, oldest first (store.listRuns). */
+  runs(name: string): Promise<BenchRun[]>;
+  /** The definition's reference contender, when its file can still be read. */
+  reference?(name: string, latest: BenchRun): string | undefined;
+}
+
+/** Benchmarks under `<data>/benchmarks/<name>/runs`, as `coding.sh bench run` writes them. */
+export function benchmarkDir(env: NodeJS.ProcessEnv = process.env): BenchmarkSource {
+  return {
+    async names() {
+      try {
+        const dirs = await readdir(benchHome(env), { withFileTypes: true });
+        return dirs.filter((d) => d.isDirectory() && NAME_RE.test(d.name) && existsSync(`${benchHome(env)}/${d.name}/runs`)).map((d) => d.name).sort();
+      } catch {
+        return [];
+      }
+    },
+    runs: (name) => listRuns(name, env),
+    reference(name, latest) {
+      // The file the run was defined in, else the user-level definition.
+      for (const file of [latest.definition.file, `${benchHome(env)}/${name}.toml`]) {
+        if (!file || !file.endsWith(".toml") || !existsSync(file)) continue;
+        try {
+          return loadDefinition(file).reference;
+        } catch {
+          return undefined;
+        }
+      }
+      return undefined;
+    },
+  };
 }
 
 export interface Viewer {
@@ -118,6 +172,10 @@ export interface ViewerHandlerOptions {
   projects?: () => Promise<string[]> | string[];
   /** Update status behind /api/update. */
   updateStatus: () => Promise<UpdateStatus>;
+  /** Dataset experiments behind /api/experiments. Default: the index, when it stores them; else none. */
+  experiments?: ExperimentSource;
+  /** Benchmarks behind /api/benchmarks. Default: none. */
+  benchmarks?: BenchmarkSource;
 }
 
 export type ViewerHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
@@ -126,6 +184,7 @@ export type ViewerHandler = (req: IncomingMessage, res: ServerResponse) => Promi
 export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<ViewerHandler> {
   const page = await loadPage();
   const labeller = currentUser();
+  const experiments = opts.experiments ?? indexExperiments(opts.index);
 
   const unauthorizedPage = (res: ServerResponse) => sendUnauthorizedPage(res, opts.unauthorizedText, opts.basicRealm);
 
@@ -177,6 +236,8 @@ export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<V
       updateStatus: opts.updateStatus,
       project: access.project,
       projects: opts.projects,
+      experiments,
+      benchmarks: opts.benchmarks,
     });
   };
 
@@ -228,6 +289,8 @@ export async function startViewer(opts: ViewerOptions): Promise<Viewer> {
     },
     exchangeToken: (t) => (tokenOk(t) ? `${cookieName}=${token}; HttpOnly; SameSite=Strict; Path=/` : undefined),
     updateStatus,
+    ...(opts.experiments ? { experiments: opts.experiments } : {}),
+    benchmarks: opts.benchmarks ?? benchmarkDir(opts.env ?? process.env),
   });
 
   const server = createServer((req, res) => {
@@ -330,6 +393,14 @@ interface ApiCtx {
   /** Scoped caller: only this project is visible. */
   project?: string;
   projects?: () => Promise<string[]> | string[];
+  experiments?: ExperimentSource;
+  benchmarks?: BenchmarkSource;
+}
+
+/** The index's own experiment methods (sqlite, memory, postgres), or undefined when it has none. */
+function indexExperiments(index: IndexStore): ExperimentSource | undefined {
+  if (!index.listExperiments || !index.getExperiment) return undefined;
+  return { listExperiments: (f) => index.listExperiments!(f), getExperiment: (id) => index.getExperiment!(id) };
 }
 
 const projectOf = (s: Session): string => s.project ?? "default";
@@ -349,6 +420,65 @@ function projectParam(ctx: ApiCtx, q: URLSearchParams): string | undefined {
   return p;
 }
 
+// ---------------------------------------------------------------- benchmarks
+
+const BENCH_TREND = 30;
+
+function headlineRun(runs: readonly BenchRun[]): BenchRun {
+  return historyRuns(runs).at(-1) ?? runs.filter((r) => (r.status ?? "complete") === "complete").at(-1) ?? runs.at(-1)!;
+}
+
+function referenceOf(src: BenchmarkSource, name: string, latest: BenchRun): string {
+  const ref = src.reference?.(name, latest);
+  return ref && latest.contenders.some((c) => c.name === ref) ? ref : latest.contenders[0]?.name ?? "";
+}
+
+/** One card on the Benchmarks page: the latest leaderboard and a short pass-rate trend per contender. */
+function benchmarkSummary(name: string, runs: readonly BenchRun[], src: BenchmarkSource) {
+  const latest = headlineRun(runs);
+  const counted = historyRuns(runs);
+  const recent = counted.slice(-BENCH_TREND);
+  const models = new Map(latest.contenders.map((c) => [c.name, c.model]));
+  return {
+    name,
+    ...(latest.description ? { description: latest.description } : {}),
+    counted: counted.length,
+    total: runs.length,
+    reference: referenceOf(src, name, latest),
+    latest: { id: latest.id, date: latest.date, cases: latest.cases.filter((c) => !c.anchor).length, mode: latest.mode ?? "scheduled", status: latest.status ?? "complete", dataset: `${latest.dataset.id}@${latest.dataset.version}` },
+    contenders: [...latest.summaries]
+      .sort((a, b) => a.place - b.place || b.passRate.p - a.passRate.p)
+      .map((s) => ({ name: s.contender, ...(models.get(s.contender) ? { model: models.get(s.contender) } : {}), place: s.place, n: s.n, passed: s.passed, passRate: s.passRate })),
+    trend: Object.fromEntries(latest.contenders.map((c) => [c.name, recent.map((r) => r.summaries.find((x) => x.contender === c.name)?.passRate.p ?? null)])),
+  };
+}
+
+/**
+ * The full report for one benchmark (bench/report.ts), as the local viewer
+ * shows it: case text and outputs included (this is the owner's own machine),
+ * the frozen case list left out, and each failure marked with whether its
+ * session is in the index so the page only links to sessions that open.
+ */
+async function benchmarkDetail(ctx: ApiCtx, runs: readonly BenchRun[], src: BenchmarkSource) {
+  const latest = headlineRun(runs);
+  const report = buildReport(runs, { includePrivate: true, reference: referenceOf(src, latest.bench, latest), worst: 25, viewerUrl: "" });
+  const { cases: _cases, failures, ...rest } = report;
+  const known = new Map<string, boolean>();
+  const out: Record<string, unknown[]> = {};
+  for (const [name, rows] of Object.entries(failures)) {
+    out[name] = [];
+    for (const { sessionUrl: _u, ...row } of rows) {
+      let has = false;
+      if (row.sessionId && /^[\w.:-]{1,200}$/.test(row.sessionId)) {
+        if (!known.has(row.sessionId)) known.set(row.sessionId, !!(await ctx.index.getSession(row.sessionId).catch(() => undefined)));
+        has = known.get(row.sessionId)!;
+      }
+      out[name]!.push({ ...row, hasSession: has });
+    }
+  }
+  return { ...rest, failures: out };
+}
+
 async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx: ApiCtx): Promise<void> {
   const parts = url.pathname
     .slice("/api/".length)
@@ -366,7 +496,9 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
     if (method !== "GET") throw new HttpError(405, "method not allowed");
   };
   const [head, id, sub, ...rest] = parts;
-  if (rest.length > 0) throw new HttpError(404, "not found");
+  // Session ids may hold "/" (`team/chat-1`); the viewer encodes them, and a raw "/" is not guessed at.
+  const notFound = () => new HttpError(404, head === "sessions" ? 'not found (percent-encode "/" in a session id: /api/sessions/team%2Fchat-1)' : "not found");
+  if (rest.length > 0) throw notFound();
 
   switch (head) {
     case "sessions": {
@@ -382,7 +514,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         const events = await ctx.index.listEvents(sessionId, { limit: limit + 1, offset, kinds });
         return sendJson(res, 200, page(events, limit, offset));
       }
-      throw new HttpError(404, "not found");
+      throw notFound();
     }
 
     case "blobs": {
@@ -414,7 +546,8 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       const limit = intParam(q, "limit", 50, 1, 500);
       const agent = q.get("agent") || undefined;
       const project = projectParam(ctx, q);
-      return sendJson(res, 200, { items: await ctx.index.search(text, { limit, agent, ...(project ? { project } : {}) }) });
+      const f = facetParams(q);
+      return sendJson(res, 200, { items: await searchSessions(ctx, text, limit, { ...f, agent, project, top: scopeParam(q) === "top" }) });
     }
 
     case "tasks": {
@@ -456,6 +589,60 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         note: b.note,
       }));
       return sendJson(res, 200, { items });
+    }
+
+    case "experiments": {
+      get();
+      if (sub !== undefined) throw new HttpError(404, "not found");
+      // Eval assets belong to no project: a project-scoped key sees none.
+      const scoped = ctx.project !== undefined;
+      if (id === undefined || id === "") {
+        const limit = intParam(q, "limit", 50, 1, 500);
+        const datasetId = q.get("dataset") || undefined;
+        const name = q.get("name") || undefined;
+        if (scoped || !ctx.experiments) return sendJson(res, 200, { items: [] });
+        const rows = await ctx.experiments.listExperiments({ limit, ...(datasetId ? { datasetId } : {}), ...(name ? { name } : {}) });
+        return sendJson(res, 200, { items: rows.map(experimentSummary) });
+      }
+      if (!EXPERIMENT_ID_RE.test(id) || id.includes("..")) throw new HttpError(400, "invalid experiment id");
+      const exp = scoped || !ctx.experiments ? undefined : await ctx.experiments.getExperiment(id);
+      if (!exp) throw new HttpError(404, "experiment not found");
+      return sendJson(res, 200, experimentDetail(exp));
+    }
+
+    case "benchmarks": {
+      get();
+      if (sub !== undefined) throw new HttpError(404, "not found");
+      // Benchmarks belong to no project: a project-scoped key sees none.
+      const src = ctx.project !== undefined ? undefined : ctx.benchmarks;
+      if (id === undefined || id === "") {
+        if (!src) return sendJson(res, 200, { items: [] });
+        const items = [];
+        for (const name of await src.names()) {
+          const runs = await src.runs(name);
+          if (runs.length) items.push(benchmarkSummary(name, runs, src));
+        }
+        items.sort((a, b) => (a.latest.date < b.latest.date ? 1 : a.latest.date > b.latest.date ? -1 : a.name < b.name ? -1 : 1));
+        return sendJson(res, 200, { items });
+      }
+      if (!NAME_RE.test(id)) throw new HttpError(400, "invalid benchmark name");
+      const runs = src ? await src.runs(id) : [];
+      if (!runs.length) throw new HttpError(404, "benchmark not found");
+      return sendJson(res, 200, await benchmarkDetail(ctx, runs, src!));
+    }
+
+    case "compare": {
+      get();
+      if (id !== undefined) throw new HttpError(404, "not found");
+      // Paired comparison of two dataset experiments: stats are computed here,
+      // never in the page. a = baseline, b = candidate.
+      const ids = [q.get("a") ?? "", q.get("b") ?? ""];
+      for (const x of ids) if (!EXPERIMENT_ID_RE.test(x) || x.includes("..")) throw new HttpError(400, "a and b must be experiment ids");
+      const [a, b] = ctx.project !== undefined || !ctx.experiments ? [] : await Promise.all(ids.map((x) => ctx.experiments!.getExperiment(x)));
+      if (!a || !b) throw new HttpError(404, "experiment not found");
+      // A cancelled side still compares (its cases are real), flagged as partial.
+      const partial = [a, b].filter((x) => x.status === "cancelled").map((x) => x.id);
+      return sendJson(res, 200, { ...compareExperiments(a, b, { iters: 4000, force: true }), partial });
     }
 
     case "labels": {
@@ -500,7 +687,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
     case "stats": {
       get();
       if (id !== undefined) throw new HttpError(404, "not found");
-      return sendJson(res, 200, await computeStats(ctx.index, scopeParam(q) === "top", projectParam(ctx, q)));
+      return sendJson(res, 200, await computeStats(ctx.index, scopeParam(q) === "top", projectParam(ctx, q), facetParams(q)));
     }
 
     case "projects": {
@@ -516,6 +703,26 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
     default:
       throw new HttpError(404, "not found");
   }
+}
+
+const EXPERIMENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,199}$/;
+const MAX_EXPERIMENT_RUNS = 5000;
+const MAX_OUTPUT_CHARS = 4000;
+
+/** List row: everything but the per-case runs, which can be large. */
+function experimentSummary(e: ExperimentResult) {
+  const { runs, ...rest } = e;
+  return { ...rest, runCount: runs.length };
+}
+
+/** Detail: the summary plus case runs, capped, with long outputs clipped to a preview. */
+function experimentDetail(e: ExperimentResult) {
+  const runs = e.runs.slice(0, MAX_EXPERIMENT_RUNS).map((r) => {
+    if (r.output === undefined) return r;
+    const text = typeof r.output === "string" ? r.output : JSON.stringify(r.output) ?? "";
+    return text.length > MAX_OUTPUT_CHARS ? { ...r, output: text.slice(0, MAX_OUTPUT_CHARS), outputTruncated: true } : r;
+  });
+  return { ...experimentSummary(e), runs, runsTruncated: e.runs.length > runs.length };
 }
 
 function page<T>(rows: T[], limit: number, offset: number) {
@@ -537,32 +744,98 @@ async function withChildCounts(index: IndexStore, rows: Session[], project?: str
   );
 }
 
+/**
+ * Full-text hits, narrowed to sessions that pass the list's filters. The index
+ * filters by agent and project; flag, repo and scope live on the session row, so
+ * hits are over-fetched and checked against their session.
+ */
+async function searchSessions(
+  ctx: ApiCtx,
+  text: string,
+  limit: number,
+  f: Facets & { project?: string; top: boolean },
+) {
+  const base = { agent: f.agent, ...(f.project ? { project: f.project } : {}) };
+  if (!f.flag && !f.repo && !f.model && !f.top && f.since === undefined && f.until === undefined) return ctx.index.search(text, { limit, ...base });
+  const hits = await ctx.index.search(text, { limit: Math.min(2000, limit * 8), ...base });
+  const ok = new Map<string, boolean>();
+  const out: typeof hits = [];
+  for (const h of hits) {
+    const id = h.event.sessionId;
+    if (!ok.has(id)) {
+      const s = await ctx.index.getSession(id);
+      ok.set(id, !!s && matchesFacets(s, f) && (!f.top || !s.parent));
+    }
+    if (ok.get(id)) out.push(h);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+/**
+ * Keyset cursor over the list order (started_at DESC, id ASC): "<startedAt>:<id>"
+ * of the last row shown. Unlike an offset, sessions ingested between two pages
+ * neither repeat nor push rows off the next page.
+ */
+interface Cursor {
+  startedAt: number;
+  id: string;
+}
+function parseCursor(raw: string | null): Cursor | undefined {
+  if (raw === null || raw === "") return undefined;
+  const m = /^(\d{1,16}):(.+)$/.exec(raw);
+  if (!m) throw new HttpError(400, "cursor is malformed");
+  return { startedAt: Number(m[1]), id: checkId(m[2]!, "cursor") };
+}
+const cursorOf = (s: Session) => `${Math.round(s.startedAt)}:${s.id}`;
+const afterCursor = (s: Session, c: Cursor) => s.startedAt < c.startedAt || (s.startedAt === c.startedAt && s.id > c.id);
+
+/** One page after the cursor, using only the portable since/until filters. */
+async function pageAfter(index: IndexStore, filter: SessionFilter, c: Cursor, limit: number): Promise<Session[]> {
+  const out: Session[] = [];
+  const batch = limit + 32;
+  for (let offset = 0; out.length <= limit && offset < STATS_SCAN_CAP; offset += batch) {
+    // Rows at or before the cursor's millisecond sort first; skip past them.
+    const rows = await index.listSessions({ ...filter, until: Math.min(filter.until ?? Infinity, c.startedAt + 1), limit: batch, offset });
+    for (const s of rows) if (afterCursor(s, c)) out.push(s);
+    if (rows.length < batch) break;
+  }
+  return out.slice(0, limit + 1);
+}
+
 async function listSessions(index: IndexStore, q: URLSearchParams, project?: string) {
   const limit = intParam(q, "limit", 50, 1, 500);
   const offset = intParam(q, "offset", 0, 0, Number.MAX_SAFE_INTEGER);
+  const cursor = parseCursor(q.get("cursor"));
   const parent = q.get("parent") || undefined;
   if (parent !== undefined) checkId(parent, "parent");
-  const filter: SessionFilter = {
-    agent: q.get("agent") || undefined,
-    repoRoot: q.get("repo") || undefined,
-    flag: q.get("flag") || undefined,
-  };
+  const f = facetParams(q);
+  const filter: SessionFilter = { agent: f.agent, repoRoot: f.repo, flag: f.flag, since: f.since, until: f.until };
   if (project !== undefined) filter.project = project;
   if (parent !== undefined) filter.parentSessionId = parent;
   else if (scopeParam(q) === "top") filter.parentSessionId = null;
   const text = (q.get("q") ?? "").trim().toLowerCase();
   if (text.length > 500) throw new HttpError(400, "q is too long");
-  const result = text
-    ? await filterSessions(index, filter, text, limit, offset)
-    : page(await index.listSessions({ ...filter, limit: limit + 1, offset }), limit, offset);
-  return { ...result, items: await withChildCounts(index, result.items, project) };
+  // Model has no store filter: like text, it goes through the scan.
+  const result = text || f.model
+    ? await filterSessions(index, filter, text, limit, offset, cursor, f.model)
+    : page(cursor ? await pageAfter(index, filter, cursor, limit) : await index.listSessions({ ...filter, limit: limit + 1, offset }), limit, offset);
+  const last = result.items[result.items.length - 1];
+  return {
+    ...result,
+    items: await withChildCounts(index, result.items, project),
+    ...(result.hasMore && last ? { nextCursor: cursorOf(last) } : {}),
+  };
 }
 
-async function filterSessions(index: IndexStore, filter: SessionFilter, text: string, limit: number, offset: number) {
+async function filterSessions(index: IndexStore, filter: SessionFilter, text: string, limit: number, offset: number, cursor?: Cursor, model?: string) {
   // Substring filter over list metadata (title, id, repo, model). Full-text
   // search over prompts and output lives at /api/search.
   const matches: Session[] = [];
-  for await (const s of scanSessions(index, filter)) {
+  const scan = cursor ? { ...filter, until: Math.min(filter.until ?? Infinity, cursor.startedAt + 1) } : filter;
+  for await (const s of scanSessions(index, scan)) {
+    if (cursor && !afterCursor(s, cursor)) continue;
+    if (model && s.model !== model) continue;
     const hay = [s.title, s.id, s.repo?.root, s.repo?.branch, s.model].filter(Boolean).join("\n").toLowerCase();
     if (hay.includes(text)) matches.push(s);
     if (matches.length > offset + limit) break;
@@ -579,38 +852,123 @@ async function* scanSessions(index: IndexStore, filter: SessionFilter = {}): Asy
   }
 }
 
+/** List filters shared by /api/sessions, /api/search and /api/stats. */
+interface Facets {
+  agent?: string;
+  flag?: string;
+  repo?: string;
+  model?: string;
+  /** started_at range, ms: since inclusive, until exclusive. */
+  since?: number;
+  until?: number;
+}
+function facetParams(q: URLSearchParams): Facets {
+  const time = (name: string) => (q.get(name) ? intParam(q, name, 0, 0, 8_640_000_000_000_000) : undefined);
+  return {
+    agent: q.get("agent") || undefined,
+    flag: q.get("flag") || undefined,
+    repo: q.get("repo") || undefined,
+    model: q.get("model") || undefined,
+    since: time("since"),
+    until: time("until"),
+  };
+}
+function matchesFacets(s: Session, f: Facets, skip?: keyof Facets | "time"): boolean {
+  return (
+    (skip === "agent" || !f.agent || s.agent === f.agent) &&
+    (skip === "flag" || !f.flag || s.flags.includes(f.flag)) &&
+    (skip === "repo" || !f.repo || s.repo?.root === f.repo) &&
+    (skip === "model" || !f.model || s.model === f.model) &&
+    (skip === "time" || ((f.since === undefined || s.startedAt >= f.since) && (f.until === undefined || s.startedAt < f.until)))
+  );
+}
+
+const HIST_STEPS = [5, 15, 60, 180, 360, 720, 1440, 2880, 10_080, 43_200].map((m) => m * 60_000);
+const HIST_MAX_BUCKETS = 60;
+const HIST_WINDOW = 90 * 86_400_000;
+
+/**
+ * Sessions over time, for the histogram above the list: every filter but the
+ * time range applies, so the chart shows where the selected range sits. Covers
+ * at most the 90 days before the newest session, in the smallest step that
+ * fits 60 buckets.
+ */
+function histogram(starts: { t: number; flagged: boolean }[]) {
+  if (starts.length === 0) return { step: HIST_STEPS[2]!, from: 0, buckets: [] as { t: number; n: number; flagged: number }[] };
+  let max = -Infinity;
+  let min = Infinity;
+  for (const x of starts) {
+    if (x.t > max) max = x.t;
+    if (x.t < min) min = x.t;
+  }
+  min = Math.max(min, max - HIST_WINDOW);
+  const step = HIST_STEPS.find((st) => (max - min) / st < HIST_MAX_BUCKETS) ?? HIST_STEPS[HIST_STEPS.length - 1]!;
+  const from = Math.floor(min / step) * step;
+  const count = Math.floor((max - from) / step) + 1;
+  const buckets = Array.from({ length: count }, (_, i) => ({ t: from + i * step, n: 0, flagged: 0 }));
+  for (const x of starts) {
+    if (x.t < from) continue;
+    const b = buckets[Math.floor((x.t - from) / step)]!;
+    b.n++;
+    if (x.flagged) b.flagged++;
+  }
+  return { step, from, buckets };
+}
+
 /**
  * Totals and filter facets. With topLevelOnly, `sessions`, the test counts and
  * every facet count top-level sessions only (what the list shows by default);
  * `subagents` counts child sessions, and tool/cost totals cover every session.
+ *
+ * Facets count like a facet sidebar does: each facet's counts apply every
+ * other active filter but its own, so picking a value never hides its
+ * siblings. Totals apply them all.
  */
-async function computeStats(index: IndexStore, topLevelOnly = false, project?: string) {
+async function computeStats(index: IndexStore, topLevelOnly = false, project?: string, f: Facets = {}) {
   const byAgent: Record<string, number> = {};
   const byFlag: Record<string, number> = {};
   const byRepo: Record<string, number> = {};
+  const byModel: Record<string, number> = {};
+  const starts: { t: number; flagged: boolean }[] = [];
   let sessions = 0;
   let subagents = 0;
   let toolCalls = 0;
   let toolErrors = 0;
   let costUsd = 0;
+  let priced = 0;
+  let llmCalls = 0;
   let withTests = 0;
   let testsFailing = 0;
+  const inc = (m: Record<string, number>, k: string) => (m[k] = (m[k] ?? 0) + 1);
   for await (const s of scanSessions(index, project ? { project } : {})) {
-    toolCalls += s.stats.toolCalls;
-    toolErrors += s.stats.toolErrors;
-    costUsd += s.stats.usage?.costUsd ?? 0;
-    if (s.parent) subagents++;
+    const all = matchesFacets(s, f);
+    if (all) {
+      toolCalls += s.stats.toolCalls;
+      toolErrors += s.stats.toolErrors;
+      llmCalls += s.stats.latency?.llmCalls ?? 0;
+      if (typeof s.stats.usage?.costUsd === "number") {
+        costUsd += s.stats.usage.costUsd;
+        priced++;
+      }
+      if (s.parent) subagents++;
+    }
     if (topLevelOnly && s.parent) continue;
+    if (matchesFacets(s, f, "agent")) inc(byAgent, s.agent);
+    if (matchesFacets(s, f, "flag")) for (const fl of s.flags) inc(byFlag, fl);
+    if (s.repo?.root && matchesFacets(s, f, "repo")) inc(byRepo, s.repo.root);
+    if (s.model && matchesFacets(s, f, "model")) inc(byModel, s.model);
+    if (matchesFacets(s, f, "time")) starts.push({ t: s.startedAt, flagged: s.flags.length > 0 || (s.stats.testsFailed ?? 0) > 0 });
+    if (!all) continue;
     sessions++;
-    byAgent[s.agent] = (byAgent[s.agent] ?? 0) + 1;
-    for (const f of s.flags) byFlag[f] = (byFlag[f] ?? 0) + 1;
-    if (s.repo?.root) byRepo[s.repo.root] = (byRepo[s.repo.root] ?? 0) + 1;
     if (s.stats.testsPassed !== undefined || s.stats.testsFailed !== undefined) {
       withTests++;
       if ((s.stats.testsFailed ?? 0) > 0) testsFailing++;
     }
   }
-  return { sessions, subagents, byAgent, byFlag, byRepo, toolCalls, toolErrors, costUsd, withTests, testsFailing };
+  return {
+    sessions, subagents, byAgent, byFlag, byRepo, byModel, toolCalls, toolErrors, llmCalls, costUsd, pricedSessions: priced,
+    withTests, testsFailing, histogram: histogram(starts),
+  };
 }
 
 async function createLabel(ctx: ApiCtx, body: unknown): Promise<Label> {

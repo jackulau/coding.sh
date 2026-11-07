@@ -1,4 +1,4 @@
-// coding.sh exp run|compare|list: generic dataset experiments (src/experiments).
+// coding.sh exp run|compare|show|list: generic dataset experiments (src/experiments).
 import { dirname, resolve } from "node:path";
 import { FileEvalStore } from "../../datasets/store.ts";
 import type { Split } from "../../datasets/types.ts";
@@ -74,31 +74,56 @@ export async function run(c: CommandContext): Promise<number> {
           onProgress: (_r, done, total) => spin.update(`Running ${dataset.name}… ${done}/${total}`),
         });
         spin.stop();
-        if (out.json) out.data({ outcome: "completed", experiment: result });
+        const cancelled = result.status === "cancelled";
+        if (out.json) out.data({ outcome: cancelled ? "cancelled" : "completed", experiment: result });
         else {
           out.print(renderExperiment(result, { color: out.color }));
           out.print(result.id);
+        }
+        // main.ts exits 130 (or 143 for SIGTERM) after an interrupt; say what was kept.
+        if (cancelled) {
+          const kept = result.runs.length ? `with the ${plural(result.runs.length, "case run")} that finished` : "with no finished case runs";
+          out.warn(`Cancelled: stored ${result.id} as cancelled ${kept}; exp compare refuses it unless --force. See it with: coding.sh exp show ${result.id}`);
+          return 1;
         }
         // Every run failing to produce output means the task never worked: not a result.
         return result.summary.n > 0 && result.summary.errors === result.summary.n ? 1 : 0;
       }
       case "compare": {
         const [ida, idb] = c.positionals as [string, string];
-        const a = await store.resolveExperiment(ida);
-        const b = await store.resolveExperiment(idb);
+        const force = c.flags.force === true;
+        // Without --force a name resolves to its newest completed experiment; when only a
+        // cancelled one has that name, find it anyway so the error can say why it is refused.
+        const find = async (ref: string) => (await store.resolveExperiment(ref, { includeCancelled: force })) ?? (force ? undefined : await store.resolveExperiment(ref, { includeCancelled: true }));
+        const a = await find(ida);
+        const b = await find(idb);
         for (const [id, x] of [[ida, a], [idb, b]] as const) {
-          if (!x) throw new CliError(`Can't find experiment ${JSON.stringify(id)}`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
+          if (!x) throw new CliError(`Can't find a completed experiment ${JSON.stringify(id)}`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
+          if (x.status === "cancelled" && !force) {
+            throw new CliError(`Experiment ${x.name} (${x.id}) was cancelled after ${plural(x.runs.length, "case run")}; comparing a partial result is misleading`, {
+              reason: "cancelled_experiment",
+              next: ["Re-run it, or compare the partial result anyway:", `coding.sh exp compare ${ida} ${idb} --force`],
+            });
+          }
         }
-        const cmp = compareExperiments(a!, b!);
+        const cmp = compareExperiments(a!, b!, { force });
         if (out.json) out.data({ comparison: cmp });
         else out.print(renderComparison(cmp, { color: out.color, a: a!, b: b! }));
+        return 0;
+      }
+      case "show": {
+        const ref = c.positionals[0]!;
+        const e = await store.resolveExperiment(ref, { includeCancelled: true });
+        if (!e) throw new CliError(`Can't find experiment ${JSON.stringify(ref)}`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
+        if (out.json) out.data({ experiment: e });
+        else out.print(renderExperiment(e, { color: out.color }));
         return 0;
       }
       case "list": {
         const limit = positiveInt(c.flags.limit, "limit") ?? 20;
         const all = await store.listExperiments({ limit });
         if (out.json) {
-          out.data({ experiments: all.map((e) => ({ id: e.id, name: e.name, dataset: e.dataset, trials: e.trials, runs: e.runs.length, createdAt: new Date(e.createdAt).toISOString(), summary: e.summary })) });
+          out.data({ experiments: all.map((e) => ({ id: e.id, name: e.name, status: e.status ?? "completed", dataset: e.dataset, trials: e.trials, runs: e.runs.length, createdAt: new Date(e.createdAt).toISOString(), summary: e.summary })) });
           return 0;
         }
         if (!all.length) {
@@ -107,7 +132,7 @@ export async function run(c: CommandContext): Promise<number> {
         }
         out.table(
           ["ID", "NAME", "DATASET", "RUNS", "CREATED"],
-          all.map((e) => [e.id, e.name, `${e.dataset.name}@${e.dataset.version}`, plural(e.runs.length, "run"), ago(e.createdAt, { tty: out.stdoutTTY })]),
+          all.map((e) => [e.id, e.status === "cancelled" ? `${e.name} (cancelled)` : e.name, `${e.dataset.name}@${e.dataset.version}`, plural(e.runs.length, "run"), ago(e.createdAt)]),
         );
         return 0;
       }

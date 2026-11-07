@@ -147,7 +147,13 @@ export function resolveServeConfig(flags: ServeFlags, envIn: NodeJS.ProcessEnv):
       const t = k as TomlTable;
       const project = tomlString(t, "project", `${where}.project`, file) ?? "*";
       if (project !== "*" && !isProjectId(project)) throw new ConfigError(`${where}.project must be "*" or a project id`, file);
-      credentials.read.set(hashEntry(t.key, `${where}.key`, file), project);
+      const hash = hashEntry(t.key, `${where}.key`, file);
+      credentials.read.set(hash, project);
+      const name = tomlString(t, "name", `${where}.name`, file);
+      if (name !== undefined) {
+        if (!/^[A-Za-z0-9][A-Za-z0-9._@-]{0,63}$/.test(name)) throw new ConfigError(`${where}.name must be 1-64 letters, digits, ".", "_", "@" or "-"`, file);
+        (credentials.readNames ??= new Map()).set(hash, name);
+      }
     });
   }
   const basicUser = tomlString(viewer, "basic_user", "serve.viewer.basic_user", file);

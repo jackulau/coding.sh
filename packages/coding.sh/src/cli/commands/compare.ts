@@ -57,11 +57,19 @@ export async function run(c: CommandContext): Promise<number> {
         k,
         ...(concurrency ? { concurrency } : {}),
         ...(route ? { route } : {}),
+        signal: c.signal,
         onProgress: (p) => spin.update(`Running ${p.done}/${p.total}…`),
       });
       spin.stop();
       experimentId = r.experimentId;
       results = r.results;
+      if (r.cancelled) {
+        // A partial A/B is not a comparison; main.ts exits 130 (143 for SIGTERM).
+        const finished = results.filter((x) => !x.cancelled).length;
+        if (out.json) out.data({ outcome: "cancelled", experimentId, finished, total: runs });
+        else out.warn(`Cancelled after ${finished}/${runs} runs; no comparison. Analyse the stored runs: coding.sh compare ${c.positionals.slice(0, 2).join(" ")} --experiment ${experimentId}`);
+        return 1;
+      }
       // Pull in the sessions the runs' hooks captured.
       await ctx.ingest().catch(() => undefined);
     }

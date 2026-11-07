@@ -48,7 +48,8 @@ export class FakeIndex implements IndexStore {
       .filter((s) => !f.flag || s.flags.includes(f.flag))
       .filter((s) => f.runId === undefined || (f.runId === null ? !s.runId : s.runId === f.runId))
       .filter((s) => f.parentSessionId === undefined || (f.parentSessionId === null ? !s.parent : s.parent?.sessionId === f.parentSessionId))
-      .sort((a, b) => b.startedAt - a.startedAt);
+      .filter((s) => (f.since === undefined || s.startedAt >= f.since) && (f.until === undefined || s.startedAt < f.until))
+      .sort((a, b) => b.startedAt - a.startedAt || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const off = f.offset ?? 0;
     rows = rows.slice(off, f.limit === undefined ? undefined : off + f.limit);
     return rows;
@@ -169,6 +170,34 @@ export function event(sessionId: string, n: number, over: Partial<AgentEvent> = 
     agent: "claude-code",
     kind: "user.message",
     payload: { text: `prompt ${n}` },
+    ...over,
+  };
+}
+
+/** A finished dataset experiment, as `coding.sh exp run` stores it. */
+export function experimentResult(id: string, over: Partial<import("../../src/datasets/types.ts").ExperimentResult> = {}): import("../../src/datasets/types.ts").ExperimentResult {
+  const runs = [
+    { caseId: "c1", trial: 1, output: "4", latencyMs: 120, grades: [{ graderId: "exact", result: { score: 1, pass: true } }], pass: true, startedAt: 1_762_400_000_000 },
+    { caseId: "c2", trial: 1, output: "five", latencyMs: 340, grades: [{ graderId: "exact", result: { score: 0, pass: false, reason: "expected 5" } }], pass: false, startedAt: 1_762_400_000_100 },
+  ];
+  return {
+    id,
+    name: "prod-smoke",
+    dataset: { id: "qa", name: "QA", version: "v1abcdef" },
+    // Long, like a real command task's absolute path: it must truncate, not widen a phone screen.
+    task: { kind: "command", ref: "node /root/coding-sh-prod-exp/examples/production/mock-llm/answer.mjs --model gpt-4o --temperature 0" },
+    graders: [{ id: "exact", version: "g1", kind: "exact" }],
+    trials: 1,
+    createdAt: 1_762_400_000_000,
+    finishedAt: 1_762_400_001_000,
+    runs,
+    summary: {
+      n: 2, cases: 2, passed: 1, errors: 0,
+      passRate: { p: 0.5, lo: 0.09, hi: 0.91 },
+      ciMethod: "wilson",
+      graders: [{ id: "exact", kind: "exact", n: 2, passed: 1, errors: 0, meanScore: 0.5, passRate: { p: 0.5, lo: 0.09, hi: 0.91 } }],
+      latencyMs: { mean: 230, median: 230, p90: 340, max: 340 },
+    },
     ...over,
   };
 }

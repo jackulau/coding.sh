@@ -1,10 +1,11 @@
 // coding.sh ingest [--backfill] [--agent ...] [--since ...] [--background]
 //
 // --background is what the hook starts at session end: it takes the ingest
-// lock without waiting and exits 0 quietly when another ingest holds it (that
-// one, or the next read's lazy ingest, picks the new events up).
+// lock without waiting and exits 0 quietly when another ingest holds it, or
+// took it over mid-run (that one re-runs for the hook's wake-up marker, and
+// the next read's lazy ingest picks up anything else).
 import { parseSince } from "../args.ts";
-import { list, str, tailIngest, withContext } from "../common.ts";
+import { list, lockContention, str, tailIngest, withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { pickAdapters } from "./init.ts";
@@ -23,7 +24,7 @@ export async function run(c: CommandContext): Promise<number> {
         if (out.json) out.data({ outcome: "ingested", spool: r, backfill: null });
         return r.errors.length ? 1 : 0;
       } catch (e) {
-        if ((e as Error).name !== "LockBusyError") throw e;
+        if (!lockContention(e)) throw e;
         if (out.json) out.data({ outcome: "busy" });
         return 0;
       }

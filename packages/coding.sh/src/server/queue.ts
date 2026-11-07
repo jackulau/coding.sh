@@ -51,6 +51,8 @@ export interface IngestQueueOptions {
   log?: Logger;
   /** OTLP span enrichment (default: the receiver's defaultEnricher). */
   enrichSpan?: SpanEnricher | false;
+  /** Called once when the writer lease is found lost (see setWritable); the queue is standby by then. */
+  onLeaseLost?: (err: Error) => void;
 }
 
 interface Pending {
@@ -76,6 +78,8 @@ export class IngestQueue {
   /** Observed write rate, events/second (EWMA). */
   private rate = 0;
   private writable = false;
+  /** Throws once the writer lease was taken over (WriterLock.assertHeld). */
+  private fence: (() => void) | undefined;
   private closing = false;
   private stopped = false;
   private wake: (() => void) | undefined;
@@ -93,9 +97,15 @@ export class IngestQueue {
     return { events: this.queuedEvents, bytes: this.queuedBytes, max: this.o.maxEvents };
   }
 
-  /** True while this replica may write (it holds the writer lock). */
-  setWritable(on: boolean): void {
+  /**
+   * True while this replica may write (it holds the writer lock). `fence`
+   * throws once the lock was lost: it is checked before every tick and
+   * exclusive job, so a writer whose lease another replica broke never commits
+   * another write (see leaseLost).
+   */
+  setWritable(on: boolean, fence?: () => void): void {
     this.writable = on;
+    this.fence = on ? fence : undefined;
   }
 
   get isWritable(): boolean {
@@ -187,8 +197,34 @@ export class IngestQueue {
     this.queuedBytes = Math.max(0, this.queuedBytes - e.bytes);
   }
 
+  /**
+   * Undefined while this replica still holds the writer lease. Once it is lost:
+   * standby, every queued request and job fails with 503 (clients retry against
+   * the new writer), onLeaseLost fires, and the error is returned.
+   */
+  private leaseLost(): HttpError | undefined {
+    if (!this.fence) return undefined;
+    try {
+      this.fence();
+      return undefined;
+    } catch (cause) {
+      this.writable = false;
+      this.fence = undefined;
+      this.o.log?.warn("lost the writer lock to another replica; standby", { error: (cause as Error).message });
+      const err = new HttpError(503, RPC.UNAVAILABLE, "standby: another replica took over the writer lock; retry", { "Retry-After": "5" });
+      for (const p of this.pending.splice(0)) {
+        this.release(p.entry);
+        p.reject(err);
+      }
+      for (const j of this.exclusive.splice(0)) j.reject(err);
+      this.o.onLeaseLost?.(cause as Error);
+      return err;
+    }
+  }
+
   private async run(): Promise<void> {
     for (;;) {
+      if (this.exclusive.length || this.pending.length) this.leaseLost();
       const job = this.exclusive.shift();
       if (job) {
         this.busy = true;
@@ -299,6 +335,12 @@ export class IngestQueue {
         }
         return n;
       });
+      // Checked again right before the first write: preparing can take a while.
+      const lost = this.leaseLost();
+      if (lost) {
+        for (const p of batch) p.reject(lost);
+        return;
+      }
       for (const e of unique) this.dirty.add(e.sessionId);
       if (this.dirty.size && store.kvSet) await store.kvSet(DIRTY_KEY, JSON.stringify([...this.dirty]));
       const { inserted } = unique.length ? await store.putEvents(unique) : { inserted: 0 };

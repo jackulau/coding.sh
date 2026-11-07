@@ -540,15 +540,21 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
-        const [{ FileEvalStore }, { compareExperiments }] = await Promise.all([import("../datasets/store.ts"), import("../experiments/compare.ts")]);
+        const [{ FileEvalStore }, { compareExperiments, IncompleteExperimentError }] = await Promise.all([import("../datasets/store.ts"), import("../experiments/compare.ts")]);
         const store = new FileEvalStore({ env: c.env, index: ctx.index });
         const ids = [strArg(a, "baseline")!, strArg(a, "candidate")!];
         const [ea, eb] = await Promise.all(ids.map((id) => store.getExperiment(id).catch(() => undefined)));
         for (const [i, e] of [ea, eb].entries()) if (!e) throw new ToolError(`No experiment with id ${JSON.stringify(ids[i])}. Find ids with experiments_list.`);
-        const cmp = compareExperiments(ea!, eb!, { iters: 2000 });
+        let cmp: ReturnType<typeof compareExperiments>;
+        try {
+          cmp = compareExperiments(ea!, eb!, { iters: 2000 });
+        } catch (e) {
+          if (e instanceof IncompleteExperimentError) throw new ToolError(`${e.message}. Compare it with the CLI and --force to include it anyway.`);
+          throw e;
+        }
         const limit = numArg(a, "limit", 10);
         const cases = (xs: { caseId: string; a: number; b: number }[]) => xs.slice(0, limit).map((x) => ({ caseId: x.caseId, baseline: round(x.a), candidate: round(x.b) }));
-        const warnings = [...(cmp.datasetWarning ? [cmp.datasetWarning] : []), ...cmp.power.warnings.map((w) => w.message)];
+        const warnings = [...(cmp.datasetWarning ? [cmp.datasetWarning] : []), ...(cmp.gradeWarning ? [cmp.gradeWarning] : []), ...cmp.power.warnings.map((w) => w.message)];
         return {
           baseline: { id: cmp.a.id, name: cmp.a.name, passRate: round(cmp.a.passRate) },
           candidate: { id: cmp.b.id, name: cmp.b.name, passRate: round(cmp.b.passRate) },
@@ -562,6 +568,142 @@ export function buildTools(): ToolDef<ToolCtx>[] {
           improvements: cases(cmp.improvements),
           graders: cmp.graders.slice(0, limit).map((g) => ({ id: g.id, meanBaseline: round(g.meanA), meanCandidate: round(g.meanB), diff: round(g.diff.mean), lo: round(g.diff.lo), hi: round(g.diff.hi) })),
           warnings,
+        };
+      },
+    },
+    {
+      name: "benchmarks",
+      title: "Benchmarks",
+      description:
+        "Dynamic benchmarks (coding.sh bench). No name: list them. Name: one run (latest counted by default) with leaderboard, paired verdicts, cost sources and worst failures. Name + metric: that metric per contender across counted runs, oldest first",
+      inputSchema: input({
+        name: { type: "string", minLength: 1, description: "Benchmark name. Omit to list benchmarks." },
+        run: { type: "string", description: "Run id or YYYY-MM-DD. Default latest counted run." },
+        metric: { type: "string", enum: ["pass", "score", "latency", "p95", "cost", "tokens", "tokens-in", "tokens-out", "errors"], description: "Return history for this metric instead of one run: pass rate, mean score, p50 or p95 latency ms, USD per run, tokens (total, in, out) or errors." },
+        anchor: { type: "boolean", description: "With metric: numbers from the fixed anchor set instead of the fresh cases." },
+        limit: { type: "integer", minimum: 1, maximum: 365, description: "Max failures per contender (default 5), or runs of history (default 30)." },
+      }),
+      outputSchema: out({
+        benchmarks: arr(out({ name: S, source: S, contenders: arr(S), runs: I, lastRun: out({ id: S, date: S, leaders: arr(S) }) }, ["name", "runs"])),
+        bench: S,
+        run: S,
+        date: S,
+        seed: S,
+        sha256: S,
+        metric: S,
+        leaderboard: arr(out({ contender: S, place: I, passRate: N, passed: I, n: I }, ["contender", "place"])),
+        headToHead: arr(out({ a: S, b: S, verdict: S, p: N }, ["a", "b", "verdict"])),
+        failures: { type: "object" },
+        runs: arr(out({ id: S, date: S }, ["id", "date"])),
+        series: { type: "object" },
+        anchor: { type: "object" },
+        seedCheck: { type: "object" },
+        contentChanges: arr(out({ key: S, from: S, to: S }, ["key"])),
+        warnings: arr(S),
+      }),
+      annotations: READ,
+      async run(a, c) {
+        const { contentChanges, getRun, historyRuns, listRuns, series } = await import("../bench/store.ts");
+        const name = strArg(a, "name");
+        if (!name) {
+          const { listDefinitions } = await import("../bench/define.ts");
+          return {
+            benchmarks: await Promise.all(
+              listDefinitions({ cwd: c.cwd, env: c.env }).map(async (d) => {
+                const runs = await listRuns(d.name, c.env);
+                const last = historyRuns(runs).at(-1) ?? runs.at(-1);
+                return {
+                  name: d.name,
+                  file: d.file,
+                  scope: d.scope,
+                  ...(d.error ? { error: clip(d.error, 200) } : {}),
+                  ...(d.def ? { source: d.def.source.kind, cases: d.def.cases, contenders: d.def.contenders.map((x) => x.name) } : {}),
+                  runs: runs.length,
+                  ...(last ? { lastRun: { id: last.id, date: last.date, leaders: last.summaries.filter((x) => x.place === 1).map((x) => x.contender) } } : {}),
+                };
+              }),
+            ),
+          };
+        }
+        const runs = await listRuns(name, c.env).catch(() => []);
+        if (!runs.length) throw new ToolError(`No runs for benchmark ${JSON.stringify(name)}. Call benchmarks with no name to list them; run one with: coding.sh bench run ${name}`);
+        const metric = strArg(a, "metric") as "pass" | undefined;
+        if (metric) {
+          const anchor = a.anchor === true;
+          const all = historyRuns(runs);
+          const counted = (anchor ? all.filter((r) => r.anchor) : all).slice(-numArg(a, "limit", 30));
+          const s = series(counted, metric, { anchor });
+          const changes = contentChanges(all);
+          return {
+            bench: name,
+            metric,
+            ...(anchor ? { set: "anchor" } : {}),
+            runs: counted.map((r) => ({ id: r.id, date: r.date, cases: anchor ? r.anchor!.cases : r.cases.filter((x) => !x.anchor).length, sha256: anchor ? r.anchor!.sha256 : r.dataset.sha256 })),
+            series: Object.fromEntries(Object.entries(s).map(([k, v]) => [k, v.map((p) => ({ date: p.date, value: p.value === null ? null : round(p.value) ?? null, n: p.n, segment: p.segment ?? 0 }))])),
+            ...(changes.length ? { contentChanges: changes.slice(0, 20).map((x) => ({ key: clip(x.key, 120), anchor: x.anchor, from: x.from.date, to: x.to.date })) } : {}),
+          };
+        }
+        const ref = strArg(a, "run") ?? "latest";
+        const r = ref === "latest" ? (historyRuns(runs).at(-1) ?? runs.at(-1)) : await getRun(name, ref, c.env);
+        if (!r) throw new ToolError(`Benchmark ${name} has no run ${JSON.stringify(ref)}. Latest is ${runs.at(-1)!.id} (${runs.at(-1)!.date}).`);
+        const limit = numArg(a, "limit", 5);
+        const byCase = new Map(r.cases.map((x) => [x.id, x]));
+        const failures: Record<string, unknown[]> = {};
+        for (const s of r.summaries) {
+          failures[s.contender] = r.cells
+            .filter((x) => x.contender === s.contender && !x.pass)
+            .sort((x, y) => x.score - y.score)
+            .slice(0, limit)
+            .map((x) => ({ caseId: x.caseId, failure: x.failure ?? "wrong", input: clip(JSON.stringify(byCase.get(x.caseId)?.input ?? null), 160), detail: clip(x.error ?? x.grades?.find((g) => !g.pass)?.reason ?? x.output, 200), ...(x.sessionId ? { sessionId: x.sessionId } : {}) }));
+        }
+        const { verifySeed } = await import("../bench/commit.ts");
+        const seedCheck = verifySeed(r, runs);
+        const board = (xs: typeof r.summaries) =>
+          xs.map((s) => ({
+            contender: s.contender,
+            place: s.place,
+            passRate: round(s.passRate.p),
+            passRateLo: round(s.passRate.lo),
+            passRateHi: round(s.passRate.hi),
+            passed: s.passed,
+            n: s.n,
+          }));
+        return {
+          bench: r.bench,
+          run: r.id,
+          date: r.date,
+          seed: r.seed,
+          ...(seedCheck ? { seedCheck: { ok: seedCheck.ok, checks: seedCheck.checks.map((x) => `${x.ok ? "ok" : "FAILED"}: ${x.detail}`) } } : {}),
+          sha256: r.dataset.sha256,
+          dataset: `${r.dataset.id}@${r.dataset.version}`,
+          cases: r.cases.filter((x) => !x.anchor).length,
+          ...(r.anchor ? { anchor: { version: r.anchor.version, cases: r.anchor.cases, leaderboard: board(r.anchor.summaries) } } : {}),
+          mode: r.mode ?? "scheduled",
+          status: r.status ?? "complete",
+          excluded: r.excluded ? { cases: r.excluded.cases, byReason: r.excluded.byReason } : undefined,
+          contenders: r.contenders.map((x) => ({ name: x.name, kind: x.kind, model: x.model, version: x.version })),
+          leaderboard: r.summaries.map((s) => ({
+            contender: s.contender,
+            place: s.place,
+            passRate: round(s.passRate.p),
+            passRateLo: round(s.passRate.lo),
+            passRateHi: round(s.passRate.hi),
+            passed: s.passed,
+            n: s.n,
+            meanScore: round(s.meanScore),
+            p50Ms: round(s.latencyMs.p50),
+            p95Ms: round(s.latencyMs.p95),
+            costPerRunUsd: s.costUsd.known ? round(s.costUsd.perRun) : undefined,
+            costSources: s.costUsd.sources,
+            tokensIn: s.tokensIn?.known ? round(s.tokensIn.mean) : undefined,
+            tokensOut: s.tokensOut?.known ? round(s.tokensOut.mean) : undefined,
+            errors: s.errors,
+            failureModes: s.failures,
+            experimentId: s.experimentId,
+          })),
+          headToHead: r.comparisons.map((p) => ({ a: p.a, b: p.b, verdict: p.verdict === "tie" ? "tie" : `${p.verdict === "a" ? p.a : p.b} ahead`, diff: round(p.diff.mean), lo: round(p.diff.lo), hi: round(p.diff.hi), aOnly: p.aOnly, bOnly: p.bOnly, p: round(p.pAdj) })),
+          failures,
+          warnings: r.warnings,
         };
       },
     },

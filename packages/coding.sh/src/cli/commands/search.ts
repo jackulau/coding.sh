@@ -24,7 +24,7 @@ export async function run(c: CommandContext): Promise<number> {
     const tty = out.stdoutTTY;
     out.table(
       ["SESSION", "KIND", "WHEN", "MATCH"],
-      hits.map((h) => [h.event.sessionId, h.event.kind, ago(h.event.ts, { tty }), oneLine(clean(h.snippet), tty ? 80 : 10_000)]),
+      hits.map((h) => [h.event.sessionId, h.event.kind, ago(h.event.ts), oneLine(clean(h.snippet), tty ? 80 : 10_000)]),
     );
     return 0;
   });

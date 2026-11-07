@@ -101,16 +101,22 @@ describe("cli help", () => {
     const h = tmpHome();
     // Best of three: the first spawn pays cold file-cache costs.
     let best = Infinity;
+    let bare = Infinity;
     let res: SpawnSyncReturns<string> | undefined;
     for (let i = 0; i < 3; i++) {
       const t0 = performance.now();
       res = cli(h, ["--help"]);
       best = Math.min(best, performance.now() - t0);
+      // A bare node spawn under the same load: the budget is for the CLI's own startup, so a busy
+      // machine (the parallel suite, other jobs) slows both and does not fail the check.
+      const t1 = performance.now();
+      spawnSync(process.execPath, ["-e", ""]);
+      bare = Math.min(bare, performance.now() - t1);
     }
     assert.equal(res!.status, 0, res!.stderr);
     assert.match(res!.stdout, /coding\.sh/);
     assert.match(res!.stdout, /init/);
-    assert.ok(best < 200, `--help took ${best.toFixed(0)} ms`);
+    assert.ok(best - bare < 170, `--help took ${best.toFixed(0)} ms (bare node ${bare.toFixed(0)} ms)`);
   });
 
   it("keeps command code out of the entry bundle (code splitting)", () => {
@@ -468,7 +474,9 @@ describe("cli zero setup", () => {
     assert.equal(r.status, 0, r.stderr);
     const plan = parseJson(r.stdout, "init plan") as { mcpServer: { name: string; args: string[] }; agents: { id: string; changes: unknown[]; mcp: { error: string | null; changes: { path: string; after: string }[] } | null }[] };
     assert.equal(plan.mcpServer.name, "coding-sh");
-    assert.deepEqual(plan.mcpServer.args, [CLI, "mcp"], "launches the installed bundle");
+    // INS-7: the stable launcher, not the bundle path that ran init (npx cache, nvm dir).
+    assert.equal((plan.mcpServer as { command?: string }).command, "node");
+    assert.deepEqual(plan.mcpServer.args, [join(h.data, "bin", "mcp.mjs")], "launches the stable ~/.coding.sh launcher");
     const files = mcpFiles(h);
     for (const id of MCP_AGENTS) {
       const a = plan.agents.find((x) => x.id === id)!;
@@ -723,10 +731,13 @@ describe("cli QA regressions", () => {
     assert.deepEqual(list.bundles, [], "no empty bundle was stored");
   });
 
-  it("doctor shows a readable label for the wrapper agent", () => {
+  it("doctor shows the built-in wrapper as ready, with how to use it, and never suggests installing it", () => {
+    // Dogfood: "! Any command  installed, not hooked" read as a problem, and the
+    // next step said `coding.sh init --agent wrapper`, which installs nothing.
     const r = cli(tmpHome(), ["doctor"]);
-    assert.match(r.stderr, /^! Any command\s+installed/m);
+    assert.match(r.stderr, /^✓ Any command\s+no hooks needed; capture with coding\.sh run -- <cmd>, no runs yet$/m);
     assert.doesNotMatch(r.stderr, /Any command \(co/);
+    assert.doesNotMatch(r.stderr, /--agent wrapper/);
   });
 
   it("show reports files a hook session wrote outside edit tools, from its end snapshot", () => {
@@ -784,9 +795,12 @@ describe("cli QA regressions", () => {
     const PATH = `${bin}:${h.env.PATH}`;
     const r = cli(h, ["init", "--yes", "--agent", "cursor", "--agent", "antigravity"], { PATH });
     assert.equal(r.status, 0, r.stderr);
-    const tail = r.stderr.trimEnd().split("\n").slice(-4);
-    assert.match(tail[0]!, /^! Cursor CLI: cursor-agent 2025\.09\.18-7ae6800 predates CLI hooks/);
-    assert.match(tail[1]!, /^✓ Set up Cursor CLI \(hooks \+ MCP server\); Antigravity CLI \(hooks\)$/);
+    // The blocker is part of the plan, ahead of the Y/n prompt, not a surprise after the writes.
+    const blocker = r.stderr.search(/^ {4}! cursor-agent 2025\.09\.18-7ae6800 predates CLI hooks/m);
+    assert.ok(blocker >= 0, r.stderr);
+    assert.ok(blocker < r.stderr.indexOf("✓ Set up"), "blocker listed before the setup");
+    const tail = r.stderr.trimEnd().split("\n").slice(-3);
+    assert.match(tail[0]!, /^✓ Set up Cursor CLI \(hooks \+ MCP server\); Antigravity CLI \(hooks\)$/);
     assert.doesNotMatch(r.stderr, /Antigravity CLI \(hooks \+ MCP/);
     assert.doesNotMatch(r.stderr, /headless runs/, "informational notes stay out of init");
 

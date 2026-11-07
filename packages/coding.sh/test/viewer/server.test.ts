@@ -2,8 +2,14 @@ import assert from "node:assert/strict";
 import { request as httpRequest, createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, before, describe, test } from "node:test";
-import { BLOB_CAP_BYTES, MAX_BODY_BYTES, startViewer, type Viewer } from "../../src/viewer/server.ts";
-import { FakeBlobs, FakeIndex, event, session } from "./fakes.ts";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { runBench } from "../../src/bench/run.ts";
+import { runsDir } from "../../src/bench/store.ts";
+import { benchmarkDir, BLOB_CAP_BYTES, MAX_BODY_BYTES, startViewer, type Viewer } from "../../src/viewer/server.ts";
+import { MemoryIndexStore } from "../../src/store/memory.ts";
+import { cleanup as benchCleanup, day, project } from "../bench/helpers.ts";
+import { FakeBlobs, FakeIndex, event, experimentResult, session } from "./fakes.ts";
 
 interface Res {
   status: number;
@@ -366,6 +372,301 @@ describe("viewer server: subagent sessions", () => {
     assert.deepEqual(top.byAgent, { "claude-code": 1, codex: 1 });
     assert.deepEqual(top.byRepo, { "/work/api": 1, "/work/web": 1 });
     assert.equal(top.toolCalls, all.toolCalls, "tool totals still cover every session");
+  });
+});
+
+// Regression: `coding.sh exp run` results stored in the index (sqlite, postgres)
+// never reached the viewer, which had no /api/experiments route.
+describe("viewer server: dataset experiments", () => {
+  const index = new MemoryIndexStore();
+  let v: Viewer;
+  before(async () => {
+    await index.putExperiment(experimentResult("exp-1", { name: "baseline", createdAt: 1 }));
+    await index.putExperiment(experimentResult("exp-2", { runs: [{ ...experimentResult("x").runs[0]!, output: "y".repeat(10_000) }] }));
+    v = await startViewer({ index, blobs: new FakeBlobs(), port: 0 });
+  });
+  after(async () => {
+    await v.close();
+  });
+
+  test("lists experiments from the index, newest id first, without per-case runs", async () => {
+    const r = await req(v, "/api/experiments");
+    assert.equal(r.status, 200);
+    const items = r.json().items;
+    assert.deepEqual(items.map((e: any) => e.id), ["exp-2", "exp-1"]);
+    assert.equal(items[1].name, "baseline");
+    assert.equal(items[1].runCount, 2);
+    assert.equal(items[1].runs, undefined, "list rows leave out runs");
+    assert.equal(items[1].summary.passRate.p, 0.5);
+    assert.deepEqual((await req(v, "/api/experiments?name=baseline")).json().items.map((e: any) => e.id), ["exp-1"]);
+    assert.deepEqual((await req(v, "/api/experiments?limit=1")).json().items.map((e: any) => e.id), ["exp-2"]);
+    assert.equal((await req(v, "/api/experiments?limit=0")).status, 400);
+  });
+
+  test("detail returns case runs with long outputs clipped", async () => {
+    const old = (await req(v, "/api/experiments/exp-1")).json();
+    assert.deepEqual(old.runs.map((r: any) => [r.caseId, r.pass]), [["c1", true], ["c2", false]]);
+    assert.equal(old.runsTruncated, false);
+    const big = (await req(v, "/api/experiments/exp-2")).json();
+    assert.equal(big.runs[0].output.length, 4000);
+    assert.equal(big.runs[0].outputTruncated, true);
+  });
+
+  test("bad ids are 400, unknown ids 404, writes 405, auth required", async () => {
+    assert.equal((await req(v, "/api/experiments/..%2Fetc")).status, 400);
+    assert.equal((await req(v, "/api/experiments/nope")).status, 404);
+    assert.equal((await req(v, "/api/experiments/exp-1/runs")).status, 404);
+    assert.equal((await req(v, "/api/experiments", { method: "POST" })).status, 405);
+    assert.equal((await req(v, "/api/experiments", { auth: false })).status, 401);
+  });
+
+  test("an index without experiment tables lists none; an explicit source is used", async () => {
+    const bare = await startViewer({ index: new FakeIndex(), blobs: new FakeBlobs(), port: 0 });
+    const src = await startViewer({
+      index: new FakeIndex(),
+      blobs: new FakeBlobs(),
+      port: 0,
+      experiments: { listExperiments: async () => [experimentResult("from-files")], getExperiment: async (id) => (id === "from-files" ? experimentResult(id) : undefined) },
+    });
+    try {
+      assert.deepEqual((await req(bare, "/api/experiments")).json(), { items: [] });
+      assert.equal((await req(bare, "/api/experiments/x")).status, 404);
+      assert.deepEqual((await req(src, "/api/experiments")).json().items.map((e: any) => e.id), ["from-files"]);
+      assert.equal((await req(src, "/api/experiments/from-files")).json().runs.length, 2);
+    } finally {
+      await bare.close();
+      await src.close();
+    }
+  });
+});
+
+// Regression VWR-1: "Load more" paged by offset over a list that ingest keeps
+// reordering, so a session that landed between pages repeated a row.
+describe("viewer server: keyset pagination", () => {
+  const index = new MemoryIndexStore();
+  let v: Viewer;
+  const T = 1_700_000_000_000;
+  before(async () => {
+    // s2 and s3 share a start time, so the cursor must break ties by id.
+    const starts = [0, 1, 2, 2, 3, 4, 5].map((n) => T + n * 60_000);
+    for (const [i, startedAt] of starts.entries()) await index.upsertSession(session(`s${i}`, { startedAt }));
+    v = await startViewer({ index, blobs: new FakeBlobs(), port: 0 });
+  });
+  after(async () => {
+    await v.close();
+  });
+
+  test("nextCursor pages without repeats or gaps while newer sessions land", async () => {
+    const before_ = (await req(v, "/api/sessions?limit=50")).json().items.map((s: any) => s.id);
+    const seen: string[] = [];
+    let page = (await req(v, "/api/sessions?limit=3")).json();
+    seen.push(...page.items.map((s: any) => s.id));
+    let n = 0;
+    while (page.hasMore) {
+      assert.equal(typeof page.nextCursor, "string", "a page with more rows carries a cursor");
+      // A session is ingested between every two pages.
+      await index.upsertSession(session(`new${n++}`, { startedAt: T + 3_600_000 + n }));
+      page = (await req(v, `/api/sessions?limit=3&cursor=${encodeURIComponent(page.nextCursor)}`)).json();
+      seen.push(...page.items.map((s: any) => s.id));
+    }
+    assert.equal(page.nextCursor, undefined, "the last page has no cursor");
+    assert.deepEqual(seen, before_, "every pre-existing session once, in order");
+  });
+
+  test("a cursor works with filters, and a malformed one is 400", async () => {
+    const p1 = (await req(v, "/api/sessions?scope=top&agent=claude-code&limit=2")).json();
+    const p2 = (await req(v, `/api/sessions?scope=top&agent=claude-code&limit=2&cursor=${encodeURIComponent(p1.nextCursor)}`)).json();
+    assert.equal(p2.items.filter((s: any) => p1.items.some((x: any) => x.id === s.id)).length, 0);
+    for (const c of ["nope", "123", "abc:def", "-5:x"]) assert.equal((await req(v, `/api/sessions?cursor=${c}`)).status, 400, c);
+  });
+});
+
+describe("viewer server: facets, time range and model", () => {
+  const index = new FakeIndex();
+  const H = 3_600_000;
+  const t0 = 1_762_000_000_000;
+  let v: Viewer;
+  before(async () => {
+    await index.upsertSession(session("a", { startedAt: t0, model: "opus", flags: ["no-verification"] }));
+    await index.upsertSession(session("b", { startedAt: t0 + 2 * H, model: "sonnet" }));
+    await index.upsertSession(session("c", { startedAt: t0 + 5 * H, model: "opus", agent: "codex", repo: { root: "/work/web", head: "abc1234" } }));
+    await index.upsertSession(session("c:sub", { startedAt: t0 + 5 * H, model: "haiku", parent: { sessionId: "c", subagentId: "x" } }));
+    await index.putEvents(["a", "b", "c"].map((id) => event(id, 1, { payload: { text: "fix the queue" } })));
+    v = await startViewer({ index, blobs: new FakeBlobs(), port: 0 });
+  });
+  after(async () => {
+    await v.close();
+  });
+
+  test("each facet counts with every other filter applied but its own", async () => {
+    const s = (await req(v, "/api/stats?scope=top&model=opus")).json();
+    assert.equal(s.sessions, 2);
+    assert.deepEqual(s.byModel, { opus: 2, sonnet: 1 }, "the model facet ignores the model filter");
+    assert.deepEqual(s.byAgent, { "claude-code": 1, codex: 1 });
+    assert.deepEqual(s.byRepo, { "/work/api": 1, "/work/web": 1 });
+    const both = (await req(v, "/api/stats?scope=top&model=opus&agent=codex")).json();
+    assert.equal(both.sessions, 1);
+    assert.deepEqual(both.byModel, { opus: 1 });
+    assert.deepEqual(both.byAgent, { "claude-code": 1, codex: 1 });
+  });
+
+  test("the histogram ignores the time range but honours other filters", async () => {
+    const s = (await req(v, `/api/stats?scope=top&since=${t0 + H}`)).json();
+    assert.equal(s.sessions, 2);
+    const total = s.histogram.buckets.reduce((n: number, b: any) => n + b.n, 0);
+    assert.equal(total, 3, "all three top-level sessions are charted");
+    assert.ok(s.histogram.buckets.length <= 60);
+    assert.equal(s.histogram.buckets.reduce((n: number, b: any) => n + b.flagged, 0), 1);
+    for (const b of s.histogram.buckets) assert.equal((b.t - s.histogram.from) % s.histogram.step, 0);
+    const codex = (await req(v, "/api/stats?scope=top&agent=codex")).json();
+    assert.equal(codex.histogram.buckets.reduce((n: number, b: any) => n + b.n, 0), 1);
+    assert.deepEqual((await req(v, "/api/stats?scope=top&agent=nobody")).json().histogram.buckets, []);
+  });
+
+  test("the list, its cursor and search honour since, until and model", async () => {
+    const ids = async (path: string) => (await req(v, path)).json().items.map((x: any) => x.id ?? x.event.sessionId);
+    assert.deepEqual(await ids(`/api/sessions?scope=top&since=${t0 + H}`), ["c", "b"]);
+    assert.deepEqual(await ids(`/api/sessions?scope=top&until=${t0 + 3 * H}`), ["b", "a"]);
+    assert.deepEqual(await ids(`/api/sessions?scope=top&model=opus`), ["c", "a"]);
+    const p1 = (await req(v, `/api/sessions?scope=top&model=opus&limit=1`)).json();
+    assert.deepEqual([p1.items[0].id, p1.hasMore], ["c", true]);
+    assert.deepEqual(await ids(`/api/sessions?scope=top&model=opus&limit=1&cursor=${encodeURIComponent(p1.nextCursor)}`), ["a"]);
+    const p2 = (await req(v, `/api/sessions?scope=top&until=${t0 + 3 * H}&limit=1`)).json();
+    assert.deepEqual(await ids(`/api/sessions?scope=top&until=${t0 + 3 * H}&limit=1&cursor=${encodeURIComponent(p2.nextCursor)}`), ["a"]);
+    assert.deepEqual((await ids(`/api/search?q=queue&model=opus`)).sort(), ["a", "c"]);
+    assert.deepEqual(await ids(`/api/search?q=queue&since=${t0 + H}&until=${t0 + 3 * H}`), ["b"]);
+    assert.equal((await req(v, "/api/sessions?since=soon")).status, 400);
+  });
+});
+
+describe("viewer server: experiment compare", () => {
+  const index = new MemoryIndexStore();
+  let v: Viewer;
+  const run = (caseId: string, pass: boolean) => ({ ...experimentResult("x").runs[0]!, caseId, pass, grades: [{ graderId: "exact", result: { score: pass ? 1 : 0, pass } }] });
+  before(async () => {
+    await index.putExperiment(experimentResult("base", { runs: [run("c1", true), run("c2", false), run("c3", true)] }));
+    await index.putExperiment(experimentResult("cand", { runs: [run("c1", false), run("c2", true), run("c3", true), run("c4", true)], status: "cancelled" }));
+    v = await startViewer({ index, blobs: new FakeBlobs(), port: 0 });
+  });
+  after(async () => {
+    await v.close();
+  });
+
+  test("pairs cases, lists regressions and improvements, and flags a partial side", async () => {
+    const r = await req(v, "/api/compare?a=base&b=cand");
+    assert.equal(r.status, 200);
+    const c = r.json();
+    assert.equal(c.paired, 3);
+    assert.deepEqual(c.onlyInB, ["c4"]);
+    assert.deepEqual(c.regressions.map((x: any) => x.caseId), ["c1"]);
+    assert.deepEqual(c.improvements.map((x: any) => x.caseId), ["c2"]);
+    assert.equal(c.verdict, "inconclusive");
+    assert.deepEqual(c.partial, ["cand"]);
+    assert.ok(c.diff.lo <= c.diff.mean && c.diff.mean <= c.diff.hi);
+  });
+
+  test("rejects bad ids and missing experiments", async () => {
+    assert.equal((await req(v, "/api/compare?a=base")).status, 400);
+    assert.equal((await req(v, "/api/compare?a=..%2Fx&b=base")).status, 400);
+    assert.equal((await req(v, "/api/compare?a=base&b=nope")).status, 404);
+    assert.equal((await req(v, "/api/compare?a=base&b=cand", { method: "POST" })).status, 405);
+  });
+});
+
+// Regression VWR-5: search hits ignored the flag, repo and scope filters.
+describe("viewer server: search follows the session filters", () => {
+  const index = new FakeIndex();
+  let v: Viewer;
+  before(async () => {
+    await index.upsertSession(session("a", { flags: ["no-verification"], repo: { root: "/work/api", head: "abc1234" } }));
+    await index.upsertSession(session("b", { repo: { root: "/work/web", head: "abc1234" } }));
+    await index.upsertSession(session("a:sub", { repo: { root: "/work/api", head: "abc1234" }, parent: { sessionId: "a", subagentId: "x" } }));
+    await index.putEvents(["a", "b", "a:sub"].map((id) => event(id, 1, { payload: { text: "migrate the schema" } })));
+    v = await startViewer({ index, blobs: new FakeBlobs(), port: 0 });
+  });
+  after(async () => {
+    await v.close();
+  });
+  const ids = async (qs: string) => (await req(v, `/api/search?q=migrate${qs}`)).json().items.map((h: any) => h.event.sessionId).sort();
+
+  test("flag, repo and scope narrow the hits", async () => {
+    assert.deepEqual(await ids(""), ["a", "a:sub", "b"]);
+    assert.deepEqual(await ids("&flag=no-verification"), ["a"]);
+    assert.deepEqual(await ids(`&repo=${encodeURIComponent("/work/api")}`), ["a", "a:sub"]);
+    assert.deepEqual(await ids("&scope=top"), ["a", "b"]);
+    assert.deepEqual(await ids(`&scope=top&repo=${encodeURIComponent("/work/api")}`), ["a"]);
+    assert.equal((await req(v, "/api/search?q=migrate&scope=bogus")).status, 400);
+  });
+});
+
+describe("viewer server: benchmarks", () => {
+  const index = new FakeIndex();
+  let v: Viewer;
+  let env: NodeJS.ProcessEnv;
+  before(async () => {
+    // Two contenders over three days; "bad" is the definition's reference.
+    const p = project();
+    env = p.env;
+    for (const d of ["2026-11-04", "2026-11-05", "2026-11-06"]) await runBench({ def: p.def('reference = "bad"'), env, now: day(d) });
+    // Point two of the latest run's failures at sessions: one the index has, one it doesn't.
+    const dir = runsDir("arith", env);
+    const latest = readdirSync(dir).map((f) => JSON.parse(readFileSync(join(dir, f), "utf8"))).sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+    const bad = latest.cells.filter((c: any) => c.contender === "bad" && !c.pass);
+    assert.ok(bad.length >= 2, "the bad contender fails some cases");
+    bad[0].sessionId = "s-known";
+    bad[1].sessionId = "s-missing";
+    writeFileSync(join(dir, `${latest.id}.json`), JSON.stringify(latest));
+    await index.upsertSession(session("s-known"));
+    v = await startViewer({ index, blobs: new FakeBlobs(), port: 0, env });
+  });
+  after(async () => {
+    await v.close();
+    benchCleanup();
+  });
+
+  test("lists each benchmark with its latest leaderboard and pass-rate trend", async () => {
+    const { items } = (await req(v, "/api/benchmarks")).json();
+    assert.equal(items.length, 1);
+    const b = items[0];
+    assert.equal(b.name, "arith");
+    assert.equal(b.counted, 3);
+    assert.equal(b.reference, "bad", "reference comes from the definition file");
+    assert.equal(b.latest.date, "2026-11-06");
+    assert.deepEqual(b.contenders.map((c: any) => c.name), ["good", "bad"], "leader first");
+    assert.equal(b.contenders[0].passRate.p, 1);
+    assert.equal(b.trend.good.length, 3);
+    assert.ok(b.trend.bad.every((x: number) => x > 0 && x < 1));
+  });
+
+  test("detail: history, gap to the reference, and failures that only link to sessions the index has", async () => {
+    const r = (await req(v, "/api/benchmarks/arith")).json();
+    assert.equal(r.bench, "arith");
+    assert.equal(r.reference, "bad");
+    assert.equal(r.history.pass.good.length, 3);
+    assert.deepEqual(Object.keys(r.vsReference), ["good"]);
+    assert.ok(r.vsReference.good.every((x: any) => x.value > 0), "good beats the reference every day");
+    assert.equal(r.cases, undefined, "the frozen case list stays out");
+    const fails = r.failures.bad;
+    assert.ok(fails.length >= 2);
+    assert.ok(fails.every((f: any) => f.sessionUrl === undefined && typeof f.hasSession === "boolean"));
+    assert.equal(fails.find((f: any) => f.sessionId === "s-known").hasSession, true);
+    assert.equal(fails.find((f: any) => f.sessionId === "s-missing").hasSession, false);
+    assert.deepEqual(r.failures.good, []);
+  });
+
+  test("bad names are 400, unknown 404, writes 405, auth required; an empty data dir lists none", async () => {
+    assert.equal((await req(v, "/api/benchmarks/..%2Fetc")).status, 400);
+    assert.equal((await req(v, "/api/benchmarks/Nope")).status, 400);
+    assert.equal((await req(v, "/api/benchmarks/nope")).status, 404);
+    assert.equal((await req(v, "/api/benchmarks/arith/runs")).status, 404);
+    assert.equal((await req(v, "/api/benchmarks", { method: "POST" })).status, 405);
+    assert.equal((await req(v, "/api/benchmarks", { auth: false })).status, 401);
+    const empty = await startViewer({ index: new FakeIndex(), blobs: new FakeBlobs(), port: 0, benchmarks: benchmarkDir({ ...env, CODING_SH_HOME: join(String(env.HOME), "nowhere") }) });
+    try {
+      assert.deepEqual((await req(empty, "/api/benchmarks")).json(), { items: [] });
+    } finally {
+      await empty.close();
+    }
   });
 });
 

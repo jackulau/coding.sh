@@ -1,11 +1,13 @@
 // The hook entry agents run: dist/hook.mjs copied to ~/.coding.sh/bin/hook.mjs,
 // so agent configs point at a stable path that survives package upgrades and
 // `npx` cache eviction. Next to it, bin/cli-path names the installed
-// dist/cli.mjs so the hook can start a background ingest when a session ends.
+// dist/cli.mjs so the hook can start a background ingest when a session ends,
+// and bin/mcp.mjs launches that CLI's MCP server for agents. `coding.sh
+// update` refreshes all three from the new install (refreshHookBin).
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { paths } from "../core/paths.ts";
-import { runningCli } from "../mcp/launch.ts";
+import { mcpLauncherSource, runningCli } from "../mcp/launch.ts";
 import type { FileChange } from "../core/types.ts";
 import { CliError } from "./output.ts";
 
@@ -24,13 +26,13 @@ function readOr(path: string): string | undefined {
   }
 }
 
-/** Planned write of the hook bin and CLI pointer (undefined when both are current). */
+/** Planned write of the hook bin, MCP launcher and CLI pointer (undefined when all are current). */
 export function planHookBin(env: NodeJS.ProcessEnv = process.env, cli: string | undefined = runningCli()): FileChange | undefined {
   const p = paths(env);
   const dest = p.hook;
   const after = readFileSync(hookSource(env), "utf8");
   const before = readOr(dest);
-  if (before === after && (cli === undefined || readOr(p.cliPointer) === cli + "\n")) return undefined;
+  if (before === after && readOr(p.mcpLauncher) === mcpLauncherSource() && (cli === undefined || readOr(p.cliPointer) === cli + "\n")) return undefined;
   // Text is omitted from the plan (a minified bundle is not a useful diff).
   return { path: dest, action: before === undefined ? "create" : "modify", summary: before === undefined ? "install the coding.sh hook" : "update the coding.sh hook" };
 }
@@ -39,6 +41,51 @@ export async function writeHookBin(env: NodeJS.ProcessEnv = process.env, cli: st
   const { atomicWrite } = await import("../adapters/_shared/files.ts");
   const p = paths(env);
   await atomicWrite(p.hook, readFileSync(hookSource(env), "utf8"), 0o755);
+  await atomicWrite(p.mcpLauncher, mcpLauncherSource(), 0o755);
   if (cli !== undefined) await atomicWrite(p.cliPointer, cli + "\n", 0o644);
   return p.hook;
+}
+
+/**
+ * Rewrites the hook, launcher and CLI pointer from this install, but only
+ * where `coding.sh init` set them up before (an update must not install
+ * capture for someone who never ran init).
+ */
+export async function refreshHookBin(env: NodeJS.ProcessEnv = process.env, cli: string | undefined = runningCli()): Promise<"refreshed" | "current" | "not_installed"> {
+  if (!existsSync(paths(env).hook)) return "not_installed";
+  if (!planHookBin(env, cli)) return "current";
+  await writeHookBin(env, cli);
+  return "refreshed";
+}
+
+export interface HookBinHealth {
+  /** hook.mjs matches the hook this CLI ships (null: no bundled hook to compare with). */
+  hookCurrent: boolean | null;
+  /** What bin/cli-path names, if anything. */
+  cliPath: string | null;
+  /** cli-path names the running CLI (null: not running from a bundle, so nothing to compare). */
+  cliPathCurrent: boolean | null;
+  /** The CLI cli-path names exists. */
+  cliPathExists: boolean;
+  launcherInstalled: boolean;
+}
+
+/** How the installed bin compares with this CLI (for doctor). */
+export function hookBinHealth(env: NodeJS.ProcessEnv = process.env, cli: string | undefined = runningCli()): HookBinHealth {
+  const p = paths(env);
+  let hookCurrent: boolean | null = null;
+  try {
+    const installed = readOr(p.hook);
+    hookCurrent = installed === undefined ? false : installed === readFileSync(hookSource(env), "utf8");
+  } catch {
+    hookCurrent = null; // running from source without a build: nothing to compare against
+  }
+  const pointer = readOr(p.cliPointer)?.trim() || null;
+  return {
+    hookCurrent,
+    cliPath: pointer,
+    cliPathCurrent: cli === undefined ? null : pointer === cli,
+    cliPathExists: pointer !== null && existsSync(pointer),
+    launcherInstalled: existsSync(p.mcpLauncher),
+  };
 }

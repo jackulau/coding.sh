@@ -4,7 +4,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { BlobStore, IndexStore, WriterLock } from "../core/types.ts";
-import { openBlobStore, openIndexStore, parseStoreUrl } from "../store/factory.ts";
+import { canonicalScheme, openBlobStore, openIndexStore, parseStoreUrl } from "../store/factory.ts";
 import type { SpanEnricher } from "../otel/map.ts";
 import { createOtlpHandler, decompress, hostOf, HttpError, isLoopbackHost, readBody, RPC, type Signal } from "../otel/receiver.ts";
 import { createViewerHandler } from "../viewer/server.ts";
@@ -57,6 +57,21 @@ export interface ReadyBody {
 const ROUTE_LABELS = new Set(["/v1/traces", "/v1/logs", "/v1/metrics", "/v1/ingest", "/healthz", "/readyz", "/metrics", "/"]);
 const routeLabel = (path: string) => (ROUTE_LABELS.has(path) ? path : path.startsWith("/api/") ? "/api" : "other");
 const SIGNALS: Record<string, Signal> = { "/v1/traces": "traces", "/v1/logs": "logs", "/v1/metrics": "metrics" };
+/** Health and metrics: GET or HEAD only. */
+const OPS_PATHS = new Set(["/healthz", "/readyz", "/metrics"]);
+
+/** Project ids that have sessions: the store's own listing, else a bounded scan of session rows. */
+export async function storeProjects(index: IndexStore, cap = 100_000): Promise<string[]> {
+  if (index.listProjects) return index.listProjects();
+  const ids = new Set<string>();
+  const batch = 1000;
+  for (let offset = 0; offset < cap; offset += batch) {
+    const rows = await index.listSessions({ limit: batch, offset });
+    for (const s of rows) ids.add(s.project ?? "default");
+    if (rows.length < batch) break;
+  }
+  return [...ids];
+}
 
 function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
   const json = JSON.stringify(body);
@@ -84,7 +99,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
   const loopback = isLoopbackHost(cfg.host);
   const open = loopback || cfg.insecure;
   const auth = createAuthenticator(cfg.credentials, { openIngest: open, openRead: open });
-  const storeScheme = parseStoreUrl(cfg.core.store.index).scheme;
+  const storeScheme = canonicalScheme(parseStoreUrl(cfg.core.store.index).scheme);
 
   // ---- stores
   let index: IndexStore;
@@ -111,6 +126,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
     log,
     ...(o.tickEvents !== undefined ? { tickEvents: o.tickEvents } : {}),
     ...(o.enrichSpan !== undefined ? { enrichSpan: o.enrichSpan } : {}),
+    onLeaseLost: () => void loseWriter(),
   });
 
   // ---- writer lock (role all): repair before taking traffic, standby retries every 5 s
@@ -127,28 +143,40 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
     }
     const repaired = await queue.repair();
     if (repaired) log.info("repaired sessions left dirty by a previous writer", { sessions: repaired });
-    queue.setWritable(true);
+    const held = lock;
+    queue.setWritable(true, held?.assertHeld ? () => held.assertHeld!() : undefined);
     stopRetention = startRetention({ store: index, blobs, config: cfg.core, days: cfg.retentionDays, run: (fn) => queue.runExclusive(fn), log });
     return true;
   };
   metrics.gauges = { queueEvents: () => queue.depth.events, queueBytes: () => queue.depth.bytes, writerLockHeld: () => queue.isWritable };
+  const retry = () => {
+    lockTimer = setTimeout(async () => {
+      if (shuttingDown) return;
+      try {
+        if (await becomeWriter()) log.info("writer lock acquired");
+        else retry();
+      } catch (e) {
+        log.error("writer lock retry failed", { error: (e as Error).message });
+        retry();
+      }
+    }, o.lockRetryMs ?? 5000);
+    lockTimer.unref();
+  };
+  // The queue found the lease taken over (it is standby already): stop the
+  // timers that write, drop our handle (it never removes the new holder's
+  // file) and wait to become the writer again.
+  const loseWriter = async () => {
+    stopRetention?.();
+    stopRetention = undefined;
+    const l = lock;
+    lock = undefined;
+    await l?.release().catch(() => {});
+    if (!shuttingDown) retry();
+  };
   if (cfg.role === "all") {
     try {
       if (!(await becomeWriter())) {
         log.warn("standby: another replica holds the writer lock; retrying every 5s");
-        const retry = () => {
-          lockTimer = setTimeout(async () => {
-            if (shuttingDown) return;
-            try {
-              if (await becomeWriter()) log.info("writer lock acquired");
-              else retry();
-            } catch (e) {
-              log.error("writer lock retry failed", { error: (e as Error).message });
-              retry();
-            }
-          }, o.lockRetryMs ?? 5000);
-          lockTimer.unref();
-        };
         retry();
       }
     } catch (e) {
@@ -176,9 +204,32 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
     onError: (err) => log.error("otlp", { error: err.message }),
   });
 
+  // serve.cors_origins applies to both ingest routes (a browser SDK posts here with a preflight); /api stays same-origin.
   const native = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const cors: Record<string, string> = {};
     try {
-      if (req.method !== "POST") throw new HttpError(405, RPC.UNIMPLEMENTED, "use POST");
+      const origin = req.headers.origin;
+      if (origin !== undefined) {
+        if (!cfg.corsOrigins.includes(origin)) {
+          req.resume();
+          throw new HttpError(403, RPC.PERMISSION_DENIED, `origin ${origin} is not allowed`);
+        }
+        cors["Access-Control-Allow-Origin"] = origin;
+        cors["Access-Control-Expose-Headers"] = "Retry-After";
+        cors.Vary = "Origin";
+      }
+      if (req.method === "OPTIONS") {
+        res.writeHead(204, {
+          ...cors,
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Authorization, Content-Type, Content-Encoding",
+          "Access-Control-Max-Age": "86400",
+          "Content-Length": "0",
+        });
+        res.end();
+        return;
+      }
+      if (req.method !== "POST") throw new HttpError(405, RPC.UNIMPLEMENTED, "use POST", { Allow: "POST, OPTIONS" });
       const project = auth.ingest(req);
       if (project === undefined) {
         metrics.authFailures.inc({ route: "/v1/ingest" });
@@ -205,7 +256,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
         inserted = r.inserted;
       }
       if (batch.rejected.length) metrics.ingestEvents.inc({ project, result: "rejected" }, batch.rejected.length);
-      sendJson(res, 200, { accepted: batch.events.length, inserted, rejected: batch.rejected });
+      sendJson(res, 200, { accepted: batch.events.length, inserted, rejected: batch.rejected }, cors);
     } catch (err) {
       const e = err instanceof HttpError ? err : new HttpError(500, RPC.INTERNAL, "internal error");
       if (!(err instanceof HttpError)) log.error("ingest", { error: (err as Error).message });
@@ -213,7 +264,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
         res.destroy();
         return;
       }
-      sendJson(res, e.status, { error: e.message, status: e.status }, e.headers);
+      sendJson(res, e.status, { error: e.message, status: e.status }, { ...cors, ...e.headers });
     }
   };
 
@@ -228,7 +279,8 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
       auth.readScope(t) !== undefined ? `${READ_COOKIE}=${t}; HttpOnly; SameSite=Strict; Path=/${secureCookie(req) ? "; Secure" : ""}` : undefined,
     ...(cfg.credentials.basic ? { basicRealm: "coding.sh" } : {}),
     unauthorizedText: "This coding.sh server needs a read key: open <code>/?t=&lt;read key&gt;</code> once, or sign in with the configured user.",
-    projects: () => cfg.projects,
+    // Configured projects plus those in the data (a viewer replica, or keys since removed).
+    projects: async () => [...new Set([...cfg.projects, ...(await storeProjects(index))])],
     updateStatus: noUpdates,
   });
 
@@ -254,16 +306,22 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const path = (req.url ?? "/").split("?")[0]!;
     res.once("finish", () => metrics.httpRequests.inc({ route: routeLabel(path), status: String(res.statusCode) }));
+    if (OPS_PATHS.has(path) && req.method !== "GET" && req.method !== "HEAD") {
+      return sendJson(res, 405, { error: "method not allowed", status: 405 }, { Allow: "GET, HEAD" });
+    }
     if (path === "/healthz") return sendJson(res, 200, { ok: true });
     if (path === "/readyz") {
       const r = await ready();
       return sendJson(res, r.status, r.body);
     }
     if (path === "/metrics") {
-      if (!auth.read(req)) {
+      const access = auth.read(req);
+      if (!access) {
         res.setHeader("WWW-Authenticate", cfg.credentials.basic ? 'Basic realm="coding.sh"' : "Bearer");
         return sendJson(res, 401, { error: "missing or invalid read key", status: 401 });
       }
+      // Counters carry every project's name and volume: a key scoped to one project gets none of them.
+      if (access.project !== undefined) return sendJson(res, 403, { error: 'metrics need a read key for every project ("*") or basic auth', status: 403 });
       const text = metrics.render();
       res.writeHead(200, { "Content-Type": "text/plain; version=0.0.4; charset=utf-8", "Content-Length": String(Buffer.byteLength(text)), "Cache-Control": "no-store" });
       res.end(text);

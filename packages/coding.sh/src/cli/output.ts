@@ -275,17 +275,30 @@ export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
 
-/** Relative time under 7 days (2m, 5h, 3d), then a date. ISO on non-TTY. */
-export function ago(ts: number | undefined, opts: { tty?: boolean; now?: number } = {}): string {
-  if (ts === undefined) return "-";
-  if (opts.tty === false) return new Date(ts).toISOString();
-  const d = (opts.now ?? Date.now()) - ts;
-  if (d < 0) return "now";
-  if (d < 60e3) return `${Math.max(1, Math.round(d / 1e3))}s`;
-  if (d < 3600e3) return `${Math.round(d / 60e3)}m`;
-  if (d < 86400e3) return `${Math.round(d / 3600e3)}h`;
-  if (d < 7 * 86400e3) return `${Math.round(d / 86400e3)}d`;
-  return new Date(ts).toISOString().slice(0, 10);
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Local wall-clock time: "Nov 6 14:02"; "Nov 6 2025" outside the current year. */
+export function localTime(ts: number, now = Date.now()): string {
+  const d = new Date(ts);
+  const day = `${MONTHS[d.getMonth()]} ${d.getDate()}`;
+  if (d.getFullYear() !== new Date(now).getFullYear()) return `${day} ${d.getFullYear()}`;
+  return `${day} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+/**
+ * When something happened, for tables and rows: "12s ago", "3m ago", "5h ago"
+ * under a day, then the local time ("Nov 6 14:02"). --json output keeps the
+ * full ISO timestamp; this is for people, piped or not.
+ */
+export function ago(ts: number | undefined, opts: { now?: number } = {}): string {
+  if (ts === undefined || !Number.isFinite(ts)) return "-";
+  const now = opts.now ?? Date.now();
+  const d = now - ts;
+  if (d < 1e3) return "just now"; // includes small clock skew (a timestamp slightly in the future)
+  if (d < 60e3) return `${Math.floor(d / 1e3)}s ago`;
+  if (d < 3600e3) return `${Math.floor(d / 60e3)}m ago`;
+  if (d < 86400e3) return `${Math.floor(d / 3600e3)}h ago`;
+  return localTime(ts, now);
 }
 
 /**

@@ -15,6 +15,13 @@ export interface FlagSpec {
   /** Shown as "(default: X)". */
   default?: string;
   choices?: readonly string[];
+  /** Accepted but left out of help, `--help --json` and the CLI reference (internal plumbing). */
+  hidden?: boolean;
+}
+
+/** The flags help shows: everything but the hidden ones. */
+export function visibleFlags(flags: readonly FlagSpec[] | undefined): FlagSpec[] {
+  return (flags ?? []).filter((f) => !f.hidden);
 }
 
 export type FlagValue = string | number | boolean | string[] | undefined;
@@ -85,7 +92,7 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
   let sawDashDash = false;
 
   const unknown = (token: string): never => {
-    const names = [...specs.map((s) => `--${s.name}`), ...(opts.suggestions ?? [])];
+    const names = [...visibleFlags(specs).map((s) => `--${s.name}`), ...(opts.suggestions ?? [])];
     const hint = token.startsWith("--") ? suggest(token.split("=")[0]!, names) : undefined;
     throw new UsageError(`Unknown option ${token}`, { suggestion: hint, reason: "unknown_option" });
   };

@@ -69,8 +69,11 @@ describe("keys", () => {
     assert.equal(auth.ingest(req({ authorization: `Bearer ${ik}` })), "demo");
     assert.equal(auth.ingest(req({ authorization: "Bearer csh_ik_wrong" })), undefined);
     assert.equal(auth.ingest(req({})), undefined, "keys configured: no open fallback");
-    assert.deepEqual(auth.read(req({ authorization: `Bearer ${rk}` })), { project: "demo", by: "reader" });
-    assert.deepEqual(auth.read(req({ cookie: `x=1; csh_rk=${rk}` })), { project: "demo", by: "reader" });
+    // Labels are keyed by `by`: each read key gets its own id (a hash prefix, never the secret).
+    const rkBy = `reader:${sha256(rk).slice(0, 12)}`;
+    assert.deepEqual(auth.read(req({ authorization: `Bearer ${rk}` })), { project: "demo", by: rkBy });
+    assert.deepEqual(auth.read(req({ cookie: `x=1; csh_rk=${rk}` })), { project: "demo", by: rkBy });
+    assert.ok(!rkBy.includes(rk.slice(7, 19)));
     assert.deepEqual(auth.read(req({ authorization: `Basic ${Buffer.from("ops:pw").toString("base64")}` })), { by: "ops" });
     assert.equal(auth.read(req({ authorization: `Basic ${Buffer.from("ops:nope").toString("base64")}` })), undefined);
 
@@ -171,6 +174,17 @@ describe("projects", () => {
     assert.equal(b!.project, undefined);
     assert.notEqual(sdkEventId("a", "1"), sdkEventId("b", "1"));
     assert.equal(sdkEventId("a", "1"), sdkEventId("a", "1"));
+  });
+
+  it("never lets a default-project id land in another project's namespace (INS-8)", () => {
+    const [x] = scopeEvents([ev({ sessionId: "billing/x" })], "default");
+    assert.notEqual(x!.sessionId, "billing/x");
+    assert.equal(x!.sessionId, "default/billing/x");
+    assert.equal(x!.project, undefined);
+    assert.equal(scopeSessionId("default/billing/x", "default"), "default/billing/x", "idempotent for the caller's own prefix");
+    assert.equal(scopeSessionId("billing/x", "demo"), "demo/billing/x", "another project's prefix is never kept");
+    const [p] = scopeEvents([ev({ payload: { parentSessionId: "billing/p", childSessionId: "c" } })], "default");
+    assert.deepEqual(p!.payload, { parentSessionId: "default/billing/p", childSessionId: "c" });
   });
 });
 

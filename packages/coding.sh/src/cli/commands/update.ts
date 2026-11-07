@@ -1,11 +1,19 @@
-// coding.sh update [--check] [--dry-run]
+// coding.sh update [--check] [--dry-run] [--refresh-bin]
 //
 // Checks GitHub for the latest release (always fresh, ignoring the 24 h
 // throttle) and installs it the way install.sh does: npm i -g <release tgz>.
 // --check only reports; --dry-run prints the install command on stdout.
+// After an install, the NEW CLI runs `update --refresh-bin` so the hook,
+// MCP launcher and cli-path in ~/.coding.sh/bin match the version just
+// installed (agents keep running those files, not the package).
 // Exit codes: 0 ok (updated, up to date, or reported), 1 check or install
 // failed, 130 interrupted.
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+import { paths } from "../../core/paths.ts";
+import { runningCli } from "../../mcp/launch.ts";
+import { refreshHookBin } from "../hookbin.ts";
 import { version } from "../meta.ts";
 import { CliError, clean } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -21,10 +29,55 @@ export interface InstallResult {
   output: string;
 }
 
+/** What the post-update bin refresh did. */
+export interface RefreshResult {
+  status: "refreshed" | "current" | "not_installed" | "failed";
+  error?: string;
+}
+
 export interface UpdateDeps {
   check?: (env: NodeJS.ProcessEnv, opts: CheckOptions) => Promise<UpdateCache>;
   install?: (args: string[], opts: { quiet: boolean; signal: AbortSignal; env: NodeJS.ProcessEnv }) => Promise<InstallResult>;
+  /** Refresh ~/.coding.sh/bin from the CLI just installed (default: spawn it with --refresh-bin). */
+  refresh?: (env: NodeJS.ProcessEnv, signal: AbortSignal) => Promise<RefreshResult>;
   current?: string;
+}
+
+function execText(cmd: string, args: string[], env: NodeJS.ProcessEnv, signal: AbortSignal, timeout: number): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { env, signal, timeout, windowsHide: true, shell: process.platform === "win32" && cmd === "npm" }, (err, stdout, stderr) => {
+      const code = err ? (typeof (err as NodeJS.ErrnoException).code === "number" ? Number((err as NodeJS.ErrnoException).code) : 1) : 0;
+      resolve({ code, stdout: String(stdout), stderr: String(stderr) });
+    });
+  });
+}
+
+/** dist/cli.mjs of the global install npm just wrote (`npm root -g`), else the running CLI (same prefix, rewritten in place). */
+export async function installedCli(env: NodeJS.ProcessEnv, signal: AbortSignal): Promise<string | undefined> {
+  const r = await execText("npm", ["root", "-g"], env, signal, 15_000);
+  const root = r.code === 0 ? r.stdout.trim().split(/\r?\n/).pop() : undefined;
+  const cli = root ? join(root, "coding.sh", "dist", "cli.mjs") : undefined;
+  if (cli && existsSync(cli)) return cli;
+  return runningCli();
+}
+
+/**
+ * Has the newly installed CLI rewrite ~/.coding.sh/bin (its own hook.mjs,
+ * launcher and path), so agents run the new hook, not this process's code.
+ * Skipped when init never set the bin up.
+ */
+export async function refreshAfterUpdate(env: NodeJS.ProcessEnv, signal: AbortSignal, locate = installedCli): Promise<RefreshResult> {
+  if (!existsSync(paths(env).hook)) return { status: "not_installed" };
+  const cli = await locate(env, signal);
+  if (!cli) return { status: "failed", error: "can't find the installed CLI" };
+  const r = await execText(process.execPath, [cli, "update", "--refresh-bin", "--json"], { ...env, NO_UPDATE_NOTIFIER: "1" }, signal, 60_000);
+  if (r.code !== 0) return { status: "failed", error: clean(r.stderr.trim().split("\n").pop() ?? "") || `exit ${r.code}` };
+  try {
+    const status = (JSON.parse(r.stdout) as { bin?: RefreshResult["status"] }).bin;
+    return { status: status ?? "refreshed" };
+  } catch {
+    return { status: "refreshed" };
+  }
 }
 
 /** The exact install command for a release (what install.sh runs). */
@@ -79,6 +132,14 @@ export async function run(c: CommandContext): Promise<number> {
 
 export async function runUpdate(c: CommandContext, deps: UpdateDeps): Promise<number> {
   const { out } = c;
+  if (c.flags["refresh-bin"] === true) {
+    // Run by the previous version right after it installed this one (or by hand after `npm i -g`).
+    const bin = await refreshHookBin(c.env);
+    if (out.json) out.data({ bin, hook: paths(c.env).hook });
+    else if (bin === "not_installed") out.note(`Nothing to refresh: run ${out.style("coding.sh init", "cyan", "err")} to set up capture`);
+    else out.ok(bin === "refreshed" ? `Refreshed ${paths(c.env).bin}` : `${paths(c.env).bin} is current`);
+    return 0;
+  }
   const dryRun = c.flags["dry-run"] === true;
   const checkOnly = c.flags.check === true;
   const current = deps.current ?? version();
@@ -158,7 +219,15 @@ export async function runUpdate(c: CommandContext, deps: UpdateDeps): Promise<nu
     });
   }
 
-  if (out.json) out.data({ status: "updated", ...base });
-  else out.ok(`Updated coding.sh ${current} → ${latest}`);
+  // The hook and launcher in ~/.coding.sh/bin are copies: refresh them from the new install.
+  const refreshed = await (deps.refresh ?? refreshAfterUpdate)(c.env, c.signal);
+  if (out.json) out.data({ status: "updated", ...base, bin: refreshed.status, ...(refreshed.error ? { binError: refreshed.error } : {}) });
+  else {
+    out.ok(`Updated coding.sh ${current} → ${latest}`);
+    if (refreshed.status === "failed") {
+      out.warn(`Couldn't refresh the hook in ${paths(c.env).bin}${refreshed.error ? `: ${refreshed.error}` : ""}`);
+      out.next("Refresh it", "coding.sh init");
+    }
+  }
   return 0;
 }

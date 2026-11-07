@@ -1,7 +1,7 @@
 {
   "name": "coding.sh",
   "version": "0.1.0",
-  "description": "Local-first observability and evals for any AI agent, with coding agents first-class: capture sessions from hooks or OpenTelemetry, browse them in a local viewer, turn failures into evals, and compare changes with paired statistics.",
+  "description": "Open-source, local-first observability and evals for any AI agent, with coding agents first-class: capture sessions from hooks or OpenTelemetry, browse them in a local viewer, turn failures into evals, and compare changes with paired statistics.",
   "license": "MIT",
   "author": "coding.sh contributors",
   "type": "module",
@@ -40,21 +40,25 @@
     "codingsh": "dist/cli.mjs"
   },
   "exports": {
-    "./schema": "./dist/schema.mjs",
+    "./schema": {
+      "types": "./dist/types/schema/index.d.ts",
+      "default": "./dist/schema.mjs"
+    },
     "./store": {
-      "types": "./src/store/plugin-api.ts",
       "source": "./src/store/plugin-api.ts",
+      "types": "./dist/types/store/plugin-api.d.ts",
       "default": "./dist/store.mjs"
     },
     "./store/conformance": {
-      "types": "./src/store/conformance.ts",
       "source": "./src/store/conformance.ts",
+      "types": "./dist/types/store/conformance.d.ts",
       "default": "./dist/store-conformance.mjs"
     },
     "./package.json": "./package.json"
   },
   "files": [
     "dist/*.mjs",
+    "dist/types/**/*.d.ts",
     "README.md",
     "LICENSE"
   ],

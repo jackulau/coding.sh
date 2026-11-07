@@ -10,9 +10,15 @@ export const PROJECT_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 export const isProjectId = (s: string): boolean => PROJECT_RE.test(s);
 
-/** `<project>/<id>` for non-default projects (idempotent: an already-prefixed id is kept). */
+/**
+ * `<project>/<id>` for non-default projects. Default-project ids stay plain
+ * unless they contain "/": those become `default/<id>`, so a default key can
+ * never write into another project's `<project>/…` namespace ("default" is
+ * reserved, so no other project owns that prefix). Idempotent only for the
+ * caller's own prefix.
+ */
 export function scopeSessionId(id: string, project: string): string {
-  if (project === DEFAULT_PROJECT) return id;
+  if (project === DEFAULT_PROJECT && !id.includes("/")) return id;
   const prefix = `${project}/`;
   return id.startsWith(prefix) ? id : prefix + id;
 }
@@ -31,7 +37,7 @@ export function scopeEvents(events: AgentEvent[], project: string): AgentEvent[]
     const out: AgentEvent = { ...e, sessionId: scopeSessionId(e.sessionId, project) };
     if (project === DEFAULT_PROJECT) delete out.project;
     else out.project = project;
-    if (project !== DEFAULT_PROJECT && e.payload && (typeof e.payload.parentSessionId === "string" || typeof e.payload.childSessionId === "string")) {
+    if (e.payload && (typeof e.payload.parentSessionId === "string" || typeof e.payload.childSessionId === "string")) {
       out.payload = { ...e.payload };
       scopeField(out.payload, "parentSessionId", project);
       scopeField(out.payload, "childSessionId", project);

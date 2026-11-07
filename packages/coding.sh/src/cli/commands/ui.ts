@@ -1,5 +1,6 @@
 // coding.sh ui: start the local viewer; ingest in the background so new hook
 // events show up while it runs. Ctrl-C stops it (exit 130).
+import { FileEvalStore } from "../../datasets/store.ts";
 import { startViewer } from "../../viewer/server.ts";
 import { autoIngest, port as portFlag, str, withContext } from "../common.ts";
 import { CliError } from "../output.ts";
@@ -14,7 +15,9 @@ export async function run(c: CommandContext): Promise<number> {
     await autoIngest(ctx);
     let viewer;
     try {
-      viewer = await startViewer({ index: ctx.index, blobs: ctx.blobs, port, host, open });
+      // Same experiment store `coding.sh exp run` writes to (the index, or JSON files for a store without eval tables).
+      const experiments = new FileEvalStore({ env: c.env, index: ctx.index });
+      viewer = await startViewer({ index: ctx.index, blobs: ctx.blobs, port, host, open, experiments });
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "EADDRINUSE") throw new CliError(`Can't start the viewer: port ${port} is in use`, { reason: "port_in_use", next: ["Pick another port:", "coding.sh ui --port 0"] });

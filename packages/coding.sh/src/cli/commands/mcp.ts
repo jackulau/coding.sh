@@ -7,8 +7,12 @@ import type { CommandContext } from "../types.ts";
 
 export async function run(c: CommandContext): Promise<number> {
   const action = c.action ?? c.positionals[0] ?? "serve";
-  const { mcpLaunchSpec, runningCli } = await import("../../mcp/launch.ts");
-  const spec = mcpLaunchSpec(runningCli());
+  const { mcpLaunchSpec, pinnedLaunchSpec, runningCli } = await import("../../mcp/launch.ts");
+  const { existsSync } = await import("node:fs");
+  const { paths } = await import("../../core/paths.ts");
+  const cli = runningCli();
+  // The stable launcher once init has written it; before that, this exact node + cli.mjs.
+  const spec = cli && !existsSync(paths(c.env).mcpLauncher) ? pinnedLaunchSpec(cli) : mcpLaunchSpec(cli, c.env);
   if (action === "config") {
     const doc = { mcpServers: { [spec.name]: { command: spec.command, args: spec.args } } };
     const cmd = [spec.command, ...spec.args].map((a) => (/[\s'"]/.test(a) ? JSON.stringify(a) : a)).join(" ");

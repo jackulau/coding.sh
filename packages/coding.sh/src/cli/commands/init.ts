@@ -2,20 +2,22 @@
 // coding.sh MCP server for agents that speak MCP), ask once (Y/n, or --yes),
 // then copy the hook to ~/.coding.sh/bin and edit each agent's config. Every
 // edited file is backed up first; `coding.sh uninstall` reverts the edits.
-// --dry-run prints the exact FileChanges and writes nothing. --no-mcp skips
+// --dry-run prints the short plan (agent, scope, files, blockers) and writes
+// nothing; --diff adds every edit as a diff. --no-mcp skips
 // the MCP registration. Ends with at most three lines: what was set up, how to
 // open the viewer, and the docs URL.
 import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import { detectAll, ADAPTERS } from "../../adapters/index.ts";
 import { defaultConfigToml } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
 import type { Adapter, FileChange, McpServerSpec } from "../../core/types.ts";
 import { mcpLaunchSpec, runningCli } from "../../mcp/launch.ts";
 import { suggest, UsageError } from "../args.ts";
-import { changeJson, printChanges } from "../changes.ts";
+import { changeJson, printChanges, shortPath } from "../changes.ts";
 import { list, requireConsent, str } from "../common.ts";
 import { planHookBin, writeHookBin } from "../hookbin.ts";
-import { CliError, plural } from "../output.ts";
+import { CliError, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 export const DOCS_URL = "https://coding.sh/docs";
@@ -36,14 +38,23 @@ interface Part {
   error?: string;
 }
 
+interface AgentScopeConflict {
+  scope: "user" | "project";
+  files: string[];
+}
+
 interface AgentPlan {
   adapter: Adapter;
   installed: boolean;
   hooked: boolean;
   version?: string;
   /** Detect notes that mean capture will not work even after install. */
-  blockers: string[];
+  detectBlockers: string[];
   hooks: Part;
+  /** The agent already has coding.sh hooks in the other scope (its hooks would capture each event twice). */
+  otherScope?: AgentScopeConflict;
+  /** Hooks not installed because of otherScope (no --force). */
+  skipped?: boolean;
   /** Undefined when the agent has no MCP support, or MCP is off (--no-mcp, project scope). */
   mcp?: Part;
 }
@@ -61,6 +72,23 @@ async function plan(fn: () => Promise<FileChange[]>): Promise<Part> {
 const partJson = (p: Part | undefined, full: boolean) =>
   p ? { error: p.error ?? null, changes: p.changes.map((ch) => (full ? changeJson(ch) : { path: ch.path, action: ch.action, summary: ch.summary })) } : null;
 
+/**
+ * Files in the other scope that already hold this agent's coding.sh hooks,
+ * found with a dry-run uninstall of that scope. Files this scope edits as well
+ * (a project dir that is the home directory) don't count.
+ */
+export async function otherScopeHooks(a: Adapter, scope: "user" | "project", projectDir: string, planned: FileChange[]): Promise<AgentScopeConflict | undefined> {
+  if (a.tail) return undefined;
+  const other = scope === "user" ? "project" : "user";
+  try {
+    const mine = new Set([...planned, ...(await a.uninstall({ scope, projectDir, dryRun: true }))].map((c) => resolve(c.path)));
+    const files = [...new Set((await a.uninstall({ scope: other, projectDir, dryRun: true })).map((c) => resolve(c.path)))].filter((f) => !mine.has(f));
+    return files.length ? { scope: other, files } : undefined;
+  } catch {
+    return undefined; // an unreadable config in the other scope is not this init's problem
+  }
+}
+
 /** "a", "a and b", "a, b and c". */
 export function joinNames(names: string[]): string {
   return names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
@@ -74,6 +102,53 @@ const BLOCKING_NOTE = /\bpredates\b|\bwill not run\b|\bnot trusted yet\b/i;
 /** The detect notes that block capture. */
 export function blockingNotes(notes: readonly string[] | undefined): string[] {
   return (notes ?? []).filter((n) => BLOCKING_NOTE.test(n));
+}
+
+interface Blocker {
+  text: string;
+  /** The planned edit itself fails (vs capture that won't work until the user acts). */
+  fatal: boolean;
+}
+
+/** What keeps this agent's capture from working. Shown in the plan, before the Y/n prompt. */
+function planBlockers(pl: AgentPlan, env: NodeJS.ProcessEnv, cwd: string): Blocker[] {
+  const out: Blocker[] = [];
+  if (pl.hooks.error) out.push({ text: `can't install hooks: ${pl.hooks.error}`, fatal: true });
+  if (pl.mcp?.error) out.push({ text: `can't register the MCP server: ${pl.mcp.error}`, fatal: true });
+  if (!pl.installed) out.push({ text: `${pl.adapter.displayName} is not installed on this machine; its hooks fire once it is`, fatal: false });
+  if (pl.otherScope) {
+    const where = `${pl.otherScope.scope} scope (${pl.otherScope.files.map((f) => shortPath(f, env, cwd)).join(", ")})`;
+    out.push({ text: pl.skipped ? `skipping hooks: already installed in ${where}; --force installs both` : `also hooked in ${where}; events may be captured twice`, fatal: false });
+  }
+  // Codex runs new hooks only once the user approves them (we never write trust state).
+  const codexTrust = pl.adapter.id === "codex" && pl.hooks.changes.length > 0;
+  if (codexTrust) out.push({ text: "after setup, start codex, run /hooks and approve the coding.sh hooks once", fatal: false });
+  for (const n of pl.detectBlockers) if (!(codexTrust && /not trusted yet/i.test(n))) out.push({ text: n, fatal: false });
+  return out;
+}
+
+/**
+ * The plan, one block per agent: its scope, the files it would change, and
+ * what blocks capture. `emit` gets each line (stdout for --dry-run, stderr
+ * ahead of the Y/n prompt).
+ */
+function renderPlan(out: Output, plans: AgentPlan[], own: FileChange[], scope: string, env: NodeJS.ProcessEnv, cwd: string, emit: (line: string) => void, stream: "out" | "err"): void {
+  type Row = [FileChange, string];
+  const rowsOf = (pl: AgentPlan): Row[] => [...pl.hooks.changes.map((ch): Row => [ch, "hooks"]), ...(pl.mcp?.changes ?? []).map((ch): Row => [ch, "MCP server"])];
+  // Align the "hooks"/"MCP server" column over the agent rows (coding.sh's own files have none).
+  const width = Math.max(0, ...plans.flatMap(rowsOf).map(([ch]) => shortPath(ch.path, env, cwd).length));
+  const file = ([ch, what]: Row) => `    ${ch.action.padEnd(8)}${what ? `${shortPath(ch.path, env, cwd).padEnd(width)}  ${what}` : shortPath(ch.path, env, cwd)}`;
+  for (const pl of plans) {
+    emit(`  ${out.style(pl.adapter.displayName, "bold", stream)} (${scope} scope)`);
+    const rows = rowsOf(pl);
+    for (const r of rows) emit(file(r));
+    if (!rows.length && !pl.hooks.error && !pl.mcp?.error && !pl.skipped) emit(pl.adapter.tail ? "    no hooks needed; imports from its store" : "    already set up");
+    for (const b of planBlockers(pl, env, cwd)) emit(`    ${b.fatal ? out.style("✗", "red", stream) : out.style("!", "yellow", stream)} ${b.text}`);
+  }
+  if (own.length) {
+    emit(`  ${out.style("coding.sh", "bold", stream)}`);
+    for (const ch of own) emit(file([ch, ""]));
+  }
 }
 
 /** "Set up A and B (hooks + MCP server); C (hooks)" from what each agent actually got. */
@@ -95,9 +170,11 @@ export async function run(c: CommandContext): Promise<number> {
   const dryRun = c.flags["dry-run"] === true;
   // MCP servers are registered per user; project scope stays hooks-only.
   const withMcp = c.flags.mcp !== false && scope === "user";
+  const force = c.flags.force === true;
   const p = paths(env);
   const hookCommand = p.hook;
-  const server: McpServerSpec = mcpLaunchSpec(runningCli());
+  // From a bundle: node ~/.coding.sh/bin/mcp.mjs (written below with the hook), a path that survives node and package moves.
+  const server: McpServerSpec = mcpLaunchSpec(runningCli(), env);
 
   const spin = out.spin("Detecting agents…");
   const detected = await detectAll(named.length ? pickAdapters(named) : ADAPTERS);
@@ -112,10 +189,19 @@ export async function run(c: CommandContext): Promise<number> {
       adapter,
       installed: result.installed,
       hooked: result.hooked,
-      blockers: blockingNotes(result.notes),
+      detectBlockers: blockingNotes(result.notes),
       hooks: await plan(() => adapter.install({ hookCommand, scope, projectDir: c.cwd, dryRun: true })),
     };
     if (result.version) pl.version = result.version;
+    // User and project hooks both fire in agents that don't dedupe identical commands: every event twice.
+    const conflict = pl.hooks.error ? undefined : await otherScopeHooks(adapter, scope, c.cwd, pl.hooks.changes);
+    if (conflict) {
+      pl.otherScope = conflict;
+      if (pl.hooks.changes.length && !force) {
+        pl.skipped = true;
+        pl.hooks = { changes: [] };
+      }
+    }
     if (withMcp && adapter.installMcp) pl.mcp = await plan(() => adapter.installMcp!({ server, dryRun: true }));
     plans.push(pl);
   }
@@ -135,17 +221,6 @@ export async function run(c: CommandContext): Promise<number> {
   const total = pending.reduce((n, pl) => n + agentChanges(pl).length, 0);
   const failed = plans.some((pl) => pl.hooks.error || pl.mcp?.error);
 
-  // ---- the plan (stderr): one row per agent
-  for (const pl of plans) {
-    const label = pl.adapter.displayName;
-    if (pl.hooks.error) out.row(label, `can't install hooks: ${pl.hooks.error}`, "fail");
-    if (pl.mcp?.error) out.row(label, `can't register the MCP server: ${pl.mcp.error}`, "fail");
-    const todo = [pl.hooks.changes.length ? "hooks" : "", pl.mcp?.changes.length ? "MCP server" : ""].filter(Boolean);
-    if (todo.length) out.row(label, `${todo.join(" + ")}${pl.installed ? "" : " (agent not detected)"}`);
-    else if (pl.adapter.tail && !pl.hooks.error) out.row(label, "no hooks needed; imports from its store", "ok");
-    else if (!pl.hooks.error && !pl.mcp?.error) out.row(label, "already set up", "ok");
-  }
-
   if (dryRun) {
     if (out.json) {
       out.data({
@@ -154,15 +229,24 @@ export async function run(c: CommandContext): Promise<number> {
         hook: hookCommand,
         mcpServer: withMcp ? server : null,
         changes: own.map(changeJson),
-        agents: plans.map((pl) => ({ id: pl.adapter.id, installed: pl.installed, hooked: pl.hooked, error: pl.hooks.error ?? null, changes: pl.hooks.changes.map(changeJson), mcp: partJson(pl.mcp, true), warnings: pl.blockers })),
+        agents: plans.map((pl) => ({ id: pl.adapter.id, installed: pl.installed, hooked: pl.hooked, error: pl.hooks.error ?? null, changes: pl.hooks.changes.map(changeJson), mcp: partJson(pl.mcp, true), warnings: pl.detectBlockers, blockers: planBlockers(pl, env, c.cwd).map((b) => b.text), otherScope: pl.otherScope ?? null, skipped: pl.skipped === true })),
       });
     } else {
-      for (const ch of own) printChanges(out, [ch]);
-      for (const pl of plans) printChanges(out, agentChanges(pl), pl.adapter.id);
+      // The plan is the answer of a dry run: stdout.
+      renderPlan(out, plans, own, scope, env, c.cwd, (l) => out.print(l), "out");
+      if (c.flags.diff === true) {
+        out.print();
+        for (const ch of own) printChanges(out, [ch]);
+        for (const pl of plans) printChanges(out, agentChanges(pl), pl.adapter.id);
+      }
       if (own.length + total === 0) out.ok("Nothing to change");
+      else out.note(`Dry run: nothing written.${c.flags.diff === true ? "" : " Add --diff for the full edits."}`);
     }
     return failed ? 1 : 0;
   }
+
+  // ---- the plan (stderr), blockers included, before the one question.
+  renderPlan(out, plans, own, scope, env, c.cwd, (l) => out.note(l.replace(/^  /, "")), "err");
 
   if (total) {
     await requireConsent(c, `Set up coding.sh for ${plural(pending.length, "agent")} (${plural(total, "config file")}, backed up first)?`, `coding.sh init${scope === "project" ? " --scope project" : ""} --yes`, {
@@ -196,22 +280,15 @@ export async function run(c: CommandContext): Promise<number> {
       hook: hookCommand,
       mcpServer: withMcp ? server : null,
       changes: own.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })),
-      agents: applied.map((x) => ({ id: x.pl.adapter.id, error: x.hooks.error ?? null, changes: x.hooks.changes.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })), mcp: partJson(x.mcp, false), warnings: x.pl.blockers })),
+      agents: applied.map((x) => ({ id: x.pl.adapter.id, error: x.hooks.error ?? null, changes: x.hooks.changes.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })), mcp: partJson(x.mcp, false), warnings: x.pl.detectBlockers, blockers: planBlockers(x.pl, env, c.cwd).map((b) => b.text), otherScope: x.pl.otherScope ?? null, skipped: x.pl.skipped === true })),
     });
     return errors ? 1 : 0;
   }
 
-  // Codex runs new hooks only once the user approves them (we never write trust state).
+  // Blockers were listed with the plan; the one step left to do is repeated as the last thing before the summary.
   const codexTrust = applied.some((x) => x.pl.adapter.id === "codex" && !x.hooks.error && x.hooks.changes.length);
   if (codexTrust) out.warn("Codex: start codex, run /hooks and approve the coding.sh hooks once");
-  const ready = applied.filter((x) => !x.hooks.error);
-  // Notes that mean the hooks just written (or already there) capture nothing.
-  for (const x of ready) {
-    for (const n of x.pl.blockers) {
-      if (codexTrust && x.pl.adapter.id === "codex" && /not trusted yet/i.test(n)) continue;
-      out.warn(`${x.pl.adapter.displayName}: ${n}`);
-    }
-  }
+  const ready = applied.filter((x) => !x.hooks.error && !x.pl.skipped);
   // Store-read agents (T3 Code) get no hooks: listed by their plan row, not here.
   const summary = setupSummary(ready.filter((x) => !x.pl.adapter.tail || x.mcp).map((x) => ({ name: x.pl.adapter.displayName, mcp: x.mcp !== undefined && !x.mcp.error })));
   if (summary) out.ok(`${outcome === "unchanged" ? "Already set up:" : "Set up"} ${summary}`);

@@ -27,7 +27,7 @@ export async function run(c: CommandContext): Promise<number> {
         out.next("Snapshot the current harness", "coding.sh harness snapshot --agent claude-code");
         return 0;
       }
-      out.table(["ID", "NAME", "AGENT", "FILES", "CREATED"], all.map((b) => [b.id.slice(0, 16), b.name, b.agent, String(Object.keys(b.files).length), ago(b.createdAt, { tty: out.stdoutTTY })]));
+      out.table(["ID", "NAME", "AGENT", "FILES", "CREATED"], all.map((b) => [b.id.slice(0, 16), b.name, b.agent, String(Object.keys(b.files).length), ago(b.createdAt)]));
       return 0;
     }
     if (c.action !== "snapshot") throw new UsageError(`Unknown harness command ${c.action}`);

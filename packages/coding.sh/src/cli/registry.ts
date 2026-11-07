@@ -4,6 +4,7 @@
 import type { FlagSpec } from "./args.ts";
 import type { CommandModule } from "./types.ts";
 import { WORKFLOWS_COMMAND } from "../workflows/cli-spec.ts";
+import { BENCH_COMMAND } from "../bench/cli-spec.ts";
 
 export interface ArgSpec {
   name: string;
@@ -68,7 +69,15 @@ export const COMMANDS: CommandSpec[] = [
     name: "init",
     group: "Capture",
     summary: "Set up capture hooks and the MCP server for every detected agent",
-    flags: [AGENT_LIST, SCOPE, { name: "mcp", type: "boolean", desc: "Register the coding.sh MCP server too (--no-mcp to skip)", default: "true" }, YES, DRY_RUN],
+    flags: [
+      AGENT_LIST,
+      SCOPE,
+      { name: "mcp", type: "boolean", desc: "Register the coding.sh MCP server too (--no-mcp to skip)", default: "true" },
+      { name: "force", type: "boolean", desc: "Install hooks even when the agent already has coding.sh hooks in the other scope" },
+      YES,
+      { name: "dry-run", type: "boolean", desc: "Print the plan (agents, files, blockers) without writing anything" },
+      { name: "diff", type: "boolean", desc: "With --dry-run, also print the full diff of every planned edit" },
+    ],
     examples: ["coding.sh init", "coding.sh init --agent claude-code --yes", "coding.sh init --dry-run"],
     notes: [
       "Copies the hook to ~/.coding.sh/bin/hook.mjs and points each agent at it.",
@@ -204,9 +213,9 @@ export const COMMANDS: CommandSpec[] = [
     name: "show",
     group: "Explore",
     summary: "Show a session timeline with subagents and latency",
-    args: [{ name: "session", desc: "Session id, or 'latest'", required: true }],
+    args: [{ name: "session", desc: "Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'", required: true }],
     flags: [LIMIT(200)],
-    examples: ["coding.sh show latest"],
+    examples: ["coding.sh show latest", "coding.sh show 9f1c2e"],
     load: () => import("./commands/show.ts"),
   },
   {
@@ -344,7 +353,7 @@ export const COMMANDS: CommandSpec[] = [
         args: [{ name: "spec", desc: "Experiment spec JSON file (fields can be overridden by options)" }],
         flags: [
           { name: "dataset", short: "d", type: "string", value: "<ID>", desc: "Dataset id" },
-          { name: "task", type: "string", value: "<JSON|FILE>", desc: 'Task spec: {"kind":"command","command":"…"} or {"kind":"http","url":"…"}' },
+          { name: "task", type: "string", value: "<JSON|FILE>", desc: 'Task spec: {"kind":"command","command":"…"} (gets each case input as JSON on stdin) or {"kind":"http","url":"…"}' },
           { name: "grader", short: "g", type: "list", value: "<JSON|FILE>", desc: 'Grader spec, e.g. {"kind":"exact"} (repeatable)' },
           { name: "name", type: "string", value: "<NAME>", desc: "Experiment name" },
           { name: "trials", type: "number", value: "<N>", desc: "Attempts per case", default: "1" },
@@ -359,6 +368,12 @@ export const COMMANDS: CommandSpec[] = [
           { name: "a", desc: "Baseline experiment id or name (newest)", required: true },
           { name: "b", desc: "Candidate experiment id or name (newest)", required: true },
         ],
+        flags: [{ name: "force", type: "boolean", desc: "Compare a cancelled (partial) experiment too" }],
+      },
+      {
+        name: "show",
+        summary: "Show a stored experiment: pass rate, graders and failures",
+        args: [{ name: "experiment", desc: "Experiment id or name (newest, cancelled ones included)", required: true }],
       },
       { name: "list", summary: "List experiments", flags: [LIMIT(20)] },
     ],
@@ -401,7 +416,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "name", type: "string", value: "<NAME>", desc: "Target name (default: from the binary or host)" },
           DRY_RUN,
         ],
-        examples: ["coding.sh toolevals init --cli gh", 'coding.sh toolevals init --mcp "npx -y @acme/mcp" --name acme'],
+        examples: ["coding.sh toolevals init --cli gh", 'coding.sh toolevals init --mcp "npx -y @modelcontextprotocol/server-everything" --name everything'],
       },
       {
         name: "surface",
@@ -428,7 +443,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "keep", type: "boolean", desc: "Keep trial sandboxes" },
           YES,
         ],
-        examples: ["coding.sh toolevals run gh --driver agent:claude-code -k 3", "coding.sh toolevals run acme --driver model:anthropic/claude-sonnet-5 --variant base --variant terse"],
+        examples: ["coding.sh toolevals run gh --driver agent:claude-code -k 3", "coding.sh toolevals run everything --driver model:anthropic/claude-sonnet-5 --variant base --variant terse"],
       },
       {
         name: "compare",
@@ -462,6 +477,7 @@ export const COMMANDS: CommandSpec[] = [
     load: () => import("./commands/toolevals.ts"),
   },
   WORKFLOWS_COMMAND,
+  BENCH_COMMAND,
   // ---------------------------------------------------------- Harness
   {
     name: "harness",
@@ -562,7 +578,11 @@ export const COMMANDS: CommandSpec[] = [
     name: "update",
     group: "Maintain",
     summary: "Install the latest coding.sh release",
-    flags: [{ name: "check", type: "boolean", desc: "Only report whether an update is available" }, DRY_RUN],
+    flags: [
+      { name: "check", type: "boolean", desc: "Only report whether an update is available" },
+      { name: "refresh-bin", type: "boolean", hidden: true, desc: "Only refresh the hook, MCP launcher and CLI path in ~/.coding.sh/bin from this install (runs after every update)" },
+      DRY_RUN,
+    ],
     examples: ["coding.sh update", "coding.sh update --check"],
     notes: [
       "Other commands print one line when a newer release is out (checked at most daily, in the background).",

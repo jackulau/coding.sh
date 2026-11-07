@@ -389,9 +389,16 @@ async function runAction(c: CommandContext): Promise<number> {
       env: c.env,
       bundleFor: (ref) => ctx.index.getBundle(ref),
       meta: { repoRoot: root, split, surfaces },
+      signal: c.signal,
       onProgress: (done, total) => spin.update(`Running ${done}/${total}…`),
     });
     spin.stop();
+    if (r.cancelled) {
+      // main.ts exits 130 (143 for SIGTERM); finished trials stay in trials.jsonl.
+      if (out.json) out.data({ outcome: "cancelled", experimentId: r.experimentId, dir: r.dir, trials: r.trials.length, total: trials });
+      else out.warn(`Cancelled after ${r.trials.length}/${trials} trials; finished trials are in ${r.dir}`);
+      return 1;
+    }
     const summary = summarizeArms(r.trials);
     if (out.json) out.data({ experimentId: r.experimentId, dir: r.dir, trials: r.trials.length, k, arms: summary });
     else {

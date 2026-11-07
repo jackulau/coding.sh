@@ -3,7 +3,7 @@
 import type { AgentEvent, Session } from "../../core/types.ts";
 import { positiveInt } from "../args.ts";
 import { autoIngest, oneLine, resolveSession, sessionJson, withContext } from "../common.ts";
-import { clean, duration, tokens, usd, type Output } from "../output.ts";
+import { ago, clean, duration, localTime, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import type { IndexStore } from "../../core/types.ts";
 import type { FileDiff } from "../../core/snapshot.ts";
@@ -124,6 +124,12 @@ export async function snapshotChanges(s: Session, env: NodeJS.ProcessEnv): Promi
   }
 }
 
+/** "Nov 6 14:02 (3m ago)" within a day, else "Nov 6 14:02"; --json keeps the ISO timestamp. */
+export function startedText(ts: number, now = Date.now()): string {
+  const rel = ago(ts, { now });
+  return rel.endsWith("ago") || rel === "just now" ? `${localTime(ts, now)} (${rel})` : localTime(ts, now);
+}
+
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
   const limit = positiveInt(c.flags.limit, "limit") ?? 200;
@@ -148,7 +154,7 @@ export async function run(c: CommandContext): Promise<number> {
       ["Session", s.id],
       ["Agent", [s.agent, s.agentVersion, s.model].filter(Boolean).join("  ")],
       ["Repo", s.repo ? `${s.repo.root}${s.repo.branch ? ` (${s.repo.branch})` : ""}` : (s.cwd ?? "-")],
-      ["Started", new Date(s.startedAt).toString()],
+      ["Started", startedText(s.startedAt)],
       ["Duration", s.endedAt !== undefined ? duration(s.endedAt - s.startedAt) : "running or not ended"],
       ["Turns", `${s.stats.turns}, ${s.stats.toolCalls} tool calls${s.stats.toolErrors ? ` (${s.stats.toolErrors} failed)` : ""}, ${filesChanged} files changed`],
     ];

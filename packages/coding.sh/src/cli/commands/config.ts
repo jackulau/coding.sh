@@ -41,6 +41,19 @@ function getPath(obj: unknown, key: string): unknown {
   return cur;
 }
 
+/** True when two loaded configs differ at most at the dotted path `key`. */
+export function onlyKeyChanged(before: unknown, after: unknown, key: string): boolean {
+  const strip = (v: unknown) => {
+    const c = structuredClone(v) as Record<string, unknown>;
+    const parts = key.split(".");
+    let cur: Record<string, unknown> | undefined = c;
+    for (const p of parts.slice(0, -1)) cur = cur && typeof cur[p] === "object" && cur[p] !== null ? (cur[p] as Record<string, unknown>) : undefined;
+    if (cur) delete cur[parts[parts.length - 1]!];
+    return JSON.stringify(c);
+  };
+  return strip(before) === strip(after);
+}
+
 /** CLI text → TOML literal: numbers, booleans and JSON arrays stay typed; anything else is a string. */
 export function tomlLiteral(raw: string): string {
   const t = raw.trim();
@@ -56,7 +69,16 @@ export function tomlLiteral(raw: string): string {
   return JSON.stringify(raw);
 }
 
-const header = (line: string) => /^\s*\[([^\][]+)\]\s*(#.*)?$/.exec(line)?.[1]?.trim();
+/**
+ * The table a header line opens: "capture" for `[capture]`; for an
+ * array-of-tables line (`[[sinks]]`) a name no settable key can match, so the
+ * keys under it never count as part of the table before it.
+ */
+const header = (line: string): string | undefined => {
+  const m = /^\s*(\[\[?)\s*([^\][]+?)\s*\]\]?\s*(#.*)?$/.exec(line);
+  if (!m) return undefined;
+  return m[1] === "[[" ? `[[${m[2]}]]` : m[2]!.replace(/\s*\.\s*/g, ".").replace(/"/g, "");
+};
 
 /** Sets `[table] key = literal` in TOML text, keeping everything else byte-for-byte. */
 export function setTomlKey(text: string, table: string, key: string, literal: string): string {
@@ -132,12 +154,31 @@ export async function run(c: CommandContext): Promise<number> {
   const dot = key.indexOf(".");
   const after = setTomlKey(before ?? defaultConfigToml(env), key.slice(0, dot), key.slice(dot + 1), tomlLiteral(raw));
 
-  // Validate with the real loader before touching the file.
+  // Validate with the real loader before touching the file, and check that the
+  // edit changed exactly the key asked for and nothing else (a line edit in the
+  // wrong table would otherwise pass: sinks[].mode takes the same values).
   const dir = await mkdtemp(join(tmpdir(), "codingsh-config-"));
+  // Store env overrides would mask (or derive from) the file's store keys.
+  const fileEnv = { ...env, CODING_SH_STORE_URL: undefined, CODING_SH_BLOB_URL: undefined };
   try {
     const probe = join(dir, "config.toml");
+    let was: unknown;
+    if (before !== undefined) {
+      await writeFile(probe, before);
+      try {
+        was = loadConfig({ env: fileEnv, file: probe });
+      } catch {
+        was = undefined; // already invalid: nothing to compare against
+      }
+    }
     await writeFile(probe, after);
-    loadConfig({ env, file: probe });
+    const now = loadConfig({ env: fileEnv, file: probe });
+    if (was !== undefined && !onlyKeyChanged(was, now, key)) {
+      throw new CliError(`Can't set ${key}: the edit would change other settings too`, {
+        reason: "unsafe_edit",
+        next: ["Edit the file by hand:", file],
+      });
+    }
   } catch (e) {
     if (e instanceof ConfigError) throw new UsageError(`Invalid value for ${key}: ${e.message.replace(/^.*?: /, "")}`, { reason: "invalid_value" });
     throw e;

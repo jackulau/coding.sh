@@ -67,6 +67,7 @@ describe("handshake (legacy era)", () => {
     const r = await c.request("tools/list");
     tools = r.result!.tools as Tool[];
     assert.deepEqual(tools.map((t) => t.name).sort(), [
+      "benchmarks",
       "eval_from_session",
       "experiment_compare",
       "experiments_list",
@@ -353,7 +354,7 @@ describe("modern era (2026-07-28)", () => {
     try {
       assert.equal(client.era, "2026-07-28");
       assert.equal(client.serverInfo?.name, "coding.sh");
-      assert.equal((await client.listTools()).length, 12);
+      assert.equal((await client.listTools()).length, 13);
       const r = await client.callTool("session_get", { sessionId: SEED.b });
       assert.equal((r.structuredContent as { session: { agent: string } }).session.agent, "codex");
     } finally {

@@ -1,5 +1,5 @@
 // coding.sh workflows list|import|show|stats|score|run|compare|replay
-// (docs/WORKFLOWS.md §10). Runs live in the workflow store
+// (docs/design/workflows.md §10). Runs live in the workflow store
 // (~/.coding.sh/workflows); agent transcripts go to the index as child sessions.
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -137,7 +137,7 @@ async function listRuns(c: CommandContext): Promise<number> {
       tty ? oneLine(clean(r.name), 40) : clean(r.name).replace(/[\t\n]+/g, " "),
       r.framework,
       r.status,
-      ago(r.startedAt, { tty }),
+      ago(r.startedAt),
       duration(wallOf(r)),
       r.stats.failedAgents || r.stats.nullAgents ? `${r.stats.agents} (${r.stats.failedAgents} failed, ${r.stats.nullAgents} null)` : String(r.stats.agents),
       usd(r.stats.costUsd),
@@ -355,11 +355,7 @@ async function score(c: CommandContext): Promise<number> {
     throw new CliError(`Case ${caseId} is graded by a judge; the CLI scores seeded-bugs and verifier cases only`, { reason: "unsupported_truth", next: ["Score judge cases through an eval judge:", "coding.sh judge --help"] });
   }
   if (run.experimentId) {
-    const e = await store.getExperiment(run.experimentId);
-    if (e) {
-      e.scores[run.id] = report.score;
-      await store.putExperiment(e);
-    }
+    if (await store.getExperiment(run.experimentId)) await store.setExperimentScore(run.experimentId, run.id, report.score);
   }
   if (out.json) {
     out.data(report);
@@ -531,8 +527,11 @@ async function compare(c: CommandContext): Promise<number> {
   for (const v of [baseline, candidate]) {
     if (!exp.variants.some((x) => x.name === v)) throw new UsageError(`Experiment ${id} has no variant ${JSON.stringify(v)} (variants: ${exp.variants.map((x) => x.name).join(", ")})`, { reason: "invalid_value" });
   }
+  // Membership: the record's runs plus any run stored under this experiment that
+  // never made it into the record (a crash between putRun and the record append).
+  const runIds = new Set([...exp.runIds, ...(await store.listRuns({ experimentId: id })).map((r) => r.id)]);
   const runs: WorkflowRun[] = [];
-  for (const rid of exp.runIds) {
+  for (const rid of runIds) {
     const r = await store.getRun(rid);
     if (r) runs.push(r.run);
   }

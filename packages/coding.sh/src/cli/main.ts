@@ -5,20 +5,25 @@
 // Conventions (https://vercel.com/design/cli):
 //   stdout = the answer only; stderr = everything else.
 //   --json = one JSON document on stdout; errors are one JSON line on stderr.
-//   Exit codes: 0 ok, 1 failure, 2 usage error, 130 interrupted.
+//   Exit codes: 0 ok, 1 failure, 2 usage error, 128+N stopped by signal N
+//   (130 Ctrl-C/SIGINT, 143 SIGTERM, 129 SIGHUP).
 //
 // `coding.sh` alone, in a terminal, sets up capture on first run (init) and
 // opens the viewer after that (ui). Piped or in CI it prints help.
 import { existsSync } from "node:fs";
 import { paths } from "../core/paths.ts";
-import { parseArgs, suggest, UsageError, type FlagSpec } from "./args.ts";
+import { parseArgs, suggest, UsageError, visibleFlags, type FlagSpec } from "./args.ts";
 import { Output } from "./output.ts";
 import { version } from "./meta.ts";
 import { COMMANDS, findCommand, GLOBAL_FLAGS, type ActionSpec, type CommandSpec } from "./registry.ts";
 
 export const BIN = "coding.sh";
 
-const SUMMARY = "Open-source, local-first observability and evals for coding agents.";
+/** Signals that stop a command, and the exit code (128 + signal number) each one ends with. */
+const STOP_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+const SIGNAL_EXIT: Partial<Record<NodeJS.Signals, number>> = { SIGINT: 130, SIGTERM: 143, SIGHUP: 129 };
+
+export const SUMMARY = "Open-source, local-first observability and evals for any AI agent. Coding agents first-class.";
 const GROUPS: CommandSpec["group"][] = ["Capture", "Explore", "Evaluate", "Harness", "Maintain"];
 
 // ------------------------------------------------------------ help rendering
@@ -66,7 +71,7 @@ export function rootHelp(s: HelpStyle): string {
 export function commandHelp(cmd: CommandSpec, action: ActionSpec | undefined, s: HelpStyle): string {
   const name = action ? `${cmd.name} ${action.name}` : cmd.name;
   const args = action ? action.args : cmd.args;
-  const flags = action ? (action.flags ?? []) : (cmd.flags ?? []);
+  const flags = visibleFlags(action ? action.flags : cmd.flags);
   const usage = [BIN, name];
   if (!action && cmd.actions) usage.push(cmd.actionOptional ? "[action]" : "<action>");
   const argText = argSyntax(args);
@@ -97,10 +102,10 @@ export function helpMetadata(cmd?: CommandSpec, action?: ActionSpec): unknown {
     group: c.group,
     summary: c.summary,
     arguments: (c.args ?? []).map(arg),
-    options: (c.flags ?? []).map(flag),
-    commands: (c.actions ?? []).map((a) => ({ name: a.name, summary: a.summary, arguments: (a.args ?? []).map(arg), options: (a.flags ?? []).map(flag) })),
+    options: visibleFlags(c.flags).map(flag),
+    commands: (c.actions ?? []).map((a) => ({ name: a.name, summary: a.summary, arguments: (a.args ?? []).map(arg), options: visibleFlags(a.flags).map(flag) })),
   });
-  if (cmd && action) return { command: { name: `${cmd.name} ${action.name}`, summary: action.summary, arguments: (action.args ?? []).map(arg), options: (action.flags ?? []).map(flag) }, globalOptions: GLOBAL_FLAGS.map(flag) };
+  if (cmd && action) return { command: { name: `${cmd.name} ${action.name}`, summary: action.summary, arguments: (action.args ?? []).map(arg), options: visibleFlags(action.flags).map(flag) }, globalOptions: GLOBAL_FLAGS.map(flag) };
   if (cmd) return { command: describe(cmd), globalOptions: GLOBAL_FLAGS.map(flag) };
   return { name: BIN, version: version(), summary: SUMMARY, commands: COMMANDS.map(describe), globalOptions: GLOBAL_FLAGS.map(flag) };
 }
@@ -265,33 +270,45 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
       }
     }
 
+    // SIGINT, SIGTERM and SIGHUP all stop a command the same way: the first one
+    // aborts c.signal (commands stop scheduling work, kill their child process
+    // groups and record what finished); a second one exits at once, and the
+    // process 'exit' hook in core/children.ts still SIGKILLs every live child group.
     const controller = new AbortController();
-    let interrupts = 0;
-    const onSigint = () => {
-      interrupts++;
-      if (interrupts > 1) process.exit(130);
+    let stopCode = 0;
+    const onStop = (sig: NodeJS.Signals) => {
+      if (stopCode) process.exit(SIGNAL_EXIT[sig] ?? stopCode);
+      stopCode = SIGNAL_EXIT[sig] ?? 130;
       controller.abort();
     };
     const ownSignals = cmd.handlesSignals === true && !action;
-    if (!cmd.passthrough && !ownSignals) process.on("SIGINT", onSigint);
+    const handle = !cmd.passthrough && !ownSignals;
+    if (handle) for (const sig of STOP_SIGNALS) process.on(sig, onStop);
     try {
       const mod = await cmd.load();
-      const code = await mod.run({
-        action: action?.name,
-        flags: parsed.flags,
-        positionals: parsed.positionals,
-        rest: parsed.rest,
-        out,
-        env,
-        cwd: process.cwd(),
-        debug: globals.debug,
-        signal: controller.signal,
-      });
-      if (controller.signal.aborted && !cmd.passthrough && !ownSignals) return 130;
+      let code: number | void;
+      try {
+        code = await mod.run({
+          action: action?.name,
+          flags: parsed.flags,
+          positionals: parsed.positionals,
+          rest: parsed.rest,
+          out,
+          env,
+          cwd: process.cwd(),
+          debug: globals.debug,
+          signal: controller.signal,
+        });
+      } catch (e) {
+        // A command cut short by the abort may throw (AbortError, a killed step); that is the interrupt, not a failure.
+        if (handle && stopCode) return stopCode;
+        throw e;
+      }
+      if (handle && stopCode) return stopCode;
       await updateNotice(env, out, cmd.name);
       return code ?? 0;
     } finally {
-      process.off("SIGINT", onSigint);
+      if (handle) for (const sig of STOP_SIGNALS) process.off(sig, onStop);
     }
   } catch (e) {
     return out.error(e, globals.debug);

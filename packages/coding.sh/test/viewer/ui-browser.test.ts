@@ -1,11 +1,17 @@
 // Viewer UI regressions, driven in headless Chrome against a real viewer
 // server backed by an in-memory store. Skipped when no Chrome is installed.
 import assert from "node:assert/strict";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import type { AgentEvent } from "../../src/core/types.ts";
+import { runBench } from "../../src/bench/run.ts";
+import { runsDir } from "../../src/bench/store.ts";
+import type { AgentEvent, SessionFilter } from "../../src/core/types.ts";
 import { startViewer, type Viewer } from "../../src/viewer/server.ts";
+import { cleanup as benchCleanup, day, project } from "../bench/helpers.ts";
 import { findChrome, launchBrowser, type Browser, type Page } from "./browser.ts";
-import { FakeBlobs, FakeIndex, event, session } from "./fakes.ts";
+import { FakeBlobs, FakeIndex, event, experimentResult, session } from "./fakes.ts";
 
 const chrome = findChrome();
 const T0 = 1_762_400_000_000;
@@ -72,7 +78,14 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
 
   before(async () => {
     await seed(index);
-    v = await startViewer({ index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any });
+    const exp = experimentResult("exp-prod-smoke");
+    v = await startViewer({
+      index,
+      blobs: new FakeBlobs(),
+      port: 0,
+      updateStatus: async () => ({ disabled: "test" }) as any,
+      experiments: { listExperiments: async () => [exp], getExperiment: async (id) => (id === exp.id ? exp : undefined) },
+    });
     browser = await launchBrowser(chrome!);
   });
   after(async () => {
@@ -88,12 +101,15 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
     await page.waitFor("document.querySelector('[role=listbox], .panel.empty:not([aria-busy])')", "sessions list");
     if (hash !== "#/") {
       await page.eval(`location.hash = ${JSON.stringify(hash)}`);
-      await page.waitFor("document.querySelector('.detail-head')", "session header");
+      await page.waitFor("document.querySelector('#steps .st, .detail-head .facts ~ * .panel.empty')", "session steps");
     }
   }
   const sessionHash = (id: string) => "#/s/" + encodeURIComponent(id);
+  // Steps are a virtual list: only rows near the viewport are in the DOM.
+  const STEPS = "document.querySelectorAll('#steps .st')";
   const stepIndex = (re: string) =>
-    `[...document.querySelectorAll('[role=tab]')].findIndex((t) => new RegExp(${JSON.stringify(re)}).test(t.textContent))`;
+    `[...${STEPS}].findIndex((t) => new RegExp(${JSON.stringify(re)}).test(t.querySelector('.lbl').textContent))`;
+  const selected = "document.querySelector('#steps .st[aria-selected=true]')";
 
   test("subagents nest under their parent, and parent and child link to each other", async () => {
     await open("#/");
@@ -111,10 +127,10 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
 
       // Parent timeline: the subagent step links to the child session.
       await page.eval(`location.hash = ${JSON.stringify(sessionHash(PARENT))}`);
-      await page.waitFor("document.querySelector('[role=tab]')", "steps");
+      await page.waitFor("document.querySelector('#steps .st')", "steps");
       const i = await page.eval(stepIndex("^Subagent starts"));
       assert.ok(i >= 0, "subagent.start step exists");
-      await page.eval(`document.querySelectorAll('[role=tab]')[${i}].click()`);
+      await page.eval(`${STEPS}[${i}].click()`);
       const href = await page.waitFor("document.querySelector('#event-pane a.child-link')?.getAttribute('href')", "child session link");
       assert.equal(href, sessionHash(CHILD));
 
@@ -131,18 +147,71 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
     }
   });
 
+  // Regression: dataset experiments (`coding.sh exp run`) never reached the Experiments page.
+  test("the Experiments page lists dataset experiments; a detail page shows their cases", async () => {
+    await open("#/");
+    try {
+      await page.eval(`location.hash = "#/experiments"`);
+      const meta = await page.waitFor("(() => { const m = document.querySelector('#exp-h + .meta'); return m && !/Loading/.test(m.textContent) && m.textContent; })()", "experiments meta");
+      assert.match(meta, /^1 experiment · 2 runs · 0 tasks$/);
+      const card = await page.eval("document.querySelector('[data-experiment=\"exp-prod-smoke\"]')?.textContent");
+      assert.match(card ?? "", /prod-smoke/);
+      assert.match(card, /QA@v1abcdef/);
+      assert.match(card, /1\/2 · 50%/);
+      assert.match(card, /95% CI 9%–91%/);
+      assert.equal(await page.eval("!!document.querySelector('.panel.empty')"), false, "no empty state");
+      await page.eval("document.querySelector('[data-experiment=\"exp-prod-smoke\"]').click()");
+      // Failed cases first: the page opens on them.
+      const failed = await page.waitFor("(() => { const r = [...document.querySelectorAll('.case-row')]; return r.length && r.map((e) => e.textContent); })()", "case rows");
+      assert.equal(failed.length, 1);
+      assert.match(failed[0], /^c2.*exact: expected 5.*fail$/, "the failure, with the grader's reason");
+      await page.eval("document.querySelector('[data-case-filter=all]').click()");
+      const cases = await page.waitFor("(() => { const r = [...document.querySelectorAll('.case-row')]; return r.length === 2 && r.map((e) => e.textContent); })()", "all case rows");
+      assert.match(cases[0], /^c2/, "failures sort first");
+      assert.match(cases[1], /^c1.*pass$/);
+      // A case opens in place with its grades and output.
+      await page.eval("document.querySelector('.case-row').click()");
+      const detail = await page.waitFor("(() => { const d = document.querySelector('.case-row .case-detail:not([hidden])'); return d && d.textContent; })()", "case detail");
+      assert.match(detail, /exact/);
+      assert.match(detail, /five/);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("at 390px the Experiments page does not scroll sideways", async () => {
+    await open("#/", true);
+    try {
+      await page.eval(`location.hash = "#/experiments"`);
+      await page.waitFor("document.querySelector('[data-experiment]')", "experiment row");
+      // Mobile emulation grows the layout viewport to fit wide content, so compare with 390, not innerWidth.
+      const [sw, vw, card] = await page.eval("[document.documentElement.scrollWidth, innerWidth, document.querySelector('[data-experiment]').getBoundingClientRect().right]");
+      assert.ok(sw <= 390 && vw <= 390, `page is ${sw}px wide (layout viewport ${vw}px) on a 390px screen`);
+      assert.ok(card <= 390, `experiment row ends at ${card}px`);
+      const names: number[] = await page.eval("[...document.querySelectorAll('[data-experiment] .exp-name b')].map((b) => b.getBoundingClientRect().width)");
+      assert.ok(names.length && names.every((w) => w > 40), `every row shows its name (widths ${names.join(", ")})`);
+      await page.eval("document.querySelector('[data-experiment]').click()");
+      await page.waitFor("document.querySelector('.case-row')", "case rows");
+      await page.eval("document.querySelector('.case-row').click()");
+      const [sw2, right] = await page.eval("[document.documentElement.scrollWidth, Math.max(...[...document.querySelectorAll('main *')].map((e) => e.getBoundingClientRect().right))]");
+      assert.ok(sw2 <= 390 && right <= 391, `detail page is ${sw2}px wide, content ends at ${right}px`);
+    } finally {
+      await page.close();
+    }
+  });
+
   test("model calls show their duration and model; the header shows session latency", async () => {
     await open(sessionHash(PARENT));
     try {
       const i = await page.eval(stepIndex("LLM call"));
       assert.ok(i >= 0, "llm.call step exists");
-      const step = await page.eval(`document.querySelectorAll('[role=tab]')[${i}].textContent`);
+      const step = await page.eval(`${STEPS}[${i}].textContent`);
       assert.match(step, /claude-opus-5-5/);
       assert.match(step, /3\.5s$/, "duration replaces the clock offset");
-      await page.eval(`document.querySelectorAll('[role=tab]')[${i}].click()`);
+      await page.eval(`${STEPS}[${i}].click()`);
       const pane = await page.waitFor("document.querySelector('#event-pane .pane-title')?.textContent.startsWith('LLM call') && document.querySelector('#event-pane').innerText");
-      assert.match(pane, /duration 3\.5s/);
-      assert.match(pane, /ttft 3\.2s/);
+      assert.match(pane, /duration\s+3\.5s/);
+      assert.match(pane, /ttft\s+3\.2s/);
       const head: string = await page.eval("document.querySelector('.detail-head .facts').innerText");
       assert.match(head, /latency/);
       assert.match(head, /293 llm calls, p50 6\.5s, p95 34s/);
@@ -155,19 +224,22 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
   test("sessions with more than one page of events can load the rest", async () => {
     await open(sessionHash(BIG));
     try {
-      assert.equal(await page.eval("document.querySelectorAll('[role=tab]').length"), 5000);
+      // Virtualized: a few dozen rows in the DOM, 5,000 in the list.
+      assert.equal(await page.eval("document.querySelector('#steps .st').getAttribute('aria-setsize')"), "5000");
+      assert.ok((await page.eval(`${STEPS}.length`)) < 400, "only rows near the viewport render");
       const label = await page.waitFor("document.querySelector('#load-events')?.textContent", "load-more button");
       assert.equal(label, "Load the remaining 10 events");
       assert.equal(await page.eval("document.querySelector('.timeline-head').textContent"), "5,000 steps5,000 of 5,010 events");
       await page.eval("document.querySelector('#load-events').click()");
-      await page.waitFor(`document.querySelectorAll('[role=tab]').length === ${BIG_EVENTS}`, "all steps", 10_000);
+      await page.waitFor(`document.querySelector('#steps .st').getAttribute('aria-setsize') === "${BIG_EVENTS}"`, "all steps", 10_000);
       assert.equal(await page.eval("document.querySelector('#load-events')"), null);
       assert.equal(await page.eval("document.querySelector('.timeline-head').textContent"), "5,010 steps");
       assert.equal(await page.eval("document.querySelector('.timeline-more').getBoundingClientRect().height"), 0, "the empty load bar is hidden");
-      const last = await page.eval("[...document.querySelectorAll('[role=tab]')].at(-1).textContent");
-      assert.match(last, /prompt 5009/);
-      // Focus moves to the first newly loaded step.
-      assert.match(await page.eval("document.activeElement.textContent"), /prompt 5000/);
+      // The first newly loaded step is selected, with focus on the list.
+      assert.match(await page.eval(`${selected}.textContent`), /prompt 5000/);
+      assert.equal(await page.eval("document.activeElement.id"), "steps");
+      await page.eval("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))");
+      assert.match(await page.waitFor(`${selected}?.textContent`, "last step"), /prompt 5009/);
     } finally {
       await page.close();
     }
@@ -177,7 +249,7 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
     await open("#/");
     try {
       await page.eval(`location.hash = ${JSON.stringify(sessionHash(BIG) + "/" + encodeURIComponent(`${BIG}-e5005`))}`);
-      const sel = await page.waitFor("document.querySelector('[role=tab][aria-selected=true]')?.textContent", "selected step", 10_000);
+      const sel = await page.waitFor(`${selected}?.textContent`, "selected step", 10_000);
       assert.match(sel, /prompt 5005/);
     } finally {
       await page.close();
@@ -206,13 +278,15 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
     try {
       const before = await page.eval("document.querySelector('#event-pane').getBoundingClientRect().top");
       assert.ok(before > 844 - 120, `fixture starts the pane at the bottom edge or below (top ${before})`);
-      const i = await page.eval(stepIndex("WebSearch Theo Browne video 21"));
-      await page.eval(`document.querySelectorAll('[role=tab]')[${i}].click()`);
+      // Video 39 closes a run of quiet searches, so it stays visible when the middle folds.
+      const i = await page.eval(stepIndex("WebSearch\\s*Theo Browne video 39"));
+      assert.ok(i >= 0, "step is in the list");
+      await page.eval(`${STEPS}[${i}].click()`);
       await page.waitFor(
         // Its top reaches the upper half of the screen, or the page ends with the whole pane in view.
-        "(() => { const r = document.querySelector('#event-pane').getBoundingClientRect(); return r.top >= 0 && (r.top < innerHeight / 2 || r.bottom <= innerHeight) && /Theo Browne video 21/.test(document.querySelector('#event-pane').textContent); })()",
+        "(() => { const r = document.querySelector('#event-pane').getBoundingClientRect(); return r.top >= 0 && (r.top < innerHeight / 2 || r.bottom <= innerHeight) && /Theo Browne video 39/.test(document.querySelector('#event-pane').textContent); })()",
         "event pane scrolled into view",
-      );
+      )
       assert.ok((await page.eval("scrollY")) > 0, "the page scrolled to the detail");
       // The pane offers a way back to the step list on narrow screens.
       assert.equal(await page.eval("getComputedStyle(document.querySelector('#event-pane .to-steps')).display === 'none'"), false);
@@ -265,6 +339,452 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
       await page.eval("location.hash = '#/'");
       await page.waitFor("document.querySelector('[role=listbox]')", "list again");
       await page.waitFor(`document.querySelector('#status').textContent === ${JSON.stringify(initial)}`, "list announcement after leaving a session", 2000);
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+// List state machine regressions (VWR-1..5, VWR-7). Each scenario gets its own
+// viewer over a FakeIndex whose listSessions can be slowed per call.
+describe("viewer UI: sessions list state", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
+  class SlowIndex extends FakeIndex {
+    delay: (f: SessionFilter) => number = () => 0;
+    override async listSessions(f: SessionFilter = {}) {
+      const ms = this.delay(f);
+      if (ms) await new Promise((r) => setTimeout(r, ms));
+      return super.listSessions(f);
+    }
+  }
+  let browser: Browser;
+  before(async () => {
+    browser = await launchBrowser(chrome!);
+  });
+  after(async () => {
+    await browser?.close();
+  });
+  const titles = "[...document.querySelectorAll('[role=listbox] .row-title')].map((e) => e.textContent.replace(/^↳ /, ''))";
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const typeQ = (q: string) => `(() => { const i = document.getElementById('q'); i.focus(); i.value = ${JSON.stringify(q)}; i.dispatchEvent(new Event('input')); })()`;
+  const clickChip = (row: string, re: string) =>
+    `[...document.querySelectorAll('[data-filter=${row}] .chip')].find((b) => new RegExp(${JSON.stringify(re)}).test(b.textContent)).click()`;
+
+  async function scenario(seedFn: (ix: SlowIndex) => Promise<void>, run: (page: Page, ix: SlowIndex) => Promise<void>) {
+    const ix = new SlowIndex();
+    await seedFn(ix);
+    const v = await startViewer({ index: ix, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any });
+    const page = await browser.newPage();
+    try {
+      await page.viewport(1280, 900);
+      await page.goto(v.url);
+      await page.waitFor("document.querySelector('[role=listbox], .panel.empty:not([aria-busy])')", "sessions list");
+      await run(page, ix);
+    } finally {
+      await page.close();
+      await v.close();
+    }
+  }
+  const many = async (ix: SlowIndex) => {
+    for (let i = 0; i < 55; i++) await ix.upsertSession(session(`CC-${i}`, { title: `CC-${i}`, startedAt: T0 + 100_000 + i * 1000 }));
+    for (let i = 0; i < 5; i++) await ix.upsertSession(session(`CX-${i}`, { agent: "codex", title: `CX-${i}`, startedAt: T0 + i * 1000 }));
+  };
+  const loadMore = "[...document.querySelectorAll('.more button')].find((b) => /Load more/.test(b.textContent)).click()";
+
+  test("VWR-1: Load more after a new session lands repeats no row", async () => {
+    await scenario(many, async (page, ix) => {
+      assert.equal((await page.eval(titles)).length, 50);
+      await ix.upsertSession(session("NEW", { title: "NEW", startedAt: T0 + 900_000 }));
+      await page.eval(loadMore);
+      await page.waitFor(`${titles}.length >= 60`, "second page");
+      const rows: string[] = await page.eval(titles);
+      assert.equal(rows.length, new Set(rows).size, `duplicate rows: ${rows.filter((t, i) => rows.indexOf(t) !== i)}`);
+      assert.equal(rows.length, 60);
+    });
+  });
+
+  test("VWR-2: a Load more that resolves after a filter change is dropped", async () => {
+    await scenario(many, async (page, ix) => {
+      ix.delay = (f) => (!f.agent && (f.until !== undefined || (f.offset ?? 0) > 0) && f.parentSessionId === null ? 700 : 0);
+      await page.eval(loadMore);
+      await sleep(80);
+      await page.eval(clickChip("agent", "^codex"));
+      await sleep(1100);
+      const rows: string[] = await page.eval(titles);
+      assert.ok(rows.length > 0 && rows.every((t) => t.startsWith("CX-")), `rows under the codex filter: ${rows}`);
+      assert.equal(rows.length, new Set(rows).size);
+    });
+  });
+
+  test("VWR-3: a failed search does not stick; the box caps input at 500", async () => {
+    await scenario(
+      async (ix) => {
+        await ix.upsertSession(session("S1", { title: "S1", startedAt: T0 }));
+        await ix.putEvents([ev("S1", 1, { payload: { text: "hello world" } })]);
+      },
+      async (page) => {
+        assert.equal(await page.eval("document.getElementById('q').maxLength"), 500);
+        await page.eval(typeQ("x".repeat(501)));
+        await page.waitFor("document.querySelector('[role=alert]')", "error panel");
+        await page.eval(typeQ("hello"));
+        await page.waitFor("document.querySelectorAll('.hit-snippet').length > 0", "hits after a good query", 3000);
+        assert.equal(await page.eval("!!document.querySelector('[role=alert]')"), false);
+      },
+    );
+  });
+
+  test("VWR-4: expanded subagents do not duplicate in the Include subagents scope", async () => {
+    await scenario(
+      async (ix) => {
+        await ix.upsertSession(session("P", { title: "PARENT", startedAt: T0 }));
+        await ix.upsertSession(session("C", { title: "CHILD", startedAt: T0 + 5000, parent: { sessionId: "P", subagentId: "a1" } }));
+      },
+      async (page) => {
+        await page.eval("document.querySelector('.sub-toggle').click()");
+        await page.waitFor(`${titles}.includes('CHILD')`, "child row");
+        await page.eval(clickChip("scope", "^Include"));
+        await page.waitFor("document.querySelector('[data-filter=scope] [aria-pressed=true]')?.textContent.startsWith('Include') && document.querySelector('[role=listbox]')", "scope all");
+        const rows: string[] = await page.eval(titles);
+        assert.equal(rows.filter((t) => t === "CHILD").length, 1, JSON.stringify(rows));
+      },
+    );
+  });
+
+  test("VWR-5: a pressed flag chip narrows search hits", async () => {
+    await scenario(
+      async (ix) => {
+        await ix.upsertSession(session("F", { title: "FLAGGED", startedAt: T0, flags: ["no-verification"] }));
+        await ix.upsertSession(session("N", { title: "PLAIN", startedAt: T0 + 1000 }));
+        await ix.putEvents([ev("F", 1, { payload: { text: "hello flagged" } }), ev("N", 1, { payload: { text: "hello plain" } })]);
+      },
+      async (page) => {
+        await page.eval(clickChip("flag", "^no-verification"));
+        await page.waitFor("document.querySelector('[data-filter=flag] [aria-pressed=true]')?.textContent.startsWith('no-verification') && document.querySelector('[role=listbox]')", "flag pressed");
+        await page.eval(typeQ("hello"));
+        await page.waitFor("document.querySelectorAll('.hit-snippet').length > 0", "hits");
+        const snippets: string[] = await page.eval("[...document.querySelectorAll('.hit-snippet')].map((e) => e.textContent)");
+        assert.deepEqual(snippets, ["hello flagged"]);
+      },
+    );
+  });
+
+  test("VWR-7: a search hit whose session is still importing retries instead of a dead end", async () => {
+    await scenario(
+      async (ix) => {
+        await ix.upsertSession(session("S1", { title: "S1", startedAt: T0 }));
+        await ix.putEvents([ev("GHOST", 1, { payload: { text: "fresh prompt" } })]);
+      },
+      async (page, ix) => {
+        await page.eval(typeQ("fresh"));
+        await page.waitFor("document.querySelectorAll('.hit-snippet').length === 1", "hit");
+        await page.eval("document.querySelector('[role=listbox] [role=option]').click()");
+        await page.waitFor("/still importing/i.test(document.querySelector('main').textContent)", "importing state");
+        await ix.upsertSession(session("GHOST", { title: "GHOST SESSION", startedAt: T0 + 1 }));
+        const title = await page.waitFor("document.querySelector('.detail-head h1')?.textContent", "session after retry", 6000);
+        assert.equal(title, "GHOST SESSION");
+      },
+    );
+  });
+});
+
+// Timeline, inspector, header and compare behaviour from the viewer polish pass.
+describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
+  const index = new FakeIndex();
+  let v: Viewer;
+  let browser: Browser;
+  let page: Page;
+  const WORK = "w-1";
+  const API = "api-1";
+  const CHEAP = "cheap-1";
+  const STEPS = "document.querySelectorAll('#steps .st')";
+  const selected = "document.querySelector('#steps .st[aria-selected=true]')";
+  const stepWhere = (re: string) => `[...${STEPS}].find((t) => new RegExp(${JSON.stringify(re)}).test(t.querySelector('.lbl').textContent))`;
+  const key = (k: string) => page.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, cancelable: true }))`);
+
+  before(async () => {
+    await index.upsertSession(session(WORK, {
+      startedAt: T0, endedAt: T0 + 300_000, title: "Fix the cursor in the sessions list", repo: { root: "/work/api", head: "a41c9e2b00" },
+      stats: {
+        events: 30, turns: 1, toolCalls: 11, toolErrors: 1, filesChanged: 1,
+        usage: { inputTokens: 12_000, cacheReadTokens: 324_900, cacheWriteTokens: 5_500, outputTokens: 2_500 },
+      },
+    }));
+    await index.upsertSession(session(API, {
+      agent: "vercel-ai-sdk", startedAt: T0 + 1000, endedAt: T0 + 20_000, title: "POST /api/triage", repo: undefined,
+      stats: { events: 3, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0, latency: { llmCalls: 3 }, usage: { inputTokens: 900, outputTokens: 200, costUsd: 0.012 } },
+    }));
+    await index.upsertSession(session(CHEAP, {
+      agent: "vercel-ai-sdk", startedAt: T0 - 3 * 86_400_000, endedAt: T0 - 3 * 86_400_000 + 1000, title: "POST /api/ping", repo: undefined,
+      stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0, latency: { llmCalls: 1 }, usage: { inputTokens: 10, outputTokens: 2, costUsd: 0.00004 } },
+    }));
+    const evs: AgentEvent[] = [ev(WORK, 1, { kind: "user.message", payload: { text: "fix the cursor" } })];
+    let n = 2;
+    // A quiet run: eight successful reads fold to first two, a fold row and the last.
+    for (let i = 0; i < 8; i++, n += 2) {
+      evs.push(ev(WORK, n, { kind: "tool.start", payload: { tool: "Read", toolUseId: `r${i}`, input: { file_path: `/work/api/src/file${i}.ts` } } }));
+      evs.push(ev(WORK, n + 1, { kind: "tool.end", payload: { tool: "Read", toolUseId: `r${i}`, ok: true, output: "     1→export {};\n" } }));
+    }
+    evs.push(ev(WORK, n++, { kind: "tool.start", payload: { tool: "Bash", toolUseId: "b1", input: { command: "npm test" } } }));
+    evs.push(ev(WORK, n++, { kind: "tool.end", payload: { tool: "Bash", toolUseId: "b1", ok: false, output: "not ok 1 - cursor\nexit 1" } }));
+    evs.push(ev(WORK, n++, { kind: "tool.start", payload: { tool: "Edit", toolUseId: "e1", input: { file_path: "/work/api/src/server.ts", old_string: "const a = 1;\nconst b = 2;", new_string: "const a = 1;\nconst b = 3;" } } }));
+    evs.push(ev(WORK, n++, { kind: "tool.end", payload: { tool: "Edit", toolUseId: "e1", ok: true } }));
+    evs.push(ev(WORK, n++, { kind: "llm.call", durationMs: 800, payload: { ok: false, statusCode: 429, error: "rate limited" } }));
+    await index.putEvents(evs);
+    await index.putEvents([
+      ev(API, 1, { kind: "llm.call", durationMs: 1200, payload: { ok: true, responseModel: "gpt-6.1-sol" } }),
+      ev(API, 2, { kind: "llm.call", durationMs: 900, payload: { ok: false, statusCode: 503, error: "upstream unavailable" } }),
+      ev(API, 3, { kind: "llm.call", durationMs: 700, payload: { ok: true } }),
+    ]);
+    const base = experimentResult("exp-base", { name: "baseline", createdAt: T0 - 2000 });
+    const cand = experimentResult("exp-cand", {
+      name: "candidate", createdAt: T0 - 1000,
+      runs: [
+        { caseId: "c1", trial: 1, output: "3", latencyMs: 100, grades: [{ graderId: "exact", result: { score: 0, pass: false, reason: "expected 4" } }], pass: false, startedAt: T0 },
+        { caseId: "c2", trial: 1, output: "5", latencyMs: 100, grades: [{ graderId: "exact", result: { score: 1, pass: true } }], pass: true, startedAt: T0 },
+      ],
+    });
+    const exps = [cand, base];
+    v = await startViewer({
+      index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any,
+      experiments: { listExperiments: async () => exps, getExperiment: async (id) => exps.find((e) => e.id === id) },
+    });
+    browser = await launchBrowser(chrome!);
+  });
+  after(async () => {
+    await browser?.close();
+    await v?.close();
+  });
+  async function open(hash: string, width = 1280) {
+    page = await browser.newPage();
+    await page.viewport(width, 900);
+    await page.goto(v.url);
+    await page.waitFor("document.querySelector('[role=listbox], .panel.empty:not([aria-busy])')", "sessions list");
+    if (hash !== "#/") await page.eval(`location.hash = ${JSON.stringify(hash)}`);
+  }
+
+  test("list rows: API sessions show requests, missing cost is a dash, tiny costs stay readable", async () => {
+    await open("#/");
+    try {
+      const rows: Record<string, string> = await page.eval("Object.fromEntries([...document.querySelectorAll('[role=listbox] [role=option]')].map((r) => [r.querySelector('.row-title').textContent, r.textContent]))");
+      assert.match(rows["POST /api/triage"]!, /3 requests/);
+      assert.doesNotMatch(rows["POST /api/triage"]!, /tool call/);
+      assert.match(rows["POST /api/ping"]!, /<\$0\.0001/);
+      assert.match(rows["Fix the cursor in the sessions list"]!, /345k tok/, "row tokens count everything sent and received");
+      assert.match(rows["Fix the cursor in the sessions list"]!, /—/, "no price yet shows a dash");
+      const heights: number[] = await page.eval("[...document.querySelectorAll('[role=listbox] [role=option]')].map((r) => Math.round(r.getBoundingClientRect().height))");
+      assert.equal(new Set(heights).size, 1, `rows with and without a repo are the same height: ${heights.join(", ")}`);
+      assert.ok(await page.eval("!!document.querySelector('.hist-plot')"), "the time histogram renders");
+      assert.ok(await page.eval("!!document.querySelector('[data-filter=agent] .chip')"), "agent facets render");
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("session header: tokens line, cost dash and two columns from 1200px", async () => {
+    await open("#/s/" + WORK, 1280);
+    try {
+      await page.waitFor(selected, "steps");
+      const facts: string = await page.eval("document.querySelector('.detail-head .facts').innerText");
+      assert.match(facts, /342k in · 2\.5k out · 95% cached/);
+      assert.match(facts, /cost\s+—/);
+      const cols: string = await page.eval("getComputedStyle(document.querySelector('.session-grid')).gridTemplateColumns");
+      assert.equal(cols.split(" ").length, 2, cols);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("timeline: quiet steps fold, ] jumps to failures, paths read relative to the repo", async () => {
+    await open("#/s/" + WORK);
+    try {
+      await page.waitFor(selected, "steps");
+      const fold = await page.eval("document.querySelector('#steps .st.fold')?.textContent");
+      assert.match(fold ?? "", /5 quiet steps/);
+      assert.ok(await page.eval(`!!${stepWhere("src/file0.ts")}`), "relative path in the row");
+      assert.equal(await page.eval(`!!${stepWhere("/work/api")}`), false, "no absolute repo path in rows");
+      // Failures: the failed command, then the rate-limited model call.
+      await key("]");
+      const first = await page.waitFor(`${selected}?.classList.contains('is-fail') && ${selected}.textContent`, "first failure");
+      assert.match(first, /Bash/);
+      assert.match(await page.eval("document.querySelector('.fail-nav').textContent"), /1 \/ 2 failures/);
+      const pane: string = await page.eval("document.querySelector('#event-pane').innerText");
+      assert.match(pane, /npm test/);
+      assert.match(pane, /not ok 1 - cursor/);
+      await key("]");
+      const second = await page.waitFor(`/LLM call/.test(${selected}?.textContent) && ${selected}.classList.contains('is-fail') && document.querySelector('#event-pane').innerText`, "failed model call");
+      assert.match(second, /HTTP 429/);
+      // z expands every fold.
+      await key("z");
+      await page.waitFor("!document.querySelector('#steps .st.fold')", "folds expanded");
+      assert.ok(await page.eval(`!!${stepWhere("src/file4.ts")}`), "a folded step is back");
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("inspector: Edit calls render as a diff; ? opens the shortcut sheet", async () => {
+    await open("#/s/" + WORK);
+    try {
+      await page.waitFor(selected, "steps");
+      await page.eval(`${stepWhere("^Edit")}.click()`);
+      await page.waitFor("document.querySelector('#event-pane .diff')", "edit diff");
+      const del: string = await page.eval("[...document.querySelectorAll('#event-pane .diff .tx.del')].map((e) => e.textContent).join('|')");
+      const add: string = await page.eval("[...document.querySelectorAll('#event-pane .diff .tx.add')].map((e) => e.textContent).join('|')");
+      assert.equal(del, "const b = 2;");
+      assert.equal(add, "const b = 3;");
+      assert.equal(await page.eval("document.querySelector('#event-pane .diff .tx.add mark')?.textContent"), "3", "the changed word is marked");
+      await key("?");
+      const sheet = await page.waitFor("document.querySelector('[role=dialog]')?.textContent", "shortcut sheet");
+      assert.match(sheet, /Next failure/);
+      assert.match(sheet, /Find in steps/);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("API sessions: requests instead of tool calls, failed requests as error rows", async () => {
+    await open("#/s/" + API);
+    try {
+      await page.waitFor(selected, "steps");
+      const badges: string = await page.eval("document.querySelector('.detail-head .badges').textContent");
+      assert.match(badges, /3 requests/);
+      assert.match(badges, /1 failed request/);
+      assert.doesNotMatch(badges, /tool call/);
+      const failed: string[] = await page.eval("[...document.querySelectorAll('#steps .st.is-fail')].map((e) => e.textContent)");
+      assert.equal(failed.length, 1);
+      assert.match(failed[0]!, /HTTP 503/);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("compare: select two, the older is the baseline, regressions list first", async () => {
+    await open("#/experiments");
+    try {
+      await page.waitFor("document.querySelectorAll('[data-experiment]').length === 2", "experiment rows");
+      await page.eval("document.querySelectorAll('.exp-row .check')[0].click()");
+      await page.eval("document.querySelectorAll('.exp-row .check')[1].click()");
+      const href = await page.waitFor("document.querySelector('.compare-bar a')?.getAttribute('href')", "compare button");
+      assert.equal(href, "#/experiments/exp-base/vs/exp-cand");
+      await page.eval("document.querySelector('.compare-bar a').click()");
+      const verdict = await page.waitFor("document.querySelector('.verdict')?.textContent", "verdict");
+      assert.match(verdict, /baseline/);
+      assert.match(verdict, /1 regression/);
+      assert.match(verdict, /1 improvement/);
+      const rows: string[] = await page.eval("[...document.querySelectorAll('.cmp-row')].map((e) => e.textContent)");
+      assert.equal(rows.length, 1, "opens on regressions");
+      assert.match(rows[0]!, /^c1.*pass.*fail.*expected 4.*−100 pts$/);
+      await page.eval("document.querySelector('.cmp-row').click()");
+      const sides = await page.waitFor("document.querySelector('.cmp-row .side-by-side')?.textContent", "side-by-side outputs");
+      assert.match(sides, /baseline/);
+      assert.match(sides, /candidate/);
+    } finally {
+      await page.close();
+    }
+  });
+});
+
+describe("viewer UI: benchmarks", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
+  const index = new FakeIndex();
+  let v: Viewer;
+  let empty: Viewer;
+  let emptyHome: string;
+  let browser: Browser;
+  let page: Page;
+  const key = (k: string) => page.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, cancelable: true }))`);
+
+  before(async () => {
+    // Two contenders over three days; "bad" is the reference. Two of the latest
+    // run's failures point at sessions: one the index has, one it doesn't.
+    const p = project();
+    for (const d of ["2026-11-04", "2026-11-05", "2026-11-06"]) await runBench({ def: p.def('reference = "bad"'), env: p.env, now: day(d) });
+    const dir = runsDir("arith", p.env);
+    const latest = readdirSync(dir).map((f) => JSON.parse(readFileSync(join(dir, f), "utf8"))).sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+    const bad = latest.cells.filter((c: any) => c.contender === "bad" && !c.pass);
+    bad[0].sessionId = "s-known";
+    bad[1].sessionId = "s-missing";
+    writeFileSync(join(dir, `${latest.id}.json`), JSON.stringify(latest));
+    await index.upsertSession(session("s-known", { title: "Fix the arithmetic case" }));
+    v = await startViewer({ index, blobs: new FakeBlobs(), port: 0, env: p.env, updateStatus: async () => ({ disabled: "test" }) as any });
+    emptyHome = mkdtempSync(join(tmpdir(), "csh-bench-empty-"));
+    empty = await startViewer({ index: new FakeIndex(), blobs: new FakeBlobs(), port: 0, env: { ...p.env, CODING_SH_HOME: emptyHome }, updateStatus: async () => ({ disabled: "test" }) as any });
+    browser = await launchBrowser(chrome!);
+  });
+  after(async () => {
+    await browser?.close();
+    await v?.close();
+    await empty?.close();
+    rmSync(emptyHome, { recursive: true, force: true });
+    benchCleanup();
+  });
+  async function open(url: string, hash: string, width = 1280, mobile = false) {
+    page = await browser.newPage();
+    await page.viewport(width, 900, mobile);
+    await page.goto(url);
+    await page.waitFor("document.querySelector('main').children.length", "first view");
+    await page.eval(`location.hash = ${JSON.stringify(hash)}`);
+  }
+
+  test("list: a card per benchmark with its leaderboard; g b, j and Enter open it", async () => {
+    await open(v.url, "#/");
+    try {
+      await key("g");
+      await key("b");
+      await page.waitFor("document.querySelector('[data-benchmark=arith]')", "benchmark card");
+      assert.equal(await page.eval("document.querySelector('[data-nav=benchmarks]').getAttribute('aria-current')"), "page");
+      const card: string = await page.eval("document.querySelector('[data-benchmark=arith]').innerText");
+      assert.match(card, /good/);
+      assert.match(card, /bad/);
+      assert.match(card, /ref/, "the reference is marked");
+      assert.ok(await page.eval("document.querySelectorAll('[data-benchmark=arith] .spark path').length >= 2"), "one trend line per contender");
+      await key("Enter");
+      await page.waitFor("location.hash === '#/benchmarks/arith' && document.querySelector('.bench-row')", "detail");
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("detail: leaderboard, trend chart, gap to the reference and failed cases with session links", async () => {
+    await open(v.url, "#/benchmarks/arith");
+    try {
+      await page.waitFor("document.querySelector('.bench-row')", "leaderboard");
+      const rows: Record<string, string> = await page.eval("Object.fromEntries([...document.querySelectorAll('.bench-row')].map((r) => [r.dataset.contender, r.innerText]))");
+      assert.deepEqual(Object.keys(rows).sort(), ["bad", "good"]);
+      assert.match(rows.bad!, /reference/);
+      assert.match(rows.good!, /pts/, "gap to the reference in points");
+      assert.ok(await page.eval("document.querySelectorAll('.chart .ln').length >= 2"), "trend lines");
+      assert.ok(await page.eval("!!document.querySelector('.gap-card .band')"), "gap chart has a CI band");
+      // Hover the trend: a tooltip with the day's values, no layout change.
+      const box = await page.eval("(() => { const r = document.querySelector('.chart .ch-plot').getBoundingClientRect(); return [r.left + r.width - 2, r.top + r.height / 2]; })()");
+      await page.eval(`document.querySelector('.chart .ch-plot').dispatchEvent(new PointerEvent('pointermove', { clientX: ${box[0]}, clientY: ${box[1]}, bubbles: true }))`);
+      assert.match(await page.eval("document.querySelector('.ch-tip:not([hidden])')?.innerText || ''"), /good[\s\S]*%/);
+      const links: string[] = await page.eval("[...document.querySelectorAll('.fail-row a.open-sess')].map((a) => a.getAttribute('href'))");
+      assert.deepEqual(links, ["#/s/s-known"], "only a session the index has gets a link");
+      assert.ok(await page.eval("[...document.querySelectorAll('.fail-row .no-sess')].length >= 1"), "a missing session says so");
+      await page.eval("document.querySelector('.fail-row a.open-sess').click()");
+      await page.waitFor("location.hash === '#/s/s-known'", "session opened");
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("detail on a phone: no horizontal scroll", async () => {
+    await open(v.url, "#/benchmarks/arith", 390, true);
+    try {
+      await page.waitFor("document.querySelector('.bench-row')", "leaderboard");
+      assert.equal(await page.eval("document.documentElement.scrollWidth <= innerWidth"), true);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("empty and unknown: how to start, and a clear not-found", async () => {
+    await open(empty.url, "#/benchmarks");
+    try {
+      const text: string = await page.waitFor("document.querySelector('.panel.empty')?.innerText", "empty state");
+      assert.match(text, /No benchmarks yet/);
+      assert.match(text, /coding\.sh bench new/);
+      await page.eval("location.hash = '#/benchmarks/nope'");
+      assert.match(await page.waitFor("document.querySelector('.panel.empty h2')?.textContent", "not found"), /Benchmark not found/);
     } finally {
       await page.close();
     }

@@ -26,6 +26,8 @@ export interface Credentials {
   ingest: Map<string, string>;
   /** sha256 hex of a read key → project or "*". */
   read: Map<string, ReadScope>;
+  /** sha256 hex of a read key → its name (config `read_keys = [{…, name}]`), recorded as label `by`. */
+  readNames?: Map<string, string>;
   basic?: BasicCredential;
 }
 
@@ -116,6 +118,12 @@ const sameText = (a: string, b: string): boolean => {
   return timingSafeEqual(x, y);
 };
 
+/**
+ * Who a read key is, as recorded on labels (`by`): its configured name, else
+ * `reader:` plus the first 12 hex of its sha256 (the hash config files hold; never the key).
+ */
+export const readKeyId = (hash: string, names?: Map<string, string>): string => names?.get(hash) ?? `reader:${hash.slice(0, 12)}`;
+
 export interface Authenticator {
   /** Project for an ingest request, or undefined (401). With no ingest keys configured, `open` decides. */
   ingest(req: IncomingMessage): string | undefined;
@@ -135,6 +143,11 @@ export function createAuthenticator(creds: Credentials, o: { openIngest: boolean
   const hasIngestKeys = creds.ingest.size > 0;
   const hasReadCredentials = creds.read.size > 0 || !!creds.basic;
   const readScope = (key: string): ReadScope | undefined => (key ? creds.read.get(sha256(key)) : undefined);
+  const reader = (key: string) => {
+    const hash = sha256(key);
+    const scope = creds.read.get(hash);
+    return scope === undefined ? undefined : { ...scoped(scope), by: readKeyId(hash, creds.readNames) };
+  };
   const scoped = (scope: ReadScope) => (scope === "*" ? {} : { project: scope });
 
   return {
@@ -148,15 +161,11 @@ export function createAuthenticator(creds: Credentials, o: { openIngest: boolean
     },
     read(req) {
       const key = bearer(req);
-      if (key) {
-        const scope = readScope(key);
-        if (scope !== undefined) return { ...scoped(scope), by: "reader" };
-      }
+      const byKey = key ? reader(key) : undefined;
+      if (byKey) return byKey;
       const cookie = readCookie(req.headers.cookie, READ_COOKIE);
-      if (cookie) {
-        const scope = readScope(cookie);
-        if (scope !== undefined) return { ...scoped(scope), by: "reader" };
-      }
+      const byCookie = cookie ? reader(cookie) : undefined;
+      if (byCookie) return byCookie;
       const h = req.headers.authorization;
       if (creds.basic && typeof h === "string" && /^Basic\s+/i.test(h)) {
         const decoded = Buffer.from(h.replace(/^Basic\s+/i, ""), "base64").toString("utf8");

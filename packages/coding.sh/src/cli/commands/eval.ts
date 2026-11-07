@@ -79,6 +79,7 @@ export async function run(c: CommandContext): Promise<number> {
             k,
             index: ctx.index,
             keep: c.flags.keep === true,
+            signal: c.signal,
             onStep: (st) => out.note(`${st.label}: ${st.pass ? "pass" : "fail"}`),
           });
           spin.stop();
@@ -110,7 +111,7 @@ export async function run(c: CommandContext): Promise<number> {
         }
         out.table(
           ["ID", "NAME", "STATUS", "CREATED", "REPO"],
-          tasks.map((t) => [t.id, oneLine(clean(t.name), 50), t.status, ago(t.createdAt, { tty: out.stdoutTTY }), t.start.repoRoot]),
+          tasks.map((t) => [t.id, oneLine(clean(t.name), 50), t.status, ago(t.createdAt), t.start.repoRoot]),
         );
         return 0;
       }

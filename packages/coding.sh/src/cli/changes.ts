@@ -1,4 +1,5 @@
 // Rendering FileChange plans for --dry-run: the exact edits, as unified diffs.
+import { sep } from "node:path";
 import type { FileChange } from "../core/types.ts";
 import type { Output } from "./output.ts";
 
@@ -38,6 +39,21 @@ export function unifiedDiff(before: string, after: string, context = 2): string[
     out.push(`${o.t}${o.s}`);
   });
   return out;
+}
+
+const under = (path: string, dir: string) => dir !== "" && (path.startsWith(dir + "/") || path.startsWith(dir + sep));
+
+/**
+ * A path for people, relative to the closest of the working directory
+ * ("./.cursor/hooks.json") and the home directory ("~/.claude/settings.json"); else as is.
+ */
+export function shortPath(path: string, env: NodeJS.ProcessEnv, cwd?: string): string {
+  const home = (env.HOME ?? env.USERPROFILE ?? "").replace(/[\\/]+$/, "");
+  const here = (cwd ?? "").replace(/[\\/]+$/, "");
+  if (path === home) return "~";
+  // The longer base is the closer one: a project under ~ reads as ./, ~/.claude as ~/ even from a parent dir.
+  if (under(path, here) && here.length > (under(path, home) ? home.length : -1)) return `.${path.slice(here.length)}`;
+  return under(path, home) ? `~${path.slice(home.length)}` : path;
 }
 
 export function changeJson(c: FileChange): Record<string, unknown> {

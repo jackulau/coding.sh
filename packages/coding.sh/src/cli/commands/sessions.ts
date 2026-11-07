@@ -34,7 +34,7 @@ export async function run(c: CommandContext): Promise<number> {
       sessions.map((s) => [
         s.id,
         s.agent,
-        ago(s.startedAt, { tty }),
+        ago(s.startedAt),
         s.endedAt !== undefined ? duration(s.endedAt - s.startedAt) : "-",
         String(s.stats.turns),
         s.stats.toolErrors ? `${s.stats.toolCalls} (${s.stats.toolErrors} failed)` : String(s.stats.toolCalls),

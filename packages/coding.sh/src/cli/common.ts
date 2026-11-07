@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { openContext, type Context } from "../core/context.ts";
 import type { EvalTask, Session } from "../core/types.ts";
 import { UsageError, type FlagValue } from "./args.ts";
-import { CliError } from "./output.ts";
+import { ago, CliError } from "./output.ts";
 import type { CommandContext } from "./types.ts";
 
 export async function withContext<T>(c: CommandContext, fn: (ctx: Context) => Promise<T>): Promise<T> {
@@ -23,6 +23,12 @@ export async function withContext<T>(c: CommandContext, fn: (ctx: Context) => Pr
   }
 }
 
+/** Another ingest holds (or took over) the spool lock: it, or the next read, picks the events up. */
+export function lockContention(e: unknown): boolean {
+  const name = (e as Error | undefined)?.name;
+  return name === "LockBusyError" || name === "LockLostError";
+}
+
 /**
  * Drains pending hook events before a read so `sessions`/`show` see what was
  * just captured. Skips quietly when another ingest holds the lock.
@@ -34,7 +40,7 @@ export async function autoIngest(ctx: Context): Promise<void> {
     try {
       await ctx.ingest({ lock: { waitMs: 1500 } });
     } catch (e) {
-      if ((e as Error).name !== "LockBusyError") throw e;
+      if (!lockContention(e)) throw e;
     }
   }
   await tailIngest(ctx);
@@ -79,9 +85,38 @@ export async function resolveSession(ctx: Context, id: string): Promise<Session>
     if (!s) throw new CliError("No sessions captured yet", { reason: "not_found", next: ["Install capture hooks:", "coding.sh init"] });
     return s;
   }
-  const s = await ctx.index.getSession(id);
-  if (!s) throw new CliError(`Can't find session ${JSON.stringify(id)}`, { reason: "not_found", next: ["List sessions:", "coding.sh sessions"] });
+  const s = (await ctx.index.getSession(id)) ?? (await sessionByPrefix(ctx, id));
+  if (!s) {
+    const short = id.length < MIN_ID_PREFIX ? ` (an id prefix needs at least ${MIN_ID_PREFIX} characters)` : "";
+    throw new CliError(`Can't find session ${JSON.stringify(id)}${short}`, { reason: "not_found", next: ["List sessions:", "coding.sh sessions"] });
+  }
   return s;
+}
+
+/** Shortest prefix that may stand for a session id (git's minimum for short hashes). */
+export const MIN_ID_PREFIX = 4;
+const MAX_CANDIDATES = 10;
+
+/**
+ * The session a unique id prefix names, like a git short hash. An ambiguous
+ * prefix fails with the candidates listed (data.candidates in --json).
+ */
+async function sessionByPrefix(ctx: Context, prefix: string): Promise<Session | undefined> {
+  if (prefix.length < MIN_ID_PREFIX) return undefined;
+  const ids = ctx.index.sessionIdsByPrefix
+    ? await ctx.index.sessionIdsByPrefix(prefix, MAX_CANDIDATES + 1)
+    : (await ctx.index.listSessions()).map((s) => s.id).filter((x) => x.startsWith(prefix)).sort().slice(0, MAX_CANDIDATES + 1);
+  if (ids.length === 0) return undefined;
+  if (ids.length === 1) return ctx.index.getSession(ids[0]!);
+  const shown = (await Promise.all(ids.slice(0, MAX_CANDIDATES).map((x) => ctx.index.getSession(x)))).filter((x): x is Session => x !== undefined);
+  shown.sort((a, b) => b.startedAt - a.startedAt);
+  const lines = shown.map((x) => `  ${x.id}  ${x.agent}  ${ago(x.startedAt)}  ${oneLine(x.title ?? "", 50)}`.trimEnd());
+  if (ids.length > MAX_CANDIDATES) lines.push(`  …and more`);
+  throw new CliError(`Session id prefix ${JSON.stringify(prefix)} is ambiguous. It matches:\n${lines.join("\n")}`, {
+    reason: "ambiguous",
+    next: ["Use more of the id, or list sessions:", "coding.sh sessions"],
+    data: { candidates: shown.map((x) => ({ id: x.id, agent: x.agent, startedAt: new Date(x.startedAt).toISOString(), title: x.title ?? null })), more: ids.length > MAX_CANDIDATES },
+  });
 }
 
 export function str(v: FlagValue): string | undefined {

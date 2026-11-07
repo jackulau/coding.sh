@@ -45,7 +45,7 @@ export async function run(c: CommandContext): Promise<number> {
     out.row("Last 24h", recent.length ? `${plural(recent.length, "session")} from ${agents.join(", ")}` : "No sessions");
     out.row("Spool", `${plural(spool.files, "file")}, ${bytes(spool.bytes)}`);
     if (latest) {
-      out.print(`${latest.id}  ${latest.agent}  ${ago(latest.startedAt, { tty: out.stdoutTTY })}  ${oneLine(latest.title, 60)}`);
+      out.print(`${latest.id}  ${latest.agent}  ${ago(latest.startedAt)}  ${oneLine(latest.title, 60)}`);
     } else {
       out.note("No sessions captured yet");
       out.next("Install capture hooks", "coding.sh init");
