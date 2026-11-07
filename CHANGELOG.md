@@ -38,7 +38,7 @@ coding.sh runs on Windows, and CI tests it there.
 ### Fixed
 
 - **Viewer.** API sessions with a failed request are red in the session list again, with the reason: `1 failed request (429)`, the first error on hover. Sessions carry `stats.llmErrors`, counted at ingest (existing indexes are filled in on upgrade), and a list page costs the same store queries at any length.
-- **Viewer.** The top bar fits from 320px up: between 641 and 820px search folds to its icon instead of squeezing the theme button, and every top bar control has a 44px hit area.
+- **Viewer.** The top bar fits from 320px up, in any font (on Linux without Geist it ran 2px past a 320px screen; a tab label now ends in an ellipsis before the page scrolls sideways): between 641 and 820px search folds to its icon instead of squeezing the theme button, and every top bar control has a 44px hit area.
 - **Windows.** `coding.sh update` and the MCP launcher run npm and `coding.sh` without a shell, so paths with spaces or `&` arrive intact.
 - **Windows.** Goose's config is found under `%APPDATA%\Block\goose\config`, where Goose keeps it on Windows. Eval runs find agent binaries on PATH (Windows spells it `Path`), and Amp and Pi hooks use the `node` on PATH, as elsewhere, instead of the one that ran `init`.
 - **Aider.** Eval runs pass `--no-show-release-notes`: on a new version's first run, `--yes-always` made aider open its release notes in a browser.

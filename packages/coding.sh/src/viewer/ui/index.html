@@ -152,7 +152,12 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .brand { display: inline-flex; align-items: center; gap: 0.5rem; font-family: var(--font-mono); font-size: 13px; font-weight: 560; letter-spacing: -0.01em; }
 .brand svg { width: 18px; height: 18px; flex: none; }
 .brand .p1 { fill: var(--text); } .brand .p2 { fill: var(--text-muted); } .brand .p3 { fill: var(--text-2); }
-.nav { display: flex; gap: 2px; }
+.nav { display: flex; gap: 2px; min-width: 0; }
+/* The tabs are the one part of the bar that can give: in a font wider than the ones the
+   widths were tuned for (no Geist on Linux), a label ends in an ellipsis instead of the bar
+   pushing the page past the screen. The label clips, not the link, so its hit area stays. */
+.nav a, .nav a > span { min-width: 0; }
+.nav a > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav a {
   display: inline-flex; align-items: center; height: 28px; padding: 0 0.65rem;
   border-radius: var(--radius-sm); font-size: 13px; color: var(--text-muted);
@@ -1144,8 +1149,9 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   @media (max-width: 400px) { .topbar { gap: 0.25rem; } .nav a { padding: 0 0.35rem; } }
   /* 360px phones: the three tabs, search and theme still fit inside the gutters. */
   @media (max-width: 370px) { .topbar { gap: 0.2rem; } .nav a { padding: 0 0.25rem; font-size: 12px; } }
-  /* 320px: the gutters narrow so theme still ends inside the screen. */
-  @media (max-width: 340px) { .topbar { gap: 0; padding-left: max(0.6rem, env(safe-area-inset-left)); padding-right: max(0.6rem, env(safe-area-inset-right)); } .nav a { padding: 0 0.2rem; } }
+  /* 320px: the gutters narrow so theme still ends inside the screen, and the tabs tighten
+     enough that a wide fallback font (Verdana, DejaVu Sans) fits whole too. */
+  @media (max-width: 340px) { .topbar { gap: 0; padding-left: max(0.6rem, env(safe-area-inset-left)); padding-right: max(0.6rem, env(safe-area-inset-right)); } .nav a { padding: 0 0.15rem; letter-spacing: -0.01em; } }
   @media (hover: none) { .key-hint { display: none; } }
   .facets-toggle { height: 44px; }
   /* 16px text stops iOS zooming the page when a field takes focus. */
@@ -1203,9 +1209,9 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
     <span>coding.sh</span>
   </a>
   <nav class="nav" aria-label="Primary">
-    <a href="#/" data-nav="sessions">Sessions</a>
-    <a href="#/experiments" data-nav="experiments">Experiments</a>
-    <a href="#/benchmarks" data-nav="benchmarks">Benchmarks</a>
+    <a href="#/" data-nav="sessions"><span>Sessions</span></a>
+    <a href="#/experiments" data-nav="experiments"><span>Experiments</span></a>
+    <a href="#/benchmarks" data-nav="benchmarks"><span>Benchmarks</span></a>
   </nav>
   <span class="spacer"></span>
   <span class="update-pill indexing-pill" id="indexing" hidden></span>

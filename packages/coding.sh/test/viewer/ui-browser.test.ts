@@ -1043,15 +1043,18 @@ describe("viewer UI: failed requests and the top bar", { skip: chrome ? false : 
           return { sw: document.documentElement.scrollWidth, vw: innerWidth, theme: r.width, themeHitRight: r.right + (hit(theme)[0] - r.width) / 2,
             small: ctl.map((e) => [e.id || e.textContent.trim(), ...hit(e).map(Math.round)]).filter(([, a, b]) => a < 44 || b < 44) };
         })()`;
-        for (const pills of [false, true]) {
-          if (pills) {
+        // Last, the tabs in a much wider font than any we tuned for (Linux has no Geist, and
+        // its fallback is wider than macOS's): the labels give, the page does not.
+        for (const state of ["plain", "pills", "wide font"] as const) {
+          if (state === "pills") {
             await page.eval(`(() => {
               const u = document.querySelector('#update'); u.querySelector('.ver').textContent = 'v0.1.3'; u.hidden = false;
               const i = document.querySelector('#indexing'); i.innerHTML = '<span class="dot">●</span><span>Indexing 1,234 files…</span>'; i.hidden = false;
             })()`);
           }
+          if (state === "wide font") await page.eval(`document.querySelectorAll('.nav a').forEach((a) => a.style.letterSpacing = '0.15em')`);
           const m = await page.eval(measure);
-          const what = pills ? " (update and indexing pills shown)" : "";
+          const what = state === "plain" ? "" : state === "pills" ? " (update and indexing pills shown)" : " (pills, tabs in a wide font)";
           assert.ok(m.sw <= w && m.vw === w, `page is ${m.sw}px wide (layout ${m.vw}px) on a ${w}px screen${what}`);
           assert.equal(m.theme, 30, `the theme button keeps its 30px box${what}`);
           assert.ok(m.themeHitRight <= w, `the theme button's hit area ends at ${m.themeHitRight}px${what}`);
