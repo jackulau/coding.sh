@@ -928,6 +928,7 @@ coding.sh judge <action>
 |---|---|
 | [`grade`](#codingsh-judge-grade) | Run one grader on one output and trace (exit 0 on pass); inside a verifier both default to the agent's |
 | [`calibrate`](#codingsh-judge-calibrate) | Measure judge-human agreement (Cohen's kappa) on a held-out split, or a verifier's precision |
+| [`sample`](#codingsh-judge-sample) | Plan which cases to label next: a seeded random sample stratified by judge verdict and confidence |
 
 - judge grade appends each model call's tokens and price to $CODING_SH_GRADER_USAGE when it is set. coding.sh compare sets it for every verifier, so judge spend counts toward --max-cost.
 
@@ -976,15 +977,44 @@ coding.sh judge calibrate <EXPERIMENT> [options]
 | `--probe-max <N>` | `25` | With --probe-injection: human-fail cases to probe. |
 | `--labels <FILE>` |  | Extra human labels (JSON array or JSONL of {"caseId","value":"pass"\|"fail"\|"skip"}); they replace stored labels for the cases they name. |
 | `--sample-passes <N>` |  | Print N unlabelled passing cases to label (a seeded sample) instead of measuring. |
-| `--seed <N>` | `0` | With --sample-passes: sample seed. |
+| `--seed <N>` | `0` | With --sample-passes: sample seed; with --plan: must match the plan's. |
 | `--judge-cost <USD>` |  | Cost of one judge call: also print the human label cost above which calibrating the judge pays off. |
+| `--plan <FILE>` |  | A `judge sample --out` plan: also print the human-audited pass rate from its labelled picks. |
 
 ```sh
 coding.sh judge calibrate my-exp --tuned-on dev
 coding.sh judge calibrate my-exp --judge-cost 0.002
+coding.sh judge calibrate my-exp --plan plan.json
 coding.sh judge calibrate my-exp --probe-injection judge.json
 coding.sh judge calibrate my-exp --grader tests --sample-passes 40
 coding.sh judge calibrate my-exp --grader tests --labels labels.jsonl
+```
+
+### `coding.sh judge sample`
+
+Plan which cases to label next: a seeded random sample stratified by judge verdict and confidence.
+
+```text
+coding.sh judge sample <EXPERIMENT> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `experiment` | yes | Experiment id or name whose runs hold the grader's verdicts. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--budget <N>` |  | Labels to plan (required) |
+| `-g, --grader <ID>` |  | Grader id (default: the only llm grader) |
+| `--criterion <NAME>` |  | Label criterion (decides which existing labels count) |
+| `--split <SPLIT>` | `test` | Split to sample from. One of: `train`, `dev`, `test`. |
+| `--seed <N>` | `0` | Sample seed. |
+| `--min-stratum <N>` | `25` | Smallest confidence bin before it merges into a neighbour. |
+| `-o, --out <FILE>` |  | Write the plan for `judge calibrate --plan`. |
+
+```sh
+coding.sh judge sample my-exp --budget 60 --out plan.json
+coding.sh judge sample my-exp --budget 60 --json
 ```
 
 ## `coding.sh toolevals`

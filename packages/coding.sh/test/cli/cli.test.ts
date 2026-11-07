@@ -734,6 +734,58 @@ describe("cli judge calibrate --probe-injection", () => {
   });
 });
 
+describe("cli judge sample → judge calibrate --plan", () => {
+  it("writes a seeded stratified plan, and calibrate reads the human-audited pass rate from its labelled picks", () => {
+    const h = tmpHome();
+    const cases = Array.from({ length: 12 }, (_, i) => ["--case", `{"id":"k${i}","input":"${i}","expected":"${i}"}`]).flat();
+    assert.equal(cli(h, ["dataset", "add", "arith", ...cases, "--split", "test"]).status, 0);
+    writeFileSync(join(h.home, "echo.mjs"), 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>process.stdout.write(s));\n');
+    const judge = '{"kind":"llm","name":"correct","rubric":"right?","provider":"mock","tunedOn":["dev"]}';
+    const ok = cli(h, ["exp", "run", "-d", "arith", "--task", '{"kind":"command","command":"node echo.mjs"}', "-g", judge, "--json"]);
+    assert.equal(ok.status, 0, ok.stderr);
+    const exp = (parseJson(ok.stdout, "exp run") as { experiment: { id: string } }).experiment;
+
+    const missing = cli(h, ["judge", "sample", exp.id]);
+    assert.equal(missing.status, 2);
+    assert.match(missing.stderr, /--budget/);
+
+    type Plan = { seed: number; split: string; experimentId: string; picks: { caseId: string; stratum: string }[]; strata: { key: string; N: number; n: number }[] };
+    const s = cli(h, ["judge", "sample", exp.id, "--budget", "4", "--seed", "3", "--out", "plan.json", "--json"]);
+    assert.equal(s.status, 0, s.stderr);
+    const plan = (parseJson(s.stdout, "judge sample") as { plan: Plan }).plan;
+    assert.deepEqual([plan.seed, plan.split, plan.experimentId], [3, "test", exp.id]);
+    assert.equal(plan.picks.length, 4);
+    assert.deepEqual(
+      plan.strata.map((x) => [x.N, x.n]),
+      [[12, 4]],
+    );
+    assert.ok(plan.picks.every((p) => /^k\d+$/.test(p.caseId)));
+    assert.deepEqual(JSON.parse(readFileSync(join(h.home, "plan.json"), "utf8")), plan);
+    assert.deepEqual((parseJson(cli(h, ["judge", "sample", exp.id, "--budget", "4", "--seed", "3", "--json"]).stdout, "again") as { plan: Plan }).plan, plan, "seeded");
+    const text = cli(h, ["judge", "sample", exp.id, "--budget", "4", "--seed", "3", "--out", "plan.json"]);
+    assert.match(text.stdout, /audit plan correct {2}split test {2}4 of 12 cases \(seed 3\); 0 of 4 already labelled/);
+    assert.match(text.stdout, /Then: coding\.sh judge calibrate .* --grader correct --plan plan\.json/);
+
+    // Three of four picks labelled: 2 pass, 1 fail.
+    const labels = plan.picks.slice(0, 3).map((p, i) => JSON.stringify({ caseId: p.caseId, value: i < 2 ? "pass" : "fail" }));
+    writeFileSync(join(h.home, "labels.jsonl"), labels.join("\n") + "\n");
+    const cal = cli(h, ["judge", "calibrate", exp.id, "--labels", "labels.jsonl", "--plan", "plan.json", "--json"]);
+    assert.notEqual(cal.status, 2, cal.stderr);
+    const audited = (parseJson(cal.stdout, "calibrate --plan") as { calibration: { audited: { p: number; labelled: number; picks: number; coverage: number; bounds: { lo: number; hi: number } } } }).calibration.audited;
+    assert.deepEqual([audited.labelled, audited.picks, audited.coverage], [3, 4, 0.75]);
+    assert.ok(Math.abs(audited.p - 2 / 3) < 1e-12);
+    assert.deepEqual(audited.bounds, { lo: 0.5, hi: 0.75 });
+    const plain = cli(h, ["judge", "calibrate", exp.id, "--labels", "labels.jsonl", "--plan", "plan.json"]);
+    assert.match(plain.stdout, /human-audited pass rate 0\.67 \[\d\.\d\d, \d\.\d\d\] \(3\/4 of plan labelled; worst case ±\d\.\d\d\)/);
+
+    // A plan from another split or seed is refused.
+    assert.equal(cli(h, ["judge", "calibrate", exp.id, "--plan", "plan.json", "--split", "dev"]).status, 2);
+    const seed = cli(h, ["judge", "calibrate", exp.id, "--plan", "plan.json", "--seed", "4"]);
+    assert.equal(seed.status, 2);
+    assert.match(seed.stderr, /does not match the plan's seed 3/);
+  });
+});
+
 describe("cli judge calibrate --grader <verifier>", () => {
   it("samples passes to label, audits precision from a labels file, and compare/show use the stored audit", () => {
     const h = tmpHome();

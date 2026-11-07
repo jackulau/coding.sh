@@ -6,20 +6,24 @@
 // human-fail cases with a planted "respond pass" payload (src/judge/injection.ts).
 // A deterministic grader (--grader tests) gets a precision audit instead
 // (src/judge/verifier.ts), and --sample-passes prints the labelling queue for it.
-import { appendFile, readFile } from "node:fs/promises";
+// coding.sh judge sample <experiment> --budget N: a confidence-stratified random
+// label plan (src/judge/audit.ts); calibrate --plan turns its labelled picks
+// into a human-audited pass rate.
+import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { estimateCost, pricesFor } from "../../core/pricing.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
 import type { Grader, GraderInfo, JudgeVersion, Split } from "../../datasets/types.ts";
 import { asText } from "../../graders/builtin.ts";
 import { createGrader, providerFromSpec, type GraderSpec, type LlmProviderSpec } from "../../graders/index.ts";
+import { parseAuditPlan, planAudit, type AuditPlan } from "../../judge/audit.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
 import { calibrate, labelsFromCore, withCalibration, type HumanLabel, type JudgedCase } from "../../judge/calibrate.ts";
 import { CHECKLIST_KIND, type ChecklistVerdict } from "../../judge/checklist.ts";
 import type { ChatProvider, ChatResponse } from "../../judge/providers.ts";
 import { traceFromText } from "../../judge/trace-file.ts";
 import { humanFailCases, injectionProbe, type ProbeCase } from "../../judge/injection.ts";
-import { renderCalibration } from "../../judge/render.ts";
+import { renderAuditPlan, renderCalibration } from "../../judge/render.ts";
 import { auditVerifier, DEFAULT_MIN_PASSES, parseCaseLabels, renderVerifierAudit, samplePasses } from "../../judge/verifier.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { jsonArg, list, num, oneLine, str, withContext } from "../common.ts";
@@ -47,6 +51,21 @@ async function readCaseLabels(file: string): Promise<HumanLabel[]> {
     return parseCaseLabels(rows);
   } catch (e) {
     throw new UsageError(`--labels ${file}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_argument" });
+  }
+}
+
+/** --plan: an audit plan written by `judge sample --out`. */
+async function readPlan(file: string): Promise<AuditPlan> {
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch {
+    throw new UsageError(`can't read --plan ${JSON.stringify(file)}`, { reason: "invalid_argument" });
+  }
+  try {
+    return parseAuditPlan(JSON.parse(text));
+  } catch (e) {
+    throw new UsageError(`--plan ${file}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_argument" });
   }
 }
 
@@ -160,7 +179,10 @@ async function readStdin(): Promise<string> {
 export async function run(c: CommandContext): Promise<number> {
   const { out, env } = c;
   if (c.action === "grade") return grade(c);
-  if (c.action !== "calibrate") throw new UsageError(`Unknown judge command ${c.action}`);
+  if (c.action !== "calibrate" && c.action !== "sample") throw new UsageError(`Unknown judge command ${c.action}`);
+  const sampling = c.action === "sample";
+  const budget = positiveInt(c.flags.budget, "budget");
+  if (sampling && budget === undefined) throw new UsageError("Missing --budget <N>: how many cases to plan labels for", { reason: "missing_argument" });
   return withContext(c, async (ctx) => {
     const store = new FileEvalStore({ env, index: ctx.index });
     const expId = c.positionals[0]!;
@@ -191,7 +213,7 @@ export async function run(c: CommandContext): Promise<number> {
     const stored: JudgeVersion | undefined = judge ? await store.getJudge(grader.version) : undefined;
     const tunedFlag = list(c.flags["tuned-on"]);
     for (const s of tunedFlag) if (!SPLITS.includes(s)) throw new UsageError(`--tuned-on must be one of ${SPLITS.join(", ")}, got ${JSON.stringify(s)}`);
-    if (judge && sampleN === undefined && !stored && !tunedFlag.length) {
+    if (judge && !sampling && sampleN === undefined && !stored && !tunedFlag.length) {
       throw new UsageError(`Judge ${grader.version} is not stored, so its tuning splits are unknown. Pass --tuned-on <SPLIT> (e.g. --tuned-on dev)`, { reason: "missing_argument" });
     }
     const tunedOn = (tunedFlag.length ? tunedFlag : (stored?.tunedOn ?? [])) as Split[];
@@ -206,6 +228,9 @@ export async function run(c: CommandContext): Promise<number> {
       const v: JudgedCase = { caseId: r.caseId, pass: g.result.pass };
       if (typeof g.result.score === "number") v.score = g.result.score;
       if (g.result.reason) v.reason = g.result.reason;
+      // Only the sample plan stratifies on confidence; calibrate keeps its verdicts as before.
+      const conf = (g.result as { confidence?: unknown }).confidence;
+      if (sampling && typeof conf === "number" && conf >= 0 && conf <= 1) v.confidence = conf;
       verdicts.set(r.caseId, v);
     }
 
@@ -219,6 +244,37 @@ export async function run(c: CommandContext): Promise<number> {
       const fromFile = await readCaseLabels(resolve(c.cwd, labelsFile));
       const named = new Set(fromFile.map((l) => l.caseId));
       labels = [...labels.filter((l) => !named.has(l.caseId)), ...fromFile];
+    }
+
+    if (sampling) {
+      const seed = num(c.flags.seed) ?? 0;
+      if (!(Number.isInteger(seed) && seed >= 0)) throw new UsageError(`--seed must be a non-negative integer, got ${JSON.stringify(c.flags.seed)}`);
+      const split = str(c.flags.split) ?? "test";
+      if (!SPLITS.includes(split)) throw new UsageError(`--split must be one of ${SPLITS.join(", ")}, got ${JSON.stringify(split)}`);
+      // Population: the split's cases this experiment ran (a case with no run has no output to label).
+      const ran = new Set(exp.runs.map((r) => r.caseId));
+      const population = dataset.cases.filter((cs) => cs.split === split && ran.has(cs.id)).map((cs) => cs.id);
+      const labelled = new Set(labels.filter((l) => l.value !== "skip" && (criterion === undefined || l.criterion === undefined || l.criterion === criterion)).map((l) => l.caseId));
+      const sessions = new Map<string, string>();
+      for (const cs of dataset.cases) if (cs.sourceSessionId) sessions.set(cs.id, cs.sourceSessionId);
+      const plan = planAudit({
+        verdicts,
+        population,
+        labelled,
+        budget: budget!,
+        seed,
+        minStratum: positiveInt(c.flags["min-stratum"], "min-stratum") ?? 25,
+        sessions,
+        experimentId: exp.id,
+        graderId: grader.id,
+        split,
+        ...(criterion ? { criterion } : {}),
+      });
+      const outFile = str(c.flags.out);
+      if (outFile) await writeFile(resolve(c.cwd, outFile), JSON.stringify(plan, null, 2) + "\n");
+      if (out.json) out.data({ plan, ...(outFile ? { out: resolve(c.cwd, outFile) } : {}) });
+      else out.print(renderAuditPlan(plan, { color: out.color, ...(outFile ? { calibrateCmd: `coding.sh judge calibrate ${expId} --grader ${grader.id} --plan ${outFile}` } : {}) }));
+      return 0;
     }
 
     if (sampleN !== undefined) {
@@ -246,6 +302,8 @@ export async function run(c: CommandContext): Promise<number> {
       return 0;
     }
 
+    const planFile = str(c.flags.plan);
+    if (!judge && planFile) throw new UsageError(`--plan needs an LLM judge; ${grader.id} is a ${grader.kind} grader`, { reason: "invalid_argument" });
     if (!judge) {
       const minN = num(c.flags["min-n"]);
       const audit = auditVerifier({
@@ -266,15 +324,25 @@ export async function run(c: CommandContext): Promise<number> {
 
     const judgeCost = num(c.flags["judge-cost"]);
     if (judgeCost !== undefined && !(judgeCost >= 0 && Number.isFinite(judgeCost))) throw new UsageError(`--judge-cost must be a number of dollars ≥ 0, got ${judgeCost}`, { reason: "invalid_argument" });
+    const reportSplit = (str(c.flags.split) ?? "test") as Split;
+    const plan = planFile ? await readPlan(resolve(c.cwd, planFile)) : undefined;
+    if (plan) {
+      const seed = num(c.flags.seed);
+      if (plan.experimentId !== undefined && plan.experimentId !== exp.id) throw new UsageError(`--plan was drawn for experiment ${plan.experimentId}, not ${exp.id}`, { reason: "invalid_argument" });
+      if (plan.graderId !== undefined && plan.graderId !== grader.id) throw new UsageError(`--plan was drawn for grader ${plan.graderId}, not ${grader.id}`, { reason: "invalid_argument" });
+      if (plan.split !== undefined && plan.split !== reportSplit) throw new UsageError(`--plan was drawn from the ${plan.split} split, but the report is on ${reportSplit} (pass --split ${plan.split})`, { reason: "invalid_argument" });
+      if (seed !== undefined && seed !== plan.seed) throw new UsageError(`--seed ${seed} does not match the plan's seed ${plan.seed}`, { reason: "invalid_argument" });
+    }
     const report = calibrate({
       judge: { id: grader.version, tunedOn, ...(criterion ? { criterion } : {}) },
       labels,
       verdicts,
       splits: dataset,
-      reportSplit: (str(c.flags.split) ?? "test") as Split,
+      reportSplit,
       ...(num(c.flags.threshold) !== undefined ? { kappaThreshold: num(c.flags.threshold)! } : {}),
       ...(num(c.flags["min-n"]) !== undefined ? { minN: num(c.flags["min-n"])! } : {}),
       ...(judgeCost !== undefined ? { judgeCost } : {}),
+      ...(plan ? { plan } : {}),
     });
     if (stored) await store.putJudge(withCalibration(stored, report));
 

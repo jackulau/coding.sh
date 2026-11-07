@@ -1,6 +1,7 @@
 // Plain-text calibration report.
 import type { CalibrationStatus } from "../datasets/types.ts";
 import { fixed, paint, pct, table, truncate, type RenderOpts } from "../experiments/text.ts";
+import type { AuditedPassRate, AuditPlan } from "./audit.ts";
 import type { CalibrationReport, JudgeEfficiency, SplitMetrics } from "./calibrate.ts";
 import { formatInjection } from "./injection.ts";
 
@@ -67,6 +68,19 @@ function efficiencyLines(e: JudgeEfficiency, split: string, color: boolean): str
   return out;
 }
 
+/** `human-audited pass rate 0.71 [0.63, 0.79] (42/50 of plan labelled; worst case ±0.09)` (arXiv 2610.35698, Eq.1-3). */
+function auditedLines(a: AuditedPassRate, color: boolean): string[] {
+  const of = `${a.labelled}/${a.picks} of plan labelled`;
+  const out: string[] = [];
+  if (Number.isNaN(a.p)) out.push(`human-audited pass rate — (${of}; a stratum has no labelled pick yet)`);
+  else out.push(`human-audited pass rate ${fixed(a.p)} [${fixed(a.lo)}, ${fixed(a.hi)}] (${of}; worst case ±${fixed(a.hoeffdingEps)})`);
+  if (a.coverage < 1) {
+    out.push(`  between ${fixed(a.bounds.lo)} and ${fixed(a.bounds.hi)} if the unlabelled picks all fail or all pass`);
+    out.push(paint("  ! unlabelled picks make this estimate optimistic or pessimistic; label them", "yellow", color));
+  }
+  return out;
+}
+
 export function renderCalibration(r: CalibrationReport, opts: RenderOpts): string {
   const color = opts.color;
   const limit = opts.limit ?? 20;
@@ -78,6 +92,7 @@ export function renderCalibration(r: CalibrationReport, opts: RenderOpts): strin
   out.push("");
   out.push(...metricLines(r));
   if (r.efficiency) out.push(...efficiencyLines(r.efficiency, r.reportSplit, color));
+  if (r.audited) out.push(...auditedLines(r.audited, color));
   out.push("");
   out.push(confusionTable(r, color));
   if (r.inSample) {
@@ -108,6 +123,34 @@ export function renderCalibration(r: CalibrationReport, opts: RenderOpts): strin
       ),
     );
     if (r.noisy.length > limit) out.push(paint(`… ${r.noisy.length - limit} more (use --json for all)`, "dim", color));
+  }
+  return out.join("\n");
+}
+
+/** `judge sample`: the strata table and the cases to label. */
+export function renderAuditPlan(p: AuditPlan, opts: RenderOpts & { calibrateCmd?: string }): string {
+  const color = opts.color;
+  const out: string[] = [];
+  const already = p.picks.filter((x) => x.alreadyLabelled).length;
+  out.push(
+    `${paint("audit plan", "bold", color)}${p.graderId ? ` ${p.graderId}` : ""}${p.split ? `  split ${p.split}` : ""}  ${p.picks.length} of ${p.population} cases (seed ${p.seed}); ${already} of ${p.picks.length} already labelled`,
+  );
+  for (const w of p.warnings) out.push(paint(`  ! ${w}`, "yellow", color));
+  if (!p.picks.length) return out.join("\n");
+  out.push("");
+  out.push(
+    table(
+      [{ header: "verdict" }, { header: "confidence" }, { header: "N", align: "right" }, { header: "n", align: "right" }],
+      p.strata.map((s) => [s.verdict, s.lo === null || s.hi === null ? "—" : `${fixed(s.lo)}-${fixed(s.hi)}`, String(s.N), String(s.n)]),
+      { color },
+    ),
+  );
+  out.push("");
+  out.push("Label these cases pass or fail (every one: skipping the hard ones biases the estimate):");
+  for (const x of p.picks) out.push(`  ${x.caseId}${x.sessionId ? `  session ${x.sessionId}` : ""}  ${paint(x.stratum, "dim", color)}${x.alreadyLabelled ? paint("  (labelled)", "dim", color) : ""}`);
+  if (opts.calibrateCmd) {
+    out.push("");
+    out.push(`Then: ${opts.calibrateCmd}`);
   }
   return out.join("\n");
 }

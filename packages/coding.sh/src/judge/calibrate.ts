@@ -15,6 +15,7 @@ import { roganGladen } from "../stats/interval.ts";
 import { mulberry32 } from "../stats/prng.ts";
 import { judgeBreakEven, labelEfficiency } from "../stats/stratified.ts";
 import { quantileSorted } from "../stats/summary.ts";
+import { auditedPassRate, type AuditedPassRate, type AuditPlan } from "./audit.ts";
 import type { InjectionReport } from "./injection.ts";
 
 /** Minimum held-out Cohen's κ for a judge to count as calibrated (one value, everywhere). */
@@ -104,6 +105,8 @@ export interface CalibrationReport extends SplitMetrics {
   injection?: InjectionReport;
   /** Is calibrating this judge worth the human labels? Present with held-out sensitivity and specificity; never changes `status`. */
   efficiency?: JudgeEfficiency;
+  /** Human-audited pass rate from a `judge sample` plan's labelled picks (`--plan`); never changes `status`. */
+  audited?: AuditedPassRate;
 }
 
 /**
@@ -164,6 +167,8 @@ export interface CalibrateOpts {
   strict?: boolean;
   /** USD per judge call: adds the human-label cost break-even to `efficiency`. */
   judgeCost?: number;
+  /** A `judge sample` plan: adds `audited`, the stratified human pass rate over its labelled picks. */
+  plan?: AuditPlan;
   now?: number;
 }
 
@@ -397,6 +402,7 @@ export function calibrate(opts: CalibrateOpts): CalibrationReport {
       if (e.gap < MIN_GAP) reasons.push(`discrimination gap ${e.gap.toFixed(2)} < ${MIN_GAP}: the judge barely separates passes from fails, so its corrected pass rate is noisy`);
     }
   }
+  if (opts.plan) report.audited = auditedPassRate(opts.plan, opts.labels, criterion);
   const tuneSplits = tunedOn.filter((s) => s !== reportSplit);
   if (tuning.length) report.inSample = metrics(tuning, tuneSplits, iters, seed, alpha);
   return report;

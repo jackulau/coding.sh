@@ -244,10 +244,7 @@ label efficiency η 0.21 · auditing outputs directly needs ~4.8x fewer human la
 0.001` (dollars per judge call) adds the human label cost above which the judge pays off (Eq.8):
 `judge pays off when a human label costs more than $0.0046 (judge call $0.001)`, or "no
 break-even" when η ≤ 1. `--json` carries `calibration.efficiency` with `eta`, `gap`, `theta`,
-`n1Share` (the share of labels to spend on human-pass cases) and `breakEvenHumanCost`. The same
-paper's stratified estimator, proportional allocation and Hoeffding label budget are in the stats
-API (`stratifiedMean`, `allocateProportional`, `hoeffdingBudget`); a CLI that plans an audit from
-them is still to come.
+`n1Share` (the share of labels to spend on human-pass cases) and `breakEvenHumanCost`.
 
 Judges read untrusted text: the agent writes the output they grade. Every judge prompt escapes the
 data tags inside that text (`</output>` becomes `<\/output>`), so an output can't close its block
@@ -290,6 +287,32 @@ before collecting more verdicts". Judge graders (`llm`, or any calibrated grader
 line in `exp compare`, from per-case score differences. With `--cluster`, whole clusters are
 resampled and the sizes count clusters. `--json` carries `stability` with `share`, `bySize` and
 `nStar`.
+
+### Which cases to label
+
+Which cases you label matters as much as how many. Labelling the low-confidence or "interesting"
+outputs biases both the judge's measured accuracy and any pass rate built on it (verification
+bias). `coding.sh judge sample <exp> --budget 60 --out plan.json` plans a random sample instead:
+it splits the split's cases (default `test`, only the ones the experiment ran) into strata by the
+judge's verdict and confidence (bins merged until each holds `--min-stratum` cases, default 25;
+unjudged cases get their own), gives each stratum labels in proportion to its size, and draws them
+at random with `--seed`. A judge's confidence is a valid stratum even when it is miscalibrated, and
+proportional allocation keeps calibrate's kappa, sensitivity and specificity unbiased (Choi et al.,
+arXiv 2610.35698). The output is the strata table, the cases to label with their source sessions,
+and how many already carry a label (those stay in the draw so the design stays random). It warns
+when the budget is below the number of strata (then it samples the whole split at random), above
+the population, or short of a ±5 pp worst case (738 labels).
+
+Label the picks, then `coding.sh judge calibrate <exp> --plan plan.json` adds the human-audited
+pass rate, weighted by stratum, with a 95% interval and the worst-case (Hoeffding) half-width:
+
+```
+human-audited pass rate 0.71 [0.63, 0.79] (42/50 of plan labelled; worst case ±0.09)
+  between 0.62 and 0.78 if the unlabelled picks all fail or all pass
+```
+
+Until every pick is labelled, it also prints those bounds and a warning. A plan drawn for another
+experiment, grader, split or seed is refused. `--json` carries `calibration.audited`.
 
 ### Checklists and trace checks
 
