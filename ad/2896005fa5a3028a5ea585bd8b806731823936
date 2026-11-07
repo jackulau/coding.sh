@@ -1,0 +1,43 @@
+apps/site/src/data/site.ts
+  s_8e040dbdf13565::t_0a63f6d0755562 31,38-39
+package-lock.json
+  s_8e040dbdf13565::t_69a532d7615544 8216,8226,8744,8792
+packages/blob-s3/package.json
+  s_8e040dbdf13565::t_0fbc66d50c537c 3
+packages/coding.sh/package.json
+  s_8e040dbdf13565::t_4a3a499f9b1d6f 3
+packages/sdk-python/pyproject.toml
+  s_8e040dbdf13565::t_292353a74fa13a 7
+packages/sdk-python/src/coding_sh/_client.py
+  s_8e040dbdf13565::t_71e50729acdeb8 35
+packages/sdk/package.json
+  s_8e040dbdf13565::t_807f885dc085eb 3
+packages/store-postgres/package.json
+  s_8e040dbdf13565::t_b64d843d4ee2a9 3
+apps/site/src/pages/docs/faq.astro
+  s_65bf081888f603::t_658e1b80bd45d4 9
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ad2896005fa5a3028a5ea585bd8b806731823936",
+  "prompts": {},
+  "sessions": {
+    "s_65bf081888f603": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-aa087a247e362b1a8",
+        "model": "unknown"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    },
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
