@@ -253,6 +253,13 @@ the stages a variant changed.
 - **Statistics.** A replay holds the upstream sample fixed, which understates variance. Replay
   experiments therefore use m ≥ 3 base runs per case and replay each, so the paired comparison
   resamples over base runs as well as over cases.
+- **Control fork.** A replayed candidate differs from a fresh baseline in two ways: the edit, and
+  the replay itself. Compare it against a control variant that resumes the unedited script from
+  the same runs (A vs A'). `workflows compare` notes "no control fork" when the candidate resumes
+  from runs the baseline never replays. When the control and its source runs are both scored, it
+  reports how often the control's outcome changed from its source run as the replay noise floor
+  (`control.drift` in `--json`). A log stitched from a recorded prefix and a new suffix is never
+  scored as an outcome; only a re-executed run is (2608.08239: 3% of replayed states stayed valid).
 - **Other frameworks.**
   - LangGraph: replay forks from a stored checkpoint (`get_state_history` → `update_state` /
     invoke with the checkpoint id); the command driver passes `--from-checkpoint`.

@@ -22,6 +22,7 @@ import { buildWorkflowTree, type WorkflowTree } from "./tree.ts";
 import type {
   MetricCompare,
   ParetoPoint,
+  ReplayControl,
   StageDelta,
   WorkflowCase,
   WorkflowCompareReport,
@@ -312,6 +313,31 @@ function pareto(runs: readonly WorkflowRun[], scores: Map<string, number>, boot:
   return pts;
 }
 
+/**
+ * Control fork for replays (EM-19). A candidate that resumes from recorded runs differs from
+ * a fresh baseline in two ways: the edit, and the replay itself (cached prefix, drifted
+ * environment). Only a baseline replayed from the same recorded runs separates the two, and
+ * how often that control's outcome moves away from its source run is the replay noise floor.
+ */
+function replayControl(A: readonly WorkflowRun[], B: readonly WorkflowRun[], scores: Map<string, number>, thr: (caseId: string) => number): ReplayControl | undefined {
+  const sources = new Set(B.map((r) => r.resumedFrom).filter((s): s is string => !!s));
+  if (!sources.size) return undefined;
+  const controls = A.filter((r) => r.resumedFrom && sources.has(r.resumedFrom));
+  const out: ReplayControl = { sources: [...sources].sort(), controlRuns: controls.length };
+  let n = 0;
+  let changed = 0;
+  for (const r of controls) {
+    const s = scores.get(r.id);
+    const s0 = scores.get(r.resumedFrom!);
+    if (s === undefined || s0 === undefined) continue;
+    n++;
+    const t = thr(r.caseId ?? "");
+    if (s >= t !== s0 >= t) changed++;
+  }
+  if (n) out.drift = { n, changed, rate: changed / n };
+  return out;
+}
+
 export function compareWorkflowVariants(runs: WorkflowRun[], scores: Map<string, number>, o: CompareWorkflowOpts): WorkflowCompareReport {
   const alpha = o.alpha ?? 0.05;
   const boot = { ...(o.iters !== undefined ? { iters: o.iters } : {}), ...(o.seed !== undefined ? { seed: o.seed } : {}), alpha };
@@ -348,6 +374,15 @@ export function compareWorkflowVariants(runs: WorkflowRun[], scores: Map<string,
   const failed = [...A, ...B].filter((r) => r.status !== "ok").length;
   if (failed) notes.push(`${failed} run(s) did not finish ok`);
   if (A.some((r) => r.resumedFrom) || B.some((r) => r.resumedFrom)) notes.push("replayed runs hold upstream outputs fixed, which understates variance; use ≥ 3 base runs per case");
+  const control = replayControl(A, B, scores, thr);
+  if (control && !control.controlRuns) {
+    notes.push(
+      `no control fork: ${o.candidate} resumes from ${control.sources.length} recorded run(s) but no ${o.baseline} run resumes from the same one(s), so the difference mixes the edit with the replay itself; add a variant that resumes the unedited script from the same run(s) and compare against it`,
+    );
+  } else if (control?.drift) {
+    const d = control.drift;
+    notes.push(`replay noise floor: ${d.changed} of ${d.n} control replay(s) changed outcome from their source run (${(d.rate * 100).toFixed(0)}%); differences below that are replay drift`);
+  }
   const verdict = decide(quality.pairs, quality.diff, mcn, alpha);
   const cost = metrics.find((m) => m.key === "costUsd");
   if (cost && Number.isFinite(cost.baseline) && cost.baseline > 0) {
@@ -368,5 +403,6 @@ export function compareWorkflowVariants(runs: WorkflowRun[], scores: Map<string,
     verdict,
     notes,
     alpha,
+    ...(control ? { control } : {}),
   };
 }

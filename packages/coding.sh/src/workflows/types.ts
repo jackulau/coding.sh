@@ -301,4 +301,19 @@ export interface WorkflowCompareReport {
   verdict: { kind: "better" | "worse" | "no-difference" | "inconclusive"; text: string };
   notes: string[];
   alpha: number;
+  /**
+   * Present when candidate runs resume from recorded runs: the baseline runs that resume
+   * from the same ones (the control fork, A vs A'), and how often a control replay's outcome
+   * differs from its source run's (the replay noise floor), when both are scored.
+   */
+  control?: ReplayControl;
+}
+
+export interface ReplayControl {
+  /** Recorded runs the candidate resumes from. */
+  sources: string[];
+  /** Baseline runs that resume from one of those sources. */
+  controlRuns: number;
+  /** Control replays whose pass at the threshold differs from their source run's. */
+  drift?: { n: number; changed: number; rate: number };
 }

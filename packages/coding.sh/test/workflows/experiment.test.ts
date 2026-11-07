@@ -15,7 +15,7 @@ import { changeWindow, labelPattern, predictCacheHits, replayWorkflow, scanAgent
 import { loadClaudeWorkflowDir } from "../../src/workflows/sources/claude-workflow.ts";
 import { WorkflowStore } from "../../src/workflows/store.ts";
 import { buildWorkflowTree, type WorkflowTree } from "../../src/workflows/tree.ts";
-import type { WorkflowCase, WorkflowDriver, WorkflowVariant } from "../../src/workflows/types.ts";
+import type { WorkflowCase, WorkflowDriver, WorkflowRun, WorkflowVariant } from "../../src/workflows/types.ts";
 import { nodeBin } from "../_bin.ts";
 import { MemBlobs, MemIndex } from "../otel/_memstore.ts";
 import { langGraph, RESUMED, RUN, SCRIPT, SID, writeClaudeWorkflowFixture, writeReviewCases } from "./_fixtures.ts";
@@ -205,6 +205,32 @@ describe("runWorkflowExperiment + compareWorkflowVariants", () => {
     const report = compareWorkflowVariants(crash.runs, crash.scores, { baseline: "crash", candidate: "nope" });
     assert.equal(report.verdict.kind, "inconclusive");
     assert.deepEqual(report.unpairedCases, ["seeded-1"]);
+  });
+});
+
+describe("compareWorkflowVariants control fork (EM-19)", () => {
+  const run = (id: string, variant: string | undefined, caseId: string, resumedFrom?: string) =>
+    ({ id, framework: "claude", name: "review", ...(variant ? { variant } : {}), caseId, ...(resumedFrom ? { resumedFrom } : {}), startedAt: 1, status: "ok", stats: {}, tags: [] }) as unknown as WorkflowRun;
+  const cases = ["c1", "c2", "c3", "c4"];
+
+  it("flags a replayed candidate with no baseline replayed from the same runs", () => {
+    const runs = cases.flatMap((c) => [run(`src-${c}`, "base", c), run(`new-${c}`, "edit", c, `src-${c}`)]);
+    const scores = new Map(runs.map((r) => [r.id, 1]));
+    const r = compareWorkflowVariants(runs, scores, { baseline: "base", candidate: "edit", iters: 200 });
+    assert.deepEqual(r.control, { sources: cases.map((c) => `src-${c}`), controlRuns: 0 });
+    assert.ok(r.notes.some((n) => /^no control fork: edit resumes from 4 recorded run\(s\)/.test(n)), r.notes.join("\n"));
+  });
+
+  it("reports the control replays' drift from their source runs as the replay noise floor", () => {
+    const sources = cases.map((c) => run(`src-${c}`, undefined, c));
+    const control = cases.map((c) => run(`ctl-${c}`, "control", c, `src-${c}`));
+    const edit = cases.map((c) => run(`new-${c}`, "edit", c, `src-${c}`));
+    const scores = new Map<string, number>([...sources, ...edit].map((r) => [r.id, 1]));
+    for (const [i, r] of control.entries()) scores.set(r.id, i === 0 ? 0 : 1);
+    const r = compareWorkflowVariants([...sources, ...control, ...edit], scores, { baseline: "control", candidate: "edit", iters: 200 });
+    assert.deepEqual(r.control, { sources: cases.map((c) => `src-${c}`), controlRuns: 4, drift: { n: 4, changed: 1, rate: 0.25 } });
+    assert.ok(r.notes.includes("replay noise floor: 1 of 4 control replay(s) changed outcome from their source run (25%); differences below that are replay drift"), r.notes.join("\n"));
+    assert.equal(compareWorkflowVariants(sources.map((s, i) => ({ ...s, variant: i % 2 ? "a" : "b" })), scores, { baseline: "a", candidate: "b", iters: 50 }).control, undefined, "no replay, no control check");
   });
 });
 

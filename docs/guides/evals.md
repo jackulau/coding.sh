@@ -271,3 +271,9 @@ compression. See [TOOL-EVALS.md](../TOOL-EVALS.md).
 
 `coding.sh workflows` imports multi-agent workflow runs and reports the run tree, critical path,
 concurrency, cost and paired variant comparisons. See [design/workflows.md](../design/workflows.md).
+
+A variant can resume from a recorded run (`"resumeFromRunId"`), so only the stages after the edit
+run again. Compare it against a control variant that resumes the unedited script from the same
+runs, not against fresh baseline runs: `workflows compare` notes "no control fork" otherwise. With
+a control, it reports how often the control's outcome changed from its source run as the replay
+noise floor (`control.drift` in `--json`). Treat differences below that as replay drift.

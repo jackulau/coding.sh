@@ -282,8 +282,12 @@ admits this. So every judge delta in compare is uncorrected today. See EM-5.
     https://metr.org/blog/2025-08-12-research-update-towards-reconciling-slowdown-with-time-horizons.
     38% passed the tests; 0 of 15 were mergeable.
   - Vendrow et al., "Platinum benchmarks", 2025, https://arxiv.org/abs/2502.03461 (abs).
-- **Have it?** No. `judge calibrate` takes LLM judges only. Exploit probes (#17) catch hacks,
-  not "passes but wrong".
+- **Have it?** Yes, since 0.1.2. `judge calibrate --grader <verifier>` audits precision from
+  labelled passes (`--sample-passes N` builds the queue) and stores it per grader version.
+  `exp show` and `exp compare` print a corrected pass rate. The counts use the
+  `VerifierCrossCheck` shape that Z-3 will store at `task.meta.crossCheck`. Before this,
+  `judge calibrate` took LLM judges only, and exploit probes (#17) caught hacks, not "passes
+  but wrong".
 - **Proposal:**
   - Let `judge calibrate` accept any grader id, including command/test graders.
   - Add a `--sample-passes N` labelling queue (pairs with C-9).
@@ -446,8 +450,10 @@ admits this. So every judge delta in compare is uncorrected today. See EM-5.
     got every outcome wrong.
   - Bhanushali, "ARC-DR", NeurIPS 2026, https://neurips.cc/virtual/2026/168256 (abs).
     Intercepting the first irreversible action gave rank correlation 0.83 across 24 variants.
-- **Have it?** Not applicable yet. It affects specs X-1 (continuation tasks), X-7 (workspace
-  rebuild) and X-11 (record/replay proxy).
+- **Have it?** Applied, since 0.1.2. The X-1, X-7 and X-11 specs in the queue now require a
+  control arm and report its divergence as the replay noise floor, and X-7 refuses outcome
+  scoring without re-execution. The one replay surface that exists today, `workflows compare` on
+  `resumeFromRunId` variants, notes a missing control fork and reports control drift.
 - **Proposal:**
   - Add a required control arm to the X-1 and X-7 specs. Report the control's divergence rate
     as the replay noise floor.
