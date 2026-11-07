@@ -1,0 +1,121 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_174b9d4847f85e 26
+  s_8e040dbdf13565::t_9dd2a0a2f9344c 7-9,12-14,18-25,27-40,42-84
+docs/PRODUCTION.md
+  s_8e040dbdf13565::t_c0baa137b2dbb1 620-623,692-694
+  s_8e040dbdf13565::t_9fb7a26cb80f9b 323-325
+  s_8e040dbdf13565::t_f8fef6211cf77a 40,101-103,112-115,127-129,203-205,241-242,272-279,618-619,720,772-789
+examples/production/mock-llm/server.mjs
+  s_8e040dbdf13565::t_28c91a167ddb00 1-155
+examples/production/mock-llm/answer.mjs
+  s_8e040dbdf13565::t_b6ed4f2e94c19c 1-7
+docs/how-to/self-host-team.md
+  s_8e040dbdf13565::t_65605f3d3ddd4b 1-13,17-21,24-56
+  s_8e040dbdf13565::t_766c62ddb6c3e0 14-16,22-23
+  s_8e040dbdf13565::t_05d908aee1e4ea 57-61
+README.md
+  s_8e040dbdf13565::t_85ed605cc5346a 7,10-15,21-34,38-41,43,45,47-51,53-54,56-58,60-61,67,70-74,93-97,121,124-137,142-160
+  s_8e040dbdf13565::t_83c2c05a886b2e 2,161-165,173,179,194-200
+docs/README.md
+  s_8e040dbdf13565::t_15a71cfceae0ed 6-9,18,22-34,49-54
+docs/ADAPTERS.md
+  s_8e040dbdf13565::t_174b9d4847f85e 9,29,42
+  s_8e040dbdf13565::t_f7cbdc887f5ecc 8
+  s_8e040dbdf13565::t_4612fa48447526 129-145
+deploy/test/fixtures.test.mjs
+  s_8e040dbdf13565::t_00114fded81cd2 1-71,86-182,185,192-193,195-196,198,200-276,301-311
+  s_8e040dbdf13565::t_6203e50f1347f7 72-85,183-184,186-191,194,197,199,277-300
+examples/production/wait-session.mjs
+  s_8e040dbdf13565::t_42b02dcf897f2c 58-60
+  s_8e040dbdf13565::t_0a00c115fea1dc 1-57,61-63
+examples/production/flood.mjs
+  s_8e040dbdf13565::t_3ec4768360f1da 75
+  s_8e040dbdf13565::t_aaced5741cea05 60-61
+  s_8e040dbdf13565::t_aa761dc3c03176 1-14,18-19,21-22,24-59,62-74,76-85,87-90,92-107,113-131,133-149,151,153
+  s_8e040dbdf13565::t_aec693ff94e622 15-17,20,23,86,91,109-112,132,150,152
+  s_8e040dbdf13565::t_e66fcf8aab05ea 108
+.github/ISSUE_TEMPLATE/config.yml
+  s_8e040dbdf13565::t_0889122b171bc6 3-5
+.github/assets/sample-sessions.mjs
+  s_8e040dbdf13565::t_5edf6a628c9f25 1-65
+docs/RELEASE.md
+  s_8e040dbdf13565::t_c2063ffe68d85e 67
+docs/concepts.md
+  s_8e040dbdf13565::t_98a8907a659c10 1-97
+docs/design/bench-cli.md
+  s_8e040dbdf13565::t_5d8ad1c5e86521 3-5
+docs/design/state-machines.md
+  s_8e040dbdf13565::t_31954b85f7a1e9 1-1136
+docs/guides/explore.md
+  s_8e040dbdf13565::t_ae04cd9a9f07ef 25
+docs/guides/install.md
+  s_8e040dbdf13565::t_cd952dd90c66ae 43-44
+docs/guides/team.md
+  s_8e040dbdf13565::t_ac6be764faa6aa 77-79
+docs/how-to/ci-regressions.md
+  s_8e040dbdf13565::t_37164d021b3238 1-112
+docs/how-to/compare-agents.md
+  s_8e040dbdf13565::t_9b1aa1fefc2b64 1-77
+docs/how-to/expensive-sessions.md
+  s_8e040dbdf13565::t_4bc576ba632798 1-70
+docs/how-to/session-to-eval.md
+  s_8e040dbdf13565::t_89fc0cd7153255 1-87
+docs/how-to/trace-your-agent.md
+  s_8e040dbdf13565::t_70453a3965e1c7 1-239
+docs/reference/api.md
+  s_8e040dbdf13565::t_0dc0be5ed0a176 1-712
+docs/reference/cli.md
+  s_8e040dbdf13565::t_14224cfefcf9f7 1-1397
+docs/reference/config.md
+  s_8e040dbdf13565::t_b9ea533b41979c 1-252
+docs/reference/sdk.md
+  s_8e040dbdf13565::t_a98e500e30c737 1-652
+docs/research/competitive-gap.md
+  s_8e040dbdf13565::t_3194af878e666c 134
+docs/research/dynamic-benchmarks.md
+  s_8e040dbdf13565::t_a3965f3ab48678 1-643
+docs/research/prime-agent.md
+  s_8e040dbdf13565::t_f35788a2324326 364
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_47d03746daa962 1-191
+packages/coding.sh/README.md
+  s_8e040dbdf13565::t_dd2ed684f50695 2,7,24-25,58
+scripts/dogfood/bench-help.mjs
+  s_8e040dbdf13565::t_3e1405121b7be9 2
+scripts/dogfood/bench-hook.mjs
+  s_8e040dbdf13565::t_f213782c1f3453 2
+scripts/dogfood/bench-ingest.mjs
+  s_8e040dbdf13565::t_e896a938072838 2
+scripts/dogfood/bench-store.mjs
+  s_8e040dbdf13565::t_79ab22fd8f2200 2
+scripts/dogfood/bench-viewer.mjs
+  s_8e040dbdf13565::t_5f98ba38d4c89a 2
+scripts/dogfood/bench.mjs
+  s_8e040dbdf13565::t_a538f0b2b4f06a 2
+scripts/dogfood/cli-guidelines.mjs
+  s_8e040dbdf13565::t_187f4e5f3ed258 2
+scripts/dogfood/cli-suite.mjs
+  s_8e040dbdf13565::t_afa750ec0cd9db 2
+scripts/dogfood/conformance.mjs
+  s_8e040dbdf13565::t_d15036c5e15e3e 2
+scripts/dogfood/score.mjs
+  s_8e040dbdf13565::t_90a23a2b72c69d 2
+scripts/dogfood/site.mjs
+  s_8e040dbdf13565::t_25e0b1a97a476e 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "60f0c5d182070c6b84d8c7815f88105529f6d9f6",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
