@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  acceptanceGate,
+  acceptanceGatePaired,
   binomCdfHalf,
+  binomUpperTail,
+  gateDetail,
+  gateHeadline,
+  gateVerdict,
   cohenKappa,
   mcnemar,
   mcnemarPaired,
@@ -285,5 +291,163 @@ describe("roganGladen", () => {
     assert.throws(() => roganGladen(0.5, 0.9, -0.1, 10, 10), RangeError);
     assert.throws(() => roganGladen(0.5, 0.9, 0.8, -1, 10), RangeError);
     assert.throws(() => roganGladen(0.5, 0.9, 0.8, 10, { positives: 5, negatives: -1 }), RangeError);
+  });
+});
+
+describe("binomUpperTail", () => {
+  it("edges: k ≤ 0 → 1, k > n → 0", () => {
+    assert.equal(binomUpperTail(0, 5, 0.3), 1);
+    assert.equal(binomUpperTail(-2, 5, 0.3), 1);
+    assert.equal(binomUpperTail(6, 5, 0.3), 0);
+    assert.equal(binomUpperTail(0, 0, 0.3), 1);
+  });
+  it("p = 0 and p = 1", () => {
+    assert.equal(binomUpperTail(1, 5, 0), 0);
+    assert.equal(binomUpperTail(5, 5, 1), 1);
+  });
+  it("hand values", () => {
+    close(binomUpperTail(5, 5, 2 / 3), 32 / 243, 1e-12);
+    close(binomUpperTail(3, 4, 2 / 3), 48 / 81, 1e-12);
+    close(binomUpperTail(6, 7, 0.5), 8 / 128, 1e-12);
+    close(binomUpperTail(2, 3, 0.1), 3 * 0.01 * 0.9 + 0.001, 1e-12);
+  });
+  it("matches 1 − binomCdfHalf(k − 1, n) within 1e-12 for n ≤ 60", () => {
+    for (let n = 0; n <= 60; n++) {
+      for (let k = 0; k <= n + 1; k++) close(binomUpperTail(k, n, 0.5), 1 - binomCdfHalf(k - 1, n), 1e-12);
+    }
+  });
+  it("monotone: falls in k, rises in p", () => {
+    for (let k = 1; k <= 20; k++) assert.ok(binomUpperTail(k, 20, 0.6) <= binomUpperTail(k - 1, 20, 0.6));
+    for (let i = 1; i <= 20; i++) assert.ok(binomUpperTail(7, 20, i / 20) >= binomUpperTail(7, 20, (i - 1) / 20));
+  });
+  it("rejects bad input", () => {
+    assert.throws(() => binomUpperTail(1.5, 5, 0.5), RangeError);
+    assert.throws(() => binomUpperTail(1, -1, 0.5), RangeError);
+    assert.throws(() => binomUpperTail(1, 5, 1.1), RangeError);
+    assert.throws(() => binomUpperTail(1, 5, Number.NaN), RangeError);
+  });
+});
+
+describe("acceptanceGate (SAGE)", () => {
+  it("λ=1, 5 wins, 0 losses → p = 1/32, accept at .05", () => {
+    const g = acceptanceGate({ wins: 5, losses: 0, solved: 5 }, { lambda: 1 });
+    close(g.p, 1 / 32, 1e-12);
+    assert.equal(g.decision, "accept");
+    assert.deepEqual(g.reasons, []);
+    assert.equal(g.breakEven, 0.5);
+  });
+  it("λ=2, 5 wins → p = 32/243 ≈ 0.1317, abstain not-significant", () => {
+    const g = acceptanceGate({ wins: 5, losses: 0, solved: 5 });
+    close(g.p, 32 / 243, 1e-12);
+    assert.equal(g.decision, "abstain");
+    assert.deepEqual(g.reasons, ["not-significant"]);
+  });
+  it("λ=2, 8 wins → p = 256/6561, accept", () => {
+    const g = acceptanceGate({ wins: 8, losses: 0, solved: 8 });
+    close(g.p, 256 / 6561, 1e-12);
+    assert.equal(g.decision, "accept");
+  });
+  it("minCleanWins: 8 at λ=2, 5 at λ=1 (α=.05); 1 at α=1", () => {
+    assert.equal(acceptanceGate({ wins: 0, losses: 0, solved: 0 }).minCleanWins, 8);
+    assert.equal(acceptanceGate({ wins: 0, losses: 0, solved: 0 }, { lambda: 1 }).minCleanWins, 5);
+    assert.equal(acceptanceGate({ wins: 0, losses: 0, solved: 0 }, { alpha: 1 }).minCleanWins, 1);
+  });
+  it("λ=1, 6 wins, 1 loss → p = 0.0625 (half the two-sided McNemar), abstain", () => {
+    const g = acceptanceGate({ wins: 6, losses: 1, solved: 20 }, { lambda: 1 });
+    close(g.p, 0.0625, 1e-12);
+    close(g.p, mcnemar(1, 6).p / 2, 1e-12);
+    assert.deepEqual(g.reasons, ["not-significant"]);
+  });
+  it("λ=2, 8 wins, 4 losses → net gain 0, abstain", () => {
+    const g = acceptanceGate({ wins: 8, losses: 4, solved: 40 });
+    assert.equal(g.netGain, 0);
+    assert.ok(g.reasons.includes("net-gain"));
+    assert.equal(g.decision, "abstain");
+  });
+  it("30 wins, 2 losses of 10 solved, τ=.10 → only regression-fraction", () => {
+    const g = acceptanceGate({ wins: 30, losses: 2, solved: 10 }, { tau: 0.1 });
+    assert.deepEqual(g.reasons, ["regression-fraction"]);
+    close(g.regressionFraction, 0.2, 1e-12);
+  });
+  it("no discordant items → p = 1, no-discordant", () => {
+    const g = acceptanceGate({ wins: 0, losses: 0, solved: 7 });
+    assert.equal(g.p, 1);
+    assert.deepEqual(g.reasons, ["no-discordant"]);
+    assert.equal(g.decision, "abstain");
+  });
+  it("regressionFraction is 0 when nothing was solved", () => {
+    assert.equal(acceptanceGate({ wins: 3, losses: 0, solved: 0 }).regressionFraction, 0);
+  });
+  it("at (1, 1, 1) it accepts exactly when wins > losses", () => {
+    for (let w = 0; w <= 15; w++) {
+      for (let l = 0; l <= 15; l++) {
+        const g = acceptanceGate({ wins: w, losses: l, solved: 15 }, { lambda: 1, alpha: 1, tau: 1 });
+        assert.equal(g.decision === "accept", w > l, `w=${w} l=${l}`);
+      }
+    }
+  });
+  it("containment: every accept has wins > losses", () => {
+    for (const lambda of [1, 1.5, 2, 5]) {
+      for (const alpha of [0.01, 0.05, 0.2, 1]) {
+        for (const tau of [0, 0.05, 0.1, 1]) {
+          for (let w = 0; w <= 40; w++) {
+            for (let l = 0; l <= 40; l++) {
+              for (const solved of [l, l + 10]) {
+                const g = acceptanceGate({ wins: w, losses: l, solved }, { lambda, alpha, tau });
+                if (g.decision === "accept") assert.ok(w > l, `λ=${lambda} α=${alpha} τ=${tau} w=${w} l=${l}`);
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+  it("rejects bad input", () => {
+    assert.throws(() => acceptanceGate({ wins: 1, losses: 0, solved: 1 }, { lambda: 0.5 }), RangeError);
+    assert.throws(() => acceptanceGate({ wins: 1, losses: 3, solved: 2 }), RangeError);
+    assert.throws(() => acceptanceGate({ wins: 1.5, losses: 0, solved: 1 }), RangeError);
+    assert.throws(() => acceptanceGate({ wins: 1, losses: 0, solved: -1 }), RangeError);
+    assert.throws(() => acceptanceGate({ wins: 1, losses: 0, solved: 1 }, { alpha: 0 }), RangeError);
+    assert.throws(() => acceptanceGate({ wins: 1, losses: 0, solved: 1 }, { tau: 1.5 }), RangeError);
+  });
+});
+
+describe("acceptanceGatePaired", () => {
+  it("derives wins, losses and solved from the baseline", () => {
+    const base = [true, true, true, false, false, false, false];
+    const cand = [true, false, true, true, true, false, true];
+    const g = acceptanceGatePaired(base, cand, { lambda: 1, alpha: 1, tau: 1 });
+    assert.equal(g.wins, 3);
+    assert.equal(g.losses, 1);
+    assert.equal(g.solved, 3);
+    assert.equal(g.decision, "accept");
+  });
+  it("throws on a length mismatch", () => {
+    assert.throws(() => acceptanceGatePaired([true], [true, false]), RangeError);
+  });
+});
+
+describe("gate wording", () => {
+  it("ship: plain wins and losses", () => {
+    const g = acceptanceGate({ wins: 14, losses: 1, solved: 30 });
+    assert.equal(gateVerdict(g), "ship");
+    assert.equal(gateHeadline(g, "task"), "Ship it: B wins 14 tasks, loses 1");
+    // P(Bin(15, 2/3) ≥ 14) = (2/3)^14 · (15/3 + 2/3) ≈ 0.0194
+    close(g.p, (2 / 3) ** 14 * (5 + 2 / 3), 1e-12);
+    assert.equal(gateDetail(g), "accept · 14 won, 1 lost of 30 solved (3.3%) · net +12 at λ=2 · p = 0.019 < α 0.05");
+  });
+  it("hold: not enough evidence, with how many wins it needs", () => {
+    const g = acceptanceGate({ wins: 6, losses: 0, solved: 6 });
+    assert.equal(gateVerdict(g), "hold");
+    assert.equal(gateHeadline(g, "task"), "Hold: not enough evidence (B wins 6, loses 0; needs 8+ wins with no losses)");
+    assert.equal(gateDetail(g), "abstain (not-significant) · 6 won, 0 lost of 6 solved (0%) · net +6 at λ=2 · p = 0.088 ≥ α 0.05 · needs ≥8 clean wins");
+    assert.equal(gateHeadline(acceptanceGate({ wins: 0, losses: 0, solved: 4 }), "case"), "Hold: not enough evidence (no case changed outcome)");
+  });
+  it("don't ship: B breaks solved items", () => {
+    const g = acceptanceGate({ wins: 6, losses: 3, solved: 6 });
+    assert.equal(gateVerdict(g), "dont-ship");
+    assert.equal(gateHeadline(g, "task"), "Don't ship: B breaks 3 tasks A solved (and wins 6)");
+    assert.match(gateDetail(g), /3 lost of 6 solved \(50% > τ 10%\) · net 0 at λ=2/);
+    assert.equal(gateHeadline(acceptanceGate({ wins: 0, losses: 1, solved: 5 }), "case"), "Don't ship: B breaks 1 case A solved");
   });
 });
