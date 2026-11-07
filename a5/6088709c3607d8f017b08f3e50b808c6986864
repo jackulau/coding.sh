@@ -1,0 +1,24 @@
+packages/coding.sh/test/viewer/ui-browser.test.ts
+  s_8e040dbdf13565::t_40e4917dff70d4 17-18
+packages/coding.sh/test/viewer/browser.ts
+  s_8e040dbdf13565::t_41a316292ff32b 14
+  s_8e040dbdf13565::t_a450c34b803825 10-13,15-21,23-34,184-187
+packages/coding.sh/test/viewer/browser.test.ts
+  s_8e040dbdf13565::t_29c9fc8d750de7 1-34
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a56088709c3607d8f017b08f3e50b808c6986864",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
