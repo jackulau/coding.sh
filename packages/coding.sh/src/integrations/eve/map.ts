@@ -50,6 +50,21 @@ export function eveSessionId(span: OtelSpan): string | undefined {
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
+/**
+ * The span is part of a durable run's shape (see src/otel/durable.ts), not plumbing:
+ * a delivery, the workflow function, a step attempt, a wait or a recovery. The
+ * client-side `workflow.start` stays dropped: the first delivery opens the run
+ * anyway, and an eve session opens with its own agent span. The bare
+ * `step.execute` inside each attempt has no attributes but is the parent of
+ * the step's own spans (model calls): dropping it would orphan them.
+ */
+function durableShape(span: OtelSpan, events: AgentEvent[]): boolean {
+  if (span.name === "step.execute" && span.parentSpanId) return true;
+  const d = events[0]?.payload.durable;
+  if (!isObj(d)) return false;
+  return d.orphan === true || d.role === "invocation" || d.role === "orchestrate" || d.role === "step" || d.role === "wait";
+}
+
 function parseJson(v: unknown): unknown {
   if (typeof v !== "string") return v;
   const t = v.trim();
@@ -92,11 +107,14 @@ function moveContent(from: Record<string, unknown> | undefined, fromKey: string,
  * Pure and synchronous; returns a new list (never mutates `events`). Spans
  * that are not eve's are returned unchanged, except Workflow SDK
  * infrastructure spans, which are dropped (`[]`) unless keepWorkflowSpans.
+ * Spans that tell the shape of a durable run (start, deliveries, steps,
+ * waits, recovery; tagged payload.durable by the mapper) are kept: they join
+ * the run's session (workflow.run.id, which is also eve's agent.run.id).
  *
  * Signature-compatible with MapContext.enrichSpan in src/otel/map.ts.
  */
 export function enrichFromEve(span: OtelSpan, events: AgentEvent[], info: EveEnrichInfo = {}, opts: EveEnrichOptions = {}): AgentEvent[] {
-  if (isWorkflowInfraSpan(span, info.scope)) return opts.keepWorkflowSpans ? events : [];
+  if (isWorkflowInfraSpan(span, info.scope)) return opts.keepWorkflowSpans || durableShape(span, events) ? events : [];
   if (!isEveSpan(span, info.scope)) return events;
 
   const a = span.attributes;

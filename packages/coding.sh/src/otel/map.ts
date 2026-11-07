@@ -35,6 +35,7 @@ import { SCHEMA_VERSION } from "../schema/index.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
 import { geoValue, tierValue } from "../core/pricing.ts";
 import { anthropicPriceHints } from "../adapters/_shared/normalize.ts";
+import { type DurableTag, durableOf, durableSessionId } from "./durable.ts";
 import {
   type Attrs,
   nanosDiffMs,
@@ -136,6 +137,8 @@ export interface SpanNode {
   parentSpanId?: string;
   /** A nested (non-root) agent span: it has a child session. */
   subagent: boolean;
+  /** A durable-workflow replay span: model calls under it were made before (see durable.ts). */
+  replay?: boolean;
 }
 
 /**
@@ -639,6 +642,10 @@ interface SpanCtx {
   runId?: string;
   /** Span id of the nearest enclosing subagent; sessionId is then its child session. */
   subagentId?: string;
+  /** What the span is in a durable workflow run (payload.durable on its first event). */
+  durable?: DurableTag;
+  /** The span sits under a durable replay span. */
+  replayed?: boolean;
 }
 
 export const spanEventId = (traceId: string, spanId: string, slot: number): string => hashParts("otel", traceId, spanId, slot);
@@ -768,7 +775,8 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
       .set("ttftMs", ttftMs(span))
       .set("stopReason", finishReason(a))
       .set("ok", !failed)
-      .set("error", error);
+      .set("error", error)
+      .set("replay", c.replayed || undefined);
     const outTokens = usage?.outputTokens;
     const tps = num(a, "ai.response.avgOutputTokensPerSecond", "ai.response.avgCompletionTokensPerSecond");
     if (tps !== undefined) d.set("tokensPerSec", tps);
@@ -801,7 +809,9 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
     emit(endSlot, "tool.end", endMs, e, { durationMs }, ids[1]);
   };
 
-  if (isRoot) {
+  // A durable engine's root span (a queue delivery, StartWorkflow, a recovery write) is
+  // plumbing of a longer run, not a turn: it stays a plain span in the run's session.
+  if (isRoot && !(c.durable && klass === "other")) {
     const s = draft().set("name", span.name).set("agentName", agentName).set("traceId", traceId).set("scope", c.scope.name || undefined);
     emit(0, "session.start", startMs, s);
     const prompt = content(str(a, "user_prompt")) ?? userText(inputMessages(a, klass === "llm" ? span : undefined));
@@ -856,6 +866,12 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
     emit(0, "span", startMs, d, { durationMs });
   }
 
+  // ---- durable workflow tag on the span's first event (model and tool calls are never steps or waits).
+  if (c.durable && out[0]) {
+    const stepLike = c.durable.role === "step" || c.durable.role === "wait";
+    out[0].payload.durable = stepLike && klass !== "other" && klass !== "agent" ? { ...c.durable, role: "other" } : c.durable;
+  }
+
   // ---- span events: exceptions become error events; content events were folded in above.
   for (const [i, ev] of span.events.entries()) {
     if (ev.name !== "exception") continue;
@@ -890,6 +906,17 @@ function enclosingSubagent(tree: SpanTree, traceId: string, spanId: string | und
   return undefined;
 }
 
+/** True when `spanId` or a known ancestor is a durable replay span. */
+function underReplay(tree: SpanTree, traceId: string, spanId: string | undefined): boolean {
+  for (let depth = 0; spanId && depth < 256; depth++) {
+    const node = tree.get(traceId, spanId);
+    if (!node) return false;
+    if (node.replay) return true;
+    spanId = node.parentSpanId;
+  }
+  return false;
+}
+
 /** Maps decoded ExportTraceServiceRequest content to events. */
 export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promise<MapResult> {
   const store = new Blobs(ctx);
@@ -897,20 +924,36 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
 
   // Pass 1: which traces in this batch belong to a conversation (any span may
   // carry the id), and the span tree (spans arrive in any order).
+  // A durable workflow run id keys the session too (one run = one session across
+  // traces, processes and days), below an explicit conversation id.
   const traceConv = new Map<string, string>();
+  const traceRun = new Map<string, string>();
+  const durable = new Map<OtelSpan, DurableTag>();
   const tree = ctx.spanTree ?? new SpanTree();
   for (const rs of batch)
     for (const ss of rs.scopeSpans)
       for (const sp of ss.spans) {
         const conv = conversationOf(sp.attributes);
         if (sp.traceId && conv && !traceConv.has(sp.traceId)) traceConv.set(sp.traceId, conv);
+        const d = durableOf(sp, rs.resource.attributes, ss.scope);
+        if (d) {
+          durable.set(sp, d);
+          const sid = durableSessionId(d);
+          if (sp.traceId && !traceRun.has(sp.traceId)) traceRun.set(sp.traceId, sid);
+          // Traces a run span links to belong to the run too (Vercel continuous mode
+          // links each invocation to its HTTP handler's own trace).
+          for (const l of sp.links) if (l.traceId && l.traceId !== sp.traceId && !traceRun.has(l.traceId)) traceRun.set(l.traceId, sid);
+        }
         if (sp.traceId && sp.spanId) {
           const node: SpanNode = { subagent: !!sp.parentSpanId && classifySpan(sp) === "agent" };
           if (sp.parentSpanId) node.parentSpanId = sp.parentSpanId;
+          if (d?.replay) node.replay = true;
           tree.set(sp.traceId, sp.spanId, node);
         }
       }
   for (const [t, s] of traceConv) ctx.traceSessions?.set(t, s);
+  // A trace already keyed (an explicit conversation, or an earlier batch) keeps its session.
+  for (const [t, s] of traceRun) if (!traceConv.has(t) && !ctx.traceSessions?.has(t)) ctx.traceSessions?.set(t, s);
 
   for (const rs of batch) {
     const resource = rs.resource.attributes;
@@ -923,7 +966,8 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
           if (result.errors.length < 5) result.errors.push(`span ${JSON.stringify(span.name)} has no valid traceId/spanId`);
           continue;
         }
-        const conv = conversationOf(span.attributes) ?? traceConv.get(span.traceId) ?? ctx.traceSessions?.get(span.traceId) ?? resourceConv;
+        const conv =
+          conversationOf(span.attributes) ?? traceConv.get(span.traceId) ?? ctx.traceSessions?.get(span.traceId) ?? resourceConv ?? traceRun.get(span.traceId);
         const c: SpanCtx = {
           resource,
           scope: ss.scope,
@@ -938,6 +982,9 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
         if (version) c.agentVersion = version;
         const runId = str(span.attributes, ...RUN_KEYS) ?? str(resource, ...RUN_KEYS);
         if (runId) c.runId = runId;
+        const d = durable.get(span);
+        if (d) c.durable = d;
+        if (underReplay(tree, span.traceId, span.spanId)) c.replayed = true;
         const sub = enclosingSubagent(tree, span.traceId, span.parentSpanId);
         if (sub) {
           c.subagentId = sub;
