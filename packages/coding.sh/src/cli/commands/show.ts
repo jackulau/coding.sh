@@ -1,5 +1,9 @@
 // coding.sh show <session>: header, latency, the event timeline, and the
-// subagent tree (child sessions linked by parent.sessionId).
+// subagent tree (child sessions linked by parent.sessionId). A session too
+// long to list (more events than --limit) shows as phases (core/outline.ts)
+// with its derails; --all lists every event, --follow tails a running one.
+import { setTimeout as sleep } from "node:timers/promises";
+import { sessionOutline, phaseLabel, storedOutline, type Outline, type Phase } from "../../core/outline.ts";
 import { costNote } from "../../core/pricing.ts";
 import type { AgentEvent, Session } from "../../core/types.ts";
 import type { DurableStats } from "../../schema/index.ts";
@@ -8,6 +12,7 @@ import { autoIngest, oneLine, resolveSession, sessionJson, withContext } from ".
 import { ago, clean, duration, localTime, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import type { IndexStore } from "../../core/types.ts";
+import type { SessionDerail } from "../../schema/index.ts";
 import type { FileDiff } from "../../core/snapshot.ts";
 
 interface Tree {
@@ -192,13 +197,25 @@ export function startedText(ts: number, now = Date.now()): string {
   return rel.endsWith("ago") || rel === "just now" ? `${localTime(ts, now)} (${rel})` : localTime(ts, now);
 }
 
+/** Sessions with more events than this show as phases unless --all or --limit is given. */
+const DEFAULT_LIMIT = 200;
+
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
-  const limit = positiveInt(c.flags.limit, "limit") ?? 200;
+  const explicitLimit = positiveInt(c.flags.limit, "limit");
+  const limit = explicitLimit ?? DEFAULT_LIMIT;
+  const all = c.flags.all === true;
   return withContext(c, async (ctx) => {
     await autoIngest(ctx);
     const s = await resolveSession(ctx, c.positionals[0]!);
-    const events = await ctx.index.listEvents(s.id, { limit });
+    if (c.flags.follow === true) return follow(c, ctx, s);
+    // The phase view reads the phases kept at ingest; only a session stored before they were kept needs every event.
+    const phased = !all && explicitLimit === undefined && s.stats.events > limit;
+    const derails = s.stats.derails ?? [];
+    const stored = all ? undefined : storedOutline(s);
+    const full = all || (phased && !stored) ? await ctx.index.listEvents(s.id) : undefined;
+    const events = full && !all ? full.slice(0, limit) : (full ?? (await ctx.index.listEvents(s.id, { limit })));
+    const outline = stored ?? (full ? sessionOutline(full, derails) : events.length >= s.stats.events ? sessionOutline(events, derails) : undefined);
     const tree = await subagentTree(ctx.index, s.id);
     const changes = await snapshotChanges(s, c.env);
     const changed = new Set(events.filter((e) => e.kind === "file.change" && typeof e.payload.path === "string").map((e) => e.payload.path as string));
@@ -206,7 +223,7 @@ export async function run(c: CommandContext): Promise<number> {
     if (changes?.startKind === "snapshot") for (const f of changes.files) changed.add(f.path);
     const filesChanged = Math.max(s.stats.filesChanged, changed.size);
     if (out.json) {
-      out.data({ session: sessionJson(s), snapshot: changes ?? null, events, subagents: treeJson(tree) });
+      out.data({ session: sessionJson(s), snapshot: changes ?? null, events: all ? full : events, phases: outline?.phases ?? [], days: outline?.days ?? [], subagents: treeJson(tree) });
       return 0;
     }
     const lat = s.stats.latency;
@@ -239,6 +256,8 @@ export async function run(c: CommandContext): Promise<number> {
     if (s.parent) rows.push(["Parent", s.parent.sessionId]);
     const d = s.stats.durable;
     if (d) rows.push(...durableRows(d));
+    if (outline && outline.phases.length > 1) rows.push(["Phases", phaseCounts(outline)]);
+    if (derails.length) rows.push(["Derails", derails.slice(0, 4).map((d) => `${d.flag} at +${duration(Math.max(0, d.ts - s.startedAt))}`).join(", ") + (derails.length > 4 ? ` +${derails.length - 4} more` : "")]);
     for (const [k, v] of rows) out.print(`  ${k.padEnd(14)}${v}`);
     out.print();
     if (d?.steps.length) {
@@ -246,14 +265,13 @@ export async function run(c: CommandContext): Promise<number> {
       for (const l of durableSteps(d, s.startedAt)) out.print(`  ${l}`);
       out.print();
     }
-    const starts = new Map<string, AgentEvent>();
-    for (const e of events) {
-      const line = describe(e, starts);
-      if (line === undefined) continue;
-      const rel = `+${duration(Math.max(0, e.ts - s.startedAt))}`.padStart(8);
-      out.print(`${rel}  ${line}`);
+    if (phased) {
+      printPhases(out, s, outline!);
+      out.note(`${s.stats.events.toLocaleString("en-US")} events in ${outline!.phases.length} ${outline!.phases.length === 1 ? "phase" : "phases"}; --all lists every event, --limit N the first N`);
+    } else {
+      printEvents(out, s, events, all ? outline : undefined, derails);
+      if (!all && events.length >= limit && s.stats.events > limit) out.note(`Showing the first ${limit} events; pass --limit for more or --all for every event`);
     }
-    if (events.length >= limit) out.note(`Showing the first ${limit} events; pass --limit for more`);
     if (tree.length) {
       out.print();
       out.print(out.style("Subagents", "bold"));
@@ -261,4 +279,118 @@ export async function run(c: CommandContext): Promise<number> {
     }
     return 0;
   });
+}
+
+// ---------------------------------------------------------------- long sessions
+
+function phaseCounts(o: Outline): string {
+  const n = (k: Phase["kind"]) => o.phases.filter((p) => p.kind === k).length;
+  const parts = [[n("resume"), "resume"], [n("compaction"), "compaction"], [n("idle"), "idle gap"]]
+    .filter(([c]) => (c as number) > 0)
+    .map(([c, w]) => `${c} ${w}${c === 1 ? "" : "s"}`);
+  return `${o.phases.length}${parts.length ? ` (${parts.join(", ")})` : ""}${o.days.length ? `, across ${o.days.length + 1} days` : ""}`;
+}
+
+/** "+2h38m" from the session start ("+0s" at it). */
+const rel = (ms: number) => (ms < 1000 ? "+0s" : `+${duration(ms)}`);
+const clock = (ts: number) => new Date(ts).toTimeString().slice(0, 5);
+const dayLine = (ts: number) => `── ${new Date(ts).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} ──`;
+const derailLine = (s: Session, d: SessionDerail) => `⚠ ${d.flag} at +${duration(Math.max(0, d.ts - s.startedAt))}: ${d.detail}`;
+
+/** One line per phase, day lines between them, derails under the phase they started in. */
+function printPhases(out: Output, s: Session, o: Outline): void {
+  out.print(out.style("Phases", "bold"));
+  let day = 0;
+  for (const p of o.phases) {
+    while (day < o.days.length && o.days[day]!.index <= p.from) out.print(`  ${out.style(dayLine(o.days[day++]!.ts), "faint")}`);
+    const stats = [
+      `${p.prompts} ${p.prompts === 1 ? "prompt" : "prompts"}`,
+      `${p.toolCalls} tools${p.toolErrors ? ` (${p.toolErrors} failed)` : ""}`,
+      p.filesChanged ? `${p.filesChanged} files` : "",
+      p.tests ? (p.tests.failed ? `${p.tests.failed} tests failing` : `${p.tests.passed} tests passing`) : "",
+      p.tokens ? `${tokens(p.tokens)} tok` : "",
+      p.costUsd ? usd(p.costUsd) : "",
+    ].filter(Boolean);
+    out.print(`  ${String(p.n).padStart(3)}  ${clock(p.startTs)}  ${rel(p.startTs - s.startedAt).padStart(8)}  ${phaseLabel(p).padEnd(24)}${duration(p.endTs - p.startTs).padStart(8)}  ${stats.join(", ")}`);
+    if (p.title) out.print(`  ${" ".repeat(25)}${out.style(oneLine(clean(p.title), 80), "faint")}`);
+    for (const d of p.derails) out.print(`  ${" ".repeat(25)}${out.style(derailLine(s, d), "yellow")}`);
+  }
+}
+
+/** The event list; with an outline (--all), phase and day lines between events and derail markers at their onset. */
+function printEvents(out: Output, s: Session, events: AgentEvent[], o: Outline | undefined, derails: readonly SessionDerail[]): void {
+  const starts = new Map<string, AgentEvent>();
+  const phaseAt = new Map((o?.phases ?? []).filter((p) => p.n > 1).map((p) => [p.from, p]));
+  const dayAt = new Map((o?.days ?? []).map((d) => [d.index, d]));
+  const derailAt = new Map<string, SessionDerail[]>();
+  for (const d of derails) derailAt.set(d.eventId, [...(derailAt.get(d.eventId) ?? []), d]);
+  events.forEach((e, i) => {
+    const day = dayAt.get(i);
+    if (day) out.print(out.style(dayLine(day.ts), "faint"));
+    const p = phaseAt.get(i);
+    if (p) out.print(out.style(`── phase ${p.n}: ${phaseLabel(p)} at ${clock(p.startTs)} ──`, "faint"));
+    for (const d of derailAt.get(e.id) ?? []) out.print(out.style(`${"".padStart(8)}  ${derailLine(s, d)}`, "yellow"));
+    const line = describe(e, starts);
+    if (line === undefined) return;
+    const rel = `+${duration(Math.max(0, e.ts - s.startedAt))}`.padStart(8);
+    out.print(`${rel}  ${line}`);
+  });
+}
+
+/** How often --follow polls for new events. */
+const FOLLOW_POLL_MS = 1500;
+/** Events a poll re-reads from the end, to catch rows that arrive out of order. */
+const FOLLOW_WINDOW = 400;
+
+/**
+ * --follow: the last few events, then new ones as they are ingested, until the
+ * session ends (a session.end and a quiet poll after it) or Ctrl-C. New derails
+ * print as they are detected.
+ */
+async function follow(c: CommandContext, ctx: Parameters<Parameters<typeof withContext>[1]>[0], first: Session): Promise<number> {
+  const { out, signal } = c;
+  const id = first.id;
+  let s = first;
+  const seen = new Set<string>();
+  const starts = new Map<string, AgentEvent>();
+  const shown = new Set((s.stats.derails ?? []).map((d) => d.eventId + d.flag));
+  const tail = () => ctx.index.listEvents(id, { offset: Math.max(0, s.stats.events - FOLLOW_WINDOW) });
+  out.print(out.style(oneLine(clean(s.title ?? s.id), 100), "bold"));
+  out.print(`  ${"Session".padEnd(14)}${s.id}`);
+  out.print(`  ${"Started".padEnd(14)}${startedText(s.startedAt)}, ${s.stats.events.toLocaleString("en-US")} events so far`);
+  for (const d of s.stats.derails ?? []) out.print(out.style(`  ${derailLine(s, d)}`, "yellow"));
+  out.print();
+  let batch = await tail();
+  // Print the last 20; the rest only primes tool starts so a later end shows its input.
+  for (const e of batch.slice(0, -20)) {
+    seen.add(e.id);
+    describe(e, starts);
+  }
+  let ended = false;
+  for (;;) {
+    const fresh = batch.filter((e) => !seen.has(e.id));
+    for (const e of fresh) {
+      seen.add(e.id);
+      const line = describe(e, starts);
+      if (line !== undefined) out.print(`${`+${duration(Math.max(0, e.ts - s.startedAt))}`.padStart(8)}  ${line}`);
+    }
+    for (const d of s.stats.derails ?? []) {
+      if (shown.has(d.eventId + d.flag)) continue;
+      shown.add(d.eventId + d.flag);
+      out.print(out.style(`${"".padStart(8)}  ${derailLine(s, d)}`, "yellow"));
+    }
+    // Done once a session.end has come and a poll after it brought nothing (a resume would).
+    if (ended && !fresh.length) break;
+    if (fresh.length) ended = fresh.at(-1)!.kind === "session.end";
+    try {
+      await sleep(FOLLOW_POLL_MS, undefined, { signal });
+    } catch {
+      break; // Ctrl-C
+    }
+    await autoIngest(ctx);
+    s = (await ctx.index.getSession(id)) ?? s;
+    batch = await tail();
+  }
+  out.note(signal.aborted ? "Stopped following" : "Session ended");
+  return 0;
 }

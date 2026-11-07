@@ -1,4 +1,4 @@
-// coding.sh sessions [--agent --repo --since --limit]
+// coding.sh sessions [--agent --repo --since --flag --limit]
 import { resolve } from "node:path";
 import { parseSince, positiveInt } from "../args.ts";
 import { autoIngest, pendingField, readIngest, num, oneLine, sessionJson, str, withContext } from "../common.ts";
@@ -18,6 +18,7 @@ export async function run(c: CommandContext): Promise<number> {
       ...(since !== undefined ? { since } : {}),
       ...(c.flags.subagents === true ? {} : { parentSessionId: null }),
       ...(str(c.flags.project) ? { project: str(c.flags.project)! } : {}),
+      ...(str(c.flags.flag) ? { flag: str(c.flags.flag)! } : {}),
       limit,
     });
     if (out.json) {

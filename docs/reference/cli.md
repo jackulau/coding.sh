@@ -294,11 +294,13 @@ coding.sh sessions [options]
 | `-n, --limit <N>` | `20` | Maximum rows. |
 | `--subagents` |  | Include subagent sessions. |
 | `--project <ID>` |  | Only sessions in this serve project (default: all) |
+| `--flag <NAME>` |  | Only sessions with this flag: looping, failure-streak, churn, no-progress, stalled, context-thrash, premature-completion, …. |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh sessions
 coding.sh sessions --agent codex --since 7d
+coding.sh sessions --flag looping --since 7d
 coding.sh sessions --store postgres://… --project demo
 ```
 
@@ -318,12 +320,18 @@ coding.sh show <SESSION> [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `-n, --limit <N>` | `200` | Maximum rows. |
+| `-n, --limit <N>` |  | List the first N events (default 200; a longer session shows as phases) |
+| `--all` |  | List every event, with phase and day lines and derail markers. |
+| `-f, --follow` |  | Keep printing new events as a running session goes on (Ctrl-C to stop) |
 
 ```sh
 coding.sh show latest
 coding.sh show 9f1c2e
+coding.sh show 9f1c2e --all
+coding.sh show latest --follow
 ```
+
+- A session with more than 200 events shows one line per phase: the start, each resume, compaction and long idle gap, with where it derailed.
 
 ## `coding.sh search`
 
