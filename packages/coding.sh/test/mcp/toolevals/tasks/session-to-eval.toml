@@ -1,0 +1,20 @@
+id = "session-to-eval"
+split = "dev"
+tags = ["eval-authoring", "write"]
+status = "validated"
+instruction = """
+I agree to create it: turn session sess-a into an eval task whose verifier is the command `node test.mjs` and whose only setup command is `true`.
+"""
+reference = ["""node "$MCP_CALL" eval_from_session '{"sessionId":"sess-a","confirm":true,"verifier":"node test.mjs","setup":["true"]}' task.id"""]
+
+[setup]
+# Reference commands are not variable-expanded; they reach the helper through the env.
+env = { MCP_CALL = "${fixtures}/call.mjs" }
+commands = ["node --no-warnings ${fixtures}/seed.ts ${sandbox} ${sandbox}/data ${hidden}/answers.json"]
+
+[[check]]
+kind = "command"
+run = "node --no-warnings ${fixtures}/has-task.ts ${sandbox}/data sess-a 'node test.mjs'"
+
+[expect]
+minTargetCalls = 1

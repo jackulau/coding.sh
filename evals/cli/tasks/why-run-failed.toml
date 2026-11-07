@@ -1,0 +1,20 @@
+id = "why-run-failed"
+split = "dev"
+tags = ["experiments", "diagnosis"]
+# No command prints an experiment's per-run errors yet (`exp list` has counts only).
+# The task stays in the suite so the gap shows up in the scorecard (cli.tasks.blocked).
+status = "blocked"
+blockedBy = "cli-gap: no command shows an experiment's run errors (needs e.g. `coding.sh exp show <id>`)"
+instruction = """
+My most recent experiment failed on every case. Why? Quote the error message.
+"""
+
+reference = []
+
+[[check]]
+kind = "output"
+contains = ["529"]
+regex = "overloaded"
+
+[expect]
+minTargetCalls = 2

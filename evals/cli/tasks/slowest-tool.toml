@@ -1,0 +1,18 @@
+id = "slowest-tool"
+split = "dev"
+tags = ["query", "latency"]
+instruction = """
+Use the coding.sh CLI to find the slowest single tool call in yesterday's agent sessions (yesterday in local time). Reply with the session id and the tool name.
+"""
+
+reference = ['''
+coding.sh sessions --since 3d --limit 500 --subagents --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0));const t=new Date();t.setHours(0,0,0,0);const y=new Date(+t-1);y.setHours(0,0,0,0);for(const s of d.sessions){const a=Date.parse(s.startedAt);if(a>=+y&&a<+t)console.log(s.id)}' > ids.txt
+while read -r id; do coding.sh show "$id" --limit 5000 --json; done < ids.txt | node -e 'let b;for(const l of require("fs").readFileSync(0,"utf8").trim().split("\n")){const d=JSON.parse(l);for(const e of d.events)if(e.kind==="tool.end"&&(!b||(e.durationMs??0)>(b.e.durationMs??0)))b={s:d.session,e}}console.log(b.s.parentSessionId??b.s.id,b.e.payload.tool)'
+''']
+
+[[check]]
+kind = "output"
+contains = ["${answers.slowest.sessionId}", "${answers.slowest.tool}"]
+
+[expect]
+minTargetCalls = 3

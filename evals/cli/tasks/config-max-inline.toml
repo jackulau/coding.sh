@@ -1,0 +1,18 @@
+id = "config-max-inline"
+split = "dev"
+tags = ["config"]
+instruction = """
+What inline payload size limit, in bytes, is coding.sh configured with on this machine? Reply with the number.
+"""
+
+reference = ['''
+coding.sh config get capture.maxInlineBytes
+''']
+
+[[check]]
+kind = "output"
+number = "${answers.config.maxInlineBytes}"
+tolerance = 0
+
+[expect]
+minTargetCalls = 1

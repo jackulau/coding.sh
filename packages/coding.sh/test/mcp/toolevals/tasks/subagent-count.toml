@@ -1,0 +1,21 @@
+id = "subagent-count"
+split = "dev"
+tags = ["subagents"]
+status = "validated"
+instruction = """
+How many subagents did session sess-a spawn, counting nested ones? Reply with just the number.
+"""
+reference = ["""node "$MCP_CALL" subagents '{"sessionId":"sess-a"}' count"""]
+
+[setup]
+# Reference commands are not variable-expanded; they reach the helper through the env.
+env = { MCP_CALL = "${fixtures}/call.mjs" }
+commands = ["node --no-warnings ${fixtures}/seed.ts ${sandbox} ${sandbox}/data ${hidden}/answers.json"]
+
+[[check]]
+kind = "output"
+equals = "${answers.subagentsOfA}"
+normalize = ["trim"]
+
+[expect]
+minTargetCalls = 1

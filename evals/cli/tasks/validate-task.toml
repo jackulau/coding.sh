@@ -1,0 +1,26 @@
+id = "validate-task"
+split = "dev"
+tags = ["eval-authoring", "state"]
+instruction = """
+Check whether the eval task named fix-add is sound: its reference solution should pass and doing nothing should fail. Run that check and tell me whether the task passed it.
+"""
+
+reference = ['''
+id=$(coding.sh eval list --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0));console.log(d.tasks.find(t=>t.name==="fix-add").id)')
+coding.sh eval validate "$id" --k 2 > /dev/null && echo "The task passed validation."
+''']
+
+[[check]]
+kind = "state"
+command = "coding.sh eval list --json"
+jsonPath = "$.tasks"
+where = { name = "fix-add" }
+pick = "status"
+equals = "validated"
+
+[[check]]
+kind = "output"
+regex = "\\b(pass(ed|es)?|valid(ated)?|sound)\\b"
+
+[expect]
+minTargetCalls = 2

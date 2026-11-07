@@ -1,0 +1,17 @@
+id = "sessions-by-agent"
+split = "dev"
+tags = ["query", "json"]
+instruction = """
+How many top-level (not subagent) sessions did each agent run in the last 7 days? Answer with a single JSON object that maps agent id to session count.
+"""
+
+reference = ['''
+coding.sh sessions --since 7d --limit 1000 --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0));const c={};for(const s of d.sessions)c[s.agent]=(c[s.agent]??0)+1;console.log(JSON.stringify(c))'
+''']
+
+[[check]]
+kind = "output"
+json = "${answers.sessionsByAgent7d}"
+
+[expect]
+minTargetCalls = 1

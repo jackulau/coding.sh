@@ -1,0 +1,18 @@
+id = "session-duration"
+split = "dev"
+tags = ["query", "latency"]
+instruction = """
+How long did session ${answers.ids.y2} take from start to end, in seconds?
+"""
+
+reference = ['''
+coding.sh show ${answers.ids.y2} --json | node -e 'console.log(Math.round(JSON.parse(require("fs").readFileSync(0)).session.durationMs/1000))'
+''']
+
+[[check]]
+kind = "output"
+number = "${answers.durationSec.sec}"
+tolerance = 1
+
+[expect]
+minTargetCalls = 1

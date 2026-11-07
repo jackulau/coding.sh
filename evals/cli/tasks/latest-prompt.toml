@@ -1,0 +1,18 @@
+id = "latest-prompt"
+split = "dev"
+tags = ["query"]
+instruction = """
+What did I ask the agent in my most recent session? Quote the request.
+"""
+
+reference = ['''
+coding.sh show latest --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0));console.log(d.events.find(e=>e.kind==="user.message").payload.text)'
+''']
+
+[[check]]
+kind = "output"
+contains = ["calc.mjs"]
+regex = "\\badd\\b"
+
+[expect]
+minTargetCalls = 1

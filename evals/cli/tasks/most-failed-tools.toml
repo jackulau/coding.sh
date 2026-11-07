@@ -1,0 +1,18 @@
+id = "most-failed-tools"
+split = "dev"
+tags = ["query", "failures"]
+instruction = """
+Which session had the most failed tool calls? Reply with its session id.
+"""
+
+reference = ['''
+coding.sh sessions --limit 1000 --subagents --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0));d.sessions.sort((a,b)=>b.stats.toolErrors-a.stats.toolErrors);console.log(d.sessions[0].id)'
+''']
+
+[[check]]
+kind = "output"
+contains = ["${answers.mostFailed.sessionId}"]
+absent = ["${answers.mostFailed.runnerUp}"]
+
+[expect]
+minTargetCalls = 1

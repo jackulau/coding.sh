@@ -1,0 +1,21 @@
+id = "latest-prompt"
+split = "dev"
+tags = ["sessions"]
+status = "validated"
+instruction = """
+What did I ask the agent in my most recent session? Reply with the prompt text only.
+"""
+reference = ["""node "$MCP_CALL" session_get '{"sessionId":"latest"}' session.title"""]
+
+[setup]
+# Reference commands are not variable-expanded; they reach the helper through the env.
+env = { MCP_CALL = "${fixtures}/call.mjs" }
+commands = ["node --no-warnings ${fixtures}/seed.ts ${sandbox} ${sandbox}/data ${hidden}/answers.json"]
+
+[[check]]
+kind = "output"
+equals = "${answers.latestPrompt}"
+normalize = ["trim"]
+
+[expect]
+minTargetCalls = 1

@@ -1,0 +1,18 @@
+id = "metadata-mode"
+split = "dev"
+tags = ["config", "state"]
+instruction = """
+Switch coding.sh to metadata-only capture, so prompt and tool output content is no longer stored.
+"""
+
+reference = ['''
+coding.sh config set capture.mode metadata
+''']
+
+[[check]]
+kind = "state"
+command = "coding.sh config get capture.mode"
+contains = "metadata"
+
+[expect]
+minTargetCalls = 1

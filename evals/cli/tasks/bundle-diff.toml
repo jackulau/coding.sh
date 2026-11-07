@@ -1,0 +1,17 @@
+id = "bundle-diff"
+split = "dev"
+tags = ["harness"]
+instruction = """
+What differs between the harness bundles named base and lean? List the file paths that are in one bundle but not the other, and say which bundle each is in.
+"""
+
+reference = ['''
+coding.sh harness list --json | node -e 'const b=JSON.parse(require("fs").readFileSync(0)).bundles;const f=n=>new Set(b.find(x=>x.name===n).files);const A=f("base"),B=f("lean");for(const p of A)if(!B.has(p))console.log("base only:",p);for(const p of B)if(!A.has(p))console.log("lean only:",p)'
+''']
+
+[[check]]
+kind = "output"
+contains = ["${answers.bundles.onlyBase.0}", "${answers.bundles.onlyBase.1}", "${answers.bundles.onlyLean.0}"]
+
+[expect]
+minTargetCalls = 1

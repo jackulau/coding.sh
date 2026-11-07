@@ -1,0 +1,26 @@
+id = "compare-arms"
+split = "dev"
+tags = ["experiments"]
+instruction = """
+Two experiments named baseline and candidate ran on the dataset arith. Which one is better, and is the difference statistically significant? Answer in one or two sentences.
+"""
+
+reference = ['''
+coding.sh exp list --json > exps.json
+a=$(node -e 'console.log(require("./exps.json").experiments.find(e=>e.name==="baseline").id)')
+b=$(node -e 'console.log(require("./exps.json").experiments.find(e=>e.name==="candidate").id)')
+coding.sh exp compare "$a" "$b" --json | node -e 'const c=JSON.parse(require("fs").readFileSync(0)).comparison;console.log(c.verdict==="better"?"candidate is better, and the difference is statistically significant.":"inconclusive")'
+''']
+
+[[check]]
+kind = "output"
+regex = "candidate"
+leakOk = true
+
+[[check]]
+kind = "output"
+regex = "\\b(significant|yes)\\b"
+absent = ["not significant", "not statistically significant", "insignificant", "inconclusive", "baseline is better"]
+
+[expect]
+minTargetCalls = 2

@@ -1,0 +1,17 @@
+id = "otel-env"
+split = "dev"
+tags = ["config", "otel"]
+instruction = """
+Which environment variables do I set so Claude Code sends its OpenTelemetry data to coding.sh's local collector on the default port? Give each variable name and value.
+"""
+
+reference = ['''
+(timeout 3 coding.sh collector --port 0 || true) | sed -E 's#127\.0\.0\.1:[0-9]+#127.0.0.1:4318#'
+''']
+
+[[check]]
+kind = "output"
+contains = ["OTEL_EXPORTER_OTLP_ENDPOINT", "127.0.0.1:4318", "CLAUDE_CODE_ENABLE_TELEMETRY"]
+
+[expect]
+minTargetCalls = 1

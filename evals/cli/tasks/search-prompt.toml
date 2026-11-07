@@ -1,0 +1,18 @@
+id = "search-prompt"
+split = "dev"
+tags = ["query", "search"]
+instruction = """
+Find the session where I asked about the flaky snapshot test. Reply with its session id.
+"""
+
+reference = ['''
+coding.sh search flaky snapshot --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0));console.log(d.hits[0].sessionId)'
+''']
+
+[[check]]
+kind = "output"
+contains = ["${answers.search.flaky}"]
+absent = ["${answers.search.distractor}"]
+
+[expect]
+minTargetCalls = 1

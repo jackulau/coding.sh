@@ -1,0 +1,18 @@
+id = "repo-sessions"
+split = "dev"
+tags = ["query", "repo"]
+instruction = """
+List the ids of every session that ran in the repository ${answers.repoSessions.repo} since Monday 00:00 local time this week. Reply with the ids.
+"""
+
+reference = ['''
+coding.sh sessions --since 8d --limit 1000 --json | node -e 'const R="${answers.repoSessions.repo}";const m=new Date();m.setHours(0,0,0,0);m.setDate(m.getDate()-((m.getDay()+6)%7));for(const s of JSON.parse(require("fs").readFileSync(0)).sessions){const inRepo=s.repo===R||(s.cwd&&(s.cwd===R||s.cwd.startsWith(R+"/")));if(inRepo&&Date.parse(s.startedAt)>=+m)console.log(s.id)}'
+''']
+
+[[check]]
+kind = "output"
+set = "${answers.repoSessions.ids}"
+absent = "${answers.repoSessions.excluded}"
+
+[expect]
+minTargetCalls = 1

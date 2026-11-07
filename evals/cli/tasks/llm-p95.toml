@@ -1,0 +1,19 @@
+id = "llm-p95"
+split = "dev"
+tags = ["query", "latency", "aggregate"]
+instruction = """
+What was the p95 latency of individual model calls (LLM requests) across all Claude Code sessions in the last 7 days, in milliseconds? Use the nearest-rank p95 over every model call, not an average of per-session values. Reply with just the number.
+"""
+
+reference = ['''
+coding.sh sessions --agent claude-code --since 7d --limit 1000 --subagents --json | node -e 'for(const s of JSON.parse(require("fs").readFileSync(0)).sessions)console.log(s.id)' > ids.txt
+while read -r id; do coding.sh show "$id" --limit 5000 --json; done < ids.txt | node -e 'const v=[];for(const l of require("fs").readFileSync(0,"utf8").trim().split("\n"))for(const e of JSON.parse(l).events)if(e.kind==="llm.call"&&e.durationMs!=null)v.push(e.durationMs);v.sort((a,b)=>a-b);console.log(v[Math.ceil(0.95*v.length)-1])'
+''']
+
+[[check]]
+kind = "output"
+number = "${answers.llmP95ClaudeWeekMs}"
+tolerance = 1
+
+[expect]
+minTargetCalls = 3

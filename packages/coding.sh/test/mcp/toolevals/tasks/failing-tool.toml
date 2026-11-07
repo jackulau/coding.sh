@@ -1,0 +1,21 @@
+id = "failing-tool"
+split = "dev"
+tags = ["failures"]
+status = "validated"
+instruction = """
+Which tool failed most often in my coding-agent sessions over the last week? Reply with just the tool name.
+"""
+reference = ["""node "$MCP_CALL" failures '{}' topToolErrors.0.tool"""]
+
+[setup]
+# Reference commands are not variable-expanded; they reach the helper through the env.
+env = { MCP_CALL = "${fixtures}/call.mjs" }
+commands = ["node --no-warnings ${fixtures}/seed.ts ${sandbox} ${sandbox}/data ${hidden}/answers.json"]
+
+[[check]]
+kind = "output"
+equals = "${answers.failingTool}"
+normalize = ["trim"]
+
+[expect]
+minTargetCalls = 1

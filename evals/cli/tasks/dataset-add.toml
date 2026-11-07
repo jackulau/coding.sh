@@ -1,0 +1,21 @@
+id = "dataset-add"
+split = "dev"
+tags = ["datasets", "state"]
+instruction = """
+Add a case to the dataset smoke with input `ping` and expected output `pong`.
+"""
+
+reference = ['''
+coding.sh dataset add smoke --case '{"input":"ping","expected":"pong"}'
+''']
+
+[[check]]
+kind = "state"
+command = "coding.sh dataset list --json"
+jsonPath = "$.datasets"
+where = { id = "smoke" }
+pick = "cases"
+equals = 2
+
+[expect]
+minTargetCalls = 1

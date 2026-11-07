@@ -32,10 +32,10 @@ __pycache__/
 coverage/
 
 # private: agent harness, personal queue/lessons, research on the owner's own traces
-.claude/
-.codex/
-tasks/
-scripts/traces/
+/.claude/
+/.codex/
+/tasks/
+/scripts/traces/
 docs/research/my-traces.md
 docs/research/rodev-*.md
 docs/research/trace-loop.md

@@ -1,0 +1,21 @@
+id = "codex-cost"
+split = "dev"
+tags = ["usage"]
+status = "validated"
+instruction = """
+How much did my Codex sessions cost in total over the last 7 days, in US dollars? Reply with just the number.
+"""
+reference = ["""node "$MCP_CALL" usage '{"agent":"codex","groupBy":"agent"}' total.costUsd"""]
+
+[setup]
+# Reference commands are not variable-expanded; they reach the helper through the env.
+env = { MCP_CALL = "${fixtures}/call.mjs" }
+commands = ["node --no-warnings ${fixtures}/seed.ts ${sandbox} ${sandbox}/data ${hidden}/answers.json"]
+
+[[check]]
+kind = "output"
+equals = "${answers.codexCostUsd}"
+normalize = ["trim"]
+
+[expect]
+minTargetCalls = 1

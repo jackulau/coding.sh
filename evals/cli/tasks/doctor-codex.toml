@@ -1,0 +1,17 @@
+id = "doctor-codex"
+split = "dev"
+tags = ["diagnosis", "capture"]
+instruction = """
+New Codex sessions are not being captured by coding.sh. Use coding.sh to find out why, and tell me the cause in one sentence.
+"""
+
+reference = ['''
+coding.sh doctor --agent codex --json | node -e 'const a=JSON.parse(require("fs").readFileSync(0)).agents.find(x=>x.id==="codex");console.log(a.hooked?"Codex is hooked.":"Codex is installed but not hooked: coding.sh capture hooks are not installed for it (run coding.sh init --agent codex).")'
+''']
+
+[[check]]
+kind = "output"
+regex = "(not hooked|isn't hooked|unhooked|hooks? (are|is) (not|n't) (installed|set up|configured|registered)|no (coding\\.sh )?(capture )?hooks|hooks? (are |is )?missing|without (capture )?hooks|init --agent codex)"
+
+[expect]
+minTargetCalls = 1

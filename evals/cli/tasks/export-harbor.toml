@@ -1,0 +1,18 @@
+id = "export-harbor"
+split = "dev"
+tags = ["eval-authoring", "state"]
+instruction = """
+Export the eval task named fix-add in Harbor format into the directory ./out under your current working directory.
+"""
+
+reference = ['''
+id=$(coding.sh eval list --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0));console.log(d.tasks.find(t=>t.name==="fix-add").id)')
+coding.sh eval export "$id" --out ./out --format harbor
+''']
+
+[[check]]
+kind = "state"
+exists = ["out/instruction.md", "out/task.toml"]
+
+[expect]
+minTargetCalls = 2

@@ -1,0 +1,21 @@
+id = "llm-p95"
+split = "dev"
+tags = ["latency"]
+status = "validated"
+instruction = """
+What was the p95 latency of individual model calls over the last 7 days, in milliseconds? Reply with just the number.
+"""
+reference = ["""node "$MCP_CALL" latency '{"since":"7d"}' llm.p95Ms"""]
+
+[setup]
+# Reference commands are not variable-expanded; they reach the helper through the env.
+env = { MCP_CALL = "${fixtures}/call.mjs" }
+commands = ["node --no-warnings ${fixtures}/seed.ts ${sandbox} ${sandbox}/data ${hidden}/answers.json"]
+
+[[check]]
+kind = "output"
+equals = "${answers.llmP95Ms}"
+normalize = ["trim"]
+
+[expect]
+minTargetCalls = 1

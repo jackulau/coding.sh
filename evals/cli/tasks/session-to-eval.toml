@@ -1,0 +1,21 @@
+id = "session-to-eval"
+split = "dev"
+tags = ["eval-authoring", "state"]
+instruction = """
+Turn session ${answers.evalSource} into an eval task whose verifier is the command `node test.mjs`.
+"""
+
+reference = ['''
+coding.sh eval new ${answers.evalSource} --verifier 'node test.mjs'
+''']
+
+[[check]]
+kind = "state"
+command = "coding.sh eval list --json"
+jsonPath = "$.tasks"
+where = { sourceSessionId = "${answers.evalSource}" }
+pick = "verifier.command"
+equals = "node test.mjs"
+
+[expect]
+minTargetCalls = 1

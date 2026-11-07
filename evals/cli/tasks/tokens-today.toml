@@ -1,0 +1,18 @@
+id = "tokens-today"
+split = "dev"
+tags = ["query", "usage", "aggregate"]
+instruction = """
+How many output tokens did my agents use in total across sessions that started today (local time)? Reply with the number.
+"""
+
+reference = ['''
+coding.sh sessions --since 2d --limit 1000 --subagents --json | node -e 'const t=new Date();t.setHours(0,0,0,0);let n=0;for(const s of JSON.parse(require("fs").readFileSync(0)).sessions)if(Date.parse(s.startedAt)>=+t)n+=s.stats.usage?.outputTokens??0;console.log(n)'
+''']
+
+[[check]]
+kind = "output"
+number = "${answers.outputTokensToday}"
+tolerance = 0
+
+[expect]
+minTargetCalls = 1

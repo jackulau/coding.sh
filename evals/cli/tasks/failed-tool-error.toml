@@ -1,0 +1,17 @@
+id = "failed-tool-error"
+split = "dev"
+tags = ["query", "failures"]
+instruction = """
+In session ${answers.ids.t1}, what error did the failed tool calls return?
+"""
+
+reference = ['''
+coding.sh show ${answers.ids.t1} --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0));console.log([...new Set(d.events.filter(e=>e.kind==="tool.end"&&e.payload.ok===false).map(e=>e.payload.output))].join("\n"))'
+''']
+
+[[check]]
+kind = "output"
+contains = ["ECONNREFUSED", "5432"]
+
+[expect]
+minTargetCalls = 1

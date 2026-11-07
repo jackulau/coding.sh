@@ -1,0 +1,17 @@
+id = "subagent-types"
+split = "dev"
+tags = ["query", "subagents"]
+instruction = """
+Which subagent types did session ${answers.ids.y3} spawn? List each type once.
+"""
+
+reference = ['''
+coding.sh show ${answers.ids.y3} --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0));console.log([...new Set(d.events.filter(e=>e.kind==="subagent.start").map(e=>e.payload.type))].join(", "))'
+''']
+
+[[check]]
+kind = "output"
+set = "${answers.subagentTypes.types}"
+
+[expect]
+minTargetCalls = 1

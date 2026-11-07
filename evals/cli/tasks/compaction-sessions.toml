@@ -1,0 +1,17 @@
+id = "compaction-sessions"
+split = "dev"
+tags = ["query", "flags"]
+instruction = """
+Which sessions in the last 7 days hit a context compaction? Reply with their session ids.
+"""
+
+reference = ['''
+coding.sh sessions --since 7d --limit 1000 --subagents --json | node -e 'for(const s of JSON.parse(require("fs").readFileSync(0)).sessions)if(s.flags.includes("compaction"))console.log(s.id)'
+''']
+
+[[check]]
+kind = "output"
+set = "${answers.compacted}"
+
+[expect]
+minTargetCalls = 1
