@@ -1,0 +1,57 @@
+packages/coding.sh/test/query/sql.test.ts
+  s_8e040dbdf13565::t_2267efec759818 1-91,94-95,97-145
+  s_8e040dbdf13565::t_8e8541eeca7786 92-93,96
+docs/guides/explore.md
+  s_8e040dbdf13565::t_fe92f32fb45c04 10-11,15-16
+  s_8e040dbdf13565::t_764c0ea329d47c 17
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_4673f495327854 322-368
+packages/coding.sh/test/query/export.test.ts
+  s_8e040dbdf13565::t_37750ecab8fc95 1-109,113-119,121-123,125-127,129-130,132-133
+  s_8e040dbdf13565::t_010cd1501fe10d 110-112,120,124,128,131
+packages/coding.sh/src/query/export.ts
+  s_8e040dbdf13565::t_7041e26408f7e9 1-101
+docs/reference/query.md
+  s_8e040dbdf13565::t_1262f5bd933a87 9
+  s_8e040dbdf13565::t_e7575169b24db6 1-8,10-139
+apps/site/src/pages/docs/storage.astro
+  s_8e040dbdf13565::t_1552ccf7e3558e 89-95
+packages/coding.sh/src/query/sql.ts
+  s_8e040dbdf13565::t_eea70a2c1172cc 184
+  s_8e040dbdf13565::t_d3664921e8d9af 6-8,118-120,123-147,149-150,153-157,160,162-167,171-183,185-191
+  s_8e040dbdf13565::t_38e3b885e12d31 1-5,9-117,121-122,148,151-152,158-159,161,168-170,192-193
+docs/reference/cli.md
+  s_8e040dbdf13565::t_32a9569cfb12e4 47-48,386-447
+  s_8e040dbdf13565::t_9dcf3cfda134ed 448
+packages/coding.sh/src/cli/commands/export.ts
+  s_8e040dbdf13565::t_99b7eac553f86f 1-46
+packages/coding.sh/src/query/csv.ts
+  s_8e040dbdf13565::t_ed02fdb4b89e33 1-17
+CHANGELOG.md
+  s_8e040dbdf13565::t_e7b1bf97e7ad53 62
+packages/coding.sh/src/cli/commands/sql.ts
+  s_8e040dbdf13565::t_f2fa7c8004caee 7,22
+  s_8e040dbdf13565::t_460c278795d3c5 1-6,8-21,23-88
+docs/README.md
+  s_8e040dbdf13565::t_fe92f32fb45c04 61
+packages/coding.sh/test/docs/query-reference.test.ts
+  s_8e040dbdf13565::t_9c64483fda9152 1-34
+packages/coding.sh/test/query/_seed.ts
+  s_8e040dbdf13565::t_05be9ce52328a0 1-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7eedd174f70823ec857261c7ea6c3f12a42d195b",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
