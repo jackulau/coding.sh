@@ -1,0 +1,30 @@
+scripts/e2e/real-capture.mjs
+  s_8e040dbdf13565::t_1017f366987e3a 108-145,295-297,300-315
+packages/coding.sh/test/cli/hookbin.test.ts
+  s_8e040dbdf13565::t_403f8b68df5bc7 21,71-79
+  s_8e040dbdf13565::t_68f0495513240c 80-81
+packages/coding.sh/test/update/command.test.ts
+  s_8e040dbdf13565::t_403f8b68df5bc7 3-5,9,143-166
+  s_8e040dbdf13565::t_2dc9c8b30703ba 167
+packages/coding.sh/src/cli/commands/update.ts
+  s_8e040dbdf13565::t_bcb69d8392d524 14,48,50,92-93
+packages/coding.sh/src/mcp/launch.ts
+  s_8e040dbdf13565::t_0387adca77080f 63-67,69-75,77-84
+  s_8e040dbdf13565::t_3d52f454ab4d5a 52,68,76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e09fc929b5fc8fbd41b97275c938a4c007097173",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
