@@ -150,6 +150,39 @@ rate (ties count half) with a bootstrap CI, a sign test on the decisive cases, a
 `--labels labels.jsonl` (rows of `{"caseId","winner":"a"|"b"|"tie"}`) calibrates it the same way
 as `judge calibrate`: kappa on the test split, with judge ties left out, stored on the judge.
 
+### Checklists and trace checks
+
+An `llm-checklist` grader asks yes/no questions instead of one rating. An item can be `critical`
+(a "no" fails the case) and can name a `check`: a deterministic test of the trace that answers
+without a model. A checklist made only of checks makes no model calls and needs no calibration.
+Checks read the case's trace, which a function task hands over by returning
+`withTrace(output, events)` (the eve task does this for you). With no trace at all, the checks
+below answer N/A.
+
+Four checks grade whether the agent followed its rules, from its actions alone. The paper behind
+them found such checks agreed with human judges 97-98% of the time (Wang et al., arXiv 2610.04832).
+
+| Check | Yes when |
+|---|---|
+| `ran-command` | A shell call ran `args.command` (text) or matched `args.pattern` (regex). With `"ok": true`, that call also succeeded. |
+| `read-path` | A Read/Edit/Write call's path ends with `args.path`, or a shell command names it. |
+| `wrote-identifier` | `args.identifier` is on a `+` line of a file diff or in Write/Edit content. N/A when no diff is inline. |
+| `follows-rules` | Every checkable rule in `args.text` (or the case's `metadata.instructions`, a string or `{path: text}`) was acted on. |
+
+A checkable rule is an imperative line that names a backticked command, flag, path or identifier,
+for example ``Always run `npm test`.`` or ``Never use `git push --force`.`` A required token must
+show up in the trace and a forbidden one must not. `args.only` (`require`, `forbid` or `all`)
+picks which rules to grade, and `args.skipConditional` drops rules with if/when/before/after. When
+those rules fail they are marked "(conditional, low confidence)", because actions alone can't tell
+whether the condition held. The answer is N/A when there are no rules or no tool calls.
+
+```json
+{"kind": "llm-checklist", "name": "rules", "items": [
+  {"id": "tests", "question": "Ran the tests and they passed?", "check": {"name": "ran-command", "args": {"command": "npm test", "ok": true}}},
+  {"id": "claude-md", "question": "Followed CLAUDE.md?", "critical": true, "check": {"name": "follows-rules", "args": {"text": "Always run `npm test`.\nNever use `git push --force`."}}}
+]}
+```
+
 ## Harness A/B
 
 `coding.sh harness snapshot` bundles an agent's harness files (CLAUDE.md, AGENTS.md, skills, hooks,

@@ -10,6 +10,7 @@
 // version, so changing a predicate's behavior means bumping it. Built-ins never
 // hash their source text: bundling (esbuild) would otherwise change judge ids.
 import type { AgentEvent } from "../schema/index.ts";
+import { commandText, directiveOutcome, extractDirectives, inputPaths, pathEndsWith, writtenText, type Directive } from "../core/rules.ts";
 import { commandOf, detectPrematureCompletion, detectRepeatedToolFailure, isVerifyCommand } from "../core/sessions.ts";
 import type { GradeContext, TraceEvent } from "../datasets/types.ts";
 import { asText } from "../graders/builtin.ts";
@@ -90,6 +91,49 @@ function toolNames(args: Readonly<Record<string, unknown>>): string[] {
   const list = typeof t === "string" ? [t] : Array.isArray(t) && t.every((x) => typeof x === "string") ? (t as string[]) : undefined;
   if (!list || !list.length || list.some((x) => !x)) throw new TypeError('predicate "tool-used" needs args.tool: string | string[]');
   return list;
+}
+
+function nonEmpty(args: Readonly<Record<string, unknown>>, key: string, name: string): string {
+  const v = args[key];
+  if (typeof v !== "string" || !v.trim()) throw new TypeError(`predicate "${name}" needs args.${key}: a non-empty string`);
+  return v;
+}
+
+/** ran-command's matcher: args.command (substring) or args.pattern (regex), exactly one. */
+function commandMatcher(args: Readonly<Record<string, unknown>>): (cmd: string) => boolean {
+  const has = (k: string) => args[k] !== undefined;
+  if (has("command") === has("pattern")) throw new TypeError('predicate "ran-command" needs exactly one of args.command (text) or args.pattern (regex)');
+  if (args.ok !== undefined && typeof args.ok !== "boolean") throw new TypeError('predicate "ran-command": args.ok must be a boolean');
+  if (has("command")) {
+    const want = nonEmpty(args, "command", "ran-command").replace(/\s+/g, " ").trim();
+    return (cmd) => cmd.includes(want);
+  }
+  const re = regexArg(args, "pattern") as RegExp;
+  return (cmd) => {
+    re.lastIndex = 0;
+    return re.test(cmd);
+  };
+}
+
+const clip80 = (s: string) => (s.length <= 80 ? s : `${s.slice(0, 79)}…`);
+
+/** follows-rules' directives: args.text (with args.path), else metadata.instructions (a string or path → text). */
+function rulesOf(ctx: PredicateContext, args: Readonly<Record<string, unknown>>): Directive[] {
+  const path = typeof args.path === "string" && args.path ? args.path : "instructions";
+  if (typeof args.text === "string") return extractDirectives(args.text, path);
+  const inst = ctx.metadata?.instructions;
+  if (typeof inst === "string") return extractDirectives(inst, path);
+  if (inst && typeof inst === "object" && !Array.isArray(inst)) {
+    return Object.entries(inst as Record<string, unknown>).flatMap(([p, t]) => (typeof t === "string" ? extractDirectives(t, p) : []));
+  }
+  return [];
+}
+
+function validateRulesArgs(args: Readonly<Record<string, unknown>>): void {
+  if (args.text !== undefined && typeof args.text !== "string") throw new TypeError('predicate "follows-rules": args.text must be a string');
+  if (args.path !== undefined && typeof args.path !== "string") throw new TypeError('predicate "follows-rules": args.path must be a string');
+  if (args.only !== undefined && !["require", "forbid", "all"].includes(args.only as string)) throw new TypeError('predicate "follows-rules": args.only must be "require", "forbid" or "all"');
+  if (args.skipConditional !== undefined && typeof args.skipConditional !== "boolean") throw new TypeError('predicate "follows-rules": args.skipConditional must be a boolean');
 }
 
 export const BUILTIN_PREDICATES: Readonly<Record<string, TracePredicate>> = Object.freeze({
@@ -178,6 +222,81 @@ export const BUILTIN_PREDICATES: Readonly<Record<string, TracePredicate>> = Obje
     },
     test(ctx, args) {
       return (regexArg(args, "pattern") as RegExp).test(asText(ctx.output));
+    },
+  },
+  // Rule compliance from actions alone (arXiv 2610.04832 §5.2.2), for `llm-checklist` items with no model call.
+  "ran-command": {
+    version: "1",
+    description: "A tool call ran a shell command containing args.command (or matching args.pattern); with args.ok, that call also succeeded.",
+    validateArgs(args) {
+      commandMatcher(args);
+    },
+    test(ctx, args) {
+      const match = commandMatcher(args);
+      if (!ctx.trace.length) return { answer: null, explanation: "no trace" };
+      const what = String(args.command ?? `/${String(args.pattern)}/`);
+      const hits = ctx.trace.filter((e) => {
+        const cmd = commandText(e);
+        return cmd !== undefined && match(cmd);
+      });
+      if (!hits.length) return { answer: false, explanation: `never ran ${what}` };
+      if (args.ok !== true) return { answer: true, explanation: `ran ${what} in ${hits[0]!.id}`, eventIds: [hits[0]!.id] };
+      const endOf = (start: TraceEvent) => ctx.trace.find((e) => e.kind === "tool.end" && payload(start).toolUseId !== undefined && payload(e).toolUseId === payload(start).toolUseId);
+      const good = hits.find((h) => {
+        const e = endOf(h);
+        return !!e && payload(e).ok !== false;
+      });
+      if (good) return { answer: true, explanation: `ran ${what} in ${good.id} and it succeeded`, eventIds: [good.id] };
+      const ends = hits.map(endOf).filter((e): e is TraceEvent => !!e);
+      return { answer: false, explanation: `ran ${what} but it never succeeded (${hits.length}x, ${ends.length} with a result)`, eventIds: [...hits, ...ends].map((e) => e.id) };
+    },
+  },
+  "read-path": {
+    version: "1",
+    description: "A tool call read or opened args.path: its file_path/path/notebook_path ends with it, or a shell command names it.",
+    validateArgs(args) {
+      nonEmpty(args, "path", "read-path");
+    },
+    test(ctx, args) {
+      if (!ctx.trace.length) return { answer: null, explanation: "no trace" };
+      const want = args.path as string;
+      const hit = ctx.trace.find((e) => e.kind === "tool.start" && (inputPaths(payload(e).input).some((p) => pathEndsWith(p, want)) || (commandText(e) ?? "").includes(want.replace(/^\.\//, ""))));
+      return hit ? { answer: true, explanation: `opened ${want} in ${hit.id}`, eventIds: [hit.id] } : { answer: false, explanation: `never read ${want}` };
+    },
+  },
+  "wrote-identifier": {
+    version: "1",
+    description: "args.identifier appears in written text: a `+` line of a file.change diff, or the content of a Write/Edit call. N/A when no change carries its text inline.",
+    validateArgs(args) {
+      nonEmpty(args, "identifier", "wrote-identifier");
+    },
+    test(ctx, args) {
+      const want = args.identifier as string;
+      const written = ctx.trace.map((e) => [e, writtenText(e)] as const).filter((x): x is readonly [TraceEvent, string] => x[1] !== undefined);
+      if (!written.length) return { answer: null, explanation: "diffs not inline: no file change carries its text" };
+      const hit = written.find(([, t]) => t.includes(want));
+      return hit ? { answer: true, explanation: `wrote ${want} in ${hit[0].id}`, eventIds: [hit[0].id] } : { answer: false, explanation: `never wrote ${want}` };
+    },
+  },
+  "follows-rules": {
+    version: "1",
+    description:
+      "Every checkable rule (an imperative line naming a backticked command, flag, path or identifier) in args.text or metadata.instructions was acted on: required tokens used, forbidden ones not. N/A with no rules or no tool calls.",
+    validateArgs(args) {
+      validateRulesArgs(args);
+    },
+    test(ctx, args) {
+      const only = (args.only as string | undefined) ?? "all";
+      const rules = rulesOf(ctx, args).filter((d) => (only === "all" || d.polarity === only) && !(args.skipConditional === true && d.conditional));
+      if (!rules.length) return { answer: null, explanation: "no checkable rules" };
+      if (!ctx.trace.some((e) => e.kind === "tool.start")) return { answer: null, explanation: "no tool calls to check the rules against" };
+      const scored = rules.map((d) => ({ d, o: directiveOutcome(d, ctx.trace) })).filter((x) => x.o.acted !== null);
+      const failing = scored.filter((x) => x.o.acted === false);
+      if (!failing.length) {
+        return { answer: true, explanation: `acted on all ${scored.length} rule(s)`, eventIds: [...new Set(scored.flatMap((x) => x.o.eventIds))] };
+      }
+      const lines = failing.map(({ d }) => `${d.id} ${d.polarity === "forbid" ? "broke" : "skipped"} "${clip80(d.text)}"${d.conditional ? " (conditional, low confidence)" : ""}`);
+      return { answer: false, explanation: `${failing.length} of ${scored.length} rule(s) not followed: ${lines.join("; ")}`, eventIds: [...new Set(failing.flatMap((x) => x.o.eventIds))] };
     },
   },
 } satisfies Record<string, TracePredicate>);
