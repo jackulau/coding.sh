@@ -221,6 +221,12 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.deepEqual(await ids({ flag: "compaction" }), ["a"]);
       assert.deepEqual(await ids({ parentSessionId: "a" }), ["b"]);
       assert.deepEqual(await ids({ parentSessionId: null }), ["c", "a"]);
+      if (s.childCounts) {
+        const counts = await s.childCounts(["a", "b", "c"]);
+        assert.deepEqual([counts.a ?? 0, counts.b ?? 0, counts.c ?? 0], [1, 0, 0]);
+        assert.deepEqual(await s.childCounts([]), {});
+        assert.equal((await s.childCounts(["a"], { project: "elsewhere" })).a ?? 0, 0, "only children in the project");
+      }
       assert.deepEqual(await ids({ since: 2 }), ["c", "b"]);
       assert.deepEqual(await ids({ until: 2 }), ["a"]);
       assert.deepEqual(await ids({ limit: 1, offset: 1 }), ["b"]);

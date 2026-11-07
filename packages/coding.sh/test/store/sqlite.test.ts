@@ -194,6 +194,44 @@ describe("SqliteIndexStore", () => {
     check.close();
   });
 
+  it("migrating to v7 fills stats.llmErrors for sessions stored before it", async () => {
+    const path = join(root, "v6-llm-errors.db");
+    const { DatabaseSync } = await loadSqlite();
+    const db = new DatabaseSync(path);
+    db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
+    for (const m of MIGRATIONS.filter((m) => m.version <= 6)) {
+      db.exec(m.sql);
+      m.after?.(db);
+      db.prepare("INSERT INTO migrations (version, applied_at) VALUES (?, 0)").run(m.version);
+    }
+    const stats = JSON.stringify({ events: 3, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0, latency: { llmCalls: 3 } });
+    for (const id of ["api", "ok"]) db.prepare("INSERT INTO sessions (id, agent, started_at, stats) VALUES (?, 'sdk-app', 1, ?)").run(id, stats);
+    const insert = db.prepare("INSERT INTO events (id, session_id, ts, agent, kind, payload) VALUES (?, ?, ?, 'sdk-app', 'llm.call', ?)");
+    insert.run("a3", "api", 3, JSON.stringify({ ok: false, error: "socket hang up" }));
+    insert.run("a1", "api", 1, JSON.stringify({ ok: true, statusCode: 200 }));
+    insert.run("a2", "api", 2, JSON.stringify({ ok: false, statusCode: 429, error: "429 Rate limit reached" }));
+    insert.run("o1", "ok", 1, JSON.stringify({ ok: true, statusCode: "500" }));
+    db.close();
+
+    const s = await SqliteIndexStore.open(path);
+    assert.deepEqual((await s.getSession("api"))?.stats.llmErrors, { count: 2, statusCode: 429, error: "429 Rate limit reached" });
+    assert.equal((await s.getSession("ok"))?.stats.llmErrors, undefined);
+    assert.equal((await s.getSession("ok"))?.stats.latency?.llmCalls, 3, "the rest of stats is kept");
+    await s.close();
+  });
+
+  it("childCounts counts each parent's subagents in one query", async () => {
+    const s = await SqliteIndexStore.open(":memory:");
+    const row = (id: string, parent?: string, project?: string) => ({
+      id, agent: "claude-code", startedAt: 1, flags: [], stats: { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 },
+      ...(parent ? { parent: { sessionId: parent } } : {}), ...(project ? { project } : {}),
+    });
+    for (const r of [row("p"), row("q"), row("c1", "p"), row("c2", "p"), row("c3", "q", "team")]) await s.upsertSession(r);
+    assert.deepEqual(await s.childCounts(["p", "q", "none"]), { p: 2, q: 1 });
+    assert.deepEqual(await s.childCounts(["p", "q"], { project: "team" }), { q: 1 });
+    await s.close();
+  });
+
   it("retention keeps a resumed session and a session that never ended while they are active", async () => {
     const { rebuildSessions } = await import("../../src/otel/receiver.ts");
     const s = await SqliteIndexStore.open(":memory:");

@@ -8,8 +8,9 @@ import { runBench } from "../../src/bench/run.ts";
 import { runsDir } from "../../src/bench/store.ts";
 import { benchmarkDir, BLOB_CAP_BYTES, MAX_BODY_BYTES, startViewer, type Viewer } from "../../src/viewer/server.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
+import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { cleanup as benchCleanup, day, project } from "../bench/helpers.ts";
-import { FakeBlobs, FakeIndex, event, experimentResult, session } from "./fakes.ts";
+import { FakeBlobs, FakeIndex, event, experimentResult, failedRequestFixtures, session } from "./fakes.ts";
 
 interface Res {
   status: number;
@@ -372,6 +373,62 @@ describe("viewer server: subagent sessions", () => {
     assert.deepEqual(top.byAgent, { "claude-code": 1, codex: 1 });
     assert.deepEqual(top.byRepo, { "/work/api": 1, "/work/web": 1 });
     assert.equal(top.toolCalls, all.toolCalls, "tool totals still cover every session");
+  });
+});
+
+// Regression: API sessions with a failed request lost their red mark in the list.
+// The list reads stats.llmErrors from the session row (computed at ingest), and a
+// page costs the same store calls whatever its length (no per-row lookups).
+describe("viewer server: failed requests and list query count", () => {
+  let index: SqliteIndexStore;
+  let v: Viewer;
+  const calls: string[] = [];
+  before(async () => {
+    index = await SqliteIndexStore.open(":memory:");
+    const { sessions, events } = failedRequestFixtures(1_700_000_500_000);
+    await index.putEvents(events);
+    for (const s of sessions) await index.upsertSession(s);
+    for (let i = 0; i < 30; i++) {
+      await index.upsertSession(session(`top${i}`, { startedAt: 1_700_000_000_000 + i * 1000 }));
+      await index.upsertSession(session(`top${i}:sub`, { startedAt: 1_700_000_000_000 + i * 1000 + 1, parent: { sessionId: `top${i}` } }));
+    }
+    // Every store method call made while serving a request.
+    const counted = new Proxy(index, {
+      get(target, key, recv) {
+        const val = Reflect.get(target, key, recv);
+        return typeof val === "function" ? (...args: unknown[]) => (calls.push(String(key)), val.apply(target, args)) : val;
+      },
+    });
+    v = await startViewer({ index: counted, blobs: new FakeBlobs(), port: 0 });
+  });
+  after(async () => {
+    await v.close();
+    await index.close();
+  });
+
+  test("API rows carry stats.llmErrors: count, first status and message", async () => {
+    const items = (await req(v, "/api/sessions?limit=500")).json().items;
+    const failed = items.find((s: any) => s.id === "api-429");
+    assert.deepEqual(failed.stats.llmErrors, { count: 1, statusCode: 429, error: "429 Rate limit reached for gpt-5-mini on tokens per min" });
+    assert.equal(items.find((s: any) => s.id === "api-ok").stats.llmErrors, undefined);
+  });
+
+  test("the list makes as many store calls for 40 rows as for 2", async () => {
+    const count = async (path: string) => {
+      calls.length = 0;
+      const body = (await req(v, path)).json();
+      return { rows: body.items.length, calls: [...calls] };
+    };
+    for (const scope of ["", "&scope=top"]) {
+      const small = await count(`/api/sessions?limit=2${scope}`);
+      const big = await count(`/api/sessions?limit=40${scope}`);
+      assert.equal(small.rows, 2);
+      assert.ok(big.rows > 30, `${big.rows} rows`);
+      assert.deepEqual(big.calls, small.calls, `scope${scope || "=all"}: ${big.calls.join(", ")}`);
+    }
+    const top = (await req(v, "/api/sessions?limit=40&scope=top")).json().items;
+    assert.equal(top.find((s: any) => s.id === "top3").childCount, 1);
+    assert.equal(top.find((s: any) => s.id === "api-429").childCount, 0);
   });
 });
 

@@ -316,6 +316,36 @@ ALTER TABLE sessions ADD COLUMN parse_version INTEGER;
 UPDATE sessions SET parse_version = 1;
 `,
   },
+  {
+    // Session.stats.llmErrors: failed model calls (ok false, or HTTP status 400+),
+    // which buildSession now counts. Filled in once for sessions stored before,
+    // so the session list reads it from the row. Written out (not buildSession's
+    // helpers) so this migration never changes.
+    version: 7,
+    sql: "-- stats.llmErrors is filled in by after()",
+    after: (db) => {
+      const failed = db.prepare(`SELECT session_id, payload FROM events WHERE kind = 'llm.call'
+        AND (json_type(payload, '$.ok') = 'false'
+          OR (json_type(payload, '$.statusCode') IN ('integer', 'real') AND json_extract(payload, '$.statusCode') >= 400))
+        ORDER BY session_id, ts, rowid`).all() as Row[];
+      const bySession = new Map<string, { count: number; statusCode?: number; error?: string }>();
+      for (const r of failed) {
+        const id = String(r.session_id);
+        const prev = bySession.get(id);
+        if (prev) {
+          prev.count++;
+          continue;
+        }
+        const p = JSON.parse(String(r.payload)) as Record<string, unknown>;
+        const first: { count: number; statusCode?: number; error?: string } = { count: 1 };
+        if (typeof p.statusCode === "number") first.statusCode = p.statusCode;
+        if (typeof p.error === "string" && p.error) first.error = p.error.slice(0, 300);
+        bySession.set(id, first);
+      }
+      const update = db.prepare("UPDATE sessions SET stats = json_set(stats, '$.llmErrors', json(?)) WHERE id = ?");
+      for (const [id, errors] of bySession) update.run(JSON.stringify(errors), id);
+    },
+  },
 ];
 
 export const SQLITE_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
@@ -656,6 +686,16 @@ export class SqliteIndexStore implements IndexStore {
     // A range on the primary key: every id with this prefix sorts in [prefix, prefix + U+10FFFF).
     const rows = this.stmt("SELECT id FROM sessions WHERE id >= ? AND id < ? ORDER BY id LIMIT ?").all(prefix, `${prefix}\u{10FFFF}`, limit) as Row[];
     return rows.map((r) => String(r.id)).filter((id) => id.startsWith(prefix));
+  }
+
+  async childCounts(parentIds: string[], opts: { project?: string } = {}): Promise<Record<string, number>> {
+    if (!parentIds.length) return {};
+    const params: string[] = [JSON.stringify(parentIds)];
+    let sql = "SELECT parent_session_id AS p, COUNT(*) AS n FROM sessions WHERE parent_session_id IN (SELECT value FROM json_each(?))";
+    if (opts.project !== undefined) sql += " AND project_id = ?", params.push(opts.project);
+    const out: Record<string, number> = {};
+    for (const r of this.db.prepare(`${sql} GROUP BY parent_session_id`).all(...params) as Row[]) out[String(r.p)] = num(r.n) ?? 0;
+    return out;
   }
 
   async listSessions(f: SessionFilter = {}): Promise<Session[]> {

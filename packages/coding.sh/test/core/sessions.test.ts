@@ -23,6 +23,22 @@ const bash = (command: string, ok: boolean, id = `tu${t + 1}`) => [
 ];
 
 describe("buildSession", () => {
+  it("counts failed model calls and keeps the first one's status and message", () => {
+    const events = [
+      ev("llm.call", { ok: true, statusCode: 200 }),
+      ev("llm.call", { ok: false, statusCode: 429, error: "429 Rate limit reached " + "x".repeat(400) }),
+      ev("llm.call", { statusCode: 500 }),
+      ev("llm.call", { ok: false, error: "socket hang up" }),
+      ev("llm.call", { ok: true, statusCode: "503" }),
+    ];
+    const s = buildSession(events);
+    assert.equal(s.stats.llmErrors?.count, 3);
+    assert.equal(s.stats.llmErrors?.statusCode, 429);
+    assert.equal(s.stats.llmErrors?.error?.length, 300);
+    assert.match(s.stats.llmErrors!.error!, /^429 Rate limit reached/);
+    assert.equal(buildSession([ev("llm.call", { ok: true })]).stats.llmErrors, undefined, "unset when none failed");
+  });
+
   it("folds stats, usage, title, files, tests and end time", () => {
     const long = "Please   fix\nthe bug " + "x".repeat(400);
     const events = [

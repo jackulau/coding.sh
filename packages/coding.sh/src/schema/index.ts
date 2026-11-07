@@ -82,6 +82,15 @@ export interface DuplicateUsage {
   costUsd?: number;
 }
 
+/** Session.stats.llmErrors: how many model calls failed, and why the first one did. */
+export interface LlmErrors {
+  count: number;
+  /** HTTP status of the first failed call, when it had one. */
+  statusCode?: number;
+  /** The first failed call's error message, up to 300 characters. */
+  error?: string;
+}
+
 export interface AgentEvent {
   /** Deterministic: sha256(agent, sessionId, source line/offset). Re-ingest is idempotent. */
   id: string;
@@ -194,6 +203,8 @@ export interface Session {
     /** Model-call usage left out of `usage` because an enclosing call or an earlier copy of the same response already counted it. */
     duplicateUsage?: DuplicateUsage;
     latency?: LatencyStats;
+    /** Failed model calls: llm.call with `ok: false` or an HTTP status of 400 or more. Unset when none failed. */
+    llmErrors?: LlmErrors;
   };
   /** Detected failure patterns, e.g. "premature-completion". */
   flags: string[];

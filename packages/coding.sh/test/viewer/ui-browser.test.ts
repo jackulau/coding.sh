@@ -11,7 +11,7 @@ import type { AgentEvent, SessionFilter } from "../../src/core/types.ts";
 import { startViewer, type Viewer } from "../../src/viewer/server.ts";
 import { cleanup as benchCleanup, day, project } from "../bench/helpers.ts";
 import { findChrome, launchBrowser, type Browser, type Page } from "./browser.ts";
-import { FakeBlobs, FakeIndex, costFixtures, event, experimentResult, session } from "./fakes.ts";
+import { FakeBlobs, FakeIndex, costFixtures, event, experimentResult, failedRequestFixtures, session } from "./fakes.ts";
 
 const chrome = findChrome();
 const T0 = 1_762_400_000_000;
@@ -972,6 +972,91 @@ describe("viewer UI: cost marks", { skip: chrome ? false : "no Chrome/Chromium f
         assert.equal(m.cost, "cost~$0.42", "the phone header keeps the cost without More details");
         assert.ok(m.costRight <= w && m.callCost <= w, `cost ends on screen (header ${m.costRight}px, call ${m.callCost}px)`);
         assert.equal(m.step, 44, "step rows stay 44px");
+      } finally {
+        await page.close();
+      }
+    });
+  }
+});
+
+describe("viewer UI: failed requests and the top bar", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
+  const index = new FakeIndex();
+  let v: Viewer;
+  let browser: Browser;
+
+  before(async () => {
+    const { sessions, events } = failedRequestFixtures(T0);
+    for (const s of sessions) await index.upsertSession(s);
+    await index.putEvents(events);
+    v = await startViewer({ index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any });
+    browser = await launchBrowser(chrome!);
+  });
+  after(async () => {
+    await browser?.close();
+    await v?.close();
+  });
+  async function open(width: number, mobile = false): Promise<Page> {
+    const page = await browser.newPage();
+    await page.viewport(width, 800, mobile);
+    await page.goto(v.url);
+    await page.waitFor("document.querySelector('[role=listbox]')", "sessions list");
+    return page;
+  }
+
+  // Regression: API sessions with a failed request lost their red mark in the list.
+  for (const [w, mobile] of [[1280, false], [390, true]] as const) {
+    test(`at ${w}px an API row with a failed request is red and says why`, async () => {
+      const page = await open(w, mobile);
+      try {
+        const row = (title: string) => `(() => {
+          const r = [...document.querySelectorAll('[role=option]')].find((r) => r.querySelector('.row-title').textContent === ${JSON.stringify(title)});
+          const ink = document.createElement('span');
+          ink.style.color = 'var(--fail-ink)';
+          document.body.append(ink);
+          const fail = getComputedStyle(ink).color;
+          ink.remove();
+          const b = r.querySelector('.badge.fail');
+          return { dot: r.querySelector('.dot').className,
+            badge: b && [b.textContent, b.title, getComputedStyle(b).color === fail, b.getBoundingClientRect().right <= innerWidth] };
+        })()`;
+        const failed = await page.eval(row("POST /api/triage (rate limited)"));
+        assert.equal(failed.dot, "dot tone-fail ring");
+        assert.deepEqual(failed.badge, ["1 failed request (429)", "First failure: 429 Rate limit reached for gpt-5-mini on tokens per min", true, true]);
+        assert.deepEqual(await page.eval(row("POST /api/triage")), { dot: "dot tone-muted", badge: null });
+      } finally {
+        await page.close();
+      }
+    });
+  }
+
+  // Regression: between 641 and 700px the bar ran out of room and squeezed the theme button to 16px.
+  for (const w of [320, 360, 390, 641, 700, 768, 1024]) {
+    test(`at ${w}px the top bar fits with 44px targets, pills shown or not`, async () => {
+      const page = await open(w, w <= 640);
+      try {
+        const measure = `(() => {
+          const hit = (el) => { const r = el.getBoundingClientRect(), b = getComputedStyle(el, "::before"), px = (v) => parseFloat(v) || 0;
+            return b.content !== "none" && b.position === "absolute" ? [r.width - px(b.left) - px(b.right), r.height - px(b.top) - px(b.bottom)] : [r.width, r.height]; };
+          const ctl = [...document.querySelectorAll('.topbar a, .topbar button:not([hidden])')].filter((e) => e.getClientRects().length);
+          const theme = document.querySelector('#theme');
+          const r = theme.getBoundingClientRect();
+          return { sw: document.documentElement.scrollWidth, vw: innerWidth, theme: r.width, themeHitRight: r.right + (hit(theme)[0] - r.width) / 2,
+            small: ctl.map((e) => [e.id || e.textContent.trim(), ...hit(e).map(Math.round)]).filter(([, a, b]) => a < 44 || b < 44) };
+        })()`;
+        for (const pills of [false, true]) {
+          if (pills) {
+            await page.eval(`(() => {
+              const u = document.querySelector('#update'); u.querySelector('.ver').textContent = 'v0.1.3'; u.hidden = false;
+              const i = document.querySelector('#indexing'); i.innerHTML = '<span class="dot">●</span><span>Indexing 1,234 files…</span>'; i.hidden = false;
+            })()`);
+          }
+          const m = await page.eval(measure);
+          const what = pills ? " (update and indexing pills shown)" : "";
+          assert.ok(m.sw <= w && m.vw === w, `page is ${m.sw}px wide (layout ${m.vw}px) on a ${w}px screen${what}`);
+          assert.equal(m.theme, 30, `the theme button keeps its 30px box${what}`);
+          assert.ok(m.themeHitRight <= w, `the theme button's hit area ends at ${m.themeHitRight}px${what}`);
+          assert.deepEqual(m.small, [], `every top bar control has a 44px hit area${what}`);
+        }
       } finally {
         await page.close();
       }

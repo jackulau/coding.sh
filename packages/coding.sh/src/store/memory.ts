@@ -178,6 +178,17 @@ export class MemoryIndexStore implements IndexStore {
     return [...this.sessions.keys()].filter((id) => id.startsWith(prefix)).sort().slice(0, limit);
   }
 
+  async childCounts(parentIds: string[], opts: { project?: string } = {}): Promise<Record<string, number>> {
+    const want = new Set(parentIds);
+    const out: Record<string, number> = {};
+    for (const s of this.sessions.values()) {
+      const p = s.parent?.sessionId;
+      if (p === undefined || !want.has(p) || (opts.project !== undefined && projectOf(s) !== opts.project)) continue;
+      out[p] = (out[p] ?? 0) + 1;
+    }
+    return out;
+  }
+
   async listSessions(f: SessionFilter = {}): Promise<Session[]> {
     const rows = [...this.sessions.values()]
       .filter((s) =>

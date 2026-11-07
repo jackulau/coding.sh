@@ -752,11 +752,18 @@ function scopeParam(q: URLSearchParams): "top" | "all" {
   return scope;
 }
 
-/** Every list row carries `childCount`: how many subagent sessions name it as their parent. */
+/**
+ * Every list row carries `childCount`: how many subagent sessions name it as
+ * their parent. One grouped query for the page (store.childCounts); stores
+ * without it fall back to one listSessions per row.
+ */
 async function withChildCounts(index: IndexStore, rows: Session[], project?: string): Promise<(Session & { childCount: number })[]> {
-  return Promise.all(
-    rows.map(async (s) => ({ ...s, childCount: (await index.listSessions({ parentSessionId: s.id, limit: 10_000, ...(project ? { project } : {}) })).length })),
-  );
+  if (!rows.length) return [];
+  const opts = project ? { project } : {};
+  const counts: Record<string, number> = index.childCounts
+    ? await index.childCounts(rows.map((s) => s.id), opts)
+    : Object.fromEntries(await Promise.all(rows.map(async (s) => [s.id, (await index.listSessions({ parentSessionId: s.id, limit: 10_000, ...opts })).length] as const)));
+  return rows.map((s) => ({ ...s, childCount: counts[s.id] ?? 0 }));
 }
 
 /**

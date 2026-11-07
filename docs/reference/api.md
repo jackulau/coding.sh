@@ -432,7 +432,9 @@ curl -sS "$CSH/api/sessions/team%2Fchat-1" -H "Authorization: Bearer $READ_KEY"
 times list price; `estimatedCostUsd` is the part that was estimated (here all of it). Each estimated
 `llm.call` has `payload.costEstimated: true`, plus `payload.pricedAs` when a sibling model's price was
 used. `stats.duplicateUsage` (`calls`, `tokens`, `costUsd`) is model-call usage left out because an
-enclosing call or an earlier copy of the same response already counted it.
+enclosing call or an earlier copy of the same response already counted it. `stats.llmErrors`
+(`count`, plus the first failure's `statusCode` and `error`) counts `llm.call` events with
+`ok: false` or a status of 400 or more; it is absent when none failed.
 
 A missing session, or one outside a scoped key's project, gets 404:
 

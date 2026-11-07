@@ -1,6 +1,7 @@
 // Minimal in-memory IndexStore / BlobStore for viewer tests. Kept local so the
 // viewer tests don't depend on the store builder's implementation.
 import { createHash } from "node:crypto";
+import { buildSession } from "../../src/core/sessions.ts";
 import type {
   AgentEvent,
   BlobRef,
@@ -245,4 +246,28 @@ export function costFixtures(t0: number): { sessions: Session[]; events: AgentEv
     e(4, { kind: "llm.call", model: "kimi-k3", durationMs: 900, usage: { inputTokens: 3_000, outputTokens: 300 }, payload: { ok: true, responseModel: "kimi-k3" } }),
   ];
   return { sessions, events };
+}
+
+/**
+ * API (SDK) sessions as ingest builds them: one whose second request was
+ * rate-limited (429), and one whose requests all succeeded.
+ */
+export function failedRequestFixtures(t0: number): { sessions: Session[]; events: AgentEvent[] } {
+  const call = (sessionId: string, n: number, payload: Record<string, unknown>): AgentEvent => ({
+    ...event(sessionId, n), agent: "openai-agents", source: "sdk", ts: t0 + n * 1000, kind: "llm.call", model: "gpt-5-mini", durationMs: 800,
+    usage: { inputTokens: 1_200, outputTokens: 80 }, payload: { responseModel: "gpt-5-mini", ...payload },
+  });
+  const failed = [
+    call("api-429", 1, { ok: true, statusCode: 200 }),
+    call("api-429", 2, { ok: false, statusCode: 429, error: "429 Rate limit reached for gpt-5-mini on tokens per min" }),
+    call("api-429", 3, { ok: true, statusCode: 200 }),
+  ];
+  const fine = [call("api-ok", 4, { ok: true, statusCode: 200 }), call("api-ok", 5, { ok: true, statusCode: 200 })];
+  return {
+    sessions: [
+      { ...buildSession(failed), title: "POST /api/triage (rate limited)" },
+      { ...buildSession(fine), title: "POST /api/triage" },
+    ],
+    events: [...failed, ...fine],
+  };
 }

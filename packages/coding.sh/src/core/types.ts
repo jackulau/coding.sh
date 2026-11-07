@@ -144,6 +144,12 @@ export interface IndexStore {
   /** Up to `limit` session ids starting with `prefix`, sorted (`coding.sh show <prefix>`, like a git short hash). */
   sessionIdsByPrefix?(prefix: string, limit: number): Promise<string[]>;
   /**
+   * How many sessions name each of `parentIds` as their parent (only in one
+   * project when given), in one query. Ids with no children may be left out.
+   * The viewer's session list uses it; without it, one listSessions per row.
+   */
+  childCounts?(parentIds: string[], opts?: { project?: string }): Promise<Record<string, number>>;
+  /**
    * The single-writer lock `coding.sh serve` holds while it ingests. Resolves
    * undefined when another process holds it (after waiting up to waitMs, default 0).
    */

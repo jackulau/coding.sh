@@ -2,7 +2,7 @@
 // session's full event list, so re-running them after every ingest is exact
 // (no incremental state to drift).
 import { GATEWAY_FLAG, gatewayFlags } from "../integrations/gateway/ids.ts";
-import type { AgentEvent, DuplicateUsage, LatencyStats, Session, Usage } from "../schema/index.ts";
+import type { AgentEvent, DuplicateUsage, LatencyStats, LlmErrors, Session, Usage } from "../schema/index.ts";
 
 export const FLAGS = {
   prematureCompletion: "premature-completion",
@@ -310,6 +310,7 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   let idlessStarts = 0;
   let idlessEnds = 0;
   let toolErrors = 0;
+  let llmErrors: LlmErrors | undefined;
   let lastActivity: number | undefined;
   let lastTest: { passed: number; failed: number } | undefined;
   let title: string | undefined;
@@ -380,6 +381,9 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
         if (e.kind === "tool.end" && e.payload.ok === false) toolErrors++;
         break;
       }
+      case "llm.call":
+        if (llmCallFailed(e.payload)) llmErrors = addLlmError(llmErrors, e.payload);
+        break;
       case "file.change":
         if (typeof e.payload.path === "string") files.add(e.payload.path);
         break;
@@ -420,6 +424,7 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   }
   if (Object.keys(usage).length) session.stats.usage = usage;
   if (duplicate) session.stats.duplicateUsage = duplicate;
+  if (llmErrors) session.stats.llmErrors = llmErrors;
   const latency = latencyStats(sorted, endedAt);
   if (Object.keys(latency).length) session.stats.latency = latency;
   const set = <K extends keyof Session>(k: K, v: Session[K] | undefined) => {
@@ -450,6 +455,20 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   if (project && project !== "default") session.project = project;
   set("parseVersion", prev?.parseVersion);
   return session;
+}
+
+/** A model call that failed: `ok: false`, or an HTTP status of 400 or more. */
+export function llmCallFailed(payload: Record<string, unknown>): boolean {
+  return payload.ok === false || (typeof payload.statusCode === "number" && payload.statusCode >= 400);
+}
+
+/** Counts one failed call (sessions are built in time order, so the first one keeps its status and message). */
+export function addLlmError(prev: LlmErrors | undefined, payload: Record<string, unknown>): LlmErrors {
+  if (prev) return { ...prev, count: prev.count + 1 };
+  const out: LlmErrors = { count: 1 };
+  if (typeof payload.statusCode === "number") out.statusCode = payload.statusCode;
+  if (typeof payload.error === "string" && payload.error) out.error = payload.error.slice(0, 300);
+  return out;
 }
 
 /**
