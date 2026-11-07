@@ -37,7 +37,7 @@ One Node process with one port (default **4318**, so an `OTEL_EXPORTER_OTLP_ENDP
 | `GET /`, `/api/*` | read key or basic auth | The existing viewer and its API. Adds `GET /api/projects` and a `?project=` filter on list/search/stats. |
 | `GET /healthz` | none | 200 `{"ok":true}` while the process is up. It never touches the store. |
 | `GET /readyz` | none | 200 when the store pings, migrations are done, this replica holds the writer lock (or runs `--role viewer`), the queue is under 90% and the server is not shutting down. Otherwise 503. The body is `{ok, store, writer, role, queue:{events,max}, insecure, reason?}` (`reason` says why it is 503) and contains no secrets. |
-| `GET /metrics` | read key or basic auth | Prometheus text format (§1.7). |
+| `GET /metrics` | `*` read key or basic auth | Prometheus text format (§1.7). A project-scoped read key gets 403. |
 
 **CLI**
 
@@ -98,6 +98,9 @@ pushed into the production DB. An explicit `coding.sh ingest --store …` still 
     which is the existing mechanism.
   - Basic auth also works.
   - A project-scoped read key only sees its project: lists are filtered, and other sessions return 404.
+  - `/metrics` needs a `*` read key or basic auth. Its labels name every project, so a scoped key gets 403.
+  - Labels record who set them as `by`: the basic-auth user, the read key's configured `name`, or
+    `reader:<first 12 hex of the key's sha256>`. Never the key itself.
   - Ingest keys cannot read, and read keys cannot ingest.
   - Blobs are shared and content-addressed, so a scoped key that already knows another project's
     blob sha256 can fetch that blob. This is documented, not fixed.
@@ -106,8 +109,10 @@ pushed into the production DB. An explicit `coding.sh ingest --store …` still 
   names the env vars and `--insecure`. On loopback with no keys, ingest is open to project `default`
   (single-user mode, J4). `--insecure` logs a warning at start and sets `insecure: true` in `/readyz`.
 - Serve speaks plain HTTP. TLS is terminated by the platform or a proxy.
-- CORS is closed by default. `serve.cors_origins` opens it for browser viewers. Never ship ingest keys
-  to browsers.
+- CORS is closed by default. `serve.cors_origins` opens the ingest routes (`/v1/ingest` with its
+  `OPTIONS` preflight, and OTLP) to the listed browser origins; any other `Origin` gets 403. The viewer
+  and `/api/*` stay same-origin. Browser ingest needs a key in the page, so give it a dedicated
+  project's ingest key and treat that project's data as untrusted.
 
 ### 1.3 Projects
 
@@ -119,6 +124,9 @@ pushed into the production DB. An explicit `coding.sh ingest --store …` still 
 - **Session ids are namespaced at ingest** for any project other than `default`, as
   `<project>/<sessionId>`. The same applies to `payload.parentSessionId` and `childSessionId`.
   Two apps that both use conversation id `chat-1` stay apart, and the `IndexStore` keys stay unchanged.
+  A `default`-project session id that contains `/` is stored as `default/<sessionId>`, so a default key
+  can never write into another project's `<project>/…` namespace. `default` is reserved, so no other
+  project owns that prefix.
   Helpers: `scopeEvents(events, project)` and `scopeSessionId` in `src/server/project.ts`.
 - Native-ingest event ids are stored as `hashParts("sdk", project, clientId)`, and `parentId` gets the
   same transform. Projects cannot collide, and a retry still maps to the same id. OTLP ids already
@@ -192,8 +200,9 @@ In serve, an `llm.call` that has tokens but no `costUsd` gets
 ### 1.6 Retention
 
 - Retention runs at start and then hourly, for each project with `retention_days > 0`. It calls
-  `index.deleteBefore(now − days, {project})`, which deletes sessions whose
-  `coalesce(ended_at, started_at)` is before the cutoff, together with their events and labels.
+  `index.deleteBefore(now − days, {project})`, which deletes sessions whose last activity (the
+  latest of their end, their start and every event's end) is before the cutoff, together with
+  their events and labels. A resumed or still-running session is never deleted while it is active.
 - Tasks, datasets, experiments and judges are eval assets and are never deleted by retention.
 - A daily `gc` (the existing mark-and-sweep) removes unreferenced blobs.
 
@@ -229,6 +238,8 @@ There is one summary line per minute (events in/out, throttled, queue depth).
 
 ## 2. Native ingest API
 
+The full reference for every route, with examples and errors, is [reference/api.md](reference/api.md).
+
 ```
 POST /v1/ingest
 Authorization: Bearer csh_ik_…
@@ -258,9 +269,14 @@ strings that go into text columns.
 | Status | Body |
 |---|---|
 | 200 | `{"accepted":n,"inserted":k,"rejected":[{"index":i,"error":"…"}]}` (committed). A tick makes one `putEvents`, so when it holds several requests its `inserted` total is credited to them in arrival order (ids repeated within the tick belong to the first request). |
-| 400 | invalid envelope (not JSON, `events` missing or not an array, over 10,000 events) |
-| 401 / 413 / 415 | bad key / body too large / not JSON |
-| 429 / 503 | queue full / store down or shutting down, both with `Retry-After` |
+| 400 | invalid envelope (body is not valid JSON, not an object, `v` is not 0, `events` missing or not an array, over 10,000 events), or a corrupt compressed body |
+| 401 | missing or bad key, or a read key; `WWW-Authenticate: Bearer` |
+| 403 | `Origin` not in `serve.cors_origins` |
+| 404 | the server runs `--role viewer` (no ingest) |
+| 405 | method other than POST or OPTIONS; `Allow: POST, OPTIONS` |
+| 413 | body (compressed or decompressed) over 16 MiB |
+| 415 | `Content-Type` is not `application/json`, or an unknown `Content-Encoding` |
+| 429 / 503 | queue full / store down, shutting down or a standby replica, both with `Retry-After` |
 
 ## 3. Stores
 
@@ -304,6 +320,9 @@ that lookup, because Render, Railway and most hosts hand out `postgresql://` URL
   `pg`, not a second copy of `coding.sh`. It exports `indexStore` **and** `blobStore` for the scheme
   `postgres`. The core factory maps `postgresql://`, the form hosting platforms hand out, to the same
   package.
+- In a checkout, `npm ci` builds `dist/index.mjs` through the package's `prepare` script (soft: a
+  missing esbuild only warns), so `--store postgres://` works after `npm run build -w coding.sh` alone.
+  Rebuild it after editing `src/` with `npm run build -w coding.sh-store-postgres`.
 - URL: `postgres://user:pass@host:5432/db?sslmode=require&schema=coding_sh&pool_max=10`.
   - `schema` (default `public`) and `pool_max` (default 10) are stripped before the rest goes to
     `pg.Pool`. Tables are schema-qualified, so the store never depends on `search_path`.
@@ -596,7 +615,12 @@ The serve builder ships the `coding.sh/store` export first, because pg and s3 de
   `/api/sessions/<id>` every 250 ms. It prints `{elapsedMs, stats}` and exits 1 on timeout.
 - `examples/production/flood.mjs --url U --key K --events N --batch B --sessions S --seed X
   --concurrency C [--retry]` uses deterministic ids from the seed and session ids `s-0`…`s-<S-1>`. It prints
-  `{sent, acked, throttled, retryAfterSeen}`. With `--retry`, it retries every non-200 until acked.
+  `{sent, acked, throttled, retryAfterSeen}` (plus `inserted`, `rejected`, `other`, `requests`,
+  `elapsedMs`). With `--retry`, it retries every non-200 and network error, waiting at least
+  `Retry-After`, until acked; past `--deadline-ms` (default 600000) it stops and exits 1. A 401 or 403
+  is never retried: every worker stops at once, the summary carries `error`, and it exits 1.
+- `deploy/test/fixtures.test.mjs` checks these fixtures against a real `coding.sh serve`
+  (`node --test "deploy/test/*.test.mjs"`).
 
 ## 7. Acceptance journeys (QA)
 
@@ -665,7 +689,9 @@ CODING_SH_URL=http://127.0.0.1:4318 CODING_SH_INGEST_KEY=$INGEST_KEY_DEMO node e
 - Each of `demo/j3` and `demo/j3-sdk` has `llmCalls 1` (`doGenerate` is counted once, not the wrapper
   span), with `1000 / 500 / 0.002`.
 
-**J4: SQLite single binary**
+**J4: SQLite single binary.** J4, J5 and the J7 SQLite variant run `serve` on port 4318, which
+the J1 compose stack holds. Run `docker compose stop coding-sh` first, or `serve` fails with
+`EADDRINUSE`.
 
 ```sh
 npm run build -w coding.sh && export CODING_SH_HOME=$(mktemp -d) HOME=$(mktemp -d)
@@ -691,7 +717,7 @@ CODING_SH_URL=http://127.0.0.1:4318 OPENAI_BASE_URL=http://127.0.0.1:9999/v1 OPE
 | `GET /api/sessions` with `$INGEST_KEY_DEMO` | 401 |
 | `GET /api/sessions/flood%2Fs-0` with `$READ_KEY` (scoped to `demo`) | 404 |
 | `GET /healthz` without auth | 200 |
-| `GET /metrics` without auth / with `$READ_KEY` | 401 / 200, and the body contains `coding_sh_ingest_events_total` |
+| `GET /metrics` without auth / with `$READ_KEY` (scoped to `demo`) / with a `*` read key | 401 / 403 / 200, and the 200 body contains `coding_sh_ingest_events_total` |
 | A 17 MiB body | 413 |
 
 Then the flood:
@@ -743,5 +769,21 @@ sleep 2; docker compose kill -s SIGKILL coding-sh; sleep 1; docker compose up -d
 - `select count(*), count(distinct id) from events where project_id='flood'` returns `20000 | 20000`.
 - `select count(*), sum((stats::jsonb->>'events')::int) from sessions where project_id='flood'`
   returns `50 | 20000`. Dirty sessions were repaired.
-- **SQLite variant:** use the J4 server with `kill -9 $SERVE` and a restart, and expect the same
-  counts. `node -e` running `PRAGMA integrity_check` through `node:sqlite` returns `ok`.
+- **SQLite variant:** use the J5 server, which is the J4 command plus
+  `CODING_SH_INGEST_KEYS=demo:$INGEST_KEY_DEMO,flood:$INGEST_KEY_FLOOD`. The keys are required. The
+  J4 server has no keys, so it rejects `$INGEST_KEY_FLOOD` with 401 and has no `flood` project; flood
+  then stops at once with `error` and exit 1. On SQLite the 20,000-event flood takes under 2 s, so
+  wait for `/readyz` before the flood and kill 0.5 s into it:
+
+  ```sh
+  export CODING_SH_INGEST_KEYS=demo:$INGEST_KEY_DEMO,flood:$INGEST_KEY_FLOOD CODING_SH_STORE_URL=sqlite://$CODING_SH_HOME/index.db
+  node packages/coding.sh/dist/cli.mjs serve --config deploy/compose/config.toml & SERVE=$!
+  until node packages/coding.sh/dist/cli.mjs serve healthcheck --url http://127.0.0.1:4318/readyz; do sleep 0.2; done
+  node examples/production/flood.mjs --url http://127.0.0.1:4318 --key $INGEST_KEY_FLOOD --events 20000 --batch 200 --sessions 50 --seed 7 --concurrency 8 --retry & F=$!
+  sleep 0.5; kill -9 $SERVE; sleep 1
+  node packages/coding.sh/dist/cli.mjs serve --config deploy/compose/config.toml & SERVE=$!
+  wait $F
+  ```
+
+  Expect `"error"` absent, `other.network ≥ 1` (the kill landed mid-flood) and the same counts.
+  `node -e` running `PRAGMA integrity_check` through `node:sqlite` returns `ok`.

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// CLI effectiveness suite runner (docs/DOGFOOD.md §3.1, docs/TOOL-EVALS.md).
+// CLI effectiveness suite runner (docs/design/dogfood.md §3.1, docs/TOOL-EVALS.md).
 //
 //   node scripts/dogfood/cli-suite.mjs validate [--split dev|heldout|all] [--task id]... [--concurrency n] [--json]
 //   node scripts/dogfood/cli-suite.mjs run --driver agent:claude-code:sonnet [--driver agent:codex] [--k 3]

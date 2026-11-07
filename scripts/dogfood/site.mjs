@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Site scores (docs/DOGFOOD.md §3.4).
+// Site scores (docs/design/dogfood.md §3.4).
 //
 //   site.js          gzip bytes of JS shipped on / (apps/site/dist), following static imports
 //   site.lighthouse  min category score over desktop + mobile (needs the lighthouse CLI on PATH;

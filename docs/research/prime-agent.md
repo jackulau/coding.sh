@@ -361,7 +361,7 @@ Read from `packages/coding.sh/src` and `docs/*.md` at the time of writing.
 | Generic experiments | dataset × graders, `compareExperiments`, `pairedPower` MDE warnings, `passHatK` | `src/experiments/*` |
 | Tool-description variants | toolevals `Variant.descriptions` / `paramDescriptions` / `hideTools` for MCP, CLI help variants, model driver (agent-free) | `src/toolevals/types.ts`, `docs/TOOL-EVALS.md` §8 |
 | Judges | LLM judge, checklist judge with trace predicates, calibration on held-out labels | `src/judge/*` |
-| Keep rule (written, for dogfood) | gates, CI excludes 0 / McNemar, non-inferiority margins δ, size cap, protected paths | `docs/DOGFOOD.md` §5 |
+| Keep rule (written, for dogfood) | gates, CI excludes 0 / McNemar, non-inferiority margins δ, size cap, protected paths | `docs/design/dogfood.md` §5 |
 | CLI | `harness snapshot\|list`, `compare <a> <b>`, `eval new\|validate\|list\|export`, `exp run\|compare`, `judge calibrate`, `toolevals`, `workflows`, `ingest`, `run --`, `show`, `search`, `sessions`, `ui` | `src/cli/commands/*.ts` |
 
 **Missing for refine:** a failure miner, an edit proposer, pre-commit critics, a held-out

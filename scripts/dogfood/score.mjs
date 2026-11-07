@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// One scorecard (docs/DOGFOOD.md §4).
+// One scorecard (docs/design/dogfood.md §4).
 //
 //   npm run dogfood [-- --mode quick|full|auto] [--compare-to <scorecard.json>] [--json] [--skip-gates]
 //

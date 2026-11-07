@@ -22,7 +22,7 @@ per-process token in the URL it prints.
 
 `coding.sh mcp` serves your captured data to agents over stdio, with the tools `sessions_list`,
 `session_get`, `session_current`, `search`, `failures`, `latency`, `usage`, `subagents`,
-`eval_from_session`, `experiments_list`, `experiment_compare` and `status`.
+`eval_from_session`, `experiments_list`, `experiment_compare`, `benchmarks` and `status`.
 
 `coding.sh init` registers it with Claude Code, Codex, Cursor and OpenCode (`--no-mcp` skips
 this). `coding.sh mcp config` prints the snippet for any other client.

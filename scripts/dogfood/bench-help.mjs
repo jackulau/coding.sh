@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// docs/DOGFOOD.md §3.5 entry point; the implementation lives in bench.mjs.
+// docs/design/dogfood.md §3.5 entry point; the implementation lives in bench.mjs.
 import { runBenches } from "./bench.mjs";
 const r = await runBenches(["help"]);
 process.stdout.write(JSON.stringify(r, null, 2) + "\n");

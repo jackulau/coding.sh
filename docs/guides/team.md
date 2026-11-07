@@ -74,7 +74,9 @@ Pick one of these:
 - **A read key per person.** Run `serve keygen --project '*' --read` (all projects) or
   `--project alice --read` (one project). Add the printed `read_keys` line under `[serve.viewer]`.
   Each person opens `https://obs.example.com/?t=<their read key>` once. A cookie keeps them signed
-  in until the browser closes. A one-project key only ever sees that project.
+  in until the browser closes. A one-project key only ever sees that project. Add
+  `name = "alice"` to a key's entry to show that name on the labels its holder sets; without it,
+  labels show `reader:` plus the start of the key's hash.
 
 Restart `coding-sh` after editing the file. For the API, `GET /api/sessions?project=alice` filters by
 project.

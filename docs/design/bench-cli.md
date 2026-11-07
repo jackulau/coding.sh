@@ -1,6 +1,8 @@
 # Benchmarks in one noun: `coding.sh bench`
 
-Status: design, queued for round 2 (item B-1). Replaces the user-facing parts of `eval`, `exp`,
+Status: design, queued for round 2 (item B-1). The `bench` name now ships dynamic benchmarks
+(fresh cases per run, see [guides/benchmarks.md](../guides/benchmarks.md)); the wrapper over
+`eval`/`exp`/`compare` described here would need another noun or a `bench` source kind. Replaces the user-facing parts of `eval`, `exp`,
 `compare`, `toolevals`, `harness` and `dataset`, which stay available under "Advanced".
 
 ## Why

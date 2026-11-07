@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/jackulau/coding.sh/main/.github/assets/banner.png" alt="coding.sh: every agent run, recorded and measurable. Local-first observability and evals for any AI agent." width="100%">
+  <img src="https://raw.githubusercontent.com/jackulau/coding.sh/main/.github/assets/banner.png" alt="coding.sh: every agent run, recorded and measurable. Open-source, local-first observability and evals for any AI agent." width="100%">
 </p>
 
 # coding.sh
 
-Local-first observability and evals for any AI agent. Coding agents come first.
+Open-source, local-first observability and evals for any AI agent. Coding agents first-class.
 
 coding.sh records what your agents do (prompts, tool calls, file changes, model calls, latency and
 token usage) into a SQLite index on your machine. You browse it in a local viewer, query it from
@@ -21,8 +21,8 @@ coding.sh          # opens the viewer
 
 `init` points each detected agent's hooks at `~/.coding.sh/bin/hook.mjs` and registers the
 coding.sh MCP server with Claude Code, Codex, Cursor and OpenCode. Every config file it
-edits is backed up first. `coding.sh init --dry-run` shows the exact changes without writing
-anything. After that, use your agents as usual. New sessions appear without an ingest step.
+edits is backed up first. `coding.sh init --dry-run` shows the plan (agents, files, blockers) without writing
+anything; add `--diff` for the exact edits. After that, use your agents as usual. New sessions appear without an ingest step.
 
 `npx coding.sh init` works too. The hook is copied to a stable path, but the MCP entry then points
 at the npx cache, so a global install is the sturdier choice.
@@ -55,7 +55,7 @@ OpenInference, Vercel AI SDK spans and Claude Code, Codex and Gemini CLI log eve
 |---|---|
 | Capture | `init`, `doctor`, `status`, `ingest [--backfill]`, `run -- <cmd>`, `collector`, `uninstall` |
 | Explore | `sessions`, `show <id\|latest>`, `search <text>`, `usage`, `ui`, `mcp` |
-| Evaluate | `eval new\|validate\|list\|export`, `dataset`, `exp run\|compare`, `judge calibrate`, `toolevals`, `workflows` |
+| Evaluate | `eval new\|validate\|list\|export`, `dataset`, `exp run\|compare`, `judge calibrate`, `toolevals`, `workflows`, `bench new\|run\|history\|report\|schedule` |
 | Harness | `harness snapshot\|list`, `compare A B` |
 | Maintain | `gateway`, `gc`, `config`, `update`, `version` |
 

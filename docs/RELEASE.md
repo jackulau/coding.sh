@@ -64,7 +64,7 @@ git checkout -b main                       # the local branch is "master" with n
 git add -A
 git commit -m "coding.sh 0.1.0"
 gh repo create jackulau/coding.sh --public --source . --remote origin \
-  --description "Local-first observability and evals for any AI agent" \
+  --description "Open-source, local-first observability and evals for any AI agent. Coding agents first-class." \
   --homepage https://coding.sh
 git push -u origin main
 ```
@@ -246,9 +246,6 @@ These exist in the repository but are not released or documented as supported ye
 
 None of these block the release, but each one is worth a decision:
 
-- **`npx coding.sh init` registers the MCP server at the npx cache path.** The hook is copied to
-  `~/.coding.sh/bin`, but the MCP entry runs `node ~/.npm/_npx/<hash>/…/dist/cli.mjs mcp`. That
-  path disappears on `npm cache clean`. The README recommends `npm i -g` for this reason.
 - **`index.db` and `blobs/` follow the umask** (usually 644/755), unlike the spool and config files
   (600/700). On a shared machine, other local users can read captured sessions unless the home
   directory is private.

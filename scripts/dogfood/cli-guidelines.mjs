@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// cli.guidelines (docs/DOGFOOD.md §4): static conformance of coding.sh's CLI to
+// cli.guidelines (docs/design/dogfood.md §4): static conformance of coding.sh's CLI to
 // docs/CLI-GUIDELINES.md, across output modes, over a fixture home (never the
 // live one). Score = fraction of (command, mode) cases where every rule holds.
 //

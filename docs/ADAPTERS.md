@@ -5,7 +5,8 @@ agent-beacon. Items marked **(U)** are unverified and must be checked against so
 
 Repository moves: OpenCode → `anomalyco/opencode` (2.x). Pi → `earendil-works/pi`. Goose →
 `aaif-goose/goose`. Factory docs → docs.factory.com. Gemini CLI consumer tiers moved to Antigravity CLI
-(`agy`) on 2026-06-18, so plan an `agy` adapter. Aider is stale (last release 2025-08), so it is tier C.
+(`agy`) on 2026-06-18. The `antigravity` adapter covers agy and was checked against agy 1.5.2 on real
+sessions; `gemini-cli` stays for older Gemini CLI history. Aider is stale (last release 2025-08), so it is tier C.
 
 ## Live capture
 
@@ -25,7 +26,7 @@ Repository moves: OpenCode → `anomalyco/opencode` (2.x). Pi → `earendil-work
 | Kiro CLI v3 | `~/.kiro/hooks/*.json` | SessionStart/End, UserPromptSubmit, Pre/PostToolUse, Stop, File* | `session_id`, `cwd`. Workspace trust required. |
 | Qwen Code | `~/.qwen/settings.json`, Claude-shaped | Claude events + PostToolBatch, Todo*, FileChanged | `session_id`, `transcript_path`, `cwd`. **Unapproved project hooks are dropped headless.** |
 | Crush | `crushrc` or JSON `hooks` key | Pre/PostToolUse, Session*, TurnStart/End | `session_id`, `cwd`. Subagents fire no hooks. |
-| Antigravity CLI (`agy`) | `~/.gemini/config/hooks.json` or `.agents/hooks.json` | SessionStart, PreToolUse, PostToolUse, PreInvocation, PostInvocation, Stop | Transcript: `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript.jsonl`. |
+| Antigravity CLI (`agy`) | `~/.gemini/config/hooks.json` (shared by the agy CLI, App and IDE) or `.agents/hooks.json`. **A hook must print a JSON object on stdout**, so ours run with `--reply={}`. | SessionStart, PreToolUse, PostToolUse, PreInvocation, PostInvocation, Stop | camelCase: `conversationId`, `workspacePaths`, `transcriptPath`, `modelName` (often `"auto"`, which we drop), `lastUserInput` (wrapped in `<USER_REQUEST>`, which we strip), `toolCall{name,args}`, `stepIdx`, `error`, `invocationNum`, `terminationReason`. No tool output, tokens or cost; backfill fills those in. |
 | Aider | None | — | — |
 | T3 Code | None of its own. Its Codex and Claude runs fire the codex/claude-code hooks. | Those agents' events | The hook records T3's env marker as `host`: `T3CODE_THREAD_ID` (Claude Agent SDK) or `CODEX_INTERNAL_ORIGINATOR_OVERRIDE="T3 Code"` (`codex app-server`). |
 
@@ -38,6 +39,7 @@ Repository moves: OpenCode → `anomalyco/opencode` (2.x). Pi → `earendil-work
 | OpenCode | SQLite `~/.local/share/opencode/opencode.db` (`session_v2`, `session_message`, `session_part`) | `opencode run "…" -m prov/model --format json --auto --standalone` | `OPENCODE_CONFIG_CONTENT`, `OPENCODE_CONFIG_DIR`, `OPENCODE_DISABLE_PROJECT_CONFIG`. **Use `--standalone`, or the shared server ignores your env.** OpenCode 2.x does not read CLAUDE.md. | A |
 | Amp | Threads are server-side; local cache `~/.local/share/amp/threads/<T-id>.json` (U); `amp threads export` | `amp -x "…" --stream-json --mode M` | `--settings-file`, `--mcp-config <json>`. AGENTS.md, `.agents/skills`. | A (plugin) |
 | Gemini CLI | `~/.gemini/tmp/<project-slug>/chats/session-*.jsonl` | `gemini -p "…" -o stream-json -m M --approval-mode=yolo --skip-trust` | `GEMINI_CLI_HOME`, `GEMINI_SYSTEM_MD=/path`. Max turns only via `model.maxSessionTurns`. | A |
+| Antigravity CLI (`agy`) | `~/.gemini/antigravity-cli/` (also `antigravity/`, `antigravity-ide/`): `brain/<id>/.system_generated/logs/transcript_full.jsonl` (preferred; `transcript.jsonl` cuts long fields) plus `conversations/<id>.db`. Transcript rows: `step_index`, `type` (USER_INPUT, PLANNER_RESPONSE, GENERIC, ERROR_MESSAGE, …), `status`, `tool_calls[{name,args}]` with string args; each tool result is the GENERIC row after its planner step. **Failed tool steps are left out of the transcript**; the DB `steps.status` (7 error, 6 canceled, 12 interrupted) and `error_details` mark them. The DB `gen_metadata` protobuf has model, uncached input, output, cache read/write, provider, time to first token and stream time per model call; `executor_metadata` has the workspace. We copy the DB with its WAL before reading. | `agy -p "…" --output-format stream-json --model M --dangerously-skip-permissions` (U: not run here) | `--settings <json>` (not saved), `--sandbox`, `--add-dir`. | A |
 | Cursor CLI | `~/.cursor/projects/<sanitized>/agent-transcripts/<id>.jsonl` (format undocumented) | `agent -p --output-format stream-json --force --model M --trust --approve-mcps --workspace d` | `CURSOR_CONFIG_DIR`. `.cursor/rules`, AGENTS.md, `.cursor/mcp.json`. No max-turns flag. | B |
 | Copilot CLI | `$COPILOT_HOME/session-state/<id>/events.jsonl` + `session-store.db` | `copilot -p "…" --output-format=json --model M --allow-all --no-ask-user --max-autopilot-continues N` | `COPILOT_HOME`, `--additional-mcp-config @f`, `--no-custom-instructions`. `.github/copilot-instructions.md`. | A |
 | Pi | `~/.pi/agent/sessions/--<path>--/<ts>_<id>.jsonl` (v3 tree, `id`/`parentId`) | `pi -p "…" --mode json --provider P --model M --approve` | `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, `--system-prompt`, `--append-system-prompt` | A |
@@ -124,3 +126,20 @@ node "<~/.coding.sh/bin/hook.mjs>" <agent-id> <EventName>
 - Edits preserve comments and formatting where the format allows, and back up the original to
   `~/.coding.sh/backups/<agent>/<ts>-<file>`.
 - Cline needs stdout `{"cancel":false}` (`--echo` flag).
+
+## API apps and agents in production
+
+Apps in production don't use an adapter. They send data over the network to `coding.sh serve`
+([PRODUCTION.md](PRODUCTION.md)), which writes to the configured store (`sqlite://` or `postgres://`).
+
+| Source | Route | Mapping | `source` on events |
+|---|---|---|---|
+| `@coding.sh/sdk` (TS) and `coding-sh` (Python): `observe(client)` for OpenAI and Anthropic, `observeFetch()`, AI SDK tracer | `POST /v1/ingest` (native `AgentEvent` batches) or `POST /v1/traces` | `src/server/native.ts`. The `service` name becomes `agent`, ids are namespaced by project. | `sdk` |
+| Any OpenTelemetry SDK: gen_ai semconv, OpenInference, AI SDK `experimental_telemetry` | `POST /v1/traces` | `src/otel/map.ts`, the same mapper as `coding.sh collector` | `otel…` |
+| Vercel AI Gateway trace drain | `POST /v1/traces` | `src/otel/map.ts` plus the gateway enricher | `otel…` |
+| Claude Code, Codex and Gemini CLI running remotely with OTel logs on | `POST /v1/logs` | `src/otel/map.ts` log events | `otel…` |
+
+- Hooks, transcript backfill and `coding.sh run` stay local. Serve does not take spool lines.
+- The ingest key picks the project, and session ids are stored as `<project>/<sessionId>`.
+- SDK sessions that never send `session.end` have no `endedAt` yet; see the open item in
+  `tasks/research-queue.md` (Production mode).

@@ -1,0 +1,1397 @@
+<!-- Generated from packages/coding.sh/src/cli/registry.ts by packages/coding.sh/scripts/cli-reference.ts. Do not edit by hand. -->
+
+# CLI reference
+
+Every `coding.sh` command, argument and option, generated from the CLI's command registry. Run
+`coding.sh <command> --help` for the same information in a terminal, or add `--json` to get it as JSON.
+
+## Global options
+
+Every command accepts these.
+
+| Option | Default | Description |
+|---|---|---|
+| `--json` |  | Print one JSON document on stdout. |
+| `--no-color` |  | Disable color (also NO_COLOR=1) |
+| `--debug` |  | Show stack traces on errors. |
+| `-h, --help` |  | Show help. |
+| `--store <URL>` |  | Read and write this index store instead of the configured one (also CODING_SH_STORE_URL); skips auto-ingest. |
+| `--blobs <URL>` |  | Blob store to use with --store (also CODING_SH_BLOB_URL; a postgres:// index keeps blobs in the same DB) |
+| `-v, --version` |  | Print the version. |
+
+## Output and exit codes
+
+- stdout carries the answer only. Progress, warnings and errors go to stderr.
+- With `--json`, a command prints one JSON document on stdout. An error is one JSON line on stderr:
+  `{"status":"error","reason":"<reason>","message":"<text>","next":["<suggested command>"]}`.
+  The reasons are listed in [Troubleshooting](../troubleshooting.md).
+- Exit codes: `0` success, `1` error, `2` usage error (unknown option, bad value, missing `--yes`), `130` canceled.
+- Commands that change agent config ask first. In scripts and CI, pass `--yes`.
+
+## Commands
+
+| Command | Group | What it does |
+|---|---|---|
+| [`init`](#codingsh-init) | Capture | Set up capture hooks and the MCP server for every detected agent |
+| [`doctor`](#codingsh-doctor) | Capture | Check agents, hooks, spool, store and the OTLP port |
+| [`status`](#codingsh-status) | Capture | Show capture totals and the latest session |
+| [`ingest`](#codingsh-ingest) | Capture | Move captured hook events from the spool into the index |
+| [`run`](#codingsh-run) | Capture | Run any agent command and capture the session |
+| [`collector`](#codingsh-collector) | Capture | Start a local OTLP/HTTP receiver for agents that export traces |
+| [`serve`](#codingsh-serve) | Capture | Production server: OTLP + native ingest, viewer, health and metrics on one port |
+| [`uninstall`](#codingsh-uninstall) | Capture | Remove coding.sh hooks and MCP entries from every agent |
+| [`sessions`](#codingsh-sessions) | Explore | List captured sessions |
+| [`show`](#codingsh-show) | Explore | Show a session timeline with subagents and latency |
+| [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies and tool calls |
+| [`usage`](#codingsh-usage) | Explore | Tokens, turns and cache hits by agent, model or day |
+| [`ui`](#codingsh-ui) | Explore | Open the local session viewer |
+| [`mcp`](#codingsh-mcp) | Explore | Serve captured sessions to agents over MCP (stdio) |
+| [`eval`](#codingsh-eval) | Evaluate | Turn sessions into replayable eval tasks |
+| [`dataset`](#codingsh-dataset) | Evaluate | Manage versioned datasets of cases |
+| [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset and compare experiments |
+| [`judge`](#codingsh-judge) | Evaluate | Check an LLM judge against human labels |
+| [`toolevals`](#codingsh-toolevals) | Evaluate | Measure how well agents use a CLI, MCP server or API |
+| [`workflows`](#codingsh-workflows) | Evaluate | Capture, measure and A/B-test multi-agent workflow runs |
+| [`bench`](#codingsh-bench) | Evaluate | Dynamic benchmarks: fresh cases every run, same set for every contender |
+| [`harness`](#codingsh-harness) | Harness | Snapshot and list agent harness bundles |
+| [`compare`](#codingsh-compare) | Harness | A/B two harness bundles on eval tasks |
+| [`gateway`](#codingsh-gateway) | Maintain | Vercel AI Gateway: detect routing, enrich sessions with billed cost |
+| [`gc`](#codingsh-gc) | Maintain | Delete expired spool files, blobs and judge cache |
+| [`config`](#codingsh-config) | Maintain | Read and write ~/.coding.sh/config.toml |
+| [`update`](#codingsh-update) | Maintain | Install the latest coding.sh release |
+| [`version`](#codingsh-version) | Maintain | Print the version |
+
+## `coding.sh init`
+
+Set up capture hooks and the MCP server for every detected agent.
+
+```text
+coding.sh init [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `--scope <SCOPE>` | `user` | Install into user or project config. One of: `user`, `project`. |
+| `--mcp` | `true` | Register the coding.sh MCP server too (--no-mcp to skip) |
+| `--force` |  | Install hooks even when the agent already has coding.sh hooks in the other scope. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. |
+| `--dry-run` |  | Print the plan (agents, files, blockers) without writing anything. |
+| `--diff` |  | With --dry-run, also print the full diff of every planned edit. |
+
+```sh
+coding.sh init
+coding.sh init --agent claude-code --yes
+coding.sh init --dry-run
+```
+
+- Copies the hook to ~/.coding.sh/bin/hook.mjs and points each agent at it.
+- Registers the MCP server with Claude Code, Codex, Cursor, OpenCode and Gemini CLI (user scope only).
+- Every edited file is backed up to ~/.coding.sh/backups first; uninstall reverts it.
+
+## `coding.sh doctor`
+
+Check agents, hooks, spool, store and the OTLP port.
+
+```text
+coding.sh doctor [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `--port <PORT>` | `4318` | OTLP receiver port to check. |
+
+```sh
+coding.sh doctor
+coding.sh doctor --json
+```
+
+## `coding.sh status`
+
+Show capture totals and the latest session.
+
+```text
+coding.sh status
+```
+
+## `coding.sh ingest`
+
+Move captured hook events from the spool into the index.
+
+```text
+coding.sh ingest [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--backfill` |  | Also import agents' local transcript history. |
+| `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `--since <WHEN>` |  | Only after this time: 7d, 12h, 30m or a date. |
+| `--background` |  | Don't wait for another ingest; exit quietly if one is running. |
+
+```sh
+coding.sh ingest
+coding.sh ingest --backfill --since 30d
+```
+
+- Rarely needed: read commands, the viewer and the MCP server ingest first, and the hook starts one when a session ends.
+
+## `coding.sh run`
+
+Run any agent command and capture the session.
+
+```text
+coding.sh run [options] -- <CMD>...
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `cmd` | yes | Command and arguments after --. Takes the rest of the arguments. |
+
+| Option | Default | Description |
+|---|---|---|
+| `-a, --agent <AGENT>` | `wrapper` | Agent id to record. |
+
+```sh
+coding.sh run -- aider --message 'fix the tests'
+```
+
+- Exits with the command's exit code.
+
+## `coding.sh collector`
+
+Start a local OTLP/HTTP receiver for agents that export traces. Aliases: `otel`.
+
+```text
+coding.sh collector [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-p, --port <PORT>` | `4318` | Port to listen on (0 = any free port) |
+| `--host <HOST>` | `127.0.0.1` | Interface to bind. |
+
+```sh
+coding.sh collector
+coding.sh otel --port 0
+```
+
+- Prints the OTEL_\* environment to stdout; status goes to stderr.
+
+## `coding.sh serve`
+
+Production server: OTLP + native ingest, viewer, health and metrics on one port.
+
+```text
+coding.sh serve [action] [options]
+```
+
+| Action | What it does |
+|---|---|
+| [`keygen`](#codingsh-serve-keygen) | Print a new ingest (or read) key once, plus the sha256 line for a config file |
+| [`healthcheck`](#codingsh-serve-healthcheck) | Exit 0 when the server answers 200, 1 otherwise (Docker HEALTHCHECK) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--host <HOST>` | `127.0.0.1` | Interface to bind (also CODING_SH_HOST) |
+| `-p, --port <PORT>` | `4318` | Port to listen on, 0 = any free port (also CODING_SH_PORT, PORT) |
+| `--config <FILE>` |  | Config file instead of ~/.coding.sh/config.toml. |
+| `--role <ROLE>` | `all` | viewer: a read replica with no ingest and no writer lock. One of: `all`, `viewer`. |
+| `--insecure` |  | Allow a non-loopback bind with no keys (also CODING_SH_INSECURE=1) |
+
+```sh
+coding.sh serve
+CODING_SH_STORE_URL=postgres://… CODING_SH_INGEST_KEYS=demo:$KEY CODING_SH_READ_KEYS='*:'$READ coding.sh serve --host 0.0.0.0
+coding.sh serve --role viewer --host 0.0.0.0
+```
+
+- Routes: POST /v1/traces, /v1/logs, /v1/metrics (OTLP/HTTP), POST /v1/ingest (native), GET / and /api/\* (viewer), /healthz, /readyz, /metrics.
+- Precedence: flags &gt; env &gt; --config file &gt; defaults. See docs/PRODUCTION.md for every setting.
+- A non-loopback bind needs an ingest key and a read key (or basic auth), or --insecure; on loopback with no keys, ingest is open to project default.
+- Prints the URL (or one JSON document with --json) on stdout once ready; logs go to stderr. SIGTERM/SIGINT drain the queue (25s) and exit 0.
+
+### `coding.sh serve keygen`
+
+Print a new ingest (or read) key once, plus the sha256 line for a config file.
+
+```text
+coding.sh serve keygen [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--project <ID>` | `default` | Project the key belongs to (read keys: \* for all) |
+| `--read` |  | A read key (viewer, /api, /metrics) instead of an ingest key. |
+
+```sh
+coding.sh serve keygen --project demo
+coding.sh serve keygen --read --project '*'
+```
+
+### `coding.sh serve healthcheck`
+
+Exit 0 when the server answers 200, 1 otherwise (Docker HEALTHCHECK).
+
+```text
+coding.sh serve healthcheck [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--url <URL>` |  | URL to probe (default http://127.0.0.1:&lt;port&gt;/healthz) |
+| `--timeout <MS>` | `3000` | Give up after this many milliseconds. |
+
+```sh
+coding.sh serve healthcheck
+coding.sh serve healthcheck --url http://127.0.0.1:4318/readyz
+```
+
+## `coding.sh uninstall`
+
+Remove coding.sh hooks and MCP entries from every agent.
+
+```text
+coding.sh uninstall [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `--scope <SCOPE>` | `user` | Install into user or project config. One of: `user`, `project`. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. |
+| `--dry-run` |  | Show the exact changes without writing anything. |
+
+```sh
+coding.sh uninstall --dry-run
+coding.sh uninstall --yes
+```
+
+- Captured data in ~/.coding.sh is kept.
+
+## `coding.sh sessions`
+
+List captured sessions.
+
+```text
+coding.sh sessions [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-a, --agent <AGENT>` |  | Only sessions from this agent. |
+| `-r, --repo <PATH>` |  | Only sessions in this repo root. |
+| `--since <WHEN>` |  | Only after this time: 7d, 12h, 30m or a date. |
+| `-n, --limit <N>` | `20` | Maximum rows. |
+| `--subagents` |  | Include subagent sessions. |
+| `--project <ID>` |  | Only sessions in this serve project (default: all) |
+
+```sh
+coding.sh sessions
+coding.sh sessions --agent codex --since 7d
+coding.sh sessions --store postgres://… --project demo
+```
+
+## `coding.sh show`
+
+Show a session timeline with subagents and latency.
+
+```text
+coding.sh show <SESSION> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'. |
+
+| Option | Default | Description |
+|---|---|---|
+| `-n, --limit <N>` | `200` | Maximum rows. |
+
+```sh
+coding.sh show latest
+coding.sh show 9f1c2e
+```
+
+## `coding.sh search`
+
+Full-text search over prompts, replies and tool calls.
+
+```text
+coding.sh search <TEXT>... [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `text` | yes | Search text. Takes the rest of the arguments. |
+
+| Option | Default | Description |
+|---|---|---|
+| `-a, --agent <AGENT>` |  | Only sessions from this agent. |
+| `-n, --limit <N>` | `20` | Maximum rows. |
+| `--project <ID>` |  | Only matches in this serve project (default: all) |
+
+```sh
+coding.sh search 'flaky test'
+```
+
+## `coding.sh usage`
+
+Tokens, turns and cache hits by agent, model or day.
+
+```text
+coding.sh usage [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--by <GROUP>` | `agent` | Group rows by. One of: `agent`, `model`, `agent-model`, `day`, `repo`. |
+| `-a, --agent <AGENT>` |  | Only sessions from this agent. |
+| `--since <WHEN>` | `30d` | Only after this time: 7d, 12h, 30m or a date. |
+| `-n, --limit <N>` | `20` | Maximum rows. |
+
+```sh
+coding.sh usage
+coding.sh usage --by agent-model --since 90d
+```
+
+## `coding.sh ui`
+
+Open the local session viewer.
+
+```text
+coding.sh ui [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-p, --port <PORT>` | `4319` | First port to try (0 = any free port) |
+| `--host <HOST>` | `127.0.0.1` | Interface to bind. |
+| `--open` | `true` | Open the browser (--no-open to skip) |
+
+```sh
+coding.sh ui
+coding.sh ui --no-open --port 0
+```
+
+- Running coding.sh with no command opens the viewer (or sets up capture first).
+
+## `coding.sh mcp`
+
+Serve captured sessions to agents over MCP (stdio).
+
+```text
+coding.sh mcp [action]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `action` | no | serve (default): run the server; config: print how to register it. |
+
+```sh
+coding.sh mcp config
+coding.sh mcp
+```
+
+- Agents start this themselves once coding.sh init has registered it.
+- stdout carries MCP frames only.
+
+## `coding.sh eval`
+
+Turn sessions into replayable eval tasks.
+
+```text
+coding.sh eval <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`new`](#codingsh-eval-new) | Draft a task from a captured session |
+| [`validate`](#codingsh-eval-validate) | Check the reference passes, near-misses fail and nothing leaks |
+| [`list`](#codingsh-eval-list) | List eval tasks |
+| [`export`](#codingsh-eval-export) | Write a task to a directory |
+
+### `coding.sh eval new`
+
+Draft a task from a captured session.
+
+```text
+coding.sh eval new <SESSION> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `session` | yes | Session id, or 'latest'. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--name <NAME>` |  | Task name. |
+| `--instruction <TEXT|@FILE>` |  | What the agent is asked to do (default: the session's first prompt) |
+| `--verifier <CMD>` |  | Command that passes only when the task is solved. |
+| `--setup <CMD>` |  | Setup command (repeatable) |
+| `--hidden-test <GLOB>` |  | Test files to hide from the agent (repeatable) |
+| `--tag <TAG>` |  | Tag (repeatable) |
+
+```sh
+coding.sh eval new latest --verifier 'npm test'
+coding.sh eval new latest --instruction @prompt.md --verifier 'npm test'
+```
+
+### `coding.sh eval validate`
+
+Check the reference passes, near-misses fail and nothing leaks.
+
+```text
+coding.sh eval validate <TASK> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `task` | yes | Task id or name. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--k <N>` | `5` | Reference must pass N of N runs. |
+| `--keep` |  | Keep work directories. |
+
+### `coding.sh eval list`
+
+List eval tasks.
+
+```text
+coding.sh eval list [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--status <STATUS>` |  | Only tasks with this status. One of: `draft`, `validated`, `rejected`. |
+| `--tag <TAG>` |  | Only tasks with this tag. |
+
+### `coding.sh eval export`
+
+Write a task to a directory.
+
+```text
+coding.sh eval export <TASK> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `task` | yes | Task id or name. |
+
+| Option | Default | Description |
+|---|---|---|
+| `-o, --out <DIR>` |  | Output directory (required) |
+| `--format <FORMAT>` | `coding.sh` | Directory layout. One of: `coding.sh`, `harbor`. |
+| `--force` |  | Replace the named target when it already exists. |
+
+## `coding.sh dataset`
+
+Manage versioned datasets of cases.
+
+```text
+coding.sh dataset <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`add`](#codingsh-dataset-add) | Add cases to a dataset (creates it when missing) |
+| [`import`](#codingsh-dataset-import) | Import cases from a JSONL, JSON or CSV file |
+| [`list`](#codingsh-dataset-list) | List datasets |
+
+### `coding.sh dataset add`
+
+Add cases to a dataset (creates it when missing).
+
+```text
+coding.sh dataset add <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Dataset name. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--case <JSON>` |  | Case as JSON: {"input":…,"expected":…} (repeatable) |
+| `--session <ID>` |  | Case from a captured session (repeatable) |
+| `--split <SPLIT>` |  | Split for the added cases (default: stable hash of the case id, 60/20/20) One of: `train`, `dev`, `test`. |
+| `--note <TEXT>` |  | Version note. |
+
+```sh
+coding.sh dataset add smoke --case '{"input":"2+2","expected":"4"}'
+coding.sh dataset add labelled --session <ID> --split test
+```
+
+### `coding.sh dataset import`
+
+Import cases from a JSONL, JSON or CSV file.
+
+```text
+coding.sh dataset import <FILE> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `file` | yes | Path to the file. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--name <NAME>` |  | Dataset name (default: file name) |
+| `--note <TEXT>` |  | Version note. |
+
+### `coding.sh dataset list`
+
+List datasets.
+
+```text
+coding.sh dataset list
+```
+
+## `coding.sh exp`
+
+Run a task over a dataset and compare experiments.
+
+```text
+coding.sh exp <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`run`](#codingsh-exp-run) | Run an experiment |
+| [`compare`](#codingsh-exp-compare) | Compare two experiments case by case |
+| [`show`](#codingsh-exp-show) | Show a stored experiment: pass rate, graders and failures |
+| [`list`](#codingsh-exp-list) | List experiments |
+
+### `coding.sh exp run`
+
+Run an experiment.
+
+```text
+coding.sh exp run [spec] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `spec` | no | Experiment spec JSON file (fields can be overridden by options) |
+
+| Option | Default | Description |
+|---|---|---|
+| `-d, --dataset <ID>` |  | Dataset id. |
+| `--task <JSON|FILE>` |  | Task spec: {"kind":"command","command":"…"} (gets each case input as JSON on stdin) or {"kind":"http","url":"…"}. |
+| `-g, --grader <JSON|FILE>` |  | Grader spec, e.g. {"kind":"exact"} (repeatable) |
+| `--name <NAME>` |  | Experiment name. |
+| `--trials <N>` | `1` | Attempts per case. |
+| `-c, --concurrency <N>` | `4` | Parallel case runs. |
+| `--split <SPLIT>` |  | Only cases in this split. One of: `train`, `dev`, `test`. |
+
+### `coding.sh exp compare`
+
+Compare two experiments case by case.
+
+```text
+coding.sh exp compare <A> <B> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `a` | yes | Baseline experiment id or name (newest) |
+| `b` | yes | Candidate experiment id or name (newest) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--force` |  | Compare a cancelled (partial) experiment too. |
+
+### `coding.sh exp show`
+
+Show a stored experiment: pass rate, graders and failures.
+
+```text
+coding.sh exp show <EXPERIMENT>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `experiment` | yes | Experiment id or name (newest, cancelled ones included) |
+
+### `coding.sh exp list`
+
+List experiments.
+
+```text
+coding.sh exp list [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-n, --limit <N>` | `20` | Maximum rows. |
+
+## `coding.sh judge`
+
+Check an LLM judge against human labels.
+
+```text
+coding.sh judge <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`calibrate`](#codingsh-judge-calibrate) | Measure judge-human agreement (Cohen's kappa) on a held-out split |
+
+### `coding.sh judge calibrate`
+
+Measure judge-human agreement (Cohen's kappa) on a held-out split.
+
+```text
+coding.sh judge calibrate <EXPERIMENT> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `experiment` | yes | Experiment id or name whose runs hold the judge's verdicts. |
+
+| Option | Default | Description |
+|---|---|---|
+| `-g, --grader <ID>` |  | Judge grader id (default: the only llm grader) |
+| `--criterion <NAME>` |  | Label criterion. |
+| `--split <SPLIT>` | `test` | Held-out split to report on. One of: `train`, `dev`, `test`. |
+| `--tuned-on <SPLIT>` |  | Splits the prompt was tuned on, when the judge is not stored (repeatable) |
+| `--threshold <KAPPA>` | `0.6` | Minimum kappa. |
+| `--min-n <N>` | `20` | Minimum held-out cases. |
+
+## `coding.sh toolevals`
+
+Measure how well agents use a CLI, MCP server or API.
+
+```text
+coding.sh toolevals <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`init`](#codingsh-toolevals-init) | Add a target to coding.sh.toml and write starter tasks |
+| [`surface`](#codingsh-toolevals-surface) | Surface bytes, description bytes and tokens per tool or subcommand |
+| [`validate`](#codingsh-toolevals-validate) | Check no-op trials fail, references pass and nothing leaks |
+| [`run`](#codingsh-toolevals-run) | Run tasks x variants x drivers x k and summarize each arm |
+| [`compare`](#codingsh-toolevals-compare) | Compare two arms of an experiment (paired by task) |
+| [`compress`](#codingsh-toolevals-compress) | Shorten MCP tool descriptions without losing success |
+| [`show`](#codingsh-toolevals-show) | Show a trial's metrics, tap records and session tree |
+
+- Arms are named &lt;variant&gt;@&lt;driver&gt;.
+- Runs above [toolevals] confirmAboveUsd (default $5) need --yes when not on a TTY.
+
+### `coding.sh toolevals init`
+
+Add a target to coding.sh.toml and write starter tasks.
+
+```text
+coding.sh toolevals init [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--cli <BIN>` |  | CLI binary to evaluate. |
+| `--mcp <CMD>` |  | MCP server command (stdio) |
+| `--mcp-url <URL>` |  | MCP server URL (Streamable HTTP) |
+| `--http <URL>` |  | HTTP API base URL. |
+| `--name <NAME>` |  | Target name (default: from the binary or host) |
+| `--dry-run` |  | Show the exact changes without writing anything. |
+
+```sh
+coding.sh toolevals init --cli gh
+coding.sh toolevals init --mcp "npx -y @modelcontextprotocol/server-everything" --name everything
+```
+
+### `coding.sh toolevals surface`
+
+Surface bytes, description bytes and tokens per tool or subcommand.
+
+```text
+coding.sh toolevals surface [target] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `target` | no | Target name (default: the only one) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--variant <VARIANT>` | `base` | Variant to measure. |
+
+### `coding.sh toolevals validate`
+
+Check no-op trials fail, references pass and nothing leaks.
+
+```text
+coding.sh toolevals validate [target]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `target` | no | Target name (default: all) |
+
+### `coding.sh toolevals run`
+
+Run tasks x variants x drivers x k and summarize each arm.
+
+```text
+coding.sh toolevals run [target] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `target` | no | Target name (default: the only one) |
+
+| Option | Default | Description |
+|---|---|---|
+| `-d, --driver <DRIVER>` |  | agent:&lt;id&gt;[:model] or model:&lt;provider&gt;/&lt;model&gt; (repeatable) |
+| `--variant <VARIANT>` |  | Variant (repeatable; default: base) |
+| `-k, --k <N>` | `3` | Trials per task and arm. |
+| `--split <SPLIT>` | `dev` | Task split. One of: `dev`, `heldout`, `all`. |
+| `-t, --task <ID>` |  | Only this task (repeatable) |
+| `-c, --concurrency <N>` |  | Parallel trials. |
+| `--keep` |  | Keep trial sandboxes. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. |
+
+```sh
+coding.sh toolevals run gh --driver agent:claude-code -k 3
+coding.sh toolevals run everything --driver model:anthropic/claude-sonnet-5 --variant base --variant terse
+```
+
+### `coding.sh toolevals compare`
+
+Compare two arms of an experiment (paired by task).
+
+```text
+coding.sh toolevals compare <EXPERIMENT> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `experiment` | yes | Experiment id. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--baseline <ARM>` |  | Baseline arm, &lt;variant&gt;@&lt;driver&gt;. |
+| `--candidate <ARM>` |  | Candidate arm, &lt;variant&gt;@&lt;driver&gt;. |
+
+### `coding.sh toolevals compress`
+
+Shorten MCP tool descriptions without losing success.
+
+```text
+coding.sh toolevals compress [target] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `target` | no | MCP target name (default: the only one) |
+
+| Option | Default | Description |
+|---|---|---|
+| `-d, --driver <DRIVER>` |  | Driver to evaluate with. |
+| `-k, --k <N>` | `3` | Trials per task. |
+| `--margin <DELTA>` | `0.03` | Allowed success drop (CI lower bound) |
+| `--max-evals <N>` | `40` | Maximum candidate evaluations. |
+| `--batch` |  | Compress every tool at one level per step. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. |
+
+### `coding.sh toolevals show`
+
+Show a trial's metrics, tap records and session tree.
+
+```text
+coding.sh toolevals show <TRIAL>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `trial` | yes | Trial id. |
+
+## `coding.sh workflows`
+
+Capture, measure and A/B-test multi-agent workflow runs. Aliases: `workflow`, `wf`.
+
+```text
+coding.sh workflows <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`list`](#codingsh-workflows-list) | Runs with status, wall time, cost and agent count |
+| [`import`](#codingsh-workflows-import) | Import Claude Code workflow runs from disk |
+| [`show`](#codingsh-workflows-show) | Run tree with per-node time, cost and status |
+| [`stats`](#codingsh-workflows-stats) | Critical path, concurrency, barrier idle, failures, cache hits, cost |
+| [`score`](#codingsh-workflows-score) | Grade a run's output against a case's truth |
+| [`run`](#codingsh-workflows-run) | A/B workflow variants over cases; prints the experiment id |
+| [`compare`](#codingsh-workflows-compare) | Paired comparison of two variants of an experiment |
+| [`replay`](#codingsh-workflows-replay) | Re-run an edited script from a run's journal (cached prefix) |
+
+- Workflow runs are stored under ~/.coding.sh/workflows/ until the index stores them.
+
+### `coding.sh workflows list`
+
+Runs with status, wall time, cost and agent count.
+
+```text
+coding.sh workflows list [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--framework <FRAMEWORK>` |  | Only runs from this framework. |
+| `--name <NAME>` |  | Only runs of this workflow. |
+| `--since <WHEN>` |  | Only after this time: 7d, 12h, 30m or a date. |
+| `--experiment <ID>` |  | Only runs of this experiment. |
+| `-n, --limit <N>` | `20` | Maximum rows. |
+| `--import` | `true` | Import new or changed Claude Code workflow runs first (--no-import to skip) |
+
+```sh
+coding.sh workflows list --since 7d
+coding.sh workflows list --framework langgraph --json
+```
+
+### `coding.sh workflows import`
+
+Import Claude Code workflow runs from disk.
+
+```text
+coding.sh workflows import [path] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `path` | no | Projects, project, session or run directory (default: Claude Code's projects dir) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--force` |  | Re-import run directories that did not change. |
+
+### `coding.sh workflows show`
+
+Run tree with per-node time, cost and status.
+
+```text
+coding.sh workflows show <RUN> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `run` | yes | Workflow run id. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--tree` |  | Include subagent, tool and model-call nodes. |
+| `--gantt` |  | Print the timeline as TSV instead. |
+
+### `coding.sh workflows stats`
+
+Critical path, concurrency, barrier idle, failures, cache hits, cost.
+
+```text
+coding.sh workflows stats <RUN>
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `run` | yes | Workflow run id. |
+
+### `coding.sh workflows score`
+
+Grade a run's output against a case's truth.
+
+```text
+coding.sh workflows score <RUN> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `run` | yes | Workflow run id. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--case <ID>` |  | Case id (default: the run's case) |
+| `--cases <DIR>` |  | Cases directory (default: evals/workflows/&lt;workflow&gt;/cases) |
+| `--slack <LINES>` | `5` | Line distance that still matches a seeded bug. |
+
+### `coding.sh workflows run`
+
+A/B workflow variants over cases; prints the experiment id.
+
+```text
+coding.sh workflows run <WORKFLOW> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `workflow` | yes | Workflow name (cases live under evals/workflows/&lt;workflow&gt;/cases) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--variant <NAME=SCRIPT|JSON>` |  | Variant: name=script path (claude), name=command (command), or JSON (repeatable) |
+| `--cases <DIR>` |  | Cases directory (default: evals/workflows/&lt;workflow&gt;/cases) |
+| `-k, --k <N>` | `3` | Attempts per case and variant. |
+| `--split <SPLIT>` |  | Only cases in this split. One of: `dev`, `heldout`. |
+| `--driver <DRIVER>` | `claude` | How a variant runs. One of: `claude`, `command`. |
+| `-j, --concurrency <N>` | `1` | Jobs at once (a workflow already fans out) |
+| `--bin <PATH>` |  | claude binary for the claude-code-workflow driver (default: claude on PATH) |
+| `-y, --yes` |  | Run without asking when the estimated cost is above the confirm threshold. |
+
+```sh
+coding.sh workflows run coding-sh-improve -v base=wf/improve.js -v cand=wf/improve-v2.js -k 3 --split dev
+```
+
+### `coding.sh workflows compare`
+
+Paired comparison of two variants of an experiment.
+
+```text
+coding.sh workflows compare <EXPERIMENT> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `experiment` | yes | Experiment id. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--baseline <VARIANT>` |  | Baseline variant (required) |
+| `--candidate <VARIANT>` |  | Candidate variant (required) |
+| `--threshold <SCORE>` |  | Score that counts as a pass (default: the case's, else 0.5) |
+
+### `coding.sh workflows replay`
+
+Re-run an edited script from a run's journal (cached prefix).
+
+```text
+coding.sh workflows replay <RUN> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `run` | yes | Base workflow run id. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--script <PATH>` |  | Edited workflow script (required) |
+| `--base-script <PATH>` |  | Script the base run used, when it was not captured. |
+| `--args <JSON>` |  | Workflow args (JSON or a .json path) |
+| `--dry-run` |  | Print the predicted cache hits without running. |
+| `--bin <PATH>` |  | claude binary for the claude-code-workflow driver (default: claude on PATH) |
+| `-y, --yes` |  | Run without asking when the estimated cost is above the confirm threshold. |
+
+## `coding.sh bench`
+
+Dynamic benchmarks: fresh cases every run, same set for every contender. Aliases: `benchmark`.
+
+```text
+coding.sh bench <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`new`](#codingsh-bench-new) | Write a benchmark definition (bench/&lt;name&gt;.toml) |
+| [`run`](#codingsh-bench-run) | Sample fresh cases, freeze them, run every contender and grade |
+| [`regrade`](#codingsh-bench-regrade) | Re-score stored outputs with the current graders (no contender calls) |
+| [`list`](#codingsh-bench-list) | Benchmarks with their last run and leader |
+| [`show`](#codingsh-bench-show) | Leaderboard, head-to-head and failures for one run (checks a secret seed's commitment) |
+| [`history`](#codingsh-bench-history) | One metric per contender over time |
+| [`report`](#codingsh-bench-report) | Write a self-contained HTML report plus report.json |
+| [`schedule`](#codingsh-bench-schedule) | Print a daily cron line and a GitHub Actions workflow (installing needs budget_usd) |
+
+- Definitions live in ./bench/&lt;name&gt;.toml (searched upward from the current directory) or ~/.coding.sh/benchmarks/&lt;name&gt;.toml.
+- Each run is stored in ~/.coding.sh/benchmarks/&lt;name&gt;/runs/, its sample as dataset bench-&lt;name&gt;, and one experiment per contender.
+- History counts the first complete plain `bench run` per date. --seed, --cases, --date and same-day reruns are adhoc.
+- Guide: docs/guides/benchmarks.md
+
+### `coding.sh bench new`
+
+Write a benchmark definition (bench/<name>.toml).
+
+```text
+coding.sh bench new <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Benchmark name (lowercase, digits, . _ -) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--source <KIND>` | `command` | Where fresh cases come from. One of: `command`, `sessions`, `github`, `urls`, `dataset`. |
+| `--command <CMD>` |  | command source: prints JSONL cases (gets CODING_SH_BENCH_SEED and _DATE) |
+| `--repo <OWNER/NAME>` |  | github source: repository. |
+| `--sitemap <URL>` |  | urls source: sitemap URL (repeatable) |
+| `--dataset <NAME>` |  | dataset source: dataset to sample from. |
+| `-c, --contender <NAME=CMD|URL|agent:ID[:MODEL]>` |  | A contender (repeatable, at least two) |
+| `-g, --grader <JSON>` |  | Grader spec, e.g. {"kind":"exact"} (repeatable) |
+| `-n, --cases <N>` | `50` | Cases per run. |
+| `--global` |  | Write to ~/.coding.sh/benchmarks instead of ./bench. |
+| `--force` |  | Overwrite an existing definition. |
+
+```sh
+coding.sh bench new answers --command 'node gen.mjs' -c fast='node fast.mjs' -c big='node big.mjs' -g '{"kind":"exact"}'
+coding.sh bench new triage --source github --repo owner/name -c claude=agent:claude-code -c codex=agent:codex
+coding.sh bench new fetchers --source urls --sitemap https://example.com/sitemap.xml -c a=https://a.example/v1 -c b=https://b.example/v1
+```
+
+### `coding.sh bench run`
+
+Sample fresh cases, freeze them, run every contender and grade.
+
+```text
+coding.sh bench run <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Benchmark name, or a path to its .toml. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--date <YYYY-MM-DD>` |  | Sample as if on this UTC date (adhoc: kept out of history) |
+| `--seed <SEED>` |  | Fixed seed instead of the definition's (adhoc) |
+| `-n, --cases <N>` |  | Cases this run (adhoc; default: the definition's) |
+| `--adhoc` |  | Keep this run out of history and the freshness ledger. |
+| `--concurrency <N>` |  | Parallel calls (default: the definition's) |
+| `--dry-run` |  | Sample and print the cases, the detectable gap and the cost estimate; run nothing. |
+| `--resume` |  | Continue the latest incomplete run (budget stop or interrupt): same seed and cases, finished calls kept. |
+| `--run <RUN>` |  | With --resume: which incomplete run, by id or YYYY-MM-DD (default: the latest) |
+
+```sh
+coding.sh bench run answers
+coding.sh bench run answers --dry-run
+coding.sh bench run answers --seed try-1 --cases 10
+coding.sh bench run answers --resume
+```
+
+### `coding.sh bench regrade`
+
+Re-score stored outputs with the current graders (no contender calls).
+
+```text
+coding.sh bench regrade <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Benchmark name, or a path to its .toml. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--run <RUN>` |  | A specific run: id or YYYY-MM-DD (default: latest) |
+| `--all` |  | Regrade every counted run. |
+
+```sh
+coding.sh bench regrade answers
+coding.sh bench regrade answers --all
+```
+
+### `coding.sh bench list`
+
+Benchmarks with their last run and leader.
+
+```text
+coding.sh bench list
+```
+
+### `coding.sh bench show`
+
+Leaderboard, head-to-head and failures for one run (checks a secret seed's commitment).
+
+```text
+coding.sh bench show <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Benchmark name, or a path to its .toml. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--run <RUN>` |  | A specific run: id or YYYY-MM-DD (default: latest) |
+| `--cases` |  | Also list the frozen cases. |
+
+### `coding.sh bench history`
+
+One metric per contender over time.
+
+```text
+coding.sh bench history <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Benchmark name, or a path to its .toml. |
+
+| Option | Default | Description |
+|---|---|---|
+| `-m, --metric <METRIC>` | `pass` | Metric. One of: `pass`, `score`, `latency`, `p95`, `cost`, `tokens`, `tokens-in`, `tokens-out`, `errors`. |
+| `-n, --limit <N>` | `30` | Most recent runs. |
+| `--vs <CONTENDER>` |  | Show each contender's paired pass-rate gap to this one, plus the gap pooled over the window. |
+| `--anchor` |  | Numbers from the anchor set only (the same cases every day) |
+
+```sh
+coding.sh bench history answers
+coding.sh bench history answers --metric latency --json
+coding.sh bench history answers --vs baseline
+coding.sh bench history answers --anchor
+```
+
+### `coding.sh bench report`
+
+Write a self-contained HTML report plus report.json.
+
+```text
+coding.sh bench report <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Benchmark name, or a path to its .toml. |
+
+| Option | Default | Description |
+|---|---|---|
+| `-o, --out <DIR>` |  | Output directory (default: ~/.coding.sh/benchmarks/&lt;name&gt;/report) |
+| `--days <N>` | `90` | Days of history to include. |
+| `--viewer-url <URL>` | `http://127.0.0.1:4319` | Viewer base URL for session links. |
+| `--reference <CONTENDER>` |  | Contender for the gap chart (default: the definition's reference) |
+| `--include-private` |  | Show case contents, outputs and session links of a private benchmark (local copies only) |
+
+```sh
+coding.sh bench report answers --out ./public/bench
+```
+
+### `coding.sh bench schedule`
+
+Print a daily cron line and a GitHub Actions workflow (installing needs budget_usd).
+
+```text
+coding.sh bench schedule <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Benchmark name, or a path to its .toml. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--at <HH:MM>` | `06:15` | Time of day (cron: local; Actions: UTC) |
+| `--runner <LABELS>` | `self-hosted` | Actions runs-on label(s), comma-separated. |
+| `--report-dir <DIR>` |  | Also write the report here after each run. |
+| `--install-cron` |  | Add the line to your crontab (replaces this benchmark's earlier line only) |
+| `--workflow-out <FILE>` |  | Write the workflow to this file, e.g. .github/workflows/bench-&lt;name&gt;.yml. |
+| `-y, --yes` |  | Don't ask before editing the crontab. |
+
+```sh
+coding.sh bench schedule answers
+coding.sh bench schedule answers --install-cron --yes
+coding.sh bench schedule answers --workflow-out .github/workflows/bench-answers.yml
+```
+
+## `coding.sh harness`
+
+Snapshot and list agent harness bundles.
+
+```text
+coding.sh harness <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`snapshot`](#codingsh-harness-snapshot) | Snapshot an agent's harness files into a bundle |
+| [`list`](#codingsh-harness-list) | List harness bundles |
+
+### `coding.sh harness snapshot`
+
+Snapshot an agent's harness files into a bundle.
+
+```text
+coding.sh harness snapshot [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-a, --agent <AGENT>` |  | Agent id (required) |
+| `--name <NAME>` |  | Bundle name (default: agent and date) |
+| `--dir <DIR>` |  | Project directory (default: current directory) |
+| `--file <TOML>` |  | Build the bundle from a harness TOML instead. |
+| `--model <MODEL>` |  | Model to record. |
+
+### `coding.sh harness list`
+
+List harness bundles.
+
+```text
+coding.sh harness list
+```
+
+## `coding.sh compare`
+
+A/B two harness bundles on eval tasks.
+
+```text
+coding.sh compare <A> <B> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `a` | yes | Baseline bundle id or name. |
+| `b` | yes | Candidate bundle id or name. |
+
+| Option | Default | Description |
+|---|---|---|
+| `-t, --task <ID>` |  | Task id (repeatable; default: all validated tasks) |
+| `--k <N>` | `1` | Attempts per task and arm. |
+| `-c, --concurrency <N>` |  | Parallel runs. |
+| `--experiment <ID>` |  | Compare the stored runs of this experiment instead of running. |
+| `--gateway` |  | Route both arms through Vercel AI Gateway (key in AI_GATEWAY_API_KEY) |
+| `-y, --yes` |  | Answer yes to confirmation prompts. |
+
+```sh
+coding.sh compare base candidate --k 3
+coding.sh compare base candidate --experiment exp_01
+coding.sh compare sonnet gpt5 --gateway
+```
+
+## `coding.sh gateway`
+
+Vercel AI Gateway: detect routing, enrich sessions with billed cost.
+
+```text
+coding.sh gateway <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`status`](#codingsh-gateway-status) | Show which agents route through the gateway, the key source and tagged sessions |
+| [`enrich`](#codingsh-gateway-enrich) | Attach billed cost and serving provider to llm calls with a gateway generation id |
+
+- The key comes from AI_GATEWAY_API_KEY (or [gateway] apiKeyEnv / apiKey in config.toml) and is never printed or stored.
+- Lookups use GET /v1/generation; results are cached in the index, so re-runs make no calls.
+
+### `coding.sh gateway status`
+
+Show which agents route through the gateway, the key source and tagged sessions.
+
+```text
+coding.sh gateway status [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--credits` |  | Also fetch the credit balance (needs the key) |
+
+### `coding.sh gateway enrich`
+
+Attach billed cost and serving provider to llm calls with a gateway generation id.
+
+```text
+coding.sh gateway enrich [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-s, --session <ID>` |  | Only this session (repeatable; or latest) |
+| `--since <WHEN>` | `30d` | Sessions after this time: 7d, 12h, 30m or a date. |
+| `-n, --limit <N>` | `500` | Maximum rows. |
+| `--offline` |  | Use only the cache and drained traces; no API calls. |
+| `--dry-run` |  | Show the exact changes without writing anything. |
+
+```sh
+coding.sh gateway enrich
+coding.sh gateway enrich --session latest --dry-run
+```
+
+## `coding.sh gc`
+
+Delete expired spool files, blobs and judge cache.
+
+```text
+coding.sh gc [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--compact` |  | Also compact the index (VACUUM) |
+| `--dry-run` |  | Show the exact changes without writing anything. |
+
+## `coding.sh config`
+
+Read and write ~/.coding.sh/config.toml.
+
+```text
+coding.sh config <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`get`](#codingsh-config-get) | Print the effective config or one key |
+| [`set`](#codingsh-config-set) | Set one key |
+| [`path`](#codingsh-config-path) | Print the config file path |
+
+### `coding.sh config get`
+
+Print the effective config or one key.
+
+```text
+coding.sh config get [key]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `key` | no | Dotted key, e.g. capture.mode. |
+
+### `coding.sh config set`
+
+Set one key.
+
+```text
+coding.sh config set <KEY> <VALUE> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `key` | yes | Dotted key, e.g. capture.mode. |
+| `value` | yes | Value (numbers, true/false and JSON arrays are parsed) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--dry-run` |  | Show the exact changes without writing anything. |
+
+### `coding.sh config path`
+
+Print the config file path.
+
+```text
+coding.sh config path
+```
+
+## `coding.sh update`
+
+Install the latest coding.sh release.
+
+```text
+coding.sh update [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--check` |  | Only report whether an update is available. |
+| `--dry-run` |  | Show the exact changes without writing anything. |
+
+```sh
+coding.sh update
+coding.sh update --check
+```
+
+- Other commands print one line when a newer release is out (checked at most daily, in the background).
+- Turn that off with NO_UPDATE_NOTIFIER=1, CODING_SH_NO_UPDATE_CHECK=1 or `[update] check = false` in ~/.coding.sh/config.toml.
+
+## `coding.sh version`
+
+Print the version.
+
+```text
+coding.sh version
+```

@@ -40,8 +40,8 @@ Or skip the global install and run `node packages/coding.sh/dist/cli.mjs <comman
 
 `init` points each detected agent's hooks at `~/.coding.sh/bin/hook.mjs` and registers the
 coding.sh MCP server with the agents that support MCP. Every config file it edits is backed up to
-`~/.coding.sh/backups` first. `coding.sh init --dry-run` prints the exact changes and writes
-nothing.
+`~/.coding.sh/backups` first. `coding.sh init --dry-run` prints the plan (each agent, the files it
+would change, anything that blocks capture) and writes nothing; `--diff` adds the exact edits.
 
 After that, use your agents as usual. Sessions show up in the viewer, in `coding.sh sessions` and
 over MCP. There is no ingest step: read commands, the viewer and the MCP server pick up new events

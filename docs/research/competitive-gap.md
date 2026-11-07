@@ -131,7 +131,7 @@ Source: `src/cli/registry.ts`, `src/schema/index.ts`, `src/otel/map.ts`, `src/vi
   - MCP description compression under a non-inferiority margin.
 - **Workflows** (`workflows list|import|show|stats|score|run|compare|replay`): multi-agent run trees,
   critical path, gantt, and stage-level replay.
-  - `docs/WORKFLOWS.md` and `docs/TOOL-EVALS.md` still say "not implemented"; the code exists.
+  - `docs/design/workflows.md` and `docs/TOOL-EVALS.md` still say "not implemented"; the code exists.
 - **Integrations:** eve (span enrichment, trace importer, stream mapper, experiment task).
 
 ### In flight / queued (not counted as gaps below)

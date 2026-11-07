@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Performance budgets (docs/DOGFOOD.md §3.5). Every benchmark runs in a temp
+// Performance budgets (docs/design/dogfood.md §3.5). Every benchmark runs in a temp
 // HOME / CODING_SH_HOME, never against the live home.
 //
 //   node scripts/dogfood/bench.mjs [hook|ingest|store|help|viewer]... [--baseline <dist dir>] [--json]

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Conformance (docs/DOGFOOD.md §3.3).
+// Conformance (docs/design/dogfood.md §3.3).
 //
 //   conformance.fixtures  fraction of adapter tests passing (node --test, TAP)
 //   capture.health        fraction of this repo's sessions in the last 24 h
