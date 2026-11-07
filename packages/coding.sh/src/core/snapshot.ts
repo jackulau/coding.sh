@@ -177,6 +177,28 @@ async function countUntracked(root: string, limit: number, timeoutMs: number, gi
  * Snapshot the working tree containing `cwd` into its shadow repo.
  * Returns undefined when cwd is not inside a git work tree.
  */
+/**
+ * Windows: concurrent snapshots of one repo write the same loose objects into its
+ * shadow store, and git's rename into objects/ fails ("unable to write file ...
+ * Permission denied") while another process has that file open. Objects are
+ * content-addressed, so a retry finds the object already there and goes on.
+ * Covers both a thrown GitError and an allowFail result with a non-zero code.
+ */
+const OBJECT_RACE = /unable to write (?:loose object )?file .*objects|insufficient permission for adding an object/i;
+async function retryObjectRace<T>(step: () => Promise<T>): Promise<T> {
+  for (let i = 0; ; i++) {
+    const last = process.platform !== "win32" || i >= 5;
+    try {
+      const r = await step();
+      const res = r as { code?: unknown; stderr?: unknown };
+      if (last || typeof res.code !== "number" || res.code === 0 || !OBJECT_RACE.test(String(res.stderr))) return r;
+    } catch (e) {
+      if (last || !(e instanceof GitError) || e.timedOut || !OBJECT_RACE.test(e.stderr)) throw e;
+    }
+    await new Promise((r) => setTimeout(r, 20 * (i + 1)));
+  }
+}
+
 export async function snapshot(cwd: string, opts: SnapshotOptions = {}): Promise<RepoState | undefined> {
   const env = opts.env ?? process.env;
   const maxFiles = opts.maxFiles ?? DEFAULT_SNAPSHOT_MAX_FILES;
@@ -222,7 +244,7 @@ export async function snapshot(cwd: string, opts: SnapshotOptions = {}): Promise
       const left = timeoutMs - (Date.now() - started);
       try {
         if (left <= 0) throw new GitError("budget exhausted", { args: [], cwd: root, code: null, stderr: "", timedOut: true });
-        await run([...cfg, "add", "-A", "--ignore-errors"], { cwd: root, env: genv, timeoutMs: left, allowFail: true });
+        await retryObjectRace(() => run([...cfg, "add", "-A", "--ignore-errors"], { cwd: root, env: genv, timeoutMs: left, allowFail: true }));
       } catch (e) {
         if (!(e instanceof GitError && e.timedOut)) throw e;
         partial = true;
@@ -231,7 +253,7 @@ export async function snapshot(cwd: string, opts: SnapshotOptions = {}): Promise
     if (partial) {
       await prepareIndex();
       try {
-        await run([...cfg, "add", "-u", "--ignore-errors"], { cwd: root, env: genv, timeoutMs, allowFail: true });
+        await retryObjectRace(() => run([...cfg, "add", "-u", "--ignore-errors"], { cwd: root, env: genv, timeoutMs, allowFail: true }));
       } catch (e) {
         if (e instanceof GitError && e.timedOut) {
           state.partial = true;
@@ -240,10 +262,10 @@ export async function snapshot(cwd: string, opts: SnapshotOptions = {}): Promise
         throw e;
       }
     }
-    const tree = await git([...cfg, "write-tree"], { cwd: root, env: genv, timeoutMs });
+    const tree = await retryObjectRace(() => git([...cfg, "write-tree"], { cwd: root, env: genv, timeoutMs }));
     const msg = opts.message ?? `coding.sh snapshot${partial ? " (partial: tracked files only)" : ""}`;
     const commitArgs = ["commit-tree", tree, ...(headSha ? ["-p", headSha] : []), "-m", msg];
-    const commit = await git([...cfg, ...commitArgs], { cwd: root, env: { ...genv, ...CODING_SH_IDENTITY }, timeoutMs });
+    const commit = await retryObjectRace(() => git([...cfg, ...commitArgs], { cwd: root, env: { ...genv, ...CODING_SH_IDENTITY }, timeoutMs }));
     // Loose ref keeps the commit reachable for gc in the shadow repo.
     const refDir = join(shadow, "refs", "snapshots");
     mkdirSync(refDir, { recursive: true });
