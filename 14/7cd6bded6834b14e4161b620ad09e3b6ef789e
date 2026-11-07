@@ -1,0 +1,45 @@
+docs/guides/privacy.md
+  s_8e040dbdf13565::t_befba57a881fdb 54-62
+packages/coding.sh/test/store/purge.test.ts
+  s_8e040dbdf13565::t_990e4c8fcaea05 96
+  s_8e040dbdf13565::t_e86082c2e3e8db 175-176
+  s_8e040dbdf13565::t_909e0a7a9bfa14 1-95,97-174,177-223
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_0e2ad092abc215 184
+  s_8e040dbdf13565::t_9316f13c683ed7 164
+  s_8e040dbdf13565::t_31de9f47f045e9 180
+apps/site/src/pages/docs/storage.astro
+  s_8e040dbdf13565::t_1bf8af5b0ee847 117
+CHANGELOG.md
+  s_8e040dbdf13565::t_f5f39af44ff0b0 65
+packages/coding.sh/src/cli/commands/purge.ts
+  s_8e040dbdf13565::t_9ecfe54a95b22a 1-5,7-52,55-59,61-81
+  s_8e040dbdf13565::t_07290a68ce9d27 53-54
+  s_8e040dbdf13565::t_77a7be7260cdab 60
+  s_8e040dbdf13565::t_0b327695ee81d1 6
+packages/coding.sh/src/store/purge.ts
+  s_8e040dbdf13565::t_2937b1980b125d 1-26,29-40,43-187,189-196,200-210,215-231,233,235-239,241-299,302-322
+  s_8e040dbdf13565::t_ec8ee98c24bdf3 27-28,41-42,188,300-301
+  s_8e040dbdf13565::t_192c54dc0ac80c 197-199,211-214,232,234,240
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_dd9995a31943a8 1050-1064
+  s_8e040dbdf13565::t_74ce7c26acab23 1049
+docs/reference/cli.md
+  s_8e040dbdf13565::t_c58f1f526a3cac 63,2103-2124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "147cd6bded6834b14e4161b620ad09e3b6ef789e",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
