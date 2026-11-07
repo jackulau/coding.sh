@@ -1,0 +1,44 @@
+packages/coding.sh/test/fixtures/otel/durable/cloudflare-workflows.jsonl
+  s_8e040dbdf13565::t_c2641a744f4c26 1-6
+packages/coding.sh/test/otel/durable.test.ts
+  s_8e040dbdf13565::t_d2cf601259f28f 2-9
+  s_8e040dbdf13565::t_dbe18710364470 20-32
+  s_8e040dbdf13565::t_7a96d1d68811fd 289
+  s_8e040dbdf13565::t_d3c26da64253a0 290-292
+  s_8e040dbdf13565::t_4b0b5dcd750e7f 191
+  s_8e040dbdf13565::t_b661832d18d7f4 288
+  s_8e040dbdf13565::t_c3973aa9851cff 197
+  s_8e040dbdf13565::t_e699a61746488b 256
+  s_8e040dbdf13565::t_d9dddd1a2e33f4 141,231
+  s_8e040dbdf13565::t_70a491e73edd28 37-38
+  s_8e040dbdf13565::t_c3adecc14c121e 235-255,257-287,293-306
+  s_8e040dbdf13565::t_9845e16f675f63 218-230
+  s_8e040dbdf13565::t_d5a3e048960c48 208
+  s_8e040dbdf13565::t_d9c71362a4856d 41,57,63-69,161,232-234
+packages/coding.sh/test/fixtures/otel/durable/langgraph-openinference.jsonl
+  s_8e040dbdf13565::t_c2641a744f4c26 1-14
+packages/coding.sh/test/fixtures/otel/durable/langgraph-langsmith.jsonl
+  s_8e040dbdf13565::t_c2641a744f4c26 1-14
+packages/coding.sh/test/fixtures/otel/durable/dbos.jsonl
+  s_8e040dbdf13565::t_c2641a744f4c26 1-9
+packages/coding.sh/test/fixtures/otel/durable/restate.jsonl
+  s_8e040dbdf13565::t_c2641a744f4c26 1-8
+packages/coding.sh/test/fixtures/otel/durable/inngest.jsonl
+  s_8e040dbdf13565::t_c2641a744f4c26 1-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "77db494e56d209c267ea3e2068d661e86919190b",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
