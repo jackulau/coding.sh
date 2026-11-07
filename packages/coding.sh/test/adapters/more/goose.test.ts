@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, it } from "node:test";
-import { GOOSE_HOOK_EVENTS, gooseAdapter, gooseDbEvents, gooseSessionsDb } from "../../../src/adapters/more/goose.ts";
+import { GOOSE_HOOK_EVENTS, gooseAdapter, gooseConfigDir, gooseDbEvents, gooseSessionsDb } from "../../../src/adapters/more/goose.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { assertGolden, assertInstallRoundTrip, assertRunOk, assertWellFormed, collect, fakeBinary, HOOK, moreEnv, normalizeFixture, readArgv, runSpec, summarize, testCtx, writeFile } from "./_helpers.ts";
 
@@ -119,6 +119,16 @@ describe("goose sessions.db", () => {
     if (process.platform === "win32") return;
     assert.equal(gooseSessionsDb(), join(env.home, ".local", "share", "goose", "sessions", "sessions.db"));
   });
+
+  it("uses %APPDATA%/Block/goose on Windows, for config as well as data", () => {
+    const appdata = join(env.root, "AppData", "Roaming");
+    assert.equal(gooseConfigDir({ APPDATA: appdata, HOME: env.home }, "win32"), join(appdata, "Block", "goose", "config"));
+    assert.equal(gooseSessionsDb({ APPDATA: appdata, HOME: env.home }, "win32"), join(appdata, "Block", "goose", "data", "sessions", "sessions.db"));
+    // No APPDATA: the profile's AppData/Roaming, as etcetera falls back to.
+    assert.equal(gooseConfigDir({ USERPROFILE: env.home, HOME: env.home }, "win32"), join(env.home, "AppData", "Roaming", "Block", "goose", "config"));
+    // GOOSE_PATH_ROOT wins everywhere.
+    assert.equal(gooseConfigDir({ APPDATA: appdata, GOOSE_PATH_ROOT: env.root }, "win32"), join(env.root, "config"));
+  });
 });
 
 describe("goose install", () => {
@@ -172,7 +182,8 @@ describe("goose run + overlay", () => {
   });
 
   it("overlay roots goose in the run dir and carries config.yaml over", async () => {
-    writeFile(join(env.home, ".config", "goose", "config.yaml"), "GOOSE_PROVIDER: anthropic\n");
+    // ~/.config/goose, or %APPDATA%/Block/goose/config on Windows (moreEnv clears APPDATA: under the temp home).
+    writeFile(join(gooseConfigDir(), "config.yaml"), "GOOSE_PROVIDER: anthropic\n");
     const runDir = join(env.root, "run");
     const o = await gooseAdapter.overlay!({ files: {}, flags: [] } as never, runDir);
     assert.equal(o.env.GOOSE_PATH_ROOT, join(runDir, "goose"));

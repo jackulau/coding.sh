@@ -178,7 +178,7 @@ jobs:
     name: real capture / ${{ matrix.os }}
     # Always GitHub-hosted: it installs third-party agents from npm and runs them.
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -201,8 +201,12 @@ jobs:
         working-directory: packages/coding.sh
         run: npm run build
 
-      # coding.sh from its tarball plus pinned OpenCode and Pi from npm, under a temp HOME,
-      # each driven through one session against a local stub model.
+      # Aider installs through uv (it fetches a Python aider supports).
+      - uses: astral-sh/setup-uv@v6
+
+      # coding.sh from its tarball plus pinned OpenCode, Pi, Factory Droid and GitHub Copilot CLI
+      # from npm, Goose from its GitHub release and Aider from PyPI, under a temp HOME, each
+      # driven through one session against a local stub model.
       - name: Real agents against a stub model
         run: node scripts/e2e/real-capture.mjs
 

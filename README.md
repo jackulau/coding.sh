@@ -123,8 +123,9 @@ cost. The SDKs and store plugins are not published yet. Start with
 
 Verified on a real install means the agent's current release was installed and run through a
 session against a local stub model, its hooks fired and the recorded session was checked, and the
-captured payloads are now CI fixtures. Fixture-tested means CI checks the adapter against the
-agent's documented formats, but nobody has run it against a live install yet. Cursor CLI and Amp
+captured payloads are now CI fixtures. For OpenCode, Pi, Goose, Factory Droid, GitHub Copilot CLI
+and Aider, CI repeats that run on Linux and Windows on every change. Fixture-tested means CI checks
+the adapter against the agent's documented formats, but nobody has run it against a live install yet. Cursor CLI and Amp
 are still in that state because both need an account login. If you use one of them, a short
 [agent support report](https://github.com/jackulau/coding.sh/issues/new?template=agent-support.yml)
 saying whether it works moves it to "Verified". Per-agent details, including which agents get the
@@ -155,8 +156,9 @@ coding.sh is pre-1.0 (latest: 0.1.1), so expect rough edges. What isn't done yet
   remains is the maintainer's account setup and tag ([First publish](docs/RELEASE.md#first-publish)).
   The curl installer and source installs work today.
 - CI runs on Linux, macOS and Windows. On Windows, CI runs the test suite, the installer (from
-  Git Bash) and real OpenCode and Pi sessions against a stub model. Capture from the other agents
-  has not been checked on Windows yet.
+  Git Bash) and real OpenCode, Pi, Goose, Factory Droid, GitHub Copilot CLI and Aider sessions
+  against a stub model. Capture from Claude Code, Codex CLI, Antigravity CLI, Cursor CLI, Amp and
+  T3 Code has not been checked on Windows yet.
 - Two adapters, Cursor CLI and Amp, are fixture-tested only (see [Supported agents](#supported-agents)).
 
 Changes are listed in [CHANGELOG.md](CHANGELOG.md) and on the
