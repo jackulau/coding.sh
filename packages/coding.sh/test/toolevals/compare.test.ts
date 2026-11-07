@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mulberry32 } from "../../src/stats/prng.ts";
+import { pairedPermutation } from "../../src/stats/tests.ts";
 import { compareToolArms, summarizeArms } from "../../src/toolevals/compare.ts";
 import { formatToolCompare } from "../../src/toolevals/report.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
@@ -43,6 +44,9 @@ describe("compareToolArms", () => {
     assert.ok(r.diff.mean > 0.15 && r.diff.mean < 0.45, String(r.diff.mean));
     assert.equal(r.mcnemar.n, r.mcnemar.b + r.mcnemar.c);
     assert.ok(r.mcnemar.p < 0.05);
+    // AA-22: the permutation p comes from the same per-task diffs as the bootstrap.
+    assert.deepEqual(r.permutation, { p: pairedPermutation(r.tasks.map((t) => t.diff), { seed: 1 }).p, method: "exact" });
+    assert.ok(r.permutation.p < 0.05);
   });
 
   it("lists a pass → fail regression at k=1 with session links and first divergence", () => {
@@ -112,6 +116,7 @@ describe("compareToolArms", () => {
     const text = formatToolCompare(r);
     assert.match(text, /verdict:/);
     assert.match(text, /descriptions/);
+    assert.match(text, /p \(perm\) = \d\.\d{3}/);
     const sum = summarizeArms(arms(5, 2, 1, 0, 3));
     assert.deepEqual(
       sum.map((a) => [a.arm, a.passAllK, a.passAnyK]),

@@ -362,7 +362,8 @@ says how many runs were priced instead.
 
 `coding.sh toolevals` measures how well agents use a CLI, MCP server or HTTP API: surface size,
 schema checks, per-task tool-call metrics in a sandbox, variant comparisons and MCP description
-compression. See [TOOL-EVALS.md](../TOOL-EVALS.md).
+compression. `toolevals compare` prints `p (perm)` next to McNemar: a task-paired permutation test
+on per-task pass-rate differences, exact up to 20 tasks. See [TOOL-EVALS.md](../TOOL-EVALS.md).
 
 ## Workflows
 

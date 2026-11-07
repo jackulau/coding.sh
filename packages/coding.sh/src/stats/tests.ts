@@ -1,4 +1,5 @@
 // Hypothesis tests.
+import { mulberry32 } from "./prng.ts";
 
 /** ln C(n, k) via a running sum of logs — exact enough for n up to ~1e6. */
 function logChoose(n: number, k: number, logFact: Float64Array): number {
@@ -260,4 +261,85 @@ export function acceptanceGatePaired(baseline: readonly boolean[], candidate: re
     else if (!baseline[i] && candidate[i]) wins++;
   }
   return acceptanceGate({ wins, losses, solved }, opts);
+}
+
+export interface PermutationOpts {
+  /** Enumerate all 2^n sign flips up to this many pairs; Monte Carlo above. Default 20. */
+  exactMaxN?: number;
+  /** Monte Carlo sign-flip draws. Default 20000. */
+  iters?: number;
+  seed?: number;
+  /** "greater": B − A > 0; "less": B − A < 0. Default "two-sided". */
+  alternative?: "two-sided" | "greater" | "less";
+}
+
+export interface PermutationResult {
+  p: number;
+  /** Paired units (tasks); zeros are kept. */
+  n: number;
+  /** Observed mean of the per-pair differences (NaN when n = 0). */
+  observed: number;
+  method: "exact" | "monte-carlo";
+  /** Monte Carlo draws (absent for the exact test). */
+  iters?: number;
+}
+
+/**
+ * Paired permutation (sign-flip) test on per-pair differences d_i = B_i − A_i.
+ * H0: the two arms are exchangeable within each pair, so each d_i is equally
+ * likely to be +|d_i| or −|d_i|. The statistic is the mean difference, zeros
+ * kept. Up to `exactMaxN` pairs all 2^n sign assignments are enumerated in
+ * Gray-code order (one flip per step on a running sum), so p is exact. Above
+ * it p is the Monte Carlo estimate (1 + #{T* as extreme}) / (1 + iters), which
+ * is never 0 and keeps the level (Phipson and Smyth, "Permutation p-values
+ * should never be zero", SAGMB 9(1), 2010).
+ *
+ * Unlike a percentile bootstrap it holds its level at 5-11 tasks, the size of
+ * a typical tool-eval suite, and unlike the sign test it keeps magnitudes, so
+ * it works on per-task mean rewards with unequal k and on continuous metrics.
+ * Fisher, The Design of Experiments (1935) §21; the task-paired form follows
+ * AT-AT (arXiv 2610.34679) and Zmigrod et al. (2022). Exact values match
+ * scipy.stats.permutation_test(permutation_type="samples", n_resamples=inf).
+ */
+export function pairedPermutation(diffs: readonly number[], opts: PermutationOpts = {}): PermutationResult {
+  const n = diffs.length;
+  const alt = opts.alternative ?? "two-sided";
+  const exactMaxN = opts.exactMaxN ?? 20;
+  for (const d of diffs) if (!Number.isFinite(d)) throw new RangeError(`pairedPermutation: differences must be finite (got ${d})`);
+  if (n === 0) return { p: 1, n: 0, observed: NaN, method: "exact" };
+  let obs = 0;
+  let abs = 0;
+  for (const d of diffs) {
+    obs += d;
+    abs += Math.abs(d);
+  }
+  // Sums closer than this are ties: the running sum and the observed sum add
+  // the same terms in different orders, so an exact tie can drift by ulps.
+  const tol = 1e-9 * Math.max(1, abs);
+  const hit =
+    alt === "two-sided" ? (s: number) => Math.abs(s) >= Math.abs(obs) - tol : alt === "greater" ? (s: number) => s >= obs - tol : (s: number) => s <= obs + tol;
+  // 2^30 flips is the most the 32-bit Gray-code step can index (and minutes of work).
+  if (n <= Math.min(exactMaxN, 30)) {
+    // Gray code: step k flips the sign of pair ctz(k), starting from all +.
+    const sign = new Int8Array(n).fill(1);
+    let s = obs;
+    let count = hit(s) ? 1 : 0;
+    const total = 2 ** n;
+    for (let k = 1; k < total; k++) {
+      const i = 31 - Math.clz32(k & -k);
+      s -= 2 * (sign[i] as number) * (diffs[i] as number);
+      sign[i] = -(sign[i] as number);
+      if (hit(s)) count++;
+    }
+    return { p: Math.min(1, count / total), n, observed: obs / n, method: "exact" };
+  }
+  const iters = opts.iters ?? 20_000;
+  const rand = mulberry32(opts.seed ?? 0x5eed);
+  let count = 0;
+  for (let it = 0; it < iters; it++) {
+    let s = 0;
+    for (let i = 0; i < n; i++) s += rand() < 0.5 ? -(diffs[i] as number) : (diffs[i] as number);
+    if (hit(s)) count++;
+  }
+  return { p: Math.min(1, (1 + count) / (1 + iters)), n, observed: obs / n, method: "monte-carlo", iters };
 }

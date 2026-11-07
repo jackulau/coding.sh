@@ -335,6 +335,12 @@ export interface ToolCompareReport {
   diff: BootstrapResult;
   /** Exact McNemar over attempt-aligned trial pairs. */
   mcnemar: McNemarResult;
+  /**
+   * Two-sided task-paired permutation test on the same per-task pass-rate
+   * differences as `diff` (stats.pairedPermutation): exact up to 20 tasks.
+   * Reported only; the verdict still uses the bootstrap and McNemar.
+   */
+  permutation: { p: number; method: "exact" | "monte-carlo" };
   metrics: Partial<Record<ContinuousMetric, ToolMetricDelta>>;
   surface?: {
     baseline: SurfaceReport;

@@ -379,7 +379,13 @@ before starting.
 - Pairing unit: task. Arms must share the driver, or share the variant for a driver comparison.
   The report rejects pairs that differ on both.
 - Success: per-task pass-rate difference → `pairedBootstrap` (task-level resampling), plus
-  `mcnemarPaired` over attempt-aligned trials.
+  `mcnemarPaired` over attempt-aligned trials, plus `pairedPermutation` on the same per-task
+  differences (`report.permutation = {p, method}`, printed as `p (perm)`). The permutation test
+  flips the sign of each task's difference: exactly, over all 2^n flips, up to 20 tasks, and by
+  20,000 seeded Monte Carlo flips above that. Percentile bootstrap intervals under-cover at 5-11
+  tasks; the permutation p holds its level there and, unlike McNemar, does not need
+  attempt-aligned trials. It is reported only; the verdict rules are unchanged (AT-AT, arXiv
+  2610.34679).
 - Continuous metrics (`turns`, `tokens`, `costUsd`, `wallMs`, `invalidRate`, `helpLookups`,
   `llmP95Ms`, `targetLatencyP95Ms`): per-task median difference → `pairedBootstrap`.
 - Surface metrics are deterministic per variant and are reported as absolute and relative deltas.

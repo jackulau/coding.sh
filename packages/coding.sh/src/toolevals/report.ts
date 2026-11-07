@@ -63,7 +63,7 @@ export function formatToolCompare(r: ToolCompareReport, o: FormatOpts = {}): str
   const rate = (a: ToolArmSummary) => `${pct(a.passRate.p)} (${a.passes}/${a.trials})`;
   const color = (verdict: string, s: string) => (verdict === "better" ? p.good(s) : verdict === "worse" ? p.bad(s) : s);
   rows.push(["success", rate(r.baseline), rate(r.candidate), color(r.verdict.kind, `${pp(r.diff.mean)} [${pp(r.diff.lo)}, ${pp(r.diff.hi)}]`)]);
-  rows.push(["", "", "", p.dim(`McNemar ${pval(r.mcnemar.p)} (${r.mcnemar.b}↓ ${r.mcnemar.c}↑)`)]);
+  rows.push(["", "", "", p.dim(`McNemar ${pval(r.mcnemar.p)} (${r.mcnemar.b}↓ ${r.mcnemar.c}↑)${r.permutation ? ` · p (perm) ${pval(r.permutation.p).replace(/^p /, "")}` : ""}`)]);
   for (const [k, m] of Object.entries(r.metrics) as [ContinuousMetric, NonNullable<ToolCompareReport["metrics"][ContinuousMetric]>][]) {
     const { label, unit } = METRIC_LABEL[k];
     const d = unit === "rate" ? pp(m.diff.mean) : `${m.diff.mean >= 0 ? "+" : ""}${fmt(m.diff.mean, unit)}`;

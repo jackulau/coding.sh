@@ -8,7 +8,7 @@ import { firstDivergence } from "../runner/divergence.ts";
 import type { VerdictKind } from "../runner/experiment.ts";
 import { mean, median } from "../stats/summary.ts";
 import { pairedBootstrap, wilson, type BootstrapResult } from "../stats/interval.ts";
-import { mcnemarPaired, type McNemarResult } from "../stats/tests.ts";
+import { mcnemarPaired, pairedPermutation, type McNemarResult } from "../stats/tests.ts";
 import { totalTokens } from "./metrics.ts";
 import type {
   ContinuousMetric,
@@ -193,6 +193,8 @@ export function compareToolArms(trials: readonly TrialResult[], o: CompareToolOp
 
   const boot = pairedBootstrap(diffs, { iters: o.iters, seed: o.seed, alpha });
   const mcn = mcnemarPaired(alignedA, alignedB);
+  // Same per-task diffs as the bootstrap; exact at the 5-20 tasks a suite usually has.
+  const perm = pairedPermutation(diffs, { seed: o.seed });
   const baseline = summarizeArm(trials, o.baseline);
   const candidate = summarizeArm(trials, o.candidate);
   const notes: string[] = [];
@@ -265,6 +267,7 @@ export function compareToolArms(trials: readonly TrialResult[], o: CompareToolOp
     k,
     diff: boot,
     mcnemar: mcn,
+    permutation: { p: perm.p, method: perm.method },
     metrics,
     ...(surface ? { surface } : {}),
     verdict,
