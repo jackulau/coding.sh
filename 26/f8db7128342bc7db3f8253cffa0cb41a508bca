@@ -1,0 +1,34 @@
+packages/coding.sh/src/core/durable.ts
+  s_8e040dbdf13565::t_0acf9690b90028 80-81,88-90,96-99,118-153,156-157,237-239,241,244,269,307-311,373-392,405-414,416-417,440,479-480
+packages/coding.sh/src/otel/map.ts
+  s_8e040dbdf13565::t_e2dad6f95ce7f1 649-650,877-878,951-953,969-972,981-984,1007,1009
+packages/coding.sh/src/otel/durable.ts
+  s_8e040dbdf13565::t_a4ac5556cefcc3 87-93,130-155,232-234,242-244,246,250-252,341,348-356,363,402-410
+  s_8e040dbdf13565::t_6a9c98f5c50812 30-32
+  s_8e040dbdf13565::t_fe2f32f792526a 17,22-26
+  s_8e040dbdf13565::t_814551ded8a4ac 245,303-305
+packages/coding.sh/src/workflows/sources/otel.ts
+  s_8e040dbdf13565::t_bb1e2e3f209401 306-310
+  s_8e040dbdf13565::t_3e2828f598f125 56-57,71,82,275-277,279-281,283-285,288-291,296-297,301-305
+  s_8e040dbdf13565::t_0bfd12493644d9 77,90,93-103,292-293
+  s_8e040dbdf13565::t_fa07e096c6746f 104,311
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_eff5ba83f8a3d8 440
+  s_8e040dbdf13565::t_71be93a1034125 444-445
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "26f8db7128342bc7db3f8253cffa0cb41a508bca",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
