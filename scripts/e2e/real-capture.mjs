@@ -2,11 +2,14 @@
 // Real capture, end to end: install coding.sh from a tarball and real agent CLIs
 // from npm under a throwaway HOME, run `coding.sh init`, drive one non-interactive
 // session per agent against a local stub model (one tool call that writes
-// hello.txt, then text), and check what coding.sh recorded. Then `ingest
-// --backfill` twice must add no duplicate rows.
+// hello.txt, then text), and check what coding.sh recorded. The MCP server must
+// answer through ~/.coding.sh/bin/mcp.mjs, and `ingest --backfill` twice must add
+// no duplicate rows.
 //
 //   node scripts/e2e/real-capture.mjs [--tarball coding.sh-x.y.z.tgz] [--agents opencode,pi] [--keep]
 //
+// Agents are spawned with coding.sh's own core/spawn.ts (node 22.18+ loads the .ts),
+// so on Windows they run through their npm .cmd shims as a user's would.
 // Without --tarball it packs packages/coding.sh (build it first: npm run build).
 // Needs network for npm. Never touches the real HOME: every path is under a temp dir.
 // Exit codes: 0 all checks passed, 1 a check failed.

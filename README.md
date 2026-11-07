@@ -153,8 +153,9 @@ coding.sh is pre-1.0 (latest: 0.1.1), so expect rough edges. What isn't done yet
 - npm and PyPI: nothing is published yet. The packages and the release workflow are ready; what
   remains is the maintainer's account setup and tag ([First publish](docs/RELEASE.md#first-publish)).
   The curl installer and source installs work today.
-- CI runs on Linux, macOS and Windows. On Windows, CI runs the test suite and the installer (from
-  Git Bash), but capture from real agent sessions has not been checked there yet.
+- CI runs on Linux, macOS and Windows. On Windows, CI runs the test suite, the installer (from
+  Git Bash) and real OpenCode and Pi sessions against a stub model. Capture from the other agents
+  has not been checked on Windows yet.
 - Two adapters, Cursor CLI and Amp, are fixture-tested only (see [Supported agents](#supported-agents)).
 
 Changes are listed in [CHANGELOG.md](CHANGELOG.md) and on the

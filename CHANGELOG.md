@@ -14,6 +14,11 @@ coding.sh runs on Windows, and CI tests it there.
 ### Added
 
 - **Install.** Windows: run the installer from Git Bash. Hook commands use `C:/…` paths that cmd.exe, PowerShell and Git Bash all run. CI runs the tests and the installer on Windows. [Install guide](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#windows).
+- **Capture.** CI runs real OpenCode and Pi sessions on Linux and Windows against a stub model, checks the recorded prompt, tool call, file change and model, and checks that `ingest --backfill` adds no duplicates. [Install guide](https://github.com/jackulau/coding.sh/blob/main/docs/guides/install.md#windows).
+
+### Fixed
+
+- **Windows.** `coding.sh update` and the MCP launcher run npm and `coding.sh` without a shell, so paths with spaces or `&` arrive intact.
 
 ## [0.1.1] - 2026-11-07
 

@@ -48,8 +48,10 @@ Linux and records the agents you run inside WSL.
 - `bench schedule --install-cron` needs cron. On Windows, run the printed command from Task
   Scheduler, or use `--workflow-out` for a GitHub Actions schedule.
 
-CI runs the test suite and this installer on Windows. Capture from real agent sessions has not
-been checked on Windows yet.
+CI runs the test suite and this installer on Windows. It also installs OpenCode and Pi from npm,
+runs one session of each against a stub model and checks what coding.sh recorded
+([`scripts/e2e/real-capture.mjs`](../../scripts/e2e/real-capture.mjs)). Capture from the other
+agents has not been checked on Windows yet.
 
 ## What `init` changes
 
