@@ -45,13 +45,18 @@ jobs:
 
       # The viewer UI tests drive headless Chrome and skip without one. GitHub's Linux image
       # ships Chrome; the desk runner has none, so it fetches Chrome for Testing into its tool
-      # cache (no sudo). Linux legs name the binary, so a missing one fails instead of skipping.
+      # cache, kept between runs. No sudo and no unzip there: yauzl unpacks it in Node. Linux
+      # legs name the binary, so a missing one fails instead of skipping.
       - name: Chrome for the viewer tests
         id: chrome
         if: runner.os == 'Linux' && runner.environment == 'self-hosted'
-        uses: browser-actions/setup-chrome@48ad923757ca74d66703209fe939badbdf80f2f4 # v2.2.0
-        with:
-          chrome-version: stable
+        working-directory: ${{ runner.temp }}
+        run: |
+          out=$(npx --yes -p @puppeteer/browsers@3.2.6 -p yauzl@3.4.0 browsers install chrome@stable --path "$RUNNER_TOOL_CACHE/chrome-for-testing")
+          last=${out##*$'\n'}
+          echo "$last"
+          test -x "${last#* }"
+          echo "chrome-path=${last#* }" >> "$GITHUB_OUTPUT"
 
       - name: Typecheck
         working-directory: packages/coding.sh
