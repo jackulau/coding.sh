@@ -33,7 +33,7 @@ import { startStub, toolNames } from "./stub-model.mjs";
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const isWin = process.platform === "win32";
 const CLAUDE_PKG = "@anthropic-ai/claude-code@2.1.319";
-const MODEL = "claude-sonnet-4-5";
+const MODEL = "claude-sonnet-5-5";
 const RULE = "VERIFY-RULE: after changing code, run npm test before you say you are done.";
 const TASKS = {
   range: { instruction: "Make range.js include its end value.", before: "module.exports = (a, b) => Array.from({ length: b - a }, (_, i) => a + i);\n", after: "module.exports = (a, b) => Array.from({ length: b - a + 1 }, (_, i) => a + i);\n" },

@@ -29,8 +29,8 @@ coding.sh exp ab --dry-run
   unverified-claim: 3 cases from 3 sessions
   done-while-failing: 0 cases from 0 sessions
   unchanged-retry: 0 cases from 0 sessions
-A git:HEAD (1 file) vs B your edits (1 file), claude-sonnet-4-5
-Would make 6 of 6 model calls (0 cached) plus up to 6 judge calls: ~3k input tokens, ~$0.08
+A git:HEAD (1 file) vs B your edits (1 file), claude-sonnet-5-5
+Would make 6 of 6 model calls (0 cached) plus up to 6 judge calls: ~3k input tokens, ~$0.05
 ```
 
 A decision point is a moment in one of your sessions where the agent went wrong. Three kinds are
@@ -51,17 +51,17 @@ coding.sh exp ab --max-cost 1
 Here is a run on a small demo repo with three sessions:
 
 ```text
-A: git:HEAD   B: your edits   model: claude-sonnet-4-5
+A: git:HEAD   B: your edits   model: claude-sonnet-5-5
 3 decision points from 3 sessions | A 0/3 -> B 3/3 | fixed 3, broke 0 | paired p=0.25 | <$0.01, 0/6 cached
 Hold: not enough evidence (B wins 3, loses 0; needs 8+ wins with no losses)
 Replay noise floor 0% (A's turn differs from the recorded one in 0/3); B moved +100 points, above it
 
 Fixed (A failed, B passed):
-  unverified-claim "Make pad.js pad on the left."  coding.sh show 0a25368e-c939-467b-b3ae-33fc64e2eaa3
-  unverified-claim "Make clamp.js clamp to the upper bound too."  coding.sh show 21fe887d-1197-43fc-baa0-3af00a30548c
-  unverified-claim "Make range.js include its end value."  coding.sh show b75935e0-afd0-4ee0-9bf8-3e6f84eacdc2
+  unverified-claim "Make pad.js pad on the left."  coding.sh show 8f0e1e52-bdc1-4da0-a03b-14edf6dfcf77
+  unverified-claim "Make clamp.js clamp to the upper bound too."  coding.sh show 9c1792df-6267-4b30-9f24-7a7307740543
+  unverified-claim "Make range.js include its end value."  coding.sh show fe48a450-8867-48ec-b946-3b4d0cb6c780
 
-Full comparison: coding.sh exp compare exp_01M6VX8WPCYZEKMDD9PD0CRFCN exp_01M6VX8WPFG2BS15JM0YV525KQ
+Full comparison: coding.sh exp compare exp_01M6VXZSFPM2QK12ANN6Z269WP exp_01M6VXZSFSZ25HD2HXXVY40BXV
 ```
 
 For each case, the model wrote the agent's next turn twice: once with your committed CLAUDE.md (A)
@@ -110,7 +110,8 @@ only on "Ship it".
 - `--b drafts/CLAUDE.md` tests a draft file against your current one without touching the repo.
   `--a git:main --b .` compares a branch's files with your working tree.
 - `--behavior unverified-claim` limits the run to one kind of decision point.
-- `--model` picks the model for the next turn. By default it's the one your sessions used most.
+- `--model` picks the model for the next turn. By default it's the model the agent was using at
+  those moments, else the current Sonnet (or GPT with `--provider openai`).
 - `--trials 3` asks each case three times, for steadier numbers on a small set.
 - `--json` gives everything as one JSON document.
 - An interrupted run picks up where it stopped with `--resume`.

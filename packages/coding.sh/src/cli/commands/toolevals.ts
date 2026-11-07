@@ -76,7 +76,7 @@ function pickVariant(cfg: ToolEvalsConfig, target: string, name: string): Varian
 }
 
 function parseDrivers(c: CommandContext, cfg: ToolEvalsConfig, values: string[]): Driver[] {
-  if (!values.length) throw new UsageError("Pass at least one --driver, e.g. --driver agent:claude-code or --driver model:anthropic/claude-sonnet-5", { reason: "missing_argument" });
+  if (!values.length) throw new UsageError("Pass at least one --driver, e.g. --driver agent:claude-code or --driver model:anthropic/claude-sonnet-5-5", { reason: "missing_argument" });
   const drivers: Driver[] = [];
   for (const v of values) {
     try {

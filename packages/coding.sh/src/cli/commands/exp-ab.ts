@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { harnessItem, itemExposure, type ExposureState } from "../../core/exposure.ts";
-import { lookupPrice, pricesFor } from "../../core/pricing.ts";
+import { DEFAULT_MODELS, lookupPrice, pricesFor } from "../../core/pricing.ts";
 import type { Context } from "../../core/context.ts";
 import type { RunResult } from "../../core/types.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
@@ -22,7 +22,6 @@ import { planContinuation, prefixEvents, replayNoise, type ContextFile, type Con
 import { createGrader, providerFromSpec, type LlmGraderSpec } from "../../graders/index.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
 import type { ChatProvider } from "../../judge/providers.ts";
-import { DEFAULT_ANTHROPIC_MODEL } from "../../judge/providers.ts";
 import { itemGate, singleItemChange } from "../../runner/gate-item.ts";
 import { itemGateLine } from "../../runner/experiment.ts";
 import { gateHeadline } from "../../stats/gate.ts";
@@ -390,16 +389,26 @@ function baseURLFor(o: AbOptions, env: NodeJS.ProcessEnv): string {
   return (o.baseURL ?? (fromEnv?.trim() || (o.provider === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1"))).replace(/\/+$/, "");
 }
 
-/** The model the sessions used most, when the provider can serve it; else the default. */
-function defaultModel(o: AbOptions, cases: readonly Case[]): string {
-  if (o.model) return o.model;
+/** A recorded model id as this provider's API takes it, or undefined when the provider can't serve it. */
+function servedAs(provider: ContinuationProvider, model: string): string | undefined {
+  if (provider === "openai-compatible") return model;
+  const bare = model.replace(/^(?:anthropic|openai)\//, "");
+  if (provider === "anthropic") return /^claude-/.test(bare) ? bare : undefined;
+  return /^(?:gpt-|o\d|codex-)/.test(bare) ? bare : undefined;
+}
+
+/**
+ * The model the decision points were recorded with (the most common one this provider can serve,
+ * so Codex cases don't pick an Anthropic model), else the provider's current default.
+ */
+export function defaultModel(provider: ContinuationProvider, cases: readonly Case[]): string | undefined {
   const counts = new Map<string, number>();
   for (const c of cases) {
-    const m = c.metadata?.model;
-    if (typeof m === "string" && (o.provider !== "anthropic" || /^claude-/.test(m))) counts.set(m, (counts.get(m) ?? 0) + 1);
+    const m = typeof c.metadata?.model === "string" ? servedAs(provider, c.metadata.model) : undefined;
+    if (m) counts.set(m, (counts.get(m) ?? 0) + 1);
   }
   const top = [...counts].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1))[0];
-  return top?.[0] ?? (o.provider === "anthropic" ? DEFAULT_ANTHROPIC_MODEL : "gpt-5.2");
+  return top?.[0] ?? (provider === "openai-compatible" ? undefined : DEFAULT_MODELS[provider]);
 }
 
 interface Estimate {
@@ -568,10 +577,11 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
   await store.putDataset(mined.dataset);
   const dataset: Dataset = mined.dataset;
   const caseMap = new Map(cases.map((x) => [x.id, x]));
-  const model = defaultModel(o, cases);
+  const model = o.model ?? defaultModel(o.provider, cases);
+  if (!model) throw new UsageError("--provider openai-compatible has no default model and the sessions recorded none: pass --model", { reason: "missing_argument" });
   const base = baseURLFor(o, c.env);
   const judge = judgeSpec({ ...o, model }, base);
-  const judgeModel = judge.model ?? (o.provider === "anthropic" ? DEFAULT_ANTHROPIC_MODEL : model);
+  const judgeModel = judge.model ?? model;
 
   const taskFor = (arm: Arm, spend?: Spend, onSpend?: () => void): ContinuationTask => ({
     kind: "continuation",

@@ -145,6 +145,17 @@ const gpt6 = (input: number, output: number, cacheRead: number, more: Partial<Re
 const geminiLong = (p: Price, lc: Rates): Price => ({ ...p, longContext: { above: 200_000, ...lc } });
 
 /**
+ * The model coding.sh calls when nothing names one (judges, next-turn replays): each provider's
+ * current general model, as of the price table below. The one place to bump when a new model
+ * ships; a test checks every entry has a price row.
+ */
+export const DEFAULT_MODELS = {
+  anthropic: "claude-sonnet-5-5",
+  openai: "gpt-6-sol",
+  google: "gemini-4-argon",
+} as const;
+
+/**
  * Built-in list prices: standard short-context rates on each row, plus `longContext` and `tiers`
  * where the provider's page lists them. `[prices."<model>"]` replaces a whole row.
  */

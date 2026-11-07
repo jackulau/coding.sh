@@ -7,6 +7,7 @@
 // API keys come from the environment only, are read at call time (so a judge
 // whose answers are all cached needs no key), and are never logged, hashed
 // into versions, cached, or included in errors.
+import { DEFAULT_MODELS } from "../core/pricing.ts";
 import { fetchJson, type FetchLike, type RetryOpts } from "./http.ts";
 
 export interface ChatRequest {
@@ -62,7 +63,7 @@ function trimSlash(s: string): string {
 
 // ---------------------------------------------------------------- Anthropic
 
-export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5";
+export const DEFAULT_ANTHROPIC_MODEL = DEFAULT_MODELS.anthropic;
 export const ANTHROPIC_API_VERSION = "2026-10-21";
 
 export interface AnthropicOpts extends CommonOpts {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { loadConfig } from "../../src/core/config.ts";
-import { applyPricing, BUILTIN_PRICES, callRates, callTier, costFrom, costNote, geoValue, lookupPrice, priceEvent, pricesFor, promptTokens, resolvePrice, tierValue } from "../../src/core/pricing.ts";
+import { applyPricing, BUILTIN_PRICES, DEFAULT_MODELS, callRates, callTier, costFrom, costNote, geoValue, lookupPrice, priceEvent, pricesFor, promptTokens, resolvePrice, tierValue } from "../../src/core/pricing.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 
 const M = 1_000_000;
@@ -448,5 +448,11 @@ US = 1.1
       [`[prices."m"]\ninput = 1\noutput = 1\n[prices."m".priority]\ninput = -1\noutput = 1\n`, /prices\."m"\.priority\.input must be a number >= 0/],
     ];
     for (const [toml, re] of cases) assert.throws(load(toml), re, toml);
+  });
+});
+
+describe("default models", () => {
+  it("names one current model per provider, each with a built-in price row", () => {
+    for (const [provider, model] of Object.entries(DEFAULT_MODELS)) assert.ok(BUILTIN_PRICES[model], `${provider}: ${model} has no price row`);
   });
 });

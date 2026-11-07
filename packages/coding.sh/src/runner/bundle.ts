@@ -171,7 +171,7 @@ function strMap(v: unknown, key: string): Record<string, string> | undefined {
  *
  *   name = "terse-claude-md"        # default: the containing dir's name
  *   agent = "claude-code"
- *   model = "claude-sonnet-4-5"
+ *   model = "claude-sonnet-5-5"
  *   flags = ["--max-turns", "40"]
  *   include = ["CLAUDE.md", ".claude/**"]   # relative to `dir`, default DEFAULT_INCLUDE
  *   remove = ["AGENTS.md"]

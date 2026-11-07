@@ -7,6 +7,7 @@ import { GATEWAY_IDS } from "../integrations/gateway/providers.ts";
 import { WORKFLOWS_COMMAND } from "../workflows/cli-spec.ts";
 import { BENCH_COMMAND } from "../bench/cli-spec.ts";
 import { durableFlags } from "../jobs/flags.ts";
+import { DEFAULT_MODELS } from "../core/pricing.ts";
 
 export interface ArgSpec {
   name: string;
@@ -430,7 +431,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "repo", type: "string", value: "<DIR|all>", desc: "Only sessions under this directory (default: this git repo)" },
           { name: "limit", short: "n", type: "number", value: "<N>", desc: "Maximum decision points", default: "40" },
           { name: "provider", type: "string", value: "<NAME>", choices: ["anthropic", "openai", "openai-compatible"], desc: "API that answers the next turn and judges it", default: "anthropic" },
-          { name: "model", type: "string", value: "<MODEL>", desc: "Model for the next turn (default: the sessions' most used model)" },
+          { name: "model", type: "string", value: "<MODEL>", desc: `Model for the next turn (default: the one the decision points were recorded with, else ${DEFAULT_MODELS.anthropic} or ${DEFAULT_MODELS.openai})` },
           { name: "judge-model", type: "string", value: "<MODEL>", desc: "Model for the judge (default: --model)" },
           { name: "base-url", type: "string", value: "<URL>", desc: "API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's)" },
           { name: "trials", type: "number", value: "<N>", desc: "Next turns per case and arm", default: "1" },
@@ -652,7 +653,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "keep", type: "boolean", desc: "Keep trial sandboxes" },
           YES,
         ],
-        examples: ["coding.sh toolevals run gh --driver agent:claude-code -k 3", "coding.sh toolevals run everything --driver model:anthropic/claude-sonnet-5 --variant base --variant terse"],
+        examples: ["coding.sh toolevals run gh --driver agent:claude-code -k 3", "coding.sh toolevals run everything --driver model:anthropic/claude-sonnet-5-5 --variant base --variant terse"],
       },
       {
         name: "compare",

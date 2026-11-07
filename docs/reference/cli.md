@@ -660,7 +660,7 @@ coding.sh exp ab [spec] [options]
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
 | `-n, --limit <N>` | `40` | Maximum decision points. |
 | `--provider <NAME>` | `anthropic` | API that answers the next turn and judges it. One of: `anthropic`, `openai`, `openai-compatible`. |
-| `--model <MODEL>` |  | Model for the next turn (default: the sessions' most used model) |
+| `--model <MODEL>` |  | Model for the next turn (default: the one the decision points were recorded with, else claude-sonnet-5-5 or gpt-6-sol) |
 | `--judge-model <MODEL>` |  | Model for the judge (default: --model) |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
 | `--trials <N>` | `1` | Next turns per case and arm. |
@@ -1054,7 +1054,7 @@ coding.sh toolevals run [target] [options]
 
 ```sh
 coding.sh toolevals run gh --driver agent:claude-code -k 3
-coding.sh toolevals run everything --driver model:anthropic/claude-sonnet-5 --variant base --variant terse
+coding.sh toolevals run everything --driver model:anthropic/claude-sonnet-5-5 --variant base --variant terse
 ```
 
 ### `coding.sh toolevals compare`

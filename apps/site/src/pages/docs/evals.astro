@@ -76,20 +76,20 @@ const COMPARE = [
 ].join("\n");
 
 // Real output of scripts/e2e/exp-ab-capture.mjs (2026-11-07): three Claude Code sessions against a stub
-// model; this is the rerun, so every answer came from the cache.
+// model.
 const AB = [
   `${m("$")} ${t("coding.sh exp ab")}`,
-  `A: git:HEAD   B: your edits   model: claude-sonnet-4-5`,
-  `3 decision points from 3 sessions | A 0/3 -> B ${ok("3/3")} | fixed 3, broke 0 | paired p=0.25 | $0, 6/6 cached`,
+  `A: git:HEAD   B: your edits   model: claude-sonnet-5-5`,
+  `3 decision points from 3 sessions | A 0/3 -> B ${ok("3/3")} | fixed 3, broke 0 | paired p=0.25 | <$0.01, 0/6 cached`,
   `Hold: not enough evidence (B wins 3, loses 0; needs 8+ wins with no losses)`,
   `Replay noise floor 0% (A's turn differs from the recorded one in 0/3); B moved +100 points, above it`,
   "",
   `Fixed (A failed, B passed):`,
-  `  unverified-claim "Make pad.js pad on the left."  ${m("coding.sh show 45e934fd-aee9-4447-abed-7171295a1b3c")}`,
-  `  unverified-claim "Make clamp.js clamp to the upper bound too."  ${m("coding.sh show 4bd03f47-8111-47ca-879c-d51f39fb309e")}`,
-  `  unverified-claim "Make range.js include its end value."  ${m("coding.sh show cb3e2119-f537-4397-91e3-2c9856eea623")}`,
+  `  unverified-claim "Make pad.js pad on the left."  ${m("coding.sh show 8f0e1e52-bdc1-4da0-a03b-14edf6dfcf77")}`,
+  `  unverified-claim "Make clamp.js clamp to the upper bound too."  ${m("coding.sh show 9c1792df-6267-4b30-9f24-7a7307740543")}`,
+  `  unverified-claim "Make range.js include its end value."  ${m("coding.sh show fe48a450-8867-48ec-b946-3b4d0cb6c780")}`,
   "",
-  `Full comparison: coding.sh exp compare exp_01M6VX0D6N1B6BHARH3AH8AD49 exp_01M6VX0D6SY63HD23T1TY5GT4K`,
+  `Full comparison: coding.sh exp compare exp_01M6VXZSFPM2QK12ANN6Z269WP exp_01M6VXZSFSZ25HD2HXXVY40BXV`,
 ].join("\n");
 ---
 

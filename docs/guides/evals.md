@@ -462,7 +462,7 @@ is meant to stop. `coding.sh exp ab` tests the line on those sessions:
 ```sh
 $ echo "After changing code, run the tests before you say you are done." >> CLAUDE.md
 $ coding.sh exp ab
-A: git:HEAD   B: your edits   model: claude-sonnet-4-5
+A: git:HEAD   B: your edits   model: claude-sonnet-5-5
 12 decision points from 9 sessions | A 2/12 -> B 9/12 | fixed 7, broke 0 | paired p=0.016 | $0.41, 0/24 cached
 Hold: not enough evidence (B wins 7, loses 0; needs 8+ wins with no losses)
 Replay noise floor 8% (A's turn differs from the recorded one in 1/12); B moved +58 points, above it
@@ -531,9 +531,13 @@ prints one line per run:
 
 Only B's calls are new: A's answers come from the cache. Ctrl-C stops it.
 
-The model defaults to the one your sessions used most, and the API to Anthropic's (`--provider
-openai` or `openai-compatible`, with `--base-url` for a local or proxied endpoint). `--json` gives
-the comparison, the fixed and broken cases, the per-behavior counts, the cost and the cache hits.
+The model defaults to the one the agent was using at those moments (among the models the chosen
+API can serve, so Codex sessions never pick a Claude model), else the provider's current default:
+`claude-sonnet-5-5` for Anthropic, `gpt-6-sol` for OpenAI. The API defaults to Anthropic's
+(`--provider openai` or `openai-compatible`, with `--base-url` for a local or proxied endpoint;
+`openai-compatible` has no default model, so it needs `--model` when the sessions recorded none).
+`--json` gives the comparison, the fixed and broken cases, the per-behavior counts, the cost and the
+cache hits.
 
 **Your own decision points.** `--anchor ./anchors.mjs` loads a module whose default export is an
 anchor, or an array of them: `{ id, version, frame, behavior, rubric, find(events) }`. `find` gets a
@@ -542,7 +546,7 @@ session's events in time order and returns the cuts, each `{ cutBeforeEventId, e
 
 **Building blocks.** The same pieces work without `exp ab`. A dataset of decision points is an
 ordinary dataset (named `dp-…`), and a `continuation` task replays a frozen session's next turn:
-`{"kind":"continuation","provider":"anthropic","model":"claude-sonnet-4-5","context":{"files":["CLAUDE.md"]}}`.
+`{"kind":"continuation","provider":"anthropic","model":"claude-sonnet-5-5","context":{"files":["CLAUDE.md"]}}`.
 `exp run` with a continuation task needs a control arm: run it as an A/B with `--arm`, or pass
 `--no-control` to run one arm alone, and the comparison then warns that it has no noise floor.
 

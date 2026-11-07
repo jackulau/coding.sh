@@ -579,7 +579,7 @@ codes are 0, 1, 2 and 130.
 | `coding.sh toolevals compress <target> --driver <d> [-k 3] [--margin 0.03] [--max-evals 40] [--batch] [--yes] [--json]` | §8.3 |
 | `coding.sh toolevals show <trialId> [--json]` | Trial metrics, tap records, and the session tree with subagents |
 
-- Driver syntax: `agent:claude-code`, `agent:codex:gpt-5.5`, `model:anthropic/claude-sonnet-5`.
+- Driver syntax: `agent:claude-code`, `agent:codex:gpt-6-sol`, `model:anthropic/claude-sonnet-5-5`.
   Arms are named `<variant>@<driver>`.
 - Cost gate: if the estimated cost exceeds `[toolevals] confirmAboveUsd` (default 5), a TTY gets a
   y/N prompt. In non-interactive mode the command fails with

@@ -12,6 +12,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { defaultModel } from "../../src/cli/commands/exp-ab.ts";
+import { DEFAULT_MODELS } from "../../src/core/pricing.ts";
+import type { Case } from "../../src/datasets/types.ts";
 import { claimSession, putSession } from "../helpers-decision.ts";
 
 const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
@@ -248,5 +251,20 @@ describe("cli exp ab", () => {
       p.kill("SIGINT");
     });
     assert.equal(code, 0, stderr);
+  });
+});
+
+describe("exp ab default model", () => {
+  const cases = (...models: (string | undefined)[]) => models.map((model, i) => ({ id: `c${i}`, input: {}, metadata: model ? { model } : {} })) as unknown as Case[];
+  it("uses the model the decision points were recorded with, only when the provider serves it", () => {
+    const mixed = cases("claude-opus-5-5", "gpt-6-sol", "anthropic/claude-opus-5-5", "gpt-6-sol", "gpt-6-sol");
+    assert.equal(defaultModel("anthropic", mixed), "claude-opus-5-5", "Codex cases don't pick the Anthropic model");
+    assert.equal(defaultModel("openai", mixed), "gpt-6-sol");
+    assert.equal(defaultModel("openai-compatible", mixed), "gpt-6-sol");
+  });
+  it("falls back to the provider's current default (none for openai-compatible)", () => {
+    assert.equal(defaultModel("anthropic", cases("gpt-6-sol", undefined)), DEFAULT_MODELS.anthropic);
+    assert.equal(defaultModel("openai", cases()), DEFAULT_MODELS.openai);
+    assert.equal(defaultModel("openai-compatible", cases(undefined)), undefined);
   });
 });

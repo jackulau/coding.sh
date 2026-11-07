@@ -385,7 +385,7 @@ export async function loadToolEvals(repoRoot: string): Promise<ToolEvalsConfig> 
   };
 }
 
-/** `agent:claude-code`, `agent:codex:gpt-5.5`, `model:anthropic/claude-sonnet-5`. */
+/** `agent:claude-code`, `agent:codex:gpt-6-sol`, `model:anthropic/claude-sonnet-5-5`. */
 export function parseDriver(s: string, cfg: Record<string, DriverConfig> = {}): Driver {
   const c = cfg[s] ?? {};
   if (s.startsWith("agent:")) {
