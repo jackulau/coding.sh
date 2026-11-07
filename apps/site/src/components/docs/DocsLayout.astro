@@ -135,9 +135,25 @@ const body = (await Astro.slots.render("default")).replace(
     opacity: 0;
     transition: opacity 120ms ease;
   }
-  .doc :global(.h-anchor:hover)::after,
   .doc :global(.h-anchor:focus-visible)::after {
     opacity: 1;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .doc :global(.h-anchor:hover)::after {
+      opacity: 1;
+    }
+  }
+  /* Touch: padding on the inline link grows its hit area to 44px without
+     moving a line. It grows up, into the heading's top margin; a heading
+     right under another one grows down instead, so the two never overlap. */
+  @media (pointer: coarse) {
+    .doc :global(.h-anchor) {
+      padding-top: calc(2.75rem - 1.15em);
+    }
+    .doc :global(:is(h2, h3) + h3 .h-anchor) {
+      padding-top: 0;
+      padding-bottom: calc(2.75rem - 1.15em);
+    }
   }
 
   .docs {
@@ -228,6 +244,13 @@ const body = (await Astro.slots.render("default")).replace(
     .docs__link {
       min-height: 2.75rem;
     }
+    .docs__link:active {
+      color: var(--text);
+      transition-duration: 0s;
+    }
+    .docs__menu-sum:active {
+      background: rgba(255, 255, 255, 0.04);
+    }
   }
   @media (hover: hover) and (pointer: fine) {
     .docs__link:hover {
@@ -254,6 +277,7 @@ const body = (await Astro.slots.render("default")).replace(
     gap: 0.75rem;
     min-height: 2.75rem;
     padding: 0 1rem;
+    border-radius: var(--radius);
     cursor: pointer;
     list-style: none;
     font-size: var(--fs-base);
@@ -489,6 +513,69 @@ const body = (await Astro.slots.render("default")).replace(
   .doc-table .nowrap {
     white-space: nowrap;
   }
+  /* On touch, a cell that is one link is tappable across the whole cell. */
+  @media (pointer: coarse) {
+    .doc-table td.cell-link {
+      padding: 0;
+    }
+    .doc-table td.cell-link > a {
+      display: flex;
+      align-items: center;
+      min-height: 2.75rem;
+      padding: 0.6rem 0.9rem;
+    }
+    .doc-table td.cell-link > a:active {
+      background: var(--raised);
+    }
+  }
+  /* A wide table that reads better as one card per row on phones: each cell
+     carries its column name (data-label), shown beside the value. */
+  @media (max-width: 639px) {
+    .doc-table--stack {
+      overflow: visible;
+      border-radius: 0;
+      box-shadow: none;
+    }
+    .doc-table--stack :is(table, tbody, tr, td) {
+      display: block;
+    }
+    .doc-table--stack thead {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+    .doc-table--stack tr {
+      padding: 0.85rem 1rem 0.95rem;
+      border-radius: var(--radius);
+      box-shadow: inset 0 0 0 1px var(--line-strong);
+    }
+    .doc-table--stack tr + tr {
+      margin-top: 0.625rem;
+    }
+    .doc-table--stack td {
+      padding: 0;
+      border: 0;
+    }
+    .doc-table--stack td[data-label] {
+      display: grid;
+      grid-template-columns: 6.75rem minmax(0, 1fr);
+      gap: 0.75rem;
+      margin-top: 0.45rem;
+    }
+    .doc-table--stack td[data-label]::before {
+      content: attr(data-label);
+      padding-top: 0.2em;
+      font-family: var(--font-mono);
+      font-size: var(--fs-xs);
+      color: var(--text-muted);
+    }
+    .doc-table--stack td:first-child {
+      margin-bottom: 0.6rem;
+    }
+  }
 
   /* A short aside: status, caveats. */
   .note {
@@ -501,6 +588,12 @@ const body = (await Astro.slots.render("default")).replace(
   }
   .note > * + * {
     margin-top: 0.5rem;
+  }
+  /* Single-column docs (phones, tablets): asides at body size. */
+  @media (max-width: 1023px) {
+    .note {
+      font-size: 1rem;
+    }
   }
   .note strong:first-child {
     color: var(--text);

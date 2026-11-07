@@ -208,7 +208,7 @@ const FAQ = [
               <span class="example__label">biggest gain</span>
               <span class="example__row"><code>{EXAMPLE.task}</code> <span class="tnum">{EXAMPLE.before.replace("/", " of ")} runs passed before, {EXAMPLE.after.replace("/", " of ")} after</span></span>
             </p>
-            <p class="result__link"><a class="inline-link" href="/docs/evals#compare">How we check it's not luck</a></p>
+            <p class="result__link"><a class="inline-link hit" href="/docs/evals#compare">How we check it's not luck</a></p>
           </div>
         </div>
       </div>
@@ -222,7 +222,7 @@ const FAQ = [
             <h2 id="production-title"><span class="nw">Track the AI calls</span> in your app</h2>
             <p class="body">Wrap your OpenAI or Anthropic client with the SDK. Each request shows up with its model, tokens, cost and time. A failed call is marked red, with the error that came back.</p>
             <pre class="code" set:html={SDK_CODE} />
-            <p class="links"><a class="inline-link" href={SDK_URL}>Read the SDK guide</a> <a class="inline-link" href={PY_SDK_URL}>Python SDK</a></p>
+            <p class="links"><a class="inline-link hit" href={SDK_URL}>Read the SDK guide</a> <a class="inline-link hit" href={PY_SDK_URL}>Python SDK</a></p>
           </div>
           <div class="visual">
             <Shot
@@ -250,7 +250,7 @@ const FAQ = [
                 </details>
               ))
             }
-            <p class="faq__more"><a class="inline-link" href="/docs/faq">More questions</a></p>
+            <p class="faq__more"><a class="inline-link hit" href="/docs/faq">More questions</a></p>
           </div>
         </div>
       </div>
@@ -464,6 +464,12 @@ const FAQ = [
     line-height: 1.55;
     color: var(--text-2);
   }
+  /* Phones and tablets: the steps read as body text, at 16px. */
+  @media (max-width: 1023px) {
+    .steps p {
+      font-size: 1rem;
+    }
+  }
 
   /* ---------- measure ---------- */
   @media (min-width: 1024px) {
@@ -635,6 +641,10 @@ const FAQ = [
   .faq details[open] summary::after {
     content: "−" / "";
   }
+  .faq summary:active,
+  .faq summary:active::after {
+    color: var(--text-2);
+  }
   .faq summary:focus-visible {
     outline: 2px solid var(--text-2);
     outline-offset: 2px;
@@ -649,6 +659,11 @@ const FAQ = [
   .faq__more {
     margin-top: 1.25rem;
     font-size: var(--fs-base);
+  }
+  @media (max-width: 639px) {
+    .faq details p {
+      font-size: 1rem;
+    }
   }
 
   /* ---------- closing ---------- */

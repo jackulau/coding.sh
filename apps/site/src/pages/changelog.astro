@@ -51,10 +51,10 @@ const oldest = releases[releases.length - 1];
             <article class="cl-card" id={r.slug} aria-labelledby={`${r.slug}-h`}>
               {r.date && <p class="cl-date">{r.dateLabel}</p>}
               <h2 id={`${r.slug}-h`} class="cl-card__ver">
-                <a href={`/changelog/${r.slug}`}>v{r.version}</a>
+                <a class="hit" href={`/changelog/${r.slug}`}>v{r.version}</a>
               </h2>
               {r.summary.map((p) => <p class="cl-card__sum" set:html={p} />)}
-              <a class="cl-more" href={`/changelog/${r.slug}`} aria-label={`Read the notes for v${r.version}`}>
+              <a class="cl-more hit" href={`/changelog/${r.slug}`} aria-label={`Read the notes for v${r.version}`}>
                 Read the notes
                 <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
                   <path d="M3 8h9.5M8.5 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />

@@ -32,7 +32,7 @@ const dur = `${(items.length * 3.6).toFixed(1)}s`;
           <ul class="mq__track" role="list" aria-label={copy === 0 ? "Agents coding.sh records" : undefined} aria-hidden={copy === 1 ? "true" : undefined} data-mq-copy={copy}>
             {items.map((a) => (
               <li>
-                <a class="mq__chip" href={href} tabindex={copy === 1 ? -1 : undefined} draggable="false">
+                <a class="mq__chip hit" href={href} tabindex={copy === 1 ? -1 : undefined} draggable="false">
                   <AgentLogo id={a.id} name={a.name} size={18} fallback />
                 </a>
               </li>

@@ -21,7 +21,7 @@ const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>  
   </p>
 
   <h2 id="matrix">Matrix</h2>
-  <div class="doc-table">
+  <div class="doc-table doc-table--stack">
     <table>
       <thead>
         <tr>
@@ -41,10 +41,10 @@ const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>  
                 <br />
                 <code class="t-muted">{a.id}</code>
               </td>
-              <td>{STATUS_LABEL[a.status]}</td>
-              <td>{a.live}</td>
-              <td>{a.backfill ?? "None"}</td>
-              <td>
+              <td data-label="Status">{STATUS_LABEL[a.status]}</td>
+              <td data-label="Live capture">{a.live}</td>
+              <td data-label="Backfill">{a.backfill ?? "None"}</td>
+              <td data-label="Headless runs">
                 <code>{a.headless}</code>
               </td>
             </tr>

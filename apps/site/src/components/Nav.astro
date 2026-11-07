@@ -26,6 +26,8 @@ const LINKS = [
   { href: "/changelog", label: "Changelog", on: (p: string) => p === "/changelog" || p.startsWith("/changelog/") },
 ];
 const links = LINKS.map((l) => ({ ...l, current: l.on(path) }));
+// The install command breaks only before the pipe (see InstallActions).
+const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
 ---
 
 <header class="nav" data-nav>
@@ -70,7 +72,7 @@ const links = LINKS.map((l) => ({ ...l, current: l.on(path) }));
       <div class="nav__group nav__group--pad">
         <p class="nav__cap">Install</p>
         <button type="button" class="nav__install" data-copy={INSTALL_SH} aria-label={`Copy the install command: ${INSTALL_SH}`}>
-          <code>{INSTALL_SH}</code>
+          <code><span>{cmdHead}</span>{cmdTail && <>{" "}<span>{cmdTail}</span></>}</code>
           <CopyIcon />
         </button>
         <!-- The page's own status line is inert while the sheet is open. -->
@@ -88,6 +90,9 @@ const links = LINKS.map((l) => ({ ...l, current: l.on(path) }));
     position: fixed;
     inset: 0 0 auto;
     z-index: 50;
+    /* Clear of the notch: the pill's edges sit on the safe-area edges, so
+       everything in it is clear. The sheet shares the same insets. */
+    padding: var(--safe-t) max(0px, calc(var(--safe-r) - var(--inset))) 0 max(0px, calc(var(--safe-l) - var(--inset)));
     pointer-events: none;
   }
   .nav__bar {
@@ -290,7 +295,7 @@ const links = LINKS.map((l) => ({ ...l, current: l.on(path) }));
     left: var(--inset);
     right: var(--inset);
     flex-direction: column;
-    max-height: calc(100dvh - var(--bar-h) - 2rem);
+    max-height: calc(100dvh - var(--bar-h) - var(--safe-t) - var(--safe-b) - 2rem);
     overflow-y: auto;
     overscroll-behavior: contain;
     border-radius: var(--radius-bar);
@@ -389,11 +394,15 @@ const links = LINKS.map((l) => ({ ...l, current: l.on(path) }));
     gap: 0.5rem;
     width: 100%;
     min-height: 2.75rem;
-    padding: 0 0.7rem;
+    padding: 0.55rem 0.6rem 0.55rem 0.7rem;
     border-radius: 10px;
     font-family: var(--font-mono);
-    /* 11px: the whole one-liner fits a 390px phone. */
-    font-size: 0.6875rem;
+    /* 12px, a touch tight: the whole one-liner fits a 390px phone. Narrower,
+       it breaks once, before "| sh". */
+    font-size: 0.75rem;
+    letter-spacing: -0.02em;
+    line-height: 1.45;
+    text-align: left;
     color: var(--text);
     background: #141416;
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
@@ -402,10 +411,10 @@ const links = LINKS.map((l) => ({ ...l, current: l.on(path) }));
   }
   .nav__install code {
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     font: inherit;
+  }
+  .nav__install code span {
+    white-space: nowrap;
   }
   .nav__install:active {
     transform: scale(0.985);

@@ -362,8 +362,9 @@
     z-index: 5;
     max-height: none;
     overflow: visible;
-    margin-inline: -1rem;
-    padding-inline: 1rem;
+    /* Edge to edge: out through the page gutter, then back in by it. */
+    margin-inline: calc(-1 * var(--gutter-l)) calc(-1 * var(--gutter-r));
+    padding-inline: var(--gutter-l) var(--gutter-r);
     background: color-mix(in srgb, var(--bg) 88%, transparent);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
@@ -409,6 +410,8 @@
   }
   .cl-entry {
     scroll-margin-top: calc(var(--nav-h) + 5rem);
+    /* Body text at 16px once the rail is gone (phones, tablets). */
+    font-size: 1rem;
   }
   .cl-entry__link {
     display: none;
@@ -416,12 +419,6 @@
   .cl-feed,
   .cl-notes {
     padding-top: 0.5rem;
-  }
-}
-@media (min-width: 640px) and (max-width: 899px) {
-  .cl-rail {
-    margin-inline: -2rem;
-    padding-inline: 2rem;
   }
 }
 @media (max-width: 639px) {
@@ -441,5 +438,31 @@
   .cl-pager a.is-older {
     grid-column: auto;
     text-align: left;
+  }
+}
+
+/* ---------- Touch ---------- */
+@media (pointer: coarse) {
+  /* 44px rows and chips. On the phone strip the list's own padding shrinks
+     by the same amount, so the strip keeps its height. */
+  .cl-rail a,
+  .cl-chips a {
+    min-height: 2.75rem;
+  }
+  .cl-chips a {
+    align-items: center;
+  }
+  .cl-rail a:active,
+  .cl-chips a:active,
+  .cl-pager a:active {
+    background: var(--raised);
+  }
+}
+@media (pointer: coarse) and (max-width: 899px) {
+  .cl-rail ol {
+    padding-block: 0.25rem;
+  }
+  .cl-rail a {
+    align-items: center;
   }
 }

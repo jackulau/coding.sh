@@ -59,7 +59,9 @@ const markdownURL = noindex || isAgentExcluded(Astro.url.pathname)
 <html lang="en" style="background-color: #000;">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover: the black ground runs under the notch; the header,
+         gutters and footer keep their content clear of it with env() insets. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#000000" />
 
@@ -67,7 +69,10 @@ const markdownURL = noindex || isAgentExcluded(Astro.url.pathname)
          text never waits on a third-party stylesheet; @font-face is in global.css. -->
     <link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/geist-mono-latin.woff2" as="font" type="font/woff2" crossorigin />
-    <script is:inline>document.documentElement.classList.add("js");</script>
+    <!-- The client router copies the new page's <html> attributes over, which
+         drops this class, and it doesn't re-run this script: put it back after
+         every swap, before the new page paints. -->
+    <script is:inline>document.documentElement.classList.add("js");document.addEventListener("astro:after-swap",function(){document.documentElement.classList.add("js")});</script>
 
     <meta name="description" content={description} />
     <meta name="author" content={SITE.name} />
@@ -167,11 +172,11 @@ const markdownURL = noindex || isAgentExcluded(Astro.url.pathname)
           <div><dt>status</dt><dd>{SITE.version}</dd></div>
         </dl>
         <nav aria-label="Footer" class="site-footer__nav">
-          {DOCS_PUBLIC && <a href="/docs">Docs</a>}
-          <a href="/changelog">Changelog</a>
-          <a href={REPO_URL}>GitHub</a>
-          <a href={LICENSE_URL}>License</a>
-          <a href="/llms.txt">llms.txt</a>
+          {DOCS_PUBLIC && <a class="hit" href="/docs">Docs</a>}
+          <a class="hit" href="/changelog">Changelog</a>
+          <a class="hit" href={REPO_URL}>GitHub</a>
+          <a class="hit" href={LICENSE_URL}>License</a>
+          <a class="hit" href="/llms.txt">llms.txt</a>
         </nav>
       </div>
     </footer>
@@ -183,7 +188,7 @@ const markdownURL = noindex || isAgentExcluded(Astro.url.pathname)
   .site-footer {
     position: relative;
     border-top: 1px solid var(--line);
-    padding-block: 2rem 2.5rem;
+    padding-block: 2rem calc(2.5rem + var(--safe-b));
     font-size: var(--fs-sm);
   }
   .site-footer__inner {
@@ -234,6 +239,10 @@ const markdownURL = noindex || isAgentExcluded(Astro.url.pathname)
     min-height: 2.75rem;
     color: var(--text-2);
     transition: color var(--hover-out) ease;
+  }
+  .site-footer__nav a:active {
+    color: var(--text);
+    transition-duration: 0s;
   }
   @media (hover: hover) and (pointer: fine) {
     .site-footer__nav a:hover {

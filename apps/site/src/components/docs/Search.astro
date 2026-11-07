@@ -164,7 +164,8 @@ const list = `search-${id}-list`;
     border-radius: var(--radius-sm);
     color: var(--text-2);
   }
-  .search__list :global([aria-selected="true"] .search__hit) {
+  .search__list :global([aria-selected="true"] .search__hit),
+  .search__list :global(.search__hit:active) {
     background: var(--raised);
   }
   @media (hover: hover) and (pointer: fine) {

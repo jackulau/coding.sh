@@ -121,7 +121,8 @@ export function renderDoc(file: string): MdBlock[] {
       for (i += 2; i < lines.length && lines[i]!.startsWith("|"); i++) rows.push(cells(lines[i]!));
       html +=
         `<div class="doc-table"><table><thead><tr>${head.map((c) => `<th>${inline(c, file)}</th>`).join("")}</tr></thead><tbody>` +
-        rows.map((r) => `<tr>${r.map((c) => `<td>${inline(c, file)}</td>`).join("")}</tr>`).join("") +
+        // A cell that is one link becomes a full-cell tap target on touch (.cell-link).
+        rows.map((r) => `<tr>${r.map((c) => `<td${/^\[[^\]]+\]\([^)\s]+\)$/.test(c) ? ' class="cell-link"' : ""}>${inline(c, file)}</td>`).join("")}</tr>`).join("") +
         `</tbody></table></div>`;
       continue;
     }

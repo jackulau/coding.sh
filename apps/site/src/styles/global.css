@@ -61,7 +61,18 @@
   --hover-in: 160ms;
   --hover-out: 120ms;
 
-  --nav-h: 4rem;
+  /* The fixed header, notch included. */
+  --nav-h: calc(4rem + var(--safe-t));
+
+  /* Notch and home-indicator insets (viewport-fit=cover). 0 everywhere else. */
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  /* Page gutter: the .wrap side padding, never inside the notch. */
+  --gutter: 1rem;
+  --gutter-l: max(var(--gutter), var(--safe-l));
+  --gutter-r: max(var(--gutter), var(--safe-r));
 
   --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -199,6 +210,11 @@ a {
   text-underline-offset: 3px;
   transition: text-decoration-color var(--hover-out) ease;
 }
+/* A tap shows itself too: the underline lights up while the finger is down. */
+.inline-link:active {
+  text-decoration-color: var(--text);
+  transition-duration: 0s;
+}
 @media (hover: hover) and (pointer: fine) {
   .inline-link:hover {
     text-decoration-color: var(--text-2);
@@ -212,11 +228,11 @@ a {
   width: 100%;
   max-width: 76rem;
   margin: 0 auto;
-  padding-inline: 1rem;
+  padding-inline: var(--gutter-l) var(--gutter-r);
 }
 @media (min-width: 640px) {
-  .wrap {
-    padding-inline: 2rem;
+  :root {
+    --gutter: 2rem;
   }
 }
 .section {
@@ -337,6 +353,20 @@ a {
   }
 }
 
+/* Touch: a small link or chip gets a 44px hit area without moving anything.
+   The ::after is invisible and only grows the axes that are short, so the
+   layout is the same as on a mouse, where none of this applies. */
+@media (pointer: coarse) {
+  .hit {
+    position: relative;
+  }
+  .hit::after {
+    content: "";
+    position: absolute;
+    inset: min(0px, calc((100% - 2.75rem) / 2));
+  }
+}
+
 /* ---------- Signal colours ---------- */
 
 .t-pass {
@@ -368,8 +398,8 @@ a {
 
 .skip-link {
   position: fixed;
-  top: 0.75rem;
-  left: 0.75rem;
+  top: calc(0.75rem + var(--safe-t));
+  left: max(0.75rem, var(--safe-l));
   z-index: 60;
   transform: translateY(-200%);
 }

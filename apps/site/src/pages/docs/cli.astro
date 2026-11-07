@@ -40,7 +40,7 @@ const anchor = (name: string) => `cmd-${name.replace(/\s+/g, "-")}`;
               {ref.groups.flatMap((g) =>
                 g.commands.map((c) => (
                   <tr>
-                    <td class="nowrap">
+                    <td class="nowrap cell-link">
                       <a href={`#${anchor(c.name)}`}>
                         <code>{c.name}</code>
                       </a>

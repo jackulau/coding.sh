@@ -4,12 +4,16 @@
 // to the quickstart.
 import CopyIcon from "./CopyIcon.astro";
 import { INSTALL_SH } from "../data/site";
+
+// Two unbreakable halves with a plain space between them: when the command
+// can't fit one line it breaks before the pipe, never inside the URL.
+const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
 ---
 
 <div class="actions">
   <button type="button" class="install" data-copy={INSTALL_SH} aria-label={`Copy the install command: ${INSTALL_SH}`}>
     <span class="install__p" aria-hidden="true">$</span>
-    <code class="install__cmd">{INSTALL_SH}</code>
+    <code class="install__cmd"><span>{cmdHead}</span>{cmdTail && <>{" "}<span>{cmdTail}</span></>}</code>
     <CopyIcon />
   </button>
   <a class="btn btn-primary start" href="/docs/quickstart">Get started</a>
@@ -56,6 +60,9 @@ import { INSTALL_SH } from "../data/site";
     white-space: nowrap;
     user-select: all;
   }
+  .install__cmd span {
+    white-space: nowrap;
+  }
   .install :global(.copyico) {
     color: var(--text-muted);
   }
@@ -96,19 +103,17 @@ import { INSTALL_SH } from "../data/site";
       text-align: left;
     }
   }
+  /* Narrow phones: 12px still, a touch tighter, and the "$" goes (it is
+     decoration). Where even that doesn't fit, the command breaks once,
+     before "| sh", instead of pushing past the screen edge. */
   @media (max-width: 379px) {
     .install {
-      font-size: 0.6875rem;
       gap: 0.45rem;
-      padding: 0 0.65rem;
+      padding: 0.55rem 0.65rem;
+      letter-spacing: -0.02em;
     }
-  }
-  /* The narrowest phones: the command wraps at its spaces instead of
-     pushing past the screen edge. */
-  @media (max-width: 359px) {
-    .install {
-      padding-block: 0.55rem;
-      font-size: 0.75rem;
+    .install__p {
+      display: none;
     }
     .install__cmd {
       white-space: normal;
