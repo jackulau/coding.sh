@@ -241,6 +241,8 @@ picks a session without a `session.json`. `--json` output gains a `session` fiel
   redacted like captured sessions and capped at 4000 characters.
 - `coding.sh exp session summary` prints the timeline oldest first: notes, the commands (redacted)
   and one line per run with its delta. `--json` returns the blocks with the same numbers.
+- Agents do the same over MCP: `exp_session_note` adds a note and `exp_session_summary` returns
+  the blocks (`limit`, `cursor`), so an agent can read the thread back after a context reset.
 
 `coding.sh exp run spec.json --watch` runs, then reruns whenever something the run reads changes:
 the spec file, the command task's script, command and module grader files, and the spec's `watch`

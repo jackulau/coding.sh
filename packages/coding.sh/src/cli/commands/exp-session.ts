@@ -17,6 +17,7 @@ import {
   experimentBlock,
   findSession,
   newSession,
+  NOTE_MAX,
   readTimeline,
   recordExperiment,
   sessionDelta,
@@ -30,9 +31,6 @@ import { list, str } from "../common.ts";
 import { CliError } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { loadSpec, type LoadedSpec } from "./exp.ts";
-
-/** Notes longer than this are refused (MCP takes the same limit). */
-export const NOTE_MAX = 4000;
 
 /** What `exp run --json` adds under `session`. */
 export interface JoinedSession {

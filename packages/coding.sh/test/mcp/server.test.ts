@@ -1,13 +1,16 @@
 // The coding.sh MCP server over real stdio: handshake in both protocol eras,
 // every tool against a seeded store, resources, and JSON-RPC error paths.
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
 import { schemaViolations } from "../../src/toolevals/jsonschema.ts";
 import { connectMcp, resetEraCache } from "../../src/toolevals/mcp/client.ts";
 import { MAIN, RawClient, SEED, cleanup, makeWorld, seed, type World } from "./helpers.ts";
 
+const CLI_MAIN = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const META = "io.modelcontextprotocol/";
 const modernMeta = { [`${META}protocolVersion`]: "2026-07-28", [`${META}clientCapabilities`]: {}, [`${META}clientInfo`]: { name: "t", version: "0" } };
 
@@ -69,6 +72,8 @@ describe("handshake (legacy era)", () => {
     assert.deepEqual(tools.map((t) => t.name).sort(), [
       "benchmarks",
       "eval_from_session",
+      "exp_session_note",
+      "exp_session_summary",
       "experiment_compare",
       "experiments_list",
       "failures",
@@ -89,7 +94,7 @@ describe("handshake (legacy era)", () => {
       assert.equal(t.inputSchema.additionalProperties, false, `${t.name} rejects unknown args`);
       for (const [k, p] of Object.entries((t.inputSchema.properties ?? {}) as Record<string, { description?: string }>)) assert.ok(p.description, `${t.name}.${k} has a description`);
       assert.equal(t.outputSchema.type, "object", `${t.name} outputSchema`);
-      assert.equal(t.annotations.readOnlyHint, t.name !== "eval_from_session", `${t.name} readOnlyHint`);
+      assert.equal(t.annotations.readOnlyHint, !["eval_from_session", "exp_session_note"].includes(t.name), `${t.name} readOnlyHint`);
       assert.equal(t.annotations.destructiveHint, false);
       assert.equal(t.annotations.openWorldHint, false);
     }
@@ -256,6 +261,49 @@ describe("tools", () => {
     assert.match(await callError("experiment_compare", { baseline: SEED.expA, candidate: "exp-missing" }), /No experiment with id "exp-missing"/);
   });
 
+  it("exp_session_note and exp_session_summary keep the experiment session the CLI reads", async () => {
+    const cli = (...args: string[]) => {
+      const r = spawnSync(process.execPath, ["--no-warnings", CLI_MAIN, ...args], { env: w.env, cwd: w.repo, encoding: "utf8" });
+      assert.equal(r.status, 0, r.stderr);
+      return r.stdout;
+    };
+    // No session in the server's folder: a structured not_found pointing at the CLI.
+    const none = await c.call("exp_session_summary", {});
+    assert.equal(none.isError, true);
+    assert.deepEqual((none.structuredContent as { error: { reason: string; next: string } }).error.reason, "not_found");
+    assert.equal((none.structuredContent as { error: { next: string } }).error.next, "coding.sh exp session new --name <topic>");
+    assert.match(none.content[0]!.text, /coding\.sh exp session new --name <topic>/);
+    assert.match(await callError("exp_session_note", { text: "x" }), /No experiment session/);
+
+    const made = JSON.parse(cli("exp", "session", "new", "--name", "mcp", "--json")) as { session: { id: string } };
+    const key = `sk-${"ant"}-${"a".repeat(32)}`;
+    const noted = await call("exp_session_note", { text: `hypothesis: a shorter prompt fixes c3 (key ${key})` });
+    assert.deepEqual(noted.session, { id: made.session.id, name: "mcp" });
+    const text = (noted.block as { text: string }).text;
+    assert.ok(!text.includes(key) && text.includes("[redacted:anthropic-key]"), text);
+    cli("exp", "session", "note", "reading: c3 passes now");
+    await call("exp_session_note", { text: "next: try it on the dev split", session: made.session.id });
+    // Empty and over-limit notes are refused.
+    assert.equal((await c.call("exp_session_note", { text: "" })).isError, true);
+    assert.equal((await c.call("exp_session_note", { text: "x".repeat(4001) })).isError, true);
+    assert.match(await callError("exp_session_note", { text: "x", session: "../etc" }), /invalid session id/);
+
+    // The MCP note shows up in the CLI summary, and MCP output equals the CLI JSON.
+    assert.match(cli("exp", "session", "summary"), /note {2}hypothesis: a shorter prompt fixes c3 \(key \[redacted:anthropic-key\]\)/);
+    const fromCli = JSON.parse(cli("exp", "session", "summary", "--json")) as { session: unknown; blocks: unknown[] };
+    const all = await call("exp_session_summary", {});
+    assert.deepEqual({ session: all.session, blocks: all.blocks }, fromCli);
+    assert.equal(all.total, 3);
+    assert.equal(all.nextCursor, undefined);
+    // Pagination, oldest first.
+    const p1 = await call("exp_session_summary", { limit: 2 });
+    assert.deepEqual(p1.blocks, fromCli.blocks.slice(0, 2));
+    assert.equal(p1.nextCursor, "2");
+    const p2 = await call("exp_session_summary", { limit: 2, cursor: p1.nextCursor });
+    assert.deepEqual(p2.blocks, fromCli.blocks.slice(2));
+    assert.equal(p2.nextCursor, undefined);
+  });
+
   it("harness_compare lists no harness A/B runs in a store without any", async () => {
     assert.deepEqual(await call("harness_compare"), { experiments: [] });
     assert.match(await callError("harness_compare", { experiment: "exp_none" }), /No harness A\/B experiment "exp_none"/);
@@ -366,7 +414,7 @@ describe("modern era (2026-07-28)", () => {
     try {
       assert.equal(client.era, "2026-07-28");
       assert.equal(client.serverInfo?.name, "coding.sh");
-      assert.equal((await client.listTools()).length, 14);
+      assert.equal((await client.listTools()).length, 16);
       const r = await client.callTool("session_get", { sessionId: SEED.b });
       assert.equal((r.structuredContent as { session: { agent: string } }).session.agent, "codex");
     } finally {

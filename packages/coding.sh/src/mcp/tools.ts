@@ -53,6 +53,7 @@ const UNTIL = { type: "string", description: "Window end, same format as since. 
 const LIMIT = (d: number, max: number) => ({ type: "integer", minimum: 1, maximum: max, default: d, description: `Max rows (default ${d}, max ${max}).` });
 const CURSOR = { type: "string", description: "nextCursor from the previous call, to get the next page." };
 const PROJECT = { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,62}$", description: 'Only this project (a `coding.sh serve` ingest key decides it; local captures are "default"). Default: all projects.' };
+const EXP_SESSION = { type: "string", description: "Session id. Default: the project's session." };
 const SESSION_ID = { type: "string", minLength: 1, description: 'Session id from sessions_list/search, or "latest" for the newest top-level session.' };
 
 const input = (properties: Obj, required: string[] = []): Obj => ({ type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false });
@@ -127,6 +128,26 @@ function query(a: Obj, c: ToolCtx, o: { sinceDefault?: string; topLevel: boolean
   if (until !== undefined) q.until = until;
   if (repo) q.place = parsePlace(repo, c.cwd, c.env.HOME || c.env.USERPROFILE || "/");
   return q;
+}
+
+/** The experiment session: the `session` arg, else CODING_SH_EXP_SESSION or the nearest .coding-sh/session.json above the server's cwd. */
+async function expSession(a: Obj, c: ToolCtx): Promise<{ session: { id: string; name?: string; createdAt?: number }; root: string }> {
+  const [{ findSession, timelinePath }, { paths }] = await Promise.all([import("../experiments/session.ts"), import("../core/paths.ts")]);
+  const root = paths(c.env).root;
+  const id = strArg(a, "session");
+  const session = id ? { id } : findSession({ cwd: c.cwd, env: c.env });
+  if (!session) {
+    throw new ToolError(`No experiment session in ${c.cwd}. Ask the user to start one there: coding.sh exp session new --name <topic>`, {
+      reason: "not_found",
+      next: "coding.sh exp session new --name <topic>",
+    });
+  }
+  try {
+    timelinePath(root, session.id);
+  } catch (e) {
+    throw new ToolError(`${e instanceof Error ? e.message : String(e)}: pass the id from exp session summary, or omit session.`);
+  }
+  return { session, root };
 }
 
 async function resolveSession(ctx: Context, id: string): Promise<Session> {
@@ -609,6 +630,47 @@ export function buildTools(): ToolDef<ToolCtx>[] {
           coverage: { baseline: round(t.coverage.a), candidate: round(t.coverage.b), gained: t.gained.length, lost: t.lost.length, kept: t.keptCovered, lostCases: t.lost.slice(0, limit) },
           warnings,
         };
+      },
+    },
+    {
+      name: "exp_session_summary",
+      title: "Experiment session timeline",
+      description:
+        "Experiment session timeline, oldest first: notes, commands, and runs with their delta vs the previous run (pass rates, CI, McNemar p, fixed/broke). Read it after a context reset.",
+      inputSchema: input({ session: EXP_SESSION, limit: LIMIT(50, 200), cursor: CURSOR }),
+      outputSchema: out({ session: out({ id: S }), blocks: arr(out({ kind: S })), total: I, nextCursor: S, error: out({ reason: S }) }),
+      annotations: READ,
+      async run(a, c) {
+        const { session, root } = await expSession(a, c);
+        const { readTimeline } = await import("../experiments/session.ts");
+        const all = await readTimeline(root, session.id);
+        const offset = cursorArg(a);
+        const limit = numArg(a, "limit", 50);
+        return {
+          session: { id: session.id, ...(session.name ? { name: session.name } : {}), ...(session.createdAt ? { createdAt: iso(session.createdAt) } : {}) },
+          blocks: all.slice(offset, offset + limit),
+          total: all.length,
+          ...(all.length > offset + limit ? { nextCursor: String(offset + limit) } : {}),
+        };
+      },
+    },
+    {
+      name: "exp_session_note",
+      title: "Note in experiment session",
+      description:
+        "Note in the experiment session: the hypothesis before each run, the reading after it. Secrets are redacted.",
+      inputSchema: input({ text: { type: "string", minLength: 1, maxLength: 4000, description: "The note." }, session: EXP_SESSION }, ["text"]),
+      outputSchema: out({ session: out({ id: S }), block: out({ text: S }), error: out({ reason: S }) }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      async run(a, c) {
+        const [{ appendBlock, NOTE_MAX }, { createRedactor }] = await Promise.all([import("../experiments/session.ts"), import("../core/redact.ts")]);
+        const raw = strArg(a, "text");
+        if (!raw) throw new ToolError("Empty note: pass text, e.g. the hypothesis before a run or what the run showed.");
+        if (raw.length > NOTE_MAX) throw new ToolError(`A note is at most ${NOTE_MAX} characters (got ${raw.length}).`);
+        const { session, root } = await expSession(a, c);
+        const block = { kind: "note" as const, at: c.now(), text: createRedactor({ env: c.env }).string(raw) };
+        await appendBlock(root, session.id, block);
+        return { session: { id: session.id, ...(session.name ? { name: session.name } : {}) }, block };
       },
     },
     {

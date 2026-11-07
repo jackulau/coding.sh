@@ -55,11 +55,17 @@ export interface ToolDef<C = unknown> {
   run(args: Obj, ctx: C): Promise<Obj>;
 }
 
-/** A failure the model should see and can fix (bad id, missing confirm…): returned as `isError: true`. */
+/**
+ * A failure the model should see and can fix (bad id, missing confirm…): returned as `isError: true`.
+ * With `error`, the result also carries `structuredContent: {error: {message, ...error}}` (the
+ * tool's outputSchema then declares that `error` property).
+ */
 export class ToolError extends Error {
-  constructor(msg: string) {
+  readonly error?: Obj;
+  constructor(msg: string, error?: Obj) {
     super(msg);
     this.name = "ToolError";
+    if (error) this.error = error;
   }
 }
 
@@ -266,7 +272,7 @@ export class McpServer<C> {
       const structured = await tool.run(args, this.o.context());
       return { content: [{ type: "text", text: toolText(structured) }], structuredContent: structured };
     } catch (e) {
-      if (e instanceof ToolError) return errorResult(e.message);
+      if (e instanceof ToolError) return e.error ? { ...errorResult(e.message), structuredContent: { error: { message: e.message, ...e.error } } } : errorResult(e.message);
       this.o.log?.(`tool ${name} failed: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
       return errorResult(`${name} failed: ${e instanceof Error ? e.message : String(e)}`);
     }

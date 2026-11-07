@@ -17,6 +17,8 @@ import { compareExperiments } from "./compare.ts";
 
 export const SESSION_ENV = "CODING_SH_EXP_SESSION";
 export const SESSION_DIR = ".coding-sh";
+/** Notes longer than this are refused (CLI and MCP). */
+export const NOTE_MAX = 4000;
 /** Flips listed each way in a delta. */
 export const DELTA_FLIPS = 5;
 

@@ -96,9 +96,14 @@ session, the page adds new events every 4 seconds.
 
 `coding.sh mcp` serves your captured data to agents over stdio, with the tools `sessions_list`,
 `session_get`, `session_current`, `search`, `failures`, `latency`, `usage`, `subagents`,
-`eval_from_session`, `experiments_list`, `experiment_compare`, `harness_compare`, `benchmarks` and
-`status`. `sessions_list` and `session_get` include each session's derails, and `sessions_list`
-takes `flag: "looping"` (or any other flag).
+`eval_from_session`, `experiments_list`, `experiment_compare`, `exp_session_summary`,
+`exp_session_note`, `harness_compare`, `benchmarks` and `status`. `sessions_list` and `session_get`
+include each session's derails, and `sessions_list` takes `flag: "looping"` (or any other flag).
+`exp_session_note` adds a note to the experiment session of the project folder (the hypothesis
+before a run, the reading after it), and `exp_session_summary` returns its timeline with the same
+blocks as `coding.sh exp session summary --json`, which is how an agent picks the thread back up
+after a context reset. Without a session they return a `not_found` error with the command that
+starts one.
 
 `coding.sh init` registers it with Claude Code, Codex, Cursor and OpenCode (`--no-mcp` skips
 this). `coding.sh mcp config` prints the snippet for any other client.
