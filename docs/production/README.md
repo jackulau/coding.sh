@@ -55,6 +55,7 @@ pass the key once.
 | One box, small traffic | `sqlite:///data/index.db` (the default in the image) | `file:///data/blobs` (default) |
 | Real traffic | `postgres://…` (Neon, Supabase, RDS, Railway, Render, your own) | same URL (default) |
 | Lots of large payloads | `postgres://…` | `s3://bucket/blobs?region=…` (S3, R2, MinIO, RustFS) |
+| You run ClickHouse | `clickhouse://…` or `clickhouses://…` ([when and how](../how-to/self-host-team.md#clickhouse)) | `s3://…` or `file:///data/blobs` |
 
 - `DATABASE_URL` is used when `CODING_SH_STORE_URL` is unset and it holds a `postgres://` or
   `postgresql://` URL.

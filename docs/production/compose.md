@@ -21,6 +21,7 @@ open `http://127.0.0.1:4318/?t=$READ_KEY`.
 | Variable | Used for |
 |---|---|
 | `POSTGRES_PASSWORD` | the `coding` database user |
+| `CLICKHOUSE_PASSWORD` | the `coding` ClickHouse user, with `deploy/compose/clickhouse.yml` |
 | `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD` | blob store credentials (serve gets them as `AWS_*`) |
 | `INGEST_KEY_DEMO`, `INGEST_KEY_FLOOD` | ingest keys for projects `demo` and `flood` |
 | `READ_KEY` | a read key for all projects |
@@ -49,6 +50,9 @@ To add your own app, append a key to `CODING_SH_INGEST_KEYS` in `docker-compose.
   and the writer lock is held.
 - **Shutdown.** `docker compose stop` sends SIGTERM. Serve drains its queue for up to 25 s
   (`stop_grace_period` is 30 s).
+- **ClickHouse.** `docker compose -f docker-compose.yml -f deploy/compose/clickhouse.yml up -d --build --wait`
+  runs serve on ClickHouse instead of Postgres, with the `chdata` volume. See
+  [Self-host for a team](../how-to/self-host-team.md#clickhouse).
 - **Data.** Three named volumes: `pgdata`, `minio-data` and `coding-sh-data`. Back up the first two.
 - **Tests.** The Postgres and S3 store suites run against this stack:
   `docker compose up -d postgres minio minio-init`, then `CODING_SH_TEST_PG_URL=postgres://coding:$POSTGRES_PASSWORD@127.0.0.1:5432/coding`.

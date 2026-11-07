@@ -96,7 +96,7 @@ GitHub issues or a sitemap. Every contender gets the same frozen set in random o
 fails. More in [docs/guides/benchmarks.md](docs/guides/benchmarks.md).
 
 **Production.** `coding.sh serve` runs ingest, the viewer and the API on one port, backed by
-SQLite or Postgres. Your API apps send traces with the TypeScript SDK (`@coding.sh/sdk`), the
+SQLite, Postgres or ClickHouse. Your API apps send traces with the TypeScript SDK (`@coding.sh/sdk`), the
 Python SDK (`coding-sh`) or plain OpenTelemetry. `coding.sh gateway` links calls made through LLM
 gateways (Vercel AI Gateway, OpenRouter, LiteLLM, Cloudflare, Portkey, Helicone) to their billed
 cost. The SDKs and store plugins are not published yet. Start with
@@ -187,6 +187,7 @@ packages/
   sdk/              TypeScript SDK for API apps
   sdk-python/       Python SDK
   store-postgres/   Postgres store plugin
+  store-clickhouse/ ClickHouse store plugin
   blob-s3/          S3 blob store plugin
 apps/site/          coding.sh website (Astro, static)
 docs/               guides, production, reference and design docs

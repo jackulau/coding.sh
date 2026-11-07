@@ -10,7 +10,7 @@
 
 # ---- build: compile coding.sh, pack it with its store plugins, install their prod deps
 FROM node:22-bookworm-slim AS build
-ARG PLUGINS="coding.sh-store-postgres coding.sh-store-s3"
+ARG PLUGINS="coding.sh-store-postgres coding.sh-store-s3 coding.sh-store-clickhouse"
 ENV npm_config_update_notifier=false npm_config_fund=false npm_config_audit=false
 WORKDIR /src
 COPY . .

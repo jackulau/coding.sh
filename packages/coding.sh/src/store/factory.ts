@@ -4,7 +4,8 @@
 // otlp and http (sinks). Anything else is resolved from the registry, or from
 // an npm package named by convention:
 //   coding.sh-store-<scheme>  exporting { indexStore?, blobStore? } factories
-//                             (postgresql:// loads coding.sh-store-postgres)
+//                             (postgresql:// loads coding.sh-store-postgres,
+//                             clickhouses:// loads coding.sh-store-clickhouse)
 //   coding.sh-sink-<kind>     exporting { sink } factory
 import { resolve } from "node:path";
 import type { BlobStore, Config, IndexStore, Sink, SinkConfig } from "../core/types.ts";
@@ -68,9 +69,12 @@ registerBlobStore("memory", () => new MemoryBlobStore());
 registerSink("otlp", (s) => createOtlpSink(s));
 registerSink("http", (s) => createHttpSink(s));
 
-/** Scheme spellings served by another scheme's plugin package (hosting platforms hand out postgresql:// URLs). */
-const PLUGIN_ALIASES: Record<string, string> = { postgresql: "postgres" };
-/** The canonical name of a scheme: `postgresql` → `postgres`; others unchanged. */
+/**
+ * Scheme spellings served by another scheme's plugin package: hosting platforms hand out
+ * postgresql:// URLs, and clickhouses:// is ClickHouse over HTTPS.
+ */
+const PLUGIN_ALIASES: Record<string, string> = { postgresql: "postgres", clickhouses: "clickhouse" };
+/** The canonical name of a scheme: `postgresql` → `postgres`, `clickhouses` → `clickhouse`; others unchanged. */
 export const canonicalScheme = (scheme: string): string => PLUGIN_ALIASES[scheme] ?? scheme;
 export const storePluginPackage = (scheme: string): string => `coding.sh-store-${canonicalScheme(scheme)}`;
 

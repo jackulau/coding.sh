@@ -75,7 +75,37 @@ jobs:
         working-directory: apps/site
         run: npm run check
 
-  windows:
+  store-clickhouse:
+    name: coding.sh-store-clickhouse / ClickHouse 26.3
+    # GitHub-hosted, for the service container; the plugin tests run against a real server.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.3.62.3
+        env:
+          CLICKHOUSE_USER: coding
+          CLICKHOUSE_PASSWORD: ci
+        ports: ["8123:8123"]
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:8123/ping" --health-interval 2s --health-timeout 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck and test (real ClickHouse)
+        working-directory: packages/store-clickhouse
+        env:
+          CODING_SH_TEST_CH_URL: clickhouse://coding:ci@127.0.0.1:8123/coding
+        run: npm run check
+
     name: node ${{ matrix.node }} / windows-latest
     # Always GitHub-hosted: the self-hosted desk runner is Linux only.
     runs-on: windows-latest

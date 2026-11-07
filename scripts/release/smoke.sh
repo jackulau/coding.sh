@@ -5,6 +5,7 @@
 #
 #   scripts/release/smoke.sh               # from the repository root, after `npm ci`
 #   CODING_SH_SMOKE_PG_URL=postgres://... scripts/release/smoke.sh   # also run the store on Postgres
+#   CODING_SH_SMOKE_CH_URL=clickhouse://... scripts/release/smoke.sh # also run the store on ClickHouse
 #
 # CODING_SH_SMOKE_NPM_DIR / CODING_SH_SMOKE_PY_DIR test already-built tarballs,
 # sdists and wheels (the release workflow passes the exact files it publishes).
@@ -25,13 +26,13 @@ step "pack"
 if [ -n "${CODING_SH_SMOKE_NPM_DIR:-}" ]; then
   cp "$CODING_SH_SMOKE_NPM_DIR"/*.tgz "$W/pack/"
 else
-  for p in coding.sh sdk store-postgres blob-s3; do
+  for p in coding.sh sdk store-postgres blob-s3 store-clickhouse; do
     (cd "$ROOT/packages/$p" && { [ ! -f scripts/build.mjs ] || node scripts/build.mjs >/dev/null; } \
       && npm pack --silent --pack-destination "$W/pack" >/dev/null)
   done
 fi
 ls "$W/pack"
-[ "$(find "$W/pack" -name "*.tgz" | wc -l)" -eq 4 ] || fail "expected 4 npm tarballs"
+[ "$(find "$W/pack" -name "*.tgz" | wc -l)" -eq 5 ] || fail "expected 5 npm tarballs"
 for t in "$W"/pack/*.tgz; do
   bad=$(tar -tzf "$t" | grep -E '(^|/)(test|tests|fixtures?|__tests__|\.env[^/]*|\.npmrc|[^/]*\.pem|[^/]*\.test\.[a-z]+|src/[^/]*\.ts)$' || true)
   [ -z "$bad" ] || fail "$(basename "$t") ships: $bad"
@@ -68,13 +69,14 @@ step "store plugins resolve from the global install"
 NODE_PATH="$W/prefix/lib/node_modules" node --input-type=module -e '
 const s3 = await import("coding.sh-store-s3");
 const pg = await import("coding.sh-store-postgres");
-if (typeof s3.blobStore !== "function" || typeof pg.indexStore !== "function" || typeof pg.blobStore !== "function") throw new Error("plugin factory missing");
+const ch = await import("coding.sh-store-clickhouse");
+if (typeof s3.blobStore !== "function" || typeof pg.indexStore !== "function" || typeof pg.blobStore !== "function" || typeof ch.indexStore !== "function") throw new Error("plugin factory missing");
 s3.blobStore("s3://bucket/prefix?region=auto&endpoint=http://127.0.0.1:9");
-console.log("store-s3 and store-postgres load");
+console.log("store-s3, store-postgres and store-clickhouse load");
 ' 2>/dev/null || (cd "$W/prefix/lib/node_modules/coding.sh" && node --input-type=module -e '
-const s3 = await import("coding.sh-store-s3"); const pg = await import("coding.sh-store-postgres");
-if (typeof s3.blobStore !== "function" || typeof pg.indexStore !== "function") throw new Error("plugin factory missing");
-console.log("store-s3 and store-postgres load");')
+const s3 = await import("coding.sh-store-s3"); const pg = await import("coding.sh-store-postgres"); const ch = await import("coding.sh-store-clickhouse");
+if (typeof s3.blobStore !== "function" || typeof pg.indexStore !== "function" || typeof ch.indexStore !== "function") throw new Error("plugin factory missing");
+console.log("store-s3, store-postgres and store-clickhouse load");')
 
 step "coding.sh types: a TypeScript consumer of coding.sh/schema and coding.sh/store"
 cd "$W/app"
@@ -154,6 +156,22 @@ await trace("smoke-pg-turn", async () => "ok", { sessionId: "smoke-pg-session" }
 if (!(await flush(5000))) throw new Error("flush timed out");'
   i=0; until "$B" sessions --json 2>/dev/null | grep -q smoke-pg-session; do i=$((i+1)); [ $i -lt 50 ] || fail "session not in postgres"; sleep 0.2; done
   echo "found smoke-pg-session in postgres"
+  kill "$SERVE_PID"; wait "$SERVE_PID" 2>/dev/null || true; SERVE_PID=
+  unset CODING_SH_STORE_URL
+fi
+
+if [ -n "${CODING_SH_SMOKE_CH_URL:-}" ]; then
+  step "coding.sh-store-clickhouse: serve on ClickHouse, SDK trace, read back with the CLI"
+  export CODING_SH_STORE_URL="$CODING_SH_SMOKE_CH_URL"
+  "$B" serve --port 0 >"$W/ch.out" 2>"$W/ch.err" &
+  SERVE_PID=$!
+  i=0; until grep -q '^http' "$W/ch.out" 2>/dev/null; do i=$((i+1)); [ $i -lt 150 ] || fail "serve on clickhouse did not start: $(cat "$W/ch.err")"; sleep 0.1; done
+  CODING_SH_URL=$(head -n 1 "$W/ch.out") node --input-type=module -e '
+import { trace, flush } from "@coding.sh/sdk";
+await trace("smoke-ch-turn", async () => "ok", { sessionId: "smoke-ch-session" });
+if (!(await flush(5000))) throw new Error("flush timed out");'
+  i=0; until "$B" sessions --json 2>/dev/null | grep -q smoke-ch-session; do i=$((i+1)); [ $i -lt 50 ] || fail "session not in clickhouse"; sleep 0.2; done
+  echo "found smoke-ch-session in clickhouse"
   kill "$SERVE_PID"; wait "$SERVE_PID" 2>/dev/null || true; SERVE_PID=
   unset CODING_SH_STORE_URL
 fi

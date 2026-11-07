@@ -12,8 +12,9 @@ name: Release
 #                   as notes. install.sh installs from it at once.
 #   publish-npm     waits for approval in the "release" environment and for
 #                   github-release, then publishes coding.sh, @coding.sh/sdk,
-#                   coding.sh-store-postgres and coding.sh-store-s3 in that order
-#                   (the stores peer-depend on coding.sh).
+#                   coding.sh-store-postgres, coding.sh-store-s3 and
+#                   coding.sh-store-clickhouse in that order (the stores
+#                   peer-depend on coding.sh).
 #   publish-pypi    waits for the same approval and for github-release, then
 #                   publishes coding-sh.
 #
@@ -60,6 +61,14 @@ jobs:
         ports: ["5432:5432"]
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 5s --health-retries 30
+      clickhouse:
+        image: clickhouse/clickhouse-server:26.3.62.3
+        env:
+          CLICKHOUSE_USER: coding
+          CLICKHOUSE_PASSWORD: release
+        ports: ["8123:8123"]
+        options: >-
+          --health-cmd "wget -qO- http://127.0.0.1:8123/ping" --health-interval 2s --health-timeout 5s --health-retries 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -107,6 +116,12 @@ jobs:
           CODING_SH_TEST_PG_URL: postgres://postgres:release@127.0.0.1:5432/coding
         run: npm run check
 
+      - name: coding.sh-store-clickhouse typecheck and test (real ClickHouse)
+        working-directory: packages/store-clickhouse
+        env:
+          CODING_SH_TEST_CH_URL: clickhouse://coding:release@127.0.0.1:8123/coding
+        run: npm run check
+
       - name: coding.sh-store-s3 typecheck and test
         working-directory: packages/blob-s3
         run: npm run check
@@ -118,7 +133,7 @@ jobs:
       - name: Build and pack the npm packages
         run: |
           mkdir -p "$RUNNER_TEMP/npm"
-          for p in coding.sh sdk store-postgres blob-s3; do
+          for p in coding.sh sdk store-postgres blob-s3 store-clickhouse; do
             (cd "packages/$p" && { [ ! -f scripts/build.mjs ] || node scripts/build.mjs; } && npm pack --pack-destination "$RUNNER_TEMP/npm")
           done
           NO_UPDATE_NOTIFIER=1 node packages/coding.sh/dist/cli.mjs --version
@@ -136,6 +151,7 @@ jobs:
           CODING_SH_SMOKE_NPM_DIR: ${{ runner.temp }}/npm
           CODING_SH_SMOKE_PY_DIR: ${{ runner.temp }}/pypi
           CODING_SH_SMOKE_PG_URL: postgres://postgres:release@127.0.0.1:5432/coding
+          CODING_SH_SMOKE_CH_URL: clickhouse://coding:release@127.0.0.1:8123/smoke
         run: scripts/release/smoke.sh
 
       - uses: actions/upload-artifact@v4
@@ -234,7 +250,7 @@ jobs:
           # Empty once trusted publishing is configured; npm then uses OIDC.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          for name in coding.sh @coding.sh/sdk coding.sh-store-postgres coding.sh-store-s3; do
+          for name in coding.sh @coding.sh/sdk coding.sh-store-postgres coding.sh-store-s3 coding.sh-store-clickhouse; do
             base=${name#@}
             tgz=$(ls "npm/${base/\//-}-"[0-9]*.tgz)
             v=$(tar -xzOf "$tgz" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')

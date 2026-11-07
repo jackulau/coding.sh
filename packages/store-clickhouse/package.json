@@ -1,0 +1,65 @@
+{
+  "name": "coding.sh-store-clickhouse",
+  "version": "0.1.1",
+  "description": "ClickHouse store for coding.sh, observability and evals for any AI agent: point CODING_SH_STORE_URL at clickhouse:// and run serve, the CLI, MCP and evals on one database. Zero dependencies.",
+  "license": "MIT",
+  "author": "coding.sh contributors",
+  "type": "module",
+  "homepage": "https://coding.sh",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jackulau/coding.sh.git",
+    "directory": "packages/store-clickhouse"
+  },
+  "bugs": {
+    "url": "https://github.com/jackulau/coding.sh/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "observability",
+    "evals",
+    "opentelemetry",
+    "llm",
+    "claude-code",
+    "codex",
+    "coding.sh",
+    "clickhouse",
+    "store"
+  ],
+  "main": "./dist/index.mjs",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.15"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepare": "node scripts/build.mjs --soft",
+    "test": "node --conditions=source --no-warnings --test \"test/**/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "npm run typecheck && npm test"
+  },
+  "peerDependencies": {
+    "coding.sh": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "coding.sh": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.3"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

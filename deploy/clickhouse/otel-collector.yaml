@@ -1,0 +1,34 @@
+# OpenTelemetry Collector: OTLP/HTTP in, ClickHouse out (otel.otel_traces).
+# coding.sh sends here with an otlp sink; see docs/how-to/self-host-team.md#export-to-clickhouse-through-an-opentelemetry-collector.
+# Needs the contrib distribution (otel/opentelemetry-collector-contrib), which has the clickhouse exporter.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+exporters:
+  clickhouse:
+    endpoint: tcp://clickhouse:9000?dial_timeout=10s
+    database: otel
+    username: ${env:CLICKHOUSE_USER}
+    password: ${env:CLICKHOUSE_PASSWORD}
+    ttl: 720h # rows older than 30 days are dropped
+    create_schema: true # creates the database and the otel_traces table on first start
+    # json: true # store attributes as the JSON type instead of Map(String, String); needs enable_json_type=1 on the server
+    timeout: 10s
+    sending_queue:
+      batch:
+        flush_timeout: 5s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [clickhouse]

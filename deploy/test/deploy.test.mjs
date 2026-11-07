@@ -12,7 +12,7 @@ import { parseToml } from "../../packages/coding.sh/src/core/toml.ts";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const read = (p) => readFileSync(join(root, p), "utf8");
-const NAMES = ["POSTGRES_PASSWORD", "MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD", "INGEST_KEY_DEMO", "INGEST_KEY_FLOOD", "READ_KEY"];
+const NAMES = ["POSTGRES_PASSWORD", "CLICKHOUSE_PASSWORD", "MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD", "INGEST_KEY_DEMO", "INGEST_KEY_FLOOD", "READ_KEY"];
 const KEY_RE = { ik: /^csh_ik_[A-Za-z0-9_-]{43}$/, rk: /^csh_rk_[A-Za-z0-9_-]{43}$/ };
 
 describe("gen-env.sh", () => {
@@ -49,6 +49,7 @@ describe("gen-env.sh", () => {
     assert.match(env.READ_KEY, KEY_RE.rk);
     assert.notEqual(env.INGEST_KEY_DEMO, env.INGEST_KEY_FLOOD);
     assert.ok(env.POSTGRES_PASSWORD.length >= 32);
+    assert.ok(env.CLICKHOUSE_PASSWORD.length >= 32);
     assert.ok(env.MINIO_ROOT_PASSWORD.length >= 32);
   });
 
@@ -71,7 +72,7 @@ describe("Dockerfile", () => {
   test("follows the contract", () => {
     assert.match(df, /^FROM node:22-bookworm-slim AS build$/m);
     assert.match(df, /^FROM gcr\.io\/distroless\/nodejs22-debian12:nonroot$/m);
-    assert.match(df, /coding\.sh-store-postgres coding\.sh-store-s3/);
+    assert.match(df, /coding\.sh-store-postgres coding\.sh-store-s3 coding\.sh-store-clickhouse/);
     assert.match(df, /npm ci /);
     assert.match(df, /CODING_SH_HOME=\/data/);
     assert.match(df, /CODING_SH_HOST=0\.0\.0\.0/);
@@ -120,6 +121,21 @@ describe("docker-compose.yml", () => {
   test("every ${VAR} it needs is one gen-env.sh writes", () => {
     const vars = new Set([...dc.matchAll(/\$\{([A-Z_]+)/g)].map((m) => m[1]));
     for (const v of vars) assert.ok(NAMES.includes(v), v);
+  });
+});
+
+describe("deploy/compose/clickhouse.yml", () => {
+  const dc = read("deploy/compose/clickhouse.yml");
+  test("points serve at ClickHouse and keeps Postgres from starting", () => {
+    assert.match(dc, /CODING_SH_STORE_URL: clickhouse:\/\/coding:\$\{CLICKHOUSE_PASSWORD[^}]*\}@clickhouse:8123\/coding$/m);
+    assert.match(dc, /depends_on: !override\n\s+clickhouse:/);
+    assert.match(dc, /^  postgres:\n    profiles: \[postgres\]$/m);
+    assert.match(dc, /image: clickhouse\/clickhouse-server:\d+\.\d+\.\d+\.\d+$/m);
+  });
+  test("publishes on loopback only and needs only gen-env.sh secrets", () => {
+    const ports = [...dc.matchAll(/^\s+- "([^"]+:\d+)"/gm)].map((m) => m[1]);
+    assert.deepEqual(ports, ["127.0.0.1:8123:8123"]);
+    for (const [, v] of dc.matchAll(/\$\{([A-Z_]+)/g)) assert.ok(NAMES.includes(v), v);
   });
 });
 

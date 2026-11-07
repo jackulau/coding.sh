@@ -1,0 +1,46 @@
+# ClickHouse + OpenTelemetry Collector for coding.sh's OTLP export (export only; coding.sh keeps its
+# own store). Spans land in otel.otel_traces. Ports are published on 127.0.0.1 only.
+#
+#   export CLICKHOUSE_PASSWORD=$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')
+#   docker compose -f deploy/clickhouse/docker-compose.yml up -d --wait
+#
+# Then add an otlp sink with endpoint = "http://127.0.0.1:4319" to ~/.coding.sh/config.toml.
+# The collector listens on 4318 inside the network and is published on 4319, so it can share a
+# host with `coding.sh serve` on 4318. See docs/how-to/self-host-team.md.
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.3.62.3
+    environment:
+      CLICKHOUSE_USER: otel
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD}
+    ports:
+      - "127.0.0.1:8123:8123" # HTTP interface, for clickhouse-client --port 8123, Grafana or curl
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user otel --password \"$$CLICKHOUSE_PASSWORD\" -q 'SELECT 1'"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.164.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    environment:
+      CLICKHOUSE_USER: otel
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD}
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "127.0.0.1:4319:4318" # OTLP/HTTP
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  clickhouse-data:

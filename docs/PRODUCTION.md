@@ -522,7 +522,8 @@ export OTEL_SERVICE_NAME=checkout-api                              # becomes the
 
 - **`Dockerfile` (repo root).**
   - The build stage runs on `node:22-bookworm-slim`: `npm ci`, a build of `coding.sh`, then an
-    install of the production deps of `coding.sh-store-postgres` and `coding.sh-store-s3`.
+    install of the production deps of `coding.sh-store-postgres`, `coding.sh-store-s3` and
+    `coding.sh-store-clickhouse`.
   - The runtime stage is `gcr.io/distroless/nodejs22-debian12:nonroot`, with
     `CMD ["/app/cli.mjs","serve"]`.
   - It sets `CODING_SH_HOME=/data` (a nonroot-owned directory to mount a volume on; no `VOLUME`

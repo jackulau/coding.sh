@@ -50,6 +50,8 @@ describe("openStores", () => {
     assert.equal(storePluginPackage("postgres"), "coding.sh-store-postgres");
     assert.equal(storePluginPackage("postgresql"), "coding.sh-store-postgres", "hosting platforms hand out postgresql:// URLs");
     assert.equal(storePluginPackage("s3"), "coding.sh-store-s3");
+    assert.equal(storePluginPackage("clickhouse"), "coding.sh-store-clickhouse");
+    assert.equal(storePluginPackage("clickhouses"), "coding.sh-store-clickhouse", "clickhouses:// is ClickHouse over HTTPS");
     await assert.rejects(() => openStores(config({ store: { index: "memory://", blobs: "memory://" }, sinks: [{ kind: "kafka", endpoint: "x", mode: "metadata" }] })),
       /no sink of kind "kafka"\. Install the npm package "coding\.sh-sink-kafka"/);
     assert.throws(() => parseStoreUrl("/just/a/path"), /must look like scheme:\/\//);
