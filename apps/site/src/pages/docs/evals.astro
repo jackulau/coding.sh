@@ -273,6 +273,13 @@ const COMPARE = [
     <code>--eps-c</code>, or costs less while losing at most <code>--eps-q</code> of pass rate. Cost is USD, or tokens when too few runs are
     priced. Method: ParetoSaddler (<a href="https://arxiv.org/abs/2611.02079">arXiv 2611.02079</a>).
   </p>
+  <p id="item-gate">
+    When B adds or removes one rule, skill or context file and nothing else (<code>--without</code> counts), the report adds a one-item gate:
+    <code>item gate k=3 τ=.34 m=2: KEEP · G=1.67 net +4 runs D=.33 fired 11/36 · S=9 tasks</code>. It scores only the tasks where the item
+    reached the agent's context, read from each run's trace. An addition is KEEP, RECHECK (re-run the tasks that dropped), KILL or RERUN; a
+    removal is ACCEPT, REJECT, UNMEASURED (it never fired, so keep it) or RERUN. <code>--item-gate</code> makes it set the exit code. Method:
+    Cortex (<a href="https://arxiv.org/abs/2610.14216">arXiv 2610.14216</a>).
+  </p>
   <Code code={replay} />
   <div class="note">
     <p>

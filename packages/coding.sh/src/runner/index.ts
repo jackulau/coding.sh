@@ -8,3 +8,4 @@ export type { DiffFile, SnapshotOps, WorkdirDiff } from "./git.ts";
 export { commandEnv, sh, type ExecResult } from "./exec.ts";
 export { matchGlob, matchAny } from "./glob.ts";
 export * from "./anatomy.ts";
+export * from "./gate-item.ts";

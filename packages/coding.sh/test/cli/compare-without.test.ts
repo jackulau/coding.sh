@@ -146,6 +146,37 @@ describe("compare --without", () => {
     assert.ok(!(JSON.parse(plain.stdout) as { report: { notes: string[] } }).report.notes.some((n) => n.startsWith("pareto")));
   });
 
+  it("one-item gate: shown for a dropped skill, RERUN without traces, --item-gate exits 1, --no-item-gate hides it (AA-2)", (t) => {
+    if (!gitBin) return t.skip("needs git");
+    const live = cli(["compare", "base", "--without", ".claude/skills/pdf", "-t", "sum", "--yes", "--json"]);
+    assert.equal(live.status, 0, live.stdout + live.stderr);
+    const { experimentId, report } = JSON.parse(live.stdout) as {
+      experimentId: string;
+      report: { itemGate: { verdict: string; mode: string; item: { path: string; kind: string }; reasons: string[]; f: { rollouts: number } } };
+    };
+    const g = report.itemGate;
+    assert.deepEqual([g.verdict, g.mode, g.item.path, g.item.kind], ["RERUN", "remove", ".claude/skills/pdf/SKILL.md", "skill"]);
+    assert.ok(g.reasons.some((r) => r.startsWith("exposure unknown on 1 of 1 baseline rollouts")), g.reasons.join("; "));
+
+    const text = cli(["compare", "base", "--without", ".claude/skills/pdf", "--experiment", experimentId]);
+    assert.equal(text.status, 0, text.stdout + text.stderr);
+    assert.match(text.stdout, /^item gate k=1 τ=\.34 m=2: RERUN · G=0 net 0 runs D=0 fired 0\/1 · S=0 tasks$/m);
+    assert.match(text.stdout, /^ {10}B removes skill \.claude\/skills\/pdf\/SKILL\.md$/m);
+
+    const forced = cli(["compare", "base", "--without", ".claude/skills/pdf", "--experiment", experimentId, "--item-gate"]);
+    assert.equal(forced.status, 1, forced.stdout + forced.stderr);
+
+    const hidden = cli(["compare", "base", "--without", ".claude/skills/pdf", "--experiment", experimentId, "--no-item-gate", "--json"]);
+    assert.equal(hidden.status, 0);
+    assert.equal("itemGate" in (JSON.parse(hidden.stdout) as { report: object }).report, false);
+    assert.doesNotMatch(cli(["compare", "base", "--without", ".claude/skills/pdf", "--experiment", experimentId, "--no-item-gate"]).stdout, /item gate/);
+
+    // Not an instruction item: no gate, and --item-gate is a usage error before any run.
+    const notItem = cli(["compare", "base", "--without", "test.js", "-t", "sum", "--yes", "--item-gate"]);
+    assert.equal(notItem.status, 2, notItem.stdout + notItem.stderr);
+    assert.match(notItem.stderr, /--item-gate needs B to add or remove exactly one rule, skill or context file/);
+  });
+
   it("--gamma, --eps-q, --eps-c and --draws need --promote; bad values are usage errors before any run", (t) => {
     if (!gitBin) return t.skip("needs git");
     for (const args of [["--gamma", "0.8"], ["--eps-q", "0"], ["--eps-c", "inf"], ["--draws", "500"], ["--promote", "--gamma", "0"], ["--promote", "--eps-c", "x"], ["--promote", "--draws", "5"]]) {

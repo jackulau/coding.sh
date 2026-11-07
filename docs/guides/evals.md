@@ -251,6 +251,25 @@ limit). With `--k 1` there are no repeat attempts to resample, so the note says 
 is ParetoSaddler's promotion gate (Qian et al., arXiv 2611.02079). The paper weights tasks equally;
 coding.sh also resamples tasks, so one lucky run on one task can't promote B.
 
+When B adds or removes exactly one instruction item and changes nothing else (one rule file, one
+skill, or one `CLAUDE.md`/`AGENTS.md`; `--without` counts), the report adds the one-item gate:
+`item gate k=3 τ=.34 m=2: KEEP · G=1.67 net +4 runs D=.33 fired 11/36 · S=9 tasks`. It only looks at
+tasks where the item reached the agent's context in at least one run (S): an always-on file always
+does, a path-scoped rule only after the agent touched a matching file, a skill only when it was
+opened (listed is not enough). Exposure comes from each run's captured trace. Per task, Δ is B's
+pass rate minus A's. An addition is KEEP when some task improved (G > 0), no task dropped by more
+than τ = 0.34 (D, one run in three), no task A solved on every run lost one, B won at least 2 runs
+net (k·N ≥ m, whole runs, so a one-run win doesn't count) and the item fired. When only the drop or
+the solved-task rule fails it is RECHECK with the command to re-run those tasks; a drop again kills
+it. Otherwise KILL with the failed gates. A removal is REJECT when it costs 2 runs net, drops a task
+by more than τ, or a task the item's arm solved every time loses a run; UNMEASURED ("keep") when the
+item never fired in the base runs, since a rare-situation rule looks like dead weight until its
+situation comes up; else ACCEPT. RERUN means the runs can't be scored: a task without k valid runs
+per arm, more than 10% errored or cancelled runs, a run with no trace to read exposure from, two
+agent versions, or no exposed task. `--item-gate` makes it decide the exit code (0 on KEEP or
+ACCEPT), `--no-item-gate` hides it, and `--json` carries `report.itemGate`. This is Cortex's scorer
+(arXiv 2610.14216).
+
 With `--k 2` or more, compare sorts each arm's failed runs three ways. A bad run failed on a task the
 same arm passed in another attempt, so a retry would help. A beyond-arm failure is on a task only
 the other arm solved. Unsolved-by-all is a task neither arm solved; check the task itself. It also

@@ -637,6 +637,11 @@ export const COMMANDS: CommandSpec[] = [
       { name: "eps-q", type: "number", value: "<Q>", desc: "With --promote: pass rate a cheaper B may give up", default: "0.1" },
       { name: "eps-c", type: "string", value: "<C|inf>", desc: "With --promote: relative cost rise a better B may take (0.2 = +20%)", default: "inf" },
       { name: "draws", type: "number", value: "<N>", desc: "With --promote: bootstrap draws", default: "10000" },
+      {
+        name: "item-gate",
+        type: "boolean",
+        desc: "One-item gate (shown automatically when B adds or removes one rule, skill or context file): exit 0 on KEEP or ACCEPT, 1 otherwise; --no-item-gate hides it",
+      },
       YES,
     ],
     examples: [
@@ -644,6 +649,7 @@ export const COMMANDS: CommandSpec[] = [
       "coding.sh compare base candidate --experiment exp_01",
       "coding.sh compare base candidate --k 3 --gate",
       "coding.sh compare base candidate --k 3 --promote",
+      "coding.sh compare base --without .claude/rules/clock.md --k 3 --item-gate",
       "coding.sh compare sonnet gpt5 --gateway",
       "coding.sh compare sonnet gpt5 --gateway openrouter",
     ],

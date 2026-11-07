@@ -650,3 +650,41 @@ describe("compare --promote (AA-18)", () => {
     assert.doesNotMatch(formatCompare(plain), /pareto/);
   });
 });
+
+describe("compare one-item gate (AA-2)", () => {
+  /** Per task [A passes, B passes] out of 3. */
+  const sweep = (spec: Record<string, [number, number]>) =>
+    Object.entries(spec).flatMap(([t, [pa, pb]]) => [1, 2, 3].flatMap((a) => [run(t, "A", a, a <= pa), run(t, "B", a, a <= pb)]));
+  const inContext = (rs: RunResult[], arm: string) => new Map(rs.filter((r) => r.bundleId === arm).map((r) => [r.id, "in-context" as const]));
+
+  it("attached only with opts.itemGate; the report is otherwise unchanged", () => {
+    const rs = sweep({ t1: [0, 3], t2: [1, 3], t3: [2, 2] });
+    const plain = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 1 });
+    assert.equal("itemGate" in plain, false);
+    assert.doesNotMatch(formatCompare(plain), /item gate/);
+    const r = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 1, itemGate: { mode: "add", exposure: inContext(rs, "B"), item: { path: ".claude/rules/clock.md", kind: "rule", tier: "path" } } });
+    const { itemGate: g, ...rest } = r;
+    assert.deepEqual(rest, plain);
+    assert.equal(g!.verdict, "KEEP");
+    const text = formatCompare(r);
+    assert.match(text, /^item gate k=3 τ=\.34 m=2: KEEP · G=1\.67 net \+5 runs D=0 fired 9\/9 · S=3 tasks$/m);
+    assert.match(text, /^ {10}B adds rule \.claude\/rules\/clock\.md \(path-scoped\)$/m);
+  });
+
+  it("RECHECK prints the reasons and the command to re-run the regressed tasks", () => {
+    const rs = sweep({ t1: [2, 0], t2: [0, 3], t3: [0, 3], t4: [1, 3] });
+    const r = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 1, itemGate: { mode: "add", exposure: inContext(rs, "B") } });
+    const text = formatCompare(r, { arms: "base with-clock" });
+    assert.match(text, /^item gate k=3 τ=\.34 m=2: RECHECK · G=2\.67 net \+6 runs D=\.67 fired 12\/12 · S=4 tasks$/m);
+    assert.match(text, /^ {10}g2: worst drop \.67 > τ \.34 \(t1\)$/m);
+    assert.match(text, /^ {10}recheck: coding\.sh compare base with-clock --task t1 --k 3$/m);
+  });
+
+  it("cancelled runs make the sweep incomplete for the gate (RERUN)", () => {
+    const rs = sweep({ t1: [0, 3], t2: [0, 3] });
+    Object.assign(rs.find((x) => x.id === "B-t1-3")!, { cancelled: true });
+    const g = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 1, itemGate: { mode: "add", exposure: inContext(rs, "B") } }).itemGate!;
+    assert.equal(g.verdict, "RERUN");
+    assert.equal(g.invalid.runs, 1);
+  });
+});

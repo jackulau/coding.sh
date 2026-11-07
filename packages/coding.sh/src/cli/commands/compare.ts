@@ -3,16 +3,20 @@
 // `compare <a> --without <path>` derives B as A minus a skill, AGENTS.md or MCP config.
 // `--gate` adds a ship-or-hold decision and exits 1 unless it accepts.
 // `--promote` adds the Pareto promotion gate (quality or cost) and exits 1 unless it promotes.
+// When B adds or removes exactly one rule, skill or context file, the report adds
+// the one-item gate (`--item-gate` makes it decide the exit code, `--no-item-gate` hides it).
 import { getAdapter } from "../../adapters/index.ts";
 import { defaultGateway, gatewayConfig, gatewaySettings, type GatewayConfig } from "../../integrations/gateway/config.ts";
 import { GATEWAYS, resolveGatewayName, type GatewayId } from "../../integrations/gateway/providers.ts";
 import { gatewayRoute, routableAgents, routeVia, ROUTABLE_AGENTS, ROUTABLE_GATEWAYS } from "../../integrations/gateway/route.ts";
-import { ablateBundle, type Ablation } from "../../runner/bundle.ts";
+import { ablateBundle, diffBundles, type Ablation } from "../../runner/bundle.ts";
+import { harnessItem, itemExposure, type ExposureState } from "../../core/exposure.ts";
+import { singleItemChange } from "../../runner/gate-item.ts";
 import { git } from "../../runner/git.ts";
 import { hasGlob } from "../../runner/glob.ts";
 import type { AgentRoute } from "../../runner/run.ts";
 import type { EvalTask, HarnessBundle, RunResult } from "../../core/types.ts";
-import { compare, formatCompare, loadRunEvents, loadRunSessions, PARETO_NEEDS_COST, runExperiment } from "../../runner/experiment.ts";
+import { compare, type CompareOpts, formatCompare, loadRunEvents, loadRunSessions, PARETO_NEEDS_COST, runExperiment } from "../../runner/experiment.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { gateFlags, list, promoteFlags, requireConsent, resolveTask, str, withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
@@ -43,6 +47,12 @@ export async function run(c: CommandContext): Promise<number> {
     }
     const [A, B] = bundles as [HarnessBundle, HarnessBundle];
     if (A.id === B.id) throw new UsageError("Both arms are the same bundle; compare two different harnesses");
+    // The one-item gate: B adds or removes exactly one instruction item.
+    const itemFlag = c.flags["item-gate"];
+    const change = itemFlag === false ? undefined : ablation ? withoutItem(ablation) : bundleItemChange(A, B);
+    if (itemFlag === true && !change) {
+      throw new UsageError("--item-gate needs B to add or remove exactly one rule, skill or context file and change nothing else", { reason: "invalid_argument" });
+    }
     // How to name this comparison again (consent prompt, cancel hint).
     const arms = [...c.positionals.slice(0, 2), ...without.flatMap((p) => ["--without", p])].join(" ");
     /** Store the derived arm once; a rerun finds it by its content id. */
@@ -107,6 +117,20 @@ export async function run(c: CommandContext): Promise<number> {
     }
     const sessions = await loadRunSessions(ctx.index, results);
     const events = await loadRunEvents(ctx.index, sessions);
+    let itemGate: CompareOpts["itemGate"];
+    if (change) {
+      const holder = change.mode === "add" ? B : A;
+      const ref = holder.files[change.path];
+      const item = harnessItem(change.path, (ref && (await ctx.blobs.getText(ref))) ?? "")!;
+      const exposure = new Map<string, ExposureState>();
+      for (const r of results) {
+        if (r.bundleId !== holder.id) continue;
+        const s = sessions.get(r.id);
+        exposure.set(r.id, s ? itemExposure(item, events.get(r.id) ?? [], { cwd: s.cwd }).state : "unknown");
+      }
+      const agentVersions = new Map(results.map((r) => [r.id, sessions.get(r.id)?.agentVersion]));
+      itemGate = { mode: change.mode, exposure, agentVersions, item: { path: item.path, kind: item.kind, tier: item.tier } };
+    }
     const report = compare(results, {
       baseline: A.id,
       candidate: B.id,
@@ -116,18 +140,39 @@ export async function run(c: CommandContext): Promise<number> {
       ...(ablation ? { ablation: { paths: ablation.paths, dropped: ablation.dropped, unmatched: ablation.unmatched } } : {}),
       ...(gate ? { gate } : {}),
       ...(promote ? { pareto: promote } : {}),
+      ...(itemGate ? { itemGate } : {}),
     });
     if (out.json) out.data({ experimentId, report });
     else {
-      out.print(formatCompare(report, { color: out.color }));
+      out.print(formatCompare(report, { color: out.color, arms }));
       out.print(experimentId);
     }
     if (promote && !report.pareto) out.warn(`--promote: ${PARETO_NEEDS_COST}, so nothing is promoted`);
     // Each requested gate must pass for exit 0: --gate accepts (ship B, or with
-    // --without drop the component), --promote promotes.
-    const failed = (report.gate && report.gate.decision !== "accept") || (promote && !report.pareto?.promote);
+    // --without drop the component), --promote promotes, --item-gate keeps or accepts.
+    const itemOk = report.itemGate?.verdict === "KEEP" || report.itemGate?.verdict === "ACCEPT";
+    const failed = (report.gate && report.gate.decision !== "accept") || (promote && !report.pareto?.promote) || (itemFlag === true && !itemOk);
     return failed ? 1 : 0;
   });
+}
+
+/** The one item `--without` drops: one rule or skill from the bundle, or one context file only in the task repos. */
+function withoutItem(ab: Ablation): { mode: "remove"; path: string } | undefined {
+  if (ab.dropped.length) {
+    if (ab.unmatched.length) return undefined;
+    const c = singleItemChange({ added: [], removed: ab.dropped }, false);
+    return c ? { mode: "remove", path: c.path } : undefined;
+  }
+  const only = ab.unmatched.length === 1 ? (ab.unmatched[0] as string) : undefined;
+  return only && harnessItem(only, "")?.kind === "context" ? { mode: "remove", path: only } : undefined;
+}
+
+/** B is A plus (or minus) exactly one instruction item, and nothing else differs. */
+function bundleItemChange(A: HarnessBundle, B: HarnessBundle): { mode: "add" | "remove"; path: string } | undefined {
+  const d = diffBundles(A, B);
+  const other =
+    !!d.agent || !!d.model || !!d.flags || d.files.changed.length > 0 || d.env.added.length + d.env.removed.length + d.env.changed.length > 0 || d.remove.added.length + d.remove.removed.length > 0;
+  return singleItemChange(d.files, other);
 }
 
 /**

@@ -1396,6 +1396,7 @@ coding.sh compare <A> [b] [options]
 | `--eps-q <Q>` | `0.1` | With --promote: pass rate a cheaper B may give up. |
 | `--eps-c <C|inf>` | `inf` | With --promote: relative cost rise a better B may take (0.2 = +20%) |
 | `--draws <N>` | `10000` | With --promote: bootstrap draws. |
+| `--item-gate` |  | One-item gate (shown automatically when B adds or removes one rule, skill or context file): exit 0 on KEEP or ACCEPT, 1 otherwise; --no-item-gate hides it. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. |
 
 ```sh
@@ -1403,6 +1404,7 @@ coding.sh compare base candidate --k 3
 coding.sh compare base candidate --experiment exp_01
 coding.sh compare base candidate --k 3 --gate
 coding.sh compare base candidate --k 3 --promote
+coding.sh compare base --without .claude/rules/clock.md --k 3 --item-gate
 coding.sh compare sonnet gpt5 --gateway
 coding.sh compare sonnet gpt5 --gateway openrouter
 ```

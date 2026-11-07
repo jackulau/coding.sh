@@ -6,6 +6,7 @@ import type { Adapter, AgentEvent, BlobStore, EvalTask, HarnessBundle, IndexStor
 import { pairedPower, type PowerAnalysis } from "../experiments/power.ts";
 import { pairedBootstrap, wilson, type BootstrapResult, type Interval } from "../stats/interval.ts";
 import { mean } from "../stats/summary.ts";
+import { itemGate, dec, type ItemGateOpts, type ItemGateReport } from "./gate-item.ts";
 import { gateDetail, gateHeadline, gateVerdict, idList, type GateVerdict } from "../stats/gate.ts";
 import { acceptanceGate, mcnemar, type GateOpts, type GateResult, type McNemarResult } from "../stats/tests.ts";
 import { paretoSupport, type ParetoOpts, type ParetoSupport } from "../stats/pareto.ts";
@@ -255,6 +256,12 @@ export interface CompareReport {
    * Pareto support that B is credible progress in quality or cost (ParetoSaddler).
    */
   pareto?: ComparePareto;
+  /**
+   * Set when B adds or removes exactly one rule, skill or context file (or with
+   * `compare --item-gate`): Cortex's one-item gate on the tasks where the item
+   * reached the agent's context.
+   */
+  itemGate?: ItemGateReport;
 }
 
 /** The Pareto promotion gate: quality = pass (1/0) per run, cost = USD per run, else tokens. */
@@ -306,6 +313,8 @@ export interface CompareOpts {
   gate?: GateOpts;
   /** Add the Pareto promotion gate (`compare --promote`) with these settings; its seed defaults to `seed`. */
   pareto?: Pick<ParetoOpts, "gamma" | "epsQ" | "epsC" | "draws">;
+  /** Add the one-item gate: B adds (mode "add") or removes ("remove") one instruction item. */
+  itemGate?: Omit<ItemGateOpts, "baseline" | "candidate">;
 }
 
 type Extract = (r: RunResult, s: Session | undefined) => number | undefined;
@@ -500,6 +509,8 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
     ...(opts.ablation ? { ablation: { ...opts.ablation, effect: { mean: -boot.mean, lo: -boot.hi, hi: -boot.lo } } } : {}),
     ...(opts.gate ? { gate: compareGate(acceptanceGate({ wins: won.length, losses: lost.length, solved }, opts.gate), lost, won) } : {}),
     ...(pareto ? { pareto } : {}),
+    // Cancelled runs count as invalid here: an incomplete sweep is not scorable.
+    ...(opts.itemGate ? { itemGate: itemGate(all, { ...opts.itemGate, baseline: opts.baseline, candidate: opts.candidate }) } : {}),
   };
 }
 
@@ -638,8 +649,25 @@ function fmtValue(v: number, unit: MetricDelta["unit"]): string {
 
 const pct = (x: number) => (Number.isFinite(x) ? `${(x * 100).toFixed(1)}%` : "—");
 
+const ITEM_PASS = new Set(["KEEP", "ACCEPT"]);
+const ITEM_FAIL = new Set(["KILL", "REJECT"]);
+
+/** `item gate k=3 τ=.34 m=2: KEEP · G=1.67 net +4 runs D=.33 fired 11/36 · S=9 tasks`, then reasons. */
+function itemGateLines(g: ItemGateReport, arms: string, p: Record<"good" | "bad" | "bold" | "dim", (s: string) => string>): string[] {
+  const v = ITEM_PASS.has(g.verdict) ? p.good(g.verdict) : ITEM_FAIL.has(g.verdict) ? p.bad(g.verdict) : p.bold(g.verdict);
+  const net = `net ${g.kN > 0 ? "+" : g.kN < 0 ? "−" : ""}${Math.abs(g.kN)} run${Math.abs(g.kN) === 1 ? "" : "s"}`;
+  const out = [`item gate k=${g.k} τ=${dec(g.tau)} m=${g.m}: ${v} · G=${dec(g.G)} ${net} D=${dec(g.D)} fired ${g.f.fired}/${g.f.rollouts} · S=${g.S.length} task${g.S.length === 1 ? "" : "s"}`];
+  const ind = "          ";
+  if (g.item) out.push(p.dim(`${ind}${g.mode === "add" ? "B adds" : "B removes"} ${g.item.kind} ${g.item.path}${g.item.tier === "path" ? " (path-scoped)" : g.item.tier === "requested" ? " (on request)" : ""}`));
+  for (const r of g.reasons) out.push(`${ind}${r}`);
+  if (g.recheck?.length) out.push(`${ind}recheck: coding.sh compare ${arms} ${g.recheck.map((t) => `--task ${t}`).join(" ")} --k ${g.k}`);
+  return out;
+}
+
 export interface FormatOpts {
   color?: boolean;
+  /** How to name the two arms in a suggested command (default "<A> <B>"). */
+  arms?: string;
   /** Max per-task rows (default 20). */
   maxTasks?: number;
 }
@@ -747,6 +775,7 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
     out.push(`pareto: ${x.promote ? good(head) : bold(head)} ${detail}`);
     for (const n of x.notes) out.push(dim(`        ${n}`));
   }
+  if (r.itemGate) out.push(...itemGateLines(r.itemGate, opts.arms ?? "<A> <B>", { good, bad, bold, dim }));
   if (ab) {
     const e = ab.effect;
     out.push(`effect of ${ab.paths.join(", ")} = A − B: ${pp(e.mean)} [${pp(e.lo).replace(" pp", "")}, ${pp(e.hi)}]`);
