@@ -40,6 +40,22 @@ with coding_sh.trace("support-reply", session_id=conversation_id, user_id=user.i
 - Context follows `contextvars`, so it crosses `await` and asyncio tasks. Work handed to a thread
   pool starts untraced unless you run it with `contextvars.copy_context().run`.
 
+## LLM gateways
+
+Point the client at a gateway and each call records which one it went through, and the request id
+the gateway's lookup API takes, so `coding.sh gateway enrich` can add the billed cost and
+`coding.sh sessions --flag gateway:<name>` finds the sessions. Detected: Vercel AI Gateway,
+OpenRouter, LiteLLM, Cloudflare AI Gateway, Portkey, Helicone, Requesty, Ramp Router (router.com),
+TrueFoundry, Kong, Bifrost and Martian, by base URL (a self-hosted gateway by its URL env var, e.g.
+`LITELLM_PROXY_API_BASE`), by response header (`cf-aig-log-id`, `helicone-id`, `x-litellm-call-id`,
+`x-portkey-trace-id`, …) or by response id (`gen_…`, `gen-…`, `rqsty-…`).
+`observe()` adds a response hook to the client's HTTP client that reads headers only, and only for
+calls it records. [Details](https://github.com/jackulau/coding.sh/blob/main/docs/integrations/ai-gateway.md#from-the-sdks).
+
+```python
+client = coding_sh.observe(OpenAI(base_url="https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/compat"))
+```
+
 ## Delivery
 
 One daemon thread sends batches (up to 500 events or 4 MiB, gzip) to `POST /v1/ingest`. It retries

@@ -58,9 +58,10 @@ Cloudflare's account and gateway id also come from a base URL like
 - **OpenRouter** and **Requesty**: the response id is the gateway id (`gen-…`, `rqsty-…`), so Codex, the SDKs and
   OpenAI-compatible clients link without extra setup.
 - **LiteLLM**: by `litellm.call_id` from its OTel export.
-- **Cloudflare, Portkey, Helicone**: by `payload.gatewayGenerationId` with `payload.gateway` set, for apps that
-  record the `cf-aig-log-id`, Portkey log id or `helicone-id` header themselves. Agents do not keep response
-  headers, so for these gateways detection works out of the box and enrichment needs that id.
+- **Cloudflare, Portkey, Helicone**: by `payload.gatewayGenerationId` with `payload.gateway` set. The
+  [SDKs](#from-the-sdks) record it from the `cf-aig-log-id`, `x-portkey-trace-id` or `helicone-id` response header.
+  Agents do not keep response headers, so for agent sessions detection works out of the box and enrichment needs
+  that id.
 - **Ramp Router, Requesty**: no lookup API. A cost the call already carried (`usage.cost` in the response, mapped to
   `billedCostUsd`) is used as the record.
 
@@ -71,6 +72,35 @@ coding.sh gateway enrich                       # every gateway with a key
 coding.sh gateway enrich --gateway litellm --dry-run
 coding.sh sessions --flag gateway:openrouter
 ```
+
+## From the SDKs
+
+Apps traced with `@coding.sh/sdk` (`observe()`, `observeFetch()`) or the Python `coding-sh` package (`observe()`)
+detect every gateway above on each model call. The call's `llm.call` gets `payload.gateway` (so the session is
+tagged `gateway:<name>`) and, when the gateway handed one out, `payload.gatewayGenerationId`: the id
+`gateway enrich` looks up. No setup beyond pointing the client at the gateway.
+
+| Gateway | Detected by | Request id |
+| --- | --- | --- |
+| Vercel AI Gateway | `ai-gateway.vercel.sh` | response id `gen_…` (or an `x-generation-id` header of that shape) |
+| OpenRouter | `openrouter.ai` | response id `gen-…` (or an `x-generation-id` header of that shape) |
+| LiteLLM proxy | `LITELLM_PROXY_API_BASE` host, `x-litellm-*` headers | `x-litellm-call-id` |
+| Cloudflare AI Gateway | `gateway.ai.cloudflare.com`, `cf-aig-log-id` | `cf-aig-log-id` |
+| Portkey | `api.portkey.ai`, `PORTKEY_GATEWAY_URL` host, `x-portkey-trace-id` | `x-portkey-trace-id` |
+| Helicone | `*.helicone.ai`, `helicone-id` | `helicone-id` |
+| Requesty | `router.requesty.ai` | response id `rqsty-…` |
+| Ramp Router | `api.router.com`, `RAMP_ROUTER_BASE_URL` host, `x-router-provider` | none (cost is in the response) |
+| TrueFoundry | `*.truefoundry.ai` / `.com` / `.cloud`, `TFY_GATEWAY_URL` host | none |
+| Kong AI Gateway | `KONG_PROXY_URL` host, `x-kong-llm-model` | `x-kong-request-id` |
+| Bifrost | `BIFROST_URL` / `BIFROST_BASE_URL` host | none |
+| Martian | `withmartian.com` | none |
+
+The base URL decides first, then a header only one gateway sets, then the response id's shape. The SDKs read
+response headers without touching the body: the TypeScript SDK from the response the OpenAI / Anthropic client or
+`fetch` already has, the Python SDK through a response hook on the client's HTTP client that only acts on calls it
+records. The SDK tables are generated from `providers.ts` (`node packages/coding.sh/scripts/sdk-gateways.ts`), and a
+test fails when they drift. AI SDK spans sent with `aiSdkTracer()` are tagged by the server instead (provider name,
+response id, `server.address`).
 
 ## Other gateways in agent configs
 

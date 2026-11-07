@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import functools
 import inspect
-import urllib.parse
 from typing import Any, Callable, Dict, Optional, Tuple
 
+from ._gateway import capturing, hook_responses
 from ._llm import AsyncStream, LLMCall, SyncStream, content_text, g, given, last_user_text, _num
 from ._trace import enabled
 
@@ -318,7 +318,8 @@ class _AnthropicStreamManager:
     def __enter__(self) -> Any:
         call = self._cs_call = self._cs_make_call().start()
         try:
-            stream = self._cs_manager.__enter__()
+            with capturing(call):
+                stream = self._cs_manager.__enter__()
         except Exception as e:
             call.end(e)
             raise
@@ -334,7 +335,8 @@ class _AnthropicStreamManager:
     async def __aenter__(self) -> Any:
         call = self._cs_call = self._cs_make_call().start()
         try:
-            stream = await self._cs_manager.__aenter__()
+            with capturing(call):
+                stream = await self._cs_manager.__aenter__()
         except Exception as e:
             call.end(e)
             raise
@@ -359,23 +361,23 @@ class _AnthropicStreamManager:
 Prepared = Tuple[LLMCall, Dict[str, Any], Callable[[LLMCall, Any], bool], Callable[[LLMCall, Any], None]]
 
 
-def gateway_of(client: Any) -> Optional[str]:
-    """ "vercel" when the client talks to the Vercel AI Gateway (base_url on ai-gateway.vercel.sh)."""
+def base_url_of(client: Any) -> Optional[str]:
+    """The client's base URL, as a string (which gateway, if any, it talks to)."""
     try:
-        host = (urllib.parse.urlsplit(str(getattr(client, "base_url", "") or "")).hostname or "").lower()
+        url = getattr(client, "base_url", None)
+        return str(url) if url else None
     except Exception:
         return None
-    return "vercel" if host == "ai-gateway.vercel.sh" or host.endswith(".ai-gateway.vercel.sh") else None
 
 
-def _prepare(provider: str, kind: str, kwargs: Dict[str, Any], gateway: Optional[str] = None) -> Prepared:
+def _prepare(provider: str, kind: str, kwargs: Dict[str, Any], base_url: Optional[str] = None) -> Prepared:
     model = kwargs.get("model")
     if kind == "responses":
         source = kwargs.get("input")
     else:
         source = kwargs.get("messages")
     call = LLMCall(provider, model, lambda: last_user_text(source))
-    call.gateway = gateway
+    call.base_url = base_url
     observe: Callable[[LLMCall, Any], bool]
     finish: Callable[[LLMCall, Any], None]
     if kind == "chat":
@@ -408,14 +410,15 @@ def _handle(result: Any, call: LLMCall, call_kwargs: Dict[str, Any], observe: An
 
 async def _ahandle(awaitable: Any, call: LLMCall, call_kwargs: Dict[str, Any], observe: Any, finish: Any) -> Any:
     try:
-        result = await awaitable
+        with capturing(call):
+            result = await awaitable
     except Exception as e:
         call.end(e)
         raise
     return _handle(result, call, call_kwargs, observe, finish)
 
 
-def _wrap(resource: Any, attr: str, provider: str, kind: str, gateway: Optional[str] = None) -> None:
+def _wrap(resource: Any, attr: str, provider: str, kind: str, base_url: Optional[str] = None) -> None:
     orig = getattr(resource, attr, None)
     if orig is None or not callable(orig) or getattr(orig, _MARK, False):
         return
@@ -424,7 +427,7 @@ def _wrap(resource: Any, attr: str, provider: str, kind: str, gateway: Optional[
         if not enabled():
             return None
         try:
-            prepared = _prepare(provider, kind, kwargs, gateway)
+            prepared = _prepare(provider, kind, kwargs, base_url)
             prepared[0].start()
             return prepared
         except Exception:
@@ -451,7 +454,8 @@ def _wrap(resource: Any, attr: str, provider: str, kind: str, gateway: Optional[
                 return orig(*args, **kwargs)
             call, call_kwargs, observe, finish = p
             try:
-                result = orig(*args, **call_kwargs)
+                with capturing(call):
+                    result = orig(*args, **call_kwargs)
             except Exception as e:
                 call.end(e)
                 raise
@@ -467,7 +471,7 @@ def _wrap(resource: Any, attr: str, provider: str, kind: str, gateway: Optional[
         pass
 
 
-def _wrap_stream_helper(resource: Any, gateway: Optional[str] = None) -> None:
+def _wrap_stream_helper(resource: Any, base_url: Optional[str] = None) -> None:
     orig = getattr(resource, "stream", None)
     if orig is None or not callable(orig) or getattr(orig, _MARK, False):
         return
@@ -483,7 +487,7 @@ def _wrap_stream_helper(resource: Any, gateway: Optional[str] = None) -> None:
 
             def make_call() -> LLMCall:
                 call = LLMCall("anthropic", model, lambda: last_user_text(messages))
-                call.gateway = gateway
+                call.base_url = base_url
                 return call
 
             return _AnthropicStreamManager(manager, make_call)
@@ -524,20 +528,22 @@ def observe(client: Any) -> Any:
     """
     try:
         provider = _provider_of(client)
-        gw = gateway_of(client) if provider else None
+        base = base_url_of(client) if provider else None
+        if provider:
+            hook_responses(client)
         if provider == "openai":
             completions = _resource(client, "chat", "completions")
             if completions is not None:
-                _wrap(completions, "create", "openai", "chat", gw)
-                _wrap(completions, "parse", "openai", "chat", gw)
+                _wrap(completions, "create", "openai", "chat", base)
+                _wrap(completions, "parse", "openai", "chat", base)
             responses = _resource(client, "responses")
             if responses is not None:
-                _wrap(responses, "create", "openai", "responses", gw)
+                _wrap(responses, "create", "openai", "responses", base)
         elif provider == "anthropic":
             messages = _resource(client, "messages")
             if messages is not None:
-                _wrap(messages, "create", "anthropic", "messages", gw)
-                _wrap_stream_helper(messages, gw)
+                _wrap(messages, "create", "anthropic", "messages", base)
+                _wrap_stream_helper(messages, base)
     except Exception:
         pass
     return client

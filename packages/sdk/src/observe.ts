@@ -14,6 +14,7 @@
 // Anthropic's messages.stream() calls messages.create({ stream: true }) on the
 // same resource, so it is recorded through create (once).
 import { currentCtx, type LlmCall, recordLlm, runInCtx } from "./context.ts";
+import type { HeaderGetter } from "./gateway.ts";
 import { requestInfo, resultFor, type Shape, streamAcc } from "./providers.ts";
 import { errorMessage, isObj, nowMs } from "./util.ts";
 
@@ -29,17 +30,6 @@ function defineOwn(target: Obj, key: PropertyKey, value: unknown): void {
   Object.defineProperty(target, key, { value, writable: true, configurable: true, enumerable: false });
 }
 
-/** "vercel" when a base URL points at the Vercel AI Gateway. */
-export function gatewayOf(url: unknown): string | undefined {
-  if (typeof url !== "string" || !url) return undefined;
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    return host === "ai-gateway.vercel.sh" || host.endsWith(".ai-gateway.vercel.sh") ? "vercel" : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 /**
  * Wraps an OpenAI or Anthropic client so its model calls are recorded.
  * Unknown objects are returned untouched; wrapping twice is a no-op.
@@ -49,14 +39,14 @@ export function observe<T>(client: T): T {
   if (!c) return client;
   try {
     if (c[OBSERVED]) return client;
-    const gateway = gatewayOf(c.baseURL);
+    const baseUrl = typeof c.baseURL === "string" ? c.baseURL : undefined;
     let wrapped = false;
     const completions = asObj(asObj(c.chat)?.completions);
-    if (completions && isFn(completions.create)) wrapped = wrap(completions, "chat", "openai", gateway) || wrapped;
+    if (completions && isFn(completions.create)) wrapped = wrap(completions, "chat", "openai", baseUrl) || wrapped;
     const responses = asObj(c.responses);
-    if (responses && isFn(responses.create)) wrapped = wrap(responses, "responses", "openai", gateway) || wrapped;
+    if (responses && isFn(responses.create)) wrapped = wrap(responses, "responses", "openai", baseUrl) || wrapped;
     const messages = asObj(c.messages);
-    if (!completions && messages && isFn(messages.create)) wrapped = wrap(messages, "messages", "anthropic", gateway) || wrapped;
+    if (!completions && messages && isFn(messages.create)) wrapped = wrap(messages, "messages", "anthropic", baseUrl) || wrapped;
     if (wrapped) defineOwn(c, OBSERVED, true);
   } catch {
     // an exotic client shape: leave it alone
@@ -64,18 +54,18 @@ export function observe<T>(client: T): T {
   return client;
 }
 
-function wrap(resource: Obj, shape: Shape, provider: string, gateway: string | undefined): boolean {
+function wrap(resource: Obj, shape: Shape, provider: string, url: string | undefined): boolean {
   const orig = resource.create as AnyFn & { [OBSERVED]?: boolean };
   if (orig[OBSERVED]) return true;
   const wrapped = function (this: unknown, params: unknown, ...rest: unknown[]): unknown {
     const ctx = currentCtx();
     const start = nowMs();
-    let call: Omit<LlmCall, "end" | "ok"> = { provider, start };
+    let call: Omit<LlmCall, "end" | "ok"> = { provider, start, url };
     let callParams = params;
     let swallow = false;
     try {
       const info = requestInfo(shape, params);
-      call = { provider, start, requestModel: info.requestModel, input: info.input, gateway };
+      call = { provider, start, url, requestModel: info.requestModel, input: info.input };
       if (shape === "chat" && info.stream && isObj(params) && params.stream_options == null) {
         callParams = { ...params, stream_options: { include_usage: true } };
         swallow = true;
@@ -90,13 +80,18 @@ function wrap(resource: Obj, shape: Shape, provider: string, gateway: string | u
       recordLlm({ ...call, end: nowMs(), ok: false, error: errorMessage(err) }, ctx);
       throw err;
     }
+    // Response headers (gateway request ids), set before the value or error arrives.
+    let headers: HeaderGetter | undefined;
     return observeResult(
       p,
       (value) => {
-        if (isObj(callParams) && callParams.stream === true) observeStream(value, shape, swallow, call, ctx);
-        else recordLlm({ ...call, ...resultFor(shape, value), end: nowMs() }, ctx);
+        if (isObj(callParams) && callParams.stream === true) observeStream(value, shape, swallow, { ...call, headers }, ctx);
+        else recordLlm({ ...call, headers, ...resultFor(shape, value), end: nowMs() }, ctx);
       },
-      (err) => recordLlm({ ...call, end: nowMs(), ok: false, error: errorMessage(err) }, ctx),
+      (err) => recordLlm({ ...call, headers, end: nowMs(), ok: false, error: errorMessage(err) }, ctx),
+      (h) => {
+        headers = h;
+      },
     );
   };
   defineOwn(wrapped as unknown as Obj, OBSERVED, true);
@@ -117,8 +112,9 @@ const quietly =
 /**
  * Calls onValue/onError once the app consumes the result, and returns the
  * result itself. Observation attaches lazily, when the app first awaits it.
+ * onHeaders gets the HTTP response headers first, when the result exposes them.
  */
-export function observeResult<T>(p: T, onValue: (v: unknown) => void, onError: (e: unknown) => void): T {
+export function observeResult<T>(p: T, onValue: (v: unknown) => void, onError: (e: unknown) => void, onHeaders?: (h: HeaderGetter) => void): T {
   const o = asObj(p);
   if (!o || !isFn(o.then)) {
     quietly(onValue)(p);
@@ -136,6 +132,7 @@ export function observeResult<T>(p: T, onValue: (v: unknown) => void, onError: (
     if (isFn(o.parse) && isFn(o.asResponse)) {
       const parse = o.parse;
       defineOwn(o, "parse", function (this: unknown) {
+        if (!attached && onHeaders) watchHeaders(o, onHeaders);
         const r = parse.call(this) as PromiseLike<unknown>;
         attach(r);
         return r;
@@ -151,6 +148,24 @@ export function observeResult<T>(p: T, onValue: (v: unknown) => void, onError: (
     // not patchable: no record, the app is unaffected
   }
   return p;
+}
+
+/**
+ * Reads the headers off a Stainless APIPromise's responsePromise (not
+ * asResponse(), which can end the client's own tracing span early). Registered
+ * before parse(), so the headers land before the parsed value does. Never
+ * reads the body.
+ */
+function watchHeaders(o: Obj, onHeaders: (h: HeaderGetter) => void): void {
+  const rp = asObj(o.responsePromise);
+  if (!rp || !isFn(rp.then)) return;
+  (rp as unknown as PromiseLike<unknown>).then(
+    quietly((props: unknown) => {
+      const h = asObj(asObj(asObj(props)?.response)?.headers);
+      if (h && isFn(h.get)) onHeaders(h as unknown as HeaderGetter);
+    }),
+    () => {},
+  );
 }
 
 /** Observes a provider Stream's iteration (the Stream object itself is returned as is). */

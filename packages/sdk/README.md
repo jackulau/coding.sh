@@ -45,7 +45,7 @@ app.post("/chat", async (req, res) => {
 | Call | What it does |
 |---|---|
 | `observe(client)` | Records OpenAI `chat.completions.create` and `responses.create`, and Anthropic `messages.create` and `messages.stream`, plain and streaming. It patches the client in place and returns it. Calling it twice is harmless. Unknown objects come back untouched. |
-| `observeFetch(fetch?)` | Returns a `fetch` that records LLM calls made over raw HTTP: POSTs to paths ending in `/chat/completions`, `/responses` or `/messages`, including the Vercel AI Gateway. Pass it to any client that accepts a custom `fetch`. |
+| `observeFetch(fetch?)` | Returns a `fetch` that records LLM calls made over raw HTTP: POSTs to paths ending in `/chat/completions`, `/responses` or `/messages`, on any host, LLM gateways included. Pass it to any client that accepts a custom `fetch`. |
 | `trace(name, fn, {sessionId?, userId?, metadata?, input?})` | Runs `fn` as one turn. A top-level trace is its own session. `sessionId` groups the turns of a conversation into one session. A trace inside another trace becomes a step. Works with sync and async `fn`. |
 | `span("tool" \| "step", name, fn, {input?})` | A tool call or a named step inside the current trace. |
 | `withSession(id, fn)` | Every trace and untraced call inside `fn` goes to session `id`. |
@@ -89,6 +89,22 @@ tracer records. Inside `trace()`, AI SDK spans join that trace.
 
 If you already run OpenTelemetry, you don't need the SDK. Export to `<CODING_SH_URL>/v1/traces` with
 `Authorization: Bearer <key>`, and set `gen_ai.conversation.id` (or `session.id`) to group a conversation.
+
+## LLM gateways
+
+Point the client at a gateway and each call records which one it went through, and the request id
+the gateway's lookup API takes, so `coding.sh gateway enrich` can add the billed cost and
+`coding.sh sessions --flag gateway:<name>` finds the sessions. Detected: Vercel AI Gateway,
+OpenRouter, LiteLLM, Cloudflare AI Gateway, Portkey, Helicone, Requesty, Ramp Router (router.com),
+TrueFoundry, Kong, Bifrost and Martian, by base URL (a self-hosted gateway by its URL env var, e.g.
+`LITELLM_PROXY_API_BASE`), by response header (`cf-aig-log-id`, `helicone-id`, `x-litellm-call-id`,
+`x-portkey-trace-id`, …) or by response id (`gen_…`, `gen-…`, `rqsty-…`).
+Headers are read from the response the client already has; the body is never read twice.
+[Details](https://github.com/jackulau/coding.sh/blob/main/docs/integrations/ai-gateway.md#from-the-sdks).
+
+```ts
+const openai = observe(new OpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey: process.env.OPENROUTER_API_KEY }));
+```
 
 ## Streams
 

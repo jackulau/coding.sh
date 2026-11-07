@@ -1,15 +1,15 @@
 // observeFetch(fetch?): records LLM calls made over raw HTTP.
 //
 // Matches POSTs whose path ends in /chat/completions or /responses (OpenAI
-// shape) or /messages (Anthropic shape), on any host: OpenAI, Anthropic, the
-// Vercel AI Gateway (ai-gateway.vercel.sh), or any compatible server.
+// shape) or /messages (Anthropic shape), on any host: OpenAI, Anthropic, an
+// LLM gateway (Vercel AI Gateway, OpenRouter, LiteLLM, Cloudflare, Portkey,
+// Helicone, ...; see gateway.ts), or any compatible server.
 // The app gets the very same Response; the SDK reads a clone (a tee() of the
 // body), so streaming bodies are observed as they arrive without being held.
 // Calls made by a client wrapped with observe() are skipped here, so wrapping
 // both never records a call twice.
 import { track } from "./client.ts";
 import { currentCtx, type LlmCall, recordLlm } from "./context.ts";
-import { gatewayOf } from "./observe.ts";
 import { requestInfo, resultFor, type Shape, streamAcc } from "./providers.ts";
 import { errorMessage, isObj, nowMs, str } from "./util.ts";
 
@@ -179,12 +179,12 @@ export function observeFetch(f?: Fetch): Fetch {
 
     const start = nowMs();
     const provider = shape === "messages" ? "anthropic" : "openai";
-    let call: Omit<LlmCall, "end" | "ok"> = { provider, start };
+    let call: Omit<LlmCall, "end" | "ok"> = { provider, start, url };
     let stream = false;
     try {
       const info = requestInfo(shape, await readBody(input, init));
       stream = info.stream;
-      call = { provider, start, requestModel: info.requestModel, input: info.input, gateway: gatewayOf(url) };
+      call = { provider, start, url, requestModel: info.requestModel, input: info.input };
     } catch {
       // unreadable body: record what the response says
     }
@@ -196,7 +196,7 @@ export function observeFetch(f?: Fetch): Fetch {
       throw err;
     }
     try {
-      track(observeResponse(res, shape, stream, call, ctx));
+      track(observeResponse(res, shape, stream, { ...call, headers: res.headers }, ctx));
     } catch {
       // clone() refused (body already used): no record
     }

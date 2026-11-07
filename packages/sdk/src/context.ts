@@ -15,6 +15,7 @@
 // session), unless withSession() names the session it belongs to.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { config, enqueue } from "./client.ts";
+import { detectGateway, type HeaderGetter } from "./gateway.ts";
 import { errorMessage, newSpanId, newTraceId, nowMs, safeJson, truncate, uuid } from "./util.ts";
 
 /** Kinds from the coding.sh/trace v0 schema this SDK emits. */
@@ -328,8 +329,10 @@ export interface LlmCall {
   /** Last user message of the request (the prompt of an untraced call). */
   input?: string;
   responseId?: string;
-  /** "vercel" when the call went through the Vercel AI Gateway. */
-  gateway?: string;
+  /** Base URL (or request URL) of the call: which gateway, if any, it went to. */
+  url?: string;
+  /** HTTP response headers: gateway request ids. */
+  headers?: HeaderGetter;
   operation?: string;
 }
 
@@ -353,6 +356,7 @@ export function recordLlm(call: LlmCall, ctx: Ctx | undefined): void {
     const model = call.responseModel ?? call.requestModel;
     const usage = usageOf(call.usage);
     const durationMs = Math.max(0, call.end - call.start);
+    const gw = detectGateway({ url: call.url, headers: call.headers, responseId: call.responseId });
     const p: Record<string, unknown> = {
       provider: call.provider,
       requestModel: call.requestModel,
@@ -363,7 +367,9 @@ export function recordLlm(call: LlmCall, ctx: Ctx | undefined): void {
       ok: call.ok,
       error: call.error,
       responseId: call.responseId,
-      gateway: call.gateway,
+      // The names the server reads: gateway → the `gateway:<name>` flag; gatewayGenerationId → `gateway enrich`.
+      gateway: gw?.gateway,
+      gatewayGenerationId: gw?.requestId,
     };
     if (call.toolCalls?.length) {
       p.toolCalls = call.toolCalls.map((t) => {

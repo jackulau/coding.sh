@@ -4,7 +4,7 @@ import OpenAI from "openai";
 import { flush, init, observe, span, stats, trace, withSession } from "../src/index.ts";
 import { _reset } from "../src/client.ts";
 import { type FakeServe, startFakeServe } from "./helpers/fake-serve.ts";
-import { type MockLlm, startMockLlm } from "./helpers/mock-llm.ts";
+import { type MockLlm, sameIds, startMockLlm } from "./helpers/mock-llm.ts";
 
 let llm: MockLlm;
 let serve: FakeServe;
@@ -34,7 +34,7 @@ test("chat.completions.create: same result, one llm.call with usage, model and t
     sessionId = t.sessionId;
     return openai.chat.completions.create({ model: "mock-gpt", messages: [{ role: "user", content: "ping" }] });
   });
-  assert.deepEqual(res, raw);
+  assert.deepEqual(sameIds(res), sameIds(raw));
   assert.equal(res.choices[0]!.message.content, "pong");
   await flush();
   const [call] = llmCalls(sessionId);
@@ -83,7 +83,7 @@ test("stream without stream_options: usage is captured and the app sees exactly 
     },
     { input: "ping" },
   );
-  assert.deepEqual(seen, plain);
+  assert.deepEqual(sameIds(seen), sameIds(plain));
   assert.equal(seen.map((c) => (c as { choices: { delta: { content?: string } }[] }).choices[0]?.delta.content ?? "").join(""), "pong");
   // The SDK asked for usage on the wire…
   const sent = llm.requests.at(-1)!.body;

@@ -124,6 +124,8 @@ class LLMServer(_Server):
     def __init__(self, port: int = 0) -> None:
         self.requests: List[Dict[str, Any]] = []
         self.fail_next: Optional[int] = None
+        # Sent on every response, e.g. a gateway's request id header.
+        self.extra_headers: Dict[str, str] = {}
         super().__init__(_LLMHandler, port)
 
 
@@ -133,9 +135,14 @@ class _LLMHandler(BaseHTTPRequestHandler):
     def log_message(self, *a: Any) -> None:
         pass
 
+    def _extra(self) -> None:
+        for k, v in self.server.owner.extra_headers.items():  # type: ignore[attr-defined]
+            self.send_header(k, v)
+
     def _json(self, status: int, obj: Any) -> None:
         data = json.dumps(obj).encode()
         self.send_response(status)
+        self._extra()
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -143,6 +150,7 @@ class _LLMHandler(BaseHTTPRequestHandler):
 
     def _sse(self, events: List[Tuple[Optional[str], Any]]) -> None:
         self.send_response(200)
+        self._extra()
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "close")

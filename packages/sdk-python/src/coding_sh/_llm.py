@@ -11,6 +11,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 from ._client import dumps
+from ._gateway import detect_gateway
 from ._trace import Scope, clip, emit, full_capture
 
 
@@ -87,7 +88,10 @@ class LLMCall(Scope):
         self.tool_calls: Dict[Any, Dict[str, Any]] = {}
         self.ttft_ms: Optional[float] = None
         self.response_id: Optional[str] = None
-        self.gateway: Optional[str] = None
+        # Which gateway, if any: the client's base URL, and the response's URL and headers.
+        self.base_url: Optional[str] = None
+        self.request_url: Optional[str] = None
+        self.response_headers: Any = None
 
     def mark_first_token(self) -> None:
         if self.ttft_ms is None and self._p0:
@@ -136,6 +140,11 @@ class LLMCall(Scope):
             return
         from ._trace import error_text
 
+        gw = None
+        try:
+            gw = detect_gateway(self.request_url or self.base_url, self.response_headers, self.response_id)
+        except Exception:
+            gw = None
         p: Dict[str, Any] = {
             "provider": self.provider,
             "requestModel": self.request_model,
@@ -146,7 +155,9 @@ class LLMCall(Scope):
             "ok": error is None,
             "error": error_text(error) if error else None,
             "responseId": self.response_id,
-            "gateway": self.gateway,
+            # The names the server reads: gateway -> the `gateway:<name>` flag, gatewayGenerationId -> `gateway enrich`.
+            "gateway": gw[0] if gw else None,
+            "gatewayGenerationId": gw[1] if gw else None,
         }
         calls = self._tool_calls_payload()
         if calls:

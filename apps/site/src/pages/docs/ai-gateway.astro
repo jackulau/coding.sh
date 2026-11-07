@@ -27,6 +27,12 @@ const aiSdk = `const { text } = await generateText({
   experimental_telemetry: { isEnabled: true },
 });`;
 
+const sdk = `// TypeScript
+const openai = observe(new OpenAI({ baseURL: "https://openrouter.ai/api/v1", apiKey: process.env.OPENROUTER_API_KEY }));
+
+# Python
+client = coding_sh.observe(OpenAI(base_url="https://gateway.ai.cloudflare.com/v1/<account>/<gateway>/compat"))`;
+
 const cmds = `coding.sh gateway status          # which agents route through a gateway, keys set or not
 coding.sh gateway enrich          # billed cost + serving provider per call (last 30 days)
 coding.sh sessions --flag gateway:openrouter
@@ -112,8 +118,22 @@ const GATEWAY_ROWS = [
   <p>
     Detection is read-only. coding.sh never prints or stores your keys. Re-running <code>enrich</code> makes no new API calls. OpenRouter
     and Requesty calls link by their response id. LiteLLM calls link through its OpenTelemetry export. Cloudflare, Portkey and Helicone
-    need the log id their response header carries, which agents don't keep. Calls through a Vercel <code>vmc/</code> virtual model record
+    need the log id their response header carries: the SDKs record it, agents don't keep it. Calls through a Vercel <code>vmc/</code> virtual model record
     the model it resolved to.
+  </p>
+
+  <h2 id="sdk">From the SDKs <Tag status="built" /></h2>
+  <p>
+    Apps traced with the <a href="/docs/sdk">TypeScript or Python SDK</a> detect every gateway in the table on each model call: by base
+    URL (a self-hosted gateway by its URL env var, like <code>LITELLM_PROXY_API_BASE</code>), by a response header only that gateway sets,
+    or by the response id. The call records the gateway and its request id, so the session is tagged and <code>gateway enrich</code> can
+    look it up.
+  </p>
+  <Code code={sdk} />
+  <p>
+    Request ids come from <code>cf-aig-log-id</code> (Cloudflare), <code>helicone-id</code>, <code>x-litellm-call-id</code>,
+    <code>x-portkey-trace-id</code> and <code>x-kong-request-id</code>, or the response id (<code>gen_…</code> Vercel,
+    <code>gen-…</code> OpenRouter, <code>rqsty-…</code> Requesty). The SDKs read headers only, never a body twice.
   </p>
 
   <h2 id="drains">Trace drains <Tag status="partial" /></h2>

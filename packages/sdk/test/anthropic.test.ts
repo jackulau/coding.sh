@@ -4,7 +4,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { flush, init, observe, withSession } from "../src/index.ts";
 import { _reset } from "../src/client.ts";
 import { type FakeServe, startFakeServe } from "./helpers/fake-serve.ts";
-import { type MockLlm, startMockLlm } from "./helpers/mock-llm.ts";
+import { type MockLlm, sameIds, startMockLlm } from "./helpers/mock-llm.ts";
 
 let llm: MockLlm;
 let serve: FakeServe;
@@ -31,7 +31,7 @@ test("messages.create: same result, usage and stop reason recorded", async () =>
   const raw = await client().messages.create(msg);
   const anthropic = observe(client());
   const res = await withSession("a-plain", () => anthropic.messages.create(msg));
-  assert.deepEqual(res, raw);
+  assert.deepEqual(sameIds(res), sameIds(raw));
   await flush();
   const [c] = calls("a-plain");
   assert.equal(c!.payload.provider, "anthropic");

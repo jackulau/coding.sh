@@ -26,6 +26,14 @@ export interface GatewayDef {
   aliases?: readonly string[];
   /** Shape of the per-request id the gateway hands out, when it is distinctive enough to detect on its own. */
   idPattern?: RegExp;
+  /**
+   * Response headers (lowercase) that carry the per-request id `gateway enrich`
+   * looks up; the first one present wins. A header marks the gateway on its own,
+   * unless idPattern is set: then only a value of that shape does.
+   */
+  idHeaders?: readonly string[];
+  /** Other response headers only this gateway sets: their presence marks it. */
+  markHeaders?: readonly string[];
   /** Provider names agents and SDKs use for this gateway (Codex model_provider, OpenCode / AI SDK provider). */
   providers: readonly string[];
   /** What `gateway enrich` can fetch per request. */
@@ -46,6 +54,8 @@ export const GATEWAYS: Record<GatewayId, GatewayDef> = {
     keyEnv: "AI_GATEWAY_API_KEY",
     // gen_ + a 26-char Crockford base32 ULID.
     idPattern: /^gen_[0-9A-HJKMNP-TV-Z]{26}$/i,
+    // Unverified header; the id is also the chat completion `id`. Only a gen_ value counts.
+    idHeaders: ["x-generation-id"],
     providers: ["vercel", "vercel-ai-gateway", "vercel-gateway", "ai-gateway", "gateway", "vercel.ai_gateway"],
     lookup: "generation",
     credits: true,
@@ -60,6 +70,8 @@ export const GATEWAYS: Record<GatewayId, GatewayDef> = {
     keyEnv: "OPENROUTER_API_KEY",
     // gen-<random>, e.g. gen-3bhGkxlo4XFrqiabUM7NDtwDzWwG or gen-1752093120-tTzfXhWtSBRkaSlY2c8b.
     idPattern: /^gen-[0-9A-Za-z][0-9A-Za-z-]{11,}$/,
+    // The id is also the chat completion `id`. Only a gen- value counts.
+    idHeaders: ["x-generation-id"],
     providers: ["openrouter"],
     lookup: "generation",
     credits: true,
@@ -72,6 +84,9 @@ export const GATEWAYS: Record<GatewayId, GatewayDef> = {
     urlEnv: ["LITELLM_PROXY_API_BASE", "LITELLM_PROXY_URL", "LITELLM_BASE_URL"],
     keyEnv: "LITELLM_PROXY_API_KEY",
     keyEnvFallbacks: ["LITELLM_API_KEY", "LITELLM_MASTER_KEY"],
+    // x-litellm-call-id is the request_id of the /spend/logs row.
+    idHeaders: ["x-litellm-call-id"],
+    markHeaders: ["x-litellm-response-cost", "x-litellm-model-api-base"],
     providers: ["litellm", "litellm_proxy", "litellm-proxy"],
     lookup: "spend-log",
     docs: "https://docs.litellm.ai/docs/proxy/cost_tracking",
@@ -84,6 +99,8 @@ export const GATEWAYS: Record<GatewayId, GatewayDef> = {
     apiBase: "https://api.cloudflare.com/client/v4",
     keyEnv: "CLOUDFLARE_API_TOKEN",
     aliases: ["cf"],
+    // cf-aig-log-id is the {id} of the logs API.
+    idHeaders: ["cf-aig-log-id"],
     providers: ["cloudflare-ai-gateway", "cloudflare_ai_gateway", "ai-gateway-provider"],
     lookup: "log",
     docs: "https://developers.cloudflare.com/ai-gateway/",
@@ -95,6 +112,7 @@ export const GATEWAYS: Record<GatewayId, GatewayDef> = {
     urlEnv: ["PORTKEY_GATEWAY_URL"],
     apiBase: "https://api.portkey.ai/v1",
     keyEnv: "PORTKEY_API_KEY",
+    idHeaders: ["x-portkey-trace-id"],
     providers: ["portkey"],
     lookup: "log",
     docs: "https://portkey.ai/docs",
@@ -106,6 +124,8 @@ export const GATEWAYS: Record<GatewayId, GatewayDef> = {
     urlEnv: [],
     apiBase: "https://api.helicone.ai",
     keyEnv: "HELICONE_API_KEY",
+    // helicone-id is the {id} of GET /v1/request/{id}.
+    idHeaders: ["helicone-id"],
     providers: ["helicone"],
     lookup: "request",
     docs: "https://docs.helicone.ai",
@@ -128,6 +148,7 @@ export const GATEWAYS: Record<GatewayId, GatewayDef> = {
     urlEnv: ["RAMP_ROUTER_BASE_URL"],
     keyEnv: "RAMP_ROUTER_API_KEY",
     aliases: ["router", "router.com", "ramp-router"],
+    markHeaders: ["x-router-provider"],
     providers: ["ramp", "ramp-router", "router.com"],
     docs: "https://docs.router.com",
   },
@@ -146,6 +167,8 @@ export const GATEWAYS: Record<GatewayId, GatewayDef> = {
     hosts: [],
     urlEnv: ["KONG_PROXY_URL"],
     keyEnv: "KONG_API_KEY",
+    idHeaders: ["x-kong-request-id"],
+    markHeaders: ["x-kong-llm-model"],
     providers: ["kong"],
     docs: "https://developer.konghq.com/ai-gateway/",
   },

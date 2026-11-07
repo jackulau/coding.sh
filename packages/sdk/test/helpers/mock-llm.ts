@@ -9,6 +9,8 @@ import type { AddressInfo } from "node:net";
 export interface MockLlm {
   url: string;
   requests: { path: string; body: Record<string, unknown> }[];
+  /** Sent on every response, e.g. a gateway's request id header. */
+  headers: Record<string, string>;
   close(): Promise<void>;
 }
 
@@ -42,10 +44,14 @@ async function sse(res: ServerResponse, events: { event?: string; data: unknown 
 export async function startMockLlm(opts: { delayMs?: number } = {}): Promise<MockLlm> {
   const delay = opts.delayMs ?? 5;
   const requests: MockLlm["requests"] = [];
+  const state = { headers: {} as Record<string, string> };
+  // A fresh response id per call, as real APIs give: the server counts a repeated id as one call.
+  let seq = 0;
   const server = createServer(async (req, res) => {
     const path = (req.url ?? "").split("?")[0]!;
     const body = await readJson(req);
     requests.push({ path, body });
+    for (const [k, v] of Object.entries(state.headers)) res.setHeader(k, v);
     const model = typeof body.model === "string" ? body.model : "mock";
     if (model.startsWith("fail")) {
       return json(res, 500, path.endsWith("/messages") ? { type: "error", error: { type: "api_error", message: "mock failure" } } : { error: { message: "mock failure", type: "server_error" } });
@@ -55,7 +61,7 @@ export async function startMockLlm(opts: { delayMs?: number } = {}): Promise<Moc
 
     if (path === "/v1/chat/completions") {
       const usage = { prompt_tokens: 1000, completion_tokens: 500, total_tokens: 1500, prompt_tokens_details: { cached_tokens: 0 } };
-      const id = "chatcmpl-mock";
+      const id = `chatcmpl-mock-${++seq}`;
       const created = 1_700_000_000;
       if (body.stream !== true) {
         const message = tool
@@ -80,7 +86,7 @@ export async function startMockLlm(opts: { delayMs?: number } = {}): Promise<Moc
 
     if (path === "/v1/responses") {
       const response = {
-        id: "resp_mock",
+        id: `resp_mock_${++seq}`,
         object: "response",
         created_at: 1_700_000_000,
         model,
@@ -105,7 +111,7 @@ export async function startMockLlm(opts: { delayMs?: number } = {}): Promise<Moc
     }
 
     if (path === "/v1/messages") {
-      const id = "msg_mock";
+      const id = `msg_mock_${++seq}`;
       if (body.stream !== true) {
         const content = tool ? [{ type: "tool_use", id: "toolu_1", name: "lookup_order", input: { id: "42" } }] : [{ type: "text", text: "pong" }];
         return json(res, 200, { id, type: "message", role: "assistant", model, content, stop_reason: tool ? "tool_use" : "end_turn", stop_sequence: null, usage: { input_tokens: 1000, output_tokens: 500 } });
@@ -131,6 +137,12 @@ export async function startMockLlm(opts: { delayMs?: number } = {}): Promise<Moc
   return {
     url: `http://127.0.0.1:${port}`,
     requests,
+    get headers() {
+      return state.headers;
+    },
+    set headers(h: Record<string, string>) {
+      state.headers = h;
+    },
     close: () =>
       new Promise((r) => {
         server.closeAllConnections();
@@ -138,3 +150,6 @@ export async function startMockLlm(opts: { delayMs?: number } = {}): Promise<Moc
       }),
   };
 }
+
+/** `v` with this mock's per-call response ids made equal, to compare two calls' results. */
+export const sameIds = (v: unknown): unknown => JSON.parse(JSON.stringify(v).replace(/(chatcmpl-mock-|resp_mock_|msg_mock_)\d+/g, "$1N"));

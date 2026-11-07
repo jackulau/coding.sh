@@ -4,7 +4,7 @@ import OpenAI from "openai";
 import { flush, init, observe, observeFetch, withSession } from "../src/index.ts";
 import { _reset } from "../src/client.ts";
 import { matchShape } from "../src/fetch.ts";
-import { gatewayOf } from "../src/observe.ts";
+import { gatewayForUrl } from "../src/gateway.ts";
 import { type FakeServe, startFakeServe } from "./helpers/fake-serve.ts";
 import { type MockLlm, startMockLlm } from "./helpers/mock-llm.ts";
 
@@ -35,8 +35,8 @@ test("path matching and gateway detection", () => {
   assert.equal(matchShape("https://ai-gateway.vercel.sh/v1/chat/completions"), "chat");
   assert.equal(matchShape("https://api.anthropic.com/v1/messages/count_tokens"), undefined);
   assert.equal(matchShape("https://api.openai.com/v1/embeddings"), undefined);
-  assert.equal(gatewayOf("https://ai-gateway.vercel.sh/v1"), "vercel");
-  assert.equal(gatewayOf("https://api.openai.com/v1"), undefined);
+  assert.equal(gatewayForUrl("https://ai-gateway.vercel.sh/v1"), "vercel");
+  assert.equal(gatewayForUrl("https://api.openai.com/v1"), undefined);
 });
 
 test("records chat, responses and messages calls, plain and streaming; returns the same Response", async () => {
