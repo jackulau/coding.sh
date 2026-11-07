@@ -1,0 +1,59 @@
+packages/coding.sh/src/core/derail.ts
+  s_8e040dbdf13565::t_6cabe8cf4e6afe 1-42,44,48-70,89-100,103-159,162-164,166-170,172-187,194-221,224-227,229,231,233-317,319-325,327-332,340,344-366,369-370,373-377,380,382-385,387-397,402-412,415-418,423-424,427-440,446,471,480-481,483-487,489-497,502,506-513,515-549
+  s_8e040dbdf13565::t_c1baa200677ab4 43,45-47,71-79,189-191,367-368,378-379,413-414,419-420,422,426,443-444,451-455,463-470,472-473,479,488,498-501,503-505
+  s_8e040dbdf13565::t_ea0cfa0396c9c9 318,333-339,341-343,371-372,381,386,398-401,421,425,482
+  s_8e040dbdf13565::t_273ab7034401ee 326,514
+  s_8e040dbdf13565::t_ffca24ad4feaeb 80-88,101-102,160-161,165,171,188,192-193,222-223,228,230,232,441-442,445,447-450,456-462,474-478
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_273ab7034401ee 5,15-16,404,423,425,571-572,579
+packages/coding.sh/test/fixtures/longrun/generate.ts
+  s_8e040dbdf13565::t_6b259f387bd59b 281,284
+  s_8e040dbdf13565::t_53c3908bb673da 1-277,286-450
+  s_8e040dbdf13565::t_ea0cfa0396c9c9 282-283,285
+  s_8e040dbdf13565::t_f0f321237f9c66 278-280
+packages/coding.sh/test/core/derail.test.ts
+  s_8e040dbdf13565::t_e36aab49d31313 1-3,5-42,44-211,213-230
+  s_8e040dbdf13565::t_0e61de3a513020 4
+  s_8e040dbdf13565::t_d8478450798182 43
+  s_8e040dbdf13565::t_66f52f532381bf 212
+packages/coding.sh/src/core/outline.ts
+  s_8e040dbdf13565::t_b6a7eb11c7307c 72,75
+  s_8e040dbdf13565::t_10f973e69e06c2 1-71,73-74,76-141
+packages/coding.sh/src/cli/commands/show.ts
+  s_8e040dbdf13565::t_37b2cf8fa675b4 2-6,14,147-149,152-154,158-164,172,203-204,207-212,222-232,235-243,245-248,250-252,255-267,269,271-289,291,293-294,312,320,328,332,335
+  s_8e040dbdf13565::t_eb9d6a122865d6 290,292,295-311,313-319,321-327,329-331,333-334
+  s_8e040dbdf13565::t_ceba40170b9ff9 233-234,249,253
+  s_8e040dbdf13565::t_e79e560df82f71 244,254,268,270
+packages/coding.sh/src/schema/index.ts
+  s_8e040dbdf13565::t_273ab7034401ee 238-251
+  s_8e040dbdf13565::t_21b57196fac47e 208-209
+scripts/perf/longrun.mjs
+  s_8e040dbdf13565::t_53c3908bb673da 1-62,64-122,124-125,127-187,189-190,192-240
+  s_8e040dbdf13565::t_2e849914878d4f 63
+  s_8e040dbdf13565::t_59618a1e956157 123,126,188,191
+packages/coding.sh/src/cli/commands/sessions.ts
+  s_8e040dbdf13565::t_def2b666e48998 1,21
+packages/coding.sh/src/adapters/claude-code.ts
+  s_8e040dbdf13565::t_de19120b644d34 172-173
+packages/coding.sh/src/viewer/server.ts
+  s_8e040dbdf13565::t_3224e459dd764e 22,526-530
+  s_8e040dbdf13565::t_618c513f7ac49e 531
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_def2b666e48998 239,242,251-257
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6393b6bddc6fa4b788a1dc7c62629fef9c356591",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
