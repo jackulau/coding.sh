@@ -39,6 +39,10 @@ its own session with a parent id. `coding.sh sessions --subagents` lists them, a
 - `repeated-tool-failure`: the same tool failed three times in a row with similar input.
 - `no-verification`: files changed, but no test, type check, lint or build ran.
 - `compaction`: the agent's context was compacted.
+- `test-tamper`: the agent edited a test or test-runner config in a way that hides failures: it
+  added a skip marker, deleted a test file while tests were failing, or changed an assertion and that
+  edit alone turned a failing run green. New tests and edits to files the agent created stay
+  unflagged.
 
 A flag with a colon, such as `gateway:vercel`, is a tag rather than a failure. Durable workflow runs
 get two notes rather than failures: `step-retried` (a step took more than one attempt) and `resumed`

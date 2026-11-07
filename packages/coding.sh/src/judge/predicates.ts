@@ -11,6 +11,7 @@
 // hash their source text: bundling (esbuild) would otherwise change judge ids.
 import type { AgentEvent } from "../schema/index.ts";
 import { commandText, directiveOutcome, extractDirectives, inputPaths, pathEndsWith, writtenText, type Directive } from "../core/rules.ts";
+import { TEST_PATH } from "../core/intent.ts";
 import { commandOf, detectPrematureCompletion, detectRepeatedToolFailure, isVerifyCommand } from "../core/sessions.ts";
 import type { GradeContext, TraceEvent } from "../datasets/types.ts";
 import { asText } from "../graders/builtin.ts";
@@ -57,8 +58,8 @@ function isVerifyStart(e: TraceEvent): boolean {
   return p.verify === true || isVerifyCommand(commandOf(p.input));
 }
 
-/** Paths that are tests: test/ tests/ __tests__/ spec/ dirs, *.test.* *.spec.* *_test.* files, test_*.py. */
-export const TEST_PATH = /(?:^|[\\/])(?:tests?|__tests__|specs?)[\\/]|(?:^|[\\/])[^\\/]*[._-](?:test|spec)s?\.[A-Za-z0-9]+$|(?:^|[\\/])test_[^\\/]*\.py$/;
+/** Paths that are tests (moved to core/intent.ts, re-exported). */
+export { TEST_PATH };
 
 /** Shell commands that destroy work or bypass safety nets. */
 export const DESTRUCTIVE_COMMAND = new RegExp(

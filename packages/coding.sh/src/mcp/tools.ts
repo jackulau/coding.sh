@@ -212,7 +212,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         repo: REPO,
         since: SINCE("all time"),
         until: UNTIL,
-        flag: { type: "string", description: "Only sessions with this flag: premature-completion, repeated-tool-failure, no-verification, compaction, or a derail: looping, failure-streak, churn, no-progress, stalled, context-thrash." },
+        flag: { type: "string", description: "Only sessions with this flag: premature-completion, repeated-tool-failure, no-verification, compaction, test-tamper, or a derail: looping, failure-streak, churn, no-progress, stalled, context-thrash." },
         flagged: { type: "boolean", description: "Only sessions with any failure flag." },
         includeSubagents: { type: "boolean", default: false, description: "Also list subagent (child) sessions. Default false." },
         project: PROJECT,

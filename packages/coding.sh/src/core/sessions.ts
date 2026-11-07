@@ -6,12 +6,15 @@ import { DERAIL_FLAGS, detectDerails, type Derail } from "./derail.ts";
 import { phasesToStore, sessionOutline } from "./outline.ts";
 import type { AgentEvent, DuplicateUsage, LatencyStats, LlmErrors, Session, Usage } from "../schema/index.ts";
 import { DURABLE_FLAGS, durableFlags, durableStats } from "./durable.ts";
+import { detectTestTamper } from "./intent.ts";
 
 export const FLAGS = {
   prematureCompletion: "premature-completion",
   repeatedToolFailure: "repeated-tool-failure",
   noVerification: "no-verification",
   compaction: "compaction",
+  /** A test, runner config or CI file was skipped, deleted, or changed so failing tests went green (core/intent.ts). */
+  testTamper: "test-tamper",
   /** Durable workflow runs (Session.stats.durable): a step ran again after failing. */
   stepRetried: DURABLE_FLAGS.stepRetried,
   /** Durable workflow runs: the run continued after a crash, a deploy or a worker restart. */
@@ -613,6 +616,7 @@ export function detectFlags(events: AgentEvent[], derails?: readonly Derail[]): 
   if (detectNoVerification(sorted)) flags.push(FLAGS.noVerification);
   if (sorted.some((e) => e.kind === "context.compact")) flags.push(FLAGS.compaction);
   for (const d of derails ?? detectDerails(sorted)) if (!flags.includes(d.flag)) flags.push(d.flag);
+  if (detectTestTamper(sorted)) flags.push(FLAGS.testTamper);
   flags.push(...gatewayFlags(sorted));
   return flags;
 }

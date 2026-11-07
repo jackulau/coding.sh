@@ -161,6 +161,18 @@ describe("failure detectors", () => {
   it("compaction", () => {
     assert.deepEqual(detectFlags([ev("context.compact", { trigger: "auto" })]), [FLAGS.compaction]);
   });
+
+  it("test-tamper: a test edit that alone turns a failing run green", () => {
+    const tamper = [
+      ev("test.result", { passed: 1, failed: 1 }),
+      ev("tool.start", { tool: "Edit", toolUseId: "tx", input: { file_path: "tests/sum.test.js" } }),
+      ev("file.change", { path: "tests/sum.test.js", op: "modify", toolUseId: "tx", diff: "-  assert.equal(sum(2, 2), 4);\n+  assert.ok(true);" }),
+      ev("tool.end", { tool: "Edit", toolUseId: "tx", ok: true }),
+      ev("test.result", { passed: 2, failed: 0 }),
+    ];
+    assert.ok(detectFlags(tamper).includes(FLAGS.testTamper));
+    assert.ok(!detectFlags(tamper.slice(1)).includes(FLAGS.testTamper), "no failing run before, nothing flipped");
+  });
 });
 
 describe("OTel session ends and traceIds", () => {
