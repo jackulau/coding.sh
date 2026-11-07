@@ -9,14 +9,16 @@
 //
 // In both cases `ms` is the span from the path's first start to its last end,
 // so it is comparable to wallMs, and `gaps` are the stretches between
-// consecutive path nodes where no node of the path runs.
+// consecutive path nodes where no node of the path runs. A gap that a durable
+// sleep or wait covers (wait nodes) says so in `waitMs`: the run was told to
+// wait there, so that part is not orchestration overhead.
 import type { WorkflowNode } from "./types.ts";
 
 export interface CriticalPath {
   path: string[];
   ms: number;
   exact: boolean;
-  gaps: { after: string; ms: number }[];
+  gaps: { after: string; ms: number; waitMs?: number }[];
 }
 
 /** Agent-like nodes that occupy a slot: agent and step (cached nodes did not run). */
@@ -99,12 +101,34 @@ export function explicitEdges(agents: readonly (WorkflowNode & { startedAt: numb
   return edges;
 }
 
-function withGaps(path: (WorkflowNode & { startedAt: number; endedAt: number })[], exact: boolean): CriticalPath {
+/** Durable sleeps and waits as [start, end) intervals. */
+export function waitIntervals(nodes: readonly WorkflowNode[]): [number, number][] {
+  return nodes.filter((n) => n.kind === "wait" && n.startedAt !== undefined && n.endedAt !== undefined).map((n) => [n.startedAt!, n.endedAt!]);
+}
+
+/** How much of [a, b) the intervals cover (overlaps counted once). */
+export function coveredMs(a: number, b: number, intervals: readonly [number, number][]): number {
+  const xs = intervals.map(([s, e]) => [Math.max(a, s), Math.min(b, e)] as [number, number]).filter(([s, e]) => e > s).sort((x, y) => x[0] - y[0]);
+  let total = 0;
+  let end = -Infinity;
+  for (const [s, e] of xs) {
+    if (e <= end) continue;
+    total += e - Math.max(s, end);
+    end = e;
+  }
+  return total;
+}
+
+function withGaps(path: (WorkflowNode & { startedAt: number; endedAt: number })[], exact: boolean, waits: readonly [number, number][] = []): CriticalPath {
   if (!path.length) return { path: [], ms: 0, exact, gaps: [] };
-  const gaps: { after: string; ms: number }[] = [];
+  const gaps: CriticalPath["gaps"] = [];
   for (let i = 1; i < path.length; i++) {
     const g = path[i]!.startedAt - path[i - 1]!.endedAt;
-    if (g > 0) gaps.push({ after: path[i - 1]!.id, ms: g });
+    if (!(g > 0)) continue;
+    const gap: CriticalPath["gaps"][number] = { after: path[i - 1]!.id, ms: g };
+    const w = waits.length ? coveredMs(path[i - 1]!.endedAt, path[i]!.startedAt, waits) : 0;
+    if (w > 0) gap.waitMs = w;
+    gaps.push(gap);
   }
   const start = path[0]!.startedAt;
   const end = Math.max(...path.map((p) => p.endedAt));
@@ -177,10 +201,11 @@ export function approximatePath(agents: readonly (WorkflowNode & { startedAt: nu
 
 export function criticalPath(nodes: WorkflowNode[]): CriticalPath {
   const agents = timedAgents(nodes);
+  const waits = waitIntervals(nodes);
   const edges = explicitEdges(agents);
   if (edges) {
     const p = longestPath(agents, edges);
-    if (p) return withGaps(p, true);
+    if (p) return withGaps(p, true, waits);
   }
-  return withGaps(approximatePath(agents), false);
+  return withGaps(approximatePath(agents), false, waits);
 }

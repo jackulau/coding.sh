@@ -12,7 +12,13 @@ export type WorkflowFramework =
   | "crewai"
   | "mastra"
   | "otel"
-  | "command";
+  | "command"
+  // Durable workflow engines (src/otel/durable.ts): one run, stitched across processes.
+  | "vercel-workflow"
+  | "temporal"
+  | "inngest"
+  | "restate"
+  | "dbos";
 
 export interface WorkflowRun {
   /** Journal run id, or trace id, or our run id. */
@@ -52,7 +58,8 @@ export interface WorkflowRun {
   source?: { kind: "journal" | "otel" | "driver"; path?: string; signature?: string };
 }
 
-export type WorkflowNodeKind = "workflow" | "phase" | "group" | "agent" | "subagent" | "step" | "handoff" | "llm" | "tool";
+/** "wait": a durable sleep or wait for an event; time inside it is not busy time. */
+export type WorkflowNodeKind = "workflow" | "phase" | "group" | "agent" | "subagent" | "step" | "handoff" | "llm" | "tool" | "wait";
 export type WorkflowNodeStatus = "ok" | "failed" | "null" | "skipped" | "cached" | "running";
 
 export interface WorkflowNode {
@@ -95,6 +102,15 @@ export interface WorkflowNode {
   to?: string;
   output?: BlobRef;
   error?: string;
+  /** Durable step attempt number (1-based) and how many attempts its step made. */
+  attempt?: number;
+  attempts?: number;
+  /** A durable step attempt the engine never reported (its process stopped); its time is inferred. */
+  lost?: boolean;
+  /** The run resumed here after a crash, a deploy, a worker restart or a durable wait. */
+  resume?: "crash" | "deploy" | "restart" | "wait";
+  /** Process that ran this durable step attempt. */
+  instance?: string;
 }
 
 export interface AgentMetric {
@@ -137,6 +153,10 @@ export interface WorkflowStats {
   criticalPathExact: boolean;
   criticalPath?: string[];
   orchestrationGapMs?: number;
+  /** Durable runs: time inside sleeps and waits (wait nodes), left out of orchestrationGapMs. */
+  waitMs?: number;
+  /** Durable runs: step attempts after a step's first. */
+  stepRetries?: number;
   barrierIdleMs: number;
   pipelineSavingsMs?: number;
   queueWaitMs?: number;
@@ -170,6 +190,11 @@ export interface GanttRow {
   idleAfterMs?: number;
   sessionId?: string;
   costUsd?: number;
+  /** Durable runs: a wait row (a gap, not work), attempt numbers, the resume reason. */
+  wait?: boolean;
+  attempt?: number;
+  attempts?: number;
+  resume?: WorkflowNode["resume"];
 }
 
 export interface GanttData {

@@ -2,12 +2,15 @@
 // Times are ms. "Agents" are nodes of kind agent or step that ran
 // (status ≠ cached), unless noted.
 import type { AgentEvent, Usage } from "../schema/index.ts";
-import { criticalPath, timedAgents } from "./critical-path.ts";
+import { coveredMs, criticalPath, timedAgents, waitIntervals } from "./critical-path.ts";
 import type { AgentMetric, PhaseMetric, WorkflowNode, WorkflowRun, WorkflowStats } from "./types.ts";
 
 const AGENTISH = new Set<WorkflowNode["kind"]>(["agent", "step", "subagent"]);
 
 export const isAgentNode = (n: WorkflowNode): boolean => n.kind === "agent" || n.kind === "step";
+
+/** A durable step attempt that a later attempt of the same step followed. */
+export const superseded = (n: WorkflowNode): boolean => n.attempt !== undefined && n.attempts !== undefined && n.attempt < n.attempts;
 
 /** Events stamped at their start (ts + durationMs is their end); the rest are stamped at their end. */
 const START_STAMPED = new Set(["llm.call", "span"]);
@@ -226,7 +229,8 @@ export function workflowStats(run: WorkflowRun, nodes: WorkflowNode[], base?: { 
     barrierIdleMs: [...idle.values()].reduce((a, b) => a + b, 0),
     agents: ran.length,
     nullAgents: allAgents.filter((n) => n.status === "null" || n.status === "skipped").length,
-    failedAgents: allAgents.filter((n) => n.status === "failed").length,
+    // A failed durable step attempt that a later attempt retried is a retry, not a failure.
+    failedAgents: allAgents.filter((n) => n.status === "failed" && !superseded(n)).length,
     apiRetries: nodes.reduce((s, n) => s + (n.apiRetries ?? 0), 0),
     schemaFailures: allAgents.reduce((s, n) => s + (n.schema?.failures ?? 0), 0),
     schemaFinalInvalid: allAgents.filter((n) => n.schema?.finalValid === false).length,
@@ -245,8 +249,11 @@ export function workflowStats(run: WorkflowRun, nodes: WorkflowNode[], base?: { 
   if (cp.path.length) {
     stats.criticalPathMs = cp.ms;
     stats.criticalPath = cp.path;
-    stats.orchestrationGapMs = cp.gaps.reduce((s, g) => s + g.ms, 0);
+    stats.orchestrationGapMs = cp.gaps.reduce((s, g) => s + g.ms - (g.waitMs ?? 0), 0);
   }
+  const waitSpans = waitIntervals(nodes);
+  if (waitSpans.length) stats.waitMs = coveredMs(-Infinity, Infinity, waitSpans);
+  if (allAgents.some((n) => n.attempt !== undefined)) stats.stepRetries = allAgents.filter((n) => (n.attempt ?? 1) > 1).length;
   const savings = pipelineSavings(nodes, run.concurrencyCap);
   if (savings !== undefined) stats.pipelineSavingsMs = savings;
   const waits = timed.filter((a) => a.issuedAt !== undefined).map((a) => Math.max(0, a.startedAt - a.issuedAt!));
@@ -291,7 +298,7 @@ export function workflowStats(run: WorkflowRun, nodes: WorkflowNode[], base?: { 
       agents: members.filter((m) => m.status !== "cached").length,
       agentMs: t.reduce((s, m) => s + Math.max(0, m.endedAt! - m.startedAt!), 0),
       tokens: totalTokens(u),
-      failures: members.filter((m) => m.status === "failed" || m.status === "null").length,
+      failures: members.filter((m) => (m.status === "failed" && !superseded(m)) || m.status === "null").length,
     };
     if (t.length) {
       pm.startedAt = Math.min(...t.map((m) => m.startedAt!));

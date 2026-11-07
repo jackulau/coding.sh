@@ -12,7 +12,15 @@
 //   framework step span               step, or handoff with from/to (otel-frameworks.ts)
 //   other span with agent descendants phase, named after the span
 //   other span                        dropped; its children move up to its parent
-import type { AgentEvent, Usage } from "../../schema/index.ts";
+//
+// Durable workflow runs (spans tagged by src/otel/durable.ts, often many traces
+// from many processes) are one tree: each step attempt is a step node with its
+// attempt number, an attempt the engine never reported (its process died) is a
+// lost step node, sleeps and waits are wait nodes, and the engine's own
+// run/schedule/invocation spans are dropped like other spans.
+import { durableStats } from "../../core/durable.ts";
+import type { DurableTag } from "../../otel/durable.ts";
+import type { AgentEvent, DurableStats, Usage } from "../../schema/index.ts";
 import { addUsage, eventEnd, eventStart } from "../metrics.ts";
 import type { WorkflowFramework, WorkflowNode, WorkflowRun } from "../types.ts";
 import { frameworkOfScope, matchFrameworkSpan } from "./otel-frameworks.ts";
@@ -34,6 +42,47 @@ interface SpanInfo {
   model?: string;
   sessionId?: string;
   agentName?: string;
+  durable?: DurableTag;
+}
+
+/** Workflow framework of a durable engine id (DurableTag.engine). */
+function engineFramework(engine: string): WorkflowFramework {
+  if (engine === "vercel-workflow" || engine === "workflow") return "vercel-workflow";
+  if (engine === "temporal" || engine === "inngest" || engine === "restate" || engine === "dbos" || engine === "langgraph") return engine;
+  return "otel";
+}
+
+interface AttemptInfo {
+  n: number;
+  attempts: number;
+  ok: boolean;
+  error?: string;
+  replay?: boolean;
+  resume?: WorkflowNode["resume"];
+  instance?: string;
+  /** Inferred time of the attempt before this one, which was never reported. */
+  lostMs?: number;
+}
+
+/** Step attempts of a durable run by span id, with the step's attempt count and where the run resumed. */
+function attemptsBySpan(d: DurableStats): Map<string, AttemptInfo> {
+  const out = new Map<string, AttemptInfo>();
+  for (const step of d.steps) {
+    const attempts = Math.max(0, ...step.attempts.map((a) => a.n));
+    step.attempts.forEach((a, i) => {
+      if (!a.spanId) return;
+      const info: AttemptInfo = { n: a.n, attempts, ok: a.ok };
+      if (a.error) info.error = a.error;
+      if (a.replay) info.replay = true;
+      if (a.instance) info.instance = a.instance;
+      // A crash, deploy or restart says more than the wait that may end at the same attempt.
+      const resume = d.resumes.filter((r) => r.spanId === a.spanId).sort((x, y) => Number(x.reason === "wait") - Number(y.reason === "wait"))[0];
+      if (resume) info.resume = resume.reason;
+      if (i === 0 && step.unreportedMs !== undefined && a.n > 1) info.lostMs = step.unreportedMs;
+      out.set(a.spanId, info);
+    });
+  }
+  return out;
 }
 
 const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
@@ -100,6 +149,8 @@ function spanInfo(spanId: string, events: AgentEvent[]): SpanInfo {
   // Errors recorded as span events (exceptions).
   const err = events.find((e) => e.kind === "error");
   if (err && !info.error) info.error = str(err.payload.message);
+  const durable = events.find((e) => isObj(e.payload.durable))?.payload.durable;
+  if (durable) info.durable = durable as DurableTag;
   return info;
 }
 
@@ -152,10 +203,13 @@ export function otelTree(events: readonly AgentEvent[], opts: { runId?: string; 
     return v;
   };
 
+  const durable = [...spans.values()].some((s) => s.durable) ? durableStats(events) : undefined;
+  const attemptOf = durable ? attemptsBySpan(durable) : new Map<string, AttemptInfo>();
+
   const firstRoot = roots[0];
   const traceId = firstRoot?.traceId ?? "";
   const runId = opts.runId ?? traceId ?? "otel-run";
-  let framework: WorkflowFramework | undefined = opts.framework ?? frameworkOfScope(firstRoot?.scope);
+  let framework: WorkflowFramework | undefined = opts.framework ?? (durable ? engineFramework(durable.engine) : frameworkOfScope(firstRoot?.scope));
   const nodes: WorkflowNode[] = [];
   const rootId = runId;
   const single = roots.length === 1 && firstRoot?.kind === "root";
@@ -163,12 +217,14 @@ export function otelTree(events: readonly AgentEvent[], opts: { runId?: string; 
     id: rootId,
     runId,
     kind: "workflow",
-    name: opts.name ?? (single ? firstRoot!.name : "workflow"),
+    name: opts.name ?? durable?.workflow ?? (single ? firstRoot!.name : "workflow"),
     status: "ok",
   };
-  if (roots.length) {
-    wf.startedAt = Math.min(...roots.map((r) => r.start));
-    wf.endedAt = Math.max(...roots.map((r) => r.end));
+  // A durable run outlives any one span (the client's start span ends at once): it spans all of them.
+  const extent = durable ? [...spans.values()] : roots;
+  if (extent.length) {
+    wf.startedAt = Math.min(...extent.map((r) => r.start));
+    wf.endedAt = Math.max(...extent.map((r) => r.end));
   }
   nodes.push(wf);
   const nodeId = (s: SpanInfo) => `${runId}/span/${s.traceId}/${s.spanId}`;
@@ -192,6 +248,35 @@ export function otelTree(events: readonly AgentEvent[], opts: { runId?: string; 
       node = base(ctx.inAgent ? "subagent" : "agent", s.name);
       if (s.sessionId) node.sessionId = s.sessionId;
       next = { ...ctx, inAgent: true };
+    } else if (s.durable) {
+      // A step attempt is a step node; the engine's other spans (start, run,
+      // schedule, invocation, waits, a step's inner spans) are dropped.
+      const a = s.durable.role === "step" ? attemptOf.get(s.spanId) : undefined;
+      if (a) {
+        const name = s.durable.step ?? s.name;
+        if (a.lostMs !== undefined) {
+          const lost: WorkflowNode = { ...base("step", name), id: `${nodeId(s)}/lost`, startedAt: s.start - a.lostMs, endedAt: s.start, status: "failed", attempt: a.n - 1, attempts: a.attempts, lost: true };
+          lost.error = "never reported: the process running it stopped";
+          nodes.push(lost);
+        }
+        node = base("step", name);
+        node.attempt = a.n;
+        node.attempts = a.attempts;
+        // The attempt's outcome as core/durable.ts read it (Vercel leaves a failed attempt's span OK).
+        if (!a.ok) {
+          node.status = "failed";
+          if (a.error) node.error = a.error;
+        }
+        if (a.replay) node.status = "cached";
+        if (a.resume) node.resume = a.resume;
+        if (a.instance) node.instance = a.instance;
+        // A framework step that is also durable (a LangGraph node in a checkpointed thread) keeps its superstep.
+        const fm = matchFrameworkSpan(s.scope, s.name, s.attrs);
+        if (fm) framework ??= fm.framework;
+        if (fm?.stage !== undefined) node.stage = fm.stage;
+        if (fm?.item !== undefined) node.item = fm.item;
+        next = { ...ctx, inAgent: true };
+      }
     } else if (s.kind === "generic") {
       const fm = matchFrameworkSpan(s.scope, s.name, s.attrs);
       if (fm) framework ??= fm.framework;
@@ -207,8 +292,9 @@ export function otelTree(events: readonly AgentEvent[], opts: { runId?: string; 
         node.phase = node.name;
         next = { ...ctx, phase: node.name };
       }
-    } else if (s.kind === "root") {
-      // A second root (multi-trace run) becomes a phase.
+    } else if (s.kind === "root" && !durable) {
+      // A second root (multi-trace run) becomes a phase. A durable run's
+      // roots are its invocations (HTTP handlers, queue consumers): dropped.
       node = base("phase", s.name);
       node.phase = s.name;
       next = { ...ctx, phase: s.name };
@@ -234,6 +320,13 @@ export function otelTree(events: readonly AgentEvent[], opts: { runId?: string; 
   } else {
     for (const r of roots) walk(r, wf, { inAgent: false });
   }
+
+  // Durable sleeps and waits: gaps in the run, not work.
+  durable?.waits.forEach((w, i) => {
+    const n: WorkflowNode = { id: `${runId}/wait/${i}`, runId, parentId: wf.id, kind: "wait", name: w.name ?? "wait", startedAt: w.startedAt, status: w.endedAt === undefined ? "running" : "ok" };
+    if (w.endedAt !== undefined) n.endedAt = w.endedAt;
+    nodes.push(n);
+  });
 
   // Agent usage = its own llm calls (not those of nested subagents).
   const byParent = new Map<string, WorkflowNode[]>();
