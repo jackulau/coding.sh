@@ -19,6 +19,7 @@ packages/coding.sh/src/cli/commands/exp.ts
   s_8e040dbdf13565::t_050e6aa2cbcf54 66
   s_8e040dbdf13565::t_6b85e99a26eabd 543
   s_8e040dbdf13565::t_ef98fe49fc26a7 527
+  s_8e040dbdf13565::t_48f2d925317b85 571-574,581
 packages/coding.sh/src/experiments/session.ts
   s_8e040dbdf13565::t_fab46aa506ec3a 1-215,217-241
   s_8e040dbdf13565::t_050e6aa2cbcf54 216
