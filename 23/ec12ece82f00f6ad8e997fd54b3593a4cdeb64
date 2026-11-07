@@ -1,0 +1,206 @@
+examples/skill-eval/tasks/01-scope-before-collection/instruction.md
+  s_8e040dbdf13565::t_2be8569cf4f467 1
+examples/skill-eval/tasks/11-evidence-vs-process/tests/grader/checks.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1
+examples/skill-eval/fixtures/s03.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-117
+examples/skill-eval/fixtures/base.json
+  s_8e040dbdf13565::t_2f999a59fd0318 1-4,6-57,59-60
+  s_8e040dbdf13565::t_2be8569cf4f467 5,58
+examples/skill-eval/tasks/02-cli-success-not-passing/instruction.md
+  s_8e040dbdf13565::t_2be8569cf4f467 1
+examples/skill-eval/tasks/05-bounded-browser-text/repo/evidence/browser-team-security.txt
+  s_8e040dbdf13565::t_7fd149b19f1fcb 2-9
+  s_8e040dbdf13565::t_2be8569cf4f467 1
+examples/skill-eval/tasks/11-evidence-vs-process/tests/grader/checklist.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-33
+examples/skill-eval/tasks/08-missing-capabilities/tests/grader/checklist.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-34
+examples/skill-eval/tasks/09-conservative-interpretation/tests/grader/checklist.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-34
+examples/skill-eval/tasks/03-product-output-privacy/tests/grader/checks.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-5
+examples/skill-eval/tasks/12-audience-and-delivery/repo/evidence/evidence-summary.md
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-2,4-14
+  s_8e040dbdf13565::t_2be8569cf4f467 3
+examples/skill-eval/tasks/02-cli-success-not-passing/tests/grader/checks.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-5
+examples/skill-eval/tasks/07-partial-inventory/instruction.md
+  s_8e040dbdf13565::t_2be8569cf4f467 1
+apps/site/src/pages/docs/evals.astro
+  s_8e040dbdf13565::t_8bfdb1258945f2 317-325
+examples/skill-eval/README.md
+  s_8e040dbdf13565::t_0fbfe55f057906 72-73
+  s_8e040dbdf13565::t_3656da2103eff3 1-71,74-79
+examples/skill-eval/tasks/04-plugin-advice-mutations/repo/docs/firewall-plugin-notes.md
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-13
+examples/skill-eval/tasks/07-partial-inventory/repo/README.md
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-3
+examples/skill-eval/tasks/03-product-output-privacy/tests/grader/checklist.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-33
+apps/site/src/pages/docs/how-to/evaluate-a-skill.astro
+  s_8e040dbdf13565::t_9fe64d188524e5 1-9
+examples/skill-eval/tasks/06-identity-boundaries/tests/grader/checklist.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-30
+examples/skill-eval/dry-run/bin/claude
+  s_8e040dbdf13565::t_394f8df258c4f7 1-8,10-24,42,51-53,55-56,58-74,76-99,101-121,123-128,130-132,134-136,138-148,150-152,154-161,163-166,168-176
+  s_8e040dbdf13565::t_d4911f9158a24a 25-41,43-50,54,57
+  s_8e040dbdf13565::t_2be8569cf4f467 9,75,100,122,129,133,137,149,153,162,167
+  s_8e040dbdf13565::t_034d3ae141c5f3 177-178
+examples/skill-eval/tasks/10-secrets-and-app-scope/instruction.md
+  s_8e040dbdf13565::t_2be8569cf4f467 1
+examples/skill-eval/tasks/04-plugin-advice-mutations/repo/README.md
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-3
+examples/skill-eval/Dockerfile.dockerignore
+  s_8e040dbdf13565::t_fa274df293f444 1-15
+examples/skill-eval/tasks/04-plugin-advice-mutations/instruction.md
+  s_8e040dbdf13565::t_2be8569cf4f467 1
+examples/skill-eval/tasks/05-bounded-browser-text/tests/grader/checks.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-8
+examples/skill-eval/grader/verify.sh
+  s_8e040dbdf13565::t_0e5100d52122ec 1-17
+examples/skill-eval/tasks/01-scope-before-collection/tests/grader/checks.json
+  s_8e040dbdf13565::t_2be8569cf4f467 7
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-6,8-9
+examples/skill-eval/Dockerfile
+  s_8e040dbdf13565::t_a3912f8b4305b3 1-22
+examples/skill-eval/tasks/11-evidence-vs-process/repo/README.md
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-3
+examples/skill-eval/tasks/05-bounded-browser-text/task.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-15
+examples/skill-eval/tasks/12-audience-and-delivery/instruction.md
+  s_8e040dbdf13565::t_2be8569cf4f467 1
+examples/skill-eval/tasks/07-partial-inventory/task.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-15
+examples/skill-eval/tasks/09-conservative-interpretation/task.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-15
+examples/skill-eval/fixtures/s09.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-19
+examples/skill-eval/tasks/03-product-output-privacy/repo/README.md
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-3
+examples/skill-eval/tasks/06-identity-boundaries/tests/grader/checks.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-8
+examples/skill-eval/fixtures/s07.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-60
+examples/skill-eval/fixtures/s02.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-40
+examples/skill-eval/tasks/07-partial-inventory/tests/grader/checks.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-6
+examples/skill-eval/tasks/08-missing-capabilities/repo/README.md
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-3
+examples/skill-eval/tasks/05-bounded-browser-text/tests/grader/checklist.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-30
+examples/skill-eval/tasks/02-cli-success-not-passing/tests/grader/checklist.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-47
+examples/skill-eval/tasks/08-missing-capabilities/instruction.md
+  s_8e040dbdf13565::t_2be8569cf4f467 1
+examples/skill-eval/tasks/06-identity-boundaries/instruction.md
+  s_8e040dbdf13565::t_2be8569cf4f467 1
+examples/skill-eval/tasks/07-partial-inventory/tests/grader/checklist.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-29
+examples/skill-eval/bin/sendmail
+  s_8e040dbdf13565::t_4c667895394333 1-7
+apps/site/src/components/docs/nav.ts
+  s_8e040dbdf13565::t_f604ecab38d186 107
+examples/skill-eval/tasks/10-secrets-and-app-scope/tests/grader/checks.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-2,4-5
+  s_8e040dbdf13565::t_2be8569cf4f467 3
+examples/skill-eval/tasks/05-bounded-browser-text/instruction.md
+  s_8e040dbdf13565::t_2be8569cf4f467 1
+examples/skill-eval/inside.sh
+  s_8e040dbdf13565::t_9fb35beca625aa 1-34
+examples/skill-eval/bin/vstub-setup
+  s_8e040dbdf13565::t_57b70eb8c28aa6 1-53
+examples/skill-eval/tasks/08-missing-capabilities/tests/grader/checks.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1
+examples/skill-eval/tasks/04-plugin-advice-mutations/tests/grader/checklist.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-29
+examples/skill-eval/tasks/11-evidence-vs-process/instruction.md
+  s_8e040dbdf13565::t_2be8569cf4f467 1
+examples/skill-eval/bin/mail
+  s_8e040dbdf13565::t_9e45fde8e1b13c 1-7
+examples/skill-eval/tasks/04-plugin-advice-mutations/tests/grader/checks.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1
+examples/skill-eval/tasks/06-identity-boundaries/repo/README.md
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-3
+docs/how-to/evaluate-a-skill.md
+  s_8e040dbdf13565::t_bbf426ca660f6e 154-155
+  s_8e040dbdf13565::t_3301241a485113 1-153,156-168
+examples/skill-eval/tasks/10-secrets-and-app-scope/task.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-15
+examples/skill-eval/tasks/01-scope-before-collection/repo/README.md
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-3
+examples/skill-eval/tasks/12-audience-and-delivery/tests/grader/checks.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-7
+examples/skill-eval/fixtures/s08.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-17
+examples/skill-eval/tasks/03-product-output-privacy/instruction.md
+  s_8e040dbdf13565::t_2be8569cf4f467 1
+examples/skill-eval/tasks/08-missing-capabilities/task.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-15
+examples/skill-eval/bin/vercel
+  s_8e040dbdf13565::t_2be8569cf4f467 161
+  s_8e040dbdf13565::t_2ce0bc5fbcd22c 1-160,162-197
+apps/site/src/components/docs/markdown.ts
+  s_8e040dbdf13565::t_87565f1200aa14 12-13,32,56-57,59-62,66
+examples/skill-eval/tasks/09-conservative-interpretation/repo/README.md
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-3
+examples/skill-eval/tasks/03-product-output-privacy/task.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-15
+docs/README.md
+  s_8e040dbdf13565::t_e5acb5a8024763 37-41
+  s_8e040dbdf13565::t_f604ecab38d186 34
+  s_8e040dbdf13565::t_62ef7c504c653a 42
+examples/skill-eval/tasks/10-secrets-and-app-scope/tests/grader/checklist.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-29
+examples/skill-eval/tasks/09-conservative-interpretation/tests/grader/checks.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1
+examples/skill-eval/grader/check.py
+  s_8e040dbdf13565::t_93526fbee929fb 1-32,36,43-202
+  s_8e040dbdf13565::t_072e7010978e62 33-35,37-42
+examples/skill-eval/run.sh
+  s_8e040dbdf13565::t_a43eb09f234e9e 1-27
+examples/skill-eval/tasks/04-plugin-advice-mutations/task.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-15
+examples/skill-eval/tasks/02-cli-success-not-passing/task.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-15
+examples/skill-eval/tasks/12-audience-and-delivery/task.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-15
+examples/skill-eval/fetch-skill.sh
+  s_8e040dbdf13565::t_27f9d15ac8f22e 1-20
+examples/skill-eval/tasks/09-conservative-interpretation/instruction.md
+  s_8e040dbdf13565::t_2be8569cf4f467 1
+docs/case-studies/vercel-security-audit.md
+  s_8e040dbdf13565::t_80fd5242f82638 86
+  s_8e040dbdf13565::t_52f5d6d3e48f5d 1-85,87-113
+examples/skill-eval/tasks/01-scope-before-collection/tests/grader/checklist.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-30
+examples/skill-eval/tasks/01-scope-before-collection/task.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-15
+examples/skill-eval/tasks/12-audience-and-delivery/tests/grader/checklist.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-33
+examples/skill-eval/tasks/02-cli-success-not-passing/repo/README.md
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-3
+examples/skill-eval/tasks/10-secrets-and-app-scope/repo/README.md
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-3
+examples/skill-eval/tasks/11-evidence-vs-process/task.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-15
+examples/skill-eval/tasks/06-identity-boundaries/task.json
+  s_8e040dbdf13565::t_7fd149b19f1fcb 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "23ec12ece82f00f6ad8e997fd54b3593a4cdeb64",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
