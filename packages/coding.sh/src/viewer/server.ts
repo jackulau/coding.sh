@@ -19,6 +19,7 @@ import { historyRuns, listRuns } from "../bench/store.ts";
 import type { BenchRun } from "../bench/types.ts";
 import type { IngestStatus } from "../cli/ingest-worker.ts";
 import type { BlobStore, IndexStore, Label, Session, SessionFilter } from "../core/types.ts";
+import { phaseLabel, sessionOutline, storedOutline } from "../core/outline.ts";
 import type { ExperimentResult } from "../datasets/types.ts";
 import { compareExperiments } from "../experiments/compare.ts";
 import { getUpdateStatus, type UpdateStatus } from "../update/index.ts";
@@ -521,6 +522,13 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         const kinds = q.get("kinds")?.split(",").filter(Boolean);
         const events = await ctx.index.listEvents(sessionId, { limit: limit + 1, offset, kinds });
         return sendJson(res, 200, page(events, limit, offset));
+      }
+      if (sub === "outline") {
+        // Phases (start, resumes, compactions, idle gaps), day marks and derails: a long session at a glance.
+        const s = await visibleSession(ctx, sessionId);
+        const derails = s.stats.derails ?? [];
+        const o = storedOutline(s) ?? sessionOutline(await ctx.index.listEvents(sessionId), derails);
+        return sendJson(res, 200, { phases: o.phases.map((p) => ({ ...p, label: phaseLabel(p) })), days: o.days, derails, events: s.stats.events });
       }
       throw notFound();
     }

@@ -89,6 +89,7 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/sessions`](#get-apisessions) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}`](#get-apisessionsid) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/events`](#get-apisessionsidevents) | read key or basic auth | serve, ui |
+| GET | [`/api/sessions/{id}/outline`](#get-apisessionsidoutline) | read key or basic auth | serve, ui |
 | GET | [`/api/blobs/{sha256}`](#get-apiblobssha256) | read key or basic auth | serve, ui |
 | GET | [`/api/search`](#get-apisearch) | read key or basic auth | serve, ui |
 | GET | [`/api/stats`](#get-apistats) | read key or basic auth | serve, ui |
@@ -468,6 +469,35 @@ curl -sS "$CSH/api/sessions/team%2Fchat-1/events?kinds=tool.start,tool.end" -H "
      "durationMs": 400, "source": "sdk", "project": "team"}
   ],
   "limit": 5000, "offset": 0, "hasMore": false
+}
+```
+
+### `GET /api/sessions/{id}/outline`
+
+A long session at a glance: its phases (the start, each resume, compaction and long idle gap),
+the first event of each local day, and its derails. `index`, `from` and `to` count events in time
+order, the same order `/events` pages through.
+
+```sh
+curl -sS "$CSH/api/sessions/team%2Fchat-1/outline" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{
+  "phases": [
+    {"n": 1, "kind": "start", "label": "start", "startTs": 1793872802000, "endTs": 1793876402000,
+     "from": 0, "to": 1840, "eventId": "54b366d0…", "events": 1840, "prompts": 6, "toolCalls": 512,
+     "toolErrors": 9, "filesChanged": 14, "tokens": 2210000, "derails": []},
+    {"n": 2, "kind": "compaction", "trigger": "auto", "label": "compacted (auto)", "startTs": 1793876410000,
+     "endTs": 1793880010000, "from": 1840, "to": 3600, "eventId": "9a1f03c2…", "events": 1760, "prompts": 2,
+     "toolCalls": 498, "toolErrors": 31, "filesChanged": 3, "tokens": 1980000,
+     "derails": [{"flag": "failure-streak", "ts": 1793877000000, "eventId": "c41e88a0…", "index": 2210,
+                  "endTs": 1793877090000, "detail": "6 failed tool calls in a row (Bash)"}]}
+  ],
+  "days": [{"date": "2026-11-04", "ts": 1793872802000, "index": 0, "eventId": "54b366d0…"}],
+  "derails": [{"flag": "failure-streak", "ts": 1793877000000, "eventId": "c41e88a0…", "index": 2210,
+               "endTs": 1793877090000, "detail": "6 failed tool calls in a row (Bash)"}],
+  "events": 3600
 }
 ```
 

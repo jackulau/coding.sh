@@ -546,6 +546,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .tl-tools .spacer { flex: 1; }
 .fail-nav { display: inline-flex; align-items: center; gap: 2px; height: 26px; padding: 0 2px 0 0.5rem; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 12px; color: var(--fail-ink); background: var(--fail-wash); }
 .fail-nav[hidden] { display: none; }
+.fail-nav.derail-nav { color: var(--warn-ink); background: var(--warn-wash); }
+.fail-nav.derail-nav button { color: var(--warn-ink); }
 .fail-nav button { width: 22px; height: 22px; border-radius: 4px; color: var(--fail-ink); }
 .fail-nav .lbl { padding-right: 0.25rem; }
 .find { position: relative; display: flex; align-items: center; gap: 0.35rem; }
@@ -621,6 +623,12 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .tl-map { position: absolute; top: 0; bottom: 0; right: 0; width: 6px; z-index: 2; cursor: pointer; }
 .tl-map i { position: absolute; right: 1px; width: 4px; height: 2px; border-radius: 1px; background: var(--text-faint); pointer-events: none; }
 .tl-map i.f { background: var(--fail); height: 3px; }
+.tl-map i.d { background: var(--warn); height: 4px; right: 0; width: 6px; }
+.st.is-derail { box-shadow: inset 2px 0 0 var(--warn); }
+.st .derail-flag { flex: none; margin-left: 0.5rem; padding: 0 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 11px; line-height: 18px; color: var(--warn-ink); background: var(--warn-wash); }
+.st.phase-start { box-shadow: inset 0 2px 0 var(--line-strong, var(--line)); }
+.st.phase-start.is-derail { box-shadow: inset 0 2px 0 var(--line-strong, var(--line)), inset 2px 0 0 var(--warn); }
+.st .phase-chip { flex: none; margin-right: 0.5rem; padding: 0 6px; border-radius: 4px; font-family: var(--font-mono); font-size: 11px; line-height: 18px; color: var(--text-muted); background: color-mix(in srgb, var(--text-faint) 14%, transparent); }
 .tl-map i.e { background: var(--text-muted); }
 .tl-map i.p { background: var(--pass); }
 .tl-tail { position: absolute; left: 50%; bottom: 0.75rem; transform: translateX(-50%); z-index: 3; }
@@ -2518,6 +2526,8 @@ const SHOWN_KEYS = {
   "llm.call": ["ok", "ttftMs", "tokensPerSec", "stopReason", "statusCode", "error", "requestModel", "responseModel", "provider"],
 };
 const EVENTS_PAGE = 5000;
+/** Pages fetched in the background after the first one is on screen (the server's cap). */
+const EVENTS_BG_PAGE = 20000;
 const INPUT_KEYS = ["file_path", "path", "command", "cmd", "pattern", "url", "query", "description", "prompt", "notebook_path"];
 const EDIT_TOOLS = new Set(["Edit", "MultiEdit", "Write", "NotebookEdit", "apply_patch", "str_replace_based_edit_tool", "edit", "write", "create_file", "replace"]);
 // Step rows are 30px, or 44px on phones so each one is a full-size tap target (matches --row in the CSS).
@@ -2753,12 +2763,25 @@ async function showSession(seq, id, eventId) {
   // start/end pairs that straddle a page boundary still join up.
   let allEvents = events.items;
   let hasMore = events.hasMore;
-  async function fetchMore(quiet) {
-    const body = await api(eventsPath + qs({ limit: EVENTS_PAGE, offset: allEvents.length }), null, quiet);
-    allEvents = allEvents.concat(body.items);
+  // Rows read so far (the next offset) and their ids: a row stored out of order shifts later
+  // pages, and the id keeps it from showing twice.
+  let served = allEvents.length;
+  const loadedIds = new Set(allEvents.map((e) => e.id));
+  async function fetchMore(quiet, limit) {
+    const body = await api(eventsPath + qs({ limit: limit || EVENTS_PAGE, offset: served }), null, quiet);
+    served += body.items.length;
+    const fresh = body.items.filter((e) => !loadedIds.has(e.id));
+    for (const e of fresh) loadedIds.add(e.id);
+    allEvents = allEvents.concat(fresh);
     hasMore = body.hasMore && body.items.length > 0;
-    return body.items.length;
+    return fresh.length;
   }
+  // Where it went off the rails (session.stats.derails, then /outline) and its phases
+  // (resumes, compactions, idle gaps) and days, marked on the steps they start at.
+  let derails = (session.stats && session.stats.derails) || [];
+  let outline = null;
+  let derailIdx = [];
+  let loadingRest = false;
   if (eventId) {
     try {
       for (let pages = 0; hasMore && pages < 40 && !allEvents.some((e) => e.id === eventId); pages++) {
@@ -2820,6 +2843,31 @@ async function showSession(seq, id, eventId) {
     failIdx = [];
     for (let i = 0; i < meta.length; i++) if (meta[i].fail) failIdx.push(i);
     turnCount = turns.length;
+    markOutline();
+  }
+  function markOutline() {
+    const idxOf = new Map(items.map((it, i) => [it, i]));
+    const at = (eventId) => idxOf.get(byEvent.get(eventId));
+    for (const m of meta) { m.derail = null; m.phase = null; m.day = null; }
+    const seen = new Set();
+    for (const d of derails) {
+      const i = at(d.eventId);
+      if (i === undefined) continue;
+      (meta[i].derail = meta[i].derail || []).push(d);
+      seen.add(i);
+    }
+    derailIdx = [...seen].sort((a, b) => a - b);
+    // Day lines in the viewer's own time zone (the server's may differ), where the date turns over.
+    let nextDay = Infinity;
+    for (let i = 0; i < items.length; i++) {
+      const ts = items[i].ts;
+      if (!(ts >= nextDay) && i > 0) continue;
+      const d = new Date(ts);
+      if (i > 0) meta[i].day = { ts };
+      nextDay = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+    }
+    if (!outline) return;
+    for (const p of outline.phases) { const i = p.n > 1 ? at(p.eventId) : undefined; if (i !== undefined) meta[i].phase = p; }
   }
   let failIdx = [];
   let turnCount = 0;
@@ -2893,9 +2941,10 @@ async function showSession(seq, id, eventId) {
   const findCount = h("span", { class: "meta count", "aria-live": "polite" });
   const onlyBox = h("input", { type: "checkbox", "aria-label": "Show only matching steps" });
   const failNav = h("div", { class: "fail-nav", role: "group", "aria-label": "Failures" });
+  const derailNav = h("div", { class: "fail-nav derail-nav", role: "group", "aria-label": "Derails" });
   const wfBtn = h("button", { class: "btn btn-sm btn-ghost wf-btn", type: "button", "aria-pressed": String(tl.classList.contains("wf-on")), "aria-keyshortcuts": "w", title: "Timing bars (w)", onclick: () => toggleWf() }, "Timing");
   const foldBtn = h("button", { class: "btn btn-sm btn-ghost", type: "button", "aria-keyshortcuts": "z", title: "Fold quiet steps (z)", onclick: () => toggleFolds() });
-  const tools = h("div", { class: "tl-tools" }, head, failNav, h("span", { class: "spacer" }),
+  const tools = h("div", { class: "tl-tools" }, head, failNav, derailNav, h("span", { class: "spacer" }),
     h("div", { class: "find" }, findInput, findCount), h("label", { class: "find-only" }, onlyBox, h("span", null, "Only matches")), foldBtn, wfBtn);
   const timeline = h("div", { class: "timeline" }, tl, map, tailPill);
   const narrow = window.matchMedia("(max-width: 860px)");
@@ -2908,11 +2957,21 @@ async function showSession(seq, id, eventId) {
         remaining ? fmtNum(allEvents.length) + " of " + fmtNum(total) + " events" : "first " + fmtNum(allEvents.length) + " events") : null].filter(Boolean));
     more.hidden = !hasMore;
     more.replaceChildren();
-    if (hasMore) {
+    if (hasMore && loadingRest) {
+      more.append(h("span", { class: "meta", "aria-live": "polite" }, "Loading the rest of the session: " + fmtNum(allEvents.length) + (total ? " of " + fmtNum(total) : "") + " events"));
+    } else if (hasMore) {
       const label = remaining && remaining <= EVENTS_PAGE ? "Load the remaining " + plural(remaining, "event") : "Load the next " + fmtNum(EVENTS_PAGE) + " events";
       more.append(h("span", { class: "meta" }, "Newer events are not loaded yet."),
         h("button", { class: "btn btn-sm", type: "button", id: "load-events", onclick: loadMoreEvents }, label));
     }
+    derailNav.hidden = derailIdx.length === 0;
+    const dpos = derailIdx.indexOf(activeItem);
+    const dcur = dpos >= 0 ? meta[activeItem].derail[0] : derailIdx.length ? meta[derailIdx[0]].derail[0] : null;
+    derailNav.title = dcur ? dcur.flag + ": " + dcur.detail : "";
+    derailNav.replaceChildren(
+      h("span", { class: "lbl" }, (dpos >= 0 ? fmtNum(dpos + 1) + " / " : "") + plural(derailIdx.length, "derail")),
+      h("button", { type: "button", "aria-label": "Previous derail", title: "Previous derail", onclick: () => jumpDerail(-1) }, "‹"),
+      h("button", { type: "button", "aria-label": "Next derail", title: "Next derail", onclick: () => jumpDerail(1) }, "›"));
     failNav.hidden = failIdx.length === 0;
     const pos = failIdx.indexOf(activeItem);
     failNav.replaceChildren(
@@ -2948,7 +3007,10 @@ async function showSession(seq, id, eventId) {
     const v = m.v;
     const cls = "st" + (m.isTurn ? " turn" + (m.turn === 0 && x === 0 ? " first" : "") : "") + (m.fail ? " is-fail" : "") + (v.tone === "pass" ? " is-pass" : "")
       + (m.api ? " k-llm" : "") + (m.test ? " k-test" : "") + (it.type === "assistant.message" ? " k-msg" : "")
-      + (findQ && m.text.includes(findQ) ? " is-match" : "");
+      + (findQ && m.text.includes(findQ) ? " is-match" : "") + (m.derail ? " is-derail" : "") + (m.phase || m.day ? " phase-start" : "");
+    const chip = m.phase || m.day ? h("span", { class: "phase-chip", title: m.phase ? "Phase " + m.phase.n + ": " + m.phase.label : "" },
+      [m.day ? new Date(m.day.ts).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }) : "", m.phase ? m.phase.label : ""].filter(Boolean).join(" · ")) : null;
+    const flag = m.derail ? h("span", { class: "derail-flag", title: m.derail.map((d) => d.flag + ": " + d.detail).join("\n") }, "⚑ " + m.derail.map((d) => d.flag).join(", ")) : null;
     const wf = h("span", { class: "wf" + (m.isTurn ? " ruler" : "") });
     // Each turn has its own time scale, so its header row labels that scale.
     if (m.isTurn) wf.append(h("b", null, "0"), h("b", null, fmtDuration(m.span / 2)), h("b", null, fmtDuration(m.span)));
@@ -2962,7 +3024,7 @@ async function showSession(seq, id, eventId) {
     const el = h("div", { class: cls, role: "option", id: "st-" + r, "aria-selected": String(r === activeRow), "aria-setsize": String(rows.length), "aria-posinset": String(r + 1),
       onclick: () => selectRow(r, true) },
       h("span", { class: "t", title: new Date(it.ts).toLocaleTimeString() }, m.isTurn ? "Turn " + m.prompt : fmtClock(it.ts - session.startedAt)),
-      h("span", { class: "lbl" }, h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }), m.isTurn ? null : h("span", { class: "name" }, v.name), m.isTurn ? h("span", { class: "arg" }, v.arg || "Prompt") : argNode(v.arg), v.cost ? h("span", { class: "cost", title: v.cost.title }, v.cost.text) : null),
+      h("span", { class: "lbl" }, chip, h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }), m.isTurn ? null : h("span", { class: "name" }, v.name), m.isTurn ? h("span", { class: "arg" }, v.arg || "Prompt") : argNode(v.arg), v.cost ? h("span", { class: "cost", title: v.cost.title }, v.cost.text) : null, flag),
       h("span", { class: "d" }, v.adds !== undefined || v.dels !== undefined
         ? [v.adds !== undefined ? h("span", { class: "add" }, "+" + v.adds) : null, v.adds !== undefined && v.dels !== undefined ? " " : null, v.dels !== undefined ? h("span", { class: "del" }, "−" + v.dels) : null]
         : v.meta || ""), wf);
@@ -3015,6 +3077,13 @@ async function showSession(seq, id, eventId) {
       const r = rowOf[i];
       if (r < 0) continue;
       const mk = h("i", { class: "f" });
+      mk.style.top = (r / n) * 100 + "%";
+      marks.push(mk);
+    }
+    for (const i of derailIdx) {
+      const r = rowOf[i];
+      if (r < 0) continue;
+      const mk = h("i", { class: "d" });
       mk.style.top = (r / n) * 100 + "%";
       marks.push(mk);
     }
@@ -3076,6 +3145,16 @@ async function showSession(seq, id, eventId) {
     selectItem(next, true);
     tl.focus({ preventScroll: true });
     announce("Failure " + (failIdx.indexOf(next) + 1) + " of " + failIdx.length + ": " + meta[next].v.label);
+  }
+  function jumpDerail(dir) {
+    if (!derailIdx.length) return;
+    let next;
+    if (dir > 0) next = derailIdx.find((i) => i > activeItem) ?? derailIdx[0];
+    else next = [...derailIdx].reverse().find((i) => i < activeItem) ?? derailIdx[derailIdx.length - 1];
+    selectItem(next, true);
+    tl.focus({ preventScroll: true });
+    const d = meta[next].derail[0];
+    announce("Derail " + (derailIdx.indexOf(next) + 1) + " of " + derailIdx.length + ": " + d.flag + ", " + d.detail);
   }
   function jumpMatch(dir) {
     if (!matches.length) return;
@@ -3150,6 +3229,44 @@ async function showSession(seq, id, eventId) {
   tailPill.addEventListener("click", () => { fresh = 0; tailPill.hidden = true; selectRow(rows.length - 1, false); tl.focus({ preventScroll: true }); });
   const live = !session.endedAt || Date.now() - session.endedAt < 120e3;
   let tailTimer = 0;
+  // Rebuild the steps from allEvents, keeping the selected step and the scroll position.
+  function refresh() {
+    const activeId = items[activeItem] && items[activeItem].id;
+    reindex();
+    activeItem = Math.max(0, items.indexOf(byEvent.get(activeId)));
+    rebuildRows();
+  }
+  // A long session: the first page is on screen; the rest streams in behind it, so the
+  // whole run (and its end, where a running session grows) is there without clicking.
+  async function loadRest() {
+    if (loadingRest || !hasMore) return;
+    loadingRest = true;
+    renderTools();
+    try {
+      while (hasMore && current(seq)) {
+        await fetchMore(true, EVENTS_BG_PAGE);
+        if (!current(seq)) return;
+        refresh();
+      }
+    } catch { /* the Load button stays for a retry */ }
+    loadingRest = false;
+    if (!current(seq)) return;
+    renderTools();
+    if (!hasMore) loadOutline();
+  }
+  let outlineAt = 0;
+  async function loadOutline() {
+    outlineAt = Date.now();
+    let body;
+    try { body = await api("/api/sessions/" + encodeURIComponent(id) + "/outline", null, true); } catch { return; }
+    if (!current(seq)) return;
+    outline = body;
+    derails = body.derails || derails;
+    markOutline();
+    renderWindow(true);
+    renderMap();
+    renderTools();
+  }
   if (live) {
     tailTimer = setInterval(async () => {
       if (document.hidden || hasMore) return;
@@ -3157,10 +3274,9 @@ async function showSession(seq, id, eventId) {
       const follow = atBottom() && activeRow === rows.length - 1;
       try { n = await fetchMore(true); } catch { return; }
       if (!current(seq) || !n) return;
-      const activeId = items[activeItem] && items[activeItem].id;
-      reindex();
-      activeItem = Math.max(0, items.indexOf(byEvent.get(activeId)));
-      rebuildRows();
+      refresh();
+      // New phases and derails show up as the session goes on; the outline is a full read, so not every tick.
+      if (Date.now() - outlineAt > 30e3) loadOutline();
       if (follow) selectRow(rows.length - 1, false);
       else { fresh += n; tailPill.hidden = false; $(".txt", tailPill).textContent = plural(fresh, "new event"); }
     }, 4000);
@@ -3207,6 +3323,7 @@ async function showSession(seq, id, eventId) {
   rebuildRows();
   selectItem(activeItem, !!eventId);
   if (!eventId) tl.scrollTop = 0, renderWindow(true);
+  if (hasMore) loadRest(); else loadOutline();
   announce("Session loaded, " + plural(items.length, "step") + (failIdx.length ? ", " + plural(failIdx.length, "failure") : "") + (hasMore ? ", more events available" : ""));
   const onResize = () => {
     if (rowHeight() !== ROW) { ROW = rowHeight(); rebuildRows(); return; }
