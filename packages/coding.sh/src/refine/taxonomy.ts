@@ -197,6 +197,8 @@ export const FLAG_DIAGNOSIS: Readonly<Record<string, FlagDiagnosis | "context-on
   "no-progress": { typeIds: ["orch.loop-deadlock", "eff.context-bloat"], nature: "inefficiency" },
   stalled: { typeIds: ["rt.provider-unavailable"], nature: "inefficiency" },
   "context-thrash": { typeIds: ["ctx.context-limit", "eff.context-bloat"], nature: "inefficiency" },
+  // A vendor token passed through the agent to its model provider; misuse not observed.
+  "secret:exposed": { typeIds: ["sec.disclosure"], nature: "risk", reach: 0.6 },
   // Slots for flags not built yet (research queue #12):
   //   "user-pushback": ins.intent-misread
   //   "search-loop": eff.redundant-retrieval

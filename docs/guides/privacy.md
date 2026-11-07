@@ -47,6 +47,10 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
   AWS, Google, Stripe, npm and more), JWTs, bearer and basic auth, and values next to secret-looking
   names. Add `redact = ["secrets", "env"]` to also replace the literal values of secret-looking
   environment variables, and `redactPatterns` for your own regexes.
+- **Exposed secrets.** Redaction keeps a secret out of the store, but the agent and its model
+  provider still saw it. Each session counts what was redacted by kind (`coding.sh show` prints a
+  `Redacted` row), and a session that held a vendor token gets the `secret:exposed` tag:
+  `coding.sh sessions --flag secret:exposed` lists the sessions whose credentials to rotate.
 - **Metadata mode.** `[capture] mode = "metadata"` stores structure and numbers only, with no
   prompts, code or tool output.
 - **Exclusions.** `[capture] exclude = ["~/work/secret-client/**"]` drops events from matching

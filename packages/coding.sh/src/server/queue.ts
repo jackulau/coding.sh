@@ -9,7 +9,7 @@ import type { BlobStore, Config, IndexStore } from "../core/types.ts";
 import { sha256Hex } from "../core/ids.ts";
 import { offloadPayload } from "../core/offload.ts";
 import { applyPricing, priceTable, type Prices } from "../core/pricing.ts";
-import { createRedactor, toMetadata, type Redactor } from "../core/redact.ts";
+import { createRedactor, redactEventCounted, toMetadata, type Redactor } from "../core/redact.ts";
 import { isVerifyToolStart } from "../core/sessions.ts";
 import type { ResourceLogs, ResourceSpans } from "../otel/model.ts";
 import type { SpanEnricher } from "../otel/map.ts";
@@ -303,7 +303,7 @@ export class IngestQueue {
       rejected = m.rejected;
       message = m.errors.join("; ");
     } else {
-      events = entry.events.map((e) => this.redactor.event(e));
+      events = entry.events.map((e) => redactEventCounted(this.redactor, e));
     }
     events = scopeEvents(events, entry.project);
     if (this.metadata) events = events.map((e) => this.strip(e));

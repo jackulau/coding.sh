@@ -121,7 +121,7 @@ import { promisify } from "node:util";
 import * as zlib from "node:zlib";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import type { BlobStore, IndexStore } from "../core/types.ts";
-import { createRedactor, type Redactor } from "../core/redact.ts";
+import { createRedactor, redactEventCounted, type Redactor } from "../core/redact.ts";
 import { buildSession } from "../core/sessions.ts";
 import { decodeLogsJson, decodeTraceJson, parseJson, validateMetricsJson } from "./json.ts";
 import { applyPricing, pricesFor, type Prices } from "../core/pricing.ts";
@@ -356,7 +356,7 @@ export function createOtlpPipeline(opts: OtlpPipelineOptions): OtlpPipeline {
       const mapped: MapResult =
         signal === "traces" ? await mapTraces(decoded as ResourceSpans[], mapCtx) : await mapLogs(decoded as ResourceLogs[], mapCtx);
       if (opts.store.kvSet) for (const [t, s] of traceSessions.takeDirty()) await opts.store.kvSet(kvKey(t), s);
-      const events = redactor ? mapped.events.map((e) => redactor.event(e)) : mapped.events;
+      const events = redactor ? mapped.events.map((e) => redactEventCounted(redactor, e)) : mapped.events;
       return { events, rejected: mapped.rejected, errors: mapped.errors };
     },
   };

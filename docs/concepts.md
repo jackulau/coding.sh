@@ -50,7 +50,12 @@ its own session with a parent id. `coding.sh sessions --subagents` lists them, a
 
 A flag with a colon, such as `gateway:vercel`, is a tag rather than a failure. Each skill a session
 used (through the Skill tool, or by reading or running a file in the skill's folder) adds a
-`skill:<name>` tag, so `coding.sh sessions --flag skill:pdf` lists the sessions that used it. Durable workflow runs
+`skill:<name>` tag, so `coding.sh sessions --flag skill:pdf` lists the sessions that used it. A session
+in which redaction replaced a vendor token (an Anthropic, OpenAI, GitHub, GitLab, Slack, AWS, Google,
+Stripe, npm, coding.sh or AI Gateway key, a Slack webhook or a private key) gets the `secret:exposed`
+tag: the stored copy is redacted, but the agent and its model provider saw the credential, so rotate it.
+`coding.sh sessions --flag secret:exposed` lists them, and `stats.redactions` counts what was replaced
+by kind. Durable workflow runs
 get two notes rather than failures: `step-retried` (a step took more than one attempt) and `resumed`
 (the run continued after a crash, a deploy or a restart). See
 [Trace a durable workflow](how-to/trace-durable-workflow.md).

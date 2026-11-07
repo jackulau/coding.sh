@@ -13,6 +13,7 @@ import { detectTestTamper, foldTamper, tamperState, type TamperState } from "./i
 import { cacheBreakState, cacheBreaksOf, foldCacheBreaks, type CacheBreakState } from "./cache-breaks.ts";
 import { foldSkills, skillFlags, skillState, skillUseOf, type SkillState } from "./skills-use.ts";
 import { foldWaste, wasteState, wasteStatsOf, type WasteState } from "./waste.ts";
+import { exposesSecret, foldRedactions, redactionsOf, redactionState, SECRET_EXPOSED, type RedactionState } from "./redaction-stats.ts";
 
 export { REOPEN_SLACK_MS };
 
@@ -33,6 +34,8 @@ export const FLAGS = {
   duplicateFetch: "duplicate-fetch",
   /** One skill name loaded from two directories, e.g. a project copy and a personal copy (core/skills-use.ts). */
   skillCopyConflict: "skill-copy-conflict",
+  /** A tag, not a failure: redaction replaced a vendor token (core/redaction-stats.ts, Session.stats.redactions). Rotate it. */
+  secretExposed: SECRET_EXPOSED,
   /** Derails (core/derail.ts): where the session went off the rails. */
   ...DERAIL_FLAGS,
 } as const;
@@ -397,7 +400,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * meaning: a saved fold of another version is dropped and the session rebuilt
  * from all its events.
  */
-export const SESSION_FOLD_VERSION = 1;
+export const SESSION_FOLD_VERSION = 2;
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -467,6 +470,7 @@ export interface SessionState {
   waste: WasteState;
   cacheBreaks: CacheBreakState;
   skills: SkillState;
+  redactions: RedactionState;
 }
 
 /** A fresh fold: no events seen. */
@@ -497,6 +501,7 @@ export function sessionState(): SessionState {
     waste: wasteState(),
     cacheBreaks: cacheBreakState(),
     skills: skillState(),
+    redactions: redactionState(),
   };
 }
 
@@ -525,6 +530,7 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
   foldWaste(s.waste, e);
   foldCacheBreaks(s.cacheBreaks, e);
   foldSkills(s.skills, e);
+  foldRedactions(s.redactions, e);
   if (isEnrichment(e)) return;
 
   s.captured++;
@@ -654,6 +660,9 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   const cacheBreaks = cacheBreaksOf(s.cacheBreaks);
   if (cacheBreaks) session.stats.cacheBreaks = cacheBreaks;
   session.flags.push(...skillFlags(skillUseOf(s.skills, s.cwd ?? prev?.cwd)));
+  const redactions = redactionsOf(s.redactions);
+  if (redactions) session.stats.redactions = redactions;
+  if (exposesSecret(redactions)) session.flags.push(FLAGS.secretExposed);
   if (s.lastTest) {
     session.stats.testsPassed = s.lastTest.passed;
     session.stats.testsFailed = s.lastTest.failed;

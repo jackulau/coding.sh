@@ -59,7 +59,7 @@ import { deserialize, serialize } from "node:v8";
 import { join } from "node:path";
 import { hashParts, sha256Hex } from "./ids.ts";
 import { paths } from "./paths.ts";
-import { createRedactor, sessionToMetadata, toMetadata, type Redactor } from "./redact.ts";
+import { createRedactor, noteBlobHits, redactEventCounted, redactionTally, sessionToMetadata, toMetadata, type RedactionTally, type Redactor } from "./redact.ts";
 import { byTime, foldSession, isBackfillEvent, isRealPrompt, isVerifyToolStart, SESSION_FOLD_VERSION, sessionOf, sessionState, type SessionState } from "./sessions.ts";
 import { copyFilter } from "./message-copies.ts";
 import { priceEvent, pricesFor } from "./pricing.ts";
@@ -613,10 +613,12 @@ export function normalizeContext(profile: CaptureProfile, blobs: BlobStore, meta
     maxInlineBytes: profile.config.capture.maxInlineBytes,
     id: (...parts) => hashParts(...parts),
     blob: async (data) => {
-      const clean = redactBlob(data, profile.redactor);
+      const tally = redactionTally();
+      const clean = redactBlob(data, profile.redactor, tally);
       // Metadata mode keeps no content locally either: hand back the ref, store nothing.
-      if (metadata) return sha256Hex(clean);
-      return blobs.put(clean);
+      const ref = metadata ? sha256Hex(clean) : await blobs.put(clean);
+      noteBlobHits(ref, tally.kinds);
+      return ref;
     },
   };
   if (source) ctx.source = source;
@@ -629,7 +631,7 @@ export function normalizeContext(profile: CaptureProfile, blobs: BlobStore, meta
  * report tokens but no cost (built-in prices, `[prices]` overrides), as serve does.
  */
 export function finishEvent(e: AgentEvent, profile: CaptureProfile, metadata: boolean): AgentEvent {
-  let ev = profile.redactor.event(e);
+  let ev = redactEventCounted(profile.redactor, e);
   if (metadata) {
     const verify = isVerifyToolStart(ev);
     ev = toMetadata(ev);
@@ -1040,14 +1042,14 @@ async function sessionsFor(index: IndexStore, batch: AgentEvent[]): Promise<Sess
 }
 
 /** Redacts text blobs (utf-8); binary data is stored as-is. */
-function redactBlob(data: string | Uint8Array, redactor: Redactor): string | Uint8Array {
-  if (typeof data === "string") return redactor.string(data);
+function redactBlob(data: string | Uint8Array, redactor: Redactor, tally?: RedactionTally): string | Uint8Array {
+  if (typeof data === "string") return redactor.string(data, tally);
   let text: string;
   try {
     text = utf8.decode(data);
   } catch {
     return data;
   }
-  const clean = redactor.string(text);
+  const clean = redactor.string(text, tally);
   return clean === text ? data : clean;
 }

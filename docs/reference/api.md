@@ -449,6 +449,13 @@ from cache, and more than 2,048 tokens were billed again. `byCause` splits them 
 the cache-write (or input) price minus the cache-read price for those tokens; it is left out, and
 `unpriced` counts the breaks, when the model has no price.
 
+`stats.redactions` counts the values redaction replaced before storage, by rule kind
+(`{"anthropic-key": 1, "password": 2}`); it never holds the values, and it is absent when nothing was
+redacted. Each event's own counts are in `payload.redactions`, which metadata mode keeps; a tool
+output moved to a blob counts what was redacted inside the blob. A vendor token kind also adds the
+`secret:exposed` tag to `flags`. Events stored before counting existed are counted from the
+`[redacted:<kind>]` markers in their payload.
+
 A missing session, or one outside a scoped key's project, gets 404:
 
 ```sh

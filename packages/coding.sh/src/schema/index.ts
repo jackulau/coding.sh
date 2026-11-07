@@ -255,6 +255,11 @@ export interface Session {
     waste?: WasteStats;
     /** Model calls that found the prompt cache gone and paid for the prompt again (core/cache-breaks.ts). Unset when none did. */
     cacheBreaks?: CacheBreakStats;
+    /**
+     * Values redaction replaced before storage, by rule kind (`anthropic-key`, `password`, …): counts, never
+     * the values. A vendor token kind also tags the session `secret:exposed`. Unset when nothing was redacted.
+     */
+    redactions?: Record<string, number>;
   };
   /** Detected failure patterns, e.g. "premature-completion". */
   flags: string[];

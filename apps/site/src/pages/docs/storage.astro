@@ -113,6 +113,7 @@ interface Sink {
   <h2 id="privacy">Redaction and metadata mode</h2>
   <ul>
     <li>Redaction runs before anything is written to the index, blobs or sinks. The built-in <code>secrets</code> rules key on vendor token prefixes and on secret-looking names next to values, so code, paths and hashes pass through.</li>
+    <li>Each session counts what was redacted, by kind (<code>stats.redactions</code>, counts only). A session in which a vendor token was redacted gets the <code>secret:exposed</code> tag: the agent and its model provider saw the credential, so rotate it. <code>coding.sh sessions --flag secret:exposed</code> lists them.</li>
     <li><code>capture.mode = "metadata"</code> keeps ids, timings, kinds, counts and usage, and drops prompts, code and tool output.</li>
   </ul>
 

@@ -141,6 +141,14 @@ export function skillsText(r: SkillUseReport): string {
     .join(" · ");
 }
 
+/** What redaction replaced in the session, by kind, with the rotate hint when a vendor token was among them. */
+export function redactedRow(s: Session): [string, string] | undefined {
+  const r = s.stats.redactions;
+  if (!r) return undefined;
+  const kinds = Object.entries(r).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(", ");
+  return ["Redacted", s.flags.includes("secret:exposed") ? `${kinds}. The agent saw these credentials: rotate them` : kinds];
+}
+
 /** Header rows for waste: repeated read-only calls and prompt-cache breaks. */
 export function wasteRows(s: Session): [string, string][] {
   const rows: [string, string][] = [];
@@ -321,6 +329,8 @@ export async function run(c: CommandContext): Promise<number> {
     if (d) rows.push(...durableRows(d));
     if (outline && outline.phases.length > 1) rows.push(["Phases", phaseCounts(outline)]);
     rows.push(...wasteRows(s));
+    const red = redactedRow(s);
+    if (red) rows.push(red);
     if (skills?.used.length) rows.push(["Skills", skillsText(skills)]);
     if (derails.length) rows.push(["Derails", derails.slice(0, 4).map((d) => `${d.flag} at +${duration(Math.max(0, d.ts - s.startedAt))}`).join(", ") + (derails.length > 4 ? ` +${derails.length - 4} more` : "")]);
     for (const [k, v] of rows) out.print(`  ${k.padEnd(14)}${v}`);

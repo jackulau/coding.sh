@@ -10,15 +10,59 @@ export interface RedactRule {
   replace?: (match: string, ...groups: string[]) => string;
 }
 
+/**
+ * What a redaction pass replaced, by rule kind: markers in the output minus
+ * markers already in the input, so text that quotes a marker counts nothing.
+ */
+export interface RedactionTally {
+  kinds: Record<string, number>;
+  /** The input already held a marker (e.g. the agent read `coding.sh show` output). */
+  preexisting?: boolean;
+}
+
+export const redactionTally = (): RedactionTally => ({ kinds: {} });
+
 export interface Redactor {
   readonly rules: readonly RedactRule[];
-  string(s: string): string;
+  /** Redacts one string; with a tally, adds what it replaced. */
+  string(s: string, tally?: RedactionTally): string;
   /** Deep-redacts strings in any JSON-like value; returns a new value. */
-  value<T>(v: T): T;
-  event(e: AgentEvent): AgentEvent;
+  value<T>(v: T, tally?: RedactionTally): T;
+  event(e: AgentEvent, tally?: RedactionTally): AgentEvent;
 }
 
 export const marker = (kind: string): string => `[redacted:${kind}]`;
+
+/**
+ * Vendor token kinds: a match is almost surely a live credential, so a session
+ * holding one is tagged `secret:exposed` (core/redaction-stats.ts). Name-based and
+ * prose rules (password, secret-field, prose-secret, …) only count.
+ */
+export const HIGH_CONFIDENCE_KINDS: ReadonlySet<string> = new Set([
+  "anthropic-key", "openai-key", "github-token", "gitlab-token", "slack-token", "slack-webhook", "aws-access-key",
+  "google-api-key", "stripe-key", "npm-token", "coding-sh-key", "vercel-ai-gateway-key", "private-key",
+]);
+
+const MARKER_RE = /\[redacted:([a-z0-9-]+)\]/g;
+
+/** Adds the markers in `s` to `into` (kind → count); returns how many it found. */
+export function countMarkers(s: string, into: Record<string, number>, sign = 1): number {
+  if (!s.includes("[redacted:")) return 0;
+  let n = 0;
+  for (const m of s.matchAll(MARKER_RE)) {
+    into[m[1]!] = (into[m[1]!] ?? 0) + sign;
+    n++;
+  }
+  return n;
+}
+
+/** Adds to `t` what turned `before` into `after` (only called when they differ). */
+function tallyChange(t: RedactionTally, before: string, after: string): void {
+  const diff: Record<string, number> = {};
+  if (countMarkers(before, diff, -1)) t.preexisting = true;
+  countMarkers(after, diff);
+  for (const [k, n] of Object.entries(diff)) if (n > 0) t.kinds[k] = (t.kinds[k] ?? 0) + n;
+}
 
 // Names that mark the adjacent value as a secret. Matched as a suffix of an
 // identifier (OPENAI_API_KEY, db_password, x-api-key, …).
@@ -285,7 +329,16 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
   }
   rules.push(...patternRules(opts.patterns ?? []));
 
-  const string = (s: string): string => {
+  const string = (s: string, tally?: RedactionTally): string => {
+    const out = apply(s);
+    if (tally) {
+      if (out !== s) tallyChange(tally, s, out);
+      else if (!tally.preexisting && s.includes("[redacted:")) tally.preexisting = true;
+    }
+    return out;
+  };
+
+  const apply = (s: string): string => {
     let out = s;
     for (const r of rules) {
       const fast = fastApply.get(r);
@@ -303,14 +356,53 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
     return out;
   };
 
-  const value = <T>(v: T): T => walk(v, string, 0) as T;
+  const value = <T>(v: T, tally?: RedactionTally): T => walk(v, tally ? (x) => string(x, tally) : apply, 0, tally) as T;
 
   return {
     rules,
     string,
     value,
-    event: (e) => ({ ...e, payload: value(e.payload) }),
+    event: (e, tally) => ({ ...e, payload: value(e.payload, tally) }),
   };
+}
+
+// Redaction hits found in blob content, by blob ref (the content hash): the event
+// that points at an offloaded tool output counts what was redacted inside it.
+// Only refs with hits are kept, and only the most recent few thousand.
+const blobHits = new Map<string, Record<string, number>>();
+const BLOB_HITS_MAX = 4096;
+
+/** Remembers what redaction replaced in the blob stored under `ref`. */
+export function noteBlobHits(ref: string, kinds: Record<string, number>): void {
+  if (!Object.keys(kinds).length) return;
+  blobHits.delete(ref);
+  blobHits.set(ref, { ...kinds });
+  if (blobHits.size > BLOB_HITS_MAX) blobHits.delete(blobHits.keys().next().value!);
+}
+
+/**
+ * Redacts an event and records what was replaced in `payload.redactions`
+ * (kind → count, never values): the inline payload's hits, or the hits in the
+ * blobs it points at when those are more (an offloaded output's inline part is a
+ * prefix of the blob, so the two are not added). An event whose input already
+ * held markers gets `redactions: {}`, so readers don't count those markers as
+ * hits. Nothing found: the payload has no `redactions`.
+ */
+export function redactEventCounted(r: Redactor, e: AgentEvent): AgentEvent {
+  const tally = redactionTally();
+  const ev = r.event(e, tally);
+  const kinds = { ...tally.kinds };
+  if (e.blobs?.length) {
+    const inBlobs: Record<string, number> = {};
+    for (const ref of e.blobs) for (const [k, n] of Object.entries(blobHits.get(ref) ?? {})) inBlobs[k] = (inBlobs[k] ?? 0) + n;
+    for (const [k, n] of Object.entries(inBlobs)) kinds[k] = Math.max(kinds[k] ?? 0, n);
+  }
+  const earlier = redactionCounts(e.payload?.redactions);
+  if (Object.keys(kinds).length) ev.payload = { ...ev.payload, redactions: kinds };
+  // Re-finishing a stored event (its markers are now "preexisting"): keep what the first pass counted.
+  else if (earlier) ev.payload = { ...ev.payload, redactions: earlier };
+  else if (tally.preexisting) ev.payload = { ...ev.payload, redactions: {} };
+  return ev;
 }
 
 /** A command-line flag whose value is a secret: --api-key, --openai-api-key, --db-password, -token. */
@@ -337,17 +429,23 @@ export function redactArgv<T>(args: readonly T[]): T[] {
   return out;
 }
 
-function walk(v: unknown, redact: (s: string) => string, depth: number): unknown {
+function walk(v: unknown, redact: (s: string) => string, depth: number, tally?: RedactionTally): unknown {
   if (typeof v === "string") return redact(v);
   if (depth > 64 || v === null || typeof v !== "object") return v;
   // Arrays may be argv (wrapper session.start args, tool command vectors).
-  if (Array.isArray(v)) return redactArgv(v).map((x) => walk(x, redact, depth + 1));
+  if (Array.isArray(v)) {
+    const argv = redactArgv(v);
+    if (tally) for (let i = 0; i < argv.length; i++) if (argv[i] !== v[i] && typeof v[i] === "string") tallyChange(tally, v[i] as string, argv[i] as string);
+    return argv.map((x) => walk(x, redact, depth + 1, tally));
+  }
   if (v instanceof Uint8Array) return v;
   const out: Record<string, unknown> = {};
   for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
-    const val = typeof x === "string" && x.length > 0 && SECRET_KEY.test(k) && !isAlreadyRedacted(x)
+    const secretKey = typeof x === "string" && x.length > 0 && SECRET_KEY.test(k) && !isAlreadyRedacted(x);
+    if (secretKey && tally) tally.kinds["secret-field"] = (tally.kinds["secret-field"] ?? 0) + 1;
+    const val = secretKey
       ? marker("secret-field")
-      : walk(x, redact, depth + 1);
+      : walk(x, redact, depth + 1, tally);
     Object.defineProperty(out, k, { value: val, writable: true, enumerable: true, configurable: true });
   }
   return out;
@@ -400,6 +498,9 @@ export function toMetadata(event: AgentEvent): AgentEvent {
     if (typeof v === "number" || typeof v === "boolean") payload[k] = v;
     else if (typeof v === "string" && METADATA_STRING_KEYS.has(k) && v.length <= 200) payload[k] = v;
   }
+  // Redaction counts (kind → number, never values): the secret-exposure signal survives metadata mode.
+  const counts = redactionCounts(event.payload?.redactions);
+  if (counts) payload.redactions = counts;
   const out: AgentEvent = {
     id: event.id,
     v: event.v,
@@ -424,6 +525,14 @@ export function toMetadata(event: AgentEvent): AgentEvent {
     if (event.repo.snapshot) out.repo.snapshot = event.repo.snapshot;
     if (event.repo.partial !== undefined) out.repo.partial = event.repo.partial;
   }
+  return out;
+}
+
+/** `payload.redactions` as kind → positive count, or undefined when it is not one. */
+export function redactionCounts(v: unknown): Record<string, number> | undefined {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const out: Record<string, number> = {};
+  for (const [k, n] of Object.entries(v as Record<string, unknown>)) if (/^[a-z0-9-]{1,64}$/.test(k) && typeof n === "number" && Number.isInteger(n) && n >= 0) out[k] = n;
   return out;
 }
 
