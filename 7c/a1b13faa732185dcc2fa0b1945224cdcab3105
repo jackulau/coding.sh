@@ -1,0 +1,55 @@
+docs/reference/config.md
+  s_8e040dbdf13565::t_549633e26e0c14 138-147
+packages/coding.sh/src/adapters/_shared/normalize.ts
+  s_8e040dbdf13565::t_65ecd42b230ca2 6
+  s_8e040dbdf13565::t_65cab3e3e14805 158-162,168-184
+  s_8e040dbdf13565::t_be95c2e0a905b3 185-186
+docs/how-to/expensive-sessions.md
+  s_8e040dbdf13565::t_549633e26e0c14 87-94,97
+packages/coding.sh/src/adapters/_shared/claude-transcript.ts
+  s_8e040dbdf13565::t_65cab3e3e14805 22,62-64,221,406-408
+packages/coding.sh/src/mcp/data.ts
+  s_8e040dbdf13565::t_27ff36e47a3b01 648
+packages/coding.sh/src/core/config.ts
+  s_8e040dbdf13565::t_f330ea29081f25 282,285-291,314-321
+  s_8e040dbdf13565::t_419ee900a16502 283-284
+docs/reference/api.md
+  s_8e040dbdf13565::t_27ff36e47a3b01 434
+packages/store-clickhouse/src/index-store.ts
+  s_8e040dbdf13565::t_034eda6b29ec73 361,363,373,379
+packages/coding.sh/test/core/pricing.test.ts
+  s_8e040dbdf13565::t_a69da229a9fc2d 353
+  s_8e040dbdf13565::t_a149f2421ffcd7 7
+  s_8e040dbdf13565::t_672fb4ad56942a 316-352,354-359
+  s_8e040dbdf13565::t_c92a1320871a7a 422-440
+packages/coding.sh/src/otel/map.ts
+  s_8e040dbdf13565::t_8202bff8f39ad3 36-37,484-487,512-525
+  s_8e040dbdf13565::t_ef7302396251ee 758,764-765,1067,1076-1077
+packages/coding.sh/test/adapters/claude-code.test.ts
+  s_8e040dbdf13565::t_dcc95ad7025be8 224-235
+packages/coding.sh/src/core/pricing.ts
+  s_8e040dbdf13565::t_3e3215e33db0b7 8-10,19,21-22,50-54,67-75,92,94,102,113-117,123-128,209-217,221-223,231
+  s_8e040dbdf13565::t_659a370e888661 427-443,469,476-477,479,485-488,495-498,516,522
+CHANGELOG.md
+  s_8e040dbdf13565::t_93f405b282f3a8 27
+packages/store-clickhouse/test/clickhouse.test.ts
+  s_8e040dbdf13565::t_49ae06d969cf88 191,200-201
+packages/coding.sh/test/otel/map.test.ts
+  s_8e040dbdf13565::t_ef621e97fea9ab 564-583
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7ca1b13faa732185dcc2fa0b1945224cdcab3105",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
