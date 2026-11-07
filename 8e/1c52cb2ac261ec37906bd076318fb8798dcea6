@@ -1,0 +1,98 @@
+packages/coding.sh/src/adapters/codex.ts
+  s_8e040dbdf13565::t_5ae5d326307f3c 928-929
+CHANGELOG.md
+  s_8e040dbdf13565::t_23adedc38951b1 19
+packages/coding.sh/src/adapters/more/antigravity.ts
+  s_8e040dbdf13565::t_5ae5d326307f3c 534-535
+packages/coding.sh/src/core/ingest.ts
+  s_8e040dbdf13565::t_bd0620d326bcf5 140,145-175,178,262,280,286,306,470-533,553,571-572,627,641,683-695,700-701,752,807-810,831-832,834,846-857
+  s_8e040dbdf13565::t_894297aca7ddb0 858
+packages/coding.sh/src/spool/kick.ts
+  s_8e040dbdf13565::t_a9bfdfc79b33aa 37-45,48,50
+packages/store-postgres/src/pool.ts
+  s_8e040dbdf13565::t_594c506016f3d5 315-321
+  s_8e040dbdf13565::t_5d1e442077cc08 313-314
+packages/coding.sh/src/core/reparse.ts
+  s_8e040dbdf13565::t_fd5739bd1d82e4 167-175,331-340,342-343
+  s_8e040dbdf13565::t_3d88aacbf6a5cc 1-38,40-106,108-166,176-234,237-252,256-257,259-284,286-299,301-305,308-329,341,344-447
+  s_8e040dbdf13565::t_a9bfdfc79b33aa 107,235
+  s_8e040dbdf13565::t_f143fa830ca541 39,236,253-255,258,285,300,306-307,330
+packages/coding.sh/src/adapters/opencode.ts
+  s_8e040dbdf13565::t_5ae5d326307f3c 634-635
+packages/coding.sh/src/cli/common.ts
+  s_8e040dbdf13565::t_a9bfdfc79b33aa 47-67
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_bf8f27f87cef8d 323
+packages/coding.sh/src/adapters/more/aider.ts
+  s_8e040dbdf13565::t_5ae5d326307f3c 88-89
+packages/coding.sh/src/store/sqlite.ts
+  s_8e040dbdf13565::t_ef622835e2d97c 600-601,607-608,612
+  s_8e040dbdf13565::t_f15ccd7aa8c577 309-317,413,506-524,530-531
+  s_8e040dbdf13565::t_b6023c9ac460cd 532-548
+packages/coding.sh/src/adapters/more/goose.ts
+  s_8e040dbdf13565::t_5ae5d326307f3c 385-386
+packages/coding.sh/src/schema/index.ts
+  s_8e040dbdf13565::t_bf8f27f87cef8d 199-207
+packages/coding.sh/src/core/paths.ts
+  s_8e040dbdf13565::t_a9bfdfc79b33aa 42-43
+packages/coding.sh/src/core/types.ts
+  s_8e040dbdf13565::t_bf8f27f87cef8d 152-158,385-391
+packages/coding.sh/src/adapters/more/gemini-cli.ts
+  s_8e040dbdf13565::t_5ae5d326307f3c 381-382
+packages/coding.sh/test/core/reparse.test.ts
+  s_8e040dbdf13565::t_20d4bef3eadd8a 123
+  s_8e040dbdf13565::t_81af57bd7ac869 1-122,124-253
+packages/coding.sh/src/adapters/more/copilot-cli.ts
+  s_8e040dbdf13565::t_5ae5d326307f3c 351-352
+packages/coding.sh/src/adapters/cursor.ts
+  s_8e040dbdf13565::t_5ae5d326307f3c 353-354
+packages/coding.sh/src/store/conformance.ts
+  s_8e040dbdf13565::t_f336473f8a1e16 317-318
+  s_8e040dbdf13565::t_3ecced0c16b629 296-316,319-320
+packages/coding.sh/src/store/memory.ts
+  s_8e040dbdf13565::t_ef622835e2d97c 114-123,163-167
+packages/coding.sh/test/cli/cli.test.ts
+  s_8e040dbdf13565::t_4a12e3441c0916 583-637
+  s_8e040dbdf13565::t_5ba8346f3bc7ce 6
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_ced97b0d07b688 121,126-130
+packages/coding.sh/src/adapters/more/droid.ts
+  s_8e040dbdf13565::t_5ae5d326307f3c 371-372
+packages/coding.sh/src/adapters/more/pi.ts
+  s_8e040dbdf13565::t_5ae5d326307f3c 326-327
+packages/coding.sh/src/adapters/more/wrapper.ts
+  s_8e040dbdf13565::t_5ae5d326307f3c 119-120
+packages/store-postgres/src/index-store.ts
+  s_8e040dbdf13565::t_1aff9f98d5e295 348,357
+  s_8e040dbdf13565::t_18af0765ee9609 278-310,312
+  s_8e040dbdf13565::t_594c506016f3d5 146,263-268,270-272,276-277,311,313,349-350,356,362
+  s_8e040dbdf13565::t_b119ab5cb288ae 314
+packages/coding.sh/src/cli/commands/ingest.ts
+  s_8e040dbdf13565::t_542b0a5a54f957 1,6-9,12,14-15,24,30,36,61,63,68-73,78,86-101,103-107
+  s_8e040dbdf13565::t_cca188372338aa 31-35,60,79-85,102
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_a57069da71b3a4 105-121
+packages/coding.sh/src/adapters/t3code.ts
+  s_8e040dbdf13565::t_5ae5d326307f3c 710-711
+packages/coding.sh/src/core/context.ts
+  s_8e040dbdf13565::t_a9bfdfc79b33aa 9,29-32,70-77
+  s_8e040dbdf13565::t_baafbb4d2648e3 14-15,55
+docs/reference/cli.md
+  s_8e040dbdf13565::t_12e8e664f8b1f7 129,137,141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8e1c52cb2ac261ec37906bd076318fb8798dcea6",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
