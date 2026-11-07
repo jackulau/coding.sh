@@ -1,0 +1,20 @@
+docs/reference/cli.md
+  s_8e040dbdf13565::t_be3596c5f9d559 297,303,323-325,330-331,334
+  s_8e040dbdf13565::t_296dec73bcbe20 335
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b7322ebec501a47876018397d8199677c3d68d5a",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "unknown"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
