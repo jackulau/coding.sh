@@ -48,9 +48,14 @@ async function waitForCache(file: string): Promise<Record<string, unknown>> {
 describe("background refresh child", () => {
   test("from source: writes the cache without the parent waiting", async () => {
     const env = tmpEnv();
-    const t0 = Date.now();
+    const served = hits.length;
     assert.equal(scheduleUpdateCheck(env, { githubApi: base, npmRegistry: base, current: "0.1.0" }), true);
-    assert.ok(Date.now() - t0 < 500, "spawning does not wait on the network");
+    // The server runs on this event loop, so it cannot answer the child until
+    // scheduleUpdateCheck returns: a parent that waited on the refresh would
+    // come back with the network's answer (or its timeout) already cached.
+    assert.equal(hits.length, served, "spawning does not wait on the network");
+    const pending = JSON.parse(readFileSync(cacheFile(env), "utf8")) as Record<string, unknown>;
+    assert.equal(pending.checkedAt ?? pending.error, undefined, "only the attempt is recorded when spawning returns");
     const c = await waitForCache(cacheFile(env));
     assert.equal(c.error, undefined);
     assert.equal(c.latest, "9.8.7");

@@ -2,7 +2,7 @@
 // fencing, and cleanup on process.exit.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -75,17 +75,36 @@ describe("lock", () => {
   });
 
   it("lets exactly one of many racing processes break a dead holder's lock", { timeout: 120_000 }, async () => {
+    // Barriers instead of a wall-clock start: every racer is up before any
+    // tries, and the winner holds until every racer has made its one attempt.
+    // A racer the scheduler delayed past the winner's release would otherwise
+    // take the free lock legitimately and look like a second winner.
     const body = `
-      const [path, startAt] = [args[0], Number(args[1])];
-      while (Date.now() < startAt) {}
-      try { const l = await acquireLock(path, { waitMs: 0 }); console.log("ACQ"); await new Promise((r) => setTimeout(r, 1500)); l.release(); }
-      catch (e) { console.log(e.name); }`;
-    for (let round = 0; round < 3; round++) {
+      const { readdirSync, writeFileSync } = await import("node:fs");
+      const { join } = await import("node:path");
+      const [path, sync, n] = [args[0], args[1], Number(args[2])];
+      const count = (k) => readdirSync(sync).filter((f) => f.startsWith(k + ".")).length;
+      const mark = (k) => writeFileSync(join(sync, k + "." + process.pid), "");
+      mark("ready");
+      while (count("ready") < n) await new Promise((r) => setTimeout(r, 1));
+      let out;
+      try {
+        const l = await acquireLock(path, { waitMs: 0 });
+        mark("done");
+        const until = Date.now() + 60000;
+        while (count("done") < n && Date.now() < until) await new Promise((r) => setTimeout(r, 5));
+        l.release();
+        out = "ACQ";
+      } catch (e) { mark("done"); out = e.name; }
+      console.log(out);`;
+    const racers = 12;
+    for (let round = 0; round < 5; round++) {
       const d = dir();
       const p = join(d, ".ingest.lock");
+      const sync = join(d, "sync");
+      mkdirSync(sync);
       writeFileSync(p, JSON.stringify({ pid: DEAD_PID, host: hostname(), ts: 1 }));
-      const startAt = String(Date.now() + 2000);
-      const outs = await Promise.all(Array.from({ length: 8 }, () => child(body, [p, startAt])));
+      const outs = await Promise.all(Array.from({ length: racers }, () => child(body, [p, sync, String(racers)])));
       assert.equal(outs.filter((o) => o === "ACQ").length, 1, `round ${round}: ${outs.join(",")}`);
       assert.deepEqual(new Set(outs.filter((o) => o !== "ACQ")), new Set(["LockBusyError"]));
     }
