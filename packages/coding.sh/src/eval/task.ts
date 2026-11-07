@@ -12,6 +12,7 @@ import { safeJoin, safeWrite, toPosix } from "../runner/fsutil.ts";
 import { rmrf, snapshotOps, type SnapshotOps } from "../runner/git.ts";
 import { matchAny } from "../runner/glob.ts";
 import { filterPatch, patchPaths } from "./patch.ts";
+import { taskWitnesses, type Witness } from "./witness.ts";
 
 export const TASK_FORMAT = "coding.sh/task@0";
 export const DEFAULT_VERIFIER_TIMEOUT_MS = 10 * 60_000;
@@ -408,6 +409,8 @@ function defaultName(instruction: string): string {
 //   tests/<path>     hidden verifier files (copied over the work tree at verify time)
 //   reference.patch  reference solution (optional)
 //   near-misses/NNN.patch
+//   witnesses/witnesses.json   meta.witnesses (src/eval/witness.ts)
+//   witnesses/files/<id12>/<path>   each witness's test file
 
 interface TaskJson {
   format: typeof TASK_FORMAT;
@@ -430,8 +433,17 @@ async function blobBytes(blobs: BlobStore, ref: BlobRef, what: string): Promise<
   return b;
 }
 
+/** Where a witness's file lives in an exported task dir (its id keeps two witnesses at one path apart). */
+const witnessFile = (w: Witness) => `${w.id.slice(0, 12)}/${w.path}`;
+
 export async function exportTaskDir(task: EvalTask, dir: string, blobs: BlobStore): Promise<void> {
   await mkdir(dir, { recursive: true });
+  const witnesses = taskWitnesses(task);
+  let meta = (task as Partial<DraftedTask>).meta as Record<string, unknown> | undefined;
+  if (meta && "witnesses" in meta) {
+    const { witnesses: _w, ...rest } = meta;
+    meta = Object.keys(rest).length ? rest : undefined;
+  }
   const json: TaskJson = {
     format: TASK_FORMAT,
     id: task.id,
@@ -444,7 +456,7 @@ export async function exportTaskDir(task: EvalTask, dir: string, blobs: BlobStor
     tags: task.tags,
     createdAt: task.createdAt,
     validation: task.validation,
-    meta: (task as Partial<DraftedTask>).meta,
+    meta,
   };
   await writeFile(join(dir, "task.json"), `${JSON.stringify(json, null, 2)}\n`);
   await writeFile(join(dir, "instruction.md"), task.instruction.endsWith("\n") ? task.instruction : `${task.instruction}\n`);
@@ -458,6 +470,11 @@ export async function exportTaskDir(task: EvalTask, dir: string, blobs: BlobStor
     for (let i = 0; i < nm.length; i++) {
       await writeFile(join(dir, "near-misses", `${String(i + 1).padStart(3, "0")}.patch`), await blobBytes(blobs, nm[i] as BlobRef, "near-miss patch"));
     }
+  }
+  if (witnesses.length) {
+    await mkdir(join(dir, "witnesses"), { recursive: true });
+    await writeFile(join(dir, "witnesses", "witnesses.json"), `${JSON.stringify(witnesses, null, 2)}\n`);
+    for (const w of witnesses) await safeWrite(join(dir, "witnesses", "files"), witnessFile(w), await blobBytes(blobs, w.blob, `witness ${w.path}`));
   }
 }
 
@@ -525,6 +542,22 @@ export async function importTaskDir(dir: string, blobs?: BlobStore, opts: Import
     createdAt: json.createdAt ?? Date.now(),
   };
   if (json.meta && typeof json.meta === "object" && !Array.isArray(json.meta)) task.meta = json.meta as Record<string, unknown>;
+  const wJson = join(dir, "witnesses", "witnesses.json");
+  if (existsSync(wJson)) {
+    const listed = JSON.parse(await readFile(wJson, "utf8")) as unknown;
+    if (!Array.isArray(listed)) throw new Error(`${wJson}: expected an array of witnesses`);
+    const witnesses: Witness[] = [];
+    for (const w of taskWitnesses({ ...task, meta: { witnesses: listed } })) {
+      const file = join(dir, "witnesses", "files");
+      const data = await readFile(safeJoin(file, witnessFile(w))).catch(() => {
+        throw new Error(`${dir}: witness ${w.path} is listed but witnesses/files/${witnessFile(w)} is missing`);
+      });
+      const blob = await store(data);
+      if (blob !== w.blob) throw new Error(`${dir}: witnesses/files/${witnessFile(w)} does not match its witness (blob ${w.blob})`);
+      witnesses.push(w);
+    }
+    if (witnesses.length) task.meta = { ...(task.meta ?? {}), witnesses };
+  }
   return task;
 }
 

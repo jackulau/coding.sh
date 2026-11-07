@@ -8,3 +8,4 @@ export * from "./suite.ts";
 export * from "./coupling.ts";
 export * from "./crosscheck.ts";
 export * from "./decision.ts";
+export * from "./witness.ts";

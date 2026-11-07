@@ -362,6 +362,23 @@ export const COMMANDS: CommandSpec[] = [
         examples: ["coding.sh eval crosscheck my-task --experiment exp_01J…", "coding.sh eval crosscheck my-task --solver claude-default --max 3"],
       },
       {
+        name: "audit",
+        summary: "Replay a witness test on an experiment's passing runs and count the passes it refutes",
+        args: [{ name: "task", desc: "Task id or name", required: true }],
+        flags: [
+          { name: "experiment", type: "string", value: "<ID>", desc: "Experiment whose passing runs to replay (required)" },
+          { name: "witness", type: "string", value: "<FILE|PATH=FILE>", desc: "Test for a requirement the verifier misses; written at its path relative to here, or at PATH" },
+          { name: "witness-cmd", type: "string", value: "<CMD>", desc: "Command that runs the witness from the repo root" },
+          { name: "requirement", type: "string", value: "<TEXT>", desc: "The requirement it checks, in the instruction's words" },
+          { name: "promote", type: "boolean", desc: "Add the witnesses to the verifier afterwards (the task needs validating again)" },
+          { name: "count-ambiguous", type: "boolean", desc: "Also count refutations by a witness that refutes over half the passing runs" },
+        ],
+        examples: [
+          "coding.sh eval audit add-neg --experiment exp_01J… --witness test/neg.test.js --witness-cmd 'node test/neg.test.js' --requirement 'handle negative numbers'",
+          "coding.sh eval audit add-neg --experiment exp_01J…",
+        ],
+      },
+      {
         name: "list",
         summary: "List eval tasks",
         flags: [

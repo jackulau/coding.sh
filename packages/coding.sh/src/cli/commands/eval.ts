@@ -1,14 +1,29 @@
-// coding.sh eval new|import|validate|crosscheck|list|export
+// coding.sh eval new|import|validate|crosscheck|audit|list|export
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { paths } from "../../core/paths.ts";
 import { snapshotDir } from "../../core/snapshot.ts";
 import type { EvalTask, RunResult } from "../../core/types.ts";
 import { crossCheckMeta, crossCheckVerifier, DEFAULT_CROSSCHECK_MAX, formatCrossCheck } from "../../eval/crosscheck.ts";
 import { draftTaskFromSession, exportHarbor, exportTaskDir, importTaskDir, readInstructionArg } from "../../eval/task.ts";
 import { formatValidation, validateTask } from "../../eval/validate.ts";
+import {
+  auditArms,
+  confirmWitness,
+  formatAudit,
+  promoteWitnesses,
+  replayWitnesses,
+  taskWitnesses,
+  withAudit,
+  withWitnesses,
+  witnessId,
+  type AuditReport,
+  type ConfirmWitnessResult,
+  type Witness,
+} from "../../eval/witness.ts";
+import { toPosix } from "../../runner/fsutil.ts";
 import { providerFromSpec, type LlmProviderSpec } from "../../graders/index.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { autoIngest, jsonArg, list, oneLine, resolveSession, resolveTask, str, withContext } from "../common.ts";
@@ -37,6 +52,18 @@ async function importDir(dir: string, ctx: Context, env: NodeJS.ProcessEnv): Pro
     }
   }
   return importTaskDir(dir, ctx.blobs, start ? { start } : {});
+}
+
+/**
+ * `--witness <FILE>` is written at its path relative to the current dir (its name when
+ * outside it); `--witness <REPO_PATH>=<FILE>` names the repo path.
+ */
+function witnessPaths(arg: string, cwd: string): { path: string; file: string } {
+  const eq = arg.indexOf("=");
+  if (eq > 0 && !existsSync(resolve(cwd, arg))) return { path: toPosix(arg.slice(0, eq)), file: resolve(cwd, arg.slice(eq + 1)) };
+  const file = resolve(cwd, arg);
+  const rel = relative(cwd, file);
+  return { path: toPosix(rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : basename(file)), file };
 }
 
 function taskJson(t: EvalTask): Record<string, unknown> {
@@ -172,6 +199,96 @@ export async function run(c: CommandContext): Promise<number> {
         if (out.json) out.data({ outcome: result.checked ? "checked" : "nothing_checked", crossCheck: result, coupling });
         else out.print(formatCrossCheck(result, coupling));
         return result.checked && !result.errors.length ? 0 : 1;
+      }
+      case "audit": {
+        const task = await getTask(ctx, c.positionals[0]!);
+        const experimentId = str(c.flags.experiment);
+        if (!experimentId) throw new UsageError("Missing --experiment <ID>: an audit replays one experiment's passing runs", { reason: "missing_argument" });
+        const witnessArg = str(c.flags.witness);
+        const witnessCmd = str(c.flags["witness-cmd"]);
+        if (!!witnessArg !== !!witnessCmd) throw new UsageError("--witness <FILE> and --witness-cmd <CMD> go together: the test file and the command that runs it", { reason: "missing_argument" });
+        const runs = await ctx.index.listRuns({ taskId: task.id, experimentId });
+        if (!runs.length) throw new CliError(`No runs of ${task.name} in experiment ${experimentId}`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
+        const workRoot = await mkdtemp(join(tmpdir(), "codingsh-audit-"));
+        try {
+          let current = task;
+          let fresh: { witness: Witness; confirm: ConfirmWitnessResult } | undefined;
+          if (witnessArg && witnessCmd) {
+            const { path, file } = witnessPaths(witnessArg, c.cwd);
+            let data: Uint8Array;
+            try {
+              data = await readFile(file);
+            } catch {
+              throw new UsageError(`Can't read --witness ${file}`, { reason: "invalid_value" });
+            }
+            const witness: Witness = {
+              id: witnessId(path, data, witnessCmd),
+              path,
+              blob: await ctx.blobs.put(data),
+              command: witnessCmd,
+              requirement: str(c.flags.requirement) ?? "",
+              source: "manual",
+              status: "confirmed",
+              createdAt: Date.now(),
+            };
+            const spin = out.spin(`Checking ${path} passes the reference…`);
+            let confirm: ConfirmWitnessResult;
+            try {
+              confirm = await confirmWitness({ task, witness, blobs: ctx.blobs, workRoot, signal: c.signal });
+            } finally {
+              spin.stop();
+            }
+            fresh = { witness, confirm };
+            if (!confirm.ok) {
+              if (out.json) out.data({ outcome: "witness_rejected", task: task.id, experimentId, witness: { path, command: witnessCmd }, confirm });
+              else {
+                out.fail(`Witness ${path} rejected: ${confirm.error}`);
+                if (confirm.tail) out.print(confirm.tail);
+              }
+              return 1;
+            }
+            current = withWitnesses(current, [witness]);
+          }
+          const witnesses = taskWitnesses(current).filter((w) => w.status === "confirmed");
+          if (!witnesses.length) {
+            throw new CliError(`${task.name} has no witnesses yet`, { reason: "missing_argument", next: ["Give it one:", `coding.sh eval audit ${task.id} --experiment ${experimentId} --witness <FILE> --witness-cmd <CMD>`] });
+          }
+          const spin = out.spin(`Replaying ${witnesses.length} witness(es) on the passing runs…`);
+          let report: AuditReport;
+          try {
+            report = await replayWitnesses({ task: current, runs, witnesses, blobs: ctx.blobs, workRoot, experimentId, countAmbiguous: c.flags["count-ambiguous"] === true, signal: c.signal });
+          } finally {
+            spin.stop();
+          }
+          current = withAudit(current, experimentId, report);
+          let notes: string[] = [];
+          if (c.flags.promote === true) ({ task: current, notes } = promoteWitnesses(current, report.witnesses));
+          await ctx.index.putTask(current);
+          const names = new Map<string, string>();
+          for (const a of auditArms(report, runs)) {
+            const b = await ctx.index.getBundle(a.bundleId);
+            names.set(a.bundleId, b ? `${b.name} (${a.bundleId.slice(0, 8)})` : a.bundleId.slice(0, 8));
+          }
+          if (out.json) {
+            out.data({
+              outcome: "audited",
+              task: task.id,
+              experimentId,
+              ...(fresh ? { witness: { id: fresh.witness.id, path: fresh.witness.path, command: fresh.witness.command, confirm: fresh.confirm } } : {}),
+              arms: auditArms(report, runs),
+              report,
+              ...(c.flags.promote === true ? { promoted: report.witnesses, verifier: current.verifier.command } : {}),
+              notes,
+            });
+            return 0;
+          }
+          if (fresh) out.ok(`Witness ${fresh.witness.path} passes the reference ${fresh.confirm.refPassed}/${fresh.confirm.k}${fresh.confirm.noopFails ? " and fails the start" : "; note: it also passes the untouched start"}`);
+          out.print(formatAudit(report, runs, witnesses, (b) => names.get(b) ?? b.slice(0, 8)));
+          for (const n of notes) out.note(n);
+          return 0;
+        } finally {
+          await rm(workRoot, { recursive: true, force: true });
+        }
       }
       case "list": {
         const status = str(c.flags.status) as EvalTask["status"] | undefined;

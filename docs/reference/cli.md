@@ -436,6 +436,7 @@ coding.sh eval <action>
 | [`import`](#codingsh-eval-import) | Add tasks from task directories (hand-written, or from eval export) |
 | [`validate`](#codingsh-eval-validate) | Check the reference passes, near-misses fail and nothing leaks |
 | [`crosscheck`](#codingsh-eval-crosscheck) | Ask a model whether stored solutions are valid and count where the verifier disagrees |
+| [`audit`](#codingsh-eval-audit) | Replay a witness test on an experiment's passing runs and count the passes it refutes |
 | [`list`](#codingsh-eval-list) | List eval tasks |
 | [`export`](#codingsh-eval-export) | Write a task to a directory |
 
@@ -521,6 +522,32 @@ coding.sh eval crosscheck <TASK> [options]
 ```sh
 coding.sh eval crosscheck my-task --experiment exp_01J…
 coding.sh eval crosscheck my-task --solver claude-default --max 3
+```
+
+### `coding.sh eval audit`
+
+Replay a witness test on an experiment's passing runs and count the passes it refutes.
+
+```text
+coding.sh eval audit <TASK> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `task` | yes | Task id or name. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--experiment <ID>` |  | Experiment whose passing runs to replay (required) |
+| `--witness <FILE|PATH=FILE>` |  | Test for a requirement the verifier misses; written at its path relative to here, or at PATH. |
+| `--witness-cmd <CMD>` |  | Command that runs the witness from the repo root. |
+| `--requirement <TEXT>` |  | The requirement it checks, in the instruction's words. |
+| `--promote` |  | Add the witnesses to the verifier afterwards (the task needs validating again) |
+| `--count-ambiguous` |  | Also count refutations by a witness that refutes over half the passing runs. |
+
+```sh
+coding.sh eval audit add-neg --experiment exp_01J… --witness test/neg.test.js --witness-cmd 'node test/neg.test.js' --requirement 'handle negative numbers'
+coding.sh eval audit add-neg --experiment exp_01J…
 ```
 
 ### `coding.sh eval list`

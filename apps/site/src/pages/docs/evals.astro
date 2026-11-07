@@ -321,6 +321,14 @@ const AB = [
     on the task in the same shape as a human verifier audit. <code>--solver &lt;bundle&gt;</code> solves the task once first, and
     <code>--max</code> caps the model calls (default 5).
   </p>
+  <p id="witness">
+    <code>eval audit &lt;task&gt; --experiment &lt;id&gt; --witness &lt;file&gt; --witness-cmd &lt;cmd&gt;</code> checks passing runs with a
+    test for a requirement the verifier skips. The witness must pass the reference 3/3; then every passing run is rebuilt from its diff, the
+    verifier must still pass, and a witness that fails twice in a row refutes the run:
+    <code>claude-tdd: passes 6/10, refuted 3, audited pass rate 30% (3/10)</code>. A witness refuting over half the passes is ambiguous
+    and not counted. No model calls (TestJack, <a href="https://arxiv.org/abs/2610.10619">arXiv 2610.10619</a>).
+    <code>--promote</code> adds the witness to the verifier.
+  </p>
   <p>
     Harness bundles (agent, model, flags, env and files such as <code>CLAUDE.md</code> or <code>AGENTS.md</code>, identified by a content hash)
     are what <code>compare</code> A/B tests: it runs both bundles on validated tasks in isolated worktrees and reports per-arm Wilson

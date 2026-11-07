@@ -361,6 +361,39 @@ passes, so it carries over only roughly to configs that pass different cases. `-
 the audit as `verifier` (`checked`, `agree`, `falseAccepts`, `falseRejects`, `precision`, …).
 These are the same counts a blind-solver cross-check stores at `task.meta.crossCheck`.
 
+### Witness audits
+
+Labels tell you how often the verifier is wrong; a witness test shows which passes it got wrong. A
+witness checks one requirement of the instruction that the hidden tests skip. `eval audit` makes
+sure it passes the reference patch 3 of 3 times, then replays it on every passing run of one
+experiment. Each run is rebuilt from the start snapshot, setup and the run's stored diff. The
+original verifier must still pass on the rebuilt tree, or the run is `replay-mismatch`. A diff that
+no longer applies is `unreplayable`. A run the witness fails twice in a row is refuted. A fail then
+a pass is noted as flaky and the run stays clean. No model is called. TestJack (arXiv 2610.10619)
+refuted 34% of passing trials this way.
+
+```bash
+coding.sh eval audit add-neg --experiment exp_01J… --witness test/neg.test.js \
+  --witness-cmd 'node test/neg.test.js' --requirement 'handle negative numbers'
+```
+
+```
+claude-default (1a2b3c4d): passes 6/10, refuted 0, audited pass rate 60% (6/10), replayed 6/6
+claude-tdd (5e6f7a8b): passes 6/10, refuted 3, audited pass rate 30% (3/10), replayed 6/6
+refuted run_01JX… (claude-tdd (5e6f7a8b)) by test/neg.test.js: handle negative numbers
+  add(-2, -3) is 0, want -5
+```
+
+`--witness PATH=FILE` writes FILE at PATH in the repo; plain `--witness FILE` uses FILE's path
+relative to the current directory. A witness the reference fails is rejected and nothing replays.
+Confirmed witnesses are stored at `task.meta.witnesses`, and `eval audit <task> --experiment <id>`
+without `--witness` replays them again. A witness that refutes more than half of all passing runs
+is listed as ambiguous: the instruction probably doesn't state the requirement clearly. Its
+refutations are shown but not counted unless you pass `--count-ambiguous`. The report is stored at
+`task.meta.audits[<experiment>]`. `--promote` then adds the
+witnesses to the verifier (hidden file plus `&& <cmd>`) and puts the task back to draft for
+`eval validate`. `eval export` writes witnesses to `witnesses/`, and `eval import` reads them back.
+
 ## Harness A/B
 
 `coding.sh harness snapshot` bundles an agent's harness files (CLAUDE.md, AGENTS.md, skills, hooks,

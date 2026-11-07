@@ -106,7 +106,8 @@ const DEFAULT_SETUP_TIMEOUT_MS = 15 * 60_000;
 const DEFAULT_SUITE_TIMEOUT_MS = 15 * 60_000;
 const SUITE_OUTPUT_BYTES = 16 * 1024 * 1024;
 
-function tail(r: ExecResult, max = 2000): string {
+/** The last `max` chars of a command's stdout + stderr. */
+export function execTail(r: ExecResult, max = 2000): string {
   const s = `${r.stdoutTail}${r.stderrTail ? `\n${r.stderrTail}` : ""}`.trim();
   return s.length > max ? s.slice(s.length - max) : s;
 }
@@ -115,7 +116,7 @@ async function runSetup(dir: string, task: EvalTask, env: Record<string, string 
   for (const cmd of task.setup) {
     const r = await sh(cmd, { cwd: dir, env, timeoutMs });
     if (r.exitCode !== 0) {
-      return { ok: false, error: `setup \`${cmd}\` ${r.timedOut ? "timed out" : `exited ${r.exitCode}`}`, out: tail(r) };
+      return { ok: false, error: `setup \`${cmd}\` ${r.timedOut ? "timed out" : `exited ${r.exitCode}`}`, out: execTail(r) };
     }
   }
   return { ok: true, out: "" };
@@ -212,6 +213,86 @@ async function scanTree(dir: string, task: EvalTask, refPatch: string | undefine
   return leaks;
 }
 
+/** A fresh step dir at the task's start state: patched, set up, or why not. */
+export interface StepDir {
+  dir: string;
+  /** The patch applied (true when there was none). */
+  applied: boolean;
+  setup: { ok: boolean; error?: string; out: string };
+}
+
+export interface TaskWorldsOpts {
+  task: EvalTask;
+  /** Parent dir for the step dirs. */
+  workRoot: string;
+  ops: SnapshotOps;
+  env: Record<string, string | undefined>;
+  setupTimeoutMs?: number;
+  keep?: boolean;
+  signal?: AbortSignal;
+}
+
+export interface TaskWorlds {
+  /**
+   * Fresh dir at the start state, then the patch and the task's setup. A reference or
+   * near-miss patch is written against the start tree, so it goes before setup; a run's
+   * diff was taken after setup (runTask commits setup output into its start), so
+   * `afterSetup` applies it after.
+   */
+  prepare(label: string, patch?: string, opts?: { afterSetup?: boolean }): Promise<StepDir>;
+  /** Remove a step dir (kept with `keep`). */
+  cleanup(dir: string): Promise<void>;
+}
+
+/** Step dirs for validation and witness replays; each is removed by an exit hook if a hard exit skips cleanup(). */
+export function taskWorlds(o: TaskWorldsOpts): TaskWorlds {
+  const { task, ops, env } = o;
+  const setupTimeout = o.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS;
+  const checkpoint = () => o.signal?.throwIfAborted();
+  const forgetOnExit = new Map<string, () => void>();
+  const removeDir = async (dir: string) => {
+    await rmrf(dir);
+    forgetOnExit.get(dir)?.();
+    forgetOnExit.delete(dir);
+  };
+  const setupIn = (dir: string) =>
+    runSetup(dir, task, env, setupTimeout).finally(async () => {
+      if (o.signal?.aborted && !o.keep) await removeDir(dir);
+    });
+  return {
+    async prepare(label, patch, opts = {}) {
+      checkpoint();
+      const dir = await mkdtemp(join(o.workRoot, `${label.replace(/[^a-z0-9]+/gi, "-").slice(0, 40)}-`));
+      if (!o.keep) forgetOnExit.set(dir, removeOnExit(dir));
+      try {
+        await ops.materialize({ root: task.start.repoRoot, head: task.start.head, snapshot: task.start.snapshot }, dir);
+      } catch (e) {
+        await removeDir(dir);
+        throw e;
+      }
+      const apply = async (): Promise<StepDir | undefined> => {
+        if (patch === undefined) return undefined;
+        const a = await applyPatch(dir, patch);
+        return a.ok ? undefined : { dir, applied: false, setup: { ok: false, error: `patch did not apply: ${a.error}`, out: "" } };
+      };
+      if (!opts.afterSetup) {
+        const failed = await apply();
+        if (failed) return failed;
+      }
+      const setup = await setupIn(dir);
+      checkpoint();
+      if (opts.afterSetup && setup.ok) {
+        const failed = await apply();
+        if (failed) return failed;
+      }
+      return { dir, applied: true, setup };
+    },
+    async cleanup(dir) {
+      if (!o.keep) await removeDir(dir);
+    },
+  };
+}
+
 export async function validateTask(opts: ValidateOpts): Promise<ValidationOutcome> {
   // Every command spawned below is killed on abort.
   return withAbortSignal(opts.signal, () => validateTaskInner(opts));
@@ -224,7 +305,6 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
   const k = Math.max(1, opts.k ?? 5);
   const ops = await snapshotOps(opts.git);
   const env = commandEnv(opts.env);
-  const setupTimeout = opts.setupTimeoutMs ?? DEFAULT_SETUP_TIMEOUT_MS;
   const steps: StepResult[] = [];
   const errors: string[] = [];
   const notes: string[] = [];
@@ -240,37 +320,7 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
   if (!task.verifier.command.trim()) errors.push("task has no verifier command");
   if (!refPatch) errors.push("task has no reference patch; cannot check that the verifier can pass");
 
-  /** Dirs prepare() made, each removed by the exit hook if a hard exit skips cleanup(). */
-  const forgetOnExit = new Map<string, () => void>();
-  const removeDir = async (dir: string) => {
-    await rmrf(dir);
-    forgetOnExit.get(dir)?.();
-    forgetOnExit.delete(dir);
-  };
-  /** Fresh dir at the start state, optionally patched, set up. */
-  const prepare = async (label: string, patch?: string): Promise<{ dir: string; applied: boolean; setup: { ok: boolean; error?: string; out: string } }> => {
-    checkpoint();
-    const dir = await mkdtemp(join(opts.workRoot, `${label.replace(/[^a-z0-9]+/gi, "-").slice(0, 40)}-`));
-    if (!opts.keep) forgetOnExit.set(dir, removeOnExit(dir));
-    try {
-      await ops.materialize({ root: task.start.repoRoot, head: task.start.head, snapshot: task.start.snapshot }, dir);
-    } catch (e) {
-      await removeDir(dir);
-      throw e;
-    }
-    if (patch !== undefined) {
-      const a = await applyPatch(dir, patch);
-      if (!a.ok) return { dir, applied: false, setup: { ok: false, error: `patch did not apply: ${a.error}`, out: "" } };
-    }
-    const setup = await runSetup(dir, task, env, setupTimeout).finally(async () => {
-      if (opts.signal?.aborted && !opts.keep) await removeDir(dir);
-    });
-    checkpoint();
-    return { dir, applied: true, setup };
-  };
-  const cleanup = async (dir: string) => {
-    if (!opts.keep) await removeDir(dir);
-  };
+  const { prepare, cleanup } = taskWorlds({ task, workRoot: opts.workRoot, ops, env, setupTimeoutMs: opts.setupTimeoutMs, keep: opts.keep, signal: opts.signal });
   const verifyStep = async (
     kind: StepKind,
     label: string,
@@ -290,7 +340,7 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
       exitCode: r.exitCode,
       timedOut: r.timedOut,
       durationMs: r.durationMs,
-      outputTail: tail(r),
+      outputTail: execTail(r),
     };
     record(s);
     return s;
@@ -483,7 +533,7 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
             }
             const r = await sh(command, { cwd: p.dir, env: suiteEnv, timeoutMs, tailBytes: SUITE_OUTPUT_BYTES });
             checkpoint();
-            record({ kind: "pass-to-pass", label, applied: true, setupOk: true, pass: r.exitCode === 0 && !r.timedOut, exitCode: r.exitCode, timedOut: r.timedOut, durationMs: r.durationMs, outputTail: tail(r) });
+            record({ kind: "pass-to-pass", label, applied: true, setupOk: true, pass: r.exitCode === 0 && !r.timedOut, exitCode: r.exitCode, timedOut: r.timedOut, durationMs: r.durationMs, outputTail: execTail(r) });
             if (r.timedOut) notes.push(`pass-to-pass: ${label} timed out after ${timeoutMs}ms`);
             runs.push({ exitCode: r.exitCode, timedOut: r.timedOut, output: await relativizeOutput(`${r.stdoutTail}\n${r.stderrTail}`, p.dir) });
           } finally {
