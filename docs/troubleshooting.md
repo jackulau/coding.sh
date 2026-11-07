@@ -193,7 +193,7 @@ The command ran and something failed.
 | `unsupported_gateway` | `--gateway can route through vercel, openrouter, litellm, ramp; got "helicone"` | Pick one of those; other gateways are detect and enrich only. |
 | `missing_key` | `--gateway needs an AI Gateway key in $AI_GATEWAY_API_KEY` (or `--gateway openrouter needs a key in $OPENROUTER_API_KEY`) | Export the named variable, or set `[gateway] apiKeyEnv` / `[gateway.<name>] apiKeyEnv`. |
 | `missing_api_key` | `Driver model:anthropic/claude-sonnet-5 needs $ANTHROPIC_API_KEY` | Export the variable it names. |
-| `invalid_file` | `Couldn't import cases.csv: …` | Fix the file. Datasets accept JSONL, JSON and CSV. |
+| `invalid_file` | `Couldn't import cases.csv: …`, `2 problems in labels labels.jsonl` (refine score) | Fix the file. Datasets accept JSONL, JSON and CSV. refine score prints each problem with its line number. |
 | `invalid_config` | `Can't read config: …`, `Invalid serve configuration: …` (exit 2) | Fix the file or variable named in the message. See [Configuration](reference/config.md). |
 | `no_config` | `No coding.sh.toml found in … or its parents` | `coding.sh toolevals init --cli <bin>` |
 | `surface_failed` | `Couldn't read the gh surface: …` | The CLI or MCP server could not be started or listed. Run it by hand to see why. |

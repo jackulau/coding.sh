@@ -1796,12 +1796,14 @@ coding.sh refine <action>
 | [`run`](#codingsh-refine-run) | Loop: propose (or take --candidate), test, apply when kept; stop at --rounds, --max-cost or a plateau |
 | [`protected`](#codingsh-refine-protected) | List the harness lines an edit may not delete, reword or relax |
 | [`check`](#codingsh-refine-check) | Check a harness edit for deleted, reworded or relaxed protected lines; exit 1 when it has any |
+| [`score`](#codingsh-refine-score) | Score diagnoses against human labels: occurrence, Signal and session precision and recall, coverage, repeat agreement |
 
 - A protected line is inside a &lt;!-- coding.sh:protect --&gt; … &lt;!-- coding.sh:protect end --&gt; block, matches a [refine] protect regex, or pairs a gate word (never, don't, must not, only, before, ask, confirm, verify, check, require) with a safety topic (credentials, secrets, access tokens, private keys, .env, prod, deploy, push, --force, force-push, destructive, --no-verify, rm -rf, delete, drop table, reset --hard, migrations, permissions, sudo, chmod, payments, PII, another user, owner, dry-run, backups). Set [refine] autoProtect = false in your user config to keep only markers and patterns.
 - check rejects an edit that deletes or rewords a protected line (protected-line), or adds a line that waives one (skip, no need, only … when, unless, without asking, already verified …) and shares a backticked token, a word or a safety topic with it (relaxes-protected).
 - exp ab runs the same check on its arms and warns; with --gate a protected-line problem fails the run.
 - test decides each candidate in stages: the protected-line check, the harmless and duplicate critics on the added lines, an A/B against your current files on the decision points exp ab mines (the acceptance gate: ship goes on, hold is inconclusive, don't ship rejects), then the guard set: the decision points earlier kept edits won must not go from solved to unsolved. A run stopped at --max-cost is inconclusive.
 - The ledger and every tested candidate's files live under the data dir (refine/&lt;repo&gt;-&lt;hash&gt;/). Rejected candidates and their reasons go into the next proposal prompt; protected lines go in as READ-ONLY.
+- score matches by code, never a model: a prediction matches a label in the same session with the same component (type, and name compared after Unicode, case, camelCase and separator normalization) whose top-3 type ids share one id, under a maximum one-to-one matching. Unmatched items count against precision or recall; a rate with nothing to divide by prints —. Without --pred, each diagnosed session flag is a prediction with no component, so it matches on session and type ids alone, and per-flag precision is reported. score writes nothing.
 
 ### `coding.sh refine propose`
 
@@ -2000,6 +2002,28 @@ coding.sh refine check
 coding.sh refine check --b ./drafts/AGENTS.md
 coding.sh refine check --a git:main --b . --json
 coding.sh refine check --allow-protected-edit AGENTS.md:12
+```
+
+### `coding.sh refine score`
+
+Score diagnoses against human labels: occurrence, Signal and session precision and recall, coverage, repeat agreement.
+
+```text
+coding.sh refine score <LABELS> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `labels` | yes | Labels JSONL: one occurrence per line, {sessionId, signalId, component: {type, name}, typeIds: [1-3 ids], nature?}; a line with only sessionId marks a session with nothing found. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--pred <FILE>` |  | Predictions in the labels format (repeatable; 2 or more adds repeat agreement). Default: the labelled sessions' flags from the store. |
+
+```sh
+coding.sh refine score labels.jsonl --pred diagnoses.jsonl
+coding.sh refine score labels.jsonl --pred run1.jsonl --pred run2.jsonl --pred run3.jsonl --json
+coding.sh refine score labels.jsonl
 ```
 
 ## `coding.sh gateway`

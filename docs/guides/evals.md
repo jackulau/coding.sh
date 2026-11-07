@@ -996,6 +996,71 @@ whole loop, proposer calls included), when the plateau detector says stop, or on
 when it applied an edit. `refine run --dry-run` shows the findings, the decision points, the guard
 size and the cost of one round.
 
+### Scoring diagnoses
+
+`coding.sh refine score` checks diagnoses against labels you wrote by hand. Code does every match;
+no model is called. It writes nothing.
+
+```sh
+$ coding.sh refine score labels.jsonl --pred run1.jsonl --pred run2.jsonl
+Labels: labels.jsonl, 3 occurrences in 2 Signals over 4 sessions
+
+run1.jsonl (3 predictions)
+  occurrences P 66.7% (2/3)  R 66.7% (2/3)  F1 66.7%
+  signals     P 50.0% (1/2)  R 50.0% (1/2)  F1 50.0%
+  sessions    P 66.7% (2/3)  R 66.7% (2/3)  F1 66.7%
+  coverage    >=1 matched 50.0% (1/2)  >=half matched 50.0% (1/2) of labelled Signals
+  recall      out 0.0% (0/1), tool 100.0% (2/2)
+
+run2.jsonl (2 predictions)
+  ...
+
+repeat agreement 25.0% (2 runs, 1 pair, 4 sessions)
+```
+
+**Labels.** One JSON object per line: an occurrence of a problem in one session.
+
+```json
+{"sessionId": "s1", "signalId": "edit-miss", "component": {"type": "tool", "name": "Edit"}, "typeIds": ["tool.invalid-args"], "nature": "defect"}
+{"sessionId": "s4"}
+```
+
+`signalId` groups occurrences that one fix would address; a Signal can span sessions. The component
+type is `agent`, `subagent`, `tool`, `model`, `runtime` or `harness`. `typeIds` holds 1 to 3 ids
+from the diagnostic taxonomy (`src/refine/taxonomy.ts`), best first. `nature` is optional and must
+be one the first type allows. A line with only `sessionId` marks a session you reviewed and found
+nothing in. An unknown id, component type or nature fails the run with its line number (exit 1).
+Prediction files use the same format.
+
+**Matching.** A prediction matches a label when both are in the same session, the component types
+are equal, the component names are equal after normalization (Unicode NFKC, camelCase and digit
+boundaries split, lowercase, runs of `-_./` and spaces become `-`, so `createPayment`,
+`create_payment` and `Create Payment` are one name), and their first three type ids share at least
+one id. The matching is a maximum one-to-one matching, so input order does not change the result.
+An unmatched prediction counts against precision and an unmatched label against recall.
+Predictions in sessions the labels do not name are left out and counted.
+
+**Metrics.** Each number comes with its counts.
+
+- **occurrences**: precision, recall and F1 over the matched pairs.
+- **signals**: Signal-to-Signal matching. Two Signals match when they share a component and a type
+  id. How many occurrences each has does not matter.
+- **sessions**: a session counts as positive when it has at least one occurrence.
+- **coverage**: labelled Signals with at least one matched occurrence, and with at least half of
+  them matched.
+- **recall** per family of the label's first type id.
+- **repeat agreement** (two or more `--pred` files): for each pair of runs, the share of labelled
+  sessions where both agree on whether the session has a problem, averaged over pairs.
+
+A rate with nothing to divide by prints `—` (`null` in `--json`, with the rate named in `empty`).
+
+**Flags.** Without `--pred`, the predictions are the session flags of the labelled sessions in the
+store, read through the taxonomy (`premature-completion` is `out.false-success` or
+`out.incomplete-result`). Context-only flags and tags are skipped. A flag names no component, so it
+matches a label in its session that shares a type id. The output adds precision per flag; each flag
+is matched on its own, so two flags can both be credited with one label. Labelled sessions missing
+from the store are left out with a warning.
+
 ## Skill triggers
 
 `coding.sh eval trigger <skill-dir>` checks that the agent loads a skill when it should and leaves

@@ -979,6 +979,13 @@ export const COMMANDS: CommandSpec[] = [
         ],
         examples: ["coding.sh refine check", "coding.sh refine check --b ./drafts/AGENTS.md", "coding.sh refine check --a git:main --b . --json", "coding.sh refine check --allow-protected-edit AGENTS.md:12"],
       },
+      {
+        name: "score",
+        summary: "Score diagnoses against human labels: occurrence, Signal and session precision and recall, coverage, repeat agreement",
+        args: [{ name: "labels", desc: "Labels JSONL: one occurrence per line, {sessionId, signalId, component: {type, name}, typeIds: [1-3 ids], nature?}; a line with only sessionId marks a session with nothing found", required: true }],
+        flags: [{ name: "pred", type: "list", value: "<FILE>", desc: "Predictions in the labels format (repeatable; 2 or more adds repeat agreement). Default: the labelled sessions' flags from the store" }],
+        examples: ["coding.sh refine score labels.jsonl --pred diagnoses.jsonl", "coding.sh refine score labels.jsonl --pred run1.jsonl --pred run2.jsonl --pred run3.jsonl --json", "coding.sh refine score labels.jsonl"],
+      },
     ],
     notes: [
       "A protected line is inside a <!-- coding.sh:protect --> … <!-- coding.sh:protect end --> block, matches a [refine] protect regex, or pairs a gate word (never, don't, must not, only, before, ask, confirm, verify, check, require) with a safety topic (credentials, secrets, access tokens, private keys, .env, prod, deploy, push, --force, force-push, destructive, --no-verify, rm -rf, delete, drop table, reset --hard, migrations, permissions, sudo, chmod, payments, PII, another user, owner, dry-run, backups). Set [refine] autoProtect = false in your user config to keep only markers and patterns.",
@@ -986,6 +993,7 @@ export const COMMANDS: CommandSpec[] = [
       "exp ab runs the same check on its arms and warns; with --gate a protected-line problem fails the run.",
       "test decides each candidate in stages: the protected-line check, the harmless and duplicate critics on the added lines, an A/B against your current files on the decision points exp ab mines (the acceptance gate: ship goes on, hold is inconclusive, don't ship rejects), then the guard set: the decision points earlier kept edits won must not go from solved to unsolved. A run stopped at --max-cost is inconclusive.",
       "The ledger and every tested candidate's files live under the data dir (refine/<repo>-<hash>/). Rejected candidates and their reasons go into the next proposal prompt; protected lines go in as READ-ONLY.",
+      "score matches by code, never a model: a prediction matches a label in the same session with the same component (type, and name compared after Unicode, case, camelCase and separator normalization) whose top-3 type ids share one id, under a maximum one-to-one matching. Unmatched items count against precision or recall; a rate with nothing to divide by prints —. Without --pred, each diagnosed session flag is a prediction with no component, so it matches on session and type ids alone, and per-flag precision is reported. score writes nothing.",
     ],
     load: () => import("./commands/refine.ts"),
   },

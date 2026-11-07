@@ -2,7 +2,8 @@
 // reword or relax (src/refine/protect.ts). `check` runs the two critics on an
 // edit (default: git HEAD vs your uncommitted edits) and exits 1 when the edit
 // drops or waives a protected line. `exp ab` runs the same check on its arms.
-// The loop (propose, test, apply, rollback, log, run) is in refine-loop.ts.
+// The loop (propose, test, apply, rollback, log, run) is in refine-loop.ts,
+// `score` (diagnoses against human labels) in refine-score.ts.
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { Context } from "../../core/context.ts";
@@ -30,6 +31,7 @@ const LOOP = new Set(["propose", "test", "apply", "rollback", "log", "run"]);
 
 export async function run(c: CommandContext): Promise<number> {
   if (c.action && LOOP.has(c.action)) return (await import("./refine-loop.ts")).refineLoop(c);
+  if (c.action === "score") return (await import("./refine-score.ts")).refineScore(c);
   const { out } = c;
   const root = gitRoot(c.cwd);
   const repoRoot = root ?? c.cwd;

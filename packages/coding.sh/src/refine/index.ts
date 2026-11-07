@@ -9,3 +9,4 @@ export * from "./propose.ts";
 export * from "./critics.ts";
 export * from "./decide.ts";
 export * from "./ledger.ts";
+export * from "./match.ts";
