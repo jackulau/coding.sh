@@ -155,6 +155,7 @@ The command line was wrong. Nothing ran.
 | `invalid_driver` | (toolevals) `Unknown agent "…"` or a malformed driver | Use `agent:<id>[:model]` or `model:<provider>/<model>`. |
 | `invalid_arms` | (toolevals compare) a baseline or candidate that is not `<variant>@<driver>` | Use arm names from the experiment. |
 | `unsupported_target` | `compress works on MCP targets; gh is cli` | Run `compress` on an MCP target. |
+| `no_control` | `A continuation task needs a control arm: …` (exp run) | Run the recorded config as A and your change as B (`--arm control=… --arm cand=…`), or use `coding.sh exp ab`. `--no-control` runs it alone, without a noise floor. |
 
 ### Errors (exit 1)
 
@@ -193,7 +194,8 @@ The command ran and something failed.
 | `no_config` | `No coding.sh.toml found in … or its parents` | `coding.sh toolevals init --cli <bin>` |
 | `surface_failed` | `Couldn't read the gh surface: …` | The CLI or MCP server could not be started or listed. Run it by hand to see why. |
 | `invalid_definition` | `bench/answers.toml: …` | Fix the benchmark file. |
-| `invalid_cases` / `no_cases` | `Can't read cases from …`, `No cases in …` | Check the workflow's cases directory. |
+| `invalid_cases` / `no_cases` | `Can't read cases from …`, `No cases in …`, `No decision points in sessions since 14d` (exp ab, exit 2) | Check the workflow's cases directory. For `exp ab`, look further back (`--since 30d`) or in every repo (`--repo all`); the message lists what each behavior found. |
+| `over_budget` | `Estimated cost $3.10 is over --max-cost $1.00` (exp ab) | Test fewer decision points (`--limit`), or raise `--max-cost`. A run that passes the cap partway stops and can be resumed. |
 | `missing_script` | `Run … has no captured script` | The workflow run can't be replayed. |
 | `unsupported_truth` | `Case … is graded by a judge; the CLI scores seeded-bugs and verifier cases only` | Score it in the viewer. |
 | `cost_confirmation_required` | `Estimated cost $7.20 exceeds confirmAboveUsd $5.00` | With `--json` this is `{"status":"action_required",…}`. Re-run with `--yes`, or raise `[toolevals] confirmAboveUsd`. |

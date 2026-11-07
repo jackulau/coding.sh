@@ -232,3 +232,10 @@ jobs:
       - name: Harness compare with real agents
         if: runner.os == 'Linux'
         run: node scripts/e2e/compare-capture.mjs
+
+      # exp ab on real Claude Code sessions that claim done without testing: mines the decision
+      # points, replays the next turn with the committed and the edited CLAUDE.md, and checks the
+      # verdict, the noise floor, the cost cap, the cache and --watch.
+      - name: exp ab on real Claude Code sessions
+        if: runner.os == 'Linux'
+        run: node scripts/e2e/exp-ab-capture.mjs

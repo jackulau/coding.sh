@@ -627,6 +627,7 @@ coding.sh exp <action>
 
 | Action | What it does |
 |---|---|
+| [`ab`](#codingsh-exp-ab) | A/B a CLAUDE.md, AGENTS.md, rule or skill edit on the decision points your agent recently got wrong |
 | [`run`](#codingsh-exp-run) | Run an experiment, or two tasks as one interleaved A/B |
 | [`compare`](#codingsh-exp-compare) | Compare two experiments case by case |
 | [`aa`](#codingsh-exp-aa) | Run one config twice (A/A) and store its run-to-run noise |
@@ -635,6 +636,54 @@ coding.sh exp <action>
 | [`show`](#codingsh-exp-show) | Show a stored experiment: pass rate, graders and failures |
 | [`list`](#codingsh-exp-list) | List experiments |
 | [`status`](#codingsh-exp-status) | Progress, ETA and cost so far of long runs (exp, compare, bench, workflows), and how to resume them |
+
+### `coding.sh exp ab`
+
+A/B a CLAUDE.md, AGENTS.md, rule or skill edit on the decision points your agent recently got wrong.
+
+```text
+coding.sh exp ab [spec] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `spec` | no | JSON file with the same fields as the options (behavior, since, a, b, model, …); options override it. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--a <FILE|DIR|git:REV|BUNDLE|none>` |  | Baseline harness (default: git HEAD when B is omitted, else the repo's current files) |
+| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | Candidate harness; a file replaces the file of the same path in A (default: your uncommitted edits) |
+| `--behavior <ID[,ID]>` |  | Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all) Repeatable. |
+| `--anchor <FILE>` |  | Module exporting your own anchor(s) (see the evals guide) Repeatable. |
+| `--since <DURATION|DATE>` | `14d` | Sessions started since. |
+| `--agent <AGENT>` |  | Only sessions of this agent. Repeatable. |
+| `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
+| `-n, --limit <N>` | `40` | Maximum decision points. |
+| `--provider <NAME>` | `anthropic` | API that answers the next turn and judges it. One of: `anthropic`, `openai`, `openai-compatible`. |
+| `--model <MODEL>` |  | Model for the next turn (default: the sessions' most used model) |
+| `--judge-model <MODEL>` |  | Model for the judge (default: --model) |
+| `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
+| `--trials <N>` | `1` | Next turns per case and arm. |
+| `-c, --concurrency <N>` | `4` | Parallel model calls. |
+| `--max-cost <USD>` |  | Refuse to start when the estimate is over this, and stop once the spend passes it. |
+| `--dry-run` |  | Show the decision points and the cost estimate; make no model calls. |
+| `--watch` |  | Rerun when B's files change, one line per run; Ctrl-C to stop. |
+| `--cache` | `true` | Reuse stored model responses (--no-cache to ask the model again) |
+| `--name <NAME>` |  | Experiment name (default: the dataset's) |
+| `--gate` |  | Ship-or-hold decision: exit 0 when B wins enough without breaking what A solved, 1 otherwise. |
+| `--lambda <N>` | `2` | With --gate: what breaking one solved item costs, in fixed items. |
+| `--gate-alpha <A>` | `0.05` | With --gate: one-sided significance level. |
+| `--tau <T>` | `0.10` | With --gate: largest share of solved items B may break. |
+| `--resume [<ID>]` |  | Continue an interrupted A/B: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
+
+```sh
+coding.sh exp ab
+coding.sh exp ab --b ./drafts/CLAUDE.md --behavior unverified-claim
+coding.sh exp ab --a git:main --b . --since 30d --dry-run
+coding.sh exp ab --watch
+```
 
 ### `coding.sh exp run`
 
@@ -662,6 +711,7 @@ coding.sh exp run [spec] [options]
 | `--looks <N>` | `4` | With --stop-early: planned looks over the case budget. |
 | `--max-cases <N>` |  | With --arm: run at most N cases (a random subset) |
 | `--seed <N>` |  | With --arm: seed for the case and arm order (default random, recorded) |
+| `--control` | `true` | A continuation task needs a control arm (A, the recorded config) to measure replay noise; --no-control runs one task alone and marks the result. |
 | `--resume [<ID>]` |  | Continue an interrupted experiment: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |

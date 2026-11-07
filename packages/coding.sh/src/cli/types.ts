@@ -20,6 +20,11 @@ export interface CommandContext {
    * every other command (absent: use `signal`).
    */
   drain?: AbortSignal;
+  /**
+   * The exit code main() returns after an interrupt, instead of 130/143/129.
+   * For commands that run until stopped (`exp ab --watch`): Ctrl-C is how they end.
+   */
+  interruptExit?: (code: number) => void;
   /** The command line as given (after the binary), when run from main(). */
   argv?: readonly string[];
 }

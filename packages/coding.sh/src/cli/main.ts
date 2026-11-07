@@ -283,12 +283,14 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
     const graceful = (action ? action.graceful : cmd.graceful) === true;
     const drainer = graceful ? new AbortController() : controller;
     let stopCode = 0;
+    // Set by a command that runs until stopped: the exit code after an interrupt.
+    let stopExit: number | undefined;
     const onStop = (sig: NodeJS.Signals) => {
       if (controller.signal.aborted) process.exit(SIGNAL_EXIT[sig] ?? stopCode);
       stopCode = SIGNAL_EXIT[sig] ?? 130;
       if (graceful && sig === "SIGINT" && !drainer.signal.aborted) {
         drainer.abort();
-        process.stderr.write("\nFinishing the trials in flight; finished trials are saved. Press Ctrl-C again to stop them now.\n");
+        if (stopExit === undefined) process.stderr.write("\nFinishing the trials in flight; finished trials are saved. Press Ctrl-C again to stop them now.\n");
         return;
       }
       drainer.abort();
@@ -312,14 +314,17 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
           debug: globals.debug,
           signal: controller.signal,
           drain: drainer.signal,
+          interruptExit: (code) => {
+            stopExit = code;
+          },
           argv,
         });
       } catch (e) {
         // A command cut short by the abort may throw (AbortError, a killed step); that is the interrupt, not a failure.
-        if (handle && stopCode) return stopCode;
+        if (handle && stopCode) return stopExit ?? stopCode;
         throw e;
       }
-      if (handle && stopCode) return stopCode;
+      if (handle && stopCode) return stopExit ?? stopCode;
       await updateNotice(env, out, cmd.name);
       return code ?? 0;
     } finally {

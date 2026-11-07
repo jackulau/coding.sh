@@ -101,6 +101,7 @@ export const DOC_GROUPS: DocGroup[] = [
   {
     label: "How-to",
     pages: [
+      { path: "/docs/how-to/test-claude-md-change", label: "Test a CLAUDE.md change", title: "Test a CLAUDE.md change in five minutes", summary: "Replay the moments your agent went wrong with your committed CLAUDE.md and with your edit, and get a ship-or-hold verdict before you commit." },
       { path: "/docs/how-to/compare-agents", label: "Compare two agents", title: "Compare two agents on your repo", summary: "Turn a real task into a checked eval, snapshot two agent setups, and run both on it with a paired comparison." },
       { path: "/docs/how-to/ci-regressions", label: "Catch regressions in CI", title: "Catch a regression in CI", summary: "Run the same eval on the base branch and the pull request in GitHub Actions, and fail the job when a case regresses." },
       { path: "/docs/how-to/expensive-sessions", label: "Find expensive sessions", title: "Find your most expensive sessions", summary: "Rank sessions by cost or tokens, break spend down by repo, agent and model, and see where cost data comes from." },

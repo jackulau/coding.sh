@@ -18,6 +18,7 @@ import { clusterMap, compareExperiments, type CompareOpts } from "../../experime
 import { MetricRunError, renderMetrics, runMetrics, type MetricArm } from "../../experiments/metrics.ts";
 import { runPairwise, summarizePairwise, type PairwiseSummary } from "../../experiments/pairwise.ts";
 import { renderAa, renderComparison, renderExperiment, renderPairwise, renderSweep } from "../../experiments/render.ts";
+import { replayNoise } from "../../experiments/continuation.ts";
 import { runExperiment } from "../../experiments/run.ts";
 import { runSweep, type SweepConfig } from "../../experiments/sweep.ts";
 import type { TaskSpec } from "../../experiments/task.ts";
@@ -50,7 +51,7 @@ function isObj(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
-interface LoadedSpec {
+export interface LoadedSpec {
   spec: ExpSpec;
   dataset: Dataset;
   graders: Grader[];
@@ -119,6 +120,14 @@ async function loadSpec(c: CommandContext, store: FileEvalStore, specFile: strin
 async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string | undefined): Promise<{ result: ExperimentResult; job: Job }> {
   const loaded = await loadSpec(c, store, specFile);
   const { spec, dataset, graders } = loaded;
+  // EM-19: a next-turn experiment without a control arm has no replay noise floor to read B against.
+  const continuation = (spec.task as { kind?: unknown }).kind === "continuation";
+  if (continuation && c.flags.control !== false) {
+    throw new UsageError("A continuation task needs a control arm: run the recorded config as A and your change as B in one run, or pass --no-control to run it alone", {
+      reason: "no_control",
+      suggestion: "coding.sh exp run --arm control=recorded.json --arm cand=cand.json …",
+    });
+  }
   const config = specConfig(c, loaded, { task: taskFingerprint(spec.task, c.cwd) });
   const job = await openJob(c, { kind: "exp run", name: loaded.name, config, newId: () => sortableId("exp_"), concurrency: spec.concurrency ?? 4 });
   const spin = c.out.spin(`Running ${dataset.name}…`);
@@ -133,6 +142,7 @@ async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string
         ...(spec.trials ? { trials: spec.trials } : {}),
         ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
         ...(spec.split ? { split: spec.split } : {}),
+        ...(continuation ? { metadata: { control: "skipped" } } : {}),
         store,
         signal: c.signal,
         ...durable(c, job),
@@ -279,7 +289,7 @@ async function pairwiseCompare(
 }
 
 /** Run two tasks as one interleaved A/B (exp run --arm, exp aa). */
-async function runArms(
+export async function runArms(
   c: CommandContext,
   store: FileEvalStore,
   loaded: LoadedSpec,
@@ -324,7 +334,7 @@ async function runArms(
   return { result, job };
 }
 
-function cancelledWarning(c: CommandContext, result: ExperimentResult): void {
+export function cancelledWarning(c: CommandContext, result: ExperimentResult): void {
   const kept = result.runs.length ? `with the ${plural(result.runs.length, "case run")} that finished` : "with no finished case runs";
   c.out.warn(`Cancelled: stored ${result.id} as cancelled ${kept}; exp compare refuses it unless --force. See it with: coding.sh exp show ${result.id}`);
 }
@@ -443,6 +453,10 @@ export async function run(c: CommandContext): Promise<number> {
   return withContext(c, async (ctx) => {
     const store = new FileEvalStore({ env, index: ctx.index });
     switch (c.action) {
+      case "ab": {
+        const { expAb } = await import("./exp-ab.ts");
+        return expAb(c, store, ctx);
+      }
       case "run": {
         const armFlags = list(c.flags.arm);
         const stopEarly = c.flags["stop-early"] === true;
@@ -465,7 +479,9 @@ export async function run(c: CommandContext): Promise<number> {
             ...(stopEarly ? { stopEarly: looks !== undefined ? { looks } : true } : {}),
           });
           const cancelled = ab.a.status === "cancelled";
-          const cmp = compareExperiments(ab.a, ab.b, { force: true });
+          // Continuation arms: A is the control, so its divergence from the recorded turns is the replay noise floor.
+          const replay = ab.a.task.kind === "continuation" ? replayNoise(ab.a, new Map(loaded.dataset.cases.map((x) => [x.id, x]))) : undefined;
+          const cmp = compareExperiments(ab.a, ab.b, { force: true, ...(replay ? { replay } : {}) });
           if (out.json) {
             out.data({ outcome: cancelled ? "cancelled" : "completed", pair: { id: ab.pairId, seed: ab.seed }, experiments: [ab.a, ab.b], comparison: cmp, ...(ab.sequential ? { sequential: ab.sequential } : {}), ...resumeField(job) });
           } else {
@@ -537,6 +553,12 @@ export async function run(c: CommandContext): Promise<number> {
         if (noise) opts.noise = noise;
         const verifiers = await verifierAudits(store, a!, b!);
         if (verifiers.size) opts.verifiers = verifiers;
+        // A next-turn A/B: A is the control arm, and its divergence from the recorded turns is the replay noise floor.
+        if (a!.task.kind === "continuation" && a!.metadata?.control !== "skipped") {
+          const ds = await store.getDataset(a!.dataset.id, a!.dataset.version);
+          const replay = ds ? replayNoise(a!, new Map(ds.cases.map((x) => [x.id, x]))) : undefined;
+          if (replay) opts.replay = replay;
+        }
         const cmp = compareExperiments(a!, b!, opts);
         const pw = pairSpec ? await pairwiseCompare(c, store, a!, b!, pairSpec, labelsFile, opts.cluster) : undefined;
         if (out.json) {

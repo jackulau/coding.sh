@@ -419,6 +419,99 @@ finished runs reach the cap (agent plus grader cost), no new run starts. Runs al
 so the total can pass the cap by what the runs in flight cost. The compare then covers the runs that
 finished. Runs that report no cost count as $0 and are listed as such. `--json` carries `budget`.
 
+## A/B a harness edit on your own sessions
+
+`coding.sh compare` needs eval tasks with verifiers. Often you don't have those yet. You have a
+CLAUDE.md line you think will help, and a week of sessions where the agent did the thing that line
+is meant to stop. `coding.sh exp ab` tests the line on those sessions:
+
+```sh
+$ echo "After changing code, run the tests before you say you are done." >> CLAUDE.md
+$ coding.sh exp ab
+A: git:HEAD   B: your edits   model: claude-sonnet-4-5
+12 decision points from 9 sessions | A 2/12 -> B 9/12 | fixed 7, broke 0 | paired p=0.016 | $0.41, 0/24 cached
+Hold: not enough evidence (B wins 7, loses 0; needs 8+ wins with no losses)
+Replay noise floor 8% (A's turn differs from the recorded one in 1/12); B moved +58 points, above it
+
+Fixed (A failed, B passed):
+  unverified-claim "The date picker drops the timezone. Fix it."  coding.sh show 3f9c2a1e
+  ...
+Full comparison: coding.sh exp compare exp_… exp_…
+```
+
+It works in three steps.
+
+**Find the decision points.** It reads your recent sessions (`--since`, default 14 days) in this
+repo (`--repo`, default the git root; `--repo all` for every repo) and looks for moments where the
+agent tends to go wrong. Three are built in, and `--behavior` picks among them:
+`unverified-claim` (it changed code, then said it was done without running anything),
+`done-while-failing` (it ended the turn while its last test run was failing) and `unchanged-retry`
+(it ran a failed command again unchanged). Each one becomes a case: the session frozen just before
+that turn, plus a rubric for what a good next turn looks like. Sessions from eval runs and
+subagents are skipped, and so are turns right after a context compaction. At most 2 cases come from
+one session, and 40 overall (`--limit`).
+
+**Replay the next turn twice.** For each case it asks the model for the next turn once with A's
+harness files and once with B's. CLAUDE.md and AGENTS.md go in the way Claude Code injects them, a
+path-scoped rule only when the session had touched a matching file, and a skill as a one-line
+listing unless the session opened it. The model gets the tools the session used, plus a shell. Only
+one turn is generated: nothing runs in your repo.
+
+**Judge both turns.** An LLM judge scores each turn against the case's rubric. A turn passes at
+0.8. The judge sees only the turn, never which arm wrote it.
+
+By default A is your last commit (`git:HEAD`) and B is your working tree, so the usual loop is: edit
+CLAUDE.md, run `coding.sh exp ab`, keep or revert. `--a` and `--b` take a file (it replaces the file
+of the same path in A), a directory, `git:<rev>`, a harness bundle, or `none`. It errors when the
+two arms have the same files, so a typo'd path can't produce a "no difference" result.
+
+The headline counts the cases each arm passed, and which ones flipped. The second line is the same
+ship gate as `compare --gate`, with the same settings (`--lambda`, `--gate-alpha`, `--tau`). With
+`--gate`, the exit code follows it: 0 only for "Ship it". When B adds or removes one instruction
+item, the one-item gate line appears too, scored only on the cases where that item would have been
+in the agent's context.
+
+**The noise floor.** A is the control arm. A replayed turn won't match what the agent did at the
+time, even with the same files: a different model version, a missing system prompt and plain
+sampling all move it. So `exp ab` also counts how often A's turn differs from the one recorded in
+the session. That rate, with its Wilson interval, is the noise floor. When B moves fewer points than
+that, the line says the difference may be replay noise. This is the control-arm requirement in
+[experimentation-methods.md](../research/experimentation-methods.md) (EM-19). It is also why
+absolute pass rates mean little here. Read the difference between A and B, not either number on
+its own.
+
+**Cost.** Before it runs, `--dry-run` prints the cases and an estimate: model calls, judge calls,
+input tokens and dollars. `--max-cost 2` refuses to start when the estimate is over $2, and stops
+the run if the spend passes it. A stopped or interrupted run keeps its finished trials, and
+`--resume` picks up the rest. Responses and verdicts are cached under the data directory, so a rerun
+with unchanged files makes no calls and costs nothing. Only an edited arm is asked again.
+`--no-cache` asks the model again anyway, and `--trials 3` asks each case three times.
+
+**Watch mode.** `coding.sh exp ab --watch` runs once, then reruns whenever B's files change and
+prints one line per run:
+
+```text
+14:02:11  A 2/12 -> B 9/12 | fixed 7, broke 0 | Hold | $0.41, 24 new calls
+14:05:40  A 2/12 -> B 11/12 | fixed 9, broke 0 | Ship it | $0.19, 12 new calls
+```
+
+Only B's calls are new: A's answers come from the cache. Ctrl-C stops it.
+
+The model defaults to the one your sessions used most, and the API to Anthropic's (`--provider
+openai` or `openai-compatible`, with `--base-url` for a local or proxied endpoint). `--json` gives
+the comparison, the fixed and broken cases, the per-behavior counts, the cost and the cache hits.
+
+**Your own decision points.** `--anchor ./anchors.mjs` loads a module whose default export is an
+anchor, or an array of them: `{ id, version, frame, behavior, rubric, find(events) }`. `find` gets a
+session's events in time order and returns the cuts, each `{ cutBeforeEventId, evidenceEventIds }`.
+`frame` is `"action"`, `"failure"` or `"claim"`.
+
+**Building blocks.** The same pieces work without `exp ab`. A dataset of decision points is an
+ordinary dataset (named `dp-…`), and a `continuation` task replays a frozen session's next turn:
+`{"kind":"continuation","provider":"anthropic","model":"claude-sonnet-4-5","context":{"files":["CLAUDE.md"]}}`.
+`exp run` with a continuation task needs a control arm: run it as an A/B with `--arm`, or pass
+`--no-control` to run one arm alone, and the comparison then warns that it has no noise floor.
+
 ## Tool evals
 
 `coding.sh toolevals` measures how well agents use a CLI, MCP server or HTTP API: surface size,
