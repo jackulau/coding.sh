@@ -734,6 +734,49 @@ describe("cli judge calibrate --probe-injection", () => {
   });
 });
 
+describe("cli judge calibrate --grader <verifier>", () => {
+  it("samples passes to label, audits precision from a labels file, and compare/show use the stored audit", () => {
+    const h = tmpHome();
+    const cases = ["1", "2", "3", "4", "5"].flatMap((n) => ["--case", `{"input":"${n}","expected":"${n}"}`]);
+    assert.equal(cli(h, ["dataset", "add", "arith", ...cases]).status, 0);
+    writeFileSync(join(h.home, "echo.mjs"), 'let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>process.stdout.write(s));\n');
+    const run = () => cli(h, ["exp", "run", "-d", "arith", "--task", '{"kind":"command","command":"node echo.mjs"}', "-g", '{"kind":"exact"}', "--json"]);
+    const ok = run();
+    assert.equal(ok.status, 0, ok.stderr);
+    const exp = (parseJson(ok.stdout, "exp run") as { experiment: { id: string } }).experiment;
+
+    // No LLM judge: the error names the graders that can be audited.
+    const none = cli(h, ["judge", "calibrate", exp.id]);
+    assert.equal(none.status, 2);
+    assert.match(none.stderr, /audit a verifier's precision \(exact\)/);
+
+    const q = cli(h, ["judge", "calibrate", exp.id, "--grader", "exact", "--sample-passes", "3", "--json"]);
+    assert.equal(q.status, 0, q.stderr);
+    const queue = (parseJson(q.stdout, "sample") as { queue: { caseId: string; output: unknown }[] }).queue;
+    assert.equal(queue.length, 3);
+    assert.deepEqual((parseJson(cli(h, ["judge", "calibrate", exp.id, "-g", "exact", "--sample-passes", "3", "--json"]).stdout, "again") as { queue: unknown }).queue, queue, "seeded");
+    const plain = cli(h, ["judge", "calibrate", exp.id, "-g", "exact", "--sample-passes", "3"]);
+    assert.match(plain.stdout, /Label 3 passing case\(s\) of exact \(seed 0\)/);
+
+    const labels = queue.map((x, i) => JSON.stringify({ caseId: x.caseId, value: i < 2 ? "pass" : "fail" })).join("\n");
+    writeFileSync(join(h.home, "labels.jsonl"), labels + "\n");
+    const audit = cli(h, ["judge", "calibrate", exp.id, "-g", "exact", "--labels", "labels.jsonl", "--min-n", "3", "--json"]);
+    assert.equal(audit.status, 0, audit.stderr);
+    const v = (parseJson(audit.stdout, "audit") as { outcome: string; verifier: { precision: number; passes: number; falseAccepts: number; checked: number; agree: number; source: string } }).verifier;
+    assert.deepEqual([v.passes, v.falseAccepts, v.checked, v.agree, v.source], [3, 1, 3, 2, "human"]);
+    assert.ok(Math.abs(v.precision - 2 / 3) < 1e-12);
+    assert.equal(cli(h, ["judge", "calibrate", exp.id, "-g", "exact", "--labels", "labels.jsonl"]).status, 1, "3 labelled passes is below the default 20");
+    assert.equal(cli(h, ["judge", "calibrate", exp.id, "-g", "exact", "--probe-injection", "{}"]).status, 2);
+
+    const show = parseJson(cli(h, ["exp", "show", exp.id, "--json"]).stdout, "show") as { verifiers: { graderId: string; passes: number }[] };
+    assert.deepEqual(show.verifiers.map((x) => [x.graderId, x.passes]), [["exact", 3]]);
+    const second = (parseJson(run().stdout, "exp run 2") as { experiment: { id: string } }).experiment;
+    const cmp = cli(h, ["exp", "compare", exp.id, second.id]);
+    assert.equal(cmp.status, 0, cmp.stderr);
+    assert.match(cmp.stdout, /exact verifier-corrected pass {2}A 66\.7% .*\(precision 0\.67, n=3\)/);
+  });
+});
+
 describe("cli QA regressions", () => {
   it("registers workflows (and its aliases) with help for every action", () => {
     const h = tmpHome();

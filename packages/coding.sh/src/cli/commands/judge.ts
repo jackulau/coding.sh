@@ -2,22 +2,48 @@
 // verdicts (a grader in the experiment's runs) and human labels, reported on
 // a held-out split only (src/judge/calibrate.ts). --probe-injection re-judges
 // human-fail cases with a planted "respond pass" payload (src/judge/injection.ts).
+// A deterministic grader (--grader tests) gets a precision audit instead
+// (src/judge/verifier.ts), and --sample-passes prints the labelling queue for it.
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { FileEvalStore } from "../../datasets/store.ts";
-import type { Grader, JudgeVersion, Split } from "../../datasets/types.ts";
+import type { Grader, GraderInfo, JudgeVersion, Split } from "../../datasets/types.ts";
+import { asText } from "../../graders/builtin.ts";
 import { createGrader, type GraderSpec } from "../../graders/index.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
-import { calibrate, labelsFromCore, withCalibration, type JudgedCase } from "../../judge/calibrate.ts";
+import { calibrate, labelsFromCore, withCalibration, type HumanLabel, type JudgedCase } from "../../judge/calibrate.ts";
 import { CHECKLIST_KIND } from "../../judge/checklist.ts";
 import { humanFailCases, injectionProbe, type ProbeCase } from "../../judge/injection.ts";
 import { renderCalibration } from "../../judge/render.ts";
+import { auditVerifier, DEFAULT_MIN_PASSES, parseCaseLabels, renderVerifierAudit, samplePasses } from "../../judge/verifier.ts";
 import { positiveInt, UsageError } from "../args.ts";
-import { jsonArg, list, num, str, withContext } from "../common.ts";
+import { jsonArg, list, num, oneLine, str, withContext } from "../common.ts";
 import { CliError } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 const SPLITS = ["train", "dev", "test"];
 /** Human-fail cases the injection probe judges by default (each costs up to three judge calls). */
 const PROBE_MAX = 25;
+
+/** An LLM judge (calibrated against labels) rather than a deterministic verifier (audited against them). */
+const isJudge = (g: GraderInfo) => g.kind === "llm" || (g.kind === CHECKLIST_KIND && g.calibration !== undefined);
+
+/** --labels: a JSON array or JSONL rows of {"caseId","value"}. */
+async function readCaseLabels(file: string): Promise<HumanLabel[]> {
+  let text: string;
+  try {
+    text = await readFile(file, "utf8");
+  } catch {
+    throw new UsageError(`can't read --labels ${JSON.stringify(file)}`, { reason: "invalid_argument" });
+  }
+  try {
+    const t = text.trim();
+    const rows = t.startsWith("[") ? (JSON.parse(t) as unknown[]) : t.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l) as unknown);
+    return parseCaseLabels(rows);
+  } catch (e) {
+    throw new UsageError(`--labels ${file}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_argument" });
+  }
+}
 
 /** The judge to probe, rebuilt from its spec (the same JSON as `exp run --grader`). */
 async function probeJudge(c: CommandContext, specArg: string): Promise<Grader> {
@@ -45,24 +71,33 @@ export async function run(c: CommandContext): Promise<number> {
     if (!exp) throw new CliError(`Can't find experiment ${JSON.stringify(expId)}`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
 
     // LLM judges: kind "llm", and checklists that ask a model (an all-predicate checklist is deterministic and carries no calibration).
-    const llm = exp.graders.filter((g) => g.kind === "llm" || (g.kind === CHECKLIST_KIND && g.calibration !== undefined));
+    const llm = exp.graders.filter(isJudge);
     const graderId = str(c.flags.grader) ?? (llm.length === 1 ? llm[0]!.id : undefined);
     if (!graderId) {
-      throw new UsageError(llm.length ? `Experiment has ${llm.length} judge graders; pass --grader <ID> (${llm.map((g) => g.id).join(", ")})` : "Experiment has no LLM judge grader", { reason: "missing_argument" });
+      const all = exp.graders.map((g) => g.id).join(", ");
+      throw new UsageError(
+        llm.length ? `Experiment has ${llm.length} judge graders; pass --grader <ID> (${llm.map((g) => g.id).join(", ")})` : `Experiment has no LLM judge grader; pass --grader <ID> to audit a verifier's precision${all ? ` (${all})` : ""}`,
+        { reason: "missing_argument" },
+      );
     }
     const grader = exp.graders.find((g) => g.id === graderId);
     if (!grader) throw new UsageError(`Experiment has no grader ${JSON.stringify(graderId)}`);
+    const judge = isJudge(grader);
+    const sampleN = positiveInt(c.flags["sample-passes"], "sample-passes");
+    const probeSpec = str(c.flags["probe-injection"]);
+    if (!judge && probeSpec) throw new UsageError(`--probe-injection needs an LLM judge; ${grader.id} is a ${grader.kind} grader`, { reason: "invalid_argument" });
 
     const dataset = await store.getDataset(exp.dataset.id, exp.dataset.version);
     if (!dataset) throw new CliError(`Can't find dataset ${exp.dataset.id}@${exp.dataset.version}`, { reason: "not_found" });
 
-    const stored: JudgeVersion | undefined = await store.getJudge(grader.version);
+    // Only an LLM judge has tuning splits; a verifier never saw the labels, so every labelled case counts.
+    const stored: JudgeVersion | undefined = judge ? await store.getJudge(grader.version) : undefined;
     const tunedFlag = list(c.flags["tuned-on"]);
     for (const s of tunedFlag) if (!SPLITS.includes(s)) throw new UsageError(`--tuned-on must be one of ${SPLITS.join(", ")}, got ${JSON.stringify(s)}`);
-    if (!stored && !tunedFlag.length) {
+    if (judge && sampleN === undefined && !stored && !tunedFlag.length) {
       throw new UsageError(`Judge ${grader.version} is not stored, so its tuning splits are unknown. Pass --tuned-on <SPLIT> (e.g. --tuned-on dev)`, { reason: "missing_argument" });
     }
-    const tunedOn = (tunedFlag.length ? tunedFlag : stored!.tunedOn) as Split[];
+    const tunedOn = (tunedFlag.length ? tunedFlag : (stored?.tunedOn ?? [])) as Split[];
     const criterion = str(c.flags.criterion) ?? stored?.criterion;
 
     // Verdicts: first trial per case (one verdict per case; later trials are retries, not votes).
@@ -80,7 +115,57 @@ export async function run(c: CommandContext): Promise<number> {
     // Labels are on sessions; a case maps to its source session (or its own id).
     const caseBySession = new Map<string, string>();
     for (const cs of dataset.cases) caseBySession.set(cs.sourceSessionId ?? cs.id, cs.id);
-    const labels = labelsFromCore(await ctx.index.listLabels(criterion ? { criterion } : {}), (sid) => caseBySession.get(sid));
+    let labels = labelsFromCore(await ctx.index.listLabels(criterion ? { criterion } : {}), (sid) => caseBySession.get(sid));
+    // --labels rows replace stored labels for the cases they name.
+    const labelsFile = str(c.flags.labels);
+    if (labelsFile) {
+      const fromFile = await readCaseLabels(resolve(c.cwd, labelsFile));
+      const named = new Set(fromFile.map((l) => l.caseId));
+      labels = [...labels.filter((l) => !named.has(l.caseId)), ...fromFile];
+    }
+
+    if (sampleN !== undefined) {
+      const seed = num(c.flags.seed) ?? 0;
+      if (!(Number.isInteger(seed) && seed >= 0)) throw new UsageError(`--seed must be a non-negative integer, got ${JSON.stringify(c.flags.seed)}`);
+      const ids = samplePasses(verdicts, labels, sampleN, { ...(criterion ? { criterion } : {}), seed });
+      const byId = new Map(dataset.cases.map((cs) => [cs.id, cs]));
+      const outputOf = new Map<string, unknown>();
+      for (const r of [...exp.runs].sort((x, y) => x.trial - y.trial)) if (!outputOf.has(r.caseId)) outputOf.set(r.caseId, r.output);
+      const queue = ids.map((id) => {
+        const cs = byId.get(id);
+        return { caseId: id, ...(cs?.sourceSessionId ? { sessionId: cs.sourceSessionId } : {}), input: cs?.input, output: outputOf.get(id) };
+      });
+      if (out.json) {
+        out.data({ grader: { id: grader.id, version: grader.version, kind: grader.kind }, ...(criterion ? { criterion } : {}), seed, queue });
+      } else if (!queue.length) {
+        out.print(`No unlabelled passing cases for ${grader.id}`);
+      } else {
+        const lines = [`Label ${queue.length} passing case(s) of ${grader.id} (seed ${seed}): would you accept each output?`];
+        for (const q of queue) lines.push(`  ${q.caseId}${q.sessionId ? `  session ${q.sessionId}` : ""}  ${oneLine(asText(q.input), 50)} -> ${oneLine(asText(q.output), 70)}`);
+        lines.push("", 'Label sessions in the viewer, or write {"caseId":"…","value":"pass"|"fail"} rows to a JSONL file, then run:');
+        lines.push(`  coding.sh judge calibrate ${expId} --grader ${grader.id} --labels labels.jsonl`);
+        out.print(lines.join("\n"));
+      }
+      return 0;
+    }
+
+    if (!judge) {
+      const minN = num(c.flags["min-n"]);
+      const audit = auditVerifier({
+        graderId: grader.id,
+        graderVersion: grader.version,
+        experimentId: exp.id,
+        ...(criterion ? { criterion } : {}),
+        verdicts,
+        labels,
+        minPasses: minN ?? DEFAULT_MIN_PASSES,
+      });
+      // compare and show read the newest audit per grader version.
+      if (audit.precision !== undefined) await store.putVerifierAudit(audit);
+      if (out.json) out.data({ outcome: audit.precision !== undefined ? "audited" : "no_labels", verifier: audit });
+      else out.print(renderVerifierAudit(audit));
+      return audit.state === "audited" ? 0 : 1;
+    }
 
     const report = calibrate({
       judge: { id: grader.version, tunedOn, ...(criterion ? { criterion } : {}) },
@@ -93,7 +178,6 @@ export async function run(c: CommandContext): Promise<number> {
     });
     if (stored) await store.putJudge(withCalibration(stored, report));
 
-    const probeSpec = str(c.flags["probe-injection"]);
     if (probeSpec) {
       const judge = await probeJudge(c, probeSpec);
       if (judge.version !== grader.version) out.warn(`The probed judge is ${judge.version}, not the experiment's ${grader.version} (its prompt, model or rubric differ)`);

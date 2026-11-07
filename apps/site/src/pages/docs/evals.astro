@@ -233,6 +233,14 @@ const COMPARE = [
     The agent writes the text a judge grades, so judge prompts escape the data tags inside it (<code>&lt;/output&gt;</code> becomes
     <code>&lt;\/output&gt;</code>) and tell the model that everything inside them is untrusted. Citations still verify against the raw text.
   </p>
+  <p>
+    Test verifiers get the same check. A passing suite is not proof of a correct change, so <code>judge calibrate --grader tests</code> also
+    takes a <code>command</code> or other deterministic grader and measures its precision: how many of its passes a person would accept.
+    <code>--sample-passes 40</code> lists a seeded sample of unlabelled passes to label, and <code>--labels labels.jsonl</code> adds labels
+    from a file. The audit reports precision with a Wilson interval and the false accepts. A verifier never sees the labels, so no held-out
+    split is needed. After that, <code>exp show</code> and <code>exp compare</code> print the precision and a corrected
+    pass rate.
+  </p>
 
   <h2 id="repo-replay">Repo-replay tasks <Tag status="partial" /></h2>
   <p>

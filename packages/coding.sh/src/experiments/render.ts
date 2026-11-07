@@ -3,6 +3,7 @@
 // with "*" wherever they appear, including the overall pass rate they feed.
 import type { CalibrationStatus, ExperimentResult } from "../datasets/types.ts";
 import { calibrationBadge } from "../judge/render.ts";
+import { formatVerifierAudit, verifierCorrected, type VerifierAudit, type VerifierCorrection } from "../judge/verifier.ts";
 import type { RoganGladenResult } from "../stats/interval.ts";
 import type { SequentialOutcome } from "../stats/sequential.ts";
 import type { AaResult } from "./aa.ts";
@@ -41,12 +42,16 @@ export function failureReason(run: ExperimentResult["runs"][number]): string {
   return "";
 }
 
-export function renderExperiment(r: ExperimentResult, opts: RenderOpts): string {
+export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verifiers?: ReadonlyMap<string, VerifierAudit> }): string {
   const color = opts.color;
   const limit = opts.limit ?? 20;
   const s = r.summary;
   const anyUntrusted = r.graders.some((g) => !trusted(g.calibration));
   const star = (t: boolean) => (t ? "" : paint("*", "yellow", color));
+  const auditOf = (id: string) => {
+    const version = r.graders.find((g) => g.id === id)?.version;
+    return version ? opts.verifiers?.get(version) : undefined;
+  };
   const out: string[] = [];
   out.push(`${paint(r.name, "bold", color)}  ${paint(r.id, "dim", color)}`);
   out.push(`dataset ${r.dataset.name}@${r.dataset.version}${r.dataset.split ? ` (${r.dataset.split})` : ""}  task ${r.task.kind}: ${r.task.ref}  trials ${r.trials}`);
@@ -78,6 +83,7 @@ export function renderExperiment(r: ExperimentResult, opts: RenderOpts): string 
         ],
         s.graders.map((g) => {
           const t = trusted(g.calibration);
+          const audit = auditOf(g.id);
           return [
             g.id,
             g.kind,
@@ -85,12 +91,18 @@ export function renderExperiment(r: ExperimentResult, opts: RenderOpts): string 
             ci(g.passRate.lo, g.passRate.hi),
             fixed(g.meanScore) + star(t),
             String(g.errors),
-            g.calibration ? calibrationBadge(g.calibration, color) : paint("deterministic", "dim", color),
+            g.calibration ? calibrationBadge(g.calibration, color) : audit?.precision !== undefined ? `precision ${fixed(audit.precision)} (n=${audit.passes})` : paint("deterministic", "dim", color),
           ];
         }),
         { color },
       ),
     );
+    for (const g of s.graders) {
+      const audit = auditOf(g.id);
+      const v = audit && g.n > 0 ? verifierCorrected(g.passed / g.n, g.n, audit) : undefined;
+      if (!v) continue;
+      out.push(`${g.id} verifier-corrected pass ${pct(v.p)} ${ci(v.lo, v.hi)} ${paint(`(${formatVerifierAudit(audit!)}${v.assumesNoFalseRejects ? "; assumes no false rejects" : ""})`, "dim", color)}`);
+    }
   }
   const legend = untrustedLegend(r, color);
   if (legend.length) out.push("", ...legend);
@@ -207,6 +219,12 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
     for (const g of c.graders) {
       if (!g.corrected) continue;
       out.push(`${g.id} bias-corrected pass  A ${side(g.corrected.a)}  B ${side(g.corrected.b)} ${paint("(Rogan–Gladen, 95%)", "dim", color)}`);
+    }
+    const vside = (v: VerifierCorrection | undefined) => (v ? `${pct(v.p)} ${ci(v.lo, v.hi)} (precision ${fixed(v.precision)}, n=${v.n})` : "—");
+    for (const g of c.graders) {
+      if (!g.verifier) continue;
+      const assumes = [g.verifier.a, g.verifier.b].some((v) => v?.assumesNoFalseRejects);
+      out.push(`${g.id} verifier-corrected pass  A ${vside(g.verifier.a)}  B ${vside(g.verifier.b)} ${paint(`(audited precision, 95%${assumes ? "; assumes no false rejects" : ""})`, "dim", color)}`);
     }
   }
   const list = (title: string, rows: Comparison["regressions"], style: "red" | "green") => {

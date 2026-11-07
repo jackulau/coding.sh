@@ -24,6 +24,7 @@ import { FileJudgeCache } from "../../judge/cache.ts";
 import { withCalibration } from "../../judge/calibrate.ts";
 import { calibratePairwise, PAIRWISE_KIND, parsePairLabels, type PairCalibration, type PairwiseJudge } from "../../judge/pairwise.ts";
 import { renderCalibration } from "../../judge/render.ts";
+import type { VerifierAudit } from "../../judge/verifier.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { gateFlags, jsonArg, list, num, str, withContext } from "../common.ts";
 import { ago, CliError, plural } from "../output.ts";
@@ -147,6 +148,17 @@ function seedFlag(c: CommandContext): number | undefined {
   const seed = c.flags.seed === undefined ? undefined : num(c.flags.seed);
   if (seed !== undefined && !(Number.isInteger(seed) && seed >= 0)) throw new UsageError(`--seed must be a non-negative integer, got ${JSON.stringify(c.flags.seed)}`);
   return seed;
+}
+
+/** Stored verifier precision audits (`judge calibrate --grader <verifier>`) for the experiments' graders, by grader version. */
+async function verifierAudits(store: FileEvalStore, ...exps: ExperimentResult[]): Promise<Map<string, VerifierAudit>> {
+  const out = new Map<string, VerifierAudit>();
+  for (const g of exps.flatMap((e) => e.graders)) {
+    if (g.calibration || out.has(g.version)) continue; // LLM judges are calibrated, not audited
+    const audit = await store.getVerifierAudit(g.version).catch(() => undefined);
+    if (audit) out.set(g.version, audit);
+  }
+  return out;
 }
 
 /** Human pairwise labels: a JSON array or JSONL rows. */
@@ -457,6 +469,8 @@ export async function run(c: CommandContext): Promise<number> {
         // The baseline config's A/A noise floor on this dataset, else the candidate's.
         const noise = (await store.getNoise(a!.dataset.id, taskKey(a!.task))) ?? (a!.dataset.id === b!.dataset.id ? await store.getNoise(b!.dataset.id, taskKey(b!.task)) : undefined);
         if (noise) opts.noise = noise;
+        const verifiers = await verifierAudits(store, a!, b!);
+        if (verifiers.size) opts.verifiers = verifiers;
         const cmp = compareExperiments(a!, b!, opts);
         const pw = pairSpec ? await pairwiseCompare(c, store, a!, b!, pairSpec, labelsFile, opts.cluster) : undefined;
         if (out.json) {
@@ -550,8 +564,9 @@ export async function run(c: CommandContext): Promise<number> {
         const ref = c.positionals[0]!;
         const e = await store.resolveExperiment(ref, { includeCancelled: true });
         if (!e) throw new CliError(`Can't find experiment ${JSON.stringify(ref)}`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
-        if (out.json) out.data({ experiment: e });
-        else out.print(renderExperiment(e, { color: out.color }));
+        const verifiers = await verifierAudits(store, e);
+        if (out.json) out.data({ experiment: e, ...(verifiers.size ? { verifiers: [...verifiers.values()] } : {}) });
+        else out.print(renderExperiment(e, { color: out.color, verifiers }));
         return 0;
       }
       case "list": {

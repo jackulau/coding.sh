@@ -23,6 +23,7 @@ import { writeFileDurable } from "../store/durable.ts";
 import type { DatasetListing, IndexStore } from "../core/types.ts";
 import { datasetVersion } from "./dataset.ts";
 import type { NoiseFloor } from "../experiments/aa.ts";
+import type { VerifierAudit } from "../judge/verifier.ts";
 import type { Dataset, DatasetVersionInfo, ExperimentLogEntry, ExperimentResult, JudgeVersion } from "./types.ts";
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,199}$/;
@@ -117,6 +118,9 @@ export class FileEvalStore {
   }
   get noiseDir(): string {
     return join(this.root, "noise"); // always files, like the judge cache
+  }
+  get verifiersDir(): string {
+    return join(this.root, "verifiers"); // always files, like noise floors
   }
   get judgeCacheDir(): string {
     return join(this.root, "judge-cache"); // == paths(env).judgeCache
@@ -285,6 +289,18 @@ export class FileEvalStore {
   }
 
   // ------------------------------------------------------------ judges
+
+  // ------------------------------------------------------------ verifier audits
+
+  /** Store a verifier precision audit (`judge calibrate --grader <verifier>`); the newest per grader version wins. */
+  async putVerifierAudit(a: VerifierAudit): Promise<void> {
+    await mkdir(this.verifiersDir, { recursive: true });
+    await writeFileAtomic(join(this.verifiersDir, `${safeId("grader version", a.graderVersion)}.json`), JSON.stringify(a, null, 2) + "\n");
+  }
+
+  async getVerifierAudit(graderVersion: string): Promise<VerifierAudit | undefined> {
+    return readJson<VerifierAudit>(join(this.verifiersDir, `${safeId("grader version", graderVersion)}.json`));
+  }
 
   // ------------------------------------------------------------ noise floors
 

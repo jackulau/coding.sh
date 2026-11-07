@@ -533,6 +533,24 @@ export interface ValidationReport {
   ts: number;
 }
 
+/**
+ * One check of a verifier's verdicts against an independent opinion. A human label
+ * (`judge calibrate --grader <verifier>`, EM-11) and a blind-solver review (Z-3) store this
+ * same shape, the latter at `task.meta.crossCheck`, so both audits read each other's counts.
+ * A false accept is a verifier pass the other opinion calls wrong; a false reject is a
+ * verifier fail it calls valid.
+ */
+export interface VerifierCrossCheck {
+  /** Who disagreed with the verifier: human labels, or a blind solver's review. */
+  source: "human" | "blind-solver";
+  /** Cases with both a verifier verdict and an opinion. */
+  checked: number;
+  agree: number;
+  falseAccepts: number;
+  falseRejects: number;
+  ts: number;
+}
+
 export interface EvalTask {
   id: string;
   name: string;

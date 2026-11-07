@@ -3,6 +3,7 @@
 // bootstrap CI on per-case differences and an exact McNemar test on per-case
 // outcomes detect changes an unpaired comparison would miss.
 import type { Case, CaseRun, ExperimentResult } from "../datasets/types.ts";
+import { verifierCorrected, type VerifierAudit, type VerifierCorrection } from "../judge/verifier.ts";
 import { clusteredBootstrap } from "../stats/cluster.ts";
 import { pairedBootstrap, roganGladen, type BootstrapOpts, type RoganGladenResult } from "../stats/interval.ts";
 import { pairedPosterior, type PairedPosterior } from "../stats/posterior.ts";
@@ -32,6 +33,11 @@ export interface GraderDelta {
    * side's grader calibration carries sensitivity and specificity.
    */
   corrected?: { a?: RoganGladenResult; b?: RoganGladenResult };
+  /**
+   * Pass rate corrected for an audited verifier's precision (`judge calibrate --grader
+   * <verifier>`), per side, present when that side's grader version has a stored audit.
+   */
+  verifier?: { a?: VerifierCorrection; b?: VerifierCorrection };
 }
 
 const unit = (x: unknown): x is number => typeof x === "number" && x >= 0 && x <= 1;
@@ -44,6 +50,15 @@ function correctedRate(r: ExperimentResult, graderId: string): RoganGladenResult
   const nCal =
     typeof cal.positives === "number" && typeof cal.negatives === "number" ? { positives: cal.positives, negatives: cal.negatives } : (cal.n ?? 0);
   return roganGladen(s.passed / s.n, cal.sensitivity, cal.specificity, s.n, nCal);
+}
+
+/** Precision-corrected pass rate of one verifier grader in one experiment, or undefined without an audit. */
+function verifierRate(r: ExperimentResult, graderId: string, audits: ReadonlyMap<string, VerifierAudit> | undefined): VerifierCorrection | undefined {
+  const version = r.graders.find((g) => g.id === graderId)?.version;
+  const audit = version ? audits?.get(version) : undefined;
+  const s = r.summary.graders.find((g) => g.id === graderId);
+  if (!audit || !s || !(s.n > 0)) return undefined;
+  return verifierCorrected(s.passed / s.n, s.n, audit);
 }
 
 /** Clusters below which the cluster bootstrap is flagged as unreliable. */
@@ -258,6 +273,8 @@ export interface CompareOpts {
   noise?: NoisePrior;
   /** Add the acceptance gate with these settings. */
   gate?: GateOpts;
+  /** Stored verifier precision audits by grader version (`FileEvalStore.getVerifierAudit`). */
+  verifiers?: ReadonlyMap<string, VerifierAudit>;
 }
 
 /** Thrown when a side of a comparison is a cancelled (partial) experiment and `force` is not set. */
@@ -346,6 +363,9 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     const ca = correctedRate(a, gid);
     const cb = correctedRate(b, gid);
     if (ca || cb) out.corrected = { ...(ca ? { a: ca } : {}), ...(cb ? { b: cb } : {}) };
+    const va = verifierRate(a, gid, opts.verifiers);
+    const vb = verifierRate(b, gid, opts.verifiers);
+    if (va || vb) out.verifier = { ...(va ? { a: va } : {}), ...(vb ? { b: vb } : {}) };
     return out;
   });
   const ungraded = { a: a.runs.filter((r) => r.ungraded).length, b: b.runs.filter((r) => r.ungraded).length };

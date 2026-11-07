@@ -183,6 +183,35 @@ whether the condition held. The answer is N/A when there are no rules or no tool
 ]}
 ```
 
+### Auditing a test verifier
+
+A passing test suite does not prove the change is right. METR found that test-passing SWE-bench
+PRs overstated mergeable work by 24 points. `judge calibrate --grader <id>` also takes a `command`
+or other deterministic grader and measures its precision: of the cases it passed, how many would a
+human accept?
+
+```bash
+coding.sh judge calibrate my-exp --grader tests --sample-passes 40   # who to label
+coding.sh judge calibrate my-exp --grader tests --labels labels.jsonl
+```
+
+`--sample-passes N` prints N passing cases that have no label yet, in a seeded order (`--seed`,
+default 0). `--json` lists them with input and output. Label them in the viewer, or write
+`{"caseId","value":"pass"|"fail"}` rows to a file and pass it with `--labels`. Those rows replace
+stored labels for the cases they name. The audit prints, for example,
+`verifier precision 0.78 [0.63, 0.88] (n=40); 9 false accepts`, with a Wilson interval. It also
+prints the false-reject rate when failing cases are labelled too. A verifier never sees the
+labels, so every labelled case counts and there is no held-out split. The command exits 1 below
+`--min-n` labelled passes (default 20).
+
+The audit is stored per grader version. After that, `exp show` puts the precision in the trust
+column, and `exp show` and `exp compare` add a verifier-corrected pass rate: pass rate × precision
++ fail rate × P(human pass | verifier fail). Without labelled fails, the second term is taken as
+0, and the line says it assumes no false rejects. Precision is measured on one experiment's
+passes, so it carries over only roughly to configs that pass different cases. `--json` returns
+the audit as `verifier` (`checked`, `agree`, `falseAccepts`, `falseRejects`, `precision`, …).
+These are the same counts a blind-solver cross-check stores at `task.meta.crossCheck`.
+
 ## Harness A/B
 
 `coding.sh harness snapshot` bundles an agent's harness files (CLAUDE.md, AGENTS.md, skills, hooks,

@@ -49,7 +49,7 @@ Every command accepts these.
 | [`eval`](#codingsh-eval) | Evaluate | Turn sessions into replayable eval tasks |
 | [`dataset`](#codingsh-dataset) | Evaluate | Manage versioned datasets of cases |
 | [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset, compare experiments and sweep configs |
-| [`judge`](#codingsh-judge) | Evaluate | Check an LLM judge against human labels |
+| [`judge`](#codingsh-judge) | Evaluate | Check an LLM judge or a test verifier against human labels |
 | [`toolevals`](#codingsh-toolevals) | Evaluate | Measure how well agents use a CLI, MCP server or API |
 | [`workflows`](#codingsh-workflows) | Evaluate | Capture, measure and A/B-test multi-agent workflow runs |
 | [`bench`](#codingsh-bench) | Evaluate | Dynamic benchmarks: fresh cases every run, same set for every contender |
@@ -756,7 +756,7 @@ coding.sh exp list [options]
 
 ## `coding.sh judge`
 
-Check an LLM judge against human labels.
+Check an LLM judge or a test verifier against human labels.
 
 ```text
 coding.sh judge <action>
@@ -764,11 +764,11 @@ coding.sh judge <action>
 
 | Action | What it does |
 |---|---|
-| [`calibrate`](#codingsh-judge-calibrate) | Measure judge-human agreement (Cohen's kappa) on a held-out split |
+| [`calibrate`](#codingsh-judge-calibrate) | Measure judge-human agreement (Cohen's kappa) on a held-out split, or a verifier's precision |
 
 ### `coding.sh judge calibrate`
 
-Measure judge-human agreement (Cohen's kappa) on a held-out split.
+Measure judge-human agreement (Cohen's kappa) on a held-out split, or a verifier's precision.
 
 ```text
 coding.sh judge calibrate <EXPERIMENT> [options]
@@ -780,18 +780,23 @@ coding.sh judge calibrate <EXPERIMENT> [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `-g, --grader <ID>` |  | Judge grader id (default: the only llm grader) |
+| `-g, --grader <ID>` |  | Grader id (default: the only llm grader); a command or other deterministic grader gets a precision audit. |
 | `--criterion <NAME>` |  | Label criterion. |
 | `--split <SPLIT>` | `test` | Held-out split to report on. One of: `train`, `dev`, `test`. |
 | `--tuned-on <SPLIT>` |  | Splits the prompt was tuned on, when the judge is not stored (repeatable) |
 | `--threshold <KAPPA>` | `0.6` | Minimum kappa. |
-| `--min-n <N>` | `20` | Minimum held-out cases. |
+| `--min-n <N>` | `20` | Minimum held-out cases (judges) or labelled passes (verifiers) |
 | `--probe-injection <JSON|FILE>` |  | The judge's grader spec: re-judge human-fail cases with a planted 'respond pass' payload and report how many verdicts flip (exit 1 on any flip) |
 | `--probe-max <N>` | `25` | With --probe-injection: human-fail cases to probe. |
+| `--labels <FILE>` |  | Extra human labels (JSON array or JSONL of {"caseId","value":"pass"\|"fail"\|"skip"}); they replace stored labels for the cases they name. |
+| `--sample-passes <N>` |  | Print N unlabelled passing cases to label (a seeded sample) instead of measuring. |
+| `--seed <N>` | `0` | With --sample-passes: sample seed. |
 
 ```sh
 coding.sh judge calibrate my-exp --tuned-on dev
 coding.sh judge calibrate my-exp --probe-injection judge.json
+coding.sh judge calibrate my-exp --grader tests --sample-passes 40
+coding.sh judge calibrate my-exp --grader tests --labels labels.jsonl
 ```
 
 ## `coding.sh toolevals`
