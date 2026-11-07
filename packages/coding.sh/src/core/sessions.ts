@@ -457,7 +457,7 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
   if (durable) {
     session.stats.durable = durable;
     session.flags.push(...durableFlags(durable));
-    if (durable.workflow) fallbackTitle ??= durable.workflow;
+    fallbackTitle ??= durable.workflow ?? `${durable.engine} run ${durable.runId}`;
   }
   if (derails.length) session.stats.derails = derails;
   const phases = phasesToStore(sessionOutline(sorted));

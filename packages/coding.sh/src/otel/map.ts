@@ -814,7 +814,8 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
   if (isRoot && !(c.durable && klass === "other")) {
     const s = draft().set("name", span.name).set("agentName", agentName).set("traceId", traceId).set("scope", c.scope.name || undefined);
     emit(0, "session.start", startMs, s);
-    const prompt = content(str(a, "user_prompt")) ?? userText(inputMessages(a, klass === "llm" ? span : undefined));
+    const resumed = c.durable?.recovered || c.durable?.waitEdge === "end";
+    const prompt = resumed ? undefined : (content(str(a, "user_prompt")) ?? userText(inputMessages(a, klass === "llm" ? span : undefined)));
     const promptId = cc ? str(a, "prompt.id") : undefined;
     if (prompt) emit(2, "user.message", startMs, await draft().content("text", prompt), {}, promptId ? ccPromptId(c.sessionId, promptId) : undefined);
     if (klass === "llm" || klass === "embedding") await llm(4);
@@ -929,6 +930,9 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
   const traceConv = new Map<string, string>();
   const traceRun = new Map<string, string>();
   const durable = new Map<OtelSpan, DurableTag>();
+  // Durable spans that name no run (Restate's run spans): their trace's run, below.
+  const unkeyed: [OtelSpan, DurableTag][] = [];
+  const traceRunId = new Map<string, string>();
   const tree = ctx.spanTree ?? new SpanTree();
   for (const rs of batch)
     for (const ss of rs.scopeSpans)
@@ -936,7 +940,9 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
         const conv = conversationOf(sp.attributes);
         if (sp.traceId && conv && !traceConv.has(sp.traceId)) traceConv.set(sp.traceId, conv);
         const d = durableOf(sp, rs.resource.attributes, ss.scope);
-        if (d) {
+        if (d && !d.run) unkeyed.push([sp, d]);
+        else if (d) {
+          if (sp.traceId && !traceRunId.has(sp.traceId)) traceRunId.set(sp.traceId, d.run);
           durable.set(sp, d);
           const sid = durableSessionId(d);
           if (sp.traceId && !traceRun.has(sp.traceId)) traceRun.set(sp.traceId, sid);
@@ -951,6 +957,11 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
           tree.set(sp.traceId, sp.spanId, node);
         }
       }
+  for (const [sp, d] of unkeyed) {
+    const known = sp.traceId ? ctx.traceSessions?.get(sp.traceId) : undefined;
+    const run = (sp.traceId && traceRunId.get(sp.traceId)) || (known?.startsWith(`${d.engine}:`) ? known.slice(d.engine.length + 1) : undefined);
+    if (run) durable.set(sp, { ...d, run });
+  }
   for (const [t, s] of traceConv) ctx.traceSessions?.set(t, s);
   // A trace already keyed (an explicit conversation, or an earlier batch) keeps its session.
   for (const [t, s] of traceRun) if (!traceConv.has(t) && !ctx.traceSessions?.has(t)) ctx.traceSessions?.set(t, s);
@@ -959,6 +970,8 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
     const resource = rs.resource.attributes;
     const resourceConv = conversationOf(resource);
     for (const ss of rs.scopeSpans) {
+      // DBOS checks the global tracer at launch with an empty "probe" span: nothing happened.
+      if (ss.scope.name === "otel-bootstrap-check") continue;
       const agent = detectAgent(resource, ss.scope);
       for (const span of ss.spans) {
         if (!span.traceId || !span.spanId) {

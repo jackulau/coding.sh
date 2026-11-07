@@ -19,10 +19,13 @@
 //   langgraph         thread_id                         node spans (langgraph_node)       inferred from order
 //   workflow          workflow.run.id (any other app)   spans with step.name              step.attempt
 //
+// Restate run spans carry only restate.run.name: their run is their trace's
+// (one invocation is one trace), filled in by map.ts (run "" here).
+//
 // The last row is a convention any engine can follow by hand (Cloudflare
 // Workflows exposes no run identity on its spans): set workflow.run.id on the
 // spans of a run, step.name (+ step.id, step.attempt) on step spans.
-import type { Attrs, OtelScope, OtelSpan, OtelValue } from "./model.ts";
+import { type Attrs, nanosToMs, type OtelScope, type OtelSpan, type OtelValue } from "./model.ts";
 
 export type DurableEngine = "vercel-workflow" | "temporal" | "inngest" | "restate" | "dbos" | "langgraph" | "workflow";
 
@@ -52,8 +55,8 @@ export interface DurableTag {
   stepId?: string;
   /** Attempt number the engine reported (1-based). */
   attempt?: number;
-  /** Failed attempts the engine reported inside this span (DBOS "Step attempt N failed"). */
-  failedAttempts?: number;
+  /** Failed attempts the engine reported inside this span (DBOS "Step attempt N failed" events): when each ended, why, and the retry delay. */
+  failures?: { at: number; error?: string; retryMs?: number }[];
   /** Queue redelivery number of an invocation (Vercel workflow.delivery.attempt). */
   delivery?: number;
   /** Why the attempt failed, when the engine says so on a span it leaves OK (Vercel step.error.message). */
@@ -64,8 +67,18 @@ export interface DurableTag {
   orphan?: true;
   /** The span re-ran history (replay); work under it was done before and is not counted again. */
   replay?: true;
-  /** "start" or "end" of a wait recorded as two instants (Vercel wait_created / wait_completed). */
+  /**
+   * "start" or "end" of a wait recorded as two instants (Vercel wait_created /
+   * wait_completed, a LangGraph interrupt and the invocation resuming it). A start
+   * with no end closes where the run next does something.
+   */
   waitEdge?: "start" | "end";
+  /** When a wait started inside this span (a Restate sleep journal event); default the span's start. */
+  waitAt?: number;
+  /** Name of the wait a waitEdge starts ("interrupt", the sleep's name). */
+  waitName?: string;
+  /** A step this invocation attempt started and never finished before it failed (Restate journal events). */
+  inFlight?: { step: string; at: number };
   /** Process that emitted the span. */
   instance?: string;
   /** Deployment or code version that emitted the span. */
@@ -115,13 +128,15 @@ function instanceOf(resource: Attrs, a: Attrs): string | undefined {
   const host = str(resource, "host.name", "host.id");
   const pid = str(resource, "process.pid");
   if (pid) return host ? `${host}:${pid}` : `pid:${pid}`;
-  return str(a, "dbos.executor.id", "executorID") ?? str(resource, "dbos.executor.id");
+  const executor = str(a, "dbos.executor.id", "executorID") ?? str(resource, "dbos.executor.id");
+  // Every DBOS process is executor "local" unless configured otherwise.
+  return executor === "local" ? undefined : executor;
 }
 
 /** The deployment or code version that emitted a span. */
 function versionOf(resource: Attrs, a: Attrs): string | undefined {
   return (
-    str(a, "deployment.id", "restate.deployment.id") ??
+    str(a, "deployment.id") ??
     str(resource, "deployment.id", "vercel.deployment_id", "service.version", "cloudflare.script_version.id") ??
     str(a, "dbos.application.version", "applicationVersion", "cloudflare.script_version.id")
   );
@@ -176,8 +191,10 @@ function vercel(span: OtelSpan, scope: OtelScope, a: Attrs): Partial0 | undefine
   } else if (/\bwait_completed$/.test(name)) {
     t.role = "wait";
     t.waitEdge = "end";
-  } else if (str(a, "workflow.wait.duration", "wait.duration") !== undefined || /^(workflow\.)?(sleep|wait)\b/i.test(name)) {
+  } else if (str(a, "workflow.wait.duration", "wait.duration", "workflow.wait.name", "wait.name") !== undefined || /^(workflow\.)?(sleep|wait)\b/i.test(name)) {
     t.role = "wait";
+    const wait = str(a, "workflow.wait.name", "wait.name") ?? /^(?:workflow\.)?(?:sleep|wait)\s+(.+)$/i.exec(name)?.[1];
+    if (wait) t.step = wait;
   }
   return t;
 }
@@ -226,12 +243,20 @@ function temporal(span: OtelSpan, scope: OtelScope, a: Attrs): Partial0 | undefi
   return t;
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Inngest: the SDK exports one inngest.execution root per request and copies
+ * the step id and attempt onto the user's spans inside a step. No step, sleep
+ * or retry span leaves the server, and every span is status UNSET.
+ */
 function inngest(span: OtelSpan, a: Attrs): Partial0 | undefined {
   const run = str(a, "sdk.run.id");
   if (!run) return undefined;
   const t: Partial0 = { engine: "inngest", run, role: span.name === "inngest.execution" ? "invocation" : "other" };
+  // sys.function.id is an internal UUID in Inngest 4 (the function's slug never reaches spans).
   const fn = str(a, "sys.function.id");
-  if (fn) t.workflow = fn;
+  if (fn && !UUID.test(fn)) t.workflow = fn;
   const stepId = str(a, "inngest.step.id");
   if (stepId) {
     t.role = "step";
@@ -244,17 +269,48 @@ function inngest(span: OtelSpan, a: Attrs): Partial0 | undefined {
   return t;
 }
 
+const RESTATE_EVENT = "restate.invocation.lifecycle.";
+
+/**
+ * Restate: the server traces each invocation (ingress, invocation-start, one
+ * invocation-attempt per attempt with journal events) and the SDK hook adds an
+ * "attempt" span per attempt and a "run (<name>)" span per ctx.run that really
+ * ran (replayed runs emit nothing). There is no attempt number and no sleep span:
+ * the server's journal events say where a sleep started and which step an
+ * attempt was in when it failed.
+ */
 function restate(span: OtelSpan, a: Attrs): Partial0 | undefined {
   const run = str(a, "restate.invocation.id");
-  if (!run) return undefined;
-  const t: Partial0 = { engine: "restate", run, role: "other" };
+  const runName = str(a, "restate.run.name");
+  if (!run && !runName) return undefined;
+  const t: Partial0 = { engine: "restate", run: run ?? "", role: "other" };
+  // "researchAgent/research-durable-agents/run" (service/key/handler): the service.
   const target = str(a, "restate.invocation.target");
-  if (target) t.workflow = target;
-  if (span.name.startsWith("ingress")) t.role = "start";
-  else if (span.name.startsWith("invocation-attempt") || span.name.startsWith("attempt ")) t.role = "invocation";
-  else if (span.name.startsWith("run")) {
+  if (target) t.workflow = target.split("/")[0] || target;
+  const name = span.name;
+  if (name.startsWith("ingress") || name.startsWith("invocation-start")) t.role = "start";
+  else if (name.startsWith("invocation-attempt")) {
+    t.role = "invocation";
+    let open: { step: string; at: number } | undefined;
+    for (const e of span.events) {
+      if (!e.name.startsWith(RESTATE_EVENT)) continue;
+      const what = e.name.slice(RESTATE_EVENT.length);
+      const type = str(e.attributes, "restate.journal.command.type");
+      const cmd = str(e.attributes, "restate.journal.command.name");
+      const at = nanosToMs(e.timeUnixNano);
+      if (what === "new_command" && type === "Command/Run" && cmd) open = { step: cmd, at };
+      else if (what === "run_ended") open = undefined;
+      else if (what === "new_command" && type === "Command/Sleep") {
+        t.waitEdge = "start";
+        t.waitAt = at;
+        t.waitName = cmd ?? "sleep";
+      }
+    }
+    if (open && span.status.code === 2) t.inFlight = open;
+  } else if (name.startsWith("attempt ")) t.role = "invocation";
+  else if (runName || name.startsWith("run")) {
     t.role = "step";
-    const step = str(a, "restate.run.name") ?? /^run \((.*)\)$/.exec(span.name)?.[1];
+    const step = runName ?? /^run \((.*)\)$/.exec(name)?.[1];
     if (step) {
       t.step = step;
       t.stepId = step;
@@ -263,7 +319,7 @@ function restate(span: OtelSpan, a: Attrs): Partial0 | undefined {
   return t;
 }
 
-const DBOS_FAILED_ATTEMPT = /^Step attempt \d+ failed/;
+const DBOS_FAILED_ATTEMPT = /^Step (attempt \d+ failed|retry predicate failed)/;
 
 function dbos(span: OtelSpan, scope: OtelScope, a: Attrs): Partial0 | undefined {
   const run = str(a, "dbos.operation.workflow_id", "operationUUID");
@@ -277,37 +333,75 @@ function dbos(span: OtelSpan, scope: OtelScope, a: Attrs): Partial0 | undefined 
   } else if (type === "step" || type === "transaction" || type === "procedure") {
     t.role = "step";
     t.step = name;
-    const failed = span.events.filter((e) => DBOS_FAILED_ATTEMPT.test(e.name)).length;
-    if (failed) {
-      t.failedAttempts = failed;
-      t.attempt = failed + 1;
-    }
+    // One span covers every attempt; each failed one is an event at its end (its "N" counts from 2).
+    const failures = span.events
+      .filter((e) => DBOS_FAILED_ATTEMPT.test(e.name))
+      .map((e) => {
+        const f: { at: number; error?: string; retryMs?: number } = { at: nanosToMs(e.timeUnixNano) };
+        const err = str(e.attributes, "error");
+        if (err) f.error = err;
+        const retry = Number(e.attributes.retryIntervalSeconds);
+        if (Number.isFinite(retry) && retry >= 0) f.retryMs = Math.round(retry * 1000);
+        return f;
+      });
+    if (failures.length) t.failures = failures;
   } else if (span.name === "sleep") t.role = "wait";
   if (a.cached === true) t.replay = true;
   return t;
 }
 
-/** LangGraph node spans: the thread is the run (it outlives processes through its checkpointer). */
-function langgraph(span: OtelSpan, a: Attrs): Partial0 | undefined {
-  let md: Attrs = {};
-  const m = a.metadata;
-  if (isObj(m)) md = m;
-  else if (typeof m === "string" && m.startsWith("{")) {
-    try {
-      const v = JSON.parse(m) as unknown;
-      if (isObj(v)) md = v;
-    } catch {
-      // not JSON
-    }
+/** A JSON-looking attribute parsed, else undefined. */
+function json(v: OtelValue | undefined): unknown {
+  if (typeof v !== "string" || !/^[[{n]/.test(v)) return undefined;
+  try {
+    return JSON.parse(v) as unknown;
+  } catch {
+    return undefined;
   }
+}
+
+const INTERRUPT = /(^|\.)(Graph|Node)Interrupt$/;
+
+/**
+ * LangGraph through OpenInference (metadata as a JSON string) or LangSmith's
+ * OTel exporter (flat langsmith.metadata.* attributes). The thread is the run:
+ * it outlives processes through its checkpointer. Each invoke is a root span
+ * (the invocation); node spans are step attempts, with no attempt number, and a
+ * node that calls interrupt() ends in a GraphInterrupt exception: the thread
+ * waits there until an invoke resumes it with a Command.
+ */
+function langgraph(span: OtelSpan, a: Attrs): Partial0 | undefined {
+  const m = json(a.metadata);
+  const md: Attrs = isObj(a.metadata) ? a.metadata : isObj(m) ? m : {};
   const node = str(a, "langgraph_node", "langgraph.node", "metadata.langgraph_node", "langsmith.metadata.langgraph_node") ?? str(md, "langgraph_node");
   const thread = str(a, "langsmith.metadata.thread_id", "metadata.thread_id", "thread_id") ?? str(md, "thread_id") ?? str(a, "session.id");
-  if (!node || !thread || node === "__start__" || node === "__end__") return undefined;
+  if (!thread || node === "__start__" || node === "__end__") return undefined;
+  const graph = str(a, "langsmith.metadata.graph_id", "graph_id") ?? str(md, "graph_id");
+  if (!node) {
+    // The graph's own root span: one invoke of the thread.
+    const integration = str(a, "langsmith.metadata.ls_integration") ?? str(md, "ls_integration");
+    if (integration !== "langgraph" || span.parentSpanId) return undefined;
+    const t: Partial0 = { engine: "langgraph", run: thread, role: "invocation", workflow: graph ?? span.name };
+    // invoke(None) continues from the checkpoint (after a crash); invoke(Command(resume=…)) answers an interrupt.
+    let input = json(str(a, "input.value") ?? str(a, "gen_ai.prompt"));
+    if (isObj(input) && Object.keys(input).length === 1 && "input" in input) input = input.input;
+    if (input === null) t.recovered = true;
+    else if (isObj(input) && input.resume !== undefined) t.waitEdge = "end";
+    return t;
+  }
   const step = int(a, "langgraph_step", "langgraph.step", "metadata.langgraph_step", "langsmith.metadata.langgraph_step") ?? int(md, "langgraph_step");
   const ns = str(a, "langgraph_checkpoint_ns", "langsmith.metadata.langgraph_checkpoint_ns") ?? str(md, "langgraph_checkpoint_ns");
   const t: Partial0 = { engine: "langgraph", run: thread, role: "step", step: node, stepId: `${step ?? ""}:${node}:${ns ?? ""}` };
-  const graph = str(a, "langsmith.metadata.graph_id", "graph_id") ?? str(md, "graph_id");
   if (graph) t.workflow = graph;
+  // LangSmith leaves a failed node's span OK (and an interrupted one ERROR): the exception event says which.
+  for (const e of span.events) {
+    if (e.name !== "exception") continue;
+    const type = str(e.attributes, "exception.type") ?? "";
+    const msg = str(e.attributes, "exception.message") ?? "";
+    if (INTERRUPT.test(type) || /^(Graph|Node)Interrupt\(/.test(msg)) return { ...t, role: "wait", step: "interrupt", waitEdge: "start", waitName: "interrupt" };
+    // LangSmith writes repr(exc) + the traceback: SearchError('search API returned 503')Traceback…
+    t.error ??= msg.split("Traceback")[0]!.trim().replace(/^\w+\((["'])(.*)\1\)$/s, "$2") || type || "failed";
+  }
   return t;
 }
 
@@ -317,7 +411,9 @@ export function durableOf(span: OtelSpan, resource: Attrs, scope: OtelScope): Du
   const t = temporal(span, scope, a) ?? vercel(span, scope, a) ?? inngest(span, a) ?? restate(span, a) ?? dbos(span, scope, a) ?? langgraph(span, a);
   if (!t) return undefined;
   const out: DurableTag = t;
-  const instance = instanceOf(resource, a);
+  // The engine's own server (Restate) is not the process running the run's code.
+  if (str(resource, "service.namespace") === "Restate") return out;
+  const instance = instanceOf(resource, a) ?? (t.engine === "dbos" && span.traceId ? `trace:${span.traceId}` : undefined);
   if (instance) out.instance = instance;
   const version = versionOf(resource, a);
   if (version) out.version = version;

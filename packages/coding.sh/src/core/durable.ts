@@ -126,6 +126,7 @@ function buildSteps(recs: Rec[], byKey: Map<string, Rec>): { steps: Step[]; atte
   };
   const groups = new Map<string, Rec[]>();
   const lastByName = new Map<string, { key: string; ok: boolean }>();
+  const nth = new Map<string, number>();
   let anon = 0;
   for (const r of stepRecs) {
     if (ownerOf(r)) continue;
@@ -133,7 +134,14 @@ function buildSteps(recs: Rec[], byKey: Map<string, Rec>): { steps: Step[]; atte
     let key: string;
     if (r.tag.stepId) key = `id:${r.tag.stepId}`;
     else if (scheduleOf(r)) key = `sched:${scheduleOf(r)!.key}`;
-    else {
+    else if (r.tag.engine === "dbos") {
+      // One DBOS span holds all of a step's attempts, and a recovery replays the
+      // workflow from the top: the k-th same-named step of each execution is one step.
+      const k = `${r.parentKey ?? ""}/${name}`;
+      const i = nth.get(k) ?? 0;
+      nth.set(k, i + 1);
+      key = `nth:${name}#${i}`;
+    } else {
       // No id: a same-name span right after a failed attempt is its retry, anything else a new step.
       const prev = lastByName.get(name);
       key = prev && !prev.ok ? prev.key : `anon:${anon++}:${name}`;
@@ -154,10 +162,35 @@ function buildSteps(recs: Rec[], byKey: Map<string, Rec>): { steps: Step[]; atte
     const reported = rs.every((r) => r.tag.attempt !== undefined);
     let n = 0;
     for (const r of rs) {
-      // Failed attempts reported inside one span (DBOS span events) become zero-length attempts at its start.
-      for (let i = 0; i < (r.tag.failedAttempts ?? 0); i++) step.attempts.push({ n: ++n, startedAt: r.start, endedAt: r.start, ok: false, rec: r });
-      n = reported ? r.tag.attempt! : n + 1;
-      const a: Attempt = { n, startedAt: r.start, endedAt: r.end, ok: r.ok, rec: r, spanId: r.spanId };
+      const prev = step.attempts[step.attempts.length - 1];
+      // Spans of one reported attempt (Inngest tags each span a step runs) are that one attempt.
+      if (reported && prev && prev.n === r.tag.attempt) {
+        prev.startedAt = Math.min(prev.startedAt, r.start);
+        prev.endedAt = Math.max(prev.endedAt, r.end);
+        if (!r.ok) {
+          prev.ok = false;
+          if (r.error) prev.error ??= r.error;
+        }
+        continue;
+      }
+      // Failed attempts reported inside one span (DBOS span events), each ending at its event.
+      let start = r.start;
+      const failures = r.tag.failures ?? [];
+      failures.forEach((f, i) => {
+        // A span that failed for good ends with its last attempt.
+        const end = !r.ok && i === failures.length - 1 ? r.end : Math.max(start, f.at);
+        // They share the span: each is a part of it (work, a lane bar, a tree node).
+        const a: Attempt = { n: ++n, startedAt: start, endedAt: end, ok: false, rec: r, spanId: r.spanId };
+        if (f.error) a.error = f.error;
+        if (r.tag.instance) a.instance = r.tag.instance;
+        if (r.tag.version) a.version = r.tag.version;
+        step.attempts.push(a);
+        start = Math.min(r.end, end + (f.retryMs ?? 0));
+      });
+      if (failures.length && !r.ok) continue;
+      // A replay reads the recorded result back: the same attempt, not a new one.
+      n = reported ? r.tag.attempt! : r.tag.replay && n > 0 ? n : n + 1;
+      const a: Attempt = { n, startedAt: start, endedAt: r.end, ok: r.ok, rec: r, spanId: r.spanId };
       if (r.error) a.error = r.error;
       if (r.tag.replay) a.replay = true;
       if (r.tag.instance) a.instance = r.tag.instance;
@@ -168,6 +201,9 @@ function buildSteps(recs: Rec[], byKey: Map<string, Rec>): { steps: Step[]; atte
       const seen = new Set(step.attempts.map((a) => a.n));
       const missing = Math.max(...seen) - seen.size;
       if (missing > 0) step.unreported = missing;
+      // The engine only runs a step again after an attempt failed or was lost
+      // (Inngest leaves a failed attempt's spans UNSET).
+      for (const a of step.attempts) if (a.ok && step.attempts.some((b) => b.n > a.n)) a.ok = false;
     }
     steps.push(step);
     all.push(...step.attempts);
@@ -195,59 +231,115 @@ export function durableStats(sorted: readonly AgentEvent[]): DurableStats | unde
   }
   work.sort((a, b) => a.start - b.start || a.end - b.end);
 
-  // Temporal: a step first reported long after it was scheduled, on a new process: an attempt was lost.
-  const scheduleOf = (r: Rec): Rec | undefined => {
-    const p = r.parentKey ? byKey.get(r.parentKey) : undefined;
-    return p?.tag.role === "schedule" ? p : undefined;
-  };
   const prevWork = (w: Work): Work | undefined => {
     let best: Work | undefined;
     for (const x of work) if (x !== w && x.end <= w.start && x.instance && (!best || x.end > best.end)) best = x;
     return best;
   };
+  /** When a process was last seen before `t`: the end of its last span. */
+  const lastSeen = (instance: string, t: number): number | undefined => {
+    let seen: number | undefined;
+    for (const r of recs) if (r.tag.instance === instance && r.end <= t && (seen === undefined || r.end > seen)) seen = r.end;
+    return seen;
+  };
+  /**
+   * One attempt of `s` was lost before `next`: it began at `from` and was seen
+   * working for `ranMs`; the rest, up to `next`, its process was down. The time
+   * is kept when the lost attempt is the step's first (it sits right before it).
+   */
+  const lose = (s: Step, next: Attempt, from: number, ranMs: number, renumber: boolean) => {
+    s.unreported = (s.unreported ?? 0) + 1;
+    if (renumber) for (const a of s.attempts) if (a.startedAt >= next.startedAt) a.n += 1;
+    if (next !== s.attempts[0] || s.unreportedMs !== undefined || !(next.startedAt > from)) return;
+    s.unreportedMs = Math.round(next.startedAt - from);
+    s.unreportedRanMs = Math.round(Math.max(0, Math.min(ranMs, next.startedAt - from)));
+  };
+  const firstIn = (w: Work): Attempt | undefined => w.attempt ?? attempts.find((a) => a.spanId && a.startedAt >= w.start && a.startedAt <= w.end);
+  const stepOf = (a: Attempt | undefined) => (a ? steps.find((x) => x.attempts.includes(a)) : undefined);
+
+  // Temporal: a step first reported long after it was scheduled, on a new process:
+  // an attempt was lost. It ran at most until its process was last seen (its last
+  // export); after that it was down until the engine's timeout retried it.
+  const scheduleOf = (r: Rec): Rec | undefined => {
+    const p = r.parentKey ? byKey.get(r.parentKey) : undefined;
+    return p?.tag.role === "schedule" ? p : undefined;
+  };
   for (const s of steps) {
-    if (s.unreported !== undefined || s.attempts.some((a) => a.rec.tag.attempt !== undefined)) continue;
     const first = s.attempts[0];
     const sched = first && scheduleOf(first.rec);
-    if (!first || !sched) continue;
-    const lead = first.startedAt - sched.start;
-    const w = work.find((x) => x.attempt === first);
+    const w = first && work.find((x) => x.attempt === first);
     const prev = w && prevWork(w);
-    if (lead >= UNREPORTED_MIN_MS && w?.instance && prev?.instance && prev.instance !== w.instance) {
-      s.unreported = 1;
-      s.unreportedMs = Math.round(lead);
-      for (const a of s.attempts) a.n += 1;
-    }
+    if (!first || !sched || !w?.instance || !prev?.instance || prev.instance === w.instance) continue;
+    if (s.unreported !== undefined || s.attempts.some((a) => a.rec.tag.attempt !== undefined)) continue;
+    if (first.startedAt - sched.start < UNREPORTED_MIN_MS) continue;
+    lose(s, first, sched.start, (lastSeen(prev.instance, first.startedAt) ?? sched.start) - sched.start, true);
+  }
+  // A gap before the first reported attempt number (Inngest, the hand-rolled
+  // convention), on a new process: lost with the old one, after it was last seen.
+  for (const s of steps) {
+    const first = s.attempts[0];
+    const w = first && work.find((x) => x.attempt === first);
+    const prev = w && prevWork(w);
+    if (!first || !s.unreported || s.unreportedMs !== undefined || first.n <= 1 || !w?.instance || !prev?.instance || prev.instance === w.instance) continue;
+    s.unreported -= 1;
+    lose(s, first, lastSeen(prev.instance, first.startedAt) ?? prev.end, 0, false);
   }
   // Vercel: the recovery released a step whose process exited mid-attempt. The
   // next step attempt to start is its retry; the released attempt was never reported.
   for (const o of recs) {
     if (!o.tag.orphan) continue;
     const next = attempts.find((a) => a.spanId && a.startedAt >= o.start);
-    const s = next && steps.find((x) => x.attempts.includes(next));
+    const s = stepOf(next);
     if (!next || !s) continue;
-    s.unreported = (s.unreported ?? 0) + 1;
-    for (const a of s.attempts) if (a.startedAt >= o.start) a.n += 1;
+    const old = work.filter((x) => x.end <= o.start && x.instance && x.instance !== o.tag.instance).pop();
+    lose(s, next, (old?.instance && lastSeen(old.instance, o.start)) || o.start, 0, true);
+  }
+  // Restate: an invocation attempt failed inside a step that reported no attempt
+  // in it: the attempt ran from the step's start until the attempt broke off.
+  for (const r of recs) {
+    const f = r.tag.inFlight;
+    if (!f || r.ok) continue;
+    const s = steps.find((x) => x.name === f.step);
+    if (!s || s.attempts.some((a) => a.startedAt >= f.at - 1 && a.startedAt <= r.end)) continue;
+    const next = s.attempts.find((a) => a.startedAt >= r.end);
+    if (next) lose(s, next, f.at, r.end - f.at, true);
+  }
+  // LangGraph: an invoke that continues from the checkpoint (input None) on a new
+  // process whose own invoke never reported: the process died, and the node the
+  // new invoke runs first was in flight there.
+  for (const w of work) {
+    if (!w.rec.tag.recovered || w.attempt || !w.instance) continue;
+    const prev = prevWork(w);
+    if (!prev?.instance || prev.instance === w.instance) continue;
+    if (recs.some((o) => (o.tag.role === "invocation" && o.tag.instance === prev.instance) || o.tag.orphan)) continue;
+    const next = firstIn(w);
+    const s = stepOf(next);
+    if (next && s && s.unreported === undefined && next === s.attempts[0]) lose(s, next, lastSeen(prev.instance, w.start) ?? prev.end, 0, true);
   }
 
-  // Waits: spans that cover the wait, or created/completed instants paired in order.
+  // Waits: spans that cover the wait, or start and end instants paired in order;
+  // a start with no end closes where the run next does something.
   const waits: DurableWait[] = [];
-  const open: Rec[] = [];
+  const open: { at: number; name: string; rec: Rec }[] = [];
   for (const r of recs) {
-    if (r.tag.role !== "wait") continue;
-    if (r.tag.waitEdge === "start") open.push(r);
+    if (r.tag.waitEdge === "start") open.push({ at: r.tag.waitAt ?? r.start, name: r.tag.waitName ?? "wait", rec: r });
     else if (r.tag.waitEdge === "end") {
       const s = open.shift();
-      waits.push({ startedAt: s ? s.start : r.start, endedAt: r.start, name: "wait" });
-    } else waits.push({ startedAt: r.start, endedAt: r.end, name: r.tag.step ?? "sleep" });
+      waits.push({ startedAt: s ? s.at : r.start, endedAt: r.start, name: s?.name ?? "wait" });
+    } else if (r.tag.role === "wait") waits.push({ startedAt: r.start, endedAt: r.end, name: r.tag.step ?? "sleep" });
   }
-  for (const s of open) waits.push({ startedAt: s.start, name: "wait" });
+  for (const s of open) {
+    const next = work.find((x) => x.start > s.at && x.rec !== s.rec);
+    waits.push(next ? { startedAt: s.at, endedAt: next.start, name: s.name } : { startedAt: s.at, name: s.name });
+  }
   waits.sort((a, b) => a.startedAt - b.startedAt);
 
   // Resume points, each named by the first step attempt that ran from there.
   const resumes: DurableResume[] = [];
   const resumedAt = (r: DurableResume, w: Work) => {
-    const a = w.attempt ?? attempts.find((x) => x.spanId && x.startedAt >= w.start);
+    // The first attempt that really ran from there (a recovery replays the steps before it first).
+    const after = attempts.filter((x) => x.spanId && x.startedAt >= w.start);
+    const a = (w.attempt?.replay ? undefined : w.attempt) ?? after.find((x) => !x.replay) ?? w.attempt ?? after[0];
     const s = a && steps.find((x) => x.attempts.includes(a));
     if (s) r.step = s.name;
     if (a?.spanId) r.spanId = a.spanId;
@@ -260,7 +352,8 @@ export function durableStats(sorted: readonly AgentEvent[]): DurableStats | unde
       const redeployed = !!prev.version && !!w.version && prev.version !== w.version;
       let reason: DurableResume["reason"] | undefined;
       if (redeployed) reason = "deploy";
-      else if (moved && w.step?.unreportedMs !== undefined && w.attempt === w.step.attempts[0]) reason = "crash";
+      // The first attempt here (or in this invocation) follows a lost one: its process died.
+      else if (moved && stepOf(firstIn(w))?.unreported !== undefined && firstIn(w) === stepOf(firstIn(w))!.attempts.find((a) => a.spanId)) reason = "crash";
       else if (moved && (w.rec.tag.delivery ?? 1) > 1) reason = "crash";
       // A recovery invocation (Vercel): a crash when it released a step the dead process left mid-attempt.
       else if (moved && w.rec.tag.recovered) reason = recs.some((o) => o.tag.orphan && o.tag.instance === w.instance) ? "crash" : "restart";
