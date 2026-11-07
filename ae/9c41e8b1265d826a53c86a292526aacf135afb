@@ -1,0 +1,47 @@
+packages/sdk-python/pyproject.toml
+  s_8e040dbdf13565::t_34b96f25cbee0f 2,8,10-12,15,21-22,32-35
+packages/blob-s3/package.json
+  s_8e040dbdf13565::t_4f78856b01a938 3-4,6,8-30,37-38,44,50-52
+.github/workflows/release.yml
+  s_8e040dbdf13565::t_c24f2eed3fae75 3-24,43-51,54-55,62-65,77,83,85,89-117,119-128,132-133,136-142,151,154-155,158-159,166-172,175-193,195,197,199-212,216-220,227,229-247
+README.md
+  s_8e040dbdf13565::t_16a6abcd5336f4 150-152
+docs/RELEASE.md
+  s_8e040dbdf13565::t_6f6b89118eac00 3-12,20,23,26,28-30,32-75,77-78,80,82-101,103-104,106-108,118-120,132,134,142-143,147-148,158-162
+package-lock.json
+  s_8e040dbdf13565::t_66b61ba72c3fce 8216,8222,8744,8792,8807
+packages/blob-s3/LICENSE
+  s_8e040dbdf13565::t_be8327d93262f4 1-21
+packages/coding.sh/package.json
+  s_8e040dbdf13565::t_d1f8aa15535dfa 19-24
+packages/sdk-python/LICENSE
+  s_8e040dbdf13565::t_76e67ab678fbd8 1-21
+packages/sdk-python/MANIFEST.in
+  s_8e040dbdf13565::t_04ce059cb82c96 1-3
+packages/sdk/LICENSE
+  s_8e040dbdf13565::t_f15e7e63b8b15a 1-21
+packages/sdk/README.md
+  s_8e040dbdf13565::t_ba5937c78c0e96 112,114
+packages/sdk/package.json
+  s_8e040dbdf13565::t_1438c217fffd64 3-4,6,8-31,43-44,79-81
+packages/store-postgres/package.json
+  s_8e040dbdf13565::t_28e7f6ea404092 3-4,6,8-29,54,66-68
+scripts/release/smoke.sh
+  s_8e040dbdf13565::t_097d1637b5a81f 1-165
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ae9c41e8b1265d826a53c86a292526aacf135afb",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
