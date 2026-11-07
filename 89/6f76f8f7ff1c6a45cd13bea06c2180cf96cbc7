@@ -1,0 +1,19 @@
+packages/coding.sh/src/mcp/tools.ts
+  s_8e040dbdf13565::t_e3ad6f966fb4ec 71,209,215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "896f76f8f7ff1c6a45cd13bea06c2180cf96cbc7",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "unknown"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
