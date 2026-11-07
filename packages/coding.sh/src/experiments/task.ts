@@ -1,8 +1,10 @@
-// What an experiment evaluates. Three adapters so ANY agent can be measured:
+// What an experiment evaluates. Four adapters so ANY agent can be measured:
 //  - a JS function `(input, ctx) => output`
 //  - a command (any language): case input JSON on stdin, output on stdout,
 //    CODING_SH_RUN_ID / CODING_SH_CASE_ID / CODING_SH_TRIAL in the env
 //  - an HTTP endpoint: POST JSON, response JSON (or text) is the output
+//  - a next-turn continuation (continuation.ts): the case input is a frozen
+//    session prefix, the output is one model turn under a harness variant
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { extractJson } from "../judge/extract.ts";
@@ -10,6 +12,7 @@ import { queryJsonPath } from "../graders/json-path.ts";
 import { describeFailure, formatArgv, runProcess, type CommandSpec } from "../graders/proc.ts";
 import type { TaskInfo } from "../datasets/types.ts";
 import type { FetchLike } from "../judge/http.ts";
+import { continuationTask, type ContinuationTask } from "./continuation.ts";
 
 export interface TaskContext {
   runId: string;
@@ -53,7 +56,7 @@ export interface FunctionTask {
   name?: string;
 }
 
-export type TaskSpec = TaskFn | FunctionTask | CommandTask | HttpTask;
+export type TaskSpec = TaskFn | FunctionTask | CommandTask | HttpTask | ContinuationTask;
 
 export interface ResolvedTask {
   info: TaskInfo;
@@ -223,5 +226,6 @@ export function resolveTask(spec: TaskSpec): ResolvedTask {
   }
   if (spec.kind === "command") return commandTask(spec);
   if (spec.kind === "http") return httpTask(spec);
+  if (spec.kind === "continuation") return continuationTask(spec);
   throw new TaskError(`unknown task kind ${JSON.stringify((spec as { kind?: unknown }).kind)}`);
 }

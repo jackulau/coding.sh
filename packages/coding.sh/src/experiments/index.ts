@@ -1,6 +1,7 @@
 export * from "./ab.ts";
 export * from "./aa.ts";
 export * from "./compare.ts";
+export * from "./continuation.ts";
 export * from "./render.ts";
 export * from "./pairwise.ts";
 export * from "./power.ts";

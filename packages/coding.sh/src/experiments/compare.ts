@@ -10,6 +10,7 @@ import { pairedPosterior, type PairedPosterior } from "../stats/posterior.ts";
 import type { SequentialOutcome } from "../stats/sequential.ts";
 import { gateVerdict, type GateVerdict } from "../stats/gate.ts";
 import { acceptanceGate, fisherExact, hardRegressions, mcnemar, nonInferiority, type GateOpts, type GateResult, type McNemarResult, type NonInferiorityResult } from "../stats/tests.ts";
+import type { ReplayNoise } from "./continuation.ts";
 import { pairedPower, passHatK, type NoisePrior, type PowerAnalysis } from "./power.ts";
 import { caseRates } from "./run.ts";
 import { outcomesByCase, turnover, type Turnover } from "./turnover.ts";
@@ -236,6 +237,20 @@ export interface Comparison {
    * and the trial-half check.
    */
   turnover: ComparisonTurnover;
+  /**
+   * Continuation experiments (EM-19): how often the control arm (A, the
+   * recorded config) diverged from the recorded turn from the same prefix.
+   * `warning` is set when B's change is smaller than that noise floor.
+   */
+  replay?: ComparisonReplay;
+  /** Set when A is a continuation experiment with no control arm (`exp run --no-control`). */
+  controlWarning?: string;
+}
+
+export interface ComparisonReplay extends ReplayNoise {
+  /** |B − A| is below the noise floor: the replay itself moves outcomes that much. */
+  withinNoise: boolean;
+  warning?: string;
 }
 
 /**
@@ -289,6 +304,8 @@ export interface CompareOpts {
   margin?: number;
   /** Stored verifier precision audits by grader version (`FileEvalStore.getVerifierAudit`). */
   verifiers?: ReadonlyMap<string, VerifierAudit>;
+  /** The control arm's replay noise floor (continuation.ts replayNoise on A). */
+  replay?: ReplayNoise;
 }
 
 /** Thrown when a side of a comparison is a cancelled (partial) experiment and `force` is not set. */
@@ -454,6 +471,16 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
       { iters: boot.iters, seed: boot.seed, alpha: boot.alpha / 2, ...(cl ? { clusterIds: ids.map(clusterOf) } : {}) },
     );
     out.nonInferiority = { ...ni, hardRegressions: hardRegressions(outcomesByCase(a.runs), outcomesByCase(b.runs)) };
+  }
+  if (opts.replay) {
+    const withinNoise = ids.length > 0 && Math.abs(d.mean) < opts.replay.rate;
+    out.replay = { ...opts.replay, withinNoise };
+    if (withinNoise) {
+      out.replay.warning = `B − A (${(d.mean * 100).toFixed(1)} points) is smaller than the replay noise floor (${(opts.replay.rate * 100).toFixed(0)}%): the control arm alone diverges from the recorded turns that often, so this difference may be replay noise`;
+    }
+  }
+  if (a.task.kind === "continuation" && a.metadata?.control === "skipped") {
+    out.controlWarning = "A ran without a control arm (--no-control): there is no replay noise floor to read the difference against";
   }
   if (opts.gate) {
     const g = acceptanceGate({ wins: improve, losses: regress, solved }, opts.gate);

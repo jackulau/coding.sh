@@ -29,12 +29,16 @@ export function configChanges(was: JobConfig, now: JobConfig): string[] {
 /**
  * A command task's fingerprint: the spec plus the content of the program and
  * of every argument that names a file (an agent script edited mid-run is a
- * changed config). Other specs are returned as they are.
+ * changed config). Other specs are returned as they are, minus function
+ * fields (runtime hooks such as a continuation task's onCall or fetch).
  */
 export function taskFingerprint(spec: unknown, cwd = process.cwd()): unknown {
   if (!spec || typeof spec !== "object" || Array.isArray(spec)) return spec;
   const s = spec as { kind?: unknown; command?: unknown; args?: unknown; cwd?: unknown };
-  if (s.kind !== "command" || typeof s.command !== "string") return spec;
+  if (s.kind !== "command" || typeof s.command !== "string") {
+    const entries = Object.entries(spec);
+    return entries.some(([, v]) => typeof v === "function") ? Object.fromEntries(entries.filter(([, v]) => typeof v !== "function")) : spec;
+  }
   const base = typeof s.cwd === "string" ? resolve(cwd, s.cwd) : cwd;
   const files: Record<string, string> = {};
   const words = [s.command, ...(Array.isArray(s.args) ? s.args : [])].filter((x): x is string => typeof x === "string");

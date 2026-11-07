@@ -223,8 +223,8 @@ export interface ExperimentSummary {
 }
 
 export interface TaskInfo {
-  kind: "function" | "command" | "http";
-  /** Human description: function name, argv, or URL (credentials stripped). */
+  kind: "function" | "command" | "http" | "continuation";
+  /** Human description: function name, argv, URL (credentials stripped), or continuation:<provider>/<model>#<harness hash>. */
   ref: string;
 }
 

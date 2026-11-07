@@ -191,6 +191,12 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
         paint(`(sd ${fixed(p.noise.sd)} over ${p.noise.paired} cases${p.noise.used ? "; the MDE uses it as a floor" : ""})`, "dim", color),
     );
   }
+  if (c.replay) {
+    const r = c.replay;
+    out.push(`replay noise floor ${pct(r.rate, 0)} (n=${r.n}) ${paint(`${ci(r.lo, r.hi)}; control arm vs the recorded turns from the same prefixes`, "dim", color)}`);
+    if (r.warning) out.push(paint(`! ${r.warning}`, "yellow", color));
+  }
+  if (c.controlWarning) out.push(paint(`! ${c.controlWarning}`, "yellow", color));
   for (const w of p.warnings) out.push(paint(`! ${w.message}`, "yellow", color));
   const att = c.attrition;
   if (att.a.lost || att.b.lost) {
