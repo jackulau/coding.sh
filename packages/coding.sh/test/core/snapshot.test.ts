@@ -282,7 +282,9 @@ describe("performance", () => {
     assert.ok(ms < 3 * base, `${label} took ${ms.toFixed(0)} ms; plain git add -A + write-tree into a fresh index took ${base.toFixed(0)} ms`);
   };
 
-  test("5k-file repo snapshot < 2 s (or 3x plain git on a loaded machine)", { timeout: 120_000 }, async () => {
+  // Setting up 5k files (writes, a commit, a materialize) is slow on Windows runners, where a
+  // virus scanner reads every new file; the budgets below are on the snapshots alone.
+  test("5k-file repo snapshot < 2 s (or 3x plain git on a loaded machine)", { timeout: process.platform === "win32" ? 300_000 : 120_000 }, async () => {
     const root = makeRepo();
     for (let d = 0; d < 50; d++) {
       mkdirSync(join(root, `dir${d}`));

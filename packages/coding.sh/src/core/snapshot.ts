@@ -46,6 +46,12 @@ import type { RepoLayout } from "./git.ts";
 
 export const DEFAULT_SNAPSHOT_MAX_FILES = 50_000;
 export const DEFAULT_SNAPSHOT_TIMEOUT_MS = 2_000;
+/**
+ * materialize() writes and then hashes every file of the tree. It is not on a hot path, and a
+ * failed one fails the whole eval run, so its git calls get far more than git's 30 s default
+ * (a large tree on Windows, where a virus scanner reads each new file, can need it).
+ */
+const MATERIALIZE_TIMEOUT_MS = 10 * 60_000;
 
 export interface SnapshotOptions {
   maxFiles?: number;
@@ -326,16 +332,16 @@ export async function materialize(state: RepoState, destDir: string, env: NodeJS
   try {
     const idx = join(scratch, "index");
     const senv = { GIT_DIR: shadow, GIT_INDEX_FILE: idx, GIT_WORK_TREE: dest };
-    await run(["read-tree", `${rev}^{tree}`], { cwd: dest, env: senv });
-    await run(["checkout-index", "-a", "-f"], { cwd: dest, env: senv });
+    await run(["read-tree", `${rev}^{tree}`], { cwd: dest, env: senv, timeoutMs: MATERIALIZE_TIMEOUT_MS });
+    await run(["checkout-index", "-a", "-f"], { cwd: dest, env: senv, timeoutMs: MATERIALIZE_TIMEOUT_MS });
   } finally {
     rmQuiet(scratch);
   }
   const quiet = ["-c", "init.defaultBranch=main", "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false"];
   await run([...quiet, "init", "-q"], { cwd: dest });
   // -f: files tracked-but-ignored upstream must be in the start commit too.
-  await run([...quiet, "add", "-A", "-f"], { cwd: dest });
-  await run([...quiet, "commit", "-q", "--no-verify", "--allow-empty", "-m", "coding.sh task start"], { cwd: dest, env: CODING_SH_IDENTITY });
+  await run([...quiet, "add", "-A", "-f"], { cwd: dest, timeoutMs: MATERIALIZE_TIMEOUT_MS });
+  await run([...quiet, "commit", "-q", "--no-verify", "--allow-empty", "-m", "coding.sh task start"], { cwd: dest, env: CODING_SH_IDENTITY, timeoutMs: MATERIALIZE_TIMEOUT_MS });
   const startCommit = await git(["rev-parse", "HEAD"], { cwd: dest });
   await run(["update-ref", START_REF, startCommit], { cwd: dest });
   return { dir: dest, startCommit };
