@@ -1,0 +1,49 @@
+packages/coding.sh/src/experiments/compare.ts
+  s_8e040dbdf13565::t_ed9e0e5734caa2 456
+  s_8e040dbdf13565::t_be5fd166e8752f 12,231-232,241-250,288-289,450-455
+  s_8e040dbdf13565::t_7bc9f390254c54 457
+packages/coding.sh/src/experiments/render.ts
+  s_8e040dbdf13565::t_ed9e0e5734caa2 11,182,303-316
+  s_8e040dbdf13565::t_2e29fb58abfee3 317-319
+packages/coding.sh/src/stats/index.ts
+  s_8e040dbdf13565::t_b8cd59e3e80e50 6-7
+packages/coding.sh/test/experiments/gate-cli.test.ts
+  s_8e040dbdf13565::t_960e28bb1adbc3 83-104
+CHANGELOG.md
+  s_8e040dbdf13565::t_a955072a13b8fe 37
+docs/reference/cli.md
+  s_8e040dbdf13565::t_f2dcde00a15258 670,678
+packages/coding.sh/src/cli/commands/exp.ts
+  s_8e040dbdf13565::t_c65bd90830077e 521-523,552-553
+  s_8e040dbdf13565::t_ef138c627978c7 7-8
+apps/site/src/pages/docs/evals.astro
+  s_8e040dbdf13565::t_a955072a13b8fe 160-164
+docs/guides/evals.md
+  s_8e040dbdf13565::t_8419405af68cff 91
+  s_8e040dbdf13565::t_a955072a13b8fe 82-90,92
+packages/coding.sh/src/stats/tests.ts
+  s_8e040dbdf13565::t_4b099c65c1c552 2-3
+  s_8e040dbdf13565::t_76d16ad6dda533 348-405
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_c65bd90830077e 440,445
+packages/coding.sh/test/stats/tests.test.ts
+  s_8e040dbdf13565::t_2f211a8527b795 97,105
+  s_8e040dbdf13565::t_d9242624f33044 3
+  s_8e040dbdf13565::t_7e402512516b99 71-96,98-104,106-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e96e81279fba85f5573d91a4e773d916e4894197",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
