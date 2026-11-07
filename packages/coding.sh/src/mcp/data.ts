@@ -95,6 +95,7 @@ export function sessionSummary(s: Session, now: number = Date.now()): SessionSum
     costUsd: u?.costUsd !== undefined ? round4(u.costUsd) : undefined,
     costEstimated: (u?.estimatedCostUsd ?? 0) > 0 ? true : undefined,
     flags: s.flags.length ? s.flags : undefined,
+    derails: s.stats.derails?.length ? s.stats.derails.map((d) => ({ flag: d.flag, at: iso(d.ts), index: d.index, eventId: d.eventId, detail: d.detail })) : undefined,
     parentSessionId: s.parent?.sessionId,
     subagentType: s.parent?.type,
   };

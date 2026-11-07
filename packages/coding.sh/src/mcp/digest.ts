@@ -28,9 +28,15 @@ export interface Digest extends Obj {
 }
 
 export async function sessionDigest(index: IndexStore, s: Session, o: DigestOpts): Promise<Digest> {
-  const events = await index.listEvents(s.id, { limit: DIGEST_EVENT_CAP });
+  // A session past the cap read from its end (tail, or turn -1) reads its last DIGEST_EVENT_CAP
+  // events: the latest activity of a days-long run, not the middle of it.
+  const fromEnd = s.stats.events > DIGEST_EVENT_CAP && (o.turn !== undefined && o.turn !== 0 ? o.turn < 0 : o.from === "tail");
+  const events = await index.listEvents(s.id, { limit: DIGEST_EVENT_CAP, ...(fromEnd ? { offset: s.stats.events - DIGEST_EVENT_CAP } : {}) });
   const turns = splitTurns(events);
   const idx = turnIndex(turns, s.startedAt);
+  // Number the window's turns as in the whole session.
+  const shift = fromEnd ? Math.max(0, s.stats.turns - turns.length) : 0;
+  for (const t of idx) t.turn += shift;
   let scope = events;
   let turnNo: number | undefined;
   if (o.turn !== undefined && o.turn !== 0) {
@@ -48,8 +54,8 @@ export async function sessionDigest(index: IndexStore, s: Session, o: DigestOpts
   const TURN_CAP = 40;
   return {
     session: sessionSummary(s, o.now ?? Date.now()),
-    ...(turnNo !== undefined ? { turn: turnNo } : {}),
-    turnCount: turns.length,
+    ...(turnNo !== undefined ? { turn: turnNo + shift } : {}),
+    turnCount: turns.length + shift,
     turns: turnNo !== undefined ? idx.slice(turnNo - 1, turnNo) : idx.length > TURN_CAP ? [...idx.slice(0, 10), ...idx.slice(-(TURN_CAP - 10))] : idx,
     ...(turnNo === undefined && idx.length > TURN_CAP ? { turnsOmitted: idx.length - TURN_CAP } : {}),
     timeline: page,
@@ -95,6 +101,7 @@ export async function sessionMarkdown(index: IndexStore, s: Session, maxEntries 
   if (u) row("Tokens", `in ${u.inputTokens ?? 0}, out ${u.outputTokens ?? 0}, cache read ${u.cacheReadTokens ?? 0}${u.costUsd !== undefined ? `, $${u.costUsd.toFixed(4)}${costNote(u)}` : ""}`);
   if (lat?.llmCalls) row("Latency", `${lat.llmCalls} model calls, p50 ${fmtMs(lat.llmP50Ms)}, p95 ${fmtMs(lat.llmP95Ms)}${lat.ttftP50Ms !== undefined ? `, TTFT p50 ${fmtMs(lat.ttftP50Ms)}` : ""}`);
   if (s.flags.length) row("Flags", s.flags.join(", "));
+  for (const d of s.stats.derails ?? []) row("Derail", `${d.flag} at +${fmtMs(d.ts - s.startedAt)} (event ${d.index + 1}): ${d.detail}`);
   if (s.parent) row("Parent", `\`${s.parent.sessionId}\``);
   if (turns.length > 1) {
     lines.push("", "## Turns", "");

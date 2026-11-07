@@ -206,13 +206,13 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       name: "sessions_list",
       title: "List sessions",
       description:
-        "List captured agent sessions, newest first, with turns, tool calls/errors, tokens, cost and failure flags. Use to find session ids or browse recent work; use search for text inside sessions.",
+        "List captured agent sessions, newest first, with turns, tool calls/errors, tokens, cost, failure flags and derails (where and when a run went off the rails). Use to find session ids or browse recent work; use search for text inside sessions.",
       inputSchema: input({
         agent: AGENT,
         repo: REPO,
         since: SINCE("all time"),
         until: UNTIL,
-        flag: { type: "string", description: "Only sessions with this failure flag: premature-completion, repeated-tool-failure, no-verification or compaction." },
+        flag: { type: "string", description: "Only sessions with this flag: premature-completion, repeated-tool-failure, no-verification, compaction, or a derail: looping, failure-streak, churn, no-progress, stalled, context-thrash." },
         flagged: { type: "boolean", description: "Only sessions with any failure flag." },
         includeSubagents: { type: "boolean", default: false, description: "Also list subagent (child) sessions. Default false." },
         project: PROJECT,
