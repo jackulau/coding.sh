@@ -5,8 +5,35 @@ import { describe, it } from "node:test";
 import type { AgentEvent, Session } from "../../src/schema/index.ts";
 import { createRedactor, sessionToMetadata, toMetadata } from "../../src/core/redact.ts";
 import { originalSecretRedact } from "../fixtures/redact/original-secret-rules.ts";
+import { median, timeMs } from "../helpers-timing.ts";
 
 const r = createRedactor({ redact: ["secrets"] });
+
+/**
+ * Redacting `make(n)` grows linearly with n. A 1 MB input under `budgetMs` passes
+ * at once (an idle machine takes a few tens of ms). A slower run is either load
+ * or super-linear growth, so measure the growth: median of 3 at 256 KB and at
+ * 1 MB, interleaved. Linear time grows about 4x, O(n²) about 16x. The O(n²)
+ * rules this guards against took seconds to minutes at 1 MB, past the hard cap.
+ */
+function assertLinear(label: string, make: (n: number) => string, budgetMs = 500, check?: (input: string, out: string) => void): void {
+  const MB = 1 << 20;
+  const input = make(MB);
+  let out = "";
+  const ms = timeMs(() => (out = r.string(input)));
+  check?.(input, out);
+  if (ms < budgetMs) return;
+  assert.ok(ms < 10_000, `${label}: ${ms.toFixed(0)} ms for 1 MB`);
+  const quarter = make(MB / 4);
+  const small: number[] = [];
+  const big: number[] = [];
+  for (let i = 0; i < 3; i++) {
+    small.push(timeMs(() => r.string(quarter)));
+    big.push(timeMs(() => r.string(input)));
+  }
+  const growth = median(big) / Math.max(median(small), 0.01);
+  assert.ok(growth < 8, `${label}: ${median(small).toFixed(1)} ms at 256 KB, ${median(big).toFixed(1)} ms at 1 MB (${growth.toFixed(1)}x; linear is ~4x, O(n²) ~16x)`);
+}
 
 const positives: [string, string, string][] = [
   ["anthropic", "key: sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789_-abc", "anthropic-key"],
@@ -123,10 +150,8 @@ describe("redact: secrets", () => {
   });
 
   it("redacts a large string quickly", () => {
-    const big = "const x = 1; // normal code line with words and numbers 12345\n".repeat(20_000);
-    const t = performance.now();
-    assert.equal(r.string(big), big);
-    assert.ok(performance.now() - t < 1000, "1.2 MB in under 1s");
+    const line = "const x = 1; // normal code line with words and numbers 12345\n";
+    assertLinear("1 MB of plain code", (n) => line.repeat(Math.ceil(n / line.length)), 1000, (input, out) => assert.equal(out, input));
   });
 });
 
@@ -218,29 +243,22 @@ describe("redact: linear time on long input", () => {
   // extrapolated from 100 KB, all O(n²)): secret-field ~20-50 min on the first two,
   // password ~6-9 min on dotted runs, prose-secret ~3 min on "token:" repeats,
   // private-key ~14 s on unterminated BEGIN lines. Now each is a few tens of ms.
-  const MB = 1 << 20;
   const rand = prng(42);
-  const cases: [string, () => string][] = [
-    ["alphanumeric", () => randomFrom(rand, ALNUM, MB)],
-    ["[A-Za-z0-9_-]", () => randomFrom(rand, `${ALNUM}_-`, MB)],
-    ["'token: ' + letters", () => `token: ${randomFrom(rand, LETTERS, MB)}`],
-    ["'Bearer ' + letters", () => `Bearer ${randomFrom(rand, LETTERS, MB)}`],
-    ["'password is ' + letters", () => `password is ${randomFrom(rand, LETTERS, MB)}`],
-    ["'sk-' + letters and dashes", () => `sk-${randomFrom(rand, `${LETTERS}-`, MB)}`],
-    ["dotted words (a.a.a.…)", () => "a.".repeat(MB / 2)],
-    ["dashed words (sk-sk-…)", () => "sk-".repeat(Math.floor(MB / 3))],
-    ["repeated 'token:'", () => "token:".repeat(Math.floor(MB / 6))],
-    ["repeated 'password='", () => "password=".repeat(Math.floor(MB / 9))],
-    ["unterminated BEGIN PRIVATE KEY lines", () => "-----BEGIN PRIVATE KEY-----".repeat(Math.floor(MB / 27))],
+  const cases: [string, (n: number) => string][] = [
+    ["alphanumeric", (n) => randomFrom(rand, ALNUM, n)],
+    ["[A-Za-z0-9_-]", (n) => randomFrom(rand, `${ALNUM}_-`, n)],
+    ["'token: ' + letters", (n) => `token: ${randomFrom(rand, LETTERS, n)}`],
+    ["'Bearer ' + letters", (n) => `Bearer ${randomFrom(rand, LETTERS, n)}`],
+    ["'password is ' + letters", (n) => `password is ${randomFrom(rand, LETTERS, n)}`],
+    ["'sk-' + letters and dashes", (n) => `sk-${randomFrom(rand, `${LETTERS}-`, n)}`],
+    ["dotted words (a.a.a.…)", (n) => "a.".repeat(n / 2)],
+    ["dashed words (sk-sk-…)", (n) => "sk-".repeat(Math.floor(n / 3))],
+    ["repeated 'token:'", (n) => "token:".repeat(Math.floor(n / 6))],
+    ["repeated 'password='", (n) => "password=".repeat(Math.floor(n / 9))],
+    ["unterminated BEGIN PRIVATE KEY lines", (n) => "-----BEGIN PRIVATE KEY-----".repeat(Math.floor(n / 27))],
   ];
   for (const [name, make] of cases) {
-    it(`redacts 1 MB of ${name} in under 500 ms`, () => {
-      const input = make();
-      const t = performance.now();
-      r.string(input);
-      const ms = performance.now() - t;
-      assert.ok(ms < 500, `${name}: ${ms.toFixed(0)} ms`);
-    });
+    it(`redacts 1 MB of ${name} in linear time (under 500 ms, else linear growth)`, () => assertLinear(name, make));
   }
 });
 

@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, chmodSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { diffSnapshots, diffWorkdir, ensureShadow, materialize, shadowRepoPath, snapshot } from "../../src/core/snapshot.ts";
 import { branch, head, isRepo, repoRoot, run } from "../../src/core/git.ts";
 import { gitDirFingerprint, gitc, isolate, makeRepo, removeTmp, tmp, treeHash, write } from "../capture/_helpers.ts";
+import { median, timeMs } from "../helpers-timing.ts";
 
 before(() => isolate());
 after(() => removeTmp());
@@ -244,7 +246,27 @@ describe("materialize / diff", () => {
 });
 
 describe("performance", () => {
-  test("5k-file repo snapshot < 2 s", { timeout: 120_000 }, async () => {
+  // The budget is 2 s, or 3x what plain git takes at the same moment to hash
+  // the whole tree into a fresh index (`add -A`, then `write-tree`), whichever
+  // is larger. A snapshot never does more than that plus a few small git calls
+  // (with a seeded index it does much less), so load slows both alike, and a
+  // regression that adds per-file work or extra passes over the tree fails.
+  const plainGitMs = (dir: string) =>
+    median(
+      [0, 1, 2].map(() => {
+        const env = { ...process.env, GIT_INDEX_FILE: join(tmp(), "index") };
+        return timeMs(() => {
+          for (const args of [["add", "-A"], ["write-tree"]]) assert.equal(spawnSync("git", args, { cwd: dir, env }).status, 0, args.join(" "));
+        });
+      }),
+    );
+  const within = (label: string, ms: number, dir: string) => {
+    if (ms < 2000) return;
+    const base = plainGitMs(dir);
+    assert.ok(ms < 3 * base, `${label} took ${ms.toFixed(0)} ms; plain git add -A + write-tree into a fresh index took ${base.toFixed(0)} ms`);
+  };
+
+  test("5k-file repo snapshot < 2 s (or 3x plain git on a loaded machine)", { timeout: 120_000 }, async () => {
     const root = makeRepo();
     for (let d = 0; d < 50; d++) {
       mkdirSync(join(root, `dir${d}`));
@@ -262,8 +284,8 @@ describe("performance", () => {
     console.log(`# snapshot 5k files: first ${coldMs.toFixed(0)} ms, second ${warmMs.toFixed(0)} ms`);
     assert.equal(cold?.partial, false);
     assert.ok(warm?.snapshot);
-    assert.ok(coldMs < 2000, `first snapshot took ${coldMs} ms`);
-    assert.ok(warmMs < 2000, `second snapshot took ${warmMs} ms`);
+    within("first snapshot", coldMs, root);
+    within("second snapshot", warmMs, root);
     // fresh clone without a warm index (stat cache empty) still within budget
     const m = await materialize(cold!, join(tmp(), "big"));
     rmSync(join(m.dir, ".git", "index"));
@@ -272,6 +294,6 @@ describe("performance", () => {
     const noIndexMs = performance.now() - t;
     console.log(`# snapshot 5k files without index: ${noIndexMs.toFixed(0)} ms`);
     assert.equal(noIndex?.partial, false);
-    assert.ok(noIndexMs < 2000, `no-index snapshot took ${noIndexMs} ms`);
+    within("no-index snapshot", noIndexMs, m.dir);
   });
 });

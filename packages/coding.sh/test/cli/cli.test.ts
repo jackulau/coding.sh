@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { bundle } from "../../scripts/bundle.mjs";
+import { assertStartupBudget } from "../helpers-timing.ts";
 
 let distDir = "";
 let CLI = "";
@@ -99,24 +100,11 @@ const ANSI = /\x1b\[/;
 describe("cli help", () => {
   it("prints root help in under 200 ms from the bundle", () => {
     const h = tmpHome();
-    // Best of three: the first spawn pays cold file-cache costs.
-    let best = Infinity;
-    let bare = Infinity;
-    let res: SpawnSyncReturns<string> | undefined;
-    for (let i = 0; i < 3; i++) {
-      const t0 = performance.now();
-      res = cli(h, ["--help"]);
-      best = Math.min(best, performance.now() - t0);
-      // A bare node spawn under the same load: the budget is for the CLI's own startup, so a busy
-      // machine (the parallel suite, other jobs) slows both and does not fail the check.
-      const t1 = performance.now();
-      spawnSync(process.execPath, ["-e", ""]);
-      bare = Math.min(bare, performance.now() - t1);
-    }
-    assert.equal(res!.status, 0, res!.stderr);
-    assert.match(res!.stdout, /coding\.sh/);
-    assert.match(res!.stdout, /init/);
-    assert.ok(best - bare < 170, `--help took ${best.toFixed(0)} ms (bare node ${bare.toFixed(0)} ms)`);
+    // Paired against bare node under the same load (see helpers-timing.ts). A real regression,
+    // like the ~300 ms of module compile a monolithic bundle cost, fails on any machine.
+    const res = assertStartupBudget("--help", () => cli(h, ["--help"]));
+    assert.match(res.stdout, /coding\.sh/);
+    assert.match(res.stdout, /init/);
   });
 
   it("keeps command code out of the entry bundle (code splitting)", () => {

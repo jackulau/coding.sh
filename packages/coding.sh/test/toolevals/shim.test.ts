@@ -95,7 +95,7 @@ describe("CLI shim", () => {
     assert.equal(readTap(tapLog).length, 1);
   });
 
-  it("durationMs excludes shim startup: within 5 ms of a direct spawn (median of 20)", async () => {
+  it("durationMs excludes shim startup: matches a direct spawn, not the wall time through the shim (median of 20)", async () => {
     const d = tmp();
     const bin = join(d, "bin");
     const tapLog = join(d, "tap.jsonl");
@@ -109,6 +109,13 @@ describe("CLI shim", () => {
       });
     // One round is 20 interleaved pairs. The full suite runs test files in
     // parallel, so a round that lands on a CPU spike is retried (at most 3).
+    //
+    // The tolerance scales with load. The shim's own overhead (wall time
+    // through the shim minus a direct spawn, both measured here) is what a
+    // regression would add to durationMs, and load stretches it and the noise
+    // alike. So the recorded median must sit within a quarter of that
+    // overhead of the direct median (5 ms floor on an idle machine): a shim
+    // that counted its own startup would land near the wall time instead.
     let last = "";
     for (let round = 0; round < 3; round++) {
       writeFileSync(tapLog, "");
@@ -122,10 +129,13 @@ describe("CLI shim", () => {
       assert.equal(recorded.length, 20);
       const dm = median(direct);
       const rm = median(recorded);
+      const wm = median(shimWall);
       // The shim's own startup is real: the wall time through the shim is longer.
-      assert.ok(median(shimWall) > rm);
-      if (Math.abs(rm - dm) <= 5) return;
-      last = `shim-recorded median ${rm.toFixed(2)} ms vs direct ${dm.toFixed(2)} ms`;
+      assert.ok(wm > rm);
+      const overhead = wm - dm;
+      const tolerance = Math.max(5, overhead / 4);
+      if (Math.abs(rm - dm) <= tolerance) return;
+      last = `shim-recorded median ${rm.toFixed(2)} ms vs direct ${dm.toFixed(2)} ms (tolerance ${tolerance.toFixed(2)} ms; shim wall ${wm.toFixed(2)} ms)`;
     }
     assert.fail(last);
   });

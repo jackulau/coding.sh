@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -67,14 +67,31 @@ describe("validateTask", () => {
     const index = new MemIndex();
     const ac = new AbortController();
     const steps: string[] = [];
-    setTimeout(() => ac.abort(), 700);
-    const t0 = Date.now();
-    await assert.rejects(validateTask({ task, blobs, git, workRoot, k: 3, index, passToPass: false, signal: ac.signal, onStep: (st) => steps.push(st.label) }), { name: "AbortError" });
-    assert.ok(Date.now() - t0 < 5000, `stopped in ${Date.now() - t0}ms`);
+    // Abort once the verifier is running (its pid is on disk), not after a fixed delay: on a
+    // loaded machine materializing the step dir can take longer than any delay, and an abort
+    // before the spawn leaves no verifier to kill. The 20 s fallback only keeps a broken run
+    // from hanging; the pid checks below then fail.
+    let abortedAt = 0;
+    const abort = () => {
+      clearInterval(poll);
+      clearTimeout(fallback);
+      abortedAt = Date.now();
+      ac.abort();
+    };
+    const poll = setInterval(() => {
+      if (existsSync(pidFile) && readFileSync(pidFile, "utf8").includes("\n")) abort();
+    }, 10);
+    const fallback = setTimeout(abort, 20_000);
+    try {
+      await assert.rejects(validateTask({ task, blobs, git, workRoot, k: 3, index, passToPass: false, signal: ac.signal, onStep: (st) => steps.push(st.label) }), { name: "AbortError" });
+    } finally {
+      clearInterval(poll);
+      clearTimeout(fallback);
+    }
+    assert.ok(Date.now() - abortedAt < 5000, `stopped ${Date.now() - abortedAt}ms after the abort`);
     assert.deepEqual(steps, [], "the killed no-op step is not recorded as a result");
     assert.deepEqual(await readdir(workRoot), [], "step dirs are cleaned up");
     assert.equal(await index.getTask("t1"), undefined, "task status not written");
-    const { readFileSync } = await import("node:fs");
     const pids = readFileSync(pidFile, "utf8").trim().split("\n").map(Number);
     assert.equal(pids.length, 1, "no step after the abort");
     let alive = true;

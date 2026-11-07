@@ -9,6 +9,7 @@ import { after, before, describe, it } from "node:test";
 import { bundle } from "../../scripts/bundle.mjs";
 import { startFakeProvider, type FakeProvider } from "./fixtures/fake-provider.mjs";
 import { FAKE_CLI } from "./helpers.ts";
+import { assertStartupBudget } from "../helpers-timing.ts";
 
 let distDir = "";
 let CLI = "";
@@ -91,23 +92,10 @@ function writeRepo(h: Home, opts: { confirmAboveUsd?: number; providerUrl?: stri
 describe("toolevals CLI", () => {
   it("prints toolevals help in under 200 ms from the bundle", () => {
     const h = tmpHome();
-    let best = Infinity;
-    let bare = Infinity;
-    let r: SpawnSyncReturns<string> | undefined;
-    for (let i = 0; i < 3; i++) {
-      const t0 = performance.now();
-      r = cli(h, ["toolevals", "--help"]);
-      best = Math.min(best, performance.now() - t0);
-      // A bare node spawn under the same load: the budget is for the CLI's own startup, so a busy
-      // machine (the parallel suite, other jobs) slows both and does not fail the check.
-      const t1 = performance.now();
-      spawnSync(process.execPath, ["-e", ""]);
-      bare = Math.min(bare, performance.now() - t1);
-    }
-    assert.equal(r!.status, 0, r!.stderr);
-    assert.match(r!.stdout, /toolevals/);
-    assert.match(r!.stdout, /compress/);
-    assert.ok(best - bare < 170, `toolevals --help took ${best.toFixed(0)} ms (bare node ${bare.toFixed(0)} ms)`);
+    // Paired against bare node under the same load (see helpers-timing.ts).
+    const r = assertStartupBudget("toolevals --help", () => cli(h, ["toolevals", "--help"]));
+    assert.match(r.stdout, /toolevals/);
+    assert.match(r.stdout, /compress/);
   });
 
   it("exits 2 on an unknown flag, with a JSON error on stderr in --json mode", () => {

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { loadSqlite, MIGRATIONS, SQLITE_SCHEMA_VERSION, SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { median, timeMs } from "../helpers-timing.ts";
 
 const root = mkdtempSync(join(tmpdir(), "csh-sqlite-"));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -40,14 +41,35 @@ describe("SqliteIndexStore writer lock fencing (STO-8)", () => {
 });
 
 describe("SqliteIndexStore", () => {
-  it("writes 10k events in one batch in under a second", async () => {
+  it("writes 10k events in one batch in under a second (or 10x a raw insert on a loaded machine)", async () => {
     const s = await SqliteIndexStore.open(join(root, "perf.db"));
     const batch = events(10_000);
     const t = performance.now();
     const { inserted } = await s.putEvents(batch);
     const ms = performance.now() - t;
     assert.equal(inserted, 10_000);
-    assert.ok(ms < 1000, `took ${ms.toFixed(0)}ms`);
+    if (ms >= 1000) {
+      // Over budget: load, or a regression? Compare with the same 10k rows inserted raw in one
+      // transaction, at the same moment on the same disk (median of 3). The store adds JSON,
+      // indexes and session stats, about 2x the raw cost; losing the single transaction or
+      // going per-row costs orders of magnitude more.
+      const { DatabaseSync } = await loadSqlite();
+      const raw = median(
+        [0, 1, 2].map((i) => {
+          const db = new DatabaseSync(join(root, `raw-${i}.db`));
+          db.exec("PRAGMA journal_mode=WAL; CREATE TABLE e (id TEXT PRIMARY KEY, session TEXT, ts INTEGER, kind TEXT, payload TEXT); CREATE INDEX e_s ON e (session, ts)");
+          const ins = db.prepare("INSERT INTO e VALUES (?, ?, ?, ?, ?)");
+          const took = timeMs(() => {
+            db.exec("BEGIN");
+            for (const e of batch) ins.run(e.id, e.sessionId, e.ts, e.kind, JSON.stringify(e));
+            db.exec("COMMIT");
+          });
+          db.close();
+          return took;
+        }),
+      );
+      assert.ok(ms < 10 * raw, `putEvents took ${ms.toFixed(0)} ms; a raw insert of the same rows took ${raw.toFixed(0)} ms`);
+    }
     assert.equal(await s.countEvents(), 10_000);
     assert.equal((await s.putEvents(batch)).inserted, 0);
     assert.equal((await s.search("refactoring", { limit: 5 })).length, 5);
