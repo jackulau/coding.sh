@@ -28,15 +28,15 @@ export const INSTALL_CMD = "npx coding.sh init";
 /** The installer (repo root install.sh, served at /install): latest GitHub release, then `init`, then the viewer. */
 export const INSTALL_SH = "curl -fsSL https://coding.sh/install | sh";
 /** The release tarball the installer fetches (install.sh: releases/download/<tag>/coding.sh-<n>.tgz). */
-export const RELEASE = "0.1.0";
+export const RELEASE = "0.1.1";
 export const RELEASE_TGZ = `${REPO_URL}/releases/download/v${RELEASE}/coding.sh-${RELEASE}.tgz`;
 
 export const SITE = {
   name: "coding.sh",
   tagline: "observability and evals for AI agents, on your machine",
   description:
-    "coding.sh is open-source, local-first observability and evals for AI agents. It records agent runs through coding-agent hooks and a local OpenTelemetry receiver, turns failures into evals with calibrated graders, and compares prompt, harness and model changes with paired statistics. MIT licensed, v0.1.0. Install: curl -fsSL https://coding.sh/install | sh",
-  version: "v0.1.0, early",
+    "coding.sh is open-source, local-first observability and evals for AI agents. It records agent runs through coding-agent hooks and a local OpenTelemetry receiver, turns failures into evals with calibrated graders, and compares prompt, harness and model changes with paired statistics. MIT licensed, v0.1.1. Install: curl -fsSL https://coding.sh/install | sh",
+  version: "v0.1.1, early",
   status: "install with curl -fsSL https://coding.sh/install | sh",
 } as const;
 

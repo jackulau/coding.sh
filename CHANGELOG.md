@@ -7,7 +7,44 @@ follow [Semantic Versioning](https://semver.org/) from the first npm release.
 Each release opens with a short summary. The list under it has one line per change,
 grouped by area, with links to the docs for the details.
 
-## [0.1.0] - Unreleased
+## [0.1.1] - 2026-11-07
+
+Sturdier experiments for any AI agent: cluster bootstrap, an A/A noise floor, attrition checks,
+interleaved A/B runs, early stopping, and `compare --without` to measure what one file is worth.
+The viewer and the site now work on phones, the installer uses npm once the package is there, and
+a round of QA fixes is in.
+
+### Added
+
+- **Experiments.** `exp compare --cluster <key>` resamples by repo or session and warns under 10 clusters. [Evals](https://coding.sh/docs/evals).
+- **Experiments.** `exp aa` measures the run-to-run noise floor, and power planning uses it.
+- **Experiments.** Compare flags uneven attrition between arms (Fisher exact) and splits infra errors from agent errors.
+- **Experiments.** Under 100 paired cases, compare also reports P(B>A) from a paired posterior.
+- **Experiments.** `exp run --arm a=<task> --arm b=<task>` interleaves both arms case by case in a seeded random order.
+- **Experiments.** `--stop-early` checks at planned looks with O'Brien-Fleming alpha spending and reports a repeated confidence interval.
+- **Experiments.** Pairwise judges see both outputs in both orders. `exp compare --pairwise` reports win rate, ties and position bias.
+- **Experiments.** `exp sweep` races task configs on a train split and reports the winner's optimism gap on held-out cases.
+- **Compare.** `compare <bundle> --without <path>` measures what one skill, AGENTS.md, CLAUDE.md or MCP config is worth. [Compare agents](https://coding.sh/docs/how-to/compare-agents).
+- **Compare.** With 2+ attempts per task, failed runs split into bad runs, arm limits and tasks no arm solves, with variance shares.
+- **Compare.** Cost rows show how many runs had a known cost, and "cheaper" needs a known cost for 80% of each arm.
+- **Viewer.** Phone layouts: 44px targets, filters in a bottom sheet, a compact session header and safe-area insets.
+- **Viewer.** The Benchmarks tab shows anchors, pooled gaps, difficulty, cost sources and tokens, and ranks follow the pooled gaps.
+- **Site.** Mobile pass: touch targets, safe areas, stacked agent cards and 16px body text on phones.
+- **Install.** `install.sh` installs from npm when the registry has the version, else from the GitHub release. `CODING_SH_SOURCE=npm|github` picks one.
+- **Release.** A tag creates its GitHub release as soon as the checks pass, so the installer gets it right away.
+
+### Fixed
+
+- **Fixes.** Experiments stop cleanly on Ctrl-C, kill their child processes and keep every finished run.
+- **Fixes.** Capture, ingest and storage state bugs from an audit of each state machine. Sessions are priced locally at ingest.
+- **Fixes.** Adapter fixes for opencode, goose, copilot-cli, droid, aider and t3code, found running each on a real install.
+- **Fixes.** `coding.sh run --agent <name>` records sessions for names with no adapter.
+- **Fixes.** `exp aa` refuses to compare a run with itself.
+- **Fixes.** `coding.sh ui` prints the viewer URL once in a terminal.
+- **Fixes.** Muted text in the viewer passes WCAG AA in both themes.
+- **Fixes.** Timing tests compare against a baseline, so a loaded machine no longer fails them.
+
+## [0.1.0] - 2026-11-06
 
 The first public release, still pre-1.0. coding.sh records what your AI agents do, with coding
 agents first-class, on your own machine, shows it in a local viewer, and turns those sessions into evals and A/B experiments.
@@ -84,4 +121,5 @@ It also runs as a server on SQLite or Postgres, with SDKs for apps that call mod
 - **Docs.** README with a quickstart, the agent matrix, OTLP setup, storage, privacy and uninstall.
 - **Docs.** CONTRIBUTING, SECURITY and a release checklist in docs/RELEASE.md.
 
+[0.1.1]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.1
 [0.1.0]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.0

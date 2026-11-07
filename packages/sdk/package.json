@@ -1,6 +1,6 @@
 {
   "name": "@coding.sh/sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Trace any AI agent or LLM app in production: wrap OpenAI, Anthropic, the AI SDK or fetch and send every model call, tool call and turn to a coding.sh server.",
   "license": "MIT",
   "author": "coding.sh contributors",
