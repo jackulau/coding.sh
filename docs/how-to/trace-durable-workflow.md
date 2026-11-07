@@ -7,8 +7,10 @@ deploys it crosses, and shows each step with its attempts, the waits as waiting 
 and the points where the run resumed.
 Site version: [coding.sh/docs/how-to/trace-durable-workflow](https://coding.sh/docs/how-to/trace-durable-workflow).
 
-This page sets it up for the Vercel Workflow SDK and for Temporal. Both send OpenTelemetry to the
-local collector; nothing else is needed on the coding.sh side.
+This page sets it up for the Vercel Workflow SDK and Temporal, then for Inngest, Restate, DBOS,
+LangGraph and Cloudflare Workflows. Each sends OpenTelemetry to the local collector; nothing else is
+needed on the coding.sh side. Every engine here was checked with a real run: a step that fails once,
+a worker killed in the middle of a step, a sleep, and a restart on a new version.
 
 ## Start the collector
 
@@ -112,6 +114,51 @@ Activities are the steps. The session id is `temporal:<workflow id>:<run id>`. I
 activity interceptors are installed, each activity is its own trace; the run still comes out as
 one session, because every activity span names its workflow.
 
+## Other engines
+
+Whatever the engine, register a tracer provider in each process with its own `service.instance.id`
+and a `service.version` for the release, as in the Vercel example above. That is how coding.sh
+tells a crash from a deploy.
+
+**Inngest.** Add `extendedTracesMiddleware()` from `inngest/experimental` to the client, after your
+provider is registered. Pin one copy of the OpenTelemetry API, or Inngest's own copy ignores your
+provider without saying so:
+
+```json
+"overrides": { "@opentelemetry/api": "1.9.0" }
+```
+
+Steps show up through the spans made inside them, such as AI SDK model calls. The session id is
+`inngest:<run id>`.
+
+**Restate.** Point the server at the collector, with the path:
+`RESTATE_TRACING_ENDPOINT=otlp+json+http://127.0.0.1:4318/v1/traces`. In the service, add the SDK's
+hook, which needs version 2 of the OpenTelemetry JS SDK:
+
+```js
+import { openTelemetryHook } from "@restatedev/restate-sdk-opentelemetry";
+// restate.workflow({ name, handlers, options: { hooks: [openTelemetryHook({ tracer })] } })
+```
+
+`ctx.run` closures are the steps, and the session id is `restate:<invocation id>`.
+
+**DBOS.** Register your own provider and set `tracingEnabled: true` and `enableOTLP: false` in
+`DBOS.setConfig`. DBOS's own exporter sends only its spans, so model calls inside steps would be
+missing. Steps are the step functions; the session id is `dbos:<workflow id>`.
+
+**LangGraph.** Use a checkpointer and a tracer: OpenInference
+(`LangChainInstrumentor().instrument(tracer_provider=provider)`) or LangSmith in
+OpenTelemetry-only mode (`LANGSMITH_TRACING=true`, `LANGSMITH_OTEL_ENABLED=true`,
+`LANGSMITH_OTEL_ONLY=true`, no API key needed). For LangSmith, set your provider as the global
+one first; LangSmith's built-in provider has no process id. Nodes are the steps, an
+`interrupt()` is a wait, and the session id is the `thread_id`.
+
+**Cloudflare Workflows** and engines without tracing: put `workflow.run.id`, `workflow.name`,
+`step.name`, `step.id` and `step.attempt` on a span per step attempt, with status ERROR when it
+fails, and a span with `workflow.wait.name` for a sleep. In a Workflow, `ctx.step.name`,
+`ctx.step.count` and `ctx.attempt` come with each `step.do` callback. `wrangler dev` exports no
+traces, so post OTLP/HTTP JSON to the collector from the Worker yourself.
+
 ## What you see
 
 `coding.sh sessions` lists the run once, titled with the workflow's name. `coding.sh show <id>`
@@ -127,14 +174,15 @@ for six seconds, and `write` ran on a new release:
 Steps
      +22ms  plan    ok      #1 ok 166ms
     +204ms  search  ok      #1 failed 162ms (search API returned 503) → #2 ok 163ms
-     +3.5s  read    ok      1 lost (never reported: its process stopped) → #2 ok 375ms
+     +1.5s  read    ok      1 lost (its process stopped; seen 0ms, then down 2.0s) → #2 ok 375ms
      +3.9s  (wait)  done    wait 6.4s
       +10s  write   ok      #1 ok 176ms
 ```
 
 Busy time counts only when something ran. Sleeps are waiting, and the rest (retry backoff,
 queueing, the gap while no process held the run) is idle. The killed attempt never reported a
-span, so it shows as lost.
+span, so it shows as lost: it starts when its process last reported and runs as long as that
+process was still seen (here, not at all), then the run was down until the next attempt.
 
 The session gets two flags, shown in the viewer and in `show --json`: `step-retried` when any step
 needed more than one attempt, and `resumed` when the run continued after a crash, a deploy or a
@@ -142,7 +190,8 @@ restart.
 
 `coding.sh workflows show <id>` prints the run as a tree, one line per attempt, and
 `coding.sh workflows stats <id>` puts the waits and retries next to the critical path. Sleep time
-is not counted as orchestration overhead there. In `coding.sh ui`, the session page has a lane per
+is not counted as orchestration overhead there, and the downtime after a crash is its own row,
+"lost to crashes", instead of agent time. In `coding.sh ui`, the session page has a lane per
 step with a bar per attempt (failed in red, lost hatched), the waits as hatched gaps, and a tick
 where the run resumed. Click a bar to jump to that attempt's span.
 
@@ -151,19 +200,24 @@ where the run resumed. Click a bar to jump to that attempt's span.
 Durable engines re-run the workflow function from its history to find where it left off. The
 Vercel SDK marks those runs (`workflow.execution.mode=replay`), and coding.sh leaves model calls
 made under them out of the session's tokens and cost, so a resumed run isn't billed twice.
-Temporal doesn't export replayed spans at all.
+DBOS marks replayed steps `cached`, and they show as replayed. Temporal and Restate don't export
+replayed spans at all.
 
 ## Limits
 
-- Temporal puts no attempt number and no timer on its spans. coding.sh numbers attempts by order,
-  infers an attempt lost with a crashed worker from timing, and a `workflow.sleep` shows as idle
-  time, not as a wait.
-- An attempt killed with its process leaves no span. On Temporal its length is known (from when
-  the activity was scheduled); on Vercel it is not.
-- Inngest, Restate, DBOS and LangGraph runs are read from the attributes their tracers document;
-  they haven't been checked against a real run yet. For an engine with no tracing, such as
-  Cloudflare Workflows, set `workflow.run.id`, `step.name`, `step.id` and `step.attempt` on your
-  own spans and coding.sh treats them the same way.
+- No engine exports an attempt killed with its process. coding.sh infers it, and counts as busy
+  only the time its process was still seen; the rest is lost to the crash.
+- Temporal, Inngest and DBOS (TypeScript) export no sleep, so a sleep shows as idle time, not as
+  a wait. Temporal and LangGraph put no attempt number on spans; coding.sh numbers attempts by
+  order.
+- Inngest exports no error text for a failed step, and its session is titled by run id, since
+  spans name the function only by an internal id.
+- A DBOS process killed in the middle of a step looks like one that stopped cleanly, so the run
+  shows a resume after a restart, not a crash.
+- Restate's client span is its own session, and running the same workflow key again adds to the
+  earlier run's session, because Restate gives it the same invocation id.
+- A local Cloudflare Workflow doesn't pick a run up again after `wrangler dev` restarts until you
+  call `pause()` and `resume()` on the instance, so a local run shows that wait as downtime.
 
 The span names and attributes behind all this, per engine, are in
 [research/durable-workflows.md](../research/durable-workflows.md).
