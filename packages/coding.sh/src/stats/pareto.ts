@@ -186,3 +186,89 @@ export function paretoSupport(input: readonly ParetoCase[], o: ParetoOpts = {}):
     notes,
   };
 }
+
+export interface FrontierOpts {
+  /** Bootstrap draws. Default 10000. */
+  draws?: number;
+  seed?: number;
+  /** As in ParetoOpts: "dirichlet" (default) also resamples cases, one vector per draw shared by every arm. */
+  caseWeights?: "dirichlet" | "equal";
+}
+
+export interface FrontierPoint {
+  arm: string;
+  /** Share of draws in which no other arm dominates this one. */
+  pFront: number;
+  /** Point estimates over the shared cases: the mean of each case's mean run. */
+  q: number;
+  c: number;
+}
+
+/**
+ * P(on the frontier) per arm (ParetoSaddler §3.3). Each draw reweights every
+ * arm's runs within a case (Dirichlet(1)) and, by default, the cases (one
+ * Dirichlet(1) vector shared by every arm), then counts the arms no other arm
+ * dominates. Uses the cases where every arm has a usable run; empty when none.
+ */
+export function frontierSupport(arms: ReadonlyMap<string, ReadonlyMap<string, readonly QC[]>>, o: FrontierOpts = {}): FrontierPoint[] {
+  const draws = Math.max(1, Math.floor(o.draws ?? 10_000));
+  const names = [...arms.keys()];
+  const runsOf = names.map((a) => {
+    const m = new Map<string, QC[]>();
+    for (const [id, rs] of arms.get(a)!) {
+      const ok = rs.filter(usable);
+      if (ok.length) m.set(id, ok);
+    }
+    return m;
+  });
+  const shared = [...(runsOf[0]?.keys() ?? [])].filter((id) => runsOf.every((m) => m.has(id))).sort();
+  const n = shared.length;
+  if (!n) return [];
+  // cells[a][i]: arm a's runs on shared case i.
+  const cells = runsOf.map((m) => shared.map((id) => m.get(id)!));
+  const avg = (xs: readonly QC[], f: (r: QC) => number) => xs.reduce((s, r) => s + f(r), 0) / xs.length;
+  const point = cells.map((cs) => ({ q: cs.reduce((s, rs) => s + avg(rs, (r) => r.q), 0) / n, c: cs.reduce((s, rs) => s + avg(rs, (r) => r.c), 0) / n }));
+
+  const rand = mulberry32(o.seed ?? 0x5eed);
+  const exp1 = () => -Math.log(1 - rand());
+  const caseW = new Float64Array(n);
+  const drawn: QC[] = names.map(() => ({ q: 0, c: 0 }));
+  const front = names.map(() => 0);
+  for (let d = 0; d < draws; d++) {
+    let total = 0;
+    for (let i = 0; i < n; i++) {
+      caseW[i] = o.caseWeights === "equal" ? 1 : exp1();
+      total += caseW[i]!;
+    }
+    for (let a = 0; a < names.length; a++) {
+      let q = 0;
+      let c = 0;
+      for (let i = 0; i < n; i++) {
+        const rs = cells[a]![i]!;
+        let rq = rs[0]!.q;
+        let rc = rs[0]!.c;
+        if (rs.length > 1) {
+          let w = 0;
+          rq = 0;
+          rc = 0;
+          for (const r of rs) {
+            const e = exp1();
+            w += e;
+            rq += e * r.q;
+            rc += e * r.c;
+          }
+          rq /= w;
+          rc /= w;
+        }
+        const cw = caseW[i]! / total;
+        q += cw * rq;
+        c += cw * rc;
+      }
+      drawn[a] = { q, c };
+    }
+    for (let a = 0; a < names.length; a++) {
+      if (!drawn.some((x, b) => b !== a && dominates(x, drawn[a]!))) front[a]!++;
+    }
+  }
+  return names.map((arm, a) => ({ arm, pFront: front[a]! / draws, q: point[a]!.q, c: point[a]!.c }));
+}

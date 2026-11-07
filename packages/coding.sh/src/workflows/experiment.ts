@@ -15,13 +15,15 @@ import type { IndexStore } from "../core/types.ts";
 import { infraKind, withRetries, type RetryPolicy } from "../jobs/retry.ts";
 import type { JobScope } from "../jobs/store.ts";
 import { pool } from "../runner/experiment.ts";
-import { mcnemarPaired, mean, median, pairedBootstrap, type BootstrapResult, type McNemarResult } from "../stats/index.ts";
+import { frontierSupport, mcnemarPaired, mean, median, pairedBootstrap, type BootstrapResult, type McNemarResult, type QC } from "../stats/index.ts";
 import { workflowStats } from "./metrics.ts";
 import { extractFindings, matchFindings } from "./score/findings.ts";
 import { splitTraces } from "./sources/otel.ts";
 import type { WorkflowExperimentRecord, WorkflowStore } from "./store.ts";
 import { buildWorkflowTree, type WorkflowTree } from "./tree.ts";
 import type {
+  Deployment,
+  DeploymentRule,
   MetricCompare,
   ParetoPoint,
   ReplayControl,
@@ -247,11 +249,14 @@ export interface CompareWorkflowOpts {
   /** Pass threshold for the binary outcome: one number, or per case id. Default: case threshold, else 0.5. */
   threshold?: number | Map<string, number>;
   alpha?: number;
+  /** Bootstrap draws for the intervals and for P(front) (default 2000 there). */
   iters?: number;
   seed?: number;
+  /** Pick a variant to deploy with this rule; the report carries the pick as `deployment`. */
+  select?: DeploymentRule;
 }
 
-const finite = (xs: (number | undefined)[]): number[] => xs.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+const finite =(xs: (number | undefined)[]): number[] => xs.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
 
 function byCase(runs: readonly WorkflowRun[]): Map<string, WorkflowRun[]> {
   const m = new Map<string, WorkflowRun[]>();
@@ -353,7 +358,9 @@ function stageDeltas(a: readonly WorkflowRun[], b: readonly WorkflowRun[]): Stag
   });
 }
 
-function pareto(runs: readonly WorkflowRun[], scores: Map<string, number>, boot: { iters?: number; seed?: number; alpha: number }): ParetoPoint[] {
+type FrontierAxes = NonNullable<WorkflowCompareReport["frontierAxes"]>;
+
+function pareto(runs: readonly WorkflowRun[], scores: Map<string, number>, boot: { iters?: number; seed?: number; alpha: number }): { points: ParetoPoint[]; axes?: FrontierAxes; notes: string[] } {
   const variants = [...new Set(runs.map((r) => r.variant).filter((v): v is string => !!v))].sort();
   const pts: ParetoPoint[] = variants.map((variant) => {
     const cases = byCase(runs.filter((r) => r.variant === variant));
@@ -386,7 +393,103 @@ function pareto(runs: readonly WorkflowRun[], scores: Map<string, number>, boot:
       p.dominatedBy = by;
     }
   }
-  return pts;
+  const notes: string[] = [];
+  const axes = frontier(pts, runs, scores, boot, notes);
+  return { points: pts, ...(axes ? { axes } : {}), notes };
+}
+
+/**
+ * P(front) per variant: frontierSupport over each variant's scored runs, on quality and cost,
+ * or on quality and wall time when no run records cost. Point-mean dominance can't tell a
+ * real trade-off from noise between near-equal variants; P(front) can. Sets pFront on the
+ * points it places and returns the axes it used.
+ */
+function frontier(pts: ParetoPoint[], runs: readonly WorkflowRun[], scores: Map<string, number>, boot: { iters?: number; seed?: number }, notes: string[]): FrontierAxes | undefined {
+  if (pts.length < 2) return undefined;
+  const scored = runs.filter((r) => r.variant && !r.infra && Number.isFinite(scores.get(r.id)));
+  const has = (r: WorkflowRun, k: "costUsd" | "wallMs") => Number.isFinite(METRIC_GET[k](r));
+  const key = scored.some((r) => has(r, "costUsd")) ? "costUsd" : scored.some((r) => has(r, "wallMs")) ? "wallMs" : undefined;
+  if (!key) {
+    if (scored.length) notes.push("no scored run records cost or wall time, so there is no P(front)");
+    return undefined;
+  }
+  const what = key === "costUsd" ? "cost" : "wall time";
+  if (key === "wallMs") notes.push("no run records cost, so P(front) weighs quality against wall time");
+  const arms = new Map<string, Map<string, QC[]>>();
+  const unplaced: string[] = [];
+  for (const p of pts) {
+    const rs = scored.filter((r) => r.variant === p.variant);
+    const known = rs.filter((r) => has(r, key));
+    // Cost on a minority of runs would compare the cheap runs that reported against full ones.
+    if (!rs.length || known.length < 0.8 * rs.length) {
+      unplaced.push(`${p.variant} (${rs.length ? `${what} on ${known.length} of ${rs.length} scored runs` : "no scored run"})`);
+      continue;
+    }
+    const m = new Map<string, QC[]>();
+    for (const r of known) {
+      const k = r.caseId ?? "";
+      m.set(k, [...(m.get(k) ?? []), { q: scores.get(r.id)!, c: METRIC_GET[key](r)! }]);
+    }
+    arms.set(p.variant, m);
+  }
+  if (unplaced.length) notes.push(`no P(front) for ${unplaced.join(", ")}: it needs ${what} on at least 80% of a variant's scored runs`);
+  if (arms.size < 2) return undefined;
+  const fs = frontierSupport(arms, { draws: boot.iters ?? 2000, ...(boot.seed !== undefined ? { seed: boot.seed } : {}) });
+  if (!fs.length) {
+    notes.push(`no case has a scored run with ${what} in every variant, so there is no P(front)`);
+    return undefined;
+  }
+  for (const f of fs) pts.find((p) => p.variant === f.arm)!.pFront = f.pFront;
+  if (unplaced.length) notes.push(`P(front) compares only ${[...arms.keys()].join(", ")}`);
+  return ["quality", key];
+}
+
+const f3 = (x: number) => x.toFixed(3);
+
+/**
+ * Pick the variant to deploy (ParetoSaddler §3.3: apply the deployment preference once, to
+ * the compared set). Cost is the frontier's: USD per run, or wall seconds when the frontier
+ * is on wall time (so lambda is quality per USD, or per second).
+ */
+export function selectDeployment(points: readonly ParetoPoint[], rule: DeploymentRule, costKey: "costUsd" | "wallMs" = "costUsd"): Deployment {
+  const cost = (p: ParetoPoint) => (costKey === "wallMs" ? p.wallMs.mean / 1000 : p.costUsd.mean);
+  const costName = costKey === "wallMs" ? "wall time" : "cost";
+  const showCost = (x: number) => (costKey === "wallMs" ? `${x.toFixed(1)} s` : `$${x.toFixed(4)}`);
+  const done = (picked: string[], reason: string): Deployment => ({ rule, picked, reason });
+  if (rule.kind === "min-cost") {
+    let qMin = rule.qMin;
+    let basis = `quality lower bound ≥ ${qMin === undefined ? "" : f3(qMin)}`;
+    if (qMin === undefined) {
+      const from = rule.qDropFrom;
+      if (!from) return done([], "min-cost needs qMin or qDropFrom");
+      const b = points.find((p) => p.variant === from.variant);
+      if (!b || !Number.isFinite(b.quality.mean)) return done([], `${from.variant} has no quality to measure the drop from`);
+      qMin = b.quality.mean - from.pp / 100;
+      basis = `quality lower bound ≥ ${from.variant}'s ${f3(b.quality.mean)} − ${from.pp} pp = ${f3(qMin)}`;
+    }
+    const floor = qMin;
+    const ok = points.filter((p) => p.quality.lo >= floor - 1e-12 && Number.isFinite(cost(p)));
+    if (!ok.length) {
+      const best = points.filter((p) => Number.isFinite(p.quality.lo)).sort((x, y) => y.quality.lo - x.quality.lo)[0];
+      return done([], `no variant with ${costName} has ${basis}${best ? ` (highest lower bound: ${best.variant} ${f3(best.quality.lo)})` : ""}`);
+    }
+    const pick = ok.reduce((x, y) => (cost(y) < cost(x) ? y : x));
+    return done([pick.variant], `cheapest of ${ok.length} with ${basis}: ${showCost(cost(pick))}, quality lower bound ${f3(pick.quality.lo)}`);
+  }
+  if (rule.kind === "weighted") {
+    const u = (p: ParetoPoint) => p.quality.mean - (rule.lambda === 0 ? 0 : rule.lambda * cost(p));
+    const ok = points.filter((p) => Number.isFinite(u(p)));
+    if (!ok.length) return done([], `no variant has both quality and ${costName}`);
+    const pick = ok.reduce((x, y) => (u(y) > u(x) ? y : x));
+    return done([pick.variant], `highest quality − ${rule.lambda} × ${costName}: ${f3(u(pick))}`);
+  }
+  const front = points.filter((p) => (p.pFront !== undefined ? p.pFront >= 0.5 : !p.dominated));
+  const byQ = front.filter((p) => Number.isFinite(p.quality.mean)).sort((x, y) => y.quality.mean - x.quality.mean)[0];
+  if (!byQ) return done([], "no variant is on the front in at least half the draws");
+  const byC = front.filter((p) => Number.isFinite(cost(p))).sort((x, y) => cost(x) - cost(y))[0];
+  const on = `of ${front.length} on the front${front.some((p) => p.pFront !== undefined) ? " (P(front) ≥ 0.5)" : ""}`;
+  if (!byC || byC === byQ) return done([byQ.variant], `${byQ.variant} has the highest quality${byC ? ` and the lowest ${costName}` : ""} ${on}`);
+  return done([byQ.variant, byC.variant], `highest quality ${byQ.variant}, lowest ${costName} ${byC.variant}, ${on}`);
 }
 
 /**
@@ -466,6 +569,8 @@ export function compareWorkflowVariants(runs: WorkflowRun[], scores: Map<string,
     const rel = (cost.candidate - cost.baseline) / cost.baseline;
     if (Math.abs(rel) >= 0.05) notes.push(`quality aside, candidate is ${Math.abs(rel * 100).toFixed(0)}% ${rel < 0 ? "cheaper" : "more expensive"} per run`);
   }
+  const front = pareto(runs, scores, boot);
+  notes.push(...front.notes);
   return {
     baseline: o.baseline,
     candidate: o.candidate,
@@ -475,7 +580,9 @@ export function compareWorkflowVariants(runs: WorkflowRun[], scores: Map<string,
     quality: { key: "quality", baseline: quality.baseline, candidate: quality.candidate, diff: quality.diff, pairs: quality.pairs },
     mcnemar: mcn,
     metrics,
-    pareto: pareto(runs, scores, boot),
+    pareto: front.points,
+    ...(front.axes ? { frontierAxes: front.axes } : {}),
+    ...(o.select ? { deployment: selectDeployment(front.points, o.select, front.axes?.[1] ?? (front.points.some((p) => Number.isFinite(p.costUsd.mean)) ? "costUsd" : "wallMs")) } : {}),
     stages: stageDeltas(A, B),
     verdict,
     notes,

@@ -10,12 +10,13 @@ import type { AgentEvent } from "../../src/schema/index.ts";
 import { loadCases } from "../../src/workflows/cases.ts";
 import { claudeArgv, claudeWorkflowDriver, workflowPrompt } from "../../src/workflows/drivers/claude-workflow.ts";
 import { commandDriver, mergeArgs, parseOutput } from "../../src/workflows/drivers/command.ts";
-import { compareWorkflowVariants, runWorkflowExperiment, scheduleWorkflowJobs } from "../../src/workflows/experiment.ts";
+import { mulberry32 } from "../../src/stats/index.ts";
+import { compareWorkflowVariants, runWorkflowExperiment, scheduleWorkflowJobs, selectDeployment } from "../../src/workflows/experiment.ts";
 import { changeWindow, labelPattern, predictCacheHits, replayWorkflow, scanAgentCalls } from "../../src/workflows/replay.ts";
 import { loadClaudeWorkflowDir } from "../../src/workflows/sources/claude-workflow.ts";
 import { WorkflowStore } from "../../src/workflows/store.ts";
 import { buildWorkflowTree, type WorkflowTree } from "../../src/workflows/tree.ts";
-import type { WorkflowCase, WorkflowDriver, WorkflowRun, WorkflowVariant } from "../../src/workflows/types.ts";
+import type { ParetoPoint, WorkflowCase, WorkflowDriver, WorkflowRun, WorkflowVariant } from "../../src/workflows/types.ts";
 import { nodeBin } from "../_bin.ts";
 import { MemBlobs, MemIndex } from "../otel/_memstore.ts";
 import { langGraph, RESUMED, RUN, SCRIPT, SID, writeClaudeWorkflowFixture, writeReviewCases } from "./_fixtures.ts";
@@ -231,6 +232,104 @@ describe("compareWorkflowVariants control fork (EM-19)", () => {
     assert.deepEqual(r.control, { sources: cases.map((c) => `src-${c}`), controlRuns: 4, drift: { n: 4, changed: 1, rate: 0.25 } });
     assert.ok(r.notes.includes("replay noise floor: 1 of 4 control replay(s) changed outcome from their source run (25%); differences below that are replay drift"), r.notes.join("\n"));
     assert.equal(compareWorkflowVariants(sources.map((s, i) => ({ ...s, variant: i % 2 ? "a" : "b" })), scores, { baseline: "a", candidate: "b", iters: 50 }).control, undefined, "no replay, no control check");
+  });
+});
+
+describe("compareWorkflowVariants P(front) and deployment (AA-19)", () => {
+  /**
+   * n cases × r runs of one variant: quality, cost and wall time wobble run to run by a
+   * seeded pattern (the same in every variant with the same seed). No cost: none recorded;
+   * costRuns: only the first that many runs record it. Returns the runs and their scores.
+   */
+  const arm = (variant: string, o: { q: number; cost?: number; wallMs?: number; noise?: number; n?: number; r?: number; seed?: number; costRuns?: number }) => {
+    const rnd = mulberry32(o.seed ?? 11);
+    const runs: WorkflowRun[] = [];
+    const scores = new Map<string, number>();
+    const noise = o.noise ?? 0.2;
+    let i = 0;
+    for (let c = 0; c < (o.n ?? 10); c++) {
+      for (let k = 0; k < (o.r ?? 3); k++) {
+        const e = rnd() * 2 - 1;
+        const id = `${variant}-${c}-${k}`;
+        const withCost = o.cost !== undefined && i++ < (o.costRuns ?? Infinity);
+        const stats = { ...(withCost ? { costUsd: o.cost! * (1 + noise * (rnd() * 2 - 1)) } : {}), ...(o.wallMs !== undefined ? { wallMs: o.wallMs * (1 + noise * (rnd() * 2 - 1)) } : {}) };
+        runs.push({ id, framework: "command", name: "wf", variant, caseId: `c${c}`, startedAt: 1, status: "ok", stats, tags: [] } as unknown as WorkflowRun);
+        scores.set(id, Math.min(1, Math.max(0, o.q + noise * e)));
+      }
+    }
+    return { runs, scores };
+  };
+  const both = (...arms: ReturnType<typeof arm>[]) => ({ runs: arms.flatMap((a) => a.runs), scores: new Map(arms.flatMap((a) => [...a.scores])) });
+  const pt = (variant: string, q: [number, number], cost: number, extra: Partial<ParetoPoint> = {}): ParetoPoint => ({
+    variant,
+    cases: 10,
+    quality: { mean: q[0], lo: q[1], hi: q[0] + (q[0] - q[1]) },
+    costUsd: { mean: cost, lo: cost, hi: cost },
+    wallMs: { mean: NaN, lo: NaN, hi: NaN },
+    dominated: false,
+    ...extra,
+  });
+
+  it("near-equal noisy variants both stay on the front in a share of draws, though the point rule calls one dominated", () => {
+    // Same wobble, b a hair worse and dearer: dominated on point means, not credibly.
+    const { runs, scores } = both(arm("a", { q: 0.7, cost: 0.1 }), arm("b", { q: 0.69, cost: 0.1005 }));
+    const r = compareWorkflowVariants(runs, scores, { baseline: "a", candidate: "b", iters: 2000, seed: 1 });
+    const [a, b] = r.pareto;
+    assert.deepEqual([b!.dominated, b!.dominatedBy], [true, ["a"]]);
+    assert.ok(a!.pFront! > 0.3 && a!.pFront! <= 1, String(a!.pFront));
+    assert.ok(b!.pFront! > 0.3 && b!.pFront! <= 1, String(b!.pFront));
+    assert.deepEqual(r.frontierAxes, ["quality", "costUsd"]);
+  });
+
+  it("a better and cheaper variant is on the front in every draw, the other in almost none", () => {
+    const { runs, scores } = both(arm("good", { q: 0.9, cost: 0.05, noise: 0.05 }), arm("bad", { q: 0.5, cost: 0.1, noise: 0.05, seed: 12 }));
+    const r = compareWorkflowVariants(runs, scores, { baseline: "bad", candidate: "good", iters: 2000, seed: 1 });
+    const p = Object.fromEntries(r.pareto.map((x) => [x.variant, x.pFront]));
+    assert.equal(p.good, 1);
+    assert.ok(p.bad! < 0.05, String(p.bad));
+    const again = compareWorkflowVariants(runs, scores, { baseline: "bad", candidate: "good", iters: 2000, seed: 1 });
+    assert.equal(JSON.stringify(again), JSON.stringify(r), "deterministic for a seed");
+  });
+
+  it("weighs quality against wall time when no run records cost, and skips variants that report cost on few runs", () => {
+    const wall = both(arm("a", { q: 0.8, wallMs: 60_000 }), arm("b", { q: 0.6, wallMs: 30_000, seed: 12 }));
+    const w = compareWorkflowVariants(wall.runs, wall.scores, { baseline: "a", candidate: "b", iters: 500, seed: 1 });
+    assert.deepEqual(w.frontierAxes, ["quality", "wallMs"]);
+    assert.ok(w.notes.includes("no run records cost, so P(front) weighs quality against wall time"), w.notes.join("\n"));
+    assert.ok(w.pareto.every((p) => p.pFront! > 0.9), JSON.stringify(w.pareto.map((p) => p.pFront)));
+    // b reports cost on 10 of its 30 runs: no P(front) for it, so none at all with two variants.
+    const few = both(arm("a", { q: 0.8, cost: 0.1 }), arm("b", { q: 0.6, cost: 0.05, costRuns: 10 }));
+    const f = compareWorkflowVariants(few.runs, few.scores, { baseline: "a", candidate: "b", iters: 500, seed: 1 });
+    assert.equal(f.frontierAxes, undefined);
+    assert.ok(f.pareto.every((p) => p.pFront === undefined));
+    assert.ok(f.notes.includes("no P(front) for b (cost on 10 of 30 scored runs): it needs cost on at least 80% of a variant's scored runs"), f.notes.join("\n"));
+  });
+
+  it("selectDeployment: min-cost under a quality floor, weighted quality − λ·cost, and the front's extremes", () => {
+    const pts = [pt("base", [0.8, 0.75], 0.1), pt("cheap", [0.74, 0.72], 0.05), pt("cheapest", [0.6, 0.5], 0.02)];
+    const drop = selectDeployment(pts, { kind: "min-cost", qDropFrom: { variant: "base", pp: 10 } });
+    assert.deepEqual(drop.picked, ["cheap"]);
+    assert.match(drop.reason, /^cheapest of 2 with quality lower bound ≥ base's 0\.800 − 10 pp = 0\.700: \$0\.0500/);
+    const none = selectDeployment(pts, { kind: "min-cost", qDropFrom: { variant: "base", pp: 0 } });
+    assert.deepEqual(none.picked, []);
+    assert.match(none.reason, /^no variant with cost has quality lower bound ≥ base's 0\.800 − 0 pp = 0\.800 \(highest lower bound: base 0\.750\)/);
+    assert.deepEqual(selectDeployment(pts, { kind: "min-cost", qMin: 0.4 }).picked, ["cheapest"]);
+    assert.deepEqual(selectDeployment(pts, { kind: "weighted", lambda: 0 }).picked, ["base"]);
+    assert.deepEqual(selectDeployment(pts, { kind: "weighted", lambda: 2 }).picked, ["cheap"]);
+    // A clean trade-off has two extremes; when one variant dominates there is one.
+    const trade = selectDeployment([pt("q", [0.9, 0.85], 0.2, { pFront: 0.99 }), pt("c", [0.6, 0.55], 0.05, { pFront: 0.98 })], { kind: "pareto" });
+    assert.deepEqual(trade.picked, ["q", "c"]);
+    assert.equal(trade.reason, "highest quality q, lowest cost c, of 2 on the front (P(front) ≥ 0.5)");
+    assert.deepEqual(selectDeployment([pt("a", [0.9, 0.85], 0.05, { pFront: 1 }), pt("b", [0.6, 0.55], 0.1, { pFront: 0.01 })], { kind: "pareto" }).picked, ["a"]);
+    // Without P(front) the point-mean front stands in.
+    assert.deepEqual(selectDeployment([pt("a", [0.9, 0.85], 0.05), pt("b", [0.6, 0.55], 0.1, { dominated: true })], { kind: "pareto" }).picked, ["a"]);
+  });
+
+  it("carries the deployment pick on the report", () => {
+    const { runs, scores } = both(arm("base", { q: 0.8, cost: 0.1, noise: 0.05 }), arm("lite", { q: 0.78, cost: 0.04, noise: 0.05, seed: 12 }));
+    const r = compareWorkflowVariants(runs, scores, { baseline: "base", candidate: "lite", iters: 500, seed: 1, select: { kind: "min-cost", qDropFrom: { variant: "base", pp: 10 } } });
+    assert.deepEqual(r.deployment?.picked, ["lite"]);
+    assert.equal(compareWorkflowVariants(runs, scores, { baseline: "base", candidate: "lite", iters: 500, seed: 1 }).deployment, undefined);
   });
 });
 

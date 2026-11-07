@@ -85,7 +85,13 @@ export const WORKFLOWS_COMMAND: CommandSpec = {
         { name: "baseline", type: "string", value: "<VARIANT>", desc: "Baseline variant (required)" },
         { name: "candidate", type: "string", value: "<VARIANT>", desc: "Candidate variant (required)" },
         { name: "threshold", type: "number", value: "<SCORE>", desc: "Score that counts as a pass (default: the case's, else 0.5)" },
+        { name: "seed", type: "number", value: "<N>", desc: "Bootstrap seed for the intervals and P(front)" },
+        { name: "select", type: "string", value: "<RULE>", choices: ["min-cost", "weighted", "pareto"], desc: "Pick a variant to deploy: cheapest above a quality floor, best quality − λ·cost, or the front's extremes" },
+        { name: "q-min", type: "number", value: "<SCORE>", desc: "min-cost: quality lower bound to reach" },
+        { name: "q-drop", type: "number", value: "<PP>", desc: "min-cost: quality points below the baseline's mean allowed (default 10)" },
+        { name: "lambda", type: "number", value: "<λ>", desc: "weighted: quality given up per USD (per second when no run records cost)" },
       ],
+      examples: ["coding.sh workflows compare wfx_01 --baseline base --candidate cand --select min-cost --q-drop 10", "coding.sh workflows compare wfx_01 --baseline base --candidate cand --select pareto --json"],
     },
     {
       name: "replay",

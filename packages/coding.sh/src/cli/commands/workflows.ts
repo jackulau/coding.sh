@@ -18,7 +18,7 @@ import { verifyConfusion, type VerifyEntry, type VerifyScore } from "../../workf
 import { WorkflowStore } from "../../workflows/store.ts";
 import { buildWorkflowTree } from "../../workflows/tree.ts";
 import { totalTokens } from "../../workflows/metrics.ts";
-import type { WorkflowCase, WorkflowDriver, WorkflowFramework, WorkflowNode, WorkflowRun, WorkflowVariant } from "../../workflows/types.ts";
+import type { DeploymentRule, WorkflowCase, WorkflowDriver,WorkflowFramework, WorkflowNode, WorkflowRun, WorkflowVariant } from "../../workflows/types.ts";
 import { sortableId } from "../../core/ids.ts";
 import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
@@ -582,6 +582,39 @@ const signedMs = (x: number) => `${x < 0 ? "-" : "+"}${duration(Math.abs(x))}`;
 const signedUsd = (x: number) => `${x < 0 ? "-" : "+"}${usd(Math.abs(x))}`;
 const fixed3 = (x: number) => (Number.isFinite(x) ? x.toFixed(3) : "-");
 
+/** --select and its knobs as a DeploymentRule; min-cost defaults to 10 points below the baseline (PS-MinCost). */
+function deploymentRule(c: CommandContext, baseline: string): DeploymentRule | undefined {
+  const kind = str(c.flags.select);
+  const qMin = num(c.flags["q-min"]);
+  const qDrop = num(c.flags["q-drop"]);
+  const lambda = num(c.flags.lambda);
+  const stray = (names: [string, number | undefined][]) => names.filter(([, v]) => v !== undefined).map(([n]) => `--${n}`);
+  const usage = (msg: string) => new UsageError(msg, { reason: "invalid_value" });
+  if (kind === undefined) {
+    const given = stray([["q-min", qMin], ["q-drop", qDrop], ["lambda", lambda]]);
+    if (given.length) throw usage(`${given.join(" and ")} needs --select (min-cost for --q-min / --q-drop, weighted for --lambda)`);
+    return undefined;
+  }
+  if (kind === "min-cost") {
+    if (lambda !== undefined) throw usage("--lambda goes with --select weighted, not min-cost");
+    if (qMin !== undefined && qDrop !== undefined) throw usage("Pass --q-min or --q-drop, not both");
+    if (qDrop !== undefined && !(qDrop >= 0)) throw usage("--q-drop is points of quality, 0 or more");
+    return qMin !== undefined ? { kind, qMin } : { kind, qDropFrom: { variant: baseline, pp: qDrop ?? 10 } };
+  }
+  if (kind === "weighted") {
+    const given = stray([["q-min", qMin], ["q-drop", qDrop]]);
+    if (given.length) throw usage(`${given.join(" and ")} go${given.length === 1 ? "es" : ""} with --select min-cost, not weighted`);
+    if (lambda === undefined || !(lambda >= 0)) throw usage("--select weighted needs --lambda <λ ≥ 0> (quality given up per USD)");
+    return { kind, lambda };
+  }
+  if (kind === "pareto") {
+    const given = stray([["q-min", qMin], ["q-drop", qDrop], ["lambda", lambda]]);
+    if (given.length) throw usage(`--select pareto takes no ${given.join(" or ")}`);
+    return { kind };
+  }
+  throw usage(`--select must be one of min-cost, weighted, pareto, got ${JSON.stringify(kind)}`);
+}
+
 async function compare(c: CommandContext): Promise<number> {
   const { out } = c;
   const id = c.positionals[0];
@@ -589,6 +622,7 @@ async function compare(c: CommandContext): Promise<number> {
   const baseline = str(c.flags.baseline);
   const candidate = str(c.flags.candidate);
   if (!baseline || !candidate) throw new UsageError("Pass --baseline <variant> and --candidate <variant>", { reason: "missing_value" });
+  const select = deploymentRule(c, baseline);
   const store = storeOf(c);
   const exp = await store.getExperiment(id);
   if (!exp) throw new CliError(`Can't find workflow experiment ${JSON.stringify(id)}`, { reason: "not_found", next: ["Start one:", "coding.sh workflows run <workflow> --variant …"] });
@@ -604,7 +638,8 @@ async function compare(c: CommandContext): Promise<number> {
     if (r) runs.push(r.run);
   }
   const threshold = num(c.flags.threshold);
-  const report = compareWorkflowVariants(runs, new Map(Object.entries(exp.scores)), { baseline, candidate, ...(threshold !== undefined ? { threshold } : {}) });
+  const seed = num(c.flags.seed);
+  const report = compareWorkflowVariants(runs, new Map(Object.entries(exp.scores)), { baseline, candidate, ...(threshold !== undefined ? { threshold } : {}), ...(seed !== undefined ? { seed } : {}), ...(select ? { select } : {}) });
   if (out.json) {
     out.data({ experimentId: id, ...report });
     return 0;
@@ -627,8 +662,16 @@ function printCompare(out: Output, r: ReturnType<typeof compareWorkflowVariants>
     out.print();
     out.table(
       ["VARIANT", "CASES", "QUALITY", "COST", "WALL", "PARETO"],
-      r.pareto.map((p) => [p.variant, String(p.cases), ci(p.quality, fixed3), ci(p.costUsd, usd), ci(p.wallMs, duration), p.dominated ? `dominated by ${(p.dominatedBy ?? []).join(", ")}` : "front"]),
+      r.pareto.map((p) => {
+        const front = p.pFront !== undefined ? `front ${p.pFront.toFixed(2)}` : "front";
+        return [p.variant, String(p.cases), ci(p.quality, fixed3), ci(p.costUsd, usd), ci(p.wallMs, duration), p.dominated ? `dominated by ${(p.dominatedBy ?? []).join(", ")}${p.pFront !== undefined ? ` (${front})` : ""}` : front];
+      }),
     );
+  }
+  if (r.deployment) {
+    const d = r.deployment;
+    const rule = d.rule.kind === "weighted" ? `weighted λ=${d.rule.lambda}` : d.rule.kind;
+    out.print(`deploy: ${d.picked.length ? d.picked.join(", ") : "none"} (${rule}: ${d.reason})`);
   }
   if (r.stages.length) {
     out.print();

@@ -1,7 +1,7 @@
-// AA-17: Bayesian-bootstrap Pareto support (ParetoSaddler, arXiv 2611.02079).
+// AA-17: Bayesian-bootstrap Pareto support and P(on the frontier) (ParetoSaddler, arXiv 2611.02079).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { dominates, mulberry32, paretoSupport, type ParetoCase, type QC } from "../../src/stats/index.ts";
+import { dominates, frontierSupport, mulberry32, paretoSupport, type ParetoCase, type QC } from "../../src/stats/index.ts";
 
 const runs = (q: number[], c: number | number[]): QC[] => q.map((x, i) => ({ q: x, c: Array.isArray(c) ? (c[i] as number) : c }));
 
@@ -143,6 +143,47 @@ describe("paretoSupport (AA-17)", () => {
     paretoSupport(cases, { seed: 1 });
     const ms = performance.now() - t0;
     assert.ok(ms < 1500, `${ms.toFixed(0)} ms`);
+  });
+});
+
+describe("frontierSupport (AA-17)", () => {
+  /** An arm: n cases × r runs with seeded multiplicative noise on q and c. */
+  const arm = (n: number, r: number, q: number, c: number, noise: number, seed: number) => {
+    const rnd = mulberry32(seed);
+    const jit = (x: number) => x * (1 + noise * (rnd() * 2 - 1));
+    return new Map(Array.from({ length: n }, (_, i) => [`t${i}`, Array.from({ length: r }, () => ({ q: jit(q), c: jit(c) }))] as const));
+  };
+  const by = (fs: ReturnType<typeof frontierSupport>) => Object.fromEntries(fs.map((f) => [f.arm, f.pFront]));
+
+  it("A dominates B everywhere: pFront(A) = 1, pFront(B) ≈ 0", () => {
+    const fs = frontierSupport(new Map([["A", arm(10, 3, 0.9, 0.05, 0.05, 1)], ["B", arm(10, 3, 0.6, 0.1, 0.05, 2)]]), { seed: 1, draws: 2000 });
+    assert.equal(by(fs).A, 1);
+    assert.ok(by(fs).B! < 0.01, String(by(fs).B));
+    const a = fs.find((f) => f.arm === "A")!;
+    assert.ok(Math.abs(a.q - 0.9) < 0.02 && Math.abs(a.c - 0.05) < 0.002, JSON.stringify(a));
+  });
+
+  it("a clean trade-off (better and dearer vs worse and cheaper): both ≈ 1", () => {
+    const fs = frontierSupport(new Map([["A", arm(10, 3, 0.9, 0.2, 0.05, 1)], ["B", arm(10, 3, 0.6, 0.05, 0.05, 2)]]), { seed: 1, draws: 2000 });
+    assert.ok(by(fs).A! > 0.99 && by(fs).B! > 0.99, JSON.stringify(by(fs)));
+  });
+
+  it("near-equal noisy arms are each on the front in a share of draws", () => {
+    const fs = frontierSupport(new Map([["A", arm(8, 3, 0.7, 0.1, 0.3, 1)], ["B", arm(8, 3, 0.7, 0.1, 0.3, 2)], ["C", arm(8, 3, 0.7, 0.1, 0.3, 3)]]), { seed: 1, draws: 2000 });
+    for (const f of fs) assert.ok(f.pFront > 0.2 && f.pFront < 1, JSON.stringify(fs));
+  });
+
+  it("is byte-identical for a fixed seed, uses only cases every arm ran, and is empty without one", () => {
+    const arms = new Map([["A", arm(6, 2, 0.8, 0.1, 0.2, 1)], ["B", arm(6, 2, 0.7, 0.08, 0.2, 2)]]);
+    assert.equal(JSON.stringify(frontierSupport(arms, { seed: 9, draws: 500 })), JSON.stringify(frontierSupport(arms, { seed: 9, draws: 500 })));
+    // A case only A ran, and one where B's only run is unusable, change nothing.
+    const extra = new Map([["A", new Map([...arms.get("A")!, ["solo", [{ q: 0, c: 9 }]], ["nan", [{ q: 0, c: 9 }]]])], ["B", new Map([...arms.get("B")!, ["nan", [{ q: NaN, c: 1 }]]])]]);
+    assert.equal(JSON.stringify(frontierSupport(extra, { seed: 9, draws: 500 })), JSON.stringify(frontierSupport(arms, { seed: 9, draws: 500 })));
+    assert.deepEqual(frontierSupport(new Map([["A", new Map([["x", runs([1], 1)]])], ["B", new Map([["y", runs([1], 1)]])]])), []);
+    assert.deepEqual(frontierSupport(new Map()), []);
+    // One run per case with equal case weights: every draw is the point estimate.
+    const one = frontierSupport(new Map([["A", new Map([["x", runs([1], 2)]])], ["B", new Map([["x", runs([1], 1)]])]]), { caseWeights: "equal", draws: 10 });
+    assert.deepEqual(by(one), { A: 0, B: 1 });
   });
 });
 

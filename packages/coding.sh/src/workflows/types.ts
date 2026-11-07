@@ -303,8 +303,30 @@ export interface ParetoPoint {
   quality: { mean: number; lo: number; hi: number };
   costUsd: { mean: number; lo: number; hi: number };
   wallMs: { mean: number; lo: number; hi: number };
+  /** Point means: no other variant is at least as good on every axis and better on one. */
   dominated: boolean;
   dominatedBy?: string[];
+  /**
+   * Share of bootstrap draws (runs and cases reweighted) in which no other variant dominates
+   * this one on the report's frontierAxes; absent when the variant can't be placed (see notes).
+   */
+  pFront?: number;
+}
+
+/** How to pick the variant to deploy from the compared variants (ParetoSaddler §3.3). */
+export type DeploymentRule =
+  /** Cheapest variant whose quality lower bound reaches qMin, or the baseline's mean minus pp points. */
+  | { kind: "min-cost"; qMin?: number; qDropFrom?: { variant: string; pp: number } }
+  /** Highest quality − lambda × cost (point means). */
+  | { kind: "weighted"; lambda: number }
+  /** The quality-extreme and cost-extreme variants on the front (pFront ≥ 0.5; non-dominated without pFront). */
+  | { kind: "pareto" };
+
+export interface Deployment {
+  rule: DeploymentRule;
+  /** Variants picked; empty when none qualifies. */
+  picked: string[];
+  reason: string;
 }
 
 export interface StageDelta {
@@ -326,6 +348,10 @@ export interface WorkflowCompareReport {
   mcnemar: McNemarResult;
   metrics: MetricCompare[];
   pareto: ParetoPoint[];
+  /** The axes pFront is measured on: cost when runs record it, else wall time. */
+  frontierAxes?: ["quality", "costUsd" | "wallMs"];
+  /** Present when a deployment rule was given. */
+  deployment?: Deployment;
   stages: StageDelta[];
   verdict: { kind: "better" | "worse" | "no-difference" | "inconclusive"; text: string };
   notes: string[];

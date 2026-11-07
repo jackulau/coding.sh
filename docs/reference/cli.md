@@ -1160,6 +1160,16 @@ coding.sh workflows compare <EXPERIMENT> [options]
 | `--baseline <VARIANT>` |  | Baseline variant (required) |
 | `--candidate <VARIANT>` |  | Candidate variant (required) |
 | `--threshold <SCORE>` |  | Score that counts as a pass (default: the case's, else 0.5) |
+| `--seed <N>` |  | Bootstrap seed for the intervals and P(front) |
+| `--select <RULE>` |  | Pick a variant to deploy: cheapest above a quality floor, best quality − λ·cost, or the front's extremes. One of: `min-cost`, `weighted`, `pareto`. |
+| `--q-min <SCORE>` |  | min-cost: quality lower bound to reach. |
+| `--q-drop <PP>` |  | min-cost: quality points below the baseline's mean allowed (default 10) |
+| `--lambda <λ>` |  | weighted: quality given up per USD (per second when no run records cost) |
+
+```sh
+coding.sh workflows compare wfx_01 --baseline base --candidate cand --select min-cost --q-drop 10
+coding.sh workflows compare wfx_01 --baseline base --candidate cand --select pareto --json
+```
 
 ### `coding.sh workflows replay`
 

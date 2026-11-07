@@ -73,7 +73,11 @@ The comparison pairs runs by case, so each case is compared with itself:
 - **Cost, wall time and critical path.** The median per case in each variant, and a paired interval
   for the difference.
 - **Pareto.** Each variant's quality, cost and wall time. A variant is marked dominated when another
-  is at least as good on all three and better on one.
+  is at least as good on all three and better on one. Near-equal noisy variants can trade places on
+  those means, so each variant also gets P(front): the share of bootstrap draws (runs and cases
+  reweighted) in which no other variant beats it on both quality and cost, shown as `front 0.93` or
+  `dominated by base (front 0.41)`. When no run records cost, P(front) uses wall time. A variant
+  that reports cost on fewer than 80% of its scored runs gets no P(front), and a note says why.
 - **Phases.** Where the cost and time moved, phase by phase.
 
 The first line is the verdict. It says "candidate better" or "candidate worse" only when the
@@ -83,6 +87,30 @@ than 10 paired cases is marked "underpowered". Runs whose last attempt still fai
 limit, a server error or the network are left out, because they never measured the workflow
 (`--resume` runs them again). Cases that ran in only one variant are listed and left
 out too. `--json` returns the whole report.
+
+### Pick a variant to deploy
+
+The comparison measures every variant. Which one to deploy is a separate choice, made once at the
+end with `--select` (ParetoSaddler, arXiv 2611.02079):
+
+```sh
+coding.sh workflows compare <experiment> --baseline base --candidate cand --select min-cost --q-drop 10
+```
+
+- `--select min-cost` picks the cheapest variant whose quality interval stays above a floor. The
+  floor is `--q-min 0.7`, or `--q-drop 10`, meaning 10 points below the baseline's mean quality.
+  The default is `--q-drop 10`. If no variant clears the floor, nothing is picked and the reason
+  names the closest one.
+- `--select weighted --lambda 2` picks the highest quality minus λ × cost per run in USD (per second
+  of wall time when no run records cost). `--lambda 0` picks the highest quality.
+- `--select pareto` picks the highest-quality and the cheapest variant among those on the front in
+  at least half the draws. That is two variants on a real trade-off and one when a variant wins on
+  both.
+
+The pick prints as a `deploy:` line, for example
+`deploy: cand (min-cost: cheapest of 2 with quality lower bound ≥ base's 0.800 − 10 pp = 0.700: $0.0500, quality lower bound 0.720)`.
+`--json` adds it as `deployment`, alongside `pFront` on each variant and `frontierAxes`. `--seed`
+fixes the bootstrap, so the same runs always give the same report.
 
 ## Replays
 

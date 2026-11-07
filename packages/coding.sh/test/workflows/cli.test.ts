@@ -199,6 +199,29 @@ describe("coding.sh workflows", () => {
     await assert.rejects(cli("compare", [experimentId], {}), /--baseline/);
   });
 
+  it("compare places variants on the front with P(front) and picks one to deploy with --select", async () => {
+    const flags = { baseline: "bad", candidate: "good", seed: 1 };
+    const doc = await json("compare", [experimentId], { ...flags, select: "pareto" });
+    const good = doc.pareto.find((p: { variant: string }) => p.variant === "good");
+    // good scores 0.8 against bad's 0: no draw puts bad above it.
+    assert.equal(good.pFront, 1);
+    assert.equal(doc.deployment.rule.kind, "pareto");
+    assert.ok(doc.deployment.picked.includes("good"), JSON.stringify(doc.deployment));
+    assert.ok(Array.isArray(doc.frontierAxes), JSON.stringify(doc.frontierAxes));
+    const human = await cli("compare", [experimentId], { ...flags, select: "weighted", lambda: 0 });
+    assert.match(human.stdout, /\tfront 1\.00\n/);
+    assert.match(human.stdout, /^deploy: good \(weighted λ=0: highest quality − 0 × (cost|wall time): 0\.800\)$/m);
+    const minCost = await json("compare", [experimentId], { ...flags, select: "min-cost", "q-min": 2 });
+    assert.deepEqual(minCost.deployment.picked, []);
+    assert.deepEqual(minCost.deployment.rule, { kind: "min-cost", qMin: 2 });
+    assert.deepEqual((await json("compare", [experimentId], { ...flags, select: "min-cost" })).deployment.rule, { kind: "min-cost", qDropFrom: { variant: "bad", pp: 10 } });
+    await assert.rejects(cli("compare", [experimentId], { ...flags, select: "weighted" }), /--select weighted needs --lambda/);
+    await assert.rejects(cli("compare", [experimentId], { ...flags, "q-min": 0.5 }), /--q-min needs --select/);
+    await assert.rejects(cli("compare", [experimentId], { ...flags, select: "min-cost", "q-min": 0.5, "q-drop": 10 }), /--q-min or --q-drop, not both/);
+    await assert.rejects(cli("compare", [experimentId], { ...flags, select: "pareto", lambda: 1 }), /--select pareto takes no --lambda/);
+    await assert.rejects(cli("compare", [experimentId], { ...flags, select: "cheapest" }), /--select must be one of min-cost, weighted, pareto/);
+  });
+
   it("replay predicts cache hits (dry run), asks above the threshold, and resumes through claude", async () => {
     const edited = join(root, "review-v2.js");
     writeFileSync(edited, SCRIPT.replace(`prompt: "Summarize"`, `prompt: "Summarize briefly"`));
