@@ -99,3 +99,45 @@ smaller site.
 | SVG sprite for repeated icons | Skipped: few icons repeat, and brotli compresses the repeats well. |
 | Streaming server rendering, data in the page, worker threads | Skipped: the site has no server. These apply to `coding.sh ui`. |
 | Field data from real visitors | Skipped: the site has no analytics, by choice. |
+
+## Long sessions
+
+[scripts/perf/longrun.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/longrun.mjs) generates a synthetic 12-hour Claude Code session with no
+real data in it: about 42,000 events in the main session, 26 compactions, 16 subagents, resumes
+and a day boundary. It ingests the session from transcripts and from hook spool files, then times
+`show`, `show --all`, `sessions`, `sessions --flag`, `search`, the viewer API, MCP reads and a live
+hook ingest on top of the full session. Run it on the desk:
+
+```sh
+DESK_DIR=wt-longrun .claude/bin/desk run "node scripts/perf/longrun.mjs --budgets scripts/perf/longrun-budgets.json"
+```
+
+It prints one JSON object of numbers and exits 1 when a number goes over its budget in
+[scripts/perf/longrun-budgets.json](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/longrun-budgets.json). The budgets are about twice the numbers below.
+`test/cli/longrun.test.ts` runs a quarter-size session in the unit tests and fails when ingest
+stops scaling linearly or derail detection gets slow.
+
+Before is origin/main on Nov 7, 2026 and after is this change, both on the desk with the same
+fixture. The desk runs other jobs, so ingest varies 2 to 3 times between runs: the spool and live
+rows are medians of 3 interleaved runs.
+
+| Step | Before | After |
+| --- | --- | --- |
+| Spool ingest, 30,000 events | 68.4 s | 63.2 s |
+| Live hook ingest on the full session, p50 | 1.01 s | 1.28 s |
+| `show` | 0.30 s, 174 lines | 0.33 s, 92 lines: one per phase |
+| `show --all` | none | 1.64 s, 30,223 lines |
+| `show --json` | 0.30 s | 0.31 s |
+| `sessions --flag looping` | none | 0.34 s |
+| `search` | 0.29 to 0.31 s | 0.31 s |
+| Viewer: first 5,000 events | 0.14 s | 0.16 s |
+| Viewer: the whole session | 6 clicks on "Load the next 5,000 events" | loads on its own: 3 requests, 0.84 s |
+| Viewer: phases and derails (`/outline`) | none | 4 ms |
+| MCP `session_get`, last turns | the first 20,000 events only | the last 20,000 events, 0.33 s |
+
+The live ingest costs about 0.27 s more because every ingest rebuilds the session's stats from all
+its events, and that now includes derail detection (about 0.1 s for 30,000 events).
+Phases are stored with the session at ingest, so `show` and the viewer never rescan the events.
+
+In Chrome, with all 30,155 steps loaded, the timeline scrolls with a p95 of 11 ms per jump and
+9 ms per wheel step. No task during the background load ran longer than 0.1 s.
