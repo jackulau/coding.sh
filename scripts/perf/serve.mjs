@@ -46,7 +46,8 @@ const TYPES = {
 };
 const COMPRESSIBLE = new Set([".html", ".css", ".js", ".mjs", ".json", ".webmanifest", ".svg", ".xml", ".txt", ".md", ".sh", ".ttf", ".otf"]);
 
-const CACHE = join(tmpdir(), "coding-sh-perf-cache");
+// Per user: a cache another account made (root on a shared runner) isn't writable.
+const CACHE = join(tmpdir(), `coding-sh-perf-cache-${process.getuid?.() ?? "u"}`);
 
 function walk(dir, out = []) {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
