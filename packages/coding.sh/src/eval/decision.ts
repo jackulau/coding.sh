@@ -470,7 +470,8 @@ export function decisionCaseId(anchor: Pick<Anchor, "id" | "version">, sessionId
   return `dp_${createHash("sha256").update(`${anchor.id}@${anchor.version}\u001f${sessionId}\u001f${cutEventId}`).digest("hex").slice(0, 20)}`;
 }
 
-function inside(dir: string, p: string | undefined): boolean {
+/** True when `p` is `dir` or inside it (POSIX or Windows separators). */
+export function insideDir(dir: string, p: string | undefined): boolean {
   if (!p) return false;
   const d = dir.replace(/\\/g, "/").replace(/\/+$/, "");
   const x = p.replace(/\\/g, "/");
@@ -497,7 +498,7 @@ export async function buildDecisionDataset(o: BuildDecisionOpts): Promise<Decisi
   const listed = await o.index.listSessions({ parentSessionId: null, runId: null, ...(o.since !== undefined ? { since: o.since } : {}), limit: o.scan ?? 2000 });
   const sessions = listed
     .filter((s) => (o.since === undefined || s.startedAt >= o.since) && (!o.agents?.length || o.agents.includes(s.agent)))
-    .filter((s) => !o.repo || inside(o.repo, s.cwd) || inside(o.repo, s.repo?.root))
+    .filter((s) => !o.repo || insideDir(o.repo, s.cwd) || insideDir(o.repo, s.repo?.root))
     .sort((a, b) => b.startedAt - a.startedAt || (a.id < b.id ? 1 : -1));
   for (const s of sessions) {
     if (cases.length >= limit) break;

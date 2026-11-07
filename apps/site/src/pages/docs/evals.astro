@@ -106,6 +106,23 @@ const AB = [
   "",
   `Full comparison: coding.sh exp compare exp_01M6VXZSFPM2QK12ANN6Z269WP exp_01M6VXZSFSZ25HD2HXXVY40BXV`,
 ].join("\n");
+
+// Real output of scripts/e2e/refine-loop.mjs (run 2026-11-07 against a stub model and a throwaway HOME).
+const REFINE = [
+  `${m("$")} ${t("coding.sh refine test ./drafts/CLAUDE.md --behavior unchanged-retry")}`,
+  `r_b25de6ab68  ./drafts/CLAUDE.md (CLAUDE.md; +1 line)`,
+  `  protected  ${ok("ok")} (1 protected line in place)`,
+  `  critics    ${ok("ok")}`,
+  `  dev        8 decision points | effect +100pp [+100pp, +100pp] | B wins 8, loses 0; A solved 0`,
+  `  guard      8 tasks earlier kept edits won (0 from this run, 8 rerun) | ${no("forgets kept edit r_3123c2cbef")}`,
+  `  preserved  gained 8, lost 0, 0 tasks regressed`,
+  `  verdict    ${no("reject")}: dev: Ship it: B wins 8 decision points, loses 0; guard: forgets kept edit r_3123c2cbef`,
+  "",
+  `${m("$")} ${t("coding.sh refine log")}`,
+  m(`ROUND  CANDIDATE     VERDICT        EFFECT (95% CI)          GUARD                 COST   REASON`),
+  `1      r_3123c2cbef  ${ok("keep, applied")}  +100pp [+100pp, +100pp]  no tasks              $0.02  dev: Ship it: B wins 8 decision points, loses 0`,
+  `2      r_b25de6ab68  ${no("reject")}         +100pp [+100pp, +100pp]  forgets r_3123c2cbef  $0.02  guard: forgets kept edit r_3123c2cbef`,
+].join("\n");
 ---
 
 <DocsLayout>
@@ -315,6 +332,27 @@ const AB = [
     (credentials, secrets, <code>.env</code>, prod, deploy, push, <code>--force</code>, delete, <code>rm -rf</code>, migrations, owner, …).
     <code>coding.sh refine protected</code> lists them. <code>--allow-protected-edit AGENTS.md:3</code> allows one edit on purpose. See
     <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#protected-safety-lines">Protected safety lines</a>.
+  </p>
+
+  <h2 id="refine">Refine loop <Tag status="built" /></h2>
+  <p>
+    <code>coding.sh refine</code> improves CLAUDE.md, AGENTS.md, rules and skills in tested rounds. <code>refine propose</code> asks a model
+    for lines that address your sessions' most severe flags, with the file's protected lines marked READ-ONLY and earlier rejected edits listed.
+    You can also write the edit yourself. <code>refine test</code> then decides each candidate in stages: the protected-line check and two
+    critics on the added lines (harmful instructions, near duplicates) before any model call, then an A/B against your current files on the
+    decision points <code>exp ab</code> mines, through the same ship gate. Last comes the guard: the decision points earlier kept edits won must
+    not go from solved to unsolved.
+  </p>
+  <Terminal title="~/repo" label="Output of coding.sh refine test and refine log">
+    <Fragment set:html={REFINE} />
+  </Terminal>
+  <p>
+    Here the second edit wins its own decision points but drops the line the first edit added, so the guard rejects it.
+    <code>refine apply</code> writes a kept candidate with a backup and never commits. <code>refine rollback</code> restores the backup byte for
+    byte. <code>refine log</code> shows every round with its verdict, effect CI, guard result, cost and reason. <code>refine run</code> loops
+    propose, test and apply until <code>--rounds</code>, <code>--max-cost</code> or the plateau detector says stop. <code>--dry-run</code>
+    shows the plan, the guard size and the cost first. See
+    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#refine-loop">Refine loop</a>.
   </p>
 
   <h2 id="judges">LLM judges <Tag status="built" /></h2>

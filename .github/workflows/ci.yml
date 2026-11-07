@@ -251,3 +251,10 @@ jobs:
       - name: Experiment sessions and exp run --watch
         if: runner.os == 'Linux'
         run: node scripts/e2e/exp-session-watch.mjs
+
+      # The refine loop on synthetic sessions, with the proposer, the next turn and the judge
+      # answered by the stub: one edit is kept and applied, a later edit that drops it wins its own
+      # decision points but is rejected by the guard, and a rollback restores CLAUDE.md byte for byte.
+      - name: Refine loop keep and guard reject
+        if: runner.os == 'Linux'
+        run: node scripts/e2e/refine-loop.mjs

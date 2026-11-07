@@ -18,6 +18,8 @@ import { FileEvalStore } from "../../datasets/store.ts";
 import type { Case, CaseRun, Dataset, Grader } from "../../datasets/types.ts";
 import { BUILTIN_ANCHORS, buildDecisionDataset, caseSession, loadAnchor, type Anchor, type DecisionDataset } from "../../eval/decision.ts";
 import type { AbResult } from "../../experiments/ab.ts";
+import type { Job } from "../../jobs/store.ts";
+import type { GateOpts } from "../../stats/tests.ts";
 import { compareExperiments, type Comparison } from "../../experiments/compare.ts";
 import { planContinuation, prefixEvents, replayNoise, type ContextFile, type ContinuationProvider, type ContinuationTask, type FrozenPrefix } from "../../experiments/continuation.ts";
 import { createGrader, providerFromSpec, type LlmGraderSpec } from "../../graders/index.ts";
@@ -36,7 +38,7 @@ import type { CommandContext } from "../types.ts";
 import { cancelledWarning, runArms } from "./exp.ts";
 
 /** The spec file's fields; flags override them. */
-interface AbSpec {
+export interface AbSpec {
   behavior?: string | string[];
   anchor?: string | string[];
   since?: string;
@@ -54,7 +56,7 @@ interface AbSpec {
   maxCost?: number;
 }
 
-interface AbOptions {
+export interface AbOptions {
   behaviors: string[];
   anchorFiles: string[];
   since: number;
@@ -252,6 +254,11 @@ async function options(c: CommandContext, root: string | undefined): Promise<AbO
     if (!v || typeof v !== "object" || Array.isArray(v)) throw new UsageError(`${file} must hold a JSON object`, { reason: "invalid_argument" });
     spec = v as AbSpec;
   }
+  return abOptions(c, root, spec);
+}
+
+/** The decision-point trial options from flags over a spec (`exp ab`; `refine test` passes no spec). */
+export function abOptions(c: CommandContext, root: string | undefined, spec: AbSpec = {}): AbOptions {
   const f = c.flags;
   const behaviors = list(f.behavior).length ? asList(list(f.behavior)) : asList(spec.behavior);
   const anchorFiles = list(f.anchor).length ? list(f.anchor) : asList(spec.anchor);
@@ -292,7 +299,7 @@ async function options(c: CommandContext, root: string | undefined): Promise<AbO
   return o;
 }
 
-async function pickAnchors(o: AbOptions, cwd: string): Promise<Anchor[]> {
+export async function pickAnchors(o: AbOptions, cwd: string): Promise<Anchor[]> {
   const loaded: Anchor[] = [];
   for (const f of o.anchorFiles) {
     try {
@@ -332,7 +339,7 @@ Rubric:
 Score the output against the per-instance rubric in <expected>. Cite the passages that decided your verdict.`;
 
 /** What one iteration spent: continuation calls (cached or not) and judge calls. */
-interface Spend {
+export interface Spend {
   calls: number;
   cached: number;
   usd: number;
@@ -342,10 +349,10 @@ interface Spend {
   judgeUsd: number;
 }
 
-const newSpend = (): Spend => ({ calls: 0, cached: 0, usd: 0, unpriced: 0, judgeCalls: 0, judgeUsd: 0 });
+export const newSpend = (): Spend => ({ calls: 0, cached: 0, usd: 0, unpriced: 0, judgeCalls: 0, judgeUsd: 0 });
 
 /** The provider with each call counted and priced. */
-function metered(p: ChatProvider, spend: Spend, onSpend: () => void): ChatProvider {
+export function metered(p: ChatProvider, spend: Spend, onSpend: () => void): ChatProvider {
   const prices = pricesFor();
   return {
     name: p.name,
@@ -363,7 +370,7 @@ function metered(p: ChatProvider, spend: Spend, onSpend: () => void): ChatProvid
 }
 
 /** The judge sees the turn itself (text and tool calls), never usage or model names, so equal turns share a cached verdict across arms. */
-function turnOnly(g: Grader): Grader {
+export function turnOnly(g: Grader): Grader {
   return {
     ...g,
     grade(ctx) {
@@ -375,7 +382,7 @@ function turnOnly(g: Grader): Grader {
   };
 }
 
-function judgeSpec(o: AbOptions, base: string): LlmGraderSpec {
+export function judgeSpec(o: AbOptions, base: string): LlmGraderSpec {
   return {
     kind: "llm",
     name: "decision-point",
@@ -389,7 +396,7 @@ function judgeSpec(o: AbOptions, base: string): LlmGraderSpec {
   };
 }
 
-function baseURLFor(o: AbOptions, env: NodeJS.ProcessEnv): string {
+export function baseURLFor(o: AbOptions, env: NodeJS.ProcessEnv): string {
   const fromEnv = o.provider === "anthropic" ? env.ANTHROPIC_BASE_URL : env.OPENAI_BASE_URL;
   return (o.baseURL ?? (fromEnv?.trim() || (o.provider === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1"))).replace(/\/+$/, "");
 }
@@ -416,7 +423,7 @@ export function defaultModel(provider: ContinuationProvider, cases: readonly Cas
   return top?.[0] ?? (provider === "openai-compatible" ? undefined : DEFAULT_MODELS[provider]);
 }
 
-interface Estimate {
+export interface Estimate {
   calls: number;
   uncached: number;
   inputTokens: number;
@@ -426,7 +433,7 @@ interface Estimate {
 }
 
 /** Tokens and dollars before running: chars/4 for each uncached request, a short reply, and one judge call per uncached turn. */
-function estimate(tasks: readonly ContinuationTask[], cases: readonly Case[], trials: number, judgeModel: string): Estimate {
+export function estimate(tasks: readonly ContinuationTask[], cases: readonly Case[], trials: number, judgeModel: string): Estimate {
   const prices = pricesFor();
   let calls = 0;
   let uncached = 0;
@@ -454,7 +461,7 @@ function estimate(tasks: readonly ContinuationTask[], cases: readonly Case[], tr
   return { calls, uncached, inputTokens, outputTokens, judgeCalls: uncached, usd };
 }
 
-const money = (x: number) => (x === 0 ? "$0" : x < 0.01 ? "<$0.01" : `$${x.toFixed(2)}`);
+export const money = (x: number) => (x === 0 ? "$0" : x < 0.01 ? "<$0.01" : `$${x.toFixed(2)}`);
 
 // ---------------------------------------------------------------- report
 
@@ -554,26 +561,21 @@ function warnProtected(c: CommandContext, g: ProtectCheck): void {
   out.warn(`A pass-rate A/B can't see the harm of dropping a safety rule${c.flags.gate === true ? ", so --gate will fail" : ""}. Allow it on purpose: --allow-protected-edit ${p.path}:${p.line}`);
 }
 
-// ---------------------------------------------------------------- the command
+/** The mined decision points of one trial, with the per-anchor counts for the report. */
+export interface MinedCases {
+  mined: DecisionDataset;
+  dataset: Dataset;
+  cases: Case[];
+  caseMap: Map<string, Case>;
+  counts: [string, string][];
+}
 
-export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Context): Promise<number> {
-  const { out } = c;
-  const root = gitRoot(c.cwd);
-  const o = await options(c, root);
-  const repoRoot = root ?? c.cwd;
-  const anchors = await pickAnchors(o, c.cwd);
-  // Resolve the arms before mining: a bad path should fail fast.
-  let [armA, armB] = await resolveArms(o, c, repoRoot, root !== undefined, ctx);
-  // The acceptance gate is always computed (it is the headline); --gate only makes it the exit code.
-  const gate = gateFlags({ ...c.flags, gate: true })!;
-  // Protected safety lines (Z-13): a pass-rate A/B can't see the harm of deleting or waiving one,
-  // so the edit is checked before any model call; with --gate a problem fails the run.
-  const { protect, autoProtect } = protectOptions(c);
-  const allowProtected = protectOverrides(c.flags["allow-protected-edit"]);
-  const protectFor = (b: Arm): ProtectCheck => checkProtected(armA.files, b.files, { protect, autoProtect, allow: allowProtected });
-  let guard = protectFor(armB);
-  if (!out.json) warnProtected(c, guard);
-
+/**
+ * Ingest what is pending, mine the decision points and store the dataset.
+ * No decision points is a CliError (exit 2) naming a wider window; `command`
+ * is the command its hint suggests rerunning.
+ */
+export async function mineDecisionPoints(c: CommandContext, o: AbOptions, ctx: Context, store: FileEvalStore, anchors: readonly Anchor[], command: string): Promise<MinedCases> {
   await autoIngest(ctx, readIngest(c));
   const repoKey = o.repo ? (basename(o.repo).toLowerCase().replace(/[^a-z0-9._-]+/g, "-") || "repo") : "all";
   const mined = await buildDecisionDataset({
@@ -597,26 +599,43 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
       reason: "no_cases",
       exitCode: 2,
       details: counts,
-      next: ["Look further back, or in every repo:", `coding.sh exp ab ${widen}${o.repo ? " --repo all" : ""}`],
+      next: ["Look further back, or in every repo:", `${command} ${widen}${o.repo ? " --repo all" : ""}`],
       data: { perAnchor: mined.perAnchor, dropped: mined.dropped.length },
     });
   }
   await store.putDataset(mined.dataset);
-  const dataset: Dataset = mined.dataset;
-  const caseMap = new Map(cases.map((x) => [x.id, x]));
+  return { mined, dataset: mined.dataset, cases, caseMap: new Map(cases.map((x) => [x.id, x])), counts };
+}
+
+/** Who answers the next turn and who judges it: the same for every pair of one trial. */
+export interface TrialSetup {
+  provider: ContinuationProvider;
+  model: string;
+  base: string;
+  judge: LlmGraderSpec;
+  judgeModel: string;
+  trials: number;
+  concurrency: number;
+  cache: boolean;
+}
+
+export function trialSetup(o: AbOptions, cases: readonly Case[], env: NodeJS.ProcessEnv): TrialSetup {
   const model = o.model ?? defaultModel(o.provider, cases);
   if (!model) throw new UsageError("--provider openai-compatible has no default model and the sessions recorded none: pass --model", { reason: "missing_argument" });
-  const base = baseURLFor(o, c.env);
+  const base = baseURLFor(o, env);
   const judge = judgeSpec({ ...o, model }, base);
-  const judgeModel = judge.model ?? model;
+  return { provider: o.provider, model, base, judge, judgeModel: judge.model ?? model, trials: o.trials, concurrency: o.concurrency, cache: o.cache };
+}
 
-  const taskFor = (arm: Arm, spend?: Spend, onSpend?: () => void): ContinuationTask => ({
+/** One arm's next-turn task; with `spend`, each model call is counted and priced into it. */
+export function continuationTask(t: TrialSetup, arm: Arm, spend?: Spend, onSpend?: () => void): ContinuationTask {
+  return {
     kind: "continuation",
-    provider: o.provider,
-    model,
-    baseURL: base,
+    provider: t.provider,
+    model: t.model,
+    baseURL: t.base,
     context: { files: arm.files },
-    cache: o.cache,
+    cache: t.cache,
     ...(spend
       ? {
           onCall: (info) => {
@@ -629,10 +648,81 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
           },
         }
       : {}),
-  });
+  };
+}
+
+/** Tokens and dollars of one A/B pair on these cases before running it. */
+export const estimatePair = (t: TrialSetup, a: Arm, b: Arm, cases: readonly Case[]): Estimate => estimate([continuationTask(t, a), continuationTask(t, b)], cases, t.trials, t.judgeModel);
+
+export interface PairRun {
+  ab: AbResult;
+  job: Job;
+  /** Absent when the run was cancelled (Ctrl-C or the spend cap). */
+  comparison?: Comparison;
+  /** The spend passed the cap and the run stopped scheduling. */
+  overBudget: boolean;
+}
+
+/**
+ * One interleaved A/B pair on decision points: A's and B's next turns, both
+ * judged with the per-case rubric, then the comparison with the acceptance
+ * gate and A's replay noise floor. `spend` is shared, so several pairs can run
+ * under one cap: once it passes `maxCost` no new trial starts and the pair
+ * comes back cancelled, with what finished stored.
+ */
+export async function runPair(
+  c: CommandContext,
+  store: FileEvalStore,
+  t: TrialSetup,
+  dataset: Dataset,
+  caseMap: ReadonlyMap<string, Case>,
+  a: Arm,
+  b: Arm,
+  o: { spend: Spend; maxCost?: number; gate: GateOpts; name?: string },
+): Promise<PairRun> {
+  const { spend } = o;
+  const cap = new AbortController();
+  const check = () => {
+    if (o.maxCost !== undefined && spend.usd + spend.judgeUsd > o.maxCost && !cap.signal.aborted) cap.abort();
+  };
+  check();
+  const provider = metered(providerFromSpec(t.judge, { env: c.env }), spend, check);
+  const grader = turnOnly(await createGrader(t.judge, { env: c.env, provider, judgeCache: FileJudgeCache.forEnv(c.env) }));
+  const drain = c.drain ? AbortSignal.any([c.drain, cap.signal]) : cap.signal;
+  const loaded = { spec: { trials: t.trials, concurrency: t.concurrency }, dataset, graders: [grader], name: o.name ?? dataset.name };
+  const { result: ab, job } = await runArms(c, store, loaded, [{ name: "a", task: continuationTask(t, a, spend, check) }, { name: "b", task: continuationTask(t, b, spend, check) }], "exp ab", { drain });
+  if (ab.a.status === "cancelled") return { ab, job, overBudget: cap.signal.aborted };
+  const replay = replayNoise(ab.a, caseMap);
+  const comparison = compareExperiments(ab.a, ab.b, { force: true, gate: o.gate, ...(replay ? { replay } : {}) });
+  return { ab, job, comparison, overBudget: false };
+}
+
+// ---------------------------------------------------------------- the command
+
+export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Context): Promise<number> {
+  const { out } = c;
+  const root = gitRoot(c.cwd);
+  const o = await options(c, root);
+  const repoRoot = root ?? c.cwd;
+  const anchors = await pickAnchors(o, c.cwd);
+  // Resolve the arms before mining: a bad path should fail fast.
+  let [armA, armB] = await resolveArms(o, c, repoRoot, root !== undefined, ctx);
+  // The acceptance gate is always computed (it is the headline); --gate only makes it the exit code.
+  const gate = gateFlags({ ...c.flags, gate: true })!;
+  // Protected safety lines (Z-13): a pass-rate A/B can't see the harm of deleting or waiving one,
+  // so the edit is checked before any model call; with --gate a problem fails the run.
+  const { protect, autoProtect } = protectOptions(c);
+  const allowProtected = protectOverrides(c.flags["allow-protected-edit"]);
+  const protectFor = (b: Arm): ProtectCheck => checkProtected(armA.files, b.files, { protect, autoProtect, allow: allowProtected });
+  let guard = protectFor(armB);
+  if (!out.json) warnProtected(c, guard);
+
+  const { mined, dataset, cases, caseMap, counts } = await mineDecisionPoints(c, o, ctx, store, anchors, "coding.sh exp ab");
+  const setup = trialSetup(o, cases, c.env);
+  const { model } = setup;
 
   if (o.dryRun) {
-    const est = estimate([taskFor(armA), taskFor(armB)], cases, o.trials, judgeModel);
+    const est = estimatePair(setup, armA, armB, cases);
     if (out.json) {
       out.data({ dryRun: true, dataset: { id: dataset.id, version: dataset.version, cases: cases.length }, perAnchor: mined.perAnchor, dropped: mined.dropped, arms: { a: armA.label, b: armB.label }, model, estimate: est, protected: protectJson(guard) });
       return 0;
@@ -647,7 +737,7 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
   }
 
   const runOnce = async (a: Arm, b: Arm, quiet: boolean): Promise<Outcome | undefined> => {
-    const est = estimate([taskFor(a), taskFor(b)], cases, o.trials, judgeModel);
+    const est = estimatePair(setup, a, b, cases);
     if (o.maxCost !== undefined && est.usd !== undefined && est.usd > o.maxCost) {
       throw new CliError(`Estimated cost ${money(est.usd)} is over --max-cost ${money(o.maxCost)} (${est.uncached} uncached calls)`, {
         reason: "over_budget",
@@ -657,23 +747,15 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
     if (!quiet && !out.json && est.uncached) out.note(`About ${est.usd === undefined ? "an unknown cost" : money(est.usd)} for ${est.uncached} uncached model calls (${est.calls - est.uncached} cached)`);
     const spend = newSpend();
     // The cap during the run: stop scheduling once the spend passes it (finished trials are kept; --resume continues).
-    const cap = new AbortController();
-    const check = () => {
-      if (o.maxCost !== undefined && spend.usd + spend.judgeUsd > o.maxCost && !cap.signal.aborted) cap.abort();
-    };
-    const provider = metered(providerFromSpec(judge, { env: c.env }), spend, check);
-    const grader = turnOnly(await createGrader(judge, { env: c.env, provider, judgeCache: FileJudgeCache.forEnv(c.env) }));
-    const drain = c.drain ? AbortSignal.any([c.drain, cap.signal]) : cap.signal;
-    const loaded = { spec: { trials: o.trials, concurrency: o.concurrency }, dataset, graders: [grader], name: str(c.flags.name) ?? dataset.name };
-    const { result: ab, job } = await runArms(c, store, loaded, [{ name: "a", task: taskFor(a, spend, check) }, { name: "b", task: taskFor(b, spend, check) }], "exp ab", { drain });
-    if (ab.a.status === "cancelled") {
-      if (cap.signal.aborted) out.warn(`Stopped at ${money(spend.usd + spend.judgeUsd)}: over --max-cost ${money(o.maxCost!)}`);
+    const name = str(c.flags.name);
+    const run = await runPair(c, store, setup, dataset, caseMap, a, b, { spend, gate, ...(o.maxCost !== undefined ? { maxCost: o.maxCost } : {}), ...(name ? { name } : {}) });
+    const { ab, job, comparison } = run;
+    if (!comparison) {
+      if (run.overBudget) out.warn(`Stopped at ${money(spend.usd + spend.judgeUsd)}: over --max-cost ${money(o.maxCost!)}`);
       cancelledWarning(c, ab.a);
       resumeNote(c, job);
       return undefined;
     }
-    const replay = replayNoise(ab.a, caseMap);
-    const comparison = compareExperiments(ab.a, ab.b, { force: true, gate, ...(replay ? { replay } : {}) });
     const pa = casePass(ab.a.runs);
     const pb = casePass(ab.b.runs);
     const fixed = cases.filter((x) => pa.get(x.id) === false && pb.get(x.id) === true).map((x) => x.id);

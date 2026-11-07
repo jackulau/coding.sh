@@ -85,6 +85,35 @@ const EXP_RUN_FLAGS: FlagSpec[] = [
 /** Waive the protected-line check for one protected line (refine check, exp ab). */
 const PROTECTED_EDIT: FlagSpec = { name: "allow-protected-edit", type: "list", value: "<PATH:LINE>", desc: "Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force)" };
 
+/** Where refine finds its decision points and who answers and judges them (refine propose, test, run). */
+const REFINE_SOURCE_FLAGS: FlagSpec[] = [
+  { name: "behavior", type: "list", value: "<ID[,ID]>", desc: "Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all)" },
+  { name: "anchor", type: "list", value: "<FILE>", desc: "Module exporting your own anchor(s) (see the evals guide)" },
+  { name: "since", type: "string", value: "<DURATION|DATE>", desc: "Sessions started since", default: "14d" },
+  { name: "agent", type: "list", value: "<AGENT>", desc: "Only sessions of this agent" },
+  { name: "repo", type: "string", value: "<DIR|all>", desc: "Only sessions under this directory (default: this git repo)" },
+  { name: "provider", type: "string", value: "<NAME>", choices: ["anthropic", "openai", "openai-compatible"], desc: "API that proposes, answers the next turn and judges it", default: "anthropic" },
+  { name: "base-url", type: "string", value: "<URL>", desc: "API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's)" },
+  { name: "judge-model", type: "string", value: "<MODEL>", desc: "Model for the judge (default: --model)" },
+];
+
+const REFINE_TRIAL_FLAGS: FlagSpec[] = [
+  { name: "limit", short: "n", type: "number", value: "<N>", desc: "Maximum decision points", default: "40" },
+  { name: "model", type: "string", value: "<MODEL>", desc: `Model for the next turn (default: the one the decision points were recorded with, else ${DEFAULT_MODELS.anthropic} or ${DEFAULT_MODELS.openai})` },
+  { name: "trials", type: "number", value: "<N>", desc: "Next turns per case and arm", default: "1" },
+  { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel model calls", default: "4" },
+  { name: "max-cost", type: "number", value: "<USD>", desc: "Refuse to start when the estimate is over this, and stop once the spend passes it" },
+  { name: "max-guard", type: "number", value: "<N>", desc: "Most tasks in the guard set (the tasks earlier kept edits won), newest kept edits first", default: "24" },
+  { name: "cache", type: "boolean", desc: "Reuse stored model responses (--no-cache to ask the model again)", default: "true" },
+  { name: "lambda", type: "number", value: "<N>", desc: "Acceptance gate: what breaking one solved decision point costs, in fixed ones", default: "2" },
+  { name: "gate-alpha", type: "number", value: "<A>", desc: "Acceptance gate: one-sided significance level", default: "0.05" },
+  { name: "tau", type: "number", value: "<T>", desc: "Acceptance gate: largest share of solved decision points B may break", default: "0.10" },
+  PROTECTED_EDIT,
+];
+
+const PROPOSER_MODEL: FlagSpec = { name: "proposer-model", type: "string", value: "<MODEL>", desc: `Model that writes the edit (default: --judge-model, else --model, else ${DEFAULT_MODELS.anthropic} or ${DEFAULT_MODELS.openai})` };
+const REFINE_TARGET: FlagSpec = { name: "target", type: "string", value: "<PATH>", desc: "Harness file the proposal extends (default: AGENTS.md, else CLAUDE.md, else GEMINI.md)" };
+
 const SCOPE: FlagSpec = { name: "scope", type: "string", value: "<SCOPE>", choices: ["user", "project"], desc: "Install into user or project config", default: "user" };
 
 /** Global options accepted by every command (handled in main.ts). */
@@ -837,8 +866,56 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "refine",
     group: "Harness",
-    summary: "Protect the safety rules in your harness from edits that delete, reword or relax them",
+    summary: "Improve CLAUDE.md, AGENTS.md and skills in tested rounds, and protect their safety rules",
     actions: [
+      {
+        name: "propose",
+        summary: "Ask a model for lines that address your sessions' most severe flags; stores them as a candidate",
+        flags: [...REFINE_SOURCE_FLAGS.filter((f) => ["since", "agent", "repo", "provider", "base-url"].includes(f.name)), PROPOSER_MODEL, REFINE_TARGET, { name: "dry-run", type: "boolean", desc: "Print the findings and the prompt; make no model call" }],
+        examples: ["coding.sh refine propose", "coding.sh refine propose --target CLAUDE.md --dry-run"],
+      },
+      {
+        name: "test",
+        summary: "Test candidate edits against your current files; keep, reject or inconclusive per candidate, exit 0 when one is kept",
+        args: [{ name: "candidate", desc: "Edited file, directory, git:REV, harness bundle or stored r_… id; a file replaces the harness file at its repo path, else the one with its name (./drafts/AGENTS.md replaces AGENTS.md)", required: true, variadic: true }],
+        flags: [...REFINE_SOURCE_FLAGS, ...REFINE_TRIAL_FLAGS, { name: "dry-run", type: "boolean", desc: "Show the checks, decision points, guard set size and cost estimate; make no model calls" }],
+        graceful: true,
+        examples: ["coding.sh refine test ./drafts/AGENTS.md", "coding.sh refine test r_3f9a1c02e1 --behavior unverified-claim --max-cost 2", "coding.sh refine test ./a/CLAUDE.md ./b/CLAUDE.md --dry-run --json"],
+      },
+      {
+        name: "apply",
+        summary: "Write a kept candidate to your files, backing up what it replaces (never commits)",
+        args: [{ name: "candidate", desc: "Candidate id (default: the latest kept candidate not yet applied)" }],
+        flags: [{ name: "force", type: "boolean", desc: "Apply a candidate that was not kept, or whose files changed since its test (recorded in the ledger)" }],
+        examples: ["coding.sh refine apply", "coding.sh refine apply r_3f9a1c02e1"],
+      },
+      {
+        name: "rollback",
+        summary: "Put back what an apply replaced, from its backup",
+        args: [{ name: "candidate", desc: "Candidate or apply id (default: the latest apply)" }],
+        flags: [{ name: "force", type: "boolean", desc: "Roll back though the file changed since the apply (those changes are lost)" }],
+        examples: ["coding.sh refine rollback", "coding.sh refine rollback r_3f9a1c02e1"],
+      },
+      {
+        name: "log",
+        summary: "Every round in this repo: verdict, effect CI, guard result, cost and reason, and whether the loop plateaued",
+        examples: ["coding.sh refine log", "coding.sh refine log --json"],
+      },
+      {
+        name: "run",
+        summary: "Loop: propose (or take --candidate), test, apply when kept; stop at --rounds, --max-cost or a plateau",
+        flags: [
+          { name: "rounds", type: "number", value: "<N>", desc: "Most rounds", default: "3" },
+          { name: "candidate", type: "list", value: "<FILE|r_…>", desc: "Test these in order instead of asking the proposer (repeatable)" },
+          PROPOSER_MODEL,
+          REFINE_TARGET,
+          ...REFINE_SOURCE_FLAGS,
+          ...REFINE_TRIAL_FLAGS,
+          { name: "dry-run", type: "boolean", desc: "Show the findings, decision points, guard set size and per-round estimate; make no model calls" },
+        ],
+        graceful: true,
+        examples: ["coding.sh refine run --rounds 5 --max-cost 10", "coding.sh refine run --candidate ./v1/AGENTS.md --candidate ./v2/AGENTS.md", "coding.sh refine run --dry-run"],
+      },
       {
         name: "protected",
         summary: "List the harness lines an edit may not delete, reword or relax",
@@ -860,6 +937,8 @@ export const COMMANDS: CommandSpec[] = [
       "A protected line is inside a <!-- coding.sh:protect --> … <!-- coding.sh:protect end --> block, matches a [refine] protect regex, or pairs a gate word (never, don't, must not, only, before, ask, confirm, verify, check, require) with a safety topic (credentials, secrets, access tokens, private keys, .env, prod, deploy, push, --force, force-push, destructive, --no-verify, rm -rf, delete, drop table, reset --hard, migrations, permissions, sudo, chmod, payments, PII, another user, owner, dry-run, backups). Set [refine] autoProtect = false in your user config to keep only markers and patterns.",
       "check rejects an edit that deletes or rewords a protected line (protected-line), or adds a line that waives one (skip, no need, only … when, unless, without asking, already verified …) and shares a backticked token, a word or a safety topic with it (relaxes-protected).",
       "exp ab runs the same check on its arms and warns; with --gate a protected-line problem fails the run.",
+      "test decides each candidate in stages: the protected-line check, the harmless and duplicate critics on the added lines, an A/B against your current files on the decision points exp ab mines (the acceptance gate: ship goes on, hold is inconclusive, don't ship rejects), then the guard set: the decision points earlier kept edits won must not go from solved to unsolved. A run stopped at --max-cost is inconclusive.",
+      "The ledger and every tested candidate's files live under the data dir (refine/<repo>-<hash>/). Rejected candidates and their reasons go into the next proposal prompt; protected lines go in as READ-ONLY.",
     ],
     load: () => import("./commands/refine.ts"),
   },

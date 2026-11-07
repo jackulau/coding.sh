@@ -793,6 +793,116 @@ Set `[refine] autoProtect = false` in your user config to keep only markers and 
 agent editing the repo could otherwise unprotect a rule and then delete it. See
 [`[refine]`](../reference/config.md#refine).
 
+## Refine loop
+
+`coding.sh refine` improves CLAUDE.md, AGENTS.md, rules and skills in rounds. Each round tests one
+or more candidate edits against your current files and keeps, rejects or holds each one. Only a kept
+edit can be applied, and every round goes into a ledger.
+
+```sh
+$ coding.sh refine propose
+r_3123c2cbef  CLAUDE.md (+1 line)
+  + TEST-RULE: run npm test before you say you are done.
+Why: sessions end with an unverified claim
+  From 1 finding; spent <$0.01
+
+$ coding.sh refine test r_3123c2cbef
+r_3123c2cbef  (CLAUDE.md; +3 lines)
+  protected  ok (1 protected line in place)
+  critics    ok
+  dev        8 decision points | effect +100pp [+100pp, +100pp] | B wins 8, loses 0; A solved 0
+  preserved  gained 8, lost 0, 0 tasks regressed
+  verdict    keep: dev: Ship it: B wins 8 decision points, loses 0; guard: no earlier kept wins to hold
+
+$ coding.sh refine apply
+✓ Applied r_3123c2cbef to CLAUDE.md
+  Backup in ~/.coding.sh/refine/repo-d095414f/backups/a_25e3658e56
+
+$ coding.sh refine test ./drafts/CLAUDE.md --behavior unchanged-retry
+r_b25de6ab68  ./drafts/CLAUDE.md (CLAUDE.md; +1 line)
+  protected  ok (1 protected line in place)
+  critics    ok
+  dev        8 decision points | effect +100pp [+100pp, +100pp] | B wins 8, loses 0; A solved 0
+  guard      8 tasks earlier kept edits won (0 from this run, 8 rerun) | forgets kept edit r_3123c2cbef
+  preserved  gained 8, lost 0, 0 tasks regressed
+  verdict    reject: dev: Ship it: B wins 8 decision points, loses 0; guard: forgets kept edit r_3123c2cbef
+
+$ coding.sh refine log
+ROUND  CANDIDATE     VERDICT        EFFECT (95% CI)          GUARD                 COST   REASON
+1      r_3123c2cbef  keep, applied  +100pp [+100pp, +100pp]  no tasks              $0.02  dev: Ship it: B wins 8 decision points, loses 0
+2      r_b25de6ab68  reject         +100pp [+100pp, +100pp]  forgets r_3123c2cbef  $0.02  guard: forgets kept edit r_3123c2cbef
+```
+
+The second edit wins its own decision points, but it drops the line the first edit added, so it
+loses the tasks that edit won. The guard catches that.
+
+**Candidates.** `refine test` takes one or more edited files, directories, `git:REV`s, harness
+bundles or stored `r_…` ids. A single file stands in for the harness file at its repo path, or
+else for the file with its name, so `./drafts/AGENTS.md` replaces `AGENTS.md`. A candidate's id is
+a hash of its changed files. Its files are stored with the ledger, so `refine test r_…` and
+`refine apply r_…` work later.
+
+**Proposals.** `refine propose` asks a model for lines to add to one file: `--target`, else
+AGENTS.md, then CLAUDE.md, then GEMINI.md. The prompt lists your sessions' most severe flags (up to
+five, since `--since`, in this repo), each with its diagnosis and severity score. It shows the
+target file and marks its protected lines READ-ONLY. It also lists edits tested before and not kept,
+with their reasons (the last 20). The prompt is redacted before it is sent. The reply must be JSON
+with at most 40 lines and no HTML comments. The lines are appended in a
+`<!-- coding.sh:refine r_… begin -->` … `end` block and stored as a candidate. `--dry-run` prints
+the findings and the prompt without calling the model. The model is `--proposer-model`, else
+`--judge-model`, else `--model`, else the provider's default.
+
+**Stages.** `refine test` decides each candidate in this order and stops at the first that fails:
+
+1. **protected**: the [protected-line check](#protected-safety-lines). A deleted, reworded or relaxed
+   protected line rejects the candidate before any model call.
+2. **critics**: two checks on the added lines, also before any model call. *harmless* rejects a
+   line that tells the agent to skip or disable tests, edit CI or verifier files, use
+   `--no-verify`, force-push, `chmod 777`, broaden permissions, hard-code expected output or "make
+   the tests pass", or a line that holds a secret. A line that forbids the act ("never …",
+   "don't …") is fine. *duplicate* rejects a line that is a near copy of a line the file already
+   has (character 5-gram Jaccard of 0.8 or more).
+3. **dev**: an A/B of the candidate against your current files on the decision points `exp ab`
+   mines from your sessions, with the same runner, judge, cache and flags (`--behavior`, `--since`,
+   `--limit`, `--model`, `--trials`, …). The acceptance gate decides: "Ship it" goes on, "Hold" is
+   `inconclusive`, and "Don't ship" rejects.
+4. **guard**: the decision points that earlier kept edits won, newest first, at most `--max-guard`
+   (24). They must not go from solved to unsolved. Guard tasks inside this round's decision points
+   reuse the dev results. The others are run again on both arms. When the gate on the guard tasks
+   says "Don't ship", the candidate is rejected with `guard: forgets kept edit r_…`. A rolled-back
+   edit's tasks no longer count.
+
+A candidate that passes every stage is kept, and the decision points it won join the guard set.
+Each tested round also reports what the candidate gained and lost per task. When a held or rejected
+candidate gains tasks no kept edit covers and has no hard regression (a task the base solved every time and the candidate at most a third of the time), it is marked `alternative`. A guard
+reject is never an alternative. With several keeps in one round, the largest effect wins, and ties
+go to fewer regressed tasks, then lower cost per solved task.
+
+`refine test` exits 0 when a candidate was kept and 1 otherwise. `--dry-run` shows the checks, the
+decision points, the guard size and the cost estimate, and makes no model calls. `--max-cost 2`
+refuses to start when the estimate is over $2. A run that passes the cap stops, and a partial run
+is `inconclusive`, never kept. `--json` gives each round's ledger entry.
+
+**Apply and roll back.** `refine apply` writes the latest kept candidate (or the one you name) into
+your working tree and backs up what it replaces. It never commits. It refuses a candidate that was
+not kept, or whose files changed since its test, unless you pass `--force`, and the ledger records
+the override. `refine rollback` puts the backup back, byte for byte, and removes a file the apply
+created. It refuses when the file was edited after the apply, or when a later apply touched the same
+file, unless you pass `--force`.
+
+**The ledger.** Every round, apply and rollback is a line in
+`~/.coding.sh/refine/<repo>-<hash>/ledger.jsonl`, next to the stored candidates and the backups.
+`refine log` prints one row per round: verdict, effect with its 95% CI, guard result, cost and
+reason. It ends with the [`exp plateau`](#when-to-stop-a-loop) line for the series of kept rounds. `--json`
+gives every entry.
+
+**The loop.** `refine run` repeats propose, test and apply-when-kept for up to `--rounds` (3)
+rounds. `--candidate FILE` (repeatable) tests your own edits in order instead of asking the
+proposer. It stops at `--rounds`, when the candidates run out, at `--max-cost` (the cap covers the
+whole loop, proposer calls included), when the plateau detector says stop, or on Ctrl-C. It exits 0
+when it applied an edit. `refine run --dry-run` shows the findings, the decision points, the guard
+size and the cost of one round.
+
 ## Tool evals
 
 `coding.sh toolevals` measures how well agents use a CLI, MCP server or HTTP API: surface size,

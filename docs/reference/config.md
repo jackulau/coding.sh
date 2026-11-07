@@ -170,8 +170,9 @@ Keys are never printed or stored. See [LLM gateways](../integrations/ai-gateway.
 
 ## `[refine]`
 
-Which harness lines an edit may not delete, reword or relax (`coding.sh refine check` and
-`exp ab`). See [Protected safety lines](../guides/evals.md#protected-safety-lines).
+Which harness lines an edit may not delete, reword or relax (`coding.sh refine check`,
+`refine test`, `refine run` and `exp ab`), and which `refine propose` marks READ-ONLY. See
+[Protected safety lines](../guides/evals.md#protected-safety-lines).
 
 | Key | Default | What |
 |---|---|---|

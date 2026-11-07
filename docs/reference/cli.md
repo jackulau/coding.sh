@@ -55,7 +55,7 @@ Every command accepts these.
 | [`bench`](#codingsh-bench) | Evaluate | Dynamic benchmarks: fresh cases every run, same set for every contender |
 | [`harness`](#codingsh-harness) | Harness | Snapshot and list agent harness bundles |
 | [`compare`](#codingsh-compare) | Harness | A/B two harness bundles on eval tasks |
-| [`refine`](#codingsh-refine) | Harness | Protect the safety rules in your harness from edits that delete, reword or relax them |
+| [`refine`](#codingsh-refine) | Harness | Improve CLAUDE.md, AGENTS.md and skills in tested rounds, and protect their safety rules |
 | [`gateway`](#codingsh-gateway) | Maintain | LLM gateways: detect routing, enrich sessions with billed cost |
 | [`gc`](#codingsh-gc) | Maintain | Delete expired spool files, blobs and judge cache |
 | [`config`](#codingsh-config) | Maintain | Read and write ~/.coding.sh/config.toml |
@@ -1713,7 +1713,7 @@ coding.sh compare sonnet gpt5 --gateway openrouter
 
 ## `coding.sh refine`
 
-Protect the safety rules in your harness from edits that delete, reword or relax them.
+Improve CLAUDE.md, AGENTS.md and skills in tested rounds, and protect their safety rules.
 
 ```text
 coding.sh refine <action>
@@ -1721,12 +1721,181 @@ coding.sh refine <action>
 
 | Action | What it does |
 |---|---|
+| [`propose`](#codingsh-refine-propose) | Ask a model for lines that address your sessions' most severe flags; stores them as a candidate |
+| [`test`](#codingsh-refine-test) | Test candidate edits against your current files; keep, reject or inconclusive per candidate, exit 0 when one is kept |
+| [`apply`](#codingsh-refine-apply) | Write a kept candidate to your files, backing up what it replaces (never commits) |
+| [`rollback`](#codingsh-refine-rollback) | Put back what an apply replaced, from its backup |
+| [`log`](#codingsh-refine-log) | Every round in this repo: verdict, effect CI, guard result, cost and reason, and whether the loop plateaued |
+| [`run`](#codingsh-refine-run) | Loop: propose (or take --candidate), test, apply when kept; stop at --rounds, --max-cost or a plateau |
 | [`protected`](#codingsh-refine-protected) | List the harness lines an edit may not delete, reword or relax |
 | [`check`](#codingsh-refine-check) | Check a harness edit for deleted, reworded or relaxed protected lines; exit 1 when it has any |
 
 - A protected line is inside a &lt;!-- coding.sh:protect --&gt; … &lt;!-- coding.sh:protect end --&gt; block, matches a [refine] protect regex, or pairs a gate word (never, don't, must not, only, before, ask, confirm, verify, check, require) with a safety topic (credentials, secrets, access tokens, private keys, .env, prod, deploy, push, --force, force-push, destructive, --no-verify, rm -rf, delete, drop table, reset --hard, migrations, permissions, sudo, chmod, payments, PII, another user, owner, dry-run, backups). Set [refine] autoProtect = false in your user config to keep only markers and patterns.
 - check rejects an edit that deletes or rewords a protected line (protected-line), or adds a line that waives one (skip, no need, only … when, unless, without asking, already verified …) and shares a backticked token, a word or a safety topic with it (relaxes-protected).
 - exp ab runs the same check on its arms and warns; with --gate a protected-line problem fails the run.
+- test decides each candidate in stages: the protected-line check, the harmless and duplicate critics on the added lines, an A/B against your current files on the decision points exp ab mines (the acceptance gate: ship goes on, hold is inconclusive, don't ship rejects), then the guard set: the decision points earlier kept edits won must not go from solved to unsolved. A run stopped at --max-cost is inconclusive.
+- The ledger and every tested candidate's files live under the data dir (refine/&lt;repo&gt;-&lt;hash&gt;/). Rejected candidates and their reasons go into the next proposal prompt; protected lines go in as READ-ONLY.
+
+### `coding.sh refine propose`
+
+Ask a model for lines that address your sessions' most severe flags; stores them as a candidate.
+
+```text
+coding.sh refine propose [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <DURATION|DATE>` | `14d` | Sessions started since. |
+| `--agent <AGENT>` |  | Only sessions of this agent. Repeatable. |
+| `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
+| `--provider <NAME>` | `anthropic` | API that proposes, answers the next turn and judges it. One of: `anthropic`, `openai`, `openai-compatible`. |
+| `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
+| `--proposer-model <MODEL>` |  | Model that writes the edit (default: --judge-model, else --model, else claude-sonnet-5-5 or gpt-6-sol) |
+| `--target <PATH>` |  | Harness file the proposal extends (default: AGENTS.md, else CLAUDE.md, else GEMINI.md) |
+| `--dry-run` |  | Print the findings and the prompt; make no model call. |
+
+```sh
+coding.sh refine propose
+coding.sh refine propose --target CLAUDE.md --dry-run
+```
+
+### `coding.sh refine test`
+
+Test candidate edits against your current files; keep, reject or inconclusive per candidate, exit 0 when one is kept.
+
+```text
+coding.sh refine test <CANDIDATE>... [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `candidate` | yes | Edited file, directory, git:REV, harness bundle or stored r_… id; a file replaces the harness file at its repo path, else the one with its name (./drafts/AGENTS.md replaces AGENTS.md) Takes the rest of the arguments. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--behavior <ID[,ID]>` |  | Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all) Repeatable. |
+| `--anchor <FILE>` |  | Module exporting your own anchor(s) (see the evals guide) Repeatable. |
+| `--since <DURATION|DATE>` | `14d` | Sessions started since. |
+| `--agent <AGENT>` |  | Only sessions of this agent. Repeatable. |
+| `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
+| `--provider <NAME>` | `anthropic` | API that proposes, answers the next turn and judges it. One of: `anthropic`, `openai`, `openai-compatible`. |
+| `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
+| `--judge-model <MODEL>` |  | Model for the judge (default: --model) |
+| `-n, --limit <N>` | `40` | Maximum decision points. |
+| `--model <MODEL>` |  | Model for the next turn (default: the one the decision points were recorded with, else claude-sonnet-5-5 or gpt-6-sol) |
+| `--trials <N>` | `1` | Next turns per case and arm. |
+| `-c, --concurrency <N>` | `4` | Parallel model calls. |
+| `--max-cost <USD>` |  | Refuse to start when the estimate is over this, and stop once the spend passes it. |
+| `--max-guard <N>` | `24` | Most tasks in the guard set (the tasks earlier kept edits won), newest kept edits first. |
+| `--cache` | `true` | Reuse stored model responses (--no-cache to ask the model again) |
+| `--lambda <N>` | `2` | Acceptance gate: what breaking one solved decision point costs, in fixed ones. |
+| `--gate-alpha <A>` | `0.05` | Acceptance gate: one-sided significance level. |
+| `--tau <T>` | `0.10` | Acceptance gate: largest share of solved decision points B may break. |
+| `--allow-protected-edit <PATH:LINE>` |  | Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force) |
+| `--dry-run` |  | Show the checks, decision points, guard set size and cost estimate; make no model calls. |
+
+```sh
+coding.sh refine test ./drafts/AGENTS.md
+coding.sh refine test r_3f9a1c02e1 --behavior unverified-claim --max-cost 2
+coding.sh refine test ./a/CLAUDE.md ./b/CLAUDE.md --dry-run --json
+```
+
+### `coding.sh refine apply`
+
+Write a kept candidate to your files, backing up what it replaces (never commits).
+
+```text
+coding.sh refine apply [candidate] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `candidate` | no | Candidate id (default: the latest kept candidate not yet applied) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--force` |  | Apply a candidate that was not kept, or whose files changed since its test (recorded in the ledger) |
+
+```sh
+coding.sh refine apply
+coding.sh refine apply r_3f9a1c02e1
+```
+
+### `coding.sh refine rollback`
+
+Put back what an apply replaced, from its backup.
+
+```text
+coding.sh refine rollback [candidate] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `candidate` | no | Candidate or apply id (default: the latest apply) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--force` |  | Roll back though the file changed since the apply (those changes are lost) |
+
+```sh
+coding.sh refine rollback
+coding.sh refine rollback r_3f9a1c02e1
+```
+
+### `coding.sh refine log`
+
+Every round in this repo: verdict, effect CI, guard result, cost and reason, and whether the loop plateaued.
+
+```text
+coding.sh refine log
+```
+
+```sh
+coding.sh refine log
+coding.sh refine log --json
+```
+
+### `coding.sh refine run`
+
+Loop: propose (or take --candidate), test, apply when kept; stop at --rounds, --max-cost or a plateau.
+
+```text
+coding.sh refine run [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--rounds <N>` | `3` | Most rounds. |
+| `--candidate <FILE|r_…>` |  | Test these in order instead of asking the proposer (repeatable) |
+| `--proposer-model <MODEL>` |  | Model that writes the edit (default: --judge-model, else --model, else claude-sonnet-5-5 or gpt-6-sol) |
+| `--target <PATH>` |  | Harness file the proposal extends (default: AGENTS.md, else CLAUDE.md, else GEMINI.md) |
+| `--behavior <ID[,ID]>` |  | Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all) Repeatable. |
+| `--anchor <FILE>` |  | Module exporting your own anchor(s) (see the evals guide) Repeatable. |
+| `--since <DURATION|DATE>` | `14d` | Sessions started since. |
+| `--agent <AGENT>` |  | Only sessions of this agent. Repeatable. |
+| `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
+| `--provider <NAME>` | `anthropic` | API that proposes, answers the next turn and judges it. One of: `anthropic`, `openai`, `openai-compatible`. |
+| `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
+| `--judge-model <MODEL>` |  | Model for the judge (default: --model) |
+| `-n, --limit <N>` | `40` | Maximum decision points. |
+| `--model <MODEL>` |  | Model for the next turn (default: the one the decision points were recorded with, else claude-sonnet-5-5 or gpt-6-sol) |
+| `--trials <N>` | `1` | Next turns per case and arm. |
+| `-c, --concurrency <N>` | `4` | Parallel model calls. |
+| `--max-cost <USD>` |  | Refuse to start when the estimate is over this, and stop once the spend passes it. |
+| `--max-guard <N>` | `24` | Most tasks in the guard set (the tasks earlier kept edits won), newest kept edits first. |
+| `--cache` | `true` | Reuse stored model responses (--no-cache to ask the model again) |
+| `--lambda <N>` | `2` | Acceptance gate: what breaking one solved decision point costs, in fixed ones. |
+| `--gate-alpha <A>` | `0.05` | Acceptance gate: one-sided significance level. |
+| `--tau <T>` | `0.10` | Acceptance gate: largest share of solved decision points B may break. |
+| `--allow-protected-edit <PATH:LINE>` |  | Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force) |
+| `--dry-run` |  | Show the findings, decision points, guard set size and per-round estimate; make no model calls. |
+
+```sh
+coding.sh refine run --rounds 5 --max-cost 10
+coding.sh refine run --candidate ./v1/AGENTS.md --candidate ./v2/AGENTS.md
+coding.sh refine run --dry-run
+```
 
 ### `coding.sh refine protected`
 
