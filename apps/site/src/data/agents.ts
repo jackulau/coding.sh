@@ -25,7 +25,6 @@ export const AGENTS: Agent[] = [
   { name: "Factory Droid", capture: "hooks, transcript", status: "supported" },
   { name: "Goose", capture: "hooks, session db", status: "supported" },
   { name: "T3 Code", capture: "its Codex and Claude Code hooks, local state db", status: "supported" },
-  { name: "Aider", capture: "wrapper, headless", status: "supported" },
   // No adapter yet; `coding.sh run --` records it (docs/agents, "Kiro CLI").
   { name: "Kiro CLI", capture: "wrapper, repo snapshots", status: "supported" },
   { name: "anything else", capture: "wrapper, repo snapshots", status: "supported" },

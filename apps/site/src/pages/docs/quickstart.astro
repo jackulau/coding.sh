@@ -12,8 +12,7 @@ coding.sh show latest                 # one session's timeline
 coding.sh search 'flaky test'         # full text over prompts, replies, tool calls
 coding.sh ui                          # local viewer on 127.0.0.1:4319`;
 const backfill = `coding.sh ingest --backfill --since 30d`;
-const wrap = `coding.sh run -- aider --message 'fix the failing test'
-coding.sh run --agent my-agent -- ./my-agent --task 42`;
+const wrap = `coding.sh run --agent my-agent -- ./my-agent --task 42`;
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const m = (s: string) => `<span class="t-muted">${esc(s)}</span>`;

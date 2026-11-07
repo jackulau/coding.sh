@@ -21,7 +21,6 @@ import productionRequestsM from "../assets/product/production-requests-m.webp";
 // Every agent with an adapter (packages/coding.sh/src/adapters; table in
 // components/docs/agents.ts), plus Kiro, which `coding.sh run --` records
 // without one. Antigravity CLI is Google's replacement for Gemini CLI.
-// Aider and T3 Code have no published mark, so AgentLogo draws a neutral glyph.
 const WORKS_WITH = [
   { id: "claude-code", name: "Claude Code" },
   { id: "codex", name: "Codex" },
@@ -34,7 +33,6 @@ const WORKS_WITH = [
   { id: "pi", name: "Pi" },
   { id: "droid", name: "Factory Droid" },
   { id: "kiro", name: "Kiro CLI" },
-  { id: "aider", name: "Aider" },
   { id: "t3code", name: "T3 Code" },
 ];
 const OTHERS = WORKS_WITH.length - 3;

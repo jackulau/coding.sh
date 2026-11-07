@@ -21,12 +21,10 @@ tools coding.sh works with.
 | opentelemetry.svg | OpenTelemetry | `simple-icons@16.36.0` icons/opentelemetry.svg | CC0-1.0 |
 | kiro.svg | Kiro (kiro.dev) | `@lobehub/icons-static-svg@1.102.0` icons/kiro.svg | MIT |
 | factory.svg | Factory (maker of Droid) | factory.ai home page, the `#mobile-nav-logo` inline SVG mark (downloaded 2026-11-06; factory.ai now redirects to factory.com). viewBox padded from `0 0 67 65` to `0 -1 67 67` so it sits square; path unchanged. | Trademark of Factory; no published license or press kit (factory.com/press and /brand 404). Used nominatively, as with the other marks. |
+| t3code.svg | T3 Code | `pingdotgg/t3code` at `511238c3`, `apps/mobile/assets/widget/T3Mark.svg` (the T3 glyph without its tile); fill removed so it takes `currentColor`, viewBox padded from `7 29 111 74` to `7 10.5 111 111` so it sits square; path unchanged. | MIT (repo license) |
 
 Not used: lobehub `pi.svg` (Inflection's Pi, a different product) and lobehub
 `copilot.svg` (Microsoft Copilot, not GitHub Copilot).
 
 Factory Droid has no mark in either package (searched factory*, droid*), so the
 mark comes from Factory's own site; the `droid` adapter id maps to factory.svg.
-
-No logo found in either package or as an official press-kit SVG: Aider. It is
-shown as text.

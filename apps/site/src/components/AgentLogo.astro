@@ -14,7 +14,7 @@ interface Props {
 }
 const { id, name, size = 20, fallback = false, class: cls } = Astro.props;
 const l = logo(id);
-// No published mark (Aider): a neutral terminal prompt, so every agent has a
+// No published mark: a neutral terminal prompt, so every agent has a
 // glyph row. It is generic on purpose; it is not anyone's logo.
 const FALLBACK = { viewBox: "0 0 24 24", body: '<path d="M4.5 7.5 9 12l-4.5 4.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square"/><path d="M12 17.25h7.5" fill="none" stroke="currentColor" stroke-width="1.8"/>', evenodd: false };
 const mark = l ?? (fallback ? FALLBACK : undefined);

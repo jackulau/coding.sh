@@ -98,7 +98,6 @@ const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>  
     <li><strong>Codex</strong> runs new hooks only after you trust them with <code>/hooks</code>. coding.sh never writes trust hashes; eval runs pass <code>--dangerously-bypass-hook-trust</code> inside an isolated <code>CODEX_HOME</code>.</li>
     <li><strong>Cursor</strong> also runs Claude Code hooks from <code>.claude/settings.json</code>. Those payloads are dropped by the Claude Code adapter, so each Cursor event is captured once.</li>
     <li><strong>Amp</strong> keeps threads server-side, so there is no local backfill.</li>
-    <li><strong>Aider</strong> has no hooks or session ids. Run it through <code>coding.sh run -- aider …</code>; token and cost lines are parsed from its output during eval runs.</li>
     <li>
       <strong>Kiro CLI</strong> has no adapter yet, so record it with the wrapper:
       <code>coding.sh run -- kiro-cli chat --v3 --no-interactive --trust-all-tools "…"</code> records the session's start, end, exit code,
