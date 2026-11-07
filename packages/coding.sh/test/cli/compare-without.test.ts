@@ -52,7 +52,7 @@ before(() => {
   // Source session → task (start = the buggy repo), then put the repo back.
   const fix = 'require("fs").writeFileSync("sum.js","module.exports=(a,b)=>a+b;\\n")';
   assert.equal(cli(["run", "--", process.execPath, "-e", fix], repo).status, 0);
-  const t = cli(["eval", "new", "latest", "--name", "sum", "--verifier", "node test.js", "--instruction", "make sum add", "--json"], repo);
+  const t = cli(["eval", "new", "latest", "--name", "sum", "--verifier", "node test.js", "--instruction", "make sum add", "--tag", "suite:sum", "--json"], repo);
   assert.equal(t.status, 0, t.stdout + t.stderr);
   git("checkout", "-q", "sum.js");
 
@@ -128,6 +128,43 @@ describe("compare --without", () => {
     const plain = cli(["compare", "base", "--without", ".claude/skills/pdf", "--experiment", experimentId, "--json"]);
     assert.equal(plain.status, 0);
     assert.equal("gate" in (JSON.parse(plain.stdout) as { report: object }).report, false);
+  });
+
+  it("--gate --by <tag-prefix>: per-suite gate on --experiment re-analysis; bad --by is a usage error before any run (AB-2)", (t) => {
+    if (!gitBin) return t.skip("needs git");
+    const live = cli(["compare", "base", "--without", ".claude/skills/pdf", "-t", "sum", "--yes", "--gate", "--json"]);
+    assert.equal(live.status, 1, live.stdout + live.stderr);
+    const { experimentId } = JSON.parse(live.stdout) as { experimentId: string };
+
+    const by = cli(["compare", "base", "--without", ".claude/skills/pdf", "--experiment", experimentId, "--gate", "--by", "suite:", "--json"]);
+    assert.equal(by.status, 1, by.stdout + by.stderr);
+    const gate = (JSON.parse(by.stdout) as { report: { gate: { verdict: string; reasons: string[]; blockedBy: string[]; strata: { group: string; tasks: number; lost: string[]; gate: { verdict: string } }[] } } }).report.gate;
+    assert.deepEqual(gate.blockedBy, ["suite:sum"]);
+    assert.ok(gate.reasons.includes("stratum-regression"));
+    assert.deepEqual(
+      gate.strata.map((s) => [s.group, s.tasks, s.lost.length, s.gate.verdict]),
+      [["suite:sum", 1, 1, "dont-ship"]],
+    );
+    const text = cli(["compare", "base", "--without", ".claude/skills/pdf", "--experiment", experimentId, "--gate", "--by", "suite:"]);
+    assert.match(text.stdout, /^drop-it gate: Keep it: dropping \.claude\/skills\/pdf breaks 1 of 1 suite:sum task A solved$/m);
+    assert.match(text.stdout, /^ {14}suite:sum {2}Don't ship: B breaks 1 task A solved$/m);
+
+    // Swapped arms with a lenient gate: the suite ships too, exit 0.
+    const swapped = cli(["compare", "base-without-claude-skills-pdf", "base", "--experiment", experimentId, "--gate", "--lambda", "1", "--gate-alpha", "1", "--tau", "1", "--by", "suite:"]);
+    assert.equal(swapped.status, 0, swapped.stdout + swapped.stderr);
+    assert.match(swapped.stdout, /^ {6}suite:sum {2}Ship it: B wins 1 task, loses 0$/m);
+
+    const runs = () => readFileSync(join(root, "runs.log"), "utf8").split("\n").length;
+    const before = runs();
+    const noGate = cli(["compare", "base", "--without", ".claude/skills/pdf", "-t", "sum", "--yes", "--by", "suite:"]);
+    assert.equal(noGate.status, 2, noGate.stdout + noGate.stderr);
+    assert.match(noGate.stderr, /--by needs --gate/);
+    const unknown = cli(["compare", "base", "--without", ".claude/skills/pdf", "-t", "sum", "--yes", "--gate", "--by", "lang:"]);
+    assert.equal(unknown.status, 2, unknown.stdout + unknown.stderr);
+    assert.match(unknown.stderr, /--by lang:: no task has a tag starting with it; prefixes seen: agent:, from-session, suite:/);
+    const reanalysis = cli(["compare", "base", "--without", ".claude/skills/pdf", "--experiment", experimentId, "--gate", "--by", "lang:"]);
+    assert.equal(reanalysis.status, 2);
+    assert.equal(runs(), before, "no agent ran");
   });
 
   it("--promote without cost or tokens: exit 1, a warning, no report.pareto, the reason in notes (AA-18)", (t) => {

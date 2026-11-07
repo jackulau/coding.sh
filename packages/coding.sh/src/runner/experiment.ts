@@ -283,6 +283,24 @@ export interface CompareGate extends GateResult {
   lost: string[];
   /** Tasks A failed that B solved. */
   won: string[];
+  /**
+   * `compare --gate --by <prefix>`: the same gate per task group (the first tag
+   * with the prefix, "(none)" when a task has none), sorted by group. The
+   * numbers above stay pooled; a group that says dont-ship makes the whole
+   * gate abstain with reason "stratum-regression". Hold never blocks.
+   */
+  strata?: GateStratum[];
+  /** Groups whose gate said dont-ship. */
+  blockedBy?: string[];
+}
+
+export interface GateStratum {
+  group: string;
+  /** Paired tasks in the group. */
+  tasks: number;
+  gate: GateResult & { verdict: GateVerdict };
+  lost: string[];
+  won: string[];
 }
 
 export interface AblationReport {
@@ -311,6 +329,10 @@ export interface CompareOpts {
   ablation?: Pick<AblationReport, "paths" | "dropped" | "unmatched">;
   /** Add the acceptance gate (`compare --gate`) with these settings. */
   gate?: GateOpts;
+  /** With `gate`: also gate each task group, grouped by the first tag with this prefix (`compare --gate --by suite:`). */
+  gateBy?: string;
+  /** Task tags by task id, for `gateBy`. */
+  taskTags?: ReadonlyMap<string, readonly string[]>;
   /** Add the Pareto promotion gate (`compare --promote`) with these settings; its seed defaults to `seed`. */
   pareto?: Pick<ParetoOpts, "gamma" | "epsQ" | "epsC" | "draws">;
   /** Add the one-item gate: B adds (mode "add") or removes ("remove") one instruction item. */
@@ -383,6 +405,8 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
   const lost: string[] = [];
   const won: string[] = [];
   let solved = 0;
+  /** Per paired task: A's majority pass, and B's not counting tampered passes. */
+  const gateCells: { id: string; a: boolean; b: boolean }[] = [];
   for (const id of taskIds) {
     const ra = ta.get(id) ?? [];
     const rb = tb.get(id) ?? [];
@@ -408,6 +432,7 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
     if (x) solved++;
     if (x && !yg) lost.push(id);
     else if (!x && yg) won.push(id);
+    gateCells.push({ id, a: x, b: yg });
     let divergence: Divergence | undefined;
     const ea = opts.events?.get((ra[0] as RunResult).id);
     const eb = opts.events?.get((rb[0] as RunResult).id);
@@ -507,7 +532,7 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
     alpha,
     ...(anatomy ? { anatomy } : {}),
     ...(opts.ablation ? { ablation: { ...opts.ablation, effect: { mean: -boot.mean, lo: -boot.hi, hi: -boot.lo } } } : {}),
-    ...(opts.gate ? { gate: compareGate(acceptanceGate({ wins: won.length, losses: lost.length, solved }, opts.gate), lost, won) } : {}),
+    ...(opts.gate ? { gate: stratify(compareGate(acceptanceGate({ wins: won.length, losses: lost.length, solved }, opts.gate), lost, won), gateCells, opts) } : {}),
     ...(pareto ? { pareto } : {}),
     // Cancelled runs count as invalid here: an incomplete sweep is not scorable.
     ...(opts.itemGate ? { itemGate: itemGate(all, { ...opts.itemGate, baseline: opts.baseline, candidate: opts.candidate }) } : {}),
@@ -552,8 +577,42 @@ function compareGate(g: GateResult, lost: string[], won: string[]): CompareGate 
   return { ...g, verdict: gateVerdict(g), lost, won };
 }
 
+/** The group a task gates in under `--by <prefix>`: its first tag with the prefix, else "(none)". */
+export function gateGroup(tags: readonly string[] | undefined, prefix: string): string {
+  return tags?.find((t) => t.startsWith(prefix)) ?? "(none)";
+}
+
+/**
+ * AB-2: gate each task group too, so a pooled "ship" can't hide one suite
+ * collapsing (arXiv 2611.03219: one gate change took a suite 96 → 0).
+ */
+function stratify(pooled: CompareGate, cells: readonly { id: string; a: boolean; b: boolean }[], opts: CompareOpts): CompareGate {
+  if (opts.gateBy === undefined) return pooled;
+  const groups = new Map<string, { id: string; a: boolean; b: boolean }[]>();
+  for (const c of cells) {
+    const g = gateGroup(opts.taskTags?.get(c.id), opts.gateBy);
+    groups.set(g, [...(groups.get(g) ?? []), c]);
+  }
+  const strata: GateStratum[] = [...groups.keys()].sort().map((group) => {
+    const cs = groups.get(group)!;
+    const lost = cs.filter((c) => c.a && !c.b).map((c) => c.id);
+    const won = cs.filter((c) => !c.a && c.b).map((c) => c.id);
+    const g = acceptanceGate({ wins: won.length, losses: lost.length, solved: cs.filter((c) => c.a).length }, opts.gate);
+    return { group, tasks: cs.length, gate: { ...g, verdict: gateVerdict(g) }, lost, won };
+  });
+  const blockedBy = strata.filter((s) => s.gate.verdict === "dont-ship").map((s) => s.group);
+  if (!blockedBy.length) return { ...pooled, strata, blockedBy };
+  const reasons = [...pooled.reasons.filter((r) => r !== "stratum-regression"), "stratum-regression" as const];
+  return { ...pooled, decision: "abstain", reasons, verdict: "dont-ship", strata, blockedBy };
+}
+
 /** The gate's headline. With `--without`, B is A minus a component: accepting means drop it. */
 function gateLine(g: CompareGate, ab: AblationReport | undefined): string {
+  const blocked = g.strata?.filter((s) => g.blockedBy?.includes(s.group)) ?? [];
+  if (blocked.length) {
+    const what = blocked.map((s) => `${s.lost.length} of ${s.gate.solved} ${s.group} task${s.gate.solved === 1 ? "" : "s"}`).join(" and ");
+    return ab ? `Keep it: dropping ${ab.paths.join(", ")} breaks ${what} A solved` : `Don't ship: B breaks ${what} A solved`;
+  }
   if (!ab) return gateHeadline(g, "task");
   const what = ab.paths.join(", ");
   const tasks = (n: number) => `${n} task${n === 1 ? "" : "s"}`;
@@ -764,6 +823,13 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
     out.push(`${label} ${g.verdict === "ship" ? good(head) : g.verdict === "dont-ship" ? bad(head) : bold(head)}`);
     out.push(dim(`${indent}${gateDetail(g)}`));
     if (g.lost.length) out.push(`${indent}lost: ${idList(g.lost)}`);
+    if (g.strata) {
+      const w = Math.max(...g.strata.map((s) => s.group.length));
+      for (const s of g.strata) {
+        const h = gateHeadline(s.gate, "task");
+        out.push(`${indent}${pad(s.group, w)}  ${s.gate.verdict === "ship" ? good(h) : s.gate.verdict === "dont-ship" ? bad(h) : h}`);
+      }
+    }
   }
   if (r.pareto) {
     const x = r.pareto;

@@ -86,6 +86,18 @@ method is SAGE (Wang et al., [arXiv 2609.36043](https://arxiv.org/abs/2609.36043
 `--gate` also works with `--experiment`, and `--json` carries it as `report.gate`. Without `--gate`,
 the report and the exit code are unchanged.
 
+If your tasks come from several suites, tag them (`eval new --tag suite:swe`) and add `--by suite:`.
+The gate then also runs per suite and prints one line each; one suite that B breaks blocks the
+ship even when the pooled numbers look fine:
+
+```
+gate: Don't ship: B breaks 3 of 4 suite:swt tasks A solved
+      abstain (stratum-regression) · 12 won, 3 lost of 40 solved (7.5%) · net +9 at λ=1 · p = 0.018 < α 0.05
+      lost: t48, t49, t50
+      suite:swe  Ship it: B wins 12 tasks, loses 0
+      suite:swt  Don't ship: B breaks 3 tasks A solved
+```
+
 ## Cheaper counts too
 
 `--gate` only ships quality wins. A B that passes the same tasks for 40% less is still progress. Add

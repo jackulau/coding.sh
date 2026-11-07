@@ -11,6 +11,7 @@ export type GateVerdict = "ship" | "hold" | "dont-ship";
 
 export function gateVerdict(g: Pick<GateResult, "decision" | "losses" | "reasons">): GateVerdict {
   if (g.decision === "accept") return "ship";
+  if (g.reasons.includes("stratum-regression")) return "dont-ship";
   if (g.losses > 0 && (g.reasons.includes("regression-fraction") || g.reasons.includes("net-gain"))) return "dont-ship";
   return "hold";
 }

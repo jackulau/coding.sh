@@ -162,7 +162,11 @@ export interface GateOpts {
   tau?: number;
 }
 
-export type GateReason = "no-discordant" | "net-gain" | "not-significant" | "regression-fraction";
+/**
+ * stratum-regression: set by callers that also gate per group (`compare --gate
+ * --by`): the pooled gate may pass, but one group's gate says don't ship.
+ */
+export type GateReason = "no-discordant" | "net-gain" | "not-significant" | "regression-fraction" | "stratum-regression";
 
 export interface GateResult {
   decision: "accept" | "abstain";

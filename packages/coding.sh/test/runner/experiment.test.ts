@@ -688,3 +688,87 @@ describe("compare one-item gate (AA-2)", () => {
     assert.equal(g.invalid.runs, 1);
   });
 });
+
+describe("compare --gate --by (AB-2)", () => {
+  /** One run per arm per task; groups of [tag | undefined, count, A passes, B passes]. */
+  const pool = (groups: [string | undefined, number, boolean, boolean][]) => {
+    const rs: RunResult[] = [];
+    const tags = new Map<string, string[]>();
+    let i = 0;
+    for (const [tag, n, a, b] of groups) {
+      for (let j = 0; j < n; j++, i++) {
+        const id = `t${String(i).padStart(2, "0")}`;
+        rs.push(run(id, "A", 1, a), run(id, "B", 1, b));
+        tags.set(id, tag ? ["lang:ts", tag] : ["lang:py"]);
+      }
+    }
+    return { rs, tags };
+  };
+  const opts = (tags: Map<string, string[]>) => ({ baseline: "A", candidate: "B", iters: 200, seed: 1, gate: { lambda: 1 }, taskTags: tags });
+
+  it("pooled 12 wins / 3 losses over 40 solved ships, but 3 of 4 solved lost in suite:swt → dont-ship, blockedBy suite:swt", () => {
+    const { rs, tags } = pool([
+      ["suite:swe", 12, false, true],
+      ["suite:swe", 36, true, true],
+      ["suite:swt", 3, true, false],
+      ["suite:swt", 1, true, true],
+    ]);
+    const pooled = compare(rs, opts(tags)).gate!;
+    assert.deepEqual([pooled.wins, pooled.losses, pooled.solved, pooled.verdict], [12, 3, 40, "ship"]);
+    const r = compare(rs, { ...opts(tags), gateBy: "suite:" });
+    const g = r.gate!;
+    assert.deepEqual([g.wins, g.losses, g.solved], [12, 3, 40], "pooled numbers stay");
+    assert.deepEqual([g.decision, g.verdict], ["abstain", "dont-ship"]);
+    assert.deepEqual(g.reasons, ["stratum-regression"]);
+    assert.deepEqual(g.blockedBy, ["suite:swt"]);
+    assert.deepEqual(
+      g.strata!.map((s) => [s.group, s.tasks, s.gate.solved, s.lost.length, s.won.length, s.gate.verdict]),
+      [
+        ["suite:swe", 48, 36, 0, 12, "ship"],
+        ["suite:swt", 4, 4, 3, 0, "dont-ship"],
+      ],
+    );
+    const text = formatCompare(r);
+    assert.match(text, /^gate: Don't ship: B breaks 3 of 4 suite:swt tasks A solved$/m);
+    assert.match(text, /^ {6}suite:swe {2}Ship it: B wins 12 tasks, loses 0$/m);
+    assert.match(text, /^ {6}suite:swt {2}Don't ship: B breaks 3 tasks A solved$/m);
+  });
+
+  it("losses spread so no suite breaks: pooled ship stands; hold never blocks; '(none)' collects untagged tasks; groups sorted", () => {
+    const { rs, tags } = pool([
+      ["suite:b", 6, false, true],
+      ["suite:b", 1, true, false],
+      ["suite:b", 15, true, true],
+      ["suite:a", 6, false, true],
+      ["suite:a", 1, true, false],
+      ["suite:a", 19, true, true],
+      [undefined, 4, true, true],
+    ]);
+    const g = compare(rs, { ...opts(tags), gateBy: "suite:" }).gate!;
+    assert.equal(g.verdict, "ship");
+    assert.equal(g.decision, "accept");
+    assert.deepEqual(g.blockedBy, []);
+    assert.deepEqual(
+      g.strata!.map((s) => [s.group, s.gate.verdict]),
+      [
+        ["(none)", "hold"],
+        ["suite:a", "hold"],
+        ["suite:b", "hold"],
+      ],
+    );
+  });
+
+  it("without gateBy the gate (and the report) is unchanged", () => {
+    const { rs, tags } = pool([
+      ["suite:swe", 12, false, true],
+      ["suite:swt", 3, true, false],
+      ["suite:swt", 1, true, true],
+    ]);
+    const plain = compare(rs, { ...opts(tags) });
+    assert.equal("strata" in plain.gate!, false);
+    assert.equal("blockedBy" in plain.gate!, false);
+    const { taskTags: _t, ...noTags } = opts(tags);
+    assert.deepEqual(compare(rs, noTags), plain);
+    assert.doesNotMatch(formatCompare(plain), /suite:/);
+  });
+});

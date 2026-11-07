@@ -234,6 +234,16 @@ arXiv 2609.36043). The paper reports no default settings; these are ours. B pass
 with tests count as fails for the gate only. With `--without`, the line is labelled `drop-it gate`
 and reads "Drop it" or "Keep it".
 
+On a mixed task pool the pooled gate can ship a change that breaks most of a small suite: 3 losses
+out of 40 solved tasks is under τ, even when all 3 come from a suite where A solved 4. `--gate --by
+suite:` also runs the gate on each group of tasks, grouped by their first tag with that prefix
+(tasks without one go in `(none)`). The pooled numbers stay, one line per group follows, and any
+group that says "Don't ship" makes the whole gate "Don't ship" (reason `stratum-regression`):
+`gate: Don't ship: B breaks 3 of 4 suite:swt tasks A solved`. A group that only holds never blocks.
+`--json` adds `gate.strata` (each group's gate, lost and won tasks) and `gate.blockedBy`. `--by`
+without `--gate`, or a prefix no task's tags start with, is an error before anything runs. Tag
+tasks with `eval new --tag suite:swe`.
+
 `coding.sh compare A B --promote` asks a different question: is B credible progress on quality or
 on cost? A harness 40% cheaper at the same pass rate reads "no significant difference" in the
 verdict, and `--gate` holds it, but it is still worth keeping. Each run gives a quality (pass = 1)

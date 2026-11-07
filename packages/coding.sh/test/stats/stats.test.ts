@@ -450,4 +450,9 @@ describe("gate wording", () => {
     assert.match(gateDetail(g), /3 lost of 6 solved \(50% > τ 10%\) · net 0 at λ=2/);
     assert.equal(gateHeadline(acceptanceGate({ wins: 0, losses: 1, solved: 5 }), "case"), "Don't ship: B breaks 1 case A solved");
   });
+  it("a group's regression (stratum-regression) is don't ship even with a pooled accept's numbers", () => {
+    const g = acceptanceGate({ wins: 12, losses: 3, solved: 40 }, { lambda: 1 });
+    assert.equal(gateVerdict(g), "ship");
+    assert.equal(gateVerdict({ ...g, decision: "abstain", reasons: ["stratum-regression"] }), "dont-ship");
+  });
 });

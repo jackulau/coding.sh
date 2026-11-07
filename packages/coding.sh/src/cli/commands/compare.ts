@@ -1,7 +1,8 @@
 // coding.sh compare <a> <b>: A/B two harness bundles on eval tasks
 // (src/runner/experiment.ts), or re-analyse the stored runs of an experiment.
 // `compare <a> --without <path>` derives B as A minus a skill, AGENTS.md or MCP config.
-// `--gate` adds a ship-or-hold decision and exits 1 unless it accepts.
+// `--gate` adds a ship-or-hold decision and exits 1 unless it accepts; `--by
+// <tag-prefix>` also gates each task group, and any group's "don't ship" blocks.
 // `--promote` adds the Pareto promotion gate (quality or cost) and exits 1 unless it promotes.
 // When B adds or removes exactly one rule, skill or context file, the report adds
 // the one-item gate (`--item-gate` makes it decide the exit code, `--no-item-gate` hides it).
@@ -29,6 +30,9 @@ export async function run(c: CommandContext): Promise<number> {
   // Before running anything: a typo in the gate flags must not cost a full A/B.
   const gate = gateFlags(c.flags);
   const promote = promoteFlags(c.flags);
+  const gateBy = str(c.flags.by);
+  if (c.flags.by !== undefined && !gate) throw new UsageError("--by needs --gate", { reason: "invalid_argument" });
+  if (c.flags.by !== undefined && !gateBy) throw new UsageError("--by needs a tag prefix, e.g. --by suite:", { reason: "invalid_argument" });
   return withContext(c, async (ctx) => {
     const without = list(c.flags.without);
     if (without.length && c.positionals.length > 1) throw new UsageError("--without derives the second arm from the first; pass one bundle", { reason: "invalid_argument" });
@@ -63,10 +67,15 @@ export async function run(c: CommandContext): Promise<number> {
     };
 
     let experimentId = str(c.flags.experiment);
+    let taskTags: Map<string, string[]> | undefined;
     let results: RunResult[];
     if (experimentId) {
       results = (await ctx.index.listRuns({ experimentId })).filter((r) => r.bundleId === A.id || r.bundleId === B.id);
       if (!results.length) throw new CliError(`Experiment ${experimentId} has no runs for these bundles`, { reason: "not_found" });
+      if (gateBy) {
+        const stored = await Promise.all([...new Set(results.map((r) => r.taskId))].map((id) => ctx.index.getTask(id)));
+        taskTags = byTagPrefix(stored.filter((t): t is EvalTask => !!t), gateBy);
+      }
       await storeAblation();
     } else {
       const ids = list(c.flags.task);
@@ -79,6 +88,7 @@ export async function run(c: CommandContext): Promise<number> {
         }
       } else tasks = await ctx.index.listTasks({ status: "validated" });
       if (!tasks.length) throw new CliError("No validated tasks to run", { reason: "no_tasks", next: ["Draft and validate one first:", "coding.sh eval new latest"] });
+      if (gateBy) taskTags = byTagPrefix(tasks, gateBy);
       if (ablation && !ablation.dropped.length && !(await anyInTaskRepo(tasks, ablation.unmatched, c.env))) {
         throw new UsageError(`nothing to ablate: ${ablation.unmatched.join(", ")} is in neither bundle ${A.name} nor any selected task's repo`, { reason: "nothing_to_ablate" });
       }
@@ -139,6 +149,7 @@ export async function run(c: CommandContext): Promise<number> {
       bundles: { baseline: A, candidate: B },
       ...(ablation ? { ablation: { paths: ablation.paths, dropped: ablation.dropped, unmatched: ablation.unmatched } } : {}),
       ...(gate ? { gate } : {}),
+      ...(gateBy ? { gateBy, taskTags } : {}),
       ...(promote ? { pareto: promote } : {}),
       ...(itemGate ? { itemGate } : {}),
     });
@@ -154,6 +165,18 @@ export async function run(c: CommandContext): Promise<number> {
     const failed = (report.gate && report.gate.decision !== "accept") || (promote && !report.pareto?.promote) || (itemFlag === true && !itemOk);
     return failed ? 1 : 0;
   });
+}
+
+/**
+ * Task tags by id for `--by <prefix>`. A prefix no task's tags start with is a
+ * usage error that lists the prefixes the tasks do have (before any run).
+ */
+function byTagPrefix(tasks: readonly EvalTask[], prefix: string): Map<string, string[]> {
+  if (!tasks.some((t) => t.tags.some((g) => g.startsWith(prefix)))) {
+    const seen = [...new Set(tasks.flatMap((t) => t.tags.map((g) => (g.includes(":") ? g.slice(0, g.indexOf(":") + 1) : g))))].sort();
+    throw new UsageError(`--by ${prefix}: no task has a tag starting with it; ${seen.length ? `prefixes seen: ${seen.join(", ")}` : "the tasks have no tags"}`, { reason: "invalid_argument" });
+  }
+  return new Map(tasks.map((t) => [t.id, t.tags]));
 }
 
 /** The one item `--without` drops: one rule or skill from the bundle, or one context file only in the task repos. */
