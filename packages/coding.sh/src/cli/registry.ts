@@ -50,6 +50,7 @@ export const FORCE: FlagSpec = { name: "force", type: "boolean", desc: "Replace 
 const AGENT_LIST: FlagSpec = { name: "agent", short: "a", type: "list", value: "<AGENT>", desc: "Only this agent (repeatable)" };
 const AGENT_ONE: FlagSpec = { name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Only sessions from this agent" };
 const SINCE: FlagSpec = { name: "since", type: "string", value: "<WHEN>", desc: "Only after this time: 7d, 12h, 30m or a date" };
+const FRESH: FlagSpec = { name: "fresh", type: "boolean", desc: "Wait for every pending capture to be ingested (default: answer after 1.5 s)" };
 const LIMIT = (d: number): FlagSpec => ({ name: "limit", short: "n", type: "number", value: "<N>", desc: "Maximum rows", default: String(d) });
 
 /** Flags that describe an experiment run (exp run, exp aa). */
@@ -110,6 +111,7 @@ export const COMMANDS: CommandSpec[] = [
     name: "status",
     group: "Capture",
     summary: "Show capture totals and the latest session",
+    flags: [FRESH],
     load: () => import("./commands/status.ts"),
   },
   {
@@ -217,6 +219,7 @@ export const COMMANDS: CommandSpec[] = [
       LIMIT(20),
       { name: "subagents", type: "boolean", desc: "Include subagent sessions" },
       { name: "project", type: "string", value: "<ID>", desc: "Only sessions in this serve project (default: all)" },
+      FRESH,
     ],
     examples: ["coding.sh sessions", "coding.sh sessions --agent codex --since 7d", "coding.sh sessions --store postgres://… --project demo"],
     load: () => import("./commands/sessions.ts"),
@@ -235,7 +238,7 @@ export const COMMANDS: CommandSpec[] = [
     group: "Explore",
     summary: "Full-text search over prompts, replies and tool calls",
     args: [{ name: "text", desc: "Search text", required: true, variadic: true }],
-    flags: [AGENT_ONE, LIMIT(20), { name: "project", type: "string", value: "<ID>", desc: "Only matches in this serve project (default: all)" }],
+    flags: [AGENT_ONE, LIMIT(20), { name: "project", type: "string", value: "<ID>", desc: "Only matches in this serve project (default: all)" }, FRESH],
     examples: ["coding.sh search 'flaky test'"],
     load: () => import("./commands/search.ts"),
   },

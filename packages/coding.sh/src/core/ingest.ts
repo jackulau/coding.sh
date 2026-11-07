@@ -99,6 +99,16 @@ export interface IngestOptions {
   now?: () => number;
   /** Cross-process lock (default: `<spoolDir>/.ingest.lock`, wait 30 s). false = no lock. */
   lock?: false | (LockOptions & { path?: string });
+  /**
+   * Stop at the next checkpoint once Date.now() passes this (ms epoch) and at least one
+   * file has been read (so every run makes progress). Cursors cover exactly what was stored, so the next ingest resumes there; `pendingFiles` says how
+   * many spool files still hold unread lines. Reads use it to answer from what is indexed.
+   */
+  deadline?: number;
+  /** Like `deadline`, on abort: stop at the next checkpoint (`coding.sh ui` shutting down its ingest worker). */
+  signal?: AbortSignal;
+  /** Called with the number of spool files still holding unread lines: once listed, then after each checkpoint. */
+  onProgress?: (p: { filesPending: number }) => void;
 }
 
 export interface IngestError {
@@ -129,6 +139,8 @@ export interface IngestResult {
   excluded: number;
   errors: IngestError[];
   sinks: SinkReport[];
+  /** Spool files left with unread lines because `deadline` passed or `signal` aborted (0 otherwise). */
+  pendingFiles: number;
 }
 
 interface LineEvents {
@@ -187,6 +199,8 @@ export async function ingest(opts: IngestOptions): Promise<IngestResult> {
     } finally {
       lock.release();
     }
+    // Out of time: the marker stays for whoever ingests next.
+    if (total.pendingFiles) break;
     // Checked after release: a hook that saw the lock held touched the marker before it looked.
     if (!existsSync(marker)) break;
   }
@@ -213,6 +227,7 @@ function mergeResults(a: IngestResult, b: IngestResult): IngestResult {
     excluded: a.excluded + b.excluded,
     errors: [...a.errors, ...b.errors].slice(0, MAX_ERRORS + 1),
     sinks,
+    pendingFiles: b.pendingFiles,
   };
 }
 
@@ -221,7 +236,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   const { config, index, blobs, adapters } = opts;
   const now = opts.now ?? Date.now;
   const checkpointEvents = opts.checkpointEvents ?? DEFAULT_CHECKPOINT_EVENTS;
-  const result: IngestResult = { lines: 0, events: 0, sessions: 0, excluded: 0, errors: [], sinks: [] };
+  const result: IngestResult = { lines: 0, events: 0, sessions: 0, excluded: 0, errors: [], sinks: [], pendingFiles: 0 };
   let droppedErrors = 0;
   const error = (e: IngestError) => {
     if (result.errors.length < MAX_ERRORS) result.errors.push(e);
@@ -425,7 +440,26 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     windowEvents = 0;
   };
 
-  for (const file of await listSpoolFiles(spoolDir)) {
+  const files = await listSpoolFiles(spoolDir);
+  // The deadline counts once a file has been read, so a budgeted run always makes progress
+  // (a slow start, such as loading the adapters, never leaves a read with nothing new).
+  let readAny = false;
+  const outOfTime = () => !!opts.signal?.aborted || (readAny && opts.deadline !== undefined && Date.now() >= opts.deadline);
+  /** Files from `from` on whose local cursor is short of their end. */
+  const unread = async (from: number) => {
+    let n = 0;
+    for (let i = from; i < files.length; i++) if ((await index.getCursor(files[i]!.source)) < files[i]!.size) n++;
+    return n;
+  };
+  let left = opts.onProgress ? await unread(0) : 0;
+  opts.onProgress?.({ filesPending: left });
+  let stopped = false;
+  for (let fi = 0; fi < files.length && !stopped; fi++) {
+    const file = files[fi]!;
+    if (outOfTime()) {
+      result.pendingFiles = await unread(fi);
+      break;
+    }
     let local = await index.getCursor(file.source);
     if (local > file.size) {
       // Recreated at the same path (pid reuse after gc, say): start over for every consumer.
@@ -450,6 +484,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     const start = Math.min(local, ...active.map((s) => sinkFrom.get(s)!));
     if (start >= file.size) continue;
 
+    readAny = true;
     const fr: FileRun = { file, local, readPos: start, active, window: [] };
     open.push(fr);
     const keepWindow = active.length > 0;
@@ -479,10 +514,18 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
       if (windowEvents >= checkpointEvents) {
         await checkpoint();
         open = [fr];
+        opts.onProgress?.({ filesPending: left });
+        if (outOfTime()) {
+          stopped = true;
+          break;
+        }
       }
     }
+    if (stopped) result.pendingFiles = (fr.readPos < file.size ? 1 : 0) + (await unread(fi + 1));
+    else if (local < file.size) left--;
   }
   await checkpoint();
+  opts.onProgress?.({ filesPending: result.pendingFiles });
 
   // Applied after every file so a child ingested before its parent is still linked.
   for (const id of await linker.apply()) touchedAll.add(id);
@@ -683,6 +726,8 @@ export interface BackfillOptions {
   adapters: Adapter[];
   env?: NodeJS.ProcessEnv;
   since?: number;
+  /** Read no further source files (after the first) once Date.now() passes this (ms epoch); they count in `pendingFiles`. */
+  deadline?: number;
 }
 
 export interface BackfillResult {
@@ -694,6 +739,8 @@ export interface BackfillResult {
   excluded: number;
   errors: IngestError[];
   agents: { agent: string; events: number; error?: string }[];
+  /** Changed source files left unread because `deadline` passed (0 otherwise). */
+  pendingFiles: number;
 }
 
 /** Cursor keys for one backfill source file: size, mtime (floored ms) and the `since` it was read with. */
@@ -708,7 +755,7 @@ export const backfillCursorKey = (agent: string, path: string, field: "size" | "
 export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   const { config, index, blobs } = opts;
   const env = opts.env ?? process.env;
-  const result: BackfillResult = { events: 0, duplicates: 0, sessions: 0, excluded: 0, errors: [], agents: [] };
+  const result: BackfillResult = { events: 0, duplicates: 0, sessions: 0, excluded: 0, errors: [], agents: [], pendingFiles: 0 };
   const profiles = new Map<string, CaptureProfile>();
   const profileFor = (cwd: string | undefined): CaptureProfile => {
     const key = cwd ?? "";
@@ -740,6 +787,8 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   const since = opts.since ?? 0;
   // File cursors to commit once the events they cover are stored and their sessions recomputed.
   const fileCursors: { agent: string; file: BackfillFile }[] = [];
+  /** Changed files read so far (the deadline only defers files after the first). */
+  let accepted = 0;
   for (const adapter of opts.adapters) {
     if (!adapter.backfill) continue;
     const report = { agent: adapter.id, events: 0 } as BackfillResult["agents"][number];
@@ -774,6 +823,12 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
       const seen = mtime > 0;
       // Unchanged, and last read with a window at least as wide as this one.
       if (seen && size === f.size && mtime === Math.floor(f.mtimeMs) && readSince <= since) return false;
+      // Out of time (after reading one, so every run makes progress): left for the next backfill, which finds it still changed.
+      if (accepted > 0 && opts.deadline !== undefined && Date.now() >= opts.deadline) {
+        result.pendingFiles++;
+        return false;
+      }
+      accepted++;
       firstRead = !seen;
       files.push(f);
       return true;

@@ -218,6 +218,7 @@ Tool-eval model drivers read the key variable set by `apiKeyEnv` in `coding.sh.t
 | `FORCE_COLOR` | Color even when output is not a terminal. |
 | `CI` | Treated as non-interactive: no prompts or spinners. Commands that would ask need `--yes`. |
 | `NO_UPDATE_NOTIFIER`, `CODING_SH_NO_UPDATE_CHECK` | Turn off the update check. Same as `update.check = false`. |
+| `CODING_SH_READ_BUDGET_MS` | How long `status`, `sessions` and `search` ingest pending captures before answering from what is indexed. Default `1500`; `--fresh` waits for all. |
 
 ### Installer
 

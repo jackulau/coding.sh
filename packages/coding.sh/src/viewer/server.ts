@@ -17,6 +17,7 @@ import { benchHome, loadDefinition, NAME_RE } from "../bench/define.ts";
 import { buildReport } from "../bench/report.ts";
 import { historyRuns, listRuns } from "../bench/store.ts";
 import type { BenchRun } from "../bench/types.ts";
+import type { IngestStatus } from "../cli/ingest-worker.ts";
 import type { BlobStore, IndexStore, Label, Session, SessionFilter } from "../core/types.ts";
 import type { ExperimentResult } from "../datasets/types.ts";
 import { compareExperiments } from "../experiments/compare.ts";
@@ -43,6 +44,8 @@ export interface ViewerOptions {
   experiments?: ExperimentSource;
   /** Benchmark run records behind /api/benchmarks. Default: `coding.sh bench`'s folder under env's data dir. */
   benchmarks?: BenchmarkSource;
+  /** Background ingest progress behind /api/ingest (`coding.sh ui`). Without it the route is 404. */
+  ingestStatus?: () => IngestStatus | undefined;
 }
 
 /** Read side of the dataset experiment store (FileEvalStore and every full IndexStore fit). */
@@ -176,6 +179,8 @@ export interface ViewerHandlerOptions {
   experiments?: ExperimentSource;
   /** Benchmarks behind /api/benchmarks. Default: none. */
   benchmarks?: BenchmarkSource;
+  /** Background ingest progress behind /api/ingest. Default: none (404). */
+  ingestStatus?: () => IngestStatus | undefined;
 }
 
 export type ViewerHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
@@ -238,6 +243,7 @@ export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<V
       projects: opts.projects,
       experiments,
       benchmarks: opts.benchmarks,
+      ingestStatus: opts.ingestStatus,
     });
   };
 
@@ -291,6 +297,7 @@ export async function startViewer(opts: ViewerOptions): Promise<Viewer> {
     updateStatus,
     ...(opts.experiments ? { experiments: opts.experiments } : {}),
     benchmarks: opts.benchmarks ?? benchmarkDir(opts.env ?? process.env),
+    ...(opts.ingestStatus ? { ingestStatus: opts.ingestStatus } : {}),
   });
 
   const server = createServer((req, res) => {
@@ -395,6 +402,7 @@ interface ApiCtx {
   projects?: () => Promise<string[]> | string[];
   experiments?: ExperimentSource;
   benchmarks?: BenchmarkSource;
+  ingestStatus?: () => IngestStatus | undefined;
 }
 
 /** The index's own experiment methods (sqlite, memory, postgres), or undefined when it has none. */
@@ -682,6 +690,13 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       // Release notes are remote text: the client only ever renders the version fields.
       const u = await ctx.updateStatus();
       return sendJson(res, 200, { current: u.current, latest: u.latest, updateAvailable: u.updateAvailable && u.disabled === null, url: u.url, command: u.command, checkedAt: u.checkedAt });
+    }
+
+    case "ingest": {
+      get();
+      if (id !== undefined) throw new HttpError(404, "not found");
+      // `coding.sh serve` ingests over HTTP as events arrive, so it never has a backlog to report.
+      return sendJson(res, 200, ctx.ingestStatus?.() ?? { ingesting: false, filesPending: 0, lastIngestAt: null });
     }
 
     case "stats": {

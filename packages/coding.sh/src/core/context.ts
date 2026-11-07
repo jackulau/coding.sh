@@ -20,9 +20,9 @@ export interface Context {
    */
   storeOverridden: boolean;
   /** Drains the spool through the adapters' normalize into the index and sinks (lazy-loads adapters). */
-  ingest(opts?: Pick<IngestOptions, "lock" | "checkpointEvents" | "now">): Promise<IngestResult>;
+  ingest(opts?: Pick<IngestOptions, "lock" | "checkpointEvents" | "now" | "deadline" | "signal" | "onProgress">): Promise<IngestResult>;
   /** Imports agents' local transcript history (adapter.backfill), skipping copies live capture already has. */
-  backfill(opts?: { agents?: string[]; since?: number }): Promise<BackfillResult>;
+  backfill(opts?: { agents?: string[]; since?: number; deadline?: number }): Promise<BackfillResult>;
   /** Blob/spool/judge-cache garbage collection with the effective config. */
   gc(opts?: Pick<GcOptions, "dryRun" | "compact" | "minBlobAgeMs" | "judgeCacheMaxBytes">): Promise<GcResult>;
   close(): Promise<void>;
@@ -57,7 +57,7 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
     async backfill(o = {}) {
       const [{ backfill }, { ADAPTERS }] = await Promise.all([import("./ingest.ts"), import("../adapters/index.ts")]);
       const chosen = o.agents?.length ? ADAPTERS.filter((a) => o.agents!.includes(a.id)) : ADAPTERS;
-      return backfill({ config, index, blobs, env, adapters: chosen, ...(o.since !== undefined ? { since: o.since } : {}) });
+      return backfill({ config, index, blobs, env, adapters: chosen, ...(o.since !== undefined ? { since: o.since } : {}), ...(o.deadline !== undefined ? { deadline: o.deadline } : {}) });
     },
     async gc(o = {}) {
       const { gc } = await import("./gc.ts");

@@ -360,12 +360,13 @@ Target: every facet/autocomplete call < 100 ms warm, < 300 ms cold.
    tokens_out, files, compactions, first_error_id)**, maintained by buildSession, backfilled for existing sessions.
 5. **CI guard**: `EXPLAIN QUERY PLAN` for every event-level key; fail on `SCAN events`.
 
-**Ingest must not block queries.** `ui` awaits `autoIngest` before listening (cli/commands/ui.ts:14), which is the
-21 s blank start, then re-ingests every 3 s on the same synchronous `DatabaseSync` that serves requests. Fix: listen
-first; ingest in a `worker_threads` worker with its own writer, committing every 500 events or 50 ms; the server
-reads through a separate `readOnly` connection (WAL readers never wait); `/api/status` → `{ingesting,
-filesPending, lastIngestAt}` for the nav pill. CLI reads (`status`, `sessions`, `search`) ingest within a 1.5 s
-budget, answer from the store, and print `N files not yet ingested` to stderr; `--fresh` waits.
+**Ingest must not block queries (landed, V-1).** `ui` used to await `autoIngest` before listening (the 21 s blank
+start), then re-ingested every 3 s on the synchronous `DatabaseSync` that served requests. Now it listens first and
+ingests every 3 s in a `worker_threads` worker (cli/ingest-worker.ts) with its own connection, so the request thread
+only reads and WAL lets those reads run during the worker's writes. `GET /api/ingest` → `{ingesting, filesPending,
+lastIngestAt}` drives the "Indexing N files…" pill. CLI reads (`status`, `sessions`, `search`) ingest within a
+1.5 s budget (`ingest({deadline})` stops at the next checkpoint, cursors on what was stored), answer from the store,
+start a background `ingest`, and print `N files not yet ingested` to stderr; `--fresh` waits.
 
 ## 10. Gaps against the current code
 

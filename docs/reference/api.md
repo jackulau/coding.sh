@@ -103,6 +103,7 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/runs`](#get-apitasks-get-apiruns-get-apibundles) | read key or basic auth | serve, ui |
 | GET | [`/api/bundles`](#get-apitasks-get-apiruns-get-apibundles) | read key or basic auth | serve, ui |
 | GET | [`/api/update`](#get-apiupdate) | read key or basic auth | serve, ui |
+| GET | [`/api/ingest`](#get-apiingest) | read key or basic auth | serve, ui |
 
 Any other path answers 404 `{"error":"not found","status":404}`.
 
@@ -719,4 +720,16 @@ curl -sS "$CSH/api/update" -H "Authorization: Bearer $READ_KEY"
 
 ```json
 {"current":"","latest":null,"updateAvailable":false,"url":null,"command":"","checkedAt":null}
+```
+
+### `GET /api/ingest`
+
+Progress of the local spool ingest, for the viewer's "Indexing N files…" pill. `coding.sh ui` ingests in a background worker after it starts listening, so pages answer from what is already indexed while `filesPending` counts down. `lastIngestAt` is the end of the last finished pass (epoch ms), `null` before the first. `coding.sh serve` ingests events as they arrive, so it always answers:
+
+```sh
+curl -sS "$CSH/api/ingest" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{"ingesting":false,"filesPending":0,"lastIngestAt":null}
 ```

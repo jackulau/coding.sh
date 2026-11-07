@@ -178,6 +178,22 @@ describe("backfill (QA real-traces)", () => {
     assert.equal(r.sessions, 0, "no new events: no session recomputed");
   });
 
+  it("stops reading files at the deadline and leaves them for the next backfill", async () => {
+    const dir = tmp("csh-transcripts-");
+    writeFileSync(join(dir, "a.jsonl"), jl({ session: "A", kind: "user.message", ts: 1000, text: "one" }));
+    writeFileSync(join(dir, "b.jsonl"), jl({ session: "B", kind: "user.message", ts: 1000, text: "two" }));
+    const { env: e, config } = env();
+    const index = new MemoryIndexStore();
+    const blobs = new MemoryBlobStore();
+    const reads: string[] = [];
+    writeFileSync(join(dir, "c.jsonl"), jl({ session: "C", kind: "user.message", ts: 1000, text: "three" }));
+    let r = await backfill({ config, index, blobs, adapters: [fileAdapter(dir, reads)], env: e, deadline: Date.now() - 1 });
+    assert.deepEqual([r.events, r.pendingFiles, reads.splice(0)], [1, 2, ["a.jsonl"]], "one file read (progress), the rest deferred");
+    assert.equal(await index.getCursor(backfillCursorKey("fb", join(dir, "b.jsonl"), "mtime")), 0, "not marked read");
+    r = await backfill({ config, index, blobs, adapters: [fileAdapter(dir, reads)], env: e });
+    assert.deepEqual([r.events, r.pendingFiles, reads.splice(0)], [2, 0, ["b.jsonl", "c.jsonl"]]);
+  });
+
   it("recomputes sessions of files read for the first time even when their events exist (upgrade path)", async () => {
     const root = makeRepo({ "a.txt": "a\n" });
     const dir = tmp("csh-transcripts-");

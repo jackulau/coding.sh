@@ -112,8 +112,12 @@ coding.sh doctor --json
 Show capture totals and the latest session.
 
 ```text
-coding.sh status
+coding.sh status [options]
 ```
+
+| Option | Default | Description |
+|---|---|---|
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ## `coding.sh ingest`
 
@@ -285,6 +289,7 @@ coding.sh sessions [options]
 | `-n, --limit <N>` | `20` | Maximum rows. |
 | `--subagents` |  | Include subagent sessions. |
 | `--project <ID>` |  | Only sessions in this serve project (default: all) |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh sessions
@@ -330,6 +335,7 @@ coding.sh search <TEXT>... [options]
 | `-a, --agent <AGENT>` |  | Only sessions from this agent. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
 | `--project <ID>` |  | Only matches in this serve project (default: all) |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh search 'flaky test'

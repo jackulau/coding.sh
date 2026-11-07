@@ -194,6 +194,10 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .update-pill[hidden] { display: none; }
 .update-pill .dot { color: var(--pass); }
 .update-pill:active { transform: scale(0.97); }
+.indexing-pill { cursor: default; }
+.indexing-pill .dot { color: var(--text-muted); animation: breathe 1600ms ease-in-out infinite; }
+@keyframes breathe { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .indexing-pill .dot { animation: none; } }
 .loading-bar { position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; overflow: hidden; opacity: 0; transition: opacity 160ms ease-out; pointer-events: none; }
 .loading-bar.on { opacity: 1; transition-delay: 150ms; }
 .loading-bar::after { content: ""; position: absolute; inset: 0; width: 30%; background: linear-gradient(90deg, transparent, var(--text-2), transparent); animation: sweep 1100ms linear infinite; }
@@ -1157,6 +1161,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
     <a href="#/benchmarks" data-nav="benchmarks">Benchmarks</a>
   </nav>
   <span class="spacer"></span>
+  <span class="update-pill indexing-pill" id="indexing" hidden></span>
   <button class="update-pill" id="update" type="button" hidden><span class="dot" aria-hidden="true"></span><span class="long">Update available</span><span class="ver"></span></button>
   <button class="cmdk" id="cmdk" type="button" aria-label="Open command menu" aria-keyshortcuts="Meta+K Control+K"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4l3.1 3.1"/></svg><span>Jump to…</span><kbd>⌘K</kbd></button>
   <button class="icon-btn" id="theme" type="button" aria-label="Switch to light theme"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="8" cy="8" r="3.2"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></svg></button>
@@ -2364,8 +2369,11 @@ function listActions(view) {
 }
 
 function captureEmpty() {
+  // A first `coding.sh ui` over a big spool opens before anything is indexed: say so instead.
+  const indexing = () => !$("#indexing").hidden;
+  const title = h("h2", { text: indexing() ? "Indexing captured sessions…" : "No sessions captured yet" });
   const panel = h("div", { class: "panel empty" },
-    h("h2", { text: "No sessions captured yet" }),
+    title,
     h("p", { text: "coding.sh records sessions through your agent's hooks. Set it up once, then keep working as usual." }),
     cmdBlock("npx coding.sh init", "Copy init command"),
     h("ol", { class: "steps" },
@@ -2378,6 +2386,7 @@ function captureEmpty() {
   const timer = setInterval(async () => {
     if (!panel.isConnected) { clearInterval(timer); return; }
     if (document.hidden) return;
+    title.textContent = indexing() ? "Indexing captured sessions…" : "No sessions captured yet";
     try {
       const body = await api("/api/sessions" + qs({ limit: 1 }), null, true);
       if (body && body.items && body.items.length && panel.isConnected) { clearInterval(timer); list.loaded = false; route(); }
@@ -4940,6 +4949,40 @@ async function loadUpdate() {
   pill.hidden = false;
 }
 
+// ------------------------------------------------------------ indexing pill
+
+// `coding.sh ui` ingests in the background, so the list can open on a partial
+// index. While a backlog of spool files is pending the top bar says how many; the list's
+// "new sessions" pill picks up what lands. 404 (`serve`, no background ingest) stops the polling.
+function loadIngest() {
+  const pill = $("#indexing");
+  let was = false;
+  async function tick() {
+    if (!document.hidden) {
+      let st;
+      try {
+        const res = await fetch("/api/ingest", { credentials: "same-origin", headers: { Accept: "application/json" } });
+        if (res.status === 404) { pill.hidden = true; return; }
+        if (res.ok) st = await res.json();
+      } catch { /* the next tick tries again */ }
+      if (st) {
+        const n = typeof st.filesPending === "number" ? st.filesPending : 0;
+        // A backlog only: live capture adds a few files every pass, and a flashing pill would be noise.
+        const on = !!st.ingesting && n >= 20;
+        if (on) {
+          pill.replaceChildren(h("span", { class: "dot", "aria-hidden": "true" }), h("span", null, "Indexing " + fmtNum(n) + (n === 1 ? " file…" : " files…")));
+          pill.title = "Captured sessions are being indexed in the background. The list shows what is indexed so far.";
+        }
+        if (on !== was) announce(on ? "Indexing captured sessions" : "Indexing done");
+        pill.hidden = !on;
+        was = on;
+      }
+    }
+    setTimeout(tick, was ? 1500 : 4000);
+  }
+  tick();
+}
+
 // ------------------------------------------------------------ touch titles
 
 // Touch screens never show title tooltips. A tap on plain text with a title, or a
@@ -4986,6 +5029,7 @@ function touchTitles() {
 
 route();
 loadUpdate();
+loadIngest();
 touchTitles();
 </script>
 </body>

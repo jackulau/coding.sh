@@ -1,7 +1,7 @@
 // coding.sh status: capture totals, pending spool, latest session.
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { autoIngest, oneLine, sessionJson, withContext } from "../common.ts";
+import { autoIngest, readIngest, oneLine, sessionJson, withContext } from "../common.ts";
 import { ago, bytes, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -30,7 +30,7 @@ function spoolSize(dir: string): { files: number; bytes: number } {
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
   return withContext(c, async (ctx) => {
-    await autoIngest(ctx);
+    await autoIngest(ctx, readIngest(c));
     const day = Date.now() - 86400e3;
     const recent = await ctx.index.listSessions({ since: day, limit: 10_000 });
     const [latest] = await ctx.index.listSessions({ limit: 1, parentSessionId: null });

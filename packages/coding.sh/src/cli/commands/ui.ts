@@ -1,8 +1,11 @@
-// coding.sh ui: start the local viewer; ingest in the background so new hook
-// events show up while it runs. Ctrl-C stops it (exit 130).
+// coding.sh ui: start the local viewer at once and ingest in a background
+// worker (its own store connection), so the viewer shows what is indexed while
+// a big spool drains and new hook events show up while it runs. Ctrl-C stops
+// it (exit 130).
 import { FileEvalStore } from "../../datasets/store.ts";
 import { startViewer } from "../../viewer/server.ts";
-import { autoIngest, port as portFlag, str, withContext } from "../common.ts";
+import { port as portFlag, str, withContext } from "../common.ts";
+import { startBackgroundIngest, type BackgroundIngest } from "../ingest-worker.ts";
 import { CliError } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -12,33 +15,26 @@ export async function run(c: CommandContext): Promise<number> {
   const host = str(c.flags.host) ?? "127.0.0.1";
   const open = c.flags.open !== false && out.interactive;
   return withContext(c, async (ctx) => {
-    await autoIngest(ctx);
     let viewer;
+    let ingest: BackgroundIngest | undefined;
     try {
       // Same experiment store `coding.sh exp run` writes to (the index, or JSON files for a store without eval tables).
       const experiments = new FileEvalStore({ env: c.env, index: ctx.index });
-      viewer = await startViewer({ index: ctx.index, blobs: ctx.blobs, port, host, open, experiments });
+      viewer = await startViewer({ index: ctx.index, blobs: ctx.blobs, port, host, open, experiments, ingestStatus: () => ingest?.status() });
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "EADDRINUSE") throw new CliError(`Can't start the viewer: port ${port} is in use`, { reason: "port_in_use", next: ["Pick another port:", "coding.sh ui --port 0"] });
       throw e;
     }
-    let busy = false;
-    const timer = setInterval(() => {
-      if (busy) return;
-      busy = true;
-      autoIngest(ctx)
-        .catch((e: unknown) => out.warn(`Background ingest failed: ${e instanceof Error ? e.message : String(e)}`))
-        .finally(() => (busy = false));
-    }, 3000);
+    // A remote store (--store / CODING_SH_STORE_URL) is read as is: never push this machine's spool into it.
+    if (!ctx.storeOverridden) ingest = startBackgroundIngest({ env: c.env, cwd: c.cwd, onError: (m) => out.warn(`Background ingest failed: ${m}`) });
     if (out.json) out.data({ url: viewer.url, port: viewer.port });
     // Piped: the URL alone on stdout for scripts. In a terminal the note below already shows it.
     else if (!out.stdoutTTY) out.print(viewer.url);
     out.note(`Ready on ${viewer.url}`);
     out.note("Press Ctrl-C to stop");
     await new Promise<void>((resolve) => c.signal.addEventListener("abort", () => resolve(), { once: true }));
-    clearInterval(timer);
-    await viewer.close();
+    await Promise.all([ingest?.close(), viewer.close()]);
     return 130;
   });
 }

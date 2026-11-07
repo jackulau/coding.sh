@@ -1,7 +1,7 @@
 // coding.sh sessions [--agent --repo --since --limit]
 import { resolve } from "node:path";
 import { parseSince, positiveInt } from "../args.ts";
-import { autoIngest, num, oneLine, sessionJson, str, withContext } from "../common.ts";
+import { autoIngest, readIngest, num, oneLine, sessionJson, str, withContext } from "../common.ts";
 import { ago, clean, duration } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -11,7 +11,7 @@ export async function run(c: CommandContext): Promise<number> {
   const since = str(c.flags.since) !== undefined ? parseSince(str(c.flags.since)!) : undefined;
   const repo = str(c.flags.repo);
   return withContext(c, async (ctx) => {
-    await autoIngest(ctx);
+    await autoIngest(ctx, readIngest(c));
     const sessions = await ctx.index.listSessions({
       ...(str(c.flags.agent) ? { agent: str(c.flags.agent)! } : {}),
       ...(repo ? { repoRoot: resolve(c.cwd, repo) } : {}),

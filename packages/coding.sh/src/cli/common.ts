@@ -1,9 +1,11 @@
 // Helpers shared by command modules (loaded only after dispatch).
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { openContext, type Context } from "../core/context.ts";
 import type { EvalTask, Session } from "../core/types.ts";
+import { runningCli } from "../mcp/launch.ts";
+import { spawnBackgroundIngest } from "../spool/kick.ts";
 import { UsageError, type FlagValue } from "./args.ts";
-import { ago, CliError } from "./output.ts";
+import { ago, CliError, plural, type Output } from "./output.ts";
 import type { CommandContext } from "./types.ts";
 
 export async function withContext<T>(c: CommandContext, fn: (ctx: Context) => Promise<T>): Promise<T> {
@@ -29,38 +31,106 @@ export function lockContention(e: unknown): boolean {
   return name === "LockBusyError" || name === "LockLostError";
 }
 
-/**
- * Drains pending hook events before a read so `sessions`/`show` see what was
- * just captured. Skips quietly when another ingest holds the lock.
- */
-export async function autoIngest(ctx: Context): Promise<void> {
-  // A remote store (--store / CODING_SH_STORE_URL) is read as is: never push this machine's spool into it.
-  if (ctx.storeOverridden) return;
-  if (existsSync(ctx.paths.spool)) {
-    try {
-      await ctx.ingest({ lock: { waitMs: 1500 } });
-    } catch (e) {
-      if (!lockContention(e)) throw e;
-    }
-  }
-  await tailIngest(ctx);
+/** How long a read waits on ingest before answering from what is indexed (`--fresh` waits for all). */
+export const READ_INGEST_BUDGET_MS = 1500;
+
+export interface AutoIngestOptions {
+  /**
+   * Answer after this long even when the spool is not drained: the rest goes to
+   * a background `coding.sh ingest` and a note to stderr. Unset: wait for all.
+   */
+  budgetMs?: number;
+  /** Where the "not yet ingested" note goes. */
+  out?: Output;
+  /** Environment of the background ingest (default: process.env). */
+  env?: NodeJS.ProcessEnv;
+  /** Stops the spool ingest at its next checkpoint and skips transcripts (the viewer's worker shutting down). */
+  signal?: AbortSignal;
+  /** Spool files still holding unread lines, as the ingest goes. */
+  onProgress?: (p: { filesPending: number }) => void;
 }
 
-/** Imports from adapters whose store is a capture path (Adapter.tail). Never fails a read. */
-export async function tailIngest(ctx: Context): Promise<void> {
+/**
+ * Budgeted autoIngest options for a read command (`status`, `sessions`, `search`):
+ * no budget with `--fresh`; CODING_SH_READ_BUDGET_MS overrides the default.
+ */
+export function readIngest(c: CommandContext): AutoIngestOptions {
+  const base = { out: c.out, env: c.env };
+  if (c.flags.fresh === true) return base;
+  const raw = c.env.CODING_SH_READ_BUDGET_MS?.trim();
+  const v = Number(raw);
+  return { ...base, budgetMs: raw && Number.isFinite(v) && v >= 0 ? v : READ_INGEST_BUDGET_MS };
+}
+
+/**
+ * Drains pending hook events before a read so `sessions`/`show` see what was
+ * just captured. Skips quietly when another ingest holds the lock. With a
+ * budget it stops at the next checkpoint once the budget is spent (cursors
+ * cover exactly what was stored) and leaves the rest to a background ingest,
+ * so a big backlog never blanks a read. Returns the source files still waiting.
+ */
+export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promise<{ pendingFiles: number }> {
+  // A remote store (--store / CODING_SH_STORE_URL) is read as is: never push this machine's spool into it.
+  if (ctx.storeOverridden) return { pendingFiles: 0 };
+  const deadline = o.budgetMs !== undefined ? Date.now() + o.budgetMs : undefined;
+  let pending = 0;
+  let busy = false;
+  if (existsSync(ctx.paths.spool)) {
+    try {
+      const r = await ctx.ingest({
+        lock: { waitMs: Math.min(1500, o.budgetMs ?? 1500) },
+        ...(deadline !== undefined ? { deadline } : {}),
+        ...(o.signal ? { signal: o.signal } : {}),
+        ...(o.onProgress ? { onProgress: o.onProgress } : {}),
+      });
+      pending += r.pendingFiles;
+    } catch (e) {
+      if (!lockContention(e)) throw e;
+      busy = true;
+    }
+  }
+  if (!o.signal?.aborted) pending += await tailIngest(ctx, deadline);
+  if (pending && o.budgetMs !== undefined) {
+    // An ingest holding the lock finishes the spool (and the transcripts) itself; else start one
+    // (not with CODING_SH_NO_AUTO_INGEST=1, which also keeps the hook from starting them).
+    const env = o.env ?? process.env;
+    const started = !busy && env.CODING_SH_NO_AUTO_INGEST !== "1" && spawnBackgroundIngest(ingestCli(ctx.paths.cliPointer), env);
+    o.out?.note(`${plural(pending, "file")} not yet ingested${started ? ", indexing in the background" : ""}; showing what is indexed so far (--fresh waits for all)`);
+  }
+  return { pendingFiles: pending };
+}
+
+/** The CLI a background ingest runs: this one (the bundle, or src/cli/main.ts from source), else the one init recorded. */
+function ingestCli(pointer: string): string | undefined {
+  const argv1 = process.argv[1];
+  if (argv1 && /[\\/]cli[\\/]main\.ts$/.test(argv1)) return argv1;
+  const running = runningCli();
+  if (running) return running;
+  try {
+    return readFileSync(pointer, "utf8").trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Imports from adapters whose store is a capture path (Adapter.tail). Never fails a read. Returns the files left unread at `deadline`. */
+export async function tailIngest(ctx: Context, deadline?: number): Promise<number> {
+  let pending = 0;
+  const d = deadline !== undefined ? { deadline } : {};
   try {
     const { ADAPTERS } = await import("../adapters/index.ts");
     const agents = ADAPTERS.filter((a) => a.tail?.()).map((a) => a.id);
-    if (agents.length) await ctx.backfill({ agents });
+    if (agents.length) pending += (await ctx.backfill({ agents, ...d })).pendingFiles;
     // Agents whose hooks are installed but not firing yet: their transcripts
     // are the capture path until they are (a fresh `init` with Codex).
     for (const a of ADAPTERS) {
       const t = a.tailWhenUnhooked?.();
-      if (t) await ctx.backfill({ agents: [a.id], ...(t.since !== undefined ? { since: t.since } : {}) });
+      if (t) pending += (await ctx.backfill({ agents: [a.id], ...(t.since !== undefined ? { since: t.since } : {}), ...d })).pendingFiles;
     }
   } catch {
     // a broken third-party store must not break `coding.sh sessions`
   }
+  return pending;
 }
 
 /**

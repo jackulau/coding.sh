@@ -40,6 +40,15 @@ export function kickIngest(event: string, env: NodeJS.ProcessEnv = process.env, 
   } catch {
     return undefined; // init ran from source, or before this existed: reads ingest lazily
   }
+  return spawnBackgroundIngest(cli, env, spawn);
+}
+
+/**
+ * Starts `node <cli> ingest --background` detached (it outlives this process and
+ * exits quietly when another ingest holds the lock). Returns `cli`, or undefined
+ * when that file is missing. Also used by reads that ran out of their ingest budget.
+ */
+export function spawnBackgroundIngest(cli: string | undefined, env: NodeJS.ProcessEnv = process.env, spawn?: KickSpawner): string | undefined {
   if (!cli || !existsSync(cli)) return undefined;
   const run = spawn ?? (process.getBuiltinModule("node:child_process").spawn as unknown as KickSpawner);
   const child = run(process.execPath, [cli, "ingest", "--background"], { detached: true, stdio: "ignore", windowsHide: true, env: { ...env, NODE_OPTIONS: undefined } });

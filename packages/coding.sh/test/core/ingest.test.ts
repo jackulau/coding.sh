@@ -236,6 +236,41 @@ describe("ingest", () => {
     await index.close();
   });
 
+  it("stops at a deadline or abort with cursors on what was stored; the next run finishes with nothing lost", async () => {
+    const t = setup();
+    const dir = join(t.env.CODING_SH_HOME, "spool", "fake");
+    for (let f = 2; f <= 4; f++) writeFileSync(join(dir, `2026-11-06.${f}.jsonl`), t.line({ session: `f${f}`, kind: "notification", events: 3 }, { pid: f }));
+    // The big file aborts the run (the viewer closing) from its 20th line, when that hook is set.
+    for (let i = 0; i < 40; i++) t.write(t.line({ session: `s${i % 2}`, kind: "tool.end", tool: "Bash", ok: true, events: 5, ...(i === 20 ? { hook: "abort" } : {}) }));
+    // Oldest first: the small files, then the big one.
+    for (let f = 2; f <= 4; f++) utimesSync(join(dir, `2026-11-06.${f}.jsonl`), new Date(1_700_000_000_000 + f * 1000), new Date(1_700_000_000_000 + f * 1000));
+    const sessions = ["s0", "s1", "f2", "f3", "f4"];
+    const ids = async (ix: MemoryIndexStore) => (await Promise.all(sessions.map((s) => ix.listEvents(s)))).flat().map((e) => e.id).sort();
+    const ref = new MemoryIndexStore();
+    await ingest({ config: t.config, index: ref, blobs: t.blobs, adapters, env: t.env, lock: false });
+
+    const index = new MemoryIndexStore();
+    const run = (o: { deadline?: number; signal?: AbortSignal } = {}) => ingest({ config: t.config, index, blobs: t.blobs, adapters, env: t.env, checkpointEvents: 50, ...o });
+    let r = await run({ deadline: Date.now() - 1 });
+    assert.ok(r.lines > 0 && r.events > 0, "out of time from the start: still makes progress");
+    assert.deepEqual([r.lines, r.pendingFiles], [1, 3], "it stops after its first file");
+
+    const before = (await ids(index)).length;
+    const ac = new AbortController();
+    hooks.abort = () => ac.abort();
+    r = await run({ signal: ac.signal });
+    delete hooks.abort;
+    const cursor = await index.getCursor("fake/2026-11-06.1.jsonl");
+    assert.ok(cursor > 0 && cursor < statSync(t.file).size, `stopped at a checkpoint inside the big file (cursor ${cursor})`);
+    assert.ok(r.pendingFiles >= 1, "the big file's rest is pending");
+    assert.equal(before + r.events, (await ids(index)).length, "what this run stored is all that was added");
+
+    r = await run();
+    assert.equal(r.pendingFiles, 0);
+    assert.deepEqual(await ids(index), await ids(ref), "the same events as one uninterrupted run");
+    for (const s of sessions) assert.deepEqual((await index.getSession(s))?.stats, (await ref.getSession(s))?.stats, s);
+  });
+
   it("does not advance the cursor when a write fails, and recovers on the next run", async () => {
     const t = setup();
     t.write(t.line({ session: "s", kind: "user.message", text: "a" }), t.line({ session: "s", kind: "turn.end" }));
@@ -514,7 +549,7 @@ describe("ingest", () => {
     const t = setup();
     rmSync(join(t.env.CODING_SH_HOME, "spool"), { recursive: true });
     const r = await ingest({ config: t.config, index: t.index, blobs: t.blobs, adapters, env: t.env });
-    assert.deepEqual(r, { lines: 0, events: 0, sessions: 0, excluded: 0, errors: [], sinks: [] });
+    assert.deepEqual(r, { lines: 0, events: 0, sessions: 0, excluded: 0, errors: [], sinks: [], pendingFiles: 0 });
   });
 
   it("re-runs for a session that ended while it held the lock (no lost wakeup)", async () => {
