@@ -91,7 +91,8 @@ describe("OTLP receiver over HTTP", () => {
     assert.ok(s);
     assert.equal(s.agent, "weather-bot");
     assert.equal(s.title, "What's the weather in Paris?");
-    assert.deepEqual(s.stats.usage, { inputTokens: 300, outputTokens: 45, cacheReadTokens: 20 });
+    // No cost on the spans: the local collector prices them from list prices, as serve does.
+    assert.deepEqual(s.stats.usage, { inputTokens: 300, outputTokens: 45, cacheReadTokens: 20, costUsd: 0.001225, estimatedCostUsd: 0.001225 });
     assert.equal(s.stats.toolCalls, 2);
     assert.equal(s.endedAt, 1767225605000);
     assert.equal(batches.length, 1);
@@ -218,9 +219,16 @@ describe("OTLP receiver over HTTP", () => {
     const r = await store.getSession(`otel-sub-${T}-${reader}`);
     assert.equal(r?.stats.toolCalls, 1);
     assert.equal(r?.stats.latency?.llmCalls, 1);
-    assert.deepEqual(r?.stats.usage, { inputTokens: 300, outputTokens: 30, cacheReadTokens: 0 });
+    // Tokens but no reported cost: priced from the list price, and marked as an estimate.
+    const { costUsd: rc, estimatedCostUsd: re, ...rTokens } = r?.stats.usage ?? {};
+    assert.deepEqual(rTokens, { inputTokens: 300, outputTokens: 30, cacheReadTokens: 0 });
+    assert.ok(rc !== undefined && rc > 0 && re === rc, `estimated cost ${rc} / ${re}`);
+    const call = (await store.listEvents(r!.id)).find((e) => e.kind === "llm.call");
+    assert.equal(call?.payload.costEstimated, true);
     const w = await store.getSession(`otel-sub-${T}-${writer}`);
-    assert.deepEqual(w?.stats.usage, { inputTokens: 500, outputTokens: 30, cacheReadTokens: 200 });
+    const { costUsd: wc, ...wTokens } = w?.stats.usage ?? {};
+    assert.deepEqual({ ...wTokens, estimatedCostUsd: undefined }, { inputTokens: 500, outputTokens: 30, cacheReadTokens: 200, estimatedCostUsd: undefined });
+    assert.ok(wc !== undefined && wc > rc!, "the writer read more, so it cost more");
     const parent = await store.getSession(T);
     assert.equal(parent?.stats.latency?.subagents, 2);
     assert.equal(parent?.stats.latency?.llmCalls, undefined);

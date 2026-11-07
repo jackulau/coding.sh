@@ -1,5 +1,6 @@
 // coding.sh collector (alias: otel): local OTLP/HTTP receiver. stdout gets the
 // environment that points an agent's OpenTelemetry exporter here.
+import { pricesFor } from "../../core/pricing.ts";
 import { startReceiver } from "../../otel/receiver.ts";
 import { port as portFlag, str, withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
@@ -29,6 +30,7 @@ export async function run(c: CommandContext): Promise<number> {
         store: ctx.index,
         blobs: ctx.blobs,
         maxInlineBytes: ctx.config.capture.maxInlineBytes,
+        prices: pricesFor(ctx.config.pricing),
         onBatch: (b) => {
           if (b.events.length) out.note(`${b.signal}: ${plural(b.events.length, "event")}, ${plural(b.sessions.length, "session")}${b.rejected ? `, ${b.rejected} rejected` : ""}`);
         },

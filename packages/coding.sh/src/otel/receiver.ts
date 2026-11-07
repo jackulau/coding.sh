@@ -124,6 +124,7 @@ import type { BlobStore, IndexStore } from "../core/types.ts";
 import { createRedactor, type Redactor } from "../core/redact.ts";
 import { buildSession } from "../core/sessions.ts";
 import { decodeLogsJson, decodeTraceJson, parseJson, validateMetricsJson } from "./json.ts";
+import { applyPricing, pricesFor, type Prices } from "../core/pricing.ts";
 import { enrichFromEve } from "../integrations/eve/map.ts";
 import { enrichGatewaySpan } from "../integrations/gateway/otel.ts";
 import { type MapContext, type MapResult, mapLogs, mapTraces, type SpanEnricher, SpanTree, TraceSessionMap, traceKvKey } from "./map.ts";
@@ -167,6 +168,8 @@ export interface ReceiverOptions {
   redactor?: Redactor | false;
   /** Keep each source span/log as blobs[0] (default true). */
   keepRaw?: boolean;
+  /** Prices for model calls that report tokens but no cost (as serve and ingest do). Default: the built-in table. */
+  prices?: Prices;
   /**
    * Per-span enrichment hook. See MapContext.enrichSpan. Default:
    * defaultEnricher, i.e. enrichFromEve (src/integrations/eve) then
@@ -567,11 +570,13 @@ export async function startReceiver(opts: ReceiverOptions): Promise<Receiver> {
     return p;
   };
 
+  const prices = opts.prices ?? pricesFor();
   const persist = (signal: Signal, decoded: ResourceSpans[] | ResourceLogs[]): Promise<{ batch: BatchInfo; errors: string[] }> =>
     serial(async () => {
       const mapped = await pipeline.map(signal, decoded);
-      const { inserted, sessions } = await storeAndRebuild(opts.store, mapped.events);
-      return { batch: { signal, events: mapped.events, inserted, sessions, rejected: mapped.rejected }, errors: mapped.errors };
+      const events = applyPricing(mapped.events, prices);
+      const { inserted, sessions } = await storeAndRebuild(opts.store, events);
+      return { batch: { signal, events, inserted, sessions, rejected: mapped.rejected }, errors: mapped.errors };
     });
 
   const handle = createOtlpHandler<true>({
