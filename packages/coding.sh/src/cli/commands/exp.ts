@@ -4,7 +4,8 @@
 // stopping early (group sequential, src/stats/sequential.ts). `exp compare
 // --pairwise` adds a both-order pairwise judge (src/experiments/pairwise.ts);
 // `exp sweep` races configs with sequential halving (src/experiments/sweep.ts).
-// `exp compare --gate` adds a ship-or-hold decision and exits 1 unless it accepts.
+// `exp compare --gate` adds a ship-or-hold decision and exits 1 unless it accepts;
+// `--margin D` adds paired non-inferiority and exits 1 unless B is within D of A.
 // `exp metrics` A/Bs two commands that print numbers (src/experiments/metrics.ts).
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -517,7 +518,9 @@ export async function run(c: CommandContext): Promise<number> {
             });
           }
         }
-        const opts: CompareOpts = { force, ...(gate ? { gate } : {}) };
+        const margin = num(c.flags.margin);
+        if (margin !== undefined && !(margin >= 0 && margin < 1)) throw new UsageError(`--margin must be at least 0 and below 1 (pass-rate points: 0.05 = 5pp), got ${margin}`, { reason: "invalid_argument" });
+        const opts: CompareOpts = { force, ...(gate ? { gate } : {}), ...(margin !== undefined ? { margin } : {}) };
         const key = str(c.flags.cluster);
         if (key) {
           // Case metadata lives on the dataset; B's cases fill in ones A's version lacks.
@@ -546,8 +549,8 @@ export async function run(c: CommandContext): Promise<number> {
             if (pw.calibration.abstained) out.print(`${pw.calibration.abstained} human-decisive case(s) the judge called a tie were left out of kappa`);
           }
         }
-        // --gate: exit 0 only when the gate accepts B.
-        return cmp.gate && cmp.gate.decision !== "accept" ? 1 : 0;
+        // --gate: exit 0 only when the gate accepts B; --margin: only when B is non-inferior.
+        return (cmp.gate && cmp.gate.decision !== "accept") || (cmp.nonInferiority && !cmp.nonInferiority.nonInferior) ? 1 : 0;
       }
       case "aa": {
         let first: ExperimentResult;

@@ -158,6 +158,11 @@ const COMPARE = [
       <code>Don't ship: B breaks 2 cases A solved</code> with the broken cases. It exits 0 only for "Ship it", so CI can use it. A break costs two
       fixes, the wins must clear a one-sided exact test, and B may break at most 10% of what A solved (<a href="#gate">details</a>).
     </li>
+    <li id="non-inferiority">
+      <code>--margin 0.03</code> asks whether B is at most 3pp worse than A, for a cheaper or faster config you want to keep only if it does not
+      lose quality. It prints <code>non-inf B − A ≥ -3.0pp: yes</code> when the lower end of the 95% interval is above −3pp, and exits 1
+      otherwise. It also lists cases A passed on every trial that B now mostly fails, which an average within the margin can hide.
+    </li>
     <li id="coverage">
       With 2+ trials per case it counts coverage on its own: cases B gained (A never passed, B passed at least once) and cases B lost (A passed
       at least once, B never), listed under <code>lost coverage</code>. A net gain can hide lost cases. It also prints how many cases' pass rates

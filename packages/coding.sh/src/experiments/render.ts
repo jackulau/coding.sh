@@ -8,7 +8,7 @@ import type { RoganGladenResult } from "../stats/interval.ts";
 import type { SequentialOutcome } from "../stats/sequential.ts";
 import type { AaResult } from "./aa.ts";
 import { gateDetail, gateHeadline, idList } from "../stats/gate.ts";
-import type { ArmAttrition, Comparison, ComparisonGate, ComparisonTurnover } from "./compare.ts";
+import type { ArmAttrition, Comparison, ComparisonGate, ComparisonNonInferiority, ComparisonTurnover } from "./compare.ts";
 import type { PairwiseSummary } from "./pairwise.ts";
 import type { SweepResult } from "./sweep.ts";
 import type { Turnover } from "./turnover.ts";
@@ -179,6 +179,7 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   const why = c.sequential ? (c.verdict === "inconclusive" ? "no boundary crossed" : "group sequential test") : "CI includes 0";
   out.push(`verdict ${paint(c.verdict === "inconclusive" ? `inconclusive (${why})` : `B is ${c.verdict}${c.sequential ? ` (${why})` : ""}`, vColor, color)}`);
   if (c.gate) out.push(...renderGate(c.gate, color));
+  if (c.nonInferiority) out.push(...renderNonInferiority(c.nonInferiority, color));
   const p = c.power;
   out.push(
     `power   MDE ${Number.isFinite(p.mde) ? `${(p.mde * 100).toFixed(1)}pp` : "—"} ` +
@@ -296,6 +297,23 @@ function renderGate(g: ComparisonGate, color: boolean): string[] {
   const out = [`gate    ${paint(gateHeadline(g, "case"), GATE_COLOR[g.verdict], color)}`, `        ${paint(gateDetail(g), "dim", color)}`];
   if (g.lostCases.length) out.push(`        lost: ${idList(g.lostCases)}`);
   if (g.note) out.push(paint(`! ${g.note}`, "yellow", color));
+  return out;
+}
+
+/** `exp compare --margin`: is B at most δ worse, and which pass^k cases it now mostly fails. */
+function renderNonInferiority(ni: ComparisonNonInferiority, color: boolean): string[] {
+  const level = `${Math.round((1 - 2 * ni.alpha) * 100)}% CI`;
+  const head = `non-inf B − A ≥ ${signedPct(-ni.delta)}: `;
+  const out = [
+    !ni.n
+      ? `${head}${paint("unknown (no paired cases)", "yellow", color)}`
+      : ni.nonInferior
+        ? `${head}${paint("yes", "green", color)} ${paint(`(${level} lower bound ${signedPct(ni.lower)} > ${signedPct(-ni.delta)})`, "dim", color)}`
+        : `${head}${paint("no", "red", color)} ${paint(`(${level} lower bound ${signedPct(ni.lower)} ≤ ${signedPct(-ni.delta)})`, "dim", color)}`,
+  ];
+  if (ni.hardRegressions.length) {
+    out.push(paint(`! B now mostly fails ${ni.hardRegressions.length} case(s) A passed on every trial: ${idList(ni.hardRegressions)}`, "yellow", color));
+  }
   return out;
 }
 

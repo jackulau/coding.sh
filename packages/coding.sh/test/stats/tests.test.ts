@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mulberry32, pairedPermutation } from "../../src/stats/index.ts";
+import { clusteredBootstrap, hardRegressions, mulberry32, nonInferiority, pairedBootstrap, pairedPermutation } from "../../src/stats/index.ts";
 
 describe("pairedPermutation", () => {
   it("matches hand counts: [1,1,1,1,1] is 2/32 two-sided and 1/32 greater", () => {
@@ -66,5 +66,90 @@ describe("pairedPermutation", () => {
 
   it("rejects non-finite differences", () => {
     assert.throws(() => pairedPermutation([1, NaN]), RangeError);
+  });
+});
+
+describe("nonInferiority", () => {
+  it("all-zero differences are non-inferior at δ 0.05", () => {
+    const r = nonInferiority(new Array(50).fill(0), 0.05);
+    assert.equal(r.lower, 0);
+    assert.equal(r.nonInferior, true);
+    assert.equal(r.n, 50);
+    assert.equal(r.alpha, 0.05);
+  });
+
+  it("a mean of −0.1 with a small spread is not non-inferior at δ 0.05", () => {
+    const rand = mulberry32(5);
+    const d = Array.from({ length: 80 }, () => -0.1 + (rand() - 0.5) * 0.04);
+    const r = nonInferiority(d, 0.05);
+    assert.ok(r.lower < -0.05, String(r.lower));
+    assert.equal(r.nonInferior, false);
+  });
+
+  it("no pairs: not non-inferior, lower NaN", () => {
+    const r = nonInferiority([], 0.05);
+    assert.equal(r.nonInferior, false);
+    assert.ok(Number.isNaN(r.lower));
+  });
+
+  it("is the α percentile of the paired bootstrap: the lower end of its 1 − 2α interval, same seed twice", () => {
+    const rand = mulberry32(9);
+    const d = Array.from({ length: 60 }, (): number => (rand() < 0.2 ? -1 : rand() < 0.25 ? 1 : 0));
+    const r = nonInferiority(d, 0.03, { seed: 4 });
+    assert.equal(r.lower, pairedBootstrap(d, { seed: 4, alpha: 0.1 }).lo);
+    assert.deepEqual(nonInferiority(d, 0.03, { seed: 4 }), r);
+  });
+
+  it("agrees with the normal-theory bound mean − z₀.₉₅·sd/√n at large n", () => {
+    const rand = mulberry32(21);
+    const d = Array.from({ length: 2000 }, (): number => (rand() < 0.3 ? -1 : rand() < 0.4 ? 1 : 0));
+    const m = d.reduce((s, x) => s + x, 0) / d.length;
+    const sd = Math.sqrt(d.reduce((s, x) => s + (x - m) ** 2, 0) / (d.length - 1));
+    const normal = m - 1.6448536269514722 * (sd / Math.sqrt(d.length));
+    assert.ok(Math.abs(nonInferiority(d, 0.05).lower - normal) < 0.004, `${nonInferiority(d, 0.05).lower} vs ${normal}`);
+  });
+
+  it("rejects H0 about α of the time when B is exactly δ worse", () => {
+    // Paired ±1/0 outcomes with true mean −δ; the bootstrap test should claim non-inferiority ≈ 5% of runs.
+    const rand = mulberry32(77);
+    const delta = 0.1;
+    let claims = 0;
+    const reps = 300;
+    for (let r = 0; r < reps; r++) {
+      const d = Array.from({ length: 150 }, () => {
+        const u = rand();
+        return u < 0.3 ? -1 : u < 0.5 ? 1 : 0; // mean 0.2 − 0.3 = −0.1
+      });
+      if (nonInferiority(d, delta, { iters: 2000, seed: r }).nonInferior) claims++;
+    }
+    assert.ok(claims / reps < 0.1, `type I error ${claims / reps}`);
+  });
+
+  it("clusters: resamples whole clusters", () => {
+    const d = [0.5, 0.5, -0.5, -0.5, 0, 0];
+    const r = nonInferiority(d, 0.2, { clusterIds: ["a", "a", "b", "b", "c", "c"], seed: 1 });
+    assert.equal(r.lower, clusteredBootstrap(d, ["a", "a", "b", "b", "c", "c"], { seed: 1, alpha: 0.1 }).lo);
+  });
+
+  it("rejects a negative margin", () => {
+    assert.throws(() => nonInferiority([0], -0.1), RangeError);
+  });
+});
+
+describe("hardRegressions", () => {
+  it("flags pass^k cases the candidate now mostly fails, not cases the baseline only sometimes passed", () => {
+    const base = new Map([
+      ["a", [true, true, true]],
+      ["b", [true, false, true]],
+      ["c", [true, true, true]],
+      ["d", [true, true, true]],
+    ]);
+    const cand = new Map([
+      ["a", [false, false, true]],
+      ["b", [false, false, false]],
+      ["c", [true, false, true]],
+    ]);
+    assert.deepEqual(hardRegressions(base, cand), ["a"]);
+    assert.deepEqual(hardRegressions(base, cand, 2 / 3), ["a", "c"]);
   });
 });

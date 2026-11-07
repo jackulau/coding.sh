@@ -80,6 +80,17 @@ al., arXiv 2609.36043). Plain "mean went up" accepts changes that break solved c
 1 --gate-alpha 1 --tau 1` the gate is exactly "more fixes than breaks". When trials were lost to
 errors unevenly, the gate notes that a task error counts as a failure.
 
+`coding.sh exp compare A B --margin 0.03` is a paired non-inferiority check: is B at most 3pp worse
+than A? Use it to keep a cheaper or faster config only when it gives up no more than the margin.
+B is non-inferior when the lower end of the 95% paired bootstrap interval of B − A (the one the
+`B − A` line prints, over clusters with `--cluster`) lies above −0.03, a one-sided test at 2.5%
+(the confidence-interval form in the CONSORT non-inferiority extension). The report prints
+`non-inf B − A ≥ -3.0pp: yes (95% CI lower bound -1.2pp > -3.0pp)` or `no`, and lists cases A
+passed on every trial that B now passes at most a third of the time, which a mean within the
+margin can hide. It exits 1 unless B is non-inferior; `--json` carries
+`comparison.nonInferiority` (`mean`, `lower`, `delta`, `nonInferior`, `n`, `alpha`,
+`hardRegressions`). The test itself is `nonInferiority(diffs, delta)` in `src/stats/tests.ts`.
+
 `coding.sh exp run --arm base=a.json --arm cand=b.json` runs two task configs as one A/B. Cases go
 in a random order, and each case runs in both arms back to back, in random arm order, so drift
 hits both arms the same. Both arms are stored (as `<name>-base` and `<name>-cand`) and share a pair

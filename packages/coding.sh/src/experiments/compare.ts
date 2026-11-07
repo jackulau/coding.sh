@@ -9,7 +9,7 @@ import { pairedBootstrap, roganGladen, type BootstrapOpts, type RoganGladenResul
 import { pairedPosterior, type PairedPosterior } from "../stats/posterior.ts";
 import type { SequentialOutcome } from "../stats/sequential.ts";
 import { gateVerdict, type GateVerdict } from "../stats/gate.ts";
-import { acceptanceGate, fisherExact, mcnemar, type GateOpts, type GateResult, type McNemarResult } from "../stats/tests.ts";
+import { acceptanceGate, fisherExact, hardRegressions, mcnemar, nonInferiority, type GateOpts, type GateResult, type McNemarResult, type NonInferiorityResult } from "../stats/tests.ts";
 import { pairedPower, passHatK, type NoisePrior, type PowerAnalysis } from "./power.ts";
 import { caseRates } from "./run.ts";
 import { outcomesByCase, turnover, type Turnover } from "./turnover.ts";
@@ -228,12 +228,24 @@ export interface Comparison {
   passK?: { a: { k: number; rate: number }; b: { k: number; rate: number }; diff: number };
   /** Present with the gate option (`exp compare --gate`): adopt B or keep A. */
   gate?: ComparisonGate;
+  /** Present with the margin option (`exp compare --margin`): is B at most δ worse than A? */
+  nonInferiority?: ComparisonNonInferiority;
   /**
    * Coverage turnover on paired, graded cases: cases B gained or lost (passed
    * in any of k trials), per-case reliability shift, the success-count matrix
    * and the trial-half check.
    */
   turnover: ComparisonTurnover;
+}
+
+/**
+ * Paired non-inferiority on the per-case pass-rate differences: B is
+ * non-inferior when the lower end of the two-sided (1 − alpha) CI, the
+ * interval printed as B − A, lies above −δ (one-sided level alpha/2).
+ */
+export interface ComparisonNonInferiority extends NonInferiorityResult {
+  /** Cases A passed on every trial that B passes on at most a third of its trials. */
+  hardRegressions: string[];
 }
 
 export interface ComparisonTurnover extends Turnover {
@@ -273,6 +285,8 @@ export interface CompareOpts {
   noise?: NoisePrior;
   /** Add the acceptance gate with these settings. */
   gate?: GateOpts;
+  /** Add a non-inferiority check: how much worse (pass-rate points, 0.05 = 5pp) B may be. */
+  margin?: number;
   /** Stored verifier precision audits by grader version (`FileEvalStore.getVerifierAudit`). */
   verifiers?: ReadonlyMap<string, VerifierAudit>;
 }
@@ -432,6 +446,14 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
   }
   if (a.dataset.id !== b.dataset.id || a.dataset.version !== b.dataset.version) {
     out.datasetWarning = `A ran on ${a.dataset.id}@${a.dataset.version}, B on ${b.dataset.id}@${b.dataset.version}; only the ${ids.length} shared case id(s) are compared`;
+  }
+  if (opts.margin !== undefined) {
+    const ni = nonInferiority(
+      deltas.map((x) => x.delta),
+      opts.margin,
+      { iters: boot.iters, seed: boot.seed, alpha: boot.alpha / 2, ...(cl ? { clusterIds: ids.map(clusterOf) } : {}) },
+    );
+    out.nonInferiority = { ...ni, hardRegressions: hardRegressions(outcomesByCase(a.runs), outcomesByCase(b.runs)) };
   }
   if (opts.gate) {
     const g = acceptanceGate({ wins: improve, losses: regress, solved }, opts.gate);

@@ -80,6 +80,28 @@ describe("exp compare --gate from the CLI", () => {
     assert.deepEqual([...t.lost].sort(), ["c10", "c20", "c25", "c5"]);
   });
 
+  it("--margin: non-inferiority line, exit 1 unless B is within the margin, hard regressions listed (R2-3)", () => {
+    // c gains 8 of a's failures and loses 4: mean +13pp, comfortably within −20pp.
+    const ok = cli(["exp", "compare", "a", "c", "--margin", "0.2"]);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.match(ok.stdout, /^non-inf B − A ≥ -20\.0pp: yes \(95% CI lower bound [+-]\d+\.\dpp > -20\.0pp\)$/m);
+    assert.match(ok.stdout, /^! B now mostly fails 4 case\(s\) A passed on every trial: c10, c20, c25, c5$/m);
+    // b solves all 30; c breaks the 6 multiples of 5: −20pp is not within 5pp.
+    const bad = cli(["exp", "compare", "b", "c", "--margin", "0.05", "--json"]);
+    assert.equal(bad.status, 1, bad.stderr);
+    const cmp = JSON.parse(bad.stdout).comparison;
+    assert.equal(cmp.nonInferiority.nonInferior, false);
+    assert.equal(cmp.nonInferiority.delta, 0.05);
+    assert.equal(cmp.nonInferiority.n, 30);
+    // The bound is the lower end of the printed 95% CI.
+    assert.equal(cmp.nonInferiority.lower, cmp.diff.lo);
+    assert.equal(cmp.nonInferiority.hardRegressions.length, 6);
+    assert.equal("nonInferiority" in JSON.parse(cli(["exp", "compare", "a", "c", "--json"]).stdout).comparison, false);
+    const usage = cli(["exp", "compare", "a", "c", "--margin", "1.5"]);
+    assert.equal(usage.status, 2);
+    assert.match(usage.stderr, /--margin must be at least 0 and below 1/);
+  });
+
   it("--lambda, --gate-alpha and --tau without --gate are usage errors", () => {
     for (const flag of ["--lambda", "--gate-alpha", "--tau"]) {
       const r = cli(["exp", "compare", "a", "b", flag, "1"]);

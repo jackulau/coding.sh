@@ -1,4 +1,6 @@
 // Hypothesis tests.
+import { clusteredBootstrap } from "./cluster.ts";
+import { pairedBootstrap } from "./interval.ts";
 import { mulberry32 } from "./prng.ts";
 
 /** ln C(n, k) via a running sum of logs — exact enough for n up to ~1e6. */
@@ -342,4 +344,62 @@ export function pairedPermutation(diffs: readonly number[], opts: PermutationOpt
     if (hit(s)) count++;
   }
   return { p: Math.min(1, (1 + count) / (1 + iters)), n, observed: obs / n, method: "monte-carlo", iters };
+}
+
+export interface NonInferiorityOpts {
+  /** One-sided level: the bound is the α percentile of the bootstrap means. Default 0.05 (the lower end of the 90% two-sided interval). */
+  alpha?: number;
+  iters?: number;
+  seed?: number;
+  /** Resample these clusters instead of single pairs (`clusterIds[i]` is the cluster of `diffs[i]`). */
+  clusterIds?: readonly string[];
+}
+
+export interface NonInferiorityResult {
+  /** Mean of the per-pair differences (B − A). */
+  mean: number;
+  /** One-sided (1 − α) lower confidence bound on the mean difference; NaN with no pairs. */
+  lower: number;
+  /** The margin δ ≥ 0: how much worse B may be. */
+  delta: number;
+  /** lower > −δ. False with no pairs. */
+  nonInferior: boolean;
+  n: number;
+  alpha: number;
+}
+
+/**
+ * Paired non-inferiority: is B at most δ worse than A? H0: μ_B − μ_A ≤ −δ
+ * against H1: μ_B − μ_A > −δ, rejected at one-sided α when the (1 − α) lower
+ * confidence bound of the mean paired difference lies above −δ. This is the
+ * confidence-interval form of the test (CONSORT non-inferiority extension,
+ * Piaggio et al., JAMA 308(24), 2012; FDA, "Non-Inferiority Clinical Trials to
+ * Establish Effectiveness", 2016). The bound is the α percentile of the paired
+ * bootstrap (pairs, or whole clusters, resampled), so it is the interval
+ * `exp compare` already reports, read one-sided.
+ */
+export function nonInferiority(diffs: readonly number[], delta: number, opts: NonInferiorityOpts = {}): NonInferiorityResult {
+  const alpha = opts.alpha ?? 0.05;
+  if (!(delta >= 0 && Number.isFinite(delta))) throw new RangeError(`nonInferiority: delta must be a finite number ≥ 0 (got ${delta})`);
+  if (!(alpha > 0 && alpha < 0.5)) throw new RangeError(`nonInferiority: alpha must be in (0, 0.5) (got ${alpha})`);
+  const n = diffs.length;
+  if (n === 0) return { mean: NaN, lower: NaN, delta, nonInferior: false, n, alpha };
+  const boot = { iters: opts.iters ?? 10_000, seed: opts.seed ?? 0x5eed, alpha: 2 * alpha };
+  const b = opts.clusterIds ? clusteredBootstrap(diffs, opts.clusterIds, boot) : pairedBootstrap(diffs, boot);
+  return { mean: b.mean, lower: b.lo, delta, nonInferior: b.lo > -delta, n, alpha };
+}
+
+/**
+ * Cases the baseline passed on every attempt (pass^k) that the candidate now
+ * passes at most `maxRate` of the time. A non-inferior mean can hide them.
+ * Sorted ids; cases missing from either side are skipped.
+ */
+export function hardRegressions(baseline: ReadonlyMap<string, readonly boolean[]>, candidate: ReadonlyMap<string, readonly boolean[]>, maxRate = 1 / 3): string[] {
+  const out: string[] = [];
+  for (const [id, a] of baseline) {
+    const b = candidate.get(id);
+    if (!a.length || !b?.length || !a.every(Boolean)) continue;
+    if (b.filter(Boolean).length / b.length <= maxRate) out.push(id);
+  }
+  return out.sort();
 }
