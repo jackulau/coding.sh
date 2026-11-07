@@ -58,7 +58,7 @@ How each agent marks a subagent, and where coding.sh pairs it with its parent:
 
 | Agent | Spawned by | Child id and parent link |
 |---|---|---|
-| Claude Code | `Agent` tool | SubagentStart/Stop `agent_id`; transcript `subagents/agent-*.jsonl`. `SubagentStop` lacks `tool_use_id`. |
+| Claude Code | `Agent` tool | SubagentStart/Stop `agent_id`; transcript `subagents/agent-*.jsonl`, with its `description` in the `.meta.json` sidecar. `SubagentStop` lacks `tool_use_id`. Internal forks (the compaction summarizer, prompt suggestions) fire a `SubagentStop` with an empty `agent_type` and no transcript; coding.sh records no session for them. |
 | Codex | Threads | SubagentStart/Stop `agent_id`. |
 | Gemini CLI | `invoke_agent` tool `{agent_name,prompt}` | Child chat `chats/<parentSessionId>/<agentId>.jsonl` with `kind:'subagent'` and `sessionId == agentId`; the parent's `toolCalls[].agentId` names the child file. Hooks inside it carry the main `session_id`. |
 | Amp | `Task`, `oracle`, `librarian`, `finder` tools; `create_thread` makes child threads | No payload carries a subagent field. |

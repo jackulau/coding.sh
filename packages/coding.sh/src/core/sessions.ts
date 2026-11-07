@@ -562,9 +562,14 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
       s.userMessages++;
       if (s.title !== undefined || !text?.trim()) break;
       if (COMMAND_PROMPT.test(text)) s.fallbackTitle ??= commandTitle(text);
-      else s.title = makeTitle(text);
+      // A subagent's prompt is a brief: its first line names the task.
+      else s.title = makeTitle(e.subagentId ? text.trim().split("\n", 1)[0]! : text);
       break;
     }
+    case "session.start":
+      // A subagent's task description (the Agent tool's `description`) titles it, before its prompt.
+      if (e.payload.source === "subagent" && typeof e.payload.description === "string" && e.payload.description.trim()) s.title = makeTitle(e.payload.description);
+      break;
     case "turn.end":
       // A Stop that fired because a Stop hook blocked the previous one continues the same turn.
       // Turn ends per capture path: a session seen live (hooks) and from its

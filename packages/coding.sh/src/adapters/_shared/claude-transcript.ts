@@ -42,6 +42,12 @@ export interface ClaudeConvertOpts {
    * at the last entry's timestamp. Omitted = never (live windows).
    */
   endIfIdleMs?: number;
+  /**
+   * Assistant mode only: also emit the prompts that open turns (user.message).
+   * Set for a subagent's window: no hook reports a subagent's prompt, so
+   * without it the child session has no turn and no title.
+   */
+  prompts?: boolean;
 }
 
 interface PendingCall {
@@ -285,13 +291,13 @@ export class ClaudeTranscriptConverter {
     this.push(em);
   }
 
-  /** Ends the current turn and starts one; `emit` adds the turn's opening event (full mode only). */
+  /** Ends the current turn and starts one; `emit` adds the turn's opening event (full mode, or `prompts`). */
   private async openTurn(key: string, ts: number, lineNo: number | string, emit: (em: Emitter) => Promise<void>): Promise<void> {
     await this.endTurn(ts, lineNo);
     this.turnId = this.ctx.id(this.opts.agent, this.opts.sessionId, "turn", key);
     this.turnStartTs = ts;
     this.turnEnded = false;
-    if (this.opts.mode !== "full") return;
+    if (this.opts.mode !== "full" && !this.opts.prompts) return;
     const em = this.em(ts, lineNo);
     await emit(em);
     this.push(em);

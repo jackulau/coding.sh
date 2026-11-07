@@ -7,6 +7,7 @@ import { ClaudeTranscriptConverter } from "../../src/adapters/_shared/claude-tra
 import { hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { backfill, backfillCursorKey } from "../../src/core/ingest.ts";
+import { buildSession } from "../../src/core/sessions.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 
@@ -40,6 +41,34 @@ describe("claude-code normalize", () => {
     const { ctx } = testCtx();
     const foreign = loadSpool("claude-code/hooks.spool.jsonl").at(-1)!;
     assert.deepEqual(await claudeCode.normalize(foreign, ctx), []);
+  });
+
+  it("a subagent's live capture has its prompt as a turn and its description as its title", async () => {
+    const { ctx } = testCtx();
+    const events = [];
+    for (const line of loadSpool("claude-code/hooks.spool.jsonl")) events.push(...(await claudeCode.normalize(line, ctx)));
+    const child = events.filter((e) => e.sessionId === `${SID}:sub:abc123`);
+    assert.equal(child.find((e) => e.kind === "session.start")!.payload.description, "Find callers");
+    const prompt = child.find((e) => e.kind === "user.message")!;
+    assert.equal(prompt.payload.text, "List files that import sum.js");
+    const s = buildSession(child);
+    assert.equal(s.title, "Find callers");
+    assert.equal(s.stats.turns, 1);
+    // No description (older versions, Workflow agents): the prompt's first line.
+    const noDesc = child.map((e) => (e.kind === "session.start" ? { ...e, payload: { ...e.payload, description: undefined } } : e));
+    const multi = noDesc.map((e) => (e.kind === "user.message" ? { ...e, payload: { text: "Audit the parser\n\nRead src/a.ts and report." } } : e));
+    assert.equal(buildSession(multi).title, "Audit the parser");
+  });
+
+  it("drops the SubagentStop of Claude Code's internal forks (no agent type, no transcript)", async () => {
+    const { ctx } = testCtx();
+    const stop = loadSpool("claude-code/hooks.spool.jsonl").find((l) => (l.raw as { hook_event_name?: string }).hook_event_name === "SubagentStop")!;
+    const raw = stop.raw as Record<string, unknown>;
+    const ghost = { ...stop, raw: { ...raw, agent_id: "f00d", agent_type: "", agent_transcript_path: "/nonexistent/subagents/agent-f00d.jsonl", last_assistant_message: "<analysis>summary</analysis>" } };
+    assert.deepEqual(await claudeCode.normalize(ghost, ctx), []);
+    // A real subagent whose transcript is gone keeps its end.
+    const gone = { ...stop, raw: { ...raw, agent_transcript_path: "/nonexistent/subagents/agent-abc123.jsonl" } };
+    assert.deepEqual((await claudeCode.normalize(gone, ctx)).map((e) => e.kind), ["subagent.end", "session.end"]);
   });
 
   it("is deterministic (same line → same ids)", async () => {
@@ -80,6 +109,9 @@ describe("claude-code backfill", () => {
       assert.ok(l.length > 0);
       for (const e of l) assert.ok(ids.has(e.id), `${kind} ${JSON.stringify(e.payload).slice(0, 80)} not deduped`);
     }
+    // A subagent's prompt, read from its transcript on both paths.
+    const prompt = live.find((e) => e.kind === "user.message" && e.subagentId === "abc123")!;
+    assert.ok(prompt && ids.has(prompt.id), "subagent prompt not deduped");
   });
 
   it("surfaces failed blob writes instead of dropping transcripts silently", async () => {

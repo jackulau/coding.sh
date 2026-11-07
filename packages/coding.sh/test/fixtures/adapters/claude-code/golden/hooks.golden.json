@@ -202,6 +202,7 @@
     "payload": {
       "subagentId": "abc123",
       "type": "Explore",
+      "description": "Find callers",
       "childSessionId": "11111111-2222-4333-8444-555555555555:sub:abc123"
     },
     "id": "d692d8e4793f5a610df315f69eeefe7ed34462527c10c378001a40b6b70bcc08",
@@ -216,6 +217,7 @@
     "ts": 1793527206050,
     "payload": {
       "source": "subagent",
+      "description": "Find callers",
       "parentSessionId": "11111111-2222-4333-8444-555555555555",
       "parentEventId": "d692d8e4793f5a610df315f69eeefe7ed34462527c10c378001a40b6b70bcc08",
       "subagentId": "abc123",
@@ -289,6 +291,19 @@
     "subagentId": "abc123",
     "model": "claude-haiku-4-5",
     "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "11111111-2222-4333-8444-555555555555:sub:abc123",
+    "ts": 1793527206100,
+    "payload": {
+      "text": "List files that import sum.js"
+    },
+    "id": "b3e00ac7d6b4c18ea6576ea6a4505e7d0c07a1991eea786f0f3b187cb126707a",
+    "turnId": "8928081098cbcb05e464db49bfb43b1100a00993d39ea431eee1b2f98de946f5",
+    "subagentId": "abc123",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.300"
   },
   {
     "kind": "llm.call",

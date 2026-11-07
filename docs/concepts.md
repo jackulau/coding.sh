@@ -30,8 +30,10 @@ transcript. See [Agents and OpenTelemetry](guides/agents.md).
 
 **Subagent.** A child agent started by a session, such as Claude Code's Task tool or a nested agent
 span in an OpenTelemetry trace. It is stored as
-its own session with a parent id. `coding.sh sessions --subagents` lists them, and
-`coding.sh show` places them on the parent's timeline.
+its own session with a parent id. Its prompt counts as its turn, and its title is the task
+description the parent gave it (Claude Code's `description`), else the first line of its prompt.
+`coding.sh sessions --subagents` lists them, and `coding.sh show` places them on the parent's
+timeline.
 
 **Flag.** A failure pattern detected on a session after each ingest:
 

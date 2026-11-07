@@ -132,7 +132,8 @@ async function windowEvents(ctx: NormalizeContext, path: string | undefined, unt
   } catch {
     return { events: [] };
   }
-  const conv = new ClaudeTranscriptConverter(ctx, { agent: CLAUDE_AGENT, mode: "assistant", sessionId, subagentId, runId, source: basename(path), sidechain: subagentId !== undefined });
+  // A subagent's prompt reaches no hook: its window records it (same id as the backfill's).
+  const conv = new ClaudeTranscriptConverter(ctx, { agent: CLAUDE_AGENT, mode: "assistant", sessionId, subagentId, runId, source: basename(path), sidechain: subagentId !== undefined, prompts: subagentId !== undefined });
   let i = 0;
   for (const e of entries) await conv.add(e, i++);
   return { events: await conv.finish(), model: conv.model, turnId: conv.currentTurnId };
@@ -213,14 +214,19 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
       const id = subagentId ?? toolUseId;
       const child = childSessionId(parentSid, id);
       const type = str(raw.agent_type);
-      em.emit("subagent.start", { subagentId: id, type, childSessionId: child }, { key: [id] });
-      em.emit("session.start", { source: "subagent", ...parentLink(ctx, agent, parentSid, id, type) }, { sessionId: child, subagentId: id, key: ["start"] });
+      const tp = str(raw.transcript_path);
+      const description = tp && subagentId ? str((await subagentMeta(join(dirname(tp), basename(tp, ".jsonl"), "subagents", `agent-${subagentId}.jsonl`))).description) : undefined;
+      em.emit("subagent.start", { subagentId: id, type, description, childSessionId: child }, { key: [id] });
+      em.emit("session.start", { source: "subagent", description, ...parentLink(ctx, agent, parentSid, id, type) }, { sessionId: child, subagentId: id, key: ["start"] });
       break;
     }
     case "SubagentStop": {
       const id = subagentId ?? toolUseId;
       const child = childSessionId(parentSid, id);
       const w = await windowEvents(ctx, str(raw.agent_transcript_path), line.ts, child, id, line.runId, true);
+      // Claude Code's internal forks (the compaction summarizer, prompt suggestions) fire a
+      // SubagentStop with no agent type, no SubagentStart and no transcript on disk: no session.
+      if (!str(raw.agent_type) && !w.events.length) return [];
       extra.push(...w.events);
       const r = str(raw.last_assistant_message) ? await clipText(ctx, raw.last_assistant_message as string, 1024) : undefined;
       em.emit("subagent.end", { subagentId: id, type: str(raw.agent_type), ok: true, childSessionId: child, result: r?.value }, { key: [id], blobs: blobList(r?.blob) });
@@ -386,14 +392,18 @@ async function* readLines(path: string): AsyncGenerator<string> {
   }
 }
 
+/** The `.meta.json` sidecar of a subagent transcript (agentType, description, toolUseId, finished); {} when absent. */
+async function subagentMeta(transcriptPath: string): Promise<Record<string, unknown>> {
+  try {
+    return obj(JSON.parse(await readFile(transcriptPath.replace(/\.jsonl$/, ".meta.json"), "utf8")));
+  } catch {
+    return {}; // older versions write no meta sidecar
+  }
+}
+
 async function convertSubagentFile(ctx: NormalizeContext, path: string, parentSid: string, agentId: string, resolveLink?: (firstTs: number | undefined) => Promise<SubagentLink>): Promise<AgentEvent[]> {
   const child = childSessionId(parentSid, agentId);
-  let meta: Record<string, unknown> = {};
-  try {
-    meta = obj(JSON.parse(await readFile(path.replace(/\.jsonl$/, ".meta.json"), "utf8")));
-  } catch {
-    // older versions write no meta sidecar
-  }
+  const meta = await subagentMeta(path);
   const type = str(meta.agentType);
   const conv = new ClaudeTranscriptConverter(ctx, { agent: CLAUDE_AGENT, mode: "full", sessionId: child, subagentId: agentId, source: basename(path), sidechain: true });
   for await (const r of readJsonl(path)) await conv.add(r.value, r.lineNo);
@@ -406,12 +416,12 @@ async function convertSubagentFile(ctx: NormalizeContext, path: string, parentSi
   const events = await conv.finish(finished);
   const first = events[0]!;
   const last = events[events.length - 1]!;
+  const description = str(meta.description) ?? link?.label;
   const start = events.find((e) => e.kind === "session.start");
-  if (start) start.payload = { ...start.payload, source: "subagent", ...parentLink(ctx, CLAUDE_AGENT, parentSid, agentId, type) };
+  if (start) start.payload = { ...start.payload, source: "subagent", description, ...parentLink(ctx, CLAUDE_AGENT, parentSid, agentId, type) };
   const toolUseId = link?.toolUseId ?? str(meta.toolUseId);
   const parentId = toolUseId ? ctx.id(CLAUDE_AGENT, parentSid, "tool.start", toolUseId) : undefined;
   const em = new Emitter(ctx, { agent: CLAUDE_AGENT, sessionId: parentSid, ts: first.ts, cwd: first.cwd, agentVersion: first.agentVersion }, ["subagent", agentId]);
-  const description = str(meta.description) ?? link?.label;
   em.emit("subagent.start", { subagentId: agentId, type, description, childSessionId: child, toolUseId, workflowId: link?.workflowId, phase: str(meta.workflowPhase) ?? link?.phase }, { key: [agentId], parentId });
   if (finished) {
     const lastText = [...events].reverse().find((e) => e.kind === "assistant.message");
@@ -502,7 +512,8 @@ export const claudeCode: Adapter = {
   tier: "A",
   // 2 (0.1.2): one session.end (idle end) and one compaction across hooks and backfill.
   // 3 (0.1.2): harness.loaded (nested CLAUDE.md, skills) and file.change from Bash edits.
-  parseVersion: 3,
+  // 4 (0.1.2): subagent prompt and description (turn, title); no session for internal forks.
+  parseVersion: 4,
 
   detect() {
     const dir = claudeConfigDir();
