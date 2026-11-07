@@ -125,13 +125,14 @@ function session(id: string, startedAt: number, title = id): Session {
 }
 
 describe("show <prefix> resolves a unique session id prefix, like git", () => {
-  const now = Date.now();
   const ids = ["9f1c2e7a-4b1d-4c55-9a0e-1f2a3b4c5d6e", "9f1c88d0-7e2a-4f19-b3c4-5d6e7f8a9b0c", "a3b4c5d6-1111-4222-8333-944445555666", "proj/9f1c-x"];
 
   for (const kind of ["memory", "sqlite"] as const) {
     test(`${kind} store: unique prefix, ambiguous prefix, too short, exact id`, async () => {
       const index = kind === "memory" ? new MemoryIndexStore() : await SqliteIndexStore.open(join(t.root, "index.db"));
       await index.migrate();
+      // Taken per test: "just now" means under a second old, and the other store's test runs first.
+      const now = Date.now();
       for (const [i, id] of ids.entries()) await index.upsertSession(session(id, now - i * 60e3));
       const ctx = { index } as unknown as Context;
       try {

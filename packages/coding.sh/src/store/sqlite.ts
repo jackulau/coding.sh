@@ -319,6 +319,24 @@ const parse = <T>(v: unknown): T | undefined => (typeof v === "string" ? (JSON.p
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const num = (v: unknown): number | undefined => (typeof v === "number" ? v : typeof v === "bigint" ? Number(v) : undefined);
 
+/**
+ * PRAGMA journal_mode = WAL, retried on SQLITE_BUSY. Switching a fresh database out of
+ * rollback mode needs an exclusive lock, and SQLite skips the busy handler when waiting
+ * could deadlock, so several processes opening a new index together (the hook's
+ * background ingest and the CLI) can get "database is locked" despite busy_timeout.
+ */
+async function switchToWal(db: DatabaseSync): Promise<void> {
+  for (let i = 0; ; i++) {
+    try {
+      db.exec("PRAGMA journal_mode = WAL");
+      return;
+    } catch (e) {
+      if ((e as { errcode?: number }).errcode !== 5 || i >= 50) throw e;
+      await new Promise((r) => setTimeout(r, 10 + Math.random() * 40));
+    }
+  }
+}
+
 function rowToEvent(r: Row): AgentEvent {
   const e: AgentEvent = {
     id: r.id as string,
@@ -414,7 +432,7 @@ export class SqliteIndexStore implements IndexStore {
     const db = new DatabaseSync(path, { readOnly: opts.readOnly ?? false });
     // busy_timeout first so the WAL switch itself waits on a concurrent writer.
     db.exec("PRAGMA busy_timeout = 5000");
-    if (!opts.readOnly) db.exec("PRAGMA journal_mode = WAL");
+    if (!opts.readOnly) await switchToWal(db);
     db.exec("PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;");
     const store = new SqliteIndexStore(db, path);
     if (!opts.readOnly) await store.migrate();
