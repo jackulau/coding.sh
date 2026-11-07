@@ -1,0 +1,46 @@
+packages/coding.sh/test/adapters/claude-code.test.ts
+  s_8e040dbdf13565::t_917e9bb8a7c8a1 10
+  s_8e040dbdf13565::t_97d04ac11c15ae 46-55,57-73
+  s_8e040dbdf13565::t_9365fef4356fb8 112-114
+  s_8e040dbdf13565::t_8e09be625081cf 56
+CHANGELOG.md
+  s_8e040dbdf13565::t_ef351c2f5e2df1 64
+packages/coding.sh/src/adapters/claude-code.ts
+  s_8e040dbdf13565::t_7b9d768f98e8ab 217-220,227-229
+  s_8e040dbdf13565::t_c9fb6e4f3c2fab 419,421
+  s_8e040dbdf13565::t_1e59ddfebc6e03 406
+  s_8e040dbdf13565::t_5a5f31db69ee7b 395-396,398,400,402-403
+  s_8e040dbdf13565::t_f33058e685928f 503-504
+  s_8e040dbdf13565::t_bf0012d86da7e8 135-136
+  s_8e040dbdf13565::t_a63c9e77ad6bb2 404-405
+packages/coding.sh/src/adapters/_shared/claude-transcript.ts
+  s_8e040dbdf13565::t_74ef75b8b30fe9 45-50
+  s_8e040dbdf13565::t_6b4aeaa9320d81 294,300
+docs/ADAPTERS.md
+  s_8e040dbdf13565::t_ef351c2f5e2df1 61
+docs/concepts.md
+  s_8e040dbdf13565::t_ef351c2f5e2df1 33-36
+packages/coding.sh/test/fixtures/adapters/claude-code/golden/backfill.golden.json
+  s_8e040dbdf13565::t_8e09be625081cf 9
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_0fdb6d2a13ebe9 559-560,563-566
+packages/coding.sh/test/fixtures/adapters/claude-code/golden/hooks.golden.json
+  s_8e040dbdf13565::t_8e09be625081cf 205,220,295-306
+  s_8e040dbdf13565::t_40bb8c6eab10c1 307
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3a6429c46f6002301c8f27f7bf3d9d8c8fb2d666",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
