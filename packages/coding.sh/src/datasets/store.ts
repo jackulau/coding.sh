@@ -6,6 +6,7 @@
 //   <root>/experiments/<id>.json                   one ExperimentResult per run
 //   <root>/experiments/<id>.runs.jsonl             append-only progress of a run in flight
 //   <root>/judges/<id>.json                        JudgeVersion (status, calibration)
+//   <root>/noise/<dataset>/<taskKey>.json          A/A noise floor per dataset and task (exp aa)
 //   <root>/judge-cache/…                           see src/judge/cache.ts
 //
 // Writes are atomic (tmp + rename) so a crash never leaves a torn JSON file.
@@ -21,6 +22,7 @@ import { paths } from "../core/paths.ts";
 import { writeFileDurable } from "../store/durable.ts";
 import type { DatasetListing, IndexStore } from "../core/types.ts";
 import { datasetVersion } from "./dataset.ts";
+import type { NoiseFloor } from "../experiments/aa.ts";
 import type { Dataset, DatasetVersionInfo, ExperimentLogEntry, ExperimentResult, JudgeVersion } from "./types.ts";
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,199}$/;
@@ -112,6 +114,9 @@ export class FileEvalStore {
   }
   get judgesDir(): string {
     return join(this.root, "judges");
+  }
+  get noiseDir(): string {
+    return join(this.root, "noise"); // always files, like the judge cache
   }
   get judgeCacheDir(): string {
     return join(this.root, "judge-cache"); // == paths(env).judgeCache
@@ -280,6 +285,19 @@ export class FileEvalStore {
   }
 
   // ------------------------------------------------------------ judges
+
+  // ------------------------------------------------------------ noise floors
+
+  /** Store an A/A noise floor; the newest one per (dataset, task) wins. */
+  async putNoise(n: NoiseFloor): Promise<void> {
+    const dir = join(this.noiseDir, safeId("dataset", n.datasetId));
+    await mkdir(dir, { recursive: true });
+    await writeFileAtomic(join(dir, `${safeId("task key", n.taskKey)}.json`), JSON.stringify(n, null, 2) + "\n");
+  }
+
+  async getNoise(datasetId: string, taskKey: string): Promise<NoiseFloor | undefined> {
+    return readJson<NoiseFloor>(join(this.noiseDir, safeId("dataset", datasetId), `${safeId("task key", taskKey)}.json`));
+  }
 
   async putJudge(v: JudgeVersion): Promise<void> {
     if (this.index) return this.index.putJudge!({ ...v, id: safeId("judge", v.id) });

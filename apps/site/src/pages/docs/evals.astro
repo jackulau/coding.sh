@@ -142,6 +142,15 @@ const COMPARE = [
   <Terminal title="~/smoke" label="Output of coding.sh exp compare">
     <pre set:html={COMPARE} />
   </Terminal>
+  <ul>
+    <li><code>--cluster &lt;key&gt;</code> resamples groups of related cases, such as <code>repo</code> or <code>session</code>, instead of single cases. It prints the cluster count and warns below 10 clusters.</li>
+    <li>Below 100 paired cases, compare also prints P(B&gt;A) from a Bayesian posterior on the paired outcomes. The bootstrap interval stays.</li>
+    <li>It counts trials each arm lost to errors, split into infra and agent errors, and warns when Fisher's exact test finds an uneven split.</li>
+    <li>
+      <code>exp aa</code> runs one config twice and stores its run-to-run noise. Compare then prints the A/A flip rate, and the minimum
+      detectable effect never goes below that noise.
+    </li>
+  </ul>
 
   <h2 id="judges">LLM judges <Tag status="built" /></h2>
   <p>
@@ -167,6 +176,7 @@ const COMPARE = [
     <li>κ measured on a split listed in the judge's <code>tunedOn</code> is reported as <strong>in-sample</strong>, never as calibrated.</li>
     <li>Below the bar, the judge is <strong>uncalibrated</strong> or has <strong>insufficient data</strong>, and every report flags its scores.</li>
     <li>Cases where the judge is confidently opposite to unanimous humans are listed for relabelling.</li>
+    <li>The judge's held-out sensitivity and specificity are stored too, so <code>exp compare</code> shows a bias-corrected judge pass rate.</li>
   </ul>
 
   <h2 id="repo-replay">Repo-replay tasks <Tag status="partial" /></h2>

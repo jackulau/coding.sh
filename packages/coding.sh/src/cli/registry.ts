@@ -51,6 +51,18 @@ const AGENT_LIST: FlagSpec = { name: "agent", short: "a", type: "list", value: "
 const AGENT_ONE: FlagSpec = { name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Only sessions from this agent" };
 const SINCE: FlagSpec = { name: "since", type: "string", value: "<WHEN>", desc: "Only after this time: 7d, 12h, 30m or a date" };
 const LIMIT = (d: number): FlagSpec => ({ name: "limit", short: "n", type: "number", value: "<N>", desc: "Maximum rows", default: String(d) });
+
+/** Flags that describe an experiment run (exp run, exp aa). */
+const EXP_RUN_FLAGS: FlagSpec[] = [
+  { name: "dataset", short: "d", type: "string", value: "<ID>", desc: "Dataset id" },
+  { name: "task", type: "string", value: "<JSON|FILE>", desc: 'Task spec: {"kind":"command","command":"…"} (gets each case input as JSON on stdin) or {"kind":"http","url":"…"}' },
+  { name: "grader", short: "g", type: "list", value: "<JSON|FILE>", desc: 'Grader spec, e.g. {"kind":"exact"} (repeatable)' },
+  { name: "name", type: "string", value: "<NAME>", desc: "Experiment name" },
+  { name: "trials", type: "number", value: "<N>", desc: "Attempts per case", default: "1" },
+  { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel case runs", default: "4" },
+  { name: "split", type: "string", value: "<SPLIT>", choices: ["train", "dev", "test"], desc: "Only cases in this split" },
+];
+
 const SCOPE: FlagSpec = { name: "scope", type: "string", value: "<SCOPE>", choices: ["user", "project"], desc: "Install into user or project config", default: "user" };
 
 /** Global options accepted by every command (handled in main.ts). */
@@ -351,15 +363,7 @@ export const COMMANDS: CommandSpec[] = [
         name: "run",
         summary: "Run an experiment",
         args: [{ name: "spec", desc: "Experiment spec JSON file (fields can be overridden by options)" }],
-        flags: [
-          { name: "dataset", short: "d", type: "string", value: "<ID>", desc: "Dataset id" },
-          { name: "task", type: "string", value: "<JSON|FILE>", desc: 'Task spec: {"kind":"command","command":"…"} (gets each case input as JSON on stdin) or {"kind":"http","url":"…"}' },
-          { name: "grader", short: "g", type: "list", value: "<JSON|FILE>", desc: 'Grader spec, e.g. {"kind":"exact"} (repeatable)' },
-          { name: "name", type: "string", value: "<NAME>", desc: "Experiment name" },
-          { name: "trials", type: "number", value: "<N>", desc: "Attempts per case", default: "1" },
-          { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel case runs", default: "4" },
-          { name: "split", type: "string", value: "<SPLIT>", choices: ["train", "dev", "test"], desc: "Only cases in this split" },
-        ],
+        flags: EXP_RUN_FLAGS,
       },
       {
         name: "compare",
@@ -368,7 +372,21 @@ export const COMMANDS: CommandSpec[] = [
           { name: "a", desc: "Baseline experiment id or name (newest)", required: true },
           { name: "b", desc: "Candidate experiment id or name (newest)", required: true },
         ],
-        flags: [{ name: "force", type: "boolean", desc: "Compare a cancelled (partial) experiment too" }],
+        flags: [
+          { name: "force", type: "boolean", desc: "Compare a cancelled (partial) experiment too" },
+          { name: "cluster", type: "string", value: "<KEY>", desc: "Case metadata field (e.g. repo, session) whose clusters the bootstrap resamples instead of single cases" },
+        ],
+        examples: ["coding.sh exp compare base cand", "coding.sh exp compare base cand --cluster repo"],
+      },
+      {
+        name: "aa",
+        summary: "Run one config twice (A/A) and store its run-to-run noise",
+        args: [
+          { name: "a", desc: "Spec JSON file to run twice, or the first of two stored runs of one config" },
+          { name: "b", desc: "The second stored run (compares the two instead of running)" },
+        ],
+        flags: EXP_RUN_FLAGS,
+        examples: ["coding.sh exp aa --dataset smoke --task '{\"kind\":\"command\",\"command\":\"node agent.mjs\"}' --grader '{\"kind\":\"exact\"}'", "coding.sh exp aa smoke-aa1 smoke-aa2"],
       },
       {
         name: "show",

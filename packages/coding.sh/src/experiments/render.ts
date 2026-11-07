@@ -4,7 +4,8 @@
 import type { CalibrationStatus, ExperimentResult } from "../datasets/types.ts";
 import { calibrationBadge } from "../judge/render.ts";
 import type { RoganGladenResult } from "../stats/interval.ts";
-import type { Comparison } from "./compare.ts";
+import type { AaResult } from "./aa.ts";
+import type { ArmAttrition, Comparison } from "./compare.ts";
 import { fixed, ms, paint, pct, pValue, signedPct, table, truncate, type RenderOpts } from "./text.ts";
 
 const trusted = (c: CalibrationStatus | undefined) => c === undefined || c.state === "calibrated";
@@ -122,9 +123,24 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   out.push("");
   out.push(
     `B − A   ${paint(signedPct(c.diff.mean), vColor, color)} [${signedPct(c.diff.lo)}, ${signedPct(c.diff.hi)}] ` +
-      `${paint(`(${c.paired} paired cases, 95% paired bootstrap)`, "dim", color)}`,
+      paint(
+        c.cluster
+          ? `(${c.paired} paired cases in ${c.cluster.clusters} ${c.cluster.key} clusters, 95% cluster bootstrap)`
+          : `(${c.paired} paired cases, 95% paired bootstrap)`,
+        "dim",
+        color,
+      ),
   );
+  if (c.cluster?.missing) out.push(paint(`${c.cluster.missing} paired case(s) have no ${c.cluster.key}; each counts as its own cluster`, "dim", color));
+  if (c.cluster?.warning) out.push(paint(`! ${c.cluster.warning}`, "yellow", color));
   out.push(`mcnemar p=${pValue(c.mcnemar.p)}  ${c.mcnemar.b} regressed, ${c.mcnemar.c} improved`);
+  if (c.posterior) {
+    const q = c.posterior;
+    out.push(
+      `bayes   P(B>A)=${q.pBetter > 0.995 ? ">0.99" : q.pBetter < 0.005 ? "<0.01" : q.pBetter.toFixed(2)}  B − A ${signedPct(q.mean)} [${signedPct(q.lo)}, ${signedPct(q.hi)}] ` +
+        paint(`(95% credible, Dirichlet on paired outcomes; shown below 100 paired cases)`, "dim", color),
+    );
+  }
   if (c.passK) {
     const { a, b } = c.passK;
     const same = a.k === b.k;
@@ -139,7 +155,23 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
     `power   MDE ${Number.isFinite(p.mde) ? `${(p.mde * 100).toFixed(1)}pp` : "—"} ` +
       paint(`(α ${p.alpha}, power ${Math.round(p.power * 100)}%, paired, sd of per-case Δ ${Number.isFinite(p.sd) ? fixed(p.sd) : "—"})`, "dim", color),
   );
+  if (p.noise) {
+    out.push(
+      `noise   A/A flip rate on this dataset ${pct(p.noise.flipRate)} ` +
+        paint(`(sd ${fixed(p.noise.sd)} over ${p.noise.paired} cases${p.noise.used ? "; the MDE uses it as a floor" : ""})`, "dim", color),
+    );
+  }
   for (const w of p.warnings) out.push(paint(`! ${w.message}`, "yellow", color));
+  const att = c.attrition;
+  if (att.a.lost || att.b.lost) {
+    const arm = (x: ArmAttrition) => {
+      const n = (k: number, what: string) => (k ? [`${k} ${what}${k === 1 ? "" : "s"}`] : []);
+      const parts = [...n(x.infra, "infra error"), ...n(x.agent, "agent error"), ...n(x.ungraded, "ungraded run"), ...n(x.missing, "missing run")];
+      return `${x.lost}/${x.runs}${parts.length ? ` (${parts.join(", ")})` : ""}`;
+    };
+    out.push(`lost    A ${arm(att.a)}  B ${arm(att.b)}  ${paint(`Fisher p=${pValue(att.p)}`, "dim", color)}`);
+  }
+  if (att.warning) out.push(paint(`! ${att.warning}`, "yellow", color));
   if (c.onlyInA.length || c.onlyInB.length) out.push(paint(`unpaired: ${c.onlyInA.length} only in A, ${c.onlyInB.length} only in B`, "dim", color));
   const untrusted = new Set(
     [...(opts.a?.graders ?? []), ...(opts.b?.graders ?? [])].filter((g) => !trusted(g.calibration)).map((g) => g.id),
@@ -179,5 +211,23 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   };
   list("regressions", c.regressions, "red");
   list("improvements", c.improvements, "green");
+  return out.join("\n");
+}
+
+/** `exp aa`: the noise one config shows against itself. */
+export function renderAa(r: AaResult, opts: RenderOpts & { first?: ExperimentResult; second?: ExperimentResult }): string {
+  const color = opts.color;
+  const n = r.noise;
+  const c = r.comparison;
+  const out: string[] = [];
+  out.push(`${paint("A/A", "bold", color)} ${c.a.name} ${paint(c.a.id, "dim", color)} vs ${c.b.name} ${paint(c.b.id, "dim", color)}`);
+  out.push(`task    ${n.task.kind}: ${n.task.ref}  dataset ${n.datasetId}@${n.datasetVersion}`);
+  for (const w of r.warnings) out.push(paint(`! ${w}`, "yellow", color));
+  out.push("");
+  out.push(`delta   ${signedPct(n.delta.mean)} [${signedPct(n.delta.lo)}, ${signedPct(n.delta.hi)}] ${paint(`(${n.paired} paired cases, 95% paired bootstrap)`, "dim", color)}`);
+  out.push(`flips   ${n.flips} of ${n.paired} cases (${pct(n.flipRate)}): ${c.mcnemar.b} passed only in the first run, ${c.mcnemar.c} only in the second  mcnemar p=${pValue(n.mcnemarP)}`);
+  out.push(`sd      ${fixed(n.sd)} ${paint("(per-case Δ between the two runs)", "dim", color)}`);
+  const cases = (x: number) => (Number.isFinite(x) ? String(x) : "—");
+  out.push(`plan    paired cases to detect 5pp: ${cases(r.plan.for5)}, 10pp: ${cases(r.plan.for10)} ${paint("(α 0.05, power 80%, at this noise)", "dim", color)}`);
   return out.join("\n");
 }

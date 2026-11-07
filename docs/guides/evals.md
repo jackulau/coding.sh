@@ -22,12 +22,28 @@ leaks.
 (exact, contains, regex, numeric, similarity, JSON schema, JSON path), a command, or an LLM judge.
 
 `coding.sh exp compare A B` reports the paired bootstrap CI of the difference, an exact McNemar
-test on flipped cases and the minimum detectable effect.
+test on flipped cases and the minimum detectable effect. It also reports:
+
+- **Clusters.** `--cluster repo` resamples groups of related cases (any case metadata field;
+  `session` falls back to the case's source session) instead of single cases. It prints the cluster
+  count and warns below 10 clusters. Without the flag, cases are treated as independent.
+- **A Bayesian check at small n.** Below 100 paired cases it adds P(B>A) and a credible interval
+  from a Dirichlet posterior on the paired outcomes. The bootstrap interval stays.
+- **Attrition.** Per arm, trials lost to task errors, grader errors or missing runs, split into
+  infra errors (timeouts, network, HTTP 429/5xx) and agent errors. Fisher's exact test flags an
+  uneven split at p < 0.01.
+- **Noise floor.** When an A/A run exists for the baseline config, it prints the A/A flip rate,
+  and the minimum detectable effect never goes below what that noise allows.
+
+`coding.sh exp aa --dataset D --task T --grader G` runs one config twice and stores its run-to-run
+noise: the A/A delta, flipped cases, the SD of per-case differences, and the cases needed to detect
+a 5pp or 10pp change. `coding.sh exp aa A B` measures it from two stored runs instead.
 
 ## Judges
 
 `coding.sh judge calibrate` measures judge and human agreement (Cohen's kappa) on a held-out split.
-Every report flags judges that are not calibrated.
+Every report flags judges that are not calibrated. It also stores the judge's held-out sensitivity
+and specificity, so later `exp compare` runs show a bias-corrected (Rogan-Gladen) judge pass rate.
 
 ## Harness A/B
 

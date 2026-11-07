@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { CaseRun } from "../../src/datasets/types.ts";
-import { allTrialsPass, normalQuantile, pairedPower, passHatK } from "../../src/experiments/power.ts";
+import { allTrialsPass, casesFor, normalQuantile, pairedPower, passHatK } from "../../src/experiments/power.ts";
 
 const close = (x: number, y: number, eps = 1e-8) => assert.ok(Math.abs(x - y) < eps, `${x} ≉ ${y}`);
 const rep = (v: number, k: number) => Array.from({ length: k }, () => v);
@@ -105,6 +105,38 @@ describe("pairedPower", () => {
   it("rejects alpha or power outside (0, 1)", () => {
     assert.throws(() => pairedPower([0, 1], { alpha: 0 }), RangeError);
     assert.throws(() => pairedPower([0, 1], { power: 1 }), RangeError);
+  });
+});
+
+describe("A/A noise floor in power planning", () => {
+  const noise = { sd: 0.5, flipRate: 0.25, paired: 40 };
+
+  it("the floor replaces a smaller observed SD, and is ignored when the observed one is larger", () => {
+    const quiet = [...rep(1, 2), ...rep(0, 248)];
+    const p = pairedPower(quiet, { noise });
+    close(p.mde, (Z * 0.5) / Math.sqrt(250));
+    assert.deepEqual(p.noise, { ...noise, used: true });
+    assert.ok(p.mde > pairedPower(quiet).mde);
+    const loud = [...rep(1, 125), ...rep(-1, 125)];
+    const q = pairedPower(loud, { noise: { ...noise, sd: 0.1 } });
+    close(q.mde, pairedPower(loud).mde);
+    assert.equal(q.noise?.used, false);
+  });
+
+  it("with no change at all the floor still gives an MDE instead of no-change", () => {
+    const p = pairedPower(rep(0, 250), { noise });
+    close(p.mde, (Z * 0.5) / Math.sqrt(250));
+    assert.deepEqual(p.warnings.map((w) => w.code), ["below-mde"]);
+  });
+
+  it("casesFor inverts the MDE", () => {
+    assert.equal(casesFor(0.1, 0.5), Math.ceil(((Z * 0.5) / 0.1) ** 2));
+    assert.equal(casesFor(0.05, 0.5), Math.ceil(((Z * 0.5) / 0.05) ** 2));
+    assert.ok(casesFor(0.1, 0.5, { alpha: 0.01 }) > casesFor(0.1, 0.5));
+    assert.ok(Number.isNaN(casesFor(0.1, 0)));
+    // At the planned n the MDE is at or just below the target effect.
+    const n = casesFor(0.1, 0.5);
+    assert.ok((Z * 0.5) / Math.sqrt(n) <= 0.1 && (Z * 0.5) / Math.sqrt(n - 1) > 0.1);
   });
 });
 

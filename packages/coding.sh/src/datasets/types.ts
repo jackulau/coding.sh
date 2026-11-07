@@ -91,6 +91,15 @@ export interface CalibrationStatus {
   split?: Split;
   reason?: string;
   ts?: number;
+  /**
+   * Held-out confusion rates, for the Rogan–Gladen correction in `exp compare`:
+   * sensitivity = P(judge pass | human pass), specificity = P(judge fail | human fail),
+   * measured on `positives` human passes and `negatives` human fails.
+   */
+  sensitivity?: number;
+  specificity?: number;
+  positives?: number;
+  negatives?: number;
 }
 
 export interface Grader {

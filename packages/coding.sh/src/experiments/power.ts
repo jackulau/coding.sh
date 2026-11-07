@@ -44,6 +44,19 @@ export interface PowerWarning {
   message: string;
 }
 
+/**
+ * Run-to-run noise of one config on one dataset, measured by an A/A run
+ * (`exp aa`): the same config twice, compared as if it were A and B.
+ */
+export interface NoisePrior {
+  /** Sample SD of per-case (second − first) differences. */
+  sd: number;
+  /** Share of paired cases whose majority outcome flipped between the two runs. */
+  flipRate: number;
+  /** Paired cases the A/A run measured. */
+  paired: number;
+}
+
 export interface PowerAnalysis {
   /** Two-sided significance level. */
   alpha: number;
@@ -64,6 +77,11 @@ export interface PowerAnalysis {
   mde: number;
   /** Cases below which the suite is flagged as small. */
   minPaired: number;
+  /**
+   * The A/A noise floor, when one was given. `used` is true when its SD was
+   * larger than the observed one, so the MDE above is computed from it.
+   */
+  noise?: NoisePrior & { used: boolean };
   warnings: PowerWarning[];
 }
 
@@ -78,6 +96,12 @@ export interface PowerOpts {
    * rather than as undetectable. Default false.
    */
   significant?: boolean;
+  /**
+   * A/A noise floor for this config and dataset. The MDE uses the larger of
+   * its SD and the observed one: a comparison where few cases happened to
+   * change cannot claim to detect effects smaller than run-to-run noise.
+   */
+  noise?: NoisePrior;
 }
 
 const pp = (x: number) => `${(x * 100).toFixed(1)}pp`;
@@ -93,7 +117,10 @@ export function pairedPower(diffs: readonly number[], opts: PowerOpts = {}): Pow
   const observed = n ? diffs.reduce((s, x) => s + x, 0) / n : NaN;
   const sd = n >= 2 ? Math.sqrt(diffs.reduce((s, x) => s + (x - observed) ** 2, 0) / (n - 1)) : NaN;
   const z = normalQuantile(1 - alpha / 2) + normalQuantile(power);
-  const mde = sd > 0 ? (z * sd) / Math.sqrt(n) : NaN;
+  const floor = opts.noise && opts.noise.sd > 0 ? opts.noise.sd : undefined;
+  const useFloor = floor !== undefined && n >= 2 && !(sd >= floor);
+  const planSd = useFloor ? (floor as number) : sd;
+  const mde = planSd > 0 ? (z * planSd) / Math.sqrt(n) : NaN;
   const warnings: PowerWarning[] = [];
   const level = `α ${alpha}, power ${Math.round(power * 100)}%`;
   if (n < 2) {
@@ -105,7 +132,7 @@ export function pairedPower(diffs: readonly number[], opts: PowerOpts = {}): Pow
         message: `only ${n} paired cases (< ${minPaired}): small suites detect only large effects and their intervals can under-cover; add cases or trials before trusting a null result`,
       });
     }
-    if (sd === 0 && observed === 0) {
+    if (sd === 0 && observed === 0 && !useFloor) {
       warnings.push({ code: "no-change", message: "no paired case changed between A and B, so the minimum detectable effect cannot be estimated from these runs" });
     } else if (Number.isFinite(mde) && Math.abs(observed) < mde && opts.significant) {
       warnings.push({
@@ -119,7 +146,19 @@ export function pairedPower(diffs: readonly number[], opts: PowerOpts = {}): Pow
       });
     }
   }
-  return { alpha, power, n, observed, sd, mde, minPaired, warnings };
+  const out: PowerAnalysis = { alpha, power, n, observed, sd, mde, minPaired, warnings };
+  if (opts.noise) out.noise = { sd: opts.noise.sd, flipRate: opts.noise.flipRate, paired: opts.noise.paired, used: useFloor };
+  return out;
+}
+
+/**
+ * Paired cases needed to detect a true |B − A| of `effect` with probability
+ * `power` at level `alpha`, given an SD of per-case differences (e.g. the A/A
+ * noise floor): ⌈((z₁₋α/₂ + z_power) · sd / effect)²⌉. NaN without spread.
+ */
+export function casesFor(effect: number, sd: number, opts: { alpha?: number; power?: number } = {}): number {
+  const z = normalQuantile(1 - (opts.alpha ?? 0.05) / 2) + normalQuantile(opts.power ?? 0.8);
+  return effect > 0 && sd > 0 ? Math.ceil(((z * sd) / effect) ** 2) : NaN;
 }
 
 /** Per case: did every trial pass? (pass^k with k = the case's trial count). */

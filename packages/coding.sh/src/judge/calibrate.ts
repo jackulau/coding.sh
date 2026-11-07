@@ -314,6 +314,14 @@ export function calibrate(opts: CalibrateOpts): CalibrationReport {
     status.kappaHi = m.kappaCI.hi;
   }
   if (reasons.length) status.reason = reasons[0] as string;
+  // Confusion rates for the Rogan–Gladen correction in compare; only held-out ones (in-sample rates flatter the judge).
+  if (heldOut) {
+    const { tp, fp, fn, tn } = m.confusion;
+    status.positives = tn + fp;
+    status.negatives = tp + fn;
+    if (tn + fp > 0) status.sensitivity = tn / (tn + fp);
+    if (tp + fn > 0) status.specificity = tp / (tp + fn);
+  }
 
   const report: CalibrationReport = {
     ...m,

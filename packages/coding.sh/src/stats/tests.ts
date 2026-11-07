@@ -73,3 +73,28 @@ export function holm(ps: readonly number[]): number[] {
   }
   return out;
 }
+
+/**
+ * Fisher's exact test on a 2×2 table [[a, b], [c, d]]. Two-sided p: the sum
+ * of hypergeometric probabilities (margins fixed) of every table no more
+ * likely than the observed one. Exact at any n, so it suits small arms.
+ */
+export function fisherExact(a: number, b: number, c: number, d: number): number {
+  for (const v of [a, b, c, d]) {
+    if (!(Number.isInteger(v) && v >= 0)) throw new RangeError(`fisherExact: counts must be non-negative integers (got ${a}, ${b}, ${c}, ${d})`);
+  }
+  const r1 = a + b;
+  const c1 = a + c;
+  const n = a + b + c + d;
+  if (n === 0) return 1;
+  const lf = logFactorials(n);
+  const r2 = n - r1;
+  const logP = (x: number) => logChoose(r1, x, lf) + logChoose(r2, c1 - x, lf) - logChoose(n, c1, lf);
+  const observed = logP(a);
+  let p = 0;
+  for (let x = Math.max(0, c1 - r2); x <= Math.min(r1, c1); x++) {
+    const lp = logP(x);
+    if (lp <= observed + 1e-7) p += Math.exp(lp);
+  }
+  return Math.min(1, p);
+}

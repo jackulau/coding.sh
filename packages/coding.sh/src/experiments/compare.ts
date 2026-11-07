@@ -2,10 +2,12 @@
 // removes between-case variance (most of it, on agent evals), so a paired
 // bootstrap CI on per-case differences and an exact McNemar test on per-case
 // outcomes detect changes an unpaired comparison would miss.
-import type { CalibrationStatus, ExperimentResult } from "../datasets/types.ts";
-import { pairedBootstrap, roganGladen, type RoganGladenResult } from "../stats/interval.ts";
-import { mcnemar, type McNemarResult } from "../stats/tests.ts";
-import { pairedPower, passHatK, type PowerAnalysis } from "./power.ts";
+import type { Case, CaseRun, ExperimentResult } from "../datasets/types.ts";
+import { clusteredBootstrap } from "../stats/cluster.ts";
+import { pairedBootstrap, roganGladen, type BootstrapOpts, type RoganGladenResult } from "../stats/interval.ts";
+import { pairedPosterior, type PairedPosterior } from "../stats/posterior.ts";
+import { fisherExact, mcnemar, type McNemarResult } from "../stats/tests.ts";
+import { pairedPower, passHatK, type NoisePrior, type PowerAnalysis } from "./power.ts";
 import { caseRates } from "./run.ts";
 
 export interface CaseDelta {
@@ -29,29 +31,100 @@ export interface GraderDelta {
   corrected?: { a?: RoganGladenResult; b?: RoganGladenResult };
 }
 
-/**
- * Confusion-matrix rates a judge calibration may carry. Read structurally:
- * `CalibrationStatus` does not persist them yet, so until it does no
- * correction is reported.
- */
-interface JudgeConfusion {
-  sensitivity?: number;
-  specificity?: number;
-  /** Calibration labels per human class; else `n` is split evenly. */
-  positives?: number;
-  negatives?: number;
-}
-
 const unit = (x: unknown): x is number => typeof x === "number" && x >= 0 && x <= 1;
 
 /** Corrected pass rate of one judge grader in one experiment, or undefined without calibration rates. */
 function correctedRate(r: ExperimentResult, graderId: string): RoganGladenResult | undefined {
-  const cal = r.graders.find((g) => g.id === graderId)?.calibration as (CalibrationStatus & JudgeConfusion) | undefined;
+  const cal = r.graders.find((g) => g.id === graderId)?.calibration;
   const s = r.summary.graders.find((g) => g.id === graderId);
   if (!cal || !s || !(s.n > 0) || !unit(cal.sensitivity) || !unit(cal.specificity)) return undefined;
   const nCal =
     typeof cal.positives === "number" && typeof cal.negatives === "number" ? { positives: cal.positives, negatives: cal.negatives } : (cal.n ?? 0);
   return roganGladen(s.passed / s.n, cal.sensitivity, cal.specificity, s.n, nCal);
+}
+
+/** Clusters below which the cluster bootstrap is flagged as unreliable. */
+export const MIN_CLUSTERS = 10;
+/** Paired cases below which compare also reports the Bayesian posterior. */
+export const POSTERIOR_BELOW = 100;
+/** Attrition p-value below which compare warns. */
+export const ATTRITION_ALPHA = 0.01;
+
+export interface ClusterInfo {
+  /** Case metadata field the cases were grouped by. */
+  key: string;
+  /** Distinct clusters among the paired cases. */
+  clusters: number;
+  /** Paired cases without the key; each counts as its own cluster. */
+  missing: number;
+  /** Set below MIN_CLUSTERS. */
+  warning?: string;
+}
+
+/** Trials one arm lost before an outcome was known. */
+export interface ArmAttrition {
+  /** Trials expected: runs that happened plus missing ones. */
+  runs: number;
+  /** Ran and graded. */
+  completed: number;
+  /** Task errors (they count as fails in the pass rate). */
+  errored: number;
+  /** Task errors that look like infrastructure: timeouts, spawn failures, network, HTTP 429/5xx. */
+  infra: number;
+  /** The other task errors (the agent crashed or exited non-zero). */
+  agent: number;
+  /** Grader errors: outcome unknown, left out. */
+  ungraded: number;
+  /** Trials of cases that ran only in the other arm (same dataset version only). */
+  missing: number;
+  /** errored + ungraded + missing. */
+  lost: number;
+}
+
+export interface Attrition {
+  a: ArmAttrition;
+  b: ArmAttrition;
+  /** Fisher's exact two-sided p for lost vs kept trials by arm. */
+  p: number;
+  /** Set when p < ATTRITION_ALPHA: one arm lost noticeably more trials. */
+  warning?: string;
+}
+
+const INFRA = /time[sd]? ?out|ETIMEDOUT|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|EPIPE|socket hang up|fetch failed|network|could not start|spawn|ENOMEM|killed by SIG|HTTP (429|5\d\d)\b|rate.?limit|overloaded/i;
+
+/** Whether a task error message looks like infrastructure rather than the agent. */
+export function isInfraError(message: string): boolean {
+  return INFRA.test(message);
+}
+
+function armAttrition(runs: readonly CaseRun[], missing: number): ArmAttrition {
+  let errored = 0;
+  let infra = 0;
+  let ungraded = 0;
+  for (const r of runs) {
+    if (r.error !== undefined) {
+      errored++;
+      if (isInfraError(r.error)) infra++;
+    } else if (r.ungraded) ungraded++;
+  }
+  const lost = errored + ungraded + missing;
+  return { runs: runs.length + missing, completed: runs.length - errored - ungraded, errored, infra, agent: errored - infra, ungraded, missing, lost };
+}
+
+/**
+ * Each case's cluster from a case field: `metadata.<key>` (a leading
+ * "metadata." is optional), or, for "session", the case's source session
+ * when its metadata has none. Cases without a value are left out.
+ */
+export function clusterMap(cases: readonly Case[], key: string): Map<string, string> {
+  const k = key.replace(/^metadata\./, "");
+  const out = new Map<string, string>();
+  for (const c of cases) {
+    const v = c.metadata?.[k];
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") out.set(c.id, String(v));
+    else if (k === "session" && c.sourceSessionId) out.set(c.id, c.sourceSessionId);
+  }
+  return out;
 }
 
 export interface Comparison {
@@ -66,8 +139,17 @@ export interface Comparison {
   paired: number;
   onlyInA: string[];
   onlyInB: string[];
-  /** Mean of per-case (B − A) pass-rate differences, with paired bootstrap CI. */
+  /** Mean of per-case (B − A) pass-rate differences, with paired bootstrap CI (over clusters with `cluster`). */
   diff: { mean: number; lo: number; hi: number; iters: number };
+  /** Present with the cluster option: the bootstrap resampled clusters of cases. */
+  cluster?: ClusterInfo;
+  /**
+   * Present below POSTERIOR_BELOW paired cases, where percentile bootstrap
+   * intervals under-cover: Dirichlet posterior on the paired majority outcomes.
+   */
+  posterior?: PairedPosterior;
+  /** Trials each arm lost to task errors, grader errors or missing runs, and whether the split is uneven. */
+  attrition: Attrition;
   /** On per-case majority outcomes: b = A pass → B fail (regressions), c = A fail → B pass. */
   mcnemar: McNemarResult;
   /** "better" / "worse" when the CI excludes 0; otherwise "inconclusive". */
@@ -95,6 +177,10 @@ export interface CompareOpts {
   minPaired?: number;
   /** Compare a cancelled experiment anyway (its unfinished cases are missing, not failed). */
   force?: boolean;
+  /** Resample clusters, not cases: `key` names the case field, `of` maps case id → cluster (see clusterMap). */
+  cluster?: { key: string; of: ReadonlyMap<string, string> };
+  /** A/A noise floor of this config on this dataset (`exp aa`); power planning uses it. */
+  noise?: NoisePrior;
 }
 
 /** Thrown when a side of a comparison is a cancelled (partial) experiment and `force` is not set. */
@@ -136,7 +222,13 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     const y = rb.get(caseId) as number;
     return { caseId, a: x, b: y, delta: y - x };
   });
-  const d = pairedBootstrap(
+  // With a cluster key, a case without one is its own cluster.
+  const cl = opts.cluster;
+  const clusterOf = (id: string) => cl?.of.get(id) ?? `\u0000${id}`;
+  const bootstrap = (caseIds: readonly string[], diffs: readonly number[], o: BootstrapOpts) =>
+    cl ? clusteredBootstrap(diffs, caseIds.map(clusterOf), o) : pairedBootstrap(diffs, o);
+  const d = bootstrap(
+    ids,
     deltas.map((x) => x.delta),
     boot,
   );
@@ -160,7 +252,7 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     const mb = graderMeans(b, gid);
     const common = [...ma.keys()].filter((k) => mb.has(k)).sort();
     const diffs = common.map((k) => (mb.get(k) as number) - (ma.get(k) as number));
-    const bd = pairedBootstrap(diffs, boot);
+    const bd = bootstrap(common, diffs, boot);
     const mean = (m: Map<string, number>) => (common.length ? common.reduce((s, k) => s + (m.get(k) as number), 0) / common.length : NaN);
     const out: GraderDelta = { id: gid, n: common.length, meanA: mean(ma), meanB: mean(mb), diff: { mean: bd.mean, lo: bd.lo, hi: bd.hi } };
     const ca = correctedRate(a, gid);
@@ -169,6 +261,18 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     return out;
   });
   const ungraded = { a: a.runs.filter((r) => r.ungraded).length, b: b.runs.filter((r) => r.ungraded).length };
+  // Cases that ran on one side only are lost trials only when both sides ran the same cases.
+  const sameData = a.dataset.id === b.dataset.id && a.dataset.version === b.dataset.version;
+  const attA = armAttrition(a.runs, sameData ? onlyInB.length * a.trials : 0);
+  const attB = armAttrition(b.runs, sameData ? onlyInA.length * b.trials : 0);
+  const attrition: Attrition = { a: attA, b: attB, p: fisherExact(attA.lost, attA.runs - attA.lost, attB.lost, attB.runs - attB.lost) };
+  if (attrition.p < ATTRITION_ALPHA) {
+    const infra = attA.infra + attB.infra;
+    attrition.warning =
+      `uneven attrition: A lost ${attA.lost} of ${attA.runs} trials, B lost ${attB.lost} of ${attB.runs} (Fisher p=${attrition.p < 0.001 ? "<0.001" : attrition.p.toFixed(3)}); ` +
+      `lost trials are not missing at random, so the paired result may be biased` +
+      (infra ? `. ${infra} task error(s) look like infrastructure (timeout, network, HTTP 429/5xx): re-run those cases before trusting the verdict` : "");
+  }
   const out: Comparison = {
     a: { id: a.id, name: a.name, passRate: rateOf(ra) },
     b: { id: b.id, name: b.name, passRate: rateOf(rb) },
@@ -182,11 +286,21 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     regressions: deltas.filter((x) => x.delta < 0).sort(byDelta),
     improvements: deltas.filter((x) => x.delta > 0).sort((x, y) => y.delta - x.delta || (x.caseId < y.caseId ? -1 : 1)),
     graders,
+    attrition,
     power: pairedPower(
       deltas.map((x) => x.delta),
-      { alpha: boot.alpha, power: opts.power, minPaired: opts.minPaired, significant: verdict !== "inconclusive" },
+      { alpha: boot.alpha, power: opts.power, minPaired: opts.minPaired, significant: verdict !== "inconclusive", ...(opts.noise ? { noise: opts.noise } : {}) },
     ),
   };
+  if (cl) {
+    const clusters = new Set(ids.map(clusterOf)).size;
+    const info: ClusterInfo = { key: cl.key, clusters, missing: ids.filter((id) => !cl.of.has(id)).length };
+    if (ids.length && clusters < MIN_CLUSTERS) {
+      info.warning = `only ${clusters} ${cl.key} cluster(s) (< ${MIN_CLUSTERS}): a cluster bootstrap with so few clusters gives a rough, often too narrow interval`;
+    }
+    out.cluster = info;
+  }
+  if (ids.length > 0 && ids.length < POSTERIOR_BELOW) out.posterior = pairedPosterior(regress, improve, ids.length - regress - improve, { alpha: boot.alpha, seed: boot.seed });
   if (a.trials > 1 || b.trials > 1) {
     const pa = passHatK(a.runs, ids);
     const pb = passHatK(b.runs, ids);

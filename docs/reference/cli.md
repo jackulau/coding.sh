@@ -560,6 +560,7 @@ coding.sh exp <action>
 |---|---|
 | [`run`](#codingsh-exp-run) | Run an experiment |
 | [`compare`](#codingsh-exp-compare) | Compare two experiments case by case |
+| [`aa`](#codingsh-exp-aa) | Run one config twice (A/A) and store its run-to-run noise |
 | [`show`](#codingsh-exp-show) | Show a stored experiment: pass rate, graders and failures |
 | [`list`](#codingsh-exp-list) | List experiments |
 
@@ -601,6 +602,40 @@ coding.sh exp compare <A> <B> [options]
 | Option | Default | Description |
 |---|---|---|
 | `--force` |  | Compare a cancelled (partial) experiment too. |
+| `--cluster <KEY>` |  | Case metadata field (e.g. repo, session) whose clusters the bootstrap resamples instead of single cases. |
+
+```sh
+coding.sh exp compare base cand
+coding.sh exp compare base cand --cluster repo
+```
+
+### `coding.sh exp aa`
+
+Run one config twice (A/A) and store its run-to-run noise.
+
+```text
+coding.sh exp aa [a] [b] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `a` | no | Spec JSON file to run twice, or the first of two stored runs of one config. |
+| `b` | no | The second stored run (compares the two instead of running) |
+
+| Option | Default | Description |
+|---|---|---|
+| `-d, --dataset <ID>` |  | Dataset id. |
+| `--task <JSON|FILE>` |  | Task spec: {"kind":"command","command":"…"} (gets each case input as JSON on stdin) or {"kind":"http","url":"…"}. |
+| `-g, --grader <JSON|FILE>` |  | Grader spec, e.g. {"kind":"exact"} (repeatable) |
+| `--name <NAME>` |  | Experiment name. |
+| `--trials <N>` | `1` | Attempts per case. |
+| `-c, --concurrency <N>` | `4` | Parallel case runs. |
+| `--split <SPLIT>` |  | Only cases in this split. One of: `train`, `dev`, `test`. |
+
+```sh
+coding.sh exp aa --dataset smoke --task '{"kind":"command","command":"node agent.mjs"}' --grader '{"kind":"exact"}'
+coding.sh exp aa smoke-aa1 smoke-aa2
+```
 
 ### `coding.sh exp show`
 
