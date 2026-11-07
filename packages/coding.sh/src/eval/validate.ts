@@ -5,7 +5,9 @@
 //   (d) nothing leaks the answer to the agent,
 //   (e) fails the reference on an impossible variant (tests flipped to contradict
 //       the instruction); passing it means the verifier is gameable,
-//   (f) and the reference keeps the repo's pre-existing tests passing (pass-to-pass).
+//   (f) the reference keeps the repo's pre-existing tests passing (pass-to-pass),
+//   (g) and no hidden test names an identifier or file only the reference introduces
+//       (gold-only coupling, src/eval/coupling.ts); non-blocking unless strictCoupling.
 // Every step runs in its own freshly materialized dir; hidden verifier files
 // are copied in only right before the verifier runs.
 import { existsSync } from "node:fs";
@@ -17,9 +19,10 @@ import type { BlobRef, BlobStore, EvalTask, IndexStore, ValidationReport } from 
 import { commandEnv, sh, type ExecResult } from "../runner/exec.ts";
 import { safeJoin, safeWrite, writeHiddenFiles } from "../runner/fsutil.ts";
 import { applyPatch, git, rmrf, snapshotOps, type SnapshotOps } from "../runner/git.ts";
-import { impossibleMutations, readTextFiles, verifierReferencedFiles, type ImpossibleMutation, type TestFileText } from "./impossible.ts";
+import { couplingNote, goldCandidates, goldOnlyCoupling, startTreeLookup, type Coupling, type StartTree } from "./coupling.ts";
+import { impossibleMutations, isTestPath, readTextFiles, verifierReferencedFiles, type ImpossibleMutation, type TestFileText } from "./impossible.ts";
 import { blockOverlap } from "./leakage.ts";
-import { addedBlocks, addedLines, nearMissMutations } from "./patch.ts";
+import { addedBlocks, addedLines, nearMissMutations, patchPaths } from "./patch.ts";
 import { comparePassToPass, detectSuiteCommand } from "./suite.ts";
 
 export type StepKind = "noop" | "reference" | "near-miss" | "impossible" | "pass-to-pass";
@@ -69,6 +72,8 @@ export interface ValidateOpts {
   passToPass?: boolean | string | { command: string; timeoutMs?: number };
   /** n-gram size and overlap fraction for the instruction-vs-patch leakage check. */
   leakage?: { ngram?: number; threshold?: number };
+  /** Gold-only coupling blocks validation (default: reported as notes only). */
+  strictCoupling?: boolean;
   setupTimeoutMs?: number;
   /** Extra env for setup + verifier. */
   env?: Record<string, string>;
@@ -303,10 +308,12 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
   // (a) no-op, plus tree-level leakage checks on the untouched start state.
   let noopFails = false;
   let detectedSuite: string | undefined;
+  let startTree: StartTree | undefined;
   {
     const p = await prepare("noop");
     try {
       leakage.push(...(await scanTree(p.dir, task, refPatch, notes)));
+      if (refPatch) startTree = await startTreeLookup(p.dir, goldCandidates(refPatch).names.keys());
       if (p2pOpt === true) detectedSuite = await detectSuiteCommand(p.dir);
       if (!p.setup.ok) {
         errors.push(`no-op: ${p.setup.error}`);
@@ -323,9 +330,12 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
 
   // (b) reference passes k/k (same dir: setup once, verifier k times).
   let refPassed = 0;
+  /** Test files the reference adds or changes, as they read after it (for the coupling check). */
+  let refTests: TestFileText[] = [];
   if (refPatch && canVerify) {
     const p = await prepare("reference", refPatch);
     try {
+      if (p.applied) refTests = await readTextFiles(p.dir, patchPaths(refPatch).filter(isTestPath));
       if (!p.applied || !p.setup.ok) {
         errors.push(`reference: ${p.setup.error}`);
         failedPrep("reference", "reference", p.applied, p.setup.error ?? "setup failed", p.setup.out);
@@ -496,6 +506,15 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
     }
   }
 
+  // (g) gold-only coupling: tests that only a solution reusing the reference's names can pass.
+  let coupling: Coupling[] = [];
+  if (refPatch && startTree) {
+    const hidden = await hiddenTexts(task, blobs);
+    const testFiles = [...hidden, ...refTests.filter((t) => !hidden.some((h) => h.path === t.path))];
+    coupling = goldOnlyCoupling({ testFiles, refPatch, startTree, instruction: task.instruction });
+    for (const c of coupling) notes.push(couplingNote(c));
+  }
+
   // (d) text leakage: the instruction must not contain the answer.
   if (refPatch) {
     const ov = blockOverlap(addedBlocks(refPatch), task.instruction, opts.leakage?.ngram ?? 8);
@@ -512,6 +531,7 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
     leakage,
     ...(impossible ? { impossible } : {}),
     ...(passToPass ? { passToPass } : {}),
+    ...(coupling.length ? { coupling } : {}),
     ok:
       errors.length === 0 &&
       noopFails &&
@@ -519,7 +539,8 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
       nmFailed === nmOf &&
       leakage.length === 0 &&
       !impossible?.gameable &&
-      (!passToPass || passToPass.passed === passToPass.of),
+      (!passToPass || passToPass.passed === passToPass.of) &&
+      !(opts.strictCoupling && coupling.length),
     ts: Date.now(),
   };
   checkpoint();
@@ -548,6 +569,7 @@ export function formatValidation(o: ValidationOutcome): string {
     ...(r.passToPass
       ? [`${mark(r.passToPass.passed === r.passToPass.of)} pass-to-pass ${r.passToPass.passed}/${r.passToPass.of}${r.passToPass.granularity === "exit" ? " (suite exit status)" : ""} \`${r.passToPass.command}\``]
       : []),
+    ...(r.coupling ? [`warn ${r.coupling.length} hidden-test reference(s) to names only the reference introduces (gold-only coupling)`] : []),
     ...o.errors.map((e) => `error: ${e}`),
     ...o.notes.map((n) => `note: ${n}`),
     r.ok ? "→ validated" : "→ kept as draft",

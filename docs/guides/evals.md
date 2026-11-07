@@ -12,6 +12,22 @@ repo snapshot taken before the agent ran.
 reference fix passes k of k, near-misses fail, an impossible variant fails, and no future history
 leaks.
 
+Validation also looks for gold-only coupling: a hidden test that names a helper or file only the
+reference introduces, which the instruction never mentions (`_parseCidr`, `src/acl/util.ts`). A
+valid solution that names things differently fails such a test. Each case is listed as a note and
+in `report.coupling`. It does not block validation unless you pass `--strict-coupling`.
+
+`coding.sh eval crosscheck <task> [--experiment <id>] [--max 5]` checks the verifier from the
+other side. A reviewer model reads the instruction and each stored run's diff, with the reference
+shown as one valid answer among many, and decides whether the change is valid. Where it disagrees
+with the verifier, the run is a false reject (the verifier failed a valid fix) or a false accept
+(it passed an invalid one). The report lists each disagreement next to any coupling found by
+`eval validate`. Cancelled and timed-out runs are skipped. `--solver <bundle>` first solves the
+task once with that harness and reviews that attempt too. `--judge '{"provider":"openai","model":…}'`
+picks the reviewer (default Anthropic). It makes one model call per run, at most `--max`. The
+counts are stored at `task.meta.crossCheck`, in the same shape as a human verifier audit (see
+[Auditing a test verifier](#auditing-a-test-verifier)), and `eval list --json` shows them.
+
 `coding.sh eval export --format harbor` writes a Harbor-format task.
 
 ## Datasets and experiments

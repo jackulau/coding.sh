@@ -1,13 +1,15 @@
-// coding.sh eval new|validate|list|export
+// coding.sh eval new|validate|crosscheck|list|export
 import { existsSync, readdirSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { EvalTask } from "../../core/types.ts";
+import type { EvalTask, RunResult } from "../../core/types.ts";
+import { crossCheckMeta, crossCheckVerifier, DEFAULT_CROSSCHECK_MAX, formatCrossCheck } from "../../eval/crosscheck.ts";
 import { draftTaskFromSession, exportHarbor, exportTaskDir, readInstructionArg } from "../../eval/task.ts";
 import { formatValidation, validateTask } from "../../eval/validate.ts";
+import { providerFromSpec, type LlmProviderSpec } from "../../graders/index.ts";
 import { positiveInt, UsageError } from "../args.ts";
-import { autoIngest, list, oneLine, resolveSession, resolveTask, str, withContext } from "../common.ts";
+import { autoIngest, jsonArg, list, oneLine, resolveSession, resolveTask, str, withContext } from "../common.ts";
 import { ago, CliError, clean } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import type { Context } from "../../core/context.ts";
@@ -16,7 +18,7 @@ import type { Context } from "../../core/context.ts";
 const getTask = (ctx: Context, ref: string): Promise<EvalTask> => resolveTask(ctx, ref);
 
 function taskJson(t: EvalTask): Record<string, unknown> {
-  return { id: t.id, name: t.name, status: t.status, sourceSessionId: t.sourceSessionId ?? null, repo: t.start.repoRoot, verifier: t.verifier, tags: t.tags, createdAt: new Date(t.createdAt).toISOString(), validation: t.validation ?? null };
+  return { id: t.id, name: t.name, status: t.status, sourceSessionId: t.sourceSessionId ?? null, repo: t.start.repoRoot, verifier: t.verifier, tags: t.tags, createdAt: new Date(t.createdAt).toISOString(), validation: t.validation ?? null, ...(t.meta?.crossCheck ? { crossCheck: t.meta.crossCheck } : {}) };
 }
 
 export async function run(c: CommandContext): Promise<number> {
@@ -79,6 +81,7 @@ export async function run(c: CommandContext): Promise<number> {
             k,
             index: ctx.index,
             keep: c.flags.keep === true,
+            strictCoupling: c.flags["strict-coupling"] === true,
             signal: c.signal,
             onStep: (st) => out.note(`${st.label}: ${st.pass ? "pass" : "fail"}`),
           });
@@ -95,6 +98,58 @@ export async function run(c: CommandContext): Promise<number> {
           if (c.flags.keep !== true) await rm(workRoot, { recursive: true, force: true });
           else out.note(`Work directories kept in ${workRoot}`);
         }
+      }
+      case "crosscheck": {
+        const task = await getTask(ctx, c.positionals[0]!);
+        const max = positiveInt(c.flags.max, "max") ?? DEFAULT_CROSSCHECK_MAX;
+        const judgeArg = str(c.flags.judge);
+        const spec = (judgeArg ? await jsonArg(judgeArg, "--judge") : {}) as LlmProviderSpec;
+        if (!spec || typeof spec !== "object" || Array.isArray(spec)) throw new UsageError('--judge must be a provider spec, e.g. {"provider":"anthropic","model":"…"}', { reason: "invalid_value" });
+        let provider;
+        try {
+          provider = providerFromSpec(spec, { env: c.env });
+        } catch (e) {
+          throw new UsageError(`Invalid --judge: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_value" });
+        }
+        const experimentId = str(c.flags.experiment);
+        const runs: RunResult[] = await ctx.index.listRuns({ taskId: task.id, ...(experimentId ? { experimentId } : {}) });
+        const solver = str(c.flags.solver);
+        if (solver) {
+          const bundle = await ctx.index.getBundle(solver);
+          if (!bundle) throw new CliError(`Can't find harness bundle ${JSON.stringify(solver)}`, { reason: "not_found", next: ["List bundles:", "coding.sh harness list"] });
+          const { getAdapter } = await import("../../adapters/index.ts");
+          const adapter = getAdapter(bundle.agent);
+          if (!adapter?.run) throw new CliError(`Agent ${bundle.agent} has no headless driver, so bundle ${bundle.name} can't solve the task`, { reason: "unsupported_agent" });
+          const { runTask } = await import("../../runner/run.ts");
+          const spin = out.spin(`Solving ${task.name} with ${bundle.name}…`);
+          try {
+            runs.push(await runTask({ task, bundle, adapter, blobs: ctx.blobs, index: ctx.index, signal: c.signal }));
+          } finally {
+            spin.stop();
+          }
+        }
+        if (!runs.length) {
+          throw new CliError(`No stored runs of ${task.name}${experimentId ? ` in experiment ${experimentId}` : ""} to cross-check`, {
+            reason: "not_found",
+            next: ["Run the task first, or solve it once here:", `coding.sh eval crosscheck ${task.id} --solver <BUNDLE>`],
+          });
+        }
+        const spin = out.spin(`Cross-checking up to ${max} run(s) of ${task.name}…`);
+        let result;
+        try {
+          // The reviewer takes runs oldest first; a fresh solver attempt is moved to the front so --max never skips it.
+          const ordered = solver ? [{ ...runs.at(-1)!, startedAt: -Infinity }, ...runs.slice(0, -1)] : runs;
+          result = await crossCheckVerifier({ task, runs: ordered, blobs: ctx.blobs, provider, max, signal: c.signal });
+        } finally {
+          spin.stop();
+        }
+        // Shared with `judge calibrate --grader <verifier>` (EM-11): the same counts, source "blind-solver".
+        const updated: EvalTask = { ...task, meta: { ...(task.meta ?? {}), crossCheck: crossCheckMeta(result) } };
+        if (result.checked) await ctx.index.putTask(updated);
+        const coupling = task.validation?.coupling ?? [];
+        if (out.json) out.data({ outcome: result.checked ? "checked" : "nothing_checked", crossCheck: result, coupling });
+        else out.print(formatCrossCheck(result, coupling));
+        return result.checked && !result.errors.length ? 0 : 1;
       }
       case "list": {
         const status = str(c.flags.status) as EvalTask["status"] | undefined;

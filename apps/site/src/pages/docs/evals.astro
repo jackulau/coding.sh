@@ -254,6 +254,14 @@ const COMPARE = [
     <li>Nothing leaks: hidden test files are copied in only when the verifier runs, and follow-up prompts that steer toward the answer stay out of the instruction.</li>
   </ol>
   <p>
+    It also flags gold-only coupling: a hidden test that names a helper or file only the reference adds, when the instruction never mentions
+    it. A valid fix that names things differently would fail. These show as notes; <code>--strict-coupling</code> makes them fail validation.
+    <code>eval crosscheck &lt;task&gt;</code> works from the other side: a reviewer model reads the instruction and each stored run's diff and
+    says whether the change is valid. Where it disagrees with the verifier, it reports a false reject or a false accept, and stores the counts
+    on the task in the same shape as a human verifier audit. <code>--solver &lt;bundle&gt;</code> solves the task once first, and
+    <code>--max</code> caps the model calls (default 5).
+  </p>
+  <p>
     Harness bundles (agent, model, flags, env and files such as <code>CLAUDE.md</code> or <code>AGENTS.md</code>, identified by a content hash)
     are what <code>compare</code> A/B tests: it runs both bundles on validated tasks in isolated worktrees and reports per-arm Wilson
     intervals, a paired bootstrap interval, McNemar's test, cost, token, turn and latency deltas, and the first step where the two traces diverge. Tasks export

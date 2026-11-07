@@ -487,6 +487,19 @@ export interface VerifierSpec {
   timeoutMs: number;
 }
 
+/**
+ * A hidden test that names something only the reference solution introduces (Z-3): a
+ * valid solution that names it differently fails. `symbol` is the identifier or the path.
+ */
+export interface VerifierCoupling {
+  testFile: string;
+  line: number;
+  symbol: string;
+  kind: "identifier" | "path";
+  /** Reference file that defines (or is) the symbol. */
+  definedIn: string;
+}
+
 export interface ValidationReport {
   noopFails: boolean;
   referencePasses: { passed: number; of: number };
@@ -529,6 +542,11 @@ export interface ValidationReport {
     /** "tests" when per-test results were parsed, "exit" when only exit statuses were compared. */
     granularity: "tests" | "exit";
   };
+  /**
+   * Gold-only coupling: hidden or reference tests that name identifiers or files only the
+   * reference introduces. Non-blocking unless validated with `strictCoupling`. Absent when none.
+   */
+  coupling?: VerifierCoupling[];
   ok: boolean;
   ts: number;
 }

@@ -328,7 +328,20 @@ export const COMMANDS: CommandSpec[] = [
         flags: [
           { name: "k", type: "number", value: "<N>", desc: "Reference must pass N of N runs", default: "5" },
           { name: "keep", type: "boolean", desc: "Keep work directories" },
+          { name: "strict-coupling", type: "boolean", desc: "Fail validation when a hidden test names an identifier or file only the reference introduces" },
         ],
+      },
+      {
+        name: "crosscheck",
+        summary: "Ask a model whether stored solutions are valid and count where the verifier disagrees",
+        args: [{ name: "task", desc: "Task id or name", required: true }],
+        flags: [
+          { name: "experiment", type: "string", value: "<ID>", desc: "Only runs from this experiment (default: every stored run of the task)" },
+          { name: "max", type: "number", value: "<N>", desc: "Runs to review (one model call each)", default: "5" },
+          { name: "judge", type: "string", value: "<JSON|FILE>", desc: 'Reviewer model: {"provider":"anthropic"|"openai"|"gateway"|"mock","model":…}', default: '{"provider":"anthropic"}' },
+          { name: "solver", type: "string", value: "<BUNDLE>", desc: "First solve the task once with this harness bundle and review that attempt too" },
+        ],
+        examples: ["coding.sh eval crosscheck my-task --experiment exp_01J…", "coding.sh eval crosscheck my-task --solver claude-default --max 3"],
       },
       {
         name: "list",

@@ -426,6 +426,7 @@ coding.sh eval <action>
 |---|---|
 | [`new`](#codingsh-eval-new) | Draft a task from a captured session |
 | [`validate`](#codingsh-eval-validate) | Check the reference passes, near-misses fail and nothing leaks |
+| [`crosscheck`](#codingsh-eval-crosscheck) | Ask a model whether stored solutions are valid and count where the verifier disagrees |
 | [`list`](#codingsh-eval-list) | List eval tasks |
 | [`export`](#codingsh-eval-export) | Write a task to a directory |
 
@@ -471,6 +472,31 @@ coding.sh eval validate <TASK> [options]
 |---|---|---|
 | `--k <N>` | `5` | Reference must pass N of N runs. |
 | `--keep` |  | Keep work directories. |
+| `--strict-coupling` |  | Fail validation when a hidden test names an identifier or file only the reference introduces. |
+
+### `coding.sh eval crosscheck`
+
+Ask a model whether stored solutions are valid and count where the verifier disagrees.
+
+```text
+coding.sh eval crosscheck <TASK> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `task` | yes | Task id or name. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--experiment <ID>` |  | Only runs from this experiment (default: every stored run of the task) |
+| `--max <N>` | `5` | Runs to review (one model call each) |
+| `--judge <JSON|FILE>` | `{"provider":"anthropic"}` | Reviewer model: {"provider":"anthropic"\|"openai"\|"gateway"\|"mock","model":…}. |
+| `--solver <BUNDLE>` |  | First solve the task once with this harness bundle and review that attempt too. |
+
+```sh
+coding.sh eval crosscheck my-task --experiment exp_01J…
+coding.sh eval crosscheck my-task --solver claude-default --max 3
+```
 
 ### `coding.sh eval list`
 

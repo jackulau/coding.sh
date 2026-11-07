@@ -5,3 +5,5 @@ export * from "./patch.ts";
 export * from "./leakage.ts";
 export * from "./impossible.ts";
 export * from "./suite.ts";
+export * from "./coupling.ts";
+export * from "./crosscheck.ts";
