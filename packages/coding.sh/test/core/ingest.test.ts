@@ -11,6 +11,7 @@ import { acquireLock, isStale, LockBusyError, LockLostError } from "../../src/co
 import { kickIngest } from "../../src/spool/kick.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { wrapperAdapter } from "../../src/adapters/more/wrapper.ts";
 
 const roots: string[] = [];
 after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
@@ -152,6 +153,28 @@ describe("ingest", () => {
     assert.ok(r.errors.every((e) => e.source === "fake/2026-11-06.1.jsonl" && typeof e.offset === "number"));
     assert.equal(await t.index.getCursor("fake/2026-11-06.1.jsonl"), statSync(t.file).size);
     assert.deepEqual((await ingest(opts)).errors, [], "errors are not repeated");
+  });
+
+  it("records `run --agent <any name>` wrapper lines under that name", async () => {
+    const t = setup();
+    const wrapper = new Map<string, Adapter>([["fake", fakeAdapter], ["wrapper", wrapperAdapter]]);
+    const sid = "2dddda7a-0b0e-4c03-ba2e-52b2d1a22b84";
+    const cwd = join(t.root, "work");
+    t.write(
+      t.line({ sessionId: sid, cmd: "./my-agent", args: ["--task", "42"], cwd }, { agent: "my-agent", event: "session.start" }),
+      t.line({ sessionId: sid, path: "add.js", op: "modify", additions: 1, deletions: 1 }, { agent: "my-agent", event: "file.change" }),
+      t.line({ sessionId: sid, exitCode: 0, durationMs: 2 }, { agent: "my-agent", event: "session.end" }),
+      // A hook-shaped line from an unknown agent is still skipped.
+      t.line({ hook_event_name: "Stop", session_id: "x" }, { agent: "my-agent", event: "session.end" }),
+    );
+    const r = await ingest({ config: t.config, index: t.index, blobs: t.blobs, adapters: wrapper, env: t.env });
+    assert.deepEqual(r.errors.map((e) => e.message.slice(0, 30)), ["no adapter registered for agen"]);
+    const s = await t.index.getSession(sid);
+    assert.equal(s?.agent, "my-agent");
+    assert.equal(s?.stats.filesChanged, 1);
+    const events = await t.index.listEvents(sid);
+    assert.deepEqual(events.map((e) => e.kind), ["session.start", "file.change", "session.end"]);
+    assert.ok(events.every((e) => e.agent === "my-agent" && e.source === "wrapper"));
   });
 
   it("redacts payloads and blobs before storing", async () => {

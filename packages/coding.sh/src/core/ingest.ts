@@ -64,6 +64,7 @@ import { priceEvent, pricesFor } from "./pricing.ts";
 import { listSpoolFiles, readSpoolFile, type SpoolFile } from "./spool-read.ts";
 import { repoResolver, type RepoResolver } from "./repo-state.ts";
 import { snapshot } from "./snapshot.ts";
+import { isWrapperLine } from "../adapters/more/wrapper.ts";
 
 export const PUT_BATCH = 500;
 const DEFAULT_CHECKPOINT_EVENTS = 5000;
@@ -272,7 +273,9 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
       result.excluded++;
       return [];
     }
-    const adapter = adapters.get(line.agent);
+    // `coding.sh run --agent my-agent -- …` spools under any name: an id with no
+    // adapter of its own is still a wrapper session, recorded under that name.
+    const adapter = adapters.get(line.agent) ?? (isWrapperLine(line) ? adapters.get("wrapper") : undefined);
     if (!adapter) {
       error({ source, offset, message: `no adapter registered for agent ${JSON.stringify(line.agent)}; line skipped` });
       return [];
@@ -286,7 +289,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
       error({ source, offset, message: `${adapter.id}.normalize failed: ${(err as Error).message}` });
       return [];
     }
-    const capturePath = line.agent === "wrapper" ? "wrapper" : "hook";
+    const capturePath = line.agent === "wrapper" || adapter.id === "wrapper" ? "wrapper" : "hook";
     const out: AgentEvent[] = [];
     for (const e of raw) {
       const problem = validEvent(e);
