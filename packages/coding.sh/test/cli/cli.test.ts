@@ -786,6 +786,56 @@ describe("cli judge sample → judge calibrate --plan", () => {
   });
 });
 
+describe("cli exp run --series → exp plateau", () => {
+  it("tags each round, prints the stopping status, and exits 0 continue, 3 stop, 2 too few", () => {
+    const h = tmpHome();
+    const cases = Array.from({ length: 12 }, (_, i) => ["--case", `{"id":"k${i + 1}","input":"${i + 1}","expected":"${i + 1}"}`]).flat();
+    assert.equal(cli(h, ["dataset", "add", "loop", ...cases]).status, 0);
+    // The agent echoes its input unless the case number is listed in fail.json.
+    writeFileSync(
+      join(h.home, "agent.mjs"),
+      'import{readFileSync}from"node:fs";let s="";process.stdin.on("data",(d)=>(s+=d)).on("end",()=>{const f=JSON.parse(readFileSync("fail.json","utf8"));process.stdout.write(f.includes(Number(s.replace(/[^0-9]/g,"")))?"x":s)});\n',
+    );
+    const all = Array.from({ length: 12 }, (_, i) => i + 1);
+    const run = (v: number, pass: number[], extra: string[] = []) => {
+      writeFileSync(join(h.home, "fail.json"), JSON.stringify(all.filter((x) => !pass.includes(x))));
+      return cli(h, ["exp", "run", "-d", "loop", "--task", '{"kind":"command","command":"node agent.mjs"}', "-g", '{"kind":"exact"}', "--name", `v${v}`, "--series", "loop", ...extra]);
+    };
+    type Plateau = { status: string; recommend?: { id: string; version: number }; incumbent: { id: string } };
+    const first = run(0, [], ["--json"]);
+    assert.equal(first.status, 0, first.stderr);
+    const v0 = parseJson(first.stdout, "v0") as { experiment: { id: string; metadata: { series: string } }; plateau: Plateau };
+    assert.equal(v0.experiment.metadata.series, "loop");
+    assert.equal(v0.plateau.status, "insufficient");
+    assert.equal(cli(h, ["exp", "plateau", "--series", "loop"]).status, 2);
+
+    const second = run(1, [1, 2, 3]);
+    assert.equal(second.status, 0, second.stderr);
+    assert.match(second.stderr, /series loop: continue, incumbent v1 exp_\w+ \(round 1 \+25\.0pp, 12 cases, kept\)/);
+    assert.equal(cli(h, ["exp", "plateau", "--series", "loop"]).status, 0);
+
+    const v2 = (parseJson(run(2, [1, 2, 3, 4, 5, 6], ["--json"]).stdout, "v2") as { experiment: { id: string } }).experiment;
+    // Each later candidate breaks 2 of v2's 6 passes: the loop stopped helping at round 3.
+    for (let k = 0; k < 3; k++) assert.equal(run(3 + k, [1, 2, 3, 4, 5, 6].filter((x) => x !== 1 + k && x !== 2 + k)).status, 0);
+    const last = run(6, [3, 4, 5, 6]);
+    assert.match(last.stderr, new RegExp(`series loop: stop, ship v2 ${v2.id} \\(version 2; the plateau began at round 3\\)`));
+
+    const stop = cli(h, ["exp", "plateau", "--series", "loop", "--json"]);
+    assert.equal(stop.status, 3, stop.stderr);
+    const p = (parseJson(stop.stdout, "plateau") as { series: string; plateau: Plateau }).plateau;
+    assert.deepEqual([p.status, p.recommend?.id, p.recommend?.version], ["stop", v2.id, 2]);
+    const text = cli(h, ["exp", "plateau", "--series", "loop"]);
+    assert.match(text.stdout, /plateau loop {2}7 versions, gate greedy, ε 0\.05, δ 0\.05, bet agrapa/);
+    assert.match(text.stdout, new RegExp(`ship v2 ${v2.id} \\(version 2, the incumbent before the plateau\\)`));
+    // By name, in loop order; --baseline drops the earlier rounds.
+    assert.equal(cli(h, ["exp", "plateau", "v0", "v1"]).status, 0);
+    assert.equal(cli(h, ["exp", "plateau", "--series", "loop", "--baseline", "v2"]).status, 3, "from v2 every round is a loss");
+    assert.equal(cli(h, ["exp", "plateau"]).status, 2);
+    assert.equal(cli(h, ["exp", "plateau", "--series", "loop", "--eps", "2"]).status, 2);
+    assert.equal(run(7, [], ["--arm", "a={}", "--arm", "b={}"]).status, 2);
+  });
+});
+
 describe("cli judge calibrate --grader <verifier>", () => {
   it("samples passes to label, audits precision from a labels file, and compare/show use the stored audit", () => {
     const h = tmpHome();

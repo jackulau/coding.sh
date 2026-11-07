@@ -6,6 +6,7 @@
 // `exp sweep` races configs with sequential halving (src/experiments/sweep.ts).
 // `exp compare --gate` adds a ship-or-hold decision and exits 1 unless it accepts;
 // `--margin D` adds paired non-inferiority and exits 1 unless B is within D of A.
+// `exp plateau` runs the restart e-detector over a loop's experiments (src/experiments/plateau.ts).
 // `exp metrics` A/Bs two commands that print numbers (src/experiments/metrics.ts).
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -19,6 +20,7 @@ import { MetricRunError, renderMetrics, runMetrics, type MetricArm } from "../..
 import { runPairwise, summarizePairwise, type PairwiseSummary } from "../../experiments/pairwise.ts";
 import { renderAa, renderComparison, renderExperiment, renderPairwise, renderSweep } from "../../experiments/render.ts";
 import { replayNoise } from "../../experiments/continuation.ts";
+import { plateau, plateauLine, renderPlateau, type PlateauGate, type PlateauResult } from "../../experiments/plateau.ts";
 import { runExperiment } from "../../experiments/run.ts";
 import { runSweep, type SweepConfig } from "../../experiments/sweep.ts";
 import type { TaskSpec } from "../../experiments/task.ts";
@@ -142,7 +144,7 @@ async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string
         ...(spec.trials ? { trials: spec.trials } : {}),
         ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
         ...(spec.split ? { split: spec.split } : {}),
-        ...(continuation ? { metadata: { control: "skipped" } } : {}),
+        ...(continuation || seriesFlag(c) ? { metadata: { ...(continuation ? { control: "skipped" } : {}), ...(seriesFlag(c) ? { series: seriesFlag(c) } : {}) } } : {}),
         store,
         signal: c.signal,
         ...durable(c, job),
@@ -190,6 +192,63 @@ async function parseConfigs(values: string[]): Promise<SweepConfig[]> {
     seen.add(c.name);
   }
   return configs;
+}
+
+/** `--series NAME` (X-18): the iteration loop an experiment belongs to. */
+function seriesFlag(c: CommandContext): string | undefined {
+  const v = c.flags.series;
+  if (v === undefined) return undefined;
+  if (typeof v !== "string" || !v.trim()) throw new UsageError("--series needs a name, e.g. --series prompt-loop", { reason: "invalid_argument" });
+  return v.trim();
+}
+
+/** A stored series: completed experiments tagged `metadata.series`, oldest first. */
+async function storedSeries(store: FileEvalStore, name: string | undefined, datasetId?: string): Promise<ExperimentResult[]> {
+  const all = await store.listExperiments(datasetId ? { datasetId } : {});
+  return all
+    .filter((e) => (e.status ?? "completed") === "completed" && (name === undefined || e.metadata?.series === name))
+    .sort((a, b) => a.createdAt - b.createdAt || (a.id < b.id ? -1 : 1));
+}
+
+/** `exp plateau`: the series from ids, --series or --dataset, starting at --baseline. */
+async function plateauCmd(c: CommandContext, store: FileEvalStore): Promise<number> {
+  const { out } = c;
+  const name = seriesFlag(c);
+  const gate = (str(c.flags.gate) ?? "greedy") as PlateauGate;
+  const eps = c.flags.eps === undefined ? 0.05 : num(c.flags.eps);
+  const delta = c.flags.delta === undefined ? 0.05 : num(c.flags.delta);
+  for (const [flag, v] of [["eps", eps], ["delta", delta]] as const) {
+    if (!(v !== undefined && v > 0 && v < 1)) throw new UsageError(`--${flag} must be between 0 and 1, got ${JSON.stringify(c.flags[flag])}`, { reason: "invalid_argument" });
+  }
+  const resolve = async (ref: string) => {
+    const e = await store.resolveExperiment(ref);
+    if (!e) throw new CliError(`Can't find experiment ${JSON.stringify(ref)}`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
+    return e;
+  };
+  let series: ExperimentResult[];
+  if (c.positionals.length) series = await Promise.all(c.positionals.map(resolve));
+  else if (name !== undefined || str(c.flags.dataset)) {
+    const ref = str(c.flags.dataset);
+    const datasetId = ref ? ((await store.getDataset(ref))?.id ?? ref) : undefined;
+    series = await storedSeries(store, name, datasetId);
+  } else {
+    throw new UsageError("Name the series: exp plateau <experiment…>, --series NAME (tagged by exp run --series) or --dataset ID", { reason: "missing_argument" });
+  }
+  const baseRef = str(c.flags.baseline);
+  if (baseRef) {
+    const base = await resolve(baseRef);
+    const rest = series.filter((e) => e.id !== base.id && (c.positionals.length > 0 || e.createdAt >= base.createdAt));
+    series = [base, ...rest];
+  }
+  const result = plateau(series, { eps: eps!, delta: delta!, gate, ...(str(c.flags.bet) ? { bet: str(c.flags.bet) as "agrapa" | "mixture" } : {}) });
+  if (out.json) out.data({ ...(name ? { series: name } : {}), plateau: result });
+  else out.print(renderPlateau(result, { color: out.color, ...(name ? { series: name } : {}) }));
+  return result.status === "stop" ? 3 : result.status === "insufficient" ? 2 : 0;
+}
+
+/** After `exp run --series`: the series' stopping status, or undefined. */
+async function seriesStatus(store: FileEvalStore, name: string | undefined): Promise<PlateauResult | undefined> {
+  return name === undefined ? undefined : plateau(await storedSeries(store, name));
 }
 
 /** `--seed`: a non-negative integer, or undefined. */
@@ -469,6 +528,7 @@ export async function run(c: CommandContext): Promise<number> {
           }
         }
         if (looks !== undefined && !stopEarly) throw new UsageError("--looks needs --stop-early", { reason: "invalid_argument" });
+        if (armFlags.length && seriesFlag(c) !== undefined) throw new UsageError("--series tags one experiment per loop round; run the candidate alone", { reason: "invalid_argument" });
         if (armFlags.length) {
           if (str(c.flags.task)) throw new UsageError("Use either --task or two --arm options, not both", { reason: "invalid_argument" });
           const arms = await parseArms(armFlags);
@@ -499,10 +559,12 @@ export async function run(c: CommandContext): Promise<number> {
         }
         const { result, job } = await runSpec(c, store, c.positionals[0]);
         const cancelled = result.status === "cancelled";
-        if (out.json) out.data({ outcome: cancelled ? "cancelled" : "completed", experiment: result, ...resumeField(job) });
+        const series = cancelled ? undefined : await seriesStatus(store, seriesFlag(c));
+        if (out.json) out.data({ outcome: cancelled ? "cancelled" : "completed", experiment: result, ...(series ? { plateau: series } : {}), ...resumeField(job) });
         else {
           out.print(renderExperiment(result, { color: out.color }));
           out.print(result.id);
+          if (series) out.note(plateauLine(seriesFlag(c)!, series));
         }
         // main.ts exits 130 (or 143 for SIGTERM) after an interrupt; say what was kept.
         resumeNote(c, job);
@@ -672,6 +734,8 @@ export async function run(c: CommandContext): Promise<number> {
         }
         return 0;
       }
+      case "plateau":
+        return plateauCmd(c, store);
       case "show": {
         const ref = c.positionals[0]!;
         const e = await store.resolveExperiment(ref, { includeCancelled: true });

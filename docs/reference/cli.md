@@ -661,6 +661,7 @@ coding.sh exp <action>
 | [`aa`](#codingsh-exp-aa) | Run one config twice (A/A) and store its run-to-run noise |
 | [`sweep`](#codingsh-exp-sweep) | Race task configs with sequential halving, then re-score the winner on held-out cases |
 | [`metrics`](#codingsh-exp-metrics) | A/B two metric commands (ms, bytes) in interleaved pairs |
+| [`plateau`](#codingsh-exp-plateau) | Should an iteration loop stop? A restart e-detector over its experiments, and the version to ship (exit 3 stop, 2 too few, 0 continue) |
 | [`show`](#codingsh-exp-show) | Show a stored experiment: pass rate, graders and failures |
 | [`list`](#codingsh-exp-list) | List experiments |
 | [`status`](#codingsh-exp-status) | Progress, ETA and cost so far of long runs (exp, compare, bench, workflows), and how to resume them |
@@ -741,6 +742,7 @@ coding.sh exp run [spec] [options]
 | `--max-cases <N>` |  | With --arm: run at most N cases (a random subset) |
 | `--seed <N>` |  | With --arm: seed for the case and arm order (default random, recorded) |
 | `--control` | `true` | A continuation task needs a control arm (A, the recorded config) to measure replay noise; --no-control runs one task alone and marks the result. |
+| `--series <NAME>` |  | Tag the experiment as the next round of an iteration loop and print whether the loop should stop (see exp plateau) |
 | `--resume [<ID>]` |  | Continue an interrupted experiment: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
@@ -871,6 +873,34 @@ coding.sh exp metrics [options]
 ```sh
 coding.sh exp metrics --arm base='node bench.mjs --dir a' --arm cand='node bench.mjs --dir b'
 coding.sh exp metrics --arm base=base.json --arm cand=cand.json --pairs 21 --higher score --json
+```
+
+### `coding.sh exp plateau`
+
+Should an iteration loop stop? A restart e-detector over its experiments, and the version to ship (exit 3 stop, 2 too few, 0 continue).
+
+```text
+coding.sh exp plateau [experiments]... [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `experiments` | no | Experiment ids or names in loop order, baseline first (default: --series or --dataset, oldest first) Takes the rest of the arguments. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--series <NAME>` |  | The experiments tagged by exp run --series NAME. |
+| `-d, --dataset <ID>` |  | The completed experiments on this dataset. |
+| `--baseline <ID>` |  | Version 0 of the loop; earlier experiments are left out. |
+| `--eps <GAIN>` | `0.05` | Smallest gain per round worth another round (0.05 = 5pp) |
+| `--delta <P>` | `0.05` | Stop once the evidence reaches 1/δ (false alarms average no sooner than every 1/δ rounds) |
+| `--gate <GATE>` | `greedy` | greedy keeps a candidate only when it beats the incumbent; chain keeps every candidate (metadata.accepted overrides both) One of: `greedy`, `chain`. |
+| `--bet <BET>` | `agrapa` | Betting strategy of the detector. One of: `agrapa`, `mixture`. |
+
+```sh
+coding.sh exp plateau --series prompt-loop
+coding.sh exp plateau v0 v1 v2 v3 v4 --gate chain --json
+coding.sh exp run spec.json --name v5 --series prompt-loop
 ```
 
 ### `coding.sh exp show`

@@ -207,6 +207,20 @@ const AB = [
     <code>keep &lt;start&gt;</code> with the reason. <code>--budget</code> caps the race's case runs.
   </p>
 
+  <h2 id="plateau">When to stop a loop <Tag status="built" /></h2>
+  <p>
+    A loop that tries one candidate after another needs a stop rule. Tag each round with <code>exp run … --series NAME</code>; it prints
+    <code>series NAME: continue, incumbent v4 …</code> or <code>series NAME: stop, ship v2 … (the plateau began at round 3)</code>.
+    <code>exp plateau --series NAME</code> prints one row per round and exits 0 (continue), 3 (stop) or 2 (too few experiments).
+  </p>
+  <p>
+    Each round compares the candidate with the incumbent on the cases both ran. A restart e-detector (Yin, Liu and Qi, arXiv 2610.04756)
+    stops once the gains stay below ε (<code>--eps</code>, default 0.05) and names the incumbent before the plateau as the version to ship.
+    <code>--gate greedy</code> keeps a candidate only when it beats the incumbent; <code>--gate chain</code> keeps every one. False alarms
+    come on average no sooner than every 1/δ rounds (20 at <code>--delta 0.05</code>): an average run length, not an error rate. It warns on
+    a dataset version change, thin rounds, a small eval that can't see ε, and a stop chosen on dev (confirm it on test).
+  </p>
+
   <h2 id="resume">Long runs: resume and retries <Tag status="built" /></h2>
   <p>
     <code>exp run</code>, <code>exp aa</code>, <code>exp sweep</code>, <code>compare</code>, <code>bench run</code> and

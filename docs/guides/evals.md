@@ -157,14 +157,30 @@ caps case runs for the race (default: each train case used once), `--split` and 
 the splits, and a dataset with no splits gets a seeded 30% held out. Every run is stored as a
 normal experiment.
 
+### When to stop a loop
+
 A loop that tries one candidate after another (prompt tuning, self-improvement) also needs a stop
-rule. The stats module has a restart e-detector for it (`createEDetector`, `eDetector`; Yin, Liu
-and Qi, arXiv 2610.04756): each round feeds the per-case differences candidate minus incumbent,
-and it alarms once the gains have fallen below ε (default 0.01) for long enough, returning the
-round the plateau started so the loop can keep the version before it. Its guarantee is an average
-run length of at least 1/δ rounds (20 at δ 0.05) before a false alarm while the loop still gains
-ε per round, not a familywise error rate. Small evals can't see a small ε:
-`plateauRoundsNeeded(12, 0.01)` is 51 rounds, against 4 at 200 cases. It is not on the CLI yet.
+rule. Tag each round's experiment with `exp run … --series NAME`; after the run it prints one
+line: `series NAME: continue, incumbent v4 exp_… (round 4 +3.0pp, 120 cases, kept)` or
+`series NAME: stop, ship v2 exp_… (version 2; the plateau began at round 3)`. `exp plateau
+--series NAME` prints the whole series, one row per round, and exits 0 (continue), 3 (stop) or 2
+(fewer than two experiments sharing cases). It also takes experiment ids in loop order
+(`exp plateau v0 v1 v2`), or `--dataset ID` for every completed experiment on a dataset, and
+`--baseline` sets version 0.
+
+Each round compares the candidate with the incumbent on the cases both ran (per case, the pass
+share over trials). With `--gate greedy` (the default) a candidate becomes the incumbent only when
+its mean difference is above 0; `--gate chain` keeps every candidate. A boolean
+`metadata.accepted` on an experiment overrides the gate. The differences feed a restart
+e-detector (Yin, Liu and Qi, arXiv 2610.04756), also in the stats module as `createEDetector` and
+`eDetector`. It stops once the gains have stayed below ε (`--eps`, default 0.05) for long enough,
+and names the version to ship: the incumbent before the round the plateau began. Its guarantee
+is an average run length of at least 1/δ rounds (`--delta`, 20 rounds at 0.05) before a false
+alarm while the loop still gains ε per round. That is not a familywise error rate, and it warns
+once a loop runs past 1/δ rounds. Small evals can't see a small ε: `plateauRoundsNeeded(12,
+0.01)` is 51 rounds, against 4 at 200 cases, and it warns when that floor is above 1/δ. It also
+warns on a dataset version or split change, rounds with fewer than 10 shared cases, and a stop
+chosen on the dev or train split (confirm the version on test before shipping it).
 
 ## Long runs: resume, retries, status
 
