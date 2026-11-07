@@ -69,6 +69,9 @@ coding.sh serve --port 4318 &
 CSH=http://127.0.0.1:4318
 ```
 
+The experiment examples use `$EXP_A` and `$EXP_B`: two ids from `coding.sh exp list`, run with the
+same `CODING_SH_HOME` as the server.
+
 ## Routes
 
 | Method | Path | Auth | Served by |
@@ -464,17 +467,21 @@ Always `text/plain` with `X-Blob-Size` (full size) and `X-Truncated` (`1` when c
 `?full=1` for the whole blob. Blobs are content-addressed and shared across projects: a scoped key
 that knows another project's hash can fetch it.
 
+Here `$BLOB` is the source span of the OTLP example above:
+
 ```sh
+BLOB=$(curl -sS "$CSH/api/sessions/team%2Ftriage-12/events?limit=1" -H "Authorization: Bearer $READ_KEY" \
+  | node -pe 'JSON.parse(require("fs").readFileSync(0)).items[0].blobs[0]')
 curl -sS -i "$CSH/api/blobs/$BLOB" -H "Authorization: Bearer $READ_KEY"
 ```
 
 ```text
 HTTP/1.1 200 OK
 Content-Type: text/plain; charset=utf-8
-X-Blob-Size: 1042
+X-Blob-Size: 513
 X-Truncated: 0
 
-{"format":"otlp.span","v":0,"resource":{"service.name":"weather_bot",…},"span":{"name":"chat gpt-4o",…}}
+{"format":"otlp.span","v":0,"resource":{"service.name":"triage-agent"},"scope":{"name":"manual"},"span":{"name":"chat gpt-4o",…}}
 ```
 
 A ref that is not 64 lowercase hex characters gets 400 `{"error":"blob ref must be 64 lowercase hex chars","status":400}`;
@@ -507,7 +514,7 @@ curl -sS "$CSH/api/stats?project=team&agent=support-bot" -H "Authorization: Bear
 ```
 
 ```json
-{"sessions":1,"subagents":0,"byAgent":{"triage-agent":1,"support-bot":1,"weather-bot":1},"byFlag":{},"byRepo":{},"byModel":{"gpt-4o":1},"toolCalls":1,"toolErrors":0,"llmCalls":1,"costUsd":0.00251,"pricedSessions":1,"withTests":0,"testsFailing":0,"histogram":{"step":300000,"from":1793872800000,"buckets":[{"t":1793872800000,"n":1,"flagged":0}]}}
+{"sessions":1,"subagents":0,"byAgent":{"triage-agent":1,"support-bot":1},"byFlag":{},"byRepo":{},"byModel":{"gpt-4o":1},"toolCalls":1,"toolErrors":0,"llmCalls":1,"costUsd":0.00251,"pricedSessions":1,"withTests":0,"testsFailing":0,"histogram":{"step":300000,"from":1793872800000,"buckets":[{"t":1793872800000,"n":1,"flagged":0}]}}
 ```
 
 `byAgent` still lists every agent in `team`, because a facet skips its own filter. The totals apply all of them.
@@ -615,9 +622,12 @@ curl -sS "$CSH/api/compare?a=$EXP_A&b=$EXP_B" -H "Authorization: Bearer $READ_KE
   "ungraded": {"a": 0, "b": 0}, "paired": 3, "onlyInA": [], "onlyInB": [],
   "diff": {"mean": 0.6666666666666666, "lo": 0, "hi": 1, "iters": 4000},
   "mcnemar": {"b": 0, "c": 2, "n": 2, "p": 0.5}, "verdict": "inconclusive",
+  "timing": {"interleaved": false, "gapMs": 81, "warning": "A and B ran one after the other, not interleaved, …"},
   "regressions": [], "improvements": [{"caseId": "c_47dd42650c395e5c", "a": 0, "b": 1, "delta": 1}, …],
   "graders": [{"id": "exact", "n": 3, "meanA": 0.3333333333333333, "meanB": 1, "diff": {"mean": 0.6666666666666666, "lo": 0, "hi": 1}}],
+  "attrition": {"a": {"runs": 3, "completed": 3, "errored": 0, "infra": 0, "agent": 0, "ungraded": 0, "missing": 0, "lost": 0}, "b": {…}, "p": 1},
   "power": {"alpha": 0.05, "power": 0.8, "n": 3, "mde": 0.9338617396156048, "minPaired": 200, "warnings": […], …},
+  "posterior": {"pBetter": 0.875, "mean": 0.2857142857142857, "lo": -0.24060826256615866, "hi": 0.7345975081216372, "prior": 1, "draws": 20000},
   "partial": []
 }
 ```
