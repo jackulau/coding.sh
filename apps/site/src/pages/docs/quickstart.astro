@@ -23,34 +23,29 @@ const SHOW = [
   t("add() returns the wrong result, fix it"),
   `  ${m("Session ")}      22222222-2222-3333-4444-555555555555`,
   `  ${m("Agent   ")}      claude-code  claude-sonnet-4-5`,
-  `  ${m("Repo    ")}      ~/acme/calc`,
+  `  ${m("Repo    ")}      ~/calc`,
   `  ${m("Turns   ")}      1, 2 tool calls, 0 files changed`,
   `  ${m("Latency ")}      tools 57ms (p95 29ms)`,
   "",
   `    ${m("+0ms")}  session.start`,
   `   ${m("+29ms")}  user        add() returns the wrong result, fix it`,
-  `   ${m("+85ms")}  tool        Read ~/acme/calc/add.js  ok 28ms`,
+  `   ${m("+85ms")}  tool        Read ~/calc/add.js  ok 28ms`,
   `  ${m("+143ms")}  tool        Bash node test.js  ok 29ms`,
   `  ${m("+173ms")}  turn.end`,
 ].join("\n");
 ---
 
 <DocsLayout>
+  <p>
+    This page is for coding agents such as Claude Code and Codex, which coding.sh records with no code changes. For an agent you built
+    yourself, see <a href="/docs/how-to/trace-your-agent">Trace your own agent</a>.
+  </p>
+  <h2 id="install">1. Install</h2>
   <Code code={INSTALL_SH} />
   <p>
-    That installs the CLI, runs <code>init</code> and opens the viewer. Other ways to install are on <a href="/docs/install">Install</a>. For
-    agent frameworks rather than coding agents, see <a href="/docs/otel">OpenTelemetry</a>.
-  </p>
-
-  <h2 id="init">1. Install the hooks</h2>
-  <p>
-    <code>init</code> detects the agents on your machine and adds one hook command to each agent's config. Every file it edits is backed up to
-    <code>~/.coding.sh/backups</code> first, and its entries are marked so <code>uninstall</code> removes only them.
-  </p>
-  <Code code={init} />
-  <p>
-    <code>--scope project</code> writes to the repository's agent config (for example <code>.claude/settings.json</code>) instead of your user
-    config.
+    The script installs the CLI and finds the agents on your machine. It asks once, adds a hook to each agent, then opens the viewer. Other
+    ways to install are on <a href="/docs/install">Install</a>. For agent frameworks rather than coding agents, see
+    <a href="/docs/otel">OpenTelemetry</a>.
   </p>
   <div class="note">
     <p>
@@ -58,6 +53,18 @@ const SHOW = [
       <code>/hooks</code>. coding.sh never writes trust state for you; <code>doctor</code> tells you when hooks are still untrusted.
     </p>
   </div>
+  <details class="more" id="init">
+    <summary>Add the hooks yourself</summary>
+    <p>
+      If you installed another way, or want to choose which agents get hooks, run <code>init</code>. Every file it edits is backed up to
+      <code>~/.coding.sh/backups</code> first, and its entries are marked so <code>uninstall</code> removes only them.
+    </p>
+    <Code code={init} />
+    <p>
+      <code>--scope project</code> writes to the repository's agent config (for example <code>.claude/settings.json</code>) instead of your
+      user config.
+    </p>
+  </details>
 
   <h2 id="use">2. Use your agent as usual</h2>
   <p>
@@ -69,7 +76,7 @@ const SHOW = [
   <h2 id="explore">3. Look at what was captured</h2>
   <p>Read commands ingest the spool first, so a session shows up as soon as its events are written.</p>
   <Code code={explore} />
-  <Terminal title="~/acme/calc" label="Output of coding.sh show latest">
+  <Terminal title="~/calc" label="Output of coding.sh show latest">
     <pre set:html={SHOW} />
   </Terminal>
   <p>

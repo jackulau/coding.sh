@@ -4,13 +4,16 @@
   "type": "module",
   "version": "0.0.1",
   "scripts": {
+    "prebuild": "npm run build -w coding.sh",
     "dev": "astro dev",
-    "build": "astro build && node scripts/gen-agent-text.mjs",
+    "build": "astro build && pagefind --site dist --exclude-selectors \"[data-agent-skip]\" && node scripts/gen-agent-text.mjs",
     "preview": "astro preview",
     "check": "astro check",
     "og": "node scripts/gen-og.mjs",
     "astro": "astro",
-    "icons": "node scripts/gen-icons.mjs"
+    "icons": "node scripts/gen-icons.mjs",
+    "shots:seed": "node --experimental-strip-types scripts/shots/seed.mjs",
+    "shots:capture": "node scripts/shots/capture.mjs"
   },
   "dependencies": {
     "@astrojs/sitemap": "^3.6.0",
@@ -20,6 +23,7 @@
   },
   "devDependencies": {
     "@astrojs/check": "^0.9.10",
+    "pagefind": "1.5.2",
     "typescript": "^5.9.3"
   }
 }

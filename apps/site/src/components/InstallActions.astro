@@ -1,0 +1,118 @@
+---
+// The landing's first action, used in the hero and again at the end: the
+// install command (click to copy, wired by the page's copy script) and a link
+// to the quickstart.
+import CopyIcon from "./CopyIcon.astro";
+import { INSTALL_SH } from "../data/site";
+---
+
+<div class="actions">
+  <button type="button" class="install" data-copy={INSTALL_SH} aria-label={`Copy the install command: ${INSTALL_SH}`}>
+    <span class="install__p" aria-hidden="true">$</span>
+    <code class="install__cmd">{INSTALL_SH}</code>
+    <CopyIcon />
+  </button>
+  <a class="btn btn-primary start" href="/docs/quickstart">Get started</a>
+</div>
+
+<style>
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px;
+  }
+  .install {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.8rem;
+    min-height: 2.875rem;
+    padding: 0 1rem 0 1.1rem;
+    border-radius: 12px;
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    color: var(--text);
+    background: #0d0d0f;
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+    cursor: copy;
+    transition:
+      box-shadow var(--hover-out) ease,
+      transform 140ms var(--ease-out);
+  }
+  .install:active {
+    transform: scale(0.985);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .install:active {
+      transform: none;
+    }
+  }
+  .install__p {
+    color: var(--text-muted);
+    user-select: none;
+  }
+  .install__cmd {
+    font: inherit;
+    white-space: nowrap;
+    user-select: all;
+  }
+  .install :global(.copyico) {
+    color: var(--text-muted);
+  }
+  .install.is-copied :global(.copyico) {
+    color: var(--pass);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .install:hover {
+      box-shadow: inset 0 0 0 1px #3a3a40;
+      transition-duration: var(--hover-in);
+    }
+    .install:hover :global(.copyico) {
+      color: var(--text);
+    }
+  }
+  .start {
+    min-height: 2.875rem;
+    padding: 0 1.25rem;
+    border-radius: 12px;
+  }
+  @media (max-width: 479px) {
+    .actions {
+      flex-direction: column;
+      width: 100%;
+    }
+    .install,
+    .start {
+      width: 100%;
+    }
+    .install {
+      justify-content: space-between;
+      gap: 0.55rem;
+      padding: 0 0.8rem;
+      font-size: 0.75rem;
+    }
+    .install__cmd {
+      flex: 1;
+      text-align: left;
+    }
+  }
+  @media (max-width: 379px) {
+    .install {
+      font-size: 0.6875rem;
+      gap: 0.45rem;
+      padding: 0 0.65rem;
+    }
+  }
+  /* The narrowest phones: the command wraps at its spaces instead of
+     pushing past the screen edge. */
+  @media (max-width: 359px) {
+    .install {
+      padding-block: 0.55rem;
+      font-size: 0.75rem;
+    }
+    .install__cmd {
+      white-space: normal;
+      line-height: 1.45;
+    }
+  }
+</style>

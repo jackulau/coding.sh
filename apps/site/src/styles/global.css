@@ -351,16 +351,6 @@ a {
 .t-text {
   color: var(--text);
 }
-/* The one session the landing page follows (s_8f3a21): recorded, turned into
-   an eval, compared. Same treatment wherever it appears, so the eye can follow it. */
-.sid {
-  color: var(--text);
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--text) 40%, transparent);
-  text-decoration-thickness: 1px;
-  text-underline-offset: 3px;
-}
-
 .sr-only {
   position: absolute;
   width: 1px;

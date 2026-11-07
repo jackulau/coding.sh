@@ -16,6 +16,7 @@ const TOOLS: [string, string][] = [
   ["subagents", "The subagents a session spawned, as a tree with durations and errors."],
   ["experiments_list", "Dataset experiments with pass rate and confidence interval."],
   ["experiment_compare", "Paired comparison of two experiments: difference, p-value, regressed and improved cases."],
+  ["benchmarks", "Benchmarks: the list, one run's leaderboard with paired verdicts and worst failures, or one metric over time."],
   ["eval_from_session", "Draft an eval task from a session. The only tool that writes; agents ask you first."],
   ["status", "Health of coding.sh: version, available update, recent captures, pending spool, last error."],
 ];
@@ -70,7 +71,7 @@ const gemini = `// ~/.gemini/settings.json
   <h2 id="automatic">You don't set it up <Tag status="built" /></h2>
   <p>
     <code>coding.sh init</code> shows one plan: capture hooks and the MCP server for every agent it finds. You answer once. It registers the
-    server at user scope with Claude Code, Codex, Cursor, OpenCode and Gemini CLI, backing up each file first. The install script runs
+    server at user scope with Claude Code, Codex, Cursor, OpenCode and older Gemini CLI installs, backing up each file first. The install script runs
     <code>init</code> for you.
   </p>
   <Code code={init} />
@@ -121,6 +122,6 @@ const gemini = `// ~/.gemini/settings.json
   <Code title="json" code={cursor} />
   <h3 id="opencode">OpenCode</h3>
   <Code title="json" code={opencode} />
-  <h3 id="gemini">Gemini CLI</h3>
+  <h3 id="gemini">Gemini CLI (older installs)</h3>
   <Code title="json" code={gemini} />
 </DocsLayout>

@@ -130,6 +130,10 @@ trace.set_tracer_provider(provider)
     <code>coding.sh collector</code> (alias <code>otel</code>) runs a local OTLP/HTTP receiver. Anything that exports OpenTelemetry traces or
     logs can send them there, and each run shows up as a session next to your coding-agent sessions.
   </p>
+  <p>
+    For a step-by-step path that also covers the TypeScript and Python SDKs and runs evals on the traces, see
+    <a href="/docs/how-to/trace-your-agent">Trace your own agent</a>.
+  </p>
 
   <h2 id="start">Start the receiver</h2>
   <Code code={startReal} />
@@ -155,7 +159,7 @@ trace.set_tracer_provider(provider)
     <li>OpenTelemetry GenAI semantic conventions (<code>gen_ai.*</code>)</li>
     <li>OpenInference (<code>openinference.span.kind</code>, <code>llm.*</code>, <code>tool.*</code>)</li>
     <li>Vercel AI SDK (<code>ai.*</code>)</li>
-    <li>Claude Code, Codex and Gemini CLI log events (<code>claude_code.api_request</code> and similar)</li>
+    <li>Claude Code, Codex and older Gemini CLI log events (<code>claude_code.api_request</code> and similar)</li>
   </ul>
   <p>
     Model-call spans become <code>llm.call</code> events with duration, model and token usage; tool spans become

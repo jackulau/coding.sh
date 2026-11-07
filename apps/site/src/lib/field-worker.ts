@@ -20,10 +20,7 @@ interface C {
   stream?: boolean;
   hidden?: boolean;
   dim?: number;
-  /** A one-off pass/fail flash: tone and start time (s). */
-  sig?: { tone: Tone; at: number };
 }
-type Tone = "pass" | "fail";
 export interface Rect {
   left: number;
   top: number;
@@ -37,8 +34,7 @@ export interface Zone extends Rect {
 export type Msg =
   | { type: "init"; canvas: OffscreenCanvas; variant: string }
   | { type: "size"; W: number; H: number; dpr: number; clear: Zone[] }
-  | { type: "run"; on: boolean }
-  | { type: "signal"; tone: Tone };
+  | { type: "run"; on: boolean };
 
 // Minimum spacing between random cubes, in field fractions scaled to a 16:10
 // box, so the scatter reads as placed rather than clumped.
@@ -142,35 +138,6 @@ function layout(clear: Zone[]) {
   });
 }
 
-// Signal colours, the page's only two (global.css --pass / --fail).
-const TONE: Record<Tone, [number, number, number]> = { pass: [60, 207, 122], fail: [240, 97, 106] };
-const SIG_S = 0.9;
-
-/** Flash one visible stream cube, the nearest kind of cube to the viewer. */
-function signal(tone: Tone, now: number) {
-  const pool = cubes.filter((c) => !c.hidden && c.stream && c.s * scale >= 4);
-  const from = pool.length ? pool : cubes.filter((c) => !c.hidden && c.layer !== "far");
-  const pick = from[Math.floor(Math.random() * from.length)];
-  if (pick) pick.sig = { tone, at: (now - t0) / 1000 };
-}
-
-/** Face colour: grey, or blended toward the signal colour while a flash runs. */
-function faceColour(g: number, c: C, t: number) {
-  if (!c.sig) return hex(g);
-  const age = t - c.sig.at;
-  if (age > SIG_S) {
-    c.sig = undefined;
-    return hex(g);
-  }
-  // Fast in (80ms), slow out: a blink, not a pulse.
-  const k = age < 0.08 ? age / 0.08 : 1 - ((age - 0.08) / (SIG_S - 0.08)) ** 0.6;
-  const [r, gg, b] = TONE[c.sig.tone];
-  const l = g / 255;
-  const mix = (a: number, v: number) => Math.round(a + (v * Math.max(0.55, l) - a) * k);
-  const h = (n: number) => n.toString(16).padStart(2, "0");
-  return `#${h(mix(g, r))}${h(mix(g, gg))}${h(mix(g, b))}`;
-}
-
 function draw(now: number) {
   if (!ctx) return;
   const t = (now - t0) / 1000;
@@ -185,7 +152,7 @@ function draw(now: number) {
     const k = c.b * (c.dim ?? 1);
     const faces = cubeFaces(c.yaw + t * c.spin, c.pitch + Math.sin(t * 0.15 + c.wob) * 0.12, s);
     for (const f of faces) {
-      const col = faceColour(f.grey * k, c, t);
+      const col = hex(f.grey * k);
       ctx.fillStyle = col;
       ctx.strokeStyle = col;
       ctx.beginPath();
@@ -201,7 +168,7 @@ function draw(now: number) {
       const edges = litEdges(faces);
       if (edges.length) {
         const top = faces.reduce((a, b) => (b.grey > a.grey ? b : a));
-        ctx.strokeStyle = faceColour(Math.min(255, top.grey * k + 34), c, t);
+        ctx.strokeStyle = hex(Math.min(255, top.grey * k + 34));
         ctx.lineWidth = 1;
         ctx.beginPath();
         for (const [a, b] of edges) {
@@ -254,8 +221,6 @@ self.onmessage = (e: MessageEvent<Msg>) => {
     ctx.setTransform(m.dpr, 0, 0, m.dpr, 0, 0);
     layout(m.clear);
     draw(performance.now());
-  } else if (m.type === "signal") {
-    if (running) signal(m.tone, performance.now());
   } else if (m.type === "run") {
     running = m.on;
     if (running && !timer) timer = raf(loop);

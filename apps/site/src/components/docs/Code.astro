@@ -13,7 +13,7 @@ const text = code.replace(/^\n+|\s+$/g, "");
 ---
 
 <div class:list={["code", klass]}>
-  <div class="code__bar">
+  <div class="code__bar" data-pagefind-ignore>
     <span class="code__title">{title}</span>
     <button type="button" class="code__copy ctl" data-code-copy aria-label={`Copy ${title}`} data-agent-skip>
       <span data-code-label>Copy</span>

@@ -8,10 +8,7 @@
 // The grid language comes from the framed bands below, not from here.
 // Cubes never sit on the content of an element marked [data-field-clear]
 // (text: far cubes dim) or [data-field-clear="hard"] (a product frame: nothing
-// is drawn over or touching it). When the viewer's waterfall plays a pass or a
-// fail it fires a "cs:signal" event and one stream cube blinks that colour, so
-// the field reads as the event stream, not decoration. The canvas is
-// absolutely positioned (no layout shift); its loop pauses off-screen and in
+// is drawn over or touching it). The canvas is absolutely positioned (no layout shift); its loop pauses off-screen and in
 // hidden tabs, and draws one still frame under prefers-reduced-motion.
 // Without JS the stars and the near cube still render.
 import { cubeSvg, mulberry32 } from "../lib/cube";
@@ -164,11 +161,6 @@ const fore = FORE.map((f) => ({ ...f, svg: cubeSvg(f.yaw, f.pitch, f.s) }));
       post({ type: "size", W: rect.width, H: rect.height, dpr: Math.min(devicePixelRatio || 1, 2), clear });
     };
     const run = () => post({ type: "run", on: visible && !document.hidden && !still.matches });
-    const onSignal = (e: Event) => {
-      const tone = (e as CustomEvent<string>).detail;
-      if (tone === "pass" || tone === "fail") post({ type: "signal", tone });
-    };
-    document.addEventListener("cs:signal", onSignal);
 
     size();
     run();
@@ -188,7 +180,6 @@ const fore = FORE.map((f) => ({ ...f, svg: cubeSvg(f.yaw, f.pitch, f.s) }));
         ro.disconnect();
         io.disconnect();
         document.removeEventListener("visibilitychange", run);
-        document.removeEventListener("cs:signal", onSignal);
         still.removeEventListener("change", run);
       },
       { once: true },

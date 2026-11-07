@@ -142,8 +142,9 @@ interface Sink {
   <Code title="src/core/types.ts (abridged)" code={iface} />
   <div class="note">
     <p>
-      <strong>Planned:</strong> Postgres and S3/R2/GCS stores as separate packages. The plugin loading exists; those packages do not. The npm
-      package doesn't export the TypeScript types yet either, so a plugin copies them from the repository for now.
+      <strong>Postgres and S3:</strong> <code>coding.sh-store-postgres</code> and <code>coding.sh-store-s3</code> (S3, R2, MinIO) live in the
+      repository and back <a href="/docs/production">production mode</a>. They are not on npm yet, and the npm package doesn't ship the
+      TypeScript types for <code>coding.sh/store</code> yet, so a plugin built outside the repository copies them for now.
     </p>
   </div>
 

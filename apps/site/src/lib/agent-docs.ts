@@ -57,7 +57,7 @@ writable and whether the OTLP port is free. Fix what it reports before going on.
 
 \`coding.sh mcp\` is an MCP server over stdio that lets the agent query its own history (sessions, the current
 session, failures, latency, usage, search, and drafting an eval from a session). \`init\` registers it
-automatically with Claude Code, Codex, Cursor, OpenCode and Gemini CLI. Manual: run \`coding.sh mcp\` over stdio.
+automatically with Claude Code, Codex, Cursor, OpenCode and older Gemini CLI installs. Manual: run \`coding.sh mcp\` over stdio.
 
 ## 4. Where sessions land
 

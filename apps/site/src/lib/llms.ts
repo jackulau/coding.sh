@@ -1,5 +1,4 @@
-// Agent-facing text, shared by /llms.txt and the AGENT view on the home page,
-// so what an agent reads on the page and at /llms.txt is the same document.
+// Agent-facing text for /llms.txt.
 import { SITE_URL, SITE, NAV_PAGES, REPO_URL, LICENSE, SOURCE_STEPS, CLI_PATH, INSTALL_SH, RELEASE_TGZ } from "../data/site";
 import { FRAMEWORKS, OTLP_ENDPOINT } from "../data/agents";
 import { DOC_PAGES } from "../components/docs/nav";
@@ -51,7 +50,7 @@ CODING_SH_NO_UI=1 skips the viewer, CODING_SH_VERSION=v0.1.0 pins a release.
 From source: \`${SOURCE_STEPS.join(" && ")}\`; the CLI builds to ${CLI_PATH}.
 
 Full prose for every page is at ${abs("/llms-full.txt")}; each page also serves a Markdown copy at <page>.md.
-Terminals on the landing page show sample output; terminals in the docs marked as real output were captured from the CLI.
+Screenshots and terminal output on the landing page come from the real CLI and viewer, run on a throwaway home where coding.sh works on its own repo; terminals in the docs marked as real output were captured from the CLI.
 
 ## Pages
 

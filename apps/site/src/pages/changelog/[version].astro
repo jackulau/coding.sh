@@ -1,0 +1,127 @@
+---
+// /changelog/<version>: the full notes for one release. The summary from
+// CHANGELOG.md leads, then every change as one line, grouped by area, each
+// with its own anchor. Rendered from CHANGELOG.md (see src/lib/changelog.ts).
+import Layout from "../../layouts/Layout.astro";
+import Nav from "../../components/Nav.astro";
+import CubeField from "../../components/CubeField.astro";
+import { REPO_URL } from "../../data/site";
+import { releases, type Release } from "../../lib/changelog";
+import "../../styles/changelog.css";
+
+export function getStaticPaths() {
+  return releases.map((release, i) => ({
+    params: { version: release.slug },
+    props: { release, newer: releases[i - 1], older: releases[i + 1] },
+  }));
+}
+
+interface Props {
+  release: Release;
+  newer?: Release;
+  older?: Release;
+}
+const { release: r, newer, older } = Astro.props;
+// Group names (Added, Fixed, ...) only matter when a release has more than one.
+const showKind = r.groups.length > 1;
+const title = `v${r.version}`;
+---
+
+<Layout
+  title={`coding.sh ${title} · Changelog`}
+  description={r.summaryText || `What changed in coding.sh ${title}.`}
+  breadcrumbs={[
+    { name: "Changelog", path: "/changelog" },
+    { name: title, path: `/changelog/${r.slug}` },
+  ]}
+  image="/og/changelog.png"
+>
+  <Nav />
+  <main id="main">
+    <header class="cl-head">
+      <CubeField variant="side" />
+      <div class="wrap cl-head__inner" data-field-clear>
+        <a class="cl-back" href="/changelog">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M13 8H3.5M7.5 4l-4 4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          Changelog
+        </a>
+        <p class="cl-date">
+          {r.dateLabel}{r.date && " · "}{r.count} {r.count === 1 ? "change" : "changes"}
+        </p>
+        <h1>coding.sh {title}</h1>
+        {r.summary.map((p) => <p class="cl-lede" set:html={p} />)}
+      </div>
+    </header>
+
+    <div class="wrap cl-frame">
+      <nav class="cl-rail" aria-label={`Areas in ${title}`} data-cl-rail data-agent-skip>
+        <p class="cl-rail__label">In this release</p>
+        <ol role="list">
+          {
+            r.areas.map((a, i) => (
+              <li>
+                <a href={`#${a.id}`} aria-current={i === 0 ? "true" : "false"}>
+                  <span>{a.name}</span>
+                  <small>{a.entries.length}</small>
+                </a>
+              </li>
+            ))
+          }
+        </ol>
+      </nav>
+
+      <div class="cl-notes">
+        {
+          r.areas.map((a) => (
+            <section class="cl-area" id={a.id} aria-labelledby={`${a.id}-h`}>
+              <h2 class="cl-area__h" id={`${a.id}-h`}>
+                <a href={`#${a.id}`}>{a.name}</a>
+                <small data-agent-skip>{a.entries.length}</small>
+              </h2>
+              <ul class="cl-list" role="list">
+                {a.entries.map((e) => (
+                  <li class="cl-entry" id={e.id}>
+                    <a class="cl-entry__link" href={`#${e.id}`} aria-label={`Link to this ${a.name} change`} data-agent-skip>
+                      #
+                    </a>
+                    {showKind && <span class="cl-entry__kind">{e.kind}</span>}
+                    <span class="cl-entry__text" set:html={e.html} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))
+        }
+
+        {
+          (newer || older) && (
+            <nav class="cl-pager" aria-label="Other releases">
+              {newer && (
+                <a href={`/changelog/${newer.slug}`}>
+                  <small>Newer release</small>
+                  <strong>v{newer.version}</strong>
+                </a>
+              )}
+              {older && (
+                <a class="is-older" href={`/changelog/${older.slug}`}>
+                  <small>Older release</small>
+                  <strong>v{older.version}</strong>
+                </a>
+              )}
+            </nav>
+          )
+        }
+        <p class="cl-source">
+          From <a class="inline-link" href={`${REPO_URL}/blob/main/CHANGELOG.md`}>CHANGELOG.md</a> · <a class="inline-link" href="/changelog.xml">RSS</a> · <a class="inline-link" href="/changelog">All releases</a>
+        </p>
+      </div>
+    </div>
+  </main>
+</Layout>
+
+<script>
+  import { setupRail } from "../../lib/changelog-spy";
+  document.addEventListener("astro:page-load", setupRail);
+</script>

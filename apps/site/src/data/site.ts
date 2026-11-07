@@ -35,8 +35,8 @@ export const SITE = {
   name: "coding.sh",
   tagline: "observability and evals for AI agents, on your machine",
   description:
-    "coding.sh is open-source, local-first observability and evals for AI agents, in early development. It is being built to record agent runs over a local OpenTelemetry receiver and coding-agent hooks, turn failures into evals with calibrated graders, and compare prompt, harness and model changes with paired statistics. MIT licensed and pre-alpha. Install: curl -fsSL https://coding.sh/install | sh",
-  version: "pre-alpha",
+    "coding.sh is open-source, local-first observability and evals for AI agents. It records agent runs through coding-agent hooks and a local OpenTelemetry receiver, turns failures into evals with calibrated graders, and compares prompt, harness and model changes with paired statistics. MIT licensed, v0.1.0. Install: curl -fsSL https://coding.sh/install | sh",
+  version: "v0.1.0, early",
   status: "install with curl -fsSL https://coding.sh/install | sh",
 } as const;
 
@@ -47,7 +47,7 @@ export const NAV_PAGES = [
   {
     path: "/",
     title: "Home",
-    summary: "What coding.sh is, with a working sample of the local viewer, and how recording, evals and comparisons work.",
+    summary: "What coding.sh is: a real view of the local viewer, what agents cost, and how to check that a change helped.",
   },
   {
     path: "/changelog",

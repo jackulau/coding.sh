@@ -1,0 +1,84 @@
+---
+import DocsLayout from "../../components/docs/DocsLayout.astro";
+import Code from "../../components/docs/Code.astro";
+import Tag from "../../components/docs/Tag.astro";
+
+// Short version of docs/production/README.md. The full contract is docs/PRODUCTION.md.
+const serve = `docker build -t coding-sh .
+docker run -d -p 4318:4318 \\
+  -e CODING_SH_STORE_URL='postgres://user:pass@db.example.com:5432/coding?sslmode=require' \\
+  -e CODING_SH_INGEST_KEYS='myapp:csh_ik_…' \\
+  -e CODING_SH_READ_KEYS='*:csh_rk_…' \\
+  coding-sh
+curl -s http://127.0.0.1:4318/readyz`;
+
+const keys = `coding.sh serve keygen --project myapp          # csh_ik_… for the app
+coding.sh serve keygen --project myapp --read   # csh_rk_… for people`;
+
+const sdk = `import OpenAI from "openai";
+import { observe } from "@coding.sh/sdk";
+
+// CODING_SH_URL=https://obs.example.com  CODING_SH_INGEST_KEY=csh_ik_…
+const openai = observe(new OpenAI()); // or new Anthropic()`;
+
+const otel = `OTEL_EXPORTER_OTLP_ENDPOINT=https://obs.example.com
+OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer%20csh_ik_…"`;
+
+const cli = `coding.sh sessions --store postgres://… --project myapp
+coding.sh search "timeout" --store postgres://…`;
+---
+
+<DocsLayout>
+  <p>
+    Run one <code>coding.sh serve</code> process, point it at a database, and send traces from your API apps: OpenAI, Anthropic, the AI SDK,
+    the Vercel AI Gateway or any OpenTelemetry app. The viewer, CLI, MCP tools, datasets and experiments work on the same database.
+  </p>
+
+  <h2 id="run">Run serve <Tag status="built" /></h2>
+  <p>Make one ingest key per app and one read key for people. Each key is printed once.</p>
+  <Code code={keys} />
+  <p>Then start serve with a store URL. It creates its tables on first start.</p>
+  <Code code={serve} />
+
+  <h2 id="store">Pick a store</h2>
+  <div class="doc-table">
+    <table>
+      <thead>
+        <tr><th>Setup</th><th><code>CODING_SH_STORE_URL</code></th><th>Blobs</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>One box</td><td><code>sqlite:///data/index.db</code></td><td><code>file:///data/blobs</code></td></tr>
+        <tr><td>Real traffic</td><td><code>postgres://…</code></td><td>same database</td></tr>
+        <tr><td>Large payloads</td><td><code>postgres://…</code></td><td><code>s3://bucket/blobs?region=…</code> (S3, R2, MinIO)</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Postgres and S3 come from plugin packages, so the core stays dependency-free. The Docker image includes both.</p>
+
+  <h2 id="send">Send traces</h2>
+  <p>Node, with <code>@coding.sh/sdk</code>:</p>
+  <Code title="ts" code={sdk} />
+  <p>Python: <code>coding_sh.observe(client)</code>. Any OpenTelemetry SDK, or an AI Gateway trace drain:</p>
+  <Code code={otel} />
+  <p>The key decides the project. Group a conversation with <code>sessionId</code> or <code>gen_ai.conversation.id</code>.</p>
+
+  <h2 id="use">Use it</h2>
+  <p>Open <code>https://obs.example.com/?t=csh_rk_…</code> for the viewer. The CLI and MCP server read the same store:</p>
+  <Code code={cli} />
+
+  <h2 id="ops">Operate it</h2>
+  <ul>
+    <li><code>/healthz</code> is up, <code>/readyz</code> is ready to write, <code>/metrics</code> is Prometheus.</li>
+    <li>One writer replica. Add read-only replicas with <code>--role viewer</code>.</li>
+    <li>A full queue answers 429 with <code>Retry-After</code>. Retries never duplicate.</li>
+    <li>Secrets are redacted before writing. <code>CODING_SH_CAPTURE_MODE=metadata</code> drops message text.</li>
+    <li>Recipes for Compose, Fly, Railway and Render are in <a href="https://github.com/jackulau/coding.sh/tree/main/docs/production">docs/production</a>.</li>
+  </ul>
+
+  <div class="note">
+    <p>
+      <strong>Not published yet:</strong> <code>@coding.sh/sdk</code>, <code>coding-sh</code> (Python) and the store plugins are in the
+      repository but not on npm or PyPI. Build the Docker image from a checkout.
+    </p>
+  </div>
+</DocsLayout>

@@ -1,0 +1,13 @@
+---
+// A docs page whose body is a file under the repo's docs/ folder (see markdown.ts).
+import Code from "./Code.astro";
+import { renderDoc } from "./markdown";
+
+interface Props {
+  /** Path under docs/, e.g. "concepts.md". */
+  file: string;
+}
+const blocks = renderDoc(Astro.props.file);
+---
+
+{blocks.map((b) => (b.kind === "code" ? <Code code={b.code} title={b.title} /> : <Fragment set:html={b.html} />))}

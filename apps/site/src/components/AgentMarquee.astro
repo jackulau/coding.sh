@@ -1,0 +1,252 @@
+---
+// "Works with": one row of agent chips that drifts left forever. Two copies of
+// the list sit side by side on one rail, and the rail moves by exactly one
+// copy (translateX -50%) before it loops, so the seam never shows. Only the
+// rail's transform animates (a CSS animation, so it stays on the compositor).
+// It pauses on hover, keyboard focus and touch; on touch (or a mouse drag) the
+// script scrubs the same animation's currentTime, so the row follows the
+// finger and picks up from there when it is let go.
+// Reduced motion: no animation, the second copy is dropped, and the row is a
+// plain horizontal scroller with snap points.
+import AgentLogo from "./AgentLogo.astro";
+
+interface Item {
+  id: string;
+  name: string;
+}
+interface Props {
+  items: Item[];
+  /** Where each chip links. */
+  href?: string;
+}
+const { items, href = "/docs/agents" } = Astro.props;
+// About 40px a second whatever the list length.
+const dur = `${(items.length * 3.6).toFixed(1)}s`;
+---
+
+<div class="mq" data-mq style={`--mq-dur:${dur}`}>
+  <div class="mq__view" data-mq-view>
+    <div class="mq__rail" data-mq-rail>
+      {
+        [0, 1].map((copy) => (
+          <ul class="mq__track" role="list" aria-label={copy === 0 ? "Agents coding.sh records" : undefined} aria-hidden={copy === 1 ? "true" : undefined} data-mq-copy={copy}>
+            {items.map((a) => (
+              <li>
+                <a class="mq__chip" href={href} tabindex={copy === 1 ? -1 : undefined} draggable="false">
+                  <AgentLogo id={a.id} name={a.name} size={18} fallback />
+                </a>
+              </li>
+            ))}
+          </ul>
+        ))
+      }
+    </div>
+  </div>
+</div>
+
+<style>
+  .mq {
+    --gap: 0.5rem;
+    --fade: 3rem;
+    position: relative;
+    min-width: 0;
+  }
+  .mq__view {
+    overflow: hidden;
+    padding-block: 0.75rem;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 var(--fade), #000 calc(100% - var(--fade)), transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 var(--fade), #000 calc(100% - var(--fade)), transparent);
+    /* Vertical swipes still scroll the page; horizontal ones go to the script. */
+    touch-action: pan-y;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .mq__rail {
+    display: flex;
+    width: max-content;
+    animation: mq-loop var(--mq-dur, 50s) linear infinite;
+    will-change: transform;
+  }
+  @keyframes mq-loop {
+    to {
+      transform: translateX(-50%);
+    }
+  }
+  /* Hover only where hover is real, so a tap doesn't leave it stuck. */
+  @media (hover: hover) and (pointer: fine) {
+    .mq:hover .mq__rail {
+      animation-play-state: paused;
+    }
+  }
+  .mq:focus-within .mq__rail,
+  .mq[data-held] .mq__rail {
+    animation-play-state: paused;
+  }
+  /* A keyboard-focused chip is never under a fade (the script scrolls it to the left edge). */
+  .mq:has(.mq__chip:focus-visible) .mq__view {
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .mq__track {
+    display: flex;
+    gap: var(--gap);
+    margin: 0;
+    /* The gap between the copies equals the gap inside them: no visible seam. */
+    padding: 0 var(--gap) 0 0;
+    list-style: none;
+  }
+  .mq__chip {
+    display: inline-flex;
+    align-items: center;
+    height: 2.5rem;
+    padding: 0 0.9rem;
+    border-radius: 999px;
+    font-size: var(--fs-base);
+    font-weight: 500;
+    color: rgba(244, 244, 245, 0.72);
+    background: #0b0b0c;
+    box-shadow: inset 0 0 0 1px var(--line);
+    transition:
+      color var(--hover-out) ease,
+      box-shadow var(--hover-out) ease;
+    -webkit-user-drag: none;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .mq__chip:hover {
+      color: var(--text);
+      box-shadow: inset 0 0 0 1px var(--line-strong);
+      transition-duration: var(--hover-in);
+    }
+  }
+  .mq__chip:focus-visible {
+    outline-offset: -2px;
+    border-radius: 999px;
+  }
+  .mq[data-dragging] .mq__chip {
+    cursor: grabbing;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .mq__view {
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      scroll-padding-inline: var(--fade);
+      padding-inline: var(--fade);
+      scrollbar-width: none;
+      touch-action: auto;
+    }
+    .mq__view::-webkit-scrollbar {
+      display: none;
+    }
+    .mq__rail {
+      animation: none;
+      will-change: auto;
+    }
+    .mq__track[data-mq-copy="1"] {
+      display: none;
+    }
+    .mq__track li {
+      scroll-snap-align: start;
+    }
+  }
+</style>
+
+<script>
+  // Touch and drag: scrub the CSS animation instead of starting a second one,
+  // so letting go resumes from exactly where the finger left the row.
+  function setupMarquee() {
+    document.querySelectorAll<HTMLElement>("[data-mq]").forEach((mq) => {
+      if (mq.dataset.bound) return;
+      mq.dataset.bound = "1";
+      if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      const view = mq.querySelector<HTMLElement>("[data-mq-view]")!;
+      const rail = mq.querySelector<HTMLElement>("[data-mq-rail]")!;
+      const anim = () => rail.getAnimations()[0] as Animation | undefined;
+
+      let id: number | null = null;
+      let x0 = 0;
+      let y0 = 0;
+      let t0 = 0;
+      let dragging = false;
+      let moved = false;
+      let resume = 0;
+
+      const hold = () => {
+        clearTimeout(resume);
+        mq.dataset.held = "";
+      };
+      const release = (after: number) => {
+        clearTimeout(resume);
+        resume = window.setTimeout(() => delete mq.dataset.held, after);
+      };
+
+      view.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        const a = anim();
+        if (!a) return;
+        id = e.pointerId;
+        x0 = e.clientX;
+        y0 = e.clientY;
+        t0 = Number(a.currentTime ?? 0);
+        dragging = false;
+        moved = false;
+        hold();
+      });
+      view.addEventListener("pointermove", (e) => {
+        if (e.pointerId !== id) return;
+        const dx = e.clientX - x0;
+        if (!dragging) {
+          // Only a mostly horizontal move becomes a drag; otherwise the page scrolls.
+          if (Math.abs(dx) < 6 || Math.abs(dx) < Math.abs(e.clientY - y0)) return;
+          dragging = true;
+          moved = true;
+          mq.dataset.dragging = "";
+          view.setPointerCapture(e.pointerId);
+        }
+        const a = anim();
+        if (!a) return;
+        const dur = Number(a.effect?.getTiming().duration ?? 1);
+        const loop = rail.scrollWidth / 2; // one copy, in px
+        const t = t0 - (dx / loop) * dur;
+        a.currentTime = ((t % dur) + dur) % dur;
+      });
+      const end = (e: PointerEvent) => {
+        if (e.pointerId !== id) return;
+        id = null;
+        dragging = false;
+        delete mq.dataset.dragging;
+        // A touch stays paused a moment so the reader can read the chip they stopped on.
+        release(e.pointerType === "mouse" ? 0 : 1400);
+      };
+      // Keyboard focus: the rail pauses (:focus-within) and the fades drop
+      // (CSS), so scrub the rail until the focused chip is the first one in the
+      // view. Only the first copy is focusable, and one copy is exactly one loop,
+      // so the chips after it are the second copy's, the same names in order.
+      // A mouse click also focuses the chip, but must not move it under the pointer.
+      mq.addEventListener("focusin", (e) => {
+        const chip = (e.target as HTMLElement).closest<HTMLElement>(".mq__chip");
+        const a = anim();
+        if (!chip || !a || !chip.matches(":focus-visible")) return;
+        const dur = Number(a.effect?.getTiming().duration ?? 1);
+        const loop = rail.scrollWidth / 2;
+        const x = chip.getBoundingClientRect().left - rail.getBoundingClientRect().left;
+        a.currentTime = (Math.min(Math.max(x - 4, 0), loop) / loop) * dur;
+      });
+      view.addEventListener("pointerup", end);
+      view.addEventListener("pointercancel", end);
+      // A drag is not a click on the chip under the finger.
+      view.addEventListener(
+        "click",
+        (e) => {
+          if (moved) {
+            e.preventDefault();
+            e.stopPropagation();
+            moved = false;
+          }
+        },
+        true,
+      );
+    });
+  }
+  document.addEventListener("astro:page-load", setupMarquee);
+</script>

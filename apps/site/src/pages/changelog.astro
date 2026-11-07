@@ -1,16 +1,17 @@
 ---
-// /changelog, rendered from the repository's CHANGELOG.md at build time, so
-// the page and the file can never disagree. Keep a Changelog format:
-//   ## [version] - date     a release
-//   ### Added               a group
-//   - **Area.** text        an entry; the bold lead becomes its tag
+// /changelog: every release as a short summary, newest first, with a sticky
+// release list beside it. The full notes for a release are one click away at
+// /changelog/<version>. Both are rendered from CHANGELOG.md at build time
+// (see src/lib/changelog.ts), so the pages and the file can never disagree.
 import Layout from "../layouts/Layout.astro";
 import Nav from "../components/Nav.astro";
 import CubeField from "../components/CubeField.astro";
 import { REPO_URL } from "../data/site";
-import { releases, slug } from "../lib/changelog";
+import { releases } from "../lib/changelog";
+import "../styles/changelog.css";
 
 const count = releases.length;
+const oldest = releases[releases.length - 1];
 ---
 
 <Layout title="Changelog · coding.sh" description="Every coding.sh release, newest first, rendered from CHANGELOG.md." breadcrumbs={[{ name: "Changelog", path: "/changelog" }]} image="/og/changelog.png">
@@ -20,40 +21,62 @@ const count = releases.length;
       <CubeField variant="side" />
       <div class="wrap cl-head__inner" data-field-clear>
         <h1>Changelog</h1>
-        <p class="cl-head__sub">Every release, newest first.</p>
-        <p class="cl-head__meta">
-          {count} {count === 1 ? "release" : "releases"} · from <a class="inline-link" href={`${REPO_URL}/blob/main/CHANGELOG.md`}>CHANGELOG.md</a>
+        <p class="cl-head__sub">Every release, newest first, with the full notes one click away.</p>
+        <p class="cl-meta">
+          {count} {count === 1 ? "release" : "releases"}{oldest?.date && /^\d/.test(oldest.date) && ` since ${oldest.dateLabel}`} · <a class="inline-link" href="/changelog.xml">RSS</a> · from <a class="inline-link" href={`${REPO_URL}/blob/main/CHANGELOG.md`}>CHANGELOG.md</a>
         </p>
       </div>
     </header>
 
-    <div class="wrap">
-      <div class="cl">
+    <div class="wrap cl-frame">
+      <nav class="cl-rail" aria-label="Releases" data-cl-rail data-agent-skip>
+        <p class="cl-rail__label">Releases</p>
+        <ol role="list">
+          {
+            releases.map((r, i) => (
+              <li>
+                <a href={`#${r.slug}`} aria-current={i === 0 ? "true" : "false"}>
+                  <span>v{r.version}</span>
+                  {r.date && <small>{r.dateLabel}</small>}
+                </a>
+              </li>
+            ))
+          }
+        </ol>
+      </nav>
+
+      <div class="cl-feed">
         {
           releases.map((r) => (
-            <article class="cl__rel" id={slug(r.version)} aria-labelledby={`${slug(r.version)}-h`}>
-              <div class="cl__when">
-                <h2 id={`${slug(r.version)}-h`} class="cl__ver">
-                  <a href={`#${slug(r.version)}`}>v{r.version}</a>
-                </h2>
-                {r.date && <p class="cl__date">{r.date}</p>}
-              </div>
-              <div class="cl__body">
-                {r.summary.map((p) => <p class="cl__sum" set:html={p} />)}
-                {r.groups.map((g) => (
-                  <section class="cl__group" aria-label={g.name}>
-                    <h3 class="cl__gname">{g.name}</h3>
-                    <ul class="cl__list" role="list">
-                      {g.entries.map((e) => (
-                        <li class="cl__item">
-                          {e.tag && <span class="cl__tag">{e.tag}</span>}
-                          <span class="cl__text" set:html={e.html} />
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                ))}
-              </div>
+            <article class="cl-card" id={r.slug} aria-labelledby={`${r.slug}-h`}>
+              {r.date && <p class="cl-date">{r.dateLabel}</p>}
+              <h2 id={`${r.slug}-h`} class="cl-card__ver">
+                <a href={`/changelog/${r.slug}`}>v{r.version}</a>
+              </h2>
+              {r.summary.map((p) => <p class="cl-card__sum" set:html={p} />)}
+              <a class="cl-more" href={`/changelog/${r.slug}`} aria-label={`Read the notes for v${r.version}`}>
+                Read the notes
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                  <path d="M3 8h9.5M8.5 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </a>
+              {r.areas.length > 0 && (
+                <div class="cl-card__areas">
+                  <p class="cl-card__count">
+                    {r.count} {r.count === 1 ? "change" : "changes"} in v{r.version}
+                  </p>
+                  <ul class="cl-chips" role="list">
+                    {r.areas.map((a) => (
+                      <li>
+                        <a href={`/changelog/${r.slug}#${a.id}`}>
+                          {a.name}
+                          <small>{a.entries.length}</small>
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </article>
           ))
         }
@@ -62,129 +85,7 @@ const count = releases.length;
   </main>
 </Layout>
 
-<style>
-  .cl-head {
-    position: relative;
-    isolation: isolate;
-    padding: calc(var(--nav-h) + 5rem) 0 4rem;
-    border-bottom: 1px solid var(--line);
-  }
-  .cl-head__inner {
-    position: relative;
-  }
-  .cl-head h1 {
-    font-size: clamp(2.5rem, 1.5rem + 3.5vw, 4rem);
-  }
-  .cl-head__sub {
-    margin-top: 0.9rem;
-    font-size: 1.125rem;
-    color: var(--text-2);
-  }
-  .cl-head__meta {
-    margin-top: 1.5rem;
-    font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-    color: var(--text-muted);
-  }
-  .cl {
-    border-inline: 1px solid var(--line);
-  }
-  @media (max-width: 639px) {
-    .cl {
-      border-inline: 0;
-    }
-  }
-  .cl__rel {
-    display: grid;
-    grid-template-columns: 14rem minmax(0, 1fr);
-    gap: 3rem;
-    padding: 3.5rem 2.5rem 4rem;
-  }
-  .cl__rel + .cl__rel {
-    border-top: 1px solid var(--line);
-  }
-  .cl__when {
-    position: sticky;
-    top: calc(var(--nav-h) + 1.5rem);
-    align-self: start;
-  }
-  .cl__ver {
-    font-family: var(--font-mono);
-    font-size: 1.5rem;
-    font-weight: 560;
-    letter-spacing: -0.03em;
-  }
-  .cl__date {
-    margin-top: 0.4rem;
-    font-family: var(--font-mono);
-    font-size: var(--fs-sm);
-    color: var(--text-muted);
-  }
-  .cl__sum {
-    font-size: 1.125rem;
-    color: var(--text);
-    max-width: 40rem;
-  }
-  .cl__group {
-    margin-top: 2rem;
-  }
-  .cl__gname {
-    font-family: var(--font-mono);
-    font-size: var(--fs-xs);
-    font-weight: 500;
-    color: var(--text-muted);
-    text-transform: lowercase;
-    padding-bottom: 0.75rem;
-    border-bottom: 1px solid var(--line);
-  }
-  .cl__list {
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-  .cl__item {
-    display: grid;
-    grid-template-columns: 8.5rem minmax(0, 1fr);
-    gap: 1.5rem;
-    padding: 0.9rem 0;
-    border-bottom: 1px solid var(--line);
-    font-size: 0.9375rem;
-    line-height: 1.6;
-  }
-  .cl__tag {
-    font-family: var(--font-mono);
-    font-size: var(--fs-sm);
-    color: var(--text);
-    padding-top: 0.1rem;
-  }
-  .cl__text {
-    color: var(--text-2);
-    max-width: 44rem;
-  }
-  .cl__text :global(code) {
-    font-size: 0.875em;
-    color: var(--text);
-  }
-  @media (max-width: 899px) {
-    .cl__rel {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 1.5rem;
-      padding: 2.5rem 1.5rem 3rem;
-    }
-    .cl__when {
-      position: static;
-      display: flex;
-      align-items: baseline;
-      gap: 1rem;
-    }
-  }
-  @media (max-width: 639px) {
-    .cl__rel {
-      padding-inline: 0;
-    }
-    .cl__item {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 0.2rem;
-    }
-  }
-</style>
+<script>
+  import { setupRail } from "../lib/changelog-spy";
+  document.addEventListener("astro:page-load", setupRail);
+</script>

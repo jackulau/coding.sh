@@ -17,7 +17,26 @@ const groups = DOC_GROUPS.map((g) => ({ ...g, pages: g.pages.filter((p) => p.pat
     coding.sh is open-source, local-first observability and evals for AI agents. Think of a local LangSmith, Braintrust or
     Judgment Labs: traces and evals stay on your disk, in one npm package with zero runtime dependencies, on Node 22.15 or newer.
   </p>
-  <p>Coding agents are first-class. Adapters capture prompts, tool calls, model calls, file changes and subagents from Claude Code, Codex and ten other agents. Any other agent framework reports in over OpenTelemetry.</p>
+  <p>
+    It works with any agent. Your own agent, built on the OpenAI Agents SDK, LangGraph, the Vercel AI SDK, the Claude Agent SDK or plain
+    code, sends traces over OpenTelemetry or the TypeScript and Python SDKs. Coding agents are first-class: adapters capture prompts, tool
+    calls, model calls, file changes and subagents from Claude Code, Codex and ten other agents with no code changes.
+  </p>
+
+  <h2 id="start">Start here</h2>
+  <div class="doc-table">
+    <table>
+      <thead>
+        <tr><th>You have</th><th>Start with</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Your own agent or LLM app</td><td><a href="/docs/how-to/trace-your-agent">Trace your own agent</a>: OpenTelemetry or the SDK, then evals on those runs.</td></tr>
+        <tr><td>A coding agent (Claude Code, Codex, Cursor and others)</td><td><a href="/docs/quickstart">Quickstart</a>: one install line adds the hooks.</td></tr>
+        <tr><td>An app in production</td><td><a href="/docs/production">Production</a>: <code>coding.sh serve</code> on SQLite or Postgres.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>New to the terms? Read <a href="/docs/concepts">Concepts</a>.</p>
 
   <h2 id="status">What is built</h2>
   <div class="doc-table">
@@ -37,6 +56,11 @@ const groups = DOC_GROUPS.map((g) => ({ ...g, pages: g.pages.filter((p) => p.pat
           <td><code>coding.sh collector</code> on 127.0.0.1:4318: OTLP/HTTP, JSON or protobuf, GenAI, OpenInference and AI SDK attributes. <a href="/docs/otel">Setup</a>.</td>
         </tr>
         <tr>
+          <td>TypeScript and Python SDKs</td>
+          <td><Tag status="partial" /></td>
+          <td>Wrap OpenAI and Anthropic clients, trace turns and tool calls, AI SDK tracer. In the repository, not on npm or PyPI yet. <a href="/docs/sdk">Reference</a>.</td>
+        </tr>
+        <tr>
           <td>Explore</td>
           <td><Tag status="built" /></td>
           <td><code>sessions</code>, <code>show</code>, <code>search</code> (SQLite FTS5) and a local viewer, <code>coding.sh ui</code>.</td>
@@ -54,7 +78,7 @@ const groups = DOC_GROUPS.map((g) => ({ ...g, pages: g.pages.filter((p) => p.pat
         <tr>
           <td>Repo-replay tasks</td>
           <td><Tag status="partial" /></td>
-          <td>Task drafting, verifier validation, harness bundles and A/B compare exist. Captured sessions don't carry a pre-agent snapshot yet, so drafting a task from a real session is blocked. <a href="/docs/evals#repo-replay">Details</a>.</td>
+          <td>Task drafting, verifier validation, harness bundles and A/B compare exist. Sessions recorded with <code>coding.sh run --</code> carry repo snapshots and can become tasks; hook-captured sessions can't yet. <a href="/docs/evals#repo-replay">Details</a>.</td>
         </tr>
         <tr>
           <td>Storage and sinks</td>
@@ -63,8 +87,8 @@ const groups = DOC_GROUPS.map((g) => ({ ...g, pages: g.pages.filter((p) => p.pat
         </tr>
         <tr>
           <td>Postgres, S3 stores</td>
-          <td><Tag status="planned" /></td>
-          <td>The plugin interface exists; no Postgres or S3 package does.</td>
+          <td><Tag status="partial" /></td>
+          <td>Plugin packages in the repository, used by <code>coding.sh serve</code>. Not on npm yet. <a href="/docs/production">Production</a>.</td>
         </tr>
         <tr>
           <td>Tool evals</td>
@@ -82,7 +106,7 @@ const groups = DOC_GROUPS.map((g) => ({ ...g, pages: g.pages.filter((p) => p.pat
 
   <h2 id="how">How it fits together</h2>
   <ol>
-    <li><strong>Capture.</strong> An agent's hook runs <code>~/.coding.sh/bin/hook.mjs</code>, which appends one JSON line to a local spool file and exits 0. No network, no daemon, nothing parsed on the hot path.</li>
+    <li><strong>Capture.</strong> Your own agent sends OpenTelemetry spans to <code>coding.sh collector</code>, or SDK events to <code>coding.sh serve</code>. A coding agent's hook runs <code>~/.coding.sh/bin/hook.mjs</code>, which appends one JSON line to a local spool file and exits 0. No network, no daemon, nothing parsed on the hot path.</li>
     <li><strong>Ingest.</strong> <code>coding.sh ingest</code> (and every read command, before it reads) normalizes spool lines into <a href="/docs/trace-format">coding.sh/trace</a> events, redacts secrets, and writes them to the index and blob store.</li>
     <li><strong>Explore.</strong> List, inspect and search sessions in the terminal or in the local viewer.</li>
     <li><strong>Evaluate.</strong> Turn cases into datasets, run any agent over them, grade the outputs, and compare two runs case by case.</li>

@@ -44,6 +44,8 @@ export const DOC_GROUPS: DocGroup[] = [
         title: "Quickstart",
         summary: "Record Claude Code, Codex and other coding agents with no code changes, then list, inspect and search their sessions.",
       },
+      { path: "/docs/how-to/trace-your-agent", label: "Your own agent", title: "Trace your own agent", summary: "Record an agent you built with OpenTelemetry or the TypeScript and Python SDKs, then run evals on it and compare versions." },
+      { path: "/docs/concepts", label: "Concepts", title: "Concepts", summary: "Sessions, events, turns, flags, datasets, experiments, graders, judges and benchmarks, each in a sentence or two." },
     ],
   },
   {
@@ -56,6 +58,7 @@ export const DOC_GROUPS: DocGroup[] = [
         summary: "Point the Vercel AI SDK, Claude Agent SDK, OpenAI Agents SDK, LangGraph or any OTLP exporter at the local receiver.",
       },
       { path: "/docs/ai-gateway", label: "AI Gateway", title: "Vercel AI Gateway", summary: "Agents routed through Vercel AI Gateway: tagged sessions, billed cost per call, trace drains, and A/B runs across models with one key." },
+      { path: "/docs/production", label: "Production", title: "Production: API apps", summary: "Run coding.sh serve on SQLite or Postgres and send traces from API apps with the SDKs or OpenTelemetry." },
       {
         path: "/docs/agents",
         label: "Coding agents",
@@ -84,12 +87,23 @@ export const DOC_GROUPS: DocGroup[] = [
         title: "Evals",
         summary: "Datasets, graders, LLM judges calibrated against human labels, paired experiment comparisons, and repo-replay tasks.",
       },
+      { path: "/docs/benchmarks", label: "Benchmarks", title: "Benchmarks", summary: "coding.sh bench: fresh cases every day from a live source, every contender on the same frozen set, and a history of who leads." },
       {
         path: "/docs/tool-evals",
         label: "Tool evals",
         title: "Tool evals (planned)",
         summary: "The design for measuring how well agents use a CLI, MCP server or HTTP API. Not implemented yet.",
       },
+    ],
+  },
+  {
+    label: "How-to",
+    pages: [
+      { path: "/docs/how-to/compare-agents", label: "Compare two agents", title: "Compare two agents on your repo", summary: "Turn a real task into a checked eval, snapshot two agent setups, and run both on it with a paired comparison." },
+      { path: "/docs/how-to/ci-regressions", label: "Catch regressions in CI", title: "Catch a regression in CI", summary: "Run the same eval on the base branch and the pull request in GitHub Actions, and fail the job when a case regresses." },
+      { path: "/docs/how-to/expensive-sessions", label: "Find expensive sessions", title: "Find your most expensive sessions", summary: "Rank sessions by cost or tokens, break spend down by repo, agent and model, and see where cost data comes from." },
+      { path: "/docs/how-to/session-to-eval", label: "Session to eval", title: "Turn a real session into an eval", summary: "Keep a captured session as a validated repo task or a dataset case, so later changes are tested against it." },
+      { path: "/docs/how-to/self-host-team", label: "Self-host for a team", title: "Self-host for a team", summary: "Run one coding.sh serve on Postgres with ingest and read keys, and send each teammate's sessions to it." },
     ],
   },
   {
@@ -101,6 +115,9 @@ export const DOC_GROUPS: DocGroup[] = [
         title: "CLI reference",
         summary: "Every coding.sh command and option, generated from the CLI's own --help output at build time.",
       },
+      { path: "/docs/sdk", label: "SDKs", title: "SDK reference", summary: "Every function and option in the TypeScript and Python SDKs, generated from their source." },
+      { path: "/docs/api", label: "REST API", title: "REST API reference", summary: "Every route coding.sh serve answers: ingest, OTLP, the read API, health and metrics, with auth and examples." },
+      { path: "/docs/config", label: "Configuration", title: "Configuration reference", summary: "Every config.toml key and environment variable, their defaults, and which layer wins." },
       {
         path: "/docs/storage",
         label: "Storage",
@@ -113,6 +130,7 @@ export const DOC_GROUPS: DocGroup[] = [
         title: "Trace format",
         summary: "The coding.sh/trace v0 event format every adapter and the OTLP receiver normalize into.",
       },
+      { path: "/docs/troubleshooting", label: "Troubleshooting", title: "Troubleshooting", summary: "What doctor checks, why sessions go missing, and every CLI error reason with its fix." },
       {
         path: "/docs/faq",
         label: "FAQ",
