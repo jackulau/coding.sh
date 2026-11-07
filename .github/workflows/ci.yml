@@ -68,6 +68,11 @@ jobs:
           CODING_SH_TEST_CHROME: ${{ steps.chrome.outputs.chrome-path || (runner.os == 'Linux' && '/usr/bin/google-chrome' || '') }}
         run: npm test
 
+      # The SDK's golden test builds sessions with coding.sh's core, so a core change can break it.
+      - name: SDK typecheck and test
+        working-directory: packages/sdk
+        run: npm run check
+
       - name: Build
         working-directory: packages/coding.sh
         run: npm run build
