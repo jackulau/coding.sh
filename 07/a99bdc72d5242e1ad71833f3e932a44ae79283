@@ -1,0 +1,71 @@
+packages/coding.sh/test/fixtures/adapters/pi/real/extension.spool.jsonl
+  s_8e040dbdf13565::t_d94ed767fdaedd 1-8
+packages/coding.sh/test/fixtures/adapters/pi/real/home/.pi/agent/sessions/--work-demo--/2026-11-07T07-47-31-986Z_01a1b4fa-1a11-7283-b288-2d5c05020dce.jsonl
+  s_8e040dbdf13565::t_92d437897e297c 1-7
+packages/coding.sh/src/adapters/more/_util.ts
+  s_8e040dbdf13565::t_59e86fa2ec3568 13,321-333,336-338,342,346,350,352-361,363,648-650,656-657,659-664,674,903-955
+packages/coding.sh/src/adapters/more/copilot-cli.ts
+  s_8e040dbdf13565::t_c1f4eafb218def 129-131,140,173,244,258-267
+packages/coding.sh/src/adapters/more/droid.ts
+  s_8e040dbdf13565::t_4a1abbc1f54bf1 22,45,58,132,134,136,138-139,157-194,219,254,289,292,300,302-303,305,315-316,318,320,323-325,329,351
+packages/coding.sh/src/adapters/more/goose.ts
+  s_8e040dbdf13565::t_67a91ffe9bf5fd 38,65,118,147-150,156,207-278,289,311-312,317,321-323,326,349
+packages/coding.sh/src/adapters/more/pi.ts
+  s_8e040dbdf13565::t_c4276fe7389ba5 40,57,164-190,192,214,223,252,277,290,294,304
+packages/coding.sh/src/adapters/more/wrapper.ts
+  s_8e040dbdf13565::t_dcb9791cbcfe26 18,62,103-105
+packages/coding.sh/src/capture/wrapper.ts
+  s_8e040dbdf13565::t_25726360322911 36,113-114
+packages/coding.sh/src/core/redact.ts
+  s_8e040dbdf13565::t_6774dca833bfc0 316-339,343-344
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_3bf557ab7750cb 135-141,145-146
+packages/coding.sh/test/fixtures/adapters/copilot-cli/golden/backfill.golden.json
+  s_8e040dbdf13565::t_f8e093527fe9fd 49,64,79,95,111,126,156,172
+packages/coding.sh/test/fixtures/adapters/copilot-cli/golden/hooks.golden.json
+  s_8e040dbdf13565::t_fc66e7bafe3c50 53,69,82,98,114,128,142,159,237,253,266,277-278
+packages/coding.sh/test/fixtures/adapters/droid/golden/backfill.golden.json
+  s_8e040dbdf13565::t_5cfd4d57810640 48,64,79,94,109,125,145-146
+packages/coding.sh/test/fixtures/adapters/droid/golden/hooks.golden.json
+  s_8e040dbdf13565::t_9f9ab8bfb3ac20 44,61,78,92,110,124,141,155,170,189
+packages/coding.sh/test/fixtures/adapters/goose/golden/backfill.golden.json
+  s_8e040dbdf13565::t_3cbb625b57ae2c 52,68,83,98,114,129,187-188,236-237
+packages/coding.sh/test/fixtures/adapters/goose/golden/hooks.golden.json
+  s_8e040dbdf13565::t_dcd4bdf7b98ff8 42,57,73,89
+packages/coding.sh/test/fixtures/adapters/pi/golden/backfill.golden.json
+  s_8e040dbdf13565::t_127317caf53a65 34,49,68,85,101,116,131,146,162,177,196,207-208,223,237
+packages/coding.sh/test/fixtures/adapters/pi/golden/extension.golden.json
+  s_8e040dbdf13565::t_ccc1af85389986 26,46,64,82,97,116,131,153
+CHANGELOG.md
+  s_d274540b4b09c7::t_f9024dd274e521 26-27
+packages/coding.sh/test/adapters/real-install.test.ts
+  s_d274540b4b09c7::t_4f856aeb47eb31 6,16-17,21,23,218-302
+packages/coding.sh/test/capture/wrapper.test.ts
+  s_d274540b4b09c7::t_c23f468d365b0b 71-84
+packages/coding.sh/test/core/redact.test.ts
+  s_d274540b4b09c7::t_192169c092aaa3 6,125-133
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "07a99bdc72d5242e1ad71833f3e932a44ae79283",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    },
+    "s_d274540b4b09c7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "agent-af956f322afb05a2c",
+        "model": "unknown"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
