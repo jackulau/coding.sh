@@ -1,0 +1,44 @@
+{
+  "assistantActiveTimeMs": 1586,
+  "model": "custom:Stub-0",
+  "reasoningEffort": "none",
+  "interactionMode": "auto",
+  "autonomyLevel": "high",
+  "autonomyMode": "auto-high",
+  "compactionThresholdCheckEnabled": true,
+  "allowSubagentsInScripts": false,
+  "tags": [
+    {
+      "name": "exec"
+    }
+  ],
+  "toolExecutionMode": "direct_only",
+  "toolExecutionModeModelId": "custom:Stub-0",
+  "tokenUsage": {
+    "inputTokens": 240,
+    "outputTokens": 60,
+    "cacheCreationTokens": 0,
+    "cacheReadTokens": 0,
+    "thinkingTokens": 0,
+    "factoryCredits": 0
+  },
+  "childInclusiveTokenUsageBySessionId": {},
+  "inclusiveTokenUsage": {
+    "inputTokens": 240,
+    "outputTokens": 60,
+    "cacheCreationTokens": 0,
+    "cacheReadTokens": 0,
+    "thinkingTokens": 0,
+    "factoryCredits": 0
+  },
+  "providerLock": "generic-chat-completion-api",
+  "providerLockTimestamp": "2026-11-07T07:52:34.685Z",
+  "byokUnmappedNoticeModelIds": [
+    "custom:Stub-0"
+  ],
+  "lastCallTokenUsage": {
+    "inputTokens": 120,
+    "outputTokens": 30,
+    "cacheReadTokens": 0
+  }
+}

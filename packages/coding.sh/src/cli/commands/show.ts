@@ -82,9 +82,9 @@ function describe(e: AgentEvent, starts: Map<string, AgentEvent>): string | unde
     case "turn.end":
     case "context.compact":
     case "notification":
-      return `${e.kind.padEnd(12)}${oneLine(clean(str(p.text) ?? str(p.message) ?? str(p.reason) ?? ""), 80)}`;
+      return `${`${e.kind} `.padEnd(12)}${oneLine(clean(str(p.text) ?? str(p.message) ?? str(p.reason) ?? ""), 80)}`;
     default:
-      return `${e.kind.padEnd(12)}${oneLine(clean(str(p.name) ?? ""), 80)}`;
+      return `${`${e.kind} `.padEnd(12)}${oneLine(clean(str(p.name) ?? ""), 80)}`;
   }
 }
 

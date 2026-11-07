@@ -7,11 +7,13 @@
 // - Per-message usage on stdout: "Tokens: 2.1k sent, 1.2k cache write, 3k cache hit, 345 received.
 //   Cost: $0.01 message, $0.02 session." (cache parts and Cost are optional; counts use k suffixes).
 // - .aider.chat.history.md has no session id and lives at each repo root, so there is no backfill.
+//   The wrapper's session.start keeps aider's argv: the prompt (--message/-m/--msg) and --model
+//   come from there.
 // - Config: .aider.conf.yml in ~, git root, cwd (later wins); `-c file` loads only that file.
 import { join } from "node:path";
 import type { Adapter, AgentRunOutput, DetectResult, FileChange, HarnessBundle, NormalizeContext, RunSpec, SpoolLine } from "../../core/types.ts";
 import type { AgentEvent, Usage } from "../../schema/index.ts";
-import { binVersion, findBinary, hasFlag, overlayHome, runEnv, spawnAgent, toRunOutput } from "./_util.ts";
+import { Emitter, binVersion, emitText, findBinary, hasFlag, isObj, overlayHome, runEnv, spawnAgent, spoolIdParts, toRunOutput } from "./_util.ts";
 import { normalizeWrapperLine } from "./wrapper.ts";
 
 const ID = "aider";
@@ -47,6 +49,38 @@ export function parseAiderUsage(text: string): Usage | undefined {
   return u;
 }
 
+/** Value of the last `--flag value` / `--flag=value` among `names` in an argv. */
+export function argValue(args: string[], ...names: string[]): string | undefined {
+  let v: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (names.includes(a) && i + 1 < args.length) v = args[++i];
+    else {
+      const eq = a.indexOf("=");
+      if (eq > 0 && names.includes(a.slice(0, eq))) v = a.slice(eq + 1);
+    }
+  }
+  return v;
+}
+
+/** Wrapper events, plus the prompt and model aider was started with. */
+export async function normalizeAider(line: SpoolLine, ctx: NormalizeContext): Promise<AgentEvent[]> {
+  const events = await normalizeWrapperLine(line, ctx);
+  const start = events.find((e) => e.kind === "session.start");
+  const raw = isObj(line.raw) ? line.raw : {};
+  if (!start || !Array.isArray(raw.args)) return events;
+  const args = raw.args.filter((a): a is string => typeof a === "string");
+  const model = argValue(args, "--model");
+  const prompt = argValue(args, "--message", "--msg", "-m");
+  if (model) start.model = model;
+  if (prompt) {
+    const em = new Emitter(ctx, { agent: line.agent, sessionId: start.sessionId, ts: start.ts, cwd: start.cwd, runId: line.runId, model }, [...spoolIdParts(line, start.sessionId, ctx), "prompt"]);
+    await emitText(em, ctx, "user.message", prompt);
+    events.push(...em.events);
+  }
+  return events;
+}
+
 export const aiderAdapter: Adapter = {
   id: ID,
   displayName: "Aider",
@@ -67,9 +101,7 @@ export const aiderAdapter: Adapter = {
   async uninstall(): Promise<FileChange[]> {
     return [];
   },
-  normalize(line: SpoolLine, ctx: NormalizeContext): Promise<AgentEvent[]> {
-    return normalizeWrapperLine(line, ctx);
-  },
+  normalize: normalizeAider,
   async run(spec: RunSpec): Promise<AgentRunOutput> {
     const bin = findBinary(["aider"], { ...process.env, ...spec.env }) ?? "aider";
     const args = ["--message", spec.instruction];

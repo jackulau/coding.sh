@@ -260,6 +260,18 @@ describe("cli exit codes", () => {
     assert.match(r.stderr, /^hi$/m);
   });
 
+  it("run attributes a hookless agent (aider) by command name, anything else to the wrapper", () => {
+    const h = tmpHome();
+    const bin = join(h.root, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "aider"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const path = { PATH: `${bin}:${dirname(process.execPath)}` };
+    assert.equal(cli(h, ["run", "--", "aider", "--message", "hi"], path).status, 0);
+    assert.equal(cli(h, ["run", "--", process.execPath, "-e", ""], path).status, 0);
+    const spool = join(h.env.CODING_SH_HOME!, "spool");
+    assert.deepEqual(readdirSync(spool).filter((d) => !d.includes(".")).sort(), ["aider", "wrapper"]);
+  });
+
   it("run --json of a missing binary reports the error in the document", () => {
     const r = cli(tmpHome(), ["run", "--json", "--", "nonexistent-cmd-xyz"]);
     assert.equal(r.status, 127, r.stderr);

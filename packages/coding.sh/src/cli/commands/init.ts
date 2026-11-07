@@ -289,8 +289,8 @@ export async function run(c: CommandContext): Promise<number> {
   const codexTrust = applied.some((x) => x.pl.adapter.id === "codex" && !x.hooks.error && x.hooks.changes.length);
   if (codexTrust) out.warn("Codex: start codex, run /hooks and approve the coding.sh hooks once");
   const ready = applied.filter((x) => !x.hooks.error && !x.pl.skipped);
-  // Store-read agents (T3 Code) get no hooks: listed by their plan row, not here.
-  const summary = setupSummary(ready.filter((x) => !x.pl.adapter.tail || x.mcp).map((x) => ({ name: x.pl.adapter.displayName, mcp: x.mcp !== undefined && !x.mcp.error })));
+  // Store-read agents (T3 Code) and wrapper-only agents (tier C: Aider) get no hooks: listed by their plan row, not here.
+  const summary = setupSummary(ready.filter((x) => (!x.pl.adapter.tail && x.pl.adapter.tier !== "C") || x.mcp).map((x) => ({ name: x.pl.adapter.displayName, mcp: x.mcp !== undefined && !x.mcp.error })));
   if (summary) out.ok(`${outcome === "unchanged" ? "Already set up:" : "Set up"} ${summary}`);
   out.note(`Open the viewer: ${out.style("coding.sh", "cyan", "err")}`);
   out.note(`Docs: ${DOCS_URL}`);

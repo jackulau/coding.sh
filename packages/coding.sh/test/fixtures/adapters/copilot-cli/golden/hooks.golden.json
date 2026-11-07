@@ -15,11 +15,14 @@
   {
     "kind": "user.message",
     "sessionId": "cop-sess-1",
-    "ts": 1790000000000,
+    "ts": 1790000000100,
     "payload": {
       "text": "Add a README and make the tests pass"
     },
-    "id": "6c3c43be16d9aea809d332cec4cc910c838820362d11c01a2995410f16d8db2a",
+    "id": "2f158f358a0f59539139f8acc10049f41272f1d1e46eedbcd2beff4f340a918c",
+    "blobs": [
+      "b3b9fcb37c7a4bd9a32cfb3dd50ac0f6c8de5886b67558ff4f187daa44e3449c"
+    ],
     "cwd": "/work/demo"
   },
   {

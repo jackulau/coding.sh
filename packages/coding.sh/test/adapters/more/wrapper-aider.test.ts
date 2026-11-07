@@ -38,10 +38,13 @@ describe("wrapper normalize", () => {
     assert.match(anon[0]!.sessionId, /^wrapper-[0-9a-f]{24}$/, "stable fallback session id without a sessionId");
   });
 
-  it("aider normalizes through the wrapper", async () => {
+  it("aider normalizes through the wrapper, plus the prompt from its argv", async () => {
     const line = loadSpool("wrapper/wrapper.spool.jsonl").find((l) => l.agent === "aider")!;
     const { ctx } = testCtx();
-    assert.deepEqual(await aiderAdapter.normalize(line, ctx), await wrapperAdapter.normalize(line, ctx));
+    const events = await aiderAdapter.normalize(line, ctx);
+    const wrapped = await wrapperAdapter.normalize(line, ctx);
+    assert.deepEqual(events.slice(0, wrapped.length), wrapped);
+    assert.deepEqual(events.slice(wrapped.length).map((e) => [e.kind, e.payload.text]), [["user.message", "hi"]]);
   });
 });
 

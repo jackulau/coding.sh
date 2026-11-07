@@ -171,6 +171,23 @@ function contentBlocks(json: unknown): Json[] {
   return Array.isArray(v) ? v.filter(isObj) : [];
 }
 
+/** sessions.created_at/updated_at are SQLite CURRENT_TIMESTAMP: UTC without a zone ("2026-11-07 07:45:01"). */
+function sqliteMs(v: unknown): number | undefined {
+  if (typeof v === "string" && /^\d{4}-\d\d-\d\d[ T]\d\d:\d\d(:\d\d(\.\d+)?)?$/.test(v)) return toMs(`${v.replace(" ", "T")}Z`);
+  return toMs(v);
+}
+
+/** Goose stores injected context (turn-context, top-of-mind) as hidden user messages. */
+function hiddenMessage(m: Row): boolean {
+  if (typeof m.metadata_json !== "string") return false;
+  try {
+    const meta: unknown = JSON.parse(m.metadata_json);
+    return isObj(meta) && (meta.userVisible === false || meta.turnContext === true);
+  } catch {
+    return false;
+  }
+}
+
 function resultText(tr: unknown): { ok: boolean; output: unknown; error?: string } {
   if (!isObj(tr)) return { ok: true, output: tr };
   if (tr.status === "error") return { ok: false, output: tr.error, error: str(tr.error) ?? "tool error" };
@@ -203,8 +220,8 @@ export async function* gooseDbEvents(dbPath: string, ctx: NormalizeContext, sinc
       } catch {
         // none
       }
-      const startTs = toMs(s.created_at) ?? 0;
-      const updated = toMs(s.updated_at) ?? startTs;
+      const startTs = sqliteMs(s.created_at) ?? 0;
+      const updated = sqliteMs(s.updated_at) ?? startTs;
       if (since !== undefined && updated < since) continue;
       const out: AgentEvent[] = [];
       const head = new Emitter(ctx, { agent: ID, sessionId, ts: startTs, cwd, model }, ["goose-db", sessionId, "meta"]);
@@ -224,7 +241,7 @@ export async function* gooseDbEvents(dbPath: string, ctx: NormalizeContext, sinc
         const role = str(m.role);
         if (role === "user") {
           const responses = bs.filter((b) => b.type === "toolResponse");
-          if (text && responses.length === 0) {
+          if (text && responses.length === 0 && !hiddenMessage(m)) {
             if (sawUser) em.push("turn.end", {});
             sawUser = true;
             await emitText(em, ctx, "user.message", text);
@@ -300,7 +317,7 @@ export const gooseAdapter: Adapter = {
       if (v) r.version = v;
     }
     if (existsSync(cfg)) r.configDir = cfg;
-    r.notes = ["Hooks need goose >= 1.34. Goose sends no tool output to hooks: run `coding.sh backfill goose` for results and usage."];
+    r.notes = ["Hooks need goose >= 1.34. Goose sends no tool output to hooks: run `coding.sh ingest --backfill --agent goose` for results and usage."];
     return r;
   },
   async install(opts: InstallOpts): Promise<FileChange[]> {

@@ -1,0 +1,132 @@
+{
+ "schema": [
+  "CREATE TABLE sessions (\n                id TEXT PRIMARY KEY,\n                name TEXT NOT NULL DEFAULT '',\n                description TEXT NOT NULL DEFAULT '',\n                user_set_name BOOLEAN DEFAULT FALSE,\n                session_type TEXT NOT NULL DEFAULT 'user',\n                working_dir TEXT NOT NULL,\n                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n                extension_data TEXT DEFAULT '{}',\n                total_tokens INTEGER,\n                input_tokens INTEGER,\n                output_tokens INTEGER,\n                cache_read_tokens INTEGER,\n                cache_write_tokens INTEGER,\n                accumulated_total_tokens INTEGER,\n                accumulated_input_tokens INTEGER,\n                accumulated_output_tokens INTEGER,\n                accumulated_cache_read_tokens INTEGER,\n                accumulated_cache_write_tokens INTEGER,\n                accumulated_cost REAL,\n                schedule_id TEXT,\n                recipe_json TEXT,\n                user_recipe_values_json TEXT,\n                provider_name TEXT,\n                model_config_json TEXT,\n                goose_mode TEXT NOT NULL DEFAULT 'auto',\n                archived_at TIMESTAMP,\n                project_id TEXT,\n                parent_session_id TEXT,\n                system_prompt_override TEXT,\n                system_prompt_extras_json TEXT,\n                container_id TEXT\n            )",
+  "CREATE TABLE messages (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                message_id TEXT,\n                session_id TEXT NOT NULL REFERENCES sessions(id),\n                role TEXT NOT NULL,\n                content_json TEXT NOT NULL,\n                created_timestamp INTEGER NOT NULL,\n                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n                tokens INTEGER,\n                metadata_json TEXT\n            )",
+  "CREATE TABLE usage_ledger (\n                id INTEGER PRIMARY KEY AUTOINCREMENT,\n                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,\n                created_timestamp INTEGER NOT NULL,\n                model TEXT,\n                input_tokens INTEGER,\n                output_tokens INTEGER,\n                total_tokens INTEGER,\n                cache_read_tokens INTEGER,\n                cache_write_tokens INTEGER,\n                cost REAL,\n                cost_source TEXT,\n                is_compaction INTEGER DEFAULT 0\n            )"
+ ],
+ "rows": {
+  "sessions": [
+   {
+    "id": "20261107_1",
+    "name": "Done. I wrote hello.txt.",
+    "description": "",
+    "user_set_name": 0,
+    "session_type": "user",
+    "working_dir": "/work/demo",
+    "created_at": "2026-11-07 07:45:01",
+    "updated_at": "2026-11-07 07:45:02",
+    "extension_data": "{}",
+    "total_tokens": 150,
+    "input_tokens": 120,
+    "output_tokens": 30,
+    "cache_read_tokens": null,
+    "cache_write_tokens": null,
+    "accumulated_total_tokens": 300,
+    "accumulated_input_tokens": 240,
+    "accumulated_output_tokens": 60,
+    "accumulated_cache_read_tokens": 0,
+    "accumulated_cache_write_tokens": 0,
+    "accumulated_cost": null,
+    "schedule_id": null,
+    "recipe_json": null,
+    "user_recipe_values_json": null,
+    "provider_name": "openai",
+    "model_config_json": "{\"model_name\":\"stub-model\",\"temperature\":null,\"max_tokens\":null,\"toolshim\":false,\"toolshim_model\":null}",
+    "goose_mode": "auto",
+    "archived_at": null,
+    "project_id": null,
+    "parent_session_id": null,
+    "system_prompt_override": null,
+    "system_prompt_extras_json": null,
+    "container_id": null
+   }
+  ],
+  "messages": [
+   {
+    "id": 1,
+    "message_id": "msg_353ffcc7-4bf2-4e91-9156-695898027b1c",
+    "session_id": "20261107_1",
+    "role": "user",
+    "content_json": "[{\"type\":\"text\",\"text\":\"create hello.txt\"}]",
+    "created_timestamp": 1794037502,
+    "timestamp": "2026-11-07 07:45:02",
+    "tokens": null,
+    "metadata_json": "{\"userVisible\":true,\"agentVisible\":true}"
+   },
+   {
+    "id": 2,
+    "message_id": "msg_a0697d7f-a3ed-46e7-821e-147afed43634",
+    "session_id": "20261107_1",
+    "role": "user",
+    "content_json": "[{\"type\":\"text\",\"text\":\"<turn-context>\\n<current-time>2026-11-07 01:45:00 -06:00</current-time>\\n<working-directory>/work/demo</working-directory>\\n</turn-context>\"}]",
+    "created_timestamp": 1794037502,
+    "timestamp": "2026-11-07 07:45:02",
+    "tokens": null,
+    "metadata_json": "{\"userVisible\":false,\"agentVisible\":true,\"turnContext\":true}"
+   },
+   {
+    "id": 3,
+    "message_id": "chatcmpl_mw63lw8r2",
+    "session_id": "20261107_1",
+    "role": "assistant",
+    "content_json": "[{\"type\":\"toolRequest\",\"id\":\"call_mw63lw8r3\",\"toolCall\":{\"status\":\"success\",\"value\":{\"name\":\"write\",\"arguments\":{\"filePath\":\"hello.txt\",\"file_path\":\"hello.txt\",\"path\":\"hello.txt\",\"content\":\"hello from stub\\n\"}}},\"_meta\":{\"goose.toolCall.providerIndex\":0,\"goose_extension\":\"developer\"}}]",
+    "created_timestamp": 1794037502,
+    "timestamp": "2026-11-07 07:45:02",
+    "tokens": null,
+    "metadata_json": "{\"userVisible\":true,\"agentVisible\":true,\"inference\":{\"provider\":\"openai\",\"requestedModel\":\"stub-model\"},\"usage\":{\"inputTokens\":120,\"outputTokens\":30,\"totalTokens\":150,\"elapsedMs\":3,\"timeToFirstTokenMs\":3}}"
+   },
+   {
+    "id": 4,
+    "message_id": "msg_796720d8-fb2e-4024-b996-08a1149de782",
+    "session_id": "20261107_1",
+    "role": "user",
+    "content_json": "[{\"type\":\"toolResponse\",\"id\":\"call_mw63lw8r3\",\"toolResult\":{\"status\":\"success\",\"value\":{\"resultType\":\"complete\",\"content\":[{\"type\":\"text\",\"text\":\"Created hello.txt (1 lines)\",\"annotations\":{\"priority\":0.0}}],\"isError\":false}}}]",
+    "created_timestamp": 1794037502,
+    "timestamp": "2026-11-07 07:45:02",
+    "tokens": null,
+    "metadata_json": "{\"userVisible\":true,\"agentVisible\":true}"
+   },
+   {
+    "id": 5,
+    "message_id": "chatcmpl_mw63lwcw4",
+    "session_id": "20261107_1",
+    "role": "assistant",
+    "content_json": "[{\"type\":\"text\",\"text\":\"Done. I wrote hello.txt.\"}]",
+    "created_timestamp": 1794037502,
+    "timestamp": "2026-11-07 07:45:02",
+    "tokens": null,
+    "metadata_json": "{\"userVisible\":true,\"agentVisible\":true,\"inference\":{\"provider\":\"openai\",\"requestedModel\":\"stub-model\"},\"usage\":{\"inputTokens\":120,\"outputTokens\":30,\"totalTokens\":150,\"elapsedMs\":12,\"timeToFirstTokenMs\":12}}"
+   }
+  ],
+  "usage_ledger": [
+   {
+    "id": 1,
+    "session_id": "20261107_1",
+    "created_timestamp": 1794037502,
+    "model": "stub-model",
+    "input_tokens": 120,
+    "output_tokens": 30,
+    "total_tokens": 150,
+    "cache_read_tokens": null,
+    "cache_write_tokens": null,
+    "cost": null,
+    "cost_source": null,
+    "is_compaction": 0
+   },
+   {
+    "id": 2,
+    "session_id": "20261107_1",
+    "created_timestamp": 1794037502,
+    "model": "stub-model",
+    "input_tokens": 120,
+    "output_tokens": 30,
+    "total_tokens": 150,
+    "cache_read_tokens": null,
+    "cache_write_tokens": null,
+    "cost": null,
+    "cost_source": null,
+    "is_compaction": 0
+   }
+  ]
+ }
+}

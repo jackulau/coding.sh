@@ -1,11 +1,19 @@
 // coding.sh run -- <cmd> [args...]: run any agent under the capture wrapper.
 // Exits with the child's exit code (128+n when it died from signal n).
 import { constants } from "node:os";
+import { basename } from "node:path";
 import { wrapRunDetailed } from "../../capture/wrapper.ts";
 import { loadConfig } from "../../core/config.ts";
 import { str } from "../common.ts";
 import { duration } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+
+/** Agents with no hooks (tier C) are captured only by this wrapper, so their sessions carry their own id. */
+async function agentFor(cmd: string): Promise<string> {
+  const { getAdapter } = await import("../../adapters/index.ts");
+  const a = getAdapter(basename(cmd).replace(/\.(exe|cmd|bat)$/i, "").toLowerCase());
+  return a?.tier === "C" ? a.id : "wrapper";
+}
 
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
@@ -16,7 +24,7 @@ export async function run(c: CommandContext): Promise<number> {
     args,
     cwd: c.cwd,
     env: c.env,
-    agentId: str(c.flags.agent) ?? "wrapper",
+    agentId: str(c.flags.agent) ?? (await agentFor(cmd!)),
     // --json: stdout is reserved for the single result document, so the child's stdout goes to stderr.
     ...(out.json ? { stdoutToStderr: true } : {}),
     ...(config.snapshot.enabled ? { snapshot: { maxFiles: config.snapshot.maxFiles, timeoutMs: config.snapshot.timeoutMs } } : {}),

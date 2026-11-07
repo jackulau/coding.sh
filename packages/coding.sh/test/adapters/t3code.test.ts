@@ -366,3 +366,50 @@ describe("t3code v1 usage snapshots", () => {
     assert.ok(Math.abs(u.costUsd! - 0.2175) < 1e-9, String(u.costUsd));
   });
 });
+
+// Native id shapes seen on a real install (T3 0.1.7 driving Pi 1.5.0; OpenCode 1.19.5's opencode.db).
+describe("t3code native ids from real installs", () => {
+  let env: TmpEnv;
+  const saved: Record<string, string | undefined> = {};
+  const PI_ID = "01a1b505-0d47-77fa-8dac-f35329f7818e";
+  const OC_ID = "ses_e4b0a0cc8ffe19CiWeM0N8wEWa";
+  before(() => {
+    env = tmpEnv();
+    for (const k of t3Env) (saved[k] = process.env[k]), delete process.env[k];
+  });
+  after(() => {
+    for (const k of t3Env) if (saved[k] === undefined) delete process.env[k];
+    else process.env[k] = saved[k];
+    env.restore();
+  });
+
+  it("Pi's native id is its session file path; OpenCode 1.x sessions live in the session table", async () => {
+    const dir = join(env.home, ".t3", "userdata");
+    mkdirSync(dir, { recursive: true });
+    const piFile = join(env.home, ".pi", "agent", "sessions", "--work-demo--", `2026-11-07T07-59-29-608Z_${PI_ID}.jsonl`);
+    writeFile(piFile, `${J({ type: "session", version: 3, id: PI_ID, timestamp: T(0), cwd: "/work/demo" })}\n`);
+    const ocDir = join(env.home, ".local", "share", "opencode");
+    mkdirSync(ocDir, { recursive: true });
+    const oc = new DatabaseSync(join(ocDir, "opencode.db"));
+    oc.exec("CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, time_created INTEGER, time_updated INTEGER)");
+    oc.prepare("INSERT INTO session VALUES (?, '/work/demo', 0, 0)").run(OC_ID);
+    oc.close();
+    const db = new DatabaseSync(join(dir, "statev2.sqlite"));
+    db.exec(V2_SCHEMA);
+    db.prepare("INSERT INTO projection_projects VALUES ('proj-1', 'demo', '/work/demo', '[]', ?, ?, NULL, NULL)").run(T(0), T(0));
+    thread(db, "thr-pi", { provider: "pi", title: "create hello.txt", created: T(0) });
+    providerThread(db, "pt-pi", "thr-pi", "pi", piFile, 1);
+    thread(db, "thr-oc", { provider: "opencode", title: "create hello.txt", created: T(1) });
+    providerThread(db, "pt-oc", "thr-oc", "opencode", OC_ID, 1);
+    db.prepare("INSERT INTO orchestration_v2_projection_messages VALUES ('m-oc', 'thr-oc', NULL, 'node-1', 'user', 0, ?, ?, ?)").run(T(1), T(1), J({ text: "create hello.txt" }));
+    db.close();
+    const cenv = { ...process.env };
+    const index = new MemoryIndexStore();
+    const r = await backfill({ config: defaultConfig(cenv), index, blobs: new MemoryBlobStore(), adapters: [t3code], env: cenv });
+    assert.deepEqual(r.errors, []);
+    const ids = (await index.listSessions({})).map((s) => s.id).sort();
+    assert.deepEqual(ids, [OC_ID, PI_ID].sort(), "linked to the provider's own session ids, never a file path");
+    // Found natively: the provider's own capture has the content, so T3 adds only the link.
+    assert.equal((await index.listEvents(OC_ID, { kinds: ["user.message"] })).length, 0);
+  });
+});

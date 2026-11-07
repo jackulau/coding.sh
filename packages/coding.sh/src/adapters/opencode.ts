@@ -1,5 +1,5 @@
 // OpenCode adapter (tier A): a JS plugin forwards events to the hook command,
-// SQLite (2.x) / JSON storage (1.x) backfill, `opencode run --format json`.
+// SQLite (1.x and 2.x) / JSON storage (older 1.x) backfill, `opencode run --format json`.
 //
 // Plugin API (verified 2026-11-06, opencode.ai/docs/build/plugins):
 // - 2.x: auto-loaded from ~/.config/opencode/plugins/ and .opencode/plugins/;
@@ -355,7 +355,7 @@ interface StoredMessage {
   parts: Record<string, unknown>[];
 }
 
-/** Convert one stored session (1.x JSON storage or 2.x SQLite rows) — shared 1.x-style part shapes. */
+/** Convert one stored session (JSON storage or SQLite rows) — shared 1.x-style part shapes. */
 async function convertStoredSession(ctx: NormalizeContext, s: { id: string; parentId?: string; title?: string; directory?: string; version?: string; created: number; updated?: number; agent?: string }, messages: StoredMessage[], totals?: Usage): Promise<AgentEvent[]> {
   const out: AgentEvent[] = [];
   const base = { agent: OPENCODE_AGENT, sessionId: s.id, ts: s.created, cwd: s.directory, agentVersion: s.version, subagentId: s.parentId ? s.id : undefined };
@@ -474,7 +474,29 @@ const parseJson = (v: unknown): Record<string, unknown> => {
   }
 };
 
-/** 2.x: opencode.db (session_v2 / session_message / session_part). Copied first: WAL locks. */
+const SESSION_TOTALS = [["tokens_input", "inputTokens"], ["tokens_output", "outputTokens"], ["tokens_cache_read", "cacheReadTokens"], ["tokens_cache_write", "cacheWriteTokens"], ["cost", "costUsd"]] as const;
+
+function sessionTotals(s: SqlRow): Usage | undefined {
+  const totals: Usage = {};
+  for (const [col, k] of SESSION_TOTALS) {
+    const v = num(s[col]);
+    if (v !== undefined) totals[k] = v;
+  }
+  if (num(s.tokens_reasoning)) totals.outputTokens = (totals.outputTokens ?? 0) + (s.tokens_reasoning as number);
+  return Object.keys(totals).length ? totals : undefined;
+}
+
+/**
+ * Table names per schema. 1.x (verified on 1.19.5): session / message / part, with message and
+ * part bodies in a `data` JSON column and the part id in its own column. 2.x: session_v2 /
+ * session_message / session_part.
+ */
+const SQL_SCHEMAS = [
+  { session: "session_v2", messages: "SELECT * FROM session_message WHERE session_id = ? ORDER BY seq, time_created", parts: "SELECT * FROM session_part WHERE session_id = ? ORDER BY message_id, ordinal", v2: true },
+  { session: "session", messages: "SELECT * FROM message WHERE session_id = ? ORDER BY time_created, id", parts: "SELECT * FROM part WHERE session_id = ? ORDER BY message_id, id", v2: false },
+] as const;
+
+/** opencode.db (2.x tables, else 1.x tables). Copied first: WAL locks. */
 async function* backfillSqlite(ctx: NormalizeContext, dbPath: string, since?: number): AsyncIterable<AgentEvent> {
   const tmp = await mkdtemp(join(tmpdir(), "csh-opencode-"));
   try {
@@ -484,15 +506,18 @@ async function* backfillSqlite(ctx: NormalizeContext, dbPath: string, since?: nu
     const { DatabaseSync } = (await import("node:sqlite")) as typeof import("node:sqlite");
     const db = new DatabaseSync(copy);
     try {
-      const sessions = db.prepare("SELECT * FROM session_v2 WHERE COALESCE(time_updated, time_created, 0) >= ? ORDER BY time_created").all(since ?? 0) as SqlRow[];
-      const msgStmt = db.prepare("SELECT * FROM session_message WHERE session_id = ? ORDER BY seq, time_created");
-      const partStmt = db.prepare("SELECT * FROM session_part WHERE session_id = ? ORDER BY message_id, ordinal");
+      const hasTable = (name: string) => db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== undefined;
+      const schema = SQL_SCHEMAS.find((x) => hasTable(x.session));
+      if (!schema) return;
+      const sessions = db.prepare(`SELECT * FROM ${schema.session} WHERE COALESCE(time_updated, time_created, 0) >= ? ORDER BY time_created`).all(since ?? 0) as SqlRow[];
+      const msgStmt = db.prepare(schema.messages);
+      const partStmt = db.prepare(schema.parts);
       for (const s of sessions) {
         const id = str(s.id);
         if (!id) continue;
         const partsByMsg = new Map<string, Record<string, unknown>[]>();
         for (const p of partStmt.all(id) as SqlRow[]) {
-          const d = { type: p.type, call_id: p.call_id, ...parseJson(p.data) };
+          const d = schema.v2 ? { type: p.type, call_id: p.call_id, ...parseJson(p.data) } : { id: p.id, ...parseJson(p.data) };
           const mid = String(p.message_id);
           partsByMsg.set(mid, [...(partsByMsg.get(mid) ?? []), d]);
         }
@@ -500,17 +525,11 @@ async function* backfillSqlite(ctx: NormalizeContext, dbPath: string, since?: nu
           const data = parseJson(m.data);
           return { id: String(m.id), sessionId: id, role: str(data.role) ?? str(m.type), data, ts: toMs(m.time_created, 0), parts: partsByMsg.get(String(m.id)) ?? [] };
         });
-        const totals: Usage = {};
-        for (const [col, k] of [["tokens_input", "inputTokens"], ["tokens_output", "outputTokens"], ["tokens_cache_read", "cacheReadTokens"], ["tokens_cache_write", "cacheWriteTokens"], ["cost", "costUsd"]] as const) {
-          const v = num(s[col]);
-          if (v !== undefined) totals[k] = v;
-        }
-        if (num(s.tokens_reasoning)) totals.outputTokens = (totals.outputTokens ?? 0) + (s.tokens_reasoning as number);
         const events = await convertStoredSession(
           ctx,
           { id, parentId: str(s.parent_id), title: str(s.title), directory: str(s.directory), version: str(s.version), created: toMs(s.time_created, 0), updated: num(s.time_updated), agent: str(s.agent) },
           msgs,
-          Object.keys(totals).length ? totals : undefined,
+          sessionTotals(s),
         );
         for (const e of events) if (since === undefined || e.ts >= since) yield e;
       }

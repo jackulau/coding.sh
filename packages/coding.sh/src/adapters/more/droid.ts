@@ -19,7 +19,7 @@
 // - Headless: `droid exec "<prompt>" -o json --auto high --cwd d -m M` → one result object
 //   {type:"result",session_id,usage{input_tokens,output_tokens,cache_read_input_tokens,…}}.
 // - Isolation: no config-dir env var; override HOME.
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Adapter, AgentRunOutput, DetectResult, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../../core/types.ts";
 import type { AgentEvent, Usage } from "../../schema/index.ts";
@@ -121,6 +121,92 @@ export function droidSidecar(transcriptPath: string | undefined): Json | undefin
   }
 }
 
+/** Order-independent JSON for matching a hook's tool_input to a transcript tool_use input. */
+function stableJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(stableJson).join(",")}]`;
+  if (isObj(v)) return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${stableJson(v[k])}`).join(",")}}`;
+  return JSON.stringify(v) ?? "null";
+}
+
+interface ToolUse {
+  id: string;
+  key: string;
+  ts: number;
+}
+
+/** tool_use blocks per transcript, read incrementally (normalize sees many tool hooks of one session). */
+const toolUseCache = new Map<string, { size: number; rest: Buffer; seen: Set<string>; uses: ToolUse[] }>();
+
+function transcriptToolUses(path: string): ToolUse[] {
+  let size: number;
+  try {
+    size = statSync(path).size;
+  } catch {
+    return [];
+  }
+  let c = toolUseCache.get(path);
+  if (!c || size < c.size) {
+    if (toolUseCache.size >= 64) toolUseCache.delete(toolUseCache.keys().next().value!);
+    c = { size: 0, rest: Buffer.alloc(0), seen: new Set(), uses: [] };
+    toolUseCache.set(path, c);
+  }
+  if (size === c.size) return c.uses;
+  const buf = Buffer.alloc(size - c.size);
+  const fd = openSync(path, "r");
+  try {
+    readSync(fd, buf, 0, buf.length, c.size);
+  } finally {
+    closeSync(fd);
+  }
+  c.size = size;
+  const data = Buffer.concat([c.rest, buf]);
+  const end = data.lastIndexOf(0x0a);
+  c.rest = Buffer.from(data.subarray(end + 1));
+  for (const l of data.subarray(0, end + 1).toString("utf8").split("\n")) {
+    let r: unknown;
+    try {
+      r = JSON.parse(l);
+    } catch {
+      continue;
+    }
+    const m = get(r, "message");
+    if (!isObj(m) || m.role !== "assistant") continue;
+    const ts = toMs(get(r, "timestamp")) ?? 0;
+    for (const b of blocks(m.content)) {
+      const id = str(b.id);
+      if (b.type !== "tool_use" || !id || c.seen.has(id)) continue;
+      c.seen.add(id);
+      c.uses.push({ id, key: toolKey(str(b.name), b.input), ts });
+    }
+  }
+  return c.uses;
+}
+
+const toolKey = (tool: string | undefined, input: unknown): string => `${tool ?? ""} ${stableJson(input)}`;
+
+/**
+ * Droid tool hooks carry no call id (seen on 1.6.0). The transcript does: the assistant tool_use
+ * is written before PreToolUse fires. Take the latest tool_use with the same tool and input at or
+ * before the hook, so Pre/Post pair and share the id the transcript backfill uses.
+ */
+export function droidToolUseId(transcriptPath: string | undefined, tool: string, input: unknown, ts: number): string | undefined {
+  if (!transcriptPath) return undefined;
+  const key = toolKey(tool, input);
+  let id: string | undefined;
+  for (const u of transcriptToolUses(transcriptPath)) if (u.key === key && u.ts <= ts) id = u.id;
+  return id;
+}
+
+/** tool_response arrives as a JSON string on 1.6.0. */
+function parseResponse(resp: unknown): unknown {
+  if (typeof resp !== "string") return resp;
+  try {
+    return JSON.parse(resp);
+  } catch {
+    return resp;
+  }
+}
+
 function toolResult(resp: unknown): { ok: boolean; error?: string } {
   if (isObj(resp)) {
     if (resp.is_error === true || resp.isError === true || resp.success === false) return { ok: false, error: str(resp.error) ?? textOf(resp.content) ?? "tool error" };
@@ -138,7 +224,7 @@ export async function normalizeDroid(line: SpoolLine, ctx: NormalizeContext): Pr
   const em = new Emitter(ctx, { agent: ID, sessionId, ts: line.ts, cwd, runId: line.runId, model }, spoolIdParts(line, sessionId, ctx));
   const ev = str(raw.hook_event_name) ?? line.event;
   const tool = str(raw.tool_name) ?? "unknown";
-  const toolUseId = str(raw.tool_use_id) ?? str(raw.tool_call_id);
+  const toolUseId = str(raw.tool_use_id) ?? str(raw.tool_call_id) ?? (TOOL_EVENTS.has(ev) ? droidToolUseId(str(raw.transcript_path), tool, raw.tool_input, line.ts) : undefined);
   switch (ev) {
     case "SessionStart":
       em.push("session.start", { source: str(raw.source), transcriptPath: str(raw.transcript_path), permissionMode: str(raw.permission_mode) });
@@ -163,8 +249,9 @@ export async function normalizeDroid(line: SpoolLine, ctx: NormalizeContext): Pr
       break;
     }
     case "PostToolUse": {
-      const { ok, error } = toolResult(raw.tool_response);
-      await emitToolEnd(em, ctx, { tool, toolUseId, input: raw.tool_input, output: raw.tool_response, ok, error }, cwd);
+      const resp = parseResponse(raw.tool_response);
+      const { ok, error } = toolResult(resp);
+      await emitToolEnd(em, ctx, { tool, toolUseId, input: raw.tool_input, output: resp, ok, error }, cwd);
       break;
     }
     case "Stop": {
@@ -217,6 +304,9 @@ export async function* droidSessionEvents(file: string, ctx: NormalizeContext, s
     }
     const m = isObj(r.message) ? r.message : r.role ? r : undefined;
     if (!m) continue;
+    // Not conversation: UI-only notices and hook bookkeeping (visibility "user_only"), and
+    // injected context (system reminders) whose line id starts with "context-".
+    if (m.visibility === "user_only" || str(r.id)?.startsWith("context-")) continue;
     const key = str(m.id) ?? str(r.id) ?? `line-${lineNo}`;
     const prev = msgs.get(key);
     msgs.set(key, { ts: ts ?? prev?.ts ?? startTs ?? mtimeMs(file) + n++, m });

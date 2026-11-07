@@ -1,0 +1,123 @@
+{
+ "schema": [
+  "CREATE TABLE `session` (\n          `id` text PRIMARY KEY,\n          `project_id` text NOT NULL,\n          `workspace_id` text,\n          `parent_id` text,\n          `slug` text NOT NULL,\n          `directory` text NOT NULL,\n          `path` text,\n          `title` text NOT NULL,\n          `version` text NOT NULL,\n          `share_url` text,\n          `summary_additions` integer,\n          `summary_deletions` integer,\n          `summary_files` integer,\n          `summary_diffs` text,\n          `metadata` text,\n          `cost` real DEFAULT 0 NOT NULL,\n          `tokens_input` integer DEFAULT 0 NOT NULL,\n          `tokens_output` integer DEFAULT 0 NOT NULL,\n          `tokens_reasoning` integer DEFAULT 0 NOT NULL,\n          `tokens_cache_read` integer DEFAULT 0 NOT NULL,\n          `tokens_cache_write` integer DEFAULT 0 NOT NULL,\n          `revert` text,\n          `permission` text,\n          `agent` text,\n          `model` text,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL,\n          `time_compacting` integer,\n          `time_archived` integer,\n          CONSTRAINT `fk_session_project_id_project_id_fk` FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE\n        )",
+  "CREATE TABLE `message` (\n          `id` text PRIMARY KEY,\n          `session_id` text NOT NULL,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL,\n          `data` text NOT NULL,\n          CONSTRAINT `fk_message_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE\n        )",
+  "CREATE TABLE `part` (\n          `id` text PRIMARY KEY,\n          `message_id` text NOT NULL,\n          `session_id` text NOT NULL,\n          `time_created` integer NOT NULL,\n          `time_updated` integer NOT NULL,\n          `data` text NOT NULL,\n          CONSTRAINT `fk_part_message_id_message_id_fk` FOREIGN KEY (`message_id`) REFERENCES `message`(`id`) ON DELETE CASCADE\n        )"
+ ],
+ "rows": {
+  "session": [
+   {
+    "id": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "project_id": "global",
+    "workspace_id": null,
+    "parent_id": null,
+    "slug": "witty-garden",
+    "directory": "/work/demo",
+    "path": "work/demo",
+    "title": "Done. I wrote hello.txt.",
+    "version": "1.19.5",
+    "share_url": null,
+    "summary_additions": 0,
+    "summary_deletions": 0,
+    "summary_files": 0,
+    "summary_diffs": null,
+    "metadata": null,
+    "cost": 0,
+    "tokens_input": 240,
+    "tokens_output": 60,
+    "tokens_reasoning": 0,
+    "tokens_cache_read": 0,
+    "tokens_cache_write": 0,
+    "revert": null,
+    "permission": "[{\"permission\":\"question\",\"pattern\":\"*\",\"action\":\"deny\"},{\"permission\":\"plan_enter\",\"pattern\":\"*\",\"action\":\"deny\"},{\"permission\":\"plan_exit\",\"pattern\":\"*\",\"action\":\"deny\"}]",
+    "agent": "build",
+    "model": "{\"id\":\"stub-model\",\"providerID\":\"stub\",\"variant\":\"default\"}",
+    "time_created": 1794037379895,
+    "time_updated": 1794037381480,
+    "time_compacting": null,
+    "time_archived": null
+   }
+  ],
+  "message": [
+   {
+    "id": "msg_1b4f5f379001JUtf5p6dO7wmeF",
+    "session_id": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "time_created": 1794037379961,
+    "time_updated": 1794037381404,
+    "data": "{\"role\":\"user\",\"time\":{\"created\":1794037379961},\"agent\":\"build\",\"model\":{\"providerID\":\"stub\",\"modelID\":\"stub-model\"},\"summary\":{\"diffs\":[]}}"
+   },
+   {
+    "id": "msg_1b4f5f5e9001gOcyu65PX0jVOt",
+    "session_id": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "time_created": 1794037380585,
+    "time_updated": 1794037381387,
+    "data": "{\"parentID\":\"msg_1b4f5f379001JUtf5p6dO7wmeF\",\"role\":\"assistant\",\"mode\":\"build\",\"agent\":\"build\",\"path\":{\"cwd\":\"/work/demo\",\"root\":\"/\"},\"cost\":0,\"tokens\":{\"total\":150,\"input\":120,\"output\":30,\"reasoning\":0,\"cache\":{\"write\":0,\"read\":0}},\"modelID\":\"stub-model\",\"providerID\":\"stub\",\"time\":{\"created\":1794037380585,\"completed\":1794037381386},\"finish\":\"tool-calls\"}"
+   },
+   {
+    "id": "msg_1b4f5f90e001xvS3RKcqq0Irux",
+    "session_id": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "time_created": 1794037381390,
+    "time_updated": 1794037381446,
+    "data": "{\"parentID\":\"msg_1b4f5f379001JUtf5p6dO7wmeF\",\"role\":\"assistant\",\"mode\":\"build\",\"agent\":\"build\",\"path\":{\"cwd\":\"/work/demo\",\"root\":\"/\"},\"cost\":0,\"tokens\":{\"total\":150,\"input\":120,\"output\":30,\"reasoning\":0,\"cache\":{\"write\":0,\"read\":0}},\"modelID\":\"stub-model\",\"providerID\":\"stub\",\"time\":{\"created\":1794037381390,\"completed\":1794037381445},\"finish\":\"stop\"}"
+   }
+  ],
+  "part": [
+   {
+    "id": "prt_1b4f5f381001VHQ2T29Au9oQ0B",
+    "message_id": "msg_1b4f5f379001JUtf5p6dO7wmeF",
+    "session_id": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "time_created": 1794037379974,
+    "time_updated": 1794037379976,
+    "data": "{\"type\":\"text\",\"text\":\"\\\"create hello.txt\\\"\"}"
+   },
+   {
+    "id": "prt_1b4f5f8de001XiVPIgJXM2oHaO",
+    "message_id": "msg_1b4f5f5e9001gOcyu65PX0jVOt",
+    "session_id": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "time_created": 1794037381342,
+    "time_updated": 1794037381345,
+    "data": "{\"type\":\"step-start\"}"
+   },
+   {
+    "id": "prt_1b4f5f8e3001YlnyQY0y4pz9H5",
+    "message_id": "msg_1b4f5f5e9001gOcyu65PX0jVOt",
+    "session_id": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "time_created": 1794037381347,
+    "time_updated": 1794037381375,
+    "data": "{\"type\":\"tool\",\"tool\":\"write\",\"callID\":\"call_mw63javu3\",\"state\":{\"status\":\"completed\",\"input\":{\"filePath\":\"hello.txt\",\"file_path\":\"hello.txt\",\"path\":\"hello.txt\",\"content\":\"hello from stub\\n\"},\"output\":\"Wrote file successfully.\",\"metadata\":{\"diagnostics\":{},\"filepath\":\"/work/demo/hello.txt\",\"exists\":false,\"truncated\":false},\"title\":\"work/demo/hello.txt\",\"time\":{\"start\":1794037381358,\"end\":1794037381373}}}"
+   },
+   {
+    "id": "prt_1b4f5f90300112cs72S4WrCXGl",
+    "message_id": "msg_1b4f5f5e9001gOcyu65PX0jVOt",
+    "session_id": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "time_created": 1794037381380,
+    "time_updated": 1794037381381,
+    "data": "{\"reason\":\"tool-calls\",\"type\":\"step-finish\",\"tokens\":{\"total\":150,\"input\":120,\"output\":30,\"reasoning\":0,\"cache\":{\"write\":0,\"read\":0}},\"cost\":0}"
+   },
+   {
+    "id": "prt_1b4f5f936001Nq0vW1r3pHBXxN",
+    "message_id": "msg_1b4f5f90e001xvS3RKcqq0Irux",
+    "session_id": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "time_created": 1794037381430,
+    "time_updated": 1794037381431,
+    "data": "{\"type\":\"step-start\"}"
+   },
+   {
+    "id": "prt_1b4f5f938001HdDM2bajACshNO",
+    "message_id": "msg_1b4f5f90e001xvS3RKcqq0Irux",
+    "session_id": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "time_created": 1794037381432,
+    "time_updated": 1794037381436,
+    "data": "{\"type\":\"text\",\"text\":\"Done. I wrote hello.txt.\",\"time\":{\"start\":1794037381432,\"end\":1794037381435}}"
+   },
+   {
+    "id": "prt_1b4f5f93f0013vrJPvEeXmxCd3",
+    "message_id": "msg_1b4f5f90e001xvS3RKcqq0Irux",
+    "session_id": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "time_created": 1794037381439,
+    "time_updated": 1794037381441,
+    "data": "{\"reason\":\"stop\",\"type\":\"step-finish\",\"tokens\":{\"total\":150,\"input\":120,\"output\":30,\"reasoning\":0,\"cache\":{\"write\":0,\"read\":0}},\"cost\":0}"
+   }
+  ]
+ }
+}

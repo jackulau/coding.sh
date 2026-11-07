@@ -57,8 +57,14 @@ export function t3UserData(env: NodeJS.ProcessEnv = process.env): string {
 const DRIVER_AGENT: Record<string, string> = { codex: "codex", claudeAgent: CLAUDE_AGENT, claude: CLAUDE_AGENT, claudeCode: CLAUDE_AGENT, cursor: "cursor", opencode: "opencode", pi: "pi" };
 export const providerAgent = (driver: string): string => DRIVER_AGENT[driver] ?? driver;
 
-/** ACP provider threads may scope native ids as provider-instance:<instance>:<id>. */
-const unscope = (id: string): string => id.replace(/^provider-instance:[^:]+:/, "");
+/**
+ * The provider's own session id from a T3 native id. ACP instance-scoped ids carry a
+ * "provider-instance:<name>:" prefix; Pi's is its session file path (…/<time>_<id>.jsonl).
+ */
+const unscope = (id: string): string => {
+  const bare = id.replace(/^provider-instance:[^:]+:/, "");
+  return (/[\\/]/.test(bare) && /_([^_\\/]+)\.jsonl$/.exec(bare)?.[1]) || bare;
+};
 
 type Row = Record<string, unknown>;
 
@@ -227,9 +233,11 @@ class NativeIndex {
       const h = await openSqliteCopy(db);
       if (h) {
         try {
-          for (const r of h.db.prepare("SELECT id FROM session_v2").all() as Row[]) if (str(r.id)) out.set(r.id as string, db);
+          // 2.x keeps sessions in session_v2, 1.x in session.
+          const table = hasTable(h.db, "session_v2") ? "session_v2" : hasTable(h.db, "session") ? "session" : undefined;
+          if (table) for (const r of h.db.prepare(`SELECT id FROM ${table}`).all() as Row[]) if (str(r.id)) out.set(r.id as string, db);
         } catch {
-          // older OpenCode schema: treat as not found
+          // unreadable OpenCode schema: treat as not found
         } finally {
           h.close();
         }

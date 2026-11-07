@@ -22,7 +22,9 @@
 //   user.message{content}, assistant.message{content,model}, tool.execution_start{toolCallId,toolName,
 //   arguments,mcpServerName}, tool.execution_complete{toolCallId,success,result{content},error},
 //   session.model_change{newModel}, session.shutdown{modelMetrics{<m>:{usage{…}}}}.
-//   assistant.usage is ephemeral (never on disk): token totals come from session.shutdown.
+//   assistant.usage is ephemeral (never on disk). 1.0.107 also writes session.usage_record{usage{model,
+//   inputTokens,outputTokens,cache*,cost,duration,finishReason}} per model call; otherwise token
+//   totals come from session.shutdown.
 // - Headless: `copilot -p … --allow-all --no-ask-user --output-format=json --session-id <uuid>`.
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -139,9 +141,8 @@ export async function normalizeCopilot(line: SpoolLine, ctx: NormalizeContext): 
   const toolUseId = str(pick(raw, "toolCallId", "tool_use_id")) ?? (ev.startsWith("postToolUse") ? `hook-${ctx.id(...spoolIdParts(line, sessionId, ctx)).slice(0, 16)}` : undefined);
   switch (ev) {
     case "sessionStart": {
+      // initialPrompt is not emitted: userPromptSubmitted carries the same prompt (seen on 1.0.107).
       em.push("session.start", { source: str(raw.source), transcriptPath: str(pick(raw, "transcriptPath", "transcript_path")) });
-      const p = str(pick(raw, "initialPrompt", "initial_prompt"));
-      if (p) await emitText(em, ctx, "user.message", p);
       break;
     }
     case "sessionEnd":
@@ -257,12 +258,15 @@ export async function* copilotSessionEvents(file: string, ctx: NormalizeContext,
         if (text) await emitText(em, ctx, "assistant.message", text, model ? { model } : {});
         break;
       }
-      case "assistant.usage": {
-        const u = usageFrom({ inputTokens: d.inputTokens, outputTokens: d.outputTokens, cacheReadTokens: d.cacheReadTokens, cacheWriteTokens: d.cacheWriteTokens, costUsd: d.cost });
-        const m = str(d.model);
+      case "assistant.usage":
+      case "session.usage_record": {
+        // 1.0.107 writes one session.usage_record{usage{…}} per model call; assistant.usage is the older live shape.
+        const c: Json = type === "session.usage_record" ? (isObj(d.usage) ? d.usage : {}) : d;
+        const u = usageFrom({ inputTokens: c.inputTokens, outputTokens: c.outputTokens, cacheReadTokens: c.cacheReadTokens, cacheWriteTokens: c.cacheWriteTokens, costUsd: c.cost });
+        const m = str(c.responseModel) ?? str(c.model);
         if (u) sawUsage = true;
-        const dur = num(d.duration);
-        em.push("llm.call", { responseModel: m, ok: true }, { ...(u ? { usage: u } : {}), ...(m ? { model: m } : {}), ...(dur !== undefined ? { durationMs: dur } : {}) });
+        const dur = num(c.duration);
+        em.push("llm.call", { responseModel: m, ok: true, stopReason: str(c.finishReason) }, { ...(u ? { usage: u } : {}), ...(m ? { model: m } : {}), ...(dur !== undefined ? { durationMs: dur } : {}) });
         break;
       }
       case "tool.execution_start": {
@@ -349,7 +353,7 @@ export const copilotCliAdapter: Adapter = {
       if (v) r.version = v;
     }
     if (existsSync(dir)) r.configDir = dir;
-    r.notes = ["Token totals are written at session shutdown; run `coding.sh backfill copilot-cli` for usage.", "Repo hooks (.github/hooks) load in -p mode only for trusted folders."];
+    r.notes = ["Token totals are written at session shutdown; run `coding.sh ingest --backfill --agent copilot-cli` for usage.", "Repo hooks (.github/hooks) load in -p mode only for trusted folders."];
     return r;
   },
   async install(opts: InstallOpts): Promise<FileChange[]> {
