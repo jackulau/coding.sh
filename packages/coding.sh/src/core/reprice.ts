@@ -6,7 +6,7 @@
 // - a call with a gateway companion (`coding.sh gateway enrich`) is skipped:
 //   the companion holds billed minus the cost the call had, so a new estimate
 //   would be counted twice;
-// - each changed session gets its usage totals refolded, nothing else.
+// - each changed session gets its usage totals (and cache-break cost) refolded, nothing else.
 // It runs once per price table (built-in + `[prices]` overrides) and lookup-rule
 // version: the stamp is kept under a cursor, so later opens cost one read.
 // `coding.sh usage --reprice` forces a pass.
@@ -75,9 +75,9 @@ function withoutCost(e: AgentEvent): AgentEvent {
   return { ...e, usage, payload };
 }
 
-/** The stored session with only its usage totals refolded (links, repo state and the rest stay). */
+/** The stored session with only its priced totals refolded (links, repo state and the rest stay). */
 function withUsage(prev: Session, rebuilt: Session): Session {
-  const { usage: _u, duplicateUsage: _d, ...stats } = prev.stats;
-  const { usage, duplicateUsage } = rebuilt.stats;
-  return { ...prev, stats: { ...stats, ...(usage ? { usage } : {}), ...(duplicateUsage ? { duplicateUsage } : {}) } };
+  const { usage: _u, duplicateUsage: _d, cacheBreaks: _c, ...stats } = prev.stats;
+  const { usage, duplicateUsage, cacheBreaks } = rebuilt.stats;
+  return { ...prev, stats: { ...stats, ...(usage ? { usage } : {}), ...(duplicateUsage ? { duplicateUsage } : {}), ...(cacheBreaks ? { cacheBreaks } : {}) } };
 }

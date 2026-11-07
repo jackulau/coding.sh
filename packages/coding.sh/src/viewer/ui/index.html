@@ -3368,12 +3368,15 @@ function latencyShort(lat) {
   if (!lat || !lat.llmCalls) return latencyText(lat);
   return [plural(lat.llmCalls, "llm call"), lat.llmP50Ms !== undefined ? "p50 " + fmtDuration(lat.llmP50Ms) : "", lat.llmP95Ms !== undefined ? "p95 " + fmtDuration(lat.llmP95Ms) : ""].filter(Boolean).join(" · ");
 }
-/** "1 re-fetch": read-only calls repeated unchanged. */
+/** "2 cache breaks · $0.11 · 1 re-fetch": prompt tokens paid for again, and read-only calls repeated unchanged. */
 function wasteFact(st) {
+  const b = st.cacheBreaks;
   const w = st.waste;
-  if (!w) return null;
-  const title = fmtNum(w.duplicateFetches) + " of " + fmtNum(w.readOnlyCalls) + " read-only calls repeated with the same result (~" + fmtCompact(w.duplicateFetchTokens) + " tokens)";
-  return { short: plural(w.duplicateFetches, "re-fetch", "re-fetches"), title };
+  if (!b && !w) return null;
+  const short = [b ? plural(b.count, "cache break") + (b.extraUsd ? " · " + fmtCost(b.extraUsd) : "") : "", w ? plural(w.duplicateFetches, "re-fetch", "re-fetches") : ""].filter(Boolean).join(" · ");
+  const causes = b ? Object.entries(b.byCause || {}).map(([k, c]) => k + " " + c.count).join(", ") : "";
+  const title = [b ? fmtCompact(b.lostTokens) + " prompt tokens billed again after the prompt cache was lost (" + causes + ")" : "", w ? fmtNum(w.duplicateFetches) + " of " + fmtNum(w.readOnlyCalls) + " read-only calls repeated with the same result (~" + fmtCompact(w.duplicateFetchTokens) + " tokens)" : ""].filter(Boolean).join("; ");
+  return { short, title };
 }
 /** "342k in · 2.5k out · 95% cached": prompt tokens include cache reads and writes. */
 /** Model calls the session totals left out because another call already counted them. */

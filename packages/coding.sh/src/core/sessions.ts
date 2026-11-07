@@ -8,6 +8,7 @@ import type { AgentEvent, DuplicateUsage, LatencyStats, LlmErrors, Session, Usag
 import { DURABLE_FLAGS, durableFlags, durableStats } from "./durable.ts";
 import { detectTestTamper } from "./intent.ts";
 // waste.ts imports commandOf and FLAGS back from here, inside functions only.
+import { cacheBreakStats, findCacheBreaks } from "./cache-breaks.ts";
 import { wasteOf } from "./waste.ts";
 
 export const FLAGS = {
@@ -471,6 +472,8 @@ export function buildSession(events: AgentEvent[], prev?: Session): Session {
     session.stats.waste = waste.stats;
     session.flags.push(...waste.flags);
   }
+  const cacheBreaks = cacheBreakStats(findCacheBreaks(sorted));
+  if (cacheBreaks) session.stats.cacheBreaks = cacheBreaks;
   if (lastTest) {
     session.stats.testsPassed = lastTest.passed;
     session.stats.testsFailed = lastTest.failed;

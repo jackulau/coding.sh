@@ -439,9 +439,15 @@ enclosing call or an earlier copy of the same response already counted it. `stat
 (`count`, plus the first failure's `statusCode` and `error`) counts `llm.call` events with
 `ok: false` or a status of 400 or more; it is absent when none failed.
 
-`stats.waste` (`duplicateFetches`, `duplicateFetchTokens`, `readOnlyCalls`) counts read-only calls
-that repeated an earlier call in the same context with the same result, and the tokens they sent
-again (output length / 4). It is absent when none repeated.
+Two waste stats are absent when there is nothing to report. `stats.waste` (`duplicateFetches`,
+`duplicateFetchTokens`, `readOnlyCalls`) counts read-only calls that repeated an earlier call in the
+same context with the same result, and the tokens they sent again (output length / 4).
+`stats.cacheBreaks` (`count`, `lostTokens`, `extraUsd`, `byCause`) counts model calls that found the
+prompt cache gone: the previous prompt was over 4,096 tokens, this call read less than half of it
+from cache, and more than 2,048 tokens were billed again. `byCause` splits them into `compaction`,
+`model-switch`, `idle` (5 minutes, or an hour after a 1-hour cache write) and `other`. `extraUsd` is
+the cache-write (or input) price minus the cache-read price for those tokens; it is left out, and
+`unpriced` counts the breaks, when the model has no price.
 
 A missing session, or one outside a scoped key's project, gets 404:
 

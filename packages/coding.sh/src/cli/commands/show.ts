@@ -126,11 +126,20 @@ function harnessText(p: Record<string, unknown>): string {
   }
 }
 
-/** Header rows for waste: repeated read-only calls. */
+/** Header rows for waste: repeated read-only calls and prompt-cache breaks. */
 export function wasteRows(s: Session): [string, string][] {
   const rows: [string, string][] = [];
   const w = s.stats.waste;
   if (w) rows.push(["Re-fetches", `${w.duplicateFetches} of ${w.readOnlyCalls} read-only calls repeated with the same result (~${tokens(w.duplicateFetchTokens)} tokens re-sent)`]);
+  const b = s.stats.cacheBreaks;
+  if (b) {
+    const causes = Object.entries(b.byCause)
+      .sort((x, y) => y[1]!.lostTokens - x[1]!.lostTokens)
+      .map(([k, c]) => `${k} ${c!.count}`)
+      .join(", ");
+    const cost = b.extraUsd !== undefined ? `, ${usd(b.extraUsd)} extra` : "";
+    rows.push(["Cache breaks", `${b.count}: ${tokens(b.lostTokens)} prompt tokens billed again${cost} (${causes})`]);
+  }
   return rows;
 }
 

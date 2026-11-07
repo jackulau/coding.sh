@@ -97,6 +97,7 @@ export function sessionSummary(s: Session, now: number = Date.now()): SessionSum
     flags: s.flags.length ? s.flags : undefined,
     derails: s.stats.derails?.length ? s.stats.derails.map((d) => ({ flag: d.flag, at: iso(d.ts), index: d.index, eventId: d.eventId, detail: d.detail })) : undefined,
     waste: s.stats.waste,
+    cacheBreaks: s.stats.cacheBreaks,
     parentSessionId: s.parent?.sessionId,
     subagentType: s.parent?.type,
   };
@@ -578,8 +579,12 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     /** Read-only calls repeated with an unchanged result (Session.stats.waste) and the tokens they re-sent. */
     duplicateFetches: number;
     duplicateFetchTokens: number;
+    /** Prompt-cache breaks (Session.stats.cacheBreaks): prompt tokens billed again, and what that cost. */
+    cacheBreaks: number;
+    cacheBreakTokens: number;
+    cacheBreakUsd: number;
   }
-  const zero = (): Acc => ({ sessions: 0, turns: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, estimatedCostUsd: 0, estimatedCostByTier: {}, priced: 0, unpriced: 0, duplicateFetches: 0, duplicateFetchTokens: 0 });
+  const zero = (): Acc => ({ sessions: 0, turns: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, estimatedCostUsd: 0, estimatedCostByTier: {}, priced: 0, unpriced: 0, duplicateFetches: 0, duplicateFetchTokens: 0, cacheBreaks: 0, cacheBreakTokens: 0, cacheBreakUsd: 0 });
   const tokens = (s: Session) => {
     const u = s.stats.usage ?? {};
     return (u.inputTokens ?? 0) + (u.outputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
@@ -600,6 +605,9 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     } else if (tokens(s) > 0) a.unpriced++;
     a.duplicateFetches += s.stats.waste?.duplicateFetches ?? 0;
     a.duplicateFetchTokens += s.stats.waste?.duplicateFetchTokens ?? 0;
+    a.cacheBreaks += s.stats.cacheBreaks?.count ?? 0;
+    a.cacheBreakTokens += s.stats.cacheBreaks?.lostTokens ?? 0;
+    a.cacheBreakUsd += s.stats.cacheBreaks?.extraUsd ?? 0;
   };
   const unpricedModels = new Map<string, number>();
   const total = zero();
@@ -621,7 +629,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   // cost is unknown, not $0. Partial coverage is flagged as a lower bound.
   // tokensPerTurn and cacheReadShare (cache reads / all prompt tokens) compare
   // harnesses at a fixed model: same work, fewer tokens or more cache hits.
-  const fix = ({ priced, unpriced, costUsd, estimatedCostUsd, estimatedCostByTier, duplicateFetches, duplicateFetchTokens, ...a }: Acc) => {
+  const fix = ({ priced, unpriced, costUsd, estimatedCostUsd, estimatedCostByTier, duplicateFetches, duplicateFetchTokens, cacheBreaks, cacheBreakTokens, cacheBreakUsd, ...a }: Acc) => {
     const tiers = Object.entries(estimatedCostByTier).sort((x, y) => y[1] - x[1]);
     const totalTokens = a.inputTokens + a.outputTokens + a.cacheReadTokens + a.cacheWriteTokens;
     const prompt = a.inputTokens + a.cacheReadTokens + a.cacheWriteTokens;
@@ -635,6 +643,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
       ...(a.turns ? { tokensPerTurn: Math.round(totalTokens / a.turns) } : {}),
       ...(prompt ? { cacheReadShare: Math.round((a.cacheReadTokens / prompt) * 1000) / 1000 } : {}),
       ...(duplicateFetches ? { duplicateFetches, duplicateFetchTokens } : {}),
+      ...(cacheBreaks ? { cacheBreaks, cacheBreakTokens, ...(cacheBreakUsd > 0 ? { cacheBreakUsd: round4(cacheBreakUsd) } : {}) } : {}),
     };
   };
   const rows = [...groups].map(([key, a]) => ({ key, ...fix(a) }));
@@ -654,6 +663,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   if (total.estimatedCostUsd > 0) notes.push(`$${round4(total.estimatedCostUsd)} of costUsd is estimated: token counts times list prices (estimatedCostUsd), not a bill. Reported and gateway-billed costs are used as is.`);
   const tierUsd = Object.values(total.estimatedCostByTier).reduce((x, y) => x + y, 0);
   if (tierUsd > 0) notes.push(`$${round4(tierUsd)} of the estimate used batch, flex, priority, fast, long-context or US-only rates rather than standard ones (estimatedCostByTier, by the calls' payload.priceTier).`);
+  if (total.cacheBreaks) notes.push(`${total.cacheBreaks} prompt-cache ${total.cacheBreaks === 1 ? "break" : "breaks"} billed ${total.cacheBreakTokens} prompt tokens again${total.cacheBreakUsd > 0 ? ` (~$${round4(total.cacheBreakUsd)} more than reading them from cache)` : ""}: cacheBreaks, cacheBreakTokens, cacheBreakUsd; causes per session in session_get stats.cacheBreaks.`);
   if (total.duplicateFetches) notes.push(`${total.duplicateFetches} read-only ${total.duplicateFetches === 1 ? "call was" : "calls were"} repeated with the same result while the earlier result was still in context (duplicateFetches, ~${total.duplicateFetchTokens} tokens re-sent).`);
   if (unpricedModels.size) notes.push(`No price for: ${[...unpricedModels].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([m, n]) => `${m} (${n})`).join(", ")}. Add [prices."<model>"] to config.toml to price them.`);
   return {

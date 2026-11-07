@@ -499,6 +499,19 @@ export function callRates(p: Price, tier?: PriceTier, prompt?: number, geo?: str
   return { rates: k !== undefined ? scale(rates, k) : rates, ...(labels.length ? { tier: labels.join("+") } : {}) };
 }
 
+/** The price for an event's model: its response model, else its model, else the requested one; an exact row beats a family fallback. */
+export function eventPrice(e: AgentEvent, prices: Prices): ResolvedPrice | undefined {
+  const pl = e.payload ?? {};
+  let r: ResolvedPrice | undefined;
+  for (const m of [pl.responseModel, e.model, pl.requestModel]) {
+    if (typeof m !== "string" || !m) continue;
+    const got = resolvePrice(m, prices);
+    if (got && !got.fallback) return got;
+    r ??= got;
+  }
+  return r;
+}
+
 /**
  * Fills `usage.costUsd` on a model call (or usage snapshot) that carries tokens
  * but no cost, from its model's price, and marks it `payload.costEstimated = true`
@@ -512,16 +525,7 @@ export function callRates(p: Price, tier?: PriceTier, prompt?: number, geo?: str
 export function priceEvent(e: AgentEvent, prices: Prices): AgentEvent {
   if (!priceable(e) || !hasTokens(e.usage) || typeof e.usage.costUsd === "number") return e;
   const pl = e.payload ?? {};
-  const names = [pl.responseModel, e.model, pl.requestModel].filter((m): m is string => typeof m === "string" && m !== "");
-  let r: ResolvedPrice | undefined;
-  for (const m of names) {
-    const got = resolvePrice(m, prices);
-    if (got && !got.fallback) {
-      r = got;
-      break;
-    }
-    r ??= got;
-  }
+  const r = eventPrice(e, prices);
   if (!r) return e;
   const call = e.kind === "llm.call";
   const { rates, tier } = call ? callRates(r.price, callTier(pl), promptTokens(e.usage), geoValue(pl.inferenceGeo)) : { rates: r.price, tier: undefined };

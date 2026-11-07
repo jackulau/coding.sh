@@ -103,6 +103,25 @@ export interface WasteStats {
   readOnlyCalls: number;
 }
 
+/** Why a prompt cache broke: a compaction rewrote the context, the model changed, the cache expired while idle, or something else. */
+export type CacheBreakCause = "compaction" | "model-switch" | "idle" | "other";
+
+/**
+ * Session.stats.cacheBreaks: model calls whose prompt prefix was no longer cached,
+ * so tokens read from cache on the previous call were billed again at the write
+ * (or full input) rate.
+ */
+export interface CacheBreakStats {
+  count: number;
+  /** Prompt tokens that were cached before the break and paid for again. */
+  lostTokens: number;
+  /** USD the re-billing cost over cache-read prices; set only when every break's model has a price. */
+  extraUsd?: number;
+  byCause: Partial<Record<CacheBreakCause, { count: number; lostTokens: number; extraUsd?: number }>>;
+  /** Breaks on models with no price (extraUsd is then left out). */
+  unpriced?: number;
+}
+
 /** Session.stats.llmErrors: how many model calls failed, and why the first one did. */
 export interface LlmErrors {
   count: number;
@@ -234,6 +253,8 @@ export interface Session {
     phases?: SessionPhase[];
     /** Read-only calls repeated with an unchanged result (core/waste.ts). Unset when none repeated. */
     waste?: WasteStats;
+    /** Model calls that found the prompt cache gone and paid for the prompt again (core/cache-breaks.ts). Unset when none did. */
+    cacheBreaks?: CacheBreakStats;
   };
   /** Detected failure patterns, e.g. "premature-completion". */
   flags: string[];

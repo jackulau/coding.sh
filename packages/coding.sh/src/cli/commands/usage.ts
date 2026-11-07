@@ -7,7 +7,7 @@
 // times list price (marked `~`), at the rates each call ran at (batch, flex,
 // priority, long context: `estimatedCostByTier`). `--reprice` recomputes those estimates from the
 // current price table first (it also runs by itself when the table changes). Waste totals:
-// repeated read-only calls.
+// prompt-cache breaks (tokens billed again, extra USD) and repeated read-only calls.
 import { repriceStored } from "../../core/reprice.ts";
 import { parseSince, positiveInt } from "../args.ts";
 import { autoIngest, str, withContext } from "../common.ts";
@@ -31,6 +31,9 @@ interface Row {
   costPartial?: boolean;
   duplicateFetches?: number;
   duplicateFetchTokens?: number;
+  cacheBreaks?: number;
+  cacheBreakTokens?: number;
+  cacheBreakUsd?: number;
 }
 
 /** `$1.23`, `~$1.23` when part of it is estimated, `$1.23+` when some sessions in the row have no cost. */
@@ -72,6 +75,7 @@ export async function run(c: CommandContext): Promise<number> {
     const tiers = Object.entries(r.total.estimatedCostByTier ?? {});
     if (tiers.length) out.note(`Estimated at non-standard rates: ${tiers.map(([t, v]) => `${t} ${usd(v)}`).join(", ")}`);
     const t = r.total;
+    if (t.cacheBreaks) out.note(`Cache breaks: ${t.cacheBreaks}, ${fmt(t.cacheBreakTokens)} prompt tokens billed again${t.cacheBreakUsd ? ` (~${usd(t.cacheBreakUsd)} extra)` : ""}. Causes per session: coding.sh show <id>.`);
     if (t.duplicateFetches) out.note(`Re-fetches: ${t.duplicateFetches} read-only ${t.duplicateFetches === 1 ? "call" : "calls"} repeated with the same result (~${fmt(t.duplicateFetchTokens)} tokens re-sent).`);
     const unpriced = Object.entries(r.unpricedModels ?? {});
     if (unpriced.length) out.note(`No price for ${unpriced.map(([m]) => m).slice(0, 6).join(", ")}: add [prices."<model>"] to config.toml`);

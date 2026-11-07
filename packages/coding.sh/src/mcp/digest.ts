@@ -102,6 +102,8 @@ export async function sessionMarkdown(index: IndexStore, s: Session, maxEntries 
   if (lat?.llmCalls) row("Latency", `${lat.llmCalls} model calls, p50 ${fmtMs(lat.llmP50Ms)}, p95 ${fmtMs(lat.llmP95Ms)}${lat.ttftP50Ms !== undefined ? `, TTFT p50 ${fmtMs(lat.ttftP50Ms)}` : ""}`);
   if (s.flags.length) row("Flags", s.flags.join(", "));
   if (s.stats.waste) row("Re-fetches", `${s.stats.waste.duplicateFetches} of ${s.stats.waste.readOnlyCalls} read-only calls repeated with the same result (~${s.stats.waste.duplicateFetchTokens} tokens)`);
+  const cb = s.stats.cacheBreaks;
+  if (cb) row("Cache breaks", `${cb.count}, ${cb.lostTokens} prompt tokens billed again${cb.extraUsd !== undefined ? `, $${cb.extraUsd.toFixed(4)} extra` : ""} (${Object.entries(cb.byCause).map(([k, c]) => `${k} ${c!.count}`).join(", ")})`);
   for (const d of s.stats.derails ?? []) row("Derail", `${d.flag} at +${fmtMs(d.ts - s.startedAt)} (event ${d.index + 1}): ${d.detail}`);
   if (s.parent) row("Parent", `\`${s.parent.sessionId}\``);
   if (turns.length > 1) {
