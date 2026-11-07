@@ -40,7 +40,7 @@ const WORKS_WITH = [
 const OTHERS = WORKS_WITH.length - 3;
 // One sentence: the "Works with" strip under the screenshot names the rest, and
 // the fine print says where runs are kept.
-const SUB = "coding.sh records every step your AI agents take, from Claude Code, Codex and Cursor to the ones you build.";
+const SUB = "coding.sh records every step your AI agents take, from Claude\u00a0Code, Codex and Cursor to the ones you build.";
 
 const m = (s: string) => `<span class="t-muted">${s}</span>`;
 const tx = (s: string) => `<span class="t-text">${s}</span>`;
@@ -219,7 +219,7 @@ const FAQ = [
         <div class="frame split split--flip band__inner">
           <div class="copy">
             <p class="eyebrow">Production</p>
-            <h2 id="production-title">Track the <span class="nw">AI calls</span> in your app</h2>
+            <h2 id="production-title"><span class="nw">Track the AI calls</span> in your app</h2>
             <p class="body">Wrap your OpenAI or Anthropic client with the SDK. Each request shows up with its model, tokens, cost and time. A failed call is marked red, with the error that came back.</p>
             <pre class="code" set:html={SDK_CODE} />
             <p class="links"><a class="inline-link" href={SDK_URL}>Read the SDK guide</a> <a class="inline-link" href={PY_SDK_URL}>Python SDK</a></p>
@@ -559,7 +559,7 @@ const FAQ = [
 
 
   /* ---------- production ---------- */
-  /* "AI calls" stays together, so the heading never breaks after "AI". */
+  /* The first line stays whole, so the heading never breaks after "AI" or "the". */
   .nw {
     white-space: nowrap;
   }
