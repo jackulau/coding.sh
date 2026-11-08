@@ -326,13 +326,28 @@ describe("host attribution", () => {
       index.upsertSession({ id, agent, model: "gpt-5.5", startedAt: Date.now() - 1000, stats: { events: 1, turns, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: u }, flags: [], ...(parent ? { parent: { sessionId: parent } } : {}) });
     await mk("a", "t3code", 2, { inputTokens: 100, outputTokens: 100, cacheReadTokens: 800 });
     await mk("b", "codex", 4, { inputTokens: 400, outputTokens: 200, cacheReadTokens: 400 });
-    // A subagent of b: its tokens count, its prompt is not a user turn.
+    // A subagent of b: its tokens count in TOKENS, its prompt is not a user turn.
     await mk("b:sub:1", "codex", 1, { inputTokens: 200, outputTokens: 0, cacheReadTokens: 4000 }, "b");
-    const r = (await usage(index, { topLevel: false, since: 0 }, "agent-model", 10)) as { groups: { key: string; turns: number; tokensPerTurn: number; cacheReadShare: number }[] };
+    const r = (await usage(index, { topLevel: false, since: 0 }, "agent-model", 10)) as { groups: { key: string; turns: number; totalTokens: number; tokensPerTurn: number; cacheReadShare: number }[] };
     const g = Object.fromEntries(r.groups.map((x) => [x.key, x]));
-    // Tokens per user turn leave cache reads out: (100 + 100) / 2, (400 + 200 + 200) / 4.
+    // Tokens per user turn leave cache reads and subagents out: (100 + 100) / 2, (400 + 200) / 4.
     assert.deepEqual([g["t3code gpt-5.5"]!.turns, g["t3code gpt-5.5"]!.tokensPerTurn, g["t3code gpt-5.5"]!.cacheReadShare], [2, 100, 0.889]);
-    assert.deepEqual([g["codex gpt-5.5"]!.turns, g["codex gpt-5.5"]!.tokensPerTurn, g["codex gpt-5.5"]!.cacheReadShare], [4, 200, 0.88]);
+    assert.deepEqual([g["codex gpt-5.5"]!.turns, g["codex gpt-5.5"]!.tokensPerTurn, g["codex gpt-5.5"]!.cacheReadShare], [4, 150, 0.88]);
+    assert.equal(g["codex gpt-5.5"]!.totalTokens, 400 + 200 + 400 + 200 + 4000, "TOKENS still counts the subagent");
+  });
+
+  it("a subagent in another group than its parent does not divide by the parent's turns", async () => {
+    const index = new MemoryIndexStore();
+    const mk = (id: string, model: string, turns: number, inputTokens: number, parent?: string) =>
+      index.upsertSession({ id, agent: "claude-code", model, startedAt: Date.now() - 1000, stats: { events: 1, turns, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { inputTokens, outputTokens: 0 } }, flags: [], ...(parent ? { parent: { sessionId: parent } } : {}) });
+    // One prompt on Opus whose subagents ran 7.9M tokens on Sonnet: the Sonnet row has no user turn.
+    await mk("p", "claude-opus-5-5", 1, 1000);
+    await mk("p:sub:1", "claude-sonnet-5", 1, 7_900_000, "p");
+    const r = (await usage(index, { topLevel: false, since: 0 }, "model", 10)) as { groups: { key: string; turns: number; tokensPerTurn?: number }[]; total: { turns: number; tokensPerTurn?: number } };
+    const g = Object.fromEntries(r.groups.map((x) => [x.key, x]));
+    assert.deepEqual([g["claude-sonnet-5"]!.turns, g["claude-sonnet-5"]!.tokensPerTurn], [0, undefined]);
+    assert.deepEqual([g["claude-opus-5-5"]!.turns, g["claude-opus-5-5"]!.tokensPerTurn], [1, 1000]);
+    assert.deepEqual([r.total.turns, r.total.tokensPerTurn], [1, 1000], "not 7.9M tokens per turn");
   });
 });
 

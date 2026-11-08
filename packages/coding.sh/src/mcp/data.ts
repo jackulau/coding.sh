@@ -594,6 +594,8 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     sessions: number;
     /** User turns: the turns of top-level sessions (a subagent's prompt comes from its parent's turn). */
     turns: number;
+    /** Input + output + cache-write tokens of top-level sessions: tokensPerTurn divides these, not subagents' tokens, by `turns`. */
+    turnTokens: number;
     inputTokens: number;
     outputTokens: number;
     cacheReadTokens: number;
@@ -621,7 +623,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     /** Sessions tagged cache:low: paid to write a prompt cache they barely read back. */
     cacheLowSessions: number;
   }
-  const zero = (): Acc => ({ sessions: 0, turns: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, estimatedCostUsd: 0, estimatedCostByTier: {}, priced: 0, unpriced: 0, duplicateFetches: 0, duplicateFetchTokens: 0, cacheBreaks: 0, cacheBreakTokens: 0, cacheBreakUsd: 0, cacheBreakCauses: {}, cacheBreakIdle: {}, cacheLowSessions: 0 });
+  const zero = (): Acc => ({ sessions: 0, turns: 0, turnTokens: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, estimatedCostUsd: 0, estimatedCostByTier: {}, priced: 0, unpriced: 0, duplicateFetches: 0, duplicateFetchTokens: 0, cacheBreaks: 0, cacheBreakTokens: 0, cacheBreakUsd: 0, cacheBreakCauses: {}, cacheBreakIdle: {}, cacheLowSessions: 0 });
   const tokens = (s: Session) => {
     const u = s.stats.usage ?? {};
     return (u.inputTokens ?? 0) + (u.outputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
@@ -629,7 +631,10 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   const add = (a: Acc, s: Session) => {
     const u = s.stats.usage ?? {};
     a.sessions++;
-    if (!s.parent) a.turns += s.stats.turns ?? 0;
+    if (!s.parent) {
+      a.turns += s.stats.turns ?? 0;
+      a.turnTokens += (u.inputTokens ?? 0) + (u.outputTokens ?? 0) + (u.cacheWriteTokens ?? 0);
+    }
     a.inputTokens += u.inputTokens ?? 0;
     a.outputTokens += u.outputTokens ?? 0;
     a.cacheReadTokens += u.cacheReadTokens ?? 0;
@@ -673,11 +678,13 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   // cost is unknown, not $0. Partial coverage is flagged as a lower bound.
   // tokensPerTurn and cacheReadShare (cache reads / all prompt tokens) compare
   // harnesses at a fixed model: same work, fewer tokens or more cache hits.
-  // tokensPerTurn is input + output + cache-write tokens (subagents' included)
-  // per user turn. Cache reads are left out: every model call re-reads the
-  // whole context, so they grow with the number of calls, not with the work,
-  // and would make one long turn read as millions of tokens.
-  const fix = ({ priced, unpriced, costUsd, estimatedCostUsd, estimatedCostByTier, duplicateFetches, duplicateFetchTokens, cacheBreaks, cacheBreakTokens, cacheBreakUsd, cacheBreakCauses, cacheBreakIdle, cacheLowSessions, ...a }: Acc) => {
+  // tokensPerTurn is input + output + cache-write tokens of top-level sessions
+  // per user turn. Subagents' tokens are left out: their sessions have no user
+  // turns, and a group can hold a subagent without its parent (another model,
+  // another day), so dividing them by the group's turns gave millions per turn.
+  // Cache reads are left out too: every model call re-reads the whole context,
+  // so they grow with the number of calls, not with the work.
+  const fix = ({ priced, unpriced, costUsd, estimatedCostUsd, estimatedCostByTier, duplicateFetches, duplicateFetchTokens, cacheBreaks, cacheBreakTokens, cacheBreakUsd, cacheBreakCauses, cacheBreakIdle, cacheLowSessions, turnTokens, ...a }: Acc) => {
     const tiers = Object.entries(estimatedCostByTier).sort((x, y) => y[1] - x[1]);
     const totalTokens = a.inputTokens + a.outputTokens + a.cacheReadTokens + a.cacheWriteTokens;
     const prompt = a.inputTokens + a.cacheReadTokens + a.cacheWriteTokens;
@@ -688,7 +695,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
       ...(priced && tiers.length ? { estimatedCostByTier: Object.fromEntries(tiers.map(([k, v]) => [k, round4(v)])) } : {}),
       ...(priced && unpriced ? { costPartial: true, unpricedSessions: unpriced } : {}),
       totalTokens,
-      ...(a.turns ? { tokensPerTurn: Math.round((totalTokens - a.cacheReadTokens) / a.turns) } : {}),
+      ...(a.turns ? { tokensPerTurn: Math.round(turnTokens / a.turns) } : {}),
       ...(prompt ? { cacheReadShare: Math.round((a.cacheReadTokens / prompt) * 1000) / 1000 } : {}),
       ...(a.cacheWriteTokens ? { cacheReadWriteRatio: Math.round((a.cacheReadTokens / a.cacheWriteTokens) * 100) / 100 } : {}),
       ...(duplicateFetches ? { duplicateFetches, duplicateFetchTokens } : {}),

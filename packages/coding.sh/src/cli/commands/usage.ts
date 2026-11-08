@@ -119,7 +119,7 @@ export async function run(c: CommandContext): Promise<number> {
       [by.toUpperCase(), "SESSIONS", "TURNS", "TOKENS", "OUTPUT", "TOK/TURN", "CACHE READ", ...(cost ? ["COST"] : [])],
       r.groups.map((g) => [g.key, String(g.sessions), String(g.turns), fmt(g.totalTokens), fmt(g.outputTokens), fmt(g.tokensPerTurn), pct(g.cacheReadShare), ...(cost ? [costCell(g)] : [])]),
     );
-    out.note("TURNS = user turns (top-level sessions). TOK/TURN = input + output + cache-write tokens per turn, cache reads left out. CACHE READ = cache reads / all prompt tokens. Subagent tokens count.");
+    out.note("TURNS = user turns (top-level sessions). TOK/TURN = top-level sessions' input + output + cache-write tokens per turn; subagents' tokens and cache reads are left out. CACHE READ = cache reads / all prompt tokens. TOKENS counts subagents.");
     if (r.groups.some((g) => g.estimatedCostUsd)) out.note("~ = includes cost estimated from tokens × list price (no reported cost).");
     if (r.groups.some((g) => g.costPartial)) out.note("≥ = some sessions in the row have tokens but no price; the cost is a lower bound.");
     const tiers = Object.entries(r.total.estimatedCostByTier ?? {});

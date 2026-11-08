@@ -594,7 +594,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       name: "usage",
       title: "Token usage and cost",
       description:
-        "Tokens and cost over a window by day (local time), agent, model, agent-model or repo: totals, user turns, tokensPerTurn (no cache reads), cacheReadShare, top sessions. costUsd: reported, else tokens × list price (estimatedCostUsd); omitted when unknown, never $0. Subagents count. Default 7d by day.",
+        "Tokens and cost over a window by day (local), agent, model, agent-model, repo: totals (subagents count), user turns, tokensPerTurn (top-level, no cache reads), cacheReadShare, top sessions. costUsd: reported, else tokens × list price (estimatedCostUsd); omitted if unknown, not $0. Default 7d by day.",
       inputSchema: input({
         since: SINCE("7d"),
         until: UNTIL,

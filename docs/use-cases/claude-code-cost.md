@@ -85,8 +85,9 @@ command, with estimates marked. It takes the same `where` filter as `--where`.
 ### Why are cache reads left out of tokens per turn?
 
 Every model call re-reads the whole context, so cache reads grow with the number of calls rather
-than the work done. `TOK/TURN` counts input, output and cache-write tokens. The `CACHE READ` column
-shows the cache-read share on its own.
+than the work done. `TOK/TURN` counts input, output and cache-write tokens of top-level sessions per
+user turn; subagents' tokens are left out, like their turns. The `CACHE READ` column shows the
+cache-read share on its own.
 
 ### Prices changed. Do old sessions update?
 
