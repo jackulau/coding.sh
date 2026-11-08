@@ -18,6 +18,7 @@ const TOOLS: [string, string][] = [
   ["latency", "Model-call p50/p95 and time to first token, plus the slowest tools and tool calls."],
   ["usage", "Tokens and cost by day, agent, model or repo, with the most expensive sessions. Takes where too."],
   ["subagents", "The subagents a session spawned, as a tree with durations and errors."],
+  ["session_tree", "A whole multi-agent run as one tree: a parent agent and its subagents (or, by run id, a fan-out of separate agents), with per-node cost, tokens and flags, rolled-up totals and the worst flag to fix first."],
   ["experiments_list", "Dataset experiments with pass rate and confidence interval."],
   ["experiment_compare", "Paired comparison of two experiments: difference, p-value, regressed and improved cases."],
   ["exp_session_summary", "The experiment session's timeline, oldest first: notes, commands and each run with its delta against the previous run."],

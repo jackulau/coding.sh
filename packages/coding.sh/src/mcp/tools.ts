@@ -8,6 +8,7 @@ import type { Session } from "../core/types.ts";
 import { failureFlags } from "../core/sessions.ts";
 import { createRedactor } from "../core/redact.ts";
 import { loadReplay, snapshotBaseline, type Replay } from "../core/replay.ts";
+import { buildRunTree, buildSessionTree, worstFirst, worstNode, type Tree, type TreeNode } from "../core/tree.ts";
 import { parseSince } from "../cli/args.ts";
 import { version } from "../cli/meta.ts";
 import { isNewer } from "../update/semver.ts";
@@ -24,6 +25,7 @@ import {
   pageSessions,
   parsePlace,
   placeNode,
+  round2,
   scanFilter,
   sessionSummary,
   SESSION_ENV_VARS,
@@ -96,6 +98,32 @@ const DIGEST_OUT = out(
   ["session", "timeline"],
 );
 const NODE_OUT: Obj = out({ type: S, sessionId: S, children: arr({ $ref: "#/$defs/node" }) });
+const TREE_NODE_OUT: Obj = out(
+  { sessionId: S, role: S, agent: S, model: S, title: S, depth: I, costUsd: N, inputTokens: I, outputTokens: I, durationMs: N, toolCalls: I, toolErrors: I, flags: arr(S), children: arr({ $ref: "#/$defs/treeNode" }) },
+  ["sessionId", "depth", "children"],
+);
+
+/** One session_tree node: the session's own numbers plus its subagents. */
+function treeNodeJson(n: TreeNode): Obj {
+  const s = n.session;
+  const u = s.stats.usage;
+  return {
+    sessionId: s.id,
+    role: n.depth === 0 ? "root" : (s.parent?.type ?? "subagent"),
+    agent: s.agent,
+    ...(s.model ? { model: s.model } : {}),
+    ...(s.title ? { title: clip(s.title, 120) } : {}),
+    depth: n.depth,
+    ...(u?.costUsd !== undefined ? { costUsd: round2(u.costUsd) } : {}),
+    ...(u?.inputTokens !== undefined ? { inputTokens: u.inputTokens } : {}),
+    ...(u?.outputTokens !== undefined ? { outputTokens: u.outputTokens } : {}),
+    ...(s.endedAt !== undefined ? { durationMs: s.endedAt - s.startedAt } : {}),
+    toolCalls: s.stats.toolCalls,
+    toolErrors: s.stats.toolErrors,
+    flags: worstFirst(s.flags),
+    children: n.children.map(treeNodeJson),
+  };
+}
 
 // ------------------------------------------------------------ helpers
 
@@ -607,6 +635,58 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         const tree = await subagentTree(ctx.index, s.id);
         const more = tree.length > offset + limit;
         return { sessionId: s.id, count: countNodes(tree), topLevel: tree.length, subagents: tree.slice(offset, offset + limit), ...(more ? { nextCursor: String(offset + limit), truncated: true } : {}) };
+      },
+    },
+    {
+      name: "session_tree",
+      title: "Whole multi-agent run as a tree",
+      description:
+        "A whole multi-agent run as one tree: from any session, its top-level agent and every subagent; or with run:true a fan-out sharing a run id. Each node has model, cost, tokens, duration and flags. Also rolled-up totals, the worst flag, and worst (the node to fix first).",
+      inputSchema: input({ sessionId: SESSION_ID, run: { type: "boolean", default: false, description: "Read sessionId as a run id (CODING_SH_RUN_ID) instead of a session." } }, ["sessionId"]),
+      outputSchema: {
+        ...out(
+          {
+            runId: S,
+            totals: out({ sessions: I, costUsd: N, inputTokens: I, outputTokens: I, toolCalls: I, toolErrors: I, filesChanged: I, durationMs: N, flags: arr(S) }, ["sessions"]),
+            worst: out({ sessionId: S, role: S, flags: arr(S) }),
+            tree: arr({ $ref: "#/$defs/treeNode" }),
+          },
+          ["totals", "tree"],
+        ),
+        $defs: { treeNode: TREE_NODE_OUT },
+      },
+      annotations: READ,
+      async run(a, c) {
+        const ctx = await c.store();
+        const arg = strArg(a, "sessionId")!;
+        let tree: Tree | undefined;
+        if (a.run === true) {
+          tree = await buildRunTree(ctx.index, arg);
+          if (!tree) throw new ToolError(`No sessions in run ${JSON.stringify(arg)}. Set CODING_SH_RUN_ID on your fan-out, or pass a session id with run:false.`);
+        } else {
+          const s = await resolveSession(ctx, arg);
+          tree = await buildSessionTree(ctx.index, s.id);
+          if (!tree) throw new ToolError(`No tree for session ${JSON.stringify(arg)}.`);
+        }
+        const worst = worstNode(tree.roots);
+        const t = tree.totals;
+        return {
+          ...(tree.runId ? { runId: tree.runId } : {}),
+          totals: {
+            sessions: t.sessions,
+            ...(t.usage.costUsd !== undefined ? { costUsd: round2(t.usage.costUsd) } : {}),
+            ...(t.usage.inputTokens !== undefined ? { inputTokens: t.usage.inputTokens } : {}),
+            ...(t.usage.outputTokens !== undefined ? { outputTokens: t.usage.outputTokens } : {}),
+            ...(t.usage.cacheReadTokens !== undefined ? { cacheReadTokens: t.usage.cacheReadTokens } : {}),
+            toolCalls: t.toolCalls,
+            toolErrors: t.toolErrors,
+            filesChanged: t.filesChanged,
+            ...(t.wallMs !== undefined ? { durationMs: t.wallMs } : {}),
+            flags: t.flags,
+          },
+          ...(worst ? { worst: { sessionId: worst.session.id, role: worst.depth === 0 ? "root" : (worst.session.parent?.type ?? "subagent"), flags: worstFirst(worst.session.flags) } } : {}),
+          tree: tree.roots.map(treeNodeJson),
+        };
       },
     },
     {

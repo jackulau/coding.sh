@@ -353,7 +353,7 @@ step. The address ends in `?step=N`, so a copied link opens the replay at that s
 
 `coding.sh mcp` serves your captured data to agents over stdio, with the tools `improve`,
 `harness_changes`, `harness_audit`, `sessions_list`, `session_get`, `session_current`, `session_replay`, `search`,
-`failures`, `latency`, `usage`, `subagents`, `eval_from_session`, `eval_init`, `experiments_list`,
+`failures`, `latency`, `usage`, `subagents`, `session_tree`, `eval_from_session`, `eval_init`, `experiments_list`,
 `experiment_compare`, `exp_session_summary`, `exp_session_note`, `harness_compare`, `benchmarks` and
 `status`. `improve` and `harness_changes` return what `coding.sh improve` and `coding.sh improve
 check` print, for the repo the server runs in or the one named by `repo`. The server also has two
@@ -373,6 +373,10 @@ starts one.
 `session_replay` gives the same as `coding.sh replay`: the steps, one step with `step` (and a
 file with `file`), or a range with `from` and `to`. With `step` and `fork` it forks that step
 (see [Fork from a step](#fork-from-a-step)); this one calls the model.
+`session_tree` gives the same as `coding.sh tree`: a whole multi-agent run as one tree — from any
+session, its top-level agent and every subagent; with `run: true`, every agent of a fan-out that
+shares a run id. Each node has its model, cost, tokens, duration and flags, and the result rolls up
+the loop's totals, the worst flag across it, and `worst`, the node to fix first.
 
 `coding.sh init` registers it with Claude Code, Codex, Cursor and OpenCode (`--no-mcp` skips
 this). `coding.sh mcp config` prints the snippet for any other client.
