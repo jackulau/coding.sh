@@ -255,7 +255,7 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
   if (!tasks.length) throw new InitError(`couldn't draft a task from any of ${sessions.length} session(s): ${notes.join("; ")}`);
   if (attempts) {
     notes.push(
-      `the agent's failed attempt is saved as near-misses/001.patch (the verifier must fail it). Add reference.patch, a correct fix, to ${attempts === tasks.length ? "each task dir" : "those task dirs"}; then coding.sh eval validate <task> checks the verifier fails before the fix and passes after`,
+      `the agent's failed attempt is saved as near-misses/001.patch (the verifier must fail it). Add reference.patch, a correct fix, to ${attempts === tasks.length ? "each task dir" : "those task dirs"}; then coding.sh eval import evals/${name}/tasks/<task> loads it and coding.sh eval validate <task> checks the verifier fails before the fix and passes after`,
     );
   }
   const agent = o.agent ?? [...agents.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "claude-code";

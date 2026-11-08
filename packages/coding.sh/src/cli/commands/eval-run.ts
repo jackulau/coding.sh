@@ -90,7 +90,7 @@ export async function evalRun(c: CommandContext): Promise<number> {
       if (!o.report) continue;
       out.print("");
       out.print(renderSuiteReport(o.report, { color: out.color, transcript }));
-      if (o.unverified?.length) out.print(`${plural(o.unverified.length, "task")} without a reference solution (${o.unverified.slice(0, 5).join(", ")}${o.unverified.length > 5 ? ", …" : ""}): add reference.patch to the task dir, then coding.sh eval validate <task>`);
+      if (o.unverified?.length) out.print(`${plural(o.unverified.length, "task")} without a reference solution (${o.unverified.slice(0, 5).join(", ")}${o.unverified.length > 5 ? ", …" : ""}): add reference.patch to the task dir, then coding.sh eval import <task dir> and coding.sh eval validate <task>`);
       const meta = [o.harness ? `harness ${o.harness.name} (${plural(o.harness.files, "file")})` : "", o.experimentId ? `experiment ${o.experimentId}` : ""].filter(Boolean).join(" · ");
       for (const line of o.extra ?? []) out.print(line);
       if (meta) out.print(meta);

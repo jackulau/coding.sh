@@ -178,7 +178,7 @@ function render(c: CommandContext, r: InitResult, root: string): void {
   const what = r.kind === "tasks" ? plural(r.tasks?.length ?? 0, "task") : r.kind === "triggers" ? "skill trigger prompts" : "cases";
   out.ok(`Wrote ${r.purpose} suite ${r.name} (${what}) to ${relative(root, r.dir) || "."}${r.drafted ? ", DRAFT: read it before trusting a score" : ""}`);
   for (const f of r.files) out.note(f);
-  for (const t of r.tasks ?? []) out.row(t.name, t.verifier || "no verifier");
+  for (const t of r.tasks ?? []) out.row(t.name, `${t.verifier || "no verifier"} · from session ${t.sessionId.slice(0, 8)}`);
   for (const n of r.notes) out.warn(n);
   out.note("");
   out.note(
