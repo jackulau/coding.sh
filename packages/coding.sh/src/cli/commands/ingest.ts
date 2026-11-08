@@ -84,7 +84,6 @@ export async function run(c: CommandContext): Promise<number> {
       for (const [reason, n] of keptReasons(rp).slice(0, 3)) out.note(`${n} kept: ${reason}`);
     }
     for (const e of [...r.errors, ...(bf?.errors ?? []), ...(rp?.errors ?? [])].slice(0, 5)) out.note(typeof e === "string" ? e : JSON.stringify(e));
-    out.print(String(r.events + (bf?.events ?? 0)));
     return errors ? 1 : 0;
   });
 }

@@ -588,6 +588,16 @@ describe("cli zero setup", () => {
     assert.equal(r.spool.lines, 0, "nothing left for a manual ingest");
   });
 
+  it("ingest --backfill ends with its summary rows, not a bare event count", () => {
+    // Regression: after the Spool and Backfill rows it printed a lone number (e.g. `677671`) to stdout.
+    const h = tmpHome();
+    const r = cli(h, ["ingest", "--backfill"], { CODING_SH_NO_AUTO_INGEST: "1" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /Spool\s+0 events/);
+    assert.match(r.stderr, /Backfill\s+0 events/);
+    assert.equal(r.stdout, "");
+  });
+
   it("ingest --background skips quietly while another ingest holds the lock", async () => {
     const h = tmpHome();
     assert.equal(cli(h, ["init", "--agent", "claude-code", "--yes"]).status, 0);
