@@ -890,6 +890,16 @@ function flagsOf(s: FlagState, derails: readonly Derail[], sorted?: readonly Age
   return flags;
 }
 
+/**
+ * A session with nothing to look at: no turn, no tool call and no model call
+ * (a hook that fired with no agent work behind it, such as a wrapper process
+ * or a subagent that never ran). `coding.sh sessions` hides these unless --empty.
+ */
+export function isEmptySession(s: Pick<Session, "stats">): boolean {
+  const { turns, toolCalls, usage, latency } = s.stats;
+  return !turns && !toolCalls && !latency?.llmCalls && !usage?.inputTokens && !usage?.outputTokens && !usage?.costUsd;
+}
+
 /** Failure flags for a session. `derails` (already detected on the same events) saves detecting them again. */
 export function detectFlags(events: AgentEvent[], derails?: readonly Derail[]): string[] {
   const sorted = byTime(events);

@@ -428,6 +428,30 @@ describe("cli init/uninstall round trip", () => {
     assert.equal(show.status, 0, show.stderr);
     assert.match(show.stdout, /hello from the cli test/);
   });
+
+  it("sessions hides sessions with no turn, tool call or model call unless --empty", () => {
+    const h = tmpHome();
+    assert.equal(cli(h, ["init", "--agent", "claude-code", "--yes"]).status, 0);
+    const hookBin = join(h.data, "bin", "hook.mjs");
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(h.env)) if (v !== undefined) env[k] = v;
+    const hook = (event: string, payload: Record<string, unknown>) => {
+      const r = spawnSync(process.execPath, [hookBin, "claude-code", event], { env, input: JSON.stringify({ hook_event_name: event, cwd: h.home, transcript_path: join(h.home, "none.jsonl"), ...payload }), encoding: "utf8" });
+      assert.equal(r.status, 0, r.stderr);
+    };
+    hook("UserPromptSubmit", { session_id: "with-work", prompt: "do the thing" });
+    // A process that started and stopped a session and did nothing (newest, so it would fill --limit 1).
+    hook("SessionStart", { session_id: "no-work", source: "startup" });
+    hook("SessionEnd", { session_id: "no-work", reason: "other" });
+    const ids = (...args: string[]) => {
+      const r = cli(h, ["sessions", "--json", ...args]);
+      assert.equal(r.status, 0, r.stderr);
+      return (parseJson(r.stdout, "sessions") as { sessions: { id: string }[] }).sessions.map((s) => s.id);
+    };
+    assert.deepEqual(ids(), ["with-work"]);
+    assert.deepEqual(ids("--limit", "1"), ["with-work"]);
+    assert.deepEqual(ids("--empty"), ["no-work", "with-work"]);
+  });
 });
 
 describe("cli zero setup", () => {

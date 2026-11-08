@@ -302,6 +302,7 @@ coding.sh sessions [options]
 | `--since <WHEN>` |  | Only after this time: 7d, 12h, 30m or a date. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
 | `--subagents` |  | Include subagent sessions. |
+| `--empty` |  | Include sessions with no turn, tool call or model call (hidden by default) |
 | `--project <ID>` |  | Only sessions in this serve project (default: all) |
 | `--flag <NAME>` |  | Only sessions with this flag: looping, failure-streak, churn, no-progress, stalled, context-thrash, premature-completion, duplicate-fetch, …, or a tag such as skill:&lt;name&gt;. |
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |

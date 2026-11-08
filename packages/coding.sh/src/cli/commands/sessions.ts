@@ -1,6 +1,7 @@
-// coding.sh sessions [--agent --repo --since --flag --limit] [--where <query>] [--facets [keys]]
+// coding.sh sessions [--agent --repo --since --flag --limit --empty] [--where <query>] [--facets [keys]]
 import { resolve } from "node:path";
 import type { IndexStore, SessionFilter } from "../../core/types.ts";
+import { isEmptySession } from "../../core/sessions.ts";
 import { facetCounts, findSessions } from "../../query/run.ts";
 import { FACET_KEYS, type Query } from "../../query/where.ts";
 import type { Session } from "../../schema/index.ts";
@@ -40,7 +41,19 @@ export async function run(c: CommandContext): Promise<number> {
     };
     const facets = facetKeys(c.flags.facets, ctx.index.queryFacets !== undefined || ctx.index.kind === "memory");
     if (facets) return printFacets(c, await counts(ctx.index, where ?? {}, facets, filter, positiveInt(c.flags.limit, "limit") ?? 10), backlog);
-    const sessions = where ? await query(ctx.index, where, filter, positiveInt(c.flags.limit, "limit") ?? where.limit ?? 20) : await ctx.index.listSessions({ ...filter, limit });
+    let sessions: Session[];
+    if (where) sessions = await query(ctx.index, where, filter, positiveInt(c.flags.limit, "limit") ?? where.limit ?? 20);
+    else if (c.flags.empty === true) sessions = await ctx.index.listSessions({ ...filter, limit });
+    else {
+      // Empty sessions are left out after the store's page, so read pages until `limit` are kept.
+      sessions = [];
+      const page = Math.max(limit * 2, 50);
+      for (let offset = 0; sessions.length < limit; offset += page) {
+        const got = await ctx.index.listSessions({ ...filter, limit: page, offset });
+        for (const s of got) if (!isEmptySession(s) && sessions.length < limit) sessions.push(s);
+        if (got.length < page) break;
+      }
+    }
     if (out.json) {
       out.data({ sessions: sessions.map(sessionJson), ...pendingField(backlog) });
       return 0;

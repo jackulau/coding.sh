@@ -287,6 +287,7 @@ export const COMMANDS: CommandSpec[] = [
       SINCE,
       LIMIT(20),
       { name: "subagents", type: "boolean", desc: "Include subagent sessions" },
+      { name: "empty", type: "boolean", desc: "Include sessions with no turn, tool call or model call (hidden by default)" },
       { name: "project", type: "string", value: "<ID>", desc: "Only sessions in this serve project (default: all)" },
       { name: "flag", type: "string", value: "<NAME>", desc: "Only sessions with this flag: looping, failure-streak, churn, no-progress, stalled, context-thrash, premature-completion, duplicate-fetch, …, or a tag such as skill:<name>" },
       WHERE("sessions"),

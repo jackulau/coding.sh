@@ -3,7 +3,7 @@
 ## CLI
 
 ```sh
-coding.sh sessions                 # recent sessions (--agent, --repo, --since, --subagents)
+coding.sh sessions                 # recent sessions (--agent, --repo, --since, --subagents, --empty)
 coding.sh show latest              # timeline with turns, tools, subagents and latency
 coding.sh search "rate limit"      # full-text search over prompts, replies and tool calls
 coding.sh usage --by model         # tokens, cost, turns and cache hits by agent, model, day or repo
