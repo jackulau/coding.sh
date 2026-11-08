@@ -109,6 +109,13 @@ still applies, call by call). To match your bill, set your own prices, including
 tier rates (see [Configuration](../reference/config.md#prices)). Estimates refresh by themselves
 when the table changes; `coding.sh usage --reprice` recomputes them now.
 
+Claude Code keeps its own cost tally: a `cost-state` line at the end of the transcript when the
+process exits. A backfill keeps it on the session's `session.end` as `payload.reportedUsage`:
+`costUsd` (`totalCostUSD`), `apiDurationMs` (`totalAPIDuration`), `costUsdByModel` (each model's
+`costUSD`) and `unknownModelCost: true` when Claude Code could not price a model. It is a total, so
+it is never added to the session's cost. Compare it with the session's computed cost to check your
+prices; a resumed session writes a new line, and the latest one wins.
+
 ## Ask your agent
 
 With the MCP server registered (`coding.sh init` does it), an agent can call the `usage` tool to get

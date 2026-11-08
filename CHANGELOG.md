@@ -7,6 +7,14 @@ follow [Semantic Versioning](https://semver.org/) from the first npm release.
 Each release opens with a short summary. The list under it has one line per change,
 grouped by area, with links to the docs for the details.
 
+## [0.1.3] - Unreleased
+
+Sessions read back from Claude Code and Codex transcripts keep more of what the agent recorded.
+
+### Added
+
+- **Cost.** A Claude Code backfill keeps Claude Code's own cost tally (the transcript's `cost-state` line: total cost, API time and cost per model) on the session's `session.end` as `payload.reportedUsage`, so you can check the computed cost against it. It is never added to the session's cost. [Where cost comes from](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/expensive-sessions.md#where-cost-comes-from).
+
 ## [0.1.2] - 2026-11-08
 
 coding.sh runs on Windows, and CI tests it there.
@@ -319,6 +327,7 @@ It also runs as a server on SQLite or Postgres, with SDKs for apps that call mod
 - **Docs.** README with a quickstart, the agent matrix, OTLP setup, storage, privacy and uninstall.
 - **Docs.** CONTRIBUTING, SECURITY and a release checklist in docs/RELEASE.md.
 
+[0.1.3]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.3
 [0.1.2]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.2
 [0.1.1]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.1
 [0.1.0]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.0

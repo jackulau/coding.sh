@@ -20,7 +20,7 @@ import type { NormalizeContext } from "../../core/types.ts";
 import { virtualModelId } from "../../integrations/gateway/ids.ts";
 import { hookSource } from "./claude-plugins.ts";
 import { toMs } from "./jsonl.ts";
-import { Emitter, anthropicPriceHints, anthropicUsage, arr, blobList, clipText, clipValue, isObj, num, obj, outputText, str } from "./normalize.ts";
+import { Emitter, anthropicPriceHints, anthropicUsage, arr, blobList, clipText, clipValue, compact, isObj, num, obj, outputText, str } from "./normalize.ts";
 import { emitDerived } from "./tools.ts";
 
 export interface ClaudeConvertOpts {
@@ -157,6 +157,8 @@ export class ClaudeTranscriptConverter {
   /** A slash command not yet known to be local (no model call) or a prompt command. */
   private command?: PendingCommand;
   private hookRuns: HookRun[] = [];
+  /** What the latest cost-state line reported (full mode), for the session.end. */
+  private reported?: Record<string, unknown>;
 
   constructor(ctx: NormalizeContext, opts: ClaudeConvertOpts) {
     this.ctx = ctx;
@@ -206,6 +208,7 @@ export class ClaudeTranscriptConverter {
     if (!isObj(entry)) return;
     const type = entry.type;
     if (type === "attachment") return this.attachment(entry, lineNo);
+    if (type === "cost-state") return this.costState(entry);
     if (type !== "user" && type !== "assistant" && type !== "system") return;
     if (entry.isSidechain === true && !this.opts.sidechain) return;
     const ts = toMs(entry.timestamp, this.lastTs);
@@ -495,6 +498,29 @@ export class ClaudeTranscriptConverter {
     this.push(em);
   }
 
+  /**
+   * Claude Code's own cost tally (a `cost-state` line, written when the process
+   * exits), kept for the backfilled session.end as `payload.reportedUsage`:
+   * `{costUsd, apiDurationMs, costUsdByModel, unknownModelCost?}`. A total, never
+   * summed into usage. The latest line wins: a resumed session writes another.
+   */
+  private costState(e: Record<string, unknown>): void {
+    if (this.opts.mode !== "full" || (e.sessionId !== undefined && e.sessionId !== this.opts.sessionId)) return;
+    const costUsd = num(e.totalCostUSD);
+    if (costUsd === undefined) return;
+    const byModel: Record<string, number> = {};
+    for (const [m, u] of Object.entries(obj(e.modelUsage))) {
+      const c = num(obj(u).costUSD);
+      if (c !== undefined) byModel[m] = c;
+    }
+    this.reported = compact({
+      costUsd,
+      apiDurationMs: num(e.totalAPIDuration),
+      costUsdByModel: Object.keys(byModel).length ? byModel : undefined,
+      unknownModelCost: e.hasUnknownModelCost === true || undefined,
+    });
+  }
+
   private async system(e: Record<string, unknown>, ts: number, lineNo: number): Promise<void> {
     const uuid = str(e.uuid) ?? `line-${lineNo}`;
     const em = this.em(ts, lineNo);
@@ -574,7 +600,7 @@ export class ClaudeTranscriptConverter {
     if (this.opts.mode === "full" && this.started && this.idle()) {
       const em = this.em(this.lastTs, "eof");
       // Keyed by the last entry's time: a resumed session gets a later end instead of keeping a stale one.
-      em.emit("session.end", { reason: "idle" }, { key: ["idle", this.lastTs], turnId: undefined });
+      em.emit("session.end", { reason: "idle", reportedUsage: this.reported }, { key: ["idle", this.lastTs], turnId: undefined });
       this.push(em);
     }
     return this.out;

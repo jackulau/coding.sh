@@ -7,6 +7,7 @@ import { ClaudeTranscriptConverter } from "../../src/adapters/_shared/claude-tra
 import { hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { backfill, backfillCursorKey } from "../../src/core/ingest.ts";
+import { applyPricing, pricesFor } from "../../src/core/pricing.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
@@ -144,6 +145,29 @@ describe("claude-code backfill", () => {
     // A subagent's prompt, read from its transcript on both paths.
     const prompt = live.find((e) => e.kind === "user.message" && e.subagentId === "abc123")!;
     assert.ok(prompt && ids.has(prompt.id), "subagent prompt not deduped");
+  });
+
+  it("keeps Claude Code's reported cost (cost-state) on the session.end, and the local price is within 2% of it", async () => {
+    // The real capture (scripts/e2e/claude-transcript-capture.mjs) ends with a cost-state line.
+    const prev = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = join(FIXTURES, "claude-code", "real", "config");
+    try {
+      const { ctx } = testCtx();
+      const events = await collect(claudeCode.backfill!(ctx));
+      const end = events.find((e) => e.kind === "session.end")!;
+      assert.deepEqual(end.payload.reportedUsage, { costUsd: 0.26932500000000004, apiDurationMs: 326, costUsdByModel: { "claude-sonnet-4-5": 0.26932500000000004 } });
+      assert.equal(end.usage, undefined, "a reported total is never summed into usage");
+      const priced = applyPricing(events, pricesFor());
+      const session = buildSession(priced);
+      const reported = (end.payload.reportedUsage as { costUsd: number }).costUsd;
+      assert.ok(Math.abs(session.stats.usage!.costUsd! - reported) / reported < 0.02, `computed ${session.stats.usage?.costUsd} vs reported ${reported}`);
+    } finally {
+      process.env.CLAUDE_CONFIG_DIR = prev;
+    }
+    // The synthetic fixtures have no cost-state: no reportedUsage.
+    const { ctx } = testCtx();
+    const plain = await collect(claudeCode.backfill!(ctx));
+    assert.ok(plain.filter((e) => e.kind === "session.end").every((e) => e.payload.reportedUsage === undefined));
   });
 
   it("surfaces failed blob writes instead of dropping transcripts silently", async () => {
