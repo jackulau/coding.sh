@@ -1,0 +1,103 @@
+packages/coding.sh/src/runner/tamper.ts
+  s_8e040dbdf13565::t_18f55f82a3d79b 178,180,185-189
+  s_8e040dbdf13565::t_2dfb8c34e07ba5 63-68
+  s_8e040dbdf13565::t_b1b849b169b1fc 209
+  s_8e040dbdf13565::t_a37be382f2eec8 9
+packages/coding.sh/test/fixtures/tamper/repair-match-changed/diff.patch
+  s_8e040dbdf13565::t_3ebf8676748fd3 1
+  s_8e040dbdf13565::t_aa9b5d3a3f8c69 2-13
+docs/guides/evals.md
+  s_8e040dbdf13565::t_f2226543c1558b 1045-1052
+packages/coding.sh/test/fixtures/tamper/gate-regression-test/diff.patch
+  s_8e040dbdf13565::t_aa9b5d3a3f8c69 2-26
+  s_8e040dbdf13565::t_3ebf8676748fd3 1
+packages/coding.sh/test/fixtures/tamper/repair-match-changed/post
+  s_8e040dbdf13565::t_2bf2b74aa1f32d 1-311
+packages/coding.sh/test/fixtures/tamper/purge-new-cases/diff.patch
+  s_8e040dbdf13565::t_aa9b5d3a3f8c69 2-28
+  s_8e040dbdf13565::t_3ebf8676748fd3 1
+packages/coding.sh/test/fixtures/tamper/purge-new-cases/meta.json
+  s_8e040dbdf13565::t_2bf2b74aa1f32d 1-6
+packages/coding.sh/test/runner/tamper.test.ts
+  s_8e040dbdf13565::t_6ac5661815b5d1 204-212
+packages/coding.sh/src/runner/run.ts
+  s_8e040dbdf13565::t_45247d4523917d 6,16,284-285,313
+  s_8e040dbdf13565::t_3f522ad6c69e0a 340-348
+packages/coding.sh/test/fixtures/tamper/intent-new-cases/diff.patch
+  s_8e040dbdf13565::t_aa9b5d3a3f8c69 2-22
+  s_8e040dbdf13565::t_3ebf8676748fd3 1
+packages/coding.sh/test/fixtures/tamper/repair-match-changed/meta.json
+  s_8e040dbdf13565::t_2bf2b74aa1f32d 1-6
+packages/coding.sh/test/fixtures/tamper/intent-new-cases/post
+  s_8e040dbdf13565::t_2bf2b74aa1f32d 1-401
+packages/coding.sh/test/fixtures/tamper/intent-new-cases/meta.json
+  s_8e040dbdf13565::t_2bf2b74aa1f32d 1-6
+packages/coding.sh/test/fixtures/tamper/pricing-import-and-describe/diff.patch
+  s_8e040dbdf13565::t_3ebf8676748fd3 1
+  s_8e040dbdf13565::t_aa9b5d3a3f8c69 2-23
+docs/reference/api.md
+  s_8e040dbdf13565::t_866fcea0539b83 1019-1021
+packages/coding.sh/src/core/types.ts
+  s_8e040dbdf13565::t_6acf505b5288ca 720-721
+packages/coding.sh/test/fixtures/tamper/gate-regression-test/post
+  s_8e040dbdf13565::t_2bf2b74aa1f32d 1-959
+packages/coding.sh/test/fixtures/tamper/judge-new-case/post
+  s_8e040dbdf13565::t_2bf2b74aa1f32d 1-420
+packages/coding.sh/test/fixtures/tamper/experiment-expectation-changed/diff.patch
+  s_8e040dbdf13565::t_3ebf8676748fd3 1
+  s_8e040dbdf13565::t_aa9b5d3a3f8c69 2-13
+CHANGELOG.md
+  s_8e040dbdf13565::t_b7516f8264d9c9 114
+packages/coding.sh/src/runner/test-additions.ts
+  s_8e040dbdf13565::t_137533fdde437a 193-194,198-218
+  s_8e040dbdf13565::t_506fcccca5dffe 107-108
+  s_8e040dbdf13565::t_3716661b852d54 188
+  s_8e040dbdf13565::t_af50f01d91b6c5 223,225,234-240,243
+  s_8e040dbdf13565::t_fa8d96c5def08b 277,280,282,284-288,290-291,343-351,355-356,358-368,371,373,380,387,391,445-448,453-455
+  s_8e040dbdf13565::t_02490451ca9c4e 162-169
+  s_8e040dbdf13565::t_d81fbbd76b8673 1-106,109-161,170-187,189-192,195-197,219-222,224,226-233,241-242,244-276,278-279,281,283,289,292-342,352-354,357,369-370,372,374-379,381-386,388-390,392-444,449-452,456-460
+packages/coding.sh/test/fixtures/tamper/judge-new-case/meta.json
+  s_8e040dbdf13565::t_2bf2b74aa1f32d 1-6
+packages/coding.sh/test/fixtures/tamper/experiment-expectation-changed/meta.json
+  s_8e040dbdf13565::t_2bf2b74aa1f32d 1-6
+packages/coding.sh/test/fixtures/tamper/gen.mjs
+  s_8e040dbdf13565::t_aa9b5d3a3f8c69 15
+  s_8e040dbdf13565::t_3ebf8676748fd3 33,35
+  s_8e040dbdf13565::t_2bf2b74aa1f32d 23-25
+  s_8e040dbdf13565::t_4b2e671983ee2e 1-14,16-22,26-32,34,36-38
+packages/coding.sh/test/runner/test-additions.test.ts
+  s_8e040dbdf13565::t_c17908aa519ecf 1-103,127-184,187-202,204-251
+  s_8e040dbdf13565::t_7c0d0ce57f1d13 123-124
+  s_8e040dbdf13565::t_c6d17ce733c77a 104-122,125-126
+  s_8e040dbdf13565::t_3ebf8676748fd3 203
+  s_8e040dbdf13565::t_4c6fe6a7818919 185-186
+packages/coding.sh/test/fixtures/tamper/pricing-import-and-describe/meta.json
+  s_8e040dbdf13565::t_2bf2b74aa1f32d 1-6
+packages/coding.sh/test/fixtures/tamper/gate-regression-test/meta.json
+  s_8e040dbdf13565::t_2bf2b74aa1f32d 1-6
+packages/coding.sh/test/fixtures/tamper/pricing-import-and-describe/post
+  s_8e040dbdf13565::t_2bf2b74aa1f32d 1-458
+packages/coding.sh/test/fixtures/tamper/experiment-expectation-changed/post
+  s_8e040dbdf13565::t_2bf2b74aa1f32d 1-944
+packages/coding.sh/test/fixtures/tamper/purge-new-cases/post
+  s_8e040dbdf13565::t_2bf2b74aa1f32d 1-240
+packages/coding.sh/test/fixtures/tamper/judge-new-case/diff.patch
+  s_8e040dbdf13565::t_aa9b5d3a3f8c69 2-24
+  s_8e040dbdf13565::t_3ebf8676748fd3 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1635f6dc9758e979aba58bc43a128f6d58c3229b",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
