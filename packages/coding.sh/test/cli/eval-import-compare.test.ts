@@ -145,6 +145,46 @@ describe("eval import + compare --tag", () => {
     assert.equal(existsSync(join(home, ".claude", "settings.json")), false, "the user's own agent config is not touched");
   });
 
+  it("a task.json start.commit starts from that commit of the repo the task dir is in, or of start.repo", (t) => {
+    if (!gitBin) return t.skip("needs git");
+    const repo = join(root, "app-repo");
+    mkdirSync(repo);
+    const g = (...args: string[]) => {
+      const r = spawnSync(gitBin, ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...args], { cwd: repo, encoding: "utf8" });
+      assert.equal(r.status, 0, r.stderr);
+      return r.stdout.trim();
+    };
+    g("init", "-q");
+    writeFileSync(join(repo, "v1.txt"), "one\n");
+    g("add", "v1.txt");
+    g("commit", "-q", "-m", "v1");
+    const v1 = g("rev-parse", "HEAD");
+    writeFileSync(join(repo, "v2.txt"), "two\n");
+    g("add", "v2.txt");
+    g("commit", "-q", "-m", "v2");
+    const check = `"${process.execPath}" -e "const f=require('fs');process.exit(f.existsSync('v1.txt')&&!f.existsSync('v2.txt')?0:1)"`;
+    const inRepo = join(repo, "evals", "s", "tasks", "from-v1");
+    mkdirSync(inRepo, { recursive: true });
+    writeFileSync(join(inRepo, "task.json"), JSON.stringify({ name: "from-v1", tags: ["start-commit"], start: { commit: v1.slice(0, 10) }, verifier: { command: check } }));
+    writeFileSync(join(inRepo, "instruction.md"), "Do nothing.\n");
+    const outside = join(root, "tasks", "from-v1-outside");
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, "task.json"), JSON.stringify({ name: "from-v1-outside", tags: ["start-commit"], start: { commit: "HEAD~1", repo: "../../app-repo" }, verifier: { command: check } }));
+    writeFileSync(join(outside, "instruction.md"), "Do nothing.\n");
+    const imp = cli(["eval", "import", inRepo, outside, "--json"]);
+    assert.equal(imp.status, 0, imp.stdout + imp.stderr);
+    const r = cli(["compare", "no-skill", "with-skill", "--tag", "start-commit", "--k", "1", "--yes", "--json"]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const out = JSON.parse(r.stdout) as { report: { baseline: { passes: number; runs: number; errors: number } } };
+    // Both tasks start from v1 (v1.txt there, v2.txt not), and materialize side by side from one repo without an error.
+    assert.deepEqual([out.report.baseline.passes, out.report.baseline.runs, out.report.baseline.errors], [2, 2, 0]);
+
+    writeFileSync(join(outside, "task.json"), JSON.stringify({ name: "bad-commit", start: { commit: "0000000000", repo: "../../app-repo" }, verifier: { command: check } }));
+    const bad = cli(["eval", "import", outside]);
+    assert.notEqual(bad.status, 0);
+    assert.match(bad.stdout + bad.stderr, /commit 0000000000 is not in/);
+  });
+
   it("judge grade outside a run: predicate-only checklists need no model; usage rows land in CODING_SH_GRADER_USAGE", (t) => {
     if (!gitBin) return t.skip("needs git");
     const dir = join(root, "grade");

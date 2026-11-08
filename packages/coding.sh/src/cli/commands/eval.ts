@@ -24,6 +24,7 @@ import {
   type Witness,
 } from "../../eval/witness.ts";
 import { toPosix } from "../../runner/fsutil.ts";
+import { git } from "../../runner/git.ts";
 import { providerFromSpec, type LlmProviderSpec } from "../../graders/index.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { autoIngest, jsonArg, list, oneLine, resolveSession, resolveTask, str, withContext } from "../common.ts";
@@ -35,8 +36,10 @@ import type { Context } from "../../core/context.ts";
 const getTask = (ctx: Context, ref: string): Promise<EvalTask> => resolveTask(ctx, ref);
 
 /**
- * One task dir: an exported task (task.json with a start snapshot), or a
- * hand-written one whose repo/ dir is the start tree (none: an empty tree).
+ * One task dir: an exported task (task.json with a start snapshot), a
+ * hand-written one whose repo/ dir is the start tree, one whose task.json
+ * names `"start": {"commit": "<rev>"}` of a git repo (`repo`, relative to the
+ * task dir; default the repo the task dir is in), or none: an empty tree.
  */
 export async function importDir(dir: string, ctx: Context, env: NodeJS.ProcessEnv): Promise<EvalTask> {
   if (!existsSync(join(dir, "task.json"))) throw new Error("no task.json in it");
@@ -44,14 +47,29 @@ export async function importDir(dir: string, ctx: Context, env: NodeJS.ProcessEn
   let start: EvalTask["start"] | undefined;
   if (existsSync(repo)) start = await snapshotDir(repo, env);
   else {
-    const json = JSON.parse(await readFile(join(dir, "task.json"), "utf8")) as { start?: { snapshot?: string } };
-    if (!json.start?.snapshot) {
+    const json = JSON.parse(await readFile(join(dir, "task.json"), "utf8")) as { start?: { snapshot?: string; commit?: unknown; repo?: unknown } };
+    if (json.start?.commit !== undefined && !json.start.snapshot) start = await commitStart(dir, json.start.commit, json.start.repo);
+    else if (!json.start?.snapshot) {
       const empty = join(paths(env).repos, "empty-start");
       await mkdir(empty, { recursive: true });
       start = await snapshotDir(empty, env);
     }
   }
   return importTaskDir(dir, ctx.blobs, start ? { start } : {});
+}
+
+/** A task's start tree as a commit of a git repo: `repo` (relative to the task dir) or the repo holding the task dir. */
+async function commitStart(dir: string, commit: unknown, repo: unknown): Promise<EvalTask["start"]> {
+  if (typeof commit !== "string" || !commit.trim()) throw new Error(`${dir}/task.json: "start.commit" must be a commit sha or ref`);
+  if (repo !== undefined && typeof repo !== "string") throw new Error(`${dir}/task.json: "start.repo" must be a path`);
+  const from = resolve(dir, repo ?? ".");
+  const top = await git(["rev-parse", "--show-toplevel"], from);
+  if (top.exitCode !== 0) throw new Error(`${dir}/task.json: "start.commit" needs a git repo, and ${from} is not in one`);
+  const root = resolve(top.stdoutTail.trim());
+  const sha = await git(["rev-parse", "--verify", "--quiet", `${commit.trim()}^{commit}`], root);
+  if (sha.exitCode !== 0) throw new Error(`${dir}/task.json: commit ${commit.trim()} is not in ${root} (fetch it first)`);
+  const full = sha.stdoutTail.trim();
+  return { repoRoot: root, snapshot: full, head: full };
 }
 
 /**

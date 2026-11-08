@@ -197,6 +197,12 @@ tree, so the verifier runs `node check.js`. To have it at `tests/check.js`, put 
 hidden file at the root would match, since such a command finds no file, and a test runner given a
 glob that matches nothing can run zero tests and pass.
 
+A task can start from a commit of a git repo instead of `repo/`: `"start": {"commit": "af23a50"}`
+starts from that commit of the repo the task directory is in, and `"start": {"commit": "HEAD~1",
+"repo": "../app"}` from a commit of the repo at that path, relative to the task directory. This
+lets a suite live inside the repo it tests. `eval import` fails when the commit is not in the
+repo; fetch it first.
+
 The task id comes from the name, so importing again updates the task in place. Imported tasks are
 drafts. A draft has no reference patch for `eval validate` to check, so `compare` skips drafts by
 default. Use `compare --tag <tag>` to run them.
