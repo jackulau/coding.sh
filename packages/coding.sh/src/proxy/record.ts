@@ -13,11 +13,12 @@ import { randomUUID } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import { errorClass, isObj, str } from "../adapters/_shared/normalize.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
+import { foldSessionRow } from "../core/ingest.ts";
 import { type Prices, priceEvent } from "../core/pricing.ts";
 import { type Redactor, toMetadata } from "../core/redact.ts";
-import { buildSession } from "../core/sessions.ts";
+import { foldSession, sessionOf, type SessionState } from "../core/sessions.ts";
 import type { BlobStore, IndexStore } from "../core/types.ts";
-import { type AgentEvent, SCHEMA_VERSION } from "../schema/index.ts";
+import { type AgentEvent, SCHEMA_VERSION, type Session } from "../schema/index.ts";
 import { messagesKey, putMessages, RecentBlobs } from "./blocks.ts";
 import { accountHash, callLineage, type Client, detectClient, type Headers, type Lineage, type Link, linkCall, ResponseSessions, upstreamAuth } from "./link.ts";
 import { type CallResult, compacted, parseRequest, type RequestInfo, type Route } from "./wire.ts";
@@ -183,8 +184,20 @@ async function storeContent(call: CapturedCall, body: unknown, info: RequestInfo
   if (sysText) out.systemSha = sha256Hex(sysText);
   if (toolsText) out.toolsSha = sha256Hex(toolsText);
   if (o.metadata) return out;
-  if (sysText && sysField) await o.blobs.put(sysText);
-  if (toolsText) await o.blobs.put(toolsText);
+  // One write-behind batch per call: its blobs are made durable together (one
+  // directory sync on macOS, not one per blob) before the event that points at
+  // them is written. Refs reach `recent` only once they are durable.
+  const batch = o.blobs.batch?.();
+  const blobs = batch ?? o.blobs;
+  const added: string[] = [];
+  const seen = batch ? { has: (ref: string) => recent.has(ref), add: (ref: string) => void added.push(ref) } : recent;
+  const putOnce = async (text: string, ref: string) => {
+    if (seen.has(ref)) return;
+    await blobs.put(text);
+    seen.add(ref);
+  };
+  if (sysText && sysField) await putOnce(sysText, out.systemSha!);
+  if (toolsText) await putOnce(toolsText, out.toolsSha!);
   if (body !== undefined) {
     const stored: Record<string, unknown> = { ...(red.value(body) as Record<string, unknown>) };
     hashAccount(stored);
@@ -192,16 +205,18 @@ async function storeContent(call: CapturedCall, body: unknown, info: RequestInfo
     if (toolsText && stored.tools !== undefined) stored.tools = { $blob: out.toolsSha };
     const key = o.blocks === false ? undefined : messagesKey(call.route.api, stored);
     if (key) {
-      stored[key] = await putMessages(o.blobs, stored[key] as unknown[], recent);
+      stored[key] = await putMessages(blobs, stored[key] as unknown[], seen);
       out.paged = true;
     }
     const doc = { v: key ? 2 : 1, provider: call.route.provider, api: call.route.api, method: call.method, path: call.path.split("?")[0], headers: pick(call.reqHeaders, REQUEST_HEADERS), body: stored };
-    out.requestRef = await o.blobs.put(JSON.stringify(doc));
+    out.requestRef = await blobs.put(JSON.stringify(doc));
   }
   if (call.result?.body !== undefined || call.status !== undefined) {
     const doc = { v: 1, status: call.status, headers: pick(call.resHeaders, RESPONSE_HEADERS), body: call.result?.body !== undefined ? red.value(call.result.body) : undefined };
-    out.responseRef = await o.blobs.put(JSON.stringify(doc));
+    out.responseRef = await blobs.put(JSON.stringify(doc));
   }
+  await batch?.flush();
+  for (const ref of added) recent.add(ref);
   return out;
 }
 
@@ -276,7 +291,6 @@ export function buildPayload(call: CapturedCall, info: RequestInfo | undefined, 
   return p;
 }
 
-/** Stores events and rebuilds their sessions. A session the proxy creates gets parseVersion 0 (re-parse leaves it alone; ingest stamps it). */
 /**
  * Payload fields that place a call among sessions (callLineage, link.ts):
  * `parentSessionId` (the session that spawned this one; for a Claude Code
@@ -299,16 +313,62 @@ export function lineagePayload(l: Lineage, link: Link, resHeaders: Headers | und
   return p;
 }
 
+/** Sessions whose fold storeWriter keeps in memory. */
+const LIVE_FOLDS = 64;
+
+/** A session folded by this writer: every event stored up to `seq`, in time order (the newest at `state.lastTs`), and the row it wrote from that, as the store reads it back. */
+interface LiveFold {
+  state: SessionState;
+  seq: number;
+  row: string;
+}
+
+/**
+ * Stores events and refolds their sessions. The writer keeps the fold of each
+ * session it wrote last in memory and folds only the events stored since, so a
+ * call costs the same at the end of a long session as at its start. It folds
+ * from the store instead (ingest.ts foldSessionRow: the saved fold plus the
+ * last minutes of events) when another writer changed the session's row, when
+ * an event since is stamped before the newest one it folded (a call that ran
+ * longer than the one after it, a transcript read at a Stop), and for a
+ * session with spans or enrichment. A session the proxy creates gets
+ * parseVersion 0 (re-parse leaves it alone; ingest stamps it).
+ */
 export function storeWriter(store: IndexStore): (events: AgentEvent[]) => Promise<void> {
+  const live = new Map<string, LiveFold>();
+  const since = async (id: string, f: LiveFold | undefined, prev: Session | undefined): Promise<SessionState | undefined> => {
+    if (!f || !prev || !store.listEventsSince || JSON.stringify(prev) !== f.row) return undefined;
+    // Stored after seq (none is stamped after MAX_SAFE_INTEGER), in time order.
+    const { events, seq } = await store.listEventsSince(id, { seq: f.seq, ts: Number.MAX_SAFE_INTEGER });
+    if (events.length && events[0]!.ts < (f.state.lastTs ?? -Infinity)) return undefined;
+    for (const e of events) foldSession(f.state, e);
+    f.seq = seq;
+    return f.state.simple ? f.state : undefined;
+  };
   return async (events) => {
     await store.putEvents(events);
     for (const id of new Set(events.map((e) => e.sessionId))) {
-      const all = await store.listEvents(id);
-      if (!all.length) continue;
       const prev = await store.getSession(id);
-      const session = buildSession(all, prev);
+      const f = live.get(id);
+      live.delete(id);
+      const state = await since(id, f, prev);
+      let session: Session;
+      let next: LiveFold | undefined;
+      if (state) {
+        session = sessionOf(state, prev);
+        next = f;
+      } else {
+        const folded = await foldSessionRow(store, id, prev);
+        if (!folded) continue;
+        session = folded.session;
+        if (folded.seq !== undefined && folded.state.simple) next = { state: folded.state, seq: folded.seq, row: "" };
+      }
       if (!prev) session.parseVersion = 0;
       await store.upsertSession(session);
+      if (!next) continue;
+      next.row = JSON.stringify(await store.getSession(id));
+      live.set(id, next);
+      if (live.size > LIVE_FOLDS) live.delete(live.keys().next().value!);
     }
   };
 }

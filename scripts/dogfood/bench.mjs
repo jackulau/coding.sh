@@ -2,20 +2,20 @@
 // Performance budgets (docs/design/dogfood.md §3.5). Every benchmark runs in a temp
 // HOME / CODING_SH_HOME, never against the live home.
 //
-//   node scripts/dogfood/bench.mjs [hook|ingest|store|help|viewer|replay|proxy]... [--baseline <dist dir>] [--json] [--check]
+//   node scripts/dogfood/bench.mjs [hook|ingest|store|help|viewer|replay|proxy|proxy-session]... [--baseline <dist dir>] [--calls N] [--json] [--check]
 //
 // `viewer` also runs `replay` (session replay through the viewer API).
 // --check exits 1 when a result misses its budget in TARGETS (CI runs it for the proxy).
 //
-// With --baseline, the hook and help benchmarks interleave the baseline build
-// with the candidate (A B A B ...) and report a bootstrap CI on the median
-// difference, so machine noise is paired.
+// With --baseline, the hook, help and proxy-session benchmarks interleave the
+// baseline build with the candidate (A B A B ...) and report a bootstrap CI on
+// the median difference, so machine noise is paired.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
 import { join, resolve } from "node:path";
-import { bootstrapMedianDiff, CLI, DIST, isolatedEnv, log, median, nearestRank, parseArgs, quantile, round, sh, shAsync, tempDir } from "./lib/util.mjs";
+import { bootstrapMedianDiff, CLI, DIST, isolatedEnv, log, median, nearestRank, parseArgs, prng, quantile, round, sh, shAsync, tempDir } from "./lib/util.mjs";
 
 export const TARGETS = {
   "perf.hook": { target: 10, unit: "ms", dir: "max" },
@@ -356,6 +356,145 @@ export async function benchProxy({ cli = CLI, n = 60, warmup = 5, chunks = 20, g
   }
 }
 
+// ---------------------------------------------------------------- proxy over a long session
+
+/** A free loopback port. */
+const freePort = () =>
+  new Promise((r) => {
+    const s = net.createServer().listen(0, "127.0.0.1", () => {
+      const p = s.address().port;
+      s.close(() => r(p));
+    });
+  });
+
+/**
+ * Message i of a Claude Code–like conversation: a prompt, then tool calls and
+ * their results, some of them long (over the 2 KiB that gets a blob of its own).
+ */
+function sessionMessage(i, rnd) {
+  if (i === 0) return { role: "user", content: [{ type: "text", text: "fix the failing tests and keep going" }] };
+  if (i % 2 === 1) return { role: "assistant", content: [{ type: "text", text: `step ${i}` }, { type: "tool_use", id: `toolu_${i}`, name: "Bash", input: { command: `npm test -- --grep case${i}` } }] };
+  const len = rnd() < 0.15 ? 2048 + Math.floor(rnd() * 6144) : 200 + Math.floor(rnd() * 800);
+  return { role: "user", content: [{ type: "tool_result", tool_use_id: `toolu_${i - 1}`, content: `line ${i} ${"output of the tool ".repeat(Math.ceil(len / 18)).slice(0, len)}` }] };
+}
+
+/**
+ * perf.proxyRecord: how long `coding.sh proxy` takes to store a call (from the
+ * end of the response until the session row counts it) in the last quarter of a
+ * long Claude Code–like session, where every call re-sends the conversation so
+ * far (reset every `compactEvery` calls, as a compaction does). The recording
+ * runs after the response, on the proxy's one thread, so it is what a
+ * concurrent stream or the agent's next call can wait on. With --baseline, both
+ * builds run side by side, each with its own store, in alternating order, and
+ * each quarter of the session gets a paired bootstrap CI on the median difference.
+ */
+export async function benchProxySession({ cli = CLI, baseline, calls = 1000, compactEvery = 200 } = {}) {
+  const root = tempDir("cs-bench-proxy-session-");
+  const upstream = http.createServer((req, res) => {
+    req.resume();
+    req.on("end", () => {
+      const id = String(req.headers["x-bench-id"]);
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+      const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
+      ev("message_start", { message: { id: `msg_${id}`, type: "message", role: "assistant", model: "claude-sonnet-4-5", content: [], stop_reason: null, usage: { input_tokens: 1200, cache_read_input_tokens: 90000, output_tokens: 1 } } });
+      ev("content_block_start", { index: 0, content_block: { type: "text", text: "" } });
+      ev("content_block_delta", { index: 0, delta: { type: "text_delta", text: "running the tests" } });
+      ev("content_block_stop", { index: 0 });
+      ev("message_delta", { delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 40 } });
+      ev("message_stop", {});
+      res.end();
+    });
+  });
+  await new Promise((r) => upstream.listen(0, "127.0.0.1", r));
+  const upUrl = `http://127.0.0.1:${upstream.address().port}`;
+  const { DatabaseSync } = await import("node:sqlite");
+  const session = "5e55a0de-0000-4000-8000-0000000000bb";
+  const targets = [];
+  try {
+    for (const [name, file] of [["candidate", cli], ...(baseline ? [["baseline", join(baseline, "cli.mjs")]] : [])]) {
+      const env = isolatedEnv(join(root, name));
+      mkdirSync(env.HOME, { recursive: true });
+      const port = await freePort();
+      const proc = spawn(process.execPath, [file, "proxy", "--quiet", "--port", String(port), "--anthropic-upstream", upUrl], { env, stdio: ["ignore", "ignore", "pipe"] });
+      const t = { name, proc, url: `http://127.0.0.1:${port}`, db: join(env.CODING_SH_HOME, "index.db"), err: "", record: [], ttfb: [] };
+      proc.stderr.on("data", (d) => (t.err += d));
+      targets.push(t);
+      await waitFor(() => fetch(`${t.url}/__codingsh/health`).then((r) => r.ok, () => false), 20_000, `${name} proxy health (${t.err.slice(0, 300)})`);
+    }
+    const agent = new http.Agent({ keepAlive: true, maxSockets: 2 });
+    const send = (t, body, id) =>
+      new Promise((resolve, reject) => {
+        const t0 = performance.now();
+        let ttfb;
+        const headers = { "content-type": "application/json", "x-api-key": "sk-ant-bench", "anthropic-version": "2023-06-01", "user-agent": "claude-cli/2.1.319 (external, cli)", "x-claude-code-session-id": session, "x-bench-id": id, "content-length": Buffer.byteLength(body) };
+        const req = http.request(`${t.url}/v1/messages`, { method: "POST", agent, headers }, (res) => {
+          res.on("data", () => (ttfb ??= performance.now() - t0));
+          res.on("end", () => (res.statusCode === 200 ? resolve({ ttfb, end: performance.now() }) : reject(new Error(`${t.name}: status ${res.statusCode}`))));
+        });
+        req.on("error", reject);
+        req.end(body);
+      });
+    /** Waits until the session row counts `n` model calls; ms since `since`. */
+    const recorded = async (t, n, since) => {
+      for (const deadline = performance.now() + 30_000; performance.now() < deadline; ) {
+        try {
+          t.conn ??= new DatabaseSync(t.db, { readOnly: true });
+          const row = t.conn.prepare("SELECT json_extract(stats, '$.latency.llmCalls') AS n FROM sessions WHERE id = ?").get(session);
+          if ((row?.n ?? 0) >= n) return performance.now() - since;
+        } catch {
+          // The proxy has not created its store yet.
+        }
+        await new Promise((r) => setImmediate(r));
+      }
+      throw new Error(`${t.name}: call ${n} not recorded within 30 s (${t.err.slice(0, 300)})`);
+    };
+    const rnd = prng(7);
+    let messages = [];
+    for (let k = 0; k < calls; k++) {
+      if (k % compactEvery === 0) messages = [sessionMessage(0, rnd)];
+      const last = messages.at(-1);
+      const sent = [...messages.slice(0, -1), { ...last, content: last.content.map((c) => ({ ...c, cache_control: { type: "ephemeral" } })) }];
+      const system = [{ type: "text", text: `You are Claude Code. ${"Follow the repository conventions. ".repeat(200)}` }];
+      const tools = ["Bash", "Read", "Edit", "Write", "Grep"].map((name) => ({ name, description: `${name} tool. ${"How to call it. ".repeat(40)}`, input_schema: { type: "object" } }));
+      const body = JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 32000, stream: true, system, tools, messages: sent });
+      for (const t of k % 2 ? [...targets].reverse() : targets) {
+        const r = await send(t, body, `${t.name}_${k}`);
+        t.ttfb.push(r.ttfb);
+        t.record.push(await recorded(t, k + 1, r.end));
+      }
+      // The reply and the tool's result join the conversation the next call sends.
+      messages.push(sessionMessage(messages.length, rnd), sessionMessage(messages.length + 1, rnd));
+    }
+    agent.destroy();
+    const quarters = (xs) => [0, 1, 2, 3].map((q) => xs.slice(Math.floor((q * xs.length) / 4), Math.floor(((q + 1) * xs.length) / 4)));
+    const summary = (t) => ({ recordMsByQuarter: quarters(t.record).map((x) => round(median(x), 2)), recordP95Ms: round(quantile(t.record, 0.95), 2), ttfbMs: round(median(t.ttfb), 2) });
+    const [cand, base] = targets;
+    const out = { "perf.proxyRecord": round(median(quarters(cand.record)[3]), 2), detail: { calls, compactEvery, ...summary(cand) } };
+    if (base) {
+      out.baseline = { "perf.proxyRecord": round(median(quarters(base.record)[3]), 2), ...summary(base) };
+      // Candidate minus baseline: negative is faster.
+      const paired = (a, b, digits) => {
+        const d = bootstrapMedianDiff(a, b);
+        return { diff: round(d.diff, digits), ci: d.ci.map((x) => round(x, digits)) };
+      };
+      out.paired = {
+        recordByQuarter: quarters(cand.record).map((c, q) => paired(quarters(base.record)[q], c, 2)),
+        ttfb: paired(base.ttfb, cand.ttfb, 3),
+      };
+    }
+    return out;
+  } finally {
+    for (const t of targets) {
+      t.conn?.close();
+      t.proc.kill("SIGINT");
+    }
+    upstream.closeAllConnections();
+    await new Promise((r) => upstream.close(() => r()));
+    await sleep(300);
+    rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+  }
+}
+
 // ---------------------------------------------------------------- viewer TTI
 
 const CHROME_CANDIDATES = [process.env.CHROME_PATH, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", "/Applications/Chromium.app/Contents/MacOS/Chromium", "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser"].filter(Boolean);
@@ -644,6 +783,7 @@ export async function runBenches(which = ["hook", "ingest", "help", "viewer"], o
   if (which.includes("viewer")) await step("viewer", () => benchViewer(opts));
   if (which.includes("viewer") || which.includes("replay")) await step("replay", () => benchReplay({ ...opts, events: opts.replayEvents }));
   if (which.includes("proxy")) await step("proxy", () => benchProxy(opts));
+  if (which.includes("proxy-session")) await step("proxy-session", () => benchProxySession(opts));
   return { results: out, errors };
 }
 
@@ -651,7 +791,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const args = parseArgs(process.argv.slice(2), { booleans: ["json", "check"] });
   const which = args._.length ? args._ : ["hook", "ingest", "help", "viewer"];
   const baseline = args.baseline ? resolve(args.baseline) : undefined;
-  const r = await runBenches(which, { baseline, events: args.events ? Number(args.events) : undefined });
+  const r = await runBenches(which, { baseline, events: args.events ? Number(args.events) : undefined, calls: args.calls ? Number(args.calls) : undefined });
   process.stdout.write(JSON.stringify(r, null, args.json ? 0 : 2) + "\n");
   const missed = Object.values(r.results).flatMap((x) => Object.entries(x).filter(([k, v]) => k.startsWith("perf.") && meets(k, v) === false));
   for (const [k, v] of missed) log(`over budget: ${k} ${v} ${TARGETS[k].unit} (target ${TARGETS[k].dir === "max" ? "≤" : "≥"} ${TARGETS[k].target})`);

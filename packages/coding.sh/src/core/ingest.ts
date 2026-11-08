@@ -818,6 +818,19 @@ export async function recomputeSession(index: IndexStore, id: string, o: Recompu
 }
 
 /**
+ * A session's row folded from its stored events, as recomputeSession folds it
+ * (from the saved fold when the store keeps one), without the parse version,
+ * parent link and repo that recomputeSession adds. Undefined: no events. When
+ * the store keeps folds and the session is `simple`, `state` is the fold of
+ * every event stored up to `seq`, in time order, for a writer to fold newer
+ * events into (proxy/record.ts storeWriter).
+ */
+export async function foldSessionRow(index: IndexStore, id: string, prev: Session | undefined): Promise<{ session: Session; state: SessionState; seq?: number } | undefined> {
+  const folded = await foldStoredSession(index, id, prev, false);
+  return folded && { session: sessionOf(folded.state, prev, folded.events), state: folded.state, ...(folded.seq !== undefined ? { seq: folded.seq } : {}) };
+}
+
+/**
  * How far a saved session fold stays behind the newest event. Events are not
  * always stored in time order: at a Stop, the Claude Code hook reads the turn's
  * transcript, whose model calls are stamped from the prompt on, after the turn's
@@ -857,9 +870,10 @@ const canFold = (index: IndexStore): index is FoldStore => !!(index.listEventsSi
  * stamped after it, when one applies, else from all events; the fold is then
  * saved again, up to FOLD_LAG_MS (and the last prompt) behind the newest event.
  * `events` (all of them, in time order) is set when the state needs them (see
- * sessionOf); `read` is what was read from the store. Undefined: no events.
+ * sessionOf); `read` is what was read from the store; `seq`, for a simple
+ * state, the store's sequence number it covers. Undefined: no events.
  */
-async function foldStoredSession(index: IndexStore, id: string, prev: Session | undefined, rebuild: boolean): Promise<{ state: SessionState; events?: AgentEvent[]; read: AgentEvent[] } | undefined> {
+async function foldStoredSession(index: IndexStore, id: string, prev: Session | undefined, rebuild: boolean): Promise<{ state: SessionState; events?: AgentEvent[]; read: AgentEvent[]; seq?: number } | undefined> {
   const all = (events: AgentEvent[]) => {
     const state = sessionState();
     for (const e of events) foldSession(state, e);
@@ -889,7 +903,7 @@ async function foldStoredSession(index: IndexStore, id: string, prev: Session | 
   for (; i < events.length && events[i]!.ts <= upTo; i++) foldSession(state, events[i]!);
   if (state.simple && (!saved || i > 0 || seq !== saved.seq || upTo !== from)) await index.putSessionFold(id, serialize({ v: SESSION_FOLD_VERSION, seq, upTo, state } satisfies SavedFold));
   for (; i < events.length; i++) foldSession(state, events[i]!);
-  if (state.simple) return { state, read: events };
+  if (state.simple) return { state, read: events, seq };
   // Spans or enrichment: sessionOf needs every event, and no fold is kept.
   await index.putSessionFold(id, undefined);
   if (!saved) return { state, events, read: events };

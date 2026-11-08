@@ -82,6 +82,9 @@ export class RecentBlobs {
   }
 }
 
+/** What putMessages asks of RecentBlobs: whether a ref is known stored, and that one now is. */
+export type Seen = Pick<RecentBlobs, "has" | "add">;
+
 /** Runs `fn` over `xs` with at most PARALLEL in flight, results in order. */
 async function pool<T, R>(xs: readonly T[], fn: (x: T, i: number) => Promise<R>): Promise<R[]> {
   const out = new Array<R>(xs.length);
@@ -96,7 +99,7 @@ async function pool<T, R>(xs: readonly T[], fn: (x: T, i: number) => Promise<R>)
   return out;
 }
 
-async function putText(blobs: BlobStore, text: string, recent: RecentBlobs | undefined): Promise<string> {
+async function putText(blobs: BlobStore, text: string, recent: Seen | undefined): Promise<string> {
   if (recent) {
     const ref = sha256Hex(text);
     if (recent.has(ref)) return ref;
@@ -107,7 +110,7 @@ async function putText(blobs: BlobStore, text: string, recent: RecentBlobs | und
 }
 
 /** Stores a conversation (already redacted) as blocks and a tail. */
-export async function putMessages(blobs: BlobStore, items: readonly unknown[], recent?: RecentBlobs): Promise<StoredMessages> {
+export async function putMessages(blobs: BlobStore, items: readonly unknown[], recent?: Seen): Promise<StoredMessages> {
   const sealed = Math.max(0, items.length - HOLD_BACK);
   const full = sealed - (sealed % FANOUT);
   const entry = async (m: unknown): Promise<unknown> => {

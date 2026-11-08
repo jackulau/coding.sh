@@ -14,8 +14,8 @@
 // APFS/HFS+ fsync commits the volume's metadata (the renames) with it; this is
 // git's core.fsyncMethod=batch, which git documents as safe there. A batch
 // abandoned before flush() leaves temp files that sweepTmp removes.
-import { existsSync } from "node:fs";
-import { link, mkdir, readdir, readFile, stat, unlink, utimes } from "node:fs/promises";
+import { existsSync, readFileSync } from "node:fs";
+import { link, mkdir, readdir, stat, unlink, utimes } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { constants, zstdCompressSync, zstdDecompressSync } from "node:zlib";
@@ -169,7 +169,11 @@ export class FsBlobStore implements BlobStore {
   private async read(ref: BlobRef, file: string): Promise<Uint8Array | undefined> {
     let compressed: Buffer;
     try {
-      compressed = await readFile(file);
+      // Read in one synchronous call: a blob is small and local, its decompress
+      // and hash below are synchronous anyway, and the promise readFile's four
+      // thread-pool round trips cost more than the read when a proxied request
+      // is rebuilt from dozens of message blocks.
+      compressed = readFileSync(file);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
       throw err;

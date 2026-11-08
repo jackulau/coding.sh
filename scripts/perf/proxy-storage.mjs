@@ -2,8 +2,9 @@
 // What the proxy stores per session, and how long a call takes to read back:
 // request bodies as whole documents (format 1) against message blocks (format 2,
 // packages/coding.sh/src/proxy/blocks.ts). Both go through the real recorder
-// into a real FsBlobStore (zstd), then every call is read back with loadCall
-// and checked byte for byte against the other format.
+// into a real FsBlobStore (zstd) and SQLite index, as `coding.sh proxy` writes,
+// then every call is read back with loadCall and checked byte for byte against
+// the other format.
 //
 //   node scripts/perf/proxy-storage.mjs --synthetic [--hours 2] [--calls 600] [--keep]
 //   node scripts/perf/proxy-storage.mjs --store <CODING_SH_HOME of a capture> [--session <id>]
@@ -23,7 +24,7 @@ import { createRedactor } from "../../packages/coding.sh/src/core/redact.ts";
 import { loadCall } from "../../packages/coding.sh/src/proxy/calls.ts";
 import { createRecorder, storeWriter } from "../../packages/coding.sh/src/proxy/record.ts";
 import { FsBlobStore } from "../../packages/coding.sh/src/store/fs-blobs.ts";
-import { MemoryIndexStore } from "../../packages/coding.sh/src/store/memory.ts";
+import { SqliteIndexStore } from "../../packages/coding.sh/src/store/sqlite.ts";
 import { openStores } from "../../packages/coding.sh/src/store/factory.ts";
 import { generateLongSession as generate } from "../../packages/coding.sh/test/fixtures/longrun/generate.ts";
 
@@ -101,7 +102,7 @@ function filesUnder(dir) {
 async function recordAll(calls, blocks) {
   const root = join(tmp, blocks ? "blocks" : "whole");
   const blobs = new FsBlobStore(join(root, "blobs"));
-  const index = new MemoryIndexStore();
+  const index = await SqliteIndexStore.open(join(root, "index.db"));
   const cfg = defaultConfig({});
   const rec = createRecorder({ blobs, redactor: createRedactor({ redact: cfg.capture.redact, patterns: [], env: {} }), metadata: false, prices: pricesFor({}), write: storeWriter(index), blocks });
   const t0 = performance.now();
@@ -130,6 +131,7 @@ async function recordAll(calls, blocks) {
   const sizes = filesUnder(join(root, "blobs"));
   const events = [];
   for (const s of await index.listSessions({ limit: 10_000 })) events.push(...(await index.listEvents(s.id, { kinds: ["llm.call"] })));
+  await index.close();
   events.sort((a, b) => a.ts - b.ts);
   const times = [];
   const bodies = [];

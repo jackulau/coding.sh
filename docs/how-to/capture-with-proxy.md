@@ -96,6 +96,14 @@ Measured overhead on a Linux desktop (`node scripts/dogfood/bench.mjs proxy`, 60
 streamed chunks each): 0.34 ms per chunk (95% CI 0.28 to 0.39 ms) and 1.96 ms to the first byte
 (95% CI 1.66 to 2.49 ms). CI fails the build above 2 ms per chunk or 5 ms to first byte.
 
+The proxy stores a call after its response has ended, so the agent never waits on the write. The
+write runs on the proxy's one thread, though, so it can delay another stream or the agent's next
+call. It folds only the events stored since its last write into the session row, and puts the
+call's blobs in one batch, so the cost stays flat as the session grows. Over a 1,000-call session
+(`node scripts/dogfood/bench.mjs proxy-session --baseline <older dist>`, Linux desktop), storing a
+call in the last quarter took 8.95 ms at the median, against 26.24 ms before this change (paired
+difference −17.29 ms, 95% CI −17.97 to −16.73 ms).
+
 ## 3. Read a call
 
 Each call is an `llm.call` event with source `proxy`, inside the session it belongs to:
@@ -253,8 +261,9 @@ blocks of 16 at fixed positions, so a call shares the blocks of the messages it 
 earlier calls, and only its newest messages (at most 19) are stored with the call itself. `show`,
 `diff-calls` and `exp replay` read the body back exactly as it was sent, after redaction. On a
 synthetic session of 500 calls (up to 231 KiB per request), the requests took 828 KiB instead of
-4,116 KiB, and reading one back took 10 ms instead of 3 ms at the median (`node
-scripts/perf/proxy-storage.mjs --synthetic`). Calls an earlier build stored with the whole body
+4,116 KiB (`node scripts/perf/proxy-storage.mjs --synthetic`). Reading a call back reads a few
+dozen small blobs; on a synthetic session of 2,000 calls that took 2.1 ms at the median on a Linux
+desktop. Calls an earlier build stored with the whole body
 still read. `coding.sh gc` keeps a block while any stored call uses it.
 
 ## For a team
