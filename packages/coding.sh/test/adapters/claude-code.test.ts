@@ -197,6 +197,40 @@ describe("claude-code backfill", () => {
     }
   });
 
+  it("records a model fallback, tags model:fallback and model:switch, and prices the switched calls", async () => {
+    // Real capture (scripts/e2e/claude-fallback-capture.mjs): two calls on claude-opus-5-5, then 529s until
+    // Claude Code falls back to claude-opus-4-8 for one turn (system/model_fallback), then back on claude-opus-5-5.
+    const prev = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = join(FIXTURES, "claude-code", "fallback", "config");
+    try {
+      const { ctx } = testCtx();
+      const events = await collect(claudeCode.backfill!(ctx));
+      assertWellFormed(events);
+      const fallbacks = events.filter((e) => e.kind === "notification" && e.payload.kind === "model.fallback");
+      assert.deepEqual(
+        fallbacks.map((e) => e.payload),
+        [{ kind: "model.fallback", trigger: "overloaded", from: "claude-opus-5-5", to: "claude-opus-4-8", text: "Switched to Opus 4.8 due to high demand for Opus 5.5" }],
+      );
+      const calls = events.filter((e) => e.kind === "llm.call");
+      assert.deepEqual(
+        calls.map((e) => e.payload.responseModel),
+        ["claude-opus-5-5", "claude-opus-5-5", "claude-opus-4-8", "claude-opus-4-8", "claude-opus-5-5", "claude-opus-5-5"],
+      );
+      const s = buildSession(applyPricing(events, pricesFor()));
+      // A switch and back: not a hand-over, so before the fallback record this was no switch at all.
+      assert.ok(s.flags.includes("model:fallback") && s.flags.includes("model:switch"), s.flags.join(","));
+      // The two calls on claude-opus-4-8 (80 input, 60 output, 12,800 cache read, 13,100 cache write tokens)
+      // at its list prices ($5, $25, $0.50, $6.25 per M) minus claude-opus-5-5's ($4, $20, $0.20, $5).
+      const extra = (80 * (5 - 4) + 60 * (25 - 20) + 12_800 * (0.5 - 0.2) + 13_100 * (6.25 - 5)) / 1e6;
+      assert.deepEqual(s.stats.modelSwitch, { from: "claude-opus-5-5", to: "claude-opus-4-8", at: calls[2]!.ts, trigger: "fallback", reason: "overloaded", switchedCalls: 2, extraUsd: Math.round(extra * 1e6) / 1e6 });
+      assert.equal(s.model, "claude-opus-5-5");
+      // Both changes (to the fallback and back) re-wrote the prompt cache.
+      assert.equal(s.stats.cacheBreaks?.byCause["model-switch"]?.count, 2);
+    } finally {
+      process.env.CLAUDE_CONFIG_DIR = prev;
+    }
+  });
+
   it("marks a tool output Claude Code persisted to a file (the model got a preview) as cut", async () => {
     // Real capture (scripts/e2e/claude-edge-capture.mjs): `seq 1 200000` prints 1.2 MB.
     const prev = process.env.CLAUDE_CONFIG_DIR;

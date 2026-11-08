@@ -10,7 +10,8 @@
 //   import { startStub } from "./stub-model.mjs"; const s = await startStub(); s.url
 //   startStub({ decide: (body) => ({ tool: { name, args } }) | ({ text }) | undefined })  # a scenario; undefined falls back
 //   ({ text, tool }) answers with the text and then the tool call in one response.
-//   (Anthropic only: a decision's `usage` replaces the prompt-side usage, e.g. cache_read_input_tokens.)
+//   (Anthropic only: a decision's `usage` replaces the prompt-side usage, e.g. cache_read_input_tokens,
+//   and its `stop` the stop_reason, e.g. "refusal".)
 //   (Responses only: `tool: { name, input: "<text>" }` is a freeform custom tool call, e.g. Codex's code-mode `exec`.)
 //   ({ error: { status, headers?, body } }) answers with that HTTP error instead (a 429 with rate-limit headers, a 529).
 import { createServer } from "node:http";
@@ -98,7 +99,7 @@ function anthropic(body, res, d) {
   const model = body.model || MODEL;
   // Text first (an agent saying what it is about to do), then the tool call; either may be absent.
   const content = [...(d.text ? [{ type: "text", text: d.text }] : []), ...(d.tool ? [{ type: "tool_use", id: toolId, name: d.tool.name, input: d.tool.args }] : [])];
-  const stop = d.tool ? "tool_use" : "end_turn";
+  const stop = d.stop ?? (d.tool ? "tool_use" : "end_turn");
   // A scenario may set the prompt side of usage (cache reads and writes) to script cache behaviour.
   const prompt = d.usage ?? { input_tokens: 120 };
   if (!body.stream) return json(res, { id: mid, type: "message", role: "assistant", model, content, stop_reason: stop, stop_sequence: null, usage: { ...prompt, output_tokens: 30 } });

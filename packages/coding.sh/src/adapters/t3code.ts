@@ -711,7 +711,8 @@ export const t3code: Adapter = {
   // 3 (0.1.2): Claude transcripts keep Claude Code's reported cost (cost-state) on session.end.
   // 4 (0.1.2): Claude transcripts' API errors keep their HTTP status, error class, rate-limit type and retry wait.
   // 5 (0.1.2): tool.end records a tool output the agent cut before the model saw it (cut).
-  parseVersion: 5,
+  // 6 (0.1.3): Claude transcripts' model fallbacks (system/model_fallback, model_refusal_fallback) are model.fallback notifications.
+  parseVersion: 6,
 
   async detect() {
     const env = process.env;

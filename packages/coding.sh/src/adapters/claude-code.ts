@@ -575,7 +575,8 @@ export const claudeCode: Adapter = {
   // 7 (0.1.2): session.end keeps Claude Code's reported cost (cost-state) as reportedUsage.
   // 8 (0.1.2): API errors keep their HTTP status, error class, rate-limit type and retry wait.
   // 9 (0.1.2): tool.end records a tool output Claude Code persisted to a file, so the model got a preview (cut).
-  parseVersion: 9,
+  // 10 (0.1.3): a model fallback (system/model_fallback, model_refusal_fallback) is a model.fallback notification.
+  parseVersion: 10,
 
   detect() {
     const dir = claudeConfigDir();

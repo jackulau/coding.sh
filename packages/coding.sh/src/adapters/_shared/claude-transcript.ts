@@ -540,6 +540,9 @@ export class ClaudeTranscriptConverter {
       }
     } else if (e.subtype === "api_error" && this.opts.mode === "full") {
       em.emit("error", apiError(e), { key: [uuid] });
+    } else if (e.subtype === "model_fallback" || e.subtype === "model_refusal_fallback") {
+      // Hooks never see a fallback, so live windows record it too; the uuid key dedupes the two copies.
+      em.emit("notification", modelFallback(e), { key: [uuid, "fallback"] });
     }
     this.push(em);
   }
@@ -638,6 +641,26 @@ function apiError(e: Record<string, unknown>): Record<string, unknown> {
     retryAfterMs: num(e.retryInMs),
     retryAttempt: num(e.retryAttempt),
     maxRetries: num(e.maxRetries),
+  };
+}
+
+/**
+ * A `system/model_fallback` entry (the turn moved to the fallback model because
+ * the main one failed: trigger `overloaded`, `model_not_found`, `server_error`, …)
+ * or `system/model_refusal_fallback` (a refusal retried on another model: trigger
+ * `refusal`, direction `retry`/`revert`/`sticky`, scope `session` or `local` for a
+ * subagent) as a notification payload:
+ * `{kind: "model.fallback", trigger, from, to, direction?, scope?, text?}`.
+ */
+function modelFallback(e: Record<string, unknown>): Record<string, unknown> {
+  return {
+    kind: "model.fallback",
+    trigger: str(e.trigger) ?? (e.subtype === "model_refusal_fallback" ? "refusal" : "unknown"),
+    from: str(e.originalModel),
+    to: str(e.fallbackModel),
+    direction: str(e.direction),
+    scope: str(e.scope),
+    text: str(e.content)?.slice(0, 300),
   };
 }
 

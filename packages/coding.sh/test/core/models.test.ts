@@ -217,6 +217,68 @@ describe("switches and their triggers", () => {
 describe("recorded fallbacks, switches and back, and subagents", () => {
   const OPUS_55 = "claude-opus-5-5";
   const OPUS_48 = "claude-opus-4-8";
+  // A Claude Code `system/model_refusal_fallback` entry. No capture has one (the stub cannot get
+  // 2.1.319 to route a refusal to another model), so its shape is the one 2.1.319 writes:
+  // type, subtype, content, level, trigger, direction, scope, originalModel, fallbackModel,
+  // requestId, apiRefusalCategory, apiRefusalExplanation, retractedMessageUuids, refusedUserMessageUuid.
+  const refusalFallback = (uuid: string, s: number, scope?: string) => ({
+    ...base,
+    type: "system",
+    subtype: "model_refusal_fallback",
+    uuid,
+    timestamp: TS(s),
+    content: "Opus 5.5 declined; Opus 4.8 answered",
+    level: "warning",
+    trigger: "refusal",
+    direction: "retry",
+    ...(scope ? { scope } : {}),
+    originalModel: OPUS_55,
+    fallbackModel: OPUS_48,
+    requestId: "req_1",
+    apiRefusalCategory: null,
+    apiRefusalExplanation: null,
+    retractedMessageUuids: ["a3"],
+    refusedUserMessageUuid: "u3",
+    isMeta: false,
+  });
+
+  it("a refusal fallback whose notice comes at the end of the turn, then back: one switch, priced", async () => {
+    const lines = [
+      prompt("u1", 0, "fix the parser"),
+      reply("a1", 2, "msg_1", OPUS_55, "tool_use", [read("t1")]),
+      result("u2", 3, "t1"),
+      reply("a2", 5, "msg_2", OPUS_55, "end_turn", [text("Read it.")]),
+      prompt("u3", 30, "now the lexer"),
+      reply("a3", 32, "msg_3", OPUS_55, "refusal", [text("I can't.")]),
+      reply("a4", 34, "msg_4", OPUS_48, "end_turn", [text("Done.")]),
+      refusalFallback("f1", 35),
+      prompt("u4", 60, "and a test"),
+      reply("a5", 62, "msg_5", OPUS_55, "tool_use", [read("t2")]),
+      result("u5", 63, "t2"),
+      reply("a6", 65, "msg_6", OPUS_55, "end_turn", [text("Added.")]),
+    ];
+    const events = await convert(lines);
+    const notes = events.filter((e) => e.kind === "notification" && e.payload.kind === "model.fallback");
+    assert.deepEqual(
+      notes.map((e) => e.payload),
+      [{ kind: "model.fallback", trigger: "refusal", from: OPUS_55, to: OPUS_48, direction: "retry", text: "Opus 5.5 declined; Opus 4.8 answered" }],
+    );
+    const s = buildSession(events);
+    const at = events.find((e) => e.kind === "llm.call" && e.payload.responseModel === OPUS_48)!.ts;
+    // One call on claude-opus-4-8: 900 input and 40 output tokens at $5/$25 per M instead of $4/$20.
+    assert.deepEqual(s.stats.modelSwitch, { from: OPUS_55, to: OPUS_48, at, trigger: "fallback", reason: "refusal", switchedCalls: 1, extraUsd: (900 * 1 + 40 * 5) / 1e6 });
+    assert.ok(s.flags.includes(FLAGS.modelSwitch) && s.flags.includes(FLAGS.modelFallback) && s.flags.includes(FLAGS.refusal), s.flags.join(","));
+    assert.equal(s.model, OPUS_55);
+    // Folded one event at a time, with the state copied between (live ingest), the row is the same.
+    const sorted = [...events].sort((a, b) => a.ts - b.ts);
+    let st = sessionState();
+    for (const e of sorted) {
+      foldSession(st, e);
+      st = structuredClone(st);
+    }
+    assert.deepEqual(sessionOf(st), s);
+  });
+
   it("a fallback recorded before the change, in the main thread, with no refusal: a switch and back", () => {
     reset();
     const events = [
