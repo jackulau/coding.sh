@@ -114,4 +114,5 @@ Specs and plans. Each one states its status at the top.
 | Doc | What |
 |---|---|
 | [RELEASE.md](RELEASE.md) | release checklist for npm, GitHub and the site |
+| [ease.md](ease.md) | the ease benchmark: installer to first captured session, for a person and for an agent reading agents.md |
 | [research/](research/) | landscape and competitor research |
