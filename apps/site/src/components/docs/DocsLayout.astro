@@ -2,13 +2,16 @@
 // Docs shell: the site Layout and Nav, a sidebar on wide screens, a disclosure
 // menu on narrow ones (works without JS), the page, then prev/next. Title and
 // description come from nav.ts so the sidebar, <title> and llms.txt agree.
+// A page that sits under a nav.ts entry without its own sidebar row (one CLI
+// command, /docs/cli/<name>) passes `page` and `parent`, and its own prev/next:
+// the sidebar and the breadcrumbs then point at the parent.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import Layout from "../../layouts/Layout.astro";
 import Nav from "../Nav.astro";
 import Search from "./Search.astro";
 import { SITE } from "../../data/site";
-import { DOC_GROUPS, docPage, neighbours } from "./nav";
+import { DOC_GROUPS, docPage, neighbours, type DocPage } from "./nav";
 import { techArticleSchema, faqSchema } from "../../lib/schema";
 import { pageLastmod } from "../../lib/lastmod.mjs";
 import "../../styles/doc.css";
@@ -16,24 +19,31 @@ import "../../styles/doc.css";
 interface Props {
   /** Extra JSON-LD for this page (the FAQ page passes its questions). */
   schemas?: Record<string, unknown>[];
+  page?: DocPage;
+  parent?: DocPage;
+  prev?: DocPage;
+  next?: DocPage;
 }
 const { schemas = [] } = Astro.props;
 
 const path = Astro.url.pathname.length > 1 ? Astro.url.pathname.replace(/\/+$/, "") : Astro.url.pathname;
-const page = docPage(path);
-const { prev, next } = neighbours(path);
+const page = Astro.props.page ?? docPage(path);
+const { parent } = Astro.props;
+const current = parent ?? page;
+const { prev, next } = Astro.props.page ? Astro.props : neighbours(path);
 const isIndex = page.path === "/docs";
 const title = page.metaTitle ?? (isIndex ? `${SITE.name} docs: observability and evals for any AI agent` : `${page.title} · ${SITE.name} docs`);
 const breadcrumbs = isIndex
   ? [{ name: "Docs", path: "/docs" }]
   : [
       { name: "Docs", path: "/docs" },
+      ...(parent ? [{ name: parent.label, path: parent.path }] : []),
       { name: page.label, path: page.path },
     ];
 // Title card from scripts/gen-og.mjs (npm run og).
-const ogCard = `/og/${isIndex ? "docs" : `docs-${page.path.slice("/docs/".length).replace(/\//g, "-")}`}.png`;
-// A page added since the cards were last generated falls back to the site card.
-const ogImage = existsSync(join(process.cwd(), "public", ogCard)) ? ogCard : "/og-image.png";
+const card = (p: DocPage) => `/og/${p.path === "/docs" ? "docs" : `docs-${p.path.slice("/docs/".length).replace(/\//g, "-")}`}.png`;
+// A page without a card yet uses its parent's, or the site card.
+const ogImage = [card(page), ...(parent ? [card(parent)] : [])].find((c) => existsSync(join(process.cwd(), "public", c))) ?? "/og-image.png";
 const article = techArticleSchema({ ...page, image: ogImage, dateModified: pageLastmod(page.path) });
 
 // Headings link to themselves (#id), rendered into the HTML, so no script needed.
@@ -65,7 +75,7 @@ const faqSchemas = faq.length ? [faqSchema(faq)] : [];
               <ul>
                 {g.pages.map((p) => (
                   <li>
-                    <a href={p.path} class="docs__link" aria-current={p.path === page.path ? "page" : undefined}>
+                    <a href={p.path} class="docs__link" aria-current={p.path === current.path ? "page" : undefined}>
                       {p.label}
                     </a>
                   </li>
@@ -82,7 +92,7 @@ const faqSchemas = faq.length ? [faqSchema(faq)] : [];
       <details class="docs__menu" data-docs-menu>
         <summary class="docs__menu-sum">
           <span class="docs__menu-kicker">Docs</span>
-          <span class="docs__menu-current">{page.label}</span>
+          <span class="docs__menu-current">{current.label}</span>
           <svg class="docs__menu-chev" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" focusable="false">
             <path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"></path>
           </svg>
@@ -96,7 +106,7 @@ const faqSchemas = faq.length ? [faqSchema(faq)] : [];
                 <ul>
                   {g.pages.map((p) => (
                     <li>
-                      <a href={p.path} class="docs__link" aria-current={p.path === page.path ? "page" : undefined}>
+                      <a href={p.path} class="docs__link" aria-current={p.path === current.path ? "page" : undefined}>
                         {p.label}
                       </a>
                     </li>

@@ -91,6 +91,15 @@ export function dedentBlocks(text: string): string {
     .join("\n\n");
 }
 
+/** Heading id for a command or sub-action: "eval new" -> "cmd-eval-new". */
+export const cliAnchor = (name: string) => `cmd-${name.replace(/\s+/g, "-")}`;
+
+/**
+ * Each top-level command has its own page, /docs/cli/<command>, with its
+ * sub-actions on it. All of them on one page came to over 40KB of HTML.
+ */
+export const cliPath = (name: string) => `/docs/cli/${name.split(/\s+/)[0]}`;
+
 let cached: CliReference | null | undefined;
 
 export function cliReference(): CliReference | null {

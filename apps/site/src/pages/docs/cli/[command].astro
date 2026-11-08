@@ -1,0 +1,70 @@
+---
+// /docs/cli/<command>: one command's --help and its subcommands', from the
+// same build-time run of the CLI as /docs/cli (see cli-help.ts).
+import DocsLayout from "../../../components/docs/DocsLayout.astro";
+import Terminal from "../../../components/Terminal.astro";
+import { cliAnchor, cliPath, cliReference, type HelpCommand } from "../../../components/docs/cli-help";
+import { docPage, neighbours, type DocPage } from "../../../components/docs/nav";
+import { clampDescription } from "../../../lib/schema";
+
+export function getStaticPaths() {
+  const ref = cliReference();
+  if (!ref) return [];
+  const parent = docPage("/docs/cli");
+  const commands = ref.groups.flatMap((g) => g.commands);
+  const pages: DocPage[] = commands.map((c) => ({
+    path: cliPath(c.name),
+    label: c.name,
+    title: `coding.sh ${c.name}`,
+    // Also the meta description, which needs 50 to 155 characters.
+    summary: clampDescription(`${c.summary}. Every option of coding.sh ${c.name}${c.actions.length ? " and its subcommands" : ""}, from its own --help.`),
+  }));
+  return commands.map((command, i) => ({
+    params: { command: command.name },
+    props: { command, parent, page: pages[i]!, prev: pages[i - 1] ?? parent, next: pages[i + 1] ?? neighbours(parent.path).next },
+  }));
+}
+
+interface Props {
+  command: HelpCommand;
+  parent: DocPage;
+  page: DocPage;
+  prev?: DocPage;
+  next?: DocPage;
+}
+const { command: c, ...nav } = Astro.props;
+---
+
+<DocsLayout {...nav}>
+  {c.aliases.length > 0 && (
+    <p>
+      Alias: <code>{c.aliases.join(", ")}</code>.
+    </p>
+  )}
+  <Terminal title={`coding.sh ${c.name} --help`} label={`Help for coding.sh ${c.name}`}>
+    <pre>{c.help}</pre>
+  </Terminal>
+  {c.actions.map((a) => (
+    <>
+      <h2 id={cliAnchor(a.name)}>
+        <code>coding.sh {a.name}</code>
+      </h2>
+      <p>{a.summary}.</p>
+      <Terminal title={`coding.sh ${a.name} --help`} label={`Help for coding.sh ${a.name}`}>
+        <pre>{a.help}</pre>
+      </Terminal>
+    </>
+  ))}
+  <p>
+    <a class="inline-link" href="/docs/cli">All commands</a> · <a class="inline-link" href="/docs/cli#global">Global options</a>
+  </p>
+</DocsLayout>
+
+<style>
+  .doc :global(.term) {
+    margin-top: 1rem;
+  }
+  .doc :global(h2 code) {
+    font-size: 0.9em;
+  }
+</style>

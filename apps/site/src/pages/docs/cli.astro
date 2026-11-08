@@ -1,10 +1,11 @@
 ---
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Terminal from "../../components/Terminal.astro";
-import { cliReference } from "../../components/docs/cli-help";
+import { cliAnchor, cliPath, cliReference } from "../../components/docs/cli-help";
 
 const ref = cliReference();
-const anchor = (name: string) => `cmd-${name.replace(/\s+/g, "-")}`;
+// Links to /docs/cli#cmd-<name> predate the per-command pages: send them on.
+const commands = ref ? ref.groups.flatMap((g) => g.commands.map((c) => c.name)) : [];
 ---
 
 <DocsLayout>
@@ -13,7 +14,8 @@ const anchor = (name: string) => `cmd-${name.replace(/\s+/g, "-")}`;
       <>
         <p>
           Generated at build time from <code>coding.sh --help</code> (version {ref.version}). Run <code>coding.sh &lt;command&gt; --help</code>{" "}
-          for the same text in your terminal, or add <code>--json</code> for machine-readable metadata.
+          for the same text in your terminal, or add <code>--json</code> for machine-readable metadata. Each command has its own page with its full
+          help and its subcommands.
         </p>
 
         <h2 id="global">Global options</h2>
@@ -27,61 +29,44 @@ const anchor = (name: string) => `cmd-${name.replace(/\s+/g, "-")}`;
         </p>
 
         <h2 id="commands">Commands</h2>
-        <div class="doc-table">
-          <table>
-            <thead>
-              <tr>
-                <th>Command</th>
-                <th>Group</th>
-                <th>What it does</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ref.groups.flatMap((g) =>
-                g.commands.map((c) => (
-                  <tr>
-                    <td class="nowrap cell-link">
-                      <a href={`#${anchor(c.name)}`}>
-                        <code>{c.name}</code>
-                      </a>
-                    </td>
-                    <td class="nowrap">{g.label}</td>
-                    <td>{c.summary}</td>
-                  </tr>
-                )),
-              )}
-            </tbody>
-          </table>
-        </div>
-
         {ref.groups.map((g) => (
           <>
-            <h2 id={`group-${g.label.toLowerCase()}`}>{g.label}</h2>
-            {g.commands.map((c) => (
-              <>
-                <h3 id={anchor(c.name)}>
-                  <code>coding.sh {c.name}</code>
-                </h3>
-                <p>
-                  {c.summary}.{c.aliases.length > 0 && <> Alias: <code>{c.aliases.join(", ")}</code>.</>}
-                </p>
-                <Terminal title={`coding.sh ${c.name} --help`} label={`Help for coding.sh ${c.name}`}>
-                  <pre>{c.help}</pre>
-                </Terminal>
-                {c.actions.map((a) => (
-                  <>
-                    <h3 id={anchor(a.name)}>
-                      <code>coding.sh {a.name}</code>
-                    </h3>
-                    <Terminal title={`coding.sh ${a.name} --help`} label={`Help for coding.sh ${a.name}`}>
-                      <pre>{a.help}</pre>
-                    </Terminal>
-                  </>
-                ))}
-              </>
-            ))}
+            <h3 id={`group-${g.label.toLowerCase()}`}>{g.label}</h3>
+            <div class="doc-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Command</th>
+                    <th>What it does</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {g.commands.map((c) => (
+                    <tr>
+                      <td class="nowrap cell-link">
+                        <a href={cliPath(c.name)}>
+                          <code>{c.name}</code>
+                        </a>
+                      </td>
+                      <td>
+                        {c.summary}
+                        {/* On one line: a line break here would put spaces inside "(a, b)". */}
+                        {c.actions.length > 0 && <>({c.actions.map((a, i) => <>{i > 0 && ", "}<a class="inline-link" href={`${cliPath(a.name)}#${cliAnchor(a.name)}`}>{a.name.slice(c.name.length + 1)}</a></>)})</>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </>
         ))}
+        <script is:inline define:vars={{ commands }}>
+          {
+            const id = decodeURIComponent(location.hash.slice(1));
+            const name = commands.find((c) => id === `cmd-${c}` || id.startsWith(`cmd-${c}-`));
+            if (name && !document.getElementById(id)) location.replace(`/docs/cli/${name}${location.hash}`);
+          }
+        </script>
       </>
     ) : (
       <div class="note">
@@ -98,8 +83,5 @@ const anchor = (name: string) => `cmd-${name.replace(/\s+/g, "-")}`;
 <style>
   .doc :global(.term) {
     margin-top: 1rem;
-  }
-  .doc :global(h3 code) {
-    font-size: 0.9em;
   }
 </style>

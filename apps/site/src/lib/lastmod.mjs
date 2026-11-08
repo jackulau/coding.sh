@@ -9,7 +9,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const SITE_DIR = fileURLToPath(new URL("../../", import.meta.url));
 const REPO_DIR = join(SITE_DIR, "../..");
@@ -40,13 +40,15 @@ function fileLastmod(file) {
 /** Source files that make up the page at `pathname`: the route file, plus any repo doc or post it renders. */
 function pageSources(pathname) {
   const route = pathname.replace(/^\/+|\/+$/g, "");
-  if (/^changelog\/[^/]+$/.test(route)) return [join(REPO_DIR, "CHANGELOG.md")];
+  if (/^changelog\/[^/]+(\/\d+)?$/.test(route)) return [join(REPO_DIR, "CHANGELOG.md")];
   // A blog post is its Markdown file; /blog lists every post, so each one dates it.
   if (/^blog\/[^/]+$/.test(route)) return [join(POSTS_DIR, `${route.slice("blog/".length)}.md`)].filter(existsSync);
   const posts = route === "blog" && existsSync(POSTS_DIR) ? readdirSync(POSTS_DIR).filter((f) => f.endsWith(".md")).map((f) => join(POSTS_DIR, f)) : [];
   const pages = join(SITE_DIR, "src/pages");
   const base = route === "" ? join(pages, "index") : join(pages, route);
-  const file = [`${base}.astro`, join(base, "index.astro"), `${base}.md`, `${base}.mdx`].find(existsSync);
+  // A generated page (docs/cli/<command>) comes from its folder's [param].astro route.
+  const dynamic = existsSync(dirname(base)) ? readdirSync(dirname(base)).find((f) => /^\[[^.\]]+\]\.astro$/.test(f)) : undefined;
+  const file = [`${base}.astro`, join(base, "index.astro"), `${base}.md`, `${base}.mdx`, ...(dynamic ? [join(dirname(base), dynamic)] : [])].find(existsSync);
   if (!file) return [];
   // Docs pages whose body is a repo doc: <MdDoc file="concepts.md" /> renders docs/concepts.md.
   const docs = [...readFileSync(file, "utf8").matchAll(/<MdDoc\s[^>]*file="([^"]+)"/g)]
