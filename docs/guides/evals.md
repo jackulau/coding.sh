@@ -837,7 +837,14 @@ its files), the agent's version, the attempt number, the trial timeout, and the 
 Editing a hidden test or a CLAUDE.md, or upgrading the agent, runs it again. So does a run that
 recorded an error, was cancelled or failed on infrastructure, and one older than
 `--reuse-max-age` (default `7d`). Every run stores its key as `cellKey`, and a copy stores
-`reusedFrom`, the run it was copied from. Copies count $0 toward `--max-cost`.
+`reusedFrom`, the run it was copied from. Copies count $0 toward `--max-cost`, and the `agent
+spend` and `grader spend` rows leave them out: they show what this comparison paid. A `reused` row
+shows what the copied runs cost when they first ran:
+
+```
+agent spend       $0.00                 $0.24                 $0.24 total
+reused            $0.24                                       $0.24 not spent: 2 runs paid for by earlier comparisons
+```
 
 `--dry-run` prints what would run and runs nothing:
 
@@ -855,8 +862,8 @@ note: reused runs from earlier comparisons (baseline 2/2), finished up to 3h bef
 ```
 
 When the agent can't report its version, an upgrade can't change the key; the dry run and the
-report warn about it. `--json` carries `report.reused` (`{"baseline", "candidate"}`), present only
-when runs were reused.
+report warn about it. `--json` carries `report.reused` (`{"baseline", "candidate"}`) and
+`report.spend.<arm>.reused` (`{runs, usd, priced}`), present only when runs were reused.
 
 ## A/B a harness edit on your own sessions
 

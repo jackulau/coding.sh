@@ -140,6 +140,13 @@ describe("runExperiment reuse", () => {
     const r = await runExperiment(s.opts([s.A, B2], { reuse: { bundleIds: [s.A.id], now: s.clock }, maxCostUsd: 100, concurrency: 1 }));
     assert.deepEqual(r.reuse, { reused: 4, unknownVersion: ["fake"] });
     assert.equal(r.budget?.spentUsd, 2, "4 new runs at $0.50; the 4 reused are not charged again");
+    // The agent spend row counts what this comparison paid; the reused runs' original cost shows on its own row.
+    const report = compare(r.results, { baseline: s.A.id, candidate: B2.id });
+    assert.deepEqual(report.spend.baseline, { usd: 0, priced: 0, runs: 0, reused: { runs: 4, usd: 2, priced: 4 }, graderUsd: 0, graderCalls: 0, graderUnpriced: 0 });
+    assert.deepEqual(report.spend.candidate, { usd: 2, priced: 4, runs: 4, graderUsd: 0, graderCalls: 0, graderUnpriced: 0 });
+    const text = formatCompare(report);
+    assert.match(text, /^agent spend\s+\$0\.00\s+\$2\.00\s+\$2\.00 total$/m);
+    assert.match(text, /^reused\s+\$2\.00\s+\$2\.00 not spent: 4 runs paid for by earlier comparisons$/m);
   });
 
   it("resume keeps a reused copy instead of copying it again", async () => {

@@ -433,11 +433,17 @@ export interface TaskOutcome {
 export type VerdictKind = "better" | "worse" | "no-difference" | "inconclusive";
 
 export interface ArmSpend {
-  /** Agent cost, summed over the runs whose cost is known. */
+  /** Agent cost, summed over the runs whose cost is known. Reused runs (`compare --reuse`) are left out: an earlier comparison paid for them. */
   usd: number;
-  /** Runs with a known agent cost. */
+  /** Runs with a known agent cost (reused runs left out). */
   priced: number;
+  /** Runs this comparison paid for (reused runs left out). */
   runs: number;
+  /**
+   * Runs copied from earlier comparisons, and what their originals cost (known
+   * costs only). Absent when no run was reused.
+   */
+  reused?: { runs: number; usd: number; priced: number };
   /** What the verifiers' `judge grade` model calls cost (priced calls only). */
   graderUsd: number;
   /** Judge model calls, and how many of them had no price. */
@@ -826,11 +832,24 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
   }
   // Total agent spend, cancelled runs included: a killed run was still billed for what it did.
   const costOf = (r: RunResult) => r.agent.usage?.costUsd ?? opts.sessions?.get(r.id)?.stats.usage?.costUsd;
+  const known = (rs: readonly RunResult[]) => rs.map(costOf).filter((x): x is number => typeof x === "number" && Number.isFinite(x));
   const spendOf = (id: string): ArmSpend => {
-    const rs = all.filter((r) => r.bundleId === id);
-    const known = rs.map(costOf).filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+    const mine = all.filter((r) => r.bundleId === id);
+    // A reused run's agent and grader cost were paid by the comparison that ran it: shown apart, not spent here.
+    const rs = mine.filter((r) => !r.reusedFrom);
+    const copies = mine.filter((r) => r.reusedFrom);
+    const paid = known(rs);
     const sum = (f: (u: NonNullable<RunResult["graderUsage"]>) => number) => rs.reduce((s, r) => s + (r.graderUsage ? f(r.graderUsage) : 0), 0);
-    return { usd: known.reduce((s, x) => s + x, 0), priced: known.length, runs: rs.length, graderUsd: sum((u) => u.costUsd), graderCalls: sum((u) => u.calls), graderUnpriced: sum((u) => u.unpriced) };
+    const was = known(copies);
+    return {
+      usd: paid.reduce((s, x) => s + x, 0),
+      priced: paid.length,
+      runs: rs.length,
+      ...(copies.length ? { reused: { runs: copies.length, usd: was.reduce((s, x) => s + x, 0), priced: was.length } } : {}),
+      graderUsd: sum((u) => u.costUsd),
+      graderCalls: sum((u) => u.calls),
+      graderUnpriced: sum((u) => u.unpriced),
+    };
   };
   const spend = { baseline: spendOf(opts.baseline), candidate: spendOf(opts.candidate) };
 
@@ -1274,6 +1293,15 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
     const runs = sp.baseline.runs + sp.candidate.runs;
     const usd = (x: number) => `$${x.toFixed(2)}`;
     out.push(row(["agent spend", usd(sp.baseline.usd), usd(sp.candidate.usd), `${usd(sp.baseline.usd + sp.candidate.usd)} total${priced < runs ? dim(` (${priced}/${runs} runs priced)`) : ""}`]));
+  }
+  const ra = sp?.baseline.reused;
+  const rb = sp?.candidate.reused;
+  if (ra || rb) {
+    const usd = (x: number) => `$${x.toFixed(2)}`;
+    const n = (ra?.runs ?? 0) + (rb?.runs ?? 0);
+    const priced = (ra?.priced ?? 0) + (rb?.priced ?? 0);
+    const cell = (x: typeof ra) => (x ? (x.priced ? usd(x.usd) : "—") : "");
+    out.push(row(["reused", cell(ra), cell(rb), dim(`${priced ? `${usd((ra?.usd ?? 0) + (rb?.usd ?? 0))} ` : ""}not spent: ${n} run${n === 1 ? "" : "s"} paid for by earlier comparisons`)]));
   }
   if (sp && sp.baseline.graderCalls + sp.candidate.graderCalls > 0) {
     const usd = (x: number) => `$${x.toFixed(2)}`;
