@@ -1,0 +1,20 @@
+packages/coding.sh/src/store/sqlite.ts
+  s_8e040dbdf13565::t_3b036e6ec58bcf 462-464
+  s_8e040dbdf13565::t_7d1564ff40f52c 566-571
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b0f785409fc65b59c6d39fe85299271758913892",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jack <jack@coding.sh>"
+    }
+  }
+}
