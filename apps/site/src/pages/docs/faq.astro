@@ -5,6 +5,11 @@ import { faqSchema } from "../../lib/schema";
 
 const FAQ: { id: string; q: string; a: string }[] = [
   {
+    id: "name",
+    q: "How do you say coding.sh, and is it the same as “coding shell”?",
+    a: `It is one tool with one name. The <code>.sh</code> is a domain, and because <code>.sh</code> files are shell scripts it reads as “coding shell”, so people also write it coding shell, coding sh or codingsh. They all mean this: open-source, local-first observability and evals for AI agents, run from your shell.`,
+  },
+  {
     id: "status",
     q: "Can I use it today?",
     a: `Yes, if you accept early software (v0.1.2): capture, the viewer, datasets, graders, judges and comparisons work, and the package's test suite passes. Nothing has a stable interface yet, and drafting repo-replay tasks from real sessions is still blocked (see <a href="/docs/harness-evals#repo-replay">Evals</a>).`,

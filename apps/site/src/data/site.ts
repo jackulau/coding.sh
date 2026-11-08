@@ -33,6 +33,9 @@ export const RELEASE_TGZ = `${REPO_URL}/releases/download/v${RELEASE}/coding.sh-
 
 export const SITE = {
   name: "coding.sh",
+  // How people also write and say the name: the `.sh` reads as "shell". Used as
+  // schema.org alternateName so the brand is found when spelled as words.
+  altNames: ["coding shell", "coding sh", "codingsh", "coding.sh cli"],
   tagline: "observability and evals for AI agents, on your machine",
   description:
     "coding.sh is open-source, local-first observability and evals for AI agents. It records agent runs through coding-agent hooks and a local OpenTelemetry receiver, turns failures into evals with calibrated graders, and compares prompt, harness and model changes with paired statistics. MIT licensed, v0.1.2. Install: curl -fsSL https://coding.sh/install | sh",
