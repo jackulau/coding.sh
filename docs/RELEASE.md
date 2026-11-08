@@ -82,7 +82,8 @@ Check it worked: `npm view coding.sh version`, `npm view @codingdotsh/sdk versio
 2. `.github/workflows/release.yml`, job **verify** (GitHub-hosted): checks that the tag matches
    the version and that `CHANGELOG.md` has a `## [X.Y.Z]` section, typechecks and tests every
    package (store-postgres against a real Postgres service), packs the four npm tarballs, builds
-   the Python sdist and wheel, and runs `scripts/release/smoke.sh` on those exact files.
+   the Python sdist and wheel, runs `scripts/release/smoke.sh` on those exact files, and dry-runs the
+   npm publish with `scripts/release/publish-npm.sh`, the same script publish-npm runs.
 3. Job **github-release** (GitHub-hosted, no environment, no approval) runs as soon as verify
    passes. It creates the GitHub release `vX.Y.Z` with the verified `coding.sh-X.Y.Z.tgz`, the same
    bytes npm gets, attached and that CHANGELOG section as the notes. From then on install.sh and

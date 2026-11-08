@@ -159,6 +159,14 @@ jobs:
           CODING_SH_SMOKE_CH_URL: clickhouse://coding:release@127.0.0.1:8123/smoke
         run: scripts/release/smoke.sh
 
+      # The same publish script publish-npm runs, from the same relative npm/
+      # directory, with --dry-run: a tarball path npm misreads fails here,
+      # before anyone approves the release.
+      - name: Dry-run the npm publish
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$GITHUB_WORKSPACE/scripts/release/publish-npm.sh" npm --dry-run
+
       - uses: actions/upload-artifact@v4
         with:
           name: npm-tarballs
@@ -306,20 +314,7 @@ jobs:
         env:
           # Empty once trusted publishing is configured; npm then uses OIDC.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          for name in coding.sh @codingdotsh/sdk coding.sh-store-postgres coding.sh-store-s3 coding.sh-store-clickhouse; do
-            base=${name#@}
-            tgz=$(ls "npm/${base/\//-}-"[0-9]*.tgz)
-            v=$(tar -xzOf "$tgz" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')
-            code=$(curl -s -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/${name/\//%2f}/$v")
-            case "$code" in
-              200) echo "$name@$v is already on npm, skipping"; continue ;;
-              404) ;;
-              *) echo "::error::registry returned $code for $name@$v"; exit 1 ;;
-            esac
-            echo "publishing $name@$v"
-            npm publish "$tgz" --access public --provenance
-          done
+        run: scripts/release/publish-npm.sh npm
 
   publish-pypi:
     needs: [verify, github-release]
