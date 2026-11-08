@@ -611,6 +611,10 @@ export async function run(c: CommandContext): Promise<number> {
         const { sessionCommand } = await import("./exp-session.ts");
         return sessionCommand(c, store);
       }
+      case "replay": {
+        const { expReplay } = await import("./exp-replay.ts");
+        return expReplay(c, store, ctx);
+      }
       case "run": {
         const armFlags = list(c.flags.arm);
         const stopEarly = c.flags["stop-early"] === true;

@@ -984,6 +984,7 @@ coding.sh exp <action>
 | Action | What it does |
 |---|---|
 | [`ab`](#codingsh-exp-ab) | A/B a CLAUDE.md, AGENTS.md, rule or skill edit on the decision points your agent recently got wrong |
+| [`replay`](#codingsh-exp-replay) | Replay logged model calls against the real API, with your own key, varying the model, system prompt or a field |
 | [`run`](#codingsh-exp-run) | Run an experiment, two tasks as one interleaved A/B, or a matrix of cells against a baseline cell |
 | [`session`](#codingsh-exp-session) | Group runs into a session: new, note &lt;text&gt;, summary. exp run in it prints the delta against the previous run |
 | [`compare`](#codingsh-exp-compare) | Compare two experiments case by case |
@@ -1043,6 +1044,42 @@ coding.sh exp ab
 coding.sh exp ab --b ./drafts/CLAUDE.md --behavior unverified-claim
 coding.sh exp ab --a git:main --b . --since 30d --dry-run
 coding.sh exp ab --watch
+```
+
+### `coding.sh exp replay`
+
+Replay logged model calls against the real API, with your own key, varying the model, system prompt or a field.
+
+```text
+coding.sh exp replay [call]... [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `call` | no | Calls logged by coding.sh proxy: an id, a 6+ character prefix, or &lt;session&gt;#&lt;n&gt; (latest#-1 is the last call) Takes the rest of the arguments. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--vary <KEY=B|KEY=A,B>` |  | A request field to vary: model, system, tools or any body field (dots for nested, @file reads a file). One value: A sends the recorded request, B this. Two: A and B. Repeatable. |
+| `--session <SESSION>` |  | Also replay this session's proxy calls (the last --limit) |
+| `--limit <N>` | `20` | With --session: the last N calls. |
+| `--n <N>` | `5` | Replays per call and arm. |
+| `-g, --grader <JSON|FILE>` |  | More grader specs (same-action always runs: does the reply take the first action the agent took?) Repeatable. |
+| `--criterion <TEXT>` |  | Also grade each reply with an LLM judge on this criterion. |
+| `--judge-model <MODEL>` |  | Model for --criterion. |
+| `--upstream <URL>` |  | API base URL (default: the proxy's upstream for the call's provider) |
+| `-c, --concurrency <N>` | `4` | Parallel model calls. |
+| `--max-cost <USD>` |  | Refuse to start when the estimate is over this. |
+| `--dry-run` |  | Show the calls, the arms and a cost estimate; make no model calls and need no key. |
+| `--name <NAME>` |  | Experiment name (default: replay-&lt;first call id&gt;) |
+| `--resume [<ID>]` |  | Continue an interrupted replay: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
+
+```sh
+coding.sh exp replay latest#-1 --vary model=claude-haiku-4-5 --dry-run
+coding.sh exp replay latest#-1 --vary model=claude-sonnet-4-5,claude-haiku-4-5 --n 5
+coding.sh exp replay --session latest --vary system=@prompt.md --n 3
 ```
 
 ### `coding.sh exp run`

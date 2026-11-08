@@ -217,7 +217,7 @@ The command ran and something failed.
 | `nothing_to_ablate` | `nothing to ablate: … is in neither bundle base nor any selected task's repo` (exit 2) | Check the `--without` path against `coding.sh harness list --json`. |
 | `unsupported_gateway` | `--gateway can route through vercel, openrouter, litellm, ramp; got "helicone"` | Pick one of those; other gateways are detect and enrich only. |
 | `missing_key` | `--gateway needs an AI Gateway key in $AI_GATEWAY_API_KEY` (or `--gateway openrouter needs a key in $OPENROUTER_API_KEY`) | Export the named variable, or set `[gateway] apiKeyEnv` / `[gateway.<name>] apiKeyEnv`. |
-| `missing_api_key` | `Driver model:anthropic/claude-sonnet-5 needs $ANTHROPIC_API_KEY` | Export the variable it names. |
+| `missing_api_key` | `Driver model:anthropic/claude-sonnet-5 needs $ANTHROPIC_API_KEY`, `exp replay calls the Anthropic API with your own key, and $ANTHROPIC_API_KEY is not set` | Export the variable it names. `exp replay` never reuses the agent's login (it is not stored). |
 | `invalid_file` | `Couldn't import cases.csv: …`, `2 problems in labels labels.jsonl` (refine score) | Fix the file. Datasets accept JSONL, JSON and CSV. refine score prints each problem with its line number. |
 | `invalid_config` | `Can't read config: …`, `Invalid serve configuration: …` (exit 2) | Fix the file or variable named in the message. See [Configuration](reference/config.md). |
 | `no_config` | `No coding.sh.toml found in … or its parents` | `coding.sh toolevals init --cli <bin>` |
@@ -231,6 +231,7 @@ The command ran and something failed.
 | `files_changed` | `CLAUDE.md changed since r_… was tested`, `… changed since r_… was applied` (refine apply, refine rollback) | Run `refine test r_…` again on the current files, or pass `--force`. A forced rollback loses your later edits to the file. |
 | `applied_over` | `r_… was applied over r_… on the same file; roll it back first` (refine rollback) | Roll back the newest apply first. |
 | `already_applied` | `r_… is already in the working tree` (refine apply, exit 0) | Nothing to do. |
+| `not_replayable` | `None of these calls can be replayed` (exp replay) | Replay needs calls logged by `coding.sh proxy` with `capture.mode = "full"`: in `metadata` mode the request is not stored. |
 | `missing_script` | `Run … has no captured script` | The workflow run can't be replayed. |
 | `unsupported_truth` | `Case … is graded by a judge; the CLI scores seeded-bugs and verifier cases only` | Score it in the viewer. |
 | `cost_confirmation_required` | `Estimated cost $7.20 exceeds confirmAboveUsd $5.00` | With `--json` this is `{"status":"action_required",…}`. Re-run with `--yes`, or raise `[toolevals] confirmAboveUsd`. |
