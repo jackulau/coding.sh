@@ -1,0 +1,70 @@
+packages/coding.sh/test/store/conformance.test.ts
+  s_8e040dbdf13565::t_8cc781ef173dfe 5,20,22
+  s_8e040dbdf13565::t_b989cdfc20ee3d 19,21
+packages/coding.sh/src/proxy/record.ts
+  s_8e040dbdf13565::t_45a376959364b9 64-65,185
+  s_8e040dbdf13565::t_db3ae3f2e879d1 7-8,21,156-157,165-167,169,186-190,264,288,330
+packages/coding.sh/src/store/conformance.ts
+  s_8e040dbdf13565::t_39a102969e9d9c 9-11,15-16,18-21
+  s_8e040dbdf13565::t_b989cdfc20ee3d 23,747-748,750,782-783,785
+  s_8e040dbdf13565::t_a80d74adac5a85 741-746,749,751-781,784,786-831
+packages/coding.sh/src/core/gc.ts
+  s_8e040dbdf13565::t_3bb1bda7d78833 10-13,31,153-155,157-158,278-281,283,286,288-289,293-295,302,307
+scripts/perf/proxy-storage.mjs
+  s_8e040dbdf13565::t_498cb7c0386c48 28
+  s_8e040dbdf13565::t_8cc86730861ede 8,19
+  s_8e040dbdf13565::t_8ed618709bad2e 1-7,9-18,20-27,29-178
+packages/coding.sh/test/proxy/blocks.test.ts
+  s_8e040dbdf13565::t_d2d83a82915c42 13
+  s_8e040dbdf13565::t_943bb555b1918f 124,176
+  s_8e040dbdf13565::t_9cdc6b34a93121 1-12,14-18,21-64,66-67,69,71-79,81,83,89,91-92,109-110,119,125-153,155-156,161-175,177-184,213-214
+  s_8e040dbdf13565::t_ab5b818c1f3c83 80,86,90,94-108
+  s_8e040dbdf13565::t_15b48d1b9585c1 19-20,70,185-212
+  s_8e040dbdf13565::t_a0c46e22500011 65
+  s_8e040dbdf13565::t_765342749fc517 68
+  s_8e040dbdf13565::t_15888496f01a60 82,84-85,87-88,93,111-118,120-123,154,157-160
+packages/coding.sh/src/store/purge.ts
+  s_8e040dbdf13565::t_6aa0b4e5684f51 211-233,260-262
+docs/how-to/capture-with-proxy.md
+  s_8e040dbdf13565::t_e80c5161951de7 220-221
+  s_8e040dbdf13565::t_1dd47ef593d730 227
+  s_8e040dbdf13565::t_69fbe7950e7535 222-226
+  s_8e040dbdf13565::t_b07f2ded29599c 203-204
+packages/coding.sh/test/proxy/server.test.ts
+  s_8e040dbdf13565::t_6d07c5d779ae22 119,121-122
+  s_8e040dbdf13565::t_ab5b818c1f3c83 118,120
+packages/coding.sh/src/proxy/calls.ts
+  s_8e040dbdf13565::t_db3ae3f2e879d1 8,123-128,130-132,134-137,147-148
+docs/reference/api.md
+  s_8e040dbdf13565::t_b07f2ded29599c 502-503
+  s_8e040dbdf13565::t_1dd47ef593d730 504
+CHANGELOG.md
+  s_8e040dbdf13565::t_2d0a35fbe44a8b 35
+packages/store-clickhouse/test/conformance.test.ts
+  s_8e040dbdf13565::t_8cc781ef173dfe 3,5,15-16,18
+  s_8e040dbdf13565::t_b989cdfc20ee3d 17
+packages/coding.sh/src/proxy/blocks.ts
+  s_8e040dbdf13565::t_e8c0430c4ddc51 1-5,18-20,23-26,33-36,38-40,46-48,50,53-62,65-67,74-99,104-108,110,114,121,132-143,157,165,167-175,180,182-184,199-200,202,204-206
+  s_8e040dbdf13565::t_fc6102330d00ba 68-73,100-103
+  s_8e040dbdf13565::t_85ac9decabc5be 6-17,21-22,27,29,31,37,41-45,49,51-52,63-64,109,111-113,115-120,122-131,144-156,158-164,166,176-179,181,185-198,201,203
+  s_8e040dbdf13565::t_e0f1dfabfdb7fd 28,30,32
+packages/store-postgres/test/conformance.test.ts
+  s_8e040dbdf13565::t_8cc781ef173dfe 4,25-29
+  s_8e040dbdf13565::t_4141c433c3faaa 30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "34039cd4e30c72d7b5f60910c1e4d5f8375a9618",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
