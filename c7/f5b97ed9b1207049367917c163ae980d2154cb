@@ -1,0 +1,30 @@
+packages/coding.sh/test/cli/eval-init-run.test.ts
+  s_8e040dbdf13565::t_3995124a35f50a 213,216,220
+  s_8e040dbdf13565::t_05637e81631fc0 217-219,221-222
+CHANGELOG.md
+  s_8e040dbdf13565::t_f5a7411822f6d9 11,15,19
+  s_8e040dbdf13565::t_eca500396588fe 10,337
+docs/guides/evals.md
+  s_8e040dbdf13565::t_21e0058461239f 126-128
+packages/coding.sh/src/cli/commands/exp.ts
+  s_8e040dbdf13565::t_83f8576f88153e 610-637,639-641
+  s_8e040dbdf13565::t_8137f76337a60a 934-938
+  s_8e040dbdf13565::t_526374600b2cb3 638
+  s_8e040dbdf13565::t_a1fefab4fa2500 43
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c7f5b97ed9b1207049367917c163ae980d2154cb",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    }
+  }
+}
