@@ -139,6 +139,43 @@ async function windowEvents(ctx: NormalizeContext, path: string | undefined, unt
   return { events: await conv.finish(), model: conv.model, turnId: conv.currentTurnId };
 }
 
+/**
+ * The subagent an Agent (or Task) call ran, from the parent's PostToolUse. Some
+ * agents (web-fetch) fire no SubagentStart or SubagentStop, so this is the only
+ * record that links them to the parent. Every event uses the key the
+ * SubagentStart/Stop path uses, so a hooked agent is stored once. Returns the
+ * child transcript's events; the rest go to `em`.
+ */
+async function subagentFromResult(ctx: NormalizeContext, em: Emitter, raw: Record<string, unknown>, line: SpoolLine, parentSid: string, toolUseId: string, ok: boolean): Promise<AgentEvent[]> {
+  const res = obj(raw.tool_response);
+  const agentId = str(res.agentId);
+  if (!agentId) return [];
+  const input = obj(raw.tool_input);
+  const child = childSessionId(parentSid, agentId);
+  const type = str(res.agentType) ?? str(input.subagent_type);
+  const description = str(input.description);
+  const tp = str(raw.transcript_path);
+  const w = await windowEvents(ctx, tp && join(dirname(tp), basename(tp, ".jsonl"), "subagents", `agent-${agentId}.jsonl`), line.ts, child, agentId, line.runId, true);
+  const durationMs = num(res.totalDurationMs);
+  const startTs = durationMs !== undefined ? line.ts - durationMs : (w.events[0]?.ts ?? line.ts);
+  const parentId = em.ctx.id(em.base.agent, parentSid, "tool.start", toolUseId);
+  const childBase = { sessionId: child, subagentId: agentId, ts: startTs };
+  em.emit("subagent.start", { subagentId: agentId, type, description, childSessionId: child, toolUseId }, { key: [agentId], ts: startTs, parentId });
+  em.emit("session.start", { source: "subagent", description, ...parentLink(ctx, em.base.agent, parentSid, agentId, type) }, { ...childBase, key: ["start"] });
+  const prompt = str(input.prompt);
+  if (prompt && !w.events.some((e) => e.kind === "user.message")) {
+    const t = await clipText(ctx, prompt);
+    em.emit("user.message", { text: t.value, truncated: t.truncated || undefined }, { ...childBase, key: ["prompt"], blobs: blobList(t.blob) });
+  }
+  // A background agent returns at once ("async_launched"): it ends later, on its own SubagentStop.
+  const status = str(res.status);
+  if (status === "async_launched" || status === "running") return w.events;
+  const r = await clipText(ctx, outputText(res.content) ?? "", 1024);
+  em.emit("subagent.end", { subagentId: agentId, type, ok: ok && (status === undefined || status === "completed"), childSessionId: child, result: r.value || undefined }, { key: [agentId], parentId, durationMs, blobs: blobList(r.blob) });
+  em.emit("session.end", { reason: "subagent-stop" }, { sessionId: child, subagentId: agentId, key: ["end"], model: str(res.resolvedModel) ?? w.model });
+  return w.events;
+}
+
 export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext, agent = CLAUDE_AGENT): Promise<AgentEvent[]> {
   // `coding.sh run --agent <id> -- …` spools its session.start/file.change/session.end under this agent id.
   if (isWrapperLine(line)) return normalizeWrapperLine(line, ctx);
@@ -192,6 +229,7 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
       const durationMs = num(raw.duration_ms) ?? num(obj(raw.tool_response).durationMs);
       em.emit("tool.end", { tool, toolUseId, ok, durationMs, output: o.value, interrupted: raw.is_interrupt === true || undefined }, { key: [toolUseId], durationMs, blobs: blobList(o.blob) });
       await emitDerived(em, { tool, toolUseId, input: raw.tool_input, output: ok ? raw.tool_response : text, ok, cwd: str(raw.cwd) ?? line.cwd });
+      if (!inChild && (tool === "Agent" || tool === "Task")) extra.push(...(await subagentFromResult(ctx, em, raw, line, parentSid, toolUseId, ok)));
       break;
     }
     case "Stop":
@@ -512,7 +550,7 @@ export const claudeCode: Adapter = {
   tier: "A",
   // 2 (0.1.2): one session.end (idle end) and one compaction across hooks and backfill.
   // 3 (0.1.2): harness.loaded (nested CLAUDE.md, skills) and file.change from Bash edits.
-  // 4 (0.1.2): subagent prompt and description (turn, title); no session for internal forks.
+  // 4 (0.1.2): subagent prompt and description (turn, title); no session for internal forks; hook-less subagents (web-fetch) linked from the parent's PostToolUse(Agent).
   parseVersion: 4,
 
   detect() {

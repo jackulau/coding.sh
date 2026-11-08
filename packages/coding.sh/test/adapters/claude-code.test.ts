@@ -8,6 +8,7 @@ import { hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { backfill, backfillCursorKey } from "../../src/core/ingest.ts";
 import { buildSession } from "../../src/core/sessions.ts";
+import type { AgentEvent } from "../../src/schema/index.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 
@@ -69,6 +70,37 @@ describe("claude-code normalize", () => {
     // A real subagent whose transcript is gone keeps its end.
     const gone = { ...stop, raw: { ...raw, agent_transcript_path: "/nonexistent/subagents/agent-abc123.jsonl" } };
     assert.deepEqual((await claudeCode.normalize(gone, ctx)).map((e) => e.kind), ["subagent.end", "session.end"]);
+  });
+
+  it("a subagent with no SubagentStart/Stop (web-fetch) is linked from the parent's PostToolUse(Agent); a hooked one is stored once", async () => {
+    const { ctx } = testCtx();
+    const lines = loadSpool("claude-code/hooks.spool.jsonl");
+    const start = lines.find((l) => (l.raw as { hook_event_name?: string }).hook_event_name === "SubagentStart")!;
+    const base = start.raw as Record<string, unknown>;
+    const at = (ts: number, raw: Record<string, unknown>) => ({ ...start, event: raw.hook_event_name as string, ts, raw: { ...base, agent_id: undefined, agent_type: undefined, ...raw } });
+    const agentCall = (id: string, agentId: string, type: string, ts: number, extra: Record<string, unknown> = {}) => [
+      at(ts - 6000, { hook_event_name: "PreToolUse", tool_name: "Agent", tool_use_id: id, tool_input: { description: "Read docs", prompt: "Read these pages\nand summarize them", subagent_type: type } }),
+      at(ts, { hook_event_name: "PostToolUse", tool_name: "Agent", tool_use_id: id, tool_input: { description: "Read docs", prompt: "Read these pages\nand summarize them", subagent_type: type }, tool_response: { status: "completed", agentId, agentType: type, content: [{ type: "text", text: "Three pages say the same." }], resolvedModel: "claude-haiku-5-5", totalDurationMs: 5000, ...extra } }),
+    ];
+    const fetch = (ts: number, id: string) => at(ts, { hook_event_name: "PostToolUse", tool_name: "WebFetch", tool_use_id: id, tool_input: { url: "https://example.com" }, tool_response: { code: 200 }, agent_id: "wf9", agent_type: "web-fetch" });
+    const [pre, post] = agentCall("toolu_agent_wf9", "wf9", "web-fetch", 1793527300000);
+    const events = [];
+    for (const l of [pre!, fetch(1793527296000, "toolu_f1"), fetch(1793527298000, "toolu_f2"), post!]) events.push(...(await claudeCode.normalize(l, ctx)));
+    const child = events.filter((e) => e.sessionId === `${SID}:sub:wf9`);
+    const s = buildSession(child);
+    assert.deepEqual([s.parent?.sessionId, s.title, s.stats.turns, s.stats.toolCalls, s.model, s.endedAt !== undefined], [SID, "Read docs", 1, 2, "claude-haiku-5-5", true]);
+    const toolStart = events.find((e) => e.kind === "tool.start" && e.payload.toolUseId === "toolu_agent_wf9")!;
+    const sub = events.filter((e) => e.sessionId === SID && e.kind.startsWith("subagent."));
+    assert.deepEqual(sub.map((e) => [e.kind, e.parentId === toolStart.id, e.payload.result]), [["subagent.start", true, undefined], ["subagent.end", true, "Three pages say the same."]]);
+    assert.equal(sub[0]!.ts, 1793527295000);
+    // A background agent returns at once: no end yet.
+    const [, launched] = agentCall("toolu_agent_bg", "bg1", "general-purpose", 1793527400000, { status: "async_launched" });
+    assert.deepEqual((await claudeCode.normalize(launched!, ctx)).map((e) => e.kind), ["tool.end", "subagent.start", "session.start", "user.message"]);
+    // abc123 fires SubagentStart and SubagentStop: its PostToolUse(Agent) adds no second event.
+    const hooked: AgentEvent[] = [];
+    for (const l of [...lines, agentCall("toolu_agent_abc", "abc123", "Explore", 1793527209000)[1]!]) hooked.push(...(await claudeCode.normalize(l, ctx)));
+    const once = (kind: string, sid: string) => new Set(hooked.filter((e) => e.kind === kind && e.sessionId === sid).map((e) => e.id)).size;
+    assert.deepEqual([once("subagent.start", SID), once("subagent.end", SID), once("session.start", `${SID}:sub:abc123`), once("session.end", `${SID}:sub:abc123`), once("user.message", `${SID}:sub:abc123`)], [1, 1, 1, 1, 1]);
   });
 
   it("is deterministic (same line → same ids)", async () => {
