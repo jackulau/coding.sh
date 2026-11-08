@@ -50,9 +50,27 @@ export class CallRefError extends Error {
 const isCall = (e: AgentEvent) => e.kind === "llm.call";
 
 /**
+ * A session's model calls in order: the ones coding.sh proxy logged when there
+ * are any (their requests are stored), else every llm.call (transcript, OTel).
+ */
+export async function sessionCalls(index: IndexStore, sessionId: string): Promise<AgentEvent[]> {
+  const all = await index.listEvents(sessionId, { kinds: ["llm.call"] });
+  const proxied = all.filter((e) => e.source === "proxy");
+  return proxied.length ? proxied : all;
+}
+
+/** The model call before `e` in its session (proxy calls before a proxy call), if any. */
+export async function previousCall(index: IndexStore, e: AgentEvent): Promise<AgentEvent | undefined> {
+  const calls = (await index.listEvents(e.sessionId, { kinds: ["llm.call"] })).filter((x) => (x.source === "proxy") === (e.source === "proxy"));
+  const i = calls.findIndex((x) => x.id === e.id);
+  return i > 0 ? calls[i - 1] : undefined;
+}
+
+/**
  * The llm.call a reference names: an event id, a unique id prefix (6+
  * characters), or `<session>#<n>`: the n-th model call of a session (1-based;
- * `#-1` is the last). The session part may be an id prefix, or `latest`.
+ * `#-1` is the last; counting proxy-logged calls only when the session has
+ * any). The session part may be an id prefix, or `latest`.
  */
 export async function resolveCall(index: IndexStore, ref: string): Promise<AgentEvent> {
   const hash = ref.lastIndexOf("#");
@@ -67,7 +85,7 @@ export async function resolveCall(index: IndexStore, ref: string): Promise<Agent
       sid = ids[0];
     }
     if (!sid) throw new CallRefError(`Can't find session ${JSON.stringify(sref)}`, "not_found");
-    const calls = await index.listEvents(sid, { kinds: ["llm.call"] });
+    const calls = await sessionCalls(index, sid);
     const e = n > 0 ? calls[n - 1] : calls[calls.length + n];
     if (!e) throw new CallRefError(`Session ${sid} has ${calls.length} model call${calls.length === 1 ? "" : "s"}; no #${n}`, "not_found");
     return e;

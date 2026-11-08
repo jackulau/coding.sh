@@ -3,7 +3,7 @@
 // when b missed the prompt cache, the first change that explains it. With one
 // call, b is that call and a the model call before it in its session.
 // Also printCall, the one-call view `coding.sh show <call>` prints.
-import { CallRefError, diffCalls, loadCall, resolveCall, type CallDiff, type LoadedCall } from "../../proxy/calls.ts";
+import { CallRefError, diffCalls, loadCall, previousCall, resolveCall, type CallDiff, type LoadedCall } from "../../proxy/calls.ts";
 import type { IndexStore } from "../../core/types.ts";
 import type { AgentEvent } from "../../schema/index.ts";
 import { oneLine, withContext } from "../common.ts";
@@ -22,13 +22,6 @@ export async function callOrFail(index: IndexStore, ref: string): Promise<AgentE
       ...(e.candidates.length ? { data: { candidates: e.candidates } } : {}),
     });
   }
-}
-
-/** The model call before `e` in its session, if any. */
-async function previousCall(index: IndexStore, e: AgentEvent): Promise<AgentEvent | undefined> {
-  const calls = await index.listEvents(e.sessionId, { kinds: ["llm.call"] });
-  const i = calls.findIndex((x) => x.id === e.id);
-  return i > 0 ? calls[i - 1] : undefined;
 }
 
 const short = (id: string) => id.slice(0, 12);

@@ -27,7 +27,7 @@ import { facetCounts, findEvents, findSessions, searchWhere } from "../query/run
 import type { AgentEvent } from "../schema/index.ts";
 import { searchableText, searchTerms, snippet } from "../store/common.ts";
 import { andQuery, keyGuide, parseWhere, QueryError, QueryUnsupported, type Node, type Query } from "../query/where.ts";
-import { CallRefError, diffCalls, loadCall, resolveCall } from "../proxy/calls.ts";
+import { CallRefError, diffCalls, loadCall, previousCall, resolveCall } from "../proxy/calls.ts";
 import { getUpdateStatus, type UpdateStatus } from "../update/index.ts";
 
 export interface ViewerOptions {
@@ -633,8 +633,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       const withRef = q.get("with");
       let a = withRef ? await call(withRef) : undefined;
       if (!a) {
-        const calls = await ctx.index.listEvents(b.sessionId, { kinds: ["llm.call"] });
-        a = calls[calls.findIndex((x) => x.id === b.id) - 1];
+        a = await previousCall(ctx.index, b);
         if (!a) throw new HttpError(404, "no earlier model call in this session; pass ?with=<call id>");
       }
       return sendJson(res, 200, diffCalls(await loadCall(ctx.blobs, a), await loadCall(ctx.blobs, b)));

@@ -10,8 +10,9 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../../src/core/config.ts";
+import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
-import { CallRefError, diffCalls, lineDiff, loadCall, resolveCall } from "../../src/proxy/calls.ts";
+import { CallRefError, diffCalls, lineDiff, loadCall, previousCall, resolveCall } from "../../src/proxy/calls.ts";
 import { recorderFor } from "../../src/proxy/index.ts";
 import { startProxy } from "../../src/proxy/server.ts";
 import { openStores } from "../../src/store/factory.ts";
@@ -104,6 +105,17 @@ describe("proxy calls: refs, load and diff", () => {
     await assert.rejects(resolveCall(t.index, `${SESSION}#x`), /call number/);
     await assert.rejects(resolveCall(t.index, "nosuchsession#1"), /Can't find session/);
     await assert.rejects(resolveCall(t.index, "ffffffffffff"), /Can't find call/);
+  });
+
+  it("<session>#n counts the proxy's calls when the transcript logged the same turns too", async () => {
+    const index = new MemoryIndexStore();
+    const ev = (id: string, ts: number, source?: string): AgentEvent => ({ id, v: 0, sessionId: "s2", ts, agent: "claude-code", kind: "llm.call", payload: {}, ...(source ? { source } : {}) });
+    const events = [ev("transcript-1", 1, "transcript"), ev("proxycall-1", 2, "proxy"), ev("transcript-2", 3, "transcript"), ev("proxycall-2", 4, "proxy")];
+    await index.putEvents(events);
+    await index.upsertSession(buildSession(events));
+    assert.equal((await resolveCall(index, "s2#1")).id, "proxycall-1");
+    assert.equal((await resolveCall(index, "s2#-1")).id, "proxycall-2");
+    assert.equal((await previousCall(index, await resolveCall(index, "s2#2")))?.id, "proxycall-1");
   });
 
   it("names the candidates when a prefix is ambiguous", async () => {
