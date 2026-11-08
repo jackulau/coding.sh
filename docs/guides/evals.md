@@ -70,9 +70,10 @@ tasks, from a stub CLI to the compare report.
 `coding.sh dataset add|import` keeps versioned cases with stable train/dev/test splits.
 
 `coding.sh exp run` runs a command or HTTP task over a dataset. Graders can be deterministic
-(exact, contains, regex, numeric, similarity, JSON schema, JSON path, progress, agent-slop), a
-command, or an LLM judge. `progress` scores the run's trace: the share of the run before its first
-derail. `agent-slop` flags placeholder code, type escapes, swallowed errors and other patterns in
+(exact, contains, regex, numeric, similarity, JSON schema, JSON path, progress, executability,
+agent-slop), a command, or an LLM judge. `progress` scores the run's trace: the share of the run
+before its first derail. `executability` scores the share of tool calls before the first one the
+harness refused to run (see [Executability](explore.md#executability)). `agent-slop` flags placeholder code, type escapes, swallowed errors and other patterns in
 the lines a diff adds (see [Agent slop](#agent-slop)).
 
 `coding.sh exp compare A B` reports the paired bootstrap CI of the difference, an exact McNemar

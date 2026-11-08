@@ -7,6 +7,7 @@ import { maybeJson } from "../judge/extract.ts";
 import { formatSchemaErrors, validateJsonSchema, type JsonSchema } from "./json-schema.ts";
 import { queryJsonPath } from "./json-path.ts";
 import { detectDerails, DERAIL_FLAG_LIST, progressMetrics } from "../core/derail.ts";
+import { aucPec, executability, INVALID_KINDS, type InvalidKind } from "../core/executability.ts";
 import type { AgentEvent } from "../schema/index.ts";
 import { looksLikeDiff, selectSlopRules, slopFindings, slopScore, slopSummary, traceDiffs } from "./slop.ts";
 
@@ -327,6 +328,45 @@ export function progressGrader(spec: Omit<ProgressSpec, "kind"> = {}): Grader {
       ? `${p.derails} derail${p.derails === 1 ? "" : "s"}; first ${first.flag} at ${Math.round(p.timeToFirstDerailMs / 1000)}s (${Math.round(p.onTrack * 100)}% of the run on track): ${first.detail}`
       : "no derails";
     return result(p.onTrack, p.derails <= max, why);
+  });
+}
+
+// ---------------------------------------------------------------- executability
+
+export interface ExecutabilitySpec {
+  kind: "executability";
+  name?: string;
+  /** Count only these invalid-call kinds (schema, unknown-tool, precondition, state, missing, denied, other). Default all. */
+  kinds?: readonly InvalidKind[];
+  /** Pass with at most this many invalid calls. Default 0. */
+  maxInvalid?: number;
+}
+
+/**
+ * How far the agent got before its first invalid tool call, from the run's
+ * trace (arXiv 2610.40444): score = (FED-1)/T, the share of steps before the
+ * first call the harness refused (1 when none was), so the mean score over runs
+ * is AUC-PEC. Pass when at most maxInvalid calls were invalid, so the pass rate
+ * with the default 0 is TER. A call that ran and failed (a test exiting 1) is
+ * not invalid.
+ */
+export function executabilityGrader(spec: Omit<ExecutabilitySpec, "kind"> = {}): Grader {
+  const max = spec.maxInvalid ?? 0;
+  if (!(Number.isInteger(max) && max >= 0)) throw new RangeError("executability maxInvalid must be a whole number >= 0");
+  if (spec.kinds !== undefined && !Array.isArray(spec.kinds)) throw new RangeError(`executability kinds must be a list of ${INVALID_KINDS.join(", ")}`);
+  for (const k of spec.kinds ?? []) if (!(INVALID_KINDS as readonly string[]).includes(k)) throw new RangeError(`unknown invalid-call kind ${JSON.stringify(k)} (expected ${INVALID_KINDS.join(", ")})`);
+  return makeGrader("executability", spec, (ctx) => {
+    const events = (ctx.trace ?? []).filter((e) => typeof e.ts === "number") as unknown as AgentEvent[];
+    if (!events.length) return result(0, false, "no timed trace to check tool calls on");
+    const sorted = [...events].sort((a, b) => a.ts - b.ts);
+    const x = executability(sorted, { only: spec.kinds });
+    if (!x.steps) return result(1, true, "no tool calls");
+    const first = x.first;
+    let why = first
+      ? `first invalid call at step ${first.depth} of ${x.steps}: ${first.tool || "tool"} (${first.kind})${first.detail ? `: ${first.detail}` : ""}`
+      : `all ${x.steps} tool call${x.steps === 1 ? "" : "s"} executable`;
+    if (why.length > 160) why = `${why.slice(0, 159)}…`;
+    return result(aucPec(x), x.invalid <= max, why);
   });
 }
 

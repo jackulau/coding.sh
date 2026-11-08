@@ -86,6 +86,51 @@ The real-session hits were one session with about 50 automatic compactions, comm
   derailed. It passes with at most `maxDerails` derails (default 0). `flags` counts only the
   listed derail kinds.
 
+### Executability
+
+`executability` asks a different question: how far did the agent get before it made a tool call
+the harness refused to run? It follows Prefix Executability
+([arXiv 2610.40444](https://arxiv.org/abs/2610.40444)). Each main-stream tool call is a step.
+Subagent calls, wrapper calls (a Codex code-mode cell) and interrupted calls are not steps. Each
+step is one of:
+
+- **ok**: the call succeeded.
+- **failed**: the call ran and did not succeed. A test run that exits 1 is failed, not invalid.
+- **invalid**: the harness refused the call before it ran.
+
+An invalid call gets a kind from the first 2 KB of its output, checked in this order:
+
+| Kind | Matches |
+| --- | --- |
+| `schema` | `InputValidationError`, a required or unexpected parameter, invalid or unparseable arguments, `must have required property`, `validation error` |
+| `unknown-tool` | `No such tool available`, `unknown tool`, `tool … not found`, `not found in registry` |
+| `precondition` | Claude Code's `has not been read yet` and `modified since read` |
+| `state` | `String to replace not found`, `Found N matches`, `apply_patch verification failed` |
+| `missing` | `File does not exist`; a shell exit 127 or `command not found`; `No such file or directory` on a read or edit call |
+| `denied` | `Permission to use … denied`, a PreToolUse hook block |
+| `other` | any other Claude Code `<tool_use_error>` |
+
+A shell call with any other non-zero exit is failed, whatever its output says. A call with
+`ok: false` and no output is failed too. Hook-only captures often carry no output, so their invalid
+counts are a lower bound.
+
+The First-Error Depth (FED) is the 1-based step of the first invalid call, or the number of steps
+plus 1 when no call was invalid. A `{"kind": "executability"}` grader scores a run from its trace
+for `exp run` and `exp compare`:
+
+- The score is (FED-1) / steps: the share of steps before the first invalid call. It is 1 when no
+  call was invalid or the run made no tool calls. The mean score over runs is AUC-PEC.
+- It passes with at most `maxInvalid` invalid calls (default 0). With the default, the pass rate is
+  TER, the share of runs with no invalid call.
+- `kinds` counts only the listed kinds, for example `{"kind": "executability", "kinds": ["schema",
+  "unknown-tool"]}`.
+- A run with no timed trace scores 0 and fails.
+
+The detail names the first invalid call, for example `first invalid call at step 4 of 37: Edit
+(state): String to replace not found in file.`, or says `all 37 tool calls executable`. Read FED
+next to the number of steps: an invalid call at step 4 of 37 and one at step 4 of 5 score very
+differently. Two arms can share a pass rate on the task and still differ here.
+
 ## Viewer
 
 `coding.sh ui` serves the viewer on 127.0.0.1 and opens it in your browser. It needs the

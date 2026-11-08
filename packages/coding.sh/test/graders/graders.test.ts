@@ -283,6 +283,7 @@ describe("createGrader", () => {
       { kind: "json-path", path: "$.a" },
       { kind: "numeric", abs: 1 },
       { kind: "similarity" },
+      { kind: "executability", kinds: ["schema", "state"], maxInvalid: 1 },
       { kind: "command", command: "true" },
       { kind: "module", module: "grader.mjs" },
     ] as const) {

@@ -11,6 +11,7 @@ import {
   agentSlopGrader,
   containsGrader,
   exactGrader,
+  executabilityGrader,
   jsonPathGrader,
   jsonSchemaGrader,
   numericGrader,
@@ -20,6 +21,7 @@ import {
   type AgentSlopSpec,
   type ContainsSpec,
   type ExactSpec,
+  type ExecutabilitySpec,
   type JsonPathSpec,
   type JsonSchemaSpec,
   type NumericSpec,
@@ -101,6 +103,7 @@ export type GraderSpec =
   | JsonPathSpec
   | NumericSpec
   | ProgressSpec
+  | ExecutabilitySpec
   | SimilaritySpec
   | AgentSlopSpec
   | CommandGraderSpec
@@ -169,6 +172,8 @@ export async function createGrader(spec: GraderSpec, deps: GraderDeps = {}): Pro
       return numericGrader(rest as Omit<NumericSpec, "kind">);
     case "progress":
       return progressGrader(rest as Omit<ProgressSpec, "kind">);
+    case "executability":
+      return executabilityGrader(rest as Omit<ExecutabilitySpec, "kind">);
     case "similarity":
       return similarityGrader(rest as Omit<SimilaritySpec, "kind">);
     case "agent-slop":
