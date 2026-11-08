@@ -70,7 +70,8 @@ describe("gen-env.sh", () => {
 describe("Dockerfile", () => {
   const df = read("Dockerfile");
   test("follows the contract", () => {
-    assert.match(df, /^FROM node:22-bookworm-slim AS build$/m);
+    // The build stage is plain JavaScript: it runs on the build platform, so arm64 needs no emulation.
+    assert.match(df, /^FROM --platform=\$BUILDPLATFORM node:22-bookworm-slim AS build$/m);
     assert.match(df, /^FROM gcr\.io\/distroless\/nodejs22-debian12:nonroot$/m);
     assert.match(df, /coding\.sh-store-postgres coding\.sh-store-s3 coding\.sh-store-clickhouse/);
     assert.match(df, /npm ci /);
@@ -121,6 +122,48 @@ describe("docker-compose.yml", () => {
   test("every ${VAR} it needs is one gen-env.sh writes", () => {
     const vars = new Set([...dc.matchAll(/\$\{([A-Z_]+)/g)].map((m) => m[1]));
     for (const v of vars) assert.ok(NAMES.includes(v), v);
+  });
+});
+
+describe("deploy/compose/compose*.yml (the team stacks)", () => {
+  const files = ["compose.yml", "compose.postgres.yml", "compose.clickhouse.yml"];
+  const optional = new Set(["CODING_SH_IMAGE", "CODING_SH_PUBLISH", "CODING_SH_INGEST_KEYS", "CODING_SH_READ_KEYS", "CODING_SH_BASIC_AUTH", "CODING_SH_RETENTION_DAYS", "CODING_SH_TRUST_PROXY", "POSTGRES_PASSWORD", "CLICKHOUSE_PASSWORD"]);
+  const example = read("deploy/compose/.env.example");
+  for (const f of files) {
+    const dc = read(`deploy/compose/${f}`);
+    test(`${f}: needs no edits and no .env`, () => {
+      const vars = [...dc.matchAll(/\$\{([A-Z_]+)([^}]*)\}/g)];
+      assert.ok(vars.length > 0);
+      for (const [, name, rest] of vars) {
+        assert.ok(optional.has(name), `${name} is not a known optional setting`);
+        assert.match(rest, /^:-/, `${name} has a default`);
+        assert.match(example, new RegExp(`^# ${name}=`, "m"), `${name} is in .env.example`);
+      }
+      assert.doesNotMatch(dc, /:\?/, "nothing is required");
+    });
+    test(`${f}: the published image, built from this checkout until it exists`, () => {
+      assert.match(dc, /^    image: \$\{CODING_SH_IMAGE:-ghcr\.io\/jackulau\/coding\.sh:latest\}$/m);
+      assert.match(dc, /^    build:\n      context: \.\.\/\.\.$/m);
+      assert.match(dc, /- coding-sh-data:\/data/);
+      assert.match(dc, /stop_grace_period: 30s/);
+      // Only serve is published; databases stay on the stack's network.
+      const ports = [...dc.matchAll(/^\s+- "([^"]+)"$/gm)].map((m) => m[1]);
+      assert.deepEqual(ports, ["${CODING_SH_PUBLISH:-4318}:4318"]);
+    });
+    test(`${f}: pins every other image`, () => {
+      for (const [, img] of dc.matchAll(/image: (\S+)/g)) {
+        if (img.startsWith("${CODING_SH_IMAGE")) continue;
+        assert.match(img, /:[\w.-]+$/, img);
+        assert.doesNotMatch(img, /:latest$/, img);
+      }
+    });
+  }
+  test("each stack points serve at its own store", () => {
+    assert.doesNotMatch(read("deploy/compose/compose.yml"), /CODING_SH_STORE_URL/);
+    assert.match(read("deploy/compose/compose.postgres.yml"), /CODING_SH_STORE_URL: postgres:\/\/coding:\$\{POSTGRES_PASSWORD:-coding\}@postgres:5432\/coding$/m);
+    const ch = read("deploy/compose/compose.clickhouse.yml");
+    assert.match(ch, /CODING_SH_STORE_URL: clickhouse:\/\/coding:\$\{CLICKHOUSE_PASSWORD:-coding\}@clickhouse:8123\/coding$/m);
+    assert.match(ch, /CODING_SH_BLOB_URL: file:\/\/\/data\/blobs$/m);
   });
 });
 

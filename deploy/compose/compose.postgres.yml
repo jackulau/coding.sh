@@ -1,0 +1,49 @@
+# coding.sh for a team, on one machine: serve with Postgres. No edits needed.
+#
+#   docker compose -f deploy/compose/compose.postgres.yml up -d --wait
+#   docker compose -f deploy/compose/compose.postgres.yml logs coding-sh   # the keys and how to connect
+#
+# Postgres holds the index, the eval assets and the blobs. It is reachable only from serve, on the
+# stack's own network. Set POSTGRES_PASSWORD in .env before the first start to pick the password;
+# Postgres keeps the one it started with. The first-start keys live in the coding-sh-data volume.
+
+services:
+  coding-sh:
+    image: ${CODING_SH_IMAGE:-ghcr.io/jackulau/coding.sh:latest}
+    build:
+      context: ../..
+    ports:
+      - "${CODING_SH_PUBLISH:-4318}:4318"
+    environment:
+      CODING_SH_STORE_URL: postgres://coding:${POSTGRES_PASSWORD:-coding}@postgres:5432/coding
+      CODING_SH_INGEST_KEYS: ${CODING_SH_INGEST_KEYS:-}
+      CODING_SH_READ_KEYS: ${CODING_SH_READ_KEYS:-}
+      CODING_SH_BASIC_AUTH: ${CODING_SH_BASIC_AUTH:-}
+      CODING_SH_RETENTION_DAYS: ${CODING_SH_RETENTION_DAYS:-}
+      CODING_SH_TRUST_PROXY: ${CODING_SH_TRUST_PROXY:-}
+    volumes:
+      - coding-sh-data:/data # serve-keys.json and the writer lock
+    depends_on:
+      postgres:
+        condition: service_healthy
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: coding
+      POSTGRES_DB: coding
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-coding}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coding -d coding"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+volumes:
+  coding-sh-data:
+  pgdata:

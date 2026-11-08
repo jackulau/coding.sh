@@ -1,0 +1,33 @@
+# coding.sh for a team, on one machine: serve with SQLite on a volume. No edits needed.
+#
+#   docker compose -f deploy/compose/compose.yml up -d --wait
+#   docker compose -f deploy/compose/compose.yml logs coding-sh    # the keys and how to connect
+#
+# Compose pulls the image; until ghcr.io/jackulau/coding.sh is published (with the first tagged
+# release), the pull fails and Compose builds it from this checkout instead.
+# Postgres or ClickHouse instead of SQLite: compose.postgres.yml, compose.clickhouse.yml.
+# Optional settings: copy .env.example to .env next to this file.
+
+services:
+  coding-sh:
+    image: ${CODING_SH_IMAGE:-ghcr.io/jackulau/coding.sh:latest}
+    build:
+      context: ../..
+    ports:
+      # Every interface, so teammates can reach it. 127.0.0.1:4318 keeps it to this machine
+      # (behind a TLS proxy, for example).
+      - "${CODING_SH_PUBLISH:-4318}:4318"
+    environment:
+      # Empty: serve uses the keys it made on first start (in the volume, printed in the logs).
+      CODING_SH_INGEST_KEYS: ${CODING_SH_INGEST_KEYS:-}
+      CODING_SH_READ_KEYS: ${CODING_SH_READ_KEYS:-}
+      CODING_SH_BASIC_AUTH: ${CODING_SH_BASIC_AUTH:-}
+      CODING_SH_RETENTION_DAYS: ${CODING_SH_RETENTION_DAYS:-}
+      CODING_SH_TRUST_PROXY: ${CODING_SH_TRUST_PROXY:-}
+    volumes:
+      - coding-sh-data:/data # index.db, blobs/ and serve-keys.json
+    stop_grace_period: 30s # serve drains its queue for up to 25 s on SIGTERM
+    restart: unless-stopped
+
+volumes:
+  coding-sh-data:

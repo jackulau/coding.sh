@@ -128,6 +128,60 @@ jobs:
           CODING_SH_TEST_CH_URL: clickhouse://coding:ci@127.0.0.1:8123/coding
         run: npm run check
 
+  image:
+    name: container image / self-host smoke
+    # GitHub-hosted: it builds and runs pull-request code in Docker. Nothing is pushed; the
+    # release workflow publishes the image on version tags.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: npm
+
+      # The smoke test drives the server with the real CLI and hook from this checkout.
+      - name: Install and build the CLI
+        run: |
+          npm ci
+          npm run build -w coding.sh
+
+      - name: Static checks of the deploy recipes and fixtures
+        run: node --no-warnings --test deploy/test/deploy.test.mjs deploy/test/fixtures.test.mjs
+
+      - uses: docker/setup-buildx-action@v3
+
+      # The build stage runs on the runner's platform and the runtime stage only copies files,
+      # so arm64 builds without emulation. This proves both platforms build, as release.yml does.
+      - name: Build linux/amd64 and linux/arm64
+        run: docker buildx build --platform linux/amd64,linux/arm64 .
+
+      - name: Build the image to test
+        run: docker buildx build --load -t coding-sh:smoke .
+
+      - name: Image is small and runs as nonroot
+        run: |
+          docker image inspect coding-sh:smoke --format '{{.Size}} {{.Config.User}} {{json .Config.Healthcheck.Test}}'
+          size=$(docker image inspect coding-sh:smoke --format '{{.Size}}')
+          test "$size" -lt 300000000
+          test "$(docker image inspect coding-sh:smoke --format '{{.Config.User}}')" = "65532"
+
+      - name: docker run with no configuration
+        run: node deploy/test/smoke.mjs docker coding-sh:smoke
+
+      - name: Compose, SQLite
+        run: node deploy/test/smoke.mjs compose coding-sh:smoke deploy/compose/compose.yml
+
+      - name: Compose, Postgres
+        run: node deploy/test/smoke.mjs compose coding-sh:smoke deploy/compose/compose.postgres.yml
+
+      - name: Compose, ClickHouse
+        run: node deploy/test/smoke.mjs compose coding-sh:smoke deploy/compose/compose.clickhouse.yml
+
   windows:
     name: node ${{ matrix.node }} / windows-latest
     # Always GitHub-hosted: the self-hosted desk runner is Linux only.

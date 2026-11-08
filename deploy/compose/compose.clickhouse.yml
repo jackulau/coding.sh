@@ -1,0 +1,52 @@
+# coding.sh for a team, on one machine: serve with ClickHouse. No edits needed.
+#
+#   docker compose -f deploy/compose/compose.clickhouse.yml up -d --wait
+#   docker compose -f deploy/compose/compose.clickhouse.yml logs coding-sh   # the keys and how to connect
+#
+# ClickHouse holds sessions, events and eval assets. Blobs (transcripts, large payloads) stay on the
+# coding-sh-data volume, because they never go to ClickHouse. ClickHouse is reachable only from
+# serve, on the stack's own network. Set CLICKHOUSE_PASSWORD in .env before the first start.
+
+services:
+  coding-sh:
+    image: ${CODING_SH_IMAGE:-ghcr.io/jackulau/coding.sh:latest}
+    build:
+      context: ../..
+    ports:
+      - "${CODING_SH_PUBLISH:-4318}:4318"
+    environment:
+      CODING_SH_STORE_URL: clickhouse://coding:${CLICKHOUSE_PASSWORD:-coding}@clickhouse:8123/coding
+      CODING_SH_BLOB_URL: file:///data/blobs
+      CODING_SH_INGEST_KEYS: ${CODING_SH_INGEST_KEYS:-}
+      CODING_SH_READ_KEYS: ${CODING_SH_READ_KEYS:-}
+      CODING_SH_BASIC_AUTH: ${CODING_SH_BASIC_AUTH:-}
+      CODING_SH_RETENTION_DAYS: ${CODING_SH_RETENTION_DAYS:-}
+      CODING_SH_TRUST_PROXY: ${CODING_SH_TRUST_PROXY:-}
+    volumes:
+      - coding-sh-data:/data # blobs/, serve-keys.json and caches
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.3.62.3
+    environment:
+      CLICKHOUSE_USER: coding
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-coding}
+      CLICKHOUSE_DB: coding
+    volumes:
+      - chdata:/var/lib/clickhouse
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    healthcheck:
+      test: ["CMD-SHELL", "clickhouse-client --user coding --password \"$$CLICKHOUSE_PASSWORD\" -q 'SELECT 1'"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+volumes:
+  coding-sh-data:
+  chdata:
