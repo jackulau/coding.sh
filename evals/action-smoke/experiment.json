@@ -1,0 +1,5 @@
+{
+  "dataset": "action-smoke",
+  "task": { "kind": "command", "command": "node", "args": ["evals/action-smoke/agent.mjs"], "output": "text" },
+  "graders": [{ "kind": "exact" }]
+}

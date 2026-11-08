@@ -1,0 +1,255 @@
+name: coding.sh agent evals
+description: Run your agent's evals on a pull request and on its base branch, compare them case by case, and fail on regressions.
+author: coding.sh contributors
+
+branding:
+  icon: activity
+  color: purple
+
+inputs:
+  experiment:
+    description: Path to the experiment spec JSON (dataset, task, graders), relative to working-directory.
+    required: true
+  cases:
+    description: Path to the cases file (JSONL, JSON array or CSV), relative to working-directory. Imported as the dataset the spec names.
+    required: true
+  dataset:
+    description: Dataset name to import the cases as. Default is the spec's "dataset" field.
+    required: false
+    default: ""
+  baseline-ref:
+    description: Git ref to run the baseline on. Default is the pull request's base branch; "none" skips the baseline and reports this run alone.
+    required: false
+    default: ""
+  working-directory:
+    description: Directory, relative to the workspace, that the agent command runs in. The baseline runs in the same directory of the baseline checkout.
+    required: false
+    default: "."
+  trials:
+    description: Attempts per case. Overrides the spec.
+    required: false
+    default: ""
+  concurrency:
+    description: Parallel case runs. Overrides the default of 4.
+    required: false
+    default: ""
+  gate:
+    description: 'When to call it a regression: "regressions" (any case that passed on the baseline fails), "worse" (pass rate is worse with 95% confidence) or "pass-rate" (pass rate dropped at all).'
+    required: false
+    default: regressions
+  min-pass-rate:
+    description: Also fail when this run's pass rate is below this fraction, e.g. 0.9. Works without a baseline.
+    required: false
+    default: ""
+  fail-on-regression:
+    description: Fail the step when the gate trips.
+    required: false
+    default: "true"
+  comment:
+    description: Post the result as a pull request comment, updated in place on later runs. Needs pull-requests write permission.
+    required: false
+    default: "false"
+  github-token:
+    description: Token for the release lookup and the pull request comment.
+    required: false
+    default: ${{ github.token }}
+  version:
+    description: coding.sh release to install, e.g. v0.1.0. Default is the latest release.
+    required: false
+    default: latest
+  source:
+    description: '"release" installs the release tarball from GitHub. "local" runs coding.sh from this action''s own checkout (for testing coding.sh itself).'
+    required: false
+    default: release
+  node-version:
+    description: Node.js version to set up when the runner's Node is older than coding.sh needs.
+    required: false
+    default: "22"
+
+outputs:
+  verdict:
+    description: better, worse or inconclusive (95% paired bootstrap on the pass-rate difference), or none without a baseline.
+    value: ${{ steps.report.outputs.verdict }}
+  pass-rate:
+    description: Pass rate of this run, 0 to 1.
+    value: ${{ steps.report.outputs.pass-rate }}
+  baseline-pass-rate:
+    description: Pass rate of the baseline run, 0 to 1. Empty without a baseline.
+    value: ${{ steps.report.outputs.baseline-pass-rate }}
+  delta:
+    description: Pass-rate difference (this run minus baseline), 0 to 1 scale.
+    value: ${{ steps.report.outputs.delta }}
+  ci-low:
+    description: Lower bound of the 95% CI on the difference.
+    value: ${{ steps.report.outputs.ci-low }}
+  ci-high:
+    description: Upper bound of the 95% CI on the difference.
+    value: ${{ steps.report.outputs.ci-high }}
+  regressions:
+    description: Number of cases that passed on the baseline and fail now.
+    value: ${{ steps.report.outputs.regressions }}
+  regressed:
+    description: '"true" when the gate or min-pass-rate tripped.'
+    value: ${{ steps.report.outputs.regressed }}
+  report:
+    description: Path to the markdown report.
+    value: ${{ steps.report.outputs.report }}
+  home:
+    description: The CODING_SH_HOME this action used. Upload it as an artifact to keep the runs.
+    value: ${{ steps.setup.outputs.home }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check Node.js
+      id: node
+      shell: bash
+      env:
+        SOURCE: ${{ inputs.source }}
+      run: |
+        # Release builds need Node 22.15+; running from source needs built-in type stripping (22.18+).
+        min=15; [ "$SOURCE" = "local" ] && min=18
+        if command -v node >/dev/null 2>&1 && node -e "const [a,b]=process.versions.node.split('.').map(Number);process.exit(a>22||(a===22&&b>=$min)?0:1)"; then
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Set up Node.js
+      if: steps.node.outputs.ok != 'true'
+      uses: actions/setup-node@v7
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install coding.sh
+      id: setup
+      shell: bash
+      env:
+        SOURCE: ${{ inputs.source }}
+        VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        set -euo pipefail
+        root=$(mktemp -d "${RUNNER_TEMP:-/tmp}/coding.sh-action.XXXXXX")
+        mkdir -p "$root/bin" "$root/home"
+        if [ "$SOURCE" = "local" ]; then
+          printf '#!/bin/sh\nexec node "%s/packages/coding.sh/src/cli/main.ts" "$@"\n' "$ACTION_PATH" > "$root/bin/coding.sh"
+          chmod +x "$root/bin/coding.sh"
+        elif [ "$SOURCE" = "release" ]; then
+          if [ "$VERSION" = "latest" ] || [ -z "$VERSION" ]; then
+            VERSION=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/jackulau/coding.sh/releases/latest \
+              | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).tag_name||""))')
+            [ -n "$VERSION" ] || { echo "::error::could not find the latest coding.sh release"; exit 1; }
+          fi
+          url="https://github.com/jackulau/coding.sh/releases/download/$VERSION/coding.sh-${VERSION#v}.tgz"
+          echo "Installing coding.sh $VERSION from $url"
+          npm install -g --prefix "$root" --silent --no-fund --no-audit "$url"
+        else
+          echo "::error::source must be \"release\" or \"local\", got \"$SOURCE\""; exit 1
+        fi
+        echo "$root/bin" >> "$GITHUB_PATH"
+        echo "CODING_SH_HOME=$root/home" >> "$GITHUB_ENV"
+        echo "NO_UPDATE_NOTIFIER=1" >> "$GITHUB_ENV"
+        echo "root=$root" >> "$GITHUB_OUTPUT"
+        echo "home=$root/home" >> "$GITHUB_OUTPUT"
+        "$root/bin/coding.sh" --version
+
+    - name: Run evals
+      id: run
+      shell: bash
+      env:
+        ROOT: ${{ steps.setup.outputs.root }}
+        WORKDIR: ${{ inputs.working-directory }}
+        EXPERIMENT: ${{ inputs.experiment }}
+        CASES: ${{ inputs.cases }}
+        DATASET: ${{ inputs.dataset }}
+        BASELINE_REF: ${{ inputs.baseline-ref }}
+        TRIALS: ${{ inputs.trials }}
+        CONCURRENCY: ${{ inputs.concurrency }}
+      run: |
+        set -euo pipefail
+        head_dir=$(cd "$GITHUB_WORKSPACE/$WORKDIR" && pwd -P)
+        abspath() { node -e 'process.stdout.write(require("path").resolve(...process.argv.slice(1)))' "$@"; }
+        spec=$(abspath "$head_dir" "$EXPERIMENT")
+        cases=$(abspath "$head_dir" "$CASES")
+        [ -f "$spec" ] || { echo "::error::experiment spec not found: $spec"; exit 1; }
+        [ -f "$cases" ] || { echo "::error::cases file not found: $cases"; exit 1; }
+        if [ -z "$DATASET" ]; then
+          DATASET=$(node -e 'const s=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write(typeof s.dataset==="string"?s.dataset:"")' "$spec")
+          [ -n "$DATASET" ] || { echo "::error::$EXPERIMENT has no \"dataset\" field; set the dataset input"; exit 1; }
+        fi
+        flags=(--dataset "$DATASET")
+        [ -n "$TRIALS" ] && flags+=(--trials "$TRIALS")
+        [ -n "$CONCURRENCY" ] && flags+=(--concurrency "$CONCURRENCY")
+
+        echo "::group::Import cases as $DATASET"
+        coding.sh dataset import "$cases" --name "$DATASET"
+        echo "::endgroup::"
+
+        ref="${BASELINE_REF:-${GITHUB_BASE_REF:-}}"
+        [ "$ref" = "none" ] && ref=""
+        echo "spec=$EXPERIMENT" >> "$GITHUB_OUTPUT"
+        if [ -n "$ref" ]; then
+          echo "::group::Baseline: $ref"
+          base_root="$ROOT/baseline"
+          repo=$(git -C "$head_dir" rev-parse --show-toplevel)
+          rel=$(node -e 'process.stdout.write(require("path").relative(process.argv[1],process.argv[2])||".")' "$repo" "$head_dir")
+          if git -C "$repo" fetch --no-tags --depth=1 origin "$ref" \
+             && git -C "$repo" worktree add --detach "$base_root" FETCH_HEAD \
+             && (cd "$base_root/$rel" && coding.sh exp run "$spec" "${flags[@]}" --name baseline --json > "$ROOT/base.json"); then
+            echo "base_json=$ROOT/base.json" >> "$GITHUB_OUTPUT"
+            echo "base_sha=$(git -C "$base_root" rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          else
+            rm -f "$ROOT/base.json"
+            echo "::warning::The baseline run on $ref failed, so this run is reported alone. A first pull request that adds the evals has nothing to compare against."
+            echo "base_note=The baseline run on \`$ref\` failed; see the step log." >> "$GITHUB_OUTPUT"
+          fi
+          echo "base_ref=$ref" >> "$GITHUB_OUTPUT"
+          git -C "$repo" worktree remove --force "$base_root" 2>/dev/null || true
+          echo "::endgroup::"
+        fi
+
+        echo "::group::This run"
+        (cd "$head_dir" && coding.sh exp run "$spec" "${flags[@]}" --name head --json > "$ROOT/head.json")
+        echo "head_json=$ROOT/head.json" >> "$GITHUB_OUTPUT"
+        echo "::endgroup::"
+
+        if [ -f "$ROOT/base.json" ] && [ -s "$ROOT/base.json" ]; then
+          a=$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).experiment.id' "$ROOT/base.json")
+          b=$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).experiment.id' "$ROOT/head.json")
+          echo "::group::Compare"
+          coding.sh exp compare "$a" "$b"
+          coding.sh exp compare "$a" "$b" --json > "$ROOT/compare.json"
+          echo "compare_json=$ROOT/compare.json" >> "$GITHUB_OUTPUT"
+          echo "::endgroup::"
+        fi
+
+    - name: Report
+      id: report
+      shell: bash
+      env:
+        ROOT: ${{ steps.setup.outputs.root }}
+        HEAD_JSON: ${{ steps.run.outputs.head_json }}
+        BASE_JSON: ${{ steps.run.outputs.base_json }}
+        COMPARE_JSON: ${{ steps.run.outputs.compare_json }}
+        BASE_REF: ${{ steps.run.outputs.base_ref }}
+        BASE_SHA: ${{ steps.run.outputs.base_sha }}
+        BASE_NOTE: ${{ steps.run.outputs.base_note }}
+        SPEC: ${{ steps.run.outputs.spec }}
+        GATE: ${{ inputs.gate }}
+        MIN_PASS_RATE: ${{ inputs.min-pass-rate }}
+        COMMENT: ${{ inputs.comment }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: node "$ACTION_PATH/action/report.mjs"
+
+    - name: Gate
+      if: inputs.fail-on-regression == 'true' && steps.report.outputs.regressed == 'true'
+      shell: bash
+      env:
+        WHY: ${{ steps.report.outputs.why }}
+      run: |
+        echo "::error title=coding.sh evals::$WHY"
+        exit 1
