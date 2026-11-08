@@ -1,0 +1,20 @@
+packages/coding.sh/test/spool/githead.test.ts
+  s_8e040dbdf13565::t_60470f23109e9b 132,143-144,148-150
+  s_8e040dbdf13565::t_92eb173fa354ba 145-147,151
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "bc9a261aced76c6534d4835a271d7431ad67ef7d",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
