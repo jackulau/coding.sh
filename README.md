@@ -19,13 +19,16 @@
   <a href="https://coding.sh/docs/">Docs</a> ·
   <a href="https://coding.sh/docs/quickstart/">Quickstart</a> ·
   <a href="#supported-agents">Supported agents</a> ·
+  <a href="https://coding.sh/docs/compare">Compared with Langfuse, LangSmith, ccusage …</a> ·
   <a href="https://coding.sh/changelog/">Changelog</a> ·
   <a href="https://github.com/jackulau/coding.sh/discussions">Discussions</a> ·
   <a href="https://github.com/jackulau/coding.sh/issues/new/choose">Report a bug</a>
 </p>
 
 ```sh
-curl -fsSL https://coding.sh/install | sh
+curl -fsSL https://coding.sh/install | sh   # install, hook up your agents, open the viewer
+coding.sh sessions                          # after your next agent session: what it did
+coding.sh usage --by model                  # tokens and cost by model
 ```
 
 <p align="center">
