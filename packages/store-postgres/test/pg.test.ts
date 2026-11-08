@@ -6,6 +6,7 @@ import { describe, it } from "node:test";
 import pg from "pg";
 import type { AgentEvent } from "coding.sh/store";
 import { blobStore, indexStore, parsePgUrl, PgBlobStore, PgIndexStore, redactUrl, searchFolded, tsQuery } from "../src/index.ts";
+import { MIGRATIONS } from "../src/pool.ts";
 import { PG_URL, SKIP, schemaUrl } from "./helpers.ts";
 
 const ev = (over: Partial<AgentEvent> = {}): AgentEvent => ({
@@ -81,7 +82,7 @@ describe("postgres store", { skip: SKIP }, () => {
       await client.connect();
       const { rows } = await client.query(`SELECT version FROM "${schema}".coding_sh_migrations`);
       await client.end();
-      assert.deepEqual(rows.map((r) => r.version), [1]);
+      assert.deepEqual(rows.map((r) => r.version).sort((a, b) => a - b), MIGRATIONS.map((m) => m.version), "each migration applied once");
     } finally {
       for (const s of stores.slice(1)) await s.close();
       await stores[0]!.close();
