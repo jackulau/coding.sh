@@ -210,18 +210,32 @@ export class Output {
    */
   async confirm(question: string, opts: { defaultYes?: boolean } = {}): Promise<boolean> {
     if (!this.interactive) return false;
+    const a = await this.question(`${question} ${opts.defaultYes ? "(Y/n)" : "(y/N)"} `);
+    return opts.defaultYes ? !/^n(o)?$/i.test(a.trim()) : /^y(es)?$/i.test(a.trim());
+  }
+
+  /**
+   * `? <question> (<default>)` on stderr; returns the trimmed answer, or the
+   * default when it is empty. Only call when `interactive`; Ctrl-C throws Interrupted.
+   */
+  async ask(question: string, opts: { default?: string } = {}): Promise<string> {
+    if (!this.interactive) return opts.default ?? "";
+    const a = (await this.question(`${question}${opts.default ? ` (${opts.default})` : ""} `)).trim();
+    return a || (opts.default ?? "");
+  }
+
+  private async question(prompt: string): Promise<string> {
     this.stopSpinner();
     const { createInterface } = await import("node:readline");
     const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
     try {
-      return await new Promise<boolean>((resolve, reject) => {
+      return await new Promise<string>((resolve, reject) => {
         rl.on("SIGINT", () => {
           process.stderr.write("\n");
           reject(new Interrupted());
         });
         rl.on("close", () => reject(new Interrupted()));
-        const hint = opts.defaultYes ? "(Y/n)" : "(y/N)";
-        rl.question(`${this.style("?", "cyan", "err")} ${question} ${hint} `, (a) => resolve(opts.defaultYes ? !/^n(o)?$/i.test(a.trim()) : /^y(es)?$/i.test(a.trim())));
+        rl.question(`${this.style("?", "cyan", "err")} ${prompt}`, resolve);
       });
     } finally {
       rl.removeAllListeners("close");

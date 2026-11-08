@@ -48,7 +48,7 @@ Every command accepts these.
 | [`export`](#codingsh-export) | Explore | Stream sessions, events or labels as JSONL or CSV |
 | [`ui`](#codingsh-ui) | Explore | Open the local session viewer |
 | [`mcp`](#codingsh-mcp) | Explore | Serve captured sessions to agents over MCP (stdio) |
-| [`eval`](#codingsh-eval) | Evaluate | Turn sessions into replayable eval tasks |
+| [`eval`](#codingsh-eval) | Evaluate | Build eval suites from sessions, skills or cases, and run them |
 | [`dataset`](#codingsh-dataset) | Evaluate | Manage versioned datasets of cases |
 | [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset, compare experiments and sweep configs |
 | [`judge`](#codingsh-judge) | Evaluate | Grade one output or the slop in captured diffs, or check an LLM judge or a test verifier against human labels |
@@ -507,7 +507,7 @@ coding.sh mcp
 
 ## `coding.sh eval`
 
-Turn sessions into replayable eval tasks.
+Build eval suites from sessions, skills or cases, and run them.
 
 ```text
 coding.sh eval <action>
@@ -515,6 +515,8 @@ coding.sh eval <action>
 
 | Action | What it does |
 |---|---|
+| [`init`](#codingsh-eval-init) | Scaffold an eval suite in evals/&lt;name&gt;/: from failed sessions, a skill, or an app's cases |
+| [`run`](#codingsh-eval-run) | Run eval suites and report pass@1, pass@k, pass^k, flaky tasks and saturation |
 | [`new`](#codingsh-eval-new) | Draft a task from a captured session |
 | [`import`](#codingsh-eval-import) | Add tasks from task directories (hand-written, or from eval export) |
 | [`validate`](#codingsh-eval-validate) | Check the reference passes, near-misses fail and nothing leaks |
@@ -523,6 +525,80 @@ coding.sh eval <action>
 | [`trigger`](#codingsh-eval-trigger) | Check that the agent loads a skill when it should and not when it shouldn't |
 | [`list`](#codingsh-eval-list) | List eval tasks |
 | [`export`](#codingsh-eval-export) | Write a task to a directory |
+
+- eval run exits 1 when a regression suite has a task that fails most of its trials. A capability suite reports its score and exits 0.
+- pass@k is the chance at least one of k trials passes; pass^k is the chance all k pass. Both are estimated from every trial run.
+
+### `coding.sh eval init`
+
+Scaffold an eval suite in evals/<name>/: from failed sessions, a skill, or an app's cases.
+
+```text
+coding.sh eval init [name] [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | no | Suite name (default: the skill's or cases file's name, else failures or app) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--sessions` |  | Tasks from failed or flagged sessions in this repo (newest first) |
+| `--session <ID>` |  | Tasks from these sessions instead: an id, a prefix or latest (repeatable) |
+| `--since <AGE>` | `14d` | With --sessions: how far back to look (30m, 12h, 7d, 2w) |
+| `--limit <N>` | `10` | With --sessions: at most N tasks. |
+| `--verifier <CMD>` |  | With --sessions: command that passes only when a task is solved (default: guessed per session) |
+| `--hidden-test <GLOB>` |  | With --sessions: test files to hide from the agent (repeatable) |
+| `--skill <DIR>` |  | Should / should-not trigger prompts for this skill. |
+| `--should <PROMPT>` |  | With --skill: a prompt that should load it (repeatable) |
+| `--should-not <PROMPT>` |  | With --skill: a prompt that should not (repeatable) |
+| `--cases <FILE>` |  | Cases for an app or prompt: JSONL, JSON or CSV of {"input", "expected"}. |
+| `--describe <TEXT|@FILE>` |  | What the app or skill should do: the judge's rubric when cases have no expected answer, and the brief for --draft. |
+| `--command <CMD>` |  | Command that answers one case: the input arrives as JSON on stdin, the answer is what it prints. |
+| `--url <URL>` |  | Or an HTTP endpoint that answers one case (POST) |
+| `--draft [<PROVIDER|JSON>]` |  | Have a model write the prompts or cases you didn't give, marked draft (default provider: anthropic) |
+| `--draft-model <MODEL>` |  | With --draft: the model. |
+| `--purpose <PURPOSE>` |  | capability: a hill to climb (sessions default). regression: should pass nearly always, eval run exits 1 when it doesn't (skill and cases default) One of: `capability`, `regression`. |
+| `-k, --trials <N>` | `3` | Trials per task, case or prompt. |
+| `-a, --agent <AGENT>` |  | Agent that runs the suite (default: the sessions' agent, else claude-code) |
+| `--force` |  | Replace the named target when it already exists. |
+
+```sh
+coding.sh eval init
+coding.sh eval init --sessions --verifier 'npm test'
+coding.sh eval init --skill .claude/skills/pdf --draft
+coding.sh eval init support --cases cases.jsonl --command 'node app.mjs'
+coding.sh eval init triage --describe 'Labels a support ticket bug, billing or other' --command 'node triage.mjs' --draft
+```
+
+### `coding.sh eval run`
+
+Run eval suites and report pass@1, pass@k, pass^k, flaky tasks and saturation.
+
+```text
+coding.sh eval run [suite]... [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `suite` | no | Suite name under evals/, or its dir (default: every suite in evals/) Takes the rest of the arguments. |
+
+| Option | Default | Description |
+|---|---|---|
+| `-k, --trials <N>` |  | Trials per task, case or prompt (default: the suite's trials, else 3) |
+| `-c, --concurrency <N>` |  | Parallel runs. |
+| `-a, --agent <AGENT>` |  | Agent for task and skill suites (default: the suite's, else claude-code) |
+| `--model <MODEL>` |  | Model for the agent. |
+| `--harness <BUNDLE>` |  | Task suites: run this stored harness bundle (default: a snapshot of the project's current setup) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. |
+
+```sh
+coding.sh eval run
+coding.sh eval run failures --trials 5 --yes
+coding.sh eval run triage --json
+```
 
 ### `coding.sh eval new`
 

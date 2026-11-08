@@ -1,4 +1,4 @@
-// coding.sh eval new|import|validate|crosscheck|audit|trigger|list|export
+// coding.sh eval init|run|new|import|validate|crosscheck|audit|trigger|list|export
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -38,7 +38,7 @@ const getTask = (ctx: Context, ref: string): Promise<EvalTask> => resolveTask(ct
  * One task dir: an exported task (task.json with a start snapshot), or a
  * hand-written one whose repo/ dir is the start tree (none: an empty tree).
  */
-async function importDir(dir: string, ctx: Context, env: NodeJS.ProcessEnv): Promise<EvalTask> {
+export async function importDir(dir: string, ctx: Context, env: NodeJS.ProcessEnv): Promise<EvalTask> {
   if (!existsSync(join(dir, "task.json"))) throw new Error("no task.json in it");
   const repo = join(dir, "repo");
   let start: EvalTask["start"] | undefined;
@@ -74,6 +74,8 @@ export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
   // The spec and flags are checked before the store opens.
   if (c.action === "trigger") return (await import("./eval-trigger.ts")).evalTrigger(c);
+  if (c.action === "init") return (await import("./eval-init.ts")).evalInit(c);
+  if (c.action === "run") return (await import("./eval-run.ts")).evalRun(c);
   return withContext(c, async (ctx) => {
     switch (c.action) {
       case "new": {

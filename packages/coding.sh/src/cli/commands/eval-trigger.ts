@@ -24,6 +24,9 @@ import {
   withDescription,
   type SkillSource,
   type TriggerArm,
+  type TriggerObservation,
+  type TriggerReport,
+  type TriggerSpec,
 } from "../../eval/trigger.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { requireConsent, str, withContext } from "../common.ts";
@@ -33,7 +36,17 @@ import type { CommandContext } from "../types.ts";
 
 const SPEC_EXAMPLE = 'skill = "pdf"\n\n[[should]]\nprompt = "Fill in the form fields of invoice.pdf"\n\n[[should_not]]\nprompt = "Rename every .txt file to .md"';
 
-export async function evalTrigger(c: CommandContext): Promise<number> {
+/** What a trigger run hands `eval run` (which prints its own report instead). */
+export interface TriggerRunResult {
+  spec: TriggerSpec;
+  skill: string;
+  report: TriggerReport;
+  observations: TriggerObservation[];
+  experimentId: string;
+  file: string;
+}
+
+export async function evalTrigger(c: CommandContext, hooks: { onResult?: (r: TriggerRunResult) => void } = {}): Promise<number> {
   const { out } = c;
   const target = c.positionals[0];
   if (!target) throw new UsageError("Missing argument <SKILL>. Usage: coding.sh eval trigger <skill-dir|SKILL.md>", { reason: "missing_argument" });
@@ -150,6 +163,10 @@ export async function evalTrigger(c: CommandContext): Promise<number> {
     await mkdir(dirname(file), { recursive: true });
     await writeFile(file, `${JSON.stringify({ spec: specPath, experimentId, siblings: siblings.map((s) => s.name), ...report }, null, 2)}\n`);
 
+    if (hooks.onResult) {
+      hooks.onResult({ spec, skill, report, observations: r.observations, experimentId, file });
+      return 0;
+    }
     const tested = report.arms[report.arms.length - 1]!;
     const f1Miss = typeof minF1 === "number" && !(tested.metrics.f1 >= minF1);
     const regressed = c.flags["fail-on"] === "regression" && report.delta?.regression === true;

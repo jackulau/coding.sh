@@ -200,6 +200,8 @@ The command ran and something failed.
 | `timeout` | `the query ran past 10s and was stopped` (sql) | Narrow the query, or pass a longer `--timeout`. |
 | `sql_error` | `SQLite: no such column: foo` (sql) | List the tables and columns: `coding.sh sql "select name, sql from sqlite_schema"`. See [Query and export](reference/query.md). |
 | `judge_error` | `The pairwise judge failed on every case: …` | Check the judge's `provider`, `model`, `baseURL` and API key variable, then re-run `exp compare --pairwise`. |
+| `init_failed` | `no failed or flagged sessions in /work/demo in the last 14 days …` (eval init), or a draft model that returned no usable JSON | List flagged sessions with `coding.sh sessions --where is:flagged`, or name sessions with `--session <id>`. For a draft, check the provider and its API key. |
+| `draft_suite` | `Suite pdf: 6 prompts in evals/pdf/triggers.toml still say TODO:` (eval run) | Write real prompts there, or have a model draft them: `coding.sh eval init pdf --skill <dir> --draft --force`. |
 | `unsafe_edit` | `Can't set capture.mode: the edit would change other settings too` | Edit the config file by hand; the message prints its path. |
 | `no_budget` | `answers has no budget_usd, so it can't be scheduled` | Add `budget_usd = 5` (or your cap) to the benchmark file. Printing the schedule works without one. |
 | `ambiguous` | `2 tasks are named "…"`, `Session id prefix "9f1c" is ambiguous. It matches: …` | Pass one of the ids it prints, or more of the session id. |

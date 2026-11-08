@@ -6,7 +6,7 @@ import type { CommandModule } from "./types.ts";
 import { GATEWAY_IDS } from "../integrations/gateway/providers.ts";
 import { WORKFLOWS_COMMAND } from "../workflows/cli-spec.ts";
 import { BENCH_COMMAND } from "../bench/cli-spec.ts";
-import { durableFlags } from "../jobs/flags.ts";
+import { durableFlags, RETRIES_FLAG, TRIAL_TIMEOUT_FLAG } from "../jobs/flags.ts";
 import { DEFAULT_MODELS } from "../core/pricing.ts";
 import { FACET_KEYS, keyDocs } from "../query/where.ts";
 
@@ -415,8 +415,65 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "eval",
     group: "Evaluate",
-    summary: "Turn sessions into replayable eval tasks",
+    summary: "Build eval suites from sessions, skills or cases, and run them",
     actions: [
+      {
+        name: "init",
+        summary: "Scaffold an eval suite in evals/<name>/: from failed sessions, a skill, or an app's cases",
+        args: [{ name: "name", desc: "Suite name (default: the skill's or cases file's name, else failures or app)" }],
+        flags: [
+          { name: "sessions", type: "boolean", desc: "Tasks from failed or flagged sessions in this repo (newest first)" },
+          { name: "session", type: "list", value: "<ID>", desc: "Tasks from these sessions instead: an id, a prefix or latest (repeatable)" },
+          { name: "since", type: "string", value: "<AGE>", desc: "With --sessions: how far back to look (30m, 12h, 7d, 2w)", default: "14d" },
+          { name: "limit", type: "number", value: "<N>", desc: "With --sessions: at most N tasks", default: "10" },
+          { name: "verifier", type: "string", value: "<CMD>", desc: "With --sessions: command that passes only when a task is solved (default: guessed per session)" },
+          { name: "hidden-test", type: "list", value: "<GLOB>", desc: "With --sessions: test files to hide from the agent (repeatable)" },
+          { name: "skill", type: "string", value: "<DIR>", desc: "Should / should-not trigger prompts for this skill" },
+          { name: "should", type: "list", value: "<PROMPT>", desc: "With --skill: a prompt that should load it (repeatable)" },
+          { name: "should-not", type: "list", value: "<PROMPT>", desc: "With --skill: a prompt that should not (repeatable)" },
+          { name: "cases", type: "string", value: "<FILE>", desc: 'Cases for an app or prompt: JSONL, JSON or CSV of {"input", "expected"}' },
+          { name: "describe", type: "string", value: "<TEXT|@FILE>", desc: "What the app or skill should do: the judge's rubric when cases have no expected answer, and the brief for --draft" },
+          { name: "command", type: "string", value: "<CMD>", desc: "Command that answers one case: the input arrives as JSON on stdin, the answer is what it prints" },
+          { name: "url", type: "string", value: "<URL>", desc: "Or an HTTP endpoint that answers one case (POST)" },
+          {
+            name: "draft",
+            type: "string",
+            optionalValue: true,
+            valuePattern: /^(?:anthropic|openai|gateway|mock|\{.*|.+\.json)$/,
+            value: "<PROVIDER|JSON>",
+            desc: "Have a model write the prompts or cases you didn't give, marked draft (default provider: anthropic)",
+          },
+          { name: "draft-model", type: "string", value: "<MODEL>", desc: "With --draft: the model" },
+          { name: "purpose", type: "string", value: "<PURPOSE>", choices: ["capability", "regression"], desc: "capability: a hill to climb (sessions default). regression: should pass nearly always, eval run exits 1 when it doesn't (skill and cases default)" },
+          { name: "trials", short: "k", type: "number", value: "<N>", desc: "Trials per task, case or prompt", default: "3" },
+          { name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Agent that runs the suite (default: the sessions' agent, else claude-code)" },
+          FORCE,
+        ],
+        examples: [
+          "coding.sh eval init",
+          "coding.sh eval init --sessions --verifier 'npm test'",
+          "coding.sh eval init --skill .claude/skills/pdf --draft",
+          "coding.sh eval init support --cases cases.jsonl --command 'node app.mjs'",
+          "coding.sh eval init triage --describe 'Labels a support ticket bug, billing or other' --command 'node triage.mjs' --draft",
+        ],
+      },
+      {
+        name: "run",
+        summary: "Run eval suites and report pass@1, pass@k, pass^k, flaky tasks and saturation",
+        args: [{ name: "suite", desc: "Suite name under evals/, or its dir (default: every suite in evals/)", variadic: true }],
+        flags: [
+          { name: "trials", short: "k", type: "number", value: "<N>", desc: "Trials per task, case or prompt (default: the suite's trials, else 3)" },
+          { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel runs" },
+          { name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Agent for task and skill suites (default: the suite's, else claude-code)" },
+          { name: "model", type: "string", value: "<MODEL>", desc: "Model for the agent" },
+          { name: "harness", type: "string", value: "<BUNDLE>", desc: "Task suites: run this stored harness bundle (default: a snapshot of the project's current setup)" },
+          RETRIES_FLAG,
+          TRIAL_TIMEOUT_FLAG,
+          YES,
+        ],
+        graceful: true,
+        examples: ["coding.sh eval run", "coding.sh eval run failures --trials 5 --yes", "coding.sh eval run triage --json"],
+      },
       {
         name: "new",
         summary: "Draft a task from a captured session",
@@ -523,6 +580,10 @@ export const COMMANDS: CommandSpec[] = [
           FORCE,
         ],
       },
+    ],
+    notes: [
+      "eval run exits 1 when a regression suite has a task that fails most of its trials. A capability suite reports its score and exits 0.",
+      "pass@k is the chance at least one of k trials passes; pass^k is the chance all k pass. Both are estimated from every trial run.",
     ],
     load: () => import("./commands/eval.ts"),
   },
