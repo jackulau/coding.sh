@@ -54,6 +54,12 @@ export interface WorkflowRun {
   infra?: "rate-limit" | "server" | "network" | "tempfail";
   /** Phase titles in script order (meta.phases), when known. */
   phases?: string[];
+  /**
+   * Launched segments of a run resumed in place (a Claude Code workflow stopped and resumed in
+   * the same run dir), first to last; absent for a run launched once. The gaps between them are
+   * not active time.
+   */
+  segments?: { startedAt: number; endedAt: number }[];
   /** Where the run was read from (journal path, trace id, driver), for re-import. */
   source?: { kind: "journal" | "otel" | "driver"; path?: string; signature?: string };
 }
@@ -154,7 +160,12 @@ export interface PhaseMetric {
 }
 
 export interface WorkflowStats {
+  /** First launch to last result, across every segment of a resumed run. */
   wallMs?: number;
+  /** wallMs minus the gaps between segments of a run resumed in place; absent for a run launched once. */
+  activeMs?: number;
+  /** Launched segments of a run resumed in place; absent for one. */
+  segments?: number;
   agentMs: number;
   parallelism?: number;
   utilization?: number;

@@ -216,11 +216,15 @@ export function workflowStats(run: WorkflowRun, nodes: WorkflowNode[], base?: { 
   if (!(start > 0) && timed.length) start = Math.min(...timed.map((a) => a.startedAt));
   if (end === undefined && run.status !== "running" && timed.length) end = Math.max(...timed.map((a) => a.endedAt));
   const wallMs = end !== undefined && start > 0 ? Math.max(0, end - start) : undefined;
+  // A run resumed in place: the gaps between its segments are not active time.
+  const segs = run.segments && run.segments.length > 1 ? run.segments : undefined;
+  const pauses: [number, number][] = segs ? segs.slice(1).map((sg, i) => [segs[i]!.endedAt, sg.startedAt]) : [];
+  const activeMs = segs && wallMs !== undefined ? Math.max(0, wallMs - coveredMs(start, end!, pauses)) : undefined;
 
   const agentMs = timed.reduce((s, a) => s + Math.max(0, a.endedAt - a.startedAt), 0);
   const series = concurrencySeries(timed.map((a) => ({ start: a.startedAt, end: a.endedAt })));
   const peakConcurrency = series.reduce((m, p) => Math.max(m, p.running), 0);
-  const cp = criticalPath(nodes);
+  const cp = criticalPath(nodes, pauses);
   const idle = barrierIdle(nodes);
 
   const children = new Map<string, WorkflowNode[]>();
@@ -254,13 +258,19 @@ export function workflowStats(run: WorkflowRun, nodes: WorkflowNode[], base?: { 
   }
   if (wallMs !== undefined) {
     stats.wallMs = wallMs;
-    if (wallMs > 0) stats.parallelism = agentMs / wallMs;
-    if (run.concurrencyCap && wallMs > 0) stats.utilization = integrate(series) / (run.concurrencyCap * wallMs);
+    if (segs) {
+      stats.activeMs = activeMs!;
+      stats.segments = segs.length;
+    }
+    // Over active time: agents can't run while the run is stopped between segments.
+    const busyWindow = activeMs ?? wallMs;
+    if (busyWindow > 0) stats.parallelism = agentMs / busyWindow;
+    if (run.concurrencyCap && busyWindow > 0) stats.utilization = integrate(series) / (run.concurrencyCap * busyWindow);
   }
   if (cp.path.length) {
     stats.criticalPathMs = cp.ms;
     stats.criticalPath = cp.path;
-    stats.orchestrationGapMs = cp.gaps.reduce((s, g) => s + Math.max(0, g.ms - (g.waitMs ?? 0) - (g.lostMs ?? 0)), 0);
+    stats.orchestrationGapMs = cp.gaps.reduce((s, g) => s + Math.max(0, g.ms - (g.waitMs ?? 0) - (g.lostMs ?? 0) - (g.pausedMs ?? 0)), 0);
   }
   const waitSpans = waitIntervals(nodes);
   if (waitSpans.length) stats.waitMs = coveredMs(-Infinity, Infinity, waitSpans);

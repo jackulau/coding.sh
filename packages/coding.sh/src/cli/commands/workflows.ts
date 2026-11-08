@@ -246,7 +246,7 @@ async function show(c: CommandContext): Promise<number> {
   out.row("Run", `${run.id} (${run.framework})`);
   out.row("Workflow", clean(run.name));
   out.row("Status", run.status, run.status === "ok" ? "ok" : run.status === "running" ? "none" : "fail");
-  out.row("Wall", `${duration(wallOf(run))}${run.stats.criticalPathMs !== undefined ? `, critical path ${duration(run.stats.criticalPathMs)}${run.stats.criticalPathExact ? "" : " (approx)"}` : ""}`);
+  out.row("Wall", `${duration(wallOf(run))}${segmentsText(run.stats)}${run.stats.criticalPathMs !== undefined ? `, critical path ${duration(run.stats.criticalPathMs)}${run.stats.criticalPathExact ? "" : " (approx)"}` : ""}`);
   out.row("Cost", `${usd(run.stats.costUsd)}, ${tokens(totalTokens(run.stats.tokens))} tokens`);
   if (run.resumedFrom) out.row("Resumed from", `${run.resumedFrom} (${run.stats.cacheHits} cached)`);
   const stopped = stoppedText(run.stats);
@@ -266,6 +266,11 @@ async function show(c: CommandContext): Promise<number> {
 
 const pct = (x: number | undefined) => (x === undefined || !Number.isFinite(x) ? "-" : `${(x * 100).toFixed(0)}%`);
 
+/** " (active 6h42m over 3 segments)" for a run resumed in place, else "". */
+function segmentsText(s: { activeMs?: number; segments?: number }): string {
+  return s.segments !== undefined && s.activeMs !== undefined ? ` (active ${duration(s.activeMs)} over ${s.segments} segments)` : "";
+}
+
 /** "1 cancelled, 6 superseded", or "" when the run stopped no agent. */
 function stoppedText(s: { cancelledAgents?: number; supersededAgents?: number; cancelled?: number; superseded?: number }): string {
   const c = s.cancelledAgents ?? s.cancelled;
@@ -284,7 +289,7 @@ async function stats(c: CommandContext): Promise<number> {
     return 0;
   }
   const rows: [string, string][] = [
-    ["wall", duration(s.wallMs)],
+    ["wall", `${duration(s.wallMs)}${segmentsText(s)}`],
     ["critical path", `${duration(s.criticalPathMs)}${s.criticalPathExact ? " (exact)" : " (approx)"}`],
     ["orchestration gap", duration(s.orchestrationGapMs)],
     ...(s.waitMs !== undefined ? [["durable waits", duration(s.waitMs)] as [string, string]] : []),

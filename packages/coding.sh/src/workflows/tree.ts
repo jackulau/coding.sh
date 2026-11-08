@@ -212,6 +212,41 @@ function stoppedCalls(calls: readonly JournalCall[], labelOf: (c: JournalCall) =
   return out;
 }
 
+/**
+ * Segments of a run resumed in place. The journal keeps one "launched" line and no timestamps
+ * across resumes, so boundaries are read from the agents: a stretch with no agent running that
+ * begins when the agents the operator stopped (cancelled, superseded) end, or that the record's
+ * start time (the last segment's launch) falls in. Undefined for a run launched once.
+ */
+export function resumeSegments(agents: readonly WorkflowNode[], startedAt: number, endedAt: number | undefined, lastLaunch?: number): { startedAt: number; endedAt: number }[] | undefined {
+  const timed = agents
+    .filter((a): a is WorkflowNode & { startedAt: number; endedAt: number } => a.status !== "cached" && a.startedAt !== undefined && a.endedAt !== undefined)
+    .sort((x, y) => x.startedAt - y.startedAt);
+  const gaps: [number, number][] = [];
+  let maxEnd = -Infinity;
+  let last: WorkflowNode | undefined;
+  for (const a of timed) {
+    if (last && a.startedAt > maxEnd) {
+      const launch = lastLaunch !== undefined && lastLaunch > maxEnd && lastLaunch <= a.startedAt ? lastLaunch : undefined;
+      if (last.status === "cancelled" || last.status === "superseded" || launch !== undefined) gaps.push([maxEnd, launch ?? a.startedAt]);
+    }
+    if (a.endedAt >= maxEnd) {
+      maxEnd = a.endedAt;
+      last = a;
+    }
+  }
+  if (!gaps.length) return undefined;
+  const end = endedAt ?? maxEnd;
+  const out: { startedAt: number; endedAt: number }[] = [];
+  let from = startedAt;
+  for (const [a, b] of gaps) {
+    out.push({ startedAt: from, endedAt: a });
+    from = b;
+  }
+  out.push({ startedAt: from, endedAt: Math.max(from, end) });
+  return out;
+}
+
 function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
   const parsed = parseJournal(src.journal ?? "");
   const record = src.record ?? {};
@@ -349,9 +384,15 @@ function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
   }
 
   // ---- run
-  const timed = agents.filter((a) => a.startedAt !== undefined);
-  const startedAt = recStart ?? parsed.launchedAt ?? host.workflow?.start ?? (timed.length ? Math.min(...timed.map((a) => a.startedAt!)) : 0);
-  if (endedAt === undefined && runDone && timed.length) endedAt = Math.max(...timed.map((a) => a.endedAt ?? a.startedAt!));
+  // From the first launch to the last result, across every segment: the record's start time and
+  // duration cover only the last segment of a run resumed in place.
+  const timed = agents.filter((a) => a.startedAt !== undefined && a.status !== "cached");
+  const starts = [recStart, parsed.launchedAt, host.workflow?.start, ...timed.map((a) => a.startedAt!)].filter((t): t is number => t !== undefined);
+  const startedAt = starts.length ? Math.min(...starts) : 0;
+  if (runDone && timed.length) {
+    const lastEnd = Math.max(...timed.map((a) => a.endedAt ?? a.startedAt!));
+    endedAt = endedAt === undefined ? lastEnd : Math.max(endedAt, lastEnd);
+  }
   const scriptPath = s(record.scriptPath) ?? parsed.scriptPath;
   const name = s(record.workflowName) ?? s(record.name) ?? (scriptPath ? basename(scriptPath).replace(/\.[cm]?[jt]s$/, "") : runId);
   wf.name = name;
@@ -378,6 +419,8 @@ function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
   const cap = src.concurrencyCap ?? n(record.concurrencyCap) ?? n(record.maxConcurrency) ?? n(record.concurrency);
   if (cap !== undefined) run.concurrencyCap = cap;
   if (phaseOrder.length) run.phases = phaseOrder;
+  const segments = resumeSegments(agents, startedAt, endedAt, recStart);
+  if (segments) run.segments = segments;
 
   const nodes = [wf, ...phaseNodes.values(), ...groups.values(), ...agents, ...childNodes];
   run.stats = workflowStats(run, nodes, opts.base);

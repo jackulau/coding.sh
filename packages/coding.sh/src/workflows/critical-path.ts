@@ -19,7 +19,7 @@ export interface CriticalPath {
   path: string[];
   ms: number;
   exact: boolean;
-  gaps: { after: string; ms: number; waitMs?: number; lostMs?: number }[];
+  gaps: { after: string; ms: number; waitMs?: number; lostMs?: number; pausedMs?: number }[];
 }
 
 /** Agent-like nodes that occupy a slot: agent and step (cached nodes did not run). */
@@ -125,7 +125,13 @@ export function coveredMs(a: number, b: number, intervals: readonly [number, num
   return total;
 }
 
-function withGaps(path: (WorkflowNode & { startedAt: number; endedAt: number })[], exact: boolean, waits: readonly [number, number][] = [], lost: readonly [number, number][] = []): CriticalPath {
+function withGaps(
+  path: (WorkflowNode & { startedAt: number; endedAt: number })[],
+  exact: boolean,
+  waits: readonly [number, number][] = [],
+  lost: readonly [number, number][] = [],
+  paused: readonly [number, number][] = [],
+): CriticalPath {
   if (!path.length) return { path: [], ms: 0, exact, gaps: [] };
   const gaps: CriticalPath["gaps"] = [];
   for (let i = 1; i < path.length; i++) {
@@ -136,6 +142,8 @@ function withGaps(path: (WorkflowNode & { startedAt: number; endedAt: number })[
     if (w > 0) gap.waitMs = w;
     const l = lost.length ? coveredMs(path[i - 1]!.endedAt, path[i]!.startedAt, lost) : 0;
     if (l > 0) gap.lostMs = l;
+    const p = paused.length ? coveredMs(path[i - 1]!.endedAt, path[i]!.startedAt, paused) : 0;
+    if (p > 0) gap.pausedMs = p;
     gaps.push(gap);
   }
   const start = path[0]!.startedAt;
@@ -207,7 +215,11 @@ export function approximatePath(agents: readonly (WorkflowNode & { startedAt: nu
   return path;
 }
 
-export function criticalPath(nodes: WorkflowNode[]): CriticalPath {
+/**
+ * `paused`: stretches the run was not running at all (between the segments of a resumed run);
+ * a gap they cover says so in `pausedMs`.
+ */
+export function criticalPath(nodes: WorkflowNode[], paused: readonly [number, number][] = []): CriticalPath {
   // A stopped agent (cancelled, superseded) never returned, so nothing waited on its end.
   const agents = timedAgents(nodes).filter((a) => a.status !== "cancelled" && a.status !== "superseded");
   const waits = waitIntervals(nodes);
@@ -215,7 +227,7 @@ export function criticalPath(nodes: WorkflowNode[]): CriticalPath {
   const edges = explicitEdges(agents);
   if (edges) {
     const p = longestPath(agents, edges);
-    if (p) return withGaps(p, true, waits, lost);
+    if (p) return withGaps(p, true, waits, lost, paused);
   }
-  return withGaps(approximatePath(agents), false, waits, lost);
+  return withGaps(approximatePath(agents), false, waits, lost, paused);
 }

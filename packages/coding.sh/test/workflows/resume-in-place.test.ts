@@ -9,7 +9,7 @@ import { run as workflowsCli } from "../../src/cli/commands/workflows.ts";
 import { Output } from "../../src/cli/output.ts";
 import { loadClaudeWorkflowDir } from "../../src/workflows/sources/claude-workflow.ts";
 import { buildWorkflowTree, type WorkflowTree } from "../../src/workflows/tree.ts";
-import { INPLACE, writeInPlaceFixture } from "./_fixtures.ts";
+import { INPLACE, T1, writeInPlaceFixture } from "./_fixtures.ts";
 
 let root = "";
 let tree: WorkflowTree;
@@ -104,6 +104,43 @@ describe("stopped agents", () => {
   });
 });
 
+describe("wall time across resumes", () => {
+  it("runs from the first launch to the last result, not just the last segment the record covers", () => {
+    assert.equal(tree.run.startedAt, T1);
+    assert.equal(tree.run.endedAt, T1 + 100_000);
+    assert.equal(tree.run.stats.wallMs, 100_000);
+    assert.ok(tree.run.stats.criticalPathMs! <= tree.run.stats.wallMs!, "the critical path fits inside the wall time");
+  });
+
+  it("finds the segments from the operator's stops and the record's launch time, and reports active time", () => {
+    assert.deepEqual(tree.run.segments, [
+      { startedAt: T1, endedAt: T1 + 30_000 },
+      { startedAt: T1 + 40_000, endedAt: T1 + 50_000 },
+      { startedAt: T1 + 60_000, endedAt: T1 + 100_000 },
+    ]);
+    const s = tree.run.stats;
+    assert.equal(s.segments, 3);
+    assert.equal(s.activeMs, 80_000);
+    // Parallelism and utilization are over active time.
+    assert.equal(s.parallelism, s.agentMs / 80_000);
+    assert.ok(s.utilization! <= 1);
+    // Path plan → review-x → qa-one → fix. The 41 s between review-x and qa-one hold the two
+    // 10 s stretches the run sat stopped, which are not orchestration overhead: 1 + 21 + 1 s.
+    assert.equal(s.orchestrationGapMs, 23_000);
+  });
+
+  it("leaves a run launched once without segments", async () => {
+    const t = buildWorkflowTree({
+      journal: [{ type: "launched" }, { type: "started", key: "k", agentId: "x", label: "one" }, { type: "result", key: "k", agentId: "x", result: 1 }].map((x) => JSON.stringify(x)).join("\n"),
+      record: { startTime: T1, durationMs: 5000, status: "completed" },
+    });
+    assert.equal(t.run.segments, undefined);
+    assert.equal(t.run.stats.activeMs, undefined);
+    assert.equal(t.run.stats.segments, undefined);
+    assert.equal(t.run.stats.wallMs, 5000);
+  });
+});
+
 describe("workflows show and stats on a run resumed in place", () => {
   it("show and stats list stopped agents apart from failures", async () => {
     await cli("import", []);
@@ -115,5 +152,7 @@ describe("workflows show and stats on a run resumed in place", () => {
     assert.match(stats, /agents\t5 \(0 failed 0%, 0 null 0%\)/);
     assert.match(stats, /stopped\t1 cancelled, 2 superseded \(not failures\)/);
     assert.match(stats, /QA\t.*\t0 \(\+2 superseded\)\n/);
+    assert.match(stats, /wall\t1m40s \(active 1m20s over 3 segments\)/);
+    assert.match(show, /Wall\s+1m40s \(active 1m20s over 3 segments\)/);
   });
 });

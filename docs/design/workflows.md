@@ -61,7 +61,14 @@ Three sources are merged by time and id:
    flushed late.
 
 When the journal has no timestamps, an agent's start and end are taken from the first and last line
-of its transcript. Phase membership comes from the `phase` field, or else from `phase()` order in
+of its transcript.
+
+A stopped run resumed with `resumeFromRunId` set to its own id keeps its run dir: the journal grows
+across segments with one `launched` line and no timestamps, and the persisted record covers only
+the last segment (`startTime`, `durationMs`). The run's start is the earliest of the record's start
+and every agent's start, and its end the latest of the record's end and every agent's end. Segment
+boundaries are read from the agents: a stretch with no agent running that starts when the agents
+the operator stopped end, or that holds the record's `startTime`. Phase membership comes from the `phase` field, or else from `phase()` order in
 the script: a static scan of `phase('…')` calls. Group structure (which agents belong to one
 `parallel()` or `pipeline()` call) is recorded in the journal if available (U). Otherwise it is
 inferred: agents in the same phase whose start times fall within 2 s of each other form one
@@ -154,13 +161,14 @@ kind `agent` or `step` that ran (`status ≠ cached`), unless noted.
 
 | Metric | Definition |
 |---|---|
-| `wallMs` | `endedAt − startedAt` of the run |
+| `wallMs` | `endedAt − startedAt` of the run: the first launch to the last result, across every segment of a resumed run |
+| `activeMs`, `segments` | A Claude Code run stopped and resumed in the same run dir: `wallMs` minus the gaps between its launched segments, and how many segments it had (`run.segments` lists them). Absent for a run launched once. |
 | `agentMs` | Σ agent durations |
-| `parallelism` | `agentMs / wallMs` |
-| `utilization` | ∫ (running agents) dt / (`concurrencyCap` × `wallMs`) |
+| `parallelism` | `agentMs / wallMs` (over `activeMs` when present) |
+| `utilization` | ∫ (running agents) dt / (`concurrencyCap` × `wallMs`), over `activeMs` when present |
 | `peakConcurrency` | Max number of agents running at once |
 | `criticalPathMs`, `criticalPath[]` | See below |
-| `orchestrationGapMs` | Σ of gaps on the critical path where no agent of the path runs (queueing, script time, barrier waits) |
+| `orchestrationGapMs` | Σ of gaps on the critical path where no agent of the path runs (queueing, script time, barrier waits), less the time between segments of a resumed run |
 | `barrierIdleMs` | For each `parallel` group followed by later work: Σ over members of (`max end in group` − `member end`). This is agent-slot time spent waiting at the barrier. |
 | `pipelineSavingsMs` | For barrier groups whose next stage maps items one-to-one (same `item`): `wallMs` minus the simulated wall time if every item ran its chain without the barrier, under the same cap. Reported only when item mapping is known. |
 | `queueWaitMs` | Agent call issue time to start time, when the journal records issue times (U) |
