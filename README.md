@@ -19,7 +19,6 @@
   <a href="https://coding.sh/docs/">Docs</a> ·
   <a href="https://coding.sh/docs/quickstart/">Quickstart</a> ·
   <a href="#supported-agents">Supported agents</a> ·
-  <a href="https://coding.sh/docs/compare">Compared with Langfuse, LangSmith, ccusage …</a> ·
   <a href="https://coding.sh/changelog/">Changelog</a> ·
   <a href="https://github.com/jackulau/coding.sh/discussions">Discussions</a> ·
   <a href="https://github.com/jackulau/coding.sh/issues/new/choose">Report a bug</a>
@@ -40,8 +39,7 @@ coding.sh usage --by model                  # tokens and cost by model
 coding.sh records what your agents do: prompts, tool calls, file changes, model calls, latency and
 tokens. It goes into a SQLite index on your machine. You browse it in a local viewer, query it from
 the CLI or from your agents over MCP, turn failures into evals, and compare changes with paired
-statistics. It covers the same ground as LangSmith or Braintrust, but capture, storage and the
-viewer stay on your machine unless you add a remote sink.
+statistics. Capture, storage and the viewer stay on your machine unless you add a remote sink.
 
 MIT licensed, no runtime dependencies, Node 22.15 or newer.
 
