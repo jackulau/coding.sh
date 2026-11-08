@@ -13,6 +13,10 @@ coding.sh usage --since 7d --by day
 ```
 
 Each row shows sessions, turns, total and output tokens, tokens per turn and the cache-read share.
+`TURNS` counts user turns: the turns of top-level sessions, since a subagent's prompt comes from its
+parent's turn. `TOK/TURN` is input, output and cache-write tokens per user turn, subagents' tokens
+included. It leaves cache reads out: every model call re-reads the whole context, so cache reads grow
+with the number of calls rather than the work done (`CACHE READ` shows their share).
 A `COST` column appears when at least one session in the window has a cost: `~` marks a cost that
 includes an estimate, and `≥` marks a lower bound: some sessions in the row have tokens but no
 cost, and the figure counts only the priced ones. A row with no priced session shows `-`. Below

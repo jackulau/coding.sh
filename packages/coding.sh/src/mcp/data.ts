@@ -587,6 +587,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   const { sessions, truncated } = await collectSessions(index, { ...q, topLevel: false });
   interface Acc {
     sessions: number;
+    /** User turns: the turns of top-level sessions (a subagent's prompt comes from its parent's turn). */
     turns: number;
     inputTokens: number;
     outputTokens: number;
@@ -617,7 +618,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   const add = (a: Acc, s: Session) => {
     const u = s.stats.usage ?? {};
     a.sessions++;
-    a.turns += s.stats.turns ?? 0;
+    if (!s.parent) a.turns += s.stats.turns ?? 0;
     a.inputTokens += u.inputTokens ?? 0;
     a.outputTokens += u.outputTokens ?? 0;
     a.cacheReadTokens += u.cacheReadTokens ?? 0;
@@ -654,6 +655,10 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   // cost is unknown, not $0. Partial coverage is flagged as a lower bound.
   // tokensPerTurn and cacheReadShare (cache reads / all prompt tokens) compare
   // harnesses at a fixed model: same work, fewer tokens or more cache hits.
+  // tokensPerTurn is input + output + cache-write tokens (subagents' included)
+  // per user turn. Cache reads are left out: every model call re-reads the
+  // whole context, so they grow with the number of calls, not with the work,
+  // and would make one long turn read as millions of tokens.
   const fix = ({ priced, unpriced, costUsd, estimatedCostUsd, estimatedCostByTier, duplicateFetches, duplicateFetchTokens, cacheBreaks, cacheBreakTokens, cacheBreakUsd, ...a }: Acc) => {
     const tiers = Object.entries(estimatedCostByTier).sort((x, y) => y[1] - x[1]);
     const totalTokens = a.inputTokens + a.outputTokens + a.cacheReadTokens + a.cacheWriteTokens;
@@ -665,7 +670,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
       ...(priced && tiers.length ? { estimatedCostByTier: Object.fromEntries(tiers.map(([k, v]) => [k, round4(v)])) } : {}),
       ...(priced && unpriced ? { costPartial: true, unpricedSessions: unpriced } : {}),
       totalTokens,
-      ...(a.turns ? { tokensPerTurn: Math.round(totalTokens / a.turns) } : {}),
+      ...(a.turns ? { tokensPerTurn: Math.round((totalTokens - a.cacheReadTokens) / a.turns) } : {}),
       ...(prompt ? { cacheReadShare: Math.round((a.cacheReadTokens / prompt) * 1000) / 1000 } : {}),
       ...(duplicateFetches ? { duplicateFetches, duplicateFetchTokens } : {}),
       ...(cacheBreaks ? { cacheBreaks, cacheBreakTokens, ...(cacheBreakUsd > 0 ? { cacheBreakUsd: round4(cacheBreakUsd) } : {}) } : {}),

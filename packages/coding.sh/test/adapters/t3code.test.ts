@@ -322,14 +322,17 @@ describe("host attribution", () => {
 
   it("usage groups by agent and model with tokens per turn and cache share", async () => {
     const index = new MemoryIndexStore();
-    const mk = (id: string, agent: string, turns: number, u: { inputTokens: number; outputTokens: number; cacheReadTokens: number }) =>
-      index.upsertSession({ id, agent, model: "gpt-5.5", startedAt: Date.now() - 1000, stats: { events: 1, turns, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: u }, flags: [] });
+    const mk = (id: string, agent: string, turns: number, u: { inputTokens: number; outputTokens: number; cacheReadTokens: number }, parent?: string) =>
+      index.upsertSession({ id, agent, model: "gpt-5.5", startedAt: Date.now() - 1000, stats: { events: 1, turns, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: u }, flags: [], ...(parent ? { parent: { sessionId: parent } } : {}) });
     await mk("a", "t3code", 2, { inputTokens: 100, outputTokens: 100, cacheReadTokens: 800 });
     await mk("b", "codex", 4, { inputTokens: 400, outputTokens: 200, cacheReadTokens: 400 });
+    // A subagent of b: its tokens count, its prompt is not a user turn.
+    await mk("b:sub:1", "codex", 1, { inputTokens: 200, outputTokens: 0, cacheReadTokens: 4000 }, "b");
     const r = (await usage(index, { topLevel: false, since: 0 }, "agent-model", 10)) as { groups: { key: string; turns: number; tokensPerTurn: number; cacheReadShare: number }[] };
     const g = Object.fromEntries(r.groups.map((x) => [x.key, x]));
-    assert.deepEqual([g["t3code gpt-5.5"]!.turns, g["t3code gpt-5.5"]!.tokensPerTurn, g["t3code gpt-5.5"]!.cacheReadShare], [2, 500, 0.889]);
-    assert.deepEqual([g["codex gpt-5.5"]!.turns, g["codex gpt-5.5"]!.tokensPerTurn, g["codex gpt-5.5"]!.cacheReadShare], [4, 250, 0.5]);
+    // Tokens per user turn leave cache reads out: (100 + 100) / 2, (400 + 200 + 200) / 4.
+    assert.deepEqual([g["t3code gpt-5.5"]!.turns, g["t3code gpt-5.5"]!.tokensPerTurn, g["t3code gpt-5.5"]!.cacheReadShare], [2, 100, 0.889]);
+    assert.deepEqual([g["codex gpt-5.5"]!.turns, g["codex gpt-5.5"]!.tokensPerTurn, g["codex gpt-5.5"]!.cacheReadShare], [4, 200, 0.88]);
   });
 });
 
