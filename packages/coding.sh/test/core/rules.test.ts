@@ -31,6 +31,9 @@ describe("extractDirectives", () => {
     assert.deepEqual(one("Run `pnpm` for installs").tokens, [{ kind: "command", value: "pnpm" }], "a lone word after run is a command");
     assert.deepEqual(one("Prefer `parseFoo` over regex").tokens, [{ kind: "identifier", value: "parseFoo" }]);
     assert.equal(one("Don't import `lodash`").polarity, "forbid");
+    assert.equal(one("Run `npm test` before you say you are done, and never claim a fix works without running it.").polarity, "require", "the clause with the token decides");
+    assert.equal(one("If the build fails, don't run `git push`").polarity, "forbid");
+    assert.equal(one("`rm -rf` must never run outside tmp/").polarity, "forbid", "a line that opens with its token is read whole");
     assert.equal(one("You MUST call `flushAll` when done").conditional, true);
   });
 

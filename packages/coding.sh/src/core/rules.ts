@@ -109,12 +109,17 @@ export function extractDirectives(text: string, path: string): Directive[] {
     }
     if (!tokens.length) continue;
     const norm = normalize(line);
+    // The clause before the first token decides: "Run `npm test` …, and never claim …" asks for npm test.
+    // A line that opens with its token ("`rm -rf` must never run") is read whole.
+    const tick = line.indexOf("`");
+    const lead = tick >= 0 ? line.slice(0, tick) : line;
+    const polarity = FORBID.test(/[A-Za-z]/.test(lead) ? lead : line) ? "forbid" : "require";
     out.push({
       id: sha256Hex(`${path}\n${norm}`).slice(0, 12),
       path,
       line: i + 1,
       text: norm,
-      polarity: FORBID.test(line) ? "forbid" : "require",
+      polarity,
       conditional: CONDITIONAL.test(line),
       tokens,
       ...(scope ? { scope } : {}),
