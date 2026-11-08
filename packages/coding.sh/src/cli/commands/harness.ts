@@ -1,7 +1,8 @@
 // coding.sh harness snapshot|list|audit
 import { statSync } from "node:fs";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { getAdapter } from "../../adapters/index.ts";
+import { agentFileProblems } from "../../core/agent-files.ts";
 import { bundleFromDir, bundleFromToml, DEFAULT_INCLUDE } from "../../runner/bundle.ts";
 import { claudeDirOf, isPluginPath } from "../../runner/plugins.ts";
 import type { HarnessBundle } from "../../core/types.ts";
@@ -37,16 +38,22 @@ async function audit(c: CommandContext): Promise<number> {
   const sinceFlag = str(c.flags.since) ?? "30d";
   const since = parseSince(sinceFlag);
   const limit = positiveInt(c.flags.limit, "limit") ?? 40;
-  const { memoryAudit } = await import("../../core/memory-files.ts");
+  const { memoryAudit, memoryDirs } = await import("../../core/memory-files.ts");
+  // Subagent files Claude Code misreads: the user's and this project's.
+  const agentFiles = !agent || agent === "claude-code" ? agentFileProblems([join(memoryDirs(c.env).claudeDir, "agents"), join(c.cwd, ".claude", "agents")]) : [];
   return withContext(c, async (ctx) => {
     await autoIngest(ctx);
     const a = await memoryAudit(ctx.index, { since, env: c.env, ...(agent ? { agent } : {}) });
     if (out.json) {
-      out.data(a);
+      out.data(agentFiles.length ? { ...a, agentFiles } : a);
       return 0;
     }
     const t = a.totals;
     out.note(`${plural(a.sessions, "session")} since ${sinceFlag}${agent ? ` (${agent})` : ""} · ${plural(t.files, "memory or instruction file")}${t.bytes ? ` · ${bytes(t.bytes)}` : ""}`);
+    if (agentFiles.length) {
+      out.row("Agents", `${plural(agentFiles.length, "subagent file")} ${agentFiles.length === 1 ? "gives" : "give"} \`tools:\` as a map; Claude Code reads a list of tool names, so ${agentFiles.length === 1 ? "that subagent gets" : "those subagents get"} no tools`, "warn");
+      for (const f of agentFiles) out.note(`${f.path}: ${f.fix ? `use \`${f.fix}\`` : "drop the `tools:` map"}`);
+    }
     if (!a.files.length) {
       out.note("No memory or instruction files found on disk or in these sessions");
       return 0;

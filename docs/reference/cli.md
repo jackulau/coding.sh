@@ -2192,7 +2192,7 @@ coding.sh harness <action>
 |---|---|
 | [`snapshot`](#codingsh-harness-snapshot) | Snapshot an agent's harness files into a bundle |
 | [`list`](#codingsh-harness-list) | List harness bundles |
-| [`audit`](#codingsh-harness-audit) | Count the sessions that loaded, read and wrote each memory, CLAUDE.md, AGENTS.md, rule and skill file |
+| [`audit`](#codingsh-harness-audit) | Count the sessions that loaded, read and wrote each memory, CLAUDE.md, AGENTS.md, rule and skill file; warn about subagent files Claude Code misreads |
 
 - A harness TOML can carry Claude Code plugins too: plugins = ["caveman", "./plugins/mine"], with a directory relative to the TOML file.
 - A plugin is looked up read-only in plugins/installed_plugins.json under $CLAUDE_CONFIG_DIR (default ~/.claude), or read from a directory with .claude-plugin/plugin.json. Its whole directory is stored in the bundle. A run writes it under the run's own home and starts Claude Code with --plugin-dir; your Claude config is not touched.
@@ -2231,7 +2231,7 @@ coding.sh harness list
 
 ### `coding.sh harness audit`
 
-Count the sessions that loaded, read and wrote each memory, CLAUDE.md, AGENTS.md, rule and skill file.
+Count the sessions that loaded, read and wrote each memory, CLAUDE.md, AGENTS.md, rule and skill file; warn about subagent files Claude Code misreads.
 
 ```text
 coding.sh harness audit [options]

@@ -1232,7 +1232,7 @@ export const COMMANDS: CommandSpec[] = [
       { name: "list", summary: "List harness bundles" },
       {
         name: "audit",
-        summary: "Count the sessions that loaded, read and wrote each memory, CLAUDE.md, AGENTS.md, rule and skill file",
+        summary: "Count the sessions that loaded, read and wrote each memory, CLAUDE.md, AGENTS.md, rule and skill file; warn about subagent files Claude Code misreads",
         flags: [
           { name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Only this agent's sessions and files" },
           { ...SINCE, default: "30d" },

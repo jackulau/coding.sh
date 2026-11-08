@@ -303,6 +303,14 @@ command instead, `coding.sh refine run --suite <name> --target CLAUDE.md --objec
 repo's costliest instruction file, cut while the suite's pass rate holds. With no suite of repo
 tasks in `evals/`, its note says to build one first (the `eval_init` tool).
 
+The audit also reads Claude Code's subagent files, in `~/.claude/agents/` (or `CLAUDE_CONFIG_DIR`)
+and the current project's `.claude/agents/`. It warns about each one whose `tools:` frontmatter is a
+map such as `edit: false`, the form OpenCode uses. Claude Code reads `tools:` as a list of tool
+names, so such a subagent gets no tools, and its model writes tool calls out as text instead (the
+`text-tool-call` flag). The warning gives the line to use instead, such as
+`disallowedTools: Edit, Write`; `--json` lists these files under `agentFiles`. `--agent` set to an
+agent other than `claude-code` skips this check.
+
 ## Viewer
 
 `coding.sh ui` serves the viewer on 127.0.0.1 and opens it in your browser. It needs the
