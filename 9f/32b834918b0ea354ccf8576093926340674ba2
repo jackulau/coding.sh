@@ -1,0 +1,21 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_74fb86f688001d 25-35
+  s_8e040dbdf13565::t_b3ba6db5b9ea76 78
+  s_8e040dbdf13565::t_53d7921cbe4591 19
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9f32b834918b0ea354ccf8576093926340674ba2",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
