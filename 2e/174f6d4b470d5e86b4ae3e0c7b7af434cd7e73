@@ -1,0 +1,42 @@
+deploy/compose/compose.postgres.yml
+  s_8e040dbdf13565::t_94b0518a031031 1-20,22-49
+  s_8e040dbdf13565::t_b11ab78d9ff99e 21
+deploy/compose/.env.example
+  s_8e040dbdf13565::t_b11ab78d9ff99e 12-13,16-18
+  s_8e040dbdf13565::t_58629366081c4d 1-11,14-15,19-28
+deploy/test/smoke.mjs
+  s_8e040dbdf13565::t_a33e7dda894832 102-107
+  s_8e040dbdf13565::t_1d485baeba5db3 1-101,108-179
+deploy/test/deploy.test.mjs
+  s_8e040dbdf13565::t_8ac0c5a7077a8c 128-129,131-166
+  s_8e040dbdf13565::t_64a5b0c40e5e1a 73-74
+  s_8e040dbdf13565::t_ff611341ee7f0f 130
+  s_8e040dbdf13565::t_dafb9d445dae56 167-169
+deploy/compose/compose.clickhouse.yml
+  s_8e040dbdf13565::t_3b59b2e8f1ba58 1-21,23-52
+  s_8e040dbdf13565::t_b11ab78d9ff99e 22
+Dockerfile
+  s_8e040dbdf13565::t_91f080b409f85f 2,4-8,13-16,38-44,47-48
+deploy/compose/compose.yml
+  s_8e040dbdf13565::t_b11ab78d9ff99e 24
+  s_8e040dbdf13565::t_c0b7b3f28045e0 1-23,25-33
+.github/workflows/ci.yml
+  s_8e040dbdf13565::t_b402238e4a702a 131-152,156-184
+  s_8e040dbdf13565::t_af7a5362353b29 153-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2e174f6d4b470d5e86b4ae3e0c7b7af434cd7e73",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
