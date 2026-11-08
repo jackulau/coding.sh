@@ -5,6 +5,7 @@
 // with its cause.
 import type { BlobStore, IndexStore } from "../core/types.ts";
 import type { AgentEvent } from "../schema/index.ts";
+import { getMessages, isStoredMessages } from "./blocks.ts";
 import { type Api, parseRequest, type RequestInfo } from "./wire.ts";
 
 /** The request document stored in the requestRef blob. */
@@ -119,13 +120,21 @@ async function blobJson(blobs: BlobStore, ref: unknown): Promise<unknown> {
   }
 }
 
-/** Replaces `{ "$blob": sha }` fields of the stored body with the blob's JSON. */
-async function inline(blobs: BlobStore, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+/**
+ * Replaces `{ "$blob": sha }` fields of the stored body with the blob's JSON
+ * and, in a format 2 document, the paged messages with the messages. Undefined
+ * when a message block is gone.
+ */
+async function inline(blobs: BlobStore, body: Record<string, unknown>, v: unknown): Promise<Record<string, unknown> | undefined> {
   const out = { ...body };
-  for (const [k, v] of Object.entries(out)) {
-    if (isObj(v) && typeof v.$blob === "string" && Object.keys(v).length === 1) {
-      const val = await blobJson(blobs, v.$blob);
+  for (const [k, x] of Object.entries(out)) {
+    if (isObj(x) && typeof x.$blob === "string" && Object.keys(x).length === 1) {
+      const val = await blobJson(blobs, x.$blob);
       if (val !== undefined) out[k] = val;
+    } else if (v === 2 && isStoredMessages(x)) {
+      const msgs = await getMessages(blobs, x);
+      if (!msgs) return undefined;
+      out[k] = msgs;
     }
   }
   return out;
@@ -135,8 +144,8 @@ async function inline(blobs: BlobStore, body: Record<string, unknown>): Promise<
 export async function loadCall(blobs: BlobStore, event: AgentEvent): Promise<LoadedCall> {
   const out: LoadedCall = { event };
   const req = await blobJson(blobs, event.payload.requestRef);
-  if (isObj(req) && isObj(req.body)) {
-    const body = await inline(blobs, req.body);
+  const body = isObj(req) && isObj(req.body) ? await inline(blobs, req.body, req.v) : undefined;
+  if (isObj(req) && body) {
     out.request = {
       provider: String(req.provider ?? event.payload.provider ?? ""),
       api: String(req.api ?? event.payload.api ?? "other") as Api,

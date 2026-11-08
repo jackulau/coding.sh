@@ -115,7 +115,11 @@ describe("proxy: Anthropic Messages streaming", () => {
     const req = JSON.parse((await t.blobs.getText(p.requestRef as string))!);
     assert.deepEqual(req.body.system, { $blob: p.systemRef });
     assert.deepEqual(req.body.tools, { $blob: p.toolsRef });
-    assert.equal(req.body.messages[0].content[0].text, "fix the failing test");
+    // Messages are in blocks (format 2); this short one stays inline in the tail.
+    assert.equal(req.v, 2);
+    assert.deepEqual(req.body.messages.$blocks, []);
+    assert.equal(req.body.messages.$tail[0].content[0].text, "fix the failing test");
+    assert.equal(p.requestPaged, true);
     assert.equal(req.headers["x-claude-code-session-id"], SESSION);
     const sys = JSON.parse((await t.blobs.getText(p.systemRef as string))!);
     assert.equal(sys[0].text, "You are a careful coding agent.");

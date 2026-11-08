@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after } from "node:test";
-import { runBlobStoreConformance, runIndexStoreConformance } from "../../src/store/conformance.ts";
+import { runBlobStoreConformance, runIndexStoreConformance, runProxyCallConformance } from "../../src/store/conformance.ts";
 import { FsBlobStore } from "../../src/store/fs-blobs.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
@@ -16,3 +16,7 @@ runIndexStoreConformance("sqlite :memory:", () => SqliteIndexStore.open(":memory
 runIndexStoreConformance("sqlite file", () => SqliteIndexStore.open(join(root, `idx-${n++}.db`)));
 runBlobStoreConformance("memory", async () => new MemoryBlobStore());
 runBlobStoreConformance("fs", async () => new FsBlobStore(join(root, `blobs-${n++}`)));
+runProxyCallConformance("sqlite file, fs blobs", async () => {
+  const index = await SqliteIndexStore.open(join(root, `idx-${n++}.db`));
+  return { index, close: () => index.close() };
+});

@@ -6,11 +6,21 @@
 //
 // Each test gets a fresh store from `make` and closes it afterwards.
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import type { BlobStore, EvalTask, HarnessBundle, IndexStore, Label, RunResult } from "../core/types.ts";
+import { defaultConfig } from "../core/config.ts";
+import { gc } from "../core/gc.ts";
 import { sha256Hex } from "../core/ids.ts";
+import { pricesFor } from "../core/pricing.ts";
+import { createRedactor } from "../core/redact.ts";
+import { loadCall } from "../proxy/calls.ts";
+import { type CapturedCall, createRecorder, storeWriter } from "../proxy/record.ts";
 import { SNIPPET_CLOSE, SNIPPET_OPEN } from "./common.ts";
+import { FsBlobStore } from "./fs-blobs.ts";
 
 let seq = 0;
 const REF = (s: string) => sha256Hex(s);
@@ -726,5 +736,96 @@ export function runBlobStoreConformance(name: string, make: () => Promise<BlobSt
       await b.flush();
       assert.equal(await s.getText(later), "after the flush");
     }));
+  });
+}
+
+/**
+ * A proxied model call stored and read back through a backend: the request's
+ * messages go to content-addressed blocks (proxy/blocks.ts), each call reads
+ * back exactly as recorded (redacted), and gc keeps the blocks while a call
+ * needs them and sweeps them once the session is deleted. `make` returns a fresh
+ * index, the (empty) blob store that goes with it or none for a temporary fs
+ * blob store, and `close` for both.
+ */
+export function runProxyCallConformance(name: string, make: () => Promise<{ index: IndexStore; blobs?: BlobStore; close: () => Promise<void> }>): void {
+  const SESSION = "5b0c1f2e-3a4d-4e5f-8a9b-0c1d2e3f4a5c";
+  const SECRET = "sk-ant-api03-CONFORMCONFORMCONFORMCONFORM-abcdefAA";
+  const message = (i: number): Record<string, unknown> =>
+    i === 0
+      ? { role: "user", content: [{ type: "text", text: "fix the failing test" }] }
+      : i % 2
+        ? { role: "assistant", content: [{ type: "tool_use", id: `toolu_${i}`, name: "Bash", input: { command: `npm test -- case${i}` } }] }
+        : { role: "user", content: [{ type: "tool_result", tool_use_id: `toolu_${i - 1}`, content: `${"ok ".repeat(40 + (i % 5) * 400)}line ${i}${i === 4 ? ` token=${SECRET}` : ""}` }] };
+  const body = (n: number) => ({ model: "claude-sonnet-4-5", max_tokens: 1000, system: [{ type: "text", text: "You are Claude Code." }], tools: [{ name: "Bash", input_schema: { type: "object" } }], messages: Array.from({ length: 2 * n + 1 }, (_, i) => message(i)), stream: true });
+  const call = (n: number): CapturedCall => {
+    const b = Buffer.from(JSON.stringify(body(n)));
+    return {
+      route: { provider: "anthropic", api: "messages" },
+      method: "POST",
+      path: "/v1/messages",
+      upstream: "https://api.anthropic.com",
+      reqHeaders: { "user-agent": "claude-cli/2.1.319 (external, cli)", "x-claude-code-session-id": SESSION },
+      reqBody: b,
+      reqBytes: b.length,
+      status: 200,
+      resHeaders: { "content-type": "application/json" },
+      result: { id: `msg_${n}`, body: { id: `msg_${n}`, content: [{ type: "text", text: "ok" }] } },
+      resBytes: 50,
+      stream: false,
+      startedAt: 1_700_000_000_000 + n * 1000,
+      endedAt: 1_700_000_000_500 + n * 1000,
+    } as unknown as CapturedCall;
+  };
+
+  describe(`proxy call storage: ${name}`, () => {
+    it("stores messages in blocks, reads every call back exactly, and gc keeps then sweeps the blocks", async () => {
+      const made = await make();
+      const { index, close } = made;
+      const home = mkdtempSync(join(tmpdir(), "csh-proxy-conf-"));
+      const blobs = made.blobs ?? new FsBlobStore(join(home, "blobs"));
+      try {
+        const env = { HOME: home, CODING_SH_HOME: join(home, ".coding.sh") };
+        const config = defaultConfig(env);
+        const redactor = createRedactor({ redact: config.capture.redact, patterns: [], env: {} });
+        const rec = createRecorder({ blobs, redactor, metadata: false, prices: pricesFor({}), write: storeWriter(index) });
+        const CALLS = 40;
+        for (let n = 0; n < CALLS; n++) {
+          rec.record(call(n));
+          await rec.flush();
+        }
+        const events = (await index.listEvents(SESSION, { kinds: ["llm.call"] })).sort((a, b) => a.ts - b.ts);
+        assert.equal(events.length, CALLS);
+        assert.ok(events.every((e) => e.payload.requestPaged === true && typeof e.payload.requestRef === "string"));
+        const doc = JSON.parse((await blobs.getText(events.at(-1)!.payload.requestRef as string))!) as { v: number; body: { messages: { $blocks: string[] } } };
+        assert.equal(doc.v, 2);
+        assert.ok(doc.body.messages.$blocks.length > 0, "the oldest messages are in blocks");
+        const check = async () => {
+          for (const n of [0, 1, 17, CALLS - 1]) {
+            const l = await loadCall(blobs, events[n]!);
+            assert.equal(JSON.stringify(l.request?.body), JSON.stringify(redactor.value(body(n))), `call ${n} reads back exactly`);
+          }
+        };
+        await check();
+        assert.ok(!JSON.stringify((await loadCall(blobs, events.at(-1)!)).request?.body).includes(SECRET), "redacted before it was stored");
+
+        // Two days on, nothing a stored call needs is swept.
+        const now = Date.now() + 2 * 86_400_000;
+        const opts = { index, blobs, config, env, now, judgeCacheDir: false as const, lock: false as const, spoolDir: join(home, "spool") };
+        assert.equal((await gc(opts)).blobs.deleted, 0);
+        await check();
+
+        if (index.deleteBefore) {
+          await index.deleteBefore(now);
+          const swept = await gc(opts);
+          assert.ok(swept.blobs.deleted > CALLS, `the session's blocks went with it (${swept.blobs.deleted} blobs)`);
+          const left: string[] = [];
+          for await (const r of blobs.list()) left.push(r);
+          assert.deepEqual(left, []);
+        }
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+        await close();
+      }
+    });
   });
 }

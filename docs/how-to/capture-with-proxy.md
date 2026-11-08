@@ -200,7 +200,8 @@ needs no key and prints the number of calls and an estimated cost (input priced 
 In capture mode `full` (the default), each call stores:
 
 - the request body after redaction, with the system prompt and tool definitions as blobs of their own,
-  so repeated ones are stored once;
+  so repeated ones are stored once, and its messages in blocks shared with the session's earlier
+  calls;
 - the response body after redaction (for a stream, the message rebuilt from its events);
 - an allowlist of request headers (`anthropic-version`, `anthropic-beta`, `user-agent`, session ids)
   and response headers (`request-id`, rate limit headers, `retry-after`);
@@ -216,7 +217,14 @@ only the event is kept: hashes, counts, tool names, usage and timings, with no p
 text. `show` and `diff-calls` then compare hashes only, and `exp replay` has nothing to send. See
 [Privacy](../guides/privacy.md).
 
-Every turn sends the whole conversation again, so a long session stores its messages once per call.
+Every turn sends the whole conversation again. The proxy puts the messages in content-addressed
+blocks of 16 at fixed positions, so a call shares the blocks of the messages it has in common with
+earlier calls, and only its newest messages (at most 19) are stored with the call itself. `show`,
+`diff-calls` and `exp replay` read the body back exactly as it was sent, after redaction. On a
+synthetic session of 500 calls (up to 231 KiB per request), the requests took 828 KiB instead of
+4,116 KiB, and reading one back took 10 ms instead of 3 ms at the median (`node
+scripts/perf/proxy-storage.mjs --synthetic`). Calls an earlier build stored with the whole body
+still read. `coding.sh gc` keeps a block while any stored call uses it.
 
 ## For a team
 

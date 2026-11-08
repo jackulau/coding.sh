@@ -208,6 +208,29 @@ const OTHER_TABLES: { table: string; key: string; json: string[]; text: string[]
 const instrAny = (cols: string[], needles: readonly string[]): string => cols.flatMap((c) => needles.map(() => `instr(${c}, ?) > 0`)).join(" OR ");
 const params = (cols: string[], needles: readonly string[]): string[] => cols.flatMap(() => [...needles]);
 
+/** Rewrites blobs holding a repointed ref until none does (at most a few levels: message → page → document). */
+async function repointNested(blobs: BlobStore, refs: readonly string[], repoint: Map<string, string>, oldRefs: string[]): Promise<void> {
+  let frontier = new Map(repoint);
+  for (let level = 0; frontier.size && level < 8; level++) {
+    const next = new Map<string, string>();
+    for (const ref of refs) {
+      const cur = repoint.get(ref) ?? ref;
+      const text = await blobs.getText(cur).catch(() => undefined);
+      if (text === undefined || ![...frontier.keys()].some((f) => text.includes(f))) continue;
+      let t = text;
+      for (const [from, to] of frontier) t = t.replaceAll(from, to);
+      const fresh = await blobs.put(t);
+      if (fresh === cur) continue;
+      if (cur !== ref) oldRefs.push(cur);
+      else oldRefs.push(ref);
+      repoint.set(ref, fresh);
+      next.set(cur, fresh);
+      if (cur !== ref) next.set(ref, fresh);
+    }
+    frontier = next;
+  }
+}
+
 export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
   for (const l of o.literals) if (l.length < MIN_LITERAL_LENGTH) throw new Error(`a literal is shorter than ${MIN_LITERAL_LENGTH} characters; it would rewrite ordinary text`);
   const scrub = new Scrubber(o.literals);
@@ -234,6 +257,9 @@ export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
       const next = await o.blobs.put(clean);
       if (next !== ref) repoint.set(ref, next), oldRefs.push(ref);
     }
+    // Blobs that point at a rewritten blob (a proxied request's message pages
+    // and document, proxy/blocks.ts) are rewritten to its new ref, level by level.
+    if (!dry) await repointNested(o.blobs, refs, repoint, oldRefs);
 
     const run = () => {
       // External-content FTS: a row's old text must be deleted before the row changes, the new text indexed after.

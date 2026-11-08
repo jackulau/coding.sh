@@ -4,7 +4,8 @@
 //
 // What is stored (capture.mode "full"): the request body, redacted, with its
 // system prompt and tool definitions in blobs of their own (shared by every call
-// that sends the same ones), the rebuilt response, an allowlist of headers
+// that sends the same ones) and its messages as content-addressed blocks
+// (blocks.ts: shared with the calls before it), the rebuilt response, an allowlist of headers
 // (never Authorization, x-api-key, cookies or account ids), timings, usage and
 // rate-limit numbers. In "metadata" mode: no content at all, only counts, names,
 // timings, usage and short hashes of the system prompt and tools.
@@ -17,6 +18,7 @@ import { type Redactor, toMetadata } from "../core/redact.ts";
 import { buildSession } from "../core/sessions.ts";
 import type { BlobStore, IndexStore } from "../core/types.ts";
 import { type AgentEvent, SCHEMA_VERSION } from "../schema/index.ts";
+import { messagesKey, putMessages, RecentBlobs } from "./blocks.ts";
 import { type Client, detectClient, type Headers, linkCall, ResponseSessions } from "./link.ts";
 import { type CallResult, compacted, parseRequest, type RequestInfo, type Route } from "./wire.ts";
 
@@ -59,6 +61,8 @@ export interface RecorderOptions {
   write: (events: AgentEvent[]) => Promise<void>;
   /** Set on every event (serve). */
   project?: string;
+  /** false: store each request body whole (format 1) instead of in message blocks; for benchmarks. */
+  blocks?: boolean;
   onError?: (err: Error) => void;
   /** Called with each event after it is written. */
   onEvent?: (e: AgentEvent) => void;
@@ -149,6 +153,8 @@ interface Content {
   toolsSha?: string;
   requestRef?: string;
   responseRef?: string;
+  /** The request's messages went to blocks (format 2). */
+  paged?: boolean;
 }
 
 /** Field of the request body that holds the system prompt, per API (chat keeps it in messages). */
@@ -156,10 +162,11 @@ const systemField = (api: string): string | undefined => (api === "messages" || 
 
 /**
  * The stored form of a request: its body with the system prompt and tools
- * replaced by `{ "$blob": ref }` when they went to blobs of their own.
- * core of `loadRequest` (calls.ts), which puts them back.
+ * replaced by `{ "$blob": ref }` when they went to blobs of their own, and its
+ * messages by pages of message blocks (blocks.ts). `loadCall` (calls.ts) puts
+ * them back.
  */
-async function storeContent(call: CapturedCall, body: unknown, info: RequestInfo | undefined, o: RecorderOptions): Promise<Content> {
+async function storeContent(call: CapturedCall, body: unknown, info: RequestInfo | undefined, o: RecorderOptions, recent: RecentBlobs): Promise<Content> {
   const red = o.redactor;
   const out: Content = {};
   const sysField = systemField(call.route.api);
@@ -175,7 +182,12 @@ async function storeContent(call: CapturedCall, body: unknown, info: RequestInfo
     const stored: Record<string, unknown> = { ...(red.value(body) as Record<string, unknown>) };
     if (sysText && sysField && stored[sysField] !== undefined) stored[sysField] = { $blob: out.systemSha };
     if (toolsText && stored.tools !== undefined) stored.tools = { $blob: out.toolsSha };
-    const doc = { v: 1, provider: call.route.provider, api: call.route.api, method: call.method, path: call.path.split("?")[0], headers: pick(call.reqHeaders, REQUEST_HEADERS), body: stored };
+    const key = o.blocks === false ? undefined : messagesKey(call.route.api, stored);
+    if (key) {
+      stored[key] = await putMessages(o.blobs, stored[key] as unknown[], recent);
+      out.paged = true;
+    }
+    const doc = { v: key ? 2 : 1, provider: call.route.provider, api: call.route.api, method: call.method, path: call.path.split("?")[0], headers: pick(call.reqHeaders, REQUEST_HEADERS), body: stored };
     out.requestRef = await o.blobs.put(JSON.stringify(doc));
   }
   if (call.result?.body !== undefined || call.status !== undefined) {
@@ -249,6 +261,7 @@ export function buildPayload(call: CapturedCall, info: RequestInfo | undefined, 
   p.responseBytes = call.resBytes;
   if (call.reqBody === undefined && call.reqBytes > 0) p.requestTruncated = true;
   if (content.requestRef) p.requestRef = content.requestRef;
+  if (content.requestRef && content.paged) p.requestPaged = true;
   if (content.responseRef) p.responseRef = content.responseRef;
   if (content.systemSha && content.requestRef && systemField(call.route.api)) p.systemRef = content.systemSha;
   if (content.toolsSha && content.requestRef) p.toolsRef = content.toolsSha;
@@ -272,6 +285,7 @@ export function storeWriter(store: IndexStore): (events: AgentEvent[]) => Promis
 
 export function createRecorder(o: RecorderOptions): Recorder {
   const responses = new ResponseSessions();
+  const recent = new RecentBlobs();
   const pending: AgentEvent[] = [];
   const building = new Set<Promise<void>>();
   let draining: Promise<void> | undefined;
@@ -313,7 +327,7 @@ export function createRecorder(o: RecorderOptions): Recorder {
     const body = parseJson(call.reqBody);
     const info = body !== undefined ? parseRequest(call.route.api, body) : undefined;
     const client = detectClient(call.reqHeaders);
-    const content = await storeContent(call, body, info, o);
+    const content = await storeContent(call, body, info, o, recent);
     const link = linkCall(call.reqHeaders, client, info, content.systemSha ? shortHash(content.systemSha) : undefined, responses);
     if (call.route.api === "responses") responses.set(call.result?.id, link.sessionId);
     const payload = buildPayload(call, info, client, content, link.linkedBy);

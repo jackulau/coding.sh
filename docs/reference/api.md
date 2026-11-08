@@ -499,7 +499,9 @@ characters each), `toolNames`, `toolCount`, `messageCount`, `prompt` (the last u
 clipped), `linkedBy` (`header`, `metadata`, `previous-response` or `conversation`: how the call
 found its session), rate limits (`rlRequestsRemaining`, `rlTokensRemaining`, … when the API sent
 them), `errorClass` on failure, and `requestRef` and
-`responseRef` (the stored request and response blobs, absent in `metadata` mode). When the request
+`responseRef` (the stored request and response blobs, absent in `metadata` mode), and
+`requestPaged: true` when the request's messages are stored in blocks, not inside the request blob
+(`show <session>#<n>` puts them back). When the request
 or response has them, it also adds `reasoningEffort` (`reasoning.effort`, `reasoning_effort` or
 `output_config.effort`), `serviceTier` and `speed` (the response's value, else the request's;
 `requestedServiceTier` when the request asked for another tier),

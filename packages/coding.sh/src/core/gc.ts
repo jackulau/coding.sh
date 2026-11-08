@@ -7,6 +7,10 @@
 // tasks, bundles and run artifacts are never expired. The judge verdict cache
 // is size-capped (oldest-used entries first).
 //
+// A proxied model call's request document points at its message pages and
+// message blobs (proxy/blocks.ts) rather than its event: those are marked by
+// reading the documents of the calls marked `requestPaged`.
+//
 // Safety: blobs younger than `minBlobAgeMs` are never swept, so an ingest that
 // has stored a blob but not yet committed the event referencing it is safe.
 // Dedupe hits refresh a blob's mtime (FsBlobStore), extending the same guard.
@@ -24,6 +28,7 @@ import type { BlobRef } from "../schema/index.ts";
 import type { BlobStore, Config, IndexStore } from "./types.ts";
 import { paths } from "./paths.ts";
 import { bundleBlobs, runBlobs, taskBlobs } from "../store/common.ts";
+import { requestBlobRefs } from "../proxy/blocks.ts";
 import { gcJudgeCache, type JudgeCacheGcResult } from "../judge/cache.ts";
 import { sinkCursorKey } from "./ingest.ts";
 import { acquireLock, type Lock, type LockOptions } from "./lock.ts";
@@ -145,11 +150,12 @@ async function sweepBlobs(opts: GcOptions, result: GcResult, now: number, minAge
   const referenced = new Set<BlobRef>();
   for await (const ref of index.referencedBlobs()) referenced.add(ref);
   const days = config.retention.toolOutputDays;
-  if (days > 0) {
-    for (const ref of await expiredToolOutput(index, now - days * DAY)) {
-      if (referenced.delete(ref)) result.blobs.expired++;
-    }
+  const scan = await scanEvents(index, days > 0 ? now - days * DAY : undefined);
+  for (const ref of scan.expired) {
+    if (referenced.delete(ref)) result.blobs.expired++;
   }
+  const seenPages = new Set<BlobRef>();
+  for (const doc of scan.pagedRequests) for (const ref of await requestBlobRefs(blobs, doc, seenPages)) referenced.add(ref);
   result.blobs.referenced = referenced.size;
 
   // ---- blobs: sweep
@@ -269,28 +275,34 @@ async function sweepOrphanRaw(opts: GcOptions, result: GcResult, now: number, sp
 }
 
 /**
- * Blob refs held only by tool.end events older than `cutoff`. A ref also held
- * by a newer event, any other kind of event, a task, bundle or run is kept.
+ * One pass over the stored events. `expired`: blob refs held only by tool.end
+ * events older than `cutoff` (none without a cutoff); a ref also held by a newer
+ * event, any other kind of event, a task, bundle or run is kept.
+ * `pagedRequests`: request documents whose messages are in blocks.
  */
-async function expiredToolOutput(index: IndexStore, cutoff: number): Promise<Set<BlobRef>> {
+async function scanEvents(index: IndexStore, cutoff: number | undefined): Promise<{ expired: Set<BlobRef>; pagedRequests: Set<BlobRef> }> {
   const candidates = new Set<BlobRef>();
   const keep = new Set<BlobRef>();
+  const pagedRequests = new Set<BlobRef>();
   const PAGE = 500;
+  // Without a cutoff only model calls matter.
+  const opts = cutoff === undefined ? { kinds: ["llm.call"] } : undefined;
   for (let offset = 0; ; offset += PAGE) {
     const sessions = await index.listSessions({ limit: PAGE, offset });
     for (const s of sessions) {
-      for (const e of await index.listEvents(s.id)) {
-        if (!e.blobs?.length) continue;
+      for (const e of await index.listEvents(s.id, opts)) {
+        if (e.payload?.requestPaged === true && typeof e.payload.requestRef === "string") pagedRequests.add(e.payload.requestRef);
+        if (cutoff === undefined || !e.blobs?.length) continue;
         const target = e.kind === "tool.end" && e.ts < cutoff ? candidates : keep;
         for (const ref of e.blobs) target.add(ref);
       }
     }
     if (sessions.length < PAGE) break;
   }
-  if (!candidates.size) return candidates;
+  if (!candidates.size) return { expired: candidates, pagedRequests };
   for (const t of await index.listTasks()) for (const r of taskBlobs(t)) keep.add(r);
   for (const b of await index.listBundles()) for (const r of bundleBlobs(b)) keep.add(r);
   for (const r of await index.listRuns()) for (const ref of runBlobs(r)) keep.add(ref);
   for (const ref of keep) candidates.delete(ref);
-  return candidates;
+  return { expired: candidates, pagedRequests };
 }
