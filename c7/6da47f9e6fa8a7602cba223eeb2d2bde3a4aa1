@@ -1,0 +1,29 @@
+packages/coding.sh/src/cli/commands/exp.ts
+  s_8e040dbdf13565::t_83f8576f88153e 610-637,639-641
+  s_8e040dbdf13565::t_a1fefab4fa2500 43
+  s_8e040dbdf13565::t_526374600b2cb3 638
+  s_8e040dbdf13565::t_8137f76337a60a 934-938
+packages/coding.sh/test/cli/eval-init-run.test.ts
+  s_8e040dbdf13565::t_3995124a35f50a 213,216,220
+  s_8e040dbdf13565::t_05637e81631fc0 217-219,221-222
+docs/guides/evals.md
+  s_8e040dbdf13565::t_21e0058461239f 126-128
+CHANGELOG.md
+  s_8e040dbdf13565::t_46e2befd3e73ab 145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c76da47f9e6fa8a7602cba223eeb2d2bde3a4aa1",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
