@@ -88,6 +88,7 @@ packages/coding.sh/src/graders/index.ts
 CHANGELOG.md
   s_8e040dbdf13565::t_1f355d75d3cd60 52
   s_8e040dbdf13565::t_8dbf6e4325b284 54
+  s_8e040dbdf13565::t_768a1b67084461 53
 packages/coding.sh/test/viewer/server.test.ts
   s_8e040dbdf13565::t_8bb299a0205c3b 831-892
 packages/coding.sh/test/mcp/toolevals.test.ts
@@ -100,6 +101,8 @@ packages/coding.sh/src/mcp/tools.ts
   s_8e040dbdf13565::t_501a691dd493c1 378,380-381,387-388,408-410
   s_8e040dbdf13565::t_0b6976d86a692b 10
   s_8e040dbdf13565::t_46866911c24e52 198,200-201
+apps/site/src/pages/docs/mcp.astro
+  s_8e040dbdf13565::t_46052fb1a8637c 14
 ---
 {
   "schema_version": "authorship/3.0.0",
