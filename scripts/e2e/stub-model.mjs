@@ -148,7 +148,9 @@ export function startStub({ port = 0, decide: custom } = {}) {
         body = buf ? JSON.parse(buf) : {};
       } catch {}
       const url = req.url.split("?")[0];
-      requests.push({ method: req.method, url, model: body.model, tools: toolNames(body).length, toolResult: hasToolResult(body) });
+      // Whether the call carried a key (proxy tests check the client's own auth reaches the API), never the key itself.
+      const auth = req.headers["x-api-key"] ? "x-api-key" : req.headers.authorization ? "authorization" : undefined;
+      requests.push({ method: req.method, url, model: body.model, tools: toolNames(body).length, toolResult: hasToolResult(body), stream: body.stream === true, ...(auth ? { auth } : {}) });
       if (req.method === "GET" && /models$/.test(url)) return json(res, { object: "list", data: [{ id: MODEL, object: "model", owned_by: "stub" }] });
       if (/chat\/completions$/.test(url)) return chat(body, res, pick(body));
       if (/messages$/.test(url)) return anthropic(body, res, pick(body));

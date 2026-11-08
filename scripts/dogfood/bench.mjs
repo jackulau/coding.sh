@@ -2,15 +2,18 @@
 // Performance budgets (docs/design/dogfood.md §3.5). Every benchmark runs in a temp
 // HOME / CODING_SH_HOME, never against the live home.
 //
-//   node scripts/dogfood/bench.mjs [hook|ingest|store|help|viewer|replay]... [--baseline <dist dir>] [--json]
+//   node scripts/dogfood/bench.mjs [hook|ingest|store|help|viewer|replay|proxy]... [--baseline <dist dir>] [--json] [--check]
 //
 // `viewer` also runs `replay` (session replay through the viewer API).
+// --check exits 1 when a result misses its budget in TARGETS (CI runs it for the proxy).
 //
 // With --baseline, the hook and help benchmarks interleave the baseline build
 // with the candidate (A B A B ...) and report a bootstrap CI on the median
 // difference, so machine noise is paired.
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
+import http from "node:http";
+import net from "node:net";
 import { join, resolve } from "node:path";
 import { bootstrapMedianDiff, CLI, DIST, isolatedEnv, log, median, nearestRank, parseArgs, quantile, round, sh, shAsync, tempDir } from "./lib/util.mjs";
 
@@ -25,6 +28,8 @@ export const TARGETS = {
   // Replay of a 12k-event editing session: the step list, and the last step with its file rebuilt (both cold).
   "perf.replayIndex": { target: 1000, unit: "ms", dir: "max" },
   "perf.replayStep": { target: 300, unit: "ms", dir: "max" },
+  "perf.proxyChunk": { target: 2, unit: "ms", dir: "max" },
+  "perf.proxyTtfb": { target: 5, unit: "ms", dir: "max" },
 };
 export function meets(key, value) {
   const t = TARGETS[key];
@@ -213,6 +218,117 @@ export function benchHelp({ cli = CLI, baseline, n = 20 } = {}) {
     return out;
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------- proxy overhead
+
+/**
+ * perf.proxyChunk / perf.proxyTtfb: what `coding.sh proxy` adds to a streamed
+ * Anthropic call. A local upstream streams `chunks` SSE events `gapMs` apart; the
+ * client calls it directly and through the proxy, interleaved (A B A B ...), on
+ * keep-alive connections. Per chunk: arrival time minus the upstream's write time
+ * (one process, one clock); TTFB: request sent to first body byte. The overhead is
+ * the proxy median minus the direct median, with a paired bootstrap CI.
+ */
+export async function benchProxy({ cli = CLI, n = 60, warmup = 5, chunks = 20, gapMs = 2 } = {}) {
+  const root = tempDir("cs-bench-proxy-");
+  const writes = new Map();
+  const upstream = http.createServer((req, res) => {
+    req.resume();
+    req.on("end", async () => {
+      const id = String(req.headers["x-bench-id"]);
+      const at = [];
+      writes.set(id, at);
+      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+      const ev = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
+      ev("message_start", { message: { id: `msg_${id}`, type: "message", role: "assistant", model: "claude-sonnet-4-5", content: [], stop_reason: null, usage: { input_tokens: 1200, cache_read_input_tokens: 9000, output_tokens: 1 } } });
+      ev("content_block_start", { index: 0, content_block: { type: "text", text: "" } });
+      for (let i = 0; i < chunks; i++) {
+        await sleep(gapMs);
+        at[i] = performance.now();
+        ev("content_block_delta", { index: 0, delta: { type: "text_delta", text: `chunk ${i} ${"lorem ipsum dolor sit amet ".repeat(3)}` } });
+      }
+      ev("content_block_stop", { index: 0 });
+      ev("message_delta", { delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: chunks * 12 } });
+      ev("message_stop", {});
+      res.end();
+    });
+  });
+  await new Promise((r) => upstream.listen(0, "127.0.0.1", r));
+  const upUrl = `http://127.0.0.1:${upstream.address().port}`;
+  let proxy;
+  try {
+    const env = isolatedEnv(root);
+    mkdirSync(env.HOME, { recursive: true });
+    const port = await new Promise((r) => {
+      const s = net.createServer().listen(0, "127.0.0.1", () => {
+        const p = s.address().port;
+        s.close(() => r(p));
+      });
+    });
+    proxy = spawn(process.execPath, [cli, "proxy", "--quiet", "--port", String(port), "--anthropic-upstream", upUrl], { env, stdio: ["ignore", "ignore", "pipe"] });
+    let err = "";
+    proxy.stderr.on("data", (d) => (err += d));
+    const proxyUrl = `http://127.0.0.1:${port}`;
+    await waitFor(() => fetch(`${proxyUrl}/__codingsh/health`).then((r) => r.ok, () => false), 20_000, `proxy health (${err.slice(0, 300)})`);
+
+    const agent = new http.Agent({ keepAlive: true, maxSockets: 1 });
+    const body = JSON.stringify({ model: "claude-sonnet-4-5", max_tokens: 1024, stream: true, system: "You are a benchmark.", messages: [{ role: "user", content: "stream something" }] });
+    let seq = 0;
+    const call = (base) =>
+      new Promise((resolve, reject) => {
+        const id = `${seq++}`;
+        const arrive = [];
+        let ttfb;
+        const t0 = performance.now();
+        const req = http.request(`${base}/v1/messages`, { method: "POST", agent, headers: { "content-type": "application/json", "x-api-key": "sk-ant-bench", "anthropic-version": "2023-06-01", "x-bench-id": id, "content-length": Buffer.byteLength(body) } }, (res) => {
+          let buf = "";
+          res.setEncoding("utf8");
+          res.on("data", (d) => {
+            const now = performance.now();
+            ttfb ??= now - t0;
+            buf += d;
+            for (const m of buf.matchAll(/"text":"chunk (\d+) /g)) arrive[Number(m[1])] ??= now;
+            buf = buf.slice(Math.max(0, buf.lastIndexOf("\n\n")));
+          });
+          res.on("end", () => {
+            const at = writes.get(id) ?? [];
+            writes.delete(id);
+            if (res.statusCode !== 200 || arrive.length !== chunks) return reject(new Error(`${base}: status ${res.statusCode}, ${arrive.length}/${chunks} chunks`));
+            resolve({ ttfb, chunk: median(arrive.map((t, i) => t - at[i])) });
+          });
+        });
+        req.on("error", reject);
+        req.end(body);
+      });
+
+    for (let i = 0; i < warmup; i++) {
+      await call(upUrl);
+      await call(proxyUrl);
+    }
+    const direct = [];
+    const proxied = [];
+    for (let i = 0; i < n; i++) {
+      direct.push(await call(upUrl));
+      proxied.push(await call(proxyUrl));
+    }
+    agent.destroy();
+    const pick = (xs, k) => xs.map((x) => x[k]);
+    const chunk = bootstrapMedianDiff(pick(direct, "chunk"), pick(proxied, "chunk"));
+    const ttfb = bootstrapMedianDiff(pick(direct, "ttfb"), pick(proxied, "ttfb"));
+    return {
+      "perf.proxyChunk": round(chunk.diff, 2),
+      "perf.proxyTtfb": round(ttfb.diff, 2),
+      paired: { "perf.proxyChunk": { diff: round(chunk.diff, 3), ci: chunk.ci.map((x) => round(x, 3)) }, "perf.proxyTtfb": { diff: round(ttfb.diff, 3), ci: ttfb.ci.map((x) => round(x, 3)) } },
+      detail: { n, warmup, chunks, gapMs, directChunkMs: round(median(pick(direct, "chunk")), 3), proxyChunkMs: round(median(pick(proxied, "chunk")), 3), directTtfbMs: round(median(pick(direct, "ttfb")), 3), proxyTtfbMs: round(median(pick(proxied, "ttfb")), 3), proxyTtfbP95Ms: round(quantile(pick(proxied, "ttfb"), 0.95), 3) },
+    };
+  } finally {
+    proxy?.kill("SIGINT");
+    upstream.closeAllConnections();
+    await new Promise((r) => upstream.close(() => r()));
+    await sleep(300);
+    rmSync(root, { recursive: true, force: true, maxRetries: 3 });
   }
 }
 
@@ -503,14 +619,17 @@ export async function runBenches(which = ["hook", "ingest", "help", "viewer"], o
   if (which.includes("help")) await step("help", () => benchHelp(opts));
   if (which.includes("viewer")) await step("viewer", () => benchViewer(opts));
   if (which.includes("viewer") || which.includes("replay")) await step("replay", () => benchReplay({ ...opts, events: opts.replayEvents }));
+  if (which.includes("proxy")) await step("proxy", () => benchProxy(opts));
   return { results: out, errors };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const args = parseArgs(process.argv.slice(2), { booleans: ["json"] });
+  const args = parseArgs(process.argv.slice(2), { booleans: ["json", "check"] });
   const which = args._.length ? args._ : ["hook", "ingest", "help", "viewer"];
   const baseline = args.baseline ? resolve(args.baseline) : undefined;
   const r = await runBenches(which, { baseline, events: args.events ? Number(args.events) : undefined });
   process.stdout.write(JSON.stringify(r, null, args.json ? 0 : 2) + "\n");
-  process.exitCode = Object.keys(r.errors).length ? 1 : 0;
+  const missed = Object.values(r.results).flatMap((x) => Object.entries(x).filter(([k, v]) => k.startsWith("perf.") && meets(k, v) === false));
+  for (const [k, v] of missed) log(`over budget: ${k} ${v} ${TARGETS[k].unit} (target ${TARGETS[k].dir === "max" ? "≤" : "≥"} ${TARGETS[k].target})`);
+  process.exitCode = Object.keys(r.errors).length || (args.check && missed.length) ? 1 : 0;
 }

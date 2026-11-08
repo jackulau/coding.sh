@@ -340,3 +340,16 @@ jobs:
       - name: Refine loop keep and guard reject
         if: runner.os == 'Linux'
         run: node scripts/e2e/refine-loop.mjs
+
+      # The model API proxy with real Claude Code and Codex: init --proxy routes both through it to a
+      # stub model; checks streaming, the agent's own key reaching the API, calls linked into the
+      # hook sessions, show/diff-calls/exp replay, no key stored, and a byte-for-byte uninstall.
+      - name: Model API proxy with real agents
+        if: runner.os == 'Linux'
+        run: node scripts/e2e/proxy-capture.mjs
+
+      # What the proxy adds to a streamed call, direct and proxied interleaved; fails over budget
+      # (2 ms per chunk, 5 ms to first byte).
+      - name: Proxy latency budget
+        if: runner.os == 'Linux'
+        run: node scripts/dogfood/bench.mjs proxy --check
