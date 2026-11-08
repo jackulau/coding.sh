@@ -122,7 +122,7 @@ async function report(c: CommandContext): Promise<number> {
     const sessions = await scopeSessions(ctx.index, scope);
     const testCommand = await testCommandOf(o.root);
     const issues = await findIssues(ctx.index, sessions, { ...(o.root ? { repoRoot: o.root } : {}), ...(testCommand ? { testCommand } : {}) });
-    const changes = o.root ? await findChanges(ctx.index, o.root, { since: parseSince("30d"), limit: 3, ...(o.agents.length ? { agents: o.agents } : {}) }) : [];
+    const changes = o.root ? await findChanges(ctx.index, o.root, { since: parseSince("30d"), limit: 3, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}) }) : [];
     const provider = modelProvider(c.env);
     const top = issues.slice(0, o.limit);
     if (out.json) {
@@ -259,7 +259,7 @@ async function check(c: CommandContext): Promise<number> {
   return withContext(c, async (ctx) => {
     const read = async () => {
       const backlog = await autoIngest(ctx, readIngest(c));
-      return { changes: await findChanges(ctx.index, root, { since: o.since, limit: o.limit, ...(o.agents.length ? { agents: o.agents } : {}) }), backlog };
+      return { changes: await findChanges(ctx.index, root, { since: o.since, limit: o.limit, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}) }), backlog };
     };
     const first = await read();
     const regressed = first.changes.filter((e) => e.verdict === "regressed");

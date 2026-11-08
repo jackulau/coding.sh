@@ -55,10 +55,12 @@ export async function findIssues(index: IndexStore, sessions: readonly Session[]
 /**
  * Harness changes in `root` since `since` (newest first, at most `limit`), with the
  * sessions before and after each. Sessions are read from 30 days before `since`,
- * so the oldest change still has a baseline.
+ * so the oldest change still has a baseline; from under `root`, or `sessionsIn`
+ * (another dir, or "all": the project's other checkouts and worktrees).
  */
-export async function findChanges(index: IndexStore, root: string, o: { since: number; limit?: number; agents?: readonly string[] }): Promise<ChangeEffect[]> {
-  const sessions = await scopeSessions(index, { repo: root, since: o.since - 30 * DAY, ...(o.agents ? { agents: o.agents } : {}) });
+export async function findChanges(index: IndexStore, root: string, o: { since: number; limit?: number; agents?: readonly string[]; sessionsIn?: string }): Promise<ChangeEffect[]> {
+  const repo = o.sessionsIn === "all" ? undefined : (o.sessionsIn ?? root);
+  const sessions = await scopeSessions(index, { ...(repo ? { repo } : {}), since: o.since - 30 * DAY, ...(o.agents ? { agents: o.agents } : {}) });
   try {
     return await changeEffects(root, sessions, {
       since: o.since,

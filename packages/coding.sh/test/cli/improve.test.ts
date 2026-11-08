@@ -142,6 +142,18 @@ describe("cli improve", () => {
     assert.doesNotMatch(all.stdout, /more \(--sessions/);
   });
 
+  it("improve check --repo counts sessions from another checkout of the repo against its history", async () => {
+    const w = await world("checkouts", { afterFlagged: 0, elsewhere: true });
+    const here = JSON.parse(cli(w, ["improve", "check", "--json"]).stdout) as { changes: { verdict: string; after: { sessions: number } }[] };
+    assert.deepEqual([here.changes[0]!.verdict, here.changes[0]!.after.sessions], ["no-sessions-after", 0], "by default only this checkout's sessions count");
+    for (const repo of ["all", join(root, "checkouts", "other")]) {
+      const r = cli(w, ["improve", "check", "--repo", repo, "--json"]);
+      assert.equal(r.status, 0, r.stderr);
+      const j = JSON.parse(r.stdout) as { changes: { verdict: string; before: { sessions: number }; after: { sessions: number } }[] };
+      assert.deepEqual([j.changes[0]!.verdict, j.changes[0]!.before.sessions, j.changes[0]!.after.sessions], ["helped", 4, 6], `--repo ${repo}`);
+    }
+  });
+
   it("outside a git repo, check and fix say why", async () => {
     const w = await world("norepo", { afterFlagged: 0 });
     const dir = join(root, "norepo", "plain");

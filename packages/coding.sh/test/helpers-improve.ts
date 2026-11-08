@@ -13,8 +13,9 @@ export interface World {
   commits: Record<string, string>;
 }
 
-/** Before the CLAUDE.md change, 4 of 6 sessions edit without a check (or, with `beforeTested`, all 6 run the tests); after it, `afterFlagged` of 6 skip the check. */
-export async function improveWorld(root: string, name: string, o: { afterFlagged: number; beforeTested?: boolean }): Promise<World> {
+/** Before the CLAUDE.md change, 4 of 6 sessions edit without a check (or, with `beforeTested`, all 6 run the tests); after it, `afterFlagged` of 6 skip the check. With `elsewhere`, every session ran in another checkout of the repo (`<name>/other`). */
+export async function improveWorld(root: string, name: string, o: { afterFlagged: number; beforeTested?: boolean; elsewhere?: boolean }): Promise<World> {
+  const elsewhere = o.elsewhere === true;
   const home = join(root, name, "home");
   const repo = join(root, name, "repo");
   mkdirSync(home, { recursive: true });
@@ -48,17 +49,19 @@ export async function improveWorld(root: string, name: string, o: { afterFlagged
   writeFileSync(join(repo, "CLAUDE.md"), "Keep answers short.\nRun `npm test` before you say you are done.\n");
   git(["commit", "-qam", "CLAUDE.md: run the tests"], day(6));
   commits.rule = git(["rev-parse", "HEAD"]);
+  if (elsewhere) git(["worktree", "add", "-q", "--detach", join(root, name, "other")]);
 
   const { openContext } = await import("../src/core/context.ts");
   const ctx = await openContext({ env, cwd: repo });
   try {
     // Flags come from the events (ingest recomputes them): an edit with no check is no-verification.
+    const at = elsewhere ? join(root, name, "other") : repo;
     const put = (id: string, head: string, daysAgo: number, o: { edit: boolean; test: boolean }) => {
       const steps: Parameters<typeof sessionEvents>[2] = [["user.message", { text: `Task ${id}` }]];
-      if (o.edit) steps.push(["tool.start", { tool: "Edit", toolUseId: `${id}-e`, input: { file_path: join(repo, "index.js") } }], ["tool.end", { tool: "Edit", toolUseId: `${id}-e`, ok: true }], ["file.change", { path: "index.js", op: "modify" }]);
+      if (o.edit) steps.push(["tool.start", { tool: "Edit", toolUseId: `${id}-e`, input: { file_path: join(at, "index.js") } }], ["tool.end", { tool: "Edit", toolUseId: `${id}-e`, ok: true }], ["file.change", { path: "index.js", op: "modify" }]);
       if (o.test) steps.push(["tool.start", { tool: "Bash", toolUseId: `${id}-t`, input: { command: "npm test" } }], ["tool.end", { tool: "Bash", toolUseId: `${id}-t`, ok: true, output: "ok" }]);
       steps.push(["assistant.message", { text: "Done." }]);
-      const ev = sessionEvents(id, { cwd: repo, startedAt: now - daysAgo * 86_400_000 }, steps).map((e) => ({ ...e, repo: { root: repo, head } }));
+      const ev = sessionEvents(id, { cwd: at, startedAt: now - daysAgo * 86_400_000 }, steps).map((e) => ({ ...e, repo: { root: at, head } }));
       return putSession(ctx.index, ev);
     };
     for (let k = 0; k < 6; k++) await put(`before-${k}`, commits.init, 11 - k * 0.5, o.beforeTested ? { edit: true, test: true } : { edit: k < 4, test: false });

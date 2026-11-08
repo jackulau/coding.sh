@@ -131,7 +131,11 @@ export async function harnessChanges(root: string, o: { limit?: number; since?: 
   return out;
 }
 
-/** Each session's harness version: the newest harness commit reachable from its starting HEAD. */
+/**
+ * Each session's harness version: the newest harness commit reachable from its starting HEAD.
+ * A session in another checkout or worktree of the repo counts when `root` has its HEAD; one
+ * whose HEAD `root` doesn't have (another repo, an unfetched branch) is left out.
+ */
 export async function sessionVersions(root: string, sessions: readonly Session[]): Promise<Map<string, string>> {
   const byHead = new Map<string, Promise<string | undefined>>();
   const version = (head: string) => {
@@ -143,7 +147,7 @@ export async function sessionVersions(root: string, sessions: readonly Session[]
     return p;
   };
   const out = new Map<string, string>();
-  const heads = sessions.filter((s) => s.repo?.head && s.repo.root === root);
+  const heads = sessions.filter((s) => s.repo?.head);
   for (let i = 0; i < heads.length; i += 8) {
     await Promise.all(
       heads.slice(i, i + 8).map(async (s) => {

@@ -132,6 +132,7 @@ coding.sh runs on Windows, and CI tests it there.
 
 ### Fixed
 
+- **Improve.** `improve check --repo <DIR|all>` counts the sessions that ran in other checkouts and worktrees of the repo. Before, it ignored `--repo` and counted only sessions whose repo root was the current checkout, so a repo whose agents work in worktrees showed every change as "No sessions yet". [Improve](https://github.com/jackulau/coding.sh/blob/main/docs/guides/improve.md).
 - **Harness.** `harness audit` skips a file or directory it can't stat (a symlink loop, or a Windows junction Node can't follow) instead of failing with "unknown error". [Memory and instruction files](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#memory-and-instruction-files).
 - **Capture.** Backfill follows symlinked and junctioned transcript directories and files, and skips dangling links. Before, a `~/.claude/projects` made of links ingested nothing. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#known-breakage-to-design-around).
 - **Harness A/B.** Two tasks from the same repo no longer error when they start at once: the first run of a repo set up its snapshot store while the second was reading it. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md).

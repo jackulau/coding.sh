@@ -128,8 +128,10 @@ coding.sh improve check
 
 For each harness commit in the last 30 days, `check` compares the sessions that ran on the version
 before it with the sessions that ran on it. A session with no tool calls, or only calls to MCP
-servers (asking your agent whether a change helped, for example), is left out. It uses two
-measures:
+servers (asking your agent whether a change helped, for example), is left out. When your agents
+work in other checkouts or worktrees of the repo, `--repo <DIR>` or `--repo all` counts their
+sessions too, against this repo's history: a session counts when this repo has the commit it
+started from. It uses two measures:
 
 - **Flagged sessions**: the share of sessions with a failure flag, before and after.
 - **The new lines**: for each added line that names a command, flag, path or identifier (like
