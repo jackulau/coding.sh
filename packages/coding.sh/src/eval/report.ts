@@ -195,3 +195,78 @@ export function renderSuiteReport(r: SuiteReport, o: RenderSuiteOpts): string {
   }
   return out.join("\n").replace(/\n+$/, "");
 }
+
+/** One suite in the Markdown summary: its report, or the exit code of a run that ended without one. */
+export interface MarkdownSuite {
+  suite: string;
+  report?: SuiteReport;
+  exitCode?: number;
+  /** Lines under the suite's table: tasks without a reference, the harness, the experiment id. */
+  extra?: string[];
+}
+
+/** Text with no HTML that could end a <details> block or open a tag. */
+const noHtml = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+/** A table cell: one line, with pipes escaped so they don't split it. */
+const cell = (s: string, max = 120) => noHtml(oneLine(s, max)).replace(/\|/g, "\\|");
+
+/** Why a regression suite failed, or that a capability suite is not gated. */
+function verdict(r: SuiteReport): string {
+  if (r.purpose === "capability") return r.saturated ? "not gated (saturated)" : "not gated";
+  if (r.ok) return "pass";
+  if (!r.trials) return "**fail**: nothing was graded";
+  const ungraded = r.rows.filter((x) => x.n === 0).length;
+  const names = r.failing.slice(0, 3).map((n) => cell(n, 40)).join(", ") + (r.failing.length > 3 ? ` and ${r.failing.length - 3} more` : "");
+  const why = [r.failing.length ? `${names} fail${r.failing.length === 1 ? "s" : ""} most trials` : "", ungraded ? `${ungraded} of ${plural(r.rows.length, r.unit)} have no graded trial` : ""].filter(Boolean);
+  return `**fail**: ${why.join("; ")}`;
+}
+
+/**
+ * The `eval run` report as GitHub-flavored Markdown, for a CI step summary or a
+ * pull request comment: one row per suite, then each suite's tasks in a
+ * <details> block, open when the suite failed.
+ */
+export function renderSuitesMarkdown(suites: readonly MarkdownSuite[], o: { transcript?: (sessionId: string) => string; limit?: number } = {}): string {
+  const failed = suites.filter((s) => (s.report ? !s.report.ok : (s.exitCode ?? 1) !== 0)).length;
+  const n = suites.length;
+  const out: string[] = [];
+  out.push(`### Evals: ${failed ? `${failed} of ${n} suite${n === 1 ? "" : "s"} failed` : n === 1 ? "the suite passed" : `all ${n} suites passed`}`, "");
+  out.push("| Suite | Purpose | Size | Trials passed | pass@1 (95% CI) | pass@k | pass^k | Result |", "| --- | --- | ---: | ---: | --- | ---: | ---: | --- |");
+  for (const s of suites) {
+    const r = s.report;
+    if (!r) {
+      out.push(`| ${cell(s.suite)} | | | | | | | **fail**: no report (exit ${s.exitCode ?? 1}) |`);
+      continue;
+    }
+    const p1 = r.trials ? `${pct(r.passRate.p)} [${pct(r.passRate.lo)}, ${pct(r.passRate.hi)}]` : "—";
+    const k = (x: number | undefined) => (x === undefined ? "—" : `${pct(x)} (k=${r.k})`);
+    out.push(`| ${cell(s.suite)} | ${r.purpose} | ${plural(r.tasks, r.unit)} | ${r.passed}/${r.trials} | ${p1} | ${k(r.passAtK)} | ${k(r.passHatK)} | ${verdict(r)} |`);
+  }
+  const limit = o.limit ?? 50;
+  for (const s of suites) {
+    const r = s.report;
+    if (!r) continue;
+    const u = r.unit;
+    const bad = r.rows.filter((x) => x.n === 0 || x.passed < x.n).length;
+    const what = bad ? `${bad} with a failed or ungraded trial` : "every trial passed";
+    out.push("", `<details${r.ok ? "" : " open"}><summary>${noHtml(s.suite)}: ${plural(r.tasks, u)}, ${what}</summary>`, "");
+    out.push(`| ${u.charAt(0).toUpperCase()}${u.slice(1)} | Passed | | First failure |`, "| --- | ---: | --- | --- |");
+    const shown = [...r.rows].sort((a, b) => (a.rate || 0) - (b.rate || 0) || a.name.localeCompare(b.name)).slice(0, limit);
+    for (const t of shown) {
+      const status = t.n === 0 ? "unknown" : t.passed === 0 ? "never" : t.flaky ? "flaky" : "ok";
+      const first = t.failedSession ? `\`${(o.transcript ? o.transcript(t.failedSession) : t.failedSession).replace(/`/g, "")}\`` : t.passed < t.n && t.reason ? cell(t.reason, 80) : "";
+      out.push(`| ${cell(t.name, 80)} | ${t.n ? `${t.passed}/${t.n}` : "—"} | ${status} | ${first} |`);
+    }
+    if (r.rows.length > limit) out.push("", `${r.rows.length - limit} more ${u}s: \`coding.sh eval run ${s.suite.replace(/`/g, "")} --json\` lists them all.`);
+    const lines = [
+      ...(r.neverPassed.length ? [`Never passed: ${r.neverPassed.join(", ")}. A ${u} no trial passes is most often a broken ${u} or grader; read its transcript or output first.`] : []),
+      ...(r.flaky.length ? [`Flaky: ${r.flaky.join(", ")}. These pass some trials and fail others.`] : []),
+      ...(r.saturated ? [`Saturated: this capability suite can no longer show improvement. Add harder ${u}s, or make it a regression suite.`] : []),
+      ...r.notes.map((x) => `${x.charAt(0).toUpperCase()}${x.slice(1)}.`),
+      ...(s.extra ?? []),
+    ];
+    if (lines.length) out.push("", ...lines.map((l) => `- ${noHtml(oneLine(l, 400))}`));
+    out.push("", "</details>");
+  }
+  return `${out.join("\n")}\n`;
+}

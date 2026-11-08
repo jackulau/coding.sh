@@ -97,6 +97,77 @@ jobs:
         working-directory: apps/site
         run: npm run check
 
+  action:
+    name: GitHub Action
+    # The action in action.yml, installing this checkout's package: a passing and a failing
+    # regression suite, the exit code, and the report. The comment is tested in
+    # test/scripts/github-action.test.ts against a stub API.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+
+      - name: Build and pack
+        run: |
+          npm ci
+          cd packages/coding.sh
+          npm run build
+          mv "$(npm pack --silent | tail -n 1)" "$RUNNER_TEMP/coding.sh.tgz"
+
+      - name: Install only
+        uses: ./
+        with:
+          path: ${{ runner.temp }}/coding.sh.tgz
+          command: ""
+
+      - name: Write a passing and a failing suite
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir proj && cd proj
+          echo 'process.stdin.on("data", (d) => process.stdout.write(JSON.parse(d)));' > echo.mjs
+          printf '{"input":"a","expected":"a"}\n{"input":"b","expected":"b"}\n' > good.jsonl
+          printf '{"input":"a","expected":"a"}\n{"input":"b","expected":"c"}\n' > bad.jsonl
+          coding.sh eval init good --cases good.jsonl --command 'node echo.mjs' -k 1 > /dev/null
+          coding.sh eval init bad --cases bad.jsonl --command 'node echo.mjs' -k 1 > /dev/null
+
+      - name: Passing suite
+        id: good
+        uses: ./
+        with:
+          path: ${{ runner.temp }}/coding.sh.tgz
+          command: eval run good --yes
+          working-directory: ${{ runner.temp }}/proj
+
+      - name: Failing suite
+        id: bad
+        continue-on-error: true
+        uses: ./
+        with:
+          path: ${{ runner.temp }}/coding.sh.tgz
+          command: eval run bad --yes
+          working-directory: ${{ runner.temp }}/proj
+
+      # Each step has its own $GITHUB_STEP_SUMMARY, so this reads the action's report output.
+      - name: Check the exit codes and the reports
+        env:
+          GOOD: ${{ steps.good.outputs.exit-code }}
+          GOOD_REPORT: ${{ steps.good.outputs.report }}
+          BAD: ${{ steps.bad.outputs.exit-code }}
+          BAD_REPORT: ${{ steps.bad.outputs.report }}
+          BAD_OUTCOME: ${{ steps.bad.outcome }}
+        run: |
+          test "$GOOD" = 0
+          test "$BAD" = 1
+          test "$BAD_OUTCOME" = failure
+          grep -q '^### Evals: the suite passed$' "$GOOD_REPORT"
+          grep -q '^| bad | regression | 2 cases | 1/2 | .* | \*\*fail\*\*: b fails most trials |$' "$BAD_REPORT"
+          grep -q '`coding.sh eval run bad --yes` exited 1' "$BAD_REPORT"
+
   store-clickhouse:
     name: coding.sh-store-clickhouse / ClickHouse 26.3
     # GitHub-hosted, for the service container; the plugin tests run against a real server.

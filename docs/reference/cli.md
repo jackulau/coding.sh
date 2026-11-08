@@ -741,6 +741,7 @@ coding.sh eval run [suite]... [options]
 | `-a, --agent <AGENT>` |  | Agent for task and skill suites (default: the suite's, else claude-code) |
 | `--model <MODEL>` |  | Model for the agent. |
 | `--harness <BUNDLE>` |  | Task suites: run this stored harness bundle (default: a snapshot of the project's current setup) |
+| `--summary <FILE>` |  | Also append the report to FILE as Markdown, e.g. "$GITHUB_STEP_SUMMARY" in GitHub Actions. |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. |
@@ -749,6 +750,7 @@ coding.sh eval run [suite]... [options]
 coding.sh eval run
 coding.sh eval run failures --trials 5 --yes
 coding.sh eval run triage --json
+coding.sh eval run triage --summary "$GITHUB_STEP_SUMMARY"
 ```
 
 ### `coding.sh eval new`

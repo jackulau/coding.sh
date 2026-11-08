@@ -89,8 +89,10 @@ judge on your description when there are none. A judge needs `ANTHROPIC_API_KEY`
 your own labels with `coding.sh judge calibrate` before you trust it (see [Judges](#judges)).
 
 This is a **regression** suite. `eval init` also prints a GitHub Actions workflow that runs it on
-every pull request, and `eval run` exits 1 when a case fails most of its trials. The run is an
-ordinary experiment, so `coding.sh exp show <id>` and `exp compare` work on it.
+every pull request with the coding.sh action, and `eval run` exits 1 when a case fails most of its
+trials. The action posts the report as the job's step summary and as one pull request comment;
+see [Catch a regression in CI](../how-to/ci-regressions.md). The run is an ordinary experiment, so
+`coding.sh exp show <id>` and `exp compare` work on it.
 
 ### The report
 
@@ -133,9 +135,10 @@ share of all trials that passed.
   progress, so add harder tasks or move it to regression.
 - Under 20 tasks the report says the suite can show only large changes.
 
-`eval run --json` prints the same report as JSON. `-k` changes the trials, `--model` and `--agent`
-the agent, and `--harness <bundle>` runs a repo task suite with a stored harness instead of the
-current setup. Suites can also be built by your agent through the `eval_init` MCP tool.
+`eval run --json` prints the same report as JSON, and `--summary <file>` appends it to a file as
+Markdown, such as `"$GITHUB_STEP_SUMMARY"` in GitHub Actions. `-k` changes the trials, `--model`
+and `--agent` the agent, and `--harness <bundle>` runs a repo task suite with a stored harness
+instead of the current setup. Suites can also be built by your agent through the `eval_init` MCP tool.
 
 ### From Anthropic's roadmap to coding.sh
 

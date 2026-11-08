@@ -73,7 +73,7 @@ describe("initSuite: cases", () => {
     assert.deepEqual(s.spec.task, { kind: "command", command: "node app.mjs" });
     assert.equal((s.spec.graders![0] as { kind: string }).kind, "exact");
     assert.equal(s.spec.trials, 3);
-    assert.match(r.ci!, /coding\.sh eval run triage --yes/);
+    assert.match(r.ci!, /command: eval run triage --yes/);
     assert.ok(r.notes.some((n) => /2 cases: grow toward 20 to 50/.test(n)));
     await assert.rejects(initSuite({ name: "triage", root, source: "cases", casesFile: "cases.jsonl", command: "x" }, deps()), /already exists; pass --force/);
     await initSuite({ name: "triage", root, source: "cases", casesFile: "cases.jsonl", url: "http://localhost:1/x", force: true, trials: 5, purpose: "capability" }, deps());
@@ -300,11 +300,12 @@ describe("draft", () => {
 });
 
 describe("ciWorkflow", () => {
-  it("installs coding.sh into a temp home and runs the suite", () => {
-    const y = ciWorkflow("triage", "cases");
-    assert.match(y, /CODING_SH_HOME: \$\{\{ runner\.temp \}\}\/coding\.sh/);
-    assert.match(y, /coding\.sh eval run triage --yes/);
-    assert.doesNotMatch(y, /claude-code/);
+  it("runs the suite with the coding.sh action pinned to this release, allowed to comment", () => {
+    const y = ciWorkflow("triage", "cases", undefined, "1.2.3");
+    assert.match(y, /- uses: jackulau\/coding\.sh@v1\.2\.3\n {8}with:\n {10}command: eval run triage --yes\n/);
+    assert.match(y, /pull-requests: write/);
+    assert.doesNotMatch(y, /claude-code|setup-node/);
     assert.doesNotMatch(ciWorkflow("pdf", "triggers", "codex"), /claude-code/);
+    assert.match(ciWorkflow("pdf", "triggers"), /npm install -g @anthropic-ai\/claude-code\n {6}- uses: jackulau\/coding\.sh@v/, "Claude Code is installed before the action runs the suite");
   });
 });

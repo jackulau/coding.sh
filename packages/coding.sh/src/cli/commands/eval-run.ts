@@ -6,7 +6,7 @@
 // Reuses the existing runners: repo tasks go through runner/experiment.ts (the
 // engine behind `compare`) with one harness arm; cases through
 // experiments/run.ts (`exp run`); a skill's triggers through `eval trigger`.
-import { readFile } from "node:fs/promises";
+import { appendFile, readFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import { getAdapter } from "../../adapters/index.ts";
 import { repoRoot } from "../../core/git.ts";
@@ -28,7 +28,7 @@ import { toPosix } from "../../runner/fsutil.ts";
 import { latestPerSlot } from "../../runner/iterate.ts";
 import { captureRedactor, failedRuns, renderFailedRuns, type FailedRun } from "../../runner/verifier-output.ts";
 import { paint } from "../../experiments/text.ts";
-import { renderSuiteReport, suiteReport, type SuiteReport, type TaskTrials } from "../../eval/report.ts";
+import { renderSuiteReport, renderSuitesMarkdown, suiteReport, type SuiteReport, type TaskTrials } from "../../eval/report.ts";
 import { TODO } from "../../eval/init.ts";
 import { trialsFromExperiment, trialsFromRuns, trialsFromTriggers } from "../../eval/run-suite.ts";
 import type { TriggerRunResult } from "./eval-trigger.ts";
@@ -90,6 +90,18 @@ export async function evalRun(c: CommandContext): Promise<number> {
     });
   }
   const failed = outcomes.some((o) => (o.report ? !o.report.ok : (o.exitCode ?? 0) !== 0));
+  const summary = str(c.flags.summary);
+  if (summary) {
+    const md = renderSuitesMarkdown(
+      outcomes.map((o) => ({ suite: o.suite, ...(o.report ? { report: o.report } : { exitCode: o.exitCode ?? 1 }), extra: [...unverifiedLine(o), ...(o.extra ?? []), ...metaLine(o)] })),
+      { transcript },
+    );
+    try {
+      await appendFile(resolve(c.cwd, summary), md);
+    } catch (e) {
+      out.warn(`Couldn't write the summary to ${summary}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
   if (out.json) {
     const docs = outcomes.filter((o) => o.report).map(outcomeJson);
     if (docs.length) out.data(docs.length === 1 ? docs[0]! : { suites: docs, ok: !failed });
@@ -98,15 +110,23 @@ export async function evalRun(c: CommandContext): Promise<number> {
       if (!o.report) continue;
       out.print("");
       out.print(renderSuiteReport(o.report, { color: out.color, transcript }));
-      if (o.unverified?.length) out.print(`${plural(o.unverified.length, "task")} without a reference solution (${o.unverified.slice(0, 5).join(", ")}${o.unverified.length > 5 ? ", …" : ""}): add reference.patch to the task dir, then coding.sh eval import <task dir> and coding.sh eval validate <task>`);
-      const meta = [o.harness ? `harness ${o.harness.name} (${plural(o.harness.files, "file")})` : "", o.experimentId ? `experiment ${o.experimentId}` : ""].filter(Boolean).join(" · ");
+      for (const line of unverifiedLine(o)) out.print(line);
       const block = renderFailedRuns(o.failedRuns ?? [], { names: (id) => o.names?.get(id) ?? id, dim: (s) => paint(s, "dim", out.color) });
       if (block.length) out.print(["", ...block].join("\n"));
-      for (const line of o.extra ?? []) out.print(line);
-      if (meta) out.print(meta);
+      for (const line of [...(o.extra ?? []), ...metaLine(o)]) out.print(line);
     }
   }
   return failed ? 1 : 0;
+}
+
+const unverifiedLine = (o: SuiteOutcome): string[] =>
+  o.unverified?.length
+    ? [`${plural(o.unverified.length, "task")} without a reference solution (${o.unverified.slice(0, 5).join(", ")}${o.unverified.length > 5 ? ", …" : ""}): add reference.patch to the task dir, then coding.sh eval import <task dir> and coding.sh eval validate <task>`]
+    : [];
+
+function metaLine(o: SuiteOutcome): string[] {
+  const meta = [o.harness ? `harness ${o.harness.name} (${plural(o.harness.files, "file")})` : "", o.experimentId ? `experiment ${o.experimentId}` : ""].filter(Boolean).join(" · ");
+  return meta ? [meta] : [];
 }
 
 function outcomeJson(o: SuiteOutcome): Record<string, unknown> {

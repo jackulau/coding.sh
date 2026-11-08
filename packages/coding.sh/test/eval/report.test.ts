@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { renderSuiteReport, suiteReport, type TaskTrials } from "../../src/eval/report.ts";
+import { renderSuiteReport, renderSuitesMarkdown, suiteReport, type TaskTrials } from "../../src/eval/report.ts";
 
 const P = { pass: true };
 const F = { pass: false };
@@ -87,5 +87,71 @@ describe("suiteReport", () => {
     assert.match(text, /agent-task\s+1\/2\s+flaky\s+coding\.sh show 0123456789ab/);
     assert.match(text, /case\s+0\/1\s+never\s+exact: expected "bug", got "other"/);
     assert.match(text, /never passed: case\. Read its transcript or output first/);
+  });
+});
+
+describe("renderSuitesMarkdown", () => {
+  it("renders one row per suite and each suite's tasks, open when the suite failed", () => {
+    const reg = suiteReport("triage", "regression", [
+      task("billing", [P, P]),
+      task("wrong | color <b>", [{ pass: false, reason: 'exact: expected "bug", got "other"' }, F]),
+      task("crash", [P, { pass: false, sessionId: "0123456789abcdefXYZ" }]),
+    ]);
+    const hill = suiteReport("hill", "capability", [task("a", [P]), task("b", [P])]);
+    const md = renderSuitesMarkdown(
+      [
+        { suite: "triage", report: reg, extra: ["experiment exp_1"] },
+        { suite: "hill", report: hill },
+        { suite: "pdf", exitCode: 130 },
+      ],
+      { transcript: (id) => `coding.sh show ${id.slice(0, 12)}` },
+    );
+    assert.equal(
+      md,
+      [
+        "### Evals: 2 of 3 suites failed",
+        "",
+        "| Suite | Purpose | Size | Trials passed | pass@1 (95% CI) | pass@k | pass^k | Result |",
+        "| --- | --- | ---: | ---: | --- | ---: | ---: | --- |",
+        "| triage | regression | 3 tasks | 3/6 | 50.0% [18.8%, 81.2%] | 66.7% (k=2) | 33.3% (k=2) | **fail**: wrong \\| color &lt;b&gt; fails most trials |",
+        "| hill | capability | 2 tasks | 2/2 | 100.0% [34.2%, 100.0%] | — | — | not gated (saturated) |",
+        "| pdf | | | | | | | **fail**: no report (exit 130) |",
+        "",
+        "<details open><summary>triage: 3 tasks, 2 with a failed or ungraded trial</summary>",
+        "",
+        "| Task | Passed | | First failure |",
+        "| --- | ---: | --- | --- |",
+        "| wrong \\| color &lt;b&gt; | 0/2 | never | exact: expected \"bug\", got \"other\" |",
+        "| crash | 1/2 | flaky | `coding.sh show 0123456789ab` |",
+        "| billing | 2/2 | ok |  |",
+        "",
+        "- Never passed: wrong | color &lt;b&gt;. A task no trial passes is most often a broken task or grader; read its transcript or output first.",
+        "- Flaky: crash. These pass some trials and fail others.",
+        "- 3 tasks: a suite this small only shows large changes; grow it toward 20 to 50 tasks from real failures.",
+        "- experiment exp_1",
+        "",
+        "</details>",
+        "",
+        "<details><summary>hill: 2 tasks, every trial passed</summary>",
+        "",
+        "| Task | Passed | | First failure |",
+        "| --- | ---: | --- | --- |",
+        "| a | 1/1 | ok |  |",
+        "| b | 1/1 | ok |  |",
+        "",
+        "- Saturated: this capability suite can no longer show improvement. Add harder tasks, or make it a regression suite.",
+        "- One trial per task: agents vary from run to run, so pass@k and pass^k need --trials 3 or more.",
+        "- 2 tasks: a suite this small only shows large changes; grow it toward 20 to 50 tasks from real failures.",
+        "",
+        "</details>",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("says when every suite passed", () => {
+    const ok = suiteReport("s", "regression", [task("a", [P, P])]);
+    assert.match(renderSuitesMarkdown([{ suite: "s", report: ok }]), /^### Evals: the suite passed\n[\s\S]*\| pass \|/);
+    assert.match(renderSuitesMarkdown([{ suite: "s", report: ok }, { suite: "t", report: ok }]), /^### Evals: all 2 suites passed/);
   });
 });

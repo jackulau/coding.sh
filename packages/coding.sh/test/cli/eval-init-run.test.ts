@@ -63,7 +63,7 @@ describe("eval init + eval run: cases", () => {
     assert.equal(init.status, 0, init.stdout + init.stderr);
     assert.match(init.stderr, /Wrote regression suite triage \(cases\) to evals\/triage/);
     assert.match(init.stderr, /coding\.sh eval run triage/);
-    assert.match(init.stdout, /run: coding\.sh eval run triage --yes/, "the CI workflow is the answer on stdout");
+    assert.match(init.stdout, /command: eval run triage --yes/, "the CI workflow is the answer on stdout");
     const spec = JSON.parse(readFileSync(join(proj, "evals", "triage", "suite.json"), "utf8")) as { graders: { kind: string }[]; trials: number };
     assert.deepEqual([spec.graders[0]!.kind, spec.trials], ["exact", 2]);
 
@@ -81,6 +81,18 @@ describe("eval init + eval run: cases", () => {
     assert.deepEqual([doc.suite, doc.kind, doc.report.ok, doc.report.k, doc.report.failing], ["triage", "cases", false, 2, ["Button is the wrong color"]]);
     assert.match(doc.experimentId, /^exp_/);
     assert.equal(cli(["exp", "show", doc.experimentId]).status, 0, "the run is a stored experiment");
+
+    // --summary appends, as $GITHUB_STEP_SUMMARY expects.
+    const summary = join(root, "step-summary.md");
+    writeFileSync(summary, "earlier step\n");
+    const md = cli(["eval", "run", "triage", "--summary", summary]);
+    assert.equal(md.status, 1, md.stdout + md.stderr);
+    const text = readFileSync(summary, "utf8");
+    assert.match(text, /^earlier step\n### Evals: 1 of 1 suite failed\n/);
+    assert.match(text, /\| triage \| regression \| 4 cases \| 6\/8 \| 75\.0% \[/);
+    assert.match(text, /\*\*fail\*\*: Button is the wrong color fails most trials/);
+    assert.match(text, /\| Case \| Passed \| \| First failure \|\n\| --- \| ---: \| --- \| --- \|\n\| Button is the wrong color \| 0\/2 \| never \| exact: expected "bug", got "other" \|/);
+    assert.match(text, /- experiment exp_/);
   });
 
   it("does not fail a capability suite on its score", () => {

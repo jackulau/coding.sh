@@ -1,0 +1,129 @@
+# The coding.sh GitHub Action: installs coding.sh, runs one command, writes the
+# report to the step summary and to one pull request comment, and fails the job
+# when the command fails. Docs: docs/how-to/ci-regressions.md.
+name: coding.sh
+description: Run coding.sh evals in CI. Fails the job when a regression suite regresses, and reports in the step summary and a pull request comment.
+author: coding.sh contributors
+branding:
+  icon: check-circle
+  color: gray-dark
+
+inputs:
+  command:
+    description: "The coding.sh arguments to run, e.g. `eval run triage --yes` or `exp compare base head --margin 0.05`. Empty: install coding.sh and stop."
+    required: false
+    default: eval run --yes
+  version:
+    description: "The coding.sh release to install, e.g. 0.1.3 or latest. Default: the release that matches this action's ref."
+    required: false
+    default: ""
+  path:
+    description: Install coding.sh from this package tarball, directory or URL instead of a release.
+    required: false
+    default: ""
+  working-directory:
+    description: Where to run the command.
+    required: false
+    default: "."
+  comment:
+    description: "On pull requests, post the report as a comment and edit that comment on later runs. Needs `permissions: pull-requests: write`."
+    required: false
+    default: "true"
+  github-token:
+    description: Token for the pull request comment.
+    required: false
+    default: ${{ github.token }}
+  node-version:
+    description: "Node.js to set up (coding.sh needs 22.15 or newer). Empty: use the runner's."
+    required: false
+    default: "22"
+
+outputs:
+  exit-code:
+    description: The command's exit code (0 passed, 1 failed, 2 usage error).
+    value: ${{ steps.run.outputs.exit-code }}
+  report:
+    description: The path of a Markdown file holding the report the action posted.
+    value: ${{ steps.run.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - if: inputs.node-version != ''
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ inputs.node-version }}
+
+    - name: Install coding.sh
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        PKG: ${{ inputs.path }}
+      run: |
+        set -eu
+        # Keep coding.sh's store out of the runner's home; later steps see the same one.
+        if [ -z "${CODING_SH_HOME:-}" ]; then echo "CODING_SH_HOME=$RUNNER_TEMP/coding.sh" >> "$GITHUB_ENV"; fi
+        if [ -n "$PKG" ]; then
+          case "$PKG" in /* | [A-Za-z]:* | *://*) ;; *) PKG="$GITHUB_WORKSPACE/$PKG" ;; esac
+          CODING_SH_TARBALL="$PKG" CODING_SH_NO_INIT=1 sh "$GITHUB_ACTION_PATH/install.sh"
+          exit 0
+        fi
+        want=${VERSION#v}
+        if [ -z "$want" ]; then want=$(node -p 'require(process.argv[1]).version' "$GITHUB_ACTION_PATH/packages/coding.sh/package.json"); fi
+        if [ "$want" != latest ] && command -v coding.sh >/dev/null 2>&1 && [ "$(coding.sh --version 2>/dev/null || true)" = "$want" ]; then
+          echo "coding.sh $want is installed"
+          exit 0
+        fi
+        if [ "$want" = latest ]; then unset CODING_SH_VERSION; else export CODING_SH_VERSION="v$want"; fi
+        CODING_SH_NO_INIT=1 sh "$GITHUB_ACTION_PATH/install.sh"
+
+    - name: Run coding.sh
+      id: run
+      if: inputs.command != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        COMMAND: ${{ inputs.command }}
+      run: |
+        # Run steps start with -e -o pipefail; this one records the command's exit code instead.
+        set -u +e +o pipefail
+        out="$RUNNER_TEMP/coding-sh-action-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$$"
+        : > "$out.md"
+        # Split the command with shell quoting, as a run: step would.
+        eval "set -- $COMMAND"
+        # eval run writes its report as Markdown; other commands are reported by their output.
+        if [ "${1:-}" = eval ] && [ "${2:-}" = run ]; then
+          case " $* " in *" --summary"*) ;; *) set -- "$@" --summary "$out.md" ;; esac
+        fi
+        coding.sh "$@" 2>&1 | tee "$out.log"
+        code=${PIPESTATUS[0]}
+        {
+          echo "exit-code=$code"
+          echo "summary=$out.md"
+          echo "log=$out.log"
+          echo "report=$out.report.md"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Report
+      if: always() && steps.run.outputs.exit-code != ''
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        CODING_SH_COMMAND: ${{ inputs.command }}
+        CODING_SH_EXIT: ${{ steps.run.outputs.exit-code }}
+        CODING_SH_SUMMARY_FILE: ${{ steps.run.outputs.summary }}
+        CODING_SH_LOG_FILE: ${{ steps.run.outputs.log }}
+        CODING_SH_REPORT_FILE: ${{ steps.run.outputs.report }}
+        CODING_SH_COMMENT: ${{ inputs.comment }}
+        CODING_SH_DIR: ${{ inputs.working-directory }}
+        CODING_SH_GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: node "$GITHUB_ACTION_PATH/packages/coding.sh/scripts/github-action.mjs"
+
+    - name: Fail on the command's exit code
+      if: steps.run.outputs.exit-code != '' && steps.run.outputs.exit-code != '0'
+      shell: bash
+      env:
+        CODE: ${{ steps.run.outputs.exit-code }}
+      run: |
+        echo "::error title=coding.sh::coding.sh exited $CODE"
+        exit "$CODE"

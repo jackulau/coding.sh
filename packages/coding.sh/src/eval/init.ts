@@ -14,6 +14,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { version } from "../cli/meta.ts";
 import { sha256Hex } from "../core/ids.ts";
 import { failureFlags } from "../core/sessions.ts";
 import { stringifyToml } from "../core/toml.ts";
@@ -466,29 +467,35 @@ async function fromCases(o: InitOpts, name: string, dir: string): Promise<Built>
 
 // ------------------------------------------------------------ CI
 
-/** A GitHub Actions workflow that runs the suite on every pull request; `eval run` exits 1 when a regression suite regresses. */
-export function ciWorkflow(name: string, kind: SuiteKind, agent?: string): string {
+/**
+ * A GitHub Actions workflow that runs the suite on every pull request with the
+ * coding.sh action (action.yml at the repo root, pinned to this release): `eval
+ * run` exits 1 when a regression suite regresses, and the action writes the
+ * report to the step summary and one pull request comment.
+ */
+export function ciWorkflow(name: string, kind: SuiteKind, agent?: string, release = version()): string {
   const needsClaude = kind === "triggers" && (agent ?? "claude-code") === "claude-code";
   return [
     `name: evals (${name})`,
     "on: pull_request",
     "",
+    "permissions:",
+    "  contents: read",
+    "  pull-requests: write",
+    "",
     "jobs:",
     "  evals:",
     "    runs-on: ubuntu-latest",
     "    env:",
-    "      CODING_SH_HOME: ${{ runner.temp }}/coding.sh",
     "      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}",
     "    steps:",
     "      - uses: actions/checkout@v4",
-    "      - uses: actions/setup-node@v4",
+    ...(needsClaude
+      ? ["      - uses: actions/setup-node@v4", "        with:", "          node-version: 22", "      - name: Install Claude Code", "        run: npm install -g @anthropic-ai/claude-code"]
+      : []),
+    `      - uses: jackulau/coding.sh@v${release}`,
     "        with:",
-    "          node-version: 22",
-    "      - name: Install coding.sh",
-    "        run: curl -fsSL https://coding.sh/install | CODING_SH_YES=1 CODING_SH_NO_INIT=1 CODING_SH_NO_UI=1 sh",
-    ...(needsClaude ? ["      - name: Install Claude Code", "        run: npm install -g @anthropic-ai/claude-code"] : []),
-    `      - name: Run the ${name} suite`,
-    `        run: coding.sh eval run ${name} --yes`,
+    `          command: eval run ${name} --yes`,
     "",
   ].join("\n");
 }
