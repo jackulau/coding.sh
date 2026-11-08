@@ -133,7 +133,9 @@ The real-session hits were one session with about 50 automatic compactions, comm
 
 `progress` compares how long runs stayed on track:
 
-- `coding.sh compare` reports `derails / run` and `time to first derail` for each arm.
+- `coding.sh compare` reports `derails / run` and `time to first derail` for each arm. It leaves
+  out `time to first derail` when no run in either arm derailed, since it would equal the session
+  length.
 - A `{"kind": "progress"}` grader scores a run from its trace for `exp run` and `exp compare`.
   The score is the time to the first derail divided by the wall time, or 1 when the run never
   derailed. It passes with at most `maxDerails` derails (default 0). `flags` counts only the

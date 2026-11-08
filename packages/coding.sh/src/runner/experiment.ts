@@ -700,10 +700,12 @@ const METRICS: { key: MetricKey; label: string; unit: MetricDelta["unit"]; bette
     key: "tokens",
     label: "tokens / run",
     unit: "count",
+    // Every token the run used, cache reads and writes included: with prompt caching on,
+    // input alone is a few dozen tokens a run and the count would track output only.
     get: (r, s) => {
       const u = r.agent.usage ?? s?.stats.usage;
       if (!u || (u.inputTokens === undefined && u.outputTokens === undefined)) return undefined;
-      return (u.inputTokens ?? 0) + (u.outputTokens ?? 0);
+      return (u.inputTokens ?? 0) + (u.outputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
     },
   },
   { key: "turns", label: "turns / run", unit: "count", get: (_r, s) => s?.stats.turns },
@@ -943,6 +945,9 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     const va = A.map((r) => m.get(r, opts.sessions?.get(r.id))).filter((x): x is number => typeof x === "number" && Number.isFinite(x));
     const vb = B.map((r) => m.get(r, opts.sessions?.get(r.id))).filter((x): x is number => typeof x === "number" && Number.isFinite(x));
     if (!va.length && !vb.length) continue;
+    // No run in either arm derailed: time to first derail is the session length, a second wall time row.
+    const derails = metrics.find((x) => x.key === "derails");
+    if (m.key === "onTrack" && derails && derails.baseline === 0 && derails.candidate === 0) continue;
     const a = mean(va);
     const b = mean(vb);
     const md: MetricDelta = {

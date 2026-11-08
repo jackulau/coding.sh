@@ -1038,7 +1038,8 @@ tasks with `eval new --tag suite:swe`.
 on cost? A harness 40% cheaper at the same pass rate reads "no significant difference" in the
 verdict, and `--gate` holds it, but it is still worth keeping. Each run gives a quality (pass = 1)
 and a cost: USD when cost is known on at least 80% of each arm's runs, else tokens (with a note),
-else no gate. A Bayesian bootstrap draws Dirichlet weights on each task's attempts (quality and cost
+else no gate. Tokens here, as in the `tokens / run` row, count input, output, cache reads and
+cache writes. A Bayesian bootstrap draws Dirichlet weights on each task's attempts (quality and cost
 move together) and on the tasks, 10,000 times (`--draws`). A draw counts when B gains quality and
 its cost rises by at most `--eps-c` (relative, default `inf`), or when B is cheaper and gives up at
 most `--eps-q` of pass rate (default 0.1). The share of draws that count is the support. B is

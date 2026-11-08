@@ -112,6 +112,24 @@ describe("compare", () => {
     assert.equal(r.verdict.kind, "inconclusive");
   });
 
+  it("time to first derail shows only when a run in either arm derailed", () => {
+    const ra = run("t1", "A", 1, true);
+    const rb = run("t1", "B", 1, true);
+    const sess = (derails: Session["stats"]["derails"]): Session => ({
+      id: "s",
+      agent: "x",
+      startedAt: 0,
+      endedAt: 60_000,
+      stats: { events: 0, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0, ...(derails ? { derails } : {}) },
+      flags: [],
+    });
+    const keys = (b: Session) => compare([ra, rb], { baseline: "A", candidate: "B", sessions: new Map([[ra.id, sess(undefined)], [rb.id, b]]) }).metrics.map((m) => m.key);
+    const clean = keys(sess(undefined));
+    assert.ok(clean.includes("derails") && !clean.includes("onTrack"));
+    const looped = keys(sess([{ flag: "looping", ts: 15_000, eventId: "e1", index: 3, endTs: 20_000, detail: "Read a ×6" }]));
+    assert.ok(looped.includes("derails") && looped.includes("onTrack"));
+  });
+
   it("turns, tokens and latency come from captured sessions; divergence from events", () => {
     const ra = run("t1", "A", 1, true);
     const rb = run("t1", "B", 1, true);
@@ -474,6 +492,16 @@ describe("compare cost coverage", () => {
     assert.ok(r.notes.some((n) => /90% cheaper/.test(n)));
     assert.doesNotMatch(formatCompare(r), /\(\d+\/\d+\)/);
     assert.deepEqual(r.metrics.find((m) => m.key === "cost")?.costEstimatedRuns, { baseline: 0, candidate: 0 });
+  });
+
+  it("tokens / run counts cache reads and writes, so a cached run is not read as output only", () => {
+    const usage = (cacheReadTokens: number) => ({ inputTokens: 40, outputTokens: 1000, cacheReadTokens, cacheWriteTokens: 500 });
+    const results = [0, 1, 2].flatMap((i) => [
+      run(`t${i}`, "A", 1, true, { agent: { ...run("x", "A", 1, true).agent, usage: usage(10_000) } }),
+      run(`t${i}`, "B", 1, true, { agent: { ...run("x", "B", 1, true).agent, usage: usage(20_000) } }),
+    ]);
+    const tokens = compare(results, { baseline: "A", candidate: "B" }).metrics.find((m) => m.key === "tokens");
+    assert.deepEqual([tokens?.baseline, tokens?.candidate], [11_540, 21_540]);
   });
 
   it("price-table costs from sessions count as known and are counted as estimated", () => {
