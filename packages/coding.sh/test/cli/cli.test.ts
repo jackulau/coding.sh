@@ -546,6 +546,11 @@ describe("cli zero setup", () => {
     for (const f of Object.values(files)) assert.match(readFileSync(f, "utf8"), /coding-sh/, f);
     assert.equal(readFileSync(join(h.data, "bin", "cli-path"), "utf8"), `${CLI}\n`, "hook knows the CLI for background ingests");
 
+    // Started with npx (npm sets npm_command=exec), `coding.sh` is not on PATH: the next steps say npx.
+    const npx = cli(h, ["init", "--yes", ...agentArgs], { npm_command: "exec" }).stderr;
+    assert.match(npx, /Open the viewer: npx coding\.sh ui$/m);
+    assert.match(npx, /see what to fix first: npx coding\.sh improve$/m);
+
     const again = cli(h, ["init", "--yes", "--json", ...agentArgs]);
     assert.equal((parseJson(again.stdout, "init again") as { outcome: string }).outcome, "unchanged", again.stderr);
     // Nothing new hooked: no "start a new session" note.

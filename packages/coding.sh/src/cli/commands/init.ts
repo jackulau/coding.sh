@@ -503,8 +503,10 @@ export async function run(c: CommandContext): Promise<number> {
     }
   }
   if (imported) reportImport(out, imported);
-  out.note(`Open the viewer: ${out.style("coding.sh ui", "cyan", "err")}`);
-  out.note(`After a few sessions, see what to fix first: ${out.style("coding.sh improve", "cyan", "err")}`);
+  // Started with npx, `coding.sh` is not on PATH: name the next commands the way this one ran.
+  const bin = env.npm_command === "exec" ? "npx coding.sh" : "coding.sh";
+  out.note(`Open the viewer: ${out.style(`${bin} ui`, "cyan", "err")}`);
+  out.note(`After a few sessions, see what to fix first: ${out.style(`${bin} improve`, "cyan", "err")}`);
   out.note(`Docs: ${DOCS_URL}`);
   return errors ? 1 : 0;
 }
