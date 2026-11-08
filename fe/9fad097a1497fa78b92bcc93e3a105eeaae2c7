@@ -58,6 +58,8 @@ CHANGELOG.md
   s_8e040dbdf13565::t_904b56318acfc5 63
 docs/troubleshooting.md
   s_8e040dbdf13565::t_bd54f3b05a2f29 229-230
+packages/coding.sh/src/jobs/store.ts
+  s_8e040dbdf13565::t_5c8c467e9b40e6 27
 ---
 {
   "schema_version": "authorship/3.0.0",
