@@ -1,6 +1,6 @@
 // JSON-LD builders, derived from src/data/* so structured data cannot drift
 // from what the pages render.
-import { SITE_URL, SITE, REPO_URL, REPO_PUBLIC, LICENSE_URL, RELEASE } from "../data/site";
+import { SITE_URL, SITE, REPO_URL, REPO_PUBLIC, LICENSE_URL, RELEASE, SAME_AS } from "../data/site";
 
 export function websiteSchema() {
   return {
@@ -9,9 +9,12 @@ export function websiteSchema() {
     "@id": `${SITE_URL}/#website`,
     name: SITE.name,
     alternateName: [...SITE.altNames],
-    url: SITE_URL,
+    // The home page's canonical URL, trailing slash included: Google reads the
+    // site name from the WebSite object whose url is the canonical home page.
+    url: `${SITE_URL}/`,
     description: SITE.description,
     inLanguage: "en-US",
+    publisher: { "@id": `${SITE_URL}/#org` },
   };
 }
 
@@ -59,7 +62,8 @@ export function organizationSchema() {
     alternateName: [...SITE.altNames],
     url: SITE_URL,
     logo: `${SITE_URL}/icon-512.png`,
-    sameAs: [REPO_URL],
+    description: SITE.description,
+    sameAs: [...SAME_AS],
   };
 }
 
