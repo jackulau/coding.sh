@@ -7,7 +7,7 @@ import { paths } from "../../core/paths.ts";
 import { snapshotDir } from "../../core/snapshot.ts";
 import type { EvalTask, RunResult } from "../../core/types.ts";
 import { crossCheckMeta, crossCheckVerifier, DEFAULT_CROSSCHECK_MAX, formatCrossCheck } from "../../eval/crosscheck.ts";
-import { draftTaskFromSession, exportHarbor, exportTaskDir, importTaskDir, readInstructionArg } from "../../eval/task.ts";
+import { draftTaskFromSession, exportHarbor, exportTaskDir, importTaskDir, readInstructionArg, verifierPathWarnings } from "../../eval/task.ts";
 import { formatValidation, validateTask } from "../../eval/validate.ts";
 import {
   auditArms,
@@ -327,11 +327,13 @@ export async function run(c: CommandContext): Promise<number> {
           await ctx.index.putTask(task);
           imported.push(task);
         }
+        const warnings = imported.flatMap((t) => verifierPathWarnings(t).map((w) => `${t.name}: ${w}`));
         if (out.json) {
-          out.data({ outcome: "imported", tasks: imported.map(taskJson) });
+          out.data({ outcome: "imported", tasks: imported.map(taskJson), ...(warnings.length ? { warnings } : {}) });
           return 0;
         }
         for (const t of imported) out.ok(`${t.name}  ${t.id}`);
+        for (const w of warnings) out.warn(w);
         out.next("Run them in a harness A/B", `coding.sh compare <A> <B>${imported[0]?.tags[0] ? ` --tag ${imported[0].tags[0]}` : ` --task ${imported[0]?.id}`}`);
         return 0;
       }

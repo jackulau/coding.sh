@@ -191,6 +191,12 @@ tasks/asks-for-scope/
   tests/           hidden files, copied into the work tree only for the verifier
 ```
 
+A hidden file lands at its path inside `tests/`: `tests/check.js` becomes `check.js` in the work
+tree, so the verifier runs `node check.js`. To have it at `tests/check.js`, put it at
+`tests/tests/check.js`. `eval import` warns when the verifier names a `tests/` path that only a
+hidden file at the root would match, since such a command finds no file, and a test runner given a
+glob that matches nothing can run zero tests and pass.
+
 The task id comes from the name, so importing again updates the task in place. Imported tasks are
 drafts. A draft has no reference patch for `eval validate` to check, so `compare` skips drafts by
 default. Use `compare --tag <tag>` to run them.

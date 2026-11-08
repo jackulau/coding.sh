@@ -504,6 +504,30 @@ export interface ImportTaskOpts {
 }
 
 /**
+ * Paths a verifier command names under tests/ that will not be there at verify time. A task
+ * dir's tests/<path> is copied over the work tree at <path>, so `node tests/check.js` finds no
+ * file and `node --test tests/*.test.js` runs zero tests and passes. One message per path.
+ */
+export function verifierPathWarnings(task: Pick<EvalTask, "verifier">): string[] {
+  const hidden = Object.keys(task.verifier.hiddenFiles);
+  if (!hidden.length) return [];
+  const out = new Set<string>();
+  for (const raw of task.verifier.command.split(/[\s;&|()<>]+/)) {
+    const path = raw.replace(/^["']|["']$/g, "").replace(/^\.\//, "");
+    if (!path.startsWith("tests/")) continue;
+    const inside = path.slice("tests/".length);
+    // A hidden file really is at tests/… (the task dir has tests/tests/…).
+    if (!inside || hidden.some((h) => matchAny(h, [path]))) continue;
+    const lands = hidden.filter((h) => matchAny(h, [inside]));
+    if (!lands.length) continue;
+    const shown = lands.slice(0, 3).map((h) => `tests/${h} → ${h}`);
+    if (lands.length > 3) shown.push("…");
+    out.add(`the verifier names ${path}, but hidden files land at their path inside tests/ (${shown.join(", ")}): name ${inside}, or move the files to tests/tests/`);
+  }
+  return [...out];
+}
+
+/**
  * Read a task dir. Blob refs are sha256 of content (the BlobStore contract),
  * so they are correct with or without `blobs`; pass `blobs` to also store them.
  *

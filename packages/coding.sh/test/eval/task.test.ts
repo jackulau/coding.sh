@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { AgentEvent, Session } from "../../src/core/types.ts";
@@ -16,6 +16,7 @@ import {
   instructionFromArgs,
   readInstructionArg,
   shellCommandOf,
+  verifierPathWarnings,
 } from "../../src/eval/task.ts";
 import { BUGGY, FIXED, FakeSnapshots, HIDDEN_TEST, MemBlobs, MemIndex, tempDir } from "../helpers-eval.ts";
 
@@ -266,6 +267,35 @@ describe("task dir import/export", () => {
     const { writeFile } = await import("node:fs/promises");
     await writeFile(join(dir, "task.json"), JSON.stringify({ format: "other" }));
     await assert.rejects(importTaskDir(dir), /unsupported format/);
+  });
+});
+
+describe("verifierPathWarnings", () => {
+  const task = (command: string, files: string[]) => ({ verifier: { command, timeoutMs: 1, hiddenFiles: Object.fromEntries(files.map((f) => [f, "ref"])) } });
+  it("flags a verifier that names tests/ when the hidden files land at the root", async () => {
+    // A hand-written dir: tests/check.js and tests/need.json are copied to check.js and need.json.
+    const dir = await tempDir();
+    dirs.push(dir);
+    await mkdir(join(dir, "tests"), { recursive: true });
+    await writeFile(join(dir, "tests", "check.js"), "process.exit(0)\n");
+    await writeFile(join(dir, "tests", "need.json"), "[]\n");
+    await writeFile(join(dir, "instruction.md"), "Explain it.\n");
+    await writeFile(join(dir, "task.json"), JSON.stringify({ name: "explain", verifier: { command: "node tests/check.js" } }));
+    const t = await importTaskDir(dir, undefined, { start: { repoRoot: ROOT, snapshot: "s" } as never });
+    assert.deepEqual(Object.keys(t.verifier.hiddenFiles).sort(), ["check.js", "need.json"]);
+    const [w, ...rest] = verifierPathWarnings(t);
+    assert.equal(rest.length, 0);
+    assert.match(w ?? "", /names tests\/check\.js, but hidden files land at their path inside tests\/ \(tests\/check\.js → check\.js\): name check\.js/);
+    // A glob that matches nothing runs zero tests (node --test passes): flagged too.
+    assert.equal(verifierPathWarnings(task("node --test './tests/*.test.js'", ["a.test.js", "b.test.js"])).length, 1);
+  });
+  it("stays quiet when the hidden files are where the verifier looks", () => {
+    assert.deepEqual(verifierPathWarnings(task("node --test tests/*.test.js", ["tests/a.test.js"])), []);
+    assert.deepEqual(verifierPathWarnings(task("node check.js", ["check.js"])), []);
+    assert.deepEqual(verifierPathWarnings(task("npm test", ["test/add.test.js"])), []);
+    assert.deepEqual(verifierPathWarnings(task("node tests/run.js", [])), []);
+    // tests/ in the start tree, unrelated to the hidden files.
+    assert.deepEqual(verifierPathWarnings(task("node tests/run.js && node check.js", ["check.js"])), []);
   });
 });
 
