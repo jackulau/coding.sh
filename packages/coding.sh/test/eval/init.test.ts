@@ -154,6 +154,25 @@ describe("initSuite: skill", () => {
     return ".claude/skills/pdf";
   }
 
+  it("uses the skill's own triggers.toml instead of writing a template", async () => {
+    const root = await project();
+    const skill = await skillDir(root);
+    const own = '[[should]]\nprompt = "merge a.pdf and b.pdf"\n\n[[should_not]]\nprompt = "clean up this CSV"\n';
+    await writeFile(join(root, skill, "triggers.toml"), own);
+    const r = await initSuite({ name: "pdf", root, source: "skill", skill }, deps());
+    assert.deepEqual([r.todo, r.drafted, r.files], [false, false, ["evals/pdf/suite.json"]]);
+    assert.ok(!existsSync(join(r.dir, "triggers.toml")), "no copy, no TODO template");
+    const s = await loadSuite(r.dir);
+    assert.equal(s.spec.triggers, "../../.claude/skills/pdf/triggers.toml");
+    assert.equal(await readFile(join(r.dir, s.spec.triggers!), "utf8"), own);
+    assert.ok(r.notes.some((n) => /uses the skill's own triggers\.toml \(1 should, 1 should-not prompts\)/.test(n)));
+    // Prompts you pass (or --draft) still go to the suite's own file.
+    const given = await initSuite({ name: "pdf2", root, source: "skill", skill, should: ["fill this form"], shouldNot: ["sum these numbers"] }, deps());
+    assert.equal((await loadSuite(given.dir)).spec.triggers, "triggers.toml");
+    await writeFile(join(root, skill, "triggers.toml"), "[[should]]\nprompt = 3\n");
+    await assert.rejects(initSuite({ name: "pdf3", root, source: "skill", skill }, deps()), InitError);
+  });
+
   it("writes a TODO template when no prompts are given, which still parses", async () => {
     const root = await project();
     const r = await initSuite({ name: "pdf", root, source: "skill", skill: await skillDir(root) }, deps());

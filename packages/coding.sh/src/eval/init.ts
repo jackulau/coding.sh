@@ -26,7 +26,7 @@ import { draftCases, draftTriggers, type DraftedCase } from "./draft.ts";
 import { type SuitePurpose } from "./report.ts";
 import { DEFAULT_TRIALS, SUITE_FILE, SUITES_DIR, type SuiteKind, type SuiteSpec } from "./suite-spec.ts";
 import { draftTaskFromSession, exportTaskDir } from "./task.ts";
-import { readSkill, siblingSkills } from "./trigger.ts";
+import { parseTriggerSpec, readSkill, siblingSkills, TriggerSpecError } from "./trigger.ts";
 
 export type InitSource = "sessions" | "skill" | "cases";
 export const INIT_SOURCES: readonly InitSource[] = ["sessions", "skill", "cases"];
@@ -321,6 +321,19 @@ async function fromSkill(o: InitOpts, name: string, dir: string): Promise<Built>
   const notes: string[] = [];
   let should = o.should?.filter((p) => p.trim()) ?? [];
   let shouldNot = o.shouldNot?.filter((p) => p.trim()) ?? [];
+  const fields: Partial<SuiteSpec> = { description: skill.description || `Routing for ${skill.name}`, skill: toPosix(relative(dir, skill.dir)) || ".", ...(o.agent ? { agent: o.agent } : {}) };
+  // The skill's own triggers.toml (what `eval trigger <skill>` reads): the suite points at it instead of a copy.
+  const own = join(skill.dir, "triggers.toml");
+  if (!should.length && !shouldNot.length && !o.draft && existsSync(own)) {
+    let spec;
+    try {
+      spec = parseTriggerSpec(await readFile(own, "utf8"), own);
+    } catch (e) {
+      throw new InitError(e instanceof TriggerSpecError ? e.message : `can't read ${own}: ${(e as Error).message}`);
+    }
+    notes.push(`uses the skill's own triggers.toml (${spec.should.length} should, ${spec.shouldNot.length} should-not prompts); edit it there`);
+    return { purpose: "regression", fields: { ...fields, triggers: toPosix(relative(dir, own)) }, files: {}, notes, drafted: false, todo: false };
+  }
   let drafted = false;
   let todo = false;
   if (o.draftedBy && (should.length || shouldNot.length)) {
@@ -352,7 +365,7 @@ async function fromSkill(o: InitOpts, name: string, dir: string): Promise<Built>
   const toml = stringifyToml({ skill: skill.name, should: should.map((prompt) => ({ prompt })), should_not: shouldNot.map((prompt) => ({ prompt })) });
   return {
     purpose: "regression",
-    fields: { description: skill.description || `Routing for ${skill.name}`, skill: toPosix(relative(dir, skill.dir)) || ".", triggers: "triggers.toml", ...(o.agent ? { agent: o.agent } : {}) },
+    fields: { ...fields, triggers: "triggers.toml" },
     files: { "triggers.toml": `${header}${toml}` },
     notes,
     drafted,

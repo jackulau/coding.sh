@@ -52,7 +52,9 @@ prompts where it should not. `--draft` has a model write them (Anthropic by defa
 `ANTHROPIC_API_KEY`; `--draft openai` or a provider JSON picks another). The file says DRAFT at the
 top: read it and fix what is wrong before you trust a score. Without `--draft` you get TODO
 prompts to fill in, or pass your own with `--should` and `--should-not`. `eval run` refuses to run
-a file that still has TODO prompts.
+a file that still has TODO prompts. When the skill dir already has a `triggers.toml` (the file
+`coding.sh eval trigger <skill>` reads) and you give no prompts and no `--draft`, the suite points
+at that file instead of writing its own.
 
 `eval run` runs each prompt 3 times in Claude Code with the skill and its sibling skills installed,
 reads from each captured session whether the skill loaded, and reports precision, recall and F1
