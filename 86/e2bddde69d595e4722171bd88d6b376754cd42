@@ -5,6 +5,7 @@ packages/coding.sh/test/mcp/audit.test.ts
   s_8e040dbdf13565::t_99f74675b9a068 100
 CHANGELOG.md
   s_8e040dbdf13565::t_2e60a45901ebb1 10-11,14-16,21-22
+  s_8e040dbdf13565::t_139984de9a607c 12
 packages/coding.sh/src/mcp/prompts.ts
   s_8e040dbdf13565::t_28e7bf4b70ed23 25-37
   s_8e040dbdf13565::t_4b32ae261a5b9e 24
