@@ -1,0 +1,38 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_7436385ef7f00a 123
+packages/coding.sh/test/helpers-improve.ts
+  s_8e040dbdf13565::t_71c91130ae01f0 61
+  s_8e040dbdf13565::t_9e1d0d0649ce3e 16-17
+  s_8e040dbdf13565::t_b1056e3e060d56 52
+  s_8e040dbdf13565::t_eb48770a420b3f 64
+  s_8e040dbdf13565::t_32bd914d1a7816 58
+  s_8e040dbdf13565::t_85d5748402ea98 18
+packages/coding.sh/src/cli/commands/improve.ts
+  s_8e040dbdf13565::t_0b3f87ce6c7c54 244
+  s_8e040dbdf13565::t_f6a62705c4da5f 108
+packages/coding.sh/src/improve/report.ts
+  s_8e040dbdf13565::t_4f2e13f0ab0297 57-58
+  s_8e040dbdf13565::t_a2e3a5ac62ba2a 60-62
+packages/coding.sh/test/cli/improve.test.ts
+  s_8e040dbdf13565::t_c170697d82e5cf 117-128
+packages/coding.sh/src/improve/changes.ts
+  s_8e040dbdf13565::t_b5efc67dfaca95 123-127,139
+docs/guides/improve.md
+  s_8e040dbdf13565::t_cb634e7e8fb2a5 109-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0de2d1e4016108350f64453386045cafd7da17b8",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
