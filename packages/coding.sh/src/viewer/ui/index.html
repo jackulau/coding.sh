@@ -4509,9 +4509,10 @@ function tokensText(usage) {
   usage = usage || {};
   // With caching on, the uncached remainder alone ("34 in") would hide almost all of what the session sent.
   const prompt = (usage.inputTokens || 0) + (usage.cacheReadTokens || 0) + (usage.cacheWriteTokens || 0);
-  return (prompt || usage.outputTokens)
-    ? fmtCompact(prompt) + " in · " + fmtCompact(usage.outputTokens || 0) + " out" + (usage.cacheReadTokens && prompt ? " · " + Math.round((usage.cacheReadTokens / prompt) * 100) + "% cached" : "")
-    : "";
+  if (!prompt && !usage.outputTokens) return "";
+  // read:write below 1:1 means the cache was re-created faster than it was reused (tag cache:low).
+  const churn = usage.cacheWriteTokens && (usage.cacheReadTokens || 0) < usage.cacheWriteTokens ? " · r:w " + Math.round(((usage.cacheReadTokens || 0) / usage.cacheWriteTokens) * 100) / 100 + ":1" : "";
+  return fmtCompact(prompt) + " in · " + fmtCompact(usage.outputTokens || 0) + " out" + (usage.cacheReadTokens && prompt ? " · " + Math.round((usage.cacheReadTokens / prompt) * 100) + "% cached" : "") + churn;
 }
 
 function sessionHeader(s, labels, rel) {
