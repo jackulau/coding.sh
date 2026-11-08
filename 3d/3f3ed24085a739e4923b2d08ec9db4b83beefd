@@ -1,0 +1,14 @@
+.github/workflows/zz-action-e2e.yml
+  h_3cf8c6b879737e 1-131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "3d3f3ed24085a739e4923b2d08ec9db4b83beefd",
+  "prompts": {},
+  "humans": {
+    "h_3cf8c6b879737e": {
+      "author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
