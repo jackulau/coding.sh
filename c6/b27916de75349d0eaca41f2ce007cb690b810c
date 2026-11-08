@@ -1,0 +1,90 @@
+packages/coding.sh/test/cli/cli.test.ts
+  s_8e040dbdf13565::t_08808803f9f574 539,541-543
+packages/coding.sh/src/cli/commands/sessions.ts
+  s_8e040dbdf13565::t_1ff0460ac30b1a 4,79,81
+  s_8e040dbdf13565::t_138b902d26af6f 78,80,82-84
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_75328f7b7d0609 96-104
+  s_8e040dbdf13565::t_9e73fff07d4a66 1128-1129
+  s_8e040dbdf13565::t_9184ca4fdb7224 1127
+  s_8e040dbdf13565::t_b915e5407d33f3 1099-1124,1126,1130-1133
+  s_8e040dbdf13565::t_ea81e389366c42 1125
+  s_8e040dbdf13565::t_dfc286cd88b778 1098
+packages/coding.sh/src/improve/issues.ts
+  s_8e040dbdf13565::t_c17cafffa2f9eb 257
+  s_8e040dbdf13565::t_bceaaca659aa24 308-310
+  s_8e040dbdf13565::t_3da08a1cbbc98e 247
+  s_8e040dbdf13565::t_bf0e1209693994 42-48
+  s_8e040dbdf13565::t_21add72df04979 297
+  s_8e040dbdf13565::t_5e2662b19137ff 137-147,150
+  s_8e040dbdf13565::t_926fdd65640fd8 238-239
+  s_8e040dbdf13565::t_264da1486ca10a 1-41,49-124,126-136,148-149,151-237,240-246,248-256,258-296,298-307,311-312
+  s_8e040dbdf13565::t_a82e8e581adb7c 125
+packages/coding.sh/src/core/harness-paths.ts
+  s_8e040dbdf13565::t_d38f2330c7b525 1-15
+packages/coding.sh/src/improve/report.ts
+  s_8e040dbdf13565::t_19d7330dd37da7 1-9,11-49,52-72,93-98,100,113-115,120-122,126-143
+  s_8e040dbdf13565::t_c09e866b80c446 99,101-112,123-125
+  s_8e040dbdf13565::t_3db61f273436be 116-119
+  s_8e040dbdf13565::t_458d1d2aece572 73-92
+  s_8e040dbdf13565::t_8a53dd9cbd611f 10
+  s_8e040dbdf13565::t_6bae7bcac92d62 50-51
+packages/coding.sh/src/cli/commands/init.ts
+  s_8e040dbdf13565::t_7b3b7d74025625 388-389
+docs/reference/cli.md
+  s_8e040dbdf13565::t_e1a8e0b94026c2 61,2056-2085,2089-2139
+  s_8e040dbdf13565::t_f6eadb63fe5269 2086-2088
+  s_8e040dbdf13565::t_526361969ada9a 2140
+packages/coding.sh/src/improve/changes.ts
+  s_8e040dbdf13565::t_451b8768c99038 269-271,274-275
+  s_8e040dbdf13565::t_051e7ebba0c09a 272-273
+  s_8e040dbdf13565::t_10420881b0f14f 282
+  s_8e040dbdf13565::t_fddde7e2ffd563 240-246
+  s_8e040dbdf13565::t_c0e64c5426534a 281
+  s_8e040dbdf13565::t_680820df0a4c5a 148-153
+  s_8e040dbdf13565::t_c025253aa94d44 91
+  s_8e040dbdf13565::t_5fb3100bd1a1e7 10-12
+  s_8e040dbdf13565::t_21f9ef0f7cb972 230-239,247,250-251
+  s_8e040dbdf13565::t_2907457c460827 1-9,13-90,92-147,154-229,248-249,252-268,276-280,283-293
+packages/coding.sh/test/improve/changes.test.ts
+  s_8e040dbdf13565::t_bd75a6999bca81 1-100,102-148
+  s_8e040dbdf13565::t_c15898adf51206 101
+packages/coding.sh/src/cli/commands/show.ts
+  s_8e040dbdf13565::t_4bdefeef0b9b38 10,334
+  s_8e040dbdf13565::t_d1edfe0b791133 333,335
+packages/coding.sh/test/cli/improve.test.ts
+  s_8e040dbdf13565::t_7944d1866cb1f7 5,10,22
+  s_8e040dbdf13565::t_a04911e32958c8 30-50,55,58-59,61-62,73-74,76
+  s_8e040dbdf13565::t_a5b40dd90effcc 104
+  s_8e040dbdf13565::t_c15898adf51206 67,75
+  s_8e040dbdf13565::t_d9c5539a101b57 1-4,6-9,11-21,23-29,51-54,56-57,60,63-66,69-72,77-103,105-125
+  s_8e040dbdf13565::t_63644cc5a0933e 68
+packages/coding.sh/test/helpers-improve.ts
+  s_8e040dbdf13565::t_7944d1866cb1f7 1-71
+packages/coding.sh/src/cli/commands/improve.ts
+  s_8e040dbdf13565::t_92eca8254c2d26 10,45,122,129
+  s_8e040dbdf13565::t_9ee378777941cd 56,138,141,155-156
+  s_8e040dbdf13565::t_1f52dc7f7de5ca 92-93
+  s_8e040dbdf13565::t_c90f90038fd7ec 1-9,11-14,16-44,46-54,58-91,94-108,110-113,115-121,123-128,130-137,139-140,143-154,157-193,197-297
+  s_8e040dbdf13565::t_c09e866b80c446 15,55,57,109,114,142,194-196
+packages/coding.sh/test/improve/issues.test.ts
+  s_8e040dbdf13565::t_b641d06008fa32 8
+  s_8e040dbdf13565::t_02097fc27f8b4d 104-114
+  s_8e040dbdf13565::t_bb06d04fd38dd7 1-7,9-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c6b27916de75349d0eaca41f2ce007cb690b810c",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
