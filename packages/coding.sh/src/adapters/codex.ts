@@ -52,6 +52,7 @@ import {
   lineRaw,
   num,
   obj,
+  outputCutOf,
   outputText,
   parentLink,
   planNestedInstall,
@@ -381,6 +382,8 @@ export class CodexRolloutConverter {
   private readonly failedCells = new Set<string>();
   /** Exec calls' tool.end: a nested call recorded after its cell's output (or a yielded cell's) can still fail it. */
   private readonly cellEnds = new Map<string, AgentEvent>();
+  /** tool.end from an item_completed record (the produced output), by call id: the delivered output's cut goes on it. */
+  private readonly itemEnds = new Map<string, AgentEvent>();
   private readonly prompts = new Map<string, number>();
   private readonly seen = new Set<string>();
   readonly events: AgentEvent[] = [];
@@ -628,7 +631,8 @@ export class CodexRolloutConverter {
     const inp = await clipValue(this.ctx, o.input);
     em.emit("tool.start", { tool: o.tool, toolUseId: o.id, input: inp.value, server: o.server }, { key: [o.id], ts: o.t0, turnId: o.turn, parentId, blobs: blobList(inp.blob) });
     const out = await clipText(this.ctx, o.text);
-    em.emit("tool.end", { tool: o.tool, toolUseId: o.id, ok: o.ok, durationMs: o.t1 - o.t0, output: out.value, exitCode: o.exitCode }, { key: [o.id], ts: o.t1, turnId: o.turn, durationMs: o.t1 - o.t0, parentId, blobs: blobList(out.blob) });
+    const end = em.emit("tool.end", { tool: o.tool, toolUseId: o.id, ok: o.ok, durationMs: o.t1 - o.t0, output: out.value, exitCode: o.exitCode }, { key: [o.id], ts: o.t1, turnId: o.turn, durationMs: o.t1 - o.t0, parentId, blobs: blobList(out.blob) });
+    if (!isNested(o.id)) this.itemEnds.set(o.id, end); // a cell's calls get no output record of their own
     await emitDerived(em, { tool: o.tool === "Bash" ? "shell" : o.tool, toolUseId: o.id, input: o.input, output: o.text, ok: o.ok, cwd: this.cwd, extra: { ts: o.t1, turnId: o.turn } });
   }
 
@@ -659,9 +663,14 @@ export class CodexRolloutConverter {
         ? /^Script (completed|running)\b/.test(statusLine(p.output)) && !this.failedCells.has(id) && !cellChunkFailed(p.output)
         : (exit ?? 0) === 0 && obj(p.output).success !== false;
       const text = (isObj(parsed) && typeof parsed.output === "string" ? parsed.output : outputText(parsed)) ?? "";
+      // What the model got, cut by Codex or not: on this tool.end, or on the item's when that came first.
+      const cut = outputCutOf(text);
+      const item = this.itemEnds.get(id);
+      if (item) this.itemEnds.delete(id);
+      if (item && cut) item.payload.cut = cut;
       const o = await clipText(this.ctx, text);
       const durationMs = call ? ts - call.ts : undefined;
-      const e = em.emit("tool.end", { tool, toolUseId: id, ok, durationMs, output: o.value, exitCode: exit, wrapper }, { key: [id], durationMs, blobs: blobList(o.blob) });
+      const e = em.emit("tool.end", { tool, toolUseId: id, ok, durationMs, output: o.value, exitCode: exit, wrapper, cut }, { key: [id], durationMs, blobs: blobList(o.blob) });
       if (wrapper) this.cellEnds.set(id, e);
       await emitDerived(em, { tool, toolUseId: id, input: call?.input, output: text, ok, cwd: this.cwd });
     }
@@ -794,6 +803,7 @@ export async function normalizeCodexLine(line: SpoolLine, ctx: NormalizeContext)
       break;
     }
     case "PostToolUse": {
+      // tool_response is what the tool produced, before Codex cut it for the model: no `cut` here (the rollout has it).
       const resp = raw.tool_response;
       const r = obj(resp);
       const exit = num(r.exit_code) ?? num(r.exitCode);
@@ -941,7 +951,8 @@ export const codex: Adapter = {
   tier: "A",
   // 2 (0.1.2): code-mode exec cells parent their commands and count once; one compaction across hooks and backfill.
   // 3 (0.1.2): a hook SessionStart records how Codex was launched (originator, launch) from the rollout.
-  parseVersion: 3,
+  // 4 (0.1.2): tool.end records a tool output Codex cut before the model saw it (cut).
+  parseVersion: 4,
 
   detect() {
     const home = codexHome();

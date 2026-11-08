@@ -11,6 +11,7 @@
 //   startStub({ decide: (body) => ({ tool: { name, args } }) | ({ text }) | undefined })  # a scenario; undefined falls back
 //   ({ text, tool }) answers with the text and then the tool call in one response.
 //   (Anthropic only: a decision's `usage` replaces the prompt-side usage, e.g. cache_read_input_tokens.)
+//   (Responses only: `tool: { name, input: "<text>" }` is a freeform custom tool call, e.g. Codex's code-mode `exec`.)
 //   ({ error: { status, headers?, body } }) answers with that HTTP error instead (a 429 with rate-limit headers, a 529).
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
@@ -118,10 +119,14 @@ function anthropic(body, res, d) {
 }
 
 function responses(body, res, d) {
-  // A message item first (when there is text), then the function call.
+  // A message item first (when there is text), then the function call (a freeform custom tool call when `tool.input` is a string).
+  const call = (t) =>
+    typeof t.input === "string"
+      ? { type: "custom_tool_call", id: id("ctc"), call_id: id("call"), name: t.name, input: t.input, status: "completed" }
+      : { type: "function_call", id: id("fc"), call_id: id("call"), name: t.name, arguments: JSON.stringify(t.args), status: "completed" };
   const output = [
     ...(d.text ? [{ type: "message", id: id("msg"), role: "assistant", status: "completed", content: [{ type: "output_text", text: d.text, annotations: [] }] }] : []),
-    ...(d.tool ? [{ type: "function_call", id: id("fc"), call_id: id("call"), name: d.tool.name, arguments: JSON.stringify(d.tool.args), status: "completed" }] : []),
+    ...(d.tool ? [call(d.tool)] : []),
   ];
   const u = { input_tokens: 120, output_tokens: 30, total_tokens: 150, input_tokens_details: { cached_tokens: 0 }, output_tokens_details: { reasoning_tokens: 0 } };
   const resp = { id: id("resp"), object: "response", created_at: Math.floor(Date.now() / 1000), model: body.model || MODEL, status: "completed", output, usage: u };

@@ -710,7 +710,8 @@ export const t3code: Adapter = {
   // 2 (0.1.2): Pi's native id links to the Pi session.
   // 3 (0.1.2): Claude transcripts keep Claude Code's reported cost (cost-state) on session.end.
   // 4 (0.1.2): Claude transcripts' API errors keep their HTTP status, error class, rate-limit type and retry wait.
-  parseVersion: 4,
+  // 5 (0.1.2): tool.end records a tool output the agent cut before the model saw it (cut).
+  parseVersion: 5,
 
   async detect() {
     const env = process.env;

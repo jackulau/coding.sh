@@ -237,6 +237,7 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
     case "PostToolUse":
     case "PostToolUseFailure": {
       const ok = event === "PostToolUse";
+      // tool_response is what the tool produced, before Claude Code persisted a large one to a file: no `cut` here (the transcript has it).
       const response = ok ? raw.tool_response : (raw.error ?? raw.tool_response);
       const text = outputText(response) ?? "";
       const o = await clipText(ctx, text);
@@ -573,7 +574,8 @@ export const claudeCode: Adapter = {
   // 6 (0.1.2): session.start records how Claude Code was launched (entrypoint).
   // 7 (0.1.2): session.end keeps Claude Code's reported cost (cost-state) as reportedUsage.
   // 8 (0.1.2): API errors keep their HTTP status, error class, rate-limit type and retry wait.
-  parseVersion: 8,
+  // 9 (0.1.2): tool.end records a tool output Claude Code persisted to a file, so the model got a preview (cut).
+  parseVersion: 9,
 
   detect() {
     const dir = claudeConfigDir();

@@ -21,6 +21,7 @@ import { virtualModelId } from "../../integrations/gateway/ids.ts";
 import { hookSource } from "./claude-plugins.ts";
 import { toMs } from "./jsonl.ts";
 import { Emitter, anthropicPriceHints, anthropicUsage, arr, blobList, clipText, clipValue, compact, errorClass, isObj, num, obj, outputText, str } from "./normalize.ts";
+import { outputCutOf } from "./cut.ts";
 import { emitDerived } from "./tools.ts";
 
 export interface ClaudeConvertOpts {
@@ -309,7 +310,8 @@ export class ClaudeTranscriptConverter {
       const durationMs = num(obj(result).durationMs) ?? (use ? Math.max(0, ts - use.ts) : undefined);
       const text = outputText(b.content) ?? outputText(result) ?? "";
       const o = await clipText(this.ctx, text);
-      em.emit("tool.end", { tool, toolUseId: id, ok, durationMs, output: o.value }, { key: [id], durationMs, blobs: blobList(o.blob) });
+      // The tool_result is what the model got: a large output arrives as a <persisted-output> preview.
+      em.emit("tool.end", { tool, toolUseId: id, ok, durationMs, output: o.value, cut: outputCutOf(text) }, { key: [id], durationMs, blobs: blobList(o.blob) });
       await emitDerived(em, { tool, toolUseId: id, input: use?.input, output: isObj(result) || typeof result === "string" ? result : text, ok, cwd: this.cwd });
     }
     this.push(em);

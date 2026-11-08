@@ -123,6 +123,35 @@ describe("codex backfill (rollouts)", () => {
   });
 });
 
+describe("codex tool-output cuts", () => {
+  // Real captures (scripts/e2e/codex-cut-capture.mjs): a 40 KB JSON line from exec_command, then from a code-mode cell.
+  const dir = join(FIXTURES, "codex", "cut", "sessions", "2026", "11", "08");
+  const ends = (events: AgentEvent[]) => events.filter((e) => e.kind === "tool.end");
+
+  it("an exec_command output Codex cut: the cut goes on the item's tool.end, from the output the model got", async () => {
+    const events = await convertRollout(testCtx().ctx, join(dir, "rollout-2026-11-08T01-10-10-01a1b9fe-432d-7523-b54c-549334a74440.jsonl"), { mode: "full" });
+    assertWellFormed(events);
+    const [end] = ends(events);
+    assert.equal(ends(events).length, 1);
+    assert.equal(end!.payload.tool, "Bash");
+    // The elision happened to join two halves of a key, so the JSON still parses: no jsonBroken.
+    assert.deepEqual(end!.payload.cut, { by: "codex-head", originalTokens: 10696, cutChars: 32782, deliveredBytes: 10212 });
+  });
+
+  it("a code-mode cell's cut output: on the exec cell, not the command it ran", async () => {
+    const events = await convertRollout(testCtx().ctx, join(dir, "rollout-2026-11-08T01-10-11-01a1b9fe-4653-7bd1-9e72-32a873a1bdfc.jsonl"), { mode: "full" });
+    const cell = ends(events).find((e) => e.payload.wrapper === true)!;
+    assert.deepEqual(cell.payload.cut, { by: "codex-head", originalTokens: 12973, cutTokens: 2973, deliveredBytes: 40154 });
+    const nested = ends(events).find((e) => e.payload.tool === "Bash")!;
+    assert.equal(nested.payload.cut, undefined, "the command produced its whole output; the cell's result was cut");
+  });
+
+  it("an output Codex delivered whole has no cut", async () => {
+    const events = await convertRollout(testCtx().ctx, join(FIXTURES, "codex", "code-mode", "rollout-2026-11-01T10-00-00-0193dddd-1111-7222-8333-444455556666.jsonl"), { mode: "full" });
+    assert.ok(ends(events).length > 0 && ends(events).every((e) => e.payload.cut === undefined));
+  });
+});
+
 describe("codex code mode (exec cells)", () => {
   const CM = "0193dddd-1111-7222-8333-444455556666";
   const EA = "exec-0a0a0a0a-0000-4000-8000-000000000001";

@@ -192,7 +192,8 @@ export interface AgentEvent {
    * - subagent.start: { subagentId, type?, description?, prompt? }
    * - subagent.end:   { subagentId, ok?, result? (truncated), childSessionId? }
    * - tool.start: { tool, toolUseId, input, server? (MCP server name) }
-   * - tool.end:   { tool, toolUseId, ok, durationMs?, output? (truncated) }
+   * - tool.end:   { tool, toolUseId, ok, durationMs?, output? (truncated), cut? (the agent's
+   *   harness cut the output before the model saw it: adapters/_shared/cut.ts OutputCut) }
    *   (both: wrapper? — a call that runs other tool calls, e.g. a Codex code-mode
    *   cell; its calls point at it by parentId and only they count in session stats)
    * - file.change: { path, op: "add"|"modify"|"delete", additions?, deletions? }

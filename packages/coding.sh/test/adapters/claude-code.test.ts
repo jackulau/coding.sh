@@ -197,6 +197,25 @@ describe("claude-code backfill", () => {
     }
   });
 
+  it("marks a tool output Claude Code persisted to a file (the model got a preview) as cut", async () => {
+    // Real capture (scripts/e2e/claude-edge-capture.mjs): `seq 1 200000` prints 1.2 MB.
+    const prev = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = join(FIXTURES, "claude-code", "edge", "config");
+    try {
+      const ends = (await collect(claudeCode.backfill!(testCtx().ctx))).filter((e) => e.kind === "tool.end");
+      assert.equal(ends.length, 1);
+      const { savedTo, deliveredBytes, ...cut } = ends[0]!.payload.cut as Record<string, unknown>;
+      assert.deepEqual(cut, { by: "persisted", originalBytes: 1258291 });
+      assert.match(String(savedTo), /^\/home\/user\/\.claude\/projects\/-work-demo\/[\w-]+\/tool-results\/\w+\.txt$/);
+      assert.ok((deliveredBytes as number) > 2048 && (deliveredBytes as number) < 4096, String(deliveredBytes));
+    } finally {
+      process.env.CLAUDE_CONFIG_DIR = prev;
+    }
+    // Outputs delivered whole (the real and synthetic captures) have no cut.
+    const whole = await collect(claudeCode.backfill!(testCtx().ctx));
+    assert.ok(whole.filter((e) => e.kind === "tool.end").every((e) => e.payload.cut === undefined));
+  });
+
   it("surfaces failed blob writes instead of dropping transcripts silently", async () => {
     // Small inline limit: the fixture transcripts need blobs.
     const { ctx } = testCtx(16);

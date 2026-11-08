@@ -10,6 +10,7 @@ export * from "./heuristics.ts";
 export * from "./run.ts";
 export * from "./overlay.ts";
 export * from "./tools.ts";
+export * from "./cut.ts";
 export * from "./claude-transcript.ts";
 export * from "./install.ts";
 export * from "./installs.ts";

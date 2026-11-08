@@ -13,6 +13,7 @@ Sessions read back from Claude Code and Codex transcripts keep more of what the 
 
 ### Added
 
+- **Capture.** A tool output the agent cut before the model saw it is marked on its `tool.end` as `payload.cut`: Codex's head-and-tail cut of a long command or code-mode result (with the original token count, and `jsonBroken` when cut JSON no longer parses), and Claude Code's `<persisted-output>` preview of a result saved to a file (with its size and path). Backfilled sessions only for now; a hook-captured call keeps the hook's copy. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#known-breakage-to-design-around).
 - **Capture.** API errors Claude Code retried keep what the transcript says about them: the HTTP status, the error type and class (`rate_limit`, `overloaded`, …), the rate limit that was hit (`seven_day`, `five_hour`), when it resets, how long Claude Code waited and which attempt it was. Before, every one was a bare "api error", so a three-day weekly-limit stall looked like one transient error. [Read API](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#get-apisessionsid).
 - **Cost.** A Claude Code backfill keeps Claude Code's own cost tally (the transcript's `cost-state` line: total cost, API time and cost per model) on the session's `session.end` as `payload.reportedUsage`, so you can check the computed cost against it. It is never added to the session's cost. [Where cost comes from](https://github.com/jackulau/coding.sh/blob/main/docs/how-to/expensive-sessions.md#where-cost-comes-from).
 
