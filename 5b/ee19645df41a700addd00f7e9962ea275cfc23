@@ -1,0 +1,175 @@
+examples/plugin-ab/tasks/c2-duration/repo/src/duration.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-6
+examples/plugin-ab/tasks/e3-retry/repo/src/retry.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-15
+examples/plugin-ab/tasks/c1-paginate/repo/src/paginate.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-8
+examples/plugin-ab/tasks/e4-crash/tests/tests/need.json
+  s_8e040dbdf13565::t_a128108afa54cb 1
+examples/plugin-ab/inside.sh
+  s_8e040dbdf13565::t_ab34ab1dea827e 1-32,35,38-54
+  s_8e040dbdf13565::t_5bdfc67d1e1b7c 33-34,36-37
+examples/plugin-ab/tasks/c5-semver/repo/src/semver.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-5
+examples/plugin-ab/demo-plugin/.claude-plugin/plugin.json
+  s_8e040dbdf13565::t_93461561de041d 1-5
+examples/plugin-ab/tasks/c5-semver/instruction.md
+  s_8e040dbdf13565::t_a128108afa54cb 1-4
+examples/plugin-ab/check-tasks.py
+  s_8e040dbdf13565::t_ef01f79ed33545 2-7
+  s_8e040dbdf13565::t_74566f37d44395 15
+  s_8e040dbdf13565::t_b4300435764c02 119,121-122
+  s_8e040dbdf13565::t_a128108afa54cb 1,8-14,16-118,120
+examples/plugin-ab/tasks/c3-cache/repo/package.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-5
+examples/plugin-ab/tasks/c6-cli-json/tests/tests/cli.hidden.test.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-20
+examples/plugin-ab/tasks/e4-crash/repo/src/mailer.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-17
+examples/plugin-ab/tasks/c1-paginate/repo/package.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-5
+examples/plugin-ab/tasks/c4-csv/repo/package.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-5
+examples/plugin-ab/tasks/c2-duration/instruction.md
+  s_8e040dbdf13565::t_a128108afa54cb 1-4
+examples/plugin-ab/tasks/e3-retry/tests/tests/check.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-6
+examples/plugin-ab/tasks/c1-paginate/repo/test/paginate.test.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-6
+examples/plugin-ab/tasks/c6-cli-json/repo/package.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-5
+examples/plugin-ab/tasks/e2-flaky/repo/src/report.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-11
+examples/plugin-ab/tasks/e2-flaky/task.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-11
+examples/plugin-ab/analysis/runs.py
+  s_8e040dbdf13565::t_01221e53a2bd41 1-37
+examples/plugin-ab/tasks/e3-retry/instruction.md
+  s_8e040dbdf13565::t_a128108afa54cb 1-2
+examples/plugin-ab/demo-plugin/hooks/terse.mjs
+  s_8e040dbdf13565::t_2d0a631ebe706c 1-9
+examples/plugin-ab/tasks/c3-cache/tests/tests/users.hidden.test.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-23
+CHANGELOG.md
+  s_8e040dbdf13565::t_3bce45cf58f58a 21
+examples/plugin-ab/tasks/c4-csv/repo/src/csv.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-4
+examples/plugin-ab/tasks/c4-csv/task.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-11
+examples/plugin-ab/tasks/c4-csv/tests/tests/csv.hidden.test.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-10
+examples/plugin-ab/tasks/e1-review/tests/tests/need.json
+  s_8e040dbdf13565::t_a128108afa54cb 1
+examples/plugin-ab/tasks/e1-review/instruction.md
+  s_8e040dbdf13565::t_a128108afa54cb 1-2
+examples/plugin-ab/tasks/c3-cache/repo/src/users.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-16
+examples/plugin-ab/tasks/c4-csv/instruction.md
+  s_8e040dbdf13565::t_a128108afa54cb 1-3
+examples/plugin-ab/Dockerfile.dockerignore
+  s_8e040dbdf13565::t_a128108afa54cb 2-6,8-14
+  s_8e040dbdf13565::t_8cf58841e0a399 1,7
+examples/plugin-ab/tasks/c5-semver/repo/package.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-5
+examples/plugin-ab/tasks/e4-crash/repo/src/worker.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-10
+examples/plugin-ab/tasks/c3-cache/instruction.md
+  s_8e040dbdf13565::t_a128108afa54cb 1-4
+examples/plugin-ab/tasks/e4-crash/repo/crash.log
+  s_8e040dbdf13565::t_a128108afa54cb 1-11
+examples/plugin-ab/tasks/c2-duration/tests/tests/duration.hidden.test.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-17
+examples/plugin-ab/tasks/c5-semver/tests/tests/semver.hidden.test.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-18
+examples/plugin-ab/tasks/e2-flaky/tests/tests/check.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-6
+examples/plugin-ab/tasks/e4-crash/repo/src/jobs/receipt.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-8
+examples/plugin-ab/tasks/e3-retry/tests/tests/need.json
+  s_8e040dbdf13565::t_a128108afa54cb 1
+examples/plugin-ab/tasks/e2-flaky/instruction.md
+  s_8e040dbdf13565::t_a128108afa54cb 1-2
+examples/plugin-ab/demo-plugin/hooks/hooks.json
+  s_8e040dbdf13565::t_9a1b61dc6e6454 1-9
+examples/plugin-ab/tasks/c1-paginate/task.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-11
+examples/plugin-ab/tasks/e4-crash/task.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-11
+packages/coding.sh/test/examples/plugin-ab.test.ts
+  s_8e040dbdf13565::t_07c48cb7ca4921 1-89,93-128
+  s_8e040dbdf13565::t_b6ca3fcaf79cdf 90-92
+examples/plugin-ab/tasks/c2-duration/task.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-11
+examples/plugin-ab/tasks/c1-paginate/instruction.md
+  s_8e040dbdf13565::t_a128108afa54cb 1-3
+examples/plugin-ab/tasks/c5-semver/task.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-11
+examples/plugin-ab/analysis/judge.ts
+  s_8e040dbdf13565::t_e8bdb0b9c397cf 1-91
+examples/plugin-ab/tasks/c1-paginate/tests/tests/paginate.hidden.test.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-17
+examples/plugin-ab/tasks/e3-retry/task.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-11
+examples/plugin-ab/analysis/analyze.py
+  s_8e040dbdf13565::t_3b849a5819ab52 89
+  s_8e040dbdf13565::t_c4c6f43c170ba8 1-88,90-158
+examples/plugin-ab/Dockerfile
+  s_8e040dbdf13565::t_f39199608bd4a5 1-23
+examples/plugin-ab/tasks/c4-csv/repo/test/csv.test.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-6
+examples/plugin-ab/tasks/e4-crash/instruction.md
+  s_8e040dbdf13565::t_a128108afa54cb 1-2
+examples/plugin-ab/tasks/c6-cli-json/repo/cli.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-38
+examples/plugin-ab/tasks/c2-duration/repo/package.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-5
+examples/plugin-ab/run.sh
+  s_8e040dbdf13565::t_48c4f677c3ced2 1-13,16-46,48-49
+  s_8e040dbdf13565::t_a95afdbcc443bb 47
+  s_8e040dbdf13565::t_6116ca099b0ecb 14-15
+examples/plugin-ab/tasks/e4-crash/repo/src/config.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-6
+examples/plugin-ab/tasks/e1-review/task.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-11
+examples/plugin-ab/tasks/e4-crash/tests/tests/check.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-6
+examples/plugin-ab/tasks/c3-cache/task.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-11
+examples/plugin-ab/tasks/e2-flaky/repo/test/report.test.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-7
+examples/plugin-ab/README.md
+  s_8e040dbdf13565::t_726f4f95661fe6 1-13,17-94
+  s_8e040dbdf13565::t_d0a53e4f72902a 14-16
+examples/plugin-ab/tasks/e2-flaky/tests/tests/tz.hidden.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-5
+examples/plugin-ab/tasks/e2-flaky/repo/package.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-5
+examples/plugin-ab/tasks/c6-cli-json/instruction.md
+  s_8e040dbdf13565::t_a128108afa54cb 1-3
+examples/plugin-ab/build-arms.mjs
+  s_8e040dbdf13565::t_00f7e95646c801 65
+  s_8e040dbdf13565::t_2dc034a33b663f 115-117
+  s_8e040dbdf13565::t_9b8b9a5623663b 1-64,66-114
+examples/plugin-ab/tasks/c6-cli-json/task.json
+  s_8e040dbdf13565::t_a128108afa54cb 1-11
+examples/plugin-ab/tasks/e1-review/repo/change.diff
+  s_8e040dbdf13565::t_a128108afa54cb 1-31
+examples/plugin-ab/tasks/e1-review/tests/tests/check.js
+  s_8e040dbdf13565::t_a128108afa54cb 1-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5bee19645df41a700addd00f7e9962ea275cfc23",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}

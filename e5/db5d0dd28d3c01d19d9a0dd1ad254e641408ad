@@ -1,0 +1,71 @@
+packages/coding.sh/src/core/ingest.ts
+  s_8e040dbdf13565::t_076c4f201f4295 899-908,980,1000
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_47e57039fe7ad0 70-73
+packages/coding.sh/src/cli/common.ts
+  s_8e040dbdf13565::t_fea2c7ab2c0d0c 10
+  s_8e040dbdf13565::t_4f0ddca6eb424c 197
+  s_8e040dbdf13565::t_51517bb18f83b7 39-58
+  s_8e040dbdf13565::t_4409bf7c91c4ea 2-3
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_60edcc64d89ddb 187
+  s_8e040dbdf13565::t_3abf6273542ade 197
+  s_8e040dbdf13565::t_549814cc5a39f3 233
+  s_8e040dbdf13565::t_7b3cd94d4bebfb 200
+packages/coding.sh/src/viewer/ui/index.html
+  s_8e040dbdf13565::t_bf3327c4dcbc30 3132-3134,3137-3140,3143,3152
+  s_8e040dbdf13565::t_c14ba3f07437ed 6401
+  s_8e040dbdf13565::t_4444983b938047 6415,6417-6421
+docs/reference/cli.md
+  s_8e040dbdf13565::t_eee44d767d4115 85,98,105,157
+packages/coding.sh/src/cli/commands/ui.ts
+  s_8e040dbdf13565::t_825f6a0561eaa7 5
+  s_8e040dbdf13565::t_241cbca370909f 29-34
+packages/coding.sh/src/cli/commands/init.ts
+  s_8e040dbdf13565::t_02c409b5746db5 184-233,237-252,254-256
+  s_8e040dbdf13565::t_e886ca97daadbd 234-236
+  s_8e040dbdf13565::t_63ba71ebe716f1 21,24,148,169,346-347,359,364,377,380,429-435,446,474
+packages/coding.sh/src/cli/commands/ingest.ts
+  s_8e040dbdf13565::t_b299b2e75d19a0 13,17
+  s_8e040dbdf13565::t_86d6ea8b3d2fe9 8-9
+  s_8e040dbdf13565::t_c96705a0ae37a8 33-34,36,45-49,53-54
+docs/reference/api.md
+  s_8e040dbdf13565::t_99bbf9edef9771 1080
+packages/coding.sh/src/core/context.ts
+  s_8e040dbdf13565::t_076c4f201f4295 8,29,69
+packages/coding.sh/src/cli/ingest-worker.ts
+  s_8e040dbdf13565::t_bd9fe09f5b8d7d 22-23
+packages/coding.sh/src/core/paths.ts
+  s_8e040dbdf13565::t_1c95d2d1ef078c 44-45
+packages/coding.sh/src/spool/kick.ts
+  s_8e040dbdf13565::t_6ce5dd73232625 55
+  s_8e040dbdf13565::t_020faee7784e03 49-50,52
+CHANGELOG.md
+  s_8e040dbdf13565::t_cec4bf2dfad569 20
+packages/coding.sh/test/cli/init-import.test.ts
+  s_8e040dbdf13565::t_f71e6bff12c90b 1-141,143-157
+  s_8e040dbdf13565::t_56da794802a849 142
+packages/coding.sh/test/cli/read-while-ingesting.test.ts
+  s_8e040dbdf13565::t_a75e184fe81e60 168-177
+  s_8e040dbdf13565::t_577b9af4cdf76b 18-19
+README.md
+  s_8e040dbdf13565::t_f83ab8f4ac095f 56-58
+docs/guides/install.md
+  s_8e040dbdf13565::t_dc09d96eb58e01 64-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e5db5d0dd28d3c01d19d9a0dd1ad254e641408ad",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
