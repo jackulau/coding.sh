@@ -223,6 +223,33 @@ export const COMMANDS: CommandSpec[] = [
     load: () => import("./commands/collector.ts"),
   },
   {
+    name: "proxy",
+    group: "Capture",
+    summary: "Run a local Anthropic/OpenAI API proxy that logs every model call",
+    actionOptional: true,
+    flags: [
+      { name: "port", short: "p", type: "number", value: "<PORT>", desc: "Port to listen on, 0 = any free port ([proxy] port)", default: "4320" },
+      { name: "host", type: "string", value: "<HOST>", desc: "Interface to bind ([proxy] host)", default: "127.0.0.1" },
+      { name: "anthropic-upstream", type: "string", value: "<URL>", desc: "Where Anthropic calls go, e.g. a gateway ([proxy] anthropic_upstream)", default: "https://api.anthropic.com" },
+      { name: "openai-upstream", type: "string", value: "<URL>", desc: "Where OpenAI calls go ([proxy] openai_upstream)", default: "https://api.openai.com" },
+      { name: "background", type: "boolean", desc: "Start detached, print the URL once it answers (log: ~/.coding.sh/proxy.log)" },
+      { name: "quiet", short: "q", type: "boolean", desc: "No line per call on stderr" },
+    ],
+    actions: [
+      { name: "status", summary: "Show whether a proxy is running, and where (exit 1 when not)", examples: ["coding.sh proxy status"] },
+      { name: "stop", summary: "Stop the background proxy", examples: ["coding.sh proxy stop"] },
+      { name: "env", summary: "Print the ANTHROPIC_BASE_URL / OPENAI_BASE_URL exports for the proxy", examples: ['eval "$(coding.sh proxy env)"'] },
+    ],
+    examples: ["coding.sh proxy", "coding.sh proxy --background", "coding.sh init --proxy", "coding.sh proxy --anthropic-upstream https://gateway.example.com/anthropic"],
+    notes: [
+      "Forwards /v1/messages (and count_tokens), /v1/chat/completions, /v1/responses and every other path to the real API with the client's own auth headers. Auth headers are never stored.",
+      "Streams pass through as they arrive. A failed store write never fails the request.",
+      "Calls from Claude Code and Codex land in the session their hooks capture; other clients get a proxy-<hash> session per conversation (or send x-coding-sh-session: <id>).",
+      "Prints the environment to stdout; one line per call goes to stderr.",
+    ],
+    load: () => import("./commands/proxy.ts"),
+  },
+  {
     name: "serve",
     group: "Capture",
     summary: "Production server: OTLP + native ingest, viewer, health and metrics on one port",

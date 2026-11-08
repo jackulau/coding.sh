@@ -46,6 +46,9 @@ export const failureFlags = (flags: readonly string[]): string[] => flags.filter
 /** Events written by enrichment (`coding.sh gateway enrich`): they never decide a session's shape. */
 const isEnrichment = (e: AgentEvent): boolean => e.source === "gateway";
 
+/** A model call logged by `coding.sh proxy`. */
+const isProxyCall = (e: AgentEvent): boolean => e.kind === "llm.call" && e.source === "proxy";
+
 export const TITLE_MAX = 280;
 /** Cap on Session.traceIds (a long-lived conversation can span many traces). */
 export const MAX_TRACE_IDS = 256;
@@ -402,7 +405,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * events, and every stored session is folded again once in the background
  * (core/reparse.ts, REFOLD_CURSOR), so old sessions get the new derivation.
  */
-export const SESSION_FOLD_VERSION = 4; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips.
+export const SESSION_FOLD_VERSION = 5; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -471,6 +474,17 @@ export interface SessionState {
   outline: OutlineState;
   waste: WasteState;
   cacheBreaks: CacheBreakState;
+  /**
+   * Proxy model calls (source "proxy") that another capture path also recorded
+   * are detail only: when the session has model calls from its agent's own
+   * capture (a transcript, an OTel span), those count, and usage, latency,
+   * phases and cache breaks come from this copy of their folds, which skips the
+   * proxy's calls. Made at the first proxy call. A session with no other model
+   * calls counts the proxy's. Failed calls count either way (only the proxy sees retries).
+   */
+  sansProxy?: { usage: UsageState; latency: LatencyState; outline: OutlineState; cacheBreaks: CacheBreakState };
+  /** A model call from a capture path other than the proxy. */
+  otherCalls?: boolean;
   skills: SkillState;
   redactions: RedactionState;
 }
@@ -523,6 +537,16 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
     const { gitBranch, gitCommit, git } = e.payload;
     s.gitStart = { gitBranch, gitCommit, git };
   }
+  const proxyCall = isProxyCall(e);
+  if (proxyCall) s.sansProxy ??= structuredClone({ usage: s.usage, latency: s.latency, outline: s.outline, cacheBreaks: s.cacheBreaks });
+  else if (e.kind === "llm.call" && !isEnrichment(e)) s.otherCalls = true;
+  const sans = proxyCall ? undefined : s.sansProxy;
+  if (sans) {
+    foldUsage(sans.usage, e);
+    foldLatency(sans.latency, e);
+    foldOutline(sans.outline, e, index);
+    foldCacheBreaks(sans.cacheBreaks, e);
+  }
   foldUsage(s.usage, e);
   foldLatency(s.latency, e);
   foldFlags(s.flags, e);
@@ -547,7 +571,7 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
   // When it was stamped, not when it ended: a span that began before the end is not a resume.
   if (e.kind !== "session.end" && (s.lastActivity === undefined || e.ts > s.lastActivity)) s.lastActivity = e.ts;
   // Live-ingested (OTel or the SDKs' native batches): no adapter emits a session.end.
-  if (!e.source?.startsWith("otel") && e.source !== "sdk") s.allLive = false;
+  if (!e.source?.startsWith("otel") && e.source !== "sdk" && e.source !== "proxy") s.allLive = false;
   if (!isBackfillEvent(e)) s.allTranscript = false;
   if (e.model) s.model = e.model;
   if (e.agentVersion) s.agentVersion = e.agentVersion;
@@ -599,6 +623,8 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
     }
     case "llm.call":
       if (llmCallFailed(e.payload)) s.llmErrors = addLlmError(s.llmErrors, e.payload);
+      // A proxy-only session has no user.message events: the call's last prompt names it.
+      if (proxyCall && typeof e.payload.prompt === "string" && e.payload.prompt.trim() && !SYNTHETIC_PROMPT.test(e.payload.prompt)) s.fallbackTitle ??= makeTitle(e.payload.prompt);
       break;
     case "file.change":
       if (typeof e.payload.path === "string") s.files.add(e.payload.path);
@@ -624,7 +650,9 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   if (!first && !prev) throw new Error("buildSession needs at least one event or an existing session");
   if (!s.simple && !sorted) throw new Error("sessionOf needs the events of a session with spans or enrichment");
   const id = first?.sessionId ?? prev!.id;
-  const { usage, duplicate } = s.simple ? usageOf(s.usage) : rollupUsage(sorted!);
+  // The folds that count: without the proxy's copies when another capture path recorded the calls.
+  const counted = s.sansProxy && s.otherCalls ? s.sansProxy : s;
+  const { usage, duplicate } = s.simple ? usageOf(counted.usage) : rollupUsage(counted === s ? sorted! : sorted!.filter((e) => !isProxyCall(e)));
   const derails = derailsOf(s.derails);
   // A session.end followed by later captured activity was reopened (resumed
   // under the same id): it is not ended, whatever an earlier build stored.
@@ -657,14 +685,14 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
     fallbackTitle ??= durable.workflow ?? `${durable.engine} run ${durable.runId}`;
   }
   if (derails.length) session.stats.derails = derails;
-  const phases = phasesToStore(outlineOf(s.outline));
+  const phases = phasesToStore(outlineOf(counted.outline));
   if (phases) session.stats.phases = phases;
   const waste = wasteStatsOf(s.waste);
   if (waste) {
     session.stats.waste = waste.stats;
     session.flags.push(...waste.flags);
   }
-  const cacheBreaks = cacheBreaksOf(s.cacheBreaks);
+  const cacheBreaks = cacheBreaksOf(counted.cacheBreaks);
   if (cacheBreaks) session.stats.cacheBreaks = cacheBreaks;
   session.flags.push(...skillFlags(skillUseOf(s.skills, s.cwd ?? prev?.cwd)));
   const redactions = redactionsOf(s.redactions);
@@ -677,7 +705,7 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   if (Object.keys(usage).length) session.stats.usage = usage;
   if (duplicate) session.stats.duplicateUsage = duplicate;
   if (s.llmErrors) session.stats.llmErrors = { ...s.llmErrors };
-  const latency = latencyOf(s.latency, endedAt);
+  const latency = latencyOf(counted.latency, endedAt);
   if (Object.keys(latency).length) session.stats.latency = latency;
   const set = <K extends keyof Session>(k: K, v: Session[K] | undefined) => {
     if (v !== undefined) session[k] = v;

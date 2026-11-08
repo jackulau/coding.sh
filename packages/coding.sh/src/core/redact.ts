@@ -485,6 +485,18 @@ const METADATA_STRING_KEYS = new Set([
   "childSessionId",
   "server",
   "type",
+  // Model calls (the proxy): which API, which client, how it failed, and ids/short hashes, never content.
+  "api",
+  "client",
+  "clientVersion",
+  "linkedBy",
+  "errorClass",
+  "errorType",
+  "systemHash",
+  "toolsHash",
+  "messageId",
+  "responseId",
+  "requestId",
 ]);
 
 /**

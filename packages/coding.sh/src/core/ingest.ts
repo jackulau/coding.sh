@@ -788,7 +788,9 @@ export async function recomputeSession(index: IndexStore, id: string, o: Recompu
   if (!folded) return false;
   const { state } = folded;
   const session = sessionOf(state, prev, folded.events);
-  const version = o.parseVersion ?? (prev ? undefined : o.versionFor?.(session.agent));
+  // parseVersion 0: a row the proxy created before any hook or transcript event (proxy/record.ts).
+  const unstamped = !prev || prev.parseVersion === 0;
+  const version = o.parseVersion ?? (unstamped ? o.versionFor?.(session.agent) : undefined);
   if (version !== undefined) session.parseVersion = version;
   if (!session.parent) {
     const link = await linker.pending(id);

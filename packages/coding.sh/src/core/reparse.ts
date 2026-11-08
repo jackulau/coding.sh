@@ -158,7 +158,8 @@ const versionOf = (adapters: ReadonlyMap<string, Adapter>, agent: string) => par
 async function staleSessions(index: IndexStore, adapters: ReadonlyMap<string, Adapter>) {
   return (await index.listSessions({})).filter((s) => {
     const v = versionOf(adapters, s.agent);
-    return v !== undefined && s.parseVersion !== undefined && s.parseVersion < v;
+    // 0: created by the proxy and not parsed by an adapter yet (ingest stamps it).
+    return v !== undefined && s.parseVersion !== undefined && s.parseVersion !== 0 && s.parseVersion < v;
   });
 }
 

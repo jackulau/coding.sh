@@ -38,6 +38,7 @@ Every command accepts these.
 | [`ingest`](#codingsh-ingest) | Capture | Move captured hook events from the spool into the index |
 | [`run`](#codingsh-run) | Capture | Run any agent command and capture the session |
 | [`collector`](#codingsh-collector) | Capture | Start a local OTLP/HTTP receiver for agents that export traces |
+| [`proxy`](#codingsh-proxy) | Capture | Run a local Anthropic/OpenAI API proxy that logs every model call |
 | [`serve`](#codingsh-serve) | Capture | Production server: OTLP + native ingest, viewer, health and metrics on one port |
 | [`uninstall`](#codingsh-uninstall) | Capture | Remove coding.sh hooks and MCP entries from every agent |
 | [`sessions`](#codingsh-sessions) | Explore | List captured sessions |
@@ -197,6 +198,77 @@ coding.sh otel --port 0
 ```
 
 - Prints the OTEL_\* environment to stdout; status goes to stderr.
+
+## `coding.sh proxy`
+
+Run a local Anthropic/OpenAI API proxy that logs every model call.
+
+```text
+coding.sh proxy [action] [options]
+```
+
+| Action | What it does |
+|---|---|
+| [`status`](#codingsh-proxy-status) | Show whether a proxy is running, and where (exit 1 when not) |
+| [`stop`](#codingsh-proxy-stop) | Stop the background proxy |
+| [`env`](#codingsh-proxy-env) | Print the ANTHROPIC_BASE_URL / OPENAI_BASE_URL exports for the proxy |
+
+| Option | Default | Description |
+|---|---|---|
+| `-p, --port <PORT>` | `4320` | Port to listen on, 0 = any free port ([proxy] port) |
+| `--host <HOST>` | `127.0.0.1` | Interface to bind ([proxy] host) |
+| `--anthropic-upstream <URL>` | `https://api.anthropic.com` | Where Anthropic calls go, e.g. a gateway ([proxy] anthropic_upstream) |
+| `--openai-upstream <URL>` | `https://api.openai.com` | Where OpenAI calls go ([proxy] openai_upstream) |
+| `--background` |  | Start detached, print the URL once it answers (log: ~/.coding.sh/proxy.log) |
+| `-q, --quiet` |  | No line per call on stderr. |
+
+```sh
+coding.sh proxy
+coding.sh proxy --background
+coding.sh init --proxy
+coding.sh proxy --anthropic-upstream https://gateway.example.com/anthropic
+```
+
+- Forwards /v1/messages (and count_tokens), /v1/chat/completions, /v1/responses and every other path to the real API with the client's own auth headers. Auth headers are never stored.
+- Streams pass through as they arrive. A failed store write never fails the request.
+- Calls from Claude Code and Codex land in the session their hooks capture; other clients get a proxy-&lt;hash&gt; session per conversation (or send x-coding-sh-session: &lt;id&gt;).
+- Prints the environment to stdout; one line per call goes to stderr.
+
+### `coding.sh proxy status`
+
+Show whether a proxy is running, and where (exit 1 when not).
+
+```text
+coding.sh proxy status
+```
+
+```sh
+coding.sh proxy status
+```
+
+### `coding.sh proxy stop`
+
+Stop the background proxy.
+
+```text
+coding.sh proxy stop
+```
+
+```sh
+coding.sh proxy stop
+```
+
+### `coding.sh proxy env`
+
+Print the ANTHROPIC_BASE_URL / OPENAI_BASE_URL exports for the proxy.
+
+```text
+coding.sh proxy env
+```
+
+```sh
+eval "$(coding.sh proxy env)"
+```
 
 ## `coding.sh serve`
 
