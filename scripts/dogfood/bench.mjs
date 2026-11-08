@@ -293,6 +293,12 @@ export async function benchViewer({ cli = CLI, events = 5000, runs = 3 } = {}) {
       }
     }, 60_000, "viewer url");
     const url = `${info.url}#/s/${encodeURIComponent(corpus.sessions[0])}`;
+    // `ui` indexes the spool after it starts listening: measure the page, not the import.
+    const token = new URL(info.url).searchParams.get("t");
+    await waitFor(async () => {
+      const r = await fetch(new URL(`/api/sessions/${encodeURIComponent(corpus.sessions[0])}`, info.url), { headers: { authorization: `Bearer ${token}` } }).catch(() => null);
+      return r?.ok && (await r.json()).stats?.events >= corpus.events;
+    }, 120_000, "corpus indexed");
     if (lighthouse) {
       const vals = [];
       for (let i = 0; i < runs; i++) {
@@ -319,8 +325,8 @@ export async function benchViewer({ cli = CLI, events = 5000, runs = 3 } = {}) {
       await s("Page.addScriptToEvaluateOnNewDocument", { source: "window.__lt=[];try{new PerformanceObserver(l=>{for(const e of l.getEntries())window.__lt.push(e.startTime+e.duration)}).observe({type:'longtask',buffered:true})}catch{}" });
       await s("Page.navigate", { url });
       const evalJs = async (expr) => (await s("Runtime.evaluate", { expression: expr, returnByValue: true })).result.value;
-      // Rendered: the session view lists its events (any element linking to an event inside this session).
-      await waitFor(() => evalJs(`document.readyState==='complete' && document.querySelectorAll('a[href^="#/s/"], [data-event], li, tr').length > 20`), 30_000, "timeline render");
+      // Rendered: the session view lists its steps (the timeline's rows, a virtual list).
+      await waitFor(() => evalJs(`document.readyState==='complete' && document.querySelectorAll('#steps .st').length > 20`), 30_000, "timeline render");
       let lastLt = -1;
       let quietSince = Date.now();
       await waitFor(async () => {
