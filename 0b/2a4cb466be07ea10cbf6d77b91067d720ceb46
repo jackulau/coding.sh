@@ -1,0 +1,41 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_71b0771ba7364a 31
+docs/guides/improve.md
+  s_8e040dbdf13565::t_03b5b5b2b1556c 36-41,194-195
+docs/reference/cli.md
+  s_8e040dbdf13565::t_115ef095feaf0d 2197,2210,2235,2258
+packages/coding.sh/src/cli/commands/improve.ts
+  s_8e040dbdf13565::t_94b2a9afc33c00 16,30-31,46,123-126,129,134,142,144,151,196,267
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_1642fd011b29ea 101,1242
+packages/coding.sh/src/improve/report.ts
+  s_8e040dbdf13565::t_b9852428b6b165 20-21,29-36,39,102,104
+packages/coding.sh/src/mcp/improve.ts
+  s_8e040dbdf13565::t_b6163a7f535055 10,21-22,104-105,108,113
+packages/coding.sh/src/mcp/tools.ts
+  s_8e040dbdf13565::t_6ca30c18a6080e 482,487,496
+packages/coding.sh/test/cli/improve.test.ts
+  s_8e040dbdf13565::t_c7ef6ba76d0b5a 49-65
+packages/coding.sh/test/helpers-improve.ts
+  s_8e040dbdf13565::t_21c6480e14157e 17,62,64-65,74
+packages/coding.sh/test/improve/report.test.ts
+  s_8e040dbdf13565::t_47bc51a7393b4c 5,39-53
+packages/coding.sh/test/mcp/toolevals.test.ts
+  s_8e040dbdf13565::t_d5b58ba25b625e 65-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "0b2a4cb466be07ea10cbf6d77b91067d720ceb46",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <jack@coding.sh>"
+    }
+  }
+}

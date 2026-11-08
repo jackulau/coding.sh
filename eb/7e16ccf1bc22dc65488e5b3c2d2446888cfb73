@@ -1,0 +1,35 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_e6e8cc6406c1e0 36
+docs/guides/improve.md
+  s_8e040dbdf13565::t_e05fd639babf11 44-52
+docs/reference/cli.md
+  s_8e040dbdf13565::t_fa55af81568252 2209
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_ed5742cc4c838c 1241
+packages/coding.sh/src/core/failing-command.ts
+  s_8e040dbdf13565::t_19e14e07ffa733 1-294
+packages/coding.sh/src/eval/task.ts
+  s_8e040dbdf13565::t_7a5a3178c9c8fa 8,112-113
+packages/coding.sh/src/improve/issues.ts
+  s_8e040dbdf13565::t_acddd203d317f9 10-11,21,66,159-161,163-164,179-180,195-202,205-206,209-220,234-235,239,242-248,251,255-263,265,271,333-334,348-351
+packages/coding.sh/test/core/failing-command.test.ts
+  s_8e040dbdf13565::t_575ea925f99543 1-108
+packages/coding.sh/test/eval/task.test.ts
+  s_8e040dbdf13565::t_d7e031e68d06bf 77-78
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "eb7e16ccf1bc22dc65488e5b3c2d2446888cfb73",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <jack@coding.sh>"
+    }
+  }
+}
