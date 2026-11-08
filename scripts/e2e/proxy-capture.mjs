@@ -9,7 +9,10 @@
 //   - the request (system prompt, tools) and the response are readable back
 //     (`show <session>#-1`, `diff-calls`), and no API key is stored anywhere;
 //   - `exp replay` replays a logged call (dry run, then against the stub);
-//   - `uninstall --proxy` puts both agents' configs back byte for byte.
+//   - `uninstall --proxy` puts both agents' configs back byte for byte;
+//   - with a gateway already set (Claude Code's ANTHROPIC_BASE_URL, a Codex
+//     provider of its own), `init --proxy` chains through it: the calls are
+//     logged and sent on to it, and uninstall puts the old base URL back.
 //
 //   node scripts/e2e/proxy-capture.mjs [--agent claude-code|codex]... [--tarball coding.sh-x.y.z.tgz] [--keep]
 //
@@ -294,6 +297,54 @@ try {
   for (const a of opts.agents) {
     const after = readFileSync(AGENTS[a].config(home), "utf8");
     check(own(a, after) === own(a, before[a]), `${a}: config byte for byte as before`, after);
+  }
+
+  // Chaining: each agent already calls a gateway (the stub plays a CLIProxyAPI). init --proxy keeps it
+  // as the upstream instead of replacing it: no upstream in coding.sh's config, the proxy stopped first
+  // so init starts it with the chained upstreams.
+  await cs(["proxy", "stop"], { quiet: true });
+  writeFileSync(join(csHome, "config.toml"), `[proxy]\nport = ${port}\n`);
+  writeFileSync(AGENTS["claude-code"].config(home), `{\n  "env": { "ANTHROPIC_BASE_URL": "${stub.url}" }\n}\n`);
+  writeFileSync(AGENTS.codex.config(home), `model = "gpt-5"\nmodel_provider = "cliproxy"\n\n[model_providers.cliproxy]\nname = "CLIProxyAPI"\nbase_url = "${stub.url}/v1"\nenv_key = "CLIPROXY_KEY"\nwire_api = "responses"\n`);
+  const chainedBefore = Object.fromEntries(opts.agents.map((a) => [a, readFileSync(AGENTS[a].config(home), "utf8")]));
+  const chainEnv = { ...env, CLIPROXY_KEY: OPENAI_KEY };
+  const chain = await cs(["init", ...opts.agents.flatMap((a) => ["--agent", a]), "--proxy", "--yes", "--no-mcp"], { env: chainEnv });
+  check(chain.code === 0 && /calls go on to/.test(chain.stderr), "init --proxy chains through the base URL each agent used, no --force", chain.stderr);
+  const chainedHealth = await fetch(`${proxyUrl}/__codingsh/health`).then((r) => r.json()).catch((e) => ({ error: String(e) }));
+  const want = { ...(opts.agents.includes("claude-code") ? { anthropic: stub.url } : {}), ...(opts.agents.includes("codex") ? { openai: stub.url } : {}) };
+  check(Object.entries(want).every(([k, v]) => chainedHealth.upstreams?.[k] === v), "the proxy's upstreams are the chained base URLs", chainedHealth);
+  const chainDoctor = JSON.parse((await cs(["doctor", "--json"], { quiet: true })).stdout || "{}");
+  check(opts.agents.every((a) => chainDoctor.proxy?.routes?.some((r) => r.agent === a && r.ok && r.chained)), "doctor: each agent routed, with its chained URL", chainDoctor.proxy);
+  const chainedCalls = async (sid) => {
+    await new Promise((r) => setTimeout(r, 1500));
+    const doc = JSON.parse((await cs(["show", sid, "--json"], { quiet: true })).stdout || "{}");
+    return ((doc.data ?? doc).events ?? []).filter((e) => e.kind === "llm.call" && e.source === "proxy");
+  };
+  if (opts.agents.includes("claude-code")) {
+    const settings = JSON.parse(readFileSync(AGENTS["claude-code"].config(home), "utf8"));
+    check(settings.env?.ANTHROPIC_BASE_URL === proxyUrl, "chained: Claude Code calls the proxy", settings.env);
+    const sid = randomUUID();
+    const r = await run("claude", ["-p", "--output-format", "json", "--permission-mode", "bypassPermissions", "--model", AGENTS["claude-code"].model, "--session-id", sid, "create hello.txt"], { env: chainEnv, cwd: repo });
+    check(r.code === 0, "chained: claude -p through the proxy to the gateway", r.stderr.slice(-2000));
+    const calls = await chainedCalls(sid);
+    check(calls.length >= 2 && calls.every((e) => e.payload?.statusCode === 200 && e.payload?.upstream === stub.url), `chained: Claude Code calls logged and sent on to the gateway (${calls.length})`, calls.map((e) => e.payload));
+    rmSync(join(repo, "hello.txt"), { force: true });
+  }
+  if (opts.agents.includes("codex")) {
+    const toml = readFileSync(AGENTS.codex.config(home), "utf8");
+    check(toml.includes('model_provider = "cliproxy"') && toml.includes(`base_url = "${proxyUrl}/v1"`) && !toml.includes("coding-sh"), "chained: Codex keeps its provider, whose base_url is now the proxy", toml);
+    const r = await run("codex", ["exec", "--json", "--dangerously-bypass-hook-trust", "-s", "workspace-write", "--skip-git-repo-check", "-m", AGENTS.codex.model, "-C", repo, "create hello.txt"], { env: chainEnv, cwd: repo });
+    check(r.code === 0, "chained: codex exec through the proxy to the gateway", r.stderr.slice(-2000));
+    const thread = /"thread_id"\s*:\s*"([^"]+)"/.exec(r.stdout)?.[1];
+    const calls = thread ? await chainedCalls(thread) : [];
+    check(calls.length >= 2 && calls.every((e) => e.payload?.statusCode === 200 && e.payload?.upstream === stub.url), `chained: Codex calls logged and sent on to the gateway (${calls.length})`, calls.map((e) => e.payload));
+  }
+  check(SECRETS.every((s) => !everyByte(csHome).includes(s)), "chained: no API key in ~/.coding.sh");
+  const unChain = await cs(["uninstall", "--yes"]);
+  check(unChain.code === 0, "coding.sh uninstall after chaining", unChain.stderr);
+  for (const a of opts.agents) {
+    const after = readFileSync(AGENTS[a].config(home), "utf8");
+    check(own(a, after) === own(a, chainedBefore[a]), `chained: ${a} config byte for byte as before, base URL back`, after);
   }
 } catch (e) {
   log(`error: ${e instanceof Error ? e.stack : e}`);
