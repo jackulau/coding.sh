@@ -127,6 +127,17 @@ export function parseRequest(api: Api, body: unknown): RequestInfo {
         info.messages.push(m);
       }
       if (sys.length && !str(b.instructions)) info.system = sys.join("\n\n");
+      // Without instructions (Codex), the system prompt is the leading system/developer items;
+      // ones added later in the conversation are turns, so they don't change its hash.
+      if (typeof b.instructions !== "string") {
+        const lead: unknown[] = [];
+        for (const m of arr(b.input)) {
+          const role = obj(m).role;
+          if (role !== "system" && role !== "developer") break;
+          lead.push(m);
+        }
+        if (lead.length) info.systemRaw = lead;
+      }
     }
     if (typeof b.instructions === "string") {
       info.systemRaw = b.instructions;

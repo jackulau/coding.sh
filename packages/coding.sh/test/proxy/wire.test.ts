@@ -97,6 +97,14 @@ describe("classify and parseRequest", () => {
     assert.equal(r.system, "I");
     assert.equal(r.prompt, "hi");
     assert.equal(r.previousResponseId, "resp_0");
+    // Codex: no instructions; the system prompt is the leading developer items, later ones are turns.
+    const dev = (t: string) => ({ type: "message", role: "developer", content: [{ type: "input_text", text: t }] });
+    const user = { type: "message", role: "user", content: [{ type: "input_text", text: "q" }] };
+    const x = parseRequest("responses", { input: [dev("D1"), dev("D2"), user] });
+    const y = parseRequest("responses", { input: [dev("D1"), dev("D2"), user, dev("later")] });
+    assert.deepEqual(x.systemRaw, [dev("D1"), dev("D2")]);
+    assert.deepEqual(y.systemRaw, x.systemRaw);
+    assert.equal(parseRequest("responses", { input: [user] }).systemRaw, undefined);
   });
 });
 
