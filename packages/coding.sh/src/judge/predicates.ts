@@ -165,8 +165,8 @@ export const BUILTIN_PREDICATES: Readonly<Record<string, TracePredicate>> = Obje
     },
   },
   "no-premature-completion": {
-    version: "1",
-    description: "The agent did not end while the latest test run was failing (core flag premature-completion).",
+    version: "2",
+    description: "The agent did not end while the latest test run was failing without saying so (core flag premature-completion).",
     test(ctx) {
       return { answer: !detectPrematureCompletion(asAgentEvents(ctx.trace)) };
     },

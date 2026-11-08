@@ -90,7 +90,7 @@ export const FLAG_TEXT: Readonly<Record<string, FlagText>> = {
     behavior: "unverified-claim",
   },
   "premature-completion": {
-    title: "Ends its turn while tests or checks fail",
+    title: "Ends its turn while tests fail, without saying so",
     fix: "Tell the agent not to stop on a red check.",
     rule: () => "Don't end your turn while a test or check fails: fix it, or say plainly that it still fails and why.",
     behavior: "done-while-failing",

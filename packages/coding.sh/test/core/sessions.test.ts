@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
 import {
@@ -129,6 +131,67 @@ describe("failure detectors", () => {
     assert.ok(!detectFlags([...failingEnd, ev("user.message", { text: "fix" }), ev("test.result", { passed: 3, failed: 0 }), ev("turn.end")]).includes(FLAGS.prematureCompletion));
     assert.ok(!detectFlags([ev("test.result", { passed: 1, failed: 2 }), ev("test.result", { passed: 3, failed: 0 }), ev("turn.end")]).includes(FLAGS.prematureCompletion));
     assert.ok(!detectFlags([ev("test.result", { passed: 1, failed: 2 })]).includes(FLAGS.prematureCompletion), "still working");
+  });
+
+  it("premature-completion: an agent that says the tests still fail is not flagged; one that claims success or says nothing is", () => {
+    const premature = (...events: AgentEvent[]) => detectFlags(events).includes(FLAGS.prematureCompletion);
+    const red = () => ev("test.result", { passed: 3, failed: 2 });
+    const say = (text: string) => ev("assistant.message", { text });
+    assert.equal(premature(red(), say("2 tests still fail: test_a and test_b need the fixture."), ev("turn.end"), ev("session.end")), false);
+    assert.equal(premature(red(), say("I couldn't get test_a to pass. How would you like to proceed?"), ev("turn.end")), false);
+    assert.equal(premature(red(), say("Done: all tests pass."), ev("turn.end")), true, "claims success");
+    assert.equal(premature(red(), ev("turn.end")), true, "silent end");
+    assert.equal(premature(red(), say("Updated the README."), ev("turn.end")), true, "says nothing about the failure");
+    // Text before a tool call is not what the agent said as it stopped.
+    assert.equal(premature(red(), say("2 tests still fail; checking the fixture."), ev("tool.start", { tool: "Read", toolUseId: "r1" }), ev("turn.end")), true);
+    // Once reported, a later end is flagged only if it claims success without a new run.
+    const reported = [red(), say("test_a still fails."), ev("turn.end"), ev("user.message", { text: "thanks" })];
+    assert.equal(premature(...reported, say("You're welcome."), ev("turn.end")), false);
+    assert.equal(premature(...reported, say("Fixed it, all tests pass now."), ev("turn.end")), true);
+    assert.equal(premature(...reported, red(), ev("turn.end")), true, "a new red run, then a silent end");
+  });
+
+  describe("premature-completion on the adapter fixtures", () => {
+    const fixtures = join(import.meta.dirname, "..", "fixtures", "adapters");
+    const session = (golden: string, id: string): AgentEvent[] =>
+      (JSON.parse(readFileSync(join(fixtures, golden), "utf8")) as AgentEvent[]).filter((e) => e.sessionId === id).sort((a, b) => a.ts - b.ts);
+    const premature = (events: AgentEvent[]) => detectFlags(events).includes(FLAGS.prematureCompletion);
+    // The agent ends on a failing run and says so: "One test fails: test_div.", "One test still fails.", "TestSub still fails."
+    const honest: [string, string][] = [
+      ["codex/golden/backfill.golden.json", "0193cccc-1111-7222-8333-444455556666"],
+      ["pi/golden/backfill.golden.json", "pi-sess-1"],
+      ["goose/golden/backfill.golden.json", "20260921_1"],
+    ];
+    // The agent ends on a failing run and says it is done ("all tests pass", "Fixed add().") or says nothing.
+    const flagged: [string, string][] = [
+      ["claude-code/golden/backfill.golden.json", "11111111-2222-4333-8444-555555555555"],
+      ["claude-code/golden/hooks.golden.json", "11111111-2222-4333-8444-555555555555"],
+      ["codex/golden/hooks.golden.json", "0193aaaa-1111-7222-8333-444455556666"],
+      ["cursor/golden/hooks.golden.json", "c0ffee00-1111-4222-8333-444455556666"],
+      ["gemini-cli/golden/backfill.golden.json", "gem-sess-1"],
+      ["opencode/golden/v2.golden.json", "ses_main"],
+      ["copilot-cli/golden/backfill.golden.json", "cop-sess-1"],
+      ["copilot-cli/golden/hooks.golden.json", "cop-sess-1"],
+      ["droid/golden/hooks.golden.json", "droid-sess-1"],
+      ["antigravity/golden/backfill.golden.json", "agy-conv-1"],
+      ["wrapper/golden/wrapper.golden.json", "wrap-sess-1"],
+    ];
+    it("an honest failure report is not flagged", () => {
+      for (const [g, id] of honest) assert.equal(premature(session(g, id)), false, `${g}: ${id}`);
+    });
+    it("a claim of success or a silent end while tests fail is flagged", () => {
+      for (const [g, id] of flagged) assert.equal(premature(session(g, id)), true, `${g}: ${id}`);
+    });
+    it("the codex honest session with only its final text changed is flagged", () => {
+      const events = session(...honest[0]!);
+      const last = events.findLast((e) => e.kind === "assistant.message")!;
+      assert.equal(last.payload.text, "One test fails: test_div.");
+      const withText = (text: string) => events.map((e) => (e === last ? { ...e, payload: { ...e.payload, text } } : e));
+      assert.equal(premature(withText("Done: test_div is fixed and all tests pass.")), true);
+      assert.equal(premature(withText("Fixed the division.")), true);
+      assert.equal(premature(events.filter((e) => e !== last)), true, "silent end");
+      assert.equal(premature(withText("I couldn't get test_div to pass: the fixture returns None.")), false);
+    });
   });
 
   it("repeated-tool-failure: 3 similar consecutive failures of one tool", () => {

@@ -13,6 +13,7 @@ import { detectTestTamper, foldTamper, tamperState, type TamperState } from "./i
 import { cacheBreakState, cacheBreaksOf, foldCacheBreaks, type CacheBreakState } from "./cache-breaks.ts";
 import { foldSkills, skillFlags, skillState, skillUseOf, type SkillState } from "./skills-use.ts";
 import { foldHookContext, hookContextFlags, hookContextOf, hookContextState, type HookContextState } from "./hook-context.ts";
+import { claimsSuccess, reportsFailure } from "./failure-report.ts";
 import { foldWaste, wasteState, wasteStatsOf, type WasteState } from "./waste.ts";
 import { exposesSecret, foldRedactions, redactionsOf, redactionState, SECRET_EXPOSED, type RedactionState } from "./redaction-stats.ts";
 
@@ -406,7 +407,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * events, and every stored session is folded again once in the background
  * (core/reparse.ts, REFOLD_CURSOR), so old sessions get the new derivation.
  */
-export const SESSION_FOLD_VERSION = 7; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch.
+export const SESSION_FOLD_VERSION = 8; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -931,7 +932,7 @@ interface FlagState {
 }
 
 const flagState = (): FlagState => ({
-  premature: { failing: false, endedWhileFailing: false },
+  premature: prematureState(),
   repeated: repeatedFailureState(),
   fileChange: false,
   verified: false,
@@ -985,21 +986,54 @@ export function detectFlags(events: AgentEvent[], derails?: readonly Derail[]): 
 interface PrematureState {
   failing: boolean;
   endedWhileFailing: boolean;
+  /** The agent's text since its last tool call, test result or prompt: what it says as the turn ends. */
+  said: string;
+  /** The agent already said that the latest test run fails. */
+  reported: boolean;
 }
 
+const prematureState = (): PrematureState => ({ failing: false, endedWhileFailing: false, said: "", reported: false });
+
+/** Enough of the closing text to judge it (core/failure-report.ts), kept small in a saved fold. */
+const SAID_MAX = 4000;
+
 function foldPremature(s: PrematureState, e: AgentEvent): void {
-  if (e.kind === "test.result") {
-    s.failing = (num(e.payload.failed) ?? 0) > 0;
-    // A later green run means the work was eventually finished.
-    if (!s.failing) s.endedWhileFailing = false;
-  } else if ((e.kind === "turn.end" || e.kind === "session.end") && s.failing) {
-    s.endedWhileFailing = true;
+  switch (e.kind) {
+    case "test.result":
+      s.failing = (num(e.payload.failed) ?? 0) > 0;
+      s.reported = false;
+      s.said = "";
+      // A later green run means the work was eventually finished.
+      if (!s.failing) s.endedWhileFailing = false;
+      return;
+    case "assistant.message": {
+      const t = e.payload.text;
+      if (typeof t === "string" && t.trim()) s.said = (s.said ? `${s.said}\n${t}` : t).slice(-SAID_MAX);
+      return;
+    }
+    case "tool.start":
+    case "user.message":
+      s.said = "";
+      return;
+    case "turn.end":
+    case "session.end":
+      if (s.failing) {
+        // Saying plainly that tests still fail is an honest stop, not a premature one. Once it is said,
+        // a later end (session.end after turn.end, "You're welcome.") is premature only if it claims success.
+        if (reportsFailure(s.said)) s.reported = true;
+        else if (!s.reported || claimsSuccess(s.said)) s.endedWhileFailing = true;
+      }
+      s.said = "";
   }
 }
 
-/** The agent ended a turn/session while the latest test run was failing, and tests never went green afterwards. */
+/**
+ * The agent ended a turn/session while the latest test run was failing without
+ * saying so (it said it was done, or said nothing about the failure), and tests
+ * never went green afterwards.
+ */
 export function detectPrematureCompletion(sorted: AgentEvent[]): boolean {
-  const s: PrematureState = { failing: false, endedWhileFailing: false };
+  const s = prematureState();
   for (const e of sorted) foldPremature(s, e);
   return s.endedWhileFailing;
 }

@@ -36,7 +36,7 @@ Fix first
 `--repo all` for every repo). It lists two kinds of issue:
 
 - **A failure flag**, such as an agent that says it is done without running anything, or one that
-  ends its turn while tests fail. [concepts.md](../concepts.md) lists the flags.
+  ends its turn while tests fail without saying so. [concepts.md](../concepts.md) lists the flags.
 - **A command or tool that fails the same way in two or more sessions**, such as a broken
   `npm test` or a missing script. When the test command failed before the agent changed any file,
   the issue says so: fix the command first, or the agent can't check its work.
@@ -157,7 +157,8 @@ You can also ask in plain words: "look at my recent sessions and help me improve
 - Small samples give wide answers. With 6 sessions on each side, only a large change reaches
   p ≤ 0.1. "No clear change" means "not proven", not "no effect".
 - Sessions differ in what you asked for. A week of harder tasks can look like a regression.
-- Flags are heuristics. A session can be flagged when the agent reported a failure honestly.
-  Open the example before you act on an issue.
+- Flags are heuristics. `premature-completion` skips an agent that says plainly that tests still
+  fail, but it reads the agent's words with patterns, so an unusual phrasing can still be flagged
+  or missed. Open the example before you act on an issue.
 - Sessions without a recorded git HEAD (outside a repo, or from an agent that doesn't report one)
   are left out of `check`.

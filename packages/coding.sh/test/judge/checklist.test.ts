@@ -356,6 +356,7 @@ describe("built-in predicates", () => {
     assert.equal(run("tool-used", TRACE, { tool: ["Grep", "Glob"] }), false);
     assert.equal(run("no-premature-completion", [ev("a", "test.result", { failed: 1, passed: 0 }), ev("b", "turn.end", {})]), false);
     assert.equal(run("no-premature-completion", TRACE), true);
+    assert.equal(run("no-premature-completion", [ev("a", "test.result", { failed: 1, passed: 0 }), ev("m", "assistant.message", { text: "test_div still fails." }), ev("b", "turn.end", {})]), true, "an honest report");
     const fails = [1, 2, 3].map((i) => ev(`f${i}`, "tool.end", { tool: "Bash", toolUseId: `u${i}`, ok: false, input: { command: "npm run build" } }));
     assert.equal(run("no-repeated-tool-failure", fails), false);
     assert.equal(run("no-repeated-tool-failure", fails, { threshold: 4 }), true);

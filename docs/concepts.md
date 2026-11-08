@@ -48,7 +48,12 @@ timeline. Through the proxy, a Claude Code subagent's model calls land in its se
 
 **Flag.** A failure pattern detected on a session after each ingest:
 
-- `premature-completion`: the agent stopped while the last test run was failing.
+- `premature-completion`: the agent stopped while the last test run was failing, and its last
+  words did not say so: it said it was done, fixed or passing, or said nothing about the failure.
+  An agent that says plainly that tests still fail ("2 tests still fail", "I couldn't get test_x
+  to pass", "not done yet") or asks how to go on about a failing test is not flagged. The check
+  reads the agent's text after its last tool call in the turn, with a few word patterns, not a
+  model.
 - `repeated-tool-failure`: the same tool failed three times in a row with similar input.
 - `no-verification`: files changed, but no test, type check, lint or build ran.
 - `compaction`: the agent's context was compacted.
