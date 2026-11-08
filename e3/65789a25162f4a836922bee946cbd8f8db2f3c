@@ -2,6 +2,7 @@ packages/coding.sh/src/cli/commands/init.ts
   s_8e040dbdf13565::t_121ddd5a7e64d2 325-330
   s_8e040dbdf13565::t_b5be0c35b6b6e7 191
   s_8e040dbdf13565::t_45f952f7c255b4 19-20,66-69,128-129,149-153,161,190,192-193,240-243,267,270,279,282,314,320-324,331,334-348,358,361,378-382
+  s_8e040dbdf13565::t_075adc20ac7e44 9-10
 packages/coding.sh/src/core/paths.ts
   s_8e040dbdf13565::t_8c644acba8ad52 46-50
 packages/coding.sh/src/proxy/state.ts
@@ -19,6 +20,7 @@ docs/reference/config.md
 packages/coding.sh/src/cli/registry.ts
   s_8e040dbdf13565::t_bf945327878929 303-305
   s_8e040dbdf13565::t_45f952f7c255b4 149-150,163
+  s_8e040dbdf13565::t_075adc20ac7e44 158
 packages/coding.sh/src/proxy/install.ts
   s_8e040dbdf13565::t_f6ef8b2f2d5c03 1-147,152-312
   s_8e040dbdf13565::t_26d755b61971a0 148-151
