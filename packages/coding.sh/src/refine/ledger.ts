@@ -18,6 +18,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { dataHome } from "../core/paths.ts";
 import type { RefineStage, RefineVerdict } from "./decide.ts";
 import type { GuardEntry } from "./guard.ts";
+import type { ArmPoint, MetricResult, Objective, QualityResult } from "./objectives.ts";
 import type { HarnessText } from "./protect.ts";
 
 export const sha = (text: string): string => createHash("sha256").update(text).digest("hex").slice(0, 16);
@@ -41,6 +42,12 @@ export interface TestEntry {
     files: FileRef[];
     /** Lines it adds (at most 40), for the log and the proposer's rejected list. */
     added: string[];
+    /** Lines it deletes or rewords (at most 40), when it removes any. */
+    removed?: string[];
+    /** How many lines it deletes or rewords, when that is more than `removed` holds. */
+    removedCount?: number;
+    /** The sections it takes lines from (a cut of more than a few lines). */
+    sections?: { path: string; heading: string; removed: number; lines: number }[];
     findings?: string[];
     rationale?: string;
   };
@@ -62,6 +69,20 @@ export interface TestEntry {
   dataset?: { id: string; version: string; cases: number };
   experiments?: { devA: string; devB: string; guardA?: string; guardB?: string };
   model?: string;
+  /** `--suite` rounds: the eval suite and primary objective of the climb, and the experiment that ran the round (absent when the candidate was rejected before any run). */
+  suite?: { name: string; tasks: number; k: number; primary: Objective; experiment?: string; base?: string; cand?: string };
+  /** `--suite` rounds: each objective's result (objectives.ts), point estimates per arm, and the per-task gains the e-detector took. */
+  objectives?: {
+    list: Objective[];
+    margin: number;
+    minGain: number;
+    branch?: "quality" | "efficiency";
+    quality: QualityResult;
+    metrics: MetricResult[];
+    arms: { base: ArmPoint; cand: ArmPoint };
+    gains: number[];
+    warnings: string[];
+  };
   cost: { usd: number; unpriced: number };
 }
 

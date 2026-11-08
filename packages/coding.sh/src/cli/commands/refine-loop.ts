@@ -48,10 +48,12 @@ import { candidateId, parseProposal, proposalCandidate, proposalPrompt, PROPOSAL
 import { checkProtected, protectedLines, type HarnessText, type ProtectCheck } from "../../refine/protect.ts";
 import type { GateOpts } from "../../stats/tests.ts";
 import { positiveInt, UsageError } from "../args.ts";
+import { sh } from "../../runner/exec.ts";
 import { gateFlags, list, num, str, withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
 import { protectOptions, protectOverrides } from "../protect.ts";
 import type { CommandContext } from "../types.ts";
+import { targetPath as targetPathOf } from "../../refine/target.ts";
 import {
   abOptions,
   baseURLFor,
@@ -78,7 +80,7 @@ import {
 
 // ---------------------------------------------------------------- setup
 
-interface Env {
+export interface Env {
   c: CommandContext;
   ctx: Context;
   store: FileEvalStore;
@@ -94,7 +96,7 @@ interface Env {
   maxGuard: number;
 }
 
-interface Candidate {
+export interface Candidate {
   id: string;
   label: string;
   source: "file" | "proposal";
@@ -109,7 +111,7 @@ interface Candidate {
 const CANDIDATE_ID = /^r_[0-9a-f]{10}$/;
 const pathOrder = (a: { path: string }, b: { path: string }) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 
-async function setupEnv(c: CommandContext, ctx: Context): Promise<Env> {
+export async function setupEnv(c: CommandContext, ctx: Context): Promise<Env> {
   const git = gitRoot(c.cwd);
   const root = git ?? c.cwd;
   const o = abOptions(c, git, {});
@@ -132,7 +134,7 @@ async function setupEnv(c: CommandContext, ctx: Context): Promise<Env> {
   };
 }
 
-const baseArm = (root: string): Arm => ({ label: "current files", files: harnessFilesIn(root), watch: [] });
+export const baseArm = (root: string): Arm => ({ label: "current files", files: harnessFilesIn(root), watch: [] });
 
 const isFile = (p: string): boolean => {
   try {
@@ -164,7 +166,7 @@ function fileCandidate(v: string, cwd: string, root: string, base: Arm): Arm {
 }
 
 /** A candidate from `r_…` (a stored candidate), a file, a directory, `git:REV` or a bundle, laid over the base. */
-async function resolveCandidate(e: Pick<Env, "c" | "ctx" | "root" | "dir">, v: string, base: Arm, extra: { source?: "proposal"; findings?: string[]; rationale?: string } = {}): Promise<Candidate> {
+export async function resolveCandidate(e: Pick<Env, "c" | "ctx" | "root" | "dir">, v: string, base: Arm, extra: { source?: "proposal"; findings?: string[]; rationale?: string } = {}): Promise<Candidate> {
   let arm: Arm;
   let source: Candidate["source"] = extra.source ?? "file";
   let findings = extra.findings;
@@ -487,7 +489,7 @@ interface Proposed {
   findings: Finding[];
 }
 
-function defaultTarget(base: readonly ContextFile[]): string {
+export function defaultTarget(base: readonly ContextFile[]): string {
   for (const p of ["AGENTS.md", "CLAUDE.md", "GEMINI.md"]) if (base.some((f) => f.path === p)) return p;
   return base[0]?.path ?? "AGENTS.md";
 }
@@ -499,7 +501,7 @@ async function findingsFor(e: Env): Promise<Finding[]> {
   return flagFindings(sessions, { limit: 5 });
 }
 
-function proposerModel(e: Env): string {
+export function proposerModel(e: Env): string {
   const m = str(e.c.flags["proposer-model"]) ?? e.o.judgeModel ?? e.o.model ?? (e.o.provider === "openai-compatible" ? undefined : DEFAULT_MODELS[e.o.provider]);
   if (!m) throw new UsageError("--provider openai-compatible has no default model: pass --proposer-model", { reason: "missing_argument" });
   return m;
@@ -508,7 +510,7 @@ function proposerModel(e: Env): string {
 /** The prompt for the next proposal (no model call). */
 async function proposalInput(e: Env, base: Arm) {
   const findings = await findingsFor(e);
-  const targetPath = str(e.c.flags.target) ?? defaultTarget(base.files);
+  const targetPath = targetPathOf(str(e.c.flags.target), e.root) ?? defaultTarget(base.files);
   const target = base.files.find((f) => f.path === targetPath) ?? { path: targetPath, text: "" };
   const rejected = tests(readLedger(e.dir))
     .filter((t) => t.verdict !== "keep")
@@ -517,20 +519,39 @@ async function proposalInput(e: Env, base: Arm) {
   return { findings, target, prompt };
 }
 
-async function propose(e: Env, base: Arm, spend: Spend): Promise<Proposed> {
-  const { findings, target, prompt } = await proposalInput(e, base);
-  const model = proposerModel(e);
-  const spec = { ...judgeSpec(e.o, baseURLFor(e.o, e.c.env)), model, name: "refine-proposer" };
+/**
+ * The proposer's reply: from --proposer-command (the system and user prompt on
+ * stdin, the reply on stdout), else from the provider's model.
+ */
+export async function proposerReply(e: Env, spend: Spend, req: { system: string; user: string; schema: Record<string, unknown> }): Promise<string> {
+  const cmd = str(e.c.flags["proposer-command"]);
+  if (cmd) {
+    const r = await sh(cmd, { cwd: e.root, env: e.c.env, stdin: `${req.system}\n\n${req.user}\n`, timeoutMs: 600_000, tailBytes: 1 << 20, signal: e.c.signal });
+    if (r.exitCode !== 0) {
+      throw new CliError(`--proposer-command exited ${r.timedOut ? "after the 10 minute limit" : String(r.exitCode)}: ${r.stderrTail.trim().slice(-400) || "no output on stderr"}`, { reason: "proposer_failed" });
+    }
+    return r.stdoutTail;
+  }
+  const spec = { ...judgeSpec(e.o, baseURLFor(e.o, e.c.env)), model: proposerModel(e), name: "refine-proposer" };
   const provider = metered(providerFromSpec(spec, { env: e.c.env }), spend, () => {});
-  const res = await provider.complete({ system: prompt.system, user: prompt.user, jsonSchema: PROPOSAL_SCHEMA, signal: e.c.signal }).catch((err: unknown) => {
+  const res = await provider.complete({ system: req.system, user: req.user, jsonSchema: req.schema, signal: e.c.signal }).catch((err: unknown) => {
     // The provider's message says "to call the judge"; here it is the proposer.
     const key = /set (\w+) to call the judge/.exec(err instanceof Error ? err.message : "")?.[1];
     if (!key) throw err;
     throw new CliError(`refine asks a model to write the edit: set ${key}`, { reason: "missing_key", next: ["Without an API key, list what to fix and the line that fixes it:", "coding.sh improve"] });
   });
+  return res.text;
+}
+
+/** Who writes the edits: the --proposer-command, else the proposer model. */
+export const proposerName = (e: Env): string => str(e.c.flags["proposer-command"]) ?? proposerModel(e);
+
+export async function propose(e: Env, base: Arm, spend: Spend): Promise<Proposed> {
+  const { findings, target, prompt } = await proposalInput(e, base);
+  const text = await proposerReply(e, spend, { system: prompt.system, user: prompt.user, schema: PROPOSAL_SCHEMA });
   let p;
   try {
-    p = parseProposal(res.text);
+    p = parseProposal(text);
   } catch (err) {
     throw new CliError(`The proposer's reply is not a usable edit: ${(err as Error).message}`, { reason: "bad_proposal", next: ["Try again, or write the edit yourself and test it:", "coding.sh refine test ./drafts/AGENTS.md"] });
   }
@@ -547,7 +568,7 @@ interface Applied {
   test: TestEntry;
 }
 
-function applyCandidate(root: string, dir: string, id: string | undefined, force: boolean): Applied {
+export function applyCandidate(root: string, dir: string, id: string | undefined, force: boolean): Applied {
   const entries = readLedger(dir);
   const all = tests(entries);
   const live = liveApplies(entries);
@@ -580,7 +601,7 @@ function applyCandidate(root: string, dir: string, id: string | undefined, force
   return { entry, test };
 }
 
-function printApplied(c: CommandContext, dir: string, a: Applied): void {
+export function printApplied(c: CommandContext, dir: string, a: Applied): void {
   const files = a.entry.files.map((f) => `${f.path}${f.before === null ? " (new)" : ""}`).join(", ");
   c.out.ok(`Applied ${a.test.id} to ${files}${a.entry.forced ? ` (forced: ${a.entry.forced})` : ""}`);
   if (a.entry.files.some((f) => f.before !== null)) c.out.note(`Backup in ${join(dir, "backups", a.entry.id)}`);
@@ -618,7 +639,7 @@ async function testCommand(c: CommandContext, e: Env): Promise<number> {
   return done.some((d) => d.entry.verdict === "keep") ? 0 : 1;
 }
 
-const spendJson = (s: Spend) => ({ usd: s.usd + s.judgeUsd, model: s.usd, judge: s.judgeUsd, unpriced: s.unpriced, calls: s.calls, cached: s.cached, judgeCalls: s.judgeCalls });
+export const spendJson = (s: Spend) => ({ usd: s.usd + s.judgeUsd, model: s.usd, judge: s.judgeUsd, unpriced: s.unpriced, calls: s.calls, cached: s.cached, judgeCalls: s.judgeCalls });
 
 function planJson(e: Env, plan: Plan) {
   return {
@@ -694,8 +715,10 @@ async function logCommand(c: CommandContext, e: Pick<Env, "dir" | "store">): Pro
   const live = new Set(liveApplies(entries).map((a) => a.candidate));
   const everApplied = new Set(entries.filter((x) => x.op === "apply").map((x) => (x as ApplyEntry).candidate));
   const p = rounds.length ? await refinePlateau(e.store, entries) : undefined;
+  // Suite rounds (`--suite`) are shown as climbs, below the decision-point rounds.
+  const climb = rounds.some((t) => t.suite) ? await import("./refine-climb.ts") : undefined;
   if (out.json) {
-    out.data({ ledger: ledgerFile(e.dir), entries, plateau: plateauJson(p) });
+    out.data({ ledger: ledgerFile(e.dir), entries, plateau: plateauJson(p), ...(climb ? { climbs: climb.climbsJson(entries) } : {}) });
     return 0;
   }
   if (!rounds.length) {
@@ -703,15 +726,21 @@ async function logCommand(c: CommandContext, e: Pick<Env, "dir" | "store">): Pro
     out.next("Test an edit to CLAUDE.md or AGENTS.md", "coding.sh refine test ./drafts/AGENTS.md");
     return 0;
   }
+  const decisionRounds = rounds.filter((t) => !t.suite);
+  if (climb && decisionRounds.length === 0) {
+    climb.printClimbs(c, entries, { live, ever: everApplied });
+    return 0;
+  }
   out.table(
     ["ROUND", "CANDIDATE", "VERDICT", "EFFECT (95% CI)", "GUARD", "COST", "REASON"],
-    rounds.map((t) => {
+    decisionRounds.map((t) => {
       const applied = live.has(t.id) ? ", applied" : everApplied.has(t.id) ? ", rolled back" : "";
       const why = t.verdict === "keep" ? t.reasons[0] ?? "" : t.reasons.find((r) => !r.startsWith("dev: Ship")) ?? t.reasons[0] ?? "";
       return [String(t.round), t.id, `${t.verdict}${t.rank && !t.rank.winner ? ` (#${t.rank.position})` : ""}${applied}`, effectText(t), guardText(t), money(t.cost.usd), why];
     }),
   );
   if (p) out.print(plateauLine("refine", p));
+  climb?.printClimbs(c, entries, { live, ever: everApplied });
   return 0;
 }
 
@@ -848,6 +877,10 @@ export async function refineLoop(c: CommandContext): Promise<number> {
   return withContext(c, async (ctx) => {
     if (c.action === "log") return logCommand(c, { dir, store: new FileEvalStore({ env: c.env, index: ctx.index }) });
     const e = await setupEnv(c, ctx);
+    if (c.action === "test" || c.action === "run") {
+      const climb = await import("./refine-climb.ts");
+      if (climb.climbing(c, e)) return c.action === "test" ? climb.climbTest(c, e) : climb.climbRun(c, e);
+    }
     if (c.action === "test") return testCommand(c, e);
     if (c.action === "propose") return proposeCommand(c, e);
     if (c.action === "run") return runCommand(c, e);

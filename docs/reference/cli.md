@@ -2268,7 +2268,7 @@ coding.sh refine <action>
 | [`test`](#codingsh-refine-test) | Test candidate edits against your current files; keep, reject or inconclusive per candidate, exit 0 when one is kept |
 | [`apply`](#codingsh-refine-apply) | Write a kept candidate to your files, backing up what it replaces (never commits) |
 | [`rollback`](#codingsh-refine-rollback) | Put back what an apply replaced, from its backup |
-| [`log`](#codingsh-refine-log) | Every round in this repo: verdict, effect CI, guard result, cost and reason, and whether the loop plateaued |
+| [`log`](#codingsh-refine-log) | Every round in this repo: verdict, effect CI, guard result, cost and reason, and whether the loop plateaued; --suite climbs show pass rate, cost, time and size per round and the Pareto front |
 | [`run`](#codingsh-refine-run) | Loop: propose (or take --candidate), test, apply when kept; stop at --rounds, --max-cost or a plateau |
 | [`protected`](#codingsh-refine-protected) | List the harness lines an edit may not delete, reword or relax |
 | [`check`](#codingsh-refine-check) | Check a harness edit for deleted, reworded or relaxed protected lines; exit 1 when it has any |
@@ -2279,6 +2279,8 @@ coding.sh refine <action>
 - exp ab runs the same check on its arms and warns; with --gate a protected-line problem fails the run.
 - test decides each candidate in stages: the protected-line check, the harmless and duplicate critics on the added lines, an A/B against your current files on the decision points exp ab mines (the acceptance gate: ship goes on, hold is inconclusive, don't ship rejects), then the guard set: the decision points earlier kept edits won must not go from solved to unsolved. A run stopped at --max-cost is inconclusive.
 - The ledger and every tested candidate's files live under the data dir (refine/&lt;repo&gt;-&lt;hash&gt;/). Rejected candidates and their reasons go into the next proposal prompt; protected lines go in as READ-ONLY.
+- With --suite, each round runs the suite's repo tasks --trials times (default: the suite's trials, else 3) with the current files and with the candidate, interleaved, as one durable job; --model is the agent's model, --concurrency the parallel sessions, --max-cost caps agent and proposer spend. The candidate is kept when the pass rate is significantly better (one-sided paired permutation test over tasks, or the acceptance gate says ship), or when it holds within --margin (one-sided bootstrap lower bound) and a listed objective is significantly better by --min-gain (per-task log ratios, one-sided permutation test); a hard regression, a don't-ship gate or a listed objective significantly worse rejects it. Below 5 tasks no test can reach significance.
+- With --suite and a primary objective other than pass, the proposer cuts instead of adding: it sees the target file, its largest sections and what made the last runs slow or expensive (tokens, turns, repeated tool calls, long outputs), and replies with edits: find and replace an exact string, or replace a whole section by its heading. The protected-line check and the critics still run on the result.
 - score matches by code, never a model: a prediction matches a label in the same session with the same component (type, and name compared after Unicode, case, camelCase and separator normalization) whose top-3 type ids share one id, under a maximum one-to-one matching. Unmatched items count against precision or recall; a rate with nothing to divide by prints —. Without --pred, each diagnosed session flag is a prediction with no component, so it matches on session and type ids alone, and per-flag precision is reported. score writes nothing.
 
 ### `coding.sh refine propose`
@@ -2297,7 +2299,8 @@ coding.sh refine propose [options]
 | `--provider <NAME>` | `anthropic` | API that proposes, answers the next turn and judges it. One of: `anthropic`, `openai`, `openai-compatible`. |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
 | `--proposer-model <MODEL>` |  | Model that writes the edit (default: --judge-model, else --model, else claude-sonnet-5-5 or gpt-6-sol) |
-| `--target <PATH>` |  | Harness file the proposal extends (default: AGENTS.md, else CLAUDE.md, else GEMINI.md) |
+| `--proposer-command <CMD>` |  | Shell command that writes the edit instead of the proposer model: the prompt on stdin, the JSON reply on stdout (e.g. 'claude -p') |
+| `--target <PATH>` |  | Harness file the proposal edits, or a skill directory for its SKILL.md (default: AGENTS.md, else CLAUDE.md, else GEMINI.md) |
 | `--dry-run` |  | Print the findings and the prompt; make no model call. |
 
 ```sh
@@ -2338,12 +2341,22 @@ coding.sh refine test <CANDIDATE>... [options]
 | `--gate-alpha <A>` | `0.05` | Acceptance gate: one-sided significance level. |
 | `--tau <T>` | `0.10` | Acceptance gate: largest share of solved decision points B may break. |
 | `--allow-protected-edit <PATH:LINE>` |  | Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force) |
+| `--suite <NAME>` |  | Judge candidates on this eval suite of repo tasks (evals/&lt;NAME&gt;) instead of mined decision points; a skill --target uses evals/&lt;skill&gt; when it exists. |
+| `--objective <OBJ[,OBJ]>` |  | With --suite: what to improve, primary first: pass, cost, tokens, wall, llm, turns, size (default: pass). The pass rate must hold within --margin whatever the list. Repeatable. |
+| `--margin <SHARE>` | `2pp` | With --suite: how far the pass rate may drop for a cheaper or faster candidate to be kept, e.g. 5pp. |
+| `--min-gain <SHARE>` | `10%` | With --suite: smallest relative gain in cost, tokens, time, turns or size that counts, e.g. 20%. |
+| `--harness <BUNDLE>` |  | With --suite: stored harness bundle the suite runs, the repo's harness files laid over it (default: the suite's, else a snapshot of the repo) |
+| `--resume [<ID>]` |  | Continue an interrupted round: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. |
 | `--dry-run` |  | Show the checks, decision points, guard set size and cost estimate; make no model calls. |
 
 ```sh
 coding.sh refine test ./drafts/AGENTS.md
 coding.sh refine test r_3f9a1c02e1 --behavior unverified-claim --max-cost 2
 coding.sh refine test ./a/CLAUDE.md ./b/CLAUDE.md --dry-run --json
+coding.sh refine test ./drafts/CLAUDE.md --suite fixes --objective cost,wall --margin 2pp --yes
 ```
 
 ### `coding.sh refine apply`
@@ -2390,7 +2403,7 @@ coding.sh refine rollback r_3f9a1c02e1
 
 ### `coding.sh refine log`
 
-Every round in this repo: verdict, effect CI, guard result, cost and reason, and whether the loop plateaued.
+Every round in this repo: verdict, effect CI, guard result, cost and reason, and whether the loop plateaued; --suite climbs show pass rate, cost, time and size per round and the Pareto front.
 
 ```text
 coding.sh refine log
@@ -2411,10 +2424,12 @@ coding.sh refine run [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--rounds <N>` | `3` | Most rounds. |
+| `--rounds <N>` |  | Most rounds (default: 3, none with --until-plateau) |
 | `--candidate <FILE|r_…>` |  | Test these in order instead of asking the proposer (repeatable) |
+| `--until-plateau` |  | With --suite: keep climbing until the e-detector says the climb stopped gaining; --resume continues an interrupted round. |
 | `--proposer-model <MODEL>` |  | Model that writes the edit (default: --judge-model, else --model, else claude-sonnet-5-5 or gpt-6-sol) |
-| `--target <PATH>` |  | Harness file the proposal extends (default: AGENTS.md, else CLAUDE.md, else GEMINI.md) |
+| `--proposer-command <CMD>` |  | Shell command that writes the edit instead of the proposer model: the prompt on stdin, the JSON reply on stdout (e.g. 'claude -p') |
+| `--target <PATH>` |  | Harness file the proposal edits, or a skill directory for its SKILL.md (default: AGENTS.md, else CLAUDE.md, else GEMINI.md) |
 | `--behavior <ID[,ID]>` |  | Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all) Repeatable. |
 | `--anchor <FILE>` |  | Module exporting your own anchor(s) (see the evals guide) Repeatable. |
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
@@ -2434,12 +2449,24 @@ coding.sh refine run [options]
 | `--gate-alpha <A>` | `0.05` | Acceptance gate: one-sided significance level. |
 | `--tau <T>` | `0.10` | Acceptance gate: largest share of solved decision points B may break. |
 | `--allow-protected-edit <PATH:LINE>` |  | Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force) |
+| `--suite <NAME>` |  | Judge candidates on this eval suite of repo tasks (evals/&lt;NAME&gt;) instead of mined decision points; a skill --target uses evals/&lt;skill&gt; when it exists. |
+| `--objective <OBJ[,OBJ]>` |  | With --suite: what to improve, primary first: pass, cost, tokens, wall, llm, turns, size (default: pass). The pass rate must hold within --margin whatever the list. Repeatable. |
+| `--margin <SHARE>` | `2pp` | With --suite: how far the pass rate may drop for a cheaper or faster candidate to be kept, e.g. 5pp. |
+| `--min-gain <SHARE>` | `10%` | With --suite: smallest relative gain in cost, tokens, time, turns or size that counts, e.g. 20%. |
+| `--harness <BUNDLE>` |  | With --suite: stored harness bundle the suite runs, the repo's harness files laid over it (default: the suite's, else a snapshot of the repo) |
+| `--resume [<ID>]` |  | Continue an interrupted round: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. |
 | `--dry-run` |  | Show the findings, decision points, guard set size and per-round estimate; make no model calls. |
 
 ```sh
 coding.sh refine run --rounds 5 --max-cost 10
 coding.sh refine run --candidate ./v1/AGENTS.md --candidate ./v2/AGENTS.md
 coding.sh refine run --dry-run
+coding.sh refine run --suite fixes --objective cost --margin 2pp --until-plateau --yes
+coding.sh refine run --target .claude/skills/pdf --objective wall,cost --proposer-command 'claude -p' --yes
+coding.sh refine run --suite fixes --objective cost --until-plateau --resume --yes
 ```
 
 ### `coding.sh refine protected`

@@ -1503,6 +1503,92 @@ whole loop, proposer calls included), when the plateau detector says stop, or on
 when it applied an edit. `refine run --dry-run` shows the findings, the decision points, the guard
 size and the cost of one round.
 
+### Climbing on an eval suite
+
+With `--suite <name>`, `refine test` and `refine run` judge an edit on an eval suite of repo tasks
+(`evals/<name>`, from [`eval init`](#your-first-eval-in-5-minutes) or written by hand) instead of mined decision
+points. That lets a round ask more than "is it better?": it can also ask "is it cheaper or faster,
+and no worse?".
+
+```sh
+$ coding.sh refine test ./drafts/CLAUDE.md --suite strkit --objective cost,wall,tokens --yes
+$ coding.sh refine run --suite strkit --objective cost,wall,tokens --until-plateau --yes
+$ coding.sh refine log
+```
+
+**Rounds.** Each round runs every task of the suite `--trials` times (default: the suite's
+`trials`, else 3) with your current files and with the candidate, interleaved, as one durable job.
+The harness is `--harness`, else the suite's, else a snapshot of the repo's setup, with the repo's
+harness files laid over it. `--model` is the agent's model and `--concurrency` the parallel
+sessions. Only `tasks` suites work: a `cases` suite grades a command's answers, which a harness
+file does not change, and a `triggers` suite only checks that a skill loads.
+
+**Objectives.** `--objective` lists what to improve, primary first: `pass` (the default), `cost`,
+`tokens`, `wall` (wall time), `llm` (LLM time), `turns` and `size` (the instruction bytes the
+agent loads). The pass rate is always judged. A candidate is:
+
+- **rejected** when a task the base passed every time now mostly fails (a hard regression), when the
+  acceptance gate says "Don't ship", or when a listed objective is significantly worse by
+  `--min-gain`;
+- **kept on quality** when the pass rate is significantly better (a one-sided paired permutation
+  test over tasks), or the gate says "Ship it";
+- **kept on efficiency** when the pass rate holds within `--margin` (default 2pp: the one-sided
+  95% bootstrap lower bound of the per-task difference is above minus the margin) and a listed
+  objective is significantly better by at least `--min-gain` (default 10%). Cost, tokens, times and
+  turns are compared as per-task log ratios with a one-sided permutation test; size is a byte count.
+- **rejected** when the pass rate fell and did not hold within the margin, however much cheaper or
+  faster it got;
+- **inconclusive** otherwise.
+
+A measure decides only when at least 80% of each arm's runs reported it: cost and tokens need
+captured sessions, so run `coding.sh init` for the agent first. With fewer than 5 tasks no
+one-sided test can reach significance, and the round says so.
+
+**Cuts.** When the primary objective is not `pass`, the proposer cuts instead of adding. It sees the
+target file and its largest sections, and what made the last round's runs slow or expensive:
+tokens, turns and time per run, the slowest tasks, tool calls per run, the same call repeated in a
+run, duplicate fetches and long tool outputs (measured at full length, though the capture clips
+them). It also sees the cuts tested before and not kept, with the sections each one took lines from.
+It replies with edits: `{"find", "replace"}`, where `find` occurs exactly once, or `{"section",
+"replace"}`, which replaces a heading and everything under it up to the next heading of the same or
+a higher level. The protected-line check and the critics still run on the result, so a cut
+that removes or weakens a safety line is rejected before any agent runs. `--proposer-command 'claude
+-p'` writes the edit with a command instead of the proposer model: it gets the prompt on stdin and
+prints the JSON reply.
+
+**Skills.** `--target .claude/skills/<name>` edits that skill's `SKILL.md`. When `evals/<name>`
+exists and `--suite` is not given, it is the suite.
+
+**Until it stops gaining.** `--until-plateau` runs rounds until the restart e-detector (the one
+[`exp plateau`](#when-to-stop-a-loop) uses) alarms on the rounds' per-task gains on the primary
+objective, then names the version to keep. A climb is one suite, primary objective and target file;
+its state is rebuilt from the ledger, so running the command again continues it. An interrupted
+round (Ctrl-C or `--max-cost`) keeps its finished runs, and `--resume` runs only the rest. It
+refuses when the harness files changed since the round started.
+
+**The log.** `refine log` shows each climb as a table: pass rate, cost and wall time per run and
+size for both arms of every round, the verdict and the reason. It ends with the Pareto front (pass
+rate against the primary objective, or cost when the primary is `pass`) and the plateau line. The
+front compares point estimates from different rounds, so it is a map, not a test.
+
+Here is a climb with Claude Code (`--model claude-sonnet-5-5`) on a repo whose CLAUDE.md was
+51 KB: a style guide and a project history, a step telling the agent to read three long docs
+first, and a rule that error messages start with `strkit: `, which the task checks test. The
+suite had 6 tasks and 2 trials. Round 1 was a hand trim that also dropped that rule. Rounds 2
+and 3 came from `--proposer-command 'claude -p'`: round 2 removed the style guide and the
+history, and round 3 changed "read the docs first" to "read them only if the task needs them".
+
+```sh
+$ coding.sh refine log
+Climb on strkit (CLAUDE.md, primary cost / run)
+ROUND	CANDIDATE	VERDICT	PASS	COST/RUN	WALL/RUN	SIZE	REASON
+1	r_5f83c31fad	reject	100% → 0%	$0.29 → $0.0347 (−88%)	20.6s → 13.4s (−35%)	51166 B → 292 B (−99%)	hard regression: the base passed camelCase, countWords, padCenter, reverseWords, slugify, truncate every time and the candidate now mostly fails
+2	r_d50d8bebd5	keep (efficiency), applied	100% → 100%	$0.27 → $0.22 (−20%)	14.6s → 14.0s (−4%)	51166 B → 596 B (−99%)	cost / run -20% [-25%, -9.8%], p 0.031 with quality held: pass rate 100% → 100% (+0.0 pts per task [+0.0 pts, +0.0 pts], one-sided lower bound +0.0 pts vs margin −2.0 pts)
+3	r_9387e6524f	keep (efficiency), applied	100% → 100%	$0.22 → $0.0372 (−83%)	13.7s → 8.7s (−36%)	596 B → 530 B (−11%)	cost / run -83% [-83%, -82%], p 0.016; wall time / run -36% [-42%, -31%], p 0.016; tokens / run -45% [-51%, -40%], p 0.016 with quality held: pass rate 100% → 100% (+0.0 pts per task [+0.0 pts, +0.0 pts], one-sided lower bound +0.0 pts vs margin −2.0 pts)
+Pareto front (pass rate vs cost / run): r_5f83c31fad (round 1, not kept): 0% pass, $0.0347; r_9387e6524f (round 3): 100% pass, $0.0372
+climb: still gaining after 3 rounds (log wealth -0.17 of 3.00; a flat plateau needs at least 21 rounds to show at this suite size)
+```
+
 ### Scoring diagnoses
 
 `coding.sh refine score` checks diagnoses against labels you wrote by hand. Code does every match;

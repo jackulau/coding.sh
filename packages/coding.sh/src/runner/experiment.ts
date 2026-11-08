@@ -714,6 +714,11 @@ const METRICS: { key: MetricKey; label: string; unit: MetricDelta["unit"]; bette
   },
 ];
 
+/** One run's value of a comparison metric; undefined when the run (or its session) did not report it. */
+export function runMetric(key: MetricKey, r: RunResult, s: Session | undefined): number | undefined {
+  return METRICS.find((m) => m.key === key)?.get(r, s);
+}
+
 /** Each tamper-flagged run's flags linked to the tool calls in its trace (session cwd makes paths repo-relative). */
 function tamperAttributions(A: readonly RunResult[], B: readonly RunResult[], opts: Pick<CompareOpts, "sessions" | "events">): Map<string, RunTamperAttribution> {
   const out = new Map<string, RunTamperAttribution>();

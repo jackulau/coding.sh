@@ -148,7 +148,19 @@ const REFINE_TRIAL_FLAGS: FlagSpec[] = [
 ];
 
 const PROPOSER_MODEL: FlagSpec = { name: "proposer-model", type: "string", value: "<MODEL>", desc: `Model that writes the edit (default: --judge-model, else --model, else ${DEFAULT_MODELS.anthropic} or ${DEFAULT_MODELS.openai})` };
-const REFINE_TARGET: FlagSpec = { name: "target", type: "string", value: "<PATH>", desc: "Harness file the proposal extends (default: AGENTS.md, else CLAUDE.md, else GEMINI.md)" };
+const REFINE_TARGET: FlagSpec = { name: "target", type: "string", value: "<PATH>", desc: "Harness file the proposal edits, or a skill directory for its SKILL.md (default: AGENTS.md, else CLAUDE.md, else GEMINI.md)" };
+const PROPOSER_COMMAND: FlagSpec = { name: "proposer-command", type: "string", value: "<CMD>", desc: "Shell command that writes the edit instead of the proposer model: the prompt on stdin, the JSON reply on stdout (e.g. 'claude -p')" };
+
+/** Judge candidates on an eval suite of repo tasks (refine test, run). */
+const REFINE_SUITE_FLAGS: FlagSpec[] = [
+  { name: "suite", type: "string", value: "<NAME>", desc: "Judge candidates on this eval suite of repo tasks (evals/<NAME>) instead of mined decision points; a skill --target uses evals/<skill> when it exists" },
+  { name: "objective", type: "list", value: "<OBJ[,OBJ]>", desc: "With --suite: what to improve, primary first: pass, cost, tokens, wall, llm, turns, size (default: pass). The pass rate must hold within --margin whatever the list" },
+  { name: "margin", type: "string", value: "<SHARE>", desc: "With --suite: how far the pass rate may drop for a cheaper or faster candidate to be kept, e.g. 5pp", default: "2pp" },
+  { name: "min-gain", type: "string", value: "<SHARE>", desc: "With --suite: smallest relative gain in cost, tokens, time, turns or size that counts, e.g. 20%", default: "10%" },
+  { name: "harness", type: "string", value: "<BUNDLE>", desc: "With --suite: stored harness bundle the suite runs, the repo's harness files laid over it (default: the suite's, else a snapshot of the repo)" },
+  ...durableFlags("round"),
+  YES,
+];
 
 const SCOPE: FlagSpec = { name: "scope", type: "string", value: "<SCOPE>", choices: ["user", "project"], desc: "Install into user or project config", default: "user" };
 
@@ -1264,16 +1276,21 @@ export const COMMANDS: CommandSpec[] = [
       {
         name: "propose",
         summary: "Ask a model for lines that address your sessions' most severe flags; stores them as a candidate",
-        flags: [...REFINE_SOURCE_FLAGS.filter((f) => ["since", "agent", "repo", "provider", "base-url"].includes(f.name)), PROPOSER_MODEL, REFINE_TARGET, { name: "dry-run", type: "boolean", desc: "Print the findings and the prompt; make no model call" }],
+        flags: [...REFINE_SOURCE_FLAGS.filter((f) => ["since", "agent", "repo", "provider", "base-url"].includes(f.name)), PROPOSER_MODEL, PROPOSER_COMMAND, REFINE_TARGET, { name: "dry-run", type: "boolean", desc: "Print the findings and the prompt; make no model call" }],
         examples: ["coding.sh refine propose", "coding.sh refine propose --target CLAUDE.md --dry-run"],
       },
       {
         name: "test",
         summary: "Test candidate edits against your current files; keep, reject or inconclusive per candidate, exit 0 when one is kept",
         args: [{ name: "candidate", desc: "Edited file, directory, git:REV, harness bundle or stored r_… id; a file replaces the harness file at its repo path, else the one with its name (./drafts/AGENTS.md replaces AGENTS.md)", required: true, variadic: true }],
-        flags: [...REFINE_SOURCE_FLAGS, ...REFINE_TRIAL_FLAGS, { name: "dry-run", type: "boolean", desc: "Show the checks, decision points, guard set size and cost estimate; make no model calls" }],
+        flags: [...REFINE_SOURCE_FLAGS, ...REFINE_TRIAL_FLAGS, ...REFINE_SUITE_FLAGS, { name: "dry-run", type: "boolean", desc: "Show the checks, decision points, guard set size and cost estimate; make no model calls" }],
         graceful: true,
-        examples: ["coding.sh refine test ./drafts/AGENTS.md", "coding.sh refine test r_3f9a1c02e1 --behavior unverified-claim --max-cost 2", "coding.sh refine test ./a/CLAUDE.md ./b/CLAUDE.md --dry-run --json"],
+        examples: [
+          "coding.sh refine test ./drafts/AGENTS.md",
+          "coding.sh refine test r_3f9a1c02e1 --behavior unverified-claim --max-cost 2",
+          "coding.sh refine test ./a/CLAUDE.md ./b/CLAUDE.md --dry-run --json",
+          "coding.sh refine test ./drafts/CLAUDE.md --suite fixes --objective cost,wall --margin 2pp --yes",
+        ],
       },
       {
         name: "apply",
@@ -1291,23 +1308,33 @@ export const COMMANDS: CommandSpec[] = [
       },
       {
         name: "log",
-        summary: "Every round in this repo: verdict, effect CI, guard result, cost and reason, and whether the loop plateaued",
+        summary: "Every round in this repo: verdict, effect CI, guard result, cost and reason, and whether the loop plateaued; --suite climbs show pass rate, cost, time and size per round and the Pareto front",
         examples: ["coding.sh refine log", "coding.sh refine log --json"],
       },
       {
         name: "run",
         summary: "Loop: propose (or take --candidate), test, apply when kept; stop at --rounds, --max-cost or a plateau",
         flags: [
-          { name: "rounds", type: "number", value: "<N>", desc: "Most rounds", default: "3" },
+          { name: "rounds", type: "number", value: "<N>", desc: "Most rounds (default: 3, none with --until-plateau)" },
           { name: "candidate", type: "list", value: "<FILE|r_…>", desc: "Test these in order instead of asking the proposer (repeatable)" },
+          { name: "until-plateau", type: "boolean", desc: "With --suite: keep climbing until the e-detector says the climb stopped gaining; --resume continues an interrupted round" },
           PROPOSER_MODEL,
+          PROPOSER_COMMAND,
           REFINE_TARGET,
           ...REFINE_SOURCE_FLAGS,
           ...REFINE_TRIAL_FLAGS,
+          ...REFINE_SUITE_FLAGS,
           { name: "dry-run", type: "boolean", desc: "Show the findings, decision points, guard set size and per-round estimate; make no model calls" },
         ],
         graceful: true,
-        examples: ["coding.sh refine run --rounds 5 --max-cost 10", "coding.sh refine run --candidate ./v1/AGENTS.md --candidate ./v2/AGENTS.md", "coding.sh refine run --dry-run"],
+        examples: [
+          "coding.sh refine run --rounds 5 --max-cost 10",
+          "coding.sh refine run --candidate ./v1/AGENTS.md --candidate ./v2/AGENTS.md",
+          "coding.sh refine run --dry-run",
+          "coding.sh refine run --suite fixes --objective cost --margin 2pp --until-plateau --yes",
+          "coding.sh refine run --target .claude/skills/pdf --objective wall,cost --proposer-command 'claude -p' --yes",
+          "coding.sh refine run --suite fixes --objective cost --until-plateau --resume --yes",
+        ],
       },
       {
         name: "protected",
@@ -1339,6 +1366,8 @@ export const COMMANDS: CommandSpec[] = [
       "exp ab runs the same check on its arms and warns; with --gate a protected-line problem fails the run.",
       "test decides each candidate in stages: the protected-line check, the harmless and duplicate critics on the added lines, an A/B against your current files on the decision points exp ab mines (the acceptance gate: ship goes on, hold is inconclusive, don't ship rejects), then the guard set: the decision points earlier kept edits won must not go from solved to unsolved. A run stopped at --max-cost is inconclusive.",
       "The ledger and every tested candidate's files live under the data dir (refine/<repo>-<hash>/). Rejected candidates and their reasons go into the next proposal prompt; protected lines go in as READ-ONLY.",
+      "With --suite, each round runs the suite's repo tasks --trials times (default: the suite's trials, else 3) with the current files and with the candidate, interleaved, as one durable job; --model is the agent's model, --concurrency the parallel sessions, --max-cost caps agent and proposer spend. The candidate is kept when the pass rate is significantly better (one-sided paired permutation test over tasks, or the acceptance gate says ship), or when it holds within --margin (one-sided bootstrap lower bound) and a listed objective is significantly better by --min-gain (per-task log ratios, one-sided permutation test); a hard regression, a don't-ship gate or a listed objective significantly worse rejects it. Below 5 tasks no test can reach significance.",
+      "With --suite and a primary objective other than pass, the proposer cuts instead of adding: it sees the target file, its largest sections and what made the last runs slow or expensive (tokens, turns, repeated tool calls, long outputs), and replies with edits: find and replace an exact string, or replace a whole section by its heading. The protected-line check and the critics still run on the result.",
       "score matches by code, never a model: a prediction matches a label in the same session with the same component (type, and name compared after Unicode, case, camelCase and separator normalization) whose top-3 type ids share one id, under a maximum one-to-one matching. Unmatched items count against precision or recall; a rate with nothing to divide by prints —. Without --pred, each diagnosed session flag is a prediction with no component, so it matches on session and type ids alone, and per-flag precision is reported. score writes nothing.",
     ],
     load: () => import("./commands/refine.ts"),

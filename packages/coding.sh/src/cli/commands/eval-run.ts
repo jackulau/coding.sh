@@ -104,7 +104,7 @@ function outcomeJson(o: SuiteOutcome): Record<string, unknown> {
 }
 
 /** The harness the suite runs: a stored bundle, else a snapshot of the project's setup for the agent (content-addressed, so a rerun reuses it). */
-async function suiteHarness(c: CommandContext, ctx: Context, s: LoadedSuite, root: string): Promise<HarnessBundle> {
+export async function suiteHarness(c: CommandContext, ctx: Context, s: LoadedSuite, root: string): Promise<HarnessBundle> {
   const ref = str(c.flags.harness) ?? s.spec.harness;
   if (ref) {
     const b = await ctx.index.getBundle(ref);
