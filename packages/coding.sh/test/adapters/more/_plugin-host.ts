@@ -11,11 +11,15 @@ export function fakeHook(dir: string): string {
   const p = join(dir, "hook.mjs");
   writeFileSync(
     p,
-    `import { writeFileSync } from "node:fs";
+    // Written to a temp name and renamed: hookCalls polls the directory, and a
+    // plain writeFileSync creates the file empty before it fills it.
+    `import { renameSync, writeFileSync } from "node:fs";
 let body = "";
 process.stdin.on("data", (d) => (body += d));
 process.stdin.on("end", () => {
-  writeFileSync(${JSON.stringify(dir)} + "/call-" + process.hrtime.bigint() + ".json", JSON.stringify({ argv: process.argv.slice(2), stdin: JSON.parse(body) }));
+  const name = ${JSON.stringify(dir)} + "/call-" + process.hrtime.bigint() + ".json";
+  writeFileSync(name + ".tmp", JSON.stringify({ argv: process.argv.slice(2), stdin: JSON.parse(body) }));
+  renameSync(name + ".tmp", name);
 });
 `,
   );
@@ -24,7 +28,7 @@ process.stdin.on("end", () => {
 
 export function hookCalls(dir: string): { argv: string[]; stdin: Record<string, unknown> }[] {
   return readdirSync(dir)
-    .filter((f) => f.startsWith("call-"))
+    .filter((f) => f.startsWith("call-") && f.endsWith(".json"))
     .sort()
     .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")));
 }
