@@ -113,13 +113,18 @@ export function describeFailure(r: ProcResult, timeoutMs?: number): string {
 
 // An uncaught error's own line ("TypeError: fetch failed") and, for Node, the
 // `[cause]: Error: connect ECONNREFUSED …` under it. The stack frames and the
-// closing braces that end a Node crash say nothing about why it failed.
-const ERROR_LINE = /^\s*(?:Uncaught )?((?:\w+\.)*(?:[A-Z]\w*)?(?:Error|Exception)(?: \[\w+\])?: .+)$/;
+// closing braces that end a Node crash say nothing about why it failed. Node
+// 24.22 prints an uncaught fetch failure as an inspected object,
+// `[TypeError: fetch failed] {`, so the brackets are optional.
+const ERROR_LINE = /^\s*(?:Uncaught )?(?:\[((?:\w+\.)*(?:[A-Z]\w*)?(?:Error|Exception)(?: \[\w+\])?: .+)\](?: \{)?|((?:\w+\.)*(?:[A-Z]\w*)?(?:Error|Exception)(?: \[\w+\])?: .+))$/;
 const CAUSE_LINE = /^\s*\[cause\]: (?:[\w.]*(?:Error|Exception)(?: \[\w+\])?: )?(.+?)\s*\{?$/;
 
 function errorCause(stderr: string): string | undefined {
   const lines = stderr.split(/\r?\n/);
-  const errors = lines.flatMap((l) => ERROR_LINE.exec(l)?.[1] ?? []);
+  const errors = lines.flatMap((l) => {
+    const m = ERROR_LINE.exec(l);
+    return m ? [m[1] ?? m[2]!] : [];
+  });
   // Python prints the traceback first and the exception last; Node the reverse.
   const head = /^Traceback \(most recent call last\)/m.test(stderr) ? errors[errors.length - 1] : errors[0];
   if (head === undefined) return undefined;

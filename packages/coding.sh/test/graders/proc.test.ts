@@ -17,6 +17,24 @@ describe("describeFailure", () => {
     assert.equal(r.exitCode, 1);
     assert.equal(describeFailure(r), `exited 1: TypeError: fetch failed (cause: connect ECONNREFUSED 127.0.0.1:${port})`);
   });
+  it("reads the bracketed form Node 24.22 prints for an uncaught fetch failure", () => {
+    const crash = [
+      "node:internal/modules/run_main:107",
+      "    triggerUncaughtException(",
+      "    ^",
+      "",
+      "[TypeError: fetch failed] {",
+      "  [cause]: Error: connect ECONNREFUSED 127.0.0.1:34117",
+      "      at TCPConnectWrap.afterConnect [as oncomplete] (node:net:2083:16) {",
+      "    errno: -111,",
+      "    code: 'ECONNREFUSED',",
+      "  }",
+      "}",
+      "",
+      "Node.js v24.22.2",
+    ].join("\r\n");
+    assert.equal(describeFailure(failed(crash)), "exited 1: TypeError: fetch failed (cause: connect ECONNREFUSED 127.0.0.1:34117)");
+  });
   it("names a thrown error without its stack", async () => {
     const r = await runProcess({ command: process.execPath, args: ["-e", `throw new RangeError("too big")`] });
     assert.equal(describeFailure(r), "exited 1: RangeError: too big");
