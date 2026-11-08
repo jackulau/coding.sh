@@ -93,6 +93,15 @@ const EXP_RUN_FLAGS: FlagSpec[] = [
   { name: "split", type: "string", value: "<SPLIT>", choices: ["train", "dev", "test"], desc: "Only cases in this split" },
 ];
 
+/** Where improve looks (improve, improve fix, improve check). */
+const IMPROVE_FLAGS = (since: string, limit: number): FlagSpec[] => [
+  { name: "since", type: "string", value: "<WHEN>", desc: "Only sessions (check: changes) after this time: 7d, 12h or a date", default: since },
+  { name: "repo", type: "string", value: "<DIR|all>", desc: "Only sessions under this directory, or all (default: this git repo)" },
+  AGENT_LIST,
+  LIMIT(limit),
+  FRESH,
+];
+
 /** Waive the protected-line check for one protected line (refine check, exp ab). */
 const PROTECTED_EDIT: FlagSpec = { name: "allow-protected-edit", type: "list", value: "<PATH:LINE>", desc: "Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force)" };
 
@@ -1086,6 +1095,42 @@ export const COMMANDS: CommandSpec[] = [
   WORKFLOWS_COMMAND,
   BENCH_COMMAND,
   // ---------------------------------------------------------- Harness
+  {
+    name: "improve",
+    group: "Harness",
+    summary: "What to fix first in your sessions, the line that fixes it, and whether your last CLAUDE.md or AGENTS.md changes helped",
+    actionOptional: true,
+    flags: IMPROVE_FLAGS("14d", 5),
+    actions: [
+      {
+        name: "fix",
+        summary: "Add an issue's line to CLAUDE.md or AGENTS.md (uncommitted), then print the command that tests it",
+        args: [{ name: "issue", desc: "Its number in coding.sh improve, or its id (flag:no-verification)", required: true }],
+        flags: [...IMPROVE_FLAGS("14d", 50).filter((f) => f.name !== "limit"), { name: "target", type: "string", value: "<FILE>", desc: "Repo file to add the line to (default: CLAUDE.md or AGENTS.md, whichever the issue's agent reads)" }, DRY_RUN],
+        examples: ["coding.sh improve fix 1", "coding.sh improve fix flag:no-verification --target AGENTS.md --dry-run"],
+      },
+      {
+        name: "check",
+        summary: "Did each committed CLAUDE.md, AGENTS.md, rule or skill change help? Sessions before vs after it; exit 1 when one made things worse",
+        flags: [
+          ...IMPROVE_FLAGS("30d", 5),
+          { name: "watch", type: "boolean", desc: "Keep running and print a line when a change's verdict moves as new sessions arrive" },
+          { name: "interval", type: "number", value: "<SECONDS>", desc: "With --watch: how often to re-check", default: "60" },
+        ],
+        examples: ["coding.sh improve check", "coding.sh improve check --since 7d --json", "coding.sh improve check --watch"],
+      },
+    ],
+    examples: ["coding.sh improve", "coding.sh improve --since 30d --repo all", "coding.sh improve fix 1", "coding.sh improve check"],
+    notes: [
+      "improve lists the failure flags in this repo's sessions and any command or tool that fails the same way in two or more sessions. Issues seen in two or more sessions come first, then by the severity score refine uses. Each issue has an example session, a fix, and the commands that take it through the loop: show, improve fix, exp ab, improve check.",
+      "A failing test command that already failed before the agent changed any file is reported as a broken setup: fix the command first, or the agent can't check its work.",
+      "When sessions ran on the repo's current harness version (the newest commit that changed CLAUDE.md, AGENTS.md, a rule or a skill) and none of them had an issue, the issue is marked 'Not seen since <commit>', goes last, and points at improve check instead of a new line.",
+      "check reads the git history of CLAUDE.md, AGENTS.md, GEMINI.md, .claude/rules, .cursor/rules and skills. A session counts for the newest such commit its starting HEAD contains, so uncommitted edits count from the commit that keeps them. Sessions with no recorded HEAD, and sessions with no tool call outside MCP servers (a chat, or asking coding.sh about a change), are left out.",
+      "check compares sessions with a failure flag before and after each change, and, for each added line that names a command, flag, path or identifier, the share of sessions that acted on it. Two-sided Fisher exact tests at p ≤ 0.1: more flagged sessions is Regressed (exit 1); fewer, or the new line followed more with nothing worse, is Helped. Under 5 sessions after a change without a clear result is Too early to tell.",
+      "exp ab (the replay A/B that improve suggests) needs ANTHROPIC_API_KEY or OPENAI_API_KEY. Without one, commit the change and let improve check judge it on new sessions.",
+    ],
+    load: () => import("./commands/improve.ts"),
+  },
   {
     name: "harness",
     group: "Harness",

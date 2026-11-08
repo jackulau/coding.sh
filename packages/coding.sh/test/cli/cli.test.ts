@@ -536,10 +536,11 @@ describe("cli zero setup", () => {
     }
     const i = cli(h, ["init", "--yes", ...agentArgs]);
     assert.equal(i.status, 0, i.stderr);
-    const tail = i.stderr.trimEnd().split("\n").slice(-3);
+    const tail = i.stderr.trimEnd().split("\n").slice(-4);
     assert.match(tail[0]!, /Set up Claude Code.*\(hooks \+ MCP server\)/);
-    assert.match(tail[1]!, /Open the viewer: coding\.sh$/);
-    assert.match(tail[2]!, /Docs: https:\/\/coding\.sh\/docs$/);
+    assert.match(tail[1]!, /Open the viewer: coding\.sh ui$/);
+    assert.match(tail[2]!, /After a few sessions, see what to fix first: coding\.sh improve$/);
+    assert.match(tail[3]!, /Docs: https:\/\/coding\.sh\/docs$/);
     for (const f of Object.values(files)) assert.match(readFileSync(f, "utf8"), /coding-sh/, f);
     assert.equal(readFileSync(join(h.data, "bin", "cli-path"), "utf8"), `${CLI}\n`, "hook knows the CLI for background ingests");
 
@@ -1079,7 +1080,7 @@ describe("cli QA regressions", () => {
     const blocker = r.stderr.search(/^ {4}! cursor-agent 2025\.09\.18-7ae6800 predates CLI hooks/m);
     assert.ok(blocker >= 0, r.stderr);
     assert.ok(blocker < r.stderr.indexOf("✓ Set up"), "blocker listed before the setup");
-    const tail = r.stderr.trimEnd().split("\n").slice(-3);
+    const tail = r.stderr.trimEnd().split("\n").slice(-4);
     assert.match(tail[0]!, /^✓ Set up Cursor CLI \(hooks \+ MCP server\); Antigravity CLI \(hooks\)$/);
     assert.doesNotMatch(r.stderr, /Antigravity CLI \(hooks \+ MCP/);
     assert.doesNotMatch(r.stderr, /headless runs/, "informational notes stay out of init");

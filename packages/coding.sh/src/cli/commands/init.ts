@@ -385,7 +385,8 @@ export async function run(c: CommandContext): Promise<number> {
       if (chained) out.note(`${x.pl.adapter.displayName} calls go on to ${chained}, the base URL it used before`);
     }
   }
-  out.note(`Open the viewer: ${out.style("coding.sh", "cyan", "err")}`);
+  out.note(`Open the viewer: ${out.style("coding.sh ui", "cyan", "err")}`);
+  out.note(`After a few sessions, see what to fix first: ${out.style("coding.sh improve", "cyan", "err")}`);
   out.note(`Docs: ${DOCS_URL}`);
   return errors ? 1 : 0;
 }

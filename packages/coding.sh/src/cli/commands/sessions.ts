@@ -1,7 +1,7 @@
 // coding.sh sessions [--agent --repo --since --flag --limit --empty] [--where <query>] [--facets [keys]]
 import { resolve } from "node:path";
 import type { IndexStore, SessionFilter } from "../../core/types.ts";
-import { isEmptySession } from "../../core/sessions.ts";
+import { failureFlags, isEmptySession } from "../../core/sessions.ts";
 import { facetCounts, findSessions } from "../../query/run.ts";
 import { FACET_KEYS, type Query } from "../../query/where.ts";
 import type { Session } from "../../schema/index.ts";
@@ -75,6 +75,13 @@ export async function run(c: CommandContext): Promise<number> {
         tty ? oneLine(clean(s.title ?? ""), 60) : clean(s.title ?? "").replace(/[\t\n]+/g, " "),
       ]),
     );
+    const byFlag = new Map<string, number>();
+    for (const s of sessions) for (const f of new Set(failureFlags(s.flags))) byFlag.set(f, (byFlag.get(f) ?? 0) + 1);
+    if (byFlag.size) {
+      const flagged = sessions.filter((s) => failureFlags(s.flags).length).length;
+      const top = [...byFlag].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([f, n]) => `${f} ${n}`).join(", ");
+      out.next(`${flagged} of these ${sessions.length} sessions are flagged (${top}). See what to fix first and the line that fixes it`, "coding.sh improve");
+    }
     return 0;
   });
 }

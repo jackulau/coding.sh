@@ -7,6 +7,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { sessionOutline, phaseLabel, storedOutline, type Outline, type Phase } from "../../core/outline.ts";
 import { costNote } from "../../core/pricing.ts";
+import { failureFlags } from "../../core/sessions.ts";
 import { SKILL_EVENT_KINDS, SKILL_TAG_PREFIX, skillUse, type SkillUseReport } from "../../core/skills-use.ts";
 import type { AgentEvent, Session } from "../../core/types.ts";
 import type { DurableStats } from "../../schema/index.ts";
@@ -329,6 +330,9 @@ export async function run(c: CommandContext): Promise<number> {
       ["Duration", s.endedAt !== undefined ? duration(s.endedAt - s.startedAt) : "running or not ended"],
       ["Turns", `${s.stats.turns}, ${s.stats.toolCalls} tool calls${s.stats.toolErrors ? ` (${s.stats.toolErrors} failed)` : ""}, ${filesChanged} files changed`],
     ];
+    // Tags (a colon in the name) are not failures; what is left is why `sessions --where is:flagged` listed it.
+    const flags = failureFlags(s.flags);
+    if (flags.length) rows.push(["Flags", flags.join(", ")]);
     if (u) rows.push(["Tokens", `in ${tokens(u.inputTokens)}  out ${tokens(u.outputTokens)}  cache ${tokens(u.cacheReadTokens)}  ${usd(u.costUsd)}${costNote(u)}`]);
     if (lat) {
       const parts: string[] = [];

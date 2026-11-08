@@ -58,6 +58,7 @@ Every command accepts these.
 | [`toolevals`](#codingsh-toolevals) | Evaluate | Measure how well agents use a CLI, MCP server or API |
 | [`workflows`](#codingsh-workflows) | Evaluate | Capture, measure and A/B-test multi-agent workflow runs |
 | [`bench`](#codingsh-bench) | Evaluate | Dynamic benchmarks: fresh cases every run, same set for every contender |
+| [`improve`](#codingsh-improve) | Harness | What to fix first in your sessions, the line that fixes it, and whether your last CLAUDE.md or AGENTS.md changes helped |
 | [`harness`](#codingsh-harness) | Harness | Snapshot and list agent harness bundles |
 | [`compare`](#codingsh-compare) | Harness | A/B two harness bundles on eval tasks |
 | [`refine`](#codingsh-refine) | Harness | Improve CLAUDE.md, AGENTS.md and skills in tested rounds, and protect their safety rules |
@@ -2050,6 +2051,91 @@ coding.sh bench schedule <NAME> [options]
 coding.sh bench schedule answers
 coding.sh bench schedule answers --install-cron --yes
 coding.sh bench schedule answers --workflow-out .github/workflows/bench-answers.yml
+```
+
+## `coding.sh improve`
+
+What to fix first in your sessions, the line that fixes it, and whether your last CLAUDE.md or AGENTS.md changes helped.
+
+```text
+coding.sh improve [action] [options]
+```
+
+| Action | What it does |
+|---|---|
+| [`fix`](#codingsh-improve-fix) | Add an issue's line to CLAUDE.md or AGENTS.md (uncommitted), then print the command that tests it |
+| [`check`](#codingsh-improve-check) | Did each committed CLAUDE.md, AGENTS.md, rule or skill change help? Sessions before vs after it; exit 1 when one made things worse |
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <WHEN>` | `14d` | Only sessions (check: changes) after this time: 7d, 12h or a date. |
+| `--repo <DIR|all>` |  | Only sessions under this directory, or all (default: this git repo) |
+| `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `-n, --limit <N>` | `5` | Maximum rows. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh improve
+coding.sh improve --since 30d --repo all
+coding.sh improve fix 1
+coding.sh improve check
+```
+
+- improve lists the failure flags in this repo's sessions and any command or tool that fails the same way in two or more sessions. Issues seen in two or more sessions come first, then by the severity score refine uses. Each issue has an example session, a fix, and the commands that take it through the loop: show, improve fix, exp ab, improve check.
+- A failing test command that already failed before the agent changed any file is reported as a broken setup: fix the command first, or the agent can't check its work.
+- When sessions ran on the repo's current harness version (the newest commit that changed CLAUDE.md, AGENTS.md, a rule or a skill) and none of them had an issue, the issue is marked 'Not seen since &lt;commit&gt;', goes last, and points at improve check instead of a new line.
+- check reads the git history of CLAUDE.md, AGENTS.md, GEMINI.md, .claude/rules, .cursor/rules and skills. A session counts for the newest such commit its starting HEAD contains, so uncommitted edits count from the commit that keeps them. Sessions with no recorded HEAD, and sessions with no tool call outside MCP servers (a chat, or asking coding.sh about a change), are left out.
+- check compares sessions with a failure flag before and after each change, and, for each added line that names a command, flag, path or identifier, the share of sessions that acted on it. Two-sided Fisher exact tests at p ≤ 0.1: more flagged sessions is Regressed (exit 1); fewer, or the new line followed more with nothing worse, is Helped. Under 5 sessions after a change without a clear result is Too early to tell.
+- exp ab (the replay A/B that improve suggests) needs ANTHROPIC_API_KEY or OPENAI_API_KEY. Without one, commit the change and let improve check judge it on new sessions.
+
+### `coding.sh improve fix`
+
+Add an issue's line to CLAUDE.md or AGENTS.md (uncommitted), then print the command that tests it.
+
+```text
+coding.sh improve fix <ISSUE> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `issue` | yes | Its number in coding.sh improve, or its id (flag:no-verification) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <WHEN>` | `14d` | Only sessions (check: changes) after this time: 7d, 12h or a date. |
+| `--repo <DIR|all>` |  | Only sessions under this directory, or all (default: this git repo) |
+| `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+| `--target <FILE>` |  | Repo file to add the line to (default: CLAUDE.md or AGENTS.md, whichever the issue's agent reads) |
+| `--dry-run` |  | Show the exact changes without writing anything. |
+
+```sh
+coding.sh improve fix 1
+coding.sh improve fix flag:no-verification --target AGENTS.md --dry-run
+```
+
+### `coding.sh improve check`
+
+Did each committed CLAUDE.md, AGENTS.md, rule or skill change help? Sessions before vs after it; exit 1 when one made things worse.
+
+```text
+coding.sh improve check [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <WHEN>` | `30d` | Only sessions (check: changes) after this time: 7d, 12h or a date. |
+| `--repo <DIR|all>` |  | Only sessions under this directory, or all (default: this git repo) |
+| `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `-n, --limit <N>` | `5` | Maximum rows. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+| `--watch` |  | Keep running and print a line when a change's verdict moves as new sessions arrive. |
+| `--interval <SECONDS>` | `60` | With --watch: how often to re-check. |
+
+```sh
+coding.sh improve check
+coding.sh improve check --since 7d --json
+coding.sh improve check --watch
 ```
 
 ## `coding.sh harness`
