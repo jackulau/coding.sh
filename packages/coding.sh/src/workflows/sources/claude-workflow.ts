@@ -341,6 +341,35 @@ export function recordStatus(v: unknown): WorkflowRun["status"] | undefined {
   return undefined;
 }
 
+export interface RecordAgent {
+  agentId: string;
+  /** The last segment replayed this call's result from the journal. */
+  cached: boolean;
+  startedAt?: number;
+  endedAt?: number;
+}
+
+/**
+ * Per-agent entries of the persisted run record (`workflowProgress[]`, type "workflow_agent"),
+ * keyed by agent id. They describe the record's segment: the last one of a resumed run.
+ */
+export function recordAgents(record: Record<string, unknown> | undefined): Map<string, RecordAgent> {
+  const out = new Map<string, RecordAgent>();
+  const list = record && Array.isArray(record.workflowProgress) ? record.workflowProgress : [];
+  for (const e of list) {
+    if (!isObj(e) || (e.type !== undefined && e.type !== "workflow_agent")) continue;
+    const agentId = s(e.agentId);
+    if (!agentId) continue;
+    const a: RecordAgent = { agentId, cached: e.cached === true };
+    const start = tsOf(e.startedAt);
+    if (start !== undefined) a.startedAt = start;
+    const d = n(e.durationMs);
+    if (start !== undefined && d !== undefined) a.endedAt = start + d;
+    out.set(agentId, a);
+  }
+  return out;
+}
+
 export const scriptHashOf = (script: string): string => sha256Hex(script);
 export const argsHashOf = (args: unknown): string => sha256Hex(stableJson(args));
 

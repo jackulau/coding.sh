@@ -68,7 +68,12 @@ across segments with one `launched` line and no timestamps, and the persisted re
 the last segment (`startTime`, `durationMs`). The run's start is the earliest of the record's start
 and every agent's start, and its end the latest of the record's end and every agent's end. Segment
 boundaries are read from the agents: a stretch with no agent running that starts when the agents
-the operator stopped end, or that holds the record's `startTime`. Phase membership comes from the `phase` field, or else from `phase()` order in
+the operator stopped end, or that holds the record's `startTime`.
+
+The journal writes no cache lines on such a resume: a replayed call keeps the `started` and
+`result` lines of the segment it ran in. The record's `workflowProgress[]` marks the calls the last
+segment replayed with `cached: true`; those nodes keep their status and get `cacheHit: true`. The
+record's per-agent `startedAt` and `durationMs` time an agent that has no transcript. Phase membership comes from the `phase` field, or else from `phase()` order in
 the script: a static scan of `phase('…')` calls. Group structure (which agents belong to one
 `parallel()` or `pipeline()` call) is recorded in the journal if available (U). Otherwise it is
 inferred: agents in the same phase whose start times fall within 2 s of each other form one
@@ -178,8 +183,8 @@ kind `agent` or `step` that ran (`status ≠ cached`), unless noted.
 | `nullAgents`, `failedAgents` | Agents that returned `null` (skipped or died after retries) / ended in error. Rates are over all agents except cancelled and superseded ones. |
 | `cancelledAgents`, `supersededAgents` | Agents that never returned because the run was stopped, absent when none. `cancelled`: the agent's transcript ends with Claude Code's `[Request interrupted by user]` or `[Request interrupted by user for tool use]`. `superseded`: a later call with the same label ran in its place (a re-run after a resume). Neither is a failure: both stay out of `agents`, `failedAgents` and the rates, and out of the critical path and barrier groups, but their time and tokens count in `agentMs` and cost. `perPhase[]` counts them as `cancelled` and `superseded`. |
 | `schemaFailures` | StructuredOutput calls whose result was a validation error, summed over agents. `schemaFinalInvalid` counts agents that never produced a valid output. |
-| `cacheHits`, `cacheHitRate` | Nodes with `status = cached` / all agent nodes in a resumed run |
-| `resumeSavedMs`, `resumeSavedUsd` | Σ of the original durations and costs of cached nodes, looked up by `ordinal` in `resumedFrom` |
+| `cacheHits`, `cacheHitRate` | Nodes with `status = cached`, plus nodes with `cacheHit` (they ran earlier in this run and a resume in the same run dir replayed them) / all agent nodes |
+| `resumeSavedMs`, `resumeSavedUsd` | Σ of the original durations and costs of cache hits: looked up by `ordinal` in `resumedFrom` for cached nodes, the node's own for `cacheHit` nodes |
 | `tokens`, `costUsd` | Σ over all nodes, including subagents |
 | `costShareByPhase` | Phase cost / total |
 

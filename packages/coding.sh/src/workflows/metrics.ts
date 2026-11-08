@@ -245,7 +245,8 @@ export function workflowStats(run: WorkflowRun, nodes: WorkflowNode[], base?: { 
     apiRetries: nodes.reduce((s, n) => s + (n.apiRetries ?? 0), 0),
     schemaFailures: allAgents.reduce((s, n) => s + (n.schema?.failures ?? 0), 0),
     schemaFinalInvalid: allAgents.filter((n) => n.schema?.finalValid === false).length,
-    cacheHits: allAgents.filter((n) => n.status === "cached").length,
+    // Replayed from a resumed-from run (status cached), or from earlier in this run (cacheHit).
+    cacheHits: allAgents.filter((n) => n.status === "cached" || n.cacheHit === true).length,
     tokens,
   };
   const cancelled = allAgents.filter((n) => n.status === "cancelled").length;
@@ -285,18 +286,21 @@ export function workflowStats(run: WorkflowRun, nodes: WorkflowNode[], base?: { 
 
   if (run.resumedFrom || stats.cacheHits > 0) {
     if (allAgents.length) stats.cacheHitRate = stats.cacheHits / allAgents.length;
-    if (base && stats.cacheHits > 0) {
-      const byOrdinal = new Map(base.nodes.filter(isAgentNode).filter((n) => n.ordinal !== undefined).map((n) => [n.ordinal!, n]));
-      let ms = 0;
-      let usd: number | undefined;
-      for (const n of allAgents) {
-        if (n.status !== "cached" || n.ordinal === undefined) continue;
-        const o = byOrdinal.get(n.ordinal);
-        if (!o) continue;
-        if (o.startedAt !== undefined && o.endedAt !== undefined) ms += Math.max(0, o.endedAt - o.startedAt);
-        const c = o.usage?.costUsd;
-        if (c !== undefined) usd = (usd ?? 0) + c;
-      }
+    // What a cache hit saved is what its original run took: looked up by ordinal in the
+    // resumed-from run, or the node itself when it ran earlier in this run.
+    const byOrdinal = base ? new Map(base.nodes.filter(isAgentNode).filter((n) => n.ordinal !== undefined).map((n) => [n.ordinal!, n])) : undefined;
+    let ms = 0;
+    let usd: number | undefined;
+    let found = false;
+    for (const n of allAgents) {
+      const o = n.cacheHit ? n : n.status === "cached" && n.ordinal !== undefined ? byOrdinal?.get(n.ordinal) : undefined;
+      if (!o) continue;
+      found = true;
+      if (o.startedAt !== undefined && o.endedAt !== undefined) ms += Math.max(0, o.endedAt - o.startedAt);
+      const c = o.usage?.costUsd;
+      if (c !== undefined) usd = (usd ?? 0) + c;
+    }
+    if (found || (base && stats.cacheHits > 0)) {
       stats.resumeSavedMs = ms;
       if (usd !== undefined) stats.resumeSavedUsd = usd;
     }

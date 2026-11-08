@@ -198,6 +198,7 @@ function nodeLine(n: WorkflowNode): string {
   const attempt = n.attempt !== undefined && (n.attempts ?? 1) > 1 ? ` #${n.attempt}` : "";
   const label = n.kind === "wait" && n.name === "wait" ? "wait" : `${n.kind} ${clean(n.name) || "(unnamed)"}${attempt}`;
   const parts = [label, n.status, dur];
+  if (n.cacheHit) parts.push("replayed on resume");
   if (n.resume) parts.push(n.resume === "wait" ? "resumed after wait" : `resumed after ${n.resume}`);
   if (n.lost) parts.push(n.lostMs ? `lost, then down ${duration(n.lostMs)}` : "lost");
   if (n.usage?.costUsd !== undefined) parts.push(usd(n.usage.costUsd));
@@ -249,6 +250,7 @@ async function show(c: CommandContext): Promise<number> {
   out.row("Wall", `${duration(wallOf(run))}${segmentsText(run.stats)}${run.stats.criticalPathMs !== undefined ? `, critical path ${duration(run.stats.criticalPathMs)}${run.stats.criticalPathExact ? "" : " (approx)"}` : ""}`);
   out.row("Cost", `${usd(run.stats.costUsd)}, ${tokens(totalTokens(run.stats.tokens))} tokens`);
   if (run.resumedFrom) out.row("Resumed from", `${run.resumedFrom} (${run.stats.cacheHits} cached)`);
+  else if (run.stats.cacheHits) out.row("Cache hits", `${run.stats.cacheHits} replayed on resume${run.stats.resumeSavedMs !== undefined ? `, saved ${duration(run.stats.resumeSavedMs)}${run.stats.resumeSavedUsd !== undefined ? ` and ${usd(run.stats.resumeSavedUsd)}` : ""}` : ""}`);
   const stopped = stoppedText(run.stats);
   if (stopped) out.row("Stopped", `${stopped} (not failures)`);
   if (run.stats.stepRetries !== undefined || run.stats.waitMs !== undefined) {

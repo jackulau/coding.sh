@@ -141,6 +141,34 @@ describe("wall time across resumes", () => {
   });
 });
 
+describe("cache hits on a run resumed in place", () => {
+  it("reads which calls the last segment replayed from the persisted record", () => {
+    const plan = agents().find((n) => n.name === "plan")!;
+    assert.equal(plan.cacheHit, true);
+    assert.equal(plan.status, "ok", "it ran in an earlier segment");
+    assert.equal(agents().filter((n) => n.cacheHit).length, 1);
+    const s = tree.run.stats;
+    assert.equal(s.cacheHits, 1);
+    assert.equal(s.cacheHitRate, 1 / 8);
+    // What replaying it saved is what it took when it ran: 10 s and its cost.
+    assert.equal(s.resumeSavedMs, 10_000);
+    assert.ok(Math.abs(s.resumeSavedUsd! - 0.4) < 1e-9, String(s.resumeSavedUsd));
+  });
+
+  it("takes an agent's time from the record when it has no transcript", () => {
+    const t = buildWorkflowTree({
+      journal: [{ type: "launched" }, { type: "started", key: "k", agentId: "x", label: "one" }, { type: "result", key: "k", agentId: "x", result: 1 }].map((x) => JSON.stringify(x)).join("\n"),
+      record: { startTime: T1, durationMs: 9000, status: "completed", workflowProgress: [{ type: "workflow_agent", agentId: "x", startedAt: T1 + 1000, durationMs: 4000, state: "done" }] },
+    });
+    const a = t.nodes.find((n) => n.kind === "agent")!;
+    assert.equal(a.startedAt, T1 + 1000);
+    assert.equal(a.endedAt, T1 + 5000);
+    assert.equal(a.cacheHit, undefined);
+    assert.equal(t.run.stats.cacheHits, 0);
+    assert.equal(t.run.stats.resumeSavedMs, undefined);
+  });
+});
+
 describe("workflows show and stats on a run resumed in place", () => {
   it("show and stats list stopped agents apart from failures", async () => {
     await cli("import", []);
@@ -153,6 +181,10 @@ describe("workflows show and stats on a run resumed in place", () => {
     assert.match(stats, /stopped\t1 cancelled, 2 superseded \(not failures\)/);
     assert.match(stats, /QA\t.*\t0 \(\+2 superseded\)\n/);
     assert.match(stats, /wall\t1m40s \(active 1m20s over 3 segments\)/);
+    assert.match(show, /Cache hits\s+1 replayed on resume, saved 10s and \$0\.40/);
+    assert.match(show, /agent plan\s+ok\s+10s\s+replayed on resume/);
+    assert.match(stats, /cache hits\t1 \(13%\)/);
+    assert.match(stats, /resume saved\t10s, \$0\.40/);
     assert.match(show, /Wall\s+1m40s \(active 1m20s over 3 segments\)/);
   });
 });

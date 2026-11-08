@@ -90,6 +90,11 @@ export interface WorkflowNode {
   ordinal?: number;
   /** Child session holding this agent's transcript. */
   sessionId?: string;
+  /**
+   * The agent ran earlier in this run, and a later resume of the same run replayed its result
+   * instead of running it again (the persisted record marks it cached). Its status keeps how it ended.
+   */
+  cacheHit?: boolean;
   startedAt?: number;
   endedAt?: number;
   /** When the call was issued (queue wait = startedAt − issuedAt), if recorded. */

@@ -17,6 +17,7 @@ import {
   argsHashOf,
   isObj,
   parseJournal,
+  recordAgents,
   recordStatus,
   scanPhases,
   scriptHashOf,
@@ -262,6 +263,7 @@ function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
     if (evs || ses) details.set(c.ordinal, agentDetail(evs, ses));
   }
   const meta = src.meta ?? {};
+  const progress = recordAgents(src.record);
   const stopped = stoppedCalls(
     parsed.calls,
     (c) => c.label ?? (c.agentId ? s(meta[c.agentId]?.description) : undefined),
@@ -290,6 +292,7 @@ function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
     const m = c.agentId ? (meta[c.agentId] ?? {}) : {};
     const d = details.get(c.ordinal);
     const h = c.agentId ? host.agents.get(c.agentId) : undefined;
+    const p = c.agentId ? progress.get(c.agentId) : undefined;
     const node: WorkflowNode = {
       id: `${runId}/agent/${c.ordinal}`,
       runId,
@@ -300,12 +303,16 @@ function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
     };
     const phase = c.phase ?? s(m.workflowPhase) ?? s(m.phase);
     if (phase) node.phase = phase;
-    const start = c.startedAt ?? h?.start ?? d?.startedAt;
-    const end = c.endedAt ?? h?.end ?? (c.hasResult || runDone ? d?.endedAt : undefined);
+    // A record entry the last segment replayed carries the replay time, not the agent's own.
+    const live = p && !p.cached ? p : undefined;
+    const start = c.startedAt ?? h?.start ?? d?.startedAt ?? live?.startedAt;
+    const end = c.endedAt ?? h?.end ?? (c.hasResult || runDone ? (d?.endedAt ?? live?.endedAt) : undefined);
     if (start !== undefined) node.startedAt = start;
     if (end !== undefined) node.endedAt = Math.max(end, start ?? end);
     if (c.issuedAt !== undefined) node.issuedAt = c.issuedAt;
     if (d?.sessionId) node.sessionId = d.sessionId;
+    // Ran earlier in this run (its start is in this journal); a later resume replayed it.
+    if (p?.cached && !c.cached) node.cacheHit = true;
     const model = d?.model ?? c.model ?? s(m.model);
     if (model) node.model = model;
     const effort = c.effort ?? s(m.effort);
