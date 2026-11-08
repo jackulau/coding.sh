@@ -210,9 +210,16 @@ say({ type: "result", result: existsSync(".claude/skills/demo/SKILL.md") ? "Whic
     assert.match(cli(["eval", "run", "scope"]).stderr, /needs confirmation\. Pass --yes/);
     const good = cli(["eval", "run", "scope", "--harness", "skilled", "--yes", "--json"]);
     assert.equal(good.status, 0, good.stdout + good.stderr);
-    const doc = JSON.parse(good.stdout) as { kind: string; harness: { name: string }; unverified: string[]; report: { ok: boolean; passed: number; trials: number; passHatK: number } };
+    const doc = JSON.parse(good.stdout) as { kind: string; experimentId: string; harness: { name: string }; unverified: string[]; report: { ok: boolean; passed: number; trials: number; passHatK: number } };
     assert.deepEqual([doc.kind, doc.harness.name, doc.report.ok, doc.report.passed, doc.report.trials, doc.report.passHatK], ["tasks", "skilled", true, 2, 2, 1]);
     assert.deepEqual(doc.unverified, ["asks-for-scope"], "a hand-written task with no reference.patch is unverified");
+    const shown = cli(["exp", "show", doc.experimentId]);
+    assert.equal(shown.status, 0, "the id eval run printed shows its runs: " + shown.stderr);
+    assert.match(shown.stdout, /2 runs of 1 task from eval run, 2 passed/);
+    assert.match(shown.stdout, /asks-for-scope\s+2\/2/);
+    const shownJson = JSON.parse(cli(["exp", "show", doc.experimentId, "--json"]).stdout) as { taskRuns: { runs: number; passed: number; tasks: { name: string }[] } };
+    assert.deepEqual([shownJson.taskRuns.runs, shownJson.taskRuns.passed, shownJson.taskRuns.tasks.map((t) => t.name)], [2, 2, ["asks-for-scope"]]);
+    assert.equal(cli(["exp", "show", "exp_nothing_here"]).status, 1, "an id with no runs is still not found");
 
     const bad = cli(["eval", "run", "scope", "--harness", "plain", "--yes"]);
     assert.equal(bad.status, 1, bad.stdout + bad.stderr);

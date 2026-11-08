@@ -40,6 +40,7 @@ import { finishJob, openJob, resumeField, resumeNote, retryFlag, statusCommand, 
 import { gateFlags, jsonArg, list, num, str, withContext } from "../common.ts";
 import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+import type { IndexStore, RunResult } from "../../core/types.ts";
 
 interface ExpSpec {
   name?: string;
@@ -606,6 +607,38 @@ async function runMetricsCmd(c: CommandContext): Promise<number> {
   return 0;
 }
 
+/**
+ * `exp show` of the id `eval run` prints for a tasks suite: there is no experiment record, only runs stored under that
+ * id, so show those per task with the agent's cost (API-equivalent when the agent ran on a subscription).
+ */
+async function showTaskRuns(c: CommandContext, index: IndexStore, id: string, runs: RunResult[]): Promise<number> {
+  const byTask = new Map<string, { passed: number; n: number }>();
+  let costUsd = 0;
+  let priced = 0;
+  for (const r of runs) {
+    const t = byTask.get(r.taskId) ?? { passed: 0, n: 0 };
+    t.n++;
+    if (r.pass) t.passed++;
+    byTask.set(r.taskId, t);
+    if (typeof r.agent.usage?.costUsd === "number") {
+      costUsd += r.agent.usage.costUsd;
+      priced++;
+    }
+  }
+  const tasks = await Promise.all([...byTask].map(async ([taskId, t]) => ({ id: taskId, name: (await index.getTask(taskId))?.name ?? taskId, ...t })));
+  tasks.sort((a, b) => a.name.localeCompare(b.name));
+  const passed = runs.filter((r) => r.pass).length;
+  const cost = priced ? { costUsd: Math.round(costUsd * 1e4) / 1e4, priced } : {};
+  if (c.out.json) {
+    c.out.data({ taskRuns: { experimentId: id, runs: runs.length, passed, ...cost, tasks } });
+    return 0;
+  }
+  c.out.print(`${id}: ${plural(runs.length, "run")} of ${plural(tasks.length, "task")} from eval run, ${passed} passed`);
+  c.out.table(["TASK", "PASSED"], tasks.map((t) => [t.name, `${t.passed}/${t.n}`]));
+  if (priced) c.out.print(`Agent cost $${costUsd.toFixed(2)} at API prices, over ${plural(priced, "priced run")}`);
+  return 0;
+}
+
 export async function run(c: CommandContext): Promise<number> {
   const { out, env } = c;
   if (c.action === "metrics") return runMetricsCmd(c);
@@ -898,6 +931,11 @@ export async function run(c: CommandContext): Promise<number> {
       case "show": {
         const ref = c.positionals[0]!;
         const e = await store.resolveExperiment(ref, { includeCancelled: true });
+        // `eval run` on a tasks suite prints an experiment id that names its stored runs, not an experiment record.
+        if (!e && /^exp_\w+$/.test(ref)) {
+          const runs = (await ctx.index.listRuns({ experimentId: ref })).filter((r) => !r.superseded && !r.cancelled);
+          if (runs.length) return showTaskRuns(c, ctx.index, ref, runs);
+        }
         if (!e) throw new CliError(`Can't find experiment ${JSON.stringify(ref)}`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
         const verifiers = await verifierAudits(store, e);
         if (out.json) out.data({ experiment: e, ...(verifiers.size ? { verifiers: [...verifiers.values()] } : {}) });

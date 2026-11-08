@@ -123,6 +123,9 @@ share of all trials that passed.
 - **first failure** links the session of a failed trial (`coding.sh show <id>`, or the viewer), or
   gives the grader's reason. Read failed transcripts before you change a prompt or a grader: a
   task no trial ever passes is more often a broken task than a hard one.
+- **experiment** names the stored runs. For a tasks suite there is no experiment record, so
+  `coding.sh exp show <id>` lists those runs per task, with the agent's cost at API prices
+  (`--json`: `taskRuns`).
 - Under the table, **Verifier output of failed runs** shows the last 8 lines that the verifier
   printed for up to 5 failed trials of a repo task suite. See
   [Verifier output](#verifier-output).
