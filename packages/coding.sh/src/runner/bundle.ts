@@ -1,7 +1,7 @@
 // Harness bundles: the thing being A/B-tested. A bundle is a manifest (agent,
 // model, flags, env, removals) plus overlay files stored as blobs; its id is
 // the sha256 of that content, so "same harness" is decidable.
-import { chmod, lstat, readFile, readdir, rm, stat } from "node:fs/promises";
+import { chmod, lstat, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
 import { basename, dirname, extname, join, posix, resolve } from "node:path";
 import { userHome } from "../core/paths.ts";
 import { sha256Hex } from "../core/ids.ts";
@@ -109,8 +109,17 @@ export function bundleId(b: Pick<HarnessBundle, "name" | "agent" | "model" | "fl
   );
 }
 
-async function walk(root: string, sub: string, out: string[]): Promise<void> {
+/**
+ * Files under root/sub. Symlinks and junctions are followed, because skills
+ * and commands are often linked in (`npx skills add` links ~/.claude/skills/<x>
+ * to ~/.agents/skills/<x>); a file keeps the link's path. A link back to a dir
+ * being walked, and a dangling link, are skipped.
+ */
+async function walk(root: string, sub: string, out: string[], ancestors?: Set<string>): Promise<void> {
   const here = sub ? join(root, sub) : root;
+  const real = await realpath(here).catch(() => undefined);
+  if (!real || ancestors?.has(real)) return;
+  const chain = new Set(ancestors).add(real);
   let entries;
   try {
     entries = await readdir(here, { withFileTypes: true });
@@ -119,9 +128,16 @@ async function walk(root: string, sub: string, out: string[]): Promise<void> {
   }
   for (const e of entries) {
     const rel = sub ? `${sub}/${e.name}` : e.name;
-    if (e.isDirectory()) {
-      if (!SKIP_DIRS.has(e.name)) await walk(root, rel, out);
-    } else if (e.isFile()) out.push(rel);
+    let isDir = e.isDirectory();
+    let isFile = e.isFile();
+    if (e.isSymbolicLink()) {
+      const st = await stat(join(here, e.name)).catch(() => undefined);
+      isDir = !!st?.isDirectory();
+      isFile = !!st?.isFile();
+    }
+    if (isDir) {
+      if (!SKIP_DIRS.has(e.name)) await walk(root, rel, out, chain);
+    } else if (isFile) out.push(rel);
   }
 }
 

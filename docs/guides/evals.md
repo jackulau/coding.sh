@@ -982,6 +982,9 @@ witnesses to the verifier (hidden file plus `&& <cmd>`) and puts the task back t
 `coding.sh harness snapshot` bundles an agent's harness files (CLAUDE.md, AGENTS.md, skills, hooks,
 MCP config). `coding.sh compare A B` runs both bundles on eval tasks in isolated config
 directories. It reports per-arm Wilson intervals and the first step where the traces diverge.
+A snapshot follows linked files and directories, such as skills that `npx skills` or a dotfiles
+repo links into `~/.claude/skills`, and stores the files they point to. It skips dangling links and
+links that loop back to a directory it is already in.
 
 `coding.sh compare A --without .claude/skills/pdf` tests one piece of a harness. B is A minus that
 path: a skill, `AGENTS.md`, `CLAUDE.md` or `.mcp.json`. The path is also deleted from each task's

@@ -47,6 +47,33 @@ describe("bundleFromDir", () => {
     const flagged = await bundleFromDir({ name: "a", agent: "claude-code", dir, home, include: ["CLAUDE.md", ".claude/**", "~/.claude/CLAUDE.md"], blobs, flags: ["--x"] });
     assert.notEqual(flagged.id, changed.id);
   });
+
+  it("follows linked skill and command dirs (npx skills, dotfile repos), and skips loops and dangling links", async () => {
+    const home = await tree({
+      ".claude/CLAUDE.md": "rules",
+      ".claude/skills/own/SKILL.md": "own",
+      ".agents/skills/pdf/SKILL.md": "pdf skill",
+      ".agents/skills/pdf/scripts/fill.py": "print(1)",
+      "dotfiles/review.md": "review command",
+    });
+    const link = (target: string, path: string) => symlink(target, join(home, path), process.platform === "win32" ? "junction" : undefined);
+    await link(join(home, ".agents/skills/pdf"), ".claude/skills/pdf");
+    await symlink(join(home, "dotfiles/review.md"), join(home, ".claude/review.md"));
+    await link(join(home, ".claude/skills"), ".claude/skills/own/loop");
+    await symlink(join(home, "missing"), join(home, ".claude/dangling.md"));
+    const blobs = new MemBlobs();
+    const b = await bundleFromDir({ name: "u", agent: "claude-code", dir: home, home, include: ["~/.claude/**"], blobs });
+    assert.deepEqual(Object.keys(b.files), [
+      "~/.claude/CLAUDE.md",
+      "~/.claude/review.md",
+      "~/.claude/skills/own/SKILL.md",
+      "~/.claude/skills/pdf/SKILL.md",
+      "~/.claude/skills/pdf/scripts/fill.py",
+    ]);
+    assert.equal(await blobs.getText(b.files["~/.claude/skills/pdf/SKILL.md"] ?? ""), "pdf skill");
+    const dirInclude = await bundleFromDir({ name: "u", agent: "claude-code", dir: home, home, include: ["~/.claude/skills/pdf"], blobs });
+    assert.deepEqual(Object.keys(dirInclude.files), ["~/.claude/skills/pdf/SKILL.md", "~/.claude/skills/pdf/scripts/fill.py"]);
+  });
 });
 
 describe("bundleFromToml", () => {
