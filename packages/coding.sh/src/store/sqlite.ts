@@ -459,6 +459,9 @@ function rowToEvent(r: Row): AgentEvent {
 const projectField = (v: unknown): string | undefined => (typeof v === "string" && v !== "default" ? v : undefined);
 const projectCol = (p: string | undefined): string => p ?? "default";
 
+/** Per-connection page cache, in KiB (negative cache_size = KiB, not pages). Bounded RAM, freed on close. */
+const CACHE_SIZE_KIB = 16_000;
+
 /** Writer locks this process holds, by lock path (see acquireWriterLock). */
 const heldWriterLocks = new Set<string>();
 
@@ -560,6 +563,12 @@ export class SqliteIndexStore implements IndexStore {
       db.exec("PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;");
       // A WAL that a checkpoint has reset is cut back to this size instead of keeping its high-water mark.
       if (!opts.readOnly) db.exec(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT}`);
+      // RAM-only cache tuning: a larger page cache (bounded, freed on close) and
+      // in-memory temp b-trees (sorts, FTS merges). The default cache is ~2 MB; a
+      // few thousand events spill it, so ingest and the reads that fold a session
+      // re-decode pages this keeps resident. No effect on the on-disk file or its
+      // locking, so it is safe for read-only connections and on Windows.
+      db.exec(`PRAGMA cache_size = -${CACHE_SIZE_KIB}; PRAGMA temp_store = MEMORY;`);
       const store = new SqliteIndexStore(db, path, opts.readOnly ?? false);
       if (!opts.readOnly) await store.migrate();
       return store;
