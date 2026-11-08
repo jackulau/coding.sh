@@ -12,6 +12,9 @@ packages/coding.sh/test/mcp/qa-fixes.test.ts
   s_8e040dbdf13565::t_95879cc4e5cc4a 42-47
 packages/coding.sh/test/mcp/server.test.ts
   s_8e040dbdf13565::t_6cb330ae629b09 485,487,518,520
+packages/coding.sh/src/store/sqlite.ts
+  s_8e040dbdf13565::t_d793e6e4d3c070 741-743
+  s_8e040dbdf13565::t_023f17870a4519 714-724
 ---
 {
   "schema_version": "authorship/3.0.0",
