@@ -1,0 +1,58 @@
+packages/coding.sh/test/docs/api-reference.test.ts
+  s_8e040dbdf13565::t_0e97a290063d7a 60
+packages/coding.sh/src/cli/commands/diff-calls.ts
+  s_8e040dbdf13565::t_03f40d96327876 62,95-96
+  s_8e040dbdf13565::t_091c7c3c0f62ce 1-61,63-94,97-122
+packages/coding.sh/src/viewer/server.ts
+  s_8e040dbdf13565::t_e983314eb9c50c 543,545
+  s_8e040dbdf13565::t_42d102ceb9d3a2 25,537-539,542,544,546-554,556-566
+  s_8e040dbdf13565::t_0e97a290063d7a 540-541,555
+  s_8e040dbdf13565::t_09602bb09d4d25 567-568
+packages/coding.sh/src/store/sqlite.ts
+  s_8e040dbdf13565::t_1d935b61c2ea86 694-698
+packages/coding.sh/src/core/redact.ts
+  s_8e040dbdf13565::t_4bca97ae699993 414-415
+packages/coding.sh/test/proxy/calls.test.ts
+  s_8e040dbdf13565::t_9769939c96bbab 275,299
+  s_8e040dbdf13565::t_cdf1fe4e1cdc27 1-220,222-274,276-298,300-302
+  s_8e040dbdf13565::t_4bca97ae699993 221
+docs/reference/api.md
+  s_8e040dbdf13565::t_449d1abf31ba65 94-95,543-544,546-593
+  s_8e040dbdf13565::t_592e67657239e9 545
+  s_8e040dbdf13565::t_c945ab1ec24817 594
+packages/coding.sh/src/core/types.ts
+  s_8e040dbdf13565::t_1d935b61c2ea86 149-150
+packages/coding.sh/src/viewer/ui/index.html
+  s_8e040dbdf13565::t_e3a8033871deed 4011,4022
+  s_8e040dbdf13565::t_64eaa307c5c059 3968-4010,4012-4021,4023-4036,4141
+packages/coding.sh/src/store/memory.ts
+  s_8e040dbdf13565::t_1d935b61c2ea86 181-189
+packages/coding.sh/src/cli/commands/show.ts
+  s_8e040dbdf13565::t_ebafc46d57f267 5-6,14,16-17,92-97,280-293
+docs/reference/cli.md
+  s_8e040dbdf13565::t_592e67657239e9 46,398,411,415-436
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_f3d718a16accca 285,291-295,298-308
+  s_8e040dbdf13565::t_d5dd789a30af25 309
+packages/coding.sh/src/proxy/calls.ts
+  s_8e040dbdf13565::t_ba51eb4470d23f 1-54,56-62,64-164,167-199,207,209-266,269-281,284-326
+  s_8e040dbdf13565::t_4bca97ae699993 165-166
+  s_8e040dbdf13565::t_7ace071494326d 55,63
+  s_8e040dbdf13565::t_171bcaa4aa600a 200-206,208,267-268,282-283
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2393f609b8c4e36541431d6642c085cfc40e0512",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
