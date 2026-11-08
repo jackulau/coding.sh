@@ -6,6 +6,32 @@
 User-agent: *
 Allow: /
 
+# Named groups so each crawler is allowed even if a host adds per-crawler rules above.
+User-agent: Amazonbot
+User-agent: Applebot-Extended
+User-agent: Bytespider
+User-agent: CCBot
+User-agent: ClaudeBot
+User-agent: Claude-Web
+User-agent: anthropic-ai
+User-agent: Claude-SearchBot
+User-agent: Claude-User
+User-agent: Diffbot
+User-agent: Google-Extended
+User-agent: GoogleOther
+User-agent: GPTBot
+User-agent: OAI-SearchBot
+User-agent: ChatGPT-User
+User-agent: PerplexityBot
+User-agent: Perplexity-User
+User-agent: cohere-ai
+User-agent: MistralAI-Training
+User-agent: meta-externalagent
+User-agent: omgili
+User-agent: Baiduspider
+User-agent: PetalBot
+Allow: /
+
 Sitemap: https://coding.sh/sitemap-index.xml
 
 # Plain-text corpora for LLMs: an index plus the full site text.
