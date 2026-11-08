@@ -1,0 +1,14 @@
+# Used instead of the repo's .dockerignore when building examples/plugin-ab/Dockerfile.
+*
+!package.json
+!package-lock.json
+!packages/
+!apps/*/package.json
+!examples/plugin-ab/
+**/node_modules
+**/dist
+**/*.tgz
+**/__pycache__
+**/.env
+**/.env.*
+**/.DS_Store

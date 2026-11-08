@@ -1,0 +1,11 @@
+{
+  "name": "ab-e3-retry",
+  "tags": [
+    "plugin-ab",
+    "suite:explain"
+  ],
+  "verifier": {
+    "command": "node tests/check.js",
+    "timeoutMs": 120000
+  }
+}

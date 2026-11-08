@@ -1,0 +1,1 @@
+[["sql injection", "inject|parameteri[sz]|placeholder|\\$1|bound param"], ["missing await on delete", "await"], ["payments undefined or refund amount unchecked", "payments|amount|authori[sz]"]]

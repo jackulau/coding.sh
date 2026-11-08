@@ -1,0 +1,11 @@
+{
+  "name": "ab-e4-crash",
+  "tags": [
+    "plugin-ab",
+    "suite:explain"
+  ],
+  "verifier": {
+    "command": "node tests/check.js",
+    "timeoutMs": 120000
+  }
+}

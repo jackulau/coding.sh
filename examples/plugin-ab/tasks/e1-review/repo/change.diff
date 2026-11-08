@@ -1,0 +1,31 @@
+diff --git a/src/routes/orders.js b/src/routes/orders.js
+--- a/src/routes/orders.js
++++ b/src/routes/orders.js
+@@ -1,12 +1,27 @@
+ const express = require("express");
+ const db = require("../db");
+ const router = express.Router();
+
+ router.get("/orders/:id", async (req, res) => {
+   const order = await db.query("SELECT * FROM orders WHERE id = $1", [req.params.id]);
+   res.json(order.rows[0]);
+ });
+
++router.get("/orders", async (req, res) => {
++  const status = req.query.status;
++  const rows = await db.query(`SELECT * FROM orders WHERE status = '${status}' ORDER BY created_at DESC`);
++  res.json(rows.rows);
++});
++
++router.delete("/orders/:id", async (req, res) => {
++  db.query("DELETE FROM orders WHERE id = $1", [req.params.id]);
++  res.status(204).end();
++});
++
++router.post("/orders/:id/refund", async (req, res) => {
++  const order = await db.query("SELECT * FROM orders WHERE id = $1", [req.params.id]);
++  await payments.refund(order.rows[0].charge_id, req.body.amount);
++  res.json({ ok: true });
++});
++
+ module.exports = router;

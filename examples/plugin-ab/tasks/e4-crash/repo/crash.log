@@ -1,0 +1,11 @@
+2026-11-02T03:14:07.112Z info  worker starting pid=4121 node=v24.11.1
+2026-11-02T03:14:07.130Z info  config loaded from env (keys: QUEUE_URL, LOG_LEVEL, WORKER_CONCURRENCY)
+2026-11-02T03:14:07.141Z info  connecting to queue url=redis://queue:6379
+2026-11-02T03:14:07.402Z info  polling queue "emails" concurrency=4
+2026-11-02T03:14:09.877Z info  job 88121 start type=send_receipt
+2026-11-02T03:14:09.879Z error uncaught TypeError: Cannot read properties of undefined (reading 'split')
+    at parseSmtpUrl (/app/src/mailer.js:4:24)
+    at createTransport (/app/src/mailer.js:12:18)
+    at sendReceipt (/app/src/jobs/receipt.js:7:20)
+    at runJob (/app/src/worker.js:22:11)
+2026-11-02T03:14:09.880Z fatal worker exiting code=1

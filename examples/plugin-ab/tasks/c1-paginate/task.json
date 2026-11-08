@@ -1,0 +1,11 @@
+{
+  "name": "ab-c1-paginate",
+  "tags": [
+    "plugin-ab",
+    "suite:code"
+  ],
+  "verifier": {
+    "command": "node --test tests/*.test.js",
+    "timeoutMs": 120000
+  }
+}

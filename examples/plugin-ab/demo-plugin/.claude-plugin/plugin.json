@@ -1,0 +1,5 @@
+{
+  "name": "terse-demo",
+  "version": "0.1.0",
+  "description": "Demo plugin for the plugin A/B: asks Claude Code for short replies at session start."
+}

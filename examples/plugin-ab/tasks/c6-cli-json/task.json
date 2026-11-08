@@ -1,0 +1,11 @@
+{
+  "name": "ab-c6-cli-json",
+  "tags": [
+    "plugin-ab",
+    "suite:code"
+  ],
+  "verifier": {
+    "command": "node --test tests/*.test.js",
+    "timeoutMs": 120000
+  }
+}

@@ -1,0 +1,1 @@
+[["isRetryable is never called", "isRetryable\\s*\\(|isRetryable(?:\\(err\\))? is (?:never|not) (?:called|invoked)|never call|not call|function (?:itself|reference)|always truthy|is a function"], ["backoff/attempt explained", "backoff|exponential|2\\s*\\*\\*|doubl"]]
