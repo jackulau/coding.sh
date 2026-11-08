@@ -1183,7 +1183,7 @@ function anatomyNotes(a: NonNullable<CompareReport["anatomy"]>): string[] {
   const unsolved = a.baseline.unsolvedByAll + b.unsolvedByAll;
   if (fails > 0 && unsolved / fails >= 0.3) {
     const n = a.baseline.tasks.unsolvedByAll.length;
-    out.push(`${n} task${n === 1 ? "" : "s"} failed every attempt in both arms (${share(unsolved / fails)} of failed runs): check them with coding.sh eval validate / eval curate`);
+    out.push(`${n} task${n === 1 ? "" : "s"} failed every attempt in both arms (${share(unsolved / fails)} of failed runs): a task no attempt solves is often broken, so check it with coding.sh eval validate <task>`);
   }
   const v = a.variance;
   if (Number.isFinite(v.run) && v.run > v.arm) out.push(`run-to-run noise (${share(v.run)}) outweighs the harness effect (${share(v.arm)})`);
