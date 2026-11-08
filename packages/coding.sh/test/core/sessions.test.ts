@@ -13,6 +13,7 @@ import {
   percentile,
   rollupUsage,
   similarInputs,
+  writesToolCallAsText,
 } from "../../src/core/sessions.ts";
 
 let t = 0;
@@ -223,6 +224,17 @@ describe("failure detectors", () => {
 
   it("compaction", () => {
     assert.deepEqual(detectFlags([ev("context.compact", { trigger: "auto" })]), [FLAGS.compaction]);
+  });
+
+  it("text-tool-call: a tool call written out as text, not markup quoted in a code block or in prose", () => {
+    const say = (text: string) => detectFlags([ev("assistant.message", { text }, { agent: "claude-code" })]);
+    // What a Claude Code subagent with a map-form `tools:` wrote, its calls never run.
+    assert.deepEqual(say('I\'ll read it first.\n\n\n<invoke name="Read">\n<parameter name="file_path">/work/demo/README.md</parameter>\n</invoke>\n'), [FLAGS.textToolCall]);
+    assert.deepEqual(say('<invoke name="mcp__docs__search"></invoke>'), [FLAGS.textToolCall]);
+    assert.deepEqual(say('Calls look like this:\n```xml\n<invoke name="Read">\n<parameter name="file_path">a.ts</parameter>\n</invoke>\n```'), [], "fenced");
+    assert.deepEqual(say('The subagent wrote `<invoke name="Read">` as text.'), [], "mid-line, in prose");
+    assert.deepEqual(say('<invoke name="Read"> is the markup it used'), [], "no parameter or close after it");
+    assert.ok(writesToolCallAsText('  <invoke name="Bash">\n  <parameter name="command">ls</parameter>'));
   });
 
   it("test-tamper: a test edit that alone turns a failing run green", () => {

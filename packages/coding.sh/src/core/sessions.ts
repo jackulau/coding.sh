@@ -43,6 +43,8 @@ export const FLAGS = {
   modelSwitch: MODEL_SWITCH,
   /** A model call stopped on a refusal or a content filter (core/models.ts). */
   refusal: REFUSAL,
+  /** The model wrote a tool call out as text, so it never ran: the tool was not available to it (writesToolCallAsText). */
+  textToolCall: "text-tool-call",
   /** Derails (core/derail.ts): where the session went off the rails. */
   ...DERAIL_FLAGS,
 } as const;
@@ -412,7 +414,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * events, and every stored session is folded again once in the background
  * (core/reparse.ts, REFOLD_CURSOR), so old sessions get the new derivation.
  */
-export const SESSION_FOLD_VERSION = 9; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used).
+export const SESSION_FOLD_VERSION = 10; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -950,6 +952,7 @@ interface FlagState {
   fileChange: boolean;
   verified: boolean;
   compaction: boolean;
+  textToolCall: boolean;
   gateways: Set<GatewayId>;
   tamper: TamperState;
 }
@@ -960,9 +963,26 @@ const flagState = (): FlagState => ({
   fileChange: false,
   verified: false,
   compaction: false,
+  textToolCall: false,
   gateways: new Set(),
   tamper: tamperState(),
 });
+
+/** Anthropic's tool-use markup opening a call on a line of its own: `<invoke name="Read">`, then a parameter or the close. */
+const TEXT_TOOL_CALL = /^[ \t]*<invoke name="[\w.:-]+">\s*(?:<parameter name="|<\/invoke>)/m;
+/** A fenced code block: markup inside one is quoted, not called. */
+const CODE_BLOCK = /^[ \t]*(```|~~~)[^\n]*\n[\s\S]*?^[ \t]*\1/gm;
+
+/**
+ * The model wrote a tool call out as text instead of calling the tool, so it
+ * never ran. A model does this when the tool it reaches for was not given to it,
+ * such as a Claude Code subagent whose `tools:` frontmatter is a map
+ * (`edit: false`) rather than a list of names. Markup inside a fenced code
+ * block or mid-line (prose about tool calls) does not count.
+ */
+export function writesToolCallAsText(text: string): boolean {
+  return text.includes("<invoke name=") && TEXT_TOOL_CALL.test(text.replace(CODE_BLOCK, ""));
+}
 
 function foldFlags(s: FlagState, e: AgentEvent): void {
   foldPremature(s.premature, e);
@@ -971,6 +991,7 @@ function foldFlags(s: FlagState, e: AgentEvent): void {
   if (e.kind === "file.change") s.fileChange = true;
   if (e.kind === "test.result" || isVerifyToolStart(e)) s.verified = true;
   if (e.kind === "context.compact") s.compaction = true;
+  if (e.kind === "assistant.message" && !s.textToolCall && typeof e.payload.text === "string" && writesToolCallAsText(e.payload.text)) s.textToolCall = true;
   const g = gatewayOfEvent(e);
   if (g) s.gateways.add(g);
 }
@@ -982,6 +1003,7 @@ function flagsOf(s: FlagState, derails: readonly Derail[], sorted?: readonly Age
   if (s.repeated.found) flags.push(FLAGS.repeatedToolFailure);
   if (s.fileChange && !s.verified) flags.push(FLAGS.noVerification);
   if (s.compaction) flags.push(FLAGS.compaction);
+  if (s.textToolCall) flags.push(FLAGS.textToolCall);
   for (const d of derails) if (!flags.includes(d.flag)) flags.push(d.flag);
   if (s.tamper.high || (s.tamper.needsEvents && detectTestTamper(sorted!))) flags.push(FLAGS.testTamper);
   flags.push(...gatewayFlagsOf(s.gateways));

@@ -81,6 +81,12 @@ timeline. Through the proxy, a Claude Code subagent's model calls land in its se
 - `skill-copy-conflict`: the session used two copies of one skill, for example the project's and a
   personal one.
 - `refusal`: a model call stopped on a refusal (`refusal`, `content_filter` or `safety`).
+- `text-tool-call`: the model wrote a tool call out as text (a line that opens with
+  `<invoke name="…">` and a parameter or the close), so the call never ran. A model does this when
+  the tool it reaches for was not given to it. In Claude Code the usual cause is a subagent whose
+  `tools:` frontmatter is a map such as `edit: false`: Claude Code reads `tools:` as a list of tool
+  names, so the subagent gets none. List the tools, or deny some with `disallowedTools: Edit, Write`.
+  Markup inside a fenced code block or in the middle of a sentence does not count.
 
 A flag with a colon, such as `gateway:vercel`, is a tag rather than a failure. Each skill a session
 used (through the Skill tool, or by reading or running a file in the skill's folder) adds a

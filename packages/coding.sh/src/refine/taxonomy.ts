@@ -203,6 +203,8 @@ export const FLAG_DIAGNOSIS: Readonly<Record<string, FlagDiagnosis | "context-on
   "model:switch": "context-only",
   // A refusal can be the correct answer (a safety refusal); harm not observed.
   refusal: { typeIds: ["ins.inappropriate-refusal"], nature: "risk", reach: 0.4 },
+  // The call never ran, and the model then works from a result it never got.
+  "text-tool-call": { typeIds: ["rt.auth-config", "tool.call-omitted"], nature: "defect" },
   // Slots for flags not built yet (research queue #12):
   //   "user-pushback": ins.intent-misread
   //   "search-loop": eff.redundant-retrieval

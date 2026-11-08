@@ -112,6 +112,10 @@ export const FLAG_TEXT: Readonly<Record<string, FlagText>> = {
   stalled: { title: "Waits on a slow or failing model provider", fix: "Check the provider or gateway; coding.sh usage --by model shows which model." },
   "context-thrash": { title: "Fills its context and compacts again and again", fix: "Split tasks like these, or trim what CLAUDE.md and skills load." },
   "skill-copy-conflict": { title: "Has two different copies of one skill", fix: "Delete the stale copy so the agent reads one." },
+  "text-tool-call": {
+    title: "Writes tool calls as text, so they never run",
+    fix: "Give the agent the tools it reaches for. In Claude Code, a subagent's `tools:` is a comma list of tool names; a map such as `edit: false` leaves it with none, so use `disallowedTools: Edit, Write` instead.",
+  },
 };
 
 const clip = (s: string | undefined, n: number): string | undefined => {
