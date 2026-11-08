@@ -1,0 +1,59 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_ad9f00285b03b8 27
+docs/concepts.md
+  s_8e040dbdf13565::t_de576dde73d506 119-124
+docs/guides/explore.md
+  s_8e040dbdf13565::t_36ffc58852b1d6 10
+docs/reference/api.md
+  s_8e040dbdf13565::t_d3ae00224be9f5 552-559
+docs/reference/cli.md
+  s_8e040dbdf13565::t_326d3dfe5f1ba2 461,621,630
+docs/reference/query.md
+  s_8e040dbdf13565::t_c0ba9724f8b7b9 76-78
+packages/coding.sh/src/cli/commands/harness.ts
+  s_8e040dbdf13565::t_2924a0cc6bbe96 42-46,51,54-57
+packages/coding.sh/src/cli/commands/usage.ts
+  s_8e040dbdf13565::t_02e0135da9545c 11-12,16,21-53,63-65,75-76,109-112
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_40b874607212b6 495,502
+packages/coding.sh/src/core/cache-breaks.ts
+  s_8e040dbdf13565::t_bd858b61167291 35-38,43-50,121-135
+packages/coding.sh/src/core/cache-setup.ts
+  s_8e040dbdf13565::t_efd9c0571f612f 1-39
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_027632333b03e4 13,48-49,419,757
+packages/coding.sh/src/mcp/data.ts
+  s_8e040dbdf13565::t_69f03864252259 7-8,617-620,622,646-647,673,686,688-689,709-713
+packages/coding.sh/src/query/where.ts
+  s_8e040dbdf13565::t_c838410a6ec18e 207-209
+packages/coding.sh/src/refine/taxonomy.ts
+  s_8e040dbdf13565::t_dc1925b56835ef 204-205
+packages/coding.sh/test/cli/harness-audit-cache.test.ts
+  s_8e040dbdf13565::t_1ae980669025f5 1-29
+packages/coding.sh/test/cli/usage-cache.test.ts
+  s_8e040dbdf13565::t_6c1001f37e4ae9 1-83
+packages/coding.sh/test/core/cache-breaks.test.ts
+  s_8e040dbdf13565::t_1b971f466c279c 3,116-152
+packages/coding.sh/test/core/cache-setup.test.ts
+  s_8e040dbdf13565::t_2af1468342f4a0 1-36
+packages/coding.sh/test/query/_where-fixture.ts
+  s_8e040dbdf13565::t_8a6f22e6be537d 11,14,92-97
+packages/coding.sh/test/query/where.test.ts
+  s_8e040dbdf13565::t_841f85292a121c 188-190
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "833715c0969a721b75a0c0f66760c5344f78413c",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <jack@coding.sh>"
+    }
+  }
+}
