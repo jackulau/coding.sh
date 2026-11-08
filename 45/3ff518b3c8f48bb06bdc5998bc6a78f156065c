@@ -1,0 +1,20 @@
+scripts/dogfood/bench.mjs
+  s_8e040dbdf13565::t_5788d0bc815690 193-194,199,201,213,219-259
+  s_8e040dbdf13565::t_fcbd7954a6836d 260-261
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "453ff518b3c8f48bb06bdc5998bc6a78f156065c",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jack <jack@coding.sh>"
+    }
+  }
+}
