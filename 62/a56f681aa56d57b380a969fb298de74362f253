@@ -1,0 +1,37 @@
+docs/how-to/status-line.md
+  s_8e040dbdf13565::t_db6b8e29fe25c5 1-64
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_400049d32213b1 217
+docs/README.md
+  s_8e040dbdf13565::t_6d4497bebf27df 36
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_688b6d4e83eede 225-252
+  s_8e040dbdf13565::t_ae50ecc3535ca6 224
+packages/coding.sh/src/cli/statusline.ts
+  s_8e040dbdf13565::t_0a31242aad0db7 1-46
+packages/coding.sh/test/cli/statusline.test.ts
+  s_8e040dbdf13565::t_92da7d1b8240eb 56
+  s_8e040dbdf13565::t_196887b468cedf 1-11,13-55,57-101
+  s_8e040dbdf13565::t_e152cdbbd8170b 12
+docs/reference/cli.md
+  s_8e040dbdf13565::t_4141ee95d364c5 38,144-197
+  s_8e040dbdf13565::t_f3c90c6e8e879c 198
+packages/coding.sh/src/cli/commands/statusline.ts
+  s_8e040dbdf13565::t_9cbba06be6271d 1-195
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "62a56f681aa56d57b380a969fb298de74362f253",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "unknown"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
