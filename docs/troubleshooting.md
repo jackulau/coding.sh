@@ -214,6 +214,7 @@ The command ran and something failed.
 | `conflict` | `Can't export to …: the directory is not empty` | Pick an empty directory, or add `--force`. |
 | `no_agents` | `No supported agents found on this machine` | Install a supported agent, or use `coding.sh run -- <cmd>`. |
 | `hook_missing` | `Can't find hook.mjs to install` | From a source checkout, run `npm run build` first. |
+| `statusline_exists` | `Claude Code already has a status line: ccusage statusline` (statusline install) | Keep it, or replace it with `coding.sh statusline install --force` (uninstall restores the old one). |
 | `draft_failed` | `Couldn't draft a task from …: session … has no repo state; cannot build a task` | Record the session inside a git repository, ideally with `coding.sh run --`. |
 | `no_tasks` | `No validated tasks to run` | `coding.sh eval new` then `eval validate`, or add tool-eval tasks. |
 | `unsupported_agent` | `Agent aider has no headless driver, so bundle … can't be run`, `--run forks Claude Code sessions; this one is codex` | Use an agent that can run headless. For `replay --fork`, leave out `--run`: it sends the one call again for any proxied agent. |

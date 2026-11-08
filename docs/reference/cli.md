@@ -35,6 +35,7 @@ Every command accepts these.
 | [`init`](#codingsh-init) | Capture | Set up capture hooks and the MCP server for every detected agent |
 | [`doctor`](#codingsh-doctor) | Capture | Check agents, hooks, spool, store and the OTLP port |
 | [`status`](#codingsh-status) | Capture | Show capture totals and the latest session |
+| [`statusline`](#codingsh-statusline) | Capture | Print a Claude Code status line (model, cost, worst flag), or install it |
 | [`ingest`](#codingsh-ingest) | Capture | Move captured hook events from the spool into the index |
 | [`run`](#codingsh-run) | Capture | Run any agent command and capture the session |
 | [`collector`](#codingsh-collector) | Capture | Start a local OTLP/HTTP receiver for agents that export traces |
@@ -139,6 +140,61 @@ coding.sh status [options]
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
+
+## `coding.sh statusline`
+
+Print a Claude Code status line (model, cost, worst flag), or install it.
+
+```text
+coding.sh statusline [action]
+```
+
+| Action | What it does |
+|---|---|
+| [`install`](#codingsh-statusline-install) | Set coding.sh as Claude Code's status line in the user settings.json |
+| [`uninstall`](#codingsh-statusline-uninstall) | Remove the coding.sh status line, restoring the previous one |
+
+```sh
+coding.sh statusline install
+coding.sh statusline uninstall
+```
+
+- With no subcommand it reads the status-line JSON Claude Code sends on stdin and prints one line: model, this session's cost, today's cost, and the single worst flag. It exits 0 even on error, so it never disrupts the agent.
+- install writes settings.statusLine and backs the file up; uninstall restores it byte-for-byte (the previous status line, if any, comes back).
+
+### `coding.sh statusline install`
+
+Set coding.sh as Claude Code's status line in the user settings.json.
+
+```text
+coding.sh statusline install [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--force` |  | Replace an existing status line (restored on uninstall) |
+| `--dry-run` |  | Show what would change, write nothing. |
+
+```sh
+coding.sh statusline install
+coding.sh statusline install --force
+```
+
+### `coding.sh statusline uninstall`
+
+Remove the coding.sh status line, restoring the previous one.
+
+```text
+coding.sh statusline uninstall [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--dry-run` |  | Show what would change, write nothing. |
+
+```sh
+coding.sh statusline uninstall
+```
 
 ## `coding.sh ingest`
 

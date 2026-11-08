@@ -33,6 +33,7 @@ Short recipes you can run as written.
 | [how-to/compare-agents.md](how-to/compare-agents.md) | compare two coding agents on your repo |
 | [how-to/ci-regressions.md](how-to/ci-regressions.md) | catch a regression in CI |
 | [how-to/expensive-sessions.md](how-to/expensive-sessions.md) | find your most expensive sessions |
+| [how-to/status-line.md](how-to/status-line.md) | put your session cost, today's cost and the worst flag in the Claude Code status line |
 | [how-to/session-to-eval.md](how-to/session-to-eval.md) | turn a real session into an eval task or dataset case |
 | [how-to/evaluate-a-skill.md](how-to/evaluate-a-skill.md) | test whether an Agent Skill changes what the agent does |
 | [how-to/does-this-plugin-help.md](how-to/does-this-plugin-help.md) | see what a Claude Code plugin adds to your sessions, then A/B it on your own tasks |

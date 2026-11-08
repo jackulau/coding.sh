@@ -222,6 +222,35 @@ export const COMMANDS: CommandSpec[] = [
     load: () => import("./commands/status.ts"),
   },
   {
+    name: "statusline",
+    group: "Capture",
+    summary: "Print a Claude Code status line (model, cost, worst flag), or install it",
+    actionOptional: true,
+    actions: [
+      {
+        name: "install",
+        summary: "Set coding.sh as Claude Code's status line in the user settings.json",
+        flags: [
+          { name: "force", type: "boolean", desc: "Replace an existing status line (restored on uninstall)" },
+          { name: "dry-run", type: "boolean", desc: "Show what would change, write nothing" },
+        ],
+        examples: ["coding.sh statusline install", "coding.sh statusline install --force"],
+      },
+      {
+        name: "uninstall",
+        summary: "Remove the coding.sh status line, restoring the previous one",
+        flags: [{ name: "dry-run", type: "boolean", desc: "Show what would change, write nothing" }],
+        examples: ["coding.sh statusline uninstall"],
+      },
+    ],
+    notes: [
+      "With no subcommand it reads the status-line JSON Claude Code sends on stdin and prints one line: model, this session's cost, today's cost, and the single worst flag. It exits 0 even on error, so it never disrupts the agent.",
+      "install writes settings.statusLine and backs the file up; uninstall restores it byte-for-byte (the previous status line, if any, comes back).",
+    ],
+    examples: ["coding.sh statusline install", "coding.sh statusline uninstall"],
+    load: () => import("./commands/statusline.ts"),
+  },
+  {
     name: "ingest",
     group: "Capture",
     summary: "Move captured hook events from the spool into the index",
