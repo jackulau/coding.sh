@@ -306,6 +306,13 @@ jobs:
         if: runner.os == 'Linux'
         run: node scripts/e2e/trigger-capture.mjs
 
+      # eval init then eval run with real Claude Code, one suite per source: a repo task from a
+      # failed session (pass@2 100%, pass^2 0%, flaky, the failed trial's session), drafted cases
+      # graded exactly (a regression suite that exits 1), and drafted skill trigger prompts.
+      - name: eval init and eval run with real Claude Code
+        if: runner.os == 'Linux'
+        run: node scripts/e2e/eval-init-capture.mjs
+
       # exp ab on real Claude Code sessions that claim done without testing: mines the decision
       # points, replays the next turn with the committed and the edited CLAUDE.md, and checks the
       # verdict, the noise floor, the cost cap, the cache and --watch.
