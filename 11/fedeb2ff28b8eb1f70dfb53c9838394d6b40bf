@@ -1,0 +1,33 @@
+packages/coding.sh/src/viewer/server.ts
+  s_8e040dbdf13565::t_bcf436d54fe8c1 24
+  s_8e040dbdf13565::t_c466b979bf5c0c 562-583
+  s_8e040dbdf13565::t_58744166262486 663-684
+  s_8e040dbdf13565::t_455a0638a4ebb9 685
+packages/coding.sh/test/viewer/ui-browser.test.ts
+  s_8e040dbdf13565::t_24fae6f361b20a 147-157
+docs/reference/api.md
+  s_8e040dbdf13565::t_958907f397be03 639-667,669
+  s_8e040dbdf13565::t_c8bbd20864d706 94
+  s_8e040dbdf13565::t_679b1a495687de 668
+  s_8e040dbdf13565::t_24bed8910632cc 670
+packages/coding.sh/src/viewer/ui/index.html
+  s_8e040dbdf13565::t_beb235f91144ab 523-540
+  s_8e040dbdf13565::t_40a5499a5bed54 4592-4655
+  s_8e040dbdf13565::t_05d8f32f3a74da 1285
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "11fedeb2ff28b8eb1f70dfb53c9838394d6b40bf",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jack <jack@coding.sh>"
+    }
+  }
+}
