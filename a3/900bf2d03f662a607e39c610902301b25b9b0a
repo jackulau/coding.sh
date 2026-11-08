@@ -2,11 +2,13 @@ docs/guides/evals.md
   s_8e040dbdf13565::t_040ac97468adc5 303-319,321-344
   s_8e040dbdf13565::t_8cf156db55c1de 226-227
   s_8e040dbdf13565::t_bedc4d9b5762b9 345
+  s_8e040dbdf13565::t_e0bd61b1d99f44 320
 CHANGELOG.md
   s_8e040dbdf13565::t_af47b97fe035e5 91
 packages/coding.sh/test/docs/reference-drift.test.ts
   s_8e040dbdf13565::t_672e9b9a052376 35-43,46,55,57-58
   s_8e040dbdf13565::t_e1699400206419 48,50
+  s_8e040dbdf13565::t_e0bd61b1d99f44 44-45,47,49,51-54,56
 packages/coding.sh/src/eval/init.ts
   s_8e040dbdf13565::t_3f32ad64075c2c 153-156,158,206
 packages/coding.sh/test/eval/init.test.ts
