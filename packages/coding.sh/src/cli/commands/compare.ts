@@ -1,6 +1,7 @@
 // coding.sh compare <a> <b>: A/B two harness bundles on eval tasks
 // (src/runner/experiment.ts), or re-analyse the stored runs of an experiment.
-// `compare <a> --without <path>` derives B as A minus a skill, AGENTS.md or MCP config.
+// `compare <a> --without <path>` derives B as A minus a skill, AGENTS.md or MCP config
+// (or a plugin, `plugin:<name>`); `compare <a> --with plugin:<name|path>` derives B as A plus a Claude Code plugin.
 // `--gate` adds a ship-or-hold decision and exits 1 unless it accepts; `--by
 // <tag-prefix>` also gates each task group, and any group's "don't ship" blocks.
 // `--promote` adds the Pareto promotion gate (quality or cost) and exits 1 unless it promotes.
@@ -12,7 +13,8 @@ import { getAdapter } from "../../adapters/index.ts";
 import { defaultGateway, gatewayConfig, gatewaySettings, type GatewayConfig } from "../../integrations/gateway/config.ts";
 import { GATEWAYS, resolveGatewayName, type GatewayId } from "../../integrations/gateway/providers.ts";
 import { gatewayRoute, routableAgents, routeVia, ROUTABLE_AGENTS, ROUTABLE_GATEWAYS } from "../../integrations/gateway/route.ts";
-import { ablateBundle, type Ablation } from "../../runner/bundle.ts";
+import { ablateBundle, addPlugins, pluginRef, type Ablation } from "../../runner/bundle.ts";
+import { claudeDirOf, resolvePlugin, storePlugin } from "../../runner/plugins.ts";
 import { harnessItem } from "../../core/exposure.ts";
 import { singleItemChange } from "../../runner/gate-item.ts";
 import { bundleItemChange, harnessReport, tagPrefixProblem } from "../../runner/harness-report.ts";
@@ -63,8 +65,13 @@ export async function run(c: CommandContext): Promise<number> {
   if (c.flags.experiment !== undefined && (failingRef || sampleN !== undefined)) throw new UsageError("--failing and --sample pick tasks for new runs; --experiment re-analyses stored ones", { reason: "invalid_argument" });
   return withContext(c, async (ctx) => {
     const without = list(c.flags.without);
+    const withs = list(c.flags.with);
+    if (without.length && withs.length) throw new UsageError("Pass --with or --without, not both: each derives the second arm from the first", { reason: "invalid_argument" });
     if (without.length && c.positionals.length > 1) throw new UsageError("--without derives the second arm from the first; pass one bundle", { reason: "invalid_argument" });
-    if (!without.length && c.positionals.length < 2) throw new UsageError("Missing argument <B>. Usage: coding.sh compare <A> <B> (or <A> --without <PATH>)", { reason: "missing_argument" });
+    if (withs.length && c.positionals.length > 1) throw new UsageError("--with derives the second arm from the first; pass one bundle", { reason: "invalid_argument" });
+    const bad = withs.find((w) => !pluginRef(w));
+    if (bad !== undefined) throw new UsageError(`--with takes a Claude Code plugin, plugin:<name|name@marketplace|dir>; got ${JSON.stringify(bad)}`, { reason: "invalid_argument" });
+    if (!without.length && !withs.length && c.positionals.length < 2) throw new UsageError("Missing argument <B>. Usage: coding.sh compare <A> <B> (or <A> --without <PATH>, or <A> --with plugin:<NAME>)", { reason: "missing_argument" });
     const bundles: HarnessBundle[] = [];
     for (const ref of c.positionals.slice(0, 2)) {
       const b = await ctx.index.getBundle(ref);
@@ -72,10 +79,36 @@ export async function run(c: CommandContext): Promise<number> {
       bundles.push(b);
     }
     let ablation: Ablation | undefined;
+    /** B derived from A (--without or --with), stored once it is about to run. */
+    let derived: HarnessBundle | undefined;
     if (without.length) {
-      ablation = ablateBundle(bundles[0] as HarnessBundle, without);
+      try {
+        ablation = ablateBundle(bundles[0] as HarnessBundle, without);
+      } catch (e) {
+        throw new UsageError(`--without: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_argument" });
+      }
       if (!ablation.paths.length) throw new UsageError("--without needs a path", { reason: "invalid_argument" });
+      derived = ablation.bundle;
       bundles.push(ablation.bundle);
+    }
+    if (withs.length) {
+      // Each plugin is resolved read-only (installed in the Claude config dir, or a dir) and stored whole.
+      const A0 = bundles[0] as HarnessBundle;
+      if (A0.agent !== "claude-code") throw new UsageError(`--with plugin: loads Claude Code plugins; bundle ${A0.name} runs ${A0.agent}`, { reason: "invalid_argument" });
+      const added = [];
+      for (const w of withs) {
+        try {
+          added.push(await storePlugin(await resolvePlugin(pluginRef(w) as string, { cwd: c.cwd, claudeDir: claudeDirOf(c.env), home: c.env.HOME || undefined }), ctx.blobs));
+        } catch (e) {
+          throw new CliError(`--with ${w}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_argument" });
+        }
+      }
+      try {
+        derived = addPlugins(A0, added);
+      } catch (e) {
+        throw new UsageError(`--with: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_argument" });
+      }
+      bundles.push(derived);
     }
     const [A, B] = bundles as [HarnessBundle, HarnessBundle];
     if (A.id === B.id) throw new UsageError("Both arms are the same bundle; compare two different harnesses");
@@ -86,12 +119,12 @@ export async function run(c: CommandContext): Promise<number> {
       throw new UsageError("--item-gate needs B to add or remove exactly one rule, skill or context file and change nothing else", { reason: "invalid_argument" });
     }
     // How to name this comparison again (consent prompt, cancel hint).
-    const arms = [...c.positionals.slice(0, 2), ...without.flatMap((p) => ["--without", p])].join(" ");
+    const arms = [...c.positionals.slice(0, 2), ...without.flatMap((p) => ["--without", p]), ...withs.flatMap((p) => ["--with", p])].join(" ");
     /** Store the derived arm once; a rerun finds it by its content id. */
     const storeAblation = async () => {
-      if (!ablation) return;
-      for (const p of ablation.unmatched) out.warn(`--without ${p}: not in bundle ${A.name}; it is only removed from each task's repo`);
-      if (!(await ctx.index.getBundle(ablation.bundle.id))) await ctx.index.putBundle(ablation.bundle);
+      if (!derived) return;
+      for (const p of ablation?.unmatched ?? []) out.warn(`--without ${p}: not in bundle ${A.name}; it is only removed from each task's repo`);
+      if (!(await ctx.index.getBundle(derived.id))) await ctx.index.putBundle(derived);
     };
 
     let experimentId = str(c.flags.experiment);
@@ -378,6 +411,8 @@ function byTagPrefix(tasks: readonly EvalTask[], prefix: string): Map<string, st
 
 /** The one item `--without` drops: one rule or skill from the bundle, or one context file only in the task repos. */
 function withoutItem(ab: Ablation): { mode: "remove"; path: string } | undefined {
+  // A plugin is many items (skills, hooks, agents); the one-item gate doesn't read it.
+  if (ab.plugins.length) return undefined;
   if (ab.dropped.length) {
     if (ab.unmatched.length) return undefined;
     const c = singleItemChange({ added: [], removed: ab.dropped }, false);

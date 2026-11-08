@@ -140,7 +140,8 @@ pass^k the chance that all k pass. Both are estimated from n trials as C(n−c, 
 C(n, k), with c passes. A task that passes some trials and fails others is **flaky**: it counts for
 pass@k and against pass^k.
 
-**Harness bundle.** A snapshot of an agent's setup: its config files, instructions and model.
+**Harness bundle.** A snapshot of an agent's setup: its config files, instructions and model, and
+for Claude Code any plugins named with `--plugin`.
 `coding.sh harness snapshot` makes one; `coding.sh compare <a> <b>` runs two on the same eval tasks.
 See [Compare two agents](how-to/compare-agents.md).
 

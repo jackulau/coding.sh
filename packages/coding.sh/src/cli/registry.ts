@@ -1182,6 +1182,18 @@ export const COMMANDS: CommandSpec[] = [
           { name: "dir", type: "string", value: "<DIR>", desc: "Project directory (default: current directory)" },
           { name: "file", type: "string", value: "<TOML>", desc: "Build the bundle from a harness TOML instead" },
           { name: "model", type: "string", value: "<MODEL>", desc: "Model to record" },
+          {
+            name: "plugin",
+            type: "list",
+            value: "<PLUGIN>",
+            desc: "claude-code: carry this Claude Code plugin, an installed one (name or name@marketplace) or a plugin directory (repeatable). Only the plugins named here are carried",
+          },
+        ],
+        examples: [
+          "coding.sh harness snapshot --agent claude-code --name base",
+          "coding.sh harness snapshot --agent claude-code --name with-caveman --plugin caveman",
+          "coding.sh harness snapshot --agent claude-code --plugin ./my-plugin",
+          "coding.sh harness snapshot --file harness.toml",
         ],
       },
       { name: "list", summary: "List harness bundles" },
@@ -1196,6 +1208,10 @@ export const COMMANDS: CommandSpec[] = [
         examples: ["coding.sh harness audit", "coding.sh harness audit --agent claude-code --since 90d", "coding.sh harness audit --json"],
       },
     ],
+    notes: [
+      "A harness TOML can carry Claude Code plugins too: plugins = [\"caveman\", \"./plugins/mine\"], with a directory relative to the TOML file.",
+      "A plugin is looked up read-only in plugins/installed_plugins.json under $CLAUDE_CONFIG_DIR (default ~/.claude), or read from a directory with .claude-plugin/plugin.json. Its whole directory is stored in the bundle. A run writes it under the run's own home and starts Claude Code with --plugin-dir; your Claude config is not touched.",
+    ],
     load: () => import("./commands/harness.ts"),
   },
   {
@@ -1204,7 +1220,7 @@ export const COMMANDS: CommandSpec[] = [
     summary: "A/B two harness bundles on eval tasks",
     args: [
       { name: "a", desc: "Baseline bundle id or name", required: true },
-      { name: "b", desc: "Candidate bundle id or name (omit with --without)" },
+      { name: "b", desc: "Candidate bundle id or name (omit with --without or --with)" },
     ],
     flags: [
       { name: "task", short: "t", type: "list", value: "<ID>", desc: "Task id (repeatable; default: all validated tasks)" },
@@ -1232,7 +1248,8 @@ export const COMMANDS: CommandSpec[] = [
       },
       { name: "reuse-max-age", type: "string", value: "<AGE>", default: "7d", desc: "With --reuse: only runs that finished this recently (30m, 12h, 7d, 2w)" },
       { name: "dry-run", type: "boolean", desc: "Print how many runs each arm would reuse and run, and run nothing" },
-      { name: "without", type: "list", value: "<PATH>", desc: "Ablation: B is A without this file, dir or glob (repeatable)" },
+      { name: "without", type: "list", value: "<PATH>", desc: "Ablation: B is A without this file, dir or glob, or without plugin:<NAME> (repeatable)" },
+      { name: "with", type: "list", value: "plugin:<PLUGIN>", desc: "B is A plus this Claude Code plugin, an installed one (name or name@marketplace) or a plugin directory (repeatable; claude-code bundles)" },
       {
         name: "gateway",
         type: "string",
@@ -1273,6 +1290,8 @@ export const COMMANDS: CommandSpec[] = [
       "coding.sh compare no-skill with-skill --tag skill-eval --gate --by suite: --max-cost 15",
       "coding.sh compare base candidate --k 3 --promote",
       "coding.sh compare base --without .claude/rules/clock.md --k 3 --item-gate",
+      "coding.sh compare base --with plugin:caveman --k 3 --gate",
+      "coding.sh compare with-caveman --without plugin:caveman --k 3",
       "coding.sh compare sonnet gpt5 --gateway",
       "coding.sh compare sonnet gpt5 --gateway openrouter",
     ],

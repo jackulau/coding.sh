@@ -51,6 +51,7 @@ import {
   mcpInstaller,
 } from "./_shared/index.ts";
 import { isWrapperLine, normalizeWrapperLine } from "./more/wrapper.ts";
+import { pluginDirIn } from "../runner/plugins.ts";
 
 export const CLAUDE_AGENT = "claude-code";
 
@@ -530,16 +531,20 @@ export async function runClaude(spec: RunSpec): Promise<AgentRunOutput> {
  * captured without reading or touching the user's ~/.claude. Credentials:
  * Linux/Windows keep them in .credentials.json (copied in); macOS keeps them
  * in the keychain, so isolated runs there need ANTHROPIC_API_KEY or
- * CLAUDE_CODE_OAUTH_TOKEN in the bundle/run env.
+ * CLAUDE_CODE_OAUTH_TOKEN in the bundle/run env. The bundle's plugins were
+ * written by the runner under the same isolated home; each is loaded for this
+ * run only with `--plugin-dir`.
  */
-export async function overlayClaude(_bundle: HarnessBundle, runDir: string): Promise<{ env: Record<string, string>; flags: string[] }> {
-  const configDir = join(isolatedHome(runDir), ".claude");
+export async function overlayClaude(bundle: HarnessBundle, runDir: string): Promise<{ env: Record<string, string>; flags: string[] }> {
+  const home = isolatedHome(runDir);
+  const configDir = join(home, ".claude");
   await applyChanges(
     [planNestedInstall({ agent: CLAUDE_AGENT, file: join(configDir, "settings.json"), hookCommand: paths().hook, events: CLAUDE_HOOK_EVENTS, marker: true })],
     { agent: CLAUDE_AGENT, dryRun: false, noBackup: true },
   );
   await copyIfExists(join(claudeConfigDir(), ".credentials.json"), join(configDir, ".credentials.json"));
-  return { env: { CLAUDE_CONFIG_DIR: configDir, DISABLE_AUTOUPDATER: "1" }, flags: [] };
+  const flags = (bundle.plugins ?? []).flatMap((p) => ["--plugin-dir", pluginDirIn(home, p.name)]);
+  return { env: { CLAUDE_CONFIG_DIR: configDir, DISABLE_AUTOUPDATER: "1" }, flags };
 }
 
 // ---------------------------------------------------------------- adapter

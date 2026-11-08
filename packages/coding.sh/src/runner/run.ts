@@ -12,6 +12,7 @@ import { sortableId } from "../core/ids.ts";
 import { paths } from "../core/paths.ts";
 import type { Adapter, AgentRunOutput, BlobStore, EvalTask, HarnessBundle, IndexStore, RepairReport, RepairRound, RunResult, TamperReport } from "../core/types.ts";
 import { applyBundle } from "./bundle.ts";
+import { pluginProblem } from "./plugins.ts";
 import { commandEnv, sh, type ExecResult } from "./exec.ts";
 import { safeJoin, writeHiddenFiles } from "./fsutil.ts";
 import { rebaseStart, rmrf, snapshotOps, type SnapshotOps, type WorkdirDiff } from "./git.ts";
@@ -175,6 +176,12 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
   const forgetDir = opts.keep ? () => {} : removeOnExit(layout.root);
   try {
     checkpoint();
+    // Plugins only claude-code loads: fail the run rather than silently drop them.
+    const pluginErr = pluginProblem({ agent: adapter.id, plugins: bundle.plugins });
+    if (pluginErr) {
+      result.error = pluginErr;
+      return result;
+    }
     await mkdir(layout.root, { recursive: true });
     const ops = await snapshotOps(opts.git);
     await ops.materialize({ root: task.start.repoRoot, head: task.start.head, snapshot: task.start.snapshot }, layout.work);

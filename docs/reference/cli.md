@@ -2160,6 +2160,9 @@ coding.sh harness <action>
 | [`list`](#codingsh-harness-list) | List harness bundles |
 | [`audit`](#codingsh-harness-audit) | Count the sessions that loaded, read and wrote each memory, CLAUDE.md, AGENTS.md, rule and skill file |
 
+- A harness TOML can carry Claude Code plugins too: plugins = ["caveman", "./plugins/mine"], with a directory relative to the TOML file.
+- A plugin is looked up read-only in plugins/installed_plugins.json under $CLAUDE_CONFIG_DIR (default ~/.claude), or read from a directory with .claude-plugin/plugin.json. Its whole directory is stored in the bundle. A run writes it under the run's own home and starts Claude Code with --plugin-dir; your Claude config is not touched.
+
 ### `coding.sh harness snapshot`
 
 Snapshot an agent's harness files into a bundle.
@@ -2175,6 +2178,14 @@ coding.sh harness snapshot [options]
 | `--dir <DIR>` |  | Project directory (default: current directory) |
 | `--file <TOML>` |  | Build the bundle from a harness TOML instead. |
 | `--model <MODEL>` |  | Model to record. |
+| `--plugin <PLUGIN>` |  | claude-code: carry this Claude Code plugin, an installed one (name or name@marketplace) or a plugin directory (repeatable). Only the plugins named here are carried. |
+
+```sh
+coding.sh harness snapshot --agent claude-code --name base
+coding.sh harness snapshot --agent claude-code --name with-caveman --plugin caveman
+coding.sh harness snapshot --agent claude-code --plugin ./my-plugin
+coding.sh harness snapshot --file harness.toml
+```
 
 ### `coding.sh harness list`
 
@@ -2215,7 +2226,7 @@ coding.sh compare <A> [b] [options]
 | Argument | Required | Description |
 |---|---|---|
 | `a` | yes | Baseline bundle id or name. |
-| `b` | no | Candidate bundle id or name (omit with --without) |
+| `b` | no | Candidate bundle id or name (omit with --without or --with) |
 
 | Option | Default | Description |
 |---|---|---|
@@ -2237,7 +2248,8 @@ coding.sh compare <A> [b] [options]
 | `--reuse <ARMS>` | `none` | Copy finished runs of the same task, bundle, agent version, attempt and timeout from earlier comparisons instead of running them again. One of: `baseline`, `both`, `none`. |
 | `--reuse-max-age <AGE>` | `7d` | With --reuse: only runs that finished this recently (30m, 12h, 7d, 2w) |
 | `--dry-run` |  | Print how many runs each arm would reuse and run, and run nothing. |
-| `--without <PATH>` |  | Ablation: B is A without this file, dir or glob (repeatable) |
+| `--without <PATH>` |  | Ablation: B is A without this file, dir or glob, or without plugin:&lt;NAME&gt; (repeatable) |
+| `--with plugin:<PLUGIN>` |  | B is A plus this Claude Code plugin, an installed one (name or name@marketplace) or a plugin directory (repeatable; claude-code bundles) |
 | `--gateway [<NAME>]` |  | Route both arms through a gateway. Without a name: [gateway] default, else the one with a key, else vercel. One of: `vercel`, `openrouter`, `litellm`, `ramp`. |
 | `--gate` |  | Ship-or-hold decision: exit 0 when B wins enough without breaking what A solved, 1 otherwise. |
 | `--lambda <N>` | `2` | With --gate: what breaking one solved item costs, in fixed items. |
@@ -2271,6 +2283,8 @@ coding.sh compare base candidate --k 3 --gate --by suite:
 coding.sh compare no-skill with-skill --tag skill-eval --gate --by suite: --max-cost 15
 coding.sh compare base candidate --k 3 --promote
 coding.sh compare base --without .claude/rules/clock.md --k 3 --item-gate
+coding.sh compare base --with plugin:caveman --k 3 --gate
+coding.sh compare with-caveman --without plugin:caveman --k 3
 coding.sh compare sonnet gpt5 --gateway
 coding.sh compare sonnet gpt5 --gateway openrouter
 ```

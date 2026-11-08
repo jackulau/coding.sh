@@ -152,6 +152,17 @@ be repeated. The report adds a line like `effect of .claude/skills/pdf = A − B
 The derived bundle is stored, so `--experiment` finds it again. With `--gate` the line reads
 `drop-it gate: Keep it: ...` or `drop-it gate: Drop it: ...`, and only "Drop it" exits 0.
 
+A Claude Code plugin works the same way the other way round:
+
+```sh
+coding.sh compare claude --with plugin:caveman --k 3
+```
+
+B is `claude` plus the installed plugin `caveman` (or a plugin directory, `plugin:./my-plugin`),
+stored as `claude-with-plugin-caveman`. Each B run loads the plugin with `--plugin-dir` from the
+run's own home; your Claude config is not touched. `--without plugin:<name>` drops a plugin a
+bundle carries. See [Claude Code plugins](../guides/evals.md#claude-code-plugins).
+
 For one rule, skill or context file, the report also prints an item gate, which counts only the tasks
 where the item reached the agent's context:
 

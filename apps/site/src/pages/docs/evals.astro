@@ -659,6 +659,12 @@ const TRIGGER = [
     the pass rate without it is under 80%, so keep it), UNCOVERED (neither arm solves the tasks: repair the item or check the tasks) or RERUN. <code>--item-gate</code> makes it set the exit code. Method:
     Cortex (<a href="https://arxiv.org/abs/2610.14216">arXiv 2610.14216</a>).
   </p>
+  <p id="plugins">
+    A claude-code bundle can carry Claude Code plugins, the whole plugin directory: <code>harness snapshot --agent claude-code --plugin caveman</code>
+    (an installed name, <code>name@marketplace</code> or a plugin directory; repeatable), or <code>plugins = [...]</code> in a harness TOML.
+    <code>compare A --with plugin:caveman</code> runs A against A plus the plugin in one command, and <code>--without plugin:&lt;name&gt;</code>
+    drops one. Each run loads the plugin with <code>--plugin-dir</code> from its own home; your Claude config is never changed.
+  </p>
   <p id="hand-written">
     A task can also be written by hand: a directory with <code>task.json</code>, <code>instruction.md</code>, an optional <code>repo/</code>
     start tree and <code>tests/</code> for hidden files. <code>eval import tasks/*/</code> loads them as drafts, and

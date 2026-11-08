@@ -242,8 +242,9 @@ to a semconv version.
 ## Runner and harness lab
 
 - **Harness bundle:** `harness.toml` + overlay files (CLAUDE.md, AGENTS.md, skills, hooks, MCP config,
-  CLI flags, model, env). Its content hash is its identity. `coding.sh harness snapshot` captures
-  the current setup.
+  CLI flags, model, env), plus Claude Code plugins for claude-code (stored whole, loaded with
+  `--plugin-dir` from the run's home). Its content hash is its identity. `coding.sh harness snapshot`
+  captures the current setup.
 - **Run:**
   1. Create a git worktree from the task snapshot in `~/.coding.sh/runs/<id>`.
   2. Apply the bundle overlay. Where the agent supports it, use an isolated config dir, never the

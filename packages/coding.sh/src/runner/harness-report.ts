@@ -15,7 +15,7 @@ export type ItemChange = { mode: "add" | "remove"; path: string };
 export function bundleItemChange(A: HarnessBundle, B: HarnessBundle): ItemChange | undefined {
   const d = diffBundles(A, B);
   const other =
-    !!d.agent || !!d.model || !!d.flags || d.files.changed.length > 0 || d.env.added.length + d.env.removed.length + d.env.changed.length > 0 || d.remove.added.length + d.remove.removed.length > 0;
+    !!d.agent || !!d.model || !!d.flags || !!d.plugins || d.files.changed.length > 0 || d.env.added.length + d.env.removed.length + d.env.changed.length > 0 || d.remove.added.length + d.remove.removed.length > 0;
   return singleItemChange(d.files, other);
 }
 

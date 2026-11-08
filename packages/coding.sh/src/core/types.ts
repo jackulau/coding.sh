@@ -693,8 +693,24 @@ export interface HarnessBundle {
   files: Record<string, BlobRef>;
   /** Paths the overlay removes (e.g. to test "no CLAUDE.md"). */
   remove: string[];
+  /**
+   * Claude Code plugins the run loads (claude-code only). Each plugin's files are
+   * the `files` keys under "~/.coding.sh-plugins/<name>/"; absent when there are none.
+   */
+  plugins?: HarnessPlugin[];
   createdAt: number;
   note?: string;
+}
+
+/** A Claude Code plugin carried by a harness bundle (runner/plugins.ts). */
+export interface HarnessPlugin {
+  /** From .claude-plugin/plugin.json, else the installed key's name. */
+  name: string;
+  /** The marketplace it was installed from, when it was resolved by name. */
+  marketplace?: string;
+  version?: string;
+  /** Files (relative to the plugin dir) that were executable, e.g. hook scripts. */
+  exec?: string[];
 }
 
 /**

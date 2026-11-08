@@ -1116,6 +1116,31 @@ finished runs reach the cap (agent plus grader cost), no new run starts. Runs al
 so the total can pass the cap by what the runs in flight cost. The compare then covers the runs that
 finished. Runs that report no cost count as $0 and are listed as such. `--json` carries `budget`.
 
+### Claude Code plugins
+
+A claude-code bundle can carry Claude Code plugins: their hooks, skills, agents, commands and MCP
+servers, the whole plugin directory. `harness snapshot --agent claude-code --plugin <name>` takes an
+installed plugin by name (or `name@marketplace`) or a plugin directory, and can be repeated. In a
+harness TOML, write `plugins = ["caveman", "./plugins/mine"]`; a directory there is relative to the
+TOML file. A name is looked up read-only in `plugins/installed_plugins.json` under
+`$CLAUDE_CONFIG_DIR` (default `~/.claude`). A directory must hold `.claude-plugin/plugin.json`, and
+the plugin's name comes from it. An unknown or ambiguous name is an error that lists the installed
+plugins. A snapshot carries only the plugins you name: the ones enabled in your settings are not
+picked up.
+
+The plugin's files are stored as blobs (`.git` is skipped, executable bits are kept), so the bundle
+id changes when the plugin's content does. A bundle without plugins keeps the id it had. A run
+writes each plugin under the run's own home, at `<run>/home/.coding.sh-plugins/<name>`, outside the
+work dir the agent edits, and starts Claude Code with `--plugin-dir` for it. Your Claude config is
+never changed, and the run loads no plugin the bundle does not carry. A bundle with plugins for
+any other agent is refused at snapshot time, and a run of one fails with an error instead of
+dropping them.
+
+`coding.sh compare A --with plugin:<name|dir>` runs "with the plugin vs without" in one command: B
+is A plus the plugin, stored as `<A>-with-plugin-<name>`. `--without plugin:<name>` drops a plugin
+that A carries. `--with` and `--without` don't combine. The report's bundle diff reads
+`+ plugin <name>`. A plugin holds many items, so the one-item gate does not apply to it.
+
 ### Reuse finished runs
 
 Comparing three candidates against one baseline runs the baseline three times. `--reuse baseline`
