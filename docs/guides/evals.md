@@ -23,7 +23,10 @@ repo as it was before the session, the session's first prompt as the instruction
 verifier. Each task's row names the session it came from. `--session <id>` (or `latest`, or an id
 prefix) picks sessions yourself; `--since` and `--limit` change the window. The suite is called
 `failures` unless you name it (`coding.sh eval init mine --session latest`), and a name that
-exists needs `--force`, which replaces the whole suite.
+exists needs `--force` to replace it. `--force` stops when the suite holds a file `eval init` did
+not write or that you changed since (a `reference.patch` you added, a prompt you fixed) and lists
+them; `--force-all` deletes those too. `evals/<name>/.eval-init.json` records what `eval init`
+wrote.
 
 The session failed, so its diff is not a correct answer. It is saved as a near miss
 (`near-misses/001.patch`) that the verifier must fail. Add a correct fix as `reference.patch` in

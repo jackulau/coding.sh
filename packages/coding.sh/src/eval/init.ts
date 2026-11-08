@@ -12,8 +12,9 @@
 // model (`--draft`); drafted content is marked draft. The suite is plain files
 // to read, edit and commit; `coding.sh eval run <name>` runs it.
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { sha256Hex } from "../core/ids.ts";
 import { failureFlags } from "../core/sessions.ts";
 import { stringifyToml } from "../core/toml.ts";
 import type { BlobStore, IndexStore, Session } from "../core/types.ts";
@@ -51,8 +52,10 @@ export interface InitOpts {
   source: InitSource;
   purpose?: SuitePurpose;
   trials?: number;
-  /** Replace an existing suite dir. */
+  /** Replace an existing suite dir, unless it holds files eval init did not write (or that changed since). */
   force?: boolean;
+  /** With force: delete those files too. */
+  forceAll?: boolean;
   /** Agent that runs the suite (tasks, triggers). */
   agent?: string;
   // sessions
@@ -134,10 +137,54 @@ export function suiteName(raw: string): string {
   return s;
 }
 
+/** In each suite dir: the sha256 of every file eval init wrote, so --force can tell them from yours. */
+export const INIT_MANIFEST = ".eval-init.json";
+
+/** Every file under `dir`, suite-relative with forward slashes, the manifest left out. */
+async function filesUnder(dir: string): Promise<string[]> {
+  const entries = await readdir(dir, { recursive: true, withFileTypes: true }).catch(() => []);
+  return entries
+    .filter((e) => e.isFile())
+    .map((e) => toPosix(relative(dir, join(e.parentPath, e.name))))
+    .filter((f) => f !== INIT_MANIFEST)
+    .sort();
+}
+
+/** Record what eval init wrote: `written` (suite-relative files) and everything under each `dirs` entry. */
+async function writeManifest(dir: string, written: readonly string[], dirs: readonly string[]): Promise<void> {
+  const all = [...written];
+  for (const d of dirs) all.push(...(await filesUnder(join(dir, d))).map((f) => `${d}/${f}`));
+  const files: Record<string, string> = {};
+  for (const f of all.sort()) files[f] = sha256Hex(await readFile(join(dir, f)));
+  await writeFile(join(dir, INIT_MANIFEST), `${JSON.stringify({ v: 1, files }, null, 2)}\n`);
+}
+
+/** Files in a suite dir that eval init did not write, or that changed since: everything when there is no manifest. */
+export async function userFiles(dir: string): Promise<string[]> {
+  let known: Record<string, string> = {};
+  try {
+    const m = JSON.parse(await readFile(join(dir, INIT_MANIFEST), "utf8")) as { files?: Record<string, string> };
+    if (m.files && typeof m.files === "object") known = m.files;
+  } catch {
+    // No manifest (or a broken one): every file is yours.
+  }
+  const out: string[] = [];
+  for (const f of await filesUnder(dir)) if (known[f] !== sha256Hex(await readFile(join(dir, f)))) out.push(f);
+  return out;
+}
+
 export async function initSuite(o: InitOpts, deps: InitDeps): Promise<InitResult> {
   const name = suiteName(o.name);
   const dir = join(o.root, SUITES_DIR, name);
-  if (existsSync(join(dir, SUITE_FILE)) && !o.force) throw new InitError(`${toPosix(relative(o.root, dir))} already exists; pass --force to replace it`);
+  const rel = toPosix(relative(o.root, dir));
+  if (existsSync(join(dir, SUITE_FILE)) && !o.force) throw new InitError(`${rel} already exists; pass --force to replace it`);
+  if (o.force && !o.forceAll && existsSync(dir)) {
+    const yours = await userFiles(dir);
+    if (yours.length) {
+      const shown = yours.slice(0, 8).join(", ") + (yours.length > 8 ? `, and ${yours.length - 8} more` : "");
+      throw new InitError(`${rel} has files eval init did not write, or that changed since: ${shown}. Pass --force-all to delete them too, or move them out first`);
+    }
+  }
   if (o.trials !== undefined && !(Number.isInteger(o.trials) && o.trials >= 1)) throw new InitError("trials must be a whole number ≥ 1");
   const trials = o.trials ?? DEFAULT_TRIALS;
   const built = o.source === "sessions" ? await fromSessions(o, deps, name, dir) : o.source === "skill" ? await fromSkill(o, name, dir) : await fromCases(o, name, dir);
@@ -156,6 +203,7 @@ export async function initSuite(o: InitOpts, deps: InitDeps): Promise<InitResult
   }
   await writeFile(join(dir, SUITE_FILE), `${JSON.stringify(spec, null, 2)}\n`);
   files.unshift(toPosix(relative(o.root, join(dir, SUITE_FILE))));
+  await writeManifest(dir, [SUITE_FILE, ...Object.keys(built.files).map(toPosix)], (built.tasks ?? []).map((t) => `tasks/${toPosix(t.dir)}`));
   const kind: SuiteKind = o.source === "sessions" ? "tasks" : o.source === "skill" ? "triggers" : "cases";
   const run = `coding.sh eval run ${name}`;
   const ci = kind === "tasks" ? undefined : ciWorkflow(name, kind, spec.agent);

@@ -81,6 +81,38 @@ describe("initSuite: cases", () => {
     assert.deepEqual([again.spec.task, again.spec.trials, again.spec.purpose], [{ kind: "http", url: "http://localhost:1/x" }, 5, "capability"]);
   });
 
+  it("--force keeps files you added or changed unless forceAll", async () => {
+    const root = await project();
+    await writeFile(join(root, "cases.jsonl"), '{"input":"crash","expected":"bug"}\n');
+    const o = { name: "triage", root, source: "cases" as const, casesFile: "cases.jsonl", command: "node app.mjs" };
+    const r = await initSuite(o, deps());
+    // Untouched: --force replaces it.
+    await initSuite({ ...o, force: true, trials: 5 }, deps());
+    // A file you added (a reference solution, notes) is refused, and so is an edit to a written one.
+    await mkdir(join(r.dir, "tasks", "t1"), { recursive: true });
+    await writeFile(join(r.dir, "tasks", "t1", "reference.patch"), "diff\n");
+    await assert.rejects(initSuite({ ...o, force: true }, deps()), (e: Error) => e instanceof InitError && /evals\/triage has files eval init did not write, or that changed since: tasks\/t1\/reference\.patch\. Pass --force-all/.test(e.message));
+    assert.ok(existsSync(join(r.dir, "tasks", "t1", "reference.patch")), "nothing was deleted");
+    await rm(join(r.dir, "tasks"), { recursive: true });
+    await writeFile(join(r.dir, "suite.json"), (await readFile(join(r.dir, "suite.json"), "utf8")).replace('"trials": 5', '"trials": 9'));
+    await assert.rejects(initSuite({ ...o, force: true }, deps()), /changed since: suite\.json\./);
+    // forceAll deletes them.
+    await mkdir(join(r.dir, "tasks", "t1"), { recursive: true });
+    await writeFile(join(r.dir, "tasks", "t1", "reference.patch"), "diff\n");
+    await initSuite({ ...o, force: true, forceAll: true }, deps());
+    assert.ok(!existsSync(join(r.dir, "tasks")));
+    assert.equal((await loadSuite(r.dir)).spec.trials, 3);
+    // A file that was there before eval init wrote the suite stays yours.
+    await rm(r.dir, { recursive: true });
+    await mkdir(r.dir, { recursive: true });
+    await writeFile(join(r.dir, "NOTES.md"), "mine\n");
+    await initSuite(o, deps());
+    await assert.rejects(initSuite({ ...o, force: true }, deps()), /changed since: NOTES\.md\./);
+    // A suite dir eval init never wrote (no manifest) is all yours.
+    await rm(join(r.dir, ".eval-init.json"));
+    await assert.rejects(initSuite({ ...o, force: true }, deps()), /did not write, or that changed since: NOTES\.md, suite\.json\./);
+  });
+
   it("writes drafted cases with should / should-not tags, marked draft, and a judge for open answers", async () => {
     const root = await project();
     const provider = fakeProvider({

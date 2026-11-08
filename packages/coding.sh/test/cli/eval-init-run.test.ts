@@ -105,6 +105,15 @@ describe("eval init + eval run: skill", () => {
     assert.match(run.stderr, /6 prompts in evals\/pdf\/triggers\.toml still say TODO:/);
     assert.match(run.stderr, /coding\.sh eval init pdf --skill \.claude\/skills\/pdf --draft --force/);
     assert.equal(cli(["eval", "init", "--skill", ".claude/skills/pdf"]).status, 1, "an existing suite needs --force");
+    assert.equal(cli(["eval", "init", "--skill", ".claude/skills/pdf", "--force"]).status, 0, "nothing of yours in it");
+    const toml = join(proj, "evals", "pdf", "triggers.toml");
+    writeFileSync(toml, readFileSync(toml, "utf8").replace("TODO:", "merge these two PDFs"));
+    const kept = cli(["eval", "init", "--skill", ".claude/skills/pdf", "--force"]);
+    assert.equal(kept.status, 1);
+    assert.match(kept.stderr, /evals\/pdf has files eval init did not write, or that changed since: triggers\.toml\. Pass --force-all/);
+    assert.match(readFileSync(toml, "utf8"), /merge these two PDFs/, "your edit is still there");
+    assert.equal(cli(["eval", "init", "--skill", ".claude/skills/pdf", "--force-all"]).status, 0);
+    assert.doesNotMatch(readFileSync(toml, "utf8"), /merge these two PDFs/);
   });
 });
 

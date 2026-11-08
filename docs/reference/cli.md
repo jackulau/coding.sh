@@ -590,7 +590,8 @@ coding.sh eval init [name] [options]
 | `--purpose <PURPOSE>` |  | capability: a hill to climb (sessions default). regression: should pass nearly always, eval run exits 1 when it doesn't (skill and cases default) One of: `capability`, `regression`. |
 | `-k, --trials <N>` | `3` | Trials per task, case or prompt. |
 | `-a, --agent <AGENT>` |  | Agent that runs the suite (default: the sessions' agent, else claude-code) |
-| `--force` |  | Replace the named target when it already exists. |
+| `--force` |  | Replace an existing suite; refused when it holds files eval init did not write, or that you changed. |
+| `--force-all` |  | Replace an existing suite and delete those files too. |
 
 ```sh
 coding.sh eval init

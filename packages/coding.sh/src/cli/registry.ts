@@ -465,7 +465,8 @@ export const COMMANDS: CommandSpec[] = [
           { name: "purpose", type: "string", value: "<PURPOSE>", choices: ["capability", "regression"], desc: "capability: a hill to climb (sessions default). regression: should pass nearly always, eval run exits 1 when it doesn't (skill and cases default)" },
           { name: "trials", short: "k", type: "number", value: "<N>", desc: "Trials per task, case or prompt", default: "3" },
           { name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Agent that runs the suite (default: the sessions' agent, else claude-code)" },
-          FORCE,
+          { name: "force", type: "boolean", desc: "Replace an existing suite; refused when it holds files eval init did not write, or that you changed" },
+          { name: "force-all", type: "boolean", desc: "Replace an existing suite and delete those files too" },
         ],
         examples: [
           "coding.sh eval init",

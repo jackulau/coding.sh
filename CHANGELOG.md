@@ -129,6 +129,7 @@ coding.sh runs on Windows, and CI tests it there.
 - **Experiments.** A grader error leaves a run ungraded only when no other grader failed it. With `exact` and a judge that is down, the runs `exact` failed count as failures and only the runs it passed are left out, instead of every run reading ungraded and the pass rate going blank. `exp regrade` follows the same rule. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md)
 - **Evals.** `eval run` reports on a cases suite say "case" and on a triggers suite "prompt" (the header, the table, never-passed, saturation and the regression lines), and `--json` carries the report's `unit`.
 - **Evals.** `eval validate` shows the last 12 lines of the verifier's output when a check goes the wrong way (the reference fails, the no-op or a near-miss passes, or setup fails), once per kind of check, and `--json` carries every step with its output in `steps`. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md)
+- **Evals.** `eval init --force` no longer deletes your work: it stops when the suite holds a file `eval init` did not write or that you changed since (a `reference.patch` you added, a prompt you fixed) and lists them. `--force-all` deletes those too. `evals/<name>/.eval-init.json` records what `eval init` wrote. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#your-agents-failed-sessions)
 
 ## [0.1.1] - 2026-11-07
 
