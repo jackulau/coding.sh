@@ -1,0 +1,65 @@
+packages/coding.sh/src/query/where.ts
+  s_8e040dbdf13565::t_1ea02d2e67d0d6 162
+packages/coding.sh/test/core/launch.test.ts
+  s_8e040dbdf13565::t_48984a71f30bd1 1-90,92-97
+  s_8e040dbdf13565::t_cc3e24bab06552 91
+packages/coding.sh/src/core/redact.ts
+  s_8e040dbdf13565::t_672bc3d148346b 503-506
+docs/reference/query.md
+  s_8e040dbdf13565::t_19c53c5188644e 50
+packages/store-clickhouse/src/where.ts
+  s_8e040dbdf13565::t_0f34c1d8efea32 53
+docs/concepts.md
+  s_8e040dbdf13565::t_05fcc7b101fdd1 12-15
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_b78a2eb99c63ee 409,492-493,529-549,623,728
+packages/coding.sh/src/core/types.ts
+  s_8e040dbdf13565::t_d4c03c11775eee 29-30
+packages/coding.sh/src/schema/index.ts
+  s_8e040dbdf13565::t_c67714a21aed7d 271-275
+packages/coding.sh/src/adapters/_shared/jsonl.ts
+  s_8e040dbdf13565::t_0ef9486bae8908 39-58
+packages/store-postgres/src/where.ts
+  s_8e040dbdf13565::t_0f34c1d8efea32 52
+packages/coding.sh/src/spool/hook.ts
+  s_8e040dbdf13565::t_4068108687711a 148-149
+CHANGELOG.md
+  s_8e040dbdf13565::t_4e0d56bdf90cb3 23
+docs/ADAPTERS.md
+  s_8e040dbdf13565::t_b5a302783a32de 122
+docs/reference/api.md
+  s_8e040dbdf13565::t_8df97c07e22722 523-529
+packages/coding.sh/test/fixtures/adapters/codex/golden/hooks.golden.json
+  s_8e040dbdf13565::t_ba805edbc423d3 10-12
+packages/coding.sh/test/fixtures/adapters/claude-code/golden/backfill.golden.json
+  s_8e040dbdf13565::t_ba805edbc423d3 9,208-209
+packages/coding.sh/src/adapters/codex.ts
+  s_8e040dbdf13565::t_e99cfdef47700a 778-783,785
+  s_8e040dbdf13565::t_68115480d6de3b 943-944
+  s_8e040dbdf13565::t_87f09614a77b30 60
+packages/coding.sh/src/adapters/_shared/claude-transcript.ts
+  s_8e040dbdf13565::t_5c554db0f71ebc 229
+packages/coding.sh/test/capture/hook.test.ts
+  s_8e040dbdf13565::t_adc3b36cb8ea8e 66-77
+packages/coding.sh/src/adapters/claude-code.ts
+  s_8e040dbdf13565::t_68115480d6de3b 573-574
+  s_8e040dbdf13565::t_5c554db0f71ebc 225
+docs/reference/cli.md
+  s_8e040dbdf13565::t_2528d2e7fbfe61 390,401
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a1c3341c6a1f5f7c83cd8b5cf049c5c0efe77375",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}

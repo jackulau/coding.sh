@@ -1,0 +1,73 @@
+docs/reference/cli.md
+  s_8e040dbdf13565::t_75e6ef7ae1a3f3 2163-2165,2182-2188,2229,2251,2286-2287
+  s_8e040dbdf13565::t_9889ad4061971d 2181,2252
+packages/coding.sh/src/core/types.ts
+  s_8e040dbdf13565::t_f8fa3a13918a5b 696-700,705-713
+  s_8e040dbdf13565::t_04e9fe67ca707c 714-715
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_fcb42cbde744bb 1223
+  s_8e040dbdf13565::t_9889ad4061971d 1188,1252
+  s_8e040dbdf13565::t_356fe51d8b6690 1251
+  s_8e040dbdf13565::t_afcfb5a3d761f5 1293-1294
+  s_8e040dbdf13565::t_9fe22f9eb837e2 1185-1187,1189-1196,1211-1213
+  s_8e040dbdf13565::t_61b634777c295a 1214
+packages/coding.sh/src/runner/harness-report.ts
+  s_8e040dbdf13565::t_485630846f5259 18
+docs/guides/evals.md
+  s_8e040dbdf13565::t_502829711ce84d 1111-1113
+  s_8e040dbdf13565::t_d77436cddcfe01 1095-1110,1114-1118
+  s_8e040dbdf13565::t_fef84b98968538 1119
+packages/coding.sh/test/cli/compare-plugin.test.ts
+  s_8e040dbdf13565::t_62eec4adaf6e99 1-209
+packages/coding.sh/src/cli/commands/compare.ts
+  s_8e040dbdf13565::t_81664422f3c105 3-4,16-17,68-69,71-74,82-83,85-89,91,94-112,122,125-127,414-415
+docs/design/architecture.md
+  s_8e040dbdf13565::t_a7b38bce83d459 245-247
+apps/site/src/pages/docs/evals.astro
+  s_8e040dbdf13565::t_58686aac35270d 662-667
+packages/coding.sh/test/runner/plugins.test.ts
+  s_8e040dbdf13565::t_acfe39a59cb309 244
+  s_8e040dbdf13565::t_b128bb9b9f0db7 139
+  s_8e040dbdf13565::t_b1944e11a5026c 90
+  s_8e040dbdf13565::t_015957bac4cf40 1-89,91-138,140-243,245-282
+packages/coding.sh/src/runner/bundle.ts
+  s_8e040dbdf13565::t_0de2d88c2c3e91 388-391
+  s_8e040dbdf13565::t_225a5366dfb5c2 12,328-329,335,360-365,370-372,375-382,386,399-410,412-413
+  s_8e040dbdf13565::t_83f61994489887 341-342,416,420-447,456-457,468-469,479,488,496-497,501-514,529-531
+  s_8e040dbdf13565::t_cd4448dbee1a5d 194-195
+  s_8e040dbdf13565::t_f756b62729ad11 4,9,93-94,96,107,168-174,193,196-201,212,243,251,260,271-272,276,294-296,323,327
+  s_8e040dbdf13565::t_78d79a1c2acbe7 337
+packages/coding.sh/src/runner/run.ts
+  s_8e040dbdf13565::t_1dd842916df318 15
+  s_8e040dbdf13565::t_e96e86a8883af8 179-184
+packages/coding.sh/src/adapters/claude-code.ts
+  s_8e040dbdf13565::t_026fd92f0468b3 534-536,538-540
+  s_8e040dbdf13565::t_8454ad986424f1 54
+  s_8e040dbdf13565::t_dceb1fe80d29e7 546-547
+docs/how-to/compare-agents.md
+  s_8e040dbdf13565::t_7c4f638974353a 155-165
+packages/coding.sh/src/runner/plugins.ts
+  s_8e040dbdf13565::t_b23827e3e29f95 1-173
+packages/coding.sh/src/cli/commands/harness.ts
+  s_8e040dbdf13565::t_17e1877ea1987e 6,14-25,89-90,92,94,111,115-129,134-135
+docs/concepts.md
+  s_8e040dbdf13565::t_49469403e2a2a0 143-144
+CHANGELOG.md
+  s_8e040dbdf13565::t_f9145548086f63 29
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "71991ae38b68e307cc1e09f3c78f12efa20f17fb",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}

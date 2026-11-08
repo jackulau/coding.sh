@@ -1,0 +1,83 @@
+packages/store-clickhouse/src/where.ts
+  s_8e040dbdf13565::t_099e6c75ef1cbf 62-63
+CHANGELOG.md
+  s_8e040dbdf13565::t_74ec837ae0da4a 22
+packages/coding.sh/test/fixtures/adapters/claude-code/hooks-real/config/projects/-work-demo/fd08f71c-fbd8-4bb1-a1aa-114160e07141.jsonl
+  s_8e040dbdf13565::t_f59fb3c344e5c3 1-27
+packages/store-postgres/src/where.ts
+  s_8e040dbdf13565::t_099e6c75ef1cbf 61-62
+packages/coding.sh/src/core/redact.ts
+  s_8e040dbdf13565::t_8895f577bb4329 500-502
+docs/reference/api.md
+  s_8e040dbdf13565::t_89ec7e59b3f305 523-531
+docs/ADAPTERS.md
+  s_8e040dbdf13565::t_4df375815ce6cc 122
+packages/coding.sh/test/fixtures/adapters/claude-code/hooks-real/config/projects/-work-demo/cad8f087-2e7c-410b-92a2-6df89bb5fa57.jsonl
+  s_8e040dbdf13565::t_f59fb3c344e5c3 1-32
+packages/coding.sh/test/fixtures/adapters/claude-code/hooks-real/config/plugins/installed_plugins.json
+  s_8e040dbdf13565::t_f59fb3c344e5c3 1-14
+docs/reference/query.md
+  s_8e040dbdf13565::t_30f9417fbfd243 58-59
+packages/coding.sh/test/fixtures/adapters/claude-code/hooks-real/config/plugins/cache/local/terse/0.1.0/hooks/hooks.json
+  s_8e040dbdf13565::t_f59fb3c344e5c3 1-25
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_461e22604d3db0 15,409,491,523,563,702-704
+packages/coding.sh/test/fixtures/adapters/claude-code/hooks-real/config/plugins/cache/local/terse/0.1.0/hooks/read.js
+  s_8e040dbdf13565::t_f59fb3c344e5c3 1-10
+packages/coding.sh/src/schema/index.ts
+  s_8e040dbdf13565::t_6f3a34c47fd2f1 271-272
+  s_8e040dbdf13565::t_f65af1dfc7e9e1 106-118
+packages/coding.sh/test/fixtures/adapters/claude-code/hooks-real/config/plugins/cache/local/terse/0.1.0/hooks/start.js
+  s_8e040dbdf13565::t_f59fb3c344e5c3 1-10
+packages/coding.sh/src/adapters/_shared/claude-transcript.ts
+  s_8e040dbdf13565::t_bcd24c1a5c571f 21,52-53,56-69,159,394,408-437,443-478,584
+  s_8e040dbdf13565::t_d58b5f89865e25 213
+  s_8e040dbdf13565::t_b34e8868ccbb1f 222-233
+  s_8e040dbdf13565::t_75e909444ca158 438-442
+  s_8e040dbdf13565::t_a404616cce0275 585
+packages/coding.sh/src/cli/commands/show.ts
+  s_8e040dbdf13565::t_b37485d3296911 162-172,371-372
+  s_8e040dbdf13565::t_61c55a2f8dcbd9 115
+packages/coding.sh/src/core/hook-context.ts
+  s_8e040dbdf13565::t_629180ca502732 1-44
+docs/concepts.md
+  s_8e040dbdf13565::t_f39d1f1cb8e08f 73-78
+packages/coding.sh/src/adapters/_shared/claude-plugins.ts
+  s_8e040dbdf13565::t_dad8156b20d59f 1-97
+packages/coding.sh/test/fixtures/adapters/claude-code/hooks-real/config/projects/-work-demo/3bcbc506-9513-4a2a-9315-96d125d275ff.jsonl
+  s_8e040dbdf13565::t_f59fb3c344e5c3 1-32
+docs/reference/cli.md
+  s_8e040dbdf13565::t_40a669bfbdf1fc 390,401
+packages/coding.sh/test/fixtures/adapters/claude-code/hooks-real/config/plugins/cache/local/terse/0.1.0/.claude-plugin/plugin.json
+  s_8e040dbdf13565::t_f59fb3c344e5c3 1-5
+packages/coding.sh/src/query/where.ts
+  s_8e040dbdf13565::t_3204cd5c83df8c 170-181
+scripts/e2e/hook-context-capture.mjs
+  s_8e040dbdf13565::t_37e61ecc416e1d 10-13,28,45-46,106,162-166,170,199-209
+  s_8e040dbdf13565::t_41a82fa102ef3d 22-24,194
+  s_8e040dbdf13565::t_2dd58c2b75f1d5 1-9,14-21,25-27,29-44,47-105,107-161,167-169,171-193,195-198,210-216
+packages/coding.sh/test/adapters/claude-hook-context.test.ts
+  s_8e040dbdf13565::t_b3ab42af58fbd6 193
+  s_8e040dbdf13565::t_a1615b9e922232 1-185,187-192,194-198,201-205
+  s_8e040dbdf13565::t_0ba9bf0bb9e8e0 186,199-200
+packages/coding.sh/src/adapters/claude-code.ts
+  s_8e040dbdf13565::t_236935ec431575 126-138
+  s_8e040dbdf13565::t_1d06a53aeb3e8d 55,150,355,460
+  s_8e040dbdf13565::t_97c0fccaa137ba 572-573
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "787583d4b5f481fd7e8b802685add502054fc408",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
