@@ -1,0 +1,37 @@
+packages/coding.sh/test/mcp/toolevals.test.ts
+  s_8e040dbdf13565::t_91b12846578192 65
+  s_8e040dbdf13565::t_51a62d521fc28e 62
+  s_8e040dbdf13565::t_4146291c243e2b 63-64
+  s_8e040dbdf13565::t_7b7ec9195a1761 52
+packages/coding.sh/test/mcp/server.test.ts
+  s_8e040dbdf13565::t_4662212b6aeb2d 89
+  s_8e040dbdf13565::t_4e2bd9fa5f5b04 472
+docs/guides/explore.md
+  s_8e040dbdf13565::t_9d12c394192ac6 357-360
+  s_8e040dbdf13565::t_c7a78d8bc7ccab 340
+apps/site/src/pages/docs/mcp.astro
+  s_8e040dbdf13565::t_949af4f538a87c 20
+packages/coding.sh/src/mcp/tools.ts
+  s_8e040dbdf13565::t_7130fdbf9ce1e1 28
+  s_8e040dbdf13565::t_e668bcb62b31c6 618-620,622-667
+  s_8e040dbdf13565::t_74becb27adc851 11
+  s_8e040dbdf13565::t_2b0922376a889b 621
+  s_8e040dbdf13565::t_9b3897daaf3b7b 99-124
+  s_8e040dbdf13565::t_b4de50c3688597 617,668
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5c15f7074606b41fe5082beee776f1bc1adf3b81",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jack <jack@coding.sh>"
+    }
+  }
+}
