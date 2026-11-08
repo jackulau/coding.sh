@@ -153,22 +153,28 @@ export async function inspectRepo(dir: string): Promise<RepoFacts> {
 
 /** Install commands from lockfiles/manifests at the repo root. At most one per ecosystem. */
 export function guessSetup(f: RepoFacts): string[] {
+  return guessSetupFrom(f).map((g) => g.command);
+}
+
+/** {@link guessSetup}, with the file each command was guessed from. */
+export function guessSetupFrom(f: RepoFacts): { command: string; from: string }[] {
   const has = (n: string) => f.files.has(n);
-  const out: string[] = [];
-  if (has("pnpm-lock.yaml")) out.push("pnpm i --frozen-lockfile");
-  else if (has("bun.lockb") || has("bun.lock")) out.push("bun install --frozen-lockfile");
-  else if (has("yarn.lock")) out.push(has(".yarnrc.yml") ? "yarn install --immutable" : "yarn install --frozen-lockfile");
-  else if (has("package-lock.json") || has("npm-shrinkwrap.json")) out.push("npm ci");
-  else if (has("package.json")) out.push("npm install");
+  const out: { command: string; from: string }[] = [];
+  const add = (command: string, first: string, ...more: string[]) => out.push({ command, from: [first, ...more].find(has) ?? first });
+  if (has("pnpm-lock.yaml")) add("pnpm i --frozen-lockfile", "pnpm-lock.yaml");
+  else if (has("bun.lockb") || has("bun.lock")) add("bun install --frozen-lockfile", "bun.lockb", "bun.lock");
+  else if (has("yarn.lock")) add(has(".yarnrc.yml") ? "yarn install --immutable" : "yarn install --frozen-lockfile", "yarn.lock");
+  else if (has("package-lock.json") || has("npm-shrinkwrap.json")) add("npm ci", "package-lock.json", "npm-shrinkwrap.json");
+  else if (has("package.json")) add("npm install", "package.json (no lockfile)");
 
-  if (has("uv.lock")) out.push("uv sync --frozen");
-  else if (has("poetry.lock")) out.push("poetry install --no-interaction");
-  else if (has("requirements.txt")) out.push("pip install -r requirements.txt");
-  else if (has("pyproject.toml") || has("setup.py")) out.push("pip install -e .");
+  if (has("uv.lock")) add("uv sync --frozen", "uv.lock");
+  else if (has("poetry.lock")) add("poetry install --no-interaction", "poetry.lock");
+  else if (has("requirements.txt")) add("pip install -r requirements.txt", "requirements.txt");
+  else if (has("pyproject.toml") || has("setup.py")) add("pip install -e .", "pyproject.toml", "setup.py");
 
-  if (has("go.mod")) out.push("go mod download");
-  if (has("Cargo.toml")) out.push("cargo fetch");
-  if (has("Gemfile.lock")) out.push("bundle install");
+  if (has("go.mod")) add("go mod download", "go.mod");
+  if (has("Cargo.toml")) add("cargo fetch", "Cargo.toml");
+  if (has("Gemfile.lock")) add("bundle install", "Gemfile.lock");
   return out;
 }
 
@@ -348,6 +354,7 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
   let verifier = opts.verifierCommand;
   let setupSource: TaskMeta["setupSource"] = setup ? "given" : "none";
   let verifierSource: TaskMeta["verifierSource"] = verifier ? "given" : "none";
+  let setupFrom: string[] = [];
   if (!verifier) {
     verifier = guessVerifierFromEvents(events, start.repoRoot);
     if (verifier) verifierSource = "session";
@@ -358,7 +365,9 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
       await ops.materialize({ root: start.repoRoot, head: start.head, snapshot: start.snapshot }, dir);
       const facts = await inspectRepo(dir);
       if (!setup) {
-        setup = guessSetup(facts);
+        const guessed = guessSetupFrom(facts);
+        setup = guessed.map((g) => g.command);
+        setupFrom = guessed.map((g) => g.from);
         setupSource = setup.length ? "guessed" : "none";
       }
       if (!verifier) {
@@ -371,7 +380,7 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
   }
   if (!verifier) notes.push("no verifier command found; set one before validating");
   else if (verifierSource !== "given") notes.push(`verifier guessed from ${verifierSource}: ${verifier}`);
-  if (setupSource === "guessed") notes.push(`setup guessed from lockfiles: ${(setup ?? []).join(" && ")}`);
+  if (setupSource === "guessed") notes.push(`setup guessed from ${setupFrom.join(", ")}: ${(setup ?? []).join(" && ")}`);
 
   const now = opts.now ?? Date.now();
   const tags = [...new Set(["from-session", `agent:${session.agent}`, ...(prompts.length > 1 ? ["multi-turn"] : []), ...(opts.tags ?? [])])];

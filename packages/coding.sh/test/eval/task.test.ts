@@ -144,10 +144,10 @@ describe("draftTaskFromSession", () => {
 });
 
 /** A `coding.sh run -- <cmd>` session: snapshots, no user.message. */
-async function wrapperFixture(args: unknown[], opts: { rawArgs?: string[] } = {}) {
+async function wrapperFixture(args: unknown[], opts: { rawArgs?: string[]; start?: typeof BUGGY } = {}) {
   const index = new MemIndex();
   const blobs = new MemBlobs();
-  const git = new FakeSnapshots().add("start", BUGGY).add("end", FIXED);
+  const git = new FakeSnapshots().add("start", opts.start ?? BUGGY).add("end", FIXED);
   const repo = { root: ROOT, head: "abc123", snapshot: "start" };
   await index.upsertSession({
     id: "w1",
@@ -181,6 +181,15 @@ describe("instruction for sessions without a user prompt (coding.sh run)", () =>
     assert.equal(t.name, "add-is-broken-fix-it");
     assert.deepEqual(t.meta.followUps, []);
     assert.ok(t.referencePatch, "the run's snapshots still give a reference patch");
+  });
+  it("names the files a guessed setup came from", async () => {
+    const draft = async (start: typeof BUGGY) => {
+      const { index, blobs, git } = await wrapperFixture([], { start });
+      return (await draftTaskFromSession({ index, blobs, git, sessionId: "w1", instruction: "fix add()", verifierCommand: "x" })).meta.notes;
+    };
+    const { "package-lock.json": _, ...noLock } = BUGGY;
+    assert.ok((await draft(BUGGY)).includes("setup guessed from package-lock.json: npm ci"));
+    assert.ok((await draft(noLock)).includes("setup guessed from package.json (no lockfile): npm install"));
   });
   it("falls back to the wrapped command's prompt argument", async () => {
     const { index, blobs, git } = await wrapperFixture(["--yes", "make add() return a + b"]);
