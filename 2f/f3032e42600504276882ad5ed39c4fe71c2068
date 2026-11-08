@@ -1,0 +1,47 @@
+packages/coding.sh/src/proxy/record.ts
+  s_8e040dbdf13565::t_c17d0bb1cefdbd 319
+  s_8e040dbdf13565::t_8fad8f1cb195f8 16,19,21,187-200,208,212,216,218-219,316-318,320-336,338-347,352-365,368-371
+packages/coding.sh/src/store/fs-blobs.ts
+  s_8e040dbdf13565::t_859dbc6ecad57c 17-18,172-176
+docs/how-to/capture-with-proxy.md
+  s_8e040dbdf13565::t_f3e62a2675e719 99-106
+  s_8e040dbdf13565::t_bd22af4d8a4557 264-266
+scripts/dogfood/bench.mjs
+  s_8e040dbdf13565::t_5435bdfa077828 5,10-12,18,359-376,378-390,392-441,443-497,786,794
+  s_8e040dbdf13565::t_3a506a42166e31 377,391
+  s_8e040dbdf13565::t_f95274e84b3bc4 442
+CHANGELOG.md
+  s_8e040dbdf13565::t_c716af54cb3812 63,159
+packages/coding.sh/src/proxy/blocks.ts
+  s_8e040dbdf13565::t_5a7b7c4cf82ae6 85-87,102,113
+packages/coding.sh/src/core/ingest.ts
+  s_8e040dbdf13565::t_18f602438bb32f 822-826,828,830,873-874,876,906
+  s_8e040dbdf13565::t_32f4fea0031961 821,827,829,831-832
+  s_8e040dbdf13565::t_8435f6e11ea797 820
+scripts/perf/proxy-storage.mjs
+  s_8e040dbdf13565::t_55bf59bcd2dc48 6-7
+  s_8e040dbdf13565::t_6a956418f8a6c9 27,105,134
+  s_8e040dbdf13565::t_3733ba0a0f7519 5
+packages/coding.sh/test/proxy/store-writer.test.ts
+  s_8e040dbdf13565::t_a76aa65021911b 89,98
+  s_8e040dbdf13565::t_569b9d2b76b660 7,119
+  s_8e040dbdf13565::t_429e040f6404cb 21,26,53,58-59,61,65,72-88,90-97
+  s_8e040dbdf13565::t_1a0ce126b6fd37 1-6,8-12,14-20,22-23,25,27-52,54-57,60,62-64,66-70,99-118,120-160
+  s_8e040dbdf13565::t_e84ebf82dbdd0e 13,24,71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2ff3032e42600504276882ad5ed39c4fe71c2068",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
