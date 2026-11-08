@@ -8,7 +8,7 @@ export const SITE_URL = "https://coding.sh";
 // people to run a package name nobody owns.
 export const REPO_URL = "https://github.com/jackulau/coding.sh";
 export const REPO_PUBLIC = true;
-export const PACKAGE_PUBLISHED = false;
+export const PACKAGE_PUBLISHED = true;
 export const ISSUES_URL = `${REPO_URL}/issues`;
 export const LICENSE_URL = `${REPO_URL}/blob/main/LICENSE`;
 export const LICENSE = "MIT";
