@@ -1,0 +1,40 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_18572e92c43665 71
+apps/site/src/pages/docs/evals.astro
+  s_8e040dbdf13565::t_18572e92c43665 215
+docs/guides/evals.md
+  s_8e040dbdf13565::t_18572e92c43665 73-76
+docs/guides/explore.md
+  s_8e040dbdf13565::t_3b166f81b7f294 89-133
+packages/coding.sh/src/graders/index.ts
+  s_8e040dbdf13565::t_86d1f17c2f1ca5 14,24,106,175-176
+packages/coding.sh/test/graders/executability.test.ts
+  s_8e040dbdf13565::t_90e4a3a2e5410d 1-92
+packages/coding.sh/test/core/executability.test.ts
+  s_8e040dbdf13565::t_5fc4d898d97392 1-234
+packages/coding.sh/src/core/executability.ts
+  s_8e040dbdf13565::t_ca0025b554d64d 1-195,199-202
+  s_8e040dbdf13565::t_d1e456a5a2f851 196-198
+packages/coding.sh/src/graders/builtin.ts
+  s_8e040dbdf13565::t_3f41da40c112d2 334-339,341-372
+  s_8e040dbdf13565::t_041ce0e3aa3e31 340
+  s_8e040dbdf13565::t_86d1f17c2f1ca5 10
+packages/coding.sh/test/graders/graders.test.ts
+  s_8e040dbdf13565::t_050a67c41e3c3b 286
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "27496ca86b8efa9773741898a46dd8004620c43a",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
