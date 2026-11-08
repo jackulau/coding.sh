@@ -8,6 +8,7 @@ packages/coding.sh/src/core/sessions.ts
   s_8e040dbdf13565::t_728da2e0319e70 893-902
 packages/coding.sh/src/cli/commands/sessions.ts
   s_8e040dbdf13565::t_87c65a7359ab26 4,7,34,41,44,47-56
+  s_8e040dbdf13565::t_7f3622a5abde5c 1,45-46
 packages/coding.sh/test/cli/cli.test.ts
   s_8e040dbdf13565::t_c82be4ccf1baff 431-454
 docs/concepts.md
