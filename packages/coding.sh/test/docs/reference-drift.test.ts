@@ -32,6 +32,30 @@ describe("docs drift", () => {
     assert.deepEqual(missing, [], `add these reasons to docs/troubleshooting.md: ${missing.join(", ")}`);
   });
 
+  it("the grader field reference lists every grader kind and its fields", () => {
+    const doc = readFileSync(join(repo, "docs", "guides", "evals.md"), "utf8");
+    const table = doc.slice(doc.indexOf("### Grader fields"), doc.indexOf("### Regrade"));
+    const rows = new Map([...table.matchAll(/^\| `([a-z-]+)` \| (.*)$/gm)].map((m) => [m[1]!, m[2]!]));
+    const graders = join(pkg, "src", "graders");
+    const kinds = matches([readFileSync(join(graders, "index.ts"), "utf8")], /case "([a-z-]+)":/g);
+    kinds.add("llm-checklist");
+    assert.ok(kinds.size >= 14, "found the kinds");
+    assert.deepEqual([...kinds].filter((k) => !rows.has(k)), [], "add these kinds to Grader fields in docs/guides/evals.md");
+    // Each built-in or external spec's fields, by kind, with the fields of the spec it extends.
+    const src = [...["builtin.ts", "external.ts", "proc.ts"].map((f) => join(graders, f)), join(pkg, "src", "toolevals", "calls.ts")].map((f) => readFileSync(f, "utf8")).join("\n");
+    const fieldsOf = (body: string) => [...body.matchAll(/^\s{2}(\w+)\??:/gm)].map((m) => m[1]!).filter((f) => f !== "kind" && f !== "name");
+    const parentFields = (name: string) => fieldsOf(new RegExp(`export interface ${name} \\{([\\s\\S]*?)\\n\\}`).exec(src)![1]!);
+    let specs = 0;
+    for (const m of src.matchAll(/export interface \w+Spec(?: extends (\w+))? \{\n\s{2}kind: "([a-z-]+)";([\s\S]*?)\n\}/g)) {
+      specs++;
+      const kind = m[2]!;
+      const fields = [...fieldsOf(m[3]!), ...(m[1] ? parentFields(m[1]) : [])];
+      const missing = fields.filter((f) => !rows.get(kind)?.includes(`\`${f}\``));
+      assert.deepEqual(missing, [], `add these ${kind} fields to Grader fields in docs/guides/evals.md`);
+    }
+    assert.equal(specs, 13, "every built-in and external spec was checked");
+  });
+
   it("the MCP docs list every MCP tool", () => {
     const tools = matches([readFileSync(join(pkg, "src", "mcp", "tools.ts"), "utf8")], /^\s{6}name: "([a-z_]+)",$/gm);
     assert.ok(tools.size >= 10, "found the tools");

@@ -223,7 +223,8 @@ harness refused to run (see [Executability](explore.md#executability)). `calls` 
 calls in the trace, with the same `must`, `mustNot`, `max` and `order` fields as the tool-eval
 `calls` check ([Tool evals](../TOOL-EVALS.md#3-task-format)); an MCP tool matches by its own name
 or by the agent's (`mcp__github__create_issue`). `agent-slop` flags placeholder code, type escapes, swallowed errors and other patterns in
-the lines a diff adds (see [Agent slop](#agent-slop)).
+the lines a diff adds (see [Agent slop](#agent-slop)). [Grader fields](#grader-fields) lists every
+kind and its fields.
 
 With a spec file, each `--grader` (`-g`) is added to the spec's `graders`: `exp run spec.json -g
 judge.json` grades with both. `--replace-graders` uses only the `--grader` ones. A `--grader`
@@ -298,6 +299,49 @@ passed on every trial that B now passes at most a third of the time, which a mea
 margin can hide. It exits 1 unless B is non-inferior; `--json` carries
 `comparison.nonInferiority` (`mean`, `lower`, `delta`, `nonInferior`, `n`, `alpha`,
 `hardRegressions`). The test itself is `nonInferiority(diffs, delta)` in `src/stats/tests.ts`.
+
+### Grader fields
+
+A grader is a JSON object with a `kind`. Every kind takes `name`, the grader's id in reports
+(default: the kind, or the judge's name). Graders that compare with an answer use the case's
+`expected` unless the grader gives `value`. A run passes when every grader passes it.
+
+| Kind | Fields | Passes when |
+|---|---|---|
+| `exact` | `value`, `normalize` | The output equals the answer. JSON values compare structurally; text compares after `normalize`. |
+| `contains` | `value` (a string or a list), `mode` (`all` by default, or `any`), `negate`, `normalize` | The output contains every substring (or any, with `mode: "any"`). With `negate`, when it contains none of them. |
+| `regex` | `pattern` (required), `flags` (`g` and `y` are ignored), `negate` | The pattern matches the output text. With `negate`, when it doesn't. |
+| `json-schema` | `schema` (required) | The output, parsed as JSON when it is text, validates against the schema. |
+| `json-path` | `path` (required, e.g. `$.answer.city`), `equals`, `expectedPath`, `normalize` | The value at `path` in the output equals `equals`, else the value at `expectedPath` (default: `path`) in `expected`, else `expected` itself. |
+| `numeric` | `abs`, `rel`, `value`, `path` | The first number in the output (or at `path`) is within `max(abs, rel × \|answer\|)` of the answer. Both tolerances default to 0. |
+| `similarity` | `threshold` (default 0.8), `value`, `normalize` | 1 − edit distance / length of the longer text is at least `threshold`. |
+| `progress` | `flags`, `maxDerails` (default 0) | The trace derailed at most `maxDerails` times. The score is the share of the run before the first derail. `flags` limits which derails count: `looping`, `failure-streak`, `churn`, `no-progress`, `stalled`, `context-thrash`. |
+| `executability` | `kinds`, `maxInvalid` (default 0) | The trace has at most `maxInvalid` tool calls the harness refused. `kinds` limits which count: `schema`, `unknown-tool`, `precondition`, `state`, `missing`, `denied`, `other`. |
+| `calls` | `must`, `mustNot`, `max`, `order` | Every `must` match is some tool call in the trace, no `mustNot` match is, there are at most `max` calls, and the `order` tools are called in that order (other calls may come between). A match is `{"tool": …, "args": {…}}`, with partial argument matches; an MCP tool matches by its own name or the agent's. See [Tool evals](../TOOL-EVALS.md#3-task-format). |
+| `agent-slop` | `rules`, `exclude`, `maxErrors` (default 0), `maxWarnings` (default: no limit) | The lines the diff adds have at most that many findings. See [Agent slop](#agent-slop). |
+| `command` | `command` (required, an executable, not a shell line), `args`, `cwd`, `env`, `timeoutMs` (default 60000, 0 for none), `passThreshold` (default 0.5) | The command exits 0. It gets `{input, output, expected, metadata, caseId, trace}` as JSON on stdin and may print a grade: `true`/`false`, a score from 0 to 1 (passes at `passThreshold`), or `{"score", "pass", "reason"}`. A non-zero exit fails the run. A timeout, a signal or a command that can't start is a grader error. |
+| `module` | `module` (required, a path to a JS file, relative to the spec file), `export` (default `default`), `options`, `passThreshold` (default 0.5) | The exported function, called with the grade context and `options`, returns a passing grade, in the same forms as `command`. |
+| `llm` | `name` and `rubric` (required), `criterion` (default: `name`), `passThreshold` (default 0.5), `template`, `system`, `tunedOn` (default `["train", "dev"]`), `concurrency` (default 4), and the provider fields below | The judge model's verdict passes, or its score is at least `passThreshold` when it gives no verdict. |
+| `llm-checklist` | `name` and `items` (required), `mode` (`per-item` by default, or `batched`), `passThreshold` (default 0.5), `criterion`, `system`, `tunedOn`, `concurrency`, and the provider fields below | No `critical` item is answered no, and the weighted share of yes answers is at least `passThreshold`. An item has `id`, `question`, and optionally `critical`, `weight` (default 1), `dimension`, `violationExample` and `check`. See [Checklists and trace checks](#checklists-and-trace-checks). |
+
+`normalize` takes `trim` (default true), `caseInsensitive`, `collapseWhitespace`,
+`stripPunctuation` and `unicode` (NFKC).
+
+The provider fields of `llm` and `llm-checklist`: `provider` (`anthropic` by default, `openai`,
+`gateway` or `mock`), `model` (default `claude-sonnet-5-5` for Anthropic), `baseURL`, `apiKeyEnv`,
+`maxTokens`, `effort` (Anthropic), `temperature` and `requireKey` (OpenAI-compatible; `requireKey:
+false` for a local server with no key), and `mockAnswer` (`mock` only). A judge reads
+`ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` when `baseURL` is not set. A `pairwise` judge takes the
+`llm` fields but compares two experiments, so it goes to `exp compare --pairwise`, not to
+`--grader`.
+
+```json
+{"kind": "exact", "normalize": {"caseInsensitive": true, "collapseWhitespace": true}}
+{"kind": "contains", "value": ["refund", "billing"], "mode": "any"}
+{"kind": "numeric", "path": "$.total", "rel": 0.01}
+{"kind": "command", "command": "python3", "args": ["grade.py"], "timeoutMs": 30000}
+{"kind": "llm", "name": "helpful", "rubric": "Answers the question asked, correctly and politely."}
+```
 
 ### Regrade
 
