@@ -484,11 +484,12 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       name: "improve",
       title: "What to fix first",
       description:
-        "Start here to improve the agent setup: what goes wrong most in this repo's sessions, each with an example session, the CLAUDE.md/AGENTS.md line that fixes it and next commands, plus whether recent changes helped. Default 14d.",
+        "Start here to improve the agent setup: what goes wrong most in this repo's sessions, each with an example session, the CLAUDE.md/AGENTS.md line that fixes it and next commands, plus whether recent changes helped.",
       inputSchema: input({
         repo: { type: "string", description: 'Repo path or folder name; "all" for every repo. Default: the server\'s repo.' },
         since: SINCE("14d"),
         agent: AGENT,
+        headless: { type: "boolean", description: "Also headless runs (claude -p, codex exec)." },
         limit: LIMIT(5, 20),
       }),
       outputSchema: out({ scope: out({ sessions: I }), issues: arr(out({ rank: I, id: S, title: S, line: S, next: arr(S) }, ["rank", "id", "title", "next"])), changes: arr(out({ commit: S, verdict: S }, ["commit", "verdict"])) }, ["scope", "issues", "changes"]),
@@ -497,7 +498,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         const ctx = await c.store();
         const { improveReport } = await import("./improve.ts");
         const limit = a.limit === undefined ? undefined : numArg(a, "limit", 5);
-        return improveReport(ctx, { repo: strArg(a, "repo"), since: strArg(a, "since"), agent: strArg(a, "agent"), ...(limit ? { limit } : {}) }, { cwd: c.cwd, env: c.env, now: c.now() });
+        return improveReport(ctx, { repo: strArg(a, "repo"), since: strArg(a, "since"), agent: strArg(a, "agent"), ...(limit ? { limit } : {}), ...(a.headless === true ? { headless: true } : {}) }, { cwd: c.cwd, env: c.env, now: c.now() });
       },
     },
     {

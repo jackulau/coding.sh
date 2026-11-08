@@ -33,7 +33,12 @@ Fix first
 ```
 
 `improve` reads the sessions in this repo from the last 14 days (`--since 30d` for more,
-`--repo all` for every repo). It lists two kinds of issue:
+`--repo all` for every repo). It leaves out subagents, eval and benchmark runs, and headless
+sessions: `claude -p`, an Agent SDK or `codex exec`, the ones whose `stats.launch` is `"headless"`
+(see [concepts.md](../concepts.md)). Those are mostly scripts, judges and evals that nobody watched,
+and a CLAUDE.md line is not what changes them. The first line says how many headless sessions it
+left out, and `--headless` counts them. A session that does not say how it started stays in. It
+lists two kinds of issue:
 
 - **A failure flag**, such as an agent that says it is done without running anything, or one that
   ends its turn while tests fail without saying so. [concepts.md](../concepts.md) lists the flags.
@@ -186,7 +191,8 @@ regressed, and `--json` gives the numbers.
 The coding.sh MCP server (`coding.sh init` sets it up) has the same loop:
 
 - The `improve` tool returns the ranked issues with the line, the file it goes in and the next
-  commands, plus the verdicts for recent changes.
+  commands, plus the verdicts for recent changes. It leaves out headless sessions as `improve`
+  does, and `scope.headlessLeftOut` counts them; `headless: true` counts them.
 - The `harness_changes` tool returns each change with its before and after counts, how often the
   agent followed each new line, and the verdict. `after.flaggedSessions` lists the sessions still
   flagged after the change (`sessionId`, `at`, `flags`, `title`), newest first: five per change,

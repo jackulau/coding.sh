@@ -13,7 +13,7 @@ import type { Context } from "../../core/context.ts";
 import { repoRoot } from "../../core/git.ts";
 import type { ChangeEffect, GroupStats, Verdict } from "../../improve/changes.ts";
 import type { Issue } from "../../improve/issues.ts";
-import { abCommand, findChanges, findIssues, modelProvider, NEEDS_MODEL, scopeSessions, stepsFor, targetFile, testCommandOf, type ImproveScope, type ModelProvider } from "../../improve/report.ts";
+import { abCommand, findChanges, findIssues, isHeadless, modelProvider, NEEDS_MODEL, scopeSessions, stepsFor, targetFile, testCommandOf, type ImproveScope, type ModelProvider } from "../../improve/report.ts";
 import { CLI_PLAN, isCliProvider } from "../../judge/subscription.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, list, oneLine, pendingField, readIngest, str, withContext } from "../common.ts";
@@ -28,6 +28,8 @@ interface Opts {
   since: number;
   agents: string[];
   limit: number;
+  /** --headless: keep headless sessions. */
+  headless: boolean;
 }
 
 async function options(c: CommandContext, defaultSince: string, defaultLimit: number): Promise<Opts> {
@@ -42,7 +44,7 @@ async function options(c: CommandContext, defaultSince: string, defaultLimit: nu
     throw new UsageError(`--since must be a duration like 7d or 12h, or a date: got ${JSON.stringify(sinceText)}`, { reason: "invalid_argument" });
   }
   const agents = list(c.flags.agent).flatMap((x) => x.split(",")).map((x) => x.trim()).filter(Boolean);
-  return { root: repoFlag && repoFlag !== "all" ? ((await repoRoot(repo!).catch(() => undefined)) ?? repo) : root, repo, sinceText, since, agents, limit: positiveInt(c.flags.limit, "limit") ?? defaultLimit };
+  return { root: repoFlag && repoFlag !== "all" ? ((await repoRoot(repo!).catch(() => undefined)) ?? repo) : root, repo, sinceText, since, agents, limit: positiveInt(c.flags.limit, "limit") ?? defaultLimit, headless: c.flags.headless === true };
 }
 
 const where = (o: Opts, cwd: string) => (o.repo ? relative(cwd, o.repo) || o.repo.split(/[\\/]/).pop() || o.repo : "every repo");
@@ -119,16 +121,18 @@ async function report(c: CommandContext): Promise<number> {
   const o = await options(c, "14d", 5);
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
-    const scope: ImproveScope = { since: o.since, ...(o.repo ? { repo: o.repo } : {}), ...(o.agents.length ? { agents: o.agents } : {}) };
-    const sessions = await scopeSessions(ctx.index, scope);
+    const scope: ImproveScope = { since: o.since, ...(o.repo ? { repo: o.repo } : {}), ...(o.agents.length ? { agents: o.agents } : {}), headless: true };
+    const all = await scopeSessions(ctx.index, scope);
+    const sessions = o.headless ? all : all.filter((s) => !isHeadless(s));
+    const headlessLeftOut = all.length - sessions.length;
     const testCommand = await testCommandOf(o.root);
     const issues = await findIssues(ctx.index, sessions, { ...(o.root ? { repoRoot: o.root } : {}), ...(testCommand ? { testCommand } : {}) });
-    const changes = o.root ? await findChanges(ctx.index, o.root, { since: parseSince("30d"), limit: 3, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}) }) : [];
+    const changes = o.root ? await findChanges(ctx.index, o.root, { since: parseSince("30d"), limit: 3, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}), ...(o.headless ? { headless: true } : {}) }) : [];
     const provider = modelProvider(c.env);
     const top = issues.slice(0, o.limit);
     if (out.json) {
       out.data({
-        scope: { repo: o.repo ?? null, since: new Date(o.since).toISOString(), agents: o.agents, sessions: sessions.length },
+        scope: { repo: o.repo ?? null, since: new Date(o.since).toISOString(), agents: o.agents, sessions: sessions.length, ...(headlessLeftOut ? { headlessLeftOut } : {}) },
         issues: top.map((i, k) => issueJson(i, k + 1, provider)),
         more: Math.max(0, issues.length - top.length),
         changes: changes.map(changeJson),
@@ -136,8 +140,9 @@ async function report(c: CommandContext): Promise<number> {
       });
       return 0;
     }
+    const leftOut = headlessLeftOut ? `; ${plural(headlessLeftOut, "headless session")} left out (--headless)` : "";
     if (!sessions.length) {
-      out.note(`No sessions in ${where(o, c.cwd)} since ${o.sinceText}`);
+      out.note(`No sessions in ${where(o, c.cwd)} since ${o.sinceText}${leftOut}`);
       if (o.repo) out.next("Look in every repo", `coding.sh improve --repo all --since ${o.sinceText}`);
       else if (captureSetUp(c.env)) out.next(`${START_NEW_SESSION}. Then check capture`, "coding.sh doctor");
       else out.next("Capture your agents' sessions first", "coding.sh init");
@@ -145,7 +150,7 @@ async function report(c: CommandContext): Promise<number> {
     }
     const byAgent = new Map<string, number>();
     for (const s of sessions) byAgent.set(s.agent, (byAgent.get(s.agent) ?? 0) + 1);
-    out.print(`${plural(sessions.length, "session")} in ${where(o, c.cwd)} since ${o.sinceText} (${[...byAgent].map(([a, n]) => `${a} ${n}`).join(", ")})`);
+    out.print(`${plural(sessions.length, "session")} in ${where(o, c.cwd)} since ${o.sinceText} (${[...byAgent].map(([a, n]) => `${a} ${n}`).join(", ")})${leftOut}`);
     out.print("");
     if (!top.length) out.print("Nothing to fix: no failure flags, and no command failing the same way in two sessions.");
     else out.print(out.style("Fix first", "bold"));
@@ -190,7 +195,7 @@ async function fix(c: CommandContext): Promise<number> {
   const root = o.root;
   return withContext(c, async (ctx: Context) => {
     await autoIngest(ctx, readIngest(c));
-    const sessions = await scopeSessions(ctx.index, { since: o.since, repo: o.repo ?? root, ...(o.agents.length ? { agents: o.agents } : {}) });
+    const sessions = await scopeSessions(ctx.index, { since: o.since, repo: o.repo ?? root, ...(o.agents.length ? { agents: o.agents } : {}), ...(o.headless ? { headless: true } : {}) });
     const testCommand = await testCommandOf(root);
     const issues = await findIssues(ctx.index, sessions, { repoRoot: root, ...(testCommand ? { testCommand } : {}) });
     const n = /^\d+$/.test(ref) ? Number(ref) : issues.findIndex((i) => i.id === ref) + 1;
@@ -261,7 +266,7 @@ async function check(c: CommandContext): Promise<number> {
   return withContext(c, async (ctx) => {
     const read = async () => {
       const backlog = await autoIngest(ctx, readIngest(c));
-      return { changes: await findChanges(ctx.index, root, { since: o.since, limit: o.limit, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}) }), backlog };
+      return { changes: await findChanges(ctx.index, root, { since: o.since, limit: o.limit, sessionsIn: o.repo ?? "all", ...(o.agents.length ? { agents: o.agents } : {}), ...(o.headless ? { headless: true } : {}) }), backlog };
     };
     const first = await read();
     const regressed = first.changes.filter((e) => e.verdict === "regressed");

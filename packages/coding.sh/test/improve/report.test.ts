@@ -2,7 +2,7 @@
 // stored events kept. Synthetic sessions in a memory index.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { findIssues, scopeSessions } from "../../src/improve/report.ts";
+import { findIssues, isHeadless, scopeSessions } from "../../src/improve/report.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { putSession, sessionEvents } from "../helpers-decision.ts";
 
@@ -35,5 +35,20 @@ describe("improve report", () => {
     assert.doesNotMatch(shown, /sk-ant-api03-Zq8/, "a key the capture missed is redacted too");
     assert.equal(fail.examples[0]!.title, "Email [redacted:email] when the deploy is done");
     assert.match(fail.sample!, /permission denied for \[redacted:email\]/);
+  });
+
+  it("leaves headless sessions (claude -p, codex exec) out unless asked", async () => {
+    const index = new MemoryIndexStore();
+    const start = (id: string, k: number, payload: Record<string, unknown>) =>
+      putSession(index, sessionEvents(id, { cwd: CWD, startedAt: T0 + k * 3600_000 }, [["session.start", payload], ["user.message", { text: "hi" }], ["turn.end", {}]]));
+    await start("cli", 0, { entrypoint: "cli" });
+    await start("print", 1, { entrypoint: "sdk-cli" });
+    await start("exec", 2, { launch: "exec" });
+    await start("unknown", 3, {});
+    const ids = async (headless?: boolean) => (await scopeSessions(index, { since: 0, ...(headless ? { headless } : {}) })).map((s) => s.id).sort();
+    assert.deepEqual(await ids(), ["cli", "unknown"], "a session that does not say how it started stays in");
+    assert.deepEqual(await ids(true), ["cli", "exec", "print", "unknown"]);
+    const all = await scopeSessions(index, { since: 0, headless: true });
+    assert.deepEqual(all.filter(isHeadless).map((s) => s.id).sort(), ["exec", "print"]);
   });
 });

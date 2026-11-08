@@ -17,6 +17,8 @@ export interface ImproveScope {
   repo?: string;
   since: number;
   agents?: readonly string[];
+  /** Keep headless sessions (isHeadless); left out by default. */
+  headless?: boolean;
 }
 
 /** Most sessions read for one report, and most whose events are read for failures. */
@@ -24,10 +26,17 @@ const MAX_SESSIONS = 2000;
 const MAX_EVENT_SESSIONS = 300;
 const DAY = 86_400_000;
 
-/** Top-level sessions in scope, newest first: no subagents, no eval or benchmark runs. */
+/**
+ * A session the agent ran headless: `claude -p`, an Agent SDK, `codex exec` (Session.stats.launch,
+ * from the agent's own record of how it started). Mostly scripts, judges and evals: one-shot
+ * prompts nobody watched, whose habits a CLAUDE.md line is not meant to change.
+ */
+export const isHeadless = (s: Session): boolean => s.stats.launch === "headless";
+
+/** Top-level sessions in scope, newest first: no subagents, no eval or benchmark runs, and no headless ones unless `headless`. */
 export async function scopeSessions(index: IndexStore, s: ImproveScope): Promise<Session[]> {
   const all = await index.listSessions({ parentSessionId: null, runId: null, since: s.since, limit: MAX_SESSIONS });
-  return all.filter((x) => x.startedAt >= s.since && (!s.agents?.length || s.agents.includes(x.agent)) && (!s.repo || insideDir(s.repo, x.repo?.root) || insideDir(s.repo, x.cwd)));
+  return all.filter((x) => x.startedAt >= s.since && (s.headless || !isHeadless(x)) && (!s.agents?.length || s.agents.includes(x.agent)) && (!s.repo || insideDir(s.repo, x.repo?.root) || insideDir(s.repo, x.cwd)));
 }
 
 /** The repo's own test command, e.g. `npm test` (undefined when none is obvious). */
@@ -90,9 +99,9 @@ export function shownChange(e: ChangeEffect): ChangeEffect {
  * so the oldest change still has a baseline; from under `root`, or `sessionsIn`
  * (another dir, or "all": the project's other checkouts and worktrees).
  */
-export async function findChanges(index: IndexStore, root: string, o: { since: number; limit?: number; agents?: readonly string[]; sessionsIn?: string }): Promise<ChangeEffect[]> {
+export async function findChanges(index: IndexStore, root: string, o: { since: number; limit?: number; agents?: readonly string[]; sessionsIn?: string; headless?: boolean }): Promise<ChangeEffect[]> {
   const repo = o.sessionsIn === "all" ? undefined : (o.sessionsIn ?? root);
-  const sessions = await scopeSessions(index, { ...(repo ? { repo } : {}), since: o.since - 30 * DAY, ...(o.agents ? { agents: o.agents } : {}) });
+  const sessions = await scopeSessions(index, { ...(repo ? { repo } : {}), since: o.since - 30 * DAY, ...(o.agents ? { agents: o.agents } : {}), ...(o.headless ? { headless: true } : {}) });
   try {
     const effects = await changeEffects(root, sessions, {
       since: o.since,

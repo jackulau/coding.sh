@@ -47,6 +47,23 @@ describe("cli improve", () => {
     assert.match(text.stderr, /Start with the first one:\n\s+coding\.sh improve fix 1/);
   });
 
+  it("leaves headless sessions out and says how many; --headless counts them", async () => {
+    const w = await world("headless", { afterFlagged: 0, headless: 3 });
+    const j = (args: string[]) => {
+      const r = cli(w, ["improve", "--json", ...args]);
+      assert.equal(r.status, 0, r.stderr);
+      return JSON.parse(r.stdout) as { scope: { sessions: number; headlessLeftOut?: number }; issues: { id: string; sessions: number }[] };
+    };
+    const out = j([]);
+    assert.deepEqual([out.scope.sessions, out.scope.headlessLeftOut], [12, 3]);
+    assert.equal(out.issues.find((i) => i.id === "flag:no-verification")?.sessions, 4, "the headless runs' flags are not counted");
+    const all = j(["--headless"]);
+    assert.deepEqual([all.scope.sessions, all.scope.headlessLeftOut], [15, undefined]);
+    assert.equal(all.issues.find((i) => i.id === "flag:no-verification")?.sessions, 7);
+    const text = cli(w, ["improve"]);
+    assert.match(text.stdout, /^12 sessions in repo since 14d \(claude-code 12\); 3 headless sessions left out \(--headless\)$/m);
+  });
+
   it("says the CLAUDE.md change helped, and an issue no session since it had is marked, not fixed again", async () => {
     const w = await world("helped", { afterFlagged: 0 });
     const r = cli(w, ["improve", "--json"]);

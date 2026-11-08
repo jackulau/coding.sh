@@ -7,7 +7,7 @@ import type { Context } from "../core/context.ts";
 import { repoRoot } from "../core/git.ts";
 import { parseSince } from "../cli/args.ts";
 import type { ChangeEffect, GroupStats } from "../improve/changes.ts";
-import { findChanges, findIssues, modelProvider, scopeSessions, stepsFor, targetFile, testCommandOf } from "../improve/report.ts";
+import { findChanges, findIssues, isHeadless, modelProvider, scopeSessions, stepsFor, targetFile, testCommandOf } from "../improve/report.ts";
 import { clip, iso } from "./data.ts";
 import { ToolError } from "./protocol.ts";
 
@@ -18,6 +18,8 @@ export interface ImproveArgs {
   since?: string | undefined;
   agent?: string | undefined;
   limit?: number | undefined;
+  /** Keep headless sessions (claude -p, codex exec), left out by default. */
+  headless?: boolean | undefined;
 }
 
 const DAY = 86_400_000;
@@ -99,15 +101,16 @@ export async function improveReport(ctx: Context, a: ImproveArgs, c: { cwd: stri
   const p = await place(ctx, a.repo, c.cwd, c.env);
   const from = since(a.since, "14d", c.now);
   const agents = a.agent ? [a.agent] : [];
-  const sessions = await scopeSessions(ctx.index, { since: from, ...(p.dir ? { repo: p.dir } : {}), ...(agents.length ? { agents } : {}) });
+  const all = await scopeSessions(ctx.index, { since: from, ...(p.dir ? { repo: p.dir } : {}), ...(agents.length ? { agents } : {}), headless: true });
+  const sessions = a.headless ? all : all.filter((s) => !isHeadless(s));
   const testCommand = await testCommandOf(p.root);
   const issues = await findIssues(ctx.index, sessions, { ...(p.root ? { repoRoot: p.root } : {}), ...(testCommand ? { testCommand } : {}) });
-  const changes = p.root ? await findChanges(ctx.index, p.root, { since: c.now - 30 * DAY, limit: 3, ...(agents.length ? { agents } : {}) }) : [];
+  const changes = p.root ? await findChanges(ctx.index, p.root, { since: c.now - 30 * DAY, limit: 3, ...(agents.length ? { agents } : {}), ...(a.headless ? { headless: true } : {}) }) : [];
   const provider = modelProvider(c.env);
   const limit = a.limit ?? 5;
   const top = issues.slice(0, limit);
   return {
-    scope: { repo: p.dir ?? null, since: iso(from), sessions: sessions.length },
+    scope: { repo: p.dir ?? null, since: iso(from), sessions: sessions.length, ...(all.length > sessions.length ? { headlessLeftOut: all.length - sessions.length } : {}) },
     issues: top.map((i, k) => {
       const ex = i.examples[0];
       const agentsOf = sessions.filter((s) => i.examples.some((x) => x.sessionId === s.id)).map((s) => s.agent);

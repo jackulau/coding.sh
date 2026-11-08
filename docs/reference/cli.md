@@ -2194,6 +2194,7 @@ coding.sh improve [action] [options]
 | `--since <WHEN>` | `14d` | Only sessions (check: changes) after this time: 7d, 12h or a date. |
 | `--repo <DIR|all>` |  | Only sessions under this directory, or all (default: this git repo) |
 | `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `--headless` |  | Include headless sessions (claude -p, an Agent SDK, codex exec), left out by default. |
 | `-n, --limit <N>` | `5` | Maximum rows. |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
@@ -2206,6 +2207,7 @@ coding.sh improve check
 
 - improve lists the failure flags in this repo's sessions and any command or tool that fails the same way in two or more sessions. Issues seen in two or more sessions come first, then by the severity score refine uses. Each issue has an example session, a fix, and the commands that take it through the loop: show, improve fix, exp ab, improve check.
 - A failing test command that already failed before the agent changed any file is reported as a broken setup: fix the command first, or the agent can't check its work.
+- Headless sessions (claude -p, an Agent SDK, codex exec: scripts, judges and evals) are left out, and the first line says how many; --headless counts them. Eval and benchmark runs and subagents are always left out.
 - A failed compound line (&&, ;, \|, a loop) counts against the part that failed: the one its error names, the tool whose error it is, the part timeout stopped, or the last part of a pipeline. When nothing singles one out, the issue says compound command.
 - When sessions ran on the repo's current harness version (the newest commit that changed CLAUDE.md, AGENTS.md, a rule or a skill) and none of them had an issue, the issue is marked 'Not seen since &lt;commit&gt;', goes last, and points at improve check instead of a new line.
 - check reads the git history of CLAUDE.md, AGENTS.md, GEMINI.md, .claude/rules, .cursor/rules and skills. A session counts for the newest such commit its starting HEAD contains, so uncommitted edits count from the commit that keeps them. Sessions with no recorded HEAD, and sessions with no tool call outside MCP servers (a chat, or asking coding.sh about a change), are left out.
@@ -2230,6 +2232,7 @@ coding.sh improve fix <ISSUE> [options]
 | `--since <WHEN>` | `14d` | Only sessions (check: changes) after this time: 7d, 12h or a date. |
 | `--repo <DIR|all>` |  | Only sessions under this directory, or all (default: this git repo) |
 | `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `--headless` |  | Include headless sessions (claude -p, an Agent SDK, codex exec), left out by default. |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 | `--target <FILE>` |  | Repo file to add the line to (default: CLAUDE.md or AGENTS.md, whichever the issue's agent reads) |
 | `--dry-run` |  | Show the exact changes without writing anything. |
@@ -2252,6 +2255,7 @@ coding.sh improve check [options]
 | `--since <WHEN>` | `30d` | Only sessions (check: changes) after this time: 7d, 12h or a date. |
 | `--repo <DIR|all>` |  | Only sessions under this directory, or all (default: this git repo) |
 | `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `--headless` |  | Include headless sessions (claude -p, an Agent SDK, codex exec), left out by default. |
 | `-n, --limit <N>` | `5` | Maximum rows. |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 | `--watch` |  | Keep running and print a line when a change's verdict moves as new sessions arrive. |

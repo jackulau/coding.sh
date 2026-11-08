@@ -98,6 +98,7 @@ const IMPROVE_FLAGS = (since: string, limit: number): FlagSpec[] => [
   { name: "since", type: "string", value: "<WHEN>", desc: "Only sessions (check: changes) after this time: 7d, 12h or a date", default: since },
   { name: "repo", type: "string", value: "<DIR|all>", desc: "Only sessions under this directory, or all (default: this git repo)" },
   AGENT_LIST,
+  { name: "headless", type: "boolean", desc: "Include headless sessions (claude -p, an Agent SDK, codex exec), left out by default" },
   LIMIT(limit),
   FRESH,
 ];
@@ -1238,6 +1239,7 @@ export const COMMANDS: CommandSpec[] = [
     notes: [
       "improve lists the failure flags in this repo's sessions and any command or tool that fails the same way in two or more sessions. Issues seen in two or more sessions come first, then by the severity score refine uses. Each issue has an example session, a fix, and the commands that take it through the loop: show, improve fix, exp ab, improve check.",
       "A failing test command that already failed before the agent changed any file is reported as a broken setup: fix the command first, or the agent can't check its work.",
+      "Headless sessions (claude -p, an Agent SDK, codex exec: scripts, judges and evals) are left out, and the first line says how many; --headless counts them. Eval and benchmark runs and subagents are always left out.",
       "A failed compound line (&&, ;, |, a loop) counts against the part that failed: the one its error names, the tool whose error it is, the part timeout stopped, or the last part of a pipeline. When nothing singles one out, the issue says compound command.",
       "When sessions ran on the repo's current harness version (the newest commit that changed CLAUDE.md, AGENTS.md, a rule or a skill) and none of them had an issue, the issue is marked 'Not seen since <commit>', goes last, and points at improve check instead of a new line.",
       "check reads the git history of CLAUDE.md, AGENTS.md, GEMINI.md, .claude/rules, .cursor/rules and skills. A session counts for the newest such commit its starting HEAD contains, so uncommitted edits count from the commit that keeps them. Sessions with no recorded HEAD, and sessions with no tool call outside MCP servers (a chat, or asking coding.sh about a change), are left out.",

@@ -14,7 +14,7 @@ export interface World {
 }
 
 /** Before the CLAUDE.md change, 4 of 6 sessions edit without a check (or, with `beforeTested`, all 6 run the tests); after it, `afterFlagged` of 6 skip the check. With `elsewhere`, every session ran in another checkout of the repo (`<name>/other`). */
-export async function improveWorld(root: string, name: string, o: { afterFlagged: number; beforeTested?: boolean; elsewhere?: boolean }): Promise<World> {
+export async function improveWorld(root: string, name: string, o: { afterFlagged: number; beforeTested?: boolean; elsewhere?: boolean; headless?: number }): Promise<World> {
   const elsewhere = o.elsewhere === true;
   const home = join(root, name, "home");
   const repo = join(root, name, "repo");
@@ -59,8 +59,10 @@ export async function improveWorld(root: string, name: string, o: { afterFlagged
   try {
     // Flags come from the events (ingest recomputes them): an edit with no check is no-verification.
     const at = elsewhere ? join(root, name, "other") : repo;
-    const put = (id: string, head: string, daysAgo: number, o: { edit: boolean; test: boolean }) => {
+    const put = (id: string, head: string, daysAgo: number, o: { edit: boolean; test: boolean; headless?: boolean }) => {
       const steps: Parameters<typeof sessionEvents>[2] = [["user.message", { text: `Task ${id}` }]];
+      // How `claude -p` says it started: the transcript's entrypoint.
+      if (o.headless) steps.unshift(["session.start", { entrypoint: "sdk-cli" }]);
       if (o.edit) steps.push(["tool.start", { tool: "Edit", toolUseId: `${id}-e`, input: { file_path: join(at, "index.js") } }], ["tool.end", { tool: "Edit", toolUseId: `${id}-e`, ok: true }], ["file.change", { path: "index.js", op: "modify" }]);
       if (o.test) steps.push(["tool.start", { tool: "Bash", toolUseId: `${id}-t`, input: { command: "npm test" } }], ["tool.end", { tool: "Bash", toolUseId: `${id}-t`, ok: true, output: "ok" }]);
       steps.push(["assistant.message", { text: "Done." }]);
@@ -69,6 +71,7 @@ export async function improveWorld(root: string, name: string, o: { afterFlagged
     };
     for (let k = 0; k < 6; k++) await put(`before-${k}`, commits.init, 11 - k * 0.5, o.beforeTested ? { edit: true, test: true } : { edit: k < 4, test: false });
     for (let k = 0; k < 6; k++) await put(`after-${k}`, commits.rule, 5 - k * 0.5, { edit: true, test: k >= o.afterFlagged });
+    for (let k = 0; k < (o.headless ?? 0); k++) await put(`headless-${k}`, commits.rule, 4 - k * 0.5, { edit: true, test: false, headless: true });
   } finally {
     await ctx.close();
   }

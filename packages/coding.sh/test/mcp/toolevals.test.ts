@@ -62,8 +62,9 @@ describe("tool evals against the coding.sh MCP server", () => {
     // harness audit, and refine check with check: true) adds about 1.35 KB; shorter shared argument
     // descriptions (agent, repo, until, limit, cursor, sessionId) paid for it within the same budget.
     // session_tree (the 22nd, a whole multi-agent run as one tree with rolled-up totals and the
-    // worst node) adds about 2.4 KB.
-    assert.ok(s.surfaceBytes < 37_700, `surface is ${s.surfaceBytes} bytes`);
+    // worst node) adds about 2.4 KB. improve's headless argument (headless runs are left out by
+    // default) adds about 50 bytes, less the default its description repeated from since.
+    assert.ok(s.surfaceBytes < 37_750, `surface is ${s.surfaceBytes} bytes`);
     assert.ok(s.descriptionBytes < 10_400, `descriptions are ${s.descriptionBytes} bytes`);
     for (const it of s.items) assert.ok(it.bytes < 4_000, `${it.name} is ${it.bytes} bytes`);
   });
