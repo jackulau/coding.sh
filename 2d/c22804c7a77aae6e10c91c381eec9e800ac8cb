@@ -1,0 +1,23 @@
+docs/perf.md
+  s_8e040dbdf13565::t_1d06944009dc9c 81-84
+scripts/perf/lighthouse.mjs
+  s_8e040dbdf13565::t_27b53403afb4da 32-35,39,99-109,210,212,216
+scripts/perf/ab.mjs
+  s_8e040dbdf13565::t_2ff2264c401381 9,21-27,56,61,109-110,126-127,129,134-144,146,150-153,158
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2dc22804c7a77aae6e10c91c381eec9e800ac8cb",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
