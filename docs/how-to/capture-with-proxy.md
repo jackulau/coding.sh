@@ -21,11 +21,34 @@ This installs the hooks as usual, and also:
   and selects it;
 - starts the proxy in the background (log: `~/.coding.sh/proxy.log`).
 
-Each changed file is backed up first. `--agent claude-code --proxy` routes one agent only. If you
-already set `ANTHROPIC_BASE_URL` or a Codex `model_provider` of your own, `init` stops and says how
-to keep it: set it as the proxy's upstream (below), then run `init --proxy --force`. When a Claude
-Code or Codex session starts, the hook restarts a stopped proxy (set `CODING_SH_NO_PROXY_AUTOSTART=1`
-to turn that off).
+Each changed file is backed up first. `--agent claude-code --proxy` routes one agent only. When a
+Claude Code or Codex session starts, the hook restarts a stopped proxy (set
+`CODING_SH_NO_PROXY_AUTOSTART=1` to turn that off).
+
+### Already using a gateway or CLIProxyAPI?
+
+If the agent already calls another base URL, `init --proxy` puts the proxy in front of it instead of
+replacing it. The calls are logged, then go on to the same URL as before. It looks for:
+
+- Claude Code: `ANTHROPIC_BASE_URL` in `settings.json`, else in the environment `init` runs in;
+- Codex: the `base_url` of your own `model_provider`, else `openai_base_url`, else `OPENAI_BASE_URL`.
+
+The agent gets the proxy's address with that URL's path, and the URL's origin becomes the proxy's
+upstream:
+
+| Before | After | Upstream |
+|---|---|---|
+| `ANTHROPIC_BASE_URL=http://127.0.0.1:8317` | `http://127.0.0.1:4320` | `http://127.0.0.1:8317` |
+| `ANTHROPIC_BASE_URL=https://gw.example.com/anthropic` | `http://127.0.0.1:4320/anthropic` | `https://gw.example.com` |
+| `[model_providers.cliproxy]` `base_url = "http://127.0.0.1:8317/v1"` | `base_url = "http://127.0.0.1:4320/v1"` | `http://127.0.0.1:8317` |
+
+A Codex provider of your own keeps its table and stays selected. Only its `base_url` changes, so
+its `env_key`, headers and wire API still apply. `init` prints the URL it chains through, and `doctor`
+shows it. `uninstall --proxy` puts the old value back, byte for byte while the file is unchanged.
+
+`init --proxy --force` replaces the URL instead: the calls go to the proxy's configured upstream
+(the provider's own API unless you set one), and Codex switches to the `coding-sh` provider. A URL with a query string or credentials in it is never chained;
+`init` stops and asks for `--force`.
 
 Other clients, including your own scripts and SDKs, use the environment:
 
@@ -54,14 +77,15 @@ The client's own auth headers go upstream unchanged. The proxy holds no keys, ne
 accounts, and sends one upstream request per client request. Streams are passed through as they
 arrive, with no buffering. If logging fails, the call still succeeds.
 
-To send calls on to a gateway, set the upstream:
+To send calls on to a gateway by hand, set the upstream:
 
 ```sh
 coding.sh proxy --anthropic-upstream https://gateway.example.com/anthropic
 ```
 
 or `anthropic_upstream` and `openai_upstream` under `[proxy]` in `~/.coding.sh/config.toml`
-([config reference](../reference/config.md)).
+([config reference](../reference/config.md)). A flag wins over the config, and the config wins over
+the upstream `init --proxy` chained through.
 
 Measured overhead on a Linux desktop (`node scripts/dogfood/bench.mjs proxy`, 60 paired calls of 20
 streamed chunks each): 0.34 ms per chunk (95% CI 0.28 to 0.39 ms) and 1.96 ms to the first byte

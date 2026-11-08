@@ -1,7 +1,7 @@
 // init --proxy / uninstall --proxy against a temp HOME: what each agent's config
 // gets, conflicts refused, and uninstall leaving files byte-for-byte as before.
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
 import { run as initRun } from "../../src/cli/commands/init.ts";
@@ -10,8 +10,8 @@ import { Output } from "../../src/cli/output.ts";
 import type { CommandContext } from "../../src/cli/types.ts";
 import { parseToml } from "../../src/core/toml.ts";
 import { applyProxyInstall, applyProxyUninstall, planProxyInstall, planProxyUninstall, proxyRoutes, readProxyInstalls, type ProxyAgent } from "../../src/proxy/install.ts";
-import { startProxy } from "../../src/proxy/server.ts";
-import { writeProxyState } from "../../src/proxy/state.ts";
+import { joinUpstream, startProxy } from "../../src/proxy/server.ts";
+import { proxySettings, writeProxyState } from "../../src/proxy/state.ts";
 import { kickProxy, type KickSpawner } from "../../src/spool/kick.ts";
 import { tmpEnv, writeFile, type TmpEnv } from "../adapters/_helpers.ts";
 
@@ -19,8 +19,13 @@ const URL = "http://127.0.0.1:4320";
 let t: TmpEnv & { cleanup?: () => Promise<void> };
 let claude = "";
 let codex = "";
+// Base URLs in the environment are chained through: keep the developer's own out of these tests.
+const BASE_ENV = ["ANTHROPIC_BASE_URL", "OPENAI_BASE_URL"] as const;
+let savedBase: Record<string, string | undefined> = {};
 beforeEach(() => {
   t = tmpEnv();
+  savedBase = Object.fromEntries(BASE_ENV.map((k) => [k, process.env[k]]));
+  for (const k of BASE_ENV) delete process.env[k];
   process.env.CLAUDE_CONFIG_DIR = join(t.home, ".claude");
   process.env.CODEX_HOME = join(t.home, ".codex");
   claude = join(t.home, ".claude", "settings.json");
@@ -28,6 +33,10 @@ beforeEach(() => {
 });
 afterEach(async () => {
   await t.cleanup?.();
+  for (const k of BASE_ENV) {
+    if (savedBase[k] === undefined) delete process.env[k];
+    else process.env[k] = savedBase[k];
+  }
   t.restore();
 });
 
@@ -91,10 +100,54 @@ describe("Claude Code", () => {
     assert.deepEqual(JSON.parse(readFileSync(claude, "utf8")), { model: "opus", theme: "dark" });
   });
 
-  test("refuses to replace a base URL the user set, unless --force; uninstall puts it back", async () => {
+  test("chains through a base URL the user set: the proxy takes its path, its origin becomes the upstream", async () => {
+    const before = `{\n  "env": { "ANTHROPIC_BASE_URL": "https://gw.example.com/anthropic/" },\n  "model": "opus"\n}\n`;
+    writeFile(claude, before);
+    const plan = planProxyInstall("claude-code", { url: URL });
+    assert.match(plan?.summary ?? "", /calls go on to https:\/\/gw\.example\.com\/anthropic\//);
+    await install("claude-code");
+    assert.equal(JSON.parse(readFileSync(claude, "utf8")).env.ANTHROPIC_BASE_URL, `${URL}/anthropic`);
+    const rec = readProxyInstalls(process.env)["claude-code"];
+    assert.equal(rec?.chained, "https://gw.example.com/anthropic/");
+    assert.equal(rec?.upstream, "https://gw.example.com");
+    assert.equal(proxySettings(process.env).upstreams.anthropic, "https://gw.example.com");
+    assert.equal(proxySettings(process.env).upstreams.openai, "https://api.openai.com", "Codex not chained");
+    // What the agent sends now reaches the URL it reached before.
+    assert.equal(joinUpstream(rec!.upstream!, "/anthropic/v1/messages").href, "https://gw.example.com/anthropic/v1/messages");
+    assert.deepEqual(proxyRoutes(process.env), [{ agent: "claude-code", file: claude, url: `${URL}/anthropic`, expected: `${URL}/anthropic`, chained: "https://gw.example.com/anthropic/" }]);
+    assert.equal(planProxyInstall("claude-code", { url: URL }), undefined, "idempotent");
+    // A new port keeps the chain.
+    await install("claude-code", { url: "http://127.0.0.1:4999" });
+    assert.equal(JSON.parse(readFileSync(claude, "utf8")).env.ANTHROPIC_BASE_URL, "http://127.0.0.1:4999/anthropic");
+    assert.equal(readProxyInstalls(process.env)["claude-code"]?.chained, "https://gw.example.com/anthropic/");
+    await uninstall("claude-code");
+    assert.equal(readFileSync(claude, "utf8"), before, "byte for byte");
+    assert.equal(proxySettings(process.env).upstreams.anthropic, "https://api.anthropic.com", "the chain goes with the record");
+  });
+
+  test("chains through ANTHROPIC_BASE_URL from the environment, and uninstall drops only our key", async () => {
+    process.env.ANTHROPIC_BASE_URL = "http://127.0.0.1:8317";
+    writeFile(claude, `{ "model": "opus" }\n`);
+    await install("claude-code");
+    assert.equal(JSON.parse(readFileSync(claude, "utf8")).env.ANTHROPIC_BASE_URL, URL);
+    assert.equal(readProxyInstalls(process.env)["claude-code"]?.upstream, "http://127.0.0.1:8317");
+    writeFileSync(claude, readFileSync(claude, "utf8").replace("{", '{ "theme": "dark",'));
+    await uninstall("claude-code");
+    assert.deepEqual(JSON.parse(readFileSync(claude, "utf8")), { theme: "dark", model: "opus" });
+  });
+
+  test("won't chain through a URL with credentials or a query", () => {
+    writeFile(claude, `{ "env": { "ANTHROPIC_BASE_URL": "https://user:pw@gw.example.com" } }\n`);
+    assert.throws(() => planProxyInstall("claude-code", { url: URL }), /not a plain http\(s\) URL[\s\S]*--force/);
+    writeFile(claude, `{ "env": { "ANTHROPIC_BASE_URL": "https://gw.example.com?key=1" } }\n`);
+    assert.throws(() => planProxyInstall("claude-code", { url: URL }), /--force/);
+  });
+
+  test("--force replaces a base URL the user set; uninstall puts it back", async () => {
     writeFile(claude, `{ "env": { "ANTHROPIC_BASE_URL": "https://gw.example.com" } }\n`);
-    assert.throws(() => planProxyInstall("claude-code", { url: URL }), /anthropic_upstream = "https:\/\/gw\.example\.com"/);
     await install("claude-code", { force: true });
+    assert.equal(JSON.parse(readFileSync(claude, "utf8")).env.ANTHROPIC_BASE_URL, URL);
+    assert.equal(readProxyInstalls(process.env)["claude-code"]?.upstream, undefined);
     assert.equal(readProxyInstalls(process.env)["claude-code"]?.previous, "https://gw.example.com");
     // Touch the file so the structural path (not the byte restore) runs.
     writeFileSync(claude, readFileSync(claude, "utf8").replace("{", '{ "model": "opus",'));
@@ -153,15 +206,93 @@ describe("Codex", () => {
     assert.deepEqual(v, { model: "gpt-5.5", notice: { hide: true } });
   });
 
-  test("model_provider = openai is replaced and restored; a custom provider is refused without --force", async () => {
+  test("model_provider = openai is replaced and restored", async () => {
     writeFile(codex, `model_provider = "openai"\n`);
     await install("codex");
     writeFileSync(codex, readFileSync(codex, "utf8") + "\n# note\n");
     await uninstall("codex");
     assert.equal(parseToml(readFileSync(codex, "utf8")).model_provider, "openai");
+  });
 
-    writeFileSync(codex, `model_provider = "azure"\n\n[model_providers.azure]\nbase_url = "https://x.openai.azure.com/openai"\n`);
-    assert.throws(() => planProxyInstall("codex", { url: URL }), /model_provider = "azure"/);
+  const CLIPROXY = `model = "gpt-5.5"
+model_provider = "cliproxy"
+
+[model_providers.cliproxy]
+name = "CLIProxyAPI"
+base_url = "http://127.0.0.1:8317/v1"
+env_key = "CLIPROXY_KEY"
+wire_api = "responses"
+
+[mcp_servers.docs]
+command = "docs-mcp"
+`;
+
+  test("chains through the user's own provider: only its base_url changes, and uninstall restores the exact bytes", async () => {
+    writeFile(codex, CLIPROXY);
+    await install("codex");
+    const v = parseToml(readFileSync(codex, "utf8"));
+    assert.equal(v.model_provider, "cliproxy", "still the user's provider");
+    assert.deepEqual((v.model_providers as Record<string, unknown>).cliproxy, { name: "CLIProxyAPI", base_url: `${URL}/v1`, env_key: "CLIPROXY_KEY", wire_api: "responses" });
+    assert.equal((v.model_providers as Record<string, unknown>)["coding-sh"], undefined);
+    const rec = readProxyInstalls(process.env).codex;
+    assert.deepEqual([rec?.provider, rec?.chained, rec?.upstream, rec?.target], ["cliproxy", "http://127.0.0.1:8317/v1", "http://127.0.0.1:8317", `${URL}/v1`]);
+    assert.equal(proxySettings(process.env).upstreams.openai, "http://127.0.0.1:8317");
+    assert.equal(joinUpstream(rec!.upstream!, "/v1/responses").href, "http://127.0.0.1:8317/v1/responses");
+    assert.deepEqual(proxyRoutes(process.env), [{ agent: "codex", file: codex, url: `${URL}/v1`, expected: `${URL}/v1`, chained: "http://127.0.0.1:8317/v1" }]);
+    assert.equal(planProxyInstall("codex", { url: URL }), undefined, "idempotent");
+    await install("codex", { url: "http://127.0.0.1:4999" });
+    assert.equal((parseToml(readFileSync(codex, "utf8")).model_providers as Record<string, Record<string, unknown>>).cliproxy!.base_url, "http://127.0.0.1:4999/v1");
+    await uninstall("codex");
+    assert.equal(readFileSync(codex, "utf8"), CLIPROXY, "byte for byte");
+    assert.equal(proxySettings(process.env).upstreams.openai, "https://api.openai.com");
+  });
+
+  test("a chained provider edited since (Codex added a section, our tag gone) gets its base_url back", async () => {
+    writeFile(codex, CLIPROXY);
+    await install("codex");
+    writeFileSync(codex, readFileSync(codex, "utf8").replace(/ # coding\.sh.*$/m, "") + `\n[projects."/work/demo"]\ntrust_level = "trusted"\n`);
+    await uninstall("codex");
+    const v = parseToml(readFileSync(codex, "utf8"));
+    assert.equal((v.model_providers as Record<string, Record<string, unknown>>).cliproxy!.base_url, "http://127.0.0.1:8317/v1");
+    assert.ok(v.projects, "the new section stays");
+  });
+
+  test("a provider path without /v1 (Azure) keeps its path through the proxy", async () => {
+    writeFile(codex, `model_provider = "azure"\n\n[model_providers.azure]\nbase_url = "https://x.openai.azure.com/openai"\nquery_params = { api-version = "2025-04-01-preview" }\n`);
+    await install("codex");
+    const rec = readProxyInstalls(process.env).codex;
+    assert.equal(rec?.target, `${URL}/openai`);
+    assert.equal(joinUpstream(rec!.upstream!, "/openai/responses?api-version=2025-04-01-preview").href, "https://x.openai.azure.com/openai/responses?api-version=2025-04-01-preview");
+  });
+
+  test("openai_base_url or OPENAI_BASE_URL is chained through the coding-sh provider", async () => {
+    const before = `openai_base_url = "https://gw.example.com/openai/v1"\n`;
+    writeFile(codex, before);
+    await install("codex");
+    const v = parseToml(readFileSync(codex, "utf8"));
+    assert.equal(v.model_provider, "coding-sh");
+    assert.equal((v.model_providers as Record<string, Record<string, unknown>>)["coding-sh"]!.base_url, `${URL}/openai/v1`);
+    assert.equal(readProxyInstalls(process.env).codex?.upstream, "https://gw.example.com");
+    await uninstall("codex");
+    assert.equal(readFileSync(codex, "utf8"), before);
+
+    process.env.OPENAI_BASE_URL = "http://localhost:4000/v1";
+    rmSync(codex);
+    await install("codex");
+    assert.equal(readProxyInstalls(process.env).codex?.upstream, "http://localhost:4000");
+    assert.equal((parseToml(readFileSync(codex, "utf8")).model_providers as Record<string, Record<string, unknown>>)["coding-sh"]!.base_url, `${URL}/v1`);
+  });
+
+  test("--force switches a custom provider to OpenAI through the proxy; a provider with no base_url needs it", async () => {
+    writeFile(codex, CLIPROXY);
+    await install("codex", { force: true });
+    assert.equal(parseToml(readFileSync(codex, "utf8")).model_provider, "coding-sh");
+    assert.equal(readProxyInstalls(process.env).codex?.upstream, undefined);
+    await uninstall("codex");
+    assert.equal(readFileSync(codex, "utf8"), CLIPROXY);
+
+    writeFileSync(codex, `model_provider = "local"\n\n[model_providers.local]\nname = "x"\n`);
+    assert.throws(() => planProxyInstall("codex", { url: URL }), /no base_url to chain through[\s\S]*--force/);
   });
 
   test("a [model_providers.coding-sh] coding.sh never wrote is the user's", async () => {
@@ -238,6 +369,39 @@ describe("init --proxy and uninstall --proxy", () => {
 
       const p = ctx({ agent: ["claude-code"], proxy: true, scope: "project" });
       await assert.rejects(initRun(p.c), /user config/);
+    } finally {
+      delete process.env.CODING_SH_HOOK_SOURCE;
+    }
+  });
+
+  test("keeps a CLIProxyAPI both agents already used as the upstream, and uninstall leaves both files identical", async () => {
+    process.env.PATH = join(t.root, "nobin");
+    const hook = join(t.root, "dist", "hook.mjs");
+    writeFile(hook, "// hook\n");
+    process.env.CODING_SH_HOOK_SOURCE = hook;
+    try {
+      const claudeBefore = `{\n  "env": { "ANTHROPIC_BASE_URL": "http://127.0.0.1:8317" }\n}\n`;
+      const codexBefore = `model_provider = "cliproxy"\n\n[model_providers.cliproxy]\nname = "CLIProxyAPI"\nbase_url = "http://127.0.0.1:8317/v1"\nenv_key = "CLIPROXY_KEY"\n`;
+      writeFile(claude, claudeBefore);
+      writeFile(codex, codexBefore);
+      // A proxy already running with the chained upstreams, so init neither starts nor restarts one.
+      const running = await startProxy({ port: 0 });
+      t.cleanup = () => running.close();
+      await writeProxyState({ pid: process.pid, url: running.url, host: running.host, port: running.port, startedAt: Date.now(), upstreams: { anthropic: "http://127.0.0.1:8317", openai: "http://127.0.0.1:8317", chatgpt: "https://chatgpt.com/backend-api/codex" } }, process.env);
+
+      const r = ctx({ agent: ["claude-code", "codex"], proxy: true });
+      assert.equal(await initRun(r.c), 0);
+      assert.match(r.err(), /Claude Code calls go on to http:\/\/127\.0\.0\.1:8317, the base URL it used before/);
+      assert.match(r.err(), /Codex CLI calls go on to http:\/\/127\.0\.0\.1:8317\/v1/);
+      assert.equal(JSON.parse(readFileSync(claude, "utf8")).env.ANTHROPIC_BASE_URL, URL);
+      const v = parseToml(readFileSync(codex, "utf8"));
+      assert.equal(v.model_provider, "cliproxy");
+      assert.equal((v.model_providers as Record<string, Record<string, unknown>>).cliproxy!.base_url, `${URL}/v1`);
+      assert.deepEqual(proxySettings(process.env).upstreams, { anthropic: "http://127.0.0.1:8317", openai: "http://127.0.0.1:8317", chatgpt: "https://chatgpt.com/backend-api/codex" });
+
+      assert.equal(await uninstallRun(ctx({}).c), 0);
+      assert.equal(readFileSync(claude, "utf8"), claudeBefore);
+      assert.equal(readFileSync(codex, "utf8"), codexBefore);
     } finally {
       delete process.env.CODING_SH_HOOK_SOURCE;
     }

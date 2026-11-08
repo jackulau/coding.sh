@@ -186,14 +186,16 @@ protect = ["^Use pnpm", "staging"]
 
 ## `[proxy]`
 
-Read by `coding.sh proxy` and `coding.sh init --proxy`. Flags on `coding.sh proxy` win over these. See
-[Capture with the proxy](../how-to/capture-with-proxy.md).
+Read by `coding.sh proxy` and `coding.sh init --proxy`. Flags on `coding.sh proxy` win over these,
+and these win over the upstream `init --proxy` chained through (the base URL an agent used before,
+kept in `~/.coding.sh/proxy-installs.json`). See
+[Capture with the proxy](../how-to/capture-with-proxy.md#already-using-a-gateway-or-cliproxyapi).
 
 | Key | Default | What |
 |---|---|---|
 | `port` | `4320` | Port the proxy listens on, and the one `init --proxy` points agents at. |
 | `host` | `127.0.0.1` | Interface to bind. |
-| `anthropic_upstream` | `https://api.anthropic.com` | Where Anthropic API calls go: a gateway, or the base URL an agent used before. |
+| `anthropic_upstream` | `https://api.anthropic.com` | Where Anthropic API calls go, e.g. a gateway. |
 | `openai_upstream` | `https://api.openai.com` | Where OpenAI API calls go. |
 | `chatgpt_upstream` | `https://chatgpt.com/backend-api/codex` | Where Codex calls signed in with ChatGPT go. |
 

@@ -16,7 +16,7 @@ import { defaultConfigToml } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
 import type { Adapter, FileChange, McpServerSpec } from "../../core/types.ts";
 import { mcpLaunchSpec, runningCli } from "../../mcp/launch.ts";
-import { applyProxyInstall, isProxyAgent, planProxyInstall } from "../../proxy/install.ts";
+import { applyProxyInstall, isProxyAgent, planProxyInstall, readProxyInstalls } from "../../proxy/install.ts";
 import { proxySettings } from "../../proxy/state.ts";
 import { suggest, UsageError } from "../args.ts";
 import { changeJson, printChanges, shortPath } from "../changes.ts";
@@ -239,7 +239,7 @@ export async function run(c: CommandContext): Promise<number> {
     if (withMcp && adapter.installMcp) pl.mcp = await plan(() => adapter.installMcp!({ server, dryRun: true }));
     if (withProxy && isProxyAgent(adapter.id)) {
       const id = adapter.id;
-      pl.proxy = await plan(async () => [planProxyInstall(id, { url: proxyUrl, env, force })].filter((x): x is FileChange => x !== undefined));
+      pl.proxy = await plan(async () => [planProxyInstall(id, { url: proxyUrl, env, force })].filter((x) => x !== undefined));
     } else if (withProxy && named.includes(adapter.id)) pl.proxyUnsupported = true;
     plans.push(pl);
   }
@@ -337,12 +337,12 @@ export async function run(c: CommandContext): Promise<number> {
   const errors = applied.some((x) => x.hooks.error || x.mcp?.error || x.proxy?.error);
   // Routed agents need the proxy up: start it now (the hook restarts it on later session starts).
   const routed = applied.filter((x) => x.proxy && !x.proxy.error);
-  let proxyStart: { url: string; pid: number; started: boolean; error?: string } | undefined;
+  let proxyStart: { url: string; pid: number; started: boolean; restarted?: boolean; error?: string } | undefined;
   if (routed.length) {
     try {
       const { ensureRunning } = await import("./proxy.ts");
       const r = await ensureRunning(env);
-      proxyStart = { url: r.state.url, pid: r.state.pid, started: r.started };
+      proxyStart = { url: r.state.url, pid: r.state.pid, started: r.started, ...(r.restarted ? { restarted: true } : {}) };
     } catch (e) {
       proxyStart = { url: proxyUrl, pid: 0, started: false, error: errText(e) };
     }
@@ -378,7 +378,12 @@ export async function run(c: CommandContext): Promise<number> {
   if (routed.length) {
     const names = joinNames(routed.map((x) => x.pl.adapter.displayName));
     if (proxyStart?.error) out.warn(`${names} now call ${proxyUrl}, but the proxy did not start (${proxyStart.error}). Start it: coding.sh proxy --background`);
-    else out.ok(`${names} → proxy at ${proxyUrl}${proxyStart?.started ? ` (started, pid ${proxyStart.pid})` : ""}; restart running sessions to pick it up`);
+    else out.ok(`${names} → proxy at ${proxyUrl}${proxyStart?.started ? ` (${proxyStart.restarted ? "restarted" : "started"}, pid ${proxyStart.pid})` : ""}; restart running sessions to pick it up`);
+    const recs = readProxyInstalls(env);
+    for (const x of routed) {
+      const chained = isProxyAgent(x.pl.adapter.id) ? recs[x.pl.adapter.id]?.chained : undefined;
+      if (chained) out.note(`${x.pl.adapter.displayName} calls go on to ${chained}, the base URL it used before`);
+    }
   }
   out.note(`Open the viewer: ${out.style("coding.sh", "cyan", "err")}`);
   out.note(`Docs: ${DOCS_URL}`);

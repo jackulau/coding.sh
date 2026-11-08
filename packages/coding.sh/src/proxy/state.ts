@@ -1,7 +1,8 @@
 // The running proxy's state file (~/.coding.sh/proxy.json) and settings.
 // `coding.sh proxy` writes it while it runs; `proxy status`, `proxy stop`,
 // `doctor` and `init --proxy` read it. Settings come from flags, then the
-// `[proxy]` table of config.toml, then defaults.
+// `[proxy]` table of config.toml, then the base URLs `init --proxy` chained
+// through (proxy-installs.json), then defaults.
 import { readFileSync, rmSync } from "node:fs";
 import { request } from "node:http";
 import { atomicWrite } from "../adapters/_shared/files.ts";
@@ -89,7 +90,20 @@ export interface ProxySettings {
 
 const strOf = (v: unknown): string | undefined => (typeof v === "string" && v.trim() ? v.trim() : undefined);
 
-/** [proxy] in config.toml: port, host, anthropic_upstream, openai_upstream. */
+/**
+ * The upstreams `init --proxy` chained through (install.ts): the origin of the
+ * base URL Claude Code (anthropic) or Codex (openai) called before.
+ */
+export function chainedUpstreams(env: NodeJS.ProcessEnv = process.env): { anthropic?: string; openai?: string } {
+  try {
+    const agents = (JSON.parse(readFileSync(paths(env).proxyInstalls, "utf8")) as { agents?: Record<string, { upstream?: unknown } | undefined> }).agents ?? {};
+    return { anthropic: strOf(agents["claude-code"]?.upstream), openai: strOf(agents.codex?.upstream) };
+  } catch {
+    return {}; // nothing routed
+  }
+}
+
+/** [proxy] in config.toml: port, host, anthropic_upstream, openai_upstream; then the chained upstreams. */
 export function proxySettings(env: NodeJS.ProcessEnv = process.env, flags: { port?: number; host?: string; anthropic?: string; openai?: string } = {}): ProxySettings {
   let t: Record<string, unknown> = {};
   try {
@@ -99,12 +113,13 @@ export function proxySettings(env: NodeJS.ProcessEnv = process.env, flags: { por
     // a broken config is reported by the commands that load it
   }
   const port = flags.port ?? (typeof t.port === "number" ? t.port : DEFAULT_PROXY_PORT);
+  const chained = chainedUpstreams(env);
   return {
     host: flags.host ?? strOf(t.host) ?? "127.0.0.1",
     port,
     upstreams: {
-      anthropic: flags.anthropic ?? strOf(t.anthropic_upstream) ?? DEFAULT_UPSTREAMS.anthropic,
-      openai: flags.openai ?? strOf(t.openai_upstream) ?? DEFAULT_UPSTREAMS.openai,
+      anthropic: flags.anthropic ?? strOf(t.anthropic_upstream) ?? chained.anthropic ?? DEFAULT_UPSTREAMS.anthropic,
+      openai: flags.openai ?? strOf(t.openai_upstream) ?? chained.openai ?? DEFAULT_UPSTREAMS.openai,
       chatgpt: strOf(t.chatgpt_upstream) ?? DEFAULT_UPSTREAMS.chatgpt,
     },
   };

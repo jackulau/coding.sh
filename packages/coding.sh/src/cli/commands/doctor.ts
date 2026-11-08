@@ -256,7 +256,7 @@ export async function run(c: CommandContext): Promise<number> {
   const proxy = {
     running: proxyUp,
     ...(proxyUp ? { url: ps!.url, pid: ps!.pid } : {}),
-    routes: proxyRoutes(env).map((r) => ({ agent: r.agent, file: r.file, url: r.url ?? null, ok: r.url === r.expected })),
+    routes: proxyRoutes(env).map((r) => ({ agent: r.agent, file: r.file, url: r.url ?? null, ok: r.url === r.expected, chained: r.chained ?? null })),
   };
   const problems = (spool.ok ? 0 : 1) + (store.ok ? 0 : 1);
   // LLM gateways: read-only config scan; keys are reported as set or not, never shown.
@@ -306,7 +306,7 @@ export async function run(c: CommandContext): Promise<number> {
   out.row("Spool", spool.ok ? `${spool.path} writable` : `${spool.path} not writable: ${spool.error}`, spool.ok ? "ok" : "fail");
   out.row("Store", store.ok ? `${store.kind} ${store.url}` : `can't open: ${store.error}`, store.ok ? "ok" : "fail");
   out.row("Receiver", receiver.listening ? `port ${port} in use (collector running?)` : `port ${port} free; start with coding.sh collector`, receiver.listening ? "ok" : "none");
-  const routedNames = proxy.routes.filter((r) => r.ok).map((r) => ADAPTERS.find((a) => a.id === r.agent)?.displayName ?? r.agent);
+  const routedNames = proxy.routes.filter((r) => r.ok).map((r) => `${ADAPTERS.find((a) => a.id === r.agent)?.displayName ?? r.agent}${r.chained ? ` (then ${r.chained})` : ""}`);
   if (proxy.running) out.row("Proxy", `${proxy.url} (pid ${proxy.pid})${routedNames.length ? `, routes ${routedNames.join(", ")}` : ""}`, "ok");
   else if (routedNames.length) out.row("Proxy", `not running, but ${routedNames.join(" and ")} call it; it restarts on the next session start, or now with coding.sh proxy --background`, "warn");
   else out.row("Proxy", "not running; route agents through it with coding.sh init --proxy", "none");

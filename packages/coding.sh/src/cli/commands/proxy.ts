@@ -7,7 +7,7 @@ import { basename, dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { runningCli } from "../../mcp/launch.ts";
 import { startLocalProxy } from "../../proxy/index.ts";
-import { clearProxyState, pidAlive, probeProxy, proxyEnv, proxyLogPath, proxySettings, readProxyState, writeProxyState, type ProxyState } from "../../proxy/state.ts";
+import { chainedUpstreams, clearProxyState, pidAlive, probeProxy, proxyEnv, proxyLogPath, proxySettings, readProxyState, writeProxyState, type ProxyState } from "../../proxy/state.ts";
 import type { AgentEvent } from "../../schema/index.ts";
 import { port as portFlag, str, withContext } from "../common.ts";
 import { version } from "../meta.ts";
@@ -127,11 +127,30 @@ export async function startInBackground(env: NodeJS.ProcessEnv, flags: Record<st
   throw new CliError("The background proxy did not start", { reason: "proxy_failed", next: ["See its log:", proxyLogPath(env)] });
 }
 
-/** The running proxy, or one just started in the background on the configured port. */
-export async function ensureRunning(env: NodeJS.ProcessEnv): Promise<{ state: ProxyState; started: boolean }> {
+/**
+ * The running proxy, or one just started in the background on the configured
+ * port. A running proxy that would send a chained agent's calls somewhere else
+ * (it started before `init --proxy` chained through a base URL) is restarted.
+ */
+export async function ensureRunning(env: NodeJS.ProcessEnv): Promise<{ state: ProxyState; started: boolean; restarted?: boolean }> {
   const running = readProxyState(env);
-  if (running && pidAlive(running.pid) && (await probeProxy(running.url))) return { state: running, started: false };
-  return { state: await startInBackground(env, {}, proxySettings(env).port), started: true };
+  const s = proxySettings(env);
+  if (running && pidAlive(running.pid) && (await probeProxy(running.url))) {
+    const chained = chainedUpstreams(env);
+    const stale = (["anthropic", "openai"] as const).some((p) => chained[p] !== undefined && running.upstreams?.[p] !== s.upstreams[p]);
+    if (!stale) return { state: running, started: false };
+    await stopProxy(running, env);
+    return { state: await startInBackground(env, {}, s.port), started: true, restarted: true };
+  }
+  return { state: await startInBackground(env, {}, s.port), started: true };
+}
+
+async function stopProxy(st: ProxyState, env: NodeJS.ProcessEnv): Promise<void> {
+  process.kill(st.pid, "SIGTERM");
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && pidAlive(st.pid)) await sleep(50);
+  if (pidAlive(st.pid)) throw new CliError(`The proxy (pid ${st.pid}) did not stop`, { reason: "proxy_failed" });
+  clearProxyState(st.pid, env);
 }
 
 async function status(c: CommandContext): Promise<number> {
@@ -162,11 +181,7 @@ async function stop(c: CommandContext): Promise<number> {
     out.note("No proxy is running");
     return 0;
   }
-  process.kill(st.pid, "SIGTERM");
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline && pidAlive(st.pid)) await sleep(50);
-  if (pidAlive(st.pid)) throw new CliError(`The proxy (pid ${st.pid}) did not stop`, { reason: "proxy_failed" });
-  clearProxyState(st.pid, c.env);
+  await stopProxy(st, c.env);
   out.ok(`Stopped the proxy on ${st.url}`);
   return 0;
 }

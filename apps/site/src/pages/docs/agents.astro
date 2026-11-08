@@ -114,7 +114,8 @@ const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>  
     and messages of every call), route it through the local proxy with <code>coding.sh init --proxy</code>. It points Claude Code
     (<code>ANTHROPIC_BASE_URL</code> in <code>settings.json</code>) and Codex (a <code>coding-sh</code> provider in
     <code>config.toml</code>) at <code>coding.sh proxy</code> on <code>127.0.0.1:4320</code> and starts it. Both agents name their
-    session on every call, so each call lands in the session their hooks capture. Other clients use
+    session on every call, so each call lands in the session their hooks capture. An agent that already calls a gateway or
+    CLIProxyAPI keeps calling it, through the proxy. Other clients use
     <code>eval "$(coding.sh proxy env)"</code>. See <a href="/docs/how-to/capture-with-proxy">Capture with the proxy</a>.
   </p>
 
