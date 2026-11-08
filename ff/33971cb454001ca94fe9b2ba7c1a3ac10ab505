@@ -1,0 +1,52 @@
+packages/coding.sh/src/spool/githead.ts
+  s_8e040dbdf13565::t_6cfb0d07cdfd31 1-16,18-19,23-43,46,49-141
+  s_8e040dbdf13565::t_4dec9bab84b56e 17,44-45,47-48
+  s_8e040dbdf13565::t_7ca4cfd7be8474 20-22
+packages/coding.sh/test/capture/hook.test.ts
+  s_8e040dbdf13565::t_1940056152cddd 87-89
+  s_8e040dbdf13565::t_9bf0ce9e54ec4e 78-86,90-111
+  s_8e040dbdf13565::t_d3f75a45cba561 8
+docs/reference/config.md
+  s_8e040dbdf13565::t_7de56c40097fe1 249
+packages/coding.sh/test/spool/githead.test.ts
+  s_8e040dbdf13565::t_14b527ce66156d 43-45,48-53,56
+  s_8e040dbdf13565::t_d36a5dd02e5c7c 1-42,46-47,54-55,57-141,154-155
+  s_8e040dbdf13565::t_f2badf8099605d 142-153
+CHANGELOG.md
+  s_8e040dbdf13565::t_b441ef139bf475 16
+packages/coding.sh/src/core/repo-state.ts
+  s_8e040dbdf13565::t_ed49a54b663028 6-7
+packages/coding.sh/src/core/ingest.ts
+  s_8e040dbdf13565::t_25a2f935ab5e51 615-622
+docs/design/architecture.md
+  s_8e040dbdf13565::t_9d1630b67d5da3 78-80
+  s_8e040dbdf13565::t_79844f4368200a 74-77
+packages/coding.sh/src/spool/hook.ts
+  s_8e040dbdf13565::t_c2ce920821eb8c 39
+  s_8e040dbdf13565::t_fde22178efd97d 27-31,33-34,153-156
+packages/coding.sh/test/core/ingest-repo.test.ts
+  s_8e040dbdf13565::t_0a6df07f018592 4
+  s_8e040dbdf13565::t_6fdb98486a1b1c 88-105
+packages/coding.sh/src/core/types.ts
+  s_8e040dbdf13565::t_fde22178efd97d 31-33
+scripts/dogfood/bench.mjs
+  s_8e040dbdf13565::t_2aacf5e4a1e02f 45-57
+  s_8e040dbdf13565::t_70c7e67494ee23 110-111,114,116-117
+  s_8e040dbdf13565::t_fdf631012d7088 95-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ff33971cb454001ca94fe9b2ba7c1a3ac10ab505",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
