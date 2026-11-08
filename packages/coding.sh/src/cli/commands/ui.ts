@@ -2,6 +2,7 @@
 // worker (its own store connection), so the viewer shows what is indexed while
 // a big spool drains and new hook events show up while it runs. Ctrl-C stops
 // it (exit 130).
+import { isLocked } from "../../core/lock.ts";
 import { createRedactor } from "../../core/redact.ts";
 import { snapshotBaseline } from "../../core/replay.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
@@ -25,7 +26,12 @@ export async function run(c: CommandContext): Promise<number> {
       // Replays can start from a `coding.sh run` snapshot: its shadow repo is on this machine.
       const redactor = createRedactor({ redact: ctx.config.capture.redact, patterns: ctx.config.capture.redactPatterns, env: ctx.env });
       const replayBaseline = (s: Parameters<typeof snapshotBaseline>[0]) => snapshotBaseline(s, ctx.env, redactor);
-      viewer = await startViewer({ index: ctx.index, blobs: ctx.blobs, port, host, open, experiments, ingestStatus: () => ingest?.status(), replayBaseline });
+      // A history import (init's background rest) holds the import lock: the empty list says so.
+      const ingestStatus = () => {
+        const s = ingest?.status();
+        return s && { ...s, importing: isLocked(ctx.paths.importLock) };
+      };
+      viewer = await startViewer({ index: ctx.index, blobs: ctx.blobs, port, host, open, experiments, ingestStatus, replayBaseline });
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "EADDRINUSE") throw new CliError(`Can't start the viewer: port ${port} is in use`, { reason: "port_in_use", next: ["Pick another port:", "coding.sh ui --port 0"] });

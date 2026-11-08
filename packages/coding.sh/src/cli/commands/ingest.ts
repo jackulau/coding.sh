@@ -5,13 +5,16 @@
 // took it over mid-run (that one re-runs for the hook's wake-up marker, and
 // the next read's lazy ingest picks up anything else). It also re-parses
 // sessions stored by an older adapter parse, once per upgrade (core/reparse.ts).
+// `--background --backfill` is what init starts when its import budget runs out:
+// it imports the rest of the history under paths.importLock (one at a time).
 //
 // --rebuild re-parses every session (of --agent) from its transcript and spool now.
 import { parseSince } from "../args.ts";
-import { list, lockContention, str, tailIngest, withContext } from "../common.ts";
+import { list, lockContention, str, tailIngest, underImportLock, withContext } from "../common.ts";
 import { CliError, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import type { Context } from "../../core/context.ts";
+import type { IngestResult } from "../../core/ingest.ts";
 import type { ReparseResult } from "../../core/reparse.ts";
 import { healHookBin } from "../hookbin.ts";
 import { pickAdapters } from "./init.ts";
@@ -27,22 +30,28 @@ export async function run(c: CommandContext): Promise<number> {
   await healHookBin(c.env);
   return withContext(c, async (ctx) => {
     if (background) {
+      let r: IngestResult | undefined;
+      let rp: ReparseResult | null = null;
       try {
-        const r = await ctx.ingest({ lock: { waitMs: 0 } });
+        r = await ctx.ingest({ lock: { waitMs: 0 } });
         await tailIngest(ctx);
-        let rp: ReparseResult | null = null;
         try {
           if (await ctx.reparseDue()) rp = await ctx.reparse();
         } catch (e) {
           if (!lockContention(e)) throw e; // another re-parse runs, or an ingest kept the lock: the next one does it
         }
-        if (out.json) out.data({ outcome: "ingested", spool: r, backfill: null, reparse: rp });
-        return r.errors.length ? 1 : 0;
       } catch (e) {
         if (!lockContention(e)) throw e;
+      }
+      // --backfill: the rest of init's history import. It needs no spool lock, so it runs even
+      // while another ingest drains the spool; another import running makes it a no-op.
+      const bf = c.flags.backfill === true ? ((await underImportLock(ctx, 5000, () => ctx.backfill({ ...(agents.length ? { agents } : {}), ...(since !== undefined ? { since } : {}) }))) ?? null) : null;
+      if (!r && !bf) {
         if (out.json) out.data({ outcome: "busy" });
         return 0;
       }
+      if (out.json) out.data({ outcome: "ingested", spool: r ?? null, backfill: bf, reparse: rp });
+      return (r?.errors.length ?? 0) + (bf?.errors.length ?? 0) ? 1 : 0;
     }
     const spin = out.spin("Ingesting spool…");
     let r;

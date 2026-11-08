@@ -82,6 +82,7 @@ coding.sh init [options]
 | `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
 | `--scope <SCOPE>` | `user` | Install into user or project config. One of: `user`, `project`. |
 | `--mcp` | `true` | Register the coding.sh MCP server too (--no-mcp to skip) |
+| `--import` | `true` | Import each agent's past sessions so the viewer opens on your history (--no-import to skip) |
 | `--proxy` |  | Also route Claude Code and Codex model calls through the local proxy, and start it. |
 | `--force` |  | Install hooks even when the agent already has coding.sh hooks in the other scope; with --proxy, replace a base URL or provider you set instead of chaining through it. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. |
@@ -94,12 +95,14 @@ coding.sh init [options]
 ```sh
 coding.sh init
 coding.sh init --agent claude-code --yes
+coding.sh init --no-import
 coding.sh init --proxy
 coding.sh init --dry-run
 coding.sh init --remote https://obs.example.com --key csh_ik_…
 ```
 
 - Copies the hook to ~/.coding.sh/bin/hook.mjs and points each agent at it.
+- Then imports the sessions each agent already keeps on this machine, for up to 8 seconds (CODING_SH_INIT_IMPORT_BUDGET_MS changes it). The rest imports in the background and shows up in the viewer as it lands. Running init again reads only new or changed transcripts.
 - --remote checks that the server takes the key before writing anything, then adds the sink to ~/.coding.sh/config.toml (mode 600). Run it again to change the URL, key or mode.
 - Registers the MCP server with Claude Code, Codex, Cursor, OpenCode and Gemini CLI (user scope only).
 - --proxy sets ANTHROPIC_BASE_URL in Claude Code's settings.json and a coding-sh model provider in Codex's config.toml. A base URL the agent already used (a gateway, CLIProxyAPI, your own Codex provider) becomes the proxy's upstream instead of being replaced. The hook restarts a stopped proxy when a session starts.
@@ -151,7 +154,7 @@ coding.sh ingest [options]
 | `--rebuild` |  | Re-parse every stored session (of --agent) from its transcript and spool with the current adapters. |
 | `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
 | `--since <WHEN>` |  | Only after this time: 7d, 12h, 30m or a date. |
-| `--background` |  | Don't wait for another ingest; exit quietly if one is running. |
+| `--background` |  | Don't wait for another ingest; exit quietly if one is running. With --backfill, imports history unless another import is running. |
 
 ```sh
 coding.sh ingest

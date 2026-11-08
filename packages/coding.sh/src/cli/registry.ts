@@ -184,6 +184,7 @@ export const COMMANDS: CommandSpec[] = [
       AGENT_LIST,
       SCOPE,
       { name: "mcp", type: "boolean", desc: "Register the coding.sh MCP server too (--no-mcp to skip)", default: "true" },
+      { name: "import", type: "boolean", desc: "Import each agent's past sessions so the viewer opens on your history (--no-import to skip)", default: "true" },
       { name: "proxy", type: "boolean", desc: "Also route Claude Code and Codex model calls through the local proxy, and start it" },
       { name: "force", type: "boolean", desc: "Install hooks even when the agent already has coding.sh hooks in the other scope; with --proxy, replace a base URL or provider you set instead of chaining through it" },
       YES,
@@ -193,9 +194,10 @@ export const COMMANDS: CommandSpec[] = [
       { name: "key", type: "string", value: "<KEY>", desc: "With --remote, the server's ingest key, csh_ik_… (also CODING_SH_INGEST_KEY)" },
       { name: "remote-mode", type: "string", value: "<MODE>", desc: "With --remote: metadata sends no prompts, code or tool output; full sends them", default: "metadata" },
     ],
-    examples: ["coding.sh init", "coding.sh init --agent claude-code --yes", "coding.sh init --proxy", "coding.sh init --dry-run", "coding.sh init --remote https://obs.example.com --key csh_ik_…"],
+    examples: ["coding.sh init", "coding.sh init --agent claude-code --yes", "coding.sh init --no-import", "coding.sh init --proxy", "coding.sh init --dry-run", "coding.sh init --remote https://obs.example.com --key csh_ik_…"],
     notes: [
       "Copies the hook to ~/.coding.sh/bin/hook.mjs and points each agent at it.",
+      "Then imports the sessions each agent already keeps on this machine, for up to 8 seconds (CODING_SH_INIT_IMPORT_BUDGET_MS changes it). The rest imports in the background and shows up in the viewer as it lands. Running init again reads only new or changed transcripts.",
       "--remote checks that the server takes the key before writing anything, then adds the sink to ~/.coding.sh/config.toml (mode 600). Run it again to change the URL, key or mode.",
       "Registers the MCP server with Claude Code, Codex, Cursor, OpenCode and Gemini CLI (user scope only).",
       "--proxy sets ANTHROPIC_BASE_URL in Claude Code's settings.json and a coding-sh model provider in Codex's config.toml. A base URL the agent already used (a gateway, CLIProxyAPI, your own Codex provider) becomes the proxy's upstream instead of being replaced. The hook restarts a stopped proxy when a session starts.",
@@ -228,7 +230,7 @@ export const COMMANDS: CommandSpec[] = [
       { name: "rebuild", type: "boolean", desc: "Re-parse every stored session (of --agent) from its transcript and spool with the current adapters" },
       AGENT_LIST,
       SINCE,
-      { name: "background", type: "boolean", desc: "Don't wait for another ingest; exit quietly if one is running" },
+      { name: "background", type: "boolean", desc: "Don't wait for another ingest; exit quietly if one is running. With --backfill, imports history unless another import is running" },
     ],
     examples: ["coding.sh ingest", "coding.sh ingest --backfill --since 30d", "coding.sh ingest --rebuild --agent pi"],
     notes: [

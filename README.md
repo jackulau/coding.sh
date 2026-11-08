@@ -53,8 +53,9 @@ coding.sh, registers the MCP server where the agent supports it, and backs up ev
 edits. `coding.sh init --dry-run` prints the plan without writing anything (`--diff` adds the edits), and
 `coding.sh uninstall` removes the hooks and MCP entries again.
 
-Then use your agents as usual. Sessions show up on their own, with no ingest step. To pull in
-sessions from before you installed:
+`init` also imports the sessions your agents already keep on this machine, so the viewer opens on
+your own history; `--no-import` skips that. Then use your agents as usual. New sessions show up on
+their own, with no ingest step. To import past sessions again, for example after adding an agent:
 
 ```sh
 coding.sh ingest --backfill

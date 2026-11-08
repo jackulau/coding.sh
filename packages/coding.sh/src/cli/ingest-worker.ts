@@ -19,6 +19,8 @@ export interface IngestStatus {
   filesPending: number;
   /** When the last pass finished (ms epoch), null before the first. */
   lastIngestAt: number | null;
+  /** Past sessions are being imported (init, or the background import it started). Set by `coding.sh ui`. */
+  importing?: boolean;
 }
 
 export interface BackgroundIngest {

@@ -46,12 +46,13 @@ export function kickIngest(event: string, env: NodeJS.ProcessEnv = process.env, 
 /**
  * Starts `node <cli> ingest --background` detached (it outlives this process and
  * exits quietly when another ingest holds the lock). Returns `cli`, or undefined
- * when that file is missing. Also used by reads that ran out of their ingest budget.
+ * when that file is missing. Also used by reads that ran out of their ingest budget,
+ * and by init (`extra`: --backfill and its agents) when its import budget runs out.
  */
-export function spawnBackgroundIngest(cli: string | undefined, env: NodeJS.ProcessEnv = process.env, spawn?: KickSpawner): string | undefined {
+export function spawnBackgroundIngest(cli: string | undefined, env: NodeJS.ProcessEnv = process.env, spawn?: KickSpawner, extra: string[] = []): string | undefined {
   if (!cli || !existsSync(cli)) return undefined;
   const run = spawn ?? (process.getBuiltinModule("node:child_process").spawn as unknown as KickSpawner);
-  const child = run(process.execPath, [cli, "ingest", "--background"], { detached: true, stdio: "ignore", windowsHide: true, env: { ...env, NODE_OPTIONS: undefined } });
+  const child = run(process.execPath, [cli, "ingest", "--background", ...extra], { detached: true, stdio: "ignore", windowsHide: true, env: { ...env, NODE_OPTIONS: undefined } });
   child.unref();
   return cli;
 }

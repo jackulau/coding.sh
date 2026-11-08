@@ -3129,15 +3129,18 @@ function listActions(view) {
 }
 
 function captureEmpty() {
-  // A first `coding.sh ui` over a big spool opens before anything is indexed: say so instead.
-  const indexing = () => !$("#indexing").hidden;
-  const title = h("h2", { text: indexing() ? "Indexing captured sessions…" : "No sessions captured yet" });
+  // A first `coding.sh ui` over a big spool, or during init's history import, opens before anything is indexed: say so instead.
+  const state = () => ingestState.importing ? "Importing your past sessions…" : !$("#indexing").hidden ? "Indexing captured sessions…" : "No sessions yet";
+  const title = h("h2", { text: state() });
   const panel = h("div", { class: "panel empty" },
     title,
-    h("p", { text: "coding.sh records sessions through your agent's hooks. Set it up once, then keep working as usual." }),
+    h("p", { text: "Used Claude Code, Codex or another supported agent on this machine before? Import the sessions it kept:" }),
+    cmdBlock("coding.sh ingest --backfill", "Copy import command"),
+    h("p", { text: "Each past session then shows up here with its prompts, tool calls, files changed, tokens, cost and flags such as no-verification." }),
+    h("p", { text: "To record new sessions as they happen, set up the hooks once. init imports past sessions too:" }),
     cmdBlock("npx coding.sh init", "Copy init command"),
     h("ol", { class: "steps" },
-      h("li", null, "Run ", h("code", null, "npx coding.sh init"), " in a terminal. It detects installed agents and adds hooks."),
+      h("li", null, "Run ", h("code", null, "npx coding.sh init"), " in a terminal. It detects installed agents, adds hooks and imports their past sessions."),
       h("li", null, "Use Claude Code, Codex or another supported agent in any git repository."),
       h("li", null, "Come back here. New sessions show up on their own within a few seconds.")),
     h("button", { class: "btn", type: "button", onclick: () => { list.loaded = false; route(); } }, "Check again"));
@@ -3146,7 +3149,7 @@ function captureEmpty() {
   const timer = setInterval(async () => {
     if (!panel.isConnected) { clearInterval(timer); return; }
     if (document.hidden) return;
-    title.textContent = indexing() ? "Indexing captured sessions…" : "No sessions captured yet";
+    title.textContent = state();
     try {
       const body = await api("/api/sessions" + qs({ limit: 1 }), null, true);
       if (body && body.items && body.items.length && panel.isConnected) { clearInterval(timer); list.loaded = false; route(); }
@@ -6395,6 +6398,7 @@ async function loadUpdate() {
 // `coding.sh ui` ingests in the background, so the list can open on a partial
 // index. While a backlog of spool files is pending the top bar says how many; the list's
 // "new sessions" pill picks up what lands. 404 (`serve`, no background ingest) stops the polling.
+const ingestState = { importing: false };
 function loadIngest() {
   const pill = $("#indexing");
   let was = false;
@@ -6408,9 +6412,13 @@ function loadIngest() {
       } catch { /* the next tick tries again */ }
       if (st) {
         const n = typeof st.filesPending === "number" ? st.filesPending : 0;
+        ingestState.importing = !!st.importing;
         // A backlog only: live capture adds a few files every pass, and a flashing pill would be noise.
-        const on = !!st.ingesting && n >= 20;
-        if (on) {
+        const on = (!!st.ingesting && n >= 20) || ingestState.importing;
+        if (on && ingestState.importing) {
+          pill.replaceChildren(h("span", { class: "dot", "aria-hidden": "true" }), h("span", null, "Importing past sessions…"));
+          pill.title = "Past sessions are being imported in the background. The list shows what is imported so far.";
+        } else if (on) {
           pill.replaceChildren(h("span", { class: "dot", "aria-hidden": "true" }), h("span", null, "Indexing " + fmtNum(n) + (n === 1 ? " file…" : " files…")));
           pill.title = "Captured sessions are being indexed in the background. The list shows what is indexed so far.";
         }

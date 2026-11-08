@@ -5,7 +5,7 @@ import { loadConfig } from "./config.ts";
 import { paths } from "./paths.ts";
 import { openStores } from "../store/factory.ts";
 import { LockBusyError } from "./lock.ts";
-import type { BackfillResult, IngestOptions, IngestResult } from "./ingest.ts";
+import type { BackfillProgress, BackfillResult, IngestOptions, IngestResult } from "./ingest.ts";
 import type { GcOptions, GcResult } from "./gc.ts";
 import type { ReparseOptions, ReparseResult } from "./reparse.ts";
 
@@ -26,7 +26,7 @@ export interface Context {
   /** Drains the spool through the adapters' normalize into the index and sinks (lazy-loads adapters). */
   ingest(opts?: Pick<IngestOptions, "lock" | "checkpointEvents" | "now" | "deadline" | "signal" | "onProgress">): Promise<IngestResult>;
   /** Imports agents' local transcript history (adapter.backfill), skipping copies live capture already has. */
-  backfill(opts?: { agents?: string[]; since?: number; deadline?: number }): Promise<BackfillResult>;
+  backfill(opts?: { agents?: string[]; since?: number; deadline?: number; onProgress?: (p: BackfillProgress) => void }): Promise<BackfillResult>;
   /** Rebuilds sessions stored by an older adapter parse (or every one with `all`) from their transcripts and spool. */
   reparse(opts?: Pick<ReparseOptions, "all" | "agents" | "onProgress" | "runLock">): Promise<ReparseResult>;
   /** True when sessions stored by an older adapter parse wait for an automatic re-parse (cheap once none do). */
@@ -66,7 +66,7 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
     async backfill(o = {}) {
       const [{ backfill }, { ADAPTERS }] = await Promise.all([import("./ingest.ts"), import("../adapters/index.ts")]);
       const chosen = o.agents?.length ? ADAPTERS.filter((a) => o.agents!.includes(a.id)) : ADAPTERS;
-      return backfill({ config, index, blobs, env, adapters: chosen, ...(o.since !== undefined ? { since: o.since } : {}), ...(o.deadline !== undefined ? { deadline: o.deadline } : {}) });
+      return backfill({ config, index, blobs, env, adapters: chosen, ...(o.since !== undefined ? { since: o.since } : {}), ...(o.deadline !== undefined ? { deadline: o.deadline } : {}), ...(o.onProgress ? { onProgress: o.onProgress } : {}) });
     },
     async reparse(o = {}) {
       const [{ reparse }, { ADAPTERS }] = await Promise.all([import("./reparse.ts"), import("../adapters/index.ts")]);

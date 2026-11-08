@@ -1,12 +1,13 @@
 // Helpers shared by command modules (loaded only after dispatch).
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { openContext, type Context } from "../core/context.ts";
 import type { IngestError } from "../core/ingest.ts";
 import type { EvalTask, Session } from "../core/types.ts";
 import type { GateOpts } from "../stats/tests.ts";
 import { parseWhere, QueryError, QueryUnsupported, type Query } from "../query/where.ts";
 import { runningCli } from "../mcp/launch.ts";
-import { isLocked, wakeMarker } from "../core/lock.ts";
+import { acquireLock, isLocked, wakeMarker } from "../core/lock.ts";
 import { spawnBackgroundIngest } from "../spool/kick.ts";
 import { UsageError, type FlagValue } from "./args.ts";
 import { ago, CliError, plural, type Output } from "./output.ts";
@@ -33,6 +34,26 @@ export async function withContext<T>(c: CommandContext, fn: (ctx: Context) => Pr
 export function lockContention(e: unknown): boolean {
   const name = (e as Error | undefined)?.name;
   return name === "LockBusyError" || name === "LockLostError";
+}
+
+/**
+ * Runs a history import while holding paths.importLock, so one runs at a time and the
+ * viewer can say one is running. Undefined when another import holds the lock.
+ */
+export async function underImportLock<T>(ctx: Context, waitMs: number, fn: () => Promise<T>): Promise<T | undefined> {
+  mkdirSync(dirname(ctx.paths.importLock), { recursive: true });
+  let lock;
+  try {
+    lock = await acquireLock(ctx.paths.importLock, { waitMs });
+  } catch (e) {
+    if (lockContention(e)) return undefined;
+    throw e;
+  }
+  try {
+    return await fn();
+  } finally {
+    lock.release();
+  }
 }
 
 /** How long a read waits on ingest before answering from what is indexed (`--fresh` waits for all). */
@@ -173,7 +194,7 @@ async function kickReparse(ctx: Context, env: NodeJS.ProcessEnv): Promise<void> 
 }
 
 /** The CLI a background ingest runs: this one (the bundle, or src/cli/main.ts from source), else the one init recorded. */
-function ingestCli(pointer: string): string | undefined {
+export function ingestCli(pointer: string): string | undefined {
   const argv1 = process.argv[1];
   if (argv1 && /[\\/]cli[\\/]main\.ts$/.test(argv1)) return argv1;
   const running = runningCli();

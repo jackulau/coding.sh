@@ -15,6 +15,8 @@ import { startBackgroundIngest } from "../../src/cli/ingest-worker.ts";
 import { Output } from "../../src/cli/output.ts";
 import type { FlagValue } from "../../src/cli/args.ts";
 import { openContext } from "../../src/core/context.ts";
+import { acquireLock } from "../../src/core/lock.ts";
+import { paths } from "../../src/core/paths.ts";
 import { median } from "../helpers-timing.ts";
 
 const roots: string[] = [];
@@ -163,7 +165,16 @@ describe("reads during ingest", () => {
       }
       assert.equal(items.length, 5);
       const st = await api("/api/ingest");
-      assert.deepEqual(Object.keys(st).sort(), ["filesPending", "ingesting", "lastIngestAt"]);
+      assert.deepEqual(Object.keys(st).sort(), ["filesPending", "importing", "ingesting", "lastIngestAt"]);
+      assert.equal(st.importing, false);
+      // init's background history import holds the import lock: the viewer says it is importing.
+      const lock = await acquireLock(paths(h.env).importLock, { waitMs: 0 });
+      try {
+        assert.equal((await api("/api/ingest")).importing, true);
+      } finally {
+        lock.release();
+      }
+      assert.equal((await api("/api/ingest")).importing, false);
     } finally {
       ac.abort();
       assert.equal(await done, 130);

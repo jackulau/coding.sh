@@ -41,6 +41,8 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     ingestLock: join(root, "spool", ".ingest.lock"),
     /** Held for a whole re-parse run (core/reparse.ts), so one runs at a time. */
     reparseLock: join(root, "reparse.lock"),
+    /** Held while past sessions are imported (init, `ingest --backfill --background`); the viewer reads it. */
+    importLock: join(root, "import.lock"),
     /** Hook ownership for agents whose config files carry no coding.sh marker. */
     installs: join(root, "installs.json"),
     /** The running `coding.sh proxy` (pid, url); see proxy/state.ts. */

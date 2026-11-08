@@ -18,9 +18,10 @@ import type { Adapter, FileChange, McpServerSpec } from "../../core/types.ts";
 import { mcpLaunchSpec, runningCli } from "../../mcp/launch.ts";
 import { applyProxyInstall, isProxyAgent, planProxyInstall, readProxyInstalls } from "../../proxy/install.ts";
 import { proxySettings } from "../../proxy/state.ts";
+import { spawnBackgroundIngest } from "../../spool/kick.ts";
 import { suggest, UsageError } from "../args.ts";
 import { changeJson, printChanges, shortPath } from "../changes.ts";
-import { list, requireConsent, str } from "../common.ts";
+import { ingestCli, list, requireConsent, str, underImportLock, withContext } from "../common.ts";
 import { planHookBin, writeHookBin } from "../hookbin.ts";
 import { parseRemote, probeRemote, REMOTE_SINK, validateConfigText, withRemoteSink } from "../remote.ts";
 import { CliError, plural, type Output } from "../output.ts";
@@ -144,7 +145,7 @@ function planBlockers(pl: AgentPlan, env: NodeJS.ProcessEnv, cwd: string): Block
  * what blocks capture. `emit` gets each line (stdout for --dry-run, stderr
  * ahead of the Y/n prompt).
  */
-function renderPlan(out: Output, plans: AgentPlan[], own: FileChange[], scope: string, env: NodeJS.ProcessEnv, cwd: string, emit: (line: string) => void, stream: "out" | "err"): void {
+function renderPlan(out: Output, plans: AgentPlan[], own: FileChange[], scope: string, env: NodeJS.ProcessEnv, cwd: string, emit: (line: string) => void, stream: "out" | "err", importFrom: Adapter[] = []): void {
   type Row = [FileChange, string];
   const rowsOf = (pl: AgentPlan): Row[] => [
     ...pl.hooks.changes.map((ch): Row => [ch, "hooks"]),
@@ -165,6 +166,7 @@ function renderPlan(out: Output, plans: AgentPlan[], own: FileChange[], scope: s
     emit(`  ${out.style("coding.sh", "bold", stream)}`);
     for (const ch of own) emit(file([ch, ""]));
   }
+  if (importFrom.length) emit(`  then import past sessions from ${joinNames(importFrom.map((a) => a.displayName))} (--no-import skips)`);
 }
 
 /** "Set up A and B (hooks + MCP server); C (hooks)" from what each agent actually got. */
@@ -177,6 +179,79 @@ export function setupSummary(ready: { name: string; mcp: boolean }[]): string {
     .filter(([names]) => names.length)
     .map(([names, what]) => `${joinNames(names)} (${what})`)
     .join("; ");
+}
+
+/** How long init imports past sessions before it leaves the rest to a background import. */
+export const IMPORT_BUDGET_MS = 8000;
+
+/** The import budget: CODING_SH_INIT_IMPORT_BUDGET_MS when it is a number >= 0, else IMPORT_BUDGET_MS. */
+export function importBudgetMs(env: NodeJS.ProcessEnv): number {
+  const raw = env.CODING_SH_INIT_IMPORT_BUDGET_MS?.trim();
+  const v = Number(raw);
+  return raw && Number.isFinite(v) && v >= 0 ? v : IMPORT_BUDGET_MS;
+}
+
+export interface ImportOutcome {
+  agents: string[];
+  /** Sessions created or updated by this import. */
+  sessions: number;
+  events: number;
+  /** Transcripts left for the background import (0 when it all fit in the budget). */
+  pendingFiles: number;
+  /** A background import was started for the pending files (or one was already running). */
+  background: boolean;
+  errors: string[];
+  ms: number;
+}
+
+/**
+ * Imports the past sessions of `agents` (adapter.backfill), stopping at the time budget and
+ * starting `ingest --background --backfill` for the rest. Undefined when there is nothing to
+ * import from or the store is not this machine's.
+ */
+async function importHistory(c: CommandContext, agents: Adapter[]): Promise<ImportOutcome | undefined> {
+  const ids = agents.filter((a) => a.backfill).map((a) => a.id);
+  if (!ids.length) return undefined;
+  const { out, env } = c;
+  const started = Date.now();
+  const names = (id: string) => ADAPTERS.find((a) => a.id === id)?.displayName ?? id;
+  return withContext(c, async (ctx) => {
+    // A store from --store / CODING_SH_STORE_URL is shared: never push this machine's history into it.
+    if (ctx.storeOverridden) return undefined;
+    const spin = out.spin("Importing past sessions…");
+    let bf;
+    try {
+      bf = await underImportLock(ctx, 0, () =>
+        ctx.backfill({
+          agents: ids,
+          deadline: started + importBudgetMs(env),
+          onProgress: (p) => spin.update(`Importing past ${names(p.agent)} sessions… ${plural(p.files, "transcript")} read`),
+        }),
+      );
+    } finally {
+      spin.stop();
+    }
+    // Name only the agents that had history to import.
+    const found = bf?.agents.filter((a) => a.events > 0).map((a) => a.agent) ?? [];
+    const outcome: ImportOutcome = { agents: found.length ? found : ids, sessions: bf?.sessions ?? 0, events: bf?.events ?? 0, pendingFiles: bf?.pendingFiles ?? 0, background: !bf, errors: (bf?.errors ?? []).map((e) => e.message), ms: Date.now() - started };
+    if (bf?.pendingFiles && env.CODING_SH_NO_AUTO_INGEST !== "1") {
+      outcome.background = !!spawnBackgroundIngest(ingestCli(ctx.paths.cliPointer), env, undefined, ["--backfill", ...ids.flatMap((id) => ["--agent", id])]);
+    }
+    return outcome;
+  });
+}
+
+function reportImport(out: Output, r: ImportOutcome): void {
+  const from = joinNames(r.agents.map((id) => ADAPTERS.find((a) => a.id === id)?.displayName ?? id));
+  const secs = `${(r.ms / 1000).toFixed(1)} s`;
+  if (r.background && !r.pendingFiles) out.ok("Past sessions: an import is already running in the background");
+  else if (r.pendingFiles) {
+    const rest = `${plural(r.pendingFiles, "transcript")} left`;
+    if (r.background) out.ok(`Imported ${plural(r.sessions, "past session")} from ${from} in ${secs}; importing the rest (${rest}) in the background`);
+    else out.warn(`Imported ${plural(r.sessions, "past session")} from ${from}; ${rest}. Import them: coding.sh ingest --backfill`);
+  } else if (r.sessions) out.ok(`Imported ${plural(r.sessions, "past session")} from ${from} in ${secs}`);
+  // Nothing found or nothing new: say nothing, so init still ends in its three lines.
+  for (const e of r.errors.slice(0, 3)) out.note(e);
 }
 
 export async function run(c: CommandContext): Promise<number> {
@@ -268,6 +343,8 @@ export async function run(c: CommandContext): Promise<number> {
   const pending = plans.filter((pl) => agentChanges(pl).length);
   const total = pending.reduce((n, pl) => n + agentChanges(pl).length, 0);
   const failed = plans.some((pl) => pl.hooks.error || pl.mcp?.error || pl.proxy?.error);
+  // Past sessions to import once set up: every planned agent that keeps its own history.
+  const importFrom = c.flags.import === false ? [] : plans.map((pl) => pl.adapter).filter((a) => a.backfill);
 
   if (dryRun) {
     if (out.json) {
@@ -279,11 +356,12 @@ export async function run(c: CommandContext): Promise<number> {
         proxy: withProxy ? proxyUrl : null,
         changes: own.map(changeJson),
         remote: remote ? { url: remote.url, mode: remote.mode, sink: REMOTE_SINK } : null,
+        import: importFrom.length ? { agents: importFrom.map((a) => a.id), budgetMs: importBudgetMs(env) } : null,
         agents: plans.map((pl) => ({ id: pl.adapter.id, installed: pl.installed, hooked: pl.hooked, error: pl.hooks.error ?? null, changes: pl.hooks.changes.map(changeJson), mcp: partJson(pl.mcp, true), proxy: partJson(pl.proxy, true), warnings: pl.detectBlockers, blockers: planBlockers(pl, env, c.cwd).map((b) => b.text), otherScope: pl.otherScope ?? null, skipped: pl.skipped === true })),
       });
     } else {
       // The plan is the answer of a dry run: stdout.
-      renderPlan(out, plans, own, scope, env, c.cwd, (l) => out.print(l), "out");
+      renderPlan(out, plans, own, scope, env, c.cwd, (l) => out.print(l), "out", importFrom);
       if (c.flags.diff === true) {
         out.print();
         for (const ch of own) printChanges(out, [ch]);
@@ -296,10 +374,10 @@ export async function run(c: CommandContext): Promise<number> {
   }
 
   // ---- the plan (stderr), blockers included, before the one question.
-  renderPlan(out, plans, own, scope, env, c.cwd, (l) => out.note(l.replace(/^  /, "")), "err");
+  renderPlan(out, plans, own, scope, env, c.cwd, (l) => out.note(l.replace(/^  /, "")), "err", importFrom);
 
   if (total) {
-    await requireConsent(c, `Set up coding.sh for ${plural(pending.length, "agent")} (${plural(total, "config file")}, backed up first)?`, `coding.sh init${scope === "project" ? " --scope project" : ""} --yes`, {
+    await requireConsent(c, `Set up coding.sh for ${plural(pending.length, "agent")} (${plural(total, "config file")}, backed up first)${importFrom.length ? " and import past sessions" : ""}?`, `coding.sh init${scope === "project" ? " --scope project" : ""} --yes`, {
       defaultYes: true,
     });
   }
@@ -348,6 +426,13 @@ export async function run(c: CommandContext): Promise<number> {
     }
   }
   const outcome = total + own.length === 0 ? "unchanged" : errors ? "partial" : "installed";
+  // Past sessions, so the first viewer screen shows the user's own history (never fails init).
+  let imported: ImportOutcome | undefined;
+  try {
+    imported = await importHistory(c, importFrom);
+  } catch (e) {
+    imported = { agents: importFrom.map((a) => a.id), sessions: 0, events: 0, pendingFiles: 0, background: false, errors: [errText(e)], ms: 0 };
+  }
 
   if (out.json) {
     out.data({
@@ -358,6 +443,7 @@ export async function run(c: CommandContext): Promise<number> {
       proxy: proxyStart ? { url: proxyUrl, running: !proxyStart.error, started: proxyStart.started, ...(proxyStart.error ? { error: proxyStart.error } : { pid: proxyStart.pid }) } : null,
       changes: own.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })),
       remote: remote ? { url: remote.url, mode: remote.mode, sink: REMOTE_SINK } : null,
+      import: imported ?? null,
       agents: applied.map((x) => ({ id: x.pl.adapter.id, error: x.hooks.error ?? null, changes: x.hooks.changes.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })), mcp: partJson(x.mcp, false), proxy: partJson(x.proxy, false), warnings: x.pl.detectBlockers, blockers: planBlockers(x.pl, env, c.cwd).map((b) => b.text), otherScope: x.pl.otherScope ?? null, skipped: x.pl.skipped === true })),
     });
     return errors ? 1 : 0;
@@ -385,6 +471,7 @@ export async function run(c: CommandContext): Promise<number> {
       if (chained) out.note(`${x.pl.adapter.displayName} calls go on to ${chained}, the base URL it used before`);
     }
   }
+  if (imported) reportImport(out, imported);
   out.note(`Open the viewer: ${out.style("coding.sh ui", "cyan", "err")}`);
   out.note(`After a few sessions, see what to fix first: ${out.style("coding.sh improve", "cyan", "err")}`);
   out.note(`Docs: ${DOCS_URL}`);

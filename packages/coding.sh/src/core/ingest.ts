@@ -896,6 +896,16 @@ export interface BackfillOptions {
   since?: number;
   /** Read no further source files (after the first) once Date.now() passes this (ms epoch); they count in `pendingFiles`. */
   deadline?: number;
+  /** Called as the import goes: source files read so far and events stored, for the agent being read. */
+  onProgress?: (p: BackfillProgress) => void;
+}
+
+export interface BackfillProgress {
+  agent: string;
+  /** Changed source files read so far, over every agent. */
+  files: number;
+  /** Events stored so far, over every agent. */
+  events: number;
 }
 
 export interface BackfillResult {
@@ -967,6 +977,7 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
         result.events += inserted;
         report.events += inserted;
       }
+      opts.onProgress?.({ agent: adapter.id, files: accepted, events: result.events });
     };
     // Whether events now being yielded come from a file this adapter reported as
     // read for the first time; undefined = the adapter reports no files.
@@ -986,6 +997,7 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
       accepted++;
       firstRead = !seen;
       files.push(f);
+      opts.onProgress?.({ agent: adapter.id, files: accepted, events: result.events });
       return true;
     };
     const adapterOpts = opts.since !== undefined ? { since: opts.since, changed } : { changed };

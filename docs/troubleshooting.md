@@ -67,8 +67,10 @@ Work down this list:
 6. **Are you reading another store?** With `--store` or `CODING_SH_STORE_URL` set, commands skip the
    automatic ingest of your local spool. Run `coding.sh ingest --store <url>` to push it, or unset
    the variable.
-7. **Is it older than `init`?** Import past transcripts with `coding.sh ingest --backfill --since 30d`.
-   Re-running it adds nothing new.
+7. **Is it older than `init`?** `init` imports past transcripts, for up to 8 seconds and then in
+   the background, unless you passed `--no-import`. Import them yourself with
+   `coding.sh ingest --backfill` (add `--since 30d` for the last 30 days only). Re-running it adds
+   nothing new.
 
 ## Your agent's traces don't show up
 
