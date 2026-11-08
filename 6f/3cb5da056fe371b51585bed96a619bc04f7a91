@@ -1,0 +1,23 @@
+packages/coding.sh/src/refine/objectives.ts
+  s_8e040dbdf13565::t_2e82cfbb5e6874 290-304
+CHANGELOG.md
+  s_8e040dbdf13565::t_4dc88cae25d629 36
+packages/coding.sh/test/refine/objectives.test.ts
+  s_8e040dbdf13565::t_168b924828b73c 49-67
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6f3cb5da056fe371b51585bed96a619bc04f7a91",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": null
+    }
+  }
+}
