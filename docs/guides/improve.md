@@ -5,7 +5,7 @@ guide turns those sessions into one weekly loop:
 
 1. See what goes wrong most.
 2. Add the line to CLAUDE.md or AGENTS.md that fixes it.
-3. Test the edit on the moments it went wrong (needs an API key), or skip to 4.
+3. Test the edit on the moments it went wrong, or skip to 4.
 4. Commit it.
 5. Let new sessions tell you whether it helped, and catch a change that made things worse.
 
@@ -28,7 +28,7 @@ Fix first
    Fix: Name the check in CLAUDE.md or AGENTS.md. Add: "Run `npm test` before you say you are done, and say what it printed."
    → See it happen: coding.sh show 36ee2026-fff1-4fd3-aab3-a7d1706f15e0
    → Add the line to CLAUDE.md or AGENTS.md (uncommitted): coding.sh improve fix 1
-   → Test the edit on the moments it went wrong (needs ANTHROPIC_API_KEY or OPENAI_API_KEY): coding.sh exp ab --behavior unverified-claim --dry-run
+   → Test the edit on the moments it went wrong (on your Claude subscription): coding.sh exp ab --behavior unverified-claim
    → Commit it, then check new sessions against it: coding.sh improve check
 ```
 
@@ -75,9 +75,29 @@ next turn twice: once with the committed CLAUDE.md and once with your edit. A ju
 turns did the right thing. [Test a CLAUDE.md change in five
 minutes](../how-to/test-claude-md-change.md) walks through it.
 
-It calls the model API, so it needs `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`. A Claude subscription
-is not enough. With only `OPENAI_API_KEY` set, `improve` suggests `--provider openai`. Without a
-key, `exp ab` stops before it starts and points at step 5.
+It needs a model. With `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` set, it calls that API. With
+neither, it runs on your subscription through a logged-in Claude Code (`claude -p`) or Codex
+(`codex exec`), and says so in one line:
+
+```text
+No API key set: replaying through `claude -p` on your Claude subscription (CLAUDE_CODE_OAUTH_TOKEN); costs are API-equivalent
+```
+
+`--provider claude-code` or `--provider codex` picks one. Each call runs without your hooks,
+plugins, MCP servers or settings, in an empty directory, with your edit as the only harness file in
+the prompt. With `claude -p` the model gets the session's own tools, and a hook of ours refuses
+every call it makes, so nothing runs. A subscription run shows its cost as API-equivalent: what the same
+tokens would cost on the API, not what you pay. It has no spending cap unless you pass `--max-cost`.
+It makes 2 calls at a time, waits and retries when rate limited, and stops when your plan's usage
+limit is reached; run the same command after the reset and the finished trials come from the
+cache. [Replaying on a subscription](evals.md#replaying-on-a-subscription) lists how its prompt
+differs from the API's.
+
+When you already committed the edit, `exp ab` with no `--a` or `--b` tests your last harness commit
+against the version before it. `--dry-run` shows the moments it would replay and the cost without
+calling a model, with or without uncommitted edits.
+
+With nothing logged in and no key, `exp ab` stops before it starts and points at step 5.
 
 ## 4. Commit it
 

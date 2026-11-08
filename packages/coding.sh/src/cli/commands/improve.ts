@@ -13,7 +13,8 @@ import type { Context } from "../../core/context.ts";
 import { repoRoot } from "../../core/git.ts";
 import type { ChangeEffect, GroupStats, Verdict } from "../../improve/changes.ts";
 import type { Issue } from "../../improve/issues.ts";
-import { abCommand, findChanges, findIssues, modelProvider, scopeSessions, stepsFor, targetFile, testCommandOf, type ImproveScope, type ModelProvider } from "../../improve/report.ts";
+import { abCommand, findChanges, findIssues, modelProvider, NEEDS_MODEL, scopeSessions, stepsFor, targetFile, testCommandOf, type ImproveScope, type ModelProvider } from "../../improve/report.ts";
+import { CLI_PLAN, isCliProvider } from "../../judge/subscription.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, list, oneLine, pendingField, readIngest, str, withContext } from "../common.ts";
 import { ago, CliError, localTime, plural } from "../output.ts";
@@ -209,6 +210,7 @@ async function fix(c: CommandContext): Promise<number> {
     const behavior = issue.behavior;
     const provider = modelProvider(c.env);
     const hasKey = provider !== undefined;
+    const onPlan = isCliProvider(provider) ? `, on your ${CLI_PLAN[provider]}` : "";
     const test = behavior ? abCommand(behavior, provider) : undefined;
     if (out.json) {
       if (!present && !dryRun) writeFileSync(abs, after);
@@ -218,7 +220,7 @@ async function fix(c: CommandContext): Promise<number> {
     if (present) {
       out.warn(`${target} already has this line: ${issue.rule}`);
       out.note(`It is not stopping "${issue.title.toLowerCase()}" (${issue.sessions} of ${issue.analyzed} sessions). Reword it, or put it nearer the top, then test the edit:`);
-      if (test) out.next(hasKey ? "Test your rewording on the moments it went wrong" : "Test your rewording (needs ANTHROPIC_API_KEY or OPENAI_API_KEY)", hasKey ? test : `${test} --dry-run`);
+      if (test) out.next(hasKey ? `Test your rewording on the moments it went wrong${onPlan}` : `Test your rewording (${NEEDS_MODEL})`, hasKey ? test : `${test} --dry-run`);
       return 0;
     }
     if (dryRun) {
@@ -230,11 +232,11 @@ async function fix(c: CommandContext): Promise<number> {
     out.ok(`Added to ${target} (not committed):`);
     out.print(`+ ${issue.rule}`);
     if (test) {
-      if (hasKey) out.next(`Test it on the ${issue.sessions > 1 ? "moments" : "moment"} it went wrong (A = committed, B = your edit)`, test);
+      if (hasKey) out.next(`Test it on the ${issue.sessions > 1 ? "moments" : "moment"} it went wrong (A = committed, B = your edit)${onPlan}`, test);
       else {
         out.note("");
-        out.note(`Testing the edit on past sessions (${test}) needs ANTHROPIC_API_KEY or OPENAI_API_KEY.`);
-        out.note("Without one: commit it and let new sessions tell you.");
+        out.note(`Testing the edit on past sessions (${test}) ${NEEDS_MODEL}.`);
+        out.note("Without any of them: commit it and let new sessions tell you.");
       }
     }
     out.next("Keep it: commit, then check new sessions against it", `git commit ${target} -m "${target}: ${issue.title.toLowerCase()}" && coding.sh improve check`);

@@ -7,6 +7,7 @@ import type { AgentEvent, Session } from "../schema/index.ts";
 import type { IndexStore } from "../core/types.ts";
 import { insideDir } from "../eval/decision.ts";
 import { guessVerifierFromRepo, inspectRepo } from "../eval/task.ts";
+import { autoCliProvider, CLI_PLAN, isCliProvider, type CliProvider } from "../judge/subscription.ts";
 import { changeEffects, currentVersion, sessionVersions, type ChangeEffect } from "./changes.ts";
 import { failureRecords, rankIssues, type FailureRecord, type Issue } from "./issues.ts";
 
@@ -96,17 +97,25 @@ export interface Step {
   command: string;
 }
 
-export type ModelProvider = "anthropic" | "openai";
+export type ModelProvider = "anthropic" | "openai" | CliProvider;
 
-/** The provider exp ab can call with the keys set: anthropic (its default) first; undefined with neither key. */
+/**
+ * The provider exp ab can call: anthropic (its default) when its key is set,
+ * then openai, then a logged-in Claude Code or Codex (a subscription);
+ * undefined with none of them.
+ */
 export function modelProvider(env: NodeJS.ProcessEnv): ModelProvider | undefined {
   if (env.ANTHROPIC_API_KEY?.trim()) return "anthropic";
   if (env.OPENAI_API_KEY?.trim()) return "openai";
-  return undefined;
+  return autoCliProvider(env)?.provider;
 }
 
-/** The exp ab command that replays one behavior's decision points with that provider. */
-export const abCommand = (behavior: string, provider: ModelProvider | undefined): string => `coding.sh exp ab --behavior ${behavior}${provider === "openai" ? " --provider openai" : ""}`;
+/** What testing an edit needs when modelProvider finds nothing. */
+export const NEEDS_MODEL = "needs ANTHROPIC_API_KEY, OPENAI_API_KEY, or Claude Code or Codex logged in";
+
+/** The exp ab command that replays one behavior's decision points with that provider (exp ab picks a logged-in Claude Code by itself). */
+export const abCommand = (behavior: string, provider: ModelProvider | undefined): string =>
+  `coding.sh exp ab --behavior ${behavior}${provider === "openai" || provider === "codex" ? ` --provider ${provider}` : ""}`;
 
 /** The commands that take one issue through the loop: look, edit, test, keep. `n` is its 1-based rank; `provider` undefined: no model API key. */
 export function stepsFor(issue: Issue, n: number, o: { provider: ModelProvider | undefined }): Step[] {
@@ -121,8 +130,8 @@ export function stepsFor(issue: Issue, n: number, o: { provider: ModelProvider |
   if (issue.behavior) {
     steps.push(
       o.provider
-        ? { label: "Test the edit on the moments it went wrong", command: abCommand(issue.behavior, o.provider) }
-        : { label: "Test the edit on the moments it went wrong (needs ANTHROPIC_API_KEY or OPENAI_API_KEY)", command: `${abCommand(issue.behavior, undefined)} --dry-run` },
+        ? { label: `Test the edit on the moments it went wrong${isCliProvider(o.provider) ? ` (on your ${CLI_PLAN[o.provider]})` : ""}`, command: abCommand(issue.behavior, o.provider) }
+        : { label: `Test the edit on the moments it went wrong (${NEEDS_MODEL})`, command: `${abCommand(issue.behavior, undefined)} --dry-run` },
     );
   }
   if (issue.rule) steps.push({ label: "Commit it, then check new sessions against it", command: "coding.sh improve check" });

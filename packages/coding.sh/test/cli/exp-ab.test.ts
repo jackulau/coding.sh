@@ -5,16 +5,17 @@
 // judge passes a turn that runs `npm test` and fails one that does not.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { defaultModel } from "../../src/cli/commands/exp-ab.ts";
 import { DEFAULT_MODELS } from "../../src/core/pricing.ts";
 import type { Case } from "../../src/datasets/types.ts";
+import { nodeBin, pathOf } from "../_bin.ts";
 import { claimSession, putSession } from "../helpers-decision.ts";
 
 const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
@@ -264,6 +265,7 @@ describe("cli exp ab", () => {
     const err = JSON.parse(r.stderr) as { reason: string; message: string; next: string[] };
     assert.equal(err.reason, "missing_key");
     assert.match(err.message, /set ANTHROPIC_API_KEY \(6 of 6 model calls are not cached\)/);
+    assert.match(err.message, /or log in to Claude Code \(.*\) or Codex \(run `codex login`\) and exp ab replays them on that subscription$/);
     assert.ok(err.next.includes("coding.sh improve check"));
     const runs = await cli({ ...e, env }, ["exp", "list", "--json"]);
     assert.doesNotMatch(runs.stdout, /exp ab/, "no experiment was recorded");
@@ -296,6 +298,178 @@ describe("cli exp ab", () => {
       p.kill("SIGINT");
     });
     assert.equal(code, 0, stderr);
+  });
+});
+
+// A fake `claude -p` for the subscription path: the next turn runs `npm test` when the
+// B marker is in its context and says "Done." otherwise; the judge passes a turn that
+// runs `npm test`. A turn with the session's tools (--tools not empty) answers like
+// `--output-format stream-json`; the judge like `--output-format json` with
+// structured output. It appends one line per call to FAKE_LOG.
+const FAKE_CLAUDE = `
+const fs = require("node:fs");
+const argv = process.argv.slice(2);
+let input = "";
+process.stdin.on("data", (d) => (input += d));
+process.stdin.on("end", () => {
+  const say = (e) => process.stdout.write(JSON.stringify(e) + "\\n");
+  const schema = argv.includes("--json-schema") ? JSON.parse(argv[argv.indexOf("--json-schema") + 1]) : {};
+  const native = !!argv[argv.indexOf("--tools") + 1];
+  const turn = native || !!(schema.properties && schema.properties.tool_calls);
+  const marker = /ALWAYS-RUN-NPM-TEST/.test(input);
+  fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ turn, native, marker, configDir: process.env.CLAUDE_CONFIG_DIR }) + "\\n");
+  const mode = process.env.FAKE_MODE;
+  if (turn && (mode === "fail" || (mode === "fail-a" && !marker))) {
+    const error = "API Error: 400 invalid_request_error: prompt is too long";
+    say(native ? { type: "result", subtype: "success", is_error: true, result: error, usage: {} } : { type: "result", is_error: true, result: error });
+    process.exitCode = 1;
+    return;
+  }
+  if (native) {
+    const usage = { input_tokens: 1000, output_tokens: 50 };
+    say({ type: "system", subtype: "init", model: "claude-sonnet-5-5" });
+    if (marker) {
+      say({ type: "assistant", message: { model: "claude-sonnet-5-5", content: [{ type: "tool_use", id: "toolu_x", name: "Bash", input: { command: "npm test" } }] } });
+      say({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_x", is_error: true, content: "blocked" }] } });
+      say({ type: "result", subtype: "error_max_turns", is_error: true, usage, total_cost_usd: 0.001 });
+      process.exitCode = 1;
+    } else {
+      say({ type: "assistant", message: { model: "claude-sonnet-5-5", content: [{ type: "text", text: "Done." }] } });
+      say({ type: "result", subtype: "success", is_error: false, result: "Done.", usage, total_cost_usd: 0.001 });
+    }
+    return;
+  }
+  let out;
+  if (turn) out = marker ? { text: "", tool_calls: [{ name: "Bash", input_json: JSON.stringify({ command: "npm test" }) }] } : { text: "Done.", tool_calls: [] };
+  else {
+    const output = (/<output>([\\s\\S]*?)<\\/output>/.exec(input) || [])[1] || "";
+    const pass = output.includes("npm test");
+    out = { score: pass ? 1 : 0.2, pass, confidence: 0.9, reason: pass ? "verifies first" : "claims done without checking", citations: [] };
+  }
+  process.stdout.write(JSON.stringify({ type: "result", is_error: false, stop_reason: "end_turn", result: "", structured_output: out, usage: { input_tokens: 1000, output_tokens: 50 }, modelUsage: { "claude-sonnet-5-5": {} } }) + "\\n");
+});
+`;
+
+/** The env with no API key, a fake `claude` on PATH, and (unless `login` is false) CLAUDE_CODE_OAUTH_TOKEN. */
+function subscriptionEnv(e: Env, o: { login?: boolean; claude?: boolean } = {}): Env & { log: string } {
+  const { ANTHROPIC_API_KEY: _k, ANTHROPIC_BASE_URL: _b, ...rest } = e.env;
+  const bin = join(e.home, "bin");
+  if (o.claude !== false) nodeBin(bin, "claude", FAKE_CLAUDE);
+  else mkdirSync(bin, { recursive: true });
+  const log = join(e.home, "claude.log");
+  return { ...e, log, env: { ...rest, PATH: pathOf(bin, process.env.PATH), FAKE_LOG: log, ...(o.login !== false ? { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-fake" } : {}) } };
+}
+
+describe("cli exp ab on a subscription", () => {
+  it("with no API key and Claude Code logged in, replays and judges through claude -p, says so once, and marks costs API-equivalent", async () => {
+    const e = subscriptionEnv(await setup("sub"));
+    writeFileSync(join(e.repo, "CLAUDE.md"), `Keep answers short.\n${MARKER}: run npm test before you say you are done.\n`);
+    const before = hits.length;
+
+    const dry = await cli(e, ["exp", "ab", "--dry-run"]);
+    assert.equal(dry.status, 0, dry.stderr);
+    const out = dry.stdout + dry.stderr;
+    assert.equal(out.match(/No API key set: replaying through `claude -p` on your Claude subscription \(CLAUDE_CODE_OAUTH_TOKEN\); costs are API-equivalent/g)?.length, 1, out);
+    assert.match(dry.stdout, /, claude-sonnet-5-5 through claude-code$/m);
+    assert.match(dry.stdout, /~\$[\d.]+ API-equivalent/);
+    const json = JSON.parse((await cli(e, ["exp", "ab", "--dry-run", "--json"])).stdout) as { provider: string; estimate: { apiEquivalent?: boolean } };
+    assert.equal(json.provider, "claude-code");
+    assert.equal(json.estimate.apiEquivalent, true);
+
+    const run = await cli(e, ["exp", "ab"]);
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal(hits.length, before, "nothing reached the API");
+    assert.match(run.stdout, /^A: git:HEAD {3}B: your edits {3}model: claude-sonnet-5-5 \(claude-code\)$/m);
+    assert.match(run.stdout, /A 0\/3 -> B 3\/3 \| fixed 3, broke 0 .*\| \$[\d.]+ API-equivalent, 0\/6 cached/);
+    const calls = readFileSync(e.log, "utf8").trim().split("\n").map((l) => JSON.parse(l) as { turn: boolean; native: boolean; marker: boolean; configDir?: string });
+    assert.equal(calls.filter((c) => c.turn).length, 6);
+    assert.ok(calls.filter((c) => c.turn).every((c) => c.native), "Claude Code sessions' tools are given natively");
+    assert.ok(calls.filter((c) => !c.turn).every((c) => !c.native), "the judge gets no tools");
+    assert.equal(calls.filter((c) => c.turn && c.marker).length, 3, "only arm B's turns see the edit");
+    assert.equal(calls.filter((c) => !c.turn).length, 6, "the judge runs through claude -p too");
+    assert.ok(calls.every((c) => c.configDir && !c.configDir.startsWith(e.home)), "a throwaway config dir, not the user's");
+
+    const again = JSON.parse((await cli(e, ["exp", "ab", "--json"])).stdout) as { provider: string; cost: { apiEquivalent?: boolean }; cacheHits: { model: number } };
+    assert.equal(again.provider, "claude-code");
+    assert.equal(again.cost.apiEquivalent, true);
+    assert.equal(again.cacheHits.model, 6);
+  });
+
+  it("an API key keeps the API: no note, provider anthropic", async () => {
+    const base = await setup("subkey");
+    const e = subscriptionEnv(base);
+    e.env.ANTHROPIC_API_KEY = "sk-stub";
+    writeFileSync(join(e.repo, "CLAUDE.md"), `${MARKER}\n`);
+    const r = await cli(e, ["exp", "ab", "--dry-run", "--json"]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal((JSON.parse(r.stdout) as { provider: string; estimate: { apiEquivalent?: boolean } }).provider, "anthropic");
+    const text = await cli(e, ["exp", "ab", "--dry-run"]);
+    assert.doesNotMatch(text.stdout + text.stderr, /No API key set|API-equivalent/);
+  });
+
+  it("--provider claude-code stops before any call when claude is missing or not logged in", async () => {
+    const base = await setup("sublogin");
+    writeFileSync(join(base.repo, "CLAUDE.md"), `${MARKER}\n`);
+    const out = subscriptionEnv(base, { login: false });
+    const r = await cli(out, ["exp", "ab", "--provider", "claude-code", "--json"]);
+    assert.equal(r.status, 1, r.stdout);
+    const err = JSON.parse(r.stderr) as { reason: string; message: string; next: string[] };
+    assert.equal(err.reason, "not_logged_in");
+    assert.match(err.next.join("\n"), /claude setup-token/);
+    assert.equal(existsSync(out.log), false, "claude never ran");
+
+    const none = subscriptionEnv(base, { claude: false });
+    // PATH keeps git and drops every dir with a claude in it.
+    none.env.PATH = pathOf(...(process.env.PATH ?? "").split(delimiter).filter((d) => d && !["claude", "claude.cmd", "claude.exe"].some((f) => existsSync(join(d, f)))));
+    const m = await cli(none, ["exp", "ab", "--provider", "claude-code", "--json"]);
+    assert.equal(m.status, 1, m.stdout);
+    assert.equal((JSON.parse(m.stderr) as { reason: string }).reason, "missing_cli");
+  });
+
+  it("every model call failing is an error (model_error), not a Hold; some failing is a warning", async () => {
+    const e = subscriptionEnv(await setup("subfail"));
+    writeFileSync(join(e.repo, "CLAUDE.md"), `Keep answers short.\n${MARKER}: run npm test before you say you are done.\n`);
+    const all = await cli({ ...e, env: { ...e.env, FAKE_MODE: "fail" } }, ["exp", "ab", "--json"]);
+    assert.equal(all.status, 1, all.stdout);
+    const err = JSON.parse(all.stderr) as { reason: string; message: string; next: string[] };
+    assert.equal(err.reason, "model_error");
+    assert.match(err.message, /^Every model call failed \(6 of 6 trials\): .*prompt is too long/);
+    assert.match(err.next.join("\n"), /coding\.sh exp show exp_\w+/);
+
+    const some = await cli({ ...e, env: { ...e.env, FAKE_MODE: "fail-a" } }, ["exp", "ab", "--no-cache"]);
+    assert.equal(some.status, 0, some.stderr);
+    assert.match(some.stderr, /3 of 6 trials failed and count as not passing: .*prompt is too long/);
+    assert.match(some.stdout, /A 0\/3 -> B 3\/3/);
+  });
+});
+
+describe("cli exp ab on a committed edit", () => {
+  it("with no uncommitted edits, tests the last harness commit against the version before it", async () => {
+    const e = await setup("committed");
+    const git = (...a: string[]) => assert.equal(spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: e.repo, env: e.env }).status, 0, a.join(" "));
+    writeFileSync(join(e.repo, "CLAUDE.md"), `Keep answers short.\n${MARKER}: run npm test before you say you are done.\n`);
+    git("commit", "-qam", "CLAUDE.md: run the tests");
+    writeFileSync(join(e.repo, "README.md"), "unrelated\n");
+    git("add", "README.md");
+    git("commit", "-qm", "readme");
+    const short = spawnSync("git", ["log", "-1", "--format=%h", "HEAD~1"], { cwd: e.repo, encoding: "utf8" }).stdout.trim();
+
+    const before = hits.length;
+    const dry = await cli(e, ["exp", "ab", "--dry-run"]);
+    assert.equal(dry.status, 0, dry.stderr);
+    assert.match(dry.stdout + dry.stderr, new RegExp(`No uncommitted edits: testing your last harness commit ${short} "CLAUDE\\.md: run the tests" \\(B\\) against the version before it \\(A\\)`));
+    assert.match(dry.stdout, new RegExp(`^A git:${short}\\^ \\(1 file\\) vs B git:HEAD \\(1 file\\)`, "m"));
+    assert.equal(hits.length, before);
+    const json = JSON.parse((await cli(e, ["exp", "ab", "--dry-run", "--json"])).stdout) as { arms: { a: string; b: string } };
+    assert.deepEqual(json.arms, { a: `git:${short}^`, b: "git:HEAD" });
+
+    const explicit = await cli(e, ["exp", "ab", "--a", "git:HEAD~2", "--b", "git:HEAD", "--dry-run", "--json"]);
+    assert.equal(explicit.status, 0, explicit.stderr);
+    assert.deepEqual((JSON.parse(explicit.stdout) as { arms: { a: string; b: string } }).arms, { a: "git:HEAD~2", b: "git:HEAD" });
+
+    const run = await cli(e, ["exp", "ab", "--json"]);
+    assert.equal(run.status, 0, run.stderr);
+    assert.equal((JSON.parse(run.stdout) as { fixed: string[] }).fixed.length, 3, "B is the committed edit");
   });
 });
 

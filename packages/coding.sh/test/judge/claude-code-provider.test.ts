@@ -45,7 +45,8 @@ describe("claude-code judge provider", () => {
   before(async () => {
     dir = await mkdtemp(join(tmpdir(), "csh-cc-judge-"));
     nodeBin(join(dir, "bin"), "claude", FAKE);
-    env = { PATH: pathOf(join(dir, "bin"), process.env.PATH), FAKE_LOG: join(dir, "log.json") };
+    // A temp HOME: the real ~/.claude login is never read or copied.
+    env = { HOME: dir, USERPROFILE: dir, PATH: pathOf(join(dir, "bin"), process.env.PATH), FAKE_LOG: join(dir, "log.json") };
   });
   after(() => rm(dir, { recursive: true, force: true }));
 

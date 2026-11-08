@@ -3,16 +3,13 @@
 //  - Anthropic Messages API (POST {baseURL}/v1/messages)
 //  - OpenAI-compatible chat completions (POST {baseURL}/chat/completions):
 //    OpenAI, OpenRouter, Ollama, LM Studio, vLLM, … via baseURL.
-//  - The Claude Code CLI (`claude -p`), for a Claude subscription without an API key.
+//  - The Claude Code and Codex CLIs, for a subscription without an API key:
+//    subscription.ts.
 //
 // API keys come from the environment only, are read at call time (so a judge
 // whose answers are all cached needs no key), and are never logged, hashed
 // into versions, cached, or included in errors.
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { DEFAULT_MODELS } from "../core/pricing.ts";
-import { spawn } from "../core/spawn.ts";
 import { fetchJson, type FetchLike, type RetryOpts } from "./http.ts";
 
 export interface ChatRequest {
@@ -144,119 +141,6 @@ export function anthropicProvider(opts: AnthropicOpts = {}): ChatProvider {
       return r;
     },
   };
-}
-
-// ---------------------------------------------------------------- Claude Code
-
-export interface ClaudeCodeOpts {
-  model?: string;
-  env?: NodeJS.ProcessEnv;
-  /** The CLI to run (default "claude", found on PATH). */
-  command?: string;
-  /** Kill the call after this long (default 5 min). */
-  timeoutMs?: number;
-}
-
-/**
- * The judge through the Claude Code CLI (`claude -p`), so a Claude subscription
- * can grade without an API key: auth is whatever the CLI uses
- * (CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token`, ANTHROPIC_API_KEY, or its
- * login). Each call runs with no tools, no setting sources (so no user or project
- * hooks, plugins or MCP servers reach the judge), no saved session, in an empty
- * temp directory, and asks for the verdict schema with --json-schema.
- */
-export function claudeCodeProvider(opts: ClaudeCodeOpts = {}): ChatProvider {
-  const model = opts.model ?? DEFAULT_ANTHROPIC_MODEL;
-  const command = opts.command ?? "claude";
-  const timeoutMs = opts.timeoutMs ?? 300_000;
-  return {
-    name: "claude-code",
-    model,
-    params: { structuredOutput: true },
-    async complete(req) {
-      const args = ["-p", "--output-format", "json", "--model", model, "--system-prompt", req.system, "--tools", "", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--disable-slash-commands"];
-      if (req.jsonSchema) args.push("--json-schema", JSON.stringify(req.jsonSchema));
-      const cwd = await mkdtemp(join(tmpdir(), "csh-judge-"));
-      try {
-        const out = await runCli(command, args, req.user, { cwd, env: opts.env ?? process.env, timeoutMs, ...(req.signal ? { signal: req.signal } : {}) });
-        let json: {
-          is_error?: boolean;
-          result?: unknown;
-          structured_output?: unknown;
-          stop_reason?: string;
-          usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
-          modelUsage?: Record<string, unknown>;
-        };
-        try {
-          json = JSON.parse(out.stdout.trim().split("\n").pop() ?? "");
-        } catch {
-          throw new ProviderError(`claude-code: \`${command} -p\` exited ${out.code} without a JSON result${clipErr(out.stderr)}`);
-        }
-        if (json.is_error || out.code !== 0) {
-          throw new ProviderError(`claude-code: \`${command} -p\` failed: ${clip(typeof json.result === "string" ? json.result : out.stderr, 300) || `exit ${out.code}`}`);
-        }
-        const text = json.structured_output !== undefined && json.structured_output !== null ? JSON.stringify(json.structured_output) : typeof json.result === "string" ? json.result : "";
-        const r: ChatResponse = { text, model: Object.keys(json.modelUsage ?? {})[0] ?? model };
-        if (json.stop_reason) r.stopReason = json.stop_reason;
-        const u = json.usage;
-        if (u) r.usage = { inputTokens: (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0), outputTokens: u.output_tokens };
-        return r;
-      } finally {
-        await rm(cwd, { recursive: true, force: true });
-      }
-    },
-  };
-}
-
-function clip(s: string, n: number): string {
-  const t = s.trim();
-  return t.length > n ? `${t.slice(0, n)}…` : t;
-}
-
-function clipErr(stderr: string): string {
-  const t = clip(stderr, 300);
-  return t ? `: ${t}` : "";
-}
-
-function runCli(
-  command: string,
-  args: string[],
-  stdin: string,
-  o: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number; signal?: AbortSignal },
-): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  return new Promise((resolvePromise, reject) => {
-    let child: ReturnType<typeof spawn>;
-    try {
-      child = spawn(command, args, { cwd: o.cwd, env: o.env, stdio: ["pipe", "pipe", "pipe"] });
-    } catch (e) {
-      reject(new ProviderError(`claude-code: could not run \`${command}\`: ${(e as Error).message}`));
-      return;
-    }
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    const stop = () => child.kill();
-    const timer = setTimeout(() => {
-      timedOut = true;
-      stop();
-    }, o.timeoutMs);
-    o.signal?.addEventListener("abort", stop, { once: true });
-    child.stdout!.setEncoding("utf8").on("data", (d: string) => (stdout += d));
-    child.stderr!.setEncoding("utf8").on("data", (d: string) => (stderr += d));
-    child.on("error", (e: NodeJS.ErrnoException) => {
-      clearTimeout(timer);
-      reject(new ProviderError(e.code === "ENOENT" ? `claude-code: \`${command}\` is not on PATH (install Claude Code, or use another provider)` : `claude-code: ${e.message}`));
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      o.signal?.removeEventListener("abort", stop);
-      if (o.signal?.aborted) reject(new ProviderError("claude-code: aborted"));
-      else if (timedOut) reject(new ProviderError(`claude-code: no answer within ${Math.round(o.timeoutMs / 1000)} s`));
-      else resolvePromise({ code, stdout, stderr });
-    });
-    child.stdin!.on("error", () => {});
-    child.stdin!.end(stdin);
-  });
 }
 
 // ---------------------------------------------------------------- OpenAI-compatible

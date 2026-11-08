@@ -12,4 +12,5 @@ export * from "./predicates.ts";
 export * from "./prompt.ts";
 export * from "./providers.ts";
 export * from "./render.ts";
+export * from "./subscription.ts";
 export * from "./verifier.ts";

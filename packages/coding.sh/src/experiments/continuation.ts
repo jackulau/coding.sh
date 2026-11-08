@@ -27,6 +27,7 @@ import { writeFileAtomic } from "../datasets/store.ts";
 import type { Case, CaseRun, ExperimentResult, TraceEvent } from "../datasets/types.ts";
 import { fetchJson, type FetchLike, type RetryOpts } from "../judge/http.ts";
 import { ANTHROPIC_API_VERSION, DEFAULT_ANTHROPIC_MODEL } from "../judge/providers.ts";
+import { CLAUDE_CODE_TOOLS, cliComplete, isCliProvider, type CliLimiter, type CliProvider } from "../judge/subscription.ts";
 import { wilson } from "../stats/interval.ts";
 import { withTrace } from "./run.ts";
 import { TaskError, type ResolvedTask, type TaskContext } from "./task.ts";
@@ -199,11 +200,14 @@ export function contextBlock(injected: readonly InjectedFile[]): string {
 
 // ---------------------------------------------------------------- task spec
 
-export type ContinuationProvider = "anthropic" | "openai" | "openai-compatible";
+export type ContinuationProvider = "anthropic" | "openai" | "openai-compatible" | CliProvider;
 
 export interface ContinuationTask {
   kind: "continuation";
-  /** anthropic: Messages API. openai: Responses API. openai-compatible: chat completions (OpenRouter, vLLM, Ollama, …). */
+  /**
+   * anthropic: Messages API. openai: Responses API. openai-compatible: chat completions (OpenRouter, vLLM, Ollama, …).
+   * claude-code, codex: the agent's CLI on a subscription (`claude -p`, `codex exec`), the turn history as a transcript (cliTurnPrompt).
+   */
   provider: ContinuationProvider;
   model: string;
   baseURL?: string;
@@ -234,6 +238,8 @@ export interface ContinuationTask {
   retry?: RetryOpts;
   /** Price table for usage.costUsd. Default the built-in one. */
   prices?: Prices;
+  /** claude-code and codex: the CLI's shared limiter (default the process-wide one). */
+  limiter?: CliLimiter;
   /** Called once per case-trial: whether the response came from the cache, and what the call cost (0 when cached). */
   onCall?: (info: { caseId: string; trial: number; cached: boolean; costUsd?: number; usage: ContinuationUsage }) => void;
 }
@@ -380,6 +386,62 @@ export function openAIResponsesBody(p: FrozenPrefix, o: RenderOpts): Record<stri
   return body;
 }
 
+/**
+ * What a subscription CLI is told on top of the system prompt. `claude -p` and
+ * `codex exec` take one message and run their own tools, so the turn history
+ * goes in as a transcript and the model writes its tool calls as JSON instead
+ * of calling them.
+ */
+// Nothing here may suggest that tools are unavailable. On a real subscription replay, a model whose
+// own tool list was empty said "the Bash tool is disabled" instead of running the tests, whatever
+// this text said; the API path (native tools) never does. So Claude Code gets the session's tools
+// natively when it can (CLAUDE_CODE_TOOLS), and this protocol is the fallback.
+export const CLI_TURN_PROTOCOL = `This session is replayed. The user's message holds it up to now, in <conversation>, and the tools you have in it, in <tools>. Write your next turn in it, as you would with those tools. The tools in your own tool list here only return your answer and say nothing about the session: in the session, every tool in <tools> works and none is disabled. To call one, put it in "tool_calls", with its name and its input as a JSON object written as a string; the calls run after you answer, in order, and you see their results next. Write only your next turn: in "text", what you say to the user now (empty when you only call tools); in "tool_calls", the tools you call now (empty when you call none).`;
+/** With the session's tools given natively (Claude Code): only the transcript form needs saying. */
+export const CLI_NATIVE_PROTOCOL = `This session is replayed. The user's message holds it up to now, in <conversation>. Write your next turn in it: what you say to the user, and the tool calls you make now, as you normally would.`;
+/** The end of the CLI user message, next to where the model starts writing. */
+export const CLI_TURN_ASK = `Write your next turn. Every tool in <tools> works: call the ones you need in "tool_calls".`;
+export const CLI_NATIVE_ASK = "Write your next turn.";
+
+/** The reply a subscription CLI must give: the turn's text and its tool calls, inputs as JSON strings (strict-schema friendly). */
+export const CLI_TURN_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    text: { type: "string" },
+    tool_calls: {
+      type: "array",
+      items: { type: "object", properties: { name: { type: "string" }, input_json: { type: "string" } }, required: ["name", "input_json"], additionalProperties: false },
+    },
+  },
+  required: ["text", "tool_calls"],
+  additionalProperties: false,
+};
+
+const attr = (v: string) => v.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+
+/**
+ * The same request as anthropicBody, as one system prompt and one message for
+ * a CLI: the system prompt (with "system" placement, the context block too)
+ * and CLI_TURN_PROTOCOL; then the tool definitions and every message of the
+ * prefix in order (the context block in front of the first user message, tool
+ * calls with their JSON input, tool results with their content). The text of
+ * every block is the API body's text, unchanged.
+ */
+export function cliTurnPrompt(p: FrozenPrefix, o: RenderOpts & { native?: boolean }): { system: string; user: string } {
+  const tools = (o.native ? [] : o.tools).map((t) => `<tool name="${attr(t.name)}">\n${t.description ? `${t.description.trimEnd()}\n` : ""}Input schema: ${JSON.stringify(schemaOf(t))}\n</tool>`);
+  const turns: string[] = [];
+  for (const m of withContext(p.messages, o.firstUser)) {
+    if (m.role === "user") turns.push(`<user>\n${m.text || "(empty)"}\n</user>`);
+    else if (m.role === "tool") turns.push(`<tool_result id="${attr(safeId(m.toolUseId))}" name="${attr(m.name)}"${m.isError ? ' is_error="true"' : ""}>\n${m.content || "(no output)"}\n</tool_result>`);
+    else {
+      const parts = [...(m.text ? [m.text] : []), ...(m.toolCalls ?? []).map((c) => `<tool_call id="${attr(safeId(c.id))}" name="${attr(c.name)}">${JSON.stringify(objInput(c.input))}</tool_call>`)];
+      turns.push(`<assistant>\n${parts.join("\n")}\n</assistant>`);
+    }
+  }
+  const user = `${tools.length ? `<tools>\n${tools.join("\n")}\n</tools>\n\n` : ""}<conversation>\n${turns.join("\n\n")}\n</conversation>\n\n${o.native ? CLI_NATIVE_ASK : CLI_TURN_ASK}`;
+  return { system: `${o.system}\n\n${o.native ? CLI_NATIVE_PROTOCOL : CLI_TURN_PROTOCOL}`, user };
+}
+
 // ---------------------------------------------------------------- responses
 
 const n = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
@@ -404,7 +466,18 @@ export function parseResponse(provider: ContinuationProvider, json: unknown, mod
   let text = "";
   const toolCalls: ToolCall[] = [];
   let stopReason: string | undefined;
-  if (provider === "anthropic") {
+  if (isCliProvider(provider)) {
+    // The stored CLI reply (cliTurn below): the turn and the call's usage.
+    if (typeof j.text === "string") text = j.text;
+    for (const c of Array.isArray(j.tool_calls) ? j.tool_calls : []) {
+      if (isObj(c) && typeof c.name === "string") toolCalls.push({ id: `call_${toolCalls.length}`, name: c.name, input: parseArgs(c.input_json) });
+    }
+    if (typeof j.stop_reason === "string") stopReason = j.stop_reason;
+    put("inputTokens", u.inputTokens);
+    put("outputTokens", u.outputTokens);
+    put("cacheReadTokens", u.cacheReadTokens);
+    put("cacheWriteTokens", u.cacheWriteTokens);
+  } else if (provider === "anthropic") {
     for (const b of Array.isArray(j.content) ? j.content : []) {
       if (!isObj(b)) continue;
       if (b.type === "text" && typeof b.text === "string") text += b.text;
@@ -489,6 +562,7 @@ const LOCAL_BASE = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/
 
 /** The env var a task's uncached model calls need, when it is unset and the endpoint is not local; else undefined. */
 export function missingModelKey(t: ContinuationTask, env: NodeJS.ProcessEnv): string | undefined {
+  if (isCliProvider(t.provider)) return undefined;
   const name = keyEnv(t);
   if (env[name]?.trim()) return undefined;
   return LOCAL_BASE.test(baseURLOf(t, env)) ? undefined : name;
@@ -501,6 +575,7 @@ function baseURLOf(t: ContinuationTask, env: NodeJS.ProcessEnv): string {
 }
 
 function endpoint(t: ContinuationTask, base: string): string {
+  if (isCliProvider(t.provider)) return base;
   if (t.provider === "anthropic") return `${base}/v1/messages`;
   if (t.provider === "openai") return `${base}/responses`;
   return `${base}/chat/completions`;
@@ -517,8 +592,8 @@ interface Prepared {
 }
 
 function prepare(spec: ContinuationTask): Prepared {
-  if (!["anthropic", "openai", "openai-compatible"].includes(spec.provider)) {
-    throw new TaskError(`continuation task: provider must be "anthropic", "openai" or "openai-compatible" (got ${JSON.stringify(spec.provider)})`);
+  if (!["anthropic", "openai", "openai-compatible", "claude-code", "codex"].includes(spec.provider)) {
+    throw new TaskError(`continuation task: provider must be "anthropic", "openai", "openai-compatible", "claude-code" or "codex" (got ${JSON.stringify(spec.provider)})`);
   }
   if (typeof spec.model !== "string" || !spec.model) throw new TaskError("continuation task: `model` is required");
   const cwd = spec.cwd ?? process.cwd();
@@ -533,7 +608,8 @@ function prepare(spec: ContinuationTask): Prepared {
   const placement = spec.context?.placement ?? "first-user";
   const toolDefs = spec.toolDefs ?? "recorded";
   const maxOutputTokens = spec.maxOutputTokens ?? 2048;
-  const base = baseURLOf(spec, env);
+  const cli = isCliProvider(spec.provider);
+  const base = cli ? `cli:${spec.provider}` : baseURLOf(spec, env);
   const cacheDir = spec.cacheDir ?? join(paths(env).root, "continuation-cache");
   return {
     ref: continuationRef(spec.provider, spec.model, system, files, toolDefs, placement),
@@ -551,7 +627,15 @@ function prepare(spec: ContinuationTask): Prepared {
         ...(spec.temperature !== undefined && spec.provider !== "anthropic" ? { temperature: spec.temperature } : {}),
         ...(spec.effort ? { effort: spec.effort } : {}),
       };
-      const body = spec.provider === "anthropic" ? anthropicBody(prefix, opts) : spec.provider === "openai" ? openAIResponsesBody(prefix, opts) : openAIChatBody(prefix, opts);
+      // Claude Code can give the model the session's own tools when they are all its built-ins.
+      const native = spec.provider === "claude-code" && opts.tools.length > 0 && opts.tools.every((t) => CLAUDE_CODE_TOOLS.has(t.name));
+      const body = cli
+        ? { model: spec.model, ...cliTurnPrompt(prefix, { ...opts, native }), ...(native ? { tools: opts.tools.map((t) => t.name) } : {}), ...(spec.effort ? { effort: spec.effort } : {}) }
+        : spec.provider === "anthropic"
+          ? anthropicBody(prefix, opts)
+          : spec.provider === "openai"
+            ? openAIResponsesBody(prefix, opts)
+            : openAIChatBody(prefix, opts);
       // The key never enters the cache key or the file: provider, endpoint, body and trial do.
       const key = sha256Hex(canonicalJson({ v: CACHE_VERSION, provider: spec.provider, baseURL: base, body, trial }));
       return { body, file: join(cacheDir, key.slice(0, 2), `${key}.json`) };
@@ -579,6 +663,42 @@ export function planContinuation(spec: ContinuationTask): (input: unknown, trial
   };
 }
 
+type CliTurnBody = { model: string; system: string; user: string; effort?: string; tools?: string[] };
+
+/** One next turn through a subscription CLI, stored the way parseResponse reads it. */
+async function cliTurn(kind: CliProvider, req: CliTurnBody, o: { env: NodeJS.ProcessEnv; limiter?: CliLimiter; signal?: AbortSignal }): Promise<Record<string, unknown>> {
+  const r = await cliComplete(kind, { ...req, ...(req.tools?.length ? {} : { jsonSchema: CLI_TURN_SCHEMA }), ...(o.signal ? { signal: o.signal } : {}) }, { env: o.env, ...(o.limiter ? { limiter: o.limiter } : {}) }).catch((e: unknown) => {
+    throw new TaskError(e instanceof Error ? e.message : String(e));
+  });
+  if (r.toolCalls) {
+    return {
+      cli: kind,
+      text: r.text,
+      tool_calls: r.toolCalls.map((c) => ({ name: c.name, input_json: JSON.stringify(c.input) })),
+      model: r.model,
+      ...(r.stopReason ? { stop_reason: r.stopReason } : {}),
+      usage: r.usage,
+    };
+  }
+  let turn: unknown;
+  try {
+    turn = JSON.parse(r.text);
+  } catch {
+    turn = undefined;
+  }
+  // A reply that ignored the schema is still a turn: its text, no tool calls.
+  const t = isObj(turn) ? turn : { text: r.text, tool_calls: [] };
+  return {
+    cli: kind,
+    text: typeof t.text === "string" ? t.text : "",
+    tool_calls: Array.isArray(t.tool_calls) ? t.tool_calls : [],
+    model: r.model,
+    ...(r.stopReason ? { stop_reason: r.stopReason } : {}),
+    usage: r.usage,
+    ...(r.commands ? { commands: r.commands } : {}),
+  };
+}
+
 export function continuationTask(spec: ContinuationTask): ResolvedTask {
   const p = prepare(spec);
   const env = spec.env ?? process.env;
@@ -596,6 +716,13 @@ export function continuationTask(spec: ContinuationTask): ResolvedTask {
           cached = true;
         } catch {
           json = undefined;
+        }
+      }
+      if (json === undefined && isCliProvider(spec.provider)) {
+        json = await cliTurn(spec.provider, body as CliTurnBody, { env, ...(spec.limiter ? { limiter: spec.limiter } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) });
+        if (p.useCache) {
+          await mkdir(dirname(file), { recursive: true });
+          await writeFileAtomic(file, JSON.stringify(json));
         }
       }
       if (json === undefined) {

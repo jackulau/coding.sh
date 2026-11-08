@@ -361,7 +361,8 @@ A grader is a JSON object with a `kind`. Every kind takes `name`, the grader's i
 `stripPunctuation` and `unicode` (NFKC).
 
 The provider fields of `llm` and `llm-checklist`: `provider` (`anthropic` by default, `openai`,
-`gateway` or `mock`), `model` (default `claude-sonnet-5-5` for Anthropic), `baseURL`, `apiKeyEnv`,
+`gateway`, `claude-code`, `codex` or `mock`; `claude-code` and `codex` judge through `claude -p` or
+`codex exec` on a subscription, see [Replaying on a subscription](#replaying-on-a-subscription)), `model` (default `claude-sonnet-5-5` for Anthropic), `baseURL`, `apiKeyEnv`,
 `maxTokens`, `effort` (Anthropic), `temperature` and `requireKey` (OpenAI-compatible; `requireKey:
 false` for a local server with no key), and `mockAnswer` (`mock` only). A judge reads
 `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` when `baseURL` is not set. A `pairwise` judge takes the
@@ -668,7 +669,8 @@ worse, for CI gates. scripts/perf/ uses it to gate the coding.sh site on Lightho
 
 Judges call Anthropic with `ANTHROPIC_API_KEY` or OpenAI with `OPENAI_API_KEY`. Like the vendors'
 SDKs, they send to `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` when set, so a proxy or gateway works
-without `--base-url`.
+without `--base-url`. `"provider":"claude-code"` and `"provider":"codex"` judge on a Claude or
+ChatGPT subscription instead, through the agent's CLI.
 
 `coding.sh judge calibrate` measures judge and human agreement (Cohen's kappa) on a held-out split.
 Every report flags judges that are not calibrated. It also stores the judge's held-out sensitivity
@@ -1397,8 +1399,79 @@ API can serve, so Codex sessions never pick a Claude model), else the provider's
 `claude-sonnet-5-5` for Anthropic, `gpt-6-sol` for OpenAI. The API defaults to Anthropic's
 (`--provider openai` or `openai-compatible`, with `--base-url` for a local or proxied endpoint;
 `openai-compatible` has no default model, so it needs `--model` when the sessions recorded none).
-`--json` gives the comparison, the fixed and broken cases, the per-behavior counts, the cost and the
-cache hits.
+With no API key set, it uses a logged-in Claude Code or Codex instead (next section). `--json`
+gives the comparison, the fixed and broken cases, the per-behavior counts, the provider, the cost
+and the cache hits.
+
+**A committed edit.** With no uncommitted harness edits and no `--a` or `--b`, `exp ab` tests your
+last commit that changed CLAUDE.md, AGENTS.md, a rule or a skill (B, `git:HEAD`) against the version
+before it (A, `git:<commit>^`), and says so. `--a git:<rev> --b git:<rev>` compares any two
+commits, with or without `--dry-run`.
+
+### Replaying on a subscription
+
+`--provider claude-code` runs each next turn and each verdict through `claude -p`, and
+`--provider codex` through `codex exec`, so a Claude or ChatGPT subscription can stand in for an API
+key. `exp ab`, `refine` and the `improve` hints pick one when neither `ANTHROPIC_API_KEY` nor
+`OPENAI_API_KEY` is set and the CLI is logged in: Claude Code first, Codex first when every
+`--agent` is codex. They print one line saying which. Login is read from `CLAUDE_CODE_OAUTH_TOKEN`
+(from `claude setup-token`), Claude Code's credentials file or account, or Codex's `auth.json`.
+
+Each call is isolated from your setup:
+
+- `claude -p` runs with `--setting-sources ""`, `--strict-mcp-config`,
+  `--no-session-persistence` and `--disable-slash-commands`, and a throwaway `CLAUDE_CONFIG_DIR`
+  that holds only the token or a copy of the credentials file. No hooks, plugins, MCP servers,
+  CLAUDE.md or settings of yours load, and the call is not recorded as a session. On macOS, where
+  the login lives in the keychain, there is no file to copy, so it uses your config dir and relies
+  on those flags alone; set `CLAUDE_CODE_OAUTH_TOKEN` to get the throwaway dir there too.
+- `codex exec` runs with `--ephemeral`, `--ignore-user-config`, `--ignore-rules`, a read-only
+  sandbox and `project_doc_max_bytes=0`, and a throwaway `CODEX_HOME` holding a copy of
+  `auth.json`. Our system prompt replaces Codex's instructions (`model_instructions_file`).
+- Every call runs in a new empty directory, removed afterwards. A login the CLI refreshes during
+  the run is copied back when it exits, unless your own file changed meanwhile.
+
+The prompt carries the same content as the API request: the system prompt, the harness files in a
+`<system-reminder>` block before the first user message, and every turn up to the decision point,
+with each tool call's input and each tool result. The tools reach the model in one of two ways:
+
+- **Natively**, with `claude-code` when every tool of the session is a Claude Code built-in (Bash,
+  Read, Edit, Write, Glob, Grep and the like). `claude -p` gets `--tools` with those names and
+  calls them as it would in a session. A `PreToolUse` hook of our own (`--settings`) refuses every
+  call, so none runs, and `--max-turns 1` ends the run after that first turn. The tool calls are
+  read from the `stream-json` output.
+- **As JSON**, with `codex`, and with `claude-code` when a session used other tools (MCP tools,
+  another agent's tools). The tools are listed by name, description and input schema inside the
+  prompt, the model has no tools (`--tools ""`), and it answers with `{"text": …, "tool_calls":
+  [{"name": …, "input_json": …}]}`, held to that schema by `--json-schema` or `--output-schema`.
+  The judge reads the same text and tool calls either way.
+
+The JSON form is the fallback because it changes behavior. On a real replay of four sessions that
+claimed done without running the tests, with a CLAUDE.md line telling the agent to run `npm test`,
+Claude Haiku often answered in the JSON form that "the Bash tool is disabled", and arm B passed 0 to
+2 of the 4 decision points over five runs. With native tools B passed 4 of 4 (A 0 of 4 both ways),
+which matches what the edit did in later real sessions.
+
+Other differences, in both forms:
+
+- The turns are a transcript in one user message (`<user>`, `<assistant>`, `<tool_call>`,
+  `<tool_result>` tags), not separate API messages.
+- Claude Code adds lines before the system prompt (a billing header and "You are a Claude agent,
+  built on Anthropic's Claude Agent SDK."), a message with its own environment (the throwaway
+  directory, the platform, the date), and with `--tools` its own tool descriptions, which differ
+  from the ones the session recorded. Codex wraps its own turn around the prompt.
+- Thinking, effort and the reply length follow the CLI's defaults; `--model` still picks the
+  model.
+
+So a subscription replay is close to the API's but not identical. Compare edits on one provider;
+don't mix an API run with a subscription run in one A/B.
+
+Limits: calls run 2 at a time per CLI (`--concurrency` lowers it). A rate-limit error waits 20 s,
+then 40, 80 and 160, and then fails that trial. A message that the plan's usage limit is reached
+stops the run: no new trial starts, the finished ones are stored, and the next run reuses them from
+the cache. Costs are API-equivalent, priced from the tokens the CLI reports, and shown as
+`$0.41 API-equivalent`; `--json` adds `"apiEquivalent": true`. There is no spending cap unless you
+pass `--max-cost`.
 
 **Your own decision points.** `--anchor ./anchors.mjs` loads a module whose default export is an
 anchor, or an array of them: `{ id, version, frame, behavior, rubric, find(events) }`. `find` gets a

@@ -1,11 +1,15 @@
 // What to fix first: command grouping, failure records from events, and the
 // ranking (recurring before one-off, then severity), on synthetic sessions.
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { Session } from "../../src/core/types.ts";
 import { commandHead, errorKey, failureRecords, rankIssues, type FailureRecord } from "../../src/improve/issues.ts";
-import { modelProvider, stepsFor } from "../../src/improve/report.ts";
+import { modelProvider, NEEDS_MODEL, stepsFor } from "../../src/improve/report.ts";
+import { nodeBin, pathOf } from "../_bin.ts";
 import { claimSession, failingSession, retrySession, sessionEvents } from "../helpers-decision.ts";
 
 const CWD = "/work/demo";
@@ -110,5 +114,35 @@ describe("stepsFor", () => {
     assert.equal(ab({ ANTHROPIC_API_KEY: "k", OPENAI_API_KEY: "k" }), `coding.sh exp ab --behavior ${issue.behavior}`);
     assert.equal(ab({ OPENAI_API_KEY: "k" }), `coding.sh exp ab --behavior ${issue.behavior} --provider openai`);
     assert.equal(ab({ ANTHROPIC_API_KEY: " " }), `coding.sh exp ab --behavior ${issue.behavior} --dry-run`);
+  });
+
+  it("with no API key, a logged-in Claude Code or Codex tests the edit on its subscription", () => {
+    const [issue] = rankIssues([session("a", ["no-verification"], 0), session("b", ["no-verification"], 1)], new Map());
+    assert.ok(issue?.behavior);
+    const home = mkdtempSync(join(tmpdir(), "csh-steps-"));
+    try {
+      const bin = join(home, "bin");
+      nodeBin(bin, "claude", "");
+      nodeBin(bin, "codex", "");
+      const base = { HOME: home, USERPROFILE: home, PATH: pathOf(bin) };
+      const step = (env: NodeJS.ProcessEnv) => stepsFor(issue, 1, { provider: modelProvider(env) }).find((s) => s.command.startsWith("coding.sh exp ab"))!;
+
+      const none = step(base);
+      assert.equal(none.command, `coding.sh exp ab --behavior ${issue.behavior} --dry-run`);
+      assert.ok(none.label.includes(NEEDS_MODEL), none.label);
+
+      const claude = step({ ...base, CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat-fake" });
+      assert.equal(claude.command, `coding.sh exp ab --behavior ${issue.behavior}`, "exp ab picks Claude Code by itself");
+      assert.match(claude.label, /on your Claude subscription/);
+
+      mkdirSync(join(home, ".codex"));
+      writeFileSync(join(home, ".codex", "auth.json"), JSON.stringify({ tokens: { id_token: "x" } }));
+      const codex = step(base);
+      assert.equal(codex.command, `coding.sh exp ab --behavior ${issue.behavior} --provider codex`);
+      assert.match(codex.label, /on your ChatGPT subscription/);
+      assert.equal(step({ ...base, OPENAI_API_KEY: "k" }).command, `coding.sh exp ab --behavior ${issue.behavior} --provider openai`, "a key comes first");
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   });
 });

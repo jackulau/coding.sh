@@ -10,7 +10,6 @@
 import { readFileSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import type { Context } from "../../core/context.ts";
-import { DEFAULT_MODELS } from "../../core/pricing.ts";
 import { createDataset } from "../../datasets/dataset.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
 import type { Case, Dataset, ExperimentResult } from "../../datasets/types.ts";
@@ -57,6 +56,7 @@ import { targetPath as targetPathOf } from "../../refine/target.ts";
 import {
   abOptions,
   baseURLFor,
+  costText,
   estimatePair,
   gitRoot,
   harnessFilesIn,
@@ -67,6 +67,8 @@ import {
   money,
   newSpend,
   pickAnchors,
+  providerDefaultModel,
+  readyCli,
   resolveArm,
   runPair,
   trialSetup,
@@ -115,6 +117,8 @@ export async function setupEnv(c: CommandContext, ctx: Context): Promise<Env> {
   const git = gitRoot(c.cwd);
   const root = git ?? c.cwd;
   const o = abOptions(c, git, {});
+  if (o.autoProvider && !c.out.json) c.out.note(o.autoProvider);
+  if (!o.dryRun) readyCli(o, c.env, (l) => c.out.warn(l));
   const anchors = await pickAnchors(o, c.cwd);
   const { files: _f, ...protect } = protectOptions(c);
   const maxGuard = c.flags["max-guard"] === undefined ? 24 : Number(c.flags["max-guard"]);
@@ -314,6 +318,7 @@ async function runRound(e: Env, plan: Plan, spend: Spend, cap: number | undefine
     if ((e.c.drain ?? e.c.signal).aborted) break;
     const { mined, setup } = plan;
     const run = await runPair(e.c, e.store, setup, mined.dataset, mined.caseMap, plan.base, cand.arm, { spend, gate: e.gate, ...(cap !== undefined ? { maxCost: cap } : {}), name: `refine-${cand.id}` });
+    if (run.limited) e.c.out.warn(`Stopped: ${run.limited}`);
     const devA = outcomesByCase(run.ab.a.runs);
     const devB = outcomesByCase(run.ab.b.runs);
     const cmp = run.comparison;
@@ -502,7 +507,7 @@ async function findingsFor(e: Env): Promise<Finding[]> {
 }
 
 export function proposerModel(e: Env): string {
-  const m = str(e.c.flags["proposer-model"]) ?? e.o.judgeModel ?? e.o.model ?? (e.o.provider === "openai-compatible" ? undefined : DEFAULT_MODELS[e.o.provider]);
+  const m = str(e.c.flags["proposer-model"]) ?? e.o.judgeModel ?? e.o.model ?? providerDefaultModel(e.o.provider);
   if (!m) throw new UsageError("--provider openai-compatible has no default model: pass --proposer-model", { reason: "missing_argument" });
   return m;
 }
@@ -622,7 +627,7 @@ async function testCommand(c: CommandContext, e: Env): Promise<number> {
   const plan = await planRound(e, base, cands, entries);
   overBudget(e, plan, e.o.maxCost);
   if (e.o.dryRun) return printPlan(c, e, plan);
-  if (!out.json && plan.estimate?.uncached) out.note(`About ${plan.estimate.usd === undefined ? "an unknown cost" : money(plan.estimate.usd)} for up to ${plan.estimate.uncached} uncached model and judge calls`);
+  if (!out.json && plan.estimate?.uncached) out.note(`About ${plan.estimate.usd === undefined ? "an unknown cost" : costText(plan.estimate.usd, e.o.provider)} for up to ${plan.estimate.uncached} uncached model and judge calls`);
   const spend = newSpend();
   const done = await runRound(e, plan, spend, e.o.maxCost);
   const p = await refinePlateau(e.store, readLedger(e.dir));
@@ -630,7 +635,7 @@ async function testCommand(c: CommandContext, e: Env): Promise<number> {
     out.data({ ledger: ledgerFile(e.dir), rounds: done.map((d) => d.entry), spent: spendJson(spend), plateau: plateauJson(p) });
   } else {
     printTested(c, plan, done);
-    out.print(`Spent ${money(spend.usd + spend.judgeUsd)}${spend.unpriced ? "+" : ""} (${spend.cached} of ${spend.calls} next-turn calls cached, ${spend.judgeCalls} judge calls)`);
+    out.print(`Spent ${costText(spend.usd + spend.judgeUsd, e.o.provider)}${spend.unpriced ? "+" : ""} (${spend.cached} of ${spend.calls} next-turn calls cached, ${spend.judgeCalls} judge calls)`);
     if (p) out.print(plateauLine("refine", p));
     const win = done.find((d) => d.entry.verdict === "keep" && (d.entry.rank?.winner ?? true));
     if (win) out.next("Write the kept edit to your files (with a backup)", `coding.sh refine apply ${win.entry.id}`);
@@ -674,7 +679,7 @@ function printPlan(c: CommandContext, e: Env, plan: Plan): number {
     out.print(`Dev: ${plural(plan.mined.cases.length, "decision point")} from ${plural(plan.mined.mined.sessions, "session")} since ${e.o.sinceText}, ${plan.setup.model}, ${plural(e.o.trials, "trial")} per case and arm`);
     const g = plan.guard;
     out.print(`Guard: ${guardPlanText(g)}`);
-    out.print(`Would make up to ${plan.estimate.uncached} uncached model and judge calls: ${plan.estimate.usd === undefined ? "cost unknown (no price for the model)" : `~${money(plan.estimate.usd)}`}${e.o.maxCost !== undefined ? ` of --max-cost ${money(e.o.maxCost)}` : ""}`);
+    out.print(`Would make up to ${plan.estimate.uncached} uncached model and judge calls: ${plan.estimate.usd === undefined ? "cost unknown (no price for the model)" : `~${costText(plan.estimate.usd, e.o.provider)}`}${e.o.maxCost !== undefined ? ` of --max-cost ${money(e.o.maxCost)}` : ""}`);
   } else out.print("No model calls: every candidate is rejected before the trial");
   return 0;
 }
@@ -769,7 +774,7 @@ async function runCommand(c: CommandContext, e: Env): Promise<number> {
     out.print(`Up to ${plural(max, "round")}: propose an edit to ${target.path} with ${plan.proposer}, test it on ${plural(mined.cases.length, "decision point")}, apply it when kept`);
     out.print(findings.length ? `Findings: ${findings.map((f) => `${f.flag} ${f.diagnosis.severity.level} ${f.diagnosis.severity.score}`).join(", ")}` : "Findings: none");
     out.print(`Guard: ${guardPlanText(guard)}`);
-    out.print(`Each round: up to ${est.uncached} uncached model and judge calls, ${est.usd === undefined ? "cost unknown" : `~${money(est.usd)}`}, plus one proposer call${cap !== undefined ? `; stops at --max-cost ${money(cap)}` : ""}`);
+    out.print(`Each round: up to ${est.uncached} uncached model and judge calls, ${est.usd === undefined ? "cost unknown" : `~${costText(est.usd, e.o.provider)}`}, plus one proposer call${cap !== undefined ? `; stops at --max-cost ${money(cap)}` : ""}`);
     return 0;
   }
   const spend = newSpend();
@@ -824,7 +829,7 @@ async function runCommand(c: CommandContext, e: Env): Promise<number> {
     out.data({ ledger: ledgerFile(e.dir), rounds: done, applied, stopped, spent: spendJson(spend), plateau: plateauJson(p) });
   } else {
     const why = { rounds: `ran ${plural(done.length, "round")}`, candidates: "used every --candidate", plateau: "the e-detector says the loop stopped gaining", budget: "reached --max-cost", interrupted: "interrupted" }[stopped];
-    out.print(`Stopped: ${why}. ${plural(done.length, "round")}, ${applied.length} kept and applied, spent ${money(spend.usd + spend.judgeUsd)}${spend.unpriced ? "+" : ""}`);
+    out.print(`Stopped: ${why}. ${plural(done.length, "round")}, ${applied.length} kept and applied, spent ${costText(spend.usd + spend.judgeUsd, e.o.provider)}${spend.unpriced ? "+" : ""}`);
     if (p) out.print(plateauLine("refine", p));
     if (p?.status === "stop" && p.recommend) out.print(`The plateau began at round ${p.changePoint}: the version to keep is ${p.recommend.name}`);
     if (applied.length) out.next("Undo the last applied edit", "coding.sh refine rollback");

@@ -809,7 +809,7 @@ coding.sh eval crosscheck <TASK> [options]
 |---|---|---|
 | `--experiment <ID>` |  | Only runs from this experiment (default: every stored run of the task) |
 | `--max <N>` | `5` | Runs to review (one model call each) |
-| `--judge <JSON|FILE>` | `{"provider":"anthropic"}` | Reviewer model: {"provider":"anthropic"\|"openai"\|"gateway"\|"claude-code"\|"mock","model":…}. |
+| `--judge <JSON|FILE>` | `{"provider":"anthropic"}` | Reviewer model: {"provider":"anthropic"\|"openai"\|"gateway"\|"claude-code"\|"codex"\|"mock","model":…}. |
 | `--solver <BUNDLE>` |  | First solve the task once with this harness bundle and review that attempt too. |
 
 ```sh
@@ -998,6 +998,10 @@ coding.sh exp <action>
 | [`list`](#codingsh-exp-list) | List experiments |
 | [`status`](#codingsh-exp-status) | Progress, ETA and cost so far of long runs (exp, compare, bench, workflows), and how to resume them |
 
+- exp ab and refine call a model API with ANTHROPIC_API_KEY or OPENAI_API_KEY. With neither set they use a logged-in Claude Code (`claude -p`) or Codex (`codex exec`) instead and say so in one line; --provider claude-code or codex asks for one. Each call runs with no hooks, plugins, MCP servers or settings of yours, in an empty directory, with a throwaway CLAUDE_CONFIG_DIR or CODEX_HOME holding only a copy of the login. claude -p gets the session's own Claude Code tools and refuses every call, so none runs.
+- On a subscription, costs are API-equivalent (what the same tokens would cost on the API), there is no spending cap unless you pass --max-cost, calls run 2 at a time, rate limits back off and retry, and a spent usage limit stops the run and keeps the finished trials.
+- With no uncommitted harness edits, exp ab tests your last commit that changed CLAUDE.md, AGENTS.md, a rule or a skill (B) against the version before it (A).
+
 ### `coding.sh exp ab`
 
 A/B a CLAUDE.md, AGENTS.md, rule or skill edit on the decision points your agent recently got wrong.
@@ -1012,21 +1016,21 @@ coding.sh exp ab [spec] [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--a <FILE|DIR|git:REV|BUNDLE|none>` |  | Baseline harness (default: git HEAD when B is omitted, else the repo's current files) |
-| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | Candidate harness; a file replaces the file of the same path in A (default: your uncommitted edits) |
+| `--a <FILE|DIR|git:REV|BUNDLE|none>` |  | Baseline harness (default: git HEAD when B is omitted, else the repo's current files; with no uncommitted edits, the version before your last harness commit) |
+| `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | Candidate harness; a file replaces the file of the same path in A (default: your uncommitted edits, else your last harness commit) |
 | `--behavior <ID[,ID]>` |  | Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all) Repeatable. |
 | `--anchor <FILE>` |  | Module exporting your own anchor(s) (see the evals guide) Repeatable. |
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
 | `--agent <AGENT>` |  | Only sessions of this agent. Repeatable. |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
 | `-n, --limit <N>` | `40` | Maximum decision points. |
-| `--provider <NAME>` | `anthropic` | API that answers the next turn and judges it. One of: `anthropic`, `openai`, `openai-compatible`. |
+| `--provider <NAME>` |  | Who answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
 | `--model <MODEL>` |  | Model for the next turn (default: the one the decision points were recorded with, else claude-sonnet-5-5 or gpt-6-sol) |
 | `--judge-model <MODEL>` |  | Model for the judge (default: --model) |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
 | `--trials <N>` | `1` | Next turns per case and arm. |
 | `-c, --concurrency <N>` | `4` | Parallel model calls. |
-| `--max-cost <USD>` |  | Refuse to start when the estimate is over this, and stop once the spend passes it. |
+| `--max-cost <USD>` |  | Refuse to start when the estimate is over this, and stop once the spend passes it (API-equivalent dollars with claude-code or codex) |
 | `--dry-run` |  | Show the decision points and the cost estimate; make no model calls. |
 | `--watch` |  | Rerun when B's files change, one line per run; Ctrl-C to stop. |
 | `--cache` | `true` | Reuse stored model responses (--no-cache to ask the model again) |
@@ -1044,6 +1048,7 @@ coding.sh exp ab [spec] [options]
 coding.sh exp ab
 coding.sh exp ab --b ./drafts/CLAUDE.md --behavior unverified-claim
 coding.sh exp ab --a git:main --b . --since 30d --dry-run
+coding.sh exp ab --provider claude-code
 coding.sh exp ab --watch
 ```
 
@@ -2095,7 +2100,7 @@ coding.sh improve check
 - check reads the git history of CLAUDE.md, AGENTS.md, GEMINI.md, .claude/rules, .cursor/rules and skills. A session counts for the newest such commit its starting HEAD contains, so uncommitted edits count from the commit that keeps them. Sessions with no recorded HEAD, and sessions with no tool call outside MCP servers (a chat, or asking coding.sh about a change), are left out.
 - check compares sessions with a failure flag before and after each change, and, for each added line that names a command, flag, path or identifier, the share of sessions that acted on it. Two-sided Fisher exact tests at p ≤ 0.1: more flagged sessions is Regressed (exit 1); fewer, or the new line followed more with nothing worse, is Helped. Under 5 sessions after a change without a clear result is Too early to tell.
 - Under each change, check lists the sessions after it that still have a failure flag, newest first, with their flags (5, or all with --sessions; --json has every flagged session before and after).
-- exp ab (the replay A/B that improve suggests) needs ANTHROPIC_API_KEY or OPENAI_API_KEY. Without one, commit the change and let improve check judge it on new sessions.
+- exp ab (the replay A/B that improve suggests) needs ANTHROPIC_API_KEY, OPENAI_API_KEY, or Claude Code or Codex logged in (it runs on your subscription then). Without any of them, commit the change and let improve check judge it on new sessions.
 
 ### `coding.sh improve fix`
 
@@ -2334,7 +2339,7 @@ coding.sh refine propose [options]
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
 | `--agent <AGENT>` |  | Only sessions of this agent. Repeatable. |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
-| `--provider <NAME>` | `anthropic` | API that proposes, answers the next turn and judges it. One of: `anthropic`, `openai`, `openai-compatible`. |
+| `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
 | `--proposer-model <MODEL>` |  | Model that writes the edit (default: --judge-model, else --model, else claude-sonnet-5-5 or gpt-6-sol) |
 | `--proposer-command <CMD>` |  | Shell command that writes the edit instead of the proposer model: the prompt on stdin, the JSON reply on stdout (e.g. 'claude -p') |
@@ -2365,7 +2370,7 @@ coding.sh refine test <CANDIDATE>... [options]
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
 | `--agent <AGENT>` |  | Only sessions of this agent. Repeatable. |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
-| `--provider <NAME>` | `anthropic` | API that proposes, answers the next turn and judges it. One of: `anthropic`, `openai`, `openai-compatible`. |
+| `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
 | `--judge-model <MODEL>` |  | Model for the judge (default: --model) |
 | `-n, --limit <N>` | `40` | Maximum decision points. |
@@ -2473,7 +2478,7 @@ coding.sh refine run [options]
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
 | `--agent <AGENT>` |  | Only sessions of this agent. Repeatable. |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
-| `--provider <NAME>` | `anthropic` | API that proposes, answers the next turn and judges it. One of: `anthropic`, `openai`, `openai-compatible`. |
+| `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
 | `--judge-model <MODEL>` |  | Model for the judge (default: --model) |
 | `-n, --limit <N>` | `40` | Maximum decision points. |

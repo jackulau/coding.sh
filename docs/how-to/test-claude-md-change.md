@@ -5,7 +5,9 @@ line to CLAUDE.md. Did it help? `coding.sh exp ab` answers that from the session
 before you commit the line.
 
 You need: coding.sh capturing your agent's sessions for a week or two (`coding.sh init`), a repo
-under git, and an API key for the model that answers (`ANTHROPIC_API_KEY` by default).
+under git, and a model that answers: `ANTHROPIC_API_KEY` by default, or with no API key set, a
+logged-in Claude Code or Codex, which runs it on your subscription (see
+[Replaying on a subscription](../guides/evals.md#replaying-on-a-subscription)).
 
 ## 1. Make the edit
 
@@ -109,6 +111,11 @@ only on "Ship it".
 
 - `--b drafts/CLAUDE.md` tests a draft file against your current one without touching the repo.
   `--a git:main --b .` compares a branch's files with your working tree.
+- Already committed it? With no uncommitted edits, `exp ab` tests your last harness commit against
+  the version before it. `--a git:HEAD~1 --b git:HEAD` names the two commits yourself.
+- `--provider claude-code` or `--provider codex` runs it on your Claude or ChatGPT subscription
+  through `claude -p` or `codex exec`; with no API key set, that happens on its own. Costs are then
+  API-equivalent and there is no cap unless you pass `--max-cost`.
 - `--behavior unverified-claim` limits the run to one kind of decision point.
 - `--model` picks the model for the next turn. By default it's the model the agent was using at
   those moments, else the current Sonnet (or GPT with `--provider openai`).

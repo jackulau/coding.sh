@@ -18,6 +18,14 @@
 // refuses before any call; --watch prints one line per save of CLAUDE.md and
 // asks only arm B again.
 //
+// Then the same A/B on a subscription: no API key, only CLAUDE_CODE_OAUTH_TOKEN,
+// so exp ab picks `claude -p` on its own and says so. The stub sees Claude Code's
+// requests (its identity line before our system prompt, a StructuredOutput tool
+// for the reply schema) and answers through that tool. Checked: the same result,
+// costs labelled API-equivalent, the replayed prompt carries every text, tool
+// call and tool result the API request had, and no hook of the captured setup
+// ran (no new session).
+//
 //   node scripts/e2e/exp-ab-capture.mjs [--tarball coding.sh-x.y.z.tgz] [--keep]
 //
 // Without --tarball it packs packages/coding.sh (build it first: npm run build).
@@ -88,7 +96,12 @@ function run(file, args, { cwd, env, timeoutMs = 900_000, quiet = false } = {}) 
 const CONTINUATION = "You are a coding agent working";
 const JUDGE = "You are a strict";
 const systemText = (body) => (typeof body.system === "string" ? body.system : Array.isArray(body.system) ? body.system.map((b) => b?.text ?? "").join("\n") : "");
-const counts = { claude: 0, continuation: 0, continuationWithRule: 0, judge: 0 };
+const counts = { claude: 0, continuation: 0, continuationWithRule: 0, judge: 0, cli: 0, structured: 0 };
+/** The first request of each replayed turn, by path ("api" or "cli"), task and arm, for the fidelity check. */
+const turnBodies = { api: new Map(), cli: new Map() };
+const turnKey = (all) => `${Object.keys(TASKS).find((t) => all.includes(TASKS[t].instruction)) ?? "?"}:${all.includes("VERIFY-RULE") ? "B" : "A"}`;
+/** Claude Code answers a --json-schema call through this tool. */
+const STRUCTURED = "StructuredOutput";
 
 /** Claude Code: Read the task's file, Write the fix, then claim done without running anything. */
 function claudeTurn(body, all) {
@@ -114,21 +127,75 @@ function judgeTurn(body) {
   return { text: JSON.stringify({ score: pass ? 1 : 0.2, pass, confidence: 0.9, reason: pass ? "runs the tests before claiming success" : "claims done without checking", citations: [] }) };
 }
 
+/** Whether Claude Code already sent our StructuredOutput call back: the reply is in, close the turn. */
+const answered = (body) => body.messages.some((m) => Array.isArray(m.content) && m.content.some((c) => c?.type === "tool_result"));
+/** A call from `claude -p --json-schema`: the answer goes through the StructuredOutput tool. */
+const viaCli = (answer) => ({ tool: { name: STRUCTURED, args: answer } });
+
+/** A file only a replayed tool call that ran would create. */
+const canary = () => join(root, "replayed-call-ran");
+
 let lastBody;
 function scenario(body) {
   if (!Array.isArray(body.messages)) return { text: "ok" };
   const sys = systemText(body);
   const all = JSON.stringify(body);
-  if (sys.startsWith(JUDGE)) return judgeTurn(body);
-  if (sys.startsWith(CONTINUATION)) {
+  // Through `claude -p` Claude Code puts its own lines before our system prompt.
+  const via = (marker) => (sys.startsWith(marker) ? "api" : sys.includes(marker) ? "cli" : undefined);
+  const judge = via(JUDGE);
+  if (judge === "api") return judgeTurn(body);
+  if (judge === "cli") {
+    if (answered(body)) return { text: "ok" };
+    counts.cli++;
+    return viaCli(JSON.parse(judgeTurn(body).text));
+  }
+  const turn = via(CONTINUATION);
+  if (turn) {
+    // The session's tools natively (Bash, Read, Write): Claude Code's hook refuses the call and the run ends.
+    if (turn === "cli" && answered(body)) return { text: "ok" };
+    if (turn === "cli") {
+      counts.cli++;
+      if (toolNames(body).includes(STRUCTURED)) counts.structured++;
+    }
     counts.continuation++;
+    const key = turnKey(all);
+    if (!turnBodies[turn].has(key)) turnBodies[turn].set(key, body);
     if (!all.includes("VERIFY-RULE")) return { text: "Done." };
     counts.continuationWithRule++;
     const shell = toolNames(body).find((n) => /bash/i.test(n)) ?? "Bash";
-    return { tool: { name: shell, args: { command: "npm test" } } };
+    // Through claude -p the call also touches a canary file: it must be refused, never run.
+    return { tool: { name: shell, args: { command: turn === "cli" ? `npm test; touch ${canary()}` : "npm test" } } };
   }
   if (toolNames(body).length) lastBody = body;
   return claudeTurn(body, all);
+}
+
+/** Every piece of an Anthropic request a replay must carry: system text, message text, tool calls with their input, tool results. */
+function pieces(body) {
+  const out = { system: [], parts: [] };
+  const sys = Array.isArray(body.system) ? body.system.map((b) => b?.text ?? "") : [String(body.system ?? "")];
+  out.system.push(...sys.filter(Boolean));
+  for (const m of body.messages) {
+    if (typeof m.content === "string") out.parts.push(m.content);
+    else
+      for (const c of m.content ?? []) {
+        if (c?.type === "text") out.parts.push(c.text);
+        else if (c?.type === "tool_use") out.parts.push(`name="${c.name}">${JSON.stringify(c.input)}`);
+        else if (c?.type === "tool_result") out.parts.push(...(typeof c.content === "string" ? [c.content] : (c.content ?? []).map((x) => x?.text ?? "")));
+      }
+  }
+  out.tools = toolNames(body);
+  out.parts = out.parts.map((x) => x.trim()).filter(Boolean);
+  return out;
+}
+
+/** The text of a `claude -p` request: its system blocks and its one user message. */
+function cliText(body) {
+  const user = body.messages
+    .filter((m) => m.role === "user")
+    .map((m) => (typeof m.content === "string" ? m.content : (m.content ?? []).map((c) => c?.text ?? "").join("\n")))
+    .join("\n");
+  return { system: systemText(body), user };
 }
 
 // ------------------------------------------------------------------ main
@@ -274,7 +341,48 @@ try {
   const gated = await ab(["--gate"]);
   check(gated.code === 1 && /^Hold: /m.test(gated.stdout), "exp ab --gate holds and exits 1", gated.stdout);
 
-  // 5. --watch: one history line per save, only arm B asked again, Ctrl-C exits 0 (no SIGINT to a child on Windows).
+  // 5. The same A/B on a Claude subscription: no API key, a login token only.
+  const subEnv = { ...env, CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-stub-token" };
+  delete subEnv.ANTHROPIC_API_KEY;
+  const sessionsBefore = rows.length;
+  before = stub.requests.length;
+  const cliBefore = counts.cli;
+  const sub = await ab([], { env: subEnv });
+  log(`exp ab on a subscription:\n${sub.stdout}\n${sub.stderr}`);
+  check(sub.code === 0, "subscription: exp ab exits 0", sub.stderr.slice(-2000));
+  check(/No API key set: replaying through `claude -p` on your Claude subscription \(CLAUDE_CODE_OAUTH_TOKEN\); costs are API-equivalent/.test(sub.stdout + sub.stderr), "subscription: one line says it picked claude -p", sub.stderr);
+  check(new RegExp(`model: ${MODEL} \\(claude-code\\)`).test(sub.stdout), "subscription: the header names the provider", sub.stdout);
+  check(/A 0\/3 -> B 3\/3 \| fixed 3, broke 0/.test(sub.stdout), "subscription: the same result, A 0/3 -> B 3/3", sub.stdout);
+  check(/API-equivalent/.test(sub.stdout), "subscription: the cost is labelled API-equivalent", sub.stdout);
+  check(counts.cli - cliBefore === 12 && counts.structured === 0, "subscription: 6 turns (with the session's tools) and 6 verdicts went through claude -p", counts);
+  check(counts.continuationWithRule > 0 && !existsSync(canary()), "subscription: the replayed Bash calls were refused, none ran");
+  const subJson = json(await ab(["--json"], { env: subEnv }), "subscription --json");
+  check(subJson.provider === "claude-code" && subJson.cost?.apiEquivalent === true, "subscription --json: provider claude-code, apiEquivalent", { provider: subJson.provider, cost: subJson.cost });
+  check(subJson.cacheHits?.model === 6, "subscription --json: a rerun is answered from the cache", subJson.cacheHits);
+  check(stub.requests.slice(before).every((r) => r.auth === "authorization"), "subscription: every call used the login token, not an API key");
+  // Fidelity: everything the API request carried is in the CLI request.
+  for (const [key, api] of turnBodies.api) {
+    const cliBody = turnBodies.cli.get(key);
+    if (!check(!!cliBody, `fidelity ${key}: a claude -p request for the same turn`)) continue;
+    const want = pieces(api);
+    const got = cliText(cliBody);
+    const missingSys = want.system.filter((x) => !got.system.includes(x.trim()));
+    const missing = want.parts.filter((x) => !got.user.includes(x));
+    check(!missingSys.length, `fidelity ${key}: the system prompt is in the CLI system prompt`, missingSys.map((x) => x.slice(0, 200)));
+    check(!missing.length, `fidelity ${key}: ${want.parts.length} message parts (text, tool calls with input, tool results) are in the CLI prompt`, missing.map((x) => x.slice(0, 200)));
+    const cliTools = toolNames(cliBody);
+    check(want.tools.every((t) => cliTools.includes(t)) && !cliTools.includes(STRUCTURED), `fidelity ${key}: the session's tools (${want.tools.join(", ")}) are the model's own tools`, cliTools);
+    check(key.endsWith(":B") === got.user.includes(RULE), `fidelity ${key}: the harness edit reaches only arm B`);
+  }
+  check(turnBodies.cli.size === 6, "fidelity: 6 replayed turns compared", [...turnBodies.cli.keys()]);
+  // Isolation: the hooks init installed did not fire for any claude -p call.
+  const subIngest = await run("coding.sh", ["ingest"], { env, cwd: repo });
+  check(subIngest.code === 0, "coding.sh ingest after the subscription run", subIngest.stderr);
+  const after = json(await run("coding.sh", ["sessions", "--agent", "claude-code", "--json"], { env, cwd: repo }), "sessions");
+  const afterRows = Array.isArray(after) ? after : (after.sessions ?? []);
+  check(afterRows.length === sessionsBefore, "isolation: no claude -p call was captured as a session (no hooks, no saved session)", { before: sessionsBefore, after: afterRows.length });
+
+  // 6. --watch: one history line per save, only arm B asked again, Ctrl-C exits 0 (no SIGINT to a child on Windows).
   if (!isWin) {
     const child = spawn("coding.sh", ["exp", "ab", "--watch"], { cwd: repo, env: { ...env, PWD: repo }, stdio: ["ignore", "pipe", "pipe"] });
     let out = "";

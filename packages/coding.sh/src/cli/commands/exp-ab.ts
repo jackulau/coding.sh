@@ -6,7 +6,7 @@
 // compares them with the same machinery as `exp run --arm` and `exp compare`:
 // the interleaved durable runner (resume, retries), the acceptance gate, the
 // one-item gate and the EM-19 replay noise floor.
-import { HARNESS_DIRS, isHarnessPath } from "../../core/harness-paths.ts";
+import { HARNESS_DIRS, HARNESS_PATHSPECS, isHarnessPath } from "../../core/harness-paths.ts";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -26,6 +26,7 @@ import { missingModelKey, planContinuation, prefixEvents, replayNoise, type Cont
 import { createGrader, providerFromSpec, type LlmGraderSpec } from "../../graders/index.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
 import type { ChatProvider } from "../../judge/providers.ts";
+import { autoCliProvider, CLI_DEFAULT_MODEL, CLI_PLAN, CLI_PROVIDERS, cliLimiter, cliLogin, isCliProvider, LOGIN_HINT, type CliProvider } from "../../judge/subscription.ts";
 import { itemGate, singleItemChange } from "../../runner/gate-item.ts";
 import { itemGateLine } from "../../runner/experiment.ts";
 import { checkProtected, type ProtectCheck } from "../../refine/protect.ts";
@@ -78,6 +79,8 @@ export interface AbOptions {
   watch: boolean;
   dryRun: boolean;
   cache: boolean;
+  /** Set when no --provider was given and no API key is: the logged-in CLI that was picked, and the line that says so. */
+  autoProvider?: string;
 }
 
 /** One arm's harness: its context files, what to call it, and what to watch. */
@@ -88,7 +91,7 @@ export interface Arm {
   watch: { dir: string; recursive: boolean }[];
 }
 
-const PROVIDERS: readonly ContinuationProvider[] = ["anthropic", "openai", "openai-compatible"];
+const PROVIDERS: readonly ContinuationProvider[] = ["anthropic", "openai", "openai-compatible", ...CLI_PROVIDERS];
 const asList = (v: string | string[] | undefined): string[] => (v === undefined ? [] : (Array.isArray(v) ? v : [v]).flatMap((x) => x.split(",")).map((x) => x.trim()).filter(Boolean));
 
 // ---------------------------------------------------------------- arms
@@ -198,8 +201,20 @@ export async function resolveArm(v: string, o: { cwd: string; root: string; base
   });
 }
 
-/** Both arms, with the defaults: no flags compares git HEAD with your uncommitted edits; a lone --b runs against the repo's current files. */
-async function resolveArms(o: AbOptions, c: CommandContext, root: string, inGit: boolean, ctx: Pick<Context, "index" | "blobs">): Promise<[Arm, Arm]> {
+/** The newest commit at or before HEAD that changed a harness file, with its parent; undefined when there is none or it has no parent. */
+export function lastHarnessCommit(root: string): { commit: string; short: string; subject: string } | undefined {
+  const line = git(root, ["log", "-1", "--format=%H%x00%h%x00%s", "HEAD", "--", ...HARNESS_PATHSPECS])?.trim();
+  if (!line) return undefined;
+  const [commit, short, subject] = line.split("\0") as [string, string, string];
+  return git(root, ["rev-parse", "--verify", "--quiet", `${commit}^`]) === undefined ? undefined : { commit, short, subject };
+}
+
+/**
+ * Both arms, with the defaults: no flags compares git HEAD with your
+ * uncommitted edits, or, with none, the last commit that changed a harness
+ * file with the version before it; a lone --b runs against the repo's current files.
+ */
+async function resolveArms(o: AbOptions, c: CommandContext, root: string, inGit: boolean, ctx: Pick<Context, "index" | "blobs">): Promise<[Arm, Arm, string?]> {
   const current = harnessFilesIn(root);
   const currentArm: Arm = {
     label: "current files",
@@ -209,13 +224,21 @@ async function resolveArms(o: AbOptions, c: CommandContext, root: string, inGit:
   if (o.a === undefined && o.b === undefined) {
     if (!inGit) throw new UsageError("Not in a git repo: pass the harness to test with --b <file|dir>", { reason: "missing_argument", suggestion: "coding.sh exp ab --b ./CLAUDE.md" });
     const head = harnessAtRev(root, "HEAD") ?? [];
-    if (sameFiles(head, current)) {
-      throw new UsageError("No uncommitted changes to CLAUDE.md, AGENTS.md, rules or skills: edit one first, or pass the version to test with --b", {
+    if (!sameFiles(head, current)) return [{ label: "git:HEAD", files: head, watch: [] }, { ...currentArm, label: "your edits" }];
+    // Already committed: test the last harness commit against the version before it.
+    const last = lastHarnessCommit(root);
+    const before = last ? harnessAtRev(root, `${last.commit}^`) : undefined;
+    if (!last || !before || sameFiles(before, head)) {
+      throw new UsageError("No uncommitted changes to CLAUDE.md, AGENTS.md, rules or skills, and no earlier commit to compare with: edit one first, or pass the versions with --a and --b", {
         reason: "missing_argument",
         suggestion: "coding.sh exp ab --b ./candidate/CLAUDE.md",
       });
     }
-    return [{ label: "git:HEAD", files: head, watch: [] }, { ...currentArm, label: "your edits" }];
+    return [
+      { label: `git:${last.short}^`, files: before, watch: [] },
+      { label: `git:HEAD`, files: head, watch: [] },
+      `No uncommitted edits: testing your last harness commit ${last.short} "${last.subject}" (B) against the version before it (A)`,
+    ];
   }
   const a = o.a === undefined ? currentArm : await resolveArm(o.a, { cwd: c.cwd, root, base: current, flag: "a", ctx });
   const b = o.b === undefined ? currentArm : await resolveArm(o.b, { cwd: c.cwd, root, base: a.files, flag: "b", ctx });
@@ -259,8 +282,12 @@ export function abOptions(c: CommandContext, root: string | undefined, spec: AbS
   const anchorFiles = list(f.anchor).length ? list(f.anchor) : asList(spec.anchor);
   const sinceText = str(f.since) ?? spec.since ?? "14d";
   const repoFlag = str(f.repo) ?? spec.repo;
-  const provider = (str(f.provider) ?? spec.provider ?? "anthropic") as ContinuationProvider;
-  if (!PROVIDERS.includes(provider)) throw new UsageError(`--provider must be one of ${PROVIDERS.join(", ")}`, { reason: "invalid_argument" });
+  const asked = (str(f.provider) ?? spec.provider) as ContinuationProvider | undefined;
+  if (asked !== undefined && !PROVIDERS.includes(asked)) throw new UsageError(`--provider must be one of ${PROVIDERS.join(", ")}`, { reason: "invalid_argument" });
+  const agentsFor = list(f.agent).length ? asList(list(f.agent)) : asList(spec.agent);
+  // No provider and no API key: a logged-in Claude Code or Codex answers on its subscription.
+  const auto = asked === undefined && !(str(f["base-url"]) ?? spec.baseURL) ? autoCliProvider(c.env, agentsFor.length && agentsFor.every((a) => a === "codex") ? "codex" : undefined) : undefined;
+  const provider: ContinuationProvider = asked ?? auto?.provider ?? "anthropic";
   const maxCost = num(f["max-cost"]) ?? spec.maxCost;
   if (maxCost !== undefined && !(maxCost >= 0)) throw new UsageError(`--max-cost must be a dollar amount of at least 0, got ${maxCost}`, { reason: "invalid_argument" });
   const o: AbOptions = {
@@ -268,12 +295,13 @@ export function abOptions(c: CommandContext, root: string | undefined, spec: AbS
     anchorFiles,
     since: parseSince(sinceText),
     sinceText,
-    agents: list(f.agent).length ? asList(list(f.agent)) : asList(spec.agent),
+    agents: agentsFor,
     repo: repoFlag === "all" ? undefined : repoFlag ? resolve(c.cwd, repoFlag) : (root ?? c.cwd),
     limit: positiveInt(f.limit, "limit") ?? spec.limit ?? 40,
     provider,
     trials: positiveInt(f.trials, "trials") ?? spec.trials ?? 1,
-    concurrency: positiveInt(f.concurrency, "concurrency") ?? spec.concurrency ?? 4,
+    // A subscription CLI starts a process per call and has tighter rate limits: two at a time unless asked.
+    concurrency: positiveInt(f.concurrency, "concurrency") ?? spec.concurrency ?? (isCliProvider(provider) ? 2 : 4),
     watch: f.watch === true,
     dryRun: f["dry-run"] === true,
     cache: f["no-cache"] !== true && f.cache !== false,
@@ -289,6 +317,7 @@ export function abOptions(c: CommandContext, root: string | undefined, spec: AbS
   if (judgeModel) o.judgeModel = judgeModel;
   if (baseURL) o.baseURL = baseURL;
   if (maxCost !== undefined) o.maxCost = maxCost;
+  if (auto) o.autoProvider = `No API key set: replaying through ${auto.provider === "codex" ? "`codex exec`" : "`claude -p`"} on your ${CLI_PLAN[auto.provider]} (${auto.how}); costs are API-equivalent`;
   if (o.watch && o.dryRun) throw new UsageError("--watch and --dry-run don't go together", { reason: "invalid_argument" });
   if (o.watch && c.out.json) throw new UsageError("--watch prints a line per run; it does not combine with --json", { reason: "invalid_argument" });
   return o;
@@ -384,14 +413,16 @@ export function judgeSpec(o: AbOptions, base: string): LlmGraderSpec {
     rubric: DECISION_JUDGE_RUBRIC,
     template: DECISION_JUDGE_TEMPLATE,
     passThreshold: 0.8,
-    provider: o.provider === "anthropic" ? "anthropic" : "openai",
+    provider: o.provider === "anthropic" || isCliProvider(o.provider) ? o.provider : "openai",
     ...(o.judgeModel ? { model: o.judgeModel } : o.model ? { model: o.model } : {}),
-    baseURL: base,
+    ...(base ? { baseURL: base } : {}),
     ...(o.provider === "openai-compatible" && /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])/.test(base) ? { requireKey: false } : {}),
   };
 }
 
+/** The API base URL; "" for a subscription CLI. */
 export function baseURLFor(o: AbOptions, env: NodeJS.ProcessEnv): string {
+  if (isCliProvider(o.provider)) return "";
   const fromEnv = o.provider === "anthropic" ? env.ANTHROPIC_BASE_URL : env.OPENAI_BASE_URL;
   return (o.baseURL ?? (fromEnv?.trim() || (o.provider === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1"))).replace(/\/+$/, "");
 }
@@ -400,8 +431,14 @@ export function baseURLFor(o: AbOptions, env: NodeJS.ProcessEnv): string {
 function servedAs(provider: ContinuationProvider, model: string): string | undefined {
   if (provider === "openai-compatible") return model;
   const bare = model.replace(/^(?:anthropic|openai)\//, "");
-  if (provider === "anthropic") return /^claude-/.test(bare) ? bare : undefined;
+  if (provider === "anthropic" || provider === "claude-code") return /^claude-/.test(bare) ? bare : undefined;
   return /^(?:gpt-|o\d|codex-)/.test(bare) ? bare : undefined;
+}
+
+/** A provider's default model: the API's current one, or what its CLI is told to use. */
+export function providerDefaultModel(provider: ContinuationProvider): string | undefined {
+  if (isCliProvider(provider)) return CLI_DEFAULT_MODEL[provider];
+  return provider === "openai-compatible" ? undefined : DEFAULT_MODELS[provider];
 }
 
 /**
@@ -415,7 +452,7 @@ export function defaultModel(provider: ContinuationProvider, cases: readonly Cas
     if (m) counts.set(m, (counts.get(m) ?? 0) + 1);
   }
   const top = [...counts].sort((x, y) => y[1] - x[1] || (x[0] < y[0] ? -1 : 1))[0];
-  return top?.[0] ?? (provider === "openai-compatible" ? undefined : DEFAULT_MODELS[provider]);
+  return top?.[0] ?? providerDefaultModel(provider);
 }
 
 export interface Estimate {
@@ -458,9 +495,13 @@ export function estimate(tasks: readonly ContinuationTask[], cases: readonly Cas
 
 export const money = (x: number) => (x === 0 ? "$0" : x < 0.01 ? "<$0.01" : `$${x.toFixed(2)}`);
 
+/** A dollar figure, marked API-equivalent when a subscription CLI answered (the plan is billed, not the tokens). */
+export const costText = (x: number, provider: ContinuationProvider): string => `${money(x)}${isCliProvider(provider) ? " API-equivalent" : ""}`;
+
 // ---------------------------------------------------------------- report
 
 interface Outcome {
+  provider: ContinuationProvider;
   comparison: Comparison;
   ab: AbResult;
   spend: Spend;
@@ -512,7 +553,7 @@ function summaryLines(o: Outcome, mined: DecisionDataset): string[] {
   const p = cmp.mcnemar.p;
   const pText = p < 0.001 ? "p<0.001" : `p=${p < 0.1 ? p.toFixed(3) : p.toFixed(2)}`;
   const s = o.spend;
-  const cost = `${money(s.usd + s.judgeUsd)}${s.unpriced ? "+" : ""}, ${s.cached}/${s.calls} cached`;
+  const cost = `${costText(s.usd + s.judgeUsd, o.provider)}${s.unpriced ? "+" : ""}, ${s.cached}/${s.calls} cached`;
   const lines = [`${plural(n, "decision point")} from ${plural(mined.sessions, "session")} | A ${o.passA}/${n} -> B ${o.passB}/${n} | fixed ${o.fixed.length}, broke ${o.broke.length} | paired ${pText} | ${cost}`];
   if (cmp.gate) lines.push(gateHeadline(cmp.gate, "decision point"));
   if (cmp.replay) {
@@ -628,7 +669,7 @@ export function continuationTask(t: TrialSetup, arm: Arm, spend?: Spend, onSpend
     kind: "continuation",
     provider: t.provider,
     model: t.model,
-    baseURL: t.base,
+    ...(t.base ? { baseURL: t.base } : {}),
     context: { files: arm.files },
     cache: t.cache,
     ...(spend
@@ -656,6 +697,25 @@ export interface PairRun {
   comparison?: Comparison;
   /** The spend passed the cap and the run stopped scheduling. */
   overBudget: boolean;
+  /** The subscription hit its usage limit and the run stopped scheduling: the line that says so. */
+  limited?: string;
+}
+
+/**
+ * Before the first call through a subscription CLI: it must be installed and
+ * logged in. Its limiter runs `concurrency` calls at a time and reports each
+ * backoff and a spent plan through `warn`.
+ */
+export function readyCli(t: Pick<TrialSetup, "provider" | "concurrency">, env: NodeJS.ProcessEnv, warn: (line: string) => void): void {
+  if (!isCliProvider(t.provider)) return;
+  const kind: CliProvider = t.provider;
+  const l = cliLogin(kind, env);
+  const cmd = kind === "codex" ? "codex" : "claude";
+  if (!l.installed) throw new CliError(`--provider ${kind} runs \`${cmd}\`, which is not on PATH`, { reason: "missing_cli", next: [`Install ${kind === "codex" ? "Codex" : "Claude Code"}, or set an API key and use --provider ${kind === "codex" ? "openai" : "anthropic"}`] });
+  if (!l.loggedIn) throw new CliError(`--provider ${kind}: \`${cmd}\` is not logged in`, { reason: "not_logged_in", next: [`Log in: ${LOGIN_HINT[kind]}`] });
+  const limiter = cliLimiter(kind);
+  limiter.max = t.concurrency;
+  limiter.onNote = warn;
 }
 
 /**
@@ -683,10 +743,12 @@ export async function runPair(
   check();
   const provider = metered(providerFromSpec(t.judge, { env: c.env }), spend, check);
   const grader = turnOnly(await createGrader(t.judge, { env: c.env, provider, judgeCache: FileJudgeCache.forEnv(c.env) }));
-  const drain = c.drain ? AbortSignal.any([c.drain, cap.signal]) : cap.signal;
+  // A spent subscription stops scheduling like the spend cap does: what finished is kept for --resume.
+  const limiter = isCliProvider(t.provider) ? cliLimiter(t.provider) : undefined;
+  const drain = AbortSignal.any([...(c.drain ? [c.drain] : []), cap.signal, ...(limiter ? [limiter.stopped] : [])]);
   const loaded = { spec: { trials: t.trials, concurrency: t.concurrency }, dataset, graders: [grader], name: o.name ?? dataset.name };
   const { result: ab, job } = await runArms(c, store, loaded, [{ name: "a", task: continuationTask(t, a, spend, check) }, { name: "b", task: continuationTask(t, b, spend, check) }], "exp ab", { drain });
-  if (ab.a.status === "cancelled") return { ab, job, overBudget: cap.signal.aborted };
+  if (ab.a.status === "cancelled") return { ab, job, overBudget: cap.signal.aborted, ...(limiter?.spent ? { limited: limiter.spent } : {}) };
   const replay = replayNoise(ab.a, caseMap);
   const comparison = compareExperiments(ab.a, ab.b, { force: true, gate: o.gate, ...(replay ? { replay } : {}) });
   return { ab, job, comparison, overBudget: false };
@@ -701,7 +763,8 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
   const repoRoot = root ?? c.cwd;
   const anchors = await pickAnchors(o, c.cwd);
   // Resolve the arms before mining: a bad path should fail fast.
-  let [armA, armB] = await resolveArms(o, c, repoRoot, root !== undefined, ctx);
+  let [armA, armB, armsNote] = await resolveArms(o, c, repoRoot, root !== undefined, ctx);
+  if (armsNote && !out.json) out.note(armsNote);
   // The acceptance gate is always computed (it is the headline); --gate only makes it the exit code.
   const gate = gateFlags({ ...c.flags, gate: true })!;
   // Protected safety lines (Z-13): a pass-rate A/B can't see the harm of deleting or waiving one,
@@ -715,18 +778,19 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
   const { mined, dataset, cases, caseMap, counts } = await mineDecisionPoints(c, o, ctx, store, anchors, "coding.sh exp ab");
   const setup = trialSetup(o, cases, c.env);
   const { model } = setup;
+  if (o.autoProvider && !out.json) out.note(o.autoProvider);
 
   if (o.dryRun) {
     const est = estimatePair(setup, armA, armB, cases);
     if (out.json) {
-      out.data({ dryRun: true, dataset: { id: dataset.id, version: dataset.version, cases: cases.length }, perAnchor: mined.perAnchor, dropped: mined.dropped, arms: { a: armA.label, b: armB.label }, model, estimate: est, protected: protectJson(guard) });
+      out.data({ dryRun: true, dataset: { id: dataset.id, version: dataset.version, cases: cases.length }, perAnchor: mined.perAnchor, dropped: mined.dropped, arms: { a: armA.label, b: armB.label }, provider: setup.provider, model, estimate: { ...est, ...(isCliProvider(setup.provider) ? { apiEquivalent: true } : {}) }, protected: protectJson(guard) });
       return 0;
     }
     out.print(`${plural(cases.length, "decision point")} from ${plural(mined.sessions, "session")} since ${o.sinceText}`);
     for (const [id, v] of counts) out.print(`  ${id}: ${v}`);
-    out.print(`A ${armA.label} (${plural(armA.files.length, "file")}) vs B ${armB.label} (${plural(armB.files.length, "file")}), ${model}`);
+    out.print(`A ${armA.label} (${plural(armA.files.length, "file")}) vs B ${armB.label} (${plural(armB.files.length, "file")}), ${model}${isCliProvider(setup.provider) ? ` through ${setup.provider}` : ""}`);
     out.print(
-      `Would make ${est.uncached} of ${est.calls} model calls (${est.calls - est.uncached} cached) plus up to ${est.judgeCalls} judge calls: ~${Math.round(est.inputTokens / 1000)}k input tokens, ${est.usd === undefined ? "cost unknown (no price for the model)" : `~${money(est.usd)}`}`,
+      `Would make ${est.uncached} of ${est.calls} model calls (${est.calls - est.uncached} cached) plus up to ${est.judgeCalls} judge calls: ~${Math.round(est.inputTokens / 1000)}k input tokens, ${est.usd === undefined ? "cost unknown (no price for the model)" : `~${costText(est.usd, setup.provider)}`}`,
     );
     return 0;
   }
@@ -742,23 +806,36 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
     // Every uncached case would fail on the missing key and the run would read "not enough evidence": stop before it.
     const missing = est.uncached ? missingModelKey(continuationTask(setup, a), c.env) : undefined;
     if (missing) {
-      throw new CliError(`exp ab replays your sessions against the model API: set ${missing} (${est.uncached} of ${est.calls} model calls are not cached)`, {
-        reason: "missing_key",
-        next: ["Without an API key, commit the edit and compare the sessions before and after it:", "coding.sh improve check"],
-      });
+      // CliError keeps two next lines: the subscription hint goes in the message.
+      throw new CliError(
+        `exp ab replays your sessions against the model API: set ${missing} (${est.uncached} of ${est.calls} model calls are not cached), or log in to Claude Code (${LOGIN_HINT["claude-code"]}) or Codex (${LOGIN_HINT.codex}) and exp ab replays them on that subscription`,
+        { reason: "missing_key", next: ["Or commit the edit and compare the sessions before and after it:", "coding.sh improve check"] },
+      );
     }
-    if (!quiet && !out.json && est.uncached) out.note(`About ${est.usd === undefined ? "an unknown cost" : money(est.usd)} for ${est.uncached} uncached model calls (${est.calls - est.uncached} cached)`);
+    if (est.uncached) readyCli(setup, c.env, (l) => out.warn(l));
+    if (!quiet && !out.json && est.uncached) out.note(`About ${est.usd === undefined ? "an unknown cost" : costText(est.usd, setup.provider)} for ${est.uncached} uncached model calls (${est.calls - est.uncached} cached)`);
     const spend = newSpend();
     // The cap during the run: stop scheduling once the spend passes it (finished trials are kept; --resume continues).
     const name = str(c.flags.name);
     const run = await runPair(c, store, setup, dataset, caseMap, a, b, { spend, gate, ...(o.maxCost !== undefined ? { maxCost: o.maxCost } : {}), ...(name ? { name } : {}) });
     const { ab, job, comparison } = run;
     if (!comparison) {
-      if (run.overBudget) out.warn(`Stopped at ${money(spend.usd + spend.judgeUsd)}: over --max-cost ${money(o.maxCost!)}`);
+      if (run.overBudget) out.warn(`Stopped at ${costText(spend.usd + spend.judgeUsd, setup.provider)}: over --max-cost ${money(o.maxCost!)}`);
+      if (run.limited) out.warn(`Stopped: ${run.limited}`);
       cancelledWarning(c, ab.a);
       resumeNote(c, job);
       return undefined;
     }
+    // A failed model call counts as a failed trial; when every one failed, the comparison means nothing.
+    const runs = [...ab.a.runs, ...ab.b.runs];
+    const failedRuns = runs.filter((r) => r.error !== undefined);
+    if (failedRuns.length && failedRuns.length === runs.length) {
+      throw new CliError(`Every model call failed (${failedRuns.length} of ${runs.length} trials): ${failedRuns[0]!.error}`, {
+        reason: "model_error",
+        next: ["See each failure:", `coding.sh exp show ${ab.b.id}`],
+      });
+    }
+    if (failedRuns.length && !quiet) out.warn(`${failedRuns.length} of ${runs.length} trials failed and count as not passing: ${failedRuns[0]!.error}`);
     const pa = casePass(ab.a.runs);
     const pb = casePass(ab.b.runs);
     const fixed = cases.filter((x) => pa.get(x.id) === false && pb.get(x.id) === true).map((x) => x.id);
@@ -766,6 +843,7 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
     const itemLine = itemGateFor(a, b, ab, caseMap);
     const resume = resumeField(job).resume;
     return {
+      provider: setup.provider,
       comparison,
       ab,
       spend,
@@ -783,12 +861,13 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
       out.data({
         dataset: { id: dataset.id, version: dataset.version, cases: cases.length, sessions: mined.sessions },
         arms: { a: { label: armA.label, files: armA.files.map((f) => f.path) }, b: { label: armB.label, files: armB.files.map((f) => f.path) } },
+        provider: setup.provider,
         model,
         experiments: { a: r.ab.a.id, b: r.ab.b.id },
         comparison: r.comparison,
         fixed: r.fixed,
         broke: r.broke,
-        cost: { usd: r.spend.usd + r.spend.judgeUsd, model: r.spend.usd, judge: r.spend.judgeUsd, unpriced: r.spend.unpriced },
+        cost: { usd: r.spend.usd + r.spend.judgeUsd, model: r.spend.usd, judge: r.spend.judgeUsd, unpriced: r.spend.unpriced, ...(isCliProvider(setup.provider) ? { apiEquivalent: true } : {}) },
         cacheHits: { model: r.spend.cached, of: r.spend.calls, judgeCalls: r.spend.judgeCalls },
         perAnchor: mined.perAnchor,
         dropped: mined.dropped,
@@ -797,7 +876,7 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
       });
       return;
     }
-    out.print(`A: ${armA.label}   B: ${armB.label}   model: ${model}`);
+    out.print(`A: ${armA.label}   B: ${armB.label}   model: ${model}${isCliProvider(setup.provider) ? ` (${setup.provider})` : ""}`);
     for (const l of summaryLines(r, mined)) out.print(l);
     if (!guard.ok) out.print(protectedHeadline(guard, c.flags.gate === true));
     const more = [...caseLines("Fixed (A failed, B passed):", r.fixed, caseMap), ...caseLines("Broke (A passed, B failed):", r.broke, caseMap)];
@@ -821,7 +900,7 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
     const s = r.spend;
     const verdict = r.comparison.gate ? gateHeadline(r.comparison.gate, "decision point").split(":")[0] : r.comparison.verdict;
     const prot = guard.ok ? "" : ` | ${guard.rejections[0]!.reason}${guard.rejections.length > 1 ? ` (+${guard.rejections.length - 1} more)` : ""}`;
-    return `A ${r.passA}/${cases.length} -> B ${r.passB}/${cases.length} | fixed ${r.fixed.length}, broke ${r.broke.length} | ${verdict}${prot} | ${money(s.usd + s.judgeUsd)}, ${s.calls - s.cached} new calls`;
+    return `A ${r.passA}/${cases.length} -> B ${r.passB}/${cases.length} | fixed ${r.fixed.length}, broke ${r.broke.length} | ${verdict}${prot} | ${costText(s.usd + s.judgeUsd, setup.provider)}, ${s.calls - s.cached} new calls`;
   }, async () => {
     // Re-read B the way it was given.
     if (o.b === undefined) return { ...armB, files: harnessFilesIn(repoRoot) };
