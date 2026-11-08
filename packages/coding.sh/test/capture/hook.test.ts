@@ -3,6 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
+import { pathToFileURL } from "node:url";
 import type { SpoolLine } from "../../src/core/types.ts";
 import { MAX_INLINE_LINE_BYTES, SPOOL_FILE_CAP, appendSpool, resolveRaw, safeAgentId, spoolFile } from "../../src/spool/write.ts";
 import { PKG_ROOT, gitc, isolate, makeRepo, removeTmp, tmp, tsNodeArgs } from "./_helpers.ts";
@@ -216,7 +217,7 @@ describe("hook", () => {
     const each = 100;
     const start = Date.now() + 1500; // every writer starts its loop at the same moment
     const script = `
-      const { appendSpool } = await import(${JSON.stringify(join(PKG_ROOT, "src", "spool", "write.ts"))});
+      const { appendSpool } = await import(${JSON.stringify(pathToFileURL(join(PKG_ROOT, "src", "spool", "write.ts")).href)});
       while (Date.now() < ${start});
       const w = Number(process.argv[1]);
       for (let i = 0; i < ${each}; i++)
