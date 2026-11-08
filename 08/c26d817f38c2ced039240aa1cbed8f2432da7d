@@ -1,0 +1,28 @@
+packages/coding.sh/test/spool/githead.test.ts
+  s_8e040dbdf13565::t_f0dd3f9b816728 92
+  s_8e040dbdf13565::t_588dfe49924dad 98
+  s_8e040dbdf13565::t_7bed9cb47024d0 78
+packages/coding.sh/test/capture/hook.test.ts
+  s_8e040dbdf13565::t_0a9da581fc7626 83
+  s_8e040dbdf13565::t_1e5c1217e22d7f 93-94
+packages/coding.sh/src/spool/githead.ts
+  s_8e040dbdf13565::t_c69afbaaadefcc 17-18
+  s_8e040dbdf13565::t_9b7c468b833eb5 133-134
+  s_8e040dbdf13565::t_fefb86666e23be 66-77
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "08c26d817f38c2ced039240aa1cbed8f2432da7d",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jack <jack@coding.sh>"
+    }
+  }
+}
