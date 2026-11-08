@@ -115,11 +115,14 @@ A key whose value is plainly made up, as in docs and test fixtures (`AKIAIOSFODN
 word EXAMPLE or test after the vendor prefix, eight of one character, a chunk repeated three times,
 `abcdefgh`), is redacted too but counts as `placeholder-key` and does not add the tag.
 `coding.sh sessions --flag secret:exposed` lists them, and `stats.redactions` counts what was replaced
-by kind. A session whose main thread handed over to another model mid-session, such as Claude Code
-falling back to an older model after a refusal, gets the `model:switch` tag, and
-`stats.modelSwitch` names both models and the trigger. A hand-over means every main-thread call on the
-first model came before the first call on the second. A helper model that runs beside the main one,
-such as the Haiku calls Claude Code makes for titles, is not a switch. A session of at least three
+by kind. A session whose model changed mid-session gets the `model:switch` tag, and
+`stats.modelSwitch` names both models, the trigger, how many switches there were and what the calls
+on the other model cost over the first model's list prices. A change counts when the agent recorded
+a fallback for it (Claude Code falls back to `--fallback-model` when the main model is overloaded,
+and to another model after a refusal; that also adds the `model:fallback` tag), when it happened
+inside a subagent, or when the main thread handed over for good: every main-thread call on the first
+model came before the first call on the second. A switch and back counts once. A helper model that
+runs beside the main one, such as the Haiku calls Claude Code makes for titles, is not a switch. A session of at least three
 turns that wrote a prompt cache of at least one block (4,096 tokens) but read back fewer tokens than
 it wrote gets the `cache:low` tag: it paid to create a cache it barely reused. Short sessions and
 ones that never wrote a cache are left alone, since that is the agent's behaviour, not a setup to

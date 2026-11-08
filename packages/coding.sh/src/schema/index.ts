@@ -136,16 +136,35 @@ export interface CacheBreakStats {
 }
 
 /**
- * Session.stats.modelSwitch: the main thread (calls outside subagents) moved
- * from one model to another for good mid-session (core/models.ts).
+ * Session.stats.modelSwitch: the model changed mid-session (core/models.ts): a
+ * fallback the agent recorded (a switch and back included), any change inside a
+ * subagent, or a main-thread hand-over from one model to another. The fields
+ * name the first switch; the counts cover them all.
  */
 export interface ModelSwitch {
   from: string;
   to: string;
   /** ts of the first call on `to`. */
   at: number;
-  /** What came right before: `from`'s last call was refused or failed, or a /model command. Unset when unknown. */
-  trigger?: "refusal" | "error" | "command";
+  /**
+   * What came right before: a fallback the agent recorded, `from`'s last call was refused
+   * or failed, or a /model command. Unset when unknown.
+   */
+  trigger?: "fallback" | "refusal" | "error" | "command";
+  /** For a recorded fallback: why, as the agent said (`overloaded`, `refusal`, `model_not_found`, …). */
+  reason?: string;
+  /** The first switch was inside a subagent (a subagent's own session, or one in this session). */
+  subagent?: boolean;
+  /** Switches in the session, when more than one. A return to the model a switch left is not one. */
+  count?: number;
+  /** Model calls that ran on a model a switch moved to (until the scope went back). */
+  switchedCalls?: number;
+  /**
+   * What those calls cost at their model's list prices minus what the same tokens cost at the
+   * list prices of the model the switch left (standard rates); negative when the other model is
+   * cheaper. Unset when either model has no price.
+   */
+  extraUsd?: number;
 }
 
 /** Session.stats.llmErrors: how many model calls failed, and why the first one did. */
@@ -275,7 +294,7 @@ export interface Session {
     llmErrors?: LlmErrors;
     /** Model calls by model, when more than one model made them (core/models.ts). */
     models?: Record<string, number>;
-    /** The main thread's first hand-over to another model mid-session; it also tags the session `model:switch`. */
+    /** Model switches mid-session (the first one, how many, what the switched calls cost extra); it also tags the session `model:switch`. */
     modelSwitch?: ModelSwitch;
     /** Set when the session is one run of a durable workflow engine (Vercel Workflow, Temporal, …). */
     durable?: DurableStats;

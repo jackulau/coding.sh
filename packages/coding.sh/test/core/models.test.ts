@@ -84,7 +84,8 @@ describe("a refusal, then a silent fallback to another model (Claude Code transc
     );
     const s = buildSession(events);
     assert.deepEqual(s.stats.models, { [SONNET_55]: 3, [SONNET_5]: 2 });
-    assert.deepEqual(s.stats.modelSwitch, { from: SONNET_55, to: SONNET_5, at: calls[3]!.ts, trigger: "refusal" });
+    // Both Sonnets have the same list prices: the two calls on the fallback cost nothing extra.
+    assert.deepEqual(s.stats.modelSwitch, { from: SONNET_55, to: SONNET_5, at: calls[3]!.ts, trigger: "refusal", switchedCalls: 2, extraUsd: 0 });
     assert.ok(s.flags.includes(FLAGS.modelSwitch) && s.flags.includes(FLAGS.refusal), s.flags.join(","));
     assert.deepEqual(failureFlags(s.flags).filter((f) => f === "refusal" || f.startsWith("model")), ["refusal"], "model:switch is a tag, refusal a failure");
     // Most calls ran on the configured model: the session is labeled with it, not the fallback seen last.
@@ -96,11 +97,11 @@ describe("a refusal, then a silent fallback to another model (Claude Code transc
     const s = buildSession(events);
     const row = modelsRow(s);
     assert.equal(row?.[0], "Models");
-    assert.match(row![1], /^claude-sonnet-5-5 3, claude-sonnet-5 2; switched from claude-sonnet-5-5 to claude-sonnet-5 at \+\S+ after a refusal$/);
+    assert.match(row![1], /^claude-sonnet-5-5 3, claude-sonnet-5 2; switched from claude-sonnet-5-5 to claude-sonnet-5 at \+\S+ after a refusal; 2 calls on the other model, at the same list prices as claude-sonnet-5-5$/);
     const index = new MemoryIndexStore();
     await index.putEvents(events);
     await index.upsertSession(s);
-    assert.match(await sessionMarkdown(index, s), /- \*\*Models:\*\* claude-sonnet-5-5 3, claude-sonnet-5 2; switched from claude-sonnet-5-5 to claude-sonnet-5 at \+\S+ \(refusal\)/);
+    assert.match(await sessionMarkdown(index, s), /- \*\*Models:\*\* claude-sonnet-5-5 3, claude-sonnet-5 2; switched from claude-sonnet-5-5 to claude-sonnet-5 at \+\S+ \(refusal\); 2 calls on the other model, \$0\.0000 over claude-sonnet-5-5's prices/);
     reset();
     assert.equal(modelsRow(buildSession(times(2, () => call(SONNET_55)))), undefined);
   });
@@ -178,7 +179,7 @@ describe("calls logged by coding.sh proxy", () => {
     assert.deepEqual([both.model, both.stats.models, both.stats.modelSwitch], [SONNET_55, undefined, undefined]);
     reset();
     const only = buildSession([...times(2, () => proxied(SONNET_55)), proxied(SONNET_55, { stopReason: "refusal" }), proxied(SONNET_5), proxied(SONNET_5)]);
-    assert.deepEqual(only.stats.modelSwitch, { from: SONNET_55, to: SONNET_5, at: T0 + 4000, trigger: "refusal" });
+    assert.deepEqual(only.stats.modelSwitch, { from: SONNET_55, to: SONNET_5, at: T0 + 4000, trigger: "refusal", switchedCalls: 2, extraUsd: 0 });
     assert.deepEqual(only.stats.models, { [SONNET_55]: 3, [SONNET_5]: 2 });
   });
 });
@@ -188,7 +189,7 @@ describe("switches and their triggers", () => {
     reset();
     const events = [...times(3, () => call(SONNET_55)), ...times(2, () => call(SONNET_5))];
     const s = buildSession(events);
-    assert.deepEqual(s.stats.modelSwitch, { from: SONNET_55, to: SONNET_5, at: events[3]!.ts });
+    assert.deepEqual(s.stats.modelSwitch, { from: SONNET_55, to: SONNET_5, at: events[3]!.ts, switchedCalls: 2, extraUsd: 0 });
     assert.ok(!s.flags.includes(FLAGS.refusal));
   });
 
@@ -201,7 +202,7 @@ describe("switches and their triggers", () => {
   it("a /model command between: trigger command", () => {
     reset();
     const events = [call(SONNET_55), ev("notification", { kind: "command", command: "/model", args: "sonnet-5" }), call(SONNET_5)];
-    assert.deepEqual(buildSession(events).stats.modelSwitch, { from: SONNET_55, to: SONNET_5, at: events[2]!.ts, trigger: "command" });
+    assert.deepEqual(buildSession(events).stats.modelSwitch, { from: SONNET_55, to: SONNET_5, at: events[2]!.ts, trigger: "command", switchedCalls: 1, extraUsd: 0 });
   });
 
   it("a refusal with no switch is still flagged; a content filter stop counts as one", () => {
@@ -210,5 +211,58 @@ describe("switches and their triggers", () => {
     assert.deepEqual([s.flags.includes(FLAGS.refusal), s.stats.modelSwitch], [true, undefined]);
     reset();
     assert.ok(buildSession([call("gpt-5", { stopReason: "content_filter" })]).flags.includes(FLAGS.refusal));
+  });
+});
+
+describe("recorded fallbacks, switches and back, and subagents", () => {
+  const OPUS_55 = "claude-opus-5-5";
+  const OPUS_48 = "claude-opus-4-8";
+  it("a fallback recorded before the change, in the main thread, with no refusal: a switch and back", () => {
+    reset();
+    const events = [
+      ...times(2, () => call(OPUS_55)),
+      ev("notification", { kind: "model.fallback", trigger: "overloaded", from: OPUS_55, to: OPUS_48 }),
+      ...times(2, () => call(OPUS_48)),
+      ...times(2, () => call(OPUS_55)),
+    ];
+    const s = buildSession(events);
+    assert.equal(s.stats.modelSwitch?.trigger, "fallback");
+    assert.equal(s.stats.modelSwitch?.reason, "overloaded");
+    assert.equal(s.stats.modelSwitch?.switchedCalls, 2);
+    assert.equal(s.stats.modelSwitch?.count, undefined, "the return is not a second switch");
+    // The same calls with no record: a helper-like detour on the main thread, not a switch.
+    reset();
+    const bare = buildSession([...times(2, () => call(OPUS_55)), ...times(2, () => call(OPUS_48)), ...times(2, () => call(OPUS_55))]);
+    assert.deepEqual([bare.stats.modelSwitch, bare.flags], [undefined, []]);
+  });
+
+  it("a fallback record with no model change tags model:fallback only", () => {
+    reset();
+    const s = buildSession([call(OPUS_55), ev("notification", { kind: "model.fallback", trigger: "overloaded", from: OPUS_55, to: OPUS_48 }), call(OPUS_55)]);
+    assert.deepEqual([s.stats.modelSwitch, s.flags], [undefined, [FLAGS.modelFallback]]);
+  });
+
+  it("a subagent that changes model with no record is a switch; each move off its model counts", () => {
+    reset();
+    const sub = { subagentId: "agent-1" };
+    const once = buildSession([...times(3, () => call(OPUS_55, {}, sub)), ...times(2, () => call(OPUS_48, {}, sub)), call(OPUS_55, {}, sub)]);
+    assert.equal(once.stats.modelSwitch?.subagent, true);
+    assert.deepEqual([once.stats.modelSwitch?.from, once.stats.modelSwitch?.to, once.stats.modelSwitch?.switchedCalls, once.stats.modelSwitch?.count], [OPUS_55, OPUS_48, 2, undefined]);
+    assert.ok(once.flags.includes(FLAGS.modelSwitch) && !once.flags.includes(FLAGS.modelFallback));
+    // A subagent's own session (every call has its subagentId): labeled with the model most calls ran on.
+    assert.equal(once.model, OPUS_55);
+    reset();
+    const twice = buildSession([call(OPUS_55, {}, sub), call(OPUS_48, {}, sub), call(OPUS_55, {}, sub), call(OPUS_48, {}, sub)]);
+    assert.deepEqual([twice.stats.modelSwitch?.count, twice.stats.modelSwitch?.switchedCalls], [2, 2]);
+    // A subagent on its own model throughout is still no switch (the main thread's model is not its reference).
+    reset();
+    const steady = buildSession([...times(3, () => call(SONNET_55)), ...times(3, () => call(HAIKU, {}, sub))]);
+    assert.equal(steady.stats.modelSwitch, undefined);
+  });
+
+  it("a model with no price leaves extraUsd out, and switchedCalls in", () => {
+    reset();
+    const s = buildSession([...times(2, () => call(OPUS_55)), ev("notification", { kind: "model.fallback", trigger: "overloaded", to: "acme-large" }), call("acme-large")]);
+    assert.deepEqual([s.stats.modelSwitch?.switchedCalls, s.stats.modelSwitch?.extraUsd, "extraUsd" in s.stats.modelSwitch!], [1, undefined, false]);
   });
 });

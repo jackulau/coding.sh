@@ -15,7 +15,7 @@ import { foldSkills, skillFlags, skillState, skillUseOf, type SkillState } from 
 import { foldHookContext, hookContextFlags, hookContextOf, hookContextState, type HookContextState } from "./hook-context.ts";
 import { claimsSuccess, reportsFailure } from "./failure-report.ts";
 import { foldWaste, wasteState, wasteStatsOf, type WasteState } from "./waste.ts";
-import { foldModels, mainModelOf, MODEL_SWITCH, modelFlags, modelState, modelSwitchOf, modelsOf, REFUSAL, type ModelState } from "./models.ts";
+import { foldModels, mainModelOf, MODEL_FALLBACK, MODEL_SWITCH, modelFlags, modelState, modelSwitchOf, modelsOf, REFUSAL, type ModelState } from "./models.ts";
 import { exposesSecret, foldRedactions, redactionsOf, redactionState, SECRET_EXPOSED, type RedactionState } from "./redaction-stats.ts";
 
 export { REOPEN_SLACK_MS };
@@ -39,8 +39,10 @@ export const FLAGS = {
   skillCopyConflict: "skill-copy-conflict",
   /** A tag, not a failure: redaction replaced a vendor token (core/redaction-stats.ts, Session.stats.redactions). Rotate it. */
   secretExposed: SECRET_EXPOSED,
-  /** A tag, not a failure: the main thread handed over to another model mid-session (core/models.ts, Session.stats.modelSwitch). */
+  /** A tag, not a failure: the model changed mid-session (core/models.ts, Session.stats.modelSwitch). */
   modelSwitch: MODEL_SWITCH,
+  /** A tag, not a failure: the agent recorded a fallback to another model (Claude Code's model_fallback, model_refusal_fallback). */
+  modelFallback: MODEL_FALLBACK,
   /** A model call stopped on a refusal or a content filter (core/models.ts). */
   refusal: REFUSAL,
   /** The model wrote a tool call out as text, so it never ran: the tool was not available to it (writesToolCallAsText). */
@@ -416,7 +418,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * events, and every stored session is folded again once in the background
  * (core/reparse.ts, REFOLD_CURSOR), so old sessions get the new derivation.
  */
-export const SESSION_FOLD_VERSION = 11; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused).
+export const SESSION_FOLD_VERSION = 12; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,

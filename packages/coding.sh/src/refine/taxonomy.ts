@@ -201,6 +201,7 @@ export const FLAG_DIAGNOSIS: Readonly<Record<string, FlagDiagnosis | "context-on
   "secret:exposed": { typeIds: ["sec.disclosure"], nature: "risk", reach: 0.6 },
   // A model change mid-session is context: the refusal or failure that caused it is flagged on its own.
   "model:switch": "context-only",
+  "model:fallback": "context-only",
   // Under-reused prompt cache is a setup/cost signal, not a behaviour defect; the priced waste is in stats.cacheBreaks.
   "cache:low": "context-only",
   // A refusal can be the correct answer (a safety refusal); harm not observed.

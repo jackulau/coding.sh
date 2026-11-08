@@ -65,6 +65,7 @@ const FLAG_SEVERITY = [
   "no-verification",
   "text-tool-call",
   "model:switch",
+  "model:fallback",
   "refusal",
   "duplicate-fetch",
   "skill-copy-conflict",

@@ -499,13 +499,24 @@ enclosing call or an earlier copy of the same response already counted it. `stat
 `subagentId`; the earlier one on a tie), else the last model any event named. `stats.models`
 counts model calls per model (`{"claude-sonnet-5-5": 3, "claude-sonnet-5": 2}`), subagent calls in
 the session included; it is absent when one model or none made them. `stats.modelSwitch`
-(`from`, `to`, `at`, `trigger`) is the main thread's first hand-over to another model: every
-main-thread call on `from` came before the first call on `to`, at `at`. `trigger` is `refusal` or
-`error` when the last call on `from` stopped on a refusal or failed, `command` when a `/model`
-command came right before the first call on `to`, and absent otherwise. Without a trigger, each
-model needs at least two calls, so a helper model's single call before or after the others (a
-title) is not a switch; a helper model whose calls run between the main model's never is. A switch
-adds the `model:switch` tag to `flags`. A call whose `payload.stopReason` is `refusal`,
+(`from`, `to`, `at`, `trigger`) is the session's first model switch: the last call on `from`, then
+the first call on `to` at `at`, in the same scope (the main thread, or one subagent). A change is a
+switch when the agent recorded a fallback for it, when it is inside a subagent (a Claude Code
+subagent's own session included), or when the main thread handed over: every main-thread call on
+`from` came before the first call on `to`. `trigger` is `fallback` for a recorded fallback (with
+`reason`, such as `overloaded` or `refusal`), `refusal` or `error` when the last call on `from`
+stopped on a refusal or failed, `command` when a `/model` command came right before the first call
+on `to`, and absent otherwise. Without a trigger or a record, each main-thread model needs at least
+two calls, so a helper model's single call before or after the others (a title) is not a switch; a
+helper model whose calls run between the main model's never is. A switch and back is one switch.
+`subagent: true` says the first switch was in a subagent, and `count` is the number of switches
+when there was more than one. `switchedCalls` counts the calls that ran on a model a switch moved
+to, until the scope went back, and `extraUsd` is what those calls cost at their model's list prices
+minus what the same tokens cost at `from`'s list prices (standard rates, so negative when the other
+model is cheaper); it is absent when either model has no price. A switch adds the `model:switch` tag
+to `flags`. Claude Code's `model_fallback` and `model_refusal_fallback` transcript records become a
+`notification` with `payload.kind: "model.fallback"` (`from`, `to`, `trigger`, `direction`, `text`)
+and add the `model:fallback` tag. A call whose `payload.stopReason` is `refusal`,
 `content_filter` or `safety` (any case) adds the `refusal` flag. Calls logged by `coding.sh proxy`
 count here only in a session with no other model calls, as they do for usage.
 

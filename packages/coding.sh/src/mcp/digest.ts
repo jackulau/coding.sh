@@ -106,7 +106,8 @@ export async function sessionMarkdown(index: IndexStore, s: Session, maxEntries 
   if (lat?.llmCalls) row("Latency", `${lat.llmCalls} model calls, p50 ${fmtMs(lat.llmP50Ms)}, p95 ${fmtMs(lat.llmP95Ms)}${lat.ttftP50Ms !== undefined ? `, TTFT p50 ${fmtMs(lat.ttftP50Ms)}` : ""}`);
   if (s.flags.length) row("Flags", s.flags.join(", "));
   const sw = s.stats.modelSwitch;
-  row("Models", [s.stats.models && Object.entries(s.stats.models).map(([k, n]) => `${k} ${n}`).join(", "), sw && `switched from ${sw.from} to ${sw.to} at +${fmtMs(sw.at - s.startedAt)}${sw.trigger ? ` (${sw.trigger})` : ""}`].filter(Boolean).join("; "));
+  const why = sw && [sw.trigger, sw.reason].filter(Boolean).join(": ");
+  row("Models", [s.stats.models && Object.entries(s.stats.models).map(([k, n]) => `${k} ${n}`).join(", "), sw && `switched from ${sw.from} to ${sw.to}${sw.subagent ? " in a subagent" : ""} at +${fmtMs(sw.at - s.startedAt)}${why ? ` (${why})` : ""}${sw.count ? `, ${sw.count} switches` : ""}`, sw?.switchedCalls && `${sw.switchedCalls} calls on the other model${sw.extraUsd !== undefined ? `, $${sw.extraUsd.toFixed(4)} over ${sw.from}'s prices` : ""}`].filter(Boolean).join("; "));
   if (s.stats.redactions) row("Redacted", `${Object.entries(s.stats.redactions).map(([k, n]) => `${k} ${n}`).join(", ")}${s.flags.includes("secret:exposed") ? " (vendor tokens: rotate them)" : ""}`);
   if (s.stats.waste) row("Re-fetches", `${s.stats.waste.duplicateFetches} of ${s.stats.waste.readOnlyCalls} read-only calls repeated with the same result (~${s.stats.waste.duplicateFetchTokens} tokens)`);
   const cb = s.stats.cacheBreaks;

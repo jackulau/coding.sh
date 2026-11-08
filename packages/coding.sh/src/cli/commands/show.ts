@@ -171,16 +171,34 @@ export function hookContextRow(s: Session): [string, string] | undefined {
   return ["Hook context", `${h.count} ${h.count === 1 ? "text" : "texts"}, ~${tokens(h.tokens)} tokens: ${by}`];
 }
 
-const TRIGGER_TEXT = { refusal: "after a refusal", error: "after a failed call", command: "after /model" } as const;
+const TRIGGER_TEXT = { fallback: "after a fallback", refusal: "after a refusal", error: "after a failed call", command: "after /model" } as const;
 
-/** Calls per model when more than one model made them, and the main thread's switch: "claude-sonnet-5-5 3, claude-sonnet-5 2; switched from claude-sonnet-5-5 to claude-sonnet-5 at +12s after a refusal". */
+/** What a switch's calls cost over the model it left: "4 calls on the other model, $0.0123 extra" (or "… less"). */
+export function switchCostText(sw: NonNullable<Session["stats"]["modelSwitch"]>): string | undefined {
+  if (!sw.switchedCalls) return undefined;
+  const calls = `${sw.switchedCalls} ${sw.switchedCalls === 1 ? "call" : "calls"} on the other model`;
+  if (sw.extraUsd === undefined) return calls;
+  if (sw.extraUsd === 0) return `${calls}, at the same list prices as ${sw.from}`;
+  return `${calls}, ${usd(Math.abs(sw.extraUsd))} ${sw.extraUsd < 0 ? "less" : "extra"} than at ${sw.from}'s prices`;
+}
+
+/**
+ * Calls per model when more than one model made them, and the first switch:
+ * "claude-opus-5-5 3, claude-opus-4-8 2; switched from claude-opus-5-5 to claude-opus-4-8 at +12s after a fallback (overloaded); 2 calls on the other model, $0.0123 extra than at claude-opus-5-5's prices".
+ */
 export function modelsRow(s: Session): [string, string] | undefined {
   const m = s.stats.models;
   const sw = s.stats.modelSwitch;
   if (!m && !sw) return undefined;
   const parts: string[] = [];
   if (m) parts.push(Object.entries(m).map(([k, n]) => `${k} ${n}`).join(", "));
-  if (sw) parts.push(`switched from ${sw.from} to ${sw.to} at +${duration(Math.max(0, sw.at - s.startedAt))}${sw.trigger ? ` ${TRIGGER_TEXT[sw.trigger]}` : ""}`);
+  if (sw) {
+    const why = sw.trigger ? ` ${TRIGGER_TEXT[sw.trigger] ?? `after ${sw.trigger}`}${sw.reason ? ` (${sw.reason})` : ""}` : "";
+    const where = sw.subagent ? " in a subagent" : "";
+    parts.push(`switched from ${sw.from} to ${sw.to}${where} at +${duration(Math.max(0, sw.at - s.startedAt))}${why}${sw.count ? ` (${sw.count} switches)` : ""}`);
+    const cost = switchCostText(sw);
+    if (cost) parts.push(cost);
+  }
   return ["Models", parts.join("; ")];
 }
 
