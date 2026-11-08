@@ -5,6 +5,7 @@ packages/coding.sh/src/mcp/tools.ts
   s_8e040dbdf13565::t_e93d32c720e7b2 390,393
   s_8e040dbdf13565::t_48ad8dfe96cd26 382
   s_8e040dbdf13565::t_51378bf1889dec 371,400-401
+  s_8e040dbdf13565::t_f9894e984af5cb 352-353
 packages/coding.sh/src/cli/registry.ts
   s_8e040dbdf13565::t_cbafe5e36ca695 316-331
   s_8e040dbdf13565::t_799d122045c876 315
@@ -33,6 +34,7 @@ packages/coding.sh/src/viewer/ui/index.html
   s_8e040dbdf13565::t_9f76770d35d545 735-746,748-772
   s_8e040dbdf13565::t_14dba593964000 1823,3627,3629,3798-3801,3803
   s_8e040dbdf13565::t_86e3482c68650c 4279
+  s_8e040dbdf13565::t_031bfa0d6e7938 1684-1685,1761,3375,3802,4023,4113-4114
 packages/coding.sh/test/cli/replay.test.ts
   s_8e040dbdf13565::t_71b31a90225921 1-85
 docs/ADAPTERS.md
@@ -43,6 +45,7 @@ docs/reference/cli.md
 docs/guides/explore.md
   s_8e040dbdf13565::t_9e24f69eef665d 170-185,188-200,230-238,242
   s_8e040dbdf13565::t_9ed42dcc68d6c8 186-187
+  s_8e040dbdf13565::t_2817848e5c9b92 253-254
 packages/coding.sh/src/core/replay.ts
   s_8e040dbdf13565::t_c141816720dbd1 1-24,27-29,34-149,151,153-213,215-659,662-676,679-680,701-728,754-770,774-802,805-812,822-824,826-828,836-930,932-940,945-946,948-964,966-985,987-1060,1062-1064,1066-1180,1182,1185-1186,1189-1319,1321,1323-1370,1373-1376,1378-1405,1415-1435,1437,1445-1463,1465-1565
   s_8e040dbdf13565::t_aa7836f170aa22 965
@@ -69,11 +72,14 @@ packages/coding.sh/test/mcp/server.test.ts
   s_8e040dbdf13565::t_48ad8dfe96cd26 170
   s_8e040dbdf13565::t_0b629e3c4d6a17 85
   s_8e040dbdf13565::t_57cfeee857680b 151-169,171-174
+  s_8e040dbdf13565::t_2817848e5c9b92 442
 packages/coding.sh/src/viewer/server.ts
   s_8e040dbdf13565::t_2b449e7b36dcd2 23,55-56,213-214,278,333,439,450-472,582-598
   s_8e040dbdf13565::t_b781fe3d61b828 599
 CHANGELOG.md
   s_8e040dbdf13565::t_edf2b258775ea7 22
+packages/coding.sh/test/mcp/toolevals.test.ts
+  s_8e040dbdf13565::t_2817848e5c9b92 52,57-58
 ---
 {
   "schema_version": "authorship/3.0.0",
