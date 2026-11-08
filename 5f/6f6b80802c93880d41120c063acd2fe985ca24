@@ -1,0 +1,35 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_9966775634e334 35
+docs/reference/query.md
+  s_8e040dbdf13565::t_8f430aabc6291a 49
+packages/coding.sh/src/query/where.ts
+  s_8e040dbdf13565::t_690aaa7d9e3b12 131-136,138,141-145,164,166-168
+packages/coding.sh/test/query/_where-fixture.ts
+  s_8e040dbdf13565::t_8967b385889103 37-53
+packages/coding.sh/test/query/where.test.ts
+  s_8e040dbdf13565::t_e2e832ae1fc2a4 15,143-156
+packages/store-clickhouse/src/where.ts
+  s_8e040dbdf13565::t_e7256034f2fb6d 41-42
+packages/store-clickhouse/test/where.test.ts
+  s_8e040dbdf13565::t_43eb3c4b95a92c 11,96-97,146-151
+packages/store-postgres/src/where.ts
+  s_8e040dbdf13565::t_27ffd836dfb8de 43-44
+packages/store-postgres/test/where.test.ts
+  s_8e040dbdf13565::t_58abb86912c0f2 11,90-91,136-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5f6f6b80802c93880d41120c063acd2fe985ca24",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <jack@coding.sh>"
+    }
+  }
+}
