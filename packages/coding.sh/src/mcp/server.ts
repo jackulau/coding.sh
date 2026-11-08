@@ -12,6 +12,7 @@ import { version } from "../cli/meta.ts";
 import { paths } from "../core/paths.ts";
 import { schemaViolations } from "../toolevals/jsonschema.ts";
 import { McpServer, serveStdio, ToolError, type StdioStreams } from "./protocol.ts";
+import { buildPrompts } from "./prompts.ts";
 import { buildResources } from "./resources.ts";
 import { buildTools, updateInfo, type ToolCtx } from "./tools.ts";
 
@@ -36,7 +37,8 @@ export interface CodingShMcp {
 const BASE_INSTRUCTIONS = [
   "coding.sh records every coding-agent session on this machine (prompts, tool calls, model calls, tokens, latency, subagents) in a local store.",
   "Start with session_current for the session you are in, sessions_list or search to find others, then session_get for a digest.",
-  "For trends use failures (what went wrong lately), latency, usage (tokens/cost) and subagents. experiments_list and experiment_compare read eval results.",
+  "To improve the user's setup, start with improve: what goes wrong most in this repo's sessions and the CLAUDE.md or AGENTS.md line that fixes it. For \"did my CLAUDE.md change help?\" call harness_changes, not git.",
+  "For trends use failures (raw tool errors and flags), latency, usage (tokens/cost) and subagents. experiments_list and experiment_compare read eval results.",
   "In an experiment session, call exp_session_note with the hypothesis before each run and the reading after it; exp_session_summary returns the timeline.",
   "To build evals for the user, call eval_init (a suite in evals/<name>/ from failed sessions, a skill's trigger prompts, or cases you write), then tell them its run command.",
   "eval_from_session, eval_init and exp_session_note write; ask the user before calling eval_from_session or eval_init with confirm: true.",
@@ -113,6 +115,7 @@ export function createCodingShMcp(o: CodingShMcpOptions = {}): CodingShMcp {
     instructions: () => instructions(env),
     tools,
     resources: buildResources(store),
+    prompts: buildPrompts(),
     context: () => ctx,
     validate: (args, schema) => schemaViolations(args, schema, 10),
     log,

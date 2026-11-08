@@ -426,10 +426,51 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       },
     },
     {
+      name: "improve",
+      title: "What to fix first",
+      description:
+        "Start here to improve the agent setup: what goes wrong most in this repo's sessions, each with an example session, the CLAUDE.md/AGENTS.md line that fixes it and next commands, plus whether recent changes helped. Default 14d.",
+      inputSchema: input({
+        repo: { type: "string", description: 'Repo path or folder name; "all" for every repo. Default: the server\'s repo.' },
+        since: SINCE("14d"),
+        agent: AGENT,
+        limit: LIMIT(5, 20),
+      }),
+      outputSchema: out({ scope: out({ sessions: I }), issues: arr(out({ rank: I, id: S, title: S, line: S, next: arr(S) }, ["rank", "id", "title", "next"])), changes: arr(out({ commit: S, verdict: S }, ["commit", "verdict"])) }, ["scope", "issues", "changes"]),
+      annotations: READ,
+      async run(a, c) {
+        const ctx = await c.store();
+        const { improveReport } = await import("./improve.ts");
+        const limit = a.limit === undefined ? undefined : numArg(a, "limit", 5);
+        return improveReport(ctx, { repo: strArg(a, "repo"), since: strArg(a, "since"), agent: strArg(a, "agent"), ...(limit ? { limit } : {}) }, { cwd: c.cwd, env: c.env, now: c.now() });
+      },
+    },
+    {
+      name: "harness_changes",
+      title: "Did a CLAUDE.md change help?",
+      description:
+        "Did a committed CLAUDE.md, AGENTS.md, rule or skill change help? Per change: lines added, flagged sessions before vs after, how often the agent follows each new line, and a verdict. No model calls. Default 30d.",
+      inputSchema: input({
+        repo: { type: "string", description: "Repo path or folder name. Default: the server's repo." },
+        commit: { type: "string", description: "Only this change: a commit sha or prefix." },
+        since: SINCE("30d"),
+        agent: AGENT,
+        limit: LIMIT(5, 20),
+      }),
+      outputSchema: out({ repo: S, changes: arr(out({ commit: S, verdict: S, reason: S, before: out({ sessions: I, flagged: I }), after: out({ sessions: I, flagged: I }) }, ["commit", "verdict", "reason"])) }, ["repo", "changes"]),
+      annotations: READ,
+      async run(a, c) {
+        const ctx = await c.store();
+        const { harnessChangesReport } = await import("./improve.ts");
+        const limit = a.limit === undefined ? undefined : numArg(a, "limit", 5);
+        return harnessChangesReport(ctx, { repo: strArg(a, "repo"), since: strArg(a, "since"), agent: strArg(a, "agent"), commit: strArg(a, "commit"), ...(limit ? { limit } : {}) }, { cwd: c.cwd, env: c.env, now: c.now() });
+      },
+    },
+    {
       name: "failures",
       title: "What went wrong",
       description:
-        "What went wrong lately: sessions with failure flags or failing tests, the most frequent tool errors (with a sample message), and prompts where the user pushed back on the agent. Default window 7d.",
+        "Raw failure data: sessions with failure flags or failing tests, the most frequent tool errors (with a sample message), and prompts where the user pushed back. For what to fix first, call improve. Default window 7d.",
       inputSchema: input({ since: SINCE("7d"), until: UNTIL, agent: AGENT, repo: REPO, limit: LIMIT(10, 50) }),
       outputSchema: out(
         {

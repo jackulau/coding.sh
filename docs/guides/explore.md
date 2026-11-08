@@ -254,10 +254,14 @@ step. The address ends in `?step=N`, so a copied link opens the replay at that s
 
 ## MCP
 
-`coding.sh mcp` serves your captured data to agents over stdio, with the tools `sessions_list`,
-`session_get`, `session_current`, `session_replay`, `search`, `failures`, `latency`, `usage`, `subagents`,
-`eval_from_session`, `eval_init`, `experiments_list`, `experiment_compare`, `exp_session_summary`,
-`exp_session_note`, `harness_compare`, `benchmarks` and `status`. `sessions_list` and `session_get`
+`coding.sh mcp` serves your captured data to agents over stdio, with the tools `improve`,
+`harness_changes`, `sessions_list`, `session_get`, `session_current`, `session_replay`, `search`,
+`failures`, `latency`, `usage`, `subagents`, `eval_from_session`, `eval_init`, `experiments_list`,
+`experiment_compare`, `exp_session_summary`, `exp_session_note`, `harness_compare`, `benchmarks` and
+`status`. `improve` and `harness_changes` return what `coding.sh improve` and `coding.sh improve
+check` print, for the repo the server runs in or the one named by `repo`. The server also has two
+prompts, `improve` and `did-it-help`, which run that loop; see
+[Improve your agent every week](improve.md). `sessions_list` and `session_get`
 include each session's derails, and `sessions_list` takes `flag: "looping"` (or any other flag).
 `sessions_list`, `search` and `usage` take `where`, the same filter as `--where`, and
 `sessions_list` takes `facets: ["model", "tool"]` for counts per value.

@@ -78,7 +78,9 @@ describe("handshake (legacy era)", () => {
       "experiment_compare",
       "experiments_list",
       "failures",
+      "harness_changes",
       "harness_compare",
+      "improve",
       "latency",
       "search",
       "session_current",
@@ -462,7 +464,7 @@ describe("modern era (2026-07-28)", () => {
     try {
       assert.equal(client.era, "2026-07-28");
       assert.equal(client.serverInfo?.name, "coding.sh");
-      assert.equal((await client.listTools()).length, 18);
+      assert.equal((await client.listTools()).length, 20);
       const r = await client.callTool("session_get", { sessionId: SEED.b });
       assert.equal((r.structuredContent as { session: { agent: string } }).session.agent, "codex");
     } finally {

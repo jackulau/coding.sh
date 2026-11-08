@@ -49,15 +49,17 @@ describe("tool evals against the coding.sh MCP server", () => {
     const target = cfg.targets.get(TARGET) as McpTarget;
     const env = { HOME: join(root, "home"), CODING_SH_HOME: join(root, "surface-data") };
     const s = await measureSurface({ ...target, env }, { name: "base" }, { cwd: root });
-    assert.equal(s.items.length, 18);
+    assert.equal(s.items.length, 20);
     // Every tool definition (name, description, input + output schema) costs context in every turn.
     // 24 KB for 13 tools; harness_compare (the 14th) adds about 1.3 KB, exp_session_summary and
     // exp_session_note about 1.9 KB together. The where query on sessions_list, search and usage
     // plus sessions_list facets add about 0.8 KB (instead of new query and facets tools). eval_init
     // (the 17th, the one tool that writes a suite) adds about 2.4 KB.
-    // session_replay (the 18th) adds about 1.6 KB.
-    assert.ok(s.surfaceBytes < 32_700, `surface is ${s.surfaceBytes} bytes`);
-    assert.ok(s.descriptionBytes < 9_900, `descriptions are ${s.descriptionBytes} bytes`);
+    // session_replay (the 18th) adds about 1.6 KB. improve and harness_changes (the improve loop,
+    // which an agent otherwise pieced together from failures, session_get and git it can't run)
+    // add about 3 KB together.
+    assert.ok(s.surfaceBytes < 35_700, `surface is ${s.surfaceBytes} bytes`);
+    assert.ok(s.descriptionBytes < 10_900, `descriptions are ${s.descriptionBytes} bytes`);
     for (const it of s.items) assert.ok(it.bytes < 4_000, `${it.name} is ${it.bytes} bytes`);
   });
 

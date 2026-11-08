@@ -6,12 +6,14 @@ import Tag from "../../components/docs/Tag.astro";
 // Tool list and config shapes follow packages/coding.sh/src/mcp/tools.ts and
 // src/adapters/_shared/mcp.ts (what `coding.sh init` writes for each agent).
 const TOOLS: [string, string][] = [
+  ["improve", "What goes wrong most in this repo's sessions, ranked, each with an example session, the CLAUDE.md or AGENTS.md line that fixes it and the next commands; then whether recent harness changes helped."],
+  ["harness_changes", "Each committed CLAUDE.md, AGENTS.md, rule or skill change: flagged sessions before and after, how often the agent follows each new line, and a verdict."],
   ["session_current", "The session of the agent calling the tool: its summary and latest timeline."],
   ["sessions_list", "Captured sessions, newest first, with turns, tool errors, tokens, cost, failure flags and derails. Filter with flag (e.g. looping) or where (e.g. tool:Bash ok:false cost>0.5); facets counts per value."],
   ["session_get", "One session as a digest: per-turn index and a timeline of prompts, replies, tool calls and model calls."],
   ["session_replay", "A session as numbered steps, with the files the agent touched rebuilt as of any step, one step's diff, or a range's."],
   ["search", "Full-text search over prompts, replies and tool input/output across all sessions. Takes where too."],
-  ["failures", "What went wrong lately: flagged sessions, frequent tool errors, prompts where the user pushed back."],
+  ["failures", "The raw data behind improve: flagged sessions, frequent tool errors, prompts where the user pushed back."],
   ["latency", "Model-call p50/p95 and time to first token, plus the slowest tools and tool calls."],
   ["usage", "Tokens and cost by day, agent, model or repo, with the most expensive sessions. Takes where too."],
   ["subagents", "The subagents a session spawned, as a tree with durations and errors."],
@@ -108,6 +110,11 @@ const gemini = `// ~/.gemini/settings.json
       </tbody>
     </table>
   </div>
+  <p>
+    Prompts: <code>improve</code> (find the top issue and the line that fixes it) and <code>did-it-help</code> (whether a committed
+    change helped, with an optional <code>commit</code>). Claude Code lists them as <code>/mcp__coding-sh__improve</code> and
+    <code>/mcp__coding-sh__did-it-help</code>. See <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/improve.md">Improve your agent every week</a>.
+  </p>
   <p>
     Resources: <code>codingsh://latest</code> and <code>codingsh://session/&lt;id&gt;</code>, each a Markdown digest of one session. When a
     newer coding.sh is out, the server's instructions mention it once and the <code>status</code> tool has the details.

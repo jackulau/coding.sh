@@ -104,12 +104,29 @@ export interface ResourceProvider {
   read(uri: string): Promise<{ uri: string; mimeType: string; text: string } | undefined>;
 }
 
+export interface PromptArgument {
+  name: string;
+  description?: string;
+  required?: boolean;
+}
+
+/** One MCP prompt: a user message template the client offers (Claude Code: a slash command). */
+export interface PromptDef {
+  name: string;
+  title?: string;
+  description: string;
+  arguments?: PromptArgument[];
+  /** The user message for these arguments (required ones are present). */
+  render(args: Record<string, string>): string;
+}
+
 export interface ServerOptions<C> {
   serverInfo: Implementation;
   /** Called per handshake/discover so it can carry fresh hints (e.g. an available update). */
   instructions(): Promise<string> | string;
   tools: ToolDef<C>[];
   resources?: ResourceProvider;
+  prompts?: PromptDef[];
   /** Handler context, created per tool call. */
   context(): C;
   /** Validates tool arguments; returns human-readable violations ([] = valid). */
@@ -148,7 +165,11 @@ export class McpServer<C> {
   }
 
   private capabilities(): Obj {
-    return { tools: { listChanged: false }, ...(this.o.resources ? { resources: { listChanged: false, subscribe: false } } : {}) };
+    return {
+      tools: { listChanged: false },
+      ...(this.o.resources ? { resources: { listChanged: false, subscribe: false } } : {}),
+      ...(this.o.prompts?.length ? { prompts: { listChanged: false } } : {}),
+    };
   }
 
   /** Handles one decoded message. Returns the response, or null for notifications and stray responses. */
@@ -251,12 +272,27 @@ export class McpServer<C> {
         return { contents: [c] };
       }
       case "prompts/list":
-        return { prompts: [] };
+        return { prompts: (this.o.prompts ?? []).map((p) => ({ name: p.name, ...(p.title ? { title: p.title } : {}), description: p.description, ...(p.arguments ? { arguments: p.arguments } : {}) })) };
+      case "prompts/get":
+        return this.getPrompt(params);
       case "logging/setLevel":
         return {};
       default:
         throw new RpcFailure(RPC.METHOD_NOT_FOUND, `Method not found: ${method}`);
     }
+  }
+
+  private getPrompt(params: Obj): Obj {
+    const name = params.name;
+    if (typeof name !== "string") throw new RpcFailure(RPC.INVALID_PARAMS, "prompts/get needs a prompt name");
+    const p = (this.o.prompts ?? []).find((x) => x.name === name);
+    if (!p) throw new RpcFailure(RPC.INVALID_PARAMS, `Unknown prompt: ${name}. Call prompts/list for the available prompts`);
+    const raw = isObj(params.arguments) ? params.arguments : {};
+    const args: Record<string, string> = {};
+    for (const [k, v] of Object.entries(raw)) if (typeof v === "string" && v.trim()) args[k] = v.trim();
+    const missing = (p.arguments ?? []).filter((a) => a.required && !args[a.name]).map((a) => a.name);
+    if (missing.length) throw new RpcFailure(RPC.INVALID_PARAMS, `Prompt ${name} needs ${missing.join(", ")}`);
+    return { description: p.description, messages: [{ role: "user", content: { type: "text", text: p.render(args) } }] };
   }
 
   private async callTool(params: Obj): Promise<Obj> {
