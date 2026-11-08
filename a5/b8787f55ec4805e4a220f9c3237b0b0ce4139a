@@ -1,0 +1,33 @@
+docs/reference/cli.md
+  s_8e040dbdf13565::t_581bd23109fa97 297
+CHANGELOG.md
+  s_8e040dbdf13565::t_97e50154eba591 67
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_507994eba606b8 276
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_728da2e0319e70 884-893
+packages/coding.sh/src/cli/commands/sessions.ts
+  s_8e040dbdf13565::t_87c65a7359ab26 1,3-5,18,25-37
+packages/coding.sh/test/cli/cli.test.ts
+  s_8e040dbdf13565::t_c82be4ccf1baff 431-454
+docs/concepts.md
+  s_8e040dbdf13565::t_38d9784a7a2c94 11-12
+docs/guides/explore.md
+  s_8e040dbdf13565::t_38d9784a7a2c94 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a5b8787f55ec4805e4a220f9c3237b0b0ce4139a",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
