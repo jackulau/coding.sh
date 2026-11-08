@@ -1,0 +1,32 @@
+docs/guides/evals.md
+  s_8e040dbdf13565::t_4b3933c9ec763a 219-222,296-297
+packages/coding.sh/src/cli/commands/exp.ts
+  s_8e040dbdf13565::t_e39739aebfe56c 125,138-154,179
+packages/coding.sh/test/cli/cli.test.ts
+  s_8e040dbdf13565::t_bf2aa1cb055508 1262-1273
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_b1ac2b5843e3c7 682
+  s_8e040dbdf13565::t_e39739aebfe56c 88-89,763,766-767
+CHANGELOG.md
+  s_8e040dbdf13565::t_f63faceebfa4c6 95
+docs/reference/cli.md
+  s_8e040dbdf13565::t_19ac95d641105a 955,961-962,1063,1067-1068,1094-1095,1124
+packages/coding.sh/test/cli/eval-init-run.test.ts
+  s_8e040dbdf13565::t_99d243c7ea465c 91
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a56c8105faf8b8865640b7b7aa2cc8d0da5da1c9",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
