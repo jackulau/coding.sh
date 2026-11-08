@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mcnemar, mcnemarCasesFor, mcnemarMinDiscordant, mcnemarPlan, mcnemarPower, mulberry32 } from "../../src/stats/index.ts";
+import { cpuMs, median } from "../helpers-timing.ts";
 
 const near = (x: number, y: number, eps: number, what = "") => assert.ok(Math.abs(x - y) <= eps, `${what} ${x} ≉ ${y} ±${eps}`);
 
@@ -111,11 +112,13 @@ describe("mcnemarPower: shape", () => {
     near(rejected / sims, mcnemarPower(n, d, delta), 0.01, "simulated power");
   });
 
-  it("plans 2000 cases at 30% discordance in under 50 ms", () => {
+  it("plans 2000 cases at 30% discordance in under 50 ms of CPU", () => {
     mcnemarPlan(200, 0.3); // warm up
-    const t0 = performance.now();
-    mcnemarPlan(2000, 0.3);
-    assert.ok(performance.now() - t0 < 50, `took ${performance.now() - t0} ms`);
+    // CPU time, not wall time: on a busy machine the wall clock also counts the time
+    // this thread waits for a core. About 9 ms on an idle laptop; the median of 5
+    // keeps one GC pause from deciding it.
+    const runs = Array.from({ length: 5 }, () => cpuMs(() => mcnemarPlan(2000, 0.3)));
+    assert.ok(median(runs) < 50, `took ${runs.map((x) => x.toFixed(1)).join(", ")} ms of CPU`);
   });
 });
 

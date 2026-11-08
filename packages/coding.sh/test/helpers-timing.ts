@@ -18,6 +18,22 @@ export const timeMs = (fn: () => unknown): number => {
 };
 
 /**
+ * CPU milliseconds this thread has used so far. Unlike wall time it does not
+ * count time spent waiting for a core, so a busy machine barely moves it.
+ */
+export const threadCpuMs = (): number => {
+  const u = (process.threadCpuUsage ?? process.cpuUsage)(); // threadCpuUsage: Node 23.9 / 22.16+
+  return (u.user + u.system) / 1000;
+};
+
+/** CPU milliseconds this thread spends in `fn`. */
+export const cpuMs = (fn: () => unknown): number => {
+  const start = threadCpuMs();
+  fn();
+  return threadCpuMs() - start;
+};
+
+/**
  * A CLI start (`run`) against a bare `node -e ''` spawned right after it, over 7
  * interleaved pairs after one warm-up run. Passes when the median extra time is
  * under `extraMs` (idle machine) or the median ratio to bare node is under
