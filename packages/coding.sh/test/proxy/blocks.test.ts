@@ -108,6 +108,18 @@ describe("proxy request blocks", () => {
     }
   });
 
+  it("writes calls in the order they were recorded, when one builds slower than the next", async () => {
+    // Two calls in the same millisecond; the first one's response is still decoding when the second is recorded.
+    const index = new MemoryIndexStore();
+    const rec = createRecorder({ blobs: new MemoryBlobStore(), redactor, metadata: false, prices: pricesFor({}), write: storeWriter(index) });
+    const first = { ...captured(1), startedAt: 1_700_000_000_000 };
+    rec.record(new Promise<CapturedCall>((r) => setTimeout(() => r(first), 30)));
+    rec.record({ ...captured(2), startedAt: 1_700_000_000_000 });
+    await rec.flush();
+    const events = await index.listEvents(SESSION, { kinds: ["llm.call"] });
+    assert.deepEqual(events.map((e) => e.payload.messageCount), [3, 5]);
+  });
+
   it("a growing session's blob bytes grow with its length, not its square", async () => {
     const bytes = async (calls: number) => {
       const blobs = new MemoryBlobStore();

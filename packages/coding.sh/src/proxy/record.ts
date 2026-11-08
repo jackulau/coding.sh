@@ -328,6 +328,8 @@ export function createRecorder(o: RecorderOptions): Recorder {
   const recent = new RecentBlobs();
   const pending: AgentEvent[] = [];
   const building = new Set<Promise<void>>();
+  // The last recorded call's queueing: each event joins `pending` after the one recorded before it.
+  let queued: Promise<void> = Promise.resolve();
   let draining: Promise<void> | undefined;
   let seq = 0;
   const stats = { written: 0, failed: 0 };
@@ -401,17 +403,24 @@ export function createRecorder(o: RecorderOptions): Recorder {
   return {
     stats,
     record(call) {
+      // Builds run side by side, but their events are written in the order the calls were
+      // recorded: two calls in the same millisecond have the same ts, and the store keeps
+      // those in the order it got them.
+      const before = queued;
       const p = build(call)
-        .then((e) => {
+        .catch((err: unknown) => {
+          stats.failed++;
+          report(err);
+          return undefined;
+        })
+        .then(async (e) => {
+          await before;
           if (!e) return;
           pending.push(e);
           kick();
         })
-        .catch((err: unknown) => {
-          stats.failed++;
-          report(err);
-        })
         .finally(() => building.delete(p));
+      queued = p;
       building.add(p);
     },
     async flush() {
