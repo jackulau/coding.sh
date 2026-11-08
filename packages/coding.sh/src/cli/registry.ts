@@ -414,6 +414,19 @@ export const COMMANDS: CommandSpec[] = [
     load: () => import("./commands/show.ts"),
   },
   {
+    name: "tree",
+    group: "Explore",
+    summary: "Show a whole multi-agent run as one tree, with rolled-up totals",
+    args: [{ name: "session|run", desc: "A session id or prefix (its whole tree, from the top-level agent down), or a run id (every agent of the fan-out)", required: true }],
+    flags: [{ name: "run", type: "boolean", desc: "Read the argument as a run id (CODING_SH_RUN_ID), not a session" }],
+    examples: ["coding.sh tree latest", "coding.sh tree 9f1c2e", "coding.sh tree my-fanout-123 --run"],
+    notes: [
+      "From any session, the tree is its top-level agent and every subagent under it, with per-node model, cost, tokens, duration and tool calls, and the run's totals and worst flag.",
+      "Separate agent processes group into one run when they share a run id: set CODING_SH_RUN_ID on the orchestrator that launches your fan-out, then pass that id.",
+    ],
+    load: () => import("./commands/tree.ts"),
+  },
+  {
     name: "replay",
     group: "Explore",
     summary: "Step through a session and see what it did to each file it touched",

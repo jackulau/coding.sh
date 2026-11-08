@@ -44,6 +44,7 @@ Every command accepts these.
 | [`uninstall`](#codingsh-uninstall) | Capture | Remove coding.sh hooks and MCP entries from every agent |
 | [`sessions`](#codingsh-sessions) | Explore | List captured sessions |
 | [`show`](#codingsh-show) | Explore | Show a session timeline with subagents and latency |
+| [`tree`](#codingsh-tree) | Explore | Show a whole multi-agent run as one tree, with rolled-up totals |
 | [`replay`](#codingsh-replay) | Explore | Step through a session and see what it did to each file it touched |
 | [`diff-calls`](#codingsh-diff-calls) | Explore | Show what changed between two model calls, and why the second missed the prompt cache |
 | [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies and tool calls |
@@ -489,6 +490,31 @@ coding.sh show 'latest#-1'
 
 - A session with more than 200 events shows one line per phase: the start, each resume, compaction and long idle gap, with where it derailed.
 - A model call logged by coding.sh proxy shows its system prompt, tools, settings, cache use, usage and cost (--all: the whole system prompt).
+
+## `coding.sh tree`
+
+Show a whole multi-agent run as one tree, with rolled-up totals.
+
+```text
+coding.sh tree <SESSION|RUN> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `session|run` | yes | A session id or prefix (its whole tree, from the top-level agent down), or a run id (every agent of the fan-out) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--run` |  | Read the argument as a run id (CODING_SH_RUN_ID), not a session. |
+
+```sh
+coding.sh tree latest
+coding.sh tree 9f1c2e
+coding.sh tree my-fanout-123 --run
+```
+
+- From any session, the tree is its top-level agent and every subagent under it, with per-node model, cost, tokens, duration and tool calls, and the run's totals and worst flag.
+- Separate agent processes group into one run when they share a run id: set CODING_SH_RUN_ID on the orchestrator that launches your fan-out, then pass that id.
 
 ## `coding.sh replay`
 
