@@ -42,7 +42,7 @@ function hookPayload(bytes, cwd) {
   return JSON.stringify({ session_id: "bench-0000", transcript_path: "/nonexistent", cwd, hook_event_name: "PostToolUse", tool_name: "Bash", tool_use_id: "toolu_bench", tool_input: { command: "ls -la" }, tool_response: { stdout: filler, stderr: "", interrupted: false }, duration_ms: 12 });
 }
 
-/** A work tree whose branch is only in a 1 MB packed-refs, so a SessionStart hook reads the slow case. */
+/** A work tree whose branch is only in a 1 MB packed-refs: a SessionStart hook that read .git (0.1.3 did) pays for it here. */
 function fakeRepo(dir) {
   const head = "0123456789abcdef0123456789abcdef01234567";
   mkdirSync(join(dir, ".git", "refs", "heads"), { recursive: true });
@@ -92,7 +92,7 @@ export function benchHook({ dist = DIST, baseline, n = 50, warmup = 5 } = {}) {
       candBig.push(hook(dist, big));
       if (baseline) baseBig.push(hook(baseline, big));
     }
-    // SessionStart inside a repo: the event that also reads HEAD from .git.
+    // SessionStart inside a repo: the hook must do no git work there, so this should cost what perf.hook does.
     const startPayload = JSON.stringify({ session_id: "bench-0000", cwd: fakeRepo(join(root, "repo")), hook_event_name: "SessionStart", source: "startup" });
     const start = (d) => timeSpawn(process.execPath, [join(d, "hook.mjs"), "claude-code", "SessionStart"], { ...env, CODING_SH_NO_AUTO_INGEST: "1", CODING_SH_NO_PROXY_AUTOSTART: "1" }, startPayload);
     const candStart = [];

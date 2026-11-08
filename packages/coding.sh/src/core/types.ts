@@ -28,8 +28,9 @@ export interface SpoolLine {
   gateway?: string;
   /** Claude Code hooks: how Claude Code was launched (CLAUDE_CODE_ENTRYPOINT: `cli`, `sdk-cli` for `claude -p`, `sdk-ts`, …). */
   entrypoint?: string;
-  /** Session-start and prompt lines: the repo root, HEAD commit ("" on an unborn branch) and branch
-   *  at the line's cwd, read from .git files without running git (spool/githead.ts). Absent outside a repo. */
+  /** Written only by 0.1.3 hooks, on session-start and prompt lines: the repo root, HEAD commit ("" on an
+   *  unborn branch) and branch at the line's cwd. Later hooks do no git work and leave it out; ingest
+   *  still reads it from old spool files (core/ingest.ts). */
   git?: { root: string; head: string; branch?: string };
   /** Parsed stdin JSON when it parsed, else the raw string. Omitted when rawFile is set. */
   raw: unknown;

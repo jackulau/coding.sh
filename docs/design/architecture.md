@@ -74,13 +74,11 @@ or PyPI yet.
   file, since hooks append to it without the ingest lock.
 - It always exits 0. A failure is written to `~/.coding.sh/spool/errors.log`. A capture bug must never
   break the agent.
-- On a session-start or prompt event, the hook records the repo root, HEAD commit and branch as the
-  line's `git` field. It reads them from `.git` files (`HEAD`, loose refs, `packed-refs`, the
-  `gitdir:` and `commondir` files of worktrees and submodules) and never runs git; this takes well
-  under a millisecond. A ref it can't read exactly (a reftable repo, a corrupt `HEAD`) leaves the
-  field out. `CODING_SH_NO_GIT_HEAD=1` turns it off. Ingest copies it into the `session.start`
-  payload as `git.commit` and `git.branch`, and the session's start commit comes from there before
-  the reflog. Snapshots run at ingest; see below.
+- The hook does no git work: it neither runs git nor reads `.git`. Ingest works out a hook session's
+  repo root, its start commit (HEAD at the session's start time, from the reflog) and its branch
+  (the agent's own record, else the branch checked out at ingest).
+  Spool lines written by a 0.1.3 hook can carry a `git` field with the HEAD that hook read from
+  `.git`; ingest still takes the start commit from it. Snapshots run at ingest; see below.
 
 ### Repo snapshots
 

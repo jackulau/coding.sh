@@ -1,6 +1,7 @@
 // Ingest/backfill regressions that need real git repos: repo state for hook and
 // transcript sessions, end snapshots, and incremental backfill.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -85,7 +86,23 @@ describe("hook-captured sessions get repo state (QA P0: eval new on hook session
     assert.ok(task.referencePatch, "reference patch from start HEAD to the end snapshot");
   });
 
-  it("takes the start commit from the HEAD the hook read, not today's HEAD, when the reflog can't say", async () => {
+  it("takes the start commit from the reflog, not today's HEAD, when HEAD moved before ingest", async () => {
+    const root = makeRepo({ "a.txt": "a\n" });
+    const startSha = gitc(root, "rev-parse", "HEAD");
+    const { env: e, config, spool, spoolDir } = env();
+    const t0 = Date.now() + 2000;
+    // A current hook's line: no git field. HEAD moves on after the session starts, before ingest runs.
+    writeFileSync(join(spool, "s.jsonl"), spoolLine(t0, root, { session: "s4", kind: "session.start" }) + spoolLine(t0 + 10, root, { session: "s4", kind: "user.message", text: "go" }));
+    write(root, { "a.txt": "b\n" });
+    const later = `@${Math.floor(t0 / 1000) + 5} +0000`;
+    execFileSync("git", ["commit", "-qam", "later"], { cwd: root, env: { ...process.env, GIT_COMMITTER_DATE: later, GIT_AUTHOR_DATE: later } });
+    const index = new MemoryIndexStore();
+    await ingest({ config, index, blobs: new MemoryBlobStore(), adapters: new Map([["fake", hookAdapter]]), env: e, spoolDir, lock: false, now: () => t0 + 100 });
+    assert.notEqual(gitc(root, "rev-parse", "HEAD"), startSha);
+    assert.deepEqual((await index.getSession("s4"))!.repo, { root, head: startSha, branch: "main" });
+  });
+
+  it("takes the start commit from the HEAD a 0.1.3 hook read, not today's HEAD, when the reflog can't say", async () => {
     const root = makeRepo({ "a.txt": "a\n" });
     const startSha = gitc(root, "rev-parse", "HEAD");
     const { env: e, config, spool, spoolDir } = env();

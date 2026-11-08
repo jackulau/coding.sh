@@ -76,39 +76,61 @@ describe("hook", () => {
     assert.equal(readLines(h2, "claude-code")[0]!.entrypoint, undefined);
   });
 
-  test("session-start and prompt lines record the repo HEAD read from .git; tool lines and CODING_SH_NO_GIT_HEAD do not", () => {
+  test("does no git work: in a repo, no event touches .git or records a git field (ingest reads HEAD from the reflog)", () => {
     const h = freshHome();
     const repo = makeRepo({ "a.txt": "a\n" });
-    const head = gitc(repo, "rev-parse", "HEAD");
-    const root = gitc(repo, "rev-parse", "--show-toplevel"); // what readGitHead reports: real path, forward slashes
-    const hook = (event: string, env: Record<string, string> = {}) =>
-      runHook(["claude-code", event], JSON.stringify({ session_id: "s1", hook_event_name: event, cwd: join(repo, "sub") }), { CODING_SH_HOME: h, ...env });
-    for (const e of ["SessionStart", "UserPromptSubmit", "PostToolUse"]) assert.equal(hook(e).code, 0);
-    assert.equal(hook("SessionStart", { CODING_SH_NO_GIT_HEAD: "1" }).code, 0);
-    assert.deepEqual(
-      readLines(h, "claude-code")
-        .sort((a, b) => a.ts - b.ts)
-        .map((l) => [l.event, l.git]),
-      [
-        ["SessionStart", { root, head, branch: "main" }],
-        ["UserPromptSubmit", { root, head, branch: "main" }],
-        ["PostToolUse", undefined],
-        ["SessionStart", undefined],
-      ],
+    mkdirSync(join(repo, "sub"));
+    // Preloaded into the hook: logs every fs call on a path inside a .git dir, then the hook runs as usual.
+    const dir = tmp("csh-fstrace-");
+    const tracer = join(dir, "trace.mjs");
+    const log = join(dir, "touched.log");
+    writeFileSync(
+      tracer,
+      `import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+const touched = [];
+const inGit = (p) => /(^|[\\\\/])\\.git([\\\\/]|$)/.test(p instanceof URL ? p.pathname : String(p));
+const wrap = (name, f) => function (p, ...rest) { if (typeof p === "string" || p instanceof URL) { if (inGit(p)) touched.push(name + " " + p); } return f.call(this, p, ...rest); };
+for (const name of ["openSync", "statSync", "lstatSync", "readFileSync", "existsSync", "accessSync", "readdirSync", "readlinkSync", "opendirSync"]) fs[name] = wrap(name, fs[name]);
+const realpath = fs.realpathSync;
+fs.realpathSync = wrap("realpathSync", realpath);
+fs.realpathSync.native = wrap("realpathSync.native", realpath.native);
+syncBuiltinESMExports();
+const write = fs.appendFileSync;
+process.on("exit", () => write(${JSON.stringify(log)}, touched.map((t) => t + "\\n").join("")));
+`,
     );
+    for (const event of ["SessionStart", "UserPromptSubmit", "beforeSubmitPrompt", "PostToolUse"]) {
+      const r = spawnSync(process.execPath, [...tsNodeArgs(), "--import", pathToFileURL(tracer).href, HOOK_TS, "claude-code", event], {
+        input: JSON.stringify({ session_id: "s1", hook_event_name: event, cwd: join(repo, "sub") }),
+        env: { ...process.env, CODING_SH_HOME: h, CODING_SH_NO_AUTO_INGEST: "1", CODING_SH_NO_PROXY_AUTOSTART: "1" },
+        encoding: "utf8",
+      });
+      assert.equal(r.status, 0, r.stderr);
+      assert.equal(r.stdout, "");
+    }
+    assert.ok(existsSync(log), "the fs tracer ran");
+    assert.equal(readFileSync(log, "utf8"), "", "the hook touched .git");
+    const lines = readLines(h, "claude-code");
+    assert.equal(lines.length, 4);
+    assert.deepEqual(lines.filter((l) => "git" in l), []);
   });
 
-  test("a corrupt HEAD still exits 0 silently, with no git field", () => {
-    const h = freshHome();
-    const repo = makeRepo({ "a.txt": "a\n" });
-    writeFileSync(join(repo, ".git", "HEAD"), "\0\0garbage");
-    const r = runHook(["claude-code", "SessionStart"], JSON.stringify({ session_id: "s1", cwd: repo }), { CODING_SH_HOME: h });
-    assert.equal(r.code, 0);
-    assert.equal(r.stdout, "");
-    const [line] = readLines(h, "claude-code");
-    assert.equal(line?.event, "SessionStart");
-    assert.equal(line?.git, undefined);
-    assert.equal(existsSync(join(h, "spool", "errors.log")), false);
+  test("no module the hook loads names .git, packed-refs or the git binary", () => {
+    // The hook's static import graph (type-only imports are erased and skipped).
+    const seen = new Set<string>();
+    const walk = (file: string) => {
+      if (seen.has(file)) return;
+      seen.add(file);
+      const src = readFileSync(file, "utf8");
+      for (const m of src.matchAll(/^import\s+(?!type\s)[^;]*?from\s+"(\.{1,2}\/[^"]+)"/gm)) walk(join(file, "..", m[1]!));
+    };
+    walk(HOOK_TS);
+    assert.ok(seen.size > 3, [...seen].join(", "));
+    for (const file of seen) {
+      const src = readFileSync(file, "utf8").replace(/^\s*\/\/.*$/gm, ""); // comments may say "no git work"
+      assert.doesNotMatch(src, /["'`/\\]\.git\b|packed-refs|githead|["'`]git["'`]/, file);
+    }
   });
 
   test("non-JSON stdin is kept as a string; no stdin is an empty string; cwd falls back to process cwd", () => {
