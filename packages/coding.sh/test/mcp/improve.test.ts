@@ -135,12 +135,14 @@ describe("harness_changes flagged sessions", () => {
 });
 
 describe("prompts", () => {
-  it("lists improve and did-it-help, and renders each with its arguments", async () => {
+  it("lists improve, trim and did-it-help, and renders each with its arguments", async () => {
     const list = (await c.request("prompts/list")).result!.prompts as { name: string; arguments?: { name: string; required?: boolean }[] }[];
     assert.deepEqual(
       list.map((p) => p.name),
-      ["improve", "did-it-help"],
+      ["improve", "trim", "did-it-help"],
     );
+    const trim = (await c.request("prompts/get", { name: "trim", arguments: { since: "90d" } })).result as { messages: { content: { text: string } }[] };
+    assert.match(trim.messages[0]!.content.text, /^Call the coding\.sh harness_audit tool with since "90d"\./);
     assert.ok(list.every((p) => (p.arguments ?? []).every((a) => !a.required)), "every argument is optional");
     const got = (await c.request("prompts/get", { name: "did-it-help", arguments: { commit: "abc1234" } })).result as { messages: { role: string; content: { type: string; text: string } }[] };
     assert.equal(got.messages[0]!.role, "user");

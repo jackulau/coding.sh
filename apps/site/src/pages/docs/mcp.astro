@@ -8,6 +8,7 @@ import Tag from "../../components/docs/Tag.astro";
 const TOOLS: [string, string][] = [
   ["improve", "What goes wrong most in this repo's sessions, ranked, each with an example session, the CLAUDE.md or AGENTS.md line that fixes it and the next commands; then whether recent harness changes helped."],
   ["harness_changes", "Each committed CLAUDE.md, AGENTS.md, rule or skill change: flagged sessions before and after, which sessions are still flagged after it and with what, how often the agent follows each new line, and a verdict."],
+  ["harness_audit", "Each memory file, CLAUDE.md, AGENTS.md, rule and skill with the sessions that loaded, read and wrote it and its load tokens, unused ones first, and the refine run command that cuts the costliest instruction file. With check: true, whether your uncommitted edits deleted, reworded or relaxed a protected line."],
   ["session_current", "The session of the agent calling the tool: its summary and latest timeline."],
   ["sessions_list", "Captured sessions, newest first, with turns, tool errors, tokens, cost, failure flags and derails. Filter with flag (e.g. looping) or where (e.g. tool:Bash ok:false cost>0.5); facets counts per value."],
   ["session_get", "One session as a digest: per-turn index and a timeline of prompts, replies, tool calls and model calls."],
@@ -111,8 +112,9 @@ const gemini = `// ~/.gemini/settings.json
     </table>
   </div>
   <p>
-    Prompts: <code>improve</code> (find the top issue and the line that fixes it) and <code>did-it-help</code> (whether a committed
-    change helped, with an optional <code>commit</code>). Claude Code lists them as <code>/mcp__coding-sh__improve</code> and
+    Prompts: <code>improve</code> (find the top issue and the line that fixes it), <code>trim</code> (find the memory files, skills and
+    instructions sessions never read, then check the edits) and <code>did-it-help</code> (whether a committed change helped, with an
+    optional <code>commit</code>). Claude Code lists them as <code>/mcp__coding-sh__improve</code>, <code>/mcp__coding-sh__trim</code> and
     <code>/mcp__coding-sh__did-it-help</code>. See <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/improve.md">Improve your agent every week</a>.
   </p>
   <p>

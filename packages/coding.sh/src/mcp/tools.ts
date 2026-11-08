@@ -52,13 +52,15 @@ export interface ToolCtx {
 
 // ------------------------------------------------------------ schema pieces
 
-const AGENT = { type: "string", description: "Only this agent, e.g. claude-code, codex, cursor, opencode, t3code (sessions T3 Code ran)." };
-const REPO = { type: "string", description: "Only sessions in this repo or directory: an absolute path (matches at or under it) or a bare repo folder name." };
+// Shared argument descriptions, kept short: every tool definition is sent on every
+// turn, and the schema already carries defaults and bounds (LIMIT's default and maximum).
+const AGENT = { type: "string", description: "Only this agent, e.g. claude-code, codex, cursor, opencode, t3code." };
+const REPO = { type: "string", description: "Only sessions under this path, or in repos with this folder name." };
 const SINCE = (d: string) => ({ type: "string", description: `Window start: 30m, 12h, 7d, 2w or an ISO date. Default ${d}.` });
-const UNTIL = { type: "string", description: "Window end, same format as since. Default now." };
-const LIMIT = (d: number, max: number) => ({ type: "integer", minimum: 1, maximum: max, default: d, description: `Max rows (default ${d}, max ${max}).` });
-const CURSOR = { type: "string", description: "nextCursor from the previous call, to get the next page." };
-const PROJECT = { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,62}$", description: 'Only this project (a `coding.sh serve` ingest key decides it; local captures are "default"). Default: all projects.' };
+const UNTIL = { type: "string", description: "Window end. Default now." };
+const LIMIT = (d: number, max: number) => ({ type: "integer", minimum: 1, maximum: max, default: d, description: "Max rows." });
+const CURSOR = { type: "string", description: "nextCursor from the last call." };
+const PROJECT = { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,62}$", description: 'Only this project (its `coding.sh serve` ingest key; local is "default"). Default: all.' };
 const EXP_SESSION = { type: "string", description: "Session id. Default: the project's session." };
 const WHERE = {
   type: "string",
@@ -66,7 +68,7 @@ const WHERE = {
     "Filter query: key:value clauses ANDed; OR, ( ), - negates; a,b either; * wildcard; > >= < <= and a..b on numbers; bare words search text. Keys: agent model repo branch title flag skill cost tokens duration turns tools tool.errors since until has:tests|cost|error is:root|child|flagged; event keys tool kind ok mcp error. E.g. model:claude-* cost>0.5 tool:Bash ok:false",
 };
 const WHERE_SAME = (what: string) => ({ type: "string", description: `Filter query, same language as sessions_list where${what}.` });
-const SESSION_ID = { type: "string", minLength: 1, description: 'Session id from sessions_list/search, or "latest" for the newest top-level session.' };
+const SESSION_ID = { type: "string", minLength: 1, description: 'Session id, or "latest" for the newest top-level session.' };
 
 const input = (properties: Obj, required: string[] = []): Obj => ({ type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false });
 const out = (properties: Obj, required: string[] = []): Obj => ({ type: "object", properties, ...(required.length ? { required } : {}) });
@@ -271,7 +273,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       name: "sessions_list",
       title: "List sessions",
       description:
-        "List captured agent sessions, newest first, with turns, tool calls/errors, tokens, cost, failure flags and derails (where and when a run went off the rails). Use to find session ids or browse recent work; use search for text inside sessions.",
+        "List captured agent sessions, newest first, with turns, tool calls/errors, tokens, cost, failure flags and derails (where and when a run went off the rails). For text inside sessions use search.",
       inputSchema: input({
         agent: AGENT,
         repo: REPO,
@@ -341,7 +343,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       name: "session_current",
       title: "Current session",
       description:
-        "The session of the agent calling this tool: matched by session id env var, else the most recent (preferably still running: no end seen and active in the last 30 min) session in this working directory or repo. Returns its summary and latest timeline entries.",
+        "The session of the agent calling this tool: matched by session id env var, else the newest session in this directory or repo, preferring one active in the last 30 min. Returns its summary and latest timeline entries.",
       inputSchema: input({
         cwd: { type: "string", description: "Working directory to match. Default: the MCP server's directory (your project)." },
         limit: LIMIT(15, 100),
@@ -487,10 +489,31 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       },
     },
     {
+      name: "harness_audit",
+      title: "Trim unused memory and skills",
+      description:
+        "Audit the setup to trim it: each memory file, CLAUDE.md, AGENTS.md, rule and skill with the sessions that loaded and read it and its load tokens; unused first. After trimming, check: true finds deleted safety lines. Default 30d.",
+      inputSchema: input({
+        since: SINCE("30d"),
+        agent: AGENT,
+        limit: LIMIT(20, 200),
+        check: { type: "boolean", description: "Instead check uncommitted harness edits vs git HEAD (refine check)." },
+      }),
+      outputSchema: out({ sessions: I, loadTokensPerSession: I, files: arr(out({ path: S, flags: arr(S) }, ["path", "flags"])), check: out({ ok: B }), next: arr(S) }),
+      annotations: READ,
+      async run(a, c) {
+        const { auditCheck, auditReport } = await import("./audit.ts");
+        if (a.check === true) return auditCheck({ cwd: c.cwd, env: c.env });
+        const ctx = await c.store();
+        const limit = a.limit === undefined ? undefined : numArg(a, "limit", 20);
+        return auditReport(ctx, { since: strArg(a, "since"), agent: strArg(a, "agent"), ...(limit ? { limit } : {}) }, { cwd: c.cwd, env: c.env, now: c.now() });
+      },
+    },
+    {
       name: "failures",
       title: "What went wrong",
       description:
-        "Raw failure data: sessions with failure flags or failing tests, the most frequent tool errors (with a sample message), and prompts where the user pushed back. For what to fix first, call improve. Default window 7d.",
+        "Raw failure data: sessions with failure flags or failing tests, the most frequent tool errors (with a sample message), and prompts where the user pushed back. For what to fix first, call improve. Default 7d.",
       inputSchema: input({ since: SINCE("7d"), until: UNTIL, agent: AGENT, repo: REPO, limit: LIMIT(10, 50) }),
       outputSchema: out(
         {
@@ -543,7 +566,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         until: UNTIL,
         agent: AGENT,
         repo: REPO,
-        groupBy: { type: "string", enum: [...USAGE_GROUPS], default: "day", description: "Group rows by day, agent, model, agent-model (agent + model, to compare harnesses at a fixed model) or repo. Default day." },
+        groupBy: { type: "string", enum: [...USAGE_GROUPS], default: "day", description: "Group rows by this; agent-model compares harnesses at a fixed model." },
         where: WHERE_SAME(""),
         limit: LIMIT(31, 100),
       }),
@@ -597,7 +620,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
           confirm: { type: "boolean", description: "Must be true: the user agreed to create the task." },
           verifier: { type: "string", description: "Shell command that exits 0 when the task is solved, e.g. npm test. Default: guessed from the session or repo." },
           name: { type: "string", description: "Task name. Default: from the prompt." },
-          instruction: { type: "string", description: "What the agent is asked to do. Default: the session's first prompt. Required when the session recorded none (e.g. captured with coding.sh run)." },
+          instruction: { type: "string", description: "What the agent is asked to do. Default: the session's first prompt; required when it has none." },
           setup: { type: "array", items: { type: "string" }, maxItems: 20, description: "Setup commands run before the agent, e.g. npm ci. Default: guessed from lockfiles." },
           tags: { type: "array", items: { type: "string" }, maxItems: 20, description: "Extra tags." },
         },

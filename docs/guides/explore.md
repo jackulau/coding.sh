@@ -295,6 +295,14 @@ that loaded the file; a skill costs its name and description, the part agents li
 matched across machines by their path under the home directory (`~/…`), so the audit reads the
 files on this machine and the sessions from any.
 
+Through MCP, ask your agent to "audit my setup and trim what I don't use". The `harness_audit`
+tool returns the audit, and with `check: true` it runs `coding.sh refine check` on your
+uncommitted CLAUDE.md, AGENTS.md, rule and skill edits: did one delete, reword or relax a protected
+line? It does not run the refine loop, which runs agent sessions for minutes. Its `next` holds the
+command instead, `coding.sh refine run --suite <name> --target CLAUDE.md --objective size`: the
+repo's costliest instruction file, cut while the suite's pass rate holds. With no suite of repo
+tasks in `evals/`, its note says to build one first (the `eval_init` tool).
+
 ## Viewer
 
 `coding.sh ui` serves the viewer on 127.0.0.1 and opens it in your browser. It needs the
@@ -336,13 +344,16 @@ step. The address ends in `?step=N`, so a copied link opens the replay at that s
 ## MCP
 
 `coding.sh mcp` serves your captured data to agents over stdio, with the tools `improve`,
-`harness_changes`, `sessions_list`, `session_get`, `session_current`, `session_replay`, `search`,
+`harness_changes`, `harness_audit`, `sessions_list`, `session_get`, `session_current`, `session_replay`, `search`,
 `failures`, `latency`, `usage`, `subagents`, `eval_from_session`, `eval_init`, `experiments_list`,
 `experiment_compare`, `exp_session_summary`, `exp_session_note`, `harness_compare`, `benchmarks` and
 `status`. `improve` and `harness_changes` return what `coding.sh improve` and `coding.sh improve
 check` print, for the repo the server runs in or the one named by `repo`. The server also has two
 prompts, `improve` and `did-it-help`, which run that loop; see
-[Improve your agent every week](improve.md). `sessions_list` and `session_get`
+[Improve your agent every week](improve.md). `harness_audit` returns what `coding.sh harness audit
+--json` prints, unused files first, with absolute paths and the load tokens per session; see
+[Memory and instruction files](#memory-and-instruction-files). A third prompt, `trim`, runs that
+audit and the check after the edits. `sessions_list` and `session_get`
 include each session's derails, and `sessions_list` takes `flag: "looping"` (or any other flag).
 `sessions_list`, `search` and `usage` take `where`, the same filter as `--where`, and
 `sessions_list` takes `facets: ["model", "tool"]` for counts per value.

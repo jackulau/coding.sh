@@ -181,9 +181,14 @@ The coding.sh MCP server (`coding.sh init` sets it up) has the same loop:
   agent opens one with `session_get`.
 - Two prompts run the loop. In Claude Code they are `/mcp__coding-sh__improve` and
   `/mcp__coding-sh__did-it-help`.
+- The `harness_audit` tool lists the memory files, skills and instruction files your sessions
+  never read, with what loading each costs per session, and with `check: true` checks your edits
+  for removed safety lines. The `/mcp__coding-sh__trim` prompt runs it. See
+  [Memory and instruction files](explore.md#memory-and-instruction-files).
 
 You can also ask in plain words: "look at my recent sessions and help me improve my setup", or
-"did my CLAUDE.md change last week help?", or "which sessions still failed after it?".
+"did my CLAUDE.md change last week help?", or "which sessions still failed after it?", or "audit
+my setup and trim what I don't use".
 
 ## What it can't tell you
 
