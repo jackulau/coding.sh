@@ -287,8 +287,21 @@ export function judgeObjectives(pairs: readonly TaskPair[], o: ObjectiveOpts): O
     return out("keep", "quality");
   }
   if (!q.nonInferior) {
-    reasons.push(`${q.mean < 0 ? "quality fell" : "quality not shown to hold"}: ${qText}`, ...better.map((m) => `${mText(m)}, but a gain that costs quality is not kept`));
-    return out(q.mean < 0 ? "reject" : "inconclusive");
+    // Quality fell (mean below 0): a gain that costs quality is never kept.
+    if (q.mean < 0) {
+      reasons.push(`quality fell: ${qText}`, ...better.map((m) => `${mText(m)}, but a gain that costs quality is not kept`));
+      return out("reject");
+    }
+    // Quality held on average (mean ≥ 0) but the interval is too wide to prove
+    // it stays within the margin: a hold the suite can't yet confirm, not a
+    // quality loss. Say so, and when something is cheaper or faster, that the
+    // win is real but unprovable here — the common outcome on a small suite.
+    reasons.push(
+      `quality not shown to hold: ${qText}`,
+      ...better.map((m) => `${mText(m)}, but the quality interval is too wide to adopt it within the margin at ${q.n} task${q.n === 1 ? "" : "s"}: add tasks or trials`),
+    );
+    if (better.length) warnings.push(`the quality lower bound ${pts(q.lower)} is below the −${(o.margin * 100).toFixed(1)} pt margin, so this cheaper or faster candidate can't be adopted yet: add tasks or trials to narrow the interval, or raise --margin if the drop is acceptable`);
+    return out("inconclusive");
   }
   if (better.length) {
     // The primary objective first, then the rest in the order given.

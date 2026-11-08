@@ -46,6 +46,25 @@ describe("judgeObjectives", () => {
     assert.ok(d.gains.slice(0, 4).every((g) => g < 0));
   });
 
+  it("holds a cheaper candidate whose quality is even on average but unproven, and says so", () => {
+    // Base 2/3 on every task; candidate 3/3 on half and 1/3 on half: the mean
+    // pass-rate difference is 0, but the spread is wide, so the lower bound
+    // dips past the margin. The cost cut is real; the hold is a data problem.
+    const pairs = suite(8, () => runs(3, 2, { cost: 0.2 }), (i) => runs(3, i < 4 ? 3 : 1, { cost: 0.1 }));
+    const d = judgeObjectives(pairs, { ...opts, objectives: ["cost"] });
+    assert.equal(d.verdict, "inconclusive");
+    assert.equal(d.branch, undefined);
+    assert.ok(d.quality.mean >= 0, `mean ${d.quality.mean}`);
+    assert.equal(d.quality.nonInferior, false);
+    assert.ok(d.metrics[0]!.better, "the cost cut itself is significant");
+    assert.deepEqual(d.quality.regressions, []);
+    // Not framed as a quality loss: the real reason is the wide interval.
+    assert.match(d.reasons[0]!, /^quality not shown to hold/);
+    assert.ok(!d.reasons.some((r) => /a gain that costs quality is not kept/.test(r)), "does not claim the gain cost quality");
+    assert.match(d.reasons[1]!, /quality interval is too wide to adopt it within the margin at 8 tasks: add tasks or trials/);
+    assert.match(d.warnings.join("\n"), /quality lower bound .* below the −5\.0 pt margin.*add tasks or trials/);
+  });
+
   it("rejects on a hard regression even when everything else improves", () => {
     const pairs = suite(8, () => runs(3, 3, { cost: 0.2 }), (i) => runs(3, i === 0 ? 0 : 3, { cost: 0.1 }));
     const d = judgeObjectives(pairs, { ...opts, objectives: ["cost"], margin: 0.5 });
