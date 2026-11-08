@@ -17,6 +17,7 @@ packages/coding.sh/test/core/skills-use.test.ts
 docs/concepts.md
   s_8e040dbdf13565::t_9415904a386a64 58
   s_8e040dbdf13565::t_414ea64632cbf7 55-57
+  s_8e040dbdf13565::t_33d9ad3eccfed4 59
 ---
 {
   "schema_version": "authorship/3.0.0",
