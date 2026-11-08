@@ -144,6 +144,11 @@ pass@k and against pass^k.
 `coding.sh harness snapshot` makes one; `coding.sh compare <a> <b>` runs two on the same eval tasks.
 See [Compare two agents](how-to/compare-agents.md).
 
+**Memory audit.** `coding.sh harness audit` counts, per memory and instruction file (auto-memory,
+CLAUDE.md, AGENTS.md, rules, skills), the sessions that loaded it, read it with a tool and wrote
+it, and flags files never read, written but never read back, and skills listed but never used.
+See [Memory and instruction files](guides/explore.md#memory-and-instruction-files).
+
 **Repair round.** With `compare --repair N`, a run whose verifier fails goes back to the agent in
 its own session with "Verification failed." (and, with `--repair-signal names`, the failing test
 names), up to N times. The hidden tests are out of the work tree while the agent works. A round

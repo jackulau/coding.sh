@@ -214,6 +214,43 @@ why, and shows the agent's own diff for that step instead of guessing at line nu
 command that changes files (`sed -i`, `rm`) changes them in the replay only when the agent
 recorded the change. Nothing is re-run.
 
+## Memory and instruction files
+
+`coding.sh harness audit` lists each memory and instruction file and counts the sessions that
+loaded it, read it with a tool and wrote it: Claude Code's auto-memory
+(`~/.claude/projects/*/memory/`), CLAUDE.md, AGENTS.md and GEMINI.md, rules in `.claude/rules/`,
+and skills (`SKILL.md`).
+
+```sh
+coding.sh harness audit                          # the last 30 days, flagged files first
+coding.sh harness audit --agent codex --since 90d
+coding.sh harness audit --json                   # every file, with totals
+```
+
+The counts come from captured events:
+
+- **loaded**: a `harness.loaded` event (a nested CLAUDE.md, a skill listed or invoked), or a
+  file the agent loads at start for the session's directory. For Claude Code that is
+  `~/.claude/CLAUDE.md`, CLAUDE.md and `CLAUDE.local.md` up the tree, rules without a `paths`
+  or `globs` frontmatter, the project's `MEMORY.md` and the skill list. For Codex it is
+  `AGENTS.md` in `CODEX_HOME` and from the repo root down to the directory, and its skills. A
+  start-time load counts only for a file that is on disk now.
+- **read**: a read tool (Read, `read_file`, …), a shell reader (`cat`, `head`, `tail`, `sed`,
+  `less`, `nl`, `bat`) on the path, or invoking the skill.
+- **wrote**: a recorded file change, an edit tool, or a shell write (`> file`, `tee`, `sed -i`).
+
+A subagent counts as its root session, and its own directory (a worktree, say) counts for the
+start-time loads. Flags:
+
+- `never-read`: on disk, and no session in the window loaded or read it.
+- `write-only`: written, and no session other than the ones that wrote it loaded or read it.
+- `loaded-not-read`: a skill that was listed but never invoked or read.
+
+SIZE is the file's size. The load cost in the summary is tokens (bytes / 4) times the sessions
+that loaded the file; a skill costs its name and description, the part agents list. Files are
+matched across machines by their path under the home directory (`~/…`), so the audit reads the
+files on this machine and the sessions from any.
+
 ## Viewer
 
 `coding.sh ui` serves the viewer on 127.0.0.1 and opens it in your browser. It needs the

@@ -59,7 +59,7 @@ Every command accepts these.
 | [`workflows`](#codingsh-workflows) | Evaluate | Capture, measure and A/B-test multi-agent workflow runs |
 | [`bench`](#codingsh-bench) | Evaluate | Dynamic benchmarks: fresh cases every run, same set for every contender |
 | [`improve`](#codingsh-improve) | Harness | What to fix first in your sessions, the line that fixes it, and whether your last CLAUDE.md or AGENTS.md changes helped |
-| [`harness`](#codingsh-harness) | Harness | Snapshot and list agent harness bundles |
+| [`harness`](#codingsh-harness) | Harness | Snapshot and list agent harness bundles; audit which memory and instruction files agents use |
 | [`compare`](#codingsh-compare) | Harness | A/B two harness bundles on eval tasks |
 | [`refine`](#codingsh-refine) | Harness | Improve CLAUDE.md, AGENTS.md and skills in tested rounds, and protect their safety rules |
 | [`gateway`](#codingsh-gateway) | Maintain | LLM gateways: detect routing, enrich sessions with billed cost |
@@ -2148,7 +2148,7 @@ coding.sh improve check --watch
 
 ## `coding.sh harness`
 
-Snapshot and list agent harness bundles.
+Snapshot and list agent harness bundles; audit which memory and instruction files agents use.
 
 ```text
 coding.sh harness <action>
@@ -2158,6 +2158,7 @@ coding.sh harness <action>
 |---|---|
 | [`snapshot`](#codingsh-harness-snapshot) | Snapshot an agent's harness files into a bundle |
 | [`list`](#codingsh-harness-list) | List harness bundles |
+| [`audit`](#codingsh-harness-audit) | Count the sessions that loaded, read and wrote each memory, CLAUDE.md, AGENTS.md, rule and skill file |
 
 ### `coding.sh harness snapshot`
 
@@ -2181,6 +2182,26 @@ List harness bundles.
 
 ```text
 coding.sh harness list
+```
+
+### `coding.sh harness audit`
+
+Count the sessions that loaded, read and wrote each memory, CLAUDE.md, AGENTS.md, rule and skill file.
+
+```text
+coding.sh harness audit [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-a, --agent <AGENT>` |  | Only this agent's sessions and files. |
+| `--since <WHEN>` | `30d` | Only after this time: 7d, 12h, 30m or a date. |
+| `--limit <N>` | `40` | Files to list, flagged first. |
+
+```sh
+coding.sh harness audit
+coding.sh harness audit --agent claude-code --since 90d
+coding.sh harness audit --json
 ```
 
 ## `coding.sh compare`

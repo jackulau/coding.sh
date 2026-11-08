@@ -1171,7 +1171,7 @@ export const COMMANDS: CommandSpec[] = [
   {
     name: "harness",
     group: "Harness",
-    summary: "Snapshot and list agent harness bundles",
+    summary: "Snapshot and list agent harness bundles; audit which memory and instruction files agents use",
     actions: [
       {
         name: "snapshot",
@@ -1185,6 +1185,16 @@ export const COMMANDS: CommandSpec[] = [
         ],
       },
       { name: "list", summary: "List harness bundles" },
+      {
+        name: "audit",
+        summary: "Count the sessions that loaded, read and wrote each memory, CLAUDE.md, AGENTS.md, rule and skill file",
+        flags: [
+          { name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Only this agent's sessions and files" },
+          { ...SINCE, default: "30d" },
+          { name: "limit", type: "number", value: "<N>", desc: "Files to list, flagged first", default: "40" },
+        ],
+        examples: ["coding.sh harness audit", "coding.sh harness audit --agent claude-code --since 90d", "coding.sh harness audit --json"],
+      },
     ],
     load: () => import("./commands/harness.ts"),
   },

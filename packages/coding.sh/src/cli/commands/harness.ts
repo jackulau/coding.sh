@@ -1,20 +1,61 @@
-// coding.sh harness snapshot|list
+// coding.sh harness snapshot|list|audit
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
 import { getAdapter } from "../../adapters/index.ts";
 import { bundleFromDir, bundleFromToml, DEFAULT_INCLUDE } from "../../runner/bundle.ts";
 import type { HarnessBundle } from "../../core/types.ts";
-import { suggest, UsageError } from "../args.ts";
-import { str, withContext } from "../common.ts";
-import { ago, CliError, plural } from "../output.ts";
+import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
+import { autoIngest, str, withContext } from "../common.ts";
+import { ago, bytes, CliError, plural, tokens } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 export function bundleJson(b: HarnessBundle): Record<string, unknown> {
   return { id: b.id, name: b.name, agent: b.agent, model: b.model ?? null, flags: b.flags, files: Object.keys(b.files).sort(), remove: b.remove, createdAt: new Date(b.createdAt).toISOString(), note: b.note ?? null };
 }
 
+/** coding.sh harness audit: which memory and instruction files sessions loaded, read and wrote. */
+async function audit(c: CommandContext): Promise<number> {
+  const { out } = c;
+  const agent = str(c.flags.agent);
+  if (agent && !getAdapter(agent)) {
+    const { ADAPTERS } = await import("../../adapters/index.ts");
+    const s = suggest(agent, ADAPTERS.map((a) => a.id));
+    throw new UsageError(`Unknown agent ${JSON.stringify(agent)}`, { suggestion: s ? `--agent ${s}` : undefined, reason: "unknown_agent" });
+  }
+  const sinceFlag = str(c.flags.since) ?? "30d";
+  const since = parseSince(sinceFlag);
+  const limit = positiveInt(c.flags.limit, "limit") ?? 40;
+  const { memoryAudit } = await import("../../core/memory-files.ts");
+  return withContext(c, async (ctx) => {
+    await autoIngest(ctx);
+    const a = await memoryAudit(ctx.index, { since, env: c.env, ...(agent ? { agent } : {}) });
+    if (out.json) {
+      out.data(a);
+      return 0;
+    }
+    const t = a.totals;
+    out.note(`${plural(a.sessions, "session")} since ${sinceFlag}${agent ? ` (${agent})` : ""} · ${plural(t.files, "memory or instruction file")}${t.bytes ? ` · ${bytes(t.bytes)}` : ""}`);
+    if (!a.files.length) {
+      out.note("No memory or instruction files found on disk or in these sessions");
+      return 0;
+    }
+    out.note(`sessions: ${t.sessionsLoading} loaded one, ${t.sessionsReading} read one with a tool, ${t.sessionsWriting} wrote one`);
+    out.note(`flags: ${t.neverRead} never read, ${t.writeOnly} write-only, ${t.loadedNotRead} ${t.loadedNotRead === 1 ? "skill" : "skills"} listed but never read`);
+    if (t.loadTokens) out.note(`load cost: ${tokens(t.loadTokens)} tokens over the window${a.sessions ? `, ${tokens(Math.round(t.loadTokens / a.sessions))} per session` : ""}`);
+    // Flagged files first, then the costliest to load.
+    const rows = [...a.files].sort((x, y) => Number(y.flags.length > 0) - Number(x.flags.length > 0) || (y.loadTokens ?? 0) - (x.loadTokens ?? 0));
+    out.table(
+      ["PATH", "KIND", "SIZE", "LOADED", "READ", "WROTE", "LAST READ", "LAST WRITE", "FLAGS"],
+      rows.slice(0, limit).map((r) => [r.path, r.kind, r.bytes === undefined ? "gone" : bytes(r.bytes), String(r.loaded), String(r.read), String(r.wrote), ago(r.lastRead), ago(r.lastWrite), r.flags.join(", ")]),
+    );
+    if (rows.length > limit) out.note(`… ${rows.length - limit} more; --limit ${rows.length} or --json lists every file`);
+    return 0;
+  });
+}
+
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
+  if (c.action === "audit") return audit(c);
   return withContext(c, async (ctx) => {
     if (c.action === "list") {
       const all = await ctx.index.listBundles();
