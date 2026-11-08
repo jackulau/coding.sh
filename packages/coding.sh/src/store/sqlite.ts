@@ -542,13 +542,20 @@ export class SqliteIndexStore implements IndexStore {
     const { DatabaseSync } = await loadSqlite();
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     const db = new DatabaseSync(path, { readOnly: opts.readOnly ?? false });
-    // busy_timeout first so the WAL switch itself waits on a concurrent writer.
-    db.exec("PRAGMA busy_timeout = 5000");
-    if (!opts.readOnly) await switchToWal(db);
-    db.exec("PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;");
-    const store = new SqliteIndexStore(db, path);
-    if (!opts.readOnly) await store.migrate();
-    return store;
+    try {
+      // busy_timeout first so the WAL switch itself waits on a concurrent writer.
+      db.exec("PRAGMA busy_timeout = 5000");
+      if (!opts.readOnly) await switchToWal(db);
+      db.exec("PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;");
+      const store = new SqliteIndexStore(db, path);
+      if (!opts.readOnly) await store.migrate();
+      return store;
+    } catch (e) {
+      // A store that can't be opened (a newer schema, a failed migration) must not keep
+      // the file open: Windows can't delete or replace an open file.
+      db.close();
+      throw e;
+    }
   }
 
   private stmt(sql: string): StatementSync {

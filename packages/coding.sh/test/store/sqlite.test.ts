@@ -98,6 +98,8 @@ describe("SqliteIndexStore", () => {
     db.exec(`INSERT INTO migrations (version, applied_at) VALUES (${SQLITE_SCHEMA_VERSION + 1}, 0)`);
     db.close();
     await assert.rejects(() => SqliteIndexStore.open(path), new RegExp(`schema v${SQLITE_SCHEMA_VERSION + 1}, but this coding\\.sh only knows up to v${SQLITE_SCHEMA_VERSION}`));
+    // The failed open closed the file: on Windows an open file can't be removed (EBUSY).
+    for (const f of [path, `${path}-wal`, `${path}-shm`]) rmSync(f, { force: true });
   });
 
   it("migrates a v2 store so existing tool calls become searchable", async () => {
