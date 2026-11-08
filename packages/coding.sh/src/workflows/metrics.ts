@@ -10,7 +10,10 @@ const AGENTISH = new Set<WorkflowNode["kind"]>(["agent", "step", "subagent"]);
 export const isAgentNode = (n: WorkflowNode): boolean => n.kind === "agent" || n.kind === "step";
 
 /** A durable step attempt that a later attempt of the same step followed. */
-export const superseded = (n: WorkflowNode): boolean => n.attempt !== undefined && n.attempts !== undefined && n.attempt < n.attempts;
+export const retriedAttempt = (n: WorkflowNode): boolean => n.attempt !== undefined && n.attempts !== undefined && n.attempt < n.attempts;
+
+/** An agent the run stopped before it returned: cancelled by the operator, or replaced by a later same-label call. Not a failure. */
+export const isStopped = (n: WorkflowNode): boolean => n.status === "cancelled" || n.status === "superseded";
 
 /** Events stamped at their start (ts + durationMs is their end); the rest are stamped at their end. */
 const START_STAMPED = new Set(["llm.call", "span"]);
@@ -87,7 +90,8 @@ function integrate(series: readonly { t: number; running: number }[]): number {
 function barrierGroups(nodes: readonly WorkflowNode[]): Map<string, (WorkflowNode & { startedAt: number; endedAt: number })[]> {
   const out = new Map<string, (WorkflowNode & { startedAt: number; endedAt: number })[]>();
   for (const a of timedAgents(nodes)) {
-    if (!a.groupId || a.groupKind === "pipeline") continue;
+    // A stopped agent's end is when the run stopped, not when its work finished.
+    if (!a.groupId || a.groupKind === "pipeline" || isStopped(a)) continue;
     out.set(a.groupId, [...(out.get(a.groupId) ?? []), a]);
   }
   return out;
@@ -201,7 +205,10 @@ function subtreeUsage(n: WorkflowNode, children: Map<string, WorkflowNode[]>): U
 
 export function workflowStats(run: WorkflowRun, nodes: WorkflowNode[], base?: { run: WorkflowRun; nodes: WorkflowNode[] }): WorkflowStats {
   const allAgents = nodes.filter(isAgentNode);
-  const ran = allAgents.filter((n) => n.status !== "cached");
+  // Stopped agents (cancelled, superseded) spent time and tokens but are neither agents that ran to
+  // an end nor failures: they stay in agentMs and cost, and out of the counts and rates.
+  const counted = allAgents.filter((n) => !isStopped(n));
+  const ran = counted.filter((n) => n.status !== "cached");
   const timed = timedAgents(nodes);
 
   let start = run.startedAt;
@@ -230,16 +237,20 @@ export function workflowStats(run: WorkflowRun, nodes: WorkflowNode[], base?: { 
     agents: ran.length,
     nullAgents: allAgents.filter((n) => n.status === "null" || n.status === "skipped").length,
     // A failed durable step attempt that a later attempt retried is a retry, not a failure.
-    failedAgents: allAgents.filter((n) => n.status === "failed" && !superseded(n)).length,
+    failedAgents: allAgents.filter((n) => n.status === "failed" && !retriedAttempt(n)).length,
     apiRetries: nodes.reduce((s, n) => s + (n.apiRetries ?? 0), 0),
     schemaFailures: allAgents.reduce((s, n) => s + (n.schema?.failures ?? 0), 0),
     schemaFinalInvalid: allAgents.filter((n) => n.schema?.finalValid === false).length,
     cacheHits: allAgents.filter((n) => n.status === "cached").length,
     tokens,
   };
-  if (allAgents.length) {
-    stats.nullRate = stats.nullAgents / allAgents.length;
-    stats.failRate = stats.failedAgents / allAgents.length;
+  const cancelled = allAgents.filter((n) => n.status === "cancelled").length;
+  const supersededN = allAgents.filter((n) => n.status === "superseded").length;
+  if (cancelled) stats.cancelledAgents = cancelled;
+  if (supersededN) stats.supersededAgents = supersededN;
+  if (counted.length) {
+    stats.nullRate = stats.nullAgents / counted.length;
+    stats.failRate = stats.failedAgents / counted.length;
   }
   if (wallMs !== undefined) {
     stats.wallMs = wallMs;
@@ -297,11 +308,15 @@ export function workflowStats(run: WorkflowRun, nodes: WorkflowNode[], base?: { 
     for (const m of members) addUsage(u, subtreeUsage(m, children));
     const pm: PhaseMetric = {
       phase: p,
-      agents: members.filter((m) => m.status !== "cached").length,
+      agents: members.filter((m) => m.status !== "cached" && !isStopped(m)).length,
       agentMs: t.reduce((s, m) => s + Math.max(0, m.endedAt! - m.startedAt!), 0),
       tokens: totalTokens(u),
-      failures: members.filter((m) => (m.status === "failed" && !superseded(m)) || m.status === "null").length,
+      failures: members.filter((m) => (m.status === "failed" && !retriedAttempt(m)) || m.status === "null").length,
     };
+    const pc = members.filter((m) => m.status === "cancelled").length;
+    const ps = members.filter((m) => m.status === "superseded").length;
+    if (pc) pm.cancelled = pc;
+    if (ps) pm.superseded = ps;
     if (t.length) {
       pm.startedAt = Math.min(...t.map((m) => m.startedAt!));
       pm.endedAt = Math.max(...t.map((m) => m.endedAt!));

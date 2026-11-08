@@ -281,15 +281,22 @@ export interface AgentDetail {
   startedAt?: number;
   endedAt?: number;
   sessionId?: string;
+  /** The transcript ends with the operator stopping the agent ("[Request interrupted by user…]"). */
+  interrupted: boolean;
 }
 
 const STRUCTURED = /^StructuredOutput$/;
+/** The line Claude Code writes into an agent's transcript when the operator stops it. */
+export const INTERRUPT_TEXT = /^\[Request interrupted by user( for tool use)?\]/;
+const ACTIVITY = new Set(["user.message", "assistant.message", "tool.start", "tool.end", "llm.call"]);
 
 /** Folds one agent's transcript events (and session row) into node fields. */
 export function agentDetail(events: readonly AgentEvent[] | undefined, session: Session | undefined): AgentDetail {
-  const d: AgentDetail = { apiRetries: 0, schema: { attempts: 0, failures: 0, anySuccess: false, used: false } };
+  const d: AgentDetail = { apiRetries: 0, schema: { attempts: 0, failures: 0, anySuccess: false, used: false }, interrupted: false };
   const evs = [...(events ?? [])].sort((a, b) => a.ts - b.ts);
+  let last: AgentEvent | undefined;
   for (const e of evs) {
+    if (ACTIVITY.has(e.kind)) last = e;
     if (e.kind === "tool.start" && typeof e.payload.tool === "string" && STRUCTURED.test(e.payload.tool)) d.schema.used = true;
     if (e.kind === "tool.end" && typeof e.payload.tool === "string" && STRUCTURED.test(e.payload.tool)) {
       d.schema.used = true;
@@ -300,6 +307,7 @@ export function agentDetail(events: readonly AgentEvent[] | undefined, session: 
     if (e.kind === "error" && e.payload.source === "api") d.apiRetries++;
     if (e.kind === "llm.call" && e.payload.ok === false) d.apiRetries++;
   }
+  d.interrupted = last?.kind === "user.message" && typeof last.payload.text === "string" && INTERRUPT_TEXT.test(last.payload.text.trimStart());
   if (session) {
     d.sessionId = session.id;
     d.startedAt = session.startedAt;
@@ -311,8 +319,7 @@ export function agentDetail(events: readonly AgentEvent[] | undefined, session: 
     d.toolErrors = session.stats.toolErrors;
     if (session.model) d.model = session.model;
   } else if (evs.length) {
-    const s0 = buildSession(evs as AgentEvent[]);
-    return agentDetail(evs, s0);
+    return agentDetail(evs, buildSession(evs as AgentEvent[]));
   }
   if (evs.length) {
     d.startedAt ??= evs[0]!.ts;

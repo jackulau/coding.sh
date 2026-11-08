@@ -208,7 +208,8 @@ export function approximatePath(agents: readonly (WorkflowNode & { startedAt: nu
 }
 
 export function criticalPath(nodes: WorkflowNode[]): CriticalPath {
-  const agents = timedAgents(nodes);
+  // A stopped agent (cancelled, superseded) never returned, so nothing waited on its end.
+  const agents = timedAgents(nodes).filter((a) => a.status !== "cancelled" && a.status !== "superseded");
   const waits = waitIntervals(nodes);
   const lost = lostIntervals(nodes);
   const edges = explicitEdges(agents);

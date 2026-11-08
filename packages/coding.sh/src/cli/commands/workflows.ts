@@ -249,6 +249,8 @@ async function show(c: CommandContext): Promise<number> {
   out.row("Wall", `${duration(wallOf(run))}${run.stats.criticalPathMs !== undefined ? `, critical path ${duration(run.stats.criticalPathMs)}${run.stats.criticalPathExact ? "" : " (approx)"}` : ""}`);
   out.row("Cost", `${usd(run.stats.costUsd)}, ${tokens(totalTokens(run.stats.tokens))} tokens`);
   if (run.resumedFrom) out.row("Resumed from", `${run.resumedFrom} (${run.stats.cacheHits} cached)`);
+  const stopped = stoppedText(run.stats);
+  if (stopped) out.row("Stopped", `${stopped} (not failures)`);
   if (run.stats.stepRetries !== undefined || run.stats.waitMs !== undefined) {
     const resumes = nodes.filter((n) => n.resume && n.resume !== "wait").map((n) => `${n.resume} at ${clean(n.name)}`);
     const bits = [plural(run.stats.stepRetries ?? 0, "retry", "retries")];
@@ -263,6 +265,13 @@ async function show(c: CommandContext): Promise<number> {
 }
 
 const pct = (x: number | undefined) => (x === undefined || !Number.isFinite(x) ? "-" : `${(x * 100).toFixed(0)}%`);
+
+/** "1 cancelled, 6 superseded", or "" when the run stopped no agent. */
+function stoppedText(s: { cancelledAgents?: number; supersededAgents?: number; cancelled?: number; superseded?: number }): string {
+  const c = s.cancelledAgents ?? s.cancelled;
+  const r = s.supersededAgents ?? s.superseded;
+  return [c ? `${c} cancelled` : "", r ? `${r} superseded` : ""].filter(Boolean).join(", ");
+}
 
 async function stats(c: CommandContext): Promise<number> {
   const { out } = c;
@@ -289,6 +298,7 @@ async function stats(c: CommandContext): Promise<number> {
     ["pipeline savings", duration(s.pipelineSavingsMs)],
     ["queue wait", duration(s.queueWaitMs)],
     ["agents", `${s.agents} (${s.failedAgents} failed ${pct(s.failRate)}, ${s.nullAgents} null ${pct(s.nullRate)})`],
+    ...(stoppedText(s) ? [["stopped", `${stoppedText(s)} (not failures)`] as [string, string]] : []),
     ["api retries", String(s.apiRetries)],
     ["schema failures", `${s.schemaFailures} (${s.schemaFinalInvalid} still invalid)`],
     ["cache hits", `${s.cacheHits} (${pct(s.cacheHitRate)})`],
@@ -301,7 +311,7 @@ async function stats(c: CommandContext): Promise<number> {
     out.print();
     out.table(
       ["PHASE", "WALL", "AGENTS", "AGENT TIME", "TOKENS", "COST", "SHARE", "FAILED"],
-      s.perPhase.map((p) => [clean(p.phase), duration(p.wallMs), String(p.agents), duration(p.agentMs), tokens(p.tokens), usd(p.costUsd), pct(s.costShareByPhase?.[p.phase]), String(p.failures)]),
+      s.perPhase.map((p) => [clean(p.phase), duration(p.wallMs), String(p.agents), duration(p.agentMs), tokens(p.tokens), usd(p.costUsd), pct(s.costShareByPhase?.[p.phase]), stoppedText(p) ? `${p.failures} (+${stoppedText(p)})` : String(p.failures)]),
     );
   }
   if (s.perAgent?.length) {

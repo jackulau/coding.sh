@@ -1,0 +1,119 @@
+// A Claude Code workflow stopped by the operator and resumed twice in the same run dir
+// (writeInPlaceFixture): stopped agents, wall time across segments, cache hits from the record.
+import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, before, describe, it } from "node:test";
+import { run as workflowsCli } from "../../src/cli/commands/workflows.ts";
+import { Output } from "../../src/cli/output.ts";
+import { loadClaudeWorkflowDir } from "../../src/workflows/sources/claude-workflow.ts";
+import { buildWorkflowTree, type WorkflowTree } from "../../src/workflows/tree.ts";
+import { INPLACE, writeInPlaceFixture } from "./_fixtures.ts";
+
+let root = "";
+let tree: WorkflowTree;
+let env: NodeJS.ProcessEnv = {};
+
+before(async () => {
+  root = mkdtempSync(join(tmpdir(), "csh-wf-inplace-"));
+  const home = join(root, "home");
+  mkdirSync(home, { recursive: true });
+  env = { HOME: home, USERPROFILE: home, CODING_SH_HOME: join(home, ".coding.sh"), XDG_CONFIG_HOME: join(home, ".config"), CLAUDE_CONFIG_DIR: join(root, "claude"), PATH: process.env.PATH, CI: "1" };
+  const dir = writeInPlaceFixture(join(root, "claude", "projects"));
+  tree = buildWorkflowTree((await loadClaudeWorkflowDir(dir, { concurrencyCap: 4 })).sources);
+});
+after(() => rmSync(root, { recursive: true, force: true }));
+
+/** stdout and stderr together (show prints its header rows to stderr). */
+async function cli(action: string, positionals: string[], json = false): Promise<string> {
+  let stdout = "";
+  const out = new Output({ json, env, stdout: { write: (x: string) => (stdout += x), isTTY: false }, stderr: { write: (x: string) => (stdout += x), isTTY: false }, stdin: { isTTY: false } });
+  const code = await workflowsCli({ action, flags: {}, positionals, rest: [], out, env, cwd: root, debug: false, signal: new AbortController().signal });
+  assert.equal(code, 0);
+  return stdout;
+}
+
+const agents = () => tree.nodes.filter((n) => n.kind === "agent");
+
+describe("stopped agents", () => {
+  it("marks an agent the operator stopped as cancelled and a re-run label's first call as superseded", () => {
+    assert.equal(tree.run.id, INPLACE);
+    assert.equal(tree.run.status, "ok");
+    assert.deepEqual(
+      agents().map((n) => [n.name, n.status]),
+      [
+        ["plan", "ok"],
+        ["review-x", "ok"],
+        ["review-y", "cancelled"],
+        ["qa-one", "superseded"],
+        ["qa-two", "superseded"],
+        ["qa-one", "ok"],
+        ["qa-two", "ok"],
+        ["fix", "ok"],
+      ],
+    );
+    assert.ok(agents().every((n) => n.error === undefined), "a stopped agent has no 'no result recorded' error");
+  });
+
+  it("keeps stopped agents out of the failure count and rate, and counts them apart", () => {
+    const s = tree.run.stats;
+    assert.equal(s.failedAgents, 0);
+    assert.equal(s.failRate, 0);
+    assert.equal(s.agents, 5);
+    assert.equal(s.cancelledAgents, 1);
+    assert.equal(s.supersededAgents, 2);
+    const qa = s.perPhase!.find((p) => p.phase === "QA")!;
+    assert.equal(qa.agents, 2);
+    assert.equal(qa.failures, 0);
+    assert.equal(qa.superseded, 2);
+    assert.equal(s.perPhase!.find((p) => p.phase === "Review")!.cancelled, 1);
+    // They still spent time and tokens.
+    assert.ok(s.agentMs >= 19_000 + 10_000 + 10_000);
+  });
+
+  it("leaves stopped agents off the critical path", () => {
+    const stopped = new Set(agents().filter((n) => n.status === "cancelled" || n.status === "superseded").map((n) => n.id));
+    assert.ok(tree.run.stats.criticalPath!.length > 0);
+    assert.ok(tree.run.stats.criticalPath!.every((id) => !stopped.has(id)));
+  });
+
+  it("reads an unresumed stop as an aborted run when there is no record", () => {
+    const j = [
+      { type: "launched" },
+      { type: "started", key: "k1", agentId: "x1", label: "one" },
+      { type: "result", key: "k1", agentId: "x1", result: 1 },
+      { type: "started", key: "k2", agentId: "x2", label: "two" },
+    ]
+      .map((x) => JSON.stringify(x))
+      .join("\n");
+    const ev = (kind: string, ts: number, payload: Record<string, unknown>) => ({ id: `${kind}${ts}`, sessionId: "s", agent: "claude-code", kind, ts, payload }) as never;
+    const t = buildWorkflowTree({
+      journal: j,
+      agentEvents: {
+        x1: [ev("user.message", 1000, { text: "go" }), ev("assistant.message", 2000, { text: "done" })],
+        x2: [ev("user.message", 3000, { text: "go" }), ev("user.message", 4000, { text: "[Request interrupted by user]" })],
+      },
+    });
+    assert.equal(t.nodes.find((n) => n.name === "two")!.status, "cancelled");
+    assert.equal(t.run.status, "aborted");
+    assert.equal(t.run.stats.failedAgents, 0);
+    // Without the interrupt line it is still a failure.
+    const failed = buildWorkflowTree({ journal: j, agentEvents: { x1: [ev("user.message", 1000, { text: "go" })], x2: [ev("user.message", 3000, { text: "go" })] } });
+    assert.equal(failed.nodes.find((n) => n.name === "two")!.status, "running");
+  });
+});
+
+describe("workflows show and stats on a run resumed in place", () => {
+  it("show and stats list stopped agents apart from failures", async () => {
+    await cli("import", []);
+    const show = await cli("show", [INPLACE]);
+    assert.match(show, /Stopped\s+1 cancelled, 2 superseded \(not failures\)/);
+    assert.match(show, /agent review-y\s+cancelled/);
+    assert.doesNotMatch(show, /no result recorded/);
+    const stats = await cli("stats", [INPLACE]);
+    assert.match(stats, /agents\t5 \(0 failed 0%, 0 null 0%\)/);
+    assert.match(stats, /stopped\t1 cancelled, 2 superseded \(not failures\)/);
+    assert.match(stats, /QA\t.*\t0 \(\+2 superseded\)\n/);
+  });
+});

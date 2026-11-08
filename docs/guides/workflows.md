@@ -20,7 +20,9 @@ coding.sh workflows stats <run>
 `show` prints the run tree with time, cost and status per node. `--gantt` prints the timeline as
 tab-separated text instead. `stats` reports wall time, the critical path, how many agents ran at
 once, how long agents sat idle at barriers, failed and null agents, schema retries, cache hits on a
-resumed run, and cost per phase.
+resumed run, and cost per phase. An agent you stopped (Claude Code writes "[Request interrupted by
+user]" into its transcript) shows as `cancelled`, and one a resume ran again under the same label
+shows as `superseded`. `show` and `stats` list both apart from failures.
 
 ## Cases
 

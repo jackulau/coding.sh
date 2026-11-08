@@ -182,12 +182,34 @@ function children(runId: string, parent: WorkflowNode, events: readonly AgentEve
   return out;
 }
 
-function nodeStatus(c: JournalCall, runDone: boolean): WorkflowNode["status"] {
+function nodeStatus(c: JournalCall, runDone: boolean, stop: "cancelled" | "superseded" | undefined): WorkflowNode["status"] {
   if (c.cached) return "cached";
   if (c.status === "error") return "failed";
   if (c.status === "null") return "null";
   if (c.status === "returned") return "ok";
+  if (stop) return stop;
   return runDone ? "failed" : "running";
+}
+
+/**
+ * Calls that never returned because the run was stopped: "superseded" when a later call with the
+ * same label ran (a re-run after a resume), else "cancelled" when the agent's transcript ends with
+ * the operator's interrupt. Keyed by ordinal.
+ */
+function stoppedCalls(calls: readonly JournalCall[], labelOf: (c: JournalCall) => string | undefined, interrupted: (c: JournalCall) => boolean): Map<number, "cancelled" | "superseded"> {
+  const lastByLabel = new Map<string, number>();
+  for (const c of calls) {
+    const l = labelOf(c);
+    if (l !== undefined) lastByLabel.set(l, c.ordinal);
+  }
+  const out = new Map<number, "cancelled" | "superseded">();
+  for (const c of calls) {
+    if (c.hasResult) continue;
+    const l = labelOf(c);
+    if (l !== undefined && lastByLabel.get(l)! > c.ordinal) out.set(c.ordinal, "superseded");
+    else if (interrupted(c)) out.set(c.ordinal, "cancelled");
+  }
+  return out;
 }
 
 function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
@@ -204,6 +226,12 @@ function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
     const ses = sessions.get(c.agentId);
     if (evs || ses) details.set(c.ordinal, agentDetail(evs, ses));
   }
+  const meta = src.meta ?? {};
+  const stopped = stoppedCalls(
+    parsed.calls,
+    (c) => c.label ?? (c.agentId ? s(meta[c.agentId]?.description) : undefined),
+    (c) => details.get(c.ordinal)?.interrupted === true,
+  );
   const firstStart = Math.min(...parsed.calls.map((c) => c.startedAt ?? details.get(c.ordinal)?.startedAt ?? Infinity));
   const host = hostInfo(src.host, runId, Number.isFinite(firstStart) ? firstStart : undefined);
 
@@ -211,13 +239,15 @@ function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
   const recStart = n(record.startTime) ?? tsOf(record.startedAt) ?? tsOf(record.timestamp);
   const recDuration = n(record.durationMs);
   const recStatus = recordStatus(record.status) ?? recordStatus(parsed.status);
-  const allResolved = parsed.calls.length > 0 && parsed.calls.every((c) => c.hasResult);
+  // Every call returned or was stopped: a run whose last call the operator cancelled was aborted.
+  const allResolved = parsed.calls.length > 0 && parsed.calls.every((c) => c.hasResult || stopped.has(c.ordinal));
+  const lastCancelled = stopped.get(parsed.calls.length - 1) === "cancelled";
   let endedAt = recStart !== undefined && recDuration !== undefined ? recStart + recDuration : parsed.finishedAt ?? host.workflow?.end;
-  const status: WorkflowRun["status"] = recStatus ?? (host.workflow?.ok === false ? "failed" : endedAt !== undefined || allResolved ? "ok" : "running");
+  const status: WorkflowRun["status"] =
+    recStatus ?? (host.workflow?.ok === false ? "failed" : allResolved && lastCancelled ? "aborted" : endedAt !== undefined || allResolved ? "ok" : "running");
   const runDone = status !== "running";
 
   // ---- agent nodes
-  const meta = src.meta ?? {};
   const agents: WorkflowNode[] = [];
   const outputs: Record<string, unknown> = {};
   const childNodes: WorkflowNode[] = [];
@@ -231,7 +261,7 @@ function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
       kind: "agent",
       name: c.label ?? s(m.description) ?? c.agentId ?? `agent ${c.ordinal}`,
       ordinal: c.ordinal,
-      status: nodeStatus(c, runDone),
+      status: nodeStatus(c, runDone, stopped.get(c.ordinal)),
     };
     const phase = c.phase ?? s(m.workflowPhase) ?? s(m.phase);
     if (phase) node.phase = phase;

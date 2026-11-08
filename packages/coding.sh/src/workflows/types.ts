@@ -60,7 +60,12 @@ export interface WorkflowRun {
 
 /** "wait": a durable sleep or wait for an event; time inside it is not busy time. */
 export type WorkflowNodeKind = "workflow" | "phase" | "group" | "agent" | "subagent" | "step" | "handoff" | "llm" | "tool" | "wait";
-export type WorkflowNodeStatus = "ok" | "failed" | "null" | "skipped" | "cached" | "running";
+/**
+ * "cancelled": stopped by the operator before it returned (its transcript ends with Claude Code's
+ * "[Request interrupted by user]"). "superseded": it never returned and a later call with the same
+ * label ran in its place (a re-run after a resume). Neither counts as a failure.
+ */
+export type WorkflowNodeStatus = "ok" | "failed" | "null" | "skipped" | "cached" | "running" | "cancelled" | "superseded";
 
 export interface WorkflowNode {
   id: string;
@@ -143,6 +148,9 @@ export interface PhaseMetric {
   tokens: number;
   costUsd?: number;
   failures: number;
+  /** Agents stopped by the operator, and agents a later same-label call replaced; absent when none. */
+  cancelled?: number;
+  superseded?: number;
 }
 
 export interface WorkflowStats {
@@ -167,7 +175,10 @@ export interface WorkflowStats {
   agents: number;
   nullAgents: number;
   failedAgents: number;
-  /** Over all agent nodes, cached included. */
+  /** Agents stopped by the operator / replaced by a later same-label call: left out of agents and the rates; absent when none. */
+  cancelledAgents?: number;
+  supersededAgents?: number;
+  /** Over all agent nodes, cached included, cancelled and superseded left out. */
   nullRate?: number;
   failRate?: number;
   apiRetries: number;

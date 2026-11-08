@@ -148,6 +148,98 @@ export function writeClaudeWorkflowFixture(projects: string): { base: string; re
   return { base, resumed, sessionDir: join(projects, SLUG, SID) };
 }
 
+// ------------------------------------------------------------ a run resumed in place
+
+// Claude Code resumes a stopped workflow in the same run dir: the journal keeps growing (one
+// "launched" line, no timestamps), the record holds only the last segment, and calls the last
+// segment replayed from the journal are marked `cached` in its workflowProgress.
+//
+//   segment 1  0s–30s   plan (Plan); review-x, review-y (Review); the operator stops review-y
+//   segment 2  40s–50s  qa-one, qa-two (QA); the operator stops both
+//   segment 3  60s–100s the script dropped Review; plan replays from the journal, qa-one and
+//                       qa-two run again, then fix (Fix)
+export const INPLACE = "wf_inplace01";
+export const T1 = Date.UTC(2026, 10, 2, 9, 0, 0);
+const S = 1000;
+
+interface InPlaceSpec extends AgentSpec {
+  /** No result line: the transcript ends with the operator's interrupt. */
+  stopped?: "[Request interrupted by user]" | "[Request interrupted by user for tool use]";
+  /** Replayed from the journal in the last segment (record workflowProgress cached: true). */
+  replayed?: boolean;
+  /** Runs in the last segment (record workflowProgress has it). */
+  last?: boolean;
+}
+
+export const INPLACE_AGENTS: InPlaceSpec[] = [
+  { id: "p0", label: "plan", phase: "Plan", start: T1, end: T1 + 10 * S, result: { steps: 2 }, costUsd: 0.4, replayed: true },
+  { id: "r0", label: "review-x", phase: "Review", start: T1 + 11 * S, end: T1 + 20 * S, result: { findings: [] }, costUsd: 0.1 },
+  { id: "r1", label: "review-y", phase: "Review", start: T1 + 11 * S, end: T1 + 30 * S, result: null, costUsd: 0.1, stopped: "[Request interrupted by user]" },
+  { id: "q0", label: "qa-one", phase: "QA", start: T1 + 40 * S, end: T1 + 50 * S, result: null, costUsd: 0.05, stopped: "[Request interrupted by user for tool use]" },
+  { id: "q1", label: "qa-two", phase: "QA", start: T1 + 40 * S, end: T1 + 50 * S, result: null, costUsd: 0.05, stopped: "[Request interrupted by user for tool use]" },
+  { id: "q2", label: "qa-one", phase: "QA", start: T1 + 61 * S, end: T1 + 80 * S, result: { findings: [{ file: "src/a.ts", line: 1, summary: "a" }, { file: "src/b.ts", line: 2, summary: "b" }] }, costUsd: 0.2, last: true },
+  { id: "q3", label: "qa-two", phase: "QA", start: T1 + 61 * S, end: T1 + 75 * S, result: { findings: [] }, costUsd: 0.2, last: true },
+  { id: "f0", label: "fix", phase: "Fix", start: T1 + 81 * S, end: T1 + 100 * S, result: "patched", costUsd: 0.3, last: true },
+];
+
+function stoppedTranscript(a: InPlaceSpec, sid: string): string {
+  const base = { sessionId: sid, cwd: "/work/demo", version: "2.1.319", userType: "external", isSidechain: true, agentId: a.id };
+  const mid = a.start + Math.floor((a.end - a.start) / 2);
+  return (
+    [
+      { ...base, type: "user", uuid: `${a.id}-u0`, parentUuid: null, timestamp: iso(a.start), message: { role: "user", content: `Task: ${a.label}` } },
+      { ...base, type: "assistant", uuid: `${a.id}-a1`, parentUuid: null, timestamp: iso(mid), message: { id: `msg_${a.id}_1`, type: "message", role: "assistant", model: "claude-sonnet-4-5", content: [{ type: "tool_use", id: `toolu_${a.id}_1`, name: "Bash", input: { command: "npm test" } }], stop_reason: "tool_use", usage: { input_tokens: 800, output_tokens: 40, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, cost_usd: a.costUsd } } },
+      { ...base, type: "user", uuid: `${a.id}-u1`, parentUuid: null, timestamp: iso(a.end), message: { role: "user", content: [{ type: "text", text: a.stopped }] } },
+    ]
+      .map((l) => JSON.stringify(l))
+      .join("\n") + "\n"
+  );
+}
+
+/** Writes the run resumed in place; returns its run dir. */
+export function writeInPlaceFixture(projects: string): string {
+  const sessionDir = join(projects, SLUG, SID);
+  const runDir = join(sessionDir, "subagents", "workflows", INPLACE);
+  mkdirSync(runDir, { recursive: true });
+  mkdirSync(join(sessionDir, "workflows"), { recursive: true });
+  // Journal lines in the order the run wrote them (starts of a group, then its results).
+  const started = (a: InPlaceSpec) => ({ type: "started", key: `v2:${a.id}`, agentId: a.id, label: a.label, phase: a.phase });
+  const result = (a: InPlaceSpec) => ({ type: "result", key: `v2:${a.id}`, agentId: a.id, result: a.result, toolsUsed: ["StructuredOutput"], remoteControlDeviceReport: false });
+  const [p0, r0, r1, q0, q1, q2, q3, f0] = INPLACE_AGENTS as [InPlaceSpec, InPlaceSpec, InPlaceSpec, InPlaceSpec, InPlaceSpec, InPlaceSpec, InPlaceSpec, InPlaceSpec];
+  const journal = [{ type: "launched" }, started(p0), result(p0), started(r0), started(r1), result(r0), started(q0), started(q1), started(q2), started(q3), result(q3), result(q2), started(f0), result(f0)];
+  writeFileSync(join(runDir, "journal.jsonl"), journal.map((j) => JSON.stringify(j)).join("\n") + "\n");
+  for (const a of INPLACE_AGENTS) {
+    writeFileSync(join(runDir, `agent-${a.id}.jsonl`), a.stopped ? stoppedTranscript(a, SID) : transcript(a, SID));
+    writeFileSync(join(runDir, `agent-${a.id}.meta.json`), JSON.stringify({ agentType: "workflow-subagent", description: a.label, workflowPhase: a.phase }));
+  }
+  const segStart = T1 + 60 * S;
+  const progress: unknown[] = [
+    { type: "workflow_phase", index: 1, title: "Plan" },
+    { type: "workflow_phase", index: 2, title: "QA" },
+    { type: "workflow_phase", index: 3, title: "Fix" },
+  ];
+  let index = 1;
+  for (const a of INPLACE_AGENTS) {
+    if (a.replayed) progress.push({ type: "workflow_agent", index: index++, label: a.label, phaseTitle: a.phase, agentId: a.id, state: "done", startedAt: segStart, lastProgressAt: segStart, cached: true });
+    else if (a.last) progress.push({ type: "workflow_agent", index: index++, label: a.label, phaseTitle: a.phase, agentId: a.id, state: "done", startedAt: a.start, lastProgressAt: a.end, durationMs: a.end - a.start });
+  }
+  const record = {
+    runId: INPLACE,
+    timestamp: iso(T1 + 100 * S),
+    script: `phase("Plan"); phase("QA"); phase("Fix");`,
+    scriptPath: "/work/demo/.claude/workflows/improve.js",
+    durationMs: 40 * S,
+    workflowName: "improve",
+    status: "completed",
+    startTime: segStart,
+    // The last segment's script: Review was removed before the final resume.
+    phases: [{ title: "Plan" }, { title: "QA" }, { title: "Fix" }],
+    workflowProgress: progress,
+  };
+  writeFileSync(join(sessionDir, "workflows", `${INPLACE}.json`), JSON.stringify(record));
+  return runDir;
+}
+
 // ------------------------------------------------------------ OTLP JSON
 
 type AttrValue = string | number | boolean;

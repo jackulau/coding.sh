@@ -126,7 +126,7 @@ export interface WorkflowNode {
   ordinal?: number;                   // agent() call order (resume prefix)
   sessionId?: string;                 // child session holding this agent's transcript
   startedAt?: number; endedAt?: number;
-  status: "ok" | "failed" | "null" | "skipped" | "cached" | "running";
+  status: "ok" | "failed" | "null" | "skipped" | "cached" | "running" | "cancelled" | "superseded";
   model?: string; effort?: string;
   usage?: Usage; latency?: LatencyStats;
   toolCalls?: number; toolErrors?: number; apiRetries?: number;
@@ -167,7 +167,8 @@ kind `agent` or `step` that ran (`status ≠ cached`), unless noted.
 | `perAgent[]` | Per node: duration, tokens, `costUsd`, `llmP50Ms`/`llmP95Ms`/`ttftP50Ms`, tool calls, tool errors, turns, model, effort |
 | `perPhase[]` | Per phase: wall span, agent count, Σ duration, tokens, cost, failures |
 | `apiRetries` | Σ API retry attempts (Claude Code `api_error.attempt`, `llm.call ok:false`) |
-| `nullAgents`, `failedAgents` | Agents that returned `null` (skipped or died after retries) / ended in error. Rates are over all agents. |
+| `nullAgents`, `failedAgents` | Agents that returned `null` (skipped or died after retries) / ended in error. Rates are over all agents except cancelled and superseded ones. |
+| `cancelledAgents`, `supersededAgents` | Agents that never returned because the run was stopped, absent when none. `cancelled`: the agent's transcript ends with Claude Code's `[Request interrupted by user]` or `[Request interrupted by user for tool use]`. `superseded`: a later call with the same label ran in its place (a re-run after a resume). Neither is a failure: both stay out of `agents`, `failedAgents` and the rates, and out of the critical path and barrier groups, but their time and tokens count in `agentMs` and cost. `perPhase[]` counts them as `cancelled` and `superseded`. |
 | `schemaFailures` | StructuredOutput calls whose result was a validation error, summed over agents. `schemaFinalInvalid` counts agents that never produced a valid output. |
 | `cacheHits`, `cacheHitRate` | Nodes with `status = cached` / all agent nodes in a resumed run |
 | `resumeSavedMs`, `resumeSavedUsd` | Σ of the original durations and costs of cached nodes, looked up by `ordinal` in `resumedFrom` |
