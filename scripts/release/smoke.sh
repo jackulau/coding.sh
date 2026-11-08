@@ -81,7 +81,7 @@ console.log("store-s3, store-postgres and store-clickhouse load");')
 step "coding.sh types: a TypeScript consumer of coding.sh/schema and coding.sh/store"
 cd "$W/app"
 printf '{"name":"app","private":true,"type":"module"}\n' >package.json
-npm i --silent --no-fund --no-audit "$CLI" "$(ls "$W"/pack/coding.sh-sdk-*.tgz)"
+npm i --silent --no-fund --no-audit "$CLI" "$(ls "$W"/pack/codingdotsh-sdk-*.tgz)"
 cat >check.ts <<'EOF'
 import type { BlobStore, IndexStore } from "coding.sh/store";
 import { observe, trace, span, flush, init, stats } from "@codingdotsh/sdk";
