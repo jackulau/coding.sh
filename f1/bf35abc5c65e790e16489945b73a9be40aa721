@@ -1,0 +1,83 @@
+packages/coding.sh/src/cli/commands/eval-run.ts
+  s_8e040dbdf13565::t_b20d6ab07e6e7a 107
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_fb13fc39525663 126-138,1209,1216,1218-1223,1241,1248,1250,1252,1256,1260-1267,1299-1300
+packages/coding.sh/src/refine/ledger.ts
+  s_8e040dbdf13565::t_3c14ed696cb7ed 21
+  s_8e040dbdf13565::t_bb9ae7216a0daf 49,74-85
+  s_8e040dbdf13565::t_c9225e03ba1534 45-46
+  s_8e040dbdf13565::t_84b0d9a66b3118 72-73
+  s_8e040dbdf13565::t_53c3366353fcf9 47-48,50
+packages/coding.sh/src/cli/commands/refine-climb.ts
+  s_8e040dbdf13565::t_4a9870a42d7a88 1-95,97-98,100,103-145,147-210,212-226,228-270,274,277-436,439-526,528,531-537
+  s_8e040dbdf13565::t_7106098b5e82dd 437-438
+  s_8e040dbdf13565::t_017bbca31b1c3d 96,99,101-102,146,211,227,271-273,275-276,527,529-530
+  s_8e040dbdf13565::t_22eabaf6468c9c 538-549
+packages/coding.sh/src/refine/drivers.ts
+  s_8e040dbdf13565::t_22415f7c31c47f 151-152
+  s_8e040dbdf13565::t_faa1a2ed713633 1-150,153-155
+  s_8e040dbdf13565::t_69c52ff96bfee9 156-168
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_bd54f3b05a2f29 229-230
+packages/coding.sh/src/refine/cut.ts
+  s_8e040dbdf13565::t_c3a155ab18a3f6 1-166
+  s_8e040dbdf13565::t_f9fc0056e17c13 167-256
+packages/coding.sh/src/cli/commands/refine-suite.ts
+  s_8e040dbdf13565::t_af2d5aa4ab41c0 10-11
+  s_8e040dbdf13565::t_95f38cb6eac4b0 1-9,12-194,199-238,240-247
+  s_8e040dbdf13565::t_5ace4b6ca06739 195-198,239
+  s_8e040dbdf13565::t_a846d49353fbe3 248-263
+packages/coding.sh/src/jobs/store.ts
+  s_8e040dbdf13565::t_5c8c467e9b40e6 27
+packages/coding.sh/test/refine/objectives.test.ts
+  s_8e040dbdf13565::t_27bcc1e52ce628 29,61,99
+  s_8e040dbdf13565::t_665bbd1a9d1ff6 1-28,30-60,62-98,100-157
+packages/coding.sh/src/runner/experiment.ts
+  s_8e040dbdf13565::t_b20d6ab07e6e7a 717-721
+packages/coding.sh/test/cli/refine-suite.test.ts
+  s_8e040dbdf13565::t_041af8402603ec 196
+  s_8e040dbdf13565::t_0b022bcaf455b7 203-204
+  s_8e040dbdf13565::t_2a6a5f666ed6f5 1-88,91-95,98-105,107-112,114-143,171-191,194-195,197-202,205-223
+  s_8e040dbdf13565::t_49c9776bf5203e 89-90,96-97,106
+  s_8e040dbdf13565::t_d77479b731a130 144-170
+  s_8e040dbdf13565::t_3ee100980bcb89 113,192-193
+docs/guides/evals.md
+  s_8e040dbdf13565::t_f9f4729a6a4aec 1489
+  s_8e040dbdf13565::t_a17e82d20f93ae 1486-1488,1490-1558,1564
+  s_8e040dbdf13565::t_5b195b51b8cae4 1559-1563,1565-1571
+packages/coding.sh/src/refine/objectives.ts
+  s_8e040dbdf13565::t_c4fd2b4055d53e 320,326
+  s_8e040dbdf13565::t_db9db3367bb315 1-319,321-325,327-431
+packages/coding.sh/src/refine/target.ts
+  s_8e040dbdf13565::t_9b65ca51750045 1-25
+docs/reference/cli.md
+  s_8e040dbdf13565::t_50ea8b665d6dbd 2177,2188-2189,2208-2209,2250-2258,2265,2312,2333,2335,2337-2338,2358-2366,2373-2375
+packages/coding.sh/src/cli/commands/refine-loop.ts
+  s_8e040dbdf13565::t_19978e8276fb24 737
+  s_8e040dbdf13565::t_b38177a12733c6 723
+  s_8e040dbdf13565::t_19cabcc4fe7891 56
+  s_8e040dbdf13565::t_0ecf3d3fd83a49 712-713,715,724-727,730
+  s_8e040dbdf13565::t_a24dac2da8b1d2 51,83,99,114,137,169,492,504,513,522-535,537-545,548,565,598,636,874-877
+packages/coding.sh/test/refine/cut.test.ts
+  s_8e040dbdf13565::t_808c19b6ea4383 1-60,62-120
+  s_8e040dbdf13565::t_318522d115eed2 61
+  s_8e040dbdf13565::t_775f2e1e68dea7 121-171
+CHANGELOG.md
+  s_8e040dbdf13565::t_904b56318acfc5 63
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f1bf35abc5c65e790e16489945b73a9be40aa721",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
