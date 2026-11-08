@@ -4,6 +4,7 @@ import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { RunSpec } from "../../src/core/types.ts";
+import { createRedactor } from "../../src/core/redact.ts";
 import { readGraderUsage, runTask } from "../../src/runner/run.ts";
 import { cleanupWorlds, fakeAdapter, obedientAgent, toyWorld } from "../helpers-eval.ts";
 
@@ -94,6 +95,37 @@ describe("runTask", () => {
     assert.equal(r.pass, false);
     assert.equal(r.verifierExit, 1);
     assert.equal(r.error, undefined);
+  });
+
+  it("keeps the end of a failed verifier's output on the run, colour codes removed and secrets redacted", async () => {
+    const w = await toyWorld();
+    const key = "sk-ant-" + "api03-" + "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789";
+    const script = [
+      "for i in $(seq 1 600); do echo \"ok $i\"; done",
+      `printf '\\033[31mFAIL\\033[0m expected 5, got -1 (sent ${key})\\n'`,
+      "echo 'AssertionError: -1 !== 5' >&2",
+      "echo 'order ACME-123456' >&2",
+      "exit 1",
+    ].join("; ");
+    const task = { ...w.task, setup: [], verifier: { command: script, hiddenFiles: {}, timeoutMs: 30_000 } };
+    const redactor = createRedactor({ redact: ["secrets"], patterns: ["ACME-\\d{6}"] });
+    const r = await runTask({ task, bundle: await w.mkBundle("x", "x"), adapter: obedientAgent(), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, redactor });
+    assert.equal(r.verifierExit, 1);
+    const o = r.verifierOutput;
+    assert.ok(o?.stdout && o.stderr, JSON.stringify(o));
+    assert.match(o.stdout, /FAIL expected 5, got -1 \(sent \[redacted:anthropic-key\]\)$/);
+    assert.doesNotMatch(o.stdout, /\x1b|sk-ant/);
+    assert.ok(o.stdout.length <= 4100 && /^…\nok \d+\n/.test(o.stdout), "the start is trimmed to whole lines");
+    assert.equal(o.stderr, "AssertionError: -1 !== 5\norder [redacted:pattern]");
+    assert.deepEqual(w.index.runs[0]?.verifierOutput, o, "stored with the run");
+  });
+
+  it("keeps no verifier output when the verifier printed nothing", async () => {
+    const w = await toyWorld();
+    const task = { ...w.task, setup: [], verifier: { command: "exit 1", hiddenFiles: {}, timeoutMs: 30_000 } };
+    const r = await runTask({ task, bundle: await w.mkBundle("x", "x"), adapter: obedientAgent(), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.verifierExit, 1);
+    assert.equal("verifierOutput" in r, false);
   });
 
   it("an agent that throws becomes an error; the verifier still runs", async () => {

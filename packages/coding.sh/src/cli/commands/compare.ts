@@ -22,10 +22,12 @@ import { git } from "../../runner/git.ts";
 import { hasGlob } from "../../runner/glob.ts";
 import { repairOptsProblem, type RepairOpts } from "../../runner/repair.ts";
 import type { AgentRoute } from "../../runner/run.ts";
+import { captureRedactor, failedRuns, renderFailedRuns } from "../../runner/verifier-output.ts";
 import type { EvalTask, HarnessBundle, RunResult } from "../../core/types.ts";
 import { formatCompare, PARETO_NEEDS_COST, planCells, runExperiment, runKey, type BudgetReport } from "../../runner/experiment.ts";
 import { describeSelection, erroredRuns, latestPerSlot, sampleTasks, selectFailing, slotKey, type FailingMode, type Selection } from "../../runner/iterate.ts";
 import { sortableId } from "../../core/ids.ts";
+import { paint } from "../../experiments/text.ts";
 import { jobConfig } from "../../jobs/config.ts";
 import { parseAge, positiveInt, UsageError } from "../args.ts";
 import { finishedToResume, finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
@@ -168,6 +170,7 @@ export async function run(c: CommandContext): Promise<number> {
             adapterFor: (b) => getAdapter(b.agent)!,
             blobs: ctx.blobs,
             index: ctx.index,
+            redactor: captureRedactor(ctx.config, ctx.env),
             k: Math.max(...errored.map((e) => e.attempt)),
             select: (j) => replaces.has(runKey(j)),
             replaces,
@@ -306,6 +309,7 @@ export async function run(c: CommandContext): Promise<number> {
             adapterFor: (b) => getAdapter(b.agent)!,
             blobs: ctx.blobs,
             index: ctx.index,
+            redactor: captureRedactor(ctx.config, ctx.env),
             k,
             ...(concurrency ? { concurrency } : {}),
             ...(route ? { route } : {}),
@@ -369,9 +373,17 @@ export async function run(c: CommandContext): Promise<number> {
     });
     if (versionNote) report.notes.push(versionNote);
     report.notes.push(...notes);
-    if (out.json) out.data({ experimentId, report, ...resume, ...(budget ? { budget } : {}), ...(counts ?? {}), ...(selection ? { selection } : {}) });
+    // Each failed run with the end of what its verifier printed, so a failure reads without a rerun.
+    const failedList = failedRuns(results);
+    if (out.json) out.data({ experimentId, report, ...(failedList.length ? { failedRuns: failedList } : {}), ...resume, ...(budget ? { budget } : {}), ...(counts ?? {}), ...(selection ? { selection } : {}) });
     else {
       out.print(formatCompare(report, { color: out.color, arms, taskNames }));
+      const block = renderFailedRuns(failedList, {
+        names: (id) => taskNames?.get(id) ?? id,
+        arm: (id) => (id === A.id ? `A ${A.name}` : id === B.id ? `B ${B.name}` : id),
+        dim: (s) => paint(s, "dim", out.color),
+      });
+      if (block.length) out.print(["", ...block].join("\n"));
       out.print(experimentId);
     }
     if (promote && !report.pareto) out.warn(`--promote: ${PARETO_NEEDS_COST}, so nothing is promoted`);

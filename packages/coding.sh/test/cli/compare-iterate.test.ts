@@ -47,7 +47,11 @@ before(() => {
     GIT_CONFIG_NOSYSTEM: "1",
   };
   writeFileSync(join(repo, "sum.js"), "module.exports = (a, b) => a - b;\n");
-  writeFileSync(join(repo, "test.js"), 'if (require("./sum.js")(2, 3) !== 5) process.exit(1);\n');
+  // On failure the verifier prints a coloured message and a fake Anthropic key, built at run time.
+  writeFileSync(
+    join(repo, "test.js"),
+    'const r = require("./sum.js")(2, 3);\nif (r !== 5) { console.error("\\x1b[31mexpected 5, got " + r + "\\x1b[0m with " + ["sk", "ant", "api03", "Q".repeat(40)].join("-")); process.exit(1); }\n',
+  );
   const git = (...a: string[]) => assert.equal(spawnSync(gitBin, ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...a], { cwd: repo, env }).status, 0, a.join(" "));
   git("init", "-q");
   git("add", "-A");
@@ -85,7 +89,7 @@ after(() => {
   if (root) rmSync(root, { recursive: true, force: true });
 });
 
-type Out = { experimentId: string; planned?: number; skipped?: number; retried?: number; selection?: { from: number; tasks: number; note: string; failing?: { bundle: string; matched: number } }; report: { baseline: { passes: number; runs: number }; candidate: { passes: number; runs: number }; notes: string[] } };
+type Out = { experimentId: string; failedRuns?: { runId: string; taskId: string; verifierExit: number | null; verifierOutput?: { stdout?: string; stderr?: string } }[]; planned?: number; skipped?: number; retried?: number; selection?: { from: number; tasks: number; note: string; failing?: { bundle: string; matched: number } }; report: { baseline: { passes: number; runs: number }; candidate: { passes: number; runs: number }; notes: string[] } };
 
 describe("compare: iterate on a comparison", () => {
   let first = "";
@@ -124,6 +128,16 @@ describe("compare: iterate on a comparison", () => {
     const out = JSON.parse(r.stdout) as Out;
     assert.deepEqual([out.selection?.from, out.selection?.tasks, out.selection?.failing?.bundle], [4, 1, "base"]);
     assert.deepEqual(runsLog().sort(), ["with:make sum add BROKEN", "without:make sum add BROKEN"]);
+    // Both arms failed the BROKEN task: each failed run carries the end of its verifier output, redacted.
+    assert.equal(out.failedRuns?.length, 2, JSON.stringify(out.failedRuns));
+    for (const f of out.failedRuns ?? []) {
+      assert.equal(f.verifierExit, 1);
+      assert.deepEqual(f.verifierOutput, { stderr: "expected 5, got -1 with [redacted:anthropic-key]" });
+    }
+    const shown = cli(["compare", "base", ...WITHOUT, "--experiment", out.experimentId]);
+    assert.equal(shown.status, 0, shown.stderr);
+    assert.match(shown.stdout, /^Verifier output of failed runs \(last 8 lines\):\n {2}s4 · A base · attempt 1 {2}exit 1 · run_\w+\n {4}│ expected 5, got -1 with \[redacted:anthropic-key\]$/m);
+    assert.doesNotMatch(shown.stdout, /sk-ant|QQQQ/);
     assert.ok(out.report.notes.some((n) => /^selection: 1 of 4 tasks: the 1 task base failed in exp_\w+\. The B − A difference holds for these tasks; both pass rates are conditioned on base having failed them/.test(n)), out.report.notes.join("\n"));
     const text = cli(["compare", "base", ...WITHOUT, "--failing", `${first}@base-without-claude-skills-pdf`, "--dry-run"]);
     assert.equal(text.status, 0, text.stderr);

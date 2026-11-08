@@ -25,6 +25,8 @@ import { userHome } from "../../core/paths.ts";
 import { bundleFromDir, DEFAULT_INCLUDE } from "../../runner/bundle.ts";
 import { runExperiment as runTasks } from "../../runner/experiment.ts";
 import { latestPerSlot } from "../../runner/iterate.ts";
+import { captureRedactor, failedRuns, renderFailedRuns, type FailedRun } from "../../runner/verifier-output.ts";
+import { paint } from "../../experiments/text.ts";
 import { renderSuiteReport, suiteReport, type SuiteReport, type TaskTrials } from "../../eval/report.ts";
 import { TODO } from "../../eval/init.ts";
 import { trialsFromExperiment, trialsFromRuns, trialsFromTriggers } from "../../eval/run-suite.ts";
@@ -47,6 +49,10 @@ interface SuiteOutcome {
   harness?: { id: string; name: string; files: number };
   /** Tasks with no reference solution (drafts): a 0% there may be the task, not the agent. */
   unverified?: string[];
+  /** Repo-task suites: each failed run with the end of its verifier output. */
+  failedRuns?: FailedRun[];
+  /** Task names by id, for the failed-run block. */
+  names?: Map<string, string>;
   /** A trigger run that ended without a report (cancelled): its exit code. */
   exitCode?: number;
   /** More lines under the report. */
@@ -93,6 +99,8 @@ export async function evalRun(c: CommandContext): Promise<number> {
       out.print(renderSuiteReport(o.report, { color: out.color, transcript }));
       if (o.unverified?.length) out.print(`${plural(o.unverified.length, "task")} without a reference solution (${o.unverified.slice(0, 5).join(", ")}${o.unverified.length > 5 ? ", …" : ""}): add reference.patch to the task dir, then coding.sh eval import <task dir> and coding.sh eval validate <task>`);
       const meta = [o.harness ? `harness ${o.harness.name} (${plural(o.harness.files, "file")})` : "", o.experimentId ? `experiment ${o.experimentId}` : ""].filter(Boolean).join(" · ");
+      const block = renderFailedRuns(o.failedRuns ?? [], { names: (id) => o.names?.get(id) ?? id, dim: (s) => paint(s, "dim", out.color) });
+      if (block.length) out.print(["", ...block].join("\n"));
       for (const line of o.extra ?? []) out.print(line);
       if (meta) out.print(meta);
     }
@@ -101,7 +109,7 @@ export async function evalRun(c: CommandContext): Promise<number> {
 }
 
 function outcomeJson(o: SuiteOutcome): Record<string, unknown> {
-  return { suite: o.suite, kind: o.kind, dir: o.dir, ...(o.experimentId ? { experimentId: o.experimentId } : {}), ...(o.harness ? { harness: o.harness } : {}), ...(o.unverified?.length ? { unverified: o.unverified } : {}), report: o.report };
+  return { suite: o.suite, kind: o.kind, dir: o.dir, ...(o.experimentId ? { experimentId: o.experimentId } : {}), ...(o.harness ? { harness: o.harness } : {}), ...(o.unverified?.length ? { unverified: o.unverified } : {}), report: o.report, ...(o.failedRuns?.length ? { failedRuns: o.failedRuns } : {}) };
 }
 
 /** The harness the suite runs: a stored bundle, else a snapshot of the project's setup for the agent (content-addressed, so a rerun reuses it). */
@@ -152,6 +160,7 @@ async function runTaskSuite(c: CommandContext, ctx: Context, s: LoadedSuite, k: 
     adapterFor: (b) => getAdapter(b.agent)!,
     blobs: ctx.blobs,
     index: ctx.index,
+    redactor: captureRedactor(ctx.config, ctx.env),
     k,
     experimentId: sortableId("exp_"),
     ...(concurrency ? { concurrency } : {}),
@@ -167,7 +176,8 @@ async function runTaskSuite(c: CommandContext, ctx: Context, s: LoadedSuite, k: 
   const runs = latestPerSlot(r.results).runs;
   const report = suiteReport(s.spec.name, s.spec.purpose, trialsFromRuns(tasks, runs));
   const unverified = tasks.filter((t) => !t.referencePatch && !referenceRun(t)).map((t) => t.name);
-  return { suite: s.spec.name, kind: "tasks", dir: s.dir, report, experimentId: r.experimentId, harness: { id: bundle.id, name: bundle.name, files: Object.keys(bundle.files).length }, unverified };
+  const failed = failedRuns(runs);
+  return { suite: s.spec.name, kind: "tasks", dir: s.dir, report, ...(failed.length ? { failedRuns: failed, names: new Map(tasks.map((t) => [t.id, t.name])) } : {}), experimentId: r.experimentId, harness: { id: bundle.id, name: bundle.name, files: Object.keys(bundle.files).length }, unverified };
 }
 
 async function runCaseSuite(c: CommandContext, ctx: Context, s: LoadedSuite, trials: number, root: string): Promise<SuiteOutcome> {

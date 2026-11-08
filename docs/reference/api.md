@@ -1041,9 +1041,12 @@ answer `{"items":[…]}` and are empty for a scoped key.
   `compare --reuse` matches on; absent on older runs) and, when `compare --reuse` copied it, `reusedFrom`
   (the id of the run it was copied from). A run carries `tamper` when its diff was checked: `flagged`,
   `flags` (each with `kind`, `path`, `why` and `detail`) and `addedTests`, the existing test files the
-  agent only added new test cases to (absent when none). A run from `compare --repair` carries `repair`: `signal`
+  agent only added new test cases to (absent when none). `verifierOutput` holds the end of what the
+  verifier printed: `stdout` and `stderr`, each the last 4096 characters, colour codes removed and
+  redacted with `capture.redact` and `capture.redactPatterns`; a stream that was empty is absent, and
+  so is the field when both were. A run from `compare --repair` carries `repair`: `signal`
   (`bit` or `names`), `mode` (`resume` or `fresh`), `limit`, `rounds` (each with `n`, `pass`,
-  `verifierExit`, `durationMs`, `usage`, `sessionId`, `diffBlob`, `unchanged` when the round changed no
+  `verifierExit`, `verifierOutput`, `durationMs`, `usage`, `sessionId`, `diffBlob`, `unchanged` when the round changed no
   file, `tamper` when the round's diff tampers with tests, and `namesParsed` with signal `names`),
   `pass` (the outcome after the last
   round; `pass` on the run stays the first attempt's), `falseAlarm` and `falseAlarmFired` with

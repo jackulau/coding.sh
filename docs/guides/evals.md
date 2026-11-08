@@ -121,6 +121,9 @@ share of all trials that passed.
 - **first failure** links the session of a failed trial (`coding.sh show <id>`, or the viewer), or
   gives the grader's reason. Read failed transcripts before you change a prompt or a grader: a
   task no trial ever passes is more often a broken task than a hard one.
+- Under the table, **Verifier output of failed runs** shows the last 8 lines that the verifier
+  printed for up to 5 failed trials of a repo task suite. See
+  [Verifier output](#verifier-output).
 - A capability suite where 90% of tasks pass every trial is saturated: it no longer shows
   progress, so add harder tasks or move it to regression.
 - Under 20 tasks the report says the suite can show only large changes.
@@ -1115,6 +1118,26 @@ spend` row when verifiers called `judge grade`. `--max-cost 15` caps a live run 
 finished runs reach the cap (agent plus grader cost), no new run starts. Runs already going finish,
 so the total can pass the cap by what the runs in flight cost. The compare then covers the runs that
 finished. Runs that report no cost count as $0 and are listed as such. `--json` carries `budget`.
+
+### Verifier output
+
+Each run of a repo task (`compare`, `eval run`, `eval crosscheck --solver`) keeps the end of what
+its verifier printed as `verifierOutput`: the last 4096 characters of stdout and of stderr, with
+colour codes and progress redraws removed. The text is redacted before it is stored, with the same
+`capture.redact` and `capture.redactPatterns` rules as captured sessions. A stream the verifier left
+empty is absent, and so is `verifierOutput` when both are. Each `compare --repair` round keeps its
+own. After the report, `compare` and `eval run` print the last 8 lines for up to 5 failed runs:
+
+```
+Verifier output of failed runs (last 8 lines):
+  s4 · A base · attempt 1  exit 1 · run_01KA…
+    │ expected 5, got -1 with [redacted:anthropic-key]
+```
+
+`--json` lists every failed run in `failedRuns`, each with `runId`, `taskId`, `bundleId`,
+`attempt`, `verifierExit`, `error` and `sessionId` when set, and `verifierOutput`. Cancelled,
+superseded and infrastructure-failed runs are left out. Runs recorded before this field have no
+output.
 
 ### Claude Code plugins
 

@@ -3,6 +3,7 @@
 import { availableParallelism } from "node:os";
 import { progressMetrics } from "../core/derail.ts";
 import { sortableId } from "../core/ids.ts";
+import type { Redactor } from "../core/redact.ts";
 import type { Adapter, AgentEvent, BlobStore, EvalTask, HarnessBundle, IndexStore, RunResult, Session } from "../core/types.ts";
 import { exactPowerText, pairedPower, type PowerAnalysis } from "../experiments/power.ts";
 import { infraKind, withRetries, type InfraKind, type RetryPolicy } from "../jobs/retry.ts";
@@ -54,6 +55,8 @@ export interface RunExperimentOpts {
   runsDir?: string;
   /** Extra test globs for each run's tamper check. */
   testGlobs?: string[];
+  /** Redacts each run's kept verifier output (RunTaskOpts.redactor). */
+  redactor?: Redactor;
   /** Agent-only routing per arm (see RunTaskOpts.route). */
   route?: AgentRoute;
   /** Ingests the spool after each run, before its dir is removed (see RunTaskOpts.ingest). */
@@ -366,6 +369,7 @@ async function attemptRun(o: RunExperimentOpts, job: Job, experimentId: string, 
       runsDir: o.runsDir,
       testGlobs: o.testGlobs,
       signal: o.signal,
+      ...(o.redactor ? { redactor: o.redactor } : {}),
       ...(o.ingest ? { ingest: o.ingest } : {}),
       ...(o.repair ? { repair: o.repair } : {}),
     });

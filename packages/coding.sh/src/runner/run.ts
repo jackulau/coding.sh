@@ -10,6 +10,7 @@ import { agentAnswerText } from "../core/answer.ts";
 import { removeOnExit, withAbortSignal } from "../core/children.ts";
 import { sortableId } from "../core/ids.ts";
 import { paths } from "../core/paths.ts";
+import { createRedactor, type Redactor } from "../core/redact.ts";
 import type { Adapter, AgentRunOutput, BlobStore, EvalTask, HarnessBundle, IndexStore, RepairReport, RepairRound, RunResult, TamperReport } from "../core/types.ts";
 import { applyBundle } from "./bundle.ts";
 import { pluginProblem } from "./plugins.ts";
@@ -18,6 +19,7 @@ import { safeJoin, writeHiddenFiles } from "./fsutil.ts";
 import { rebaseStart, rmrf, snapshotOps, type SnapshotOps, type WorkdirDiff } from "./git.ts";
 import { falseAlarmFires, failingTestNames, repairMessage, restoreFiles, saveFiles, type RepairOpts, type SavedFiles } from "./repair.ts";
 import { detectTamper, tamperOptsFor } from "./tamper.ts";
+import { verifierOutput } from "./verifier-output.ts";
 
 export const DEFAULT_RUN_TIMEOUT_MS = 30 * 60_000;
 const SETUP_TIMEOUT_MS = 15 * 60_000;
@@ -44,6 +46,8 @@ export interface RunTaskOpts {
   cellKey?: string;
   /** The agent release this run starts on (runner/release.ts), stamped on the result. */
   agentVersion?: string;
+  /** Redacts the verifier output kept on the result (default: the built-in secret rules). Pass one built from capture.redact. */
+  redactor?: Redactor;
   /** Extra test globs for the tamper check (on top of the defaults and task.meta.testGlobs). */
   testGlobs?: string[];
   /** Agent-only routing (e.g. through AI Gateway): env and flags applied after the overlay, and a model override. Setup and verifier don't see it. */
@@ -166,6 +170,7 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
     ...(opts.agentVersion ? { agentVersion: opts.agentVersion } : {}),
   };
   const baseEnv = commandEnv({ ...(opts.env ?? {}), CODING_SH_RUN_ID: runId });
+  const redactor = opts.redactor ?? createRedactor();
 
   /** Stop here when interrupted; the catch below records it. */
   const checkpoint = () => {
@@ -298,6 +303,8 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
     } else {
       result.verifierExit = g.v.exitCode;
       result.pass = g.v.exitCode === 0 && !g.v.timedOut;
+      const vo = verifierOutput(g.v, redactor);
+      if (vo) result.verifierOutput = vo;
       if (g.v.timedOut) result.error ??= "verifier timed out";
     }
     if (opts.repair) {
@@ -318,6 +325,7 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
         callAgent,
         takeDiff,
         tamperOf: (diff) => detectTamper(diff, tamperOpts),
+        redactor,
         grade,
       });
     }
@@ -386,6 +394,7 @@ interface RepairCtx {
   callAgent: (instruction: string, resumeSessionId?: string) => Promise<AgentCall>;
   takeDiff: () => Promise<TakenDiff>;
   tamperOf: (diff: WorkdirDiff) => TamperReport;
+  redactor: Redactor;
   grade: (agent: AgentRunOutput) => Promise<Graded>;
 }
 
@@ -454,6 +463,8 @@ async function repairRounds(c: RepairCtx): Promise<RepairReport> {
     if (graded.v) {
       round.verifierExit = graded.v.exitCode;
       round.pass = graded.v.exitCode === 0 && !graded.v.timedOut;
+      const vo = verifierOutput(graded.v, c.redactor);
+      if (vo) round.verifierOutput = vo;
       if (graded.v.timedOut) error ??= "verifier timed out";
     }
     if (error) round.error = error;

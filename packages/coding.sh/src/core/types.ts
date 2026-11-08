@@ -801,6 +801,18 @@ export interface RunResult {
    * captured session's own agentVersion takes precedence (runner/release.ts).
    */
   agentVersion?: string;
+  /**
+   * The end of what the verifier printed (runner/verifier-output.ts): colour
+   * codes removed, redacted, the last 4096 characters of each stream. Absent
+   * when it printed nothing, when there was no verifier, and on older runs.
+   */
+  verifierOutput?: VerifierOutput;
+}
+
+/** What a verifier printed, kept on its run. Each field is absent when that stream was empty. */
+export interface VerifierOutput {
+  stdout?: string;
+  stderr?: string;
 }
 
 /** One repair round: the agent's next try after "Verification failed.", and its verifier result. */
@@ -822,6 +834,8 @@ export interface RepairRound {
   diffBlob?: BlobRef;
   /** The round changed no file: the tree's diff is the same as before it. */
   unchanged?: true;
+  /** What the verifier printed after this round, as RunResult.verifierOutput. */
+  verifierOutput?: VerifierOutput;
   error?: string;
 }
 

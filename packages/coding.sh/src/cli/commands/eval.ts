@@ -192,9 +192,10 @@ export async function run(c: CommandContext): Promise<number> {
           const adapter = getAdapter(bundle.agent);
           if (!adapter?.run) throw new CliError(`Agent ${bundle.agent} has no headless driver, so bundle ${bundle.name} can't solve the task`, { reason: "unsupported_agent" });
           const { runTask } = await import("../../runner/run.ts");
+          const { captureRedactor } = await import("../../runner/verifier-output.ts");
           const spin = out.spin(`Solving ${task.name} with ${bundle.name}…`);
           try {
-            runs.push(await runTask({ task, bundle, adapter, blobs: ctx.blobs, index: ctx.index, signal: c.signal, ingest: () => ctx.ingest() }));
+            runs.push(await runTask({ task, bundle, adapter, blobs: ctx.blobs, index: ctx.index, redactor: captureRedactor(ctx.config, ctx.env), signal: c.signal, ingest: () => ctx.ingest() }));
           } finally {
             spin.stop();
           }

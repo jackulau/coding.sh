@@ -218,6 +218,11 @@ say({ type: "result", result: existsSync(".claude/skills/demo/SKILL.md") ? "Whic
     assert.equal(bad.status, 1, bad.stdout + bad.stderr);
     assert.match(bad.stdout, /asks-for-scope\s+0\/2\s+never\s+verifier exit 1/, "the wrapper agent is not captured, so the reason stands in for a transcript");
     assert.match(bad.stdout, /harness plain/);
+    // The judge's verdict, as the verifier printed it, under the report.
+    assert.match(bad.stdout, /^Verifier output of failed runs \(last 8 lines\):\n {2}asks-for-scope · attempt 1 {2}exit 1 · run_\w+\n {4}│ /m);
+    const badJson = JSON.parse(cli(["eval", "run", "scope", "--harness", "plain", "--yes", "--json"]).stdout) as { failedRuns: { attempt: number; verifierOutput?: { stdout?: string; stderr?: string } }[] };
+    assert.deepEqual(badJson.failedRuns.map((f) => f.attempt), [1, 2]);
+    assert.ok(badJson.failedRuns.every((f) => f.verifierOutput), JSON.stringify(badJson.failedRuns));
     assert.match(bad.stdout, /without a reference solution \(asks-for-scope\)/);
     const tagged = JSON.parse(cli(["eval", "list", "--tag", "suite:scope", "--json"]).stdout) as { tasks: unknown[] };
     assert.equal(tagged.tasks.length, 1, "suite tasks carry suite:<name>, for compare --tag");

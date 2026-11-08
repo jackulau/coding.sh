@@ -133,12 +133,19 @@ describe("repair rounds", () => {
     assert.doesNotMatch(adapter.specs[1]?.instruction ?? "", /SECRET/);
     assert.equal(r.repair?.rounds[0]?.namesParsed, true);
     assert.equal(r.repair?.pass, true);
+    // The first attempt's verifier output is kept on the run; the passing round printed nothing.
+    assert.match(r.verifierOutput?.stdout ?? "", /not ok 1 - adds two numbers/);
+    assert.equal(r.repair?.rounds[0]?.verifierOutput, undefined);
 
     const plain = { ...task, verifier: { ...task.verifier, command: "exit 1" } };
     const b = fakeAdapter({ canResume: true });
     const u = await runTask({ task: plain, bundle: await w.mkBundle("x", "x"), adapter: b, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, repair: { rounds: 1, signal: "names" } });
     assert.equal(b.specs[1]?.instruction, "Verification failed.");
     assert.equal(u.repair?.rounds[0]?.namesParsed, false);
+
+    const loud = { ...task, verifier: { ...task.verifier, command: "echo still failing; exit 1" } };
+    const l = await runTask({ task: loud, bundle: await w.mkBundle("x", "x"), adapter: fakeAdapter({ canResume: true }), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, repair: { rounds: 1, signal: "bit" } });
+    assert.deepEqual(l.repair?.rounds[0]?.verifierOutput, { stdout: "still failing" }, "each round keeps its own verifier output");
   });
 
   it("a repair that passes by editing a test is not a repair", async () => {
