@@ -9,7 +9,8 @@ paired statistics.
 ## Capture and measure
 
 `coding.sh workflows import` reads Claude Code workflow runs from disk: each run's journal and the
-transcript of every agent it started. Runs you start with `workflows run` are captured as they go.
+transcript of every agent it started. A run that has not changed since the last import is skipped
+without reading its transcripts. Runs you start with `workflows run` are captured as they go.
 
 ```sh
 coding.sh workflows list --since 7d

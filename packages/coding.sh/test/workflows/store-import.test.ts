@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -96,6 +96,57 @@ describe("importClaudeWorkflows", () => {
     assert.equal(r2.imported.length, 0);
     const r3 = await importClaudeWorkflows({ root: projects, store, force: true, concurrencyCap: 4 });
     assert.equal(r3.imported.length, 2);
+  });
+
+  it("skips an unchanged run dir without reading its agent transcripts", async () => {
+    const projects = join(root, "projects-skip");
+    writeClaudeWorkflowFixture(projects);
+    const store = new WorkflowStore(join(root, "imp-skip"));
+    // Every payload goes to the blob store, so reading a transcript shows up as puts.
+    let puts = 0;
+    const blobs = new MemBlobs();
+    const put = blobs.put.bind(blobs);
+    blobs.put = (d) => {
+      puts++;
+      return put(d);
+    };
+    await importClaudeWorkflows({ root: projects, store, index: new MemIndex(), blobs, maxInlineBytes: 1, concurrencyCap: 4 });
+    assert.ok(puts > 0);
+    puts = 0;
+    const again = await importClaudeWorkflows({ root: projects, store, index: new MemIndex(), blobs, maxInlineBytes: 1, concurrencyCap: 4 });
+    assert.equal(again.skipped, 2);
+    assert.equal(puts, 0, "no transcript was read");
+  });
+
+  it("writes a run's agent events to the index in few large batches", async () => {
+    // One agent with 400 tool calls: well over a thousand events. Each index write commits a
+    // transaction (and an FTS segment), so 500-event batches made the import ~30% slower.
+    const projects = join(root, "projects-batch");
+    const runDir = join(projects, "-work-demo", SID, "subagents", "workflows", "wf_batch01");
+    mkdirSync(runDir, { recursive: true });
+    const t = Date.UTC(2026, 10, 1);
+    const base = { sessionId: SID, cwd: "/work/demo", isSidechain: true, agentId: "b0" };
+    const lines = [{ ...base, type: "user", uuid: "u", timestamp: new Date(t).toISOString(), message: { role: "user", content: "go" } }];
+    for (let i = 0; i < 400; i++) {
+      const ts = new Date(t + 1000 * (i + 1)).toISOString();
+      lines.push(
+        { ...base, type: "assistant", uuid: `a${i}`, timestamp: ts, message: { id: `m${i}`, role: "assistant", model: "claude-sonnet-4-5", content: [{ type: "tool_use", id: `t${i}`, name: "Bash", input: { command: "ls" } }], usage: { input_tokens: 1, output_tokens: 1 } } } as never,
+        { ...base, type: "user", uuid: `r${i}`, timestamp: ts, message: { role: "user", content: [{ type: "tool_result", tool_use_id: `t${i}`, content: "ok" }] } } as never,
+      );
+    }
+    writeFileSync(join(runDir, "agent-b0.jsonl"), lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+    writeFileSync(join(runDir, "journal.jsonl"), [{ type: "launched" }, { type: "started", key: "k", agentId: "b0", label: "big" }, { type: "result", key: "k", agentId: "b0", result: 1 }].map((x) => JSON.stringify(x)).join("\n") + "\n");
+    const index = new MemIndex();
+    const sizes: number[] = [];
+    const putEvents = index.putEvents.bind(index);
+    index.putEvents = (b) => {
+      sizes.push(b.length);
+      return putEvents(b);
+    };
+    const r = await importClaudeWorkflows({ root: projects, store: new WorkflowStore(join(root, "imp-batch")), index, concurrencyCap: 4 });
+    assert.equal(r.imported.length, 1);
+    assert.ok(sizes[0]! > 1000, String(sizes));
+    assert.equal(sizes.length, 1);
   });
 
   it("keeps experiment tags when a changed run dir is re-imported", async () => {

@@ -1,6 +1,7 @@
 // Import Claude Code workflow runs from disk into the workflow store, and their
 // agent transcripts into the index as child sessions (so the viewer's session
-// timeline opens them). Unchanged run dirs are skipped by signature.
+// timeline opens them). Unchanged run dirs are skipped by signature, before their agent
+// transcripts are read.
 //
 // The Claude Code adapter's backfill walks transcripts only three levels deep,
 // so workflow run dirs (five levels) are not picked up there; this importer
@@ -10,7 +11,7 @@ import { join } from "node:path";
 import type { BlobStore, IndexStore } from "../core/types.ts";
 import type { Prices } from "../core/pricing.ts";
 import { claudeConfigDir } from "../adapters/claude-code.ts";
-import { findClaudeWorkflowDirs, loadClaudeWorkflowDir } from "./sources/claude-workflow.ts";
+import { findClaudeWorkflowDirs, loadClaudeWorkflowDir, peekClaudeWorkflowDir } from "./sources/claude-workflow.ts";
 import type { WorkflowStore } from "./store.ts";
 import { buildWorkflowTree, restat, type WorkflowTree } from "./tree.ts";
 import type { WorkflowRun } from "./types.ts";
@@ -47,7 +48,9 @@ export interface ImportResult {
   errors: { path: string; error: string }[];
 }
 
-const PUT_BATCH = 500;
+// Events per index write. Each write is one transaction, and committing it flushes the
+// full-text index; at 500 per write, commits were most of a large import's time.
+const PUT_BATCH = 20_000;
 
 export async function importClaudeWorkflows(o: ImportOpts): Promise<ImportResult> {
   const dirs = await findClaudeWorkflowDirs(o.root);
@@ -55,17 +58,20 @@ export async function importClaudeWorkflows(o: ImportOpts): Promise<ImportResult
   const resumed: WorkflowTree[] = [];
   for (const d of dirs) {
     try {
+      // An unchanged run dir is skipped before its transcripts are read: they are most of the bytes.
+      if (!o.force) {
+        const peek = await peekClaudeWorkflowDir(d);
+        if ((await o.store.signatureOf(peek.runId)) === peek.signature) {
+          res.skipped++;
+          continue;
+        }
+      }
       const loaded = await loadClaudeWorkflowDir(d, {
         ...(o.blobs ? { blobs: o.blobs } : {}),
         concurrencyCap: o.concurrencyCap ?? defaultClaudeCap(),
         ...(o.maxInlineBytes !== undefined ? { maxInlineBytes: o.maxInlineBytes } : {}),
         ...(o.prices ? { prices: o.prices } : {}),
       });
-      const runId = loaded.sources.runId ?? d.runId;
-      if (!o.force && (await o.store.signatureOf(runId)) === loaded.signature) {
-        res.skipped++;
-        continue;
-      }
       const tree = buildWorkflowTree(loaded.sources);
       tree.run.source = { kind: "journal", path: d.runDir, signature: loaded.signature };
       if (o.index) {

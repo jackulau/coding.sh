@@ -465,6 +465,28 @@ export async function runDirSignature(d: ClaudeWorkflowDir): Promise<string> {
   return hashParts(...parts);
 }
 
+/**
+ * The run id a run dir imports under and its signature, without reading the agent transcripts:
+ * the record's runId, else the journal's, else the dir name (as loadClaudeWorkflowDir picks it).
+ */
+export async function peekClaudeWorkflowDir(d: ClaudeWorkflowDir): Promise<{ runId: string; signature: string }> {
+  let runId: string | undefined;
+  try {
+    const v = JSON.parse(await readFile(join(d.sessionDir, "workflows", `${d.runId}.json`), "utf8")) as unknown;
+    if (isObj(v)) runId = s(v.runId);
+  } catch {
+    // no persisted record
+  }
+  if (runId === undefined) {
+    try {
+      runId = parseJournal(await readFile(join(d.runDir, "journal.jsonl"), "utf8")).runId;
+    } catch {
+      // unreadable journal: loadClaudeWorkflowDir reports it
+    }
+  }
+  return { runId: runId ?? d.runId, signature: await runDirSignature(d) };
+}
+
 class MemBlobShim {
   async put(data: string | Uint8Array): Promise<string> {
     return sha256Hex(data);
