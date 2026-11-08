@@ -1,0 +1,65 @@
+packages/coding.sh/src/cli/commands/compare.ts
+  s_8e040dbdf13565::t_4373ff59c74b84 47-58
+  s_8e040dbdf13565::t_bf10769d695bed 122-123
+  s_8e040dbdf13565::t_fe4a3fc1e9cc89 99-103,105-107,113-121,124-158
+  s_8e040dbdf13565::t_3920b0ef01ee19 26
+  s_8e040dbdf13565::t_85ffaa50938a70 329-330
+  s_8e040dbdf13565::t_e3e075c93d4199 174-213
+  s_8e040dbdf13565::t_b0d5c0f70188f6 238,240
+  s_8e040dbdf13565::t_3a189a898c9d7f 314-319
+  s_8e040dbdf13565::t_18365de60796e6 252-256
+  s_8e040dbdf13565::t_fd4fed1baf1072 21-22
+  s_8e040dbdf13565::t_a9f961f7e7a3f7 291
+packages/coding.sh/test/cli/compare-iterate.test.ts
+  s_8e040dbdf13565::t_b48f4307588f1f 1-172
+packages/coding.sh/src/runner/iterate.ts
+  s_8e040dbdf13565::t_698f55b60c29c8 109-110
+  s_8e040dbdf13565::t_ddaf680478e273 1-108,111-118
+packages/coding.sh/src/runner/experiment.ts
+  s_8e040dbdf13565::t_d6e23299e1c1e8 234
+  s_8e040dbdf13565::t_d5bb3f2fbddbbc 87-99
+  s_8e040dbdf13565::t_11a76954eb661c 215-227
+  s_8e040dbdf13565::t_baf3980d9debb0 330-332
+  s_8e040dbdf13565::t_d0792fe229ea9b 117-118
+  s_8e040dbdf13565::t_d63bc43e85aa61 246-248
+  s_8e040dbdf13565::t_fb4cca071d017f 302-307
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_a4ca8936b9b7e9 972-976
+  s_8e040dbdf13565::t_8a19e1636ef27d 1019-1021
+docs/guides/evals.md
+  s_8e040dbdf13565::t_bf9d94c7538764 890-917
+packages/coding.sh/test/runner/iterate.test.ts
+  s_8e040dbdf13565::t_e881a718aeb189 108-114
+  s_8e040dbdf13565::t_87f77e4728311a 1-107,115-143
+apps/site/src/pages/docs/evals.astro
+  s_8e040dbdf13565::t_1d310af49b46ef 590-596
+CHANGELOG.md
+  s_8e040dbdf13565::t_aebe5fac74e1dc 77
+packages/coding.sh/src/core/types.ts
+  s_8e040dbdf13565::t_a122781491560d 708-710
+docs/reference/cli.md
+  s_8e040dbdf13565::t_32ee8c150b1105 1864-1868,1897-1899
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_0d1536a40f2bb8 169
+packages/coding.sh/src/cli/jobs.ts
+  s_8e040dbdf13565::t_2af1915efae06a 113-127
+scripts/e2e/compare-capture.mjs
+  s_8e040dbdf13565::t_7eef795c5ea60a 20-21
+  s_8e040dbdf13565::t_9480d1111f35f6 416-422
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ba099732bc0ef1f3bc75edcb15d1128c74a89283",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
