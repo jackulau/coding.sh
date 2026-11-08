@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coding-sh"
-version = "0.1.1"
+version = "0.1.2"
 description = "Trace any AI agent or LLM app from Python: send model calls, traces and tool spans to a coding.sh server."
 readme = "README.md"
 license = "MIT"

@@ -7,7 +7,7 @@ follow [Semantic Versioning](https://semver.org/) from the first npm release.
 Each release opens with a short summary. The list under it has one line per change,
 grouped by area, with links to the docs for the details.
 
-## [0.1.2] - Unreleased
+## [0.1.2] - 2026-11-08
 
 coding.sh runs on Windows, and CI tests it there.
 

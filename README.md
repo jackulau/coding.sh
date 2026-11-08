@@ -159,7 +159,7 @@ content. Details in [docs/guides/privacy.md](docs/guides/privacy.md).
 
 ## Status
 
-coding.sh is pre-1.0 (latest: 0.1.1), so expect rough edges. What isn't done yet:
+coding.sh is pre-1.0 (latest: 0.1.2), so expect rough edges. What isn't done yet:
 
 - npm and PyPI: nothing is published yet. The packages and the release workflow are ready; what
   remains is the maintainer's account setup and tag ([First publish](docs/RELEASE.md#first-publish)).
