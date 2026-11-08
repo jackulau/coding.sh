@@ -55,6 +55,7 @@ packages/coding.sh/test/mcp/server.test.ts
   s_8e040dbdf13565::t_57cfeee857680b 152-170,172-175
   s_8e040dbdf13565::t_0b629e3c4d6a17 86
   s_8e040dbdf13565::t_48ad8dfe96cd26 171
+  s_8e040dbdf13565::t_f136f02ae2e5e9 465
 CHANGELOG.md
   s_8e040dbdf13565::t_edf2b258775ea7 25
 packages/coding.sh/src/cli/commands/replay.ts
@@ -78,6 +79,9 @@ packages/coding.sh/src/core/replay.ts
   s_8e040dbdf13565::t_319741ebbcd685 729-753,931,986,1061,1065,1371-1372,1377
 apps/site/src/pages/docs/mcp.astro
   s_8e040dbdf13565::t_9e24f69eef665d 12
+packages/coding.sh/test/mcp/toolevals.test.ts
+  s_8e040dbdf13565::t_f136f02ae2e5e9 52
+  s_8e040dbdf13565::t_1ac63c7d56f4c5 58-60
 ---
 {
   "schema_version": "authorship/3.0.0",
