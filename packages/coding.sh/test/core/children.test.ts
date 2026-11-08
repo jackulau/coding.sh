@@ -22,10 +22,22 @@ const alive = (pid: number) => {
     return false;
   }
 };
-const settle = () => new Promise((r) => setTimeout(r, 100));
 const until = async (cond: () => boolean) => {
   while (!cond()) await new Promise((r) => setTimeout(r, 20));
 };
+/** Whether `pid` is gone within 5 s. A killed process is not gone at once: it still has to be scheduled to die and be reaped. */
+const gone = async (pid: number) => {
+  const end = Date.now() + 5000;
+  while (alive(pid) && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
+  return !alive(pid);
+};
+/**
+ * Script line that writes `pid` (a JS expression) to `pidFile` in one step. A plain
+ * writeFileSync creates the file before it writes it: a kill in between leaves it empty,
+ * Number("") is 0, and kill(0, 0) signals our own process group, so the sleeper looks alive.
+ */
+const writePid = (pidFile: string, pid: string) =>
+  `require("node:fs").writeFileSync(${JSON.stringify(pidFile + ".tmp")}, String(${pid})); require("node:fs").renameSync(${JSON.stringify(pidFile + ".tmp")}, ${JSON.stringify(pidFile)});`;
 
 const root = mkdtempSync(join(tmpdir(), "codingsh-children-"));
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -39,7 +51,7 @@ function script(js: string): string {
 /** Script lines that start a 30 s sleeper sharing our stdout (`c`) and record its pid in `pidFile`. */
 const sleeper = (pidFile: string) => `
 const c = require("node:child_process").spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: ["ignore", "inherit", "inherit"] });
-require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(c.pid));
+${writePid(pidFile, "c.pid")}
 `;
 /** `node <file>` as a sh command line. */
 const nodeLine = (file: string) => `'${process.execPath}' '${file}'`;
@@ -75,10 +87,9 @@ for (const [name, run] of Object.entries(helpers)) {
         assert.equal(r.exitCode, 0);
         assert.equal(r.timedOut, false);
         assert.match(r.stdout, /tests passed/);
-        await settle();
         // POSIX: the group kill on exit. Windows has no groups; there the sleeper, a node
         // child, dies with its parent through libuv's kill-on-close job object.
-        assert.equal(alive(Number(readFileSync(pidFile, "utf8"))), false, "background child reaped");
+        assert.equal(await gone(Number(readFileSync(pidFile, "utf8"))), true, "background child reaped");
       }
     });
 
@@ -93,8 +104,7 @@ for (const [name, run] of Object.entries(helpers)) {
       assert.ok(Date.now() - t0 < 5000, `aborted in ${Date.now() - t0}ms`);
       assert.equal(r.exitCode, null);
       assert.equal(r.timedOut, false);
-      await settle();
-      assert.equal(alive(Number(readFileSync(pidFile, "utf8"))), false);
+      assert.equal(await gone(Number(readFileSync(pidFile, "utf8"))), true);
     });
 
     it("the ambient signal reaches spawns that take no signal", async () => {
@@ -130,15 +140,14 @@ describe("live child registry", () => {
     assert.equal(exit, 130);
     const pid = Number(readFileSync(pidFile, "utf8").trim());
     assert.ok(pid > 0);
-    await settle();
-    const left = alive(pid);
+    const left = !(await gone(pid));
     if (left) process.kill(pid, "SIGKILL");
     assert.equal(left, false, "sleeper killed on exit");
   });
 
   it("a hard exit also kills an MCP server spawned over stdio (tap upstream, relay)", async () => {
     const pidFile = join(root, `mcp-${seq++}`);
-    const server = script(`require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));\nsetTimeout(() => {}, 30000);\n`);
+    const server = script(`${writePid(pidFile, "process.pid")}\nsetTimeout(() => {}, 30000);\n`);
     const code = `
       import { StdioTransport } from ${mod("../../src/toolevals/mcp/stdio.ts")};
       import { existsSync } from "node:fs";
@@ -149,8 +158,7 @@ describe("live child registry", () => {
     assert.equal(await new Promise<number | null>((r) => child.on("close", r)), 143);
     const pid = Number(readFileSync(pidFile, "utf8").trim());
     assert.ok(pid > 0);
-    await settle();
-    const left = alive(pid);
+    const left = !(await gone(pid));
     if (left) process.kill(pid, "SIGKILL");
     assert.equal(left, false, "MCP server killed on exit");
   });

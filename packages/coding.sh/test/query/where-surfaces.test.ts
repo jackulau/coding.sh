@@ -51,8 +51,11 @@ describe("--where on CLI, MCP and HTTP", () => {
     env.restore();
   });
 
+  // A fresh connection per request: the CLI runs below (spawnSync) block this event loop, so
+  // fetch's keep-alive clock stalls while the viewer's runs on, and fetch would reuse a socket
+  // the viewer has just closed (ECONNRESET).
   const http = async (path: string) => {
-    const r = await fetch(`http://127.0.0.1:${viewer.port}${path}`, { headers: { authorization: `Bearer ${viewer.token}` } });
+    const r = await fetch(`http://127.0.0.1:${viewer.port}${path}`, { headers: { authorization: `Bearer ${viewer.token}`, connection: "close" } });
     return { status: r.status, json: (await r.json()) as Record<string, unknown> };
   };
 

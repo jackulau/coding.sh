@@ -230,7 +230,8 @@ describe("viewer /api/calls", () => {
     await v?.close();
     await t?.close();
   });
-  const get = (path: string) => fetch(`http://127.0.0.1:${v.port}${path}`, { headers: { authorization: "Bearer test-token" } });
+  // A fresh connection per request, as in test/query/where-surfaces.test.ts: CLI runs block this event loop.
+  const get = (path: string) => fetch(`http://127.0.0.1:${v.port}${path}`, { headers: { authorization: "Bearer test-token", connection: "close" } });
 
   it("returns the call with its request and response", async () => {
     const r = await get(`/api/calls/${calls[2]!.id}`);
