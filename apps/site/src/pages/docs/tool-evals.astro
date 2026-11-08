@@ -93,7 +93,7 @@ coding.sh toolevals compress <target> --driver agent:claude-code`;
   <h2 id="experiments">Experiments</h2>
   <p>
     An experiment is tasks × variants × drivers × k attempts, interleaved so provider drift hits every arm equally. Compare pairs by task and
-    uses the same paired bootstrap and McNemar's test as <a href="/docs/evals#compare">dataset experiments</a>. It also prints
+    uses the same paired bootstrap and McNemar's test as <a href="/docs/experiments#compare">dataset experiments</a>. It also prints
     <code>p (perm)</code>, a task-paired permutation test on the same per-task differences, exact up to 20 tasks, which holds its level at
     the 5-11 tasks a suite often has, where bootstrap intervals run too narrow. A description-compression mode
     shortens MCP tool descriptions one tool at a time on the dev split, keeps each cut only if it is non-inferior, and confirms the result on

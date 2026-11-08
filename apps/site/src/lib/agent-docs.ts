@@ -82,7 +82,7 @@ coding.sh exp compare <base-id> <candidate-id> --json
 \`\`\`
 
 \`exp compare\` pairs the runs by case and reports a paired bootstrap CI of the difference and McNemar's test.
-Details: ${abs("/docs/evals")}.
+Details: ${abs("/docs/evals")} and ${abs("/docs/experiments#compare")}.
 
 ## Output and exit codes
 

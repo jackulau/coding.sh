@@ -7,7 +7,8 @@ interface Props {
   /** Path under docs/, e.g. "concepts.md". */
   file: string;
 }
-const blocks = renderDoc(Astro.props.file);
+// A doc split over several pages renders only this page's part.
+const blocks = renderDoc(Astro.props.file, Astro.url.pathname.replace(/(.)\/+$/, "$1"));
 ---
 
 {blocks.map((b) => (b.kind === "code" ? <Code code={b.code} title={b.title} /> : <Fragment set:html={b.html} />))}

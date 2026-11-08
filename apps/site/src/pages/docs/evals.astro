@@ -44,36 +44,14 @@ const spec = `{
   ]
 }`;
 
-const replayCall = `coding.sh exp replay latest#-1 --vary model=claude-sonnet-4-5,claude-haiku-4-5 --n 5 --dry-run
-coding.sh exp replay latest#-1 --vary model=claude-sonnet-4-5,claude-haiku-4-5 --n 5
-coding.sh exp replay --session latest --limit 10 --vary system=@new-prompt.md`;
-
 const judge = `coding.sh ui                                   # label sessions pass / fail
 coding.sh judge calibrate <experiment> --criterion outcome --split test`;
 
-const replay = `coding.sh eval new latest --verifier 'npm test' --hidden-test 'test/retry.spec.ts'
-coding.sh eval validate <task> --k 5
-coding.sh eval export <task> --out ./tasks/retry --format harbor
-coding.sh harness snapshot --agent claude-code --name base
-coding.sh compare base candidate --k 3`;
-
-const matrix = `{
-  "name": "shout-matrix",
-  "dataset": "qa",
-  "task": { "kind": "command", "command": "node agent.mjs", "env": { "MODEL": "stub-small", "PROMPT": "plain.md" } },
-  "graders": [{ "kind": "regex", "pattern": "^[A-Z]+$" }],
-  "matrix": {
-    "model": { "path": "/task/env/MODEL", "values": [{ "small": "stub-small" }, { "big": "stub-big" }] },
-    "prompt": { "path": "/task/env/PROMPT", "values": [{ "plain": "plain.md" }, { "shout": "shout.md" }] }
-  },
-  "baseline": { "model": "small", "prompt": "plain" }
-}`;
-
-const matrixOut = `cell                        pass     B − A    p  p (Holm)  verdict
-model=small,prompt=plain    0.0%  baseline
-model=small,prompt=shout  100.0%  +100.0pp  0.008     0.023  better
-model=big,prompt=plain     50.0%   +50.0pp  0.125     0.125  inconclusive
-model=big,prompt=shout    100.0%  +100.0pp  0.008     0.023  better`;
+// Sections that moved to their own pages. An old /docs/evals#<id> link follows its section.
+const moved = {
+  "/docs/experiments": ["compare", "non-inferiority", "coverage", "grader-versions", "regrade", "sweep", "matrix", "plateau", "resume", "sessions", "metrics", "exp-replay"],
+  "/docs/harness-evals": ["exp-ab", "protected", "refine", "triggers", "repo-replay", "witness", "gate", "tamper", "audited", "promote", "item-gate", "plugins", "hand-written", "reuse", "release", "iterate", "repair"],
+};
 
 const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 const m = (s: string) => `<span class="t-muted">${esc(s)}</span>`;
@@ -110,87 +88,6 @@ const RUN = [
   m(`------  -----  ------  ---------------  ----------  ------  -------------`),
   `exact   exact  ${ok("100.0%")}  [34.2%, 100.0%]        1.00       0  deterministic`,
 ].join("\n");
-
-const COMPARE = [
-  `${m("$")} ${t("coding.sh exp compare exp_01M6SAJYC5RM7A5TCT65R3SFSM exp_01M6SAK893Z1DFH770KVNQC4BZ")}`,
-  `A base exp_01M6SAJYC5RM7A5TCT65R3SFSM  pass 100.0%`,
-  `B cand exp_01M6SAK893Z1DFH770KVNQC4BZ  pass 50.0%`,
-  "",
-  `B − A   ${no("-50.0pp")} [-100.0pp, 0.0pp] (2 paired cases, 95% paired bootstrap)`,
-  `mcnemar p=1.000  1 regressed, 0 improved`,
-  `verdict inconclusive (CI includes 0)`,
-  "",
-  `regressions 1`,
-  `case                   A   B       Δ`,
-  m(`------------------  ----  --  ------`),
-  `c_756966685591eb9b  100%  ${no("0%")}  -100pp`,
-].join("\n");
-
-// Real output of scripts/e2e/exp-session-watch.mjs (2026-11-07): a command agent and an LLM judge against a stub model.
-const SESSION = [
-  `${m("$")} ${t("coding.sh exp run spec.json")}`,
-  m("…"),
-  `session shout: vs exp_01M6W03B3SPG7NSG4MEM9T032J  ${m("changed prompt.md")}`,
-  `pass    0.0% → 100.0%  Δ ${ok("+100.0pp [+100.0pp, +100.0pp]")}  mcnemar p=0.125 ${m("(4 paired cases, 95% CI)")}`,
-  `grader  caps  score Δ ${ok("+100.0pp [+100.0pp, +100.0pp]")}`,
-  `fixed   4: alpha, beta, delta, gamma`,
-  `broke   —`,
-  "",
-  `${m("$")} ${t("coding.sh exp run spec.json --watch")}`,
-  `15:54:41  run     exp_01M6W03CN9P1ZE633C2RXPGVYQ  pass 100.0% (4/4)  4 case runs`,
-  `15:54:41  regrade exp_01M6W03D5H1YEKWWXWGNCGN7MF  pass 75.0% (3/4)  regrade of exp_01M6W03CN9P1ZE633C2RXPGVYQ, 0 task calls`,
-].join("\n");
-
-// Real output of scripts/e2e/exp-ab-capture.mjs (2026-11-07): three Claude Code sessions against a stub
-// model.
-const AB = [
-  `${m("$")} ${t("coding.sh exp ab")}`,
-  `A: git:HEAD   B: your edits   model: claude-sonnet-5-5`,
-  `3 decision points from 3 sessions | A 0/3 -> B ${ok("3/3")} | fixed 3, broke 0 | paired p=0.25 | <$0.01, 0/6 cached`,
-  `Hold: not enough evidence (B wins 3, loses 0; needs 8+ wins with no losses)`,
-  `Replay noise floor 0% (A's turn differs from the recorded one in 0/3); B moved +100 points, above it`,
-  "",
-  `Fixed (A failed, B passed):`,
-  `  unverified-claim "Make pad.js pad on the left."  ${m("coding.sh show 8f0e1e52-bdc1-4da0-a03b-14edf6dfcf77")}`,
-  `  unverified-claim "Make clamp.js clamp to the upper bound too."  ${m("coding.sh show 9c1792df-6267-4b30-9f24-7a7307740543")}`,
-  `  unverified-claim "Make range.js include its end value."  ${m("coding.sh show fe48a450-8867-48ec-b946-3b4d0cb6c780")}`,
-  "",
-  `Full comparison: coding.sh exp compare exp_01M6VXZSFPM2QK12ANN6Z269WP exp_01M6VXZSFSZ25HD2HXXVY40BXV`,
-].join("\n");
-
-// Real output of scripts/e2e/refine-loop.mjs (run 2026-11-07 against a stub model and a throwaway HOME).
-const REFINE = [
-  `${m("$")} ${t("coding.sh refine test ./drafts/CLAUDE.md --behavior unchanged-retry")}`,
-  `r_b25de6ab68  ./drafts/CLAUDE.md (CLAUDE.md; +1 line)`,
-  `  protected  ${ok("ok")} (1 protected line in place)`,
-  `  critics    ${ok("ok")}`,
-  `  dev        8 decision points | effect +100pp [+100pp, +100pp] | B wins 8, loses 0; A solved 0`,
-  `  guard      8 tasks earlier kept edits won (0 from this run, 8 rerun) | ${no("forgets kept edit r_3123c2cbef")}`,
-  `  preserved  gained 8, lost 0, 0 tasks regressed`,
-  `  verdict    ${no("reject")}: dev: Ship it: B wins 8 decision points, loses 0; guard: forgets kept edit r_3123c2cbef`,
-  "",
-  `${m("$")} ${t("coding.sh refine log")}`,
-  m(`ROUND  CANDIDATE     VERDICT        EFFECT (95% CI)          GUARD                 COST   REASON`),
-  `1      r_3123c2cbef  ${ok("keep, applied")}  +100pp [+100pp, +100pp]  no tasks              $0.02  dev: Ship it: B wins 8 decision points, loses 0`,
-  `2      r_b25de6ab68  ${no("reject")}         +100pp [+100pp, +100pp]  forgets r_3123c2cbef  $0.02  guard: forgets kept edit r_3123c2cbef`,
-].join("\n");
-const TRIGGER = [
-  `${m("$")} ${t('coding.sh eval trigger skills/pdf --description "Use when the user mentions pdf, invoice, scanned." --yes')}`,
-  `A (current): pdf on claude-code, k=1`,
-  `  precision 67%  recall 50%  F1 0.57  accuracy 63%`,
-  `  missed:`,
-  `    should     loaded 0/1  "Make the invoice searchable"`,
-  `    should_not false trigger 1/1  "Explain in one line what a pdf is"`,
-  `  expected routes: docx 1/1`,
-  `B (--description): pdf on claude-code, k=1`,
-  `  precision 80%  recall 100%  F1 0.89  accuracy 88%`,
-  "",
-  `B vs A over 8 prompts: recall 2/4→4/4 · false triggers 1/4→1/4 · Δacc +25 pp (95% CI +0 to +63)`,
-  `  flip ${ok("better")} should     skipped → loaded  "Make the invoice searchable"`,
-  `  flip ${ok("better")} should     skipped → loaded  "OCR this scanned invoice"`,
-  `  ${m("note: 4 should and 4 should_not prompts: only a large change can show; aim for 10+ per side")}`,
-  `No clear difference`,
-].join("\n");
 ---
 
 <DocsLayout>
@@ -198,6 +95,10 @@ const TRIGGER = [
     There are two kinds of eval. <strong>Dataset experiments</strong> run any agent, in any language, over a set of cases and grade the outputs.
     <strong>Repo-replay tasks</strong> re-run a coding agent from the repository state before a real session and check the result with a
     validated verifier.
+  </p>
+  <p>
+    <a href="/docs/experiments">Experiments</a> covers comparing two runs, sweeps, matrices and long runs.
+    <a href="/docs/harness-evals">Harness evals</a> covers testing a CLAUDE.md, rule or skill change and repo-replay tasks.
   </p>
 
   <h2 id="first-eval">Your first eval in 5 minutes <Tag status="built" /></h2>
@@ -291,247 +192,6 @@ const TRIGGER = [
     </table>
   </div>
 
-  <h2 id="compare">Comparing two experiments <Tag status="built" /></h2>
-  <p>
-    <code>exp compare</code> pairs the two runs by case. It reports the difference in pass rate with a paired bootstrap interval, McNemar's exact
-    test on cases that flipped, per-grader score deltas and the regressed cases. If the interval includes zero, the verdict says inconclusive.
-  </p>
-  <Terminal title="~/smoke" label="Output of coding.sh exp compare">
-    <pre set:html={COMPARE} />
-  </Terminal>
-  <ul>
-    <li><code>--cluster &lt;key&gt;</code> resamples groups of related cases, such as <code>repo</code> or <code>session</code>, instead of single cases. It prints the cluster count and warns below 10 clusters.</li>
-    <li>Below 100 paired cases, compare also prints P(B&gt;A) from a Bayesian posterior on the paired outcomes. The bootstrap interval stays.</li>
-    <li>It counts trials each arm lost to errors, split into infra and agent errors, and warns when Fisher's exact test finds an uneven split.</li>
-    <li>
-      <code>exp aa</code> runs one config twice and stores its run-to-run noise. Compare then prints the A/A flip rate, and the minimum
-      detectable effect never goes below that noise.
-    </li>
-    <li>
-      The power line adds the exact McNemar power. The exact test needs at least 6 flipped cases to reject at α 0.05, so a small suite has a
-      ceiling: at 45 cases with 14% flipped, even the largest gap is found only 62% of the time. Then the line reads
-      <code>no 80% power at this n (exact McNemar ceiling 62%)</code>; otherwise it adds <code>exact MDE 10.6pp</code>.
-    </li>
-    <li>Compare warns when the two runs ran one after the other, and says how far apart they were.</li>
-    <li>
-      <code>--gate</code> adds a ship-or-hold line: <code>Ship it: B wins 8 cases, loses 0</code>, <code>Hold: not enough evidence</code>, or
-      <code>Don't ship: B breaks 2 cases A solved</code> with the broken cases. It exits 0 only for "Ship it", so CI can use it. A break costs two
-      fixes, the wins must clear a one-sided exact test, and B may break at most 10% of what A solved (<a href="#gate">details</a>).
-    </li>
-    <li id="non-inferiority">
-      <code>--margin 0.03</code> asks whether B is at most 3pp worse than A, for a cheaper or faster config you want to keep only if it does not
-      lose quality. It prints <code>non-inf B − A ≥ -3.0pp: yes</code> when the lower end of the 95% interval is above −3pp, and exits 1
-      otherwise. It also lists cases A passed on every trial that B now mostly fails, which an average within the margin can hide.
-    </li>
-    <li id="coverage">
-      With 2+ trials per case it counts coverage on its own: cases B gained (A never passed, B passed at least once) and cases B lost (A passed
-      at least once, B never), listed under <code>lost coverage</code>. A net gain can hide lost cases. It also prints how many cases' pass rates
-      went up or down, and the change in each half of the trials, with a warning when the two halves disagree. <code>--matrix</code> prints the
-      cases by passes out of k in A and B. Method: EvoAudit (<a href="https://arxiv.org/abs/2611.07624">arXiv 2611.07624</a>).
-    </li>
-    <li id="grader-versions">
-      Compare pins grader versions. When a grader changed version between A and B, or graded only one side, it warns above the verdict: the
-      pass rate then mixes your change with a change of measurement. A grader error leaves that run ungraded, not failed, and cases with no
-      graded run on one side are listed and left out of the pairing.
-    </li>
-  </ul>
-  <p id="regrade">
-    <code>exp regrade &lt;experiment&gt; spec.json</code> grades a stored experiment's outputs again with the spec's graders (or
-    <code>--grader</code>), without calling the task. It stores a new experiment with <code>regradeOf</code> set and prints the pass rate before
-    and after, each grader's version change and every run whose outcome flipped. Regrade A with B's graders, then compare like with like.
-  </p>
-  <p>
-    To avoid that, run both configs in one job: <code>exp run --arm base=a.json --arm cand=b.json</code>. Each case runs in both arms back
-    to back, in random order, so drift during the run hits both arms the same. Add <code>--stop-early</code> to stop once the answer is clear.
-    It checks at a few planned points (an O'Brien-Fleming group sequential test, never before 20 cases), says why it stopped, and reports an
-    interval that stays valid after stopping. <code>--max-cases</code> caps the run.
-  </p>
-
-  <h2 id="sweep">Sweeping configs <Tag status="built" /></h2>
-  <p>
-    <code>exp sweep base=a.json b.json c.json -d smoke -g G</code> picks the best of several task configs. It uses sequential halving: each
-    round runs the surviving configs on the same fresh train cases and keeps the better half, so weak configs stop costing runs early. Dropped
-    configs show their gap to the leader with an interval.
-  </p>
-  <p>
-    The race winner tends to be the luckiest config, so its train score runs high. The winner and the first config then run on the test
-    split, which the race never saw. The output prints both scores for the winner and the <strong>optimism gap</strong> (train minus
-    held-out). On those held-out cases the same gate as <code>exp compare --gate</code> prints <code>adopt &lt;winner&gt;</code> or
-    <code>keep &lt;start&gt;</code> with the reason. <code>--budget</code> caps the race's case runs.
-  </p>
-
-  <h2 id="matrix">Matrix <Tag status="built" /></h2>
-  <p>
-    A spec with <code>"matrix"</code> runs every combination of its axes against one baseline cell. Each axis is a JSON Pointer into the
-    spec and a list of values. <code>"variants"</code> names cells by hand instead, with <code>"vary"</code> listing the pointers they may
-    change. A cell may change only <code>/task/…</code> and <code>/trials</code>; graders, dataset and split are refused. A cell that differs
-    from the baseline anywhere else is refused before anything runs, and <code>--plan</code> prints the cells without running them.
-  </p>
-  <Code title="matrix.json" code={matrix} />
-  <p>
-    <code>exp run matrix.json</code> runs the cells interleaved, case by case in random order. Each cell is stored as its own experiment and
-    compared with the baseline, and the McNemar p-values are Holm-adjusted over the cells, so a big sweep doesn't produce a winner by chance.
-    <code>exp compare</code> on the baseline and a cell gives its per-case diff. <code>--cell</code> runs some cells and
-    <code>--resume</code> picks up an interrupted matrix.
-  </p>
-  <Code code={matrixOut} />
-  <p>
-    <code>--reuse baseline</code> copies the baseline cell's finished case-trials from earlier experiments instead of running them again,
-    so several matrices against one baseline pay for it once (<code>--reuse all</code> copies any cell's). A case-trial is copied only when
-    the case, the task spec and the files it runs, the graders, the trial number and the trial timeout are all the same, and it finished
-    without an error within <code>--reuse-max-age</code> (default 7 days). <code>--plan</code> prints how many each cell would copy and
-    run. The comparisons then warn that the copies did not run interleaved with the new case-trials.
-  </p>
-
-  <h2 id="plateau">When to stop a loop <Tag status="built" /></h2>
-  <p>
-    A loop that tries one candidate after another needs a stop rule. Tag each round with <code>exp run … --series NAME</code>; it prints
-    <code>series NAME: continue, incumbent v4 …</code> or <code>series NAME: stop, ship v2 … (the plateau began at round 3)</code>.
-    <code>exp plateau --series NAME</code> prints one row per round and exits 0 (continue), 3 (stop) or 2 (too few experiments).
-  </p>
-  <p>
-    Each round compares the candidate with the incumbent on the cases both ran. A restart e-detector (Yin, Liu and Qi, arXiv 2610.04756)
-    stops once the gains stay below ε (<code>--eps</code>, default 0.05) and names the incumbent before the plateau as the version to ship.
-    <code>--gate greedy</code> keeps a candidate only when it beats the incumbent; <code>--gate chain</code> keeps every one. False alarms
-    come on average no sooner than every 1/δ rounds (20 at <code>--delta 0.05</code>): an average run length, not an error rate. It warns on
-    a dataset version change, thin rounds, a small eval that can't see ε, and a stop chosen on dev (confirm it on test).
-  </p>
-
-  <h2 id="resume">Long runs: resume and retries <Tag status="built" /></h2>
-  <p>
-    <code>exp run</code>, <code>exp aa</code>, <code>exp sweep</code>, <code>compare</code>, <code>bench run</code> and
-    <code>workflows run</code> save each trial as it finishes. After Ctrl-C, a crash or a reboot, run the same command with
-    <code>--resume</code> and only the unfinished trials run. The seed, order and <code>--stop-early</code> looks come from the checkpoint, so
-    the resumed run stops at the same point and gives the same verdict as one that was never interrupted. If the dataset, graders, task or
-    agent script changed, it refuses to resume and names what changed. The first Ctrl-C lets the trials in flight finish; the second stops
-    them.
-  </p>
-  <p>
-    <code>--retries N</code> (default 3) retries rate limits, 5xx and network errors with backoff. Task failures are never retried, since
-    that would inflate the pass rate. A trial that still hits infrastructure errors is left out of the pass rate and runs again on
-    <code>--resume</code>. <code>--trial-timeout</code> caps each trial. <code>exp status</code> shows each run's progress, ETA and cost so
-    far.
-  </p>
-
-  <h2 id="sessions">Sessions and watch <Tag status="built" /></h2>
-  <p>
-    <code>coding.sh exp session new --name &lt;topic&gt;</code> starts a session in the current folder. Every <code>exp run</code> there or
-    below joins it and, as it finishes, is compared with the previous run on the same dataset, so the delta prints without an
-    <code>exp compare</code>. It names the files that changed since that run. Runs on different dataset versions are not paired.
-    <code>exp session note</code> records the hypothesis before a run and the reading after it, and <code>exp session summary</code> prints
-    the timeline. <code>--no-session</code> keeps a run out.
-  </p>
-  <Terminal title="~/shout" label="Output of coding.sh exp run in a session and with --watch">
-    <Fragment set:html={SESSION} />
-  </Terminal>
-  <p>
-    <code>exp run spec.json --watch</code> reruns whenever the spec, the agent script, a grader file or a <code>watch</code> entry changes.
-    A save mid-run aborts that run and stores nothing from it. A change to the graders alone regrades the last outputs with no agent calls.
-    A spec that fails to parse is reported and watching goes on. Enter reruns, <code>q</code> quits.
-  </p>
-
-  <h2 id="metrics">Metric A/B <Tag status="built" /></h2>
-  <p>
-    <code>exp metrics --arm base='node bench.mjs a' --arm cand='node bench.mjs b'</code> compares two commands that print numbers, such as
-    <code>&#123;"lcp_ms": 2310, "js_bytes": 48211&#125;</code>, instead of pass/fail. The arms run in interleaved pairs (11 by default), one run
-    at a time, with half the pairs running A first.
-  </p>
-  <p>
-    For each metric it prints both medians, the median paired difference with a 95% bootstrap interval, and a verdict. Lower is better unless
-    you name the metric in <code>--higher</code>. A change counts only when the interval excludes zero and a sign test still passes after
-    correcting for the number of metrics, so an A/A run stays quiet. <code>--fail-on-worse</code> exits 1 for CI.
-  </p>
-
-  <h2 id="exp-ab">A/B a harness edit on your sessions <Tag status="built" /></h2>
-  <p>
-    You changed a line in CLAUDE.md and want to know if it helps before you commit it. <code>coding.sh exp ab</code> answers that from
-    the sessions you already have, with no eval tasks to write. It finds the moments in your recent sessions where the agent went wrong:
-    it said it was done without running anything, ended a turn while its tests were failing, or retried a failed command unchanged. It
-    replays the next turn at each of those moments twice, once with your committed files and once with your edit, and a judge scores both
-    turns.
-  </p>
-  <Terminal title="~/repo" label="Output of coding.sh exp ab">
-    <Fragment set:html={AB} />
-  </Terminal>
-  <p>
-    The verdict line is the same ship gate <code>compare --gate</code> uses, and <code>--gate</code> makes it the exit code. The noise floor
-    comes from the control arm: how often your committed files alone produce a different turn from the one recorded in the session. A
-    difference smaller than that may just be replay noise. Use <code>--dry-run</code> to see the cases and a cost estimate before anything is
-    called, and <code>--max-cost</code> to cap the spend. Responses are cached, so rerunning with unchanged files is free.
-    <code>--watch</code> reruns each time you save, one line per run. See
-    <a href="/docs/how-to/test-claude-md-change">Test a CLAUDE.md change in five minutes</a>.
-  </p>
-
-  <h2 id="protected">Protected safety lines <Tag status="built" /></h2>
-  <p>
-    A pass-rate A/B can't see the harm of dropping a safety rule: if no case needed "Never run <code>git push --force</code>", deleting it
-    costs nothing, and neither does rewording it into "only ask when the path is ambiguous". So <code>coding.sh refine check</code> checks a
-    harness edit by text (default: git <code>HEAD</code> against your working tree) and exits 1 when it deletes or rewords a protected line
-    (<code>protected-line</code>) or adds an exception that relaxes one (<code>relaxes-protected</code>). <code>exp ab</code> runs the same check
-    on its arms, warns before any model call, and with <code>--gate</code> fails the run.
-  </p>
-  <p>
-    A line is protected inside a <code>&lt;!-- coding.sh:protect --&gt;</code> block, when it matches a <code>[refine] protect</code> regex, or
-    when one sentence pairs a gate word (never, don't, must not; or only, ask, confirm, verify at its start) with a safety topic
-    (credentials, secrets, <code>.env</code>, prod, deploy, push, <code>--force</code>, delete, <code>rm -rf</code>, migrations, owner, …).
-    <code>coding.sh refine protected</code> lists them. <code>--allow-protected-edit AGENTS.md:3</code> allows one edit on purpose. See
-    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#protected-safety-lines">Protected safety lines</a>.
-  </p>
-
-  <h2 id="refine">Refine loop <Tag status="built" /></h2>
-  <p>
-    <code>coding.sh refine</code> improves CLAUDE.md, AGENTS.md, rules and skills in tested rounds. <code>refine propose</code> asks a model
-    for lines that address your sessions' most severe flags, with the file's protected lines marked READ-ONLY and earlier rejected edits listed.
-    You can also write the edit yourself. <code>refine test</code> then decides each candidate in stages: the protected-line check and two
-    critics on the added lines (harmful instructions, near duplicates) before any model call, then an A/B against your current files on the
-    decision points <code>exp ab</code> mines, through the same ship gate. Last comes the guard: the decision points earlier kept edits won must
-    not go from solved to unsolved.
-  </p>
-  <Terminal title="~/repo" label="Output of coding.sh refine test and refine log">
-    <Fragment set:html={REFINE} />
-  </Terminal>
-  <p>
-    Here the second edit wins its own decision points but drops the line the first edit added, so the guard rejects it.
-    <code>refine apply</code> writes a kept candidate with a backup and never commits. <code>refine rollback</code> restores the backup byte for
-    byte. <code>refine log</code> shows every round with its verdict, effect CI, guard result, cost and reason. <code>refine run</code> loops
-    propose, test and apply until <code>--rounds</code>, <code>--max-cost</code> or the plateau detector says stop. <code>--dry-run</code>
-    shows the plan, the guard size and the cost first. See
-    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#refine-loop">Refine loop</a>.
-  </p>
-
-  <h2 id="triggers">Skill triggers <Tag status="built" /></h2>
-  <p>
-    A skill only helps when the agent loads it. <code>coding.sh eval trigger &lt;skill-dir&gt;</code> reads a <code>triggers.toml</code> next to
-    the skill with <code>[[should]]</code> prompts the skill is for and <code>[[should_not]]</code> near misses. It runs each prompt k times in a
-    fresh empty directory with the skill and its sibling skills installed, and reads from each captured session whether the agent loaded the
-    skill. It reports precision, recall, F1 and Wilson intervals, and lists the prompts it missed or loaded by mistake. A near miss can name the
-    sibling that should take it (<code>expect_skill</code>). <code>--description</code> or <code>--candidate DIR</code> runs a second arm with the
-    same prompts in the same order and adds a paired bootstrap CI on accuracy and the prompts that flipped.
-  </p>
-  <Terminal title="~/repo" label="Output of coding.sh eval trigger with a description A/B">
-    <Fragment set:html={TRIGGER} />
-  </Terminal>
-  <p>
-    The output above is the CI check with real Claude Code against a stub model. Eight prompts can't show a change of this size, so the verdict
-    holds. <code>--min-f1</code> and <code>--fail-on regression</code> set the exit code for CI. See
-    <a href="https://github.com/jackulau/coding.sh/blob/main/docs/how-to/evaluate-a-skill.md#does-the-skill-load">Does the skill load?</a>.
-  </p>
-
-  <h2 id="exp-replay">Replay a model call <Tag status="built" /></h2>
-  <p>
-    <code>exp ab</code> replays a whole turn with the agent. <code>exp replay</code> replays one model call: the exact request
-    <a href="/docs/how-to/capture-with-proxy">the proxy</a> logged, sent again with the model, the system prompt or any request field
-    changed. One <code>--vary</code> value changes arm B and keeps arm A as recorded; two values set both.
-  </p>
-  <Code code={replayCall} />
-  <p>
-    Each reply is graded by whether its first action (a tool call by name, or text) matches the one the agent took;
-    <code>--criterion</code> adds an LLM judge. The two arms are experiments, so the report is the paired comparison of
-    <code>exp compare</code>. It calls the API with your own <code>ANTHROPIC_API_KEY</code> or <code>OPENAI_API_KEY</code>, never the
-    agent's login, and stops before any call when the key is not set. <code>--dry-run</code> prints the call count and an estimated cost
-    without a key.
-  </p>
-
   <h2 id="judges">LLM judges <Tag status="built" /></h2>
   <p>
     An <code>llm</code> grader calls Anthropic's Messages API or any OpenAI-compatible endpoint (OpenAI, OpenRouter, Ollama, LM Studio, vLLM
@@ -587,137 +247,18 @@ const TRIGGER = [
     pass rate.
   </p>
 
-  <h2 id="repo-replay">Repo-replay tasks <Tag status="partial" /></h2>
-  <p>
-    For coding agents, a task is the repository snapshot from before the agent ran, the first prompt as the instruction, setup commands and a
-    verifier command. Before a task counts, <code>eval validate</code> checks the verifier:
-  </p>
-  <ol>
-    <li>Doing nothing fails.</li>
-    <li>The reference solution (the session's own diff, or a later fix) passes <code>k</code> runs out of <code>k</code> (default 5), so flaky tests fail validation.</li>
-    <li>Near-miss variants of the reference, generated by mutating its patch, fail.</li>
-    <li>Nothing leaks: hidden test files are copied in only when the verifier runs, and follow-up prompts that steer toward the answer stay out of the instruction.</li>
-  </ol>
-  <p>
-    It also flags gold-only coupling: a hidden test that names a helper or file only the reference adds, when the instruction never mentions
-    it. A valid fix that names things differently would fail. These show as notes; <code>--strict-coupling</code> makes them fail validation.
-    <code>eval crosscheck &lt;task&gt;</code> works from the other side: a reviewer model reads the instruction and each stored run's diff and
-    says whether the change is valid. Where it disagrees with the verifier, it reports a false reject or a false accept, and stores the counts
-    on the task in the same shape as a human verifier audit. <code>--solver &lt;bundle&gt;</code> solves the task once first, and
-    <code>--max</code> caps the model calls (default 5).
-  </p>
-  <p id="witness">
-    <code>eval audit &lt;task&gt; --experiment &lt;id&gt; --witness &lt;file&gt; --witness-cmd &lt;cmd&gt;</code> checks passing runs with a
-    test for a requirement the verifier skips. The witness must pass the reference 3/3; then every passing run is rebuilt from its diff, the
-    verifier must still pass, and a witness that fails twice in a row refutes the run:
-    <code>claude-tdd: passes 6/10, refuted 3, audited pass rate 30% (3/10)</code>. A witness refuting over half the passes is ambiguous
-    and not counted. No model calls (TestJack, <a href="https://arxiv.org/abs/2610.10619">arXiv 2610.10619</a>).
-    <code>--promote</code> adds the witness to the verifier.
-  </p>
-  <p>
-    Harness bundles (agent, model, flags, env and files such as <code>CLAUDE.md</code> or <code>AGENTS.md</code>, identified by a content hash)
-    are what <code>compare</code> A/B tests: it runs both bundles on validated tasks in isolated worktrees and reports per-arm Wilson
-    intervals, a paired bootstrap interval, McNemar's test, cost, token, turn and latency deltas, and the first step where the two traces diverge. Tasks export
-    in coding.sh's own layout or Harbor's.
-  </p>
-  <p id="gate">
-    <code>compare A B --gate</code> answers "should I ship B?" in one line: <code>Ship it: B wins 9 tasks, loses 0</code>,
-    <code>Hold: not enough evidence</code>, or <code>Don't ship: B breaks 3 tasks A solved</code>, with the broken tasks listed. It exits 0
-    only for "Ship it". A break costs two fixes (<code>--lambda</code>), the wins must clear a one-sided exact test (<code>--gate-alpha</code>,
-    default 0.05), and B may break at most 10% of the tasks A solved (<code>--tau</code>). This is the SAGE accept-or-abstain rule
-    (<a href="https://arxiv.org/abs/2609.36043">arXiv 2609.36043</a>). Passes that tampered with tests count as fails for the gate.
-    <code>--gate --by suite:</code> also gates each group of tasks (by their first tag with that prefix), so a pooled "Ship it" can't hide
-    one suite collapsing: any group's "Don't ship" blocks. The report also splits each arm's failed runs by the agent's own last test run
-    (<code>A fails 12: own tests green 7 (58%), red 3, stale 1, none 1</code>): green fails are silent misses, where the agent's tests passed
-    and the verifier's did not.
-  </p>
-  <p id="tamper">
-    Passing runs that edited, deleted or skipped tests or the verifier's files still count as passes, so compare links each such change to
-    the tool call that made it and splits those passes: <code>tampered passes B 3: disclosed 2, stealth 1</code>. Disclosed means the agent
-    said it was changing the test before or with the call; stealth means it didn't (EPISTEME,
-    <a href="https://arxiv.org/abs/2611.06563">arXiv 2611.06563</a>). Each pass gets a line with the run, file, tool, event id and the
-    agent's words; <code>--json</code> has them under <code>tamperAttribution</code>.
-  </p>
-  <p id="audited">
-    After <a href="#witness"><code>eval audit</code></a>, compare shows each audited arm's raw and audited pass rate:
-    <code>audited pass B 60% → 30% (3 refuted, coverage 100%)</code>. <code>compare A B --audited</code> counts refuted passes as fails
-    and labels the verdict <code>verdict (audited)</code>, with a note when that changes it. It needs every pass in both arms replayed;
-    otherwise the raw verdict stands and a note says what the audit covers.
-  </p>
-  <p id="promote">
-    <code>compare A B --promote</code> keeps a B that is cheaper at the same quality, which the verdict calls "no significant difference". It
-    prints <code>pareto: support 0.86 ≥ 0.70 → promote (cost-cut: cost -38% …)</code> or <code>→ hold</code>, and exits 0 only on promote.
-    The support is the share of bootstrap draws (over tasks and attempts) where B gains quality without costing more than
-    <code>--eps-c</code>, or costs less while losing at most <code>--eps-q</code> of pass rate. Cost is USD, or tokens when too few runs are
-    priced. Method: ParetoSaddler (<a href="https://arxiv.org/abs/2611.02079">arXiv 2611.02079</a>).
-  </p>
-  <p id="item-gate">
-    When B adds or removes one rule, skill or context file and nothing else (<code>--without</code> counts), the report adds a one-item gate:
-    <code>item gate k=3 τ=.34 m=2: KEEP · G=1.67 net +4 runs D=.33 fired 11/36 · S=9 tasks</code>. It scores only the tasks where the item
-    reached the agent's context, read from each run's trace. An addition is KEEP, RECHECK (re-run the tasks that dropped), KILL or RERUN; a
-    removal is ACCEPT (only when the agent passes at least 80% of the exposed tasks without it), REJECT, UNMEASURED (it never fired, or
-    the pass rate without it is under 80%, so keep it), UNCOVERED (neither arm solves the tasks: repair the item or check the tasks) or RERUN. <code>--item-gate</code> makes it set the exit code. Method:
-    Cortex (<a href="https://arxiv.org/abs/2610.14216">arXiv 2610.14216</a>).
-  </p>
-  <p id="plugins">
-    A claude-code bundle can carry Claude Code plugins, the whole plugin directory: <code>harness snapshot --agent claude-code --plugin caveman</code>
-    (an installed name, <code>name@marketplace</code> or a plugin directory; repeatable), or <code>plugins = [...]</code> in a harness TOML.
-    <code>compare A --with plugin:caveman</code> runs A against A plus the plugin in one command, and <code>--without plugin:&lt;name&gt;</code>
-    drops one. Each run loads the plugin with <code>--plugin-dir</code> from its own home; your Claude config is never changed.
-  </p>
-  <p id="hand-written">
-    A task can also be written by hand: a directory with <code>task.json</code>, <code>instruction.md</code>, an optional <code>repo/</code>
-    start tree and <code>tests/</code> for hidden files. <code>eval import tasks/*/</code> loads them as drafts, and
-    <code>compare A B --tag &lt;tag&gt;</code> runs them. The verifier gets the agent's final answer and its whole stdout as files
-    (<code>CODING_SH_AGENT_OUTPUT</code>, <code>CODING_SH_AGENT_STDOUT</code>), so <code>judge grade --grader checklist.json</code> can grade
-    what the agent said and which commands it ran. <code>--max-cost 15</code> stops starting runs once agent and judge spend reach $15;
-    the report shows both as <code>agent spend</code> and <code>grader spend</code>. The <a href="/docs/how-to/evaluate-a-skill">Evaluate an
-    Agent Skill</a> guide walks through it.
-  </p>
-  <p id="reuse">
-    <code>compare A B --reuse baseline</code> copies A's finished runs from earlier comparisons instead of running them again, so comparing
-    several candidates against one baseline pays for the baseline once. A run is reused only when its task (instruction, verifier, hidden
-    files), bundle, agent version, attempt and timeout are all the same, keyed by content, and only when it finished without an error inside
-    <code>--reuse-max-age</code> (default 7 days). <code>--dry-run</code> prints how many runs each arm would reuse and run. The report notes
-    that reused runs did not run interleaved with the new ones.
-  </p>
-  <p id="release">
-    Each run records the agent release it started on, checked at most once a minute, so an auto-update mid-comparison shows. When the arms
-    ran on different releases, the report adds <code>agent claude-code 2.1.316 ×12 2.1.319 ×12 release differs</code> and a note that
-    the delta mixes the change with the release. <code>--gate</code> repeats it, and <code>--promote</code> holds and exits 1
-    (<code>pareto.refused: "release_confound"</code>). <code>--json</code> has <code>report.agentVersions</code>. Releases change the
-    agent's own prompt and tools often (<a href="https://arxiv.org/abs/2610.37332">arXiv 2610.37332</a>).
-  </p>
-  <Code code={replay} />
-  <p id="iterate">
-    <code>--experiment exp_01 --retry-errors</code> runs again, in place, the runs of a stored comparison that errored or failed on
-    infrastructure; the old runs stay, marked superseded, so each task, arm and attempt counts once. <code>--failing exp_01</code> runs
-    only the tasks A failed in <code>exp_01</code> (<code>exp_01@bundle</code> for another arm). The difference holds on those tasks, but both
-    pass rates are conditioned on A having failed them, and the report says so. <code>--sample 20 --seed 7</code> runs the same random
-    20 tasks for the same seed.
-  </p>
-  <p id="repair">
-    <code>compare A B --repair 2</code> also measures how well the agent fixes its own failure. When the verifier fails, the agent gets
-    "Verification failed." in its own session (Claude Code <code>--resume</code>, <code>codex exec resume</code>) and tries again, up to 2
-    rounds. The hidden tests are out of the work tree while it works. <code>--repair-signal names</code> adds the failing test names read from
-    the verifier output. A round that edits, deletes or skips tests does not count as a repair. <code>--false-alarm 0.2</code> tells a
-    seeded 20% of passing runs they failed, to measure what a wrong signal breaks. The report adds, per arm, Seq@k (the share of tasks
-    solved by the k-th attempt), the repair rate, where the gain lands (EGS, LGS), rounds that changed nothing, cost to solve and, with
-    <code>--k 2</code> or more, a cost front against k independent attempts. <code>--repair-verdict</code> moves the verdict to the
-    outcome after repair.
-  </p>
-  <div class="note">
-    <p>
-      <strong>Known gap.</strong> A hook-captured session starts from the commit that was checked out when it began, so uncommitted changes at
-      that point are missing and <code>eval new</code> warns. <code>coding.sh run --</code> snapshots the whole working tree before and after,
-      and takes the instruction from the command's prompt argument, or from <code>--instruction</code>.
-    </p>
-  </div>
-
   <h2 id="workflows">Workflows</h2>
   <p>
     Multi-agent workflows have their own page: capturing runs, scoring them against seeded bugs, comparing two versions with
     <code>workflows compare</code>, and replaying from a recorded run with a control fork that measures the replay noise floor.
     See <a href="/docs/workflows">Workflow experiments</a>.
   </p>
+
+  <script is:inline define:vars={{ moved }}>
+    {
+      const id = decodeURIComponent(location.hash.slice(1));
+      const to = Object.keys(moved).find((path) => moved[path].includes(id));
+      if (to) location.replace(to + location.hash);
+    }
+  </script>
 </DocsLayout>

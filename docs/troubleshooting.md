@@ -170,7 +170,7 @@ The command line was wrong. Nothing ran.
 | `bad_directive`, `too_long`, `bad_query` | `--where: sort: and limit: apply to the whole query; put them outside an OR` | Put `sort:` and `limit:` at the top level, outside parentheses, OR and `-`. A query is at most 2,000 characters. |
 | `invalid_case` | (dataset add) a case that is not `{"input":…}` JSON | Fix the `--case` JSON. |
 | `invalid_grader` | `Invalid grader: …` | Fix the `--grader` JSON. See [Evals](https://coding.sh/docs/evals#graders). |
-| `invalid_matrix` | `Invalid matrix in matrix.json: …` (exp run) | Fix the spec: a cell that differs from the baseline outside `vary`, an override of graders or the dataset, or a bad axis or baseline. `--plan` checks it without running. See [Evals](https://coding.sh/docs/evals#matrix). |
+| `invalid_matrix` | `Invalid matrix in matrix.json: …` (exp run) | Fix the spec: a cell that differs from the baseline outside `vary`, an override of graders or the dataset, or a bad axis or baseline. `--plan` checks it without running. See [Experiments](https://coding.sh/docs/experiments#matrix). |
 | `invalid_driver` | (toolevals) `Unknown agent "…"` or a malformed driver | Use `agent:<id>[:model]` or `model:<provider>/<model>`. |
 | `invalid_arms` | (toolevals compare) a baseline or candidate that is not `<variant>@<driver>` | Use arm names from the experiment. |
 | `bundle_mismatch` | `exp_… has no runs of good; it ran base and cand. Name the arm: --failing exp_…@<bundle>` (compare --failing) | The experiment did not run the arm `--failing` picked. Name one it ran after `@`. |

@@ -1,9 +1,20 @@
 ---
-// Body: docs/reference/api.md. Edit that file; this page renders it at build time.
+// Body: docs/reference/api.md up to its "Read API" section, which continues on /docs/api/read and /docs/api/read/search. Edit that file; this page renders it at build time.
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import MdDoc from "../../components/docs/MdDoc.astro";
+import { laterPages } from "../../components/docs/markdown";
+
+// The Read API used to be on this page. An old /docs/api#<id> link follows its section.
+const moved = laterPages("reference/api.md");
 ---
 
 <DocsLayout>
   <MdDoc file="reference/api.md" />
+  <script is:inline define:vars={{ moved }}>
+    {
+      const id = decodeURIComponent(location.hash.slice(1));
+      const to = Object.keys(moved).find((path) => moved[path].includes(id));
+      if (to) location.replace(to + location.hash);
+    }
+  </script>
 </DocsLayout>
