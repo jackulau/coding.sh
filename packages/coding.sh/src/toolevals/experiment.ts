@@ -233,7 +233,7 @@ async function runTrialInner(o: TrialOpts): Promise<TrialResult> {
     if (job.driver.kind === "agent") finalText = lastAssistantText(trace.events, trace.sessions[0]?.id) || run.stdoutTail.trim();
 
     tap = await readTap(sb.tapLog);
-    result.checks = await runChecks(job.task, sb, finalText, o.judge);
+    result.checks = await runChecks(job.task, sb, finalText, o.judge, tap);
   } catch (e) {
     result.error ??= e instanceof Error ? e.message : String(e);
   } finally {

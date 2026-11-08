@@ -1,4 +1,4 @@
-// Task checks (§3): command, state, output and judge. Every check must pass.
+// Task checks (§3): command, state, output, judge and calls. Every check must pass.
 // Commands run with the tapped shim off PATH (checkbin/ instead), so checks
 // are never counted as agent calls. `${answers.*}` resolves from the hidden
 // answers.json written by setup.
@@ -8,8 +8,9 @@ import { deepEqual } from "../datasets/hash.ts";
 import { queryJsonPath } from "../graders/json-path.ts";
 import { sh } from "../runner/exec.ts";
 import { safeJoin } from "../runner/fsutil.ts";
+import { callsFromTap, checkCalls } from "./calls.ts";
 import { checkEnv, expandVars, suiteDirOf, type Sandbox } from "./sandbox.ts";
-import type { Check, CheckResult, JudgeFn, StateAssertion, ToolTask } from "./types.ts";
+import type { Check, CheckResult, JudgeFn, StateAssertion, TapRecord, ToolTask } from "./types.ts";
 
 const CHECK_TIMEOUT_MS = 5 * 60_000;
 
@@ -118,8 +119,12 @@ async function stateAssertion(a: StateAssertion, sb: Sandbox, answers: unknown):
   return undefined;
 }
 
-async function one(c: Check, task: ToolTask, sb: Sandbox, finalText: string, answers: unknown, judge?: JudgeFn): Promise<CheckResult> {
+async function one(c: Check, task: ToolTask, sb: Sandbox, finalText: string, answers: unknown, judge: JudgeFn | undefined, tap: readonly TapRecord[]): Promise<CheckResult> {
   try {
+    if (c.kind === "calls") {
+      const r = checkCalls(c, callsFromTap(tap));
+      return r.pass ? { kind: c.kind, pass: true } : { kind: c.kind, pass: false, detail: r.detail };
+    }
     if (c.kind === "command") {
       for (const [rel, src] of Object.entries(c.hiddenFiles ?? {})) {
         const from = isAbsolute(src) ? src : resolve(suiteDirOf(task), src);
@@ -163,9 +168,10 @@ async function one(c: Check, task: ToolTask, sb: Sandbox, finalText: string, ans
   }
 }
 
-export async function runChecks(task: ToolTask, sb: Sandbox, finalText: string, judge?: JudgeFn): Promise<CheckResult[]> {
+/** `tap`: the trial's target calls, which `calls` checks read (none for a no-op trial). */
+export async function runChecks(task: ToolTask, sb: Sandbox, finalText: string, judge?: JudgeFn, tap: readonly TapRecord[] = []): Promise<CheckResult[]> {
   const answers = await loadAnswers(sb);
   const out: CheckResult[] = [];
-  for (const c of task.checks) out.push(await one(c, task, sb, finalText, answers, judge));
+  for (const c of task.checks) out.push(await one(c, task, sb, finalText, answers, judge, tap));
   return out;
 }

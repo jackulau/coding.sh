@@ -124,6 +124,13 @@ contains = ["${answers.slowest.sessionId}", "${answers.slowest.tool}"]
 kind = "state"
 assert = [{ command = "coding.sh sessions --json", jsonPath = "$.length", equals = 12 }]
 
+[[check]]
+kind = "calls"                           # the target calls the tap recorded
+must = [{ tool = "sessions", args = { since = "~d", limit = "<=50" } }]
+mustNot = [{ tool = "purge" }]
+max = 6
+order = ["sessions", "show"]
+
 [budget]
 turns = 25                               # model calls
 tokens = 300000                          # input + output, cache reads included
@@ -139,7 +146,8 @@ minTargetCalls = 2                       # reference count, used for the efficie
 | `command` | `run` exits 0 in the sandbox after the agent stops | `hiddenFiles` are copied in only at check time, as in `VerifierSpec`. |
 | `state` | Every assertion holds: file `exists` / `contains` / `regex` / `jsonPath`+`equals`, or a command's stdout matches | Commands run with the shim removed from `PATH`, so checks are not counted as agent calls. |
 | `output` | The final assistant message matches `equals`, `contains` (all), `regex` or `jsonPath` after `normalize` (`trim`, `lower`, `collapse-ws`) | `${answers.*}` resolves from a hidden `answers.json` written by setup. |
-| `judge` | A judge from `src/judge` returns pass | Results are flagged `uncalibrated` until the judge's κ reaches the threshold. Prefer the other three kinds. |
+| `judge` | A judge from `src/judge` returns pass | Results are flagged `uncalibrated` until the judge's κ reaches the threshold. Prefer the other kinds. |
+| `calls` | Every `must` match has a call, no call matches a `mustNot`, there are at most `max` calls, and the `order` tools are called in that order (other calls may come between) | Reads the trial's target calls from the tap. A match is `{ tool, args }`; `args` match partially: only the keys given are compared, a key may be a dotted path (`where.agent`), `"~text"` is a substring, `"<=N"`, `">=N"`, `"<N"`, `">N"` bound a number. The tool is the MCP tool name, the CLI subcommand words (`sessions list`; args are the flags, `--limit 5` gives `limit = "5"`, a bare `--json` gives `json = true`, and `argv` is the whole list), or `GET /path/{id}` for HTTP, which records no args. The MCP tap keeps each call's arguments, redacted, up to 4 KB. The detail names the first match that failed. |
 
 Every check must pass, and the trial must stay within budget. A trial that exceeds a budget is a
 failure with `budgetExceeded` set to the first exceeded key. Budgets are enforced where the driver
@@ -234,7 +242,8 @@ target tool was called.
   stdin, stdout and stderr through unchanged.
 - **MCP proxy** (`tap mcp`): forwards every JSON-RPC message. Per request it records `method`,
   `tool`, request and response bytes, `durationMs`, any JSON-RPC `error.code`, `result.isError`,
-  and `schemaViolations`. The proxy validates `tools/call` arguments against the tool's
+  and `schemaViolations`, and for `tools/call` the `args`, redacted and left out above 4 KB of
+  JSON. The proxy validates `tools/call` arguments against the tool's
   `inputSchema` itself, with the subset validator in `jsonschema.ts` (`type`, `required`,
   `properties`, `enum`, `additionalProperties`, `items`, `minimum`/`maximum`). It also applies the
   variant overrides to `tools/list`.
@@ -669,7 +678,9 @@ export type Check =
   | { kind: "state"; assert: StateAssertion[] }
   | { kind: "output"; equals?: string; contains?: string[]; regex?: string; jsonPath?: string;
       jsonEquals?: unknown; normalize?: ("trim" | "lower" | "collapse-ws")[] }
-  | { kind: "judge"; judge: string; rubric: string };
+  | { kind: "judge"; judge: string; rubric: string }
+  | { kind: "calls"; must?: CallMatch[]; mustNot?: CallMatch[]; max?: number; order?: string[] };
+export interface CallMatch { tool: string; args?: Record<string, unknown> }
 
 export interface ToolTask {                 // structurally a Case: id, input (= instruction), tags, metadata
   id: string; target: string; split: "dev" | "heldout"; tags: string[];

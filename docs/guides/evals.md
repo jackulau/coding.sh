@@ -209,9 +209,12 @@ tasks, from a stub CLI to the compare report.
 
 `coding.sh exp run` runs a command or HTTP task over a dataset. Graders can be deterministic
 (exact, contains, regex, numeric, similarity, JSON schema, JSON path, progress, executability,
-agent-slop), a command, or an LLM judge. `progress` scores the run's trace: the share of the run
+calls, agent-slop), a command, or an LLM judge. `progress` scores the run's trace: the share of the run
 before its first derail. `executability` scores the share of tool calls before the first one the
-harness refused to run (see [Executability](explore.md#executability)). `agent-slop` flags placeholder code, type escapes, swallowed errors and other patterns in
+harness refused to run (see [Executability](explore.md#executability)). `calls` checks the tool
+calls in the trace, with the same `must`, `mustNot`, `max` and `order` fields as the tool-eval
+`calls` check ([Tool evals](../TOOL-EVALS.md#3-task-format)); an MCP tool matches by its own name
+or by the agent's (`mcp__github__create_issue`). `agent-slop` flags placeholder code, type escapes, swallowed errors and other patterns in
 the lines a diff adds (see [Agent slop](#agent-slop)).
 
 `coding.sh exp compare A B` reports the paired bootstrap CI of the difference, an exact McNemar

@@ -6,6 +6,7 @@ import type { BootstrapResult, Interval } from "../stats/interval.ts";
 import type { McNemarResult } from "../stats/tests.ts";
 import type { VerdictKind } from "../runner/experiment.ts";
 import type { Divergence } from "../runner/divergence.ts";
+import type { CallsSpec } from "./calls.ts";
 
 // ------------------------------------------------------------ targets
 
@@ -109,7 +110,8 @@ export type Check =
       jsonEquals?: unknown;
       normalize?: ("trim" | "lower" | "collapse-ws")[];
     }
-  | { kind: "judge"; judge: string; rubric: string };
+  | { kind: "judge"; judge: string; rubric: string }
+  | ({ kind: "calls" } & CallsSpec);
 
 /** Structurally a Case: id, input (= instruction), tags, metadata. */
 export interface ToolTask {
@@ -150,6 +152,8 @@ export interface TapRecord {
   // mcp
   method?: string;
   tool?: string;
+  /** tools/call arguments, redacted; left out above 4 KB of JSON. */
+  args?: Record<string, unknown>;
   rpcErrorCode?: number;
   isError?: boolean;
   schemaViolations?: string[];

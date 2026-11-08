@@ -9,6 +9,7 @@ import { queryJsonPath } from "./json-path.ts";
 import { detectDerails, DERAIL_FLAG_LIST, progressMetrics } from "../core/derail.ts";
 import { aucPec, executability, INVALID_KINDS, type InvalidKind } from "../core/executability.ts";
 import type { AgentEvent } from "../schema/index.ts";
+import { callsFromEvents, callsSpecProblems, checkCalls, type CallsSpec } from "../toolevals/calls.ts";
 import { looksLikeDiff, selectSlopRules, slopFindings, slopScore, slopSummary, traceDiffs } from "./slop.ts";
 
 export interface NormalizeOpts {
@@ -367,6 +368,31 @@ export function executabilityGrader(spec: Omit<ExecutabilitySpec, "kind"> = {}):
       : `all ${x.steps} tool call${x.steps === 1 ? "" : "s"} executable`;
     if (why.length > 160) why = `${why.slice(0, 159)}…`;
     return result(aucPec(x), x.invalid <= max, why);
+  });
+}
+
+// ---------------------------------------------------------------- calls
+
+export interface CallsGraderSpec extends CallsSpec {
+  kind: "calls";
+  name?: string;
+}
+
+/**
+ * The tools the task's trace called (tool.start events): must, mustNot, max
+ * and order, with partial argument matches (src/toolevals/calls.ts). MCP
+ * tools match by their own name or the agent's (`mcp__github__create_issue`).
+ */
+export function callsGrader(spec: Omit<CallsGraderSpec, "kind">): Grader {
+  const { name: _n, ...rest } = spec;
+  const problems = callsSpecProblems(rest as Record<string, unknown>);
+  if (problems.length) throw new RangeError(`calls grader ${problems.join("; ")}`);
+  return makeGrader("calls", spec, (ctx) => {
+    const events = (ctx.trace ?? []).filter((e) => typeof e.ts === "number") as unknown as AgentEvent[];
+    if (!events.length) return result(0, false, "no timed trace to check tool calls on");
+    const calls = callsFromEvents(events);
+    const r = checkCalls(rest, calls);
+    return result(r.pass ? 1 : 0, r.pass, r.detail ?? `${calls.length} call${calls.length === 1 ? "" : "s"} as expected`);
   });
 }
 

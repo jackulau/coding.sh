@@ -18,6 +18,7 @@ import { createServer as createHttpServer, type IncomingMessage, type ServerResp
 import { createServer as createNetServer, type Socket } from "node:net";
 import { join } from "node:path";
 import type { Readable, Writable } from "node:stream";
+import { createRedactor, type Redactor } from "../../core/redact.ts";
 import { schemaViolations } from "../jsonschema.ts";
 import { errorResponse, isNotification, isObj, isRequest, isResponse, LineSplitter, RPC, wireBytes, type RpcRequest, type RpcResponse } from "../mcp/jsonrpc.ts";
 import { parseMcpBody } from "../mcp/http.ts";
@@ -67,11 +68,23 @@ export interface McpTapOpts {
 interface Pending {
   method: string;
   tool?: string;
+  args?: Record<string, unknown>;
   ts: number;
   t0: number;
   requestBytes: number;
   violations?: string[];
   unknownTool?: boolean;
+}
+
+/** Above this much JSON a call's arguments are left out of the tap. */
+const ARGS_MAX_BYTES = 4096;
+let redactor: Redactor | undefined;
+
+/** A tools/call's arguments for the tap (calls checks match on them): secrets redacted, small ones only. */
+function tapArgs(v: unknown): Record<string, unknown> | undefined {
+  if (!isObj(v)) return undefined;
+  const r = (redactor ??= createRedactor()).value(v);
+  return Buffer.byteLength(JSON.stringify(r), "utf8") <= ARGS_MAX_BYTES ? r : undefined;
 }
 
 const META_METHODS = new Set(["initialize", "server/discover", "tools/list", "ping", "logging/setLevel"]);
@@ -102,6 +115,7 @@ export class McpTap {
       ...r,
     };
     if (p.tool !== undefined) rec.tool = p.tool;
+    if (p.args) rec.args = p.args;
     if (p.violations?.length) rec.schemaViolations = p.violations;
     this.o.record(rec);
   }
@@ -119,6 +133,7 @@ export class McpTap {
       const params = isObj(msg.params) ? msg.params : {};
       const name = typeof params.name === "string" ? params.name : undefined;
       p.tool = name;
+      p.args = tapArgs(params.arguments);
       if (name === undefined || this.hidden.has(name)) {
         const reply = errorResponse(msg.id, RPC.INVALID_PARAMS, `Unknown tool: ${name ?? "(missing name)"}`);
         this.emit(p, { class: "invalid", reason: "unknown-tool", rpcErrorCode: RPC.INVALID_PARAMS }, wireBytes(reply));

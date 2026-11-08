@@ -9,6 +9,7 @@ import { createPairwiseJudge, PAIRWISE_KIND, type PairwiseJudge } from "../judge
 import { anthropicProvider, openAICompatibleProvider, type ChatProvider } from "../judge/providers.ts";
 import {
   agentSlopGrader,
+  callsGrader,
   containsGrader,
   exactGrader,
   executabilityGrader,
@@ -19,6 +20,7 @@ import {
   regexGrader,
   similarityGrader,
   type AgentSlopSpec,
+  type CallsGraderSpec,
   type ContainsSpec,
   type ExactSpec,
   type ExecutabilitySpec,
@@ -105,6 +107,7 @@ export type GraderSpec =
   | ProgressSpec
   | ExecutabilitySpec
   | SimilaritySpec
+  | CallsGraderSpec
   | AgentSlopSpec
   | CommandGraderSpec
   | ModuleGraderSpec
@@ -176,6 +179,8 @@ export async function createGrader(spec: GraderSpec, deps: GraderDeps = {}): Pro
       return executabilityGrader(rest as Omit<ExecutabilitySpec, "kind">);
     case "similarity":
       return similarityGrader(rest as Omit<SimilaritySpec, "kind">);
+    case "calls":
+      return callsGrader(rest as Omit<CallsGraderSpec, "kind">);
     case "agent-slop":
       return agentSlopGrader(rest as Omit<AgentSlopSpec, "kind">);
     case "command":

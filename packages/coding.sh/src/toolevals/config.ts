@@ -7,6 +7,7 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parseToml, type TomlTable } from "../core/toml.ts";
+import { callsSpecProblems } from "./calls.ts";
 import { DEFAULT_USAGE_PATTERNS } from "./tap/cli.ts";
 import type { Budget, Check, Driver, Prices, StateAssertion, Target, ToolTask, Variant } from "./types.ts";
 
@@ -152,6 +153,18 @@ function parseCheck(c: unknown, where: string): Check {
     case "judge":
       if (typeof c.judge !== "string" || typeof c.rubric !== "string") throw new ToolEvalsConfigError(`${where}: judge check needs judge and rubric`);
       return { kind: "judge", judge: c.judge, rubric: c.rubric };
+    case "calls": {
+      const problems = callsSpecProblems(c);
+      if (problems.length) throw new ToolEvalsConfigError(`${where}: calls check ${problems.join("; ")}`);
+      const matches = (v: unknown) => (v as TomlTable[]).map((m) => ({ tool: m.tool as string, ...(isTable(m.args) ? { args: m.args as Record<string, unknown> } : {}) }));
+      return {
+        kind: "calls",
+        ...(c.must !== undefined ? { must: matches(c.must) } : {}),
+        ...(c.mustNot !== undefined ? { mustNot: matches(c.mustNot) } : {}),
+        ...(typeof c.max === "number" ? { max: c.max } : {}),
+        ...(c.order !== undefined ? { order: c.order as string[] } : {}),
+      };
+    }
     default:
       throw new ToolEvalsConfigError(`${where}: unknown check kind ${JSON.stringify(c.kind)}`);
   }

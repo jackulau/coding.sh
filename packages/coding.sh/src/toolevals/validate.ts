@@ -111,8 +111,9 @@ export async function validateToolTask(task: ToolTask, target: Target, o: { root
         last = r.stdoutTail;
       }
       for (const c of closers.splice(0)) await c().catch(() => {});
-      ref.targetCalls = (await readTap(sb.tapLog)).filter((t) => t.class !== "meta").length;
-      ref.checks = await runChecks(task, sb, last);
+      const tap = await readTap(sb.tapLog);
+      ref.targetCalls = tap.filter((t) => t.class !== "meta").length;
+      ref.checks = await runChecks(task, sb, last, undefined, tap);
       ref.pass = ref.checks.length > 0 && ref.checks.every((c) => c.pass);
       if (!ref.pass) problems.push(`the reference trial fails: ${ref.checks.filter((c) => !c.pass).map((c) => `${c.kind}${c.detail ? ` (${c.detail})` : ""}`).join("; ")}`);
     } catch (e) {
