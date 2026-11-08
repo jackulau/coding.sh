@@ -24,5 +24,5 @@ export { allocateProportional, binStrata, hoeffdingBudget, judgeBreakEven, label
 export type { LabelEfficiency, StratifiedEstimate, StratumBin, StratumCount } from "./stratified.ts";
 export { createEDetector, eDetector, plateauRoundsNeeded } from "./edetector.ts";
 export type { EBet, EDetector, EDetectorOpts, EDetectorResult } from "./edetector.ts";
-export { gainShares, passAtK, protocolFront, rankAgreement, seqCurve, unchangedRate } from "./seqk.ts";
+export { gainShares, passAtK, passAllK, protocolFront, rankAgreement, seqCurve, unchangedRate } from "./seqk.ts";
 export type { ProtocolPoint, RankAgreement, RankFlip, SeqCase, SeqPoint } from "./seqk.ts";

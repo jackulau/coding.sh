@@ -1,7 +1,7 @@
 // AC-8: Seq@K curve, unbiased pass@k, gain shares, protocol fronts, rank agreement (arXiv 2610.37859).
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { gainShares, mulberry32, passAtK, protocolFront, rankAgreement, seqCurve, unchangedRate, type SeqCase } from "../../src/stats/index.ts";
+import { gainShares, mulberry32, passAllK, passAtK, protocolFront, rankAgreement, seqCurve, unchangedRate, type SeqCase } from "../../src/stats/index.ts";
 
 const close = (a: number | undefined, b: number, eps = 1e-9) => assert.ok(a !== undefined && Math.abs(a - b) <= eps, `${a} ≉ ${b}`);
 
@@ -20,6 +20,40 @@ function bruteForce(n: number, c: number, k: number): number {
   walk(0, k, false);
   return hit / all;
 }
+
+/** Brute force: share of the C(n, k) k-subsets that hold only passes. */
+function bruteForceAll(n: number, c: number, k: number): number {
+  let hit = 0;
+  let all = 0;
+  const walk = (start: number, left: number, every: boolean) => {
+    if (left === 0) {
+      all++;
+      if (every) hit++;
+      return;
+    }
+    for (let i = start; i <= n - left; i++) walk(i + 1, left - 1, every && i < c);
+  };
+  walk(0, k, true);
+  return hit / all;
+}
+
+describe("passAllK (pass^k, tau-bench)", () => {
+  it("matches the known values", () => {
+    close(passAllK(3, 3, 3), 1);
+    close(passAllK(3, 2, 3), 0);
+    close(passAllK(10, 3, 1), 0.3);
+    close(passAllK(4, 3, 2), 3 / 6); // C(3,2)/C(4,2)
+  });
+
+  it("matches brute force for every n ≤ 8", () => {
+    for (let n = 1; n <= 8; n++) for (let c = 0; c <= n; c++) for (let k = 1; k <= n; k++) close(passAllK(n, c, k), bruteForceAll(n, c, k), 1e-12);
+  });
+
+  it("rejects k outside [1, n]", () => {
+    assert.throws(() => passAllK(3, 1, 4), RangeError);
+    assert.throws(() => passAllK(3, 1, 0), RangeError);
+  });
+});
 
 describe("passAtK (Chen et al. 2021, Eq. 1)", () => {
   it("matches the known values", () => {

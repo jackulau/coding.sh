@@ -27,6 +27,20 @@ export function passAtK(n: number, c: number, k: number): number {
   return 1 - fail;
 }
 
+/**
+ * Unbiased pass^k from n samples of which c passed (tau-bench, Yao et al.,
+ * arXiv 2406.12045): the chance that k attempts drawn without replacement all
+ * pass, C(c, k) / C(n, k), computed as ∏_{i=0}^{k−1} (c − i) / (n − i).
+ */
+export function passAllK(n: number, c: number, k: number): number {
+  if (!Number.isInteger(n) || !Number.isInteger(c) || !Number.isInteger(k)) throw new RangeError(`passAllK: n, c and k must be integers (got ${n}, ${c}, ${k})`);
+  if (k < 1 || k > n) throw new RangeError(`passAllK: k must be in [1, n] (got k=${k}, n=${n})`);
+  if (c < 0 || c > n) throw new RangeError(`passAllK: c must be in [0, n] (got c=${c}, n=${n})`);
+  let all = 1;
+  for (let i = 0; i < k; i++) all *= (c - i) / (n - i);
+  return all;
+}
+
 /** One task's sequential trials: per trial, the 1-based attempt that first passed, or null. */
 export interface SeqCase {
   id: string;
