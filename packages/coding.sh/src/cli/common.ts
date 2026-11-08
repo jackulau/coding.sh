@@ -44,6 +44,12 @@ export interface AutoIngestOptions {
    * a background `coding.sh ingest` and a note to stderr. Unset: wait for all.
    */
   budgetMs?: number;
+  /**
+   * How long to wait for another ingest's lock before reading what is indexed
+   * (default 1.5 s, or the budget when smaller). A command that needs the session
+   * that just ended (`eval init --sessions`) waits for the ingest its hook started.
+   */
+  lockWaitMs?: number;
   /** Where the "not yet ingested" note goes. */
   out?: Output;
   /** Environment of the background ingest (default: process.env). */
@@ -109,7 +115,7 @@ export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promi
     const reparsing = isLocked(ctx.paths.reparseLock);
     try {
       const r = await ctx.ingest({
-        lock: { waitMs: reparsing ? 0 : Math.min(1500, o.budgetMs ?? 1500) },
+        lock: { waitMs: o.lockWaitMs ?? (reparsing ? 0 : Math.min(1500, o.budgetMs ?? 1500)) },
         ...(deadline !== undefined ? { deadline } : {}),
         ...(o.signal ? { signal: o.signal } : {}),
         ...(o.onProgress ? { onProgress: o.onProgress } : {}),

@@ -99,6 +99,9 @@ async function askSource(c: CommandContext, root: string, o: Partial<InitOpts>):
   return { ...o, source: "sessions" };
 }
 
+/** How long `eval init --sessions` waits for an ingest already running before reading the index. */
+const SESSION_INGEST_WAIT_MS = 30_000;
+
 function defaultName(o: Partial<InitOpts>): string {
   if (o.source === "skill" && o.skill) return basename(o.skill.replace(/\/SKILL\.md$/i, "").replace(/\/+$/, ""));
   if (o.source === "cases" && o.casesFile) return basename(o.casesFile, extname(o.casesFile));
@@ -150,7 +153,8 @@ export async function evalInit(c: CommandContext): Promise<number> {
   o.signal = c.signal;
 
   const r = await withContext(c, async (ctx) => {
-    if (o.source === "sessions") await autoIngest(ctx);
+    // The session that just ended may still be in the ingest its hook started: wait for it, then ingest the rest.
+    if (o.source === "sessions") await autoIngest(ctx, { lockWaitMs: SESSION_INGEST_WAIT_MS });
     // `latest` and id prefixes, as in `eval new`.
     if (o.sessionIds) o.sessionIds = await Promise.all(o.sessionIds.map(async (id) => (await resolveSession(ctx, id)).id));
     if (o.draft) out.note(`Drafting with ${o.provider!.name} ${o.provider!.model}…`);

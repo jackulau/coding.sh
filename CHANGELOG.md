@@ -131,6 +131,7 @@ coding.sh runs on Windows, and CI tests it there.
 - **Evals.** `eval validate` shows the last 12 lines of the verifier's output when a check goes the wrong way (the reference fails, the no-op or a near-miss passes, or setup fails), once per kind of check, and `--json` carries every step with its output in `steps`. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md)
 - **Evals.** `eval init --force` no longer deletes your work: it stops when the suite holds a file `eval init` did not write or that you changed since (a `reference.patch` you added, a prompt you fixed) and lists them. `--force-all` deletes those too. `evals/<name>/.eval-init.json` records what `eval init` wrote. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#your-agents-failed-sessions)
 - **Evals.** `eval init --skill <dir>` uses the skill's own `triggers.toml` when it has one and you give no prompts and no `--draft`: `suite.json` points at it instead of a TODO template. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#a-skill)
+- **Evals.** `eval init --sessions` and `--session latest` include a session that just ended: they wait up to 30 seconds for the ingest its hook started, then ingest the rest, instead of skipping the ingest when its lock is busy after 1.5 seconds. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#your-agents-failed-sessions)
 
 ## [0.1.1] - 2026-11-07
 

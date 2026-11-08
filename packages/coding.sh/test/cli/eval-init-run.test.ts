@@ -3,7 +3,7 @@
 // TODO prompts, and a hand-written repo-task suite run by a fake agent (the
 // "wrapper" agent from a harness bundle) with a `judge grade` verifier.
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -137,6 +137,39 @@ describe("eval init: no source", () => {
     assert.equal(r.status, 1);
     assert.match(r.stderr, /No suites in/);
     assert.match(r.stderr, /coding\.sh eval init/);
+  });
+});
+
+describe("eval init --sessions: a session that just ended", () => {
+  it("waits for the ingest already running instead of missing the session", async (t) => {
+    if (!gitBin) return t.skip("needs git");
+    const repo = join(root, "fresh");
+    mkdirSync(repo);
+    writeFileSync(join(repo, "sum.js"), "module.exports = (a, b) => a - b;\n");
+    writeFileSync(join(repo, "test.js"), 'if (require("./sum.js")(2, 3) !== 5) process.exit(1);\n');
+    const git = (...a: string[]) => assert.equal(spawnSync(gitBin, ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: repo, env }).status, 0, a.join(" "));
+    git("init", "-q");
+    git("add", "-A");
+    git("commit", "-qm", "init");
+    // The agent's session ends; its lines sit in the spool for the ingest the hook would start.
+    const quiet = { ...env, CODING_SH_NO_AUTO_INGEST: "1" };
+    const fix = 'require("fs").writeFileSync("sum.js","module.exports=(a,b)=>a*b;\\n")';
+    assert.equal(spawnSync(process.execPath, ["--no-warnings", CLI, "run", "--", process.execPath, "-e", fix, "make sum add"], { env: quiet, cwd: repo, encoding: "utf8" }).status, 0);
+    git("checkout", "-q", "sum.js");
+    // That ingest holds the lock for 2.5 s, longer than a read waits.
+    const { acquireLock } = await import("../../src/core/lock.ts");
+    const lock = await acquireLock(join(home, ".coding.sh", "spool", ".ingest.lock"));
+    const released = new Promise<void>((done) => setTimeout(() => (lock.release(), done()), 2500));
+    const child = spawn(process.execPath, ["--no-warnings", CLI, "eval", "init", "fresh", "--session", "latest", "--verifier", "node test.js", "--json"], { env: quiet, cwd: repo });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => (stdout += d));
+    child.stderr.on("data", (d) => (stderr += d));
+    const code = await new Promise<number | null>((done) => child.on("close", done));
+    await released;
+    assert.equal(code, 0, stdout + stderr);
+    const r = JSON.parse(stdout) as { tasks: { name: string }[] };
+    assert.deepEqual(r.tasks.map((x) => x.name), ["make-sum-add"]);
   });
 });
 
