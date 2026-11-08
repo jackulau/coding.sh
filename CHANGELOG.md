@@ -12,6 +12,7 @@ grouped by area, with links to the docs for the details.
 ### Fixed
 
 - **Sessions.** `sessions --where id:<id>` and `export --where id:<id>` find a subagent's session, such as a Claude Code workflow agent's, as `show <id>` does. Both commands leave out subagents unless you pass `--subagents`, and that default hid every session the query named. A query with `id:`, `parent:`, `is:root` or `is:child` now decides that itself, so `--where is:child` lists subagents too. [Query and export](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md#filter-with---where).
+- **Workflows.** A Claude Code workflow run that is still going is named by its script's `meta.name`, read from the copy of the script Claude Code keeps in the session's `workflows/scripts/` folder, instead of by its `wf_…` id. Claude Code writes the record, which held the only name coding.sh read, when the run ends. `workflows import` reads runs it stored before this fix again once. [Workflows](https://github.com/jackulau/coding.sh/blob/main/docs/design/workflows.md#21-claude-code-workflows).
 
 ## [0.1.4] - 2026-11-08
 

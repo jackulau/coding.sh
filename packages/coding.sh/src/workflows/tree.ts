@@ -19,6 +19,7 @@ import {
   parseJournal,
   recordAgents,
   recordStatus,
+  scanMetaName,
   scanPhases,
   scriptHashOf,
   tsOf,
@@ -403,8 +404,12 @@ function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
     const lastEnd = Math.max(...timed.map((a) => a.endedAt ?? a.startedAt!));
     endedAt = endedAt === undefined ? lastEnd : Math.max(endedAt, lastEnd);
   }
-  const scriptPath = s(record.scriptPath) ?? parsed.scriptPath;
-  const name = s(record.workflowName) ?? s(record.name) ?? (scriptPath ? basename(scriptPath).replace(/\.[cm]?[jt]s$/, "") : runId);
+  // The record is written when the run ends; until then the name comes from the script's meta,
+  // else its file name (Claude Code's persisted copy is <meta.name>-<runId>.js).
+  const scriptPath = s(record.scriptPath) ?? parsed.scriptPath ?? src.scriptPath;
+  const stem = scriptPath ? basename(scriptPath).replace(/\.[cm]?[jt]s$/, "") : undefined;
+  const fileName = stem?.endsWith(`-${runId}`) ? stem.slice(0, -runId.length - 1) : stem;
+  const name = s(record.workflowName) ?? s(record.name) ?? (src.script !== undefined ? scanMetaName(src.script) : undefined) ?? s(fileName) ?? runId;
   wf.name = name;
   wf.startedAt = startedAt;
   if (endedAt !== undefined) wf.endedAt = endedAt;

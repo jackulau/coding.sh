@@ -305,6 +305,8 @@ export interface TreeSources {
   hostSessionId?: string;
   /** Script text, for the script hash and the static phase() scan. */
   script?: string;
+  /** Where the script was read from (the record's or journal's path, else Claude Code's persisted copy). */
+  scriptPath?: string;
   /** Run id override (e.g. our CODING_SH_WORKFLOW_RUN_ID). */
   runId?: string;
   framework?: WorkflowFramework;

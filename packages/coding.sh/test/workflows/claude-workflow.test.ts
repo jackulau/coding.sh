@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { findClaudeWorkflowDirs, loadClaudeWorkflowDir, parseJournal, recordStatus, scanPhases } from "../../src/workflows/sources/claude-workflow.ts";
+import { findClaudeWorkflowDirs, loadClaudeWorkflowDir, parseJournal, recordStatus, scanMetaName, scanPhases } from "../../src/workflows/sources/claude-workflow.ts";
 import { buildWorkflowTree, type WorkflowTree } from "../../src/workflows/tree.ts";
 import { AGENTS, RESUMED, RUN, RUN_OUTPUT, SCRIPT, SID, T0, writeClaudeWorkflowFixture } from "./_fixtures.ts";
 
@@ -89,6 +89,22 @@ describe("parseJournal", () => {
     assert.equal(recordStatus("killed"), "aborted");
     assert.equal(recordStatus("weird"), undefined);
     assert.deepEqual(scanPhases(SCRIPT), ["Find", "Fix", "Verify"]);
+  });
+
+  it("scans meta.name, never a phase's name", () => {
+    assert.equal(scanMetaName(SCRIPT), "review");
+    assert.equal(scanMetaName("export const meta = {\n  description: 'Fix it',\n  name: 'fix-loop',\n  phases: [{ title: 'Find' }],\n}"), "fix-loop");
+    assert.equal(scanMetaName("export const meta = { phases: [{ name: 'Find' }], name: 'late' }"), undefined);
+    assert.equal(scanMetaName("phase('Find'); const name = 'x'"), undefined);
+  });
+
+  it("names a run by its record, else its script's meta.name, else the script file without the run id", () => {
+    const journal = '{"type":"launched"}\n';
+    const name = (src: Parameters<typeof buildWorkflowTree>[0]) => buildWorkflowTree({ journal, runId: "wf_1", ...src }).run.name;
+    assert.equal(name({ record: { workflowName: "from-record" }, script: SCRIPT }), "from-record");
+    assert.equal(name({ script: SCRIPT, scriptPath: "/s/other-wf_1.js" }), "review");
+    assert.equal(name({ script: "phase('A')", scriptPath: "/s/fix-loop-wf_1.js" }), "fix-loop");
+    assert.equal(name({}), "wf_1");
   });
 });
 

@@ -65,6 +65,15 @@ export function scanPhases(script: string): string[] {
   return out;
 }
 
+/**
+ * `meta.name` from `export const meta = { name: '…', … }` (static scan): a `name` key before any
+ * nested `{`, so a phase's name is never taken for the workflow's.
+ */
+export function scanMetaName(script: string): string | undefined {
+  const m = /\bmeta\s*=\s*\{[^{}]*?\bname\s*:\s*(['"`])((?:(?!\1)[^\\\n]|\\.)*)\1/.exec(script);
+  return m?.[2] || undefined;
+}
+
 // ---------------------------------------------------------------- journal
 
 export interface JournalCall {
@@ -407,6 +416,13 @@ export function describeRunDir(runDir: string): ClaudeWorkflowDir {
   return { runDir, runId, sessionDir, hostSessionId: basename(sessionDir) };
 }
 
+/** The script Claude Code persists for a run: <session dir>/workflows/scripts/<meta.name>-<runId>.js. */
+async function persistedScript(d: ClaudeWorkflowDir): Promise<string | undefined> {
+  const dir = join(d.sessionDir, "workflows", "scripts");
+  const f = (await ls(dir)).find((x) => x.endsWith(`-${d.runId}.js`));
+  return f === undefined ? undefined : join(dir, f);
+}
+
 /**
  * Every Claude Code workflow run dir under `root`. `root` may be the projects
  * dir, one project (slug) dir, one session dir, or a run dir itself.
@@ -443,9 +459,15 @@ export async function findClaudeWorkflowDirs(root: string): Promise<ClaudeWorkfl
   return out;
 }
 
-/** Cheap change detector: journal + record sizes and mtimes. */
+/**
+ * Bump when the same run dir builds a different run, so `workflows import` reads stored runs again.
+ * 2: a running run is named by its persisted script's meta.name, not its id.
+ */
+const IMPORT_VERSION = 2;
+
+/** Cheap change detector: journal + record sizes and mtimes, and IMPORT_VERSION. */
 export async function runDirSignature(d: ClaudeWorkflowDir): Promise<string> {
-  const parts: (string | number)[] = [];
+  const parts: (string | number)[] = [`v${IMPORT_VERSION}`];
   for (const p of [join(d.runDir, "journal.jsonl"), join(d.sessionDir, "workflows", `${d.runId}.json`)]) {
     try {
       const st = await stat(p);
@@ -537,7 +559,9 @@ export async function loadClaudeWorkflowDir(runDirOrDesc: string | ClaudeWorkflo
   }
   const parsed = parseJournal(journal);
   let script = s(record?.script);
-  const scriptPath = s(record?.scriptPath) ?? parsed.scriptPath;
+  // The journal's launch line names no script and the record is written when the run ends, so
+  // a running run has only the copy Claude Code keeps in workflows/scripts/<name>-<runId>.js.
+  const scriptPath = s(record?.scriptPath) ?? parsed.scriptPath ?? (script === undefined ? await persistedScript(dir) : undefined);
   if (script === undefined && scriptPath) {
     try {
       script = await readFile(scriptPath, "utf8");
@@ -597,6 +621,7 @@ export async function loadClaudeWorkflowDir(runDirOrDesc: string | ClaudeWorkflo
   };
   if (record) sources.record = record;
   if (script !== undefined) sources.script = script;
+  if (scriptPath !== undefined) sources.scriptPath = scriptPath;
   if (opts.concurrencyCap !== undefined) sources.concurrencyCap = opts.concurrencyCap;
   return { dir, sources, events, sessions, signature: await runDirSignature(dir) };
 }

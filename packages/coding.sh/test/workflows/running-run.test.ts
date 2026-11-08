@@ -35,6 +35,16 @@ function cli(args: string[]): any {
 }
 
 describe("a workflow run, still running", () => {
+  it("is named by its script's meta.name, read from the script Claude Code persisted", () => {
+    const [run] = cli(["workflows", "list", "--no-import"]).runs;
+    assert.equal(run.id, RUN);
+    assert.equal(run.status, "running");
+    assert.equal(run.name, "demo-review");
+    const shown = cli(["workflows", "show", RUN]);
+    assert.equal(shown.run.name, "demo-review");
+    assert.deepEqual(shown.nodes.filter((n: { kind: string }) => n.kind === "workflow").map((n: { name: string }) => n.name), ["demo-review"]);
+  });
+
   it("sessions --where id: finds a workflow agent's session, as show does", () => {
     assert.equal(cli(["show", AGENT_SESSION, "-n", "1"]).session.id, AGENT_SESSION);
     const ids = (args: string[]) => cli(["sessions", ...args]).sessions.map((s: { id: string }) => s.id);

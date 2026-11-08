@@ -63,6 +63,11 @@ Three sources are merged by time and id:
 When the journal has no timestamps, an agent's start and end are taken from the first and last line
 of its transcript.
 
+A run is named by the persisted record's `workflowName`. Claude Code writes that record when the run
+ends and the journal's `launched` line names no script, so a running run is named by the `meta.name`
+in the script Claude Code keeps at `<session dir>/workflows/scripts/<name>-<runId>.js`, else by that
+file's name without `-<runId>`. Its id is the name only when neither exists.
+
 A stopped run resumed with `resumeFromRunId` set to its own id keeps its run dir: the journal grows
 across segments with one `launched` line and no timestamps, and the persisted record covers only
 the last segment (`startTime`, `durationMs`). The run's start is the earliest of the record's start
