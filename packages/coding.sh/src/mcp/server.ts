@@ -38,7 +38,8 @@ const BASE_INSTRUCTIONS = [
   "Start with session_current for the session you are in, sessions_list or search to find others, then session_get for a digest.",
   "For trends use failures (what went wrong lately), latency, usage (tokens/cost) and subagents. experiments_list and experiment_compare read eval results.",
   "In an experiment session, call exp_session_note with the hypothesis before each run and the reading after it; exp_session_summary returns the timeline.",
-  "eval_from_session and exp_session_note write; ask the user before calling eval_from_session with confirm: true.",
+  "To build evals for the user, call eval_init (a suite in evals/<name>/ from failed sessions, a skill's trigger prompts, or cases you write), then tell them its run command.",
+  "eval_from_session, eval_init and exp_session_note write; ask the user before calling eval_from_session or eval_init with confirm: true.",
   'A result with pending: {files, indexing} was answered before every capture was indexed: it covers what is indexed so far; call again shortly for the rest.',
 ].join(" ");
 

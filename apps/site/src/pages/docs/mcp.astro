@@ -20,7 +20,8 @@ const TOOLS: [string, string][] = [
   ["exp_session_note", "Add a note to the experiment session: the hypothesis before a run, the reading after it. Secrets are redacted."],
   ["harness_compare", "Harness A/B results from coding.sh compare: the list, or one report with the ship gate, item gate and own-tests split."],
   ["benchmarks", "Benchmarks: the list, one run's leaderboard with paired verdicts and worst failures, or one metric over time."],
-  ["eval_from_session", "Draft an eval task from a session. Agents ask you first; it and exp_session_note are the only tools that write."],
+  ["eval_from_session", "Draft an eval task from a session. Agents ask you first; it, eval_init and exp_session_note are the only tools that write."],
+  ["eval_init", "Write an eval suite to evals/<name>/: tasks from failed sessions, a skill's trigger prompts, or cases the agent writes, marked draft. Agents ask you first."],
   ["status", "Health of coding.sh: version, available update, recent captures, pending spool, last error."],
 ];
 

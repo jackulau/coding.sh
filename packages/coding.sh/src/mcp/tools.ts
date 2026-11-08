@@ -535,6 +535,100 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       },
     },
     {
+      name: "eval_init",
+      title: "Build an eval suite",
+      description: "Write an eval suite to evals/<name>/: tasks from failed sessions, a skill's trigger prompts, or cases you write. Ask the user first, then pass confirm: true. Returns the run command.",
+      inputSchema: input(
+        {
+          name: { type: "string", description: "Suite name." },
+          confirm: { type: "boolean", description: "true once the user agreed." },
+          source: { type: "string", enum: ["sessions", "skill", "cases"], description: "What to build it from." },
+          purpose: { type: "string", enum: ["capability", "regression"], description: "Default: capability for sessions, else regression." },
+          sessionIds: { type: "array", items: { type: "string" }, maxItems: 50, description: "sessions: these instead of recent failed ones." },
+          verifier: { type: "string", description: "sessions: exits 0 only when solved, e.g. npm test." },
+          skill: { type: "string", description: "skill: its dir." },
+          should: { type: "array", items: { type: "string" }, maxItems: 100, description: "skill: prompts that should load it (10+)." },
+          shouldNot: { type: "array", items: { type: "string" }, maxItems: 100, description: "skill: near misses that should not." },
+          cases: {
+            type: "array",
+            maxItems: 500,
+            description: "cases: expected when there is one exact answer; should: false for a should-not case.",
+            items: { type: "object", properties: { input: {}, expected: {}, should: { type: "boolean" } }, required: ["input"], additionalProperties: false },
+          },
+          command: { type: "string", description: "cases: answers one case, input as JSON on stdin." },
+          url: { type: "string", description: "cases: or an HTTP endpoint." },
+          description: { type: "string", description: "What it should do; the judge's rubric when cases have no expected." },
+          force: { type: "boolean", description: "Replace an existing suite." },
+        },
+        ["name", "confirm", "source"],
+      ),
+      outputSchema: out(
+        {
+          name: S,
+          dir: S,
+          kind: { type: "string", enum: ["tasks", "cases", "triggers"] },
+          purpose: S,
+          files: arr(S),
+          notes: arr(S),
+          drafted: B,
+          todo: B,
+          run: S,
+          ci: S,
+        },
+        ["name", "dir", "kind", "files", "run"],
+      ),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      async run(a, c) {
+        if (a.confirm !== true) throw new ToolError("Not written: this writes an eval suite into the user's project. Ask the user, then call again with confirm: true.");
+        const { initSuite, InitError } = await import("../eval/init.ts");
+        const { repoRoot } = await import("../core/git.ts");
+        const { isAbsolute, relative } = await import("node:path");
+        const root = (await repoRoot(c.cwd)) ?? c.cwd;
+        const strs = (k: string) => (Array.isArray(a[k]) ? (a[k] as unknown[]).filter((x): x is string => typeof x === "string" && x.trim() !== "") : undefined);
+        const cases = Array.isArray(a.cases) ? (a.cases as { input: unknown; expected?: unknown; should?: boolean }[]) : undefined;
+        const ctx = await c.store();
+        let r;
+        try {
+          r = await initSuite(
+            {
+              name: strArg(a, "name")!,
+              root,
+              source: strArg(a, "source") as "sessions" | "skill" | "cases",
+              draftedBy: "the agent",
+              ...(strArg(a, "purpose") ? { purpose: strArg(a, "purpose") as "capability" | "regression" } : {}),
+              ...(a.force === true ? { force: true } : {}),
+              ...(strs("sessionIds")?.length ? { sessionIds: strs("sessionIds")! } : {}),
+              ...(strArg(a, "verifier") ? { verifier: strArg(a, "verifier")! } : {}),
+              ...(strArg(a, "skill") ? { skill: strArg(a, "skill")! } : {}),
+              ...(strs("should")?.length ? { should: strs("should")! } : {}),
+              ...(strs("shouldNot")?.length ? { shouldNot: strs("shouldNot")! } : {}),
+              ...(cases?.length ? { cases } : {}),
+              ...(strArg(a, "command") ? { command: strArg(a, "command")! } : {}),
+              ...(strArg(a, "url") ? { url: strArg(a, "url")! } : {}),
+              ...(strArg(a, "description") ? { description: strArg(a, "description")! } : {}),
+            },
+            { index: ctx.index, blobs: ctx.blobs, now: c.now() },
+          );
+        } catch (e) {
+          if (e instanceof InitError) throw new ToolError(e.message);
+          throw e;
+        }
+        const rel = relative(c.cwd, r.dir);
+        return {
+          name: r.name,
+          dir: rel && !rel.startsWith("..") && !isAbsolute(rel) ? rel : r.dir,
+          kind: r.kind,
+          purpose: r.purpose,
+          files: r.files,
+          notes: r.notes,
+          drafted: r.drafted,
+          todo: r.todo,
+          run: r.run,
+          ...(r.ci ? { ci: r.ci } : {}),
+        };
+      },
+    },
+    {
       name: "experiments_list",
       title: "List experiments",
       description: "List dataset experiments, newest first, with dataset, trials, and pass rate with its confidence interval. Compare two with experiment_compare.",

@@ -200,7 +200,7 @@ session, the page adds new events every 4 seconds.
 
 `coding.sh mcp` serves your captured data to agents over stdio, with the tools `sessions_list`,
 `session_get`, `session_current`, `search`, `failures`, `latency`, `usage`, `subagents`,
-`eval_from_session`, `experiments_list`, `experiment_compare`, `exp_session_summary`,
+`eval_from_session`, `eval_init`, `experiments_list`, `experiment_compare`, `exp_session_summary`,
 `exp_session_note`, `harness_compare`, `benchmarks` and `status`. `sessions_list` and `session_get`
 include each session's derails, and `sessions_list` takes `flag: "looping"` (or any other flag).
 `sessions_list`, `search` and `usage` take `where`, the same filter as `--where`, and

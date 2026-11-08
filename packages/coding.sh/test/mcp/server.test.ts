@@ -2,7 +2,7 @@
 // every tool against a seeded store, resources, and JSON-RPC error paths.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, it } from "node:test";
@@ -72,6 +72,7 @@ describe("handshake (legacy era)", () => {
     assert.deepEqual(tools.map((t) => t.name).sort(), [
       "benchmarks",
       "eval_from_session",
+      "eval_init",
       "exp_session_note",
       "exp_session_summary",
       "experiment_compare",
@@ -94,7 +95,7 @@ describe("handshake (legacy era)", () => {
       assert.equal(t.inputSchema.additionalProperties, false, `${t.name} rejects unknown args`);
       for (const [k, p] of Object.entries((t.inputSchema.properties ?? {}) as Record<string, { description?: string }>)) assert.ok(p.description, `${t.name}.${k} has a description`);
       assert.equal(t.outputSchema.type, "object", `${t.name} outputSchema`);
-      assert.equal(t.annotations.readOnlyHint, !["eval_from_session", "exp_session_note"].includes(t.name), `${t.name} readOnlyHint`);
+      assert.equal(t.annotations.readOnlyHint, !["eval_from_session", "eval_init", "exp_session_note"].includes(t.name), `${t.name} readOnlyHint`);
       assert.equal(t.annotations.destructiveHint, false);
       assert.equal(t.annotations.openWorldHint, false);
     }
@@ -240,6 +241,28 @@ describe("tools", () => {
     assert.equal(again.created, false);
     assert.equal((again.task as { id: string }).id, task.id);
     assert.match(await callError("eval_from_session", { sessionId: SEED.b, confirm: true, verifier: "true", setup: ["true"] }), /no repo state/);
+  });
+
+  it("eval_init refuses without confirm, then writes a suite the agent drafted", async () => {
+    assert.match(await callError("eval_init", { name: "triage", source: "cases", confirm: false }), /confirm: true/);
+    const args = {
+      name: "triage",
+      source: "cases",
+      confirm: true,
+      command: "node triage.mjs",
+      cases: [
+        { input: "I was charged twice", expected: "billing" },
+        { input: "Tell me a joke", expected: "other", should: false },
+      ],
+    };
+    const r = await call("eval_init", args);
+    assert.deepEqual([r.name, r.dir, r.kind, r.purpose, r.drafted, r.run], ["triage", join("evals", "triage"), "cases", "regression", true, "coding.sh eval run triage"]);
+    assert.deepEqual(r.files, ["evals/triage/suite.json", "evals/triage/cases.jsonl"]);
+    assert.ok((r.notes as string[]).some((n) => /the agent wrote 2 cases/.test(n)));
+    const lines = readFileSync(join(w.repo, "evals", "triage", "cases.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as { metadata?: { draft?: boolean }; tags?: string[] });
+    assert.deepEqual(lines.map((l) => [l.metadata?.draft, l.tags]), [[true, undefined], [true, ["should-not"]]]);
+    assert.match(await callError("eval_init", args), /already exists/);
+    assert.match(await callError("eval_init", { name: "x", source: "skill", confirm: true }), /skill dir/);
   });
 
   it("experiments_list and experiment_compare read eval results", async () => {
@@ -414,7 +437,7 @@ describe("modern era (2026-07-28)", () => {
     try {
       assert.equal(client.era, "2026-07-28");
       assert.equal(client.serverInfo?.name, "coding.sh");
-      assert.equal((await client.listTools()).length, 16);
+      assert.equal((await client.listTools()).length, 17);
       const r = await client.callTool("session_get", { sessionId: SEED.b });
       assert.equal((r.structuredContent as { session: { agent: string } }).session.agent, "codex");
     } finally {
