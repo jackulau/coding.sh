@@ -50,6 +50,7 @@ export const KEY_SQL: Record<string, string[]> = {
   agent: ["agent"],
   model: ["model"],
   provider: [jstr("stats", "provider")],
+  launch: [jstr("stats", "launch")],
   repo: ["repo_root", base("coalesce(repo_root, cwd)")],
   branch: [jstr("ifNull(repo, '{}')", "branch")],
   dir: ["cwd"],

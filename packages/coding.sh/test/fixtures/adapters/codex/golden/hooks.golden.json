@@ -7,7 +7,9 @@
       "source": "hook",
       "startSource": "startup",
       "transcriptPath": "${FIXTURES}/codex/home/sessions/2026/11/01/rollout-2026-11-01T10-00-00-0193aaaa-1111-7222-8333-444455556666.jsonl",
-      "permissionMode": "bypassPermissions"
+      "permissionMode": "bypassPermissions",
+      "originator": "codex_exec",
+      "launch": "exec"
     },
     "id": "3262f3e44d2c87beb6e084772e1562ec6c6b6fd5475b7a685a773375800bb782",
     "model": "gpt-5.5",

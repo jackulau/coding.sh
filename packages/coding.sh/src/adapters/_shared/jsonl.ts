@@ -36,6 +36,26 @@ export async function* readJsonl(path: string): AsyncGenerator<JsonlRecord> {
   }
 }
 
+/** The file's first line, parsed, when it ends within `maxBytes`; else (or unreadable) undefined. */
+export async function readJsonlHead(path: string, maxBytes = 1024 * 1024): Promise<unknown> {
+  let fh;
+  try {
+    fh = await open(path, "r");
+  } catch {
+    return undefined;
+  }
+  try {
+    const buf = Buffer.alloc(Math.min(maxBytes, (await fh.stat()).size));
+    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+    const end = buf.subarray(0, bytesRead).indexOf(10);
+    return JSON.parse(buf.subarray(0, end < 0 ? bytesRead : end).toString("utf8"));
+  } catch {
+    return undefined;
+  } finally {
+    await fh.close();
+  }
+}
+
 /** Parses the complete JSON lines within the last `maxBytes` of a file (oldest first). */
 export async function readJsonlTail(path: string, maxBytes = 256 * 1024): Promise<unknown[]> {
   let fh;

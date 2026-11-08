@@ -507,6 +507,10 @@ const METADATA_STRING_KEYS = new Set([
   // Hook context: which hook event and whose hook (plugin:<name>, settings), never the text or command.
   "hookEvent",
   "hookSource",
+  // How the agent was launched (session.start): Claude Code's entrypoint, Codex's originator and launch source.
+  "entrypoint",
+  "originator",
+  "launch",
 ]);
 
 /**

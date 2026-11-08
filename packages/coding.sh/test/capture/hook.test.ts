@@ -63,6 +63,18 @@ describe("hook", () => {
     assert.equal(files[0], `${new Date(line.ts).toISOString().slice(0, 10)}.${line.pid}.jsonl`);
   });
 
+  test("a Claude Code hook records CLAUDE_CODE_ENTRYPOINT (how Claude Code was launched); other agents' do not", () => {
+    const h = freshHome();
+    const payload = JSON.stringify({ session_id: "s1", hook_event_name: "SessionStart" });
+    assert.equal(runHook(["claude-code", "SessionStart"], payload, { CODING_SH_HOME: h, CLAUDE_CODE_ENTRYPOINT: "sdk-cli" }).code, 0);
+    assert.equal(runHook(["codex", "SessionStart"], payload, { CODING_SH_HOME: h, CLAUDE_CODE_ENTRYPOINT: "sdk-cli" }).code, 0);
+    assert.deepEqual(readLines(h, "claude-code").map((l) => l.entrypoint), ["sdk-cli"]);
+    assert.deepEqual(readLines(h, "codex").map((l) => l.entrypoint), [undefined]);
+    const h2 = freshHome();
+    assert.equal(runHook(["claude-code", "SessionStart"], payload, { CODING_SH_HOME: h2, CLAUDE_CODE_ENTRYPOINT: "" }).code, 0);
+    assert.equal(readLines(h2, "claude-code")[0]!.entrypoint, undefined);
+  });
+
   test("non-JSON stdin is kept as a string; no stdin is an empty string; cwd falls back to process cwd", () => {
     const h = freshHome();
     assert.equal(runHook(["codex", "notify"], "not json {", { CODING_SH_HOME: h }).code, 0);

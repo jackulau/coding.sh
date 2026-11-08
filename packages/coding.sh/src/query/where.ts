@@ -159,6 +159,7 @@ const KEY_LIST: KeyDef[] = [
     get: (s) => [s.repo?.root, baseName(s.repo?.root ?? s.cwd)],
     facet: { sql: sqlBase("coalesce(s.repo_root, s.cwd)"), get: (s) => [baseName(s.repo?.root ?? s.cwd)] },
   },
+  { name: "launch", level: "session", type: "text", doc: "How the agent was launched: headless (claude -p, an SDK, codex exec) or interactive", example: "launch:headless", sql: [stat("launch")], get: (s) => [s.stats?.launch], facet: {} },
   { name: "branch", level: "session", type: "text", doc: "Git branch", example: "branch:main", sql: ["json_extract(s.repo, '$.branch')"], get: (s) => [s.repo?.branch], facet: {} },
   { name: "dir", level: "session", type: "text", doc: "Working directory", example: "dir:/work/*", sql: ["s.cwd"], get: (s) => [s.cwd] },
   { name: "title", level: "session", type: "text", match: "contains", doc: "Title contains (case-insensitive)", example: "title:deploy", sql: ["s.title"], get: (s) => [s.title] },

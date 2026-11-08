@@ -145,6 +145,8 @@ function main(): void {
       // Hooks inherit the agent's env (Claude Code settings env included).
       const gateway = gatewayFromEnv(env);
       if (gateway) line.gateway = gateway;
+      // Claude Code says how it was launched: `sdk-cli` for `claude -p`, `cli` in a terminal.
+      if (agent === "claude-code" && env.CLAUDE_CODE_ENTRYPOINT) line.entrypoint = env.CLAUDE_CODE_ENTRYPOINT.slice(0, 64);
       appendSpool(line, env, { rawText: text });
       if (truncated) logSpoolError(new Error(`stdin truncated at ${MAX_STDIN_BYTES} bytes`), { agent, event }, env);
       captured = true;

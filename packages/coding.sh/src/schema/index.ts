@@ -268,6 +268,11 @@ export interface Session {
     waste?: WasteStats;
     /** Model calls that found the prompt cache gone and paid for the prompt again (core/cache-breaks.ts). Unset when none did. */
     cacheBreaks?: CacheBreakStats;
+    /**
+     * How the agent was launched: `headless` (`claude -p`, an Agent SDK, `codex exec`) or
+     * `interactive` (a terminal UI or an IDE). Unset when the agent's start does not say.
+     */
+    launch?: "headless" | "interactive";
     /** Text hooks added to the model's context, by source (`plugin:<name>`, `settings`, …). Unset when no hook added any. */
     hookContext?: HookContextStats;
     /**

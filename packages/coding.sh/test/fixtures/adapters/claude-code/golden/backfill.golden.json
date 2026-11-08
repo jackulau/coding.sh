@@ -6,6 +6,7 @@
     "payload": {
       "source": "subagent",
       "gitBranch": "main",
+      "entrypoint": "cli",
       "description": "Find callers",
       "parentSessionId": "11111111-2222-4333-8444-555555555555",
       "parentEventId": "d692d8e4793f5a610df315f69eeefe7ed34462527c10c378001a40b6b70bcc08",
@@ -204,7 +205,8 @@
     "ts": 1793527200000,
     "payload": {
       "source": "transcript",
-      "gitBranch": "main"
+      "gitBranch": "main",
+      "entrypoint": "cli"
     },
     "id": "bbc769a64157f31569a3de21925804e30cd1c6a5159454a5b4a2e301c82ad437",
     "cwd": "/work/demo",

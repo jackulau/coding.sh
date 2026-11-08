@@ -9,7 +9,10 @@ Site version: [coding.sh/docs/concepts](https://coding.sh/docs/concepts).
 `coding.sh run -- <cmd>`, or one trace from your own agent sent over OpenTelemetry or the SDK. It has an id, an agent, a model, a
 repo, start and end times, totals and flags. List them with `coding.sh sessions`; open one with
 `coding.sh show <id>`. `coding.sh sessions` leaves out sessions with no turn, tool call or model call
-(a hook that fired with no agent work behind it); `--empty` lists them too.
+(a hook that fired with no agent work behind it); `--empty` lists them too. A session the agent ran
+without a person at the keyboard (`claude -p`, an Agent SDK, `codex exec`) has `stats.launch:
+"headless"`, and a terminal or IDE session has `"interactive"`; `--where launch:headless` and
+`--facets launch` use it.
 
 **Event.** One thing that happened in a session, stored in the
 [coding.sh/trace v0](https://coding.sh/docs/trace-format) format. Kinds include `user.message`,

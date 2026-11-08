@@ -525,6 +525,13 @@ from cache, and more than 2,048 tokens were billed again. `byCause` splits them 
 the cache-write (or input) price minus the cache-read price for those tokens; it is left out, and
 `unpriced` counts the breaks, when the model has no price.
 
+`stats.launch` is `headless` for a session the agent ran without a person at the keyboard
+(`claude -p`, the Claude Agent SDK, `codex exec`, Codex as an MCP server) and `interactive` for a
+terminal or IDE session. It comes from the session's start: Claude Code's `entrypoint` (`sdk-cli`,
+`sdk-ts`, `sdk-py`; `cli`, `claude-vscode`, …) and Codex's `originator` and `launch` (the rollout's
+`session_meta.source`). It is absent when the start does not say. `--where launch:headless` and
+`--facets launch` use it.
+
 `stats.hookContext` (`count`, `tokens`, `bySource`) counts the texts hooks added to the model's
 context (Claude Code), and their size in tokens (characters / 4). `bySource` splits them by whose
 hook it was: `plugin:<name>`, `plugin` (a plugin not installed where the session was parsed),

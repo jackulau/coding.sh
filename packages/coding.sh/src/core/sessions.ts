@@ -406,7 +406,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * events, and every stored session is folded again once in the background
  * (core/reparse.ts, REFOLD_CURSOR), so old sessions get the new derivation.
  */
-export const SESSION_FOLD_VERSION = 6; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags).
+export const SESSION_FOLD_VERSION = 7; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch.
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -491,6 +491,8 @@ export interface SessionState {
   skills: SkillState;
   redactions: RedactionState;
   hookContext: HookContextState;
+  /** How the agent was launched, from the first session.start that says (launchOf). */
+  launch?: "headless" | "interactive";
 }
 
 /** A fresh fold: no events seen. */
@@ -524,6 +526,27 @@ export function sessionState(): SessionState {
     redactions: redactionState(),
     hookContext: hookContextState(),
   };
+}
+
+/**
+ * How the agent was launched, from a session.start payload; undefined when it does not say.
+ * - Claude Code `entrypoint` (the transcript's, or the hook's CLAUDE_CODE_ENTRYPOINT):
+ *   `sdk-cli` (`claude -p`), `sdk-ts`, `sdk-py` are headless; `cli` and the IDE and
+ *   desktop apps (`claude-vscode`, …) are interactive.
+ * - Codex `launch` (session_meta.source) and `originator`: `exec` and `mcp` launches,
+ *   and `codex_exec` or `codex_sdk_*` originators, are headless; `cli` and `vscode`
+ *   launches, and `codex_cli_rs` or `codex_vscode`, are interactive.
+ */
+export function launchOf(p: Record<string, unknown>): "headless" | "interactive" | undefined {
+  const s = (v: unknown) => (typeof v === "string" ? v : "");
+  const entry = s(p.entrypoint);
+  if (/^sdk-/.test(entry)) return "headless";
+  if (entry === "cli" || /^claude-/.test(entry)) return "interactive";
+  const launch = s(p.launch);
+  const origin = s(p.originator);
+  if (launch === "exec" || launch === "mcp" || /^codex_(exec|sdk)/.test(origin)) return "headless";
+  if (launch === "cli" || launch === "vscode" || /^codex_(cli|vscode)/.test(origin)) return "interactive";
+  return undefined;
 }
 
 /** Folds the session's next event (in time order) into the state. */
@@ -609,6 +632,7 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
       break;
     }
     case "session.start":
+      s.launch ??= launchOf(e.payload);
       // A subagent's task description (the Agent tool's `description`) titles it, before its prompt.
       if (e.payload.source === "subagent" && typeof e.payload.description === "string" && e.payload.description.trim()) s.title = makeTitle(e.payload.description);
       break;
@@ -713,6 +737,7 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   session.flags.push(...skillFlags(skillUseOf(s.skills, s.cwd ?? prev?.cwd)));
   const hookContext = hookContextOf(s.hookContext);
   if (hookContext) session.stats.hookContext = hookContext;
+  if (s.launch) session.stats.launch = s.launch;
   session.flags.push(...hookContextFlags(s.hookContext));
   const redactions = redactionsOf(s.redactions);
   if (redactions) session.stats.redactions = redactions;

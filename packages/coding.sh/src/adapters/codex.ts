@@ -57,6 +57,7 @@ import {
   planNestedInstall,
   planNestedUninstall,
   readJsonl,
+  readJsonlHead,
   readJsonlTail,
   readTextIfExists,
   runEnv,
@@ -774,9 +775,14 @@ export async function normalizeCodexLine(line: SpoolLine, ctx: NormalizeContext)
   };
 
   switch (event) {
-    case "SessionStart":
-      em.emit("session.start", { source: "hook", startSource: str(raw.source), transcriptPath: str(raw.transcript_path), permissionMode: str(raw.permission_mode) }, { key: ["start"] });
+    case "SessionStart": {
+      // How Codex was launched (`codex exec`, the TUI, …) is only in the rollout's session_meta, as the backfill's start records it.
+      const head = obj(raw.transcript_path ? await readJsonlHead(str(raw.transcript_path)!) : undefined);
+      const meta = head.type === "session_meta" ? obj(head.payload) : {};
+      const launch = { originator: str(meta.originator), launch: typeof meta.source === "string" ? meta.source : undefined };
+      em.emit("session.start", { source: "hook", startSource: str(raw.source), transcriptPath: str(raw.transcript_path), permissionMode: str(raw.permission_mode), ...launch }, { key: ["start"] });
       break;
+    }
     case "UserPromptSubmit": {
       const t = await clipText(ctx, str(raw.prompt) ?? "");
       em.emit("user.message", { text: t.value, truncated: t.truncated || undefined }, { key: turnId ? ["prompt", turnId] : undefined, blobs: blobList(t.blob) });
@@ -934,7 +940,8 @@ export const codex: Adapter = {
   displayName: "Codex CLI",
   tier: "A",
   // 2 (0.1.2): code-mode exec cells parent their commands and count once; one compaction across hooks and backfill.
-  parseVersion: 2,
+  // 3 (0.1.2): a hook SessionStart records how Codex was launched (originator, launch) from the rollout.
+  parseVersion: 3,
 
   detect() {
     const home = codexHome();

@@ -226,7 +226,7 @@ export class ClaudeTranscriptConverter {
     if (this.opts.mode !== "full" || this.started) return;
     this.started = true;
     const em = this.em(ts, lineNo);
-    const payload: Record<string, unknown> = { source: "transcript", gitBranch: str(entry.gitBranch) };
+    const payload: Record<string, unknown> = { source: "transcript", gitBranch: str(entry.gitBranch), entrypoint: str(entry.entrypoint) };
     em.emit("session.start", payload, { key: ["start"] });
     this.push(em);
   }

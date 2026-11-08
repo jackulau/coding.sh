@@ -47,6 +47,7 @@ matching event, and event keys in the same and-group must match the same event. 
 | `model` | session | Main model | `model:claude-sonnet-*` |
 | `provider` | session | Model provider | `provider:anthropic` |
 | `repo` | session | Repo root path, or its name (else the working directory's name) | `repo:coding-sh` |
+| `launch` | session | How the agent was launched: headless (claude -p, an SDK, codex exec) or interactive | `launch:headless` |
 | `branch` | session | Git branch | `branch:main` |
 | `dir` | session | Working directory | `dir:/work/*` |
 | `title` | session | Title contains (case-insensitive) | `title:deploy` |

@@ -26,6 +26,8 @@ export interface SpoolLine {
   /** "vercel" when the hook's env routed model calls through Vercel AI Gateway
    *  (ANTHROPIC_BASE_URL / OPENAI_BASE_URL at ai-gateway.vercel.sh). Never the key. */
   gateway?: string;
+  /** Claude Code hooks: how Claude Code was launched (CLAUDE_CODE_ENTRYPOINT: `cli`, `sdk-cli` for `claude -p`, `sdk-ts`, …). */
+  entrypoint?: string;
   /** Parsed stdin JSON when it parsed, else the raw string. Omitted when rawFile is set. */
   raw: unknown;
   /** When raw was too large to inline, the path of the side file holding it

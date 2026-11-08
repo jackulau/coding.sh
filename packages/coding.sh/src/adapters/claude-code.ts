@@ -222,7 +222,7 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
     case "SessionStart":
       // Same key as the transcript's session.start: a backfill of a hooked session adds no second start.
       // A `claude --resume` start keeps its own row: it marks where the session picked up again.
-      em.emit("session.start", { source: str(raw.source), transcriptPath: str(raw.transcript_path), permissionMode: str(raw.permission_mode) }, raw.source === "resume" ? {} : { key: ["start"] });
+      em.emit("session.start", { source: str(raw.source), transcriptPath: str(raw.transcript_path), permissionMode: str(raw.permission_mode), entrypoint: line.entrypoint }, raw.source === "resume" ? {} : { key: ["start"] });
       break;
     case "UserPromptSubmit": {
       const t = await clipText(ctx, str(raw.prompt) ?? "");
@@ -570,7 +570,8 @@ export const claudeCode: Adapter = {
   // 3 (0.1.2): harness.loaded (nested CLAUDE.md, skills) and file.change from Bash edits.
   // 4 (0.1.2): subagent prompt and description (turn, title); no session for internal forks; hook-less subagents (web-fetch) linked from the parent's PostToolUse(Agent).
   // 5 (0.1.2): hook.context (text hooks added to the context, with its source and size).
-  parseVersion: 5,
+  // 6 (0.1.2): session.start records how Claude Code was launched (entrypoint).
+  parseVersion: 6,
 
   detect() {
     const dir = claudeConfigDir();
