@@ -109,4 +109,14 @@ describe("regradeDiff", () => {
     assert.equal(d.after.passRate, 1, "5 of 5 graded runs pass");
     assert.match(renderRegradeDiff(d, { color: false }), /a grader errored on a/);
   });
+  it("a throwing grader next to a failing one leaves the run a failure", async () => {
+    const first = await runExperiment({ name: "base", dataset: ds, task: agent([]), graders: [exactGrader()] });
+    const throwing: Grader = { id: "judge", version: "t", kind: "custom", grade: async () => { throw new Error("judge down"); } };
+    const never: Grader = { id: "never", version: "t", kind: "custom", grade: async (ctx) => ({ pass: ctx.caseId !== "a", score: 1 }) };
+    const r = await regradeExperiment({ result: first, dataset: ds, graders: [never, throwing] });
+    const a = r.runs.find((x) => x.caseId === "a")!;
+    assert.equal(a.pass, false);
+    assert.equal(a.ungraded, undefined);
+    assert.equal(r.summary.ungraded, r.runs.length - 1);
+  });
 });

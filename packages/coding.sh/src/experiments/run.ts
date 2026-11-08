@@ -190,6 +190,15 @@ async function attemptTask(env: TrialEnv, c: Case, trial: number): Promise<{ out
 }
 
 /** Every grader on one output; a grader that throws gives an error outcome, not a fail. Shared by runTrial and regradeExperiment. */
+/**
+ * Whether a grader error leaves the run's outcome unknown. A run passes only
+ * when every grader passes, so one grader's fail settles it even when another
+ * grader errored: a judge outage leaves out only the runs it could have changed.
+ */
+export function gradeUnknown(grades: readonly GraderOutcome[]): boolean {
+  return grades.some((g) => g.error !== undefined) && !grades.some((g) => g.result?.pass === false);
+}
+
 export async function gradeOne(graders: readonly Grader[], c: Case, output: unknown, trace?: TraceEvent[], signal?: AbortSignal): Promise<GraderOutcome[]> {
   return Promise.all(
     graders.map(async (g): Promise<GraderOutcome> => {
@@ -233,7 +242,7 @@ export async function runTrial(env: TrialEnv, c: Case, trial: number): Promise<C
   const grades: GraderOutcome[] = error !== undefined || signal?.aborted ? [] : await gradeOne(graders, c, output, trace, signal);
   // The abort cut this case-trial short (killed task or grader): its outcome says nothing about the agent.
   if (signal?.aborted) return undefined;
-  const ungraded = tried.infra !== undefined || (error === undefined && grades.some((g) => g.error !== undefined));
+  const ungraded = tried.infra !== undefined || (error === undefined && gradeUnknown(grades));
   const run: CaseRun = {
     caseId: c.id,
     trial,
@@ -416,7 +425,7 @@ export async function regradeExperiment(o: RegradeOpts): Promise<ExperimentResul
     }
     const grades = await gradeOne(graders, c, run.output, undefined, o.signal);
     if (o.signal?.aborted) return undefined;
-    const ungraded = grades.some((g) => g.error !== undefined);
+    const ungraded = gradeUnknown(grades);
     const { ungraded: _u, ...rest } = run;
     const next: CaseRun = { ...rest, grades, pass: !ungraded && grades.every((g) => g.result?.pass === true) };
     if (ungraded) next.ungraded = true;

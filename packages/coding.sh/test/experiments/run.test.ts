@@ -208,6 +208,18 @@ describe("runExperiment: function task", () => {
     assert.match(cmp.gradeWarning ?? "", /6 run\(s\) had a grader error/);
     assert.match(renderExperiment(b, { color: false }), /ungraded 6 run\(s\) with a grader error/);
   });
+  it("a judge error leaves a run another grader failed as a failure, not ungraded", async () => {
+    const down: Grader = { id: "judge", version: "1", kind: "custom", grade: async () => { throw new Error("judge reply contained no JSON verdict"); } };
+    const cases = Array.from({ length: 4 }, (_, i) => ({ id: `c${i}`, input: { q: `c${i}` }, expected: i < 2 ? `C${i}` : "wrong" }));
+    const r = await runExperiment({ name: "j", dataset: createDataset({ name: "j", createdAt: 1, cases }), task: upper, graders: [exactGrader(), down] });
+    const byId = new Map(r.runs.map((x) => [x.caseId, x]));
+    assert.equal(byId.get("c0")!.ungraded, true, "exact passed: the judge could still fail it");
+    assert.equal(byId.get("c2")!.ungraded, undefined, "exact failed: a fail whatever the judge says");
+    assert.equal(byId.get("c2")!.pass, false);
+    assert.equal(r.summary.ungraded, 2);
+    assert.equal(r.summary.passRate.p, 0, "the 2 known fails are graded");
+    assert.match(renderExperiment(r, { color: false }), /ungraded 2 run\(s\) with a grader error/);
+  });
 });
 
 // EXP-1 / EXP-3: an interrupted experiment is stored as cancelled with only its finished runs,

@@ -234,7 +234,8 @@ test on flipped cases and the minimum detectable effect. It also reports:
   of measurement. `--json` carries `comparison.instrumentWarning`, `graders[].versionChanged` and
   `gradersOnlyIn`. When one side is a regrade of the other, the line says B − A is the grader
   change alone and the timing warning is dropped. A grader that throws leaves its run ungraded:
-  it is neither a pass nor a fail and is left out. Cases that ran on both sides but have no graded
+  it is neither a pass nor a fail and is left out, unless another grader failed the run, which
+  makes it a fail. Cases that ran on both sides but have no graded
   run on one are listed in `comparison.ungradedCases`.
 - **Noise floor.** When an A/A run exists for the baseline config, it prints the A/A flip rate,
   and the minimum detectable effect never goes below what that noise allows.

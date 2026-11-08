@@ -171,9 +171,10 @@ export interface CaseRun {
   /** Task succeeded and every grader passed. */
   pass: boolean;
   /**
-   * A grader errored (judge outage, crashed scorer), so whether this run passed
-   * is unknown. `pass` is false, but the run is left out of pass rates and
-   * paired comparisons instead of counting as a failure.
+   * A grader errored (judge outage, crashed scorer) and no other grader failed
+   * the run, so whether it passed is unknown. `pass` is false, but the run is
+   * left out of pass rates and paired comparisons instead of counting as a
+   * failure. A run another grader failed is a failure, whatever the error.
    */
   ungraded?: true;
   startedAt: number;
