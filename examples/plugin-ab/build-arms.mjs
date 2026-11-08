@@ -13,7 +13,7 @@
 // MCP servers (.mcp.json) and other plugin parts are not mapped; the script says so.
 // Both arms get the same base settings, so the plugin is the only difference.
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, join, posix, relative, resolve, sep } from "node:path";
 
 const [pluginArg, outArg, model = "claude-opus-5-5"] = process.argv.slice(2);
 if (!pluginArg || !outArg) {
@@ -85,7 +85,8 @@ function writeArm(name, settings, files) {
   writeFileSync(join(d, "settings.json"), JSON.stringify(settings, null, 2) + "\n");
   const map = { "~/.claude/settings.json": "settings.json" };
   for (const [target, src] of Object.entries(files)) {
-    const rel = join("files", target.replace("~/.claude/", ""));
+    // harness.toml paths use forward slashes on every OS.
+    const rel = posix.join("files", target.replace("~/.claude/", ""));
     mkdirSync(join(d, rel, ".."), { recursive: true });
     cpSync(src, join(d, rel));
     map[target] = rel;
@@ -101,11 +102,12 @@ writeArm("base", baseSettings, {});
 
 const hooks = mapHooks(loadHooks());
 const files = {};
-for (const p of walk(plugin)) files[`~/.claude/ab-plugin/${relative(plugin, p)}`] = p;
+const rel = (from, p) => relative(from, p).split(sep).join("/");
+for (const p of walk(plugin)) files[`~/.claude/ab-plugin/${rel(plugin, p)}`] = p;
 for (const sub of ["skills", "agents", "commands"]) {
   const root = join(plugin, sub);
   if (!existsSync(root)) continue;
-  for (const p of walk(root)) files[`~/.claude/${sub}/${relative(root, p)}`] = p;
+  for (const p of walk(root)) files[`~/.claude/${sub}/${rel(root, p)}`] = p;
 }
 const settings = Object.keys(hooks).length ? { ...baseSettings, hooks } : baseSettings;
 writeArm("plugin", settings, files);
