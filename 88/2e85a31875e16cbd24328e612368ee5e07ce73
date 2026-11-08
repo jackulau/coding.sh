@@ -12,6 +12,17 @@ apps/site/scripts/subset-fonts.py
   s_8e040dbdf13565::t_16e6a9bf3661ef 53-54,56
 CHANGELOG.md
   s_8e040dbdf13565::t_2efc26945b5d61 138
+apps/site/src/pages/docs/cli.astro
+  s_8e040dbdf13565::t_bc6f796b3e8197 4,7-8,17-18,34-60,63-69
+apps/site/src/components/docs/cli-help.ts
+  s_8e040dbdf13565::t_bc6f796b3e8197 94-102
+apps/site/src/pages/docs/cli/[command].astro
+  s_8e040dbdf13565::t_bc6f796b3e8197 1-70
+apps/site/src/lib/lastmod.mjs
+  s_8e040dbdf13565::t_9f83d64d155516 43
+  s_8e040dbdf13565::t_bc6f796b3e8197 12,49-51
+apps/site/src/components/docs/DocsLayout.astro
+  s_8e040dbdf13565::t_bc6f796b3e8197 5-7,14,22-25,30-33,40,44-46,78,95,109
 ---
 {
   "schema_version": "authorship/3.0.0",
