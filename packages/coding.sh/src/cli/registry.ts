@@ -158,6 +158,8 @@ const REFINE_SUITE_FLAGS: FlagSpec[] = [
   { name: "margin", type: "string", value: "<SHARE>", desc: "With --suite: how far the pass rate may drop for a cheaper or faster candidate to be kept, e.g. 5pp", default: "2pp" },
   { name: "min-gain", type: "string", value: "<SHARE>", desc: "With --suite: smallest relative gain in cost, tokens, time, turns or size that counts, e.g. 20%", default: "10%" },
   { name: "harness", type: "string", value: "<BUNDLE>", desc: "With --suite: stored harness bundle the suite runs, the repo's harness files laid over it (default: the suite's, else a snapshot of the repo)" },
+  { name: "reuse", type: "string", value: "<WHAT>", choices: ["baseline", "both", "none"], desc: "With --suite: copy earlier rounds' finished runs of the unchanged base arm (baseline) or both arms (both) instead of running them again; the pair then did not run interleaved, so the round warns about drift (default: none)", default: "none" },
+  { name: "reuse-max-age", type: "string", value: "<AGE>", desc: "With --reuse: only copy runs that finished this recently, e.g. 3d or 12h (default: 7d)" },
   ...durableFlags("round"),
   YES,
 ];

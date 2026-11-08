@@ -35,7 +35,8 @@ import {
 import { checkProtected, protectedLines, type ProtectCheck } from "../../refine/protect.ts";
 import { skillOf, targetPath } from "../../refine/target.ts";
 import { SUITES_DIR } from "../../eval/suite-spec.ts";
-import { positiveInt, UsageError } from "../args.ts";
+import type { ReuseOpts } from "../../runner/cells.ts";
+import { parseAge, positiveInt, UsageError } from "../args.ts";
 import { list, requireConsent, str } from "../common.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -43,7 +44,7 @@ import { money, newSpend, type Arm, type Spend } from "./exp-ab.ts";
 import { applyCandidate, baseArm, defaultTarget, printApplied, propose, proposerName, proposerReply, resolveCandidate, spendJson, type Candidate, type Env } from "./refine-loop.ts";
 import { armBundle, armDrivers, clearPending, loadFitness, readPending, roundsText, runSuiteRound, writePending, type Fitness, type SuiteRound } from "./refine-suite.ts";
 
-const CLIMB_FLAGS = ["suite", "objective", "margin", "min-gain", "until-plateau", "harness", "proposer-command"] as const;
+const CLIMB_FLAGS = ["suite", "objective", "margin", "min-gain", "until-plateau", "harness", "proposer-command", "reuse", "reuse-max-age"] as const;
 
 /** The suite to climb on: --suite, else the target skill's own tasks suite (evals/<skill>). */
 function suiteName(c: CommandContext, root: string): string | undefined {
@@ -67,6 +68,8 @@ interface ClimbOpts {
   primary: Objective;
   margin: number;
   minGain: number;
+  /** `--reuse`: which arm's earlier runs to copy, and how recent they must be. Absent means run everything fresh. */
+  reuse?: { what: "baseline" | "both"; maxAgeMs?: number };
 }
 
 function climbOpts(c: CommandContext, root: string): ClimbOpts {
@@ -82,7 +85,12 @@ function climbOpts(c: CommandContext, root: string): ClimbOpts {
     throw new UsageError((err as Error).message, { reason: "invalid_argument" });
   }
   if (!objectives.length) objectives = ["pass"];
-  return { suite, objectives, primary: objectives[0]!, margin, minGain };
+  const reuseWhat = str(c.flags.reuse) ?? "none";
+  if (!["baseline", "both", "none"].includes(reuseWhat)) throw new UsageError(`--reuse takes baseline, both or none, got ${JSON.stringify(reuseWhat)}`, { reason: "invalid_argument" });
+  const reuseMaxAgeMs = c.flags["reuse-max-age"] === undefined ? undefined : parseAge(String(c.flags["reuse-max-age"]), "reuse-max-age");
+  if (reuseMaxAgeMs !== undefined && reuseWhat === "none") throw new UsageError("--reuse-max-age needs --reuse baseline or --reuse both", { reason: "invalid_argument" });
+  const reuse = reuseWhat !== "none" ? { what: reuseWhat as "baseline" | "both", ...(reuseMaxAgeMs !== undefined ? { maxAgeMs: reuseMaxAgeMs } : {}) } : undefined;
+  return { suite, objectives, primary: objectives[0]!, margin, minGain, ...(reuse ? { reuse } : {}) };
 }
 
 // ---------------------------------------------------------------- the ledger's climbs
@@ -220,8 +228,10 @@ async function climbRound(c: CommandContext, e: Env, f: Fitness, o: ClimbOpts, b
   }
   const A = await armBundle(e.ctx, f.harness, base.files, f.harness.name);
   const B = await armBundle(e.ctx, f.harness, cand.arm.files, `${f.harness.name}+${cand.id}`);
+  // Copy the unchanged base's runs from an earlier round (and, with `both`, a candidate that recurs) instead of re-running them.
+  const reuse: ReuseOpts | undefined = o.reuse ? { bundleIds: o.reuse.what === "both" ? [A.id, B.id] : [A.id], ...(o.reuse.maxAgeMs !== undefined ? { maxAgeMs: o.reuse.maxAgeMs } : {}) } : undefined;
   writePending(e.dir, { suite: o.suite, candidate: cand.id, base: base.files.map((b) => ({ path: b.path, sha: sha(b.text) })), at: new Date().toISOString() });
-  const run = await runSuiteRound(c, e.ctx, f, A, B, { objectives: o.objectives, margin: o.margin, minGain: o.minGain, gate: e.gate, ...(x.cap !== undefined ? { maxCostUsd: x.cap } : {}), resume: x.resume, label: cand.id });
+  const run = await runSuiteRound(c, e.ctx, f, A, B, { objectives: o.objectives, margin: o.margin, minGain: o.minGain, gate: e.gate, ...(x.cap !== undefined ? { maxCostUsd: x.cap } : {}), resume: x.resume, label: cand.id, ...(reuse ? { reuse } : {}) });
   if (run.cancelled || run.skipped) return { stopped: run.cancelled ? "interrupted" : "budget", run, ...(run.resume ? { resume: run.resume } : {}) };
   const d = run.decision!;
   const entry: TestEntry = {
@@ -309,11 +319,12 @@ export async function climbTest(c: CommandContext, e: Env): Promise<number> {
   if (e.o.dryRun) {
     const checks = cands.map((k) => ({ id: k.id, files: k.changed.map((x) => x.path), protect: checkProtected(base.files, k.arm.files, { ...e.protect, allow: e.allow }), critics: runCritics(base.files, k.arm.files) }));
     if (out.json) {
-      out.data({ dryRun: true, ledger: ledgerFile(e.dir), suite: o.suite, tasks: f.tasks.length, k: f.k, sessions, harness: f.harness.name, objectives: o.objectives, margin: o.margin, minGain: o.minGain, candidates: checks.map((x) => ({ id: x.id, files: x.files, protected: x.protect.ok, critics: x.critics.ok })) });
+      out.data({ dryRun: true, ledger: ledgerFile(e.dir), suite: o.suite, tasks: f.tasks.length, k: f.k, sessions, harness: f.harness.name, objectives: o.objectives, margin: o.margin, minGain: o.minGain, reuse: o.reuse?.what ?? null, candidates: checks.map((x) => ({ id: x.id, files: x.files, protected: x.protect.ok, critics: x.critics.ok })) });
       return 0;
     }
     out.print(`Suite ${o.suite}: ${roundsText(f)} per candidate, harness ${f.harness.name} (${f.harness.agent})`);
     out.print(`Objectives: ${o.objectives.map((x) => OBJECTIVE_LABEL[x]).join(", ")}; quality margin ${(o.margin * 100).toFixed(1)} pts, smallest gain ${(o.minGain * 100).toFixed(0)}%`);
+    if (o.reuse) out.print(`Reuse: copy earlier rounds' finished runs of ${o.reuse.what === "both" ? "both arms" : "the base arm"} instead of re-running them (the pair is then not interleaved; drift is not balanced)`);
     for (const x of checks) out.print(`${x.id}  ${x.files.join(", ")}: ${!x.protect.ok ? `rejected before any run: ${x.protect.rejections[0]!.reason}` : !x.critics.ok ? `rejected before any run: ${x.critics.rejections[0]!.reason}` : "passes the protected-line and critic checks"}`);
     out.print(`Would run up to ${plural(sessions, "agent session")}`);
     return 0;
@@ -366,13 +377,14 @@ export async function climbRun(c: CommandContext, e: Env): Promise<number> {
   const perRound = f.tasks.length * f.k * 2;
   if (e.o.dryRun) {
     const { drivers, from } = given.length ? { drivers: [] as string[], from: undefined } : await driversFor(e, f, o, start, path);
-    const plan = { dryRun: true, ledger: ledgerFile(e.dir), suite: o.suite, tasks: f.tasks.length, k: f.k, sessionsPerRound: perRound, rounds: Number.isFinite(maxRounds) ? maxRounds : null, untilPlateau, target: path, mode, proposer: given.length ? null : proposerName(e), objectives: o.objectives, margin: o.margin, minGain: o.minGain, drivers, ...(from ? { driversFrom: from } : {}), plateau: before.status };
+    const plan = { dryRun: true, ledger: ledgerFile(e.dir), suite: o.suite, tasks: f.tasks.length, k: f.k, sessionsPerRound: perRound, rounds: Number.isFinite(maxRounds) ? maxRounds : null, untilPlateau, target: path, mode, proposer: given.length ? null : proposerName(e), objectives: o.objectives, margin: o.margin, minGain: o.minGain, reuse: o.reuse?.what ?? null, drivers, ...(from ? { driversFrom: from } : {}), plateau: before.status };
     if (out.json) {
       out.data(plan);
       return 0;
     }
     out.print(`${untilPlateau ? "Until the e-detector says plateau" : `Up to ${plural(maxRounds, "round")}`}: ${given.length ? "test each --candidate" : `${mode === "cut" ? "cut" : "add to"} ${path} with ${proposerName(e)}`}, run ${o.suite} (${roundsText(f)} = ${plural(perRound, "agent session")} a round), apply what is kept`);
     out.print(`Objectives: ${o.objectives.map((x) => OBJECTIVE_LABEL[x]).join(", ")}; quality margin ${(o.margin * 100).toFixed(1)} pts, smallest gain ${(o.minGain * 100).toFixed(0)}%`);
+    if (o.reuse) out.print(`Reuse: copy earlier rounds' finished runs of ${o.reuse.what === "both" ? "both arms" : "the base arm"} instead of re-running them (the pair is then not interleaved; drift is not balanced)`);
     if (drivers.length) {
       out.print(`What the proposer is shown${from ? ` (from ${from})` : ""}:`);
       for (const d of drivers) out.print(`  ${d}`);

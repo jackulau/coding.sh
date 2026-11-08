@@ -2497,6 +2497,8 @@ coding.sh refine test <CANDIDATE>... [options]
 | `--margin <SHARE>` | `2pp` | With --suite: how far the pass rate may drop for a cheaper or faster candidate to be kept, e.g. 5pp. |
 | `--min-gain <SHARE>` | `10%` | With --suite: smallest relative gain in cost, tokens, time, turns or size that counts, e.g. 20%. |
 | `--harness <BUNDLE>` |  | With --suite: stored harness bundle the suite runs, the repo's harness files laid over it (default: the suite's, else a snapshot of the repo) |
+| `--reuse <WHAT>` | `none` | With --suite: copy earlier rounds' finished runs of the unchanged base arm (baseline) or both arms (both) instead of running them again; the pair then did not run interleaved, so the round warns about drift (default: none) One of: `baseline`, `both`, `none`. |
+| `--reuse-max-age <AGE>` |  | With --reuse: only copy runs that finished this recently, e.g. 3d or 12h (default: 7d) |
 | `--resume [<ID>]` |  | Continue an interrupted round: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
@@ -2605,6 +2607,8 @@ coding.sh refine run [options]
 | `--margin <SHARE>` | `2pp` | With --suite: how far the pass rate may drop for a cheaper or faster candidate to be kept, e.g. 5pp. |
 | `--min-gain <SHARE>` | `10%` | With --suite: smallest relative gain in cost, tokens, time, turns or size that counts, e.g. 20%. |
 | `--harness <BUNDLE>` |  | With --suite: stored harness bundle the suite runs, the repo's harness files laid over it (default: the suite's, else a snapshot of the repo) |
+| `--reuse <WHAT>` | `none` | With --suite: copy earlier rounds' finished runs of the unchanged base arm (baseline) or both arms (both) instead of running them again; the pair then did not run interleaved, so the round warns about drift (default: none) One of: `baseline`, `both`, `none`. |
+| `--reuse-max-age <AGE>` |  | With --reuse: only copy runs that finished this recently, e.g. 3d or 12h (default: 7d) |
 | `--resume [<ID>]` |  | Continue an interrupted round: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |

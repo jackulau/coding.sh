@@ -1730,6 +1730,18 @@ harness files laid over it. `--model` is the agent's model and `--concurrency` t
 sessions. Only `tasks` suites work: a `cases` suite grades a command's answers, which a harness
 file does not change, and a `triggers` suite only checks that a skill loads.
 
+**Reusing the base across rounds.** The base arm is the same every round until an edit is kept, so
+`--reuse baseline` copies its finished runs from an earlier round instead of running the agent
+again — a candidate-against-base round then pays only for the candidate, roughly halving the agent
+sessions a long climb spends. `--reuse both` also copies a candidate that recurs. Reuse keys runs by
+content exactly as [`compare --reuse`](#reuse-finished-runs) does (an agent upgrade, a harness edit
+or a changed verifier runs them again), copies count `$0` toward `--max-cost`, and only runs that
+finished within `--reuse-max-age` (default `7d`) are copied. It is off by default because a reused
+run did not run next to this round's, so the pair is no longer fully interleaved: the round warns
+that drift since the earlier run (model updates, API latency, rate limits) is not balanced across
+the arms. The verdict itself is unchanged — reuse copies identical runs, it does not change what is
+judged.
+
 **Objectives.** `--objective` lists what to improve, primary first: `pass` (the default), `cost`,
 `tokens`, `wall` (wall time), `llm` (LLM time), `turns` and `size` (the instruction bytes the
 agent loads). The pass rate is always judged. A candidate is:

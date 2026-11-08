@@ -19,6 +19,7 @@ import { driverRun, type DriverRun } from "../../refine/drivers.ts";
 import { armPoint, judgeObjectives, type ArmPoint, type ObjectiveDecision, type Objective, type RunPoint, type TaskPair } from "../../refine/objectives.ts";
 import type { HarnessText } from "../../refine/protect.ts";
 import { bundleId, instructionSurface } from "../../runner/bundle.ts";
+import type { ReuseOpts } from "../../runner/cells.ts";
 import { loadRunEvents, loadRunSessions, runExperiment, runMetric, type CompareReport } from "../../runner/experiment.ts";
 import { harnessReport } from "../../runner/harness-report.ts";
 import { latestPerSlot } from "../../runner/iterate.ts";
@@ -104,6 +105,8 @@ export interface SuiteRoundOpts {
   resume: FlagValue;
   /** The candidate, for the job name. */
   label: string;
+  /** Copy finished runs of the unchanged arm(s) from earlier rounds instead of running them again (`refine run --reuse`). */
+  reuse?: ReuseOpts;
 }
 
 export interface SuiteRound {
@@ -119,6 +122,8 @@ export interface SuiteRound {
   pairs: TaskPair[];
   arms: { base: ArmPoint; cand: ArmPoint };
   sizes: { base: number; cand: number };
+  /** Runs per arm copied from earlier rounds (`refine run --reuse`); absent when none were. */
+  reused?: { baseline: number; candidate: number };
 }
 
 const counted = (r: RunResult) => !r.cancelled && !r.superseded && !r.infra;
@@ -150,6 +155,12 @@ export async function runSuiteRound(c: CommandContext, ctx: Context, f: Fitness,
   const { out } = c;
   const timeoutMs = trialTimeout(c);
   const concurrency = positiveInt(c.flags.concurrency, "concurrency");
+  // The agent version goes in each run's cell key, so an agent upgrade busts a reused round the way `compare` does.
+  const versions = new Map<string, Promise<string | undefined>>();
+  const agentVersion = (b: HarnessBundle) => {
+    if (!versions.has(b.agent)) versions.set(b.agent, getAdapter(b.agent)!.detect().then((d) => d.version).catch(() => undefined));
+    return versions.get(b.agent)!;
+  };
   const config = jobConfig({ bundles: [A.id, B.id], tasks: f.tasks.map((t) => t.id), k: f.k, timeoutMs });
   const job = await openJob({ ...c, flags: { ...c.flags, resume: o.resume } }, { kind: "refine run", name: `${f.suite.spec.name} ${o.label}`, config, newId: () => sortableId("exp_"), concurrency: concurrency ?? 4 });
   if ((await ensureHookBin(c.env)) === "unavailable") out.warn("The coding.sh hook bin is missing and can't be written, so these runs won't be captured: cost, tokens, turns and LLM time need captured sessions. Run `coding.sh init` first.");
@@ -173,6 +184,8 @@ export async function runSuiteRound(c: CommandContext, ctx: Context, f: Fitness,
         job: job.scope(),
         retry: retryFlag(c),
         experimentId: job.id,
+        agentVersion,
+        ...(o.reuse ? { reuse: o.reuse } : {}),
         onProgress: (p) => spin.update(`${f.suite.spec.name}: ${p.done}/${p.total}…`),
       }),
     )
@@ -186,7 +199,9 @@ export async function runSuiteRound(c: CommandContext, ctx: Context, f: Fitness,
   const sessions = await loadRunSessions(ctx.index, runs);
   const pairs = taskPairs(f.tasks, A.id, B.id, runs, sessions);
   const arms = { base: armPoint(pairs, "base", sizes.base), cand: armPoint(pairs, "cand", sizes.cand) };
-  const base = { experimentId: r.experimentId, skipped: r.budget?.skipped ?? 0, spentUsd: r.budget?.spentUsd ?? spent, unpriced: r.budget?.unpriced ?? unpriced, pairs, arms, sizes };
+  // Runs copied from an earlier round, per arm: they were not run next to this round's, so the pair is not fully interleaved.
+  const reused = { baseline: runs.filter((x) => x.reusedFrom && x.bundleId === A.id).length, candidate: runs.filter((x) => x.reusedFrom && x.bundleId === B.id).length };
+  const base = { experimentId: r.experimentId, skipped: r.budget?.skipped ?? 0, spentUsd: r.budget?.spentUsd ?? spent, unpriced: r.budget?.unpriced ?? unpriced, pairs, arms, sizes, ...(reused.baseline || reused.candidate ? { reused } : {}) };
   const status = job.header.status;
   const resume = status === "completed" || status === "running" ? undefined : resumeCommand(job.header);
   if (r.cancelled || (r.budget?.skipped ?? 0) > 0) return { ...base, cancelled: r.cancelled, ...(resume ? { resume } : {}) };
@@ -196,6 +211,11 @@ export async function runSuiteRound(c: CommandContext, ctx: Context, f: Fitness,
   const pw = report.power;
   if (pw && Number.isFinite(pw.mde)) decision.warnings.push(`the smallest pass-rate change this suite detects with ${Math.round(pw.power * 100)}% power is ${(pw.mde * 100).toFixed(0)} pts (MDE over ${plural(pw.n, "task")})`);
   for (const w of pw?.warnings ?? []) if (w.code === "below-mde" || w.code === "no-power") decision.warnings.push(w.message);
+  // Reuse trades drift-balance for speed: say so, so the verdict is read with the same honesty `compare --reuse` gets.
+  if (reused.baseline || reused.candidate) {
+    const which = [reused.baseline ? `${reused.baseline} base` : "", reused.candidate ? `${reused.candidate} candidate` : ""].filter(Boolean).join(" and ");
+    decision.warnings.push(`reused ${which} run(s) from an earlier round, so the arms did not run interleaved: drift since then (model updates, API latency, rate limits) is not balanced across the pair${r.reuse?.unknownVersion.length ? `, and the agent version is unknown for ${r.reuse.unknownVersion.join(", ")}, so a reused run may come from another version` : ""}`);
+  }
   return { ...base, cancelled: false, ...(resume ? { resume } : {}), report, decision };
 }
 
