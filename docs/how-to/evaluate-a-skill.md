@@ -109,7 +109,9 @@ exec coding.sh judge grade --grader grader/checklist.json
 ```
 
 `judge grade` reads the answer and the trace from those two variables, so it needs no other
-arguments inside a verifier. Run the judge only after the checks pass: a run that broke a hard rule
+arguments inside a verifier. On a Claude subscription with no API key, set `"provider": "claude-code"`:
+the judge then runs through `claude -p` with no tools, hooks, plugins or MCP servers, so the arm
+under test never reaches it. Run the judge only after the checks pass: a run that broke a hard rule
 then costs no judge call. Grade against the scenario's pass rules, not against the skill's wording,
 or the arm with the skill wins by echoing it. Each judge call is recorded, and `compare` reports
 what they cost.

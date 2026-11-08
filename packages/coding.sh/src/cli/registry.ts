@@ -574,7 +574,7 @@ export const COMMANDS: CommandSpec[] = [
         flags: [
           { name: "experiment", type: "string", value: "<ID>", desc: "Only runs from this experiment (default: every stored run of the task)" },
           { name: "max", type: "number", value: "<N>", desc: "Runs to review (one model call each)", default: "5" },
-          { name: "judge", type: "string", value: "<JSON|FILE>", desc: 'Reviewer model: {"provider":"anthropic"|"openai"|"gateway"|"mock","model":…}', default: '{"provider":"anthropic"}' },
+          { name: "judge", type: "string", value: "<JSON|FILE>", desc: 'Reviewer model: {"provider":"anthropic"|"openai"|"gateway"|"claude-code"|"mock","model":…}', default: '{"provider":"anthropic"}' },
           { name: "solver", type: "string", value: "<BUNDLE>", desc: "First solve the task once with this harness bundle and review that attempt too" },
         ],
         examples: ["coding.sh eval crosscheck my-task --experiment exp_01J…", "coding.sh eval crosscheck my-task --solver claude-default --max 3"],

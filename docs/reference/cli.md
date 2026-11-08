@@ -808,7 +808,7 @@ coding.sh eval crosscheck <TASK> [options]
 |---|---|---|
 | `--experiment <ID>` |  | Only runs from this experiment (default: every stored run of the task) |
 | `--max <N>` | `5` | Runs to review (one model call each) |
-| `--judge <JSON|FILE>` | `{"provider":"anthropic"}` | Reviewer model: {"provider":"anthropic"\|"openai"\|"gateway"\|"mock","model":…}. |
+| `--judge <JSON|FILE>` | `{"provider":"anthropic"}` | Reviewer model: {"provider":"anthropic"\|"openai"\|"gateway"\|"claude-code"\|"mock","model":…}. |
 | `--solver <BUNDLE>` |  | First solve the task once with this harness bundle and review that attempt too. |
 
 ```sh

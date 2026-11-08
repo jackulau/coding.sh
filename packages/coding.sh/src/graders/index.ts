@@ -6,7 +6,7 @@ import type { FetchLike, RetryOpts } from "../judge/http.ts";
 import { CHECKLIST_KIND, checklistGrader, createChecklistJudge, type ChecklistItem, type ChecklistMode } from "../judge/checklist.ts";
 import { createJudge, judgeGrader } from "../judge/judge.ts";
 import { createPairwiseJudge, PAIRWISE_KIND, type PairwiseJudge } from "../judge/pairwise.ts";
-import { anthropicProvider, openAICompatibleProvider, type ChatProvider } from "../judge/providers.ts";
+import { anthropicProvider, claudeCodeProvider, openAICompatibleProvider, type ChatProvider } from "../judge/providers.ts";
 import {
   agentSlopGrader,
   callsGrader,
@@ -39,8 +39,9 @@ import { GATEWAY_API_BASE } from "../integrations/gateway/ids.ts";
 /** Which model answers an LLM grader. Shared by "llm" and "llm-checklist" specs. */
 export interface LlmProviderSpec {
   /** "mock": deterministic offline verdicts, no network, no key, no cache (dry runs).
-   *  "gateway": Vercel AI Gateway's OpenAI-compatible API (any `<creator>/<model>`, key in AI_GATEWAY_API_KEY). */
-  provider?: "anthropic" | "openai" | "gateway" | "mock";
+   *  "gateway": Vercel AI Gateway's OpenAI-compatible API (any `<creator>/<model>`, key in AI_GATEWAY_API_KEY).
+   *  "claude-code": the Claude Code CLI (`claude -p`), on a Claude subscription or whatever auth the CLI has. */
+  provider?: "anthropic" | "openai" | "gateway" | "claude-code" | "mock";
   model?: string;
   baseURL?: string;
   apiKeyEnv?: string;
@@ -126,13 +127,14 @@ export interface GraderDeps {
   provider?: ChatProvider;
 }
 
-const PROVIDERS = ["anthropic", "openai", "gateway", "mock"];
+const PROVIDERS = ["anthropic", "openai", "gateway", "claude-code", "mock"];
 
 export function providerFromSpec(spec: LlmProviderSpec, deps: GraderDeps = {}): ChatProvider {
   if (deps.provider) return deps.provider;
   const kind = spec.provider ?? "anthropic";
   if (!PROVIDERS.includes(kind)) throw new Error(`unknown provider ${JSON.stringify(kind)} (expected ${PROVIDERS.map((p) => JSON.stringify(p)).join(", ")})`);
   if (kind === "mock") return mockProvider(spec.mockAnswer ? { answer: spec.mockAnswer } : {});
+  if (kind === "claude-code") return claudeCodeProvider({ ...(spec.model ? { model: spec.model } : {}), ...(deps.env ? { env: deps.env } : {}) });
   const common = {
     ...(spec.model ? { model: spec.model } : {}),
     ...(spec.baseURL ? { baseURL: spec.baseURL } : {}),

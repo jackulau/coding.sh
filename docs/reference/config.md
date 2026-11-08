@@ -280,6 +280,7 @@ Read these in your agent or script to tie its output to a run.
 |---|---|
 | `ANTHROPIC_API_KEY` | LLM judges with `"provider":"anthropic"` (the default). A grader's `apiKeyEnv` names another variable. |
 | `OPENAI_API_KEY` | LLM judges with `"provider":"openai"`. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | LLM judges with `"provider":"claude-code"`, which run `claude -p` on a Claude subscription (the token comes from `claude setup-token`). Without it the CLI uses `ANTHROPIC_API_KEY` or its own login. |
 | `AI_GATEWAY_API_KEY` | Vercel AI Gateway: `gateway enrich`, `gateway status --credits`, `compare --gateway`, `gateway` judges. |
 | `CODING_SH_GATEWAY_URL` | Vercel AI Gateway API base. |
 | `OPENROUTER_API_KEY`, `LITELLM_PROXY_API_KEY`, `CLOUDFLARE_API_TOKEN`, `PORTKEY_API_KEY`, `HELICONE_API_KEY`, `RAMP_ROUTER_API_KEY` | Other gateways: `gateway enrich` lookups and `compare --gateway <name>`. |
