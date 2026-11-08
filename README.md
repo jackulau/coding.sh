@@ -27,7 +27,7 @@
 
 ```sh
 curl -fsSL https://coding.sh/install | sh   # install, hook up your agents, open the viewer
-coding.sh sessions                          # after your next agent session: what it did
+coding.sh sessions                          # your past and new sessions: what each one did
 coding.sh usage --by model                  # tokens and cost by model
 ```
 
