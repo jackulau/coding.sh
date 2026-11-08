@@ -31,8 +31,10 @@ export function fallbackModelRisks(dirs: readonly string[]): FallbackRisk[] {
       } catch {
         continue;
       }
+      // A single model or a list of them, tried in order.
       const fb = (parsed as { fallbackModel?: unknown } | null)?.fallbackModel;
-      if (typeof fb === "string" && fb.trim()) out.push({ path, fallbackModel: fb.trim() });
+      const models = (Array.isArray(fb) ? fb : [fb]).filter((m): m is string => typeof m === "string" && m.trim() !== "").map((m) => m.trim());
+      if (models.length) out.push({ path, fallbackModel: models.join(", ") });
     }
   }
   return out;

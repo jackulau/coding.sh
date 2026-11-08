@@ -24,6 +24,18 @@ describe("fallbackModelRisks", () => {
     }
   });
 
+  it("reports a fallbackModel list, the form Claude Code settings use for several fallbacks", () => {
+    const root = mkdtempSync(join(tmpdir(), "csh-cache-setup-"));
+    writeFileSync(join(root, "settings.json"), JSON.stringify({ model: "opus", fallbackModel: ["claude-opus-4-8[1m]", "", "claude-opus-4-7[1m]"] }));
+    try {
+      const risks = fallbackModelRisks([root]);
+      assert.equal(risks.length, 1);
+      assert.equal(risks[0]?.fallbackModel, "claude-opus-4-8[1m], claude-opus-4-7[1m]");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("is empty when no fallback is set", () => {
     const root = mkdtempSync(join(tmpdir(), "csh-cache-setup-"));
     writeFileSync(join(root, "settings.json"), JSON.stringify({ model: "claude-opus-5-5" }));
