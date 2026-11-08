@@ -34,6 +34,8 @@ export function llmsText(): string {
 
 > ${SITE.description}
 
+Also written coding shell, coding sh or codingsh (the \`.sh\` reads as "shell"); the CLI runs as \`coding.sh\` or \`codingsh\`. One tool.
+
 Status: ${SITE.version}, ${LICENSE} licensed. Source: ${REPO_URL}
 
 ## Install
