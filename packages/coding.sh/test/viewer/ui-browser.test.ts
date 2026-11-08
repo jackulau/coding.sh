@@ -144,6 +144,17 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
       );
       assert.ok(parent.href.startsWith(sessionHash(PARENT)), parent.href);
       assert.match(parent.text, /parent:\s*Research the ui design/);
+
+      // The Run tree panel shows the whole run: the top-level agent and this subagent,
+      // with rolled-up totals, and the open session is marked current.
+      await page.eval("document.querySelector('.detail-head details.run-tree > summary').click()");
+      const tree = await page.waitFor(
+        "(() => { const b = document.querySelector('.run-tree-body'); if (!b || /Loading/.test(b.textContent)) return null; return { totals: b.querySelector('.rt-totals')?.textContent, roles: [...b.querySelectorAll('.rt-node .rt-role')].map((e) => e.textContent), current: b.querySelector('.rt-node.current .rt-role')?.textContent }; })()",
+        "run tree body",
+      );
+      assert.deepEqual(tree.roles, ["root", "general-purpose"], JSON.stringify(tree));
+      assert.match(tree.totals, /2 agents/);
+      assert.equal(tree.current, "general-purpose", "the open subagent is marked current");
     } finally {
       await page.close();
     }

@@ -520,6 +520,24 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .facts .lat-short { display: none; }
 @media (max-width: 560px) { .facts .lat-full { display: none; } .facts .lat-short { display: inline; } }
 .head-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1.25rem; }
+/* Multi-agent run tree: the top-level agent and every subagent, with per-node numbers. */
+.run-tree { grid-column: 1 / -1; margin-top: 0.1rem; }
+.run-tree > summary { display: inline-flex; align-items: center; gap: 0.4rem; cursor: pointer; font-size: 12px; color: var(--text-2); list-style: none; width: fit-content; }
+.run-tree > summary::-webkit-details-marker { display: none; }
+.run-tree > summary .caret { display: inline-block; transition: transform var(--hover-out) ease-out; color: var(--text-muted); }
+.run-tree[open] > summary .caret { transform: rotate(90deg); }
+.run-tree-body { margin-top: 0.55rem; display: grid; gap: 0.55rem; }
+.rt-totals { display: flex; flex-wrap: wrap; gap: 0.15rem 1.1rem; font-size: 12px; color: var(--text-2); }
+.rt-totals b { font-weight: 540; color: var(--text); }
+.rt-worst { font-size: 12px; color: var(--text-2); }
+.rt-worst a { color: var(--fail-ink); }
+.rt-nodes { display: grid; gap: 1px; }
+.rt-node { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.25rem 0.4rem; border-radius: 4px; font-size: 12px; min-width: 0; }
+.rt-node.current { background: var(--raised); box-shadow: inset 2px 0 0 var(--text); }
+.rt-node .rt-name { font-family: var(--font-mono); color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.rt-node .rt-role { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); flex: none; }
+.rt-node .rt-nums { margin-left: auto; display: flex; gap: 0.8rem; color: var(--text-2); flex: none; font-variant-numeric: tabular-nums; }
+.rt-node .rt-nums .fail { color: var(--fail-ink); }
 /* Durable workflow run: one lane per step, a bar per attempt, waits hatched, resumes ticked. */
 .wf-run { flex: none; display: grid; gap: 0.45rem; padding: 0.6rem var(--gutter) 0.7rem; box-shadow: inset 0 -1px 0 var(--line); }
 .wf-run-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 1rem; font-size: 12px; color: var(--text-2); }
@@ -1264,6 +1282,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .copy-id:hover { color: var(--text); }
   .sub-toggle:hover { background: var(--hover); color: var(--text); transition-duration: var(--hover-in); }
   .parent-link:hover { color: var(--text); transition-duration: var(--hover-in); }
+  .rt-node:hover:not(.current) { background: var(--hover); }
   .check:hover:not([aria-checked="true"]) { box-shadow: inset 0 0 0 1.5px var(--text-muted); }
   .palette-item:hover { background: var(--hover); }
   .qbar-opt:hover:not([aria-selected="true"]) { background: var(--hover); color: var(--text); }
@@ -4570,7 +4589,70 @@ function sessionHeader(s, labels, rel) {
           h("span", { class: "meta label-by" }, outcome ? "by " + outcome.by + " · " + fmtRel(outcome.ts) : "")),
         h("div", { class: "make-eval" },
           h("span", { class: "meta" }, "Make eval"),
-          cmdBlock(evalCmd, "Copy eval command")))));
+          cmdBlock(evalCmd, "Copy eval command")))),
+    runTreePanel(s, kids.length));
+}
+
+/**
+ * The whole multi-agent run as one tree, under the session header: the top-level
+ * agent and every subagent, each with its model, cost, tokens, duration, tool
+ * calls and flags, plus rolled-up totals and the worst subagent to fix first.
+ * Only shown when the session is part of a run (it has a parent or subagents).
+ * The tree is fetched from /api/sessions/{id}/tree the first time it is opened.
+ */
+function runTreePanel(s, kidCount) {
+  if (!s.parent && !kidCount) return null;
+  const body = h("div", { class: "run-tree-body" }, h("p", { class: "meta" }, "Loading…"));
+  const summary = h("summary", null, h("span", { class: "caret", "aria-hidden": "true" }, "▸"), "Run tree");
+  const details = h("details", { class: "run-tree" }, summary, body);
+  let loaded = false;
+  details.addEventListener("toggle", async () => {
+    if (!details.open || loaded) return;
+    loaded = true;
+    let data;
+    try {
+      data = await api("/api/sessions/" + encodeURIComponent(s.id) + "/tree");
+    } catch (e) {
+      loaded = false;
+      body.replaceChildren(h("p", { class: "meta err" }, "Could not load the run tree: " + e.message));
+      return;
+    }
+    const t = data.totals || {};
+    const u = t.usage || {};
+    const cost = usageCost(u, s.model);
+    const totals = h("div", { class: "rt-totals" },
+      h("span", null, h("b", null, fmtNum(t.sessions || 0)), " ", t.sessions === 1 ? "agent" : "agents"),
+      t.durationMs ? h("span", null, "wall ", h("b", null, fmtDuration(t.durationMs))) : null,
+      t.toolCalls ? h("span", null, h("b", null, fmtNum(t.toolCalls)), " tool calls") : null,
+      t.toolErrors ? h("span", { class: "err" }, h("b", null, fmtNum(t.toolErrors)), " tool errors") : null,
+      t.filesChanged ? h("span", null, h("b", null, fmtNum(t.filesChanged)), " files changed") : null,
+      tokensText(u) ? h("span", null, h("b", null, tokensText(u)), " tokens") : null,
+      cost.none ? null : h("span", null, h("b", null, cost.text), " total"));
+    const worst = data.worst && data.worst.flags && data.worst.flags.length
+      ? h("p", { class: "rt-worst" }, "Fix first: ",
+          h("a", { href: sessionHref(data.worst.sessionId) }, data.worst.role),
+          " — ", data.worst.flags[0])
+      : null;
+    const nodes = h("div", { class: "rt-nodes" });
+    const walk = (n) => {
+      const current = n.id === s.id;
+      const row = h("div", { class: "rt-node" + (current ? " current" : "") },
+        h("span", { class: "rt-role" }, n.role),
+        h("a", { class: "rt-name", href: sessionHref(n.id), title: n.id }, n.title ? oneLine(n.title) : n.id),
+        h("span", { class: "rt-nums" },
+          n.model ? h("span", null, n.model) : null,
+          n.durationMs ? h("span", null, fmtDuration(n.durationMs)) : null,
+          n.toolCalls ? h("span", { class: n.toolErrors ? "fail" : undefined }, plural(n.toolCalls, "call")) : null,
+          usageCost(n.usage || {}, n.model).none ? null : h("span", null, usageCost(n.usage || {}, n.model).text),
+          (n.flags && n.flags.length) ? h("span", { class: "fail", title: n.flags.join(", ") }, n.flags[0]) : null));
+      row.firstChild.style.marginLeft = (n.depth || 0) * 1.1 + "rem";
+      nodes.append(row);
+      for (const c of n.children || []) walk(c);
+    };
+    for (const root of data.tree || []) walk(root);
+    body.replaceChildren(totals, worst, nodes);
+  });
+  return details;
 }
 
 /** "temporal researchAgent · 4 steps · 2 retries": the header fact for a durable workflow run. */

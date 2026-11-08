@@ -21,6 +21,7 @@ import type { IngestStatus } from "../cli/ingest-worker.ts";
 import type { BlobStore, IndexStore, Label, Session, SessionFilter } from "../core/types.ts";
 import { phaseLabel, sessionOutline, storedOutline } from "../core/outline.ts";
 import { loadReplay, type Baseline, type Replay } from "../core/replay.ts";
+import { buildSessionTree, worstFirst, worstNode, type TreeNode } from "../core/tree.ts";
 import type { ExperimentResult } from "../datasets/types.ts";
 import { compareExperiments } from "../experiments/compare.ts";
 import { facetCounts, findEvents, findSessions, searchWhere } from "../query/run.ts";
@@ -558,6 +559,28 @@ async function benchmarkDetail(ctx: ApiCtx, runs: readonly BenchRun[], src: Benc
   return { ...rest, failures: out };
 }
 
+/** One /api/sessions/<id>/tree node: the session's own numbers and its subagents. */
+function treeNode(n: TreeNode): Record<string, unknown> {
+  const s = n.session;
+  return {
+    id: s.id,
+    agent: s.agent,
+    role: n.depth === 0 ? "root" : (s.parent?.type ?? "subagent"),
+    model: s.model ?? null,
+    title: s.title ?? null,
+    depth: n.depth,
+    startedAt: s.startedAt,
+    endedAt: s.endedAt ?? null,
+    durationMs: s.endedAt !== undefined ? s.endedAt - s.startedAt : null,
+    usage: s.stats.usage ?? null,
+    toolCalls: s.stats.toolCalls,
+    toolErrors: s.stats.toolErrors,
+    filesChanged: s.stats.filesChanged,
+    flags: worstFirst(s.flags),
+    children: n.children.map(treeNode),
+  };
+}
+
 async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx: ApiCtx): Promise<void> {
   const parts = url.pathname
     .slice("/api/".length)
@@ -636,6 +659,29 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         const derails = s.stats.derails ?? [];
         const o = storedOutline(s) ?? sessionOutline(await ctx.index.listEvents(sessionId), derails);
         return sendJson(res, 200, { phases: o.phases.map((p) => ({ ...p, label: phaseLabel(p) })), days: o.days, derails, events: s.stats.events });
+      }
+      if (sub === "tree") {
+        // The whole multi-agent run this session belongs to: its top-level agent
+        // and every subagent under it, with per-node numbers and rolled-up totals.
+        await visibleSession(ctx, sessionId);
+        const tree = await buildSessionTree(ctx.index, sessionId);
+        if (!tree) throw notFound();
+        const worst = worstNode(tree.roots);
+        const t = tree.totals;
+        return sendJson(res, 200, {
+          root: tree.roots[0]?.session.id ?? sessionId,
+          totals: {
+            sessions: t.sessions,
+            usage: t.usage,
+            toolCalls: t.toolCalls,
+            toolErrors: t.toolErrors,
+            filesChanged: t.filesChanged,
+            durationMs: t.wallMs ?? null,
+            flags: t.flags,
+          },
+          worst: worst ? { sessionId: worst.session.id, role: worst.depth === 0 ? "root" : (worst.session.parent?.type ?? "subagent"), flags: worstFirst(worst.session.flags) } : null,
+          tree: tree.roots.map(treeNode),
+        });
       }
       throw notFound();
     }

@@ -91,6 +91,7 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/sessions/{id}`](#get-apisessionsid) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/events`](#get-apisessionsidevents) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/outline`](#get-apisessionsidoutline) | read key or basic auth | serve, ui |
+| GET | [`/api/sessions/{id}/tree`](#get-apisessionsidtree) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/replay`](#get-apisessionsidreplay) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/fork`](#get-apisessionsidfork-post-apisessionsidfork) | ui token | ui |
 | POST | [`/api/sessions/{id}/fork`](#get-apisessionsidfork-post-apisessionsidfork) | ui token | ui |
@@ -632,6 +633,38 @@ curl -sS "$CSH/api/sessions/team%2Fchat-1/outline" -H "Authorization: Bearer $RE
   "derails": [{"flag": "failure-streak", "ts": 1793877000000, "eventId": "c41e88a0…", "index": 2210,
                "endTs": 1793877090000, "detail": "6 failed tool calls in a row (Bash)"}],
   "events": 3600
+}
+```
+
+### `GET /api/sessions/{id}/tree`
+
+The whole multi-agent run this session belongs to: its top-level agent (found by following
+`parent` up) and every subagent under it, as a tree. Each node carries the session's own model,
+`usage`, tool calls, files changed and failure flags; `totals` sums them over the whole tree, with
+the run's wall `durationMs` and every failure flag in it worst first; `worst` names the node to fix
+first (the worst-flagged, costliest session), or is null when nothing is flagged.
+
+```sh
+curl -sS "$CSH/api/sessions/9f1c2e…/tree" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{
+  "root": "9f1c2e…",
+  "totals": {
+    "sessions": 4, "usage": {"inputTokens": 2100000, "outputTokens": 41000, "costUsd": 3.74},
+    "toolCalls": 612, "toolErrors": 40, "filesChanged": 17, "durationMs": 1800000,
+    "flags": ["premature-completion"]
+  },
+  "worst": {"sessionId": "9f1c2e…:sub:a2", "role": "fixer", "flags": ["premature-completion"]},
+  "tree": [
+    {"id": "9f1c2e…", "agent": "claude-code", "role": "root", "model": "claude-sonnet-5",
+     "depth": 0, "durationMs": 1800000, "usage": {"costUsd": 1.1}, "toolCalls": 300, "toolErrors": 2,
+     "filesChanged": 3, "flags": [], "children": [
+       {"id": "9f1c2e…:sub:a2", "role": "fixer", "depth": 1, "usage": {"costUsd": 2.0},
+        "toolCalls": 180, "toolErrors": 31, "flags": ["premature-completion"], "children": []}
+     ]}
+  ]
 }
 ```
 
