@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
+import { isPlumbing, shellParts } from "../core/failing-command.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
 import { stringifyToml } from "../core/toml.ts";
 import type { AgentEvent, BlobRef, BlobStore, EvalTask, IndexStore, Session } from "../core/types.ts";
@@ -108,6 +109,8 @@ export function extractTestCommand(cmd: string, repoRoot?: string): string | und
       continue;
     }
     if (!TEST_RE.test(seg)) continue;
+    // `cat setup.cfg | grep pytest` and `echo "run pytest"` name a test runner without running it.
+    if (isPlumbing(shellParts(seg)[0]?.prog)) continue;
     const cleaned = seg
       .replace(/\s*\|\s*(tail|head|grep|less|more|cat|tee)\b.*$/, "")
       .replace(/\s*[12]?>&[12]\s*/g, " ")

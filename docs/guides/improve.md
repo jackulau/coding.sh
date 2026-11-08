@@ -41,6 +41,15 @@ Fix first
   `npm test` or a missing script. When the test command failed before the agent changed any file,
   the issue says so: fix the command first, or the agent can't check its work.
 
+  A compound line such as `cat Cargo.toml && cargo build` or a `for` loop counts against the part
+  that failed, not its first word. That is the part the error names (`cat: x: No such file`), the
+  tool the error comes from (a Rust `error[E0425]`, a Python traceback), the part `timeout` stopped
+  (exit 124), or the one part left that could fail: the last part of a pipeline sets its status,
+  and tools like `cat` and `sed` name themselves when they fail. Shell keywords, variable
+  assignments, flags and wrappers like `sudo` or `xargs` are never the command. When nothing singles
+  out a part, the issue says "A compound command" rather than guess. A test summary that a command
+  like `cat test.log` printed is not a test run, so it never makes `cat` a broken setup.
+
 Issues seen in two or more sessions come first. Then the order follows the severity score that
 `coding.sh refine` uses. Each issue shows the newest example, what to try, and the commands for the
 next steps. `coding.sh show <id>` opens the example. Its header has a `Flags` row.

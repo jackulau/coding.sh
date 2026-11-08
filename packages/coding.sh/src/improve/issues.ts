@@ -7,7 +7,8 @@
 //   flags     every diagnosed failure flag (src/refine/findings.ts)
 //   failures  one command or tool failing the same way in two or more
 //             sessions: a broken `npm test`, a missing script, an Edit that
-//             never matches. A test command that already failed before the
+//             never matches. A compound line counts against the part that
+//             failed (core/failing-command.ts). A test command that already failed before the
 //             agent changed anything is a defect of the setup (factor 40);
 //             any other repeat is waste (25, or 40 from 6 failures up).
 //
@@ -17,6 +18,7 @@ import { commandOf } from "../core/sessions.ts";
 import { flagFindings } from "../refine/findings.ts";
 import { natureScore, signalSeverity, type SeverityLevel } from "../refine/severity.ts";
 import { extractTestCommand } from "../eval/task.ts";
+import { exitCodeOf, failingPart, isPlumbing } from "../core/failing-command.ts";
 
 /** The decision-point kinds `exp ab --behavior` replays (src/eval/decision.ts). */
 export type Behavior = "unverified-claim" | "done-while-failing" | "unchanged-retry";
@@ -61,7 +63,7 @@ export interface Issue {
 
 /** One failed command or tool call in a session. */
 export interface FailureRecord {
-  /** Grouping key: the command's head (`npm test`, `npm run lint`) or the tool and its error. */
+  /** Grouping key: the failing part's head (`cmd:npm test`), a compound command and its error (`compound:…`), or the tool and its error. */
   key: string;
   /** What to show: the command or tool. */
   label: string;
@@ -154,8 +156,12 @@ export function commandHead(cmd: string): string {
   return out.join(" ");
 }
 
+/** Claude Code puts "Exit code N" before a failed command's output: the status, not the error. */
+const withoutExitLine = (text: string | undefined): string | undefined => text?.replace(/^\s*(?:Error: )?Exit code \d+[^\n]*(?:\n|$)/, "");
+
 /** An error's first informative line, with numbers, hex ids and paths blurred, for grouping. */
-export function errorKey(text: string | undefined): string {
+export function errorKey(raw: string | undefined): string {
+  const text = withoutExitLine(raw)?.trim() ? withoutExitLine(raw) : raw;
   const line =
     (text ?? "")
       .split("\n")
@@ -170,7 +176,8 @@ export function errorKey(text: string | undefined): string {
     .trim();
 }
 
-const firstErrorLine = (text: string | undefined): string | undefined => {
+const firstErrorLine = (raw: string | undefined): string | undefined => {
+  const text = withoutExitLine(raw)?.trim() ? withoutExitLine(raw) : raw;
   if (!text) return undefined;
   const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
   return lines.find((l) => /error|cannot|not found|failed|no such|denied|missing|invalid|unknown/i.test(l)) ?? lines[0];
@@ -185,12 +192,32 @@ const outputText = (e: AgentEvent): string | undefined => {
   return undefined;
 };
 
-/** The failed tool calls and failing test runs in one session's events (tool.start, tool.end, test.result, file.change). */
+/** What improve calls a failed shell line whose failing part the evidence doesn't single out. */
+export const COMPOUND = "compound command";
+
+/**
+ * The failed tool calls and failing test runs in one session's events (tool.start, tool.end, test.result, file.change).
+ * A failed shell line is filed under the part that failed (failingPart), or as a compound command when that is unclear.
+ * A test run is a test command that reported failures: a test summary in what `cat log.txt` printed is not one.
+ */
 export function failureRecords(events: readonly AgentEvent[], repoRoot?: string): FailureRecord[] {
   const starts = new Map<string, AgentEvent>();
+  const failedTests = new Set<string>();
+  for (const e of events) if (e.kind === "test.result" && typeof e.payload.toolUseId === "string" && typeof e.payload.failed === "number" && e.payload.failed > 0) failedTests.add(e.payload.toolUseId);
   const out: FailureRecord[] = [];
   let edited = false;
-  let lastCmd: { label: string; output?: string } | undefined;
+  let lastCmd: { cmd: string; id?: string; output?: string } | undefined;
+  // A test command in `cmd` that the failing part is, with the cd prefix extractTestCommand keeps.
+  const testLabel = (cmd: string, part: string): string | undefined => {
+    const t = extractTestCommand(part, repoRoot);
+    if (!t) return undefined;
+    const full = extractTestCommand(cmd, repoRoot);
+    return full?.endsWith(t) ? full : t;
+  };
+  const sampleOf = (text: string | undefined) => {
+    const l = firstErrorLine(text);
+    return l ? { sample: l } : {};
+  };
   for (const e of [...events].sort((a, b) => a.ts - b.ts)) {
     const p = e.payload as Record<string, unknown>;
     if (e.kind === "file.change") {
@@ -204,30 +231,44 @@ export function failureRecords(events: readonly AgentEvent[], repoRoot?: string)
       continue;
     }
     if (e.kind === "tool.end") {
-      const start = typeof p.toolUseId === "string" ? starts.get(p.toolUseId) : undefined;
+      const id = typeof p.toolUseId === "string" ? p.toolUseId : undefined;
+      const start = id ? starts.get(id) : undefined;
       const tool = (typeof p.tool === "string" ? p.tool : undefined) ?? (typeof start?.payload.tool === "string" ? (start.payload.tool as string) : "?");
       const cmd = commandOf(start?.payload.input ?? p.input);
       const text = outputText(e);
-      if (cmd) lastCmd = { label: extractTestCommand(cmd, repoRoot) ?? commandHead(cmd), ...(text ? { output: text } : {}) };
+      if (cmd) lastCmd = { cmd, ...(id ? { id } : {}), ...(text ? { output: text } : {}) };
       if (p.ok !== false) continue;
       if (cmd) {
-        const head = extractTestCommand(cmd, repoRoot) ?? commandHead(cmd);
-        out.push({ key: `cmd:${head}`, label: head, ...(firstErrorLine(text) ? { sample: firstErrorLine(text)! } : {}), tests: false, beforeEdits: !edited });
+        // A test command whose run reported failures failed; otherwise find the part that did.
+        const tests = id && failedTests.has(id) ? extractTestCommand(cmd, repoRoot) : undefined;
+        const part = tests ? undefined : failingPart(cmd, { output: text ?? "", ...(exitCodeOf(p.exitCode, text) !== undefined ? { exitCode: exitCodeOf(p.exitCode, text)! } : {}) });
+        const partText = part?.argv.join(" ");
+        const label = tests ?? (partText ? (testLabel(cmd, partText) ?? commandHead(partText)) : undefined);
+        if (label) out.push({ key: `cmd:${label}`, label, ...sampleOf(text), tests: false, beforeEdits: !edited });
+        else out.push({ key: `compound:${errorKey(text)}`, label: COMPOUND, ...sampleOf(text), tests: false, beforeEdits: !edited });
       } else {
         const k = errorKey(text);
-        out.push({ key: `tool:${tool}:${k}`, label: tool, ...(firstErrorLine(text) ? { sample: firstErrorLine(text)! } : {}), tests: false, beforeEdits: !edited });
+        out.push({ key: `tool:${tool}:${k}`, label: tool, ...sampleOf(text), tests: false, beforeEdits: !edited });
       }
       continue;
     }
-    if (e.kind === "test.result" && typeof p.failed === "number" && p.failed > 0 && lastCmd) {
+    if (e.kind === "test.result" && typeof p.failed === "number" && p.failed > 0) {
+      const id = typeof p.toolUseId === "string" ? p.toolUseId : undefined;
+      const started = id ? commandOf(starts.get(id)?.payload.input) : undefined;
+      const src = started ?? lastCmd?.cmd;
+      const output = !id || lastCmd?.id === id ? lastCmd?.output : undefined;
+      const part = src && !extractTestCommand(src, repoRoot) ? failingPart(src, { output: output ?? "" }) : undefined;
+      // A test summary in what plumbing printed (`cat test.log`, `sleep 60 && tail out.log`) is not a test run.
+      const label = src ? (extractTestCommand(src, repoRoot) ?? (part && !isPlumbing(part.prog) ? commandHead(part.argv.join(" ")) : undefined)) : undefined;
+      if (!label) continue;
       // A failing test run that the tool call already reported as an error is one failure, not two.
-      const key = `cmd:${lastCmd.label}`;
+      const key = `cmd:${label}`;
       const prev = out.at(-1);
       if (prev && prev.key === key && !prev.tests) {
         prev.tests = true;
         continue;
       }
-      out.push({ key, label: lastCmd.label, ...(firstErrorLine(lastCmd.output) ? { sample: firstErrorLine(lastCmd.output)! } : {}), tests: true, beforeEdits: !edited });
+      out.push({ key, label, ...sampleOf(output), tests: true, beforeEdits: !edited });
     }
   }
   return out;
@@ -289,7 +330,8 @@ export function rankIssues(sessions: readonly Session[], failures: ReadonlyMap<s
     const setup = g.tests && g.before >= 2;
     const part = natureScore(setup ? { nature: "defect", factor: 40, affected: g.sessions.length, analyzed } : { nature: "inefficiency", factor: g.count >= 6 ? 40 : 25, affected: g.sessions.length, analyzed });
     const sev = signalSeverity([part]);
-    const what = key.startsWith("cmd:") ? `\`${g.label}\`` : g.label;
+    const compound = key.startsWith("compound:");
+    const what = key.startsWith("cmd:") ? `\`${g.label}\`` : compound ? `A ${COMPOUND}` : g.label;
     out.push({
       id: `fails:${key}`,
       kind: "failure",
@@ -303,8 +345,10 @@ export function rankIssues(sessions: readonly Session[], failures: ReadonlyMap<s
         ? `Fix ${what} so it passes on a clean checkout, or tell the agent the command that works. Until then the agent can't check its work.`
         : key.startsWith("cmd:")
           ? `Fix ${what}, or tell the agent in CLAUDE.md or AGENTS.md what to run instead.`
-          : `Look at an example: tell the agent how to use ${g.label}, or why it fails.`,
-      command: g.label,
+          : compound
+            ? "Open an example: the error doesn't say which part of the command failed, so run its parts one at a time."
+            : `Look at an example: tell the agent how to use ${g.label}, or why it fails.`,
+      ...(compound ? {} : { command: g.label }),
       ...(g.sample ? { sample: clip(g.sample, 160)! } : {}),
       beforeEdits: g.before,
     });

@@ -74,6 +74,8 @@ describe("verifier/setup guessing", () => {
     assert.equal(extractTestCommand("node scripts/build.js"), undefined);
     assert.equal(extractTestCommand(`cd /elsewhere/abs && pytest`, ROOT), "pytest");
     assert.equal(extractTestCommand("ls -la && cat package.json"), undefined);
+    assert.equal(extractTestCommand("cat setup.cfg | grep pytest && pytest -q"), "pytest -q", "a grep for the runner's name is not a run");
+    assert.equal(extractTestCommand('echo "now run npm test"'), undefined);
     assert.equal(extractTestCommand("grep -r jestConfig ."), undefined);
   });
   it("reads shell commands from several agents' tool shapes", () => {
