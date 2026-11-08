@@ -59,7 +59,7 @@ their own, with no ingest step. To import past sessions again, for example after
 coding.sh ingest --backfill
 ```
 
-coding.sh is not on npm yet, so `npm install -g coding.sh` doesn't work today. Installing from
+You can also install with npm: `npm install -g coding.sh`. Installing from
 source, updates and uninstall: [docs/guides/install.md](docs/guides/install.md).
 
 ## What you get
@@ -106,7 +106,7 @@ fails. More in [docs/guides/benchmarks.md](docs/guides/benchmarks.md).
 SQLite, Postgres or ClickHouse. Your API apps send traces with the TypeScript SDK (`@codingdotsh/sdk`), the
 Python SDK (`coding-sh`) or plain OpenTelemetry. `coding.sh gateway` links calls made through LLM
 gateways (Vercel AI Gateway, OpenRouter, LiteLLM, Cloudflare, Portkey, Helicone) to their billed
-cost. The SDKs and store plugins are not published yet. Start with
+cost. The TypeScript SDK and the store plugins are on npm; the Python SDK isn't on PyPI yet. Start with
 [docs/production/README.md](docs/production/README.md).
 
 ## Supported agents
@@ -149,9 +149,10 @@ content. Details in [docs/guides/privacy.md](docs/guides/privacy.md).
 
 coding.sh is pre-1.0 (latest: 0.1.2), so expect rough edges. What isn't done yet:
 
-- npm and PyPI: nothing is published yet. The packages and the release workflow are ready; what
-  remains is the maintainer's account setup and tag ([First publish](docs/RELEASE.md#first-publish)).
-  The curl installer and source installs work today.
+- PyPI: the Python SDK (`coding-sh`) isn't on PyPI yet — the pending publisher is still being set
+  up ([First publish](docs/RELEASE.md#first-publish)). npm is published: the CLI
+  (`npm install -g coding.sh`), `@codingdotsh/sdk` and the store plugins. The curl installer and
+  source installs work too.
 - CI runs on Linux, macOS and Windows. On Windows, CI runs the test suite, the installer (from
   Git Bash) and real OpenCode, Pi, Goose, Factory Droid, GitHub Copilot CLI and Aider sessions
   against a stub model. Capture from Claude Code, Codex CLI, Antigravity CLI, Cursor CLI, Amp and
@@ -191,7 +192,7 @@ packages/
 apps/site/          coding.sh website (Astro, static)
 docs/               guides, production, reference and design docs
 examples/           an eve agent and production app examples
-deploy/             deploy recipes for Compose, Fly and Railway (Render uses render.yaml)
+deploy/             deploy recipes for Compose, Fly, Railway and ClickHouse (Render uses render.yaml)
 evals/              coding.sh's own CLI eval suite
 scripts/dogfood/    the scorecard coding.sh runs on itself
 ```
