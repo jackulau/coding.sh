@@ -9,6 +9,7 @@ import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, pendingField, queryCliError, readIngest, num, oneLine, sessionJson, str, whereFlag, withContext, type IngestBacklog } from "../common.ts";
 import { ago, clean, duration } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+import { noSessionsNext } from "../first-session.ts";
 
 /** `--facets` alone counts these (tool only where the store indexes events). */
 const DEFAULT_FACETS = ["agent", "model", "repo", "flag", "skill", "tool"];
@@ -60,6 +61,11 @@ export async function run(c: CommandContext): Promise<number> {
     }
     if (!sessions.length) {
       out.note("No sessions");
+      // An empty store (not just an empty filter): say how the first session gets here.
+      if (!(await ctx.index.listSessions({ limit: 1 })).length) {
+        const n = noSessionsNext(c.env);
+        out.next(n.label, n.command);
+      }
       return 0;
     }
     const tty = out.stdoutTTY;

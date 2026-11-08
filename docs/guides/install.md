@@ -8,11 +8,10 @@ coding.sh needs Node 22.15 or newer.
 curl -fsSL https://coding.sh/install | sh
 ```
 
-It installs the latest GitHub release, runs `coding.sh init`, then opens the viewer.
+It installs the latest release from npm (or the GitHub release tarball when npm can't be reached),
+runs `coding.sh init`, then opens the viewer.
 
 ## npm
-
-Once `coding.sh` is on npm:
 
 ```sh
 npm install -g coding.sh   # or run any command with npx coding.sh
@@ -69,8 +68,9 @@ shows up in the viewer as it lands, with an "Importing past sessions…" note at
 `coding.sh ingest --backfill` runs it later. Running `init` again reads only new or changed
 transcripts. The import applies the same redaction and `capture.exclude` rules as live capture.
 
-After that, use your agents as usual. Sessions show up in the viewer, in `coding.sh sessions` and
-over MCP. There is no ingest step: read commands, the viewer and the MCP server pick up new events
+After that, start a new agent session and use it as usual. Agents read their hooks when a session
+starts, so a session that was already open when you ran `init` may not be recorded until you restart
+it. Sessions show up in the viewer, in `coding.sh sessions` and over MCP. There is no ingest step: read commands, the viewer and the MCP server pick up new events
 on their own.
 
 Check your setup with `coding.sh doctor`.

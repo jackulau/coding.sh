@@ -19,6 +19,7 @@ import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, list, oneLine, pendingField, readIngest, str, withContext } from "../common.ts";
 import { ago, CliError, localTime, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+import { captureSetUp, START_NEW_SESSION } from "../first-session.ts";
 
 interface Opts {
   root: string | undefined;
@@ -138,6 +139,7 @@ async function report(c: CommandContext): Promise<number> {
     if (!sessions.length) {
       out.note(`No sessions in ${where(o, c.cwd)} since ${o.sinceText}`);
       if (o.repo) out.next("Look in every repo", `coding.sh improve --repo all --since ${o.sinceText}`);
+      else if (captureSetUp(c.env)) out.next(`${START_NEW_SESSION}. Then check capture`, "coding.sh doctor");
       else out.next("Capture your agents' sessions first", "coding.sh init");
       return 0;
     }

@@ -21,6 +21,8 @@ export interface IngestStatus {
   lastIngestAt: number | null;
   /** Past sessions are being imported (init, or the background import it started). Set by `coding.sh ui`. */
   importing?: boolean;
+  /** `coding.sh init` has set up capture (the empty list then says to start a new agent session). Set by `coding.sh ui`. */
+  captureSetUp?: boolean;
 }
 
 export interface BackgroundIngest {

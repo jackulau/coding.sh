@@ -297,6 +297,9 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .page-head .meta { margin-top: 0.25rem; }
 .page-head .meta button { color: var(--text-2); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
 .empty { padding: 2.25rem 1.5rem; display: grid; grid-template-columns: minmax(0, 1fr); justify-items: start; gap: 0.7rem; max-width: 40rem; }
+/* One of two alternative bodies of an empty panel: its children join the panel's grid. */
+.empty-part { display: contents; }
+.empty-part[hidden] { display: none; }
 .empty > * { max-width: 100%; }
 .empty .cmd code { white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: visible; }
 .empty h2 { font-size: 1rem; }
@@ -3155,10 +3158,11 @@ function listActions(view) {
 
 function captureEmpty() {
   // A first `coding.sh ui` over a big spool, or during init's history import, opens before anything is indexed: say so instead.
-  const state = () => ingestState.importing ? "Importing your past sessions…" : !$("#indexing").hidden ? "Indexing captured sessions…" : "No sessions yet";
+  const state = () => ingestState.importing ? "Importing your past sessions…" : !$("#indexing").hidden ? "Indexing captured sessions…" : ingestState.captureSetUp ? "Waiting for your first session" : "No sessions yet";
   const title = h("h2", { text: state() });
-  const panel = h("div", { class: "panel empty" },
-    title,
+  // Before init: how to set up capture. After it (the installer opens this page right after init),
+  // running init again does nothing: the next step is a new agent session.
+  const setup = h("div", { class: "empty-part" },
     h("p", { text: "Used Claude Code, Codex or another supported agent on this machine before? Import the sessions it kept:" }),
     cmdBlock("coding.sh ingest --backfill", "Copy import command"),
     h("p", { text: "Each past session then shows up here with its prompts, tool calls, files changed, tokens, cost and flags such as no-verification." }),
@@ -3167,14 +3171,29 @@ function captureEmpty() {
     h("ol", { class: "steps" },
       h("li", null, "Run ", h("code", null, "npx coding.sh init"), " in a terminal. It detects installed agents, adds hooks and imports their past sessions."),
       h("li", null, "Use Claude Code, Codex or another supported agent in any git repository."),
-      h("li", null, "Come back here. New sessions show up on their own within a few seconds.")),
+      h("li", null, "Come back here. New sessions show up on their own within a few seconds.")));
+  const waiting = h("div", { class: "empty-part" },
+    h("p", { text: "Capture is set up. Start a new session of Claude Code, Codex or another supported agent; it shows up here on its own within a few seconds." }),
+    h("p", { text: "Sessions that were already open when you ran init may not have loaded the hooks. Restart them to record them." }),
+    h("p", { text: "Nothing after a new session? Check capture:" }),
+    cmdBlock("coding.sh doctor", "Copy doctor command"));
+  const sync = () => {
+    title.textContent = state();
+    setup.hidden = !!ingestState.captureSetUp;
+    waiting.hidden = !ingestState.captureSetUp;
+  };
+  sync();
+  const panel = h("div", { class: "panel empty" },
+    title, setup, waiting,
     h("button", { class: "btn", type: "button", onclick: () => { list.loaded = false; route(); } }, "Check again"));
+  // The first render can come before the ingest poller's first answer: ask once now.
+  api("/api/ingest", null, true).then((st) => { if (st) { ingestState.captureSetUp = !!st.captureSetUp; sync(); } }, () => {});
   // The server ingests every 3 s while `coding.sh ui` runs; poll until the first
   // session lands, then render the list. Stops once this panel leaves the page.
   const timer = setInterval(async () => {
     if (!panel.isConnected) { clearInterval(timer); return; }
     if (document.hidden) return;
-    title.textContent = state();
+    sync();
     try {
       const body = await api("/api/sessions" + qs({ limit: 1 }), null, true);
       if (body && body.items && body.items.length && panel.isConnected) { clearInterval(timer); list.loaded = false; route(); }
@@ -6589,7 +6608,7 @@ async function loadUpdate() {
 // `coding.sh ui` ingests in the background, so the list can open on a partial
 // index. While a backlog of spool files is pending the top bar says how many; the list's
 // "new sessions" pill picks up what lands. 404 (`serve`, no background ingest) stops the polling.
-const ingestState = { importing: false };
+const ingestState = { importing: false, captureSetUp: false };
 function loadIngest() {
   const pill = $("#indexing");
   let was = false;
@@ -6604,6 +6623,7 @@ function loadIngest() {
       if (st) {
         const n = typeof st.filesPending === "number" ? st.filesPending : 0;
         ingestState.importing = !!st.importing;
+        ingestState.captureSetUp = !!st.captureSetUp;
         // A backlog only: live capture adds a few files every pass, and a flashing pill would be noise.
         const on = (!!st.ingesting && n >= 20) || ingestState.importing;
         if (on && ingestState.importing) {

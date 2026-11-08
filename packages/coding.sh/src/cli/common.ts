@@ -12,6 +12,7 @@ import { spawnBackgroundIngest } from "../spool/kick.ts";
 import { UsageError, type FlagValue } from "./args.ts";
 import { ago, CliError, plural, type Output } from "./output.ts";
 import type { CommandContext } from "./types.ts";
+import { noSessionsNextLines } from "./first-session.ts";
 
 export async function withContext<T>(c: CommandContext, fn: (ctx: Context) => Promise<T>): Promise<T> {
   let ctx: Context;
@@ -245,7 +246,7 @@ export async function resolveTask(ctx: Context, ref: string): Promise<EvalTask> 
 export async function resolveSession(ctx: Context, id: string): Promise<Session> {
   if (id === "latest" || id === "last") {
     const [s] = await ctx.index.listSessions({ limit: 1, parentSessionId: null });
-    if (!s) throw new CliError("No sessions captured yet", { reason: "not_found", next: ["Install capture hooks:", "coding.sh init"] });
+    if (!s) throw new CliError("No sessions captured yet", { reason: "not_found", next: noSessionsNextLines(ctx.env) });
     return s;
   }
   const s = (await ctx.index.getSession(id)) ?? (await sessionByPrefix(ctx, id));

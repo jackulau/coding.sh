@@ -11,6 +11,7 @@ import { loadReplay, snapshotBaseline, type Replay } from "../core/replay.ts";
 import { buildRunTree, buildSessionTree, worstFirst, worstNode, type Tree, type TreeNode } from "../core/tree.ts";
 import { parseSince } from "../cli/args.ts";
 import { version } from "../cli/meta.ts";
+import { noSessionsHint } from "../cli/first-session.ts";
 import { isNewer } from "../update/semver.ts";
 import { gateHeadline } from "../stats/gate.ts";
 import {
@@ -212,7 +213,7 @@ async function expSession(a: Obj, c: ToolCtx): Promise<{ session: { id: string; 
 async function resolveSession(ctx: Context, id: string): Promise<Session> {
   if (id === "latest" || id === "last") {
     const [s] = await ctx.index.listSessions({ limit: 1, parentSessionId: null });
-    if (!s) throw new ToolError("No sessions captured yet. Run `coding.sh init` to install capture hooks, then use an agent.");
+    if (!s) throw new ToolError(noSessionsHint(ctx.env));
     return s;
   }
   const s = await ctx.index.getSession(id);
@@ -392,7 +393,11 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         }
         const cwd = cwdArg ?? c.cwd;
         const hit = await currentByCwd(ctx.index, cwd, c.now());
-        if (!hit) throw new ToolError(`No captured session ran in ${cwd}. Check capture with the status tool, or find the session with sessions_list.`);
+        if (!hit) {
+          // An empty store: the agent is in its first session since init (or init never ran). Say which.
+          if (!(await ctx.index.listSessions({ limit: 1 })).length) throw new ToolError(noSessionsHint(ctx.env));
+          throw new ToolError(`No captured session ran in ${cwd}. Check capture with the status tool, or find the session with sessions_list.`);
+        }
         return { matchedBy: hit.matchedBy, cwd, ...(await sessionDigest(ctx.index, hit.session, { limit, offset: 0, from: "tail", now: c.now() })) };
       },
     },
@@ -1220,7 +1225,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         const lastError = lastSpoolError(ctx.paths.spoolErrors);
         const hints: string[] = [];
         if (update.available) hints.push(`coding.sh ${update.latest} is available (running ${update.current}). Tell the user; update with: ${update.install ?? "coding.sh update"}`);
-        if (!latest) hints.push("No sessions captured yet: run `coding.sh init` to install capture hooks.");
+        if (!latest) hints.push(noSessionsHint(ctx.env));
         else if (!day.sessions.length) hints.push("No sessions in the last 24h: if agents ran, check hooks with `coding.sh doctor`.");
         return {
           version: version(),

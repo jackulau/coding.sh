@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { autoIngest, pendingField, readIngest, oneLine, sessionJson, withContext } from "../common.ts";
 import { ago, bytes, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+import { noSessionsNext } from "../first-session.ts";
 
 function spoolSize(dir: string): { files: number; bytes: number } {
   let files = 0;
@@ -48,7 +49,8 @@ export async function run(c: CommandContext): Promise<number> {
       out.print(`${latest.id}  ${latest.agent}  ${ago(latest.startedAt)}  ${oneLine(latest.title, 60)}`);
     } else {
       out.note("No sessions captured yet");
-      out.next("Install capture hooks", "coding.sh init");
+      const n = noSessionsNext(c.env);
+      out.next(n.label, n.command);
     }
     return 0;
   });

@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, describe, test } from "node:test";
 import { run as status } from "../../src/cli/commands/status.ts";
 import { run as ui } from "../../src/cli/commands/ui.ts";
@@ -192,7 +192,7 @@ describe("reads during ingest", () => {
       }
       assert.equal(items.length, 5);
       const st = await api("/api/ingest");
-      assert.deepEqual(Object.keys(st).sort(), ["filesPending", "importing", "ingesting", "lastIngestAt"]);
+      assert.deepEqual(Object.keys(st).sort(), ["captureSetUp", "filesPending", "importing", "ingesting", "lastIngestAt"]);
       assert.equal(st.importing, false);
       // init's background history import holds the import lock: the viewer says it is importing.
       const lock = await acquireLock(paths(h.env).importLock, { waitMs: 0 });
@@ -202,6 +202,11 @@ describe("reads during ingest", () => {
         lock.release();
       }
       assert.equal((await api("/api/ingest")).importing, false);
+      // Once init has written the hook bin, the empty list says to start a new agent session instead of running init.
+      assert.equal(st.captureSetUp, false);
+      mkdirSync(dirname(paths(h.env).hook), { recursive: true });
+      writeFileSync(paths(h.env).hook, "// hook\n");
+      assert.equal((await api("/api/ingest")).captureSetUp, true);
     } finally {
       ac.abort();
       assert.equal(await done, 130);

@@ -536,16 +536,20 @@ describe("cli zero setup", () => {
     }
     const i = cli(h, ["init", "--yes", ...agentArgs]);
     assert.equal(i.status, 0, i.stderr);
-    const tail = i.stderr.trimEnd().split("\n").slice(-4);
+    const tail = i.stderr.trimEnd().split("\n").slice(-5);
     assert.match(tail[0]!, /Set up Claude Code.*\(hooks \+ MCP server\)/);
-    assert.match(tail[1]!, /Open the viewer: coding\.sh ui$/);
-    assert.match(tail[2]!, /After a few sessions, see what to fix first: coding\.sh improve$/);
-    assert.match(tail[3]!, /Docs: https:\/\/coding\.sh\/docs$/);
+    // Agents load hooks at session start: say capture begins with the next session.
+    assert.match(tail[1]!, /Recording starts with the next session: start a new session of any of them\. Sessions already open may not have loaded the hooks$/);
+    assert.match(tail[2]!, /Open the viewer: coding\.sh ui$/);
+    assert.match(tail[3]!, /After a few sessions, see what to fix first: coding\.sh improve$/);
+    assert.match(tail[4]!, /Docs: https:\/\/coding\.sh\/docs$/);
     for (const f of Object.values(files)) assert.match(readFileSync(f, "utf8"), /coding-sh/, f);
     assert.equal(readFileSync(join(h.data, "bin", "cli-path"), "utf8"), `${CLI}\n`, "hook knows the CLI for background ingests");
 
     const again = cli(h, ["init", "--yes", "--json", ...agentArgs]);
     assert.equal((parseJson(again.stdout, "init again") as { outcome: string }).outcome, "unchanged", again.stderr);
+    // Nothing new hooked: no "start a new session" note.
+    assert.doesNotMatch(cli(h, ["init", "--yes", ...agentArgs]).stderr, /Recording starts/);
 
     const u = cli(h, ["uninstall", "--yes"]);
     assert.equal(u.status, 0, u.stderr);
@@ -1080,8 +1084,9 @@ describe("cli QA regressions", () => {
     const blocker = r.stderr.search(/^ {4}! cursor-agent 2025\.09\.18-7ae6800 predates CLI hooks/m);
     assert.ok(blocker >= 0, r.stderr);
     assert.ok(blocker < r.stderr.indexOf("✓ Set up"), "blocker listed before the setup");
-    const tail = r.stderr.trimEnd().split("\n").slice(-4);
+    const tail = r.stderr.trimEnd().split("\n").slice(-5);
     assert.match(tail[0]!, /^✓ Set up Cursor CLI \(hooks \+ MCP server\); Antigravity CLI \(hooks\)$/);
+    assert.match(tail[1]!, /Recording starts with the next session/);
     assert.doesNotMatch(r.stderr, /Antigravity CLI \(hooks \+ MCP/);
     assert.doesNotMatch(r.stderr, /headless runs/, "informational notes stay out of init");
 

@@ -45,15 +45,16 @@ MIT licensed, no runtime dependencies, Node 22.15 or newer.
 
 ## Quickstart
 
-The install command above downloads the latest GitHub release, runs `coding.sh init`, then opens
+The install command above installs the latest release from npm, runs `coding.sh init`, then opens
 the viewer. `init` finds your agents, shows one plan and asks once. It points their hooks at
 coding.sh, registers the MCP server where the agent supports it, and backs up every config file it
 edits. `coding.sh init --dry-run` prints the plan without writing anything (`--diff` adds the edits), and
 `coding.sh uninstall` removes the hooks and MCP entries again.
 
 `init` also imports the sessions your agents already keep on this machine, so the viewer opens on
-your own history; `--no-import` skips that. Then use your agents as usual. New sessions show up on
-their own, with no ingest step. To import past sessions again, for example after adding an agent:
+your own history; `--no-import` skips that. Then start a new agent session: agents read their hooks
+when a session starts, so one already open while `init` ran may not be recorded. New sessions show
+up on their own, with no ingest step, and your agents can read them over MCP. To import past sessions again, for example after adding an agent:
 
 ```sh
 coding.sh ingest --backfill

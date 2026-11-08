@@ -12,6 +12,7 @@ import { proxySettings } from "../../proxy/state.ts";
 import { startViewer } from "../../viewer/server.ts";
 import { port as portFlag, str, withContext } from "../common.ts";
 import { startBackgroundIngest, type BackgroundIngest } from "../ingest-worker.ts";
+import { captureSetUp } from "../first-session.ts";
 import { CliError } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -32,7 +33,7 @@ export async function run(c: CommandContext): Promise<number> {
       // A history import (init's background rest) holds the import lock: the empty list says so.
       const ingestStatus = () => {
         const s = ingest?.status();
-        return s && { ...s, importing: isLocked(ctx.paths.importLock) };
+        return s && { ...s, importing: isLocked(ctx.paths.importLock), captureSetUp: captureSetUp(c.env) };
       };
       // Fork from a replay step: the stored call sent again with this machine's key (the local viewer only).
       const fork = viewerForks({ index: ctx.index, blobs: ctx.blobs, env: c.env, prices: pricesFor(ctx.config.pricing), upstreams: proxySettings(c.env).upstreams });

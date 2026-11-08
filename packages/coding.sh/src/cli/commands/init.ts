@@ -181,6 +181,12 @@ export function setupSummary(ready: { name: string; mcp: boolean }[]): string {
     .join("; ");
 }
 
+/** The line after "Set up …": capture starts with the next session of the agents that just got hooks. */
+export function firstSessionNote(names: string[]): string {
+  const which = names.length === 1 ? `${names[0]} session` : "session of any of them";
+  return `Recording starts with the next session: start a new ${which}. Sessions already open may not have loaded the hooks`;
+}
+
 /** How long init imports past sessions before it leaves the rest to a background import. */
 export const IMPORT_BUDGET_MS = 8000;
 
@@ -456,6 +462,9 @@ export async function run(c: CommandContext): Promise<number> {
   // Store-read agents (T3 Code) and wrapper-only agents (tier C: Aider) get no hooks: listed by their plan row, not here.
   const summary = setupSummary(ready.filter((x) => (!x.pl.adapter.tail && x.pl.adapter.tier !== "C") || x.mcp).map((x) => ({ name: x.pl.adapter.displayName, mcp: x.mcp !== undefined && !x.mcp.error })));
   if (summary) out.ok(`${outcome === "unchanged" ? "Already set up:" : "Set up"} ${summary}`);
+  // Agents load hooks when a session starts: one open while init ran (often the one that ran it) is not recorded live.
+  const hookedNow = ready.filter((x) => x.hooks.changes.length).map((x) => x.pl.adapter.displayName);
+  if (hookedNow.length) out.note(firstSessionNote(hookedNow));
   if (remote) {
     if (!plans.length) out.warn("No supported agents found on this machine; apps and `coding.sh run -- <cmd>` still send");
     out.ok(`Sending new sessions to ${remote.url} (${remote.mode === "full" ? "full content" : "metadata only"}). Sessions from before stay on this machine`);
