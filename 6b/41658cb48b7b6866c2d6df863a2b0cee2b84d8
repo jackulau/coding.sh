@@ -1,3 +1,23 @@
+packages/coding.sh/test/viewer/ui-browser.test.ts
+  s_8e040dbdf13565::t_22bc224a6c1077 712-727
+packages/coding.sh/src/cli/commands/show.ts
+  s_8e040dbdf13565::t_22bc224a6c1077 8,457-458,465-466,506-510,512-513,515-518
+packages/coding.sh/test/fixtures/proxy/claude-code-proxied.jsonl
+  s_8e040dbdf13565::t_22bc224a6c1077 1-12
+packages/coding.sh/src/core/call-copies.ts
+  s_8e040dbdf13565::t_22bc224a6c1077 1-73
+CHANGELOG.md
+  s_8e040dbdf13565::t_22bc224a6c1077 158
+packages/coding.sh/src/mcp/data.ts
+  s_8e040dbdf13565::t_22bc224a6c1077 7,263-264,270,516-517
+packages/coding.sh/test/core/call-copies.test.ts
+  s_8e040dbdf13565::t_22bc224a6c1077 1-112
+docs/how-to/capture-with-proxy.md
+  s_8e040dbdf13565::t_22bc224a6c1077 109-115
+packages/coding.sh/src/viewer/ui/index.html
+  s_8e040dbdf13565::t_22bc224a6c1077 3249-3281,3285-3289,3301-3303,3537
+packages/coding.sh/test/fixtures/proxy/codex-proxied.jsonl
+  s_8e040dbdf13565::t_22bc224a6c1077 1-11
 ---
 {
   "schema_version": "authorship/3.0.0",
