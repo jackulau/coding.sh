@@ -1,0 +1,50 @@
+apps/site/src/lib/schema.ts
+  s_8e040dbdf13565::t_db496bff20d093 85-101
+  s_8e040dbdf13565::t_da9f12812a0796 84,102-127
+apps/site/scripts/gen-og.mjs
+  s_8e040dbdf13565::t_40e5a140acf232 5-7,79,81-82,91-93,96,100
+  s_8e040dbdf13565::t_c8d832f519b0ec 15-34
+  s_8e040dbdf13565::t_957837f77198ec 59,61
+  s_8e040dbdf13565::t_0f2b1a83b2f0f0 14
+CHANGELOG.md
+  s_8e040dbdf13565::t_ed512017be3ec7 17
+apps/site/src/pages/index.astro
+  s_8e040dbdf13565::t_d6685df39845ef 185
+  s_8e040dbdf13565::t_2a59522c701b27 201
+  s_8e040dbdf13565::t_d97987fd4079bf 98-100
+  s_8e040dbdf13565::t_c1d2c7b5027407 11
+  s_8e040dbdf13565::t_2eddbc58e62e4a 257
+apps/site/src/pages/docs/faq.astro
+  s_8e040dbdf13565::t_fcbe86c494b9cd 4,65
+apps/site/package.json
+  s_8e040dbdf13565::t_c7584db5245791 9,14
+apps/site/src/pages/changelog.astro
+  s_8e040dbdf13565::t_d49cb7778b84cc 18
+apps/site/scripts/seo-check.mjs
+  s_8e040dbdf13565::t_e378d088b7754c 1-92
+apps/site/src/pages/changelog/[version].astro
+  s_8e040dbdf13565::t_dc64e8d6ce2424 34
+  s_8e040dbdf13565::t_744bc3a67f9071 11
+  s_8e040dbdf13565::t_7fb6585f510068 41
+  s_8e040dbdf13565::t_26d44267fb46ea 31-33
+  s_8e040dbdf13565::t_cbf70c8d664ddd 30,35-36
+apps/site/src/components/docs/DocsLayout.astro
+  s_8e040dbdf13565::t_c231f369f92a41 12,15-20,25
+  s_8e040dbdf13565::t_bcf283efe3e298 43-50,53
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6c221d3e952a08decd7b24ad68127c9a02951b55",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
