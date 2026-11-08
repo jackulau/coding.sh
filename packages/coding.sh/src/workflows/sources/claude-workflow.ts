@@ -16,6 +16,7 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { sha256Hex, hashParts } from "../../core/ids.ts";
+import { applyPricing, type Prices } from "../../core/pricing.ts";
 import { buildSession } from "../../core/sessions.ts";
 import type { BlobStore, NormalizeContext } from "../../core/types.ts";
 import type { AgentEvent, Session } from "../../schema/index.ts";
@@ -448,6 +449,13 @@ export interface LoadOpts {
   blobs?: Pick<BlobStore, "put">;
   maxInlineBytes?: number;
   concurrencyCap?: number;
+  /**
+   * Price each agent's model calls that carry tokens but no reported cost (Claude
+   * Code transcripts carry none), so nodes and child sessions get an estimated
+   * `usage.costUsd`. Pass the effective prices (`pricesFor(config.pricing)`), as
+   * ingest does. Omit to leave calls uncosted (a reported cost always wins).
+   */
+  prices?: Prices;
 }
 
 /** Reads one run dir and its persisted record into TreeSources (plus child sessions). */
@@ -496,8 +504,11 @@ export async function loadClaudeWorkflowDir(runDirOrDesc: string | ClaudeWorkflo
     } catch {
       continue; // unreadable transcript: the node keeps journal data only
     }
-    const evs = await conv.finish();
-    if (!evs.length) continue;
+    const raw = await conv.finish();
+    if (!raw.length) continue;
+    // Claude Code transcripts carry tokens but no per-call cost, so price them
+    // here (a reported cost would win); nodes and child sessions then show cost.
+    const evs = opts.prices ? applyPricing(raw, opts.prices) : raw;
     const start = evs.find((e) => e.kind === "session.start");
     if (start) start.payload = { ...start.payload, source: "workflow-agent", workflowRunId: runId, ...parentLink(ctx, CLAUDE_AGENT, dir.hostSessionId, agentId, WORKFLOW_AGENT_TYPE) };
     const session = buildSession(evs);

@@ -8,6 +8,7 @@
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import type { BlobStore, IndexStore } from "../core/types.ts";
+import type { Prices } from "../core/pricing.ts";
 import { claudeConfigDir } from "../adapters/claude-code.ts";
 import { findClaudeWorkflowDirs, loadClaudeWorkflowDir } from "./sources/claude-workflow.ts";
 import type { WorkflowStore } from "./store.ts";
@@ -34,6 +35,8 @@ export interface ImportOpts {
   force?: boolean;
   concurrencyCap?: number;
   maxInlineBytes?: number;
+  /** Price agent calls that carry tokens but no reported cost (see LoadOpts.prices). */
+  prices?: Prices;
   onRun?: (run: WorkflowRun) => void;
 }
 
@@ -56,6 +59,7 @@ export async function importClaudeWorkflows(o: ImportOpts): Promise<ImportResult
         ...(o.blobs ? { blobs: o.blobs } : {}),
         concurrencyCap: o.concurrencyCap ?? defaultClaudeCap(),
         ...(o.maxInlineBytes !== undefined ? { maxInlineBytes: o.maxInlineBytes } : {}),
+        ...(o.prices ? { prices: o.prices } : {}),
       });
       const runId = loaded.sources.runId ?? d.runId;
       if (!o.force && (await o.store.signatureOf(runId)) === loaded.signature) {

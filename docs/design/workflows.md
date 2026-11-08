@@ -174,6 +174,13 @@ kind `agent` or `step` that ran (`status ≠ cached`), unless noted.
 | `tokens`, `costUsd` | Σ over all nodes, including subagents |
 | `costShareByPhase` | Phase cost / total |
 
+A node's `costUsd` is the cost its transcript reported, or — when the agent reported none, as
+Claude Code transcripts do, carrying tokens but no per-call cost — an estimate from the node's
+token usage and the configured prices (`pricesFor(config.pricing)`, as everywhere else in
+coding.sh), marked estimated. `coding.sh workflows import` prices as it reads, so per-agent,
+per-phase and whole-run cost and `costShareByPhase` are populated; a run imported before this was
+added shows cost after the next `coding.sh workflows import --force`.
+
 **Critical path.** When the journal or spans give explicit dependencies (pipeline item chains,
 group membership), the path is the longest weighted path in that DAG. Otherwise it is
 approximated:

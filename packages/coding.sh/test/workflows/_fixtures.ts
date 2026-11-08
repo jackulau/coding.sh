@@ -85,15 +85,19 @@ function transcript(a: AgentSpec, sid: string): string {
   const usage = (i: number, o: number, cost?: number) => ({ input_tokens: i, output_tokens: o, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, ...(cost !== undefined ? { cost_usd: cost } : {}) });
   const lines: unknown[] = [{ ...base, type: "user", uuid: `${a.id}-u0`, parentUuid: null, timestamp: iso(a.start), message: { role: "user", content: `Task: ${a.label}` } }];
   const mid = a.start + Math.floor((a.end - a.start) / 3);
+  // This run reports a cost on every call, so the retry carries one too (a share
+  // of the agent's cost); the agent's total is unchanged.
+  const retryCost = a.schemaRetry && a.costUsd !== undefined ? a.costUsd / 5 : undefined;
   if (a.schemaRetry) {
     lines.push(
-      { ...base, type: "assistant", uuid: `${a.id}-a1`, parentUuid: null, timestamp: iso(mid), message: { id: `msg_${a.id}_1`, type: "message", role: "assistant", model: "claude-sonnet-4-5", content: [{ type: "tool_use", id: `toolu_${a.id}_1`, name: "StructuredOutput", input: { bad: true } }], stop_reason: "tool_use", usage: usage(500, 50) } },
+      { ...base, type: "assistant", uuid: `${a.id}-a1`, parentUuid: null, timestamp: iso(mid), message: { id: `msg_${a.id}_1`, type: "message", role: "assistant", model: "claude-sonnet-4-5", content: [{ type: "tool_use", id: `toolu_${a.id}_1`, name: "StructuredOutput", input: { bad: true } }], stop_reason: "tool_use", usage: usage(500, 50, retryCost) } },
       { ...base, type: "user", uuid: `${a.id}-u1`, parentUuid: null, timestamp: iso(mid + 100), message: { role: "user", content: [{ type: "tool_result", tool_use_id: `toolu_${a.id}_1`, content: "Output does not match schema: findings is required", is_error: true }] } },
     );
   }
   const t2 = a.end - 500;
+  const finalCost = retryCost !== undefined && a.costUsd !== undefined ? a.costUsd - retryCost : a.costUsd;
   lines.push(
-    { ...base, type: "assistant", uuid: `${a.id}-a2`, parentUuid: null, timestamp: iso(t2), message: { id: `msg_${a.id}_2`, type: "message", role: "assistant", model: "claude-sonnet-4-5", content: [{ type: "tool_use", id: `toolu_${a.id}_2`, name: "StructuredOutput", input: a.result ?? {} }], stop_reason: "tool_use", usage: usage(1000, 100, a.costUsd) } },
+    { ...base, type: "assistant", uuid: `${a.id}-a2`, parentUuid: null, timestamp: iso(t2), message: { id: `msg_${a.id}_2`, type: "message", role: "assistant", model: "claude-sonnet-4-5", content: [{ type: "tool_use", id: `toolu_${a.id}_2`, name: "StructuredOutput", input: a.result ?? {} }], stop_reason: "tool_use", usage: usage(1000, 100, finalCost) } },
     { ...base, type: "user", uuid: `${a.id}-u2`, parentUuid: null, timestamp: iso(a.end), message: { role: "user", content: [{ type: "tool_result", tool_use_id: `toolu_${a.id}_2`, content: "Structured output provided successfully" }] } },
   );
   return lines.map((l) => JSON.stringify(l)).join("\n") + "\n";

@@ -6,6 +6,7 @@ import { readFile } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
 import { commandEnv, sh } from "../../runner/exec.ts";
 import { median } from "../../stats/index.ts";
+import { pricesFor } from "../../core/pricing.ts";
 import { claudeWorkflowDriver } from "../../workflows/drivers/claude-workflow.ts";
 import { commandDriver } from "../../workflows/drivers/command.ts";
 import { compareWorkflowVariants, runWorkflowExperiment, scheduleWorkflowJobs } from "../../workflows/experiment.ts";
@@ -114,7 +115,7 @@ function runJson(run: WorkflowRun): Record<string, unknown> {
 /** Imports new or changed Claude Code workflow run dirs (journal + transcripts). */
 async function doImport(c: CommandContext, root: string, force: boolean): Promise<ImportResult> {
   const store = storeOf(c);
-  return withContext(c, (ctx) => importClaudeWorkflows({ root, store, index: ctx.index, blobs: ctx.blobs, force }));
+  return withContext(c, (ctx) => importClaudeWorkflows({ root, store, index: ctx.index, blobs: ctx.blobs, force, prices: pricesFor(ctx.config.pricing) }));
 }
 
 // ------------------------------------------------------------ list / import
