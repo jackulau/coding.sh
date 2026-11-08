@@ -204,6 +204,9 @@ const KEY_LIST: KeyDef[] = [
   { name: "tokens.in", level: "session", type: "number", unit: "count", doc: "Input tokens", example: "tokens.in>100k", sql: [stat("usage.inputTokens")], get: (s) => [num(s.stats?.usage?.inputTokens)] },
   { name: "tokens.out", level: "session", type: "number", unit: "count", doc: "Output tokens", example: "tokens.out>10k", sql: [stat("usage.outputTokens")], get: (s) => [num(s.stats?.usage?.outputTokens)] },
   { name: "cost", level: "session", type: "number", unit: "usd", doc: "Cost in USD, reported or estimated", example: "cost>0.5", sql: [stat("usage.costUsd")], get: (s) => [num(s.stats?.usage?.costUsd)] },
+  { name: "cache.breaks", level: "session", type: "number", unit: "count", doc: "Prompt-cache breaks: calls whose cached prefix was gone, so the prompt was billed again (core/cache-breaks.ts)", example: "cache.breaks>0", sql: [stat("cacheBreaks.count")], get: (s) => [num(s.stats?.cacheBreaks?.count)] },
+  { name: "cache.lost", level: "session", type: "number", unit: "count", doc: "Prompt tokens billed again after a cache break", example: "cache.lost>10k", sql: [stat("cacheBreaks.lostTokens")], get: (s) => [num(s.stats?.cacheBreaks?.lostTokens)] },
+  { name: "cache.cost", level: "session", type: "number", unit: "usd", doc: "Extra USD the cache breaks cost over cache-read prices", example: "cache.cost>0.1", sql: [stat("cacheBreaks.extraUsd")], get: (s) => [num(s.stats?.cacheBreaks?.extraUsd)] },
   // ---- event keys: in a session query they mean "has an event that…"
   { name: "kind", level: "event", type: "text", doc: "Event kind", example: "kind:tool.end", sql: ["e.kind"], notNull: true, get: (e) => [e.kind], facet: {} },
   { name: "tool", level: "event", type: "text", doc: "Tool name", example: "tool:Bash", sql: ["e.tool"], get: (e) => [typeof e.payload?.tool === "string" ? e.payload.tool : undefined], facet: {} },

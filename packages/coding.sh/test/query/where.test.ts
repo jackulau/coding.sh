@@ -185,6 +185,9 @@ describe("SQL and the scan fallback agree", () => {
     assert.deepEqual(await ids(sqlite, "sort:-cost"), ["s1", "s2", "s5", "s4", "s3"]);
     assert.deepEqual(await ids(sqlite, "migration"), ["s3", "s1"]);
     assert.deepEqual(await ids(sqlite, 'title:"50%"'), ["s3"]);
+    // Cache breaks are queryable and sortable (AE-8): s1 lost 30k ($0.14), s4 lost 5k (unpriced).
+    assert.deepEqual(await ids(sqlite, "cache.breaks>0 sort:-cache.lost"), ["s1", "s4"]);
+    assert.deepEqual(await ids(sqlite, "cache.cost>0.1"), ["s1"]);
   });
 
   test("the base filter applies with the query", async () => {

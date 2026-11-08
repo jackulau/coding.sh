@@ -116,7 +116,12 @@ by kind. A session whose main thread handed over to another model mid-session, s
 falling back to an older model after a refusal, gets the `model:switch` tag, and
 `stats.modelSwitch` names both models and the trigger. A hand-over means every main-thread call on the
 first model came before the first call on the second. A helper model that runs beside the main one,
-such as the Haiku calls Claude Code makes for titles, is not a switch. Durable workflow runs
+such as the Haiku calls Claude Code makes for titles, is not a switch. A session of at least three
+turns that wrote a prompt cache of at least one block (4,096 tokens) but read back fewer tokens than
+it wrote gets the `cache:low` tag: it paid to create a cache it barely reused. Short sessions and
+ones that never wrote a cache are left alone, since that is the agent's behaviour, not a setup to
+change. `coding.sh usage --cache` shows the read-to-write ratio behind the tag, and
+`coding.sh sessions --flag cache:low` lists the sessions. Durable workflow runs
 get two notes rather than failures: `step-retried` (a step took more than one attempt) and `resumed`
 (the run continued after a crash, a deploy or a restart). See
 [Trace a durable workflow](how-to/trace-durable-workflow.md).

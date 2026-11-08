@@ -8,14 +8,49 @@
 // priority, long context: `estimatedCostByTier`). `--reprice` recomputes those estimates from the
 // current price table first (it also runs by itself when the table changes). Waste totals:
 // prompt-cache breaks (tokens billed again, extra USD) and repeated read-only calls.
+import { CACHE_BREAK_FIX } from "../../core/cache-breaks.ts";
+import type { CacheBreakCause } from "../../schema/index.ts";
 import { repriceStored } from "../../core/reprice.ts";
 import { parseSince, positiveInt } from "../args.ts";
 import { autoIngest, queryCliError, str, whereFlag, withContext } from "../common.ts";
-import { CliError, usd } from "../output.ts";
+import { CliError, Output, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 const fmt = (n: number | undefined): string => (n === undefined ? "-" : n >= 1e9 ? `${(n / 1e9).toFixed(2)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${(n / 1e3).toFixed(1)}k` : String(n));
 const pct = (n: number | undefined): string => (n === undefined ? "-" : `${Math.round(n * 100)}%`);
+const ratio = (g: Row): string => (g.cacheReadWriteRatio === undefined ? "-" : `${g.cacheReadWriteRatio}:1`);
+
+/**
+ * `usage --cache`: the prompt-cache economics per group. Every number is a
+ * captured token count or the per-call-priced extra the breaks cost; there is
+ * no blended-rate "savings" guess. Guidance names only what the numbers show.
+ */
+function renderCache(out: Output, by: string, r: { groups: Row[]; total: Row }): void {
+  out.table(
+    [by.toUpperCase(), "SESSIONS", "CACHED", "READ", "WRITE", "R:W", "BREAKS", "WASTE"],
+    r.groups.map((g) => [g.key, String(g.sessions), pct(g.cacheReadShare), fmt(g.cacheReadTokens), fmt(g.cacheWriteTokens), ratio(g), g.cacheBreaks ? String(g.cacheBreaks) : "-", g.cacheBreakUsd ? `~${usd(g.cacheBreakUsd)}` : "-"]),
+  );
+  out.note("CACHED = cache reads / all prompt tokens (higher is better). R:W = cache-read tokens per cache-write token; below 1:1 you wrote more cache than you read back. WASTE = extra USD the breaks cost over reading from cache (estimated).");
+  const t = r.total;
+  if (!t.cacheReadTokens && !t.cacheWriteTokens) {
+    out.note("No prompt-cache tokens recorded in this window: these agents did not report cache use (or caching is off).");
+    return;
+  }
+  if (t.cacheReadWriteRatio !== undefined && t.cacheReadWriteRatio < 1 && (t.cacheWriteTokens ?? 0) > 0) {
+    out.note(`Cache read:write is ${t.cacheReadWriteRatio}:1 — you wrote ${fmt(t.cacheWriteTokens)} prompt-cache tokens but read back only ${fmt(t.cacheReadTokens)}. The cache is being re-created faster than it is reused; keep a stable prompt prefix between turns so it survives.`);
+  }
+  if (t.cacheLowSessions) out.note(`${t.cacheLowSessions} ${t.cacheLowSessions === 1 ? "session" : "sessions"} tagged cache:low (wrote a cache they barely read back): coding.sh sessions --where 'flag:cache:low'.`);
+  if (t.cacheBreaks) {
+    const causes = Object.entries(t.cacheBreakCauses ?? {}).sort((a, b) => b[1] - a[1]);
+    const causeText = causes.length ? ` Causes: ${causes.map(([k, n]) => `${k} ${n}`).join(", ")}.` : "";
+    out.note(`${t.cacheBreaks} cache ${t.cacheBreaks === 1 ? "break" : "breaks"}: ${fmt(t.cacheBreakTokens)} prompt tokens billed again${t.cacheBreakUsd ? ` (~${usd(t.cacheBreakUsd)} extra)` : ""}.${causeText}`);
+    const top = causes[0]?.[0] as CacheBreakCause | undefined;
+    if (top) out.note(`Top cause ${top}: ${CACHE_BREAK_FIX[top]}.${top === "model-switch" ? " coding.sh harness audit flags a fallback model before it costs anything." : ""}`);
+    out.note("Drill in: coding.sh sessions --where 'cache.breaks>0 sort:-cache.cost'; one session: coding.sh show <id>.");
+  } else {
+    out.note("No cache breaks in this window: the cached prefix held between turns.");
+  }
+}
 
 interface Row {
   key: string;
@@ -25,6 +60,9 @@ interface Row {
   outputTokens: number;
   tokensPerTurn?: number;
   cacheReadShare?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  cacheReadWriteRatio?: number;
   costUsd?: number;
   estimatedCostUsd?: number;
   estimatedCostByTier?: Record<string, number>;
@@ -34,6 +72,8 @@ interface Row {
   cacheBreaks?: number;
   cacheBreakTokens?: number;
   cacheBreakUsd?: number;
+  cacheBreakCauses?: Record<string, number>;
+  cacheLowSessions?: number;
 }
 
 /** `$1.23`, `~$1.23` when part of it is estimated, `≥$1.23` (a lower bound) when some sessions in the row have tokens but no cost. */
@@ -64,6 +104,10 @@ export async function run(c: CommandContext): Promise<number> {
     if (repriced) out.note(`Repriced ${repriced.events} model calls in ${repriced.sessions} sessions`);
     if (!r.groups.length) {
       out.note("No sessions in this window");
+      return 0;
+    }
+    if (c.flags.cache === true) {
+      renderCache(out, by, r);
       return 0;
     }
     const cost = r.groups.some((g) => g.costUsd !== undefined);

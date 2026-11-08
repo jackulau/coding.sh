@@ -549,7 +549,14 @@ prompt cache gone: the previous prompt was over 4,096 tokens, this call read les
 from cache, and more than 2,048 tokens were billed again. `byCause` splits them into `compaction`,
 `model-switch`, `idle` (5 minutes, or an hour after a 1-hour cache write) and `other`. `extraUsd` is
 the cache-write (or input) price minus the cache-read price for those tokens; it is left out, and
-`unpriced` counts the breaks, when the model has no price.
+`unpriced` counts the breaks, when the model has no price. `--where cache.breaks>0`, `cache.lost`
+(the re-billed tokens) and `cache.cost` (`extraUsd`) query and sort on them, e.g.
+`coding.sh sessions --where 'cache.breaks>0 sort:-cache.cost'`. A session that wrote a prompt cache
+of at least one block over at least three turns but read back fewer tokens than it wrote is tagged
+`cache:low`. `coding.sh usage --cache` reports the hit rate, read vs write tokens, the read-to-write
+ratio, the breaks and their cost per group, with the break causes to change; `exp compare` adds the
+`cache breaks / run` and `cache waste / run` metrics so an A/B shows whether a setup change reused the
+cache better.
 
 `stats.launch` is `headless` for a session the agent ran without a person at the keyboard
 (`claude -p`, the Claude Agent SDK, `codex exec`, Codex as an MCP server) and `interactive` for a

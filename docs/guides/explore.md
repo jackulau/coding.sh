@@ -7,6 +7,7 @@ coding.sh sessions                 # recent sessions (--agent, --repo, --since, 
 coding.sh show latest              # timeline with turns, tools, subagents and latency
 coding.sh search "rate limit"      # full-text search over prompts, replies and tool calls
 coding.sh usage --by model         # tokens, cost, turns and cache hits by agent, model, day or repo
+coding.sh usage --cache            # prompt-cache economics: hit rate, read vs write, breaks, what to change
 coding.sh sql "select …"           # one read-only SQL query against the SQLite index
 coding.sh export events --since 7d # stream sessions, events or labels as JSONL or CSV
 coding.sh ui                       # local viewer on 127.0.0.1 (token-protected URL)

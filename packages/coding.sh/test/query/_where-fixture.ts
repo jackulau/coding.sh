@@ -8,10 +8,10 @@ const H = 3_600_000;
 export function fixture(): { sessions: Session[]; events: AgentEvent[] } {
   const repo = (root: string, branch?: string) => ({ root, head: "abc", ...(branch ? { branch } : {}) });
   const sessions: Session[] = [
-    session("s1", { agent: "codex", model: "gpt-5.1-codex", repo: repo("/work/demo", "main"), cwd: "/work/demo", startedAt: T0, endedAt: T0 + 20 * 60_000, flags: ["no-verification", "skill:pdf"], title: "Fix the Build", stats: { events: 6, turns: 3, toolCalls: 4, toolErrors: 1, filesChanged: 2, testsFailed: 2, usage: { inputTokens: 900_000, outputTokens: 200_000, cacheReadTokens: 50_000, costUsd: 1.25 } } }),
+    session("s1", { agent: "codex", model: "gpt-5.1-codex", repo: repo("/work/demo", "main"), cwd: "/work/demo", startedAt: T0, endedAt: T0 + 20 * 60_000, flags: ["no-verification", "skill:pdf"], title: "Fix the Build", stats: { events: 6, turns: 3, toolCalls: 4, toolErrors: 1, filesChanged: 2, testsFailed: 2, usage: { inputTokens: 900_000, outputTokens: 200_000, cacheReadTokens: 50_000, costUsd: 1.25 }, cacheBreaks: { count: 2, lostTokens: 30_000, extraUsd: 0.14, byCause: { idle: { count: 2, lostTokens: 30_000, extraUsd: 0.14 } } } } }),
     session("s2", { agent: "claude-code", model: "claude-sonnet-4-5", repo: repo("/work/other", "feat/x"), cwd: "/work/other/sub", startedAt: T0 + H, endedAt: T0 + H + 5 * 60_000, flags: ["compaction"], title: "write docs", stats: { events: 4, turns: 25, toolCalls: 120, toolErrors: 0, filesChanged: 0, testsPassed: 10, usage: { inputTokens: 1000, outputTokens: 100, costUsd: 0.02 } } }),
     session("s3", { agent: "claude-code", model: "claude-opus-4-1", cwd: "C:\\Users\\me\\proj", startedAt: T0 + 2 * H, flags: [], title: "50% done_now", stats: { events: 3, turns: 1, toolCalls: 1, toolErrors: 0, filesChanged: 0 } }),
-    session("s4", { agent: "codex", model: "gpt-5.1-codex", repo: repo("/work/demo", "main"), cwd: "/work/demo", startedAt: T0 + 3 * H, endedAt: T0 + 3 * H + 2 * H, parent: { sessionId: "s1", type: "explorer" }, flags: ["skill:docx", "gateway:vercel"], stats: { events: 2, turns: 1, toolCalls: 2, toolErrors: 2, filesChanged: 0, llmErrors: { count: 1, statusCode: 429 }, usage: { inputTokens: 10, outputTokens: 5 } } }),
+    session("s4", { agent: "codex", model: "gpt-5.1-codex", repo: repo("/work/demo", "main"), cwd: "/work/demo", startedAt: T0 + 3 * H, endedAt: T0 + 3 * H + 2 * H, parent: { sessionId: "s1", type: "explorer" }, flags: ["skill:docx", "gateway:vercel"], stats: { events: 2, turns: 1, toolCalls: 2, toolErrors: 2, filesChanged: 0, llmErrors: { count: 1, statusCode: 429 }, usage: { inputTokens: 10, outputTokens: 5 }, cacheBreaks: { count: 1, lostTokens: 5000, byCause: { other: { count: 1, lostTokens: 5000 } }, unpriced: 1 } } }),
     session("s5", { agent: "gemini", runId: "run_42", startedAt: T0 + 4 * H, endedAt: T0 + 4 * H + 30_000, flags: ["repeated-tool-failure"], stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { inputTokens: 5, outputTokens: 5, costUsd: 0 } } }),
   ];
   const tool = (sid: string, n: number, kind: "tool.start" | "tool.end", payload: Record<string, unknown>, over: Partial<AgentEvent> = {}) => event(sid, n, { kind, payload, ...over, agent: sessions.find((s) => s.id === sid)!.agent });
@@ -89,6 +89,12 @@ export const QUERIES = [
   "cost:0",
   "cost<=0.02",
   "-cost>0.5",
+  "cache.breaks>0",
+  "cache.breaks>=2",
+  "cache.lost>10k",
+  "cache.cost>0.1",
+  "-cache.breaks>0",
+  "sort:-cache.lost",
   "files>=1",
   "events<3",
   "run:run_*",

@@ -492,13 +492,14 @@ export const COMMANDS: CommandSpec[] = [
     summary: "Tokens, cost, turns and cache hits by agent, model or day",
     flags: [
       { name: "by", type: "string", value: "<GROUP>", choices: ["agent", "model", "agent-model", "day", "repo"], desc: "Group rows by", default: "agent" },
+      { name: "cache", type: "boolean", desc: "Prompt-cache economics instead: hit rate, read vs write tokens, read:write ratio, breaks and their cost, with what to change" },
       AGENT_ONE,
       { ...SINCE, default: "30d" },
       LIMIT(20),
       { name: "reprice", type: "boolean", desc: "Recompute estimated costs from the current price table first" },
       WHERE("sessions"),
     ],
-    examples: ["coding.sh usage", "coding.sh usage --by agent-model --since 90d", "coding.sh usage --by model --where 'repo:coding-sh tool:Bash'"],
+    examples: ["coding.sh usage", "coding.sh usage --cache --by model", "coding.sh usage --by agent-model --since 90d", "coding.sh usage --by model --where 'repo:coding-sh tool:Bash'"],
     load: () => import("./commands/usage.ts"),
   },
   {

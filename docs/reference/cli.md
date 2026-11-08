@@ -458,7 +458,7 @@ coding.sh sessions --agent codex --since 7d
 ```
 
 - --where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; \* as a wildcard in text; &gt; &gt;= &lt; &lt;= and a..b on numbers. Bare words search prompts, replies and tool calls (every word in one event).
-- Session keys: agent, model, provider, repo, launch, branch, dir, title, id, run, parent, flag, skill, hook, hook.tokens, since, until, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost, has, is. Event keys (the session has a matching event; event keys in one group match the same event): kind, tool, ok, mcp, error, event.duration. Also sort:-cost and limit:N. Full list with examples: docs/reference/query.md.
+- Session keys: agent, model, provider, repo, launch, branch, dir, title, id, run, parent, flag, skill, hook, hook.tokens, since, until, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost, cache.breaks, cache.lost, cache.cost, has, is. Event keys (the session has a matching event; event keys in one group match the same event): kind, tool, ok, mcp, error, event.duration. Also sort:-cost and limit:N. Full list with examples: docs/reference/query.md.
 - --facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
@@ -618,6 +618,7 @@ coding.sh usage [options]
 | Option | Default | Description |
 |---|---|---|
 | `--by <GROUP>` | `agent` | Group rows by. One of: `agent`, `model`, `agent-model`, `day`, `repo`. |
+| `--cache` |  | Prompt-cache economics instead: hit rate, read vs write tokens, read:write ratio, breaks and their cost, with what to change. |
 | `-a, --agent <AGENT>` |  | Only sessions from this agent. |
 | `--since <WHEN>` | `30d` | Only after this time: 7d, 12h, 30m or a date. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
@@ -626,6 +627,7 @@ coding.sh usage [options]
 
 ```sh
 coding.sh usage
+coding.sh usage --cache --by model
 coding.sh usage --by agent-model --since 90d
 coding.sh usage --by model --where 'repo:coding-sh tool:Bash'
 ```

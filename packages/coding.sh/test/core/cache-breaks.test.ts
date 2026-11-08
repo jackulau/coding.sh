@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { cacheBreakStats, findCacheBreaks } from "../../src/core/cache-breaks.ts";
+import { cacheBreakStats, cacheUnderused, findCacheBreaks } from "../../src/core/cache-breaks.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent, EventKind, Usage } from "../../src/schema/index.ts";
 
@@ -111,5 +111,42 @@ describe("cache breaks", () => {
   it("skips gateway companions and replayed calls", () => {
     const events = [...warm(), call(0, 110_000, { source: "gateway" }), call(0, 110_000, { payload: { ok: true, replay: true } })];
     assert.equal(findCacheBreaks(events).length, 0);
+  });
+});
+
+describe("cache underused (cache:low)", () => {
+  it("fires only over enough turns, with a cache written, when reads trail writes", () => {
+    assert.equal(cacheUnderused({ cacheWriteTokens: 10_000, cacheReadTokens: 2000 }, 3), true);
+    assert.equal(cacheUnderused({ cacheWriteTokens: 10_000, cacheReadTokens: 20_000 }, 3), false, "reads above writes: cache is being reused");
+    assert.equal(cacheUnderused({ cacheWriteTokens: 10_000, cacheReadTokens: 2000 }, 2), false, "too few turns to have reused it");
+    assert.equal(cacheUnderused({ cacheWriteTokens: 1000, cacheReadTokens: 0 }, 5), false, "no real cache block written");
+    assert.equal(cacheUnderused({}, 5), false, "no cache written at all: the agent's behaviour, not a setup to fix");
+  });
+
+  const prompt = (i: number) => ev("user.message", { text: `prompt ${i}` });
+
+  it("buildSession tags cache:low when a multi-turn session wrote a cache it barely read back", () => {
+    reset();
+    const churn = [prompt(1), call(0, 5000), prompt(2), call(0, 5000), prompt(3), call(0, 5000)];
+    const s = buildSession(churn);
+    assert.equal(s.stats.turns >= 3, true);
+    assert.equal(s.flags.includes("cache:low"), true);
+  });
+
+  it("buildSession leaves a healthy session (reads above writes) untagged", () => {
+    reset();
+    const healthy = [prompt(1), call(0, 5000), prompt(2), call(5000, 500), prompt(3), call(5400, 500)];
+    const s = buildSession(healthy);
+    assert.equal(s.flags.includes("cache:low"), false);
+  });
+
+  it("a model fallback mid-session is a priced model-switch break, and tags model:switch", () => {
+    reset();
+    // Warm the cache on claude-opus-5-5, then fall back to opus-4-8: cache reads collapse to zero on the first call there.
+    const events = [prompt(1), call(0, 100_000), prompt(2), call(100_000, 2000), prompt(3), call(0, 100_000, { model: "claude-opus-4-8" }), prompt(4), call(100_000, 2000, { model: "claude-opus-4-8" })];
+    const s = buildSession(events);
+    assert.equal(s.stats.cacheBreaks?.byCause["model-switch"]?.count, 1, "the fallback is named as the cause");
+    assert.ok((s.stats.cacheBreaks?.extraUsd ?? 0) > 0, "the rebuild is priced over the cache-read rate");
+    assert.ok(s.flags.includes("model:switch"), "built on the existing model:switch flag");
   });
 });

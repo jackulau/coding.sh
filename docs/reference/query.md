@@ -73,6 +73,9 @@ matching event, and event keys in the same and-group must match the same event. 
 | `tokens.in` | session | Input tokens | `tokens.in>100k` |
 | `tokens.out` | session | Output tokens | `tokens.out>10k` |
 | `cost` | session | Cost in USD, reported or estimated | `cost>0.5` |
+| `cache.breaks` | session | Prompt-cache breaks: calls whose cached prefix was gone, so the prompt was billed again | `cache.breaks>0` |
+| `cache.lost` | session | Prompt tokens billed again after a cache break | `cache.lost>10k` |
+| `cache.cost` | session | Extra USD the cache breaks cost over cache-read prices | `cache.cost>0.1` |
 | `kind` | event | Event kind | `kind:tool.end` |
 | `tool` | event | Tool name | `tool:Bash` |
 | `ok` | event | Tool call or model call succeeded | `ok:false` |

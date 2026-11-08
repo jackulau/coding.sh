@@ -10,7 +10,7 @@ import type { AgentEvent, DuplicateUsage, LatencyStats, LlmErrors, Session, Usag
 import { DURABLE_FLAGS, durableFlags, durableStats } from "./durable.ts";
 import { detectTestTamper, foldTamper, tamperState, type TamperState } from "./intent.ts";
 // waste.ts and skills-use.ts import commandOf and FLAGS back from here, inside functions only.
-import { cacheBreakState, cacheBreaksOf, foldCacheBreaks, type CacheBreakState } from "./cache-breaks.ts";
+import { cacheBreakState, cacheBreaksOf, cacheUnderused, foldCacheBreaks, type CacheBreakState } from "./cache-breaks.ts";
 import { foldSkills, skillFlags, skillState, skillUseOf, type SkillState } from "./skills-use.ts";
 import { foldHookContext, hookContextFlags, hookContextOf, hookContextState, type HookContextState } from "./hook-context.ts";
 import { claimsSuccess, reportsFailure } from "./failure-report.ts";
@@ -45,6 +45,8 @@ export const FLAGS = {
   refusal: REFUSAL,
   /** The model wrote a tool call out as text, so it never ran: the tool was not available to it (writesToolCallAsText). */
   textToolCall: "text-tool-call",
+  /** A tag, not a failure: the session wrote a prompt cache it barely read back (core/cache-breaks.ts cacheUnderused). */
+  cacheLow: "cache:low",
   /** Derails (core/derail.ts): where the session went off the rails. */
   ...DERAIL_FLAGS,
 } as const;
@@ -414,7 +416,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * events, and every stored session is folded again once in the background
  * (core/reparse.ts, REFOLD_CURSOR), so old sessions get the new derivation.
  */
-export const SESSION_FOLD_VERSION = 10; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall).
+export const SESSION_FOLD_VERSION = 11; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -752,6 +754,7 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   }
   const cacheBreaks = cacheBreaksOf(counted.cacheBreaks);
   if (cacheBreaks) session.stats.cacheBreaks = cacheBreaks;
+  if (cacheUnderused(usage, session.stats.turns)) session.flags.push(FLAGS.cacheLow);
   session.flags.push(...skillFlags(skillUseOf(s.skills, s.cwd ?? prev?.cwd)));
   const hookContext = hookContextOf(s.hookContext);
   if (hookContext) session.stats.hookContext = hookContext;

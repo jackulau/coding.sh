@@ -39,14 +39,21 @@ async function audit(c: CommandContext): Promise<number> {
   const since = parseSince(sinceFlag);
   const limit = positiveInt(c.flags.limit, "limit") ?? 40;
   const { memoryAudit, memoryDirs } = await import("../../core/memory-files.ts");
-  // Subagent files Claude Code misreads: the user's and this project's.
-  const agentFiles = !agent || agent === "claude-code" ? agentFileProblems([join(memoryDirs(c.env).claudeDir, "agents"), join(c.cwd, ".claude", "agents")]) : [];
+  const { fallbackModelRisks } = await import("../../core/cache-setup.ts");
+  // Subagent files Claude Code misreads, and a fallback model that drops the cache: the user's and this project's.
+  const claudeOnly = !agent || agent === "claude-code";
+  const agentFiles = claudeOnly ? agentFileProblems([join(memoryDirs(c.env).claudeDir, "agents"), join(c.cwd, ".claude", "agents")]) : [];
+  const fallback = claudeOnly ? fallbackModelRisks([memoryDirs(c.env).claudeDir, join(c.cwd, ".claude")]) : [];
   return withContext(c, async (ctx) => {
     await autoIngest(ctx);
     const a = await memoryAudit(ctx.index, { since, env: c.env, ...(agent ? { agent } : {}) });
     if (out.json) {
-      out.data(agentFiles.length ? { ...a, agentFiles } : a);
+      out.data({ ...a, ...(agentFiles.length ? { agentFiles } : {}), ...(fallback.length ? { fallbackModels: fallback } : {}) });
       return 0;
+    }
+    if (fallback.length) {
+      out.row("Cache", `a fallback model is set, so Claude Code rewrites the whole prompt cache at full price whenever it falls back (the cache belongs to one model)`, "warn");
+      for (const f of fallback) out.note(`${f.path}: falls back to ${f.fallbackModel}. Remove \`fallbackModel\`, or pin one model, to keep the cache warm.`);
     }
     const t = a.totals;
     out.note(`${plural(a.sessions, "session")} since ${sinceFlag}${agent ? ` (${agent})` : ""} · ${plural(t.files, "memory or instruction file")}${t.bytes ? ` · ${bytes(t.bytes)}` : ""}`);

@@ -32,9 +32,21 @@ export interface CacheBreak {
 export const CACHE_BREAK_MIN_PREV = 4096;
 export const CACHE_BREAK_MIN_LOST = 2048;
 export const CACHE_BREAK_READ_SHARE = 0.5;
+/** cache:low wants enough turns that the cache had a real chance to be reused. */
+export const CACHE_LOW_MIN_TURNS = 3;
+/** And enough cache written that there was something worth reusing (one Anthropic cache block). */
+export const CACHE_LOW_MIN_WRITE = 4096;
 /** Anthropic's default cache lifetime, and the 1-hour cache's. */
 export const CACHE_TTL_MS = 5 * 60_000;
 export const CACHE_TTL_1H_MS = 60 * 60_000;
+
+/** A generic, data-grounded fix per break cause — the thing to change to keep the cache warm. */
+export const CACHE_BREAK_FIX: Record<CacheBreakCause, string> = {
+  compaction: "compact less often, or start a fresh session for a new task, so the prefix is not rewritten mid-session",
+  "model-switch": "pin one model — a mid-session model change, often a settings.json fallbackModel, drops the cache since it belongs to one model",
+  idle: "the cache expired between turns (a gap past its lifetime); unavoidable unless the idle gaps are",
+  other: "keep the prompt prefix — tools, the system prompt, then the early messages — stable between turns",
+};
 
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 const hasCacheField = (u: Usage): boolean => num(u.cacheReadTokens) !== undefined || num(u.cacheWriteTokens) !== undefined;
@@ -105,6 +117,21 @@ export function foldCacheBreaks(s: CacheBreakState, e: AgentEvent, prices: Price
 
 /** Session.stats.cacheBreaks for the events folded so far. */
 export const cacheBreaksOf = (s: CacheBreakState): CacheBreakStats | undefined => cacheBreakStats(s.breaks);
+
+/**
+ * True when a session paid to write a prompt cache it barely read back: over at
+ * least CACHE_LOW_MIN_TURNS turns it wrote at least one cache block yet read
+ * fewer tokens from cache than it wrote to it. A pure fact about the session's
+ * token totals — the cache was re-created faster than it was reused — so it
+ * tags the session `cache:low` (a tag, not a failure). Short sessions and ones
+ * that never wrote a cache are left alone: that is the agent's behaviour, not a
+ * setup the user can improve.
+ */
+export function cacheUnderused(usage: Usage, turns: number): boolean {
+  const write = num(usage.cacheWriteTokens) ?? 0;
+  const read = num(usage.cacheReadTokens) ?? 0;
+  return turns >= CACHE_LOW_MIN_TURNS && write >= CACHE_LOW_MIN_WRITE && read < write;
+}
 
 /** Cache breaks in time-sorted events, priced from `prices` (the built-in table by default). */
 export function findCacheBreaks(sorted: readonly AgentEvent[], prices: Prices = pricesFor()): CacheBreak[] {
