@@ -81,3 +81,67 @@ describe("usage --cache", () => {
     assert.equal(j.total.cacheReadWriteRatio, 0.17);
   });
 });
+
+// Idle breaks split by where the wait was: a subagent's 10-minute foreground Bash wait,
+// a subagent idle between turns, and the main session idle while the person was away.
+const subagentWaits = session("sub-waits", {
+  agent: "claude-code",
+  model: "claude-opus-5-5",
+  ...base,
+  parent: { sessionId: "main-away" },
+  stats: {
+    events: 10,
+    turns: 1,
+    toolCalls: 4,
+    toolErrors: 0,
+    filesChanged: 0,
+    usage: { inputTokens: 100, outputTokens: 500, cacheReadTokens: 50_000, cacheWriteTokens: 60_000, costUsd: 0.5 },
+    cacheBreaks: {
+      count: 3,
+      lostTokens: 60_000,
+      extraUsd: 0.3,
+      byCause: { idle: { count: 3, lostTokens: 60_000, extraUsd: 0.3 } },
+      byIdle: { wait: { count: 2, lostTokens: 40_000, extraUsd: 0.2 }, subagent: { count: 1, lostTokens: 20_000, extraUsd: 0.1 } },
+    },
+  },
+}) as Session;
+const mainAway = session("main-away", {
+  agent: "claude-code",
+  model: "claude-opus-5-5",
+  ...base,
+  stats: {
+    events: 10,
+    turns: 3,
+    toolCalls: 2,
+    toolErrors: 0,
+    filesChanged: 0,
+    usage: { inputTokens: 100, outputTokens: 500, cacheReadTokens: 80_000, cacheWriteTokens: 30_000, costUsd: 0.4 },
+    cacheBreaks: { count: 1, lostTokens: 20_000, extraUsd: 0.05, byCause: { idle: { count: 1, lostTokens: 20_000, extraUsd: 0.05 } }, byIdle: { away: { count: 1, lostTokens: 20_000, extraUsd: 0.05 } } },
+  },
+}) as Session;
+
+describe("usage --cache: idle breaks by where the wait was", () => {
+  let env: TmpEnv;
+  before(async () => {
+    env = tmpEnv();
+    await seed(env.dataHome, { sessions: [subagentWaits, mainAway] });
+  });
+  after(() => env.restore());
+
+  test("each idle kind gets its own line and fix, costliest first", () => {
+    const r = ok(["usage", "--cache"]);
+    assert.match(r.stderr, /Top cause idle:/);
+    const lines = r.stderr.split("\n").filter((l) => l.includes("Idle, "));
+    assert.equal(lines.length, 3, r.stderr);
+    assert.match(lines[0]!, /Idle, a long tool call \(wait\): 2 breaks, ~\$0\.2000: cap foreground waits under the 5-minute subagent cache lifetime; poll in chunks\./);
+    assert.match(lines[1]!, /Idle, a subagent idle between turns \(subagent\): 1 break, ~\$0\.1000: a subagent sat idle/);
+    assert.match(lines[2]!, /Idle, the main session idle between turns \(away\): 1 break, ~\$0\.0500: unavoidable while you're away; the 1-hour cache helps if you return often\./);
+  });
+
+  test("--json sums them per group as cacheBreakIdle, and cacheBreakCauses still reads idle", () => {
+    const j = JSON.parse(ok(["usage", "--cache", "--json"]).stdout);
+    assert.deepEqual(j.total.cacheBreakCauses, { idle: 4 });
+    assert.deepEqual(j.total.cacheBreakIdle, { wait: { count: 2, extraUsd: 0.2 }, subagent: { count: 1, extraUsd: 0.1 }, away: { count: 1, extraUsd: 0.05 } });
+    assert.ok(j.notes.some((n: string) => /Idle breaks by where the wait was: wait 2 \(~\$0\.2\): cap foreground waits/.test(n)), j.notes.join("\n"));
+  });
+});

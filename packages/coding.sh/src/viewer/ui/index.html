@@ -4515,7 +4515,8 @@ function wasteFact(st) {
   const w = st.waste;
   if (!b && !w) return null;
   const short = [b ? plural(b.count, "cache break") + (b.extraUsd ? " · " + fmtCost(b.extraUsd) : "") : "", w ? plural(w.duplicateFetches, "re-fetch", "re-fetches") : ""].filter(Boolean).join(" · ");
-  const causes = b ? Object.entries(b.byCause || {}).map(([k, c]) => k + " " + c.count).join(", ") : "";
+  const idle = b && b.byIdle ? Object.entries(b.byIdle).map(([k, c]) => k + " " + c.count).join(", ") : "";
+  const causes = b ? Object.entries(b.byCause || {}).map(([k, c]) => k + " " + c.count + (k === "idle" && idle ? " (" + idle + ")" : "")).join(", ") : "";
   const title = [b ? fmtCompact(b.lostTokens) + " prompt tokens billed again after the prompt cache was lost (" + causes + ")" : "", w ? fmtNum(w.duplicateFetches) + " of " + fmtNum(w.readOnlyCalls) + " read-only calls repeated with the same result (~" + fmtCompact(w.duplicateFetchTokens) + " tokens)" : ""].filter(Boolean).join("; ");
   return { short, title };
 }

@@ -8,8 +8,8 @@
 // priority, long context: `estimatedCostByTier`). `--reprice` recomputes those estimates from the
 // current price table first (it also runs by itself when the table changes). Waste totals:
 // prompt-cache breaks (tokens billed again, extra USD) and repeated read-only calls.
-import { CACHE_BREAK_FIX } from "../../core/cache-breaks.ts";
-import type { CacheBreakCause } from "../../schema/index.ts";
+import { CACHE_BREAK_FIX, CACHE_IDLE_FIX, CACHE_IDLE_LABEL } from "../../core/cache-breaks.ts";
+import type { CacheBreakCause, CacheIdleKind } from "../../schema/index.ts";
 import { repriceStored } from "../../core/reprice.ts";
 import { parseSince, positiveInt } from "../args.ts";
 import { autoIngest, queryCliError, str, whereFlag, withContext } from "../common.ts";
@@ -46,6 +46,9 @@ function renderCache(out: Output, by: string, r: { groups: Row[]; total: Row }):
     out.note(`${t.cacheBreaks} cache ${t.cacheBreaks === 1 ? "break" : "breaks"}: ${fmt(t.cacheBreakTokens)} prompt tokens billed again${t.cacheBreakUsd ? ` (~${usd(t.cacheBreakUsd)} extra)` : ""}.${causeText}`);
     const top = causes[0]?.[0] as CacheBreakCause | undefined;
     if (top) out.note(`Top cause ${top}: ${CACHE_BREAK_FIX[top]}.${top === "model-switch" ? " coding.sh harness audit flags a fallback model before it costs anything." : ""}`);
+    // Idle breaks mix waits you can shorten with time you were away: each gets its own fix, costliest first.
+    const idle = (Object.entries(t.cacheBreakIdle ?? {}) as [CacheIdleKind, { count: number; extraUsd?: number }][]).sort((a, b) => (b[1].extraUsd ?? 0) - (a[1].extraUsd ?? 0) || b[1].count - a[1].count);
+    for (const [k, v] of idle) out.note(`Idle, ${CACHE_IDLE_LABEL[k]} (${k}): ${v.count} ${v.count === 1 ? "break" : "breaks"}${v.extraUsd ? `, ~${usd(v.extraUsd)}` : ""}: ${CACHE_IDLE_FIX[k]}.`);
     out.note("Drill in: coding.sh sessions --where 'cache.breaks>0 sort:-cache.cost'; one session: coding.sh show <id>.");
   } else {
     out.note("No cache breaks in this window: the cached prefix held between turns.");
@@ -73,6 +76,7 @@ interface Row {
   cacheBreakTokens?: number;
   cacheBreakUsd?: number;
   cacheBreakCauses?: Record<string, number>;
+  cacheBreakIdle?: Record<string, { count: number; extraUsd?: number }>;
   cacheLowSessions?: number;
 }
 

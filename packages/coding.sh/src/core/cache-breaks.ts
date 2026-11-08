@@ -13,7 +13,13 @@
 // Cause, first match: a context.compact in the scope between the two calls;
 // a different model; a gap past the cache lifetime (5 minutes, or 1 hour when
 // the previous call wrote to the 1-hour cache); else other.
-import type { AgentEvent, CacheBreakCause, CacheBreakStats, Usage } from "../schema/index.ts";
+// An idle break also says where the wait was (CacheBreak.idle): `wait` when one
+// tool call in the scope between the two calls ran at least the cache lifetime
+// (a foreground wait, such as a subagent polling a job with a 10-minute Bash
+// timeout); else `subagent` when the scope is a subagent (idle between turns,
+// waiting for its coordinator or a notification); else `away` (the main session
+// idle between turns: the person was away).
+import type { AgentEvent, CacheBreakCause, CacheBreakStats, CacheIdleKind, Usage } from "../schema/index.ts";
 import { modelOf } from "./models.ts";
 import { cacheWrite1h, callRates, callTier, eventPrice, geoValue, pricesFor, promptTokens, type Prices } from "./pricing.ts";
 
@@ -22,6 +28,8 @@ export interface CacheBreak {
   eventId: string;
   prevEventId: string;
   cause: CacheBreakCause;
+  /** For an idle break: where the wait was. */
+  idle?: CacheIdleKind;
   lostTokens: number;
   /** Time from the end of the previous call to the start of this one. */
   gapMs: number;
@@ -46,6 +54,20 @@ export const CACHE_BREAK_FIX: Record<CacheBreakCause, string> = {
   "model-switch": "pin one model — a mid-session model change, often a settings.json fallbackModel, drops the cache since it belongs to one model",
   idle: "the cache expired during a wait longer than its lifetime (5 minutes by default); split long waits, such as a subagent polling a job, into chunks shorter than that",
   other: "keep the prompt prefix — tools, the system prompt, then the early messages — stable between turns",
+};
+
+/** The fix per idle kind: what to change depends on where the wait was. */
+export const CACHE_IDLE_FIX: Record<CacheIdleKind, string> = {
+  wait: "cap foreground waits under the 5-minute subagent cache lifetime; poll in chunks",
+  subagent: "a subagent sat idle between turns, waiting for its coordinator or a notification; finish it and start a fresh one for later work, or answer it within 5 minutes",
+  away: "unavoidable while you're away; the 1-hour cache helps if you return often",
+};
+
+/** What an idle break is called where it is listed: "wait", "subagent", "away". */
+export const CACHE_IDLE_LABEL: Record<CacheIdleKind, string> = {
+  wait: "a long tool call",
+  subagent: "a subagent idle between turns",
+  away: "the main session idle between turns",
 };
 
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
@@ -76,6 +98,8 @@ interface Prev {
   cache: boolean;
   long: boolean;
   model?: string;
+  /** The longest tool call in the scope since this call (tool.end durationMs). */
+  toolMs?: number;
 }
 
 /** What foldCacheBreaks carries from one event to the next. Serializable (node:v8), so live ingest can keep it. */
@@ -92,6 +116,12 @@ export function foldCacheBreaks(s: CacheBreakState, e: AgentEvent, prices: Price
   if (e.kind === "context.compact") {
     const prev = s.last.get(scope);
     if (prev) prev.compacted = true;
+    return;
+  }
+  if (e.kind === "tool.end") {
+    const prev = s.last.get(scope);
+    const d = num(e.durationMs) ?? num(e.payload.durationMs);
+    if (prev && d !== undefined && d > (prev.toolMs ?? 0)) prev.toolMs = d;
     return;
   }
   // Gateway companions repeat a call's usage; replayed calls were never sent again.
@@ -111,6 +141,7 @@ export function foldCacheBreaks(s: CacheBreakState, e: AgentEvent, prices: Price
   const cause: CacheBreakCause = prev.compacted ? "compaction" : model && prev.model && model !== prev.model ? "model-switch" : gapMs >= ttl ? "idle" : "other";
   const rate = extraRate(e, prices);
   const b: CacheBreak = { eventId: e.id, prevEventId: prev.id, cause, lostTokens: lost, gapMs };
+  if (cause === "idle") b.idle = (prev.toolMs ?? 0) >= ttl ? "wait" : e.subagentId ? "subagent" : "away";
   if (rate !== undefined) b.extraUsd = Math.max(0, lost * rate);
   s.breaks.push(b);
 }
@@ -146,7 +177,9 @@ const round6 = (n: number) => Math.round(n * 1e6) / 1e6;
 export function cacheBreakStats(breaks: readonly CacheBreak[]): CacheBreakStats | undefined {
   if (!breaks.length) return undefined;
   const byCause: CacheBreakStats["byCause"] = {};
+  const byIdle: NonNullable<CacheBreakStats["byIdle"]> = {};
   const unpricedBy = new Map<CacheBreakCause, number>();
+  const unpricedIdle = new Set<CacheIdleKind>();
   let lost = 0;
   let usd = 0;
   let unpriced = 0;
@@ -155,6 +188,13 @@ export function cacheBreakStats(breaks: readonly CacheBreak[]): CacheBreakStats 
     c.count++;
     c.lostTokens += b.lostTokens;
     lost += b.lostTokens;
+    if (b.idle) {
+      const k = (byIdle[b.idle] ??= { count: 0, lostTokens: 0, extraUsd: 0 });
+      k.count++;
+      k.lostTokens += b.lostTokens;
+      if (b.extraUsd === undefined) unpricedIdle.add(b.idle);
+      else k.extraUsd! += b.extraUsd;
+    }
     if (b.extraUsd === undefined) {
       unpriced++;
       unpricedBy.set(b.cause, (unpricedBy.get(b.cause) ?? 0) + 1);
@@ -167,5 +207,10 @@ export function cacheBreakStats(breaks: readonly CacheBreak[]): CacheBreakStats 
     if (unpricedBy.has(k)) delete c.extraUsd;
     else c.extraUsd = round6(c.extraUsd!);
   }
-  return { count: breaks.length, lostTokens: lost, ...(unpriced ? { unpriced } : { extraUsd: round6(usd) }), byCause };
+  for (const [k, c] of Object.entries(byIdle) as [CacheIdleKind, NonNullable<CacheBreakStats["byCause"][CacheBreakCause]>][]) {
+    if (unpricedIdle.has(k)) delete c.extraUsd;
+    else c.extraUsd = round6(c.extraUsd!);
+  }
+  const idle = Object.keys(byIdle).length ? { byIdle } : {};
+  return { count: breaks.length, lostTokens: lost, ...(unpriced ? { unpriced } : { extraUsd: round6(usd) }), byCause, ...idle };
 }

@@ -46,6 +46,8 @@ describe("cache breaks", () => {
       lostTokens: b.lostTokens,
       extraUsd: Math.round(hand * 1e6) / 1e6,
       byCause: { idle: { count: 1, lostTokens: b.lostTokens, extraUsd: Math.round(hand * 1e6) / 1e6 } },
+      // The main session, between turns: the person was away.
+      byIdle: { away: { count: 1, lostTokens: b.lostTokens, extraUsd: Math.round(hand * 1e6) / 1e6 } },
     });
   });
 
@@ -56,6 +58,42 @@ describe("cache breaks", () => {
     assert.equal(findCacheBreaks(switched)[0]?.cause, "model-switch");
     const other = [...warm(), call(0, 110_000, { gap: 2 * MIN })];
     assert.equal(findCacheBreaks(other)[0]?.cause, "other");
+  });
+
+  it("splits idle breaks by where the wait was: one long tool call, a subagent between turns, the main session", () => {
+    const sub = { sessionId: "s:sub", subagentId: "a1" };
+    const tool = (ms: number, o: Partial<AgentEvent> & { gap?: number } = {}) => ev("tool.end", { tool: "Bash", ok: true, durationMs: ms }, { durationMs: ms, ...o });
+    // A subagent's foreground Bash that polls a job for 10 minutes: the cache expires inside the call.
+    reset();
+    const polled = [call(0, 50_000, sub), tool(10 * MIN, { ...sub, gap: 10 * MIN }), call(0, 52_000, { ...sub, gap: 1000 })];
+    const [wait] = findCacheBreaks(polled);
+    assert.deepEqual([wait?.cause, wait?.idle], ["idle", "wait"]);
+    // The same subagent with only short tool calls, idle 8 minutes until its coordinator writes: between turns.
+    reset();
+    const waiting = [call(0, 50_000, sub), tool(2000, sub), ev("user.message", { text: "next step" }, { ...sub, gap: 8 * MIN }), call(0, 52_000, sub)];
+    assert.deepEqual(findCacheBreaks(waiting).map((b) => [b.cause, b.idle]), [["idle", "subagent"]]);
+    // A tool call in another scope (the parent) does not make the subagent's gap a wait.
+    reset();
+    const elsewhere = [call(0, 50_000, sub), tool(10 * MIN, { gap: 10 * MIN }), call(0, 52_000, sub)];
+    assert.equal(findCacheBreaks(elsewhere)[0]?.idle, "subagent");
+    // The main session: a long foreground wait is a wait; a gap between turns is time away.
+    reset();
+    assert.equal(findCacheBreaks([call(0, 50_000), tool(7 * MIN, { gap: 7 * MIN }), call(0, 52_000)])[0]?.idle, "wait");
+    reset();
+    assert.equal(findCacheBreaks([call(0, 50_000), call(0, 52_000, { gap: 20 * MIN })])[0]?.idle, "away");
+    // A tool call shorter than the cache lifetime inside a longer gap is not the wait that expired it.
+    reset();
+    assert.equal(findCacheBreaks([call(0, 50_000), tool(4 * MIN, { gap: 4 * MIN }), call(0, 52_000, { gap: 4 * MIN })])[0]?.idle, "away");
+    // Only idle breaks say where; the stats split them and leave byIdle out when none was idle.
+    reset();
+    const all = [...polled, ...waiting.map((e) => ({ ...e, id: `w${e.id}`, subagentId: "a2" }))];
+    const stats = cacheBreakStats(findCacheBreaks(all))!;
+    assert.deepEqual(Object.keys(stats.byIdle ?? {}).sort(), ["subagent", "wait"]);
+    assert.equal(stats.byIdle!.wait!.count + stats.byIdle!.subagent!.count, stats.byCause.idle!.count);
+    reset();
+    const other = cacheBreakStats(findCacheBreaks([...warm(), call(0, 110_000, { gap: 2 * MIN })]))!;
+    assert.equal(other.byIdle, undefined);
+    assert.equal(findCacheBreaks([...warm(), call(0, 110_000, { gap: 2 * MIN })])[0]?.idle, undefined);
   });
 
   it("an hour-long cache write moves the idle line to an hour", () => {

@@ -5,7 +5,7 @@ import { existsSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { AgentEvent, IndexStore, Session, SessionFilter } from "../core/types.ts";
 import type { CacheBreakCause } from "../schema/index.ts";
-import { CACHE_BREAK_FIX } from "../core/cache-breaks.ts";
+import { CACHE_BREAK_FIX, CACHE_IDLE_FIX } from "../core/cache-breaks.ts";
 import { mergeCallCopies } from "../core/call-copies.ts";
 import { failureFlags, percentile } from "../core/sessions.ts";
 import { sessionMatcher } from "../query/run.ts";
@@ -616,10 +616,12 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     cacheBreakUsd: number;
     /** Cache breaks by cause (compaction, model-switch, idle, other), so `usage --cache` can name what to change. */
     cacheBreakCauses: Record<string, number>;
+    /** Idle cache breaks by where the wait was (wait, subagent, away): count and extra USD. */
+    cacheBreakIdle: Record<string, { count: number; extraUsd: number }>;
     /** Sessions tagged cache:low: paid to write a prompt cache they barely read back. */
     cacheLowSessions: number;
   }
-  const zero = (): Acc => ({ sessions: 0, turns: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, estimatedCostUsd: 0, estimatedCostByTier: {}, priced: 0, unpriced: 0, duplicateFetches: 0, duplicateFetchTokens: 0, cacheBreaks: 0, cacheBreakTokens: 0, cacheBreakUsd: 0, cacheBreakCauses: {}, cacheLowSessions: 0 });
+  const zero = (): Acc => ({ sessions: 0, turns: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, costUsd: 0, estimatedCostUsd: 0, estimatedCostByTier: {}, priced: 0, unpriced: 0, duplicateFetches: 0, duplicateFetchTokens: 0, cacheBreaks: 0, cacheBreakTokens: 0, cacheBreakUsd: 0, cacheBreakCauses: {}, cacheBreakIdle: {}, cacheLowSessions: 0 });
   const tokens = (s: Session) => {
     const u = s.stats.usage ?? {};
     return (u.inputTokens ?? 0) + (u.outputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
@@ -644,6 +646,11 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     a.cacheBreakTokens += s.stats.cacheBreaks?.lostTokens ?? 0;
     a.cacheBreakUsd += s.stats.cacheBreaks?.extraUsd ?? 0;
     for (const [c, v] of Object.entries(s.stats.cacheBreaks?.byCause ?? {})) a.cacheBreakCauses[c] = (a.cacheBreakCauses[c] ?? 0) + (v?.count ?? 0);
+    for (const [k, v] of Object.entries(s.stats.cacheBreaks?.byIdle ?? {})) {
+      const t = (a.cacheBreakIdle[k] ??= { count: 0, extraUsd: 0 });
+      t.count += v?.count ?? 0;
+      t.extraUsd += v?.extraUsd ?? 0;
+    }
     if ((s.flags ?? []).includes("cache:low")) a.cacheLowSessions++;
   };
   const unpricedModels = new Map<string, number>();
@@ -670,7 +677,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   // per user turn. Cache reads are left out: every model call re-reads the
   // whole context, so they grow with the number of calls, not with the work,
   // and would make one long turn read as millions of tokens.
-  const fix = ({ priced, unpriced, costUsd, estimatedCostUsd, estimatedCostByTier, duplicateFetches, duplicateFetchTokens, cacheBreaks, cacheBreakTokens, cacheBreakUsd, cacheBreakCauses, cacheLowSessions, ...a }: Acc) => {
+  const fix = ({ priced, unpriced, costUsd, estimatedCostUsd, estimatedCostByTier, duplicateFetches, duplicateFetchTokens, cacheBreaks, cacheBreakTokens, cacheBreakUsd, cacheBreakCauses, cacheBreakIdle, cacheLowSessions, ...a }: Acc) => {
     const tiers = Object.entries(estimatedCostByTier).sort((x, y) => y[1] - x[1]);
     const totalTokens = a.inputTokens + a.outputTokens + a.cacheReadTokens + a.cacheWriteTokens;
     const prompt = a.inputTokens + a.cacheReadTokens + a.cacheWriteTokens;
@@ -686,6 +693,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
       ...(a.cacheWriteTokens ? { cacheReadWriteRatio: Math.round((a.cacheReadTokens / a.cacheWriteTokens) * 100) / 100 } : {}),
       ...(duplicateFetches ? { duplicateFetches, duplicateFetchTokens } : {}),
       ...(cacheBreaks ? { cacheBreaks, cacheBreakTokens, ...(cacheBreakUsd > 0 ? { cacheBreakUsd: round4(cacheBreakUsd) } : {}), cacheBreakCauses } : {}),
+      ...(Object.keys(cacheBreakIdle).length ? { cacheBreakIdle: Object.fromEntries(Object.entries(cacheBreakIdle).map(([k, v]) => [k, { count: v.count, ...(v.extraUsd > 0 ? { extraUsd: round4(v.extraUsd) } : {}) }])) } : {}),
       ...(cacheLowSessions ? { cacheLowSessions } : {}),
     };
   };
@@ -709,7 +717,9 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
   if (total.cacheBreaks) {
     const topCause = Object.entries(total.cacheBreakCauses).sort((a, b) => b[1] - a[1])[0]?.[0] as CacheBreakCause | undefined;
     const fix = topCause ? ` Top cause ${topCause} (${total.cacheBreakCauses[topCause]}): ${CACHE_BREAK_FIX[topCause]}.` : "";
-    notes.push(`${total.cacheBreaks} prompt-cache ${total.cacheBreaks === 1 ? "break" : "breaks"} billed ${total.cacheBreakTokens} prompt tokens again${total.cacheBreakUsd > 0 ? ` (~$${round4(total.cacheBreakUsd)} more than reading them from cache)` : ""}.${fix} Fields: cacheBreaks, cacheBreakTokens, cacheBreakUsd, cacheBreakCauses; causes per session in session_get stats.cacheBreaks.`);
+    const idle = Object.entries(total.cacheBreakIdle).sort((a, b) => b[1].extraUsd - a[1].extraUsd || b[1].count - a[1].count);
+    const idleText = idle.length ? ` Idle breaks by where the wait was: ${idle.map(([k, v]) => `${k} ${v.count}${v.extraUsd > 0 ? ` (~$${round4(v.extraUsd)})` : ""}: ${CACHE_IDLE_FIX[k as keyof typeof CACHE_IDLE_FIX]}`).join("; ")}.` : "";
+    notes.push(`${total.cacheBreaks} prompt-cache ${total.cacheBreaks === 1 ? "break" : "breaks"} billed ${total.cacheBreakTokens} prompt tokens again${total.cacheBreakUsd > 0 ? ` (~$${round4(total.cacheBreakUsd)} more than reading them from cache)` : ""}.${fix}${idleText} Fields: cacheBreaks, cacheBreakTokens, cacheBreakUsd, cacheBreakCauses, cacheBreakIdle; causes per session in session_get stats.cacheBreaks.`);
   }
   if (total.duplicateFetches) notes.push(`${total.duplicateFetches} read-only ${total.duplicateFetches === 1 ? "call was" : "calls were"} repeated with the same result while the earlier result was still in context (duplicateFetches, ~${total.duplicateFetchTokens} tokens re-sent).`);
   if (unpricedModels.size) notes.push(`No price for: ${[...unpricedModels].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([m, n]) => `${m} (${n})`).join(", ")}. Add [prices."<model>"] to config.toml to price them.`);

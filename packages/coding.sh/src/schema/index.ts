@@ -120,6 +120,13 @@ export interface HookContextStats {
 export type CacheBreakCause = "compaction" | "model-switch" | "idle" | "other";
 
 /**
+ * Where an idle cache break's wait was: `wait`, one tool call ran past the cache
+ * lifetime (a foreground wait); `subagent`, a subagent sat idle between turns;
+ * `away`, the main session sat idle between turns.
+ */
+export type CacheIdleKind = "wait" | "subagent" | "away";
+
+/**
  * Session.stats.cacheBreaks: model calls whose prompt prefix was no longer cached,
  * so tokens read from cache on the previous call were billed again at the write
  * (or full input) rate.
@@ -131,6 +138,8 @@ export interface CacheBreakStats {
   /** USD the re-billing cost over cache-read prices; set only when every break's model has a price. */
   extraUsd?: number;
   byCause: Partial<Record<CacheBreakCause, { count: number; lostTokens: number; extraUsd?: number }>>;
+  /** The idle breaks (byCause.idle) split by where the wait was. Unset when none was idle. */
+  byIdle?: Partial<Record<CacheIdleKind, { count: number; lostTokens: number; extraUsd?: number }>>;
   /** Breaks on models with no price (extraUsd is then left out). */
   unpriced?: number;
 }

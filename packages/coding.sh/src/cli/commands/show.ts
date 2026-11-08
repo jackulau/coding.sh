@@ -209,9 +209,10 @@ export function wasteRows(s: Session): [string, string][] {
   if (w) rows.push(["Re-fetches", `${w.duplicateFetches} of ${w.readOnlyCalls} read-only calls repeated with the same result (~${tokens(w.duplicateFetchTokens)} tokens re-sent)`]);
   const b = s.stats.cacheBreaks;
   if (b) {
+    const idle = Object.entries(b.byIdle ?? {}).map(([k, c]) => `${k} ${c!.count}`).join(", ");
     const causes = Object.entries(b.byCause)
       .sort((x, y) => y[1]!.lostTokens - x[1]!.lostTokens)
-      .map(([k, c]) => `${k} ${c!.count}`)
+      .map(([k, c]) => `${k} ${c!.count}${k === "idle" && idle ? ` (${idle})` : ""}`)
       .join(", ");
     const cost = b.extraUsd !== undefined ? `, ${usd(b.extraUsd)} extra` : "";
     rows.push(["Cache breaks", `${b.count}: ${tokens(b.lostTokens)} prompt tokens billed again${cost} (${causes})`]);
