@@ -55,6 +55,14 @@ description the parent gave it (Claude Code's `description`), else the first lin
 `coding.sh sessions --subagents` lists them, and `coding.sh show` places them on the parent's
 timeline. Through the proxy, a Claude Code subagent's model calls land in its session too.
 
+**Run.** A whole multi-agent run: a top-level agent, the subagents it spawned, and their
+subagents, as one tree. `coding.sh tree <session>` shows it from any session in it (following the
+parent ids up to the top-level agent, then back down), with per-node model, cost, tokens, duration
+and tool calls, the run's rolled-up totals and the worst flag across the loop. A fan-out of
+separate agent processes — the way large runs are launched — is one logical run when the orchestrator
+sets `CODING_SH_RUN_ID` on each; pass that id to `coding.sh tree`. The relationships are derived
+from the parent ids already stored, so nothing extra is recorded.
+
 **Flag.** A failure pattern detected on a session after each ingest:
 
 - `premature-completion`: the agent stopped while the last test run was failing, and its last
