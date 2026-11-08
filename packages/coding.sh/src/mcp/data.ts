@@ -5,6 +5,8 @@ import { existsSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { AgentEvent, IndexStore, Session, SessionFilter } from "../core/types.ts";
 import { failureFlags, percentile } from "../core/sessions.ts";
+import { sessionMatcher } from "../query/run.ts";
+import type { Node, Query } from "../query/where.ts";
 
 type Obj = Record<string, unknown>;
 
@@ -140,11 +142,13 @@ export interface ScanQuery {
   topLevel: boolean;
   /** Extra in-memory predicate. */
   where?: (s: Session) => boolean;
+  /** `where` query (src/query): the store's query path when it has one, else evaluated per session. Its sort is ignored. */
+  query?: Query;
 }
 
-/** Sessions newest first matching q, scanning at most `cap` index rows. */
-export async function* scanSessions(index: IndexStore, q: ScanQuery, cap = SCAN_CAP): AsyncGenerator<Session, { truncated: boolean }> {
-  const base: SessionFilter = {
+/** The store-side part of a ScanQuery (place, where and query filter on top). */
+export function scanFilter(q: ScanQuery): SessionFilter {
+  return {
     ...(q.agent ? { agent: q.agent } : {}),
     ...(q.since !== undefined ? { since: q.since } : {}),
     ...(q.until !== undefined ? { until: q.until } : {}),
@@ -152,13 +156,34 @@ export async function* scanSessions(index: IndexStore, q: ScanQuery, cap = SCAN_
     ...(q.project ? { project: q.project } : {}),
     ...(q.topLevel ? { parentSessionId: null } : {}),
   };
+}
+
+/** A place as query clauses (for facets, which take a query, not a predicate). */
+export function placeNode(p: Place): Node | undefined {
+  const cmp = (key: string, raw: string, glob: boolean): Node => ({ t: "cmp", key, op: ":", values: [{ raw, quoted: !glob, kind: glob ? "glob" : "eq" }], at: 0 });
+  if (p.name) return { t: "or", items: [cmp("repo", p.name, false), cmp("dir", `*${sep}${p.name}`, true)] };
+  if (p.path) {
+    const under = p.path.endsWith(sep) ? p.path : p.path + sep;
+    return { t: "or", items: [cmp("repo", p.path, false), cmp("repo", `${under}*`, true), cmp("dir", p.path, false), cmp("dir", `${under}*`, true)] };
+  }
+  return undefined;
+}
+
+/** Sessions newest first matching q, scanning at most `cap` index rows. */
+export async function* scanSessions(index: IndexStore, q: ScanQuery, cap = SCAN_CAP): AsyncGenerator<Session, { truncated: boolean }> {
+  const base = scanFilter(q);
   // An exact repo root narrows in the store; anything looser filters here.
   const batch = 500;
+  const root = q.query?.root;
+  const native = root && index.querySessions ? index.querySessions.bind(index) : undefined;
+  const match = root && !native ? sessionMatcher(index, root) : undefined;
   for (let offset = 0; offset < cap; offset += batch) {
-    const rows = await index.listSessions({ ...base, limit: Math.min(batch, cap - offset), offset });
+    const page = { limit: Math.min(batch, cap - offset), offset };
+    const rows = native ? await native({ root }, { filter: base, ...page }) : await index.listSessions({ ...base, ...page });
     for (const s of rows) {
       if (q.place && !matchesPlace(s, q.place)) continue;
       if (q.where && !q.where(s)) continue;
+      if (match && !(await match(s))) continue;
       yield s;
     }
     if (rows.length < Math.min(batch, cap - offset)) return { truncated: false };

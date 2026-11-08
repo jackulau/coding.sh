@@ -10,6 +10,7 @@ coding.sh init --agent claude-code    # or just one`;
 const explore = `coding.sh sessions --since 7d         # newest first
 coding.sh show latest                 # one session's timeline
 coding.sh search 'flaky test'         # full text over prompts, replies, tool calls
+coding.sh sessions --where 'tool:Bash ok:false cost>0.5'
 coding.sh ui                          # local viewer on 127.0.0.1:4319`;
 const backfill = `coding.sh ingest --backfill --since 30d`;
 const wrap = `coding.sh run --agent my-agent -- ./my-agent --task 42`;
@@ -81,7 +82,8 @@ const SHOW = [
   <p>
     A session over 200 events shows one line per phase: the start, each resume, compaction and long idle gap, with any derails
     (looping, failure-streak, churn, no-progress, stalled, context-thrash) under the phase they started in. <code>show --all</code> lists every
-    event, <code>show latest --follow</code> prints new events as a session runs, and <code>sessions --flag looping</code> finds sessions by derail.
+    event, <code>show latest --follow</code> prints new events as a session runs, and <code>sessions --flag looping</code> finds sessions by derail. <code>--where</code> filters by any field
+    (<a href="https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md#filter-with---where">keys</a>), and <code>--facets</code> counts sessions per value.
     <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#long-sessions">Long sessions</a> has the thresholds.
   </p>
 

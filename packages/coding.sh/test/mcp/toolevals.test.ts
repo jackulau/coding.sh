@@ -52,8 +52,9 @@ describe("tool evals against the coding.sh MCP server", () => {
     assert.equal(s.items.length, 16);
     // Every tool definition (name, description, input + output schema) costs context in every turn.
     // 24 KB for 13 tools; harness_compare (the 14th) adds about 1.3 KB, exp_session_summary and
-    // exp_session_note about 1.9 KB together.
-    assert.ok(s.surfaceBytes < 27_500, `surface is ${s.surfaceBytes} bytes`);
+    // exp_session_note about 1.9 KB together. The where query on sessions_list, search and usage
+    // plus sessions_list facets add about 0.8 KB (instead of new query and facets tools).
+    assert.ok(s.surfaceBytes < 28_500, `surface is ${s.surfaceBytes} bytes`);
     assert.ok(s.descriptionBytes < 9_000, `descriptions are ${s.descriptionBytes} bytes`);
     for (const it of s.items) assert.ok(it.bytes < 4_000, `${it.name} is ${it.bytes} bytes`);
   });

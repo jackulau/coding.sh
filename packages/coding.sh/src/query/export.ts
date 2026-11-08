@@ -7,6 +7,8 @@
 import type { IndexStore, Label, SessionFilter } from "../core/types.ts";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { csvRow } from "./csv.ts";
+import { findSessions, sessionMatcher } from "./run.ts";
+import type { Query } from "./where.ts";
 
 export const EXPORT_KINDS = ["sessions", "events", "labels"] as const;
 export type ExportKind = (typeof EXPORT_KINDS)[number];
@@ -16,8 +18,10 @@ export type ExportFormat = (typeof EXPORT_FORMATS)[number];
 export interface ExportOptions {
   /** Which sessions (limit and offset are ignored; use maxSessions). */
   filter: Omit<SessionFilter, "limit" | "offset">;
-  /** Stop after this many sessions (newest first). */
+  /** Stop after this many sessions (newest first, or by query.sort). */
   maxSessions?: number;
+  /** `--where`: only sessions matching it (src/query). */
+  query?: Query;
   format: ExportFormat;
   /** Receives the output in order; awaited, so a slow consumer applies backpressure. */
   write(chunk: string): void | Promise<void>;
@@ -53,15 +57,29 @@ function eventCells(e: AgentEvent): unknown[] {
 
 const labelCells = (l: Label): unknown[] => [l.id, l.sessionId, l.caseId ?? null, l.criterion, l.value, l.note ?? null, l.by, iso(l.ts)];
 
-/** Sessions matching the filter, newest first, a page at a time. */
+/**
+ * Sessions matching the filter (and the query), newest first, a page at a time.
+ * A store with a query path pages the query itself; otherwise each page of
+ * listSessions is filtered in memory.
+ */
 async function* sessionsOf(index: IndexStore, o: ExportOptions): AsyncGenerator<Session> {
   const page = o.pageSize ?? 500;
+  const q = o.query?.root || o.query?.sort ? o.query : undefined;
+  const native = q && index.querySessions ? index.querySessions.bind(index) : undefined;
+  if (q?.sort && !native) {
+    // Sorting by a stat needs every match first: the scan fallback collects and sorts them.
+    yield* (await findSessions(index, q, { filter: o.filter, ...(o.maxSessions !== undefined ? { limit: o.maxSessions } : {}) })).sessions;
+    return;
+  }
+  const match = q && !native ? sessionMatcher(index, q.root) : undefined;
   let seen = 0;
   for (let offset = 0; ; offset += page) {
-    const want = o.maxSessions !== undefined ? Math.min(page, o.maxSessions - seen) : page;
+    const want = o.maxSessions !== undefined && !match ? Math.min(page, o.maxSessions - seen) : page;
     if (want <= 0) return;
-    const batch = await index.listSessions({ ...o.filter, limit: want, offset });
+    const batch = native ? await native(q!, { filter: o.filter, limit: want, offset }) : await index.listSessions({ ...o.filter, limit: want, offset });
     for (const s of batch) {
+      if (match && !(await match(s))) continue;
+      if (o.maxSessions !== undefined && seen >= o.maxSessions) return;
       seen++;
       yield s;
     }
@@ -71,7 +89,7 @@ async function* sessionsOf(index: IndexStore, o: ExportOptions): AsyncGenerator<
 
 /** True when the filter selects every session, so labels can be read in one call. */
 const unfiltered = (o: ExportOptions): boolean =>
-  o.maxSessions === undefined && Object.entries(o.filter).every(([k, v]) => v === undefined || (k === "parentSessionId" && v === null));
+  o.maxSessions === undefined && !o.query?.root && Object.entries(o.filter).every(([k, v]) => v === undefined || (k === "parentSessionId" && v === null));
 
 /** Streams the rows; returns how many were written. */
 export async function exportRows(index: IndexStore, kind: ExportKind, o: ExportOptions): Promise<{ rows: number }> {

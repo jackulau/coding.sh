@@ -22,6 +22,8 @@ import type { BlobStore, IndexStore, Label, Session, SessionFilter } from "../co
 import { phaseLabel, sessionOutline, storedOutline } from "../core/outline.ts";
 import type { ExperimentResult } from "../datasets/types.ts";
 import { compareExperiments } from "../experiments/compare.ts";
+import { facetCounts, findSessions, searchWhere } from "../query/run.ts";
+import { andQuery, parseWhere, QueryError, QueryUnsupported, type Node, type Query } from "../query/where.ts";
 import { getUpdateStatus, type UpdateStatus } from "../update/index.ts";
 
 export interface ViewerOptions {
@@ -110,10 +112,31 @@ const STATS_SCAN_CAP = 100_000;
 
 class HttpError extends Error {
   readonly status: number;
-  constructor(status: number, message: string) {
+  /** Extra fields for the error body (a bad `where`: reason, offset, next). */
+  readonly extra?: Record<string, unknown>;
+  constructor(status: number, message: string, extra?: Record<string, unknown>) {
     super(message);
     this.status = status;
+    if (extra) this.extra = extra;
   }
+}
+
+/** `?where=`: the query language (src/query), parsed; a bad one is a 400 with its offset. */
+function whereParam(q: URLSearchParams): Query | undefined {
+  const raw = q.get("where")?.trim();
+  if (!raw) return undefined;
+  try {
+    return parseWhere(raw);
+  } catch (e) {
+    throw queryHttpError(e);
+  }
+}
+
+function queryHttpError(e: unknown): unknown {
+  if (e instanceof QueryError) return new HttpError(400, `where: ${e.message}`, { reason: e.reason, offset: e.offset, next: e.next });
+  if (e instanceof QueryUnsupported) return new HttpError(400, e.message, { reason: e.reason });
+  if (e instanceof RangeError) return new HttpError(400, e.message);
+  return e;
 }
 
 // ---------------------------------------------------------------- page
@@ -257,7 +280,7 @@ export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<V
       const status = err instanceof HttpError ? err.status : 500;
       const message = err instanceof HttpError ? err.message : "internal error";
       if (status === 500) process.emitWarning(`coding.sh viewer: ${(err as Error)?.stack ?? String(err)}`);
-      sendJson(res, status, { error: message, status });
+      sendJson(res, status, { error: message, status, ...(err instanceof HttpError ? err.extra : {}) });
     });
 }
 
@@ -563,7 +586,26 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       const agent = q.get("agent") || undefined;
       const project = projectParam(ctx, q);
       const f = facetParams(q);
+      const where = whereParam(q);
+      if (where) {
+        // The other list filters join the query as session clauses; search applies it at event level.
+        const hits = await searchWhere(ctx.index, text, withFacets(where, f, scopeParam(q) === "top"), { limit, ...(agent ? { agent } : {}), ...(project !== undefined ? { project } : {}) }).catch((e) => Promise.reject(queryHttpError(e)));
+        return sendJson(res, 200, { items: hits });
+      }
       return sendJson(res, 200, { items: await searchSessions(ctx, text, limit, { ...f, agent, project, top: scopeParam(q) === "top" }) });
+    }
+
+    case "facets": {
+      // Session counts per value of each key, over the query without that key's own clauses.
+      get();
+      if (id !== undefined) throw new HttpError(404, "not found");
+      const keys = (q.get("keys") ?? "agent,model,repo,flag").split(",").map((k) => k.trim()).filter(Boolean);
+      if (keys.length > 12) throw new HttpError(400, "at most 12 keys");
+      const project = projectParam(ctx, q);
+      const filter: SessionFilter = scopeParam(q) === "top" ? { parentSessionId: null } : {};
+      if (project !== undefined) filter.project = project;
+      const facets = await facetCounts(ctx.index, whereParam(q) ?? {}, keys, { filter, limit: intParam(q, "limit", 20, 1, 200) }).catch((e) => Promise.reject(queryHttpError(e)));
+      return sendJson(res, 200, { facets });
     }
 
     case "tasks": {
@@ -846,6 +888,17 @@ async function listSessions(index: IndexStore, q: URLSearchParams, project?: str
   else if (scopeParam(q) === "top") filter.parentSessionId = null;
   const text = (q.get("q") ?? "").trim().toLowerCase();
   if (text.length > 500) throw new HttpError(400, "q is too long");
+  const where = whereParam(q);
+  if (where) {
+    if (cursor) throw new HttpError(400, "cursor does not apply with where; page with offset");
+    // A query pages by offset (its order may be a stat, not the keyset cursor's start time).
+    const qq = f.model ? withFacets(where, { model: f.model }, false) : where;
+    // With q too, the substring filter runs over the matches before paging.
+    const r = await findSessions(index, qq, text ? { filter, limit: STATS_SCAN_CAP } : { filter, limit: limit + 1, offset }).catch((e) => Promise.reject(queryHttpError(e)));
+    const rows = text ? r.sessions.filter((s) => [s.title, s.id, s.repo?.root, s.repo?.branch, s.model].filter(Boolean).join("\n").toLowerCase().includes(text)).slice(offset) : r.sessions;
+    const result = page(rows, limit, offset);
+    return { ...result, items: await withChildCounts(index, result.items, project) };
+  }
   // Model has no store filter: like text, it goes through the scan.
   const result = text || f.model
     ? await filterSessions(index, filter, text, limit, offset, cursor, f.model)
@@ -880,6 +933,20 @@ async function* scanSessions(index: IndexStore, filter: SessionFilter = {}): Asy
     yield* rows;
     if (rows.length < batch) return;
   }
+}
+
+/** The list filters as query clauses, and-ed onto a `where` query (exact values, as matchesFacets). */
+function withFacets(q: Query, f: Facets, top: boolean): Query {
+  const items: Node[] = [];
+  const eq = (key: string, raw: string): Node => ({ t: "cmp", key, op: ":", values: [{ raw, quoted: true, kind: "eq" }], at: 0 });
+  if (f.agent) items.push(eq("agent", f.agent));
+  if (f.flag) items.push(eq("flag", f.flag));
+  if (f.model) items.push(eq("model", f.model));
+  if (f.repo) items.push(eq("repo", f.repo));
+  if (f.since !== undefined) items.push({ t: "cmp", key: "since", op: ":", values: [{ raw: String(f.since), quoted: false, kind: "eq", n: f.since }], at: 0 });
+  if (f.until !== undefined) items.push({ t: "cmp", key: "until", op: ":", values: [{ raw: String(f.until), quoted: false, kind: "eq", n: f.until }], at: 0 });
+  if (top) items.push({ t: "is", name: "root", at: 0 });
+  return items.length ? andQuery(q, { t: "and", items }) : q;
 }
 
 /** List filters shared by /api/sessions, /api/search and /api/stats. */

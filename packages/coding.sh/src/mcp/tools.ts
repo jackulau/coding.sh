@@ -21,6 +21,8 @@ import {
   latency,
   pageSessions,
   parsePlace,
+  placeNode,
+  scanFilter,
   sessionSummary,
   SESSION_ENV_VARS,
   subagentTree,
@@ -30,6 +32,8 @@ import {
   USAGE_GROUPS,
 } from "./data.ts";
 import { sessionDigest } from "./digest.ts";
+import { facetCounts, searchWhere } from "../query/run.ts";
+import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, type Query } from "../query/where.ts";
 import { ToolError, type ToolDef } from "./protocol.ts";
 
 type Obj = Record<string, unknown>;
@@ -54,6 +58,12 @@ const LIMIT = (d: number, max: number) => ({ type: "integer", minimum: 1, maximu
 const CURSOR = { type: "string", description: "nextCursor from the previous call, to get the next page." };
 const PROJECT = { type: "string", pattern: "^[a-z0-9][a-z0-9-]{0,62}$", description: 'Only this project (a `coding.sh serve` ingest key decides it; local captures are "default"). Default: all projects.' };
 const EXP_SESSION = { type: "string", description: "Session id. Default: the project's session." };
+const WHERE = {
+  type: "string",
+  description:
+    "Filter query: key:value clauses ANDed; OR, ( ), - negates; a,b either; * wildcard; > >= < <= and a..b on numbers; bare words search text. Keys: agent model repo branch title flag skill cost tokens duration turns tools tool.errors since until has:tests|cost|error is:root|child|flagged; event keys tool kind ok mcp error. E.g. model:claude-* cost>0.5 tool:Bash ok:false",
+};
+const WHERE_SAME = (what: string) => ({ type: "string", description: `Filter query, same language as sessions_list where${what}.` });
 const SESSION_ID = { type: "string", minLength: 1, description: 'Session id from sessions_list/search, or "latest" for the newest top-level session.' };
 
 const input = (properties: Obj, required: string[] = []): Obj => ({ type: "object", properties, ...(required.length ? { required } : {}), additionalProperties: false });
@@ -102,6 +112,23 @@ function cursorArg(a: Obj): number {
   if (c === undefined) return 0;
   if (!/^\d{1,9}$/.test(c)) throw new ToolError(`Invalid cursor ${JSON.stringify(c)}: pass the nextCursor value from the previous call unchanged.`);
   return Number(c);
+}
+
+/** The `where` argument, parsed; a bad query is a tool error naming where it broke. */
+function whereArg(a: Obj, now: number): Query | undefined {
+  const raw = strArg(a, "where");
+  if (raw === undefined) return undefined;
+  try {
+    return parseWhere(raw, { now });
+  } catch (e) {
+    throw queryToolError(e);
+  }
+}
+
+function queryToolError(e: unknown): unknown {
+  if (e instanceof QueryError) return new ToolError(`Invalid where at character ${e.offset + 1}: ${e.message}.${e.next.length ? ` ${e.next.join("; ")}` : ""}`, { reason: e.reason, offset: e.offset });
+  if (e instanceof QueryUnsupported) return new ToolError(e.message, { reason: e.reason });
+  return e;
 }
 
 function when(a: Obj, k: string, now: number, dflt?: string): number | undefined {
@@ -233,14 +260,16 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         repo: REPO,
         since: SINCE("all time"),
         until: UNTIL,
-        flag: { type: "string", description: "Only sessions with this flag: premature-completion, repeated-tool-failure, no-verification, compaction, test-tamper, duplicate-fetch, skill-copy-conflict, a derail (looping, failure-streak, churn, no-progress, stalled, context-thrash), or a tag such as skill:<name>." },
+        flag: { type: "string", description: "Only sessions with this flag (premature-completion, no-verification, looping, …) or tag (skill:<name>)." },
         flagged: { type: "boolean", description: "Only sessions with any failure flag." },
+        where: WHERE,
+        facets: { type: "array", items: { type: "string", enum: [...FACET_KEYS] }, description: "Also count matching sessions per value of these keys." },
         includeSubagents: { type: "boolean", default: false, description: "Also list subagent (child) sessions. Default false." },
         project: PROJECT,
         limit: LIMIT(20, 100),
         cursor: CURSOR,
       }),
-      outputSchema: out({ sessions: arr(SESSION_OUT), nextCursor: S, truncated: B }, ["sessions"]),
+      outputSchema: out({ sessions: arr(SESSION_OUT), facets: { type: "object" }, nextCursor: S, truncated: B }, ["sessions"]),
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
@@ -248,11 +277,19 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         const flag = strArg(a, "flag");
         if (flag) q.flag = flag;
         if (a.flagged === true) q.where = (s) => failureFlags(s.flags).length > 0;
+        const where = whereArg(a, c.now());
+        if (where) q.query = where;
         const offset = cursorArg(a);
         const limit = numArg(a, "limit", 20);
-        const p = await pageSessions(ctx.index, q, offset, limit);
-        const now = c.now();
-        return { sessions: p.sessions.map((s) => sessionSummary(s, now)), ...(p.hasMore ? { nextCursor: String(offset + limit) } : {}), ...(p.truncated ? { truncated: true } : {}) };
+        const keys = Array.isArray(a.facets) ? a.facets.filter((k): k is string => typeof k === "string") : [];
+        try {
+          const p = await pageSessions(ctx.index, q, offset, limit);
+          const facets = keys.length ? await facetCounts(ctx.index, andQuery(andQuery(where ?? {}, q.place ? placeNode(q.place) : undefined), a.flagged === true ? { t: "is", name: "flagged", at: 0 } : undefined), keys, { filter: scanFilter(q), limit: 10 }) : undefined;
+          const now = c.now();
+          return { sessions: p.sessions.map((s) => sessionSummary(s, now)), ...(facets ? { facets } : {}), ...(p.hasMore ? { nextCursor: String(offset + limit) } : {}), ...(p.truncated ? { truncated: true } : {}) };
+        } catch (e) {
+          throw queryToolError(e);
+        }
       },
     },
     {
@@ -316,7 +353,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       name: "search",
       title: "Search sessions",
       description: "Full-text search over captured prompts, replies and tool input/output across all sessions. Returns matching events with session ids and snippets; open one with session_get.",
-      inputSchema: input({ query: { type: "string", minLength: 1, description: "Words to find (all must match)." }, agent: AGENT, project: PROJECT, limit: LIMIT(10, 50), cursor: CURSOR }, ["query"]),
+      inputSchema: input({ query: { type: "string", minLength: 1, description: "Words to find (all must match)." }, agent: AGENT, project: PROJECT, where: WHERE_SAME("; event keys apply to the hit"), limit: LIMIT(10, 50), cursor: CURSOR }, ["query"]),
       outputSchema: out({ hits: arr(out({ sessionId: S, kind: S, snippet: S }, ["sessionId", "kind", "snippet"])), nextCursor: S }, ["hits"]),
       annotations: READ,
       async run(a, c) {
@@ -325,7 +362,10 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         const limit = numArg(a, "limit", 10);
         const agent = strArg(a, "agent");
         const project = strArg(a, "project");
-        const raw = await ctx.index.search(strArg(a, "query") ?? "", { limit: offset + limit + 1, ...(agent ? { agent } : {}), ...(project ? { project } : {}) });
+        const where = whereArg(a, c.now());
+        const opts = { limit: offset + limit + 1, ...(agent ? { agent } : {}), ...(project ? { project } : {}) };
+        const text = strArg(a, "query") ?? "";
+        const raw = where ? await searchWhere(ctx.index, text, where, opts).catch((e) => Promise.reject(queryToolError(e))) : await ctx.index.search(text, opts);
         const page = raw.slice(offset, offset + limit);
         const titles = new Map<string, string | undefined>();
         for (const h of page) if (!titles.has(h.event.sessionId)) titles.set(h.event.sessionId, clip((await ctx.index.getSession(h.event.sessionId))?.title, 80));
@@ -393,6 +433,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         agent: AGENT,
         repo: REPO,
         groupBy: { type: "string", enum: [...USAGE_GROUPS], default: "day", description: "Group rows by day, agent, model, agent-model (agent + model, to compare harnesses at a fixed model) or repo. Default day." },
+        where: WHERE_SAME(""),
         limit: LIMIT(31, 100),
       }),
       outputSchema: out(
@@ -410,7 +451,10 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();
-        return usage(ctx.index, query(a, c, { sinceDefault: "7d", topLevel: false }), (strArg(a, "groupBy") ?? "day") as UsageGroup, numArg(a, "limit", 31));
+        const q = query(a, c, { sinceDefault: "7d", topLevel: false });
+        const where = whereArg(a, c.now());
+        if (where) q.query = where;
+        return usage(ctx.index, q, (strArg(a, "groupBy") ?? "day") as UsageGroup, numArg(a, "limit", 31)).catch((e) => Promise.reject(queryToolError(e)));
       },
     },
     {

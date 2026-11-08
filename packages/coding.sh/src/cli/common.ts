@@ -4,6 +4,7 @@ import { openContext, type Context } from "../core/context.ts";
 import type { IngestError } from "../core/ingest.ts";
 import type { EvalTask, Session } from "../core/types.ts";
 import type { GateOpts } from "../stats/tests.ts";
+import { parseWhere, QueryError, QueryUnsupported, type Query } from "../query/where.ts";
 import { runningCli } from "../mcp/launch.ts";
 import { spawnBackgroundIngest } from "../spool/kick.ts";
 import { UsageError, type FlagValue } from "./args.ts";
@@ -239,6 +240,28 @@ async function sessionByPrefix(ctx: Context, prefix: string): Promise<Session | 
     next: ["Use more of the id, or list sessions:", "coding.sh sessions"],
     data: { candidates: shown.map((x) => ({ id: x.id, agent: x.agent, startedAt: new Date(x.startedAt).toISOString(), title: x.title ?? null })), more: ids.length > MAX_CANDIDATES },
   });
+}
+
+/** `--where <query>`, parsed; undefined without the flag. A bad query is a usage error (exit 2) naming where it broke. */
+export function whereFlag(c: CommandContext): Query | undefined {
+  const raw = str(c.flags.where);
+  if (raw === undefined) return undefined;
+  try {
+    return parseWhere(raw);
+  } catch (e) {
+    throw queryCliError(e, raw);
+  }
+}
+
+/** QueryError → exit 2 with reason, offset and a hint; QueryUnsupported → exit 1 (unsupported_store); anything else as is. */
+export function queryCliError(e: unknown, raw?: string): unknown {
+  if (e instanceof QueryError) {
+    const where = raw === undefined ? "" : ` at character ${e.offset + 1}`;
+    const details: [string, string][] = raw === undefined ? [] : [["Query", raw], ["", `${" ".repeat(e.offset)}^`]];
+    return new CliError(`--where: ${e.message}${where}`, { reason: e.reason, exitCode: 2, next: e.next, details, data: { offset: e.offset } });
+  }
+  if (e instanceof QueryUnsupported) return new CliError(e.message, { reason: e.reason, next: ["coding.sh config get store.index shows which store is in use"] });
+  return e;
 }
 
 export function str(v: FlagValue): string | undefined {

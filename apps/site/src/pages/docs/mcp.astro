@@ -7,12 +7,12 @@ import Tag from "../../components/docs/Tag.astro";
 // src/adapters/_shared/mcp.ts (what `coding.sh init` writes for each agent).
 const TOOLS: [string, string][] = [
   ["session_current", "The session of the agent calling the tool: its summary and latest timeline."],
-  ["sessions_list", "Captured sessions, newest first, with turns, tool errors, tokens, cost, failure flags and derails. Filter with flag, e.g. looping."],
+  ["sessions_list", "Captured sessions, newest first, with turns, tool errors, tokens, cost, failure flags and derails. Filter with flag (e.g. looping) or where (e.g. tool:Bash ok:false cost>0.5); facets counts per value."],
   ["session_get", "One session as a digest: per-turn index and a timeline of prompts, replies, tool calls and model calls."],
-  ["search", "Full-text search over prompts, replies and tool input/output across all sessions."],
+  ["search", "Full-text search over prompts, replies and tool input/output across all sessions. Takes where too."],
   ["failures", "What went wrong lately: flagged sessions, frequent tool errors, prompts where the user pushed back."],
   ["latency", "Model-call p50/p95 and time to first token, plus the slowest tools and tool calls."],
-  ["usage", "Tokens and cost by day, agent, model or repo, with the most expensive sessions."],
+  ["usage", "Tokens and cost by day, agent, model or repo, with the most expensive sessions. Takes where too."],
   ["subagents", "The subagents a session spawned, as a tree with durations and errors."],
   ["experiments_list", "Dataset experiments with pass rate and confidence interval."],
   ["experiment_compare", "Paired comparison of two experiments: difference, p-value, regressed and improved cases."],

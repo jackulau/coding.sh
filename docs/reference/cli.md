@@ -304,15 +304,20 @@ coding.sh sessions [options]
 | `--subagents` |  | Include subagent sessions. |
 | `--project <ID>` |  | Only sessions in this serve project (default: all) |
 | `--flag <NAME>` |  | Only sessions with this flag: looping, failure-streak, churn, no-progress, stalled, context-thrash, premature-completion, duplicate-fetch, …, or a tag such as skill:&lt;name&gt;. |
+| `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
+| `--facets [<KEYS>]` |  | Count sessions per value instead of listing them: agent, model, provider, repo, branch, flag, skill, kind, tool, mcp (default: agent, model, repo, flag, skill, tool) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
-coding.sh sessions
+coding.sh sessions --where 'agent:codex cost>0.5 since:7d'
+coding.sh sessions --where 'tool:Bash ok:false -flag:compaction'
+coding.sh sessions --facets model,tool --where 'repo:coding-sh'
 coding.sh sessions --agent codex --since 7d
-coding.sh sessions --flag looping --since 7d
-coding.sh sessions --store postgres://… --project demo
 ```
 
+- --where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; \* as a wildcard in text; &gt; &gt;= &lt; &lt;= and a..b on numbers. Bare words search prompts, replies and tool calls (every word in one event).
+- Session keys: agent, model, provider, repo, branch, dir, title, id, run, parent, flag, skill, since, until, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost, has, is. Event keys (the session has a matching event; event keys in one group match the same event): kind, tool, ok, mcp, error, event.duration. Also sort:-cost and limit:N. Full list with examples: docs/reference/query.md.
+- --facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh show`
@@ -359,12 +364,15 @@ coding.sh search <TEXT>... [options]
 | `-a, --agent <AGENT>` |  | Only sessions from this agent. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
 | `--project <ID>` |  | Only matches in this serve project (default: all) |
+| `--where <QUERY>` |  | Only matches matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh search 'flaky test'
+coding.sh search migration --where 'agent:codex kind:tool.start'
 ```
 
+- --where applies to each match: event keys (kind, tool, ok, …) to the matching event, session keys (agent, repo, cost, …) to its session. Keys: coding.sh sessions --help.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh usage`
@@ -382,11 +390,12 @@ coding.sh usage [options]
 | `--since <WHEN>` | `30d` | Only after this time: 7d, 12h, 30m or a date. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
 | `--reprice` |  | Recompute estimated costs from the current price table first. |
+| `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
 
 ```sh
 coding.sh usage
 coding.sh usage --by agent-model --since 90d
-coding.sh usage --by model --reprice
+coding.sh usage --by model --where 'repo:coding-sh tool:Bash'
 ```
 
 ## `coding.sh sql`
@@ -440,11 +449,12 @@ coding.sh export <WHAT> [options]
 | `--subagents` |  | Include subagent sessions (and their events and labels) |
 | `--project <ID>` |  | Only sessions in this serve project (default: all) |
 | `-n, --limit <N>` |  | Only the N newest matching sessions (default: all) |
+| `--where <QUERY>` |  | Only sessions (and their events and labels) matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh export sessions --since 30d --format csv > sessions.csv
-coding.sh export events --agent codex --since 7d > events.jsonl
+coding.sh export events --where 'agent:codex tool.errors>0' > events.jsonl
 coding.sh export labels --format csv
 ```
 

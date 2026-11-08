@@ -5,7 +5,7 @@
 import { resolve } from "node:path";
 import { EXPORT_FORMATS, EXPORT_KINDS, exportRows, type ExportFormat, type ExportKind } from "../../query/export.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
-import { autoIngest, readIngest, str, withContext } from "../common.ts";
+import { autoIngest, queryCliError, readIngest, str, whereFlag, withContext } from "../common.ts";
 import { plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -25,6 +25,7 @@ export async function run(c: CommandContext): Promise<number> {
   const maxSessions = positiveInt(c.flags.limit, "limit");
   const since = str(c.flags.since) !== undefined ? parseSince(str(c.flags.since)!) : undefined;
   const repo = str(c.flags.repo);
+  const where = whereFlag(c);
   return withContext(c, async (ctx) => {
     await autoIngest(ctx, readIngest(c));
     const r = await exportRows(ctx.index, kind, {
@@ -36,10 +37,11 @@ export async function run(c: CommandContext): Promise<number> {
         ...(str(c.flags.project) ? { project: str(c.flags.project)! } : {}),
         ...(str(c.flags.flag) ? { flag: str(c.flags.flag)! } : {}),
       },
-      ...(maxSessions !== undefined ? { maxSessions } : {}),
+      ...(maxSessions !== undefined || where?.limit !== undefined ? { maxSessions: maxSessions ?? where!.limit! } : {}),
+      ...(where ? { query: where } : {}),
       format,
       write: stdoutWriter(),
-    });
+    }).catch((e) => Promise.reject(queryCliError(e)));
     c.out.note(`Exported ${plural(r.rows, kind === "sessions" ? "session" : kind === "events" ? "event" : "label")}`);
     return 0;
   });

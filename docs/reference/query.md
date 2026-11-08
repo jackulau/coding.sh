@@ -6,7 +6,108 @@ Two commands read the store directly:
 - `coding.sh export sessions|events|labels` streams rows as JSONL or CSV, with the same filters as
   `coding.sh sessions`.
 
-Both read what is stored, and that text was redacted at ingest.
+Both read what is stored, and that text was redacted at ingest. To pick sessions without SQL, use
+the [`--where` filter](#filter-with---where), which `sessions`, `search`, `usage`, `export`, the
+viewer API and the MCP tools share.
+
+## Filter with `--where`
+
+```sh
+coding.sh sessions --where 'agent:codex cost>0.5 since:7d'
+coding.sh sessions --where 'tool:Bash ok:false -flag:compaction'
+coding.sh sessions --where '(model:claude-* OR provider:openai) has:tests sort:-cost limit:5'
+coding.sh sessions --facets model,tool --where 'repo:coding-sh'
+coding.sh search migration --where 'agent:codex kind:tool.end'
+coding.sh usage --by model --where 'repo:coding-sh tool:Bash'
+coding.sh export events --where 'agent:codex tool.errors>0' > events.jsonl
+```
+
+A query is a list of clauses. Clauses are and-ed. Between clauses:
+
+- `OR` (upper case) means either side; `( )` groups.
+- `-` before a clause negates it: `-flag:compaction`, `-(agent:codex tool:Bash)`.
+- `a,b` matches either value: `agent:codex,gemini`.
+- `*` is a wildcard in text values: `model:claude-*`. Text matches ignore ASCII case.
+- Numbers take `>`, `>=`, `<`, `<=`, `:` (equal) and ranges `a..b`. `k`, `M` and `B` scale
+  counts (`tokens>1M`); durations need a unit (`duration>10m`, `event.duration>=30s`); `cost` may
+  start with `$`.
+- Values with spaces go in double quotes: `title:"fix the build"`.
+- Bare words search prompts, replies and tool calls, like `coding.sh search`. Every word must
+  match within one event.
+- `sort:` and `limit:` set the order and the row count. They go at the top level only.
+
+Session keys test the session. Event keys test its events: a session matches when it has a
+matching event, and event keys in the same and-group must match the same event. So
+`tool:Bash ok:false` means a failed Bash call, not a Bash call and some other failure.
+`-tool:Bash` means no Bash call at all. In `coding.sh search`, event keys test the hit itself.
+
+| Key | Level | Matches | Example |
+|---|---|---|---|
+| `agent` | session | Agent id | `agent:codex` |
+| `model` | session | Main model | `model:claude-sonnet-*` |
+| `provider` | session | Model provider | `provider:anthropic` |
+| `repo` | session | Repo root path, or its name (else the working directory's name) | `repo:coding-sh` |
+| `branch` | session | Git branch | `branch:main` |
+| `dir` | session | Working directory | `dir:/work/*` |
+| `title` | session | Title contains (case-insensitive) | `title:deploy` |
+| `id` | session | Session id | `id:01H*` |
+| `run` | session | Eval run id | `run:run_*` |
+| `parent` | session | Parent session id (subagent sessions) | `parent:abc123` |
+| `flag` | session | Any flag or tag | `flag:no-verification` |
+| `skill` | session | Skill tag (flag skill:<name>) | `skill:pdf` |
+| `since` | session | Started at or after: 7d, 12h or a date | `since:7d` |
+| `until` | session | Started before: 7d, 12h or a date | `until:2026-11-01` |
+| `duration` | session | Wall time of an ended session (30s, 10m, 2h) | `duration>10m` |
+| `turns` | session | User turns | `turns>=20` |
+| `tools` | session | Tool calls | `tools>100` |
+| `tool.errors` | session | Failed tool calls | `tool.errors>0` |
+| `llm.errors` | session | Failed model calls | `llm.errors>0` |
+| `files` | session | Files changed | `files>=1` |
+| `events` | session | Events captured | `events<10` |
+| `tests.passed` | session | Passing tests seen | `tests.passed>0` |
+| `tests.failed` | session | Failing tests seen | `tests.failed>0` |
+| `tokens` | session | All tokens: input, output, cache read and write (k, M suffixes) | `tokens>1M` |
+| `tokens.in` | session | Input tokens | `tokens.in>100k` |
+| `tokens.out` | session | Output tokens | `tokens.out>10k` |
+| `cost` | session | Cost in USD, reported or estimated | `cost>0.5` |
+| `kind` | event | Event kind | `kind:tool.end` |
+| `tool` | event | Tool name | `tool:Bash` |
+| `ok` | event | Tool call or model call succeeded | `ok:false` |
+| `mcp` | event | MCP server of a tool call | `mcp:github` |
+| `error` | event | Error message contains (case-insensitive) | `error:ENOENT` |
+| `event.duration` | event | Event duration (30s, 2m) | `event.duration>30s` |
+| `has` | session | Has tests (test results seen), cost (a cost), repo (a git repo), error (a failed tool or model call), title (a title) | `has:tests` |
+| `is` | session | Is root (a top-level session), child (a subagent session), flagged (has a failure flag, one with no colon), run (from an eval run), ended (has an end) | `is:root` |
+| `sort` | query | Order by started, duration, turns, tools, tool.errors, llm.errors, files, events, tests.passed, tests.failed, tokens, tokens.in, tokens.out, cost; - for descending | `sort:-cost` |
+| `limit` | query | Maximum rows | `limit:50` |
+
+A key that does not exist, a bad value, an unclosed quote or parenthesis, or an `OR` with nothing
+after it is a usage error (exit 2, reasons `unknown_key`, `bad_value`, `unterminated_quote`,
+`unbalanced_parens`, `dangling_or`, `dangling_not`, `bad_directive`, `empty_group`, `too_long`).
+The message points at the character:
+
+```text
+✗ --where: unknown key "modle" at character 13
+  Query           agent:codex modle:x
+                              ^
+    did you mean model:?
+```
+
+With `--json` the error carries `reason`, `next` and `data.offset` (0-based). The viewer API
+answers 400 with `reason`, `offset` and `next`; the MCP tools return a tool error that names the
+character.
+
+`--facets` counts sessions per value of each key instead of listing them: `agent`, `model`,
+`provider`, `repo`, `branch`, `flag`, `skill`, `kind`, `tool` and `mcp`. Each key is counted over
+the query without that key's own top-level clauses, so `--facets agent --where agent:codex` still
+shows every agent. `--limit` sets the values per key (default 10). A count is the number of
+sessions, not events.
+
+On the SQLite index a query becomes one SQL statement, with every value bound as a parameter.
+Postgres and ClickHouse stores answer session keys by reading sessions a page at a time, the
+newest 20,000 at most (`coding.sh sessions` says so on stderr when it stops there). Event keys and
+bare words need the SQLite or memory store; on another store they fail with reason
+`unsupported_store`.
 
 ## `coding.sh sql`
 

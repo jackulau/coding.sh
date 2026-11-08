@@ -10,7 +10,7 @@
 // prompt-cache breaks (tokens billed again, extra USD) and repeated read-only calls.
 import { repriceStored } from "../../core/reprice.ts";
 import { parseSince, positiveInt } from "../args.ts";
-import { autoIngest, str, withContext } from "../common.ts";
+import { autoIngest, queryCliError, str, whereFlag, withContext } from "../common.ts";
 import { CliError, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -47,10 +47,11 @@ export async function run(c: CommandContext): Promise<number> {
   const since = parseSince(str(c.flags.since) ?? "30d");
   const limit = positiveInt(c.flags.limit, "limit") ?? 20;
   const agent = str(c.flags.agent);
+  const where = whereFlag(c);
   return withContext(c, async (ctx) => {
     await autoIngest(ctx);
     const repriced = c.flags.reprice === true ? await repriceStored(ctx.index, ctx.config.pricing, { force: true }) : undefined;
-    const r = (await usage(ctx.index, { since, topLevel: false, ...(agent ? { agent } : {}) }, by as (typeof USAGE_GROUPS)[number], limit)) as {
+    const r = (await usage(ctx.index, { since, topLevel: false, ...(agent ? { agent } : {}), ...(where ? { query: where } : {}) }, by as (typeof USAGE_GROUPS)[number], limit).catch((e) => Promise.reject(queryCliError(e)))) as {
       groups: Row[];
       total: Row;
       notes?: string[];

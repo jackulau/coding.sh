@@ -156,7 +156,11 @@ The command line was wrong. Nothing ran.
 | `remote_not_serve` | `https://obs.example.com/v1/ingest answered 404: that is not a coding.sh serve that takes ingest` | The URL points somewhere else, or at a `serve --role viewer` replica. Use the server's base URL (the one that answers `/readyz`), with the ingest role. |
 | `remote_error` | `https://obs.example.com/v1/ingest answered 503. Nothing was changed` | The server is up but not ready, often while it waits for its database. Check `curl -s <url>/readyz` and try again. |
 | `unknown_agent` | `Unknown agent "claude"` | Use an agent id from [Coding agents](https://coding.sh/docs/agents). |
-| `unknown_key` | `Can't set "capture.mod". Settable keys: …` | Use a key from [Configuration](reference/config.md). |
+| `unknown_key` | `Can't set "capture.mod". Settable keys: …`, or in `--where`: `unknown key "modle" at character 13` | Use a key from [Configuration](reference/config.md), or a `--where` key from [Query and export](reference/query.md#filter-with---where). To search for the word itself, quote it. |
+| `bad_value` | `--where: cost: must be a USD amount like 0.5, got "abc" at character 6` | Use a value the key takes; the message gives one. Durations need a unit (`duration>10m`). |
+| `unterminated_quote`, `unbalanced_parens` | `--where: missing ')' at character 23` | Close the quote or parenthesis the caret points at. |
+| `dangling_or`, `dangling_not`, `empty_group` | `--where: OR needs a clause on each side` | Put a clause after `OR` or `-`, or inside `( )`. |
+| `bad_directive`, `too_long`, `bad_query` | `--where: sort: and limit: apply to the whole query; put them outside an OR` | Put `sort:` and `limit:` at the top level, outside parentheses, OR and `-`. A query is at most 2,000 characters. |
 | `invalid_case` | (dataset add) a case that is not `{"input":…}` JSON | Fix the `--case` JSON. |
 | `invalid_grader` | `Invalid grader: …` | Fix the `--grader` JSON. See [Evals](https://coding.sh/docs/evals#graders). |
 | `invalid_matrix` | `Invalid matrix in matrix.json: …` (exp run) | Fix the spec: a cell that differs from the baseline outside `vary`, an override of graders or the dataset, or a bad axis or baseline. `--plan` checks it without running. See [Evals](https://coding.sh/docs/evals#matrix). |
@@ -185,7 +189,7 @@ The command ran and something failed.
 | `cancelled_experiment` | `Experiment base (…) was cancelled after 3 case runs; comparing a partial result is misleading` | Re-run the experiment, or pass `--force` to `exp compare` to compare the partial result. |
 | `arm_failed` | `arm cand: the first run failed: …` (exp metrics) | Run that arm's command by hand. It must exit 0 and print a JSON object of numbers. |
 | `no_pairs` | `No pair finished in both arms, so there is nothing to compare` (exp metrics) | Read the run errors in the report, fix the arm, and rerun. |
-| `unsupported_store` | `coding.sh sql reads the SQLite index; this store is postgres://…@db/csh`, `coding.sh purge rewrites the SQLite index; …` | For sql, use `coding.sh export`, which reads every store, or query the database with its own client. For purge, remove the value with the database's own tools. |
+| `unsupported_store` | `coding.sh sql reads the SQLite index; this store is postgres://…@db/csh`, `coding.sh purge rewrites the SQLite index; …`, a `--where` with event keys or bare words on a Postgres or ClickHouse store | For sql, use `coding.sh export`, which reads every store, or query the database with its own client. For purge, remove the value with the database's own tools. For `--where`, use session keys only. |
 | `timeout` | `the query ran past 10s and was stopped` (sql) | Narrow the query, or pass a longer `--timeout`. |
 | `sql_error` | `SQLite: no such column: foo` (sql) | List the tables and columns: `coding.sh sql "select name, sql from sqlite_schema"`. See [Query and export](reference/query.md). |
 | `judge_error` | `The pairwise judge failed on every case: …` | Check the judge's `provider`, `model`, `baseURL` and API key variable, then re-run `exp compare --pairwise`. |

@@ -93,6 +93,7 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/blobs/{sha256}`](#get-apiblobssha256) | read key or basic auth | serve, ui |
 | GET | [`/api/search`](#get-apisearch) | read key or basic auth | serve, ui |
 | GET | [`/api/stats`](#get-apistats) | read key or basic auth | serve, ui |
+| GET | [`/api/facets`](#get-apifacets) | read key or basic auth | serve, ui |
 | GET | [`/api/labels`](#get-apilabels) | read key or basic auth | serve, ui |
 | POST | [`/api/labels`](#post-apilabels) | read key or basic auth | serve, ui |
 | GET | [`/api/experiments`](#get-apiexperiments) | read key or basic auth | serve, ui |
@@ -390,6 +391,7 @@ Sessions, newest first.
 | `agent`, `model`, `flag`, `repo` | | exact match on the session |
 | `since`, `until` | | start time range |
 | `q` | | substring of title, id, repo, branch or model (up to 500 characters) |
+| `where` | | a [`--where` query](query.md#filter-with---where), and-ed with the other filters |
 
 ```sh
 curl -sS "$CSH/api/sessions?project=team&limit=1" -H "Authorization: Bearer $READ_KEY"
@@ -416,6 +418,18 @@ curl -sS "$CSH/api/sessions?project=team&limit=1&cursor=1793880000000:team/triag
 ```
 
 That page holds `team/chat-1`.
+
+With `where`, rows follow the query's `sort:` (newest first without one) and pages go by `offset`;
+`cursor` answers 400. A bad query answers 400 with `reason`, the 0-based `offset` of the problem
+and `next`:
+
+```sh
+curl -sS "$CSH/api/sessions?where=agent:codex%20modle:x" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{"error":"where: unknown key \"modle\"","status":400,"reason":"unknown_key","offset":12,"next":["did you mean model:?"]}
+```
 
 ### `GET /api/sessions/{id}`
 
@@ -549,7 +563,7 @@ an unknown one gets 404 `{"error":"blob not found","status":404}`.
 
 Full-text search over prompts, replies and tool I/O. `q` is required (up to 500 characters).
 Also takes `limit` (1 to 500, default 50), `project`, `scope`, `agent`, `model`, `flag`, `repo`,
-`since` and `until`. Matches in `snippet` are wrapped in `«…»`.
+`since`, `until` and `where` (event keys test the matching event, session keys its session). Matches in `snippet` are wrapped in `«…»`.
 
 ```sh
 curl -sS "$CSH/api/search?q=order&limit=1" -H "Authorization: Bearer $READ_KEY"
@@ -576,6 +590,24 @@ curl -sS "$CSH/api/stats?project=team&agent=support-bot" -H "Authorization: Bear
 ```
 
 `byAgent` still lists every agent in `team`, because a facet skips its own filter. The totals apply all of them.
+
+### `GET /api/facets`
+
+Session counts per value of each key in `keys` (comma-separated, at most 12, default
+`agent,model,repo,flag`): `agent`, `model`, `provider`, `repo`, `branch`, `flag`, `skill`, `kind`,
+`tool` or `mcp`. Takes `where`, `project`, `scope` and `limit` (values per key, 1 to 200, default
+20). Each key is counted over `where` without that key's own clauses, so a picked value does not
+hide the others.
+
+```sh
+curl -sS "$CSH/api/facets?keys=agent,tool&where=-flag:compaction" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{"facets":{"agent":[{"value":"codex","count":2},{"value":"claude-code","count":1},{"value":"gemini","count":1}],"tool":[{"value":"Bash","count":3},{"value":"Edit","count":1},{"value":"Grep","count":1}]}}
+```
+
+An unknown key answers 400.
 
 ### `POST /api/labels`
 

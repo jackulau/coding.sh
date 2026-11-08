@@ -26,9 +26,17 @@ test("every table column in query.md exists in the index", async () => {
 });
 
 test("the CSV columns in query.md match the export", () => {
+  const exportSection = DOC.split("## `coding.sh export`")[1]?.split(/^## /m)[0] ?? "";
   for (const kind of ["sessions", "events", "labels"] as const) {
-    const row = new RegExp(`^\\| \`${kind}\` \\| (.+) \\|$`, "m").exec(DOC)?.[1];
+    const row = new RegExp(`^\\| \`${kind}\` \\| (.+) \\|$`, "m").exec(exportSection)?.[1];
     assert.ok(row, `no CSV row for ${kind}`);
     assert.deepEqual(row.split(", ").map((c) => c.replace(/ \(.*\)$/, "")), [...CSV_COLUMNS[kind]]);
   }
+});
+
+test("the --where key table in query.md lists every key the parser knows", async () => {
+  const { keyDocs } = await import("../../src/query/where.ts");
+  const section = DOC.split("## Filter with `--where`")[1]?.split(/^## /m)[0] ?? "";
+  const listed = [...section.matchAll(/^\| `([a-z.]+)` \| (?:session|event|query) \|/gm)].map((m) => m[1]);
+  assert.deepEqual(listed, keyDocs().map((k) => k.name));
 });

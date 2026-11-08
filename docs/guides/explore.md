@@ -15,6 +15,42 @@ coding.sh ui                       # local viewer on 127.0.0.1 (token-protected 
 `sql` and `export` are described, with the index's tables and columns, in
 [Query and export](../reference/query.md).
 
+### Filter with `--where`
+
+`sessions`, `search`, `usage` and `export` take one filter language. Clauses are and-ed; `OR`,
+`( )` and a leading `-` combine them; bare words search the text.
+
+```sh
+coding.sh sessions --where 'agent:codex cost>0.5 since:7d'
+coding.sh sessions --where 'tool:Bash ok:false -flag:compaction'   # a failed Bash call, never compacted
+coding.sh sessions --where 'model:claude-* has:tests sort:-cost limit:5'
+coding.sh sessions --facets model,tool --where 'repo:coding-sh'    # counts per value
+```
+
+```text
+$ coding.sh sessions --facets agent,tool --where -flag:compaction
+AGENT	SESSIONS
+claude-code	1
+codex	1
+gemini	1
+
+TOOL	SESSIONS
+Bash	2
+Edit	1
+```
+
+Event keys (`tool`, `kind`, `ok`, `mcp`, `error`, `event.duration`) in one group must match the
+same event. Every key, with an example, is in
+[Query and export](../reference/query.md#filter-with---where). A typo points at the character:
+
+```text
+$ coding.sh sessions --where 'agent:codex modle:x'
+✗ --where: unknown key "modle" at character 13
+  Query           agent:codex modle:x
+                              ^
+    did you mean model:?
+```
+
 Every command takes `--json` and `--help`. `coding.sh` with no command runs `init` until capture
 is set up, then opens the viewer.
 
@@ -149,6 +185,8 @@ session, the page adds new events every 4 seconds.
 `eval_from_session`, `experiments_list`, `experiment_compare`, `exp_session_summary`,
 `exp_session_note`, `harness_compare`, `benchmarks` and `status`. `sessions_list` and `session_get`
 include each session's derails, and `sessions_list` takes `flag: "looping"` (or any other flag).
+`sessions_list`, `search` and `usage` take `where`, the same filter as `--where`, and
+`sessions_list` takes `facets: ["model", "tool"]` for counts per value.
 `exp_session_note` adds a note to the experiment session of the project folder (the hypothesis
 before a run, the reading after it), and `exp_session_summary` returns its timeline with the same
 blocks as `coding.sh exp session summary --json`, which is how an agent picks the thread back up

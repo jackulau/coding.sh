@@ -25,6 +25,8 @@ describe("docs drift", () => {
   it("troubleshooting.md lists every CLI error reason", () => {
     const doc = readFileSync(join(repo, "docs", "troubleshooting.md"), "utf8");
     const reasons = matches(sources(join(pkg, "src", "cli")), /reason: "([a-z_]+)"/g);
+    // --where errors (src/query/where.ts) reach the CLI with their own reasons.
+    for (const r of matches([readFileSync(join(pkg, "src", "query", "where.ts"), "utf8")], /reason(?::| =| \?\?) "([a-z_]+)"/g)) reasons.add(r);
     assert.ok(reasons.size > 20, "found the reasons");
     const missing = [...reasons].filter((r) => !doc.includes(`\`${r}\``));
     assert.deepEqual(missing, [], `add these reasons to docs/troubleshooting.md: ${missing.join(", ")}`);

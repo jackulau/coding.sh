@@ -8,6 +8,7 @@ import { WORKFLOWS_COMMAND } from "../workflows/cli-spec.ts";
 import { BENCH_COMMAND } from "../bench/cli-spec.ts";
 import { durableFlags } from "../jobs/flags.ts";
 import { DEFAULT_MODELS } from "../core/pricing.ts";
+import { FACET_KEYS, keyDocs } from "../query/where.ts";
 
 export interface ArgSpec {
   name: string;
@@ -63,6 +64,13 @@ const FRESH: FlagSpec = { name: "fresh", type: "boolean", desc: "Wait for every 
 /** What a read answered before every capture was indexed says, for --json readers. */
 const PENDING_NOTE = 'With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.';
 const LIMIT = (d: number): FlagSpec => ({ name: "limit", short: "n", type: "number", value: "<N>", desc: "Maximum rows", default: String(d) });
+/** `--where`: the query language in src/query/where.ts. */
+const WHERE = (what: string): FlagSpec => ({ name: "where", type: "string", dashValue: true, value: "<QUERY>", desc: `Only ${what} matching a query, e.g. 'agent:codex cost>0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help)` });
+/** Help notes for the query language, generated from its key table. */
+const WHERE_NOTES: string[] = [
+  "--where: key:value clauses, AND by default; OR between clauses; ( ) to group; - to negate; a,b for either value; * as a wildcard in text; > >= < <= and a..b on numbers. Bare words search prompts, replies and tool calls (every word in one event).",
+  `Session keys: ${keyDocs().filter((k) => k.level === "session").map((k) => k.name).join(", ")}. Event keys (the session has a matching event; event keys in one group match the same event): ${keyDocs().filter((k) => k.level === "event").map((k) => k.name).join(", ")}. Also sort:-cost and limit:N. Full list with examples: docs/reference/query.md.`,
+];
 const GATEWAY_NAME: FlagSpec = { name: "gateway", type: "string", value: "<NAME>", choices: GATEWAY_IDS, desc: "Only this gateway" };
 
 /** The acceptance gate (compare --gate, exp compare --gate). */
@@ -281,10 +289,12 @@ export const COMMANDS: CommandSpec[] = [
       { name: "subagents", type: "boolean", desc: "Include subagent sessions" },
       { name: "project", type: "string", value: "<ID>", desc: "Only sessions in this serve project (default: all)" },
       { name: "flag", type: "string", value: "<NAME>", desc: "Only sessions with this flag: looping, failure-streak, churn, no-progress, stalled, context-thrash, premature-completion, duplicate-fetch, …, or a tag such as skill:<name>" },
+      WHERE("sessions"),
+      { name: "facets", type: "string", optionalValue: true, valuePattern: /^[a-z.]+(,[a-z.]+)*$/, value: "<KEYS>", desc: `Count sessions per value instead of listing them: ${FACET_KEYS.join(", ")} (default: agent, model, repo, flag, skill, tool)` },
       FRESH,
     ],
-    examples: ["coding.sh sessions", "coding.sh sessions --agent codex --since 7d", "coding.sh sessions --flag looping --since 7d", "coding.sh sessions --store postgres://… --project demo"],
-    notes: [PENDING_NOTE],
+    examples: ["coding.sh sessions --where 'agent:codex cost>0.5 since:7d'", "coding.sh sessions --where 'tool:Bash ok:false -flag:compaction'", "coding.sh sessions --facets model,tool --where 'repo:coding-sh'", "coding.sh sessions --agent codex --since 7d"],
+    notes: [...WHERE_NOTES, "--facets counts each key over the query without that key's own clauses, so every value of a picked key still shows. --limit sets the values per key (default 10).", PENDING_NOTE],
     load: () => import("./commands/sessions.ts"),
   },
   {
@@ -306,9 +316,9 @@ export const COMMANDS: CommandSpec[] = [
     group: "Explore",
     summary: "Full-text search over prompts, replies and tool calls",
     args: [{ name: "text", desc: "Search text", required: true, variadic: true }],
-    flags: [AGENT_ONE, LIMIT(20), { name: "project", type: "string", value: "<ID>", desc: "Only matches in this serve project (default: all)" }, FRESH],
-    examples: ["coding.sh search 'flaky test'"],
-    notes: [PENDING_NOTE],
+    flags: [AGENT_ONE, LIMIT(20), { name: "project", type: "string", value: "<ID>", desc: "Only matches in this serve project (default: all)" }, WHERE("matches"), FRESH],
+    examples: ["coding.sh search 'flaky test'", "coding.sh search migration --where 'agent:codex kind:tool.start'"],
+    notes: ["--where applies to each match: event keys (kind, tool, ok, …) to the matching event, session keys (agent, repo, cost, …) to its session. Keys: coding.sh sessions --help.", PENDING_NOTE],
     load: () => import("./commands/search.ts"),
   },
   {
@@ -321,8 +331,9 @@ export const COMMANDS: CommandSpec[] = [
       { ...SINCE, default: "30d" },
       LIMIT(20),
       { name: "reprice", type: "boolean", desc: "Recompute estimated costs from the current price table first" },
+      WHERE("sessions"),
     ],
-    examples: ["coding.sh usage", "coding.sh usage --by agent-model --since 90d", "coding.sh usage --by model --reprice"],
+    examples: ["coding.sh usage", "coding.sh usage --by agent-model --since 90d", "coding.sh usage --by model --where 'repo:coding-sh tool:Bash'"],
     load: () => import("./commands/usage.ts"),
   },
   {
@@ -362,9 +373,10 @@ export const COMMANDS: CommandSpec[] = [
       { name: "subagents", type: "boolean", desc: "Include subagent sessions (and their events and labels)" },
       { name: "project", type: "string", value: "<ID>", desc: "Only sessions in this serve project (default: all)" },
       { name: "limit", short: "n", type: "number", value: "<N>", desc: "Only the N newest matching sessions (default: all)" },
+      WHERE("sessions (and their events and labels)"),
       FRESH,
     ],
-    examples: ["coding.sh export sessions --since 30d --format csv > sessions.csv", "coding.sh export events --agent codex --since 7d > events.jsonl", "coding.sh export labels --format csv"],
+    examples: ["coding.sh export sessions --since 30d --format csv > sessions.csv", "coding.sh export events --where 'agent:codex tool.errors>0' > events.jsonl", "coding.sh export labels --format csv"],
     notes: [
       "JSONL rows are the stored objects, one per line. CSV has fixed columns (docs/reference/query.md); event payloads are a JSON column.",
       "Text cells that start with = + - or @ get a leading ' in CSV so a spreadsheet does not run them as formulas.",

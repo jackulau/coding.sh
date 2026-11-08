@@ -23,6 +23,8 @@ export interface FlagSpec {
   optionalValue?: boolean;
   /** With optionalValue: a following token matching this is taken as the value too (`--resume exp_01H…`). */
   valuePattern?: RegExp;
+  /** A following token that starts with a single `-` is its value, not a flag (`--where -flag:compaction`). */
+  dashValue?: boolean;
   /** Accepted but left out of help, `--help --json` and the CLI reference (internal plumbing). */
   hidden?: boolean;
 }
@@ -177,7 +179,8 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
         assign(spec, take ? next : undefined, token);
       } else if (spec.type !== "boolean" && inline === undefined) {
         const next = argv[i + 1];
-        if (next === undefined || (next.startsWith("-") && next !== "-" && !/^-\d/.test(next))) throw new UsageError(`${token} needs a value${spec.value ? ` ${spec.value}` : ""}`, { reason: "missing_value" });
+        const dashed = next !== undefined && next.startsWith("-") && next !== "-" && !/^-\d/.test(next) && !(spec.dashValue && !next.startsWith("--"));
+        if (next === undefined || dashed) throw new UsageError(`${token} needs a value${spec.value ? ` ${spec.value}` : ""}`, { reason: "missing_value" });
         i++;
         assign(spec, next, token);
       } else {

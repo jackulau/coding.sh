@@ -1,26 +1,46 @@
-// coding.sh sessions [--agent --repo --since --flag --limit]
+// coding.sh sessions [--agent --repo --since --flag --limit] [--where <query>] [--facets [keys]]
 import { resolve } from "node:path";
-import { parseSince, positiveInt } from "../args.ts";
-import { autoIngest, pendingField, readIngest, num, oneLine, sessionJson, str, withContext } from "../common.ts";
+import type { IndexStore, SessionFilter } from "../../core/types.ts";
+import { facetCounts, findSessions } from "../../query/run.ts";
+import { FACET_KEYS, type Query } from "../../query/where.ts";
+import type { Session } from "../../schema/index.ts";
+import { parseSince, positiveInt, UsageError } from "../args.ts";
+import { autoIngest, pendingField, queryCliError, readIngest, num, oneLine, sessionJson, str, whereFlag, withContext, type IngestBacklog } from "../common.ts";
 import { ago, clean, duration } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+
+/** `--facets` alone counts these (tool only where the store indexes events). */
+const DEFAULT_FACETS = ["agent", "model", "repo", "flag", "skill", "tool"];
+
+/** `--facets agent,model`: the keys, checked against the facet keys. */
+function facetKeys(v: unknown, eventIndex: boolean): string[] | undefined {
+  if (v === undefined || v === false) return undefined;
+  if (v === true) return DEFAULT_FACETS.filter((k) => eventIndex || k !== "tool");
+  const keys = String(v).split(",").map((k) => k.trim()).filter(Boolean);
+  const bad = keys.filter((k) => !FACET_KEYS.includes(k));
+  if (bad.length || !keys.length) throw new UsageError(`--facets: can't count ${bad.join(", ") || "nothing"}; use ${FACET_KEYS.join(", ")}`, { reason: "bad_flag" });
+  return keys;
+}
 
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
   const limit = positiveInt(c.flags.limit, "limit") ?? num(c.flags.limit) ?? 20;
   const since = str(c.flags.since) !== undefined ? parseSince(str(c.flags.since)!) : undefined;
   const repo = str(c.flags.repo);
+  const where = whereFlag(c);
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
-    const sessions = await ctx.index.listSessions({
+    const filter: SessionFilter = {
       ...(str(c.flags.agent) ? { agent: str(c.flags.agent)! } : {}),
       ...(repo ? { repoRoot: resolve(c.cwd, repo) } : {}),
       ...(since !== undefined ? { since } : {}),
       ...(c.flags.subagents === true ? {} : { parentSessionId: null }),
       ...(str(c.flags.project) ? { project: str(c.flags.project)! } : {}),
       ...(str(c.flags.flag) ? { flag: str(c.flags.flag)! } : {}),
-      limit,
-    });
+    };
+    const facets = facetKeys(c.flags.facets, ctx.index.queryFacets !== undefined || ctx.index.kind === "memory");
+    if (facets) return printFacets(c, await counts(ctx.index, where ?? {}, facets, filter, positiveInt(c.flags.limit, "limit") ?? 10), backlog);
+    const sessions = where ? await query(ctx.index, where, filter, positiveInt(c.flags.limit, "limit") ?? where.limit ?? 20) : await ctx.index.listSessions({ ...filter, limit });
     if (out.json) {
       out.data({ sessions: sessions.map(sessionJson), ...pendingField(backlog) });
       return 0;
@@ -44,4 +64,37 @@ export async function run(c: CommandContext): Promise<number> {
     );
     return 0;
   });
+}
+
+async function query(index: IndexStore, q: Query, filter: SessionFilter, limit: number): Promise<Session[]> {
+  try {
+    const r = await findSessions(index, q, { filter, limit });
+    if (r.truncated) process.stderr.write("Scanned the newest sessions only; narrow with --since\n");
+    return r.sessions;
+  } catch (e) {
+    throw queryCliError(e);
+  }
+}
+
+async function counts(index: IndexStore, q: Query, keys: string[], filter: SessionFilter, limit: number): Promise<Record<string, { value: string; count: number }[]>> {
+  try {
+    return await facetCounts(index, q, keys, { filter, limit });
+  } catch (e) {
+    throw queryCliError(e);
+  }
+}
+
+function printFacets(c: CommandContext, facets: Record<string, { value: string; count: number }[]>, backlog: IngestBacklog): number {
+  const { out } = c;
+  if (out.json) {
+    out.data({ facets, ...pendingField(backlog) });
+    return 0;
+  }
+  let first = true;
+  for (const [key, rows] of Object.entries(facets)) {
+    if (!first) process.stdout.write("\n");
+    first = false;
+    out.table([key.toUpperCase(), "SESSIONS"], rows.length ? rows.map((r) => [clean(r.value), String(r.count)]) : [["(none)", "0"]]);
+  }
+  return 0;
 }

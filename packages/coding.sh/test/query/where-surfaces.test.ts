@@ -1,0 +1,138 @@
+// One --where string returns the same session ids from the CLI, the MCP tools and the
+// viewer API, on a SQLite store under a throwaway CODING_SH_HOME. Bad queries are
+// usage errors with a reason, an offset and a hint on every surface.
+import assert from "node:assert/strict";
+import { join } from "node:path";
+import { after, before, describe, test } from "node:test";
+import { openContext } from "../../src/core/context.ts";
+import { buildTools, type ToolCtx } from "../../src/mcp/tools.ts";
+import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { FsBlobStore } from "../../src/store/fs-blobs.ts";
+import { startViewer, type Viewer } from "../../src/viewer/server.ts";
+import { tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
+import { cli, ok, seed, T0 } from "./_seed.ts";
+import { fixture } from "./_where-fixture.ts";
+
+const QUERIES = [
+  "agent:codex",
+  "tool:Bash ok:false",
+  "-tool:Bash",
+  "cost>0.01 -flag:compaction",
+  "(agent:gemini OR model:claude-*) has:cost",
+  "repo:demo is:root",
+  "migration",
+  "skill:pdf OR skill:docx",
+  "duration>10m",
+  "agent:codex,claude-code sort:-cost",
+];
+// Every session in the fixture started before NOW; the MCP tools need a window that covers them.
+const NOW = T0 + 86_400_000;
+
+describe("--where on CLI, MCP and HTTP", () => {
+  let env: TmpEnv;
+  let viewer: Viewer;
+  let index: SqliteIndexStore;
+  const tools = buildTools();
+  const tool = (name: string) => tools.find((t) => t.name === name)!;
+  let ctx: ToolCtx;
+
+  before(async () => {
+    env = tmpEnv();
+    const { sessions, events } = fixture();
+    await seed(env.dataHome, { sessions, events });
+    index = await SqliteIndexStore.open(join(env.dataHome, "index.db"));
+    viewer = await startViewer({ index, blobs: new FsBlobStore(join(env.dataHome, "blobs")), port: 0 });
+    const opened = await openContext({ env: process.env });
+    ctx = { env: process.env, cwd: env.root, now: () => NOW, store: async () => opened };
+  });
+  after(async () => {
+    await viewer.close();
+    await index.close();
+    env.restore();
+  });
+
+  const http = async (path: string) => {
+    const r = await fetch(`http://127.0.0.1:${viewer.port}${path}`, { headers: { authorization: `Bearer ${viewer.token}` } });
+    return { status: r.status, json: (await r.json()) as Record<string, unknown> };
+  };
+
+  for (const q of QUERIES) {
+    test(q, async () => {
+      const viaCli = (JSON.parse(ok(["sessions", "--subagents", "--limit", "100", "--where", q, "--json"]).stdout) as { sessions: { id: string }[] }).sessions.map((s) => s.id);
+      const viaHttp = ((await http(`/api/sessions?limit=100&where=${encodeURIComponent(q)}`)).json.items as { id: string }[]).map((s) => s.id);
+      const mcp = (await tool("sessions_list").run({ where: q, includeSubagents: true, limit: 100 }, ctx)) as { sessions: { id: string }[] };
+      const viaMcp = mcp.sessions.map((s) => s.id);
+      // MCP lists newest first whatever the sort; compare as sets there, in order elsewhere.
+      assert.deepEqual(viaHttp, viaCli, `HTTP vs CLI for ${q}`);
+      assert.deepEqual([...viaMcp].sort(), [...viaCli].sort(), `MCP vs CLI for ${q}`);
+    });
+  }
+
+  test("facets agree on CLI, MCP and HTTP", async () => {
+    const q = "agent:codex";
+    const viaCli = JSON.parse(ok(["sessions", "--subagents", "--facets", "agent,tool", "--where", q, "--json"]).stdout).facets;
+    const viaHttp = (await http(`/api/facets?keys=agent,tool&limit=10&where=${encodeURIComponent(q)}`)).json.facets;
+    const viaMcp = ((await tool("sessions_list").run({ where: q, includeSubagents: true, facets: ["agent", "tool"] }, ctx)) as { facets: unknown }).facets;
+    assert.deepEqual(viaHttp, viaCli);
+    assert.deepEqual(viaMcp, viaCli);
+    assert.deepEqual(viaCli.agent[0], { value: "claude-code", count: 2 });
+    // The example in docs/reference/api.md.
+    const doc = await http(`/api/facets?keys=agent,tool&where=-flag:compaction`);
+    assert.deepEqual(doc.json, {
+      facets: {
+        agent: [{ value: "codex", count: 2 }, { value: "claude-code", count: 1 }, { value: "gemini", count: 1 }],
+        tool: [{ value: "Bash", count: 3 }, { value: "Edit", count: 1 }, { value: "Grep", count: 1 }],
+      },
+    });
+    assert.equal((await http(`/api/facets?keys=nope`)).status, 400);
+    assert.equal((await http(`/api/sessions?where=agent:codex&cursor=1:s1`)).status, 400);
+  });
+
+  test("search, usage and export take the same query", async () => {
+    const hits = JSON.parse(ok(["search", "migration", "--where", "agent:codex", "--json"]).stdout).hits as { eventId: string }[];
+    assert.deepEqual(hits.map((h) => h.eventId), ["s1-e1"]);
+    const mcpHits = (await tool("search").run({ query: "migration", where: "agent:codex" }, ctx)) as { hits: { eventId: string }[] };
+    assert.deepEqual(mcpHits.hits.map((h) => h.eventId), ["s1-e1"]);
+    const httpHits = (await http(`/api/search?q=migration&where=${encodeURIComponent("agent:codex")}`)).json.items as { event: { id: string } }[];
+    assert.deepEqual(httpHits.map((h) => h.event.id), ["s1-e1"]);
+
+    const usage = JSON.parse(ok(["usage", "--since", "2026-10-01", "--where", "agent:codex", "--json"]).stdout) as { total: { sessions: number } };
+    assert.equal(usage.total.sessions, 2);
+    const mcpUsage = (await tool("usage").run({ since: "2026-10-01", groupBy: "agent", where: "agent:codex" }, ctx)) as { groups: { key: string }[] };
+    assert.deepEqual(mcpUsage.groups.map((g) => g.key), ["codex"]);
+
+    const lines = ok(["export", "sessions", "--subagents", "--where", "tool:Bash ok:false"]).stdout.trim().split("\n").map((l) => (JSON.parse(l) as { id: string }).id);
+    assert.deepEqual(lines, ["s4", "s1"]);
+    const sorted = ok(["export", "sessions", "--subagents", "--where", "sort:-cost limit:2"]).stdout.trim().split("\n").map((l) => (JSON.parse(l) as { id: string }).id);
+    assert.deepEqual(sorted, ["s1", "s2"]);
+  });
+
+  test("a bad query is a usage error with reason, offset and a hint", async () => {
+    const r = cli(["sessions", "--where", "agent:codex modle:x", "--json"]);
+    assert.equal(r.status, 2);
+    const err = JSON.parse(r.stderr.trim().split("\n").pop()!);
+    assert.equal(err.reason, "unknown_key");
+    assert.deepEqual(err.data, { offset: 12 });
+    assert.match(err.next[0], /model:/);
+    const text = cli(["sessions", "--where", "cost>abc"]);
+    assert.equal(text.status, 2);
+    assert.match(text.stderr, /cost: must be a USD amount/);
+    assert.match(text.stderr, /\n\s+\^/);
+
+    const h = await http(`/api/sessions?where=${encodeURIComponent("agent:codex modle:x")}`);
+    assert.equal(h.status, 400);
+    assert.equal(h.json.reason, "unknown_key");
+    assert.deepEqual(h.json, { error: 'where: unknown key "modle"', status: 400, reason: "unknown_key", offset: 12, next: ["did you mean model:?"] });
+
+    await assert.rejects(tool("sessions_list").run({ where: "agent:codex modle:x" }, ctx), /Invalid where at character 13: unknown key "modle"/);
+    assert.equal(cli(["sessions", "--facets", "nope"]).status, 2);
+  });
+
+  test("old flags still work and combine with --where", () => {
+    const ids = (JSON.parse(ok(["sessions", "--agent", "codex", "--where", "is:child", "--json"]).stdout) as { sessions: { id: string }[] }).sessions;
+    // --agent codex, top-level by default, and is:child: nothing.
+    assert.deepEqual(ids, []);
+    const sub = (JSON.parse(ok(["sessions", "--subagents", "--agent", "codex", "--where", "is:child", "--json"]).stdout) as { sessions: { id: string }[] }).sessions;
+    assert.deepEqual(sub.map((s) => s.id), ["s4"]);
+  });
+});
