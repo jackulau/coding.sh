@@ -82,14 +82,19 @@ coding.sh init [options]
 | `-y, --yes` |  | Answer yes to confirmation prompts. |
 | `--dry-run` |  | Print the plan (agents, files, blockers) without writing anything. |
 | `--diff` |  | With --dry-run, also print the full diff of every planned edit. |
+| `--remote <URL>` |  | Also send new sessions to a team's coding.sh serve at this URL (an http sink named team) |
+| `--key <KEY>` |  | With --remote, the server's ingest key, csh_ik_… (also CODING_SH_INGEST_KEY) |
+| `--remote-mode <MODE>` | `metadata` | With --remote: metadata sends no prompts, code or tool output; full sends them. |
 
 ```sh
 coding.sh init
 coding.sh init --agent claude-code --yes
 coding.sh init --dry-run
+coding.sh init --remote https://obs.example.com --key csh_ik_…
 ```
 
 - Copies the hook to ~/.coding.sh/bin/hook.mjs and points each agent at it.
+- --remote checks that the server takes the key before writing anything, then adds the sink to ~/.coding.sh/config.toml (mode 600). Run it again to change the URL, key or mode.
 - Registers the MCP server with Claude Code, Codex, Cursor, OpenCode and Gemini CLI (user scope only).
 - Every edited file is backed up to ~/.coding.sh/backups first; uninstall reverts it.
 

@@ -4,9 +4,10 @@
 // edited file is backed up first; `coding.sh uninstall` reverts the edits.
 // --dry-run prints the short plan (agent, scope, files, blockers) and writes
 // nothing; --diff adds every edit as a diff. --no-mcp skips
-// the MCP registration. Ends with at most three lines: what was set up, how to
-// open the viewer, and the docs URL.
-import { existsSync } from "node:fs";
+// the MCP registration. --remote <url> --key <ingest key> also adds an http sink
+// that sends new sessions to a team's `coding.sh serve` (see ../remote.ts).
+// Ends with a few lines: what was set up, how to open the viewer, and the docs URL.
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { detectAll, ADAPTERS } from "../../adapters/index.ts";
 import { defaultConfigToml } from "../../core/config.ts";
@@ -17,6 +18,7 @@ import { suggest, UsageError } from "../args.ts";
 import { changeJson, printChanges, shortPath } from "../changes.ts";
 import { list, requireConsent, str } from "../common.ts";
 import { planHookBin, writeHookBin } from "../hookbin.ts";
+import { parseRemote, probeRemote, REMOTE_SINK, validateConfigText, withRemoteSink } from "../remote.ts";
 import { CliError, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -173,6 +175,20 @@ export async function run(c: CommandContext): Promise<number> {
   const force = c.flags.force === true;
   const p = paths(env);
   const hookCommand = p.hook;
+  // --remote: check the server takes the key before planning anything, so a typo writes nothing.
+  const remoteUrl = str(c.flags.remote);
+  if (remoteUrl === undefined && (c.flags.key !== undefined || c.flags["remote-mode"] !== undefined)) {
+    throw new UsageError("--key and --remote-mode go with --remote <url>", { reason: "missing_value" });
+  }
+  const remote = remoteUrl === undefined ? undefined : parseRemote(remoteUrl, str(c.flags.key) ?? env.CODING_SH_INGEST_KEY, str(c.flags["remote-mode"]));
+  if (remote) {
+    const check = out.spin(`Checking ${remote.url}…`);
+    try {
+      await probeRemote(remote);
+    } finally {
+      check.stop();
+    }
+  }
   // From a bundle: node ~/.coding.sh/bin/mcp.mjs (written below with the hook), a path that survives node and package moves.
   const server: McpServerSpec = mcpLaunchSpec(runningCli(), env);
 
@@ -206,7 +222,8 @@ export async function run(c: CommandContext): Promise<number> {
     plans.push(pl);
   }
 
-  if (plans.length === 0) {
+  // With --remote and no agents here, the sink is still worth writing (apps, `coding.sh run`, agents installed later).
+  if (plans.length === 0 && !remote) {
     throw new CliError(named.length ? "None of the named agents can be installed" : "No supported agents found on this machine", {
       reason: "no_agents",
       next: ["Wrap any agent: coding.sh run -- <agent command>", "Trace an agent you built: https://coding.sh/docs/how-to/trace-your-agent"],
@@ -214,7 +231,16 @@ export async function run(c: CommandContext): Promise<number> {
   }
 
   const hookChange = planHookBin(env);
-  const configChange: FileChange | undefined = existsSync(p.config) ? undefined : { path: p.config, action: "create", summary: "write the default coding.sh config", after: defaultConfigToml(env) };
+  const configBefore = existsSync(p.config) ? readFileSync(p.config, "utf8") : undefined;
+  let configChange: FileChange | undefined = configBefore === undefined ? { path: p.config, action: "create", summary: "write the default coding.sh config", after: defaultConfigToml(env) } : undefined;
+  if (remote) {
+    const after = withRemoteSink(configBefore ?? defaultConfigToml(env), remote);
+    validateConfigText(after, env);
+    if (after !== configBefore) {
+      const summary = `send sessions to ${remote.url} (${remote.mode})`;
+      configChange = configBefore === undefined ? { path: p.config, action: "create", summary: `write the default coding.sh config and ${summary}`, after } : { path: p.config, action: "modify", summary, before: configBefore, after };
+    }
+  }
   const own = [hookChange, configChange].filter((x): x is FileChange => x !== undefined);
   const agentChanges = (pl: AgentPlan) => [...pl.hooks.changes, ...(pl.mcp?.changes ?? [])];
   const pending = plans.filter((pl) => agentChanges(pl).length);
@@ -229,6 +255,7 @@ export async function run(c: CommandContext): Promise<number> {
         hook: hookCommand,
         mcpServer: withMcp ? server : null,
         changes: own.map(changeJson),
+        remote: remote ? { url: remote.url, mode: remote.mode, sink: REMOTE_SINK } : null,
         agents: plans.map((pl) => ({ id: pl.adapter.id, installed: pl.installed, hooked: pl.hooked, error: pl.hooks.error ?? null, changes: pl.hooks.changes.map(changeJson), mcp: partJson(pl.mcp, true), warnings: pl.detectBlockers, blockers: planBlockers(pl, env, c.cwd).map((b) => b.text), otherScope: pl.otherScope ?? null, skipped: pl.skipped === true })),
       });
     } else {
@@ -257,8 +284,9 @@ export async function run(c: CommandContext): Promise<number> {
   // ---- apply: own files first, so hooks never point at a missing bin.
   if (hookChange) await writeHookBin(env);
   if (configChange) {
-    const { writeDefaultConfig } = await import("../../core/config.ts");
-    writeDefaultConfig(env);
+    // Mode 600: with --remote the file holds an ingest key.
+    const { atomicWrite } = await import("../../adapters/_shared/files.ts");
+    await atomicWrite(p.config, configChange.after!, 0o600);
   }
   const applied: { pl: AgentPlan; hooks: Part; mcp?: Part }[] = [];
   for (const pl of plans) {
@@ -280,6 +308,7 @@ export async function run(c: CommandContext): Promise<number> {
       hook: hookCommand,
       mcpServer: withMcp ? server : null,
       changes: own.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })),
+      remote: remote ? { url: remote.url, mode: remote.mode, sink: REMOTE_SINK } : null,
       agents: applied.map((x) => ({ id: x.pl.adapter.id, error: x.hooks.error ?? null, changes: x.hooks.changes.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })), mcp: partJson(x.mcp, false), warnings: x.pl.detectBlockers, blockers: planBlockers(x.pl, env, c.cwd).map((b) => b.text), otherScope: x.pl.otherScope ?? null, skipped: x.pl.skipped === true })),
     });
     return errors ? 1 : 0;
@@ -292,6 +321,11 @@ export async function run(c: CommandContext): Promise<number> {
   // Store-read agents (T3 Code) and wrapper-only agents (tier C: Aider) get no hooks: listed by their plan row, not here.
   const summary = setupSummary(ready.filter((x) => (!x.pl.adapter.tail && x.pl.adapter.tier !== "C") || x.mcp).map((x) => ({ name: x.pl.adapter.displayName, mcp: x.mcp !== undefined && !x.mcp.error })));
   if (summary) out.ok(`${outcome === "unchanged" ? "Already set up:" : "Set up"} ${summary}`);
+  if (remote) {
+    if (!plans.length) out.warn("No supported agents found on this machine; apps and `coding.sh run -- <cmd>` still send");
+    out.ok(`Sending new sessions to ${remote.url} (${remote.mode === "full" ? "full content" : "metadata only"}). Sessions from before stay on this machine`);
+    out.note(`Team viewer: ${out.style(remote.url, "cyan", "err")}`);
+  }
   out.note(`Open the viewer: ${out.style("coding.sh", "cyan", "err")}`);
   out.note(`Docs: ${DOCS_URL}`);
   return errors ? 1 : 0;

@@ -150,7 +150,11 @@ The command line was wrong. Nothing ran.
 | `invalid_argument` | (bench) a bad `--date`, `--seed` or contender | Fix the value the message names. |
 | `invalid_usage` | Any other usage error. | Read the message. |
 | `confirmation_required` | `Set up coding.sh for 1 agent (2 config files, backed up first) needs confirmation. Pass --yes to confirm` | Not a terminal, so it can't ask. Re-run with `--yes`, or `--dry-run` first to see the changes. |
-| `insecure_bind` | `refusing to listen on 0.0.0.0 without auth: …` | Set `CODING_SH_INGEST_KEYS` and `CODING_SH_READ_KEYS` (make keys with `coding.sh serve keygen`), or pass `--insecure` on a trusted network. |
+| `insecure_bind` | `refusing to listen on 0.0.0.0 without auth: …` | Only some credentials are set. Set both `CODING_SH_INGEST_KEYS` and `CODING_SH_READ_KEYS` (make keys with `coding.sh serve keygen`), unset both to use the first-start keys, or pass `--insecure` on a trusted network. |
+| `remote_unauthorized` | `https://obs.example.com refused the key. Nothing was changed` | `init --remote` needs an ingest key the server knows. A server with no configured keys prints its own on every start: `docker logs coding-sh`. |
+| `remote_unreachable` | `Can't reach https://obs.example.com: …. Nothing was changed` | Check the URL and that the server is up: `curl -s <url>/healthz`. |
+| `remote_not_serve` | `https://obs.example.com/v1/ingest answered 404: that is not a coding.sh serve that takes ingest` | The URL points somewhere else, or at a `serve --role viewer` replica. Use the server's base URL (the one that answers `/readyz`), with the ingest role. |
+| `remote_error` | `https://obs.example.com/v1/ingest answered 503. Nothing was changed` | The server is up but not ready, often while it waits for its database. Check `curl -s <url>/readyz` and try again. |
 | `unknown_agent` | `Unknown agent "claude"` | Use an agent id from [Coding agents](https://coding.sh/docs/agents). |
 | `unknown_key` | `Can't set "capture.mod". Settable keys: …` | Use a key from [Configuration](reference/config.md). |
 | `invalid_case` | (dataset add) a case that is not `{"input":…}` JSON | Fix the `--case` JSON. |
