@@ -119,6 +119,25 @@ have a price. Use `--k 3`: with one attempt per task the support comes from resa
 The method is ParetoSaddler (Qian et al., [arXiv 2611.02079](https://arxiv.org/abs/2611.02079)).
 With `--gate` and `--promote` together, exit 0 needs both to pass.
 
+## Same agent, same release
+
+Agents update often, and a release can change the agent's own instructions and tools. Each run
+records the agent release it started on (the adapter's detected version, checked at most once a
+minute; a captured session's own version wins). When the two arms ran on different releases, for
+example a baseline reused from last week, the report adds an `agent` row and a note:
+
+```text
+agent claude-code 2.1.316 ×12          2.1.319 ×12          release differs
+note: baseline ran on claude-code 2.1.316 (12 runs), candidate on claude-code 2.1.319 (12 runs); the agent release differs between arms, so the delta mixes your change with the release. Rerun both arms together on one release, with the agent's auto-update off
+```
+
+`--gate` prints the same warning under its answer, and `--promote` holds whatever the support
+(`pareto.refused` is `release_confound` in `--json`, and it exits 1). When the release changed
+mid-comparison in both arms alike, a softer note names the releases and the tasks that ran on more
+than one. `--json` carries `report.agentVersions`: runs per release per arm, runs with no known
+release, those split tasks and `confound` (`arms-differ` or `mixed`). There is no note when under
+half of an arm's runs have a known release, or when the arms run different agents.
+
 ## Does a skill help?
 
 To test one part of a setup, compare a bundle with itself minus that part:

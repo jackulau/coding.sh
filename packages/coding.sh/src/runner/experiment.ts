@@ -23,6 +23,7 @@ import type { RepairOpts } from "./repair.ts";
 import { armRepair, armSeq, passAfterRepair, seqRanking, type ArmRepair, type ArmSeq, type SeqRanking } from "./repair-report.ts";
 import { runTask, type AgentRoute } from "./run.ts";
 import { cellKey, DEFAULT_REUSE_MAX_AGE_MS, newestByCell, type ReuseOpts } from "./cells.ts";
+import { agentVersions, releaseCache, releaseList, releaseNote, type AgentVersions } from "./release.ts";
 
 // ------------------------------------------------------------ running
 
@@ -269,6 +270,9 @@ export async function runExperiment(
   for (const r of prior) if (r) charge(r);
   // Jobs the cap kept from starting: not runs, and not a cancellation either.
   const capped = new Set<number>();
+  // The release each run starts on, asked again at most once a minute so an auto-update mid-run shows.
+  const release = releaseCache();
+  const releaseOf = (b: HarnessBundle) => release(b.agent, () => o.adapterFor(b).detect());
   const settled = await pool(jobs, o.concurrency ?? defaultConcurrency(), async (job, i): Promise<RunResult | undefined> => {
     if (prior[i]) return prior[i];
     if (o.signal?.aborted || o.drain?.aborted) return undefined; // never started: not a run
@@ -294,7 +298,7 @@ export async function runExperiment(
       async () => {
         // A retried attempt stays in the index for the record, marked so comparisons leave it out.
         if (last) await o.index.putRun({ ...last, superseded: true }).catch(() => {});
-        last = await attemptRun(o, job, experimentId, cells.keys[i]);
+        last = await attemptRun(o, job, experimentId, cells.keys[i], await releaseOf(job.bundle));
         return last;
       },
       { policy: o.retry ?? { retries: 0, baseMs: 0, maxMs: 0 }, errorOf: (r) => r.error, classify: runInfra, stop: [o.signal, o.drain] },
@@ -342,10 +346,11 @@ export async function runExperiment(
 }
 
 /** One attempt of one job, stored in the index (runTask never throws for what the agent does). */
-async function attemptRun(o: RunExperimentOpts, job: Job, experimentId: string, key?: string): Promise<RunResult> {
+async function attemptRun(o: RunExperimentOpts, job: Job, experimentId: string, key?: string, agentVersion?: string): Promise<RunResult> {
   try {
     return await runTask({
       ...(key ? { cellKey: key } : {}),
+      ...(agentVersion ? { agentVersion } : {}),
       task: job.task,
       bundle: job.bundle,
       adapter: o.adapterFor(job.bundle),
@@ -572,6 +577,12 @@ export interface CompareReport {
   repairVerdict?: true;
   /** Both arms with the same repair settings: how they rank on first pass and within K attempts. */
   seqRanking?: SeqRanking;
+  /**
+   * The agent release each arm's runs ran on (runner/release.ts), present when
+   * at least one counted run has a known release. `confound` says when the arms
+   * ran on different releases or the release changed mid-comparison.
+   */
+  agentVersions?: AgentVersions;
 }
 
 /** A candidate whose instruction surface grows by more than this gets the bloat note. */
@@ -590,6 +601,8 @@ export interface ComparePareto extends ParetoSupport {
   unit: "usd" | "tokens";
   /** Which branch carried the promotion; "none" when held. */
   reason: "quality-gain" | "cost-cut" | "both" | "none";
+  /** Set when the gate holds whatever the support: the arms ran on different agent releases. */
+  refused?: "release_confound";
 }
 
 /**
@@ -1024,11 +1037,15 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     const grew = surface.baseline.bytes ? `+${Math.round(surface.relative * 100)}%` : `0 → ${surface.candidate.bytes} bytes`;
     notes.push(`instruction surface ${grew}: require a success CI above 0, not just non-inferiority (instructions cost tokens on every turn)`);
   }
+  const releases = agentVersions(A, B, opts.sessions, { baseline: opts.bundles?.baseline?.agent, candidate: opts.bundles?.candidate?.agent });
+  const releaseText = releaseNote(releases);
+  if (releaseText) notes.push(releaseText);
   let pareto: ComparePareto | undefined;
   if (opts.pareto) {
     const p = paretoGate(ta, tb, pairedIds, metrics, opts.sessions, { ...opts.pareto, seed: opts.seed });
     if (typeof p === "string") notes.push(p);
-    else pareto = p;
+    // A promotion across agent releases would credit B with what the release did.
+    else pareto = releases?.confound === "arms-differ" ? { ...p, promote: false, reason: "none", refused: "release_confound" } : p;
   }
   return {
     baseline: sa,
@@ -1055,6 +1072,7 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     ...(atts?.size ? { tamperAttribution: Object.fromEntries(atts) } : {}),
     ...(surface ? { surface } : {}),
     ...(reused.baseline || reused.candidate ? { reused } : {}),
+    ...(releases ? { agentVersions: releases } : {}),
   };
 }
 
@@ -1419,6 +1437,12 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   const dtext = `${pp(r.diff.mean)} [${pp(r.diff.lo).replace(" pp", "")}, ${pp(r.diff.hi)}]`;
   out.push(row(["pass rate", rate(r.baseline), rate(r.candidate), signed(r.diff.mean, false, dtext)]));
   out.push(row(["passes", `${r.baseline.passes}/${r.baseline.runs}`, `${r.candidate.passes}/${r.candidate.runs}`, `McNemar ${pval(r.mcnemar.p)}`]));
+  const rv = r.agentVersions;
+  if (rv?.confound) {
+    const cell = (m: Record<string, number>, unknown: number) => `${releaseList(m, true) || "—"}${unknown ? dim(` ?×${unknown}`) : ""}`;
+    const what = rv.confound === "arms-differ" ? bad("release differs") : dim("release changed mid-run");
+    out.push(row([rv.agent ? `agent ${rv.agent}` : "agent", cell(rv.baseline, rv.unknown.baseline), cell(rv.candidate, rv.unknown.candidate), what]));
+  }
   if (r.baseline.tamperChecked || r.candidate.tamperChecked) {
     const tr = (a: ArmSummary) => (a.tamperChecked ? `${pct(a.tamperRate)} (${a.tampered}/${a.tamperChecked})` : "—");
     const td = r.candidate.tamperRate - r.baseline.tamperRate;
@@ -1527,6 +1551,7 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
     out.push(`${label} ${g.verdict === "ship" ? good(head) : g.verdict === "dont-ship" ? bad(head) : bold(head)}`);
     out.push(dim(`${indent}${gateDetail(g)}`));
     if (g.lost.length) out.push(`${indent}lost: ${idList(g.lost)}`);
+    if (r.agentVersions?.confound === "arms-differ") out.push(paint("33", `${indent}the arms ran on different agent releases (see the agent row): this answer mixes the change with the release`));
     if (g.strata) {
       const w = Math.max(...g.strata.map((s) => s.group.length));
       for (const s of g.strata) {
@@ -1540,7 +1565,9 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
     const what = x.unit === "usd" ? "cost" : "tokens";
     const cv = (v: number) =>
       !Number.isFinite(v) ? "—" : x.dC.scale === "relative" ? `${v > 0 ? "+" : ""}${(v * 100).toFixed(0)}%` : `${v > 0 ? "+" : ""}${fmtValue(v, x.unit === "usd" ? "usd" : "count")}`;
-    const head = `support ${x.support.toFixed(2)} ${x.promote ? "≥" : "<"} ${x.gamma.toFixed(2)} → ${x.promote ? "promote" : "hold"}`;
+    const head = x.refused
+      ? `support ${x.support.toFixed(2)} → hold (release confound: the arms ran on different agent releases)`
+      : `support ${x.support.toFixed(2)} ${x.promote ? "≥" : "<"} ${x.gamma.toFixed(2)} → ${x.promote ? "promote" : "hold"}`;
     const detail = `(${x.reason === "none" ? "" : `${x.reason}: `}${what} ${cv(x.dC.mean)} [${cv(x.dC.lo)}, ${cv(x.dC.hi)}], quality ${pp(x.dQ.mean)} [${pp(x.dQ.lo).replace(" pp", "")}, ${pp(x.dQ.hi)}])`;
     out.push(`pareto: ${x.promote ? good(head) : bold(head)} ${detail}`);
     for (const n of x.notes) out.push(dim(`        ${n}`));

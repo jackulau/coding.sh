@@ -280,6 +280,10 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.deepEqual((await s.listRuns({ bundleId: "b1" })).map((r) => r.id), ["r1"]);
       assert.deepEqual((await s.listRuns({ experimentId: "x1" })).map((r) => r.id), ["r1"]);
       assert.equal((await s.listRuns({ taskId: "t2" }))[0]?.pass, false);
+      // The agent release a run started on (AD-13) round-trips; older runs have none.
+      assert.equal((await s.listRuns({ experimentId: "x1" }))[0]?.agentVersion, undefined);
+      await s.putRun(fixtureRun({ id: "r1", taskId: "t1", bundleId: "b1", experimentId: "x1", startedAt: 1, agentVersion: "2.1.319" }));
+      assert.equal((await s.listRuns({ experimentId: "x1" }))[0]?.agentVersion, "2.1.319");
 
       const label: Label = { id: "l1", sessionId: "s1", criterion: "outcome", value: "pass", note: "ok", by: "me", ts: 1 };
       await s.putLabel(label);

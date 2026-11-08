@@ -342,6 +342,7 @@ export async function run(c: CommandContext): Promise<number> {
       out.print(experimentId);
     }
     if (promote && !report.pareto) out.warn(`--promote: ${PARETO_NEEDS_COST}, so nothing is promoted`);
+    if (report.pareto?.refused === "release_confound") out.warn("--promote refused (release_confound): baseline and candidate ran on different agent releases, so nothing is promoted");
     // Each requested gate must pass for exit 0: --gate accepts (ship B, or with
     // --without drop the component), --promote promotes, --item-gate keeps or accepts.
     const itemOk = report.itemGate?.verdict === "KEEP" || report.itemGate?.verdict === "ACCEPT";

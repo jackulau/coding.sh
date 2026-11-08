@@ -773,6 +773,12 @@ export interface RunResult {
    * tried again, up to N rounds. `pass` above stays the first attempt's.
    */
   repair?: RepairReport;
+  /**
+   * The agent release the run started on (`detect().version`, rechecked at most
+   * once a minute). Absent when the adapter can't tell and on older runs. A
+   * captured session's own agentVersion takes precedence (runner/release.ts).
+   */
+  agentVersion?: string;
 }
 
 /** One repair round: the agent's next try after "Verification failed.", and its verifier result. */

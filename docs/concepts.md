@@ -120,6 +120,10 @@ share of tasks solved by the k-th attempt (the first, then each round), with whe
 rounds that changed nothing, cost to solve, and a cost front against k independent attempts
 (pass@k). See [Repair rounds](guides/evals.md#repair-rounds).
 
+**Agent release.** The agent version a compare run started on, stored on the run as `agentVersion`.
+The agent's own prompt and tools change between releases, so when the two arms ran on different
+releases, compare says the difference mixes the change with the release and `--promote` holds.
+
 **Protected line.** A harness line an edit may not delete, reword or relax: inside a
 `<!-- coding.sh:protect -->` block, matching a `[refine] protect` regex, or pairing a gate word with
 a safety topic ("Never run `git push --force`"). `coding.sh refine check` and `exp ab` reject an

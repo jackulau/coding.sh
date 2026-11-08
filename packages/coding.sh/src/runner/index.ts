@@ -11,3 +11,4 @@ export * from "./anatomy.ts";
 export * from "./gate-item.ts";
 export * from "./selfcheck.ts";
 export * from "./harness-report.ts";
+export * from "./release.ts";

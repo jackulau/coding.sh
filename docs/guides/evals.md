@@ -895,6 +895,28 @@ When the agent can't report its version, an upgrade can't change the key; the dr
 report warn about it. `--json` carries `report.reused` (`{"baseline", "candidate"}`) and
 `report.spend.<arm>.reused` (`{runs, usd, priced}`), present only when runs were reused.
 
+### Agent release
+
+Every run records the agent release it started on as `agentVersion`: the adapter's detected
+version, asked again at most once a minute, so an auto-update during a long comparison shows on the
+runs after it. A captured session's own version wins. When the arms ran on different releases (a
+reused baseline from before an update is the common case), B − A measures the change and the
+release together, and the report says so with an `agent` row and a note:
+
+```
+agent claude-code 2.1.316 ×12          2.1.319 ×12          release differs
+note: baseline ran on claude-code 2.1.316 (12 runs), candidate on claude-code 2.1.319 (12 runs); the agent release differs between arms, so the delta mixes your change with the release. Rerun both arms together on one release, with the agent's auto-update off
+```
+
+`--gate` repeats the warning under its answer, and `--promote` holds and exits 1
+(`report.pareto.refused` is `release_confound`). When the release changed mid-comparison in both
+arms alike, a softer note names the releases and how many tasks ran on more than one. `--json`
+carries `report.agentVersions` (runs per release per arm, `unknown` runs per arm, `splitTasks`,
+`agent`, `confound`: `arms-differ` or `mixed`) whenever some run's release is known. No note when
+under half of an arm's runs have a known release or when the arms run different agents. Releases
+change the agent's own prompt and tools often: 29% of 1,867 consecutive releases of five coding
+agents did (Paixao et al., [arXiv 2610.37332](https://arxiv.org/abs/2610.37332)).
+
 ### Iterate on a comparison
 
 An interrupted comparison continues with `--resume` (see [long runs](#long-runs-resume-retries-status)).

@@ -851,6 +851,8 @@ answer `{"items":[…]}` and are empty for a scoped key.
   `pass` (the outcome after the last
   round; `pass` on the run stays the first attempt's), `falseAlarm` and `falseAlarmFired` with
   `--false-alarm`, and `skipped` (`error` or `timeout`) when the first attempt could not be repaired.
+  `agentVersion` is the agent release the run started on (the adapter's detected version, checked at
+  most once a minute); absent when the adapter can't tell and on older runs.
 - `/api/bundles` returns `id`, `name`, `agent`, `model`, `createdAt` and `note` only; overlay files stay behind `/api/blobs`.
 
 ```sh

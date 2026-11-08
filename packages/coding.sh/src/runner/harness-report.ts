@@ -7,6 +7,7 @@ import { diffBundles, instructionSurface } from "./bundle.ts";
 import { auditStatuses, taskAudit, type AuditReport } from "../eval/witness.ts";
 import { compare, loadRunEvents, loadRunSessions, type CompareOpts, type CompareReport, type RunAuditStatus } from "./experiment.ts";
 import { singleItemChange } from "./gate-item.ts";
+import { runRelease } from "./release.ts";
 
 export type ItemChange = { mode: "add" | "remove"; path: string };
 
@@ -50,7 +51,7 @@ export async function harnessReport(stores: { index: IndexStore; blobs: BlobStor
         const s = sessions.get(r.id);
         exposure.set(r.id, s ? itemExposure(item, events.get(r.id) ?? [], { cwd: s.cwd }).state : "unknown");
       }
-      const agentVersions = new Map(results.map((r) => [r.id, sessions.get(r.id)?.agentVersion]));
+      const agentVersions = new Map(results.map((r) => [r.id, runRelease(r, sessions.get(r.id))]));
       itemGate = { mode: change.mode, exposure, agentVersions, item: { path: item.path, kind: item.kind, tier: item.tier } };
     }
   }

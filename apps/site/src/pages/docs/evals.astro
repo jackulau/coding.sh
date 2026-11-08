@@ -591,6 +591,13 @@ const TRIGGER = [
     <code>--reuse-max-age</code> (default 7 days). <code>--dry-run</code> prints how many runs each arm would reuse and run. The report notes
     that reused runs did not run interleaved with the new ones.
   </p>
+  <p id="release">
+    Each run records the agent release it started on, checked at most once a minute, so an auto-update mid-comparison shows. When the arms
+    ran on different releases, the report adds <code>agent claude-code 2.1.316 ×12 2.1.319 ×12 release differs</code> and a note that
+    the delta mixes the change with the release. <code>--gate</code> repeats it, and <code>--promote</code> holds and exits 1
+    (<code>pareto.refused: "release_confound"</code>). <code>--json</code> has <code>report.agentVersions</code>. Releases change the
+    agent's own prompt and tools often (<a href="https://arxiv.org/abs/2610.37332">arXiv 2610.37332</a>).
+  </p>
   <Code code={replay} />
   <p id="iterate">
     <code>--experiment exp_01 --retry-errors</code> runs again, in place, the runs of a stored comparison that errored or failed on
