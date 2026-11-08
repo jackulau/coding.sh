@@ -1,0 +1,29 @@
+docs/guides/evals.md
+  s_8e040dbdf13565::t_99702aa434ea2b 1152-1153
+packages/coding.sh/test/refine/protect.test.ts
+  s_8e040dbdf13565::t_175ac905c0a3db 163,166
+  s_8e040dbdf13565::t_adf43da619d620 161-162,164-165,167-171
+CHANGELOG.md
+  s_8e040dbdf13565::t_1f1d6196336c3e 94
+packages/coding.sh/src/refine/protect.ts
+  s_8e040dbdf13565::t_1be0fdbeaec24b 254-255
+  s_8e040dbdf13565::t_962e4132c1839f 253
+  s_8e040dbdf13565::t_4ca6403959c806 114-117,123
+  s_8e040dbdf13565::t_0f179b43dc1477 271-273,276-280
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d55cd25c037c0f04e3661cce78a17641feedb350",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
