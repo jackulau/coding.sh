@@ -170,6 +170,27 @@ describe("diffBundles", () => {
     assert.match(text, /~ CLAUDE\.md/);
     assert.equal(diffBundles(base, { ...base, id: "c", name: "c" }).same, true);
   });
+
+  it("collapses a long file list into directories with counts, and keeps every path in the diff", () => {
+    const empty = { id: "a", name: "a", agent: "claude-code", flags: [], env: {}, files: {}, remove: [], createdAt: 0 };
+    const files: Record<string, string> = { "CLAUDE.md": "r0" };
+    for (let i = 0; i < 300; i++) files[`.claude/skills/s${i}/SKILL.md`] = `r${i}`;
+    for (let i = 0; i < 40; i++) files[`.claude/agents/a${i}.md`] = `a${i}`;
+    const d = diffBundles(empty, { ...empty, id: "b", name: "b", files });
+    assert.equal(d.files.added.length, 341, "the diff itself keeps every path");
+    const lines = formatBundleDiff(d);
+    assert.deepEqual(lines, [
+      "+ .claude/agents/ (40 files)",
+      "+ .claude/skills/ (300 files)",
+      "+ CLAUDE.md",
+      "(341 added, 0 removed, 0 changed files; --json lists each one in bundleDiff)",
+    ]);
+    const deeper = formatBundleDiff(d, { maxFiles: 400 });
+    assert.equal(deeper.length, 341, "a list that fits is printed file by file");
+    assert.ok(deeper.includes("+ .claude/skills/s7/SKILL.md"));
+    const few = { ...empty, id: "c", name: "c", files: Object.fromEntries(Array.from({ length: 30 }, (_, i) => [`.claude/skills/s${i}/SKILL.md`, "x"])) };
+    assert.deepEqual(formatBundleDiff(diffBundles(empty, few)).slice(0, 2), ["+ .claude/skills/ (30 files)", "(30 added, 0 removed, 0 changed files; --json lists each one in bundleDiff)"]);
+  });
 });
 
 describe("ablateBundle", () => {

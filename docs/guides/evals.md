@@ -986,6 +986,11 @@ A snapshot follows linked files and directories, such as skills that `npx skills
 repo links into `~/.claude/skills`, and stores the files they point to. It skips dangling links and
 links that loop back to a directory it is already in.
 
+Under the task table, **harness changes** lists what differs from A to B: files added (`+`),
+removed (`-`) and changed (`~`), model, flags, env names (never values) and plugins. A file list
+longer than 20 lines collapses into directories with their file counts, such as
+`+ .claude/skills/ (412 files)`. `--json` keeps every path in `report.bundleDiff`.
+
 `coding.sh compare A --without .claude/skills/pdf` tests one piece of a harness. B is A minus that
 path: a skill, `AGENTS.md`, `CLAUDE.md` or `.mcp.json`. The path is also deleted from each task's
 repo. The report adds `effect of <path> = A − B` with its CI. `--without` can be repeated.

@@ -125,6 +125,7 @@ coding.sh runs on Windows, and CI tests it there.
 
 ### Changed
 
+- **Harness A/B.** The `harness changes` block of a `compare` report collapses a file list longer than 20 lines into directories with file counts (`+ .claude/skills/ (412 files)`). Before, comparing a full `~/.claude` against plain Claude Code printed one line per file, 1,500 of them. `--json` still lists every path in `report.bundleDiff`. [Harness A/B](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#harness-ab).
 - **Docs.** The vercel-security-audit case study has the live result: six read-only tasks against a real Vercel team, three runs per arm, 4/18 runs passed without the skill and 14/18 with it (+55.6 points, 95% CI +16.7 to +88.9, McNemar p = 0.125, gate Hold), at 4.4 times the cost per run. Aggregate numbers only. [Case study](https://github.com/jackulau/coding.sh/blob/main/docs/case-studies/vercel-security-audit.md#live-run).
 - **Docs.** Long docs are split into pages that load faster: the CLI reference has a page per command, a long changelog release continues over numbered pages, Evals continues on [Experiments](https://coding.sh/docs/experiments) and [Harness evals](https://coding.sh/docs/harness-evals), and the Read API has its own two pages. Old links to a section that moved still land on it. [CLI reference](https://coding.sh/docs/cli)
 - **SDK.** The TypeScript SDK is published as `@codingdotsh/sdk` (npm org names can't contain a dot). Install it with `npm i @codingdotsh/sdk`. See [the SDK reference](docs/reference/sdk.md).

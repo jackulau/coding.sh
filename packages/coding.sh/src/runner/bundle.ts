@@ -528,14 +528,51 @@ function diffPlugins(a: HarnessBundle, b: HarnessBundle): BundleDiff["plugins"] 
   return added.length + removed.length + changed.length ? { added: added.sort(), removed: removed.sort(), changed: changed.sort() } : undefined;
 }
 
-export function formatBundleDiff(d: BundleDiff): string[] {
+/** Lines per added, removed or changed file list before it collapses into directories. */
+const DIFF_FILE_LINES = 20;
+
+/**
+ * At most `max` lines for a file list: the files themselves when they fit, else
+ * the deepest directories that fit, each with its file count (`.claude/skills/ (412 files)`).
+ */
+function collapsePaths(paths: readonly string[], max: number): { lines: string[]; collapsed: boolean } {
+  if (paths.length <= max) return { lines: [...paths], collapsed: false };
+  const groupAt = (depth: number) => {
+    const groups = new Map<string, number>();
+    for (const p of paths) {
+      const parts = p.split("/");
+      const key = parts.length > depth ? `${parts.slice(0, depth).join("/")}/` : p;
+      groups.set(key, (groups.get(key) ?? 0) + 1);
+    }
+    return groups;
+  };
+  let groups = groupAt(1);
+  for (let depth = 4; depth > 1; depth--) {
+    const g = groupAt(depth);
+    if (g.size <= max) {
+      groups = g;
+      break;
+    }
+  }
+  const entries = [...groups].sort((a, b) => a[0].localeCompare(b[0]));
+  const lines = entries.slice(0, max).map(([k, n]) => (k.endsWith("/") ? `${k} (${n} file${n === 1 ? "" : "s"})` : k));
+  if (entries.length > max) lines.push(`… ${entries.length - max} more`);
+  return { lines, collapsed: true };
+}
+
+/** The report's harness changes. Long file lists collapse into directories with counts; `--json` keeps every path. */
+export function formatBundleDiff(d: BundleDiff, o: { maxFiles?: number } = {}): string[] {
   if (d.same) return ["harnesses are identical (apart from name)"];
   const out: string[] = [];
   if (d.agent) out.push(`agent: ${d.agent.from} → ${d.agent.to}`);
   if (d.model) out.push(`model: ${d.model.from ?? "(default)"} → ${d.model.to ?? "(default)"}`);
-  for (const f of d.files.added) out.push(`+ ${f}`);
-  for (const f of d.files.removed) out.push(`- ${f}`);
-  for (const f of d.files.changed) out.push(`~ ${f}`);
+  const max = o.maxFiles ?? DIFF_FILE_LINES;
+  let collapsed = false;
+  for (const [mark, list] of [["+", d.files.added], ["-", d.files.removed], ["~", d.files.changed]] as const) {
+    const c = collapsePaths(list, max);
+    collapsed ||= c.collapsed;
+    for (const l of c.lines) out.push(`${mark} ${l}`);
+  }
   if (d.flags) out.push(`flags: ${d.flags.from.join(" ") || "(none)"} → ${d.flags.to.join(" ") || "(none)"}`);
   for (const k of d.env.added) out.push(`+ env ${k}`);
   for (const k of d.env.removed) out.push(`- env ${k}`);
@@ -545,5 +582,6 @@ export function formatBundleDiff(d: BundleDiff): string[] {
   for (const p of d.plugins?.added ?? []) out.push(`+ plugin ${p}`);
   for (const p of d.plugins?.removed ?? []) out.push(`- plugin ${p}`);
   for (const p of d.plugins?.changed ?? []) out.push(`~ plugin ${p}`);
+  if (collapsed) out.push(`(${d.files.added.length} added, ${d.files.removed.length} removed, ${d.files.changed.length} changed files; --json lists each one in bundleDiff)`);
   return out;
 }
