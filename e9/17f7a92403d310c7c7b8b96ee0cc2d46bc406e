@@ -41,6 +41,8 @@ packages/coding.sh/test/core/intent.test.ts
   s_8e040dbdf13565::t_476059ea753c8c 319
 docs/concepts.md
   s_8e040dbdf13565::t_c4e006ab9a309c 47-52
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_c77d07681f2e60 403
 ---
 {
   "schema_version": "authorship/3.0.0",
