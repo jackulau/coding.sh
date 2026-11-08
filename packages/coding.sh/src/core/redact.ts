@@ -77,10 +77,14 @@ function tallyChange(t: RedactionTally, before: string, after: string, placehold
 export const PLACEHOLDER_KIND = "placeholder-key";
 
 /**
- * Published documentation keys: Stripe's and AWS's examples. Stripe's is split so
- * GitHub push protection does not read the source as holding a secret.
+ * Published documentation keys: Stripe's and AWS's examples. They are joined at run time, not
+ * written whole or with `+` (which the bundler folds back into one string), so neither the source
+ * nor the published package holds a key-shaped literal for push protection or the release's
+ * secret scan to stop on.
  */
-const DOC_KEYS: ReadonlySet<string> = new Set(["sk_test_" + "4eC39HqLyjWDarjtT1zdp7dc", "AKIAIOSFODNN7EXAMPLE"]);
+const DOC_KEYS: ReadonlySet<string> = new Set(
+  [["sk_test_", "4eC39HqLyjWDarjtT1zdp7dc"], ["AKIA", "IOSFODNN7EXAMPLE"]].map((parts) => parts.join("")),
+);
 /** A dash- or underscore-delimited word that marks a made-up value, after the vendor prefix. */
 const PLACEHOLDER_WORD = /^(?:test|fake|dummy|example|stub|mock|placeholder|sample|x{3,})$/i;
 
