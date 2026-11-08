@@ -18,11 +18,12 @@ import { git } from "../../runner/git.ts";
 import { hasGlob } from "../../runner/glob.ts";
 import type { AgentRoute } from "../../runner/run.ts";
 import type { EvalTask, HarnessBundle, RunResult } from "../../core/types.ts";
-import { formatCompare, PARETO_NEEDS_COST, planCells, runExperiment, type BudgetReport } from "../../runner/experiment.ts";
+import { formatCompare, PARETO_NEEDS_COST, planCells, runExperiment, runKey, type BudgetReport } from "../../runner/experiment.ts";
+import { describeSelection, erroredRuns, latestPerSlot, sampleTasks, selectFailing, slotKey, type FailingMode, type Selection } from "../../runner/iterate.ts";
 import { sortableId } from "../../core/ids.ts";
 import { jobConfig } from "../../jobs/config.ts";
 import { parseAge, positiveInt, UsageError } from "../args.ts";
-import { finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
+import { finishedToResume, finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
 import { gateFlags, list, promoteFlags, requireConsent, resolveTask, str, withContext } from "../common.ts";
 import { ensureHookBin } from "../hookbin.ts";
 import { CliError, plural } from "../output.ts";
@@ -43,6 +44,18 @@ export async function run(c: CommandContext): Promise<number> {
   const reuseMaxAgeMs = c.flags["reuse-max-age"] === undefined ? undefined : parseAge(String(c.flags["reuse-max-age"]), "reuse-max-age");
   if (reuseMaxAgeMs !== undefined && reuseWhat === "none") throw new UsageError("--reuse-max-age needs --reuse baseline or --reuse both", { reason: "invalid_argument" });
   if (c.flags.experiment !== undefined && (reuseWhat !== "none" || c.flags["dry-run"] === true)) throw new UsageError("--reuse and --dry-run plan new runs; --experiment re-analyses stored ones", { reason: "invalid_argument" });
+  // Iterating on a comparison (X-25): retry a stored one's errored runs, or pick the tasks of a new one.
+  const retryErrors = c.flags["retry-errors"] === true;
+  if (retryErrors && c.flags.experiment === undefined) throw new UsageError("--retry-errors needs --experiment <ID>: it runs again the runs of that comparison that errored", { reason: "invalid_argument" });
+  const failingRef = str(c.flags.failing);
+  if (c.flags.failing !== undefined && !failingRef) throw new UsageError("--failing needs an experiment id, e.g. --failing exp_01 or --failing exp_01@base", { reason: "invalid_argument" });
+  const failingMode = (str(c.flags["failing-mode"]) ?? "any") as FailingMode;
+  if (c.flags["failing-mode"] !== undefined && !failingRef) throw new UsageError("--failing-mode needs --failing", { reason: "invalid_argument" });
+  const sampleN = positiveInt(c.flags.sample, "sample");
+  const seedFlag = c.flags.seed;
+  if (seedFlag !== undefined && (typeof seedFlag !== "number" || !Number.isInteger(seedFlag) || seedFlag < 0)) throw new UsageError(`--seed must be a whole number ≥ 0, got ${JSON.stringify(seedFlag)}`, { reason: "invalid_argument" });
+  if (seedFlag !== undefined && sampleN === undefined) throw new UsageError("--seed needs --sample", { reason: "invalid_argument" });
+  if (c.flags.experiment !== undefined && (failingRef || sampleN !== undefined)) throw new UsageError("--failing and --sample pick tasks for new runs; --experiment re-analyses stored ones", { reason: "invalid_argument" });
   return withContext(c, async (ctx) => {
     const without = list(c.flags.without);
     if (without.length && c.positionals.length > 1) throw new UsageError("--without derives the second arm from the first; pass one bundle", { reason: "invalid_argument" });
@@ -83,13 +96,66 @@ export async function run(c: CommandContext): Promise<number> {
     let results: RunResult[];
     let budget: BudgetReport | undefined;
     let versionNote: string | undefined;
+    const notes: string[] = [];
+    let selection: Selection | undefined;
+    let counts: { planned: number; skipped: number; retried?: number } | undefined;
+    const concurrency = positiveInt(c.flags.concurrency, "concurrency");
+    const timeoutMs = trialTimeout(c);
     if (experimentId) {
-      results = (await ctx.index.listRuns({ experimentId })).filter((r) => r.bundleId === A.id || r.bundleId === B.id);
+      const exp = experimentId;
+      const storedRuns = async () => (await ctx.index.listRuns({ experimentId: exp })).filter((r) => r.bundleId === A.id || r.bundleId === B.id);
+      results = await storedRuns();
       if (!results.length) throw new CliError(`Experiment ${experimentId} has no runs for these bundles`, { reason: "not_found" });
       const stored = (await Promise.all([...new Set(results.map((r) => r.taskId))].map((id) => ctx.index.getTask(id)))).filter((t): t is EvalTask => !!t);
       if (gateBy) taskTags = byTagPrefix(stored, gateBy);
       taskNames = new Map(stored.map((t) => [t.id, t.name]));
       await storeAblation();
+      if (retryErrors) {
+        // Run again, in place, each slot whose run errored; the old run is kept, marked superseded.
+        const errored = erroredRuns(results);
+        const byId = new Map(stored.map((t) => [t.id, t]));
+        const gone = errored.find((r) => !byId.has(r.taskId));
+        if (gone) throw new CliError(`Can't retry the errored runs of ${exp}: task ${gone.taskId} is no longer stored`, { reason: "not_found" });
+        if (errored.length) {
+          for (const b of bundles) if (!getAdapter(b.agent)?.run) throw new CliError(`Agent ${b.agent} has no headless driver, so bundle ${b.name} can't be run`, { reason: "unsupported_agent" });
+          const replaces = new Map(errored.map((r) => [slotKey(r), r]));
+          // Pass the original run's --gateway and --trial-timeout: the retry runs under what this command line says.
+          const route = gateway ? gatewayRouteFor(bundles, gateway) : undefined;
+          await requireConsent(c, `Run ${plural(errored.length, "agent session")} again (the runs of ${exp} that errored)?`, `coding.sh compare ${arms} --experiment ${exp} --retry-errors --yes`);
+          if ((await ensureHookBin(c.env)) === "unavailable") out.warn("The coding.sh hook bin is missing and can't be written, so these runs won't be captured. Run `coding.sh init` first.");
+          const spin = out.spin(`Retrying 0/${errored.length}…`);
+          const r = await runExperiment({
+            tasks: stored.filter((t) => errored.some((e) => e.taskId === t.id)),
+            bundles: [A, B],
+            adapterFor: (b) => getAdapter(b.agent)!,
+            blobs: ctx.blobs,
+            index: ctx.index,
+            k: Math.max(...errored.map((e) => e.attempt)),
+            select: (j) => replaces.has(runKey(j)),
+            replaces,
+            experimentId: exp,
+            ...(concurrency ? { concurrency } : {}),
+            ...(route ? { route } : {}),
+            ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+            signal: c.signal,
+            ingest: () => ctx.ingest(),
+            ...(c.drain ? { drain: c.drain } : {}),
+            retry: retryFlag(c),
+            onProgress: (p) => spin.update(`Retrying ${p.done}/${p.total}…`),
+          }).finally(() => spin.stop());
+          counts = { planned: r.planned, skipped: r.skipped, retried: r.retried ?? 0 };
+          if (r.cancelled) {
+            out.warn(`Cancelled after retrying ${plural(r.retried ?? 0, "run")} of ${errored.length}; the rest keep their errored runs. Run the same command again to retry them.`);
+            return 1;
+          }
+          await ctx.ingest().catch(() => undefined);
+          results = await storedRuns();
+          notes.push(`retried ${plural(r.retried ?? 0, "run")} that errored; the old runs are kept, marked superseded`);
+        } else {
+          counts = { planned: 0, skipped: 0, retried: 0 };
+          if (!out.json) out.note(`No errored runs in ${exp}; nothing to retry`);
+        }
+      }
     } else {
       const ids = list(c.flags.task);
       const tag = str(c.flags.tag);
@@ -105,8 +171,46 @@ export async function run(c: CommandContext): Promise<number> {
         // Hand-written behaviour tasks have no reference patch to validate, so a tag selects drafts too.
         tasks = (await ctx.index.listTasks({ tag })).filter((t) => t.status !== "archived");
         if (!tasks.length) throw new CliError(`No tasks tagged ${JSON.stringify(tag)}`, { reason: "no_tasks", next: ["List tasks and their tags:", "coding.sh eval list --json"] });
-      } else tasks = await ctx.index.listTasks({ status: "validated" });
-      if (!tasks.length) throw new CliError("No validated tasks to run", { reason: "no_tasks", next: ["Draft and validate one first:", "coding.sh eval new latest"] });
+      } else if (!failingRef) tasks = await ctx.index.listTasks({ status: "validated" });
+      else tasks = [];
+      if (!tasks.length && !failingRef) throw new CliError("No validated tasks to run", { reason: "no_tasks", next: ["Draft and validate one first:", "coding.sh eval new latest"] });
+      let from = tasks.length;
+      let failing: Selection["failing"];
+      if (failingRef) {
+        // --failing EXP[@bundle]: the tasks that bundle (default A) failed in a stored comparison.
+        const at = failingRef.indexOf("@");
+        const expRef = at > 0 ? failingRef.slice(0, at) : failingRef;
+        const fb = at > 0 ? await ctx.index.getBundle(failingRef.slice(at + 1)) : A;
+        if (!fb) throw new CliError(`Can't find harness bundle ${JSON.stringify(failingRef.slice(at + 1))}`, { reason: "not_found", next: ["List bundles:", "coding.sh harness list"] });
+        const prior = await ctx.index.listRuns({ experimentId: expRef });
+        if (!prior.length) throw new CliError(`Experiment ${expRef} has no stored runs`, { reason: "not_found" });
+        const ran = [...new Set(prior.map((r) => r.bundleId))];
+        if (!ran.includes(fb.id)) {
+          const names = await Promise.all(ran.map(async (id) => (await ctx.index.getBundle(id))?.name ?? id));
+          throw new UsageError(`${expRef} has no runs of ${fb.name}; it ran ${names.join(" and ")}. Name the arm: --failing ${expRef}@<bundle>`, { reason: "bundle_mismatch" });
+        }
+        const failed = selectFailing(prior, fb.id, failingMode);
+        if (ids.length || tag) {
+          const set = new Set(failed);
+          tasks = tasks.filter((t) => set.has(t.id));
+        } else {
+          from = new Set(prior.filter((r) => r.bundleId === fb.id).map((r) => r.taskId)).size;
+          tasks = (await Promise.all(failed.map((id) => ctx.index.getTask(id)))).filter((t): t is EvalTask => !!t && t.status !== "archived");
+        }
+        if (!tasks.length) throw new CliError(`${fb.name} failed none of ${ids.length || tag ? "the selected tasks" : "its tasks"} in ${expRef}${failingMode === "majority" ? " in most attempts" : ""}`, { reason: "no_tasks" });
+        failing = { experimentId: expRef, bundleId: fb.id, bundle: fb.name, mode: failingMode, matched: tasks.length };
+      }
+      let sample: Selection["sample"];
+      if (sampleN !== undefined) {
+        // Recorded in the note, so the same sample can be drawn again (and resumed) with --seed.
+        const seed = (seedFlag as number | undefined) ?? Math.floor(Math.random() * 2 ** 32);
+        tasks = sampleTasks(tasks, sampleN, seed);
+        sample = { n: sampleN, seed };
+      }
+      if (failing || sample) {
+        selection = describeSelection({ from, tasks, ...(failing ? { failing } : {}), ...(sample ? { sample } : {}) });
+        notes.push(selection.note);
+      }
       const maxCost = c.flags["max-cost"];
       if (maxCost !== undefined && (typeof maxCost !== "number" || !(maxCost > 0))) throw new UsageError("--max-cost needs a positive amount in USD, e.g. --max-cost 15", { reason: "invalid_argument" });
       if (gateBy) taskTags = byTagPrefix(tasks, gateBy);
@@ -118,7 +222,6 @@ export async function run(c: CommandContext): Promise<number> {
       const route = gateway ? gatewayRouteFor(bundles, gateway) : undefined;
       const k = positiveInt(c.flags.k, "k") ?? 1;
       const runs = tasks.length * 2 * k;
-      const timeoutMs = trialTimeout(c);
       // Finished runs of the same cell (task, bundle, agent version, attempt, timeout, route) from earlier comparisons.
       const reuse = reuseWhat === "none" ? undefined : { bundleIds: reuseWhat === "both" ? [A.id, B.id] : [A.id], ...(reuseMaxAgeMs !== undefined ? { maxAgeMs: reuseMaxAgeMs } : {}) };
       const versions = new Map<string, Promise<string | undefined>>();
@@ -132,8 +235,9 @@ export async function run(c: CommandContext): Promise<number> {
       const cached = plan?.cached.size ?? 0;
       if (c.flags["dry-run"] === true) {
         const arm = (b: HarnessBundle) => ({ bundle: b.id, name: b.name, reused: cachedIn(b), toRun: runs / 2 - cachedIn(b) });
-        if (out.json) out.data({ dryRun: true, runs, toRun: runs - cached, baseline: arm(A), candidate: arm(B), ...(plan?.unknownVersion.length ? { unknownVersion: plan.unknownVersion } : {}) });
+        if (out.json) out.data({ dryRun: true, runs, toRun: runs - cached, baseline: arm(A), candidate: arm(B), ...(plan?.unknownVersion.length ? { unknownVersion: plan.unknownVersion } : {}), ...(selection ? { selection, tasks: tasks.map((t) => t.id) } : {}) });
         else {
+          if (selection) out.print(selection.note);
           out.print(`dry run: ${plural(runs, "run")} (${plural(tasks.length, "task")} x 2 arms x ${k}), ${cached} reused, ${runs - cached} to run`);
           const w = Math.max(A.name.length, B.name.length);
           for (const [label, b] of [["baseline ", A], ["candidate", B]] as const) out.print(`${label}  ${b.name.padEnd(w)}  ${cachedIn(b)} reused, ${runs / 2 - cachedIn(b)} to run`);
@@ -141,13 +245,15 @@ export async function run(c: CommandContext): Promise<number> {
         }
         return 0;
       }
-      await requireConsent(c, `Run ${plural(runs - cached, "agent session")} (${plural(tasks.length, "task")} x 2 arms x ${k}${cached ? `, ${cached} reused` : ""})?`, `coding.sh compare ${arms} --yes`);
-      await storeAblation();
-      const concurrency = positiveInt(c.flags.concurrency, "concurrency");
       // Durable: each finished run is checkpointed; --resume continues an interrupted comparison.
       // Gateway routing changes what runs (model, flags); its env values (keys) stay out of the hash.
       const routed = route ? [A, B].map((b) => route(b)).map((x) => (x ? { flags: x.flags, model: x.model, env: Object.keys(x.env).sort() } : null)) : undefined;
       const config = jobConfig({ bundles: [A.id, B.id], tasks, k, timeoutMs, route: routed });
+      // The prompt counts only the runs still to go: not the reused ones, nor those a resumed job already finished.
+      const finished = await finishedToResume(c, "compare", config);
+      const extra = [cached ? `${cached} reused` : "", finished ? `${finished} already finished` : ""].filter(Boolean).join(", ");
+      await requireConsent(c, `Run ${plural(Math.max(0, runs - cached - finished), "agent session")} (${plural(tasks.length, "task")} x 2 arms x ${k}${extra ? `, ${extra}` : ""})?`, `coding.sh compare ${arms} --yes`);
+      await storeAblation();
       const job = await openJob(c, { kind: "compare", name: `${A.name} vs ${B.name}`, config, newId: () => sortableId("exp_"), concurrency: concurrency ?? 4 });
       // The isolated agent configs call the hook bin; without it no run is captured (no turns, tokens, divergence or item gate).
       if ((await ensureHookBin(c.env)) === "unavailable") out.warn("The coding.sh hook bin is missing and can't be written, so these runs won't be captured: turns, tokens, trace divergence and the item gate need captured sessions. Run `coding.sh init` first.");
@@ -182,6 +288,7 @@ export async function run(c: CommandContext): Promise<number> {
       experimentId = r.experimentId;
       results = r.results;
       budget = r.budget;
+      counts = { planned: r.planned, skipped: r.skipped };
       if (r.reuse?.reused && r.reuse.unknownVersion.length) versionNote = `agent version unknown for ${r.reuse.unknownVersion.join(", ")}: a reused run may come from another version of the agent`;
       if (budget) {
         const b = budget;
@@ -204,6 +311,12 @@ export async function run(c: CommandContext): Promise<number> {
       // Pull in the sessions the runs' hooks captured.
       await ctx.ingest().catch(() => undefined);
     }
+    // One run per task, arm and attempt: when a slot holds several that count, the newest wins.
+    const slots = latestPerSlot(results);
+    if (slots.dropped.length) {
+      results = slots.runs;
+      notes.push(`${plural(slots.dropped.length, "older run")} left out: a newer run fills the same task, arm and attempt`);
+    }
     const report = await harnessReport(ctx, A, B, results, {
       ...(ablation ? { ablation: { paths: ablation.paths, dropped: ablation.dropped, unmatched: ablation.unmatched } } : {}),
       ...(gate ? { gate } : {}),
@@ -213,7 +326,8 @@ export async function run(c: CommandContext): Promise<number> {
       ...(c.flags.audited === true ? { audited: true } : {}),
     });
     if (versionNote) report.notes.push(versionNote);
-    if (out.json) out.data({ experimentId, report, ...resume, ...(budget ? { budget } : {}) });
+    report.notes.push(...notes);
+    if (out.json) out.data({ experimentId, report, ...resume, ...(budget ? { budget } : {}), ...(counts ?? {}), ...(selection ? { selection } : {}) });
     else {
       out.print(formatCompare(report, { color: out.color, arms, taskNames }));
       out.print(experimentId);

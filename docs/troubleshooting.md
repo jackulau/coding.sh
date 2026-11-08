@@ -166,6 +166,7 @@ The command line was wrong. Nothing ran.
 | `invalid_matrix` | `Invalid matrix in matrix.json: …` (exp run) | Fix the spec: a cell that differs from the baseline outside `vary`, an override of graders or the dataset, or a bad axis or baseline. `--plan` checks it without running. See [Evals](https://coding.sh/docs/evals#matrix). |
 | `invalid_driver` | (toolevals) `Unknown agent "…"` or a malformed driver | Use `agent:<id>[:model]` or `model:<provider>/<model>`. |
 | `invalid_arms` | (toolevals compare) a baseline or candidate that is not `<variant>@<driver>` | Use arm names from the experiment. |
+| `bundle_mismatch` | `exp_… has no runs of good; it ran base and cand. Name the arm: --failing exp_…@<bundle>` (compare --failing) | The experiment did not run the arm `--failing` picked. Name one it ran after `@`. |
 | `unsupported_target` | `compress works on MCP targets; gh is cli` | Run `compress` on an MCP target. |
 | `no_control` | `A continuation task needs a control arm: …` (exp run) | Run the recorded config as A and your change as B (`--arm control=… --arm cand=…`), or use `coding.sh exp ab`. `--no-control` runs it alone, without a noise floor. |
 | `bad_arg` | `export what? one of sessions, events, labels` | Use one of the listed values. |

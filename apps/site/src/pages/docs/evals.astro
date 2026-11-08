@@ -587,6 +587,13 @@ const TRIGGER = [
     that reused runs did not run interleaved with the new ones.
   </p>
   <Code code={replay} />
+  <p id="iterate">
+    <code>--experiment exp_01 --retry-errors</code> runs again, in place, the runs of a stored comparison that errored or failed on
+    infrastructure; the old runs stay, marked superseded, so each task, arm and attempt counts once. <code>--failing exp_01</code> runs
+    only the tasks A failed in <code>exp_01</code> (<code>exp_01@bundle</code> for another arm). The difference holds on those tasks, but both
+    pass rates are conditioned on A having failed them, and the report says so. <code>--sample 20 --seed 7</code> runs the same random
+    20 tasks for the same seed.
+  </p>
   <div class="note">
     <p>
       <strong>Known gap.</strong> A hook-captured session starts from the commit that was checked out when it began, so uncommitted changes at

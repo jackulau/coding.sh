@@ -110,6 +110,21 @@ export async function openJob(c: CommandContext, o: { kind: JobKind; name: strin
   return store.create({ id: o.newId(), kind: o.kind, name: o.name, config: o.config, total: 0, concurrency: o.concurrency, ...(command ? { command } : {}) });
 }
 
+/**
+ * Trials already finished in the job that `--resume` names or finds, so a
+ * consent prompt can count only the runs still to go. 0 without `--resume`,
+ * or when openJob would refuse or start a new job.
+ */
+export async function finishedToResume(c: CommandContext, kind: JobKind, config: JobConfig): Promise<number> {
+  const flag = c.flags.resume;
+  if (flag === undefined || flag === false) return 0;
+  const store = JobStore.forEnv(c.env);
+  const ref = str(flag);
+  const open = (v: JobView) => v.status !== "completed" && v.status !== "running";
+  const v = ref ? await store.find(ref) : (await store.list({ kind })).find((x) => open(x) && x.header.config.hash === config.hash);
+  return v && open(v) && v.header.kind === kind && v.header.config.hash === config.hash ? v.progress.done : 0;
+}
+
 /** End the session: interrupted when cancelled, incomplete when infra-failed trials remain, else completed. */
 export async function finishJob(job: Job, cancelled: boolean): Promise<void> {
   await job.finish(cancelled ? "interrupted" : job.infraCount() ? "incomplete" : "completed");

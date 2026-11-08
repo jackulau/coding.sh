@@ -1861,6 +1861,11 @@ coding.sh compare <A> [b] [options]
 | `-c, --concurrency <N>` |  | Parallel runs. |
 | `--max-cost <USD>` |  | Spend cap: once finished runs (agent plus judge grade calls) reach it, no new run starts. |
 | `--experiment <ID>` |  | Compare the stored runs of this experiment instead of running. |
+| `--retry-errors` |  | With --experiment: run again the runs that errored or hit infrastructure errors, in place; the old runs are kept, marked superseded. |
+| `--failing <EXP>[@BUNDLE]` |  | Run only the tasks A (or BUNDLE) failed in that stored comparison. |
+| `--failing-mode <MODE>` | `any` | With --failing: a task counts as failed in any attempt, or in more than half. One of: `any`, `majority`. |
+| `--sample <N>` |  | Run a random sample of N of the selected tasks. |
+| `--seed <N>` |  | With --sample: seed for the draw (default random, printed in the report) |
 | `--reuse <ARMS>` | `none` | Copy finished runs of the same task, bundle, agent version, attempt and timeout from earlier comparisons instead of running them again. One of: `baseline`, `both`, `none`. |
 | `--reuse-max-age <AGE>` | `7d` | With --reuse: only runs that finished this recently (30m, 12h, 7d, 2w) |
 | `--dry-run` |  | Print how many runs each arm would reuse and run, and run nothing. |
@@ -1889,6 +1894,9 @@ coding.sh compare base candidate --k 3 --resume
 coding.sh compare base candidate2 --k 3 --reuse baseline --dry-run
 coding.sh compare base candidate --experiment exp_01
 coding.sh compare base candidate --experiment exp_01 --audited
+coding.sh compare base candidate --experiment exp_01 --retry-errors
+coding.sh compare base candidate2 --failing exp_01 --k 3
+coding.sh compare base candidate --sample 20 --seed 7
 coding.sh compare base candidate --k 3 --gate
 coding.sh compare base candidate --k 3 --gate --by suite:
 coding.sh compare no-skill with-skill --tag skill-eval --gate --by suite: --max-cost 15

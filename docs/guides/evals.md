@@ -887,6 +887,34 @@ When the agent can't report its version, an upgrade can't change the key; the dr
 report warn about it. `--json` carries `report.reused` (`{"baseline", "candidate"}`) and
 `report.spend.<arm>.reused` (`{runs, usd, priced}`), present only when runs were reused.
 
+### Iterate on a comparison
+
+An interrupted comparison continues with `--resume` (see [long runs](#long-runs-resume-retries-status)).
+Three more flags save runs while you iterate:
+
+- `compare A B --experiment exp_01 --retry-errors` runs again, in place, each run of that
+  comparison that ended in an error (the agent or verifier could not run) or an infrastructure
+  failure after its retries. The old run stays in the store, marked superseded, so each task, arm
+  and attempt counts once. Pass the same `--gateway` and `--trial-timeout` as the first run.
+- `compare A C --failing exp_01` runs only the tasks A failed in `exp_01` (`exp_01@<bundle>` for
+  another arm of it; `--failing-mode majority` for tasks it failed in more than half of its
+  attempts). With `--task` or `--tag`, only the selected tasks it failed. The difference between
+  the arms holds on these tasks, but both pass rates are conditioned on A having failed them, so
+  the report says so:
+
+  ```
+  note: selection: 1 of 4 tasks: the 1 task base failed in exp_01M6WB…. The B − A difference holds for these tasks; both pass rates are conditioned on base having failed them, so they are not the arms' rates on the full set.
+  ```
+
+- `--sample 20 --seed 7` runs a random 20 of the selected tasks. The same tasks and seed draw the
+  same sample; without `--seed` the report prints the one it used. Pass it to `--resume` a sampled
+  comparison.
+
+When a task, arm and attempt holds more than one run that counts, the report keeps the newest and
+notes how many it left out. `--json` adds `planned` (runs this command had to run), `skipped` (runs
+a resumed comparison had already finished), `retried` with `--retry-errors`, and `selection` with
+`--failing` or `--sample`. The consent prompt counts only the runs still to go.
+
 ## A/B a harness edit on your own sessions
 
 `coding.sh compare` needs eval tasks with verifiers. Often you don't have those yet. You have a

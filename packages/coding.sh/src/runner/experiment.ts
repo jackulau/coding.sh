@@ -84,6 +84,19 @@ export interface RunExperimentOpts {
   reuse?: ReuseOpts;
   /** The agent version a bundle runs under, for the cell key. Default: its adapter's detect(). */
   agentVersion?: (bundle: HarnessBundle) => Promise<string | undefined>;
+  /** Only these of the scheduled jobs (`compare --retry-errors`); the rest are not part of this run. */
+  select?: (job: Job) => boolean;
+  /**
+   * Stored runs this run replaces, by runKey (`--retry-errors`): once the job's
+   * new run finishes, the old one is marked `superseded` so the slot counts once.
+   */
+  replaces?: ReadonlyMap<string, RunResult>;
+}
+
+/** The jobs of a run: scheduleJobs order, narrowed by `select`. */
+function jobsOf(o: Pick<RunExperimentOpts, "tasks" | "bundles" | "k" | "select">): Job[] {
+  const all = scheduleJobs(o.tasks, o.bundles, Math.max(1, o.k ?? 1));
+  return o.select ? all.filter(o.select) : all;
 }
 
 /** Which jobs a stored run can stand in for, and which must run. */
@@ -101,8 +114,8 @@ export interface CellPlan {
 }
 
 /** The cell key of every job, and with `reuse` the stored runs that can stand in for them. */
-export async function planCells(o: Pick<RunExperimentOpts, "tasks" | "bundles" | "adapterFor" | "index" | "k" | "timeoutMs" | "env" | "route" | "reuse" | "agentVersion">, excludeExperiment?: string): Promise<CellPlan> {
-  const jobs = scheduleJobs(o.tasks, o.bundles, Math.max(1, o.k ?? 1));
+export async function planCells(o: Pick<RunExperimentOpts, "tasks" | "bundles" | "adapterFor" | "index" | "k" | "timeoutMs" | "env" | "route" | "reuse" | "agentVersion" | "select">, excludeExperiment?: string): Promise<CellPlan> {
+  const jobs = jobsOf(o);
   const versions = new Map<string, { adapter: string; version: string | undefined }>();
   for (const b of o.bundles) {
     let adapter = b.agent;
@@ -199,14 +212,26 @@ export function defaultConcurrency(): number {
 
 export async function runExperiment(
   o: RunExperimentOpts,
-): Promise<{ experimentId: string; results: RunResult[]; cancelled: boolean; budget?: BudgetReport; reuse?: { reused: number; unknownVersion: string[] } }> {
+): Promise<{
+  experimentId: string;
+  results: RunResult[];
+  cancelled: boolean;
+  budget?: BudgetReport;
+  reuse?: { reused: number; unknownVersion: string[] };
+  /** Jobs this call had to run: neither kept from a resumed job nor copied by `reuse`. */
+  planned: number;
+  /** Jobs kept from the resumed job instead of run again. */
+  skipped: number;
+  /** With `replaces`: stored runs replaced by a new run (marked superseded). */
+  retried?: number;
+}> {
   const jobScope = o.job;
   const experimentId = jobScope?.state<string>("experimentId") ?? o.experimentId ?? sortableId("exp_");
   if (jobScope && jobScope.state("experimentId") === undefined) {
     await jobScope.setState("experimentId", experimentId);
     await jobScope.job.addRefs(experimentId);
   }
-  const jobs = scheduleJobs(o.tasks, o.bundles, Math.max(1, o.k ?? 1));
+  const jobs = jobsOf(o);
   if (jobScope && jobScope.prefix === "") await jobScope.job.setTotal(jobs.length);
   // A resume keeps every run already recorded with a known outcome (the runs live in the index).
   const stored = jobScope ? new Map((await o.index.listRuns({ experimentId })).map((r) => [r.id, r])) : new Map<string, RunResult>();
@@ -218,6 +243,9 @@ export async function runExperiment(
   let done = prior.filter(Boolean).length;
   const cells = await planCells(o, experimentId);
   let reused = prior.filter((r) => r?.reusedFrom).length;
+  const skipped = prior.filter(Boolean).length;
+  const planned = jobs.filter((_, i) => !prior[i] && !cells.cached.has(i)).length;
+  let retried = 0;
   const cap = o.maxCostUsd;
   const budget: BudgetReport | undefined = cap === undefined ? undefined : { capUsd: cap, spentUsd: 0, skipped: 0, unpriced: 0 };
   /** Add a finished run's agent and judge cost to the budget. */
@@ -271,6 +299,12 @@ export async function runExperiment(
     }
     charge(result);
     if (result.cancelled) return result; // killed mid-run: kept as cancelled in the index, not a finished run
+    const old = o.replaces?.get(runKey(job));
+    if (old) {
+      // The slot now holds the new run; the old one stays in the index for the record.
+      await o.index.putRun({ ...old, superseded: true });
+      retried++;
+    }
     if (jobScope) {
       const cost = result.agent.usage?.costUsd;
       await jobScope.record(runKey(job), {
@@ -293,6 +327,9 @@ export async function runExperiment(
     cancelled: settled.some((r, i) => (r === undefined && !capped.has(i)) || r?.cancelled === true),
     ...(budget ? { budget } : {}),
     ...(o.reuse ? { reuse: { reused, unknownVersion: cells.unknownVersion } } : {}),
+    planned,
+    skipped,
+    ...(o.replaces ? { retried } : {}),
   };
 }
 

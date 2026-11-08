@@ -17,7 +17,8 @@
 //             (Claude Code: .claude/rules/style.md; Codex: AGENTS.md).
 // Expected per agent: base vs good → KEEP (S = {sum}: the item never loads on mul);
 // base vs bad → KILL (mul breaks); good vs base re-analysed → REJECT; bad vs base
-// re-analysed → ACCEPT (the bad item hurts), and on sum alone → UNCOVERED. Base fails
+// re-analysed → ACCEPT (the bad item hurts), and on sum alone → UNCOVERED; base vs good
+// --failing <first comparison> runs only sum, the task base failed. Base fails
 // on sum are silent misses: own tests green, verifier red. The MCP harness_compare
 // tool (`coding.sh mcp` over stdio) returns the same gates.
 // Tamper (AB-20): on a third task, div, every run "passes" by overwriting the
@@ -412,6 +413,13 @@ try {
     const ug = json(unc, `compare ${bad} ${base} -t sum`).report.itemGate;
     check(ug?.verdict === "UNCOVERED" && ug?.level?.labels?.uncovered === 1, tag("bad vs base on sum: removal UNCOVERED"), gateSummary(ug));
     check(unc.code === 1, tag("UNCOVERED: --item-gate exits 1"), unc.code);
+    // X-25: --failing runs only the tasks base failed in the first comparison (sum), with the selection note.
+    const fcalls = stub.requests.length;
+    const fr = json(await cs(["compare", base, good, "--failing", g.experimentId, "--k", String(opts.k), "-c", "4", "--yes", "--json"]), `compare ${base} ${good} --failing`);
+    const sel = fr.selection;
+    check(sel?.from === 2 && sel?.tasks === 1 && sel?.failing?.bundle === base, tag("--failing: 1 of 2 tasks, the one base failed"), sel);
+    check(fr.planned === 2 * opts.k && fr.report.baseline.runs === opts.k && fr.report.baseline.passes === 0 && fr.report.candidate.passes === opts.k, tag("--failing: only sum ran; base fails it, good solves it"), { planned: fr.planned, a: fr.report.baseline, b: fr.report.candidate });
+    check(stub.requests.length > fcalls && fr.report.notes.some((n) => /conditioned on .* having failed them/.test(n)), tag("--failing: real runs, and the note says the rates are conditioned"), fr.report.notes);
 
     // 4. Tamper: both arms pass div by overwriting its verifier test. With the loud rule the agent says
     // so in the same response as the edit (disclosed); without it, it says "Refactor helpers." (stealth).

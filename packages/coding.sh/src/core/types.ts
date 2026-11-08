@@ -705,8 +705,9 @@ export interface RunResult {
   cancelled?: true;
   /**
    * This attempt failed on an infrastructure error (rate limit, 5xx, network)
-   * and was run again: the retry is the run that counts, so comparisons leave
-   * this one out. Kept for the record.
+   * and was run again, or `compare --retry-errors` ran its errored slot again:
+   * the retry is the run that counts, so comparisons leave this one out. Kept
+   * for the record.
    */
   superseded?: true;
   /** Attempts the run took when infrastructure errors were retried; absent for one. */
