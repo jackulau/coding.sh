@@ -16,6 +16,8 @@ packages/store-postgres/package.json
   s_8e040dbdf13565::t_4cc21f6465ca44 3
 package-lock.json
   s_8e040dbdf13565::t_fe856dde1d1fd0 9619,10137,10707
+apps/site/src/pages/docs/faq.astro
+  s_8e040dbdf13565::t_3310edf8b97653 10
 ---
 {
   "schema_version": "authorship/3.0.0",
