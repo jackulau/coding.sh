@@ -139,6 +139,10 @@ describe("--where on CLI, MCP and HTTP", () => {
     assert.deepEqual((second.json.items as { id: string }[]).map((e) => e.id), ["s4-e1"]);
     assert.equal(second.json.next, undefined);
     assert.equal(second.json.total, undefined, "counted on the first page only");
+    // scope=top leaves out the subagent session's (s4) events, as the list leaves out its row.
+    const top = await http(`/api/events?scope=top&where=${encodeURIComponent("tool:Bash ok:false")}`);
+    assert.deepEqual([(top.json.items as { id: string }[]).map((e) => e.id), top.json.total], [["s1-e3"], 1]);
+    assert.equal((await http(`/api/events?scope=nope`)).status, 400);
     // Text queries carry a snippet with the matched words marked.
     const text = await http(`/api/events?where=${encodeURIComponent("migration agent:codex")}`);
     assert.deepEqual((text.json.items as { id: string }[]).map((e) => e.id), ["s1-e1"]);

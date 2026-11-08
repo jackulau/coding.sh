@@ -618,7 +618,8 @@ An unknown key answers 400.
 Events that match `where` across sessions, newest first. Event keys (`kind`, `tool`, `ok`, `mcp`,
 `error`, `event.duration`, text) test each event; session keys (`agent`, `repo`, `flag`, …) test
 its session. Takes `limit` (1 to 200, default 50), `cursor`, `project`, `since` and `until` (on the
-session's start, as on the list). Each item is the event with its payload clipped for a list row,
+session's start, as on the list), and `scope` (`top` leaves out subagent sessions' events; default
+`all`). Each item is the event with its payload clipped for a list row,
 `session` (`id`, `title`, `agent`, `model`, and `parent` and `type` for a subagent), and a
 `snippet` with matches wrapped in `«…»` when the query has text. `next` is the cursor for the
 following page and is absent on the last one. The first page also counts the matches: `total`, up

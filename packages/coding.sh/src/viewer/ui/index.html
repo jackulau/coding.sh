@@ -314,7 +314,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .sessions-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem 1.75rem; max-width: 100rem; margin: 0 auto; padding: 1.25rem var(--gutter) 4rem; }
 @media (min-width: 1024px) { .sessions-layout { grid-template-columns: 13.5rem minmax(0, 1fr); } }
 .facets { display: grid; align-content: start; min-width: 0; }
-.facet-groups { display: grid; gap: 1.1rem; align-content: start; }
+.facet-groups { display: grid; gap: 1.1rem; align-content: start; min-width: 0; }
+.facet, .facet-list, .facet-row { min-width: 0; }
 .facets-toggle { display: none; }
 @media (min-width: 1024px) { .facets { position: sticky; top: calc(var(--top) + 1.25rem); max-height: calc(100vh - var(--top) - 2.5rem); overflow-y: auto; scrollbar-width: thin; padding: 2px; margin: -2px; } }
 .facet h3 { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; padding: 0 0.5rem; height: 20px; }
@@ -469,9 +470,6 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .sub-toggle .caret { display: inline-block; transition: transform 160ms var(--ease-out); }
 .sub-toggle[aria-expanded="true"] { color: var(--text); background: var(--raised-2); }
 .sub-toggle[aria-expanded="true"] .caret { transform: rotate(90deg); }
-.hit { grid-template-columns: 12px minmax(0, 1fr) auto; padding-top: 0.55rem; padding-bottom: 0.55rem; }
-.hit-snippet { color: var(--text-2); font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
-.hit-meta { display: flex; flex-wrap: wrap; gap: 0 0.75rem; margin-top: 2px; }
 .more { display: flex; justify-content: center; padding: 0.75rem; }
 .skeleton { height: 40px; box-shadow: inset 0 -1px 0 var(--line); display: flex; align-items: center; gap: 0.9rem; padding: 0 0.85rem; }
 .skeleton i { display: block; height: 8px; border-radius: 4px; background: var(--raised-2); }
@@ -559,6 +557,8 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .fail-nav[hidden] { display: none; }
 .fail-nav.derail-nav { color: var(--warn-ink); background: var(--warn-wash); }
 .fail-nav.derail-nav button { color: var(--warn-ink); }
+.fail-nav.query-nav { color: var(--text); background: var(--select); }
+.fail-nav.query-nav button { color: var(--text-2); }
 .fail-nav button { width: 22px; height: 22px; border-radius: 4px; color: var(--fail-ink); }
 .fail-nav .lbl { padding-right: 0.25rem; }
 .find { position: relative; display: flex; align-items: center; gap: 0.35rem; }
@@ -1151,6 +1151,11 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .event-table .ev-detail { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .event-table .ev-detail.err { color: var(--fail-ink); }
 .event-table .ev-detail mark { padding: 0 1px; }
+.event-table .ev-detail .k { color: var(--text-2); }
+.event-table .row-title { display: flex; gap: 0.5rem; align-items: baseline; min-width: 0; }
+.event-table .row-title > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.event-table .row-title .name { flex: none; max-width: 60%; }
+.view-tabs { margin-bottom: -0.25rem; }
 .event-table .sess-cell { display: grid; line-height: 1.3; font-family: var(--font-sans); font-size: 12.5px; color: var(--text-2); }
 .event-table .sess-cell > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .event-table .sess-cell .sub { font-family: var(--font-mono); font-size: 11px; }
@@ -1225,6 +1230,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .facet .not-btn:hover { color: var(--fail-ink); }
   .facet h3 .facet-head:hover { color: var(--text); }
   .fail-nav button:hover { background: var(--fail-wash); }
+  .fail-nav.query-nav button:hover { background: var(--hover); color: var(--text); }
   .json details > summary:hover { color: var(--text); }
   .page-head .meta button:hover { color: var(--text); }
   .bench-card:hover { background: color-mix(in srgb, var(--surface) 70%, var(--raised)); }
@@ -1479,6 +1485,11 @@ function snippetMarks(text, q) {
   if (!/«[^»]*»/.test(text)) return highlight(text, q);
   return text.split(/«([^»]*)»/).map((part, i) => (i % 2 ? h("mark", null, part) : part)).filter((x) => x !== "");
 }
+/** Splits text around case-insensitive matches of any of the words into strings and <mark>s. */
+function markWords(text, words) {
+  const re = new RegExp("(" + words.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|") + ")", "gi");
+  return String(text).split(re).map((part, i) => (i % 2 ? h("mark", null, part) : part)).filter((x) => x !== "");
+}
 /** Splits text around case-insensitive matches of q into strings and <mark>s. */
 function highlight(text, q) {
   text = String(text ?? "");
@@ -1631,13 +1642,13 @@ function route() {
   for (const a of document.querySelectorAll("[data-nav]")) {
     if (a.dataset.nav === section) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
-  if (parts[0] === "s" && parts[1]) return showSession(seq, parts[1], parts[2] || "");
+  if (parts[0] === "s" && parts[1]) return showSession(seq, parts[1], parts[2] || "", (query.get("where") || "").trim().slice(0, WHERE_MAX));
   if (parts[0] === "experiments" && parts[1] && parts[2] === "vs" && parts[3]) return showCompare(seq, parts[1], parts[3]);
   if (parts[0] === "experiments" && parts[1]) return showExperiment(seq, parts[1]);
   if (parts[0] === "experiments") return showExperiments(seq);
   if (parts[0] === "benchmarks" && parts[1]) return showBenchmark(seq, parts[1]);
   if (parts[0] === "benchmarks") return showBenchmarks(seq);
-  return showSessions(seq, hasQuery ? query : null);
+  return showSessions(seq, hasQuery ? query : null, parts[0] === "events" ? "events" : "sessions");
 }
 const current = (seq) => seq === navSeq;
 window.addEventListener("hashchange", route);
@@ -1658,6 +1669,12 @@ const KEYMAP = [
   { scope: "sessions", id: "open", keys: ["Enter"], label: "Open session" },
   { scope: "sessions", id: "expand", keys: ["→"], alt: ["ArrowRight"], label: "Show subagents" },
   { scope: "sessions", id: "collapse", keys: ["←"], alt: ["ArrowLeft"], label: "Hide subagents" },
+  { scope: "sessions", id: "tab-events", keys: ["e"], label: "Show matching events" },
+  { scope: "events", id: "search", keys: ["/"], label: "Filter or search" },
+  { scope: "events", id: "down", keys: ["j"], alt: ["ArrowDown"], label: "Next event" },
+  { scope: "events", id: "up", keys: ["k"], alt: ["ArrowUp"], label: "Previous event" },
+  { scope: "events", id: "open", keys: ["Enter"], label: "Open the event in its session" },
+  { scope: "events", id: "tab-sessions", keys: ["s"], label: "Show matching sessions" },
   { scope: "session", id: "down", keys: ["j"], alt: ["ArrowDown"], label: "Next step", hint: true },
   { scope: "session", id: "up", keys: ["k"], alt: ["ArrowUp"], label: "Previous step" },
   { scope: "session", id: "first", keys: ["Home"], label: "First step" },
@@ -1665,7 +1682,7 @@ const KEYMAP = [
   { scope: "session", id: "next-fail", keys: ["]"], label: "Next failure", hint: true },
   { scope: "session", id: "prev-fail", keys: ["["], label: "Previous failure" },
   { scope: "session", id: "find", keys: ["/"], label: "Find in steps", hint: true },
-  { scope: "session", id: "next-match", keys: ["n"], label: "Next match" },
+  { scope: "session", id: "next-match", keys: ["n"], label: "Next match (find, or the query you came from)" },
   { scope: "session", id: "prev-match", keys: ["N"], label: "Previous match" },
   { scope: "session", id: "open-fold", keys: ["Enter"], alt: ["ArrowRight"], label: "Expand folded steps" },
   { scope: "session", id: "folds", keys: ["z"], label: "Expand or fold quiet steps", hint: true },
@@ -1674,7 +1691,7 @@ const KEYMAP = [
   { scope: "session", id: "copy-step", keys: ["c"], label: "Copy step as JSON" },
   { scope: "session", id: "label-pass", keys: ["p"], label: "Label pass" },
   { scope: "session", id: "label-fail", keys: ["f"], label: "Label fail" },
-  { scope: "session", id: "back", keys: ["Esc"], alt: ["Escape"], label: "Back to sessions" },
+  { scope: "session", id: "back", keys: ["Esc"], alt: ["Escape"], label: "Back to the list" },
   { scope: "experiments", id: "down", keys: ["j"], alt: ["ArrowDown"], label: "Next experiment" },
   { scope: "experiments", id: "up", keys: ["k"], alt: ["ArrowUp"], label: "Previous experiment" },
   { scope: "experiments", id: "open", keys: ["Enter"], label: "Open experiment" },
@@ -1693,7 +1710,7 @@ const KEYMAP = [
   { scope: "benchmark", id: "session", keys: ["o"], label: "Open the case's session" },
   { scope: "benchmark", id: "back", keys: ["Esc"], alt: ["Escape"], label: "Back to benchmarks" },
 ];
-const SCOPE_NAMES = { global: "Anywhere", sessions: "Sessions list", session: "Session", experiments: "Experiments", experiment: "Experiment and compare", benchmarks: "Benchmarks", benchmark: "Benchmark" };
+const SCOPE_NAMES = { global: "Anywhere", sessions: "Sessions list", events: "Events list", session: "Session", experiments: "Experiments", experiment: "Experiment and compare", benchmarks: "Benchmarks", benchmark: "Benchmark" };
 let chordAt = 0;
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); openPalette(); return; }
@@ -1703,7 +1720,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "g") { chordAt = Date.now(); return; }
   if (chordAt && Date.now() - chordAt < 900) {
     chordAt = 0;
-    if (e.key === "s") { e.preventDefault(); location.hash = listHref(); return; }
+    if (e.key === "s") { e.preventDefault(); location.hash = listHref("sessions"); return; }
     if (e.key === "e") { e.preventDefault(); location.hash = "#/experiments"; return; }
     if (e.key === "b") { e.preventDefault(); location.hash = "#/benchmarks"; return; }
   }
@@ -1771,7 +1788,8 @@ function openPalette() {
   const d = h("div", { class: "dialog palette", role: "dialog", "aria-modal": "true", "aria-label": "Command menu" }, input, lb);
   const commands = [
     // Touch screens get no key hints and no shortcuts sheet: there is no keyboard to use them with.
-    { group: "Go to", label: "Sessions", hint: KEYBOARD.matches ? "g s" : "", run: () => { location.hash = listHref(); } },
+    { group: "Go to", label: "Sessions", hint: KEYBOARD.matches ? "g s" : "", run: () => { location.hash = listHref("sessions"); } },
+    { group: "Go to", label: "Events", run: () => { location.hash = listHref("events"); } },
     { group: "Go to", label: "Experiments", hint: KEYBOARD.matches ? "g e" : "", run: () => { location.hash = "#/experiments"; } },
     { group: "Go to", label: "Benchmarks", hint: KEYBOARD.matches ? "g b" : "", run: () => { location.hash = "#/benchmarks"; } },
     { group: "Commands", label: theme.get() === "light" ? "Switch to dark theme" : "Switch to light theme", run: () => theme.toggle() },
@@ -1878,6 +1896,16 @@ const list = {
   collapsed: loadCollapsed(),
   // Show a query error now (a link, Enter, leaving the bar) or wait (still typing).
   showError: false,
+  // Which results the query shows: "sessions" (#/) or "events" (#/events).
+  mode: "sessions",
+  // The Events tab: loaded rows from /api/events, the keyset cursor for the next page,
+  // and the count of the first page (null when not counted; capped at 10,000).
+  events: [],
+  eventsNext: null,
+  eventsTotal: null,
+  eventsCapped: false,
+  // The store has no event query path (a store plugin): the tab says so instead of failing.
+  eventsUnsupported: false,
   fresh: 0,
 };
 function topLevelOnly() { return list.filters.scope !== "all"; }
@@ -1886,11 +1914,11 @@ function listParams() {
   return { scope: scope === "all" ? "all" : "top", since, until, where: list.where.trim() };
 }
 /** The list's state as a hash, so a filtered view can be linked and survives reload. */
-function listHref() {
+function listHref(mode = list.mode) {
   const p = {};
   if (list.where.trim()) p.where = list.where.trim();
   for (const k of FILTER_KEYS) if (list.filters[k]) p[k] = list.filters[k];
-  return "#/" + qs(p);
+  return "#/" + (mode === "events" ? "events" : "") + qs(p);
 }
 function syncListHash() {
   const href = listHref();
@@ -2015,7 +2043,8 @@ function visibleRows() {
 }
 function announceList() {
   if (list.error || !list.loaded) return;
-  announce(list.items.length ? plural(list.items.length, "session") + " loaded" : "No sessions");
+  if (list.mode === "events") announce(list.events.length ? plural(list.events.length, "event") + " loaded" : "No events");
+  else announce(list.items.length ? plural(list.items.length, "session") + " loaded" : "No sessions");
 }
 function testsTone(s) {
   const st = s.stats || {};
@@ -2039,8 +2068,9 @@ function rowFlags(flags) {
   return [flagBadges(flags.slice(0, 1)), h("span", { class: "badge", title: "Flags: " + flags.join(", ") }, "+" + (flags.length - 1))];
 }
 function sessionTitle(s) { return oneLine(s.title) || "Untitled session"; }
-function sessionHref(id, eventId) {
-  return "#/s/" + encodeURIComponent(id) + (eventId ? "/" + encodeURIComponent(eventId) : "");
+/** A session, or one of its events; `where` carries the query it was opened from (n and N step through its matches). */
+function sessionHref(id, eventId, where) {
+  return "#/s/" + encodeURIComponent(id) + (eventId ? "/" + encodeURIComponent(eventId) : "") + (where ? qs({ where }) : "");
 }
 /** API and production traces: model requests, no tool calls. "0 tool calls" would be noise there. */
 function isApiSession(s) {
@@ -2093,6 +2123,12 @@ function fetchPage(p, append) {
   // A query pages by offset (its order can be a stat); the plain list by keyset cursor.
   return api("/api/sessions" + qs({ ...p, limit: PAGE, cursor: more && !p.where ? list.nextCursor : null, offset: more && p.where ? list.items.length : null }));
 }
+const EVENTS_LIST_PAGE = 50;
+/** One page of matching events (keyset on the server's `next`). A store with no event query path gives none. */
+function fetchEvents(p, append) {
+  return api("/api/events" + qs({ where: p.where, scope: p.scope, since: p.since, until: p.until, limit: EVENTS_LIST_PAGE, cursor: append ? list.eventsNext : null }))
+    .catch((e) => { if (isQueryError(e) && e.body.reason === "unsupported_store") return { items: [], unsupported: true }; throw e; });
+}
 /** The query language's keys, once per page load, for the bar's completions. */
 function loadKeys() {
   if (list.keys) return;
@@ -2109,24 +2145,27 @@ async function reload(view, opts = {}) {
   const seq = navSeq;
   const mine = ++list.seq;
   const p = listParams();
+  const events = list.mode === "events";
   list.expanded.clear();
   if (opts.reset) { list.loaded = false; list.children.clear(); }
   syncListHash();
   if (!list.loaded) renderSessions(view);
   let stats, page, facets;
   try {
-    [stats, page, facets] = await Promise.all([fetchStats(p), fetchPage(p, false), fetchFacets(p)]);
+    [stats, page, facets] = await Promise.all([fetchStats(p), events ? fetchEvents(p, false) : fetchPage(p, false), fetchFacets(p)]);
   } catch (e) {
     if (mine !== list.seq || !current(seq)) return false;
     if (isQueryError(e)) {
       list.whereError = e;
-      if (!list.loaded) { list.loaded = true; list.items = []; list.hasMore = false; }
+      if (!list.loaded) { list.loaded = true; list.items = []; list.hasMore = false; list.events = []; list.eventsNext = null; list.eventsTotal = null; }
     } else list.error = e;
     renderSessions(view);
     return false;
   }
   if (mine !== list.seq || !current(seq)) return false;
-  Object.assign(list, { stats, facets, items: page.items, hasMore: page.hasMore, nextCursor: page.nextCursor || null, loaded: true, error: null, whereError: null, active: 0, fresh: 0 });
+  if (events) Object.assign(list, { items: [], hasMore: false, events: page.items, eventsNext: page.next || null, eventsTotal: page.total ?? null, eventsCapped: !!page.totalCapped, eventsUnsupported: !!page.unsupported });
+  else Object.assign(list, { items: page.items, hasMore: page.hasMore, nextCursor: page.nextCursor || null });
+  Object.assign(list, { stats, facets, loaded: true, error: null, whereError: null, active: 0, fresh: 0 });
   renderSessions(view);
   announceList();
   const b = opts.focus && $(opts.focus, view);
@@ -2134,10 +2173,12 @@ async function reload(view, opts = {}) {
   return true;
 }
 
-async function showSessions(seq, query) {
+async function showSessions(seq, query, mode = "sessions") {
   const view = h("div", { class: "sessions-layout" });
-  const keys = { scope: "sessions", actions: {}, palette: [] };
+  const keys = { scope: mode, actions: {}, palette: [] };
   setView(view, false, keys);
+  // The other tab: same query, other rows.
+  if (list.mode !== mode) { list.mode = mode; list.loaded = false; list.active = 0; list.items = []; list.events = []; }
   if (query && applyQuery(query)) { list.loaded = false; list.expanded.clear(); }
   else syncListHash();
   // A query from a link shows its error at once; one typed shows it on Enter.
@@ -2156,8 +2197,8 @@ async function showSessions(seq, query) {
 }
 
 async function pollNew(view, seq) {
-  // A sorted query has no "newer than the head" to count.
-  if (document.hidden || !list.loaded || list.error || list.whereError || list.filters.until || whereTerms(list.where).some((t) => t.key === "sort")) return;
+  // A sorted query has no "newer than the head" to count; the Events tab has no pill.
+  if (list.mode === "events" || document.hidden || !list.loaded || list.error || list.whereError || list.filters.until || whereTerms(list.where).some((t) => t.key === "sort")) return;
   let body;
   try { body = await api("/api/sessions" + qs({ ...listParams(), limit: 20 }), null, true); } catch { return; }
   if (!current(seq)) return;
@@ -2213,11 +2254,15 @@ function renderSessions(view) {
     body.push(captureEmpty());
   } else {
     if (stats && stats.histogram && stats.histogram.buckets.length > 1) body.push(histogramPanel(view, stats.histogram));
-    const pill = h("button", { class: "live-pill", type: "button", hidden: !list.fresh, onclick: () => refreshSessions(view) },
-      h("span", { class: "dot", "aria-hidden": "true" }), h("span", { class: "txt" }, fmtNum(list.fresh) + " new " + (list.fresh === 1 ? "session" : "sessions")));
-    body.push(pill);
-    if (!list.loaded) body.push(skeletonTable());
-    else body.push(sessionList(view));
+    body.push(viewTabs());
+    if (list.mode === "events") {
+      body.push(!list.loaded ? skeletonTable() : eventsList(view));
+    } else {
+      const pill = h("button", { class: "live-pill", type: "button", hidden: !list.fresh, onclick: () => refreshSessions(view) },
+        h("span", { class: "dot", "aria-hidden": "true" }), h("span", { class: "txt" }, fmtNum(list.fresh) + " new " + (list.fresh === 1 ? "session" : "sessions")));
+      body.push(pill);
+      body.push(!list.loaded ? skeletonTable() : sessionList(view));
+    }
   }
   const col = h("div", { class: "list-col", role: "region", "aria-labelledby": "sessions-h" }, body);
   const showFacets = !nothingCaptured && !list.error && (stats || list.loaded);
@@ -2229,6 +2274,17 @@ function renderSessions(view) {
     input.setSelectionRange(sel[0], sel[1]);
   }
   qbar.rendering = false;
+}
+/** Sessions | Events: the same query as session rows or as event rows. */
+function viewTabs() {
+  const ev = list.mode === "events";
+  const n = list.stats ? fmtNum(list.stats.sessions) : "";
+  const evN = ev && list.loaded && !list.eventsUnsupported && list.eventsTotal !== null ? fmtNum(list.eventsTotal) + (list.eventsCapped ? "+" : "") : "";
+  return h("nav", { class: "view-tabs", "aria-label": "Results" },
+    h("a", { href: listHref("sessions"), "aria-current": ev ? null : "page", "aria-keyshortcuts": ev ? "s" : null }, "Sessions", n ? h("span", { class: "count" }, n) : null),
+    h("a", { href: listHref("events"), "aria-current": ev ? "page" : null, "aria-keyshortcuts": ev ? null : "e" }, "Events", evN ? h("span", { class: "count", title: list.eventsCapped ? "More than 10,000 events match" : null }, evN) : null),
+    h("span", { class: "spacer" }),
+    ev && list.events.length ? h("span", { class: "meta" }, "Newest first") : null);
 }
 function summaryLine(s) {
   const parts = [plural(s.sessions, "session")];
@@ -2860,7 +2916,114 @@ async function toggleSubagents(view, id) {
 let fromHit = "";
 function openHit(ev) {
   fromHit = ev.sessionId;
-  location.hash = sessionHref(ev.sessionId, ev.id);
+  location.hash = sessionHref(ev.sessionId, ev.id, list.where.trim());
+}
+
+/** An /api/events row as the timeline would show its step: name, argument, tone, duration. */
+function eventRowView(ev) {
+  const item = ev.kind === "tool.start" ? { type: "tool", id: ev.id, ts: ev.ts, start: ev, end: null }
+    : ev.kind === "tool.end" ? { type: "tool", id: ev.id, ts: ev.ts, start: null, end: ev }
+    : { type: ev.kind, id: ev.id, ts: ev.ts, ev };
+  const v = itemView(item);
+  const p = ev.payload || {};
+  // A tool result has no input to show; its output (or error) is what it says.
+  let detail = "", err = false;
+  if (ev.kind === "tool.end") {
+    if (typeof p.error === "string" && p.error) { detail = p.error; err = true; }
+    else if (typeof p.output === "string") detail = p.output;
+  }
+  return { name: v.name, arg: v.arg || "", tone: v.tone === "fail" ? "fail" : "muted", dur: v.dur !== undefined ? v.dur : ev.durationMs, detail: clip(oneLine(detail), 300), err };
+}
+
+function eventsList(view) {
+  list.rows = [];
+  if (list.eventsUnsupported) {
+    return h("div", { class: "panel empty" },
+      h("h2", { text: "Events need the event index" }),
+      h("p", { text: "This store answers session queries but has no event query path. The Sessions tab takes the same query." }),
+      h("a", { class: "btn", href: listHref("sessions") }, "Show sessions"));
+  }
+  if (list.events.length === 0 && list.whereError) {
+    return h("div", { class: "panel empty" },
+      h("h2", { text: "Fix the query to see events" }),
+      h("p", { text: "The query above has an error. Edit it, or remove a clause." }));
+  }
+  if (list.events.length === 0) {
+    return h("div", { class: "panel empty" },
+      h("h2", { text: "No events match" }),
+      list.where.trim()
+        ? h("p", null, "No event matches ", h("code", null, clip(list.where.trim(), 120)), list.filters.since || list.filters.until ? " in this time range." : ".", " Event keys (tool, kind, ok, mcp, error) test each event; the rest test its session.")
+        : h("p", { text: "Widen the time range, or include subagents." }),
+      hasFilters() ? h("button", { class: "btn", type: "button", onclick: () => clearFilters(view) }, "Clear filters") : null);
+  }
+  const lb = h("div", { class: "list", role: "listbox", tabindex: "0", "aria-label": "Events. j and k to move, Enter to open the event in its session." });
+  list.active = Math.min(list.active, list.events.length - 1);
+  list.events.forEach((ev, i) => lb.append(eventRowEl(ev, i)));
+  lb.setAttribute("aria-activedescendant", "opt-" + list.active);
+  lb.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      e.stopPropagation();
+      const ev = list.events[list.active];
+      if (ev) openHit(ev);
+    }
+  });
+  const table = h("div", { class: "panel table event-table" },
+    h("div", { class: "thead", "aria-hidden": "true" },
+      h("span"), h("span", null, "event"), h("span", null, "session"), h("span", { class: "num dur-cell" }, "duration"), h("span", { class: "num" }, "time")),
+    lb);
+  if (list.eventsNext) {
+    table.append(h("div", { class: "more" }, h("button", {
+      class: "btn", type: "button",
+      onclick: async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        btn.textContent = "Loading…";
+        const seq = navSeq;
+        const prev = list.events.length;
+        const listSeq = list.seq;
+        let body = null;
+        try { body = await fetchEvents(listParams(), true); } catch (err) { if (listSeq === list.seq) toast(err.message); }
+        if (!current(seq) || listSeq !== list.seq) return;
+        if (body) {
+          const known = new Set(list.events.map((x) => x.id));
+          list.events.push(...body.items.filter((x) => !known.has(x.id)));
+          list.eventsNext = body.next || null;
+        }
+        list.active = Math.min(prev, list.events.length - 1);
+        renderSessions(view);
+        announceList();
+        const l = $(".list[role=listbox]", view);
+        if (l) { l.focus({ preventScroll: true }); syncActive(l); }
+      },
+    }, "Load more")));
+  }
+  return table;
+}
+
+function eventRowEl(ev, i) {
+  const v = eventRowView(ev);
+  const s = ev.session;
+  // A snippet that only repeats the argument (a Grep pattern, a command) marks the argument instead.
+  const words = ev.snippet ? [...ev.snippet.matchAll(/«([^»]+)»/g)].map((m) => m[1]) : [];
+  const inArg = words.length > 0 && !!v.arg && words.every((w) => v.arg.toLowerCase().includes(w.toLowerCase()));
+  const detail = ev.snippet && !inArg ? snippetMarks(oneLine(ev.snippet), "") : v.detail ? [v.detail] : [];
+  return h("div", {
+    class: "row", role: "option", id: "opt-" + i, "aria-selected": String(i === list.active),
+    onclick: () => { list.active = i; openHit(ev); },
+  },
+    h("span", { class: "dot tone-" + v.tone, "aria-hidden": "true" }),
+    h("div", { class: "row-main" },
+      h("span", { class: "row-title", title: [v.name, v.arg].filter(Boolean).join(" ") },
+        h("span", { class: "name" }, v.name), v.arg ? h("span", { class: "arg" }, inArg ? markWords(v.arg, words) : v.arg) : null),
+      h("span", { class: "ev-detail" + (v.err ? " err" : "") },
+        h("span", { class: "k" }, KIND_LABEL[ev.kind] || ev.kind), detail.length ? " · " : null, ...detail)),
+    h("div", { class: "row-cells" },
+      h("span", { class: "cell sess-cell", title: s ? sessionTitle(s) + "\n" + s.id : ev.sessionId },
+        h("span", null, s ? sessionTitle(s) : clip(ev.sessionId, 24)),
+        s ? h("span", { class: "sub" }, [s.parent ? s.type || "subagent" : s.agent, s.model].filter(Boolean).join(" · ")) : null),
+      h("span", { class: "cell num muted dur-cell" }, v.dur !== undefined ? fmtDuration(v.dur) : ""),
+      h("span", { class: "cell num muted", title: new Date(ev.ts).toLocaleString() }, fmtRel(ev.ts))));
 }
 
 function syncActive(lb) {
@@ -2899,6 +3062,8 @@ function listActions(view) {
       if (!r || !r.s.childCount || list.expanded.has(r.s.id)) return false;
       toggleSubagents(view, r.s.id);
     },
+    "tab-events": () => { location.hash = listHref("events"); },
+    "tab-sessions": () => { location.hash = listHref("sessions"); },
     collapse: () => {
       const r = topLevelOnly() && list.rows[list.active];
       if (!r) return false;
@@ -3156,10 +3321,10 @@ const prefs = {
   set(k, v) { try { localStorage.setItem("csh-" + k, v ? "1" : "0"); } catch { /* private window */ } },
 };
 
-async function showSession(seq, id, eventId) {
+async function showSession(seq, id, eventId, where = "") {
   const view = h("section", { class: "session-view", "aria-label": "Session" });
   const keys = { scope: "session", actions: {}, palette: [] };
-  view.append(h("div", { class: "detail-head" }, h("div", { class: "crumbs" }, h("a", { class: "back", href: listHref() }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), "Sessions"))));
+  view.append(h("div", { class: "detail-head" }, h("div", { class: "crumbs" }, h("a", { class: "back", href: listHref() }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), list.mode === "events" ? "Events" : "Sessions"))));
   const loading = h("div", { class: "wrap" }, h("div", { class: "panel empty", "aria-busy": "true" }, h("p", { class: "meta", text: "Loading session…" })));
   view.append(loading);
   setView(view, true, keys);
@@ -3293,8 +3458,15 @@ async function showSession(seq, id, eventId) {
     for (const m of meta) { const t = turns[m.turn]; m.t0 = t.start; m.span = Math.max(1, t.end - t.start); }
     failIdx = [];
     for (let i = 0; i < meta.length; i++) if (meta[i].fail) failIdx.push(i);
+    markQuery();
     turnCount = turns.length;
     markOutline();
+  }
+  function markQuery() {
+    const idxOf = new Map(items.map((it, i) => [it, i]));
+    const seen = new Set();
+    for (const eid of queryIds) { const i = idxOf.get(byEvent.get(eid)); if (i !== undefined) seen.add(i); }
+    queryIdx = [...seen].sort((a, b) => a - b);
   }
   function markOutline() {
     const idxOf = new Map(items.map((it, i) => [it, i]));
@@ -3321,6 +3493,9 @@ async function showSession(seq, id, eventId) {
     for (const p of outline.phases) { const i = p.n > 1 ? at(p.eventId) : undefined; if (i !== undefined) meta[i].phase = p; }
   }
   let failIdx = [];
+  // Opened from the Events tab: the ids of this session's events that match its query (n and N).
+  let queryIds = [];
+  let queryIdx = [];
   let turnCount = 0;
   const openFolds = new Set();
   let foldsOff = !prefs.get("fold", true);
@@ -3393,9 +3568,10 @@ async function showSession(seq, id, eventId) {
   const onlyBox = h("input", { type: "checkbox", "aria-label": "Show only matching steps" });
   const failNav = h("div", { class: "fail-nav", role: "group", "aria-label": "Failures" });
   const derailNav = h("div", { class: "fail-nav derail-nav", role: "group", "aria-label": "Derails" });
+  const queryNav = h("div", { class: "fail-nav query-nav", role: "group", "aria-label": "Query matches", hidden: true });
   const wfBtn = h("button", { class: "btn btn-sm btn-ghost wf-btn", type: "button", "aria-pressed": String(tl.classList.contains("wf-on")), "aria-keyshortcuts": "w", title: "Timing bars (w)", onclick: () => toggleWf() }, "Timing");
   const foldBtn = h("button", { class: "btn btn-sm btn-ghost", type: "button", "aria-keyshortcuts": "z", title: "Fold quiet steps (z)", onclick: () => toggleFolds() });
-  const tools = h("div", { class: "tl-tools" }, head, failNav, derailNav, h("span", { class: "spacer" }),
+  const tools = h("div", { class: "tl-tools" }, head, failNav, derailNav, queryNav, h("span", { class: "spacer" }),
     h("div", { class: "find" }, findInput, findCount), h("label", { class: "find-only" }, onlyBox, h("span", null, "Only matches")), foldBtn, wfBtn);
   const timeline = h("div", { class: "timeline" }, tl, map, tailPill);
   const narrow = window.matchMedia("(max-width: 860px)");
@@ -3423,6 +3599,13 @@ async function showSession(seq, id, eventId) {
       h("span", { class: "lbl" }, (dpos >= 0 ? fmtNum(dpos + 1) + " / " : "") + plural(derailIdx.length, "derail")),
       h("button", { type: "button", "aria-label": "Previous derail", title: "Previous derail", onclick: () => jumpDerail(-1) }, "‹"),
       h("button", { type: "button", "aria-label": "Next derail", title: "Next derail", onclick: () => jumpDerail(1) }, "›"));
+    queryNav.hidden = queryIdx.length === 0;
+    const qpos = queryIdx.indexOf(activeItem);
+    queryNav.title = where;
+    queryNav.replaceChildren(
+      h("span", { class: "lbl" }, (qpos >= 0 ? fmtNum(qpos + 1) + " / " : "") + plural(queryIdx.length, "match", "matches")),
+      h("button", { type: "button", "aria-label": "Previous match", "aria-keyshortcuts": "N", title: "Previous match (N)", onclick: () => jumpQuery(-1) }, "‹"),
+      h("button", { type: "button", "aria-label": "Next match", "aria-keyshortcuts": "n", title: "Next match (n)", onclick: () => jumpQuery(1) }, "›"));
     failNav.hidden = failIdx.length === 0;
     const pos = failIdx.indexOf(activeItem);
     failNav.replaceChildren(
@@ -3559,7 +3742,7 @@ async function showSession(seq, id, eventId) {
     if (el) { el.setAttribute("aria-selected", "true"); tl.setAttribute("aria-activedescendant", el.id); }
     if (typeof x === "number") {
       renderPane(pane, items[x], session, ctx);
-      history.replaceState(null, "", sessionHref(session.id, items[x].id));
+      history.replaceState(null, "", sessionHref(session.id, items[x].id, where));
     } else foldPane(x);
     renderTools();
     // Single-column layout: the detail sits below the step list, so a tap
@@ -3606,6 +3789,15 @@ async function showSession(seq, id, eventId) {
     tl.focus({ preventScroll: true });
     const d = meta[next].derail[0];
     announce("Derail " + (derailIdx.indexOf(next) + 1) + " of " + derailIdx.length + ": " + d.flag + ", " + d.detail);
+  }
+  function jumpQuery(dir) {
+    if (!queryIdx.length) return false;
+    let next;
+    if (dir > 0) next = queryIdx.find((i) => i > activeItem) ?? queryIdx[0];
+    else next = [...queryIdx].reverse().find((i) => i < activeItem) ?? queryIdx[queryIdx.length - 1];
+    selectItem(next, true);
+    tl.focus({ preventScroll: true });
+    announce("Match " + (queryIdx.indexOf(next) + 1) + " of " + queryIdx.length + ": " + meta[next].v.label);
   }
   function jumpMatch(dir) {
     if (!matches.length) return;
@@ -3733,6 +3925,16 @@ async function showSession(seq, id, eventId) {
     }, 4000);
   }
 
+  // The query this session was opened from: its matching events here (the newest 200), for n and N.
+  if (where) {
+    api("/api/events" + qs({ where: addClause(where, "id:" + quoteValue(session.id)), limit: 200 }), null, true).then((b) => {
+      if (!current(seq)) return;
+      queryIds = (b.items || []).map((e) => e.id);
+      markQuery();
+      renderTools();
+    }, () => { /* the matches are a convenience; the session still shows */ });
+  }
+
   // ---- keys
   keys.actions = {
     down: () => { selectRow(activeRow + 1); tl.focus({ preventScroll: true }); },
@@ -3742,8 +3944,8 @@ async function showSession(seq, id, eventId) {
     "next-fail": () => jumpFail(1),
     "prev-fail": () => jumpFail(-1),
     find: () => { findInput.focus(); findInput.select(); },
-    "next-match": () => (findQ ? jumpMatch(1) : false),
-    "prev-match": () => (findQ ? jumpMatch(-1) : false),
+    "next-match": () => (findQ ? jumpMatch(1) : jumpQuery(1)),
+    "prev-match": () => (findQ ? jumpMatch(-1) : jumpQuery(-1)),
     "open-fold": () => { const x = rows[activeRow]; if (typeof x === "number") return false; ctx.openFold(x.key); selectRow(rowOf[x.from]); },
     folds: () => toggleFolds(),
     waterfall: () => toggleWf(),
@@ -3853,7 +4055,7 @@ function sessionHeader(s, labels, rel) {
   let factsList;
   return h("header", { class: "detail-head" },
     h("div", { class: "crumbs" },
-      h("a", { class: "back", href: listHref() }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), "Sessions"),
+      h("a", { class: "back", href: listHref() }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), list.mode === "events" ? "Events" : "Sessions"),
       h("span", { class: "sep", "aria-hidden": "true" }, "/"),
       s.parent ? [h("a", { class: "parent-link", href: sessionHref(s.parent.sessionId, s.parent.eventId), title: s.parent.sessionId },
         h("span", { "aria-hidden": "true" }, "↑"), "parent:",

@@ -531,6 +531,51 @@ describe("viewer UI: sessions list state", { skip: chrome ? false : "no Chrome/C
     );
   });
 
+  test("the Events tab lists matching events; Enter opens one in its session, where n steps through the query's matches", async () => {
+    await scenario(
+      async (ix) => {
+        await ix.upsertSession(session("S1", { title: "BUILD", startedAt: T0 }));
+        await ix.upsertSession(session("S2", { title: "OTHER", startedAt: T0 + 1000 }));
+        const call = (sid: string, n: number, id: string, ok: boolean, error?: string): AgentEvent[] => [
+          ev(sid, n, { kind: "tool.start", payload: { tool: "Bash", toolUseId: id, input: { command: "npm test" } } }),
+          ev(sid, n + 1, { kind: "tool.end", payload: { tool: "Bash", toolUseId: id, ok, ...(error ? { error } : {}) } }),
+        ];
+        await ix.putEvents([
+          ev("S1", 1, { payload: { text: "hello build" } }),
+          ...call("S1", 2, "t1", false, "first failure"), ...call("S1", 4, "t2", false, "second failure"), ...call("S2", 6, "t3", true),
+        ]);
+      },
+      async (page) => {
+        const rows = "[...document.querySelectorAll('.event-table .row')]";
+        const key = (k: string) => page.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, cancelable: true }))`);
+        const q = encodeURIComponent("tool:Bash ok:false");
+        await page.eval(`location.hash = '#/events?where=${q}'`);
+        await page.waitFor(`${rows}.length === 2`, "two failed Bash results");
+        assert.deepEqual(await page.eval(`${rows}.map((r) => r.querySelector('.ev-detail').textContent)`), ["Tool result · second failure", "Tool result · first failure"], "newest first, the error as the detail");
+        assert.match(await page.eval("document.querySelector('.view-tabs [aria-current=page]').textContent"), /^Events\s*2$/);
+        assert.equal(await page.eval(`${rows}[0].querySelector('.sess-cell').textContent.startsWith('BUILD')`), true);
+        // Enter on the second row opens its step, carrying the query.
+        await page.eval("document.querySelector('.event-table .list').focus()");
+        await key("j");
+        await page.eval("document.querySelector('.event-table .list').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))");
+        await page.waitFor(`location.hash === '#/s/S1/S1-e3?where=${q.replace(/%20/g, "+")}'`, "the event's step in its session");
+        const nav = "document.querySelector('.query-nav:not([hidden])')?.textContent";
+        await page.waitFor(`/^1 \\/ 2 matches/.test(${nav})`, "the query's matches in this session");
+        assert.equal(await page.eval("document.querySelector('.back').textContent"), "←Events");
+        await key("n");
+        await page.waitFor(`/^2 \\/ 2 matches/.test(${nav})`, "n moves to the next match");
+        await key("Escape");
+        await page.waitFor(`${rows}.length === 2 && location.hash === '#/events?where=${q.replace(/%20/g, "+")}'`, "back to the Events tab");
+        await key("s");
+        await page.waitFor(`location.hash === '#/?where=${q.replace(/%20/g, "+")}' && ${titles}.join() === 'BUILD'`, "s shows the matching sessions");
+        // Text: the prompt that matches has its words marked.
+        await page.eval(`location.hash = '#/events?where=hello'`);
+        await page.waitFor(`${rows}.length === 1`, "one matching prompt");
+        assert.equal(await page.eval(`${rows}[0].querySelector('.row-title mark').textContent`), "hello");
+      },
+    );
+  });
+
   test("the query bar completes keys and values, and Tab accepts", async () => {
     await scenario(
       async (ix) => {

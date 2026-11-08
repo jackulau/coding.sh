@@ -633,6 +633,8 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       if (cursor !== undefined && cursor.length > 80) throw new HttpError(400, "cursor is malformed");
       const project = projectParam(ctx, q);
       const filter: SessionFilter = project !== undefined ? { project } : {};
+      // scope=top leaves out subagent sessions' events, as the list leaves out their rows.
+      if (scopeParam(q) === "top") filter.parentSessionId = null;
       // A time range picks the sessions (by start), as on the list.
       const { since, until } = facetParams(q);
       if (since !== undefined) filter.since = since;

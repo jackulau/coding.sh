@@ -183,6 +183,13 @@ and each group folds shut. On a phone the sidebar is a sheet behind the Filters 
 lives in the URL (`#/?where=…`), so a filtered list can be linked and survives a reload; `/`
 focuses the bar.
 
+The Events tab (`#/events?where=…`, or `e` from the list and `s` back) runs the same query as
+event rows, newest first: event keys such as `tool:Bash ok:false` test each event, session keys
+test its session, and text marks the words it matched. Subagents' events show when the sidebar
+includes subagents. Enter opens the event's step in its session, where `n` and `N` move through
+the other events in that session that match the query. Event rows need the SQLite store; on a
+store plugin the tab says so.
+
 The session page shows the first 5,000 events right away and loads the rest in the background.
 The timeline only draws the rows on screen, so a 40,000-event session scrolls smoothly. Each
 derail gets a ⚑ badge on the step where it started and a mark on the scroll map; the ‹ › buttons
