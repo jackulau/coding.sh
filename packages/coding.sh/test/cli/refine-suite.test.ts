@@ -2,11 +2,14 @@
 // suite of repo tasks, end to end through src/cli/main.ts with a temp HOME.
 //
 // The agent is the "wrapper" agent from a harness bundle: a node script that
-// reads the CLAUDE.md it was given, sleeps 1 ms per 4 bytes of it (a bloated
-// file is slow), and writes done.txt only when the file still has the
-// ESSENTIAL line. Each task's verifier passes when done.txt exists. The wrapper
-// reports no usage, so these tests climb on wall time and harness size; cost
-// and tokens from a real agent are covered by scripts/e2e/refine-suite-capture.mjs.
+// reads the CLAUDE.md it was given, starts one bare node process per 200 bytes
+// of it (a bloated file is slow), and writes done.txt only when the file still
+// has the ESSENTIAL line. Process starts rather than a sleep: the rest of each
+// run is made of them too (the agent, the verifier, git), so a busy machine
+// stretches the gap between the arms along with the noise around it. Each
+// task's verifier passes when done.txt exists. The wrapper reports no usage,
+// so these tests climb on wall time and harness size; cost and tokens from a
+// real agent are covered by scripts/e2e/refine-suite-capture.mjs.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -67,9 +70,10 @@ before(() => {
   if (!gitBin) return;
   writeFileSync(
     join(root, "agent.mjs"),
-    `import { existsSync, readFileSync, writeFileSync } from "node:fs";
+    `import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 const md = existsSync("CLAUDE.md") ? readFileSync("CLAUDE.md", "utf8") : "";
-await new Promise((r) => setTimeout(r, Math.round(Buffer.byteLength(md) / 4)));
+for (let i = 0; i < Math.floor(Buffer.byteLength(md) / 200); i++) spawnSync(process.execPath, ["-e", ""]);
 if (md.includes("ESSENTIAL:")) writeFileSync("done.txt", "ok\\n");
 console.log(JSON.stringify({ type: "result", result: "Done." }));
 `,
