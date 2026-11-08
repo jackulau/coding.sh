@@ -14,6 +14,7 @@ has the terms, and [troubleshooting.md](troubleshooting.md) helps when something
 | [guides/install.md](guides/install.md) | installer, npm, from source, what `init` changes, updates, uninstall |
 | [guides/agents.md](guides/agents.md) | supported agents with status, history import, the OpenTelemetry receiver |
 | [guides/explore.md](guides/explore.md) | the CLI, the viewer and the MCP server |
+| [guides/improve.md](guides/improve.md) | improve your agent every week: what to fix first, the line that fixes it, whether it helped |
 | [guides/evals.md](guides/evals.md) | session to eval, datasets, experiments, judges, harness A/B |
 | [guides/benchmarks.md](guides/benchmarks.md) | daily benchmarks on fresh cases: sources, fairness, budget, report, schedule |
 | [guides/privacy.md](guides/privacy.md) | what is stored where, sinks, redaction and privacy |
