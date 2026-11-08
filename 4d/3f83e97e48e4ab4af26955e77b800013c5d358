@@ -1,0 +1,24 @@
+scripts/e2e/eval-init-capture.mjs
+  s_8e040dbdf13565::t_ae992bde3014c0 282-284
+  s_8e040dbdf13565::t_cb439d6d487a3f 1-235,240-280,285-315
+  s_8e040dbdf13565::t_1cd110604adb79 236-239
+  s_8e040dbdf13565::t_0c6c3a19027c1e 281
+.github/workflows/ci.yml
+  s_8e040dbdf13565::t_af4095df6e2958 309-315
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4d3f83e97e48e4ab4af26955e77b800013c5d358",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
