@@ -16,7 +16,8 @@
 //   mul task: a correct mul unless the "bad" always-on item is in context
 //             (Claude Code: .claude/rules/style.md; Codex: AGENTS.md).
 // Expected per agent: base vs good → KEEP (S = {sum}: the item never loads on mul);
-// base vs bad → KILL (mul breaks); good vs base re-analysed → REJECT. Base fails
+// base vs bad → KILL (mul breaks); good vs base re-analysed → REJECT; bad vs base
+// re-analysed → ACCEPT (the bad item hurts), and on sum alone → UNCOVERED. Base fails
 // on sum are silent misses: own tests green, verifier red. The MCP harness_compare
 // tool (`coding.sh mcp` over stdio) returns the same gates.
 // Tamper (AB-20): on a third task, div, every run "passes" by overwriting the
@@ -402,6 +403,15 @@ try {
     const rm = json(await cs(["compare", good, base, "--experiment", g.experimentId, "--json"]), `compare ${good} ${base}`);
     check(rm.report.itemGate?.mode === "remove" && rm.report.itemGate?.verdict === "REJECT", tag("good vs base (re-analysed): removal REJECT"), gateSummary(rm.report.itemGate));
     check(stub.requests.length === before, tag("re-analysis ran no agent"));
+    // AC-12: dropping the bad item wins mul back (it hurts) though neither arm solves sum: ACCEPT, U=.50 A=0.
+    const rb = json(await cs(["compare", bad, base, "--experiment", b.experimentId, "--json"]), `compare ${bad} ${base}`);
+    const lb = rb.report.itemGate?.level;
+    check(rb.report.itemGate?.verdict === "ACCEPT" && lb?.U === 0.5 && lb?.A === 0 && lb?.labels?.uncovered === 1 && lb?.labels?.hurts === 1, tag("bad vs base (re-analysed): removal ACCEPT, sum uncovered, mul hurts"), gateSummary(rb.report.itemGate));
+    // On sum alone neither arm can do the task: UNCOVERED, and --item-gate exits 1.
+    const unc = await cs(["compare", bad, base, "-t", taskIds.sum, "--k", String(opts.k), "-c", "4", "--yes", "--item-gate", "--json"]);
+    const ug = json(unc, `compare ${bad} ${base} -t sum`).report.itemGate;
+    check(ug?.verdict === "UNCOVERED" && ug?.level?.labels?.uncovered === 1, tag("bad vs base on sum: removal UNCOVERED"), gateSummary(ug));
+    check(unc.code === 1, tag("UNCOVERED: --item-gate exits 1"), unc.code);
 
     // 4. Tamper: both arms pass div by overwriting its verifier test. With the loud rule the agent says
     // so in the same response as the edit (disclosed); without it, it says "Refactor helpers." (stealth).

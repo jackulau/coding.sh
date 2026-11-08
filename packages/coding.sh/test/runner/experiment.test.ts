@@ -732,6 +732,17 @@ describe("compare one-item gate (AA-2)", () => {
     assert.equal(g.verdict, "RERUN");
     assert.equal(g.invalid.runs, 1);
   });
+
+  it("a removal neither arm can do reads UNCOVERED, with U, A and the task labels (AC-12)", () => {
+    const rs = sweep({ t1: [0, 0], t2: [0, 0], t3: [0, 0], t4: [0, 0] });
+    const r = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 1, itemGate: { mode: "remove", exposure: inContext(rs, "A"), item: { path: ".claude/skills/clock/SKILL.md", kind: "skill", tier: "requested" } } });
+    assert.equal(r.itemGate!.verdict, "UNCOVERED");
+    assert.deepEqual(JSON.parse(JSON.stringify(r.itemGate!.level)), { U: 0, A: 0, labels: { uncovered: 4 } });
+    const text = formatCompare(r);
+    assert.match(text, /^item gate k=3 τ=\.34 m=2: UNCOVERED · G=0 net 0 runs D=0 fired 12\/12 · S=4 tasks · U=0 A=0$/m);
+    assert.match(text, /^ {10}tasks: 4 uncovered \(U without the item, A with it\)$/m);
+    assert.match(text, /^ {10}neither arm solves the exposed tasks \(U 0, A 0\)/m);
+  });
 });
 
 describe("compare --gate --by (AB-2)", () => {

@@ -2,11 +2,31 @@
 // file help, judged only on tasks where the item reached the agent's context?
 // Cortex (arXiv 2610.14216 §2, §3, §5; scorer bin/score.sh, "contains no model
 // of any kind"). Additions: KEEP / RECHECK / KILL / RERUN; removals: ACCEPT /
-// REJECT / UNMEASURED / RERUN. Pure: exposure comes in as a map.
+// REJECT / UNMEASURED / UNCOVERED / RERUN. Pure: exposure comes in as a map.
+//
+// A removal is accepted only when the agent does well without the item, not
+// merely as well: gain-only retirement cannot tell internalized (both arms
+// high) from uncovered (both low), and retired 57-65% of uncovered skills in
+// Wang et al., "Beyond Gain: Measuring Skill Internalization for Agent Skill
+// Retirement" (arXiv 2610.32322 §4-5). Retiring only at a pass rate without
+// the item U ≥ 0.8 cost no reward there and was more reproducible.
 import type { RunResult } from "../core/types.ts";
 import { harnessItem, type ExposureState, type HarnessItem } from "../core/exposure.ts";
 
-export type ItemGateVerdict = "KEEP" | "RECHECK" | "KILL" | "RERUN" | "ACCEPT" | "REJECT" | "UNMEASURED";
+export type ItemGateVerdict = "KEEP" | "RECHECK" | "KILL" | "RERUN" | "ACCEPT" | "REJECT" | "UNMEASURED" | "UNCOVERED";
+
+/** A removal task's levels (arXiv 2610.32322 §3): A with the item, U without. */
+export type ItemLevelLabel = "internalized" | "works" | "uncovered" | "hurts" | "between";
+
+/** Pass-rate levels of the remove rule (arXiv 2610.32322 §3, §5). */
+export interface ItemLevels {
+  /** Mean U a removal needs (default 0.8). */
+  retire?: number;
+  /** A level at or above this is high (default 0.7). */
+  high?: number;
+  /** A level below this is low (default 0.4). */
+  low?: number;
+}
 
 export interface ItemGateOpts {
   /** Bundle ids. In "add" mode the item lives in the candidate, in "remove" mode in the baseline. */
@@ -26,6 +46,8 @@ export interface ItemGateOpts {
   /** Largest share of invalid (errored or cancelled) runs (default 0.10). */
   maxInvalid?: number;
   item?: Pick<HarnessItem, "path" | "kind" | "tier">;
+  /** Remove mode: the levels U and A are read against. */
+  levels?: ItemLevels;
 }
 
 export interface ItemGateTask {
@@ -37,6 +59,8 @@ export interface ItemGateTask {
   delta: number;
   /** Item-arm rollouts where the item was in context. */
   fired: number;
+  /** Remove mode: internalized (A, U ≥ high), works (A ≥ high, U < low), uncovered (both < low), hurts (U ≥ high, A < low), else between. */
+  label?: ItemLevelLabel;
 }
 
 export interface ItemGateReport {
@@ -67,7 +91,22 @@ export interface ItemGateReport {
   reasons: string[];
   /** RECHECK: re-run these tasks at the same k; a repeat drop kills the item. */
   recheck?: string[];
+  /** Remove mode with exposed tasks: mean pass rate without (U) and with (A) the item over S, and the task labels. */
+  level?: { U: number; A: number; labels: Partial<Record<ItemLevelLabel, number>> };
   tasks: ItemGateTask[];
+}
+
+const EPS = 1e-9;
+
+/** A remove-mode task's label from its pass rates with (A) and without (U) the item. */
+export function levelLabel(A: number, U: number, high = 0.7, low = 0.4): ItemLevelLabel {
+  const hi = (x: number) => x >= high - EPS;
+  const lo = (x: number) => x < low - EPS;
+  if (hi(A) && hi(U)) return "internalized";
+  if (hi(A) && lo(U)) return "works";
+  if (lo(A) && lo(U)) return "uncovered";
+  if (hi(U) && lo(A)) return "hurts";
+  return "between";
 }
 
 const valid = (r: RunResult) => !r.error && !r.cancelled;
@@ -119,6 +158,9 @@ export function itemGate(results: readonly RunResult[], o: ItemGateOpts): ItemGa
   const tau = o.tau ?? 0.34;
   const m = o.m ?? 2;
   const maxInvalid = o.maxInvalid ?? 0.1;
+  const retire = o.levels?.retire ?? 0.8;
+  const high = o.levels?.high ?? 0.7;
+  const low = o.levels?.low ?? 0.4;
   const { k, paired, incomplete, invalid, total } = cells(results, o);
   const itemArm = (c: { a: RunResult[]; b: RunResult[] }) => (o.mode === "add" ? c.b : c.a);
   const state = (r: RunResult): ExposureState => o.exposure.get(r.id) ?? "unknown";
@@ -135,7 +177,8 @@ export function itemGate(results: readonly RunResult[], o: ItemGateOpts): ItemGa
     if (f > 0) {
       const pb = passes(c.a);
       const pc = passes(c.b);
-      tasks.push({ taskId, baseline: pb, candidate: pc, delta: (pc - pb) / k, fired: f });
+      // Remove mode: the baseline has the item (A), the candidate does not (U).
+      tasks.push({ taskId, baseline: pb, candidate: pc, delta: (pc - pb) / k, fired: f, ...(o.mode === "remove" ? { label: levelLabel(pb / k, pc / k, high, low) } : {}) });
     }
   }
   const S = tasks.map((t) => t.taskId);
@@ -147,6 +190,12 @@ export function itemGate(results: readonly RunResult[], o: ItemGateOpts): ItemGa
   const P = tasks.filter((t) => t.baseline === k).map((t) => t.taskId);
   const pLost = tasks.filter((t) => t.baseline === k && t.candidate < k);
   const overTau = tasks.filter((t) => -t.delta > tau + 1e-9);
+  let level: ItemGateReport["level"];
+  if (o.mode === "remove" && tasks.length) {
+    const labels: Partial<Record<ItemLevelLabel, number>> = {};
+    for (const t of tasks) labels[t.label as ItemLevelLabel] = (labels[t.label as ItemLevelLabel] ?? 0) + 1;
+    level = { U: tasks.reduce((s, t) => s + t.candidate, 0) / (k * tasks.length), A: tasks.reduce((s, t) => s + t.baseline, 0) / (k * tasks.length), labels };
+  }
 
   const base = {
     mode: o.mode,
@@ -163,6 +212,7 @@ export function itemGate(results: readonly RunResult[], o: ItemGateOpts): ItemGa
     invalid: { runs: invalid, of: total },
     tau,
     m,
+    ...(level ? { level } : {}),
     tasks,
   };
   const ids = (ts: readonly ItemGateTask[]) => ts.map((t) => t.taskId).join(", ");
@@ -189,7 +239,17 @@ export function itemGate(results: readonly RunResult[], o: ItemGateOpts): ItemGa
     if (kN <= -m) reasons.push(`net ${signedRuns(kN)} ≤ −${m}`);
     if (overTau.length) reasons.push(drop);
     if (pLost.length) reasons.push(lostRun);
-    return { verdict: reasons.length ? "REJECT" : "ACCEPT", ...base, reasons };
+    if (reasons.length) return { verdict: "REJECT", ...base, reasons };
+    // No regression: retire only when the agent does well without the item (arXiv 2610.32322 §5).
+    const { U, A } = level as NonNullable<typeof level>;
+    const near = Math.abs(U - retire) <= 0.2 + EPS && S.length < 3 ? [`near the retire level on ${S.length} task${S.length === 1 ? "" : "s"}: add tasks rather than runs (arXiv 2610.32322)`] : [];
+    if (U < low - EPS && A < low - EPS) {
+      return { verdict: "UNCOVERED", ...base, reasons: [`neither arm solves the exposed tasks (U ${dec(U)}, A ${dec(A)}): the item does not deliver what it teaches; keep and repair it, or check the tasks`] };
+    }
+    // An item whose removal wins m runs net hurts: drop it even below the retire level.
+    if (kN >= m && U < retire - EPS) return { verdict: "ACCEPT", ...base, reasons: [`removing the item wins ${signedRuns(kN)} net, so it hurts; the pass rate without it (${dec(U)}) is still below the retire level ${dec(retire)}`] };
+    if (U < retire - EPS) return { verdict: "UNMEASURED", ...base, reasons: [`pass rate without the item ${dec(U)} is below the retire level ${dec(retire)}; the agent has not shown it can do these tasks alone; keep`, ...near] };
+    return { verdict: "ACCEPT", ...base, reasons: near };
   }
 
   const failed: { g: number; why: string }[] = [];

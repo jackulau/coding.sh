@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { RunResult } from "../../src/core/types.ts";
 import type { ExposureState } from "../../src/core/exposure.ts";
-import { itemGate, resolveRecheck, singleItemChange, type ItemGateOpts } from "../../src/runner/gate-item.ts";
+import { itemGate, levelLabel, resolveRecheck, singleItemChange, type ItemGateOpts } from "../../src/runner/gate-item.ts";
 
 function run(taskId: string, bundleId: string, attempt: number, pass: boolean, extra: Partial<RunResult> = {}): RunResult {
   return {
@@ -188,12 +188,21 @@ describe("itemGate: removals", () => {
     assert.deepEqual(g.reasons, ["net −2 runs ≤ −2"]);
   });
 
-  it("removal net 0, D = .33, no solved task loses a run → ACCEPT", () => {
-    const g = remove(sweep({ t1: [2, 1], t2: [1, 2] }));
+  it("removal net 0, D = .33, no solved task loses a run, U ≥ .8 → ACCEPT", () => {
+    const g = remove(sweep({ t1: [2, 1], t2: [2, 3], t3: [3, 3], t4: [3, 3], t5: [3, 3] }));
     assert.equal(g.verdict, "ACCEPT");
     assert.equal(g.kN, 0);
     assert.ok(Math.abs(g.D - 1 / 3) < 1e-9);
     assert.deepEqual(g.reasons, []);
+    assert.ok(Math.abs(g.level!.U - 13 / 15) < 1e-9);
+    assert.deepEqual(g.level!.labels, { between: 2, internalized: 3 });
+  });
+
+  it("the same gain-neutral removal with a low U → UNMEASURED, not ACCEPT (AC-12)", () => {
+    const g = remove(sweep({ t1: [2, 1], t2: [1, 2] }));
+    assert.equal(g.verdict, "UNMEASURED");
+    assert.deepEqual(g.level, { U: 0.5, A: 0.5, labels: { between: 2 } });
+    assert.match(g.reasons[0] as string, /^pass rate without the item \.50 is below the retire level \.80; .*; keep$/);
   });
 
   it("removal that costs a task solved every run one run → REJECT; a big drop → REJECT", () => {
@@ -226,5 +235,74 @@ describe("singleItemChange", () => {
     assert.equal(singleItemChange({ added: [".mcp.json"], removed: [] }, false), undefined);
     assert.equal(singleItemChange({ added: [".claude/rules/a.md"], removed: ["CLAUDE.md"] }, false), undefined);
     assert.equal(singleItemChange({ added: [], removed: [] }, false), undefined);
+  });
+});
+
+// Wang et al., arXiv 2610.32322: retire on a high pass rate without the item, not on gain alone.
+describe("itemGate: removal levels (AC-12)", () => {
+  const four = (pb: number, pc: number) => sweep({ t1: [pb, pc], t2: [pb, pc], t3: [pb, pc], t4: [pb, pc] });
+
+  it("4 × 0/3 → 0/3 → UNCOVERED, every task uncovered", () => {
+    const g = remove(four(0, 0));
+    assert.equal(g.verdict, "UNCOVERED");
+    assert.deepEqual(g.level, { U: 0, A: 0, labels: { uncovered: 4 } });
+    assert.deepEqual(g.reasons, ["neither arm solves the exposed tasks (U 0, A 0): the item does not deliver what it teaches; keep and repair it, or check the tasks"]);
+  });
+
+  it("4 × 3/3 → 3/3 → ACCEPT, every task internalized", () => {
+    const g = remove(four(3, 3));
+    assert.equal(g.verdict, "ACCEPT");
+    assert.deepEqual(g.level, { U: 1, A: 1, labels: { internalized: 4 } });
+    assert.deepEqual(g.reasons, []);
+  });
+
+  it("4 × 2/3 → 2/3 → UNMEASURED with the retire reason", () => {
+    const g = remove(four(2, 2));
+    assert.equal(g.verdict, "UNMEASURED");
+    assert.equal(g.reasons.length, 1);
+    assert.match(g.reasons[0] as string, /^pass rate without the item \.67 is below the retire level \.80/);
+  });
+
+  it("one task 3/3 → 2/3 is still REJECT", () => {
+    assert.equal(remove(sweep({ t1: [3, 2] })).verdict, "REJECT");
+  });
+
+  it("one task 2/3 → 3/3 → ACCEPT, with the add-tasks note", () => {
+    const g = remove(sweep({ t1: [2, 3] }));
+    assert.equal(g.verdict, "ACCEPT");
+    assert.deepEqual(g.reasons, ["near the retire level on 1 task: add tasks rather than runs (arXiv 2610.32322)"]);
+  });
+
+  it("never fired and incomplete sweeps are unchanged; add mode carries no levels", () => {
+    const rs = four(0, 0);
+    assert.equal(remove(rs, { exposure: exposure(rs, "A", "not") }).verdict, "UNMEASURED");
+    assert.equal(remove(rs, { exposure: exposure(rs, "A", "not") }).level, undefined);
+    assert.equal(remove(rs.filter((r) => !(r.taskId === "t1" && r.attempt === 3))).verdict, "RERUN");
+    const a = add(sweep({ t1: [0, 3], t2: [1, 3] }));
+    assert.equal(a.level, undefined);
+    assert.ok(a.tasks.every((t) => t.label === undefined));
+  });
+
+  it("a removal that wins m runs net is ACCEPT below the retire level (the item hurts); both low stays UNCOVERED", () => {
+    const g = remove(sweep({ sum: [0, 0], mul: [0, 3] }));
+    assert.equal(g.verdict, "ACCEPT");
+    assert.deepEqual(g.level!.labels, { uncovered: 1, hurts: 1 });
+    assert.deepEqual(g.reasons, ["removing the item wins +3 runs net, so it hurts; the pass rate without it (.50) is still below the retire level .80"]);
+    assert.equal(remove(four(0, 1)).verdict, "UNCOVERED");
+  });
+
+  it("custom levels move the retire line", () => {
+    assert.equal(remove(four(2, 2), { levels: { retire: 0.6 } }).verdict, "ACCEPT");
+  });
+
+  it("labels at the .7 and .4 boundaries", () => {
+    assert.equal(levelLabel(0.7, 0.7), "internalized");
+    assert.equal(levelLabel(0.7 - 1e-12, 0.7), "internalized"); // within 1e-9
+    assert.equal(levelLabel(0.69, 0.7), "between");
+    assert.equal(levelLabel(0.7, 0.39), "works");
+    assert.equal(levelLabel(0.7, 0.4), "between");
+    assert.equal(levelLabel(0.39, 0.39), "uncovered");
+    assert.equal(levelLabel(0.39, 0.7), "hurts");
+    assert.equal(levelLabel(0.4, 0.4), "between");
   });
 });

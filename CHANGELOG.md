@@ -77,6 +77,7 @@ coding.sh runs on Windows, and CI tests it there.
 ### Changed
 
 - **SDK.** The TypeScript SDK is published as `@codingdotsh/sdk` (npm org names can't contain a dot). Install it with `npm i @codingdotsh/sdk`. See [the SDK reference](docs/reference/sdk.md).
+- **Experiments.** The item gate no longer accepts removing a skill or rule when the agent fails the exposed tasks without it; such items read UNCOVERED (neither arm solves them) or UNMEASURED (pass rate without the item under 0.8). The gate line shows `U=` and `A=` and a count of internalized, works, uncovered, hurts and between tasks (Wang et al., arXiv 2610.32322). [Evals guide](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#harness-ab).
 
 ### Fixed
 

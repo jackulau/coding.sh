@@ -142,8 +142,11 @@ item gate k=3 τ=.34 m=2: UNMEASURED · G=0 net 0 runs D=0 fired 0/18 · S=0 tas
           never fired in base rollouts; keep
 ```
 
-A removal reads ACCEPT, REJECT (it costs 2+ runs, or breaks a task by more than one run in three) or
-UNMEASURED (the item never fired, so these tasks can't judge it). Comparing a bundle with one added
+A removal reads ACCEPT, REJECT (it costs 2+ runs, or breaks a task by more than one run in three),
+UNMEASURED (the item never fired, or the agent passes less than 80% of the exposed tasks without it)
+or UNCOVERED (neither arm solves the exposed tasks: repair the item or check the tasks). ACCEPT needs
+a pass rate of at least 80% without the item, or a removal that wins 2+ runs, shown as `U=` on the first line next to `A=`, the rate
+with it. Comparing a bundle with one added
 item gives KEEP, KILL or RECHECK, which prints the command to re-run the tasks that dropped. RERUN
 means the runs can't be scored, for example a run without a captured trace. Use `--k 3`, and add
 `--item-gate` to make the verdict set the exit code.

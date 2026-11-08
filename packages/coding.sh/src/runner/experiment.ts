@@ -1121,7 +1121,6 @@ const pct = (x: number) => (Number.isFinite(x) ? `${(x * 100).toFixed(1)}%` : "�
 const ITEM_PASS = new Set(["KEEP", "ACCEPT"]);
 const ITEM_FAIL = new Set(["KILL", "REJECT"]);
 
-/** `item gate k=3 τ=.34 m=2: KEEP · G=1.67 net +4 runs D=.33 fired 11/36 · S=9 tasks`, then reasons. */
 /** The item gate's first line: `item gate k=3 τ=.34 m=2: KEEP · G=1.00 net +3 runs D=0 fired 3/6 · S=1 task`. */
 export function itemGateLine(g: ItemGateReport): string {
   const id = (s: string) => s;
@@ -1131,9 +1130,14 @@ export function itemGateLine(g: ItemGateReport): string {
 function itemGateLines(g: ItemGateReport, arms: string, p: Record<"good" | "bad" | "bold" | "dim", (s: string) => string>): string[] {
   const v = ITEM_PASS.has(g.verdict) ? p.good(g.verdict) : ITEM_FAIL.has(g.verdict) ? p.bad(g.verdict) : p.bold(g.verdict);
   const net = `net ${g.kN > 0 ? "+" : g.kN < 0 ? "−" : ""}${Math.abs(g.kN)} run${Math.abs(g.kN) === 1 ? "" : "s"}`;
-  const out = [`item gate k=${g.k} τ=${dec(g.tau)} m=${g.m}: ${v} · G=${dec(g.G)} ${net} D=${dec(g.D)} fired ${g.f.fired}/${g.f.rollouts} · S=${g.S.length} task${g.S.length === 1 ? "" : "s"}`];
+  const lv = g.level ? ` · U=${dec(g.level.U)} A=${dec(g.level.A)}` : "";
+  const out = [`item gate k=${g.k} τ=${dec(g.tau)} m=${g.m}: ${v} · G=${dec(g.G)} ${net} D=${dec(g.D)} fired ${g.f.fired}/${g.f.rollouts} · S=${g.S.length} task${g.S.length === 1 ? "" : "s"}${lv}`];
   const ind = "          ";
   if (g.item) out.push(p.dim(`${ind}${g.mode === "add" ? "B adds" : "B removes"} ${g.item.kind} ${g.item.path}${g.item.tier === "path" ? " (path-scoped)" : g.item.tier === "requested" ? " (on request)" : ""}`));
+  if (g.level) {
+    const order = ["internalized", "works", "between", "hurts", "uncovered"] as const;
+    out.push(p.dim(`${ind}tasks: ${order.filter((l) => g.level!.labels[l]).map((l) => `${g.level!.labels[l]} ${l}`).join(", ")} (U without the item, A with it)`));
+  }
   for (const r of g.reasons) out.push(`${ind}${r}`);
   if (g.recheck?.length) out.push(`${ind}recheck: coding.sh compare ${arms} ${g.recheck.map((t) => `--task ${t}`).join(" ")} --k ${g.k}`);
   return out;

@@ -750,10 +750,20 @@ the solved-task rule fails it is RECHECK with the command to re-run those tasks;
 it. Otherwise KILL with the failed gates. A removal is REJECT when it costs 2 runs net, drops a task
 by more than τ, or a task the item's arm solved every time loses a run; UNMEASURED ("keep") when the
 item never fired in the base runs, since a rare-situation rule looks like dead weight until its
-situation comes up; else ACCEPT. RERUN means the runs can't be scored: a task without k valid runs
+situation comes up. A removal that costs nothing is not yet ACCEPT: the gate also needs the agent to
+do well without the item. Over the exposed tasks, U is the pass rate without the item and A the
+pass rate with it, and the first line ends ` · U=.92 A=.92`. When both are below 0.4 the verdict is
+UNCOVERED: neither arm solves the tasks, so the item does not deliver what it teaches; keep it and
+repair it, or check the tasks. When U is below 0.8 the verdict is UNMEASURED ("keep"), unless the
+removal wins 2 runs net: then the item hurts and the verdict is ACCEPT. Otherwise only U ≥ 0.8 gives
+ACCEPT. A second line counts the tasks by label: internalized (U and A at least 0.7), works
+(A at least 0.7, U below 0.4), hurts (the reverse), uncovered (both below 0.4) and between. With
+fewer than 3 exposed tasks and U within 0.2 of 0.8, a note says to add tasks rather than runs. A
+gain-only rule retired 57-65% of skills the agent could not do with or without them (Wang et al.,
+"Beyond Gain", arXiv 2610.32322). RERUN means the runs can't be scored: a task without k valid runs
 per arm, more than 10% errored or cancelled runs, a run with no trace to read exposure from, two
 agent versions, or no exposed task. `--item-gate` makes it decide the exit code (0 on KEEP or
-ACCEPT), `--no-item-gate` hides it, and `--json` carries `report.itemGate`. This is Cortex's scorer
+ACCEPT, 1 on UNCOVERED and the rest), `--no-item-gate` hides it, and `--json` carries `report.itemGate`. This is Cortex's scorer
 (arXiv 2610.14216).
 
 With `--k 2` or more, compare sorts each arm's failed runs three ways. A bad run failed on a task the
