@@ -1,0 +1,60 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_31ddaf5e760b00 80
+packages/coding.sh/src/core/shell-diff.ts
+  s_8e040dbdf13565::t_82329561a9afbe 154-190
+  s_8e040dbdf13565::t_3b8c48f44ad78b 1-124,127-153
+  s_8e040dbdf13565::t_379a32624875e3 125-126
+docs/ADAPTERS.md
+  s_8e040dbdf13565::t_5db71dda51ea5c 104
+packages/coding.sh/src/core/intent.ts
+  s_8e040dbdf13565::t_dfae20ff249040 305,312
+  s_8e040dbdf13565::t_d20466818ff108 531
+  s_8e040dbdf13565::t_2d3e6d17f8052e 191-197,208,211-224,228-233,281,338,341,444-445,524,526
+  s_8e040dbdf13565::t_5f4e02b0cf1ec7 75-76
+  s_8e040dbdf13565::t_b2e334a5d47486 77-82,283,333,349-353,367-369,382,458-461,481-484,490,501,509,519-523,539-542
+  s_8e040dbdf13565::t_e0997e9fca571f 284,309,335
+  s_8e040dbdf13565::t_6e4c27b2fb8e97 358
+  s_8e040dbdf13565::t_4609927bfe1127 381
+  s_8e040dbdf13565::t_65168257f8a0f0 496-497,504
+  s_8e040dbdf13565::t_7dd253a729ee6e 326,329-332,334,337,339
+  s_8e040dbdf13565::t_435afb35646c77 22
+  s_8e040dbdf13565::t_0b49c082ec23cf 279-280
+  s_8e040dbdf13565::t_4532fb051382e5 455,457
+  s_8e040dbdf13565::t_4fc3127f5fd293 442-443,446-447
+  s_8e040dbdf13565::t_271a8968b6f38a 260-261
+  s_8e040dbdf13565::t_1da847532c6ec8 122-132,134-137,139,147-152,154-170,172-173,176-178,180-183,185-190,198-206,234-241,248,250
+  s_8e040dbdf13565::t_adc9ee70c9bce8 143-145
+  s_8e040dbdf13565::t_995c146a58fd69 544
+  s_8e040dbdf13565::t_6a6a3fc8ed5e27 242-247,249
+  s_8e040dbdf13565::t_3b8c48f44ad78b 10
+  s_8e040dbdf13565::t_fb11f4dffaee8b 516,518,525
+  s_8e040dbdf13565::t_cc2af5b855d44a 471-473
+  s_8e040dbdf13565::t_487f270c851918 8
+  s_8e040dbdf13565::t_cd7d0512d632e4 9,142
+packages/coding.sh/test/core/intent.test.ts
+  s_8e040dbdf13565::t_02b4fc3a3a484f 17
+  s_8e040dbdf13565::t_38584bfccea967 144-145
+  s_8e040dbdf13565::t_51ebc567c1ffd5 239-292,322-323
+  s_8e040dbdf13565::t_4d05d4e5b71285 293,306-318,320-321
+  s_8e040dbdf13565::t_69e5fb852749ce 294-296,298-299,302-305
+  s_8e040dbdf13565::t_f66da80792458c 297,300-301
+  s_8e040dbdf13565::t_476059ea753c8c 319
+docs/concepts.md
+  s_8e040dbdf13565::t_c4e006ab9a309c 47-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "e917f7a92403d310c7c7b8b96ee0cc2d46bc406e",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}

@@ -1,0 +1,31 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_dc02adbedb5c62 82
+docs/how-to/expensive-sessions.md
+  s_8e040dbdf13565::t_1d663492aad686 16-19
+packages/coding.sh/src/mcp/tools.ts
+  s_8e040dbdf13565::t_cc43a3b65b02ef 389
+packages/coding.sh/test/adapters/t3code.test.ts
+  s_8e040dbdf13565::t_1fc688834206b6 325-326,329-330,333-334
+  s_8e040dbdf13565::t_6e88ab24497c49 335
+packages/coding.sh/src/cli/commands/usage.ts
+  s_8e040dbdf13565::t_56dade0f741bb3 73
+packages/coding.sh/src/mcp/data.ts
+  s_8e040dbdf13565::t_74b30f58c02e95 565,633-636,648
+  s_8e040dbdf13565::t_e389a93ea7b65b 596
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "69f1dbcb1fe5626cd49c6319fb319f5c6a8b1089",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
