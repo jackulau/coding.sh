@@ -518,6 +518,14 @@ function filterSql(f: Omit<SessionFilter, "limit" | "offset">, p: string): { whe
 
 // ---------------------------------------------------------------- store
 
+const BUSY_TIMEOUT_MS = 5000;
+/** A reset WAL is truncated to this many bytes (PRAGMA journal_size_limit). */
+export const WAL_SIZE_LIMIT = 64 * 1024 * 1024;
+/** How long a checkpoint after a bulk write waits for readers. */
+const CHECKPOINT_WAIT_MS = 2000;
+/** close() barely waits: it runs at the end of every command, and a later close or bulk write finishes what it can't. */
+const CLOSE_CHECKPOINT_WAIT_MS = 50;
+
 export interface SqliteIndexOptions {
   /** Open read-only (no migrations). */
   readOnly?: boolean;
@@ -532,9 +540,12 @@ export class SqliteIndexStore implements IndexStore {
   private static memSeq = 0;
   private readonly memId = SqliteIndexStore.memSeq++;
 
-  private constructor(db: DatabaseSync, path: string) {
+  private readonly readOnly: boolean;
+
+  private constructor(db: DatabaseSync, path: string, readOnly: boolean) {
     this.db = db;
     this.path = path;
+    this.readOnly = readOnly;
   }
 
   /** Opens (creating if needed) the database at `path` (":memory:" for tests) and migrates it. */
@@ -544,10 +555,12 @@ export class SqliteIndexStore implements IndexStore {
     const db = new DatabaseSync(path, { readOnly: opts.readOnly ?? false });
     try {
       // busy_timeout first so the WAL switch itself waits on a concurrent writer.
-      db.exec("PRAGMA busy_timeout = 5000");
+      db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
       if (!opts.readOnly) await switchToWal(db);
       db.exec("PRAGMA synchronous = NORMAL; PRAGMA foreign_keys = ON;");
-      const store = new SqliteIndexStore(db, path);
+      // A WAL that a checkpoint has reset is cut back to this size instead of keeping its high-water mark.
+      if (!opts.readOnly) db.exec(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT}`);
+      const store = new SqliteIndexStore(db, path, opts.readOnly ?? false);
       if (!opts.readOnly) await store.migrate();
       return store;
     } catch (e) {
@@ -634,9 +647,33 @@ export class SqliteIndexStore implements IndexStore {
 
   async close(): Promise<void> {
     if (this.closed) return;
+    // SQLite folds the WAL in on the last connection's close only; with a reader still open
+    // (the viewer, another command) the file would keep every frame this connection wrote.
+    await this.checkpoint("TRUNCATE", CLOSE_CHECKPOINT_WAIT_MS);
     this.closed = true;
     this.stmts.clear();
     this.db.close();
+  }
+
+  /**
+   * Copies the WAL into the database and, with TRUNCATE, empties the WAL file. Waits at most
+   * `waitMs` for readers on an older snapshot, then leaves what they still need (a later
+   * checkpoint or the last close finishes it). Never throws.
+   */
+  async checkpoint(mode: "PASSIVE" | "FULL" | "RESTART" | "TRUNCATE" = "TRUNCATE", waitMs = CHECKPOINT_WAIT_MS): Promise<void> {
+    if (this.closed || this.readOnly || this.path === ":memory:") return;
+    try {
+      this.db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(waitMs))}`);
+      this.db.prepare(`PRAGMA wal_checkpoint(${mode})`).get();
+    } catch {
+      // busy or locked: the WAL stays as it is until the next checkpoint
+    } finally {
+      try {
+        this.db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
+      } catch {
+        // nothing to restore on a connection that failed
+      }
+    }
   }
 
   // ------------------------------------------------------------ events
@@ -900,7 +937,12 @@ export class SqliteIndexStore implements IndexStore {
     return num(r?.offset) ?? 0;
   }
 
+  /** 0 is where every cursor starts, so a cursor set back to 0 (gc removed its spool file) is not kept. */
   async setCursor(source: string, offset: number): Promise<void> {
+    if (offset === 0) {
+      this.stmt("DELETE FROM cursors WHERE source = ?").run(source);
+      return;
+    }
     this.stmt(`INSERT INTO cursors (source, offset, updated_at) VALUES (?, ?, ?)
       ON CONFLICT(source) DO UPDATE SET offset = excluded.offset, updated_at = excluded.updated_at`).run(source, offset, Date.now());
   }
@@ -1131,6 +1173,8 @@ export class SqliteIndexStore implements IndexStore {
 
   async compact(): Promise<void> {
     this.db.exec("INSERT INTO events_fts(events_fts) VALUES ('optimize')");
+    // Rows of cursors at 0 (spool files gc removed) from before setCursor stopped keeping them.
+    this.db.exec("DELETE FROM cursors WHERE offset = 0");
     if (this.path !== ":memory:") this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     this.db.exec("VACUUM");
   }

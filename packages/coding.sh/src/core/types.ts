@@ -8,7 +8,7 @@ import type { Query } from "../query/where.ts";
 
 // ---------------------------------------------------------------- spool
 
-/** One line in ~/.coding.sh/spool/<agent>/<yyyy-mm-dd>.<pid>.jsonl, written by the hook. */
+/** One line in ~/.coding.sh/spool/<agent>/<yyyy-mm-dd>.jsonl (UTC day; spool/write.ts), written by the hook. */
 export interface SpoolLine {
   v: 0;
   agent: AgentId;
@@ -184,6 +184,8 @@ export interface IndexStore {
 
   /** Reclaim space (e.g. SQLite VACUUM + FTS optimize). Used by `gc --compact`. */
   compact?(): Promise<void>;
+  /** Fold a write-ahead log back into the store and shrink it (SQLite: wal_checkpoint). Ingest and backfill call it after a bulk write. */
+  checkpoint?(): Promise<void>;
 
   /** Cheap round trip that throws when the store is unreachable (serve's /readyz). */
   ping?(): Promise<void>;

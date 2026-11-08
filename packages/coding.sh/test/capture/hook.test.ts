@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import type { SpoolLine } from "../../src/core/types.ts";
-import { MAX_INLINE_LINE_BYTES, appendSpool, resolveRaw, safeAgentId, spoolFile } from "../../src/spool/write.ts";
+import { MAX_INLINE_LINE_BYTES, SPOOL_FILE_CAP, appendSpool, resolveRaw, safeAgentId, spoolFile } from "../../src/spool/write.ts";
 import { PKG_ROOT, gitc, isolate, makeRepo, removeTmp, tmp, tsNodeArgs } from "./_helpers.ts";
 
 const HOOK_TS = join(PKG_ROOT, "src", "spool", "hook.ts");
@@ -49,7 +49,7 @@ describe("hook", () => {
     assert.equal(r.stdout, "");
     const files = readdirSync(join(h, "spool", "claude-code"));
     assert.equal(files.length, 1);
-    assert.match(files[0]!, /^\d{4}-\d{2}-\d{2}\.\d+\.jsonl$/);
+    assert.match(files[0]!, /^\d{4}-\d{2}-\d{2}\.jsonl$/);
     const [line, ...rest] = readLines(h, "claude-code");
     assert.equal(rest.length, 0);
     assert.ok(line);
@@ -60,7 +60,7 @@ describe("hook", () => {
     assert.equal(line.runId, "run-7");
     assert.deepEqual(line.raw, payload);
     assert.ok(Math.abs(line.ts - Date.now()) < 60_000);
-    assert.equal(files[0], `${new Date(line.ts).toISOString().slice(0, 10)}.${line.pid}.jsonl`);
+    assert.equal(files[0], `${new Date(line.ts).toISOString().slice(0, 10)}.jsonl`);
   });
 
   test("a Claude Code hook records CLAUDE_CODE_ENTRYPOINT (how Claude Code was launched); other agents' do not", () => {
@@ -207,17 +207,47 @@ describe("hook", () => {
     const lines = readLines(h, "opencode");
     assert.equal(lines.length, n);
     assert.equal(new Set(lines.map((l) => l.event)).size, n);
+    assert.equal(readdirSync(join(h, "spool", "opencode")).filter((f) => f.endsWith(".jsonl")).length, 1, "one shared day file");
+  });
+
+  test("processes appending to the shared day file at the same time never interleave lines", async () => {
+    const h = freshHome();
+    const writers = 8;
+    const each = 100;
+    const start = Date.now() + 1500; // every writer starts its loop at the same moment
+    const script = `
+      const { appendSpool } = await import(${JSON.stringify(join(PKG_ROOT, "src", "spool", "write.ts"))});
+      while (Date.now() < ${start});
+      const w = Number(process.argv[1]);
+      for (let i = 0; i < ${each}; i++)
+        appendSpool({ v: 0, agent: "fake", event: "w" + w + "-" + i, ts: ${Date.UTC(2026, 0, 2)}, pid: process.pid, cwd: "/c", raw: { data: String(w).repeat(5_000 + ((i * 7919) % 120_000)) } });
+    `;
+    await Promise.all(
+      Array.from({ length: writers }, (_, w) =>
+        new Promise<void>((resolve, reject) => {
+          const c = spawn(process.execPath, [...tsNodeArgs(), "--input-type=module", "-e", script, String(w)], { env: { ...process.env, CODING_SH_HOME: h }, stdio: ["ignore", "ignore", "pipe"] });
+          let err = "";
+          c.stderr.on("data", (d) => (err += d));
+          c.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`exit ${code}: ${err}`))));
+        }),
+      ),
+    );
+    for (const f of readdirSync(join(h, "spool", "fake"))) assert.match(f, /^2026-01-02(\.\d+)?\.jsonl$/);
+    const lines = readLines(h, "fake"); // JSON.parse throws on an interleaved line
+    assert.equal(lines.length, writers * each);
+    assert.equal(new Set(lines.map((l) => l.event)).size, writers * each);
+    for (const l of lines) assert.equal((l.raw as { data: string }).data[0], l.event.slice(1, l.event.indexOf("-")));
   });
 });
 
 describe("appendSpool", () => {
-  test("writes per-pid daily files, honors disable, offloads big raw objects", () => {
+  test("writes one file per UTC day for every writer, honors disable, offloads big raw objects", () => {
     const env = { ...process.env, CODING_SH_HOME: freshHome() };
     const base: SpoolLine = { v: 0, agent: "wrapper", event: "session.start", ts: Date.UTC(2026, 0, 2, 3), pid: 4242, cwd: "/r", raw: { a: 1 } };
     const f = appendSpool(base, env);
-    assert.equal(f, spoolFile("wrapper", base.ts, 4242, env));
-    assert.ok(f?.endsWith("2026-01-02.4242.jsonl"));
-    appendSpool({ ...base, event: "session.end" }, env);
+    assert.equal(f, spoolFile("wrapper", base.ts, env));
+    assert.ok(f?.endsWith("2026-01-02.jsonl"));
+    assert.equal(appendSpool({ ...base, event: "session.end", pid: 4343 }, env), f, "another process, same file");
     const lines = readFileSync(f!, "utf8").trim().split("\n").map((l) => JSON.parse(l));
     assert.deepEqual(lines.map((l) => l.event), ["session.start", "session.end"]);
     assert.equal(appendSpool(base, { ...env, CODING_SH_DISABLE: "1" }), undefined);
@@ -231,7 +261,7 @@ describe("appendSpool", () => {
   test("a failed append leaves no raw side file behind", () => {
     const env = { ...process.env, CODING_SH_HOME: freshHome() };
     const line: SpoolLine = { v: 0, agent: "fake", event: "PostToolUse", ts: Date.now(), pid: 777, cwd: "/r", raw: null };
-    mkdirSync(spoolFile("fake", line.ts, 777, env), { recursive: true }); // the append fails (EISDIR, like ENOSPC)
+    mkdirSync(spoolFile("fake", line.ts, env), { recursive: true }); // the append fails (EISDIR, like ENOSPC)
     const big = JSON.stringify({ secret: "sk-live-" + "A".repeat(MAX_INLINE_LINE_BYTES) });
     assert.throws(() => appendSpool({ ...line, raw: JSON.parse(big) }, env, { rawText: big }), { code: "EISDIR" });
     const rawDir = join(env.CODING_SH_HOME, "spool", "fake", "raw");
@@ -241,7 +271,7 @@ describe("appendSpool", () => {
   test("starts on a fresh line after a torn fragment, so the fragment cannot swallow the new line", () => {
     const env = { ...process.env, CODING_SH_HOME: freshHome() };
     const base: SpoolLine = { v: 0, agent: "fake", event: "Stop", ts: Date.now(), pid: 555, cwd: "/r", raw: { a: 1 } };
-    const f = spoolFile("fake", base.ts, 555, env);
+    const f = spoolFile("fake", base.ts, env);
     mkdirSync(join(f, ".."), { recursive: true });
     appendFileSync(f, JSON.stringify(base) + "\n" + JSON.stringify(base).slice(0, 30)); // partial write (ENOSPC)
     appendSpool({ ...base, event: "UserPromptSubmit" }, env);
@@ -250,6 +280,21 @@ describe("appendSpool", () => {
     assert.equal(lines[1], JSON.stringify(base).slice(0, 30), "fragment isolated on its own line");
     assert.equal((JSON.parse(lines[2]!) as SpoolLine).event, "UserPromptSubmit");
     assert.equal(lines[3], "");
+  });
+
+  test("a day file at the size cap is left alone: the day continues in <day>.1.jsonl, then <day>.2.jsonl", () => {
+    const env = { ...process.env, CODING_SH_HOME: freshHome() };
+    const base: SpoolLine = { v: 0, agent: "fake", event: "PostToolUse", ts: Date.UTC(2026, 0, 2, 3), pid: 1, cwd: "/r", raw: { a: 1 } };
+    const first = appendSpool(base, env)!;
+    assert.ok(first.endsWith("2026-01-02.jsonl"));
+    truncateSync(first, SPOOL_FILE_CAP); // sparse: no 64 MB written
+    const second = appendSpool({ ...base, event: "Stop" }, env)!;
+    assert.ok(second.endsWith("2026-01-02.1.jsonl"), second);
+    assert.equal(statSync(first).size, SPOOL_FILE_CAP, "the full file is not appended to");
+    assert.equal(appendSpool({ ...base, event: "Stop2" }, env), second);
+    truncateSync(second, SPOOL_FILE_CAP + 10);
+    assert.ok(appendSpool(base, env)!.endsWith("2026-01-02.2.jsonl"));
+    assert.ok(appendSpool({ ...base, ts: Date.UTC(2026, 0, 3) }, env)!.endsWith("2026-01-03.jsonl"), "a new day starts a new file");
   });
 });
 

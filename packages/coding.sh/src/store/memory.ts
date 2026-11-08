@@ -219,7 +219,8 @@ export class MemoryIndexStore implements IndexStore {
   }
 
   async setCursor(source: string, offset: number): Promise<void> {
-    this.cursors.set(source, offset);
+    if (offset === 0) this.cursors.delete(source);
+    else this.cursors.set(source, offset);
   }
 
   async putTask(t: EvalTask): Promise<void> {

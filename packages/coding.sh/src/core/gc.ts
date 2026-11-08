@@ -18,9 +18,9 @@
 // blob between the sweep's stat and its delete would commit an event pointing
 // at a deleted blob. So a real (non-dry) run holds the ingest lock
 // (core/lock.ts) across the blob mark+sweep and the spool phase; a spool file
-// is then never deleted mid-read either. Deleting a spool file also resets its
-// cursors, so a file recreated at the same path (pid reuse the same UTC day) is
-// read from the start.
+// is then never deleted mid-read either, nor while hooks still append to it
+// (the current UTC day). Deleting a spool file also resets its cursors, so a
+// file recreated at the same path is read from the start.
 import { existsSync } from "node:fs";
 import { readdir, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -32,9 +32,10 @@ import { requestBlobRefs } from "../proxy/blocks.ts";
 import { gcJudgeCache, type JudgeCacheGcResult } from "../judge/cache.ts";
 import { sinkCursorKey } from "./ingest.ts";
 import { acquireLock, type Lock, type LockOptions } from "./lock.ts";
-import { listSpoolFiles, rawFilesOf, type SpoolFile } from "./spool-read.ts";
+import { listSpoolFiles, rawFilesOf, spoolFileDay, type SpoolFile } from "./spool-read.ts";
 
 const DAY = 86_400_000;
+const HOUR = 3_600_000;
 /** An unreferenced raw side file younger than this may belong to a hook between its two writes. */
 const MIN_ORPHAN_RAW_AGE_MS = 3_600_000;
 
@@ -204,9 +205,14 @@ async function sweepSpool(opts: GcOptions, result: GcResult, now: number, spoolD
   const keepMs = config.retention.keepSpoolDays * DAY;
   const sinkNames = config.sinks.map((s) => s.name ?? s.kind);
   const kept: SpoolFile[] = [];
+  // Hooks append to the current UTC day's file without the lock, so it is never deleted (an
+  // append between the check below and the unlink would be lost); nor is yesterday's for the
+  // first hour, for a hook that took its timestamp just before midnight.
+  const writable = new Date(now - HOUR).toISOString().slice(0, 10);
   for (const file of await listSpoolFiles(spoolDir)) {
     result.spool.scanned++;
-    if (now - file.mtimeMs < keepMs) {
+    const day = spoolFileDay(file.source.slice(file.source.lastIndexOf("/") + 1));
+    if (now - file.mtimeMs < keepMs || (day && day >= writable)) {
       kept.push(file);
       continue;
     }

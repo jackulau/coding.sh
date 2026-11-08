@@ -89,6 +89,27 @@ class RecordingSink implements Sink {
   }
 }
 
+describe("ingest WAL checkpoint (RT-5)", () => {
+  const walSize = (db: string) => (existsSync(`${db}-wal`) ? statSync(`${db}-wal`).size : 0);
+
+  it("a drain of more than 10k events empties the WAL before it returns; a small one leaves it for close", async () => {
+    const t = setup();
+    const db = join(t.root, "idx.db");
+    const index = await SqliteIndexStore.open(db);
+    const reader = await SqliteIndexStore.open(db, { readOnly: true }); // the viewer, say: SQLite won't fold the WAL in on its own
+    await reader.listSessions({ limit: 1 });
+    t.write(t.line({ session: "small", kind: "user.message", text: "hi" }));
+    await ingest({ config: t.config, index, blobs: t.blobs, adapters, env: t.env, lock: false });
+    assert.ok(walSize(db) > 0, "a small drain does not pay for a checkpoint");
+    for (let i = 0; i < 6; i++) t.write(t.line({ session: `bulk-${i}`, kind: "notification", events: 2_000 }));
+    const r = await ingest({ config: t.config, index, blobs: t.blobs, adapters, env: t.env, lock: false });
+    assert.equal(r.events, 12_000);
+    assert.equal(walSize(db), 0);
+    await index.close();
+    await reader.close();
+  });
+});
+
 describe("ingest", () => {
   it("ingests spool lines into events and sessions, idempotently", async () => {
     const t = setup();

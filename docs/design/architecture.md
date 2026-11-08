@@ -66,9 +66,12 @@ or PyPI yet.
 - The hook command is `~/.coding.sh/bin/csh-hook <agent> <event>`, a plain Node script with no
   imports beyond `node:fs`. Its startup time is the only cost the agent sees.
 - It reads stdin and wraps it as `{"v":0,"agent":…,"event":…,"ts":…,"pid":…,"cwd":…,"raw":<stdin>}`.
-- It appends that line to `~/.coding.sh/spool/<agent>/<yyyy-mm-dd>.<pid>.jsonl` with one `appendFileSync`
-  using `O_APPEND`, which is atomic for writes smaller than `PIPE_BUF`. Large payloads get their own
-  file per event.
+- It appends that line to `~/.coding.sh/spool/<agent>/<yyyy-mm-dd>.jsonl` (UTC day), one file that
+  every hook process shares. Each line is one `write` on a descriptor opened with `O_APPEND`, so lines
+  from concurrent hooks never interleave on a local filesystem. A file that reaches 64 MB is left
+  alone and the day continues in `<yyyy-mm-dd>.1.jsonl`, then `.2`, and so on. Payloads too large to
+  inline get their own file per event under `raw/`. `coding.sh gc` never removes the current day's
+  file, since hooks append to it without the ingest lock.
 - It always exits 0. A failure is written to `~/.coding.sh/spool/errors.log`. A capture bug must never
   break the agent.
 - On a session-start or prompt event, the hook records the repo root, HEAD commit and branch as the
@@ -158,8 +161,15 @@ interface Sink {                                          // write-only mirror (
   re-normalization when the schema version changes.
 - `coding.sh gc`: mark-and-sweep of unreferenced blobs, plus retention rules (for example, drop
   file-read blobs older than 90 days while keeping diffs and eval tasks).
-- SQLite settings: `journal_mode=WAL`, `synchronous=NORMAL`, batched transactions of about 500
-  events, prepared statements, FTS5 over prompt and assistant text only.
+- SQLite settings: `journal_mode=WAL`, `synchronous=NORMAL`, `journal_size_limit` of 64 MB,
+  batched transactions of about 500 events, prepared statements, FTS5 over prompt and assistant
+  text only.
+- The WAL is folded back in and emptied (`wal_checkpoint(TRUNCATE)`) when an ingest or transcript
+  import stored more than 10,000 events, and when a command closes the index. SQLite does this on
+  its own only when the last connection closes, so with the viewer open a bulk import used to
+  leave a WAL as large as the data it wrote.
+- A spool file's ingest cursor row is removed when gc deletes the file, and `gc --compact` removes
+  rows left at 0 by older versions.
 
 ## Production mode (`coding.sh serve`)
 

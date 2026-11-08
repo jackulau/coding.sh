@@ -146,6 +146,32 @@ describe("gc", () => {
     assert.ok(existsSync(recent), "younger than keepSpoolDays");
   });
 
+  it("never deletes the spool file hooks still append to: the current UTC day's, or yesterday's in the first hour", async () => {
+    const t = setup();
+    t.config.retention.keepSpoolDays = 0;
+    const dir = join(t.spool, "fake");
+    mkdirSync(dir, { recursive: true });
+    const index = new MemoryIndexStore();
+    const blobs = new MemoryBlobStore();
+    const day = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+    const run = async (now: number) => {
+      const files = [day(now), day(now - DAY), day(now - 2 * DAY)].map((d) => join(dir, `${d}.jsonl`));
+      for (const f of files) {
+        appendFileSync(f, spoolLine(1, now - DAY, { session: "s", kind: "notification" }));
+        old(f, 3650); // long past keepSpoolDays on any clock
+      }
+      await ingest({ config: t.config, index, blobs, env: t.env, adapters: new Map([["fake", fake]]) });
+      await gc({ index, blobs, config: t.config, env: t.env, judgeCacheDir: false, now });
+      return files.map((f) => existsSync(f));
+    };
+    const noon = Date.UTC(2026, 10, 8, 12);
+    assert.deepEqual(await run(noon), [true, false, false], "today kept; earlier days deleted once read");
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    const halfPastMidnight = Date.UTC(2026, 10, 8, 0, 30);
+    assert.deepEqual(await run(halfPastMidnight), [true, true, false], "yesterday kept for the first hour of the new day");
+  });
+
   it("resets the cursors of the spool files it deletes, so a file recreated at the same path is read from the start", async () => {
     const t = setup();
     t.config.retention.keepSpoolDays = 0;

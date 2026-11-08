@@ -82,6 +82,7 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
   prompt and tools, counts, tool names, usage and timings. The proxy listens on 127.0.0.1 unless you
   pass `--host`.
 - **Raw spool.** The hook writes the agent's raw payload to `~/.coding.sh/spool` (mode 600), and
-  redaction happens when that file is ingested. `coding.sh gc` deletes ingested spool files older
-  than 7 days (`[retention] keepSpoolDays`).
+  redaction happens when that file is ingested. Hooks share one spool file per agent per UTC day.
+  `coding.sh gc` deletes ingested spool files older than 7 days (`[retention] keepSpoolDays`), and
+  never the current day's file, which hooks are still writing to.
 - **The viewer** binds to 127.0.0.1 and requires the per-process token in the URL it prints.

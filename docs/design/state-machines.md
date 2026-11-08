@@ -99,7 +99,7 @@ Scope: the hook entry (`src/spool/{hook,host,kick,write}.ts`, `src/cli/hookbin.t
 
 States: `Start → StdinRead → (Disabled | Parsed | Spilled) → Appended → Replied → Kicked → Exit(0)`. Any error goes to `errors.log` and then `Replied`.
 
-Invariants: the hook always exits 0. Stdout carries only the `--echo-continue`/`--reply` payload. Exactly one spool line per call, written to `<agent>/<utcDay(ts)>.<pid>.jsonl`, so every hook call creates its own file.
+Invariants: the hook always exits 0. Stdout carries only the `--echo-continue`/`--reply` payload. Exactly one spool line per call, appended to the agent's shared day file `<agent>/<utcDay(ts)>.jsonl` (continued in `<utcDay(ts)>.<n>.jsonl` once a file reaches 64 MB). Before, every hook call created its own `<utcDay(ts)>.<pid>.jsonl`.
 
 | From | Event | To | Guard | Ref |
 |---|---|---|---|---|
@@ -112,7 +112,7 @@ Invariants: the hook always exits 0. Stdout carries only the `--echo-continue`/`
 | any | throw | errors.log | – | hook.ts:152-154 |
 | Appended | END_EVENT matches | Kicked (M5) | captured, not RUN_ID, not NO_AUTO_INGEST | hook.ts:171-177, kick.ts:23 |
 
-### M2. Spool file lifecycle (per `source = <agent>/<day>.<pid>.jsonl`)
+### M2. Spool file lifecycle (per `source = <agent>/<day>.jsonl`, `<day>.<n>.jsonl`, or a legacy `<day>.<pid>.jsonl`)
 
 States: `Absent → Growing → PartiallyRead (cursor < size) → LocallyRead (local cursor = size) → FullyRead (local and every configured sink ≥ size) → Eligible (mtime older than keepSpoolDays) → Deleted`.
 

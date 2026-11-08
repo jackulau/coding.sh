@@ -68,7 +68,7 @@ Applied by `coding.sh gc`.
 
 | Key | Default | Settable | What |
 |---|---|---|---|
-| `retention.keepSpoolDays` | `7` | yes | Days to keep spool files after they were ingested and sent to every sink. |
+| `retention.keepSpoolDays` | `7` | yes | Days to keep spool files after they were ingested and sent to every sink. The current UTC day's file is kept even at `0`: hooks are still writing to it. |
 | `retention.toolOutputDays` | `90` | yes | Days to keep blobs referenced only by tool output and file reads. Diffs and eval tasks are kept. |
 
 ## `[update]`

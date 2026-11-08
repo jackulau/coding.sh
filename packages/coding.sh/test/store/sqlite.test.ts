@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { AgentEvent } from "../../src/schema/index.ts";
-import { loadSqlite, MIGRATIONS, SQLITE_SCHEMA_VERSION, SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { loadSqlite, MIGRATIONS, SQLITE_SCHEMA_VERSION, SqliteIndexStore, WAL_SIZE_LIMIT } from "../../src/store/sqlite.ts";
 import { median, timeMs } from "../helpers-timing.ts";
 
 const root = mkdtempSync(join(tmpdir(), "csh-sqlite-"));
@@ -37,6 +37,63 @@ describe("SqliteIndexStore writer lock fencing (STO-8)", () => {
     await lock.release();
     assert.throws(() => lock.assertHeld!(), /released/);
     await s.close();
+  });
+});
+
+describe("SqliteIndexStore write-ahead log (RT-5)", () => {
+  const walSize = (db: string) => (existsSync(`${db}-wal`) ? statSync(`${db}-wal`).size : 0);
+
+  it("close() empties the WAL even while another connection keeps the database open", async () => {
+    const db = join(root, "wal-close.db");
+    const s = await SqliteIndexStore.open(db);
+    const reader = await SqliteIndexStore.open(db, { readOnly: true });
+    await reader.listSessions({ limit: 1 });
+    for (let i = 0; i < 4; i++) await s.putEvents(events(5_000, `wal-${i}`));
+    assert.ok(walSize(db) > 1 << 20, `WAL holds the writes before close (${walSize(db)} bytes)`);
+    await s.close();
+    assert.equal(walSize(db), 0, "a reader that stays open no longer pins the WAL at its high-water mark");
+    assert.equal((await reader.listEvents("wal-3", { limit: 1 })).length, 1, "the reader still sees the data");
+    await reader.close();
+  });
+
+  it("checkpoint() truncates the WAL while the store stays open, and is a no-op read-only", async () => {
+    const db = join(root, "wal-checkpoint.db");
+    const s = await SqliteIndexStore.open(db);
+    const pin = await SqliteIndexStore.open(db, { readOnly: true });
+    await s.putEvents(events(20_000, "cp"));
+    assert.ok(walSize(db) > 1 << 20);
+    await pin.checkpoint();
+    assert.ok(walSize(db) > 1 << 20, "a read-only connection does not checkpoint");
+    await s.checkpoint();
+    assert.equal(walSize(db), 0);
+    await s.putEvents(events(10, "cp-after"));
+    assert.equal((await pin.listEvents("cp-after")).length, 10, "writes after a checkpoint still work");
+    assert.ok(WAL_SIZE_LIMIT <= 64 * 1024 * 1024);
+    await s.close();
+    await pin.close();
+  });
+
+  it("a cursor set back to 0 is not kept as a row", async () => {
+    const db = join(root, "cursors.db");
+    const s = await SqliteIndexStore.open(db);
+    await s.setCursor("claude-code/2026-11-06.1.jsonl", 10);
+    await s.setCursor("claude-code/2026-11-06.2.jsonl", 20);
+    await s.setCursor("claude-code/2026-11-06.1.jsonl", 0);
+    assert.equal(await s.getCursor("claude-code/2026-11-06.1.jsonl"), 0);
+    assert.equal(await s.getCursor("claude-code/2026-11-06.2.jsonl"), 20);
+    await s.close();
+    const { DatabaseSync } = await loadSqlite();
+    const raw = new DatabaseSync(db);
+    assert.deepEqual(raw.prepare("SELECT source FROM cursors").all().map((r) => (r as { source: string }).source), ["claude-code/2026-11-06.2.jsonl"]);
+    // Rows left at 0 by an older version go at the next compact (gc --compact).
+    raw.prepare("INSERT INTO cursors (source, offset, updated_at) VALUES ('old', 0, 1)").run();
+    raw.close();
+    const again = await SqliteIndexStore.open(db);
+    await again.compact();
+    await again.close();
+    const raw2 = new DatabaseSync(db);
+    assert.equal((raw2.prepare("SELECT COUNT(*) AS n FROM cursors").get() as { n: number }).n, 1);
+    raw2.close();
   });
 });
 

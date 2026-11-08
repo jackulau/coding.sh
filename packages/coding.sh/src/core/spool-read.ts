@@ -55,12 +55,18 @@ const toSource = (spoolDir: string, file: string) => relative(spoolDir, file).sp
 
 const DAY_PREFIX = /^(\d{4}-\d{2}-\d{2})\./;
 
+/** The UTC day a spool file's name starts with (`2026-11-06` for `2026-11-06.jsonl`), or "" for another name. */
+export function spoolFileDay(name: string): string {
+  return DAY_PREFIX.exec(name)?.[1] ?? "";
+}
+
 /**
  * Lists `<spool>/<agent>/*.jsonl`, oldest first within each agent: by the UTC
- * day in the name, then mtime, then name. Every hook call writes its own
- * `<day>.<pid>.jsonl`, so the pid part says nothing about order (9999 and
- * 10000 sort the wrong way as strings, and pids wrap); mtime is when the line
- * was written. A tool.start is then normally read before its tool.end.
+ * day in the name, then mtime, then name. Hooks share `<day>.jsonl` and its
+ * numbered continuations (`<day>.1.jsonl`, … — 9 and 10 sort the wrong way as
+ * strings); older versions wrote one `<day>.<pid>.jsonl` per hook call, where
+ * the pid says nothing about order. mtime is when the last line was written,
+ * so a tool.start is normally read before its tool.end.
  *
  * Stats are synchronous: a week of hook calls is tens of thousands of files,
  * and one awaited stat each costs a thread-pool round trip (seconds on a big
@@ -91,7 +97,7 @@ export async function listSpoolFiles(spoolDir: string): Promise<SpoolFile[]> {
       try {
         const s = statSync(path);
         if (!s.isFile()) continue;
-        files.push({ source: `${agent}/${name}`, path, agent, size: s.size, mtimeMs: s.mtimeMs, day: DAY_PREFIX.exec(name)?.[1] ?? "", name });
+        files.push({ source: `${agent}/${name}`, path, agent, size: s.size, mtimeMs: s.mtimeMs, day: spoolFileDay(name), name });
       } catch {
         // Deleted between readdir and stat (gc in another process): skip.
       }

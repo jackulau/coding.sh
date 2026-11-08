@@ -70,6 +70,8 @@ import { isWrapperLine } from "../adapters/more/wrapper.ts";
 
 export const PUT_BATCH = 500;
 const DEFAULT_CHECKPOINT_EVENTS = 5000;
+/** A run that stored more events than this folds the store's write-ahead log back in before it returns. */
+export const BULK_WRITE_EVENTS = 10_000;
 const DEFAULT_SINK_BATCH = 500;
 /** Backoff for a sink that failed without saying when to retry (e.g. 401). */
 const PERMANENT_FAILURE_BACKOFF_MS = 10 * 60_000;
@@ -545,6 +547,8 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   for (const id of await linker.apply()) touchedAll.add(id);
 
   result.sessions = touchedAll.size;
+  // A bulk drain leaves a WAL as big as what it wrote until some later read-write close.
+  if (result.events > BULK_WRITE_EVENTS) await index.checkpoint?.();
   for (const s of sinkStates.values()) {
     const { failed: _failed, ...report } = s;
     result.sinks.push(report);
@@ -1049,6 +1053,7 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
     await index.setCursor(backfillCursorKey(agent, file.path, "mtime"), Math.floor(file.mtimeMs));
   }
   result.sessions = updated.size;
+  if (result.events > BULK_WRITE_EVENTS) await index.checkpoint?.();
   return result;
 }
 
