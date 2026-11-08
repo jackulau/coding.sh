@@ -292,6 +292,13 @@ jobs:
         if: runner.os == 'Linux'
         run: node scripts/e2e/compare-capture.mjs
 
+      # compare --repair with real Claude Code and Codex: a failed first attempt is told "Verification
+      # failed." with the failing test's name in its own resumed session, fixes it in round 1, never
+      # sees the hidden tests, and the report shows the Seq@k curve and the rounds that changed nothing.
+      - name: Repair rounds with real agents
+        if: runner.os == 'Linux'
+        run: node scripts/e2e/repair-capture.mjs
+
       # eval trigger with real Claude Code and Codex: a stub router loads the skill whose installed
       # description names a word of the prompt. Checks exact precision/recall counts from captured
       # sessions, the sibling route, a description A/B with its flips, and --min-f1.

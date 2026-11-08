@@ -604,8 +604,10 @@ const TRIGGER = [
     "Verification failed." in its own session (Claude Code <code>--resume</code>, <code>codex exec resume</code>) and tries again, up to 2
     rounds. The hidden tests are out of the work tree while it works. <code>--repair-signal names</code> adds the failing test names read from
     the verifier output. A round that edits, deletes or skips tests does not count as a repair. <code>--false-alarm 0.2</code> tells a
-    seeded 20% of passing runs they failed, to measure what a wrong signal breaks. The report adds first pass, pass after repair, the
-    repair rate and the rounds' cost per arm; <code>--repair-verdict</code> moves the verdict to the outcome after repair.
+    seeded 20% of passing runs they failed, to measure what a wrong signal breaks. The report adds, per arm, Seq@k (the share of tasks
+    solved by the k-th attempt), the repair rate, where the gain lands (EGS, LGS), rounds that changed nothing, cost to solve and, with
+    <code>--k 2</code> or more, a cost front against k independent attempts. <code>--repair-verdict</code> moves the verdict to the
+    outcome after repair.
   </p>
   <div class="note">
     <p>

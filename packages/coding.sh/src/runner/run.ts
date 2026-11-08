@@ -296,6 +296,7 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
         canResume: !!adapter.canResume,
         result,
         graded: g,
+        ...(d.diff ? { firstPatch: d.diff.patch } : {}),
         instruction: task.instruction,
         checkpoint,
         restore: (saved) => restoreFiles(layout.work, saved),
@@ -356,6 +357,8 @@ interface RepairCtx {
   canResume: boolean;
   result: RunResult;
   graded: Graded;
+  /** The first attempt's diff, to tell a round that changed nothing. */
+  firstPatch?: string;
   instruction: string;
   checkpoint: () => void;
   restore: (saved: SavedFiles) => Promise<void>;
@@ -395,6 +398,7 @@ async function repairRounds(c: RepairCtx): Promise<RepairReport> {
   const alarm = pass && falseAlarmFires(repair.falseAlarm, repair.seed, c.runId);
   if (alarm) rep.falseAlarmFired = true;
   let graded = c.graded;
+  let prevPatch = c.firstPatch;
   for (let n = 1; n <= repair.rounds && (!pass || (n === 1 && alarm)); n++) {
     c.checkpoint();
     // The agent never sees the hidden tests: back to its own tree.
@@ -420,6 +424,9 @@ async function repairRounds(c: RepairCtx): Promise<RepairReport> {
     const d = await c.takeDiff();
     if (d.blob) round.diffBlob = d.blob;
     error ??= d.error;
+    // The tree's diff since the start is what it was before the round: the agent changed nothing.
+    if (d.diff && prevPatch !== undefined && d.diff.patch === prevPatch) round.unchanged = true;
+    prevPatch = d.diff?.patch;
     // Judged on the whole diff since the start: a repair that edits the tests is no repair.
     const t = d.diff ? c.tamperOf(d.diff) : undefined;
     if (t?.flagged) round.tamper = t;

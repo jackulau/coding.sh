@@ -286,7 +286,7 @@ describe("compare with repair", () => {
     assert.equal(r.verdict.kind, "no-difference");
     const text = formatCompare(r);
     assert.match(text, /with verifier feedback \(bit, up to 2 rounds, resume\)/);
-    assert.match(text, /^after repair +0\.0% .* 100\.0% .* \+100\.0 pp$/m);
+    assert.match(text, /^seq@3 +0\.0% .* 100\.0% .* \+100\.0 pp$/m);
     assert.match(text, /^repaired +0\/3 \(0%\) +3\/3 \(100%\) · 1\.0 rd$/m);
 
     const v = compare(res.results, { baseline: A.id, candidate: B.id, iters: 200, seed: 1, repairVerdict: true });

@@ -115,8 +115,10 @@ See [Compare two agents](how-to/compare-agents.md).
 **Repair round.** With `compare --repair N`, a run whose verifier fails goes back to the agent in
 its own session with "Verification failed." (and, with `--repair-signal names`, the failing test
 names), up to N times. The hidden tests are out of the work tree while the agent works. A round
-whose diff edits, deletes or skips tests does not count as a repair. See
-[Repair rounds](guides/evals.md#repair-rounds).
+whose diff edits, deletes or skips tests does not count as a repair. The report gives Seq@k, the
+share of tasks solved by the k-th attempt (the first, then each round), with where the gain lands,
+rounds that changed nothing, cost to solve, and a cost front against k independent attempts
+(pass@k). See [Repair rounds](guides/evals.md#repair-rounds).
 
 **Protected line.** A harness line an edit may not delete, reword or relax: inside a
 `<!-- coding.sh:protect -->` block, matching a `[refine] protect` regex, or pairing a gate word with

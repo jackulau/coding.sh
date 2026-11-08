@@ -947,20 +947,42 @@ coding.sh compare base candidate --repair 2 --repair-signal names
 - A first attempt that errored or timed out gets no rounds.
 
 The report adds a block before the task table. Pass rates, the verdict and the gates stay on the
-first attempt; `--repair-verdict` moves them to the outcome after the rounds.
+first attempt; `--repair-verdict` moves them to the outcome after the rounds. Here with `--k 3`:
 
 ```
 with verifier feedback (names, up to 2 rounds, resume)
-first pass        0.0% [0.0–49.0%]      0.0% [0.0–49.0%]
-after repair      100.0% [51.0–100.0%]  100.0% [51.0–100.0%]  +0.0 pp
-repaired          4/4 (100%) · 1.8 rd   4/4 (100%) · 1.0 rd
-extra             $0.840 · 7 rounds     $0.400 · 4 rounds
-names unparsed    7                     4                     rounds sent the bare bit
+seq@1 (first)     0.0% [0.0–0.0%]       0.0% [0.0–0.0%]       +0.0 pp
+seq@2             8.3% [0.0–25.0%]      100.0% [100.0–100.0%] +91.7 pp
+seq@3             100.0% [100.0–100.0%] 100.0% [100.0–100.0%] +0.0 pp
+repaired          12/12 (100%) · 1.9 rd 12/12 (100%) · 1.0 rd
+gain shares       EGS 0.08 · LGS 0.92   EGS 1.00 · LGS 0.00   gain by attempt 2 · by the last
+unchanged         11/23 (48%)           0/12 (0%)             rounds that changed no file
+cost to solve     $0.350                $0.200                agent spend per run solved
+extra             $2.76 · 23 rounds     $1.20 · 12 rounds
+names unparsed    23                    12                    rounds sent the bare bit
+front A           pass@2 $0.240 0.0% · seq@1 $0.120 0.0%* · seq@2 $0.240 8.3%* · seq@3 $0.350 100.0%*
+front B           pass@2 $0.200 0.0% · seq@1 $0.100 0.0%* · seq@2 $0.200 100.0%*
+                  cost per task → success; * = no protocol does better at that cost
 ```
+
+- `seq@k` is the share of tasks solved by the k-th attempt: the first, then each round (Seq@K,
+  arXiv 2610.37859). A round that tampered with tests never counts. With one attempt per task the
+  interval is Wilson's; with more it is a bootstrap over tasks.
+- `gain shares`: of the gain from seq@1 to the last, EGS is the share the first round made and LGS
+  the share the last round still made. A high LGS says another round would likely pay.
+- `unchanged`: rounds after which the work tree's diff was the same as before the round.
+- `cost to solve`: the agent's spend on all runs, rounds included, over the runs solved.
+- `front`, with `--k 2` or more: mean cost per task against success for k independent first
+  attempts (unbiased pass@k) and for k attempts with feedback (seq@k). A `*` point is one no other
+  point, of either protocol, beats on both. When the arms rank one way on seq@1 and the other way
+  on the last seq@k, a note says so.
+- `after repair` appears with `--false-alarm`: the share passing at the end, which can fall below
+  the last seq@k when a told passing run broke its work.
 
 `agent spend` includes the rounds. The repair settings are part of each run's reuse key, so
 `--reuse` never copies a run with other repair settings, or without repair, into this comparison.
-`--json` has each arm's `repair` summary, and each run's `repair` record (see
+`--json` has each arm's `repair` and `seq` summaries, `seqRanking` when both arms ran the same
+settings, and each run's `repair` record (see
 [the API reference](../reference/api.md#get-apitasks-get-apiruns-get-apibundles)).
 
 ## A/B a harness edit on your own sessions

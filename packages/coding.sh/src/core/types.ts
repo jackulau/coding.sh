@@ -792,6 +792,8 @@ export interface RepairRound {
   tamper?: TamperReport;
   /** The work tree's diff after this round, when not empty. */
   diffBlob?: BlobRef;
+  /** The round changed no file: the tree's diff is the same as before it. */
+  unchanged?: true;
   error?: string;
 }
 

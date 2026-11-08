@@ -20,7 +20,7 @@ import { selfCheckSummary, type SelfCheckSummary } from "./selfcheck.ts";
 import type { SnapshotOps } from "./git.ts";
 import { attributeTamper, tamperDisclosure, type TamperAttribution, type TamperDisclosure } from "./tamper.ts";
 import type { RepairOpts } from "./repair.ts";
-import { armRepair, passAfterRepair, type ArmRepair } from "./repair-report.ts";
+import { armRepair, armSeq, passAfterRepair, seqRanking, type ArmRepair, type ArmSeq, type SeqRanking } from "./repair-report.ts";
 import { runTask, type AgentRoute } from "./run.ts";
 import { cellKey, DEFAULT_REUSE_MAX_AGE_MS, newestByCell, type ReuseOpts } from "./cells.ts";
 
@@ -464,6 +464,8 @@ export interface ArmSummary {
   auditedPassRate?: Interval;
   /** With repair rounds (`compare --repair N`): first failures fixed after verifier feedback, rounds, extra cost. */
   repair?: ArmRepair;
+  /** With repair rounds: Seq@1..K over attempts (first plus rounds), gain shares, unchanged rounds, cost to solve, the pass@k vs seq@k front. */
+  seq?: ArmSeq;
 }
 
 /** One run's witness-audit outcome (src/eval/witness.ts); only "refuted" changes anything. */
@@ -568,6 +570,8 @@ export interface CompareReport {
   reused?: { baseline: number; candidate: number };
   /** `compare --repair-verdict`: every statistic above counts a run's pass after repair rounds, not its first attempt. */
   repairVerdict?: true;
+  /** Both arms with the same repair settings: how they rank on first pass and within K attempts. */
+  seqRanking?: SeqRanking;
 }
 
 /** A candidate whose instruction surface grows by more than this gets the bloat note. */
@@ -755,12 +759,32 @@ export function compare(all: readonly RunResult[], opts: CompareOpts): CompareRe
   const r = compareAudited(opts.repairVerdict ? all.map((x) => (x.repair ? { ...x, pass: passAfterRepair(x) } : x)) : all, opts);
   // The repair summary always reads the first attempt as the first attempt.
   const counted = all.filter((x) => !x.cancelled && !x.superseded && !x.infra);
-  const ra = armRepair(counted.filter((x) => x.bundleId === opts.baseline));
-  const rb = armRepair(counted.filter((x) => x.bundleId === opts.candidate));
+  const A = counted.filter((x) => x.bundleId === opts.baseline);
+  const B = counted.filter((x) => x.bundleId === opts.candidate);
+  const ra = armRepair(A);
+  const rb = armRepair(B);
+  const boot = { iters: opts.iters ?? 2000, seed: opts.seed ?? 0x5eed };
+  const sa = armSeq(A, boot);
+  const sb = armSeq(B, boot);
   if (ra) r.baseline.repair = ra;
   if (rb) r.candidate.repair = rb;
+  if (sa) r.baseline.seq = sa;
+  if (sb) r.candidate.seq = sb;
   if (!ra !== !rb) r.notes.push(`only the ${ra ? "baseline" : "candidate"} ran with repair rounds; compare first-attempt pass rates, not the rates after repair`);
-  else if (ra && rb && (ra.limit !== rb.limit || ra.signal !== rb.signal)) r.notes.push(`the arms ran different repair settings (${ra.signal} ×${ra.limit} vs ${rb.signal} ×${rb.limit}); their rates after repair are not comparable`);
+  else if (ra && rb && (ra.limit !== rb.limit || ra.signal !== rb.signal)) r.notes.push(`the arms ran different repair settings (${ra.signal} ×${ra.limit} vs ${rb.signal} ×${rb.limit}); their rates after repair are not comparable, so they are not ranked by Seq@K`);
+  else if (sa && sb) {
+    const la = r.baseline.name ?? "baseline";
+    const lb = r.candidate.name && r.candidate.name !== la ? r.candidate.name : la === "baseline" ? "candidate" : `${la} (candidate)`;
+    const sr = seqRanking([
+      { label: la, seq: sa },
+      { label: lb, seq: sb },
+    ]);
+    if (sr) {
+      r.seqRanking = sr;
+      const f = sr.flipped[0];
+      if (f) r.notes.push(`ranking changes with verifier feedback: ${f.higherInA} beats ${f.higherInB} on first pass, ${f.higherInB} beats ${f.higherInA} within ${sr.k} attempts`);
+    }
+  }
   if (opts.repairVerdict) {
     r.repairVerdict = true;
     r.notes.push("verdict, gates and pass rates count each run's pass after repair rounds (--repair-verdict), not its first attempt");
@@ -1316,16 +1340,41 @@ function repairLines(
   const how = (x: ArmRepair) => `${x.signal}, up to ${plural(x.limit, "round")}, ${x.mode}`;
   const same = a && b ? how(a) === how(b) : true;
   const out = ["", f.dim(`with verifier feedback (${same ? how((a ?? b)!) : `A ${a ? how(a) : "none"} · B ${b ? how(b) : "none"}`})`)];
-  out.push(f.row(["first pass", ...cell((x) => rate(x.firstPass))]));
-  const d = a && b ? b.passAfterRepair.p - a.passAfterRepair.p : NaN;
-  out.push(f.row(["after repair", ...cell((x) => rate(x.passAfterRepair)), Number.isFinite(d) ? f.signed(d, false, pp(d)) : ""]));
+  const sa = r.baseline.seq;
+  const sb = r.candidate.seq;
+  const seqs = [sa, sb];
+  const scell = (fn: (x: ArmSeq) => string) => seqs.map((x) => (x ? fn(x) : "—"));
+  // Seq@k: the share of tasks solved by the k-th attempt (the first, then each round).
+  const K = Math.max(sa?.k ?? 0, sb?.k ?? 0);
+  for (let k = 1; k <= K; k++) {
+    const pt = (x: ArmSeq) => x.curve[k - 1];
+    const d = sa && sb && pt(sa) && pt(sb) ? pt(sb)!.rate - pt(sa)!.rate : NaN;
+    out.push(f.row([`seq@${k}${k === 1 ? " (first)" : ""}`, ...scell((x) => (pt(x) ? `${pct(pt(x)!.rate)} [${pct(pt(x)!.lo).replace("%", "")}–${pct(pt(x)!.hi)}]` : "—")), Number.isFinite(d) ? f.signed(d, false, pp(d)) : ""]));
+  }
+  // With false alarms the end state can fall below Seq@K: a told passing run may break.
+  if (both.some((x) => x?.falseAlarm)) {
+    const d = a && b ? b.passAfterRepair.p - a.passAfterRepair.p : NaN;
+    out.push(f.row(["after repair", ...cell((x) => rate(x.passAfterRepair)), Number.isFinite(d) ? f.signed(d, false, pp(d)) : ""]));
+  }
   out.push(f.row(["repaired", ...cell((x) => `${x.repaired}/${x.firstFails}${x.firstFails ? ` (${share(x.repairRate)})` : ""}${x.meanRounds !== undefined ? ` · ${x.meanRounds.toFixed(1)} rd` : ""}`)]));
-  const usd = (x: ArmRepair) => (x.extraPriced ? `$${x.extraCostUsd.toFixed(x.extraCostUsd < 1 ? 3 : 2)}` : formatDuration(x.extraAgentMs));
+  const g = (v: number | undefined) => (v === undefined ? "—" : v.toFixed(2));
+  if (seqs.some((x) => x && (x.egs !== undefined || x.lgs !== undefined))) out.push(f.row(["gain shares", ...scell((x) => `EGS ${g(x.egs)} · LGS ${g(x.lgs)}`), f.dim("gain by attempt 2 · by the last")]));
+  if (seqs.some((x) => x?.unchangedRate !== undefined)) out.push(f.row(["unchanged", ...seqs.map((x, i) => (x?.unchangedRate === undefined ? "—" : `${x.unchanged}/${both[i]?.rounds ?? "?"} (${share(x.unchangedRate)})`)), f.dim("rounds that changed no file")]));
+  const money = (v: number) => `$${v.toFixed(v < 1 ? 3 : 2)}`;
+  if (seqs.some((x) => x?.costToSolve !== undefined)) out.push(f.row(["cost to solve", ...scell((x) => (x.costToSolve === undefined ? "—" : money(x.costToSolve))), f.dim("agent spend per run solved")]));
+  const usd = (x: ArmRepair) => (x.extraPriced ? money(x.extraCostUsd) : formatDuration(x.extraAgentMs));
   out.push(f.row(["extra", ...cell((x) => `${usd(x)} · ${plural(x.rounds, "round")}`)]));
   if (both.some((x) => x?.tamperedRepairs)) out.push(f.row(["tampered repairs", ...cell((x) => (x.tamperedRepairs ? f.bad(String(x.tamperedRepairs)) : "0")), f.dim("not counted as repaired")]));
   if (both.some((x) => x?.falseAlarm)) out.push(f.row([`false alarms`, ...cell((x) => (x.falseAlarm ? `${x.falseAlarm.fired} told, ${x.falseAlarm.broke} broke` : "—")), f.dim(`p = ${(a?.falseAlarm ?? b?.falseAlarm)!.p}`)]));
   if (both.some((x) => x?.namesUnparsed)) out.push(f.row(["names unparsed", ...cell((x) => String(x.namesUnparsed ?? 0)), f.dim("rounds sent the bare bit")]));
   if (both.some((x) => x?.skipped)) out.push(f.row(["not repaired", ...cell((x) => String(x.skipped)), f.dim("first attempt errored or timed out")]));
+  // Cost per task against success, for k repair attempts (seq@k) and k independent attempts (pass@k).
+  for (const [arm, x] of [["A", sa], ["B", sb]] as const) {
+    if (!x?.front?.length) continue;
+    const pts = x.front.map((p) => `${p.protocol.replace("@k", `@${p.k}`)} ${money(p.cost)} ${pct(p.success)}${p.overall ? "*" : ""}`);
+    out.push(f.row([`front ${arm}`, pts.join(" · ")]));
+  }
+  if (seqs.some((x) => x?.front?.length)) out.push(f.dim(`${" ".repeat(18)}cost per task → success; * = no protocol does better at that cost`));
   return out;
 }
 
