@@ -194,9 +194,22 @@ describe("formatCompare", () => {
     assert.equal(r.power.n, 6);
     assert.ok(Number.isFinite(r.power.mde) && r.power.mde > 0);
     const text = formatCompare(r);
-    assert.match(text, /^power {3}MDE \d+\.\dpp \(α 0\.05, power 80%, paired, sd of per-case Δ \d\.\d\d\)$/m, text);
+    // 2 of 6 tasks discordant: the exact test needs 6 discordant tasks, so no gap reaches 80% power.
+    assert.ok(Number.isNaN(r.power.exact?.mde));
+    assert.match(text, /^power {3}MDE \d+\.\dpp · no 80% power at this n \(exact McNemar ceiling 0%\) \(α 0\.05, power 80%, paired, sd of per-case Δ \d\.\d\d, 33% discordant\)$/m, text);
     assert.match(text, /^! only 6 paired cases \(< 200\)/m, text);
-    assert.match(text, /^! observed \|B − A\| 33\.3pp is below the minimum detectable effect/m, text);
+    assert.match(text, /^! at 6 paired cases and 33% discordance no difference reaches 80% power \(the exact McNemar ceiling is 0%; it needs at least 6 discordant cases to reject at alpha 0\.05\)$/m, text);
+  });
+  it("prints the exact McNemar MDE when the design can reach 80% power", () => {
+    const rs: RunResult[] = [];
+    // 100 tasks, 14 discordant (8 B wins, 6 A wins): exact MDE 10.6pp at d = 0.14.
+    for (let i = 0; i < 100; i++) rs.push(run(`t${i}`, "A", 1, i < 40 || (i >= 40 && i < 46)), run(`t${i}`, "B", 1, i < 40 || (i >= 46 && i < 54)));
+    const r = compare(rs, { baseline: "A", candidate: "B" });
+    assert.equal(r.mcnemar.b, 6);
+    assert.equal(r.mcnemar.c, 8);
+    assert.ok(Math.abs((r.power.exact?.mde ?? NaN) - 0.106) < 0.003);
+    const text = formatCompare(r);
+    assert.match(text, /^power {3}MDE \d+\.\dpp · exact MDE 10\.6pp \(.*, 14% discordant\)$/m, text);
   });
   it("power line degrades to — with too few tasks", () => {
     const r = compare(results, { baseline: "A", candidate: "B" });

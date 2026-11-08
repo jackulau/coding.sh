@@ -4,7 +4,7 @@ import { availableParallelism } from "node:os";
 import { progressMetrics } from "../core/derail.ts";
 import { sortableId } from "../core/ids.ts";
 import type { Adapter, AgentEvent, BlobStore, EvalTask, HarnessBundle, IndexStore, RunResult, Session } from "../core/types.ts";
-import { pairedPower, type PowerAnalysis } from "../experiments/power.ts";
+import { exactPowerText, pairedPower, type PowerAnalysis } from "../experiments/power.ts";
 import { infraKind, withRetries, type InfraKind, type RetryPolicy } from "../jobs/retry.ts";
 import type { JobScope } from "../jobs/store.ts";
 import { pairedBootstrap, wilson, type BootstrapResult, type Interval } from "../stats/interval.ts";
@@ -971,7 +971,7 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     k,
     diff: boot,
     mcnemar: mcn,
-    power: pairedPower(diffs, { alpha }),
+    power: pairedPower(diffs, { alpha, discordant: { b: mb, c: mc } }),
     metrics,
     spend,
     verdict: { kind: verdict.kind, text: verdict.text },
@@ -1426,8 +1426,8 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   }
   const p = r.power;
   out.push(
-    `power   MDE ${Number.isFinite(p.mde) ? `${(p.mde * 100).toFixed(1)}pp` : "—"} ` +
-      dim(`(α ${p.alpha}, power ${Math.round(p.power * 100)}%, paired, sd of per-case Δ ${Number.isFinite(p.sd) ? p.sd.toFixed(2) : "—"})`),
+    `power   MDE ${Number.isFinite(p.mde) ? `${(p.mde * 100).toFixed(1)}pp` : "—"}${exactPowerText(p)} ` +
+      dim(`(α ${p.alpha}, power ${Math.round(p.power * 100)}%, paired, sd of per-case Δ ${Number.isFinite(p.sd) ? p.sd.toFixed(2) : "—"}${p.exact ? `, ${Math.round(p.exact.discordance * 100)}% discordant` : ""})`),
   );
   for (const w of p.warnings) out.push(paint("33", `! ${w.message}`));
   for (const n of r.notes) out.push(dim(`note: ${n}`));

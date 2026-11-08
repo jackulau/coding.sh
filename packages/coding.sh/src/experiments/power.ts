@@ -9,13 +9,16 @@ import type { CaseRun } from "../datasets/types.ts";
 
 export { normalQuantile } from "../stats/normal.ts";
 import { normalQuantile } from "../stats/normal.ts";
+import { mcnemarPlan, type McNemarPlan } from "../stats/mcnemar-power.ts";
 
 /**
  * "below-mde": a non-significant result smaller than the MDE (the design could
  * not have detected it). "near-mde": a significant result smaller than the
- * MDE, so the direction holds but the size is likely overstated.
+ * MDE, so the direction holds but the size is likely overstated. "no-power":
+ * the exact McNemar test cannot reach the target power for any gap at this
+ * number of cases and discordance.
  */
-export type PowerWarningCode = "too-few" | "no-change" | "small-n" | "below-mde" | "near-mde";
+export type PowerWarningCode = "too-few" | "no-change" | "small-n" | "below-mde" | "near-mde" | "no-power";
 
 export interface PowerWarning {
   code: PowerWarningCode;
@@ -60,6 +63,13 @@ export interface PowerAnalysis {
    * larger than the observed one, so the MDE above is computed from it.
    */
   noise?: NoisePrior & { used: boolean };
+  /**
+   * The exact McNemar design (stats/mcnemar-power.ts), when the discordant
+   * counts were given and some case is discordant: the power ceiling and the
+   * exact MDE (NaN when no gap reaches `power`). Its discordance is the
+   * observed one, raised to the A/A flip rate when that is larger.
+   */
+  exact?: McNemarPlan;
   warnings: PowerWarning[];
 }
 
@@ -80,9 +90,16 @@ export interface PowerOpts {
    * change cannot claim to detect effects smaller than run-to-run noise.
    */
   noise?: NoisePrior;
+  /**
+   * The McNemar discordant counts behind the differences (b: A passed and B
+   * failed, c: the reverse). With them the analysis adds the exact McNemar
+   * power ceiling and MDE (`exact`) and the "no-power" warning.
+   */
+  discordant?: { b: number; c: number };
 }
 
 const pp = (x: number) => `${(x * 100).toFixed(1)}pp`;
+const pct = (x: number) => `${Math.round(x * 100)}%`;
 
 /** MDE and power warnings for a paired comparison, from the per-case (B − A) differences. */
 export function pairedPower(diffs: readonly number[], opts: PowerOpts = {}): PowerAnalysis {
@@ -101,6 +118,15 @@ export function pairedPower(diffs: readonly number[], opts: PowerOpts = {}): Pow
   const mde = planSd > 0 ? (z * planSd) / Math.sqrt(n) : NaN;
   const warnings: PowerWarning[] = [];
   const level = `α ${alpha}, power ${Math.round(power * 100)}%`;
+  // The exact test's view: discordance from the counts, never below the A/A flip rate.
+  let exact: McNemarPlan | undefined;
+  if (opts.discordant && n >= 2) {
+    const d = Math.min(1, Math.max((opts.discordant.b + opts.discordant.c) / n, opts.noise?.flipRate ?? 0));
+    if (d > 0) exact = mcnemarPlan(n, d, { alpha, power });
+  }
+  const noPower = exact !== undefined && Number.isNaN(exact.mde);
+  // The larger MDE is the honest one: the normal approximation is optimistic at small n.
+  const bar = exact && !noPower ? Math.max(Number.isFinite(mde) ? mde : 0, exact.mde) : mde;
   if (n < 2) {
     warnings.push({ code: "too-few", message: `only ${n} paired case(s): too few to estimate the minimum detectable effect` });
   } else {
@@ -110,23 +136,43 @@ export function pairedPower(diffs: readonly number[], opts: PowerOpts = {}): Pow
         message: `only ${n} paired cases (< ${minPaired}): small suites detect only large effects and their intervals can under-cover; add cases or trials before trusting a null result`,
       });
     }
-    if (sd === 0 && observed === 0 && !useFloor) {
+    if (sd === 0 && observed === 0 && !useFloor && !exact) {
       warnings.push({ code: "no-change", message: "no paired case changed between A and B, so the minimum detectable effect cannot be estimated from these runs" });
-    } else if (Number.isFinite(mde) && Math.abs(observed) < mde && opts.significant) {
+    } else if (noPower) {
+      const x = exact as McNemarPlan;
+      warnings.push({
+        code: "no-power",
+        message:
+          `at ${n} paired cases and ${pct(x.discordance)} discordance no difference reaches ${Math.round(power * 100)}% power (the exact McNemar ceiling is ${pct(x.ceiling)}; ` +
+          `it needs at least ${x.minDiscordant} discordant cases to reject at alpha ${alpha})` +
+          (opts.significant ? ": the direction may hold, but an underpowered test that reaches significance tends to exaggerate the effect" : ""),
+      });
+    } else if (Number.isFinite(bar) && Math.abs(observed) < bar && opts.significant) {
       warnings.push({
         code: "near-mde",
-        message: `observed |B − A| ${pp(Math.abs(observed))} is significant but below the minimum detectable effect ${pp(mde)} (${level}): the direction holds, but its magnitude may be overstated (underpowered tests that reach significance tend to exaggerate the effect)`,
+        message: `observed |B − A| ${pp(Math.abs(observed))} is significant but below the minimum detectable effect ${pp(bar)} (${level}): the direction holds, but its magnitude may be overstated (underpowered tests that reach significance tend to exaggerate the effect)`,
       });
-    } else if (Number.isFinite(mde) && Math.abs(observed) < mde) {
+    } else if (Number.isFinite(bar) && Math.abs(observed) < bar) {
       warnings.push({
         code: "below-mde",
-        message: `observed |B − A| ${pp(Math.abs(observed))} is below the minimum detectable effect ${pp(mde)} (${level}): this comparison cannot reliably detect a difference this small`,
+        message: `observed |B − A| ${pp(Math.abs(observed))} is below the minimum detectable effect ${pp(bar)} (${level}): this comparison cannot reliably detect a difference this small`,
       });
     }
   }
   const out: PowerAnalysis = { alpha, power, n, observed, sd, mde, minPaired, warnings };
   if (opts.noise) out.noise = { sd: opts.noise.sd, flipRate: opts.noise.flipRate, paired: opts.noise.paired, used: useFloor };
+  if (exact) out.exact = exact;
   return out;
+}
+
+/**
+ * The exact McNemar part of a power line: ` · exact MDE 10.6pp` or ` · no 80%
+ * power at this n (exact McNemar ceiling 62%)`; empty without an exact design.
+ */
+export function exactPowerText(p: Pick<PowerAnalysis, "exact" | "power">): string {
+  const x = p.exact;
+  if (!x) return "";
+  return Number.isNaN(x.mde) ? ` · no ${Math.round(p.power * 100)}% power at this n (exact McNemar ceiling ${pct(x.ceiling)})` : ` · exact MDE ${pp(x.mde)}`;
 }
 
 /**

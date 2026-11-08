@@ -4566,10 +4566,22 @@ function side(cls, role, e) {
 }
 /** One decimal, so both sides add up to the difference shown in tenths of a point. */
 function pct1(x) { return ((x || 0) * 100).toFixed(1) + "%"; }
+/** The MDE to show: the larger of the normal and exact McNemar MDEs; NaN when the exact test reaches the target power for no gap. */
+function powerMde(c) {
+  const p = c.power;
+  if (!p) return NaN;
+  const ex = p.exact;
+  if (!ex) return Number.isFinite(p.mde) ? p.mde : NaN;
+  return Number.isFinite(ex.mde) ? Math.max(Number.isFinite(p.mde) ? p.mde : 0, ex.mde) : NaN;
+}
 /** Power warnings in plain words; the exact statement stays in the tooltip. */
 function powerText(w, c) {
   const pts = (x) => Math.round(x * 1000) / 10 + " pts";
-  const mde = c.power && Number.isFinite(c.power.mde) ? pts(c.power.mde) : "";
+  const honest = powerMde(c);
+  const mde = Number.isFinite(honest) ? pts(honest) : "";
+  const ex = c.power && c.power.exact;
+  if (w.code === "no-power" && ex) return "At " + fmtNum(c.paired) + " paired cases no gap, however large, is found " + Math.round(c.power.power * 100) + "% of the time: the exact test needs at least " + ex.minDiscordant + " cases that changed, and finds even the largest gap only " + Math.round(ex.ceiling * 100) + "% of the time.";
+  if (w.code === "small-n" && ex && !mde) return "With " + fmtNum(c.paired) + " paired cases, even a large gap may go undetected. Add cases or trials before reading this as no difference.";
   if (w.code === "small-n") return "With " + fmtNum(c.paired) + " paired cases, changes smaller than " + (mde ? "about " + mde : "a large gap") + " may go undetected. Add cases or trials before reading this as no difference.";
   if (w.code === "below-mde" && mde) return "The gap (" + pts(Math.abs(c.diff.mean)) + ") is smaller than the " + mde + " this suite can reliably detect.";
   if (w.code === "near-mde" && mde) return "The direction holds, but at " + fmtNum(c.paired) + " cases the size of the gap is probably overstated (reliable from " + mde + ").";
@@ -4607,8 +4619,10 @@ async function showCompare(seq, aId, bId) {
   // small-n already states the detection limit; below-mde would repeat it.
   const pw = (c.power && c.power.warnings) || [];
   const smallN = pw.some((w) => w.code === "small-n");
-  for (const w of pw) if (!(smallN && w.code === "below-mde")) warnings.push({ text: powerText(w, c), title: w.message });
-  const mde = c.power && Number.isFinite(c.power.mde) ? "detects changes of " + Math.round(c.power.mde * 1000) / 10 + " pts or more" : "";
+  // no-power is the stronger statement of small-n.
+  const noPower = pw.some((w) => w.code === "no-power");
+  for (const w of pw) if (!(smallN && w.code === "below-mde") && !(noPower && w.code === "small-n")) warnings.push({ text: powerText(w, c), title: w.message });
+  const mde = Number.isFinite(powerMde(c)) ? "detects changes of " + Math.round(powerMde(c) * 1000) / 10 + " pts or more" : "";
   view.replaceChildren(
     h("div", { class: "exp-top" }, crumbs),
     h("section", { class: "panel verdict " + tone, "aria-label": "Verdict" },

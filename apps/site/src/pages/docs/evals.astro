@@ -238,6 +238,11 @@ const TRIGGER = [
       <code>exp aa</code> runs one config twice and stores its run-to-run noise. Compare then prints the A/A flip rate, and the minimum
       detectable effect never goes below that noise.
     </li>
+    <li>
+      The power line adds the exact McNemar power. The exact test needs at least 6 flipped cases to reject at α 0.05, so a small suite has a
+      ceiling: at 45 cases with 14% flipped, even the largest gap is found only 62% of the time. Then the line reads
+      <code>no 80% power at this n (exact McNemar ceiling 62%)</code>; otherwise it adds <code>exact MDE 10.6pp</code>.
+    </li>
     <li>Compare warns when the two runs ran one after the other, and says how far apart they were.</li>
     <li>
       <code>--gate</code> adds a ship-or-hold line: <code>Ship it: B wins 8 cases, loses 0</code>, <code>Hold: not enough evidence</code>, or

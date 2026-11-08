@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { CaseRun } from "../../src/datasets/types.ts";
-import { allTrialsPass, casesFor, normalQuantile, pairedPower, passHatK } from "../../src/experiments/power.ts";
+import { allTrialsPass, casesFor, exactPowerText, normalQuantile, pairedPower, passHatK } from "../../src/experiments/power.ts";
 
 const close = (x: number, y: number, eps = 1e-8) => assert.ok(Math.abs(x - y) < eps, `${x} ≉ ${y}`);
 const rep = (v: number, k: number) => Array.from({ length: k }, () => v);
@@ -137,6 +137,69 @@ describe("A/A noise floor in power planning", () => {
     // At the planned n the MDE is at or just below the target effect.
     const n = casesFor(0.1, 0.5);
     assert.ok((Z * 0.5) / Math.sqrt(n) <= 0.1 && (Z * 0.5) / Math.sqrt(n - 1) > 0.1);
+  });
+});
+
+describe("exact McNemar power in pairedPower (AD-9)", () => {
+  // 45 cases, 3 regressions and 4 improvements: 7 of 45 discordant (15.6%).
+  const d45 = [...rep(-1, 3), ...rep(1, 4), ...rep(0, 38)];
+
+  it("45 cases with 7 discordant: no gap reaches 80% power", () => {
+    const p = pairedPower(d45, { discordant: { b: 3, c: 4 } });
+    assert.equal(p.exact?.n, 45);
+    close(p.exact?.discordance ?? NaN, 7 / 45);
+    assert.ok(Number.isNaN(p.exact?.mde));
+    assert.ok((p.exact?.ceiling ?? 1) < 0.8);
+    // The normal MDE is finite and claims about 20pp; the exact test disagrees.
+    assert.ok(Number.isFinite(p.mde));
+    assert.deepEqual(p.warnings.map((w) => w.code), ["small-n", "no-power"]);
+    assert.match(
+      p.warnings[1]!.message,
+      /^at 45 paired cases and 16% discordance no difference reaches 80% power \(the exact McNemar ceiling is \d+%; it needs at least 6 discordant cases to reject at alpha 0\.05\)$/,
+    );
+    assert.equal(exactPowerText(p), ` · no 80% power at this n (exact McNemar ceiling ${Math.round(p.exact!.ceiling * 100)}%)`);
+  });
+
+  it("447 cases at 14% discordance have an exact MDE and no no-power warning", () => {
+    const diffs = [...rep(-1, 31), ...rep(1, 32), ...rep(0, 384)];
+    const p = pairedPower(diffs, { discordant: { b: 31, c: 32 } });
+    assert.ok(Math.abs((p.exact?.mde ?? NaN) - 0.051) < 0.002);
+    assert.deepEqual(p.warnings.map((w) => w.code), ["below-mde"]);
+    // below-mde uses the larger of the two MDEs.
+    assert.match(p.warnings[0]!.message, new RegExp(`minimum detectable effect ${(Math.max(p.mde, p.exact!.mde) * 100).toFixed(1)}pp`));
+    assert.match(exactPowerText(p), /^ · exact MDE 5\.\dpp$/);
+  });
+
+  it("the A/A flip rate raises the discordance when it is larger", () => {
+    const diffs = [...rep(-1, 10), ...rep(1, 10), ...rep(0, 180)];
+    const low = pairedPower(diffs, { discordant: { b: 10, c: 10 } });
+    close(low.exact?.discordance ?? NaN, 0.1);
+    const raised = pairedPower(diffs, { discordant: { b: 10, c: 10 }, noise: { sd: 0.1, flipRate: 0.3, paired: 50 } });
+    close(raised.exact?.discordance ?? NaN, 0.3);
+    assert.ok((raised.exact?.mde ?? 0) > (low.exact?.mde ?? 1));
+    // A smaller flip rate leaves the observed discordance alone.
+    close(pairedPower(diffs, { discordant: { b: 10, c: 10 }, noise: { sd: 0.1, flipRate: 0.05, paired: 50 } }).exact?.discordance ?? NaN, 0.1);
+  });
+
+  it("no discordant case: no exact design, no-change stands", () => {
+    const p = pairedPower(rep(0, 250), { discordant: { b: 0, c: 0 } });
+    assert.equal(p.exact, undefined);
+    assert.deepEqual(p.warnings.map((w) => w.code), ["no-change"]);
+    assert.equal(exactPowerText(p), "");
+  });
+
+  it("output is unchanged without discordant counts", () => {
+    for (const diffs of [d45, [...rep(1, 7), ...rep(-1, 3), ...rep(0, 10)], rep(0, 250)]) {
+      const p = pairedPower(diffs);
+      assert.equal("exact" in p, false);
+      assert.ok(!p.warnings.some((w) => w.code === "no-power"));
+    }
+  });
+
+  it("a significant result without power says the effect is likely exaggerated", () => {
+    const p = pairedPower([...rep(-1, 6), ...rep(0, 18)], { significant: true, discordant: { b: 6, c: 0 } });
+    assert.deepEqual(p.warnings.map((w) => w.code), ["small-n", "no-power"]);
+    assert.match(p.warnings[1]!.message, /tends to exaggerate the effect$/);
   });
 });
 

@@ -11,6 +11,7 @@ import type { MatrixResult } from "./matrix-run.ts";
 import { gateDetail, gateHeadline, idList } from "../stats/gate.ts";
 import type { ArmAttrition, Comparison, ComparisonGate, ComparisonNonInferiority, ComparisonTurnover } from "./compare.ts";
 import type { PairwiseSummary } from "./pairwise.ts";
+import { exactPowerText } from "./power.ts";
 import type { ExperimentBlock, ExpSession, SessionBlock } from "./session.ts";
 import { stabilityLine } from "./stability.ts";
 import type { SweepResult } from "./sweep.ts";
@@ -187,8 +188,12 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   if (c.nonInferiority) out.push(...renderNonInferiority(c.nonInferiority, color));
   const p = c.power;
   out.push(
-    `power   MDE ${Number.isFinite(p.mde) ? `${(p.mde * 100).toFixed(1)}pp` : "—"} ` +
-      paint(`(α ${p.alpha}, power ${Math.round(p.power * 100)}%, paired, sd of per-case Δ ${Number.isFinite(p.sd) ? fixed(p.sd) : "—"})`, "dim", color),
+    `power   MDE ${Number.isFinite(p.mde) ? `${(p.mde * 100).toFixed(1)}pp` : "—"}${exactPowerText(p)} ` +
+      paint(
+        `(α ${p.alpha}, power ${Math.round(p.power * 100)}%, paired, sd of per-case Δ ${Number.isFinite(p.sd) ? fixed(p.sd) : "—"}${p.exact ? `, ${Math.round(p.exact.discordance * 100)}% discordant` : ""})`,
+        "dim",
+        color,
+      ),
   );
   if (p.noise) {
     out.push(

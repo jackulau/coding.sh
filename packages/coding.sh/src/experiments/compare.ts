@@ -480,7 +480,14 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     attrition,
     power: pairedPower(
       deltas.map((x) => x.delta),
-      { alpha: boot.alpha, power: opts.power, minPaired: opts.minPaired, significant: verdict !== "inconclusive", ...(opts.noise ? { noise: opts.noise } : {}) },
+      {
+        alpha: boot.alpha,
+        power: opts.power,
+        minPaired: opts.minPaired,
+        significant: verdict !== "inconclusive",
+        discordant: { b: regress, c: improve },
+        ...(opts.noise ? { noise: opts.noise } : {}),
+      },
     ),
     turnover: turnover(outcomesByCase(a.runs), outcomesByCase(b.runs)),
   };

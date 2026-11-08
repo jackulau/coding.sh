@@ -5,6 +5,8 @@ export { pairedBootstrap, pairedBootstrapMedian, roganGladen, wilson } from "./i
 export type { BootstrapOpts, BootstrapResult, CalibrationCounts, Interval, RoganGladenResult } from "./interval.ts";
 export { acceptanceGate, acceptanceGatePaired, binomCdfHalf, binomUpperTail, fisherExact, hardRegressions, holm, mcnemar, mcnemarPaired, nonInferiority, pairedPermutation, signTest } from "./tests.ts";
 export type { GateOpts, GateReason, GateResult, McNemarResult, NonInferiorityOpts, NonInferiorityResult, PermutationOpts, PermutationResult, SignTestResult } from "./tests.ts";
+export { mcnemarCasesFor, mcnemarMinDiscordant, mcnemarPlan, mcnemarPower } from "./mcnemar-power.ts";
+export type { McNemarPlan, McNemarPowerOpts } from "./mcnemar-power.ts";
 export { gateDetail, gateHeadline, gateVerdict } from "./gate.ts";
 export type { GateVerdict } from "./gate.ts";
 export { cohenKappa, percentAgreement } from "./agreement.ts";

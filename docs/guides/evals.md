@@ -97,6 +97,14 @@ test on flipped cases and the minimum detectable effect. It also reports:
   run on one are listed in `comparison.ungradedCases`.
 - **Noise floor.** When an A/A run exists for the baseline config, it prints the A/A flip rate,
   and the minimum detectable effect never goes below what that noise allows.
+- **Exact power.** The `power` line also gives the exact McNemar view, from the share of cases
+  that flipped (raised to the A/A flip rate when that is larger). The exact test needs at least 6
+  flipped cases to reject at α 0.05, so a small suite has a power ceiling: at 45 cases with 14%
+  flipped, even the largest possible gap is found only 62% of the time. Then the line reads
+  `no 80% power at this n (exact McNemar ceiling 62%)` and a `no-power` warning says so;
+  otherwise it adds `exact MDE 10.6pp`, and the below-MDE warnings use the larger of the two MDEs.
+  `compare` (harness A/B) prints the same line. The exact power sums K ~ Bin(n, d) flipped cases
+  against the exact test (arXiv 2610.04433, power appendix).
 - **Timing.** When the two runs were not interleaved and ran one after the other, it warns and
   says how far apart they were. Provider drift, rate limits and time of day can look like a change.
 - **Coverage turnover.** With 2+ trials per case, a case is covered when it passed in at least one

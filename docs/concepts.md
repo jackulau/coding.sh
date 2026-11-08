@@ -98,6 +98,11 @@ pass rate with a paired bootstrap confidence interval, and runs McNemar's test o
 flipped. The verdict is `better` or `worse` only when the interval excludes zero; otherwise it is
 `inconclusive`.
 
+**Minimum detectable effect (MDE).** The smallest true gap a comparison finds 80% of the time. The
+`power` line gives a normal approximation and the exact McNemar one, from the share of cases that
+flipped. The exact test cannot reject with fewer than 6 flipped cases (α 0.05), so a small suite
+has a power ceiling and may have no MDE at all: `no 80% power at this n`.
+
 **Eval task.** A repo-replay task drafted from a captured session: the repo at the start of the
 session, an instruction, a verifier command, and the session's diff as the reference answer.
 `coding.sh eval validate` checks that doing nothing fails, the reference passes k of k times, and

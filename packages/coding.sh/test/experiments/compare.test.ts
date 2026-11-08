@@ -78,7 +78,10 @@ describe("compareExperiments", () => {
     assert.ok(Math.abs(c.power.mde - 0.43592) < 1e-4);
     assert.equal(c.power.n, 20);
     assert.deepEqual(c.power.warnings.map((w) => w.code), ["small-n", "below-mde"]);
-    assert.match(text, /^power {3}MDE 43\.6pp \(α 0\.05, power 80%, paired, sd of per-case Δ 0\.70\)$/m);
+    // Exact McNemar at n = 20, d = 10/20: its MDE is close to the normal one here.
+    assert.equal(c.power.exact?.discordance, 0.5);
+    assert.ok(Math.abs((c.power.exact?.mde ?? NaN) - 0.431) < 0.001);
+    assert.match(text, /^power {3}MDE 43\.6pp · exact MDE 43\.1pp \(α 0\.05, power 80%, paired, sd of per-case Δ 0\.70, 50% discordant\)$/m);
     assert.match(text, /^! only 20 paired cases \(< 200\)/m);
     assert.match(text, /^! observed \|B − A\| 20\.0pp is below the minimum detectable effect 43\.6pp \(α 0\.05, power 80%\)/m);
     // Single trial: no pass^k.
@@ -97,11 +100,14 @@ describe("compareExperiments", () => {
     assert.equal(c.verdict, "worse");
     assert.ok(c.mcnemar.p < 0.05);
     assert.ok(Math.abs(c.diff.mean) < c.power.mde);
-    assert.deepEqual(c.power.warnings.map((w) => w.code), ["small-n", "near-mde"]);
+    // Exact McNemar: 6 discordant of 24 (25%) is the bare minimum to reject, so no gap reaches 80% power.
+    assert.ok(Number.isNaN(c.power.exact?.mde));
+    assert.deepEqual(c.power.warnings.map((w) => w.code), ["small-n", "no-power"]);
     const text = renderComparison(c, { color: false, a, b });
     assert.match(text, /verdict B is worse/);
     assert.doesNotMatch(text, /cannot reliably detect/);
-    assert.match(text, /^! observed \|B − A\| 25\.0pp is significant but below the minimum detectable effect 25\.3pp .*magnitude may be overstated/m);
+    assert.match(text, /^power {3}MDE 25\.3pp · no 80% power at this n \(exact McNemar ceiling \d+%\) /m);
+    assert.match(text, /^! at 24 paired cases and 25% discordance no difference reaches 80% power .*: the direction may hold, but an underpowered test that reaches significance tends to exaggerate the effect$/m);
   });
 
   it("identical runs: zero difference, p = 1", async () => {
@@ -534,7 +540,9 @@ describe("compare: A/A noise floor (EM-10)", () => {
     assert.ok(Number.isNaN(compareExperiments(a, b).power.mde));
     close(c.power.mde, ((1.959963984540054 + 0.8416212335729143) * 0.4) / Math.sqrt(20), 1e-8);
     assert.deepEqual(c.power.noise, { ...noise, used: true });
-    assert.deepEqual(c.power.warnings.map((w) => w.code), ["small-n", "below-mde"]);
+    // No case flipped here, so the exact design runs at the A/A flip rate: 15% of 20 cases has no 80% power.
+    assert.equal(c.power.exact?.discordance, 0.15);
+    assert.deepEqual(c.power.warnings.map((w) => w.code), ["small-n", "no-power"]);
     assert.match(renderComparison(c, { color: false }), /^noise {3}A\/A flip rate on this dataset 15\.0% \(sd 0\.40 over 20 cases; the MDE uses it as a floor\)$/m);
   });
 });

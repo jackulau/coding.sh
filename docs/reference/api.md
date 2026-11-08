@@ -747,6 +747,11 @@ curl -sS "$CSH/api/compare?a=$EXP_A&b=$EXP_B" -H "Authorization: Bearer $READ_KE
 }
 ```
 
+`power.exact` is the exact McNemar design when some case flipped: `{"n", "discordance",
+"alpha", "power", "minDiscordant", "ceiling", "mde"}`, where `ceiling` is the power at the largest
+possible gap and `mde` is `null` when no gap reaches `power`. Then `power.warnings` has a
+`no-power` entry.
+
 Present only when they apply: `graders[].versionChanged` (`{"a","b"}` versions) and
 `gradersOnlyIn` (`{"a":[…],"b":[…]}`) when the sides were graded differently, with
 `instrumentWarning` saying so; `ungradedCases` for cases that ran on both sides but have no graded
