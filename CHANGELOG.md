@@ -91,6 +91,7 @@ coding.sh runs on Windows, and CI tests it there.
 
 ### Fixed
 
+- **Judges.** The Anthropic and OpenAI judge providers read `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`, like the vendors' SDKs, so judges and drafts reach a proxy, gateway or local stub without `--base-url`. [Judges](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#judges).
 - **Privacy.** `coding.sh purge` never repeats what was typed on its command line: a secret pasted as an argument, a flag value, an unknown option or a `--literal` path that does not exist is refused with exit 2 and `(value not shown)`, instead of being printed to the terminal and logs. Other commands still name a stray argument. [Purge](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-purge).
 - **Compare.** The `agent spend` and `grader spend` rows no longer count runs copied by `--reuse`; a `reused` row shows what those runs cost when they first ran, marked not spent. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#reuse-finished-runs).
 - **Sessions.** Claude Code subagents get a title and a turn: the title is the Agent tool's `description`, else the first line of the prompt, and the prompt is recorded as the subagent's first message. Claude Code's internal forks (the compaction summarizer, prompt suggestions) no longer leave empty subagent sessions with no model, tools or title. Stored sessions are parsed again on the next ingest. [Concepts](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md).

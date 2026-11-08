@@ -61,6 +61,11 @@ function trimSlash(s: string): string {
   return s.replace(/\/+$/, "");
 }
 
+/** The base URL: the option, else the env var the vendor's own SDKs read (a proxy, gateway or local stub), else the vendor's. */
+function baseFrom(opts: CommonOpts, envVar: string, fallback: string): string {
+  return trimSlash(opts.baseURL ?? readKey(opts.env ?? process.env, envVar) ?? fallback);
+}
+
 // ---------------------------------------------------------------- Anthropic
 
 export const DEFAULT_ANTHROPIC_MODEL = DEFAULT_MODELS.anthropic;
@@ -81,7 +86,7 @@ export interface AnthropicOpts extends CommonOpts {
  */
 export function anthropicProvider(opts: AnthropicOpts = {}): ChatProvider {
   const model = opts.model ?? DEFAULT_ANTHROPIC_MODEL;
-  const baseURL = trimSlash(opts.baseURL ?? "https://api.anthropic.com");
+  const baseURL = baseFrom(opts, "ANTHROPIC_BASE_URL", "https://api.anthropic.com");
   const keyEnv = opts.apiKeyEnv ?? "ANTHROPIC_API_KEY";
   const maxTokens = opts.maxTokens ?? 4096;
   const structured = opts.structuredOutput ?? true;
@@ -156,7 +161,8 @@ export interface OpenAICompatOpts extends CommonOpts {
 export function openAICompatibleProvider(opts: OpenAICompatOpts = {}): ChatProvider {
   if (!opts.model) throw new ProviderError("openai-compatible provider: `model` is required (there is no portable default)");
   const model = opts.model;
-  const baseURL = trimSlash(opts.baseURL ?? "https://api.openai.com/v1");
+  // OPENAI_BASE_URL only for OpenAI itself: a named endpoint (gateway, Ollama, …) passes its own.
+  const baseURL = opts.name && opts.name !== "openai" ? trimSlash(opts.baseURL ?? "https://api.openai.com/v1") : baseFrom(opts, "OPENAI_BASE_URL", "https://api.openai.com/v1");
   const keyEnv = opts.apiKeyEnv ?? "OPENAI_API_KEY";
   const requireKey = opts.requireKey ?? true;
   const maxTokens = opts.maxTokens ?? 4096;
