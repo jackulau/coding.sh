@@ -86,7 +86,7 @@ export const DOC_GROUPS: DocGroup[] = [
         path: "/docs/evals",
         label: "Evals",
         title: "Evals",
-        summary: "Datasets, graders, LLM judges calibrated against human labels, paired experiment comparisons, and repo-replay tasks.",
+        summary: "Your first eval suite in minutes with eval init and eval run, then datasets, graders, calibrated LLM judges, paired comparisons and repo-replay tasks.",
       },
       { path: "/docs/benchmarks", label: "Benchmarks", title: "Benchmarks", summary: "coding.sh bench: fresh cases every day from a live source, every contender on the same frozen set, and a history of who leads." },
       { path: "/docs/workflows", label: "Workflows", title: "Workflow experiments", summary: "Capture multi-agent workflow runs, score them against known answers, compare two versions with paired statistics, and replay with a control fork." },

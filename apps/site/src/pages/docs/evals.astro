@@ -4,6 +4,18 @@ import Code from "../../components/docs/Code.astro";
 import Terminal from "../../components/Terminal.astro";
 import Tag from "../../components/docs/Tag.astro";
 
+const firstSessions = `coding.sh eval init --sessions --verifier 'npm test'
+coding.sh eval run failures --yes`;
+
+const firstSkill = `coding.sh eval init --skill .claude/skills/pdf --draft
+coding.sh eval run pdf --yes`;
+
+const firstApp = `coding.sh eval init triage --cases cases.jsonl --command 'node triage.mjs'
+# no cases yet: describe the app and have a model draft them
+coding.sh eval init triage --describe 'Labels a support ticket billing, bug or other' \\
+  --command 'node triage.mjs' --draft
+coding.sh eval run triage`;
+
 const dataset = `coding.sh dataset add smoke \\
   --case '{"input":"2+2","expected":"4"}' \\
   --case '{"input":"3*3","expected":"9"}'
@@ -64,6 +76,23 @@ const m = (s: string) => `<span class="t-muted">${esc(s)}</span>`;
 const t = (s: string) => `<span class="t-text">${esc(s)}</span>`;
 const ok = (s: string) => `<span class="t-pass">${esc(s)}</span>`;
 const no = (s: string) => `<span class="t-fail">${esc(s)}</span>`;
+
+// Real output of scripts/e2e/eval-init-capture.mjs (2026-11-07): Claude Code against a stub model that
+// writes the right fix in one trial and a wrong one in the other.
+const SUITE = [
+  `${m("$")} ${t("coding.sh eval run failures -k 2 --yes")}`,
+  `failures  capability suite · 1 task · 2 trials each`,
+  `pass@1  50.0% [9.5%, 90.5%]  (1/2 trials, 95% Wilson)`,
+  `pass@2  ${ok("100.0%")}  ${m("a task counts when any of 2 trials passes")}`,
+  `pass^2  ${no("0.0%")}  ${m("a task counts only when all 2 trials pass")}`,
+  "",
+  `task                     passed         first failure`,
+  m(`-----------------------  ------  -----  ---------------------------`),
+  `make-sum-js-add-its-two     1/2  ${no("flaky")}  coding.sh show 4fd72079-09a`,
+  "",
+  no(`flaky: make-sum-js-add-its-two. These pass some trials and fail others; pass^2 counts them as failures.`),
+  m(`1 task: a suite this small only shows large changes; grow it toward 20 to 50 tasks from real failures`),
+].join("\n");
 
 // Real output of the commands above (run 2026-11-06 against a throwaway CODING_SH_HOME).
 const RUN = [
@@ -165,6 +194,42 @@ const TRIGGER = [
     There are two kinds of eval. <strong>Dataset experiments</strong> run any agent, in any language, over a set of cases and grade the outputs.
     <strong>Repo-replay tasks</strong> re-run a coding agent from the repository state before a real session and check the result with a
     validated verifier.
+  </p>
+
+  <h2 id="first-eval">Your first eval in 5 minutes <Tag status="built" /></h2>
+  <p>
+    <code>coding.sh eval init</code> writes a suite to <code>evals/&lt;name&gt;/</code> in your repo and prints the command that runs it.
+    <code>coding.sh eval run</code> runs every suite there, or the ones you name, and prints a report. In a terminal, <code>eval init</code>
+    with no flags asks what you want to test.
+  </p>
+  <p>
+    <strong>Your agent's failed sessions.</strong> Up to 10 flagged sessions from this repo in the last 14 days become repo tasks: the repo
+    before the session, its first prompt, and your verifier. The failed diff is kept as a near miss the verifier must fail, not as the answer.
+    This is a capability suite, so <code>eval run</code> reports the score and exits 0.
+  </p>
+  <Code code={firstSessions} />
+  <p>
+    <strong>A skill.</strong> Prompts where the agent should load the skill and prompts where it should not, drafted by a model with
+    <code>--draft</code> and marked DRAFT for you to review. <code>eval run</code> runs each in Claude Code and reads from the captured session
+    whether the skill loaded. It exits 1 when a prompt is wrong in most of its trials.
+  </p>
+  <Code code={firstSkill} />
+  <p>
+    <strong>An app or a prompt.</strong> Cases of <code>&#123;"input", "expected"&#125;</code> and a command (or <code>--url</code>) that
+    answers one. Short expected answers get an <code>exact</code> grader; long ones, or none, get an LLM judge to calibrate. <code>eval init</code>
+    also prints a GitHub Actions workflow that runs the suite on every pull request.
+  </p>
+  <Code code={firstApp} />
+  <Terminal title="~/proj" label="Output of coding.sh eval run">
+    <pre set:html={SUITE} />
+  </Terminal>
+  <p>
+    Each task runs k times (3 by default). pass@k is the chance that at least one of k trials passes and pass^k that all k pass; a
+    <strong>flaky</strong> task counts for the first and against the second. Each failed trial links its captured session, so you can read
+    the transcript before changing anything. The report warns when a suite has fewer than 20 tasks and when a capability suite is saturated (90%
+    of tasks pass every trial). The <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#your-first-eval-in-5-minutes">evals
+    guide</a> maps each step of Anthropic's
+    <a href="https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents">Demystifying evals for AI agents</a> roadmap to a command.
   </p>
 
   <h2 id="datasets">Datasets <Tag status="built" /></h2>

@@ -121,6 +121,18 @@ session, an instruction, a verifier command, and the session's diff as the refer
 `coding.sh eval validate` checks that doing nothing fails, the reference passes k of k times, and
 the hidden tests do not leak. See [Turn a session into an eval](how-to/session-to-eval.md).
 
+**Eval suite.** A folder, `evals/<name>/`, with a `suite.json` and what it runs: repo tasks from
+failed sessions, a skill's `should` and `should_not` prompts, or cases for an app. `coding.sh eval
+init` writes one and `coding.sh eval run` runs it k times per task. A **capability** suite holds
+tasks the agent can't do reliably yet, and `eval run` never fails on its score. A **regression**
+suite should pass nearly every time, and `eval run` exits 1 when a task fails most of its trials.
+See [Your first eval](guides/evals.md#your-first-eval-in-5-minutes).
+
+**pass@k and pass^k.** Over k trials of a task, pass@k is the chance that at least one passes and
+pass^k the chance that all k pass. Both are estimated from n trials as C(n−c, k) and C(c, k) over
+C(n, k), with c passes. A task that passes some trials and fails others is **flaky**: it counts for
+pass@k and against pass^k.
+
 **Harness bundle.** A snapshot of an agent's setup: its config files, instructions and model.
 `coding.sh harness snapshot` makes one; `coding.sh compare <a> <b>` runs two on the same eval tasks.
 See [Compare two agents](how-to/compare-agents.md).

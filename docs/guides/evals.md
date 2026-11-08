@@ -3,6 +3,144 @@
 Eval runs that drive a real agent or an LLM judge call that agent or provider, with your
 credentials and at your cost.
 
+## Your first eval in 5 minutes
+
+`coding.sh eval init` writes a suite to `evals/<name>/` in your repo and prints the command that
+runs it. `coding.sh eval run` runs every suite there, or the ones you name, and prints a report.
+Run `eval init` with no flags in a terminal and it asks what you want to test. Pick the case below
+that matches what you have.
+
+### Your agent's failed sessions
+
+```sh
+coding.sh eval init --sessions --verifier 'npm test'
+coding.sh eval run failures --yes
+```
+
+`eval init --sessions` takes up to 10 sessions from this repo in the last 14 days that coding.sh
+flagged (a failed tool call, an unverified claim, a loop, …) and makes one repo task from each: the
+repo as it was before the session, the session's first prompt as the instruction, and your
+verifier. Each task's row names the session it came from. `--session <id>` (or `latest`, or an id
+prefix) picks sessions yourself; `--since` and `--limit` change the window. The suite is called
+`failures` unless you name it (`coding.sh eval init mine --session latest`), and a name that
+exists needs `--force`, which replaces the whole suite.
+
+The session failed, so its diff is not a correct answer. It is saved as a near miss
+(`near-misses/001.patch`) that the verifier must fail. Add a correct fix as `reference.patch` in
+the task dir, load it with `coding.sh eval import evals/failures/tasks/<task>`, and `coding.sh eval
+validate <task>` checks the verifier both ways. The verifier must pass with this task's fix alone:
+a whole test suite that also covers other bugs never passes. Until there is a reference, `eval run`
+lists the task as having no reference solution.
+
+This is a **capability** suite: tasks the agent can't do yet. `eval run` runs the agent (the one the
+sessions used) 3 times per task, from a snapshot of your current setup, and exits 0 whatever the
+score. The tasks start from snapshots on this machine, so they run here, not in CI. To test a
+change to your setup on them, use `coding.sh compare <before> <after> --tag suite:failures`.
+
+### A skill
+
+```sh
+coding.sh eval init --skill .claude/skills/pdf --draft
+coding.sh eval run pdf --yes
+```
+
+This writes `evals/pdf/triggers.toml` with prompts where the agent should load the skill and
+prompts where it should not. `--draft` has a model write them (Anthropic by default, with
+`ANTHROPIC_API_KEY`; `--draft openai` or a provider JSON picks another). The file says DRAFT at the
+top: read it and fix what is wrong before you trust a score. Without `--draft` you get TODO
+prompts to fill in, or pass your own with `--should` and `--should-not`. `eval run` refuses to run
+a file that still has TODO prompts.
+
+`eval run` runs each prompt 3 times in Claude Code with the skill and its sibling skills installed,
+reads from each captured session whether the skill loaded, and reports precision, recall and F1
+next to pass@k. It is a **regression** suite, so it exits 1 when a prompt is wrong in most of its
+trials. To test whether a skill or CLAUDE.md helps on real work rather than whether it loads, see
+[Evaluate an Agent Skill](../how-to/evaluate-a-skill.md) and
+[Test a CLAUDE.md change](../how-to/test-claude-md-change.md).
+
+### An app or a prompt
+
+```sh
+coding.sh eval init triage --cases cases.jsonl --command 'node triage.mjs'
+coding.sh eval run triage
+```
+
+`cases.jsonl` holds one `{"input": …, "expected": …}` per line. The command gets each input as JSON
+on stdin and prints its answer; `--url` posts it to an HTTP endpoint instead. No cases yet? Describe
+the app and have a model draft some:
+
+```sh
+coding.sh eval init triage --describe 'Labels a support ticket billing, bug or other' \
+  --command 'node triage.mjs' --draft
+```
+
+Drafted cases carry `"metadata": {"draft": true}` until you edit them. `eval init` picks the
+graders from the cases: an `exact` grader (case and whitespace ignored) when every expected answer
+is short, an LLM judge that compares the output with the expected answer when they are long, and a
+judge on your description when there are none. A judge needs `ANTHROPIC_API_KEY`; check it against
+your own labels with `coding.sh judge calibrate` before you trust it (see [Judges](#judges)).
+
+This is a **regression** suite. `eval init` also prints a GitHub Actions workflow that runs it on
+every pull request, and `eval run` exits 1 when a case fails most of its trials. The run is an
+ordinary experiment, so `coding.sh exp show <id>` and `exp compare` work on it.
+
+### The report
+
+```
+$ coding.sh eval run failures -k 2 --yes
+
+failures  capability suite · 1 task · 2 trials each
+pass@1  50.0% [9.5%, 90.5%]  (1/2 trials, 95% Wilson)
+pass@2  100.0%  a task counts when any of 2 trials passes
+pass^2  0.0%  a task counts only when all 2 trials pass
+
+task                     passed         first failure
+-----------------------  ------  -----  ---------------------------
+make-sum-js-add-its-two     1/2  flaky  coding.sh show 4fd72079-09a
+
+flaky: make-sum-js-add-its-two. These pass some trials and fail others; pass^2 counts them as failures.
+1 task: a suite this small only shows large changes; grow it toward 20 to 50 tasks from real failures
+1 task without a reference solution (make-sum-js-add-its-two): add reference.patch to the task dir, then coding.sh eval validate <task>
+harness claude-code-project (3 files) · experiment exp_01M6WGQF2R1GZWABGSSJY7BR87
+```
+
+This is real output from `scripts/e2e/eval-init-capture.mjs`, where Claude Code runs against a
+stub model that writes the right fix in one trial and a wrong one in the other. `pass@1` is the
+share of all trials that passed.
+
+- **pass@k** is the chance that at least one of k trials passes, **pass^k** that all k pass. They
+  are estimated per task from all its trials and averaged. A product that must work every time
+  wants pass^k; a tool where one good answer is enough can use pass@k.
+- A **flaky** task passed some trials and failed others. It counts for pass@k and against pass^k.
+- **first failure** links the session of a failed trial (`coding.sh show <id>`, or the viewer), or
+  gives the grader's reason. Read failed transcripts before you change a prompt or a grader: a
+  task no trial ever passes is more often a broken task than a hard one.
+- A capability suite where 90% of tasks pass every trial is saturated: it no longer shows
+  progress, so add harder tasks or move it to regression.
+- Under 20 tasks the report says the suite can show only large changes.
+
+`eval run --json` prints the same report as JSON. `-k` changes the trials, `--model` and `--agent`
+the agent, and `--harness <bundle>` runs a repo task suite with a stored harness instead of the
+current setup. Suites can also be built by your agent through the `eval_init` MCP tool.
+
+### From Anthropic's roadmap to coding.sh
+
+Anthropic's [Demystifying evals for AI
+agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents) gives an eight-step
+roadmap. What each step maps to here:
+
+| Step | coding.sh |
+| --- | --- |
+| 0. Start early, with 20 to 50 tasks from real failures | `eval init --sessions` makes tasks from flagged sessions; the report notes suites under 20 tasks. |
+| 1. Start with what you already test manually | `eval init --cases` with your checks as cases; `dataset add --session` keeps one session's prompt as a case. |
+| 2. Unambiguous tasks with reference solutions | `eval validate` checks that doing nothing fails, the reference passes k of k and near misses fail; `eval crosscheck` reviews the verifier. |
+| 3. Balanced problem sets | `should` and `should_not` prompts for skills; drafted cases are asked to be half and half, and `eval init` warns when every case tests the same side. |
+| 4. A stable, isolated harness | Each repo trial starts from a fresh copy of the snapshot, with hidden tests added only for the verifier; harness bundles pin the setup. |
+| 5. Graders: code first, then models | `eval init` picks a code grader when it can; LLM judges are marked uncalibrated until `judge calibrate` measures them against your labels. |
+| 6. Read the transcripts | The report links each failed trial's captured session; `coding.sh show` and the viewer open it. |
+| 7. Watch for saturation | The report flags a capability suite where 90% of tasks pass every trial. |
+| 8. Keep suites healthy | Suites are files in your repo, reviewed like code; `eval run` in CI fails a pull request that breaks a regression suite. |
+
 ## Session to eval
 
 `coding.sh eval new <session> --verifier "<cmd>"` drafts a replayable task that starts from the
@@ -414,6 +552,10 @@ the same, like the byte count of a fixed build, has no noise: a non-zero delta i
 worse, for CI gates. scripts/perf/ uses it to gate the coding.sh site on Lighthouse metrics.
 
 ## Judges
+
+Judges call Anthropic with `ANTHROPIC_API_KEY` or OpenAI with `OPENAI_API_KEY`. Like the vendors'
+SDKs, they send to `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` when set, so a proxy or gateway works
+without `--base-url`.
 
 `coding.sh judge calibrate` measures judge and human agreement (Cohen's kappa) on a held-out split.
 Every report flags judges that are not calibrated. It also stores the judge's held-out sensitivity
