@@ -8,6 +8,10 @@ import { canonicalScheme, openBlobStore, openIndexStore, parseStoreUrl } from ".
 import type { SpanEnricher } from "../otel/map.ts";
 import { createOtlpHandler, decompress, hostOf, HttpError, isLoopbackHost, readBody, RPC, type Signal } from "../otel/receiver.ts";
 import { createViewerHandler } from "../viewer/server.ts";
+import { recorderFor } from "../proxy/index.ts";
+import type { Recorder } from "../proxy/record.ts";
+import { createProxyHandler, type Upstreams } from "../proxy/server.ts";
+import { proxySettings } from "../proxy/state.ts";
 import type { UpdateStatus } from "../update/index.ts";
 import { createAuthenticator, READ_COOKIE } from "./auth.ts";
 import { DRAIN_TIMEOUT_MS, MAX_BODY_BYTES, type ServeConfig } from "./config.ts";
@@ -32,6 +36,8 @@ export interface ServeOptions {
   tickEvents?: number;
   /** Drain timeout on shutdown (default 25 s). */
   drainMs?: number;
+  /** Where the /proxy/* routes forward (default: [proxy] in config.toml, then the public APIs). */
+  proxyUpstreams?: Partial<Upstreams>;
 }
 
 export interface ServeHandle {
@@ -59,7 +65,12 @@ export interface ReadyBody {
 }
 
 const ROUTE_LABELS = new Set(["/v1/traces", "/v1/logs", "/v1/metrics", "/v1/ingest", "/healthz", "/readyz", "/metrics", "/"]);
-const routeLabel = (path: string) => (ROUTE_LABELS.has(path) ? path : path.startsWith("/api/") ? "/api" : "other");
+const routeLabel = (path: string) => (ROUTE_LABELS.has(path) ? path : path.startsWith("/api/") ? "/api" : path.startsWith(PROXY_PREFIX) ? "/proxy" : "other");
+
+/** The model API proxy's mount: `<server>/proxy/v1/messages` is the Anthropic API, and so on. */
+export const PROXY_PREFIX = "/proxy/";
+/** The ingest key for the proxy routes (Authorization carries the client's own API key, forwarded upstream). */
+export const PROXY_KEY_HEADER = "x-coding-sh-key";
 const SIGNALS: Record<string, Signal> = { "/v1/traces": "traces", "/v1/logs": "logs", "/v1/metrics": "metrics" };
 /** Health and metrics: GET or HEAD only. */
 const OPS_PATHS = new Set(["/healthz", "/readyz", "/metrics"]);
@@ -277,6 +288,45 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
     }
   };
 
+  // ---- the model API proxy at /proxy/*: logs each call into the caller's project
+  // (x-coding-sh-key, an ingest key) and forwards the client's own API key upstream.
+  const recorders = new Map<string, Recorder>();
+  const recorderOf = (project: string): Recorder => {
+    let r = recorders.get(project);
+    if (!r) {
+      r = recorderFor({
+        config: cfg.core,
+        index,
+        blobs,
+        project,
+        write: async (events) => {
+          await queue.submit({ kind: "native", project, events, items: events.length, bytes: events.reduce((n, e) => n + JSON.stringify(e.payload).length, 0) });
+        },
+        onError: (e) => log.warn("proxy call not recorded", { project, error: e.message }),
+      });
+      recorders.set(project, r);
+    }
+    return r;
+  };
+  const proxyHandler = createProxyHandler({
+    upstreams: o.proxyUpstreams ?? proxySettings(process.env).upstreams,
+    allowRemote: !loopback,
+    dropHeaders: [PROXY_KEY_HEADER],
+    onError: (e) => log.warn("proxy", { error: e.message }),
+  });
+  const proxy = (req: IncomingMessage, res: ServerResponse): void => {
+    const h = req.headers[PROXY_KEY_HEADER];
+    const project = auth.ingestKey(typeof h === "string" ? h.trim() : undefined);
+    if (project === undefined) {
+      metrics.authFailures.inc({ route: "/proxy" });
+      req.resume();
+      // The Anthropic/OpenAI error shape, so agents show the message.
+      return sendJson(res, 401, { type: "error", error: { type: "authentication_error", message: `coding.sh serve: missing or invalid ingest key; send it in the ${PROXY_KEY_HEADER} header` } });
+    }
+    const rest = `/${(req.url ?? "/").slice(PROXY_PREFIX.length)}`;
+    proxyHandler(req, res, { path: rest, recorder: recorderOf(project) });
+  };
+
   const secureCookie = (req: IncomingMessage) => cfg.trustProxy && String(req.headers["x-forwarded-proto"] ?? "").split(",")[0]!.trim() === "https";
   const viewer = await createViewerHandler({
     index,
@@ -340,8 +390,9 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
       res.end(text);
       return;
     }
-    if (SIGNALS[path] || path === "/v1/ingest") {
+    if (SIGNALS[path] || path === "/v1/ingest" || path.startsWith(PROXY_PREFIX)) {
       if (cfg.role === "viewer") return sendJson(res, 404, { error: "this replica runs --role viewer and takes no ingest", status: 404 });
+      if (path.startsWith(PROXY_PREFIX)) return proxy(req, res);
       return path === "/v1/ingest" ? native(req, res) : otlp(req, res);
     }
     return viewer(req, res);
@@ -413,6 +464,8 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
         if (lockTimer) clearTimeout(lockTimer);
         const closed = new Promise<void>((resolve) => server.close(() => resolve()));
         server.closeIdleConnections();
+        // Calls the proxy routes answered reach the queue before it drains.
+        await Promise.all([...recorders.values()].map((r) => r.flush().catch(() => {})));
         const { drained } = cfg.role === "all" ? await queue.drain(o.drainMs ?? DRAIN_TIMEOUT_MS) : { drained: true };
         stopRetention?.();
         // Requests answered during the drain have flushed; drop what is left (keep-alive sockets).

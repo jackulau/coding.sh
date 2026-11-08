@@ -27,6 +27,8 @@ export function recorderFor(o: {
   env?: NodeJS.ProcessEnv;
   /** Replaces the store write (default: putEvents, then rebuild the sessions). */
   write?: (events: AgentEvent[]) => Promise<void>;
+  /** Project stamped on every event (serve). */
+  project?: string;
   onError?: (e: Error) => void;
   onEvent?: (e: AgentEvent) => void;
 }): Recorder {
@@ -37,6 +39,7 @@ export function recorderFor(o: {
     metadata: cap.mode === "metadata",
     prices: pricesFor(o.config.pricing),
     write: o.write ?? storeWriter(o.index),
+    ...(o.project ? { project: o.project } : {}),
     ...(o.onError ? { onError: o.onError } : {}),
     ...(o.onEvent ? { onEvent: o.onEvent } : {}),
   });

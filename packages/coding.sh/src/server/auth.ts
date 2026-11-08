@@ -127,6 +127,8 @@ export const readKeyId = (hash: string, names?: Map<string, string>): string => 
 export interface Authenticator {
   /** Project for an ingest request, or undefined (401). With no ingest keys configured, `open` decides. */
   ingest(req: IncomingMessage): string | undefined;
+  /** Same, for a raw key from elsewhere than Authorization (the proxy routes' x-coding-sh-key). */
+  ingestKey(key: string | undefined): string | undefined;
   /** Read access for the viewer, /api and /metrics, or undefined (401). */
   read(req: IncomingMessage): { project?: string; by?: string } | undefined;
   /** The read scope of a raw read key (for the viewer's `?t=` exchange). */
@@ -149,16 +151,17 @@ export function createAuthenticator(creds: Credentials, o: { openIngest: boolean
     return scope === undefined ? undefined : { ...scoped(scope), by: readKeyId(hash, creds.readNames) };
   };
   const scoped = (scope: ReadScope) => (scope === "*" ? {} : { project: scope });
+  const ingestKey = (key: string | undefined): string | undefined => {
+    if (key) return creds.ingest.get(sha256(key));
+    return !hasIngestKeys && o.openIngest ? DEFAULT_PROJECT : undefined;
+  };
 
   return {
     hasIngestKeys,
     hasReadCredentials,
     readScope,
-    ingest(req) {
-      const key = bearer(req);
-      if (key) return creds.ingest.get(sha256(key));
-      return !hasIngestKeys && o.openIngest ? DEFAULT_PROJECT : undefined;
-    },
+    ingest: (req) => ingestKey(bearer(req)),
+    ingestKey,
     read(req) {
       const key = bearer(req);
       const byKey = key ? reader(key) : undefined;
