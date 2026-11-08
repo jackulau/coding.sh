@@ -58,6 +58,7 @@ packages/coding.sh/src/cli/commands/refine-loop.ts
   s_8e040dbdf13565::t_19cabcc4fe7891 56
   s_8e040dbdf13565::t_0ecf3d3fd83a49 718-719,721,730-733,736
   s_8e040dbdf13565::t_a24dac2da8b1d2 51,83,99,114,137,169,492,504,513,522-535,544-551,554,571,604,642,880-883
+  s_8e040dbdf13565::t_d8f23f07cbab72 537,543
 packages/coding.sh/test/refine/cut.test.ts
   s_8e040dbdf13565::t_808c19b6ea4383 1-60,62-120
   s_8e040dbdf13565::t_318522d115eed2 61
