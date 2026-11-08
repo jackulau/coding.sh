@@ -12,6 +12,8 @@ export type Api = "messages" | "count_tokens" | "chat" | "responses" | "other";
 export interface Route {
   provider: Provider;
   api: Api;
+  /** A compaction request: Codex's remote compaction (`/responses/compact`). */
+  compaction?: boolean;
 }
 
 /** Which API a request is for. Paths may carry a prefix (`/v1`, a gateway's own path). */
@@ -21,6 +23,8 @@ export function classify(method: string, path: string, headers: Record<string, s
   if (post && /\/messages\/count_tokens$/.test(p)) return { provider: "anthropic", api: "count_tokens" };
   if (post && /\/messages$/.test(p)) return { provider: "anthropic", api: "messages" };
   if (post && /\/chat\/completions$/.test(p)) return { provider: "openai", api: "chat" };
+  // Codex's remote compaction: a Responses request whose reply is the compacted history.
+  if (post && /\/responses\/compact$/.test(p)) return { provider: "openai", api: "responses", compaction: true };
   if (post && /\/responses$/.test(p)) return { provider: "openai", api: "responses" };
   // Anything else goes to the provider the client's headers point at.
   const anthropic = headers["anthropic-version"] !== undefined || headers["x-api-key"] !== undefined || /\/messages(\/|$)/.test(p);
@@ -48,7 +52,7 @@ export interface RequestInfo {
   params: Record<string, unknown>;
 }
 
-const PARAM_KEYS = ["temperature", "top_p", "top_k", "max_tokens", "max_output_tokens", "max_completion_tokens", "tool_choice", "thinking", "reasoning", "reasoning_effort", "service_tier", "parallel_tool_calls", "stop_sequences", "stop", "text", "truncation", "store", "prompt_cache_key"];
+const PARAM_KEYS = ["temperature", "top_p", "top_k", "max_tokens", "max_output_tokens", "max_completion_tokens", "tool_choice", "thinking", "reasoning", "reasoning_effort", "service_tier", "parallel_tool_calls", "stop_sequences", "stop", "text", "truncation", "store", "prompt_cache_key", "output_config", "speed", "context_management"];
 
 /** Text of a content value: a string, or text blocks (Anthropic, Chat parts, Responses input_text/output_text). */
 export function textOf(v: unknown): string | undefined {
@@ -213,6 +217,18 @@ function mergeUsage(prev: unknown, next: unknown): Record<string, unknown> {
   const out: Record<string, unknown> = { ...obj(prev) };
   for (const [k, v] of Object.entries(obj(next))) if (v !== null && v !== undefined) out[k] = v;
   return out;
+}
+
+/**
+ * Whether a call compacted the conversation: Codex's /responses/compact, or a
+ * reply with a compaction block or item (Anthropic's server-side compaction,
+ * a Responses `compaction` output item).
+ */
+export function compacted(route: Route, body: unknown): boolean {
+  if (route.compaction) return true;
+  const b = obj(body);
+  const items = route.api === "messages" ? arr(b.content) : route.api === "responses" ? arr(b.output) : [];
+  return items.some((x) => /^compaction/.test(str(obj(x).type) ?? ""));
 }
 
 export function anthropicAccumulator(): Accumulator {

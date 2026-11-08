@@ -18,7 +18,7 @@ import { buildSession } from "../core/sessions.ts";
 import type { BlobStore, IndexStore } from "../core/types.ts";
 import { type AgentEvent, SCHEMA_VERSION } from "../schema/index.ts";
 import { type Client, detectClient, type Headers, linkCall, ResponseSessions } from "./link.ts";
-import { type CallResult, parseRequest, type RequestInfo, type Route } from "./wire.ts";
+import { type CallResult, compacted, parseRequest, type RequestInfo, type Route } from "./wire.ts";
 
 export interface CapturedCall {
   route: Route;
@@ -222,14 +222,21 @@ export function buildPayload(call: CapturedCall, info: RequestInfo | undefined, 
     if (info.toolNames.length) p.toolNames = info.toolNames.slice(0, MAX_TOOL_NAMES);
     p.messageCount = info.messages.length;
     if (info.prompt) p.prompt = info.prompt.length > PROMPT_PREVIEW ? `${info.prompt.slice(0, PROMPT_PREVIEW - 1)}…` : info.prompt;
-    const effort = str((info.params.reasoning as Record<string, unknown> | undefined)?.effort) ?? str(info.params.reasoning_effort);
+    // Anthropic sends effort as output_config.effort, OpenAI as reasoning.effort (Responses) or reasoning_effort (Chat).
+    const effort = str((info.params.reasoning as Record<string, unknown> | undefined)?.effort) ?? str(info.params.reasoning_effort) ?? str((info.params.output_config as Record<string, unknown> | undefined)?.effort);
     if (effort) p.reasoningEffort = effort;
+    // What the response reports wins; else what the request asked for (kept apart when they differ).
+    const askedTier = str(info.params.service_tier);
+    if (p.serviceTier === undefined && askedTier) p.serviceTier = askedTier;
+    else if (askedTier && askedTier !== p.serviceTier) p.requestedServiceTier = askedTier;
+    if (p.speed === undefined && str(info.params.speed)) p.speed = str(info.params.speed);
     const thinking = info.params.thinking as Record<string, unknown> | undefined;
     if (typeof thinking?.budget_tokens === "number") p.thinkingBudget = thinking.budget_tokens;
     const maxTokens = info.params.max_tokens ?? info.params.max_output_tokens ?? info.params.max_completion_tokens;
     if (typeof maxTokens === "number") p.maxTokens = maxTokens;
     if (typeof info.params.temperature === "number") p.temperature = info.params.temperature;
   }
+  if (compacted(call.route, r?.body)) p.compaction = true;
   if (call.route.api === "count_tokens") {
     p.name = "count_tokens";
     if (r?.inputTokens !== undefined) p.inputTokens = r.inputTokens;

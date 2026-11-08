@@ -85,7 +85,8 @@ coding.sh proxy --anthropic-upstream https://gateway.example.com/anthropic
 
 or `anthropic_upstream` and `openai_upstream` under `[proxy]` in `~/.coding.sh/config.toml`
 ([config reference](../reference/config.md)). A flag wins over the config, and the config wins over
-the upstream `init --proxy` chained through.
+the upstream `init --proxy` chained through. Codex's remote compaction (`/v1/responses/compact`)
+is forwarded and logged too.
 
 Measured overhead on a Linux desktop (`node scripts/dogfood/bench.mjs proxy`, 60 paired calls of 20
 streamed chunks each): 0.34 ms per chunk (95% CI 0.28 to 0.39 ms) and 1.96 ms to the first byte
@@ -204,7 +205,11 @@ In capture mode `full` (the default), each call stores:
 - an allowlist of request headers (`anthropic-version`, `anthropic-beta`, `user-agent`, session ids)
   and response headers (`request-id`, rate limit headers, `retry-after`);
 - in the event: model, status, stop reason, usage with cache reads and writes, estimated cost,
-  latency, time to first byte and first token, error class, and hashes of the system prompt and tools.
+  latency, time to first byte and first token, error class, and hashes of the system prompt and tools;
+- when the request or response has them: reasoning effort (`reasoning.effort`, `reasoning_effort`
+  or Anthropic's `output_config.effort`), service tier, speed, the thinking budget, and
+  `compaction: true` for a call that compacted the conversation (Codex's `/responses/compact`, or a
+  `compaction` block or item in the reply). The session id the client sent is the event's session.
 
 Auth headers (`Authorization`, `x-api-key`, cookies) are never stored. In capture mode `metadata`,
 only the event is kept: hashes, counts, tool names, usage and timings, with no prompt or response

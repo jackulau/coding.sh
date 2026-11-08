@@ -448,6 +448,91 @@ describe("proxy: sessions", () => {
   });
 });
 
+// The per-request fields a CLIProxyAPI-style log keeps: session id, effort, service tier, speed, TTFT, compaction.
+describe("proxy: per-request fields", () => {
+  it("Anthropic: effort, speed and service tier from the request, TTFT, the session id, and a compaction block", async () => {
+    const stream = sse([
+      { event: "message_start", data: { type: "message_start", message: { id: "msg_c", model: "claude-opus-4-6", content: [], usage: { input_tokens: 10, output_tokens: 1 } } } },
+      { event: "content_block_start", data: { type: "content_block_start", index: 0, content_block: { type: "compaction", content: "" } } },
+      { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
+      { event: "content_block_start", data: { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } } },
+      { event: "content_block_delta", data: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "ok" } } },
+      { event: "content_block_stop", data: { type: "content_block_stop", index: 1 } },
+      { event: "message_delta", data: { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 3 } } },
+      { event: "message_stop", data: { type: "message_stop" } },
+    ]);
+    const up = await startUpstream((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      for (const s of stream) res.write(s);
+      res.end();
+    });
+    const t = await startTestProxy(up.url);
+    try {
+      const body = JSON.parse(messagesBody());
+      Object.assign(body, { model: "claude-opus-4-6", output_config: { effort: "high" }, speed: "fast", service_tier: "auto", context_management: { edits: [{ type: "compact_20260112" }] } });
+      const r = await call(t.proxy.url, { path: "/v1/messages?beta=true", body: JSON.stringify(body), headers: claudeHeaders() });
+      assert.equal(r.body.toString(), stream.join(""));
+      const [e] = await t.events();
+      assert.equal(e!.sessionId, SESSION, "the client's session id");
+      assert.equal(e!.payload.linkedBy, "header");
+      assert.equal(e!.payload.reasoningEffort, "high");
+      assert.equal(e!.payload.speed, "fast");
+      assert.equal(e!.payload.serviceTier, "auto");
+      assert.equal(typeof e!.payload.ttftMs, "number");
+      assert.equal(e!.payload.compaction, true);
+    } finally {
+      await t.close();
+      await up.close();
+    }
+  });
+
+  it("Codex: /responses/compact is logged as a compaction call; the tier the response reports wins over the request's", async () => {
+    const thread = "019a1b8d-1d73-7f00-9df8-82f7ad50858d";
+    const up = await startUpstream((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: "resp_c", object: "response", model: "gpt-5.5", service_tier: "priority", output: [{ type: "compaction", encrypted_content: "x" }], usage: { input_tokens: 5000, output_tokens: 400 } }));
+    });
+    const t = await startTestProxy(up.url);
+    try {
+      const r = await call(t.proxy.url, {
+        path: "/v1/responses/compact",
+        body: JSON.stringify({ model: "gpt-5.5", instructions: "You are Codex.", input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "list files" }] }], reasoning: { effort: "xhigh" }, service_tier: "auto" }),
+        headers: { "content-type": "application/json", authorization: "Bearer sk-stub", "user-agent": "codex_exec/0.167.0 (Mac OS 26.5.2; arm64)", "session-id": thread },
+      });
+      assert.equal(r.status, 200);
+      assert.equal(up.seen[0]!.url, "/v1/responses/compact", "forwarded to the same path");
+      const [e] = await t.events();
+      assert.equal(e!.kind, "llm.call");
+      assert.equal(e!.sessionId, thread);
+      assert.equal(e!.payload.api, "responses");
+      assert.equal(e!.payload.compaction, true);
+      assert.equal(e!.payload.reasoningEffort, "xhigh");
+      assert.equal(e!.payload.serviceTier, "priority");
+      assert.equal(e!.payload.requestedServiceTier, "auto");
+      assert.equal(e!.usage?.outputTokens, 400);
+    } finally {
+      await t.close();
+      await up.close();
+    }
+  });
+
+  it("an ordinary call has none of them", async () => {
+    const up = await startUpstream((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ id: "msg_1", type: "message", model: "claude-sonnet-4-5", content: [{ type: "text", text: "hi" }], stop_reason: "end_turn", usage: { input_tokens: 3, output_tokens: 1 } }));
+    });
+    const t = await startTestProxy(up.url);
+    try {
+      await call(t.proxy.url, { path: "/v1/messages", body: messagesBody({ stream: false }), headers: claudeHeaders() });
+      const [e] = await t.events();
+      for (const k of ["compaction", "speed", "serviceTier", "requestedServiceTier", "reasoningEffort", "ttftMs"]) assert.equal(e!.payload[k], undefined, k);
+    } finally {
+      await t.close();
+      await up.close();
+    }
+  });
+});
+
 describe("joinUpstream", () => {
   it("does not double /v1 and keeps a gateway's path", () => {
     assert.equal(joinUpstream("https://api.anthropic.com", "/v1/messages").href, "https://api.anthropic.com/v1/messages");

@@ -114,6 +114,7 @@ export function replayable(call: LoadedCall): ReplayCase | string {
   const r = call.request;
   if (!r) return `${call.event.id.slice(0, 12)}: the request was not stored (capture mode metadata, or not a proxy call)`;
   if (r.api !== "messages" && r.api !== "chat" && r.api !== "responses") return `${call.event.id.slice(0, 12)}: ${r.api} calls can't be replayed`;
+  if (call.event.payload.compaction === true) return `${call.event.id.slice(0, 12)}: compaction calls can't be replayed`;
   const provider = r.provider === "anthropic" ? "anthropic" : "openai";
   const out: ReplayCase = { call, provider, api: r.api };
   const body = call.response?.body;

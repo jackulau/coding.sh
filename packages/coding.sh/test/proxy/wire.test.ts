@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { claudeSessionFromUserId, detectClient, linkCall, namedSession, ResponseSessions } from "../../src/proxy/link.ts";
 import { errorClass, rateLimits } from "../../src/proxy/record.ts";
 import { SseParser } from "../../src/proxy/sse.ts";
-import { anthropicAccumulator, chatAccumulator, classify, firstAction, parseJsonResponse, parseRequest } from "../../src/proxy/wire.ts";
+import { anthropicAccumulator, chatAccumulator, classify, compacted, firstAction, parseJsonResponse, parseRequest } from "../../src/proxy/wire.ts";
 import { anthropicStream } from "./_helpers.ts";
 
 describe("SseParser", () => {
@@ -71,6 +71,17 @@ describe("classify and parseRequest", () => {
     assert.deepEqual(classify("POST", "/v1/responses", {}), { provider: "openai", api: "responses" });
     assert.deepEqual(classify("GET", "/v1/models", { "anthropic-version": "2023-06-01" }), { provider: "anthropic", api: "other" });
     assert.deepEqual(classify("GET", "/v1/models", {}), { provider: "openai", api: "other" });
+    assert.deepEqual(classify("POST", "/v1/responses/compact", {}), { provider: "openai", api: "responses", compaction: true });
+  });
+
+  it("compacted: Codex's compact endpoint, or a compaction block or item in the reply", () => {
+    const messages = { provider: "anthropic", api: "messages" } as const;
+    const responses = { provider: "openai", api: "responses" } as const;
+    assert.equal(compacted({ ...responses, compaction: true }, undefined), true);
+    assert.equal(compacted(messages, { content: [{ type: "compaction", content: "summary" }, { type: "text", text: "ok" }] }), true);
+    assert.equal(compacted(responses, { output: [{ type: "compaction_summary" }] }), true);
+    assert.equal(compacted(messages, { content: [{ type: "text", text: "compaction" }] }), false);
+    assert.equal(compacted(responses, undefined), false);
   });
 
   it("finds the system prompt, tools and prompts per API, skipping tool results", () => {

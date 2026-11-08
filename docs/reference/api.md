@@ -499,7 +499,12 @@ characters each), `toolNames`, `toolCount`, `messageCount`, `prompt` (the last u
 clipped), `linkedBy` (`header`, `metadata`, `previous-response` or `conversation`: how the call
 found its session), rate limits (`rlRequestsRemaining`, `rlTokensRemaining`, … when the API sent
 them), `errorClass` on failure, and `requestRef` and
-`responseRef` (the stored request and response blobs, absent in `metadata` mode). When the
+`responseRef` (the stored request and response blobs, absent in `metadata` mode). When the request
+or response has them, it also adds `reasoningEffort` (`reasoning.effort`, `reasoning_effort` or
+`output_config.effort`), `serviceTier` and `speed` (the response's value, else the request's;
+`requestedServiceTier` when the request asked for another tier),
+`thinkingBudget`, and `compaction: true` on a call that compacted the conversation (Codex's
+`/responses/compact`, or a `compaction` block or output item). When the
 session also has model calls from the agent's transcript or OpenTelemetry, those count toward
 `stats` and the proxy's copies are detail only; failed proxy calls count either way.
 

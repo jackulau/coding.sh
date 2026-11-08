@@ -9,7 +9,8 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "../../src/core/config.ts";
-import { applyArm, parseVary, sameActionGrader } from "../../src/experiments/replay.ts";
+import { applyArm, parseVary, replayable, sameActionGrader } from "../../src/experiments/replay.ts";
+import type { LoadedCall } from "../../src/proxy/calls.ts";
 import { recorderFor } from "../../src/proxy/index.ts";
 import { startProxy } from "../../src/proxy/server.ts";
 import { openStores } from "../../src/store/factory.ts";
@@ -60,6 +61,11 @@ describe("parseVary and applyArm", () => {
     assert.equal(text.pass, false);
     assert.equal(text.reason, "text instead of Bash");
     assert.equal((await g.grade({ input: {}, expected: { action: { type: "text", text: "a" } }, output: { action: { type: "text", text: "b" } } })).pass, true);
+  });
+
+  it("a compaction call is not replayed", () => {
+    const call = { event: { id: "0123456789abcdef", payload: { compaction: true } }, request: { provider: "openai", api: "responses", body: {} } } as unknown as LoadedCall;
+    assert.match(String(replayable(call)), /compaction calls can't be replayed/);
   });
 });
 
