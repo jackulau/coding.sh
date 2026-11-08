@@ -373,8 +373,8 @@ export async function run(c: CommandContext): Promise<number> {
     });
     if (versionNote) report.notes.push(versionNote);
     report.notes.push(...notes);
-    // Each failed run with the end of what its verifier printed, so a failure reads without a rerun.
-    const failedList = failedRuns(results);
+    // Each failed run with the end of what its verifier printed (and its agent, when that failed), so a failure reads without a rerun.
+    const failedList = failedRuns(results, captureRedactor(ctx.config, ctx.env));
     if (out.json) out.data({ experimentId, report, ...(failedList.length ? { failedRuns: failedList } : {}), ...resume, ...(budget ? { budget } : {}), ...(counts ?? {}), ...(selection ? { selection } : {}) });
     else {
       out.print(formatCompare(report, { color: out.color, arms, taskNames }));

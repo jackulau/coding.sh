@@ -1146,6 +1146,18 @@ Verifier output of failed runs (last 8 lines):
 superseded and infrastructure-failed runs are left out. Runs recorded before this field have no
 output.
 
+When the agent itself exited non-zero or timed out, the failed run says so before the verifier's
+lines, with the last 8 lines of the agent's stderr (cleaned and redacted the same way), and
+`--json` adds `agent: {exitCode, timedOut, stderr}`. An agent that can't start fails every run in
+seconds, and this is where its error shows:
+
+```
+Failed runs:
+  s4 · A base · attempt 1  exit 1 · run_01KA…
+    the agent exited 1, its stderr ends:
+    ! --dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons
+```
+
 ### Claude Code plugins
 
 A claude-code bundle can carry Claude Code plugins: their hooks, skills, agents, commands and MCP

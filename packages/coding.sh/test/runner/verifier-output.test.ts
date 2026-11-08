@@ -70,4 +70,24 @@ describe("verifier output", () => {
     assert.match(text, /^Verifier output of failed runs \(last 2 lines\):\n {2}adds · attempt 2 {2}exit 1 · r2\n {4}│ c\n {4}│ AssertionError: 4 !== 5$/);
     assert.deepEqual(renderFailedRuns([f[1]!]), [], "no block when no failed run kept output");
   });
+
+  it("says why the agent failed when it exited non-zero or timed out, with the end of its stderr, redacted", () => {
+    const agent = (a: Partial<RunResult["agent"]>): RunResult["agent"] => ({ exitCode: 0, timedOut: false, durationMs: 1, stdoutTail: "", stderrTail: "", ...a });
+    const base = { bundleId: "b1", endedAt: 0, pass: false, verifierExit: 1, attempt: 1 };
+    const runs: RunResult[] = [
+      { ...base, id: "r1", taskId: "t1", startedAt: 1, agent: agent({ exitCode: 1, stderrTail: "\x1b[31mError:\x1b[0m --dangerously-skip-permissions cannot be used with root\nkey sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGH\n" }) },
+      { ...base, id: "r2", taskId: "t1", startedAt: 2, agent: agent({ exitCode: null, timedOut: true }) },
+      { ...base, id: "r3", taskId: "t1", startedAt: 3, agent: agent({ exitCode: 0, stderrTail: "warning: noisy but fine" }) },
+      { ...base, id: "r4", taskId: "t1", startedAt: 4, agent: agent({ exitCode: null }) },
+    ];
+    const f = failedRuns(runs);
+    assert.equal(f[0]!.agent?.exitCode, 1);
+    assert.match(f[0]!.agent!.stderr!, /^Error: --dangerously-skip-permissions cannot be used with root\nkey /);
+    assert.doesNotMatch(f[0]!.agent!.stderr!, /sk-ant-api03/, "stderr is redacted");
+    assert.deepEqual(f[1]!.agent, { exitCode: null, timedOut: true });
+    assert.equal(f[2]!.agent, undefined, "an agent that exited 0 failed nothing");
+    assert.equal(f[3]!.agent, undefined, "an agent that never ran has no exit to report");
+    const text = renderFailedRuns(f, { lines: 2 }).join("\n");
+    assert.match(text, /^Failed runs:\n {2}t1 · attempt 1 {2}exit 1 · r1\n {4}the agent exited 1, its stderr ends:\n {4}! Error: --dangerously-skip-permissions cannot be used with root\n {4}! key \S+\n {2}t1 · attempt 1 {2}exit 1 · r2\n {4}the agent timed out$/);
+  });
 });

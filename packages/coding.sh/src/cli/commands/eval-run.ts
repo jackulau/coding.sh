@@ -176,7 +176,7 @@ async function runTaskSuite(c: CommandContext, ctx: Context, s: LoadedSuite, k: 
   const runs = latestPerSlot(r.results).runs;
   const report = suiteReport(s.spec.name, s.spec.purpose, trialsFromRuns(tasks, runs));
   const unverified = tasks.filter((t) => !t.referencePatch && !referenceRun(t)).map((t) => t.name);
-  const failed = failedRuns(runs);
+  const failed = failedRuns(runs, captureRedactor(ctx.config, ctx.env));
   return { suite: s.spec.name, kind: "tasks", dir: s.dir, report, ...(failed.length ? { failedRuns: failed, names: new Map(tasks.map((t) => [t.id, t.name])) } : {}), experimentId: r.experimentId, harness: { id: bundle.id, name: bundle.name, files: Object.keys(bundle.files).length }, unverified };
 }
 

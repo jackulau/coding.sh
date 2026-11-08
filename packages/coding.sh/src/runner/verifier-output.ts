@@ -77,10 +77,27 @@ export interface FailedRun {
   error?: string;
   sessionId?: string;
   verifierOutput?: VerifierOutput;
+  /** The agent itself failed: it exited non-zero or timed out. `stderr` is the end of what it printed, cleaned and redacted. */
+  agent?: { exitCode: number | null; timedOut?: true; stderr?: string };
 }
 
-/** Runs whose verifier failed or never passed, oldest first; cancelled, superseded and infrastructure-failed runs are left out. */
-export function failedRuns(runs: readonly RunResult[]): FailedRun[] {
+/** Lines of an agent's stderr a failed run keeps. */
+const AGENT_STDERR_LINES = 8;
+
+/** Why the agent failed (non-zero exit or timeout), or undefined when it exited 0 or never ran. */
+function agentFailure(a: RunResult["agent"] | undefined, redactor: Redactor): FailedRun["agent"] {
+  if (!a || (!a.timedOut && (a.exitCode === 0 || a.exitCode === null || a.exitCode === undefined))) return undefined;
+  const stderr = cleanStream(uncut(a.stderrTail ?? ""), redactor).split("\n").slice(-AGENT_STDERR_LINES).join("\n");
+  return { exitCode: a.exitCode, ...(a.timedOut ? { timedOut: true as const } : {}), ...(stderr ? { stderr } : {}) };
+}
+
+/**
+ * Runs whose verifier failed or never passed, oldest first; cancelled, superseded
+ * and infrastructure-failed runs are left out. A run whose agent exited non-zero
+ * or timed out says so, with the end of its stderr: an agent that can't start
+ * fails every run in seconds, and the verifier's output alone doesn't say why.
+ */
+export function failedRuns(runs: readonly RunResult[], redactor: Redactor = createRedactor()): FailedRun[] {
   return runs
     .filter((r) => !r.pass && !r.cancelled && !r.superseded && !r.infra)
     .sort((a, b) => a.startedAt - b.startedAt || a.attempt - b.attempt)
@@ -93,26 +110,34 @@ export function failedRuns(runs: readonly RunResult[]): FailedRun[] {
       ...(r.error ? { error: r.error } : {}),
       ...(r.sessionId ? { sessionId: r.sessionId } : {}),
       ...(r.verifierOutput ? { verifierOutput: r.verifierOutput } : {}),
+      ...withAgent(agentFailure(r.agent, redactor)),
     }));
 }
 
+const withAgent = (agent: FailedRun["agent"]): Pick<FailedRun, "agent"> => (agent ? { agent } : {});
+
 /**
- * The human report's block for failed runs: up to `max` of them, each with the
- * last `lines` lines of its verifier output. Empty when no failed run kept any.
+ * The human report's block for failed runs: up to `max` of them, each with why
+ * its agent failed (when it did) and the last `lines` lines of its verifier
+ * output. Empty when no failed run kept either.
  */
 export function renderFailedRuns(
   failed: readonly FailedRun[],
   o: { names?: (taskId: string) => string; arm?: (bundleId: string) => string; max?: number; lines?: number; dim?: (s: string) => string } = {},
 ): string[] {
-  const withOutput = failed.filter((f) => f.verifierOutput);
+  const withOutput = failed.filter((f) => f.verifierOutput || f.agent);
   if (!withOutput.length) return [];
   const max = o.max ?? 5;
   const lines = o.lines ?? 8;
   const dim = o.dim ?? ((s: string) => s);
-  const out = [`Verifier output of failed runs (last ${lines} lines):`];
+  const out = [withOutput.some((f) => f.verifierOutput) ? `Verifier output of failed runs (last ${lines} lines):` : "Failed runs:"];
   for (const f of withOutput.slice(0, max)) {
     const who = [o.names?.(f.taskId) ?? f.taskId, o.arm?.(f.bundleId), `attempt ${f.attempt}`].filter(Boolean).join(" · ");
     out.push(`  ${who}  ${dim(`exit ${f.verifierExit ?? "-"} · ${f.runId}`)}`);
+    if (f.agent) {
+      out.push(`    ${f.agent.timedOut ? "the agent timed out" : `the agent exited ${f.agent.exitCode}`}${f.agent.stderr ? ", its stderr ends:" : ""}`);
+      for (const l of f.agent.stderr?.split("\n").slice(-lines) ?? []) out.push(`    ${dim("!")} ${l}`);
+    }
     for (const l of outputTail(f.verifierOutput, lines)) out.push(`    ${dim("│")} ${l}`);
   }
   if (withOutput.length > max) out.push(dim(`  … ${withOutput.length - max} more failed run(s); --json lists every one with its output`));
