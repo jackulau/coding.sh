@@ -77,7 +77,7 @@ const [cmdHead, cmdTail] = INSTALL_SH.split(/ (?=\| )/);
           <code><span>{cmdHead}</span>{cmdTail && <>{" "}<span>{cmdTail}</span></>}</code>
           <CopyIcon />
         </button>
-        <!-- The page's own status line is inert while the sheet is open. -->
+        {/* The page's own status line is inert while the sheet is open. */}
         <p class="sr-only" aria-live="polite" data-nav-copy-status></p>
       </div>
     </div>

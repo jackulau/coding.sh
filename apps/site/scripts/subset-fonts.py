@@ -50,10 +50,10 @@ LATIN = (
 BOX = "U+2000-2001,U+2004-2008,U+200A,U+23B8-23BD,U+2500-259F"
 
 # What goes in the preloaded core file: printable ASCII plus the punctuation
-# the site's pages and docs use (nbsp, section, guillemets, middle dot, times,
-# dashes, curly quotes, bullet, ellipsis, primes, arrows, minus).
+# the site's pages and docs use (nbsp, section, guillemets, plus-minus, middle
+# dot, times, dashes, curly quotes, bullet, ellipsis, primes, arrows, minus).
 CORE = (
-    "U+0020-007E,U+00A0,U+00A7,U+00AB,U+00B2,U+00B7,U+00BB,U+00D7,U+2013-2014,U+2018-201A,"
+    "U+0020-007E,U+00A0,U+00A7,U+00AB,U+00B1,U+00B2,U+00B7,U+00BB,U+00D7,U+2013-2014,U+2018-201A,"
     "U+201C-201E,U+2022,U+2026,U+2032-2033,U+2039-203A,U+2190-2193,U+2212,U+2713,U+FEFF,U+FFFD"
 )
 

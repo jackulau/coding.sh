@@ -18,7 +18,7 @@ const BUDGET = {
   // Brotli q11, per page. The CLI and API references are generated and grow
   // with the tool, so they get their own room.
   htmlBrotli: { "/": 24.5 * KB, "/docs/cli/": 30 * KB, "/docs/api/": 30 * KB, other: 26 * KB },
-  preloadFonts: 28.5 * KB, // woff2 bytes preloaded by one page (25.9KB today)
+  preloadFonts: 28.5 * KB, // woff2 bytes preloaded by one page (26.0KB today)
   moduleScripts: 1, // external <script type="module" src> per page
   // The cards are lossless PNG (gen-og.mjs, compressionLevel 9). Palette
   // quantization would get them near 25KB but changes pixels, so the budget
