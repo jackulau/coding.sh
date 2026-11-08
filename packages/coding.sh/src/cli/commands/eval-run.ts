@@ -18,6 +18,7 @@ import { FileEvalStore } from "../../datasets/store.ts";
 import type { Split } from "../../datasets/types.ts";
 import { runExperiment as runCases, selectCases } from "../../experiments/run.ts";
 import type { TaskSpec } from "../../experiments/task.ts";
+import { referenceRun } from "../../eval/task.ts";
 import { createGrader, type GraderSpec } from "../../graders/index.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
 import { userHome } from "../../core/paths.ts";
@@ -165,7 +166,7 @@ async function runTaskSuite(c: CommandContext, ctx: Context, s: LoadedSuite, k: 
   if (r.cancelled) out.warn(`${s.spec.name}: cancelled; the report covers the runs that finished`);
   const runs = latestPerSlot(r.results).runs;
   const report = suiteReport(s.spec.name, s.spec.purpose, trialsFromRuns(tasks, runs));
-  const unverified = tasks.filter((t) => !t.referencePatch).map((t) => t.name);
+  const unverified = tasks.filter((t) => !t.referencePatch && !referenceRun(t)).map((t) => t.name);
   return { suite: s.spec.name, kind: "tasks", dir: s.dir, report, experimentId: r.experimentId, harness: { id: bundle.id, name: bundle.name, files: Object.keys(bundle.files).length }, unverified };
 }
 

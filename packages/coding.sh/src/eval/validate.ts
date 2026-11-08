@@ -11,7 +11,7 @@
 // Every step runs in its own freshly materialized dir; hidden verifier files
 // are copied in only right before the verifier runs.
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { removeOnExit, withAbortSignal } from "../core/children.ts";
 import { sha256Hex } from "../core/ids.ts";
@@ -23,6 +23,7 @@ import { couplingNote, goldCandidates, goldOnlyCoupling, startTreeLookup, type C
 import { impossibleMutations, isTestPath, readTextFiles, verifierReferencedFiles, type ImpossibleMutation, type TestFileText } from "./impossible.ts";
 import { blockOverlap } from "./leakage.ts";
 import { addedBlocks, addedLines, nearMissMutations, patchPaths } from "./patch.ts";
+import { nearMissRuns, referenceRun, type RecordedRun } from "./task.ts";
 import { comparePassToPass, detectSuiteCommand } from "./suite.ts";
 
 export type StepKind = "noop" | "reference" | "near-miss" | "impossible" | "pass-to-pass";
@@ -46,6 +47,8 @@ export interface StepResult {
 export interface NearMissInput {
   label: string;
   patch: string;
+  /** A recorded run: its answer and stdout go to the verifier. */
+  run?: RecordedRun;
 }
 
 export interface ValidateOpts {
@@ -317,8 +320,32 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
   };
 
   const refPatch = task.referencePatch ? await textBlob(blobs, task.referencePatch, "reference patch") : undefined;
+  const refRun = referenceRun(task);
+  const nmRuns = nearMissRuns(task);
+  // A task graded on the agent's answer or stdout: every step gets them as files, the no-op empty ones.
+  const graded = !!refRun || nmRuns.length > 0;
+  const hasReference = !!refPatch || !!refRun;
   if (!task.verifier.command.trim()) errors.push("task has no verifier command");
-  if (!refPatch) errors.push("task has no reference patch; cannot check that the verifier can pass");
+  if (!hasReference) errors.push("task has no reference patch or reference run; cannot check that the verifier can pass");
+  let runFilesN = 0;
+  /** CODING_SH_AGENT_OUTPUT, _STDOUT and _DIFF for one step, as an agent run would leave them. */
+  const runVars = async (run: RecordedRun | undefined, patch: string | undefined): Promise<Record<string, string>> => {
+    if (!graded) return {};
+    const d = join(opts.workRoot, "run-files", String(++runFilesN));
+    await mkdir(d, { recursive: true });
+    const vars: Record<string, string> = {};
+    const files = [
+      ["CODING_SH_AGENT_OUTPUT", "output.txt", run?.output],
+      ["CODING_SH_AGENT_STDOUT", "stdout", run?.stdout],
+    ] as const;
+    for (const [name, file, ref] of files) {
+      await writeFile(join(d, file), ref ? await textBlob(blobs, ref, `${run?.label ?? "run"} ${file}`) : "");
+      vars[name] = join(d, file);
+    }
+    await writeFile(join(d, "diff.patch"), patch ?? "");
+    vars.CODING_SH_AGENT_DIFF = join(d, "diff.patch");
+    return vars;
+  };
 
   const { prepare, cleanup } = taskWorlds({ task, workRoot: opts.workRoot, ops, env, setupTimeoutMs: opts.setupTimeoutMs, keep: opts.keep, signal: opts.signal });
   const verifyStep = async (
@@ -326,9 +353,10 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
     label: string,
     dir: string,
     attempt?: number,
-    run: () => Promise<ExecResult> = () => runVerifier(dir, task, blobs, env),
+    run?: () => Promise<ExecResult>,
+    vars: Record<string, string> = {},
   ): Promise<StepResult> => {
-    const r = await run();
+    const r = await (run ?? (() => runVerifier(dir, task, blobs, { ...env, ...vars })))();
     checkpoint();
     const s: StepResult = {
       kind,
@@ -369,7 +397,7 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
         errors.push(`no-op: ${p.setup.error}`);
         failedPrep("noop", "no-op", true, p.setup.error ?? "setup failed", p.setup.out);
       } else if (canVerify) {
-        const s = await verifyStep("noop", "no-op", p.dir);
+        const s = await verifyStep("noop", "no-op", p.dir, undefined, undefined, await runVars(undefined, undefined));
         noopFails = !s.pass;
         if (s.timedOut) notes.push("no-op verifier timed out; counted as a failure, but check the verifier is not hanging");
       }
@@ -382,15 +410,16 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
   let refPassed = 0;
   /** Test files the reference adds or changes, as they read after it (for the coupling check). */
   let refTests: TestFileText[] = [];
-  if (refPatch && canVerify) {
+  if (hasReference && canVerify) {
     const p = await prepare("reference", refPatch);
     try {
-      if (p.applied) refTests = await readTextFiles(p.dir, patchPaths(refPatch).filter(isTestPath));
+      if (p.applied && refPatch) refTests = await readTextFiles(p.dir, patchPaths(refPatch).filter(isTestPath));
       if (!p.applied || !p.setup.ok) {
         errors.push(`reference: ${p.setup.error}`);
         failedPrep("reference", "reference", p.applied, p.setup.error ?? "setup failed", p.setup.out);
       } else {
-        for (let i = 1; i <= k; i++) if ((await verifyStep("reference", "reference", p.dir, i)).pass) refPassed++;
+        const vars = await runVars(refRun, refPatch);
+        for (let i = 1; i <= k; i++) if ((await verifyStep("reference", "reference", p.dir, i, undefined, vars)).pass) refPassed++;
         if (refPassed > 0 && refPassed < k) notes.push(`reference passed ${refPassed}/${k}: the verifier is flaky`);
       }
     } finally {
@@ -402,6 +431,7 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
   const candidates: NearMissInput[] = [];
   for (const [i, ref] of (task.nearMissPatches ?? []).entries()) candidates.push({ label: `near-miss #${i + 1}`, patch: await textBlob(blobs, ref, "near-miss patch") });
   for (const [i, nm] of (opts.nearMisses ?? []).entries()) candidates.push(typeof nm === "string" ? { label: `given near-miss #${i + 1}`, patch: nm } : nm);
+  for (const run of nmRuns) candidates.push({ label: run.label, patch: run.patch ? await textBlob(blobs, run.patch, `${run.label} diff.patch`) : "", run });
   if (candidates.length === 0 && refPatch) {
     candidates.push(...nearMissMutations(refPatch, { max: opts.maxNearMisses ?? 10 }));
     if (candidates.length === 0) notes.push("reference patch has a single hunk: no near-misses generated; consider adding some by hand");
@@ -411,8 +441,8 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
   let nmFailed = 0;
   if (canVerify) {
     for (const nm of candidates) {
-      if (nm.patch.trim() === "") continue;
-      const p = await prepare(`near-miss`, nm.patch);
+      if (nm.patch.trim() === "" && !nm.run) continue;
+      const p = await prepare(`near-miss`, nm.patch.trim() === "" ? undefined : nm.patch);
       try {
         if (!p.applied) {
           nearMisses.push({ label: nm.label, applied: false });
@@ -429,7 +459,7 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
           notes.push(`near-miss "${nm.label}" broke setup (counted as failing)`);
           continue;
         }
-        const s = await verifyStep("near-miss", nm.label, p.dir);
+        const s = await verifyStep("near-miss", nm.label, p.dir, undefined, undefined, await runVars(nm.run, nm.patch));
         nearMisses.push({ label: nm.label, applied: true, passed: s.pass });
         if (!s.pass) nmFailed++;
       } finally {
@@ -448,6 +478,8 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
   const impOpt = opts.impossible ?? true;
   if (impOpt !== false && refPatch && canVerify && refPassed > 0) {
     const max = Math.max(1, (typeof impOpt === "object" ? impOpt.max : undefined) ?? 3);
+    const refVars = await runVars(refRun, refPatch);
+    const noopVars = await runVars(undefined, undefined);
     const p = await prepare("impossible", refPatch);
     try {
       if (p.applied && p.setup.ok) {
@@ -461,7 +493,7 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
           let chosen: ImpossibleMutation | undefined;
           for (const m of muts) {
             const s = await verifyStep("impossible", `impossible (reference): ${m.label}`, p.dir, undefined, () =>
-              runVerifierWith(p.dir, task, blobs, env, { path: m.path, text: m.text }, visible),
+              runVerifierWith(p.dir, task, blobs, { ...env, ...refVars }, { path: m.path, text: m.text }, visible),
             );
             if (!s.pass) {
               chosen = m;
@@ -481,7 +513,7 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
                 failedPrep("impossible", `impossible (no-op): ${chosen.label}`, true, q.setup.error ?? "setup failed", q.setup.out);
               } else {
                 const s = await verifyStep("impossible", `impossible (no-op): ${chosen.label}`, q.dir, undefined, () =>
-                  runVerifierWith(q.dir, task, blobs, env, { path: chosen.path, text: chosen.text }, []),
+                  runVerifierWith(q.dir, task, blobs, { ...env, ...noopVars }, { path: chosen.path, text: chosen.text }, []),
                 );
                 impossible.variant.noopFails = !s.pass;
               }
@@ -574,9 +606,10 @@ async function validateTaskInner(opts: ValidateOpts): Promise<ValidationOutcome>
     }
   }
 
+  await rmrf(join(opts.workRoot, "run-files"));
   const report: ValidationReport = {
     noopFails,
-    referencePasses: { passed: refPassed, of: refPatch && canVerify ? k : 0 },
+    referencePasses: { passed: refPassed, of: hasReference && canVerify ? k : 0 },
     nearMissesFail: { failed: nmFailed, of: nmOf },
     leakage,
     ...(impossible ? { impossible } : {}),

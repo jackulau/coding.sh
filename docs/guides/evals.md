@@ -220,6 +220,24 @@ The files live outside the work tree, so the agent can't edit what gets graded. 
 `grep` them, or hand them to `coding.sh judge grade` (see [Checklists and trace
 checks](#checklists-and-trace-checks)).
 
+A verifier that grades the answer or the trace needs a recorded run to validate against, since a
+patch alone has no answer and no tool calls. Put a correct run in `reference/` and wrong ones in
+`near-misses/<label>/`:
+
+```
+tasks/load-check/
+  reference/output.md               the final answer of a correct run
+  reference/stdout.jsonl            its stdout (stream-json for Claude Code)
+  reference.patch                   its diff, if it changed files
+  near-misses/ran-uptime/output.md  a wrong run: output.md, stdout.jsonl and diff.patch, each optional
+  near-misses/ran-uptime/stdout.jsonl
+```
+
+`eval validate` then runs the verifier with `CODING_SH_AGENT_OUTPUT`, `CODING_SH_AGENT_STDOUT`
+and `CODING_SH_AGENT_DIFF` pointing at each run's files. The no-op attempt gets empty ones, the
+reference run must pass k of k, and each near-miss run must fail. A task with a reference run
+needs no `reference.patch`.
+
 [Evaluate an Agent Skill](../how-to/evaluate-a-skill.md) walks through a full set of hand-written
 tasks, from a stub CLI to the compare report.
 

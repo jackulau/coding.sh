@@ -407,6 +407,44 @@ describe("validateTask: pass-to-pass", () => {
     assert.equal(o.report.ok, false);
   });
 
+  it("grades recorded runs: the no-op gets an empty answer, the reference run passes, a near-miss run fails", async () => {
+    // The verifier reads the answer and the stdout, as a task graded on what the agent said and ran does.
+    const check = [
+      "const fs = require('fs');",
+      "const out = fs.readFileSync(process.env.CODING_SH_AGENT_OUTPUT, 'utf8');",
+      "const std = fs.readFileSync(process.env.CODING_SH_AGENT_STDOUT, 'utf8');",
+      "const diff = fs.readFileSync(process.env.CODING_SH_AGENT_DIFF, 'utf8');",
+      "process.exit(/\\b42\\b/.test(out) && std.includes('sysload.py') && !diff.includes('src/') ? 0 : 1);",
+    ].join(" ");
+    const verifier = `'${process.execPath}' check.js`;
+    const { blobs, git, task, workRoot } = await setup({ verifier, reference: false });
+    task.verifier.hiddenFiles = { "check.js": await blobs.put(check) };
+    task.meta = {
+      referenceRun: { label: "reference", output: await blobs.put("load is fine: 42\n"), stdout: await blobs.put('{"cmd":"python scripts/sysload.py"}\n') },
+      nearMissRuns: [
+        { label: "wrong-number", output: await blobs.put("41\n"), stdout: await blobs.put('{"cmd":"python scripts/sysload.py"}\n') },
+        { label: "uptime", output: await blobs.put("42\n"), stdout: await blobs.put('{"cmd":"uptime"}\n') },
+        { label: "edits-src", output: await blobs.put("42\n"), stdout: await blobs.put('{"cmd":"python scripts/sysload.py"}\n'), patch: await blobs.put("--- a/src/math.js\n+++ b/src/math.js\n@@ -1 +1 @@\n-x\n+y\n") },
+      ],
+    };
+    const o = await validateTask({ task, blobs, git, workRoot, k: 2, passToPass: false });
+    assert.deepEqual(o.errors, []);
+    assert.equal(o.report.noopFails, true);
+    assert.deepEqual(o.report.referencePasses, { passed: 2, of: 2 });
+    // edits-src's patch does not apply to the toy tree, so it is skipped: 2 of the 2 that applied fail.
+    assert.deepEqual(o.report.nearMissesFail, { failed: 2, of: 2 });
+    assert.deepEqual(o.nearMisses.map((n) => n.label), ["wrong-number", "uptime", "edits-src"]);
+    assert.equal(o.report.ok, true);
+    assert.deepEqual(await readdir(workRoot), [], "run files are cleaned up");
+  });
+
+  it("without a reference patch or reference run, says so", async () => {
+    const { blobs, git, task, workRoot } = await setup({ reference: false });
+    const o = await validateTask({ task, blobs, git, workRoot, k: 1, passToPass: false });
+    assert.ok(o.errors.some((e) => /no reference patch or reference run/.test(e)), o.errors.join("\n"));
+    assert.equal(o.report.ok, false);
+  });
+
   it("skips with a note when no suite command can be found", async () => {
     const start = { ...BUGGY, "package.json": '{"name":"toy"}\n' };
     const { blobs, git, task, workRoot } = await setup({ start, end: { ...FIXED, "package.json": '{"name":"toy"}\n' } });

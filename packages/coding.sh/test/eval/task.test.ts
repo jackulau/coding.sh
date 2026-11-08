@@ -14,6 +14,8 @@ import {
   guessVerifierFromRepo,
   importTaskDir,
   instructionFromArgs,
+  nearMissRuns,
+  referenceRun,
   readInstructionArg,
   shellCommandOf,
   verifierPathWarnings,
@@ -260,6 +262,44 @@ describe("task dir import/export", () => {
     assert.equal(await fresh.getText(back.referencePatch ?? ""), await blobs.getText(t.referencePatch ?? ""));
     // Without a blob store the refs are still the content hashes.
     assert.equal((await importTaskDir(dir)).referencePatch, withNm.referencePatch);
+  });
+  it("reads reference/ and near-misses/<label>/ as recorded runs, and writes them back", async () => {
+    const dir = await tempDir();
+    dirs.push(dir);
+    await writeFile(join(dir, "task.json"), JSON.stringify({ name: "says-42", start: { repoRoot: "/r", snapshot: "s", head: "h" }, verifier: { command: "true" }, meta: { lane: "qa" } }));
+    await writeFile(join(dir, "instruction.md"), "What is six times seven?\n");
+    await mkdir(join(dir, "reference"), { recursive: true });
+    await writeFile(join(dir, "reference", "output.md"), "42\n");
+    await writeFile(join(dir, "reference", "stdout.jsonl"), '{"type":"result"}\n');
+    await mkdir(join(dir, "near-misses", "off-by-one"), { recursive: true });
+    await writeFile(join(dir, "near-misses", "off-by-one", "output.md"), "41\n");
+    await writeFile(join(dir, "near-misses", "off-by-one", "diff.patch"), "--- a/x\n+++ b/x\n@@ -1 +1 @@\n-a\n+b\n");
+    await writeFile(join(dir, "near-misses", "001.patch"), "--- a/y\n+++ b/y\n@@ -1 +1 @@\n-a\n+c\n");
+    const blobs = new MemBlobs();
+    const t = await importTaskDir(dir, blobs);
+    assert.equal(t.nearMissPatches?.length, 1, "a .patch file stays a near-miss patch");
+    assert.equal(t.meta?.lane, "qa");
+    const ref = referenceRun(t);
+    assert.equal(await blobs.getText(ref?.output ?? ""), "42\n");
+    assert.equal(await blobs.getText(ref?.stdout ?? ""), '{"type":"result"}\n');
+    const [nm, ...more] = nearMissRuns(t);
+    assert.equal(more.length, 0);
+    assert.equal(nm?.label, "off-by-one");
+    assert.equal(await blobs.getText(nm?.output ?? ""), "41\n");
+    assert.ok(nm?.patch);
+    assert.equal(nm?.stdout, undefined);
+
+    const out = await tempDir();
+    dirs.push(out);
+    await exportTaskDir(t, out, blobs);
+    assert.equal(await readFile(join(out, "reference", "output.md"), "utf8"), "42\n");
+    assert.equal(await readFile(join(out, "near-misses", "off-by-one", "output.md"), "utf8"), "41\n");
+    assert.ok(existsSync(join(out, "near-misses", "off-by-one", "diff.patch")));
+    const json = JSON.parse(await readFile(join(out, "task.json"), "utf8")) as { meta?: Record<string, unknown> };
+    assert.deepEqual(json.meta, { lane: "qa" }, "the runs live in their dirs, not in task.json");
+    const back = await importTaskDir(out);
+    assert.deepEqual(referenceRun(back), ref);
+    assert.deepEqual(nearMissRuns(back), nearMissRuns(t));
   });
   it("rejects unknown formats", async () => {
     const dir = await tempDir();

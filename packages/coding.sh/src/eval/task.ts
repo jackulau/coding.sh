@@ -442,6 +442,64 @@ async function blobBytes(blobs: BlobStore, ref: BlobRef, what: string): Promise<
   return b;
 }
 
+/**
+ * A recorded agent run, for a verifier that grades what the agent said or did
+ * (CODING_SH_AGENT_OUTPUT, CODING_SH_AGENT_STDOUT) and not only the tree. In a
+ * task dir, `reference/` holds a run the verifier must pass (`output.md`, the
+ * final answer; `stdout.jsonl`, the agent's stdout) next to `reference.patch`,
+ * its diff. `near-misses/<label>/` holds a run it must fail, with its diff as
+ * `diff.patch`. They live in task.meta (referenceRun, nearMissRuns), which
+ * every store keeps.
+ */
+export interface RecordedRun {
+  label: string;
+  output?: BlobRef;
+  stdout?: BlobRef;
+  patch?: BlobRef;
+}
+
+const RUN_FILES = { output: "output.md", stdout: "stdout.jsonl", patch: "diff.patch" } as const;
+
+function recordedRun(v: unknown, label: string): RecordedRun | undefined {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const o = v as Record<string, unknown>;
+  const run: RecordedRun = { label: typeof o.label === "string" && o.label ? o.label : label };
+  for (const k of ["output", "stdout", "patch"] as const) if (typeof o[k] === "string" && o[k]) run[k] = o[k] as BlobRef;
+  return run.output || run.stdout || run.patch ? run : undefined;
+}
+
+/** The task's reference run, when its task dir had a reference/ dir. */
+export function referenceRun(task: Pick<EvalTask, "meta">): RecordedRun | undefined {
+  return recordedRun(task.meta?.referenceRun, "reference");
+}
+
+/** The task's near-miss runs: near-misses/<label>/ dirs. */
+export function nearMissRuns(task: Pick<EvalTask, "meta">): RecordedRun[] {
+  const list = task.meta?.nearMissRuns;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((v, i) => recordedRun(v, `near-miss run #${i + 1}`) ?? []);
+}
+
+async function readRunDir(dir: string, label: string, store: (data: Uint8Array) => Promise<BlobRef>, files: readonly (keyof typeof RUN_FILES)[]): Promise<RecordedRun | undefined> {
+  const run: RecordedRun = { label };
+  for (const k of files) {
+    const f = join(dir, RUN_FILES[k]);
+    if (existsSync(f)) run[k] = await store(await readFile(f));
+  }
+  return run.output || run.stdout || run.patch ? run : undefined;
+}
+
+async function writeRunDir(dir: string, run: RecordedRun, blobs: BlobStore): Promise<void> {
+  await mkdir(dir, { recursive: true });
+  for (const k of ["output", "stdout", "patch"] as const) {
+    const ref = run[k];
+    if (ref) await writeFile(join(dir, RUN_FILES[k]), await blobBytes(blobs, ref, `${run.label} ${RUN_FILES[k]}`));
+  }
+}
+
+/** A near-miss dir name from its label. */
+const runDirName = (label: string, i: number) => label.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || `run-${i + 1}`;
+
 /** Where a witness's file lives in an exported task dir (its id keeps two witnesses at one path apart). */
 const witnessFile = (w: Witness) => `${w.id.slice(0, 12)}/${w.path}`;
 
@@ -449,8 +507,8 @@ export async function exportTaskDir(task: EvalTask, dir: string, blobs: BlobStor
   await mkdir(dir, { recursive: true });
   const witnesses = taskWitnesses(task);
   let meta = (task as Partial<DraftedTask>).meta as Record<string, unknown> | undefined;
-  if (meta && "witnesses" in meta) {
-    const { witnesses: _w, ...rest } = meta;
+  if (meta && ("witnesses" in meta || "referenceRun" in meta || "nearMissRuns" in meta)) {
+    const { witnesses: _w, referenceRun: _r, nearMissRuns: _n, ...rest } = meta;
     meta = Object.keys(rest).length ? rest : undefined;
   }
   const json: TaskJson = {
@@ -480,6 +538,9 @@ export async function exportTaskDir(task: EvalTask, dir: string, blobs: BlobStor
       await writeFile(join(dir, "near-misses", `${String(i + 1).padStart(3, "0")}.patch`), await blobBytes(blobs, nm[i] as BlobRef, "near-miss patch"));
     }
   }
+  const ref = referenceRun(task);
+  if (ref) await writeRunDir(join(dir, "reference"), ref, blobs);
+  for (const [i, run] of nearMissRuns(task).entries()) await writeRunDir(join(dir, "near-misses", runDirName(run.label, i)), run, blobs);
   if (witnesses.length) {
     await mkdir(join(dir, "witnesses"), { recursive: true });
     await writeFile(join(dir, "witnesses", "witnesses.json"), `${JSON.stringify(witnesses, null, 2)}\n`);
@@ -556,9 +617,17 @@ export async function importTaskDir(dir: string, blobs?: BlobStore, opts: Import
   const referencePatch = existsSync(refPath) ? await store(await readFile(refPath)) : undefined;
   const nmDir = join(dir, "near-misses");
   const nearMissPatches: BlobRef[] = [];
+  const runs: RecordedRun[] = [];
   if (existsSync(nmDir) && (await stat(nmDir)).isDirectory()) {
-    for (const f of (await readdir(nmDir)).filter((f) => f.endsWith(".patch")).sort()) nearMissPatches.push(await store(await readFile(join(nmDir, f))));
+    for (const e of (await readdir(nmDir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (e.isFile() && e.name.endsWith(".patch")) nearMissPatches.push(await store(await readFile(join(nmDir, e.name))));
+      else if (e.isDirectory()) {
+        const run = await readRunDir(join(nmDir, e.name), e.name, store, ["output", "stdout", "patch"]);
+        if (run) runs.push(run);
+      }
+    }
   }
+  const reference = existsSync(join(dir, "reference")) ? await readRunDir(join(dir, "reference"), "reference", store, ["output", "stdout"]) : undefined;
   const task: EvalTask = {
     id: json.id,
     name: json.name ?? json.id,
@@ -575,6 +644,10 @@ export async function importTaskDir(dir: string, blobs?: BlobStore, opts: Import
     createdAt: json.createdAt ?? Date.now(),
   };
   if (json.meta && typeof json.meta === "object" && !Array.isArray(json.meta)) task.meta = json.meta as Record<string, unknown>;
+  if (reference || runs.length) {
+    const { referenceRun: _r, nearMissRuns: _n, ...rest } = task.meta ?? {};
+    task.meta = { ...rest, ...(reference ? { referenceRun: reference } : {}), ...(runs.length ? { nearMissRuns: runs } : {}) };
+  }
   const wJson = join(dir, "witnesses", "witnesses.json");
   if (existsSync(wJson)) {
     const listed = JSON.parse(await readFile(wJson, "utf8")) as unknown;
