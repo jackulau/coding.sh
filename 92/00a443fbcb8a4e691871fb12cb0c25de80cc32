@@ -1,0 +1,22 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_3c314251336df3 10-15
+docs/perf.md
+  s_8e040dbdf13565::t_adeb575a7f10a5 103-123,129,142-144,146-148
+  s_8e040dbdf13565::t_029533e846d67b 124-128,130-141,145
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "9200a443fbcb8a4e691871fb12cb0c25de80cc32",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jack <jack@coding.sh>"
+    }
+  }
+}
