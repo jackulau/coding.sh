@@ -95,6 +95,7 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/stats`](#get-apistats) | read key or basic auth | serve, ui |
 | GET | [`/api/facets`](#get-apifacets) | read key or basic auth | serve, ui |
 | GET | [`/api/events`](#get-apievents) | read key or basic auth | serve, ui |
+| GET | [`/api/where`](#get-apiwhere) | read key or basic auth | serve, ui |
 | GET | [`/api/labels`](#get-apilabels) | read key or basic auth | serve, ui |
 | POST | [`/api/labels`](#post-apilabels) | read key or basic auth | serve, ui |
 | GET | [`/api/experiments`](#get-apiexperiments) | read key or basic auth | serve, ui |
@@ -633,6 +634,21 @@ curl -sS "$CSH/api/events?where=tool:lookup_order&limit=1" -H "Authorization: Be
 
 A bad `where` or `cursor` answers 400. A store plugin with no event query path answers 400 with
 `reason: "unsupported_store"`.
+
+### `GET /api/where`
+
+The `--where` keys, for the viewer's query bar to complete. Each item has `name`, `level`
+(`session`, `event` or `query`), `type`, `doc` and `example`; `facet: true` when
+[`/api/facets`](#get-apifacets) can list its values, and `values` when the key takes a few fixed
+ones (`ok`, `is`, `has`, `sort`, and times such as `7d` for `since` and `until`).
+
+```sh
+curl -sS "$CSH/api/where" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{"keys":[{"name":"agent","level":"session","type":"text","doc":"Agent id","example":"agent:codex","facet":true},{"name":"ok","level":"event","type":"bool","doc":"Tool call or model call succeeded","example":"ok:false","values":[{"value":"true"},{"value":"false"}]},…]}
+```
 
 ### `POST /api/labels`
 

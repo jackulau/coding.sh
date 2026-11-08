@@ -95,7 +95,8 @@ The message points at the character:
 
 With `--json` the error carries `reason`, `next` and `data.offset` (0-based). The viewer API
 answers 400 with `reason`, `offset` and `next`; the MCP tools return a tool error that names the
-character.
+character. The viewer's query bar ([Viewer](../guides/explore.md#viewer)) takes the same queries
+and shows that error under the bar.
 
 `--facets` counts sessions per value of each key instead of listing them: `agent`, `model`,
 `provider`, `repo`, `branch`, `flag`, `skill`, `kind`, `tool` and `mcp`. Each key is counted over

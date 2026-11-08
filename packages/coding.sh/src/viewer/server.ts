@@ -25,7 +25,7 @@ import { compareExperiments } from "../experiments/compare.ts";
 import { facetCounts, findEvents, findSessions, searchWhere } from "../query/run.ts";
 import type { AgentEvent } from "../schema/index.ts";
 import { searchableText, searchTerms, snippet } from "../store/common.ts";
-import { andQuery, parseWhere, QueryError, QueryUnsupported, type Node, type Query } from "../query/where.ts";
+import { andQuery, keyGuide, parseWhere, QueryError, QueryUnsupported, type Node, type Query } from "../query/where.ts";
 import { getUpdateStatus, type UpdateStatus } from "../update/index.ts";
 
 export interface ViewerOptions {
@@ -614,6 +614,13 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       if (prefix.length > 200) throw new HttpError(400, "prefix is too long");
       const facets = await facetCounts(ctx.index, whereParam(q) ?? {}, keys, { filter, limit: intParam(q, "limit", 20, 1, 200), ...(prefix ? { prefix } : {}) }).catch((e) => Promise.reject(queryHttpError(e)));
       return sendJson(res, 200, { facets });
+    }
+
+    case "where": {
+      // The query language's keys, for the query bar's completions.
+      get();
+      if (id !== undefined) throw new HttpError(404, "not found");
+      return sendJson(res, 200, { keys: keyGuide() });
     }
 
     case "events": {

@@ -340,35 +340,33 @@ describe("viewer UI in a browser", { skip: chrome ? false : "no Chrome/Chromium 
     }
   });
 
-  // Types a query and presses a key in the same task, i.e. well inside the 200ms debounce.
+  // Types a query and presses a key in the same task, i.e. well inside the 300ms debounce.
   const typeAndPress = (q: string, key: string) =>
     page.eval(`(() => { const q = document.querySelector('#q'); q.focus(); q.value = ${JSON.stringify(q)}; q.dispatchEvent(new Event('input', { bubbles: true })); q.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true, cancelable: true })); })()`);
-  const focusedHits = "document.activeElement && document.activeElement.getAttribute('role') === 'listbox' && /^Search results/.test(document.activeElement.getAttribute('aria-label'))";
+  const focusedList = "document.activeElement && document.activeElement.matches('.list[role=listbox]') && /^Sessions/.test(document.activeElement.getAttribute('aria-label'))";
 
-  test("Enter pressed before the search debounce fires runs the search and opens a hit", async () => {
+  test("Enter pressed before the query debounce fires runs the query and opens a session", async () => {
     await open("#/");
     try {
       await page.waitFor("/sessions loaded$/.test(document.querySelector('#status').textContent)", "initial list announcement");
-      await typeAndPress("recon", "Enter");
-      await page.waitFor(focusedHits, "focus on the search hits", 2000);
-      assert.equal(await page.eval("document.querySelectorAll('[role=listbox] [role=option]').length"), 1);
-      await page.waitFor("document.querySelector('#status').textContent === '1 match'", "hit count announcement", 2000);
+      await typeAndPress("research", "Enter");
+      await page.waitFor(`${focusedList} && document.querySelector('#status').textContent === '1 session loaded'`, "focus on the matching sessions", 2000);
+      assert.equal(await page.eval("document.querySelectorAll('.list[role=listbox] [role=option]').length"), 1);
+      assert.equal(await page.eval("location.hash"), "#/?where=research", "the query is in the URL");
       await page.eval("document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))");
-      await page.waitFor(`location.hash.startsWith(${JSON.stringify(sessionHash(CHILD) + "/")})`, "the hit's session opens", 2000);
+      await page.waitFor(`location.hash.startsWith(${JSON.stringify(sessionHash(PARENT))})`, "the session opens", 2000);
     } finally {
       await page.close();
     }
   });
 
-  test("ArrowDown before the debounce fires lands on the hits; clearing the box re-announces the list", async () => {
+  test("ArrowDown before the debounce fires lands on the matches; clearing the bar re-announces the list", async () => {
     await open("#/");
     try {
       const initial: string = await page.waitFor("/sessions loaded$/.test(document.querySelector('#status').textContent) && document.querySelector('#status').textContent", "initial list announcement");
       await typeAndPress("prompt 1", "ArrowDown");
-      await page.waitFor(focusedHits, "focus on the search hits", 2000);
-      await page.waitFor("/^\\d+ matches$/.test(document.querySelector('#status').textContent)", "hit count announcement", 2000);
+      await page.waitFor(`${focusedList} && document.querySelector('#status').textContent === '1 session loaded'`, "focus on the matching sessions", 2000);
       await page.eval("(() => { const q = document.querySelector('#q'); q.focus(); q.value = ''; q.dispatchEvent(new Event('input', { bubbles: true })); })()");
-      await page.waitFor("!/^Search results/.test(document.querySelector('[role=listbox]').getAttribute('aria-label'))", "full list again", 2000);
       await page.waitFor(`document.querySelector('#status').textContent === ${JSON.stringify(initial)}`, "list announcement after clearing", 2000);
     } finally {
       await page.close();
@@ -460,19 +458,30 @@ describe("viewer UI: sessions list state", { skip: chrome ? false : "no Chrome/C
     });
   });
 
-  test("VWR-3: a failed search does not stick; the box caps input at 500", async () => {
+  test("VWR-3: a bad query keeps the rows, says why on Enter, and does not stick; the bar caps input at 2000", async () => {
     await scenario(
       async (ix) => {
         await ix.upsertSession(session("S1", { title: "S1", startedAt: T0 }));
+        await ix.upsertSession(session("S2", { title: "S2", startedAt: T0 + 1000 }));
         await ix.putEvents([ev("S1", 1, { payload: { text: "hello world" } })]);
       },
       async (page) => {
-        assert.equal(await page.eval("document.getElementById('q').maxLength"), 500);
-        await page.eval(typeQ("x".repeat(501)));
-        await page.waitFor("document.querySelector('[role=alert]')", "error panel");
+        assert.equal(await page.eval("document.getElementById('q').maxLength"), 2000);
+        await page.eval(typeQ("tol:Bash"));
+        // Still typing: no error yet, and the last good rows stay.
+        await sleep(600);
+        assert.equal(await page.eval("!!document.querySelector('.qbar-err')"), false, "no error while typing");
+        assert.deepEqual(await page.eval(titles), ["S2", "S1"]);
+        await page.eval("document.getElementById('q').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))");
+        const msg = await page.waitFor("document.querySelector('.qbar-err[role=alert]')?.textContent", "query error on Enter");
+        assert.match(msg, /unknown key "tol".*tool:/);
+        assert.equal(await page.eval("document.querySelector('.qbar').dataset.invalid"), "true");
+        assert.equal(await page.eval("[document.getElementById('q').selectionStart, document.getElementById('q').selectionEnd].join()"), "0,1", "the caret marks where the parser stopped");
+        assert.deepEqual(await page.eval(titles), ["S2", "S1"], "the last good rows stay");
         await page.eval(typeQ("hello"));
-        await page.waitFor("document.querySelectorAll('.hit-snippet').length > 0", "hits after a good query", 3000);
-        assert.equal(await page.eval("!!document.querySelector('[role=alert]')"), false);
+        await page.waitFor(`JSON.stringify(${titles}) === '["S1"]'`, "rows after a good query", 3000);
+        assert.equal(await page.eval("!!document.querySelector('.qbar-err')"), false);
+        assert.equal(await page.eval("document.querySelector('.qbar').dataset.invalid"), "false");
       },
     );
   });
@@ -494,39 +503,58 @@ describe("viewer UI: sessions list state", { skip: chrome ? false : "no Chrome/C
     );
   });
 
-  test("VWR-5: a pressed flag chip narrows search hits", async () => {
+  test("VWR-5: a facet click and typed text narrow one query", async () => {
     await scenario(
       async (ix) => {
         await ix.upsertSession(session("F", { title: "FLAGGED", startedAt: T0, flags: ["no-verification"] }));
         await ix.upsertSession(session("N", { title: "PLAIN", startedAt: T0 + 1000 }));
+        await ix.upsertSession(session("Q", { title: "QUIET", startedAt: T0 + 2000, flags: ["no-verification"] }));
         await ix.putEvents([ev("F", 1, { payload: { text: "hello flagged" } }), ev("N", 1, { payload: { text: "hello plain" } })]);
       },
       async (page) => {
         await page.eval(clickChip("flag", "^no-verification"));
         await page.waitFor("document.querySelector('[data-filter=flag] [aria-pressed=true]')?.textContent.startsWith('no-verification') && document.querySelector('[role=listbox]')", "flag pressed");
-        await page.eval(typeQ("hello"));
-        await page.waitFor("document.querySelectorAll('.hit-snippet').length > 0", "hits");
-        const snippets: string[] = await page.eval("[...document.querySelectorAll('.hit-snippet')].map((e) => e.textContent)");
-        assert.deepEqual(snippets, ["hello flagged"], "the «» match markers become a highlight");
-        assert.equal(await page.eval("document.querySelector('.hit-snippet mark')?.textContent"), "hello");
+        assert.equal(await page.eval("document.getElementById('q').value"), "flag:no-verification", "the click writes the clause into the bar");
+        assert.deepEqual(await page.eval(titles), ["QUIET", "FLAGGED"]);
+        await page.eval(typeQ("flag:no-verification hello"));
+        await page.waitFor(`JSON.stringify(${titles}) === '["FLAGGED"]'`, "text narrows the flagged sessions");
+        assert.equal(await page.eval("location.hash"), "#/?where=flag%3Ano-verification+hello");
+        // Alt-click excludes; the clause chip removes it again.
+        await page.eval("[...document.querySelectorAll('[data-filter=flag] .chip')].find((b) => /^no-verification/.test(b.textContent)).dispatchEvent(new MouseEvent('click', { altKey: true, bubbles: true }))");
+        await page.waitFor("document.getElementById('q').value === 'hello -flag:no-verification'", "excluded");
+        await page.waitFor(`JSON.stringify(${titles}) === '["PLAIN"]'`, "excluded rows");
+        assert.ok(await page.eval("document.querySelector('[data-filter=flag] .chip.excluded')"), "the excluded value is struck through");
+        await page.eval("document.querySelector('.clauses .clause.neg button').click()");
+        await page.waitFor(`JSON.stringify(${titles}) === '["PLAIN","FLAGGED"]'`, "clause removed");
+        assert.equal(await page.eval("document.getElementById('q').value"), "hello");
       },
     );
   });
 
-  test("VWR-7: a search hit whose session is still importing retries instead of a dead end", async () => {
+  test("the query bar completes keys and values, and Tab accepts", async () => {
     await scenario(
       async (ix) => {
-        await ix.upsertSession(session("S1", { title: "S1", startedAt: T0 }));
-        await ix.putEvents([ev("GHOST", 1, { payload: { text: "fresh prompt" } })]);
+        await ix.upsertSession(session("A", { title: "A", startedAt: T0, agent: "codex" }));
+        await ix.upsertSession(session("B", { title: "B", startedAt: T0 + 1000 }));
       },
-      async (page, ix) => {
-        await page.eval(typeQ("fresh"));
-        await page.waitFor("document.querySelectorAll('.hit-snippet').length === 1", "hit");
-        await page.eval("document.querySelector('[role=listbox] [role=option]').click()");
-        await page.waitFor("/still importing/i.test(document.querySelector('main').textContent)", "importing state");
-        await ix.upsertSession(session("GHOST", { title: "GHOST SESSION", startedAt: T0 + 1 }));
-        const title = await page.waitFor("document.querySelector('.detail-head h1')?.textContent", "session after retry", 6000);
-        assert.equal(title, "GHOST SESSION");
+      async (page) => {
+        const opts = "[...document.querySelectorAll('.qbar-opt .v')].map((e) => e.textContent)";
+        const key = (k: string) => page.eval(`document.getElementById('q').dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true, cancelable: true }))`);
+        await page.eval(typeQ("ag"));
+        await page.waitFor(`${opts}[0] === 'agent:'`, "key suggestion");
+        assert.equal(await page.eval("document.getElementById('q').getAttribute('aria-expanded')"), "true");
+        await key("Tab");
+        assert.equal(await page.eval("document.getElementById('q').value"), "agent:");
+        const values: string[] = await page.waitFor(`${opts}.length === 2 && ${opts}`, "agent values from the store");
+        assert.deepEqual(values.sort(), ["claude-code", "codex"]);
+        await key("ArrowDown");
+        assert.equal(await page.eval("document.getElementById('q').getAttribute('aria-activedescendant')"), "qopt-0");
+        await key("Enter");
+        const picked = await page.eval("document.getElementById('q').value");
+        assert.match(picked, /^agent:(codex|claude-code) $/, "Enter takes the highlighted value");
+        await page.waitFor(`${titles}.length === 1`, "the picked value runs");
+        await key("Escape");
+        assert.equal(await page.eval("!!document.querySelector('.qbar-pop')"), false, "Escape closes the suggestions");
       },
     );
   });

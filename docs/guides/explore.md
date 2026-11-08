@@ -172,6 +172,17 @@ differently. Two arms can share a pass rate on the task and still differ here.
 `coding.sh ui` serves the viewer on 127.0.0.1 and opens it in your browser. It needs the
 per-process token in the URL it prints.
 
+The bar above the session list takes the same query as `--where`, so `tool:Bash ok:false
+-flag:compaction` or plain words narrow the list as you type. It completes keys, then their
+values with session counts (Tab or a click accepts; Enter runs the query and moves to the list;
+Esc closes the suggestions). A bad query keeps the last rows on screen; Enter shows what is wrong
+and puts the caret on it. Each clause shows as a chip with × to remove it. The sidebar counts
+sessions per agent, model, repository, branch, flag, tool, MCP server and event kind. A click
+adds a value to the query (two values of one key mean either), Alt-click or "not" excludes it,
+and each group folds shut. On a phone the sidebar is a sheet behind the Filters button. The query
+lives in the URL (`#/?where=…`), so a filtered list can be linked and survives a reload; `/`
+focuses the bar.
+
 The session page shows the first 5,000 events right away and loads the rest in the background.
 The timeline only draws the rows on screen, so a 40,000-event session scrolls smoothly. Each
 derail gets a ⚑ badge on the step where it started and a mark on the scroll map; the ‹ › buttons

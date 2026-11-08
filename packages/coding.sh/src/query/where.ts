@@ -243,6 +243,34 @@ export function keyDocs(): { name: string; level: string; doc: string; example: 
   ];
 }
 
+/** What the viewer's query bar completes: each key, its type, and the values it can list without a lookup. */
+export interface KeyGuide {
+  name: string;
+  level: "session" | "event" | "query";
+  type: KeyType | "enum";
+  doc: string;
+  example: string;
+  /** Values come from /api/facets. */
+  facet?: true;
+  /** Values the key takes, when there are few. */
+  values?: { value: string; doc?: string }[];
+}
+
+export function keyGuide(): KeyGuide[] {
+  const enumOf = (r: Record<string, HasDef>) => Object.entries(r).map(([value, d]) => ({ value, doc: d.doc }));
+  return [
+    ...KEY_LIST.map((k): KeyGuide => ({
+      name: k.name, level: k.level, type: k.type, doc: k.doc, example: k.example,
+      ...(k.facet ? { facet: true as const } : {}),
+      ...(k.type === "bool" ? { values: [{ value: "true" }, { value: "false" }] } : {}),
+      ...(k.type === "time" ? { values: ["1h", "24h", "7d", "30d"].map((value) => ({ value })) } : {}),
+    })),
+    { name: "is", level: "session", type: "enum", doc: "Is a kind of session", example: "is:root", values: enumOf(IS) },
+    { name: "has", level: "session", type: "enum", doc: "Has a field", example: "has:tests", values: enumOf(HAS) },
+    { name: "sort", level: "query", type: "enum", doc: "Order by; - for descending", example: "sort:-cost", values: SORT_KEYS.flatMap((k) => [{ value: `-${k}` }, { value: k }]) },
+  ];
+}
+
 // ------------------------------------------------------------ values
 
 const TIME_UNITS: Record<string, number> = { s: 1e3, m: 60e3, h: 3600e3, d: 86400e3, w: 7 * 86400e3 };

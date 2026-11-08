@@ -158,6 +158,17 @@ describe("--where on CLI, MCP and HTTP", () => {
     assert.equal((await http(`/api/stats?where=${encodeURIComponent("modle:x")}`)).status, 400);
   });
 
+  test("the viewer reads the keys it completes from /api/where", async () => {
+    const keys = (await http(`/api/where`)).json.keys as { name: string; level: string; facet?: boolean; values?: { value: string }[] }[];
+    const by = new Map(keys.map((k) => [k.name, k]));
+    assert.equal(by.get("tool")?.level, "event");
+    assert.equal(by.get("tool")?.facet, true);
+    assert.deepEqual(by.get("ok")?.values?.map((v) => v.value), ["true", "false"]);
+    assert.ok(by.get("is")?.values?.some((v) => v.value === "root"));
+    assert.ok(by.get("sort")?.values?.some((v) => v.value === "-cost"));
+    assert.equal((await http(`/api/where/x`)).status, 404);
+  });
+
   test("old flags still work and combine with --where", () => {
     const ids = (JSON.parse(ok(["sessions", "--agent", "codex", "--where", "is:child", "--json"]).stdout) as { sessions: { id: string }[] }).sessions;
     // --agent codex, top-level by default, and is:child: nothing.

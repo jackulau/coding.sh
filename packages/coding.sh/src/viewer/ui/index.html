@@ -1088,6 +1088,83 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .kv dd { margin-bottom: 0.55rem; }
 }
 
+/* ---------- query bar, view tabs, active clauses, events list ---------- */
+.search.qbar { flex: 1 1 22rem; max-width: 36rem; }
+.qbar input { font-family: var(--font-mono); font-size: 12.5px; }
+.qbar input::placeholder { font-family: var(--font-sans); font-size: 13px; }
+.qbar[data-invalid="true"] input { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fail) 55%, transparent); }
+.qbar-pop {
+  position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 20; max-height: min(20rem, 60vh); overflow-y: auto; padding: 0.3rem;
+  border-radius: var(--radius); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow);
+  transform-origin: top center; transition: opacity 120ms ease-out, transform 140ms var(--ease-out);
+  @starting-style { opacity: 0; transform: translateY(-2px) scale(0.985); }
+}
+.qbar-pop[hidden] { display: none; }
+.qbar-opt { display: flex; align-items: baseline; gap: 0.6rem; min-height: 30px; padding: 0.3rem 0.55rem; border-radius: var(--radius-sm); font-size: 12.5px; color: var(--text-2); cursor: pointer; }
+.qbar-opt .v { font-family: var(--font-mono); color: var(--text); flex: none; max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qbar-opt .d { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+.qbar-opt .count { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+.qbar-opt[aria-selected="true"] { background: var(--select); color: var(--text); }
+.qbar-foot { display: flex; gap: 0.9rem; padding: 0.35rem 0.55rem 0.15rem; box-shadow: inset 0 1px 0 var(--line); margin-top: 0.25rem; font-size: 11.5px; }
+.qbar-foot kbd { position: static; transform: none; pointer-events: auto; margin-right: 0.15rem; }
+.qbar-err { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0.2rem 0.6rem; align-items: baseline; font-size: 12.5px; color: var(--fail-ink); }
+.qbar-err .next { color: var(--text-2); }
+.qbar-err code { font-size: 12px; }
+.view-tabs { display: flex; align-items: center; gap: 2px; box-shadow: inset 0 -1px 0 var(--line); }
+.view-tabs a {
+  position: relative; display: inline-flex; align-items: center; gap: 0.45rem; height: 34px; padding: 0 0.7rem; font-size: 13px; color: var(--text-muted);
+  transition: color var(--hover-out) ease-out;
+}
+.view-tabs a .count { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); }
+.view-tabs a[aria-current="page"] { color: var(--text); }
+.view-tabs a[aria-current="page"]::after { content: ""; position: absolute; left: 0.55rem; right: 0.55rem; bottom: 0; height: 2px; border-radius: 2px; background: var(--text); }
+.view-tabs .spacer { flex: 1; }
+.view-tabs .meta { white-space: nowrap; }
+.clauses { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; }
+.clause { display: inline-flex; align-items: center; height: 26px; max-width: 100%; border-radius: var(--radius-sm); font-family: var(--font-mono); font-size: 12px; color: var(--text-2); background: var(--raised); box-shadow: inset 0 0 0 1px var(--line); }
+.clause .t { padding: 0 0.15rem 0 0.55rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.clause .k { color: var(--text-muted); }
+.clause.neg { color: var(--fail-ink); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fail) 30%, transparent); }
+.clause.op { background: none; box-shadow: none; color: var(--text-muted); padding: 0 0.15rem; }
+.clause button { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 5px; color: var(--text-muted); transition: color var(--hover-out) ease-out, background-color var(--hover-out) ease-out; }
+.clause button::before { content: ""; position: absolute; inset: -10px -6px; }
+.clause button svg { width: 12px; height: 12px; }
+.clauses .clear-all { font-size: 12px; color: var(--text-muted); padding: 0 0.35rem; height: 26px; }
+.facet .chip.excluded .name { text-decoration: line-through; text-decoration-color: var(--fail); color: var(--fail-ink); }
+.facet .chip.excluded .tick { background: var(--fail); box-shadow: none; }
+.facet .chip.excluded .tick::after { content: ""; width: 6px; height: 1.5px; border: 0; transform: none; background: var(--bg); }
+.facet .facet-row { position: relative; display: flex; align-items: center; }
+.facet .facet-row .chip { flex: 1; min-width: 0; }
+.facet .not-btn { position: absolute; right: 2.6rem; top: 50%; transform: translateY(-50%); height: 20px; padding: 0 0.35rem; border-radius: 4px; font-family: var(--font-mono); font-size: 10.5px; color: var(--text-muted); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); opacity: 0; pointer-events: none; transition: opacity var(--hover-out) ease-out; }
+.facet .not-btn:focus-visible { opacity: 1; pointer-events: auto; }
+.facet-note { margin: 0; padding: 0 0.5rem; font-size: 11.5px; color: var(--text-muted); }
+.facet h3 .facet-head { display: inline-flex; align-items: center; gap: 0.35rem; height: 24px; margin-left: -0.15rem; padding: 0 0.15rem; font-size: 12px; font-weight: inherit; color: var(--text-muted); border-radius: 4px; }
+.facet h3 .facet-head .caret { display: inline-block; width: 8px; font-size: 9px; transition: transform 160ms var(--ease-out); }
+.facet h3 .facet-head[aria-expanded="true"] .caret { transform: rotate(90deg); }
+.facet h3 .facet-head .count { font-family: var(--font-mono); font-size: 10.5px; color: var(--text); padding: 0 0.3rem; border-radius: 4px; background: var(--raised-2); }
+.facet[data-collapsed="true"] h3 { margin-bottom: 0; }
+@media (hover: none), (max-width: 1023px) { .facet .not-btn, .facet-note { display: none; } }
+
+.event-table { container-type: inline-size; }
+.event-table .thead, .event-table .row { grid-template-columns: 12px minmax(0, 1fr) var(--c-sess, minmax(9rem, 15rem)) var(--c-dur, 4.5rem) 4.5rem; }
+.event-table .row-title .arg { color: var(--text-2); font-family: var(--font-mono); font-size: 12px; }
+.event-table .ev-detail { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.event-table .ev-detail.err { color: var(--fail-ink); }
+.event-table .ev-detail mark { padding: 0 1px; }
+.event-table .sess-cell { display: grid; line-height: 1.3; font-family: var(--font-sans); font-size: 12.5px; color: var(--text-2); }
+.event-table .sess-cell > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.event-table .sess-cell .sub { font-family: var(--font-mono); font-size: 11px; }
+@media (min-width: 861px) {
+  .event-table .list > .row { min-height: 52px; }
+  @container (width < 40rem) { .event-table > * { --c-dur: ; } .event-table .dur-cell { display: none; } }
+}
+@media (max-width: 860px) {
+  .event-table .row { grid-template-columns: 12px minmax(0, 1fr); }
+  .event-table .ev-detail { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; flex-basis: 100%; }
+  .event-table .sess-cell { display: block; max-width: 100%; }
+  .event-table .sess-cell .sub { display: none; }
+}
+
 /* ---------- overlays ---------- */
 .overlay { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center; padding: 12vh var(--gutter) 2rem; background: color-mix(in srgb, var(--bg) 55%, transparent); }
 .overlay[hidden] { display: none; }
@@ -1140,6 +1217,13 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .parent-link:hover { color: var(--text); transition-duration: var(--hover-in); }
   .check:hover:not([aria-checked="true"]) { box-shadow: inset 0 0 0 1.5px var(--text-muted); }
   .palette-item:hover { background: var(--hover); }
+  .qbar-opt:hover:not([aria-selected="true"]) { background: var(--hover); color: var(--text); }
+  .view-tabs a:hover:not([aria-current="page"]) { color: var(--text); transition-duration: var(--hover-in); }
+  .clause button:hover { color: var(--text); background: var(--hover); transition-duration: var(--hover-in); }
+  .clauses .clear-all:hover { color: var(--text); }
+  .facet .facet-row:hover .not-btn { opacity: 1; pointer-events: auto; }
+  .facet .not-btn:hover { color: var(--fail-ink); }
+  .facet h3 .facet-head:hover { color: var(--text); }
   .fail-nav button:hover { background: var(--fail-wash); }
   .json details > summary:hover { color: var(--text); }
   .page-head .meta button:hover { color: var(--text); }
@@ -1216,7 +1300,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .loading-bar::after { animation: none; }
   .btn:active, .chip:active, .update-pill:active, .cmdk:active, .icon-btn:active, .check:active, .live-pill:active { transform: none; }
   .toast, .toast[data-hidden] { transform: translate(-50%, 0); }
-  .back .nudge, .sub-toggle .caret, .json details > summary::before { transition: none; }
+  .back .nudge, .sub-toggle .caret, .facet-head .caret, .json details > summary::before { transition: none; }
   .facets.opening[data-open="true"] .facet-groups, .facets.opening[data-open="true"]::after, .tip { animation: none; }
 }
 </style>
@@ -1415,7 +1499,8 @@ function highlight(text, q) {
 // ------------------------------------------------------------ api + status
 
 class ApiError extends Error {
-  constructor(status, message) { super(message); this.status = status; }
+  // body: the error's JSON (a bad query carries reason, offset and next).
+  constructor(status, message, body) { super(message); this.status = status; this.body = body || null; }
 }
 let inflight = 0;
 function busy(delta) {
@@ -1449,7 +1534,7 @@ async function api(path, init, quiet) {
   const res = await request(path, { ...init, headers: { Accept: "application/json", ...(init && init.headers) } }, quiet);
   let body = null;
   try { body = await res.json(); } catch { /* non-JSON error */ }
-  if (!res.ok) throw new ApiError(res.status, (body && body.error) || res.statusText || "request failed");
+  if (!res.ok) throw new ApiError(res.status, (body && body.error) || res.statusText || "request failed", body);
   return body;
 }
 function qs(params) {
@@ -1567,7 +1652,7 @@ const KEYMAP = [
   { scope: "global", id: "go-sessions", keys: ["g", "s"], label: "Go to sessions", chord: true },
   { scope: "global", id: "go-experiments", keys: ["g", "e"], label: "Go to experiments", chord: true },
   { scope: "global", id: "go-benchmarks", keys: ["g", "b"], label: "Go to benchmarks", chord: true },
-  { scope: "sessions", id: "search", keys: ["/"], label: "Search prompts and output" },
+  { scope: "sessions", id: "search", keys: ["/"], label: "Filter or search" },
   { scope: "sessions", id: "down", keys: ["j"], alt: ["ArrowDown"], label: "Next session" },
   { scope: "sessions", id: "up", keys: ["k"], alt: ["ArrowUp"], label: "Previous session" },
   { scope: "sessions", id: "open", keys: ["Enter"], label: "Open session" },
@@ -1754,17 +1839,28 @@ $("#cmdk").addEventListener("click", openPalette);
 // ------------------------------------------------------------ sessions list
 
 const PAGE = 50;
-const FILTER_KEYS = ["agent", "model", "repo", "flag", "scope", "since", "until"];
-const NO_FILTERS = { agent: "", model: "", repo: "", flag: "", scope: "", since: "", until: "" };
+// Filters kept beside the query: subagent scope and the histogram's time range.
+const FILTER_KEYS = ["scope", "since", "until"];
+const NO_FILTERS = { scope: "", since: "", until: "" };
+// Links from before the query bar (#/?agent=codex&q=fix) still open: their filters become clauses.
+const LEGACY_KEYS = ["agent", "model", "repo", "flag"];
+const WHERE_MAX = 2000;
 const list = {
   stats: null,
   // scope "" = top-level sessions only (subagents nest under their parent); "all" = every session.
   filters: { ...NO_FILTERS },
-  q: "",
+  // The query (src/query/where.ts): key:value clauses and free text, in the URL as ?where=.
+  where: "",
+  // A 400 for the query: the ApiError, whose body has reason, offset and next.
+  whereError: null,
+  // Facet counts from /api/facets, by key.
+  facets: null,
+  // The query language's keys (/api/where), loaded once, for completions.
+  keys: null,
   items: [],
-  hits: null,
   hasMore: false,
   // Keyset cursor for the next page (server's nextCursor): ingest reorders the list, offsets drift.
+  // A query pages by offset instead (its order can be a stat).
   nextCursor: null,
   // Bumped by every load that replaces the list, so a slower "Load more" from before is dropped.
   seq: 0,
@@ -1778,18 +1874,22 @@ const list = {
   showAll: new Set(),
   // Phones fold the filters behind one button; desktop always shows them.
   facetsOpen: false,
+  // Sidebar groups folded shut (remembered per browser).
+  collapsed: loadCollapsed(),
+  // Show a query error now (a link, Enter, leaving the bar) or wait (still typing).
+  showError: false,
   fresh: 0,
 };
 function topLevelOnly() { return list.filters.scope !== "all"; }
 function listParams() {
-  const { scope, ...rest } = list.filters;
-  return { ...rest, scope: scope === "all" ? "all" : "top" };
+  const { scope, since, until } = list.filters;
+  return { scope: scope === "all" ? "all" : "top", since, until, where: list.where.trim() };
 }
 /** The list's state as a hash, so a filtered view can be linked and survives reload. */
 function listHref() {
   const p = {};
+  if (list.where.trim()) p.where = list.where.trim();
   for (const k of FILTER_KEYS) if (list.filters[k]) p[k] = list.filters[k];
-  if (list.q.trim()) p.q = list.q.trim();
   return "#/" + qs(p);
 }
 function syncListHash() {
@@ -1802,11 +1902,102 @@ function applyQuery(query) {
   for (const k of FILTER_KEYS) next[k] = query.get(k) || "";
   if (next.scope !== "all") next.scope = "";
   for (const k of ["since", "until"]) if (next[k] && !/^\d{1,16}$/.test(next[k])) next[k] = "";
-  const q = (query.get("q") || "").slice(0, 500);
-  const changed = FILTER_KEYS.some((k) => next[k] !== list.filters[k]) || q !== list.q;
+  const parts = [(query.get("where") || "").trim()];
+  for (const k of LEGACY_KEYS) { const v = query.get(k); if (v) parts.push(k + ":" + quoteValue(v)); }
+  const q = (query.get("q") || "").trim();
+  if (q) parts.push(q.split(/\s+/).map((w) => (/^[\p{L}\p{N}_.-]+$/u.test(w) ? w : quoteValue(w))).join(" "));
+  const where = parts.filter(Boolean).join(" ").slice(0, WHERE_MAX);
+  const changed = FILTER_KEYS.some((k) => next[k] !== list.filters[k]) || where !== list.where;
   list.filters = next;
-  list.q = q;
+  list.where = where;
   return changed;
+}
+
+// ---- the query string, client side: just enough to edit it (terms, clauses, values).
+// The server parses it for real and answers a bad one with a reason and an offset.
+
+/** Top-level terms with their offsets: key:value clauses, words, "quoted text", (groups), OR. */
+function whereTerms(s) {
+  const out = [];
+  let i = 0;
+  while (i < s.length) {
+    if (/\s/.test(s[i])) { i++; continue; }
+    const start = i;
+    let depth = 0, quoted = false;
+    for (; i < s.length; i++) {
+      const c = s[i];
+      if (quoted) { if (c === "\\") i++; else if (c === '"') quoted = false; continue; }
+      if (c === '"') quoted = true;
+      else if (c === "(") depth++;
+      else if (c === ")") { if (depth > 0) depth--; }
+      else if (depth === 0 && /\s/.test(c)) break;
+    }
+    i = Math.min(i, s.length);
+    out.push(termOf(s.slice(start, i), start, i));
+  }
+  return out;
+}
+function termOf(text, start, end) {
+  const m = /^(-?)([a-z][a-z.]*)(:|>=|<=|>|<|=)([\s\S]*)$/i.exec(text);
+  if (!m) return { text, start, end, neg: text.length > 1 && text[0] === "-", op: /^(OR|AND)$/.test(text) ? text : "" };
+  return { text, start, end, neg: !!m[1], key: m[2].toLowerCase(), op: m[3], raw: m[4], values: splitValues(m[4]) };
+}
+/** 'a,"b c"' → ["a", "b c"]. */
+function splitValues(v) {
+  const out = [];
+  let cur = "", quoted = false;
+  for (let i = 0; i < v.length; i++) {
+    const c = v[i];
+    if (quoted) {
+      if (c === "\\" && i + 1 < v.length) cur += v[++i];
+      else if (c === '"') quoted = false;
+      else cur += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ",") { out.push(cur); cur = ""; }
+    else cur += c;
+  }
+  out.push(cur);
+  return out;
+}
+/** A value as the parser reads it back: bare when it can be, else quoted. */
+function quoteValue(v) {
+  v = String(v);
+  return /^[^\s(),":]+$/.test(v) && v !== "OR" && v !== "AND" ? v : '"' + v.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+}
+/** The string with one term replaced, or removed along with an OR it would leave dangling. */
+function spliceTerm(s, t, text) {
+  if (text) return s.slice(0, t.start) + text + s.slice(t.end);
+  const terms = whereTerms(s);
+  const i = terms.findIndex((x) => x.start === t.start);
+  let from = t.start, to = t.end;
+  const prev = terms[i - 1], next = terms[i + 1];
+  if (prev && prev.op === "OR" && (!next || next.op === "OR")) from = prev.start;
+  else if (next && next.op === "OR" && (!prev || prev.op === "OR")) to = next.end;
+  return (s.slice(0, from) + " " + s.slice(to)).replace(/\s+/g, " ").trim();
+}
+/** Adds a clause; a query with a top-level OR is wrapped first, so the clause narrows all of it. */
+function addClause(s, clause) {
+  s = s.trim();
+  if (!s) return clause;
+  return (whereTerms(s).some((t) => t.op === "OR") ? "(" + s + ")" : s) + " " + clause;
+}
+/** How a facet value stands in the query: "in" (key:v), "out" (-key:v) or "". */
+function facetState(terms, key, value) {
+  for (const t of terms) if (t.key === key && t.op === ":" && t.values.includes(value)) return t.neg ? "out" : "in";
+  return "";
+}
+/** A facet click: add the value (OR-ed with the key's other picks), or take it back out. */
+function toggleFacet(s, key, value, exclude) {
+  const hit = whereTerms(s).find((t) => t.key === key && t.op === ":" && t.values.includes(value));
+  if (hit) {
+    const rest = hit.values.filter((v) => v !== value);
+    s = spliceTerm(s, hit, rest.length ? (hit.neg ? "-" : "") + key + ":" + rest.map(quoteValue).join(",") : "");
+    // The same click again takes it out; the other click (exclude an included value) switches it.
+    if (hit.neg === !!exclude) return s;
+  }
+  const same = whereTerms(s).find((t) => t.key === key && t.op === ":" && t.neg === !!exclude && !t.values.some((v) => v.includes("*")));
+  if (same) return spliceTerm(s, same, (same.neg ? "-" : "") + key + ":" + same.values.concat(value).map(quoteValue).join(","));
+  return addClause(s, (exclude ? "-" : "") + key + ":" + quoteValue(value));
 }
 /** The rows the sessions list shows: top-level rows, each followed by its expanded subagents. */
 function visibleRows() {
@@ -1824,8 +2015,7 @@ function visibleRows() {
 }
 function announceList() {
   if (list.error || !list.loaded) return;
-  if (list.hits) announce(fmtNum(list.hits.length) + (list.hits.length === 1 ? " match" : " matches"));
-  else announce(list.items.length ? plural(list.items.length, "session") + " loaded" : "No sessions");
+  announce(list.items.length ? plural(list.items.length, "session") + " loaded" : "No sessions");
 }
 function testsTone(s) {
   const st = s.stats || {};
@@ -1878,43 +2068,69 @@ function rowTokens(u) {
   return n ? fmtCompact(n) + " tokens" : "";
 }
 
-async function loadStats() {
-  const seq = list.seq;
-  const stats = await api("/api/stats" + qs(listParams())).catch((e) => { if (e.status === 401) throw e; return null; });
-  if (seq === list.seq || !list.stats) list.stats = stats;
+// Facet sidebar keys: session keys always; event keys need the event index (SQLite and memory
+// stores), so a store without one leaves those groups out instead of failing the page.
+const SESSION_FACETS = ["agent", "model", "repo", "branch", "flag"];
+const EVENT_FACETS = ["tool", "mcp", "kind"];
+const FACET_PAGE = 40;
+/** A 400 that names what is wrong with the query (reason, offset, next). */
+function isQueryError(e) { return !!(e && e.status === 400 && e.body && e.body.reason); }
+
+function fetchStats(p) {
+  return api("/api/stats" + qs(p)).catch((e) => { if (e.status === 401 || isQueryError(e)) throw e; return null; });
 }
-/** Loads page one (or, with append_, the page after the cursor). Resolves false when a newer load superseded it. */
-async function loadSessions(append_) {
-  const seq = append_ ? list.seq : ++list.seq;
-  const cursor = append_ ? list.nextCursor : null;
-  const body = await api("/api/sessions" + qs({ ...listParams(), limit: PAGE, cursor }));
-  if (seq !== list.seq) return false;
-  if (append_) {
-    const seen = new Set(list.items.map((s) => s.id));
-    list.items = list.items.concat(body.items.filter((s) => !seen.has(s.id)));
-  } else {
-    list.items = body.items;
-    list.active = 0;
-    list.fresh = 0;
+async function fetchFacets(p) {
+  const get = (keys) => api("/api/facets" + qs({ ...p, keys: keys.join(","), limit: FACET_PAGE }), null, true).then((b) => b.facets || {});
+  const [session, event] = await Promise.all([
+    get(SESSION_FACETS),
+    get(EVENT_FACETS).catch((e) => { if (e.status === 401 || (isQueryError(e) && e.body.reason !== "unsupported_store")) throw e; return {}; }),
+  ]);
+  return { ...session, ...event };
+}
+/** One page of sessions: page one, or (append) the page after what is loaded. */
+function fetchPage(p, append) {
+  const more = append && list.items.length;
+  // A query pages by offset (its order can be a stat); the plain list by keyset cursor.
+  return api("/api/sessions" + qs({ ...p, limit: PAGE, cursor: more && !p.where ? list.nextCursor : null, offset: more && p.where ? list.items.length : null }));
+}
+/** The query language's keys, once per page load, for the bar's completions. */
+function loadKeys() {
+  if (list.keys) return;
+  list.keys = [];
+  api("/api/where", null, true).then((b) => { list.keys = (b && b.keys) || []; }, () => { list.keys = null; });
+}
+
+/**
+ * Loads stats, rows and facet counts for the current query, all or nothing, then renders.
+ * A bad query keeps the last good rows on screen and says why under the bar.
+ * Resolves true when the rows on screen are the query's.
+ */
+async function reload(view, opts = {}) {
+  const seq = navSeq;
+  const mine = ++list.seq;
+  const p = listParams();
+  list.expanded.clear();
+  if (opts.reset) { list.loaded = false; list.children.clear(); }
+  syncListHash();
+  if (!list.loaded) renderSessions(view);
+  let stats, page, facets;
+  try {
+    [stats, page, facets] = await Promise.all([fetchStats(p), fetchPage(p, false), fetchFacets(p)]);
+  } catch (e) {
+    if (mine !== list.seq || !current(seq)) return false;
+    if (isQueryError(e)) {
+      list.whereError = e;
+      if (!list.loaded) { list.loaded = true; list.items = []; list.hasMore = false; }
+    } else list.error = e;
+    renderSessions(view);
+    return false;
   }
-  list.hasMore = body.hasMore;
-  list.nextCursor = body.nextCursor || null;
-  list.loaded = true;
-  return true;
-}
-let searchSeq = 0;
-async function runSearch() {
-  const seq = ++searchSeq;
-  const q = list.q.trim();
-  if (!q) { list.hits = null; return; }
-  // Scope only decides whether subagents nest or list flat; a subagent's prompts
-  // and output are still part of the work, so search covers them either way.
-  const { agent, flag, repo, model, since, until } = list.filters;
-  const body = await api("/api/search" + qs({ q, agent, flag, repo, model, since, until, limit: 100 }));
-  if (seq !== searchSeq) return false;
-  list.hits = body.items;
-  list.error = null;
-  list.active = 0;
+  if (mine !== list.seq || !current(seq)) return false;
+  Object.assign(list, { stats, facets, items: page.items, hasMore: page.hasMore, nextCursor: page.nextCursor || null, loaded: true, error: null, whereError: null, active: 0, fresh: 0 });
+  renderSessions(view);
+  announceList();
+  const b = opts.focus && $(opts.focus, view);
+  if (b) b.focus({ preventScroll: true });
   return true;
 }
 
@@ -1922,28 +2138,26 @@ async function showSessions(seq, query) {
   const view = h("div", { class: "sessions-layout" });
   const keys = { scope: "sessions", actions: {}, palette: [] };
   setView(view, false, keys);
-  if (query && applyQuery(query)) { list.loaded = false; list.hits = null; list.expanded.clear(); }
+  if (query && applyQuery(query)) { list.loaded = false; list.expanded.clear(); }
   else syncListHash();
+  // A query from a link shows its error at once; one typed shows it on Enter.
+  list.showError = true;
   renderSessions(view);
   keys.actions = listActions(view);
+  loadKeys();
   if (!list.loaded || list.error) {
     list.error = null;
-    try {
-      await Promise.all([loadStats(), loadSessions(false), list.q ? runSearch() : null]);
-    } catch (e) {
-      list.error = e;
-    }
+    await reload(view);
     if (!current(seq)) return;
-    renderSessions(view);
-  }
-  announceList();
+  } else announceList();
   // Live updates: count sessions newer than the list's head; the pill loads them.
   const timer = setInterval(() => pollNew(view, seq), 5000);
   cleanup = () => clearInterval(timer);
 }
 
 async function pollNew(view, seq) {
-  if (document.hidden || !list.loaded || list.hits || list.error || list.filters.until) return;
+  // A sorted query has no "newer than the head" to count.
+  if (document.hidden || !list.loaded || list.error || list.whereError || list.filters.until || whereTerms(list.where).some((t) => t.key === "sort")) return;
   let body;
   try { body = await api("/api/sessions" + qs({ ...listParams(), limit: 20 }), null, true); } catch { return; }
   if (!current(seq)) return;
@@ -1956,71 +2170,65 @@ async function pollNew(view, seq) {
   if (pill) { pill.hidden = !n; $(".txt", pill).textContent = (n >= 20 ? "20+" : fmtNum(n)) + " new " + (n === 1 ? "session" : "sessions"); }
 }
 
-function refreshSessions(view) {
-  list.loaded = false;
-  list.hits = null;
-  list.expanded.clear();
-  list.children.clear();
-  syncListHash();
-  const seq = navSeq;
-  renderSessions(view);
-  Promise.all([loadStats(), loadSessions(false), list.q ? runSearch() : null])
-    .then(() => { list.error = null; })
-    .catch((e) => { list.error = e; })
-    .then(() => { if (current(seq)) { renderSessions(view, true); announceList(); } });
-}
+function refreshSessions(view) { return reload(view, { reset: true }); }
 
-/** A filter changed: reload rows, facet counts and hits, then put focus back where it was. */
+/** A filter changed: reload rows, facet counts and stats, then put focus back where it was. */
 function filtersChanged(view, focusSel) {
-  list.loaded = false;
-  list.expanded.clear();
-  syncListHash();
-  const seq = navSeq;
-  renderSessions(view);
-  Promise.all([loadSessions(false), loadStats(), list.q ? runSearch() : null])
-    .then(() => { list.error = null; }, (e) => { list.error = e; })
-    .then(() => {
-      if (!current(seq)) return;
-      renderSessions(view);
-      announceList();
-      const b = focusSel && $(focusSel, view);
-      if (b) b.focus({ preventScroll: true });
-    });
+  list.showError = true;
+  return reload(view, { focus: focusSel });
+}
+/** The query changed outside the bar (a facet, a chip): show it in the bar and run it. */
+function setWhere(view, where, focusSel) {
+  list.where = where.slice(0, WHERE_MAX);
+  if (qbar && qbar.view === view) qbar.input.value = list.where;
+  return filtersChanged(view, focusSel);
 }
 
-function renderSessions(view, keepFocus) {
-  const focusedSearch = document.activeElement && document.activeElement.id === "q";
+function renderSessions(view) {
+  const bar = queryBar(view);
+  const input = qbar.input;
+  const focused = document.activeElement === input;
+  const sel = focused ? [input.selectionStart, input.selectionEnd] : null;
+  // Moving the bar into the new page head blurs it; that blur is not the user leaving.
+  qbar.rendering = true;
+  if (!focused && input.value !== list.where) input.value = list.where;
   const stats = list.stats;
-  const total = stats ? stats.sessions : 0;
   const nothingCaptured = list.loaded && stats && stats.sessions === 0 && !stats.subagents && !hasFilters();
   const head = h("div", { class: "page-head" },
     h("div", null,
       h("h1", { id: "sessions-h" }, "Sessions"),
       h("p", { class: "meta fact-line" }, ...(stats ? summaryLine(stats) : [list.loaded ? "" : "Loading…"]).filter(Boolean).map((t) => typeof t === "string" ? h("span", null, t) : h("span", { class: "sum-cost", title: t.title }, t.text)),
-        hasFilters() ? h("span", null, h("button", { type: "button", onclick: () => clearFilters(view) }, "Clear filters")) : null)),
-    nothingCaptured ? null : searchBox(view));
+        // The clause row has its own Clear all; the scope filter alone has no chip.
+        hasFilters() && !whereTerms(list.where).length && !list.filters.since && !list.filters.until ? h("span", null, h("button", { type: "button", onclick: () => clearFilters(view) }, "Clear filters")) : null)),
+    nothingCaptured ? null : bar);
+  bar.dataset.invalid = String(!!(list.whereError && list.showError));
 
   const body = [head];
+  if (list.whereError && list.showError) body.push(queryErrorLine(list.whereError));
+  const clauses = nothingCaptured ? null : clauseRow(view);
+  if (clauses) body.push(clauses);
   if (list.error) {
     body.push(errorPanel(list.error, () => refreshSessions(view)));
   } else if (nothingCaptured) {
     body.push(captureEmpty());
   } else {
     if (stats && stats.histogram && stats.histogram.buckets.length > 1) body.push(histogramPanel(view, stats.histogram));
-    const pill = h("button", { class: "live-pill", type: "button", hidden: !list.fresh || !!list.hits, onclick: () => refreshSessions(view) },
+    const pill = h("button", { class: "live-pill", type: "button", hidden: !list.fresh, onclick: () => refreshSessions(view) },
       h("span", { class: "dot", "aria-hidden": "true" }), h("span", { class: "txt" }, fmtNum(list.fresh) + " new " + (list.fresh === 1 ? "session" : "sessions")));
     body.push(pill);
     if (!list.loaded) body.push(skeletonTable());
-    else body.push(list.hits ? hitsList(view) : sessionList(view));
+    else body.push(sessionList(view));
   }
   const col = h("div", { class: "list-col", role: "region", "aria-labelledby": "sessions-h" }, body);
   const showFacets = !nothingCaptured && !list.error && (stats || list.loaded);
   view.replaceChildren(...(showFacets ? [facetPanel(view), col] : [h("div"), col]));
   if (!showFacets) view.firstChild.className = "facets";
-  if (focusedSearch || keepFocus === "search") {
-    const input = $("#q", view);
-    if (input) { input.focus(); input.setSelectionRange(input.value.length, input.value.length); }
+  // Rendering moved the bar: typing goes on where it was.
+  if (focused && bar.isConnected) {
+    input.focus({ preventScroll: true });
+    input.setSelectionRange(sel[0], sel[1]);
   }
+  qbar.rendering = false;
 }
 function summaryLine(s) {
   const parts = [plural(s.sessions, "session")];
@@ -2051,82 +2259,327 @@ function skeletonTable() {
     }));
 }
 
-let debounceTimer = 0;
-// The search the box has started but not yet rendered, so Enter can wait for it.
-let pendingSearch = null;
-function searchBox(view) {
+// ---- the query bar: one input for every filter, with completions for keys and values.
+
+// Keys people reach for first lead the list; the rest follow in the server's order.
+const KEY_ORDER = ["agent", "model", "repo", "branch", "flag", "tool", "mcp", "kind", "ok", "error", "cost", "duration", "since", "is", "has", "sort"];
+const QBAR_DEBOUNCE = 300;
+const QBAR_VALUES = 12;
+let qbar = null;
+
+function xIcon() {
+  return svg("svg", { viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": "2.2", "stroke-linecap": "round", "aria-hidden": "true" }, svg("path", { d: "M18 6 6 18M6 6l12 12" }));
+}
+
+/** The word under the caret: from the last space or "(" before it to the next space or ")". */
+function tokenAt(value, caret) {
+  let start = caret;
+  while (start > 0 && !/[\s(]/.test(value[start - 1])) start--;
+  // Inside a quoted value the token runs back to the key before the quote.
+  if ((value.slice(start, caret).match(/"/g) || []).length % 2 === 0) {
+    const before = value.slice(0, start);
+    const q = (before.match(/"/g) || []).length % 2 === 1 ? before.lastIndexOf('"') : -1;
+    if (q >= 0) { start = q; while (start > 0 && !/[\s(]/.test(value[start - 1])) start--; }
+  }
+  let end = caret;
+  let quoted = (value.slice(start, caret).match(/"/g) || []).length % 2 === 1;
+  while (end < value.length && (quoted || !/[\s)]/.test(value[end]))) { if (value[end] === '"') quoted = !quoted; end++; }
+  return { start, end, text: value.slice(start, caret) };
+}
+
+function queryBar(view) {
+  if (qbar && qbar.view === view) return qbar.el;
   const input = h("input", {
-    id: "q", type: "search", value: list.q, placeholder: "Search prompts and output",
-    "aria-label": "Search sessions", autocomplete: "off", spellcheck: "false", maxlength: "500",
+    id: "q", type: "search", placeholder: "Filter: tool:Bash ok:false, or words", "aria-label": "Filter sessions",
+    role: "combobox", "aria-autocomplete": "list", "aria-expanded": "false", "aria-controls": "qbar-pop",
+    autocomplete: "off", autocapitalize: "off", spellcheck: "false", maxlength: String(WHERE_MAX), enterkeyhint: "search",
   });
-  input.value = list.q;
-  const search = () => {
-    debounceTimer = 0;
+  input.value = list.where;
+  const pop = h("div", { class: "qbar-pop", id: "qbar-pop", role: "listbox", "aria-label": "Suggestions" });
+  const el = h("div", { class: "search qbar", role: "search" }, input, h("kbd", { "aria-hidden": "true" }, "/"));
+  const st = qbar = { view, el, input, pop, opts: [], active: -1, moved: false, timer: 0, pending: null, rendering: false, cache: new Map(), ask: 0 };
+
+  function closePop() {
+    st.opts = [];
+    st.active = -1;
+    st.moved = false;
+    st.ask++;
+    // Out of the DOM when closed, so the list's own listbox is the only one on the page.
+    pop.remove();
+    input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-activedescendant");
+  }
+  function paint() {
+    if (!st.opts.length) { closePop(); return; }
+    pop.replaceChildren(
+      ...st.opts.map((o, i) => h("div", {
+        class: "qbar-opt", role: "option", id: "qopt-" + i, "aria-selected": String(i === st.active),
+        // Keep focus in the input: the click below accepts.
+        onpointerdown: (e) => e.preventDefault(),
+        onclick: () => accept(i),
+      }, h("span", { class: "v" }, o.label), o.doc ? h("span", { class: "d" }, o.doc) : h("span", { class: "d" }), o.count !== undefined ? h("span", { class: "count" }, fmtNum(o.count)) : null)),
+      KEYBOARD.matches ? h("div", { class: "qbar-foot meta", "aria-hidden": "true" }, h("span", null, h("kbd", null, "Tab"), " complete"), h("span", null, h("kbd", null, "↵"), " run"), h("span", null, h("kbd", null, "Esc"), " close")) : null);
+    if (!pop.isConnected) el.append(pop);
+    input.setAttribute("aria-expanded", "true");
+    if (st.active >= 0) {
+      input.setAttribute("aria-activedescendant", "qopt-" + st.active);
+      const o = $("#qopt-" + st.active, pop);
+      if (o) o.scrollIntoView({ block: "nearest" });
+    } else input.removeAttribute("aria-activedescendant");
+  }
+  function setActive(i) {
+    st.active = i;
+    st.moved = true;
+    paint();
+  }
+
+  /** Completions for the word under the caret: keys, then values of the key it names. */
+  function suggest() {
+    const ask = ++st.ask;
+    const value = input.value;
+    const caret = input.selectionStart ?? value.length;
+    if (input.selectionEnd !== caret) { closePop(); return; }
+    const tok = tokenAt(value, caret);
+    const keys = list.keys || [];
+    const km = /^(-?)([a-z][a-z.]*)?$/i.exec(tok.text);
+    if (km) {
+      const prefix = (km[2] || "").toLowerCase();
+      // A bare word could be free text: offer keys only once it is clearly the start of one.
+      const rank = (k) => { const i = KEY_ORDER.indexOf(k.name); return i < 0 ? KEY_ORDER.length : i; };
+      const opts = keys.filter((k) => k.name.startsWith(prefix))
+        .sort((a, b) => rank(a) - rank(b))
+        .map((k) => ({ label: k.name + (k.type === "number" ? ">" : ":"), doc: k.doc, insert: km[1] + k.name + (k.type === "number" ? ">" : ":"), from: tok.start, to: tok.end, more: true }));
+      show(opts);
+      return;
+    }
+    const vm = /^(-?)([a-z][a-z.]*):([\s\S]*)$/i.exec(tok.text);
+    const def = vm && keys.find((k) => k.name === vm[2].toLowerCase());
+    if (!def || (!def.values && !def.facet)) { closePop(); return; }
+    // The value being typed: after the last comma outside quotes, without its opening quote.
+    const raw = vm[3];
+    let cut = 0, quoted = false;
+    for (let i = 0; i < raw.length; i++) { if (raw[i] === '"') quoted = !quoted; else if (raw[i] === "," && !quoted) cut = i + 1; }
+    const partial = raw.slice(cut).replace(/^"/, "").replace(/\\(.)/g, "$1");
+    const from = tok.start + vm[1].length + vm[2].length + 1 + cut;
+    const done = splitValues(raw).slice(0, -1);
+    const mk = (value, doc, count) => ({ label: value, doc, count, insert: quoteValue(value), from, to: tok.end });
+    if (def.values) {
+      const p = partial.toLowerCase();
+      show(def.values.filter((v) => v.value.toLowerCase().startsWith(p) && !done.includes(v.value) && v.value !== partial).map((v) => mk(v.value, v.doc)));
+      return;
+    }
+    // Values from the store: counts under the rest of the query, as the sidebar counts them.
+    const rest = (value.slice(0, tok.start) + " " + value.slice(tok.end)).replace(/\s+/g, " ").trim();
+    const p = listParams();
+    const params = { scope: p.scope, since: p.since, until: p.until, keys: def.name, limit: QBAR_VALUES + done.length, prefix: partial.slice(0, 200), where: rest };
+    const cacheKey = qs(params);
+    const render = (rows) => {
+      if (ask !== st.ask) return;
+      show(rows.filter((r) => !done.includes(r.value) && r.value !== partial).slice(0, QBAR_VALUES).map((r) => mk(r.value, "", r.count)));
+    };
+    const hit = st.cache.get(cacheKey);
+    if (hit) { render(hit); return; }
+    clearTimeout(st.valueTimer);
+    st.valueTimer = setTimeout(() => {
+      api("/api/facets" + cacheKey, null, true).then((b) => {
+        const rows = (b.facets && b.facets[def.name]) || [];
+        if (st.cache.size > 200) st.cache.clear();
+        st.cache.set(cacheKey, rows);
+        render(rows);
+      }, () => { if (ask === st.ask) closePop(); });
+    }, 90);
+  }
+  function show(opts) {
+    st.opts = opts.slice(0, 40);
+    st.active = st.opts.length && st.moved ? Math.min(st.active, st.opts.length - 1) : -1;
+    if (!st.opts.length) st.moved = false;
+    paint();
+  }
+  function accept(i) {
+    const o = st.opts[i];
+    if (!o) return;
+    const v = input.value;
+    // A finished value ends the clause with a space; a key waits for its value.
+    const tail = o.more ? "" : v[o.to] === " " ? "" : " ";
+    const next = v.slice(0, o.from) + o.insert + tail + v.slice(o.to);
+    const caret = o.from + o.insert.length + tail.length;
+    input.value = next.slice(0, WHERE_MAX);
+    input.focus();
+    input.setSelectionRange(caret, caret);
+    st.moved = false;
+    st.active = -1;
+    if (o.more) suggest();
+    else { closePop(); run(false); }
+  }
+
+  /** Runs the typed query. A query error shows at once only when asked (Enter); typing waits. */
+  function run(showErr) {
+    clearTimeout(st.timer);
+    st.timer = 0;
+    const w = input.value.slice(0, WHERE_MAX);
+    if (w.trim() === list.where.trim() && list.loaded) {
+      list.where = w;
+      if (showErr && list.whereError && !list.showError) { list.showError = true; renderSessions(view); }
+      return st.pending || Promise.resolve();
+    }
+    list.where = w;
+    list.showError = !!showErr;
+    st.pending = reload(view);
+    return st.pending;
+  }
+  async function submit() {
+    closePop();
     const seq = navSeq;
-    const p = (async () => {
-      try {
-        const changed = await runSearch();
-        if (changed === false || !current(seq)) return;
-        syncListHash();
-        renderSessions(view, "search");
-        announceList();
-      } catch (e) {
-        if (!current(seq)) return;
-        list.error = e;
-        renderSessions(view, "search");
-      } finally {
-        if (pendingSearch === p) pendingSearch = null;
-      }
-    })();
-    pendingSearch = p;
-    return p;
-  };
+    await run(true);
+    if (!current(seq)) return;
+    if (list.whereError) {
+      if (!list.showError) { list.showError = true; renderSessions(view); }
+      // Put the caret where the parser stopped.
+      const at = list.whereError.body && list.whereError.body.offset;
+      if (typeof at === "number" && at >= 0 && document.activeElement === input) input.setSelectionRange(at, Math.min(input.value.length, at + 1));
+      return;
+    }
+    const lb = $(".list[role=listbox]", view);
+    if (lb) lb.focus();
+  }
+
   input.addEventListener("input", () => {
-    list.q = input.value;
-    clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(search, 200);
+    st.moved = false;
+    suggest();
+    clearTimeout(st.timer);
+    st.timer = setTimeout(() => run(false), QBAR_DEBOUNCE);
   });
-  input.addEventListener("keydown", async (e) => {
-    if (e.key === "Escape") {
-      if (input.value) { input.value = ""; input.dispatchEvent(new Event("input")); }
-      else input.blur();
-    } else if (e.key === "ArrowDown" || e.key === "Enter") {
+  input.addEventListener("click", suggest);
+  input.addEventListener("keyup", (e) => { if (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Home" || e.key === "End") suggest(); });
+  input.addEventListener("blur", () => {
+    if (st.rendering) return;
+    closePop();
+    // Leaving the bar is done typing: say what is wrong with it.
+    if (list.whereError && !list.showError && !st.timer && el.isConnected) { list.showError = true; renderSessions(view); }
+  });
+  input.addEventListener("keydown", (e) => {
+    const open = st.opts.length > 0;
+    if (e.isComposing) return;
+    if (e.key === "ArrowDown") {
       e.preventDefault();
-      // A query typed inside the debounce has not been searched yet: run it now,
-      // and wait for one already in flight, so focus lands on its hits rather
-      // than on the list it is about to replace.
-      if (debounceTimer) { clearTimeout(debounceTimer); search(); }
-      const seq = navSeq;
-      if (pendingSearch) await pendingSearch;
-      if (!current(seq)) return;
-      const lb = $("[role=listbox]", view);
-      if (lb) lb.focus();
+      if (open) setActive(Math.min(st.opts.length - 1, st.active + 1));
+      else submit();
+    } else if (e.key === "ArrowUp") {
+      if (!open) return;
+      e.preventDefault();
+      setActive(Math.max(-1, st.active - 1));
+    } else if (e.key === "Tab" && !e.shiftKey && open) {
+      e.preventDefault();
+      accept(st.active >= 0 ? st.active : 0);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (open && st.moved && st.active >= 0) accept(st.active);
+      else submit();
+    } else if (e.key === "Escape") {
+      e.stopPropagation();
+      if (open) closePop();
+      else if (input.value) { input.value = ""; closePop(); run(false); }
+      else input.blur();
     }
   });
-  return h("div", { class: "search", role: "search" }, input, h("kbd", { "aria-hidden": "true" }, "/"));
+  st.suggest = suggest;
+  return el;
+}
+
+/** What is wrong with the query, under the bar: the parser's message and what it expected. */
+function queryErrorLine(err) {
+  const b = err.body || {};
+  const msg = String(err.message || "Bad query").replace(/^where: /, "");
+  const next = Array.isArray(b.next) ? b.next.slice(0, 6) : [];
+  return h("div", { class: "qbar-err", role: "alert" },
+    h("span", null, msg),
+    next.length ? h("span", { class: "next" }, next.join(" · ")) : null);
+}
+
+/** The query's top-level clauses as removable chips, plus the time range. */
+function clauseRow(view) {
+  const terms = whereTerms(list.where);
+  const { since, until } = list.filters;
+  if (!terms.length && !since && !until) return null;
+  const chips = terms.map((t) => {
+    if (t.op === "OR" || t.op === "AND") return h("span", { class: "clause op" }, t.text);
+    const label = t.key ? [h("span", { class: "k" }, (t.neg ? "-" : "") + t.key + t.op), t.raw] : [t.text];
+    return h("span", { class: "clause" + (t.neg ? " neg" : ""), title: t.text },
+      h("span", { class: "t" }, ...label),
+      h("button", { type: "button", "aria-label": "Remove " + t.text, onclick: () => setWhere(view, spliceTerm(list.where, t, ""), ".clauses button, #q") }, xIcon()));
+  });
+  if (since || until) {
+    const text = (since ? fmtDay(Number(since), true) : "start") + " – " + (until ? fmtDay(Number(until), true) : "now");
+    chips.push(h("span", { class: "clause", title: "Started " + text },
+      h("span", { class: "t" }, h("span", { class: "k" }, "started "), text),
+      h("button", { type: "button", "aria-label": "Remove the time range", onclick: () => { list.filters.since = ""; list.filters.until = ""; filtersChanged(view, ".clauses button, #q"); } }, xIcon())));
+  }
+  if (chips.length > 1) chips.push(h("button", { class: "clear-all", type: "button", onclick: () => clearFilters(view) }, "Clear all"));
+  return h("div", { class: "clauses", role: "group", "aria-label": "Active filters" }, chips);
 }
 
 const FACET_LIMIT = 6;
+// Sidebar groups: [key, label, how a value reads]. Tool, MCP and kind count sessions by their events.
+const FACET_GROUPS = [["agent", "Agent"], ["model", "Model"], ["repo", "Repository", basename], ["branch", "Branch"], ["flag", "Flag"], ["tool", "Tool"], ["mcp", "MCP server"], ["kind", "Event kind"]];
+const COLLAPSED_KEY = "csh-facets-collapsed";
+function loadCollapsed() {
+  try { const v = JSON.parse(localStorage.getItem(COLLAPSED_KEY) || "null"); if (Array.isArray(v)) return new Set(v.map(String)); } catch { /* storage off */ }
+  return new Set(["branch", "kind"]);
+}
+function saveCollapsed() { try { localStorage.setItem(COLLAPSED_KEY, JSON.stringify([...list.collapsed])); } catch { /* storage off */ } }
+
+/** The query without any top-level `key:` clause, for a group's Clear. */
+function withoutKeyClauses(s, key) {
+  for (let t = whereTerms(s).find((x) => x.key === key && x.op === ":"); t; t = whereTerms(s).find((x) => x.key === key && x.op === ":")) s = spliceTerm(s, t, "");
+  return s;
+}
+
 function facetPanel(view) {
-  const s = list.stats || { byAgent: {}, byFlag: {}, byRepo: {}, byModel: {} };
-  const group = (label, key, counts, display) => {
-    const entries = Object.entries(counts || {}).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
-    const sel = list.filters[key];
-    // A pressed value always stays listed, even when its count dropped to zero.
-    if (sel && !entries.some(([v]) => v === sel)) entries.unshift([sel, 0]);
-    if (entries.length === 0) return null;
+  const facets = list.facets || {};
+  const terms = whereTerms(list.where);
+  const s = list.stats || {};
+  const group = ([key, label, display]) => {
+    const rows = (facets[key] || []).map((f) => [f.value, f.count]);
+    // A picked value always stays listed, even when it is not among the top counts.
+    for (const t of terms) if (t.key === key && t.op === ":") for (const v of t.values) if (v && !v.includes("*") && !rows.some(([x]) => x === v)) rows.unshift([v, null]);
+    if (rows.length === 0) return null;
+    const collapsed = list.collapsed.has(key);
     const open = list.showAll.has(key);
-    const shown = open ? entries.slice(0, 60) : entries.slice(0, FACET_LIMIT);
-    if (!open && sel && !shown.some(([v]) => v === sel)) shown.push(entries.find(([v]) => v === sel));
-    return h("section", { class: "facet", role: "group", "aria-label": label + " filter", "data-filter": key },
-      h("h3", null, label, sel ? h("button", { type: "button", onclick: () => { list.filters[key] = ""; filtersChanged(view, `[data-filter="${key}"] .chip`); } }, "Clear") : null),
-      h("div", { class: "facet-list" },
-        shown.map(([v, n]) => h("button", {
-          class: "chip", type: "button", "aria-pressed": String(sel === v), title: v,
-          onclick: () => { list.filters[key] = sel === v ? "" : v; filtersChanged(view, `[data-filter="${key}"] [aria-pressed="true"], [data-filter="${key}"] .chip`); },
-        }, h("span", { class: "tick", "aria-hidden": "true" }), h("span", { class: "name" }, display ? display(v) : v), h("span", { class: "count" }, fmtNum(n)))),
-        entries.length > FACET_LIMIT ? h("button", { class: "more-link", type: "button", onclick: () => { if (open) list.showAll.delete(key); else list.showAll.add(key); renderSessions(view); } },
-          open ? "Show fewer" : "Show " + fmtNum(entries.length - FACET_LIMIT) + " more") : null));
+    const picked = rows.filter(([v]) => facetState(terms, key, v));
+    let shown = open ? rows : rows.slice(0, FACET_LIMIT);
+    for (const r of picked) if (!shown.includes(r)) shown = shown.concat([r]);
+    const at = (v) => `[data-filter="${key}"] [data-value="${CSS.escape(v)}"]`;
+    const pick = (v, exclude) => setWhere(view, toggleFacet(list.where, key, v, exclude), at(v));
+    const head = h("h3", null,
+      h("button", {
+        class: "facet-head", type: "button", "aria-expanded": String(!collapsed),
+        onclick: () => {
+          if (collapsed) list.collapsed.delete(key); else list.collapsed.add(key);
+          saveCollapsed();
+          renderSessions(view);
+          $(`[data-filter="${key}"] .facet-head`, view)?.focus({ preventScroll: true });
+        },
+      }, h("span", { class: "caret", "aria-hidden": "true" }, "▸"), label, collapsed && picked.length ? h("span", { class: "count" }, String(picked.length)) : null),
+      picked.length ? h("button", { type: "button", onclick: () => setWhere(view, withoutKeyClauses(list.where, key), `[data-filter="${key}"] .facet-head`) }, "Clear") : null);
+    const items = collapsed ? null : h("div", { class: "facet-list" },
+      shown.map(([v, n]) => {
+        const state = facetState(terms, key, v);
+        const name = display ? display(v) : v;
+        const chip = h("button", {
+          class: "chip" + (state === "out" ? " excluded" : ""), type: "button", "aria-pressed": String(!!state), "data-value": v,
+          title: v + (state === "out" ? " (excluded)" : "") + (KEYBOARD.matches ? "\nAlt-click to exclude" : ""),
+          // Clicking an excluded value takes the exclusion back out.
+          onclick: (e) => pick(v, state === "out" || e.altKey || e.shiftKey),
+          onkeydown: (e) => { if ((e.key === "Enter" || e.key === " ") && (e.altKey || e.shiftKey)) { e.preventDefault(); pick(v, true); } },
+        }, h("span", { class: "tick", "aria-hidden": "true" }), h("span", { class: "name" }, name), state === "out" ? h("span", { class: "sr-only" }, " excluded") : null,
+          // A picked value missing from the counts matches no session under the rest of the query.
+          h("span", { class: "count" }, n === null ? (list.facets && list.facets[key] ? "0" : "") : fmtNum(n)));
+        return state === "out" ? chip : h("div", { class: "facet-row" }, chip,
+          h("button", { class: "not-btn", type: "button", tabindex: "-1", "aria-label": "Exclude " + name, onclick: () => pick(v, true) }, "not"));
+      }),
+      rows.length > FACET_LIMIT ? h("button", { class: "more-link", type: "button", onclick: () => { if (open) list.showAll.delete(key); else list.showAll.add(key); renderSessions(view); } },
+        open ? "Show fewer" : "Show " + fmtNum(rows.length - FACET_LIMIT) + " more") : null);
+    return h("section", { class: "facet", role: "group", "aria-label": label + " filter", "data-filter": key, "data-collapsed": String(collapsed) }, head, items);
   };
   const scope = s.subagents || list.filters.scope
     ? h("section", { class: "facet", role: "group", "aria-label": "Subagent filter", "data-filter": "scope" },
@@ -2136,7 +2589,7 @@ function facetPanel(view) {
         onclick: () => { if (list.filters.scope === v) return; list.filters.scope = v; filtersChanged(view, '[data-filter="scope"] [aria-pressed="true"]'); },
       }, h("span", { class: "tick", "aria-hidden": "true" }), h("span", { class: "name" }, text), n !== undefined ? h("span", { class: "count" }, fmtNum(n)) : null))))
     : null;
-  const on = ["agent", "model", "repo", "flag", "scope"].filter((k) => list.filters[k]).length;
+  const on = terms.filter((t) => t.op !== "OR" && t.op !== "AND").length + (list.filters.scope ? 1 : 0) + (list.filters.since || list.filters.until ? 1 : 0);
   const toggle = h("button", {
     class: "facets-toggle", type: "button", "aria-expanded": String(list.facetsOpen), "aria-controls": "facet-groups",
     onclick: () => setOpen(!list.facetsOpen),
@@ -2150,29 +2603,30 @@ function facetPanel(view) {
     if (open && PHONE.matches) $(".sheet-head .btn", aside)?.focus({ preventScroll: true });
     else if (!open && aside.contains(document.activeElement)) toggle.focus({ preventScroll: true });
   }
+  const groups = FACET_GROUPS.map(group);
   const aside = h("aside", {
     class: "facets", "aria-label": "Filters", "data-open": String(list.facetsOpen),
     onclick: (e) => { if (e.target === aside && list.facetsOpen && PHONE.matches) setOpen(false); },
     onkeydown: (e) => { if (e.key === "Escape" && list.facetsOpen && PHONE.matches) { e.stopPropagation(); setOpen(false); } },
   }, toggle, h("div", { class: "facet-groups", id: "facet-groups" },
     h("div", { class: "sheet-head" }, h("h2", null, "Filters"), h("button", { class: "btn btn-sm", type: "button", onclick: () => setOpen(false) }, "Done")),
-    group("Agent", "agent", s.byAgent),
-    group("Model", "model", s.byModel),
-    group("Repository", "repo", s.byRepo, basename),
-    group("Flag", "flag", s.byFlag),
+    ...groups,
     scope,
+    KEYBOARD.matches && groups.some(Boolean) ? h("p", { class: "facet-note" }, "Alt-click a value to exclude it.") : null,
     h("div", { class: "sheet-foot" },
       hasFilters() ? h("button", { class: "btn btn-ghost", type: "button", onclick: () => clearFilters(view) }, "Clear") : null,
       h("button", { class: "btn btn-primary", type: "button", onclick: () => setOpen(false) }, list.stats ? "Show " + plural(list.stats.sessions, "session") : "Done"))));
   return aside;
 }
 
-function hasFilters() { return FILTER_KEYS.some((k) => list.filters[k]) || !!list.q.trim(); }
+function hasFilters() { return FILTER_KEYS.some((k) => list.filters[k]) || !!list.where.trim(); }
 function clearFilters(view) {
   list.filters = { ...NO_FILTERS };
-  list.q = "";
-  list.hits = null;
-  refreshSessions(view);
+  list.where = "";
+  if (qbar && qbar.view === view) qbar.input.value = "";
+  list.showError = false;
+  list.whereError = null;
+  reload(view, { reset: true });
 }
 
 /** Sessions over time. Drag across it (or click a bar) to narrow the list to that range. */
@@ -2267,10 +2721,17 @@ function axisLabels(ts) {
 
 function sessionList(view) {
   list.rows = [];
+  if (list.items.length === 0 && list.whereError) {
+    return h("div", { class: "panel empty" },
+      h("h2", { text: "Fix the query to see sessions" }),
+      h("p", { text: "The query above has an error. Edit it, or remove a clause." }));
+  }
   if (list.items.length === 0) {
     return h("div", { class: "panel empty" },
-      h("h2", { text: "No sessions match these filters" }),
-      h("p", { text: "Try another agent, model or repository, or widen the time range." }),
+      h("h2", { text: "No sessions match" }),
+      list.where.trim()
+        ? h("p", null, "Nothing matches ", h("code", null, clip(list.where.trim(), 120)), list.filters.since || list.filters.until ? " in this time range." : ".", " Remove a clause, or widen the time range.")
+        : h("p", { text: "Widen the time range, or include subagents." }),
       h("button", { class: "btn", type: "button", onclick: () => clearFilters(view) }, "Clear filters"));
   }
   const lb = h("div", { class: "list", role: "listbox", tabindex: "0", "aria-label": "Sessions. j and k to move, Enter to open, right and left arrows to show or hide subagents." });
@@ -2326,7 +2787,8 @@ function sessionList(view) {
     }
   });
   // One repo in the whole index (or one picked): the column would repeat it on every row.
-  const oneRepo = !!list.filters.repo || Object.keys((list.stats && list.stats.byRepo) || {}).length <= 1;
+  const repoTerm = whereTerms(list.where).find((t) => t.key === "repo" && t.op === ":" && !t.neg);
+  const oneRepo = (repoTerm && repoTerm.values.length === 1 && !repoTerm.values[0].includes("*")) || ((list.facets && list.facets.repo) || []).length <= 1;
   const table = h("div", { class: "panel table session-table" + (oneRepo ? " one-repo" : "") },
     h("div", { class: "thead", "aria-hidden": "true" },
       h("span"), h("span", null, "session"), h("span", null, "agent · model"), h("span", { class: "repo-cell" }, "repo"), h("span", { class: "act-cell" }, "activity"),
@@ -2342,13 +2804,20 @@ function sessionList(view) {
         const seq = navSeq;
         const prev = list.rows.length;
         const listSeq = list.seq;
-        try { await loadSessions(true); } catch (err) { if (listSeq === list.seq) toast(err.message); }
+        let body = null;
+        try { body = await fetchPage(listParams(), true); } catch (err) { if (listSeq === list.seq) toast(err.message); }
         // A filter change or refresh replaced the list meanwhile: it rendered itself.
         if (!current(seq) || listSeq !== list.seq) return;
+        if (body) {
+          const known = new Set(list.items.map((x) => x.id));
+          list.items.push(...body.items.filter((x) => !known.has(x.id)));
+          list.hasMore = body.hasMore;
+          list.nextCursor = body.nextCursor || null;
+        }
         list.active = Math.min(prev, visibleRows().length - 1);
         renderSessions(view);
         announceList();
-        const l = $("[role=listbox]", view);
+        const l = $(".list[role=listbox]", view);
         if (l) { l.focus({ preventScroll: true }); syncActive(l); }
       },
     }, "Load more")));
@@ -2380,49 +2849,10 @@ async function toggleSubagents(view, id) {
   const keep = rows.findIndex((r) => r.s.id === activeId);
   list.active = keep >= 0 ? keep : Math.max(0, rows.findIndex((r) => r.s.id === id));
   renderSessions(view);
-  const lb = $("[role=listbox]", view);
+  const lb = $(".list[role=listbox]", view);
   if (lb) { lb.focus({ preventScroll: true }); syncActive(lb); }
   const kids = list.children.get(id) || [];
   announce(list.expanded.has(id) ? plural(kids.length, "subagent") + " shown" : "Subagents hidden");
-}
-
-function hitsList(view) {
-  const hits = list.hits || [];
-  if (hits.length === 0) {
-    return h("div", { class: "panel empty" },
-      h("h2", { text: "No matches" }),
-      h("p", null, "Nothing in captured prompts or output matches ", h("span", { class: "mono" }, "“" + clip(list.q, 80) + "”"), hasFilters() && FILTER_KEYS.some((k) => list.filters[k]) ? " with these filters." : "."));
-  }
-  const lb = h("div", { class: "list", role: "listbox", tabindex: "0", "aria-label": "Search results. j and k to move, Enter to open." });
-  list.active = Math.min(list.active, hits.length - 1);
-  hits.forEach((hit, i) => {
-    const ev = hit.event;
-    const text = oneLine(hit.snippet) || oneLine(ev.payload && ev.payload.text) || ev.kind;
-    lb.append(h("div", {
-      class: "row hit", role: "option", id: "opt-" + i, "aria-selected": String(i === list.active),
-      onclick: () => { list.active = i; openHit(ev); },
-    },
-      h("span", { class: "dot tone-muted", "aria-hidden": "true" }),
-      h("div", { class: "row-main", style: null },
-        h("div", { style: null },
-          h("div", { class: "hit-snippet" }, snippetMarks(text, list.q)),
-          h("div", { class: "hit-meta meta" },
-            h("span", null, KIND_LABEL[ev.kind] || ev.kind),
-            h("span", null, ev.agent),
-            h("span", { title: ev.sessionId }, "session " + clip(ev.sessionId, 14)),
-            h("span", null, fmtRel(ev.ts))))),
-      h("span", { class: "meta key-hint" }, "↵")));
-  });
-  lb.setAttribute("aria-activedescendant", "opt-" + list.active);
-  lb.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      e.stopPropagation();
-      const hit = hits[list.active];
-      if (hit) openHit(hit.event);
-    }
-  });
-  return h("div", { class: "panel table" }, lb);
 }
 
 // Events are indexed in batches before their session row is written, so a fresh
@@ -2444,7 +2874,7 @@ function syncActive(lb) {
 }
 
 function listActions(view) {
-  const lbox = () => $("[role=listbox]", view);
+  const lbox = () => $(".list[role=listbox]", view);
   const move = (fn) => () => {
     const lb = lbox();
     if (!lb) return false;
@@ -2455,7 +2885,7 @@ function listActions(view) {
     syncActive(lb);
   };
   return {
-    search: () => { const q = $("#q", view); if (!q) return false; q.focus(); q.select(); },
+    search: () => { const q = $("#q", view); if (!q) return false; q.focus(); q.select(); if (qbar && qbar.input === q) qbar.suggest(); },
     down: move(() => list.active + 1),
     up: move(() => list.active - 1),
     open: () => {
@@ -2465,12 +2895,12 @@ function listActions(view) {
       lb.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
     },
     expand: () => {
-      const r = !list.hits && topLevelOnly() && list.rows[list.active];
+      const r = topLevelOnly() && list.rows[list.active];
       if (!r || !r.s.childCount || list.expanded.has(r.s.id)) return false;
       toggleSubagents(view, r.s.id);
     },
     collapse: () => {
-      const r = !list.hits && topLevelOnly() && list.rows[list.active];
+      const r = topLevelOnly() && list.rows[list.active];
       if (!r) return false;
       if (list.expanded.has(r.s.id)) { toggleSubagents(view, r.s.id); return; }
       if (!r.depth) return false;

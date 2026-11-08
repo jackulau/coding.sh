@@ -17,7 +17,8 @@ import type {
 } from "../../src/core/types.ts";
 
 export class FakeIndex implements IndexStore {
-  readonly kind = "fake";
+  // Scans events like the in-memory store, so `where` event keys and text work against it.
+  readonly kind = "memory";
   sessions = new Map<string, Session>();
   events = new Map<string, AgentEvent>();
   tasks = new Map<string, EvalTask>();
