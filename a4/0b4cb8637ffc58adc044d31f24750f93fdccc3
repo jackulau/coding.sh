@@ -1,0 +1,64 @@
+packages/coding.sh/src/adapters/t3code.ts
+  s_8e040dbdf13565::t_678f1f3b155794 713-714
+packages/coding.sh/src/adapters/claude-code.ts
+  s_8e040dbdf13565::t_678f1f3b155794 577-578
+  s_8e040dbdf13565::t_7065d3a6fd2e97 240
+CHANGELOG.md
+  s_8e040dbdf13565::t_5a270f357e774a 16
+packages/coding.sh/test/adapters/codex.test.ts
+  s_8e040dbdf13565::t_045703fc33b6f2 126-154
+packages/coding.sh/test/adapters/cut.test.ts
+  s_8e040dbdf13565::t_86125449a70689 32-37
+  s_8e040dbdf13565::t_687553828dfd2f 1-31,38-88
+packages/coding.sh/src/adapters/codex.ts
+  s_8e040dbdf13565::t_c212e80b0f1043 55
+  s_8e040dbdf13565::t_ca2e895c76c0e5 666-670,673
+  s_8e040dbdf13565::t_6c1f2a85278d3b 806
+  s_8e040dbdf13565::t_678f1f3b155794 954-955
+  s_8e040dbdf13565::t_ca124a3624f8d5 385-386
+  s_8e040dbdf13565::t_382fed25848bc3 635
+  s_8e040dbdf13565::t_35e42fea358f02 634
+packages/coding.sh/test/fixtures/adapters/codex/cut/sessions/2026/11/08/rollout-2026-11-08T01-10-11-01a1b9fe-4653-7bd1-9e72-32a873a1bdfc.jsonl
+  s_8e040dbdf13565::t_4b57f31f068084 1-19
+docs/ADAPTERS.md
+  s_8e040dbdf13565::t_45e06e58934ce1 133-134
+  s_8e040dbdf13565::t_85af944a5e9b94 124-132,135
+packages/coding.sh/src/adapters/_shared/claude-transcript.ts
+  s_8e040dbdf13565::t_659354ccda4ddb 24
+  s_8e040dbdf13565::t_62970fb569ee2a 313-314
+packages/coding.sh/src/adapters/_shared/index.ts
+  s_8e040dbdf13565::t_46c1103998b533 13
+packages/coding.sh/src/adapters/_shared/cut.ts
+  s_8e040dbdf13565::t_d7568b9cba87bc 78-79,82-83
+  s_8e040dbdf13565::t_3ad598226d24aa 47,54
+  s_8e040dbdf13565::t_1060e4a24a4eba 1-46,48-53,55-77,80-81,84-92
+scripts/e2e/codex-cut-capture.mjs
+  s_8e040dbdf13565::t_c77cd97cb63dcd 34-35
+  s_8e040dbdf13565::t_98acc8e9bef884 1-33,36-107
+packages/coding.sh/test/adapters/claude-code.test.ts
+  s_8e040dbdf13565::t_67d4e1468f2ca0 200-216
+  s_8e040dbdf13565::t_6cd68cadb979cb 217-218
+packages/coding.sh/test/fixtures/adapters/codex/cut/sessions/2026/11/08/rollout-2026-11-08T01-10-10-01a1b9fe-432d-7523-b54c-549334a74440.jsonl
+  s_8e040dbdf13565::t_4b57f31f068084 1-19
+packages/coding.sh/src/schema/index.ts
+  s_8e040dbdf13565::t_b455cfa88f359b 195-196
+scripts/e2e/stub-model.mjs
+  s_8e040dbdf13565::t_843b5ed68334fc 14
+  s_8e040dbdf13565::t_4fda497afd6857 122-126,129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "a40b4cb8637ffc58adc044d31f24750f93fdccc3",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
