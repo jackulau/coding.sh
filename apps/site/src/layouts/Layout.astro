@@ -175,6 +175,7 @@ const markdownURL = noindex || isAgentExcluded(Astro.url.pathname)
         </dl>
         <nav aria-label="Footer" class="site-footer__nav">
           {DOCS_PUBLIC && <a class="hit" href="/docs">Docs</a>}
+          {DOCS_PUBLIC && <a class="hit" href="/docs/compare">Compare</a>}
           <a class="hit" href="/changelog">Changelog</a>
           <a class="hit" href={REPO_URL}>GitHub</a>
           <a class="hit" href={LICENSE_URL}>License</a>

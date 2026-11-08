@@ -37,6 +37,34 @@ Short recipes you can run as written.
 | [how-to/evaluate-a-skill.md](how-to/evaluate-a-skill.md) | test whether an Agent Skill changes what the agent does |
 | [how-to/self-host-team.md](how-to/self-host-team.md) | self-host for a team: run one container, connect each machine, open the viewer |
 
+## Use cases
+
+One page per job, each pointing on to the how-to or guide that covers it in full.
+
+| Doc | What |
+|---|---|
+| [use-cases/claude-code-cost.md](use-cases/claude-code-cost.md) | track Claude Code and Codex cost per session, repo and model |
+| [use-cases/replay-agent-session.md](use-cases/replay-agent-session.md) | replay a Claude Code or Codex session step by step |
+| [use-cases/test-agent-instructions.md](use-cases/test-agent-instructions.md) | test a CLAUDE.md, AGENTS.md or skill change, and which method to pick |
+| [use-cases/evals-from-failures.md](use-cases/evals-from-failures.md) | build an eval suite from your agent's failed sessions |
+| [use-cases/self-hosted-observability.md](use-cases/self-hosted-observability.md) | open-source, self-hosted LLM observability on one machine or one server |
+| [use-cases/proxy-model-calls.md](use-cases/proxy-model-calls.md) | log every model call your agent makes through a local proxy |
+
+## Compare
+
+How coding.sh compares with other tools, with a feature table, where each tool is the better
+choice, and sources. Checked against each tool's docs; each page says when.
+
+| Doc | What |
+|---|---|
+| [compare/README.md](compare/README.md) | overview of all of them |
+| [compare/langfuse.md](compare/langfuse.md) | coding.sh vs Langfuse |
+| [compare/langsmith.md](compare/langsmith.md) | coding.sh vs LangSmith |
+| [compare/braintrust.md](compare/braintrust.md) | coding.sh vs Braintrust |
+| [compare/agentops.md](compare/agentops.md) | coding.sh vs AgentOps |
+| [compare/laminar.md](compare/laminar.md) | coding.sh vs Laminar |
+| [compare/ccusage.md](compare/ccusage.md) | coding.sh vs ccusage |
+
 ## Case studies
 
 | Doc | What |

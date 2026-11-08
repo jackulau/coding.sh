@@ -22,7 +22,8 @@ import { REPO_URL, INSTALL_SH } from "../data/site";
 
 const path = Astro.url.pathname.replace(/\/+$/, "") || "/";
 const LINKS = [
-  { href: "/docs", label: "Docs", on: (p: string) => p === "/docs" || p.startsWith("/docs/") },
+  { href: "/docs", label: "Docs", on: (p: string) => p === "/docs" || (p.startsWith("/docs/") && !p.startsWith("/docs/compare")) },
+  { href: "/docs/compare", label: "Compare", on: (p: string) => p === "/docs/compare" || p.startsWith("/docs/compare/") },
   { href: "/changelog", label: "Changelog", on: (p: string) => p === "/changelog" || p.startsWith("/changelog/") },
 ];
 const links = LINKS.map((l) => ({ ...l, current: l.on(path) }));

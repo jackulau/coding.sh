@@ -33,6 +33,19 @@ const SITE_PAGES: Record<string, string> = {
   "how-to/self-host-team.md": "/docs/how-to/self-host-team",
   "how-to/evaluate-a-skill.md": "/docs/how-to/evaluate-a-skill",
   "perf.md": "/docs/perf",
+  "use-cases/claude-code-cost.md": "/docs/use-cases/claude-code-cost",
+  "use-cases/replay-agent-session.md": "/docs/use-cases/replay-agent-session",
+  "use-cases/test-agent-instructions.md": "/docs/use-cases/test-agent-instructions",
+  "use-cases/evals-from-failures.md": "/docs/use-cases/evals-from-failures",
+  "use-cases/self-hosted-observability.md": "/docs/use-cases/self-hosted-observability",
+  "use-cases/proxy-model-calls.md": "/docs/use-cases/proxy-model-calls",
+  "compare/README.md": "/docs/compare",
+  "compare/langfuse.md": "/docs/compare/langfuse",
+  "compare/langsmith.md": "/docs/compare/langsmith",
+  "compare/braintrust.md": "/docs/compare/braintrust",
+  "compare/agentops.md": "/docs/compare/agentops",
+  "compare/laminar.md": "/docs/compare/laminar",
+  "compare/ccusage.md": "/docs/compare/ccusage",
 };
 
 const FENCE_TITLES: Record<string, string> = { sh: "shell", text: "output", toml: "config.toml" };
