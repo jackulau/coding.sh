@@ -100,6 +100,14 @@ export function applyArm(api: Api, body: Record<string, unknown>, set: Record<st
 
 /** Which key the replay needs, by provider. */
 export const REPLAY_KEY_ENV = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY" } as const;
+/** A Claude subscription token (`claude setup-token`), used for Anthropic calls when there is no API key. */
+export const REPLAY_OAUTH_ENV = "CLAUDE_CODE_OAUTH_TOKEN";
+const OAUTH_BETA = "oauth-2025-04-20";
+
+/** Whether `env` can authenticate a replay to this provider: its API key, or for Anthropic a subscription token. */
+export function hasReplayAuth(provider: "anthropic" | "openai", env: NodeJS.ProcessEnv): boolean {
+  return !!env[REPLAY_KEY_ENV[provider]]?.trim() || (provider === "anthropic" && !!env[REPLAY_OAUTH_ENV]?.trim());
+}
 
 export interface ReplayCase {
   call: LoadedCall;
@@ -148,7 +156,7 @@ export interface ReplayOutput {
 }
 
 /** Tool calls and text of a reply, for the judge and the report. */
-function turnOf(api: Api, body: unknown): { text: string; toolCalls: { name: string; input: unknown }[] } {
+export function turnOf(api: Api, body: unknown): { text: string; toolCalls: { name: string; input: unknown }[] } {
   const b = isObj(body) ? body : {};
   const texts: string[] = [];
   const calls: { name: string; input: unknown }[] = [];
@@ -197,10 +205,14 @@ function headersFor(rc: ReplayCase, env: NodeJS.ProcessEnv): Record<string, stri
   const stored = rc.call.request?.headers ?? {};
   const h: Record<string, string> = { "content-type": "application/json" };
   if (rc.provider === "anthropic") {
-    h["x-api-key"] = env[REPLAY_KEY_ENV.anthropic] ?? "";
+    const key = env[REPLAY_KEY_ENV.anthropic]?.trim();
+    const token = key ? undefined : env[REPLAY_OAUTH_ENV]?.trim();
+    if (token) h.authorization = `Bearer ${token}`;
+    else h["x-api-key"] = key ?? "";
     h["anthropic-version"] = stored["anthropic-version"] ?? "2023-06-01";
-    // Subscription logins send an oauth beta that an API key must not.
+    // Subscription logins send an oauth beta that an API key must not, and a subscription token needs.
     const betas = (stored["anthropic-beta"] ?? "").split(",").map((s) => s.trim()).filter((s) => s && !/^oauth-/.test(s));
+    if (token) betas.push(OAUTH_BETA);
     if (betas.length) h["anthropic-beta"] = betas.join(",");
   } else {
     h.authorization = `Bearer ${env[REPLAY_KEY_ENV.openai] ?? ""}`;
@@ -218,9 +230,40 @@ function pathFor(rc: ReplayCase): string {
   return p;
 }
 
+export interface SendReplayOptions {
+  upstreams: { anthropic: string; openai: string };
+  env: NodeJS.ProcessEnv;
+  prices: Prices;
+  fetch?: FetchLike;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+}
+
+/** Sends a stored call's request with `set` applied and returns the reply's first action, turn, usage and cost. */
+export async function sendReplay(rc: ReplayCase, set: Record<string, unknown>, o: SendReplayOptions): Promise<ReplayOutput> {
+  const doFetch: FetchLike = o.fetch ?? ((url, init) => fetch(url, init));
+  const body = applyArm(rc.api, rc.call.request!.body, set);
+  const url = joinUpstream(rc.provider === "anthropic" ? o.upstreams.anthropic : o.upstreams.openai, pathFor(rc));
+  const timeout = AbortSignal.timeout(o.timeoutMs ?? 600_000);
+  const res = await doFetch(url.href, { method: "POST", headers: headersFor(rc, o.env), body: JSON.stringify(body), signal: o.signal ? AbortSignal.any([o.signal, timeout]) : timeout });
+  const text = await res.text();
+  const r = parseJsonResponse(rc.api, text);
+  if (!res.ok || r.error) {
+    const retry = res.headers.get("retry-after");
+    throw new TaskError(`HTTP ${res.status}: ${r.error?.message ?? text.slice(0, 300)}${retry ? ` (retry-after ${retry})` : ""}`);
+  }
+  const model = r.model ?? (typeof body.model === "string" ? body.model : undefined);
+  const out: ReplayOutput = { action: firstAction(rc.api, r.body), ...turnOf(rc.api, r.body), ...(model ? { model } : {}), ...(r.stopReason ? { stopReason: r.stopReason } : {}) };
+  if (r.usage) {
+    out.usage = r.usage;
+    const price = lookupPrice(model, o.prices);
+    if (price) out.costUsd = costFrom(r.usage, price);
+  }
+  return out;
+}
+
 /** The arm as a task: replays the case's call with the arm's fields and returns the reply's first action, turn, usage and cost. */
 export function replayTask(o: ReplayTaskOptions): FunctionTask {
-  const doFetch: FetchLike = o.fetch ?? ((url, init) => fetch(url, init));
   return {
     kind: "function",
     name: `replay ${o.arm.label}`,
@@ -228,24 +271,7 @@ export function replayTask(o: ReplayTaskOptions): FunctionTask {
       const id = isObj(input) && typeof input.call === "string" ? input.call : ctx.caseId;
       const rc = o.cases.get(id);
       if (!rc) throw new TaskError(`call ${id} is not loaded`);
-      const body = applyArm(rc.api, rc.call.request!.body, o.arm.set);
-      const url = joinUpstream(rc.provider === "anthropic" ? o.upstreams.anthropic : o.upstreams.openai, pathFor(rc));
-      const timeout = AbortSignal.timeout(o.timeoutMs ?? 600_000);
-      const res = await doFetch(url.href, { method: "POST", headers: headersFor(rc, o.env), body: JSON.stringify(body), signal: ctx.signal ? AbortSignal.any([ctx.signal, timeout]) : timeout });
-      const text = await res.text();
-      const r = parseJsonResponse(rc.api, text);
-      if (!res.ok || r.error) {
-        const retry = res.headers.get("retry-after");
-        throw new TaskError(`HTTP ${res.status}: ${r.error?.message ?? text.slice(0, 300)}${retry ? ` (retry-after ${retry})` : ""}`);
-      }
-      const model = r.model ?? (typeof body.model === "string" ? body.model : undefined);
-      const out: ReplayOutput = { action: firstAction(rc.api, r.body), ...turnOf(rc.api, r.body), ...(model ? { model } : {}), ...(r.stopReason ? { stopReason: r.stopReason } : {}) };
-      if (r.usage) {
-        out.usage = r.usage;
-        const price = lookupPrice(model, o.prices);
-        if (price) out.costUsd = costFrom(r.usage, price);
-      }
-      return out;
+      return sendReplay(rc, o.arm.set, { ...o, ...(ctx.signal ? { signal: ctx.signal } : {}) });
     },
   };
 }

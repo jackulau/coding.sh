@@ -65,8 +65,19 @@ function serverRoutes(): Map<string, string> {
     const paths: string[] = [];
     if (!itemOnly) paths.push(base);
     if (!collectionOnly) paths.push(`${base}/{}`);
-    for (const s of block.matchAll(/sub === "([a-z-]+)"/g)) paths.push(`${base}/{}/${s[1]}`);
+    // A sub-route with a method of its own (`if (sub === "fork") { … method !== "POST" … }`) answers that
+    // method too; one behind `if (!ctx.fork)` is only in `coding.sh ui`, which passes the fork source.
+    const own: [string, Set<string>, string][] = [];
+    const subs = [...block.matchAll(/(?:if \()?sub === "([a-z-]+)"/g)];
+    subs.forEach((s, j) => {
+      const path = `${base}/{}/${s[1]}`;
+      paths.push(path);
+      const sb = block.slice(s.index!, subs[j + 1]?.index ?? block.length);
+      const extra = new Set([...sb.matchAll(/method [!=]== "([A-Z]+)"/g)].map((m) => m[1]!));
+      if (extra.size) own.push([path, extra, /if \(!ctx\.fork\)/.test(sb) ? "ui" : "serve, ui"]);
+    });
     for (const method of methods) for (const path of paths) routes.set(key(method, path), "serve, ui");
+    for (const [path, ms, by] of own) for (const method of new Set([...ms, "GET"])) routes.set(key(method, path), by);
   });
   return routes;
 }

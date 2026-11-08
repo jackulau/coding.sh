@@ -5,6 +5,7 @@ import type { JudgeCache } from "../judge/cache.ts";
 import type { FetchLike, RetryOpts } from "../judge/http.ts";
 import { CHECKLIST_KIND, checklistGrader, createChecklistJudge, type ChecklistItem, type ChecklistMode } from "../judge/checklist.ts";
 import { createJudge, judgeGrader } from "../judge/judge.ts";
+import { nextActionGrader, type NextActionGraderSpec } from "./next-action.ts";
 import { createPairwiseJudge, PAIRWISE_KIND, type PairwiseJudge } from "../judge/pairwise.ts";
 import { anthropicProvider, openAICompatibleProvider, type ChatProvider } from "../judge/providers.ts";
 import { claudeCodeProvider, codexProvider } from "../judge/subscription.ts";
@@ -111,6 +112,7 @@ export type GraderSpec =
   | ExecutabilitySpec
   | SimilaritySpec
   | CallsGraderSpec
+  | NextActionGraderSpec
   | AgentSlopSpec
   | CommandGraderSpec
   | ModuleGraderSpec
@@ -188,6 +190,8 @@ export async function createGrader(spec: GraderSpec, deps: GraderDeps = {}): Pro
       return similarityGrader(rest as Omit<SimilaritySpec, "kind">);
     case "calls":
       return callsGrader(rest as Omit<CallsGraderSpec, "kind">);
+    case "next-action":
+      return nextActionGrader(rest as Omit<NextActionGraderSpec, "kind">);
     case "agent-slop":
       return agentSlopGrader(rest as Omit<AgentSlopSpec, "kind">);
     case "command":

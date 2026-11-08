@@ -57,7 +57,8 @@ describe("tool evals against the coding.sh MCP server", () => {
     // (the 17th, the one tool that writes a suite) adds about 2.4 KB.
     // session_replay (the 18th) adds about 1.6 KB. improve and harness_changes (the improve loop,
     // which an agent otherwise pieced together from failures, session_get and git it can't run)
-    // add about 3 KB together.
+    // add about 3 KB together. session_replay's fork (step N's model call sent again with changed
+    // context files) adds about 0.2 KB, in place of a session_fork tool.
     assert.ok(s.surfaceBytes < 35_700, `surface is ${s.surfaceBytes} bytes`);
     assert.ok(s.descriptionBytes < 10_900, `descriptions are ${s.descriptionBytes} bytes`);
     for (const it of s.items) assert.ok(it.bytes < 4_000, `${it.name} is ${it.bytes} bytes`);

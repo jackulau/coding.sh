@@ -762,6 +762,12 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .rp-range input { width: 5.5rem; height: 26px; }
 .rp-tabs { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .replaying .st[aria-selected="true"] { box-shadow: inset 2px 0 0 var(--text); }
+.rp-fork-file { display: grid; gap: 0.3rem; }
+.rp-fork-file textarea { width: 100%; min-height: 9rem; padding: 0.5rem 0.65rem; resize: vertical; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; color: var(--text); background: var(--surface); border: 0; border-radius: var(--radius-sm); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.rp-fork-file textarea:focus { outline: none; box-shadow: inset 0 0 0 1px var(--text-muted), 0 0 0 3px var(--select); }
+.rp-fork-go { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; font-size: 12.5px; color: var(--text-2); }
+.rp-fork-cmp { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; gap: 0.3rem 0.8rem; align-items: baseline; font-size: 12.5px; }
+.rp-fork-cmp code { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; color: var(--text); }
 @media (max-width: 860px) {
   /* Controls stay in reach while the step detail scrolls under them. */
   .rp-bar { position: sticky; top: var(--top); z-index: 5; grid-template-columns: auto minmax(0, 1fr); }
@@ -3626,7 +3632,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   const wfBtn = h("button", { class: "btn btn-sm btn-ghost wf-btn", type: "button", "aria-pressed": String(tl.classList.contains("wf-on")), "aria-keyshortcuts": "w", title: "Timing bars (w)", onclick: () => toggleWf() }, "Timing");
   const foldBtn = h("button", { class: "btn btn-sm btn-ghost", type: "button", "aria-keyshortcuts": "z", title: "Fold quiet steps (z)", onclick: () => toggleFolds() });
   // Replay state; the replay section below drives it.
-  const rp = { on: false, index: null, n: 0, playing: false, speed: rpSpeedPref(), timer: 0, view: null, range: null, want: "", shown: "", busy: false, syncing: false, tab: "changes", file: "", from: 0, stepItems: null, lastPaneStep: 0 };
+  const rp = { on: false, index: null, n: 0, playing: false, speed: rpSpeedPref(), timer: 0, view: null, range: null, want: "", shown: "", busy: false, syncing: false, tab: "changes", file: "", from: 0, stepItems: null, lastPaneStep: 0, fork: null };
   const rpBtn = h("button", { class: "btn btn-sm btn-ghost rp-toggle", type: "button", "aria-pressed": "false", "aria-keyshortcuts": "Shift+R", title: "Replay step by step (Shift+R)", onclick: () => (rp.on ? exitReplay() : enterReplay()) }, "Replay");
   const tools = h("div", { class: "tl-tools" }, head, failNav, derailNav, queryNav, h("span", { class: "spacer" }),
     h("div", { class: "find" }, findInput, findCount), h("label", { class: "find-only" }, onlyBox, h("span", null, "Only matches")), rpBtn, foldBtn, wfBtn);
@@ -4202,6 +4208,65 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
     if (c.why) out.push(h("p", { class: "rp-unknown" }, "Content unknown: " + c.why));
     return h("div", { class: "section" }, out);
   }
+  // ---- fork: step N's stored model call sent again with changed context files (/fork, coding.sh ui only).
+  const forkPath = "/api/sessions/" + encodeURIComponent(id) + "/fork";
+  async function forkLoad(n) {
+    if (rp.fork && rp.fork.n === n) return renderReplayPane();
+    const f = rp.fork = { n, preview: null, error: "", texts: {}, trials: 1, busy: false, result: null };
+    renderReplayPane();
+    try {
+      f.preview = await api(forkPath + qs({ step: n }), null, true);
+      for (const x of f.preview.files) f.texts[x.path] = x.text;
+      if (!f.preview.files.length) f.texts["CLAUDE.md"] = "";
+    } catch (e) { f.error = e.message; }
+    if (rp.fork === f && rp.on && rp.tab === "fork") renderReplayPane();
+  }
+  async function forkRun() {
+    const f = rp.fork;
+    if (!f || f.busy) return;
+    f.busy = true;
+    f.result = null;
+    renderReplayPane();
+    try {
+      const files = {};
+      for (const x of f.preview.files) if (f.texts[x.path] !== x.text) files[x.path] = f.texts[x.path];
+      if (!f.preview.files.length && f.texts["CLAUDE.md"]) files["CLAUDE.md"] = f.texts["CLAUDE.md"];
+      f.result = await api(forkPath, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ step: f.n, files, trials: f.trials }) }, true);
+    } catch (e) { toast("Fork failed: " + e.message); }
+    f.busy = false;
+    if (rp.fork === f && rp.on && rp.tab === "fork") renderReplayPane();
+  }
+  function forkNodes(n) {
+    const f = rp.fork;
+    if (!f || f.n !== n) { queueMicrotask(() => forkLoad(n)); return [h("p", { class: "meta", "aria-busy": "true" }, "Loading the model call…")]; }
+    if (f.error) return [h("p", { class: "rp-unknown" }, f.error)];
+    if (!f.preview) return [h("p", { class: "meta", "aria-busy": "true" }, "Loading the model call…")];
+    const pv = f.preview;
+    const out = [h("p", { class: "note" }, "Sends the model call " + (pv.call.by === "tool-use" ? "that made this step" : "the agent made last before this step") + " (" + pv.call.id.slice(0, 12) + (pv.call.model ? ", " + pv.call.model : "") + ") again, as the proxy stored it, with the files below as you edit them. It calls the model with this machine's key.")];
+    const paths = Object.keys(f.texts);
+    for (const path of paths) {
+      const ta = h("textarea", { spellcheck: "false", "aria-label": path });
+      ta.value = f.texts[path];
+      ta.addEventListener("input", () => { f.texts[path] = ta.value; });
+      out.push(h("label", { class: "rp-fork-file" }, h("span", { class: "rp-change-head" }, h("b", null, h("bdi", null, path)), h("span", { class: "meta" }, pv.files.length ? "as the agent had it; empty drops it" : "not in the request; text here adds it")), ta));
+    }
+    const trials = h("div", { class: "seg", role: "group", "aria-label": "Forked calls" }, [1, 3, 5].map((k) => h("button", { type: "button", "aria-pressed": String(f.trials === k), onclick: () => { f.trials = k; renderReplayPane(); } }, "×" + k)));
+    out.push(h("div", { class: "rp-fork-go" },
+      h("button", { class: "btn btn-sm btn-primary", type: "button", disabled: f.busy || !pv.canCall, onclick: forkRun }, f.busy ? "Forking…" : "Run fork"), trials,
+      pv.canCall ? null : h("span", { class: "tone-fail" }, "Set $" + pv.keyEnv + (pv.keyEnv === "ANTHROPIC_API_KEY" ? " or $CLAUDE_CODE_OAUTH_TOKEN" : "") + " where coding.sh ui runs.")));
+    const r = f.result;
+    const rows = [h("span", { class: "meta" }, "recorded"), h("code", null, pv.recorded ? pv.recorded.label : "no recorded reply"), h("span")];
+    if (r) r.trials.forEach((t, i) => rows.push(h("span", { class: "meta" }, r.trials.length > 1 ? "forked " + (i + 1) : "forked"), h("code", { class: t.error ? "tone-fail" : "" }, t.error ? "error: " + t.error : t.label),
+      h("span", { class: t.differs === true ? "tone-warn" : "meta" }, t.differs === true ? "different" : t.differs === false ? "same" : "")));
+    out.push(section("next action", h("div", { class: "rp-fork-cmp" }, rows)));
+    if (r) {
+      const ok = r.trials.filter((t) => !t.error).length;
+      if (pv.recorded && ok) out.push(h("p", { class: "note" }, r.differ ? r.differ + " of " + plural(ok, "forked call") + " took another action than the recorded one." : "Every forked call took the recorded action."));
+      const withs = r.edits.filter((e) => e.how !== "absent").map((e) => " --with " + (e.how === "removed" ? e.path + "=" : e.path)).join("");
+      out.push(cmdBlock("coding.sh replay " + session.id.slice(0, 8) + " --step " + n + " --fork" + withs + " --save-case forks", "Keep this step as a regression case (with the edited files saved in the project)"));
+    }
+    return out;
+  }
   function renderReplayPane() {
     const v = rp.view;
     if (!v) return;
@@ -4245,8 +4310,11 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       rpFetch(true);
     } }, label);
     nodes.push(h("div", { class: "rp-tabs" }, h("div", { class: "seg", role: "group", "aria-label": "Show" },
-      tab("changes", "This step" + (v.changes.length ? " · " + v.changes.length : "")), tab("file", "File"), tab("range", "Since step…"))));
-    if (rp.tab === "changes") {
+      tab("changes", "This step" + (v.changes.length ? " · " + v.changes.length : "")), tab("file", "File"), tab("range", "Since step…"),
+      rp.index && rp.index.canFork ? h("button", { type: "button", "aria-pressed": String(rp.tab === "fork"), title: "Send this step's model call again with a changed CLAUDE.md or AGENTS.md", onclick: () => { rp.tab = "fork"; forkLoad(st.n); } }, "Fork from here") : null)));
+    if (rp.tab === "fork") {
+      nodes.push(...forkNodes(st.n));
+    } else if (rp.tab === "changes") {
       if (!v.changes.length) nodes.push(h("p", { class: "note" }, "This step changed no files."));
       for (const c of v.changes) nodes.push(changeNodes(c, false));
     } else if (rp.tab === "file") {

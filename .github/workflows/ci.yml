@@ -356,6 +356,14 @@ jobs:
         if: runner.os == 'Linux'
         run: node scripts/e2e/proxy-capture.mjs
 
+      # Fork from step N with real Claude Code against the stub: a session whose CLAUDE.md says npm
+      # test fails its test step; replay --fork with a fixed CLAUDE.md sends that step's stored call
+      # again and takes another action, --run reruns the agent from the step in a rolled-back copy
+      # and its verifier passes, and --save-case makes a case eval run fails until CLAUDE.md is fixed.
+      - name: Fork from a replay step with real Claude Code
+        if: runner.os == 'Linux'
+        run: node scripts/e2e/fork-capture.mjs
+
       # What the proxy adds to a streamed call, direct and proxied interleaved; fails over budget
       # (2 ms per chunk, 5 ms to first byte).
       - name: Proxy latency budget

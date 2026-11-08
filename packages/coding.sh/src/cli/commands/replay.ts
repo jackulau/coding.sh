@@ -2,15 +2,18 @@
 // agent touched as of any step, rebuilt from its own tool calls (core/replay.ts).
 // No flags: the step list. --step N: what step N did (command and output,
 // diffs, the touched files). --step N --to M: what steps N through M changed
-// together. --file: one file's content as of the step.
+// together. --file: one file's content as of the step. --fork: step N's model
+// call sent again with a changed harness (replay-fork.ts).
 import { createRedactor } from "../../core/redact.ts";
 import { loadReplay, snapshotBaseline, type Replay, type ReplayStep, type StepChange, type RangeFile } from "../../core/replay.ts";
 import { UsageError, positiveInt } from "../args.ts";
 import { autoIngest, oneLine, resolveSession, str, withContext } from "../common.ts";
+import { fork } from "./replay-fork.ts";
 import { clean, duration, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 const OUTPUT_LINES = 40;
+const FORK_FLAGS = ["with", "harness", "model", "system", "trials", "run", "verify", "workdir", "save-case"];
 const TEXT_LINES = 30;
 
 export async function run(c: CommandContext): Promise<number> {
@@ -28,6 +31,13 @@ export async function run(c: CommandContext): Promise<number> {
       if (n > total) throw new UsageError(`--${flag} ${n} is past the last step (${plural(total, "step")})`);
       return n;
     };
+    if (c.flags.fork === true) {
+      if (step === undefined) throw new UsageError("--fork needs --step N: the step to fork from", { reason: "missing_argument" });
+      if (to !== undefined || file !== undefined) throw new UsageError("--fork goes without --to and --file");
+      return fork(c, ctx, s, replay, check(step, "step"));
+    }
+    const forkOnly = FORK_FLAGS.find((f) => c.flags[f] !== undefined && !(Array.isArray(c.flags[f]) && !(c.flags[f] as unknown[]).length));
+    if (forkOnly) throw new UsageError(`--${forkOnly} goes with --fork`);
     if (to !== undefined) {
       const range = await replay.range(check(step ?? 1, "step"), check(to, "to"));
       if (out.json) return out.data(range), 0;

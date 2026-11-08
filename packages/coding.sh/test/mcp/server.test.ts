@@ -100,7 +100,8 @@ describe("handshake (legacy era)", () => {
       assert.equal(t.outputSchema.type, "object", `${t.name} outputSchema`);
       assert.equal(t.annotations.readOnlyHint, !["eval_from_session", "eval_init", "exp_session_note"].includes(t.name), `${t.name} readOnlyHint`);
       assert.equal(t.annotations.destructiveHint, false);
-      assert.equal(t.annotations.openWorldHint, false);
+      // session_replay's fork calls the model API.
+      assert.equal(t.annotations.openWorldHint, t.name === "session_replay", `${t.name} openWorldHint`);
     }
     const ev = tools.find((t) => t.name === "eval_from_session")!;
     assert.equal(ev.annotations.idempotentHint, true);
@@ -173,6 +174,9 @@ describe("tools", () => {
     assert.match(await callError("session_replay", { sessionId: SEED.a, step: 999 }), /step must be a step number from 1 to/);
     assert.match(await callError("session_replay", { sessionId: SEED.a, from: 1 }), /both from and to/);
     assert.match(await callError("session_replay", { sessionId: SEED.a, file: "src/parse.ts" }), /file needs a step/);
+    assert.match(await callError("session_replay", { sessionId: SEED.a, fork: { "CLAUDE.md": "x" } }), /fork needs a step/);
+    assert.match(await callError("session_replay", { sessionId: SEED.a, step: 1, fork: { "CLAUDE.md": 1 } }), /fork is an object of context file paths/);
+    assert.match(await callError("session_replay", { sessionId: SEED.a, step: 1, fork: { "CLAUDE.md": "x" } }), /no model calls with stored requests/);
   });
 
   it("session_current finds the running session in the server's directory, or the env-named one", async () => {

@@ -7,7 +7,7 @@ import type { Context } from "../core/context.ts";
 import type { Session } from "../core/types.ts";
 import { failureFlags } from "../core/sessions.ts";
 import { createRedactor } from "../core/redact.ts";
-import { loadReplay, snapshotBaseline } from "../core/replay.ts";
+import { loadReplay, snapshotBaseline, type Replay } from "../core/replay.ts";
 import { parseSince } from "../cli/args.ts";
 import { version } from "../cli/meta.ts";
 import { isNewer } from "../update/semver.ts";
@@ -190,6 +190,21 @@ async function resolveSession(ctx: Context, id: string): Promise<Session> {
   return s;
 }
 
+/** session_replay's fork: step N's stored model call sent once more with the given context files (`""` drops one). Loaded on use. */
+async function forkTool(ctx: Context, env: NodeJS.ProcessEnv, s: Session, replay: Replay, step: number, files: unknown): Promise<Obj> {
+  if (typeof files !== "object" || files === null || Array.isArray(files) || !Object.values(files).every((v) => typeof v === "string")) {
+    throw new ToolError('fork is an object of context file paths to their new text, e.g. {"CLAUDE.md": "…"}; "" drops a file.');
+  }
+  const [{ ForkError, viewerForks }, { proxySettings }, { pricesFor }] = await Promise.all([import("../experiments/fork.ts"), import("../proxy/state.ts"), import("../core/pricing.ts")]);
+  try {
+    const forks = viewerForks({ index: ctx.index, blobs: ctx.blobs, env, prices: pricesFor(ctx.config.pricing), upstreams: proxySettings(env).upstreams });
+    return { ...(await forks.run(s, replay, step, files as Record<string, string>, 1)) };
+  } catch (e) {
+    if (e instanceof ForkError) throw new ToolError(e.message);
+    throw e;
+  }
+}
+
 function readUpdateCache(file: string): Obj | undefined {
   try {
     const v = JSON.parse(readFileSync(file, "utf8")) as unknown;
@@ -360,16 +375,17 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         {
           sessionId: SESSION_ID,
           step: { type: "integer", minimum: 1, description: "One step (1-based): what it did, its diff and the files so far." },
-          file: { type: "string", minLength: 1, description: "With step: this file's content as of that step." },
+          file: { type: "string", minLength: 1, description: "With step: this file as of that step." },
           from: { type: "integer", minimum: 1, description: "With to: the first step of a range." },
-          to: { type: "integer", minimum: 1, description: "With from: the last step (included). Returns each file's diff over the range." },
+          to: { type: "integer", minimum: 1, description: "With from: the last step (included); each file's diff over the range." },
+          fork: { type: "object", description: 'With step: send its model call again with these files ({"CLAUDE.md": text}); recorded vs forked next action. Calls the model.' },
           limit: LIMIT(100, 1000),
           cursor: CURSOR,
         },
         ["sessionId"],
       ),
-      outputSchema: out({ sessionId: S, steps: { description: "The step list, or (with step) how many steps there are." }, files: { type: "array" }, total: I, step: { type: "object" }, changes: { type: "array" }, tree: { type: "array" }, file: { type: "object" }, from: I, to: I, nextCursor: S }, ["sessionId"]),
-      annotations: READ,
+      outputSchema: out({ sessionId: S, steps: { description: "The step list, or (with step) how many steps there are." }, files: { type: "array" }, total: I, step: { type: "object" }, changes: { type: "array" }, tree: { type: "array" }, file: { type: "object" }, from: I, to: I, nextCursor: S, trials: { type: "array" } }, ["sessionId"]),
+      annotations: { ...READ, idempotentHint: false, openWorldHint: true },
       async run(a, c) {
         const ctx = await c.store();
         const s = await resolveSession(ctx, strArg(a, "sessionId")!);
@@ -388,6 +404,10 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         if (from !== undefined || to !== undefined) {
           if (from === undefined || to === undefined) throw new ToolError("Pass both from and to for a range.");
           return { ...(await replay.range(from, to)) };
+        }
+        if (a.fork !== undefined) {
+          if (step === undefined) throw new ToolError("fork needs a step.");
+          return { ...(await forkTool(ctx, c.env, s, replay, step, a.fork)) };
         }
         const file = strArg(a, "file");
         if (step !== undefined) return { ...(await replay.at(step, { file })) };

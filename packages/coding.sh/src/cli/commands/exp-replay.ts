@@ -13,7 +13,7 @@ import type { FileEvalStore } from "../../datasets/store.ts";
 import type { Case, Dataset, ExperimentResult, Grader } from "../../datasets/types.ts";
 import { compareExperiments } from "../../experiments/compare.ts";
 import { renderComparison } from "../../experiments/render.ts";
-import { estimateReplay, parseVary, REPLAY_KEY_ENV, replayable, replayCaseOf, replayTask, sameActionGrader, type ReplayArm, type ReplayCase, type ReplayOutput } from "../../experiments/replay.ts";
+import { estimateReplay, hasReplayAuth, parseVary, REPLAY_KEY_ENV, REPLAY_OAUTH_ENV, replayable, replayCaseOf, replayTask, sameActionGrader, type ReplayArm, type ReplayCase, type ReplayOutput } from "../../experiments/replay.ts";
 import { createGrader, type GraderSpec, type LlmGraderSpec } from "../../graders/index.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
 import { loadCall } from "../../proxy/calls.ts";
@@ -116,15 +116,15 @@ export async function expReplay(c: CommandContext, store: FileEvalStore, ctx: Co
     out.print(`${plural(cases.length, "call")} × 2 arms × ${n}: ${plural(est.calls, "model call")}, ~${tokens(est.inputTokens)} input tokens, ${estText} (input uncached, output as recorded)`);
     out.print(`A ${arms[0].label}`);
     out.print(`B ${arms[1].label}`);
-    for (const p of providers) if (!c.env[REPLAY_KEY_ENV[p]]) out.print(`needs $${REPLAY_KEY_ENV[p]} to run`);
+    for (const p of providers) if (!hasReplayAuth(p, c.env)) out.print(`needs $${REPLAY_KEY_ENV[p]} to run`);
     return 0;
   }
   for (const p of providers) {
     const key = REPLAY_KEY_ENV[p];
-    if (!c.env[key]?.trim()) {
+    if (!hasReplayAuth(p, c.env)) {
       throw new CliError(`exp replay calls the ${p === "anthropic" ? "Anthropic" : "OpenAI"} API with your own key, and $${key} is not set`, {
         reason: "missing_api_key",
-        next: [`export ${key}=…   (the agent's own login is never stored, so it can't be reused)`, "See the cost first: coding.sh exp replay … --dry-run"],
+        next: [`export ${key}=…   (the agent's own login is never stored, so it can't be reused${p === "anthropic" ? `; a subscription token in $${REPLAY_OAUTH_ENV} works too` : ""})`, "See the cost first: coding.sh exp replay … --dry-run"],
       });
     }
   }

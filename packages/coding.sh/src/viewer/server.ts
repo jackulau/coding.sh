@@ -55,6 +55,14 @@ export interface ViewerOptions {
   ingestStatus?: () => IngestStatus | undefined;
   /** Start-snapshot content for replays (`coding.sh ui`, which can read this machine's shadow repos). */
   replayBaseline?: (s: Session) => Baseline | undefined;
+  /** Forking a replay at a step (`coding.sh ui` only: it calls the model with this machine's key). Without it /fork is 404. */
+  fork?: ForkSource;
+}
+
+/** Forks behind /api/sessions/<id>/fork: what a fork at step N starts from, and the fork itself. */
+export interface ForkSource {
+  preview(s: Session, replay: Replay, step: number): Promise<unknown>;
+  run(s: Session, replay: Replay, step: number, files: Record<string, string>, trials: number): Promise<unknown>;
 }
 
 /** Read side of the dataset experiment store (FileEvalStore and every full IndexStore fit). */
@@ -213,6 +221,8 @@ export interface ViewerHandlerOptions {
   ingestStatus?: () => IngestStatus | undefined;
   /** Start-snapshot content for replays. Default: none (replays start from what the session showed). */
   replayBaseline?: (s: Session) => Baseline | undefined;
+  /** Forks from a replay step. Default: none (404). */
+  fork?: ForkSource;
 }
 
 export type ViewerHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
@@ -277,6 +287,7 @@ export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<V
       benchmarks: opts.benchmarks,
       ingestStatus: opts.ingestStatus,
       replayBaseline: opts.replayBaseline,
+      fork: opts.fork,
     });
   };
 
@@ -332,6 +343,7 @@ export async function startViewer(opts: ViewerOptions): Promise<Viewer> {
     benchmarks: opts.benchmarks ?? benchmarkDir(opts.env ?? process.env),
     ...(opts.ingestStatus ? { ingestStatus: opts.ingestStatus } : {}),
     ...(opts.replayBaseline ? { replayBaseline: opts.replayBaseline } : {}),
+    ...(opts.fork ? { fork: opts.fork } : {}),
   });
 
   const server = createServer((req, res) => {
@@ -438,6 +450,7 @@ interface ApiCtx {
   benchmarks?: BenchmarkSource;
   ingestStatus?: () => IngestStatus | undefined;
   replayBaseline?: (s: Session) => Baseline | undefined;
+  fork?: ForkSource;
 }
 
 /** The index's own experiment methods (sqlite, memory, postgres), or undefined when it has none. */
@@ -568,7 +581,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
 
   switch (head) {
     case "sessions": {
-      get();
+      if (sub !== "fork") get();
       if (id === undefined || (id === "" && sub === undefined)) return sendJson(res, 200, await listSessions(ctx.index, q, projectParam(ctx, q)));
       const sessionId = checkId(id, "session id");
       if (sub === undefined) return sendJson(res, 200, await visibleSession(ctx, sessionId));
@@ -596,7 +609,26 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         }
         if (step !== undefined) return sendJson(res, 200, await replay.at(step, { file }));
         if (file !== undefined) throw new HttpError(400, "file needs a step");
-        return sendJson(res, 200, replay.index());
+        return sendJson(res, 200, { ...replay.index(), ...(ctx.fork ? { canFork: true } : {}) });
+      }
+      if (sub === "fork") {
+        // GET ?step=N: the call a fork at step N starts from and the context files it carried. POST {step, files, trials}: the fork.
+        if (!ctx.fork) throw new HttpError(404, "forking is only in the local viewer (coding.sh ui)");
+        const s = await visibleSession(ctx, sessionId);
+        const replay = await cachedReplay(ctx, s);
+        const total = replay.steps.length;
+        if (!total) throw new HttpError(400, "this session has no steps");
+        if (method === "GET") return sendJson(res, 200, await ctx.fork.preview(s, replay, intParam(q, "step", total, 1, total)).catch(forkHttpError));
+        if (method !== "POST") throw new HttpError(405, "method not allowed");
+        checkOrigin(req, ctx.checkHost);
+        const body = await readJson(req, res);
+        const b = (typeof body === "object" && body !== null ? body : {}) as { step?: unknown; files?: unknown; trials?: unknown };
+        if (typeof b.step !== "number" || !Number.isInteger(b.step) || b.step < 1 || b.step > total) throw new HttpError(400, `step must be from 1 to ${total}`);
+        const files = b.files ?? {};
+        if (typeof files !== "object" || files === null || Array.isArray(files) || !Object.values(files).every((v) => typeof v === "string")) throw new HttpError(400, "files maps a context file path to its text");
+        const trials = b.trials === undefined ? 1 : b.trials;
+        if (typeof trials !== "number" || !Number.isInteger(trials) || trials < 1 || trials > 5) throw new HttpError(400, "trials is from 1 to 5");
+        return sendJson(res, 200, await ctx.fork.run(s, replay, b.step, files as Record<string, string>, trials).catch(forkHttpError));
       }
       if (sub === "outline") {
         // Phases (start, resumes, compactions, idle gaps), day marks and derails: a long session at a glance.
@@ -1280,6 +1312,12 @@ function intParam(q: URLSearchParams, name: string, dflt: number, min: number, m
   const n = Number(raw);
   if (n < min || n > max) throw new HttpError(400, `${name} must be between ${min} and ${max}`);
   return n;
+}
+
+/** A fork that can't start (no stored calls, no key) is the caller's to fix: 400 with the reason. */
+function forkHttpError(e: unknown): never {
+  if (e instanceof Error && e.name === "ForkError") throw new HttpError(400, e.message);
+  throw e;
 }
 
 /** Browsers always send Origin on cross-origin POSTs; when present it must be us. */

@@ -828,3 +828,65 @@ describe("viewer server: session replay", () => {
     assert.equal((await req(v, "/api/sessions/rp/replay", { auth: false })).status, 401);
   });
 });
+
+describe("viewer server: fork from a replay step", () => {
+  const index = new FakeIndex();
+  let plain: Viewer;
+  let v: Viewer;
+  const seen: unknown[][] = [];
+  before(async () => {
+    await index.upsertSession(session("fk", { stats: { events: 3, turns: 1, toolCalls: 1, toolErrors: 0, filesChanged: 0 } }));
+    await index.putEvents([
+      event("fk", 1, { kind: "user.message", payload: { text: "fix it" } }),
+      event("fk", 2, { kind: "tool.start", payload: { tool: "Bash", toolUseId: "b", input: { command: "npm test" } } }),
+      event("fk", 3, { kind: "tool.end", payload: { tool: "Bash", toolUseId: "b", ok: false } }),
+    ]);
+    plain = await startViewer({ index, blobs: new FakeBlobs(), port: 0 });
+    v = await startViewer({
+      index,
+      blobs: new FakeBlobs(),
+      port: 0,
+      fork: {
+        preview: async (s, replay, step) => (seen.push(["preview", s.id, replay.steps.length, step]), { files: [{ path: "CLAUDE.md", text: "Use npm test." }] }),
+        run: async (s, _replay, step, files, trials) => {
+          if (files["CLAUDE.md"] === "boom") throw Object.assign(new Error("This session has no model calls with stored requests."), { name: "ForkError" });
+          seen.push(["run", s.id, step, files, trials]);
+          return { differ: 1, trials: [{ label: "Bash: node --test", differs: true }] };
+        },
+      },
+    });
+  });
+  after(async () => {
+    await plain.close();
+    await v.close();
+  });
+
+  test("only a viewer given a fork source forks, and its replay index says so", async () => {
+    assert.equal((await req(plain, "/api/sessions/fk/fork?step=2")).status, 404);
+    assert.equal((await req(plain, "/api/sessions/fk/replay")).json().canFork, undefined);
+    assert.equal((await req(v, "/api/sessions/fk/replay")).json().canFork, true);
+  });
+
+  test("GET previews the step's call; POST forks it with the edited files", async () => {
+    assert.deepEqual((await req(v, "/api/sessions/fk/fork?step=2")).json(), { files: [{ path: "CLAUDE.md", text: "Use npm test." }] });
+    const r = await post(v, "/api/sessions/fk/fork", { step: 2, files: { "CLAUDE.md": "Use node --test." }, trials: 3 });
+    assert.equal(r.status, 200, r.body);
+    assert.equal(r.json().differ, 1);
+    assert.deepEqual(seen, [
+      ["preview", "fk", 2, 2],
+      ["run", "fk", 2, { "CLAUDE.md": "Use node --test." }, 3],
+    ]);
+  });
+
+  test("bad input is 400, a fork that can't start is 400 with the reason, another origin is 403", async () => {
+    assert.equal((await post(v, "/api/sessions/fk/fork", { step: 9, files: {} })).status, 400);
+    assert.equal((await post(v, "/api/sessions/fk/fork", { step: 2, files: { "CLAUDE.md": 1 } })).status, 400);
+    assert.equal((await post(v, "/api/sessions/fk/fork", { step: 2, files: {}, trials: 50 })).status, 400);
+    const e = await post(v, "/api/sessions/fk/fork", { step: 2, files: { "CLAUDE.md": "boom" } });
+    assert.equal(e.status, 400);
+    assert.match(e.json().error, /no model calls with stored requests/);
+    assert.equal((await post(v, "/api/sessions/fk/fork", { step: 2, files: {} }, { origin: "https://evil.example" })).status, 403);
+    assert.equal((await req(v, "/api/sessions/fk/fork", { method: "DELETE" })).status, 405);
+    assert.equal((await req(v, "/api/sessions/fk/fork?step=2", { auth: false })).status, 401);
+  });
+});

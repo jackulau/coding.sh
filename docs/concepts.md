@@ -42,6 +42,12 @@ calls per model.
 model, the system prompt, a setting), several times per arm, and compares the arms like an
 experiment.
 
+**Fork.** `coding.sh replay <session> --step N --fork` sends the model call behind step N again
+with changed context files (CLAUDE.md, AGENTS.md, a skill) or another model, and shows the recorded
+next action beside the forked one. `--run` carries the fork on with the real agent, and
+`--save-case` keeps the step as an eval case graded on the next action. It needs a session captured
+through the proxy.
+
 **Subagent.** A child agent started by a session, such as Claude Code's Task tool or a nested agent
 span in an OpenTelemetry trace. It is stored as
 its own session with a parent id. Its prompt counts as its turn, and its title is the task

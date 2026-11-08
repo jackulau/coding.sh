@@ -92,6 +92,8 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/sessions/{id}/events`](#get-apisessionsidevents) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/outline`](#get-apisessionsidoutline) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/replay`](#get-apisessionsidreplay) | read key or basic auth | serve, ui |
+| GET | [`/api/sessions/{id}/fork`](#get-apisessionsidfork-post-apisessionsidfork) | ui token | ui |
+| POST | [`/api/sessions/{id}/fork`](#get-apisessionsidfork-post-apisessionsidfork) | ui token | ui |
 | GET | [`/api/blobs/{sha256}`](#get-apiblobssha256) | read key or basic auth | serve, ui |
 | GET | [`/api/calls/{id}`](#get-apicallsid) | read key or basic auth | serve, ui |
 | GET | [`/api/calls/{id}/diff`](#get-apicallsiddiff) | read key or basic auth | serve, ui |
@@ -685,6 +687,55 @@ curl -sS "$CSH/api/sessions/cd0185b0-305a-4df2-92fa-6fc6caffdb55/replay?step=4&f
 
 A step past the last one gets 400. File content is cut at 1 MiB (`contentTruncated`) and a diff at
 512 KB (`diffTruncated`).
+
+### `GET /api/sessions/{id}/fork`, `POST /api/sessions/{id}/fork`
+
+Fork the session at a replay step: send the model call behind that step again with changed
+context files (CLAUDE.md, AGENTS.md) and compare the forked next action with the recorded one.
+Only `coding.sh ui` answers these routes; `coding.sh serve` answers 404. The session needs model
+calls captured by [`coding.sh proxy`](../how-to/capture-with-proxy.md). When forking is on, the
+replay step list adds `"canFork": true`.
+
+`GET ?step=N` returns the call a fork at step N starts from and the context files it carried. It
+does not call the model. `by` is `tool-use` when the call's reply holds the step's tool call, else
+`time` (the agent's last call before the step, or for a prompt the first call after it). `canCall` is false when neither `keyEnv` nor `CLAUDE_CODE_OAUTH_TOKEN` (for
+Anthropic) is set in the environment `coding.sh ui` runs in.
+
+```sh
+curl -sS "http://127.0.0.1:4319/api/sessions/cd0185b0-305a-4df2-92fa-6fc6caffdb55/fork?step=4" -H "Authorization: Bearer $UI_TOKEN"
+```
+
+```json
+{
+  "step": {"n": 4, "kind": "shell", "label": "$ npm test"},
+  "call": {"id": "7a1c…", "model": "claude-sonnet-4-5", "by": "tool-use", "messages": 5},
+  "files": [{"path": "CLAUDE.md", "text": "Run the tests with npm test.\n"}],
+  "recorded": {"action": {"type": "tool", "name": "Bash", "input": {"command": "npm test"}}, "label": "Bash: npm test"},
+  "canCall": true, "keyEnv": "ANTHROPIC_API_KEY"
+}
+```
+
+`POST` with `{"step": N, "files": {"CLAUDE.md": "…"}, "trials": 1}` sends the call with each file
+replaced, added, or removed when its text is empty. `trials` is 1 to 5. The request must come from
+the viewer's own origin. It calls the model and costs money. `edits` says what changed in the
+request, each trial has the forked first action and `differs`, and `differ` counts the trials whose
+action is not the recorded one.
+
+```json
+{
+  "sessionId": "cd0185b0-305a-4df2-92fa-6fc6caffdb55",
+  "step": {"n": 4, "kind": "shell", "label": "$ npm test"},
+  "call": {"id": "7a1c…", "model": "claude-sonnet-4-5", "by": "tool-use", "messages": 5},
+  "change": "CLAUDE.md changed",
+  "edits": [{"path": "CLAUDE.md", "how": "replaced", "count": 1}],
+  "recorded": {"action": {"type": "tool", "name": "Bash", "input": {"command": "npm test"}}, "label": "Bash: npm test"},
+  "trials": [{"action": {"type": "tool", "name": "Bash", "input": {"command": "node --test"}}, "label": "Bash: node --test",
+              "differs": true, "model": "claude-sonnet-4-5", "costUsd": 0.0123}],
+  "differ": 1
+}
+```
+
+A step out of range, a session without stored requests, or a missing key gets 400 with the reason.
 
 ### `GET /api/blobs/{sha256}`
 

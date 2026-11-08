@@ -206,6 +206,12 @@ async function runCaseSuite(c: CommandContext, ctx: Context, s: LoadedSuite, tri
   // A command runs from the project root unless the suite says otherwise.
   const spec = { ...s.spec.task } as Record<string, unknown>;
   if (spec.kind === "command") spec.cwd = resolve(root, typeof spec.cwd === "string" ? spec.cwd : ".");
+  // A request case's file sits in the suite; its context files are the project's.
+  if (spec.kind === "request") {
+    spec.dir = s.dir;
+    spec.cwd = resolve(root, typeof spec.cwd === "string" ? spec.cwd : ".");
+    spec.env = env;
+  }
   const split = s.spec.split as Split | undefined;
   const cases = selectCases(dataset, split);
   const spin = out.spin(`${s.spec.name}: 0/${cases.length * trials}…`);

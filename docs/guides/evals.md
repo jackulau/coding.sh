@@ -353,6 +353,7 @@ A grader is a JSON object with a `kind`. Every kind takes `name`, the grader's i
 | `progress` | `flags`, `maxDerails` (default 0) | The trace derailed at most `maxDerails` times. The score is the share of the run before the first derail. `flags` limits which derails count: `looping`, `failure-streak`, `churn`, `no-progress`, `stalled`, `context-thrash`. |
 | `executability` | `kinds`, `maxInvalid` (default 0) | The trace has at most `maxInvalid` tool calls the harness refused. `kinds` limits which count: `schema`, `unknown-tool`, `precondition`, `state`, `missing`, `denied`, `other`. |
 | `calls` | `must`, `mustNot`, `max`, `order` | Every `must` match is some tool call in the trace, no `mustNot` match is, there are at most `max` calls, and the `order` tools are called in that order (other calls may come between). A match is `{"tool": …, "args": {…}}`, with partial argument matches; an MCP tool matches by its own name or the agent's. See [Tool evals](../TOOL-EVALS.md#3-task-format). |
+| `next-action` | none: the case's `expected` is a calls spec (`must`, `mustNot`, `max`, `order`) | The tool calls in the turn's output match the case's own spec. `replay --fork --save-case` writes these cases, with the recorded failing action under `mustNot`. See [Fork a failing step into a case](#fork-a-failing-step-into-a-case). |
 | `agent-slop` | `rules`, `exclude`, `maxErrors` (default 0), `maxWarnings` (default: no limit) | The lines the diff adds have at most that many findings. See [Agent slop](#agent-slop). |
 | `command` | `command` (required, an executable, not a shell line), `args`, `cwd`, `env`, `timeoutMs` (default 60000, 0 for none), `passThreshold` (default 0.5) | The command exits 0. It gets `{input, output, expected, metadata, caseId, trace}` as JSON on stdin and may print a grade: `true`/`false`, a score from 0 to 1 (passes at `passThreshold`), or `{"score", "pass", "reason"}`. A non-zero exit fails the run. A timeout, a signal or a command that can't start is a grader error. |
 | `module` | `module` (required, a path to a JS file, relative to the spec file), `export` (default `default`), `options`, `passThreshold` (default 0.5) | The exported function, called with the grade context and `options`, returns a passing grade, in the same forms as `command`. |
@@ -1884,6 +1885,45 @@ It calls the API with your own `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, never th
 stops before any call when the key is not set. `--dry-run` prints the call count and an estimated
 cost without a key; `--max-cost` refuses a run estimated above it. Replay needs calls logged in
 capture mode `full`.
+
+## Fork a failing step into a case
+
+When a session goes wrong at one step, `coding.sh replay --fork` sends that step's model call
+again with a changed CLAUDE.md or AGENTS.md (see
+[Fork from a step](explore.md#fork-from-a-step)). `--save-case` keeps the step as a regression
+case:
+
+```sh
+coding.sh replay 9f1c2e --step 12 --fork --with CLAUDE.md=fixed.md --save-case forks
+coding.sh eval run forks
+```
+
+The first save creates `evals/forks/suite.json`, a regression suite of `request` cases graded by
+`next-action`. It runs 3 trials per case. Each save writes the step's stored request to
+`evals/forks/requests/<case>.json`, as the proxy stored it after redaction. It also adds one line
+to `cases.jsonl`:
+
+```json
+{"id":"fork-9f1c2e4a-step12","input":{"request":"requests/fork-9f1c2e4a-step12.json"},"expected":{"mustNot":[{"tool":"Bash","args":{"command":"~npm test"}}]},"tags":["fork"]}
+```
+
+- **The `request` task** sends each case's stored request to the model again. Before it sends,
+  it puts in the project's context files as they are at run time: the suite's
+  `task.context.files`, which `--save-case` fills with the CLAUDE.md or AGENTS.md the request
+  carried. So the case passes or fails on the harness in your working tree. `model`, `system` and
+  `systemFile` on the task change those fields too. Its output is the reply's first action, its
+  text and its tool calls.
+- **The `next-action` grader** checks a case's tool calls against its own `expected`, a calls spec
+  (`must`, `mustNot`, `max`, `order`, as in tool evals). `--save-case` puts the recorded tool call
+  under `mustNot`, without the arguments that change from one sample to the next (Claude Code's
+  `description`, timeouts). A shell command matches anywhere in the command line (`~npm test` also
+  matches `npm test 2>&1`). The case fails while the model repeats the action, and passes once the
+  harness steers it off. When the recorded reply was text, the case expects the tool every forked trial called
+  instead.
+
+`eval run` calls the API with `ANTHROPIC_API_KEY` (or `CLAUDE_CODE_OAUTH_TOKEN`) or
+`OPENAI_API_KEY`. Read the request file before you commit it: it holds the conversation up to the
+step.
 
 ## Tool evals
 

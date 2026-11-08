@@ -451,16 +451,30 @@ coding.sh replay <SESSION> [options]
 | `--step <N>` |  | Show step N: its command and output, the diff it made, and the files touched so far. |
 | `--to <M>` |  | Show what steps --step (default 1) through M changed together. |
 | `--file <PATH>` |  | Print this file as of --step (default: the last step) |
+| `--fork` |  | With --step: send the model call that made step N again, with the harness changed, and show the recorded and forked next action side by side. |
+| `--with <DEST=SRC>` |  | With --fork: the fork's DEST (CLAUDE.md, AGENTS.md, a rule or skill, ~/.claude/CLAUDE.md) has SRC's text; a bare PATH uses that file as it is now; DEST= drops it (repeatable) |
+| `--harness <BUNDLE>` |  | With --fork: take the context files and model from this stored harness bundle. |
+| `--model <MODEL>` |  | With --fork: send the call to this model. |
+| `--system <TEXT|@FILE>` |  | With --fork: replace the system prompt. |
+| `-k, --trials <N>` | `1` | With --fork: forked calls to send. |
+| `--run` |  | With --fork: run Claude Code from step N in a copy of the session's directory, the stored history spliced into its requests, and show the recorded and forked steps. |
+| `--verify <CMD>` |  | With --run: run this command in the fork's directory afterwards; exit 1 when it fails. |
+| `--workdir <DIR>` |  | With --run: put the fork's copy here (default: a new temp dir), kept afterwards. |
+| `--save-case <SUITE>` |  | With --fork: save step N as a case in evals/&lt;SUITE&gt; (eval run sends its stored request with the project's context files and fails it when it repeats the recorded action) |
 
 ```sh
 coding.sh replay latest
 coding.sh replay 9f1c2e --step 12
 coding.sh replay 9f1c2e --step 5 --to 20
 coding.sh replay 9f1c2e --step 12 --file src/app.ts
+coding.sh replay 9f1c2e --step 12 --fork --with CLAUDE.md=fixed.md -k 3
+coding.sh replay 9f1c2e --step 12 --fork --with CLAUDE.md --run --verify 'npm test'
+coding.sh replay 9f1c2e --step 12 --fork --with CLAUDE.md --save-case forks
 ```
 
 - File content is rebuilt from the agent's own tool calls: full writes, full reads and the edits applied to them. A file edited before any step showed it reads as unknown, with the reason, until a later read or write. A session run with `coding.sh run` also starts from its snapshot.
 - The viewer has the same replay: the Replay button on a session page, or a link ending in ?step=N.
+- --fork needs the session captured through coding.sh proxy (capture mode full): the stored request of the call that made step N is the fork's starting context. It calls the model with $ANTHROPIC_API_KEY (or $CLAUDE_CODE_OAUTH_TOKEN) or $OPENAI_API_KEY, at your cost. A context file is changed where the agent put it in the request; one it did not have is added the way Claude Code adds CLAUDE.md.
 
 ## `coding.sh diff-calls`
 

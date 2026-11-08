@@ -13,6 +13,7 @@ import { describeFailure, formatArgv, runProcess, type CommandSpec } from "../gr
 import type { TaskInfo } from "../datasets/types.ts";
 import type { FetchLike } from "../judge/http.ts";
 import { continuationTask, type ContinuationTask } from "./continuation.ts";
+import { requestTask, type RequestTask } from "./fork-case.ts";
 
 export interface TaskContext {
   runId: string;
@@ -56,7 +57,7 @@ export interface FunctionTask {
   name?: string;
 }
 
-export type TaskSpec = TaskFn | FunctionTask | CommandTask | HttpTask | ContinuationTask;
+export type TaskSpec = TaskFn | FunctionTask | CommandTask | HttpTask | ContinuationTask | RequestTask;
 
 export interface ResolvedTask {
   info: TaskInfo;
@@ -227,5 +228,6 @@ export function resolveTask(spec: TaskSpec): ResolvedTask {
   if (spec.kind === "command") return commandTask(spec);
   if (spec.kind === "http") return httpTask(spec);
   if (spec.kind === "continuation") return continuationTask(spec);
+  if (spec.kind === "request") return requestTask(spec);
   throw new TaskError(`unknown task kind ${JSON.stringify((spec as { kind?: unknown }).kind)}`);
 }

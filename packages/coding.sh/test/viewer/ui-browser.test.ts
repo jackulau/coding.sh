@@ -1251,4 +1251,40 @@ describe("session replay in a browser", { skip: chrome ? false : "no Chrome/Chro
       await page.close();
     }
   });
+
+  test("Fork from here: the step's CLAUDE.md is editable, and the fork shows recorded vs forked next action", async () => {
+    const runs: unknown[] = [];
+    const fv = await startViewer({
+      index,
+      blobs: new FakeBlobs(),
+      port: 0,
+      updateStatus: async () => ({ disabled: "test" }) as any,
+      fork: {
+        preview: async () => ({ step: { n: 4 }, call: { id: "0123456789abcdef", model: "claude-sonnet-4-5", by: "tool-use" }, files: [{ path: "CLAUDE.md", text: "Run the tests with npm test." }], recorded: { label: "Bash: npm test" }, canCall: true, keyEnv: "ANTHROPIC_API_KEY" }),
+        run: async (_s, _r, step, files, trials) => {
+          runs.push({ step, files, trials });
+          return { differ: 1, edits: [{ path: "CLAUDE.md", how: "replaced" }], trials: [{ label: "Bash: node --test", differs: true }] };
+        },
+      },
+    });
+    page = await browser.newPage();
+    try {
+      await page.viewport(1280, 900);
+      await page.goto(fv.url + "#/s/" + RP + "?step=4");
+      await page.waitFor(`/Step 4 of 5/.test(${paneText})`, "step 4", 10_000);
+      await tab("Fork from here");
+      await page.waitFor("document.querySelector('.rp-fork-file textarea')?.value === 'Run the tests with npm test.'", "the recorded CLAUDE.md");
+      await page.eval("(() => { const t = document.querySelector('.rp-fork-file textarea'); t.value = 'Run the tests with node --test.'; t.dispatchEvent(new Event('input', { bubbles: true })); })()");
+      await page.eval("[...document.querySelectorAll('.rp-fork-go button')].find((b) => b.textContent === 'Run fork').click()");
+      await page.waitFor(`/Bash: node --test/.test(${paneText})`, "the forked action");
+      const text: string = await page.eval(paneText);
+      assert.match(text, /recorded\s+Bash: npm test/);
+      assert.match(text, /different/);
+      assert.match(text, /coding\.sh replay 7f3c1e2a --step 4 --fork --with CLAUDE\.md --save-case forks/);
+      assert.deepEqual(runs, [{ step: 4, files: { "CLAUDE.md": "Run the tests with node --test." }, trials: 1 }]);
+    } finally {
+      await page.close();
+      await fv.close();
+    }
+  });
 });

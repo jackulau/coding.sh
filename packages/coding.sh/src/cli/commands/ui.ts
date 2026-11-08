@@ -4,8 +4,11 @@
 // it (exit 130).
 import { isLocked } from "../../core/lock.ts";
 import { createRedactor } from "../../core/redact.ts";
+import { pricesFor } from "../../core/pricing.ts";
 import { snapshotBaseline } from "../../core/replay.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
+import { viewerForks } from "../../experiments/fork.ts";
+import { proxySettings } from "../../proxy/state.ts";
 import { startViewer } from "../../viewer/server.ts";
 import { port as portFlag, str, withContext } from "../common.ts";
 import { startBackgroundIngest, type BackgroundIngest } from "../ingest-worker.ts";
@@ -31,7 +34,9 @@ export async function run(c: CommandContext): Promise<number> {
         const s = ingest?.status();
         return s && { ...s, importing: isLocked(ctx.paths.importLock) };
       };
-      viewer = await startViewer({ index: ctx.index, blobs: ctx.blobs, port, host, open, experiments, ingestStatus, replayBaseline });
+      // Fork from a replay step: the stored call sent again with this machine's key (the local viewer only).
+      const fork = viewerForks({ index: ctx.index, blobs: ctx.blobs, env: c.env, prices: pricesFor(ctx.config.pricing), upstreams: proxySettings(c.env).upstreams });
+      viewer = await startViewer({ index: ctx.index, blobs: ctx.blobs, port, host, open, experiments, ingestStatus, replayBaseline, fork });
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "EADDRINUSE") throw new CliError(`Can't start the viewer: port ${port} is in use`, { reason: "port_in_use", next: ["Pick another port:", "coding.sh ui --port 0"] });

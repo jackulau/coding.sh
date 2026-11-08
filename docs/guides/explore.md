@@ -214,6 +214,50 @@ why, and shows the agent's own diff for that step instead of guessing at line nu
 command that changes files (`sed -i`, `rm`) changes them in the replay only when the agent
 recorded the change. Nothing is re-run.
 
+### Fork from a step
+
+`--fork` re-runs a step with a changed harness. It needs the session captured through
+[the proxy](../how-to/capture-with-proxy.md) in capture mode `full`. The fork starts from the
+request the proxy stored for the model call that made step N: the call whose reply holds the
+step's tool call, or, for a prompt, the call that answered it. It then shows the action the agent
+recorded next to the action the forked call took.
+
+```sh
+coding.sh replay <session> --step 12 --fork --with CLAUDE.md=fixed.md -k 3
+coding.sh replay <session> --step 12 --fork --with AGENTS.md --model claude-haiku-4-5
+coding.sh replay <session> --step 12 --fork --harness strict-tests
+coding.sh replay <session> --step 12 --fork --with CLAUDE.md --run --verify 'npm test'
+coding.sh replay <session> --step 12 --fork --with CLAUDE.md --save-case forks
+```
+
+- `--with DEST=SRC` uses SRC's text as DEST. A bare `--with PATH` uses that file as it is now,
+  and `DEST=` drops the file. DEST is a CLAUDE.md, an AGENTS.md, a rule, a skill or
+  `~/.claude/CLAUDE.md`. coding.sh changes the file where the agent put it in the request:
+  Claude Code's `Contents of <path>` sections and Codex's `# AGENTS.md instructions` block. A file
+  the request did not carry is added the way Claude Code adds CLAUDE.md. `--harness` takes the
+  context files and the model from a stored bundle, `--model` sends the call to another model and
+  `--system` replaces the system prompt.
+- Without `--run`, the call is sent again `-k` times (default 1), not streamed. Each forked
+  action is marked `different` or `same`.
+- `--run` runs Claude Code from step N. It copies the session's directory to a temp dir (or
+  `--workdir`) and puts back the files the agent changed from step N on, as far as the replay
+  knows them. It writes the changed files into the copy and starts Claude Code there with the
+  step's prompt. A local splice puts the stored conversation up to step N into each of its
+  requests, after the first message. So the model sees the session's history, and the tools act on
+  the copy. The output is the recorded steps from N next to the fork's own actions.
+  `--verify CMD` then runs CMD in the copy, and the command exits 1 when CMD fails. The fork's
+  calls are recorded as a session of their own.
+- `--save-case SUITE` saves the step as a case in `evals/SUITE`. The recorded action becomes the
+  thing the case must not do. See
+  [Fork a failing step into a case](evals.md#fork-a-failing-step-into-a-case).
+
+Forking calls the API with `ANTHROPIC_API_KEY` (or a subscription token in
+`CLAUDE_CODE_OAUTH_TOKEN`) or `OPENAI_API_KEY`, never the agent's login. In `coding.sh ui`, the
+Replay pane has a "Fork from here" tab. It shows the step's context files as the agent had them,
+lets you edit them, and shows the recorded and forked actions side by side. The MCP tool
+`session_replay` forks too: pass `step` and `fork` (`{"CLAUDE.md": "…"}`; an empty text drops a
+file).
+
 ## Memory and instruction files
 
 `coding.sh harness audit` lists each memory and instruction file and counts the sessions that
@@ -308,7 +352,8 @@ blocks as `coding.sh exp session summary --json`, which is how an agent picks th
 after a context reset. Without a session they return a `not_found` error with the command that
 starts one.
 `session_replay` gives the same as `coding.sh replay`: the steps, one step with `step` (and a
-file with `file`), or a range with `from` and `to`.
+file with `file`), or a range with `from` and `to`. With `step` and `fork` it forks that step
+(see [Fork from a step](#fork-from-a-step)); this one calls the model.
 
 `coding.sh init` registers it with Claude Code, Codex, Cursor and OpenCode (`--no-mcp` skips
 this). `coding.sh mcp config` prints the snippet for any other client.
