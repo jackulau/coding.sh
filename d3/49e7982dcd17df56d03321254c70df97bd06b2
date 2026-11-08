@@ -1,0 +1,22 @@
+packages/coding.sh/test/helpers-timing.ts
+  s_8e040dbdf13565::t_09ca744641e628 21-34
+  s_8e040dbdf13565::t_33d0009241c9c4 20,35
+packages/coding.sh/test/stats/mcnemar-power.test.ts
+  s_8e040dbdf13565::t_649f8fb428aeae 4,115,117-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d349e7982dcd17df56d03321254c70df97bd06b2",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
