@@ -40,6 +40,8 @@ CHANGELOG.md
 docs/reference/query.md
   s_8e040dbdf13565::t_bb83a57848c2c2 115-116,120-121
   s_8e040dbdf13565::t_98f7ffd606fd28 119
+  s_8e040dbdf13565::t_09d3c4849b2dd5 113-114
+  s_8e040dbdf13565::t_1c97dbd30f6aa1 117-118
 packages/store-postgres/test/where.test.ts
   s_8e040dbdf13565::t_99acabdcee63d4 6
   s_8e040dbdf13565::t_c6addf541af02f 1-5,7-140
