@@ -10,7 +10,7 @@
 // (src/proxy/install.ts) and starts it in the background.
 // Ends with a few lines: what was set up, how to open the viewer, and the docs URL.
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { parseHookCommand } from "../../adapters/_shared/hooks.ts";
 import { detectAll, ADAPTERS } from "../../adapters/index.ts";
 import { defaultConfigToml } from "../../core/config.ts";
@@ -98,7 +98,9 @@ export function hookTarget(file: string, hook: string): { hook: string | null; c
   if (forms.some((f) => plain.includes(f))) return { hook, current: true };
   const cmd = plain.split("\n").map((l) => parseHookCommand(l)).find((x) => x)?.hookPath;
   const found = cmd ?? /["']([^"'\n]*hook\.mjs)["']/.exec(plain)?.[1] ?? null;
-  return { hook: found, current: found === null };
+  // Hook commands carry forward slashes on Windows; name the file the way this platform does,
+  // like the settings `file` beside it.
+  return { hook: found !== null && isAbsolute(found) ? resolve(found) : found, current: found === null };
 }
 
 /**
