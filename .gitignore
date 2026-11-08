@@ -43,3 +43,6 @@ docs/research/round-1-self.md
 docs/research/digest-*.md
 docs/research/seen.md
 docs/research/telemetry-efficiency-audit.md
+
+# Wrangler local cache
+.wrangler/
