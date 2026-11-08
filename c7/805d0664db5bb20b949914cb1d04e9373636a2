@@ -1,0 +1,36 @@
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_f84820aaee1c73 994
+  s_8e040dbdf13565::t_b76c6e9e0c2d6f 46-47
+  s_8e040dbdf13565::t_5edc8ba04a0cd7 417
+  s_8e040dbdf13565::t_81dd8ba335a6f5 1006
+  s_8e040dbdf13565::t_aa32d8e101cc81 966
+  s_8e040dbdf13565::t_e412886657d3a1 971-986
+  s_8e040dbdf13565::t_1e8690c8395a5d 955
+packages/coding.sh/src/refine/taxonomy.ts
+  s_8e040dbdf13565::t_d68e106f48bb2f 206-207
+packages/coding.sh/src/improve/issues.ts
+  s_8e040dbdf13565::t_314d2a34d9c3a7 115-118
+packages/coding.sh/test/core/sessions.test.ts
+  s_8e040dbdf13565::t_789ba9229142c2 16
+  s_8e040dbdf13565::t_f28da42529c7c3 229-239
+docs/concepts.md
+  s_8e040dbdf13565::t_66edc798203175 84-89
+CHANGELOG.md
+  s_8e040dbdf13565::t_cf331fa5e31ed5 16
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "c7805d0664db5bb20b949914cb1d04e9373636a2",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
