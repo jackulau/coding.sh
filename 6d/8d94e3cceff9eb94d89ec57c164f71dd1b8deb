@@ -1,0 +1,53 @@
+packages/coding.sh/src/mcp/tools.ts
+  s_8e040dbdf13565::t_661a24bd0e434d 452,460
+packages/coding.sh/test/cli/improve.test.ts
+  s_8e040dbdf13565::t_14c579fbb45269 115,135
+  s_8e040dbdf13565::t_b2292271276a1d 116-134,136-142
+packages/coding.sh/src/improve/changes.ts
+  s_8e040dbdf13565::t_b4e915b66c9b04 49-57,65-66,182-188,190
+packages/coding.sh/test/mcp/improve.test.ts
+  s_8e040dbdf13565::t_9063cb638f6739 101
+  s_8e040dbdf13565::t_b504f97321dd4b 108-136
+packages/coding.sh/src/mcp/prompts.ts
+  s_8e040dbdf13565::t_ce7bf9f2bf33b2 36
+docs/guides/improve.md
+  s_8e040dbdf13565::t_bc393d462a95b0 105-106
+  s_8e040dbdf13565::t_81451edcc8fe91 164
+  s_8e040dbdf13565::t_5e139786cac3c3 156-159
+  s_8e040dbdf13565::t_4475773e9bde56 129-134
+packages/coding.sh/src/cli/commands/improve.ts
+  s_8e040dbdf13565::t_bb759f5ee3e9ea 7-9,14,18,61-63,75-76,90-94,96,102-112,273,275,279-280
+apps/site/src/pages/docs/mcp.astro
+  s_8e040dbdf13565::t_9ceeb2d8c322c5 10
+packages/coding.sh/src/mcp/improve.ts
+  s_8e040dbdf13565::t_d70721db17afd7 57-75
+  s_8e040dbdf13565::t_c73988139d36a5 9
+  s_8e040dbdf13565::t_115ad47d714d7a 89
+  s_8e040dbdf13565::t_168adb375606e6 145
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_1b97601929ca43 1156,1158
+  s_8e040dbdf13565::t_310ad93808c6fe 1168
+CHANGELOG.md
+  s_8e040dbdf13565::t_9ceeb2d8c322c5 25
+packages/coding.sh/test/improve/changes.test.ts
+  s_8e040dbdf13565::t_43833e6c9662a0 143
+  s_8e040dbdf13565::t_40966c6218bfb4 121-139
+docs/reference/cli.md
+  s_8e040dbdf13565::t_9ceeb2d8c322c5 2097,2143,2148
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "6d8d94e3cceff9eb94d89ec57c164f71dd1b8deb",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
