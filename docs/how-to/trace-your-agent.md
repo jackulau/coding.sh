@@ -98,7 +98,7 @@ The SDKs are in the coding.sh repository and not on npm or PyPI yet. Install the
 ```sh
 git clone https://github.com/jackulau/coding.sh ~/src/coding.sh
 (cd ~/src/coding.sh && npm ci && npm run build -w @codingdotsh/sdk && cd packages/sdk && npm pack)
-npm install ~/src/coding.sh/packages/sdk/coding.sh-sdk-0.0.1.tgz   # in your agent's folder
+npm install ~/src/coding.sh/packages/sdk/codingdotsh-sdk-*.tgz      # in your agent's folder
 pip install ~/src/coding.sh/packages/sdk-python                    # Python
 ```
 
