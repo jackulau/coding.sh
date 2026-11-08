@@ -42,6 +42,19 @@ function hookPayload(bytes, cwd) {
   return JSON.stringify({ session_id: "bench-0000", transcript_path: "/nonexistent", cwd, hook_event_name: "PostToolUse", tool_name: "Bash", tool_use_id: "toolu_bench", tool_input: { command: "ls -la" }, tool_response: { stdout: filler, stderr: "", interrupted: false }, duration_ms: 12 });
 }
 
+/** A work tree whose branch is only in a 1 MB packed-refs, so a SessionStart hook reads the slow case. */
+function fakeRepo(dir) {
+  const head = "0123456789abcdef0123456789abcdef01234567";
+  mkdirSync(join(dir, ".git", "refs", "heads"), { recursive: true });
+  mkdirSync(join(dir, "src", "deep"), { recursive: true });
+  writeFileSync(join(dir, ".git", "HEAD"), "ref: refs/heads/main\n");
+  const refs = ["# pack-refs with: peeled fully-peeled sorted"];
+  for (let i = 0; refs.length * 60 < 1 << 20; i++) refs.push(`${head} refs/heads/a-${String(i).padStart(8, "0")}`);
+  refs.push(`${head} refs/heads/main`);
+  writeFileSync(join(dir, ".git", "packed-refs"), refs.join("\n") + "\n");
+  return join(dir, "src", "deep");
+}
+
 function timeSpawn(cmd, args, env, input) {
   const t0 = performance.now();
   const r = spawnSync(cmd, args, { env, input, stdio: ["pipe", "ignore", "pipe"] });
@@ -79,18 +92,29 @@ export function benchHook({ dist = DIST, baseline, n = 50, warmup = 5 } = {}) {
       candBig.push(hook(dist, big));
       if (baseline) baseBig.push(hook(baseline, big));
     }
+    // SessionStart inside a repo: the event that also reads HEAD from .git.
+    const startPayload = JSON.stringify({ session_id: "bench-0000", cwd: fakeRepo(join(root, "repo")), hook_event_name: "SessionStart", source: "startup" });
+    const start = (d) => timeSpawn(process.execPath, [join(d, "hook.mjs"), "claude-code", "SessionStart"], { ...env, CODING_SH_NO_AUTO_INGEST: "1", CODING_SH_NO_PROXY_AUTOSTART: "1" }, startPayload);
+    const candStart = [];
+    const baseStart = [];
+    for (let i = 0; i < n; i++) {
+      candStart.push(start(dist));
+      if (baseline) baseStart.push(start(baseline));
+    }
     const nodeMed = median(node);
     const spoolFiles = existsSync(join(env.CODING_SH_HOME, "spool")) ? walkCount(join(env.CODING_SH_HOME, "spool")) : 0;
     const out = {
       "perf.hook": round(median(cand) - nodeMed, 1),
       "perf.hookP95": round(quantile(cand, 0.95) - quantile(node, 0.95), 1),
       "perf.hook1mb": round(median(candBig) - nodeMed, 1),
-      detail: { n, warmup, nodeMedianMs: round(nodeMed, 1), hookMedianMs: round(median(cand), 1), hookP95Ms: round(quantile(cand, 0.95), 1), hook1mbMedianMs: round(median(candBig), 1), spoolFilesWritten: spoolFiles },
+      "perf.hookStart": round(median(candStart) - nodeMed, 1),
+      detail: { n, warmup, nodeMedianMs: round(nodeMed, 1), hookMedianMs: round(median(cand), 1), hookP95Ms: round(quantile(cand, 0.95), 1), hook1mbMedianMs: round(median(candBig), 1), hookStartMedianMs: round(median(candStart), 1), spoolFilesWritten: spoolFiles },
     };
     if (baseline) {
-      out.baseline = { "perf.hook": round(median(base) - nodeMed, 1), "perf.hook1mb": round(median(baseBig) - nodeMed, 1) };
+      out.baseline = { "perf.hook": round(median(base) - nodeMed, 1), "perf.hook1mb": round(median(baseBig) - nodeMed, 1), "perf.hookStart": round(median(baseStart) - nodeMed, 1) };
       const d = bootstrapMedianDiff(base, cand);
-      out.paired = { "perf.hook": { diff: round(d.diff, 2), ci: d.ci.map((x) => round(x, 2)) } };
+      const ds = bootstrapMedianDiff(baseStart, candStart);
+      out.paired = { "perf.hook": { diff: round(d.diff, 2), ci: d.ci.map((x) => round(x, 2)) }, "perf.hookStart": { diff: round(ds.diff, 2), ci: ds.ci.map((x) => round(x, 2)) } };
     }
     return out;
   } finally {

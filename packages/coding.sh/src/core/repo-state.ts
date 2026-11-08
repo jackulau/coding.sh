@@ -3,7 +3,8 @@
 //
 // - root:   `git rev-parse --show-toplevel` of the cwd (cached per cwd per run).
 // - head:   the commit the agent reported at session start (Codex session_meta
-//           git.commit_hash → session.start payload.gitCommit), else HEAD at
+//           git.commit_hash → session.start payload.gitCommit, or the HEAD the
+//           hook read from .git → payload.git.commit), else HEAD at
 //           session start read from the reflog, else (live capture only) the
 //           current HEAD. "" when unknown, which eval drafting refuses.
 // - branch: the agent's own record (Claude Code gitBranch, Codex git.branch →

@@ -24,16 +24,19 @@
 //
 // Work done: read stdin (synchronously, capped at 64 MB; a TTY counts as empty),
 // JSON.parse it when possible, and append one SpoolLine via appendSpool(). No
-// network, no git. The one child process: on end-of-turn/session events the
-// hook starts a detached, lock-guarded `coding.sh ingest --background` and does
-// not wait for it (./kick.ts).
+// network, no git binary: on session-start and prompt events the repo and HEAD
+// commit are fs reads of .git (./githead.ts; CODING_SH_NO_GIT_HEAD=1 skips
+// them). The one child process: on end-of-turn/session events the hook starts
+// a detached, lock-guarded `coding.sh ingest --background` and does not wait
+// for it (./kick.ts).
 //
-// Imports: node:fs, node:path, node:os only (via ./write.ts, ./kick.ts and
-// ../core/paths.ts, plus the pure ../integrations/gateway/ids.ts);
+// Imports: node:fs, node:path, node:os only (via ./write.ts, ./kick.ts,
+// ./githead.ts and ../core/paths.ts, plus the pure ../integrations/gateway/ids.ts);
 // node:child_process is loaded only when an ingest starts.
 import { fstatSync, readSync, writeSync } from "node:fs";
 import type { SpoolLine } from "../core/types.ts";
 import { gatewayFromEnv } from "../integrations/gateway/ids.ts";
+import { GIT_HEAD_EVENT, readGitHead } from "./githead.ts";
 import { hostOf } from "./host.ts";
 import { kickIngest, kickProxy } from "./kick.ts";
 import { MAX_INLINE_LINE_BYTES, appendSpool, isDisabled, logSpoolError } from "./write.ts";
@@ -147,6 +150,10 @@ function main(): void {
       if (gateway) line.gateway = gateway;
       // Claude Code says how it was launched: `sdk-cli` for `claude -p`, `cli` in a terminal.
       if (agent === "claude-code" && env.CLAUDE_CODE_ENTRYPOINT) line.entrypoint = env.CLAUDE_CODE_ENTRYPOINT.slice(0, 64);
+      if (GIT_HEAD_EVENT.test(event) && !env.CODING_SH_NO_GIT_HEAD) {
+        const git = readGitHead(line.cwd);
+        if (git) line.git = git;
+      }
       appendSpool(line, env, { rawText: text });
       if (truncated) logSpoolError(new Error(`stdin truncated at ${MAX_STDIN_BYTES} bytes`), { agent, event }, env);
       captured = true;

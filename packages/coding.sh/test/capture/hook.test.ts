@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import type { SpoolLine } from "../../src/core/types.ts";
 import { MAX_INLINE_LINE_BYTES, appendSpool, resolveRaw, safeAgentId, spoolFile } from "../../src/spool/write.ts";
-import { PKG_ROOT, isolate, removeTmp, tmp, tsNodeArgs } from "./_helpers.ts";
+import { PKG_ROOT, gitc, isolate, makeRepo, removeTmp, tmp, tsNodeArgs } from "./_helpers.ts";
 
 const HOOK_TS = join(PKG_ROOT, "src", "spool", "hook.ts");
 let home = "";
@@ -73,6 +73,40 @@ describe("hook", () => {
     const h2 = freshHome();
     assert.equal(runHook(["claude-code", "SessionStart"], payload, { CODING_SH_HOME: h2, CLAUDE_CODE_ENTRYPOINT: "" }).code, 0);
     assert.equal(readLines(h2, "claude-code")[0]!.entrypoint, undefined);
+  });
+
+  test("session-start and prompt lines record the repo HEAD read from .git; tool lines and CODING_SH_NO_GIT_HEAD do not", () => {
+    const h = freshHome();
+    const repo = makeRepo({ "a.txt": "a\n" });
+    const head = gitc(repo, "rev-parse", "HEAD");
+    const hook = (event: string, env: Record<string, string> = {}) =>
+      runHook(["claude-code", event], JSON.stringify({ session_id: "s1", hook_event_name: event, cwd: join(repo, "sub") }), { CODING_SH_HOME: h, ...env });
+    for (const e of ["SessionStart", "UserPromptSubmit", "PostToolUse"]) assert.equal(hook(e).code, 0);
+    assert.equal(hook("SessionStart", { CODING_SH_NO_GIT_HEAD: "1" }).code, 0);
+    assert.deepEqual(
+      readLines(h, "claude-code")
+        .sort((a, b) => a.ts - b.ts)
+        .map((l) => [l.event, l.git]),
+      [
+        ["SessionStart", { root: repo, head, branch: "main" }],
+        ["UserPromptSubmit", { root: repo, head, branch: "main" }],
+        ["PostToolUse", undefined],
+        ["SessionStart", undefined],
+      ],
+    );
+  });
+
+  test("a corrupt HEAD still exits 0 silently, with no git field", () => {
+    const h = freshHome();
+    const repo = makeRepo({ "a.txt": "a\n" });
+    writeFileSync(join(repo, ".git", "HEAD"), "\0\0garbage");
+    const r = runHook(["claude-code", "SessionStart"], JSON.stringify({ session_id: "s1", cwd: repo }), { CODING_SH_HOME: h });
+    assert.equal(r.code, 0);
+    assert.equal(r.stdout, "");
+    const [line] = readLines(h, "claude-code");
+    assert.equal(line?.event, "SessionStart");
+    assert.equal(line?.git, undefined);
+    assert.equal(existsSync(join(h, "spool", "errors.log")), false);
   });
 
   test("non-JSON stdin is kept as a string; no stdin is an empty string; cwd falls back to process cwd", () => {

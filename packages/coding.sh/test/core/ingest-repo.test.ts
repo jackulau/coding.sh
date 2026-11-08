@@ -1,7 +1,7 @@
 // Ingest/backfill regressions that need real git repos: repo state for hook and
 // transcript sessions, end snapshots, and incremental backfill.
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
@@ -83,6 +83,24 @@ describe("hook-captured sessions get repo state (QA P0: eval new on hook session
     assert.equal(task.start.repoRoot, root);
     assert.equal(task.start.snapshot, headSha);
     assert.ok(task.referencePatch, "reference patch from start HEAD to the end snapshot");
+  });
+
+  it("takes the start commit from the HEAD the hook read, not today's HEAD, when the reflog can't say", async () => {
+    const root = makeRepo({ "a.txt": "a\n" });
+    const startSha = gitc(root, "rev-parse", "HEAD");
+    const { env: e, config, spool, spoolDir } = env();
+    const t0 = Date.now() + 2000;
+    const line = { v: 0, agent: "fake", event: "session.start", ts: t0, pid: 1, cwd: root, git: { root, head: startSha, branch: "main" }, raw: { session: "s3", kind: "session.start" } };
+    writeFileSync(join(spool, "s.jsonl"), JSON.stringify(line) + "\n" + spoolLine(t0 + 10, root, { session: "s3", kind: "user.message", text: "go" }));
+    // HEAD moves on before ingest runs, and there is no reflog to look back with.
+    write(root, { "a.txt": "b\n" });
+    gitc(root, "commit", "-qam", "later");
+    rmSync(join(root, ".git", "logs"), { recursive: true, force: true });
+    const index = new MemoryIndexStore();
+    await ingest({ config, index, blobs: new MemoryBlobStore(), adapters: new Map([["fake", hookAdapter]]), env: e, spoolDir, lock: false, now: () => t0 + 100 });
+    const s = (await index.getSession("s3"))!;
+    assert.notEqual(gitc(root, "rev-parse", "HEAD"), startSha);
+    assert.deepEqual(s.repo, { root, head: startSha, branch: "main" });
   });
 
   it("takes no end snapshot for an end event ingested long after it happened", async () => {

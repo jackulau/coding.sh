@@ -71,8 +71,13 @@ or PyPI yet.
   file per event.
 - It always exits 0. A failure is written to `~/.coding.sh/spool/errors.log`. A capture bug must never
   break the agent.
-- When a session starts, the same script records `git rev-parse HEAD` and asks `core` to snapshot
-  lazily. Snapshotting is deferred until ingest when it's slow; see below.
+- On a session-start or prompt event, the hook records the repo root, HEAD commit and branch as the
+  line's `git` field. It reads them from `.git` files (`HEAD`, loose refs, `packed-refs`, the
+  `gitdir:` and `commondir` files of worktrees and submodules) and never runs git; this takes well
+  under a millisecond. A ref it can't read exactly (a reftable repo, a corrupt `HEAD`) leaves the
+  field out. `CODING_SH_NO_GIT_HEAD=1` turns it off. Ingest copies it into the `session.start`
+  payload as `git.commit` and `git.branch`, and the session's start commit comes from there before
+  the reflog. Snapshots run at ingest; see below.
 
 ### Repo snapshots
 

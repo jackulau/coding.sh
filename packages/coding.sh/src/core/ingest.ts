@@ -612,6 +612,14 @@ export function spoolNormalizer(o: SpoolNormalizerOptions): (line: SpoolLine, so
       if (line.gateway && ev.payload.gateway === undefined && (ev.kind === "llm.call" || out.length === 0)) ev = { ...ev, payload: { ...ev.payload, gateway: line.gateway } };
       // Host app (T3 Code) that launched the agent: buildSession attributes the session to it.
       if (line.host && ev.payload.via === undefined) ev = { ...ev, payload: { ...ev.payload, via: line.host.id, ...(line.host.thread ? { hostThreadId: line.host.thread } : {}) } };
+      // HEAD the hook read from .git as the session started: the start commit (./repo-state.ts), so
+      // ingest never has to guess it from the reflog or take today's HEAD.
+      if (line.git && ev.kind === "session.start" && ev.payload.git === undefined) {
+        const git: Record<string, string> = {};
+        if (line.git.head) git.commit = line.git.head;
+        if (line.git.branch) git.branch = line.git.branch;
+        if (git.commit || git.branch) ev = { ...ev, payload: { ...ev.payload, git } };
+      }
       out.push(finishEvent(ev, profile, metadata));
     }
     return out;
