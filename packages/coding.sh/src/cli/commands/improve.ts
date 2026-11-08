@@ -4,17 +4,18 @@
 //   improve          ranked issues with the next command for each, then the
 //                    recent CLAUDE.md / AGENTS.md / rule / skill changes
 //   improve fix <N>  append issue N's line to CLAUDE.md or AGENTS.md (uncommitted)
-//   improve check    each kept (committed) change, before vs after; exit 1 on a
-//                    regression; --watch re-checks as new sessions arrive
+//   improve check    each kept (committed) change, before vs after, and the
+//                    sessions still flagged after it; exit 1 on a regression;
+//                    --watch re-checks as new sessions arrive
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { relative, resolve } from "node:path";
 import type { Context } from "../../core/context.ts";
 import { repoRoot } from "../../core/git.ts";
-import type { ChangeEffect, Verdict } from "../../improve/changes.ts";
+import type { ChangeEffect, GroupStats, Verdict } from "../../improve/changes.ts";
 import type { Issue } from "../../improve/issues.ts";
 import { abCommand, findChanges, findIssues, modelProvider, scopeSessions, stepsFor, targetFile, testCommandOf, type ImproveScope, type ModelProvider } from "../../improve/report.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
-import { autoIngest, list, pendingField, readIngest, str, withContext } from "../common.ts";
+import { autoIngest, list, oneLine, pendingField, readIngest, str, withContext } from "../common.ts";
 import { ago, CliError, localTime, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -57,6 +58,9 @@ function issueJson(i: Issue, n: number, provider: ModelProvider | undefined) {
   return { rank: n, ...rest, next: stepsFor(i, n, { provider }) };
 }
 
+/** A group's counts, with every flagged session (id, ISO start, title, flags). */
+const groupJson = (g: GroupStats) => ({ ...g, flaggedSessions: g.flaggedSessions.map((s) => ({ id: s.id, at: new Date(s.startedAt).toISOString(), ...(s.title ? { title: s.title } : {}), flags: s.flags })) });
+
 export function changeJson(e: ChangeEffect) {
   return {
     commit: e.change.commit,
@@ -68,8 +72,8 @@ export function changeJson(e: ChangeEffect) {
     verdict: e.verdict,
     reason: e.reason,
     ...(e.p !== undefined ? { p: Math.round(e.p * 1000) / 1000 } : {}),
-    before: e.before,
-    after: e.after,
+    before: groupJson(e.before),
+    after: groupJson(e.after),
     rules: e.rules.map((r) => ({ ...r, ...(r.p !== undefined ? { p: Math.round(r.p * 1000) / 1000 } : {}) })),
   };
 }
@@ -83,17 +87,29 @@ const VERDICT_WORD: Record<Verdict, string> = {
   "no-baseline": "No sessions before it",
 };
 
-function printChange(c: CommandContext, e: ChangeEffect, indent = "  "): void {
+/** Flagged sessions listed under each change by improve check, unless --sessions. */
+const FLAGGED_SHOWN = 5;
+
+/** `flagged`: how many of the sessions still flagged after the change to list (0, the default: none). */
+function printChange(c: CommandContext, e: ChangeEffect, o: { indent?: string; flagged?: number } = {}): void {
   const { out } = c;
+  const indent = o.indent ?? "  ";
   const ch = e.change;
   const files = ch.files.map((f) => `${f.path} +${f.added} -${f.removed}`).join(", ");
   const tone = e.verdict === "helped" ? "green" : e.verdict === "regressed" ? "red" : "faint";
   out.print(`${indent}${out.style(ch.short, "bold")}  ${localTime(ch.at)}  ${files}  ${JSON.stringify(ch.subject)}`);
   // A change with no sessions before it (often the commit that added the file) has nothing to compare: one line is enough.
-  if (e.verdict === "no-baseline") return out.print(`${indent}  ${out.style(VERDICT_WORD[e.verdict], tone)}: ${e.after.sessions} session(s) after it.`);
-  for (const l of ch.added.slice(0, 3)) out.print(`${indent}    + ${l.length > 110 ? `${l.slice(0, 109)}…` : l}`);
-  for (const l of ch.removed.slice(0, 2)) out.print(`${indent}    - ${l.length > 110 ? `${l.slice(0, 109)}…` : l}`);
-  out.print(`${indent}  ${out.style(VERDICT_WORD[e.verdict], tone)}: ${e.reason}`);
+  if (e.verdict === "no-baseline") out.print(`${indent}  ${out.style(VERDICT_WORD[e.verdict], tone)}: ${e.after.sessions} session(s) after it.`);
+  else {
+    for (const l of ch.added.slice(0, 3)) out.print(`${indent}    + ${l.length > 110 ? `${l.slice(0, 109)}…` : l}`);
+    for (const l of ch.removed.slice(0, 2)) out.print(`${indent}    - ${l.length > 110 ? `${l.slice(0, 109)}…` : l}`);
+    out.print(`${indent}  ${out.style(VERDICT_WORD[e.verdict], tone)}: ${e.reason}`);
+  }
+  const list = e.after.flaggedSessions;
+  if (!o.flagged || !list.length) return;
+  out.print(`${indent}  Still flagged after it, ${e.after.flagged} of ${plural(e.after.sessions, "session")} (coding.sh show <id>):`);
+  for (const s of list.slice(0, o.flagged)) out.print(`${indent}    ${s.id}  ${localTime(s.startedAt)}  ${s.flags.join(", ")}${s.title ? `  ${JSON.stringify(oneLine(s.title, 50))}` : ""}`);
+  if (list.length > o.flagged) out.print(`${indent}    ${out.style(`… ${list.length - o.flagged} more (--sessions lists them all)`, "faint")}`);
 }
 
 async function report(c: CommandContext): Promise<number> {
@@ -254,12 +270,14 @@ async function check(c: CommandContext): Promise<number> {
       out.next("Find something worth changing", "coding.sh improve");
       if (!watch) return 0;
     }
+    const shown = c.flags.sessions === true ? Number.POSITIVE_INFINITY : FLAGGED_SHOWN;
     for (const e of first.changes) {
-      printChange(c, e, "");
+      printChange(c, e, { indent: "", flagged: shown });
       out.print("");
     }
     if (!watch) {
-      if (regressed.length) out.next("See the sessions that went wrong after it", `coding.sh show ${regressed[0]!.after.examples[0] ?? "latest"}`);
+      const after = regressed[0]?.after;
+      if (after) out.next("See the sessions that went wrong after it", `coding.sh show ${after.flaggedSessions[0]?.id ?? after.examples[0] ?? "latest"}`);
       else if (first.changes.some((e) => e.verdict === "too-early" || e.verdict === "no-sessions-after")) out.next("Re-check as new sessions arrive", "coding.sh improve check --watch");
       return regressed.length ? 1 : 0;
     }

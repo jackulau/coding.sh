@@ -98,9 +98,39 @@ describe("harness_changes tool", () => {
     assert.deepEqual(ch.before, { sessions: 4, flagged: 4, byFlag: { "no-verification": 4 } });
     assert.deepEqual((ch.after as { sessions: number; flagged: number }).flagged, 0);
     assert.deepEqual(ch.rules, [{ line: "Run `npm test` before you say you are done.", followedBefore: "0/4", followedAfter: "6/6", p: 0.005 }]);
+    assert.deepEqual((ch.after as { flaggedSessions: unknown[] }).flaggedSessions, [], "no session after it is flagged");
     const none = await c.call("harness_changes", { commit: "deadbeef" });
     assert.equal(none.isError, true);
     assert.match(none.content[0]!.text, /No harness change "deadbeef"/);
+  });
+});
+
+describe("harness_changes flagged sessions", () => {
+  it("lists the sessions still flagged after each change with their flags: 5 per change when listing, up to 20 for one commit", async () => {
+    const bad = await improveWorld(root, "still-flagged", { afterFlagged: 6, beforeTested: true });
+    const other = new RawClient(bad.env as Record<string, string>, bad.repo);
+    try {
+      await other.initialize();
+      type After = { flagged: number; flaggedSessions: { sessionId: string; at: string; flags: string[]; title?: string }[]; moreFlagged?: number };
+      const listed = await other.call("harness_changes");
+      assert.deepEqual(schemaViolations(listed.structuredContent, tools.find((t) => t.name === "harness_changes")!.outputSchema), []);
+      const ch = (listed.structuredContent as { changes: { commit: string; verdict: string; after: After }[] }).changes[0]!;
+      assert.equal(ch.verdict, "regressed");
+      assert.equal(ch.after.flagged, 6);
+      assert.deepEqual(
+        ch.after.flaggedSessions.map((s) => s.sessionId),
+        ["after-5", "after-4", "after-3", "after-2", "after-1"],
+        "newest first, capped",
+      );
+      assert.equal(ch.after.moreFlagged, 1, "the cut is marked");
+      assert.deepEqual(ch.after.flaggedSessions[0], { sessionId: "after-5", at: ch.after.flaggedSessions[0]!.at, flags: ["no-verification"], title: "Task after-5" });
+      const one = await other.call("harness_changes", { commit: bad.commits.rule! });
+      const full = (one.structuredContent as { changes: { after: After }[] }).changes[0]!.after;
+      assert.equal(full.flaggedSessions.length, 6);
+      assert.equal(full.moreFlagged, undefined);
+    } finally {
+      await other.close();
+    }
   });
 });
 

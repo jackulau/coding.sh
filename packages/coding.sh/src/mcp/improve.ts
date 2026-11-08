@@ -6,7 +6,7 @@ import { basename, isAbsolute, resolve } from "node:path";
 import type { Context } from "../core/context.ts";
 import { repoRoot } from "../core/git.ts";
 import { parseSince } from "../cli/args.ts";
-import type { ChangeEffect } from "../improve/changes.ts";
+import type { ChangeEffect, GroupStats } from "../improve/changes.ts";
 import { findChanges, findIssues, modelProvider, scopeSessions, stepsFor, targetFile, testCommandOf } from "../improve/report.ts";
 import { clip, iso } from "./data.ts";
 import { ToolError } from "./protocol.ts";
@@ -54,8 +54,25 @@ async function place(ctx: Context, repo: string | undefined, cwd: string, env: N
   return { dir, root: dir };
 }
 
-/** One change, compact: what changed, the verdict and why, and the counts behind it. */
-export function changeSummary(e: ChangeEffect, o: { full?: boolean } = {}): Obj {
+/** Sessions still flagged after a change, listed per change by harness_changes: a few when listing changes, more for one commit. */
+const FLAGGED_LIST = 5;
+const FLAGGED_COMMIT = 20;
+
+/** The newest `max` flagged sessions in a group (id, start, flags, title), and how many more there are. */
+function flaggedList(g: GroupStats, max: number): Obj {
+  const list = g.flaggedSessions;
+  return {
+    flaggedSessions: list.slice(0, max).map((s) => ({ sessionId: s.id, at: iso(s.startedAt), flags: s.flags, ...(s.title ? { title: clip(s.title, 80) } : {}) })),
+    ...(list.length > max ? { moreFlagged: list.length - max } : {}),
+  };
+}
+
+/**
+ * One change, compact: what changed, the verdict and why, and the counts behind it.
+ * `full` adds the lines, the before/after counts with the sessions still flagged
+ * after it (up to `flagged`), and the new lines' uptake.
+ */
+export function changeSummary(e: ChangeEffect, o: { full?: boolean; flagged?: number } = {}): Obj {
   const c = e.change;
   return {
     commit: c.short,
@@ -69,7 +86,7 @@ export function changeSummary(e: ChangeEffect, o: { full?: boolean } = {}): Obj 
           added: c.added.slice(0, 8).map((l) => clip(l, 200)),
           removed: c.removed.slice(0, 5).map((l) => clip(l, 200)),
           before: { sessions: e.before.sessions, flagged: e.before.flagged, byFlag: e.before.byFlag },
-          after: { sessions: e.after.sessions, flagged: e.after.flagged, byFlag: e.after.byFlag, examples: e.after.examples.slice(0, 3) },
+          after: { sessions: e.after.sessions, flagged: e.after.flagged, byFlag: e.after.byFlag, examples: e.after.examples.slice(0, 3), ...flaggedList(e.after, o.flagged ?? FLAGGED_LIST) },
           ...(e.p !== undefined ? { p: Math.round(e.p * 1000) / 1000 } : {}),
           rules: e.rules.map((r) => ({ line: clip(r.text, 160), followedBefore: `${r.before.acted}/${r.before.n}`, followedAfter: `${r.after.acted}/${r.after.n}`, ...(r.p !== undefined ? { p: Math.round(r.p * 1000) / 1000 } : {}) })),
         }
@@ -125,7 +142,7 @@ export async function harnessChangesReport(ctx: Context, a: ImproveArgs & { comm
   if (commit && !picked.length) throw new ToolError(`No harness change ${JSON.stringify(a.commit)} in ${p.root} since ${iso(from)}. Call harness_changes without commit to list them.`);
   return {
     repo: p.root,
-    changes: picked.map((e) => changeSummary(e, { full: true })),
+    changes: picked.map((e) => changeSummary(e, { full: true, flagged: commit ? FLAGGED_COMMIT : FLAGGED_LIST })),
     ...(picked.length ? {} : { note: "No commits changed CLAUDE.md, AGENTS.md, GEMINI.md, a rule or a skill in this window." }),
   };
 }

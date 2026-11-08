@@ -2094,6 +2094,7 @@ coding.sh improve check
 - When sessions ran on the repo's current harness version (the newest commit that changed CLAUDE.md, AGENTS.md, a rule or a skill) and none of them had an issue, the issue is marked 'Not seen since &lt;commit&gt;', goes last, and points at improve check instead of a new line.
 - check reads the git history of CLAUDE.md, AGENTS.md, GEMINI.md, .claude/rules, .cursor/rules and skills. A session counts for the newest such commit its starting HEAD contains, so uncommitted edits count from the commit that keeps them. Sessions with no recorded HEAD, and sessions with no tool call outside MCP servers (a chat, or asking coding.sh about a change), are left out.
 - check compares sessions with a failure flag before and after each change, and, for each added line that names a command, flag, path or identifier, the share of sessions that acted on it. Two-sided Fisher exact tests at p ≤ 0.1: more flagged sessions is Regressed (exit 1); fewer, or the new line followed more with nothing worse, is Helped. Under 5 sessions after a change without a clear result is Too early to tell.
+- Under each change, check lists the sessions after it that still have a failure flag, newest first, with their flags (5, or all with --sessions; --json has every flagged session before and after).
 - exp ab (the replay A/B that improve suggests) needs ANTHROPIC_API_KEY or OPENAI_API_KEY. Without one, commit the change and let improve check judge it on new sessions.
 
 ### `coding.sh improve fix`
@@ -2139,10 +2140,12 @@ coding.sh improve check [options]
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 | `--watch` |  | Keep running and print a line when a change's verdict moves as new sessions arrive. |
 | `--interval <SECONDS>` | `60` | With --watch: how often to re-check. |
+| `--sessions` |  | List every session still flagged after each change, not just the newest 5. |
 
 ```sh
 coding.sh improve check
 coding.sh improve check --since 7d --json
+coding.sh improve check --sessions
 coding.sh improve check --watch
 ```
 

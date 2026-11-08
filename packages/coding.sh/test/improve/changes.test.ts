@@ -118,10 +118,29 @@ describe("changeEffects", () => {
     assert.equal(e!.verdict, "regressed", e!.reason);
     assert.match(e!.reason, /flagged sessions 0 of 6 before, 5 of 6 after/);
   });
+
+  it("lists every flagged session on each side, newest first, with its diagnosed flags", async () => {
+    const sessions: Session[] = [];
+    for (let k = 0; k < 6; k++) sessions.push(at(`r${k}`, commits["add the test rule"]!, { flagged: k === 2, tested: true, k }));
+    for (let k = 0; k < 6; k++) sessions.push(at(`s${k}`, commits["ask for a summary"]!, { flagged: k % 2 === 0, tested: true, k: 10 + k }));
+    // A tag (has a colon) and an undiagnosed flag are not failures: s5 stays unflagged.
+    sessions[11] = { ...sessions[11]!, flags: ["skill:pdf", "not-a-flag"] };
+    const [e] = await changeEffects(root, sessions, { since: 0, limit: 1, events: async (id) => events.get(id) ?? [] });
+    assert.deepEqual(
+      e!.after.flaggedSessions.map((s) => [s.id, s.flags, s.startedAt]),
+      [
+        ["s4", ["no-verification"], T0 + 14 * 3600_000],
+        ["s2", ["no-verification"], T0 + 12 * 3600_000],
+        ["s0", ["no-verification"], T0 + 10 * 3600_000],
+      ],
+    );
+    assert.equal(e!.after.flagged, e!.after.flaggedSessions.length);
+    assert.deepEqual(e!.before.flaggedSessions.map((s) => s.id), ["r2"]);
+  });
 });
 
 describe("decide", () => {
-  const g = (sessions: number, flagged: number) => ({ sessions, flagged, byFlag: {}, examples: [] });
+  const g = (sessions: number, flagged: number) => ({ sessions, flagged, byFlag: {}, examples: [], flaggedSessions: [] });
   it("too early with few sessions after; no clear change when it could be chance", () => {
     assert.equal(decide(g(6, 3), g(2, 0), []).verdict, "too-early");
     assert.equal(decide(g(6, 3), g(6, 2), []).verdict, "no-clear-change");

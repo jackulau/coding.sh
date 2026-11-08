@@ -449,7 +449,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
       name: "harness_changes",
       title: "Did a CLAUDE.md change help?",
       description:
-        "Did a committed CLAUDE.md, AGENTS.md, rule or skill change help? Per change: lines added, flagged sessions before vs after, how often the agent follows each new line, and a verdict. No model calls. Default 30d.",
+        "Did a committed CLAUDE.md, AGENTS.md, rule or skill change help? Per change: lines added, flagged sessions before vs after (and which after, with flags), how often the agent follows each new line, and a verdict. No model calls. Default 30d.",
       inputSchema: input({
         repo: { type: "string", description: "Repo path or folder name. Default: the server's repo." },
         commit: { type: "string", description: "Only this change: a commit sha or prefix." },
@@ -457,7 +457,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         agent: AGENT,
         limit: LIMIT(5, 20),
       }),
-      outputSchema: out({ repo: S, changes: arr(out({ commit: S, verdict: S, reason: S, before: out({ sessions: I, flagged: I }), after: out({ sessions: I, flagged: I }) }, ["commit", "verdict", "reason"])) }, ["repo", "changes"]),
+      outputSchema: out({ repo: S, changes: arr(out({ commit: S, verdict: S, reason: S, before: out({ sessions: I, flagged: I }), after: out({ sessions: I, flagged: I, flaggedSessions: arr(out({ sessionId: S, flags: arr(S) }, ["sessionId", "flags"])), moreFlagged: I }) }, ["commit", "verdict", "reason"])) }, ["repo", "changes"]),
       annotations: READ,
       async run(a, c) {
         const ctx = await c.store();

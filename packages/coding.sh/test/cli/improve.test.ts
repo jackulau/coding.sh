@@ -112,6 +112,34 @@ describe("cli improve", () => {
     const g = cli(good, ["improve", "check"]);
     assert.equal(g.status, 0, g.stderr);
     assert.match(g.stdout, /Helped: /);
+    assert.match(g.stdout, /Helped: [^\n]*\n\n/, "nothing listed under a change no session after it is flagged on");
+  });
+
+  it("improve check lists the sessions still flagged after each change: 5 with a count of the rest, all with --sessions, every one in --json", async () => {
+    const w = await world("flagged", { afterFlagged: 6, beforeTested: true });
+    const j = JSON.parse(cli(w, ["improve", "check", "--json"]).stdout) as { changes: { after: { flagged: number; flaggedSessions: { id: string; at: string; title?: string; flags: string[] }[] }; before: { flaggedSessions: unknown[] } }[] };
+    const after = j.changes[0]!.after;
+    assert.equal(after.flagged, 6);
+    assert.deepEqual(
+      after.flaggedSessions.map((s) => s.id),
+      ["after-5", "after-4", "after-3", "after-2", "after-1", "after-0"],
+      "newest first",
+    );
+    assert.deepEqual(after.flaggedSessions[0], { id: "after-5", at: after.flaggedSessions[0]!.at, title: "Task after-5", flags: ["no-verification"] });
+    assert.match(after.flaggedSessions[0]!.at, /^\d{4}-\d\d-\d\dT/);
+    assert.deepEqual(j.changes[0]!.before.flaggedSessions, []);
+
+    const text = cli(w, ["improve", "check"]);
+    assert.equal(text.status, 1, text.stderr);
+    assert.match(text.stdout, /^ {2}Still flagged after it, 6 of 6 sessions \(coding\.sh show <id>\):$/m);
+    assert.match(text.stdout, /^ {4}after-5 {2}\w{3} \d+ (\d\d:\d\d|\d{4}) {2}no-verification {2}"Task after-5"$/m);
+    assert.doesNotMatch(text.stdout, /^ {4}after-0 /m);
+    assert.match(text.stdout, /… 1 more \(--sessions lists them all\)/);
+    assert.match(text.stderr, /See the sessions that went wrong after it:\n\s+coding\.sh show after-5/);
+
+    const all = cli(w, ["improve", "check", "--sessions"]);
+    assert.match(all.stdout, /^ {4}after-0 /m);
+    assert.doesNotMatch(all.stdout, /more \(--sessions/);
   });
 
   it("outside a git repo, check and fix say why", async () => {

@@ -7,7 +7,7 @@ import Tag from "../../components/docs/Tag.astro";
 // src/adapters/_shared/mcp.ts (what `coding.sh init` writes for each agent).
 const TOOLS: [string, string][] = [
   ["improve", "What goes wrong most in this repo's sessions, ranked, each with an example session, the CLAUDE.md or AGENTS.md line that fixes it and the next commands; then whether recent harness changes helped."],
-  ["harness_changes", "Each committed CLAUDE.md, AGENTS.md, rule or skill change: flagged sessions before and after, how often the agent follows each new line, and a verdict."],
+  ["harness_changes", "Each committed CLAUDE.md, AGENTS.md, rule or skill change: flagged sessions before and after, which sessions are still flagged after it and with what, how often the agent follows each new line, and a verdict."],
   ["session_current", "The session of the agent calling the tool: its summary and latest timeline."],
   ["sessions_list", "Captured sessions, newest first, with turns, tool errors, tokens, cost, failure flags and derails. Filter with flag (e.g. looping) or where (e.g. tool:Bash ok:false cost>0.5); facets counts per value."],
   ["session_get", "One session as a digest: per-turn index and a timeline of prompts, replies, tool calls and model calls."],

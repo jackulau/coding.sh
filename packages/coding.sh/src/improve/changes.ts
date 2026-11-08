@@ -46,6 +46,15 @@ export interface HarnessChange {
   removed: string[];
 }
 
+/** A session with a diagnosed failure flag: which one, when, and what went wrong. */
+export interface FlaggedSession {
+  id: string;
+  startedAt: number;
+  title?: string;
+  /** Its diagnosed failure flags (the ones `flagged` counts). */
+  flags: string[];
+}
+
 export interface GroupStats {
   sessions: number;
   /** Sessions with at least one diagnosed failure flag. */
@@ -53,6 +62,8 @@ export interface GroupStats {
   byFlag: Record<string, number>;
   /** Session ids, newest first (at most 5). */
   examples: string[];
+  /** Every flagged session, newest first (`flagged` of them). */
+  flaggedSessions: FlaggedSession[];
 }
 
 export interface RuleEffect {
@@ -168,13 +179,15 @@ async function filesAt(root: string, commit: string | undefined, paths: readonly
 
 function group(sessions: readonly Session[]): GroupStats {
   const byFlag: Record<string, number> = {};
-  let flagged = 0;
-  for (const s of sessions) {
-    const fs = diagnosed(s);
-    if (fs.length) flagged++;
-    for (const f of fs) byFlag[f] = (byFlag[f] ?? 0) + 1;
+  const flaggedSessions: FlaggedSession[] = [];
+  const newest = [...sessions].sort((a, b) => b.startedAt - a.startedAt);
+  for (const s of newest) {
+    const flags = diagnosed(s);
+    if (!flags.length) continue;
+    flaggedSessions.push({ id: s.id, startedAt: s.startedAt, ...(s.title ? { title: s.title } : {}), flags });
+    for (const f of flags) byFlag[f] = (byFlag[f] ?? 0) + 1;
   }
-  return { sessions: sessions.length, flagged, byFlag, examples: [...sessions].sort((a, b) => b.startedAt - a.startedAt).slice(0, 5).map((s) => s.id) };
+  return { sessions: sessions.length, flagged: flaggedSessions.length, byFlag, examples: newest.slice(0, 5).map((s) => s.id), flaggedSessions };
 }
 
 const share = (k: number, n: number): number => (n ? k / n : 0);

@@ -102,6 +102,8 @@ coding.sh improve check
 533729e  Nov 3 09:00  CLAUDE.md +2 -0  "CLAUDE.md: run the tests before saying done"
     + Run `npm test` before you say you are done, and never claim a fix works without running it.
   Helped: The agent follows the new line more: 4 of 4 sessions after, 1 of 6 before (p 0.05); flagged sessions 3 of 6 before, 1 of 4 after.
+  Still flagged after it, 1 of 4 sessions (coding.sh show <id>):
+    4b1c90d2-7a8e-4c55-9f0e-2d1f6e3b8a41  Nov 4 10:12  no-verification  "Add a --width flag to the CLI"
 ```
 
 For each harness commit in the last 30 days, `check` compares the sessions that ran on the version
@@ -124,6 +126,12 @@ Each measure gets a two-sided Fisher exact test. The verdicts:
 | No sessions yet | no session ran with the change |
 | No sessions before it | nothing to compare with, often the commit that added the file |
 
+Under each change, `check` lists the sessions that ran with it and still got a failure flag:
+newest first, with the session id, when it started, its flags and its title. It shows five and
+counts the rest; `--sessions` lists them all. `coding.sh show <id>` opens one. With `--json`, each
+change's `before` and `after` have `flaggedSessions`, every flagged session on that side, each
+with `id`, `at`, `title` and `flags`.
+
 `coding.sh improve` shows the same verdicts for up to three changes from the last 30 days. Once sessions have run on
 your latest change, an issue none of them had is marked "Not seen in the N sessions since
 <commit>" and moves to the end of the list.
@@ -145,12 +153,15 @@ The coding.sh MCP server (`coding.sh init` sets it up) has the same loop:
 - The `improve` tool returns the ranked issues with the line, the file it goes in and the next
   commands, plus the verdicts for recent changes.
 - The `harness_changes` tool returns each change with its before and after counts, how often the
-  agent followed each new line, and the verdict. `commit` picks one change.
+  agent followed each new line, and the verdict. `after.flaggedSessions` lists the sessions still
+  flagged after the change (`sessionId`, `at`, `flags`, `title`), newest first: five per change,
+  or up to 20 when `commit` picks one change. `after.moreFlagged` counts the ones left out. Your
+  agent opens one with `session_get`.
 - Two prompts run the loop. In Claude Code they are `/mcp__coding-sh__improve` and
   `/mcp__coding-sh__did-it-help`.
 
 You can also ask in plain words: "look at my recent sessions and help me improve my setup", or
-"did my CLAUDE.md change last week help?".
+"did my CLAUDE.md change last week help?", or "which sessions still failed after it?".
 
 ## What it can't tell you
 
