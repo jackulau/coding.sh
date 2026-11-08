@@ -416,7 +416,7 @@ export async function loadRunEvents(index: IndexStore, sessions: Map<string, Ses
 
 // ------------------------------------------------------------ comparing
 
-export type MetricKey = "cost" | "tokens" | "turns" | "wall" | "agentTime" | "llmTime" | "llmP50" | "llmP95" | "ttftP50" | "derails" | "onTrack";
+export type MetricKey = "cost" | "tokens" | "turns" | "wall" | "agentTime" | "llmTime" | "llmP50" | "llmP95" | "ttftP50" | "derails" | "onTrack" | "cacheBreaks" | "cacheWaste";
 
 export interface MetricDelta {
   key: MetricKey;
@@ -713,6 +713,9 @@ const METRICS: { key: MetricKey; label: string; unit: MetricDelta["unit"]; bette
   { key: "llmP50", label: "LLM call p50", unit: "ms", get: (_r, s) => s?.stats.latency?.llmP50Ms },
   { key: "llmP95", label: "LLM call p95", unit: "ms", get: (_r, s) => s?.stats.latency?.llmP95Ms },
   { key: "ttftP50", label: "TTFT p50", unit: "ms", get: (_r, s) => s?.stats.latency?.ttftP50Ms },
+  // Prompt-cache breaks and their extra cost (core/cache-breaks.ts): did a setup change reuse the cache better? Lower is better.
+  { key: "cacheBreaks", label: "cache breaks / run", unit: "count", get: (_r, s) => (s ? (s.stats.cacheBreaks?.count ?? 0) : undefined) },
+  { key: "cacheWaste", label: "cache waste / run", unit: "usd", get: (_r, s) => (s ? (s.stats.cacheBreaks?.extraUsd ?? 0) : undefined) },
   // Where a run went off the rails (core/derail.ts), from its captured session.
   { key: "derails", label: "derails / run", unit: "count", get: (_r, s) => (s ? (s.stats.derails?.length ?? 0) : undefined) },
   {

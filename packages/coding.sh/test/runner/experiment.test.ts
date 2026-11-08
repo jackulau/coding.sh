@@ -146,6 +146,25 @@ describe("compare", () => {
     assert.match(text, /LLM call p95 +1\.2s +800ms +-400ms \(-33%\)/);
     assert.match(text, /step 2: Bash vs Edit/);
   });
+
+  it("cache breaks and their cost are comparable metrics (lower is better)", () => {
+    const ra = run("t1", "A", 1, true);
+    const rb = run("t1", "B", 1, true);
+    const broke = (): Session => ({
+      id: "s",
+      agent: "x",
+      startedAt: 0,
+      stats: { events: 0, turns: 3, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { inputTokens: 10, outputTokens: 5 }, cacheBreaks: { count: 2, lostTokens: 20_000, extraUsd: 0.2, byCause: { idle: { count: 2, lostTokens: 20_000, extraUsd: 0.2 } } } },
+      flags: [],
+    });
+    const clean = (): Session => ({ id: "s", agent: "x", startedAt: 0, stats: { events: 0, turns: 3, toolCalls: 0, toolErrors: 0, filesChanged: 0, usage: { inputTokens: 10, outputTokens: 5 } }, flags: [] });
+    const r = compare([ra, rb], { baseline: "A", candidate: "B", sessions: new Map([[ra.id, broke()], [rb.id, clean()]]) });
+    const m = Object.fromEntries(r.metrics.map((x) => [x.key, x]));
+    // B removed both breaks and their cost; a clean session counts as 0, not missing.
+    assert.deepEqual([m.cacheBreaks?.baseline, m.cacheBreaks?.candidate, m.cacheBreaks?.delta], [2, 0, -2]);
+    assert.deepEqual([m.cacheWaste?.baseline, m.cacheWaste?.candidate], [0.2, 0]);
+    assert.equal(m.cacheBreaks?.better, undefined, "lower is better by default");
+  });
 });
 
 describe("formatCompare", () => {
