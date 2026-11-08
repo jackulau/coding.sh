@@ -81,7 +81,10 @@ if [ "${CODING_SH_YES:-}" = "1" ]; then
 elif has_tty; then
   coding.sh init </dev/tty || status=$?
 else
-  say "No terminal to confirm on. Run: coding.sh"
+  # An agent's shell or CI: installed, nothing set up. Name the exact next command
+  # (bare `coding.sh` without a terminal only prints help).
+  say "Installed. No terminal to ask on, so no agent was set up yet."
+  say "Next: coding.sh init --dry-run to see the plan, then coding.sh init --yes (or rerun with CODING_SH_YES=1)."
   exit 0
 fi
 # Canceled at the prompt: stop here. Other failures were already explained by init.

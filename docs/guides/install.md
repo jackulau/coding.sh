@@ -9,7 +9,8 @@ curl -fsSL https://coding.sh/install | sh
 ```
 
 It installs the latest release from npm (or the GitHub release tarball when npm can't be reached),
-runs `coding.sh init`, then opens the viewer.
+runs `coding.sh init`, then opens the viewer. Without a terminal (an agent's shell, CI) it installs
+only and prints the next command; `CODING_SH_YES=1` runs `init --yes` instead.
 
 ## npm
 

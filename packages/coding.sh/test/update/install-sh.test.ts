@@ -107,4 +107,19 @@ describe("install.sh without a terminal", () => {
     assert.deepEqual(readFileSync(calls, "utf8").trim().split("\n"), ["init --yes"]);
     assert.match(r.stderr, /Run: coding\.sh ui/);
   });
+
+  // An agent's shell has no terminal: install, set nothing up, and name the command that does (not bare `coding.sh`, which prints help there).
+  test("without CODING_SH_YES: installs, runs nothing, and names init --yes as the next step", { skip: !setsid && "needs setsid" }, () => {
+    const bin = mkdtempSync(join(tmpdir(), "csh-install-"));
+    const calls = join(bin, "calls.log");
+    writeFileSync(join(bin, "npm"), `#!/bin/sh\ncase "$1" in view) exit 1 ;; prefix) echo /nonexistent ;; esac\nexit 0\n`);
+    writeFileSync(join(bin, "curl"), `#!/bin/sh\necho '{"tag_name": "v0.3.0"}'\n`);
+    writeFileSync(join(bin, "coding.sh"), `#!/bin/sh\necho "$*" >> "${calls}"\nexit 0\n`);
+    for (const f of ["npm", "curl", "coding.sh"]) chmodSync(join(bin, f), 0o755);
+    const r = spawnSync("setsid", ["sh", INSTALL_SH], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"], env: { PATH: `${bin}:${process.env.PATH}`, HOME: bin } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.throws(() => readFileSync(calls, "utf8"), "coding.sh was not run");
+    assert.match(r.stderr, /no agent was set up yet/);
+    assert.match(r.stderr, /coding\.sh init --yes/);
+  });
 });
