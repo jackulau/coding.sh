@@ -33,7 +33,7 @@ Short recipes you can run as written.
 | [how-to/expensive-sessions.md](how-to/expensive-sessions.md) | find your most expensive sessions |
 | [how-to/session-to-eval.md](how-to/session-to-eval.md) | turn a real session into an eval task or dataset case |
 | [how-to/evaluate-a-skill.md](how-to/evaluate-a-skill.md) | test whether an Agent Skill changes what the agent does |
-| [how-to/self-host-team.md](how-to/self-host-team.md) | self-host for a team, the short path |
+| [how-to/self-host-team.md](how-to/self-host-team.md) | self-host for a team: run one container, connect each machine, open the viewer |
 
 ## Case studies
 

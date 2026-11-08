@@ -107,7 +107,7 @@ export const DOC_GROUPS: DocGroup[] = [
       { path: "/docs/how-to/expensive-sessions", label: "Find expensive sessions", title: "Find your most expensive sessions", summary: "Rank sessions by cost or tokens, break spend down by repo, agent and model, and see where cost data comes from." },
       { path: "/docs/how-to/evaluate-a-skill", label: "Evaluate a skill", title: "Evaluate an Agent Skill", summary: "Run the same behaviour tasks with and without a skill, grade each run with checks and a judge, and read a ship-or-hold answer." },
       { path: "/docs/how-to/session-to-eval", label: "Session to eval", title: "Turn a real session into an eval", summary: "Keep a captured session as a validated repo task or a dataset case, so later changes are tested against it." },
-      { path: "/docs/how-to/self-host-team", label: "Self-host for a team", title: "Self-host for a team", summary: "Run one coding.sh serve on Postgres with ingest and read keys, and send each teammate's sessions to it." },
+      { path: "/docs/how-to/self-host-team", label: "Self-host for a team", title: "Self-host for a team", summary: "Run one container, connect each machine with coding.sh init --remote, and open the team viewer." },
       { path: "/docs/perf", label: "Measure site speed", title: "Site speed", summary: "How we made coding.sh load faster on slow phones, measured with coding.sh exp metrics, and the command to measure your own site." },
     ],
   },

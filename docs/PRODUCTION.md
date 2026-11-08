@@ -104,10 +104,17 @@ pushed into the production DB. An explicit `coding.sh ingest --store …` still 
   - Ingest keys cannot read, and read keys cannot ingest.
   - Blobs are shared and content-addressed, so a scoped key that already knows another project's
     blob sha256 can fetch that blob. This is documented, not fixed.
-- **Refusal rule:** if the bind address is not loopback, serve exits 2 unless at least one ingest key
-  **and** (a read key or basic auth) are configured, or `--insecure` is passed. The error message
-  names the env vars and `--insecure`. On loopback with no keys, ingest is open to project `default`
-  (single-user mode, J4). `--insecure` logs a warning at start and sets `insecure: true` in `/readyz`.
+- **First-start keys:** if the bind address is not loopback and no ingest key, read key or basic
+  auth is configured (and no `--insecure`), serve makes one ingest key (project `default`) and one
+  read key (every project). It keeps them in `<CODING_SH_HOME>/serve-keys.json` (mode 600) and uses
+  the same file on every later start. Each start prints both keys, the viewer link and the
+  `coding.sh init --remote` line on stdout, after the URL. A damaged file stops serve with exit 2; it
+  is never replaced, because clients hold the old keys. Delete the file to make new keys. Configuring
+  any key or basic auth turns this off. A `--role viewer` replica never makes keys.
+- **Refusal rule:** otherwise, if the bind address is not loopback, serve exits 2 unless at least one
+  ingest key **and** (a read key or basic auth) are configured, or `--insecure` is passed. The error
+  message names the env vars and `--insecure`. On loopback with no keys, ingest is open to project
+  `default` (single-user mode, J4). `--insecure` logs a warning at start and sets `insecure: true` in `/readyz`.
 - Serve speaks plain HTTP. TLS is terminated by the platform or a proxy.
 - CORS is closed by default. `serve.cors_origins` opens the ingest routes (`/v1/ingest` with its
   `OPTIONS` preflight, and OTLP) to the listed browser origins; any other `Origin` gets 403. The viewer
@@ -521,16 +528,30 @@ export OTEL_SERVICE_NAME=checkout-api                              # becomes the
 ## 5. Deploy
 
 - **`Dockerfile` (repo root).**
-  - The build stage runs on `node:22-bookworm-slim`: `npm ci`, a build of `coding.sh`, then an
-    install of the production deps of `coding.sh-store-postgres`, `coding.sh-store-s3` and
-    `coding.sh-store-clickhouse`.
+  - The build stage runs on `node:22-bookworm-slim` on the build platform (`--platform=$BUILDPLATFORM`):
+    `npm ci`, a build of `coding.sh`, then an install of the production deps of
+    `coding.sh-store-postgres`, `coding.sh-store-s3` and `coding.sh-store-clickhouse`. It is plain
+    JavaScript, so the linux/arm64 image needs no emulation.
   - The runtime stage is `gcr.io/distroless/nodejs22-debian12:nonroot`, with
     `CMD ["/app/cli.mjs","serve"]`.
   - It sets `CODING_SH_HOME=/data` (a nonroot-owned directory to mount a volume on; no `VOLUME`
     instruction, which Railway rejects), `CODING_SH_HOST=0.0.0.0` and `EXPOSE 4318`, plus
     `HEALTHCHECK ["/nodejs/bin/node","/app/cli.mjs","serve","healthcheck"]`.
-  - The image needs keys or `--insecure`.
-- **`docker-compose.yml` (repo root).**
+  - With no keys, the first start makes them in `/data/serve-keys.json` (see the first-start keys in §1).
+  - The release workflow builds it for linux/amd64 and linux/arm64, smoke tests it and pushes it to
+    `ghcr.io/jackulau/coding.sh` on version tags. CI builds and smoke tests it on every change
+    (`deploy/test/smoke.mjs`).
+- **`deploy/compose/compose{,.postgres,.clickhouse}.yml` (team stacks).**
+  - `coding-sh` from `ghcr.io/jackulau/coding.sh:latest` (`CODING_SH_IMAGE`), built from the
+    checkout when the pull is denied; port 4318 published on every interface (`CODING_SH_PUBLISH`);
+    the `coding-sh-data` volume on `/data`; `stop_grace_period: 30s`.
+  - The store is SQLite on the volume, `postgres:17`, or `clickhouse/clickhouse-server` with blobs
+    on the volume. The database ports are not published. Database passwords default to `coding`
+    (`POSTGRES_PASSWORD`, `CLICKHOUSE_PASSWORD`).
+  - Every variable is optional and listed in `deploy/compose/.env.example`. With none set, serve
+    makes first-start keys. serve retries opening the store for up to 30 s on connection errors, so
+    it can start before the database accepts connections.
+- **`docker-compose.yml` (repo root).** The stack the store tests and the journeys below use.
   - Services:
     - `coding-sh`, built from `.` and published on `127.0.0.1:4318`;
     - `postgres` (`postgres:17`, published on `127.0.0.1:5432`);
@@ -549,7 +570,8 @@ export OTEL_SERVICE_NAME=checkout-api                              # becomes the
   - It also mounts `deploy/compose/config.toml`, which pins `[pricing."mock-gpt"] input=1 output=2`
     and `[pricing."mock-claude"] input=3 output=15`.
 - **`deploy/fly.toml`:** `internal_port = 4318`, an HTTP check on `/readyz`, and a `[mounts]` volume
-  at `/data` for sqlite mode. Keys are set with `fly secrets set`.
+  at `/data` for sqlite mode. Keys are made on first start and kept on the volume, or set with
+  `fly secrets set`.
 - **`deploy/railway.json`:** the Dockerfile builder and a `/healthz` healthcheck. The service
   variable `CODING_SH_STORE_URL=${{Postgres.DATABASE_URL}}` is set in the dashboard, because
   `railway.json` cannot hold variables.
@@ -696,7 +718,7 @@ the J1 compose stack holds. Run `docker compose stop coding-sh` first, or `serve
 
 ```sh
 npm run build -w coding.sh && export CODING_SH_HOME=$(mktemp -d) HOME=$(mktemp -d)
-node packages/coding.sh/dist/cli.mjs serve --host 0.0.0.0; echo $?   # → 2, stderr mentions CODING_SH_INGEST_KEYS and --insecure
+CODING_SH_INGEST_KEYS=demo:csh_ik_0123456789abcdef node packages/coding.sh/dist/cli.mjs serve --host 0.0.0.0; echo $?   # → 2, stderr mentions CODING_SH_READ_KEYS and --insecure
 CODING_SH_STORE_URL=sqlite://$CODING_SH_HOME/index.db node packages/coding.sh/dist/cli.mjs serve --config deploy/compose/config.toml & SERVE=$!
 CODING_SH_URL=http://127.0.0.1:4318 OPENAI_BASE_URL=http://127.0.0.1:9999/v1 OPENAI_API_KEY=mock node examples/production/node-openai/app.mjs
 ```

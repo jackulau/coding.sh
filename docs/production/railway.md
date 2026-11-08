@@ -1,7 +1,12 @@
 # Railway
 
 `deploy/railway.json` builds the repo's Dockerfile and checks `/healthz`. The store is a Railway
-Postgres database in the same project.
+Postgres database in the same project. There is no Railway template or deploy button; the steps
+below use the dashboard.
+
+From release 0.1.2 on you can skip the build: *+ New → Docker Image* with
+`ghcr.io/jackulau/coding.sh:latest`, then add a volume mounted at `/data` and a public domain. With
+the volume, serve runs on SQLite and makes its keys on first start; read them in the deploy logs.
 
 ## 3 steps
 
@@ -17,6 +22,9 @@ Postgres database in the same project.
      CODING_SH_READ_KEYS=*:csh_rk_…
      CODING_SH_TRUST_PROXY=1
      ```
+
+     Make the keys as in [README.md](README.md#point-it-at-a-database-in-3-steps). Without a
+     volume, keys left unset would change on every deploy.
 
    - *Settings → Networking*: generate a public domain.
 3. **Deploy**, then check `https://<your-domain>/readyz` for `{"ok":true,"store":"postgres",…}`.
@@ -35,4 +43,5 @@ Send traces with `CODING_SH_URL=https://<your-domain>` and open `https://<your-d
   the new one takes the lock within 5 s. Clients retry the 503s in between.
 - **One replica.** Keep the service at one replica. Only one replica ingests; more add nothing.
 - **Volumes are optional.** Everything lives in Postgres. SQLite on a Railway volume also works: mount
-  it at `/data` and leave `CODING_SH_STORE_URL` unset.
+  it at `/data` and leave `CODING_SH_STORE_URL` unset. Then the keys can be left unset too; serve
+  makes them on first start and keeps them on the volume.

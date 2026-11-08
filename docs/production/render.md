@@ -3,12 +3,16 @@
 `render.yaml` at the repo root is a Blueprint: a Docker web service plus a Render Postgres database
 whose connection string becomes the store URL. Blobs go to the same database.
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/jackulau/coding.sh)
+
 ## 3 steps
 
-1. **Make keys** (see [README.md](README.md#point-it-at-a-database-in-3-steps)).
-2. **Create the Blueprint.** Open `https://render.com/deploy?repo=<your fork's URL>`, or *New →
-   Blueprint* in the dashboard and pick your fork. Render asks once for `CODING_SH_INGEST_KEYS`
-   (`myapp:csh_ik_…`) and `CODING_SH_READ_KEYS` (`*:csh_rk_…`).
+1. **Make keys** (see [README.md](README.md#point-it-at-a-database-in-3-steps)). Render services
+   have no volume here, so serve cannot keep first-start keys across deploys.
+2. **Create the Blueprint.** Click the button above (it uses this repo), open
+   `https://render.com/deploy?repo=<your fork's URL>`, or pick *New → Blueprint* in the dashboard.
+   Render asks once for `CODING_SH_INGEST_KEYS` (`myapp:csh_ik_…`) and `CODING_SH_READ_KEYS`
+   (`*:csh_rk_…`).
 3. **Check it.** `https://<service>.onrender.com/readyz` returns `{"ok":true,"store":"postgres",…}`.
 
 Send traces with `CODING_SH_URL=https://<service>.onrender.com` and open

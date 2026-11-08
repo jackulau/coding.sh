@@ -1,12 +1,13 @@
 # coding.sh serve on Fly.io. Run from the repo root (see docs/production/fly.md):
 #   fly launch --no-deploy --copy-config --config deploy/fly.toml --name <your-app>
 #   fly volumes create coding_sh_data --size 3 --config deploy/fly.toml
-#   fly secrets set CODING_SH_INGEST_KEYS=myapp:csh_ik_… CODING_SH_READ_KEYS='*:csh_rk_…' --config deploy/fly.toml
-#   fly deploy --config deploy/fly.toml --dockerfile Dockerfile
+#   fly deploy --config deploy/fly.toml --image ghcr.io/jackulau/coding.sh:latest   # or --dockerfile Dockerfile
+#   fly logs --config deploy/fly.toml --no-tail | grep -A5 'No keys are configured'
 #
-# Default is SQLite on the /data volume: one machine, nothing else to run. For Postgres, set
-# `fly secrets set CODING_SH_STORE_URL=postgres://…` (blobs then go to the same database) and you
-# can drop [mounts].
+# Default is SQLite on the /data volume: one machine, nothing else to run, and the first start makes
+# the keys and keeps them on the volume. Your own keys: fly secrets set CODING_SH_INGEST_KEYS=…
+# CODING_SH_READ_KEYS=… (both). For Postgres, set `fly secrets set CODING_SH_STORE_URL=postgres://…`
+# (blobs then go to the same database); set your own keys before you drop [mounts].
 
 app = "coding-sh-change-me"
 primary_region = "iad"

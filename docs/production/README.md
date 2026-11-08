@@ -4,19 +4,27 @@ Run one `coding.sh serve` process, point it at a database, and send traces to it
 OpenAI, Anthropic, the AI SDK, an LLM gateway (Vercel AI Gateway, OpenRouter, LiteLLM, ...), or any OpenTelemetry app. The viewer, CLI, MCP
 tools, datasets and experiments run on the same database.
 
-The full contract is [docs/PRODUCTION.md](../PRODUCTION.md). This page is the short version.
+The full contract is [docs/PRODUCTION.md](../PRODUCTION.md). This page is the short version. For a
+team's coding agents on one machine, start with [Self-host for a team](../how-to/self-host-team.md):
+one `docker run`, no keys to make.
+
+The image is `ghcr.io/jackulau/coding.sh`, published for amd64 and arm64 by each tagged release from
+0.1.2 on. Before that release, build it from a checkout with
+`docker build -t ghcr.io/jackulau/coding.sh .` and use the same commands.
 
 ## Point it at a database in 3 steps
 
 **1. Make keys.** One ingest key per app, one read key for people:
 
 ```sh
-docker build -t coding-sh .                                   # or: npx coding.sh serve keygen …
-docker run --rm coding-sh /app/cli.mjs serve keygen --project myapp         # csh_ik_… for apps
-docker run --rm coding-sh /app/cli.mjs serve keygen --project myapp --read  # csh_rk_… for people
+docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project myapp         # csh_ik_… for apps
+docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project myapp --read  # csh_rk_… for people
 ```
 
-Each key is printed once. No Node or Docker at hand? A key is just `csh_ik_` (or `csh_rk_`) plus 32
+Each key is printed once. With a volume on `/data` you can skip this step: with no keys set, the
+first start makes a key pair, keeps it in `/data/serve-keys.json` and prints it in the logs. Without
+a volume (most platforms with a managed database), set your own keys, or they change on every
+deploy. No Node or Docker at hand? A key is just `csh_ik_` (or `csh_rk_`) plus 32
 random bytes in base64url:
 `echo "csh_ik_$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"`.
 
@@ -27,7 +35,7 @@ docker run -d -p 4318:4318 \
   -e CODING_SH_STORE_URL='postgres://user:pass@db.example.com:5432/coding?sslmode=require' \
   -e CODING_SH_INGEST_KEYS='myapp:csh_ik_…' \
   -e CODING_SH_READ_KEYS='*:csh_rk_…' \
-  coding-sh
+  ghcr.io/jackulau/coding.sh
 curl -s http://127.0.0.1:4318/readyz      # {"ok":true,"store":"postgres",…}
 ```
 
@@ -70,7 +78,8 @@ pass the key once.
 
 | Where | Store | Guide |
 |---|---|---|
-| Any machine with Docker | Postgres + S3-compatible blobs | [compose.md](compose.md) |
+| Any machine with Docker | SQLite, Postgres or ClickHouse, no edits | [Self-host for a team](../how-to/self-host-team.md#run-it-with-compose) |
+| Any machine with Docker | Postgres + S3-compatible blobs (the test stack) | [compose.md](compose.md) |
 | Fly.io | SQLite on a volume, or Postgres | [fly.md](fly.md) |
 | Railway | Railway Postgres | [railway.md](railway.md) |
 | Render | Render Postgres, Deploy button | [render.md](render.md) |
@@ -110,5 +119,5 @@ turns of a conversation with `sessionId` (SDK) or `gen_ai.conversation.id` (OTel
 - **CLI on the production store.** `coding.sh sessions --store postgres://… --project myapp`, or set
   `CODING_SH_STORE_URL`. `search`, `show`, `mcp`, `dataset` and `exp` all honor it.
 
-Serve refuses to bind a public address without an ingest key and a read key (or basic auth). Pass
-`--insecure` only on a private network.
+With no keys and no viewer login, serve on a public address makes a key pair on first start (above).
+With only some of them set, it refuses to start. Pass `--insecure` only on a private network.

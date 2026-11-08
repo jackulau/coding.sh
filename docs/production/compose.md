@@ -1,8 +1,13 @@
 # Docker Compose: serve + Postgres + S3 blobs
 
-One machine runs the whole stack: `coding-sh` (serve), `postgres` (index, datasets, experiments) and
-an S3-compatible blob store with a one-shot bucket creator. Every port is published on `127.0.0.1`
-only.
+This is the stack in `docker-compose.yml` at the repo root, which the Postgres and S3 store tests
+use. One machine runs `coding-sh` (serve), `postgres` (index, datasets, experiments) and an
+S3-compatible blob store with a one-shot bucket creator. Every port is published on `127.0.0.1`
+only, and the keys are for fixed test projects.
+
+For a team, the stacks in `deploy/compose/` are simpler: no `.env` to generate, keys made on first
+start, SQLite, Postgres or ClickHouse. See
+[Self-host for a team](../how-to/self-host-team.md#run-it-with-compose).
 
 ## 3 steps
 

@@ -1,11 +1,13 @@
 # One server for a team
 
 This guide sets up one `coding.sh serve` that everyone on a small team sends to and reads from.
-That covers each person's coding agents and the team's API apps. It takes about 15 minutes.
+That covers each person's coding agents and the team's API apps. The quickstart in
+[Self-host for a team](../how-to/self-host-team.md) gets one server running with one shared key
+pair in about a minute; this guide adds a key per person, a viewer login and retention.
 
 You end up with:
 
-- one server (Postgres + blob store) at a URL like `https://obs.example.com`;
+- one server at a URL like `https://obs.example.com`;
 - one **ingest key** per person or service, which decides the **project** their data lands in;
 - one shared login for the viewer, or a **read key** per person;
 - optional retention, so old sessions get deleted.
@@ -15,17 +17,16 @@ You end up with:
 On the machine that will host it, from a checkout of this repo:
 
 ```sh
-deploy/compose/gen-env.sh                 # writes .env with random secrets (mode 600)
-docker compose up -d --build --wait
+docker compose -f deploy/compose/compose.postgres.yml up -d --wait
 curl -s http://127.0.0.1:4318/readyz      # {"ok":true,"store":"postgres",...}
 ```
 
-Compose publishes port 4318 on `127.0.0.1` only. To let teammates reach it, put a TLS proxy in front
-(Caddy: `obs.example.com { reverse_proxy 127.0.0.1:4318 }`) and add `CODING_SH_TRUST_PROXY: "1"` to
-the `coding-sh` service's `environment` in `docker-compose.yml`. On a private network such as a
-tailnet, you can publish the port on that interface instead.
+This stack runs serve on Postgres; `compose.yml` runs it on SQLite. Port 4318 is published on every
+interface. On the internet, put a TLS proxy in front and keep the port on loopback: set
+`CODING_SH_PUBLISH=127.0.0.1:4318` and `CODING_SH_TRUST_PROXY=1` in `deploy/compose/.env`, and
+proxy with Caddy (`obs.example.com { reverse_proxy 127.0.0.1:4318 }`).
 
-More detail: [production/compose.md](../production/compose.md).
+More detail: [Self-host for a team](../how-to/self-host-team.md).
 
 ## 2. Give everyone a key
 
@@ -33,26 +34,24 @@ Use one project per person and one per service, so you can tell who sent what: s
 up as `alice/<id>`. Use one shared project if you don't need that.
 
 ```sh
-docker compose run --rm --no-deps coding-sh /app/cli.mjs serve keygen --project alice
-docker compose run --rm --no-deps coding-sh /app/cli.mjs serve keygen --project billing-api
+docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project alice
+docker run --rm ghcr.io/jackulau/coding.sh /app/cli.mjs serve keygen --project billing-api
 ```
 
 Each command prints a key (`csh_ik_...`) once, plus a `sha256:` line. Send the key to its owner over a
-private channel. Put only the hashes in `deploy/compose/config.toml`, which the server reads. Hashes
-are safe to commit.
+private channel. Put only the hashes in `deploy/compose/.env`. Hashes are safe to commit.
 
-```toml
-[[serve.projects]]
-id = "alice"
-ingest_keys = ["sha256:..."]
-
-[[serve.projects]]
-id = "billing-api"
-ingest_keys = ["sha256:..."]
-retention_days = 30            # optional, this project only
+```sh
+CODING_SH_INGEST_KEYS=alice:sha256:...,billing-api:sha256:...
+CODING_SH_READ_KEYS=*:sha256:...          # a read key from step 3, or the first-start one
 ```
 
-Then run `docker compose restart coding-sh`. To revoke a key, delete its hash and restart.
+Then run `docker compose -f deploy/compose/compose.postgres.yml up -d`. To revoke a key, delete its
+hash and run it again. Once you set your own keys, the first-start keys stop working. Set both
+variables, or a viewer login from step 3: with only an ingest key, serve refuses to start.
+
+For per-project settings such as `retention_days`, use `[[serve.projects]]` tables in a config file
+instead ([PRODUCTION.md](../PRODUCTION.md)).
 
 Projects keep teams' data apart, but they don't make the server safe for untrusted tenants. For
 those, run a separate server and database for each tenant.
@@ -61,30 +60,33 @@ those, run a separate server and database for each tenant.
 
 Pick one of these:
 
-- **Shared login (simplest).** Hash a password with `printf %s 'the password' | shasum -a 256`, then add:
-
-  ```toml
-  [serve.viewer]
-  basic_user = "team"
-  basic_password_sha256 = "<the hex>"
-  ```
-
-  Open `https://obs.example.com` and the browser asks for the user name and password. This login
-  sees every project.
+- **Shared login (simplest).** Add `CODING_SH_BASIC_AUTH=team:<a long password>` to
+  `deploy/compose/.env`. Open `https://obs.example.com` and the browser asks for the user name and
+  password. This login sees every project.
 - **A read key per person.** Run `serve keygen --project '*' --read` (all projects) or
-  `--project alice --read` (one project). Add the printed `read_keys` line under `[serve.viewer]`.
-  Each person opens `https://obs.example.com/?t=<their read key>` once. A cookie keeps them signed
-  in until the browser closes. A one-project key only ever sees that project. Add
-  `name = "alice"` to a key's entry to show that name on the labels its holder sets; without it,
-  labels show `reader:` plus the start of the key's hash.
+  `--project alice --read` (one project), and list the printed hashes in `CODING_SH_READ_KEYS`
+  (`*:sha256:...,alice:sha256:...`). Each person opens `https://obs.example.com/?t=<their read key>`
+  once, or pastes the key into the sign-in form. A cookie keeps them signed in until the browser
+  closes. A one-project key only ever sees that project.
 
-Restart `coding-sh` after editing the file. For the API, `GET /api/sessions?project=alice` filters by
-project.
+Run `docker compose -f deploy/compose/compose.postgres.yml up -d` after editing `.env`. For the
+API, `GET /api/sessions?project=alice` filters by project.
+
+In a config file, the same settings go under `[serve.viewer]` (`basic_user`,
+`basic_password_sha256`, `read_keys`), where a read key's entry can also carry `name = "alice"` to
+show that name on the labels its holder sets ([PRODUCTION.md](../PRODUCTION.md)).
 
 ## 4. Send your coding agents
 
-Each developer keeps coding.sh running locally as usual (`npx coding.sh init`) and adds the team
-server as a sink in `~/.coding.sh/config.toml`:
+Each developer runs, with their own ingest key:
+
+```sh
+coding.sh init --remote https://obs.example.com --key csh_ik_...
+```
+
+That installs the capture hooks if they are missing and adds the team server as a sink named
+`team` in `~/.coding.sh/config.toml`. Add `--remote-mode full` to send prompts and output too.
+On coding.sh 0.1.1 and older, add the sink by hand:
 
 ```toml
 [[sinks]]

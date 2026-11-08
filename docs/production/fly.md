@@ -1,7 +1,8 @@
 # Fly.io
 
-`deploy/fly.toml` runs one machine with SQLite on a volume. Nothing else to provision. Switch to
-Postgres with one secret when you outgrow it.
+`deploy/fly.toml` runs one machine with SQLite on a volume. Nothing else to provision, and no keys
+to make: the first start makes a key pair on the volume. Switch to Postgres with one secret when
+you outgrow it.
 
 ## 3 steps
 
@@ -12,17 +13,21 @@ Run these from the repo root, after `fly auth login`.
 fly launch --no-deploy --copy-config --config deploy/fly.toml --name my-coding-sh
 fly volumes create coding_sh_data --size 3 --config deploy/fly.toml
 
-# 2. Set the keys (see README.md "Make keys").
-fly secrets set --config deploy/fly.toml \
-  CODING_SH_INGEST_KEYS='myapp:csh_ik_…' CODING_SH_READ_KEYS='*:csh_rk_…'
+# 2. Deploy the published image, or build it here with --dockerfile Dockerfile instead of --image.
+fly deploy --config deploy/fly.toml --image ghcr.io/jackulau/coding.sh:latest
 
-# 3. Deploy.
-fly deploy --config deploy/fly.toml --dockerfile Dockerfile
-curl -s https://my-coding-sh.fly.dev/readyz     # {"ok":true,"store":"sqlite",…}
+# 3. Read the keys and the connect command from the logs.
+fly logs --config deploy/fly.toml --no-tail | grep -A5 'No keys are configured'
 ```
 
-Then send traces with `CODING_SH_URL=https://my-coding-sh.fly.dev` and open
+The image is published from release 0.1.2 on; before that, use `--dockerfile Dockerfile`. The
+printed URLs are the machine's own address: use `https://my-coding-sh.fly.dev` in their place.
+Connect each developer with `coding.sh init --remote https://my-coding-sh.fly.dev --key csh_ik_…`,
+send traces with `CODING_SH_URL=https://my-coding-sh.fly.dev`, and open
 `https://my-coding-sh.fly.dev/?t=csh_rk_…`.
+
+To use your own keys instead, set both before the deploy:
+`fly secrets set --config deploy/fly.toml CODING_SH_INGEST_KEYS='myapp:csh_ik_…' CODING_SH_READ_KEYS='*:csh_rk_…'`.
 
 ## Postgres instead of SQLite
 
@@ -30,7 +35,8 @@ Then send traces with `CODING_SH_URL=https://my-coding-sh.fly.dev` and open
 fly secrets set --config deploy/fly.toml CODING_SH_STORE_URL='postgres://…?sslmode=require'
 ```
 
-Blobs follow to the same database. You can then remove `[mounts]` from `fly.toml`.
+Blobs follow to the same database. You can then remove `[mounts]` from `fly.toml`, but set your own
+keys first: without the volume, first-start keys change on every deploy.
 
 ## Notes
 

@@ -4,12 +4,11 @@ import Code from "../../components/docs/Code.astro";
 import Tag from "../../components/docs/Tag.astro";
 
 // Short version of docs/production/README.md. The full contract is docs/PRODUCTION.md.
-const serve = `docker build -t coding-sh .
-docker run -d -p 4318:4318 \\
+const serve = `docker run -d -p 4318:4318 \\
   -e CODING_SH_STORE_URL='postgres://user:pass@db.example.com:5432/coding?sslmode=require' \\
   -e CODING_SH_INGEST_KEYS='myapp:csh_ik_…' \\
   -e CODING_SH_READ_KEYS='*:csh_rk_…' \\
-  coding-sh
+  ghcr.io/jackulau/coding.sh
 curl -s http://127.0.0.1:4318/readyz`;
 
 const keys = `coding.sh serve keygen --project myapp          # csh_ik_… for the app
@@ -33,11 +32,15 @@ coding.sh search "timeout" --store postgres://…`;
     Run one <code>coding.sh serve</code> process, point it at a database, and send traces from your API apps: OpenAI, Anthropic, the AI SDK,
     an LLM gateway such as Vercel AI Gateway or OpenRouter, or any OpenTelemetry app. The viewer, CLI, MCP tools, datasets and experiments work on the same database.
   </p>
+  <p>
+    For a team's coding agents on one machine, start with <a href="/docs/how-to/self-host-team">Self-host for a team</a>: one
+    <code>docker run</code>, no keys to make.
+  </p>
 
   <h2 id="run">Run serve <Tag status="built" /></h2>
   <p>Make one ingest key per app and one read key for people. Each key is printed once.</p>
   <Code code={keys} />
-  <p>Then start serve with a store URL. It creates its tables on first start.</p>
+  <p>Then start serve with a store URL. It creates its tables on first start. With a volume on <code>/data</code> and no keys set, the first start makes a key pair there and prints it instead.</p>
   <Code code={serve} />
 
   <h2 id="store">Pick a store</h2>
@@ -78,7 +81,8 @@ coding.sh search "timeout" --store postgres://…`;
   <div class="note">
     <p>
       <strong>Not published yet:</strong> <code>@coding.sh/sdk</code>, <code>coding-sh</code> (Python) and the store plugins are in the
-      repository but not on npm or PyPI. Build the Docker image from a checkout.
+      repository but not on npm or PyPI. The image <code>ghcr.io/jackulau/coding.sh</code> is published from release 0.1.2 on; before
+      that, build it from a checkout with <code>docker build -t ghcr.io/jackulau/coding.sh .</code>
     </p>
   </div>
 </DocsLayout>
