@@ -134,7 +134,7 @@ describe("CLI: exp replay", () => {
   it("--dry-run estimates the cost without a key", async () => {
     const r = await cli([`${SESSION}#1`, "--vary", "model=claude-sonnet-4-5,claude-haiku-4-5", "--n", "3", "--dry-run"]);
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /^1 call × 2 arms × 3: 6 model calls, ~\d+k input tokens, ~\$[\d.]+ /m);
+    assert.match(r.stdout, /^1 call × 2 arms × 3: 6 model calls, ~[\d.]+k? input tokens, ~\$[\d.]+ /m);
     assert.match(r.stdout, /^A model=claude-sonnet-4-5$/m);
     assert.match(r.stdout, /^B model=claude-haiku-4-5$/m);
     assert.match(r.stdout, /needs \$ANTHROPIC_API_KEY to run/);

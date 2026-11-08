@@ -21,7 +21,7 @@ import { proxySettings } from "../../proxy/state.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { jsonArg, list, num, str } from "../common.ts";
 import { resumeField, resumeNote } from "../jobs.ts";
-import { CliError, plural, usd } from "../output.ts";
+import { CliError, plural, tokens, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { callOrFail } from "./diff-calls.ts";
 import { cancelledWarning, runArms } from "./exp.ts";
@@ -113,7 +113,7 @@ export async function expReplay(c: CommandContext, store: FileEvalStore, ctx: Co
       out.data({ dryRun: true, calls: cases.map((x) => x.call.event.id), skipped, arms: { a: arms[0].label, b: arms[1].label }, n, estimate: est });
       return 0;
     }
-    out.print(`${plural(cases.length, "call")} × 2 arms × ${n}: ${plural(est.calls, "model call")}, ~${Math.round(est.inputTokens / 1000)}k input tokens, ${estText} (input uncached, output as recorded)`);
+    out.print(`${plural(cases.length, "call")} × 2 arms × ${n}: ${plural(est.calls, "model call")}, ~${tokens(est.inputTokens)} input tokens, ${estText} (input uncached, output as recorded)`);
     out.print(`A ${arms[0].label}`);
     out.print(`B ${arms[1].label}`);
     for (const p of providers) if (!c.env[REPLAY_KEY_ENV[p]]) out.print(`needs $${REPLAY_KEY_ENV[p]} to run`);
