@@ -1,4 +1,4 @@
-# @coding.sh/sdk
+# @codingdotsh/sdk
 
 Observability for LLM apps and APIs in production. Wrap your OpenAI or Anthropic client, point two
 env vars at a `coding.sh serve` instance (backed by SQLite, or Postgres plus S3), and every model
@@ -9,14 +9,14 @@ call, tool call and turn shows up as a session with tokens, cost, latency and er
 - Without `CODING_SH_URL` it does nothing at all.
 
 ```sh
-npm i @coding.sh/sdk
+npm i @codingdotsh/sdk
 export CODING_SH_URL=https://obs.example.com     # your coding.sh serve
 export CODING_SH_INGEST_KEY=csh_ik_...           # not needed for a loopback serve with no keys
 ```
 
 ```ts
 import OpenAI from "openai";
-import { observe } from "@coding.sh/sdk";
+import { observe } from "@codingdotsh/sdk";
 
 const openai = observe(new OpenAI()); // or observe(new Anthropic())
 ```
@@ -24,7 +24,7 @@ const openai = observe(new OpenAI()); // or observe(new Anthropic())
 That is all. Each call becomes its own session. To group work, use traces:
 
 ```ts
-import { observe, span, trace } from "@coding.sh/sdk";
+import { observe, span, trace } from "@codingdotsh/sdk";
 
 app.post("/chat", async (req, res) => {
   const reply = await trace(
@@ -70,7 +70,7 @@ app.post("/chat", async (req, res) => {
 ```ts
 import { generateText } from "ai";
 import { OpenTelemetry } from "@ai-sdk/otel";
-import { aiSdkTracer, withSession } from "@coding.sh/sdk";
+import { aiSdkTracer, withSession } from "@codingdotsh/sdk";
 
 // AI SDK 7
 const telemetry = { integrations: new OpenTelemetry({ tracer: aiSdkTracer() }) };
@@ -133,7 +133,7 @@ reading it.
 ## Development
 
 ```sh
-npm test -w @coding.sh/sdk        # node:test against a fake server and a mock LLM
-npm run typecheck -w @coding.sh/sdk
-npm run build -w @coding.sh/sdk
+npm test -w @codingdotsh/sdk        # node:test against a fake server and a mock LLM
+npm run typecheck -w @codingdotsh/sdk
+npm run build -w @codingdotsh/sdk
 ```

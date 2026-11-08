@@ -2,7 +2,7 @@
   "name": "coding-sh-example-node-openai",
   "private": true,
   "type": "module",
-  "description": "A Node app and HTTP API using the OpenAI SDK, observed with @coding.sh/sdk (journeys J1 and J4).",
+  "description": "A Node app and HTTP API using the OpenAI SDK, observed with @codingdotsh/sdk (journeys J1 and J4).",
   "engines": {
     "node": ">=18"
   },
@@ -11,7 +11,7 @@
     "api": "node api.mjs"
   },
   "dependencies": {
-    "@coding.sh/sdk": "file:../../../packages/sdk",
+    "@codingdotsh/sdk": "file:../../../packages/sdk",
     "openai": "^7.53.0"
   }
 }

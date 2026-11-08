@@ -9,7 +9,7 @@
 // call `waitUntil(flush())` (or `await flush()`) before the function returns.
 import { createServer } from "node:http";
 import OpenAI from "openai";
-import { observe, shutdown, span, trace } from "@coding.sh/sdk";
+import { observe, shutdown, span, trace } from "@codingdotsh/sdk";
 
 const openai = observe(new OpenAI());
 const model = process.env.OPENAI_MODEL ?? "mock-gpt";

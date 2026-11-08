@@ -74,6 +74,10 @@ coding.sh runs on Windows, and CI tests it there.
 - **Query.** `sessions`, `search`, `usage` and `export` take `--where`, one filter language over any session or event field: `agent:codex cost>0.5 tool:Bash ok:false -flag:compaction`, with `OR`, `( )`, wildcards, ranges, `sort:` and `limit:`. `sessions --facets model,tool` counts sessions per value. The viewer API (`?where=`, `/api/facets`) and the MCP tools `sessions_list`, `search` and `usage` (`where`, `facets`) take the same queries. On SQLite a query is one parameterized SQL statement; a typo is a usage error that points at the character. [Query and export](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md#filter-with---where)
 - **Privacy.** `coding.sh purge --rule <regex>` removes every match of a secret's shape (`sk-ant-api03-[A-Za-z0-9_-]{80,}`) the way `--literal` removes a value, without printing the rule or a match. Purge also scrubs eval run dirs (`~/.coding.sh/runs`), where a kept run holds the agent's transcripts. [Privacy](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md)
 
+### Changed
+
+- **SDK.** The TypeScript SDK is published as `@codingdotsh/sdk` (npm org names can't contain a dot). Install it with `npm i @codingdotsh/sdk`. See [the SDK reference](docs/reference/sdk.md).
+
 ### Fixed
 
 - **Privacy.** `coding.sh purge` never repeats what was typed on its command line: a secret pasted as an argument, a flag value, an unknown option or a `--literal` path that does not exist is refused with exit 2 and `(value not shown)`, instead of being printed to the terminal and logs. Other commands still name a stray argument. [Purge](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-purge).
@@ -204,7 +208,7 @@ It also runs as a server on SQLite or Postgres, with SDKs for apps that call mod
 - **Production.** Deploy recipes for Fly, Railway and Render. [Deploy guides](https://github.com/jackulau/coding.sh/tree/main/docs/production).
 - **Production.** `--store <url>` or `CODING_SH_STORE_URL` points `sessions`, `show`, `search`, `mcp`, `dataset` and `exp` at the serve database.
 - **Production.** `sessions` and `search` take `--project`.
-- **SDKs.** `@coding.sh/sdk` for TypeScript: `observe(client)` for OpenAI and Anthropic, `observeFetch()`, `aiSdkTracer()`, `withSession`.
+- **SDKs.** `@codingdotsh/sdk` for TypeScript: `observe(client)` for OpenAI and Anthropic, `observeFetch()`, `aiSdkTracer()`, `withSession`.
 - **SDKs.** `coding-sh` for Python: `observe(client)` and OTel setup.
 - **SDKs.** Both batch, retry on 429 and never throw into your app. Not on npm or PyPI yet.
 - **Integrations.** Sessions sent through the Vercel AI Gateway are tagged `gateway:vercel`. [AI Gateway](https://coding.sh/docs/ai-gateway).

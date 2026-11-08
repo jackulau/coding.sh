@@ -14,7 +14,7 @@ import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-proto";
 import { generateText } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { OpenTelemetry } from "@ai-sdk/otel";
-import { aiSdkTracer, flush, withSession } from "@coding.sh/sdk";
+import { aiSdkTracer, flush, withSession } from "@codingdotsh/sdk";
 
 const url = (process.env.CODING_SH_URL ?? "http://127.0.0.1:4318").replace(/\/+$/, "");
 const key = process.env.CODING_SH_INGEST_KEY;

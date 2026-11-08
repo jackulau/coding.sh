@@ -84,20 +84,20 @@ printf '{"name":"app","private":true,"type":"module"}\n' >package.json
 npm i --silent --no-fund --no-audit "$CLI" "$(ls "$W"/pack/coding.sh-sdk-*.tgz)"
 cat >check.ts <<'EOF'
 import type { BlobStore, IndexStore } from "coding.sh/store";
-import { observe, trace, span, flush, init, stats } from "@coding.sh/sdk";
+import { observe, trace, span, flush, init, stats } from "@codingdotsh/sdk";
 export type T = [BlobStore, IndexStore, typeof observe, typeof trace, typeof span, typeof flush, typeof init, typeof stats];
 EOF
 "$ROOT/node_modules/.bin/tsc" --noEmit --strict --skipLibCheck false --module nodenext --moduleResolution nodenext --target es2022 --types node --typeRoots "$ROOT/node_modules/@types" check.ts
 echo "types resolve"
 
-step "@coding.sh/sdk: import and send a trace to a local coding.sh serve"
+step "@codingdotsh/sdk: import and send a trace to a local coding.sh serve"
 "$B" serve --port 0 >"$W/serve.out" 2>"$W/serve.err" &
 SERVE_PID=$!
 i=0; until grep -q '^http' "$W/serve.out" 2>/dev/null; do i=$((i+1)); [ $i -lt 150 ] || fail "serve did not start: $(cat "$W/serve.err")"; sleep 0.1; done
 SERVE_URL=$(head -n 1 "$W/serve.out")
 echo "serve $SERVE_URL"
 CODING_SH_URL="$SERVE_URL" CODING_SH_SERVICE=smoke-js node --input-type=module -e '
-import { trace, span, flush, stats } from "@coding.sh/sdk";
+import { trace, span, flush, stats } from "@codingdotsh/sdk";
 const out = await trace("smoke-js-turn", async () => {
   await span("tool", "lookup", async () => ({ ok: true }), { input: { id: 1 } });
   return "done";
@@ -151,7 +151,7 @@ if [ -n "${CODING_SH_SMOKE_PG_URL:-}" ]; then
   SERVE_PID=$!
   i=0; until grep -q '^http' "$W/pg.out" 2>/dev/null; do i=$((i+1)); [ $i -lt 150 ] || fail "serve on postgres did not start: $(cat "$W/pg.err")"; sleep 0.1; done
   CODING_SH_URL=$(head -n 1 "$W/pg.out") node --input-type=module -e '
-import { trace, flush } from "@coding.sh/sdk";
+import { trace, flush } from "@codingdotsh/sdk";
 await trace("smoke-pg-turn", async () => "ok", { sessionId: "smoke-pg-session" });
 if (!(await flush(5000))) throw new Error("flush timed out");'
   i=0; until "$B" sessions --json 2>/dev/null | grep -q smoke-pg-session; do i=$((i+1)); [ $i -lt 50 ] || fail "session not in postgres"; sleep 0.2; done
@@ -167,7 +167,7 @@ if [ -n "${CODING_SH_SMOKE_CH_URL:-}" ]; then
   SERVE_PID=$!
   i=0; until grep -q '^http' "$W/ch.out" 2>/dev/null; do i=$((i+1)); [ $i -lt 150 ] || fail "serve on clickhouse did not start: $(cat "$W/ch.err")"; sleep 0.1; done
   CODING_SH_URL=$(head -n 1 "$W/ch.out") node --input-type=module -e '
-import { trace, flush } from "@coding.sh/sdk";
+import { trace, flush } from "@codingdotsh/sdk";
 await trace("smoke-ch-turn", async () => "ok", { sessionId: "smoke-ch-session" });
 if (!(await flush(5000))) throw new Error("flush timed out");'
   i=0; until "$B" sessions --json 2>/dev/null | grep -q smoke-ch-session; do i=$((i+1)); [ $i -lt 50 ] || fail "session not in clickhouse"; sleep 0.2; done

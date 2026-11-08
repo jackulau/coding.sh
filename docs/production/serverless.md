@@ -6,12 +6,12 @@ container) and point your Vercel apps at it.
 
 ## Sending from Vercel works
 
-- **SDK in a Function.** `@coding.sh/sdk` batches in memory. A Function can freeze as soon as it
+- **SDK in a Function.** `@codingdotsh/sdk` batches in memory. A Function can freeze as soon as it
   responds, so flush before it does:
 
   ```ts
   import { waitUntil } from "@vercel/functions";
-  import { flush, observe } from "@coding.sh/sdk";
+  import { flush, observe } from "@codingdotsh/sdk";
 
   const openai = observe(new OpenAI());
 

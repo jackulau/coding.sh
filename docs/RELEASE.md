@@ -8,7 +8,7 @@ publishes five packages, once you approve the npm and PyPI jobs and their creden
 | Package | Registry | Source |
 |---|---|---|
 | `coding.sh` (CLI) | npm | `packages/coding.sh` |
-| `@coding.sh/sdk` | npm | `packages/sdk` |
+| `@codingdotsh/sdk` | npm | `packages/sdk` |
 | `coding.sh-store-postgres` | npm | `packages/store-postgres` |
 | `coding.sh-store-s3` | npm | `packages/blob-s3` |
 | `coding-sh` (Python SDK) | PyPI | `packages/sdk-python` |
@@ -34,7 +34,7 @@ all five packages); these are the steps only you can do. Your npm and PyPI accou
 two-factor authentication on.
 
 1. **Log in to npm** on your machine: `npm login`, then `npm whoami`.
-2. **Create the npm org** that owns `@coding.sh/sdk`: npmjs.com → your avatar → **Add
+2. **Create the npm org** that owns `@codingdotsh/sdk`: npmjs.com → your avatar → **Add
    Organization** → name `coding.sh` → **Unlimited public packages (free)**. The unscoped names
    `coding.sh`, `coding.sh-store-postgres` and `coding.sh-store-s3` need no org.
 3. **Give CI a one-time npm token.** npm can attach a trusted publisher only to a package that
@@ -63,7 +63,7 @@ two-factor authentication on.
    tag's run only.
 8. **Switch npm to trusted publishing and drop the token** (needs npm 11.15+, hence `npx npm@11`):
    ```sh
-   for p in coding.sh @coding.sh/sdk coding.sh-store-postgres coding.sh-store-s3; do
+   for p in coding.sh @codingdotsh/sdk coding.sh-store-postgres coding.sh-store-s3; do
      npx -y npm@11 trust github "$p" --file release.yml --repo jackulau/coding.sh --env release --allow-publish --yes
    done
    gh secret delete NPM_TOKEN --env release --repo jackulau/coding.sh
@@ -73,7 +73,7 @@ two-factor authentication on.
 9. **Turn on the npm commands on the site:** set `PACKAGE_PUBLISHED = true` in
    `apps/site/src/data/site.ts` and push to `main` (the Site workflow deploys it).
 
-Check it worked: `npm view coding.sh version`, `npm view @coding.sh/sdk version`,
+Check it worked: `npm view coding.sh version`, `npm view @codingdotsh/sdk version`,
 `pip index versions coding-sh`, `gh release view vX.Y.Z`.
 
 ## How a release flows
@@ -88,7 +88,7 @@ Check it worked: `npm view coding.sh version`, `npm view @coding.sh/sdk version`
    bytes npm gets, attached and that CHANGELOG section as the notes. From then on install.sh and
    `coding.sh update` install the new version from the release.
 4. Jobs **publish-npm** and **publish-pypi** need github-release and wait for approval in the
-   `release` environment. publish-npm publishes `coding.sh`, `@coding.sh/sdk`,
+   `release` environment. publish-npm publishes `coding.sh`, `@codingdotsh/sdk`,
    `coding.sh-store-postgres` and `coding.sh-store-s3` in that order (the stores peer-depend on
    `coding.sh`) with provenance. publish-pypi publishes `coding-sh` through PyPI trusted
    publishing. Without approval or credentials they wait, and the GitHub release stands on its own.
@@ -147,7 +147,7 @@ cd ~/coding-sh && git checkout main && git pull
 - [ ] Verify the release:
       ```sh
       npm view coding.sh version                 # X.Y.Z
-      npm view @coding.sh/sdk version            # and the stores, if bumped
+      npm view @codingdotsh/sdk version            # and the stores, if bumped
       pip index versions coding-sh               # if bumped
       npm audit signatures                       # in any project that depends on it
       gh release view vX.Y.Z                     # has coding.sh-X.Y.Z.tgz

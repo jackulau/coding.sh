@@ -433,13 +433,13 @@ never throws into the app.
   - `sessionId` groups the turns of a conversation.
 - The SDK never prices. Pricing happens on the server.
 
-### 4.1 TypeScript: `packages/sdk` → `@coding.sh/sdk`
+### 4.1 TypeScript: `packages/sdk` → `@codingdotsh/sdk`
 
 It has zero runtime deps, ships ESM and types, and targets Node ≥ 18 (plus Vercel's Node runtime;
 edge is best-effort).
 
 ```ts
-import { observe } from "@coding.sh/sdk";
+import { observe } from "@codingdotsh/sdk";
 const openai = observe(new OpenAI());          // or new Anthropic(); unknown objects are returned untouched
 ```
 

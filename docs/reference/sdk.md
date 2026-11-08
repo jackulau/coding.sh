@@ -22,12 +22,12 @@ Both SDKs read the same variables. Options passed to `init()` win over them. Eve
 | `CODING_SH_DISABLED` | yes | yes | `1` (or `true`, `yes`, `on`) turns the SDK off. |
 | `CODING_SH_DEBUG` | yes | yes | `1` (or `true`, `yes`, `on`) logs transport details to stderr. Keys and bodies are never logged. |
 
-## TypeScript: `@coding.sh/sdk`
+## TypeScript: `@codingdotsh/sdk`
 
 ### Install
 
 ```sh
-npm install @coding.sh/sdk
+npm install @codingdotsh/sdk
 export CODING_SH_URL=http://127.0.0.1:4318   # where coding.sh serve listens
 export CODING_SH_SERVICE=support-agent
 ```
@@ -38,7 +38,7 @@ Node `>=18`. No runtime dependencies. Add `CODING_SH_INGEST_KEY` when your serve
 
 ```ts
 import OpenAI from "openai";
-import { observe } from "@coding.sh/sdk";
+import { observe } from "@codingdotsh/sdk";
 
 const openai = observe(new OpenAI());
 const reply = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: "Where is my order?" }] });
@@ -49,7 +49,7 @@ const reply = await openai.chat.completions.create({ model: "gpt-4o-mini", messa
 ### Traces, tools and conversations
 
 ```ts
-import { span, trace } from "@coding.sh/sdk";
+import { span, trace } from "@codingdotsh/sdk";
 
 const answer = await trace(
   "support-reply",
@@ -72,7 +72,7 @@ Each top-level `trace()` is its own session unless you pass `sessionId`, which m
 Events are sent in the background in batches. The SDK flushes on `beforeExit`, which does not fire on `process.exit()`, and a serverless function can freeze as soon as it responds:
 
 ```ts
-import { flush, shutdown } from "@coding.sh/sdk";
+import { flush, shutdown } from "@codingdotsh/sdk";
 
 await flush(); // serverless: waitUntil(flush())
 await shutdown(); // before process.exit()
@@ -84,7 +84,7 @@ await shutdown(); // before process.exit()
 import { openai } from "@ai-sdk/openai";
 import { OpenTelemetry } from "@ai-sdk/otel";
 import { generateText } from "ai";
-import { aiSdkTracer } from "@coding.sh/sdk";
+import { aiSdkTracer } from "@codingdotsh/sdk";
 
 const { text } = await generateText({
   model: openai("gpt-4o-mini"),

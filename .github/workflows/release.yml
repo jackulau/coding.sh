@@ -16,7 +16,7 @@ name: Release
 #                   linux/arm64 to ghcr.io/<owner>/coding.sh as X.Y.Z, X.Y and
 #                   latest (X.Y.Z only for a pre-release).
 #   publish-npm     waits for approval in the "release" environment and for
-#                   github-release, then publishes coding.sh, @coding.sh/sdk,
+#                   github-release, then publishes coding.sh, @codingdotsh/sdk,
 #                   coding.sh-store-postgres, coding.sh-store-s3 and
 #                   coding.sh-store-clickhouse in that order (the stores
 #                   peer-depend on coding.sh).
@@ -111,7 +111,7 @@ jobs:
         working-directory: packages/coding.sh
         run: npm run check
 
-      - name: "@coding.sh/sdk typecheck and test"
+      - name: "@codingdotsh/sdk typecheck and test"
         working-directory: packages/sdk
         run: npm run check
 
@@ -307,7 +307,7 @@ jobs:
           # Empty once trusted publishing is configured; npm then uses OIDC.
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          for name in coding.sh @coding.sh/sdk coding.sh-store-postgres coding.sh-store-s3 coding.sh-store-clickhouse; do
+          for name in coding.sh @codingdotsh/sdk coding.sh-store-postgres coding.sh-store-s3 coding.sh-store-clickhouse; do
             base=${name#@}
             tgz=$(ls "npm/${base/\//-}-"[0-9]*.tgz)
             v=$(tar -xzOf "$tgz" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')

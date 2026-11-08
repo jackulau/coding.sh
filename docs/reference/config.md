@@ -299,7 +299,7 @@ Read by `curl -fsSL https://coding.sh/install | sh`.
 
 ### SDKs
 
-Read by `@coding.sh/sdk` and the Python `coding_sh` package when they send to `coding.sh serve`.
+Read by `@codingdotsh/sdk` and the Python `coding_sh` package when they send to `coding.sh serve`.
 
 | Variable | What |
 |---|---|

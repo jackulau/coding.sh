@@ -1,6 +1,6 @@
-// @coding.sh/sdk: production observability for apps that call LLM APIs.
+// @codingdotsh/sdk: production observability for apps that call LLM APIs.
 //
-//   import { observe } from "@coding.sh/sdk";
+//   import { observe } from "@codingdotsh/sdk";
 //   const openai = observe(new OpenAI());      // or new Anthropic()
 //
 // Set CODING_SH_URL (and CODING_SH_INGEST_KEY) and every model call is sent to

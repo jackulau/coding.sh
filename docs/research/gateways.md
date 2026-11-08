@@ -100,7 +100,7 @@ Source: [model select](https://docs.notdiamond.ai/reference/token_model_select_v
   return cost in the response, so a captured cost is used as is.
 - Route `compare --gateway`: Vercel, OpenRouter, LiteLLM and Ramp Router, the ones that document Anthropic
   Messages and OpenAI Responses endpoints.
-- SDKs: `@coding.sh/sdk` and `coding-sh` read the id headers above (`cf-aig-log-id`, `helicone-id`,
+- SDKs: `@codingdotsh/sdk` and `coding-sh` read the id headers above (`cf-aig-log-id`, `helicone-id`,
   `x-litellm-call-id`, `x-portkey-trace-id`, `x-kong-request-id`, `x-generation-id`) and marker headers
   (`x-router-provider`, `x-kong-llm-model`) from each recorded call.
 - Not done: response headers for agent sessions (agents do not keep them), Portkey's OTel cost (unit unknown),

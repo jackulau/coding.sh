@@ -75,7 +75,7 @@ coding.sh sessions --flag gateway:openrouter
 
 ## From the SDKs
 
-Apps traced with `@coding.sh/sdk` (`observe()`, `observeFetch()`) or the Python `coding-sh` package (`observe()`)
+Apps traced with `@codingdotsh/sdk` (`observe()`, `observeFetch()`) or the Python `coding-sh` package (`observe()`)
 detect every gateway above on each model call. The call's `llm.call` gets `payload.gateway` (so the session is
 tagged `gateway:<name>`) and, when the gateway handed one out, `payload.gatewayGenerationId`: the id
 `gateway enrich` looks up. No setup beyond pointing the client at the gateway.

@@ -554,7 +554,7 @@ ISSUES.forEach(([model, issue, labels, inTok, outTok, secs, error], i) => {
     status: error ? { code: 2, message: error } : { code: 1 },
   });
 });
-const body = { resourceSpans: [{ resource: { attributes: [attr("service.name", "coding-sh-triage"), attr("service.version", "0.4.2")] }, scopeSpans: [{ scope: { name: "@coding.sh/sdk", version: "0.1.0" }, spans }] }] };
+const body = { resourceSpans: [{ resource: { attributes: [attr("service.name", "coding-sh-triage"), attr("service.version", "0.4.2")] }, scopeSpans: [{ scope: { name: "@codingdotsh/sdk", version: "0.1.0" }, spans }] }] };
 const base = new URL(serve.url);
 const res = await fetch(new URL("/v1/traces", base), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 if (!res.ok) {

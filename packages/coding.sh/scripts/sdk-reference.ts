@@ -516,7 +516,7 @@ const TS_INTRO = (engines: string) => [
   "### Install",
   "",
   "```sh",
-  "npm install @coding.sh/sdk",
+  "npm install @codingdotsh/sdk",
   "export CODING_SH_URL=http://127.0.0.1:4318   # where coding.sh serve listens",
   "export CODING_SH_SERVICE=support-agent",
   "```",
@@ -527,7 +527,7 @@ const TS_INTRO = (engines: string) => [
   "",
   "```ts",
   'import OpenAI from "openai";',
-  'import { observe } from "@coding.sh/sdk";',
+  'import { observe } from "@codingdotsh/sdk";',
   "",
   "const openai = observe(new OpenAI());",
   'const reply = await openai.chat.completions.create({ model: "gpt-4o-mini", messages: [{ role: "user", content: "Where is my order?" }] });',
@@ -538,7 +538,7 @@ const TS_INTRO = (engines: string) => [
   "### Traces, tools and conversations",
   "",
   "```ts",
-  'import { span, trace } from "@coding.sh/sdk";',
+  'import { span, trace } from "@codingdotsh/sdk";',
   "",
   "const answer = await trace(",
   '  "support-reply",',
@@ -561,7 +561,7 @@ const TS_INTRO = (engines: string) => [
   "Events are sent in the background in batches. The SDK flushes on `beforeExit`, which does not fire on `process.exit()`, and a serverless function can freeze as soon as it responds:",
   "",
   "```ts",
-  'import { flush, shutdown } from "@coding.sh/sdk";',
+  'import { flush, shutdown } from "@codingdotsh/sdk";',
   "",
   "await flush(); // serverless: waitUntil(flush())",
   "await shutdown(); // before process.exit()",
@@ -573,7 +573,7 @@ const TS_INTRO = (engines: string) => [
   'import { openai } from "@ai-sdk/openai";',
   'import { OpenTelemetry } from "@ai-sdk/otel";',
   'import { generateText } from "ai";',
-  'import { aiSdkTracer } from "@coding.sh/sdk";',
+  'import { aiSdkTracer } from "@codingdotsh/sdk";',
   "",
   "const { text } = await generateText({",
   '  model: openai("gpt-4o-mini"),',
@@ -704,7 +704,7 @@ export function renderSdkReference(): string {
   const pyRequires = pyProject.match(/^requires-python\s*=\s*"([^"]+)"/m)?.[1] ?? "";
   const extrasBlock = pyProject.split(/^\[project\.optional-dependencies\]$/m)[1]?.split(/^\[/m)[0] ?? "";
   const pyExtras = [...extrasBlock.matchAll(/^(\w[\w-]*)\s*=/gm)].map((m) => m[1]!);
-  if (tsPkg.name !== "@coding.sh/sdk" || pyName !== "coding-sh") throw new Error("sdk-reference: package names changed; update the intros");
+  if (tsPkg.name !== "@codingdotsh/sdk" || pyName !== "coding-sh") throw new Error("sdk-reference: package names changed; update the intros");
 
   const ts_ = tsExports();
   const anchors = new Map<string, string>(ts_.filter((e) => e.kind !== "function").map((e) => [e.name, slug(tsHeading(e))]));

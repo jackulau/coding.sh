@@ -49,7 +49,7 @@ export CODING_SH_URL=https://obs.example.com CODING_SH_INGEST_KEY=csh_ik_…
 ```
 
 ```ts
-import { observe } from "@coding.sh/sdk";
+import { observe } from "@codingdotsh/sdk";
 const openai = observe(new OpenAI()); // or new Anthropic()
 ```
 
@@ -89,7 +89,7 @@ pass the key once.
 
 | From | How |
 |---|---|
-| Node (OpenAI, Anthropic, fetch, AI SDK) | `@coding.sh/sdk`: `observe(client)`, `observeFetch()`, `aiSdkTracer()` |
+| Node (OpenAI, Anthropic, fetch, AI SDK) | `@codingdotsh/sdk`: `observe(client)`, `observeFetch()`, `aiSdkTracer()` |
 | Python | `pip install coding-sh`, then `coding_sh.observe(client)` |
 | Any OpenTelemetry SDK (gen_ai semconv) | `OTEL_EXPORTER_OTLP_ENDPOINT=https://obs.example.com` and `OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer%20csh_ik_…"` |
 | Vercel AI Gateway | point its trace drain at `https://obs.example.com/v1/traces` with the ingest key as a Bearer header |

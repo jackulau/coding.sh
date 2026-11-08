@@ -97,7 +97,7 @@ The SDKs are in the coding.sh repository and not on npm or PyPI yet. Install the
 
 ```sh
 git clone https://github.com/jackulau/coding.sh ~/src/coding.sh
-(cd ~/src/coding.sh && npm ci && npm run build -w @coding.sh/sdk && cd packages/sdk && npm pack)
+(cd ~/src/coding.sh && npm ci && npm run build -w @codingdotsh/sdk && cd packages/sdk && npm pack)
 npm install ~/src/coding.sh/packages/sdk/coding.sh-sdk-0.0.1.tgz   # in your agent's folder
 pip install ~/src/coding.sh/packages/sdk-python                    # Python
 ```
@@ -116,7 +116,7 @@ on the command line, or a case on stdin when `coding.sh exp run` calls it (used 
 
 ```js
 import { readFileSync } from "node:fs";
-import { flush, span, trace } from "@coding.sh/sdk";
+import { flush, span, trace } from "@codingdotsh/sdk";
 
 // Stand-ins for your tool and model call.
 const lookupOrder = async (id) => ({ id, status: "shipped" });

@@ -15,7 +15,7 @@ const keys = `coding.sh serve keygen --project myapp          # csh_ik_… for t
 coding.sh serve keygen --project myapp --read   # csh_rk_… for people`;
 
 const sdk = `import OpenAI from "openai";
-import { observe } from "@coding.sh/sdk";
+import { observe } from "@codingdotsh/sdk";
 
 // CODING_SH_URL=https://obs.example.com  CODING_SH_INGEST_KEY=csh_ik_…
 const openai = observe(new OpenAI()); // or new Anthropic()`;
@@ -59,7 +59,7 @@ coding.sh search "timeout" --store postgres://…`;
   <p>Postgres and S3 come from plugin packages, so the core stays dependency-free. The Docker image includes both.</p>
 
   <h2 id="send">Send traces</h2>
-  <p>Node, with <code>@coding.sh/sdk</code>:</p>
+  <p>Node, with <code>@codingdotsh/sdk</code>:</p>
   <Code title="ts" code={sdk} />
   <p>Python: <code>coding_sh.observe(client)</code>. Any OpenTelemetry SDK, a Vercel AI Gateway trace drain, or a gateway's own OpenTelemetry export (LiteLLM, Cloudflare, Portkey):</p>
   <Code code={otel} />
@@ -80,7 +80,7 @@ coding.sh search "timeout" --store postgres://…`;
 
   <div class="note">
     <p>
-      <strong>Not published yet:</strong> <code>@coding.sh/sdk</code>, <code>coding-sh</code> (Python) and the store plugins are in the
+      <strong>Not published yet:</strong> <code>@codingdotsh/sdk</code>, <code>coding-sh</code> (Python) and the store plugins are in the
       repository but not on npm or PyPI. The image <code>ghcr.io/jackulau/coding.sh</code> is published from release 0.1.2 on; before
       that, build it from a checkout with <code>docker build -t ghcr.io/jackulau/coding.sh .</code>
     </p>

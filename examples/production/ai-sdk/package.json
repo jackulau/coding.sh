@@ -12,7 +12,7 @@
   "dependencies": {
     "@ai-sdk/openai": "^4.0.110",
     "@ai-sdk/otel": "^1.0.164",
-    "@coding.sh/sdk": "file:../../../packages/sdk",
+    "@codingdotsh/sdk": "file:../../../packages/sdk",
     "@opentelemetry/exporter-trace-otlp-proto": "^0.301.0",
     "@opentelemetry/sdk-node": "^0.301.0",
     "ai": "^7.0.164"

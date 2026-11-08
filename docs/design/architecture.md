@@ -51,7 +51,7 @@ dependencies; the parts below are folders under `packages/coding.sh/src`.
 | `src/datasets`, `src/eval`, `src/experiments`, `src/graders`, `src/judge` | Evals, experiments and judges |
 | `packages/store-postgres` | `coding.sh-store-postgres`: index and blob store for `postgres://` (depends on `pg`) |
 | `packages/blob-s3` | `coding.sh-store-s3`: blob store for `s3://` (S3, R2, MinIO), SigV4 with no SDK |
-| `packages/sdk` | `@coding.sh/sdk`: TypeScript SDK for API apps |
+| `packages/sdk` | `@codingdotsh/sdk`: TypeScript SDK for API apps |
 | `packages/sdk-python` | `coding-sh`: Python SDK for API apps |
 | `apps/site` | coding.sh website (Astro) |
 

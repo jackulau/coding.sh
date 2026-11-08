@@ -6,7 +6,7 @@
 // It runs one turn in session "j1": a plain call, a tool span, a streaming call and a plain call.
 // Without CODING_SH_URL the SDK does nothing, and stdout is the same either way.
 import OpenAI from "openai";
-import { observe, span, trace } from "@coding.sh/sdk";
+import { observe, span, trace } from "@codingdotsh/sdk";
 
 // The line that attaches coding.sh. Everything else is the app as it was.
 const openai = observe(new OpenAI());
