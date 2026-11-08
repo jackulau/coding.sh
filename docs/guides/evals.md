@@ -243,6 +243,10 @@ and `CODING_SH_AGENT_DIFF` pointing at each run's files. The no-op attempt gets 
 reference run must pass k of k, and each near-miss run must fail. A task with a reference run
 needs no `reference.patch`.
 
+`eval validate` applies `reference.patch` and each near-miss diff to the start tree, then runs
+setup. A patch that only applies to what setup creates (setup appends a stray line, the task
+removes it) is applied after setup instead, as an agent's run sees it.
+
 [Evaluate an Agent Skill](../how-to/evaluate-a-skill.md) walks through a full set of hand-written
 tasks, from a stub CLI to the compare report.
 

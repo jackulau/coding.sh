@@ -238,9 +238,9 @@ export interface TaskWorldsOpts {
 export interface TaskWorlds {
   /**
    * Fresh dir at the start state, then the patch and the task's setup. A reference or
-   * near-miss patch is written against the start tree, so it goes before setup; a run's
-   * diff was taken after setup (runTask commits setup output into its start), so
-   * `afterSetup` applies it after.
+   * near-miss patch is written against the start tree, so it goes before setup, unless it
+   * only applies to what setup creates: then it goes after. A run's diff was taken after
+   * setup (runTask commits setup output into its start), so `afterSetup` applies it after.
    */
   prepare(label: string, patch?: string, opts?: { afterSetup?: boolean }): Promise<StepDir>;
   /** Remove a step dir (kept with `keep`). */
@@ -273,20 +273,19 @@ export function taskWorlds(o: TaskWorldsOpts): TaskWorlds {
         await removeDir(dir);
         throw e;
       }
-      const apply = async (): Promise<StepDir | undefined> => {
-        if (patch === undefined) return undefined;
+      const notApplied = (error: string | undefined): StepDir => ({ dir, applied: false, setup: { ok: false, error: `patch did not apply: ${error}`, out: "" } });
+      let before: string | undefined;
+      if (patch !== undefined && !opts.afterSetup) {
         const a = await applyPatch(dir, patch);
-        return a.ok ? undefined : { dir, applied: false, setup: { ok: false, error: `patch did not apply: ${a.error}`, out: "" } };
-      };
-      if (!opts.afterSetup) {
-        const failed = await apply();
-        if (failed) return failed;
+        // A patch that changes what setup creates was written against the set-up tree: try it after setup.
+        if (!a.ok) before = a.error ?? "";
       }
       const setup = await setupIn(dir);
       checkpoint();
-      if (opts.afterSetup && setup.ok) {
-        const failed = await apply();
-        if (failed) return failed;
+      if (patch !== undefined && (opts.afterSetup || before !== undefined)) {
+        if (!setup.ok) return before !== undefined ? notApplied(before) : { dir, applied: true, setup };
+        const a = await applyPatch(dir, patch);
+        if (!a.ok) return notApplied(before ?? a.error);
       }
       return { dir, applied: true, setup };
     },

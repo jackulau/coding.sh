@@ -217,6 +217,26 @@ describe("validateTask", () => {
     assert.equal(o.report.ok, false);
     assert.ok(o.errors.some((e) => /setup `exit 3` exited 3/.test(e)));
   });
+
+  it("applies a reference written against what setup creates after setup", async () => {
+    const { blobs, git, task, workRoot } = await setup({ verifier: `test "$(cat README.md)" = "# toy"` });
+    task.setup = ["printf 'stray\\n' >> README.md"];
+    task.referencePatch = await blobs.put("--- a/README.md\n+++ b/README.md\n@@ -1,2 +1 @@\n # toy\n-stray\n");
+    const o = await validateTask({ task, blobs, git, workRoot, k: 1, nearMisses: [README_NEAR_MISS] });
+    assert.deepEqual(o.errors, []);
+    assert.equal(o.report.noopFails, true);
+    assert.deepEqual(o.report.referencePasses, { passed: 1, of: 1 });
+    assert.deepEqual(o.report.nearMissesFail, { failed: 1, of: 1 });
+  });
+
+  it("reports the before-setup error when a patch applies neither before nor after setup", async () => {
+    const { blobs, git, task, workRoot } = await setup();
+    task.setup = ["printf 'stray\\n' >> README.md"];
+    task.referencePatch = await blobs.put("--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-# other\n+# toy\n");
+    const o = await validateTask({ task, blobs, git, workRoot, k: 1 });
+    assert.equal(o.report.ok, false);
+    assert.ok(o.errors.some((e) => /^reference: patch did not apply: .*README\.md/.test(e)), o.errors.join("\n"));
+  });
 });
 
 describe("validateTask: impossible variant", () => {
