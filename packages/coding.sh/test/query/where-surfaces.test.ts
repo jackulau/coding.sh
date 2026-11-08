@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import { openContext } from "../../src/core/context.ts";
+import { openContext, type Context } from "../../src/core/context.ts";
 import { buildTools, type ToolCtx } from "../../src/mcp/tools.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { FsBlobStore } from "../../src/store/fs-blobs.ts";
@@ -35,6 +35,7 @@ describe("--where on CLI, MCP and HTTP", () => {
   const tools = buildTools();
   const tool = (name: string) => tools.find((t) => t.name === name)!;
   let ctx: ToolCtx;
+  let opened: Context;
 
   before(async () => {
     env = tmpEnv();
@@ -42,12 +43,14 @@ describe("--where on CLI, MCP and HTTP", () => {
     await seed(env.dataHome, { sessions, events });
     index = await SqliteIndexStore.open(join(env.dataHome, "index.db"));
     viewer = await startViewer({ index, blobs: new FsBlobStore(join(env.dataHome, "blobs")), port: 0 });
-    const opened = await openContext({ env: process.env });
+    opened = await openContext({ env: process.env });
     ctx = { env: process.env, cwd: env.root, now: () => NOW, store: async () => opened };
   });
   after(async () => {
     await viewer.close();
     await index.close();
+    // The MCP tools' store: left open, Windows cannot remove index.db (EBUSY).
+    await opened.close();
     env.restore();
   });
 
