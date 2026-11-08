@@ -25,6 +25,7 @@ import { armRepair, armSeq, passAfterRepair, seqRanking, type ArmRepair, type Ar
 import { runTask, type AgentRoute } from "./run.ts";
 import { cellKey, DEFAULT_REUSE_MAX_AGE_MS, newestByCell, type ReuseOpts } from "./cells.ts";
 import { agentVersions, releaseCache, releaseList, releaseNote, type AgentVersions } from "./release.ts";
+import { modelMix, modelNote, type ModelMix } from "./model-mix.ts";
 
 // ------------------------------------------------------------ running
 
@@ -587,6 +588,11 @@ export interface CompareReport {
    * ran on different releases or the release changed mid-comparison.
    */
   agentVersions?: AgentVersions;
+  /**
+   * Runs whose own model calls were answered by a model other than their bundle's
+   * (runner/model-mix.ts), present when an arm names a model and its runs were captured.
+   */
+  modelMix?: ModelMix;
 }
 
 /** A candidate whose instruction surface grows by more than this gets the bloat note. */
@@ -1052,6 +1058,9 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
   const releases = agentVersions(A, B, opts.sessions, { baseline: opts.bundles?.baseline?.agent, candidate: opts.bundles?.candidate?.agent });
   const releaseText = releaseNote(releases);
   if (releaseText) notes.push(releaseText);
+  const models = modelMix(A, B, opts.events, opts.bundles);
+  const modelText = modelNote(models);
+  if (modelText) notes.push(modelText);
   let pareto: ComparePareto | undefined;
   if (opts.pareto) {
     const p = paretoGate(ta, tb, pairedIds, metrics, opts.sessions, { ...opts.pareto, seed: opts.seed });
@@ -1085,6 +1094,7 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     ...(surface ? { surface } : {}),
     ...(reused.baseline || reused.candidate ? { reused } : {}),
     ...(releases ? { agentVersions: releases } : {}),
+    ...(models ? { modelMix: models } : {}),
   };
 }
 

@@ -1248,6 +1248,20 @@ under half of an arm's runs have a known release or when the arms run different 
 change the agent's own prompt and tools often: 29% of 1,867 consecutive releases of five coding
 agents did (Paixao et al., [arXiv 2610.37332](https://arxiv.org/abs/2610.37332)).
 
+The model can change inside a run too. After a refusal, Claude Code retries on an older model and
+carries on there. When a bundle names a model, the report reads which model answered each of a
+run's own model calls (`responseModel` on its `llm.call` events; subagents' calls are left out) and
+notes the runs where another model answered:
+
+```
+note: 4 runs of baseline and 5 runs of candidate, over 2 tasks, had model calls answered by claude-sonnet-5 (33 calls), not claude-sonnet-5-5: the agent fell back to another model (Claude Code retries on an older model after a refusal). Those runs measure the other model; leave them out or rerun those tasks
+```
+
+Model ids match without a provider prefix, a date suffix or a `[1m]` tag. An arm is checked only
+when at least one of its calls was answered by the model it names, so an alias such as `sonnet`
+never reads as a fallback. `--json` carries `report.modelMix`: the model each arm asked for,
+`off` runs per arm, calls per answering model and the number of tasks.
+
 ### Iterate on a comparison
 
 An interrupted comparison continues with `--resume` (see [long runs](#long-runs-resume-retries-status)).
