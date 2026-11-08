@@ -3,14 +3,16 @@
 // cell that differs from the baseline outside "vary", run every cell
 // interleaved, and compare each with the baseline with Holm-adjusted p-values.
 // `--plan` prints the cells and stores nothing; `--cell` runs a subset.
+// `--reuse baseline|all` copies finished case-trials of the same content key
+// (experiments/trial-cells.ts) from earlier experiments instead of running them.
 import type { FileEvalStore } from "../../datasets/store.ts";
 import { expandMatrix, MatrixPlanError, planText, type MatrixPlan, type MatrixSpec } from "../../experiments/matrix.ts";
-import { checkExpPointers, runMatrixExperiment } from "../../experiments/matrix-run.ts";
+import { checkExpPointers, planMatrixTrials, runMatrixExperiment, type MatrixReuse } from "../../experiments/matrix-run.ts";
 import { renderMatrixRun } from "../../experiments/render.ts";
 import { sortableId } from "../../core/ids.ts";
 import { taskFingerprint } from "../../jobs/config.ts";
-import { UsageError } from "../args.ts";
-import { finishJob, openJob, resumeField, resumeNote } from "../jobs.ts";
+import { parseAge, UsageError } from "../args.ts";
+import { finishJob, openJob, resumeField, resumeNote, trialTimeout } from "../jobs.ts";
 import { list } from "../common.ts";
 import type { CommandContext } from "../types.ts";
 import { cancelledWarning, durable, loadSpec, seedFlag, specConfig } from "./exp.ts";
@@ -32,6 +34,11 @@ export async function matrixRun(c: CommandContext, store: FileEvalStore, specFil
   ] as const) {
     if (set) throw new UsageError(`--${flag} does not combine with a matrix spec; the matrix runs every cell against its baseline cell`, { reason: "invalid_argument" });
   }
+  const reuseWhat = c.flags.reuse === undefined ? "none" : String(c.flags.reuse);
+  if (!["none", "baseline", "all"].includes(reuseWhat)) throw new UsageError(`--reuse takes baseline, all or none, got ${JSON.stringify(reuseWhat)}`, { reason: "invalid_argument" });
+  const maxAgeMs = c.flags["reuse-max-age"] === undefined ? undefined : parseAge(String(c.flags["reuse-max-age"]), "reuse-max-age");
+  if (maxAgeMs !== undefined && reuseWhat === "none") throw new UsageError("--reuse-max-age needs --reuse baseline or --reuse all", { reason: "invalid_argument" });
+  const reuse: MatrixReuse | undefined = reuseWhat === "none" ? undefined : { cells: reuseWhat as MatrixReuse["cells"], ...(maxAgeMs !== undefined ? { maxAgeMs } : {}) };
   const loaded = await loadSpec(c, store, specFile, false);
   const { spec, dataset, graders } = loaded;
   let plan: MatrixPlan;
@@ -51,13 +58,28 @@ export async function matrixRun(c: CommandContext, store: FileEvalStore, specFil
   }
   const only = list(c.flags.cell);
   for (const n of only) if (!plan.cells.some((x) => x.name === n)) throw new UsageError(`--cell ${n} is not a cell of this matrix: ${plan.cells.map((x) => x.name).join(", ")}`, { reason: "invalid_argument" });
+  const runCells = plan.cells.filter((x) => x.name === plan.baseline || !only.length || only.includes(x.name));
   if (c.flags.plan === true) {
-    if (out.json) out.data({ plan: planJson(plan) });
-    else out.print(planText(plan));
+    // With --reuse: how many case-trials of each cell earlier experiments already hold.
+    const timeoutMs = trialTimeout(c);
+    const counts = reuse
+      ? (await planMatrixTrials({ dataset, graders, cells: runCells, baseline: plan.baseline, ...(spec.split ? { split: spec.split } : {}), store, reuse, cwd: c.cwd, ...(timeoutMs !== undefined ? { timeoutMs } : {}) })).counts
+      : undefined;
+    if (out.json) out.data({ plan: planJson(plan), ...(counts ? { reuse: counts } : {}) });
+    else {
+      out.print(planText(plan));
+      if (counts) {
+        const w = Math.max(...Object.keys(counts).map((n) => n.length));
+        const reused = Object.values(counts).reduce((s, x) => s + x.reused, 0);
+        const toRun = Object.values(counts).reduce((s, x) => s + x.toRun, 0);
+        out.print("");
+        out.print(`reuse: ${reused} case-trials reused, ${toRun} to run`);
+        for (const [n, x] of Object.entries(counts)) out.print(`  ${n.padEnd(w)}  ${x.reused} reused, ${x.toRun} to run`);
+      }
+    }
     return 0;
   }
   const seed = seedFlag(c);
-  const runCells = plan.cells.filter((x) => x.name === plan.baseline || !only.length || only.includes(x.name));
   if (runCells.length < 2) throw new UsageError("--cell names only the baseline; name at least one other cell", { reason: "invalid_argument" });
   const config = specConfig(c, loaded, {
     matrix: runCells.map((x) => ({ name: x.name, task: taskFingerprint(x.config.task, c.cwd), trials: x.config.trials ?? 1 })),
@@ -78,6 +100,8 @@ export async function matrixRun(c: CommandContext, store: FileEvalStore, specFil
         ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
         ...(seed !== undefined ? { seed } : {}),
         store,
+        cwd: c.cwd,
+        ...(reuse ? { reuse } : {}),
         signal: c.signal,
         ...durable(c, job),
         onProgress: (_r, _cell, done, total) => spin.update(`Running ${runCells.length} cells on ${dataset.name}… ${done}/${total}`),
@@ -87,7 +111,7 @@ export async function matrixRun(c: CommandContext, store: FileEvalStore, specFil
   await finishJob(job, result.status === "cancelled");
   const experiments = Object.fromEntries(Object.entries(result.experiments).map(([k, v]) => [k, v.id]));
   if (out.json) {
-    out.data({ outcome: result.status, matrix: { id: result.id, seed: result.seed }, plan: planJson(plan), experiments, comparisons: result.comparisons, ...resumeField(job) });
+    out.data({ outcome: result.status, matrix: { id: result.id, seed: result.seed }, plan: planJson(plan), experiments, comparisons: result.comparisons, ...(result.reused ? { reused: result.reused } : {}), ...resumeField(job) });
   } else {
     out.print(renderMatrixRun(result, { color: out.color }));
   }

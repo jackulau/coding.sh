@@ -21,7 +21,7 @@ import type { EvalTask, HarnessBundle, RunResult } from "../../core/types.ts";
 import { formatCompare, PARETO_NEEDS_COST, planCells, runExperiment, type BudgetReport } from "../../runner/experiment.ts";
 import { sortableId } from "../../core/ids.ts";
 import { jobConfig } from "../../jobs/config.ts";
-import { positiveInt, UsageError } from "../args.ts";
+import { parseAge, positiveInt, UsageError } from "../args.ts";
 import { finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
 import { gateFlags, list, promoteFlags, requireConsent, resolveTask, str, withContext } from "../common.ts";
 import { ensureHookBin } from "../hookbin.ts";
@@ -40,7 +40,7 @@ export async function run(c: CommandContext): Promise<number> {
   if (c.flags.by !== undefined && !gateBy) throw new UsageError("--by needs a tag prefix, e.g. --by suite:", { reason: "invalid_argument" });
   const reuseWhat = str(c.flags.reuse) ?? "none";
   if (!["none", "baseline", "both"].includes(reuseWhat)) throw new UsageError(`--reuse takes baseline, both or none, got ${JSON.stringify(reuseWhat)}`, { reason: "invalid_argument" });
-  const reuseMaxAgeMs = c.flags["reuse-max-age"] === undefined ? undefined : ageMs(String(c.flags["reuse-max-age"]));
+  const reuseMaxAgeMs = c.flags["reuse-max-age"] === undefined ? undefined : parseAge(String(c.flags["reuse-max-age"]), "reuse-max-age");
   if (reuseMaxAgeMs !== undefined && reuseWhat === "none") throw new UsageError("--reuse-max-age needs --reuse baseline or --reuse both", { reason: "invalid_argument" });
   if (c.flags.experiment !== undefined && (reuseWhat !== "none" || c.flags["dry-run"] === true)) throw new UsageError("--reuse and --dry-run plan new runs; --experiment re-analyses stored ones", { reason: "invalid_argument" });
   return withContext(c, async (ctx) => {
@@ -296,11 +296,4 @@ function gatewayRouteFor(bundles: HarnessBundle[], c: GatewayConfig): AgentRoute
     return (b) => gatewayRoute(b.agent, b.model, key);
   }
   return (b) => routeVia(c, b.agent, b.model);
-}
-
-/** `--reuse-max-age`: a duration such as 30m, 12h, 7d or 2w. */
-function ageMs(v: string): number {
-  const m = /^(\d+(?:\.\d+)?)\s*(s|m|h|d|w)$/.exec(v.trim());
-  if (!m || !(Number(m[1]) > 0)) throw new UsageError(`--reuse-max-age needs a duration such as 12h, 7d or 2w, got ${JSON.stringify(v)}`, { reason: "invalid_argument" });
-  return Number(m[1]) * { s: 1e3, m: 60e3, h: 3600e3, d: 86400e3, w: 7 * 86400e3 }[m[2] as "s" | "m" | "h" | "d" | "w"];
 }

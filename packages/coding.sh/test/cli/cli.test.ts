@@ -1257,5 +1257,22 @@ describe("cli exp run matrix", () => {
     const arm = cli(h, ["exp", "run", "matrix.json", "--arm", "x=y.json"]);
     assert.equal(arm.status, 2);
     assert.match(arm.stderr, /--arm does not combine with a matrix spec/);
+
+    // --reuse: the plan counts the stored baseline case-trials; the flags are refused where they mean nothing.
+    const reusePlan = cli(h, ["exp", "run", "matrix.json", "--reuse", "baseline", "--plan", "--json"]);
+    assert.equal(reusePlan.status, 0, reusePlan.stderr);
+    assert.deepEqual((parseJson(reusePlan.stdout, "reuse plan") as { reuse: unknown }).reuse, { "model=good": { reused: 4, toRun: 0 }, "model=bad": { reused: 0, toRun: 4 }, "model=also-good": { reused: 0, toRun: 4 } });
+    const reuseRun = cli(h, ["exp", "run", "matrix.json", "--reuse", "baseline", "--cell", "model=bad"]);
+    assert.equal(reuseRun.status, 0, reuseRun.stderr);
+    assert.match(reuseRun.stdout, /2 cells, interleaved \(seed \d+\), 4 case-trials reused/);
+    assert.match(reuseRun.stdout, /! reused case-trials from earlier experiments \(model=good 4\/4\)/);
+    const plainReuse = cli(h, ["exp", "run", "plain.json", "--reuse", "baseline"]);
+    assert.equal(plainReuse.status, 2);
+    assert.match(plainReuse.stderr, /--reuse needs a spec file with "matrix" or "variants"/);
+    const ageOnly = cli(h, ["exp", "run", "matrix.json", "--reuse-max-age", "1d"]);
+    assert.equal(ageOnly.status, 2);
+    assert.match(ageOnly.stderr, /--reuse-max-age needs --reuse baseline or --reuse all/);
+    assert.equal(cli(h, ["exp", "run", "matrix.json", "--reuse", "both"]).status, 2, "exp run takes baseline, all or none");
+    assert.match(cli(h, ["exp", "run", "matrix.json", "--reuse", "all", "--reuse-max-age", "soon"]).stderr, /--reuse-max-age needs a duration/);
   });
 });

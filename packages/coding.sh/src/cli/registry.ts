@@ -610,6 +610,15 @@ export const COMMANDS: CommandSpec[] = [
           { name: "plan", type: "boolean", desc: "With a matrix spec: print the cells and what each changes, check them, and run nothing" },
           { name: "cell", type: "list", value: "<NAME>", desc: "With a matrix spec: run only this cell (repeatable); the baseline cell always runs" },
           {
+            name: "reuse",
+            type: "string",
+            value: "<CELLS>",
+            choices: ["baseline", "all", "none"],
+            default: "none",
+            desc: "With a matrix spec: copy finished case-trials of the same case, task, graders, trial and timeout from earlier experiments instead of running them again",
+          },
+          { name: "reuse-max-age", type: "string", value: "<AGE>", default: "7d", desc: "With --reuse: only case-trials that started this recently (30m, 12h, 7d, 2w)" },
+          {
             name: "control",
             type: "boolean",
             desc: "A continuation task needs a control arm (A, the recorded config) to measure replay noise; --no-control runs one task alone and marks the result",
@@ -628,6 +637,7 @@ export const COMMANDS: CommandSpec[] = [
           "coding.sh exp run spec.json --resume",
           "coding.sh exp run matrix.json --plan",
           "coding.sh exp run matrix.json --cell model=opus,prompt=short",
+          "coding.sh exp run matrix.json --reuse baseline --plan",
         ],
       },
       {

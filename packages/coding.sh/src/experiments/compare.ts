@@ -100,12 +100,25 @@ function duration(ms: number): string {
 type Timed = Pick<ExperimentResult, "createdAt" | "finishedAt" | "pair" | "metadata">;
 const matrixOf = (r: Timed) => (r.metadata?.matrix as { id?: unknown } | undefined)?.id;
 
+const reusedOf = (r: Timed) => {
+  const n = (r.metadata?.matrix as { reused?: unknown } | undefined)?.reused;
+  return typeof n === "number" && n > 0 ? n : 0;
+};
+
 export function runTiming(a: Timed, b: Timed): Timing {
   const ma = matrixOf(a);
-  const interleaved = (!!a.pair && a.pair.id === b.pair?.id) || (typeof ma === "string" && ma === matrixOf(b));
+  const sameMatrix = typeof ma === "string" && ma === matrixOf(b);
+  const copied = sameMatrix ? reusedOf(a) + reusedOf(b) : 0;
+  const interleaved = (!!a.pair && a.pair.id === b.pair?.id) || (sameMatrix && !copied);
   const start = Math.max(a.createdAt, b.createdAt);
   const end = Math.min(a.finishedAt, b.finishedAt);
   const out: Timing = { interleaved, gapMs: Math.max(0, start - end) };
+  if (copied) {
+    // `exp run --reuse` copied case-trials from earlier runs: those did not run next to the new ones.
+    const which = [reusedOf(a) ? `A ${reusedOf(a)}` : "", reusedOf(b) ? `B ${reusedOf(b)}` : ""].filter(Boolean).join(", ");
+    out.warning = `reused case-trials from earlier experiments (${which}): they did not run interleaved with the new ones, so drift since then (model updates, API latency, rate limits) is not balanced across the cells`;
+    return out;
+  }
   if (interleaved || start < end) return out;
   const fix = "run both in one interleaved job: coding.sh exp run --arm a=<TASK> --arm b=<TASK>";
   out.warning =

@@ -526,7 +526,10 @@ export function renderMatrixRun(r: MatrixResult, opts: RenderOpts): string {
   const base = r.experiments[r.plan.baseline]!;
   const comps = Object.values(r.comparisons);
   const vColor = (v: string) => (v === "better" ? "green" : v === "worse" ? "red" : "dim");
-  out.push(`${paint("matrix", "bold", color)} ${paint(r.id, "dim", color)}  ${paint(`${names.length} cells, interleaved (seed ${r.seed}); baseline ${r.plan.baseline}`, "dim", color)}`);
+  const reusedTotal = Object.values(r.reused ?? {}).reduce((s, n) => s + n, 0);
+  out.push(
+    `${paint("matrix", "bold", color)} ${paint(r.id, "dim", color)}  ${paint(`${names.length} cells, interleaved (seed ${r.seed})${reusedTotal ? `, ${reusedTotal} case-trials reused` : ""}; baseline ${r.plan.baseline}`, "dim", color)}`,
+  );
   out.push("");
   out.push(
     table(
@@ -571,6 +574,11 @@ export function renderMatrixRun(r: MatrixResult, opts: RenderOpts): string {
     const c = r.comparisons[n];
     if (!c) continue;
     for (const w of [c.gradeWarning, c.attrition.warning, c.datasetWarning]) if (w) out.push(paint(`! ${n}: ${w}`, "yellow", color));
+  }
+  const copied = names.filter((n) => r.reused?.[n]);
+  if (copied.length) {
+    const which = copied.map((n) => `${n} ${r.reused![n]}/${r.experiments[n]!.runs.length}`).join(", ");
+    out.push(paint(`! reused case-trials from earlier experiments (${which}): they did not run interleaved with the new ones, so drift since then is not balanced across the cells`, "yellow", color));
   }
   out.push("");
   const w = Math.max(...names.map((n) => n.length));

@@ -3,7 +3,7 @@
 // run stores one experiment per cell, interleaved, compared with the baseline
 // cell with Holm-adjusted p-values.
 import assert from "node:assert/strict";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -11,7 +11,7 @@ import { createDataset } from "../../src/datasets/dataset.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
 import { compareExperiments } from "../../src/experiments/compare.ts";
 import { checkOnlyVaried, expandMatrix, getAt, MatrixPlanError, mergeOverrides, parsePointer, planText, setAt, type MatrixSpec } from "../../src/experiments/matrix.ts";
-import { checkExpPointers, holmComparisons, runMatrixExperiment } from "../../src/experiments/matrix-run.ts";
+import { checkExpPointers, holmComparisons, planMatrixTrials, runMatrixExperiment, type RunMatrixOpts } from "../../src/experiments/matrix-run.ts";
 import { renderMatrixRun } from "../../src/experiments/render.ts";
 import { exactGrader } from "../../src/graders/builtin.ts";
 
@@ -207,5 +207,107 @@ describe("runMatrixExperiment", () => {
     assert.deepEqual(Object.keys(r.experiments), ["model=good", "model=bad"]);
     assert.equal(r.comparisons["model=bad"]!.pHolm, r.comparisons["model=bad"]!.mcnemar.p, "a single comparison: adjusted = raw");
     await assert.rejects(runMatrixExperiment({ name: "m", dataset: ds, graders: [exactGrader()], plan, only: ["nope"] }), /not a cell/);
+  });
+});
+
+describe("runMatrixExperiment --reuse", () => {
+  // Like the script above, and appends the MODEL it ran under to $CALLS, so a test can count task calls per cell.
+  const script = 'const fs=require("node:fs");let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const q=JSON.parse(s);const m=process.env.MODEL;fs.appendFileSync(process.env.CALLS,m+"\\n");const bad=m==="bad"||(m==="half"&&["a","b"].includes(q));process.stdout.write(JSON.stringify(bad?"no":q.toUpperCase()))})';
+  const cases = ["a", "b", "c", "d"].map((q) => ({ id: q, input: q, expected: q.toUpperCase() }));
+  const matrix: MatrixSpec = { matrix: { model: { path: "/task/env/MODEL", values: ["good", "half", "bad"] } }, baseline: { model: "good" } };
+
+  async function setup() {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "csh-mxreuse-")));
+    dirs.push(root);
+    const calls = join(root, "calls.log");
+    const store = new FileEvalStore({ root: join(root, "store") });
+    const ds = createDataset({ name: "upper", createdAt: 1, cases });
+    await store.putDataset(ds);
+    const spec = { task: { kind: "command", command: process.execPath, args: ["-e", script], env: { MODEL: "good", CALLS: calls } } };
+    const plan = expandMatrix(spec, matrix);
+    const count = () => {
+      const out: Record<string, number> = {};
+      try {
+        for (const m of readFileSync(calls, "utf8").split("\n").filter(Boolean)) out[m] = (out[m] ?? 0) + 1;
+      } catch {
+        // no calls yet
+      }
+      rmSync(calls, { force: true });
+      return out;
+    };
+    const opts = (o: Partial<RunMatrixOpts> = {}): RunMatrixOpts => ({ name: "m", dataset: ds, graders: [exactGrader()], plan, store, seed: 3, ...o });
+    return { root, store, ds, spec, plan, count, opts };
+  }
+
+  it("baseline: a second matrix copies the baseline cell and runs the others; the copies are marked and timing is not called interleaved", async () => {
+    const s = await setup();
+    const first = await runMatrixExperiment(s.opts());
+    assert.deepEqual(s.count(), { good: 4, half: 4, bad: 4 });
+    assert.equal(first.reused, undefined, "no reuse asked, no reuse field");
+    const planned = await planMatrixTrials({ dataset: s.ds, graders: [exactGrader()], cells: s.plan.cells, baseline: s.plan.baseline, store: s.store, reuse: { cells: "baseline" } });
+    assert.deepEqual(planned.counts, { "model=good": { reused: 4, toRun: 0 }, "model=half": { reused: 0, toRun: 4 }, "model=bad": { reused: 0, toRun: 4 } });
+    const second = await runMatrixExperiment(s.opts({ reuse: { cells: "baseline" } }));
+    assert.deepEqual(s.count(), { half: 4, bad: 4 }, "the baseline cell made no task call");
+    assert.deepEqual(second.reused, { "model=good": 4, "model=half": 0, "model=bad": 0 });
+    const good = second.experiments["model=good"]!;
+    assert.equal(good.summary.passed, 4);
+    const firstGood = first.experiments["model=good"]!;
+    for (const r of good.runs) assert.equal(r.reusedFrom, firstGood.id);
+    assert.equal((good.metadata?.matrix as { reused?: number }).reused, 4);
+    assert.equal((second.experiments["model=bad"]!.metadata?.matrix as { reused?: number }).reused, undefined, "absent when none were reused");
+    const bad = second.comparisons["model=bad"]!;
+    assert.equal(bad.mcnemar.b, 4, "the comparison uses the copied baseline");
+    assert.equal(bad.timing.interleaved, false);
+    assert.match(bad.timing.warning ?? "", /reused case-trials from earlier experiments/);
+    const text = renderMatrixRun(second, { color: false });
+    assert.match(text, /4 case-trials reused/);
+    assert.match(text, /reused case-trials from earlier experiments \(model=good 4\/4\)/);
+    // A third run copies the originals, never a copy of a copy.
+    const third = await runMatrixExperiment(s.opts({ reuse: { cells: "all" } }));
+    assert.deepEqual(s.count(), {});
+    assert.deepEqual(third.reused, { "model=good": 4, "model=half": 4, "model=bad": 4 });
+    for (const r of third.experiments["model=good"]!.runs) assert.equal(r.reusedFrom, firstGood.id);
+    for (const r of third.experiments["model=bad"]!.runs) assert.equal(r.reusedFrom, second.experiments["model=bad"]!.id);
+  });
+
+  it("misses on a changed case, a changed task, another grader version, a timeout and an age past the limit", async () => {
+    const s = await setup();
+    await runMatrixExperiment(s.opts());
+    s.count();
+    const plan = (o: Partial<Parameters<typeof planMatrixTrials>[0]>) =>
+      planMatrixTrials({ dataset: s.ds, graders: [exactGrader()], cells: s.plan.cells, baseline: s.plan.baseline, store: s.store, reuse: { cells: "baseline" }, ...o }).then((p) => p.counts["model=good"]!.reused);
+    assert.equal(await plan({}), 4);
+    const edited = createDataset({ name: "upper", createdAt: 1, cases: cases.map((c) => (c.id === "a" ? { ...c, expected: "AA" } : c)) });
+    assert.equal(await plan({ dataset: { ...edited, id: s.ds.id } }), 3, "one case changed");
+    const otherTask = expandMatrix({ task: { ...s.spec.task, args: ["-e", script + ";"] } }, matrix);
+    assert.equal(await plan({ cells: otherTask.cells }), 0, "the task changed");
+    assert.equal(await plan({ graders: [{ ...exactGrader(), version: "other" }] }), 0, "a grader changed");
+    assert.equal(await plan({ timeoutMs: 60_000 }), 0, "a different trial timeout");
+    assert.equal(await plan({ reuse: { cells: "baseline", maxAgeMs: 1, now: () => Date.now() + 1000 } }), 0, "older than the limit");
+    assert.equal(await plan({ reuse: undefined }), 0, "no reuse");
+  });
+
+  it("resume keeps the recorded copies instead of copying again", async () => {
+    const s = await setup();
+    await runMatrixExperiment(s.opts());
+    s.count();
+    const recorded = new Map<string, { data?: unknown }>();
+    const state = new Map<string, unknown>();
+    const scope = (prefix: string): unknown => ({
+      prefix,
+      job: { setTotal: async () => {}, addRefs: async () => {} },
+      done: (key: string) => recorded.get(prefix + key),
+      record: async (key: string, line: { data?: unknown }) => void recorded.set(prefix + key, line),
+      state: (n: string) => state.get(prefix + n),
+      setState: async (n: string, v: unknown) => void state.set(prefix + n, v),
+      scope: (p: string) => scope(prefix + p),
+    });
+    const o = s.opts({ reuse: { cells: "baseline" }, job: scope("") as never });
+    const r1 = await runMatrixExperiment(o);
+    assert.deepEqual(s.count(), { half: 4, bad: 4 });
+    const r2 = await runMatrixExperiment(o);
+    assert.deepEqual(s.count(), {}, "everything came from the job");
+    assert.equal(r2.experiments["model=good"]!.id, r1.experiments["model=good"]!.id);
+    assert.deepEqual(r2.reused, r1.reused);
   });
 });

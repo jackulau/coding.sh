@@ -864,6 +864,8 @@ coding.sh exp run [spec] [options]
 | `--seed <N>` |  | With --arm or a matrix spec: seed for the case and arm order (default random, recorded) |
 | `--plan` |  | With a matrix spec: print the cells and what each changes, check them, and run nothing. |
 | `--cell <NAME>` |  | With a matrix spec: run only this cell (repeatable); the baseline cell always runs. |
+| `--reuse <CELLS>` | `none` | With a matrix spec: copy finished case-trials of the same case, task, graders, trial and timeout from earlier experiments instead of running them again. One of: `baseline`, `all`, `none`. |
+| `--reuse-max-age <AGE>` | `7d` | With --reuse: only case-trials that started this recently (30m, 12h, 7d, 2w) |
 | `--control` | `true` | A continuation task needs a control arm (A, the recorded config) to measure replay noise; --no-control runs one task alone and marks the result. |
 | `--series <NAME>` |  | Tag the experiment as the next round of an iteration loop and print whether the loop should stop (see exp plateau) |
 | `--watch` |  | Rerun on every change to the spec, the task's script, grader files or --watch-path; a grader-only change regrades the stored outputs. Enter reruns, q quits. |
@@ -879,6 +881,7 @@ coding.sh exp run -d smoke -g '{"kind":"exact"}' --arm base=base.json --arm cand
 coding.sh exp run spec.json --resume
 coding.sh exp run matrix.json --plan
 coding.sh exp run matrix.json --cell model=opus,prompt=short
+coding.sh exp run matrix.json --reuse baseline --plan
 ```
 
 ### `coding.sh exp session`

@@ -186,6 +186,10 @@ export interface CaseRun {
   infra?: "rate-limit" | "server" | "network" | "tempfail";
   /** What the task reported it cost (`costUsd` on its output). */
   costUsd?: number;
+  /** Content key of this case-trial (experiments/trial-cells.ts); set by matrix runs. */
+  cellKey?: string;
+  /** Copied by `exp run --reuse` from this earlier experiment instead of run again. */
+  reusedFrom?: string;
 }
 
 export interface Interval {

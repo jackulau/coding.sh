@@ -12,6 +12,8 @@
 //     -> exp compare on two stored cells matches the matrix row and is
 //        not flagged as run at different times
 //     -> --cell runs a subset plus the baseline
+//     -> --reuse baseline copies the stored baseline case-trials: no baseline
+//        model call, and the comparison is not called interleaved
 //   a variants spec where a cell changes a path outside "vary"
 //     -> exits 2 before any model call and stores nothing
 //
@@ -174,6 +176,18 @@ try {
   const sub = json(await cli(["exp", "run", "matrix.json", "--cell", "model=big,prompt=shout", "--json"]), "exp run --cell");
   check(Object.keys(sub.experiments).join(" ") === "model=small,prompt=plain model=big,prompt=shout" && counts.agent - before === 16, "cell: the baseline and one cell, 16 calls", { cells: Object.keys(sub.experiments), calls: counts.agent - before });
   check(sub.comparisons["model=big,prompt=shout"].pHolm === sub.comparisons["model=big,prompt=shout"].mcnemar.p, "cell: a single comparison keeps its raw p");
+
+  // 5b. --reuse baseline: the plan counts the stored baseline case-trials, and the run copies them, no baseline call.
+  const reusePlan = await cli(["exp", "run", "matrix.json", "--cell", "model=big,prompt=shout", "--reuse", "baseline", "--plan"]);
+  log(`exp run --reuse baseline --plan:\n${reusePlan.stdout}`);
+  check(/^reuse: 8 case-trials reused, 8 to run$/m.test(reusePlan.stdout) && /model=small,prompt=plain +8 reused, 0 to run/.test(reusePlan.stdout), "reuse: the plan counts 8 baseline case-trials reused", reusePlan.stdout);
+  calls.length = 0;
+  const beforeReuse = counts.agent;
+  const reused = json(await cli(["exp", "run", "matrix.json", "--cell", "model=big,prompt=shout", "--reuse", "baseline", "--json"]), "exp run --reuse baseline");
+  check(counts.agent - beforeReuse === 8 && calls.every((c) => c === "stub-big:shout"), "reuse: 8 calls, none for the baseline", { calls: counts.agent - beforeReuse, cells: [...new Set(calls)] });
+  check(reused.reused?.["model=small,prompt=plain"] === 8 && reused.reused?.["model=big,prompt=shout"] === 0, "reuse: the JSON counts the copies per cell", reused.reused);
+  const reusedCmp = reused.comparisons["model=big,prompt=shout"];
+  check(reusedCmp.mcnemar.c === 8 && reusedCmp.timing.interleaved === false && /reused case-trials/.test(reusedCmp.timing.warning ?? ""), "reuse: same verdict, and the comparison says it was not interleaved", { mcnemar: reusedCmp.mcnemar, timing: reusedCmp.timing });
 
   // 6. A variant that changes a path outside "vary" is refused before any call.
   const stored = (await experiments()).length;

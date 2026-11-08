@@ -145,6 +145,8 @@ export interface TrialEnv {
   job?: JobScope;
   retry?: RetryPolicy;
   timeoutMs?: number;
+  /** The content key a case-trial is stamped with (matrix runs, experiments/trial-cells.ts). */
+  keyOf?: (c: Case, trial: number) => string | undefined;
 }
 
 /** The checkpoint key of a case-trial. */
@@ -248,6 +250,8 @@ export async function runTrial(env: TrialEnv, c: Case, trial: number): Promise<C
   if (error !== undefined) run.error = error;
   const cost = costOf(output);
   if (cost !== undefined) run.costUsd = cost;
+  const key = env.keyOf?.(c, trial);
+  if (key) run.cellKey = key;
   if (env.job) {
     await env.job.record(trialKey(c.id, trial), {
       ms: latencyMs,

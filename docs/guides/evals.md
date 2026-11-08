@@ -255,6 +255,28 @@ the order, `--resume` picks up an interrupted matrix, and `--json` returns `matr
 `experiments` (cell to id) and `comparisons` (each with `pHolm` and `holmVerdict`). Up to 256
 cells.
 
+Several matrices against one baseline pay for the baseline each time. `--reuse baseline` copies
+the baseline cell's finished case-trials from earlier experiments instead of running them again
+(`--reuse all` copies any cell's). A case-trial is copied only when everything it measured is the
+same: the dataset and the case's input, expected value and metadata, the task spec with the
+content of the files a command task runs, the graders' versions, the trial number and
+`--trial-timeout`. It must have no task error, a grade from every grader, no infrastructure
+failure, and must have started within `--reuse-max-age` (default `7d`). Each case-trial stores its
+key as `cellKey`, and a copy stores `reusedFrom`, the experiment it was copied from; a copy is
+never copied again. With `--plan`, `--reuse` prints how many case-trials each cell would copy and
+run:
+
+```
+reuse: 8 case-trials reused, 8 to run
+  model=small,prompt=plain  8 reused, 0 to run
+  model=big,prompt=shout    0 reused, 8 to run
+```
+
+The copies did not run next to the new case-trials, so the run says how many were copied, the
+comparisons are no longer marked interleaved, and each one warns that drift since then is not
+balanced across the cells. `metadata.matrix.reused` counts a cell's copies, and `--json` adds
+`reused` (cell to count).
+
 ### When to stop a loop
 
 A loop that tries one candidate after another (prompt tuning, self-improvement) also needs a stop

@@ -228,6 +228,13 @@ export function parseSince(v: string, now = Date.now()): number {
   return t;
 }
 
+/** A duration such as 30m, 12h, 7d or 2w, in ms (e.g. `--reuse-max-age`). */
+export function parseAge(v: string, flag: string): number {
+  const m = /^(\d+(?:\.\d+)?)\s*(s|m|h|d|w)$/.exec(v.trim());
+  if (!m || !(Number(m[1]) > 0)) throw new UsageError(`--${flag} needs a duration such as 12h, 7d or 2w, got ${JSON.stringify(v)}`, { reason: "invalid_argument" });
+  return Number(m[1]) * { s: 1e3, m: 60e3, h: 3600e3, d: 86400e3, w: 7 * 86400e3 }[m[2] as "s" | "m" | "h" | "d" | "w"];
+}
+
 /** A positive integer flag value, or a usage error. */
 export function positiveInt(v: FlagValue, name: string): number | undefined {
   if (v === undefined) return undefined;

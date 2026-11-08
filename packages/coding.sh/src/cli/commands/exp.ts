@@ -606,6 +606,7 @@ export async function run(c: CommandContext): Promise<number> {
           return matrixRun(c, store, c.positionals[0]);
         }
         if (c.flags.plan === true || list(c.flags.cell).length) throw new UsageError(`--${c.flags.plan === true ? "plan" : "cell"} needs a spec file with "matrix" or "variants"`, { reason: "invalid_argument" });
+        if ((c.flags.reuse !== undefined && c.flags.reuse !== "none") || c.flags["reuse-max-age"] !== undefined) throw new UsageError('--reuse needs a spec file with "matrix" or "variants"', { reason: "invalid_argument" });
         if (!armFlags.length) {
           for (const [flag, set] of [["stop-early", stopEarly], ["max-cases", maxCases !== undefined], ["looks", looks !== undefined], ["seed", seed !== undefined]] as const) {
             if (set) throw new UsageError(`--${flag} needs two --arm options (an interleaved A/B)`, { reason: "invalid_argument" });

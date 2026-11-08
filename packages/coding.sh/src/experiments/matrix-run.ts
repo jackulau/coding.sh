@@ -14,8 +14,9 @@ import { mulberry32 } from "../stats/prng.ts";
 import { holm } from "../stats/tests.ts";
 import { compareExperiments, type Comparison } from "./compare.ts";
 import { MatrixPlanError, parsePointer, type MatrixPlan, type MatrixSpec } from "./matrix.ts";
-import { experimentResult, prepareGraders, priorRun, rememberIdentity, runTrial, selectCases, storeResult, type TrialEnv } from "./run.ts";
+import { experimentResult, prepareGraders, priorRun, rememberIdentity, runTrial, selectCases, storeResult, trialKey, type TrialEnv } from "./run.ts";
 import { resolveTask, type TaskSpec } from "./task.ts";
+import { DEFAULT_TRIAL_REUSE_MAX_AGE_MS, newestTrialByCell, trialCellKey, trialTaskKey } from "./trial-cells.ts";
 
 /**
  * What a matrix cell of `exp run` may change: the task and the trial count.
@@ -49,6 +50,18 @@ export interface MatrixMeta {
   baseline: string;
   vary: string[];
   seed: number;
+  /** Case-trials of this cell copied from earlier experiments (`exp run --reuse`); absent when none were. */
+  reused?: number;
+}
+
+/** `exp run --reuse`: copy finished case-trials of the same content key from earlier experiments. */
+export interface MatrixReuse {
+  /** "baseline": only the baseline cell; "all": every cell. */
+  cells: "baseline" | "all";
+  /** Only case-trials that started this recently. Default 7 days. */
+  maxAgeMs?: number;
+  /** Clock for the age check (tests). */
+  now?: () => number;
 }
 
 export interface MatrixComparison extends Comparison {
@@ -83,6 +96,10 @@ export interface RunMatrixOpts {
   alpha?: number;
   bootstrapIters?: number;
   onProgress?: (run: CaseRun, cell: string, done: number, total: number) => void;
+  /** Copy finished case-trials of the same content key from earlier experiments in `store`. */
+  reuse?: MatrixReuse;
+  /** Directory a command task's relative files resolve from, for the content key. Default the process cwd. */
+  cwd?: string;
 }
 
 export interface MatrixResult {
@@ -94,6 +111,8 @@ export interface MatrixResult {
   experiments: Record<string, ExperimentResult>;
   /** Non-baseline cell name → comparison with the baseline. */
   comparisons: Record<string, MatrixComparison>;
+  /** With `reuse`: case-trials copied per cell (every cell listed, 0 included). */
+  reused?: Record<string, number>;
 }
 
 function shuffle<T>(xs: T[], rand: () => number): T[] {
@@ -116,6 +135,57 @@ export function holmComparisons(comparisons: Record<string, Comparison>, alpha =
       return [n, { ...c, pHolm, holmVerdict: pHolm < alpha ? dir : "inconclusive" }];
     }),
   );
+}
+
+/** Each cell's case-trial keys, and with `reuse` the stored case-trials that can stand in for them. */
+export interface MatrixTrialPlan {
+  /** Per cell (in `cells` order): the content key of a case-trial, undefined when the task can't be keyed. */
+  keyOf: ((c: Case, trial: number) => string | undefined)[];
+  /** The stored case-trial to copy for this cell's case-trial, if any. */
+  hit: (cell: number, c: Case, trial: number) => { run: CaseRun; experimentId: string } | undefined;
+  /** Per cell name: case-trials that would be copied and that must run. */
+  counts: Record<string, { reused: number; toRun: number }>;
+  /** Cells whose task can't be keyed (a function task), so nothing of them is stamped or reused. */
+  unkeyed: string[];
+}
+
+export async function planMatrixTrials(o: {
+  dataset: Dataset;
+  graders: readonly Grader[];
+  cells: readonly MatrixPlan["cells"][number][];
+  baseline: string;
+  split?: Split | readonly Split[];
+  filter?: (c: Case) => boolean;
+  store?: FileEvalStore;
+  reuse?: MatrixReuse;
+  cwd?: string;
+  timeoutMs?: number;
+  /** This run's own experiment ids: never a source. */
+  exclude?: ReadonlySet<string>;
+}): Promise<MatrixTrialPlan> {
+  const taskKeys = o.cells.map((c) => trialTaskKey(c.config.task, o.cwd));
+  const graders = o.graders.map((g) => ({ id: g.id, version: g.version }));
+  const keyOf = taskKeys.map((taskKey) => (c: Case, trial: number) => (taskKey ? trialCellKey({ datasetId: o.dataset.id, case: c, taskKey, graders, trial, ...(o.timeoutMs ? { timeoutMs: o.timeoutMs } : {}) }) : undefined));
+  let byCell = new Map<string, { run: CaseRun; experimentId: string }>();
+  if (o.reuse && o.store) {
+    const notBefore = (o.reuse.now ?? Date.now)() - (o.reuse.maxAgeMs ?? DEFAULT_TRIAL_REUSE_MAX_AGE_MS);
+    byCell = newestTrialByCell(await o.store.listExperiments({ datasetId: o.dataset.id }), notBefore, o.exclude);
+  }
+  const reusable = (cell: number) => !!o.reuse && (o.reuse.cells === "all" || o.cells[cell]?.name === o.baseline);
+  const hit = (cell: number, c: Case, trial: number) => {
+    if (!reusable(cell)) return undefined;
+    const k = keyOf[cell]?.(c, trial);
+    return k ? byCell.get(k) : undefined;
+  };
+  const cases = selectCases(o.dataset, o.split, o.filter);
+  const counts: Record<string, { reused: number; toRun: number }> = {};
+  o.cells.forEach((cell, i) => {
+    const trials = (cell.config.trials as number | undefined) ?? 1;
+    let reused = 0;
+    for (const c of cases) for (let t = 1; t <= trials; t++) if (hit(i, c, t)) reused++;
+    counts[cell.name] = { reused, toRun: cases.length * trials - reused };
+  });
+  return { keyOf, hit, counts, unkeyed: o.cells.filter((_, i) => !taskKeys[i]).map((c) => c.name) };
 }
 
 export async function runMatrixExperiment(opts: RunMatrixOpts): Promise<MatrixResult> {
@@ -156,6 +226,19 @@ export async function runMatrixExperiment(opts: RunMatrixOpts): Promise<MatrixRe
     }
   }
   if (job && job.prefix === "") await job.job.setTotal(jobs.length);
+  const trialPlan = await planMatrixTrials({
+    dataset: opts.dataset,
+    graders,
+    cells,
+    baseline: plan.baseline,
+    ...(opts.split !== undefined ? { split: opts.split } : {}),
+    ...(opts.filter ? { filter: opts.filter } : {}),
+    ...(opts.store ? { store: opts.store } : {}),
+    ...(opts.reuse ? { reuse: opts.reuse } : {}),
+    ...(opts.cwd ? { cwd: opts.cwd } : {}),
+    ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+    exclude: new Set(ids),
+  });
   const envs: TrialEnv[] = cells.map((_, i) => ({
     runId: ids[i] as string,
     task: tasks[i]!,
@@ -165,18 +248,31 @@ export async function runMatrixExperiment(opts: RunMatrixOpts): Promise<MatrixRe
     ...(scopes[i] ? { job: scopes[i] } : {}),
     ...(opts.retry ? { retry: opts.retry } : {}),
     ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+    keyOf: trialPlan.keyOf[i]!,
   }));
   const prior = jobs.map((j) => priorRun(scopes[j.cell], j.c.id, j.trial));
   let done = prior.filter(Boolean).length;
   const settled = await mapPool(jobs, opts.concurrency ?? 4, async (j, i) => {
     if (prior[i]) return prior[i];
+    if (opts.signal?.aborted || opts.drain?.aborted) return undefined;
+    const src = trialPlan.hit(j.cell, j.c, j.trial);
+    if (src) {
+      // The same case-trial finished in an earlier experiment: copy it, no task call.
+      const copy: CaseRun = { ...src.run, reusedFrom: src.experimentId };
+      await scopes[j.cell]?.record(trialKey(j.c.id, j.trial), { ms: 0, outcome: copy.pass ? "pass" : "fail", data: copy });
+      opts.onProgress?.(copy, cells[j.cell]!.name, ++done, jobs.length);
+      return copy;
+    }
     const run = await runTrial(envs[j.cell]!, j.c, j.trial);
     if (run) opts.onProgress?.(run, cells[j.cell]!.name, ++done, jobs.length);
     return run;
   });
   const cancelled = settled.some((r) => r === undefined);
   const experiments: Record<string, ExperimentResult> = {};
+  const reused: Record<string, number> = {};
   for (const [i, cell] of cells.entries()) {
+    const runs = settled.filter((run, j): run is CaseRun => run !== undefined && jobs[j]!.cell === i);
+    reused[cell.name] = runs.filter((r) => r.reusedFrom).length;
     const matrix: MatrixMeta = {
       id: matrixId,
       name: opts.name,
@@ -185,6 +281,7 @@ export async function runMatrixExperiment(opts: RunMatrixOpts): Promise<MatrixRe
       baseline: plan.baseline,
       vary: plan.vary,
       seed,
+      ...(reused[cell.name] ? { reused: reused[cell.name] } : {}),
     };
     const r = experimentResult({
       id: ids[i] as string,
@@ -196,7 +293,7 @@ export async function runMatrixExperiment(opts: RunMatrixOpts): Promise<MatrixRe
       graders,
       trials: trialsOf[i] as number,
       createdAt,
-      runs: settled.filter((run, j): run is CaseRun => run !== undefined && jobs[j]!.cell === i),
+      runs,
       boot: { iters: opts.bootstrapIters ?? 2000, seed: 0x5eed },
       metadata: { matrix },
     });
@@ -206,7 +303,7 @@ export async function runMatrixExperiment(opts: RunMatrixOpts): Promise<MatrixRe
   const base = experiments[plan.baseline]!;
   const raw: Record<string, Comparison> = {};
   for (const cell of cells) if (cell.name !== plan.baseline) raw[cell.name] = compareExperiments(base, experiments[cell.name]!, { force: true, iters: opts.bootstrapIters ?? 10_000 });
-  return { id: matrixId, seed, status: cancelled ? "cancelled" : "completed", plan, experiments, comparisons: holmComparisons(raw, opts.alpha) };
+  return { id: matrixId, seed, status: cancelled ? "cancelled" : "completed", plan, experiments, comparisons: holmComparisons(raw, opts.alpha), ...(opts.reuse ? { reused } : {}) };
 }
 
 /** The matrix id an experiment belongs to, from `metadata.matrix`. */

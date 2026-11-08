@@ -301,6 +301,13 @@ const TRIGGER = [
     <code>--resume</code> picks up an interrupted matrix.
   </p>
   <Code code={matrixOut} />
+  <p>
+    <code>--reuse baseline</code> copies the baseline cell's finished case-trials from earlier experiments instead of running them again,
+    so several matrices against one baseline pay for it once (<code>--reuse all</code> copies any cell's). A case-trial is copied only when
+    the case, the task spec and the files it runs, the graders, the trial number and the trial timeout are all the same, and it finished
+    without an error within <code>--reuse-max-age</code> (default 7 days). <code>--plan</code> prints how many each cell would copy and
+    run. The comparisons then warn that the copies did not run interleaved with the new case-trials.
+  </p>
 
   <h2 id="plateau">When to stop a loop <Tag status="built" /></h2>
   <p>
