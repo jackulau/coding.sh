@@ -400,7 +400,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * meaning: a saved fold of another version is dropped and the session rebuilt
  * from all its events.
  */
-export const SESSION_FOLD_VERSION = 2;
+export const SESSION_FOLD_VERSION = 3; // 3: TamperState tracks shell calls, own lines and source edits since the last green run.
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
