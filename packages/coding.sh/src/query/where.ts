@@ -128,13 +128,21 @@ export interface KeyDef {
   facet?: { sql?: string; get?(row: Session & AgentEvent): unknown[] };
 }
 
-/** basename() for SQLite: the text after the last / or \ (empty after a trailing slash). */
-const sqlBase = (x: string): string => {
+/**
+ * A repo's name for SQLite: the text after the last / or \ (empty after a trailing slash),
+ * except "tmp" for the macOS temp dir (/var/folders/xx/yyy/T, where `claude -p` from a script
+ * often runs), which would otherwise be "T".
+ */
+const sqlRepoName = (x: string): string => {
   const n = `replace(${x}, '\\', '/')`;
-  return `replace(${n}, rtrim(${n}, replace(${n}, '/', '')), '')`;
+  return `CASE WHEN ${n} GLOB '*/var/folders/*/T' THEN 'tmp' ELSE replace(${n}, rtrim(${n}, replace(${n}, '/', '')), '') END`;
 };
 /** The same in JS, so the scan fallback agrees with SQL byte for byte. */
-export const baseName = (p: string | undefined): string | undefined => (p === undefined ? undefined : p.replace(/\\/g, "/").slice(p.replace(/\\/g, "/").lastIndexOf("/") + 1));
+export const repoName = (p: string | undefined): string | undefined => {
+  if (p === undefined) return undefined;
+  const n = p.replace(/\\/g, "/");
+  return /\/var\/folders\/[\s\S]*\/T$/.test(n) ? "tmp" : n.slice(n.lastIndexOf("/") + 1);
+};
 
 const stat = (path: string) => `json_extract(s.stats, '$.${path}')`;
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
@@ -153,11 +161,11 @@ const KEY_LIST: KeyDef[] = [
     name: "repo",
     level: "session",
     type: "text",
-    doc: "Repo root path, or its name (else the working directory's name)",
+    doc: "Repo root path, or its name (else the working directory's name; tmp for the macOS temp dir)",
     example: "repo:coding-sh",
-    sql: ["s.repo_root", sqlBase("coalesce(s.repo_root, s.cwd)")],
-    get: (s) => [s.repo?.root, baseName(s.repo?.root ?? s.cwd)],
-    facet: { sql: sqlBase("coalesce(s.repo_root, s.cwd)"), get: (s) => [baseName(s.repo?.root ?? s.cwd)] },
+    sql: ["s.repo_root", sqlRepoName("coalesce(s.repo_root, s.cwd)")],
+    get: (s) => [s.repo?.root, repoName(s.repo?.root ?? s.cwd)],
+    facet: { sql: sqlRepoName("coalesce(s.repo_root, s.cwd)"), get: (s) => [repoName(s.repo?.root ?? s.cwd)] },
   },
   { name: "launch", level: "session", type: "text", doc: "How the agent was launched: headless (claude -p, an SDK, codex exec) or interactive", example: "launch:headless", sql: [stat("launch")], get: (s) => [s.stats?.launch], facet: {} },
   { name: "branch", level: "session", type: "text", doc: "Git branch", example: "branch:main", sql: ["json_extract(s.repo, '$.branch')"], get: (s) => [s.repo?.branch], facet: {} },

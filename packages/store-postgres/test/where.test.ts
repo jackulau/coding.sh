@@ -8,7 +8,7 @@ import { facetCounts, findSessions } from "../../coding.sh/src/query/run.ts";
 import { FACET_KEYS, parseWhere } from "../../coding.sh/src/query/where.ts";
 import { MemoryIndexStore } from "../../coding.sh/src/store/memory.ts";
 import { T0 } from "../../coding.sh/test/query/_seed.ts";
-import { fixture, QUERIES } from "../../coding.sh/test/query/_where-fixture.ts";
+import { fixture, QUERIES, REPO_NAMES, repoNameSessions } from "../../coding.sh/test/query/_where-fixture.ts";
 import { PgIndexStore } from "../src/index.ts";
 import { compileWhere, facetSource, HAS_SQL, IS_SQL, KEY_SQL, orderBy } from "../src/where.ts";
 import { SKIP, schemaUrl } from "./helpers.ts";
@@ -87,6 +87,8 @@ describe("postgres --where matches the scan", { skip: SKIP }, () => {
     const { sessions, events } = fixture();
     // One more session in another project, for project scoping.
     sessions.push({ ...sessions[0]!, id: "p1", project: "acme", startedAt: T0 + 5 * 3_600_000 });
+    // Sessions in temp dirs, whose repo name is not the path's last part.
+    sessions.push(...repoNameSessions());
     for (const st of [pg, memory] as IndexStore[]) {
       await st.putEvents(events);
       for (const s of sessions) await st.upsertSession(s);
@@ -129,6 +131,12 @@ describe("postgres --where matches the scan", { skip: SKIP }, () => {
       }
     }
     assert.deepEqual(await facetCounts(pg, p(""), ["agent"], { filter: { project: "acme" } }), { agent: [{ value: "codex", count: 1 }] });
+  });
+
+  it("names the macOS temp dir tmp, as the scan does", async () => {
+    const tmp = (await facetCounts(pg, p(""), ["repo"])).repo!.filter((f) => REPO_NAMES.some(([v]) => v === f.value)).map((f): [string, number] => [f.value, f.count]).sort();
+    assert.deepEqual(tmp, REPO_NAMES);
+    assert.deepEqual((await ids(pg, "repo:tmp")).sort(), ["linux-tmp", "mac-private-tmp", "mac-tmp"]);
   });
 
   it("hostile values run as values", async () => {

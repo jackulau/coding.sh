@@ -38,8 +38,8 @@ const jnum = (col: string, keys: string) => `if(JSONType(${col}, ${path(keys)}) 
 /** A JSON string at `keys` of a JSON String column, else NULL. */
 const jstr = (col: string, keys: string) => `if(JSONType(${col}, ${path(keys)}) = 'String', JSONExtractString(${col}, ${path(keys)}), NULL)`;
 const stat = (keys: string) => jnum("stats", keys);
-/** basename(): the text after the last / or \ (empty after a trailing slash), as coding.sh's baseName. */
-const base = (x: string) => `replaceRegexpOne(replaceAll(${x}, '\\\\', '/'), '(?s)^.*/', '')`;
+/** A repo's name as coding.sh's repoName: the text after the last / or \ (empty after a trailing slash), "tmp" for the macOS temp dir. */
+const base = (x: string) => `if(match(replaceAll(${x}, '\\\\', '/'), '(?s)/var/folders/.*/T$'), 'tmp', replaceRegexpOne(replaceAll(${x}, '\\\\', '/'), '(?s)^.*/', ''))`;
 const tokens = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"].map((k) => `ifNull(${stat(`usage.${k}`)}, 0)`).join(" + ");
 
 /**

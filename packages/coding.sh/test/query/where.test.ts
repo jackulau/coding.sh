@@ -12,7 +12,7 @@ import { FACET_KEYS, keyDocs, parseWhere, printWhere, QueryError, QueryUnsupport
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { loadSqlite, SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { T0 } from "./_seed.ts";
-import { fixture, QUERIES } from "./_where-fixture.ts";
+import { fixture, QUERIES, REPO_NAMES, repoNameSessions } from "./_where-fixture.ts";
 
 const NOW = T0 + 3 * 86_400_000;
 const p = (q: string) => parseWhere(q, { now: NOW });
@@ -139,6 +139,20 @@ describe("compileWhere", () => {
 });
 
 // ------------------------------------------------------------ SQL vs scan (QUERIES: _where-fixture.ts)
+
+describe("repo names", () => {
+  for (const [name, st] of [["sqlite", () => SqliteIndexStore.open(":memory:")], ["scan", async () => new MemoryIndexStore()]] as const) {
+    test(`name the macOS temp dir tmp, not T (${name})`, async () => {
+      const index: IndexStore = await st();
+      for (const x of repoNameSessions()) await index.upsertSession(x);
+      const facet = (await facetCounts(index, p(""), ["repo"])).repo!.map((f): [string, number] => [f.value, f.count]).sort();
+      assert.deepEqual(facet, REPO_NAMES);
+      const ids = async (q: string) => (await findSessions(index, p(q), {})).sessions.map((s) => s.id).sort();
+      assert.deepEqual(await ids("repo:tmp"), ["linux-tmp", "mac-private-tmp", "mac-tmp"]);
+      assert.deepEqual(await ids("repo:T"), ["win-t"], "a repo named T keeps its name");
+    });
+  }
+});
 
 describe("SQL and the scan fallback agree", () => {
   let sqlite: SqliteIndexStore;

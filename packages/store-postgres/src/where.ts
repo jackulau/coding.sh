@@ -40,8 +40,8 @@ const jnum = (col: string, path: string) => `(CASE WHEN json_typeof(${col}::json
 /** A JSON string at `path` of a JSON text column, else NULL. */
 const jstr = (col: string, path: string) => `(CASE WHEN json_typeof(${col}::json #> '{${path}}') = 'string' THEN ${col}::json #>> '{${path}}' END)`;
 const stat = (path: string) => jnum("s.stats", path);
-/** basename(): the text after the last / or \ (empty after a trailing slash), as coding.sh's baseName. */
-const base = (x: string) => `regexp_replace(replace(${x}, chr(92), '/'), '^.*/', '')`;
+/** A repo's name as coding.sh's repoName: the text after the last / or \ (empty after a trailing slash), "tmp" for the macOS temp dir. */
+const base = (x: string) => `(CASE WHEN replace(${x}, chr(92), '/') ~ '/var/folders/.*/T$' THEN 'tmp' ELSE regexp_replace(replace(${x}, chr(92), '/'), '^.*/', '') END)`;
 const tokens = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"].map((k) => `coalesce(${stat(`usage,${k}`)}, 0)`).join(" + ");
 
 /** SQL over `s` (sessions) or `e` (events) per key; a clause matches when any expression does. Flags use `f.v`. */

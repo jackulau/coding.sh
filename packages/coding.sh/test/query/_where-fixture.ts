@@ -34,6 +34,23 @@ export function fixture(): { sessions: Session[]; events: AgentEvent[] } {
 }
 
 /** Queries over the fixture: the SQL path and the scan fallback must return the same ids for each. */
+/**
+ * Sessions whose repo name is not simply the last part of the path: `claude -p` from a script
+ * runs in $TMPDIR, on macOS /var/folders/<xx>/<yyy>/T, named "tmp" rather than "T".
+ * REPO_NAMES: their repo facet, by value.
+ */
+export function repoNameSessions(): Session[] {
+  const at = (k: number) => ({ startedAt: T0 - (k + 1) * 60_000, endedAt: T0 - k * 60_000 });
+  return [
+    session("mac-tmp", { cwd: "/var/folders/k2/x7q9b_1n0000gn/T", ...at(0) }),
+    session("mac-private-tmp", { cwd: "/private/var/folders/k2/x7q9b_1n0000gn/T", ...at(1) }),
+    session("under-tmp", { cwd: "/var/folders/k2/x7q9b_1n0000gn/T/tmp.Ab12", ...at(2) }),
+    session("linux-tmp", { cwd: "/tmp", ...at(3) }),
+    session("win-t", { cwd: "C:\\work\\T", ...at(4) }),
+  ];
+}
+export const REPO_NAMES: [string, number][] = [["T", 1], ["tmp", 3], ["tmp.Ab12", 1]];
+
 export const QUERIES = [
   "agent:codex",
   "agent:codex,gemini",
