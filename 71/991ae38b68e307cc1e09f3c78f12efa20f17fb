@@ -50,6 +50,7 @@ packages/coding.sh/src/runner/plugins.ts
   s_8e040dbdf13565::t_b23827e3e29f95 1-173
 packages/coding.sh/src/cli/commands/harness.ts
   s_8e040dbdf13565::t_17e1877ea1987e 6,14-25,89-90,92,94,111,115-129,134-135
+  s_8e040dbdf13565::t_8a2c0164838f2b 9
 docs/concepts.md
   s_8e040dbdf13565::t_49469403e2a2a0 143-144
 CHANGELOG.md
