@@ -1,0 +1,40 @@
+packages/coding.sh/test/eval/init.test.ts
+  s_8e040dbdf13565::t_e238976eba3982 84-104,111-112,114-115
+  s_8e040dbdf13565::t_41a1c43d514d37 157-175
+packages/coding.sh/src/eval/init.ts
+  s_8e040dbdf13565::t_207e90bc8e50ee 15,17,55,57-58,140-152,157,159-175,179-187
+  s_8e040dbdf13565::t_d14483f35148eb 29,324-333,335-336,368
+  s_8e040dbdf13565::t_cba2f677e43944 334
+docs/guides/evals.md
+  s_8e040dbdf13565::t_b34b7a0e3a25bb 26-29
+  s_8e040dbdf13565::t_49252a92eaefc9 55-57
+packages/coding.sh/test/cli/eval-init-run.test.ts
+  s_8e040dbdf13565::t_e137c4b75f36ec 108-116
+packages/coding.sh/src/cli/commands/eval-init.ts
+  s_8e040dbdf13565::t_1e6a9fc7cc4b61 119-120
+docs/reference/cli.md
+  s_8e040dbdf13565::t_c57e3cf74e96d9 593-594
+CHANGELOG.md
+  s_8e040dbdf13565::t_96591f7999cfd6 132
+  s_8e040dbdf13565::t_49252a92eaefc9 133
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_c57e3cf74e96d9 203
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_1e6a9fc7cc4b61 468-469
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1459111dfc227660bccf9388b44b0dc5a60f4e8a",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
