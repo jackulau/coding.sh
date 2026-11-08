@@ -40,13 +40,13 @@ const compose = (...args) => sh("docker", ["compose", "-p", tag, "-f", composeFi
 const run = {
   start() {
     if (mode === "docker") sh("docker", ["run", "-d", "--name", tag, "-p", `127.0.0.1:${port}:4318`, "-v", `${tag}:/data`, image]);
-    else compose("up", "-d", "--wait", "--pull", "never");
+    else compose("up", "-d", "--wait", "--pull", "missing");
   },
   restart() {
     if (mode === "docker") sh("docker", ["restart", tag]);
     else {
       compose("down"); // keeps the volumes
-      compose("up", "-d", "--wait", "--pull", "never");
+      compose("up", "-d", "--wait", "--pull", "missing");
     }
   },
   logs: () => (mode === "docker" ? sh("docker", ["logs", tag], { stdio: ["ignore", "pipe", "pipe"] }) : compose("logs", "--no-log-prefix", "coding-sh")),
