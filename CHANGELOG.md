@@ -140,6 +140,7 @@ coding.sh runs on Windows, and CI tests it there.
 
 ### Fixed
 
+- **Sessions.** Replay knows that a file a step created did not exist before that step, instead of calling it unknown, so `replay --fork --run` removes it from the fork's copy. [Replay a session](https://coding.sh/docs/use-cases/replay-agent-session#how-files-are-rebuilt).
 - **Improve.** `improve check --repo <DIR|all>` counts the sessions that ran in other checkouts and worktrees of the repo. Before, it ignored `--repo` and counted only sessions whose repo root was the current checkout, so a repo whose agents work in worktrees showed every change as "No sessions yet". [Improve](https://github.com/jackulau/coding.sh/blob/main/docs/guides/improve.md).
 - **Harness.** `harness audit` skips a file or directory it can't stat (a symlink loop, or a Windows junction Node can't follow) instead of failing with "unknown error". [Memory and instruction files](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#memory-and-instruction-files).
 - **Harness A/B.** `harness snapshot` follows linked skill, command and agent directories (`npx skills`, a dotfiles repo) and stores the files they point to. Before, a `~/.claude/skills` made of links snapshotted no skills, so the arm ran without them. [Harness A/B](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#harness-ab).

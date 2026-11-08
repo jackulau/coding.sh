@@ -1175,7 +1175,15 @@ export class Replay {
   private async compute(path: string, t: Track, idx: number): Promise<FileState> {
     let k = 0;
     while (k < t.touches.length && t.touches[k]! <= idx) k++;
-    if (k === 0) return this.baseState(path);
+    if (k === 0) {
+      const base = await this.baseState(path);
+      if (base.content !== undefined || !t.touches.length) return base;
+      // Unknown at the start, and the first step that touched it created it: it did not exist before.
+      const first = t.touches[0]!;
+      const created = (await this.ops(first)).changeOps.get(path) === "add";
+      if (t.touches[0] !== first) return this.compute(path, t, idx);
+      return created ? { exists: false, content: "" } : base;
+    }
     while (t.states.length < k) {
       const j = t.states.length;
       let prev = j === 0 ? await this.baseState(path) : t.states[j - 1]!;

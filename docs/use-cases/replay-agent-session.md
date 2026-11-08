@@ -45,10 +45,11 @@ compaction), and `--all` lists every event.
 
 ## How files are rebuilt
 
-File content comes from the agent's own tool calls. A full write or a full read sets a file.
-Claude Code records each file before an Edit or Write, so its files are known from their first
-edit. Edits (Edit, MultiEdit, `str_replace`, `apply_patch` hunks) then apply in order. A session
-recorded with `coding.sh run -- <cmd>` starts from a snapshot of the working tree.
+File content comes from the agent's own tool calls. A full write or a full read sets a file. Claude
+Code records each file before an Edit or Write, so its files are known from their first edit. A file
+a step created did not exist before that step. Edits (Edit, MultiEdit, `str_replace`, `apply_patch`
+hunks) then apply in order. A session recorded with `coding.sh run -- <cmd>` starts from a snapshot
+of the working tree.
 
 ## What it does not do
 

@@ -41,6 +41,9 @@ describe("replay steps and reconstruction", () => {
     assert.equal(idx.root, "/work/demo");
 
     assert.deepEqual(r.tree(1), [], "nothing touched before the first edit");
+    const before = await r.fileAt("a.txt", 1);
+    assert.equal(before.exists, false, "the step that created it says it did not exist before (a fork from step 2 removes it)");
+    assert.equal(before.why, undefined);
     assert.equal((await r.fileAt("nope.txt", 7)).why, "No step touched it.");
     assert.deepEqual(await r.fileAt("a.txt", 2), { path: "a.txt", exists: true, content: "one\ntwo\nthree\n", changedAt: 2 });
     assert.equal((await r.fileAt("a.txt", 3)).content, "one\nTWO\nthree\n");
