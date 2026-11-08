@@ -24,7 +24,7 @@ Full reference: ${abs("/docs/cli")}
 ## Output and exit codes
 
 - Every command takes \`--json\`: one JSON document on stdout. Errors go to stderr as one JSON line:
-  \`{"status":"error","reason":"<reason>","message":"<text>","next":["<suggested command>"]}\`.
+  \`{"status":"error","reason":"<reason>","message":"<text>","next":["<what to do>:","<command>"]}\`.
 - Exit codes: 0 success, 1 error, 2 usage error (unknown option, bad value, missing \`--yes\`), 130 canceled.
 - Commands that write config ask first; pass \`--yes\` to confirm without a prompt (\`init --dry-run\` prints every edit and writes nothing).`;
 }

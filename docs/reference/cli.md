@@ -23,8 +23,8 @@ Every command accepts these.
 
 - stdout carries the answer only. Progress, warnings and errors go to stderr.
 - With `--json`, a command prints one JSON document on stdout. An error is one JSON line on stderr:
-  `{"status":"error","reason":"<reason>","message":"<text>","next":["<suggested command>"]}`.
-  The reasons are listed in [Troubleshooting](../troubleshooting.md).
+  `{"status":"error","reason":"<reason>","message":"<text>","next":["<what to do>:","<command>"]}`.
+  `next` holds up to two lines: the step, then the command to run. The reasons are listed in [Troubleshooting](../troubleshooting.md).
 - Exit codes: `0` success, `1` error, `2` usage error (unknown option, bad value, missing `--yes`), `130` canceled.
 - Commands that change agent config ask first. In scripts and CI, pass `--yes`.
 

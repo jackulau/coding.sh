@@ -44,19 +44,34 @@ coding.sh init --yes       # add one hook to every detected agent
 Tell the user which agents were configured. Every edited file is backed up to \`~/.coding.sh/backups\` first.
 Codex runs new hooks only after the user approves them with \`/hooks\` inside Codex; never write trust state yourself.
 
+Agents load hooks and MCP servers when a session starts. The session you are running in started before \`init\`,
+so it is not recorded live: tell the user to start a new session. (\`init\` imports what its transcript holds so far,
+for agents that keep one.)
+Without a terminal, \`init\` exits 2 and writes nothing unless you pass \`--yes\`; with no supported agent on the
+machine it exits 1 with \`reason: "no_agents"\` (wrap any command instead: \`coding.sh run -- <cmd>\`).
+
 ## 3. Verify
 
 \`\`\`sh
 coding.sh doctor --json
 \`\`\`
 
-One JSON document: each detected agent, whether its hooks are in place, whether the spool and store are
-writable and whether the OTLP port is free. Fix what it reports before going on.
+One JSON document: \`ok\`, then each agent (\`installed\`, \`hooked\`, \`lastEventAt\`, \`blockers\`), the hook, spool and
+store, and whether the OTLP port is free. Fix what it reports before going on.
+
+Read back a session to confirm capture end to end:
+
+\`\`\`sh
+coding.sh show latest --json   # exit 1, reason "not_found" until the first session lands
+\`\`\`
+
+Until then the error's \`next\` says what to do: \`coding.sh init\` before setup, or start a new agent session after it.
 
 ## MCP
 
-\`coding.sh mcp\` is an MCP server over stdio that lets the agent query its own history (sessions, the current
-session, failures, latency, usage, search, and drafting an eval from a session). \`init\` registers it
+\`coding.sh mcp\` is an MCP server over stdio that lets the agent query its own history: \`session_current\`,
+\`sessions_list\`, \`session_get\`, \`search\`, \`failures\`, \`latency\`, \`usage\`, \`status\`, \`improve\` and
+\`eval_from_session\`, among others (\`tools/list\` has them all). \`init\` registers it
 automatically with Claude Code, Codex, Cursor, OpenCode and older Gemini CLI installs. Manual: run \`coding.sh mcp\` over stdio.
 
 ## 4. Where sessions land
@@ -87,7 +102,8 @@ Details: ${abs("/docs/evals")} and ${abs("/docs/experiments#compare")}.
 ## Output and exit codes
 
 - Every command takes \`--json\`: one JSON document on stdout. Errors are one JSON line on stderr:
-  \`{"status":"error","reason":"<reason>","message":"<text>","next":["<suggested command>"]}\`.
+  \`{"status":"error","reason":"<reason>","message":"<text>","next":["<what to do>:","<command>"]}\`. \`next\` holds
+  up to two lines, the step and then the command to run; branch on \`reason\`, never on \`message\`.
 - Exit codes: 0 success, 1 error, 2 usage error (unknown option, bad value, missing \`--yes\`), 130 canceled.
 - Commands that change config ask first. Pass \`--yes\` only when the user asked you to set it up.
 

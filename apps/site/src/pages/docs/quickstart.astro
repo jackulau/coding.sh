@@ -64,6 +64,10 @@ const SHOW = [
 
   <h2 id="use">2. Use your agent as usual</h2>
   <p>
+    Start a new agent session. Agents read their hooks when a session starts, so a session that was already open when you ran
+    <code>init</code> may not be recorded; restart it. Until the first session lands, the viewer says "Waiting for your first session".
+  </p>
+  <p>
     Each hook appends one line to <code>~/.coding.sh/spool</code> and exits 0. It makes no network calls and prints nothing, because several
     agents read hook output as a decision or as text for the model. If capture fails, the failure goes to <code>spool/errors.log</code> and
     the agent carries on.
@@ -88,7 +92,16 @@ const SHOW = [
     <a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#long-sessions">Long sessions</a> has the thresholds.
   </p>
 
-  <h2 id="backfill">4. Import past sessions</h2>
+  <h2 id="mcp">4. Ask your agent</h2>
+  <p>
+    <code>init</code> also registers the coding.sh MCP server with the agents that support MCP (Claude Code, Codex, Cursor, OpenCode
+    and others), so the agent can read its own history. In a new session, ask it things like "what failed in my last session?" or
+    "which tools are slowest this week?". It calls tools such as <code>session_current</code>, <code>failures</code>,
+    <code>latency</code> and <code>improve</code>. <code>coding.sh mcp config</code> prints how to register it by hand, and
+    <a href="/docs/mcp">MCP</a> lists every tool.
+  </p>
+
+  <h2 id="backfill">5. Import past sessions</h2>
   <p>Most agents keep local transcripts. <code>--backfill</code> imports them, so history from before <code>init</code> shows up too. Re-running it inserts nothing new: event ids are deterministic.</p>
   <Code code={backfill} />
 
