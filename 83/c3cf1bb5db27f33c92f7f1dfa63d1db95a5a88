@@ -1,0 +1,20 @@
+packages/coding.sh/test/capture/hook.test.ts
+  s_8e040dbdf13565::t_7c614851d8d2eb 220
+  s_8e040dbdf13565::t_1d543ce7211865 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "83c3cf1bb5db27f33c92f7f1dfa63d1db95a5a88",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jack <jack@coding.sh>"
+    }
+  }
+}
