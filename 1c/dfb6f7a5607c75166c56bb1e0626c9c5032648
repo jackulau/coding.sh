@@ -1,0 +1,30 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_261ff58e8496c2 16
+docs/guides/evals.md
+  s_8e040dbdf13565::t_261ff58e8496c2 166-171
+packages/coding.sh/src/cli/commands/eval.ts
+  s_8e040dbdf13565::t_c3f092f9660bc7 143-152,155-157,159-190,192
+packages/coding.sh/test/cli/eval-import-compare.test.ts
+  s_8e040dbdf13565::t_e550c61c7ee5c8 188-223
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_22d296ef2a17ff 603,605
+  s_8e040dbdf13565::t_13c865c8f20d2e 610
+docs/reference/cli.md
+  s_8e040dbdf13565::t_465c540cc5decb 787,792,796,801-805
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1cdfb6f7a5607c75166c56bb1e0626c9c5032648",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
