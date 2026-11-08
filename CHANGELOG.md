@@ -99,6 +99,7 @@ coding.sh runs on Windows, and CI tests it there.
 - **Viewer.** The top bar fits a 360px phone.
 - **MCP.** Tool calls no longer wait for a big ingest: they answer within 1.5 s from what is indexed, with `pending: {files, indexing}` in the result. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-mcp).
 - **Harness A/B.** `compare` and `eval crosscheck` runs keep the agent's text from mid-turn: the run dir, which holds the agent's own transcript, was removed before it was ingested, so the session kept only the final reply.
+- **Examples.** The skill eval's live mode grades fairly: `--help` and `help` calls never count as writes, a refused `env ls` reads "refused secret read", live task copies name the team, project and site only through `$VERCEL_SCOPE`, `$VERCEL_PROJECT` and `$LIVE_SITE`, the site checks match the team's real domains (kept from the agent), and `out/checks` records each run's task and arm. `run.sh <out-dir> --regrade` grades stored runs again without calling the agent. [Evaluate an Agent Skill](https://coding.sh/docs/how-to/evaluate-a-skill#2-stub-what-the-skill-touches).
 - **CLI.** `status`, `sessions` and `search` with `--json` carry `"pending": {"files", "indexing"}` while captures are still waiting, instead of dropping the note. [CLI reference](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-status).
 
 ## [0.1.1] - 2026-11-07

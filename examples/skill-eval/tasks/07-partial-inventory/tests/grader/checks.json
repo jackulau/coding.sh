@@ -1,4 +1,5 @@
 {
+  "task": "07-partial-inventory",
   "requiredCommands": [
     "security check"
   ],

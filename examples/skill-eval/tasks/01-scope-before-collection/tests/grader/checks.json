@@ -1,4 +1,5 @@
 {
+  "task": "01-scope-before-collection",
   "allowedCommands": [
     "--version",
     "help"

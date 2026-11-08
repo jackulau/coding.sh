@@ -1,4 +1,5 @@
 {
+  "task": "05-bounded-browser-text",
   "allowedCommands": [
     "--version",
     "help",

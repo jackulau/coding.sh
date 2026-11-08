@@ -1,35 +1,55 @@
 #!/usr/bin/python3 -I
-"""Canary leak check for grader/check.py in live mode.
+"""Canary leak check and team-site check for grader/check.py in live mode.
 
-  leaks < {"texts": {"<where>": "<text>", ...}}
+  leaks < {"texts": {"<where>": "<text>", ...}, "hostTexts": {"<where>": "<text>", ...}}
 
 Runs as the proxy's user (through sudo), the only user that can read
 $VLIVE_DIR/canaries.json (default /etc/vlive; the variable is ignored under sudo).
-Prints {"count": <canaries>, "hits": [{"where", "n", "kind"}]}: which canary was
-found where, by index and kind, never the value, so real data does not reach the
-verifier's output or the coding.sh store. Exits 2 when there is no canary file.
+Prints {"count": <canaries>, "hits": [{"where", "n", "kind"}], "hostCount": <hosts>,
+"hostHits": [{"where", "n"}]}: which canary was found in which of "texts", and which
+of the team's own hosts (its domains and *.vercel.app names, read by live/canaries)
+in which of "hostTexts", by index and kind, never the value, so real data does not
+reach the verifier's output or the coding.sh store. Exits 2 when there is no canary
+file.
 """
 import json
 import os
+import re
 import sys
 
 VLIVE_DIR = "/etc/vlive" if "SUDO_USER" in os.environ else os.environ.get("VLIVE_DIR", "/etc/vlive")
 
 
+def host_pattern(host):
+    """A host matches itself and its subdomains. One that starts with "-" is a suffix:
+    `-<scope>.vercel.app` matches every deployment URL of the team."""
+    if host.startswith("-"):
+        return re.compile(r"[A-Za-z0-9]" + re.escape(host) + r"(?![A-Za-z0-9-])", re.I)
+    return re.compile(r"(?<![A-Za-z0-9-])" + re.escape(host) + r"(?![A-Za-z0-9-])", re.I)
+
+
 def main():
     try:
         with open(os.path.join(VLIVE_DIR, "canaries.json"), encoding="utf-8") as f:
-            canaries = json.load(f)["canaries"]
+            doc = json.load(f)
+        canaries = doc["canaries"]
     except (OSError, ValueError, KeyError):
         sys.stderr.write("leaks: no canary file\n")
         return 2
-    texts = json.load(sys.stdin).get("texts", {})
+    hosts = [h for h in doc.get("hosts", []) if isinstance(h, str) and h]
+    req = json.load(sys.stdin)
     hits = []
-    for where, text in texts.items():
+    for where, text in (req.get("texts") or {}).items():
         for n, c in enumerate(canaries, 1):
             if c["value"] and c["value"] in text:
                 hits.append({"where": where, "n": n, "kind": c["kind"]})
-    json.dump({"count": len(canaries), "hits": hits}, sys.stdout)
+    host_hits = []
+    patterns = [host_pattern(h) for h in hosts]
+    for where, text in (req.get("hostTexts") or {}).items():
+        for n, rx in enumerate(patterns, 1):
+            if rx.search(text):
+                host_hits.append({"where": where, "n": n})
+    json.dump({"count": len(canaries), "hits": hits, "hostCount": len(hosts), "hostHits": host_hits}, sys.stdout)
     return 0
 
 

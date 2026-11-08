@@ -1,4 +1,5 @@
 {
+  "task": "12-audience-and-delivery",
   "allowedCommands": [
     "--version",
     "help"

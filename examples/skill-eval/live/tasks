@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
-"""Copy the tasks that can run live, naming the live team and project.
+"""Copy the tasks that can run live, naming the live team, project and site generically.
 
-  tasks <dest> <scope> [<project>]
+  tasks <dest>
 
 Copies every $SKILL_EVAL/tasks/*/ whose task.json does not say "live": false (the
-reason is in "liveNote") to
-<dest>/, adds "-live" to its name and the tag "live", and in instruction.md and the start tree's Markdown
-replaces the synthetic team slug `harbor-synth` with <scope> and the project
-`web-app` with <project>. Hostnames such as shop.harbor-synth.example.test stay as
-they are, so the checks that forbid touching them still apply. Prints each copied
-task dir, one per line, and the skipped ones to stderr.
+reason is in "liveNote") to <dest>/, adds "-live" to its name and the tag "live",
+and in instruction.md and the start tree's Markdown replaces the synthetic team,
+project and site with the variables live/entry.sh sets for the agent:
+`$VERCEL_SCOPE` (the team the Vercel CLI is logged into), `$VERCEL_PROJECT` and
+`$LIVE_SITE` (that project's production URL). No real name goes into a task, and no
+synthetic one is left: a copy that still names `harbor-synth` or `web-app` fails
+with exit 1. Prints each copied task dir, one per line, and the skipped ones to
+stderr.
+
+The hidden grader files are copied as they are. A scenario that forbids touching the
+site (checks.json "forbidUrlHosts") is checked in live mode against the team's real
+hosts too, which live/canaries reads and only live/leaks can see.
 """
 import json
 import os
@@ -17,26 +23,38 @@ import re
 import shutil
 import sys
 
-SLUG = re.compile(r"harbor-synth(?![\w.-])")
-PROJECT = re.compile(r"(?<![\w.-])web-app(?![\w-])")
+PROJECT = "the project in `$VERCEL_PROJECT`"
+# In order: the specific phrasings first, then any leftover project name.
+REWRITES = [
+    (re.compile(r"team harbor-synth's web-app"), PROJECT + " of the team in `$VERCEL_SCOPE`"),
+    (re.compile(r"team slug `harbor-synth`"), "the team in `$VERCEL_SCOPE` (the team the Vercel CLI is logged into)"),
+    (re.compile(r"https?://(?:[\w-]+\.)*harbor-synth\.example\.test(/[^\s`)]*)?"), lambda m: f"`$LIVE_SITE{m.group(1) or ''}`"),
+    (re.compile(r"--project web-app(?![\w-])"), '--project "$VERCEL_PROJECT"'),
+    (re.compile(r"project `web-app`"), PROJECT),
+    (re.compile(r"(?m)^# web-app$"), "# app"),
+    (re.compile(r"\bproject web-app(?![\w-])"), PROJECT),
+    (re.compile(r"(?<![\w.-])web-app(?![\w-])"), PROJECT),
+]
+LEFTOVER = re.compile(r"harbor-synth|(?<![\w.-])web-app(?![\w-])")
 
 
-def rewrite(path, scope, project):
+def rewrite(path):
     with open(path, encoding="utf-8") as f:
         text = f.read()
-    text = SLUG.sub(scope, text)
-    if project:
-        text = PROJECT.sub(project, text)
+    for rx, repl in REWRITES:
+        text = rx.sub(repl, text)
+    left = LEFTOVER.search(text)
+    if left:
+        raise ValueError(f"{path}: the live copy still names {left.group(0)!r}; add a rewrite to live/tasks")
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
 
 
 def main(argv):
-    if len(argv) not in (2, 3):
-        sys.stderr.write("usage: tasks <dest> <scope> [<project>]\n")
+    if len(argv) != 1:
+        sys.stderr.write("usage: tasks <dest>\n")
         return 2
-    dest, scope = argv[0], argv[1]
-    project = argv[2] if len(argv) == 3 and argv[2] else None
+    dest = argv[0]
     src = os.path.join(os.environ.get("SKILL_EVAL", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "tasks")
     shutil.rmtree(dest, ignore_errors=True)
     os.makedirs(dest)
@@ -57,11 +75,15 @@ def main(argv):
         with open(os.path.join(out, "task.json"), "w", encoding="utf-8") as f:
             json.dump(task, f, indent=2)
             f.write("\n")
-        rewrite(os.path.join(out, "instruction.md"), scope, project)
-        for root, _, files in os.walk(os.path.join(out, "repo")):
-            for fn in files:
-                if fn.endswith(".md"):
-                    rewrite(os.path.join(root, fn), scope, project)
+        try:
+            rewrite(os.path.join(out, "instruction.md"))
+            for root, _, files in os.walk(os.path.join(out, "repo")):
+                for fn in files:
+                    if fn.endswith(".md"):
+                        rewrite(os.path.join(root, fn))
+        except ValueError as e:
+            sys.stderr.write(f"live: {e}\n")
+            return 1
         print(out)
     return 0
 

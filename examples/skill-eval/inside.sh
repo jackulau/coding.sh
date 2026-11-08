@@ -24,11 +24,12 @@ sh "$SKILL_EVAL/fetch-skill.sh" /work/skill
 tasks="$SKILL_EVAL/tasks/*/"
 tag=skill-eval
 if [ "${SKILL_EVAL_LIVE:-}" = 1 ]; then
-  # `vercel` is now the proxy. The live copies of the tasks name the real team and
-  # project, and have their own names and the tag `live`, so a store that also holds
-  # the stub tasks runs only these.
+  # `vercel` is now the proxy. The live copies of the tasks refer to the real team,
+  # project and site through $VERCEL_SCOPE, $VERCEL_PROJECT and $LIVE_SITE, and have
+  # their own names and the tag `live`, so a store that also holds the stub tasks runs
+  # only these.
   export PATH="$SKILL_EVAL/live/bin:$PATH"
-  tasks=$(python3 "$SKILL_EVAL/live/tasks" /work/live-tasks "$VERCEL_SCOPE" "${LIVE_PROJECT:-}")
+  tasks=$(python3 "$SKILL_EVAL/live/tasks" /work/live-tasks)
   tag=live
 fi
 

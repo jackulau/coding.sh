@@ -1,4 +1,5 @@
 {
+  "task": "06-identity-boundaries",
   "allowedCommands": [
     "--version",
     "help",

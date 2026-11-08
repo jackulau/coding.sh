@@ -1,6 +1,7 @@
 #!/bin/sh
 # Build the eval image and run the A/B in a container.
 #   examples/skill-eval/run.sh <out-dir> [--dry-run] [--env-file <file>] [--live]
+#   examples/skill-eval/run.sh <out-dir> --regrade
 # The container gets only <out-dir> (as /work) and these variables from the env file:
 #   ANTHROPIC_API_KEY        the agent and the judge
 #   CLAUDE_CODE_OAUTH_TOKEN  the agent only (from `claude setup-token`); no judge without
@@ -11,24 +12,36 @@
 #                               recently updated one)
 # Other lines in the env file are not passed. No host credentials, ~/.claude or Vercel
 # login go in. Extra env: MODEL, K, MAX_COST (passed through).
+# --regrade grades the runs already in <out-dir> again with the current checks
+# (grader/regrade): no agent, Vercel or judge call, and no env file.
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd -P)
-usage="usage: run.sh <out-dir> [--dry-run] [--env-file <file>] [--live]"
+usage="usage: run.sh <out-dir> [--dry-run] [--env-file <file>] [--live] | <out-dir> --regrade"
 out=${1:?$usage}
 shift
 dry=0
 live=0
+regrade=0
 envfile=
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) dry=1 ;;
     --live) live=1 ;;
+    --regrade) regrade=1 ;;
     --env-file) envfile=${2:?$usage}; shift ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
   shift
 done
+if [ "$regrade" = 1 ]; then
+  [ "$dry$live" = 00 ] && [ -z "$envfile" ] || { echo "--regrade takes only the output dir." >&2; exit 2; }
+  [ -f "$out/csh/index.db" ] || { echo "$out has no eval run to regrade (no csh/index.db)." >&2; exit 2; }
+  out=$(cd "$out" && pwd -P)
+  docker build -q -t coding-sh-skill-eval -f "$here/Dockerfile" "$repo" >/dev/null
+  # Root, so it can read a live run's canaries (vproxy only) for the leak check.
+  exec docker run --rm -v "$out:/work" --user root --entrypoint python3 coding-sh-skill-eval /opt/skill-eval/grader/regrade /work
+fi
 mkdir -p "$out"
 out=$(cd "$out" && pwd -P)
 if [ "$live" = 1 ]; then

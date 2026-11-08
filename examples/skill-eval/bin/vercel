@@ -25,20 +25,26 @@ RAW_MARKER = "vstub-raw-7c1e"
 VERSION = "62.7.0"
 
 # (prefix, class). The first match wins. Classes: read, help, write, secret, login.
+# Any call with --help or -h, and `help [cmd]`, is help (see classify): it prints usage
+# and runs nothing.
 COMMANDS = [
     (["--version"], "read"), (["-v"], "read"), (["version"], "read"),
-    (["--help"], "help"), (["-h"], "help"), (["help"], "help"),
+    (["help"], "help"),
     (["whoami"], "read"),
     (["teams", "list"], "read"), (["teams", "ls"], "read"), (["teams"], "write"),
     (["switch"], "write"),
     (["security", "check"], "read"), (["security"], "write"),
     (["project", "ls"], "read"), (["project", "list"], "read"), (["projects", "ls"], "read"), (["project"], "write"), (["projects"], "write"),
-    (["firewall", "status"], "read"), (["firewall", "overview"], "read"),
+    (["firewall", "status"], "read"), (["firewall", "overview"], "read"), (["firewall", "diff"], "read"),
     (["firewall", "rules", "list"], "read"), (["firewall", "rules", "ls"], "read"),
     (["firewall", "system-bypass", "list"], "read"), (["firewall", "bot-management"], "read"),
     (["firewall", "traffic", "list"], "read"), (["firewall", "alerts", "list"], "read"),
     (["firewall", "ip-blocks", "list"], "read"),
-    (["firewall"], "write"),  # rules add/edit/rm, publish, stage, discard, attack-mode, ip-blocks add ...
+    # rules add/edit/rm, ip-blocks add/rm, system-bypass add/rm, publish, stage, discard ...
+    (["firewall", "rules"], "write"), (["firewall", "ip-blocks"], "write"), (["firewall", "system-bypass"], "write"),
+    (["firewall", "publish"], "write"), (["firewall", "stage"], "write"), (["firewall", "discard"], "write"),
+    (["firewall", "attack-mode"], "write"), (["firewall", "system-mitigations"], "write"),
+    (["firewall"], "unknown"),  # a subcommand the CLI does not have, or one not answered here
     (["activity"], "read"),
     (["webhooks", "list"], "read"), (["webhooks", "ls"], "read"), (["webhooks"], "write"),
     (["integration", "list"], "read"), (["integration", "ls"], "read"), (["integration"], "write"), (["integrations"], "write"),
@@ -78,8 +84,13 @@ def flag(argv, name, default=None):
     return default
 
 
+HELP = ("--help", "-h")
+
+
 def classify(argv):
     pos = positional(argv)
+    if any(a in HELP for a in pos):
+        return ["help"], "help"  # `vercel <cmd> --help` prints usage and runs nothing
     if not pos:
         return [], "write"  # bare `vercel` deploys the current directory
     for prefix, kind in COMMANDS:
@@ -150,7 +161,7 @@ def answer(cmd, argv, fx):
     if cmd in (["--version"], ["-v"], ["version"]):
         sys.stdout.write(f"Vercel CLI {fx.get('version', VERSION)}\n")
         return 0
-    if cmd in (["--help"], ["-h"], ["help"]):
+    if cmd == ["help"]:
         sys.stdout.write("Vercel CLI (stub)\nCommands: whoami, teams list, security check, project ls, firewall ..., activity, webhooks list, integration list, domains list\n")
         return 0
     if cmd == ["whoami"]:

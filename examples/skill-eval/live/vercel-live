@@ -12,7 +12,9 @@ the real CLI gets an argv rebuilt from that parse, never the agent's argv. The t
 goes to the CLI in its environment (VERCEL_TOKEN, which the CLI treats as --token),
 not in argv, because every user in the container can read argv. The scope is always
 --scope <live scope>; any --scope, --token, --cwd, -Q, -A or --debug the agent
-passes is dropped.
+passes is dropped. A call with --help or -h, or `help [cmd]`, is class "help", as
+in the stub: it prints usage and runs nothing. It is forwarded only for commands
+that have reads here.
 
 Answers: the token is replaced in stdout and stderr. A successful JSON object answer
 gets the stub's marker field, any other successful text answer a trailing marker
@@ -93,6 +95,7 @@ SPECS = {
     ("project", "inspect"): ({}, 0, 1, IDENT),
     ("projects", "inspect"): ({}, 0, 1, IDENT),
     ("firewall", "status"): (PROJECT, 0, 0, None),
+    ("firewall", "diff"): (PROJECT, 0, 0, None),
     ("firewall", "overview"): ({**PROJECT, **WINDOW}, 0, 0, None),
     ("firewall", "rules", "list"): (PROJECT, 0, 0, None),
     ("firewall", "rules", "ls"): (PROJECT, 0, 0, None),
@@ -126,6 +129,8 @@ GLOBAL_SWITCHES = {"--json", "--non-interactive", "--no-color"}
 DROP_VALUE = {"--token", "-t", "--scope", "-S", "--team", "-T", "--cwd", "-Q", "--global-config", "-A", "--local-config"}
 DROP_SWITCH = {"-d", "--debug"}
 HELP = {"--help", "-h"}
+# First words whose `--help` is forwarded to the real CLI: the ones with reads in SPECS.
+HELP_FORWARDED = {key[0] for key in SPECS}
 METHOD = {"-X", "--method"}
 # Flags that turn a read into something else.
 OVERRIDES = {
@@ -173,8 +178,11 @@ def scrub(text, secrets):
 
 
 def classify(argv, harness=False):
-    """(command words, class) from the stub's table, with the live-only reads first."""
-    words = [w for w in STUB.positional(argv) if w not in HELP]
+    """(command words, class) from the stub's table, with the live-only reads first.
+    Any call with --help or -h, and `help [cmd]`, is help, as in the stub."""
+    if any(a in HELP for a in argv) or STUB.positional(argv)[:1] == ["help"]:
+        return ["help"], "help"
+    words = STUB.positional(argv)
     for prefix in LIVE_READS + (HARNESS_READS if harness else []):
         if words[: len(prefix)] == prefix:
             return prefix, "read"
@@ -216,10 +224,15 @@ def strict_parse(argv, harness=False):
     if version_asked or words == ["version"]:
         return ["--version"], ["--version"], True
     if help_asked or words[:1] == ["help"]:
-        # Help prints usage and runs nothing. Forward only plain command words.
+        # Help prints usage and runs nothing. Forward only plain command words, and only
+        # for the commands with reads here: the CLI would read any other first word as a
+        # directory to deploy, so its help is not worth the risk. That call is refused,
+        # but stays a help call in the log.
         cmd = words[1:] if words[:1] == ["help"] else words
         if len(cmd) > 4 or not all(re.fullmatch(WORD, w) for w in cmd):
-            raise Refused("unknown", "unsupported_option")
+            raise Refused("help", "unsupported_option")
+        if cmd and cmd[0] not in HELP_FORWARDED:
+            raise Refused("help", "help_not_forwarded")
         return [*cmd, "--help"], ["help"], True
     cmd = next((key for key in sorted(specs, key=len, reverse=True) if tuple(words[: len(key)]) == key), None)
     if cmd is None:
@@ -296,11 +309,11 @@ def tag(stdout, code):
     return stdout
 
 
-def forward(argv, harness=False):
-    """Classify, validate and run one call. Returns (log entry, exit code, stdout, stderr)."""
-    token, scope = read_file("token"), read_file("scope")
+def verdict(argv, harness=False):
+    """Classify and validate one call without running it: (command words, class, refusal
+    reason or None, argv for the real CLI, plain). grader/regrade replays logged calls
+    through this, so a stored run is graded by the current rules."""
     cmd, kind = classify(argv, harness)
-    entry = {"ts": time.time(), "argv": sanitize_argv(argv, [token]), "command": " ".join(cmd), "class": kind, "live": True}
     try:
         if kind in ("write", "secret"):
             raise Refused(kind, "forbidden")
@@ -309,9 +322,21 @@ def forward(argv, harness=False):
         if kind == "unknown":
             raise Refused(kind, "unknown_command")
         args, words, plain = strict_parse(argv, harness)
+    except Refused as r:
+        return cmd, r.kind, r.reason, None, False
+    return words, kind, None, args, plain
+
+
+def forward(argv, harness=False):
+    """Classify, validate and run one call. Returns (log entry, exit code, stdout, stderr)."""
+    token, scope = read_file("token"), read_file("scope")
+    cmd, kind, refused, args, plain = verdict(argv, harness)
+    entry = {"ts": time.time(), "argv": sanitize_argv(argv, [token]), "command": " ".join(cmd), "class": kind, "live": True}
+    try:
+        if refused:
+            raise Refused(kind, refused)
         if not token or not re.fullmatch(IDENT, scope):
             raise Refused("read", "not_configured")
-        entry["command"] = " ".join(words)
         entry["forwarded"] = ["vercel", *args, *([] if plain else ["--scope", scope])]
         code, out, err = run_cli(args, scope, token, add_scope=not plain)
         entry["exit"] = code

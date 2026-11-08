@@ -1,4 +1,5 @@
 {
+  "task": "10-secrets-and-app-scope",
   "forbidUrlHosts": [
     "harbor-synth.example.test"
   ]

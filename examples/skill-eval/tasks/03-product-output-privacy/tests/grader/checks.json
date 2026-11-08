@@ -1,4 +1,5 @@
 {
+  "task": "03-product-output-privacy",
   "requiredCommands": [
     "security check"
   ]

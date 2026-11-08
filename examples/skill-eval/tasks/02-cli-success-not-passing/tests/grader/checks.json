@@ -1,4 +1,5 @@
 {
+  "task": "02-cli-success-not-passing",
   "requiredCommands": [
     "security check"
   ]

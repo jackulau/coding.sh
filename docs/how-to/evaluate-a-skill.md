@@ -43,8 +43,11 @@ and keeps the credential where the agent can't read it. The example's `run.sh --
 for a Vercel team: the proxy runs as a separate user that alone can read the token, refuses
 everything the stub refuses, logs to the same call log, and tags answers with the same marker.
 Before the agent starts, the harness reads the account's member emails, token names and firewall
-values as canaries for the leak check. Only scenarios whose grading doesn't depend on fixture
-facts run live. See [Live run](../../examples/skill-eval/README.md#live-run-a-real-vercel-team-read-only).
+values as canaries for the leak check, and its domains for the scenarios that forbid touching its
+sites. Only scenarios whose grading doesn't depend on fixture facts run live, and their
+instructions name the team, project and site only through environment variables, so no fixture
+name is left for the agent to chase. After a grader fix, `run.sh <out-dir> --regrade` grades the
+stored runs again without calling the agent. See [Live run](../../examples/skill-eval/README.md#live-run-a-real-vercel-team-read-only).
 
 ## 3. Write one task per scenario
 

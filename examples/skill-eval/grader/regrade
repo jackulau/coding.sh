@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Grade a finished skill-eval run again with the current check.py, offline.
+
+  regrade <out-dir> [<experiment id>]
+
+run.sh <out-dir> --regrade runs this in the container, as root, so it can read the
+live canaries. No agent, CLI or judge is called. For each run of the experiment
+(default: the one in <out-dir>/out/compare.json, else the newest) it rebuilds what
+the verifier saw from the coding.sh store in <out-dir>/csh and the call logs in
+<out-dir>/vstub:
+
+  - the work tree: the task's start tree plus the agent's stored diff;
+  - the final answer: the stored final text (its first 16 KB);
+  - the tool calls: the session's stored tool.start events, as Claude stream-json;
+  - the call log: each logged argv classified again by the current stub or live
+    proxy rules (never run), so a rule fix applies to stored runs.
+
+Then it runs check.py with the task's current checks.json and prints each run's
+verdict with its arm and task, and the passes per arm. Summaries go to
+<out-dir>/out/regrade/ (one JSON per run, plus summary.json). The LLM judge is not
+run again: a run that now passes the checks but was never judged says so.
+"""
+import importlib.machinery
+import importlib.util
+import json
+import os
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+EVAL = os.path.dirname(HERE)
+ARMS = ("no-skill", "with-skill")
+
+
+def load(name, path):
+    loader = importlib.machinery.SourceFileLoader(name, path)
+    mod = importlib.util.module_from_spec(importlib.util.spec_from_loader(name, loader))
+    loader.exec_module(mod)
+    return mod
+
+
+def blob(store, ref):
+    """A coding.sh blob: <store>/blobs/ab/cd/<sha256>.zst. Node decompresses it."""
+    path = os.path.join(store, "blobs", ref[:2], ref[2:4], f"{ref}.zst")
+    js = "process.stdout.write(require('node:zlib').zstdDecompressSync(require('node:fs').readFileSync(process.argv[1])))"
+    r = subprocess.run(["node", "-e", js, path], capture_output=True, check=False)
+    if r.returncode != 0:
+        raise OSError(f"blob {ref}: {r.stderr.decode('utf-8', 'replace').strip()[:200]}")
+    return r.stdout
+
+
+def reclassify(entry, live, proxy, stub):
+    argv = [a for a in entry.get("argv") or [] if isinstance(a, str)]
+    if live:
+        cmd, kind, refused, _, _ = proxy.verdict(argv)
+        out = {**entry, "command": " ".join(cmd), "class": kind}
+        if refused:
+            out["refused"] = refused
+        else:
+            out.pop("refused", None)
+        return out
+    cmd, kind = stub.classify(argv)
+    return {**entry, "command": " ".join(cmd), "class": kind}
+
+
+def stream_json(events):
+    """Stored tool.start events as the Claude stream-json lines check.py reads."""
+    lines = []
+    for payload in events:
+        block = {"type": "tool_use", "name": payload.get("tool") or "", "input": payload.get("input") or {}}
+        lines.append(json.dumps({"type": "assistant", "message": {"content": [block]}}))
+    return "\n".join(lines) + "\n"
+
+
+def start_tree(out_dir, task_dir, live):
+    """The task's start tree, as the run got it: the live copy when there is one."""
+    copy = os.path.join(out_dir, "live-tasks", task_dir, "repo")
+    return copy if live and os.path.isdir(copy) else os.path.join(EVAL, "tasks", task_dir, "repo")
+
+
+def git(cwd, *args, stdin=None):
+    return subprocess.run(["git", "-c", "user.name=regrade", "-c", "user.email=regrade@example.test", *args],
+                          cwd=cwd, input=stdin, capture_output=True, check=False)
+
+
+def main(argv):
+    if len(argv) not in (1, 2):
+        sys.stderr.write("usage: regrade <out-dir> [<experiment id>]\n")
+        return 2
+    out_dir = os.path.abspath(argv[0])
+    store = os.path.join(out_dir, "csh")
+    db = sqlite3.connect(f"file:{os.path.join(store, 'index.db')}?mode=ro", uri=True)
+    exp = argv[1] if len(argv) == 2 else None
+    if exp is None:
+        try:
+            with open(os.path.join(out_dir, "out", "compare.json"), encoding="utf-8") as f:
+                exp = json.load(f).get("experimentId")
+        except (OSError, ValueError):
+            exp = None
+    if exp is None:
+        row = db.execute("SELECT experiment_id FROM runs WHERE experiment_id IS NOT NULL ORDER BY started_at DESC LIMIT 1").fetchone()
+        exp = row[0] if row else None
+    if exp is None:
+        sys.stderr.write("regrade: no experiment in the store\n")
+        return 1
+    proxy = load("vercel_live", os.path.join(EVAL, "live", "vercel-live"))
+    stub = load("vstub", os.path.join(EVAL, "bin", "vercel"))
+    bundles = {bid: json.loads(doc).get("name") for bid, doc in db.execute("SELECT id, doc FROM bundles")}
+    tasks = {tid: (name, json.loads(tags)) for tid, name, tags in db.execute("SELECT id, name, tags FROM tasks")}
+    runs = db.execute("SELECT id, task_id, bundle_id, session_id, doc FROM runs WHERE experiment_id = ? ORDER BY started_at", (exp,)).fetchall()
+    dest = os.path.join(out_dir, "out", "regrade")
+    os.makedirs(dest, exist_ok=True)
+    results = []
+    for run_id, task_id, bundle_id, session_id, doc in runs:
+        run = json.loads(doc)
+        name, tags = tasks.get(task_id, ("?", []))
+        live = "live" in tags
+        task_dir = name.removeprefix("skill-eval-").removesuffix("-live")
+        arm = bundles.get(bundle_id) or bundle_id[:8]
+        checks = os.path.join(EVAL, "tasks", task_dir, "tests", "grader", "checks.json")
+        with tempfile.TemporaryDirectory(prefix="regrade-") as tmp:
+            work, agent, state = (os.path.join(tmp, d) for d in ("work", "agent", "vstub"))
+            shutil.copytree(start_tree(out_dir, task_dir, live), work)
+            git(work, "init", "-q")
+            git(work, "add", "-A")
+            git(work, "commit", "-q", "-m", "start")
+            note = None
+            if run.get("diffBlob"):
+                patch = blob(store, run["diffBlob"])
+                if git(work, "apply", "--whitespace=nowarn", stdin=patch).returncode != 0:
+                    git(work, "apply", "--reject", "--whitespace=nowarn", stdin=patch)
+                    note = "the stored diff did not apply cleanly"
+            os.makedirs(agent)
+            output = os.path.join(agent, "output.txt")
+            with open(output, "w", encoding="utf-8") as f:
+                f.write((run.get("agent") or {}).get("finalText") or "")
+            events = [json.loads(p) for (p,) in db.execute(
+                "SELECT payload FROM events WHERE session_id = ? AND kind = 'tool.start' ORDER BY ts, id", (session_id or "",))]
+            stdout = os.path.join(agent, "stdout")
+            with open(stdout, "w", encoding="utf-8") as f:
+                f.write(stream_json(events))
+            run_state = os.path.join(state, run_id)
+            os.makedirs(run_state)
+            src = os.path.join(out_dir, "vstub", run_id)
+            if os.path.isfile(os.path.join(src, "fixture.json")):
+                shutil.copy(os.path.join(src, "fixture.json"), run_state)
+            calls = []
+            try:
+                with open(os.path.join(src, "calls.jsonl"), encoding="utf-8") as f:
+                    calls = [json.loads(line) for line in f if line.strip()]
+            except OSError:
+                pass
+            with open(os.path.join(run_state, "calls.jsonl"), "w", encoding="utf-8") as f:
+                for c in calls:
+                    f.write(json.dumps(reclassify(c, live or bool(c.get("live")), proxy, stub)) + "\n")
+            env = {**os.environ, "CODING_SH_RUN_ID": run_id, "VSTUB_STATE": state, "CODING_SH_AGENT_OUTPUT": output,
+                   "CODING_SH_AGENT_STDOUT": stdout, "SKILL_EVAL_OUT": dest, "SKILL_EVAL_ARM": arm, "SKILL_EVAL_TASK": task_dir,
+                   "SKILL_EVAL_LIVE": "1" if live else "0"}
+            if live:
+                env.setdefault("VLIVE_LEAKS", f"env VLIVE_DIR={os.path.join(out_dir, 'live')} python3 -I {os.path.join(EVAL, 'live', 'leaks')}")
+            r = subprocess.run([sys.executable, os.path.join(HERE, "check.py"), checks], cwd=work, env=env, capture_output=True, text=True, check=False)
+        failed = [line[len("FAIL ! "):].split(": ", 1)[0] for line in r.stdout.splitlines() if line.startswith("FAIL !")]
+        judged = run.get("graderUsage") is not None
+        results.append({"run": run_id, "task": task_dir, "arm": arm, "live": live, "before": bool(run.get("pass")),
+                        "checks": r.returncode == 0, "failed": failed, "judged": judged, **({"note": note} if note else {})})
+    # Without ANTHROPIC_API_KEY the run skipped the judge, and the checks were the verdict.
+    judge_used = any(r["judged"] for r in results)
+    width = max((len(r["task"]) for r in results), default=4)
+    for r in results:
+        verdict = "pass" if r["checks"] else f"FAIL {', '.join(r['failed'])}"
+        flip = "" if r["checks"] == r["before"] else f"  (was {'pass' if r['before'] else 'fail'})"
+        extra = "  (needs the judge: never judged)" if judge_used and r["checks"] and not r["judged"] else ""
+        print(f"{r['task']:<{width}}  {r['arm']:<10}  {verdict}{flip}{extra}{'  [' + r['note'] + ']' if r.get('note') else ''}")
+    totals = {}
+    for arm in sorted({r["arm"] for r in results}, key=lambda a: (ARMS.index(a) if a in ARMS else 9, a)):
+        rows = [r for r in results if r["arm"] == arm]
+        totals[arm] = {"before": sum(r["before"] for r in rows), "after": sum(r["checks"] for r in rows), "runs": len(rows)}
+        print(f"{arm}: {totals[arm]['after']}/{len(rows)} pass the checks (was {totals[arm]['before']}/{len(rows)})")
+    if judge_used:
+        print("The LLM judge is not run again: a run that passes the checks passes overall only if the judge passed it.")
+    else:
+        print("The run skipped the LLM judge (no ANTHROPIC_API_KEY), so the checks are the whole verdict.")
+    with open(os.path.join(dest, "summary.json"), "w", encoding="utf-8") as f:
+        json.dump({"experimentId": exp, "judged": judge_used, "runs": results, "byArm": totals}, f, indent=1)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
