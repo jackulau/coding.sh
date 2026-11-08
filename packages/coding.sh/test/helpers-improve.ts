@@ -29,6 +29,9 @@ export async function improveWorld(root: string, name: string, o: { afterFlagged
     XDG_DATA_HOME: join(home, ".local", "share"),
     NO_COLOR: "1",
     CODING_SH_NO_UPDATE_CHECK: "1",
+    // The store is seeded directly, so each read would start a detached re-parse
+    // that outlives the CLI and still has the temp home open when after() removes it.
+    CODING_SH_NO_AUTO_INGEST: "1",
     GIT_CONFIG_GLOBAL: join(home, ".gitconfig-none"),
     GIT_CONFIG_NOSYSTEM: "1",
   };
