@@ -1,0 +1,82 @@
+docs/reference/api.md
+  s_8e040dbdf13565::t_697b1650ee0d74 887-891
+docs/guides/evals.md
+  s_8e040dbdf13565::t_f1056480f92363 517-536
+packages/coding.sh/src/toolevals/compare.ts
+  s_8e040dbdf13565::t_2e65f98c0e76f6 12
+  s_8e040dbdf13565::t_3d807bad9e7a34 77-78,80-84
+packages/coding.sh/src/cli/commands/toolevals.ts
+  s_8e040dbdf13565::t_a99a05f7b15a80 402-403
+  s_8e040dbdf13565::t_9384250098dc7a 439
+  s_8e040dbdf13565::t_abea7c5fda6673 345-351,355-364,367,369,371-375
+  s_8e040dbdf13565::t_7bb4f4ad3f3ffd 425-436,441,443
+  s_8e040dbdf13565::t_f75aa87d490b84 463-467
+packages/coding.sh/src/experiments/render.ts
+  s_8e040dbdf13565::t_fc4eece3546d3d 67-83
+packages/coding.sh/src/toolevals/types.ts
+  s_8e040dbdf13565::t_8e33dcb7f313b1 289-290
+CHANGELOG.md
+  s_8e040dbdf13565::t_cd4a9dfbf0e71e 71
+docs/reference/cli.md
+  s_8e040dbdf13565::t_cd4a9dfbf0e71e 1108-1110,1133,1604-1606,1616
+packages/coding.sh/test/toolevals/cli.test.ts
+  s_8e040dbdf13565::t_cd3a11c682db38 200-218,221,227
+  s_8e040dbdf13565::t_cfa5c24235b013 268-294
+packages/coding.sh/src/datasets/types.ts
+  s_8e040dbdf13565::t_44c6b8ea53afdc 230-231
+  s_8e040dbdf13565::t_a76547844e83df 280-283
+packages/coding.sh/test/experiments/samples.test.ts
+  s_8e040dbdf13565::t_f97ca5defb9560 1-201
+packages/coding.sh/src/experiments/samples.ts
+  s_8e040dbdf13565::t_d28d5c15b4b7bb 1-87
+packages/coding.sh/src/cli/commands/exp.ts
+  s_8e040dbdf13565::t_7a93b106ecdf52 244-245
+  s_8e040dbdf13565::t_6418bd8ee5816d 634-645
+  s_8e040dbdf13565::t_4db737995b6fb3 695-708
+  s_8e040dbdf13565::t_98527dd6866952 213,216-219
+  s_8e040dbdf13565::t_b131905eb8fcbf 749-754
+  s_8e040dbdf13565::t_b4b4921e200a5c 228-232
+packages/coding.sh/src/toolevals/report.ts
+  s_8e040dbdf13565::t_62113352a781e4 48-56
+docs/TOOL-EVALS.md
+  s_8e040dbdf13565::t_7a384ffd3995e9 601
+  s_8e040dbdf13565::t_4b2e16122ee186 373-387
+packages/coding.sh/src/toolevals/experiment.ts
+  s_8e040dbdf13565::t_41c7a56d4ecbd1 71,314,337
+  s_8e040dbdf13565::t_9c0915940a65f4 21,60-68,72-73,302-313,318-336,340-360,362
+  s_8e040dbdf13565::t_355ea070bb4f59 69-70
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_6f7d761ca22edc 1084-1085,1087
+  s_8e040dbdf13565::t_caf9d41b54e4f5 816
+  s_8e040dbdf13565::t_f1498e305f8364 105-120
+  s_8e040dbdf13565::t_13d9dfde3083d9 781-782
+  s_8e040dbdf13565::t_75eb51f9aaf765 1075-1076,1083,1086
+packages/coding.sh/test/toolevals/experiment.test.ts
+  s_8e040dbdf13565::t_3d7a366c9f1575 9,11
+  s_8e040dbdf13565::t_548e69a2652c24 111-126,130-138,140-141,143-186
+  s_8e040dbdf13565::t_ed01238f518d8f 127-129,139,142
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_d7909a9bd02968 239-240
+packages/coding.sh/src/experiments/run.ts
+  s_8e040dbdf13565::t_563eef088e9e61 82-89
+  s_8e040dbdf13565::t_5599c491f04db6 322-326
+  s_8e040dbdf13565::t_843c148e556eac 300-301
+  s_8e040dbdf13565::t_a6d968bd5092dc 24
+  s_8e040dbdf13565::t_996c6d6807b53b 352-353,363-379,384,390-408,412-415
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2b37d5d2f4feb7c249a6fbedf5fba2df07cb1bc5",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
