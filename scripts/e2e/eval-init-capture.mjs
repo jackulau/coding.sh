@@ -275,7 +275,7 @@ try {
   const lines = readFileSync(join(proj, "evals", "triage", "cases.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
   check(lines.length === 4 && lines.every((l) => l.metadata?.draft === true) && lines.filter((l) => l.tags?.[0] === "should-not").length === 1, "eval init --draft: 4 cases, marked draft, one should-not", lines);
   check(JSON.parse(readFileSync(join(proj, "evals", "triage", "suite.json"), "utf8")).graders[0].kind === "exact", "eval init: short expected answers get an exact grader");
-  check(/coding\.sh eval run triage --yes/.test(t.ci ?? ""), "eval init: a CI workflow for the cases suite");
+  check(/uses: jackulau\/coding\.sh@v/.test(t.ci ?? "") && /command: eval run triage --yes/.test(t.ci ?? ""), "eval init: a CI workflow for the cases suite");
   const tr = await cs(["eval", "run", "triage", "--json"]);
   const trj = json(tr, "eval run triage");
   check(tr.code === 1 && trj.report.failing.length === 1 && /^the-save-button/.test(trj.report.failing[0]), "eval run: the regression suite exits 1 on the case triage.mjs gets wrong", trj.report);
