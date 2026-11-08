@@ -23,6 +23,7 @@ packages/coding.sh/src/cli/commands/eval-run.ts
   s_8e040dbdf13565::t_a694c190b86361 122-129
   s_8e040dbdf13565::t_38fd60b3b9afba 93-104
   s_8e040dbdf13565::t_fa622b86373033 130-131
+  s_8e040dbdf13565::t_e5d72db219b8b6 113,116
 packages/coding.sh/src/eval/init.ts
   s_8e040dbdf13565::t_7eb3b7d4be92bf 470-476,482-485,493-496,498
   s_8e040dbdf13565::t_55eb5e77ffc4a9 17
