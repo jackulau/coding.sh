@@ -44,7 +44,7 @@ export const CACHE_TTL_1H_MS = 60 * 60_000;
 export const CACHE_BREAK_FIX: Record<CacheBreakCause, string> = {
   compaction: "compact less often, or start a fresh session for a new task, so the prefix is not rewritten mid-session",
   "model-switch": "pin one model — a mid-session model change, often a settings.json fallbackModel, drops the cache since it belongs to one model",
-  idle: "the cache expired between turns (a gap past its lifetime); unavoidable unless the idle gaps are",
+  idle: "the cache expired during a wait longer than its lifetime (5 minutes by default); split long waits, such as a subagent polling a job, into chunks shorter than that",
   other: "keep the prompt prefix — tools, the system prompt, then the early messages — stable between turns",
 };
 
