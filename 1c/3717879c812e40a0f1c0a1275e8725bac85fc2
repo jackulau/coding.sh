@@ -1,0 +1,27 @@
+packages/coding.sh/test/cli/eval-init-run.test.ts
+  s_8e040dbdf13565::t_411d6672d60c4d 235-238
+docs/guides/evals.md
+  s_8e040dbdf13565::t_2dd180c59c3c29 1211-1212
+docs/reference/cli.md
+  s_8e040dbdf13565::t_2dd180c59c3c29 2338
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_2dd180c59c3c29 1309
+CHANGELOG.md
+  s_8e040dbdf13565::t_74e08909bb72dd 26-28,30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1c3717879c812e40a0f1c0a1275e8725bac85fc2",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jack <jack@coding.sh>"
+    }
+  }
+}
