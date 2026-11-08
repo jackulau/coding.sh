@@ -206,6 +206,14 @@ describe("materialize / diff", () => {
     await assert.rejects(materialize(s, dest), /not empty/);
   });
 
+  test("materializes one repo's commit into several dirs at once, before its shadow repo exists", async () => {
+    const root = makeRepo({ "only.txt": "committed\n" });
+    const sha = gitc(root, "rev-parse", "HEAD");
+    assert.equal(existsSync(shadowRepoPath(root)), false);
+    const ms = await Promise.all(Array.from({ length: 12 }, (_, i) => i).map((i) => materialize({ root, head: sha, snapshot: sha }, join(tmp(), `par-${i}`))));
+    for (const m of ms) assert.equal(readFileSync(join(m.dir, "only.txt"), "utf8"), "committed\n");
+  });
+
   test("materialize from head when there is no snapshot", async () => {
     const root = makeRepo({ "only.txt": "committed\n" });
     write(root, { "only.txt": "dirty\n" });

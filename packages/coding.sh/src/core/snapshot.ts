@@ -100,16 +100,33 @@ export function shadowRepoPath(repoRoot: string, env: NodeJS.ProcessEnv = proces
  * Create (idempotently) the bare shadow repo for `repoRoot` and point its
  * alternates at the user's object store. Safe to call concurrently.
  */
+const shadowInits = new Map<string, Promise<void>>();
+
+async function initShadow(shadow: string, lay: RepoLayout): Promise<void> {
+  mkdirSync(shadow, { recursive: true, mode: 0o700 });
+  try {
+    await run(["init", "--bare", "-q", `--object-format=${lay.objectFormat}`, shadow], { cwd: shadow });
+  } catch (e) {
+    // Another process initialized it first (it held config.lock): its shadow is as good as ours.
+    if (!existsSync(join(shadow, "HEAD"))) throw e;
+  }
+  // allowFail: a concurrent init may hold config.lock; gc.auto is only a nicety.
+  await run(["config", "gc.auto", "0"], { env: { GIT_DIR: shadow }, allowFail: true });
+  writeFileSync(join(shadow, "coding.sh-root"), realRoot(lay.root) + "\n");
+}
+
 export async function ensureShadow(repoRoot: string, env: NodeJS.ProcessEnv = process.env, known?: RepoLayout): Promise<string> {
   const lay = known ?? (await layout(repoRoot));
   if (!lay) throw new Error(`not a git repository: ${repoRoot}`);
   const shadow = shadowRepoPath(lay.root, env);
   if (!existsSync(join(shadow, "HEAD"))) {
-    mkdirSync(shadow, { recursive: true, mode: 0o700 });
-    await run(["init", "--bare", "-q", `--object-format=${lay.objectFormat}`, shadow], { cwd: shadow });
-    // allowFail: a concurrent init may hold config.lock; gc.auto is only a nicety.
-    await run(["config", "gc.auto", "0"], { env: { GIT_DIR: shadow }, allowFail: true });
-    writeFileSync(join(shadow, "coding.sh-root"), realRoot(lay.root) + "\n");
+    // Tasks that start from one repo materialize side by side: one init per shadow in this process.
+    let init = shadowInits.get(shadow);
+    if (!init) {
+      init = initShadow(shadow, lay).finally(() => shadowInits.delete(shadow));
+      shadowInits.set(shadow, init);
+    }
+    await init;
   }
   const alternatesFile = join(shadow, "objects", "info", "alternates");
   const want = join(lay.commonDir, "objects") + "\n";

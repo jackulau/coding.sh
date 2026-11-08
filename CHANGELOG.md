@@ -118,6 +118,7 @@ coding.sh runs on Windows, and CI tests it there.
 
 ### Fixed
 
+- **Harness A/B.** Two tasks from the same repo no longer error when they start at once: the first run of a repo set up its snapshot store while the second was reading it. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md).
 - **Harness A/B.** `compare --gate` no longer says "Don't ship: B breaks a task A solved" when both arms passed it by editing tests. Tamper-flagged passes now count as fails for the gate in both arms, not only in B. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#harness-ab).
 - **Experiments.** `exp ab` with no `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` stops before the first trial with `missing_key` and points at `coding.sh improve check`, instead of running every case into an error and reporting "Hold: not enough evidence". `refine propose` without a key names the proposer, not the judge. [Improve your agent every week](https://github.com/jackulau/coding.sh/blob/main/docs/guides/improve.md#3-test-the-edit-before-you-commit-it-optional).
 - **Rules.** A CLAUDE.md line like "Run `npm test` before you say you are done, and never claim…" is read as a requirement to run `npm test`: the clause that holds the command decides, not a "never" later in the line.
