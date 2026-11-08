@@ -41,7 +41,7 @@ span in an OpenTelemetry trace. It is stored as
 its own session with a parent id. Its prompt counts as its turn, and its title is the task
 description the parent gave it (Claude Code's `description`), else the first line of its prompt.
 `coding.sh sessions --subagents` lists them, and `coding.sh show` places them on the parent's
-timeline.
+timeline. Through the proxy, a Claude Code subagent's model calls land in its session too.
 
 **Flag.** A failure pattern detected on a session after each ingest:
 

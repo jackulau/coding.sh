@@ -497,6 +497,13 @@ const METADATA_STRING_KEYS = new Set([
   "messageId",
   "responseId",
   "requestId",
+  "agentId",
+  "parentAgentId",
+  "parentSessionId",
+  "forkedFromSessionId",
+  "subagentKind",
+  "accountHash",
+  "upstreamAuth",
 ]);
 
 /**

@@ -506,7 +506,12 @@ or response has them, it also adds `reasoningEffort` (`reasoning.effort`, `reaso
 `output_config.effort`), `serviceTier` and `speed` (the response's value, else the request's;
 `requestedServiceTier` when the request asked for another tier),
 `thinkingBudget`, and `compaction: true` on a call that compacted the conversation (Codex's
-`/responses/compact`, or a `compaction` block or output item). When the
+`/responses/compact`, or a `compaction` block or output item). When the client names them, it adds
+`parentSessionId` (the session that started this one; for a Claude Code subagent, whose calls go to
+`<session>:sub:<agentId>`, the parent's), `agentId`, `parentAgentId` and `agentType` (Claude Code),
+`forkedFromSessionId` and `subagentKind` (Codex), `accountHash` (16 hex characters of the sha256 of
+the account id), and `upstreamAuth` (CLIProxyAPI's credential index). A session seen only through
+the proxy takes its `parent` from its calls' `parentSessionId`. When the
 session also has model calls from the agent's transcript or OpenTelemetry, those count toward
 `stats` and the proxy's copies are detail only; failed proxy calls count either way.
 

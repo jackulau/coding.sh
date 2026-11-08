@@ -46,6 +46,10 @@ A Codex provider of your own keeps its table and stays selected. Only its `base_
 its `env_key`, headers and wire API still apply. `init` prints the URL it chains through, and `doctor`
 shows it. `uninstall --proxy` puts the old value back, byte for byte while the file is unchanged.
 
+Behind CLIProxyAPI, each call records `upstreamAuth`: the index of the credential CLIProxyAPI picked
+for it, read from its `X-CPA-TRACE-ID` response header. It is already a hash, so calls can be grouped
+by credential without the credential.
+
 `init --proxy --force` replaces the URL instead: the calls go to the proxy's configured upstream
 (the provider's own API unless you set one), and Codex switches to the `coding-sh` provider. A URL with a query string or credentials in it is never chained;
 `init` stops and asks for `--force`.
@@ -211,6 +215,12 @@ In capture mode `full` (the default), each call stores:
   or Anthropic's `output_config.effort`), service tier, speed, the thinking budget, and
   `compaction: true` for a call that compacted the conversation (Codex's `/responses/compact`, or a
   `compaction` block or item in the reply). The session id the client sent is the event's session.
+- where the call sits among sessions, when the client says: a Claude Code subagent's calls (sent with
+  `x-claude-code-agent-id`) go to the subagent's own session, the one its hooks and transcript fill,
+  with `parentSessionId`; Codex calls name their parent thread, the thread they were forked from and
+  the subagent kind (`review`, `compact`, …); and the account the call ran on, as a 16-character
+  hash (Claude Code's `account_uuid`, Codex's `chatgpt-account-id`). The account id itself is not
+  stored: the request body keeps `account_uuid` as `hash:<hash>`.
 
 Auth headers (`Authorization`, `x-api-key`, cookies) are never stored. In capture mode `metadata`,
 only the event is kept: hashes, counts, tool names, usage and timings, with no prompt or response

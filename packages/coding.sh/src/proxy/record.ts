@@ -11,7 +11,7 @@
 // timings, usage and short hashes of the system prompt and tools.
 import { randomUUID } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
-import { str } from "../adapters/_shared/normalize.ts";
+import { isObj, str } from "../adapters/_shared/normalize.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
 import { type Prices, priceEvent } from "../core/pricing.ts";
 import { type Redactor, toMetadata } from "../core/redact.ts";
@@ -19,7 +19,7 @@ import { buildSession } from "../core/sessions.ts";
 import type { BlobStore, IndexStore } from "../core/types.ts";
 import { type AgentEvent, SCHEMA_VERSION } from "../schema/index.ts";
 import { messagesKey, putMessages, RecentBlobs } from "./blocks.ts";
-import { type Client, detectClient, type Headers, linkCall, ResponseSessions } from "./link.ts";
+import { accountHash, callLineage, type Client, detectClient, type Headers, type Lineage, type Link, linkCall, ResponseSessions, upstreamAuth } from "./link.ts";
 import { type CallResult, compacted, parseRequest, type RequestInfo, type Route } from "./wire.ts";
 
 export interface CapturedCall {
@@ -157,6 +157,23 @@ interface Content {
   paged?: boolean;
 }
 
+/**
+ * Claude Code's metadata.user_id names the account (`account_uuid`): it is
+ * stored as `hash:` and the payload's accountHash, never as sent.
+ */
+function hashAccount(body: Record<string, unknown>): void {
+  const md = body.metadata;
+  if (!isObj(md) || typeof md.user_id !== "string" || !md.user_id.startsWith("{")) return;
+  try {
+    const u = JSON.parse(md.user_id) as Record<string, unknown>;
+    if (typeof u.account_uuid !== "string" || !u.account_uuid || u.account_uuid.startsWith("hash:")) return;
+    u.account_uuid = `hash:${accountHash(u.account_uuid)}`;
+    body.metadata = { ...md, user_id: JSON.stringify(u) };
+  } catch {
+    // Not JSON: left as the redactor left it.
+  }
+}
+
 /** Field of the request body that holds the system prompt, per API (chat keeps it in messages). */
 const systemField = (api: string): string | undefined => (api === "messages" || api === "count_tokens" ? "system" : api === "responses" ? "instructions" : undefined);
 
@@ -180,6 +197,7 @@ async function storeContent(call: CapturedCall, body: unknown, info: RequestInfo
   if (toolsText) await o.blobs.put(toolsText);
   if (body !== undefined) {
     const stored: Record<string, unknown> = { ...(red.value(body) as Record<string, unknown>) };
+    hashAccount(stored);
     if (sysText && sysField && stored[sysField] !== undefined) stored[sysField] = { $blob: out.systemSha };
     if (toolsText && stored.tools !== undefined) stored.tools = { $blob: out.toolsSha };
     const key = o.blocks === false ? undefined : messagesKey(call.route.api, stored);
@@ -269,6 +287,28 @@ export function buildPayload(call: CapturedCall, info: RequestInfo | undefined, 
 }
 
 /** Stores events and rebuilds their sessions. A session the proxy creates gets parseVersion 0 (re-parse leaves it alone; ingest stamps it). */
+/**
+ * Payload fields that place a call among sessions (callLineage, link.ts):
+ * `parentSessionId` (the session that spawned this one; for a Claude Code
+ * subagent, its parent's), `agentId`, `parentAgentId`, `agentType`,
+ * `forkedFromSessionId`, `subagentKind`, `accountHash`, and `upstreamAuth`
+ * (CLIProxyAPI's credential index). Each is absent when the client sent nothing.
+ */
+export function lineagePayload(l: Lineage, link: Link, resHeaders: Headers | undefined): Record<string, string> {
+  const p: Record<string, string> = {};
+  const parent = link.parentSessionId ?? l.parentSessionId;
+  if (parent && parent !== link.sessionId) p.parentSessionId = parent;
+  if (l.agentId) p.agentId = l.agentId;
+  if (l.parentAgentId) p.parentAgentId = l.parentAgentId;
+  if (l.agentType) p.agentType = l.agentType;
+  if (l.forkedFromSessionId) p.forkedFromSessionId = l.forkedFromSessionId;
+  if (l.subagentKind) p.subagentKind = l.subagentKind;
+  if (l.accountHash) p.accountHash = l.accountHash;
+  const auth = upstreamAuth(resHeaders);
+  if (auth) p.upstreamAuth = auth;
+  return p;
+}
+
 export function storeWriter(store: IndexStore): (events: AgentEvent[]) => Promise<void> {
   return async (events) => {
     await store.putEvents(events);
@@ -328,9 +368,11 @@ export function createRecorder(o: RecorderOptions): Recorder {
     const info = body !== undefined ? parseRequest(call.route.api, body) : undefined;
     const client = detectClient(call.reqHeaders);
     const content = await storeContent(call, body, info, o, recent);
-    const link = linkCall(call.reqHeaders, client, info, content.systemSha ? shortHash(content.systemSha) : undefined, responses);
+    const lineage = callLineage(call.reqHeaders, client, info);
+    const link = linkCall(call.reqHeaders, client, info, content.systemSha ? shortHash(content.systemSha) : undefined, responses, lineage);
     if (call.route.api === "responses") responses.set(call.result?.id, link.sessionId);
     const payload = buildPayload(call, info, client, content, link.linkedBy);
+    Object.assign(payload, lineagePayload(lineage, link, call.resHeaders));
     const e: AgentEvent = {
       id: hashParts("proxy", link.sessionId, call.startedAt, seq++, randomUUID()),
       v: SCHEMA_VERSION,
@@ -346,6 +388,7 @@ export function createRecorder(o: RecorderOptions): Recorder {
     if (model) e.model = model;
     if (link.agent === client.id && client.version) e.agentVersion = client.version;
     if (client.turnId && link.agent === "codex") e.turnId = client.turnId;
+    if (link.subagentId) e.subagentId = link.subagentId;
     if (call.result?.usage && e.kind === "llm.call") e.usage = { ...call.result.usage };
     const refs = [content.requestRef, content.responseRef, payload.systemRef, payload.toolsRef].filter((r): r is string => typeof r === "string");
     if (refs.length) e.blobs = [...new Set(refs)];

@@ -7,11 +7,13 @@
 // - Codex: `session-id` / `thread-id` (also inside `x-codex-turn-metadata`),
 //   the thread id its hooks and rollouts use.
 // - Any client: `x-coding-sh-session: <id>` picks the session explicitly.
+// A Claude Code subagent's calls (`x-claude-code-agent-id`) go to the child
+// session `<session>:sub:<agent id>` its hooks and transcript use.
 // Otherwise the call goes to a `proxy-<hash>` session keyed by the client, the
 // system prompt and the first user message, so each turn of one stateless
 // conversation (its messages only grow) lands in the same session. Responses API
 // calls that continue a response (`previous_response_id`) join that response's session.
-import { isObj, obj, str } from "../adapters/_shared/normalize.ts";
+import { childSessionId, isObj, obj, str } from "../adapters/_shared/normalize.ts";
 import { hashParts } from "../core/ids.ts";
 import type { RequestInfo } from "./wire.ts";
 
@@ -31,6 +33,72 @@ export interface Link {
   agent: string;
   /** How the session was chosen: "header", "metadata", "previous-response", "conversation". */
   linkedBy: "header" | "metadata" | "previous-response" | "conversation";
+  /** Claude Code subagent the call ran in; the session is then its child session of `parentSessionId`. */
+  subagentId?: string;
+  parentSessionId?: string;
+}
+
+/**
+ * Where a call sits among an agent's sessions, and whose account it ran on, from
+ * what the client sends. Ids pass the same plain-id check as session ids.
+ * - Claude Code: `x-claude-code-agent-id` (the subagent the call ran in, the id
+ *   of its subagents/agent-<id>.jsonl), `x-claude-code-parent-agent-id`,
+ *   `x-claude-code-agent-type`, and in `metadata.user_id` `parent_session_id`
+ *   and `account_uuid`.
+ * - Codex: `x-codex-parent-thread-id`, `x-openai-subagent`, and in
+ *   `x-codex-turn-metadata` `parent_thread_id`, `forked_from_thread_id` and
+ *   `subagent_kind`; the account is `chatgpt-account-id`.
+ * - CLIProxyAPI: its `x-cpa-trace-id` response header carries the index of the
+ *   upstream credential it used (16 hex characters, already a hash).
+ * Account ids are never stored, only 16 hex characters of their sha256.
+ */
+export interface Lineage {
+  agentId?: string;
+  parentAgentId?: string;
+  agentType?: string;
+  parentSessionId?: string;
+  forkedFromSessionId?: string;
+  subagentKind?: string;
+  accountHash?: string;
+}
+
+/** 16 hex characters of the sha256 of an account id. */
+export const accountHash = (id: string): string => hashParts("proxy-account", id).slice(0, 16);
+
+export function callLineage(h: Headers, client: Client, req: RequestInfo | undefined): Lineage {
+  const out: Lineage = {};
+  if (client.id === "claude-code") {
+    const agentId = safe(one(h, "x-claude-code-agent-id"));
+    if (agentId) out.agentId = agentId;
+    const parentAgentId = safe(one(h, "x-claude-code-parent-agent-id"));
+    if (parentAgentId) out.parentAgentId = parentAgentId;
+    const agentType = safe(one(h, "x-claude-code-agent-type"));
+    if (agentType) out.agentType = agentType;
+    const userId = req?.metadata?.user_id;
+    const meta = typeof userId === "string" && userId.startsWith("{") ? parseJson(userId) : {};
+    const parent = safe(str(meta.parent_session_id));
+    if (parent) out.parentSessionId = parent;
+    const account = str(meta.account_uuid) ?? (typeof userId === "string" ? /_account_([0-9a-f-]{36})_session_/i.exec(userId)?.[1] : undefined);
+    if (account) out.accountHash = accountHash(account);
+  }
+  if (client.id === "codex") {
+    const meta = parseJson(one(h, "x-codex-turn-metadata"));
+    const parent = safe(one(h, "x-codex-parent-thread-id") ?? str(meta.parent_thread_id));
+    if (parent) out.parentSessionId = parent;
+    const forked = safe(str(meta.forked_from_thread_id));
+    if (forked) out.forkedFromSessionId = forked;
+    const kind = safe(one(h, "x-openai-subagent") ?? str(meta.subagent_kind));
+    if (kind) out.subagentKind = kind;
+    const account = one(h, "chatgpt-account-id");
+    if (account) out.accountHash = accountHash(account);
+  }
+  return out;
+}
+
+/** CLIProxyAPI's `x-cpa-trace-id: <YYYYMMDDHHMMSS>-<auth index>-<request id>`: the auth index. */
+export function upstreamAuth(h: Headers | undefined): string | undefined {
+  const v = h && one(h, "x-cpa-trace-id");
+  return v ? /^\d{14}-([0-9a-f]{16})-/i.exec(v)?.[1]?.toLowerCase() : undefined;
 }
 
 const one = (h: Headers, k: string): string | undefined => {
@@ -133,9 +201,16 @@ export class ResponseSessions {
   }
 }
 
-export function linkCall(h: Headers, client: Client, req: RequestInfo | undefined, systemHash: string | undefined, responses: ResponseSessions): Link {
+export function linkCall(h: Headers, client: Client, req: RequestInfo | undefined, systemHash: string | undefined, responses: ResponseSessions, lineage: Lineage = {}): Link {
   const named = namedSession(h, client, req);
-  if (named) return { sessionId: named.id, agent: client.id === "claude-code" || client.id === "codex" ? client.id : "proxy", linkedBy: named.by };
+  if (named) {
+    const agent = client.id === "claude-code" || client.id === "codex" ? client.id : "proxy";
+    // A Claude Code subagent sends its parent's session id: its calls go to the child
+    // session the transcript adapter builds for it (normalize.ts childSessionId).
+    const explicit = named.id === safe(one(h, "x-coding-sh-session"));
+    if (client.id === "claude-code" && lineage.agentId && !explicit) return { sessionId: childSessionId(named.id, lineage.agentId), agent, linkedBy: named.by, subagentId: lineage.agentId, parentSessionId: named.id };
+    return { sessionId: named.id, agent, linkedBy: named.by };
+  }
   const prev = responses.get(req?.previousResponseId);
   if (prev) return { sessionId: prev, agent: "proxy", linkedBy: "previous-response" };
   return { sessionId: conversationSessionId(client, req, systemHash), agent: "proxy", linkedBy: "conversation" };

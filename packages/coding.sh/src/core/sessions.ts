@@ -454,6 +454,8 @@ export interface SessionState {
   endedAt?: number;
   endSnapshot?: Session["endSnapshot"];
   parent?: Session["parent"];
+  /** `parent` came from a proxied call's parentSessionId; a session.start replaces it. */
+  parentByProxy?: boolean;
   project?: string;
   files: Set<string>;
   turnEnds: { live: number; backfill: number; liveIdless: number; backfillIdless: number };
@@ -531,7 +533,17 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
   if (e.spanId || e.parentSpanId || isEnrichment(e)) s.simple = false;
   if (s.provider === undefined && typeof e.payload.provider === "string" && e.payload.provider) s.provider = e.payload.provider;
   if (s.project === undefined && e.project) s.project = e.project;
-  if (!s.parent && e.kind === "session.start" && typeof e.payload.parentSessionId === "string") s.parent = parentOf([e]);
+  if (e.kind === "session.start" && typeof e.payload.parentSessionId === "string" && (!s.parent || s.parentByProxy)) {
+    s.parent = parentOf([e]);
+    delete s.parentByProxy;
+  } else if (!s.parent && isProxyCall(e) && typeof e.payload.parentSessionId === "string" && e.payload.parentSessionId !== e.sessionId) {
+    // A session seen only through the proxy (no hooks): its calls name the parent. A session.start wins.
+    s.parent = { sessionId: e.payload.parentSessionId };
+    const sub = e.subagentId ?? (typeof e.payload.agentId === "string" ? e.payload.agentId : undefined);
+    if (sub) s.parent.subagentId = sub;
+    if (typeof e.payload.agentType === "string") s.parent.type = e.payload.agentType;
+    s.parentByProxy = true;
+  }
   if (!isBackfillEvent(e)) s.live = true;
   if (!s.gitStart && e.kind === "session.start") {
     const { gitBranch, gitCommit, git } = e.payload;
