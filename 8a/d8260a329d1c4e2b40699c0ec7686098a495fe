@@ -18,12 +18,14 @@ apps/site/src/components/docs/markdown.ts
 apps/site/src/components/docs/nav.ts
   s_8e040dbdf13565::t_8d1fb1fcb2c756 171
   s_8e040dbdf13565::t_3db04dea1e12e3 110-115,117-121
+  s_8e040dbdf13565::t_81255d6bdca48e 116,122,172-173
 apps/site/src/pages/docs/experiments.astro
   s_8e040dbdf13565::t_dda8b685e7bb1d 1-238
 apps/site/src/pages/docs/evals.astro
   s_8e040dbdf13565::t_9638e8a07759d0 50-52,54
   s_8e040dbdf13565::t_dda8b685e7bb1d 99-102,256,258-263
   s_8e040dbdf13565::t_1c9cf0da7f4698 257
+  s_8e040dbdf13565::t_c0cee08cd90a23 53
 apps/site/src/pages/docs/api.astro
   s_8e040dbdf13565::t_a96396c895fa61 5-8,13-19
   s_8e040dbdf13565::t_32b7e4a91eef8b 2
@@ -42,6 +44,7 @@ apps/site/src/pages/index.astro
   s_8e040dbdf13565::t_f952f333ea3eff 215
 apps/site/src/pages/docs/harness-evals.astro
   s_8e040dbdf13565::t_dda8b685e7bb1d 1-223,230-278
+  s_8e040dbdf13565::t_5dcf6cee79a6e2 224-229
 docs/troubleshooting.md
   s_8e040dbdf13565::t_f952f333ea3eff 171
 ---
