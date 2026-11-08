@@ -17,6 +17,8 @@ docs/troubleshooting.md
   s_8e040dbdf13565::t_98de06c6979116 220,234
 packages/coding.sh/src/experiments/replay.ts
   s_8e040dbdf13565::t_d71300d554da09 1-286
+packages/coding.sh/src/jobs/store.ts
+  s_8e040dbdf13565::t_ccd618c2539a26 27
 ---
 {
   "schema_version": "authorship/3.0.0",
