@@ -238,3 +238,107 @@ describe("Scrubber", () => {
     await assert.rejects(purgeLiterals({ dbPath: ":memory:", blobs: new FsBlobStore(join(process.cwd(), "no-such-dir")), literals: ["short"] }), /shorter than 8/);
   });
 });
+
+describe("coding.sh purge --rule and eval run dirs", () => {
+  // Two tokens of one shape, a short value the rule also matches, and an eval run dir holding them.
+  const TOKEN_A = "zz-live-Q7d9KfL2mN4pR8sT";
+  const TOKEN_B = "zz-live-W3xY6zA1bC5dE9fG";
+  const RULE = "zz-live-[A-Za-z0-9]{16}|k-[0-9]{3}";
+  let env: TmpEnv;
+  let runFile = "";
+  let gitFile = "";
+
+  before(async () => {
+    env = tmpEnv();
+    const blobs = new FsBlobStore(join(env.dataHome, "blobs"));
+    const blobRef = await blobs.put(`export TOKEN=${TOKEN_B}\n`);
+    await seed(env.dataHome, {
+      sessions: [session("s1", { title: `rotate ${TOKEN_A}` }), session("s2")],
+      events: [
+        event("s1", 1, { payload: { text: `token ${TOKEN_A} and a short k-123 one` } }),
+        event("s1", 2, { kind: "tool.end", payload: { tool: "Bash", ok: true, outputRef: blobRef }, blobs: [blobRef] } as never),
+        event("s2", 1, { payload: { text: "nothing here" } }),
+      ],
+    });
+    // An eval run kept on disk: the agent's transcript under its HOME, and a git object in its work tree.
+    const projects = join(env.dataHome, "runs", "run_01", "home", ".claude", "projects", "work");
+    mkdirSync(projects, { recursive: true });
+    runFile = join(projects, "t.jsonl");
+    writeFileSync(runFile, JSON.stringify({ type: "user", text: `use ${TOKEN_B} and ${SECRET}` }) + "\n");
+    const objects = join(env.dataHome, "runs", "run_01", "work", ".git", "objects");
+    mkdirSync(objects, { recursive: true });
+    gitFile = join(objects, "ab");
+    writeFileSync(gitFile, `raw ${TOKEN_A}`);
+  });
+  after(() => env.restore());
+
+  test("--literal also masks eval run files, same length, and leaves .git alone", () => {
+    const secrets = join(env.root, "one.txt");
+    writeFileSync(secrets, `${SECRET}\n`);
+    const size = statSync(runFile).size;
+    const j = JSON.parse(ok(["purge", "--literal", secrets, "--json"]).stdout);
+    assert.equal(j.files, 1);
+    assert.equal(statSync(runFile).size, size);
+    assert.ok(!readFileSync(runFile, "utf8").includes(SECRET));
+    assert.ok(readFileSync(runFile, "utf8").includes(TOKEN_B), "only the given value goes");
+  });
+
+  test("--rule --dry-run counts the distinct matches and never prints them", () => {
+    const r = ok(["purge", "--rule", RULE, "--dry-run", "--json"]);
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.outcome, "planned");
+    assert.equal(j.ruleMatches, 2);
+    assert.equal(j.shortMatches, 1, "k-123 is under 8 characters and left alone");
+    assert.equal(j.events, 1);
+    assert.equal(j.sessions, 1);
+    assert.equal(j.blobs, 1);
+    assert.equal(j.files, 1);
+    for (const t of [TOKEN_A, TOKEN_B]) assert.ok(!r.stdout.includes(t) && !r.stderr.includes(t));
+    const text = ok(["purge", "--rule", RULE, "--dry-run"]);
+    assert.match(text.stderr, /Rules\s+matched 2 distinct values/);
+    assert.ok(!text.stderr.includes(TOKEN_A) && !text.stderr.includes(TOKEN_B));
+  });
+
+  test("--rule removes every match from rows, blobs and run files", () => {
+    ok(["purge", "--rule", RULE]);
+    for (const f of files(env.dataHome).filter((f) => f !== gitFile)) {
+      const buf = readFileSync(f);
+      assert.ok(!holds(buf, TOKEN_A) && !holds(buf, TOKEN_B), `${f} still holds a token`);
+    }
+    assert.ok(readFileSync(gitFile, "utf8").includes(TOKEN_A), "a .git object is not rewritten");
+    const db = new DatabaseSync(join(env.dataHome, "index.db"), { readOnly: true });
+    try {
+      const msg = JSON.parse((db.prepare("SELECT payload FROM events WHERE id = 's1-e1'").get() as { payload: string }).payload);
+      assert.equal(msg.text, `token ${PURGE_MARKER} and a short k-123 one`);
+    } finally {
+      db.close();
+    }
+    const again = JSON.parse(ok(["purge", "--rule", RULE, "--dry-run", "--json"]).stdout);
+    assert.equal(again.ruleMatches, 0);
+    assert.equal(again.values, 0);
+  });
+
+  test("a bad or empty-matching rule is refused without echoing it", () => {
+    const bad = cli(["purge", "--rule", `(${TOKEN_A}`]);
+    assert.equal(bad.status, 2);
+    assert.match(bad.stderr, /not a valid regular expression/);
+    assert.ok(!bad.stderr.includes(TOKEN_A));
+    const empty = cli(["purge", "--rule", `(${TOKEN_A})?`]);
+    assert.equal(empty.status, 2);
+    assert.match(empty.stderr, /matches empty text/);
+    assert.ok(!empty.stderr.includes(TOKEN_A));
+    assert.match(cli(["purge", "--rule", "zz-[a-z]{8}", "--rule", "-("]).stderr, /--rule 2 is not a valid/);
+  });
+
+  test("a rule matching over 10,000 distinct values is refused", () => {
+    const db = new DatabaseSync(join(env.dataHome, "index.db"));
+    const put = db.prepare("INSERT INTO kv (key, value, updated_at) VALUES (?, ?, 1)");
+    db.exec("BEGIN");
+    for (let i = 0; i < 10_001; i++) put.run(`many:${i}`, JSON.stringify({ v: `word-${String(i).padStart(6, "0")}` }));
+    db.exec("COMMIT");
+    db.close();
+    const r = cli(["purge", "--rule", "word-[0-9]{6}", "--dry-run", "--json"]);
+    assert.equal(r.status, 1);
+    assert.equal(JSON.parse(r.stderr.trim().split("\n").pop()!).reason, "too_broad");
+  });
+});

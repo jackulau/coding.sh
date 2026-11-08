@@ -8,6 +8,9 @@
 // Values are replaced with [redacted:purged]. Spool files keep their length (the
 // value becomes asterisks) so ingest cursors, which are byte offsets, stay valid.
 // Nothing here prints or returns a value; callers get counts.
+//
+// `--rule <regex>` first reads everywhere a purge writes (findRuleMatches) and
+// turns each distinct match into a literal, so both paths scrub the same way.
 import { closeSync, existsSync, openSync, readdirSync, readFileSync, statSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
@@ -19,12 +22,16 @@ import { loadSqlite } from "./sqlite.ts";
 export const PURGE_MARKER = "[redacted:purged]";
 /** Shorter literals would rewrite ordinary text. */
 export const MIN_LITERAL_LENGTH = 8;
+/** A rule that matches more distinct values than this is too broad to be one leaked secret. */
+export const MAX_RULE_VALUES = 10_000;
+/** Raw files above this size are neither scanned nor masked; the result counts them. */
+export const MAX_FILE_BYTES = 64 * 1024 * 1024;
 
 export interface PurgeOptions {
   /** The SQLite index file. */
   dbPath: string;
   blobs: BlobStore;
-  /** Directories of raw files to mask in place: the spool, the judge cache (skipped when absent). */
+  /** Directories of raw files to mask in place: the spool, the judge cache, eval run dirs (skipped when absent). */
   fileDirs?: readonly string[];
   literals: readonly string[];
   /** Count only; change nothing. */
@@ -38,8 +45,10 @@ export interface PurgeResult {
   /** Labels, eval tasks, runs, bundles, datasets, experiments, judges and kv rows. */
   otherRows: number;
   blobs: number;
-  /** Files masked in the spool and judge cache. */
+  /** Files masked in the spool, judge cache and eval run dirs. */
   files: number;
+  /** Raw files over MAX_FILE_BYTES, left alone. Absent when none. */
+  filesSkipped?: number;
   /** Saved session folds dropped (rebuilt on the next ingest). */
   foldsDropped: number;
   /** After the purge: PRAGMA integrity_check and the FTS integrity check both passed. */
@@ -142,18 +151,37 @@ export class Scrubber {
   }
 }
 
-/** Every spool file under `dir` (recursively). */
+/**
+ * Every regular file under `dir` (recursively). Symlinks are not followed, and a
+ * `.git` directory (in an eval run's work tree) is skipped: its objects are
+ * compressed, so a mask could only corrupt them.
+ */
 function* filesUnder(dir: string): Generator<string> {
   for (const ent of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, ent.name);
-    if (ent.isDirectory()) yield* filesUnder(p);
-    else if (ent.isFile() && !ent.name.endsWith(".lock")) yield p;
+    if (ent.isDirectory()) {
+      if (ent.name !== ".git") yield* filesUnder(p);
+    } else if (ent.isFile() && !ent.name.endsWith(".lock")) yield p;
   }
+}
+
+/** Raw files purge reads, and how many it leaves alone for their size. */
+function rawFiles(dirs: readonly string[] | undefined): { files: string[]; skipped: number } {
+  const files: string[] = [];
+  let skipped = 0;
+  for (const dir of dirs ?? []) {
+    if (!existsSync(dir)) continue;
+    for (const f of filesUnder(dir)) {
+      const size = statSync(f).size;
+      if (size > MAX_FILE_BYTES) skipped++;
+      else if (size > 0) files.push(f);
+    }
+  }
+  return { files, skipped };
 }
 
 /** Overwrites matches in place, same length, without truncating: a hook appending meanwhile loses nothing. */
 function maskFile(path: string, scrub: Scrubber, dryRun: boolean): boolean {
-  if (statSync(path).size === 0) return false;
   const ranges = scrub.maskRanges(readFileSync(path));
   if (!ranges.length) return false;
   if (dryRun) return true;
@@ -297,8 +325,10 @@ export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
       for (const ref of oldRefs) await o.blobs.delete(ref);
     }
 
-    // ---- raw files: hook payloads not yet (or already) ingested, cached judge prompts.
-    for (const dir of o.fileDirs ?? []) if (existsSync(dir)) for (const f of filesUnder(dir)) if (maskFile(f, scrub, dry)) result.files++;
+    // ---- raw files: hook payloads not yet (or already) ingested, cached judge prompts, eval run dirs.
+    const raw = rawFiles(o.fileDirs);
+    for (const f of raw.files) if (maskFile(f, scrub, dry)) result.files++;
+    if (raw.skipped) result.filesSkipped = raw.skipped;
 
     if (!dry) {
       // Merge FTS segments (dropping deleted tokens), then rewrite the file so freed pages keep nothing.
@@ -319,4 +349,93 @@ export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
     db.close();
   }
   return result;
+}
+
+export interface RuleScanOptions {
+  dbPath: string;
+  blobs: BlobStore;
+  fileDirs?: readonly string[];
+  rules: readonly RegExp[];
+}
+
+export interface RuleScan {
+  /** Distinct matches of MIN_LITERAL_LENGTH characters or more: the values to purge. */
+  values: string[];
+  /** Distinct shorter matches, left alone (they would rewrite ordinary text). */
+  short: number;
+}
+
+/** More than MAX_RULE_VALUES distinct matches: the rule describes ordinary text, not a secret. */
+export class RuleTooBroad extends Error {
+  constructor() {
+    super(`a rule matched more than ${MAX_RULE_VALUES} distinct values`);
+    this.name = "RuleTooBroad";
+  }
+}
+
+/** Calls `f` with every string in a JSON value, object keys included. */
+function eachString(v: unknown, f: (s: string) => void, depth = 0): void {
+  if (typeof v === "string") return f(v);
+  if (depth > 200 || v === null || typeof v !== "object") return;
+  if (Array.isArray(v)) for (const x of v) eachString(x, f, depth + 1);
+  else for (const [k, x] of Object.entries(v as Record<string, unknown>)) f(k), eachString(x, f, depth + 1);
+}
+
+/**
+ * Every distinct value the rules match where a purge writes: event payloads, session
+ * columns, the other tables, kv rows, blobs and raw files. JSON columns are matched
+ * on their decoded strings, blobs and raw files on their bytes as UTF-8. Read-only.
+ */
+export async function findRuleMatches(o: RuleScanOptions): Promise<RuleScan> {
+  const rules = o.rules.map((r) => new RegExp(r.source, r.flags.includes("g") ? r.flags : `${r.flags}g`));
+  const values = new Set<string>();
+  const short = new Set<string>();
+  const scan = (s: string): void => {
+    for (const re of rules) {
+      for (const m of s.matchAll(re)) {
+        const v = m[0];
+        if (v.length >= MIN_LITERAL_LENGTH) {
+          values.add(v);
+          if (values.size > MAX_RULE_VALUES) throw new RuleTooBroad();
+        } else if (v) short.add(v);
+      }
+    }
+  };
+  const scanJson = (s: unknown): void => {
+    if (typeof s !== "string") return;
+    let v: unknown;
+    try {
+      v = JSON.parse(s);
+    } catch {
+      return scan(s);
+    }
+    eachString(v, scan);
+  };
+  const text = (s: unknown): void => {
+    if (typeof s === "string") scan(s);
+  };
+
+  const { DatabaseSync } = await loadSqlite();
+  const db: DatabaseSync = new DatabaseSync(o.dbPath, { readOnly: true });
+  try {
+    for (const r of db.prepare("SELECT payload, cwd FROM events").iterate() as Iterable<Row>) scanJson(r.payload), text(r.cwd);
+    for (const r of db.prepare("SELECT title, cwd, stats, repo, parent FROM sessions").iterate() as Iterable<Row>) {
+      text(r.title), text(r.cwd), scanJson(r.stats), scanJson(r.repo), scanJson(r.parent);
+    }
+    for (const { table, json, text: cols } of OTHER_TABLES) {
+      for (const r of db.prepare(`SELECT ${[...json, ...cols].join(", ")} FROM ${table}`).iterate() as Iterable<Row>) {
+        for (const c of json) scanJson(r[c]);
+        for (const c of cols) text(r[c]);
+      }
+    }
+    for (const r of db.prepare("SELECT value FROM kv WHERE key NOT LIKE 'fold:%'").iterate() as Iterable<Row>) scanJson(r.value);
+  } finally {
+    db.close();
+  }
+  for await (const ref of o.blobs.list()) {
+    const data = await o.blobs.get(ref);
+    if (data) scan(Buffer.from(data).toString("utf8"));
+  }
+  for (const f of rawFiles(o.fileDirs).files) scan(readFileSync(f, "utf8"));
+  return { values: [...values], short: short.size };
 }

@@ -186,6 +186,7 @@ The command ran and something failed.
 | `config_changed` | `Can't resume exp_…: its config changed since it started (dataset, task)` | `--resume` refuses when the dataset version, graders, trials, task, agent script or timeouts differ from the interrupted run. Restore them, or start a new run without `--resume`. |
 | `already_complete` | `exp_… already finished; nothing to resume` | The run is done: `coding.sh exp show <id>`. |
 | `busy` | `exp_… is still running (pid 4182 on desk); stop it first`, `an ingest is running and holds the store: …` (purge) | Another process is running it. Stop that process, or wait; `coding.sh exp status` shows its progress. For purge, try again in a minute. |
+| `too_broad` | `the --rule patterns match more than 10000 distinct values, which is ordinary text, not one secret` (purge) | Anchor the pattern on the secret's prefix and length, and check it with `--dry-run`. |
 | `cancelled_experiment` | `Experiment base (…) was cancelled after 3 case runs; comparing a partial result is misleading` | Re-run the experiment, or pass `--force` to `exp compare` to compare the partial result. |
 | `arm_failed` | `arm cand: the first run failed: …` (exp metrics) | Run that arm's command by hand. It must exit 0 and print a JSON object of numbers. |
 | `no_pairs` | `No pair finished in both arms, so there is nothing to compare` (exp metrics) | Read the run errors in the report, fix the arm, and rerun. |

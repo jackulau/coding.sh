@@ -60,7 +60,7 @@ Every command accepts these.
 | [`refine`](#codingsh-refine) | Harness | Improve CLAUDE.md, AGENTS.md and skills in tested rounds, and protect their safety rules |
 | [`gateway`](#codingsh-gateway) | Maintain | LLM gateways: detect routing, enrich sessions with billed cost |
 | [`gc`](#codingsh-gc) | Maintain | Delete expired spool files, blobs and judge cache |
-| [`purge`](#codingsh-purge) | Maintain | Remove a leaked secret from the store: events, search, blobs, spool |
+| [`purge`](#codingsh-purge) | Maintain | Remove a leaked secret from the store: events, search, blobs, spool, eval runs |
 | [`config`](#codingsh-config) | Maintain | Read and write ~/.coding.sh/config.toml |
 | [`update`](#codingsh-update) | Maintain | Install the latest coding.sh release |
 | [`version`](#codingsh-version) | Maintain | Print the version |
@@ -2215,7 +2215,7 @@ coding.sh gc [options]
 
 ## `coding.sh purge`
 
-Remove a leaked secret from the store: events, search, blobs, spool.
+Remove a leaked secret from the store: events, search, blobs, spool, eval runs.
 
 ```text
 coding.sh purge [options]
@@ -2224,14 +2224,17 @@ coding.sh purge [options]
 | Option | Default | Description |
 |---|---|---|
 | `--literal <FILE|->` |  | File with the values to remove, one per line (- reads stdin); never pass them as arguments. |
+| `--rule <REGEX>` |  | Also remove every match of this regular expression (repeatable); describe the secret's shape, not the secret. |
 | `--dry-run` |  | Count the copies without changing anything. |
 
 ```sh
 coding.sh purge --literal leaked.txt --dry-run
 pbpaste | coding.sh purge --literal -
+coding.sh purge --rule 'sk-ant-api03-[A-Za-z0-9_-]{80,}' --dry-run
 ```
 
-- Every copy becomes [redacted:purged]: event payloads (the full-text index is updated), session titles and stats, labels, eval docs and settings. Blobs holding a value are rewritten under their new hash and every reference follows. Spool and judge-cache files keep their length (the value becomes asterisks) so ingest offsets stay valid.
+- Every copy becomes [redacted:purged]: event payloads (the full-text index is updated), session titles and stats, labels, eval docs and settings. Blobs holding a value are rewritten under their new hash and every reference follows. Spool, judge-cache and eval run files (~/.coding.sh/runs) keep their length (the value becomes asterisks) so ingest offsets stay valid. A run's .git directory and files over 64 MB are left alone.
+- --rule takes a JavaScript regular expression. Each distinct match of 8 or more characters is purged like a --literal value; shorter matches are left alone, and a rule that matches over 10,000 distinct values is refused.
 - Then the search index is merged and the database VACUUMed, so the old bytes leave the file. Values shorter than 8 characters are refused. Only the SQLite store is supported.
 - Rotate the secret as well: copies in the agent's own transcripts, shell history or git are not touched.
 

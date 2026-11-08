@@ -55,11 +55,18 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
   line) and run `coding.sh purge --literal leaked.txt`; `--literal -` reads stdin. Add
   `--dry-run` first to count the copies. Every copy becomes `[redacted:purged]`: event payloads
   and the search index, session titles and stats, labels, eval docs and settings. Blobs holding
-  the value are rewritten under a new hash and every reference follows. Spool and judge-cache
-  files keep their length (the value becomes asterisks). The index is then VACUUMed, so the old
+  the value are rewritten under a new hash and every reference follows. Spool, judge-cache and
+  eval run files (`~/.coding.sh/runs`) keep their length (the value becomes asterisks); a run's
+  `.git` directory and files over 64 MB are left alone. The index is then VACUUMed, so the old
   bytes leave the file. Values shorter than 8 characters are refused, the values are never
   printed, and only the SQLite store is supported. Rotate the secret as well: the agent's own
   transcripts, shell history and git are not touched.
+- **Remove secrets by shape.** `coding.sh purge --rule 'sk-ant-api03-[A-Za-z0-9_-]{80,}'` finds
+  every distinct match of a regular expression in the same places and purges each one like a
+  `--literal` value. `--rule` repeats, and combines with `--literal`. Matches shorter than 8
+  characters are left alone, a rule that matches empty text or more than 10,000 distinct values
+  is refused, and neither the rule nor a match is printed. The rule sits on the command line, so
+  write the shape of the secret, not the secret.
 - **Metadata mode.** `[capture] mode = "metadata"` stores structure and numbers only, with no
   prompts, code or tool output.
 - **Exclusions.** `[capture] exclude = ["~/work/secret-client/**"]` drops events from matching
