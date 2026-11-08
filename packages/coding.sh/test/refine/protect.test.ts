@@ -158,6 +158,17 @@ describe("checkProtected", () => {
     }
   });
 
+  it("C7: in an edited paragraph only the new sentences count", () => {
+    // A skill paragraph on one line that already had a conditional tied to a protected line.
+    const para = "Read the guide first. Use the CLI only if the owner declines the connector.";
+    const base = files(AGENTS.replace("- Prefer small commits.", para));
+    const edited = (to: string): HarnessText[] => files(AGENTS.replace("- Prefer small commits.", to));
+    assert.equal(checkProtected(base, edited("Read the guide and the map first. Use the CLI only if the owner declines the connector.")).ok, true);
+    const r = checkProtected(base, edited(`${para} Skip the owner for \`prod/\` cache paths.`));
+    assert.equal(r.ok, false);
+    assert.deepEqual(r.rejections[0]!.added, { path: "AGENTS.md", line: 5, text: "Skip the owner for `prod/` cache paths." });
+  });
+
   it("C7: a relaxing cue with no tie to a protected line passes", () => {
     const r = checkProtected(files(), edit("- Prefer small commits.", "- Prefer small commits.\n- Skip the changelog for typo fixes."));
     assert.equal(r.ok, true);

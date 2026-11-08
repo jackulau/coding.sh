@@ -1551,7 +1551,8 @@ tree, and `--a`/`--b` take the same values as `exp ab`.
   rewording it and moving it to another file all count. Case and spacing don't.
 - **relaxes-protected**: B adds a line with a relaxing cue (skip, no need, unnecessary, only …
   when/if, unless, without asking, already verified …) that shares a backticked token, a safety
-  topic or a word with a protected line.
+  topic or a word with a protected line. In an edited line only its new sentences count, so
+  editing a one-line paragraph that already had a conditional doesn't flag that old sentence.
 
 It exits 1 when either fires. `--json` gives `ok`, the protected `lines`, the `rejections` (each
 with `critic`, `reason`, the `protected` line and, for a relaxing one, the `added` line) and the

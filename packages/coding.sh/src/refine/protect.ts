@@ -111,12 +111,16 @@ export function safetyTopics(text: string): string[] {
   return TOPICS.filter(([, re]) => re.test(text)).map(([id]) => id);
 }
 
+/** A line's sentences: split after . ! or ? where the next one starts. */
+const sentences = (text: string): string[] => quotes(text).split(/(?<=[.!?])\s+(?=[A-Z`"'(*_[])/);
+const normSentence = (s: string): string => s.replace(/\s+/g, " ").trim().toLowerCase();
+
 /** True when a line pairs a gate word with a safety topic (auto-protection). */
 export function isSafetyDirective(text: string): boolean {
   // Gate word and topic must share a sentence. A line that starts lower-case
   // continues a hard-wrapped sentence: when a new sentence starts later on the
   // line, the leading fragment (the tail of the previous one) is not judged.
-  const parts = quotes(text).split(/(?<=[.!?])\s+(?=[A-Z`"'(*_[])/);
+  const parts = sentences(text);
   if (/^[a-z]/.test(text) && parts.length > 1) parts.shift();
   return parts.some((t) => t.length <= MAX_DIRECTIVE_CHARS && gate(t) && safetyTopics(t).length > 0);
 }
@@ -246,8 +250,9 @@ export function parseOverride(v: string): { path: string; line: number } {
  * text is gone from the same path in `after` (deleted, reworded or moved to
  * another file). C7 rejects every added line (not in that path's `before`)
  * with a relaxing cue that is tied to a protected line by a shared backticked
- * token, content word or safety topic. `allow` lists `path:line` of protected
- * lines the edit may touch.
+ * token, content word or safety topic. Only the line's new sentences count: an
+ * edited paragraph keeps the sentences it had, and those relax nothing new.
+ * `allow` lists `path:line` of protected lines the edit may touch.
  */
 export function checkProtected(before: readonly HarnessText[], after: readonly HarnessText[], opts: ProtectOpts & { allow?: readonly string[]; protected?: readonly ProtectedLine[] } = {}): ProtectCheck {
   const prot = opts.protected ? [...opts.protected] : protectedLines(before, opts);
@@ -263,11 +268,16 @@ export function checkProtected(before: readonly HarnessText[], after: readonly H
   }
 
   for (const f of [...after].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
-    const was = normsOf(beforeBy.get(f.path));
+    const before = beforeBy.get(f.path);
+    const was = normsOf(before);
+    const wasSentences = new Set(before === undefined ? [] : proseLines(before).flatMap(({ raw }) => sentences(stripLine(raw)).map(normSentence)));
     for (const { line, raw } of proseLines(f.text)) {
       const norm = normLine(raw);
-      if (!norm || was.has(norm) || !hasRelaxingCue(raw)) continue;
-      const text = stripLine(raw);
+      if (!norm || was.has(norm)) continue;
+      const text = sentences(stripLine(raw))
+        .filter((s) => !wasSentences.has(normSentence(s)))
+        .join(" ");
+      if (!hasRelaxingCue(text)) continue;
       let best: ProtectedLine | undefined;
       let bestScore = 0;
       for (const p of prot) {
