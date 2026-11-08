@@ -3,6 +3,8 @@ docs/guides/evals.md
 packages/coding.sh/src/runner/model-mix.ts
   s_8e040dbdf13565::t_2d2a41bc5ea45b 1-3,7,9-36,38-92,94-96
   s_8e040dbdf13565::t_56381488c3a70f 93
+  s_8e040dbdf13565::t_9e0fa66adc09b2 8,37
+  s_8e040dbdf13565::t_8e299e2f902432 4-6
 packages/coding.sh/test/runner/model-mix.test.ts
   s_8e040dbdf13565::t_832368705b4699 1-67,69-97
   s_8e040dbdf13565::t_56381488c3a70f 68
