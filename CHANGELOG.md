@@ -25,6 +25,7 @@ Sessions read back from Claude Code and Codex transcripts keep more of what the 
 
 ### Changed
 
+- **Evals.** `compare --reuse baseline` says in its help and docs that it copies the runs of an `eval run` too, so a suite's baseline from `eval run` is not paid for again in each comparison. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#reuse-finished-runs).
 - **Capture.** Hooks append to one spool file per agent per UTC day (`spool/<agent>/<day>.jsonl`, continued in `<day>.1.jsonl` past 64 MB) instead of one file per hook call. A busy day used to leave about 11,000 files, each with an ingest cursor that every ingest and `gc` looked up. `gc` keeps the current day's file, and removes a deleted file's cursor instead of setting it to 0. [Architecture](https://github.com/jackulau/coding.sh/blob/main/docs/design/architecture.md#spool-the-hot-path).
 
 ### Fixed

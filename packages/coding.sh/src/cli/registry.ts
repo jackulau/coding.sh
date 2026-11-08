@@ -1306,7 +1306,7 @@ export const COMMANDS: CommandSpec[] = [
         value: "<ARMS>",
         choices: ["baseline", "both", "none"],
         default: "none",
-        desc: "Copy finished runs of the same task, bundle, agent version, attempt and timeout from earlier comparisons instead of running them again",
+        desc: "Copy finished runs of the same task, bundle, agent version, attempt and timeout from earlier comparisons and eval runs instead of running them again",
       },
       { name: "reuse-max-age", type: "string", value: "<AGE>", default: "7d", desc: "With --reuse: only runs that finished this recently (30m, 12h, 7d, 2w)" },
       { name: "dry-run", type: "boolean", desc: "Print how many runs each arm would reuse and run, and run nothing" },

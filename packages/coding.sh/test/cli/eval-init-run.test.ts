@@ -232,6 +232,10 @@ say({ type: "result", result: existsSync(".claude/skills/demo/SKILL.md") ? "Whic
     const shownJson = JSON.parse(cli(["exp", "show", doc.experimentId, "--json"]).stdout) as { taskRuns: { runs: number; passed: number; tasks: { name: string }[] } };
     assert.deepEqual([shownJson.taskRuns.runs, shownJson.taskRuns.passed, shownJson.taskRuns.tasks.map((t) => t.name)], [2, 2, ["asks-for-scope"]]);
     assert.equal(cli(["exp", "show", "exp_nothing_here"]).status, 1, "an id with no runs is still not found");
+    // compare --reuse baseline copies eval run's runs of the same cell, not only an earlier comparison's.
+    const plan = cli(["compare", "skilled", "plain", "--tag", "suite:scope", "--k", "2", "--reuse", "baseline", "--dry-run"]);
+    assert.equal(plan.status, 0, plan.stdout + plan.stderr);
+    assert.match(plan.stdout, /baseline\s+skilled\s+2 reused, 0 to run/);
 
     const bad = cli(["eval", "run", "scope", "--harness", "plain", "--yes"]);
     assert.equal(bad.status, 1, bad.stdout + bad.stderr);

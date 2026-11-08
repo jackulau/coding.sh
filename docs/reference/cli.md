@@ -2335,7 +2335,7 @@ coding.sh compare <A> [b] [options]
 | `--repair-signal <SIGNAL>` | `bit` | With --repair: say only that verification failed, or also name the failing tests (parsed from the verifier output). One of: `bit`, `names`. |
 | `--false-alarm <P>` |  | With --repair: tell this share (0-1) of passing runs they failed, to measure what a wrong signal breaks. |
 | `--repair-verdict` |  | Verdict, gates and pass rates on the pass after repair rounds instead of the first attempt. |
-| `--reuse <ARMS>` | `none` | Copy finished runs of the same task, bundle, agent version, attempt and timeout from earlier comparisons instead of running them again. One of: `baseline`, `both`, `none`. |
+| `--reuse <ARMS>` | `none` | Copy finished runs of the same task, bundle, agent version, attempt and timeout from earlier comparisons and eval runs instead of running them again. One of: `baseline`, `both`, `none`. |
 | `--reuse-max-age <AGE>` | `7d` | With --reuse: only runs that finished this recently (30m, 12h, 7d, 2w) |
 | `--dry-run` |  | Print how many runs each arm would reuse and run, and run nothing. |
 | `--without <PATH>` |  | Ablation: B is A without this file, dir or glob, or without plugin:&lt;NAME&gt; (repeatable) |

@@ -1208,7 +1208,8 @@ that A carries. `--with` and `--without` don't combine. The report's bundle diff
 ### Reuse finished runs
 
 Comparing three candidates against one baseline runs the baseline three times. `--reuse baseline`
-copies A's finished runs from earlier comparisons instead (`--reuse both` copies B's too). A run is
+copies A's finished runs from earlier comparisons instead (`--reuse both` copies B's too). The runs
+of an `eval run` count as well, so a suite's baseline from `eval run` is not paid for again. A run is
 reused only when everything it measured is the same, keyed by content, never by path: the task's
 start snapshot, setup, instruction and verifier (hidden files included), the bundle (its id hashes
 its files), the agent's version, the attempt number, the trial timeout, and the gateway route.
