@@ -70,7 +70,12 @@ used (through the Skill tool, or by reading or running a file in the skill's fol
 `.agents`, `.codex`, `.config/opencode`, …) or inside a plugin; a `skills/` folder in source code,
 text inside a heredoc and a write to a skill file do not count. A plugin named for its one skill
 tags it once (`skill:frontend-design`, not `skill:frontend-design:frontend-design`).
-`coding.sh sessions --flag skill:pdf` lists the sessions that used the pdf skill. A session
+`coding.sh sessions --flag skill:pdf` lists the sessions that used the pdf skill. Text that other
+hooks added to the context (a plugin's SessionStart notes, a UserPromptSubmit reminder) adds a
+`hook:<source>` tag: `hook:plugin:<name>`, `hook:settings`, `hook:plugin` or `hook:unknown`, and
+`stats.hookContext` counts its tokens. `coding.sh sessions --where hook:plugin:caveman` lists the
+sessions the caveman plugin's hooks added context to, and `--facets hook` counts sessions per source.
+A session
 in which redaction replaced a vendor token (an Anthropic, OpenAI, GitHub, GitLab, Slack, AWS, Google,
 Stripe, npm, coding.sh or AI Gateway key, a Slack webhook or a private key) gets the `secret:exposed`
 tag: the stored copy is redacted, but the agent and its model provider saw the credential, so rotate it.

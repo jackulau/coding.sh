@@ -525,6 +525,15 @@ from cache, and more than 2,048 tokens were billed again. `byCause` splits them 
 the cache-write (or input) price minus the cache-read price for those tokens; it is left out, and
 `unpriced` counts the breaks, when the model has no price.
 
+`stats.hookContext` (`count`, `tokens`, `bySource`) counts the texts hooks added to the model's
+context (Claude Code), and their size in tokens (characters / 4). `bySource` splits them by whose
+hook it was: `plugin:<name>`, `plugin` (a plugin not installed where the session was parsed),
+`settings` (a hook in a settings file) or `unknown` (the agent recorded no command). Each source also
+adds a `hook:<source>` tag to `flags`, such as `hook:plugin:caveman`. It is absent when no hook added
+context. Each text is a `notification` event with `payload.kind: "hook.context"` and `hookEvent`,
+`hookName`, `hookSource`, `command`, `chars`, `tokens` and `text` (clipped; metadata mode keeps only
+`hookEvent`, `hookSource`, `chars` and `tokens`).
+
 `stats.redactions` counts the values redaction replaced before storage, by rule kind
 (`{"anthropic-key": 1, "password": 2}`); it never holds the values, and it is absent when nothing was
 redacted. Each event's own counts are in `payload.redactions`, which metadata mode keeps; a tool

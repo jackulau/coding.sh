@@ -52,6 +52,7 @@ import {
 } from "./_shared/index.ts";
 import { isWrapperLine, normalizeWrapperLine } from "./more/wrapper.ts";
 import { pluginDirIn } from "../runner/plugins.ts";
+import { pluginHookCommands } from "./_shared/claude-plugins.ts";
 
 export const CLAUDE_AGENT = "claude-code";
 
@@ -122,7 +123,19 @@ async function transcriptWindow(path: string, untilTs: number, whole = false): P
       break;
     }
   }
-  return entries.slice(start);
+  // Hook output written before the prompt (SessionStart's, on the first turn or
+  // after a compaction) reaches no Stop window otherwise: since the previous prompt.
+  let prev = start - 1;
+  while (prev > 0 && !(isObj(entries[prev]) && promptText(entries[prev] as Record<string, unknown>) !== undefined)) prev--;
+  const hooks = entries.slice(Math.max(prev, 0), start).filter((e) => isObj(e) && e.type === "attachment" && /^hook_/.test(str(obj(e.attachment).type) ?? ""));
+  return [...hooks, ...entries.slice(start)];
+}
+
+/** The plugins' hook commands under the config dir a transcript lives in (<dir>/projects/<slug>/…). */
+function pluginHooksFor(transcript: string): ReadonlyMap<string, string> {
+  let dir = dirname(transcript);
+  while (basename(dir) !== "projects" && dirname(dir) !== dir) dir = dirname(dir);
+  return pluginHookCommands(basename(dir) === "projects" ? dirname(dir) : dirname(dirname(transcript)));
 }
 
 async function windowEvents(ctx: NormalizeContext, path: string | undefined, untilTs: number, sessionId: string, subagentId: string | undefined, runId: string | undefined, whole: boolean): Promise<{ events: AgentEvent[]; model?: string; turnId?: string }> {
@@ -134,7 +147,7 @@ async function windowEvents(ctx: NormalizeContext, path: string | undefined, unt
     return { events: [] };
   }
   // A subagent's prompt reaches no hook: its window records it (same id as the backfill's).
-  const conv = new ClaudeTranscriptConverter(ctx, { agent: CLAUDE_AGENT, mode: "assistant", sessionId, subagentId, runId, source: basename(path), sidechain: subagentId !== undefined, prompts: subagentId !== undefined });
+  const conv = new ClaudeTranscriptConverter(ctx, { agent: CLAUDE_AGENT, mode: "assistant", sessionId, subagentId, runId, source: basename(path), sidechain: subagentId !== undefined, prompts: subagentId !== undefined, pluginHooks: pluginHooksFor(path) });
   let i = 0;
   for (const e of entries) await conv.add(e, i++);
   return { events: await conv.finish(), model: conv.model, turnId: conv.currentTurnId };
@@ -339,7 +352,7 @@ async function convertFile(path: string, conv: ClaudeTranscriptConverter): Promi
 
 async function convertMainFile(ctx: NormalizeContext, path: string): Promise<AgentEvent[]> {
   const sessionId = basename(path, ".jsonl");
-  return convertFile(path, new ClaudeTranscriptConverter(ctx, { agent: CLAUDE_AGENT, mode: "full", sessionId, source: basename(path), endIfIdleMs: TRANSCRIPT_IDLE_MS }));
+  return convertFile(path, new ClaudeTranscriptConverter(ctx, { agent: CLAUDE_AGENT, mode: "full", sessionId, source: basename(path), endIfIdleMs: TRANSCRIPT_IDLE_MS, pluginHooks: pluginHooksFor(path) }));
 }
 
 /** How a Workflow-tool subagent ties back to its parent session. */
@@ -444,7 +457,7 @@ async function convertSubagentFile(ctx: NormalizeContext, path: string, parentSi
   const child = childSessionId(parentSid, agentId);
   const meta = await subagentMeta(path);
   const type = str(meta.agentType);
-  const conv = new ClaudeTranscriptConverter(ctx, { agent: CLAUDE_AGENT, mode: "full", sessionId: child, subagentId: agentId, source: basename(path), sidechain: true });
+  const conv = new ClaudeTranscriptConverter(ctx, { agent: CLAUDE_AGENT, mode: "full", sessionId: child, subagentId: agentId, source: basename(path), sidechain: true, pluginHooks: pluginHooksFor(path) });
   for await (const r of readJsonl(path)) await conv.add(r.value, r.lineNo);
   if (!conv.out.length) return conv.finish();
   const link = resolveLink ? await resolveLink(conv.out[0]!.ts) : undefined;
@@ -556,7 +569,8 @@ export const claudeCode: Adapter = {
   // 2 (0.1.2): one session.end (idle end) and one compaction across hooks and backfill.
   // 3 (0.1.2): harness.loaded (nested CLAUDE.md, skills) and file.change from Bash edits.
   // 4 (0.1.2): subagent prompt and description (turn, title); no session for internal forks; hook-less subagents (web-fetch) linked from the parent's PostToolUse(Agent).
-  parseVersion: 4,
+  // 5 (0.1.2): hook.context (text hooks added to the context, with its source and size).
+  parseVersion: 5,
 
   detect() {
     const dir = claudeConfigDir();

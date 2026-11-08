@@ -58,6 +58,8 @@ export const KEY_SQL: Record<string, string[]> = {
   parent: ["s.parent_session_id"],
   flag: ["f.v"],
   skill: ["f.v"],
+  hook: ["f.v"],
+  "hook.tokens": [stat("hookContext,tokens")],
   since: ["s.started_at"],
   until: ["s.started_at"],
   duration: ["(s.ended_at - s.started_at)"],

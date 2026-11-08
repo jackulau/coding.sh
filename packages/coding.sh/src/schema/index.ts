@@ -103,6 +103,19 @@ export interface WasteStats {
   readOnlyCalls: number;
 }
 
+/**
+ * Session.stats.hookContext: text hooks added to the model's context
+ * (`notification` events with `payload.kind: "hook.context"`), counted and
+ * sized (characters / 4), in all and by source: `plugin:<name>`, `plugin` (a
+ * plugin not installed where the session was parsed), `settings` (a hook from
+ * a settings file) or `unknown` (the agent recorded no command).
+ */
+export interface HookContextStats {
+  count: number;
+  tokens: number;
+  bySource: Record<string, { count: number; tokens: number }>;
+}
+
 /** Why a prompt cache broke: a compaction rewrote the context, the model changed, the cache expired while idle, or something else. */
 export type CacheBreakCause = "compaction" | "model-switch" | "idle" | "other";
 
@@ -255,6 +268,8 @@ export interface Session {
     waste?: WasteStats;
     /** Model calls that found the prompt cache gone and paid for the prompt again (core/cache-breaks.ts). Unset when none did. */
     cacheBreaks?: CacheBreakStats;
+    /** Text hooks added to the model's context, by source (`plugin:<name>`, `settings`, …). Unset when no hook added any. */
+    hookContext?: HookContextStats;
     /**
      * Values redaction replaced before storage, by rule kind (`anthropic-key`, `password`, …): counts, never
      * the values. A vendor token kind also tags the session `secret:exposed`. Unset when nothing was redacted.

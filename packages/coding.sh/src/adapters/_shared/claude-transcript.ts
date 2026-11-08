@@ -18,6 +18,7 @@ import type { AgentEvent, AgentId, Usage } from "../../schema/index.ts";
 import { tierValue } from "../../core/pricing.ts";
 import type { NormalizeContext } from "../../core/types.ts";
 import { virtualModelId } from "../../integrations/gateway/ids.ts";
+import { hookSource } from "./claude-plugins.ts";
 import { toMs } from "./jsonl.ts";
 import { Emitter, anthropicPriceHints, anthropicUsage, arr, blobList, clipText, clipValue, isObj, num, obj, outputText, str } from "./normalize.ts";
 import { emitDerived } from "./tools.ts";
@@ -48,7 +49,23 @@ export interface ClaudeConvertOpts {
    * without it the child session has no turn and no title.
    */
   prompts?: boolean;
+  /** Hook command → plugin name (pluginHookCommands of the transcript's config dir), to name the plugin behind hook context. */
+  pluginHooks?: ReadonlyMap<string, string>;
 }
+
+/** A hook run the transcript recorded (hook_success): its command and stdout, to trace later additionalContext back to it. */
+interface HookRun {
+  event: string;
+  command: string;
+  stdout: string;
+}
+
+/** Hook events whose plain stdout Claude Code adds to the context (for transcripts that do not say what was rendered). */
+const STDOUT_CONTEXT_EVENTS = new Set(["SessionStart", "UserPromptSubmit"]);
+/** Hook runs remembered to trace additionalContext back to its command. */
+const HOOK_RUNS_MAX = 64;
+/** Cap on a hook.context event's text (the rest goes to a blob). */
+const HOOK_TEXT_MAX = 1024;
 
 interface PendingCall {
   msgId: string;
@@ -139,6 +156,7 @@ export class ClaudeTranscriptConverter {
   private started = false;
   /** A slash command not yet known to be local (no model call) or a prompt command. */
   private command?: PendingCommand;
+  private hookRuns: HookRun[] = [];
 
   constructor(ctx: NormalizeContext, opts: ClaudeConvertOpts) {
     this.ctx = ctx;
@@ -192,22 +210,25 @@ export class ClaudeTranscriptConverter {
     if (entry.isSidechain === true && !this.opts.sidechain) return;
     const ts = toMs(entry.timestamp, this.lastTs);
     this.lastTs = Math.max(this.lastTs, ts);
-    this.cwd = str(entry.cwd) ?? this.cwd;
-    this.version = str(entry.version) ?? this.version;
-
-    if (this.opts.mode === "full" && !this.started) {
-      this.started = true;
-      const em = this.em(ts, lineNo);
-      const payload: Record<string, unknown> = { source: "transcript", gitBranch: str(entry.gitBranch) };
-      em.emit("session.start", payload, { key: ["start"] });
-      this.push(em);
-    }
+    this.begin(entry, ts, lineNo);
 
     if (type === "assistant") return this.assistant(entry, ts, lineNo);
     await this.flushCall();
     if (type === "user") await this.user(entry, ts, lineNo);
     else await this.system(entry, ts, lineNo);
     this.lastNonAssistantTs = ts;
+  }
+
+  /** Notes the entry's cwd and version; in full mode the first entry also starts the session. */
+  private begin(entry: Record<string, unknown>, ts: number, lineNo: number): void {
+    this.cwd = str(entry.cwd) ?? this.cwd;
+    this.version = str(entry.version) ?? this.version;
+    if (this.opts.mode !== "full" || this.started) return;
+    this.started = true;
+    const em = this.em(ts, lineNo);
+    const payload: Record<string, unknown> = { source: "transcript", gitBranch: str(entry.gitBranch) };
+    em.emit("session.start", payload, { key: ["start"] });
+    this.push(em);
   }
 
   private async assistant(e: Record<string, unknown>, ts: number, lineNo: number): Promise<void> {
@@ -370,6 +391,7 @@ export class ClaudeTranscriptConverter {
   private async attachment(e: Record<string, unknown>, lineNo: number): Promise<void> {
     if (e.isSidechain === true && !this.opts.sidechain) return;
     const a = obj(e.attachment);
+    if (a.type === "hook_success" || a.type === "hook_additional_context") return this.hookContext(e, a, lineNo);
     let payload: Record<string, unknown> | undefined;
     if (a.type === "nested_memory" && str(a.path)) payload = { paths: [a.path], memoryType: str(obj(a.content).type) };
     else if (a.type === "dynamic_skill") payload = { dir: str(a.skillDir), skills: names(a.skillNames) };
@@ -381,6 +403,77 @@ export class ClaudeTranscriptConverter {
     const em = this.em(toMs(e.timestamp, this.lastTs), lineNo);
     em.emit("notification", fitPayload({ kind: "harness.loaded", loadedBy: a.type, ...payload }), { key: [str(e.uuid) ?? `line-${lineNo}`, "harness"] });
     this.push(em);
+  }
+
+  /**
+   * Text a hook added to the model's context, as a `notification` with
+   * `payload.kind: "hook.context"`: `{hookEvent, hookName, hookSource, command,
+   * chars, tokens (chars / 4), text}`, one per text. Two attachments carry it:
+   * - hook_success: one run of a hook command, with its stdout. Its `content`
+   *   reached the model when the entry has `rendered` text (plain stdout of a
+   *   SessionStart or UserPromptSubmit hook; in a transcript without
+   *   `rendered`, those two events).
+   * - hook_additional_context: the additionalContext hooks answered, one string
+   *   each. It names no command; the hook_success whose stdout JSON holds the
+   *   same additionalContext does.
+   * hookSource says whose hook it was (see hookSource). Both modes, keyed by
+   * entry uuid; a SessionStart's context belongs to no turn.
+   */
+  private async hookContext(e: Record<string, unknown>, a: Record<string, unknown>, lineNo: number): Promise<void> {
+    const event = str(a.hookEvent) ?? str(a.hookName)?.split(":")[0] ?? "unknown";
+    const texts: { text: string; command?: string }[] = [];
+    if (a.type === "hook_success") {
+      const command = str(a.command);
+      if (command) {
+        this.hookRuns.push({ event, command, stdout: str(a.stdout) ?? "" });
+        if (this.hookRuns.length > HOOK_RUNS_MAX) this.hookRuns.shift();
+      }
+      const content = str(a.content);
+      const rendered = Array.isArray(e.rendered) ? e.rendered.length > 0 : STDOUT_CONTEXT_EVENTS.has(event);
+      if (content?.trim() && rendered) texts.push({ text: content, command });
+    } else {
+      for (const t of arr(a.content)) if (typeof t === "string" && t.trim()) texts.push({ text: t, command: this.contextCommand(event, t) });
+    }
+    if (!texts.length) return;
+    const ts = toMs(e.timestamp, this.lastTs);
+    // Hook output can come before the first prompt (SessionStart): the session starts there.
+    this.lastTs = Math.max(this.lastTs, ts);
+    this.begin(e, ts, lineNo);
+    const em = this.em(ts, lineNo);
+    const uuid = str(e.uuid) ?? `line-${lineNo}`;
+    for (const [i, { text, command }] of texts.entries()) {
+      const t = await clipText(this.ctx, text, HOOK_TEXT_MAX);
+      em.emit(
+        "notification",
+        {
+          kind: "hook.context",
+          hookEvent: event,
+          hookName: str(a.hookName),
+          hookSource: hookSource(command, this.opts.pluginHooks ?? NO_PLUGINS),
+          command: command?.slice(0, 500),
+          chars: text.length,
+          tokens: Math.ceil(text.length / 4),
+          text: t.value,
+          truncated: t.truncated || undefined,
+        },
+        { key: [uuid, "hook", i], blobs: blobList(t.blob), ...(event === "SessionStart" ? { turnId: undefined } : {}) },
+      );
+    }
+    this.push(em);
+  }
+
+  /** The command of the latest hook run of `event` whose stdout answered `text` as additionalContext. */
+  private contextCommand(event: string, text: string): string | undefined {
+    for (let i = this.hookRuns.length - 1; i >= 0; i--) {
+      const r = this.hookRuns[i]!;
+      if (r.event !== event || !r.stdout.includes("additionalContext")) continue;
+      try {
+        if (str(obj(obj(JSON.parse(r.stdout.trim())).hookSpecificOutput).additionalContext) === text) return r.command;
+      } catch {
+        // stdout that is not JSON answered no additionalContext.
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -487,6 +580,8 @@ export class ClaudeTranscriptConverter {
     return this.out;
   }
 }
+
+const NO_PLUGINS: ReadonlyMap<string, string> = new Map();
 
 /** Cap on each list in a harness.loaded payload, and on the payload's JSON size. */
 const HARNESS_LIST_MAX = 50;

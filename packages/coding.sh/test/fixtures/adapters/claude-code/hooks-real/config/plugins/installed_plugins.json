@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "plugins": {
+    "terse@local": [
+      {
+        "scope": "user",
+        "installPath": "/home/user/.claude/plugins/cache/local/terse/0.1.0",
+        "version": "0.1.0",
+        "installedAt": "2026-11-08T04:14:50.880Z",
+        "lastUpdated": "2026-11-08T04:14:50.880Z"
+      }
+    ]
+  }
+}

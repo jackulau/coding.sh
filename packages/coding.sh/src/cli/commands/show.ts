@@ -112,6 +112,7 @@ function describe(e: AgentEvent, starts: Map<string, AgentEvent>): string | unde
     case "context.compact":
     case "notification":
       if (p.kind === "harness.loaded") return `harness     ${oneLine(clean(harnessText(p)), 90)}`;
+      if (p.kind === "hook.context") return `hook        ${str(p.hookEvent) ?? ""} ${str(p.hookSource) ?? "unknown"} ~${tokens(typeof p.tokens === "number" ? p.tokens : undefined)} tok  ${oneLine(clean(str(p.text) ?? ""), 70)}`;
       return `${`${e.kind} `.padEnd(12)}${oneLine(clean(str(p.text) ?? str(p.message) ?? str(p.reason) ?? ""), 80)}`;
     default:
       return `${`${e.kind} `.padEnd(12)}${oneLine(clean(str(p.name) ?? ""), 80)}`;
@@ -156,6 +157,17 @@ export function redactedRow(s: Session): [string, string] | undefined {
   if (!r) return undefined;
   const kinds = Object.entries(r).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ${n}`).join(", ");
   return ["Redacted", s.flags.includes("secret:exposed") ? `${kinds}. The agent saw these credentials: rotate them` : kinds];
+}
+
+/** Text hooks added to the context: how many, how many tokens, and whose hooks (largest first). */
+export function hookContextRow(s: Session): [string, string] | undefined {
+  const h = s.stats.hookContext;
+  if (!h) return undefined;
+  const by = Object.entries(h.bySource)
+    .sort((a, b) => b[1].tokens - a[1].tokens)
+    .map(([k, v]) => `${k} ~${tokens(v.tokens)} (${v.count})`)
+    .join(", ");
+  return ["Hook context", `${h.count} ${h.count === 1 ? "text" : "texts"}, ~${tokens(h.tokens)} tokens: ${by}`];
 }
 
 /** Header rows for waste: repeated read-only calls and prompt-cache breaks. */
@@ -356,6 +368,8 @@ export async function run(c: CommandContext): Promise<number> {
     rows.push(...wasteRows(s));
     const red = redactedRow(s);
     if (red) rows.push(red);
+    const hooks = hookContextRow(s);
+    if (hooks) rows.push(hooks);
     if (skills?.used.length) rows.push(["Skills", skillsText(skills)]);
     if (derails.length) rows.push(["Derails", derails.slice(0, 4).map((d) => `${d.flag} at +${duration(Math.max(0, d.ts - s.startedAt))}`).join(", ") + (derails.length > 4 ? ` +${derails.length - 4} more` : "")]);
     for (const [k, v] of rows) out.print(`  ${k.padEnd(14)}${v}`);

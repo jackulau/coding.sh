@@ -12,6 +12,7 @@ import { detectTestTamper, foldTamper, tamperState, type TamperState } from "./i
 // waste.ts and skills-use.ts import commandOf and FLAGS back from here, inside functions only.
 import { cacheBreakState, cacheBreaksOf, foldCacheBreaks, type CacheBreakState } from "./cache-breaks.ts";
 import { foldSkills, skillFlags, skillState, skillUseOf, type SkillState } from "./skills-use.ts";
+import { foldHookContext, hookContextFlags, hookContextOf, hookContextState, type HookContextState } from "./hook-context.ts";
 import { foldWaste, wasteState, wasteStatsOf, type WasteState } from "./waste.ts";
 import { exposesSecret, foldRedactions, redactionsOf, redactionState, SECRET_EXPOSED, type RedactionState } from "./redaction-stats.ts";
 
@@ -405,7 +406,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * events, and every stored session is folded again once in the background
  * (core/reparse.ts, REFOLD_CURSOR), so old sessions get the new derivation.
  */
-export const SESSION_FOLD_VERSION = 5; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls).
+export const SESSION_FOLD_VERSION = 6; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -489,6 +490,7 @@ export interface SessionState {
   otherCalls?: boolean;
   skills: SkillState;
   redactions: RedactionState;
+  hookContext: HookContextState;
 }
 
 /** A fresh fold: no events seen. */
@@ -520,6 +522,7 @@ export function sessionState(): SessionState {
     cacheBreaks: cacheBreakState(),
     skills: skillState(),
     redactions: redactionState(),
+    hookContext: hookContextState(),
   };
 }
 
@@ -569,6 +572,7 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
   foldCacheBreaks(s.cacheBreaks, e);
   foldSkills(s.skills, e);
   foldRedactions(s.redactions, e);
+  foldHookContext(s.hookContext, e);
   if (isEnrichment(e)) return;
 
   s.captured++;
@@ -707,6 +711,9 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   const cacheBreaks = cacheBreaksOf(counted.cacheBreaks);
   if (cacheBreaks) session.stats.cacheBreaks = cacheBreaks;
   session.flags.push(...skillFlags(skillUseOf(s.skills, s.cwd ?? prev?.cwd)));
+  const hookContext = hookContextOf(s.hookContext);
+  if (hookContext) session.stats.hookContext = hookContext;
+  session.flags.push(...hookContextFlags(s.hookContext));
   const redactions = redactionsOf(s.redactions);
   if (redactions) session.stats.redactions = redactions;
   if (exposesSecret(redactions)) session.flags.push(FLAGS.secretExposed);

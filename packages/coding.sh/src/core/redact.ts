@@ -504,6 +504,9 @@ const METADATA_STRING_KEYS = new Set([
   "subagentKind",
   "accountHash",
   "upstreamAuth",
+  // Hook context: which hook event and whose hook (plugin:<name>, settings), never the text or command.
+  "hookEvent",
+  "hookSource",
 ]);
 
 /**

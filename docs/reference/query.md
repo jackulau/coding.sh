@@ -55,6 +55,8 @@ matching event, and event keys in the same and-group must match the same event. 
 | `parent` | session | Parent session id (subagent sessions) | `parent:abc123` |
 | `flag` | session | Any flag or tag | `flag:no-verification` |
 | `skill` | session | Skill tag (flag skill:<name>) | `skill:pdf` |
+| `hook` | session | Whose hooks added text to the context (flag hook:<source>): plugin:<name>, plugin, settings or unknown | `hook:plugin:caveman` |
+| `hook.tokens` | session | Tokens hooks added to the context (characters / 4) | `hook.tokens>500` |
 | `since` | session | Started at or after: 7d, 12h or a date | `since:7d` |
 | `until` | session | Started before: 7d, 12h or a date | `until:2026-11-01` |
 | `duration` | session | Wall time of an ended session (30s, 10m, 2h) | `duration>10m` |
