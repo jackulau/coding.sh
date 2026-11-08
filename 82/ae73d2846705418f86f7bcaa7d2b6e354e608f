@@ -1,0 +1,31 @@
+packages/coding.sh/test/mcp/server.test.ts
+  s_8e040dbdf13565::t_6cb330ae629b09 485,487,518,520
+docs/ADAPTERS.md
+  s_8e040dbdf13565::t_fefc881f6e5909 55-61
+packages/coding.sh/test/adapters/claude-code.test.ts
+  s_8e040dbdf13565::t_3a2f2aaa7aa2e1 307-315
+CHANGELOG.md
+  s_8e040dbdf13565::t_b3badcabf24b52 20
+packages/coding.sh/test/mcp/qa-fixes.test.ts
+  s_8e040dbdf13565::t_95879cc4e5cc4a 42-47
+packages/coding.sh/test/cli/read-while-ingesting.test.ts
+  s_8e040dbdf13565::t_797bb1bb2a9ff0 26,29
+packages/coding.sh/src/adapters/claude-code.ts
+  s_8e040dbdf13565::t_e675ad1190147d 605-610
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "82ae73d2846705418f86f7bcaa7d2b6e354e608f",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
