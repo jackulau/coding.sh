@@ -4,6 +4,7 @@
 import type { AgentEvent, AgentId, BlobRef, RepoState, Session, Usage } from "../schema/index.ts";
 import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "../datasets/types.ts";
 import type { Prices } from "./pricing.ts";
+import type { Query } from "../query/where.ts";
 
 // ---------------------------------------------------------------- spool
 
@@ -52,6 +53,20 @@ export interface SessionFilter {
   project?: string;
   limit?: number;
   offset?: number;
+}
+
+/** Options for IndexStore.querySessions and queryFacets. */
+export interface QueryOpts {
+  /** Applied with the query (limit and offset here are ignored; use the fields below). */
+  filter?: Omit<SessionFilter, "limit" | "offset">;
+  limit?: number;
+  offset?: number;
+}
+
+/** One facet value and how many sessions have it. */
+export interface FacetCount {
+  value: string;
+  count: number;
 }
 
 /** Options for IndexStore.search. */
@@ -152,6 +167,16 @@ export interface IndexStore {
    * The viewer's session list uses it; without it, one listSessions per row.
    */
   childCounts?(parentIds: string[], opts?: { project?: string }): Promise<Record<string, number>>;
+  /**
+   * `--where` (src/query): sessions matching the query and the filter, sorted by
+   * `q.sort` (default newest first). Without it, src/query/run.ts scans
+   * listSessions and evaluates the query in memory (session keys only).
+   */
+  querySessions?(q: Query, opts?: QueryOpts): Promise<Session[]>;
+  /** Facet counts for one key (src/query FACET_KEYS): sessions per value, most first. */
+  queryFacets?(q: Query, key: string, opts?: QueryOpts): Promise<FacetCount[]>;
+  /** search() restricted by a query at event level (event keys on the hit, session keys on its session). */
+  searchWhere?(text: string, q: Query, opts?: SearchOpts): Promise<SearchHit[]>;
   /**
    * The single-writer lock `coding.sh serve` holds while it ingests. Resolves
    * undefined when another process holds it (after waiting up to waitMs, default 0).

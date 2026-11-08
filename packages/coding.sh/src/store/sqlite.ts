@@ -11,15 +11,19 @@ import type { AgentEvent, BlobRef, Session } from "../schema/index.ts";
 import type {
   EvalTask,
   EventCost,
+  FacetCount,
   HarnessBundle,
   IndexStore,
   Label,
   RunResult,
   SearchHit,
   SearchOpts,
+  QueryOpts,
   SessionFilter,
   WriterLock,
 } from "../core/types.ts";
+import { compileWhere, facetSource, orderBy } from "../query/compile.ts";
+import type { Query } from "../query/where.ts";
 import { acquireLock, LockBusyError, type Lock } from "../core/lock.ts";
 import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "../datasets/types.ts";
 import type { DatasetListing } from "../core/types.ts";
@@ -448,6 +452,23 @@ function rowToSession(r: Row): Session {
   return s;
 }
 
+/** WHERE parts for a SessionFilter; `p` prefixes column names ("s." when sessions is aliased). */
+function filterSql(f: Omit<SessionFilter, "limit" | "offset">, p: string): { where: string[]; params: (string | number)[] } {
+  const where: string[] = [];
+  const params: (string | number)[] = [];
+  if (f.agent) where.push(`${p}agent = ?`), params.push(f.agent);
+  if (f.parentSessionId === null) where.push(`${p}parent_session_id IS NULL`);
+  else if (f.parentSessionId !== undefined) where.push(`${p}parent_session_id = ?`), params.push(f.parentSessionId);
+  if (f.repoRoot) where.push(`${p}repo_root = ?`), params.push(f.repoRoot);
+  if (f.runId === null) where.push(`${p}run_id IS NULL`);
+  else if (f.runId !== undefined) where.push(`${p}run_id = ?`), params.push(f.runId);
+  if (f.flag) where.push(`EXISTS (SELECT 1 FROM json_each(${p || "sessions."}flags) WHERE value = ?)`), params.push(f.flag);
+  if (f.since !== undefined) where.push(`${p}started_at >= ?`), params.push(f.since);
+  if (f.until !== undefined) where.push(`${p}started_at < ?`), params.push(f.until);
+  if (f.project !== undefined) where.push(`${p}project_id = ?`), params.push(f.project);
+  return { where, params };
+}
+
 // ---------------------------------------------------------------- store
 
 export interface SqliteIndexOptions {
@@ -710,22 +731,59 @@ export class SqliteIndexStore implements IndexStore {
   }
 
   async listSessions(f: SessionFilter = {}): Promise<Session[]> {
-    const where: string[] = [];
-    const params: (string | number)[] = [];
-    if (f.agent) where.push("agent = ?"), params.push(f.agent);
-    if (f.parentSessionId === null) where.push("parent_session_id IS NULL");
-    else if (f.parentSessionId !== undefined) where.push("parent_session_id = ?"), params.push(f.parentSessionId);
-    if (f.repoRoot) where.push("repo_root = ?"), params.push(f.repoRoot);
-    if (f.runId === null) where.push("run_id IS NULL");
-    else if (f.runId !== undefined) where.push("run_id = ?"), params.push(f.runId);
-    if (f.flag) where.push("EXISTS (SELECT 1 FROM json_each(sessions.flags) WHERE value = ?)"), params.push(f.flag);
-    if (f.since !== undefined) where.push("started_at >= ?"), params.push(f.since);
-    if (f.until !== undefined) where.push("started_at < ?"), params.push(f.until);
-    if (f.project !== undefined) where.push("project_id = ?"), params.push(f.project);
+    const { where, params } = filterSql(f, "");
     const sql = `SELECT * FROM sessions ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY started_at DESC, id LIMIT ? OFFSET ?`;
     params.push(f.limit ?? -1, f.offset ?? 0);
     return (this.db.prepare(sql).all(...params) as Row[]).map(rowToSession);
+  }
+
+  // ------------------------------------------------------------ --where (src/query)
+
+  async querySessions(q: Query, o: QueryOpts = {}): Promise<Session[]> {
+    const { where, params } = filterSql(o.filter ?? {}, "s.");
+    if (q.root) {
+      const c = compileWhere(q.root, "session");
+      where.push(c.sql);
+      params.push(...c.params);
+    }
+    const sql = `SELECT s.* FROM sessions s ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY ${orderBy(q.sort)} LIMIT ? OFFSET ?`;
+    params.push(o.limit ?? -1, o.offset ?? 0);
+    return (this.db.prepare(sql).all(...params) as Row[]).map(rowToSession);
+  }
+
+  async queryFacets(q: Query, key: string, o: QueryOpts = {}): Promise<FacetCount[]> {
+    const src = facetSource(key);
+    const { where, params } = filterSql(o.filter ?? {}, "s.");
+    if (q.root) {
+      const c = compileWhere(q.root, "session");
+      where.push(c.sql);
+      params.push(...c.params);
+    }
+    if (src.prefix) where.push("j.value LIKE ? ESCAPE '\\'"), params.push(`${src.prefix.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`);
+    const sql = `SELECT v, COUNT(DISTINCT sid) AS n FROM (SELECT ${src.value} AS v, s.id AS sid FROM ${src.from} ${where.length ? `WHERE ${where.join(" AND ")}` : ""})
+      WHERE v IS NOT NULL AND v <> '' GROUP BY v ORDER BY n DESC, v LIMIT ?`;
+    params.push(o.limit ?? 20);
+    return (this.db.prepare(sql).all(...params) as Row[]).map((r) => ({ value: String(r.v), count: num(r.n) ?? 0 }));
+  }
+
+  async searchWhere(text: string, q: Query, opts: SearchOpts = {}): Promise<SearchHit[]> {
+    const fts = ftsQuery(text);
+    if (!fts) return [];
+    const params: (string | number)[] = [SNIPPET_OPEN, SNIPPET_CLOSE, SNIPPET_ELLIPSIS, fts];
+    let sql = `SELECT e.*, snippet(events_fts, 0, ?, ?, ?, 16) AS snip
+      FROM events_fts JOIN events e ON e.rowid = events_fts.rowid LEFT JOIN sessions s ON s.id = e.session_id
+      WHERE events_fts MATCH ?`;
+    if (opts.agent) sql += " AND e.agent = ?", params.push(opts.agent);
+    if (opts.project !== undefined) sql += " AND e.project_id = ?", params.push(opts.project);
+    if (q.root) {
+      const c = compileWhere(q.root, "event");
+      sql += ` AND ${c.sql}`;
+      params.push(...c.params);
+    }
+    sql += " ORDER BY bm25(events_fts), e.ts DESC LIMIT ?";
+    params.push(opts.limit ?? 50);
+    return (this.db.prepare(sql).all(...params) as Row[]).map((r) => ({ event: rowToEvent(r), snippet: String(r.snip ?? "") }));
   }
 
   // ------------------------------------------------------------ cursors
