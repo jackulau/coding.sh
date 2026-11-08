@@ -40,6 +40,8 @@ const SITE_PAGES: Record<string, string> = {
   "use-cases/evals-from-failures.md": "/docs/use-cases/evals-from-failures",
   "use-cases/self-hosted-observability.md": "/docs/use-cases/self-hosted-observability",
   "use-cases/proxy-model-calls.md": "/docs/use-cases/proxy-model-calls",
+  "use-cases/t3-code.md": "/docs/use-cases/t3-code",
+  "use-cases/pi.md": "/docs/use-cases/pi",
   "compare/README.md": "/docs/compare",
   "compare/langfuse.md": "/docs/compare/langfuse",
   "compare/langsmith.md": "/docs/compare/langsmith",

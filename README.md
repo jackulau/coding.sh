@@ -144,7 +144,8 @@ the adapter against the agent's documented formats, but nobody has run it agains
 are still in that state because both need an account login. If you use one of them, a short
 [agent support report](https://github.com/jackulau/coding.sh/issues/new?template=agent-support.yml)
 saying whether it works moves it to "Verified". Per-agent details, including which agents get the
-MCP server, are in [docs/guides/agents.md](docs/guides/agents.md).
+MCP server, are in [docs/guides/agents.md](docs/guides/agents.md). Guides for one agent:
+[coding.sh with T3 Code](docs/use-cases/t3-code.md) and [coding.sh with Pi](docs/use-cases/pi.md).
 
 ## Privacy
 

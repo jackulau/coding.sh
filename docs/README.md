@@ -51,6 +51,8 @@ One page per job, each pointing on to the how-to or guide that covers it in full
 | [use-cases/evals-from-failures.md](use-cases/evals-from-failures.md) | build an eval suite from your agent's failed sessions |
 | [use-cases/self-hosted-observability.md](use-cases/self-hosted-observability.md) | open-source, self-hosted LLM observability on one machine or one server |
 | [use-cases/proxy-model-calls.md](use-cases/proxy-model-calls.md) | log every model call your agent makes through a local proxy |
+| [use-cases/t3-code.md](use-cases/t3-code.md) | coding.sh with T3 Code: its threads next to your other sessions, cost by model, flags and evals |
+| [use-cases/pi.md](use-cases/pi.md) | coding.sh with Pi: history across tools, Pi's own cost per call, flags and evals with Pi as the agent |
 
 ## Compare
 

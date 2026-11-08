@@ -39,6 +39,9 @@ What the statuses mean:
 
 Import past sessions with `coding.sh ingest --backfill [--since 30d]`.
 
+Guides for one agent: [coding.sh with T3 Code](../use-cases/t3-code.md) and
+[coding.sh with Pi](../use-cases/pi.md).
+
 ## Model API proxy
 
 Hooks and transcripts record what an agent did. To also record what it sent the model (the full
