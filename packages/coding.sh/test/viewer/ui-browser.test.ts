@@ -558,7 +558,9 @@ describe("viewer UI: sessions list state", { skip: chrome ? false : "no Chrome/C
         await page.eval("document.querySelector('.event-table .list').focus()");
         await key("j");
         await page.eval("document.querySelector('.event-table .list').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))");
-        await page.waitFor(`location.hash === '#/s/S1/S1-e3?where=${q.replace(/%20/g, "+")}'`, "the event's step in its session");
+        // The event is the first call's result (S1-e3); its step is that call, which the session
+        // view names by its start (S1-e2) once it has loaded, so wait for that, not the link's hash.
+        await page.waitFor(`location.hash === '#/s/S1/S1-e2?where=${q.replace(/%20/g, "+")}' && document.querySelector('#event-pane')?.textContent.includes('first failure')`, "the event's step in its session");
         const nav = "document.querySelector('.query-nav:not([hidden])')?.textContent";
         await page.waitFor(`/^1 \\/ 2 matches/.test(${nav})`, "the query's matches in this session");
         assert.equal(await page.eval("document.querySelector('.back').textContent"), "←Events");
