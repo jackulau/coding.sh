@@ -1,0 +1,54 @@
+packages/coding.sh/src/core/context.ts
+  s_8e040dbdf13565::t_f805f8d3a730f6 7,75,97
+  s_8e040dbdf13565::t_29fde47c44cbb2 53,73-74,76-79
+packages/coding.sh/src/core/ingest.ts
+  s_8e040dbdf13565::t_56ce0cb0af8ed8 204-212,288,925
+packages/coding.sh/src/core/spool-read.ts
+  s_8e040dbdf13565::t_34a1949c0f1583 92,94
+  s_8e040dbdf13565::t_3d1e4cf3fc946c 10-11,64-67,73,82-83
+packages/coding.sh/test/core/reparse.test.ts
+  s_8e040dbdf13565::t_93a19df832ac35 245-268
+  s_8e040dbdf13565::t_00db353902570a 90
+  s_8e040dbdf13565::t_3fbf8f81b3ac0b 12-13
+  s_8e040dbdf13565::t_9d11d0dce56d75 2,10,230
+  s_8e040dbdf13565::t_2db6ad467a3ca5 211-229,231-244
+packages/coding.sh/src/cli/common.ts
+  s_8e040dbdf13565::t_307e12f1485385 2,8,97-98,108,111,122-130
+  s_8e040dbdf13565::t_b106365ee8d853 158-159,162
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_282603d17c0340 117-119
+  s_8e040dbdf13565::t_e8901a3a375482 113-116
+packages/coding.sh/src/core/reparse.ts
+  s_8e040dbdf13565::t_7411aa1075cb6e 27-37,54,88-89,128-129,299-302,309,394-396,398-401,403,406,431
+  s_8e040dbdf13565::t_fc904c2bf528b2 43-48,56,81-84,103,106,150-151,166-169,173-176,249,397,405,415-425,479-504,507-513,517
+  s_8e040dbdf13565::t_56ce0cb0af8ed8 61,69
+  s_8e040dbdf13565::t_29fde47c44cbb2 410-412
+  s_8e040dbdf13565::t_e19f496eb4658f 426
+AGENTS.md
+  s_8e040dbdf13565::t_282603d17c0340 49-50
+CHANGELOG.md
+  s_8e040dbdf13565::t_3f04a2875f506c 84
+packages/coding.sh/src/cli/commands/ingest.ts
+  s_8e040dbdf13565::t_50a17e6e820aaf 74
+  s_8e040dbdf13565::t_7ebbdfa5f4de2d 103
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_fc904c2bf528b2 400-403
+packages/coding.sh/test/cli/cli.test.ts
+  s_8e040dbdf13565::t_9579d728453c1f 605-627
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1aec1d59ecf9e55d7a5007c2c0c6562a8781f15d",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
