@@ -1,0 +1,58 @@
+packages/coding.sh/test/docs/api-reference.test.ts
+  s_8e040dbdf13565::t_0e97a290063d7a 60
+packages/coding.sh/src/cli/commands/diff-calls.ts
+  s_8e040dbdf13565::t_03f40d96327876 62,95-96
+  s_8e040dbdf13565::t_091c7c3c0f62ce 1-61,63-94,97-122
+packages/coding.sh/src/viewer/server.ts
+  s_8e040dbdf13565::t_e983314eb9c50c 617,619
+  s_8e040dbdf13565::t_42d102ceb9d3a2 30,611-613,616,618,620-628,630-640
+  s_8e040dbdf13565::t_0e97a290063d7a 614-615,629
+  s_8e040dbdf13565::t_09602bb09d4d25 641-642
+packages/coding.sh/src/store/sqlite.ts
+  s_8e040dbdf13565::t_1d935b61c2ea86 781-785
+packages/coding.sh/src/core/redact.ts
+  s_8e040dbdf13565::t_4bca97ae699993 512-513
+packages/coding.sh/test/proxy/calls.test.ts
+  s_8e040dbdf13565::t_9769939c96bbab 275,299
+  s_8e040dbdf13565::t_cdf1fe4e1cdc27 1-220,222-274,276-298,300-302
+  s_8e040dbdf13565::t_4bca97ae699993 221
+docs/reference/api.md
+  s_8e040dbdf13565::t_449d1abf31ba65 95-96,629-630,632-679
+  s_8e040dbdf13565::t_592e67657239e9 631
+  s_8e040dbdf13565::t_c945ab1ec24817 680
+packages/coding.sh/src/core/types.ts
+  s_8e040dbdf13565::t_1d935b61c2ea86 187-188
+packages/coding.sh/src/viewer/ui/index.html
+  s_8e040dbdf13565::t_e3a8033871deed 5003,5014
+  s_8e040dbdf13565::t_64eaa307c5c059 4960-5002,5004-5013,5015-5028,5133
+packages/coding.sh/src/store/memory.ts
+  s_8e040dbdf13565::t_1d935b61c2ea86 181-189
+packages/coding.sh/src/cli/commands/show.ts
+  s_8e040dbdf13565::t_ebafc46d57f267 5-6,14,16-17,92-97,288-301
+docs/reference/cli.md
+  s_8e040dbdf13565::t_592e67657239e9 47,414,427,431-432,461-480
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_f3d718a16accca 335,341-345,365-375
+  s_8e040dbdf13565::t_d5dd789a30af25 376
+packages/coding.sh/src/proxy/calls.ts
+  s_8e040dbdf13565::t_ba51eb4470d23f 1-54,56-62,64-164,167-199,207,209-266,269-281,284-326
+  s_8e040dbdf13565::t_4bca97ae699993 165-166
+  s_8e040dbdf13565::t_7ace071494326d 55,63
+  s_8e040dbdf13565::t_171bcaa4aa600a 200-206,208,267-268,282-283
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "93029f96ec3c3bb86bae093d365186fae96d1355",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
