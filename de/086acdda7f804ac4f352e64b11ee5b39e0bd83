@@ -1,0 +1,21 @@
+apps/site/src/lib/llms.ts
+  s_8e040dbdf13565::t_62f347f9b5b951 37-38
+apps/site/src/pages/index.astro
+  s_8e040dbdf13565::t_679583a10881d6 94
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "de086acdda7f804ac4f352e64b11ee5b39e0bd83",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
