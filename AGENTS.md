@@ -104,6 +104,12 @@ whether `coding.sh doctor` passed on a live install.
 `npm ci`; pushing a tag `vX.Y.Z` that matches `packages/coding.sh/package.json` runs
 `.github/workflows/release.yml`.
 
+**Measuring ease.** `npm run build` in `packages/coding.sh`, then `node scripts/e2e/ease.mjs
+[--json] [--real]` from the repo root. It times setup by a person (steps, prompts, time to the first
+session, empty states that name the next step) and checks setup by an agent that follows agents.md.
+Rerun it when you change install, init, doctor, an empty state or agents.md; results and caveats
+are in `docs/ease.md`.
+
 **Measuring performance.** CLI budgets: `npm run build` in `packages/coding.sh`, then
 `node scripts/dogfood/bench.mjs [hook|ingest|store|help|viewer]` from the repo root, with
 `--baseline <dist dir>` for a paired A/B against another build. Site: `node scripts/perf/ab.mjs
