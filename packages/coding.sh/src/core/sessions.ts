@@ -402,7 +402,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * events, and every stored session is folded again once in the background
  * (core/reparse.ts, REFOLD_CURSOR), so old sessions get the new derivation.
  */
-export const SESSION_FOLD_VERSION = 3; // 3: TamperState tracks shell calls, own lines and source edits since the last green run.
+export const SESSION_FOLD_VERSION = 4; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips.
 
 /**
  * A session's events folded so far: everything buildSession needs from them,

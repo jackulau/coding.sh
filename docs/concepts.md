@@ -48,7 +48,8 @@ timeline.
   unflagged, and so do these: a guard such as `t.skip("needs git")` inside a test the same edit
   adds; a fix to lines the agent added earlier in the session; an expectation updated after the
   agent's own source edit broke a test that passed earlier in the session; a green run of fewer tests
-  than passed in the failing one. A file that a shell command's diff reports but the command never
+  than passed in the failing one; a skip marker inside a string literal, such as a diff or a `sed`
+  command a test holds as data. A file that a shell command's diff reports but the command never
   names (a test run, or another agent writing to the same checkout) is never flagged, and files a git
   pull, merge, rebase, reset or checkout brought in are not counted as edits at all.
 - `duplicate-fetch`: three or more read-only calls (Read, Grep, `cat`, `git diff`, …) in one context

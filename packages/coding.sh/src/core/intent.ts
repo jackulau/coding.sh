@@ -140,6 +140,9 @@ function diffHunks(diff: string): DiffLine[][] {
 }
 
 const hasSkip = (lines: readonly string[]) => lines.some((l) => SKIP_MARKERS.some((re) => re.test(l)));
+/** String literals closed on the line, emptied: `"it.skip('x')"` in a test's data is text, `it.skip("x")` still a call. */
+const STRING_LITERAL = /(['"`])(?:\\.|(?!\1).)*\1/g;
+const codeSkip = (line: string) => hasSkip([line.replace(STRING_LITERAL, "$1$1")]);
 /** In a shell command the focus/exclude calls sit inside a script (`sed -i 's/it(/xit(/'`), not at a line start. */
 const SHELL_FOCUS = /(?<![.\w$])(?<!def\s)(?:xit|xtest|xdescribe|xcontext|fit|fdescribe)\s*\(/;
 const shellSkips = (cmd: string) => hasSkip([cmd]) || SHELL_FOCUS.test(cmd);
@@ -162,7 +165,7 @@ const testKey = (line: string): string | undefined => /(['"`])((?:\\.|(?!\1).)*)
 function skipsExistingTest(hunk: readonly DiffLine[]): boolean {
   const removedKeys = new Set(hunk.filter((l) => l.t === "-" && TEST_OPENER.test(l.s)).map((l) => testKey(l.s)));
   return hunk.some((l, k) => {
-    if (l.t !== "+" || !hasSkip([l.s])) return false;
+    if (l.t !== "+" || !codeSkip(l.s)) return false;
     let opener: DiffLine | undefined;
     if (ANNOTATION.test(l.s)) {
       for (let j = k + 1; j < hunk.length && !opener; j++) if (hunk[j]!.t !== "-" && TEST_OPENER.test(hunk[j]!.s)) opener = hunk[j];
