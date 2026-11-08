@@ -184,6 +184,8 @@ export interface IndexStore {
   ping?(): Promise<void>;
   /** Up to `limit` session ids starting with `prefix`, sorted (`coding.sh show <prefix>`, like a git short hash). */
   sessionIdsByPrefix?(prefix: string, limit: number): Promise<string[]>;
+  /** Up to `limit` events whose id starts with `prefix`, sorted by id (`coding.sh diff-calls`, `exp replay`). */
+  eventsByIdPrefix?(prefix: string, limit: number): Promise<AgentEvent[]>;
   /**
    * How many sessions name each of `parentIds` as their parent (only in one
    * project when given), in one query. Ids with no children may be left out.

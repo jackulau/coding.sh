@@ -4957,6 +4957,75 @@ function blobView(ref, auto) {
   return wrap;
 }
 
+// ------------------------------------------------------------ proxy calls
+
+/** The system prompt of a stored request body, per API (Anthropic system, Chat system/developer messages, Responses instructions). */
+function callSystem(api, b) {
+  const text = (v) => typeof v === "string" ? v : Array.isArray(v) ? v.map((x) => typeof x === "string" ? x : x && typeof x.text === "string" ? x.text : "").filter(Boolean).join("\n\n") : "";
+  if (api === "responses") return text(b.instructions);
+  if (api === "chat") return (b.messages || []).filter((m) => m && (m.role === "system" || m.role === "developer")).map((m) => text(m.content)).join("\n\n");
+  return text(b.system);
+}
+function callToolName(t) { return !t ? "?" : t.name || (t.function && t.function.name) || t.type || "?"; }
+
+/** A call logged by coding.sh proxy: the request as sent (system prompt, tools, last messages) and a diff with the call before it. */
+function callDetails(ev) {
+  const wrap = h("div", { class: "stack" }, h("p", { class: "meta" }, "Loading the request…"));
+  api("/api/calls/" + encodeURIComponent(ev.id), undefined, true).then((r) => {
+    const req = r && r.request;
+    const nodes = [];
+    if (req && req.body) {
+      const b = req.body;
+      const sys = callSystem(req.api, b);
+      if (sys) nodes.push(section("system prompt · " + fmtNum(sys.length) + " chars", clipped(sys, textBlock, { lines: 60 }), copyBtn(() => sys, "Copy system prompt", "system prompt")));
+      const tools = Array.isArray(b.tools) ? b.tools : [];
+      if (tools.length) nodes.push(section("tools · " + fmtNum(tools.length), h("p", { class: "meta" }, tools.map(callToolName).join(", "))));
+      const msgs = Array.isArray(b.messages) ? b.messages : Array.isArray(b.input) ? b.input : [];
+      if (msgs.length) nodes.push(section("messages · " + fmtNum(msgs.length) + (msgs.length > 3 ? " · last 3" : ""), jsonTree(msgs.slice(-3))));
+    } else {
+      nodes.push(h("p", { class: "note" }, "The request content was not stored (capture mode metadata)."));
+    }
+    nodes.push(callDiffSection(ev));
+    wrap.replaceChildren(...nodes);
+  }).catch((e) => wrap.replaceChildren(h("p", { class: "note err" }, e.message)));
+  return wrap;
+}
+
+/** "Compare with the previous call": what changed, and why the prompt cache missed. */
+function callDiffSection(ev) {
+  const body = h("div");
+  const btn = h("button", { class: "btn btn-sm", type: "button" }, "Compare with the previous call");
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      const d = await api("/api/calls/" + encodeURIComponent(ev.id) + "/diff", undefined, true);
+      const rows = [];
+      const row = (k, v, tone) => rows.push(h("dt", null, k), h("dd", tone ? { class: tone } : null, v));
+      row("model", d.model ? (d.model.a || "?") + " → " + (d.model.b || "?") : "same");
+      if (d.params && d.params.length) row("settings", d.params.map((p) => p.key + " " + JSON.stringify(p.a) + " → " + JSON.stringify(p.b)).join(", "));
+      const t = d.tools;
+      row("tools", t.same ? "same" : [t.added.length ? "+ " + t.added.join(", ") : "", t.removed.length ? "− " + t.removed.join(", ") : "", t.changed.length ? "~ " + t.changed.join(", ") : "", t.reordered ? "reordered" : ""].filter(Boolean).join(" · ") || "changed");
+      row("system", d.system.same ? "same" : "changed");
+      const m = d.messages;
+      row("messages", m.a + " → " + m.b + (d.content === "metadata" ? "" : m.rewritten ? " · rewritten from message " + (m.shared + 1) : " · extends the previous call"));
+      const c = d.cache;
+      row("cache", c.expected === 0 ? "the previous call cached nothing" : c.reused ? "hit · read " + fmtCompact(c.read) + " of " + fmtCompact(c.expected) : "miss · read " + fmtCompact(c.read) + " of " + fmtCompact(c.expected) + ", wrote " + fmtCompact(c.write), c.expected && !c.reused ? "warn" : "");
+      if (c.cause) row("why", c.cause);
+      const nodes = [h("dl", { class: "kv" }, rows)];
+      if (d.system.lines && d.system.lines.length) {
+        let a = 1, b = 1;
+        nodes.push(section("system prompt diff", diffGrid(d.system.lines.map((l) => l.op === "+" ? { t: "add", b: b++, text: l.text } : l.op === "-" ? { t: "del", a: a++, text: l.text } : l.text === "…" ? { t: "hunk", text: "…" } : { t: "ctx", a: a++, b: b++, text: l.text }))));
+      }
+      body.replaceChildren(...nodes);
+      btn.remove();
+    } catch (e) {
+      btn.disabled = false;
+      body.replaceChildren(h("p", { class: "note" }, e.status === 404 ? "This is the first model call of its session." : e.message));
+    }
+  });
+  return section("compare", h("div", { class: "stack" }, btn, body));
+}
+
 /** The child session a subagent.start/end event belongs to: by childSessionId, subagent id, or the child's parent event. */
 function childFor(ev, ctx) {
   const p = ev.payload || {};
@@ -5061,6 +5130,7 @@ function renderPane(pane, item, session, ctx) {
         const metaLine = [p.provider ? "provider · " + p.provider : "", p.requestModel && p.requestModel !== p.responseModel ? "requested " + p.requestModel : "",
           cost && cost.est ? "cost estimated from list prices" + (cost.as ? ", priced as " + cost.as : "") + (cost.tier ? ", at " + tierRates(cost.tier) : "") : ""].filter(Boolean).join(" · ");
         if (metaLine) nodes.push(h("p", { class: "meta call-meta" }, metaLine));
+        if (ev.source === "proxy") nodes.push(callDetails(ev));
         break;
       }
       case "subagent.start":

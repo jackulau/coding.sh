@@ -57,7 +57,7 @@ function serverRoutes(): Map<string, string> {
     assert.ok(methods.size > 0, `methods of /api/${c[1]}`);
     const base = `/api/${c[1]}`;
     const collectionOnly = /if \(id !== undefined\) throw new HttpError\(404/.test(block);
-    const itemOnly = /if \(id === undefined \|\| sub !== undefined\) throw new HttpError\(404/.test(block);
+    const itemOnly = /if \(id === undefined \|\| sub !== undefined\) throw new HttpError\(404/.test(block) || /if \(id === undefined \|\| id === "" \|\| \(sub !== undefined && !\w+\)\) throw notFound\(\)/.test(block);
     const paths: string[] = [];
     if (!itemOnly) paths.push(base);
     if (!collectionOnly) paths.push(`${base}/{}`);

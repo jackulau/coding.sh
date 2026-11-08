@@ -778,6 +778,11 @@ export class SqliteIndexStore implements IndexStore {
     return rows.map((r) => String(r.id)).filter((id) => id.startsWith(prefix));
   }
 
+  async eventsByIdPrefix(prefix: string, limit: number): Promise<AgentEvent[]> {
+    const rows = this.stmt("SELECT * FROM events WHERE id >= ? AND id < ? ORDER BY id LIMIT ?").all(prefix, `${prefix}\u{10FFFF}`, limit) as Row[];
+    return rows.map(rowToEvent).filter((e) => e.id.startsWith(prefix));
+  }
+
   async childCounts(parentIds: string[], opts: { project?: string } = {}): Promise<Record<string, number>> {
     if (!parentIds.length) return {};
     const params: string[] = [JSON.stringify(parentIds)];

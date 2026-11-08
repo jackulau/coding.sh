@@ -332,14 +332,17 @@ export const COMMANDS: CommandSpec[] = [
     name: "show",
     group: "Explore",
     summary: "Show a session timeline with subagents and latency",
-    args: [{ name: "session", desc: "Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'", required: true }],
+    args: [{ name: "session", desc: "Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'; or a model call (its id, or <session>#<n>)", required: true }],
     flags: [
       { name: "limit", short: "n", type: "number", value: "<N>", desc: "List the first N events (default 200; a longer session shows as phases)" },
       { name: "all", type: "boolean", desc: "List every event, with phase and day lines and derail markers" },
       { name: "follow", short: "f", type: "boolean", desc: "Keep printing new events as a running session goes on (Ctrl-C to stop)" },
     ],
-    examples: ["coding.sh show latest", "coding.sh show 9f1c2e", "coding.sh show 9f1c2e --all", "coding.sh show latest --follow"],
-    notes: ["A session with more than 200 events shows one line per phase: the start, each resume, compaction and long idle gap, with where it derailed."],
+    examples: ["coding.sh show latest", "coding.sh show 9f1c2e", "coding.sh show 9f1c2e --all", "coding.sh show latest --follow", "coding.sh show 'latest#-1'"],
+    notes: [
+      "A session with more than 200 events shows one line per phase: the start, each resume, compaction and long idle gap, with where it derailed.",
+      "A model call logged by coding.sh proxy shows its system prompt, tools, settings, cache use, usage and cost (--all: the whole system prompt).",
+    ],
     load: () => import("./commands/show.ts"),
   },
   {
@@ -358,6 +361,18 @@ export const COMMANDS: CommandSpec[] = [
       "The viewer has the same replay: the Replay button on a session page, or a link ending in ?step=N.",
     ],
     load: () => import("./commands/replay.ts"),
+  },
+  {
+    name: "diff-calls",
+    group: "Explore",
+    summary: "Show what changed between two model calls, and why the second missed the prompt cache",
+    args: [
+      { name: "a", desc: "A model call: its id, a unique prefix of one (6+ characters), or <session>#<n> (#-1 is the last)", required: true },
+      { name: "b", desc: "The call to compare it with (default: compare a with the call before it in its session)" },
+    ],
+    examples: ["coding.sh diff-calls 9f1c2e4a7b3d", "coding.sh diff-calls 'latest#3' 'latest#4'", "coding.sh diff-calls 9f1c2e 4b7d1a --json"],
+    notes: ["Compares model, settings, tool definitions, the system prompt (line by line) and the message history, in the order the prompt cache reads them. Needs calls logged by coding.sh proxy; in capture mode metadata it compares hashes only."],
+    load: () => import("./commands/diff-calls.ts"),
   },
   {
     name: "search",

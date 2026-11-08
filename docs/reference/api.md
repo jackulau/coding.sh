@@ -92,6 +92,8 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/sessions/{id}/outline`](#get-apisessionsidoutline) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/replay`](#get-apisessionsidreplay) | read key or basic auth | serve, ui |
 | GET | [`/api/blobs/{sha256}`](#get-apiblobssha256) | read key or basic auth | serve, ui |
+| GET | [`/api/calls/{id}`](#get-apicallsid) | read key or basic auth | serve, ui |
+| GET | [`/api/calls/{id}/diff`](#get-apicallsiddiff) | read key or basic auth | serve, ui |
 | GET | [`/api/search`](#get-apisearch) | read key or basic auth | serve, ui |
 | GET | [`/api/stats`](#get-apistats) | read key or basic auth | serve, ui |
 | GET | [`/api/facets`](#get-apifacets) | read key or basic auth | serve, ui |
@@ -623,6 +625,58 @@ X-Truncated: 0
 
 A ref that is not 64 lowercase hex characters gets 400 `{"error":"blob ref must be 64 lowercase hex chars","status":400}`;
 an unknown one gets 404 `{"error":"blob not found","status":404}`.
+
+### `GET /api/calls/{id}`
+
+One model call logged by `coding.sh proxy`: the `llm.call`
+event, the request as the client sent it (system prompt and tool definitions put back from their
+blobs; auth headers are never stored) and the response. `{id}` is the event id or a unique prefix
+of at least 6 characters. `request` and `response` are `null` in `metadata` capture mode.
+
+```sh
+curl -sS "$CSH/api/calls/319a57022de6" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{
+  "call": {"id": "319a57022de66bd9…", "kind": "llm.call", "source": "proxy", "model": "claude-sonnet-4-5-20250929",
+           "usage": {"inputTokens": 12, "outputTokens": 42, "cacheReadTokens": 4600, "cacheWriteTokens": 100},
+           "payload": {"api": "messages", "statusCode": 200, "systemHash": "907e1d58151bd256", "toolCount": 3, "…": "…"}},
+  "request": {"provider": "anthropic", "api": "messages", "method": "POST", "path": "/v1/messages",
+              "headers": {"anthropic-version": "2023-06-01"},
+              "body": {"model": "claude-sonnet-4-5", "system": [{"type": "text", "text": "You are a careful coding agent.…"}],
+                       "tools": [{"name": "Bash", "…": "…"}], "messages": ["…"]}},
+  "response": {"status": 200, "headers": {"request-id": "req_…"}, "body": {"content": ["…"], "stop_reason": "end_turn"}}
+}
+```
+
+An unknown or ambiguous id gets 404.
+
+### `GET /api/calls/{id}/diff`
+
+What changed between this call and the model call before it in its session, or `?with=<id>`:
+model, settings, tool definitions, the system prompt as a line diff, and the message history.
+When this call read less of the prompt cache than the other one cached, `cache.cause` names the
+first change in the order the cache reads a request (tools, then system, then messages), or the
+5-minute cache lifetime. The same object as `coding.sh diff-calls <a> <b> --json`.
+
+```json
+{
+  "a": {"id": "dc1d0bae0de0…", "model": "claude-sonnet-4-5-20250929", "usage": {"cacheReadTokens": 4000, "cacheWriteTokens": 200}},
+  "b": {"id": "7c8944291203…", "model": "claude-sonnet-4-5-20250929", "usage": {"cacheReadTokens": 0, "cacheWriteTokens": 4400}},
+  "content": "full",
+  "params": [],
+  "tools": {"same": true, "added": [], "removed": [], "changed": [], "reordered": false},
+  "system": {"same": false, "lines": [{"op": " ", "text": "Run the tests before you say done."},
+                                      {"op": "-", "text": "Today is 2026-11-06."}, {"op": "+", "text": "Today is 2026-11-07."}]},
+  "messages": {"a": 3, "b": 5, "shared": 3, "rewritten": false},
+  "cache": {"reused": false, "expected": 4200, "read": 0, "write": 4400, "gapMs": 812,
+            "cause": "the system prompt changed (first change: - Today is 2026-11-06.)"}
+}
+```
+
+`content` is `metadata` when either request was not stored: tools and system are then compared
+by their short hashes. The first call of a session, without `?with=`, gets 404.
 
 ### `GET /api/search`
 

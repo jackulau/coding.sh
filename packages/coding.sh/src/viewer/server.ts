@@ -27,6 +27,7 @@ import { facetCounts, findEvents, findSessions, searchWhere } from "../query/run
 import type { AgentEvent } from "../schema/index.ts";
 import { searchableText, searchTerms, snippet } from "../store/common.ts";
 import { andQuery, keyGuide, parseWhere, QueryError, QueryUnsupported, type Node, type Query } from "../query/where.ts";
+import { CallRefError, diffCalls, loadCall, resolveCall } from "../proxy/calls.ts";
 import { getUpdateStatus, type UpdateStatus } from "../update/index.ts";
 
 export interface ViewerOptions {
@@ -605,6 +606,38 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         return sendJson(res, 200, { phases: o.phases.map((p) => ({ ...p, label: phaseLabel(p) })), days: o.days, derails, events: s.stats.events });
       }
       throw notFound();
+    }
+
+    case "calls": {
+      // One model call logged by coding.sh proxy (request and response re-read from blobs), or its diff with another.
+      get();
+      const diff = sub === "diff";
+      if (id === undefined || id === "" || (sub !== undefined && !diff)) throw notFound();
+      const call = async (ref: string) => {
+        checkId(ref, "call id");
+        try {
+          const e = await resolveCall(ctx.index, ref);
+          await visibleSession(ctx, e.sessionId);
+          return e;
+        } catch (err) {
+          if (err instanceof CallRefError) throw new HttpError(404, err.reason === "ambiguous" ? "call id prefix is ambiguous" : "call not found");
+          if (err instanceof HttpError) throw new HttpError(404, "call not found");
+          throw err;
+        }
+      };
+      const b = await call(id);
+      if (!diff) {
+        const l = await loadCall(ctx.blobs, b);
+        return sendJson(res, 200, { call: b, request: l.request ?? null, response: l.response ?? null });
+      }
+      const withRef = q.get("with");
+      let a = withRef ? await call(withRef) : undefined;
+      if (!a) {
+        const calls = await ctx.index.listEvents(b.sessionId, { kinds: ["llm.call"] });
+        a = calls[calls.findIndex((x) => x.id === b.id) - 1];
+        if (!a) throw new HttpError(404, "no earlier model call in this session; pass ?with=<call id>");
+      }
+      return sendJson(res, 200, diffCalls(await loadCall(ctx.blobs, a), await loadCall(ctx.blobs, b)));
     }
 
     case "blobs": {

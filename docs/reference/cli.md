@@ -44,6 +44,7 @@ Every command accepts these.
 | [`sessions`](#codingsh-sessions) | Explore | List captured sessions |
 | [`show`](#codingsh-show) | Explore | Show a session timeline with subagents and latency |
 | [`replay`](#codingsh-replay) | Explore | Step through a session and see what it did to each file it touched |
+| [`diff-calls`](#codingsh-diff-calls) | Explore | Show what changed between two model calls, and why the second missed the prompt cache |
 | [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies and tool calls |
 | [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day |
 | [`sql`](#codingsh-sql) | Explore | Run one read-only SQL query against the SQLite index |
@@ -410,7 +411,7 @@ coding.sh show <SESSION> [options]
 
 | Argument | Required | Description |
 |---|---|---|
-| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'. |
+| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'; or a model call (its id, or &lt;session&gt;#&lt;n&gt;) |
 
 | Option | Default | Description |
 |---|---|---|
@@ -423,9 +424,11 @@ coding.sh show latest
 coding.sh show 9f1c2e
 coding.sh show 9f1c2e --all
 coding.sh show latest --follow
+coding.sh show 'latest#-1'
 ```
 
 - A session with more than 200 events shows one line per phase: the start, each resume, compaction and long idle gap, with where it derailed.
+- A model call logged by coding.sh proxy shows its system prompt, tools, settings, cache use, usage and cost (--all: the whole system prompt).
 
 ## `coding.sh replay`
 
@@ -454,6 +457,27 @@ coding.sh replay 9f1c2e --step 12 --file src/app.ts
 
 - File content is rebuilt from the agent's own tool calls: full writes, full reads and the edits applied to them. A file edited before any step showed it reads as unknown, with the reason, until a later read or write. A session run with `coding.sh run` also starts from its snapshot.
 - The viewer has the same replay: the Replay button on a session page, or a link ending in ?step=N.
+
+## `coding.sh diff-calls`
+
+Show what changed between two model calls, and why the second missed the prompt cache.
+
+```text
+coding.sh diff-calls <A> [b]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `a` | yes | A model call: its id, a unique prefix of one (6+ characters), or &lt;session&gt;#&lt;n&gt; (#-1 is the last) |
+| `b` | no | The call to compare it with (default: compare a with the call before it in its session) |
+
+```sh
+coding.sh diff-calls 9f1c2e4a7b3d
+coding.sh diff-calls 'latest#3' 'latest#4'
+coding.sh diff-calls 9f1c2e 4b7d1a --json
+```
+
+- Compares model, settings, tool definitions, the system prompt (line by line) and the message history, in the order the prompt cache reads them. Needs calls logged by coding.sh proxy; in capture mode metadata it compares hashes only.
 
 ## `coding.sh search`
 

@@ -2,6 +2,8 @@
 // subagent tree (child sessions linked by parent.sessionId). A session too
 // long to list (more events than --limit) shows as phases (core/outline.ts)
 // with its derails; --all lists every event, --follow tails a running one.
+// An id that names no session but a model call (`<call id>`, `<session>#3`)
+// shows that call: system prompt, tools, cache and usage (diff-calls.ts).
 import { setTimeout as sleep } from "node:timers/promises";
 import { sessionOutline, phaseLabel, storedOutline, type Outline, type Phase } from "../../core/outline.ts";
 import { costNote } from "../../core/pricing.ts";
@@ -9,8 +11,10 @@ import { SKILL_EVENT_KINDS, SKILL_TAG_PREFIX, skillUse, type SkillUseReport } fr
 import type { AgentEvent, Session } from "../../core/types.ts";
 import type { DurableStats } from "../../schema/index.ts";
 import { positiveInt } from "../args.ts";
+import { loadCall, resolveCall } from "../../proxy/calls.ts";
 import { autoIngest, oneLine, resolveSession, sessionJson, withContext } from "../common.ts";
-import { ago, clean, duration, localTime, tokens, usd, type Output } from "../output.ts";
+import { ago, clean, CliError, duration, localTime, tokens, usd, type Output } from "../output.ts";
+import { printCall } from "./diff-calls.ts";
 import type { CommandContext } from "../types.ts";
 import type { IndexStore } from "../../core/types.ts";
 import type { SessionDerail } from "../../schema/index.ts";
@@ -85,8 +89,12 @@ function describe(e: AgentEvent, starts: Map<string, AgentEvent>): string | unde
       const status = p.ok === false ? "failed" : "ok";
       return `tool        ${str(p.tool) ?? str(start?.payload.tool) ?? "?"} ${oneLine(clean(toolArg(input)), 70)}  ${status} ${duration(e.durationMs)}`;
     }
-    case "llm.call":
-      return `llm         ${e.model ?? str(p.model) ?? ""} ${duration(e.durationMs)} in ${tokens(e.usage?.inputTokens)} out ${tokens(e.usage?.outputTokens)}${callCost(e)}`;
+    case "llm.call": {
+      // Proxy calls: cache use, and the id that `show`, `diff-calls` and `exp replay` take.
+      const u = e.usage;
+      const proxied = e.source === "proxy" ? `${u?.cacheReadTokens || u?.cacheWriteTokens ? ` cache r${tokens(u.cacheReadTokens ?? 0)}/w${tokens(u.cacheWriteTokens ?? 0)}` : ""}  ${e.id.slice(0, 12)}` : "";
+      return `llm         ${e.model ?? str(p.model) ?? ""} ${duration(e.durationMs)} in ${tokens(e.usage?.inputTokens)} out ${tokens(e.usage?.outputTokens)}${callCost(e)}${proxied}`;
+    }
     case "subagent.start":
       return `subagent    start ${str(p.type) ?? str(p.subagentType) ?? ""} ${oneLine(clean(str(p.description) ?? str(p.prompt) ?? ""), 70)}`;
     case "subagent.end":
@@ -277,7 +285,20 @@ export async function run(c: CommandContext): Promise<number> {
   const all = c.flags.all === true;
   return withContext(c, async (ctx) => {
     await autoIngest(ctx);
-    const s = await resolveSession(ctx, c.positionals[0]!);
+    const ref = c.positionals[0]!;
+    let s: Session;
+    try {
+      s = await resolveSession(ctx, ref);
+    } catch (err) {
+      // Not a session: maybe a model call.
+      if (!(err instanceof CliError) || err.reason !== "not_found" || c.flags.follow === true) throw err;
+      const call = await resolveCall(ctx.index, ref).catch(() => undefined);
+      if (!call) throw err;
+      const loaded = await loadCall(ctx.blobs, call);
+      if (out.json) out.data({ call: call, request: loaded.request ?? null, response: loaded.response ?? null });
+      else printCall(out, loaded, all);
+      return 0;
+    }
     if (c.flags.follow === true) return follow(c, ctx, s);
     // The phase view reads the phases kept at ingest; only a session stored before they were kept needs every event.
     const phased = !all && explicitLimit === undefined && s.stats.events > limit;

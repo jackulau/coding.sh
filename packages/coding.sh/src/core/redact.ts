@@ -509,6 +509,8 @@ export function toMetadata(event: AgentEvent): AgentEvent {
   for (const [k, v] of Object.entries(event.payload ?? {})) {
     if (typeof v === "number" || typeof v === "boolean") payload[k] = v;
     else if (typeof v === "string" && METADATA_STRING_KEYS.has(k) && v.length <= 200) payload[k] = v;
+    // The tools a model call offered, by name (the proxy), like `tool` on tool events.
+    else if (k === "toolNames" && Array.isArray(v)) payload[k] = v.filter((n): n is string => typeof n === "string" && n.length <= 200).slice(0, 128);
   }
   // Redaction counts (kind → number, never values): the secret-exposure signal survives metadata mode.
   const counts = redactionCounts(event.payload?.redactions);
