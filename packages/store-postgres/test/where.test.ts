@@ -1,0 +1,140 @@
+// `--where` in Postgres: the compiler without a database (shape, bound values,
+// unknown keys), then, with CODING_SH_TEST_PG_URL, the same ids and facet counts
+// as coding.sh's scan fallback (the memory store) on the shared fixture.
+import assert from "node:assert/strict";
+import { after, before, describe, it } from "node:test";
+import { HAS, IS, KEYS, QueryError, QueryUnsupported, type IndexStore, type Node, type QueryOpts } from "coding.sh/store";
+import { facetCounts, findSessions } from "../../coding.sh/src/query/run.ts";
+import { FACET_KEYS, parseWhere } from "../../coding.sh/src/query/where.ts";
+import { MemoryIndexStore } from "../../coding.sh/src/store/memory.ts";
+import { T0 } from "../../coding.sh/test/query/_seed.ts";
+import { fixture, QUERIES } from "../../coding.sh/test/query/_where-fixture.ts";
+import { PgIndexStore } from "../src/index.ts";
+import { compileWhere, facetSource, HAS_SQL, IS_SQL, KEY_SQL, orderBy } from "../src/where.ts";
+import { SKIP, schemaUrl } from "./helpers.ts";
+
+const NOW = T0 + 3 * 86_400_000;
+const p = (q: string) => parseWhere(q, { now: NOW });
+
+function compile(q: string): { sql: string; params: unknown[] } {
+  const params: unknown[] = [];
+  const sql = compileWhere(p(q).root!, (v) => (params.push(v), `$${params.length}`), `"t".events`);
+  return { sql, params };
+}
+
+describe("postgres --where compiler", () => {
+  it("has SQL for every key, has: and is: value in coding.sh", () => {
+    for (const k of KEYS.keys()) assert.ok(KEY_SQL[k], `no SQL for ${k}`);
+    for (const k of Object.keys(HAS)) assert.ok(HAS_SQL[k], `no SQL for has:${k}`);
+    for (const k of Object.keys(IS)) assert.ok(IS_SQL[k], `no SQL for is:${k}`);
+  });
+
+  it("compiles to one condition with numbered placeholders", () => {
+    const c = compile("agent:codex -title:Fix cost>0.5 tool:Bash ok:false");
+    const cost = "(CASE WHEN json_typeof(s.stats::json #> '{usage,costUsd}') = 'number' THEN (s.stats::json #>> '{usage,costUsd}')::float8 END)";
+    assert.equal(
+      c.sql,
+      `(EXISTS (SELECT 1 FROM "t".events e WHERE e.session_id = s.id AND (e.tool = $1 AND e.ok = $2)) AND s.agent = $3` +
+        ` AND NOT (coalesce(translate(s.title, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz') LIKE $4, false)) AND ${cost} > $5)`,
+    );
+    assert.deepEqual(c.params, ["Bash", false, "codex", "%fix%", 0.5]);
+    assert.equal(orderBy(p("sort:-cost").sort), `(${cost}) IS NULL, (${cost}) DESC, s.started_at DESC, s.id`);
+    assert.equal(orderBy(undefined), "s.started_at DESC, s.id");
+  });
+
+  it("binds every value: hostile input never changes the SQL", () => {
+    const evil = [`x' OR 1=1 --`, `"; DROP TABLE sessions; --`, `%_\\`, `$1`, `') UNION SELECT * FROM kv --`, "a\u0000b"];
+    const qt = (x: string) => `"${x.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+    const shapes = new Set<string>();
+    for (const v of evil) {
+      const c = compile(`agent:${qt(v)} title:${qt(v)} skill:${qt(v)} tool:${qt(v)} ${qt(`${v} word`)}`);
+      for (const piece of ["DROP", "UNION", "1=1", "\u0000", "kv"]) assert.ok(!c.sql.includes(piece), c.sql);
+      shapes.add(c.sql);
+      assert.ok(c.params.includes(v), `${JSON.stringify(v)} is bound as is`);
+      assert.ok(c.params.includes(`skill:${v}`));
+    }
+    assert.equal(shapes.size, 1, "every value compiles to the same statement");
+  });
+
+  it("refuses keys it has no SQL for, and text with no words", () => {
+    const bind = () => "$1";
+    const node = (n: unknown) => n as Node;
+    assert.throws(() => compileWhere(node({ t: "cmp", key: "nope", op: ":", values: [{ raw: "x", quoted: false, kind: "eq" }], at: 0 }), bind, "e"), QueryUnsupported);
+    assert.throws(() => compileWhere(node({ t: "not", item: { t: "is", name: "nope", at: 0 } }), bind, "e"), /can't filter on is:nope/);
+    assert.throws(() => compileWhere(p('"#!"').root!, bind, "e"), (e: unknown) => e instanceof QueryError && e.reason === "bad_value");
+  });
+
+  it("errors from a bundled copy of coding.sh still read as QueryUnsupported and QueryError", () => {
+    assert.ok(Object.assign(new Error("x"), { name: "QueryUnsupported" }) instanceof QueryUnsupported);
+    assert.ok(Object.assign(new Error("x"), { name: "QueryError" }) instanceof QueryError);
+    assert.ok(!(new Error("x") instanceof QueryUnsupported));
+  });
+
+  it("facets on a prefixed flag bind the prefix", () => {
+    const params: unknown[] = [];
+    const src = facetSource("skill", (v) => (params.push(v), `$${params.length}`), "s_", "e_");
+    assert.equal(src.value, "substr(ff.v, 7)");
+    assert.deepEqual(params, ["skill:%"]);
+    assert.match(facetSource("tool", () => "$1", "S", "E").from, /^E e JOIN S s ON s\.id = e\.session_id$/);
+  });
+});
+
+describe("postgres --where matches the scan", { skip: SKIP }, () => {
+  let pg: PgIndexStore;
+  const memory = new MemoryIndexStore();
+  before(async () => {
+    pg = await PgIndexStore.open(schemaUrl(), { dropSchemaOnClose: true });
+    const { sessions, events } = fixture();
+    // One more session in another project, for project scoping.
+    sessions.push({ ...sessions[0]!, id: "p1", project: "acme", startedAt: T0 + 5 * 3_600_000 });
+    for (const st of [pg, memory] as IndexStore[]) {
+      await st.putEvents(events);
+      for (const s of sessions) await st.upsertSession(s);
+    }
+  });
+  after(async () => {
+    await pg?.close();
+  });
+
+  const ids = async (st: IndexStore, q: string, o: QueryOpts = {}) => {
+    const parsed = p(q);
+    return (await findSessions(st, parsed, { ...o, ...(parsed.limit ? { limit: parsed.limit } : {}) })).sessions.map((s) => s.id);
+  };
+
+  for (const q of QUERIES) {
+    it(q, async () => {
+      assert.deepEqual(await ids(pg, q), await ids(memory, q));
+    });
+  }
+
+  it("applies the filter, project, limit and offset with the query", async () => {
+    for (const [q, o] of [
+      ["agent:codex", { filter: { parentSessionId: null } }],
+      ["agent:codex", { filter: { project: "acme" } }],
+      ["agent:codex", { filter: { project: "default" } }],
+      ["-is:child", { filter: { agent: "claude-code" } }],
+      ["has:cost", { filter: { flag: "compaction" } }],
+      ["sort:-cost", { limit: 2, offset: 1 }],
+      ["", { limit: 3 }],
+    ] as [string, QueryOpts][]) {
+      assert.deepEqual(await ids(pg, q, o), await ids(memory, q, o), `${q} ${JSON.stringify(o)}`);
+    }
+    assert.deepEqual(await ids(pg, "agent:codex", { filter: { project: "acme" } }), ["p1"]);
+  });
+
+  it("facets agree with the scan and leave out the key's own clause", async () => {
+    for (const q of ["", "agent:codex", "agent:codex cost>0.1", "tool:Bash", "is:root", "-skill:pdf", "migration"]) {
+      for (const key of FACET_KEYS) {
+        assert.deepEqual(await facetCounts(pg, p(q), [key]), await facetCounts(memory, p(q), [key]), `${key} over ${JSON.stringify(q)}`);
+      }
+    }
+    assert.deepEqual(await facetCounts(pg, p(""), ["agent"], { filter: { project: "acme" } }), { agent: [{ value: "codex", count: 1 }] });
+  });
+
+  it("hostile values run as values", async () => {
+    for (const v of [`x' OR 1=1 --`, `%`, `_`, `\\`, `$1`, `*`]) {
+      const q = `title:"${v.replace(/\\/g, "\\\\")}" OR agent:"${v.replace(/\\/g, "\\\\")}"`;
+      assert.deepEqual(await ids(pg, q), await ids(memory, q), q);
+    }
+  });
+});

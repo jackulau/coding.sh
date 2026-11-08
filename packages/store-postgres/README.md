@@ -42,6 +42,10 @@ The tables mirror the SQLite store: `events`, `sessions`, `cursors`, `tasks`, `b
 - `coding.sh serve` takes a session advisory lock per schema, so only one replica writes. It needs a direct
   connection or a session-mode pooler. Transaction-mode poolers drop session locks.
 - Blobs are zstd-compressed `bytea` rows keyed by sha256.
+- `--where` ([the query language](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md))
+  runs in the database as one parameterized statement: every session and event key, `has:`, `is:`, bare
+  words (on the `tsvector`), `sort:`, `limit:` and `--facets`. Event keys use the `events (session_id, …)`
+  index. A key this plugin doesn't know yet, from a newer coding.sh, fails with `unsupported_store`.
 
 ## Tests
 

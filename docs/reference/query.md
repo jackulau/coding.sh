@@ -110,10 +110,15 @@ and facets on `kind`, `tool` and `mcp` read a small table of each session's dist
 `error`, `event.duration` and bare words read the payload of every candidate event, so pair them
 with an indexed key (`kind:tool.end error:timeout`) on a large store. A store written by an
 older version is migrated on first open; on a 3.3 GB store that takes about a minute.
-Postgres and ClickHouse stores answer session keys by reading sessions a page at a time, the
-newest 20,000 at most (`coding.sh sessions` says so on stderr when it stops there). Event keys and
-bare words need the SQLite or memory store; on another store they fail with reason
-`unsupported_store`.
+
+The Postgres and ClickHouse store plugins also run queries in their own database: every key, `has:`,
+`is:`, bare words (word prefixes, as their `search` matches), `sort:`, `limit:` and `--facets`.
+A plugin older than coding.sh fails on a key it doesn't know, with reason `unsupported_store`.
+Event results (`GET /api/events`) need the SQLite or memory store; on a plugin they fail with
+reason `unsupported_store`.
+Any other store plugin answers session keys by reading sessions a page at a time, the newest
+20,000 at most (`coding.sh sessions` says so on stderr when it stops there); event keys and bare
+words there fail with reason `unsupported_store`.
 
 ## `coding.sh sql`
 

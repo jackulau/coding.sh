@@ -9,9 +9,11 @@ export type {
   Config,
   DatasetListing,
   EvalTask,
+  FacetCount,
   HarnessBundle,
   IndexStore,
   Label,
+  QueryOpts,
   RunResult,
   SearchHit,
   SearchOpts,
@@ -22,6 +24,9 @@ export type { AgentEvent, AgentId, BlobRef, Session, Usage } from "../schema/ind
 export type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "../datasets/types.ts";
 export type { BlobStoreFactory, IndexStoreFactory, StorePlugin } from "./factory.ts";
 export type { BlobRefField } from "./common.ts";
+// `--where`: the parsed query and the key table a store compiles to its own SQL (querySessions, queryFacets).
+export type { Cmp, KeyDef, Node, Query, Value } from "../query/where.ts";
+export { HAS, IS, KEYS, levelOf, QueryError, QueryUnsupported } from "../query/where.ts";
 export {
   BLOB_REF_FIELDS,
   MESSAGE_SEARCH_KINDS,

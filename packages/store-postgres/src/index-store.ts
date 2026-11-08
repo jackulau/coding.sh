@@ -18,10 +18,13 @@ import {
   type DatasetVersionInfo,
   type EvalTask,
   type ExperimentResult,
+  type FacetCount,
   type HarnessBundle,
   type IndexStore,
   type JudgeVersion,
   type Label,
+  type Query,
+  type QueryOpts,
   type RunResult,
   type SearchHit,
   type Session,
@@ -38,6 +41,7 @@ import {
   withTx,
   type PgUrl,
 } from "./pool.ts";
+import { compileWhere, facetSource, orderBy, tsQuery } from "./where.ts";
 
 /** Rows per INSERT; one transaction covers the whole putEvents batch. */
 const INSERT_CHUNK = 500;
@@ -73,17 +77,6 @@ export function searchFolded(e: AgentEvent): string | null {
   if (folded.length <= SEARCH_TEXT_CAP) return folded;
   const cut = folded.lastIndexOf(" ", SEARCH_TEXT_CAP);
   return folded.slice(0, cut > 0 ? cut : SEARCH_TEXT_CAP);
-}
-
-/**
- * to_tsquery input: every term is a word prefix, ANDed. Terms are letters and
- * digits only (anything else splits them), so user input can never form
- * tsquery operators; the string is still bound as a parameter.
- */
-export function tsQuery(text: string): { query: string; terms: string[] } | undefined {
-  const terms = searchTerms(text).flatMap((t) => t.match(/[\p{L}\p{N}]+/gu) ?? []);
-  if (!terms.length) return undefined;
-  return { query: terms.map((t) => `${t}:*`).join(" & "), terms };
 }
 
 function rowToEvent(r: Row): AgentEvent {
@@ -180,6 +173,21 @@ class Where {
   get sql(): string {
     return this.parts.length ? `WHERE ${this.parts.join(" AND ")}` : "";
   }
+}
+
+/** WHERE parts for a SessionFilter; `p` prefixes column names ("s." when sessions is aliased). */
+function sessionFilter(w: Where, f: Omit<SessionFilter, "limit" | "offset">, p = ""): Where {
+  if (f.project) w.add(`${p}project_id = ?`, f.project);
+  if (f.agent) w.add(`${p}agent = ?`, f.agent);
+  if (f.parentSessionId === null) w.add(`${p}parent_session_id IS NULL`);
+  else if (f.parentSessionId !== undefined) w.add(`${p}parent_session_id = ?`, f.parentSessionId);
+  if (f.repoRoot) w.add(`${p}repo_root = ?`, f.repoRoot);
+  if (f.runId === null) w.add(`${p}run_id IS NULL`);
+  else if (f.runId !== undefined) w.add(`${p}run_id = ?`, f.runId);
+  if (f.flag) w.add(`EXISTS (SELECT 1 FROM json_array_elements_text(${p}flags::json) AS j(v) WHERE j.v = ?)`, f.flag);
+  if (f.since !== undefined) w.add(`${p}started_at >= ?`, f.since);
+  if (f.until !== undefined) w.add(`${p}started_at < ?`, f.until);
+  return w;
 }
 
 export interface PgIndexOptions {
@@ -370,20 +378,35 @@ export class PgIndexStore implements IndexStore {
   }
 
   async listSessions(f: SessionFilter = {}): Promise<Session[]> {
-    const w = new Where();
-    if (f.project) w.add("project_id = ?", f.project);
-    if (f.agent) w.add("agent = ?", f.agent);
-    if (f.parentSessionId === null) w.add("parent_session_id IS NULL");
-    else if (f.parentSessionId !== undefined) w.add("parent_session_id = ?", f.parentSessionId);
-    if (f.repoRoot) w.add("repo_root = ?", f.repoRoot);
-    if (f.runId === null) w.add("run_id IS NULL");
-    else if (f.runId !== undefined) w.add("run_id = ?", f.runId);
-    if (f.flag) w.add("EXISTS (SELECT 1 FROM json_array_elements_text(flags::json) AS j(v) WHERE j.v = ?)", f.flag);
-    if (f.since !== undefined) w.add("started_at >= ?", f.since);
-    if (f.until !== undefined) w.add("started_at < ?", f.until);
+    const w = sessionFilter(new Where(), f);
     const sql = `SELECT * FROM ${this.t("sessions")} ${w.sql} ORDER BY started_at DESC, id
       LIMIT ${w.param(f.limit ?? null)} OFFSET ${w.param(f.offset ?? 0)}`;
     return (await this.q(sql, w.params)).map(rowToSession);
+  }
+
+  // ------------------------------------------------------------ --where (coding.sh src/query)
+
+  /** The filter and the query as WHERE parts over `sessions s` (src/where.ts compiles the query). */
+  private queryWhere(q: Query, o: QueryOpts): Where {
+    const w = sessionFilter(new Where(), o.filter ?? {}, "s.");
+    if (q.root) w.add(compileWhere(q.root, (v) => w.param(v), this.t("events")));
+    return w;
+  }
+
+  async querySessions(q: Query, o: QueryOpts = {}): Promise<Session[]> {
+    const w = this.queryWhere(q, o);
+    const sql = `SELECT s.* FROM ${this.t("sessions")} s ${w.sql} ORDER BY ${orderBy(q.sort)}
+      LIMIT ${w.param(o.limit ?? null)} OFFSET ${w.param(o.offset ?? 0)}`;
+    return (await this.q(sql, w.params)).map(rowToSession);
+  }
+
+  async queryFacets(q: Query, key: string, o: QueryOpts = {}): Promise<FacetCount[]> {
+    const w = this.queryWhere(q, o);
+    const src = facetSource(key, (v) => w.param(v), this.t("sessions"), this.t("events"));
+    if (src.where) w.add(src.where);
+    const sql = `SELECT v, count(DISTINCT sid) AS n FROM (SELECT ${src.value} AS v, s.id AS sid FROM ${src.from} ${w.sql}) t
+      WHERE v IS NOT NULL AND v <> '' GROUP BY v ORDER BY n DESC, v COLLATE "C" LIMIT ${w.param(o.limit ?? 20)}`;
+    return (await this.q<{ v: string; n: number }>(sql, w.params)).map((r) => ({ value: r.v, count: r.n }));
   }
 
   /** Distinct project ids with sessions (sessions_project index), for serve's GET /api/projects. */

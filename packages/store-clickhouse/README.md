@@ -54,6 +54,11 @@ The tables mirror the SQLite store: `events`, `sessions`, `cursors`, `tasks`, `b
 - Search matches word prefixes on a `search_text` column with an `ngrambf_v1` skip index, using the
   same terms as the other stores. Each event indexes up to 200,000 characters of text.
 - Deletes (retention, `deleteBefore`) are lightweight `DELETE`s.
+- `--where` ([the query language](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md))
+  runs in the database as one statement with typed parameters: every session and event key, `has:`,
+  `is:`, bare words (on `search_text`), `sort:`, `limit:` and `--facets`. An event clause becomes
+  `id IN (SELECT session_id FROM events FINAL WHERE …)`, which reads the events table's columns once
+  per query. A key this plugin doesn't know yet, from a newer coding.sh, fails with `unsupported_store`.
 - `coding.sh serve` takes a lease in the `locks` table (30 s, renewed every 10 s), so one replica
   writes. A writer that dies without releasing it is replaced within 30 s.
 

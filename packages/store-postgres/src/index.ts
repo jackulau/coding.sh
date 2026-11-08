@@ -10,7 +10,8 @@ import { PgBlobStore } from "./blob-store.ts";
 import { PgIndexStore } from "./index-store.ts";
 
 export { PgBlobStore, type PgBlobOptions } from "./blob-store.ts";
-export { PgIndexStore, searchFolded, tsQuery, type PgIndexOptions } from "./index-store.ts";
+export { PgIndexStore, searchFolded, type PgIndexOptions } from "./index-store.ts";
+export { tsQuery } from "./where.ts";
 export { parsePgUrl, redactUrl, PG_SCHEMA_VERSION } from "./pool.ts";
 
 /** Index store factory for the core plugin loader: (url, config) → migrated store. */

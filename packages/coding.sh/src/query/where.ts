@@ -78,6 +78,10 @@ export class QueryError extends Error {
     this.reason = opts.reason ?? "bad_query";
     this.next = opts.next ?? [];
   }
+  /** By name, so one thrown by a store plugin's bundled copy of this module matches too. */
+  static override [Symbol.hasInstance](x: unknown): boolean {
+    return x instanceof Error && x.name === "QueryError";
+  }
 }
 
 /** A query this store cannot answer (event keys or text on a store without a query path). */
@@ -86,6 +90,9 @@ export class QueryUnsupported extends Error {
   constructor(message: string) {
     super(message);
     this.name = "QueryUnsupported";
+  }
+  static override [Symbol.hasInstance](x: unknown): boolean {
+    return x instanceof Error && x.name === "QueryUnsupported";
   }
 }
 

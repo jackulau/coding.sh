@@ -24,10 +24,13 @@ import {
   type DatasetVersionInfo,
   type EvalTask,
   type ExperimentResult,
+  type FacetCount,
   type HarnessBundle,
   type IndexStore,
   type JudgeVersion,
   type Label,
+  type Query,
+  type QueryOpts,
   type RunResult,
   type SearchHit,
   type Session,
@@ -35,6 +38,7 @@ import {
   type WriterLock,
 } from "coding.sh/store";
 import { ChClient, migrateDatabase, nextVer, openError, Params, parseChUrl, quoteIdent, quoteLiteral, type RequestOpts } from "./client.ts";
+import { compileWhere, facetRows, likeTerms, orderBy } from "./where.ts";
 
 /** Rows per INSERT request. */
 const INSERT_CHUNK = 5000;
@@ -74,14 +78,6 @@ export function searchText(e: AgentEvent): string {
     folded = folded.slice(0, cut > 0 ? cut : SEARCH_TEXT_CAP);
   }
   return ` ${folded}`;
-}
-
-/**
- * Query terms: folded letters and digits only, so a term can hold no LIKE
- * wildcard (% _ \). Each still travels as a bound parameter.
- */
-export function likeTerms(text: string): string[] {
-  return searchTerms(text).flatMap((t) => t.match(/[\p{L}\p{N}]+/gu) ?? []);
 }
 
 function rowToEvent(r: Row): AgentEvent {
@@ -205,6 +201,21 @@ class Where {
   get sql(): string {
     return this.parts.length ? `WHERE ${this.parts.join(" AND ")}` : "";
   }
+}
+
+/** WHERE parts for a SessionFilter. */
+function sessionFilter(w: Where, f: Omit<SessionFilter, "limit" | "offset">): Where {
+  if (f.project) w.add(`project_id = ${w.bind("String", f.project)}`);
+  if (f.agent) w.add(`agent = ${w.bind("String", f.agent)}`);
+  if (f.parentSessionId === null) w.add("parent_session_id IS NULL");
+  else if (f.parentSessionId !== undefined) w.add(`parent_session_id = ${w.bind("String", f.parentSessionId)}`);
+  if (f.repoRoot) w.add(`repo_root = ${w.bind("String", f.repoRoot)}`);
+  if (f.runId === null) w.add("run_id IS NULL");
+  else if (f.runId !== undefined) w.add(`run_id = ${w.bind("String", f.runId)}`);
+  if (f.flag) w.add(`has(flags, ${w.bind("String", f.flag)})`);
+  if (f.since !== undefined) w.add(`started_at >= ${w.bind("Float64", f.since)}`);
+  if (f.until !== undefined) w.add(`started_at < ${w.bind("Float64", f.until)}`);
+  return w;
 }
 
 const chunks = <T>(xs: readonly T[], n: number): T[][] => {
@@ -464,21 +475,37 @@ export class ChIndexStore implements IndexStore {
   }
 
   async listSessions(f: SessionFilter = {}): Promise<Session[]> {
-    const w = new Where();
-    if (f.project) w.add(`project_id = ${w.bind("String", f.project)}`);
-    if (f.agent) w.add(`agent = ${w.bind("String", f.agent)}`);
-    if (f.parentSessionId === null) w.add("parent_session_id IS NULL");
-    else if (f.parentSessionId !== undefined) w.add(`parent_session_id = ${w.bind("String", f.parentSessionId)}`);
-    if (f.repoRoot) w.add(`repo_root = ${w.bind("String", f.repoRoot)}`);
-    if (f.runId === null) w.add("run_id IS NULL");
-    else if (f.runId !== undefined) w.add(`run_id = ${w.bind("String", f.runId)}`);
-    if (f.flag) w.add(`has(flags, ${w.bind("String", f.flag)})`);
-    if (f.since !== undefined) w.add(`started_at >= ${w.bind("Float64", f.since)}`);
-    if (f.until !== undefined) w.add(`started_at < ${w.bind("Float64", f.until)}`);
+    const w = sessionFilter(new Where(), f);
     const limit = f.limit === undefined ? NO_LIMIT : String(Math.max(0, Math.floor(f.limit)));
     const sql = `SELECT * FROM ${this.t("sessions")} FINAL ${w.sql} ORDER BY started_at DESC, id
       LIMIT ${w.bind("UInt64", limit)} OFFSET ${w.bind("UInt64", Math.max(0, Math.floor(f.offset ?? 0)))}`;
     return (await this.q(sql, w.p)).map(rowToSession);
+  }
+
+  // ------------------------------------------------------------ --where (coding.sh src/query)
+
+  /** The filter and the query as WHERE parts over `sessions FINAL` (src/where.ts compiles the query). */
+  private queryWhere(q: Query, o: QueryOpts): Where {
+    const w = sessionFilter(new Where(), o.filter ?? {});
+    if (q.root) w.add(compileWhere(q.root, (type, v) => w.bind(type, v), this.t("events")));
+    return w;
+  }
+
+  async querySessions(q: Query, o: QueryOpts = {}): Promise<Session[]> {
+    const w = this.queryWhere(q, o);
+    const limit = o.limit === undefined ? NO_LIMIT : String(Math.max(0, Math.floor(o.limit)));
+    const sql = `SELECT * FROM ${this.t("sessions")} FINAL ${w.sql} ORDER BY ${orderBy(q.sort)}
+      LIMIT ${w.bind("UInt64", limit)} OFFSET ${w.bind("UInt64", Math.max(0, Math.floor(o.offset ?? 0)))}`;
+    // Every version of an event has the same search text, so skipping granules before FINAL is exact.
+    return (await this.q(sql, w.p, { settings: { use_skip_indexes_if_final: "1" } })).map(rowToSession);
+  }
+
+  async queryFacets(q: Query, key: string, o: QueryOpts = {}): Promise<FacetCount[]> {
+    const w = this.queryWhere(q, o);
+    const rows = facetRows(key, (type, v) => w.bind(type, v), this.t("sessions"), this.t("events"), w.sql);
+    const sql = `SELECT fv, uniqExact(sid) AS n FROM (${rows}) WHERE fv IS NOT NULL AND fv != '' GROUP BY fv
+      ORDER BY n DESC, fv LIMIT ${w.bind("UInt64", Math.max(0, Math.floor(o.limit ?? 20)))}`;
+    return (await this.q<{ fv: string; n: number }>(sql, w.p, { settings: { use_skip_indexes_if_final: "1" } })).map((r) => ({ value: r.fv, count: r.n }));
   }
 
   async sessionIdsByPrefix(prefix: string, limit: number): Promise<string[]> {
