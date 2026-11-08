@@ -1,5 +1,6 @@
 packages/coding.sh/test/mcp/server.test.ts
   s_8e040dbdf13565::t_4662212b6aeb2d 90
+  s_8e040dbdf13565::t_c652452eafd0fd 473
 docs/guides/explore.md
   s_8e040dbdf13565::t_9d12c394192ac6 376-379
   s_8e040dbdf13565::t_c7a78d8bc7ccab 356
@@ -12,6 +13,10 @@ packages/coding.sh/src/mcp/tools.ts
   s_8e040dbdf13565::t_2b0922376a889b 644
   s_8e040dbdf13565::t_9b3897daaf3b7b 101-126
   s_8e040dbdf13565::t_b4de50c3688597 640,691
+packages/coding.sh/test/mcp/toolevals.test.ts
+  s_8e040dbdf13565::t_ce46231874c321 52
+  s_8e040dbdf13565::t_ffa845d45a3b86 64-65
+  s_8e040dbdf13565::t_cb85680b4828a7 66-67
 ---
 {
   "schema_version": "authorship/3.0.0",
