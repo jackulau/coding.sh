@@ -1,0 +1,34 @@
+packages/coding.sh/src/runner/iterate.ts
+  s_8e040dbdf13565::t_698f55b60c29c8 109-110
+  s_8e040dbdf13565::t_ddaf680478e273 1-108,111-118
+packages/coding.sh/src/cli/commands/compare.ts
+  s_8e040dbdf13565::t_fd4fed1baf1072 21-22
+  s_8e040dbdf13565::t_bf10769d695bed 122-123
+  s_8e040dbdf13565::t_fe4a3fc1e9cc89 99-103,105-107,113-121,124-158
+  s_8e040dbdf13565::t_4373ff59c74b84 47-58
+  s_8e040dbdf13565::t_e3e075c93d4199 174-213
+packages/coding.sh/src/runner/experiment.ts
+  s_8e040dbdf13565::t_d6e23299e1c1e8 234
+  s_8e040dbdf13565::t_baf3980d9debb0 330-332
+  s_8e040dbdf13565::t_11a76954eb661c 215-227
+  s_8e040dbdf13565::t_d0792fe229ea9b 117-118
+  s_8e040dbdf13565::t_d63bc43e85aa61 246-248
+  s_8e040dbdf13565::t_d5bb3f2fbddbbc 87-99
+  s_8e040dbdf13565::t_fb4cca071d017f 302-307
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "990b8247d270cd6260641b88dc1ad0e20c8cd733",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
