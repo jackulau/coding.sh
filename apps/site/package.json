@@ -6,11 +6,12 @@
   "scripts": {
     "prebuild": "npm run build -w coding.sh",
     "dev": "astro dev",
-    "build": "astro build && pagefind --site dist --exclude-selectors \"[data-agent-skip]\" && node scripts/gen-agent-text.mjs",
+    "build": "node scripts/gen-og.mjs --missing && astro build && pagefind --site dist --exclude-selectors \"[data-agent-skip]\" && node scripts/gen-agent-text.mjs && node scripts/seo-check.mjs",
     "preview": "astro preview",
     "check": "astro check",
     "perf:budget": "node scripts/perf-budget.mjs",
     "og": "node scripts/gen-og.mjs",
+    "seo": "node scripts/seo-check.mjs",
     "astro": "astro",
     "icons": "node scripts/gen-icons.mjs",
     "shots:seed": "node --experimental-strip-types scripts/shots/seed.mjs",

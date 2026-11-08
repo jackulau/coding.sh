@@ -2,15 +2,36 @@
 // public/og/<page>.png for the changelog and every docs page (title overlay).
 // Black background, the solid voxel cube, "coding.sh" and a title.
 // Needs rsvg-convert (brew install librsvg). Run: npm run og
+// `--missing` (run by `npm run build`) writes only the cards that don't exist
+// yet, so a new docs page gets its card; without rsvg-convert it warns and the
+// page falls back to the site card.
 // rsvg-convert's PNGs are then re-encoded losslessly with sharp (zlib level 9,
 // no alpha channel since the background is opaque): pixel-identical, ~30% smaller.
 import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import sharp from "sharp";
-import { DOC_PAGES } from "../src/components/docs/nav.ts";
-import { cubeSvg } from "../src/lib/cube.ts";
+
+// Checked before anything else is loaded, so `--missing` (the build) only warns
+// on a machine without rsvg-convert, or on a Node that can't import .ts files.
+const MISSING_ONLY = process.argv.includes("--missing");
+function skip(why) {
+  console.warn(`og: ${why}; pages without a card use /og-image.png`);
+  process.exit(MISSING_ONLY ? 0 : 1);
+}
+try {
+  execFileSync("rsvg-convert", ["--version"], { stdio: "ignore" });
+} catch {
+  skip("rsvg-convert not found (brew install librsvg)");
+}
+let DOC_PAGES, cubeSvg, sharp;
+try {
+  ({ DOC_PAGES } = await import("../src/components/docs/nav.ts"));
+  ({ cubeSvg } = await import("../src/lib/cube.ts"));
+  ({ default: sharp } = await import("sharp"));
+} catch (err) {
+  skip(`could not load the page list (${String(err.message).split("\n")[0]})`);
+}
 
 const PUBLIC = new URL("../public/", import.meta.url).pathname;
 // Full source fonts live in src/assets/fonts/source; public/fonts is the old home.
@@ -35,8 +56,9 @@ function lines(text, max) {
 }
 
 function svg({ kicker, title, sub }) {
+  // Lines wrap short enough to stay left of the cube (x ≈ 830).
   const size = title.length > 34 ? 64 : 76;
-  const tl = lines(title, size === 76 ? 22 : 28);
+  const tl = lines(title, size === 76 ? 18 : 22);
   const top = 300 - ((tl.length - 1) * size * 1.05) / 2;
   const scale = 300 / cube.height;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
@@ -54,7 +76,10 @@ ${tl.map((l, i) => `<text x="88" y="${top + i * size * 1.05}" font-family="G, Ge
 const tmp = join(tmpdir(), `og-${process.pid}`);
 mkdirSync(tmp, { recursive: true });
 mkdirSync(join(PUBLIC, "og"), { recursive: true });
+let written = 0;
 async function png(name, spec) {
+  if (MISSING_ONLY && existsSync(join(PUBLIC, name + ".png"))) return;
+  written++;
   const src = join(tmp, name.replace(/\//g, "_") + ".svg");
   writeFileSync(src, svg(spec));
   const raw = execFileSync("rsvg-convert", ["-w", "1200", "-h", "630", src], { maxBuffer: 64 << 20 });
@@ -63,10 +88,13 @@ async function png(name, spec) {
 
 await png("og-image", { title: "Traces and evals for AI agents.", sub: "Open source, local-first, MIT licensed." });
 await png("og/changelog", { kicker: "changelog", title: "Changelog", sub: "Every release, newest first." });
+// The kicker names the section: comparisons and use cases are found from search
+// as often as from the docs.
+const kicker = (path) => (path.startsWith("/docs/compare") ? "compare" : path.startsWith("/docs/use-cases/") ? "use case" : "docs");
 for (const p of DOC_PAGES) {
   const slug = p.path === "/docs" ? "docs" : `docs-${p.path.slice("/docs/".length).replace(/\//g, "-")}`;
-  await png(`og/${slug}`, { kicker: "docs", title: p.title, sub: "coding.sh docs" });
+  await png(`og/${slug}`, { kicker: kicker(p.path), title: p.title, sub: "coding.sh docs" });
 }
 rmSync(tmp, { recursive: true, force: true });
 rmSync(join(PUBLIC, "og-image.svg"), { force: true });
-console.log(`og images written: og-image.png, og/changelog.png, ${DOC_PAGES.length} docs pages`);
+console.log(MISSING_ONLY ? `og: ${written} missing card(s) written` : `og images written: og-image.png, og/changelog.png, ${DOC_PAGES.length} docs pages`);

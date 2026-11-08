@@ -81,3 +81,47 @@ export function techArticleSchema(page: { path: string; title: string; summary: 
     about: { "@id": `${SITE_URL}/#software` },
   };
 }
+
+/**
+ * A meta description of at most `max` characters: whole sentences while they
+ * fit, else whole words and an ellipsis. Search results cut longer ones anyway.
+ */
+export function clampDescription(text: string, max = 155): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  let out = "";
+  for (const s of t.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) ?? []) {
+    if ((out + s).trimEnd().length > max) break;
+    out += s;
+  }
+  if (out.trim().length >= max * 0.6) return out.trim();
+  const cut = t.slice(0, max - 1);
+  return `${cut.slice(0, cut.lastIndexOf(" ")).replace(/[,;:]$/, "")}…`;
+}
+
+/** Plain text from a fragment of our own HTML (tags dropped, entities decoded). */
+export function plainText(html: string): string {
+  return html
+    .replace(/<[^>]+>/g, "")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Questions the page itself shows, word for word: the home FAQ, /docs/faq, and
+// the "Questions" section of a docs page (DocsLayout finds it).
+export function faqSchema(items: { q: string; a: string }[]) {
+  return {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    mainEntity: items.map((item) => ({
+      "@type": "Question",
+      name: plainText(item.q),
+      acceptedAnswer: { "@type": "Answer", text: plainText(item.a) },
+    })),
+  };
+}

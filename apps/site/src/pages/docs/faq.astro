@@ -1,6 +1,7 @@
 ---
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import { REPO_URL, ISSUES_URL, LICENSE } from "../../data/site";
+import { faqSchema } from "../../lib/schema";
 
 const FAQ: { id: string; q: string; a: string }[] = [
   {
@@ -61,7 +62,7 @@ const FAQ: { id: string; q: string; a: string }[] = [
 ];
 ---
 
-<DocsLayout>
+<DocsLayout schemas={[faqSchema(FAQ)]}>
   {
     FAQ.map((f) => (
       <>

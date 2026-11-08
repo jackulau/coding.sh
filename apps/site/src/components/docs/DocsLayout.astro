@@ -9,14 +9,20 @@ import Nav from "../Nav.astro";
 import Search from "./Search.astro";
 import { SITE } from "../../data/site";
 import { DOC_GROUPS, docPage, neighbours } from "./nav";
-import { techArticleSchema } from "../../lib/schema";
+import { techArticleSchema, faqSchema } from "../../lib/schema";
 import { pageLastmod } from "../../lib/lastmod.mjs";
+
+interface Props {
+  /** Extra JSON-LD for this page (the FAQ page passes its questions). */
+  schemas?: Record<string, unknown>[];
+}
+const { schemas = [] } = Astro.props;
 
 const path = Astro.url.pathname.length > 1 ? Astro.url.pathname.replace(/\/+$/, "") : Astro.url.pathname;
 const page = docPage(path);
 const { prev, next } = neighbours(path);
 const isIndex = page.path === "/docs";
-const title = isIndex ? `${SITE.name} docs: observability and evals for any AI agent` : `${page.title} · ${SITE.name} docs`;
+const title = page.metaTitle ?? (isIndex ? `${SITE.name} docs: observability and evals for any AI agent` : `${page.title} · ${SITE.name} docs`);
 const breadcrumbs = isIndex
   ? [{ name: "Docs", path: "/docs" }]
   : [
@@ -34,9 +40,17 @@ const body = (await Astro.slots.render("default")).replace(
   /<(h[23]) id="([^"]+)"([^>]*)>([\s\S]*?)<\/\1>/g,
   (_, tag, id, rest, inner) => `<${tag} id="${id}"${rest}><a class="h-anchor" href="#${id}">${inner}</a></${tag}>`,
 );
+
+// A "## Questions" section whose ### headings are questions is shown on the
+// page as Q&A, so it is also marked up as FAQPage, word for word.
+const questions = body.match(/<h2 id="questions"[^>]*>[\s\S]*?(?=<h2[ >]|$)/)?.[0] ?? "";
+const faq = [...questions.matchAll(/<h3 [^>]*>([\s\S]*?)<\/h3>([\s\S]*?)(?=<h3[ >]|$)/g)]
+  .map((m) => ({ q: m[1]!, a: m[2]! }))
+  .filter((f) => f.q.trim().endsWith("?</a>") || f.q.trim().endsWith("?"));
+const faqSchemas = faq.length ? [faqSchema(faq)] : [];
 ---
 
-<Layout title={title} description={page.summary} breadcrumbs={breadcrumbs} image={ogImage} schemas={[article]}>
+<Layout title={title} description={page.summary} breadcrumbs={breadcrumbs} image={ogImage} schemas={[article, ...faqSchemas, ...schemas]}>
   <Nav />
   <div class="wrap docs">
     <aside class="docs__side" aria-label="Docs">

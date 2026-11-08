@@ -8,6 +8,7 @@ import InstallActions from "../components/InstallActions.astro";
 import Shot from "../components/Shot.astro";
 import { SITE, REPO_URL } from "../data/site";
 import { STATS, taskScore } from "../data/compare";
+import { faqSchema } from "../lib/schema";
 
 // Real screenshots of the viewer, from scripts/shots (seed.mjs, then capture.mjs):
 // a throwaway home where coding.sh works on its own repo. Never real traces.
@@ -94,8 +95,9 @@ const FAQ = [
 ---
 
 <Layout
-  title={`${SITE.name}: see what your AI agents did`}
-  description={`coding.sh saves each run of your AI agents on your machine, step by step, with what it cost. It works with Claude Code, Codex, Cursor and ${OTHERS} other coding agents. Open source, MIT.`}
+  title={`${SITE.name}: open-source observability and evals for AI agents`}
+  description={`Record what Claude Code, Codex, Cursor and ${OTHERS} other AI agents did and what it cost, then test changes with evals. Local-first, open source, MIT.`}
+  schemas={[faqSchema(FAQ)]}
 >
   <Nav />
 
@@ -180,6 +182,7 @@ const FAQ = [
             <p class="eyebrow">Measure</p>
             <h2 id="measure-title">See what each agent costs</h2>
             <p class="body">Run <code>coding.sh usage</code> to add up tokens and dollars by agent, model, repo or day. A <code>~</code> means the cost is estimated from list prices.</p>
+            <p class="links"><a class="inline-link hit" href="/docs/use-cases/claude-code-cost">Track cost per session</a> <a class="inline-link hit" href="/docs/compare/ccusage">Compared with ccusage</a></p>
           </div>
           <Terminal title="~/coding.sh" label="Output of coding.sh usage" class="usage-term">
             <pre set:html={USAGE} />
@@ -195,6 +198,7 @@ const FAQ = [
             <p class="eyebrow">Compare</p>
             <h2 id="compare-title">You changed CLAUDE.md. Did your agent get better?</h2>
             <p class="body">Run the same {STATS.tasks} tasks on the old and new version, {STATS.runsPerTask} times each. coding.sh tells you which one passed more often.</p>
+            <p class="links"><a class="inline-link hit" href="/docs/use-cases/test-agent-instructions">Test a CLAUDE.md or skill change</a></p>
           </div>
           <div class="visual result">
             <p class="result__label">tasks passed</p>
@@ -250,7 +254,7 @@ const FAQ = [
                 </details>
               ))
             }
-            <p class="faq__more"><a class="inline-link hit" href="/docs/faq">More questions</a></p>
+            <p class="faq__more links"><a class="inline-link hit" href="/docs/faq">More questions</a> <a class="inline-link hit" href="/docs/compare">How it compares with Langfuse, LangSmith and others</a></p>
           </div>
         </div>
       </div>

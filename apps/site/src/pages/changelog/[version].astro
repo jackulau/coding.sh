@@ -8,6 +8,7 @@ import ChangelogRail from "../../components/ChangelogRail.astro";
 import CubeField from "../../components/CubeField.astro";
 import { REPO_URL } from "../../data/site";
 import { releases, type Release } from "../../lib/changelog";
+import { clampDescription } from "../../lib/schema";
 import "../../styles/changelog.css";
 
 export function getStaticPaths() {
@@ -26,11 +27,18 @@ const { release: r, newer, older } = Astro.props;
 // Group names (Added, Fixed, ...) only matter when a release has more than one.
 const showKind = r.groups.length > 1;
 const title = `v${r.version}`;
+// The summary, then what the release touched when the summary is short.
+// The areas with the most entries, e.g. "132 changes, most to Evals, Harness A/B and MCP."
+const top = [...r.areas].sort((a, b) => b.entries.length - a.entries.length).slice(0, 3).map((a) => a.name);
+const touched = top.length > 1 ? `${top.slice(0, -1).join(", ")} and ${top.at(-1)}` : top[0];
+const changes = `${r.count} ${r.count === 1 ? "change" : "changes"}${r.areas.length === 1 ? ` to ${touched}` : touched ? `, most to ${touched}` : ""}.`;
+const summary = r.summaryText || `What changed in coding.sh ${title}.`;
+const description = clampDescription(summary.length < 100 ? `${summary} ${changes}` : summary);
 ---
 
 <Layout
   title={`coding.sh ${title} · Changelog`}
-  description={r.summaryText || `What changed in coding.sh ${title}.`}
+  description={description}
   breadcrumbs={[
     { name: "Changelog", path: "/changelog" },
     { name: title, path: `/changelog/${r.slug}` },
