@@ -1,0 +1,24 @@
+packages/coding.sh/src/graders/proc.ts
+  s_8e040dbdf13565::t_df5cadf34a6fb1 117
+  s_8e040dbdf13565::t_1eb8d84524cafd 110-116,118-127
+CHANGELOG.md
+  s_8e040dbdf13565::t_122fba745bee57 124
+packages/coding.sh/test/graders/proc.test.ts
+  s_8e040dbdf13565::t_6d1d13a1a84f25 1-32
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ab50c623d4bd59f9da14d608ee33a1948a028229",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
