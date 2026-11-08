@@ -35,6 +35,10 @@ Sessions read back from Claude Code and Codex transcripts keep more of what the 
 - **Evals.** `exp show <id>` takes the experiment id that `eval run` prints for a tasks suite and lists its runs per task with the agent's cost at API prices. Before, it said the experiment was not found. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#the-report).
 - **Refine.** When a `refine run --suite` climb holds a cheaper or faster candidate whose quality is even on average but whose interval is too wide to confirm within `--margin`, the round now says the hold is a sample-size problem ("the quality interval is too wide to adopt it within the margin at N tasks: add tasks or trials") instead of implying the gain cost quality, and carries a warning that names the quality lower bound against the margin and the fix. The verdict is unchanged; only the explanation is clearer. [How good is the hill-climb, really?](https://github.com/jackulau/coding.sh/blob/main/docs/research/hillclimb-quality.md).
 
+### Performance
+
+- **Ingest.** The SQLite index gives each connection a 16 MB page cache (`cache_size`) and in-memory temp b-trees (`temp_store`), both bounded RAM freed on close, and ingest skips the duplicate `session_facets` inserts a session repeats across its events (the facet table is unchanged). Measured the paired way with `scripts/dogfood/bench.mjs ingest --baseline <dist>`. [Store ingest](https://github.com/jackulau/coding.sh/blob/main/docs/perf.md#store-ingest).
+
 ## [0.1.2] - 2026-11-08
 
 coding.sh runs on Windows, and CI tests it there.

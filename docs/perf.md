@@ -103,6 +103,52 @@ smaller site.
 | Streaming server rendering, data in the page, worker threads | Skipped: the site has no server. These apply to `coding.sh ui`. |
 | Field data from real visitors | Skipped: the site has no analytics, by choice. |
 
+## Store ingest
+
+Two changes to the SQLite index speed ingest, with no change to what is stored:
+
+- **A bigger page cache.** Each index connection sets `PRAGMA cache_size = -16000` (16 MB, up from
+  the ~2 MB default) and `PRAGMA temp_store = MEMORY`. Both are bounded RAM that is freed when the
+  connection closes and change nothing on disk or in the file's locking, so read-only connections
+  and Windows are unaffected. A few thousand events spill the default cache, so ingest and the
+  reads that fold a session stop re-decoding pages this keeps resident.
+- **Fewer facet probes.** A session repeats the same handful of `kind`/`tool`/`mcp` facet values
+  across hundreds of events. Each repeat was an `INSERT OR IGNORE` that no-ops on
+  `session_facets`' primary key but still probes the b-tree. Ingest now skips the tuples it has
+  already issued in a batch; the facet table is byte-for-byte identical (a test asserts it equals a
+  full rebuild).
+
+Measured with [scripts/dogfood/bench.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/dogfood/bench.mjs),
+which ingests a byte-identical synthetic corpus through the candidate and the origin/main build in
+interleaved pairs and reports a 95% bootstrap interval on the median events/s difference. On the
+desk, which runs other jobs (an unpaired ingest there swings 2-3x between runs), the pairing is
+what carries signal, not the absolute throughput:
+
+A paired ingest of a 50k-event corpus (6 pairs) on the desk put the candidate at a 66.0 s
+median against 76.2 s for origin/main, about +15% throughput — but the desk was busy and the
+95% interval on the per-second difference, [-86.5, +569.5] ev/s, straddles zero, so the
+wall-clock run is **inconclusive**, not a result. Each change was instead confirmed in
+isolation, where machine load cancels out:
+
+- **Facet probes.** An in-process A/B that inserts the same facet-heavy 30k-event batch with and
+  without the in-batch skip (120 pairs, identical schema) ran the candidate in a 1.51 ms median
+  against 18.63 ms, a +17.12 ms difference with a 95% interval of [17.07, 17.15] ms — the facet
+  inserts a busy session repeats cost roughly 12x less. The reduction is deterministic: a 20k-event
+  session issues 360 facet rows instead of 39,880 `INSERT OR IGNORE` probes, about 110x fewer, and
+  the stored table is identical either way.
+- **Page cache.** An in-process A/B that opens two read-only connections differing only in the
+  cache pragmas and times the real per-session read `SELECT * FROM events WHERE session_id = ?
+  ORDER BY ts, rowid` (40 sessions x 200 iterations, interleaved) read in a 10.51 ms median against
+  11.38 ms, a +0.87 ms difference with a 95% interval of [0.82, 0.90] ms — about 7.6% faster reads
+  once a session no longer fits the default cache.
+
+To re-run the loop (baseline is origin/main built into its own dist):
+
+```sh
+DESK_DIR=coding-sh-perf .claude/bin/desk run \
+  "node scripts/dogfood/bench.mjs ingest --baseline /root/dist-baseline --pairs 8"
+```
+
 ## Long sessions
 
 [scripts/perf/longrun.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/longrun.mjs) generates a synthetic 12-hour Claude Code session with no
