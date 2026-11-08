@@ -2,6 +2,8 @@
 // worker (its own store connection), so the viewer shows what is indexed while
 // a big spool drains and new hook events show up while it runs. Ctrl-C stops
 // it (exit 130).
+import { createRedactor } from "../../core/redact.ts";
+import { snapshotBaseline } from "../../core/replay.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
 import { startViewer } from "../../viewer/server.ts";
 import { port as portFlag, str, withContext } from "../common.ts";
@@ -20,7 +22,10 @@ export async function run(c: CommandContext): Promise<number> {
     try {
       // Same experiment store `coding.sh exp run` writes to (the index, or JSON files for a store without eval tables).
       const experiments = new FileEvalStore({ env: c.env, index: ctx.index });
-      viewer = await startViewer({ index: ctx.index, blobs: ctx.blobs, port, host, open, experiments, ingestStatus: () => ingest?.status() });
+      // Replays can start from a `coding.sh run` snapshot: its shadow repo is on this machine.
+      const redactor = createRedactor({ redact: ctx.config.capture.redact, patterns: ctx.config.capture.redactPatterns, env: ctx.env });
+      const replayBaseline = (s: Parameters<typeof snapshotBaseline>[0]) => snapshotBaseline(s, ctx.env, redactor);
+      viewer = await startViewer({ index: ctx.index, blobs: ctx.blobs, port, host, open, experiments, ingestStatus: () => ingest?.status(), replayBaseline });
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "EADDRINUSE") throw new CliError(`Can't start the viewer: port ${port} is in use`, { reason: "port_in_use", next: ["Pick another port:", "coding.sh ui --port 0"] });

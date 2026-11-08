@@ -1161,3 +1161,94 @@ describe("viewer UI: failed requests and the top bar", { skip: chrome ? false : 
     });
   }
 });
+
+describe("session replay in a browser", { skip: chrome ? false : "no Chrome/Chromium found (set CODING_SH_TEST_CHROME)" }, () => {
+  const RP = "7f3c1e2a-5b6d-4e8f-9a0b-1c2d3e4f5a6b";
+  const index = new FakeIndex();
+  let v: Viewer;
+  let browser: Browser;
+  let page: Page;
+  const at = (n: number, over: Partial<AgentEvent>) => ev(RP, n, { cwd: "/work/demo", ...over });
+
+  before(async () => {
+    await index.upsertSession(session(RP, { startedAt: T0, endedAt: T0 + 60_000, title: "Replay me", repo: { root: "/work/demo", head: "a41c9e2b00" }, stats: { events: 8, turns: 1, toolCalls: 3, toolErrors: 1, filesChanged: 1 } }));
+    await index.putEvents([
+      at(1, { kind: "user.message", payload: { text: "write a.txt then test" } }),
+      at(2, { kind: "tool.start", payload: { tool: "Write", toolUseId: "w1", input: { file_path: "/work/demo/a.txt", content: "one\ntwo\n" } } }),
+      at(3, { kind: "tool.end", payload: { tool: "Write", toolUseId: "w1", ok: true } }),
+      at(4, { kind: "tool.start", payload: { tool: "Edit", toolUseId: "e1", input: { file_path: "/work/demo/a.txt", old_string: "two", new_string: "TWO" } } }),
+      at(5, { kind: "tool.end", payload: { tool: "Edit", toolUseId: "e1", ok: true } }),
+      at(6, { kind: "tool.start", payload: { tool: "Bash", toolUseId: "b1", input: { command: "npm test" } } }),
+      at(7, { kind: "tool.end", durationMs: 1200, payload: { tool: "Bash", toolUseId: "b1", ok: false, exitCode: 1, output: "1 failing" } }),
+      at(8, { kind: "assistant.message", payload: { text: "The test fails." } }),
+    ]);
+    v = await startViewer({ index, blobs: new FakeBlobs(), port: 0, updateStatus: async () => ({ disabled: "test" }) as any });
+    browser = await launchBrowser(chrome!);
+  });
+  after(async () => {
+    await browser?.close();
+    await v?.close();
+  });
+  const key = (k: string) => page.eval(`document.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(k)}, bubbles: true }))`);
+  const paneText = "document.querySelector('#event-pane').innerText";
+  const tab = (re: string) => page.eval(`[...document.querySelectorAll('.rp-tabs button')].find((b) => /${re}/.test(b.textContent)).click()`);
+
+  async function openAt(hash: string, mobile = false) {
+    page = await browser.newPage();
+    if (mobile) await page.viewport(390, 844, true);
+    else await page.viewport(1280, 900);
+    await page.goto(v.url + hash);
+  }
+
+  test("a ?step link opens the replay there; keys step, the URL follows, and the File and range tabs rebuild a.txt", async () => {
+    await openAt("#/s/" + RP + "?step=2");
+    try {
+      await page.waitFor(`/Step 2 of 5/.test(${paneText})`, "step 2 pane", 10_000);
+      assert.match(await page.eval(paneText), /a\.txt/);
+      assert.equal(await page.eval("document.querySelector('.rp-bar').hidden"), false);
+      assert.match(await page.eval("document.querySelector('.rp-pos').textContent"), /^2 \/ 5/);
+      await key("j");
+      await page.waitFor(`/Step 3 of 5/.test(${paneText})`, "step 3 after j");
+      assert.match(await page.eval("location.hash"), /\?step=3$/);
+      assert.match(await page.eval(paneText), /two[\s\S]*TWO/);
+      // The file as of step 3, then as of step 2.
+      await tab("^File");
+      await page.waitFor(`/one\\nTWO/.test(${paneText})`, "a.txt at step 3");
+      await key("ArrowLeft");
+      await page.waitFor(`/Step 2 of 5/.test(${paneText}) && /one\\ntwo/.test(${paneText})`, "a.txt at step 2");
+      // Shell step: command, exit code and output.
+      await key("End");
+      await key("k");
+      await page.waitFor(`/Step 4 of 5/.test(${paneText})`, "step 4");
+      const shell: string = await page.eval(paneText);
+      assert.match(shell, /\$ npm test/);
+      assert.match(shell, /exit 1/);
+      assert.match(shell, /1 failing/);
+      // Range: steps 1 through 4 added a.txt with its final content.
+      await tab("Since");
+      await page.waitFor(`/one[\\s\\S]*TWO/.test(${paneText}) && /steps 2, 3/.test(${paneText})`, "range diff");
+      // Escape leaves the replay and the URL drops ?step.
+      await key("Escape");
+      await page.waitFor("document.querySelector('.rp-bar').hidden", "replay closed");
+      assert.doesNotMatch(await page.eval("location.hash"), /step=/);
+    } finally {
+      await page.close();
+    }
+  });
+
+  test("play advances on its own; at 390px the replay does not scroll sideways", async () => {
+    await openAt("#/s/" + RP + "?step=1", true);
+    try {
+      await page.waitFor(`/Step 1 of 5/.test(${paneText})`, "step 1", 10_000);
+      await page.eval("[...document.querySelectorAll('.rp-bar .seg button')].find((b) => b.textContent === '16×').click()");
+      await key(" ");
+      await page.waitFor(`/Step 3 of 5/.test(${paneText})`, "playback reached step 3", 5000);
+      const m = await page.eval(`({ sw: document.documentElement.scrollWidth, vw: innerWidth, bar: document.querySelector('.rp-bar').getBoundingClientRect().right })`);
+      assert.ok(m.sw <= 390 && m.bar <= 390, `page ${m.sw}px, bar ends at ${m.bar}px on a 390px screen`);
+      await key(" ");
+      assert.equal(await page.eval("document.querySelector('.rp-play').textContent"), "Play");
+    } finally {
+      await page.close();
+    }
+  });
+});

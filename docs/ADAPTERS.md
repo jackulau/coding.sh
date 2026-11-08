@@ -74,6 +74,22 @@ Harness surfaces:
 - Per-agent instruction files: CLAUDE.md, GEMINI.md, QWEN.md, `.cursor/rules/*.mdc`, `.github/instructions/**`, `.clinerules/`, `.kiro/steering/`, `.goosehints`, CRUSH.md.
 - `.agents/skills` is close to a universal skills directory. Claude Code uses `.claude/skills` instead.
 
+## Replay
+
+`coding.sh replay` rebuilds the files a session touched from its tool calls (see
+[Explore](guides/explore.md#replay)). What each agent's capture gives it, checked on the fixtures in
+`test/fixtures/adapters` by `test/core/replay.test.ts`:
+
+| Agent | Content known from | Left unknown |
+|---|---|---|
+| Claude Code | Write content, Edit and Write `originalFile`, Read output (numbered lines), diffs it records for shell changes. | Nothing in the fixtures. |
+| Codex | `apply_patch` Add File, reads with `cat`. | A patched file no step showed first. |
+| Copilot CLI, Droid, OpenCode, Pi, Goose | Write and create inputs, the recorded diff of a new file, reads. | An edit to a file no step showed first. |
+| Cursor CLI | Reads, then `afterFileEdit` edits. | An edit to a file no step showed first. |
+| Gemini CLI, Amp | Writes and reads. | An edit to a file no step showed first. |
+| Antigravity | Transcript edits that carry `TargetContent`. | Hook edits, which record only the new text. |
+| Wrapper (any CLI) | Nothing: it records only which files changed. | Every changed file. |
+
 ## Host apps (T3 Code)
 
 T3 Code drives other agents: Codex, Claude Code, OpenCode, Cursor, Pi, Grok and ACP agents. coding.sh keeps

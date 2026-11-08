@@ -2,7 +2,9 @@
 // Performance budgets (docs/design/dogfood.md §3.5). Every benchmark runs in a temp
 // HOME / CODING_SH_HOME, never against the live home.
 //
-//   node scripts/dogfood/bench.mjs [hook|ingest|store|help|viewer]... [--baseline <dist dir>] [--json]
+//   node scripts/dogfood/bench.mjs [hook|ingest|store|help|viewer|replay]... [--baseline <dist dir>] [--json]
+//
+// `viewer` also runs `replay` (session replay through the viewer API).
 //
 // With --baseline, the hook and help benchmarks interleave the baseline build
 // with the candidate (A B A B ...) and report a bootstrap CI on the median
@@ -20,6 +22,9 @@ export const TARGETS = {
   "perf.storeSize": { target: 2.0, unit: "MB/1k events", dir: "max" },
   "perf.viewerTti": { target: 1000, unit: "ms", dir: "max" },
   "perf.help": { target: 200, unit: "ms", dir: "max" },
+  // Replay of a 12k-event editing session: the step list, and the last step with its file rebuilt (both cold).
+  "perf.replayIndex": { target: 1000, unit: "ms", dir: "max" },
+  "perf.replayStep": { target: 300, unit: "ms", dir: "max" },
 };
 export function meets(key, value) {
   const t = TARGETS[key];
@@ -355,6 +360,130 @@ export async function benchViewer({ cli = CLI, events = 5000, runs = 3 } = {}) {
   }
 }
 
+// ---------------------------------------------------------------- replay
+
+/**
+ * One claude-code session that edits: 40 files, each written once (about 6 KB, so the
+ * content sits in a blob), then edited, read and tested in turn. Every edit matches, so
+ * the last step's file is rebuilt through its whole chain of edits.
+ */
+export function writeReplayCorpus(home, { events = 12_000, files = 40, lines = 300, day = Date.now() - 86_400_000 } = {}) {
+  const spool = join(home, "spool", "claude-code");
+  mkdirSync(spool, { recursive: true });
+  const sid = "00000000-0000-4000-8000-00000000beef";
+  const cwd = join(home, "..", "repo");
+  const pid = 60_000;
+  const rows = [];
+  let t = day;
+  const line = (event, raw) => {
+    rows.push(JSON.stringify({ v: 0, agent: "claude-code", event, ts: t, pid, ppid: pid - 1, cwd, raw: { session_id: sid, hook_event_name: event, cwd, ...raw } }));
+    t += 250;
+  };
+  const vals = Array.from({ length: files }, () => new Array(lines).fill(0));
+  const written = new Array(files).fill(false);
+  const call = (name, input, response) => {
+    const id = `toolu_r${rows.length}`;
+    line("PreToolUse", { tool_name: name, tool_use_id: id, tool_input: input });
+    line("PostToolUse", { tool_name: name, tool_use_id: id, tool_input: input, tool_response: response, duration_ms: 30 });
+  };
+  line("SessionStart", { source: "startup" });
+  line("UserPromptSubmit", { prompt: "refactor every module and keep the tests green" });
+  let edits = 0;
+  for (let k = 0; rows.length < events - 3; k++) {
+    const f = k % files;
+    const path = `${cwd}/src/mod${f}.ts`;
+    const text = () => vals[f].map((v, i) => `export const v${i} = ${v}; // mod${f}`).join("\n") + "\n";
+    if (!written[f]) {
+      written[f] = true;
+      call("Write", { file_path: path, content: text() }, { type: "create", filePath: path });
+    } else if (k % 7 === 3) {
+      call("Bash", { command: `npm test -- mod${f}` }, { stdout: `ok ${k}\n`.repeat(20), stderr: "" });
+    } else if (k % 11 === 5) {
+      call("Read", { file_path: path }, { type: "text", file: { filePath: path, content: text() } });
+    } else {
+      const i = (k * 31) % lines;
+      const before = `export const v${i} = ${vals[f][i]};`;
+      vals[f][i]++;
+      call("Edit", { file_path: path, old_string: before, new_string: `export const v${i} = ${vals[f][i]};` }, { filePath: path });
+      edits++;
+    }
+  }
+  line("Stop", { last_assistant_message: "done" });
+  writeFileSync(join(spool, `${new Date(day).toISOString().slice(0, 10)}.${pid}.jsonl`), rows.join("\n") + "\n");
+  return { events: rows.length, session: sid, edits, files };
+}
+
+/**
+ * Replay on a 12k-event editing session, through the viewer's HTTP API: the cold step
+ * list (events read, steps built), the last step with its file rebuilt through every edit
+ * (cold, then warm), a middle step, and the whole-session range. Each a median of `runs`
+ * fresh viewer processes for the cold numbers.
+ */
+export async function benchReplay({ cli = CLI, events = 12_000, runs = 3 } = {}) {
+  const root = tempDir("cs-bench-replay-");
+  const servers = [];
+  try {
+    const env = isolatedEnv(root);
+    mkdirSync(env.HOME, { recursive: true });
+    const corpus = writeReplayCorpus(env.CODING_SH_HOME, { events });
+    const ing = sh(process.execPath, [cli, "ingest", "--json"], { env });
+    if (ing.code !== 0) throw new Error(`ingest exited ${ing.code}: ${ing.stderr.slice(0, 400)}`);
+    const samples = { index: [], lastCold: [], lastWarm: [], mid: [], range: [] };
+    let steps = 0;
+    let lastFile;
+    for (let i = 0; i < runs; i++) {
+      const server = spawn(process.execPath, [cli, "ui", "--no-open", "--port", "0", "--json"], { env, stdio: ["ignore", "pipe", "pipe"] });
+      servers.push(server);
+      let buf = "";
+      server.stdout.on("data", (d) => (buf += d));
+      const info = await waitFor(() => {
+        try {
+          return JSON.parse(buf.trim().split("\n")[0]);
+        } catch {
+          return undefined;
+        }
+      }, 60_000, "viewer url");
+      const u = new URL(info.url);
+      const token = u.searchParams.get("t");
+      const base = `${u.origin}/api/sessions/${encodeURIComponent(corpus.session)}/replay`;
+      const get = async (q) => {
+        const t0 = performance.now();
+        const r = await fetch(base + q, { headers: { authorization: `Bearer ${token}` } });
+        const body = await r.json();
+        if (!r.ok) throw new Error(`replay${q}: ${r.status} ${JSON.stringify(body).slice(0, 200)}`);
+        return { ms: performance.now() - t0, body };
+      };
+      const idx = await get("");
+      samples.index.push(idx.ms);
+      steps = idx.body.steps.length;
+      const last = [...idx.body.steps].reverse().find((s) => s.files?.some((f) => f.op !== "read"));
+      lastFile = last.files[0].path;
+      const q = `?step=${last.n}&file=${encodeURIComponent(lastFile)}`;
+      const cold = await get(q);
+      if (cold.body.file.content === undefined) throw new Error(`replay lost ${lastFile}: ${cold.body.file.why}`);
+      samples.lastCold.push(cold.ms);
+      samples.lastWarm.push((await get(q)).ms);
+      samples.mid.push((await get(`?step=${Math.floor(steps / 2)}`)).ms);
+      samples.range.push((await get(`?from=1&to=${steps}`)).ms);
+      server.kill("SIGINT");
+    }
+    const med = (xs) => Math.round(median(xs));
+    return {
+      "perf.replayIndex": med(samples.index),
+      "perf.replayStep": med(samples.lastCold),
+      detail: {
+        events: corpus.events, steps, edits: corpus.edits, files: corpus.files, runs,
+        indexMs: samples.index.map(Math.round), lastStepColdMs: samples.lastCold.map(Math.round), lastStepWarmMs: med(samples.lastWarm),
+        midStepMs: med(samples.mid), wholeRangeMs: med(samples.range), lastFile,
+      },
+    };
+  } finally {
+    for (const s of servers) s.kill("SIGINT");
+    await sleep(300);
+    rmSync(root, { recursive: true, force: true, maxRetries: 3 });
+  }
+}
+
 export async function runBenches(which = ["hook", "ingest", "help", "viewer"], opts = {}) {
   const out = {};
   const errors = {};
@@ -373,6 +502,7 @@ export async function runBenches(which = ["hook", "ingest", "help", "viewer"], o
   if (which.includes("ingest") || which.includes("store")) await step("ingest", () => benchIngest(opts));
   if (which.includes("help")) await step("help", () => benchHelp(opts));
   if (which.includes("viewer")) await step("viewer", () => benchViewer(opts));
+  if (which.includes("viewer") || which.includes("replay")) await step("replay", () => benchReplay({ ...opts, events: opts.replayEvents }));
   return { results: out, errors };
 }
 

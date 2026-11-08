@@ -80,7 +80,7 @@ export function headline(gates, components) {
   return { headline: w ? round((s / w) * 100, 1) : null, headlineFullWeight: round(s, 1), coverage, missing, normalized: norm };
 }
 
-const LOWER_IS_BETTER = new Set(["cli.invalidRate", "cli.dev.invalidRate", "perf.hook", "perf.hookP95", "perf.hook1mb", "perf.storeSize", "perf.viewerTti", "perf.help", "site.js", "cli.costPerSuccess", "cli.wallMs"]);
+const LOWER_IS_BETTER = new Set(["cli.invalidRate", "cli.dev.invalidRate", "perf.hook", "perf.hookP95", "perf.hook1mb", "perf.storeSize", "perf.viewerTti", "perf.replayIndex", "perf.replayStep", "perf.help", "site.js", "cli.costPerSuccess", "cli.wallMs"]);
 
 export function compare(cur, prev) {
   const out = {};
@@ -194,6 +194,8 @@ export async function score(opts = {}) {
     perf("perf.storeSize", r.ingest?.["perf.storeSize"], { error: b.errors.ingest });
     perf("perf.help", r.help?.["perf.help"], { detail: r.help?.detail, paired: r.help?.paired, error: b.errors.help });
     perf("perf.viewerTti", r.viewer?.["perf.viewerTti"], { method: r.viewer?.method, skipped: r.viewer?.skipped, detail: r.viewer?.detail, error: b.errors.viewer });
+    perf("perf.replayIndex", r.replay?.["perf.replayIndex"], { detail: r.replay?.detail, error: b.errors.replay });
+    perf("perf.replayStep", r.replay?.["perf.replayStep"], { error: b.errors.replay });
     if (r.viewer?.method?.startsWith("cdp-proxy")) notes.push("perf.viewerTti is a Chrome DevTools proxy, not Lighthouse `interactive` (lighthouse CLI not installed)");
     if (!opts.baseline) notes.push("perf ran without --baseline: no interleaved A/B pairing (single build)");
   }

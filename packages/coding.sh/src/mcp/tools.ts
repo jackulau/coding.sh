@@ -6,6 +6,8 @@ import { join } from "node:path";
 import type { Context } from "../core/context.ts";
 import type { Session } from "../core/types.ts";
 import { failureFlags } from "../core/sessions.ts";
+import { createRedactor } from "../core/redact.ts";
+import { loadReplay, snapshotBaseline } from "../core/replay.ts";
 import { parseSince } from "../cli/args.ts";
 import { version } from "../cli/meta.ts";
 import { isNewer } from "../update/semver.ts";
@@ -347,6 +349,54 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         const hit = await currentByCwd(ctx.index, cwd, c.now());
         if (!hit) throw new ToolError(`No captured session ran in ${cwd}. Check capture with the status tool, or find the session with sessions_list.`);
         return { matchedBy: hit.matchedBy, cwd, ...(await sessionDigest(ctx.index, hit.session, { limit, offset: 0, from: "tail", now: c.now() })) };
+      },
+    },
+    {
+      name: "session_replay",
+      title: "Replay a session",
+      description:
+        "A session as numbered steps, with the files the agent touched rebuilt from its tool calls as of any step. No step: the step list.",
+      inputSchema: input(
+        {
+          sessionId: SESSION_ID,
+          step: { type: "integer", minimum: 1, description: "One step (1-based): what it did, its diff and the files so far." },
+          file: { type: "string", minLength: 1, description: "With step: this file's content as of that step." },
+          from: { type: "integer", minimum: 1, description: "With to: the first step of a range." },
+          to: { type: "integer", minimum: 1, description: "With from: the last step (included). Returns each file's diff over the range." },
+          limit: LIMIT(100, 1000),
+          cursor: CURSOR,
+        },
+        ["sessionId"],
+      ),
+      outputSchema: out({ sessionId: S, steps: { description: "The step list, or (with step) how many steps there are." }, files: { type: "array" }, total: I, step: { type: "object" }, changes: { type: "array" }, tree: { type: "array" }, file: { type: "object" }, from: I, to: I, nextCursor: S }, ["sessionId"]),
+      annotations: READ,
+      async run(a, c) {
+        const ctx = await c.store();
+        const s = await resolveSession(ctx, strArg(a, "sessionId")!);
+        const redactor = createRedactor({ redact: ctx.config.capture.redact, patterns: ctx.config.capture.redactPatterns, env: ctx.env });
+        const replay = await loadReplay(ctx, s, { baseline: snapshotBaseline(s, ctx.env, redactor), maxContentBytes: 64 * 1024, maxDiffBytes: 64 * 1024 });
+        const total = replay.steps.length;
+        const stepArg = (k: string): number | undefined => {
+          const v = a[k];
+          if (v === undefined) return undefined;
+          if (typeof v !== "number" || !Number.isInteger(v) || v < 1 || v > total) throw new ToolError(`${k} must be a step number from 1 to ${total}.`);
+          return v;
+        };
+        const step = stepArg("step");
+        const from = stepArg("from");
+        const to = stepArg("to");
+        if (from !== undefined || to !== undefined) {
+          if (from === undefined || to === undefined) throw new ToolError("Pass both from and to for a range.");
+          return { ...(await replay.range(from, to)) };
+        }
+        const file = strArg(a, "file");
+        if (step !== undefined) return { ...(await replay.at(step, { file })) };
+        if (file) throw new ToolError("file needs a step.");
+        const index = replay.index();
+        const offset = cursorArg(a);
+        const limit = numArg(a, "limit", 100);
+        const page = index.steps.slice(offset, offset + limit);
+        return { ...index, steps: page, total, ...(offset + limit < total ? { nextCursor: String(offset + limit) } : {}) };
       },
     },
     {

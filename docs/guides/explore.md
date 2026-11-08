@@ -167,6 +167,37 @@ The detail names the first invalid call, for example `first invalid call at step
 next to the number of steps: an invalid call at step 4 of 37 and one at step 4 of 5 score very
 differently. Two arms can share a pass rate on the task and still differ here.
 
+## Replay
+
+`coding.sh replay` walks a session step by step: each prompt, reply and tool call is one
+numbered step, and the files the agent touched are rebuilt as of any step from its own tool
+calls.
+
+```sh
+coding.sh replay <session>                      # the steps, and the files they touched
+coding.sh replay <session> --step 12            # what step 12 did: command, exit code, output, diff
+coding.sh replay <session> --step 12 --file src/app.ts   # that file as it was after step 12
+coding.sh replay <session> --step 5 --to 12     # what steps 5 to 12 changed, per file
+```
+
+A file's content is known from the first step that shows all of it, and stays known through
+later edits:
+
+- a full write (Write, `write_file`, an `apply_patch` Add File) sets it, and so does a new file
+  whose whole diff the agent recorded;
+- a full read (Read, `read_file`, `cat file`) sets it, and when the read shows something other
+  than the replay expected, the step reports that change too;
+- Claude Code records the file before each Edit and Write, so the file is known from its first edit;
+- a session from `coding.sh run` or an eval run starts from its snapshot;
+- edits (Edit, MultiEdit, `str_replace`, `apply_patch` hunks, a recorded diff) apply in order.
+
+An edit to a file no step has shown yet, an edit whose old text is not in the file, an edit
+whose input does not record its text, or a change with no content (the plain wrapper) leaves
+the file unknown from that step on, until a later read or write. The replay says which step and
+why, and shows the agent's own diff for that step instead of guessing at line numbers. A shell
+command that changes files (`sed -i`, `rm`) changes them in the replay only when the agent
+recorded the change. Nothing is re-run.
+
 ## Viewer
 
 `coding.sh ui` serves the viewer on 127.0.0.1 and opens it in your browser. It needs the
@@ -196,10 +227,19 @@ derail gets a ⚑ badge on the step where it started and a mark on the scroll ma
 step through them. The first step of each phase and each new day gets a label. For a running
 session, the page adds new events every 4 seconds.
 
+**Replay** (or <kbd>R</kbd>) on the session page plays the session back one step at a time.
+<kbd>Space</kbd> plays and pauses, <kbd>←</kbd> <kbd>→</kbd> or <kbd>j</kbd> <kbd>k</kbd> step,
+<kbd>s</kbd> changes the speed and <kbd>Esc</kbd> leaves. At 1× each step waits for the real time
+to the next one, from 0.4 to 3 seconds, so long pauses are cut short; 4× and 16× divide that. The
+scrubber jumps anywhere, with marks on edits and failures. The pane shows the step (the shell
+command with its exit code and output, or the prompt or reply), the files touched so far, and
+three tabs: the diff this step made, a file as of this step, and what changed since an earlier
+step. The address ends in `?step=N`, so a copied link opens the replay at that step.
+
 ## MCP
 
 `coding.sh mcp` serves your captured data to agents over stdio, with the tools `sessions_list`,
-`session_get`, `session_current`, `search`, `failures`, `latency`, `usage`, `subagents`,
+`session_get`, `session_current`, `session_replay`, `search`, `failures`, `latency`, `usage`, `subagents`,
 `eval_from_session`, `eval_init`, `experiments_list`, `experiment_compare`, `exp_session_summary`,
 `exp_session_note`, `harness_compare`, `benchmarks` and `status`. `sessions_list` and `session_get`
 include each session's derails, and `sessions_list` takes `flag: "looping"` (or any other flag).
@@ -210,6 +250,8 @@ before a run, the reading after it), and `exp_session_summary` returns its timel
 blocks as `coding.sh exp session summary --json`, which is how an agent picks the thread back up
 after a context reset. Without a session they return a `not_found` error with the command that
 starts one.
+`session_replay` gives the same as `coding.sh replay`: the steps, one step with `step` (and a
+file with `file`), or a range with `from` and `to`.
 
 `coding.sh init` registers it with Claude Code, Codex, Cursor and OpenCode (`--no-mcp` skips
 this). `coding.sh mcp config` prints the snippet for any other client.

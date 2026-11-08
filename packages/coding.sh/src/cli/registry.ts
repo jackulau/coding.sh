@@ -313,6 +313,23 @@ export const COMMANDS: CommandSpec[] = [
     load: () => import("./commands/show.ts"),
   },
   {
+    name: "replay",
+    group: "Explore",
+    summary: "Step through a session and see what it did to each file it touched",
+    args: [{ name: "session", desc: "Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'", required: true }],
+    flags: [
+      { name: "step", type: "number", value: "<N>", desc: "Show step N: its command and output, the diff it made, and the files touched so far" },
+      { name: "to", type: "number", value: "<M>", desc: "Show what steps --step (default 1) through M changed together" },
+      { name: "file", type: "string", value: "<PATH>", desc: "Print this file as of --step (default: the last step)" },
+    ],
+    examples: ["coding.sh replay latest", "coding.sh replay 9f1c2e --step 12", "coding.sh replay 9f1c2e --step 5 --to 20", "coding.sh replay 9f1c2e --step 12 --file src/app.ts"],
+    notes: [
+      "File content is rebuilt from the agent's own tool calls: full writes, full reads and the edits applied to them. A file edited before any step showed it reads as unknown, with the reason, until a later read or write. A session run with `coding.sh run` also starts from its snapshot.",
+      "The viewer has the same replay: the Replay button on a session page, or a link ending in ?step=N.",
+    ],
+    load: () => import("./commands/replay.ts"),
+  },
+  {
     name: "search",
     group: "Explore",
     summary: "Full-text search over prompts, replies and tool calls",

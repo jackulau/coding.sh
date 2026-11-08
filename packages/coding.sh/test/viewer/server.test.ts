@@ -774,3 +774,57 @@ describe("viewer lifecycle", () => {
     }
   });
 });
+
+describe("viewer server: session replay", () => {
+  const index = new FakeIndex();
+  let v: Viewer;
+  let baselineCalls = 0;
+  const ev = (n: number, kind: string, payload: Record<string, unknown>) => event("rp", n, { kind: kind as never, cwd: "/work/api", payload });
+  before(async () => {
+    await index.upsertSession(session("rp", { stats: { events: 7, turns: 1, toolCalls: 2, toolErrors: 0, filesChanged: 1 } }));
+    await index.putEvents([
+      ev(1, "user.message", { text: "fix it" }),
+      ev(2, "tool.start", { tool: "Edit", toolUseId: "a", input: { file_path: "/work/api/x.ts", old_string: "1", new_string: "2" } }),
+      ev(3, "tool.end", { tool: "Edit", toolUseId: "a", ok: true }),
+      ev(4, "tool.start", { tool: "Bash", toolUseId: "b", input: { command: "npm test" } }),
+      ev(5, "tool.end", { tool: "Bash", toolUseId: "b", ok: true, exitCode: 0, output: "ok" }),
+      ev(6, "tool.start", { tool: "Edit", toolUseId: "c", input: { file_path: "x.ts", old_string: "2", new_string: "3" } }),
+      ev(7, "tool.end", { tool: "Edit", toolUseId: "c", ok: true }),
+    ]);
+    v = await startViewer({
+      index,
+      blobs: new FakeBlobs(),
+      port: 0,
+      // A start snapshot: x.ts held "const x = 1;".
+      replayBaseline: () => (baselineCalls++, async (p) => (p === "x.ts" ? "const x = 1;\n" : undefined)),
+    });
+  });
+  after(async () => {
+    await v.close();
+  });
+
+  test("the index lists steps and files; ?step shows one step, ?file the file then, ?from&to a range", async () => {
+    const idx = (await req(v, "/api/sessions/rp/replay")).json();
+    assert.deepEqual(idx.steps.map((s: any) => s.kind), ["prompt", "edit", "shell", "edit"]);
+    assert.deepEqual(idx.files, ["x.ts"]);
+    const s2 = (await req(v, "/api/sessions/rp/replay?step=2&file=x.ts")).json();
+    assert.equal(s2.steps, 4);
+    assert.equal(s2.file.content, "const x = 2;\n");
+    assert.equal(s2.changes[0].exact, true);
+    const s3 = (await req(v, "/api/sessions/rp/replay?step=3")).json();
+    assert.deepEqual(s3.detail.shell, { command: "npm test", ok: true, exitCode: 0, output: "ok" });
+    const r = (await req(v, "/api/sessions/rp/replay?from=2&to=4")).json();
+    assert.deepEqual(r.files.map((f: any) => [f.path, f.steps]), [["x.ts", [2, 4]]]);
+    assert.match(r.files[0].diff, /^-const x = 1;$[\s\S]*^\+const x = 3;$/m);
+    assert.equal(baselineCalls, 1, "the replay is built once and cached");
+  });
+
+  test("bad steps and lone bounds are 400; unknown sessions 404; auth required", async () => {
+    assert.equal((await req(v, "/api/sessions/rp/replay?step=9")).status, 400);
+    assert.equal((await req(v, "/api/sessions/rp/replay?step=0")).status, 400);
+    assert.equal((await req(v, "/api/sessions/rp/replay?from=2")).status, 400);
+    assert.equal((await req(v, "/api/sessions/rp/replay?file=x.ts")).status, 400);
+    assert.equal((await req(v, "/api/sessions/nope/replay")).status, 404);
+    assert.equal((await req(v, "/api/sessions/rp/replay", { auth: false })).status, 401);
+  });
+});

@@ -9,6 +9,7 @@ const TOOLS: [string, string][] = [
   ["session_current", "The session of the agent calling the tool: its summary and latest timeline."],
   ["sessions_list", "Captured sessions, newest first, with turns, tool errors, tokens, cost, failure flags and derails. Filter with flag (e.g. looping) or where (e.g. tool:Bash ok:false cost>0.5); facets counts per value."],
   ["session_get", "One session as a digest: per-turn index and a timeline of prompts, replies, tool calls and model calls."],
+  ["session_replay", "A session as numbered steps, with the files the agent touched rebuilt as of any step, one step's diff, or a range's."],
   ["search", "Full-text search over prompts, replies and tool input/output across all sessions. Takes where too."],
   ["failures", "What went wrong lately: flagged sessions, frequent tool errors, prompts where the user pushed back."],
   ["latency", "Model-call p50/p95 and time to first token, plus the slowest tools and tool calls."],

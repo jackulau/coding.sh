@@ -20,6 +20,7 @@ import type { BenchRun } from "../bench/types.ts";
 import type { IngestStatus } from "../cli/ingest-worker.ts";
 import type { BlobStore, IndexStore, Label, Session, SessionFilter } from "../core/types.ts";
 import { phaseLabel, sessionOutline, storedOutline } from "../core/outline.ts";
+import { loadReplay, type Baseline, type Replay } from "../core/replay.ts";
 import type { ExperimentResult } from "../datasets/types.ts";
 import { compareExperiments } from "../experiments/compare.ts";
 import { facetCounts, findEvents, findSessions, searchWhere } from "../query/run.ts";
@@ -51,6 +52,8 @@ export interface ViewerOptions {
   benchmarks?: BenchmarkSource;
   /** Background ingest progress behind /api/ingest (`coding.sh ui`). Without it the route is 404. */
   ingestStatus?: () => IngestStatus | undefined;
+  /** Start-snapshot content for replays (`coding.sh ui`, which can read this machine's shadow repos). */
+  replayBaseline?: (s: Session) => Baseline | undefined;
 }
 
 /** Read side of the dataset experiment store (FileEvalStore and every full IndexStore fit). */
@@ -207,6 +210,8 @@ export interface ViewerHandlerOptions {
   benchmarks?: BenchmarkSource;
   /** Background ingest progress behind /api/ingest. Default: none (404). */
   ingestStatus?: () => IngestStatus | undefined;
+  /** Start-snapshot content for replays. Default: none (replays start from what the session showed). */
+  replayBaseline?: (s: Session) => Baseline | undefined;
 }
 
 export type ViewerHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
@@ -270,6 +275,7 @@ export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<V
       experiments,
       benchmarks: opts.benchmarks,
       ingestStatus: opts.ingestStatus,
+      replayBaseline: opts.replayBaseline,
     });
   };
 
@@ -324,6 +330,7 @@ export async function startViewer(opts: ViewerOptions): Promise<Viewer> {
     ...(opts.experiments ? { experiments: opts.experiments } : {}),
     benchmarks: opts.benchmarks ?? benchmarkDir(opts.env ?? process.env),
     ...(opts.ingestStatus ? { ingestStatus: opts.ingestStatus } : {}),
+    ...(opts.replayBaseline ? { replayBaseline: opts.replayBaseline } : {}),
   });
 
   const server = createServer((req, res) => {
@@ -429,6 +436,7 @@ interface ApiCtx {
   experiments?: ExperimentSource;
   benchmarks?: BenchmarkSource;
   ingestStatus?: () => IngestStatus | undefined;
+  replayBaseline?: (s: Session) => Baseline | undefined;
 }
 
 /** The index's own experiment methods (sqlite, memory, postgres), or undefined when it has none. */
@@ -438,6 +446,29 @@ function indexExperiments(index: IndexStore): ExperimentSource | undefined {
 }
 
 const projectOf = (s: Session): string => s.project ?? "default";
+
+/** Recent replays per store: a viewer steps through one session at a time, so a few stay warm. */
+const REPLAYS = new WeakMap<IndexStore, Map<string, { key: string; replay: Promise<Replay> }>>();
+const REPLAY_CACHE = 4;
+
+/** The session's replay, rebuilt when the session has changed (more events, an end, a re-parse). */
+function cachedReplay(ctx: ApiCtx, s: Session): Promise<Replay> {
+  let cache = REPLAYS.get(ctx.index);
+  if (!cache) REPLAYS.set(ctx.index, (cache = new Map()));
+  const key = `${s.stats.events}:${s.endedAt ?? ""}:${s.parseVersion ?? ""}`;
+  const hit = cache.get(s.id);
+  if (hit && hit.key === key) {
+    cache.delete(s.id);
+    cache.set(s.id, hit);
+    return hit.replay;
+  }
+  const replay = loadReplay(ctx, s, { baseline: ctx.replayBaseline?.(s) });
+  cache.delete(s.id);
+  cache.set(s.id, { key, replay });
+  replay.catch(() => cache.delete(s.id));
+  while (cache.size > REPLAY_CACHE) cache.delete(cache.keys().next().value!);
+  return replay;
+}
 
 /** The session, or a 404 when it is missing or outside the caller's project. */
 async function visibleSession(ctx: ApiCtx, id: string): Promise<Session> {
@@ -547,6 +578,24 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         const kinds = q.get("kinds")?.split(",").filter(Boolean);
         const events = await ctx.index.listEvents(sessionId, { limit: limit + 1, offset, kinds });
         return sendJson(res, 200, page(events, limit, offset));
+      }
+      if (sub === "replay") {
+        const s = await visibleSession(ctx, sessionId);
+        const replay = await cachedReplay(ctx, s);
+        const total = replay.steps.length;
+        const stepOf = (name: string) => (q.has(name) ? intParam(q, name, 1, 1, Math.max(1, total)) : undefined);
+        const from = stepOf("from");
+        const to = stepOf("to");
+        const step = stepOf("step");
+        const file = q.get("file") || undefined;
+        if (!total && (from !== undefined || to !== undefined || step !== undefined)) throw new HttpError(400, "this session has no steps");
+        if (from !== undefined || to !== undefined) {
+          if (from === undefined || to === undefined) throw new HttpError(400, "from and to go together");
+          return sendJson(res, 200, await replay.range(from, to));
+        }
+        if (step !== undefined) return sendJson(res, 200, await replay.at(step, { file }));
+        if (file !== undefined) throw new HttpError(400, "file needs a step");
+        return sendJson(res, 200, replay.index());
       }
       if (sub === "outline") {
         // Phases (start, resumes, compactions, idle gaps), day marks and derails: a long session at a glance.

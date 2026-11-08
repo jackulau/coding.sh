@@ -42,6 +42,7 @@ Every command accepts these.
 | [`uninstall`](#codingsh-uninstall) | Capture | Remove coding.sh hooks and MCP entries from every agent |
 | [`sessions`](#codingsh-sessions) | Explore | List captured sessions |
 | [`show`](#codingsh-show) | Explore | Show a session timeline with subagents and latency |
+| [`replay`](#codingsh-replay) | Explore | Step through a session and see what it did to each file it touched |
 | [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies and tool calls |
 | [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day |
 | [`sql`](#codingsh-sql) | Explore | Run one read-only SQL query against the SQLite index |
@@ -347,6 +348,34 @@ coding.sh show latest --follow
 ```
 
 - A session with more than 200 events shows one line per phase: the start, each resume, compaction and long idle gap, with where it derailed.
+
+## `coding.sh replay`
+
+Step through a session and see what it did to each file it touched.
+
+```text
+coding.sh replay <SESSION> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `session` | yes | Session id, a unique prefix of one (4+ characters, like a git short hash), or 'latest'. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--step <N>` |  | Show step N: its command and output, the diff it made, and the files touched so far. |
+| `--to <M>` |  | Show what steps --step (default 1) through M changed together. |
+| `--file <PATH>` |  | Print this file as of --step (default: the last step) |
+
+```sh
+coding.sh replay latest
+coding.sh replay 9f1c2e --step 12
+coding.sh replay 9f1c2e --step 5 --to 20
+coding.sh replay 9f1c2e --step 12 --file src/app.ts
+```
+
+- File content is rebuilt from the agent's own tool calls: full writes, full reads and the edits applied to them. A file edited before any step showed it reads as unknown, with the reason, until a later read or write. A session run with `coding.sh run` also starts from its snapshot.
+- The viewer has the same replay: the Replay button on a session page, or a link ending in ?step=N.
 
 ## `coding.sh search`
 

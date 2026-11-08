@@ -83,6 +83,7 @@ describe("handshake (legacy era)", () => {
       "search",
       "session_current",
       "session_get",
+      "session_replay",
       "sessions_list",
       "status",
       "subagents",
@@ -146,6 +147,30 @@ describe("tools", () => {
     assert.match(await callError("session_get", { sessionId: SEED.a, turn: 5 }), /has 2 turn/);
     assert.match(await callError("session_get", { sessionId: "nope" }), /No session with id "nope"/);
     assert.match(await callError("session_get", {}), /sessionId/);
+  });
+
+  it("session_replay lists steps, opens one with the touched files, and diffs a range", async () => {
+    const idx = await call("session_replay", { sessionId: SEED.a });
+    const steps = idx.steps as { n: number; kind: string; label: string }[];
+    assert.equal(idx.total, steps.length);
+    assert.deepEqual(idx.files, ["src/parse.ts"]);
+    const edit = steps.find((s) => s.kind === "edit")!;
+    assert.equal(edit.label, "Edit src/parse.ts");
+    const at = await call("session_replay", { sessionId: SEED.a, step: edit.n, file: "src/parse.ts" });
+    assert.deepEqual((at.tree as { path: string }[]).map((t) => t.path), ["src/parse.ts"]);
+    const file = at.file as { content?: string; why?: string };
+    assert.equal(file.content, undefined, "an edit with no recorded text leaves the content unknown");
+    assert.match(file.why!, /^Step \d+ edited it/);
+    const shell = await call("session_replay", { sessionId: SEED.a, step: steps.find((s) => s.kind === "shell")!.n });
+    assert.equal((shell.detail as { shell: { command: string; ok: boolean } }).shell.command, "npm test");
+    const range = await call("session_replay", { sessionId: SEED.a, from: 1, to: steps.length });
+    assert.deepEqual((range.files as { path: string }[]).map((f) => f.path), ["src/parse.ts"]);
+    const page = await call("session_replay", { sessionId: SEED.a, limit: 2 });
+    assert.equal((page.steps as unknown[]).length, 2);
+    assert.equal(page.nextCursor, "2");
+    assert.match(await callError("session_replay", { sessionId: SEED.a, step: 999 }), /step must be a step number from 1 to/);
+    assert.match(await callError("session_replay", { sessionId: SEED.a, from: 1 }), /both from and to/);
+    assert.match(await callError("session_replay", { sessionId: SEED.a, file: "src/parse.ts" }), /file needs a step/);
   });
 
   it("session_current finds the running session in the server's directory, or the env-named one", async () => {
@@ -437,7 +462,7 @@ describe("modern era (2026-07-28)", () => {
     try {
       assert.equal(client.era, "2026-07-28");
       assert.equal(client.serverInfo?.name, "coding.sh");
-      assert.equal((await client.listTools()).length, 17);
+      assert.equal((await client.listTools()).length, 18);
       const r = await client.callTool("session_get", { sessionId: SEED.b });
       assert.equal((r.structuredContent as { session: { agent: string } }).session.agent, "codex");
     } finally {

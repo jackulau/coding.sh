@@ -732,6 +732,44 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .hintbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 1rem; padding: 0 var(--gutter); height: 30px; box-shadow: inset 0 1px 0 var(--line); flex: none; font-size: 11.5px; color: var(--text-muted); overflow: hidden; }
 .hintbar span { display: inline-flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
 .hintbar .spacer { flex: 1; }
+/* ---------- replay ---------- */
+.rp-bar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 0.4rem 0.9rem; padding: 0.45rem var(--gutter); box-shadow: inset 0 -1px 0 var(--line); background: var(--surface); flex: none; }
+.rp-bar[hidden] { display: none; }
+.rp-ctl { display: flex; align-items: center; gap: 0.35rem; }
+.rp-ctl .btn { min-width: 26px; padding: 0 0.45rem; font-family: var(--font-mono); }
+.rp-play { min-width: 3.6rem !important; font-family: var(--font-sans) !important; }
+.rp-track { position: relative; display: flex; align-items: center; min-width: 0; height: 26px; }
+.rp-scrub { width: 100%; margin: 0; accent-color: var(--text); background: transparent; position: relative; z-index: 1; }
+.rp-marks { position: absolute; left: 8px; right: 8px; top: 2px; height: 5px; pointer-events: none; }
+.rp-marks i { position: absolute; top: 0; width: 2px; height: 5px; border-radius: 1px; background: var(--text-muted); }
+.rp-marks i.f { background: var(--fail); }
+.rp-pos { font-family: var(--font-mono); font-size: 12px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rp-files { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; max-height: 13.5rem; overflow-y: auto; overscroll-behavior: contain; }
+.rp-files button { display: grid; grid-template-columns: 1.1rem minmax(0, 1fr) auto; align-items: center; gap: 0.5rem; width: 100%; padding: 0.2rem 0.45rem; border-radius: var(--radius-sm); text-align: left; font-size: 12.5px; color: var(--text-2); }
+.rp-files button[aria-pressed="true"] { background: var(--select); color: var(--text); }
+.rp-files .st-mark { font-family: var(--font-mono); font-size: 11px; font-weight: 600; text-align: center; }
+.rp-files .st-mark.added { color: var(--pass-ink); }
+.rp-files .st-mark.modified { color: var(--warn-ink); }
+.rp-files .st-mark.deleted { color: var(--fail-ink); }
+.rp-files .st-mark.read { color: var(--text-faint); }
+.rp-files .p { font-family: var(--font-mono); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.rp-files .here .p { color: var(--text); font-weight: 500; }
+.rp-files .meta { font-size: 11px; white-space: nowrap; }
+.rp-change-head { display: flex; align-items: baseline; gap: 0.5rem; flex-wrap: wrap; font-family: var(--font-mono); font-size: 12px; color: var(--text-2); }
+.rp-change-head b { color: var(--text); font-weight: 500; overflow-wrap: anywhere; }
+.rp-unknown { padding: 0.5rem 0.7rem; border-radius: var(--radius-sm); background: var(--warn-wash); color: var(--warn-ink); font-size: 12.5px; }
+.rp-range { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; font-size: 12.5px; color: var(--text-2); }
+.rp-range input { width: 5.5rem; height: 26px; }
+.rp-tabs { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.replaying .st[aria-selected="true"] { box-shadow: inset 2px 0 0 var(--text); }
+@media (max-width: 860px) {
+  /* Controls stay in reach while the step detail scrolls under them. */
+  .rp-bar { position: sticky; top: var(--top); z-index: 5; grid-template-columns: auto minmax(0, 1fr); }
+  .rp-track { grid-column: 1 / -1; grid-row: 2; }
+  .rp-pos { justify-self: end; }
+  .rp-bar .rp-exit { grid-column: 2; grid-row: 3; justify-self: end; display: none; }
+  .replaying .tl { height: 32vh; }
+}
 @media (max-width: 860px) {
   .hintbar { display: none; }
   .tl { flex: none; height: 62vh; }
@@ -1590,7 +1628,8 @@ function smoothScroll() {
 }
 function typing(e) {
   const t = e.target;
-  return t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+  // A slider (the replay scrubber) takes the page's keys: they do the same thing there.
+  return t && ((t.tagName === "INPUT" && t.type !== "range") || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
 }
 
 // ------------------------------------------------------------ theme
@@ -1642,7 +1681,8 @@ function route() {
   for (const a of document.querySelectorAll("[data-nav]")) {
     if (a.dataset.nav === section) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
-  if (parts[0] === "s" && parts[1]) return showSession(seq, parts[1], parts[2] || "", (query.get("where") || "").trim().slice(0, WHERE_MAX));
+  if (parts[0] === "s" && parts[1]) return showSession(seq, parts[1], parts[2] || "", (query.get("where") || "").trim().slice(0, WHERE_MAX),
+    /^\d{1,9}$/.test(query.get("step") || "") ? Number(query.get("step")) : 0);
   if (parts[0] === "experiments" && parts[1] && parts[2] === "vs" && parts[3]) return showCompare(seq, parts[1], parts[3]);
   if (parts[0] === "experiments" && parts[1]) return showExperiment(seq, parts[1]);
   if (parts[0] === "experiments") return showExperiments(seq);
@@ -1691,7 +1731,15 @@ const KEYMAP = [
   { scope: "session", id: "copy-step", keys: ["c"], label: "Copy step as JSON" },
   { scope: "session", id: "label-pass", keys: ["p"], label: "Label pass" },
   { scope: "session", id: "label-fail", keys: ["f"], label: "Label fail" },
+  { scope: "session", id: "replay", keys: ["R"], label: "Replay step by step", hint: true },
   { scope: "session", id: "back", keys: ["Esc"], alt: ["Escape"], label: "Back to the list" },
+  { scope: "replay", id: "rp-play", keys: ["Space"], alt: [" "], label: "Play or pause", hint: true },
+  { scope: "replay", id: "rp-next", keys: ["→", "j"], alt: ["ArrowRight", "j"], label: "Next step", hint: true },
+  { scope: "replay", id: "rp-prev", keys: ["←", "k"], alt: ["ArrowLeft", "k"], label: "Previous step" },
+  { scope: "replay", id: "rp-first", keys: ["Home"], label: "First step" },
+  { scope: "replay", id: "rp-last", keys: ["End"], label: "Last step" },
+  { scope: "replay", id: "rp-speed", keys: ["s"], label: "Change speed", hint: true },
+  { scope: "replay", id: "rp-exit", keys: ["Esc"], alt: ["Escape"], label: "Leave replay", hint: true },
   { scope: "experiments", id: "down", keys: ["j"], alt: ["ArrowDown"], label: "Next experiment" },
   { scope: "experiments", id: "up", keys: ["k"], alt: ["ArrowUp"], label: "Previous experiment" },
   { scope: "experiments", id: "open", keys: ["Enter"], label: "Open experiment" },
@@ -1710,7 +1758,7 @@ const KEYMAP = [
   { scope: "benchmark", id: "session", keys: ["o"], label: "Open the case's session" },
   { scope: "benchmark", id: "back", keys: ["Esc"], alt: ["Escape"], label: "Back to benchmarks" },
 ];
-const SCOPE_NAMES = { global: "Anywhere", sessions: "Sessions list", events: "Events list", session: "Session", experiments: "Experiments", experiment: "Experiment and compare", benchmarks: "Benchmarks", benchmark: "Benchmark" };
+const SCOPE_NAMES = { global: "Anywhere", sessions: "Sessions list", events: "Events list", session: "Session", replay: "Replay", experiments: "Experiments", experiment: "Experiment and compare", benchmarks: "Benchmarks", benchmark: "Benchmark" };
 let chordAt = 0;
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); openPalette(); return; }
@@ -1726,14 +1774,17 @@ document.addEventListener("keydown", (e) => {
   }
   chordAt = 0;
   if (e.key === "?") { e.preventDefault(); openHelp(); return; }
-  for (const k of KEYMAP) {
-    if (k.scope !== viewKeys.scope || k.chord) continue;
-    const keys = (k.alt || []).concat(k.keys.length === 1 ? k.keys : []);
-    if (!keys.includes(e.key)) continue;
-    const fn = viewKeys.actions[k.id];
-    if (!fn) continue;
-    if (fn(e) !== false) e.preventDefault();
-    return;
+  // A mode (replay) can sit on top of its view: its keys first, then the view's.
+  for (const scope of viewKeys.fallback ? [viewKeys.scope, viewKeys.fallback] : [viewKeys.scope]) {
+    for (const k of KEYMAP) {
+      if (k.scope !== scope || k.chord) continue;
+      const keys = (k.alt || []).concat(k.keys.length === 1 ? k.keys : []);
+      if (!keys.includes(e.key)) continue;
+      const fn = viewKeys.actions[k.id];
+      if (!fn) continue;
+      if (fn(e) !== false) e.preventDefault();
+      return;
+    }
   }
 });
 
@@ -1769,7 +1820,7 @@ overlay.addEventListener("keydown", (e) => {
 });
 function keyCaps(keys) { return keys.map((k) => h("kbd", null, k === "ArrowDown" ? "↓" : k === "ArrowUp" ? "↑" : k)); }
 function openHelp() {
-  const groups = ["global", viewKeys.scope].filter((s, i, a) => SCOPE_NAMES[s] && a.indexOf(s) === i);
+  const groups = ["global", viewKeys.scope, viewKeys.fallback].filter((s, i, a) => SCOPE_NAMES[s] && a.indexOf(s) === i);
   for (const s of Object.keys(SCOPE_NAMES)) if (!groups.includes(s)) groups.push(s);
   const d = h("div", { class: "dialog", role: "dialog", "aria-modal": "true", "aria-labelledby": "keys-h", tabindex: "-1" },
     h("div", { class: "dialog-head" }, h("h2", { id: "keys-h" }, "Keyboard shortcuts"), h("button", { class: "btn btn-sm btn-ghost", type: "button", onclick: closeOverlay }, "Close")),
@@ -3321,7 +3372,7 @@ const prefs = {
   set(k, v) { try { localStorage.setItem("csh-" + k, v ? "1" : "0"); } catch { /* private window */ } },
 };
 
-async function showSession(seq, id, eventId, where = "") {
+async function showSession(seq, id, eventId, where = "", linkStep = 0) {
   const view = h("section", { class: "session-view", "aria-label": "Session" });
   const keys = { scope: "session", actions: {}, palette: [] };
   view.append(h("div", { class: "detail-head" }, h("div", { class: "crumbs" }, h("a", { class: "back", href: listHref() }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), list.mode === "events" ? "Events" : "Sessions"))));
@@ -3571,8 +3622,11 @@ async function showSession(seq, id, eventId, where = "") {
   const queryNav = h("div", { class: "fail-nav query-nav", role: "group", "aria-label": "Query matches", hidden: true });
   const wfBtn = h("button", { class: "btn btn-sm btn-ghost wf-btn", type: "button", "aria-pressed": String(tl.classList.contains("wf-on")), "aria-keyshortcuts": "w", title: "Timing bars (w)", onclick: () => toggleWf() }, "Timing");
   const foldBtn = h("button", { class: "btn btn-sm btn-ghost", type: "button", "aria-keyshortcuts": "z", title: "Fold quiet steps (z)", onclick: () => toggleFolds() });
+  // Replay state; the replay section below drives it.
+  const rp = { on: false, index: null, n: 0, playing: false, speed: rpSpeedPref(), timer: 0, view: null, range: null, want: "", shown: "", busy: false, syncing: false, tab: "changes", file: "", from: 0, stepItems: null, lastPaneStep: 0 };
+  const rpBtn = h("button", { class: "btn btn-sm btn-ghost rp-toggle", type: "button", "aria-pressed": "false", "aria-keyshortcuts": "Shift+R", title: "Replay step by step (Shift+R)", onclick: () => (rp.on ? exitReplay() : enterReplay()) }, "Replay");
   const tools = h("div", { class: "tl-tools" }, head, failNav, derailNav, queryNav, h("span", { class: "spacer" }),
-    h("div", { class: "find" }, findInput, findCount), h("label", { class: "find-only" }, onlyBox, h("span", null, "Only matches")), foldBtn, wfBtn);
+    h("div", { class: "find" }, findInput, findCount), h("label", { class: "find-only" }, onlyBox, h("span", null, "Only matches")), rpBtn, foldBtn, wfBtn);
   const timeline = h("div", { class: "timeline" }, tl, map, tailPill);
   const narrow = window.matchMedia("(max-width: 860px)");
 
@@ -3741,9 +3795,13 @@ async function showSession(seq, id, eventId, where = "") {
     const el = rendered.get(r);
     if (el) { el.setAttribute("aria-selected", "true"); tl.setAttribute("aria-activedescendant", el.id); }
     if (typeof x === "number") {
-      renderPane(pane, items[x], session, ctx);
-      history.replaceState(null, "", sessionHref(session.id, items[x].id, where));
-    } else foldPane(x);
+      // Replaying: the replay drives the pane and the URL; a row picked by hand jumps the replay there.
+      if (rp.on) { if (!rp.syncing) rpFromItem(x); }
+      else {
+        renderPane(pane, items[x], session, ctx);
+        history.replaceState(null, "", sessionHref(session.id, items[x].id, where));
+      }
+    } else if (!rp.on) foldPane(x);
     renderTools();
     // Single-column layout: the detail sits below the step list, so a tap
     // brings it into view. Keyboard stepping (j/k) leaves the scroll alone.
@@ -3935,6 +3993,298 @@ async function showSession(seq, id, eventId, where = "") {
     }, () => { /* the matches are a convenience; the session still shows */ });
   }
 
+  // ---- replay: the session as numbered steps (/replay), played back with the
+  // files the agent touched as of each step. The step list follows along.
+  const replayPath = "/api/sessions/" + encodeURIComponent(id) + "/replay";
+  const RP_MIN_MS = 400, RP_CAP_MS = 3000;
+  const RP_KIND = { prompt: "Prompt", reply: "Reply", tool: "Tool", shell: "Shell", edit: "Edit", read: "Read", subagent: "Subagent", compact: "Compaction", error: "Error", change: "File change", test: "Tests" };
+  const rpPrev = h("button", { class: "btn btn-sm", type: "button", "aria-label": "Previous step", title: "Previous step (←)", onclick: () => rpGo(rp.n - 1) }, "‹");
+  const rpNext = h("button", { class: "btn btn-sm", type: "button", "aria-label": "Next step", title: "Next step (→)", onclick: () => rpGo(rp.n + 1) }, "›");
+  const rpPlay = h("button", { class: "btn btn-sm rp-play", type: "button", "aria-keyshortcuts": "Space", title: "Play (Space)", onclick: () => rpToggle() }, "Play");
+  const rpSpeed = h("div", { class: "seg", role: "group", "aria-label": "Speed" });
+  const rpScrub = h("input", { class: "rp-scrub", type: "range", min: "1", max: "1", step: "1", value: "1", "aria-label": "Step" });
+  const rpMarks = h("div", { class: "rp-marks", "aria-hidden": "true" });
+  const rpPos = h("span", { class: "meta rp-pos", "aria-live": "off" });
+  const rpExit = h("button", { class: "btn btn-sm btn-ghost rp-exit", type: "button", title: "Leave replay (Esc)", onclick: () => exitReplay() }, "Done");
+  const rpBar = h("div", { class: "rp-bar", role: "toolbar", "aria-label": "Replay", hidden: true },
+    h("div", { class: "rp-ctl" }, rpPrev, rpPlay, rpNext, rpSpeed), h("div", { class: "rp-track" }, rpMarks, rpScrub), rpPos, rpExit);
+  rpScrub.addEventListener("input", () => rpGo(Number(rpScrub.value)));
+  function rpSpeedPref() { try { const v = Number(localStorage.getItem("csh-rpspeed")); return v === 4 || v === 16 ? v : 1; } catch { return 1; } }
+  function renderSpeed() {
+    rpSpeed.replaceChildren(...[1, 4, 16].map((x) => h("button", { type: "button", "aria-pressed": String(x === rp.speed), title: x === 1 ? "Real time, long pauses cut to 3 s" : x + "× faster", onclick: () => setSpeed(x) }, x + "×")));
+  }
+  function setSpeed(x) {
+    rp.speed = x;
+    try { localStorage.setItem("csh-rpspeed", String(x)); } catch { /* private window */ }
+    renderSpeed();
+    if (rp.playing) rpSchedule();
+  }
+  const rpSteps = () => (rp.index ? rp.index.steps : []);
+  const replayHref = (n) => sessionHref(session.id) + qs({ where, step: n });
+  /** Timeline item of each step (-1 while its event is not loaded); rebuilt when the timeline is. */
+  function stepItems() {
+    if (rp.stepItems && rp.stepItems.items === items) return rp.stepItems.at;
+    const pos = new Map(items.map((it, i) => [it, i]));
+    const at = rpSteps().map((st) => { const it = byEvent.get(st.eventId); return it ? pos.get(it) ?? -1 : -1; });
+    rp.stepItems = { items, at };
+    return at;
+  }
+  function renderMarks() {
+    const steps = rpSteps();
+    const n = Math.max(1, steps.length - 1);
+    const marks = [];
+    // Edits get a mark only when there are few enough to tell apart; failures always do.
+    const edits = steps.filter((st) => st.files && st.files.some((f) => f.op !== "read")).length;
+    const markEdits = edits <= 200;
+    for (const st of steps) {
+      const fail = st.ok === false;
+      const edit = markEdits && st.files && st.files.some((f) => f.op !== "read");
+      if (!fail && !edit) continue;
+      if (marks.length > 1500) break;
+      const mk = h("i", { class: fail ? "f" : "" });
+      mk.style.left = ((st.n - 1) / n) * 100 + "%";
+      marks.push(mk);
+    }
+    rpMarks.replaceChildren(...marks);
+  }
+  function renderPos() {
+    const steps = rpSteps();
+    const st = steps[rp.n - 1];
+    rpPos.textContent = st ? fmtNum(rp.n) + " / " + fmtNum(steps.length) + " · " + fmtClock(st.ts - session.startedAt) : "";
+    rpPrev.disabled = rp.n <= 1;
+    rpNext.disabled = rp.n >= steps.length;
+    rpPlay.textContent = rp.playing ? "Pause" : "Play";
+    rpPlay.title = (rp.playing ? "Pause" : "Play") + " (Space)";
+  }
+  async function enterReplay(n) {
+    if (!rp.on) {
+      rp.on = true;
+      view.classList.add("replaying");
+      rpBtn.setAttribute("aria-pressed", "true");
+      rpBar.hidden = false;
+      keys.scope = "replay";
+      keys.fallback = "session";
+      renderHint();
+      renderSpeed();
+      renderPos();
+    }
+    if (!rp.index) {
+      pane.replaceChildren(h("div", { class: "pane-top" }, h("p", { class: "meta", "aria-busy": "true" }, "Loading the replay…")));
+      let index;
+      try { index = await api(replayPath, null, true); } catch (e) {
+        if (!current(seq) || !rp.on) return;
+        exitReplay();
+        toast("Could not load the replay: " + e.message);
+        return;
+      }
+      if (!current(seq) || !rp.on) return;
+      rp.index = index;
+      rpScrub.max = String(Math.max(1, index.steps.length));
+      renderMarks();
+    }
+    const total = rpSteps().length;
+    if (!total) {
+      renderPos();
+      pane.replaceChildren(h("h2", { class: "pane-title" }, "Nothing to replay"), h("p", { class: "note" }, "This session has no prompts, replies or tool calls."));
+      return;
+    }
+    if (n === undefined) {
+      // Start from the step under the timeline selection.
+      const at = stepItems();
+      let k = 0;
+      for (let i = 0; i < at.length; i++) if (at[i] >= 0 && at[i] <= activeItem) k = i;
+      n = k + 1;
+    }
+    announce("Replay, step " + Math.min(n, total) + " of " + total + ". Space plays, arrows step, Escape leaves.");
+    rpGo(n);
+  }
+  function exitReplay() {
+    rpPause();
+    rp.on = false;
+    view.classList.remove("replaying");
+    rpBtn.setAttribute("aria-pressed", "false");
+    rpBar.hidden = true;
+    keys.scope = "session";
+    delete keys.fallback;
+    renderHint();
+    const x = rows[activeRow];
+    if (typeof x === "number") {
+      renderPane(pane, items[x], session, ctx);
+      history.replaceState(null, "", sessionHref(session.id, items[x].id, where));
+    } else history.replaceState(null, "", sessionHref(session.id, "", where));
+  }
+  function rpGo(n) {
+    const steps = rpSteps();
+    if (!rp.on || !steps.length) return;
+    n = Math.max(1, Math.min(steps.length, Math.round(n) || 1));
+    rp.n = n;
+    rpScrub.value = String(n);
+    renderPos();
+    const i = stepItems()[n - 1];
+    if (i >= 0 && i !== activeItem) { rp.syncing = true; try { selectItem(i, true); } finally { rp.syncing = false; } }
+    history.replaceState(null, "", replayHref(n));
+    rpFetch();
+    if (rp.playing) rpSchedule();
+  }
+  /** A row picked by hand: the replay jumps to the last step at or before it. */
+  function rpFromItem(x) {
+    const at = stepItems();
+    let k = -1;
+    for (let i = 0; i < at.length; i++) if (at[i] >= 0 && at[i] <= x) k = i;
+    if (k >= 0 && k + 1 !== rp.n) rpGo(k + 1);
+  }
+  function rpToggle() { if (rp.playing) rpPause(); else rpStart(); }
+  function rpStart() {
+    const total = rpSteps().length;
+    if (!total) return;
+    rp.playing = true;
+    if (rp.n >= total) rpGo(1); else { renderPos(); rpSchedule(); }
+  }
+  function rpPause() {
+    rp.playing = false;
+    clearTimeout(rp.timer);
+    rp.timer = 0;
+    renderPos();
+  }
+  // The real gap to the next step, at least RP_MIN_MS and at most RP_CAP_MS, divided by the speed.
+  function rpSchedule() {
+    clearTimeout(rp.timer);
+    const steps = rpSteps();
+    if (!rp.playing) return;
+    if (rp.n >= steps.length) { rpPause(); announce("Replay finished"); return; }
+    const gap = Math.max(0, steps[rp.n].ts - steps[rp.n - 1].ts);
+    const wait = Math.max(RP_MIN_MS, Math.min(RP_CAP_MS, gap)) / rp.speed;
+    rp.timer = setTimeout(() => { if (current(seq) && rp.playing) rpGo(rp.n + 1); }, wait);
+  }
+  /** Fetch what the pane shows for rp.n. While one request runs, only the newest wish waits behind it. */
+  async function rpFetch(force) {
+    if (force) rp.shown = "";
+    rp.want = rp.n + "|" + rp.tab + "|" + rp.file + "|" + rp.from;
+    if (rp.busy) return;
+    rp.busy = true;
+    try {
+      while (rp.on && rp.want !== rp.shown && current(seq)) {
+        const want = rp.want;
+        const n = rp.n;
+        const tab = rp.tab;
+        const from = Math.min(rp.from || 1, n);
+        try {
+          const [stepView, range] = await Promise.all([
+            api(replayPath + qs({ step: n, file: tab === "file" && rp.file ? rp.file : undefined }), null, true),
+            tab === "range" ? api(replayPath + qs({ from, to: n }), null, true) : null,
+          ]);
+          if (!current(seq) || !rp.on) return;
+          rp.view = stepView;
+          rp.range = range;
+          rp.shown = want;
+          if (rp.want === want) renderReplayPane();
+        } catch (e) {
+          if (!current(seq) || !rp.on) return;
+          rp.shown = want;
+          pane.replaceChildren(errorPanel(e, () => rpFetch(true)));
+        }
+      }
+    } finally { rp.busy = false; }
+  }
+  const RP_MARK = { added: "A", modified: "M", deleted: "D", read: "R" };
+  const RP_STATUS = { added: "added", modified: "modified", deleted: "deleted", read: "read only" };
+  function changeNodes(c, inRange) {
+    const out = [h("div", { class: "rp-change-head" }, h("b", null, h("bdi", null, c.path)), h("span", { class: "meta" }, c.op === "add" ? "added" : c.op === "delete" ? "deleted" : "modified"),
+      inRange ? h("span", { class: "meta" }, (c.steps.length === 1 ? "step " : "steps ") + c.steps.join(", ")) : null)];
+    if (c.resynced) out.push(h("p", { class: "note" }, "A read here showed different content than the replay had, so something outside the agent's edit tools changed the file. The diff is from the old content to what the read showed."));
+    if (c.diff) out.push(clipped(c.diff, (x) => diffBlock(x), { lines: 600 }));
+    else if (!c.why) out.push(h("p", { class: "note" }, "No diff was recorded for this change."));
+    if (c.diffTruncated) out.push(h("p", { class: "note" }, "The diff is cut short."));
+    if (!c.exact && c.diff) out.push(h("p", { class: "note" }, inRange ? "The content at one end is unknown, so these are the steps' own diffs, one after another." : "This is the diff the agent recorded, so its line numbers may not match the file."));
+    if (c.why) out.push(h("p", { class: "rp-unknown" }, "Content unknown: " + c.why));
+    return h("div", { class: "section" }, out);
+  }
+  function renderReplayPane() {
+    const v = rp.view;
+    if (!v) return;
+    const st = v.step;
+    const d = v.detail || {};
+    const tone = st.ok === false ? "fail" : st.ok === true ? "pass" : "muted";
+    const nodes = [];
+    nodes.push(h("div", { class: "pane-top" },
+      h("p", { class: "meta truncate" }, "Step " + fmtNum(st.n) + " of " + fmtNum(v.steps) + " · " + fmtClock(st.ts - session.startedAt) + " into the session"),
+      h("div", { class: "pane-tools" },
+        h("button", { class: "btn btn-sm to-steps", type: "button", onclick: ctx.backToSteps }, h("span", { "aria-hidden": "true" }, "↑"), "Steps"),
+        copyBtn(() => location.origin + location.pathname + replayHref(st.n), "Copy a link to this step", "step link", "Copy link"))));
+    nodes.push(h("h2", { class: "pane-title" }, h("span", { class: "dot tone-" + tone, "aria-hidden": "true" }), h("span", { class: "tool" }, st.tool ? toolLabel(st.tool) : RP_KIND[st.kind] || st.kind),
+      st.kind === "prompt" || st.kind === "reply" ? null : h("span", { class: "arg" }, clip(st.label.replace(/^\$ /, ""), 240)),
+      st.durationMs !== undefined ? h("span", { class: "meta" }, fmtDuration(st.durationMs)) : null));
+    if (d.shell) {
+      const sh = d.shell;
+      const facts = [sh.exitCode !== undefined ? "exit " + sh.exitCode : sh.ok === false ? "failed" : sh.ok === true ? "ok" : "no result recorded", sh.durationMs !== undefined ? fmtDuration(sh.durationMs) : ""].filter(Boolean).join(" · ");
+      nodes.push(section("command", h("div", null, codeBlock("$ " + sh.command), h("p", { class: "meta" + (sh.ok === false ? " tone-fail" : "") }, facts))));
+      if (sh.output) nodes.push(section("output at this step", clipped(sh.output, (x) => codeBlock(x), { lines: 200 })));
+      if (sh.outputBlob) nodes.push(blobView({ name: "full output", sha: sh.outputBlob }));
+    } else if (d.text !== undefined) {
+      nodes.push(section(st.kind === "prompt" ? "prompt" : st.kind === "reply" ? "reply" : "detail", clipped(d.text, textBlock, { lines: 80 })));
+    } else {
+      if (d.input !== undefined && st.kind !== "edit") nodes.push(section("input", clipped(json(d.input), (x) => codeBlock(x), { lines: 60 })));
+      if (d.output && (st.kind !== "edit" || st.ok === false)) nodes.push(section(st.ok === false ? "error" : "output", clipped(d.output, (x) => smartBlock(x), { lines: 80 })));
+    }
+    // Files touched so far; picking one opens it as of this step. A long list scrolls in its box.
+    let fileList = null;
+    if (v.tree.length) {
+      nodes.push(section("files as of this step", fileList = h("ul", { class: "rp-files" }, v.tree.map((f) => h("li", { class: f.here ? "here" : "" },
+        h("button", { type: "button", "aria-pressed": String(rp.tab === "file" && rp.file === f.path), title: f.path + ": " + RP_STATUS[f.status] + (f.edits ? ", " + plural(f.edits, "change") : ""),
+          onclick: () => { rp.tab = "file"; rp.file = f.path; rpFetch(true); } },
+          h("span", { class: "st-mark " + f.status, "aria-hidden": "true" }, RP_MARK[f.status]), h("span", { class: "p" }, h("bdi", null, f.path)),
+          h("span", { class: "meta" }, f.here ? "this step" : "step " + f.lastStep)))))));
+    }
+    const tab = (k, label) => h("button", { type: "button", "aria-pressed": String(rp.tab === k), onclick: () => {
+      rp.tab = k;
+      if (k === "file" && !rp.file) { const f = v.tree.find((x) => x.here && x.status !== "read") || v.tree.find((x) => x.here) || v.tree[0]; rp.file = f ? f.path : ""; }
+      if (k === "range" && !rp.from) rp.from = 1;
+      rpFetch(true);
+    } }, label);
+    nodes.push(h("div", { class: "rp-tabs" }, h("div", { class: "seg", role: "group", "aria-label": "Show" },
+      tab("changes", "This step" + (v.changes.length ? " · " + v.changes.length : "")), tab("file", "File"), tab("range", "Since step…"))));
+    if (rp.tab === "changes") {
+      if (!v.changes.length) nodes.push(h("p", { class: "note" }, "This step changed no files."));
+      for (const c of v.changes) nodes.push(changeNodes(c, false));
+    } else if (rp.tab === "file") {
+      const f = v.file;
+      const head = (extra) => h("div", { class: "rp-change-head" }, h("b", null, h("bdi", null, f.path)), extra ? h("span", { class: "meta" }, extra) : null);
+      if (!rp.file || !f) nodes.push(h("p", { class: "note" }, v.tree.length ? "Pick a file above." : "No file has been touched yet."));
+      else if (f.content === undefined && f.exists !== false) nodes.push(head(), h("p", { class: "rp-unknown" }, "Content unknown at this step. " + (f.why || "")));
+      else if (f.exists === false) nodes.push(head(), h("p", { class: "note" }, f.changedAt ? "Deleted at step " + f.changedAt + "." : "The file does not exist at this step."));
+      else {
+        nodes.push(head(f.changedAt ? "last changed at step " + f.changedAt : "not changed yet"));
+        nodes.push(clipped(f.content, (x) => codeBlock(x), { lines: 2000 }));
+        if (f.contentTruncated) nodes.push(h("p", { class: "note" }, "The file is cut short here."));
+        if (f.approxEol) nodes.push(h("p", { class: "note" }, "Rebuilt from a numbered read, so whether the file ends with a newline is a guess."));
+      }
+    } else {
+      const fromIn = h("input", { class: "field", type: "number", min: "1", max: String(st.n), value: String(Math.min(rp.from || 1, st.n)), "aria-label": "First step" });
+      const go = () => { rp.from = Math.max(1, Math.min(st.n, Math.round(Number(fromIn.value)) || 1)); rpFetch(true); };
+      fromIn.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } });
+      nodes.push(h("div", { class: "rp-range" }, h("span", null, "Changes from step"), fromIn, h("span", null, "through step " + fmtNum(st.n)), h("button", { class: "btn btn-sm", type: "button", onclick: go }, "Show")));
+      const r = rp.range;
+      if (r && r.to === st.n) {
+        if (!r.files.length && !r.unchanged.length) nodes.push(h("p", { class: "note" }, "No file changed in these steps."));
+        for (const f of r.files) nodes.push(changeNodes(f, true));
+        if (r.unchanged.length) nodes.push(h("p", { class: "note" }, "Changed and then put back: " + r.unchanged.join(", ")));
+      }
+    }
+    const keep = pane.scrollTop;
+    pane.replaceChildren(...nodes);
+    // Switching tabs or files keeps the reader's place; a new step starts at the top.
+    pane.scrollTop = rp.lastPaneStep === st.n ? keep : 0;
+    rp.lastPaneStep = st.n;
+    const here = fileList && (fileList.querySelector("[aria-pressed=true]") || fileList.querySelector(".here"));
+    if (here && fileList.scrollHeight > fileList.clientHeight) fileList.scrollTop += here.getBoundingClientRect().top - fileList.getBoundingClientRect().top - fileList.clientHeight / 3;
+  }
+  function renderHint() {
+    const scope = rp.on ? "replay" : "session";
+    hint.replaceChildren(
+      ...KEYMAP.filter((k) => k.scope === scope && k.hint).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.keys), k.id === "down" ? "move" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase())),
+      h("span", { class: "spacer" }), h("span", null, keyCaps(["?"]), "all shortcuts"));
+  }
+
   // ---- keys
   keys.actions = {
     down: () => { selectRow(activeRow + 1); tl.focus({ preventScroll: true }); },
@@ -3949,11 +4299,19 @@ async function showSession(seq, id, eventId, where = "") {
     "open-fold": () => { const x = rows[activeRow]; if (typeof x === "number") return false; ctx.openFold(x.key); selectRow(rowOf[x.from]); },
     folds: () => toggleFolds(),
     waterfall: () => toggleWf(),
-    raw: () => { ctx.raw = !ctx.raw; const x = rows[activeRow]; if (typeof x === "number") renderPane(pane, items[x], session, ctx); },
+    raw: () => { if (rp.on) return false; ctx.raw = !ctx.raw; const x = rows[activeRow]; if (typeof x === "number") renderPane(pane, items[x], session, ctx); },
     "copy-step": () => { const x = rows[activeRow]; if (typeof x !== "number") return false; const it = items[x]; copy(JSON.stringify([it.start, it.end, it.ev].filter(Boolean), null, 2), "step JSON"); },
     "label-pass": () => { const b = $(".btn-label.is-pass", view); if (b) b.click(); },
     "label-fail": () => { const b = $(".btn-label.is-fail", view); if (b) b.click(); },
     back: () => { location.hash = listHref(); },
+    replay: () => { enterReplay(); },
+    "rp-play": () => rpToggle(),
+    "rp-next": () => rpGo(rp.n + 1),
+    "rp-prev": () => rpGo(rp.n - 1),
+    "rp-first": () => rpGo(1),
+    "rp-last": () => rpGo(rpSteps().length),
+    "rp-speed": () => setSpeed(rp.speed === 1 ? 4 : rp.speed === 4 ? 16 : 1),
+    "rp-exit": () => { exitReplay(); tl.focus({ preventScroll: true }); },
   };
   keys.palette = [
     { group: "Session", label: "Next failure", hint: "]", run: () => jumpFail(1) },
@@ -3961,21 +4319,23 @@ async function showSession(seq, id, eventId, where = "") {
     { group: "Session", label: "Copy session id", run: () => copy(session.id, "session id") },
     { group: "Session", label: "Copy eval command", run: () => copy("coding.sh eval new " + session.id, "eval command") },
     { group: "Session", label: "Show or hide timing bars", hint: "w", run: () => toggleWf() },
+    { group: "Session", label: "Replay step by step", hint: "R", run: () => enterReplay() },
   ];
   // Clicks inside the step list keep keyboard focus on it.
   tl.addEventListener("mousedown", () => { requestAnimationFrame(() => { if (!typing({ target: document.activeElement })) tl.focus({ preventScroll: true }); }); });
 
-  const hint = h("div", { class: "hintbar", "aria-hidden": "true" },
-    KEYMAP.filter((k) => k.scope === "session" && k.hint).map((k) => h("span", null, keyCaps(k.id === "down" ? ["j", "k"] : k.keys), k.id === "down" ? "move" : k.label.replace(/^Show or hide |^Expand or fold /, "").toLowerCase())),
-    h("span", { class: "spacer" }), h("span", null, keyCaps(["?"]), "all shortcuts"));
+  const hint = h("div", { class: "hintbar", "aria-hidden": "true" });
+  renderHint();
   const pickSpan = (spanId) => {
     const i = items.findIndex((it) => ((it.ev || it.start || it.end || {}).spanId) === spanId);
     if (i >= 0) { selectItem(i, true); tl.focus({ preventScroll: true }); }
   };
-  view.lastChild.replaceWith(...[durableStrip(session, pickSpan)].filter(Boolean), tools, more, h("div", { class: "session-grid" }, timeline, pane), hint);
+  view.lastChild.replaceWith(...[durableStrip(session, pickSpan)].filter(Boolean), tools, rpBar, more, h("div", { class: "session-grid" }, timeline, pane), hint);
   rebuildRows();
   selectItem(activeItem, !!eventId);
   if (!eventId) tl.scrollTop = 0, renderWindow(true);
+  // A link ending in ?step=N opens the replay at that step.
+  if (linkStep) enterReplay(linkStep);
   if (hasMore) loadRest(); else loadOutline();
   announce("Session loaded, " + plural(items.length, "step") + (failIdx.length ? ", " + plural(failIdx.length, "failure") : "") + (hasMore ? ", more events available" : ""));
   const onResize = () => {
@@ -3983,7 +4343,7 @@ async function showSession(seq, id, eventId, where = "") {
     renderWindow(true); renderMap();
   };
   window.addEventListener("resize", onResize);
-  cleanup = () => { clearInterval(tailTimer); window.removeEventListener("resize", onResize); };
+  cleanup = () => { clearInterval(tailTimer); clearTimeout(rp.timer); rp.playing = false; rp.on = false; window.removeEventListener("resize", onResize); };
 }
 
 function latencyText(lat) {

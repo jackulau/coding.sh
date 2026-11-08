@@ -90,6 +90,7 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/sessions/{id}`](#get-apisessionsid) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/events`](#get-apisessionsidevents) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/outline`](#get-apisessionsidoutline) | read key or basic auth | serve, ui |
+| GET | [`/api/sessions/{id}/replay`](#get-apisessionsidreplay) | read key or basic auth | serve, ui |
 | GET | [`/api/blobs/{sha256}`](#get-apiblobssha256) | read key or basic auth | serve, ui |
 | GET | [`/api/search`](#get-apisearch) | read key or basic auth | serve, ui |
 | GET | [`/api/stats`](#get-apistats) | read key or basic auth | serve, ui |
@@ -533,6 +534,68 @@ curl -sS "$CSH/api/sessions/team%2Fchat-1/outline" -H "Authorization: Bearer $RE
   "events": 3600
 }
 ```
+
+### `GET /api/sessions/{id}/replay`
+
+The session as numbered steps, and the files the agent touched as of any step, rebuilt from its own
+tool calls. A step is a prompt, a reply, a tool call (with the file changes and test results it
+produced), a subagent start, a compaction, an error, or a file change no tool call claims.
+
+Without parameters it returns the step list. `steps[].eventId` is the step's first event, and
+`files` names the paths each step wrote, deleted or fully read (relative to `root` when inside it).
+`baseline` is `snapshot` when `coding.sh ui` can read the session's start snapshot, else `none`.
+
+```sh
+curl -sS "$CSH/api/sessions/cd0185b0-305a-4df2-92fa-6fc6caffdb55/replay" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{
+  "sessionId": "cd0185b0-305a-4df2-92fa-6fc6caffdb55", "root": "/work/demo", "baseline": "none",
+  "steps": [
+    {"n": 1, "ts": 1794084489400, "kind": "prompt", "label": "Tidy notes.txt and greet.", "eventId": "0c1f…"},
+    {"n": 2, "ts": 1794084489611, "kind": "read", "label": "Read notes.txt", "eventId": "5e2a…", "tool": "Read",
+     "ok": true, "durationMs": 38, "files": [{"path": "notes.txt", "op": "read"}]},
+    {"n": 4, "ts": 1794084489801, "kind": "shell", "label": "$ sed -i 's/alpha/beta/' notes.txt", "eventId": "9b7d…",
+     "tool": "Bash", "ok": true, "durationMs": 171, "files": [{"path": "notes.txt", "op": "modify"}]}
+  ],
+  "files": ["gen.txt", "notes.txt", "out.txt", "sub/inner.txt"]
+}
+```
+
+`step=N` returns what step N did: `detail` (the prompt or reply text, the tool input, or for a shell
+call `shell` with `command`, `exitCode` when known, `durationMs` and `output`), `changes` (one entry
+per file with a unified `diff`), and `tree` (every file touched up to step N, with `status` `added`,
+`modified`, `deleted` or `read`). Add `file=<path>` for that file's content as of step N.
+
+`from=A&to=B` returns what steps A through B changed together, one diff per file.
+
+A diff with `exact: true` compares the rebuilt file before and after, with real line numbers. When
+the content on one side is unknown, `exact` is `false`, the diff is the change as the agent
+recorded it, and `why` says what is missing, for example `Step 3 patched it before any step showed
+its content (no earlier read, full write or start snapshot).` A file's content is unknown until a
+step writes or fully reads it, or the start snapshot has it; an edit that does not match the
+rebuilt content makes it unknown again.
+
+```sh
+curl -sS "$CSH/api/sessions/cd0185b0-305a-4df2-92fa-6fc6caffdb55/replay?step=4&file=notes.txt" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{
+  "sessionId": "cd0185b0-305a-4df2-92fa-6fc6caffdb55", "steps": 15,
+  "step": {"n": 4, "kind": "shell", "label": "$ sed -i 's/alpha/beta/' notes.txt", "tool": "Bash", "ok": true, "durationMs": 171},
+  "detail": {"input": {"command": "sed -i 's/alpha/beta/' notes.txt"},
+             "shell": {"command": "sed -i 's/alpha/beta/' notes.txt", "ok": true, "durationMs": 171, "output": "…"}},
+  "changes": [{"path": "notes.txt", "op": "modify", "exact": true,
+               "diff": "--- a/notes.txt\n+++ b/notes.txt\n@@ -1,2 +1,2 @@\n-alpha\n+beta\n bravo\n"}],
+  "tree": [{"path": "notes.txt", "status": "modified", "edits": 1, "lastStep": 4, "here": true}],
+  "file": {"path": "notes.txt", "exists": true, "content": "beta\nbravo\n", "changedAt": 4}
+}
+```
+
+A step past the last one gets 400. File content is cut at 1 MiB (`contentTruncated`) and a diff at
+512 KB (`diffTruncated`).
 
 ### `GET /api/blobs/{sha256}`
 
