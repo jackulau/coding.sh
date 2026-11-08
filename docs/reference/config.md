@@ -184,6 +184,19 @@ Which harness lines an edit may not delete, reword or relax (`coding.sh refine c
 protect = ["^Use pnpm", "staging"]
 ```
 
+## `[proxy]`
+
+Read by `coding.sh proxy` and `coding.sh init --proxy`. Flags on `coding.sh proxy` win over these. See
+[Capture with the proxy](../how-to/capture-with-proxy.md).
+
+| Key | Default | What |
+|---|---|---|
+| `port` | `4320` | Port the proxy listens on, and the one `init --proxy` points agents at. |
+| `host` | `127.0.0.1` | Interface to bind. |
+| `anthropic_upstream` | `https://api.anthropic.com` | Where Anthropic API calls go: a gateway, or the base URL an agent used before. |
+| `openai_upstream` | `https://api.openai.com` | Where OpenAI API calls go. |
+| `chatgpt_upstream` | `https://chatgpt.com/backend-api/codex` | Where Codex calls signed in with ChatGPT go. |
+
 ## `[serve]`
 
 Read only by `coding.sh serve`. Every key has an environment variable, which wins over the file.
@@ -231,6 +244,7 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 |---|---|
 | `CODING_SH_DISABLE=1` | The hook reads its input and writes nothing. Set it in an agent's environment to pause capture. |
 | `CODING_SH_NO_AUTO_INGEST=1` | The hook does not start a background ingest when a session ends. |
+| `CODING_SH_NO_PROXY_AUTOSTART=1` | The hook does not restart a stopped `coding.sh proxy` when a session starts (it does only after `init --proxy`). |
 | `CODING_SH_ECHO_CONTINUE=1` | The hook prints `{"continue":true}`, for agents that need a JSON reply. `init` sets this up where needed. |
 | `CODING_SH_HOOK_SOURCE` | Path of the `hook.mjs` that `init` copies into `~/.coding.sh/bin`. |
 | `CODING_SH_CAPTURE_MODE` | `coding.sh serve` and the SDKs: `full` or `metadata`. |

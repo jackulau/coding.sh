@@ -6,6 +6,8 @@
 // nothing; --diff adds every edit as a diff. --no-mcp skips
 // the MCP registration. --remote <url> --key <ingest key> also adds an http sink
 // that sends new sessions to a team's `coding.sh serve` (see ../remote.ts).
+// --proxy also points Claude Code and Codex at the local model API proxy
+// (src/proxy/install.ts) and starts it in the background.
 // Ends with a few lines: what was set up, how to open the viewer, and the docs URL.
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -14,6 +16,8 @@ import { defaultConfigToml } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
 import type { Adapter, FileChange, McpServerSpec } from "../../core/types.ts";
 import { mcpLaunchSpec, runningCli } from "../../mcp/launch.ts";
+import { applyProxyInstall, isProxyAgent, planProxyInstall } from "../../proxy/install.ts";
+import { proxySettings } from "../../proxy/state.ts";
 import { suggest, UsageError } from "../args.ts";
 import { changeJson, printChanges, shortPath } from "../changes.ts";
 import { list, requireConsent, str } from "../common.ts";
@@ -59,6 +63,10 @@ interface AgentPlan {
   skipped?: boolean;
   /** Undefined when the agent has no MCP support, or MCP is off (--no-mcp, project scope). */
   mcp?: Part;
+  /** With --proxy: routing the agent's model API through the local proxy. */
+  proxy?: Part;
+  /** With --proxy, for a named agent init can't route (it reads `coding.sh proxy env` instead). */
+  proxyUnsupported?: boolean;
 }
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -117,6 +125,8 @@ function planBlockers(pl: AgentPlan, env: NodeJS.ProcessEnv, cwd: string): Block
   const out: Blocker[] = [];
   if (pl.hooks.error) out.push({ text: `can't install hooks: ${pl.hooks.error}`, fatal: true });
   if (pl.mcp?.error) out.push({ text: `can't register the MCP server: ${pl.mcp.error}`, fatal: true });
+  if (pl.proxy?.error) out.push({ text: `can't route through the proxy: ${pl.proxy.error}`, fatal: true });
+  if (pl.proxyUnsupported) out.push({ text: "init --proxy can't route this agent; point it at the variables from coding.sh proxy env", fatal: false });
   if (!pl.installed) out.push({ text: `${pl.adapter.displayName} is not installed on this machine; its hooks fire once it is`, fatal: false });
   if (pl.otherScope) {
     const where = `${pl.otherScope.scope} scope (${pl.otherScope.files.map((f) => shortPath(f, env, cwd)).join(", ")})`;
@@ -136,7 +146,11 @@ function planBlockers(pl: AgentPlan, env: NodeJS.ProcessEnv, cwd: string): Block
  */
 function renderPlan(out: Output, plans: AgentPlan[], own: FileChange[], scope: string, env: NodeJS.ProcessEnv, cwd: string, emit: (line: string) => void, stream: "out" | "err"): void {
   type Row = [FileChange, string];
-  const rowsOf = (pl: AgentPlan): Row[] => [...pl.hooks.changes.map((ch): Row => [ch, "hooks"]), ...(pl.mcp?.changes ?? []).map((ch): Row => [ch, "MCP server"])];
+  const rowsOf = (pl: AgentPlan): Row[] => [
+    ...pl.hooks.changes.map((ch): Row => [ch, "hooks"]),
+    ...(pl.mcp?.changes ?? []).map((ch): Row => [ch, "MCP server"]),
+    ...(pl.proxy?.changes ?? []).map((ch): Row => [ch, "proxy"]),
+  ];
   // Align the "hooks"/"MCP server" column over the agent rows (coding.sh's own files have none).
   const width = Math.max(0, ...plans.flatMap(rowsOf).map(([ch]) => shortPath(ch.path, env, cwd).length));
   const file = ([ch, what]: Row) => `    ${ch.action.padEnd(8)}${what ? `${shortPath(ch.path, env, cwd).padEnd(width)}  ${what}` : shortPath(ch.path, env, cwd)}`;
@@ -144,7 +158,7 @@ function renderPlan(out: Output, plans: AgentPlan[], own: FileChange[], scope: s
     emit(`  ${out.style(pl.adapter.displayName, "bold", stream)} (${scope} scope)`);
     const rows = rowsOf(pl);
     for (const r of rows) emit(file(r));
-    if (!rows.length && !pl.hooks.error && !pl.mcp?.error && !pl.skipped) emit(pl.adapter.tail ? "    no hooks needed; imports from its store" : "    already set up");
+    if (!rows.length && !pl.hooks.error && !pl.mcp?.error && !pl.proxy?.error && !pl.skipped) emit(pl.adapter.tail ? "    no hooks needed; imports from its store" : "    already set up");
     for (const b of planBlockers(pl, env, cwd)) emit(`    ${b.fatal ? out.style("✗", "red", stream) : out.style("!", "yellow", stream)} ${b.text}`);
   }
   if (own.length) {
@@ -173,6 +187,10 @@ export async function run(c: CommandContext): Promise<number> {
   // MCP servers are registered per user; project scope stays hooks-only.
   const withMcp = c.flags.mcp !== false && scope === "user";
   const force = c.flags.force === true;
+  const withProxy = c.flags.proxy === true;
+  if (withProxy && scope === "project") throw new UsageError("--proxy edits each agent's user config; drop --scope project", { reason: "invalid_argument" });
+  // The URL agents get: always loopback, whatever address the proxy listens on.
+  const proxyUrl = `http://127.0.0.1:${proxySettings(env).port}`;
   const p = paths(env);
   const hookCommand = p.hook;
   // --remote: check the server takes the key before planning anything, so a typo writes nothing.
@@ -219,6 +237,10 @@ export async function run(c: CommandContext): Promise<number> {
       }
     }
     if (withMcp && adapter.installMcp) pl.mcp = await plan(() => adapter.installMcp!({ server, dryRun: true }));
+    if (withProxy && isProxyAgent(adapter.id)) {
+      const id = adapter.id;
+      pl.proxy = await plan(async () => [planProxyInstall(id, { url: proxyUrl, env, force })].filter((x): x is FileChange => x !== undefined));
+    } else if (withProxy && named.includes(adapter.id)) pl.proxyUnsupported = true;
     plans.push(pl);
   }
 
@@ -242,10 +264,10 @@ export async function run(c: CommandContext): Promise<number> {
     }
   }
   const own = [hookChange, configChange].filter((x): x is FileChange => x !== undefined);
-  const agentChanges = (pl: AgentPlan) => [...pl.hooks.changes, ...(pl.mcp?.changes ?? [])];
+  const agentChanges = (pl: AgentPlan) => [...pl.hooks.changes, ...(pl.mcp?.changes ?? []), ...(pl.proxy?.changes ?? [])];
   const pending = plans.filter((pl) => agentChanges(pl).length);
   const total = pending.reduce((n, pl) => n + agentChanges(pl).length, 0);
-  const failed = plans.some((pl) => pl.hooks.error || pl.mcp?.error);
+  const failed = plans.some((pl) => pl.hooks.error || pl.mcp?.error || pl.proxy?.error);
 
   if (dryRun) {
     if (out.json) {
@@ -254,9 +276,10 @@ export async function run(c: CommandContext): Promise<number> {
         scope,
         hook: hookCommand,
         mcpServer: withMcp ? server : null,
+        proxy: withProxy ? proxyUrl : null,
         changes: own.map(changeJson),
         remote: remote ? { url: remote.url, mode: remote.mode, sink: REMOTE_SINK } : null,
-        agents: plans.map((pl) => ({ id: pl.adapter.id, installed: pl.installed, hooked: pl.hooked, error: pl.hooks.error ?? null, changes: pl.hooks.changes.map(changeJson), mcp: partJson(pl.mcp, true), warnings: pl.detectBlockers, blockers: planBlockers(pl, env, c.cwd).map((b) => b.text), otherScope: pl.otherScope ?? null, skipped: pl.skipped === true })),
+        agents: plans.map((pl) => ({ id: pl.adapter.id, installed: pl.installed, hooked: pl.hooked, error: pl.hooks.error ?? null, changes: pl.hooks.changes.map(changeJson), mcp: partJson(pl.mcp, true), proxy: partJson(pl.proxy, true), warnings: pl.detectBlockers, blockers: planBlockers(pl, env, c.cwd).map((b) => b.text), otherScope: pl.otherScope ?? null, skipped: pl.skipped === true })),
       });
     } else {
       // The plan is the answer of a dry run: stdout.
@@ -288,17 +311,42 @@ export async function run(c: CommandContext): Promise<number> {
     const { atomicWrite } = await import("../../adapters/_shared/files.ts");
     await atomicWrite(p.config, configChange.after!, 0o600);
   }
-  const applied: { pl: AgentPlan; hooks: Part; mcp?: Part }[] = [];
+  const applied: { pl: AgentPlan; hooks: Part; mcp?: Part; proxy?: Part }[] = [];
   for (const pl of plans) {
     const a = pl.adapter;
     const hooks: Part = pl.hooks.error || !pl.hooks.changes.length ? pl.hooks : await plan(() => a.install({ hookCommand, scope, projectDir: c.cwd, dryRun: false }));
     // MCP after hooks: for agents that keep both in one file, the MCP record is the last write (exact uninstall).
     const mcp: Part | undefined = !pl.mcp || pl.mcp.error || !pl.mcp.changes.length ? pl.mcp : await plan(() => a.installMcp!({ server, dryRun: false }));
+    // The proxy last: it is the final write to a file it shares (Claude Code settings.json), so its exact restore applies first on uninstall.
+    const proxy: Part | undefined =
+      !pl.proxy || pl.proxy.error || !pl.proxy.changes.length
+        ? pl.proxy
+        : await plan(async () => {
+            // Planned again: the hooks or MCP writes above may have changed the same file.
+            const id = a.id as "claude-code" | "codex";
+            const ch = planProxyInstall(id, { url: proxyUrl, env, force });
+            if (!ch) return [];
+            await applyProxyInstall(id, ch, proxyUrl, env);
+            return [ch];
+          });
     if (hooks !== pl.hooks && hooks.error) out.row(a.displayName, `couldn't install hooks: ${hooks.error}`, "fail");
     if (mcp && mcp !== pl.mcp && mcp.error) out.row(a.displayName, `couldn't register the MCP server: ${mcp.error}`, "fail");
-    applied.push({ pl, hooks, ...(mcp ? { mcp } : {}) });
+    if (proxy && proxy !== pl.proxy && proxy.error) out.row(a.displayName, `couldn't route through the proxy: ${proxy.error}`, "fail");
+    applied.push({ pl, hooks, ...(mcp ? { mcp } : {}), ...(proxy ? { proxy } : {}) });
   }
-  const errors = applied.some((x) => x.hooks.error || x.mcp?.error);
+  const errors = applied.some((x) => x.hooks.error || x.mcp?.error || x.proxy?.error);
+  // Routed agents need the proxy up: start it now (the hook restarts it on later session starts).
+  const routed = applied.filter((x) => x.proxy && !x.proxy.error);
+  let proxyStart: { url: string; pid: number; started: boolean; error?: string } | undefined;
+  if (routed.length) {
+    try {
+      const { ensureRunning } = await import("./proxy.ts");
+      const r = await ensureRunning(env);
+      proxyStart = { url: r.state.url, pid: r.state.pid, started: r.started };
+    } catch (e) {
+      proxyStart = { url: proxyUrl, pid: 0, started: false, error: errText(e) };
+    }
+  }
   const outcome = total + own.length === 0 ? "unchanged" : errors ? "partial" : "installed";
 
   if (out.json) {
@@ -307,9 +355,10 @@ export async function run(c: CommandContext): Promise<number> {
       scope,
       hook: hookCommand,
       mcpServer: withMcp ? server : null,
+      proxy: proxyStart ? { url: proxyUrl, running: !proxyStart.error, started: proxyStart.started, ...(proxyStart.error ? { error: proxyStart.error } : { pid: proxyStart.pid }) } : null,
       changes: own.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })),
       remote: remote ? { url: remote.url, mode: remote.mode, sink: REMOTE_SINK } : null,
-      agents: applied.map((x) => ({ id: x.pl.adapter.id, error: x.hooks.error ?? null, changes: x.hooks.changes.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })), mcp: partJson(x.mcp, false), warnings: x.pl.detectBlockers, blockers: planBlockers(x.pl, env, c.cwd).map((b) => b.text), otherScope: x.pl.otherScope ?? null, skipped: x.pl.skipped === true })),
+      agents: applied.map((x) => ({ id: x.pl.adapter.id, error: x.hooks.error ?? null, changes: x.hooks.changes.map((ch) => ({ path: ch.path, action: ch.action, summary: ch.summary })), mcp: partJson(x.mcp, false), proxy: partJson(x.proxy, false), warnings: x.pl.detectBlockers, blockers: planBlockers(x.pl, env, c.cwd).map((b) => b.text), otherScope: x.pl.otherScope ?? null, skipped: x.pl.skipped === true })),
     });
     return errors ? 1 : 0;
   }
@@ -325,6 +374,11 @@ export async function run(c: CommandContext): Promise<number> {
     if (!plans.length) out.warn("No supported agents found on this machine; apps and `coding.sh run -- <cmd>` still send");
     out.ok(`Sending new sessions to ${remote.url} (${remote.mode === "full" ? "full content" : "metadata only"}). Sessions from before stay on this machine`);
     out.note(`Team viewer: ${out.style(remote.url, "cyan", "err")}`);
+  }
+  if (routed.length) {
+    const names = joinNames(routed.map((x) => x.pl.adapter.displayName));
+    if (proxyStart?.error) out.warn(`${names} now call ${proxyUrl}, but the proxy did not start (${proxyStart.error}). Start it: coding.sh proxy --background`);
+    else out.ok(`${names} → proxy at ${proxyUrl}${proxyStart?.started ? ` (started, pid ${proxyStart.pid})` : ""}; restart running sessions to pick it up`);
   }
   out.note(`Open the viewer: ${out.style("coding.sh", "cyan", "err")}`);
   out.note(`Docs: ${DOCS_URL}`);

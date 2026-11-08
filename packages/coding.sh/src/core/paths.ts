@@ -43,5 +43,10 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     reparseLock: join(root, "reparse.lock"),
     /** Hook ownership for agents whose config files carry no coding.sh marker. */
     installs: join(root, "installs.json"),
+    /** The running `coding.sh proxy` (pid, url); see proxy/state.ts. */
+    proxyState: join(root, "proxy.json"),
+    proxyLog: join(root, "proxy.log"),
+    /** Agents `init --proxy` routed through the proxy; while it exists, the hook restarts a stopped proxy. */
+    proxyInstalls: join(root, "proxy-installs.json"),
   };
 }

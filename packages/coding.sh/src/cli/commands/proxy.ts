@@ -3,10 +3,10 @@
 // points an agent at it; one line per call goes to stderr.
 import { spawn } from "node:child_process";
 import { mkdirSync, openSync } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { startLocalProxy } from "../../proxy/index.ts";
-import { clearProxyState, pidAlive, probeProxy, proxyEnv, proxyLogPath, proxySettings, readProxyState, writeProxyState } from "../../proxy/state.ts";
+import { clearProxyState, pidAlive, probeProxy, proxyEnv, proxyLogPath, proxySettings, readProxyState, writeProxyState, type ProxyState } from "../../proxy/state.ts";
 import type { AgentEvent } from "../../schema/index.ts";
 import { port as portFlag, str, withContext } from "../common.ts";
 import { version } from "../meta.ts";
@@ -52,7 +52,13 @@ async function start(c: CommandContext): Promise<number> {
     }
     if (running.port === s.port) throw new CliError(`A coding.sh proxy is already running on ${running.url} (pid ${running.pid})`, { reason: "already_running", next: ["Stop it:", "coding.sh proxy stop"] });
   }
-  if (c.flags.background) return background(c, s.port);
+  if (c.flags.background) {
+    const st = await startInBackground(c.env, c.flags, s.port);
+    if (out.json) out.data({ url: st.url, pid: st.pid, env: proxyEnv(st.url), log: proxyLogPath(c.env) });
+    else out.print(st.url);
+    out.note(`Started in the background (pid ${st.pid}); log: ${proxyLogPath(c.env)}`);
+    return 0;
+  }
 
   return withContext(c, async (ctx) => {
     let proxy;
@@ -89,34 +95,40 @@ async function start(c: CommandContext): Promise<number> {
   });
 }
 
-/** Restarts this command detached (stdout/stderr to ~/.coding.sh/proxy.log) and waits until it answers. */
-async function background(c: CommandContext, port: number): Promise<number> {
-  const { out } = c;
-  const script = process.argv[1];
+/**
+ * Starts `coding.sh proxy --quiet` detached (stdout/stderr to
+ * ~/.coding.sh/proxy.log) with the given flags and waits until it answers.
+ * Also used by `init --proxy`.
+ */
+export async function startInBackground(env: NodeJS.ProcessEnv, flags: Record<string, unknown>, port: number): Promise<ProxyState> {
+  // The CLI this process runs (a bundle's cli.mjs, or src/cli/main.ts from a checkout), never some other script.
+  const script = process.argv[1] && /^(cli\.m?js|main\.ts)$/.test(basename(process.argv[1])) ? process.argv[1] : undefined;
   if (!script) throw new CliError("Can't find the coding.sh CLI to start in the background", { reason: "proxy_failed" });
   const args = [...process.execArgv, script, "proxy", "--quiet"];
   for (const k of ["port", "host", "anthropic-upstream", "openai-upstream"]) {
-    const v = c.flags[k];
+    const v = flags[k];
     if (v !== undefined) args.push(`--${k}`, String(v));
   }
-  if (c.flags.port === undefined) args.push("--port", String(port));
-  mkdirSync(dirname(proxyLogPath(c.env)), { recursive: true });
-  const log = openSync(proxyLogPath(c.env), "a");
-  const child = spawn(process.execPath, args, { detached: true, stdio: ["ignore", log, log], windowsHide: true, env: { ...c.env, NODE_OPTIONS: undefined } });
+  if (flags.port === undefined) args.push("--port", String(port));
+  mkdirSync(dirname(proxyLogPath(env)), { recursive: true });
+  const log = openSync(proxyLogPath(env), "a");
+  const child = spawn(process.execPath, args, { detached: true, stdio: ["ignore", log, log], windowsHide: true, env: { ...env, NODE_OPTIONS: undefined } });
   child.unref();
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
-    const st = readProxyState(c.env);
-    if (st && st.pid === child.pid && (await probeProxy(st.url))) {
-      if (out.json) out.data({ url: st.url, pid: st.pid, env: proxyEnv(st.url), log: proxyLogPath(c.env) });
-      else out.print(st.url);
-      out.note(`Started in the background (pid ${st.pid}); log: ${proxyLogPath(c.env)}`);
-      return 0;
-    }
+    const st = readProxyState(env);
+    if (st && st.pid === child.pid && (await probeProxy(st.url))) return st;
     if (child.exitCode !== null) break;
     await sleep(100);
   }
-  throw new CliError("The background proxy did not start", { reason: "proxy_failed", next: ["See its log:", proxyLogPath(c.env)] });
+  throw new CliError("The background proxy did not start", { reason: "proxy_failed", next: ["See its log:", proxyLogPath(env)] });
+}
+
+/** The running proxy, or one just started in the background on the configured port. */
+export async function ensureRunning(env: NodeJS.ProcessEnv): Promise<{ state: ProxyState; started: boolean }> {
+  const running = readProxyState(env);
+  if (running && pidAlive(running.pid) && (await probeProxy(running.url))) return { state: running, started: false };
+  return { state: await startInBackground(env, {}, proxySettings(env).port), started: true };
 }
 
 async function status(c: CommandContext): Promise<number> {

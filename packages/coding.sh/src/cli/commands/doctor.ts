@@ -9,6 +9,8 @@ import { ADAPTERS, detectAll } from "../../adapters/index.ts";
 import { mcpTargetOf, readMcpEntry } from "../../adapters/_shared/mcp.ts";
 import type { Adapter } from "../../core/types.ts";
 import { MCP_CONFIG_NAME } from "../../mcp/launch.ts";
+import { proxyRoutes } from "../../proxy/install.ts";
+import { pidAlive, probeProxy, readProxyState } from "../../proxy/state.ts";
 import { hookBinHealth } from "../hookbin.ts";
 import { openContext } from "../../core/context.ts";
 import { paths, userHome } from "../../core/paths.ts";
@@ -248,6 +250,14 @@ export async function run(c: CommandContext): Promise<number> {
     env,
   );
   const receiver = { port, listening: await listening(port) };
+  // The model API proxy: running or not, and the agents init --proxy routed through it.
+  const ps = readProxyState(env);
+  const proxyUp = !!ps && pidAlive(ps.pid) && (await probeProxy(ps.url)) !== undefined;
+  const proxy = {
+    running: proxyUp,
+    ...(proxyUp ? { url: ps!.url, pid: ps!.pid } : {}),
+    routes: proxyRoutes(env).map((r) => ({ agent: r.agent, file: r.file, url: r.url ?? null, ok: r.url === r.expected })),
+  };
   const problems = (spool.ok ? 0 : 1) + (store.ok ? 0 : 1);
   // LLM gateways: read-only config scan; keys are reported as set or not, never shown.
   // `key` and `sessions` are Vercel AI Gateway's; `others` lists other gateways with a key set.
@@ -258,7 +268,7 @@ export async function run(c: CommandContext): Promise<number> {
   const gateway = { configured: detectGatewaySetups(env, c.cwd), key: gs.apiKey ? { set: true, source: gs.keySource } : { set: false, env: gs.apiKeyEnv }, sessions: gatewaySessions, others };
 
   if (out.json) {
-    out.data({ ok: problems === 0, agents, hook: hookBin, mcp, spool, store, receiver, gateway });
+    out.data({ ok: problems === 0, agents, hook: hookBin, mcp, spool, store, receiver, proxy, gateway });
     return problems ? 1 : 0;
   }
 
@@ -296,6 +306,11 @@ export async function run(c: CommandContext): Promise<number> {
   out.row("Spool", spool.ok ? `${spool.path} writable` : `${spool.path} not writable: ${spool.error}`, spool.ok ? "ok" : "fail");
   out.row("Store", store.ok ? `${store.kind} ${store.url}` : `can't open: ${store.error}`, store.ok ? "ok" : "fail");
   out.row("Receiver", receiver.listening ? `port ${port} in use (collector running?)` : `port ${port} free; start with coding.sh collector`, receiver.listening ? "ok" : "none");
+  const routedNames = proxy.routes.filter((r) => r.ok).map((r) => ADAPTERS.find((a) => a.id === r.agent)?.displayName ?? r.agent);
+  if (proxy.running) out.row("Proxy", `${proxy.url} (pid ${proxy.pid})${routedNames.length ? `, routes ${routedNames.join(", ")}` : ""}`, "ok");
+  else if (routedNames.length) out.row("Proxy", `not running, but ${routedNames.join(" and ")} call it; it restarts on the next session start, or now with coding.sh proxy --background`, "warn");
+  else out.row("Proxy", "not running; route agents through it with coding.sh init --proxy", "none");
+  for (const r of proxy.routes.filter((x) => !x.ok)) out.row("Proxy", `${r.agent} no longer points at the proxy (${r.file}); coding.sh init --proxy or coding.sh uninstall --proxy`, "warn");
   const routed = [...new Set(gateway.configured.filter((f) => f.active).map((f) => (f.gateway === "vercel" ? f.agent : `${f.agent} via ${f.gateway}`)))];
   const gwParts = [routed.length ? `routes ${routed.join(", ")}` : "not configured", gateway.key.set ? `key set (${gateway.key.source})` : "no key", `${gateway.sessions >= 1000 ? "1000+" : gateway.sessions} tagged sessions`];
   out.row("AI Gateway", gwParts.join(", "), routed.length || gateway.key.set || gateway.sessions ? "ok" : "none");

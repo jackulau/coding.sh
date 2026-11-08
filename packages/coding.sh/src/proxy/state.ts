@@ -4,7 +4,6 @@
 // `[proxy]` table of config.toml, then defaults.
 import { readFileSync, rmSync } from "node:fs";
 import { request } from "node:http";
-import { join } from "node:path";
 import { atomicWrite } from "../adapters/_shared/files.ts";
 import { readUserConfigTable } from "../core/config.ts";
 import { paths } from "../core/paths.ts";
@@ -19,8 +18,8 @@ export interface ProxyState {
   upstreams: Upstreams;
 }
 
-export const proxyStatePath = (env: NodeJS.ProcessEnv = process.env): string => join(paths(env).root, "proxy.json");
-export const proxyLogPath = (env: NodeJS.ProcessEnv = process.env): string => join(paths(env).root, "proxy.log");
+export const proxyStatePath = (env: NodeJS.ProcessEnv = process.env): string => paths(env).proxyState;
+export const proxyLogPath = (env: NodeJS.ProcessEnv = process.env): string => paths(env).proxyLog;
 
 export function readProxyState(env: NodeJS.ProcessEnv = process.env): ProxyState | undefined {
   try {

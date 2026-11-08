@@ -35,7 +35,7 @@ import { fstatSync, readSync, writeSync } from "node:fs";
 import type { SpoolLine } from "../core/types.ts";
 import { gatewayFromEnv } from "../integrations/gateway/ids.ts";
 import { hostOf } from "./host.ts";
-import { kickIngest } from "./kick.ts";
+import { kickIngest, kickProxy } from "./kick.ts";
 import { MAX_INLINE_LINE_BYTES, appendSpool, isDisabled, logSpoolError } from "./write.ts";
 
 const MAX_STDIN_BYTES = 64 * 1024 * 1024;
@@ -174,6 +174,12 @@ function main(): void {
     } catch (e) {
       logSpoolError(e, { agent, event, where: "kickIngest" }, env);
     }
+  }
+  // Even with capture off: an agent routed through the proxy needs it running.
+  try {
+    kickProxy(event, env);
+  } catch (e) {
+    logSpoolError(e, { agent, event, where: "kickProxy" }, env);
   }
   process.exitCode = 0;
 }

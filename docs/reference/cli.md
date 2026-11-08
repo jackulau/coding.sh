@@ -80,7 +80,8 @@ coding.sh init [options]
 | `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
 | `--scope <SCOPE>` | `user` | Install into user or project config. One of: `user`, `project`. |
 | `--mcp` | `true` | Register the coding.sh MCP server too (--no-mcp to skip) |
-| `--force` |  | Install hooks even when the agent already has coding.sh hooks in the other scope. |
+| `--proxy` |  | Also route Claude Code and Codex model calls through the local proxy, and start it. |
+| `--force` |  | Install hooks even when the agent already has coding.sh hooks in the other scope; with --proxy, replace a base URL or provider you set. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. |
 | `--dry-run` |  | Print the plan (agents, files, blockers) without writing anything. |
 | `--diff` |  | With --dry-run, also print the full diff of every planned edit. |
@@ -91,6 +92,7 @@ coding.sh init [options]
 ```sh
 coding.sh init
 coding.sh init --agent claude-code --yes
+coding.sh init --proxy
 coding.sh init --dry-run
 coding.sh init --remote https://obs.example.com --key csh_ik_…
 ```
@@ -98,6 +100,7 @@ coding.sh init --remote https://obs.example.com --key csh_ik_…
 - Copies the hook to ~/.coding.sh/bin/hook.mjs and points each agent at it.
 - --remote checks that the server takes the key before writing anything, then adds the sink to ~/.coding.sh/config.toml (mode 600). Run it again to change the URL, key or mode.
 - Registers the MCP server with Claude Code, Codex, Cursor, OpenCode and Gemini CLI (user scope only).
+- --proxy sets ANTHROPIC_BASE_URL in Claude Code's settings.json and a coding-sh model provider in Codex's config.toml. The hook restarts a stopped proxy when a session starts.
 - Every edited file is backed up to ~/.coding.sh/backups first; uninstall reverts it.
 
 ## `coding.sh doctor`
@@ -350,15 +353,18 @@ coding.sh uninstall [options]
 |---|---|---|
 | `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
 | `--scope <SCOPE>` | `user` | Install into user or project config. One of: `user`, `project`. |
+| `--proxy` |  | Only stop routing agents through the proxy (undo init --proxy) |
 | `-y, --yes` |  | Answer yes to confirmation prompts. |
 | `--dry-run` |  | Show the exact changes without writing anything. |
 
 ```sh
 coding.sh uninstall --dry-run
 coding.sh uninstall --yes
+coding.sh uninstall --proxy
 ```
 
 - Captured data in ~/.coding.sh is kept.
+- Also undoes init --proxy. The proxy itself keeps running until coding.sh proxy stop.
 
 ## `coding.sh sessions`
 

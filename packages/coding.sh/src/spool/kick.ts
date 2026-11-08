@@ -55,3 +55,41 @@ export function spawnBackgroundIngest(cli: string | undefined, env: NodeJS.Proce
   child.unref();
   return cli;
 }
+
+/** Hook events that start a session, across agents. */
+export const START_EVENT = /^session[._-]?start$/i;
+
+/**
+ * Restarts the proxy agents were routed through (`init --proxy`) when it is
+ * not running, so a reboot never leaves an agent pointed at a dead port: on a
+ * session start, when ~/.coding.sh/proxy-installs.json exists and the pid in
+ * proxy.json is gone, starts `node <cli> proxy --background` detached. The
+ * agent retries its first request while the proxy comes up. Returns the CLI
+ * path when it started one. CODING_SH_NO_PROXY_AUTOSTART=1 turns it off.
+ */
+export function kickProxy(event: string, env: NodeJS.ProcessEnv = process.env, spawn?: KickSpawner): string | undefined {
+  if (!START_EVENT.test(event) || env.CODING_SH_NO_PROXY_AUTOSTART === "1") return undefined;
+  const p = paths(env);
+  if (!existsSync(p.proxyInstalls)) return undefined;
+  try {
+    const pid = (JSON.parse(readFileSync(p.proxyState, "utf8")) as { pid?: unknown }).pid;
+    if (typeof pid === "number" && pid > 0) {
+      process.kill(pid, 0);
+      return undefined; // running
+    }
+  } catch (e) {
+    // EPERM: alive under another user. Anything else: no state file, or the pid is gone.
+    if ((e as NodeJS.ErrnoException).code === "EPERM") return undefined;
+  }
+  let cli: string;
+  try {
+    cli = readFileSync(p.cliPointer, "utf8").trim();
+  } catch {
+    return undefined;
+  }
+  if (!cli || !existsSync(cli)) return undefined;
+  const run = spawn ?? (process.getBuiltinModule("node:child_process").spawn as unknown as KickSpawner);
+  const child = run(process.execPath, [cli, "proxy", "--background"], { detached: true, stdio: "ignore", windowsHide: true, env: { ...env, NODE_OPTIONS: undefined } });
+  child.unref();
+  return cli;
+}
