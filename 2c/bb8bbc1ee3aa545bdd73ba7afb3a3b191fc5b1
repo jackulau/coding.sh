@@ -1,0 +1,58 @@
+docs/reference/cli.md
+  s_8e040dbdf13565::t_c1a63376b656b6 85,104
+apps/site/src/pages/docs/agents.astro
+  s_8e040dbdf13565::t_4a93ed5d70f87e 117-118
+packages/coding.sh/src/proxy/state.ts
+  s_8e040dbdf13565::t_b12a690398193c 4-5
+  s_8e040dbdf13565::t_0b59c8c92af68d 93-106,116,121-122
+docs/guides/agents.md
+  s_8e040dbdf13565::t_30c8c778ad87c5 53-54
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_3487eb798746b7 150,163
+packages/coding.sh/src/proxy/install.ts
+  s_8e040dbdf13565::t_a11cabf6794625 10-21,23-28,38,54-69,71,116-158,185-186,218-227,231-277,285,290,298-302,304-306,314-318,323,325-326,342,345,356-363,366,375,379,395,397,403-416,434-447,455-456,461
+packages/coding.sh/src/cli/commands/init.ts
+  s_8e040dbdf13565::t_4dd2fa963f7a91 242
+  s_8e040dbdf13565::t_e1c3778bbf86d8 340,345
+  s_8e040dbdf13565::t_e08305d72c93eb 19
+  s_8e040dbdf13565::t_0a6d1417ea5dc4 381-386
+docs/how-to/capture-with-proxy.md
+  s_8e040dbdf13565::t_6f99db4ff298cc 49-50
+  s_8e040dbdf13565::t_eb2f80571029d6 80,87
+  s_8e040dbdf13565::t_42d9372160e66d 24-48,51
+  s_8e040dbdf13565::t_20f0d457d541ff 88
+packages/coding.sh/test/proxy/install.test.ts
+  s_8e040dbdf13565::t_a3e5f6fd47f928 376-408
+  s_8e040dbdf13565::t_bfa5c410fdcde3 103-146,149-150
+  s_8e040dbdf13565::t_7827bc48371d24 13-14
+  s_8e040dbdf13565::t_5fa56dbe05ae98 22-24,27-28,36-39
+  s_8e040dbdf13565::t_71579069628294 4
+  s_8e040dbdf13565::t_df58cd3aac33f0 209,215-218,220-295
+packages/coding.sh/src/cli/commands/doctor.ts
+  s_8e040dbdf13565::t_c482b8224e192f 259,309
+docs/reference/config.md
+  s_8e040dbdf13565::t_b2bfd603ac01aa 189-192
+  s_8e040dbdf13565::t_c1a63376b656b6 198
+packages/coding.sh/src/cli/commands/proxy.ts
+  s_8e040dbdf13565::t_18019ab1e24f87 10
+  s_8e040dbdf13565::t_6b3266bcf4b6d9 184
+  s_8e040dbdf13565::t_665a093cef695a 130-135,137-153
+CHANGELOG.md
+  s_8e040dbdf13565::t_3d6d9c8a8a7430 28
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2cbb8bbc1ee3aa545bdd73ba7afb3a3b191fc5b1",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
