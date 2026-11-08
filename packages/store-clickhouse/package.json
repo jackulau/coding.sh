@@ -1,6 +1,6 @@
 {
   "name": "coding.sh-store-clickhouse",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "ClickHouse store for coding.sh, observability and evals for any AI agent: point CODING_SH_STORE_URL at clickhouse:// and run serve, the CLI, MCP and evals on one database. Zero dependencies.",
   "license": "MIT",
   "author": "coding.sh contributors",
