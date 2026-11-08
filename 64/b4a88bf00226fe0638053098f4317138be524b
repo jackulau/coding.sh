@@ -1,5 +1,7 @@
 apps/site/src/pages/changelog/[version]/[...page].astro
   s_8e040dbdf13565::t_325905d93da2df 5-12,14-34,41-42,49-60,62-167
+  s_8e040dbdf13565::t_846e64e7ad5e74 13,43-46,48
+  s_8e040dbdf13565::t_98a14bba53f5e4 47
 apps/site/src/lib/changelog.ts
   s_8e040dbdf13565::t_91b8a060795a62 22-25,42-43,59-66,122,128-136,148
 apps/site/src/pages/changelog.astro
