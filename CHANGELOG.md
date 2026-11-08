@@ -7,6 +7,14 @@ follow [Semantic Versioning](https://semver.org/) from the first npm release.
 Each release opens with a short summary. The list under it has one line per change,
 grouped by area, with links to the docs for the details.
 
+## [0.1.4] - 2026-11-08
+
+The 0.1.3 changes, published to npm.
+
+### Fixed
+
+- **Release.** 0.1.3 never reached npm: the publish job passed npm a tarball path that npm read as a GitHub repository. 0.1.4 carries all of 0.1.3's changes, and the release checks now dry-run the npm publish before it is approved. [Releasing](https://github.com/jackulau/coding.sh/blob/main/docs/RELEASE.md).
+
 ## [0.1.3] - 2026-11-08
 
 Sessions read back from Claude Code and Codex transcripts keep more of what the agent recorded.
@@ -380,6 +388,7 @@ It also runs as a server on SQLite or Postgres, with SDKs for apps that call mod
 - **Docs.** README with a quickstart, the agent matrix, OTLP setup, storage, privacy and uninstall.
 - **Docs.** CONTRIBUTING, SECURITY and a release checklist in docs/RELEASE.md.
 
+[0.1.4]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.4
 [0.1.3]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.3
 [0.1.2]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.2
 [0.1.1]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.1

@@ -162,7 +162,7 @@ content. Details in [docs/guides/privacy.md](docs/guides/privacy.md).
 
 ## Status
 
-coding.sh is pre-1.0 (latest: 0.1.3), so expect rough edges. What isn't done yet:
+coding.sh is pre-1.0 (latest: 0.1.4), so expect rough edges. What isn't done yet:
 
 - PyPI: the Python SDK (`coding-sh`) isn't on PyPI yet — the pending publisher is still being set
   up ([First publish](docs/RELEASE.md#first-publish)). npm is published: the CLI
