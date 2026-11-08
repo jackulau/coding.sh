@@ -190,15 +190,15 @@ export function writeCorpus(home, { events = 100_000, perSession = 500, day = Da
   return { events: written, sessions: ids };
 }
 
-/** perf.ingest + perf.storeSize over one synthetic corpus. */
-export function benchIngest({ cli = CLI, events = 100_000 } = {}) {
+/** Ingest one fresh synthetic corpus and return the timing plus store sizes. */
+function runIngestOnce(cliPath, events, day) {
   const root = tempDir("cs-bench-ingest-");
   try {
     const env = isolatedEnv(root);
     mkdirSync(env.HOME, { recursive: true });
-    const corpus = writeCorpus(env.CODING_SH_HOME, { events });
+    const corpus = writeCorpus(env.CODING_SH_HOME, { events, day });
     const spoolBytes = duBytes(join(env.CODING_SH_HOME, "spool"));
-    const r = sh(process.execPath, [cli, "ingest", "--json"], { env });
+    const r = sh(process.execPath, [cliPath, "ingest", "--json"], { env });
     if (r.code !== 0) throw new Error(`ingest exited ${r.code}: ${r.stderr.slice(0, 400)}`);
     let ingested;
     try {
@@ -210,14 +210,53 @@ export function benchIngest({ cli = CLI, events = 100_000 } = {}) {
     const blobs = duBytes(join(home, "blobs"));
     const blobsApparent = apparent(join(home, "blobs"));
     const count = ingested ?? corpus.events;
-    return {
-      "perf.ingest": Math.round(count / (r.ms / 1000)),
-      "perf.storeSize": round((idx + blobs) / 1e6 / (count / 1000), 3),
-      detail: { events: corpus.events, ingested, sessions: corpus.sessions.length, ingestMs: Math.round(r.ms), spoolMB: round(spoolBytes / 1e6, 1), indexMB: round(idx / 1e6, 2), blobsMB: round(blobs / 1e6, 2), blobsApparentMB: round(blobsApparent.bytes / 1e6, 2), blobFiles: blobsApparent.files, corpus: "synthetic only (the redacted copy of the live last 7 days is not included)" },
-    };
+    return { ms: r.ms, count, ingested, corpus, spoolBytes, idx, blobs, blobsApparent };
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+/**
+ * perf.ingest + perf.storeSize over one synthetic corpus. With `baseline`, the
+ * candidate and baseline builds ingest an identical corpus (same `day`) in
+ * `pairs` interleaved runs (B C B C ...), each into a fresh home, and the paired
+ * result is a bootstrap CI on the events/s difference, so machine noise on a
+ * loaded host cancels out (never report an unpaired absolute from a loaded host).
+ */
+export function benchIngest({ cli = CLI, baseline, events = 100_000, pairs = 8 } = {}) {
+  const day = 1_730_000_000_000; // fixed, so both builds see byte-identical spool files
+  const one = (cliPath) => runIngestOnce(cliPath, events, day);
+  if (!baseline) {
+    const r = one(cli);
+    return {
+      "perf.ingest": Math.round(r.count / (r.ms / 1000)),
+      "perf.storeSize": round((r.idx + r.blobs) / 1e6 / (r.count / 1000), 3),
+      detail: { events: r.corpus.events, ingested: r.ingested, sessions: r.corpus.sessions.length, ingestMs: Math.round(r.ms), spoolMB: round(r.spoolBytes / 1e6, 1), indexMB: round(r.idx / 1e6, 2), blobsMB: round(r.blobs / 1e6, 2), blobsApparentMB: round(r.blobsApparent.bytes / 1e6, 2), blobFiles: r.blobsApparent.files, corpus: "synthetic only (the redacted copy of the live last 7 days is not included)" },
+    };
+  }
+  const baseCli = join(baseline, "cli.mjs");
+  const candMs = [];
+  const baseMs = [];
+  let last;
+  one(cli); // warmup (fills OS cache, JIT)
+  for (let i = 0; i < pairs; i++) {
+    const b = one(baseCli);
+    const c = one(cli);
+    baseMs.push(b.ms);
+    candMs.push(c.ms);
+    last = c;
+  }
+  const eps = (ms) => Math.round(last.count / (ms / 1000));
+  const candEps = candMs.map(eps);
+  const baseEps = baseMs.map(eps);
+  const d = bootstrapMedianDiff(baseEps, candEps);
+  return {
+    "perf.ingest": median(candEps),
+    "perf.storeSize": round((last.idx + last.blobs) / 1e6 / (last.count / 1000), 3),
+    baseline: { "perf.ingest": median(baseEps) },
+    paired: { "perf.ingest": { diff: round(d.diff, 1), ci: d.ci.map((x) => round(x, 1)), unit: "events/s (candidate − baseline)" } },
+    detail: { pairs, events: last.corpus.events, candIngestMedianMs: round(median(candMs), 0), baseIngestMedianMs: round(median(baseMs), 0), indexMB: round(last.idx / 1e6, 2), blobsMB: round(last.blobs / 1e6, 2), blobFiles: last.blobsApparent.files },
+  };
 }
 
 /** perf.help: median of 20 `--help` runs. */
@@ -791,7 +830,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const args = parseArgs(process.argv.slice(2), { booleans: ["json", "check"] });
   const which = args._.length ? args._ : ["hook", "ingest", "help", "viewer"];
   const baseline = args.baseline ? resolve(args.baseline) : undefined;
-  const r = await runBenches(which, { baseline, events: args.events ? Number(args.events) : undefined, calls: args.calls ? Number(args.calls) : undefined });
+  const r = await runBenches(which, { baseline, events: args.events ? Number(args.events) : undefined, calls: args.calls ? Number(args.calls) : undefined, pairs: args.pairs ? Number(args.pairs) : undefined });
   process.stdout.write(JSON.stringify(r, null, args.json ? 0 : 2) + "\n");
   const missed = Object.values(r.results).flatMap((x) => Object.entries(x).filter(([k, v]) => k.startsWith("perf.") && meets(k, v) === false));
   for (const [k, v] of missed) log(`over budget: ${k} ${v} ${TARGETS[k].unit} (target ${TARGETS[k].dir === "max" ? "≤" : "≥"} ${TARGETS[k].target})`);
