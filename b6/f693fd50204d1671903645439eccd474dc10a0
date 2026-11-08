@@ -1,0 +1,81 @@
+packages/coding.sh/src/mcp/tools.ts
+  s_8e040dbdf13565::t_e544fca582286f 24-25,35-36,61-66,117-133,263,265-266,272,280-281,284-286,288-292,356,365-368,436,454-457
+  s_8e040dbdf13565::t_9c16027e261b92 287
+packages/coding.sh/src/cli/commands/sessions.ts
+  s_8e040dbdf13565::t_a6fad580323685 1,3-8,12-24,30,33,40-43,68-100
+packages/coding.sh/src/cli/common.ts
+  s_8e040dbdf13565::t_d3d93a134c7b11 7,245-265
+  s_8e040dbdf13565::t_e4d5733647441f 266
+packages/coding.sh/test/docs/reference-drift.test.ts
+  s_8e040dbdf13565::t_72ee3204823258 28-29
+packages/coding.sh/test/query/where-surfaces.test.ts
+  s_8e040dbdf13565::t_2707824c557224 79-88
+  s_8e040dbdf13565::t_b46c1d3c4d90dd 1-78,89-124,126-138
+  s_8e040dbdf13565::t_7d421ba6101998 125
+apps/site/src/pages/docs/mcp.astro
+  s_8e040dbdf13565::t_66a42ee89ab8fe 10,12,15
+packages/coding.sh/test/docs/query-reference.test.ts
+  s_8e040dbdf13565::t_120e47790bd249 29,31,36-41
+  s_8e040dbdf13565::t_9371b3b41300e5 42
+packages/coding.sh/src/query/export.ts
+  s_8e040dbdf13565::t_644f7463e38c05 11,21,23-24,60-64,67-68,74,77,79,81-82,92
+  s_8e040dbdf13565::t_6655cde15bd0e5 10,69-73
+docs/reference/query.md
+  s_8e040dbdf13565::t_b5e83a5bd4a004 80
+  s_8e040dbdf13565::t_e7eab6ebea7300 9-79,81-106
+  s_8e040dbdf13565::t_6940c497b6fe66 107-110
+packages/coding.sh/test/mcp/toolevals.test.ts
+  s_8e040dbdf13565::t_f766663034eb5e 55-57
+docs/reference/api.md
+  s_8e040dbdf13565::t_e2b255efa22b54 96,394,422-433,566,594-610
+  s_8e040dbdf13565::t_41b64544f3e826 611
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_a30768c7ff0b9c 11,67,69-73,288-289,292-293,315-317,330,332,372,375
+  s_8e040dbdf13565::t_18c66e79572a32 68
+CHANGELOG.md
+  s_8e040dbdf13565::t_9b098ad361ec85 71
+apps/site/src/pages/docs/quickstart.astro
+  s_8e040dbdf13565::t_0bdcdd4d7b3258 13,85-86
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_81edbd061f67d6 159
+  s_8e040dbdf13565::t_93401c2ad1aaf0 155-158
+  s_8e040dbdf13565::t_3c79508829a489 188
+packages/coding.sh/src/mcp/data.ts
+  s_8e040dbdf13565::t_644f7463e38c05 145-146,177-179,181-182,186
+  s_8e040dbdf13565::t_87b8f2b5092f57 8
+  s_8e040dbdf13565::t_e544fca582286f 9,149-151,159-174
+docs/reference/cli.md
+  s_8e040dbdf13565::t_929bf4963b0e42 302-303,307-309,313-315,362,367,370,388,393,447,452
+packages/coding.sh/src/cli/commands/usage.ts
+  s_8e040dbdf13565::t_644f7463e38c05 13,50,54
+packages/coding.sh/src/cli/commands/search.ts
+  s_8e040dbdf13565::t_644f7463e38c05 1-2,4,11-12,17-18
+docs/guides/explore.md
+  s_8e040dbdf13565::t_66a42ee89ab8fe 18-53,143-144
+packages/coding.sh/src/viewer/server.ts
+  s_8e040dbdf13565::t_eb6ec712cdc4e7 895-899
+  s_8e040dbdf13565::t_1e5a200c4d2985 893
+  s_8e040dbdf13565::t_f71e86d21013f9 25-26
+  s_8e040dbdf13565::t_58fb23a440bb26 115-117,120,124-141,283,589-594,598-610,891-892,894,900-901,938-950
+  s_8e040dbdf13565::t_d609d03397d105 951
+packages/coding.sh/src/cli/args.ts
+  s_8e040dbdf13565::t_18c66e79572a32 26-27,182-183
+packages/coding.sh/src/cli/commands/export.ts
+  s_8e040dbdf13565::t_644f7463e38c05 8,28,40-41,44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b6f693fd50204d1671903645439eccd474dc10a0",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
