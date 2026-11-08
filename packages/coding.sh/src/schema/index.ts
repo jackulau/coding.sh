@@ -135,6 +135,19 @@ export interface CacheBreakStats {
   unpriced?: number;
 }
 
+/**
+ * Session.stats.modelSwitch: the main thread (calls outside subagents) moved
+ * from one model to another for good mid-session (core/models.ts).
+ */
+export interface ModelSwitch {
+  from: string;
+  to: string;
+  /** ts of the first call on `to`. */
+  at: number;
+  /** What came right before: `from`'s last call was refused or failed, or a /model command. Unset when unknown. */
+  trigger?: "refusal" | "error" | "command";
+}
+
 /** Session.stats.llmErrors: how many model calls failed, and why the first one did. */
 export interface LlmErrors {
   count: number;
@@ -258,6 +271,10 @@ export interface Session {
     latency?: LatencyStats;
     /** Failed model calls: llm.call with `ok: false` or an HTTP status of 400 or more. Unset when none failed. */
     llmErrors?: LlmErrors;
+    /** Model calls by model, when more than one model made them (core/models.ts). */
+    models?: Record<string, number>;
+    /** The main thread's first hand-over to another model mid-session; it also tags the session `model:switch`. */
+    modelSwitch?: ModelSwitch;
     /** Set when the session is one run of a durable workflow engine (Vercel Workflow, Temporal, …). */
     durable?: DurableStats;
     /** Where the session went off the rails (looping, failure-streak, churn, no-progress, stalled, context-thrash), earliest first. */

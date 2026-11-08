@@ -1,0 +1,214 @@
+// Mid-session model switches (core/models.ts): stats.models, stats.modelSwitch,
+// the model:switch tag and the refusal flag, and the session's model as the
+// main thread's most used one rather than the last one seen.
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { ClaudeTranscriptConverter } from "../../src/adapters/_shared/claude-transcript.ts";
+import { modelsRow } from "../../src/cli/commands/show.ts";
+import { sessionMarkdown } from "../../src/mcp/digest.ts";
+import { MemoryIndexStore } from "../../src/store/memory.ts";
+import { buildSession, failureFlags, FLAGS, foldSession, sessionOf, sessionState } from "../../src/core/sessions.ts";
+import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
+import { assertWellFormed, testCtx } from "../adapters/_helpers.ts";
+
+const T0 = Date.UTC(2026, 10, 7, 9);
+let n = 0;
+let clock = T0;
+const reset = () => {
+  n = 0;
+  clock = T0;
+};
+const ev = (kind: EventKind, payload: Record<string, unknown> = {}, o: Partial<AgentEvent> = {}): AgentEvent => {
+  clock += 1000;
+  return { id: `e${++n}`, v: 0, sessionId: "s", ts: clock, agent: "claude-code", kind, payload, ...o };
+};
+const call = (model: string, payload: Record<string, unknown> = {}, o: Partial<AgentEvent> = {}) =>
+  ev("llm.call", { ok: true, responseModel: model, ...payload }, { model, usage: { inputTokens: 100, outputTokens: 20 }, ...o });
+const times = (k: number, f: () => AgentEvent): AgentEvent[] => Array.from({ length: k }, f);
+
+const SONNET_55 = "claude-sonnet-5-5";
+const SONNET_5 = "claude-sonnet-5";
+const HAIKU = "claude-haiku-4-5";
+
+// A Claude Code transcript: the main thread on claude-sonnet-5-5 until a call
+// stops on a refusal, then every later call on claude-sonnet-5 (2.1.310's
+// silent fallback). Each call's message.model names the model that served it.
+const TS = (s: number) => new Date(T0 + s * 1000).toISOString();
+const base = { sessionId: "cc-fallback", cwd: "/work/demo", version: "2.1.310", isSidechain: false };
+const prompt = (uuid: string, s: number, text: string) => ({ ...base, type: "user", uuid, timestamp: TS(s), message: { role: "user", content: text } });
+const result = (uuid: string, s: number, id: string) => ({ ...base, type: "user", uuid, timestamp: TS(s), message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } });
+const reply = (uuid: string, s: number, id: string, model: string, stop: string, content: unknown[]) => ({
+  ...base,
+  type: "assistant",
+  uuid,
+  timestamp: TS(s),
+  message: { id, role: "assistant", model, stop_reason: stop, content, usage: { input_tokens: 900, output_tokens: 40 } },
+});
+const read = (id: string) => ({ type: "tool_use", id, name: "Read", input: { file_path: "/work/demo/app.ts" } });
+const text = (t: string) => ({ type: "text", text: t });
+
+async function convert(lines: Record<string, unknown>[]): Promise<AgentEvent[]> {
+  const { ctx } = testCtx();
+  const conv = new ClaudeTranscriptConverter(ctx, { agent: "claude-code", mode: "full", sessionId: "cc-fallback", source: "cc-fallback.jsonl" });
+  for (const [i, l] of lines.entries()) await conv.add(l, i + 1);
+  const events = await conv.finish(true);
+  assertWellFormed(events);
+  return events;
+}
+
+describe("a refusal, then a silent fallback to another model (Claude Code transcript)", () => {
+  const lines = [
+    prompt("u1", 0, "fix the parser"),
+    reply("a1", 2, "msg_1", SONNET_55, "tool_use", [read("t1")]),
+    result("u2", 3, "t1"),
+    reply("a2", 5, "msg_2", SONNET_55, "tool_use", [read("t2")]),
+    result("u3", 6, "t2"),
+    reply("a3", 8, "msg_3", SONNET_55, "refusal", [text("I can't help with that.")]),
+    reply("a4", 12, "msg_4", SONNET_5, "end_turn", [text("Fixed the parser.")]),
+    prompt("u4", 30, "add a test"),
+    reply("a5", 33, "msg_5", SONNET_5, "end_turn", [text("Added one.")]),
+  ];
+
+  it("records the switch, its trigger and the calls per model; tags model:switch and flags refusal", async () => {
+    const events = await convert(lines);
+    const calls = events.filter((e) => e.kind === "llm.call");
+    assert.deepEqual(
+      calls.map((e) => [e.payload.responseModel, e.payload.stopReason]),
+      [
+        [SONNET_55, "tool_use"],
+        [SONNET_55, "tool_use"],
+        [SONNET_55, "refusal"],
+        [SONNET_5, "end_turn"],
+        [SONNET_5, "end_turn"],
+      ],
+    );
+    const s = buildSession(events);
+    assert.deepEqual(s.stats.models, { [SONNET_55]: 3, [SONNET_5]: 2 });
+    assert.deepEqual(s.stats.modelSwitch, { from: SONNET_55, to: SONNET_5, at: calls[3]!.ts, trigger: "refusal" });
+    assert.ok(s.flags.includes(FLAGS.modelSwitch) && s.flags.includes(FLAGS.refusal), s.flags.join(","));
+    assert.deepEqual(failureFlags(s.flags).filter((f) => f === "refusal" || f.startsWith("model")), ["refusal"], "model:switch is a tag, refusal a failure");
+    // Most calls ran on the configured model: the session is labeled with it, not the fallback seen last.
+    assert.equal(s.model, SONNET_55);
+  });
+
+  it("`show` and the MCP digest name the models and the switch", async () => {
+    const events = await convert(lines);
+    const s = buildSession(events);
+    const row = modelsRow(s);
+    assert.equal(row?.[0], "Models");
+    assert.match(row![1], /^claude-sonnet-5-5 3, claude-sonnet-5 2; switched from claude-sonnet-5-5 to claude-sonnet-5 at \+\S+ after a refusal$/);
+    const index = new MemoryIndexStore();
+    await index.putEvents(events);
+    await index.upsertSession(s);
+    assert.match(await sessionMarkdown(index, s), /- \*\*Models:\*\* claude-sonnet-5-5 3, claude-sonnet-5 2; switched from claude-sonnet-5-5 to claude-sonnet-5 at \+\S+ \(refusal\)/);
+    reset();
+    assert.equal(modelsRow(buildSession(times(2, () => call(SONNET_55)))), undefined);
+  });
+
+  it("a fallback that ran most of the calls labels the session, and the switch still names the first model", async () => {
+    const more = [prompt("u5", 60, "and another"), reply("a6", 62, "msg_6", SONNET_5, "end_turn", [text("Done.")]), prompt("u6", 90, "one more"), reply("a7", 92, "msg_7", SONNET_5, "end_turn", [text("Done.")])];
+    const s = buildSession(await convert([...lines, ...more]));
+    assert.equal(s.model, SONNET_5);
+    assert.equal(s.stats.modelSwitch?.from, SONNET_55);
+  });
+
+  it("an incremental fold gives the same row as a full build", async () => {
+    const events = await convert(lines);
+    const sorted = [...events].sort((a, b) => a.ts - b.ts);
+    const st = sessionState();
+    for (const e of sorted.slice(0, 6)) foldSession(st, e);
+    const copy = structuredClone(st);
+    for (const e of sorted.slice(6)) foldSession(copy, e);
+    assert.deepEqual(sessionOf(copy), buildSession(events));
+  });
+});
+
+describe("helper models and subagents are not a switch", () => {
+  it("Haiku side calls beside the main model (a title first, checks in between, one at the end)", () => {
+    reset();
+    const events = [
+      ev("user.message", { text: "fix it" }),
+      call(HAIKU),
+      ...times(3, () => call(SONNET_55)),
+      call(HAIKU),
+      call(HAIKU),
+      ...times(3, () => call(SONNET_55)),
+      call(HAIKU),
+    ];
+    const s = buildSession(events);
+    assert.equal(s.stats.modelSwitch, undefined);
+    assert.ok(!s.flags.includes(FLAGS.modelSwitch));
+    assert.deepEqual(s.stats.models, { [SONNET_55]: 6, [HAIKU]: 4 });
+    assert.equal(s.model, SONNET_55, "the last call was Haiku's, the session ran on Sonnet");
+  });
+
+  it("one helper call before the main model and one after it", () => {
+    reset();
+    const s = buildSession([call(HAIKU), ...times(4, () => call(SONNET_55)), call(HAIKU)]);
+    assert.equal(s.stats.modelSwitch, undefined);
+    reset();
+    const t = buildSession([call(HAIKU), ...times(4, () => call(SONNET_55))]);
+    assert.equal(t.stats.modelSwitch, undefined);
+  });
+
+  it("a subagent's calls on another model, after the main thread's last call", () => {
+    reset();
+    const s = buildSession([...times(3, () => call(SONNET_55)), ...times(4, () => call(HAIKU, {}, { subagentId: "agent-1" }))]);
+    assert.equal(s.stats.modelSwitch, undefined);
+    assert.deepEqual(s.stats.models, { [HAIKU]: 4, [SONNET_55]: 3 });
+    assert.equal(s.model, SONNET_55);
+  });
+
+  it("one model: no models, no switch, no flags", () => {
+    reset();
+    const s = buildSession(times(5, () => call(SONNET_55)));
+    assert.equal(s.stats.models, undefined);
+    assert.equal(s.stats.modelSwitch, undefined);
+    assert.deepEqual(s.flags, []);
+  });
+});
+
+describe("calls logged by coding.sh proxy", () => {
+  const proxied = (model: string, payload: Record<string, unknown> = {}) => call(model, payload, { source: "proxy" });
+
+  it("count only in a session with no other model calls", () => {
+    reset();
+    // The transcript's calls, and the proxy's copies of them plus two trailing Haiku calls the transcript never sees.
+    const both = buildSession([...times(3, () => call(SONNET_55)), ...times(3, () => proxied(SONNET_55)), proxied(HAIKU), proxied(HAIKU)]);
+    assert.deepEqual([both.model, both.stats.models, both.stats.modelSwitch], [SONNET_55, undefined, undefined]);
+    reset();
+    const only = buildSession([...times(2, () => proxied(SONNET_55)), proxied(SONNET_55, { stopReason: "refusal" }), proxied(SONNET_5), proxied(SONNET_5)]);
+    assert.deepEqual(only.stats.modelSwitch, { from: SONNET_55, to: SONNET_5, at: T0 + 4000, trigger: "refusal" });
+    assert.deepEqual(only.stats.models, { [SONNET_55]: 3, [SONNET_5]: 2 });
+  });
+});
+
+describe("switches and their triggers", () => {
+  it("a hand-over with nothing before it: two calls or more on each side, no trigger", () => {
+    reset();
+    const events = [...times(3, () => call(SONNET_55)), ...times(2, () => call(SONNET_5))];
+    const s = buildSession(events);
+    assert.deepEqual(s.stats.modelSwitch, { from: SONNET_55, to: SONNET_5, at: events[3]!.ts });
+    assert.ok(!s.flags.includes(FLAGS.refusal));
+  });
+
+  it("a failed call (an overload) before a fallback: trigger error, even with one call on each side", () => {
+    reset();
+    const events = [call(SONNET_55, { ok: false, statusCode: 529, error: "overloaded" }), call(SONNET_5)];
+    assert.equal(buildSession(events).stats.modelSwitch?.trigger, "error");
+  });
+
+  it("a /model command between: trigger command", () => {
+    reset();
+    const events = [call(SONNET_55), ev("notification", { kind: "command", command: "/model", args: "sonnet-5" }), call(SONNET_5)];
+    assert.deepEqual(buildSession(events).stats.modelSwitch, { from: SONNET_55, to: SONNET_5, at: events[2]!.ts, trigger: "command" });
+  });
+
+  it("a refusal with no switch is still flagged; a content filter stop counts as one", () => {
+    reset();
+    const s = buildSession([call(SONNET_55), call(SONNET_55, { stopReason: "refusal" })]);
+    assert.deepEqual([s.flags.includes(FLAGS.refusal), s.stats.modelSwitch], [true, undefined]);
+    reset();
+    assert.ok(buildSession([call("gpt-5", { stopReason: "content_filter" })]).flags.includes(FLAGS.refusal));
+  });
+});

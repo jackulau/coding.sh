@@ -14,6 +14,7 @@
 // a different model; a gap past the cache lifetime (5 minutes, or 1 hour when
 // the previous call wrote to the 1-hour cache); else other.
 import type { AgentEvent, CacheBreakCause, CacheBreakStats, Usage } from "../schema/index.ts";
+import { modelOf } from "./models.ts";
 import { cacheWrite1h, callRates, callTier, eventPrice, geoValue, pricesFor, promptTokens, type Prices } from "./pricing.ts";
 
 export interface CacheBreak {
@@ -37,10 +38,6 @@ export const CACHE_TTL_1H_MS = 60 * 60_000;
 
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 const hasCacheField = (u: Usage): boolean => num(u.cacheReadTokens) !== undefined || num(u.cacheWriteTokens) !== undefined;
-const modelOf = (e: AgentEvent): string | undefined => {
-  for (const m of [e.payload.responseModel, e.model, e.payload.requestModel]) if (typeof m === "string" && m) return m;
-  return undefined;
-};
 
 /** USD per re-billed token for this call: what it paid to write (or send) them minus what reading them from cache costs. */
 function extraRate(e: AgentEvent, prices: Prices): number | undefined {

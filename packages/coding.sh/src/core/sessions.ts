@@ -15,6 +15,7 @@ import { foldSkills, skillFlags, skillState, skillUseOf, type SkillState } from 
 import { foldHookContext, hookContextFlags, hookContextOf, hookContextState, type HookContextState } from "./hook-context.ts";
 import { claimsSuccess, reportsFailure } from "./failure-report.ts";
 import { foldWaste, wasteState, wasteStatsOf, type WasteState } from "./waste.ts";
+import { foldModels, mainModelOf, MODEL_SWITCH, modelFlags, modelState, modelSwitchOf, modelsOf, REFUSAL, type ModelState } from "./models.ts";
 import { exposesSecret, foldRedactions, redactionsOf, redactionState, SECRET_EXPOSED, type RedactionState } from "./redaction-stats.ts";
 
 export { REOPEN_SLACK_MS };
@@ -38,6 +39,10 @@ export const FLAGS = {
   skillCopyConflict: "skill-copy-conflict",
   /** A tag, not a failure: redaction replaced a vendor token (core/redaction-stats.ts, Session.stats.redactions). Rotate it. */
   secretExposed: SECRET_EXPOSED,
+  /** A tag, not a failure: the main thread handed over to another model mid-session (core/models.ts, Session.stats.modelSwitch). */
+  modelSwitch: MODEL_SWITCH,
+  /** A model call stopped on a refusal or a content filter (core/models.ts). */
+  refusal: REFUSAL,
   /** Derails (core/derail.ts): where the session went off the rails. */
   ...DERAIL_FLAGS,
 } as const;
@@ -407,7 +412,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * events, and every stored session is folded again once in the background
  * (core/reparse.ts, REFOLD_CURSOR), so old sessions get the new derivation.
  */
-export const SESSION_FOLD_VERSION = 8; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported).
+export const SESSION_FOLD_VERSION = 9; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -492,6 +497,12 @@ export interface SessionState {
   skills: SkillState;
   redactions: RedactionState;
   hookContext: HookContextState;
+  /**
+   * Models of the agent's own model calls (core/models.ts), and of the
+   * proxy's: the proxy's count only in a session with no other model calls.
+   */
+  models: ModelState;
+  proxyModels: ModelState;
   /** How the agent was launched, from the first session.start that says (launchOf). */
   launch?: "headless" | "interactive";
 }
@@ -526,6 +537,8 @@ export function sessionState(): SessionState {
     skills: skillState(),
     redactions: redactionState(),
     hookContext: hookContextState(),
+    models: modelState(),
+    proxyModels: modelState(),
   };
 }
 
@@ -620,6 +633,8 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
   // Keep the earliest repo state (the pre-agent snapshot evals replay from).
   // session.end carries the end snapshot, which must not become the start state.
   if (e.repo && e.kind !== "session.end" && (!s.repo || !s.repo.snapshot)) s.repo = { ...e.repo };
+  if (!proxyCall) foldModels(s.models, e);
+  if (proxyCall || e.kind !== "llm.call") foldModels(s.proxyModels, e);
   switch (e.kind) {
     case "user.message": {
       const text = typeof e.payload.text === "string" ? e.payload.text : undefined;
@@ -750,6 +765,12 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   if (Object.keys(usage).length) session.stats.usage = usage;
   if (duplicate) session.stats.duplicateUsage = duplicate;
   if (s.llmErrors) session.stats.llmErrors = { ...s.llmErrors };
+  const modelFold = s.otherCalls ? s.models : s.proxyModels;
+  const models = modelsOf(modelFold);
+  if (models) session.stats.models = models;
+  const modelSwitch = modelSwitchOf(modelFold);
+  if (modelSwitch) session.stats.modelSwitch = modelSwitch;
+  session.flags.push(...modelFlags(modelFold, modelSwitch));
   const latency = latencyOf(counted.latency, endedAt);
   if (Object.keys(latency).length) session.stats.latency = latency;
   const set = <K extends keyof Session>(k: K, v: Session[K] | undefined) => {
@@ -758,7 +779,9 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   set("agentVersion", s.agentVersion ?? prev?.agentVersion);
   // The agent a host ran: the first event from another agent, else what the host's own events name.
   if (s.via) set("provider", s.agents.find((a) => a !== s.via) ?? s.provider ?? prev?.provider);
-  set("model", s.model ?? prev?.model);
+  // The model most main-thread calls ran on, not the last one seen: a silent fallback
+  // (stats.modelSwitch) or a helper model's call (a title) must not relabel the session.
+  set("model", mainModelOf(modelFold) ?? s.model ?? prev?.model);
   set("cwd", s.cwd ?? prev?.cwd);
   // The earliest repo state wins; one with a snapshot is never replaced (see foldSession).
   set("repo", prev?.repo?.snapshot ? prev.repo : (s.repo ?? prev?.repo));

@@ -199,6 +199,10 @@ export const FLAG_DIAGNOSIS: Readonly<Record<string, FlagDiagnosis | "context-on
   "context-thrash": { typeIds: ["ctx.context-limit", "eff.context-bloat"], nature: "inefficiency" },
   // A vendor token passed through the agent to its model provider; misuse not observed.
   "secret:exposed": { typeIds: ["sec.disclosure"], nature: "risk", reach: 0.6 },
+  // A model change mid-session is context: the refusal or failure that caused it is flagged on its own.
+  "model:switch": "context-only",
+  // A refusal can be the correct answer (a safety refusal); harm not observed.
+  refusal: { typeIds: ["ins.inappropriate-refusal"], nature: "risk", reach: 0.4 },
   // Slots for flags not built yet (research queue #12):
   //   "user-pushback": ins.intent-misread
   //   "search-loop": eff.redundant-retrieval

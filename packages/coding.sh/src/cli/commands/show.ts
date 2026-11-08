@@ -170,6 +170,19 @@ export function hookContextRow(s: Session): [string, string] | undefined {
   return ["Hook context", `${h.count} ${h.count === 1 ? "text" : "texts"}, ~${tokens(h.tokens)} tokens: ${by}`];
 }
 
+const TRIGGER_TEXT = { refusal: "after a refusal", error: "after a failed call", command: "after /model" } as const;
+
+/** Calls per model when more than one model made them, and the main thread's switch: "claude-sonnet-5-5 3, claude-sonnet-5 2; switched from claude-sonnet-5-5 to claude-sonnet-5 at +12s after a refusal". */
+export function modelsRow(s: Session): [string, string] | undefined {
+  const m = s.stats.models;
+  const sw = s.stats.modelSwitch;
+  if (!m && !sw) return undefined;
+  const parts: string[] = [];
+  if (m) parts.push(Object.entries(m).map(([k, n]) => `${k} ${n}`).join(", "));
+  if (sw) parts.push(`switched from ${sw.from} to ${sw.to} at +${duration(Math.max(0, sw.at - s.startedAt))}${sw.trigger ? ` ${TRIGGER_TEXT[sw.trigger]}` : ""}`);
+  return ["Models", parts.join("; ")];
+}
+
 /** Header rows for waste: repeated read-only calls and prompt-cache breaks. */
 export function wasteRows(s: Session): [string, string][] {
   const rows: [string, string][] = [];
@@ -361,6 +374,8 @@ export async function run(c: CommandContext): Promise<number> {
       const from = `${changes.startKind === "head" ? "HEAD " : ""}${changes.start.slice(0, 7)}`;
       rows.push(["Snapshot", `${from} → ${changes.end.slice(0, 7)}: ${changes.files.length} ${changes.files.length === 1 ? "file" : "files"} (+${add} -${del})${list}`]);
     }
+    const models = modelsRow(s);
+    if (models) rows.push(models);
     if (s.parent) rows.push(["Parent", s.parent.sessionId]);
     const d = s.stats.durable;
     if (d) rows.push(...durableRows(d));

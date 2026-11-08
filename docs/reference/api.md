@@ -492,6 +492,20 @@ enclosing call or an earlier copy of the same response already counted it. `stat
 (`count`, plus the first failure's `statusCode` and `error`) counts `llm.call` events with
 `ok: false` or a status of 400 or more; it is absent when none failed.
 
+`model` is the model that made most of the session's main-thread model calls (calls without a
+`subagentId`; the earlier one on a tie), else the last model any event named. `stats.models`
+counts model calls per model (`{"claude-sonnet-5-5": 3, "claude-sonnet-5": 2}`), subagent calls in
+the session included; it is absent when one model or none made them. `stats.modelSwitch`
+(`from`, `to`, `at`, `trigger`) is the main thread's first hand-over to another model: every
+main-thread call on `from` came before the first call on `to`, at `at`. `trigger` is `refusal` or
+`error` when the last call on `from` stopped on a refusal or failed, `command` when a `/model`
+command came right before the first call on `to`, and absent otherwise. Without a trigger, each
+model needs at least two calls, so a helper model's single call before or after the others (a
+title) is not a switch; a helper model whose calls run between the main model's never is. A switch
+adds the `model:switch` tag to `flags`. A call whose `payload.stopReason` is `refusal`,
+`content_filter` or `safety` (any case) adds the `refusal` flag. Calls logged by `coding.sh proxy`
+count here only in a session with no other model calls, as they do for usage.
+
 Model calls logged by [`coding.sh proxy`](../how-to/capture-with-proxy.md) have `source: "proxy"`.
 Their payload adds `provider`, `api` (`messages`, `count_tokens`, `chat` or `responses`),
 `statusCode`, `stream`, `ttfbMs`, `ttftMs`, `stopReason`, `systemHash` and `toolsHash` (16 hex

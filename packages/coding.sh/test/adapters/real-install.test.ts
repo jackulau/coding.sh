@@ -284,6 +284,8 @@ describe("real install: Claude Code 2.1.319", () => {
     );
     assert.equal(s.stats.filesChanged, 3);
     assert.equal(s.agent, "claude-code", "harness loads never name the host (payload.via)");
+    assert.equal(s.model, "claude-sonnet-4-5");
+    assert.deepEqual([s.stats.models, s.stats.modelSwitch, s.flags.filter((f) => f === "model:switch" || f === "refusal")], [undefined, undefined, []]);
   });
 });
 
@@ -339,7 +341,7 @@ describe("hook capture + backfill of one session store it once", () => {
       const s = (await index.getSession(c.session))!;
       // A second backfill finds nothing new.
       const again = await backfill({ config, index, blobs, adapters: [c.adapter], env: { ...process.env } });
-      return { rows, usage: s.stats.usage ?? {}, turns: s.stats.turns, toolCalls: s.stats.toolCalls, again: again.events };
+      return { rows, usage: s.stats.usage ?? {}, turns: s.stats.turns, toolCalls: s.stats.toolCalls, again: again.events, flags: s.flags, modelSwitch: s.stats.modelSwitch };
     } finally {
       delete process.env.GOOSE_PATH_ROOT;
       delete process.env.CURSOR_DATA_DIR;
@@ -362,6 +364,8 @@ describe("hook capture + backfill of one session store it once", () => {
         assert.equal(both.turns, Math.max(hooks.turns, transcript.turns), `${label}: turns`);
         assert.equal(both.toolCalls, Math.max(hooks.toolCalls, transcript.toolCalls), `${label}: tool calls`);
         assert.equal(both.again, 0, `${label}: a second backfill is a no-op`);
+        // One model throughout: no hand-over, and nothing refused.
+        assert.deepEqual([both.modelSwitch, both.flags.filter((f) => f === "model:switch" || f === "refusal")], [undefined, []], `${label}: no model switch`);
       }
     });
   }

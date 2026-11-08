@@ -34,6 +34,9 @@ transcript. See [Agents and OpenTelemetry](guides/agents.md). With
 [the proxy](how-to/capture-with-proxy.md), a model call also keeps the full request and response:
 system prompt, tool definitions, messages, cache use and timings. `coding.sh show <session>#n` reads
 one, and `coding.sh diff-calls` compares two.
+A session's model is the one that made most of its main-thread model calls (calls outside
+subagents), not the last one seen. When more than one model made calls, `stats.models` counts the
+calls per model.
 
 **Replay.** `coding.sh exp replay` sends a logged model call again with one thing changed (the
 model, the system prompt, a setting), several times per arm, and compares the arms like an
@@ -71,6 +74,7 @@ timeline. Through the proxy, a Claude Code subagent's model calls land in its se
   returned the same result as an earlier call, with no edit or compaction in between.
 - `skill-copy-conflict`: the session used two copies of one skill, for example the project's and a
   personal one.
+- `refusal`: a model call stopped on a refusal (`refusal`, `content_filter` or `safety`).
 
 A flag with a colon, such as `gateway:vercel`, is a tag rather than a failure. Each skill a session
 used (through the Skill tool, or by reading or running a file in the skill's folder) adds a
@@ -88,7 +92,11 @@ in which redaction replaced a vendor token (an Anthropic, OpenAI, GitHub, GitLab
 Stripe, npm, coding.sh or AI Gateway key, a Slack webhook or a private key) gets the `secret:exposed`
 tag: the stored copy is redacted, but the agent and its model provider saw the credential, so rotate it.
 `coding.sh sessions --flag secret:exposed` lists them, and `stats.redactions` counts what was replaced
-by kind. Durable workflow runs
+by kind. A session whose main thread handed over to another model mid-session, such as Claude Code
+falling back to an older model after a refusal, gets the `model:switch` tag, and
+`stats.modelSwitch` names both models and the trigger. A hand-over means every main-thread call on the
+first model came before the first call on the second. A helper model that runs beside the main one,
+such as the Haiku calls Claude Code makes for titles, is not a switch. Durable workflow runs
 get two notes rather than failures: `step-retried` (a step took more than one attempt) and `resumed`
 (the run continued after a crash, a deploy or a restart). See
 [Trace a durable workflow](how-to/trace-durable-workflow.md).
