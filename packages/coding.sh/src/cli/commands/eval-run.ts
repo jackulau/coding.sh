@@ -24,6 +24,7 @@ import { FileJudgeCache } from "../../judge/cache.ts";
 import { userHome } from "../../core/paths.ts";
 import { bundleFromDir, DEFAULT_INCLUDE } from "../../runner/bundle.ts";
 import { runExperiment as runTasks } from "../../runner/experiment.ts";
+import { toPosix } from "../../runner/fsutil.ts";
 import { latestPerSlot } from "../../runner/iterate.ts";
 import { captureRedactor, failedRuns, renderFailedRuns, type FailedRun } from "../../runner/verifier-output.ts";
 import { paint } from "../../experiments/text.ts";
@@ -235,9 +236,9 @@ async function runTriggers(c: CommandContext, s: LoadedSuite, k: number): Promis
   const specFile = resolve(s.dir, s.spec.triggers ?? "triggers.toml");
   const todo = (await readFile(specFile, "utf8").catch(() => "")).split("\n").filter((l) => !l.trimStart().startsWith("#") && l.includes(TODO)).length;
   if (todo) {
-    throw new CliError(`Suite ${s.spec.name}: ${plural(todo, "prompt")} in ${relative(c.cwd, specFile) || specFile} still say ${TODO}`, {
+    throw new CliError(`Suite ${s.spec.name}: ${plural(todo, "prompt")} in ${toPosix(relative(c.cwd, specFile)) || specFile} still say ${TODO}`, {
       reason: "draft_suite",
-      next: ["Write real prompts there, or have a model draft them:", `coding.sh eval init ${s.spec.name} --skill ${relative(c.cwd, resolve(s.dir, s.spec.skill!)) || "."} --draft --force`],
+      next: ["Write real prompts there, or have a model draft them:", `coding.sh eval init ${s.spec.name} --skill ${toPosix(relative(c.cwd, resolve(s.dir, s.spec.skill!))) || "."} --draft --force`],
     });
   }
   const flags = { ...c.flags, spec: specFile, k, ...(s.spec.agent && c.flags.agent === undefined ? { agent: s.spec.agent } : {}), ...(s.spec.model && c.flags.model === undefined ? { model: s.spec.model } : {}) };

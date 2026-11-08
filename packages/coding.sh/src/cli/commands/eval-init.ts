@@ -8,6 +8,7 @@ import { repoRoot } from "../../core/git.ts";
 import { providerFromSpec, type LlmProviderSpec } from "../../graders/index.ts";
 import { DEFAULT_SINCE_MS, initSuite, InitError, type InitOpts, type InitResult, type InitSource } from "../../eval/init.ts";
 import { DraftError } from "../../eval/draft.ts";
+import { toPosix } from "../../runner/fsutil.ts";
 import type { SuitePurpose } from "../../eval/report.ts";
 import { parseAge, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, jsonArg, list, resolveSession, str, withContext } from "../common.ts";
@@ -178,11 +179,11 @@ export async function evalInit(c: CommandContext): Promise<number> {
 function render(c: CommandContext, r: InitResult, root: string): void {
   const { out } = c;
   if (out.json) {
-    out.data({ outcome: "created", ...r, dir: relative(root, r.dir) || "." });
+    out.data({ outcome: "created", ...r, dir: toPosix(relative(root, r.dir)) || "." });
     return;
   }
   const what = r.kind === "tasks" ? plural(r.tasks?.length ?? 0, "task") : r.kind === "triggers" ? "skill trigger prompts" : "cases";
-  out.ok(`Wrote ${r.purpose} suite ${r.name} (${what}) to ${relative(root, r.dir) || "."}${r.drafted ? ", DRAFT: read it before trusting a score" : ""}`);
+  out.ok(`Wrote ${r.purpose} suite ${r.name} (${what}) to ${toPosix(relative(root, r.dir)) || "."}${r.drafted ? ", DRAFT: read it before trusting a score" : ""}`);
   for (const f of r.files) out.note(f);
   for (const t of r.tasks ?? []) out.row(t.name, `${t.verifier || "no verifier"} · from session ${t.sessionId.slice(0, 8)}`);
   for (const n of r.notes) out.warn(n);
