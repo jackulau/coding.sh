@@ -1,0 +1,31 @@
+scripts/dogfood/bench.mjs
+  s_8e040dbdf13565::t_343da1ed8d857f 14-15,27-28,220-330,487
+  s_8e040dbdf13565::t_0a8ded452050d4 5-7,492,497-499
+scripts/e2e/proxy-capture.mjs
+  s_8e040dbdf13565::t_cea53fea9f5b11 125-131,292-297
+  s_8e040dbdf13565::t_be8f14fcc18b4a 257,289
+  s_8e040dbdf13565::t_d61d330d030297 1-124,132-256,258-288,290-291,298-316
+scripts/e2e/stub-model.mjs
+  s_8e040dbdf13565::t_39a430e0560afd 151-153
+scripts/dogfood/bench-proxy.mjs
+  s_8e040dbdf13565::t_343da1ed8d857f 1-6
+.github/workflows/ci.yml
+  s_8e040dbdf13565::t_0a8ded452050d4 249-254
+  s_8e040dbdf13565::t_02b1fffe3a73c6 242-248
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1b11d7ab239ac20d73ed08adb2681c8a907d23a1",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
