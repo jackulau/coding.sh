@@ -11,7 +11,7 @@
 // OTel frameworks: see sources/otel.ts.
 import { basename } from "node:path";
 import type { AgentEvent, Session } from "../schema/index.ts";
-import { workflowStats } from "./metrics.ts";
+import { phasesByStart, workflowStats } from "./metrics.ts";
 import {
   agentDetail,
   argsHashOf,
@@ -372,10 +372,12 @@ function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
 
   const wf: WorkflowNode = { id: runId, runId, kind: "workflow", name: "", status: status === "failed" || status === "aborted" ? "failed" : status === "running" ? "running" : "ok" };
   const phaseNodes = new Map<string, WorkflowNode>();
-  for (const p of phaseOrder) {
+  // In the order the run reached them; the ordinal breaks start-time ties the same way.
+  const reached = phasesByStart(agents.filter((a) => a.phase !== undefined), phaseOrder);
+  for (const [i, p] of reached.entries()) {
     const members = agents.filter((a) => a.phase === p);
     if (!members.length) continue;
-    const node: WorkflowNode = { id: `${runId}/phase/${p}`, runId, parentId: wf.id, kind: "phase", name: p, phase: p, status: members.some((m) => m.status === "failed") ? "failed" : members.every((m) => m.status === "cached") ? "cached" : "ok" };
+    const node: WorkflowNode = { id: `${runId}/phase/${p}`, runId, parentId: wf.id, kind: "phase", name: p, phase: p, ordinal: i, status: members.some((m) => m.status === "failed") ? "failed" : members.every((m) => m.status === "cached") ? "cached" : "ok" };
     const t = members.filter((m) => m.startedAt !== undefined);
     if (t.length) {
       node.startedAt = Math.min(...t.map((m) => m.startedAt!));

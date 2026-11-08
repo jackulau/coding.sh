@@ -1,7 +1,7 @@
 // Gantt data for the viewer route /workflows/:runId and the TSV fallback
 // (`workflows show --gantt`), docs/design/workflows.md §8.
 import { criticalPath, timedAgents } from "./critical-path.ts";
-import { barrierIdle, concurrencySeries, isAgentNode } from "./metrics.ts";
+import { barrierIdle, concurrencySeries, isAgentNode, phasesByStart } from "./metrics.ts";
 import type { GanttData, GanttRow, WorkflowNode, WorkflowRun } from "./types.ts";
 
 /** Row label: a durable step that ran more than once gets its attempt number ("search #2"). */
@@ -15,8 +15,7 @@ export function buildGantt(run: WorkflowRun, nodes: WorkflowNode[]): GanttData {
   rowsOf.sort(durable ? (a, b) => (a.startedAt ?? Infinity) - (b.startedAt ?? Infinity) : byStart);
   const critical = new Set(run.stats?.criticalPath ?? criticalPath(nodes).path);
   const idle = barrierIdle(nodes);
-  const order = [...(run.phases ?? [])];
-  for (const a of rowsOf) if (!order.includes(a.phase ?? "")) order.push(a.phase ?? "");
+  const order = phasesByStart(rowsOf, run.phases);
   const phases: GanttData["phases"] = [];
   for (const p of order) {
     const rows: GanttRow[] = [];

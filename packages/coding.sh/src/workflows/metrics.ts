@@ -60,6 +60,28 @@ export function usageRoots(nodes: readonly WorkflowNode[]): WorkflowNode[] {
   return nodes.filter((n) => AGENTISH.has(n.kind) || (n.kind === "llm" && !hasAgentAncestor(n)));
 }
 
+/**
+ * Phase names in the order the run reached them: by their agents' first start, phases with no
+ * timed agent last, ties in `declared` order (the script's phases, then first appearance). Agents
+ * with no phase count as phase "". `workflows show`, `stats` and the Gantt all use this order, so a
+ * phase the script dropped before a resume sits where it ran, not at the end.
+ */
+export function phasesByStart(agents: readonly WorkflowNode[], declared: readonly string[] = []): string[] {
+  const first = new Map<string, number>();
+  const order = [...declared];
+  for (const a of agents) {
+    const p = a.phase ?? "";
+    if (!order.includes(p)) order.push(p);
+    if (a.startedAt !== undefined) first.set(p, Math.min(first.get(p) ?? Infinity, a.startedAt));
+  }
+  const present = new Set(agents.map((a) => a.phase ?? ""));
+  return order
+    .filter((p) => present.has(p))
+    .map((p, i) => ({ p, i, t: first.get(p) ?? Infinity }))
+    .sort((x, y) => x.t - y.t || x.i - y.i)
+    .map((x) => x.p);
+}
+
 /** Sweep line over [start, end) intervals: running count after each change point. */
 export function concurrencySeries(intervals: readonly { start: number; end: number }[]): { t: number; running: number }[] {
   const pts: [number, number][] = [];
@@ -311,10 +333,8 @@ export function workflowStats(run: WorkflowRun, nodes: WorkflowNode[], base?: { 
   // Per phase. Agents without a phase are grouped under "".
   const phases = new Map<string, WorkflowNode[]>();
   for (const n of allAgents) phases.set(n.phase ?? "", [...(phases.get(n.phase ?? "") ?? []), n]);
-  const order = [...(run.phases ?? [])];
-  for (const p of phases.keys()) if (!order.includes(p)) order.push(p);
   const perPhase: PhaseMetric[] = [];
-  for (const p of order) {
+  for (const p of phasesByStart(allAgents, run.phases)) {
     const members = phases.get(p);
     if (!members) continue;
     const t = members.filter((m) => m.status !== "cached" && m.startedAt !== undefined && m.endedAt !== undefined);

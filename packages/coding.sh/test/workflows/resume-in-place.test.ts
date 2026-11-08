@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { run as workflowsCli } from "../../src/cli/commands/workflows.ts";
 import { Output } from "../../src/cli/output.ts";
+import { buildGantt } from "../../src/workflows/gantt.ts";
 import { loadClaudeWorkflowDir } from "../../src/workflows/sources/claude-workflow.ts";
 import { buildWorkflowTree, type WorkflowTree } from "../../src/workflows/tree.ts";
 import { INPLACE, T1, writeInPlaceFixture } from "./_fixtures.ts";
@@ -169,6 +170,16 @@ describe("cache hits on a run resumed in place", () => {
   });
 });
 
+describe("phase order", () => {
+  it("orders phases by first start in stats, the tree and the Gantt, even one the script dropped", () => {
+    // The last segment's script declares Plan, QA, Fix; Review ran first, then was removed.
+    assert.deepEqual(tree.run.phases, ["Plan", "QA", "Fix", "Review"]);
+    const want = ["Plan", "Review", "QA", "Fix"];
+    assert.deepEqual(tree.run.stats.perPhase!.map((p) => p.phase), want);
+    assert.deepEqual(buildGantt(tree.run, tree.nodes).phases.map((p) => p.name), want);
+  });
+});
+
 describe("workflows show and stats on a run resumed in place", () => {
   it("show and stats list stopped agents apart from failures", async () => {
     await cli("import", []);
@@ -185,6 +196,9 @@ describe("workflows show and stats on a run resumed in place", () => {
     assert.match(show, /agent plan\s+ok\s+10s\s+replayed on resume/);
     assert.match(stats, /cache hits\t1 \(13%\)/);
     assert.match(stats, /resume saved\t10s, \$0\.40/);
+    const order = (text: string, re: RegExp) => [...text.matchAll(re)].map((m) => m[1]);
+    assert.deepEqual(order(show, /^  phase (\S+)/gm), ["Plan", "Review", "QA", "Fix"]);
+    assert.deepEqual(order(stats, /^(Plan|Review|QA|Fix)\t/gm), ["Plan", "Review", "QA", "Fix"]);
     assert.match(show, /Wall\s+1m40s \(active 1m20s over 3 segments\)/);
   });
 });
