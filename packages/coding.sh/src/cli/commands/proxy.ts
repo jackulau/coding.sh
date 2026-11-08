@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { mkdirSync, openSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { runningCli } from "../../mcp/launch.ts";
 import { startLocalProxy } from "../../proxy/index.ts";
 import { clearProxyState, pidAlive, probeProxy, proxyEnv, proxyLogPath, proxySettings, readProxyState, writeProxyState, type ProxyState } from "../../proxy/state.ts";
 import type { AgentEvent } from "../../schema/index.ts";
@@ -101,8 +102,10 @@ async function start(c: CommandContext): Promise<number> {
  * Also used by `init --proxy`.
  */
 export async function startInBackground(env: NodeJS.ProcessEnv, flags: Record<string, unknown>, port: number): Promise<ProxyState> {
-  // The CLI this process runs (a bundle's cli.mjs, or src/cli/main.ts from a checkout), never some other script.
-  const script = process.argv[1] && /^(cli\.m?js|main\.ts)$/.test(basename(process.argv[1])) ? process.argv[1] : undefined;
+  // The CLI this process runs (a bundle's cli.mjs, through the bin symlink of a global install,
+  // or src/cli/main.ts from a checkout), never some other script.
+  const argv1 = process.argv[1];
+  const script = runningCli(argv1) ?? (argv1 && basename(argv1) === "main.ts" ? argv1 : undefined);
   if (!script) throw new CliError("Can't find the coding.sh CLI to start in the background", { reason: "proxy_failed" });
   const args = [...process.execArgv, script, "proxy", "--quiet"];
   for (const k of ["port", "host", "anthropic-upstream", "openai-upstream"]) {
