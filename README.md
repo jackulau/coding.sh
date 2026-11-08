@@ -140,16 +140,6 @@ are still in that state because both need an account login. If you use one of th
 saying whether it works moves it to "Verified". Per-agent details, including which agents get the
 MCP server, are in [docs/guides/agents.md](docs/guides/agents.md).
 
-## How it compares
-
-- **ccusage** reads Claude Code's logs and reports token and cost totals. coding.sh records the
-  timeline of each session (tools, file changes, subagents, latency) for a dozen agents, and adds
-  evals and A/B comparisons. They can run side by side.
-- **Langfuse, LangSmith, Braintrust** are built around instrumenting your own app with an SDK and
-  sending traces to a server. coding.sh takes the same OpenTelemetry traces locally, and also
-  captures coding agents through their own hooks with no code changes. For API apps,
-  `coding.sh serve` and the SDKs cover the server case on SQLite or Postgres.
-
 ## Privacy
 
 With no sinks configured, no session data leaves your machine. The only default network request is
