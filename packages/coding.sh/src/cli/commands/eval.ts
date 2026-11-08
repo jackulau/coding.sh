@@ -140,32 +140,57 @@ export async function run(c: CommandContext): Promise<number> {
         return 0;
       }
       case "validate": {
-        const task = await getTask(ctx, c.positionals[0]!);
+        const tag = str(c.flags.tag);
+        if (!c.positionals.length && !tag) throw new UsageError("Name a task, or pass --tag <TAG> to validate every task with that tag", { reason: "missing_argument" });
+        const tasks: EvalTask[] = [];
+        for (const ref of c.positionals) tasks.push(await getTask(ctx, ref));
+        if (tag) {
+          const tagged = (await ctx.index.listTasks({ tag })).filter((t) => t.status !== "archived");
+          if (!tagged.length) throw new CliError(`No tasks have the tag ${JSON.stringify(tag)}`, { reason: "not_found", next: ["List tasks and their tags:", "coding.sh eval list --json"] });
+          tasks.push(...tagged.sort((a, b) => a.name.localeCompare(b.name)));
+        }
+        const unique = [...new Map(tasks.map((t) => [t.id, t])).values()];
         const k = positiveInt(c.flags.k, "k") ?? 5;
         const workRoot = await mkdtemp(join(tmpdir(), "codingsh-validate-"));
-        const spin = out.spin("Validating…");
+        const many = unique.length > 1;
+        const docs: Record<string, unknown>[] = [];
+        let failed = 0;
         try {
-          const o = await validateTask({
-            task,
-            blobs: ctx.blobs,
-            workRoot,
-            k,
-            index: ctx.index,
-            keep: c.flags.keep === true,
-            strictCoupling: c.flags["strict-coupling"] === true,
-            signal: c.signal,
-            onStep: (st) => out.note(`${st.label}: ${st.pass ? "pass" : "fail"}`),
-          });
-          spin.stop();
-          if (out.json) out.data({ outcome: o.report.ok ? "validated" : "rejected", task: taskJson(o.task), report: o.report, errors: o.errors, notes: o.notes, steps: o.steps });
-          else {
-            out.print(formatValidation(o));
-            if (o.report.ok) out.ok(`${task.id} validated`);
-            else out.fail(`${task.id} did not validate`);
+          for (const [i, task] of unique.entries()) {
+            const spin = out.spin(many ? `Validating ${task.name} (${i + 1}/${unique.length})…` : "Validating…");
+            let o;
+            try {
+              o = await validateTask({
+                task,
+                blobs: ctx.blobs,
+                workRoot,
+                k,
+                index: ctx.index,
+                keep: c.flags.keep === true,
+                strictCoupling: c.flags["strict-coupling"] === true,
+                signal: c.signal,
+                ...(many ? {} : { onStep: (st: { label: string; pass: boolean }) => out.note(`${st.label}: ${st.pass ? "pass" : "fail"}`) }),
+              });
+            } finally {
+              spin.stop();
+            }
+            if (!o.report.ok) failed++;
+            docs.push({ outcome: o.report.ok ? "validated" : "rejected", task: taskJson(o.task), report: o.report, errors: o.errors, notes: o.notes, steps: o.steps });
+            if (out.json) continue;
+            if (!many) {
+              out.print(formatValidation(o));
+              if (o.report.ok) out.ok(`${task.id} validated`);
+              else out.fail(`${task.id} did not validate`);
+            } else if (o.report.ok) out.ok(`${task.name} validated`);
+            else out.fail(`${task.name} did not validate${o.errors[0] ? `: ${oneLine(o.errors[0]).slice(0, 160)}` : ""}`);
           }
-          return o.report.ok ? 0 : 1;
+          if (out.json) out.data(many ? { tasks: docs, validated: unique.length - failed, rejected: failed } : docs[0]!);
+          else if (many) {
+            out.print(`${unique.length - failed} of ${unique.length} tasks validated`);
+            if (failed) out.next("See why a task did not validate", "coding.sh eval validate <task>");
+          }
+          return failed ? 1 : 0;
         } finally {
-          spin.stop();
           if (c.flags.keep !== true) await rm(workRoot, { recursive: true, force: true });
           else out.note(`Work directories kept in ${workRoot}`);
         }

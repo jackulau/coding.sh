@@ -798,18 +798,24 @@ coding.sh eval import tasks/*/
 Check the reference passes, near-misses fail and nothing leaks.
 
 ```text
-coding.sh eval validate <TASK> [options]
+coding.sh eval validate [task]... [options]
 ```
 
 | Argument | Required | Description |
 |---|---|---|
-| `task` | yes | Task id or name. |
+| `task` | no | Task id or name (repeatable; or use --tag) Takes the rest of the arguments. |
 
 | Option | Default | Description |
 |---|---|---|
+| `--tag <TAG>` |  | Validate every task with this tag, e.g. suite:&lt;name&gt; after eval import or eval run. |
 | `--k <N>` | `5` | Reference must pass N of N runs. |
 | `--keep` |  | Keep work directories. |
 | `--strict-coupling` |  | Fail validation when a hidden test names an identifier or file only the reference introduces. |
+
+```sh
+coding.sh eval validate my-task
+coding.sh eval validate --tag suite:failures --k 1
+```
 
 ### `coding.sh eval crosscheck`
 

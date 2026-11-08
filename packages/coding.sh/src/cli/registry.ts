@@ -619,12 +619,14 @@ export const COMMANDS: CommandSpec[] = [
       {
         name: "validate",
         summary: "Check the reference passes, near-misses fail and nothing leaks",
-        args: [{ name: "task", desc: "Task id or name", required: true }],
+        args: [{ name: "task", desc: "Task id or name (repeatable; or use --tag)", variadic: true }],
         flags: [
+          { name: "tag", type: "string", value: "<TAG>", desc: "Validate every task with this tag, e.g. suite:<name> after eval import or eval run" },
           { name: "k", type: "number", value: "<N>", desc: "Reference must pass N of N runs", default: "5" },
           { name: "keep", type: "boolean", desc: "Keep work directories" },
           { name: "strict-coupling", type: "boolean", desc: "Fail validation when a hidden test names an identifier or file only the reference introduces" },
         ],
+        examples: ["coding.sh eval validate my-task", "coding.sh eval validate --tag suite:failures --k 1"],
       },
       {
         name: "crosscheck",

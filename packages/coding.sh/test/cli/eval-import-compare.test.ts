@@ -185,6 +185,42 @@ describe("eval import + compare --tag", () => {
     assert.match(bad.stdout + bad.stderr, /commit 0000000000 is not in/);
   });
 
+  it("eval validate --tag validates every task with the tag, one line each, and exits 1 when any is rejected", (t) => {
+    if (!gitBin) return t.skip("needs git");
+    const check = `"${process.execPath}" -e "process.exit(require('fs').existsSync('done.txt')?0:1)"`;
+    const dirs = ["fair", "lenient"].map((name) => {
+      const d = join(root, "validate-many", name);
+      mkdirSync(join(d, "repo"), { recursive: true });
+      writeFileSync(join(d, "repo", "README.md"), "# app\n");
+      // "lenient" passes whatever the agent does, so its no-op passes and it is rejected.
+      writeFileSync(join(d, "task.json"), JSON.stringify({ name: `vm-${name}`, tags: ["validate-many"], verifier: { command: name === "fair" ? check : "exit 0" } }));
+      writeFileSync(join(d, "instruction.md"), "Create done.txt.\n");
+      writeFileSync(join(d, "reference.patch"), "diff --git a/done.txt b/done.txt\nnew file mode 100644\n--- /dev/null\n+++ b/done.txt\n@@ -0,0 +1 @@\n+done\n");
+      return d;
+    });
+    assert.equal(cli(["eval", "import", ...dirs]).status, 0);
+
+    const all = cli(["eval", "validate", "--tag", "validate-many", "--k", "1", "--json"]);
+    assert.equal(all.status, 1, all.stdout + all.stderr);
+    const doc = JSON.parse(all.stdout) as { tasks: { outcome: string; task: { name: string } }[]; validated: number; rejected: number };
+    assert.deepEqual(doc.tasks.map((x) => [x.task.name, x.outcome]), [["vm-fair", "validated"], ["vm-lenient", "rejected"]]);
+    assert.deepEqual([doc.validated, doc.rejected], [1, 1]);
+
+    const text = cli(["eval", "validate", "--tag", "validate-many", "--k", "1"]);
+    assert.equal(text.status, 1);
+    assert.match(text.stdout + text.stderr, /vm-fair validated/);
+    assert.match(text.stdout + text.stderr, /vm-lenient did not validate/);
+    assert.match(text.stdout + text.stderr, /1 of 2 tasks validated/);
+
+    // One task keeps the single-task shape.
+    const one = cli(["eval", "validate", "vm-fair", "--k", "1", "--json"]);
+    assert.equal(one.status, 0, one.stdout + one.stderr);
+    assert.equal((JSON.parse(one.stdout) as { outcome: string }).outcome, "validated");
+
+    assert.equal(cli(["eval", "validate"]).status, 2);
+    assert.equal(cli(["eval", "validate", "--tag", "no-such-tag"]).status, 1);
+  });
+
   it("judge grade outside a run: predicate-only checklists need no model; usage rows land in CODING_SH_GRADER_USAGE", (t) => {
     if (!gitBin) return t.skip("needs git");
     const dir = join(root, "grade");

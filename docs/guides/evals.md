@@ -163,6 +163,12 @@ leaks. When a check goes the wrong way (the reference fails, the no-op or a near
 setup fails), it prints the last 12 lines of that command's output under the summary, once per
 kind of check. `--json` has each step's output in `steps[].outputTail`.
 
+`eval validate` takes several tasks, or `--tag <tag>` for every task with that tag (such as
+`suite:<name>`, which `eval run` gives a suite's tasks, or a tag in the `task.json` of tasks you
+imported). It then prints one line per task and how many validated, and exits 1 if any did not.
+`--json` has `tasks`, one entry per task in the single-task shape, with `validated` and
+`rejected` counts.
+
 Validation also looks for gold-only coupling: a hidden test that names a helper or file only the
 reference introduces, which the instruction never mentions (`_parseCidr`, `src/acl/util.ts`). A
 valid solution that names things differently fails such a test. Each case is listed as a note and
