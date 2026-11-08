@@ -12,12 +12,13 @@ import { run as ui } from "../../src/cli/commands/ui.ts";
 import { run as sessions } from "../../src/cli/commands/sessions.ts";
 import { run as search } from "../../src/cli/commands/search.ts";
 import { startBackgroundIngest } from "../../src/cli/ingest-worker.ts";
+import { autoIngest } from "../../src/cli/common.ts";
 import { Output } from "../../src/cli/output.ts";
 import type { FlagValue } from "../../src/cli/args.ts";
 import { openContext } from "../../src/core/context.ts";
 import { acquireLock } from "../../src/core/lock.ts";
 import { paths } from "../../src/core/paths.ts";
-import { median } from "../helpers-timing.ts";
+import { median, threadCpuMs } from "../helpers-timing.ts";
 
 const roots: string[] = [];
 after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
@@ -113,34 +114,59 @@ describe("reads during ingest", () => {
   });
 
   test("a read on the viewer's thread stays prompt while the background worker ingests", async () => {
+    // Measured in this thread's CPU time, not wall time: node:sqlite is synchronous, so an
+    // ingest on this thread would show up as CPU spent here, while the wall clock on a busy
+    // machine also counts the time this thread waits for a core.
+    const cpu = threadCpuMs;
+    // Calibration: what the same ingest costs when it runs on this thread.
+    const inlineIngest = async (sessions: number) => {
+      const twin = home(sessions, 10);
+      const tctx = await openContext({ env: twin.env, cwd: twin.cwd });
+      try {
+        const c = cpu();
+        await autoIngest(tctx);
+        return cpu() - c;
+      } finally {
+        await tctx.close();
+      }
+    };
+    await inlineIngest(1); // loads the modules an ingest needs
+    const inline = await inlineIngest(20);
+
     const h = home(20, 10);
     const ctx = await openContext({ env: h.env, cwd: h.cwd });
-    const read = async () => {
-      const t = performance.now();
-      await ctx.index.listSessions({ limit: 50 });
-      return performance.now() - t;
+    // Reads 20 ms apart until `done`: this thread's CPU in each read, and in each wait
+    // between reads (where an ingest sharing this thread would run).
+    const sample = async (done: (n: number) => boolean) => {
+      const reads: number[] = [];
+      const waits: number[] = [];
+      while (!done(waits.length)) {
+        const w = cpu();
+        await new Promise((r) => setTimeout(r, 20));
+        waits.push(cpu() - w);
+        const c = cpu();
+        await ctx.index.listSessions({ limit: 50 });
+        reads.push(cpu() - c);
+      }
+      return { reads, waits };
     };
     try {
-      // Baseline: the same read on an idle store, same process, same moment.
-      const idle: number[] = [];
-      for (let i = 0; i < 15; i++) idle.push(await read());
+      // What a wait costs this thread on an idle store (timers, promises), same process, same moment.
+      const idle = await sample((n) => n >= 15);
       const bg = startBackgroundIngest({ env: h.env, cwd: h.cwd, intervalMs: 60_000 });
-      const busy: number[] = [];
       const started = performance.now();
-      while (bg.status().lastIngestAt === null && performance.now() - started < 120_000) {
-        // Wall time of a read, including any wait on the event loop (a sync ingest on this thread would show here).
-        const t = performance.now();
-        await new Promise((r) => setTimeout(r, 5));
-        await read();
-        busy.push(performance.now() - t - 5);
-      }
+      const busy = await sample(() => bg.status().lastIngestAt !== null || performance.now() - started > 120_000);
       await bg.close();
       assert.ok(bg.status().lastIngestAt !== null, "the pass finished");
       assert.equal((await ctx.index.listSessions({ limit: 100 })).length, 20, "the worker's writes are visible on this connection");
-      const worst = Math.max(...busy);
-      const base = Math.max(...idle);
-      assert.ok(busy.length > 0);
-      assert.ok(worst < Math.max(250, 20 * base), `reads during ingest, ms: median ${median(busy).toFixed(1)}, max ${worst.toFixed(1)} over ${busy.length}; idle max ${base.toFixed(1)}`);
+      assert.ok(busy.reads.length > 0);
+      const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+      const extra = sum(busy.waits) - busy.waits.length * median(idle.waits);
+      const detail = `this thread, ms of CPU: ${sum(busy.waits).toFixed(1)} in ${busy.waits.length} waits (${extra.toFixed(1)} over idle), max read ${Math.max(...busy.reads).toFixed(2)}; the ingest inline: ${inline.toFixed(1)}`;
+      // The ingest ran elsewhere: between reads this thread did no more than when idle.
+      assert.ok(extra < inline / 4, detail);
+      // And no read did a share of it.
+      assert.ok(Math.max(...busy.reads) < inline / 4, detail);
     } finally {
       await ctx.close();
     }
