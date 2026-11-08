@@ -54,4 +54,9 @@ export const NAV_PAGES = [
     title: "Changelog",
     summary: "Every coding.sh release, newest first, rendered from CHANGELOG.md.",
   },
+  {
+    path: "/blog",
+    title: "Blog",
+    summary: "Notes on how coding.sh works and why, newest first.",
+  },
 ] as const;

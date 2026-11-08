@@ -1,0 +1,107 @@
+---
+// /blog/<slug>: one post from src/content/blog/<slug>.md. The header matches the
+// changelog's; the body uses the docs prose (styles/doc.css) and <Code> blocks.
+import Layout from "../../layouts/Layout.astro";
+import Nav from "../../components/Nav.astro";
+import CubeField from "../../components/CubeField.astro";
+import Code from "../../components/docs/Code.astro";
+import { getPosts, type Post } from "../../lib/blog";
+import "../../styles/changelog.css";
+import "../../styles/doc.css";
+
+export async function getStaticPaths() {
+  const posts = await getPosts();
+  return posts.map((post, i) => ({
+    params: { slug: post.slug },
+    props: { post, newer: posts[i - 1], older: posts[i + 1] },
+  }));
+}
+
+interface Props {
+  post: Post;
+  newer?: Post;
+  older?: Post;
+}
+const { post, newer, older } = Astro.props;
+---
+
+<Layout
+  title={`${post.title} · coding.sh blog`}
+  description={post.description}
+  image={post.image}
+  type="article"
+  article={{ publishedTime: post.published, modifiedTime: post.modified }}
+  breadcrumbs={[
+    { name: "Blog", path: "/blog" },
+    { name: post.title, path: post.path },
+  ]}
+>
+  <Nav />
+  <main id="main">
+    <header class="cl-head">
+      <CubeField variant="side" />
+      <div class="wrap cl-head__inner" data-field-clear>
+        <a class="cl-back hit" href="/blog">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M13 8H3.5M7.5 4l-4 4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          Blog
+        </a>
+        <p class="cl-date"><time datetime={post.published}>{post.dateLabel}</time></p>
+        <h1>{post.title}</h1>
+        <p class="cl-lede">{post.description}</p>
+      </div>
+    </header>
+
+    <div class="wrap blog-post">
+      <article class="doc">
+        {post.blocks.map((b) => (b.kind === "code" ? <Code code={b.code} title={b.title} /> : <Fragment set:html={b.html} />))}
+      </article>
+
+      {
+        (newer || older) && (
+          <nav class="cl-pager" aria-label="Other posts">
+            {newer && (
+              <a href={newer.path}>
+                <small>Newer post</small>
+                <strong>{newer.title}</strong>
+              </a>
+            )}
+            {older && (
+              <a class="is-older" href={older.path}>
+                <small>Older post</small>
+                <strong>{older.title}</strong>
+              </a>
+            )}
+          </nav>
+        )
+      }
+      <p class="cl-source">
+        <a class="inline-link" href="/blog">All posts</a> · <a class="inline-link" href="/blog.xml">RSS</a>
+      </p>
+    </div>
+  </main>
+</Layout>
+
+<style>
+  .blog-post {
+    padding-block: 3rem 6rem;
+  }
+  .blog-post > :not(.doc) {
+    max-width: 46rem;
+  }
+  /* The lede already sits in the header, so the body starts on its first block. */
+  .doc > :global(:first-child) {
+    margin-top: 0;
+  }
+  /* Post titles, not version numbers: the sans voice. */
+  .cl-pager strong {
+    font-family: var(--font-sans);
+    font-weight: 520;
+  }
+  @media (max-width: 639px) {
+    .blog-post {
+      padding-block: 2rem 4rem;
+    }
+  }
+</style>

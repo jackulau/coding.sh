@@ -101,7 +101,12 @@ const cells = (row: string) =>
 
 /** Parse docs/<file>. Drops the # title and the "Site version" pointer; the layout has its own. */
 export function renderDoc(file: string): MdBlock[] {
-  const lines = readFileSync(join(REPO_DOCS, file), "utf8").split("\n");
+  return renderMarkdown(readFileSync(join(REPO_DOCS, file), "utf8"), file);
+}
+
+/** Parse Markdown text. `file` is its path under docs/, which relative links resolve against. */
+export function renderMarkdown(text: string, file: string): MdBlock[] {
+  const lines = text.split("\n");
   const blocks: MdBlock[] = [];
   let html = "";
   const flush = () => {

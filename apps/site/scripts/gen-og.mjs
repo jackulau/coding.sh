@@ -1,5 +1,6 @@
 // Writes the 1200x630 Open Graph images: public/og-image.png for the site and
-// public/og/<page>.png for the changelog and every docs page (title overlay).
+// public/og/<page>.png for the changelog, the blog, every blog post and every
+// docs page (title overlay).
 // Black background, the solid voxel cube, "coding.sh" and a title.
 // Needs rsvg-convert (brew install librsvg). Run: npm run og
 // `--missing` (run by `npm run build`) writes only the cards that don't exist
@@ -7,7 +8,7 @@
 // page falls back to the site card.
 // rsvg-convert's PNGs are then re-encoded losslessly with sharp (zlib level 9,
 // no alpha channel since the background is opaque): pixel-identical, ~30% smaller.
-import { writeFileSync, readFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
+import { writeFileSync, readFileSync, readdirSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -43,6 +44,17 @@ const mono = font("geist-mono-latin.woff2");
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 
 const cube = cubeSvg(undefined, undefined, 100);
+
+// Blog posts: src/content/blog/<slug>.md, title from the front matter.
+const POSTS = new URL("../src/content/blog/", import.meta.url).pathname;
+const posts = (existsSync(POSTS) ? readdirSync(POSTS) : [])
+  .filter((f) => f.endsWith(".md"))
+  .map((f) => {
+    const front = readFileSync(join(POSTS, f), "utf8").match(/^---\r?\n([\s\S]*?)\r?\n---/)?.[1] ?? "";
+    const title = front.match(/^title:\s*(.+)$/m)?.[1].trim().replace(/^(["'])(.*)\1$/, "$2");
+    if (!title) throw new Error(`gen-og: no title in ${f}`);
+    return { slug: f.slice(0, -3), title };
+  });
 
 /** Wraps a title onto at most three lines of roughly `max` characters. */
 function lines(text, max) {
@@ -91,10 +103,12 @@ await png("og/changelog", { kicker: "changelog", title: "Changelog", sub: "Every
 // The kicker names the section: comparisons and use cases are found from search
 // as often as from the docs.
 const kicker = (path) => (path.startsWith("/docs/compare") ? "compare" : path.startsWith("/docs/use-cases/") ? "use case" : "docs");
+await png("og/blog", { kicker: "blog", title: "Blog", sub: "Notes on how coding.sh works and why." });
+for (const p of posts) await png(`og/blog-${p.slug}`, { kicker: "blog", title: p.title, sub: "coding.sh blog" });
 for (const p of DOC_PAGES) {
   const slug = p.path === "/docs" ? "docs" : `docs-${p.path.slice("/docs/".length).replace(/\//g, "-")}`;
   await png(`og/${slug}`, { kicker: kicker(p.path), title: p.title, sub: "coding.sh docs" });
 }
 rmSync(tmp, { recursive: true, force: true });
 rmSync(join(PUBLIC, "og-image.svg"), { force: true });
-console.log(MISSING_ONLY ? `og: ${written} missing card(s) written` : `og images written: og-image.png, og/changelog.png, ${DOC_PAGES.length} docs pages`);
+console.log(MISSING_ONLY ? `og: ${written} missing card(s) written` : `og images written: og-image.png, og/changelog.png, og/blog.png, ${posts.length} blog posts, ${DOC_PAGES.length} docs pages`);

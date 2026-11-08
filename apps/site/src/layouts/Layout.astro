@@ -120,6 +120,7 @@ const markdownURL = noindex || isAgentExcluded(Astro.url.pathname)
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/site.webmanifest" />
     <link rel="alternate" type="application/atom+xml" href="/changelog.xml" title="coding.sh changelog" />
+    <link rel="alternate" type="application/atom+xml" href="/blog.xml" title="coding.sh blog" />
     <title>{title}</title>
     <ClientRouter />
 
@@ -138,7 +139,7 @@ const markdownURL = noindex || isAgentExcluded(Astro.url.pathname)
             description: description,
             image: ogImageURL,
             inLanguage: "en-US",
-            isPartOf: { "@type": "Blog", "@id": `${SITE_URL}/writings#blog` },
+            isPartOf: { "@type": "Blog", "@id": `${SITE_URL}/blog#blog` },
             ...(article.tags?.length ? { keywords: article.tags.join(", ") } : {}),
             datePublished: article.publishedTime,
             dateModified: article.modifiedTime || article.publishedTime,
@@ -177,6 +178,7 @@ const markdownURL = noindex || isAgentExcluded(Astro.url.pathname)
           {DOCS_PUBLIC && <a class="hit" href="/docs">Docs</a>}
           {DOCS_PUBLIC && <a class="hit" href="/docs/compare">Compare</a>}
           <a class="hit" href="/changelog">Changelog</a>
+          <a class="hit" href="/blog">Blog</a>
           <a class="hit" href={REPO_URL}>GitHub</a>
           <a class="hit" href={LICENSE_URL}>License</a>
           <a class="hit" href="/llms.txt">llms.txt</a>

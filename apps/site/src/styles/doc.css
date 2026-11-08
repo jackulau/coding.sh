@@ -1,0 +1,280 @@
+/* Prose for docs pages and blog posts, scoped to .doc so the landing page is
+   untouched: headings, lists, links, tables that scroll inside their own box,
+   asides and status tags. Imported by DocsLayout.astro and the blog pages. */
+.doc {
+  max-width: 46rem;
+  color: var(--text-2);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+.doc h1 {
+  font-size: clamp(2rem, 1.5rem + 2vw, 2.75rem);
+  line-height: 1.08;
+  letter-spacing: -0.04em;
+}
+.doc__lede {
+  margin-top: 1rem;
+  max-width: 38rem;
+}
+.doc h2 {
+  margin-top: 3.25rem;
+  font-size: clamp(1.35rem, 1.15rem + 0.8vw, 1.625rem);
+  line-height: 1.2;
+  letter-spacing: -0.03em;
+}
+.doc h3 {
+  margin-top: 2rem;
+}
+.doc h2 + *,
+.doc h3 + * {
+  margin-top: 0.75rem;
+}
+.doc > p,
+.doc > ul,
+.doc > ol,
+.doc > .doc-table,
+.doc > figure,
+.doc > .code,
+.doc > .note {
+  margin-top: 1rem;
+}
+.doc h2 + p,
+.doc h3 + p {
+  margin-top: 0.6rem;
+}
+.doc strong {
+  color: var(--text);
+  font-weight: 520;
+}
+.doc a:not([class]) {
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 3px;
+  transition: text-decoration-color var(--hover-out) ease;
+}
+@media (hover: hover) and (pointer: fine) {
+  .doc a:not([class]):hover {
+    text-decoration-color: var(--text-2);
+    transition-duration: var(--hover-in);
+  }
+}
+.doc :not(pre) > code {
+  font-size: 0.875em;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.doc ul,
+.doc ol {
+  padding-left: 1.25rem;
+}
+.doc ul {
+  list-style: disc;
+}
+.doc ol {
+  list-style: decimal;
+}
+.doc li + li {
+  margin-top: 0.4rem;
+}
+.doc li::marker {
+  color: var(--text-muted);
+}
+
+/* Tables scroll inside their own box, never the page. */
+.doc-table {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+  border-radius: var(--radius);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.doc-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-base);
+  line-height: 1.5;
+}
+.doc-table th,
+.doc-table td {
+  padding: 0.6rem 0.9rem;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 1px solid var(--line);
+}
+.doc-table tr:last-child td {
+  border-bottom: 0;
+}
+.doc-table th {
+  font-weight: 520;
+  color: var(--text);
+  background: var(--term-bar);
+  white-space: nowrap;
+}
+.doc-table td:first-child {
+  color: var(--text);
+}
+.doc-table code {
+  font-size: 0.86em;
+}
+.doc-table .nowrap {
+  white-space: nowrap;
+}
+/* On touch, a cell that is one link is tappable across the whole cell. */
+@media (pointer: coarse) {
+  .doc-table td.cell-link {
+    padding: 0;
+  }
+  .doc-table td.cell-link > a {
+    display: flex;
+    align-items: center;
+    min-height: 2.75rem;
+    padding: 0.6rem 0.9rem;
+  }
+  .doc-table td.cell-link > a:active {
+    background: var(--raised);
+  }
+}
+/* A wide table that reads better as one card per row on phones: each cell
+   carries its column name (data-label), shown beside the value. */
+@media (max-width: 639px) {
+  .doc-table--stack {
+    overflow: visible;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .doc-table--stack :is(table, tbody, tr, td) {
+    display: block;
+  }
+  .doc-table--stack thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .doc-table--stack tr {
+    padding: 0.85rem 1rem 0.95rem;
+    border-radius: var(--radius);
+    box-shadow: inset 0 0 0 1px var(--line-strong);
+  }
+  .doc-table--stack tr + tr {
+    margin-top: 0.625rem;
+  }
+  .doc-table--stack td {
+    padding: 0;
+    border: 0;
+  }
+  .doc-table--stack td[data-label] {
+    display: grid;
+    grid-template-columns: 6.75rem minmax(0, 1fr);
+    gap: 0.75rem;
+    margin-top: 0.45rem;
+  }
+  .doc-table--stack td[data-label]::before {
+    content: attr(data-label);
+    padding-top: 0.2em;
+    font-family: var(--font-mono);
+    font-size: var(--fs-xs);
+    color: var(--text-muted);
+  }
+  .doc-table--stack td:first-child {
+    margin-bottom: 0.6rem;
+  }
+}
+
+/* A short aside: status, caveats. */
+.note {
+  padding: 0.85rem 1rem;
+  border-radius: var(--radius);
+  background: var(--term);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+  font-size: var(--fs-base);
+  line-height: 1.6;
+}
+.note > * + * {
+  margin-top: 0.5rem;
+}
+/* Single-column docs (phones, tablets): asides at body size. */
+@media (max-width: 1023px) {
+  .note {
+    font-size: 1rem;
+  }
+}
+.note strong:first-child {
+  color: var(--text);
+}
+.doc__lede + h2 {
+  margin-top: 2.25rem;
+}
+
+/* An optional path, folded: the main sequence reads straight through. */
+.doc > details.more {
+  margin-top: 1rem;
+  border-radius: var(--radius);
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+.more > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  min-height: 2.75rem;
+  padding: 0 1rem;
+  color: var(--text);
+  font-size: var(--fs-base);
+  list-style: none;
+  cursor: pointer;
+}
+.more > summary::-webkit-details-marker {
+  display: none;
+}
+.more > summary::before {
+  content: "+";
+  width: 0.75rem;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+.more[open] > summary::before {
+  content: "−";
+}
+.more > summary:focus-visible {
+  outline-offset: -2px;
+  border-radius: var(--radius);
+}
+.more > :not(summary) {
+  margin: 0 1rem;
+}
+.more > :not(summary) + :not(summary) {
+  margin-top: 0.75rem;
+}
+.more > :last-child {
+  margin-bottom: 1rem;
+}
+
+/* Status, as bare mono text beside the feature: no box, no badge. Neutral
+   greys by design; pass/fail colours stay reserved for results. */
+.tag {
+  display: inline;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 500;
+  white-space: nowrap;
+  vertical-align: 0.1em;
+  color: var(--text-2);
+}
+.tag--built {
+  color: var(--text);
+}
+.tag--planned {
+  color: var(--text-muted);
+}
+.doc h2 .tag,
+.doc h3 .tag {
+  margin-left: 0.5rem;
+  letter-spacing: 0;
+}
+.doc figure {
+  margin-inline: 0;
+}

@@ -25,6 +25,7 @@ const LINKS = [
   { href: "/docs", label: "Docs", on: (p: string) => p === "/docs" || (p.startsWith("/docs/") && !p.startsWith("/docs/compare")) },
   { href: "/docs/compare", label: "Compare", on: (p: string) => p === "/docs/compare" || p.startsWith("/docs/compare/") },
   { href: "/changelog", label: "Changelog", on: (p: string) => p === "/changelog" || p.startsWith("/changelog/") },
+  { href: "/blog", label: "Blog", on: (p: string) => p === "/blog" || p.startsWith("/blog/") },
 ];
 const links = LINKS.map((l) => ({ ...l, current: l.on(path) }));
 // The install command breaks only before the pipe (see InstallActions).

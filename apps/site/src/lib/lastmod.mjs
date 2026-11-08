@@ -7,12 +7,13 @@
 // time. A shallow checkout would date every file at HEAD, so the site workflow
 // fetches full history.
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
 const SITE_DIR = fileURLToPath(new URL("../../", import.meta.url));
 const REPO_DIR = join(SITE_DIR, "../..");
+const POSTS_DIR = join(SITE_DIR, "src/content/blog");
 const BUILD_TIME = new Date().toISOString();
 const cache = new Map();
 
@@ -36,10 +37,13 @@ function fileLastmod(file) {
   return date;
 }
 
-/** Source files that make up the page at `pathname`: the route file, plus any repo doc it renders. */
+/** Source files that make up the page at `pathname`: the route file, plus any repo doc or post it renders. */
 function pageSources(pathname) {
   const route = pathname.replace(/^\/+|\/+$/g, "");
   if (/^changelog\/[^/]+$/.test(route)) return [join(REPO_DIR, "CHANGELOG.md")];
+  // A blog post is its Markdown file; /blog lists every post, so each one dates it.
+  if (/^blog\/[^/]+$/.test(route)) return [join(POSTS_DIR, `${route.slice("blog/".length)}.md`)].filter(existsSync);
+  const posts = route === "blog" && existsSync(POSTS_DIR) ? readdirSync(POSTS_DIR).filter((f) => f.endsWith(".md")).map((f) => join(POSTS_DIR, f)) : [];
   const pages = join(SITE_DIR, "src/pages");
   const base = route === "" ? join(pages, "index") : join(pages, route);
   const file = [`${base}.astro`, join(base, "index.astro"), `${base}.md`, `${base}.mdx`].find(existsSync);
@@ -48,7 +52,7 @@ function pageSources(pathname) {
   const docs = [...readFileSync(file, "utf8").matchAll(/<MdDoc\s[^>]*file="([^"]+)"/g)]
     .map((m) => join(REPO_DIR, "docs", m[1]))
     .filter(existsSync);
-  return [file, ...docs];
+  return [file, ...docs, ...posts];
 }
 
 /** ISO lastmod for a page path such as "/docs/quickstart". */

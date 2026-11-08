@@ -1,0 +1,87 @@
+---
+// /blog: every post, newest first, with its date and one-line description.
+// Posts are Markdown files in src/content/blog (see src/lib/blog.ts).
+import Layout from "../../layouts/Layout.astro";
+import Nav from "../../components/Nav.astro";
+import CubeField from "../../components/CubeField.astro";
+import { SITE, SITE_URL } from "../../data/site";
+import { getPosts, BLOG_IMAGE } from "../../lib/blog";
+import "../../styles/changelog.css";
+
+const posts = await getPosts();
+const description = "Notes on how coding.sh works and why, newest first.";
+const blogSchema = {
+  "@context": "https://schema.org",
+  "@type": "Blog",
+  "@id": `${SITE_URL}/blog#blog`,
+  name: `${SITE.name} blog`,
+  description,
+  url: `${SITE_URL}/blog`,
+  publisher: { "@type": "Organization", name: SITE.name, url: SITE_URL },
+  blogPost: posts.map((p) => ({
+    "@type": "BlogPosting",
+    headline: p.title,
+    description: p.description,
+    url: `${SITE_URL}${p.path}`,
+    datePublished: p.published,
+  })),
+};
+---
+
+<Layout title="Blog · coding.sh" description={description} image={BLOG_IMAGE} breadcrumbs={[{ name: "Blog", path: "/blog" }]} schemas={[blogSchema]}>
+  <Nav />
+  <main id="main">
+    <header class="cl-head">
+      <CubeField variant="side" />
+      <div class="wrap cl-head__inner" data-field-clear>
+        <h1>Blog</h1>
+        <p class="cl-head__sub">{description}</p>
+        <p class="cl-meta">
+          {posts.length} {posts.length === 1 ? "post" : "posts"} · <a class="inline-link" href="/blog.xml">RSS</a>
+        </p>
+      </div>
+    </header>
+
+    <div class="wrap blog-index">
+      <ol class="cl-feed" role="list">
+        {
+          posts.map((p) => (
+            <li>
+              <article class="cl-card" aria-labelledby={`${p.slug}-h`}>
+                <p class="cl-date">
+                  <time datetime={p.published}>{p.dateLabel}</time>
+                </p>
+                <h2 id={`${p.slug}-h`} class="cl-card__ver">
+                  <a class="hit" href={p.path}>{p.title}</a>
+                </h2>
+                <p class="cl-card__sum">{p.description}</p>
+                <a class="cl-more hit" href={p.path} aria-label={`Read ${p.title}`}>
+                  Read the post
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path d="M3 8h9.5M8.5 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </a>
+              </article>
+            </li>
+          ))
+        }
+      </ol>
+    </div>
+  </main>
+</Layout>
+
+<style>
+  .blog-index {
+    padding-block: 3rem 6rem;
+  }
+  .cl-feed {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  @media (max-width: 639px) {
+    .blog-index {
+      padding-block: 2rem 4rem;
+    }
+  }
+</style>
