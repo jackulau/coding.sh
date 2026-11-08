@@ -426,17 +426,29 @@ async function convertSubagentFile(ctx: NormalizeContext, path: string, parentSi
 
 // ---------------------------------------------------------------- run
 
-export async function runClaude(spec: RunSpec): Promise<AgentRunOutput> {
-  const bin = which("claude", { ...process.env, ...spec.env }) ?? "claude";
+/**
+ * `claude -p` argv for a run (exported for tests): a new session under a fresh
+ * id, or with `resumeSessionId` that session continued (`--resume`), unless the
+ * bundle's flags already pick the session.
+ */
+export function claudeRunArgs(spec: Pick<RunSpec, "model" | "flags" | "resumeSessionId">): { args: string[]; sessionId?: string } {
   const args = ["-p", "--output-format", "stream-json", "--verbose"];
   if (!hasFlag(spec.flags, "--permission-mode", "--dangerously-skip-permissions")) args.push("--permission-mode", "bypassPermissions");
   if (spec.model && !hasFlag(spec.flags, "--model")) args.push("--model", spec.model);
   let sessionId: string | undefined;
   if (!hasFlag(spec.flags, "--session-id", "--resume", "-r", "--continue", "-c")) {
-    sessionId = randomUUID();
-    args.push("--session-id", sessionId);
+    sessionId = spec.resumeSessionId ?? randomUUID();
+    args.push(spec.resumeSessionId ? "--resume" : "--session-id", sessionId);
   }
   args.push(...spec.flags);
+  return sessionId ? { args, sessionId } : { args };
+}
+
+export async function runClaude(spec: RunSpec): Promise<AgentRunOutput> {
+  const bin = which("claude", { ...process.env, ...spec.env }) ?? "claude";
+  const built = claudeRunArgs(spec);
+  const args = built.args;
+  let sessionId = built.sessionId;
   let usage: Usage | undefined;
   const res = await runHeadless({
     stdoutFile: spec.stdoutFile,
@@ -518,6 +530,7 @@ export const claudeCode: Adapter = {
   normalize: (line, ctx) => normalizeClaudeLine(line, ctx),
   backfill: (ctx, opts) => backfillClaude(ctx, opts),
   run: runClaude,
+  canResume: true,
   overlay: overlayClaude,
 
   harnessFiles() {

@@ -923,6 +923,46 @@ notes how many it left out. `--json` adds `planned` (runs this command had to ru
 a resumed comparison had already finished), `retried` with `--retry-errors`, and `selection` with
 `--failing` or `--sample`. The consent prompt counts only the runs still to go.
 
+### Repair rounds
+
+A pass rate says how often the agent gets a task right the first time. `compare --repair N`
+also measures how well it fixes its own failure once told about it. When the verifier fails, the
+agent gets "Verification failed." in its own session (Claude Code `--resume`, `codex exec resume`)
+and works again, up to N rounds (1 to 8), until the verifier passes. An agent that can't resume
+starts a fresh session with the instruction and the message.
+
+```sh
+coding.sh compare base candidate --repair 2 --repair-signal names
+```
+
+- The hidden test files are taken out of the work tree before each round and put back to grade
+  it, so the agent never reads them.
+- `--repair-signal names` adds the failing test names, read from the verifier output (pytest,
+  node:test and TAP, Jest, Vitest, Go and cargo test). When no name can be read, the round gets
+  "Verification failed." alone. The verifier's other output is never sent.
+- A round whose diff since the start edits, deletes or skips tests ends the loop, and the run does
+  not count as repaired, even when the verifier passed.
+- `--false-alarm 0.2` tells a seeded 20% of passing runs that they failed, once, to measure how
+  often a wrong "failed" makes the agent break working code. `--seed` picks which runs.
+- A first attempt that errored or timed out gets no rounds.
+
+The report adds a block before the task table. Pass rates, the verdict and the gates stay on the
+first attempt; `--repair-verdict` moves them to the outcome after the rounds.
+
+```
+with verifier feedback (names, up to 2 rounds, resume)
+first pass        0.0% [0.0–49.0%]      0.0% [0.0–49.0%]
+after repair      100.0% [51.0–100.0%]  100.0% [51.0–100.0%]  +0.0 pp
+repaired          4/4 (100%) · 1.8 rd   4/4 (100%) · 1.0 rd
+extra             $0.840 · 7 rounds     $0.400 · 4 rounds
+names unparsed    7                     4                     rounds sent the bare bit
+```
+
+`agent spend` includes the rounds. The repair settings are part of each run's reuse key, so
+`--reuse` never copies a run with other repair settings, or without repair, into this comparison.
+`--json` has each arm's `repair` summary, and each run's `repair` record (see
+[the API reference](../reference/api.md#get-apitasks-get-apiruns-get-apibundles)).
+
 ## A/B a harness edit on your own sessions
 
 `coding.sh compare` needs eval tasks with verifiers. Often you don't have those yet. You have a

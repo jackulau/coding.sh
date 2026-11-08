@@ -827,7 +827,12 @@ answer `{"items":[…]}` and are empty for a scoped key.
 - `/api/tasks` filters: `status` (`draft`, `validated` or `archived`) and `tag`.
 - `/api/runs` filters: `experimentId`, `taskId` and `bundleId`. A run carries `cellKey` (the content key
   `compare --reuse` matches on; absent on older runs) and, when `compare --reuse` copied it, `reusedFrom`
-  (the id of the run it was copied from).
+  (the id of the run it was copied from). A run from `compare --repair` carries `repair`: `signal`
+  (`bit` or `names`), `mode` (`resume` or `fresh`), `limit`, `rounds` (each with `n`, `pass`,
+  `verifierExit`, `durationMs`, `usage`, `sessionId`, `diffBlob`, `tamper` when the round's diff
+  tampers with tests, and `namesParsed` with signal `names`), `pass` (the outcome after the last
+  round; `pass` on the run stays the first attempt's), `falseAlarm` and `falseAlarmFired` with
+  `--false-alarm`, and `skipped` (`error` or `timeout`) when the first attempt could not be repaired.
 - `/api/bundles` returns `id`, `name`, `agent`, `model`, `createdAt` and `note` only; overlay files stay behind `/api/blobs`.
 
 ```sh

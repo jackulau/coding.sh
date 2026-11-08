@@ -112,6 +112,12 @@ the hidden tests do not leak. See [Turn a session into an eval](how-to/session-t
 `coding.sh harness snapshot` makes one; `coding.sh compare <a> <b>` runs two on the same eval tasks.
 See [Compare two agents](how-to/compare-agents.md).
 
+**Repair round.** With `compare --repair N`, a run whose verifier fails goes back to the agent in
+its own session with "Verification failed." (and, with `--repair-signal names`, the failing test
+names), up to N times. The hidden tests are out of the work tree while the agent works. A round
+whose diff edits, deletes or skips tests does not count as a repair. See
+[Repair rounds](guides/evals.md#repair-rounds).
+
 **Protected line.** A harness line an edit may not delete, reword or relax: inside a
 `<!-- coding.sh:protect -->` block, matching a `[refine] protect` regex, or pairing a gate word with
 a safety topic ("Never run `git push --force`"). `coding.sh refine check` and `exp ab` reject an

@@ -1865,7 +1865,11 @@ coding.sh compare <A> [b] [options]
 | `--failing <EXP>[@BUNDLE]` |  | Run only the tasks A (or BUNDLE) failed in that stored comparison. |
 | `--failing-mode <MODE>` | `any` | With --failing: a task counts as failed in any attempt, or in more than half. One of: `any`, `majority`. |
 | `--sample <N>` |  | Run a random sample of N of the selected tasks. |
-| `--seed <N>` |  | With --sample: seed for the draw (default random, printed in the report) |
+| `--seed <N>` |  | With --sample: seed for the draw (default random, printed in the report). With --false-alarm: seed for which runs get it (default 0) |
+| `--repair <N>` |  | After a failed verifier, tell the agent and let it try again in its own session, up to N rounds (1-8); hidden tests stay out of its tree. |
+| `--repair-signal <SIGNAL>` | `bit` | With --repair: say only that verification failed, or also name the failing tests (parsed from the verifier output). One of: `bit`, `names`. |
+| `--false-alarm <P>` |  | With --repair: tell this share (0-1) of passing runs they failed, to measure what a wrong signal breaks. |
+| `--repair-verdict` |  | Verdict, gates and pass rates on the pass after repair rounds instead of the first attempt. |
 | `--reuse <ARMS>` | `none` | Copy finished runs of the same task, bundle, agent version, attempt and timeout from earlier comparisons instead of running them again. One of: `baseline`, `both`, `none`. |
 | `--reuse-max-age <AGE>` | `7d` | With --reuse: only runs that finished this recently (30m, 12h, 7d, 2w) |
 | `--dry-run` |  | Print how many runs each arm would reuse and run, and run nothing. |
@@ -1897,6 +1901,7 @@ coding.sh compare base candidate --experiment exp_01 --audited
 coding.sh compare base candidate --experiment exp_01 --retry-errors
 coding.sh compare base candidate2 --failing exp_01 --k 3
 coding.sh compare base candidate --sample 20 --seed 7
+coding.sh compare base candidate --k 3 --repair 2 --repair-signal names
 coding.sh compare base candidate --k 3 --gate
 coding.sh compare base candidate --k 3 --gate --by suite:
 coding.sh compare no-skill with-skill --tag skill-eval --gate --by suite: --max-cost 15

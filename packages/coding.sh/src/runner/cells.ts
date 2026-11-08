@@ -6,12 +6,13 @@
 // The key hashes contents, never paths: the task's start snapshot, setup,
 // instruction and verifier (its hidden files are content-addressed blob refs),
 // the bundle (its id is a hash of its manifest and files), the agent's
-// version, the attempt number, the agent timeout, the extra env and the
-// gateway route. Editing a hidden test, a CLAUDE.md or upgrading the agent
+// version, the attempt number, the agent timeout, the extra env, the
+// gateway route and repair rounds. Editing a hidden test, a CLAUDE.md or upgrading the agent
 // changes the key, so a stale run is never reused.
 import { sha256Hex } from "../core/ids.ts";
 import type { EvalTask, HarnessBundle, RunResult } from "../core/types.ts";
 import { canonicalJson } from "../datasets/hash.ts";
+import type { RepairOpts } from "./repair.ts";
 import { DEFAULT_RUN_TIMEOUT_MS, type AgentRoute } from "./run.ts";
 
 /** Reused runs older than this are not reused by default. */
@@ -41,6 +42,8 @@ export interface CellKeyParts {
   timeoutMs?: number;
   env?: Record<string, string>;
   route?: AgentRoute;
+  /** `compare --repair`: a run with repair rounds measures something else than one without. */
+  repair?: RepairOpts;
 }
 
 /** The content key of one run. Two runs with the same key measured the same thing. */
@@ -59,6 +62,8 @@ export function cellKey(p: CellKeyParts): string {
       timeoutMs: p.timeoutMs ?? DEFAULT_RUN_TIMEOUT_MS,
       env: p.env ?? {},
       route: routed ? { env: routed.env, flags: routed.flags, model: routed.model ?? null } : null,
+      // Only when set, so the keys of runs without repair stay what they were.
+      ...(p.repair ? { repair: { rounds: p.repair.rounds, signal: p.repair.signal, falseAlarm: p.repair.falseAlarm ?? 0, seed: p.repair.falseAlarm ? (p.repair.seed ?? 0) : null } } : {}),
     }),
   );
 }

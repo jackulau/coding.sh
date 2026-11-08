@@ -6,6 +6,8 @@
 // `--promote` adds the Pareto promotion gate (quality or cost) and exits 1 unless it promotes.
 // When B adds or removes exactly one rule, skill or context file, the report adds
 // the one-item gate (`--item-gate` makes it decide the exit code, `--no-item-gate` hides it).
+// `--repair N` gives each failed run up to N rounds of "Verification failed." in its own
+// session (runner/repair.ts); the report adds the pass after repair per arm.
 import { getAdapter } from "../../adapters/index.ts";
 import { defaultGateway, gatewayConfig, gatewaySettings, type GatewayConfig } from "../../integrations/gateway/config.ts";
 import { GATEWAYS, resolveGatewayName, type GatewayId } from "../../integrations/gateway/providers.ts";
@@ -16,6 +18,7 @@ import { singleItemChange } from "../../runner/gate-item.ts";
 import { bundleItemChange, harnessReport, tagPrefixProblem } from "../../runner/harness-report.ts";
 import { git } from "../../runner/git.ts";
 import { hasGlob } from "../../runner/glob.ts";
+import { repairOptsProblem, type RepairOpts } from "../../runner/repair.ts";
 import type { AgentRoute } from "../../runner/run.ts";
 import type { EvalTask, HarnessBundle, RunResult } from "../../core/types.ts";
 import { formatCompare, PARETO_NEEDS_COST, planCells, runExperiment, runKey, type BudgetReport } from "../../runner/experiment.ts";
@@ -54,7 +57,9 @@ export async function run(c: CommandContext): Promise<number> {
   const sampleN = positiveInt(c.flags.sample, "sample");
   const seedFlag = c.flags.seed;
   if (seedFlag !== undefined && (typeof seedFlag !== "number" || !Number.isInteger(seedFlag) || seedFlag < 0)) throw new UsageError(`--seed must be a whole number ≥ 0, got ${JSON.stringify(seedFlag)}`, { reason: "invalid_argument" });
-  if (seedFlag !== undefined && sampleN === undefined) throw new UsageError("--seed needs --sample", { reason: "invalid_argument" });
+  const repair = repairFlags(c, seedFlag as number | undefined);
+  if (seedFlag !== undefined && sampleN === undefined && !repair?.falseAlarm) throw new UsageError("--seed needs --sample or --false-alarm", { reason: "invalid_argument" });
+  if (repair && c.flags.experiment !== undefined && !retryErrors) throw new UsageError("--repair runs new runs; --experiment re-analyses stored ones (their repair rounds are reported as they are)", { reason: "invalid_argument" });
   if (c.flags.experiment !== undefined && (failingRef || sampleN !== undefined)) throw new UsageError("--failing and --sample pick tasks for new runs; --experiment re-analyses stored ones", { reason: "invalid_argument" });
   return withContext(c, async (ctx) => {
     const without = list(c.flags.without);
@@ -141,6 +146,7 @@ export async function run(c: CommandContext): Promise<number> {
             ingest: () => ctx.ingest(),
             ...(c.drain ? { drain: c.drain } : {}),
             retry: retryFlag(c),
+            ...(repair ? { repair } : {}),
             onProgress: (p) => spin.update(`Retrying ${p.done}/${p.total}…`),
           }).finally(() => spin.stop());
           counts = { planned: r.planned, skipped: r.skipped, retried: r.retried ?? 0 };
@@ -229,7 +235,7 @@ export async function run(c: CommandContext): Promise<number> {
         if (!versions.has(b.agent)) versions.set(b.agent, getAdapter(b.agent)!.detect().then((d) => d.version).catch(() => undefined));
         return versions.get(b.agent)!;
       };
-      const cellOpts = { tasks, bundles: [A, B], adapterFor: (b: HarnessBundle) => getAdapter(b.agent)!, index: ctx.index, k, agentVersion, ...(route ? { route } : {}), ...(timeoutMs !== undefined ? { timeoutMs } : {}), ...(reuse ? { reuse } : {}) };
+      const cellOpts = { tasks, bundles: [A, B], adapterFor: (b: HarnessBundle) => getAdapter(b.agent)!, index: ctx.index, k, agentVersion, ...(route ? { route } : {}), ...(timeoutMs !== undefined ? { timeoutMs } : {}), ...(reuse ? { reuse } : {}), ...(repair ? { repair } : {}) };
       const plan = reuse || c.flags["dry-run"] === true ? await planCells(cellOpts) : undefined;
       const cachedIn = (b: HarnessBundle) => [...(plan?.cached.keys() ?? [])].filter((i) => plan!.jobs[i]!.bundle.id === b.id).length;
       const cached = plan?.cached.size ?? 0;
@@ -248,11 +254,12 @@ export async function run(c: CommandContext): Promise<number> {
       // Durable: each finished run is checkpointed; --resume continues an interrupted comparison.
       // Gateway routing changes what runs (model, flags); its env values (keys) stay out of the hash.
       const routed = route ? [A, B].map((b) => route(b)).map((x) => (x ? { flags: x.flags, model: x.model, env: Object.keys(x.env).sort() } : null)) : undefined;
-      const config = jobConfig({ bundles: [A.id, B.id], tasks, k, timeoutMs, route: routed });
+      const config = jobConfig({ bundles: [A.id, B.id], tasks, k, timeoutMs, route: routed, repair });
       // The prompt counts only the runs still to go: not the reused ones, nor those a resumed job already finished.
       const finished = await finishedToResume(c, "compare", config);
       const extra = [cached ? `${cached} reused` : "", finished ? `${finished} already finished` : ""].filter(Boolean).join(", ");
-      await requireConsent(c, `Run ${plural(Math.max(0, runs - cached - finished), "agent session")} (${plural(tasks.length, "task")} x 2 arms x ${k}${extra ? `, ${extra}` : ""})?`, `coding.sh compare ${arms} --yes`);
+      const rounds = repair ? `, plus up to ${plural(repair.rounds, "repair round")} per failed run` : "";
+      await requireConsent(c, `Run ${plural(Math.max(0, runs - cached - finished), "agent session")} (${plural(tasks.length, "task")} x 2 arms x ${k}${extra ? `, ${extra}` : ""}${rounds})?`, `coding.sh compare ${arms} --yes`);
       await storeAblation();
       const job = await openJob(c, { kind: "compare", name: `${A.name} vs ${B.name}`, config, newId: () => sortableId("exp_"), concurrency: concurrency ?? 4 });
       // The isolated agent configs call the hook bin; without it no run is captured (no turns, tokens, divergence or item gate).
@@ -277,6 +284,7 @@ export async function run(c: CommandContext): Promise<number> {
             ...(c.drain ? { drain: c.drain } : {}),
             job: job.scope(),
             retry: retryFlag(c),
+            ...(repair ? { repair } : {}),
             experimentId: job.id,
             agentVersion,
             ...(reuse ? { reuse } : {}),
@@ -324,6 +332,7 @@ export async function run(c: CommandContext): Promise<number> {
       ...(promote ? { pareto: promote } : {}),
       ...(change ? { change } : {}),
       ...(c.flags.audited === true ? { audited: true } : {}),
+      ...(c.flags["repair-verdict"] === true ? { repairVerdict: true } : {}),
     });
     if (versionNote) report.notes.push(versionNote);
     report.notes.push(...notes);
@@ -339,6 +348,21 @@ export async function run(c: CommandContext): Promise<number> {
     const failed = (report.gate && report.gate.decision !== "accept") || (promote && !report.pareto?.promote) || (itemFlag === true && !itemOk);
     return failed ? 1 : 0;
   });
+}
+
+/** `--repair N [--repair-signal bit|names] [--false-alarm P] [--seed S]`, checked before anything runs. */
+function repairFlags(c: CommandContext, seed: number | undefined): RepairOpts | undefined {
+  const f = c.flags;
+  if (f.repair === undefined) {
+    for (const k of ["repair-signal", "false-alarm"]) if (f[k] !== undefined) throw new UsageError(`--${k} needs --repair <N>`, { reason: "invalid_argument" });
+    return undefined;
+  }
+  const o: RepairOpts = { rounds: typeof f.repair === "number" ? f.repair : NaN, signal: (str(f["repair-signal"]) ?? "bit") as RepairOpts["signal"] };
+  if (f["false-alarm"] !== undefined) o.falseAlarm = typeof f["false-alarm"] === "number" ? f["false-alarm"] : NaN;
+  if (seed !== undefined) o.seed = seed;
+  const problem = repairOptsProblem(o);
+  if (problem) throw new UsageError(problem, { reason: "invalid_argument" });
+  return o;
 }
 
 /**

@@ -599,6 +599,14 @@ const TRIGGER = [
     pass rates are conditioned on A having failed them, and the report says so. <code>--sample 20 --seed 7</code> runs the same random
     20 tasks for the same seed.
   </p>
+  <p id="repair">
+    <code>compare A B --repair 2</code> also measures how well the agent fixes its own failure. When the verifier fails, the agent gets
+    "Verification failed." in its own session (Claude Code <code>--resume</code>, <code>codex exec resume</code>) and tries again, up to 2
+    rounds. The hidden tests are out of the work tree while it works. <code>--repair-signal names</code> adds the failing test names read from
+    the verifier output. A round that edits, deletes or skips tests does not count as a repair. <code>--false-alarm 0.2</code> tells a
+    seeded 20% of passing runs they failed, to measure what a wrong signal breaks. The report adds first pass, pass after repair, the
+    repair rate and the rounds' cost per arm; <code>--repair-verdict</code> moves the verdict to the outcome after repair.
+  </p>
   <div class="note">
     <p>
       <strong>Known gap.</strong> A hook-captured session starts from the commit that was checked out when it began, so uncommitted changes at

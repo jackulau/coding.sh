@@ -245,6 +245,8 @@ export interface FakeAdapterOpts {
   usage?: { costUsd?: number; inputTokens?: number; outputTokens?: number };
   throws?: boolean;
   overlayEnv?: Record<string, string>;
+  /** run() honors resumeSessionId (Adapter.canResume). */
+  canResume?: boolean;
 }
 
 export function fakeAdapter(opts: FakeAdapterOpts = {}): Adapter & { specs: RunSpec[] } {
@@ -252,6 +254,7 @@ export function fakeAdapter(opts: FakeAdapterOpts = {}): Adapter & { specs: RunS
   return {
     id: "fake",
     displayName: "Fake",
+    ...(opts.canResume ? { canResume: true } : {}),
     tier: "C",
     specs,
     async detect() {

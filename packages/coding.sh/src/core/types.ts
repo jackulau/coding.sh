@@ -479,6 +479,11 @@ export interface RunSpec {
    * tree and hands it to the verifier as CODING_SH_AGENT_STDOUT).
    */
   stdoutFile?: string;
+  /**
+   * Continue this earlier session instead of starting a new one (a repair
+   * round, `compare --repair`). Only adapters with `canResume` honor it.
+   */
+  resumeSessionId?: string;
 }
 
 export interface AgentRunOutput {
@@ -543,6 +548,8 @@ export interface Adapter {
   tailWhenUnhooked?(): { since?: number } | false;
   /** Headless driver for eval runs. */
   run?(spec: RunSpec): Promise<AgentRunOutput>;
+  /** run() honors RunSpec.resumeSessionId: it continues that session with the instruction as the next prompt. */
+  canResume?: boolean;
   /** Files in a repo/home that make up this agent's harness (for bundle snapshots). */
   harnessFiles?(): { project: string[]; user: string[] };
   /**
@@ -761,6 +768,49 @@ export interface RunResult {
   cellKey?: string;
   /** Copied from this earlier run by `compare --reuse` instead of running the agent again. */
   reusedFrom?: string;
+  /**
+   * `compare --repair N`: after a failed verifier the agent was told so and
+   * tried again, up to N rounds. `pass` above stays the first attempt's.
+   */
+  repair?: RepairReport;
+}
+
+/** One repair round: the agent's next try after "Verification failed.", and its verifier result. */
+export interface RepairRound {
+  /** 1-based. */
+  n: number;
+  sessionId?: string;
+  /** The verifier passed after this round (a tampered round still says what the verifier said). */
+  pass: boolean;
+  verifierExit: number | null;
+  /** The agent's time this round. */
+  durationMs: number;
+  usage?: Usage;
+  /** Signal "names": false when no failing test name could be read from the verifier output, so the bare bit was sent. */
+  namesParsed?: boolean;
+  /** The work tree after this round edits, deletes or skips tests (tamper check on the whole diff): the repair does not count. */
+  tamper?: TamperReport;
+  /** The work tree's diff after this round, when not empty. */
+  diffBlob?: BlobRef;
+  error?: string;
+}
+
+export interface RepairReport {
+  /** "bit": "Verification failed."; "names": also the failing tests' names parsed from the verifier output. */
+  signal: "bit" | "names";
+  /** "resume": the agent's own session continued; "fresh": a new session with the instruction and the message. */
+  mode: "resume" | "fresh";
+  /** Rounds allowed. */
+  limit: number;
+  /** Chance of telling a passing first attempt it failed (`--false-alarm`); absent at 0. */
+  falseAlarm?: number;
+  /** The false alarm fired on this run: it passed, and was told it failed. */
+  falseAlarmFired?: true;
+  rounds: RepairRound[];
+  /** Passing at the end: the first attempt or a round passed and no round tampered with tests. */
+  pass: boolean;
+  /** No round ran because the first attempt errored or timed out. */
+  skipped?: "error" | "timeout";
 }
 
 export type { AgentEvent, AgentId, BlobRef, RepoState, Session, Usage };

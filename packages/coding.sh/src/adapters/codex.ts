@@ -866,8 +866,13 @@ function execHelp(bin: string, env: NodeJS.ProcessEnv): Promise<string> {
   });
 }
 
-/** `codex exec --json` argv for a run (exported for tests). */
-export function codexExecArgs(spec: Pick<RunSpec, "cwd" | "model" | "flags">, help: string): string[] {
+/**
+ * `codex exec --json` argv for a run (exported for tests). With
+ * `resumeSessionId`: `codex exec <options> resume <id> -`, which continues that
+ * thread with the instruction as its next prompt (exec's options go before the
+ * subcommand, which has no -s or -C of its own).
+ */
+export function codexExecArgs(spec: Pick<RunSpec, "cwd" | "model" | "flags" | "resumeSessionId">, help: string): string[] {
   const args = ["exec", "--json"];
   // Our run-local hooks are not trusted in the isolated CODEX_HOME; without this they are skipped silently.
   if (help.includes("--dangerously-bypass-hook-trust") && !hasFlag(spec.flags, "--dangerously-bypass-hook-trust")) args.push("--dangerously-bypass-hook-trust");
@@ -875,7 +880,9 @@ export function codexExecArgs(spec: Pick<RunSpec, "cwd" | "model" | "flags">, he
   if (spec.model && !hasFlag(spec.flags, "-m", "--model")) args.push("-m", spec.model);
   if (!hasFlag(spec.flags, "-C", "--cd")) args.push("-C", spec.cwd);
   if (!hasFlag(spec.flags, "--skip-git-repo-check")) args.push("--skip-git-repo-check");
-  args.push(...spec.flags, "-"); // instruction on stdin
+  args.push(...spec.flags);
+  if (spec.resumeSessionId) args.push("resume", spec.resumeSessionId);
+  args.push("-"); // instruction on stdin
   return args;
 }
 
@@ -972,6 +979,7 @@ export const codex: Adapter = {
     return since !== undefined ? { since } : {};
   },
   run: runCodex,
+  canResume: true,
   overlay: overlayCodex,
 
   harnessFiles() {

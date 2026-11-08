@@ -19,6 +19,8 @@ import { firstDivergence, type Divergence } from "./divergence.ts";
 import { selfCheckSummary, type SelfCheckSummary } from "./selfcheck.ts";
 import type { SnapshotOps } from "./git.ts";
 import { attributeTamper, tamperDisclosure, type TamperAttribution, type TamperDisclosure } from "./tamper.ts";
+import type { RepairOpts } from "./repair.ts";
+import { armRepair, passAfterRepair, type ArmRepair } from "./repair-report.ts";
 import { runTask, type AgentRoute } from "./run.ts";
 import { cellKey, DEFAULT_REUSE_MAX_AGE_MS, newestByCell, type ReuseOpts } from "./cells.ts";
 
@@ -91,6 +93,8 @@ export interface RunExperimentOpts {
    * new run finishes, the old one is marked `superseded` so the slot counts once.
    */
   replaces?: ReadonlyMap<string, RunResult>;
+  /** Repair rounds after a failed verifier (`compare --repair N`, see RunTaskOpts.repair). Part of each cell key. */
+  repair?: RepairOpts;
 }
 
 /** The jobs of a run: scheduleJobs order, narrowed by `select`. */
@@ -114,7 +118,7 @@ export interface CellPlan {
 }
 
 /** The cell key of every job, and with `reuse` the stored runs that can stand in for them. */
-export async function planCells(o: Pick<RunExperimentOpts, "tasks" | "bundles" | "adapterFor" | "index" | "k" | "timeoutMs" | "env" | "route" | "reuse" | "agentVersion" | "select">, excludeExperiment?: string): Promise<CellPlan> {
+export async function planCells(o: Pick<RunExperimentOpts, "tasks" | "bundles" | "adapterFor" | "index" | "k" | "timeoutMs" | "env" | "route" | "reuse" | "agentVersion" | "select" | "repair">, excludeExperiment?: string): Promise<CellPlan> {
   const jobs = jobsOf(o);
   const versions = new Map<string, { adapter: string; version: string | undefined }>();
   for (const b of o.bundles) {
@@ -131,7 +135,7 @@ export async function planCells(o: Pick<RunExperimentOpts, "tasks" | "bundles" |
   }
   const keys = jobs.map((j) => {
     const v = versions.get(j.bundle.id)!;
-    return cellKey({ task: j.task, bundle: j.bundle, adapter: v.adapter, agentVersion: v.version, attempt: j.attempt, timeoutMs: o.timeoutMs, env: o.env, route: o.route });
+    return cellKey({ task: j.task, bundle: j.bundle, adapter: v.adapter, agentVersion: v.version, attempt: j.attempt, timeoutMs: o.timeoutMs, env: o.env, route: o.route, ...(o.repair ? { repair: o.repair } : {}) });
   });
   const cached = new Map<number, RunResult>();
   const unknownVersion = new Set<string>();
@@ -255,6 +259,10 @@ export async function runExperiment(
     const cost = r.agent.usage?.costUsd;
     if (typeof cost === "number" && Number.isFinite(cost)) budget.spentUsd += cost;
     else budget.unpriced++;
+    for (const round of r.repair?.rounds ?? []) {
+      const c = round.usage?.costUsd;
+      if (typeof c === "number" && Number.isFinite(c)) budget.spentUsd += c;
+    }
     budget.spentUsd += r.graderUsage?.costUsd ?? 0;
   };
   // A resumed comparison counts what its recorded runs already spent.
@@ -354,6 +362,7 @@ async function attemptRun(o: RunExperimentOpts, job: Job, experimentId: string, 
       testGlobs: o.testGlobs,
       signal: o.signal,
       ...(o.ingest ? { ingest: o.ingest } : {}),
+      ...(o.repair ? { repair: o.repair } : {}),
     });
   } catch (e) {
     // runTask should not throw; if adapterFor does, record and move on.
@@ -453,6 +462,8 @@ export interface ArmSummary {
   auditedRuns?: number;
   /** With witness audits: Wilson interval of (raw passes − refuted) / runs. */
   auditedPassRate?: Interval;
+  /** With repair rounds (`compare --repair N`): first failures fixed after verifier feedback, rounds, extra cost. */
+  repair?: ArmRepair;
 }
 
 /** One run's witness-audit outcome (src/eval/witness.ts); only "refuted" changes anything. */
@@ -555,6 +566,8 @@ export interface CompareReport {
   surface?: { baseline: InstructionSurface; candidate: InstructionSurface; relative: number };
   /** Runs per arm copied from earlier comparisons (`compare --reuse`); absent when none were. */
   reused?: { baseline: number; candidate: number };
+  /** `compare --repair-verdict`: every statistic above counts a run's pass after repair rounds, not its first attempt. */
+  repairVerdict?: true;
 }
 
 /** A candidate whose instruction surface grows by more than this gets the bloat note. */
@@ -648,6 +661,8 @@ export interface CompareOpts {
   audited?: boolean;
   /** Each bundle's instruction surface (`instructionSurface`); used only when `bundles` has both arms. */
   surfaces?: { baseline: InstructionSurface; candidate: InstructionSurface };
+  /** Verdict, gates and pass rates on each run's pass after repair rounds instead of its first attempt (`--repair-verdict`). */
+  repairVerdict?: boolean;
 }
 
 type Extract = (r: RunResult, s: Session | undefined) => number | undefined;
@@ -728,8 +743,32 @@ function arm(
  * audited pass rate; with `opts.audited` and every pass in both arms audited, refuted
  * passes count as fails before every statistic (TestJack, arXiv 2610.10619 Table 2:
  * refuted passes cut resolution by 17 points on average, so an A/B can flip).
+ * With repair rounds (`compare --repair N`) each arm also gets its repair summary;
+ * `opts.repairVerdict` moves every statistic to the pass after repair.
  */
 export function compare(all: readonly RunResult[], opts: CompareOpts): CompareReport {
+  if (!all.some((r) => r.repair)) {
+    const r = compareAudited(all, opts);
+    if (opts.repairVerdict) r.notes.push("no repair rounds in these runs, so no verdict after repair; run compare --repair N first");
+    return r;
+  }
+  const r = compareAudited(opts.repairVerdict ? all.map((x) => (x.repair ? { ...x, pass: passAfterRepair(x) } : x)) : all, opts);
+  // The repair summary always reads the first attempt as the first attempt.
+  const counted = all.filter((x) => !x.cancelled && !x.superseded && !x.infra);
+  const ra = armRepair(counted.filter((x) => x.bundleId === opts.baseline));
+  const rb = armRepair(counted.filter((x) => x.bundleId === opts.candidate));
+  if (ra) r.baseline.repair = ra;
+  if (rb) r.candidate.repair = rb;
+  if (!ra !== !rb) r.notes.push(`only the ${ra ? "baseline" : "candidate"} ran with repair rounds; compare first-attempt pass rates, not the rates after repair`);
+  else if (ra && rb && (ra.limit !== rb.limit || ra.signal !== rb.signal)) r.notes.push(`the arms ran different repair settings (${ra.signal} ×${ra.limit} vs ${rb.signal} ×${rb.limit}); their rates after repair are not comparable`);
+  if (opts.repairVerdict) {
+    r.repairVerdict = true;
+    r.notes.push("verdict, gates and pass rates count each run's pass after repair rounds (--repair-verdict), not its first attempt");
+  }
+  return r;
+}
+
+function compareAudited(all: readonly RunResult[], opts: CompareOpts): CompareReport {
   const audit = opts.audit;
   if (!audit?.size) {
     const r = compareRuns(all, opts);
@@ -868,7 +907,12 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     metrics.push(md);
   }
   // Total agent spend, cancelled runs included: a killed run was still billed for what it did.
-  const costOf = (r: RunResult) => r.agent.usage?.costUsd ?? opts.sessions?.get(r.id)?.stats.usage?.costUsd;
+  // Repair rounds the agent priced are added to its first attempt's reported cost.
+  const costOf = (r: RunResult) => {
+    const c = r.agent.usage?.costUsd;
+    if (c === undefined) return opts.sessions?.get(r.id)?.stats.usage?.costUsd;
+    return (r.repair?.rounds ?? []).reduce((s, x) => s + (Number.isFinite(x.usage?.costUsd) ? (x.usage?.costUsd as number) : 0), c);
+  };
   const known = (rs: readonly RunResult[]) => rs.map(costOf).filter((x): x is number => typeof x === "number" && Number.isFinite(x));
   const spendOf = (id: string): ArmSpend => {
     const mine = all.filter((r) => r.bundleId === id);
@@ -1253,6 +1297,38 @@ function tamperedPassLines(r: CompareReport, f: { pad: (s: string) => string; ba
   return out;
 }
 
+/**
+ * The "with verifier feedback" block (`compare --repair N`): first-attempt and
+ * after-repair pass rates per arm, how many first failures were repaired and
+ * in how many rounds, and what the rounds cost. Empty without repair.
+ */
+function repairLines(
+  r: CompareReport,
+  f: { row: (cells: string[]) => string; bad: (s: string) => string; dim: (s: string) => string; signed: (delta: number, lowerIsBetter: boolean, text: string) => string },
+): string[] {
+  const a = r.baseline.repair;
+  const b = r.candidate.repair;
+  if (!a && !b) return [];
+  const both = [a, b];
+  const cell = (fn: (x: ArmRepair) => string) => both.map((x) => (x ? fn(x) : "—"));
+  const rate = (i: Interval) => `${pct(i.p)} [${pct(i.lo).replace("%", "")}–${pct(i.hi)}]`;
+  const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const how = (x: ArmRepair) => `${x.signal}, up to ${plural(x.limit, "round")}, ${x.mode}`;
+  const same = a && b ? how(a) === how(b) : true;
+  const out = ["", f.dim(`with verifier feedback (${same ? how((a ?? b)!) : `A ${a ? how(a) : "none"} · B ${b ? how(b) : "none"}`})`)];
+  out.push(f.row(["first pass", ...cell((x) => rate(x.firstPass))]));
+  const d = a && b ? b.passAfterRepair.p - a.passAfterRepair.p : NaN;
+  out.push(f.row(["after repair", ...cell((x) => rate(x.passAfterRepair)), Number.isFinite(d) ? f.signed(d, false, pp(d)) : ""]));
+  out.push(f.row(["repaired", ...cell((x) => `${x.repaired}/${x.firstFails}${x.firstFails ? ` (${share(x.repairRate)})` : ""}${x.meanRounds !== undefined ? ` · ${x.meanRounds.toFixed(1)} rd` : ""}`)]));
+  const usd = (x: ArmRepair) => (x.extraPriced ? `$${x.extraCostUsd.toFixed(x.extraCostUsd < 1 ? 3 : 2)}` : formatDuration(x.extraAgentMs));
+  out.push(f.row(["extra", ...cell((x) => `${usd(x)} · ${plural(x.rounds, "round")}`)]));
+  if (both.some((x) => x?.tamperedRepairs)) out.push(f.row(["tampered repairs", ...cell((x) => (x.tamperedRepairs ? f.bad(String(x.tamperedRepairs)) : "0")), f.dim("not counted as repaired")]));
+  if (both.some((x) => x?.falseAlarm)) out.push(f.row([`false alarms`, ...cell((x) => (x.falseAlarm ? `${x.falseAlarm.fired} told, ${x.falseAlarm.broke} broke` : "—")), f.dim(`p = ${(a?.falseAlarm ?? b?.falseAlarm)!.p}`)]));
+  if (both.some((x) => x?.namesUnparsed)) out.push(f.row(["names unparsed", ...cell((x) => String(x.namesUnparsed ?? 0)), f.dim("rounds sent the bare bit")]));
+  if (both.some((x) => x?.skipped)) out.push(f.row(["not repaired", ...cell((x) => String(x.skipped)), f.dim("first attempt errored or timed out")]));
+  return out;
+}
+
 export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   const c = opts.color ?? false;
   const paint = (code: string, s: string) => (c ? `\x1b[${code}m${s}\x1b[0m` : s);
@@ -1365,6 +1441,7 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
     }
   });
   out.push(...tamperedPassLines(r, { pad: (s) => pad(s, W[0] as number), bad, dim }));
+  out.push(...repairLines(r, { row: (cells) => row(cells), bad, dim, signed }));
   if (r.tasks.length) {
     out.push("");
     const max = opts.maxTasks ?? 20;
@@ -1392,7 +1469,7 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   out.push("");
   const v = r.verdict;
   const vtext = v.kind === "better" ? good(v.text) : v.kind === "worse" ? bad(v.text) : bold(v.text);
-  out.push(`${r.audited ? "verdict (audited)" : "verdict"}: ${vtext}`);
+  out.push(`${r.audited ? "verdict (audited)" : r.repairVerdict ? "verdict (after repair)" : "verdict"}: ${vtext}`);
   if (r.gate) {
     const g = r.gate;
     const head = gateLine(g, ab);
