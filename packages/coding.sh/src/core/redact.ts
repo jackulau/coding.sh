@@ -56,13 +56,68 @@ export function countMarkers(s: string, into: Record<string, number>, sign = 1):
   return n;
 }
 
-/** Adds to `t` what turned `before` into `after` (only called when they differ). */
-function tallyChange(t: RedactionTally, before: string, after: string): void {
+/**
+ * Adds to `t` what turned `before` into `after` (only called when they differ).
+ * `placeholders` (kind → count) are vendor-shaped values that were plainly made up:
+ * they count as `placeholder-key`, not as their vendor kind.
+ */
+function tallyChange(t: RedactionTally, before: string, after: string, placeholders?: Record<string, number>): void {
   const diff: Record<string, number> = {};
   if (countMarkers(before, diff, -1)) t.preexisting = true;
   countMarkers(after, diff);
-  for (const [k, n] of Object.entries(diff)) if (n > 0) t.kinds[k] = (t.kinds[k] ?? 0) + n;
+  for (const [k, n] of Object.entries(diff)) {
+    if (n <= 0) continue;
+    const fake = Math.min(placeholders?.[k] ?? 0, n);
+    if (n > fake) t.kinds[k] = (t.kinds[k] ?? 0) + n - fake;
+    if (fake) t.kinds[PLACEHOLDER_KIND] = (t.kinds[PLACEHOLDER_KIND] ?? 0) + fake;
+  }
 }
+
+/** The count kind of a vendor-shaped value that is plainly made up (isPlaceholderSecret). */
+export const PLACEHOLDER_KIND = "placeholder-key";
+
+/**
+ * Published documentation keys: Stripe's and AWS's examples. Stripe's is split so
+ * GitHub push protection does not read the source as holding a secret.
+ */
+const DOC_KEYS: ReadonlySet<string> = new Set(["sk_test_" + "4eC39HqLyjWDarjtT1zdp7dc", "AKIAIOSFODNN7EXAMPLE"]);
+/** A dash- or underscore-delimited word that marks a made-up value, after the vendor prefix. */
+const PLACEHOLDER_WORD = /^(?:test|fake|dummy|example|stub|mock|placeholder|sample|x{3,})$/i;
+
+const isAlnumCode = (c: number): boolean => (c >= 48 && c <= 57) || (c >= 97 && c <= 122);
+
+/** Longest run of consecutive characters, case-insensitive (`0123…`, `abcd…`, `AbCdEf…`). */
+function ascendingRun(s: string): number {
+  let best = 1;
+  let run = 1;
+  for (let i = 1; i < s.length; i++) {
+    const a = s.charCodeAt(i - 1) | 32;
+    const b = s.charCodeAt(i) | 32;
+    run = b === a + 1 && isAlnumCode(a) && isAlnumCode(b) ? run + 1 : 1;
+    if (run > best) best = run;
+  }
+  return best;
+}
+
+/**
+ * True for a vendor-shaped token whose value is plainly made up, as in docs and
+ * test fixtures: a published example key, the word EXAMPLE, eight of one
+ * character, a chunk three times in a row (SECRETSECRETSECRET), eight
+ * consecutive characters (abcdefgh, 01234567), or a word like test, fake or stub
+ * after the vendor prefix (sk-ant-test-…). A live token is random: each shape
+ * turns up in about one in a billion of them or fewer (a word after the prefix:
+ * about one in a million). It is still redacted; it only does not count as a
+ * vendor token, so it does not tag the session secret:exposed.
+ */
+export function isPlaceholderSecret(token: string): boolean {
+  if (DOC_KEYS.has(token)) return true;
+  if (token.length > 512) return false;
+  if (/example/i.test(token) || /(.)\1{7}/.test(token) || /([A-Za-z0-9]{3,16})\1\1/.test(token) || ascendingRun(token) >= 8) return true;
+  return token.split(/[-_]/).slice(2).some((w) => PLACEHOLDER_WORD.test(w));
+}
+
+/** A private key block too short to hold a key (the smallest real one, Ed25519 PKCS#8, has a 64-character body). */
+const isPlaceholderPrivateKey = (block: string): boolean => block.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "").length < 40;
 
 // Names that mark the adjacent value as a secret. Matched as a suffix of an
 // identifier (OPENAI_API_KEY, db_password, x-api-key, …).
@@ -86,9 +141,12 @@ function keepPrefix(kind: string): (m: string, ...g: string[]) => string {
  * checks this against a frozen copy of the original patterns). Rules are keyed
  * by identity, so a copied rule object falls back to its (equivalent) regex.
  */
-const fastApply = new WeakMap<RedactRule, (s: string) => string>();
+/** Called with each match a high-confidence rule replaces, so the tally can tell a made-up value from a live one. */
+type OnMatch = (kind: string, match: string) => void;
 
-function withFastApply(rule: RedactRule, apply: (s: string) => string): RedactRule {
+const fastApply = new WeakMap<RedactRule, (s: string, onMatch?: OnMatch) => string>();
+
+function withFastApply(rule: RedactRule, apply: (s: string, onMatch?: OnMatch) => string): RedactRule {
   fastApply.set(rule, apply);
   return rule;
 }
@@ -108,7 +166,7 @@ export function secretRules(): RedactRule[] {
     replace: keepPrefix("prose-secret"),
   };
   return [
-    withFastApply(privateKey, (s) => redactPrivateKeys(s, privateKey.pattern)),
+    withFastApply(privateKey, (s, onMatch) => redactPrivateKeys(s, privateKey.pattern, onMatch)),
     { kind: "anthropic-key", pattern: /(?<![A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{20,}/g },
     // OpenAI-style: sk-, sk-proj-, sk-svcacct-… Require a digit so kebab-case words don't match.
     { kind: "openai-key", pattern: /(?<![A-Za-z0-9_-])sk-(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{20,}/g },
@@ -168,7 +226,7 @@ export function secretRules(): RedactRule[] {
 // so only the text up to the end of the last END line can change; inside that
 // prefix each BEGIN line finds its END and the scan consumes it.
 const PRIVATE_KEY_END = /-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----/y;
-function redactPrivateKeys(s: string, re: RegExp): string {
+function redactPrivateKeys(s: string, re: RegExp, onMatch?: OnMatch): string {
   let cut = -1;
   for (let q = s.lastIndexOf("-----END "); q >= 0; q = q > 0 ? s.lastIndexOf("-----END ", q - 1) : -1) {
     PRIVATE_KEY_END.lastIndex = q;
@@ -179,7 +237,15 @@ function redactPrivateKeys(s: string, re: RegExp): string {
   }
   if (cut < 0 || !s.includes("-----BEGIN ")) return s;
   re.lastIndex = 0;
-  return s.slice(0, cut).replace(re, marker("private-key")) + s.slice(cut);
+  const head = s.slice(0, cut);
+  return (
+    (onMatch
+      ? head.replace(re, (m) => {
+          onMatch("private-key", m);
+          return marker("private-key");
+        })
+      : head.replace(re, marker("private-key"))) + s.slice(cut)
+  );
 }
 
 // prose-secret, evaluated by hand. The regex checks "the rest of the token has a
@@ -351,28 +417,36 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
   rules.push(...patternRules(opts.patterns ?? []));
 
   const string = (s: string, tally?: RedactionTally): string => {
-    const out = apply(s);
-    if (tally) {
-      if (out !== s) tallyChange(tally, s, out);
-      else if (!tally.preexisting && s.includes("[redacted:")) tally.preexisting = true;
-    }
+    if (!tally) return apply(s);
+    let placeholders: Record<string, number> | undefined;
+    const out = apply(s, (kind, m) => {
+      if (kind === "private-key" ? !isPlaceholderPrivateKey(m) : !isPlaceholderSecret(m)) return;
+      placeholders ??= {};
+      placeholders[kind] = (placeholders[kind] ?? 0) + 1;
+    });
+    if (out !== s) tallyChange(tally, s, out, placeholders);
+    else if (!tally.preexisting && s.includes("[redacted:")) tally.preexisting = true;
     return out;
   };
 
-  const apply = (s: string): string => {
+  const apply = (s: string, onMatch?: OnMatch): string => {
     let out = s;
     for (const r of rules) {
       const fast = fastApply.get(r);
       if (fast) {
-        out = fast(out);
+        out = fast(out, onMatch);
         continue;
       }
       r.pattern.lastIndex = 0;
       if (!r.pattern.test(out)) continue;
       r.pattern.lastIndex = 0;
-      out = r.replace
-        ? out.replace(r.pattern, r.replace as (m: string, ...g: unknown[]) => string)
-        : out.replace(r.pattern, marker(r.kind));
+      if (r.replace) out = out.replace(r.pattern, r.replace as (m: string, ...g: unknown[]) => string);
+      else if (onMatch && HIGH_CONFIDENCE_KINDS.has(r.kind)) {
+        out = out.replace(r.pattern, (m) => {
+          onMatch(r.kind, m);
+          return marker(r.kind);
+        });
+      } else out = out.replace(r.pattern, marker(r.kind));
     }
     return out;
   };

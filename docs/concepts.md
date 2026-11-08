@@ -111,6 +111,9 @@ A session
 in which redaction replaced a vendor token (an Anthropic, OpenAI, GitHub, GitLab, Slack, AWS, Google,
 Stripe, npm, coding.sh or AI Gateway key, a Slack webhook or a private key) gets the `secret:exposed`
 tag: the stored copy is redacted, but the agent and its model provider saw the credential, so rotate it.
+A key whose value is plainly made up, as in docs and test fixtures (`AKIAIOSFODNN7EXAMPLE`, the
+word EXAMPLE or test after the vendor prefix, eight of one character, a chunk repeated three times,
+`abcdefgh`), is redacted too but counts as `placeholder-key` and does not add the tag.
 `coding.sh sessions --flag secret:exposed` lists them, and `stats.redactions` counts what was replaced
 by kind. A session whose main thread handed over to another model mid-session, such as Claude Code
 falling back to an older model after a refusal, gets the `model:switch` tag, and

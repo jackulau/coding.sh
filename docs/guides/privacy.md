@@ -50,7 +50,10 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
 - **Exposed secrets.** Redaction keeps a secret out of the store, but the agent and its model
   provider still saw it. Each session counts what was redacted by kind (`coding.sh show` prints a
   `Redacted` row), and a session that held a vendor token gets the `secret:exposed` tag:
-  `coding.sh sessions --flag secret:exposed` lists the sessions whose credentials to rotate.
+  `coding.sh sessions --flag secret:exposed` lists the sessions whose credentials to rotate. A
+  made-up key, like the ones in docs and test fixtures, is redacted but counts as
+  `placeholder-key` and does not add the tag. Sessions captured before this rule keep their tag
+  until `coding.sh ingest --rebuild` reads them again from their transcripts.
 - **Remove a leaked secret.** When a value got past redaction, put it in a file (one value per
   line) and run `coding.sh purge --literal leaked.txt`; `--literal -` reads stdin. Add
   `--dry-run` first to count the copies. Every copy becomes `[redacted:purged]`: event payloads

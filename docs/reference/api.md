@@ -578,7 +578,9 @@ context. Each text is a `notification` event with `payload.kind: "hook.context"`
 (`{"anthropic-key": 1, "password": 2}`); it never holds the values, and it is absent when nothing was
 redacted. Each event's own counts are in `payload.redactions`, which metadata mode keeps; a tool
 output moved to a blob counts what was redacted inside the blob. A vendor token kind also adds the
-`secret:exposed` tag to `flags`. Events stored before counting existed are counted from the
+`secret:exposed` tag to `flags`. A vendor-shaped value that is plainly made up (a published example
+key, EXAMPLE, test or stub after the prefix, a repeated character or chunk, eight consecutive
+characters) counts as `placeholder-key`, which adds no tag. Events stored before counting existed are counted from the
 `[redacted:<kind>]` markers in their payload.
 
 A missing session, or one outside a scoped key's project, gets 404:

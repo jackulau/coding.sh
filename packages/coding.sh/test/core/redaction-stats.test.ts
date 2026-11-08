@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { defaultConfig } from "../../src/core/config.ts";
 import { ingest } from "../../src/core/ingest.ts";
-import { createRedactor, redactEventCounted, redactionTally, toMetadata } from "../../src/core/redact.ts";
+import { createRedactor, isPlaceholderSecret, redactEventCounted, redactionTally, toMetadata } from "../../src/core/redact.ts";
 import { exposesSecret, SECRET_EXPOSED } from "../../src/core/redaction-stats.ts";
 import { buildSession, failureFlags, FLAGS } from "../../src/core/sessions.ts";
 import type { Adapter, Config } from "../../src/core/types.ts";
@@ -18,7 +18,7 @@ import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 // Built at runtime so no scanner mistakes this file for a leak.
 const ANT = ["sk", "ant", "api03", "A1b2C3d4E5f6G7h8I9j0K1l2M3n4"].join("-");
 const GH = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
-const KEY_PEM = ["-----BEGIN RSA PRIVATE KEY-----", "MIIEowIBAAKCAQEA1234567890abcdef", "-----END RSA PRIVATE KEY-----"].join("\n");
+const KEY_PEM = ["-----BEGIN RSA PRIVATE KEY-----", "MIIEowIBAAKCAQEAx9Kq2Lm8Np4Rt7Vw1Yb3Hd6Gf0Jc5SeU2", "-----END RSA PRIVATE KEY-----"].join("\n");
 
 const r = createRedactor({ redact: ["secrets"] });
 
@@ -48,6 +48,33 @@ describe("redaction tally", () => {
     const t = redactionTally();
     r.value({ headers: { authorization: "anything at all" }, argv: ["tool", "--api-key", "plainvalue"] }, t);
     assert.deepEqual(t.kinds, { "secret-field": 1, "secret-flag": 1 });
+  });
+
+  test("a made-up vendor key is redacted but counted as placeholder-key, so it exposes nothing", () => {
+    // The shapes this repo's own tests and docs use, built at runtime like ANT above.
+    const fakes = [
+      ["AKIA", "IOSFODNN7", "EXAMPLE"].join(""),
+      ["sk", "ant", "api03", "SECRET".repeat(6), "abcdefAA"].join("-"),
+      ["sk", "ant", "api03", "FORKKEY".repeat(3), "abcdefAA"].join("-"),
+      ["sk", "ant", "api03", "AbCdEfGhIjKlMnOpQrStUvWx"].join("-"),
+      ["sk", "ant", "test", "SECRET", "key", "123456"].join("-"),
+      ["sk", "ant", "oat01", "stub", "token"].join("-"),
+      ["csh", "ik", "a".repeat(43)].join("_"),
+      "ghp_" + "0123456789abcdefghijABCDEFGHIJ012345",
+      ["sk", "test", "4eC39HqLyjWDarjtT1zdp7dc"].join("_"),
+      ["-----BEGIN RSA PRIVATE KEY-----", "MIIEow", "IBAAKCAQEA", "-----END RSA PRIVATE KEY-----"].join("\n"),
+    ];
+    for (const f of fakes) {
+      const t = tallyOf(`here: ${f} done`);
+      assert.doesNotMatch(t.out, new RegExp(f.slice(0, 12).replace(/[-]/g, "\\-")), `still redacted: ${f}`);
+      assert.deepEqual(t.kinds, { "placeholder-key": 1 }, f);
+      assert.equal(exposesSecret(t.kinds), false, f);
+    }
+    // Random-looking keys, as live ones are, keep their vendor kind.
+    for (const [real, kind] of [[ANT, "anthropic-key"], [GH, "github-token"], [["AKIA", "Q3ZJ7HXW2LKD9PNR"].join(""), "aws-access-key"], [["sk", "live", "51Hq8ZbLx2Mw9Kt4Rv7Pn3Jd"].join("_"), "stripe-key"], [KEY_PEM, "private-key"]]) {
+      assert.deepEqual(tallyOf(`x ${real} y`).kinds, { [kind!]: 1 }, real);
+      assert.equal(isPlaceholderSecret(real!), false, real);
+    }
   });
 
   test("no tally, no change in output", () => {
