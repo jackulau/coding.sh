@@ -128,6 +128,36 @@ describe("--where on CLI, MCP and HTTP", () => {
     assert.equal(cli(["sessions", "--facets", "nope"]).status, 2);
   });
 
+  test("the viewer lists matching events, keyset-paged, with their session and a count", async () => {
+    const first = await http(`/api/events?limit=1&where=${encodeURIComponent("tool:Bash ok:false")}`);
+    assert.equal(first.status, 200);
+    const items = first.json.items as { id: string; kind: string; payload: { tool: string }; session: { id: string; title?: string; agent: string } }[];
+    assert.deepEqual(items.map((e) => [e.id, e.kind, e.payload.tool, e.session.id, e.session.agent]), [["s1-e3", "tool.end", "Bash", "s1", "codex"]]);
+    assert.equal(items[0]!.session.title, "Fix the Build");
+    assert.deepEqual([first.json.total, first.json.totalCapped], [2, false]);
+    const second = await http(`/api/events?limit=1&where=${encodeURIComponent("tool:Bash ok:false")}&cursor=${encodeURIComponent(first.json.next as string)}`);
+    assert.deepEqual((second.json.items as { id: string }[]).map((e) => e.id), ["s4-e1"]);
+    assert.equal(second.json.next, undefined);
+    assert.equal(second.json.total, undefined, "counted on the first page only");
+    // Text queries carry a snippet with the matched words marked.
+    const text = await http(`/api/events?where=${encodeURIComponent("migration agent:codex")}`);
+    assert.deepEqual((text.json.items as { id: string }[]).map((e) => e.id), ["s1-e1"]);
+    assert.match((text.json.items as { snippet: string }[])[0]!.snippet, /migration/);
+    assert.equal((await http(`/api/events?cursor=nope`)).status, 400);
+    assert.equal((await http(`/api/events?where=${encodeURIComponent("tool:")}`)).status, 400);
+  });
+
+  test("facet values autocomplete by prefix; stats follow the query", async () => {
+    const f = await http(`/api/facets?keys=tool&prefix=b`);
+    assert.deepEqual(f.json.facets, { tool: [{ value: "Bash", count: 3 }] });
+    assert.equal((await http(`/api/facets?keys=tool&prefix=${"x".repeat(201)}`)).status, 400);
+    const all = await http(`/api/stats`);
+    const codex = await http(`/api/stats?where=${encodeURIComponent("agent:codex")}`);
+    assert.equal(all.json.sessions, 5);
+    assert.equal(codex.json.sessions, 2);
+    assert.equal((await http(`/api/stats?where=${encodeURIComponent("modle:x")}`)).status, 400);
+  });
+
   test("old flags still work and combine with --where", () => {
     const ids = (JSON.parse(ok(["sessions", "--agent", "codex", "--where", "is:child", "--json"]).stdout) as { sessions: { id: string }[] }).sessions;
     // --agent codex, top-level by default, and is:child: nothing.

@@ -3,7 +3,7 @@
 // evaluates the query in memory. The scan answers session keys on every store;
 // event keys and text need events, which only SQLite (indexed) and the in-memory
 // store (cheap) can afford, so other stores get a clear QueryUnsupported error.
-import type { FacetCount, IndexStore, QueryOpts, SearchHit, SearchOpts } from "../core/types.ts";
+import type { EventPage, EventQueryOpts, FacetCount, IndexStore, QueryOpts, SearchHit, SearchOpts } from "../core/types.ts";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { matchesEvent, matchesSession, sortSessions } from "./match.ts";
 import { FACET_KEYS, KEYS, needsEvents, QueryUnsupported, withoutKey, type Node, type Query } from "./where.ts";
@@ -103,10 +103,54 @@ export async function facetCounts(index: IndexStore, q: Query, keys: readonly st
       }
       if (rows.length < 500) break;
     }
+    const typed = o.prefix ? asciiLower(o.prefix) : "";
     out[key] = [...counts]
+      .filter(([value]) => !typed || asciiLower(value).startsWith(typed))
       .map(([value, count]) => ({ value, count }))
       .sort((a, b) => b.count - a.count || (a.value < b.value ? -1 : a.value > b.value ? 1 : 0))
       .slice(0, limit);
+  }
+  return out;
+}
+
+/** ASCII-only lower case, as SQLite's LIKE folds case. */
+const asciiLower = (s: string): string => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
+
+/**
+ * Events matching the query (event keys on the event, session keys on its
+ * session), newest first, a page at a time. Without a store query path, scans
+ * the newest QUERY_SCAN_CAP sessions' events; only the in-memory store can.
+ */
+export async function findEvents(index: IndexStore, q: Query, o: EventQueryOpts = {}): Promise<EventPage> {
+  if (index.queryEvents) return index.queryEvents(q, o);
+  if (!SCAN_EVENTS.has(index.kind)) {
+    throw new QueryUnsupported(`Event results need the event index: the ${index.kind} store has no event query path. Use the Sessions results, or query the SQLite store.`);
+  }
+  const hits: AgentEvent[] = [];
+  for (let offset = 0; offset < QUERY_SCAN_CAP; offset += 500) {
+    const rows = await index.listSessions({ ...o.filter, limit: 500, offset });
+    for (const s of rows) for (const e of await index.listEvents(s.id)) if (matchesEvent(q.root, e, s)) hits.push(e);
+    if (rows.length < 500) break;
+  }
+  // Newest first; the same ts falls back to id, so the cursor `<ts>:<id>` is total.
+  hits.sort((a, b) => b.ts - a.ts || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+  let start = 0;
+  if (o.cursor) {
+    const i = o.cursor.indexOf(":");
+    const ts = Number(o.cursor.slice(0, i));
+    const id = o.cursor.slice(i + 1);
+    if (i < 0 || !Number.isFinite(ts)) throw new RangeError("bad events cursor");
+    start = hits.findIndex((e) => e.ts < ts || (e.ts === ts && e.id < id));
+    if (start < 0) start = hits.length;
+  }
+  const limit = o.limit ?? 50;
+  const items = hits.slice(start, start + limit);
+  const out: EventPage = { items };
+  const last = items[items.length - 1];
+  if (start + limit < hits.length && last) out.next = `${last.ts}:${last.id}`;
+  if (o.countUpTo !== undefined) {
+    out.total = Math.min(hits.length, o.countUpTo);
+    if (hits.length > o.countUpTo) out.totalCapped = true;
   }
   return out;
 }

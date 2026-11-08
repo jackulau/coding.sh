@@ -22,7 +22,9 @@ import type { BlobStore, IndexStore, Label, Session, SessionFilter } from "../co
 import { phaseLabel, sessionOutline, storedOutline } from "../core/outline.ts";
 import type { ExperimentResult } from "../datasets/types.ts";
 import { compareExperiments } from "../experiments/compare.ts";
-import { facetCounts, findSessions, searchWhere } from "../query/run.ts";
+import { facetCounts, findEvents, findSessions, searchWhere } from "../query/run.ts";
+import type { AgentEvent } from "../schema/index.ts";
+import { searchableText, searchTerms, snippet } from "../store/common.ts";
 import { andQuery, parseWhere, QueryError, QueryUnsupported, type Node, type Query } from "../query/where.ts";
 import { getUpdateStatus, type UpdateStatus } from "../update/index.ts";
 
@@ -604,8 +606,40 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       const project = projectParam(ctx, q);
       const filter: SessionFilter = scopeParam(q) === "top" ? { parentSessionId: null } : {};
       if (project !== undefined) filter.project = project;
-      const facets = await facetCounts(ctx.index, whereParam(q) ?? {}, keys, { filter, limit: intParam(q, "limit", 20, 1, 200) }).catch((e) => Promise.reject(queryHttpError(e)));
+      const { since, until } = facetParams(q);
+      if (since !== undefined) filter.since = since;
+      if (until !== undefined) filter.until = until;
+      // Autocomplete: only values starting with what was typed.
+      const prefix = q.get("prefix") ?? "";
+      if (prefix.length > 200) throw new HttpError(400, "prefix is too long");
+      const facets = await facetCounts(ctx.index, whereParam(q) ?? {}, keys, { filter, limit: intParam(q, "limit", 20, 1, 200), ...(prefix ? { prefix } : {}) }).catch((e) => Promise.reject(queryHttpError(e)));
       return sendJson(res, 200, { facets });
+    }
+
+    case "events": {
+      // `where` at event level: matching events across sessions, newest first, keyset-paged.
+      get();
+      if (id !== undefined) throw new HttpError(404, "not found");
+      const where = whereParam(q) ?? {};
+      const limit = intParam(q, "limit", 50, 1, 200);
+      const cursor = q.get("cursor") || undefined;
+      if (cursor !== undefined && cursor.length > 80) throw new HttpError(400, "cursor is malformed");
+      const project = projectParam(ctx, q);
+      const filter: SessionFilter = project !== undefined ? { project } : {};
+      // A time range picks the sessions (by start), as on the list.
+      const { since, until } = facetParams(q);
+      if (since !== undefined) filter.since = since;
+      if (until !== undefined) filter.until = until;
+      // Counted on the first page only, up to EVENTS_COUNT_CAP ("10,000+" past it).
+      const r = await findEvents(ctx.index, where, { filter, limit, ...(cursor ? { cursor } : { countUpTo: EVENTS_COUNT_CAP }) }).catch((e) => Promise.reject(queryHttpError(e)));
+      const sessions = new Map<string, Session | undefined>();
+      for (const e of r.items) if (!sessions.has(e.sessionId)) sessions.set(e.sessionId, await ctx.index.getSession(e.sessionId).catch(() => undefined));
+      const terms = textTerms(where.root);
+      return sendJson(res, 200, {
+        items: r.items.map((e) => eventRow(e, sessions.get(e.sessionId), terms)),
+        ...(r.next ? { next: r.next } : {}),
+        ...(r.total !== undefined ? { total: r.total, totalCapped: !!r.totalCapped } : {}),
+      });
     }
 
     case "tasks": {
@@ -752,7 +786,8 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
     case "stats": {
       get();
       if (id !== undefined) throw new HttpError(404, "not found");
-      return sendJson(res, 200, await computeStats(ctx.index, scopeParam(q) === "top", projectParam(ctx, q), facetParams(q)));
+      const project = projectParam(ctx, q);
+      return sendJson(res, 200, await computeStats(ctx.index, scopeParam(q) === "top", project, facetParams(q), whereParam(q)).catch((e) => Promise.reject(queryHttpError(e))));
     }
 
     case "projects": {
@@ -788,6 +823,42 @@ function experimentDetail(e: ExperimentResult) {
     return text.length > MAX_OUTPUT_CHARS ? { ...r, output: text.slice(0, MAX_OUTPUT_CHARS), outputTruncated: true } : r;
   });
   return { ...experimentSummary(e), runs, runsTruncated: e.runs.length > runs.length };
+}
+
+const EVENTS_COUNT_CAP = 10_000;
+const ROW_TEXT_CAP = 240;
+
+/** A copy of a payload small enough for a list row: strings clipped, nesting cut at two levels. */
+function clipPayload(v: unknown, depth = 0): unknown {
+  if (typeof v === "string") return v.length > ROW_TEXT_CAP ? `${v.slice(0, ROW_TEXT_CAP - 1)}…` : v;
+  if (Array.isArray(v)) return depth >= 2 ? `[${v.length}]` : v.slice(0, 8).map((x) => clipPayload(x, depth + 1));
+  if (v && typeof v === "object") {
+    if (depth >= 2) return "{…}";
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v).slice(0, 16)) out[k] = clipPayload(x, depth + 1);
+    return out;
+  }
+  return v;
+}
+
+/** The words of every positive text clause, folded as the full-text index folds them (for snippets). */
+function textTerms(n: Node | undefined): string[] {
+  if (!n || n.t === "not") return [];
+  if (n.t === "text") return n.words.flatMap((w) => searchTerms(w));
+  if (n.t === "and" || n.t === "or") return n.items.flatMap(textTerms);
+  return [];
+}
+
+/** One /api/events row: the event with its payload clipped, its session's name, and a snippet for text queries. */
+function eventRow(e: AgentEvent, s: Session | undefined, terms: string[]) {
+  const { payload, blobs: _b, repo: _r, ...rest } = e;
+  const text = terms.length ? searchableText(e) : undefined;
+  return {
+    ...rest,
+    payload: clipPayload(payload ?? {}),
+    session: s ? { id: s.id, title: s.title, agent: s.agent, model: s.model, ...(s.parent ? { parent: s.parent.sessionId, type: s.parent.type } : {}) } : null,
+    ...(text ? { snippet: snippet(text, terms) } : {}),
+  };
 }
 
 function page<T>(rows: T[], limit: number, offset: number) {
@@ -1019,9 +1090,11 @@ function histogram(starts: { t: number; flagged: boolean }[]) {
  *
  * Facets count like a facet sidebar does: each facet's counts apply every
  * other active filter but its own, so picking a value never hides its
- * siblings. Totals apply them all.
+ * siblings. Totals apply them all. A `where` query narrows everything,
+ * facets and histogram included (its sort: and limit: do not apply).
  */
-async function computeStats(index: IndexStore, topLevelOnly = false, project?: string, f: Facets = {}) {
+async function computeStats(index: IndexStore, topLevelOnly = false, project?: string, f: Facets = {}, where?: Query) {
+  const only = where?.root ? new Set((await findSessions(index, { root: where.root }, { filter: project ? { project } : {} })).sessions.map((s) => s.id)) : undefined;
   const byAgent: Record<string, number> = {};
   const byFlag: Record<string, number> = {};
   const byRepo: Record<string, number> = {};
@@ -1039,6 +1112,7 @@ async function computeStats(index: IndexStore, topLevelOnly = false, project?: s
   let testsFailing = 0;
   const inc = (m: Record<string, number>, k: string) => (m[k] = (m[k] ?? 0) + 1);
   for await (const s of scanSessions(index, project ? { project } : {})) {
+    if (only && !only.has(s.id)) continue;
     const all = matchesFacets(s, f);
     if (all) {
       toolCalls += s.stats.toolCalls;

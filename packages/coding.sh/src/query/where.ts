@@ -188,7 +188,8 @@ const KEY_LIST: KeyDef[] = [
   { name: "kind", level: "event", type: "text", doc: "Event kind", example: "kind:tool.end", sql: ["e.kind"], notNull: true, get: (e) => [e.kind], facet: {} },
   { name: "tool", level: "event", type: "text", doc: "Tool name", example: "tool:Bash", sql: ["e.tool"], get: (e) => [typeof e.payload?.tool === "string" ? e.payload.tool : undefined], facet: {} },
   { name: "ok", level: "event", type: "bool", doc: "Tool call or model call succeeded", example: "ok:false", sql: ["e.ok"], get: (e) => [typeof e.payload?.ok === "boolean" ? e.payload.ok : undefined] },
-  { name: "mcp", level: "event", type: "text", doc: "MCP server of a tool call", example: "mcp:github", sql: ["CASE WHEN json_type(e.payload, '$.server') = 'text' THEN json_extract(e.payload, '$.server') END"], get: (e) => [typeof e.payload?.server === "string" ? e.payload.server : undefined], facet: {} },
+  // events.mcp holds payload.server of tool calls (written at insert, indexed).
+  { name: "mcp", level: "event", type: "text", doc: "MCP server of a tool call", example: "mcp:github", sql: ["e.mcp"], get: (e) => [typeof e.payload?.tool === "string" && typeof e.payload.server === "string" ? e.payload.server : undefined], facet: {} },
   { name: "error", level: "event", type: "text", match: "contains", doc: "Error message contains (case-insensitive)", example: "error:ENOENT", sql: ["CASE WHEN json_type(e.payload, '$.error') = 'text' THEN json_extract(e.payload, '$.error') END"], get: (e) => [typeof e.payload?.error === "string" ? e.payload.error : undefined] },
   { name: "event.duration", level: "event", type: "number", unit: "ms", doc: "Event duration (30s, 2m)", example: "event.duration>30s", sql: ["e.duration_ms"], get: (e) => [num(e.durationMs)] },
 ];

@@ -368,6 +368,34 @@ lastIngestAt}` drives the "Indexing N files…" pill. CLI reads (`status`, `sess
 1.5 s budget (`ingest({deadline})` stops at the next checkpoint, cursors on what was stored), answer from the store,
 start a background `ingest`, and print `N files not yet ingested` to stderr; `--fresh` waits.
 
+**Indexed filter keys (landed, V-2).** Migration v8 adds `events.mcp` (a tool call's MCP server, from `payload.server`) and replaces `events_kind`/`events_tool` with `events_kind_ts(kind, ts, session_id)`,
+`events_tool_ok(tool, ok, ts, session_id)`, `events_ok(ok, ts, session_id)`, `events_mcp(mcp, ts, session_id)` and
+`events_ts(ts)`. `session_facets(key, value, session_id)` (`WITHOUT ROWID`) holds each session's tools, MCP servers
+and kinds, written with its events and backfilled by the migration, so event-key facets count sessions without
+touching `events`. A session-level event clause is one non-correlated `s.id IN (SELECT e.session_id …)`; the Events
+API pages on `(ts DESC, rowid DESC)` and counts up to 10k on the first page only. Session columns were not
+promoted: session-key queries already answer in ~4 ms at 3.6k sessions. `test/query/where.test.ts` fails on
+`SCAN e` for any indexed key. Measured on the desk against a synthetic 3.3 GB store (3,600 sessions, 1.4M events),
+warm median of five:
+
+| query | v7 | v8 |
+|---|---|---|
+| migration (once) | | 53 s, 3,326 → 3,446 MB |
+| sessions `tool:Bash ok:false` | 25,793 ms | 4.9 ms |
+| sessions `tool:Bash ok:false since:7d sort:-tools` | 118,554 ms | 4.5 ms |
+| sessions `kind:context.compact -flag:compaction` | 9,969 ms | 0.8 ms |
+| facets `tool,mcp,kind` | 8,537 ms (54 s cold) | 31 ms |
+| facets `tool` where `ok:false` | 7,570 ms | 36 ms |
+| facets `tool,mcp` where `agent:codex since:7d` | 148 ms | 1.6 ms |
+| facets `agent,model,repo,flag` | 16.7 ms | 18.6 ms |
+| events `tool:Bash ok:false since:7d` | | 2 ms |
+| events `kind:tool.end event.duration>15s agent:codex` | | 3.4 ms |
+| events `error:timed` | | 38 ms |
+| events `retry flaky` (text) | | 260 ms |
+| search `migration` where `tool:Bash` | 957 ms | 1,050 ms |
+
+Text and `error:` read payloads and stay the slow keys; pair them with an indexed key. Turns (item 4) are left to V-7.
+
 ## 10. Gaps against the current code
 
 Paths under packages/coding.sh/src.

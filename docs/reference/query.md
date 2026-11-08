@@ -104,6 +104,12 @@ shows every agent. `--limit` sets the values per key (default 10). A count is th
 sessions, not events.
 
 On the SQLite index a query becomes one SQL statement, with every value bound as a parameter.
+The event keys `kind`, `tool`, `ok` and `mcp` read indexes, not the events: a session-level
+clause such as `tool:Bash ok:false` looks up the matching events once and keeps their sessions,
+and facets on `kind`, `tool` and `mcp` read a small table of each session's distinct values.
+`error`, `event.duration` and bare words read the payload of every candidate event, so pair them
+with an indexed key (`kind:tool.end error:timeout`) on a large store. A store written by an
+older version is migrated on first open; on a 3.3 GB store that takes about a minute.
 Postgres and ClickHouse stores answer session keys by reading sessions a page at a time, the
 newest 20,000 at most (`coding.sh sessions` says so on stderr when it stops there). Event keys and
 bare words need the SQLite or memory store; on another store they fail with reason
@@ -201,6 +207,7 @@ are text: read them with `json_extract(col, '$.path')` or `json_each(col)`.
 | `kind` | `user.message`, `assistant.message`, `tool.start`, `tool.end`, `llm.call`, … |
 | `tool` | Tool name, for tool events |
 | `ok` | 1 or 0 when the event says whether it succeeded |
+| `mcp` | MCP server, for a tool call to an MCP tool |
 | `payload` | Payload JSON (`text`, `command`, `input`, `output`, …) |
 | `blobs` | JSON array of blob hashes the payload points at |
 | `usage` | Usage JSON: `inputTokens`, `outputTokens`, `cacheReadTokens`, `costUsd` |
@@ -231,8 +238,10 @@ are text: read them with `json_extract(col, '$.path')` or `json_each(col)`.
 | `started_at` | Start time |
 | `doc` | The full run as JSON |
 
-Other tables (`tasks`, `bundles`, `datasets`, `experiments`, `judges`, `kv`, `cursors`) hold eval
-and bookkeeping state as JSON in a `doc` column. `events_fts` is the full-text index behind
+`session_facets` holds each session's distinct `kind`, `tool` and `mcp` values (`key`, `value`,
+`session_id`), kept in step with `events`. Other tables (`tasks`, `bundles`, `datasets`,
+`experiments`, `judges`, `kv`, `cursors`) hold eval and bookkeeping state as JSON in a `doc`
+column. `events_fts` is the full-text index behind
 `coding.sh search`. List every table with:
 
 ```sh

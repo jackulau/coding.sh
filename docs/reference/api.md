@@ -94,6 +94,7 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/search`](#get-apisearch) | read key or basic auth | serve, ui |
 | GET | [`/api/stats`](#get-apistats) | read key or basic auth | serve, ui |
 | GET | [`/api/facets`](#get-apifacets) | read key or basic auth | serve, ui |
+| GET | [`/api/events`](#get-apievents) | read key or basic auth | serve, ui |
 | GET | [`/api/labels`](#get-apilabels) | read key or basic auth | serve, ui |
 | POST | [`/api/labels`](#post-apilabels) | read key or basic auth | serve, ui |
 | GET | [`/api/experiments`](#get-apiexperiments) | read key or basic auth | serve, ui |
@@ -578,7 +579,8 @@ Without `q`: 400 `{"error":"q is required","status":400}`.
 ### `GET /api/stats`
 
 Totals and facet counts for the session list. Takes `project`, `scope`, `agent`, `model`, `flag`,
-`repo`, `since` and `until`. Each facet applies every filter except its own. `histogram` buckets
+`repo`, `since`, `until` and `where`. A `where` query narrows the totals, facets and histogram
+(its `sort:` and `limit:` do not apply), and a bad one answers 400 as on `/api/sessions`. Each facet applies every filter except its own. `histogram` buckets
 session starts over at most the 90 days before the newest session.
 
 ```sh
@@ -595,9 +597,10 @@ curl -sS "$CSH/api/stats?project=team&agent=support-bot" -H "Authorization: Bear
 
 Session counts per value of each key in `keys` (comma-separated, at most 12, default
 `agent,model,repo,flag`): `agent`, `model`, `provider`, `repo`, `branch`, `flag`, `skill`, `kind`,
-`tool` or `mcp`. Takes `where`, `project`, `scope` and `limit` (values per key, 1 to 200, default
-20). Each key is counted over `where` without that key's own clauses, so a picked value does not
-hide the others.
+`tool` or `mcp`. Takes `where`, `project`, `scope`, `since`, `until` and `limit` (values per key, 1
+to 200, default 20). Each key is counted over `where` without that key's own clauses, so a picked
+value does not hide the others. `prefix` (up to 200 characters) keeps only values that start with
+it, ignoring case, for autocomplete.
 
 ```sh
 curl -sS "$CSH/api/facets?keys=agent,tool&where=-flag:compaction" -H "Authorization: Bearer $READ_KEY"
@@ -608,6 +611,28 @@ curl -sS "$CSH/api/facets?keys=agent,tool&where=-flag:compaction" -H "Authorizat
 ```
 
 An unknown key answers 400.
+
+### `GET /api/events`
+
+Events that match `where` across sessions, newest first. Event keys (`kind`, `tool`, `ok`, `mcp`,
+`error`, `event.duration`, text) test each event; session keys (`agent`, `repo`, `flag`, …) test
+its session. Takes `limit` (1 to 200, default 50), `cursor`, `project`, `since` and `until` (on the
+session's start, as on the list). Each item is the event with its payload clipped for a list row,
+`session` (`id`, `title`, `agent`, `model`, and `parent` and `type` for a subagent), and a
+`snippet` with matches wrapped in `«…»` when the query has text. `next` is the cursor for the
+following page and is absent on the last one. The first page also counts the matches: `total`, up
+to 10,000, with `totalCapped: true` past that.
+
+```sh
+curl -sS "$CSH/api/events?where=tool:lookup_order&limit=1" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{"items":[{"id":"22270b1c…","v":0,"sessionId":"team/chat-1","ts":1793872802400,"agent":"support-bot","kind":"tool.end","durationMs":400,"source":"sdk","project":"team","payload":{"tool":"lookup_order","toolUseId":"t1","ok":true,"output":"shipped"},"session":{"id":"team/chat-1","title":"Where is my order?","agent":"support-bot","model":"gpt-4o"}}],"total":1,"totalCapped":false}
+```
+
+A bad `where` or `cursor` answers 400. A store plugin with no event query path answers 400 with
+`reason: "unsupported_store"`.
 
 ### `POST /api/labels`
 

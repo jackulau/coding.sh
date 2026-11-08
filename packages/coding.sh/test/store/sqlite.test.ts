@@ -220,6 +220,89 @@ describe("SqliteIndexStore", () => {
     await s.close();
   });
 
+  // V-2: the facet table and the mcp column, filled for a store written before v8,
+  // equal what a fresh store writes at insert.
+  const facetEvents = (): AgentEvent[] => {
+    const ev = (id: string, sessionId: string, kind: AgentEvent["kind"], payload: Record<string, unknown>): AgentEvent => ({ id, v: 0, sessionId, ts: 1_700_000_000_000 + Number(id.slice(1)), agent: "claude-code", kind, payload });
+    return [
+      ev("e1", "a", "user.message", { text: "hi" }),
+      ev("e2", "a", "tool.start", { tool: "mcp__github__search", server: "github", input: {} }),
+      ev("e3", "a", "tool.end", { tool: "mcp__github__search", server: "github", ok: true }),
+      ev("e4", "a", "tool.end", { tool: "Bash", ok: false }),
+      ev("e5", "b", "tool.end", { tool: "Bash", ok: true }),
+      ev("e6", "b", "assistant.message", { text: "done", server: "not-a-tool" }),
+      ev("e7", "b", "tool.end", { tool: "", ok: true }),
+    ];
+  };
+  const facetRows = async (path: string) => {
+    const db = new (await loadSqlite()).DatabaseSync(path, { readOnly: true });
+    const plain = (rows: unknown[]) => rows.map((r) => ({ ...(r as Record<string, unknown>) }));
+    try {
+      return {
+        facets: plain(db.prepare("SELECT key, value, session_id FROM session_facets ORDER BY key, value, session_id").all()) as { key: string; value: string; session_id: string }[],
+        mcp: plain(db.prepare("SELECT id, mcp FROM events ORDER BY id").all()) as { id: string; mcp: string | null }[],
+      };
+    } finally {
+      db.close();
+    }
+  };
+
+  it("migrating to v8 fills session_facets and events.mcp as a fresh store writes them", async () => {
+    const { DatabaseSync } = await loadSqlite();
+    const old = join(root, "v7-facets.db");
+    const db = new DatabaseSync(old);
+    db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
+    for (const m of MIGRATIONS.filter((m) => m.version <= 7)) {
+      db.exec(m.sql);
+      m.after?.(db);
+      db.prepare("INSERT INTO migrations (version, applied_at) VALUES (?, 0)").run(m.version);
+    }
+    const insert = db.prepare("INSERT INTO events (id, session_id, ts, agent, kind, tool, ok, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    for (const e of facetEvents()) {
+      const tool = typeof e.payload.tool === "string" ? e.payload.tool : null;
+      insert.run(e.id, e.sessionId, e.ts, e.agent, e.kind, tool, typeof e.payload.ok === "boolean" ? Number(e.payload.ok) : null, JSON.stringify(e.payload));
+    }
+    db.close();
+    await (await SqliteIndexStore.open(old)).close();
+
+    const fresh = join(root, "v8-facets.db");
+    const s = await SqliteIndexStore.open(fresh);
+    await s.putEvents(facetEvents());
+    await s.close();
+
+    const migrated = await facetRows(old);
+    assert.deepEqual(migrated, await facetRows(fresh));
+    assert.deepEqual(migrated.mcp.filter((r) => r.mcp !== null).map((r) => r.id), ["e2", "e3"]);
+    assert.deepEqual(migrated.facets.filter((r) => r.key === "tool"), [
+      { key: "tool", value: "Bash", session_id: "a" },
+      { key: "tool", value: "Bash", session_id: "b" },
+      { key: "tool", value: "mcp__github__search", session_id: "a" },
+    ]);
+  });
+
+  it("session_facets follows replaced and expired events", async () => {
+    const path = join(root, "facets-follow.db");
+    const s = await SqliteIndexStore.open(path);
+    await s.putEvents(facetEvents());
+    const session = (id: string) => ({ id, agent: "claude-code", startedAt: 1_700_000_000_000, endedAt: 1_700_000_000_010, flags: [], stats: { events: 0, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 } });
+    await s.upsertSession(session("a"));
+    await s.upsertSession(session("b"));
+    // Drop session a's MCP calls: its github and mcp__github__search facets go with them.
+    await s.replaceSessionEvents("a", ["e2", "e3"], []);
+    let rows = (await facetRows(path)).facets;
+    assert.ok(!rows.some((r) => r.session_id === "a" && (r.value === "github" || r.value === "mcp__github__search")), JSON.stringify(rows));
+    assert.ok(rows.some((r) => r.session_id === "a" && r.value === "Bash"));
+    // Re-adding an event restores its facet.
+    await s.replaceSessionEvents("a", [], [facetEvents()[1]!]);
+    rows = (await facetRows(path)).facets;
+    assert.ok(rows.some((r) => r.session_id === "a" && r.key === "mcp" && r.value === "github"));
+    // Retention removes a whole session's facets.
+    const removed = await s.deleteBefore(Date.now());
+    assert.equal(removed.sessions, 2);
+    assert.deepEqual((await facetRows(path)).facets, []);
+    await s.close();
+  });
+
   it("childCounts counts each parent's subagents in one query", async () => {
     const s = await SqliteIndexStore.open(":memory:");
     const row = (id: string, parent?: string, project?: string) => ({

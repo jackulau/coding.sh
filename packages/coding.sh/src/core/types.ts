@@ -61,6 +61,29 @@ export interface QueryOpts {
   filter?: Omit<SessionFilter, "limit" | "offset">;
   limit?: number;
   offset?: number;
+  /** queryFacets only: values starting with this (ASCII case-insensitive), for autocomplete. */
+  prefix?: string;
+}
+
+/** Options for IndexStore.queryEvents. */
+export interface EventQueryOpts {
+  /** Session filter applied with the query (to each event's session). */
+  filter?: Omit<SessionFilter, "limit" | "offset">;
+  limit?: number;
+  /** The `next` of the page before: events strictly older than its last one. */
+  cursor?: string;
+  /** Also count matches, stopping at this many (`total`, `totalCapped`). */
+  countUpTo?: number;
+}
+
+/** A page of IndexStore.queryEvents: newest first (ts, then insertion order). */
+export interface EventPage {
+  items: AgentEvent[];
+  /** Pass as `cursor` for the next page; absent on the last page. */
+  next?: string;
+  /** Matches, when countUpTo was given; with totalCapped, at least this many. */
+  total?: number;
+  totalCapped?: boolean;
 }
 
 /** One facet value and how many sessions have it. */
@@ -177,6 +200,12 @@ export interface IndexStore {
   queryFacets?(q: Query, key: string, opts?: QueryOpts): Promise<FacetCount[]>;
   /** search() restricted by a query at event level (event keys on the hit, session keys on its session). */
   searchWhere?(text: string, q: Query, opts?: SearchOpts): Promise<SearchHit[]>;
+  /**
+   * `--where` at event level: events matching the query (event keys on the
+   * event, session keys on its session), newest first, keyset-paged by an
+   * opaque cursor. Without it, src/query/run.ts scans (in-memory store only).
+   */
+  queryEvents?(q: Query, opts?: EventQueryOpts): Promise<EventPage>;
   /**
    * The single-writer lock `coding.sh serve` holds while it ingests. Resolves
    * undefined when another process holds it (after waiting up to waitMs, default 0).

@@ -11,6 +11,8 @@ import type { AgentEvent, BlobRef, Session } from "../schema/index.ts";
 import type {
   EvalTask,
   EventCost,
+  EventPage,
+  EventQueryOpts,
   FacetCount,
   HarnessBundle,
   IndexStore,
@@ -350,7 +352,44 @@ UPDATE sessions SET parse_version = 1;
       for (const [id, errors] of bySession) update.run(JSON.stringify(errors), id);
     },
   },
+  {
+    // `--where` without scanning events (src/query/compile.ts). events.mcp holds a
+    // tool call's MCP server (payload.server), written at insert like tool and ok.
+    // The indexes answer the event keys at both levels: newest first for the Events
+    // list (ts after the equality columns), session_id for "sessions with such an
+    // event". events_ts serves the Events list when no clause has an index: it
+    // reads newest first and stops at the page. session_facets keeps the distinct kind, tool and mcp values of each
+    // session's events, so facet counts never touch the events table.
+    version: 8,
+    sql: `
+ALTER TABLE events ADD COLUMN mcp TEXT;
+UPDATE events SET mcp = json_extract(payload, '$.server') WHERE tool IS NOT NULL AND json_type(payload, '$.server') = 'text';
+DROP INDEX events_kind;
+DROP INDEX events_tool;
+CREATE INDEX events_kind_ts ON events(kind, ts, session_id);
+CREATE INDEX events_tool_ok ON events(tool, ok, ts, session_id) WHERE tool IS NOT NULL;
+CREATE INDEX events_ok ON events(ok, ts, session_id) WHERE ok IS NOT NULL;
+CREATE INDEX events_mcp ON events(mcp, ts, session_id) WHERE mcp IS NOT NULL;
+CREATE INDEX events_ts ON events(ts);
+CREATE TABLE session_facets (
+  key TEXT NOT NULL,
+  value TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  PRIMARY KEY (key, value, session_id)
+) WITHOUT ROWID;
+CREATE INDEX session_facets_session ON session_facets(session_id);
+INSERT OR IGNORE INTO session_facets (key, value, session_id) SELECT DISTINCT 'kind', kind, session_id FROM events WHERE kind <> '';
+INSERT OR IGNORE INTO session_facets (key, value, session_id) SELECT DISTINCT 'tool', tool, session_id FROM events WHERE tool IS NOT NULL AND tool <> '';
+INSERT OR IGNORE INTO session_facets (key, value, session_id) SELECT DISTINCT 'mcp', mcp, session_id FROM events WHERE mcp IS NOT NULL AND mcp <> '';
+`,
+  },
 ];
+
+/** session_facets rows of one session, rebuilt from its events (SESSION_FACET_KEYS). */
+const REBUILD_FACETS = `INSERT OR IGNORE INTO session_facets (key, value, session_id)
+  SELECT 'kind', kind, session_id FROM events WHERE session_id = ? AND kind <> ''
+  UNION SELECT 'tool', tool, session_id FROM events WHERE session_id = ? AND tool IS NOT NULL AND tool <> ''
+  UNION SELECT 'mcp', mcp, session_id FROM events WHERE session_id = ? AND mcp IS NOT NULL AND mcp <> ''`;
 
 export const SQLITE_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
 
@@ -450,6 +489,14 @@ function rowToSession(r: Row): Session {
   set("project", projectField(r.project_id));
   set("parseVersion", num(r.parse_version));
   return s;
+}
+
+/** queryEvents' cursor: `<ts>:<rowid>` of the last event on the page before. */
+function parseEventCursor(c: string | undefined): { ts: number; rowid: number } | undefined {
+  if (!c) return undefined;
+  const m = /^(-?\d+(?:\.\d+)?):(\d{1,18})$/.exec(c);
+  if (!m) throw new RangeError("bad events cursor");
+  return { ts: Number(m[1]), rowid: Number(m[2]) };
 }
 
 /** WHERE parts for a SessionFilter; `p` prefixes column names ("s." when sessions is aliased). */
@@ -603,6 +650,11 @@ export class SqliteIndexStore implements IndexStore {
         removed += Number(del.run(id, sessionId).changes);
       }
       this.stmt("DELETE FROM kv WHERE key = ?").run(foldKey(sessionId));
+      if (removed) {
+        // A removed event may have been the session's only one with a tool or kind.
+        this.stmt("DELETE FROM session_facets WHERE session_id = ?").run(sessionId);
+        this.stmt(REBUILD_FACETS).run(sessionId, sessionId, sessionId);
+      }
       return { removed, inserted: this.insertEvents(add) };
     });
   }
@@ -611,23 +663,29 @@ export class SqliteIndexStore implements IndexStore {
   private insertEvents(batch: AgentEvent[]): number {
     const insert = this.stmt(`INSERT OR IGNORE INTO events
       (id, session_id, turn_id, parent_id, ts, duration_ms, trace_id, span_id, parent_span_id, subagent_id,
-       agent, agent_version, model, kind, tool, ok, run_id, cwd, repo, payload, blobs, usage, source, search_extra, project_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+       agent, agent_version, model, kind, tool, ok, run_id, cwd, repo, payload, blobs, usage, source, search_extra, project_id, mcp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const fts = this.stmt("INSERT INTO events_fts (rowid, text) VALUES (?, ?)");
+    const facet = this.stmt("INSERT OR IGNORE INTO session_facets (key, value, session_id) VALUES (?, ?, ?)");
     let inserted = 0;
     for (const e of batch) {
       const p = e.payload ?? {};
       const tool = typeof p.tool === "string" ? p.tool : null;
       const ok = typeof p.ok === "boolean" ? (p.ok ? 1 : 0) : null;
+      const mcp = tool !== null && typeof p.server === "string" ? p.server : null;
       const r = insert.run(
         e.id, e.sessionId, e.turnId ?? null, e.parentId ?? null, e.ts, e.durationMs ?? null, e.traceId ?? null,
         e.spanId ?? null, e.parentSpanId ?? null, e.subagentId ?? null, e.agent, e.agentVersion ?? null,
         e.model ?? null, e.kind, tool, ok, e.runId ?? null, e.cwd ?? null, json(e.repo), JSON.stringify(p),
         e.blobs?.length ? JSON.stringify(e.blobs) : null, json(e.usage), e.source ?? null, storedSearchText(e) ?? null,
-        projectCol(e.project),
+        projectCol(e.project), mcp,
       );
       if (Number(r.changes) === 0) continue;
       inserted++;
+      // session_facets (SESSION_FACET_KEYS): most inserts find the row there already.
+      if (e.kind) facet.run("kind", e.kind, e.sessionId);
+      if (tool) facet.run("tool", tool, e.sessionId);
+      if (mcp) facet.run("mcp", mcp, e.sessionId);
       // Must equal the generated events.text, which the external-content FTS reads for snippets.
       const text = searchableText(e);
       if (text !== undefined) fts.run(r.lastInsertRowid, text);
@@ -760,11 +818,48 @@ export class SqliteIndexStore implements IndexStore {
       where.push(c.sql);
       params.push(...c.params);
     }
-    if (src.prefix) where.push("j.value LIKE ? ESCAPE '\\'"), params.push(`${src.prefix.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`);
+    const like = (x: string) => x.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+    if (src.prefix) where.push("j.value LIKE ? ESCAPE '\\'"), params.push(`${like(src.prefix)}%`);
+    if (src.facetKey) where.unshift("f.key = ?"), params.unshift(src.facetKey);
+    // Autocomplete: values starting with what was typed (LIKE folds ASCII case, as match.ts).
+    const typed = o.prefix ? " AND v LIKE ? ESCAPE '\\'" : "";
     const sql = `SELECT v, COUNT(DISTINCT sid) AS n FROM (SELECT ${src.value} AS v, s.id AS sid FROM ${src.from} ${where.length ? `WHERE ${where.join(" AND ")}` : ""})
-      WHERE v IS NOT NULL AND v <> '' GROUP BY v ORDER BY n DESC, v LIMIT ?`;
+      WHERE v IS NOT NULL AND v <> ''${typed} GROUP BY v ORDER BY n DESC, v LIMIT ?`;
+    if (o.prefix) params.push(`${like(o.prefix)}%`);
     params.push(o.limit ?? 20);
     return (this.db.prepare(sql).all(...params) as Row[]).map((r) => ({ value: String(r.v), count: num(r.n) ?? 0 }));
+  }
+
+  async queryEvents(q: Query, o: EventQueryOpts = {}): Promise<EventPage> {
+    const { where, params } = filterSql(o.filter ?? {}, "s.");
+    if (q.root) {
+      const c = compileWhere(q.root, "event");
+      where.push(c.sql);
+      params.push(...c.params);
+    }
+    const base = `FROM events e JOIN sessions s ON s.id = e.session_id ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`;
+    const cur = parseEventCursor(o.cursor);
+    const page = cur ? `${where.length ? "AND" : "WHERE"} (e.ts < ? OR (e.ts = ? AND e.rowid < ?))` : "";
+    const limit = o.limit ?? 50;
+    // The inner query picks the page from index columns alone (ts, rowid); only the
+    // rows on the page are read in full, so a broad match never sorts payloads.
+    const sql = `SELECT e.rowid AS rid, e.* FROM events e WHERE e.rowid IN (
+        SELECT e.rowid ${base} ${page} ORDER BY e.ts DESC, e.rowid DESC LIMIT ?)
+      ORDER BY e.ts DESC, e.rowid DESC`;
+    const rows = this.db.prepare(sql).all(...params, ...(cur ? [cur.ts, cur.ts, cur.rowid] : []), limit + 1) as Row[];
+    const more = rows.length > limit;
+    const items = rows.slice(0, limit);
+    const out: EventPage = { items: items.map(rowToEvent) };
+    const last = items[items.length - 1];
+    if (more && last) out.next = `${num(last.ts)}:${num(last.rid)}`;
+    if (o.countUpTo !== undefined) {
+      const cap = Math.max(0, Math.floor(o.countUpTo));
+      // A first page that is not full already holds every match.
+      const n = !more && !cur ? items.length : (num((this.db.prepare(`SELECT COUNT(*) AS n FROM (SELECT 1 ${base} LIMIT ?)`).get(...params, cap + 1) as Row).n) ?? 0);
+      out.total = Math.min(n, cap);
+      if (n > cap) out.totalCapped = true;
+    }
+    return out;
   }
 
   async searchWhere(text: string, q: Query, opts: SearchOpts = {}): Promise<SearchHit[]> {
@@ -1097,12 +1192,14 @@ export class SqliteIndexStore implements IndexStore {
       const delLabels = this.stmt("DELETE FROM labels WHERE session_id = ?");
       const delSession = this.stmt("DELETE FROM sessions WHERE id = ?");
       const delFold = this.stmt("DELETE FROM kv WHERE key = ?");
+      const delFacets = this.stmt("DELETE FROM session_facets WHERE session_id = ?");
       for (const id of ids) {
         ftsDelete.run(id);
         events += Number(delEvents.run(id).changes);
         delLabels.run(id);
         delSession.run(id);
         delFold.run(foldKey(id));
+        delFacets.run(id);
       }
       return { sessions: ids.length, events };
     });

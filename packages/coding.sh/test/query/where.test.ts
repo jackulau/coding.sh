@@ -1,13 +1,16 @@
 // The --where language: parser (table-driven, errors with offsets, round trip, fuzz),
 // and the same ids from compiled SQL (SQLite) and the scan fallback (memory store).
 import assert from "node:assert/strict";
-import { before, describe, test } from "node:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, before, describe, test } from "node:test";
 import type { IndexStore } from "../../src/core/types.ts";
 import { compileWhere } from "../../src/query/compile.ts";
-import { facetCounts, findSessions, searchWhere, sessionMatcher } from "../../src/query/run.ts";
+import { facetCounts, findEvents, findSessions, searchWhere, sessionMatcher } from "../../src/query/run.ts";
 import { FACET_KEYS, keyDocs, parseWhere, printWhere, QueryError, QueryUnsupported, withoutKey } from "../../src/query/where.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
-import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { loadSqlite, SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { T0 } from "./_seed.ts";
 import { fixture } from "./_where-fixture.ts";
 
@@ -315,6 +318,95 @@ describe("SQL and the scan fallback agree", () => {
     assert.throws(() => sessionMatcher(pg, p("migration").root), QueryUnsupported);
     // Session keys still work there.
     assert.deepEqual((await findSessions(pg, p("agent:codex"))).sessions.map((s) => s.id), ["s4", "s1"]);
+  });
+});
+
+describe("event results and indexed keys (V-2, V-6)", () => {
+  let sqlite: SqliteIndexStore;
+  let memory: MemoryIndexStore;
+  let dir: string;
+  before(async () => {
+    const { sessions, events } = fixture();
+    dir = mkdtempSync(join(tmpdir(), "csh-where-"));
+    sqlite = await SqliteIndexStore.open(join(dir, "index.db"));
+    memory = new MemoryIndexStore();
+    for (const st of [sqlite, memory] as IndexStore[]) {
+      await st.putEvents(events);
+      for (const s of sessions) await st.upsertSession(s);
+    }
+  });
+  after(async () => {
+    await sqlite.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const EVENT_QUERIES = ["", "tool:Bash", "tool:Bash ok:false", "-tool:Bash", "ok:false", "kind:tool.end", "mcp:github", "-mcp:github", "error:enoent", "event.duration>1s", "agent:codex", "agent:codex kind:tool.end", "tool:Bash OR kind:llm.call", "migration", "repo:demo tool:Edit,Grep", "cost>1", "is:child"];
+
+  const all = async (st: IndexStore, q: string, limit: number) => {
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < 50; i++) {
+      const page = await findEvents(st, p(q), { limit, ...(cursor ? { cursor } : {}) });
+      ids.push(...page.items.map((e) => e.id));
+      if (!page.next) return ids;
+      cursor = page.next;
+    }
+    throw new Error("cursor never ended");
+  };
+
+  for (const q of EVENT_QUERIES) {
+    test(`events ${JSON.stringify(q)}: SQL equals the scan, one page or many`, async () => {
+      const want = await all(memory, q, 100);
+      assert.deepEqual(await all(sqlite, q, 100), want);
+      assert.deepEqual(await all(sqlite, q, 2), want, "paged by 2");
+      assert.deepEqual(await all(memory, q, 2), want, "scan paged by 2");
+      const first = await findEvents(sqlite, p(q), { limit: 2, countUpTo: 3 });
+      assert.equal(first.total, Math.min(want.length, 3));
+      assert.equal(first.totalCapped, want.length > 3 ? true : undefined);
+    });
+  }
+
+  test("events spot checks: newest first, session keys apply to the event's session", async () => {
+    assert.deepEqual(await all(sqlite, "tool:Bash ok:false", 50), ["s1-e3", "s4-e1"]);
+    assert.deepEqual(await all(sqlite, "mcp:github", 50), ["s2-e2"]);
+    assert.deepEqual(await all(sqlite, "agent:gemini", 50), []);
+  });
+
+  test("a bad cursor is a RangeError", async () => {
+    await assert.rejects(findEvents(sqlite, p(""), { cursor: "nope" }), RangeError);
+    await assert.rejects(findEvents(memory, p(""), { cursor: "nope" }), RangeError);
+  });
+
+  test("facet values filter by a typed prefix, case-insensitive", async () => {
+    for (const [key, prefix, want] of [["tool", "b", ["Bash"]], ["tool", "MCP__", ["mcp__github__search"]], ["agent", "c", ["claude-code", "codex"]], ["mcp", "x", []], ["tool", "%", []], ["tool", "_", []]] as [string, string, string[]][]) {
+      for (const st of [sqlite, memory]) {
+        const got = (await facetCounts(st, p(""), [key], { prefix }))[key]!.map((f) => f.value).sort();
+        assert.deepEqual(got, want, `${st.kind} ${key} ${prefix}`);
+      }
+    }
+  });
+
+  test("the indexed event keys never scan the events table", async () => {
+    const { DatabaseSync } = await loadSqlite();
+    const db = new DatabaseSync(join(dir, "index.db"), { readOnly: true });
+    try {
+      for (const q of ["tool:Bash", "tool:Bash ok:false", "ok:false", "kind:tool.end", "mcp:github", "tool:Bash agent:codex", "-tool:Bash"]) {
+        const c = compileWhere(parseWhere(q).root!, "session");
+        const e = compileWhere(parseWhere(q).root!, "event");
+        const plans = {
+          session: `SELECT s.id FROM sessions s WHERE ${c.sql} ORDER BY s.started_at DESC LIMIT 50`,
+          // The inner page query of queryEvents; a negated clause may walk events_ts newest first.
+          ...(q.startsWith("-") ? {} : { event: `SELECT e.rowid FROM events e JOIN sessions s ON s.id = e.session_id WHERE ${e.sql} ORDER BY e.ts DESC, e.rowid DESC LIMIT 51` }),
+        };
+        for (const [level, sql] of Object.entries(plans)) {
+          const params = level === "session" ? c.params : e.params;
+          const detail = (db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as { detail: string }[]).map((r) => r.detail);
+          assert.ok(!detail.some((d) => /^SCAN e\b/.test(d)), `${q} at ${level} level scans events: ${detail.join(" | ")}`);
+        }
+      }
+    } finally {
+      db.close();
+    }
   });
 });
 
