@@ -1,9 +1,9 @@
 // `coding.sh serve` through the bundled CLI: the --help --json contract, the
-// refusal rule (exit 2), keygen, healthcheck, SIGTERM → exit 0, and the global
+// refusal rule (exit 2), first-start keys, keygen, healthcheck, SIGTERM → exit 0, and the global
 // --store flag that points read commands at another store.
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -13,11 +13,13 @@ import { bundle } from "../../scripts/bundle.mjs";
 let distDir = "";
 let CLI = "";
 const roots: string[] = [];
+const children: ChildProcess[] = [];
 before(async () => {
   distDir = realpathSync(mkdtempSync(join(tmpdir(), "csh-serve-dist-")));
   CLI = (await bundle(distDir)).cli;
 });
 after(() => {
+  for (const c of children) if (c.exitCode === null) c.kill("SIGKILL"); // a failed assertion must not leave a server running
   rmSync(distDir, { recursive: true, force: true });
   for (const r of roots) rmSync(r, { recursive: true, force: true });
 });
@@ -49,17 +51,96 @@ describe("coding.sh serve (CLI)", () => {
     assert.ok(JSON.stringify(root).includes('"store"'), "--store is a global option");
   });
 
-  it("refuses a public bind without keys (exit 2) and names the fix", () => {
-    const r = run(["serve", "--host", "0.0.0.0", "--port", "0"], tmpEnv());
+  it("refuses a public bind with half the credentials (exit 2) and names the fix", () => {
+    const ingestOnly = { CODING_SH_INGEST_KEYS: "demo:csh_ik_0123456789abcdef0123456789" };
+    const r = run(["serve", "--host", "0.0.0.0", "--port", "0"], tmpEnv(ingestOnly));
     assert.equal(r.status, 2);
-    assert.match(r.stderr, /CODING_SH_INGEST_KEYS/);
+    assert.match(r.stderr, /CODING_SH_READ_KEYS/);
     assert.match(r.stderr, /--insecure/);
     assert.equal(r.stdout, "");
-    const j = run(["serve", "--host", "0.0.0.0", "--port", "0", "--json"], tmpEnv());
+    const j = run(["serve", "--host", "0.0.0.0", "--port", "0", "--json"], tmpEnv(ingestOnly));
     assert.equal(j.status, 2);
     assert.equal(JSON.parse(j.stderr.trim()).reason, "insecure_bind");
+    // A viewer replica never makes its own keys: it has to share the writer's.
+    const v = run(["serve", "--host", "0.0.0.0", "--port", "0", "--role", "viewer"], tmpEnv());
+    assert.equal(v.status, 2);
+    assert.match(v.stderr, /CODING_SH_READ_KEYS/);
     assert.equal(run(["serve", "--config", "/nonexistent/serve.toml"], tmpEnv()).status, 2);
     assert.equal(run(["serve", "--role", "nope"], tmpEnv()).status, 2);
+  });
+
+  it("a public bind with no keys makes a key pair on first start, prints it, and reuses it", async () => {
+    const env = tmpEnv({ CODING_SH_HOST: "0.0.0.0" });
+    const file = join(env.CODING_SH_HOME!, "serve-keys.json");
+    const start = async () => {
+      const child = spawn(process.execPath, [CLI, "serve", "--port", "0"], { env, stdio: ["ignore", "pipe", "pipe"] });
+      children.push(child);
+      let stderr = "";
+      child.stderr.on("data", (d: Buffer) => (stderr += d.toString()));
+      const exited = new Promise<number | null>((resolve) => child.on("exit", (code) => resolve(code)));
+      const lines: string[] = [];
+      await new Promise<void>((resolve, reject) => {
+        const rl = createInterface({ input: child.stdout });
+        rl.on("line", (l) => {
+          lines.push(l);
+          if (l.startsWith("Use the server's public URL")) resolve();
+        });
+        child.once("exit", () => reject(new Error(`serve exited early: ${stderr}`)));
+      });
+      return {
+        lines,
+        stop: async () => {
+          child.kill("SIGTERM");
+          await exited;
+        },
+      };
+    };
+    const first = await start();
+    const url = first.lines[0]!;
+    assert.match(url, /^http:\/\/127\.0\.0\.1:\d+$/);
+    const text = first.lines.join("\n");
+    assert.ok(text.includes(file), "names the keys file");
+    assert.match(text, /\(made now\)/);
+    const doc = JSON.parse(readFileSync(file, "utf8"));
+    assert.match(doc.ingest, /^csh_ik_[A-Za-z0-9_-]{43}$/);
+    assert.match(doc.read, /^csh_rk_[A-Za-z0-9_-]{43}$/);
+    if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600);
+    assert.ok(text.includes(`${url}/?t=${doc.read}`));
+    assert.ok(text.includes(`coding.sh init --remote ${url} --key ${doc.ingest}`));
+
+    // The keys work, and nothing else does.
+    const event = { v: 0, id: "c1", sessionId: "first-start", ts: Date.now() - 1000, kind: "llm.call", model: "gpt-4o-mini", payload: {} };
+    const post = (key?: string) =>
+      fetch(`${url}/v1/ingest`, { method: "POST", headers: { "content-type": "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) }, body: JSON.stringify({ v: 0, events: [event] }) });
+    assert.equal((await post()).status, 401);
+    assert.equal((await post(doc.read)).status, 401, "a read key cannot ingest");
+    assert.deepEqual(await (await post(doc.ingest)).json(), { accepted: 1, inserted: 1, rejected: [] });
+    assert.equal((await fetch(`${url}/api/sessions`)).status, 401);
+    const listed = await (await fetch(`${url}/api/sessions`, { headers: { authorization: `Bearer ${doc.read}` } })).json();
+    assert.deepEqual(
+      listed.items.map((x: { id: string }) => x.id),
+      ["first-start"],
+    );
+    const page = await fetch(`${url}/`, { headers: { accept: "text/html" } });
+    assert.equal(page.status, 401);
+    assert.match(await page.text(), /<form method=get action="\/"><input name=t /);
+    await first.stop();
+
+    const second = await start();
+    const again = second.lines.join("\n");
+    assert.ok(again.includes(doc.read) && again.includes(doc.ingest), "the same keys on the next start");
+    assert.doesNotMatch(again, /made now/);
+    await second.stop();
+
+    // A damaged file is an error, never silently replaced (clients hold the old keys).
+    writeFileSync(file, "{not json");
+    const bad = run(["serve", "--port", "0"], env);
+    assert.equal(bad.status, 2);
+    assert.match(bad.stderr, /serve-keys\.json is not valid JSON/);
+    assert.equal(readFileSync(file, "utf8"), "{not json");
+    // Any configured key turns first-start keys off.
+    const own = run(["serve", "--port", "0"], { ...env, CODING_SH_INGEST_KEYS: "demo:csh_ik_0123456789abcdef0123456789" });
+    assert.equal(own.status, 2, "half the credentials still refuse, the keys file is not used");
   });
 
   it("keygen prints the key on stdout and the hash line on stderr", () => {

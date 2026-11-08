@@ -5,6 +5,7 @@
 import { ConfigError } from "../../core/config.ts";
 import { generateKey, sha256 } from "../../server/auth.ts";
 import { checkExposure, DEFAULT_SERVE_PORT, resolveServeConfig, ServeRefusal, type ServeConfig, type ServeRole } from "../../server/config.ts";
+import { applyFirstStartKeys, firstStartText, loadOrCreateKeys, wantsFirstStartKeys, type FirstStartKeys } from "../../server/first-start.ts";
 import { isProjectId } from "../../server/project.ts";
 import { num, str } from "../common.ts";
 import { UsageError } from "../args.ts";
@@ -52,6 +53,17 @@ async function serve(c: CommandContext): Promise<number> {
     if (!existsSync(config)) throw new UsageError(`Config file not found: ${config}`, { reason: "not_found" });
   }
   const cfg = resolve(c);
+  // A public bind with no credentials at all makes (or reuses) its own pair of keys instead of refusing.
+  let firstStart: FirstStartKeys | undefined;
+  if (wantsFirstStartKeys(cfg)) {
+    try {
+      firstStart = loadOrCreateKeys(c.env);
+    } catch (e) {
+      if (e instanceof ConfigError) throw new CliError(`Invalid serve configuration: ${e.message}`, { reason: "invalid_config", exitCode: 2 });
+      throw e;
+    }
+    applyFirstStartKeys(cfg, firstStart);
+  }
   try {
     checkExposure(cfg);
   } catch (e) {
@@ -72,8 +84,13 @@ async function serve(c: CommandContext): Promise<number> {
   }
 
   const { body } = await handle.ready();
-  if (out.json) out.data({ url: handle.url, host: handle.host, port: handle.port, role: cfg.role, ready: body });
-  else out.print(handle.url);
+  const keys = firstStart ? { keys: { ingest: firstStart.ingest, read: firstStart.read, file: firstStart.file, created: firstStart.created } } : {};
+  if (out.json) out.data({ url: handle.url, host: handle.host, port: handle.port, role: cfg.role, ready: body, ...keys });
+  else {
+    out.print(handle.url);
+    // stdout, after the URL: the human channel `docker logs` shows (stderr carries JSON logs).
+    if (firstStart) for (const l of firstStartText(firstStart, handle.url)) out.print(l);
+  }
 
   // Graceful shutdown: the first SIGTERM/SIGINT drains and exits 0; a second exits at once.
   let signals = 0;
