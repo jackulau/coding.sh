@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import type { IndexStore, SessionFilter } from "../../core/types.ts";
 import { failureFlags, isEmptySession } from "../../core/sessions.ts";
 import { facetCounts, findSessions } from "../../query/run.ts";
-import { FACET_KEYS, type Query } from "../../query/where.ts";
+import { FACET_KEYS, scopesSubagents, type Query } from "../../query/where.ts";
 import type { Session } from "../../schema/index.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, pendingField, queryCliError, readIngest, num, oneLine, sessionJson, str, whereFlag, withContext, type IngestBacklog } from "../common.ts";
@@ -36,7 +36,7 @@ export async function run(c: CommandContext): Promise<number> {
       ...(str(c.flags.agent) ? { agent: str(c.flags.agent)! } : {}),
       ...(repo ? { repoRoot: resolve(c.cwd, repo) } : {}),
       ...(since !== undefined ? { since } : {}),
-      ...(c.flags.subagents === true ? {} : { parentSessionId: null }),
+      ...(c.flags.subagents === true || scopesSubagents(where?.root) ? {} : { parentSessionId: null }),
       ...(str(c.flags.project) ? { project: str(c.flags.project)! } : {}),
       ...(str(c.flags.flag) ? { flag: str(c.flags.flag)! } : {}),
     };

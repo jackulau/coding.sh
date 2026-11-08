@@ -180,10 +180,12 @@ describe("--where on CLI, MCP and HTTP", () => {
   });
 
   test("old flags still work and combine with --where", () => {
-    const ids = (JSON.parse(ok(["sessions", "--agent", "codex", "--where", "is:child", "--json"]).stdout) as { sessions: { id: string }[] }).sessions;
-    // --agent codex, top-level by default, and is:child: nothing.
-    assert.deepEqual(ids, []);
-    const sub = (JSON.parse(ok(["sessions", "--subagents", "--agent", "codex", "--where", "is:child", "--json"]).stdout) as { sessions: { id: string }[] }).sessions;
-    assert.deepEqual(sub.map((s) => s.id), ["s4"]);
+    const ids = (args: string[]) => (JSON.parse(ok(["sessions", ...args, "--json"]).stdout) as { sessions: { id: string }[] }).sessions.map((s) => s.id);
+    // --agent codex, top-level by default, and turns>=1.
+    assert.deepEqual(ids(["--agent", "codex", "--where", "turns>=1"]), ["s1"]);
+    assert.deepEqual(ids(["--subagents", "--agent", "codex", "--where", "turns>=1"]), ["s4", "s1"]);
+    // is:child (like id: and parent:) says itself that subagents are in; --agent still applies.
+    assert.deepEqual(ids(["--agent", "codex", "--where", "is:child"]), ["s4"]);
+    assert.deepEqual(ids(["--agent", "claude-code", "--where", "is:child"]), []);
   });
 });

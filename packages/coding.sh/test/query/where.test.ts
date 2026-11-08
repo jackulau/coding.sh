@@ -8,7 +8,7 @@ import { after, before, describe, test } from "node:test";
 import type { IndexStore } from "../../src/core/types.ts";
 import { compileWhere } from "../../src/query/compile.ts";
 import { facetCounts, findEvents, findSessions, searchWhere, sessionMatcher } from "../../src/query/run.ts";
-import { FACET_KEYS, keyDocs, parseWhere, printWhere, QueryError, QueryUnsupported, withoutKey } from "../../src/query/where.ts";
+import { FACET_KEYS, keyDocs, parseWhere, printWhere, QueryError, QueryUnsupported, scopesSubagents, withoutKey } from "../../src/query/where.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { loadSqlite, SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { T0 } from "./_seed.ts";
@@ -112,6 +112,13 @@ describe("parseWhere", () => {
         assert.ok(e.offset >= 0 && e.offset <= q.length, `offset ${e.offset} in ${JSON.stringify(q)}`);
       }
     }
+  });
+
+  test("scopesSubagents: id:, parent: and is:root/child decide whether subagents are in", () => {
+    const yes = ["id:abc:sub:a1", "agent:codex id:x", "id:x OR agent:codex", "parent:s1", "is:child", "is:root", "-is:root", "-(-id:x)"];
+    const no = ["agent:codex", "-id:x", "-parent:s1", "is:flagged", "title:id", '"id:x"', "sort:-cost"];
+    for (const q of yes) assert.equal(scopesSubagents(p(q).root), true, q);
+    for (const q of no) assert.equal(scopesSubagents(p(q).root), false, q);
   });
 
   test("every key has a doc and an example that parses", () => {

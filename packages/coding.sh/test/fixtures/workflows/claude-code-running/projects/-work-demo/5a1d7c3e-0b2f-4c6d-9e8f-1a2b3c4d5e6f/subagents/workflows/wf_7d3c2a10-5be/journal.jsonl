@@ -1,0 +1,4 @@
+{"type":"launched"}
+{"type":"started","key":"v2:25574a5edb8e46b88705f0f7ebbca8a165eb3b48f2421098090421984d3c9e98","agentId":"a3c5e7f9b1d2e4f60","label":"review:docs","phase":"Review"}
+{"type":"started","key":"v2:2fe69bddbf0886d74017e347d155d8ea96641676c5544df3a23ca4eddc9cacf5","agentId":"a8b6d4f2e0c1a3b57","label":"review:tests","phase":"Review"}
+{"type":"result","key":"v2:25574a5edb8e46b88705f0f7ebbca8a165eb3b48f2421098090421984d3c9e98","agentId":"a3c5e7f9b1d2e4f60","result":{"summary":"Listed files in /work/demo/docs. README.md is out of date."},"toolsUsed":["Bash"]}

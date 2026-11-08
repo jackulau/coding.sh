@@ -4,6 +4,7 @@
 // (src/query/export.ts). Works on every store.
 import { resolve } from "node:path";
 import { EXPORT_FORMATS, EXPORT_KINDS, exportRows, type ExportFormat, type ExportKind } from "../../query/export.ts";
+import { scopesSubagents } from "../../query/where.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, queryCliError, readIngest, str, whereFlag, withContext } from "../common.ts";
 import { plural } from "../output.ts";
@@ -33,7 +34,7 @@ export async function run(c: CommandContext): Promise<number> {
         ...(str(c.flags.agent) ? { agent: str(c.flags.agent)! } : {}),
         ...(repo ? { repoRoot: resolve(c.cwd, repo) } : {}),
         ...(since !== undefined ? { since } : {}),
-        ...(c.flags.subagents === true ? {} : { parentSessionId: null }),
+        ...(c.flags.subagents === true || scopesSubagents(where?.root) ? {} : { parentSessionId: null }),
         ...(str(c.flags.project) ? { project: str(c.flags.project)! } : {}),
         ...(str(c.flags.flag) ? { flag: str(c.flags.flag)! } : {}),
       },

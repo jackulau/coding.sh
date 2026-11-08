@@ -41,6 +41,10 @@ matching event, and event keys in the same and-group must match the same event. 
 `tool:Bash ok:false` means a failed Bash call, not a Bash call and some other failure.
 `-tool:Bash` means no Bash call at all. In `coding.sh search`, event keys test the hit itself.
 
+`sessions` and `export` leave out subagent sessions unless you pass `--subagents`. A query with
+`id:`, `parent:`, `is:root` or `is:child` decides that itself, so `--where id:<a subagent's id>`
+finds that subagent and `--where is:child` lists subagents.
+
 | Key | Level | Matches | Example |
 |---|---|---|---|
 | `agent` | session | Agent id | `agent:codex` |
@@ -163,7 +167,8 @@ coding.sh export labels --format csv
 
 Filters: `--agent`, `--repo`, `--since`, `--flag`, `--project`, `--subagents` and `--limit` (the N
 newest matching sessions). They pick sessions; `events` and `labels` export the rows of those
-sessions. Subagent sessions are left out unless you pass `--subagents`. With no filter at all,
+sessions. Subagent sessions are left out unless you pass `--subagents` or a `--where` with `id:`,
+`parent:`, `is:root` or `is:child`. With no filter at all,
 `export labels` exports every label, including labels on eval cases.
 
 JSONL rows are the stored objects (`Session`, `AgentEvent`, `Label` in the

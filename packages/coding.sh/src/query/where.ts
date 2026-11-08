@@ -678,6 +678,19 @@ export function needsEvents(n: Node | undefined): boolean {
 }
 
 /**
+ * The query itself says whether subagent sessions are in: it names sessions by `id:` or
+ * `parent:` (not negated), or says `is:root` / `is:child`. A list that shows top-level
+ * sessions by default drops that default then, so `id:<a subagent's id>` finds it.
+ */
+export function scopesSubagents(n: Node | undefined, negated = false): boolean {
+  if (!n) return false;
+  if (n.t === "and" || n.t === "or") return n.items.some((x) => scopesSubagents(x, negated));
+  if (n.t === "not") return scopesSubagents(n.item, !negated);
+  if (n.t === "is") return n.name === "root" || n.name === "child";
+  return n.t === "cmp" && !negated && (n.key === "id" || n.key === "parent");
+}
+
+/**
  * The query without the top-level clauses on `key` (facets count a key over
  * everything else that is selected, so picking one value never hides the others).
  */
