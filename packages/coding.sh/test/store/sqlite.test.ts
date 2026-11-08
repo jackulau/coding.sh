@@ -133,6 +133,35 @@ describe("SqliteIndexStore", () => {
     await s.close();
   });
 
+  it("session_facets holds exactly the distinct (key, value, session) of the events, with repeats deduped in a batch", async () => {
+    const path = join(root, "facets.db");
+    const s = await SqliteIndexStore.open(path);
+    // Two sessions whose events repeat the same few kinds/tools hundreds of times
+    // in one batch: the dedup must leave the facet table identical to a rebuild.
+    await s.putEvents([...events(600, "sa"), ...events(400, "sb")]);
+    await s.close();
+    const { DatabaseSync } = await loadSqlite();
+    const db = new DatabaseSync(path, { readOnly: true });
+    try {
+      const facets = (db.prepare("SELECT key, value, session_id FROM session_facets ORDER BY key, value, session_id").all() as Array<{ key: string; value: string; session_id: string }>).map((r) => `${r.key}|${r.value}|${r.session_id}`);
+      const expected = (
+        db
+          .prepare(
+            `SELECT DISTINCT 'kind' AS key, kind AS value, session_id FROM events WHERE kind <> ''
+             UNION SELECT DISTINCT 'tool', tool, session_id FROM events WHERE tool IS NOT NULL AND tool <> ''
+             UNION SELECT DISTINCT 'mcp', mcp, session_id FROM events WHERE mcp IS NOT NULL AND mcp <> ''
+             ORDER BY key, value, session_id`,
+          )
+          .all() as Array<{ key: string; value: string; session_id: string }>
+      ).map((r) => `${r.key}|${r.value}|${r.session_id}`);
+      assert.deepEqual(facets, expected);
+      // Every row is distinct (no duplicates slipped past the PRIMARY KEY).
+      assert.equal(new Set(facets).size, facets.length);
+    } finally {
+      db.close();
+    }
+  });
+
   it("persists across reopen, records migrations and uses WAL", async () => {
     const path = join(root, "reopen.db");
     const s = await SqliteIndexStore.open(path);

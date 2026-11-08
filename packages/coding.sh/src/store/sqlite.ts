@@ -720,6 +720,17 @@ export class SqliteIndexStore implements IndexStore {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const fts = this.stmt("INSERT INTO events_fts (rowid, text) VALUES (?, ?)");
     const facet = this.stmt("INSERT OR IGNORE INTO session_facets (key, value, session_id) VALUES (?, ?, ?)");
+    // A session repeats a handful of (key, value) facets across hundreds of events,
+    // and session_facets' PRIMARY KEY (key, value, session_id) makes every repeat an
+    // INSERT OR IGNORE no-op that still probes the b-tree. Skipping tuples already
+    // issued in this batch leaves the table identical and cuts most of those probes.
+    const facetSeen = new Set<string>();
+    const addFacet = (key: string, value: string, sid: string) => {
+      const k = `${key}\0${value}\0${sid}`;
+      if (facetSeen.has(k)) return;
+      facetSeen.add(k);
+      facet.run(key, value, sid);
+    };
     let inserted = 0;
     for (const e of batch) {
       const p = e.payload ?? {};
@@ -736,9 +747,9 @@ export class SqliteIndexStore implements IndexStore {
       if (Number(r.changes) === 0) continue;
       inserted++;
       // session_facets (SESSION_FACET_KEYS): most inserts find the row there already.
-      if (e.kind) facet.run("kind", e.kind, e.sessionId);
-      if (tool) facet.run("tool", tool, e.sessionId);
-      if (mcp) facet.run("mcp", mcp, e.sessionId);
+      if (e.kind) addFacet("kind", e.kind, e.sessionId);
+      if (tool) addFacet("tool", tool, e.sessionId);
+      if (mcp) addFacet("mcp", mcp, e.sessionId);
       // Must equal the generated events.text, which the external-content FTS reads for snippets.
       const text = searchableText(e);
       if (text !== undefined) fts.run(r.lastInsertRowid, text);
