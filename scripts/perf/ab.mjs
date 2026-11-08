@@ -6,7 +6,7 @@
 //
 //   node scripts/perf/ab.mjs --base <dir> --cand <dir> [--pairs 11] [--warmup 1]
 //        [--out result.json] [--baseline baseline.json] [--profile mobile] [--page home] [--seed N] [--fail-on-worse]
-//        [--gate] [--budgets scripts/perf/budgets.json] [--skip-budget '*_ms']...
+//        [--gate] [--budgets scripts/perf/budgets.json] [--skip-budget '*_ms']... [--quiet-cpu 0.5]
 //
 // --out writes the full exp result (every run included). --baseline writes the
 // per-metric medians over all runs plus the run-to-run noise of the paired
@@ -18,7 +18,13 @@
 // budgets: every new paragraph adds HTML, and a fixed build makes any added byte
 // a "worse" verdict. --budgets fails when the candidate's median of a metric is
 // over its budget; --skip-budget drops matching budgets (hosted runners skip
-// the machine-dependent _ms ones).
+// the machine-dependent _ms ones). An _ms budget counts only the candidate's
+// samples of that page taken while the machine was quiet (its cpu_busy, from
+// lighthouse.mjs, at most --quiet-cpu, default 0.5): other work on a shared
+// runner stretches every timing, and both arms by different amounts as it comes
+// and goes. With quiet samples in fewer than half the pairs, the budget is not
+// checked and a warning says so; the byte, request and layout budgets and the
+// paired gate still apply.
 // Exit code: coding.sh's (0 ok, 1 runs failed or --fail-on-worse tripped, 2 usage),
 // or 1 when the gate or a budget fails.
 import { spawnSync } from "node:child_process";
@@ -47,11 +53,12 @@ const { values } = parseArgs({
     gate: { type: "boolean" },
     budgets: { type: "string" },
     "skip-budget": { type: "string", multiple: true },
+    "quiet-cpu": { type: "string", default: "0.5" },
     help: { type: "boolean", short: "h" },
   },
 });
 if (values.help || !values.base || !values.cand) {
-  console.error("usage: node scripts/perf/ab.mjs --base <dir> --cand <dir> [--pairs 11] [--warmup 1] [--out result.json] [--baseline baseline.json] [--profile p]... [--page p]... [--seed N] [--fail-on-worse] [--gate] [--budgets file] [--skip-budget pattern]...");
+  console.error("usage: node scripts/perf/ab.mjs --base <dir> --cand <dir> [--pairs 11] [--warmup 1] [--out result.json] [--baseline baseline.json] [--profile p]... [--page p]... [--seed N] [--fail-on-worse] [--gate] [--budgets file] [--skip-budget pattern]... [--quiet-cpu 0.5]");
   process.exit(values.help ? 0 : 2);
 }
 const base = resolve(values.base);
@@ -99,7 +106,8 @@ if (values.out) {
   mkdirSync(dirname(resolve(values.out)), { recursive: true });
   writeFileSync(resolve(values.out), `${JSON.stringify(result, null, 2)}\n`);
 }
-const { renderMetrics, analyzeMetrics, metricMatches } = await import(join(ROOT, "packages/coding.sh/src/experiments/metrics.ts"));
+const { renderMetrics, analyzeMetrics, metricMatches, metricUnit } = await import(join(ROOT, "packages/coding.sh/src/experiments/metrics.ts"));
+const { median } = await import(join(ROOT, "packages/coding.sh/src/stats/summary.ts"));
 process.stdout.write(`${renderMetrics(result, { color: process.stdout.isTTY === true })}\n`);
 
 const failures = [];
@@ -115,21 +123,39 @@ if (values.gate) {
 if (values.budgets) {
   const budgets = JSON.parse(readFileSync(resolve(values.budgets), "utf8"));
   const skip = values["skip-budget"] ?? [];
+  const quietCpu = Number(values["quiet-cpu"]);
+  const candRuns = result.runs.filter((x) => !x.warmup && x.metrics && x.arm === 1);
   let checked = 0;
+  const busy = [];
   for (const [pattern, max] of Object.entries(budgets)) {
     if (pattern.startsWith("$") || metricMatches(pattern, skip)) continue;
     const hits = result.metrics.filter((m) => metricMatches(m.name, [pattern]));
     for (const m of hits) {
+      let value = m.b.median;
+      if (metricUnit(m.name) === "ms") {
+        // "mobile.quickstart.lcp_ms" -> that page's "mobile.quickstart.cpu_busy"; a sample without one counts as quiet.
+        const load = `${m.name.slice(0, m.name.lastIndexOf("."))}.cpu_busy`;
+        const quiet = candRuns.filter((x) => typeof x.metrics[m.name] === "number" && !(x.metrics[load] > quietCpu)).map((x) => x.metrics[m.name]);
+        if (quiet.length * 2 < result.pairs) {
+          busy.push(`${m.name} (${quiet.length} of ${result.pairs})`);
+          continue;
+        }
+        value = Math.round(median(quiet) * 10) / 10;
+      }
       checked++;
-      if (m.b.median > max) failures.push(`${m.name} is ${m.b.median}, budget ${max} (${pattern})`);
+      if (value > max) failures.push(`${m.name} is ${value}, budget ${max} (${pattern})`);
     }
   }
   console.log(`budgets: ${checked} checked`);
+  if (busy.length) {
+    const msg = `${busy.length} timing budgets not checked: the machine was busy (cpu_busy over ${quietCpu}) in more than half the candidate's samples of ${busy.join(", ")}`;
+    console.log(process.env.GITHUB_ACTIONS ? `::warning::perf: ${msg}` : `WARN ${msg}`);
+  }
 }
 for (const f of failures) console.log(`${process.env.GITHUB_ACTIONS ? "::error::perf: " : "FAIL "}${f}`);
 
 if (values.baseline) {
-  const { median, stddev } = await import(join(ROOT, "packages/coding.sh/src/stats/summary.ts"));
+  const { stddev } = await import(join(ROOT, "packages/coding.sh/src/stats/summary.ts"));
   const runs = result.runs.filter((x) => !x.warmup && x.metrics);
   const metrics = {};
   for (const m of result.metrics) {

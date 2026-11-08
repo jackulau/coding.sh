@@ -78,7 +78,10 @@ See [Experiments](https://coding.sh/docs/experiments#metrics) for the metric A/B
 commits and runs 9 pairs. It fails when a gated metric gets worse, or when a page goes over its
 budget in [scripts/perf/budgets.json](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/budgets.json). The budgets sit about 10%
 above the numbers above. Pull requests run on GitHub's hosted runners and skip the load-time
-budgets, which only hold on our own machine. The deploy also checks page weight, fonts, scripts
+budgets, which only hold on our own machine. Our machine runs other jobs too, so each sample also
+records `cpu_busy`, the share of the machine's CPU in use while that page loaded. A load-time
+budget counts only the samples where it was 0.5 or less (`--quiet-cpu`). When fewer than half the
+pairs were quiet, the run says so in a warning and skips that budget. The deploy also checks page weight, fonts, scripts
 and images in the build (`npm run perf:budget` in apps/site).
 
 ## What we took from X's rewrite

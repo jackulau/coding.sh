@@ -29,10 +29,14 @@
 //   first_viewer_row_ms   home only: the "first-viewer-row" performance mark,
 //                         set when the hero viewer screenshot is painted
 //                         (apps/site/src/pages/index.astro)
+//   cpu_busy   share of the machine's CPU time (all cores, every process: this
+//              sample's Chrome too) that was busy while the page was measured,
+//              0 to 1. The timings mean little on a busy machine; ab.mjs checks
+//              the _ms budgets on quiet samples only.
 // Chrome: $CHROME_PATH, else Playwright's Chromium (npx playwright install
 // chromium), else whatever chrome-launcher finds.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { cpus, homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { serve } from "./serve.mjs";
@@ -90,6 +94,17 @@ function settings(profile, constants) {
     throttlingMethod: "devtools",
     throttling: { ...t, uploadThroughputKbps: 750 * 0.9 },
   };
+}
+
+/** Busy and total CPU time over every core so far (ms). */
+function cpuTimes() {
+  let busy = 0;
+  let total = 0;
+  for (const { times: t } of cpus()) {
+    busy += t.user + t.nice + t.sys + t.irq;
+    total += t.user + t.nice + t.sys + t.irq + t.idle;
+  }
+  return { busy, total };
 }
 
 const r1 = (x) => (typeof x === "number" && Number.isFinite(x) ? Math.round(x * 10) / 10 : undefined);
@@ -192,10 +207,13 @@ async function main() {
         const t0 = Date.now();
         try {
           server.reset();
+          const c0 = cpuTimes();
           const run = await lighthouse(url, { port: browser.port, output: "json", logLevel: "error" }, config);
+          const c1 = cpuTimes();
           if (!run?.lhr) throw new Error(`Lighthouse returned nothing for ${url}`);
           if (reports) writeFileSync(join(reports, `${profile}-${page}.json`), JSON.stringify(run.lhr));
           result[profile][page] = extract(run.lhr, page, server.served);
+          if (c1.total > c0.total) result[profile][page].cpu_busy = Math.round(((c1.busy - c0.busy) / (c1.total - c0.total)) * 100) / 100;
         } finally {
           await browser.kill();
           rmSync(userDataDir, { recursive: true, force: true });
