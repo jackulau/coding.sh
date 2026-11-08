@@ -527,6 +527,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "session", type: "list", value: "<ID>", desc: "Tasks from these sessions instead: an id, a prefix or latest (repeatable)" },
           { name: "since", type: "string", value: "<AGE>", desc: "With --sessions: how far back to look (30m, 12h, 7d, 2w)", default: "14d" },
           { name: "limit", type: "number", value: "<N>", desc: "With --sessions: at most N tasks", default: "10" },
+          { name: "repo", type: "string", value: "<DIR|all>", desc: "With --sessions: sessions under this directory, or all, for another checkout or worktree of the project (default: this git repo)" },
           { name: "verifier", type: "string", value: "<CMD>", desc: "With --sessions: command that passes only when a task is solved (default: guessed per session)" },
           { name: "hidden-test", type: "list", value: "<GLOB>", desc: "With --sessions: test files to hide from the agent (repeatable)" },
           { name: "skill", type: "string", value: "<DIR>", desc: "Should / should-not trigger prompts for this skill" },

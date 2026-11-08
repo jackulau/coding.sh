@@ -13,6 +13,7 @@ coding.sh runs on Windows, and CI tests it there.
 
 ### Added
 
+- **Evals.** `eval init --sessions --repo <DIR|all>` drafts tasks from sessions in another checkout or worktree of the project, not only the current one. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md).
 - **Docs.** Use-case pages for tracking Claude Code and Codex cost, replaying a session, testing a CLAUDE.md, AGENTS.md or skill change, building evals from failures, self-hosting, and logging model calls through the proxy. Comparison pages for Langfuse, LangSmith, Braintrust, AgentOps, Laminar and ccusage, each with a feature table, where the other tool is the better choice, and its sources. [Compare](https://coding.sh/docs/compare).
 - **Site.** Every docs page has its own link preview image, the home page and FAQ carry FAQ markup, and the site build fails on a missing or too-long title or description, a wrong canonical URL, or a link to a page that doesn't exist.
 - **Evals.** `eval validate` checks verifiers that grade the agent's answer or trace: a task dir's `reference/` (`output.md`, `stdout.jsonl`) is a correct run that must pass, and `near-misses/<label>/` hold wrong runs that must fail. The verifier reads them through `CODING_SH_AGENT_OUTPUT`, `CODING_SH_AGENT_STDOUT` and `CODING_SH_AGENT_DIFF`, as in a real run. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#hand-written-tasks).

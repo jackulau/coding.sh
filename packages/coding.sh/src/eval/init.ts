@@ -22,6 +22,7 @@ import { parseCases, formatFromPath, slugify } from "../datasets/dataset.ts";
 import type { ChatProvider } from "../judge/providers.ts";
 import { toPosix } from "../runner/fsutil.ts";
 import type { SnapshotOps } from "../runner/git.ts";
+import { insideDir } from "./decision.ts";
 import { draftCases, draftTriggers, type DraftedCase } from "./draft.ts";
 import { type SuitePurpose } from "./report.ts";
 import { DEFAULT_TRIALS, SUITE_FILE, SUITES_DIR, type SuiteKind, type SuiteSpec } from "./suite-spec.ts";
@@ -62,6 +63,8 @@ export interface InitOpts {
   sessionIds?: string[];
   since?: number;
   limit?: number;
+  /** Sessions under this directory instead of `root`, or "all": another checkout or worktree of the same project. */
+  sessionsRepo?: string;
   verifier?: string;
   hiddenTests?: string[];
   // skill
@@ -250,9 +253,10 @@ async function pickSessions(o: InitOpts, index: IndexStore, now: number): Promis
     return out;
   }
   const since = now - (o.since ?? DEFAULT_SINCE_MS);
-  const all = await index.listSessions({ repoRoot: o.root, runId: null, parentSessionId: null, since });
+  const where = o.sessionsRepo;
+  const all = await index.listSessions({ ...(where ? {} : { repoRoot: o.root }), runId: null, parentSessionId: null, since });
   return all
-    .filter((s) => isFlagged(s) && s.startedAt >= since)
+    .filter((s) => isFlagged(s) && s.startedAt >= since && (!where || where === "all" || insideDir(where, s.repo?.root) || insideDir(where, s.cwd)))
     .sort((a, b) => b.startedAt - a.startedAt)
     .slice(0, o.limit ?? DEFAULT_SESSION_LIMIT);
 }
@@ -262,7 +266,8 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
   const sessions = await pickSessions(o, deps.index, now);
   if (!sessions.length) {
     const days = Math.round((o.since ?? DEFAULT_SINCE_MS) / 86_400_000);
-    throw new InitError(`no failed or flagged sessions in ${o.root} in the last ${days} days (coding.sh sessions --where is:flagged lists them); name sessions with --session <id>`);
+    const where = o.sessionsRepo === "all" ? "any repo" : (o.sessionsRepo ?? o.root);
+    throw new InitError(`no failed or flagged sessions in ${where} in the last ${days} days (coding.sh sessions --where is:flagged lists them); name sessions with --session <id>${o.sessionsRepo ? "" : ", or look in another checkout with --repo <DIR|all>"}`);
   }
   const notes: string[] = [];
   const tasks: NonNullable<Built["tasks"]> = [];

@@ -270,7 +270,17 @@ describe("initSuite: sessions", () => {
 
   it("says where to look when nothing failed", async () => {
     const root = await project();
-    await assert.rejects(initSuite({ name: "f", root, source: "sessions" }, deps()), /no failed or flagged sessions .* in the last 14 days/);
+    await assert.rejects(initSuite({ name: "f", root, source: "sessions" }, deps()), /no failed or flagged sessions .* in the last 14 days.*--repo <DIR\|all>/);
+  });
+
+  it("with sessionsRepo, takes sessions from another checkout of the project, or from any with all", async () => {
+    const root = await project();
+    const w = await world();
+    const r = await initSuite({ name: "wt", root, source: "sessions", sessionsRepo: "/work", since: 5_000 }, { ...w, now: 12_000 });
+    assert.deepEqual(r.tasks!.map((t) => t.sessionId), ["failed"], "/work/toy is under /work");
+    const all = await initSuite({ name: "any", root, source: "sessions", sessionsRepo: "all", since: 5_000 }, { ...w, now: 12_000 });
+    assert.deepEqual(all.tasks!.map((t) => t.sessionId), ["failed"]);
+    await assert.rejects(initSuite({ name: "none", root, source: "sessions", sessionsRepo: "/elsewhere", since: 5_000 }, { ...w, now: 12_000 }), /no failed or flagged sessions in \/elsewhere/);
   });
 });
 

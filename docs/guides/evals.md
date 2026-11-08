@@ -22,7 +22,9 @@ flagged (a failed tool call, an unverified claim, a loop, …) and makes one rep
 repo as it was before the session, the session's first prompt as the instruction, and your
 verifier. Each task's row names the session it came from. It ingests first, and waits up to 30
 seconds for an ingest already running, so a session that just ended is included. `--session <id>`
-(or `latest`, or an id prefix) picks sessions yourself; `--since` and `--limit` change the window. The suite is called
+(or `latest`, or an id prefix) picks sessions yourself; `--since` and `--limit` change the window.
+`--repo <DIR>` takes sessions under another directory instead (a second checkout, or the
+worktrees a loop of agents runs in), and `--repo all` from any repo. The suite is called
 `failures` unless you name it (`coding.sh eval init mine --session latest`), and a name that
 exists needs `--force` to replace it. `--force` stops when the suite holds a file `eval init` did
 not write or that you changed since (a `reference.patch` you added, a prompt you fixed) and lists

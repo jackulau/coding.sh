@@ -3,7 +3,7 @@
 // asks. Ends with the command that runs the suite and, where the suite can run
 // on a fresh checkout, a CI workflow.
 import { existsSync, readdirSync } from "node:fs";
-import { basename, extname, join, relative } from "node:path";
+import { basename, extname, join, relative, resolve } from "node:path";
 import { repoRoot } from "../../core/git.ts";
 import { providerFromSpec, type LlmProviderSpec } from "../../graders/index.ts";
 import { DEFAULT_SINCE_MS, initSuite, InitError, type InitOpts, type InitResult, type InitSource } from "../../eval/init.ts";
@@ -125,6 +125,7 @@ export async function evalInit(c: CommandContext): Promise<number> {
     ...(list(flags.session).length ? { sessionIds: list(flags.session) } : {}),
     ...(sinceRaw ? { since: parseAge(sinceRaw, "since") } : {}),
     ...(limit ? { limit } : {}),
+    ...(str(flags.repo) ? { sessionsRepo: str(flags.repo) === "all" ? "all" : resolve(c.cwd, str(flags.repo)!) } : {}),
     ...(str(flags.verifier) ? { verifier: str(flags.verifier)! } : {}),
     ...(list(flags["hidden-test"]).length ? { hiddenTests: list(flags["hidden-test"]) } : {}),
     ...(str(flags.skill) ? { skill: str(flags.skill)! } : {}),

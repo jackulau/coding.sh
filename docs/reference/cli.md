@@ -682,6 +682,7 @@ coding.sh eval init [name] [options]
 | `--session <ID>` |  | Tasks from these sessions instead: an id, a prefix or latest (repeatable) |
 | `--since <AGE>` | `14d` | With --sessions: how far back to look (30m, 12h, 7d, 2w) |
 | `--limit <N>` | `10` | With --sessions: at most N tasks. |
+| `--repo <DIR|all>` |  | With --sessions: sessions under this directory, or all, for another checkout or worktree of the project (default: this git repo) |
 | `--verifier <CMD>` |  | With --sessions: command that passes only when a task is solved (default: guessed per session) |
 | `--hidden-test <GLOB>` |  | With --sessions: test files to hide from the agent (repeatable) |
 | `--skill <DIR>` |  | Should / should-not trigger prompts for this skill. |
