@@ -1,5 +1,8 @@
 // Unit tests for the shared adapter toolkit (src/adapters/_shared).
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { parseToml } from "../../src/core/toml.ts";
 import {
@@ -22,6 +25,7 @@ import {
   shellCommandOf,
   stripNestedHooks,
   upsertTomlBlock,
+  walkFiles,
 } from "../../src/adapters/_shared/index.ts";
 
 describe("test-output heuristics", () => {
@@ -179,5 +183,28 @@ describe("toml edits", () => {
     const moved = '# >>> coding.sh:mcp-server (managed by coding.sh)\n[mcp_servers.coding-sh]\ncommand = "x"\n\n[mcp_servers.my-db]\ncommand = "db"\n# <<< coding.sh:mcp-server\n';
     assert.equal(hasTomlBlock(moved, "mcp-server"), false);
     assert.equal(removeTomlBlock(moved, "mcp-server"), moved);
+  });
+});
+
+describe("walkFiles", () => {
+  it("follows symlinked (or junctioned) directories and files, and skips dangling links", async () => {
+    const root = await mkdtemp(join(tmpdir(), "csh-walk-"));
+    try {
+      const real = join(root, "real");
+      await mkdir(join(real, "proj-a"), { recursive: true });
+      await writeFile(join(real, "proj-a", "s1.jsonl"), "{}\n");
+      await writeFile(join(real, "top.jsonl"), "{}\n");
+      const projects = join(root, "projects");
+      await mkdir(projects);
+      // "junction" makes a directory link without admin rights on Windows; other platforms ignore the type.
+      await symlink(join(real, "proj-a"), join(projects, "proj-a"), "junction");
+      await symlink(join(real, "top.jsonl"), join(projects, "top.jsonl"));
+      await symlink(join(root, "missing"), join(projects, "gone"), "junction");
+      const found: string[] = [];
+      for await (const f of walkFiles(projects, { match: (n) => n.endsWith(".jsonl") })) found.push(f.path.slice(projects.length + 1).replace(/\\/g, "/"));
+      assert.deepEqual(found, ["proj-a/s1.jsonl", "top.jsonl"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });

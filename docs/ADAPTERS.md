@@ -133,6 +133,8 @@ order.
   - Windows path quoting.
   - Transcripts are often flushed after Stop, so debounce transcript reads at ingest.
   - Copy SQLite databases before reading (WAL locks).
+  - Backfill follows symlinks and Windows junctions in transcript directories (a mirror of another
+    machine's `~/.claude/projects`, say) and skips links that point nowhere.
 
 ## Hook command
 

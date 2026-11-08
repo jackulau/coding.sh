@@ -92,15 +92,26 @@ export async function* walkFiles(root: string, opts: WalkOpts, depth = 0): Async
   entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   for (const e of entries) {
     const p = join(root, e.name);
-    if (e.isDirectory()) {
+    // A symlink (or a Windows junction) is followed to what it points at; maxDepth bounds a link cycle.
+    let linked;
+    if (e.isSymbolicLink()) {
+      try {
+        linked = await stat(p);
+      } catch {
+        continue; // dangling link
+      }
+    }
+    if (linked ? linked.isDirectory() : e.isDirectory()) {
       if (opts.skipDir?.(e.name, p)) continue;
       if (depth < (opts.maxDepth ?? 8)) yield* walkFiles(p, opts, depth + 1);
-    } else if (e.isFile() && opts.match(e.name, p)) {
-      let st;
-      try {
-        st = await stat(p);
-      } catch {
-        continue;
+    } else if ((linked ? linked.isFile() : e.isFile()) && opts.match(e.name, p)) {
+      let st = linked;
+      if (!st) {
+        try {
+          st = await stat(p);
+        } catch {
+          continue;
+        }
       }
       if (opts.since !== undefined && st.mtimeMs < opts.since) continue;
       yield { path: p, mtimeMs: st.mtimeMs, size: st.size };
