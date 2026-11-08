@@ -709,6 +709,22 @@ describe("viewer UI: timeline, inspector and compare", { skip: chrome ? false : 
     }
   });
 
+  test("a model call the proxy and the hooks both logged is one step (real capture)", async () => {
+    // scripts/e2e/proxy-capture.mjs: Claude Code through `init --proxy`, two calls, each logged by both paths.
+    const events = readFileSync(new URL("../fixtures/proxy/claude-code-proxied.jsonl", import.meta.url), "utf8").trim().split("\n").map((l) => JSON.parse(l) as AgentEvent);
+    const proxied = events.filter((e) => e.kind === "llm.call" && e.source === "proxy");
+    const hooked = events.filter((e) => e.kind === "llm.call" && e.source !== "proxy");
+    await open("#/");
+    try {
+      const steps: { id: string; source: string; turnId?: string; copyId?: string }[] = await page.eval(`buildTimeline(${JSON.stringify(events)}).filter((it) => it.type === "llm.call").map((it) => ({ id: it.id, source: it.ev.source, turnId: it.ev.turnId, copyId: it.copyId }))`);
+      assert.deepEqual(steps.map((s) => s.id), proxied.map((e) => e.id), "one step per call, the proxy's call id");
+      assert.deepEqual(steps.map((s) => s.copyId), hooked.map((e) => e.id), "the hook copy's id still finds the step");
+      assert.ok(steps.every((s) => s.source === "proxy" && s.turnId === hooked[0]!.turnId), "the turn from the hook copy");
+    } finally {
+      await page.close();
+    }
+  });
+
   test("a file change reads as the result of an edit, with its line counts in the duration column", async () => {
     await open("#/");
     try {

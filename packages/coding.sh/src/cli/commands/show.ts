@@ -5,6 +5,7 @@
 // An id that names no session but a model call (`<call id>`, `<session>#3`)
 // shows that call: system prompt, tools, cache and usage (diff-calls.ts).
 import { setTimeout as sleep } from "node:timers/promises";
+import { callCopies } from "../../core/call-copies.ts";
 import { sessionOutline, phaseLabel, storedOutline, type Outline, type Phase } from "../../core/outline.ts";
 import { costNote } from "../../core/pricing.ts";
 import { failureFlags } from "../../core/sessions.ts";
@@ -453,12 +454,16 @@ function printEvents(out: Output, s: Session, events: AgentEvent[], o: Outline |
   const dayAt = new Map((o?.days ?? []).map((d) => [d.index, d]));
   const derailAt = new Map<string, SessionDerail[]>();
   for (const d of derails) derailAt.set(d.eventId, [...(derailAt.get(d.eventId) ?? []), d]);
+  // A model call the proxy and the agent's own capture both logged: one line, at the proxy's copy.
+  const copies = callCopies(events);
   events.forEach((e, i) => {
     const day = dayAt.get(i);
     if (day) out.print(out.style(dayLine(day.ts), "faint"));
     const p = phaseAt.get(i);
     if (p) out.print(out.style(`── phase ${p.n}: ${phaseLabel(p)} at ${clock(p.startTs)} ──`, "faint"));
     for (const d of derailAt.get(e.id) ?? []) out.print(out.style(`${"".padStart(8)}  ${derailLine(s, d)}`, "yellow"));
+    if (copies.folded.has(e.id)) return;
+    e = copies.merged.get(e.id) ?? e;
     const line = describe(e, starts);
     if (line === undefined) return;
     const rel = `+${duration(Math.max(0, e.ts - s.startedAt))}`.padStart(8);
@@ -498,10 +503,19 @@ async function follow(c: CommandContext, ctx: Parameters<Parameters<typeof withC
   let ended = false;
   for (;;) {
     const fresh = batch.filter((e) => !seen.has(e.id));
+    // One line per model call the proxy and the agent's own capture both logged:
+    // the merged copy when both are new, nothing when the other was printed before.
+    const copies = callCopies(batch);
+    const into = new Map([...copies.folded].map(([other, proxy]) => [proxy, other]));
+    const freshIds = new Set(fresh.map((e) => e.id));
     for (const e of fresh) {
+      const twin = copies.folded.get(e.id) ?? into.get(e.id);
+      const printed = twin !== undefined && (freshIds.has(twin) ? copies.folded.has(e.id) : seen.has(twin));
       seen.add(e.id);
-      const line = describe(e, starts);
-      if (line !== undefined) out.print(`${`+${duration(Math.max(0, e.ts - s.startedAt))}`.padStart(8)}  ${line}`);
+      if (printed) continue;
+      const shownAs = copies.merged.get(e.id) ?? e;
+      const line = describe(shownAs, starts);
+      if (line !== undefined) out.print(`${`+${duration(Math.max(0, shownAs.ts - s.startedAt))}`.padStart(8)}  ${line}`);
     }
     for (const d of s.stats.derails ?? []) {
       if (shown.has(d.eventId + d.flag)) continue;

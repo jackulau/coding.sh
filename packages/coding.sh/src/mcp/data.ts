@@ -4,6 +4,7 @@
 import { existsSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { AgentEvent, IndexStore, Session, SessionFilter } from "../core/types.ts";
+import { mergeCallCopies } from "../core/call-copies.ts";
 import { failureFlags, percentile } from "../core/sessions.ts";
 import { sessionMatcher } from "../query/run.ts";
 import type { Node, Query } from "../query/where.ts";
@@ -259,13 +260,14 @@ export function toolDuration(e: AgentEvent, start?: AgentEvent): number | undefi
 
 /**
  * One line per meaningful event. tool.start/tool.end pairs collapse into the
- * end; session/turn bookkeeping is dropped.
+ * end, and a model call the proxy and the agent both logged into one line
+ * (core/call-copies.ts); session/turn bookkeeping is dropped.
  */
 export function timeline(events: AgentEvent[], startedAt: number): TimelineEntry[] {
   const starts = new Map<string, AgentEvent>();
   const out: TimelineEntry[] = [];
   const pendingStarts = new Set<AgentEvent>();
-  for (const e of events) {
+  for (const e of mergeCallCopies(events)) {
     const p = e.payload;
     const at = Math.max(0, e.ts - startedAt);
     const push = (kind: string, text: string | undefined) => {
@@ -511,7 +513,8 @@ export async function latency(index: IndexStore, q: ScanQuery, opts: { model?: s
     if (scanned >= EVENT_SCAN_CAP) break;
     if (!s.stats.toolCalls && !s.stats.latency?.llmCalls) continue;
     scanned++;
-    const evs = await index.listEvents(s.id, { kinds: ["llm.call", "tool.start", "tool.end"], limit: 20_000 });
+    // A call the proxy and the agent both logged is one sample.
+    const evs = mergeCallCopies(await index.listEvents(s.id, { kinds: ["llm.call", "tool.start", "tool.end"], limit: 20_000 }));
     const starts = new Map<string, AgentEvent>();
     for (const e of evs) {
       if (e.kind === "llm.call") {

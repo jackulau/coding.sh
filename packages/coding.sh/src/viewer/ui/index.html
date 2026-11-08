@@ -3246,10 +3246,47 @@ function llmFailed(p) {
   return p.ok === false || (typeof p.statusCode === "number" && p.statusCode >= 400);
 }
 
+/**
+ * A model call the proxy and the agent's own capture both logged (same messageId or responseId
+ * in the session): proxy call id → the proxy's copy with the other's missing fields filled in,
+ * the other copy's id → the proxy call id (folded), and back (into). Mirrors core/call-copies.ts.
+ */
+function callCopies(events) {
+  const merged = new Map();
+  const folded = new Map();
+  const into = new Map();
+  const open = new Map();
+  const fill = (a, b) => { const o = Object.assign({}, a); for (const k in b) if (o[k] === undefined && b[k] !== undefined) o[k] = b[k]; return o; };
+  for (const ev of events) {
+    const p = ev.payload || {};
+    const id = ev.kind === "llm.call" && ev.source !== "gateway" ? (typeof p.messageId === "string" && p.messageId) || (typeof p.responseId === "string" && p.responseId) : "";
+    if (!id) continue;
+    const key = ev.sessionId + "\0" + id;
+    const proxy = ev.source === "proxy";
+    const waiting = open.get(key) || [];
+    const i = waiting.findIndex((w) => (w.source === "proxy") !== proxy);
+    if (i < 0) { waiting.push(ev); open.set(key, waiting); continue; }
+    const twin = waiting.splice(i, 1)[0];
+    const pc = proxy ? ev : twin;
+    const other = proxy ? twin : ev;
+    const m = fill(pc, other);
+    m.payload = fill(pc.payload || {}, other.payload || {});
+    if (pc.usage && other.usage) m.usage = fill(pc.usage, other.usage);
+    merged.set(pc.id, m);
+    folded.set(other.id, pc.id);
+    into.set(pc.id, other.id);
+  }
+  return { merged, folded, into };
+}
+
 function buildTimeline(events) {
   const items = [];
   const open = new Map();
-  for (const ev of events) {
+  const copies = callCopies(events);
+  for (const raw of events) {
+    // One step per model call: the merged copy where the proxy's is, the other copy folded into it.
+    if (copies.folded.has(raw.id)) continue;
+    const ev = copies.merged.get(raw.id) || raw;
     const p = ev.payload || {};
     if (ev.kind === "tool.start") {
       const item = { type: "tool", id: ev.id, ts: ev.ts, start: ev, end: null };
@@ -3261,7 +3298,9 @@ function buildTimeline(events) {
       if (item) { item.end = ev; open.delete(key); }
       else items.push({ type: "tool", id: ev.id, ts: ev.ts, start: null, end: ev });
     } else {
-      items.push({ type: ev.kind, id: ev.id, ts: ev.ts, ev });
+      const item = { type: ev.kind, id: ev.id, ts: ev.ts, ev };
+      if (copies.into.has(ev.id)) item.copyId = copies.into.get(ev.id);
+      items.push(item);
     }
   }
   return items;
@@ -3495,6 +3534,7 @@ async function showSession(seq, id, eventId, where = "", linkStep = 0) {
       byEvent.set(it.id, it);
       if (it.start) byEvent.set(it.start.id, it);
       if (it.end) byEvent.set(it.end.id, it);
+      if (it.copyId) byEvent.set(it.copyId, it);
       const v = itemView(it);
       const ev = it.start || it.end || it.ev;
       const isTurn = it.type === "user.message";

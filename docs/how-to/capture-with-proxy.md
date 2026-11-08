@@ -106,6 +106,13 @@ Each call is an `llm.call` event with source `proxy`, inside the session it belo
 - **Otherwise**: a `proxy-<hash>` session per conversation (same client, system prompt and first
   message), or, for the Responses API, the session of `previous_response_id`.
 
+When the agent's hooks or transcript also log the call, the session stores both copies and counts
+its tokens and cost once. `show`, the viewer's timeline and the MCP `session_get` and
+`session_current` tools show it as one line: the proxy's copy, with its call id, timing and cache
+use, plus what only the other copy has (the turn, cache counts the stream did not report). Copies
+pair by the provider's id for the call (`messageId` or `responseId`). `show --json` and
+`/api/sessions/{id}/events` return both.
+
 ```sh
 coding.sh show latest#-1             # the last model call of the latest session
 coding.sh show <session>#3           # its third call
