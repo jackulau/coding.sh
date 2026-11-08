@@ -1,0 +1,81 @@
+packages/coding.sh/test/eval/report.test.ts
+  s_8e040dbdf13565::t_bc9da1d18bbe76 1-74
+packages/coding.sh/src/eval/suite-spec.ts
+  s_8e040dbdf13565::t_cce6c710cc1633 1-147
+packages/coding.sh/test/eval/run-suite.test.ts
+  s_8e040dbdf13565::t_fdf9ebca75ca96 1-10,12-51
+  s_8e040dbdf13565::t_674e6820a8b69f 11
+packages/coding.sh/src/cli/commands/eval-run.ts
+  s_8e040dbdf13565::t_84a05a729c1df6 9-10,28,224-232
+  s_8e040dbdf13565::t_ecbfcd54ccabb2 131-134
+  s_8e040dbdf13565::t_05c57b4daa5c05 1-8,11-22,24-27,31-48,50,53-94,96-118,120-130,135-223,233-234,242
+  s_8e040dbdf13565::t_78098d2c0b8cdf 23,119
+  s_8e040dbdf13565::t_02f7c919cf8ea4 29-30,49,51-52,95,235-241
+packages/coding.sh/src/eval/report.ts
+  s_8e040dbdf13565::t_e2f54262b4a760 142-146,166,171,178
+  s_8e040dbdf13565::t_3505a4ca421b13 77,130
+  s_8e040dbdf13565::t_7db0d09e53d309 1-76,78-129,131-141,147-152,155-165,167-170,172-177,179-181,188-189
+  s_8e040dbdf13565::t_3067c13d0e095d 182-185,187
+  s_8e040dbdf13565::t_eafaf0d25024bc 153-154
+  s_8e040dbdf13565::t_6cb8eca9acca40 186
+packages/coding.sh/src/eval/init.ts
+  s_8e040dbdf13565::t_46cae785161ff6 1-22,24-77,80-86,89-120,130-131,133-206,208-222,224-229,231-240,245,248-249,251-255,261-277,282-337,339-362,367-431
+  s_8e040dbdf13565::t_6264e159b935da 121-129
+  s_8e040dbdf13565::t_21813b5b073139 23,87-88,207,223,230,241-244,250,256-260
+  s_8e040dbdf13565::t_53af16d08c4627 132,246-247,338
+  s_8e040dbdf13565::t_03f6c9d41a654c 78-79,278-281,363-366
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_490c17ebc21177 198-199
+packages/coding.sh/src/cli/commands/eval.ts
+  s_8e040dbdf13565::t_6e146e2025c3e6 41
+  s_8e040dbdf13565::t_1575bb1e0766e9 1,77-78
+packages/coding.sh/test/eval/suite-spec.test.ts
+  s_8e040dbdf13565::t_689e6ea94c5442 1-64
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_fd6996b7394f0c 425
+  s_8e040dbdf13565::t_647f6d9453c900 583-585
+  s_8e040dbdf13565::t_1575bb1e0766e9 9,417,419-424,426-475
+  s_8e040dbdf13565::t_bdaa8167c1952d 586
+packages/coding.sh/src/cli/commands/eval-trigger.ts
+  s_8e040dbdf13565::t_c650e8fd6722ca 39-49,166-169
+  s_8e040dbdf13565::t_02f7c919cf8ea4 27-29
+CHANGELOG.md
+  s_8e040dbdf13565::t_6fe445f2b4bb40 16-17
+docs/reference/cli.md
+  s_8e040dbdf13565::t_9193bcec545d38 546
+  s_8e040dbdf13565::t_6a3eb2eae99391 51,509,517-518,528-545,547-600
+  s_8e040dbdf13565::t_3645262a89ff24 601
+packages/coding.sh/test/eval/init.test.ts
+  s_8e040dbdf13565::t_108307054d422f 1-249
+packages/coding.sh/test/cli/eval-init-run.test.ts
+  s_8e040dbdf13565::t_d8a51a2ac619ca 1-134,136-176,178-183
+  s_8e040dbdf13565::t_566dacfcf55b53 135,177
+packages/coding.sh/src/eval/run-suite.ts
+  s_8e040dbdf13565::t_abda644e3c129a 1-7,9-47,76
+  s_8e040dbdf13565::t_02f7c919cf8ea4 8,48-75
+packages/coding.sh/src/cli/output.ts
+  s_8e040dbdf13565::t_a8d1382771c59c 213-227,232,238
+packages/coding.sh/src/eval/draft.ts
+  s_8e040dbdf13565::t_4b64e486c2ccbb 1-108
+packages/coding.sh/src/cli/commands/eval-init.ts
+  s_8e040dbdf13565::t_5f9380751ff9c5 153-154
+  s_8e040dbdf13565::t_f168515fbe481f 9
+  s_8e040dbdf13565::t_fd6996b7394f0c 13
+  s_8e040dbdf13565::t_7b6a0483fcc992 1-8,10-12,14-152,155-200
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "b58286c3723c885c2bd08989714ef4451a68efd3",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
