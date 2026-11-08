@@ -46,7 +46,10 @@ Before the agent starts, the harness reads the account's member emails, token na
 values as canaries for the leak check, and its domains for the scenarios that forbid touching its
 sites. Only scenarios whose grading doesn't depend on fixture facts run live, and their
 instructions name the team, project and site only through environment variables, so no fixture
-name is left for the agent to chase. After a grader fix, `run.sh <out-dir> --regrade` grades the
+name is left for the agent to chase. A check that looks for the site's host must then also match
+the variable: `curl -sI "$LIVE_SITE"` never spells the host out. Before you trust a live result,
+check which model answered. After a refusal, Claude Code retries on an older model, and the
+`responseModel` of each session's `llm.call` events shows it. After a grader fix, `run.sh <out-dir> --regrade` grades the
 stored runs again without calling the agent. See [Live run](../../examples/skill-eval/README.md#live-run-a-real-vercel-team-read-only).
 
 ## 3. Write one task per scenario
