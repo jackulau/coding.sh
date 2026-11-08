@@ -69,7 +69,7 @@ const oldest = releases[releases.length - 1];
                   <ul class="cl-chips" role="list">
                     {r.areas.map((a) => (
                       <li>
-                        <a href={`/changelog/${r.slug}#${a.id}`}>
+                        <a href={a.href}>
                           {a.name}
                           <small>{a.entries.length}</small>
                         </a>

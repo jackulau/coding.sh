@@ -19,6 +19,10 @@ export interface Area {
   name: string;
   id: string;
   entries: Entry[];
+  /** Which page of the release's notes holds it, from 1. */
+  page: number;
+  /** /changelog/<slug>[/<page>]#<id> */
+  href: string;
 }
 export interface Release {
   version: string;
@@ -35,6 +39,8 @@ export interface Release {
   /** Entries by area, in the order each area first appears. */
   areas: Area[];
   count: number;
+  /** Pages the notes are split over; see PAGE_CHARS. */
+  pages: number;
 }
 
 export const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -50,6 +56,14 @@ const plain = (s: string) =>
     .trim();
 
 export const slug = (v: string) => `v${v.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`;
+/** Page 1 of a release's notes is /changelog/<slug>; later pages add /<n>. */
+export const releasePath = (slug: string, page = 1) => `/changelog/${slug}${page > 1 ? `/${page}` : ""}`;
+
+// A long release (the unreleased one collects every change until it ships) is
+// split into pages of whole areas, each holding about this much entry HTML, so
+// a page stays inside its HTML budget (scripts/perf-budget.mjs). An area is
+// never split, so one larger than this gets a page to itself.
+const PAGE_CHARS = 24_000;
 const idOf = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
 const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -105,12 +119,21 @@ export const releases: Release[] = drafts.map((d) => {
       const lead = text.match(/^\*\*([^*]+?)\.?\*\*\s*(.*)$/);
       const name = lead ? lead[1] : g.name;
       let area = areas.find((a) => a.name === name);
-      if (!area) areas.push((area = { name, id: idOf(name) || "changes", entries: [] }));
+      if (!area) areas.push((area = { name, id: idOf(name) || "changes", entries: [], page: 1, href: "" }));
       const entry: Entry = { id: `${area.id}-${area.entries.length + 1}`, area: name, kind: g.name, html: inline(lead ? lead[2] : text) };
       area.entries.push(entry);
       return entry;
     }),
   }));
+  let page = 1;
+  let chars = 0;
+  for (const a of areas) {
+    const size = a.entries.reduce((n, e) => n + e.html.length, 0);
+    if (chars && chars + size > PAGE_CHARS) [page, chars] = [page + 1, 0];
+    chars += size;
+    a.page = page;
+    a.href = `${releasePath(slug(d.version), page)}#${a.id}`;
+  }
   const summary = d.paras.map((p) => p.join(" "));
   return {
     version: d.version,
@@ -122,5 +145,6 @@ export const releases: Release[] = drafts.map((d) => {
     groups,
     areas,
     count: groups.reduce((n, g) => n + g.entries.length, 0),
+    pages: page,
   };
 });

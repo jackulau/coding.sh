@@ -1,0 +1,171 @@
+---
+// /changelog/<version>: the full notes for one release. The summary from
+// CHANGELOG.md leads, then every change as one line, grouped by area, each
+// with its own anchor. Rendered from CHANGELOG.md (see src/lib/changelog.ts).
+// A long release continues on /changelog/<version>/2, 3, ...: whole areas per
+// page, and the rail lists every area of the release, wherever it is.
+import Layout from "../../../layouts/Layout.astro";
+import Nav from "../../../components/Nav.astro";
+import ChangelogRail from "../../../components/ChangelogRail.astro";
+import CubeField from "../../../components/CubeField.astro";
+import { REPO_URL } from "../../../data/site";
+import { releasePath, releases, type Release } from "../../../lib/changelog";
+import { clampDescription } from "../../../lib/schema";
+import "../../../styles/changelog.css";
+
+export function getStaticPaths() {
+  return releases.flatMap((release, i) =>
+    Array.from({ length: release.pages }, (_, p) => ({
+      params: { version: release.slug, page: p ? String(p + 1) : undefined },
+      props: { release, page: p + 1, newer: releases[i - 1], older: releases[i + 1] },
+    })),
+  );
+}
+
+interface Props {
+  release: Release;
+  page: number;
+  newer?: Release;
+  older?: Release;
+}
+const { release: r, page, newer, older } = Astro.props;
+// Group names (Added, Fixed, ...) only matter when a release has more than one.
+const showKind = r.groups.length > 1;
+const title = `v${r.version}`;
+// The summary, then what the release touched when the summary is short.
+// The areas with the most entries, e.g. "132 changes, most to Evals, Harness A/B and MCP."
+const top = [...r.areas].sort((a, b) => b.entries.length - a.entries.length).slice(0, 3).map((a) => a.name);
+const touched = top.length > 1 ? `${top.slice(0, -1).join(", ")} and ${top.at(-1)}` : top[0];
+const changes = `${r.count} ${r.count === 1 ? "change" : "changes"}${r.areas.length === 1 ? ` to ${touched}` : touched ? `, most to ${touched}` : ""}.`;
+const summary = r.summaryText || `What changed in coding.sh ${title}.`;
+const pageNote = r.pages > 1 ? `page ${page} of ${r.pages}` : "";
+const areas = r.areas.filter((a) => a.page === page);
+// Later pages say which areas they hold, so each page has its own description.
+const names = areas.map((a) => a.name);
+const held = names.length > 1 ? `${names.slice(0, -1).join(", ")} and ${names.at(-1)}` : names[0];
+const description = clampDescription(
+  page > 1 ? `What changed in coding.sh ${title}, page ${page} of ${r.pages}: every change to ${held}, one line each.` : summary.length < 100 ? `${summary} ${changes}` : summary,
+);
+const prev =
+  page > 1
+    ? { href: releasePath(r.slug, page - 1), small: "Previous page", strong: `${title}, page ${page - 1}` }
+    : newer && { href: releasePath(newer.slug), small: "Newer release", strong: `v${newer.version}` };
+const next =
+  page < r.pages
+    ? { href: releasePath(r.slug, page + 1), small: "Next page", strong: `${title}, page ${page + 1}` }
+    : older && { href: releasePath(older.slug), small: "Older release", strong: `v${older.version}` };
+---
+
+<Layout
+  title={`coding.sh ${title}${page > 1 ? ` (page ${page})` : ""} · Changelog`}
+  description={description}
+  breadcrumbs={[
+    { name: "Changelog", path: "/changelog" },
+    { name: title, path: releasePath(r.slug, page) },
+  ]}
+  image="/og/changelog.png"
+>
+  <Nav />
+  <main id="main">
+    <header class="cl-head">
+      <CubeField variant="side" />
+      <div class="wrap cl-head__inner" data-field-clear>
+        <a class="cl-back hit" href="/changelog">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M13 8H3.5M7.5 4l-4 4 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          Changelog
+        </a>
+        <p class="cl-date">
+          {r.dateLabel}{r.date && " · "}{r.count} {r.count === 1 ? "change" : "changes"}{pageNote && ` · ${pageNote}`}
+        </p>
+        <h1>coding.sh {title}</h1>
+        {r.summary.map((p) => <p class="cl-lede" set:html={p} />)}
+      </div>
+    </header>
+
+    <div class="wrap cl-frame">
+      <nav class="cl-rail" aria-label={`Areas in ${title}`} data-cl-rail data-agent-skip>
+        <p class="cl-rail__label">In this release</p>
+        <ol role="list">
+          {
+            r.areas.map((a) => (
+              <li>
+                <a href={a.page === page ? `#${a.id}` : a.href} aria-current={a === areas[0] ? "true" : "false"}>
+                  <span>{a.name}</span>
+                  <small>{a.entries.length}</small>
+                </a>
+              </li>
+            ))
+          }
+        </ol>
+      </nav>
+
+      <div class="cl-notes">
+        {
+          areas.map((a) => (
+            <section class="cl-area" id={a.id} aria-labelledby={`${a.id}-h`}>
+              <h2 class="cl-area__h" id={`${a.id}-h`}>
+                <a class="hit" href={`#${a.id}`}>{a.name}</a>
+                <small data-agent-skip>{a.entries.length}</small>
+              </h2>
+              <ul class="cl-list" role="list">
+                {a.entries.map((e) => (
+                  <li class="cl-entry" id={e.id}>
+                    <a class="cl-entry__link" href={`#${e.id}`} aria-label={`Link to this ${a.name} change`} data-agent-skip>
+                      #
+                    </a>
+                    {showKind && <span class="cl-entry__kind">{e.kind}</span>}
+                    <span class="cl-entry__text" set:html={e.html} />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))
+        }
+
+        {
+          (prev || next) && (
+            <nav class="cl-pager" aria-label={r.pages > 1 ? "More notes and other releases" : "Other releases"}>
+              {prev && (
+                <a href={prev.href}>
+                  <small>{prev.small}</small>
+                  <strong>{prev.strong}</strong>
+                </a>
+              )}
+              {next && (
+                <a class="is-older" href={next.href}>
+                  <small>{next.small}</small>
+                  <strong>{next.strong}</strong>
+                </a>
+              )}
+            </nav>
+          )
+        }
+        <p class="cl-source">
+          From <a class="inline-link" href={`${REPO_URL}/blob/main/CHANGELOG.md`}>CHANGELOG.md</a> · <a class="inline-link" href="/changelog.xml">RSS</a> · <a class="inline-link" href="/changelog">All releases</a>
+        </p>
+      </div>
+    </div>
+    {
+      r.pages > 1 && (
+        <script is:inline>
+          {
+            // A link to an area or change that lives on another page of these notes
+            // (#area or #area-3) goes to that page: the rail links say which.
+            const id = decodeURIComponent(location.hash.slice(1));
+            let to;
+            if (id && !document.getElementById(id))
+              for (const a of document.querySelectorAll("[data-cl-rail] a")) {
+                const area = a.hash.slice(1);
+                if ((id === area || id.startsWith(`${area}-`)) && (!to || area.length > to.hash.length - 1)) to = a;
+              }
+            if (to && to.pathname !== location.pathname) location.replace(to.pathname + location.hash);
+          }
+        </script>
+      )
+    }
+  </main>
+</Layout>
+
+<ChangelogRail />

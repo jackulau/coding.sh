@@ -8,8 +8,16 @@ export function setupRail() {
   stop = undefined;
   const rail = document.querySelector<HTMLElement>("[data-cl-rail]");
   if (!rail) return;
-  const links = [...rail.querySelectorAll<HTMLAnchorElement>("a[href*='#']")];
-  const targets = links.map((a) => document.getElementById(decodeURIComponent(a.hash.slice(1))));
+  // Only sections on this page: a long release's rail also links its other pages.
+  const links: HTMLAnchorElement[] = [];
+  const targets: HTMLElement[] = [];
+  for (const a of rail.querySelectorAll<HTMLAnchorElement>("a[href*='#']")) {
+    const t = a.pathname === location.pathname ? document.getElementById(decodeURIComponent(a.hash.slice(1))) : null;
+    if (t) {
+      links.push(a);
+      targets.push(t);
+    }
+  }
   if (!links.length) return;
 
   let current = -1;
