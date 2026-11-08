@@ -46,7 +46,8 @@ There is no build step for development and no formatter; match the style of the 
   there is nothing to report. A flag with a colon (`gateway:vercel`, `skill:pdf`) is a tag, not a
   failure.
 - When an adapter parses a source differently, bump its `parseVersion` so stored sessions are
-  parsed again.
+  parsed again. When the stats, flags or titles derived from the same stored events change, bump
+  `SESSION_FOLD_VERSION` in `src/core/sessions.ts` so stored sessions are folded again.
 
 ## Tests and fixtures
 

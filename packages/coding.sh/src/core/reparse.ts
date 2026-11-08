@@ -24,29 +24,41 @@
 //
 // Readers never wait and never see a half-rebuilt session: transcripts and
 // spool are read with no lock held, and each session is swapped in one
-// transaction (IndexStore.replaceSessionEvents) under the ingest lock, taken
-// per batch so hook ingests interleave. One re-parse runs at a time
-// (`<data>/reparse.lock`). Memory is bounded: only stale sessions' events are
-// buffered, flushed between transcript files once FLUSH_EVENTS pile up; a
-// session whose transcript spans files flushed apart is rebuilt by the first
-// flush and topped up by the later ones.
+// transaction (IndexStore.replaceSessionEvents) under the ingest lock, held
+// for at most LOCK_HOLD_MS at a time. Between holds, when a hook or a read
+// left the ingest wake marker, the spool is ingested (onWake), so captures
+// keep landing during a long re-parse and a read never waits for it. Blob
+// puts go through a write-behind batch, flushed before any row is written.
+// One re-parse runs at a time (`<data>/reparse.lock`); it is incremental: a
+// session is stamped with the new version as it is rebuilt, so a re-parse
+// cut short resumes with the sessions still stale. Memory is bounded: only
+// stale sessions' events are buffered, flushed between transcript files once
+// FLUSH_EVENTS pile up; a session whose transcript spans files flushed apart
+// is rebuilt by the first flush and topped up by the later ones.
 //
 // Automatic runs (`ingest --background`, which reads and the viewer start when
 // due) do the stale sessions once per set of adapter versions: a stamp of the
 // versions is kept under the cursor REPARSE_CURSOR. `ingest --rebuild` does
 // every session (optionally of some agents) now.
+//
+// Refold: when SESSION_FOLD_VERSION changes (how stats and flags are derived
+// from stored events), an automatic run then folds every other session again
+// from its stored rows, with no source re-read, under the same short lock
+// holds. Its progress is kept (REFOLD_AFTER), so a cut-short pass resumes; the
+// version it finished is kept under REFOLD_CURSOR.
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AgentEvent } from "../schema/index.ts";
 import type { Adapter, BackfillFile, BlobStore, Config, IndexStore } from "./types.ts";
 import { sha256Hex } from "./ids.ts";
-import { acquireLock, type Lock, type LockOptions } from "./lock.ts";
+import { acquireLock, wakeMarker, type Lock, type LockOptions } from "./lock.ts";
 import { paths } from "./paths.ts";
-import { isBackfillEvent } from "./sessions.ts";
+import { isBackfillEvent, SESSION_FOLD_VERSION } from "./sessions.ts";
 import { COPY_SLACK_MS, copyFilter, messageKey } from "./message-copies.ts";
 import { listSpoolFiles, readSpoolFile } from "./spool-read.ts";
 import { repoResolver } from "./repo-state.ts";
 import { isWrapperLine } from "../adapters/more/wrapper.ts";
+export { REFOLD_CURSOR } from "./ingest.ts";
 import {
   backfillEvent,
   childLinker,
@@ -54,6 +66,7 @@ import {
   parseVersionFor,
   profileCache,
   recomputeSession,
+  REFOLD_CURSOR,
   spoolNormalizer,
   toolDurationFiller,
   type IngestError,
@@ -65,11 +78,15 @@ export const REPARSE_CURSOR = "reparse:stamp";
 export const reparseKeptKey = (sessionId: string): string => `reparse:kept:${sessionId}`;
 /** kv: JSON summary of the last re-parse (when, counts, first errors). */
 export const REPARSE_LAST = "reparse:last";
+/** kv: `{ v, id }` of an unfinished refold: sessions up to id (in id order) are done. */
+const REFOLD_AFTER = "reparse:fold-after";
+/** Refolded sessions between progress saves. */
+const REFOLD_SAVE_EVERY = 100;
 
 /** Buffered transcript events that trigger a flush at the next file boundary. */
 const FLUSH_EVENTS = 20_000;
-/** Sessions written per ingest-lock hold. */
-const LOCK_BATCH = 50;
+/** Longest ingest-lock hold while sessions are written (at least one session per hold). */
+const LOCK_HOLD_MS = 1_000;
 /** Slack when checking that spool lines span the stored hook rows. */
 const SPAN_SLACK_MS = 60_000;
 const MAX_ERRORS = 100;
@@ -83,10 +100,10 @@ export function parseStamp(adapters: ReadonlyMap<string, Adapter>): number {
 }
 
 export interface ReparseProgress {
-  phase: "spool" | "transcripts" | "sessions";
+  phase: "spool" | "transcripts" | "sessions" | "refold";
   /** Agent whose transcripts are being read (phase "transcripts"). */
   agent?: string;
-  /** Sessions done so far, of `total`. */
+  /** Sessions done so far, of `total` (phase "refold": sessions refolded, of those to refold). */
   done: number;
   total: number;
 }
@@ -108,6 +125,8 @@ export interface ReparseOptions {
   runLock?: false | (LockOptions & { path?: string });
   /** Held while sessions are written (default `<spoolDir>/.ingest.lock` when the spool dir exists, wait 30 s). false = none. */
   ingestLock?: false | (LockOptions & { path?: string });
+  /** Run between ingest-lock holds while the lock's wake marker is set (a hook or a read has spool lines waiting): an ingest. */
+  onWake?: () => Promise<void>;
   now?: () => number;
 }
 
@@ -128,6 +147,8 @@ export interface ReparseResult {
   /** Rows deleted and inserted. */
   removed: number;
   inserted: number;
+  /** Sessions folded again from their stored rows because SESSION_FOLD_VERSION changed. */
+  refolded: number;
   errors: IngestError[];
 }
 
@@ -142,12 +163,17 @@ async function staleSessions(index: IndexStore, adapters: ReadonlyMap<string, Ad
 }
 
 /**
- * True when stale sessions wait for an automatic re-parse. One cursor read
- * while the adapter versions match the last run's stamp; otherwise a scan of
- * the session rows, and the stamp is set right away when none is stale.
+ * True when stale sessions wait for an automatic re-parse, or stored sessions
+ * for a refold. Two cursor reads while the adapter versions match the last
+ * run's stamp and the fold version its refold; otherwise a scan of the
+ * session rows, and the stamp is set right away when none is stale.
  */
 export async function reparseDue(index: IndexStore, adapters: ReadonlyMap<string, Adapter>): Promise<boolean> {
   if (!index.replaceSessionEvents) return false;
+  if ((await index.getCursor(REFOLD_CURSOR)) !== SESSION_FOLD_VERSION) {
+    if ((await index.listSessions({ limit: 1 })).length) return true;
+    await index.setCursor(REFOLD_CURSOR, SESSION_FOLD_VERSION);
+  }
   const stamp = parseStamp(adapters);
   if ((await index.getCursor(REPARSE_CURSOR)) === stamp) return false;
   if ((await staleSessions(index, adapters)).length) return true;
@@ -220,7 +246,7 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
   const env = opts.env ?? process.env;
   const now = opts.now ?? Date.now;
   const spoolDir = opts.spoolDir ?? paths(env).spool;
-  const result: ReparseResult = { sessions: 0, reparsed: 0, kept: 0, keptSessions: [], removed: 0, inserted: 0, errors: [] };
+  const result: ReparseResult = { sessions: 0, reparsed: 0, kept: 0, keptSessions: [], removed: 0, inserted: 0, refolded: 0, errors: [] };
   const error = (e: IngestError) => {
     if (result.errors.length < MAX_ERRORS) result.errors.push(e);
   };
@@ -246,7 +272,9 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
   async function run(): Promise<void> {
     const stamp = parseStamp(adapters);
     const wanted = opts.agents?.length ? new Set(opts.agents) : undefined;
-    const targets = (opts.all ? await index.listSessions({}) : await staleSessions(index, adapters)).filter(
+    // The parsers are the ones the last finished run used: what is still stale is what it kept (no source left), so only refold.
+    const sameParsers = !opts.all && !wanted && (await index.getCursor(REPARSE_CURSOR)) === stamp;
+    const targets = (opts.all ? await index.listSessions({}) : sameParsers ? [] : await staleSessions(index, adapters)).filter(
       (s) => versionOf(adapters, s.agent) !== undefined && (!wanted || wanted.has(s.agent) || (s.provider !== undefined && wanted.has(s.provider))),
     );
     result.sessions = targets.length;
@@ -270,13 +298,17 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
       }
     }
 
+    // Blob puts write behind (most are hits: the content is already stored); flushed before any row is written.
+    const blobBatch = blobs.batch?.();
+    const blobStore = blobBatch ?? blobs;
+
     // Hook rows: every spool line still on disk, re-normalized.
     const profileFor = profileCache(config, env, error);
     const spoolEvents = new Map<string, AgentEvent[]>();
     const spoolSources = new Set(SPOOL_SOURCES);
     if (spoolAdapters.size && existsSync(spoolDir)) {
       progress({ phase: "spool" });
-      const normalize = spoolNormalizer({ adapters, blobs, env, profileFor, error, excluded: () => {} });
+      const normalize = spoolNormalizer({ adapters, blobs: blobStore, env, profileFor, error, excluded: () => {} });
       for (const file of await listSpoolFiles(spoolDir)) {
         for await (const rec of readSpoolFile(spoolDir, file.path, 0, { onError: () => {} })) {
           const a = adapters.get(rec.line.agent) ?? (isWrapperLine(rec.line) ? adapters.get("wrapper") : undefined);
@@ -361,35 +393,44 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
       await index.kvSet?.(reparseKeptKey(id), JSON.stringify({ version: version, reason, at: now() }));
     };
 
-    // Writes run under the ingest lock, a batch at a time, so a hook ingest waits at most one batch.
-    const writeBatch = async (items: [string, AgentEvent[] | undefined][]) => {
-      for (let i = 0; i < items.length; i += LOCK_BATCH) {
-        let lock: Lock | undefined;
-        if (opts.ingestLock !== false && existsSync(spoolDir)) {
-          const lo = opts.ingestLock ?? {};
-          lock = await acquireLock(lo.path ?? join(spoolDir, ".ingest.lock"), lo);
-        }
+    // Writes run under the ingest lock, held LOCK_HOLD_MS at most; spool lines waiting are ingested between holds.
+    const lockOpts = opts.ingestLock !== false && existsSync(spoolDir) ? opts.ingestLock ?? {} : undefined;
+    const lockPath = lockOpts && (lockOpts.path ?? join(spoolDir, ".ingest.lock"));
+    const underLock = async <T>(items: T[], each: (item: T) => Promise<void>) => {
+      let i = 0;
+      while (i < items.length) {
+        const lock = lockPath ? await acquireLock(lockPath, lockOpts) : undefined;
+        const until = now() + LOCK_HOLD_MS;
         try {
-          for (const [id, transcript] of items.slice(i, i + LOCK_BATCH)) {
+          do {
             lock?.assertHeld();
-            try {
-              await rebuild(id, transcript);
-            } catch (err) {
-              failed.add(id);
-              error({ message: `re-parse of session ${id} failed: ${(err as Error).message}` });
-            }
-            progress({ phase: "sessions" });
-          }
+            await each(items[i++]!);
+          } while (i < items.length && now() < until);
         } finally {
           lock?.release();
         }
+        if (lockPath && opts.onWake && existsSync(wakeMarker(lockPath))) {
+          await opts.onWake().catch((err: Error) => error({ message: `ingest between re-parse batches failed: ${err.message}` }));
+        }
       }
+    };
+    const writeBatch = async (items: [string, AgentEvent[] | undefined][]) => {
+      await blobBatch?.flush();
+      await underLock(items, async ([id, transcript]) => {
+        try {
+          await rebuild(id, transcript);
+        } catch (err) {
+          failed.add(id);
+          error({ message: `re-parse of session ${id} failed: ${(err as Error).message}` });
+        }
+        progress({ phase: "sessions" });
+      });
     };
 
     // Backfill rows: each adapter's transcripts, every file, keeping only the targets' events.
     const ctxBase = profileFor(undefined);
     const metadata = ctxBase.config.capture.mode === "metadata";
-    const ctx = normalizeContext(ctxBase, blobs, metadata);
+    const ctx = normalizeContext(ctxBase, blobStore, metadata);
     for (const id of transcriptAdapters) {
       const adapter = adapters.get(id)!;
       progress({ phase: "transcripts", agent: id });
@@ -437,11 +478,44 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
       await flush();
     }
 
+    async function refold(): Promise<void> {
+      let after = "";
+      try {
+        const saved = JSON.parse((await index.kvGet?.(REFOLD_AFTER)) ?? "null") as { v?: number; id?: string } | null;
+        if (saved?.v === SESSION_FOLD_VERSION && typeof saved.id === "string") after = saved.id;
+      } catch {
+        // unreadable progress: start over
+      }
+      const ids = (await index.listSessions({}))
+        .map((s) => s.id)
+        .filter((id) => id > after && !done.has(id) && !failed.has(id))
+        .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      let n = 0;
+      opts.onProgress?.({ phase: "refold", done: 0, total: ids.length });
+      await underLock(ids, async (id) => {
+        try {
+          if (await recomputeSession(index, id, { linker, repo })) result.refolded++;
+        } catch (err) {
+          error({ message: `refold of session ${id} failed: ${(err as Error).message}` });
+        }
+        n++;
+        if (n % REFOLD_SAVE_EVERY === 0) await index.kvSet?.(REFOLD_AFTER, JSON.stringify({ v: SESSION_FOLD_VERSION, id }));
+        opts.onProgress?.({ phase: "refold", done: n, total: ids.length });
+      });
+    }
+
     // Everything not rebuilt from a transcript: spool only, or nothing left to read.
     await writeBatch(targets.filter((s) => !done.has(s.id) && !failed.has(s.id)).map((s) => [s.id, undefined]));
+
+    // Refold: every session not rebuilt above (OTel and SDK sessions too), from its stored rows, once per fold version.
+    if (!wanted && (await index.getCursor(REFOLD_CURSOR)) !== SESSION_FOLD_VERSION) {
+      await refold();
+      await index.setCursor(REFOLD_CURSOR, SESSION_FOLD_VERSION);
+      await index.kvSet?.(REFOLD_AFTER, undefined);
+    }
     await linker.apply();
 
     if (!wanted) await index.setCursor(REPARSE_CURSOR, stamp);
-    await index.kvSet?.(REPARSE_LAST, JSON.stringify({ at: now(), all: !!opts.all, sessions: result.sessions, reparsed: result.reparsed, kept: result.kept, errors: result.errors.slice(0, 5) }));
+    await index.kvSet?.(REPARSE_LAST, JSON.stringify({ at: now(), all: !!opts.all, sessions: result.sessions, reparsed: result.reparsed, kept: result.kept, refolded: result.refolded, errors: result.errors.slice(0, 5) }));
   }
 }

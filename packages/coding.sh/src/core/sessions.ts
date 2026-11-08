@@ -397,8 +397,10 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
 
 /**
  * Bumped whenever SessionState (or anything folded into it) changes shape or
- * meaning: a saved fold of another version is dropped and the session rebuilt
- * from all its events.
+ * meaning, or sessionOf derives other stats, flags or titles from it: a saved
+ * fold of another version is dropped and the session rebuilt from all its
+ * events, and every stored session is folded again once in the background
+ * (core/reparse.ts, REFOLD_CURSOR), so old sessions get the new derivation.
  */
 export const SESSION_FOLD_VERSION = 3; // 3: TamperState tracks shell calls, own lines and source edits since the last green run.
 

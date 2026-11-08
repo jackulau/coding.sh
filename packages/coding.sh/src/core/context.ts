@@ -4,6 +4,7 @@ import type { BlobStore, Config, IndexStore, Sink } from "./types.ts";
 import { loadConfig } from "./config.ts";
 import { paths } from "./paths.ts";
 import { openStores } from "../store/factory.ts";
+import { LockBusyError } from "./lock.ts";
 import type { BackfillResult, IngestOptions, IngestResult } from "./ingest.ts";
 import type { GcOptions, GcResult } from "./gc.ts";
 import type { ReparseOptions, ReparseResult } from "./reparse.ts";
@@ -49,7 +50,7 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
   const { index, blobs, sinks } = await openStores(config);
   let closed = false;
   const p = paths(env);
-  return {
+  const ctx: Context = {
     config,
     paths: p,
     env,
@@ -69,7 +70,13 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
     },
     async reparse(o = {}) {
       const [{ reparse }, { ADAPTERS }] = await Promise.all([import("./reparse.ts"), import("../adapters/index.ts")]);
-      return reparse({ ...o, config, index, blobs, env, spoolDir: p.spool, adapters: new Map(ADAPTERS.map((a) => [a.id, a])) });
+      // Between its lock holds, a re-parse ingests what hooks and reads left waiting (another ingest running: skip).
+      const onWake = async () => {
+        await ctx.ingest({ lock: { waitMs: 0 } }).catch((e: unknown) => {
+          if (!(e instanceof LockBusyError)) throw e;
+        });
+      };
+      return reparse({ onWake, ...o, config, index, blobs, env, spoolDir: p.spool, adapters: new Map(ADAPTERS.map((a) => [a.id, a])) });
     },
     async reparseDue() {
       const [{ reparseDue }, { ADAPTERS }] = await Promise.all([import("./reparse.ts"), import("../adapters/index.ts")]);
@@ -87,4 +94,5 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
       if (failed) throw failed.reason;
     },
   };
+  return ctx;
 }

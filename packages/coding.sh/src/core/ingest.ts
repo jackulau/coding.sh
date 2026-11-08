@@ -201,6 +201,15 @@ export function validEvent(e: AgentEvent): string | undefined {
 export { BACKFILL_SOURCES } from "./sessions.ts";
 const isBackfill = isBackfillEvent;
 
+/** Cursor holding the SESSION_FOLD_VERSION every stored session was last folded with (core/reparse.ts refolds the rest). */
+export const REFOLD_CURSOR = "reparse:fold";
+
+/** A store with no sessions yet has nothing to refold: marks it current before its first session lands. */
+async function markFreshStore(index: IndexStore): Promise<void> {
+  if ((await index.getCursor(REFOLD_CURSOR)) === SESSION_FOLD_VERSION) return;
+  if (!(await index.listSessions({ limit: 1 })).length) await index.setCursor(REFOLD_CURSOR, SESSION_FOLD_VERSION);
+}
+
 /** kv key holding a pending parent link for a child session. */
 export const childLinkKey = (childId: string): string => `child-link:${childId}`;
 
@@ -276,6 +285,7 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   const now = opts.now ?? Date.now;
   const checkpointEvents = opts.checkpointEvents ?? DEFAULT_CHECKPOINT_EVENTS;
   const result: IngestResult = { lines: 0, events: 0, sessions: 0, excluded: 0, errors: [], sinks: [], pendingFiles: 0 };
+  await markFreshStore(index);
   let droppedErrors = 0;
   const error = (e: IngestError) => {
     if (result.errors.length < MAX_ERRORS) result.errors.push(e);
@@ -912,6 +922,7 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   const { config, index, blobs } = opts;
   const env = opts.env ?? process.env;
   const result: BackfillResult = { events: 0, duplicates: 0, sessions: 0, excluded: 0, errors: [], agents: [], pendingFiles: 0 };
+  await markFreshStore(index);
   const profileFor = profileCache(config, env, (e) => result.errors.push(e));
   const base = profileFor(undefined);
   const metadata = base.config.capture.mode === "metadata";

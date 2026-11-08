@@ -602,6 +602,29 @@ describe("cli zero setup", () => {
     assert.equal(first.spool.lines, 1, "the skipped lines are still there");
     assert.equal(second.spool.lines, 0, "and are ingested exactly once");
   });
+
+  it("a read during a re-parse doesn't wait for the ingest lock and leaves the wake marker for it", async () => {
+    const h = tmpHome();
+    assert.equal(cli(h, ["init", "--agent", "claude-code", "--yes"]).status, 0);
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries({ ...h.env, CODING_SH_NO_AUTO_INGEST: "1" })) if (v !== undefined) env[k] = v;
+    const payload = { session_id: "waiting", hook_event_name: "Stop", cwd: h.home };
+    spawnSync(process.execPath, [join(h.data, "bin", "hook.mjs"), "claude-code", "Stop"], { env, input: JSON.stringify(payload), encoding: "utf8" });
+    const marker = join(h.data, "spool", ".ingest.pending");
+    rmSync(marker, { force: true });
+
+    const { acquireLock } = await import("../../src/core/lock.ts");
+    const reparse = await acquireLock(join(h.data, "reparse.lock"));
+    const ingest = await acquireLock(join(h.data, "spool", ".ingest.lock"));
+    try {
+      const r = cli(h, ["sessions", "--json"], { CODING_SH_NO_AUTO_INGEST: "1" });
+      assert.equal(r.status, 0, r.stderr);
+      assert.ok(existsSync(marker), "the re-parse ingests the waiting line between its lock holds");
+    } finally {
+      ingest.release();
+      reparse.release();
+    }
+  });
 });
 
 describe("cli ingest re-parse", () => {

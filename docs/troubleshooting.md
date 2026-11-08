@@ -110,8 +110,13 @@ For an agent sending over OpenTelemetry or the SDK:
 Sessions captured before an upgrade keep the rows the older coding.sh parsed. When an adapter's
 parsing changes, coding.sh re-parses that agent's stored sessions in the background, from their
 transcripts and from the hook lines still in the spool. This runs on the next session end, read
-or viewer start after the upgrade. Each session is swapped in one step, so reads never wait or see
-it half done.
+or viewer start after the upgrade. Each session is swapped in one step, so reads never see it half
+done. The re-parse holds the ingest lock for at most a second at a time, and between those holds it
+ingests the hook lines that arrived meanwhile, so a read made while it runs doesn't wait for it and
+new sessions keep showing up. Sessions are marked as they are rebuilt, so a re-parse that is cut
+short (the laptop sleeps, the process is killed) picks up where it stopped. When an upgrade changes
+how stats and flags are worked out (a `test-tamper` or `skill:` fix, say), the same background run
+works them out again for every stored session from the rows it already has.
 
 - **Do it now.** `coding.sh ingest --rebuild` re-parses every session. Add `--agent pi` for one
   agent. It prints how many sessions it re-parsed and how many it kept.

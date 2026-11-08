@@ -1,11 +1,12 @@
 // Helpers shared by command modules (loaded only after dispatch).
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { openContext, type Context } from "../core/context.ts";
 import type { IngestError } from "../core/ingest.ts";
 import type { EvalTask, Session } from "../core/types.ts";
 import type { GateOpts } from "../stats/tests.ts";
 import { parseWhere, QueryError, QueryUnsupported, type Query } from "../query/where.ts";
 import { runningCli } from "../mcp/launch.ts";
+import { isLocked, wakeMarker } from "../core/lock.ts";
 import { spawnBackgroundIngest } from "../spool/kick.ts";
 import { UsageError, type FlagValue } from "./args.ts";
 import { ago, CliError, plural, type Output } from "./output.ts";
@@ -94,6 +95,8 @@ export function readIngest(c: CommandContext): AutoIngestOptions {
  * cover exactly what was stored) and leaves the rest to a background ingest,
  * so a big backlog never blanks a read. Returns the source files still waiting.
  * While another ingest holds the lock, the spool files it has yet to read count as waiting.
+ * While a re-parse runs, the read takes the lock only if it is free right now: the re-parse
+ * holds it in short stretches and ingests between them what the wake marker says is waiting.
  */
 export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promise<IngestBacklog> {
   // A remote store (--store / CODING_SH_STORE_URL) is read as is: never push this machine's spool into it.
@@ -103,9 +106,10 @@ export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promi
   let busy = false;
   let indexing = false;
   if (existsSync(ctx.paths.spool)) {
+    const reparsing = isLocked(ctx.paths.reparseLock);
     try {
       const r = await ctx.ingest({
-        lock: { waitMs: Math.min(1500, o.budgetMs ?? 1500) },
+        lock: { waitMs: reparsing ? 0 : Math.min(1500, o.budgetMs ?? 1500) },
         ...(deadline !== undefined ? { deadline } : {}),
         ...(o.signal ? { signal: o.signal } : {}),
         ...(o.onProgress ? { onProgress: o.onProgress } : {}),
@@ -116,7 +120,15 @@ export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promi
       if (!lockContention(e)) throw e;
       busy = true;
       const { spoolBacklog } = await import("../core/ingest.ts");
-      pending += await spoolBacklog(ctx.index, ctx.paths.spool).catch(() => 0);
+      const waiting = await spoolBacklog(ctx.index, ctx.paths.spool).catch(() => 0);
+      pending += waiting;
+      if (waiting && reparsing) {
+        try {
+          writeFileSync(wakeMarker(ctx.paths.ingestLock), "", { mode: 0o600 });
+        } catch {
+          // the re-parse ingests at its next hook's marker instead
+        }
+      }
     }
   }
   if (!o.signal?.aborted) pending += await tailIngest(ctx, deadline);
@@ -144,10 +156,11 @@ let reparseKicked = false;
 async function kickReparse(ctx: Context, env: NodeJS.ProcessEnv): Promise<void> {
   if (reparseKicked || env.CODING_SH_NO_AUTO_INGEST === "1") return;
   try {
+    // A re-parse already running: don't scan the session rows to find out it is due.
+    if (isLocked(ctx.paths.reparseLock)) return;
     if (!(await ctx.reparseDue())) return;
     reparseKicked = true;
-    const { isLocked } = await import("../core/lock.ts");
-    if (!isLocked(ctx.paths.reparseLock)) spawnBackgroundIngest(ingestCli(ctx.paths.cliPointer), env);
+    spawnBackgroundIngest(ingestCli(ctx.paths.cliPointer), env);
   } catch {
     // a store that can't answer must not break `coding.sh sessions`
   }

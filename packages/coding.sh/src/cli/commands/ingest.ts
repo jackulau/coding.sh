@@ -71,6 +71,7 @@ export async function run(c: CommandContext): Promise<number> {
     if (rp) {
       out.row("Re-parsed", `${plural(rp.reparsed, "session")} (${plural(rp.removed, "row")} removed, ${rp.inserted} written)${rp.errors.length ? `, ${plural(rp.errors.length, "error")}` : ""}`, rp.errors.length ? "warn" : "ok");
       out.row("Kept", `${plural(rp.kept, "session")} without a source to re-read`, "ok");
+      if (rp.refolded) out.row("Refolded", `${plural(rp.refolded, "session")} from their stored rows (new stats and flags)`, "ok");
       for (const [reason, n] of keptReasons(rp).slice(0, 3)) out.note(`${n} kept: ${reason}`);
     }
     for (const e of [...r.errors, ...(bf?.errors ?? []), ...(rp?.errors ?? [])].slice(0, 5)) out.note(typeof e === "string" ? e : JSON.stringify(e));
@@ -99,7 +100,7 @@ async function reparseWithProgress(ctx: Context, out: Output, o: { all?: boolean
     return await ctx.reparse({
       ...(o.all ? { all: true } : {}),
       ...(o.agents?.length ? { agents: o.agents } : {}),
-      onProgress: (p) => spin.update(p.phase === "spool" ? "Re-reading the spool…" : p.phase === "transcripts" ? `Re-reading ${p.agent} transcripts… (${p.done}/${p.total} sessions)` : `Re-parsing sessions… ${p.done}/${p.total}`),
+      onProgress: (p) => spin.update(p.phase === "spool" ? "Re-reading the spool…" : p.phase === "transcripts" ? `Re-reading ${p.agent} transcripts… (${p.done}/${p.total} sessions)` : p.phase === "refold" ? `Refolding sessions… ${p.done}/${p.total}` : `Re-parsing sessions… ${p.done}/${p.total}`),
     });
   } catch (e) {
     if (lockContention(e)) throw new CliError(`Can't re-parse: ${(e as Error).message}`, { reason: "locked", next: ["Wait for the other re-parse or ingest to finish, then run:", "coding.sh ingest --rebuild"] });

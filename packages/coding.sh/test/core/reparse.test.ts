@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -7,9 +7,10 @@ import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
 import type { Adapter } from "../../src/core/types.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { backfill, ingest } from "../../src/core/ingest.ts";
-import { acquireLock } from "../../src/core/lock.ts";
+import { acquireLock, wakeMarker } from "../../src/core/lock.ts";
 import { paths } from "../../src/core/paths.ts";
-import { REPARSE_CURSOR, reparse, reparseDue, reparseKeptKey } from "../../src/core/reparse.ts";
+import { REFOLD_CURSOR, REPARSE_CURSOR, reparse, reparseDue, reparseKeptKey } from "../../src/core/reparse.ts";
+import { SESSION_FOLD_VERSION } from "../../src/core/sessions.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { loadSqlite, MIGRATIONS, SqliteIndexStore } from "../../src/store/sqlite.ts";
 
@@ -86,7 +87,7 @@ async function setup(transcripts: { path: string; events: Raw[] }[] = []) {
     appendFileSync(join(spool, file), JSON.stringify({ v: 0, agent: "vf", event: `E${n++}`, ts: T0 + at * 1000, pid: 1, cwd: root, raw }) + "\n");
   const base = { config, index, blobs, env };
   return {
-    root, env, spool, adapter, adapters, index, hook,
+    root, env, spool, adapter, adapters, index, blobs, hook,
     ingest: () => ingest({ ...base, adapters }),
     backfill: () => backfill({ ...base, adapters: [adapter] }),
     reparse: (o: { all?: boolean; agents?: string[] } = {}) => reparse({ ...base, adapters, ...o }),
@@ -204,6 +205,81 @@ describe("reparse", () => {
     const mine = await t.reparse({ all: true, agents: ["vf"] });
     assert.equal(mine.reparsed, 1);
     assert.equal(await t.due(), false, "nothing stale left: the stamp is set by the check");
+    await t.index.close();
+  });
+
+  it("holds the ingest lock briefly and ingests what hooks spool meanwhile between holds", async () => {
+    const t = await setup();
+    for (let i = 0; i < 4; i++) t.hook(`d1.${i}.jsonl`, { session: `s${i}`, kind: "llm.call", model: "m" }, i);
+    await t.ingest();
+    t.adapter.parseVersion = 2;
+    const lockPath = join(t.env.CODING_SH_HOME, "spool", ".ingest.lock");
+    let clock = T0;
+    let wakes = 0;
+    const seen: boolean[] = [];
+    const r = await reparse({
+      config: defaultConfig(t.env), index: t.index, blobs: t.blobs, env: t.env, adapters: t.adapters,
+      // Each session takes longer than a hold: the lock is released after every one.
+      now: () => (clock += 5_000),
+      onWake: async () => {
+        wakes++;
+        await ingest({ config: defaultConfig(t.env), index: t.index, blobs: t.blobs, env: t.env, adapters: t.adapters });
+      },
+      onProgress: (p) => {
+        if (p.phase !== "sessions") return;
+        seen.push(existsSync(lockPath));
+        if (p.done === 1) {
+          // A hook spools a line and touches the wake marker while the re-parse holds the lock.
+          t.hook("d2.9.jsonl", { session: "fresh", kind: "llm.call", model: "m" }, 9);
+          writeFileSync(wakeMarker(lockPath), "");
+        }
+      },
+    });
+    assert.equal(r.reparsed, 4);
+    assert.ok(seen.every(Boolean), "every session is written under the ingest lock");
+    assert.equal(wakes, 1, "the marker woke one ingest, after the hold it was left in");
+    assert.equal((await t.stats("fresh")).events, 1, "the line spooled mid-re-parse is indexed");
+    await t.index.close();
+  });
+
+  it("a new fold version refolds every stored session once, from its rows, and a cut-short pass resumes", async () => {
+    const t = await setup();
+    for (const s of ["a", "b", "c"]) t.hook(`d1.${s}.jsonl`, { session: s, kind: "llm.call", model: "m" }, 1);
+    await t.ingest();
+    assert.equal(await t.due(), false, "a store whose sessions all came from this version has nothing to refold");
+    // Sessions an older coding.sh derived: a flag this version no longer gives, and its fold version.
+    for (const id of ["a", "b", "c"]) {
+      const s = (await t.index.getSession(id))!;
+      await t.index.upsertSession({ ...s, flags: [...s.flags, "old-flag"] });
+    }
+    await t.index.setCursor(REFOLD_CURSOR, SESSION_FOLD_VERSION - 1);
+    // An earlier pass got as far as "a" before it was stopped.
+    await t.index.kvSet!("reparse:fold-after", JSON.stringify({ v: SESSION_FOLD_VERSION, id: "a" }));
+    assert.equal(await t.due(), true);
+    const r = await t.reparse();
+    assert.deepEqual([r.sessions, r.refolded], [0, 2], "nothing stale; b and c refolded, a was done");
+    const flags = async (id: string) => (await t.index.getSession(id))!.flags.includes("old-flag");
+    assert.deepEqual([await flags("a"), await flags("b"), await flags("c")], [true, false, false]);
+    assert.equal(await t.index.getCursor(REFOLD_CURSOR), SESSION_FOLD_VERSION);
+    assert.equal(await t.due(), false);
+    assert.equal((await t.reparse()).refolded, 0, "once per fold version");
+    // A session the last run under these parsers kept (stale, no source it could use) is refolded, not read again.
+    const c = (await t.index.getSession("c"))!;
+    await t.index.upsertSession({ ...c, parseVersion: t.adapter.parseVersion! - 1 });
+    await t.index.setCursor(REFOLD_CURSOR, SESSION_FOLD_VERSION - 1);
+    const fold = await t.reparse();
+    assert.deepEqual([fold.sessions, fold.refolded], [0, 3]);
+    assert.equal((await t.index.getSession("c"))!.parseVersion, t.adapter.parseVersion! - 1);
+    // `ingest --rebuild` re-parses every adapter session; one no adapter made (OTel, SDK) is refolded.
+    await t.index.replaceSessionEvents!("otel", [], [{ id: "o1", v: 0, sessionId: "otel", ts: T0, agent: "otel", kind: "llm.call", payload: { model: "m" } }]);
+    for (const id of ["a", "otel"]) {
+      const s = (await t.index.getSession(id)) ?? { id, agent: "otel", startedAt: T0, stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] };
+      await t.index.upsertSession({ ...s, flags: [...s.flags, "old-flag"] });
+    }
+    await t.index.setCursor(REFOLD_CURSOR, SESSION_FOLD_VERSION - 1);
+    const all = await t.reparse({ all: true });
+    assert.deepEqual([all.sessions, all.refolded], [3, 1]);
+    assert.deepEqual([await flags("a"), await flags("otel")], [false, false]);
     await t.index.close();
   });
 

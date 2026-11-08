@@ -7,7 +7,8 @@
 // EIO, a killed writer): it is reported and skipped, so the cursor reaches the
 // end of the file and gc can remove it. The writer starts its next line on a
 // fresh line after such a fragment (spool/write.ts).
-import { open, readdir, readFile, stat } from "node:fs/promises";
+import { readdirSync, statSync } from "node:fs";
+import { open, readFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { SpoolLine } from "./types.ts";
 
@@ -60,12 +61,16 @@ const DAY_PREFIX = /^(\d{4}-\d{2}-\d{2})\./;
  * `<day>.<pid>.jsonl`, so the pid part says nothing about order (9999 and
  * 10000 sort the wrong way as strings, and pids wrap); mtime is when the line
  * was written. A tool.start is then normally read before its tool.end.
+ *
+ * Stats are synchronous: a week of hook calls is tens of thousands of files,
+ * and one awaited stat each costs a thread-pool round trip (seconds on a big
+ * spool, against well under a second for statSync).
  */
 export async function listSpoolFiles(spoolDir: string): Promise<SpoolFile[]> {
   const out: SpoolFile[] = [];
   let agents: string[];
   try {
-    agents = await readdir(spoolDir);
+    agents = readdirSync(spoolDir);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw err;
@@ -74,8 +79,8 @@ export async function listSpoolFiles(spoolDir: string): Promise<SpoolFile[]> {
     const dir = join(spoolDir, agent);
     let names: string[];
     try {
-      if (!(await stat(dir)).isDirectory()) continue;
-      names = await readdir(dir);
+      if (!statSync(dir).isDirectory()) continue;
+      names = readdirSync(dir);
     } catch {
       continue;
     }
@@ -84,9 +89,9 @@ export async function listSpoolFiles(spoolDir: string): Promise<SpoolFile[]> {
       if (!name.endsWith(".jsonl")) continue;
       const path = join(dir, name);
       try {
-        const s = await stat(path);
+        const s = statSync(path);
         if (!s.isFile()) continue;
-        files.push({ source: toSource(spoolDir, path), path, agent, size: s.size, mtimeMs: s.mtimeMs, day: DAY_PREFIX.exec(name)?.[1] ?? "", name });
+        files.push({ source: `${agent}/${name}`, path, agent, size: s.size, mtimeMs: s.mtimeMs, day: DAY_PREFIX.exec(name)?.[1] ?? "", name });
       } catch {
         // Deleted between readdir and stat (gc in another process): skip.
       }
