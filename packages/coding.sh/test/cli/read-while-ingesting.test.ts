@@ -23,9 +23,10 @@ import { median, threadCpuMs } from "../helpers-timing.ts";
 const roots: string[] = [];
 after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
 
-// In-process commands' adapters look for T3 Code and Codex stores through process.env: keep them off this machine's.
+// In-process commands' adapters look for Claude Code, T3 Code and Codex history through process.env: keep them off this machine's.
 const isolated = mkdtempSync(join(tmpdir(), "csh-v1-agents-"));
 roots.push(isolated);
+process.env.CLAUDE_CONFIG_DIR = join(isolated, "claude");
 process.env.T3CODE_HOME = join(isolated, "t3");
 process.env.CODEX_HOME = join(isolated, "codex");
 

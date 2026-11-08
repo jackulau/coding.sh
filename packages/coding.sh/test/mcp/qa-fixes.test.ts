@@ -39,6 +39,12 @@ async function call(name: string, args: Record<string, unknown> = {}): Promise<R
 
 before(async () => {
   w = makeWorld();
+  // In-process reads resolve agent homes (Claude, Codex, T3) through process.env;
+  // point them at the world's empty HOME so they never read this machine's real sessions.
+  Object.assign(process.env, { HOME: w.env.HOME, USERPROFILE: w.env.HOME });
+  delete process.env.CLAUDE_CONFIG_DIR;
+  delete process.env.T3CODE_HOME;
+  delete process.env.CODEX_HOME;
   mkdirSync(stale(), { recursive: true });
   const now = w.now;
   const sessions: AgentEvent[][] = [];

@@ -602,6 +602,12 @@ export const claudeCode: Adapter = {
 
   normalize: (line, ctx) => normalizeClaudeLine(line, ctx),
   backfill: (ctx, opts) => backfillClaude(ctx, opts),
+  // Zero-setup reads: until `init` installs our hooks, a read imports the
+  // transcripts already on disk, so `coding.sh usage` works with no setup and
+  // shows all of a user's Claude Code history. Once hooked, live hooks and the
+  // spool capture, so stop re-reading all of history on every read. Imports are
+  // keyed by session id, so a later `init` backfill never doubles them.
+  tailWhenUnhooked: () => (hasOurHooks(CLAUDE_AGENT, join(claudeConfigDir(), "settings.json")) ? false : {}),
   run: runClaude,
   canResume: true,
   overlay: overlayClaude,

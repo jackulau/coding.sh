@@ -52,6 +52,13 @@ sessions; `gemini-cli` stays for older Gemini CLI history. Aider is stale (last 
 | Aider | `.aider.chat.history.md` (markdown, no session id). Usage from its `Tokens: … sent, … received` and `Cost: $… message, $… session` lines. | `aider -m "…" --yes-always --no-auto-commits --model M --no-stream --no-pretty` | `-c file`, `--read CONVENTIONS.md` | C |
 | T3 Code | SQLite `$T3CODE_HOME/userdata/statev2.sqlite` (default `~/.t3`; `orchestration_v2_projection_*`), v1 `state.sqlite`. Read as copies. | None (desktop GUI) | — | B |
 
+**History on read.** Before `coding.sh init` installs its hooks, a read (`usage`, `sessions`,
+`show`, `ui`) imports Claude Code's transcripts already on disk, so `coding.sh usage` works with no
+setup and shows all of your history. Once the hooks are installed, live capture and the spool take
+over and the transcripts are not re-read on every read (an explicit `ingest --backfill` still does).
+Imports key on the session id, so running `init` later never doubles a session. Codex does the same,
+but only for the narrow window after `init` while its hooks are untrusted or disabled (see below).
+
 ## Subagents
 
 How each agent marks a subagent, and where coding.sh pairs it with its parent:

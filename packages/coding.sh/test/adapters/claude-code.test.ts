@@ -304,6 +304,15 @@ describe("claude-code install", () => {
     assert.equal((await claudeCode.detect()).hooked, false);
   });
 
+  it("imports history on read until our hooks are installed", async () => {
+    writeFile(settings(), "{}\n"); // valid settings, no coding.sh hooks
+    assert.deepEqual(claudeCode.tailWhenUnhooked!(), {}, "not inited: a read imports all transcripts");
+    await claudeCode.install({ hookCommand: hookCommand(), scope: "user", dryRun: false });
+    assert.equal(claudeCode.tailWhenUnhooked!(), false, "hooked: live capture, don't re-read history");
+    await claudeCode.uninstall({ scope: "user", dryRun: false });
+    assert.deepEqual(claudeCode.tailWhenUnhooked!(), {}, "uninstalled: import history again");
+  });
+
   it("creates and deletes a settings file it fully owns; project scope uses settings.local.json", async () => {
     const proj = join(env.root, "proj");
     const c = await claudeCode.install({ hookCommand: hookCommand(), scope: "project", projectDir: proj, dryRun: false });

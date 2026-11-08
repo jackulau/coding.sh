@@ -482,8 +482,9 @@ describe("freshness", () => {
   it("ingests newly spooled hook events before answering", async () => {
     const f = makeWorld();
     // In process, the store-based imports (T3's store, unhooked Codex transcripts) read process.env: point them at the world's HOME too.
-    const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, T3CODE_HOME: process.env.T3CODE_HOME, CODEX_HOME: process.env.CODEX_HOME };
+    const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR, T3CODE_HOME: process.env.T3CODE_HOME, CODEX_HOME: process.env.CODEX_HOME };
     Object.assign(process.env, { HOME: f.env.HOME, USERPROFILE: f.env.HOME });
+    delete process.env.CLAUDE_CONFIG_DIR;
     delete process.env.T3CODE_HOME;
     delete process.env.CODEX_HOME;
     const { createCodingShMcp } = await import("../../src/mcp/server.ts");
@@ -514,8 +515,9 @@ describe("freshness", () => {
 
   it("answers within its ingest budget from what is indexed, with pending: { files, indexing }, until the backlog is gone", async () => {
     const f = makeWorld();
-    const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, T3CODE_HOME: process.env.T3CODE_HOME, CODEX_HOME: process.env.CODEX_HOME };
+    const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR, T3CODE_HOME: process.env.T3CODE_HOME, CODEX_HOME: process.env.CODEX_HOME };
     Object.assign(process.env, { HOME: f.env.HOME, USERPROFILE: f.env.HOME });
+    delete process.env.CLAUDE_CONFIG_DIR;
     delete process.env.T3CODE_HOME;
     delete process.env.CODEX_HOME;
     const dir = join(f.env.CODING_SH_HOME!, "spool", "claude-code");
