@@ -27,7 +27,14 @@ it took.
 **Model call.** One request to a model, stored as an `llm.call` event with tokens, latency, time to
 first token and, when the agent reports it, cost. OpenTelemetry and the SDKs record model calls
 directly. Coding-agent hooks do not see them, so most adapters recover them from the agent's
-transcript. See [Agents and OpenTelemetry](guides/agents.md).
+transcript. See [Agents and OpenTelemetry](guides/agents.md). With
+[the proxy](how-to/capture-with-proxy.md), a model call also keeps the full request and response:
+system prompt, tool definitions, messages, cache use and timings. `coding.sh show <session>#n` reads
+one, and `coding.sh diff-calls` compares two.
+
+**Replay.** `coding.sh exp replay` sends a logged model call again with one thing changed (the
+model, the system prompt, a setting), several times per arm, and compares the arms like an
+experiment.
 
 **Subagent.** A child agent started by a session, such as Claude Code's Task tool or a nested agent
 span in an OpenTelemetry trace. It is stored as

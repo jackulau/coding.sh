@@ -80,6 +80,7 @@ same `CODING_SH_HOME` as the server.
 | POST | [`/v1/traces`](#post-v1traces-post-v1logs-post-v1metrics) | ingest key | serve, collector |
 | POST | [`/v1/logs`](#post-v1traces-post-v1logs-post-v1metrics) | ingest key | serve, collector |
 | POST | [`/v1/metrics`](#post-v1traces-post-v1logs-post-v1metrics) | ingest key | serve, collector |
+| POST | [`/proxy/{path}`](#post-proxypath) | ingest key in `x-coding-sh-key` | serve |
 | GET | [`/healthz`](#get-healthz) | none | serve |
 | GET | [`/readyz`](#get-readyz) | none | serve |
 | GET | [`/metrics`](#get-metrics) | `*` read key or basic auth | serve |
@@ -267,6 +268,39 @@ rest are kept and the 200 body says so (`rejectedLogRecords` for logs):
 | 415 | other `Content-Type`, or an unknown `Content-Encoding` | `{"code":3,"message":"unsupported Content-Type \"text/plain\"; use application/x-protobuf or application/json"}` |
 | 429 | ingest queue full; `Retry-After` set | `{"code":8,"message":"ingest queue is full; retry after 1s"}` |
 | 503 | store error, shutting down, or a standby replica; `Retry-After` set | `{"code":14,"message":"server is shutting down; retry"}` |
+
+## Model API proxy
+
+### `POST /proxy/{path}`
+
+The model API proxy of [`coding.sh proxy`](../how-to/capture-with-proxy.md), mounted so a team
+needs one URL. `/proxy/v1/messages` and `/proxy/v1/messages/count_tokens` go to the Anthropic API,
+`/proxy/v1/chat/completions` and `/proxy/v1/responses` to the OpenAI API; any other path and
+method is forwarded without being logged. Upstreams come from `[proxy]` in the server's
+`config.toml`.
+
+The ingest key goes in `x-coding-sh-key` and picks the project the call is logged into. It is
+dropped before forwarding. `Authorization` and `x-api-key` carry the client's own API key, which
+goes upstream unchanged and is never stored. Streams pass through as they arrive.
+
+```sh
+curl -sS "$CSH/proxy/v1/messages" -H "x-coding-sh-key: $INGEST_KEY" \
+  -H "x-api-key: $ANTHROPIC_API_KEY" -H "anthropic-version: 2023-06-01" -H "content-type: application/json" \
+  -d '{"model": "claude-haiku-4-5", "max_tokens": 64, "messages": [{"role": "user", "content": "hi"}]}'
+```
+
+The upstream's status, headers and body come back as they are. The proxy's own errors use the
+Anthropic error shape, so agents show the message:
+
+| Status | When | Body |
+|---|---|---|
+| 401 | missing or wrong ingest key | `{"type":"error","error":{"type":"authentication_error","message":"coding.sh serve: missing or invalid ingest key; send it in the x-coding-sh-key header"}}` |
+| 404 | the server runs `--role viewer` | `{"error":"this replica runs --role viewer and takes no ingest","status":404}` |
+| 403 | a browser request (`Origin` other than localhost) | `{"type":"error","error":{"type":"invalid_request_error","message":"coding.sh proxy: cross-origin requests are not allowed"}}` |
+| 502 | the upstream could not be reached | `{"type":"error","error":{"type":"api_error","message":"coding.sh proxy: upstream https://api.anthropic.com unreachable (…)"}}` |
+
+Each call becomes an `llm.call` event with `source: "proxy"`, read back with
+[`GET /api/calls/{id}`](#get-apicallsid).
 
 ## Health and metrics
 
@@ -458,6 +492,17 @@ enclosing call or an earlier copy of the same response already counted it. `stat
 (`count`, plus the first failure's `statusCode` and `error`) counts `llm.call` events with
 `ok: false` or a status of 400 or more; it is absent when none failed.
 
+Model calls logged by [`coding.sh proxy`](../how-to/capture-with-proxy.md) have `source: "proxy"`.
+Their payload adds `provider`, `api` (`messages`, `count_tokens`, `chat` or `responses`),
+`statusCode`, `stream`, `ttfbMs`, `ttftMs`, `stopReason`, `systemHash` and `toolsHash` (16 hex
+characters each), `toolNames`, `toolCount`, `messageCount`, `prompt` (the last user message,
+clipped), `linkedBy` (`header`, `metadata`, `previous-response` or `conversation`: how the call
+found its session), rate limits (`rlRequestsRemaining`, `rlTokensRemaining`, … when the API sent
+them), `errorClass` on failure, and `requestRef` and
+`responseRef` (the stored request and response blobs, absent in `metadata` mode). When the
+session also has model calls from the agent's transcript or OpenTelemetry, those count toward
+`stats` and the proxy's copies are detail only; failed proxy calls count either way.
+
 Two waste stats are absent when there is nothing to report. `stats.waste` (`duplicateFetches`,
 `duplicateFetchTokens`, `readOnlyCalls`) counts read-only calls that repeated an earlier call in the
 same context with the same result, and the tokens they sent again (output length / 4).
@@ -628,7 +673,7 @@ an unknown one gets 404 `{"error":"blob not found","status":404}`.
 
 ### `GET /api/calls/{id}`
 
-One model call logged by `coding.sh proxy`: the `llm.call`
+One model call logged by [`coding.sh proxy`](../how-to/capture-with-proxy.md): the `llm.call`
 event, the request as the client sent it (system prompt and tool definitions put back from their
 blobs; auth headers are never stored) and the response. `{id}` is the event id or a unique prefix
 of at least 6 characters. `request` and `response` are `null` in `metadata` capture mode.

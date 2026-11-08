@@ -116,6 +116,11 @@ interface Sink {
     <li>Each session counts what was redacted, by kind (<code>stats.redactions</code>, counts only). A session in which a vendor token was redacted gets the <code>secret:exposed</code> tag: the agent and its model provider saw the credential, so rotate it. <code>coding.sh sessions --flag secret:exposed</code> lists them.</li>
     <li>A value that got past redaction can be removed afterwards: <code>coding.sh purge --literal leaked.txt</code> reads one value per line (<code>-</code> reads stdin) and replaces every copy with <code>[redacted:purged]</code> in events and the search index, sessions, labels, eval docs, blobs (rewritten under a new hash), the spool and eval run dirs, then VACUUMs the index. <code>--rule '&lt;regex&gt;'</code> purges every match of a pattern instead, such as a token prefix and length. <code>--dry-run</code> counts the copies first. SQLite store only; rotate the secret too.</li>
     <li><code>capture.mode = "metadata"</code> keeps ids, timings, kinds, counts and usage, and drops prompts, code and tool output.</li>
+    <li>
+      <a href="/docs/how-to/capture-with-proxy">The model API proxy</a> stores each call's request (system prompt, tools, messages) and
+      response, redacted first, and an allowlist of headers. It never stores <code>Authorization</code>, <code>x-api-key</code> or cookies.
+      In metadata mode it keeps hashes, counts, tool names, usage and timings only.
+    </li>
   </ul>
 
   <h2 id="sinks">Sinks <Tag status="built" /></h2>

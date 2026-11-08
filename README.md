@@ -65,6 +65,9 @@ source, updates and uninstall: [docs/guides/install.md](docs/guides/install.md).
 **Record.** Hooks and transcripts capture each session, including subagents.
 `coding.sh run -- <cmd>` wraps any other agent and snapshots the repo before and after.
 `coding.sh collector` takes OpenTelemetry from agent frameworks and apps.
+`coding.sh init --proxy` routes Claude Code and Codex through a local API proxy that logs each model
+call's system prompt, tools, messages and cache use. More in
+[docs/how-to/capture-with-proxy.md](docs/how-to/capture-with-proxy.md).
 
 **Measure.** Every session has its turns, tool calls, model calls, tokens, latency and outcome.
 Sessions that edited code and never ran a check get a `no-verification` flag.
@@ -78,6 +81,7 @@ coding.sh sessions             # recent sessions
 coding.sh show latest          # timeline with turns, tools, subagents and latency
 coding.sh search "rate limit"  # full-text search over prompts, replies and tool calls
 coding.sh usage --by model     # tokens, turns and cache hits
+coding.sh diff-calls latest#-1 # what changed since the previous model call, and why the cache missed
 coding.sh ui                   # the local viewer
 ```
 
@@ -87,7 +91,8 @@ More in [docs/guides/explore.md](docs/guides/explore.md).
 **Compare.** Turn a failed session into a replayable eval with `coding.sh eval new`, and check
 that its verifier is fair with `coding.sh eval validate`. Run experiments over versioned datasets
 with code graders or calibrated LLM judges. `coding.sh exp compare` and `coding.sh compare` A/B
-prompts, harness files and models with paired statistics. Tool evals and multi-agent workflow
+prompts, harness files and models with paired statistics. `coding.sh exp replay` resends one logged
+model call with another model or system prompt. Tool evals and multi-agent workflow
 runs are covered too. More in [docs/guides/evals.md](docs/guides/evals.md).
 
 **Benchmark.** `coding.sh bench` draws new cases every day from a script, your failed sessions,

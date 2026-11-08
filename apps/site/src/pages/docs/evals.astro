@@ -44,6 +44,10 @@ const spec = `{
   ]
 }`;
 
+const replayCall = `coding.sh exp replay latest#-1 --vary model=claude-sonnet-4-5,claude-haiku-4-5 --n 5 --dry-run
+coding.sh exp replay latest#-1 --vary model=claude-sonnet-4-5,claude-haiku-4-5 --n 5
+coding.sh exp replay --session latest --limit 10 --vary system=@new-prompt.md`;
+
 const judge = `coding.sh ui                                   # label sessions pass / fail
 coding.sh judge calibrate <experiment> --criterion outcome --split test`;
 
@@ -511,6 +515,21 @@ const TRIGGER = [
     The output above is the CI check with real Claude Code against a stub model. Eight prompts can't show a change of this size, so the verdict
     holds. <code>--min-f1</code> and <code>--fail-on regression</code> set the exit code for CI. See
     <a href="https://github.com/jackulau/coding.sh/blob/main/docs/how-to/evaluate-a-skill.md#does-the-skill-load">Does the skill load?</a>.
+  </p>
+
+  <h2 id="exp-replay">Replay a model call <Tag status="built" /></h2>
+  <p>
+    <code>exp ab</code> replays a whole turn with the agent. <code>exp replay</code> replays one model call: the exact request
+    <a href="/docs/how-to/capture-with-proxy">the proxy</a> logged, sent again with the model, the system prompt or any request field
+    changed. One <code>--vary</code> value changes arm B and keeps arm A as recorded; two values set both.
+  </p>
+  <Code code={replayCall} />
+  <p>
+    Each reply is graded by whether its first action (a tool call by name, or text) matches the one the agent took;
+    <code>--criterion</code> adds an LLM judge. The two arms are experiments, so the report is the paired comparison of
+    <code>exp compare</code>. It calls the API with your own <code>ANTHROPIC_API_KEY</code> or <code>OPENAI_API_KEY</code>, never the
+    agent's login, and stops before any call when the key is not set. <code>--dry-run</code> prints the call count and an estimated cost
+    without a key.
   </p>
 
   <h2 id="judges">LLM judges <Tag status="built" /></h2>

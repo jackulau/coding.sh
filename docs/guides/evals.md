@@ -1562,6 +1562,28 @@ McNemar at k=1 and the prompts whose majority answer flipped. `--min-f1 X` exits
 arm's F1 is under X. `--fail-on regression` exits 1 when B's CI is below 0. Results go to
 `~/.coding.sh/triggers/<skill>/`. See [Does the skill load?](../how-to/evaluate-a-skill.md#does-the-skill-load).
 
+## Replay a model call
+
+`exp ab` replays a whole next turn with the agent. `exp replay` replays one model call: the exact
+request [the proxy](../how-to/capture-with-proxy.md) logged, sent again with the model, the system
+prompt or any request field changed.
+
+```sh
+coding.sh exp replay latest#-1 --vary model=claude-sonnet-4-5,claude-haiku-4-5 --n 5 --dry-run
+coding.sh exp replay latest#-1 --vary model=claude-sonnet-4-5,claude-haiku-4-5 --n 5
+coding.sh exp replay --session latest --limit 10 --vary system=@new-prompt.md
+```
+
+One `--vary` value changes arm B and keeps arm A as recorded; two values set both. Each reply is
+graded by whether its first action (a tool call by name, or text) matches the one the agent took.
+`--criterion` adds an LLM judge and `--grader` any grader above. The two arms are experiments, so the
+report is the paired comparison of `exp compare`, and `exp compare` and `exp show` read them later.
+
+It calls the API with your own `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, never the agent's login, and
+stops before any call when the key is not set. `--dry-run` prints the call count and an estimated
+cost without a key; `--max-cost` refuses a run estimated above it. Replay needs calls logged in
+capture mode `full`.
+
 ## Tool evals
 
 `coding.sh toolevals` measures how well agents use a CLI, MCP server or HTTP API: surface size,

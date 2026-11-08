@@ -74,6 +74,13 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
 - **Repo-level config can only add privacy.** A `.coding.sh/config.toml` inside a repository may
   add redaction rules or switch to metadata mode. It can never add sinks or move the stores, so a
   cloned repo cannot exfiltrate your sessions.
+- **The model API proxy** ([Capture with the proxy](../how-to/capture-with-proxy.md)) stores each
+  call's request (system prompt, tool definitions, messages and settings) and response, redacted with
+  the same rules before they are written. It keeps an allowlist of headers (API version, beta flags,
+  user agent, session ids, request ids, rate limits) and never stores `Authorization`, `x-api-key`
+  or cookies, so no API key or login token is kept. In metadata mode it keeps hashes of the system
+  prompt and tools, counts, tool names, usage and timings. The proxy listens on 127.0.0.1 unless you
+  pass `--host`.
 - **Raw spool.** The hook writes the agent's raw payload to `~/.coding.sh/spool` (mode 600), and
   redaction happens when that file is ingested. `coding.sh gc` deletes ingested spool files older
   than 7 days (`[retention] keepSpoolDays`).

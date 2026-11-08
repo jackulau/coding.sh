@@ -119,6 +119,12 @@ order.
 - **Claude Code:** the model reads as unknown when large tool results fill the transcript tail; scan backwards further. `SubagentStop` lacks `tool_use_id`. Old `Task` matchers never fire; use `Agent`.
 - **Claude Code:** files a Bash command edits (`sed -i`, heredoc writes, `tee`) are in the tool result's `toolUseResult.bashEditDiff` (per-file hunks, plus `changedFiles` past the first few), which becomes `file.change`. It is on by default only in auto and bypass-permissions modes; `CLAUDE_CODE_BASH_EDIT_DIFF=true` or the `bashEditDiffEnabled` setting turns it on elsewhere. The diff lists every file that changed while the command ran, including ones it never touched (a `git rebase`, a test run's output, another agent in the same checkout), so `test-tamper` only counts a file the command names.
 - **Claude Code:** context loaded mid-session is only in transcript `attachment` lines, never in hooks: `nested_memory` (a subdirectory's CLAUDE.md), `dynamic_skill` (a nested `.claude/skills` became available) and `invoked_skills` (skills restored after a compaction). A Skill call's "Base directory for this skill" line names the skill's folder. Each becomes a `notification` with `payload.kind: "harness.loaded"` and `loadedBy`, paths and skill names (never the text). Live windows read them too; the attachment's uuid keys the event, so backfill and live capture store it once.
+- **Model API proxy** (`init --proxy`): Claude Code 2.1.319 sends `x-claude-code-session-id` on every
+  call (older versions: `metadata.user_id`), and Codex 0.167.0 sends `session-id`/`thread-id` (its
+  thread id), so proxy calls join the hook session. Codex 0.167.0 sends its system prompt as leading
+  `developer` items in `input`, not `instructions`. Codex signed in with ChatGPT sends
+  `chatgpt-account-id`, and the proxy forwards it to the ChatGPT backend. Verified by
+  `scripts/e2e/proxy-capture.mjs`.
 - **OpenCode 2.0** broke git-ai's and Entire's plugins. Pin the plugin to the V2 API and detect the version.
 - **Copilot:** bash-only hooks fail on Windows, so provide `powershell` too. Token totals are written after hooks return, so read them at backfill.
 - **Amp:** no session id in tool payloads. Correlate by `thread.id` from `session.start`.

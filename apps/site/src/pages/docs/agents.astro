@@ -108,6 +108,16 @@ const hook = `node "/Users/you/.coding.sh/bin/hook.mjs" <agent-id> <EventName>  
     <li><strong>Antigravity CLI</strong> (<code>agy</code>) replaced Gemini CLI. Record it with the <code>antigravity</code> adapter; <code>gemini-cli</code> still reads sessions from older installs.</li>
   </ul>
 
+  <h2 id="proxy">Model API proxy</h2>
+  <p>
+    Hooks and transcripts record what an agent did. To also record what it sent the model (the full system prompt, tool definitions
+    and messages of every call), route it through the local proxy with <code>coding.sh init --proxy</code>. It points Claude Code
+    (<code>ANTHROPIC_BASE_URL</code> in <code>settings.json</code>) and Codex (a <code>coding-sh</code> provider in
+    <code>config.toml</code>) at <code>coding.sh proxy</code> on <code>127.0.0.1:4320</code> and starts it. Both agents name their
+    session on every call, so each call lands in the session their hooks capture. Other clients use
+    <code>eval "$(coding.sh proxy env)"</code>. See <a href="/docs/how-to/capture-with-proxy">Capture with the proxy</a>.
+  </p>
+
   <h2 id="other-agents">Other agents</h2>
   <p>{PLANNED_AGENTS.join(", ")} have no adapter yet. Record them with <code>coding.sh run -- &lt;cmd&gt;</code>, which keeps the start, end, exit code, duration and file changes.</p>
 </DocsLayout>

@@ -26,6 +26,7 @@ Short recipes you can run as written.
 | Doc | What |
 |---|---|
 | [how-to/trace-your-agent.md](how-to/trace-your-agent.md) | trace your own agent with OpenTelemetry or the SDKs, then eval and compare it |
+| [how-to/capture-with-proxy.md](how-to/capture-with-proxy.md) | log every model call through a local API proxy, see why the prompt cache missed, replay a call with another model |
 | [how-to/trace-durable-workflow.md](how-to/trace-durable-workflow.md) | trace a Vercel Workflow or Temporal run as one session, with attempts, waits and resumes |
 | [how-to/test-claude-md-change.md](how-to/test-claude-md-change.md) | test a CLAUDE.md change in five minutes, on your own sessions |
 | [how-to/compare-agents.md](how-to/compare-agents.md) | compare two coding agents on your repo |

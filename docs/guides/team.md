@@ -108,6 +108,20 @@ are also sent whenever you run a `coding.sh` command. To check that it works, ru
   `TEAM_KEY`, or coding.sh refuses to load the config. A key written directly in your own config
   file avoids that.
 
+### The model API proxy
+
+The server also mounts [the proxy](../how-to/capture-with-proxy.md) at `/proxy/`, so one URL logs
+every model call the team's agents make. Point an agent's base URL at it and send an ingest key in
+`x-coding-sh-key`; each call lands in that key's project:
+
+```sh
+export ANTHROPIC_BASE_URL=https://obs.example.com/proxy
+export ANTHROPIC_CUSTOM_HEADERS="x-coding-sh-key: $INGEST_KEY"
+```
+
+The agent's own API key still goes to the API unchanged, and is never stored. The ingest key is
+dropped before the call is forwarded. Upstreams come from `[proxy]` in the server's config.
+
 ## 5. Send your apps
 
 Set two environment variables wherever the app runs, using that service's key:

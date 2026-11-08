@@ -41,6 +41,10 @@ function serverRoutes(): Map<string, string> {
     routes.set(key(path.startsWith("/v1/") ? "POST" : "GET", path), collector.has(path) ? "serve, collector" : "serve");
   }
 
+  // The model API proxy's mount: every path under PROXY_PREFIX (documented as POST, what agents send).
+  const prefix = /export const PROXY_PREFIX = "(\/[^"]+\/)"/.exec(serve)?.[1];
+  if (prefix && /path\.startsWith\(PROXY_PREFIX\)\) return proxy\(req, res\)/.test(serve)) routes.set(key("POST", `${prefix}{path}`), "serve");
+
   // viewer/server.ts: the page, then routeApi's switch. Served by `serve` and `ui`.
   assert.match(viewer, /req\.method !== "GET" && req\.method !== "HEAD"/, "the page is GET/HEAD");
   for (const m of viewer.matchAll(/path === "(\/[^"]*)"/g)) routes.set(key("GET", m[1]!), "serve, ui");
@@ -98,7 +102,7 @@ describe("docs/reference/api.md", () => {
 
   it("finds the server's routes", () => {
     assert.ok(server.size >= 20, `found ${server.size} routes`);
-    for (const r of ["POST /v1/ingest", "POST /v1/traces", "GET /healthz", "GET /api/sessions/{}/events", "POST /api/labels"]) {
+    for (const r of ["POST /v1/ingest", "POST /v1/traces", "GET /healthz", "GET /api/sessions/{}/events", "POST /api/labels", "POST /proxy/{}"]) {
       assert.ok(server.has(r), r);
     }
   });

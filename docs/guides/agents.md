@@ -39,6 +39,21 @@ What the statuses mean:
 
 Import past sessions with `coding.sh ingest --backfill [--since 30d]`.
 
+## Model API proxy
+
+Hooks and transcripts record what an agent did. To also record what it sent the model (the full
+system prompt, tool definitions and messages of every call), route it through the local proxy:
+
+```sh
+coding.sh init --proxy
+```
+
+This points Claude Code (`ANTHROPIC_BASE_URL` in `settings.json`) and Codex (a `coding-sh` provider
+in `config.toml`) at `coding.sh proxy` on `127.0.0.1:4320` and starts it. Both agents name their
+session on every call, so each call lands in the session their hooks capture. For other clients,
+`eval "$(coding.sh proxy env)"` sets `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`. See
+[Capture with the proxy](../how-to/capture-with-proxy.md).
+
 ## OpenTelemetry
 
 Agent frameworks and apps that export OpenTelemetry can send traces to a local receiver.

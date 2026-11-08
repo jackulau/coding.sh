@@ -54,6 +54,22 @@ $ coding.sh sessions --where 'agent:codex modle:x'
 Every command takes `--json` and `--help`. `coding.sh` with no command runs `init` until capture
 is set up, then opens the viewer.
 
+## Model calls
+
+Calls logged by [the proxy](../how-to/capture-with-proxy.md) keep their full request and response.
+
+```sh
+coding.sh show latest#-1           # the last model call: system prompt, tools, settings, cache, usage, cost
+coding.sh show <session>#3 --all   # the third call, with the whole system prompt
+coding.sh diff-calls latest#-1     # what changed since the call before, and why the cache missed
+coding.sh diff-calls <a> <b>       # any two calls
+```
+
+`diff-calls` compares model, settings, tool definitions, the system prompt (line by line) and the
+messages, in the order the prompt cache reads them, and names the first change that broke the cache.
+In the viewer, a proxy call in the timeline opens to the same view, with "Compare with the previous
+call".
+
 ## Long sessions
 
 A session can run for hours or days, with many compactions and resumes. coding.sh keeps it as
