@@ -608,7 +608,7 @@ export interface ComparePareto extends ParetoSupport {
 /**
  * The acceptance gate on per-task majority outcomes. wins: tasks A failed and
  * B passed; losses: tasks A passed and B failed; solved: paired tasks A passed.
- * A tamper-flagged B attempt counts as a fail here only (pass rates keep it).
+ * A tamper-flagged attempt, in either arm, counts as a fail here only (pass rates keep it).
  */
 export interface CompareGate extends GateResult {
   /** ship (accept), hold (not enough evidence) or dont-ship (B breaks solved tasks). */
@@ -879,7 +879,7 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
   const lost: string[] = [];
   const won: string[] = [];
   let solved = 0;
-  /** Per paired task: A's majority pass, and B's not counting tampered passes. */
+  /** Per paired task: each arm's majority pass, not counting tampered passes. */
   const gateCells: { id: string; a: boolean; b: boolean }[] = [];
   for (const id of taskIds) {
     const ra = ta.get(id) ?? [];
@@ -901,12 +901,15 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     const y = pb / rb.length >= 0.5;
     if (x && !y) mb++;
     else if (!x && y) mc++;
-    // The gate does not credit B for passes that edited, deleted or skipped tests.
-    const yg = rb.filter((r) => r.pass && !r.tamper?.flagged).length / rb.length >= 0.5;
-    if (x) solved++;
-    if (x && !yg) lost.push(id);
-    else if (!x && yg) won.push(id);
-    gateCells.push({ id, a: x, b: yg });
+    // The gate credits neither arm for passes that edited, deleted or skipped tests. Counting
+    // them for A only would call a task both arms passed the same way a task B broke.
+    const clean = (rs: readonly RunResult[]) => rs.filter((r) => r.pass && !r.tamper?.flagged).length / rs.length >= 0.5;
+    const xg = clean(ra);
+    const yg = clean(rb);
+    if (xg) solved++;
+    if (xg && !yg) lost.push(id);
+    else if (!xg && yg) won.push(id);
+    gateCells.push({ id, a: xg, b: yg });
     let divergence: Divergence | undefined;
     const ea = opts.events?.get((ra[0] as RunResult).id);
     const eb = opts.events?.get((rb[0] as RunResult).id);

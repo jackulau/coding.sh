@@ -106,6 +106,7 @@ coding.sh runs on Windows, and CI tests it there.
 
 ### Fixed
 
+- **Harness A/B.** `compare --gate` no longer says "Don't ship: B breaks a task A solved" when both arms passed it by editing tests. Tamper-flagged passes now count as fails for the gate in both arms, not only in B. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#harness-ab).
 - **Judges.** The Anthropic and OpenAI judge providers read `ANTHROPIC_BASE_URL` and `OPENAI_BASE_URL`, like the vendors' SDKs, so judges and drafts reach a proxy, gateway or local stub without `--base-url`. [Judges](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#judges).
 - **Experiments.** When no attempt in either arm solves a task, `compare` suggests `coding.sh eval validate <task>` instead of an `eval curate` command that does not exist.
 - **Privacy.** `coding.sh purge` never repeats what was typed on its command line: a secret pasted as an argument, a flag value, an unknown option or a `--literal` path that does not exist is refused with exit 2 and `(value not shown)`, instead of being printed to the terminal and logs. Other commands still name a stray argument. [Purge](https://github.com/jackulau/coding.sh/blob/main/docs/reference/cli.md#codingsh-purge).

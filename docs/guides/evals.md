@@ -938,8 +938,8 @@ ties are ignored. B ships when three things hold. First, wins minus λ times los
 `--lambda`, default 2, so one break cancels two fixes). Second, an exact one-sided binomial test on
 the wins and losses beats break-even at `--gate-alpha` (default 0.05). Third, B breaks at most
 `--tau` (default 10%) of the tasks A solved. This is SAGE's accept-or-abstain rule (Wang et al.,
-arXiv 2609.36043). The paper reports no default settings; these are ours. B passes that tampered
-with tests count as fails for the gate only. With `--without`, the line is labelled `drop-it gate`
+arXiv 2609.36043). The paper reports no default settings; these are ours. Passes that tampered
+with tests count as fails for the gate only, in both arms. With `--without`, the line is labelled `drop-it gate`
 and reads "Drop it" or "Keep it".
 
 On a mixed task pool the pooled gate can ship a change that breaks most of a small suite: 3 losses
