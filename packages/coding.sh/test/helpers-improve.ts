@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { AgentEvent } from "../src/core/types.ts";
 import { putSession, sessionEvents } from "./helpers-decision.ts";
 
 export interface World {
@@ -14,7 +15,8 @@ export interface World {
 }
 
 /** Before the CLAUDE.md change, 4 of 6 sessions edit without a check (or, with `beforeTested`, all 6 run the tests); after it, `afterFlagged` of 6 skip the check. With `elsewhere`, every session ran in another checkout of the repo (`<name>/other`). */
-export async function improveWorld(root: string, name: string, o: { afterFlagged: number; beforeTested?: boolean; elsewhere?: boolean; headless?: number }): Promise<World> {
+export async function improveWorld(root: string, name: string, opts: { afterFlagged: number; beforeTested?: boolean; elsewhere?: boolean; headless?: number; cacheBreaks?: boolean }): Promise<World> {
+  const o = opts;
   const elsewhere = o.elsewhere === true;
   const home = join(root, name, "home");
   const repo = join(root, name, "repo");
@@ -66,7 +68,13 @@ export async function improveWorld(root: string, name: string, o: { afterFlagged
       if (o.edit) steps.push(["tool.start", { tool: "Edit", toolUseId: `${id}-e`, input: { file_path: join(at, "index.js") } }], ["tool.end", { tool: "Edit", toolUseId: `${id}-e`, ok: true }], ["file.change", { path: "index.js", op: "modify" }]);
       if (o.test) steps.push(["tool.start", { tool: "Bash", toolUseId: `${id}-t`, input: { command: "npm test" } }], ["tool.end", { tool: "Bash", toolUseId: `${id}-t`, ok: true, output: "ok" }]);
       steps.push(["assistant.message", { text: "Done." }]);
-      const ev = sessionEvents(id, { cwd: at, startedAt: now - daysAgo * 86_400_000 }, steps).map((e) => ({ ...e, repo: { root: at, head } }));
+      const ev: AgentEvent[] = sessionEvents(id, { cwd: at, startedAt: now - daysAgo * 86_400_000 }, steps).map((e) => ({ ...e, repo: { root: at, head } }));
+      // cacheBreaks: two model calls ten minutes apart, so the second writes the whole prompt cache again (an idle break).
+      if (opts.cacheBreaks) {
+        const t = ev[0]!.ts;
+        const call = (n: number, ts: number, read: number, write: number): AgentEvent => ({ ...ev[0]!, id: `${id}-llm${n}`, kind: "llm.call", ts, model: "claude-opus-5-5", payload: { ok: true }, usage: { inputTokens: 40, outputTokens: 200, cacheReadTokens: read, cacheWriteTokens: write, costUsd: 1 } });
+        ev.push(call(0, t + 1, 0, 100_000), call(1, t + 2, 100_000, 2000), call(2, t + 2 + 10 * 60_000, 0, 102_000));
+      }
       return putSession(ctx.index, ev);
     };
     for (let k = 0; k < 6; k++) await put(`before-${k}`, commits.init, 11 - k * 0.5, o.beforeTested ? { edit: true, test: true } : { edit: k < 4, test: false });

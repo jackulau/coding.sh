@@ -11,9 +11,13 @@
 //             failed (core/failing-command.ts). A test command that already failed before the
 //             agent changed anything is a defect of the setup (factor 40);
 //             any other repeat is waste (25, or 40 from 6 failures up).
+//   cost      prompt-cache breaks (Session.stats.cacheBreaks): the extra
+//             dollars they cost, as a share of the spend sets the waste
+//             factor, with a fix per cause, costliest first (CACHE_BREAK_FIX).
 //
 // Pure: the caller loads sessions and their failure records (failureRecords).
-import type { AgentEvent, Session } from "../schema/index.ts";
+import type { AgentEvent, CacheBreakCause, Session } from "../schema/index.ts";
+import { CACHE_BREAK_FIX } from "../core/cache-breaks.ts";
 import { commandOf } from "../core/sessions.ts";
 import { flagFindings } from "../refine/findings.ts";
 import { natureScore, signalSeverity, type SeverityLevel } from "../refine/severity.ts";
@@ -30,9 +34,9 @@ export interface IssueExample {
 }
 
 export interface Issue {
-  /** `flag:<name>` or `fails:<key>`: stable across runs. */
+  /** `flag:<name>`, `fails:<key>` or `cost:cache-breaks`: stable across runs. */
   id: string;
-  kind: "flag" | "failure";
+  kind: "flag" | "failure" | "cost";
   /** What goes wrong, in plain words. */
   title: string;
   /** Distinct sessions with it, and sessions looked at. */
@@ -59,6 +63,18 @@ export interface Issue {
   sample?: string;
   /** failure: sessions where it failed before the agent changed any file. */
   beforeEdits?: number;
+  /** cost: the extra USD, summed from the sessions' own stats. */
+  usd?: number;
+  /** cost: the cache breaks by cause, costliest first, each with its fix. */
+  causes?: CacheCause[];
+}
+
+export interface CacheCause {
+  cause: CacheBreakCause;
+  breaks: number;
+  /** Extra USD; 0 when every break of this cause was on a model with no price. */
+  usd: number;
+  fix: string;
 }
 
 /** One failed command or tool call in a session. */
@@ -353,8 +369,68 @@ export function rankIssues(sessions: readonly Session[], failures: ReadonlyMap<s
       beforeEdits: g.before,
     });
   }
+  const cache = cacheIssue(sessions, maxEx);
+  if (cache) out.push(cache);
   // Something that happened in two or more sessions is a habit a line can change; a one-off goes after every habit.
   const recurring = (i: Issue) => (i.sessions >= 2 ? 1 : 0);
   out.sort((a, b) => recurring(b) - recurring(a) || b.severity.score - a.severity.score || b.sessions - a.sessions || (a.id < b.id ? -1 : 1));
   return out;
+}
+
+/** Cache breaks are listed from this many extra dollars, in two or more sessions. */
+export const CACHE_ISSUE_MIN_USD = 1;
+
+/** Waste points (FACTOR_POINTS) for cache breaks costing this share of the spend: under 2% small, from 50% severe. */
+export function cacheFactor(share: number): number {
+  return share >= 0.5 ? 85 : share >= 0.25 ? 65 : share >= 0.1 ? 40 : share >= 0.02 ? 25 : 10;
+}
+
+const usdText = (n: number): string => `$${n >= 100 ? Math.round(n).toLocaleString("en-US") : n.toFixed(2)}`;
+
+/**
+ * The cost of lost prompt cache, from what ingest already stored per session
+ * (Session.stats.cacheBreaks: count, extraUsd, byCause); nothing is recomputed.
+ * Its severity comes from dollars: the extra USD as a share of the sessions'
+ * spend sets the waste factor, so it ranks against the other issues by what it costs.
+ */
+export function cacheIssue(sessions: readonly Session[], maxExamples = 3): Issue | undefined {
+  const usd = (s: Session) => s.stats.cacheBreaks?.extraUsd ?? 0;
+  const hit = sessions.filter((s) => usd(s) > 0).sort((a, b) => usd(b) - usd(a) || byNewest(a, b));
+  const extra = hit.reduce((n, s) => n + usd(s), 0);
+  if (hit.length < 2 || extra < CACHE_ISSUE_MIN_USD) return undefined;
+  const spend = sessions.reduce((n, s) => n + (s.stats.usage?.costUsd ?? 0), 0);
+  // With no spend recorded the share is unknown: material waste (25), as a repeated failure.
+  const share = spend > 0 ? Math.min(1, extra / spend) : undefined;
+  const sev = signalSeverity([natureScore({ nature: "inefficiency", factor: share === undefined ? 25 : cacheFactor(share), affected: hit.length, analyzed: sessions.length })]);
+  const by = new Map<CacheBreakCause, { breaks: number; usd: number }>();
+  let breaks = 0;
+  for (const s of sessions) {
+    const cb = s.stats.cacheBreaks;
+    if (!cb) continue;
+    breaks += cb.count;
+    for (const [c, v] of Object.entries(cb.byCause) as [CacheBreakCause, { count: number; extraUsd?: number } | undefined][]) {
+      if (!v || !(c in CACHE_BREAK_FIX)) continue;
+      const g = by.get(c) ?? { breaks: 0, usd: 0 };
+      g.breaks += v.count;
+      g.usd += v.extraUsd ?? 0;
+      by.set(c, g);
+    }
+  }
+  const causes: CacheCause[] = [...by]
+    .map(([cause, g]) => ({ cause, breaks: g.breaks, usd: Math.round(g.usd * 100) / 100, fix: CACHE_BREAK_FIX[cause] }))
+    .sort((a, b) => b.usd - a.usd || b.breaks - a.breaks || (a.cause < b.cause ? -1 : 1));
+  const top = causes[0];
+  return {
+    id: "cost:cache-breaks",
+    kind: "cost",
+    title: `Pays ${usdText(extra)} again for prompt cache it lost (${breaks} cache ${breaks === 1 ? "break" : "breaks"}${share === undefined ? "" : `, ${share < 0.01 ? "under 1" : Math.round(share * 100)}% of the spend`})`,
+    sessions: hit.length,
+    analyzed: sessions.length,
+    severity: { score: sev.score, level: sev.level },
+    examples: hit.slice(0, maxExamples).map(example),
+    sessionIds: hit.map((x) => x.id),
+    fix: top ? `Keep the cache warm, costliest cause first. ${top.cause}: ${top.fix}.` : "Keep the prompt prefix stable between turns.",
+    usd: Math.round(extra * 100) / 100,
+    causes,
+  };
 }

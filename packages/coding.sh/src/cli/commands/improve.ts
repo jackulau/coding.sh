@@ -152,7 +152,7 @@ async function report(c: CommandContext): Promise<number> {
     for (const s of sessions) byAgent.set(s.agent, (byAgent.get(s.agent) ?? 0) + 1);
     out.print(`${plural(sessions.length, "session")} in ${where(o, c.cwd)} since ${o.sinceText} (${[...byAgent].map(([a, n]) => `${a} ${n}`).join(", ")})${leftOut}`);
     out.print("");
-    if (!top.length) out.print("Nothing to fix: no failure flags, and no command failing the same way in two sessions.");
+    if (!top.length) out.print("Nothing to fix: no failure flags, no command failing the same way in two sessions, and no costly cache breaks.");
     else out.print(out.style("Fix first", "bold"));
     top.forEach((i, k) => {
       const n = k + 1;
@@ -162,7 +162,10 @@ async function report(c: CommandContext): Promise<number> {
       if (i.quietSince) out.print(`   ${out.style(`Not seen in the ${plural(i.quietSince.sessions, "session")} since ${i.quietSince.commit} changed the harness`, "green")}`);
       if (ex?.title) out.print(`   e.g. ${JSON.stringify(ex.title.length > 80 ? `${ex.title.slice(0, 79)}…` : ex.title)}`);
       if (i.sample) out.print(`   error: ${i.sample}`);
-      if (!i.quietSince) out.print(`   Fix: ${i.fix}${i.rule ? ` Add: "${i.rule}"` : ""}`);
+      if (!i.quietSince && i.causes?.length) {
+        out.print("   Fix, costliest cause first:");
+        for (const k of i.causes) out.print(`     ${k.cause} (${k.usd ? `$${k.usd.toFixed(2)}, ` : ""}${plural(k.breaks, "break")}): ${k.fix}`);
+      } else if (!i.quietSince) out.print(`   Fix: ${i.fix}${i.rule ? ` Add: "${i.rule}"` : ""}`);
       for (const s of stepsFor(i, n, { provider })) out.print(`   ${out.style("→", "faint")} ${s.label}: ${out.style(s.command, "cyan")}`);
       out.print("");
     });

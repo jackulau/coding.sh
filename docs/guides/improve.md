@@ -38,7 +38,7 @@ sessions: `claude -p`, an Agent SDK or `codex exec`, the ones whose `stats.launc
 (see [concepts.md](../concepts.md)). Those are mostly scripts, judges and evals that nobody watched,
 and a CLAUDE.md line is not what changes them. The first line says how many headless sessions it
 left out, and `--headless` counts them. A session that does not say how it started stays in. It
-lists two kinds of issue:
+lists three kinds of issue:
 
 - **A failure flag**, such as an agent that says it is done without running anything, or one that
   ends its turn while tests fail without saying so. [concepts.md](../concepts.md) lists the flags.
@@ -54,6 +54,14 @@ lists two kinds of issue:
   assignments, flags and wrappers like `sudo` or `xargs` are never the command. When nothing singles
   out a part, the issue says "A compound command" rather than guess. A test summary that a command
   like `cat test.log` printed is not a test run, so it never makes `cat` a broken setup.
+
+- **Prompt cache paid for again**: the model calls that found the prompt cache gone, so the prompt
+  was billed again at the write rate (`stats.cacheBreaks`, see [the API reference](../reference/api.md)). The
+  issue says what that cost in dollars and as a share of the sessions' spend, and lists a fix for
+  each cause (compaction, a model switch, a wait longer than the cache lives, or other), costliest
+  first. The share sets its severity, from small under 2% of the spend to severe from 50%, so it
+  ranks against the other issues by what it costs. It is listed from $1 in two or more sessions,
+  and only for models with a price. `coding.sh usage --cache` breaks it down further.
 
 Issues seen in two or more sessions come first. Then the order follows the severity score that
 `coding.sh refine` uses. Each issue shows the newest example, what to try, and the commands for the
@@ -192,7 +200,8 @@ The coding.sh MCP server (`coding.sh init` sets it up) has the same loop:
 
 - The `improve` tool returns the ranked issues with the line, the file it goes in and the next
   commands, plus the verdicts for recent changes. It leaves out headless sessions as `improve`
-  does, and `scope.headlessLeftOut` counts them; `headless: true` counts them.
+  does, and `scope.headlessLeftOut` counts them; `headless: true` counts them The prompt cache issue carries `usd` and
+  `causes`, each with its `cause`, `breaks`, `usd` and `fix`.
 - The `harness_changes` tool returns each change with its before and after counts, how often the
   agent followed each new line, and the verdict. `after.flaggedSessions` lists the sessions still
   flagged after the change (`sessionId`, `at`, `flags`, `title`), newest first: five per change,

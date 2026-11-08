@@ -1239,6 +1239,7 @@ export const COMMANDS: CommandSpec[] = [
     notes: [
       "improve lists the failure flags in this repo's sessions and any command or tool that fails the same way in two or more sessions. Issues seen in two or more sessions come first, then by the severity score refine uses. Each issue has an example session, a fix, and the commands that take it through the loop: show, improve fix, exp ab, improve check.",
       "A failing test command that already failed before the agent changed any file is reported as a broken setup: fix the command first, or the agent can't check its work.",
+      "Prompt cache paid for again (stored cache breaks) is an issue from $1 in two or more sessions: its dollars and share of the spend set its severity, with a fix per cause, costliest first.",
       "Headless sessions (claude -p, an Agent SDK, codex exec: scripts, judges and evals) are left out, and the first line says how many; --headless counts them. Eval and benchmark runs and subagents are always left out.",
       "A failed compound line (&&, ;, |, a loop) counts against the part that failed: the one its error names, the tool whose error it is, the part timeout stopped, or the last part of a pipeline. When nothing singles one out, the issue says compound command.",
       "When sessions ran on the repo's current harness version (the newest commit that changed CLAUDE.md, AGENTS.md, a rule or a skill) and none of them had an issue, the issue is marked 'Not seen since <commit>', goes last, and points at improve check instead of a new line.",

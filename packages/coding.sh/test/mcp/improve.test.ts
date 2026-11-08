@@ -79,6 +79,24 @@ describe("improve tool", () => {
     }
   });
 
+  it("prices lost prompt cache with a fix per cause, and leaves headless runs out unless asked", async () => {
+    const world = await improveWorld(root, "cost", { afterFlagged: 0, cacheBreaks: true, headless: 2 });
+    const other = new RawClient(world.env as Record<string, string>, world.repo);
+    try {
+      await other.initialize();
+      const r = (await other.call("improve", { limit: 1 })).structuredContent as { scope: { sessions: number; headlessLeftOut?: number }; issues: Record<string, unknown>[] };
+      assert.deepEqual([r.scope.sessions, r.scope.headlessLeftOut], [12, 2]);
+      const i = r.issues[0]!;
+      assert.equal(i.id, "cost:cache-breaks");
+      assert.ok((i.usd as number) > 1);
+      assert.deepEqual((i.causes as { cause: string; breaks: number }[]).map((k) => [k.cause, k.breaks]), [["idle", 12]]);
+      const all = (await other.call("improve", { limit: 1, headless: true })).structuredContent as { scope: { sessions: number; headlessLeftOut?: number } };
+      assert.deepEqual([all.scope.sessions, all.scope.headlessLeftOut], [14, undefined]);
+    } finally {
+      await other.close();
+    }
+  });
+
   it("takes a repo by folder name and fails clearly on an unknown one", async () => {
     const r = (await call("improve", { repo: "repo", limit: 1 })) as { scope: { repo: string } };
     assert.equal(r.scope.repo, w.repo);

@@ -180,6 +180,10 @@ export function stepsFor(issue: Issue, n: number, o: { provider: ModelProvider |
   }
   if (issue.rule) steps.push({ label: "Commit it, then check new sessions against it", command: "coding.sh improve check" });
   if (issue.kind === "failure" && issue.command) steps.push({ label: "Find every time it failed", command: `coding.sh search ${JSON.stringify(issue.command)}` });
+  if (issue.kind === "cost") {
+    steps.push({ label: "See the cache by repo, with each cause", command: "coding.sh usage --cache --by repo" });
+    steps.push({ label: "List the sessions whose breaks cost most", command: "coding.sh sessions --where 'cache.breaks>0 sort:-cache.cost'" });
+  }
   return steps;
 }
 

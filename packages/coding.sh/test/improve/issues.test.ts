@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { Session } from "../../src/core/types.ts";
-import { commandHead, errorKey, failureRecords, rankIssues, type FailureRecord } from "../../src/improve/issues.ts";
+import { CACHE_BREAK_FIX } from "../../src/core/cache-breaks.ts";
+import { cacheFactor, commandHead, errorKey, failureRecords, rankIssues, type FailureRecord } from "../../src/improve/issues.ts";
 import { modelProvider, NEEDS_MODEL, stepsFor } from "../../src/improve/report.ts";
 import { nodeBin, pathOf } from "../_bin.ts";
 import { claimSession, failingSession, retrySession, sessionEvents } from "../helpers-decision.ts";
@@ -144,5 +145,88 @@ describe("stepsFor", () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  });
+});
+
+describe("cache breaks as a cost issue", () => {
+  /** A session whose stored stats say what its cache breaks cost (as ingest folds them), and what it cost in all. */
+  function spent(id: string, k: number, costUsd: number, byCause: Record<string, { count: number; lostTokens: number; extraUsd?: number }> | undefined, flags: string[] = []): Session {
+    const s = session(id, flags, k);
+    const breaks = byCause && Object.values(byCause);
+    return {
+      ...s,
+      stats: {
+        ...s.stats,
+        usage: { ...s.stats.usage, costUsd },
+        ...(breaks
+          ? { cacheBreaks: { count: breaks.reduce((n, v) => n + v.count, 0), lostTokens: breaks.reduce((n, v) => n + v.lostTokens, 0), extraUsd: breaks.reduce((n, v) => n + (v.extraUsd ?? 0), 0), byCause } }
+          : {}),
+      },
+    };
+  }
+
+  it("lists what lost cache cost, ranked by its dollars, with a fix per cause, costliest first", () => {
+    const sessions = [
+      spent("a", 0, 12, { compaction: { count: 2, lostTokens: 400_000, extraUsd: 4 }, idle: { count: 3, lostTokens: 90_000, extraUsd: 1 } }, ["no-verification"]),
+      spent("b", 1, 10, { idle: { count: 4, lostTokens: 120_000, extraUsd: 1.5 }, "model-switch": { count: 1, lostTokens: 300_000, extraUsd: 2.5 } }, ["no-verification"]),
+      spent("c", 2, 8, undefined),
+    ];
+    const issues = rankIssues(sessions, new Map());
+    const cost = issues.find((i) => i.kind === "cost");
+    assert.ok(cost, JSON.stringify(issues));
+    assert.equal(cost.id, "cost:cache-breaks");
+    assert.equal(cost.title, "Pays $9.00 again for prompt cache it lost (10 cache breaks, 30% of the spend)");
+    assert.equal(cost.usd, 9);
+    assert.deepEqual(cost.examples.map((x) => x.sessionId), ["a", "b"], "costliest session first");
+    // Ordered by dollars, not by how many breaks (idle has the most); a tie goes to more breaks.
+    assert.deepEqual(
+      cost.causes!.map((k) => [k.cause, k.usd, k.breaks]),
+      [["compaction", 4, 2], ["idle", 2.5, 7], ["model-switch", 2.5, 1]],
+    );
+    for (const k of cost.causes!) assert.equal(k.fix, CACHE_BREAK_FIX[k.cause]);
+    assert.equal(cost.fix, `Keep the cache warm, costliest cause first. compaction: ${CACHE_BREAK_FIX.compaction}.`);
+    // 30% of the spend is major waste (65), plus 2 of 3 sessions: high, and ahead of the flag.
+    assert.deepEqual(cost.severity, { score: 68, level: "high" });
+    const flag = issues.findIndex((i) => i.id === "flag:no-verification");
+    assert.ok(issues.indexOf(cost) < flag, issues.map((i) => `${i.id} ${i.severity.score}`).join(", "));
+  });
+
+  it("a small share of the spend ranks after the habits that cost more", () => {
+    const sessions = [
+      spent("a", 0, 200, { other: { count: 1, lostTokens: 50_000, extraUsd: 1 } }, ["no-verification"]),
+      spent("b", 1, 200, { other: { count: 1, lostTokens: 50_000, extraUsd: 1 } }, ["no-verification"]),
+    ];
+    const issues = rankIssues(sessions, new Map());
+    const cost = issues.find((i) => i.kind === "cost")!;
+    assert.equal(cost.severity.score, 10 + 3, "0.5% of the spend is small waste");
+    assert.match(cost.title, /under 1% of the spend/);
+    assert.ok(issues.indexOf(cost) > issues.findIndex((i) => i.id === "flag:no-verification"));
+  });
+
+  it("leaves it out under a dollar, in one session, or with no price", () => {
+    const one = (usd: number | undefined) => ({ other: { count: 2, lostTokens: 90_000, ...(usd !== undefined ? { extraUsd: usd } : {}) } });
+    const none = (sessions: Session[]) => rankIssues(sessions, new Map()).filter((i) => i.kind === "cost");
+    assert.deepEqual(none([spent("a", 0, 5, one(0.4)), spent("b", 1, 5, one(0.4))]), []);
+    assert.deepEqual(none([spent("a", 0, 50, one(20)), spent("b", 1, 5, undefined)]), []);
+    assert.deepEqual(none([spent("a", 0, 5, one(undefined)), spent("b", 1, 5, one(undefined))]), []);
+  });
+
+  it("with no spend recorded, says no share and scores it as material waste", () => {
+    const cost = rankIssues([spent("a", 0, 0, { idle: { count: 1, lostTokens: 90_000, extraUsd: 2 } }), spent("b", 1, 0, { idle: { count: 1, lostTokens: 90_000, extraUsd: 2 } })], new Map()).find((i) => i.kind === "cost")!;
+    assert.equal(cost.title, "Pays $4.00 again for prompt cache it lost (2 cache breaks)");
+    assert.equal(cost.severity.score, 25 + 3);
+  });
+
+  it("scores the dollar share on the shared waste scale", () => {
+    assert.deepEqual([0, 0.019, 0.02, 0.1, 0.25, 0.5, 1].map(cacheFactor), [10, 10, 25, 40, 65, 85, 85]);
+  });
+
+  it("its next steps show where the cache breaks and the costliest sessions", () => {
+    const sessions = [spent("a", 0, 10, { idle: { count: 2, lostTokens: 90_000, extraUsd: 3 } }), spent("b", 1, 10, { idle: { count: 1, lostTokens: 40_000, extraUsd: 2 } })];
+    const cost = rankIssues(sessions, new Map()).find((i) => i.kind === "cost")!;
+    assert.deepEqual(
+      stepsFor(cost, 1, { provider: undefined }).map((x) => x.command),
+      ["coding.sh show a", "coding.sh usage --cache --by repo", "coding.sh sessions --where 'cache.breaks>0 sort:-cache.cost'"],
+    );
   });
 });

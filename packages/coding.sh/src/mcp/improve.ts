@@ -124,6 +124,8 @@ export async function improveReport(ctx: Context, a: ImproveArgs, c: { cwd: stri
         ...(i.quietSince ? { quietSince: i.quietSince } : {}),
         ...(i.sample ? { error: i.sample } : {}),
         fix: i.fix,
+        ...(i.usd !== undefined ? { usd: i.usd } : {}),
+        ...(i.causes ? { causes: i.causes.map((k) => ({ cause: k.cause, breaks: k.breaks, usd: k.usd, fix: k.fix })) } : {}),
         ...(i.rule && !i.quietSince ? { line: i.rule, file: p.root ? targetFile(p.root, agentsOf) : "CLAUDE.md or AGENTS.md" } : {}),
         next: stepsFor(i, k + 1, { provider }).map((s) => s.command),
       };

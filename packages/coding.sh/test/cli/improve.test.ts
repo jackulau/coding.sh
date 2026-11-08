@@ -64,6 +64,21 @@ describe("cli improve", () => {
     assert.match(text.stdout, /^12 sessions in repo since 14d \(claude-code 12\); 3 headless sessions left out \(--headless\)$/m);
   });
 
+  it("lists what lost prompt cache cost, with a fix per cause", async () => {
+    const w = await world("cache", { afterFlagged: 0, cacheBreaks: true });
+    const r = cli(w, ["improve", "--json"]);
+    assert.equal(r.status, 0, r.stderr);
+    const j = JSON.parse(r.stdout) as { issues: { id: string; kind: string; sessions: number; usd?: number; causes?: { cause: string; breaks: number; fix: string }[]; next: { command: string }[] }[] };
+    const cost = j.issues.find((i) => i.kind === "cost");
+    assert.ok(cost, JSON.stringify(j.issues.map((i) => i.id)));
+    assert.equal(cost.sessions, 12);
+    assert.ok(cost.usd! > 1, String(cost.usd));
+    assert.deepEqual(cost.causes!.map((k) => [k.cause, k.breaks]), [["idle", 12]]);
+    const text = cli(w, ["improve"]);
+    assert.match(text.stdout, /Pays \$[\d.,]+ again for prompt cache it lost \(12 cache breaks, \d+% of the spend\)/);
+    assert.match(text.stdout, /^ {3}Fix, costliest cause first:\n {5}idle \(\$[\d.]+, 12 breaks\): the cache expired during a wait/m);
+  });
+
   it("says the CLAUDE.md change helped, and an issue no session since it had is marked, not fixed again", async () => {
     const w = await world("helped", { afterFlagged: 0 });
     const r = cli(w, ["improve", "--json"]);
