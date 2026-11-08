@@ -1,0 +1,20 @@
+apps/site/src/content/blog/agents-run-in-your-shell.md
+  s_8e040dbdf13565::t_17d768cd4657ca 3
+  s_8e040dbdf13565::t_f2b968f5c58f97 1-2,4-52
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "4a32e0bd8a83406dcc4d8cff3dc290042af450ef",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
