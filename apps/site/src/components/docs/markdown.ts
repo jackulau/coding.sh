@@ -32,6 +32,7 @@ const SITE_PAGES: Record<string, string> = {
   "how-to/session-to-eval.md": "/docs/how-to/session-to-eval",
   "how-to/self-host-team.md": "/docs/how-to/self-host-team",
   "how-to/evaluate-a-skill.md": "/docs/how-to/evaluate-a-skill",
+  "how-to/does-this-plugin-help.md": "/docs/how-to/does-this-plugin-help",
   "perf.md": "/docs/perf",
   "use-cases/claude-code-cost.md": "/docs/use-cases/claude-code-cost",
   "use-cases/replay-agent-session.md": "/docs/use-cases/replay-agent-session",
