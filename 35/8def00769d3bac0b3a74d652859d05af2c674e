@@ -1,5 +1,8 @@
 packages/coding.sh/test/proxy/server.test.ts
   s_8e040dbdf13565::t_1bbbd71caf508f 1-2,4,6-421,449-458
+  s_8e040dbdf13565::t_22a84195776237 448
+  s_8e040dbdf13565::t_ab36801a7494fe 3,5,422-423,429-430,432-435,437-438,440-441,443-447
+  s_8e040dbdf13565::t_734b552040a69f 424-428,431,436,439,442
 packages/coding.sh/src/proxy/link.ts
   s_8e040dbdf13565::t_4d40f0bb452686 30,138,140-141
   s_8e040dbdf13565::t_660fa256fb1969 1-29,31-137,139,142
@@ -37,6 +40,7 @@ packages/coding.sh/src/core/redact.ts
   s_8e040dbdf13565::t_4f0c8b816897da 488-499
 packages/coding.sh/src/core/sessions.ts
   s_8e040dbdf13565::t_347adff11e98d1 51
+  s_8e040dbdf13565::t_9d7b6375252a19 49-50,408,477-487,540-549,574,626-627,653-655,688,695,708
 docs/reference/cli.md
   s_8e040dbdf13565::t_e4d44475f3844e 41,202-271
   s_8e040dbdf13565::t_f58338b1bea2b8 272
