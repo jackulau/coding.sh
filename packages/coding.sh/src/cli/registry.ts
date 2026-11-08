@@ -85,7 +85,8 @@ const GATE_FLAGS: FlagSpec[] = [
 const EXP_RUN_FLAGS: FlagSpec[] = [
   { name: "dataset", short: "d", type: "string", value: "<ID>", desc: "Dataset id" },
   { name: "task", type: "string", value: "<JSON|FILE>", desc: 'Task spec: {"kind":"command","command":"…"} (gets each case input as JSON on stdin) or {"kind":"http","url":"…"}' },
-  { name: "grader", short: "g", type: "list", value: "<JSON|FILE>", desc: 'Grader spec, e.g. {"kind":"exact"} (repeatable)' },
+  { name: "grader", short: "g", type: "list", value: "<JSON|FILE>", desc: 'Grader spec, e.g. {"kind":"exact"} (repeatable); added to the spec file\'s graders' },
+  { name: "replace-graders", type: "boolean", desc: "Use only the --grader graders, not the spec file's" },
   { name: "name", type: "string", value: "<NAME>", desc: "Experiment name" },
   { name: "trials", type: "number", value: "<N>", desc: "Attempts per case", default: "1" },
   { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel case runs", default: "4" },
@@ -678,7 +679,7 @@ export const COMMANDS: CommandSpec[] = [
       {
         name: "run",
         summary: "Run an experiment, two tasks as one interleaved A/B, or a matrix of cells against a baseline cell",
-        args: [{ name: "spec", desc: "Experiment spec JSON file (fields can be overridden by options); with \"matrix\" or \"variants\" it runs every cell" }],
+        args: [{ name: "spec", desc: "Experiment spec JSON file (options override its fields; --grader adds graders); with \"matrix\" or \"variants\" it runs every cell" }],
         flags: [
           ...EXP_RUN_FLAGS,
           { name: "arm", type: "list", value: "<NAME=JSON|FILE>", desc: "One arm's task spec; give two (A then B) to interleave them case by case in one run" },
@@ -759,10 +760,11 @@ export const COMMANDS: CommandSpec[] = [
         summary: "Grade a stored experiment's outputs again with new graders, without calling the task, and show what flipped",
         args: [
           { name: "experiment", desc: "Experiment id or name (newest)", required: true },
-          { name: "spec", desc: "Experiment spec JSON file whose graders to use (--grader overrides)" },
+          { name: "spec", desc: "Experiment spec JSON file whose graders to use (--grader adds to them)" },
         ],
         flags: [
-          { name: "grader", short: "g", type: "list", value: "<JSON|FILE>", desc: "Grader spec (repeatable); replaces the spec's graders" },
+          { name: "grader", short: "g", type: "list", value: "<JSON|FILE>", desc: "Grader spec (repeatable); added to the spec file's graders" },
+          { name: "replace-graders", type: "boolean", desc: "Use only the --grader graders, not the spec file's" },
           { name: "name", type: "string", value: "<NAME>", desc: "Name of the regraded experiment (default: the original's)" },
           { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel grader runs", default: "4" },
         ],

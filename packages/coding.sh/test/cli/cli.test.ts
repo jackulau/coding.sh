@@ -1259,6 +1259,18 @@ describe("cli exp regrade", () => {
     const none = cli(h, ["exp", "regrade", "base"]);
     assert.equal(none.status, 2);
     assert.match(none.stderr, /Missing graders/);
+
+    // --grader adds to the spec file's graders; --replace-graders uses only the flags.
+    const ids = (r: ReturnType<typeof cli>) => (parseJson(r.stdout, "graders") as { experiment: { graders: { id: string }[] } }).experiment.graders.map((g) => g.id).sort();
+    assert.deepEqual(ids(cli(h, ["exp", "regrade", baseId, "spec.json", "-g", '{"kind":"exact"}', "--json"])), ["exact", "regex"]);
+    assert.deepEqual(ids(cli(h, ["exp", "regrade", baseId, "spec.json", "-g", '{"kind":"regex","pattern":"^[45]$"}', "--json"])), ["regex"], "the same grader is not added twice");
+    assert.deepEqual(ids(cli(h, ["exp", "regrade", baseId, "spec.json", "-g", '{"kind":"exact"}', "--replace-graders", "--json"])), ["exact"]);
+    writeFileSync(join(h.home, "run.json"), JSON.stringify({ dataset: "arith", task: { kind: "command", command: "node echo.mjs" }, graders: [{ kind: "regex", pattern: "^[45]$" }] }));
+    assert.deepEqual(ids(cli(h, ["exp", "run", "run.json", "-g", '{"kind":"exact"}', "--json"])), ["exact", "regex"]);
+    assert.deepEqual(ids(cli(h, ["exp", "run", "run.json", "-g", '{"kind":"exact"}', "--replace-graders", "--json"])), ["exact"]);
+    const alone = cli(h, ["exp", "run", "run.json", "--replace-graders"]);
+    assert.equal(alone.status, 2);
+    assert.match(alone.stderr, /--replace-graders needs at least one --grader/);
   });
 });
 

@@ -952,13 +952,14 @@ coding.sh exp run [spec] [options]
 
 | Argument | Required | Description |
 |---|---|---|
-| `spec` | no | Experiment spec JSON file (fields can be overridden by options); with "matrix" or "variants" it runs every cell. |
+| `spec` | no | Experiment spec JSON file (options override its fields; --grader adds graders); with "matrix" or "variants" it runs every cell. |
 
 | Option | Default | Description |
 |---|---|---|
 | `-d, --dataset <ID>` |  | Dataset id. |
 | `--task <JSON|FILE>` |  | Task spec: {"kind":"command","command":"…"} (gets each case input as JSON on stdin) or {"kind":"http","url":"…"}. |
-| `-g, --grader <JSON|FILE>` |  | Grader spec, e.g. {"kind":"exact"} (repeatable) |
+| `-g, --grader <JSON|FILE>` |  | Grader spec, e.g. {"kind":"exact"} (repeatable); added to the spec file's graders. |
+| `--replace-graders` |  | Use only the --grader graders, not the spec file's. |
 | `--name <NAME>` |  | Experiment name. |
 | `--trials <N>` | `1` | Attempts per case. |
 | `-c, --concurrency <N>` | `4` | Parallel case runs. |
@@ -1059,11 +1060,12 @@ coding.sh exp regrade <EXPERIMENT> [spec] [options]
 | Argument | Required | Description |
 |---|---|---|
 | `experiment` | yes | Experiment id or name (newest) |
-| `spec` | no | Experiment spec JSON file whose graders to use (--grader overrides) |
+| `spec` | no | Experiment spec JSON file whose graders to use (--grader adds to them) |
 
 | Option | Default | Description |
 |---|---|---|
-| `-g, --grader <JSON|FILE>` |  | Grader spec (repeatable); replaces the spec's graders. |
+| `-g, --grader <JSON|FILE>` |  | Grader spec (repeatable); added to the spec file's graders. |
+| `--replace-graders` |  | Use only the --grader graders, not the spec file's. |
 | `--name <NAME>` |  | Name of the regraded experiment (default: the original's) |
 | `-c, --concurrency <N>` | `4` | Parallel grader runs. |
 
@@ -1089,7 +1091,8 @@ coding.sh exp aa [a] [b] [options]
 |---|---|---|
 | `-d, --dataset <ID>` |  | Dataset id. |
 | `--task <JSON|FILE>` |  | Task spec: {"kind":"command","command":"…"} (gets each case input as JSON on stdin) or {"kind":"http","url":"…"}. |
-| `-g, --grader <JSON|FILE>` |  | Grader spec, e.g. {"kind":"exact"} (repeatable) |
+| `-g, --grader <JSON|FILE>` |  | Grader spec, e.g. {"kind":"exact"} (repeatable); added to the spec file's graders. |
+| `--replace-graders` |  | Use only the --grader graders, not the spec file's. |
 | `--name <NAME>` |  | Experiment name. |
 | `--trials <N>` | `1` | Attempts per case. |
 | `-c, --concurrency <N>` | `4` | Parallel case runs. |
@@ -1118,7 +1121,7 @@ coding.sh exp sweep <CONFIGS>... [options]
 | Option | Default | Description |
 |---|---|---|
 | `-d, --dataset <ID>` |  | Dataset id. |
-| `-g, --grader <JSON|FILE>` |  | Grader spec, e.g. {"kind":"exact"} (repeatable) |
+| `-g, --grader <JSON|FILE>` |  | Grader spec, e.g. {"kind":"exact"} (repeatable); added to the spec file's graders. |
 | `--name <NAME>` |  | Experiment name. |
 | `-c, --concurrency <N>` | `4` | Parallel case runs. |
 | `--budget <N>` |  | Case runs for the race, over all configs (default: each race case used once by the last round) |

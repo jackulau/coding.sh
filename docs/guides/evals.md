@@ -219,6 +219,10 @@ calls in the trace, with the same `must`, `mustNot`, `max` and `order` fields as
 or by the agent's (`mcp__github__create_issue`). `agent-slop` flags placeholder code, type escapes, swallowed errors and other patterns in
 the lines a diff adds (see [Agent slop](#agent-slop)).
 
+With a spec file, each `--grader` (`-g`) is added to the spec's `graders`: `exp run spec.json -g
+judge.json` grades with both. `--replace-graders` uses only the `--grader` ones. A `--grader`
+identical to one already in the spec is not added twice.
+
 `coding.sh exp compare A B` reports the paired bootstrap CI of the difference, an exact McNemar
 test on flipped cases and the minimum detectable effect. It also reports:
 
@@ -292,8 +296,8 @@ margin can hide. It exits 1 unless B is non-inferior; `--json` carries
 ### Regrade
 
 `coding.sh exp regrade <experiment> spec.json` grades a stored experiment's outputs again with the
-spec's graders (`--grader` replaces them), without calling the task. Task errors are copied as
-they were. Stored runs keep no trace, so a grader that reads one sees none
+spec's graders, plus any `--grader` (`--replace-graders` uses only those), without calling the
+task. Task errors are copied as they were. Stored runs keep no trace, so a grader that reads one sees none
 (`metadata.regradeNoTrace`). The new experiment is stored with `metadata.regradeOf` and the
 dataset version the original ran on. The report pairs runs by case and trial:
 

@@ -122,7 +122,7 @@ export async function loadSpec(c: CommandContext, store: FileEvalStore, specFile
   if (str(c.flags.dataset)) spec.dataset = str(c.flags.dataset);
   if (str(c.flags.name)) spec.name = str(c.flags.name);
   if (str(c.flags.task)) spec.task = (await jsonArg(str(c.flags.task)!, "--task")) as TaskSpec;
-  if (list(c.flags.grader).length) spec.graders = (await Promise.all(list(c.flags.grader).map((g) => jsonArg(g, "--grader")))) as GraderSpec[];
+  spec.graders = await withGraderFlags(c, spec.graders);
   if (num(c.flags.trials) !== undefined) spec.trials = positiveInt(c.flags.trials, "trials");
   if (num(c.flags.concurrency) !== undefined) spec.concurrency = positiveInt(c.flags.concurrency, "concurrency");
   if (str(c.flags.split)) spec.split = str(c.flags.split) as Split;
@@ -133,6 +133,23 @@ export async function loadSpec(c: CommandContext, store: FileEvalStore, specFile
   if (!dataset) throw new CliError(`Can't find dataset ${JSON.stringify(spec.dataset)}`, { reason: "not_found", next: ["List datasets:", "coding.sh dataset list"] });
   const graders = await buildGraders(c, spec.graders, baseDir);
   return { spec, dataset, graders, name: spec.name ?? `${dataset.name}-${new Date().toISOString().slice(0, 10)}`, baseDir, ...(file ? { file } : {}) };
+}
+
+/**
+ * The spec's graders plus each --grader, or only the --grader ones with
+ * --replace-graders. A --grader identical to one the spec has is not added twice.
+ */
+export async function withGraderFlags(c: CommandContext, specs: GraderSpec[] | undefined): Promise<GraderSpec[] | undefined> {
+  const replace = c.flags["replace-graders"] === true;
+  const flags = list(c.flags.grader);
+  if (!flags.length) {
+    if (replace) throw new UsageError("--replace-graders needs at least one --grader", { reason: "missing_argument" });
+    return specs;
+  }
+  const given = (await Promise.all(flags.map((g) => jsonArg(g, "--grader")))) as GraderSpec[];
+  if (replace || !specs?.length) return given;
+  const have = new Set(specs.map((g) => JSON.stringify(g)));
+  return [...specs, ...given.filter((g) => !have.has(JSON.stringify(g)))];
 }
 
 /** Graders from their specs; relative paths resolve against `baseDir`. */
@@ -159,7 +176,7 @@ async function regradeCmd(c: CommandContext, store: FileEvalStore): Promise<numb
     if (Array.isArray(v.graders)) specs = v.graders as GraderSpec[];
     baseDir = dirname(file);
   }
-  if (list(c.flags.grader).length) specs = (await Promise.all(list(c.flags.grader).map((g) => jsonArg(g, "--grader")))) as GraderSpec[];
+  specs = (await withGraderFlags(c, specs)) ?? [];
   if (!specs.length) throw new UsageError("Missing graders: pass a spec file with \"graders\" or --grader", { reason: "missing_argument", suggestion: `coding.sh exp regrade ${ref} spec.json` });
   const graders = await buildGraders(c, specs, baseDir);
   // The exact dataset version the experiment ran on; the latest one only when that version is gone (it warns).
