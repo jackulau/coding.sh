@@ -1,0 +1,44 @@
+packages/coding.sh/src/core/models.ts
+  s_8e040dbdf13565::t_d940706c0ca8eb 1-133
+packages/coding.sh/test/core/models.test.ts
+  s_8e040dbdf13565::t_f43e3839d10406 1-6,10-91,106-199
+  s_8e040dbdf13565::t_d45527f5b7c249 7-9,92-105
+packages/coding.sh/src/cli/commands/show.ts
+  s_8e040dbdf13565::t_2bdaef159bb020 152-153,155-164,340-341
+  s_8e040dbdf13565::t_ff9b3afec8dfb6 154
+packages/coding.sh/src/schema/index.ts
+  s_8e040dbdf13565::t_e7655aa68bd07f 125-137,261-264
+packages/coding.sh/src/refine/taxonomy.ts
+  s_8e040dbdf13565::t_7260e2da1b6be8 202-205
+packages/coding.sh/src/core/cache-breaks.ts
+  s_8e040dbdf13565::t_e7655aa68bd07f 17
+packages/coding.sh/src/mcp/digest.ts
+  s_8e040dbdf13565::t_33a9e73eb36469 108-109
+packages/coding.sh/src/core/sessions.ts
+  s_8e040dbdf13565::t_6159a614792dfe 16,40-43,410,481,513
+  s_8e040dbdf13565::t_cddbc8925fcb0d 566,688-692,701-703
+packages/coding.sh/test/adapters/real-install.test.ts
+  s_8e040dbdf13565::t_512a7711dfa9dd 287-288,344,367-368
+CHANGELOG.md
+  s_8e040dbdf13565::t_4f17eaf156b799 16
+docs/concepts.md
+  s_8e040dbdf13565::t_62268578c7015b 32-35,63,76-80
+docs/reference/api.md
+  s_8e040dbdf13565::t_62268578c7015b 459-471
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "f9d1e5895653cf1251d07a01d485ab62b59e0649",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
