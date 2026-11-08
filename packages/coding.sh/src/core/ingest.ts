@@ -630,7 +630,7 @@ export function spoolNormalizer(o: SpoolNormalizerOptions): (line: SpoolLine, so
   };
 }
 
-export function normalizeContext(profile: CaptureProfile, blobs: BlobStore, metadata: boolean, source?: { file: string; offset: number }): NormalizeContext {
+export function normalizeContext(profile: CaptureProfile, blobs: Pick<BlobStore, "put">, metadata: boolean, source?: { file: string; offset: number }): NormalizeContext {
   const ctx: NormalizeContext = {
     maxInlineBytes: profile.config.capture.maxInlineBytes,
     id: (...parts) => hashParts(...parts),

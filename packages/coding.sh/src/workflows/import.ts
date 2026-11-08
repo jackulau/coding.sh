@@ -10,6 +10,7 @@ import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import type { BlobStore, IndexStore } from "../core/types.ts";
 import type { Prices } from "../core/pricing.ts";
+import type { CaptureProfile } from "../core/ingest.ts";
 import { claudeConfigDir } from "../adapters/claude-code.ts";
 import { findClaudeWorkflowDirs, loadClaudeWorkflowDir, peekClaudeWorkflowDir } from "./sources/claude-workflow.ts";
 import type { WorkflowStore } from "./store.ts";
@@ -38,6 +39,8 @@ export interface ImportOpts {
   maxInlineBytes?: number;
   /** Price agent calls that carry tokens but no reported cost (see LoadOpts.prices). */
   prices?: Prices;
+  /** Redact, strip (metadata mode) and price agent events as ingest does (see LoadOpts.profile). */
+  profile?: CaptureProfile;
   onRun?: (run: WorkflowRun) => void;
 }
 
@@ -71,6 +74,7 @@ export async function importClaudeWorkflows(o: ImportOpts): Promise<ImportResult
         concurrencyCap: o.concurrencyCap ?? defaultClaudeCap(),
         ...(o.maxInlineBytes !== undefined ? { maxInlineBytes: o.maxInlineBytes } : {}),
         ...(o.prices ? { prices: o.prices } : {}),
+        ...(o.profile ? { profile: o.profile } : {}),
       });
       const tree = buildWorkflowTree(loaded.sources);
       tree.run.source = { kind: "journal", path: d.runDir, signature: loaded.signature };

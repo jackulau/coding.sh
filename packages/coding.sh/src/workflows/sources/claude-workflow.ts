@@ -17,6 +17,7 @@ import { readFile, readdir, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { sha256Hex, hashParts } from "../../core/ids.ts";
 import { applyPricing, type Prices } from "../../core/pricing.ts";
+import { finishEvent, normalizeContext, type CaptureProfile } from "../../core/ingest.ts";
 import { buildSession } from "../../core/sessions.ts";
 import type { BlobStore, NormalizeContext } from "../../core/types.ts";
 import type { AgentEvent, Session } from "../../schema/index.ts";
@@ -514,6 +515,13 @@ export interface LoadOpts {
    * ingest does. Omit to leave calls uncosted (a reported cost always wins).
    */
   prices?: Prices;
+  /**
+   * The capture profile spool ingest and backfill use. When set, every event is
+   * redacted, stripped in metadata mode and priced (finishEvent), and blobs are
+   * redacted before they are stored (normalizeContext), so imported agent
+   * transcripts follow the same rules as any other capture. Supersedes `prices`.
+   */
+  profile?: CaptureProfile;
 }
 
 /** Reads one run dir and its persisted record into TreeSources (plus child sessions). */
@@ -539,7 +547,11 @@ export async function loadClaudeWorkflowDir(runDirOrDesc: string | ClaudeWorkflo
   }
 
   const blobs = opts.blobs ?? new MemBlobShim();
-  const ctx: NormalizeContext = { blob: (d) => blobs.put(d), maxInlineBytes: opts.maxInlineBytes ?? 4096, id: (...p) => hashParts(...p) };
+  const profile = opts.profile;
+  const metadata = profile?.config.capture.mode === "metadata";
+  const ctx: NormalizeContext = profile
+    ? normalizeContext(profile, blobs, metadata)
+    : { blob: (d) => blobs.put(d), maxInlineBytes: opts.maxInlineBytes ?? 4096, id: (...p) => hashParts(...p) };
   const meta: Record<string, Record<string, unknown>> = {};
   const agentEvents: Record<string, AgentEvent[]> = {};
   const sessions: Session[] = [];
@@ -564,9 +576,9 @@ export async function loadClaudeWorkflowDir(runDirOrDesc: string | ClaudeWorkflo
     }
     const raw = await conv.finish();
     if (!raw.length) continue;
-    // Claude Code transcripts carry tokens but no per-call cost, so price them
-    // here (a reported cost would win); nodes and child sessions then show cost.
-    const evs = opts.prices ? applyPricing(raw, opts.prices) : raw;
+    // Redact (and strip in metadata mode) before anything is stored, then price:
+    // Claude Code transcripts carry tokens but no per-call cost (a reported cost would win).
+    const evs = profile ? raw.map((e) => finishEvent(e, profile, metadata)) : opts.prices ? applyPricing(raw, opts.prices) : raw;
     const start = evs.find((e) => e.kind === "session.start");
     if (start) start.payload = { ...start.payload, source: "workflow-agent", workflowRunId: runId, ...parentLink(ctx, CLAUDE_AGENT, dir.hostSessionId, agentId, WORKFLOW_AGENT_TYPE) };
     const session = buildSession(evs);
