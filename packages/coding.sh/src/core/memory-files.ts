@@ -29,8 +29,17 @@ export function forAgent(key: string, agent: string): boolean {
   return base.startsWith("AGENTS") || key.includes("/.agents/");
 }
 
-const isFile = (p: string) => statSync(p, { throwIfNoEntry: false })?.isFile() === true;
-const isDir = (p: string) => statSync(p, { throwIfNoEntry: false })?.isDirectory() === true;
+/** A path's stat, or undefined when it can't be read: missing, a dangling link, no permission, or a Windows reparse point Node can't follow (EUNKNOWN). */
+function stat(p: string) {
+  try {
+    return statSync(p, { throwIfNoEntry: false });
+  } catch {
+    return undefined;
+  }
+}
+
+const isFile = (p: string) => stat(p)?.isFile() === true;
+const isDir = (p: string) => stat(p)?.isDirectory() === true;
 
 function names(dir: string): string[] {
   try {
@@ -46,7 +55,7 @@ function walk(dir: string, test: (rel: string) => boolean, depth: number, out: s
   for (const n of names(dir)) {
     const p = join(dir, n);
     const r = rel ? `${rel}/${n}` : n;
-    const st = statSync(p, { throwIfNoEntry: false });
+    const st = stat(p);
     if (st?.isDirectory()) walk(p, test, depth - 1, out, r);
     else if (st?.isFile() && test(r)) out.push(p);
   }
@@ -103,7 +112,7 @@ export function memoryDirs(env: NodeJS.ProcessEnv = process.env): MemoryDirs {
 
 /** One file's audit info, or undefined when it is not a memory or instruction file on disk. */
 export function fileInfo(path: string, home: string): MemoryFileInfo | undefined {
-  const st = statSync(path, { throwIfNoEntry: false });
+  const st = stat(path);
   if (!st?.isFile()) return undefined;
   const key = homeKey(path, home);
   const kind = memoryKind(key);

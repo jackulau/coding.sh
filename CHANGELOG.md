@@ -131,6 +131,7 @@ coding.sh runs on Windows, and CI tests it there.
 
 ### Fixed
 
+- **Harness.** `harness audit` skips a file or directory it can't stat (a symlink loop, or a Windows junction Node can't follow) instead of failing with "unknown error". [Memory and instruction files](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#memory-and-instruction-files).
 - **Capture.** Backfill follows symlinked and junctioned transcript directories and files, and skips dangling links. Before, a `~/.claude/projects` made of links ingested nothing. [Adapters](https://github.com/jackulau/coding.sh/blob/main/docs/ADAPTERS.md#known-breakage-to-design-around).
 - **Harness A/B.** Two tasks from the same repo no longer error when they start at once: the first run of a repo set up its snapshot store while the second was reading it. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md).
 - **Harness A/B.** The tamper check no longer flags a run that only added new test cases to an existing test file, so a regression test written next to the fix keeps the task in the gate's evidence. Changed, removed or skipped tests, early returns, hooks, mocks and shadowing definitions still flag. The run lists those files in `tamper.addedTests`. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#harness-ab).

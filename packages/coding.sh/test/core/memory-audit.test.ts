@@ -4,7 +4,7 @@
 // temp store and HOME for the CLI.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -237,6 +237,21 @@ describe("harness audit over a store and a temp HOME", () => {
     const pdf = listMemoryFiles({ home, claudeDir: join(home, ".claude"), codexDir: join(home, ".codex") }, []).find((f) => f.key === "~/.claude/skills/pdf/SKILL.md");
     assert.deepEqual(pdf, { key: "~/.claude/skills/pdf/SKILL.md", bytes: 1046, loadBytes: 19 }, "a skill loads its listing");
     assert.deepEqual(keys, ["~/.claude/projects/" + slug + "/memory/MEMORY.md", `~/.claude/projects/${slug}/memory/deploy.md`, `~/.claude/projects/${slug}/memory/stale.md`, "~/.claude/skills/pdf/SKILL.md", "~/app/CLAUDE.md", "~/app/pkg/deep/CLAUDE.md"].sort());
+  });
+
+  it("skips a path it can't stat (a symlink loop here, an unreadable junction on Windows) instead of failing", (t) => {
+    if (process.platform === "win32") return t.skip("symlinks need privileges on Windows");
+    const root = mkdtempSync(join(tmpdir(), "cs-memloop-"));
+    try {
+      mkdirSync(join(root, "app", "pkg"), { recursive: true });
+      writeFileSync(join(root, "app", "pkg", "CLAUDE.md"), "# pkg\n");
+      symlinkSync(join(root, "app", "b"), join(root, "app", "a"));
+      symlinkSync(join(root, "app", "a"), join(root, "app", "b"));
+      const keys = listMemoryFiles({ home: root, claudeDir: join(root, ".claude"), codexDir: join(root, ".codex") }, [join(root, "app")]).map((f) => f.key);
+      assert.deepEqual(keys, ["~/app/pkg/CLAUDE.md"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("audits stored sessions (subagents folded into their root) since a time", async () => {
