@@ -11,6 +11,7 @@
 // Ends with a few lines: what was set up, how to open the viewer, and the docs URL.
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parseHookCommand } from "../../adapters/_shared/hooks.ts";
 import { detectAll, ADAPTERS } from "../../adapters/index.ts";
 import { defaultConfigToml } from "../../core/config.ts";
 import { paths } from "../../core/paths.ts";
@@ -83,17 +84,36 @@ async function plan(fn: () => Promise<FileChange[]>): Promise<Part> {
 const partJson = (p: Part | undefined, full: boolean) =>
   p ? { error: p.error ?? null, changes: p.changes.map((ch) => (full ? changeJson(ch) : { path: ch.path, action: ch.action, summary: ch.summary })) } : null;
 
+/** Which hook.mjs `file` runs, and whether it is `hook` (this home's). */
+export function hookTarget(file: string, hook: string): { hook: string | null; current: boolean } {
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch {
+    return { hook: null, current: true };
+  }
+  // JSON and TOML escape the quotes and backslashes of `node "<hook>" <agent> <event>`.
+  const plain = text.replace(/\\(["\\])/g, "$1");
+  const forms = [hook, hook.replace(/\\/g, "/")];
+  if (forms.some((f) => plain.includes(f))) return { hook, current: true };
+  const cmd = plain.split("\n").map((l) => parseHookCommand(l)).find((x) => x)?.hookPath;
+  const found = cmd ?? /["']([^"'\n]*hook\.mjs)["']/.exec(plain)?.[1] ?? null;
+  return { hook: found, current: found === null };
+}
+
 /**
  * Files in the other scope that already hold this agent's coding.sh hooks,
  * found with a dry-run uninstall of that scope. Files this scope edits as well
- * (a project dir that is the home directory) don't count.
+ * (a project dir that is the home directory) don't count. With `hook`, neither
+ * do files whose hooks run another hook.mjs: they feed another coding.sh home
+ * (a temp CODING_SH_HOME run from a project hooked for the real one).
  */
-export async function otherScopeHooks(a: Adapter, scope: "user" | "project", projectDir: string, planned: FileChange[]): Promise<AgentScopeConflict | undefined> {
+export async function otherScopeHooks(a: Adapter, scope: "user" | "project", projectDir: string, planned: FileChange[], hook?: string): Promise<AgentScopeConflict | undefined> {
   if (a.tail) return undefined;
   const other = scope === "user" ? "project" : "user";
   try {
     const mine = new Set([...planned, ...(await a.uninstall({ scope, projectDir, dryRun: true }))].map((c) => resolve(c.path)));
-    const files = [...new Set((await a.uninstall({ scope: other, projectDir, dryRun: true })).map((c) => resolve(c.path)))].filter((f) => !mine.has(f));
+    const files = [...new Set((await a.uninstall({ scope: other, projectDir, dryRun: true })).map((c) => resolve(c.path)))].filter((f) => !mine.has(f) && (hook === undefined || hookTarget(f, hook).current));
     return files.length ? { scope: other, files } : undefined;
   } catch {
     return undefined; // an unreadable config in the other scope is not this init's problem
@@ -309,7 +329,7 @@ export async function run(c: CommandContext): Promise<number> {
     };
     if (result.version) pl.version = result.version;
     // User and project hooks both fire in agents that don't dedupe identical commands: every event twice.
-    const conflict = pl.hooks.error ? undefined : await otherScopeHooks(adapter, scope, c.cwd, pl.hooks.changes);
+    const conflict = pl.hooks.error ? undefined : await otherScopeHooks(adapter, scope, c.cwd, pl.hooks.changes, p.hook);
     if (conflict) {
       pl.otherScope = conflict;
       if (pl.hooks.changes.length && !force) {

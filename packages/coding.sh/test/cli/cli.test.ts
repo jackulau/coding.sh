@@ -1140,6 +1140,38 @@ describe("doctor on a dogfood machine", () => {
     assert.deepEqual(a.projectHooks, [file]);
   });
 
+  it("reports one state when a project's hooks run another home's hook, and names each settings file", () => {
+    // Regression: doctor under a temp CODING_SH_HOME, run from a repo whose
+    // .claude/settings.local.json runs the real ~/.coding.sh hook, said both
+    // "✓ Claude Code hooked in <file> (project)" and "! Hook missing".
+    const { h, proj, run } = claudeHome();
+    const other = join(h.root, "other-home", ".coding.sh");
+    const init = run(proj, ["init", "--scope", "project", "--agent", "claude-code", "--yes"], { CODING_SH_HOME: other });
+    assert.equal(init.status, 0, init.stderr);
+    const file = join(proj, ".claude", "settings.local.json");
+    const otherHook = join(other, "bin", "hook.mjs");
+    assert.ok(existsSync(otherHook));
+    assert.ok(!existsSync(join(h.data, "bin", "hook.mjs")));
+
+    const r = run(proj, ["doctor", "--agent", "claude-code"]);
+    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    assert.match(r.stderr, new RegExp(`^! Claude Code\\s+v2\\.1\\.319, hooks in ${esc(file)} \\(project\\) run ${esc(otherHook)}, not this home's hook, `, "m"));
+    assert.doesNotMatch(r.stderr, /✓ Claude Code/);
+    assert.match(r.stderr, /^! Hook\s+missing at .*hook\.mjs; run coding\.sh init$/m);
+    assert.match(r.stderr, /coding\.sh init --agent claude-code/);
+    const doc = parseJson(run(proj, ["doctor", "--json", "--agent", "claude-code"]).stdout, "doctor") as { agents: { id: string; hookFiles: unknown[] }[] };
+    assert.deepEqual(doc.agents.find((x) => x.id === "claude-code")!.hookFiles, [{ file, scope: "project", hook: otherHook, current: false }]);
+
+    // Hooked for this home, in the user config, but its hook bin is gone: one warning, naming the file.
+    const ui = run(proj, ["init", "--agent", "claude-code", "--yes"]);
+    assert.doesNotMatch(ui.stderr, /skipping hooks/, "project hooks for another home do not block this one");
+    assert.equal(ui.status, 0);
+    rmSync(join(h.data, "bin", "hook.mjs"));
+    const gone = run(proj, ["doctor", "--agent", "claude-code"]);
+    assert.match(gone.stderr, new RegExp(`^! Claude Code\\s+v2\\.1\\.319, hooked in ${esc(join(h.home, ".claude", "settings.json"))}, but the hook it runs is missing, `, "m"));
+    assert.match(gone.stderr, /^! Hook\s+missing at /m);
+  });
+
   it("never says 'not hooked' while events arrive", () => {
     const { h, run, hook } = claudeHome();
     const before = run(h.home, ["doctor", "--agent", "claude-code"]);

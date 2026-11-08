@@ -29,6 +29,8 @@ doctor exits 1 only when the spool or the store fails. The other rows are inform
 |---|---|---|
 | `not hooked` | The agent is installed but has no coding.sh hook in its user config or in a project doctor checked, and no events in the last 5 minutes. | `coding.sh init --agent <id>` |
 | `hooked in <file> (project)` | The hook is in a project's config (`init --scope project`), not the user config. doctor looks in the current directory, its parents and the directories the agent's recent sessions ran in. The agent is captured in that project only. | Nothing, or `coding.sh init --agent <id>` to capture every project. |
+| `hooks in <file> run <path>, not this home's hook` | The agent's hooks in that settings file run another coding.sh home's `hook.mjs`, usually because `HOME` or `CODING_SH_HOME` points somewhere else than when the hooks were written. They capture into that home, not this one. `doctor --json` lists each file it read under `hookFiles`, with the hook it runs and `current: false`. | `coding.sh init --agent <id>` hooks this home too. |
+| `hooked …, but the hook it runs is missing` | The hooks run this home's `hook.mjs`, and that file is gone. The `Hook` row says the same. | `coding.sh init` |
 | `events arriving, hook not in user config` | Events came in during the last 5 minutes, but doctor found no hook in the user config or a project it checked. | Nothing if those sessions are the ones you want. Run doctor from the project to see its hook. |
 | `hooked but not firing` | The hook is in place but the agent will not run it. The note under the row says why (see below). | Follow the note. |
 | `no events yet` | Nothing captured from this agent. Normal right after `init`. | Use the agent, then `coding.sh sessions`. |

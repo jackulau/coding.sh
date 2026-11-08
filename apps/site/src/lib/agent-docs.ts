@@ -56,8 +56,10 @@ machine it exits 1 with \`reason: "no_agents"\` (wrap any command instead: \`cod
 coding.sh doctor --json
 \`\`\`
 
-One JSON document: \`ok\`, then each agent (\`installed\`, \`hooked\`, \`lastEventAt\`, \`blockers\`), the hook, spool and
-store, and whether the OTLP port is free. Fix what it reports before going on.
+One JSON document: \`ok\`, then each agent (\`installed\`, \`hooked\`, \`hookFiles\`, \`lastEventAt\`, \`blockers\`), the
+hook, spool and store, and whether the OTLP port is free. Each \`hookFiles\` entry is a settings file holding the
+agent's hooks; \`current: false\` means it runs another coding.sh home's hook, so this home captures nothing from it.
+Fix what it reports before going on.
 
 Read back a session to confirm capture end to end:
 

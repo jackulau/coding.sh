@@ -20,7 +20,7 @@ import { GATEWAY_FLAG } from "../../integrations/gateway/ids.ts";
 import { list, port as portFlag } from "../common.ts";
 import { ago, LABEL_WIDTH } from "../output.ts";
 import type { CommandContext } from "../types.ts";
-import { blockingNotes, otherScopeHooks, pickAdapters } from "./init.ts";
+import { blockingNotes, hookTarget, otherScopeHooks, pickAdapters } from "./init.ts";
 
 /** Newest of the agent's spool files, and its mtime. */
 function lastSpoolWrite(spool: string, agent: string): { file: string; mtimeMs: number } | undefined {
@@ -85,6 +85,30 @@ export async function projectHookFiles(a: Adapter, dirs: readonly string[]): Pro
     for (const f of r?.files ?? []) found.add(f);
   }
   return [...found];
+}
+
+/** A config file holding coding.sh hooks, as doctor read it. */
+export interface HookFile {
+  file: string;
+  scope: "user" | "project";
+  /** The hook.mjs its commands run, or null when no path could be read from the file. */
+  hook: string | null;
+  /** False only when the file runs a different hook.mjs than this coding.sh home's (another CODING_SH_HOME or HOME). */
+  current: boolean;
+}
+
+/** The files in `scope` that hold this agent's coding.sh hooks: the same dry-run uninstall init uses. */
+async function hookFilesIn(a: Adapter, scope: "user" | "project", projectDir: string, hook: string): Promise<HookFile[]> {
+  let files: string[];
+  try {
+    files = [...new Set((await a.uninstall({ scope, projectDir, dryRun: true })).map((c) => resolve(c.path)))];
+  } catch {
+    return [];
+  }
+  const all = files.map((file) => ({ file, scope, ...hookTarget(file, hook) }));
+  // The uninstall also names files without hooks (the MCP entry's): keep the ones that run a hook when any do.
+  const withHook = all.filter((f) => f.hook !== null);
+  return withHook.length ? withHook : all;
 }
 
 function spoolWritable(spool: string): { ok: boolean; error?: string } {
@@ -165,9 +189,17 @@ function listening(port: number, host = "127.0.0.1", timeoutMs = 500): Promise<b
   });
 }
 
-/** Not hooked in the user config, but captured anyway: project-level hooks, or events within the last few minutes. */
-function capturing(a: { projectHooks: string[]; lastEventAgeMs: number | null }): boolean {
-  return a.projectHooks.length > 0 || (a.lastEventAgeMs !== null && a.lastEventAgeMs < RECENT_EVENT_MS);
+/** Hooks that feed this coding.sh home: in the user config or a project file, running this home's hook.mjs. */
+function hooksHere(a: { hooked: boolean; hookFiles: HookFile[] }): HookFile | true | undefined {
+  const user = a.hookFiles.filter((f) => f.scope === "user");
+  const here = a.hookFiles.find((f) => f.current);
+  // Hooked in the user config with no file to read (an adapter whose dry-run uninstall names none): trust detect.
+  return here ?? (a.hooked && !user.length ? true : undefined);
+}
+
+/** Not hooked for this home in the user config, but captured anyway: project-level hooks, or events within the last few minutes. */
+function capturing(a: { hooked: boolean; hookFiles: HookFile[]; lastEventAgeMs: number | null }): boolean {
+  return hooksHere(a) !== undefined || (a.lastEventAgeMs !== null && a.lastEventAgeMs < RECENT_EVENT_MS);
 }
 
 export async function run(c: CommandContext): Promise<number> {
@@ -206,6 +238,9 @@ export async function run(c: CommandContext): Promise<number> {
     store.error = e instanceof Error ? e.message : String(e);
   }
 
+  // After an update the bin can lag the CLI (stale hook.mjs, cli-path naming an old install).
+  const health = hookBinHealth(env);
+  const hookBin = { path: p.hook, installed: existsSync(p.hook), ...health, stale: existsSync(p.hook) && (health.hookCurrent === false || health.cliPathCurrent === false || (health.cliPath !== null && !health.cliPathExists)) };
   const home = resolve(userHome(env));
   const agents = [];
   for (const { adapter, result } of detected) {
@@ -218,6 +253,11 @@ export async function run(c: CommandContext): Promise<number> {
     const shown = result.installed || named.includes(adapter.id);
     const dirs = shown && capture === "hooks" && !result.hooked ? [...upward(c.cwd, home), ...(newest ? spoolCwds(newest.file) : []), ...(cwdsByAgent[adapter.id] ?? [])] : [];
     const projectHooks = dirs.length ? await projectHookFiles(adapter, dirs) : [];
+    // Which settings file each hook lives in, and whether it runs this home's hook.mjs
+    // (a project file written under another HOME or CODING_SH_HOME feeds that home, not this one).
+    const hookFiles: HookFile[] =
+      capture !== "hooks" || !shown ? []
+      : [...(result.hooked ? await hookFilesIn(adapter, "user", c.cwd, p.hook) : []), ...projectHooks.map((file): HookFile => ({ file, scope: "project", ...hookTarget(file, p.hook) }))];
     agents.push({
       id: adapter.id,
       name: adapter.displayName,
@@ -228,6 +268,8 @@ export async function run(c: CommandContext): Promise<number> {
       hooked: result.hooked,
       // Project-level config files holding coding.sh hooks, looked for only when the user config has none.
       projectHooks,
+      // Every settings file doctor read holding its hooks (user config and projects), with the hook.mjs each runs and whether that is this home's (current).
+      hookFiles,
       // Captured by reading the agent's own store (T3 Code), not by hooks.
       store: adapter.tail !== undefined,
       // How this agent is captured: its hooks, its own store, or the `coding.sh run --` wrapper (tier C: nothing to install).
@@ -242,9 +284,6 @@ export async function run(c: CommandContext): Promise<number> {
   }
 
   const spool = { path: p.spool, ...spoolWritable(p.spool) };
-  // After an update the bin can lag the CLI (stale hook.mjs, cli-path naming an old install).
-  const health = hookBinHealth(env);
-  const hookBin = { path: p.hook, installed: existsSync(p.hook), ...health, stale: existsSync(p.hook) && (health.hookCurrent === false || health.cliPathCurrent === false || (health.cliPath !== null && !health.cliPathExists)) };
   const mcp = checkMcpEntries(
     detected.filter((d) => d.result.installed || named.includes(d.adapter.id)).map((d) => d.adapter),
     env,
@@ -278,20 +317,28 @@ export async function run(c: CommandContext): Promise<number> {
     // The built-in wrapper is not something "installed": it is part of coding.sh.
     const parts = a.id === "wrapper" ? [] : [a.version ? `v${a.version}` : "installed"];
     const blocked = !a.store && a.hooked && a.blockers.length > 0;
-    const captured = capturing(a);
+    const here = hooksHere(a);
+    const elsewhere = a.hookFiles.find((f) => !f.current);
+    const recent = a.lastEventAgeMs !== null && a.lastEventAgeMs < RECENT_EVENT_MS;
+    // Hooks only capture when they run this home's hook.mjs and it exists; the Hook row below says the same.
+    const working = here !== undefined && hookBin.installed;
+    const where = (f: HookFile) => `${f.file}${f.scope === "project" ? " (project)" : ""}`;
+    const more = (n: number) => (n > 1 ? ` and ${n - 1} more` : "");
     parts.push(
       a.store ? (a.hooked ? "reads its store" : "no store yet")
       : wrapper ? `no hooks needed; capture with coding.sh run -- ${a.id === "wrapper" ? "<cmd>" : a.id}`
-      : blocked ? "hooked but not firing" : a.hooked ? "hooked"
-      : a.projectHooks.length ? `hooked in ${a.projectHooks[0]} (project)${a.projectHooks.length > 1 ? ` and ${a.projectHooks.length - 1} more` : ""}`
-      : captured ? "events arriving, hook not in user config" : "not hooked",
+      : blocked ? "hooked but not firing"
+      : here !== undefined ? `hooked${here === true ? "" : ` in ${where(here)}${more(a.hookFiles.filter((f) => f.current).length)}`}${hookBin.installed ? "" : ", but the hook it runs is missing"}`
+      : elsewhere ? `hooks in ${where(elsewhere)} run ${elsewhere.hook}, not this home's hook`
+      : recent ? "events arriving, hook not in user config" : "not hooked",
     );
     if (a.lastEventAt) {
       parts.push(`last event ${ago(Date.parse(a.lastEventAt))}`);
     } else parts.push(wrapper ? "no runs yet" : "no events yet");
     // "Any command (coding.sh run --)" reads better as "Any command" than cut off.
     const label = a.name.length >= LABEL_WIDTH ? a.name.replace(/\s*\(.*\)$/, "") : a.name;
-    out.row(label, parts.join(", "), wrapper || (a.hooked && !blocked) || (!a.hooked && captured) ? "ok" : "warn");
+    const ok = wrapper || (a.store ? a.hooked || recent : !blocked && (working || (here === undefined && recent)));
+    out.row(label, parts.join(", "), ok ? "ok" : "warn");
     if (a.store) for (const n of a.notes) out.note(n);
     else if (blocked) for (const n of a.blockers) out.note(n);
   }
@@ -316,7 +363,7 @@ export async function run(c: CommandContext): Promise<number> {
   out.row("AI Gateway", gwParts.join(", "), routed.length || gateway.key.set || gateway.sessions ? "ok" : "none");
   if (others.length) out.row("Gateways", `keys set for ${others.map((g) => GATEWAYS[g.id].name).join(", ")}`, "ok");
   for (const f of gateway.configured) out.note(`${f.gateway === "vercel" ? "" : `${GATEWAYS[f.gateway].name}: `}${f.detail} (${f.where}${f.active ? "" : ", not selected"})`);
-  const unhooked = shown.filter((a) => a.capture === "hooks" && !a.hooked && !capturing(a));
+  const unhooked = shown.filter((a) => a.capture === "hooks" && !capturing(a));
   if (unhooked.length) out.next("Capture the agents without hooks", `coding.sh init ${unhooked.map((a) => `--agent ${a.id}`).join(" ")}`);
   out.print(problems ? "problems found" : "ok");
   return problems ? 1 : 0;
