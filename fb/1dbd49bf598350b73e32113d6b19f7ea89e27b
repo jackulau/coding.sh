@@ -1,0 +1,45 @@
+packages/coding.sh/test/cli/refine-reuse.test.ts
+  s_8e040dbdf13565::t_57a4abffdf5b34 1-137,139-191
+  s_8e040dbdf13565::t_935d9f30683939 138
+packages/coding.sh/src/cli/commands/refine-climb.ts
+  s_8e040dbdf13565::t_75e63882fce91a 47
+  s_8e040dbdf13565::t_1453407bda30bf 387
+  s_8e040dbdf13565::t_954ab2d5621d91 380
+  s_8e040dbdf13565::t_62ca6848ed7e2a 38-39
+  s_8e040dbdf13565::t_7be90769aa247c 71-72,88-93
+  s_8e040dbdf13565::t_a1249eb9fa16c7 231-232,234
+  s_8e040dbdf13565::t_1466ee5facf097 327
+  s_8e040dbdf13565::t_e7bf75538f08f7 322
+CHANGELOG.md
+  s_8e040dbdf13565::t_b665de234996c3 25
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_37261ec05c3e7e 161-162
+docs/guides/evals.md
+  s_8e040dbdf13565::t_b83796a56894df 1733-1744
+packages/coding.sh/src/cli/commands/refine-suite.ts
+  s_8e040dbdf13565::t_fb7d5393b2c77d 125-126
+  s_8e040dbdf13565::t_8bb4ea3482272a 22
+  s_8e040dbdf13565::t_9aafc416419c14 158-163
+  s_8e040dbdf13565::t_170d619a1035ab 187-188
+  s_8e040dbdf13565::t_082015d9acf720 202-204
+  s_8e040dbdf13565::t_57370691e89825 214-218
+  s_8e040dbdf13565::t_dce4f7b6c71ad3 108-109
+docs/reference/cli.md
+  s_8e040dbdf13565::t_7acb43fed30c7b 2474-2475,2584-2585
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "fb1dbd49bf598350b73e32113d6b19f7ea89e27b",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Jack <jack@coding.sh>"
+    }
+  }
+}
