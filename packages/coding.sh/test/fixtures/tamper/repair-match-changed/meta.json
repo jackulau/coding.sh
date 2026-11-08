@@ -1,0 +1,6 @@
+{
+  "path": "test/runner/repair.test.ts",
+  "additive": false,
+  "commit": "a0014c7",
+  "what": "changes an existing assert.match pattern"
+}

@@ -1,0 +1,6 @@
+{
+  "path": "test/core/pricing.test.ts",
+  "additive": true,
+  "commit": "79100ec",
+  "what": "extends an import line and adds a describe at the end"
+}

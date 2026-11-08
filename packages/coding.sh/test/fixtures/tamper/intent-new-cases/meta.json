@@ -1,0 +1,6 @@
+{
+  "path": "test/core/intent.test.ts",
+  "additive": true,
+  "commit": "226699b",
+  "what": "adds test cases to an existing suite"
+}

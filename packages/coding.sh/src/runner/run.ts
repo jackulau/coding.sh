@@ -3,7 +3,7 @@
 //   diff → tamper check → hidden files → verifier → [repair rounds] → RunResult.
 // Never throws for anything the agent, setup or verifier does; those become
 // `error` on the result. The work dir is removed unless `keep`.
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { agentAnswerText } from "../core/answer.ts";
@@ -13,7 +13,7 @@ import { paths } from "../core/paths.ts";
 import type { Adapter, AgentRunOutput, BlobStore, EvalTask, HarnessBundle, IndexStore, RepairReport, RepairRound, RunResult, TamperReport } from "../core/types.ts";
 import { applyBundle } from "./bundle.ts";
 import { commandEnv, sh, type ExecResult } from "./exec.ts";
-import { writeHiddenFiles } from "./fsutil.ts";
+import { safeJoin, writeHiddenFiles } from "./fsutil.ts";
 import { rebaseStart, rmrf, snapshotOps, type SnapshotOps, type WorkdirDiff } from "./git.ts";
 import { falseAlarmFires, failingTestNames, repairMessage, restoreFiles, saveFiles, type RepairOpts, type SavedFiles } from "./repair.ts";
 import { detectTamper, tamperOptsFor } from "./tamper.ts";
@@ -281,7 +281,8 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
     if (d.blob) result.diffBlob = d.blob;
     if (d.error) result.error ??= d.error;
     // Test tamper (edits, deletions, skip markers) is judged on the agent's diff alone.
-    if (d.diff) result.tamper = detectTamper(d.diff, tamperOptsFor(task, opts.testGlobs));
+    const tamperOpts = { ...tamperOptsFor(task, opts.testGlobs), readFile: (p: string) => readWorkFile(layout.work, p) };
+    if (d.diff) result.tamper = detectTamper(d.diff, tamperOpts);
 
     // The verifier runs even when the agent errored or timed out: partial work can still pass.
     const g = await grade(result.agent);
@@ -309,7 +310,7 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
         },
         callAgent,
         takeDiff,
-        tamperOf: (diff) => detectTamper(diff, tamperOptsFor(task, opts.testGlobs)),
+        tamperOf: (diff) => detectTamper(diff, tamperOpts),
         grade,
       });
     }
@@ -334,6 +335,15 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
     }
   }
   return result;
+}
+
+/** A file in the work tree as the agent left it, for the tamper check; undefined when unreadable or outside the tree. */
+function readWorkFile(work: string, rel: string): string | undefined {
+  try {
+    return readFileSync(safeJoin(work, rel), "utf8");
+  } catch {
+    return undefined;
+  }
 }
 
 interface AgentCall {

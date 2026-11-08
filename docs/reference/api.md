@@ -1023,7 +1023,9 @@ answer `{"items":[…]}` and are empty for a scoped key.
 - `/api/tasks` filters: `status` (`draft`, `validated` or `archived`) and `tag`.
 - `/api/runs` filters: `experimentId`, `taskId` and `bundleId`. A run carries `cellKey` (the content key
   `compare --reuse` matches on; absent on older runs) and, when `compare --reuse` copied it, `reusedFrom`
-  (the id of the run it was copied from). A run from `compare --repair` carries `repair`: `signal`
+  (the id of the run it was copied from). A run carries `tamper` when its diff was checked: `flagged`,
+  `flags` (each with `kind`, `path`, `why` and `detail`) and `addedTests`, the existing test files the
+  agent only added new test cases to (absent when none). A run from `compare --repair` carries `repair`: `signal`
   (`bit` or `names`), `mode` (`resume` or `fresh`), `limit`, `rounds` (each with `n`, `pass`,
   `verifierExit`, `durationMs`, `usage`, `sessionId`, `diffBlob`, `unchanged` when the round changed no
   file, `tamper` when the round's diff tampers with tests, and `namesParsed` with signal `names`),

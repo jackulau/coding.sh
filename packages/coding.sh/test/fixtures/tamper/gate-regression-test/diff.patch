@@ -1,0 +1,26 @@
+diff --git a/test/runner/experiment.test.ts b/test/runner/experiment.test.ts
+index fa26f20..ca08e13 100644
+--- a/test/runner/experiment.test.ts
++++ b/test/runner/experiment.test.ts
+@@ -616,6 +616,21 @@ describe("compare --gate", () => {
+     assert.equal(row(formatCompare(gated)), row(formatCompare(plain)));
+   });
+ 
++  it("tamper-flagged passes count for neither arm: both tampering is a tie, A tampering and B clean is a win", () => {
++    const dirty = { flagged: true, flags: [{ kind: "edit" as const, path: "test/a.test.js", why: "test-glob" as const }] };
++    const clean = { flagged: false, flags: [] };
++    const rs: RunResult[] = [];
++    // t: both arms pass every attempt by editing the visible test. u: A tampers, B passes clean.
++    for (let a = 1; a <= 3; a++) {
++      rs.push(run("t", "A", a, true, { tamper: dirty }), run("t", "B", a, true, { tamper: dirty }));
++      rs.push(run("u", "A", a, true, { tamper: dirty }), run("u", "B", a, true, { tamper: clean }));
++    }
++    const g = compare(rs, { baseline: "A", candidate: "B", iters: 200, gate: {} }).gate!;
++    assert.deepEqual([g.wins, g.losses, g.solved], [1, 0, 0]);
++    assert.deepEqual([g.lost, g.won], [[], ["u"]]);
++    assert.notEqual(g.verdict, "dont-ship");
++  });
++
+   it("with --without the line reads drop it / keep it", () => {
+     const rs: RunResult[] = [];
+     for (let i = 0; i < 6; i++) rs.push(run(`t${i}`, "A", 1, true), run(`t${i}`, "B", 1, i >= 2));

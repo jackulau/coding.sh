@@ -1,0 +1,23 @@
+diff --git a/test/core/pricing.test.ts b/test/core/pricing.test.ts
+index 940ceba..6f0a6d0 100644
+--- a/test/core/pricing.test.ts
++++ b/test/core/pricing.test.ts
+@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
+ import { join } from "node:path";
+ import { after, describe, it } from "node:test";
+ import { loadConfig } from "../../src/core/config.ts";
+-import { applyPricing, BUILTIN_PRICES, callRates, callTier, costFrom, costNote, geoValue, lookupPrice, priceEvent, pricesFor, promptTokens, resolvePrice, tierValue } from "../../src/core/pricing.ts";
++import { applyPricing, BUILTIN_PRICES, DEFAULT_MODELS, callRates, callTier, costFrom, costNote, geoValue, lookupPrice, priceEvent, pricesFor, promptTokens, resolvePrice, tierValue } from "../../src/core/pricing.ts";
+ import type { AgentEvent } from "../../src/schema/index.ts";
+ 
+ const M = 1_000_000;
+@@ -450,3 +450,9 @@ US = 1.1
+     for (const [toml, re] of cases) assert.throws(load(toml), re, toml);
+   });
+ });
++
++describe("default models", () => {
++  it("names one current model per provider, each with a built-in price row", () => {
++    for (const [provider, model] of Object.entries(DEFAULT_MODELS)) assert.ok(BUILTIN_PRICES[model], `${provider}: ${model} has no price row`);
++  });
++});

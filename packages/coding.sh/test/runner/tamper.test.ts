@@ -201,6 +201,15 @@ describe("runTask tamper check", () => {
     assert.deepEqual(s.tamper?.flags.map((f) => f.kind), ["edit", "skip"]);
   });
 
+  it("a fix plus a regression test added to the existing test file is not flagged; the file is listed as added to", async () => {
+    const w = await visibleTestWorld();
+    const withTest = VISIBLE_TEST.replace("\n", '\nimport { test } from "node:test";\n') + '\ntest("adds zero", () => {\n  assert.equal(add(0, 0), 0);\n});\n';
+    const fixer = fakeAdapter({ act: () => ({ "src/add.js": FIXED["src/add.js"] as string, "test/visible.test.js": withTest }) });
+    const r = await runTask({ task: w.task, bundle: await w.mkBundle("x", "x"), adapter: fixer, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.pass, true);
+    assert.deepEqual(r.tamper, { flagged: false, flags: [], addedTests: ["test/visible.test.js"] });
+  });
+
   it("writing a file at a hidden verifier path is flagged; hidden files still win", async () => {
     const w = await toyWorld();
     const planter = fakeAdapter({ act: () => ({ "test/add.test.js": "// always passes\n", "src/add.js": FIXED["src/add.js"] as string }) });

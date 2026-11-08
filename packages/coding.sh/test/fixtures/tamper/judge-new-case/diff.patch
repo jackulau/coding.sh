@@ -1,0 +1,24 @@
+diff --git a/test/judge/judge.test.ts b/test/judge/judge.test.ts
+index 5c656ee..649fe31 100644
+--- a/test/judge/judge.test.ts
++++ b/test/judge/judge.test.ts
+@@ -161,6 +161,19 @@ describe("providers", () => {
+     assert.ok(!JSON.stringify(p.params).includes(KEY));
+   });
+ 
++  it("reads the base URL from ANTHROPIC_BASE_URL / OPENAI_BASE_URL, after the option", async () => {
++    const reply = () => new Response(JSON.stringify({ choices: [{ message: { content: "x" } }] }));
++    const m = mockFetch([anthropicReply("x"), anthropicReply("x"), reply(), reply()]);
++    await anthropicProvider({ env: { ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: "http://127.0.0.1:9/" }, fetch: m.fn }).complete({ system: "", user: "" });
++    await anthropicProvider({ env: { ANTHROPIC_API_KEY: KEY, ANTHROPIC_BASE_URL: "http://127.0.0.1:9" }, baseURL: "http://opt", fetch: m.fn }).complete({ system: "", user: "" });
++    await openAICompatibleProvider({ model: "m", env: { OPENAI_API_KEY: KEY, OPENAI_BASE_URL: "http://proxy/v1" }, fetch: m.fn }).complete({ system: "", user: "" });
++    await openAICompatibleProvider({ model: "m", name: "ollama", requireKey: false, env: { OPENAI_BASE_URL: "http://proxy/v1" }, fetch: m.fn }).complete({ system: "", user: "" });
++    assert.deepEqual(
++      (m.calls as Call[]).map((c) => c.url),
++      ["http://127.0.0.1:9/v1/messages", "http://opt/v1/messages", "http://proxy/v1/chat/completions", "https://api.openai.com/v1/chat/completions"],
++    );
++  });
++
+   it("anthropic: refusal is an error; a missing key names the env var", async () => {
+     const m = mockFetch([anthropicReply("", { stop_reason: "refusal", stop_details: { category: "cyber" } })]);
+     await assert.rejects(anthropicProvider({ env: { ANTHROPIC_API_KEY: KEY }, fetch: m.fn }).complete({ system: "", user: "" }), /declined.*cyber/);

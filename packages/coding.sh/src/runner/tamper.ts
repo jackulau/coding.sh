@@ -6,6 +6,7 @@ import { detectTestTamperTrace, SKIP_MARKERS, type TestTamperFinding } from "../
 import type { AgentEvent, EvalTask, TamperFlag, TamperReport } from "../core/types.ts";
 import type { DiffFile, WorkdirDiff } from "./git.ts";
 import { hasGlob, matchAny, matchGlob } from "./glob.ts";
+import { onlyAddsTests, patchHunks } from "./test-additions.ts";
 
 /** Paths that are tests by convention, across common ecosystems. */
 export const DEFAULT_TEST_GLOBS: readonly string[] = [
@@ -59,6 +60,12 @@ export interface TamperOpts {
   verifierCommand?: string;
   /** Extra test globs on top of DEFAULT_TEST_GLOBS. */
   testGlobs?: readonly string[];
+  /**
+   * The file at a repo-relative path as the agent left it (undefined when
+   * unreadable). With it, an edit that only adds new test cases to an existing
+   * test file is not a flag; without it, every edit to a test file is.
+   */
+  readFile?: (path: string) => string | undefined;
 }
 
 /** Detector inputs for a task: hidden files, verifier command, and `meta.testGlobs` plus `extraGlobs`. */
@@ -168,12 +175,18 @@ export function detectTamper(diff: WorkdirDiff, opts: TamperOpts = {}): TamperRe
   const cmdPaths = opts.verifierCommand ? verifierPaths(opts.verifierCommand) : [];
   const dataPaths = opts.verifierCommand ? verifierDataPaths(opts.verifierCommand) : new Set<string>();
   const lines = patchLines(diff.patch);
+  let hunks: ReturnType<typeof patchHunks> | undefined;
   const flags: TamperFlag[] = [];
+  const addedTests: string[] = [];
   for (const f of diff.files) {
     const path = norm(f.path);
     const pl = lines.get(path);
     const why = classify(path, opts, hidden, cmdPaths);
-    if (why) {
+    // New test cases added to an existing test file, every existing line kept: nothing is disabled.
+    const additive = (w: Why) =>
+      w !== "runner-config" && w !== "ci" && !!opts.readFile && onlyAddsTests(path, (hunks ??= patchHunks(diff.patch)).get(path) ?? [], opts.readFile(path));
+    if (why && !isDelete(f) && !isAdd(f) && additive(why)) addedTests.push(path);
+    else if (why) {
       const counts = `+${f.additions} -${f.deletions}`;
       if (isDelete(f)) flags.push({ kind: "delete", path, why, detail: counts });
       else if (isAdd(f)) {
@@ -193,7 +206,7 @@ export function detectTamper(diff: WorkdirDiff, opts: TamperOpts = {}): TamperRe
       if (changed.length) flags.push({ kind: "script", path, why: "package-json", detail: changed.join(" ") });
     }
   }
-  return { flagged: flags.length > 0, flags };
+  return { flagged: flags.length > 0, flags, ...(addedTests.length ? { addedTests } : {}) };
 }
 
 /** One line per flag, e.g. "edit test/a.test.js (test-glob, +1 -3)". */

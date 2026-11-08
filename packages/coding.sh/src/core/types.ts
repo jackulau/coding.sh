@@ -717,6 +717,8 @@ export interface TamperFlag {
 export interface TamperReport {
   flagged: boolean;
   flags: TamperFlag[];
+  /** Existing test files the agent only added new test cases to (not flags); absent when none. */
+  addedTests?: string[];
 }
 
 export interface RunResult {

@@ -1,0 +1,6 @@
+{
+  "path": "test/runner/experiment.test.ts",
+  "additive": true,
+  "commit": "0561e4f",
+  "what": "fix(compare): adds one regression test inside an existing describe"
+}

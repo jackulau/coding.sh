@@ -1,0 +1,6 @@
+{
+  "path": "test/store/purge.test.ts",
+  "additive": true,
+  "commit": "0596392",
+  "what": "adds tests to an existing describe"
+}

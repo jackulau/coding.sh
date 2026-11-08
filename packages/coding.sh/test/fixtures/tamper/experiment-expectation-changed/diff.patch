@@ -1,0 +1,13 @@
+diff --git a/test/runner/experiment.test.ts b/test/runner/experiment.test.ts
+index 936f2bc..fa26f20 100644
+--- a/test/runner/experiment.test.ts
++++ b/test/runner/experiment.test.ts
+@@ -494,7 +494,7 @@ describe("compare failure anatomy", () => {
+     assert.deepEqual([a.candidate.fails, a.candidate.badRun, a.candidate.beyondArm, a.candidate.unsolvedByAll], [4, 1, 0, 3]);
+     assert.ok(Math.abs(a.variance.task + a.variance.arm + a.variance.run - 1) < 1e-12);
+     assert.equal(a.variance.n, 24);
+-    assert.ok(r.notes.includes("1 task failed every attempt in both arms (50% of failed runs): check them with coding.sh eval validate / eval curate"));
++    assert.ok(r.notes.includes("1 task failed every attempt in both arms (50% of failed runs): a task no attempt solves is often broken, so check it with coding.sh eval validate <task>"));
+     assert.ok(!r.notes.some((n) => /bad runs/.test(n)), "B's failures are mostly not bad runs");
+     const text = formatCompare(r);
+     assert.match(text, /^failures {10}A 8 \(bad-run 2 · beyond-arm 3 · unsolved-by-all 3\)$/m);

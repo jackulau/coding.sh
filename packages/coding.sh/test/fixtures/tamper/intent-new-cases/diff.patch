@@ -1,0 +1,22 @@
+diff --git a/test/core/intent.test.ts b/test/core/intent.test.ts
+index d5f86da..09e20b0 100644
+--- a/test/core/intent.test.ts
++++ b/test/core/intent.test.ts
+@@ -275,6 +275,17 @@ describe("test-tamper false positives seen on real sessions", () => {
+     assert.equal(trace(edit("test/cli.test.ts", existing))[0]?.severity, "high");
+   });
+ 
++  it("a skip marker inside a string literal is test data, not a skip", () => {
++    // A detector's own tests hold diffs and commands with markers in them, added to tests already there.
++    const data = "--- a/test/intent.test.ts\n+++ b/test/intent.test.ts\n@@ -40,3 +40,5 @@\n it(\"finds skips\", () => {\n+  const cmd = \"sed -i 's/^it(/it.skip(/' tests/a.test.js\";\n+  const line = '+it.skip(\\'adds\\', () => {';\n   assert.ok(run());\n";
++    assert.deepEqual(trace(edit("test/intent.test.ts", data)).map((f) => [f.shape, f.severity]), [["additive", "info"]]);
++    // The marker itself outside a string still counts, whatever its arguments.
++    const call = "--- a/test/a.test.ts\n+++ b/test/a.test.ts\n@@ -10,3 +10,3 @@\n-it(\"adds\", () => {\n+it.skip(\"adds\", () => {\n   assert.equal(add(1, 1), 2);\n";
++    assert.equal(trace(edit("test/a.test.ts", call))[0]?.shape, "skip");
++    const opts = "--- a/test/a.test.ts\n+++ b/test/a.test.ts\n@@ -10,3 +10,3 @@\n-it(\"adds\", () => {\n+it(\"adds\", { skip: \"flaky\" }, () => {\n   assert.equal(add(1, 1), 2);\n";
++    assert.equal(trace(edit("test/a.test.ts", opts))[0]?.shape, "skip");
++  });
++
+   it("a widened import next to a new test is additive; a rewritten assertion is still weaken", () => {
+     const imports = "--- a/test/a.test.ts\n+++ b/test/a.test.ts\n@@ -1,2 +1,2 @@\n-import { a } from \"./a.ts\";\n+import { a, b } from \"./a.ts\";\n@@ -20,0 +21,3 @@\n+it(\"b\", () => {\n+  assert.equal(b(), 1);\n+});\n";
+     assert.deepEqual(trace([result(1, 5), ...edit("test/a.test.ts", imports), result(0, 7)]).map((f) => [f.shape, f.severity]), [["additive", "info"]]);

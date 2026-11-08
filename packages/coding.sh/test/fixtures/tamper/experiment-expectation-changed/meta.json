@@ -1,0 +1,6 @@
+{
+  "path": "test/runner/experiment.test.ts",
+  "additive": false,
+  "commit": "ba563a7",
+  "what": "changes an existing assertion's expected note"
+}
