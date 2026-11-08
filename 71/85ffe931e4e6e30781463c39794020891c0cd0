@@ -3,6 +3,7 @@ packages/coding.sh/src/core/models.ts
 packages/coding.sh/test/core/models.test.ts
   s_8e040dbdf13565::t_f43e3839d10406 1-6,10-91,106-170,186-214
   s_8e040dbdf13565::t_d45527f5b7c249 7-9,92-105
+  s_8e040dbdf13565::t_08303ee7abf8f9 171-185
 packages/coding.sh/src/cli/commands/show.ts
   s_8e040dbdf13565::t_2bdaef159bb020 173-174,176-185,377-378
   s_8e040dbdf13565::t_ff9b3afec8dfb6 175
@@ -25,6 +26,7 @@ docs/concepts.md
   s_8e040dbdf13565::t_62268578c7015b 42-45,78,96-100
 docs/reference/api.md
   s_8e040dbdf13565::t_62268578c7015b 495-505,531
+  s_8e040dbdf13565::t_38842449c9d8e4 506-508
 ---
 {
   "schema_version": "authorship/3.0.0",
