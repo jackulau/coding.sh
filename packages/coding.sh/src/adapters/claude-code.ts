@@ -572,7 +572,8 @@ export const claudeCode: Adapter = {
   // 5 (0.1.2): hook.context (text hooks added to the context, with its source and size).
   // 6 (0.1.2): session.start records how Claude Code was launched (entrypoint).
   // 7 (0.1.2): session.end keeps Claude Code's reported cost (cost-state) as reportedUsage.
-  parseVersion: 7,
+  // 8 (0.1.2): API errors keep their HTTP status, error class, rate-limit type and retry wait.
+  parseVersion: 8,
 
   detect() {
     const dir = claudeConfigDir();

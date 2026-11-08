@@ -11,6 +11,7 @@
 //   startStub({ decide: (body) => ({ tool: { name, args } }) | ({ text }) | undefined })  # a scenario; undefined falls back
 //   ({ text, tool }) answers with the text and then the tool call in one response.
 //   (Anthropic only: a decision's `usage` replaces the prompt-side usage, e.g. cache_read_input_tokens.)
+//   ({ error: { status, headers?, body } }) answers with that HTTP error instead (a 429 with rate-limit headers, a 529).
 import { createServer } from "node:http";
 import { pathToFileURL } from "node:url";
 
@@ -152,9 +153,15 @@ export function startStub({ port = 0, decide: custom } = {}) {
       const auth = req.headers["x-api-key"] ? "x-api-key" : req.headers.authorization ? "authorization" : undefined;
       requests.push({ method: req.method, url, model: body.model, tools: toolNames(body).length, toolResult: hasToolResult(body), stream: body.stream === true, ...(auth ? { auth } : {}) });
       if (req.method === "GET" && /models$/.test(url)) return json(res, { object: "list", data: [{ id: MODEL, object: "model", owned_by: "stub" }] });
-      if (/chat\/completions$/.test(url)) return chat(body, res, pick(body));
-      if (/messages$/.test(url)) return anthropic(body, res, pick(body));
-      if (/responses$/.test(url)) return responses(body, res, pick(body));
+      const answer = (fn) => {
+        const d = pick(body);
+        if (!d.error) return fn(body, res, d);
+        res.writeHead(d.error.status, { "content-type": "application/json", ...d.error.headers });
+        res.end(JSON.stringify(d.error.body ?? { type: "error", error: { type: "api_error", message: `stub: ${d.error.status}` } }));
+      };
+      if (/chat\/completions$/.test(url)) return answer(chat);
+      if (/messages$/.test(url)) return answer(anthropic);
+      if (/responses$/.test(url)) return answer(responses);
       res.writeHead(404, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: { message: `stub: no route ${url}` } }));
     });

@@ -492,6 +492,7 @@ const METADATA_STRING_KEYS = new Set([
   "linkedBy",
   "errorClass",
   "errorType",
+  "rateLimitType",
   "systemHash",
   "toolsHash",
   "messageId",

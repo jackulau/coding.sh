@@ -709,7 +709,8 @@ export const t3code: Adapter = {
   tier: "B",
   // 2 (0.1.2): Pi's native id links to the Pi session.
   // 3 (0.1.2): Claude transcripts keep Claude Code's reported cost (cost-state) on session.end.
-  parseVersion: 3,
+  // 4 (0.1.2): Claude transcripts' API errors keep their HTTP status, error class, rate-limit type and retry wait.
+  parseVersion: 4,
 
   async detect() {
     const env = process.env;

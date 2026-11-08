@@ -11,7 +11,7 @@
 // timings, usage and short hashes of the system prompt and tools.
 import { randomUUID } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
-import { isObj, str } from "../adapters/_shared/normalize.ts";
+import { errorClass, isObj, str } from "../adapters/_shared/normalize.ts";
 import { hashParts, sha256Hex } from "../core/ids.ts";
 import { type Prices, priceEvent } from "../core/pricing.ts";
 import { type Redactor, toMetadata } from "../core/redact.ts";
@@ -120,18 +120,8 @@ export function rateLimits(h: IncomingHttpHeaders | undefined): Record<string, n
   return out;
 }
 
-/** Coarse error class of a failed call, for filters and charts. */
-export function errorClass(status: number | undefined, type: string | undefined, network?: string): string | undefined {
-  if (network) return /timed? ?out|ETIMEDOUT/i.test(network) ? "timeout" : "network";
-  if (status === undefined || status < 400) return type ? "api" : undefined;
-  if (status === 429) return "rate_limit";
-  if (status === 529 || type === "overloaded_error") return "overloaded";
-  if (status === 401 || status === 403) return "auth";
-  if (status === 413) return "too_large";
-  if (status === 408 || status === 504) return "timeout";
-  if (status >= 500) return "server";
-  return "invalid_request";
-}
+/** Coarse error class of a failed call, for filters and charts (shared with the adapters). */
+export { errorClass };
 
 const MAX_TOOL_NAMES = 64;
 const PROMPT_PREVIEW = 280;

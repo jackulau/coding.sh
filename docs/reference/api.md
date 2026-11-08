@@ -531,6 +531,15 @@ the proxy takes its `parent` from its calls' `parentSessionId`. When the
 session also has model calls from the agent's transcript or OpenTelemetry, those count toward
 `stats` and the proxy's copies are detail only; failed proxy calls count either way.
 
+`errorClass` is one of `rate_limit` (429), `overloaded` (529), `auth` (401, 403), `too_large`
+(413), `timeout`, `server` (other 5xx), `invalid_request` (other 4xx), `network` and `api`. Each
+API error Claude Code retried (a transcript's `api_error` line) is an `error` event with
+`source: "api"`, and a backfill also keeps what the transcript records about it: `statusCode`,
+`errorType` (`rate_limit_error`, `overloaded_error`, …), `errorClass`, `rateLimitType` (the limit
+that was hit, such as `seven_day` or `five_hour`), `resetsAt` (ms), `retryAfterMs` (how long Claude
+Code waited before the next attempt), `retryAttempt` and `maxRetries`. A weekly-limit stall then
+reads as hundreds of `rate_limit` errors on `seven_day`, not as one transient error.
+
 Two waste stats are absent when there is nothing to report. `stats.waste` (`duplicateFetches`,
 `duplicateFetchTokens`, `readOnlyCalls`) counts read-only calls that repeated an earlier call in the
 same context with the same result, and the tokens they sent again (output length / 4).

@@ -20,7 +20,7 @@ import type { NormalizeContext } from "../../core/types.ts";
 import { virtualModelId } from "../../integrations/gateway/ids.ts";
 import { hookSource } from "./claude-plugins.ts";
 import { toMs } from "./jsonl.ts";
-import { Emitter, anthropicPriceHints, anthropicUsage, arr, blobList, clipText, clipValue, compact, isObj, num, obj, outputText, str } from "./normalize.ts";
+import { Emitter, anthropicPriceHints, anthropicUsage, arr, blobList, clipText, clipValue, compact, errorClass, isObj, num, obj, outputText, str } from "./normalize.ts";
 import { emitDerived } from "./tools.ts";
 
 export interface ClaudeConvertOpts {
@@ -537,7 +537,7 @@ export class ClaudeTranscriptConverter {
         this.turnEnded = true;
       }
     } else if (e.subtype === "api_error" && this.opts.mode === "full") {
-      em.emit("error", { message: (str(e.content) ?? "api error").slice(0, 1000), source: "api" }, { key: [uuid] });
+      em.emit("error", apiError(e), { key: [uuid] });
     }
     this.push(em);
   }
@@ -608,6 +608,36 @@ export class ClaudeTranscriptConverter {
 }
 
 const NO_PLUGINS: ReadonlyMap<string, string> = new Map();
+
+/**
+ * A `system/api_error` entry (one failed attempt Claude Code retries) as an error
+ * payload: `{message, source: "api", statusCode, errorType, errorClass,
+ * rateLimitType, resetsAt (ms), retryAfterMs, retryAttempt, maxRetries}`, so a
+ * weekly-limit stall (`429`, `seven_day`) reads apart from one overloaded 529.
+ */
+function apiError(e: Record<string, unknown>): Record<string, unknown> {
+  const err = obj(e.error);
+  const status = num(err.status);
+  const raw = str(err.message);
+  const errorType = raw ? /"type"\s*:\s*"([a-z_]+_error)"/.exec(raw)?.[1] : undefined;
+  const conn = err.connection;
+  const network = typeof conn === "string" && conn ? conn : isObj(conn) ? (str(conn.code) ?? str(conn.message) ?? "connection error") : err.isNetworkDown === true ? "network down" : undefined;
+  const rl = obj(err.rateLimits);
+  const resets = num(rl.resetsAt);
+  return {
+    message: (str(e.content) ?? str(err.formatted) ?? raw ?? "api error").slice(0, 1000),
+    source: "api",
+    statusCode: status,
+    errorType,
+    errorClass: errorClass(status, errorType, network),
+    rateLimitType: str(rl.rateLimitType),
+    // Seconds since the epoch on the wire.
+    resetsAt: resets !== undefined ? (resets < 1e12 ? resets * 1000 : resets) : undefined,
+    retryAfterMs: num(e.retryInMs),
+    retryAttempt: num(e.retryAttempt),
+    maxRetries: num(e.maxRetries),
+  };
+}
 
 /** Cap on each list in a harness.loaded payload, and on the payload's JSON size. */
 const HARNESS_LIST_MAX = 50;

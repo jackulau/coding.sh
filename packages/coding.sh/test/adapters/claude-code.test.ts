@@ -8,6 +8,7 @@ import { hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { backfill, backfillCursorKey } from "../../src/core/ingest.ts";
 import { applyPricing, pricesFor } from "../../src/core/pricing.ts";
+import { toMetadata } from "../../src/core/redact.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
@@ -168,6 +169,32 @@ describe("claude-code backfill", () => {
     const { ctx } = testCtx();
     const plain = await collect(claudeCode.backfill!(ctx));
     assert.ok(plain.filter((e) => e.kind === "session.end").every((e) => e.payload.reportedUsage === undefined));
+  });
+
+  it("keeps the HTTP status, rate-limit type, retry wait and error class of API errors Claude Code retried", async () => {
+    // Real capture (scripts/e2e/claude-edge-capture.mjs): two 429s on a seven_day limit, then a 529.
+    const prev = process.env.CLAUDE_CONFIG_DIR;
+    process.env.CLAUDE_CONFIG_DIR = join(FIXTURES, "claude-code", "edge", "config");
+    try {
+      const { ctx } = testCtx();
+      const errors = (await collect(claudeCode.backfill!(ctx))).filter((e) => e.kind === "error");
+      assert.deepEqual(
+        errors.map(({ payload: { message, resetsAt, ...p } }) => (assert.equal(typeof message, "string"), p)),
+        [
+          { source: "api", statusCode: 429, errorType: "rate_limit_error", errorClass: "rate_limit", rateLimitType: "seven_day", retryAfterMs: 1000, retryAttempt: 1, maxRetries: 10 },
+          { source: "api", statusCode: 429, errorType: "rate_limit_error", errorClass: "rate_limit", rateLimitType: "seven_day", retryAfterMs: 1155, retryAttempt: 2, maxRetries: 10 },
+          { source: "api", statusCode: 529, errorType: "overloaded_error", errorClass: "overloaded", retryAfterMs: 2227, retryAttempt: 3, maxRetries: 10 },
+        ],
+      );
+      assert.equal(errors[0]!.payload.message, "429 This request would exceed your account's rate limit. Please try again later.");
+      assert.equal(errors[0]!.payload.resetsAt, 1794125030000);
+      assert.equal(errors[2]!.payload.resetsAt, undefined);
+      // Metadata-only capture keeps the status, class and limit, not the message.
+      const meta = toMetadata(errors[0]!).payload;
+      assert.deepEqual([meta.statusCode, meta.errorClass, meta.rateLimitType, meta.message], [429, "rate_limit", "seven_day", undefined]);
+    } finally {
+      process.env.CLAUDE_CONFIG_DIR = prev;
+    }
   });
 
   it("surfaces failed blob writes instead of dropping transcripts silently", async () => {

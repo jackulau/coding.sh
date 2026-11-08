@@ -308,6 +308,19 @@ export function usageSnapshotKey(u: Usage): (string | number)[] {
   return ["usage-summary", u.inputTokens ?? 0, u.outputTokens ?? 0, u.cacheReadTokens ?? 0, u.cacheWriteTokens ?? 0, u.costUsd ?? 0];
 }
 
+/** Coarse error class of a failed model call, for filters and charts (the proxy and the adapters). */
+export function errorClass(status: number | undefined, type: string | undefined, network?: string): string | undefined {
+  if (network) return /timed? ?out|ETIMEDOUT/i.test(network) ? "timeout" : "network";
+  if (status === undefined || status < 400) return type ? "api" : undefined;
+  if (status === 429) return "rate_limit";
+  if (status === 529 || type === "overloaded_error") return "overloaded";
+  if (status === 401 || status === 403) return "auth";
+  if (status === 413) return "too_large";
+  if (status === 408 || status === 504) return "timeout";
+  if (status >= 500) return "server";
+  return "invalid_request";
+}
+
 /** Drop undefined values (shallow) so payloads serialize identically. */
 export function compact(p: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};

@@ -198,6 +198,7 @@ export interface AgentEvent {
    * - file.change: { path, op: "add"|"modify"|"delete", additions?, deletions? }
    * - test.result: { runner?, passed, failed, skipped? }
    * - context.compact: { trigger: "auto"|"manual", tokensBefore? }
+   * - error: { message, source?, statusCode?, errorType?, errorClass?, rateLimitType?, retryAfterMs?, retryAttempt? }
    * - session.end: { reason?, reportedUsage? (Claude Code's cost-state: costUsd, apiDurationMs, costUsdByModel) }
    * - span: { name, attributes } — an OTel span with no better mapping
    * - any kind: payload.reportedUsage = totals an agent span reports (not summed, avoids double counting)
