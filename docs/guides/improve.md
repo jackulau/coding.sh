@@ -45,6 +45,10 @@ Issues seen in two or more sessions come first. Then the order follows the sever
 `coding.sh refine` uses. Each issue shows the newest example, what to try, and the commands for the
 next steps. `coding.sh show <id>` opens the example. Its header has a `Flags` row.
 
+What `improve` shows from your sessions, the example prompts, error lines and commands, goes
+through redaction first: secrets and email addresses become `[redacted:<kind>]`, whatever
+`capture.redact` kept in the store. The same holds for `improve check`, `--json` and the MCP tools.
+
 ## 2. Add the line
 
 ```sh

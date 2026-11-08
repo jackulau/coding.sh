@@ -283,6 +283,26 @@ function redactProseSecrets(s: string): string {
   return copied === 0 ? s : out + s.slice(copied);
 }
 
+/**
+ * Email addresses: a personal detail, not a secret, so it is not among the
+ * built-in "secrets" rules. Capture redacts emails when capture.redact lists
+ * "email"; what coding.sh shows as a summary (improve) always does.
+ * The local part only starts a match at the start of its run (the lookbehind), so a
+ * long run of address characters without an "@" is scanned once, not once per
+ * start. The last domain label is letters (`pkg@1.2.3` is a version), and an
+ * `@2x.png` image name is not an address.
+ */
+export function emailRules(): RedactRule[] {
+  return [{ kind: "email", pattern: /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@(?!\d+x\.)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?<=\.[A-Za-z]{2,})(?![A-Za-z0-9-])/g }];
+}
+
+/** Redacts what coding.sh prints or returns as a summary: the secret rules, then emails. */
+let shown: Redactor | undefined;
+export function redactShown(s: string): string {
+  shown ??= createRedactor({ redact: ["secrets", "email"] });
+  return shown.string(s);
+}
+
 /** Rules that replace literal values of secret-looking environment variables. */
 export function envRules(env: NodeJS.ProcessEnv = process.env): RedactRule[] {
   const values: string[] = [];
@@ -313,7 +333,7 @@ export function patternRules(patterns: readonly string[]): RedactRule[] {
 }
 
 export interface RedactOptions {
-  /** Built-in redactors: "secrets", "env". Unknown names throw. */
+  /** Built-in redactors: "secrets", "env", "email". Unknown names throw. */
   redact?: readonly string[];
   patterns?: readonly string[];
   env?: NodeJS.ProcessEnv;
@@ -324,8 +344,9 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
   for (const name of opts.redact ?? ["secrets"]) {
     if (name === "secrets") rules.push(...secretRules());
     else if (name === "env") rules.push(...envRules(opts.env));
+    else if (name === "email") rules.push(...emailRules());
     else if (name === "none") continue;
-    else throw new Error(`unknown redactor ${JSON.stringify(name)} in capture.redact (expected "secrets" or "env")`);
+    else throw new Error(`unknown redactor ${JSON.stringify(name)} in capture.redact (expected "secrets", "env" or "email")`);
   }
   rules.push(...patternRules(opts.patterns ?? []));
 

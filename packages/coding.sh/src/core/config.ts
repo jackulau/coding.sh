@@ -369,8 +369,8 @@ function applyCapture(out: Config, r: Reader, how: "replace" | "union", file: st
   const exclude = r.strings(capture, "exclude", "capture.exclude");
   const maxInline = r.int(capture, "maxInlineBytes", "capture.maxInlineBytes", 256);
   for (const name of redact ?? []) {
-    if (!["secrets", "env", "none"].includes(name)) {
-      throw new ConfigError(`capture.redact: unknown redactor ${JSON.stringify(name)} (expected "secrets", "env" or "none")`, file);
+    if (!["secrets", "env", "email", "none"].includes(name)) {
+      throw new ConfigError(`capture.redact: unknown redactor ${JSON.stringify(name)} (expected "secrets", "env", "email" or "none")`, file);
     }
   }
   for (const [i, src] of (patterns ?? []).entries()) {

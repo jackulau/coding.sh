@@ -364,7 +364,7 @@ export interface Config {
   };
   capture: {
     mode: "full" | "metadata";
-    /** Built-in redactors to run: "secrets" (API keys, tokens), "env" (env var values). */
+    /** Built-in redactors to run: "secrets" (API keys, tokens), "env" (env var values), "email" (email addresses). */
     redact: string[];
     /** Extra regexes (source strings) to redact. */
     redactPatterns: string[];

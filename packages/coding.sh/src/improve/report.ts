@@ -4,11 +4,12 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentEvent, Session } from "../schema/index.ts";
+import { redactShown } from "../core/redact.ts";
 import type { IndexStore } from "../core/types.ts";
 import { insideDir } from "../eval/decision.ts";
 import { guessVerifierFromRepo, inspectRepo } from "../eval/task.ts";
 import { autoCliProvider, CLI_PLAN, isCliProvider, type CliProvider } from "../judge/subscription.ts";
-import { changeEffects, currentVersion, sessionVersions, type ChangeEffect } from "./changes.ts";
+import { changeEffects, currentVersion, sessionVersions, type ChangeEffect, type GroupStats } from "./changes.ts";
 import { failureRecords, rankIssues, type FailureRecord, type Issue } from "./issues.ts";
 
 export interface ImproveScope {
@@ -48,8 +49,39 @@ export async function findIssues(index: IndexStore, sessions: readonly Session[]
     const recs = failureRecords(events, o.repoRoot ?? s.repo?.root);
     if (recs.length) failures.set(s.id, recs);
   }
-  const ranked = rankIssues(sessions, failures, o.testCommand ? { testCommand: o.testCommand } : {});
+  const ranked = rankIssues(sessions, failures, o.testCommand ? { testCommand: o.testCommand } : {}).map(shownIssue);
   return o.repoRoot ? markQuiet(o.repoRoot, sessions, ranked) : ranked;
+}
+
+/**
+ * An issue as improve shows it: the text that comes from sessions (example titles,
+ * the error line, the command) goes through redactShown. Stored events were
+ * redacted for secrets at capture, but by the rules of that day and not for
+ * emails, and the report is what gets pasted into issues and sent to a model.
+ */
+export function shownIssue(i: Issue): Issue {
+  return {
+    ...i,
+    title: redactShown(i.title),
+    fix: redactShown(i.fix),
+    examples: i.examples.map((x) => (x.title ? { ...x, title: redactShown(x.title) } : x)),
+    ...(i.command !== undefined ? { command: redactShown(i.command) } : {}),
+    ...(i.sample !== undefined ? { sample: redactShown(i.sample) } : {}),
+  };
+}
+
+const shownGroup = (g: GroupStats): GroupStats => ({ ...g, flaggedSessions: g.flaggedSessions.map((s) => (s.title ? { ...s, title: redactShown(s.title) } : s)) });
+
+/** A harness change as improve shows it: session titles, the subject and the changed lines through redactShown. */
+export function shownChange(e: ChangeEffect): ChangeEffect {
+  const c = e.change;
+  return {
+    ...e,
+    change: { ...c, subject: redactShown(c.subject), added: c.added.map(redactShown), removed: c.removed.map(redactShown) },
+    before: shownGroup(e.before),
+    after: shownGroup(e.after),
+    rules: e.rules.map((r) => ({ ...r, text: redactShown(r.text) })),
+  };
 }
 
 /**
@@ -62,11 +94,12 @@ export async function findChanges(index: IndexStore, root: string, o: { since: n
   const repo = o.sessionsIn === "all" ? undefined : (o.sessionsIn ?? root);
   const sessions = await scopeSessions(index, { ...(repo ? { repo } : {}), since: o.since - 30 * DAY, ...(o.agents ? { agents: o.agents } : {}) });
   try {
-    return await changeEffects(root, sessions, {
+    const effects = await changeEffects(root, sessions, {
       since: o.since,
       ...(o.limit !== undefined ? { limit: o.limit } : {}),
       events: (id: string): Promise<AgentEvent[]> => index.listEvents(id, { kinds: ["tool.start", "tool.end", "file.change"], limit: 5000 }),
     });
+    return effects.map(shownChange);
   } catch {
     // git missing or the repo unreadable: no change history to report.
     return [];

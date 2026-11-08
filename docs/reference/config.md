@@ -45,7 +45,7 @@ keep tokens out of the file.
 | Key | Default | Settable | What |
 |---|---|---|---|
 | `capture.mode` | `"full"` | yes | `full` keeps prompts, replies and tool input and output. `metadata` keeps ids, times, kinds, durations, token counts and short labels only. |
-| `capture.redact` | `["secrets"]` | yes | Built-in redactors: `secrets` (API keys, tokens, private keys), `env` (values of environment variables), `none` (clears the list in your user config). |
+| `capture.redact` | `["secrets"]` | yes | Built-in redactors: `secrets` (API keys, tokens, private keys), `env` (values of environment variables), `email` (email addresses), `none` (clears the list in your user config). |
 | `capture.redactPatterns` | `[]` | yes | Extra regular expressions to redact. Matches become `[redacted:<kind>]`. |
 | `capture.exclude` | `[]` | yes | Path globs (`*`, `**`, `?`, `~`). Sessions whose working directory, or a parent of it, matches are dropped at ingest. |
 | `capture.maxInlineBytes` | `4096` | yes | Payloads larger than this go to the blob store. Minimum 256. |

@@ -16,11 +16,11 @@ const r = createRedactor({ redact: ["secrets"] });
  * 1 MB, interleaved. Linear time grows about 4x, O(n²) about 16x. The O(n²)
  * rules this guards against took seconds to minutes at 1 MB, past the hard cap.
  */
-function assertLinear(label: string, make: (n: number) => string, budgetMs = 500, check?: (input: string, out: string) => void): void {
+function assertLinear(label: string, make: (n: number) => string, budgetMs = 500, check?: (input: string, out: string) => void, red = r): void {
   const MB = 1 << 20;
   const input = make(MB);
   let out = "";
-  const ms = timeMs(() => (out = r.string(input)));
+  const ms = timeMs(() => (out = red.string(input)));
   check?.(input, out);
   if (ms < budgetMs) return;
   assert.ok(ms < 10_000, `${label}: ${ms.toFixed(0)} ms for 1 MB`);
@@ -28,8 +28,8 @@ function assertLinear(label: string, make: (n: number) => string, budgetMs = 500
   const small: number[] = [];
   const big: number[] = [];
   for (let i = 0; i < 3; i++) {
-    small.push(timeMs(() => r.string(quarter)));
-    big.push(timeMs(() => r.string(input)));
+    small.push(timeMs(() => red.string(quarter)));
+    big.push(timeMs(() => red.string(input)));
   }
   const growth = median(big) / Math.max(median(small), 0.01);
   assert.ok(growth < 8, `${label}: ${median(small).toFixed(1)} ms at 256 KB, ${median(big).toFixed(1)} ms at 1 MB (${growth.toFixed(1)}x; linear is ~4x, O(n²) ~16x)`);
@@ -162,6 +162,29 @@ describe("redact: secrets", () => {
     const line = "const x = 1; // normal code line with words and numbers 12345\n";
     assertLinear("1 MB of plain code", (n) => line.repeat(Math.ceil(n / line.length)), 1000, (input, out) => assert.equal(out, input));
   });
+});
+
+describe("redact: email", () => {
+  const er = createRedactor({ redact: ["email"] });
+  it("redacts email addresses, and only those", () => {
+    assert.equal(er.string("mail jane.doe+ci@mail.example.co.uk or ops@corp.io."), "mail [redacted:email] or [redacted:email].");
+    assert.equal(er.string("Author: Jane <JANE_D@Example.COM>"), "Author: Jane <[redacted:email]>");
+    for (const keep of ["npm i zod@3.22.4", "npx @scope/pkg@latest", "icon@2x.png", "user@localhost", "a @ b.com", "@decorator.call()"]) assert.equal(er.string(keep), keep, keep);
+  });
+
+  it("is not in the secrets set; capture opts in with capture.redact", () => {
+    assert.equal(r.string("jane@example.com"), "jane@example.com");
+    assert.equal(createRedactor({ redact: ["secrets", "email"] }).string("jane@example.com sk-ant-api03-Zq8Jx2Lm4Np6Rt0Vw3Yb5Kd7Hf9Gs1Ce"), "[redacted:email] [redacted:anthropic-key]");
+  });
+
+  const rand = prng(7);
+  for (const [name, make] of [
+    ["address characters with no @", (n: number) => randomFrom(rand, `${ALNUM}._%+-`, n)],
+    ["a@ repeated", (n: number) => "a@".repeat(n / 2)],
+    ["a domain of single letters (x@a.a.a.…1)", (n: number) => `x@${"a.".repeat(n / 2)}1`],
+  ] as const) {
+    it(`redacts 1 MB of ${name} in linear time`, () => assertLinear(name, make, 500, undefined, er));
+  }
 });
 
 describe("toMetadata", () => {
