@@ -1,0 +1,26 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_49252a92eaefc9 132
+packages/coding.sh/src/eval/init.ts
+  s_8e040dbdf13565::t_d14483f35148eb 29,321-330,332-333,365
+  s_8e040dbdf13565::t_cba2f677e43944 331
+docs/guides/evals.md
+  s_8e040dbdf13565::t_49252a92eaefc9 55-57
+packages/coding.sh/test/eval/init.test.ts
+  s_8e040dbdf13565::t_41a1c43d514d37 151-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "d5988d3b19b863ffb400b0e4c8bc2bf9535366f2",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
