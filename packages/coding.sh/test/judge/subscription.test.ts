@@ -8,11 +8,11 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { autoCliProvider, CLAUDE_CODE_TOOLS, claudeArgs, cliComplete, cliHome, CliLimiter, cliLogin, codexProvider, limitKind, ProviderError } from "../../src/judge/index.ts";
 import { nodeBin, pathOf } from "../_bin.ts";
 
-const SUBSCRIPTION = fileURLToPath(new URL("../../src/judge/subscription.ts", import.meta.url));
+// A file: URL, not a path: an import of a Windows path (D:\…) reads "d:" as a URL scheme.
+const SUBSCRIPTION = new URL("../../src/judge/subscription.ts", import.meta.url).href;
 
 let root: string;
 before(() => {
