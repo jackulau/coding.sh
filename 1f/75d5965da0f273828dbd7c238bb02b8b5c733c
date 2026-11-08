@@ -1,0 +1,27 @@
+packages/coding.sh/src/eval/task.ts
+  s_8e040dbdf13565::t_e66ac02ea4a507 357,368-370,383
+  s_8e040dbdf13565::t_e50e461ded6213 163
+  s_8e040dbdf13565::t_3764531167c7e0 156-160,162,164-168,170-173,175-177
+  s_8e040dbdf13565::t_69352bf7210a32 169,174
+CHANGELOG.md
+  s_8e040dbdf13565::t_20d214a64afdce 125
+packages/coding.sh/test/eval/task.test.ts
+  s_8e040dbdf13565::t_6fa440d4b33bd1 147,150,185-192
+  s_8e040dbdf13565::t_a7cacffbb77334 193
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1f75d5965da0f273828dbd7c238bb02b8b5c733c",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
