@@ -197,14 +197,12 @@ T3 improved. He plans to hide targets. The loop took about 17.6 agent-hours and 
 benchmarks contaminated and tells developers to keep a private benchmark from real failures
 (BigGo, [4](https://finance.biggo.com/news/26e0bee7ca8915e7)).
 
-**Token saving.** No primary source ties Theo to "caveman" or other terse-output prompts. His levers
+**Token saving.** No primary source ties Theo to terse-output prompts or plugins. His levers
 are effort level (Opus at max spends far more tokens for about a point, per BigGo
 [7](https://finance.biggo.com/news/d88fb484e898ec12)) and context size (tool-description cuts).
-The caveman project itself now says "Be concise" is the real baseline and its standard mode cuts
-3% more at the median, for about 1,160 input tokens of rules
-([README](https://github.com/juliusbrussee/caveman)). [JetBrains](https://blog.jetbrains.com/ai/2026/07/speak-to-ai-agents-like-cavemen-tosave-tokens/)
-measured about 8.5% fewer output tokens on agent tasks. Caveman now sells a proxy and hosted evals,
-so it is a competitor as well as a test subject.
+Published measurements of terse-output prompts report single-digit cuts in output tokens on agent
+tasks, and some terse-output projects now sell proxies and hosted evals, so they are competitors
+as well as test subjects.
 
 **Model comparison and cost.** The gap between Claude Code and Codex on the same model is "three to
 five percent"; more than that is a model-layer bug (BigGo, [8](https://finance.biggo.com/news/a7f6180d1ab2dfb2)).
@@ -245,7 +243,7 @@ Scored like the main queue: value 1–10, effort S=1, M=2, L=3. Full specs are i
 | TB-1 | Memory and rule-file audit: loads, reads, writes per file; never-read and write-only files | `harness audit` (new action) | S | 7 | 7.0 |
 | TB-2 | `calls` check kind: must, must-not, max, order, partial args, over the captured trace | `toolevals` checks, exp graders | S | 6 | 6.0 |
 | TB-3 | Tie-break sampling (a 3rd trial when 2 disagree) and `--stop-on-regression` against a baseline | `exp run`, `toolevals run` | S | 5 | 5.0 |
-| TB-4 | How-to: does a terse mode (caveman, "be concise") save money on your tasks? | `compare` (`exp replay` once the proxy lands) | S | 5 | 5.0 |
+| TB-4 | How-to: does a terse mode (a terse-output plugin, "be concise") save money on your tasks? | `compare` (`exp replay` once the proxy lands) | S | 5 | 5.0 |
 | TB-5 | `init --proxy` chains an existing base URL (CLIProxyAPI, a gateway) as the upstream | `init`, `proxy` | S | 5 | 5.0 |
 | TB-6 | Reasoning effort as a first-class arm field, recorded per run | `compare`, `harness snapshot`, `bench` | M | 8 | 4.0 |
 | TB-7 | Cross-harness child sessions: `codex exec`, `claude -p`, `gemini -p` launched from another agent's shell call | adapters, `show` | M | 8 | 4.0 |
