@@ -16,6 +16,10 @@ import { ServeMetrics } from "./metrics.ts";
 import { parseNativeBatch } from "./native.ts";
 import { IngestQueue } from "./queue.ts";
 import { startRetention } from "./retention.ts";
+import { retryTransient } from "./startup.ts";
+
+/** How long serve waits for a database that refuses connections at startup. */
+export const STORE_WAIT_MS = 30_000;
 
 export interface ServeOptions {
   log?: Logger;
@@ -106,7 +110,12 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
   let blobs: BlobStore;
   if (o.stores) ({ index, blobs } = o.stores);
   else {
-    index = await openIndexStore(cfg.core.store.index, cfg.core);
+    // A database that is still starting (Compose, platforms) gets 30 s; any other error fails at once.
+    index = await retryTransient(() => openIndexStore(cfg.core.store.index, cfg.core), {
+      timeoutMs: STORE_WAIT_MS,
+      delayMs: 1000,
+      onRetry: (e, attempt) => log.warn("store not reachable yet, retrying", { index: safeUrl(cfg.core.store.index), attempt, error: (e as Error).message }),
+    });
     try {
       blobs = await openBlobStore(cfg.core.store.blobs, cfg.core);
     } catch (e) {
