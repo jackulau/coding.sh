@@ -1,0 +1,84 @@
+examples/skill-eval/grader/regrade
+  s_8e040dbdf13565::t_4522595fe85f38 169-170,175
+  s_8e040dbdf13565::t_3ace1cef7d07dc 1-164,166-168,171-174,176-181,186,188-192
+  s_8e040dbdf13565::t_ba378e1dc6a853 165
+  s_8e040dbdf13565::t_ce5878cc40cd86 182-185,187
+docs/how-to/evaluate-a-skill.md
+  s_8e040dbdf13565::t_a8afe04ccd8fb9 46-50
+CHANGELOG.md
+  s_8e040dbdf13565::t_ef0575046d60a8 102
+examples/skill-eval/README.md
+  s_8e040dbdf13565::t_75fbcc239e846b 152-167,170-171
+  s_8e040dbdf13565::t_f16454860b8c52 138-143
+  s_8e040dbdf13565::t_e77d46db924362 114
+  s_8e040dbdf13565::t_617414f82b6a88 168-169
+  s_8e040dbdf13565::t_536ac93403cc83 199-201
+  s_8e040dbdf13565::t_e3a1330caf5715 188
+  s_8e040dbdf13565::t_fe2c69c620a181 89-93
+  s_8e040dbdf13565::t_3d7563fbc09224 39-40,43-55
+  s_8e040dbdf13565::t_3b99bdc775250b 56
+packages/coding.sh/test/examples/skill-eval-live.test.ts
+  s_8e040dbdf13565::t_f92b867184b2c7 2-4,7,13
+  s_8e040dbdf13565::t_ac2abd968cf78a 33-35,100-102,144-146
+  s_8e040dbdf13565::t_4c29d0209def36 210,212,217-224,226-229,233-392,394
+  s_8e040dbdf13565::t_7ae828e9b58258 165-168
+  s_8e040dbdf13565::t_d3247584757f0f 393,395-445
+examples/skill-eval/bin/vercel
+  s_8e040dbdf13565::t_53c9e09a1119fa 28-29,32,38,43-47,87-89,92-93,164
+examples/skill-eval/grader/check.py
+  s_8e040dbdf13565::t_502bb44f3fca18 8-9,15,21-22,25-31,33,47,62-67,86-107,112,137-141,159,161-162,165,174,185-195,202-203,207,209,212-221,223,225,229-230,233,244,263-267,284-285
+examples/skill-eval/inside.sh
+  s_8e040dbdf13565::t_98e89797d57ecd 27-30,32
+examples/skill-eval/live/canaries
+  s_8e040dbdf13565::t_67650eeeb07504 14-22,38,99-122,137,183-184,195,200,208,211
+examples/skill-eval/live/entry.sh
+  s_8e040dbdf13565::t_351abeb4bcc482 6-7,28-31,33-34
+examples/skill-eval/live/leaks
+  s_8e040dbdf13565::t_e48a962d1c4cb1 2,4,8-13,17,23-30,34-35,39-40,42,46-52
+examples/skill-eval/live/tasks
+  s_8e040dbdf13565::t_52d93af75308c3 2,4,7-18,26-38,41,44-48,54-55,57,78-86
+examples/skill-eval/live/vercel-live
+  s_8e040dbdf13565::t_3087a68c8e32d6 15-17,98,132-133,181-185,227-230,233-235,312-315,325-337
+examples/skill-eval/run.sh
+  s_8e040dbdf13565::t_2a452779f66ade 4,15-16,20,25,31,37-44
+examples/skill-eval/tasks/01-scope-before-collection/tests/grader/checks.json
+  s_8e040dbdf13565::t_8032a69d1eaa88 2
+examples/skill-eval/tasks/02-cli-success-not-passing/tests/grader/checks.json
+  s_8e040dbdf13565::t_468917df31491d 2
+examples/skill-eval/tasks/03-product-output-privacy/tests/grader/checks.json
+  s_8e040dbdf13565::t_641c1ccade5eb0 2
+examples/skill-eval/tasks/04-plugin-advice-mutations/tests/grader/checks.json
+  s_8e040dbdf13565::t_fbde7edaab901d 1-3
+examples/skill-eval/tasks/05-bounded-browser-text/tests/grader/checks.json
+  s_8e040dbdf13565::t_f493d460df3c61 2
+examples/skill-eval/tasks/06-identity-boundaries/tests/grader/checks.json
+  s_8e040dbdf13565::t_b502ebf26651e1 2
+examples/skill-eval/tasks/07-partial-inventory/tests/grader/checks.json
+  s_8e040dbdf13565::t_ea2c4ca884ab19 2
+examples/skill-eval/tasks/08-missing-capabilities/tests/grader/checks.json
+  s_8e040dbdf13565::t_e3efab56583652 1-3
+examples/skill-eval/tasks/09-conservative-interpretation/tests/grader/checks.json
+  s_8e040dbdf13565::t_d9b94987acd9cd 1-3
+examples/skill-eval/tasks/10-secrets-and-app-scope/tests/grader/checks.json
+  s_8e040dbdf13565::t_dff07f25d4adb0 2
+examples/skill-eval/tasks/11-evidence-vs-process/tests/grader/checks.json
+  s_8e040dbdf13565::t_249b3e0486d590 1-3
+examples/skill-eval/tasks/12-audience-and-delivery/tests/grader/checks.json
+  s_8e040dbdf13565::t_ae2055eaae25b2 2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "7b8cb70c8d7af240f63a81e45210cc08306d6fe9",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
