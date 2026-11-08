@@ -18,6 +18,8 @@ docs/reference/cli.md
   s_8e040dbdf13565::t_f3c90c6e8e879c 198
 packages/coding.sh/src/cli/commands/statusline.ts
   s_8e040dbdf13565::t_9cbba06be6271d 1-195
+CHANGELOG.md
+  s_8e040dbdf13565::t_019e0570c860a4 22
 ---
 {
   "schema_version": "authorship/3.0.0",
