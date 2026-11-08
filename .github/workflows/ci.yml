@@ -341,6 +341,14 @@ jobs:
         if: runner.os == 'Linux'
         run: node scripts/e2e/refine-loop.mjs
 
+      # refine run --suite with real Claude Code against the stub, which bills input tokens by
+      # request size: the proposer's cut of a bloated CLAUDE.md is kept on cost with the pass rate
+      # held, a cheaper cut that drops a line the tasks need is rejected, and a cut of a safety
+      # line is rejected before any run.
+      - name: Refine climb on an eval suite with real Claude Code
+        if: runner.os == 'Linux'
+        run: node scripts/e2e/refine-suite-capture.mjs
+
       # The model API proxy with real Claude Code and Codex: init --proxy routes both through it to a
       # stub model; checks streaming, the agent's own key reaching the API, calls linked into the
       # hook sessions, show/diff-calls/exp replay, no key stored, and a byte-for-byte uninstall.
