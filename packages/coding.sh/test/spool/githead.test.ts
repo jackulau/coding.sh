@@ -75,7 +75,7 @@ describe("readGitHead matches git", () => {
     gitc(wt, "commit", "-qam", "side");
     const r = readGitHead(wt);
     assert.deepEqual(r, gitSays(wt));
-    assert.equal(r!.root, wt);
+    assert.equal(r!.root, gitSays(wt).root);
     assert.equal(r!.branch, "side");
     assert.notEqual(r!.head, readGitHead(root)!.head);
     gitc(root, "pack-refs", "--all");
@@ -89,13 +89,13 @@ describe("readGitHead matches git", () => {
     const sub = join(sup, "vendor", "lib");
     const r = readGitHead(sub);
     assert.deepEqual(r, gitSays(sub));
-    assert.equal(r!.root, sub);
+    assert.equal(r!.root, gitSays(sub).root);
     assert.equal(r!.head, gitc(lib, "rev-parse", "HEAD"));
   });
 
   test("an unborn branch gives head \"\" and the branch", () => {
     const root = makeRepo();
-    assert.deepEqual(readGitHead(root), { root, head: "", branch: "main" });
+    assert.deepEqual(readGitHead(root), { root: gitSays(root).root, head: "", branch: "main" });
     assert.deepEqual(readGitHead(root), gitSays(root));
   });
 });

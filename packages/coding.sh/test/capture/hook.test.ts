@@ -80,6 +80,7 @@ describe("hook", () => {
     const h = freshHome();
     const repo = makeRepo({ "a.txt": "a\n" });
     const head = gitc(repo, "rev-parse", "HEAD");
+    const root = gitc(repo, "rev-parse", "--show-toplevel"); // what readGitHead reports: real path, forward slashes
     const hook = (event: string, env: Record<string, string> = {}) =>
       runHook(["claude-code", event], JSON.stringify({ session_id: "s1", hook_event_name: event, cwd: join(repo, "sub") }), { CODING_SH_HOME: h, ...env });
     for (const e of ["SessionStart", "UserPromptSubmit", "PostToolUse"]) assert.equal(hook(e).code, 0);
@@ -89,8 +90,8 @@ describe("hook", () => {
         .sort((a, b) => a.ts - b.ts)
         .map((l) => [l.event, l.git]),
       [
-        ["SessionStart", { root: repo, head, branch: "main" }],
-        ["UserPromptSubmit", { root: repo, head, branch: "main" }],
+        ["SessionStart", { root, head, branch: "main" }],
+        ["UserPromptSubmit", { root, head, branch: "main" }],
         ["PostToolUse", undefined],
         ["SessionStart", undefined],
       ],

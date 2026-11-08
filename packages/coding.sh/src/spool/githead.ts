@@ -14,8 +14,8 @@
 //   head "".
 // It gives up (undefined) on anything it cannot read exactly, such as a
 // reftable ref store, and never throws.
-import { closeSync, fstatSync, openSync, readSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { closeSync, fstatSync, openSync, readSync, realpathSync, statSync } from "node:fs";
+import { dirname, join, resolve, sep } from "node:path";
 
 /** Hook events where a session starts or a prompt is sent: the ones whose spool line records HEAD. */
 export const GIT_HEAD_EVENT = /^(session[._-]?start|UserPromptSubmit|beforeSubmitPrompt)$/i;
@@ -61,6 +61,18 @@ function readHead(path: string, max: number): string | undefined {
       }
     }
   }
+}
+
+/** The work tree root as `git rev-parse --show-toplevel` prints it: the real path
+ * (symlinks and Windows 8.3 short names resolved) with forward slashes. */
+function gitStyleRoot(dir: string): string {
+  let real = dir;
+  try {
+    real = realpathSync.native(dir);
+  } catch {
+    // keep `dir`: the directory exists (we found its .git), but a realpath hiccup is no reason to drop the read
+  }
+  return sep === "\\" ? real.split(sep).join("/") : real;
 }
 
 /** The `.git` entry at or above `cwd`: the work tree root and the git dir. */
@@ -118,7 +130,8 @@ export function readGitHead(cwd: string): GitHead | undefined {
     if (!cwd) return undefined;
     const found = findGitDir(cwd);
     if (!found) return undefined;
-    const { root, gitDir } = found;
+    const { gitDir } = found;
+    const root = gitStyleRoot(found.root);
     const headText = readHead(join(gitDir, "HEAD"), MAX_SMALL_FILE);
     if (headText === undefined) return undefined;
     const v = headText.trim();
