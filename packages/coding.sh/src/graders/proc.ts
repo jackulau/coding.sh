@@ -106,9 +106,25 @@ export function describeFailure(r: ProcResult, timeoutMs?: number): string {
   if (r.spawnError) return `could not start: ${r.spawnError}`;
   if (r.timedOut) return `timed out after ${timeoutMs ?? DEFAULT_TIMEOUT} ms`;
   if (r.aborted) return "aborted";
-  const tail = r.stderr.trim().split("\n").slice(-3).join(" | ").slice(0, 500);
   const how = r.signal ? `killed by ${r.signal}` : `exited ${r.exitCode}`;
-  return tail ? `${how}: ${tail}` : how;
+  const why = errorCause(r.stderr) ?? r.stderr.trim().split("\n").slice(-3).join(" | ");
+  return why ? `${how}: ${why.slice(0, 500)}` : how;
+}
+
+// An uncaught error's own line ("TypeError: fetch failed") and, for Node, the
+// `[cause]: Error: connect ECONNREFUSED …` under it. The stack frames and the
+// closing braces that end a Node crash say nothing about why it failed.
+const ERROR_LINE = /^\s*(?:Uncaught )?((?:\w+\.)*(?:[A-Z]\w*)?(?:Error|Exception)(?: \[\w+\])?: .+)$/;
+const CAUSE_LINE = /^\s*\[cause\]: (?:[\w.]*(?:Error|Exception)(?: \[\w+\])?: )?(.+?)\s*\{?$/;
+
+function errorCause(stderr: string): string | undefined {
+  const lines = stderr.split(/\r?\n/);
+  const errors = lines.flatMap((l) => ERROR_LINE.exec(l)?.[1] ?? []);
+  // Python prints the traceback first and the exception last; Node the reverse.
+  const head = /^Traceback \(most recent call last\)/m.test(stderr) ? errors[errors.length - 1] : errors[0];
+  if (head === undefined) return undefined;
+  const cause = lines.flatMap((l) => CAUSE_LINE.exec(l)?.[1] ?? [])[0];
+  return cause && !head.includes(cause) ? `${head.trim()} (cause: ${cause})` : head.trim();
 }
 
 /** argv rendered for humans (quotes args with spaces). */
