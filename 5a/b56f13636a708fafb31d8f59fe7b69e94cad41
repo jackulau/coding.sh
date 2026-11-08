@@ -1,0 +1,52 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_b23067195b7648 16-18
+  s_8e040dbdf13565::t_09ce3a12fd2e75 19
+README.md
+  s_8e040dbdf13565::t_da9a94bc32d0c1 22
+apps/site/scripts/gen-og.mjs
+  s_8e040dbdf13565::t_cae91f24f04a94 103-105
+apps/site/src/components/Nav.astro
+  s_8e040dbdf13565::t_db4f6c2759bff6 25
+apps/site/src/components/docs/markdown.ts
+  s_8e040dbdf13565::t_a1caea7c4f4224 43-49
+apps/site/src/content/blog/coding-sh-vs-agentops.md
+  s_8e040dbdf13565::t_cd312d06666023 1-5
+apps/site/src/content/blog/coding-sh-vs-braintrust.md
+  s_8e040dbdf13565::t_788e2c3c069304 1-5
+apps/site/src/content/blog/coding-sh-vs-ccusage.md
+  s_8e040dbdf13565::t_23624c76c6a324 1-5
+apps/site/src/content/blog/coding-sh-vs-laminar.md
+  s_8e040dbdf13565::t_2afdca26afdeab 1-5
+apps/site/src/content/blog/coding-sh-vs-langfuse.md
+  s_8e040dbdf13565::t_ce51493b9d4e47 1-5
+apps/site/src/content/blog/coding-sh-vs-langsmith.md
+  s_8e040dbdf13565::t_d628dca8dc2b22 1-5
+apps/site/src/content/blog/coding-sh-vs-other-tools.md
+  s_8e040dbdf13565::t_cf83798b0c2278 1-5,11,13,20-25
+apps/site/src/lib/llms.ts
+  s_8e040dbdf13565::t_a54751d74b5ab0 86-87
+apps/site/src/pages/docs/index.astro
+  s_8e040dbdf13565::t_e35195fb1462fa 36
+apps/site/src/pages/index.astro
+  s_8e040dbdf13565::t_50c8490514ee40 185,257
+apps/site/worker/index.ts
+  s_8e040dbdf13565::t_08a764e44831e5 6,33-38
+docs/README.md
+  s_8e040dbdf13565::t_2d05be5db78b79 56-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5ab56f13636a708fafb31d8f59fe7b69e94cad41",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
