@@ -1,6 +1,7 @@
 scripts/dogfood/bench.mjs
   s_8e040dbdf13565::t_343da1ed8d857f 15-16,31-32,224-334,622
   s_8e040dbdf13565::t_0a8ded452050d4 6,8,627,632-634
+  s_8e040dbdf13565::t_e51e690e0aec24 5
 scripts/e2e/proxy-capture.mjs
   s_8e040dbdf13565::t_cea53fea9f5b11 125-131,292-297
   s_8e040dbdf13565::t_be8f14fcc18b4a 257,289
@@ -12,6 +13,7 @@ scripts/dogfood/bench-proxy.mjs
 .github/workflows/ci.yml
   s_8e040dbdf13565::t_0a8ded452050d4 350-355
   s_8e040dbdf13565::t_02b1fffe3a73c6 322,344-349
+  s_8e040dbdf13565::t_e51e690e0aec24 343
 ---
 {
   "schema_version": "authorship/3.0.0",
