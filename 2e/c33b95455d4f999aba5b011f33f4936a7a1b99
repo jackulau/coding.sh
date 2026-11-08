@@ -1,0 +1,43 @@
+apps/site/src/pages/docs/cli.astro
+  s_8e040dbdf13565::t_187c65a0a59902 54
+  s_8e040dbdf13565::t_efc0d3b4ffe831 53
+  s_8e040dbdf13565::t_a1bc36aea8871c 4,7-8,17-18,34-52,55-60,63-69
+apps/site/src/lib/lastmod.mjs
+  s_8e040dbdf13565::t_967d982039b521 42,45-47
+  s_8e040dbdf13565::t_29a477fb2000d3 10,12
+apps/site/src/components/docs/cli-help.ts
+  s_8e040dbdf13565::t_a993967feb7760 94-98,100-102
+  s_8e040dbdf13565::t_8094aac35d5453 99
+apps/site/src/components/docs/DocsLayout.astro
+  s_8e040dbdf13565::t_026730f9c1effe 5-7,14,18,21-25,29-32,39,43-45
+  s_8e040dbdf13565::t_2e9485a38ee06b 77,94,108
+apps/site/src/pages/docs/cli/[command].astro
+  s_8e040dbdf13565::t_9b1b83925bea24 1-7,9-18,21-70
+apps/site/src/pages/changelog/[version]/[...page].astro
+  s_8e040dbdf13565::t_325905d93da2df 5-12,14-34,41-42,49-60,62-167
+  s_8e040dbdf13565::t_846e64e7ad5e74 13,43-46,48
+  s_8e040dbdf13565::t_98a14bba53f5e4 47
+apps/site/src/lib/changelog.ts
+  s_8e040dbdf13565::t_91b8a060795a62 22-25,42-43,59-66,122,128-136,148
+apps/site/src/pages/changelog.astro
+  s_8e040dbdf13565::t_58504d1975aa86 72
+apps/site/src/lib/changelog-spy.ts
+  s_8e040dbdf13565::t_05f51ed135df74 16-19
+  s_8e040dbdf13565::t_fea92c24038107 11-15,20
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "2ec33b95455d4f999aba5b011f33f4936a7a1b99",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
