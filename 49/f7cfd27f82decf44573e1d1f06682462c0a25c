@@ -1,0 +1,43 @@
+packages/coding.sh/src/cli/registry.ts
+  s_8e040dbdf13565::t_8a6274b2f79f26 143-145,147,150
+packages/coding.sh/src/cli/remote.ts
+  s_8e040dbdf13565::t_ca101763f741c3 45-46,49
+  s_8e040dbdf13565::t_79f8726c8abc9c 5-8
+  s_8e040dbdf13565::t_1458b43a0a6c73 1-4,9-44,47-48,50-107
+  s_8e040dbdf13565::t_b4b0c46417b7aa 108-122
+docs/troubleshooting.md
+  s_8e040dbdf13565::t_f9e70696ffdf37 153-155
+  s_8e040dbdf13565::t_87e0b07d8f6eb8 156-157
+packages/coding.sh/src/cli/commands/init.ts
+  s_8e040dbdf13565::t_6b1ab2d3c71767 225-226
+  s_8e040dbdf13565::t_934d768061f9af 10
+  s_8e040dbdf13565::t_078be599c5a9cd 178-191
+  s_8e040dbdf13565::t_5c385ca77b3e6a 311
+  s_8e040dbdf13565::t_fc3536426b52ab 258
+  s_8e040dbdf13565::t_0d01749252fce8 234-243
+  s_8e040dbdf13565::t_4ae1daf3a86c58 7-9
+  s_8e040dbdf13565::t_0a9e7daa97b7ce 287-289
+  s_8e040dbdf13565::t_77ff9922b8ca1b 21
+  s_8e040dbdf13565::t_6d8d35fa51d3dc 324-328
+packages/coding.sh/test/cli/init-remote.test.ts
+  s_8e040dbdf13565::t_d9d6123280ab44 75-77
+  s_8e040dbdf13565::t_591596a80977f9 1-74,78-161
+docs/reference/cli.md
+  s_8e040dbdf13565::t_144860d03c10cc 85-87,93,97
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "49f7cfd27f82decf44573e1d1f06682462c0a25c",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <72348727+Jack-GitHub12@users.noreply.github.com>"
+    }
+  }
+}
