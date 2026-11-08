@@ -21,9 +21,13 @@ const BUDGET = {
   preloadFonts: 28.5 * KB, // woff2 bytes preloaded by one page (26.0KB today)
   moduleScripts: 1, // external <script type="module" src> per page
   // The cards are lossless PNG (gen-og.mjs, compressionLevel 9). Palette
-  // quantization would get them near 25KB but changes pixels, so the budget
-  // sits above the largest lossless card (og-image.png, 36.7KB).
-  ogPng: 40 * KB, // each social card
+  // quantization would get them near 25KB but changes pixels (a card has about
+  // 650 colors). A card grows with its title: the one-word changelog card is
+  // 29.7KB, and the largest, a three-line use-case title (replay-agent-session),
+  // is 44.2KB. Raised from 40KB for those titles: only link-preview crawlers
+  // fetch a card, never a page load. 48KB still fails that card if it gains an
+  // alpha channel (49.0KB) or drops to compressionLevel 6 (50.1KB).
+  ogPng: 48 * KB, // each social card
 };
 
 const distArg = process.argv.indexOf("--dist");
