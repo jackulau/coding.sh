@@ -88,7 +88,7 @@ describe("eval init + eval run: cases", () => {
     assert.equal(init.status, 0, init.stderr);
     const run = cli(["eval", "run", "triage-hill"]);
     assert.equal(run.status, 0, run.stdout + run.stderr);
-    assert.match(run.stdout, /one trial per task/);
+    assert.match(run.stdout, /one trial per case/);
   });
 });
 

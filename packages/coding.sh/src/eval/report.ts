@@ -15,6 +15,8 @@ import { passAllK, passAtK } from "../stats/seqk.ts";
 import { paint, pct, table } from "../experiments/text.ts";
 
 export type SuitePurpose = "capability" | "regression";
+/** What one row of a suite is: a repo task, a dataset case or a trigger prompt. */
+export type SuiteUnit = "task" | "case" | "prompt";
 export const SUITE_PURPOSES: readonly SuitePurpose[] = ["capability", "regression"];
 
 /** A capability suite is saturated when at least this share of its tasks pass every trial. */
@@ -56,6 +58,8 @@ export interface TaskRow {
 export interface SuiteReport {
   suite: string;
   purpose: SuitePurpose;
+  /** What each row is, for the wording: "task", "case" or "prompt". */
+  unit: SuiteUnit;
   /** The k of pass@k and pass^k: the fewest known trials of any task. */
   k: number;
   tasks: number;
@@ -79,7 +83,9 @@ export interface SuiteReport {
   notes: string[];
 }
 
-export function suiteReport(suite: string, purpose: SuitePurpose, tasks: readonly TaskTrials[]): SuiteReport {
+const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+
+export function suiteReport(suite: string, purpose: SuitePurpose, tasks: readonly TaskTrials[], unit: SuiteUnit = "task"): SuiteReport {
   const rows: TaskRow[] = tasks.map((t) => {
     const known = t.trials.filter((x) => !x.unknown);
     const passed = known.filter((x) => x.pass).length;
@@ -109,12 +115,13 @@ export function suiteReport(suite: string, purpose: SuitePurpose, tasks: readonl
   const saturated = purpose === "capability" && graded.length > 0 && allPass / graded.length >= SATURATION_SHARE;
   const unknown = rows.reduce((s, r) => s + r.unknown, 0);
   const notes: string[] = [];
-  if (graded.length && k < 2) notes.push("one trial per task: agents vary from run to run, so pass@k and pass^k need --trials 3 or more");
-  if (tasks.length && tasks.length < SMALL_SUITE) notes.push(`${tasks.length} task${tasks.length === 1 ? "" : "s"}: a suite this small only shows large changes; grow it toward 20 to 50 tasks from real failures`);
+  if (graded.length && k < 2) notes.push(`one trial per ${unit}: agents vary from run to run, so pass@k and pass^k need --trials 3 or more`);
+  if (tasks.length && tasks.length < SMALL_SUITE) notes.push(`${plural(tasks.length, unit)}: a suite this small only shows large changes; grow it toward 20 to 50 ${unit}s from real failures`);
   if (unknown) notes.push(`${unknown} trial${unknown === 1 ? "" : "s"} with an unknown outcome (grader or infrastructure error), left out of every rate`);
   return {
     suite,
     purpose,
+    unit,
     k,
     tasks: tasks.length,
     passRate: wilson(passed, trials),
@@ -146,8 +153,9 @@ const oneLine = (s: string, max: number) => {
 
 export function renderSuiteReport(r: SuiteReport, o: RenderSuiteOpts): string {
   const { color } = o;
+  const u = r.unit;
   const out: string[] = [];
-  out.push(`${paint(r.suite, "bold", color)}  ${paint(`${r.purpose} suite · ${r.tasks} task${r.tasks === 1 ? "" : "s"} · ${r.k || "?"} trial${r.k === 1 ? "" : "s"} each`, "dim", color)}`);
+  out.push(`${paint(r.suite, "bold", color)}  ${paint(`${r.purpose} suite · ${plural(r.tasks, u)} · ${r.k || "?"} trial${r.k === 1 ? "" : "s"} each`, "dim", color)}`);
   if (!r.trials) {
     out.push(paint("no trial finished with a known outcome", "yellow", color));
     for (const n of r.notes) out.push(paint(n, "dim", color));
@@ -156,14 +164,14 @@ export function renderSuiteReport(r: SuiteReport, o: RenderSuiteOpts): string {
   }
   const tone = r.passRate.p >= 0.8 ? "green" : r.passRate.p >= 0.5 ? "yellow" : "red";
   out.push(`pass@1  ${paint(pct(r.passRate.p), tone, color)} [${pct(r.passRate.lo)}, ${pct(r.passRate.hi)}]  ${paint(`(${r.passed}/${r.trials} trials, 95% Wilson)`, "dim", color)}`);
-  if (r.passAtK !== undefined) out.push(`pass@${r.k}  ${pct(r.passAtK)}  ${paint(`a task counts when any of ${r.k} trials passes`, "dim", color)}`);
-  if (r.passHatK !== undefined) out.push(`pass^${r.k}  ${pct(r.passHatK)}  ${paint(`a task counts only when all ${r.k} trials pass`, "dim", color)}`);
+  if (r.passAtK !== undefined) out.push(`pass@${r.k}  ${pct(r.passAtK)}  ${paint(`a ${u} counts when any of ${r.k} trials passes`, "dim", color)}`);
+  if (r.passHatK !== undefined) out.push(`pass^${r.k}  ${pct(r.passHatK)}  ${paint(`a ${u} counts only when all ${r.k} trials pass`, "dim", color)}`);
   out.push("");
   const limit = o.limit ?? 50;
   const shown = [...r.rows].sort((a, b) => (a.rate || 0) - (b.rate || 0) || a.name.localeCompare(b.name)).slice(0, limit);
   out.push(
     table(
-      [{ header: "task" }, { header: "passed", align: "right" }, { header: "" }, { header: "first failure" }],
+      [{ header: u }, { header: "passed", align: "right" }, { header: "" }, { header: "first failure" }],
       shown.map((t) => [
         t.name,
         t.n ? `${t.passed}/${t.n}` : "—",
@@ -175,15 +183,15 @@ export function renderSuiteReport(r: SuiteReport, o: RenderSuiteOpts): string {
   );
   if (r.rows.length > limit) out.push(paint(`… ${r.rows.length - limit} more (use --json for all)`, "dim", color));
   out.push("");
-  if (r.neverPassed.length) out.push(paint(`never passed: ${r.neverPassed.join(", ")}. Read its transcript or output first: a task no trial passes is most often a broken task or grader, not a weak agent.`, "yellow", color));
+  if (r.neverPassed.length) out.push(paint(`never passed: ${r.neverPassed.join(", ")}. Read its transcript or output first: a ${u} no trial passes is most often a broken ${u} or grader, not a weak agent.`, "yellow", color));
   if (r.flaky.length) out.push(paint(`flaky: ${r.flaky.join(", ")}. These pass some trials and fail others; pass^${r.k} counts them as failures.`, "yellow", color));
-  if (r.saturated) out.push(paint(`saturated: ${pct(1 - r.rows.filter((x) => x.n && x.passed < x.n).length / Math.max(1, r.rows.filter((x) => x.n).length), 0)} of tasks pass every trial, so this suite can no longer show improvement. Set "purpose": "regression" in suite.json to keep it as a regression suite, and add harder tasks.`, "yellow", color));
+  if (r.saturated) out.push(paint(`saturated: ${pct(1 - r.rows.filter((x) => x.n && x.passed < x.n).length / Math.max(1, r.rows.filter((x) => x.n).length), 0)} of ${u}s pass every trial, so this suite can no longer show improvement. Set "purpose": "regression" in suite.json to keep it as a regression suite, and add harder ${u}s.`, "yellow", color));
   for (const n of r.notes) out.push(paint(n, "dim", color));
   if (r.purpose === "regression") {
     const ungraded = r.rows.filter((x) => x.n === 0).map((x) => x.name);
-    if (r.ok) out.push(paint("regression suite: no task fails most of its trials", "green", color));
+    if (r.ok) out.push(paint(`regression suite: no ${u} fails most of its trials`, "green", color));
     if (r.failing.length) out.push(paint(`regression suite: ${r.failing.join(", ")} fail${r.failing.length === 1 ? "s" : ""} most trials`, "red", color));
-    if (ungraded.length) out.push(paint(`regression suite: ${ungraded.length} of ${r.rows.length} tasks have no graded trial (grader or infrastructure errors), so it can't pass`, "red", color));
+    if (ungraded.length) out.push(paint(`regression suite: ${ungraded.length} of ${plural(r.rows.length, u)} have no graded trial (grader or infrastructure errors), so it can't pass`, "red", color));
   }
   return out.join("\n").replace(/\n+$/, "");
 }

@@ -53,6 +53,23 @@ describe("suiteReport", () => {
     assert.match(renderSuiteReport(none, { color: false }), /nothing was graded, so it can't pass/);
   });
 
+  it("says cases or prompts for dataset and trigger suites", () => {
+    const cases = suiteReport("s", "regression", [task("a", [P]), task("b", [U])], "case");
+    assert.equal(cases.unit, "case");
+    assert.ok(cases.notes.some((n) => /^one trial per case/.test(n)));
+    assert.ok(cases.notes.some((n) => /^2 cases: a suite this small .* 20 to 50 cases/.test(n)));
+    const text = renderSuiteReport(cases, { color: false });
+    assert.match(text, /regression suite · 2 cases · 1 trial each/);
+    assert.match(text, /^case\s+passed/m);
+    assert.match(text, /1 of 2 cases have no graded trial/);
+    assert.doesNotMatch(text, /\btasks?\b/);
+    const prompts = renderSuiteReport(suiteReport("s", "capability", [task("p1", [P, F, F]), task("p2", [F, F, F])], "prompt"), { color: false });
+    assert.match(prompts, /2 prompts · 3 trials each/);
+    assert.match(prompts, /a prompt counts when any of 3 trials passes/);
+    assert.match(prompts, /a prompt no trial passes is most often a broken prompt or grader/);
+    assert.doesNotMatch(prompts, /\btasks?\b/);
+  });
+
   it("warns when a capability suite saturates", () => {
     const tasks = Array.from({ length: 10 }, (_, i) => task(`t${i}`, i === 0 ? [P, F] : [P, P]));
     assert.equal(suiteReport("s", "capability", tasks).saturated, true);

@@ -216,7 +216,7 @@ async function runCaseSuite(c: CommandContext, ctx: Context, s: LoadedSuite, tri
     onProgress: (_r, done, total) => spin.update(`${s.spec.name}: ${done}/${total}…`),
   }).finally(() => spin.stop());
   if (result.status === "cancelled") out.warn(`${s.spec.name}: cancelled; the report covers the runs that finished`);
-  const report = suiteReport(s.spec.name, s.spec.purpose, trialsFromExperiment(cases, result));
+  const report = suiteReport(s.spec.name, s.spec.purpose, trialsFromExperiment(cases, result), "case");
   return { suite: s.spec.name, kind: "cases", dir: s.dir, report, experimentId: result.id };
 }
 
@@ -235,7 +235,7 @@ async function runTriggers(c: CommandContext, s: LoadedSuite, k: number): Promis
   let result: TriggerRunResult | undefined;
   const exitCode = await evalTrigger({ ...c, flags, positionals: [resolve(s.dir, s.spec.skill!)] }, { onResult: (r) => void (result = r) });
   if (!result) return { suite: s.spec.name, kind: "triggers", dir: s.dir, exitCode: exitCode || 1 };
-  const report = suiteReport(s.spec.name, s.spec.purpose, trialsFromTriggers(result.spec, result.observations));
+  const report = suiteReport(s.spec.name, s.spec.purpose, trialsFromTriggers(result.spec, result.observations), "prompt");
   const m = result.report.arms[0]!.metrics;
   const f = (x: number) => (Number.isFinite(x) ? x.toFixed(2) : "—");
   return { suite: s.spec.name, kind: "triggers", dir: s.dir, report, experimentId: result.experimentId, extra: [`skill ${result.skill}: precision ${f(m.precision)} · recall ${f(m.recall)} · F1 ${f(m.f1)}`, `trigger report ${result.file}`] };

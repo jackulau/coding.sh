@@ -126,6 +126,7 @@ coding.sh runs on Windows, and CI tests it there.
 - **Evals.** A command task, grader or source that crashes names the error and its cause, such as `exited 1: TypeError: fetch failed (cause: connect ECONNREFUSED 127.0.0.1:8803)`, instead of the last three lines of stderr (for Node, the closing braces of the error object). A refused connection now reads as an infrastructure error, so the trial is retried and counted as infra, not as a failure. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md)
 - **Evals.** A task drafted from a session names the files its setup was guessed from, such as `setup guessed from package.json (no lockfile): npm install`, instead of saying "from lockfiles" when there was none.
 - **Experiments.** A grader error leaves a run ungraded only when no other grader failed it. With `exact` and a judge that is down, the runs `exact` failed count as failures and only the runs it passed are left out, instead of every run reading ungraded and the pass rate going blank. `exp regrade` follows the same rule. [Evals](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md)
+- **Evals.** `eval run` reports on a cases suite say "case" and on a triggers suite "prompt" (the header, the table, never-passed, saturation and the regression lines), and `--json` carries the report's `unit`.
 
 ## [0.1.1] - 2026-11-07
 
