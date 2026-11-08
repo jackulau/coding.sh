@@ -25,10 +25,13 @@
 </p>
 
 ```sh
-curl -fsSL https://coding.sh/install | sh   # install, hook up your agents, open the viewer
-coding.sh sessions                          # your past and new sessions: what each one did
-coding.sh usage --by model                  # tokens and cost by model
+npx coding.sh                               # try it: finds your agents, asks once, imports past sessions
+curl -fsSL https://coding.sh/install | sh   # or install it: same setup, then opens the viewer
 ```
+
+Run `npx coding.sh` again to open the viewer on your sessions.
+
+**What it costs:** nothing. MIT licensed, runs on your machine, no account.
 
 <p align="center">
   <img src=".github/assets/viewer-session.png" alt="The coding.sh viewer on one Claude Code session: the prompt as the title, agent, model, duration, latency percentiles, tokens with the cache rate and the estimated cost, a '14 passed' test badge, a copyable 'coding.sh eval new' command, and the step list with each model call's estimated cost and the selected file change shown as a diff." width="100%">
@@ -41,12 +44,14 @@ tokens. It goes into a SQLite index on your machine. You browse it in a local vi
 the CLI or from your agents over MCP, turn failures into evals, and compare changes with paired
 statistics. Capture, storage and the viewer stay on your machine unless you add a remote sink.
 
-MIT licensed, no runtime dependencies, Node 22.15 or newer.
+No runtime dependencies, Node 22.15 or newer.
 
 ## Quickstart
 
-The install command above installs the latest release from npm, runs `coding.sh init`, then opens
-the viewer. `init` finds your agents, shows one plan and asks once. It points their hooks at
+`npx coding.sh` runs the latest release from npm without installing it. In a terminal, the first
+run is `coding.sh init` and later runs open the viewer. The install command above installs the
+release, runs `init`, opens the viewer, and puts `coding.sh` on your PATH for the commands below.
+`init` finds your agents, shows one plan and asks once. It points their hooks at
 coding.sh, registers the MCP server where the agent supports it, and backs up every config file it
 edits. `coding.sh init --dry-run` prints the plan without writing anything (`--diff` adds the edits), and
 `coding.sh uninstall` removes the hooks and MCP entries again.
@@ -60,8 +65,10 @@ up on their own, with no ingest step, and your agents can read them over MCP. To
 coding.sh ingest --backfill
 ```
 
-You can also install with npm: `npm install -g coding.sh`. Installing from
-source, updates and uninstall: [docs/guides/install.md](docs/guides/install.md).
+You can also install with npm: `npm install -g coding.sh`. If you only ran `npx coding.sh`, the
+hooks keep recording, but the MCP server runs the copy in the npx cache, so install it before you
+clear that cache. Installing from source, updates and uninstall:
+[docs/guides/install.md](docs/guides/install.md).
 
 ## What you get
 
