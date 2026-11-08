@@ -44,6 +44,8 @@ export interface CommandSpec {
   handlesSignals?: boolean;
   /** See ActionSpec.graceful (for a command without actions). */
   graceful?: boolean;
+  /** Handles secrets: usage errors never repeat what was typed (see ParseOptions.sensitive). */
+  sensitive?: boolean;
   examples?: string[];
   notes?: string[];
   load(): Promise<CommandModule>;
@@ -1123,6 +1125,7 @@ export const COMMANDS: CommandSpec[] = [
     name: "purge",
     group: "Maintain",
     summary: "Remove a leaked secret from the store: events, search, blobs, spool",
+    sensitive: true,
     flags: [
       { name: "literal", type: "string", value: "<FILE|->", desc: "File with the values to remove, one per line (- reads stdin); never pass them as arguments" },
       { name: "dry-run", type: "boolean", desc: "Count the copies without changing anything" },

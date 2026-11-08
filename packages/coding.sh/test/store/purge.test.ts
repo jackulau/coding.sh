@@ -171,6 +171,23 @@ describe("purge input and store checks", () => {
     assert.equal(j.events, 0);
   });
 
+  test("never echoes a value typed on the command line", () => {
+    // A secret pasted as an argument, as a flag value, as an unknown option or into --literal by mistake.
+    const tries = [["purge", SECRET], ["purge", "--dry-run", SECRET], ["purge", `--${SECRET}`], ["purge", `--dry-run=${SECRET}`], ["purge", "--literal", SECRET], ["purge", "--literal", `./${SECRET}`]];
+    for (const args of tries) {
+      for (const json of [false, true]) {
+        const r = cli(json ? [...args, "--json"] : args);
+        assert.equal(r.status, 2, args.join(" "));
+        assert.ok(!r.stderr.includes(SECRET) && !r.stdout.includes(SECRET), `${args.join(" ")} echoed the value: ${r.stderr}`);
+        assert.ok(!r.stderr.includes(SECRET.slice(0, 12)), args.join(" "));
+      }
+    }
+    assert.match(cli(["purge", SECRET]).stderr, /Unexpected argument \(value not shown\)/);
+    assert.match(cli(["purge", "--literal", SECRET]).stderr, /no such file/);
+    // Other commands still name the stray argument, which is what a typo needs.
+    assert.match(cli(["status", "extra-arg"]).stderr, /"extra-arg"/);
+  });
+
   test("refuses values on the command line, short values and a missing file", () => {
     assert.equal(cli(["purge", SECRET]).status, 2);
     assert.equal(cli(["purge"]).status, 2);

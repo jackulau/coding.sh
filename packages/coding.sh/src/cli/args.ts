@@ -89,7 +89,17 @@ export interface ParseOptions {
   maxPositionals?: number;
   /** More `--name`s to suggest for a typo (e.g. global flags handled elsewhere). */
   suggestions?: readonly string[];
+  /**
+   * The command handles secrets (`purge`): no usage error repeats a token the
+   * user typed, since a secret pasted as an argument would land on the
+   * terminal, in CI logs and in an agent's transcript. Errors name the flag or
+   * the position instead.
+   */
+  sensitive?: boolean;
 }
+
+/** What a usage error says in place of a value on a sensitive command. */
+const HIDDEN = "(value not shown)";
 
 export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], opts: ParseOptions = {}): ParsedArgs {
   const byName = new Map(specs.map((s) => [s.name, s]));
@@ -99,10 +109,15 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
   let rest: string[] = [];
   let sawDashDash = false;
 
+  const sensitive = opts.sensitive === true;
+  /** A user token as an error may show it: quoted, or hidden on a sensitive command. */
+  const shown = (raw: string): string => (sensitive ? HIDDEN : JSON.stringify(raw));
+
   const unknown = (token: string): never => {
     const names = [...visibleFlags(specs).map((s) => `--${s.name}`), ...(opts.suggestions ?? [])];
     const hint = token.startsWith("--") ? suggest(token.split("=")[0]!, names) : undefined;
-    throw new UsageError(`Unknown option ${token}`, { suggestion: hint, reason: "unknown_option" });
+    // The suggestion is always a known flag name, so it is safe to show.
+    throw new UsageError(sensitive ? `Unknown option ${HIDDEN}` : `Unknown option ${token}`, { suggestion: hint, reason: "unknown_option" });
   };
 
   const assign = (spec: FlagSpec, raw: string | undefined, token: string) => {
@@ -111,7 +126,7 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
       if (raw === undefined) flags[spec.name] = true;
       else if (raw === "true" || raw === "1") flags[spec.name] = true;
       else if (raw === "false" || raw === "0") flags[spec.name] = false;
-      else throw new UsageError(`${label} takes no value, got ${JSON.stringify(raw)}`);
+      else throw new UsageError(`${label} takes no value, got ${shown(raw)}`);
       return;
     }
     if (raw === undefined && spec.optionalValue) {
@@ -120,11 +135,11 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
     }
     if (raw === undefined) throw new UsageError(`${token} needs a value${spec.value ? ` ${spec.value}` : ""}`, { reason: "missing_value" });
     if (spec.choices && !spec.choices.includes(raw)) {
-      throw new UsageError(`${label} must be one of ${spec.choices.join(", ")}, got ${JSON.stringify(raw)}`, { suggestion: suggest(raw, spec.choices) ? `${label} ${suggest(raw, spec.choices)}` : undefined });
+      throw new UsageError(`${label} must be one of ${spec.choices.join(", ")}, got ${shown(raw)}`, { suggestion: suggest(raw, spec.choices) ? `${label} ${suggest(raw, spec.choices)}` : undefined });
     }
     if (spec.type === "number") {
       const n = Number(raw);
-      if (raw.trim() === "" || !Number.isFinite(n)) throw new UsageError(`${label} must be a number, got ${JSON.stringify(raw)}`);
+      if (raw.trim() === "" || !Number.isFinite(n)) throw new UsageError(`${label} must be a number, got ${shown(raw)}`);
       flags[spec.name] = n;
     } else if (spec.type === "list") {
       const prev = flags[spec.name];
@@ -191,6 +206,7 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
 
   if (opts.maxPositionals !== undefined && positionals.length > opts.maxPositionals) {
     const extra = positionals[opts.maxPositionals]!;
+    if (sensitive) throw new UsageError(`Unexpected argument ${HIDDEN}: this command takes no values on the command line`, { reason: "extra_argument" });
     throw new UsageError(`Unexpected argument ${JSON.stringify(extra)}`, { reason: "extra_argument" });
   }
   return { flags, positionals, rest, sawDashDash };

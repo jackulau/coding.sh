@@ -30,10 +30,13 @@ export async function run(c: CommandContext): Promise<number> {
   try {
     text = source === "-" ? readFileSync(0, "utf8") : readFileSync(resolve(c.cwd, source), "utf8");
   } catch (e) {
-    throw new UsageError(`couldn't read ${source === "-" ? "stdin" : source}: ${(e as Error).message}`);
+    // Neither the path nor the error (which repeats it) is shown: `--literal <secret>` is an easy slip.
+    const code = (e as NodeJS.ErrnoException).code;
+    const why = code === "ENOENT" ? "no such file" : code === "EISDIR" ? "it is a directory" : code === "EACCES" ? "permission denied" : "read failed";
+    throw new UsageError(source === "-" ? `couldn't read stdin: ${why}` : `couldn't read the --literal file (${why}); it takes a file path, one value per line`);
   }
   const literals = parseLiterals(text);
-  if (!literals.length) throw new UsageError(`${source === "-" ? "stdin" : source} holds no values`);
+  if (!literals.length) throw new UsageError(`${source === "-" ? "stdin" : "the --literal file"} holds no values`);
   const short = literals.filter((l) => l.length < MIN_LITERAL_LENGTH).length;
   if (short) throw new UsageError(`${plural(short, "value")} shorter than ${MIN_LITERAL_LENGTH} characters; a short value would rewrite ordinary text`, { reason: "too_short" });
 

@@ -259,7 +259,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
     const args = action ? (action.args ?? []) : (cmd.args ?? []);
     const flags = action ? (action.flags ?? []) : (cmd.flags ?? []);
     const variadic = args.some((a) => a.variadic) && !cmd.passthrough;
-    const parsed = parseArgs(tail, flags, { maxPositionals: cmd.passthrough ? 0 : variadic ? undefined : args.length, suggestions: GLOBAL_OPTION_NAMES });
+    const parsed = parseArgs(tail, flags, { maxPositionals: cmd.passthrough ? 0 : variadic ? undefined : args.length, suggestions: GLOBAL_OPTION_NAMES, sensitive: cmd.sensitive === true });
     if (cmd.passthrough) {
       if (parsed.rest.length === 0) throw new UsageError(`Missing command. Usage: ${BIN} ${cmd.name} -- <cmd> [args...]`, { reason: "missing_argument" });
     } else {
