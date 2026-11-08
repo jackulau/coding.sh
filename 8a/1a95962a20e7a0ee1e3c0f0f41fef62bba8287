@@ -1,0 +1,25 @@
+CHANGELOG.md
+  s_8e040dbdf13565::t_090c8df9892fe6 30
+docs/guides/install.md
+  s_8e040dbdf13565::t_10f5684e735dfb 12-13
+install.sh
+  s_8e040dbdf13565::t_03b4e0a0b84817 84-87
+packages/coding.sh/test/update/install-sh.test.ts
+  s_8e040dbdf13565::t_7f9e0f804b39a0 110-124
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "8a1a95962a20e7a0ee1e3c0f0f41fef62bba8287",
+  "prompts": {},
+  "sessions": {
+    "s_8e040dbdf13565": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4b9889a2-c0d2-4046-9d28-6b07d00c01a8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Jack <jack@coding.sh>"
+    }
+  }
+}
