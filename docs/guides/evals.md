@@ -148,7 +148,9 @@ repo snapshot taken before the agent ran.
 
 `coding.sh eval validate <task>` checks that the verifier is fair: a do-nothing attempt fails, the
 reference fix passes k of k, near-misses fail, an impossible variant fails, and no future history
-leaks.
+leaks. When a check goes the wrong way (the reference fails, the no-op or a near-miss passes, or
+setup fails), it prints the last 12 lines of that command's output under the summary, once per
+kind of check. `--json` has each step's output in `steps[].outputTail`.
 
 Validation also looks for gold-only coupling: a hidden test that names a helper or file only the
 reference introduces, which the instruction never mentions (`_parseCidr`, `src/acl/util.ts`). A

@@ -306,6 +306,9 @@ describe("cli eval new from a `coding.sh run` session", () => {
     const fromArgs = run(["eval", "new", "latest", "--verifier", "node test.js", "--json"]);
     assert.equal(fromArgs.status, 0, fromArgs.stdout + fromArgs.stderr);
     assert.equal((parseJson(fromArgs.stdout, "eval new") as { task: { name: string } }).task.name, "make-sum-add-its-arguments");
+    const validated = run(["eval", "validate", "make-sum-add-its-arguments", "--k", "1", "--json"]);
+    const steps = (parseJson(validated.stdout, "eval validate") as { steps: { kind: string; pass: boolean; outputTail: string }[] }).steps;
+    assert.ok(steps.some((s) => s.kind === "noop" && !s.pass && typeof s.outputTail === "string"), "--json has each step and its output");
 
     const bad = run(["eval", "new", "latest", "--instruction", "@nope.md", "--json"]);
     assert.equal(bad.status, 2, bad.stdout + bad.stderr);

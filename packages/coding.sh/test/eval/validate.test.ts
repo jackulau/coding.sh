@@ -117,6 +117,21 @@ describe("validateTask", () => {
     assert.equal(o.task.status, "draft");
   });
 
+  it("shows the end of the verifier's output when the reference fails", async () => {
+    const verifier = `'${process.execPath}' -e "for (let i = 1; i <= 30; i++) console.log('line ' + i); process.exit(1)"`;
+    const { blobs, git, task, workRoot } = await setup({ verifier });
+    const o = await validateTask({ task, blobs, git, workRoot, k: 2, passToPass: false, impossible: false });
+    const text = formatValidation(o);
+    assert.match(text, /^output of reference #1 \(verifier exited 1\), last 12 lines:$/m);
+    assert.match(text, /^ {4}line 30$/m);
+    assert.match(text, /^ {4}line 19$/m);
+    assert.doesNotMatch(text, /^ {4}line 18$/m, "only the last 12 lines");
+    assert.doesNotMatch(text, /output of reference #2/, "one block per kind");
+    assert.doesNotMatch(text, /output of no-op/, "a failing no-op is expected");
+    const sound = await setup();
+    assert.doesNotMatch(formatValidation(await validateTask({ ...sound, k: 1, passToPass: false })), /output of/);
+  });
+
   it("catches a verifier that passes without any change", async () => {
     const { blobs, git, task, workRoot } = await setup({ verifier: "true" });
     const o = await validateTask({ task, blobs, git, workRoot, k: 1 });

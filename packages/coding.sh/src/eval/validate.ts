@@ -622,7 +622,32 @@ export function formatValidation(o: ValidationOutcome): string {
     ...(r.coupling ? [`warn ${r.coupling.length} hidden-test reference(s) to names only the reference introduces (gold-only coupling)`] : []),
     ...o.errors.map((e) => `error: ${e}`),
     ...o.notes.map((n) => `note: ${n}`),
+    ...surprises(o.steps).flatMap(stepOutput),
     r.ok ? "→ validated" : "→ kept as draft",
   ];
   return lines.join("\n");
+}
+
+/** Lines of a step's output shown under the summary. */
+export const OUTPUT_LINES = 12;
+
+/** The first step of each kind that went the wrong way: the output to read first. */
+function surprises(steps: readonly StepResult[]): StepResult[] {
+  const wrong = (s: StepResult) =>
+    !s.setupOk || (s.kind === "reference" ? !s.pass : s.kind === "noop" || s.kind === "near-miss" ? s.pass : false);
+  const seen = new Set<string>();
+  return steps.filter((s) => {
+    const key = s.setupOk ? s.kind : "setup";
+    if (!wrong(s) || !s.outputTail.trim() || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function stepOutput(s: StepResult): string[] {
+  const how = !s.setupOk ? (s.error ?? "setup failed") : s.timedOut ? "timed out" : `verifier exited ${s.exitCode}`;
+  const all = s.outputTail.trimEnd().split("\n");
+  const shown = all.slice(-OUTPUT_LINES).map((l) => `    ${l.length > 200 ? `${l.slice(0, 199)}…` : l}`);
+  const name = s.label.startsWith(s.kind) || s.label === "no-op" ? s.label : `${s.kind} ${s.label}`;
+  return [`output of ${name}${s.attempt !== undefined ? ` #${s.attempt}` : ""} (${how})${all.length > OUTPUT_LINES ? `, last ${OUTPUT_LINES} lines` : ""}:`, ...shown];
 }

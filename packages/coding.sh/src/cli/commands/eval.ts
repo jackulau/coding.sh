@@ -139,7 +139,7 @@ export async function run(c: CommandContext): Promise<number> {
             onStep: (st) => out.note(`${st.label}: ${st.pass ? "pass" : "fail"}`),
           });
           spin.stop();
-          if (out.json) out.data({ outcome: o.report.ok ? "validated" : "rejected", task: taskJson(o.task), report: o.report, errors: o.errors, notes: o.notes });
+          if (out.json) out.data({ outcome: o.report.ok ? "validated" : "rejected", task: taskJson(o.task), report: o.report, errors: o.errors, notes: o.notes, steps: o.steps });
           else {
             out.print(formatValidation(o));
             if (o.report.ok) out.ok(`${task.id} validated`);
