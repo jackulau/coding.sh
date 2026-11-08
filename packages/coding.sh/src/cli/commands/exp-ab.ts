@@ -6,6 +6,7 @@
 // compares them with the same machinery as `exp run --arm` and `exp compare`:
 // the interleaved durable runner (resume, retries), the acceptance gate, the
 // one-item gate and the EM-19 replay noise floor.
+import { HARNESS_DIRS, isHarnessPath } from "../../core/harness-paths.ts";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -21,7 +22,7 @@ import type { AbResult } from "../../experiments/ab.ts";
 import type { Job } from "../../jobs/store.ts";
 import type { GateOpts } from "../../stats/tests.ts";
 import { compareExperiments, type Comparison } from "../../experiments/compare.ts";
-import { planContinuation, prefixEvents, replayNoise, type ContextFile, type ContinuationProvider, type ContinuationTask, type FrozenPrefix } from "../../experiments/continuation.ts";
+import { missingModelKey, planContinuation, prefixEvents, replayNoise, type ContextFile, type ContinuationProvider, type ContinuationTask, type FrozenPrefix } from "../../experiments/continuation.ts";
 import { createGrader, providerFromSpec, type LlmGraderSpec } from "../../graders/index.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
 import type { ChatProvider } from "../../judge/providers.ts";
@@ -92,13 +93,7 @@ const asList = (v: string | string[] | undefined): string[] => (v === undefined 
 
 // ---------------------------------------------------------------- arms
 
-/** Harness files, as repo-relative paths: the context files, rules and skills an agent loads. */
-export function isHarnessPath(rel: string): boolean {
-  const p = rel.replace(/\\/g, "/");
-  return /^(?:CLAUDE|AGENTS|GEMINI)\.md$/.test(p) || /^\.claude\/rules\/.+\.md$/.test(p) || /^\.cursor\/rules\/.+\.mdc?$/.test(p) || /^\.(?:claude|agents)\/skills\/[^/]+\/SKILL\.md$/.test(p);
-}
-
-const HARNESS_DIRS = [".claude/rules", ".cursor/rules", ".claude/skills", ".agents/skills"];
+export { isHarnessPath };
 
 function walk(dir: string, base: string, out: string[], depth = 0): void {
   if (depth > 6) return;
@@ -742,6 +737,14 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
       throw new CliError(`Estimated cost ${money(est.usd)} is over --max-cost ${money(o.maxCost)} (${est.uncached} uncached calls)`, {
         reason: "over_budget",
         next: ["Run fewer cases, or raise the cap:", `coding.sh exp ab --limit ${Math.max(1, Math.floor((cases.length * o.maxCost) / est.usd))}`],
+      });
+    }
+    // Every uncached case would fail on the missing key and the run would read "not enough evidence": stop before it.
+    const missing = est.uncached ? missingModelKey(continuationTask(setup, a), c.env) : undefined;
+    if (missing) {
+      throw new CliError(`exp ab replays your sessions against the model API: set ${missing} (${est.uncached} of ${est.calls} model calls are not cached)`, {
+        reason: "missing_key",
+        next: ["Without an API key, commit the edit and compare the sessions before and after it:", "coding.sh improve check"],
       });
     }
     if (!quiet && !out.json && est.uncached) out.note(`About ${est.usd === undefined ? "an unknown cost" : money(est.usd)} for ${est.uncached} uncached model calls (${est.calls - est.uncached} cached)`);

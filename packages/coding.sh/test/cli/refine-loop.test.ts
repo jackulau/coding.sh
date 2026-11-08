@@ -289,6 +289,17 @@ describe("cli refine loop", () => {
     assert.match(readFileSync(join(e.repo, "CLAUDE.md"), "utf8"), new RegExp(`<!-- coding\\.sh:refine ${prop.id} begin -->\\n${TEST_RULE}\\n<!-- coding\\.sh:refine ${prop.id} end -->\\n$`));
   });
 
+  it("propose without an API key names the proposer, not the judge, and points at improve", async () => {
+    const e = await setup("propose-nokey");
+    const { ANTHROPIC_API_KEY: _k, ANTHROPIC_BASE_URL: _b, ...env } = e.env;
+    const p = await cli({ ...e, env }, ["refine", "propose", "--json"]);
+    assert.equal(p.status, 1, p.stdout);
+    const err = JSON.parse(p.stderr) as { reason: string; message: string; next: string[] };
+    assert.equal(err.reason, "missing_key");
+    assert.equal(err.message, "refine asks a model to write the edit: set ANTHROPIC_API_KEY");
+    assert.ok(err.next.includes("coding.sh improve"));
+  });
+
   it("run loops over --candidate files, applies keeps and stops when they run out", async () => {
     const e = await setup("run");
     const v1 = draft(e, "v1", `${BASE}${TEST_RULE}\n`);

@@ -522,7 +522,12 @@ async function propose(e: Env, base: Arm, spend: Spend): Promise<Proposed> {
   const model = proposerModel(e);
   const spec = { ...judgeSpec(e.o, baseURLFor(e.o, e.c.env)), model, name: "refine-proposer" };
   const provider = metered(providerFromSpec(spec, { env: e.c.env }), spend, () => {});
-  const res = await provider.complete({ system: prompt.system, user: prompt.user, jsonSchema: PROPOSAL_SCHEMA, signal: e.c.signal });
+  const res = await provider.complete({ system: prompt.system, user: prompt.user, jsonSchema: PROPOSAL_SCHEMA, signal: e.c.signal }).catch((err: unknown) => {
+    // The provider's message says "to call the judge"; here it is the proposer.
+    const key = /set (\w+) to call the judge/.exec(err instanceof Error ? err.message : "")?.[1];
+    if (!key) throw err;
+    throw new CliError(`refine asks a model to write the edit: set ${key}`, { reason: "missing_key", next: ["Without an API key, list what to fix and the line that fixes it:", "coding.sh improve"] });
+  });
   let p;
   try {
     p = parseProposal(res.text);

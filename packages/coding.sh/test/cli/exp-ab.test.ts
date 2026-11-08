@@ -255,6 +255,20 @@ describe("cli exp ab", () => {
     assert.equal(hits.length, before);
   });
 
+  it("stops before any trial when the model API key is missing, and points at improve check", async () => {
+    const e = await setup("nokey");
+    const { ANTHROPIC_API_KEY: _k, ANTHROPIC_BASE_URL: _b, ...env } = e.env;
+    writeFileSync(join(e.repo, "CLAUDE.md"), `${MARKER}\n`);
+    const r = await cli({ ...e, env }, ["exp", "ab", "--json"]);
+    assert.equal(r.status, 1, r.stdout);
+    const err = JSON.parse(r.stderr) as { reason: string; message: string; next: string[] };
+    assert.equal(err.reason, "missing_key");
+    assert.match(err.message, /set ANTHROPIC_API_KEY \(6 of 6 model calls are not cached\)/);
+    assert.ok(err.next.includes("coding.sh improve check"));
+    const runs = await cli({ ...e, env }, ["exp", "list", "--json"]);
+    assert.doesNotMatch(runs.stdout, /exp ab/, "no experiment was recorded");
+  });
+
   it("--watch reruns once per edit, calls the model only for arm B, and Ctrl-C exits 0", { skip: process.platform === "win32" && "no SIGINT to a child on Windows" }, async () => {
     const e = await setup("watch");
     writeFileSync(join(e.repo, "CLAUDE.md"), `Keep answers short.\n${MARKER}: run npm test first.\n`);

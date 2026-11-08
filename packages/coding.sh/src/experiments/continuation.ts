@@ -485,6 +485,15 @@ function keyEnv(t: ContinuationTask): string {
   return t.apiKeyEnv ?? (t.provider === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY");
 }
 
+const LOCAL_BASE = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/;
+
+/** The env var a task's uncached model calls need, when it is unset and the endpoint is not local; else undefined. */
+export function missingModelKey(t: ContinuationTask, env: NodeJS.ProcessEnv): string | undefined {
+  const name = keyEnv(t);
+  if (env[name]?.trim()) return undefined;
+  return LOCAL_BASE.test(baseURLOf(t, env)) ? undefined : name;
+}
+
 function baseURLOf(t: ContinuationTask, env: NodeJS.ProcessEnv): string {
   const fromEnv = t.provider === "anthropic" ? env.ANTHROPIC_BASE_URL : env.OPENAI_BASE_URL;
   const def = t.provider === "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1";
@@ -592,7 +601,7 @@ export function continuationTask(spec: ContinuationTask): ResolvedTask {
       if (json === undefined) {
         const keyName = keyEnv(spec);
         const apiKey = env[keyName]?.trim();
-        const local = /^https?:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/.test(p.base);
+        const local = LOCAL_BASE.test(p.base);
         if (!apiKey && !local) throw new TaskError(`${spec.provider}: set ${keyName} to call the model (no cached response for this case)`);
         const headers: Record<string, string> = { "content-type": "application/json" };
         if (spec.provider === "anthropic") {
