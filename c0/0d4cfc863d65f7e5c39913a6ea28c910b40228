@@ -8,6 +8,7 @@ packages/coding.sh/src/core/sessions.ts
   s_8e040dbdf13565::t_ebdfaf4006dd84 16
   s_8e040dbdf13565::t_a5f945656ade75 935
   s_8e040dbdf13565::t_29cdac8a419a67 989-992,995-999,1001-1026,1030-1034,1036
+  s_8e040dbdf13565::t_8673be0b759d2c 410
 packages/coding.sh/src/core/failure-report.ts
   s_8e040dbdf13565::t_3190020581ba08 6,11,17-18,21-23,29-32,40,42,45-48,53-57,59-61,67
   s_8e040dbdf13565::t_3cce0e3332f47f 1-5,7-10,12-16,19-20,24-28,34,38-39,41,43-44,49-52,63-66,68
