@@ -2,6 +2,8 @@
   <img src="https://raw.githubusercontent.com/jackulau/coding.sh/main/.github/assets/banner.png" alt="coding.sh: every agent run, recorded and measurable. Open-source, local-first observability and evals for any AI agent." width="100%">
 </p>
 
+Docs: [coding.sh/docs](https://coding.sh/docs) · Quickstart: [coding.sh/docs/quickstart](https://coding.sh/docs/quickstart)
+
 # coding.sh
 
 Open-source, local-first observability and evals for any AI agent. Coding agents first-class.
