@@ -10,7 +10,7 @@ import { Output } from "../../src/cli/output.ts";
 import { buildGantt } from "../../src/workflows/gantt.ts";
 import { loadClaudeWorkflowDir } from "../../src/workflows/sources/claude-workflow.ts";
 import { buildWorkflowTree, type WorkflowTree } from "../../src/workflows/tree.ts";
-import { INPLACE, T1, writeInPlaceFixture } from "./_fixtures.ts";
+import { INPLACE, T1, writeClaudeWorkflowFixture, writeInPlaceFixture } from "./_fixtures.ts";
 
 let root = "";
 let tree: WorkflowTree;
@@ -180,6 +180,32 @@ describe("phase order", () => {
   });
 });
 
+describe("per-agent rows", () => {
+  it("carry the agent id, the attempt for a re-run label and how the agent ended", () => {
+    const rows = tree.run.stats.perAgent!.map((a) => [a.label, a.agentId, a.attempt, a.endReason]);
+    assert.deepEqual(rows, [
+      ["plan", "p0", 1, "ok"],
+      ["review-x", "r0", 1, "ok"],
+      ["review-y", "r1", 1, "cancelled"],
+      ["qa-one", "q0", 1, "superseded"],
+      ["qa-two", "q1", 1, "superseded"],
+      ["qa-one", "q2", 2, "ok"],
+      ["qa-two", "q3", 2, "ok"],
+      ["fix", "f0", 1, "ok"],
+    ]);
+  });
+
+  it("say schema-retry for an agent that returned after a StructuredOutput validation failure", async () => {
+    const dirs = writeClaudeWorkflowFixture(join(root, "review-projects"));
+    const t = buildWorkflowTree((await loadClaudeWorkflowDir(dirs.base)).sources);
+    const byLabel = new Map(t.run.stats.perAgent!.map((a) => [a.label, a]));
+    assert.equal(byLabel.get("verify-schema")!.endReason, "schema-retry");
+    assert.equal(byLabel.get("verify-schema")!.status, "ok");
+    assert.equal(byLabel.get("verify-null")!.endReason, "null");
+    assert.equal(byLabel.get("find-a")!.endReason, "ok");
+  });
+});
+
 describe("workflows show and stats on a run resumed in place", () => {
   it("show and stats list stopped agents apart from failures", async () => {
     await cli("import", []);
@@ -199,6 +225,9 @@ describe("workflows show and stats on a run resumed in place", () => {
     const order = (text: string, re: RegExp) => [...text.matchAll(re)].map((m) => m[1]);
     assert.deepEqual(order(show, /^  phase (\S+)/gm), ["Plan", "Review", "QA", "Fix"]);
     assert.deepEqual(order(stats, /^(Plan|Review|QA|Fix)\t/gm), ["Plan", "Review", "QA", "Fix"]);
+    assert.match(stats, /\nqa-one #2\tQA\tok\t/);
+    const doc = JSON.parse(await cli("stats", [INPLACE], true)) as { stats: { perAgent: { agentId?: string; attempt?: number; endReason?: string }[] } };
+    assert.deepEqual(doc.stats.perAgent[3], { ...doc.stats.perAgent[3], agentId: "q0", attempt: 1, endReason: "superseded" });
     assert.match(show, /Wall\s+1m40s \(active 1m20s over 3 segments\)/);
   });
 });

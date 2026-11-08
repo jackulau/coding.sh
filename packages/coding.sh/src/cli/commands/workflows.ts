@@ -326,7 +326,7 @@ async function stats(c: CommandContext): Promise<number> {
     out.table(
       ["AGENT", "PHASE", "STATUS", "TIME", "TOKENS", "COST", "LLM P50", "TOOLS"],
       s.perAgent.map((a) => [
-        oneLine(clean(a.label), 40),
+        oneLine(clean(a.label) + ((a.attempt ?? 1) > 1 ? ` #${a.attempt}` : ""), 40),
         clean(a.phase ?? "-"),
         a.status,
         duration(a.durationMs),

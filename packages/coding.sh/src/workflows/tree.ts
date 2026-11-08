@@ -299,6 +299,7 @@ function claudeTree(src: TreeSources, opts: BuildOpts): WorkflowTree {
       kind: "agent",
       name: c.label ?? s(m.description) ?? c.agentId ?? `agent ${c.ordinal}`,
       ordinal: c.ordinal,
+      ...(c.agentId ? { agentId: c.agentId } : {}),
       status: nodeStatus(c, runDone, stopped.get(c.ordinal)),
     };
     const phase = c.phase ?? s(m.workflowPhase) ?? s(m.phase);

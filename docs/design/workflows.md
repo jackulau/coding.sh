@@ -177,7 +177,7 @@ kind `agent` or `step` that ran (`status ≠ cached`), unless noted.
 | `barrierIdleMs` | For each `parallel` group followed by later work: Σ over members of (`max end in group` − `member end`). This is agent-slot time spent waiting at the barrier. |
 | `pipelineSavingsMs` | For barrier groups whose next stage maps items one-to-one (same `item`): `wallMs` minus the simulated wall time if every item ran its chain without the barrier, under the same cap. Reported only when item mapping is known. |
 | `queueWaitMs` | Agent call issue time to start time, when the journal records issue times (U) |
-| `perAgent[]` | Per node: duration, tokens, `costUsd`, `llmP50Ms`/`llmP95Ms`/`ttftP50Ms`, tool calls, tool errors, turns, model, effort |
+| `perAgent[]` | Per node: duration, tokens, `costUsd`, `llmP50Ms`/`llmP95Ms`/`ttftP50Ms`, tool calls, tool errors, turns, model, effort; `agentId` (the source's agent id), `attempt` (1-based: which call with this label it was, so a label re-run after a resume is `2`; a durable step's attempt) and `endReason` (the status, or `schema-retry` for an agent that returned after a StructuredOutput validation failure) |
 | `perPhase[]` | Per phase: wall span, agent count, Σ duration, tokens, cost, failures. Phases are listed in the order the run reached them (their agents' first start; ties and untimed phases in script order), the same order `workflows show` and the Gantt use, so a phase the script dropped before a resume sits where it ran. |
 | `apiRetries` | Σ API retry attempts (Claude Code `api_error.attempt`, `llm.call ok:false`) |
 | `nullAgents`, `failedAgents` | Agents that returned `null` (skipped or died after retries) / ended in error. Rates are over all agents except cancelled and superseded ones. |

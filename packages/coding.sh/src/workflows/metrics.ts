@@ -186,7 +186,7 @@ const percentile = (xs: number[], p: number): number | undefined => {
   return s[lo]! + (h - lo) * (s[Math.ceil(h)]! - s[lo]!);
 };
 
-function agentMetric(n: WorkflowNode, nodes: readonly WorkflowNode[]): AgentMetric {
+function agentMetric(n: WorkflowNode, nodes: readonly WorkflowNode[], attempt: number | undefined): AgentMetric {
   // When an agent has llm children (OTel), their durations give the percentiles
   // if the node has no latency stats of its own.
   let lat = n.latency;
@@ -196,6 +196,9 @@ function agentMetric(n: WorkflowNode, nodes: readonly WorkflowNode[]): AgentMetr
   }
   const m: AgentMetric = { nodeId: n.id, label: n.name, status: n.status };
   if (n.phase !== undefined) m.phase = n.phase;
+  if (n.agentId !== undefined) m.agentId = n.agentId;
+  if (attempt !== undefined) m.attempt = attempt;
+  m.endReason = n.status === "ok" && (n.schema?.failures ?? 0) > 0 ? "schema-retry" : n.status;
   if (n.startedAt !== undefined && n.endedAt !== undefined) m.durationMs = Math.max(0, n.endedAt - n.startedAt);
   if (n.usage) m.tokens = totalTokens(n.usage);
   if (n.usage?.costUsd !== undefined) m.costUsd = n.usage.costUsd;
@@ -328,7 +331,16 @@ export function workflowStats(run: WorkflowRun, nodes: WorkflowNode[], base?: { 
     }
   }
 
-  stats.perAgent = allAgents.map((n) => agentMetric(n, nodes));
+  // Which call with its label each agent was (a durable step keeps its own attempt number).
+  const seen = new Map<string, number>();
+  const callOrder = [...allAgents].sort((x, y) => (x.ordinal ?? Infinity) - (y.ordinal ?? Infinity) || (x.startedAt ?? Infinity) - (y.startedAt ?? Infinity));
+  const attemptOf = new Map<string, number>();
+  for (const n of callOrder) {
+    const k = seen.get(n.name) ?? 0;
+    seen.set(n.name, k + 1);
+    attemptOf.set(n.id, n.attempt ?? k + 1);
+  }
+  stats.perAgent = allAgents.map((n) => agentMetric(n, nodes, attemptOf.get(n.id)));
 
   // Per phase. Agents without a phase are grouped under "".
   const phases = new Map<string, WorkflowNode[]>();

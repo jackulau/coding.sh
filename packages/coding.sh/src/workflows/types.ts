@@ -90,6 +90,8 @@ export interface WorkflowNode {
   ordinal?: number;
   /** Child session holding this agent's transcript. */
   sessionId?: string;
+  /** The source's own agent id (Claude Code: the <id> of agent-<id>.jsonl). */
+  agentId?: string;
   /**
    * The agent ran earlier in this run, and a later resume of the same run replayed its result
    * instead of running it again (the persisted record marks it cached). Its status keeps how it ended.
@@ -136,6 +138,12 @@ export interface AgentMetric {
   label: string;
   phase?: string;
   status: WorkflowNodeStatus;
+  /** The source's agent id, when known: tells apart two calls with the same label. */
+  agentId?: string;
+  /** 1-based: which call with this label it was (a label run again after a resume counts up); a durable step's attempt. */
+  attempt?: number;
+  /** How the agent ended: its status, or "schema-retry" for one that returned after a StructuredOutput validation failure. */
+  endReason?: WorkflowNodeStatus | "schema-retry";
   durationMs?: number;
   tokens?: number;
   costUsd?: number;
