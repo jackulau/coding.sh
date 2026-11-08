@@ -236,6 +236,8 @@ The command ran and something failed.
 | `missing_script` | `Run … has no captured script` | The workflow run can't be replayed. |
 | `unsupported_truth` | `Case … is graded by a judge; the CLI scores seeded-bugs and verifier cases only` | Score it in the viewer. |
 | `cost_confirmation_required` | `Estimated cost $7.20 exceeds confirmAboveUsd $5.00` | With `--json` this is `{"status":"action_required",…}`. Re-run with `--yes`, or raise `[toolevals] confirmAboveUsd`. |
+| `adaptive_samples` | `Experiment … ran adaptive samples: its trial count depends on its outcomes, so a paired CI over it is biased` (exp compare, toolevals compare) | Compare runs with a fixed trial count (`--trials`, `-k`). `exp compare --force` compares anyway. |
+| `invalid_baseline` | `Baseline texp_… ran none of these tasks` (toolevals run --stop-on-regression) | Pass a baseline experiment of the same target and tasks. |
 | `no_release` | `No coding.sh release has been published yet` | Install from source. |
 | `update_check_failed` | `Couldn't check for updates: …` | Usually offline. Try again later. |
 | `install_failed` | `npm install failed (exit 1): …` | Run the npm command it printed yourself to see the full error. |

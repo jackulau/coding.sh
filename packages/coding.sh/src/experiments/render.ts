@@ -64,11 +64,23 @@ export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verif
     return out.join("\n");
   }
   const rateColor = s.passRate.p >= 0.8 ? "green" : s.passRate.p >= 0.5 ? "yellow" : "red";
-  out.push(
-    `pass    ${paint(pct(s.passRate.p), rateColor, color)}${star(!anyUntrusted)} ${ci(s.passRate.lo, s.passRate.hi)} ` +
-      `${paint(`(${s.passed}/${s.n - (s.ungraded ?? 0)}${r.trials > 1 ? ` over ${s.cases} cases` : ""}, 95% ${s.ciMethod === "wilson" ? "Wilson" : "cluster bootstrap"})`, "dim", color)}`,
-  );
-  if (r.status === "cancelled") out.push(paint(`cancelled: only ${s.n} case run${s.n === 1 ? "" : "s"} finished before the interrupt; this result is partial`, "yellow", color));
+  const v = s.caseVerdicts;
+  if (r.samples === "adaptive" && v) {
+    // The trial count depends on the outcomes, so an interval over it is biased: no CI.
+    const cases = v.passed + v.failed;
+    const p = cases ? v.passed / cases : NaN;
+    out.push(
+      `pass    ${paint(pct(p), p >= 0.8 ? "green" : p >= 0.5 ? "yellow" : "red", color)}${star(!anyUntrusted)} ` +
+        `${paint(`(${v.passed}/${cases} cases; adaptive, no CI: 2 trials each, a 3rd on ${v.tieBreaks} disagreement${v.tieBreaks === 1 ? "" : "s"}; a case fails at half or more failing)`, "dim", color)}`,
+    );
+  } else {
+    out.push(
+      `pass    ${paint(pct(s.passRate.p), rateColor, color)}${star(!anyUntrusted)} ${ci(s.passRate.lo, s.passRate.hi)} ` +
+        `${paint(`(${s.passed}/${s.n - (s.ungraded ?? 0)}${r.trials > 1 ? ` over ${s.cases} cases` : ""}, 95% ${s.ciMethod === "wilson" ? "Wilson" : "cluster bootstrap"})`, "dim", color)}`,
+    );
+  }
+  if (r.regression) out.push(paint(`regression: case ${r.regression.caseId} passed every trial of ${r.regression.baseline} and fails here; the run stopped (--stop-on-regression)`, "red", color));
+  else if (r.status === "cancelled") out.push(paint(`cancelled: only ${s.n} case run${s.n === 1 ? "" : "s"} finished before the interrupt; this result is partial`, "yellow", color));
   if (s.errors) out.push(paint(`errors  ${s.errors} task error(s)`, "red", color));
   const graderErrors = (s.ungraded ?? 0) - (s.infra ?? 0);
   if (graderErrors > 0) out.push(paint(`ungraded ${graderErrors} run(s) with a grader error: outcome unknown, left out of the pass rate`, "yellow", color));

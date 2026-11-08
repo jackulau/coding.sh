@@ -884,6 +884,11 @@ curl -sS "$CSH/api/experiments?dataset=refunds&name=baseline" -H "Authorization:
 }
 ```
 
+An experiment run with `--samples adaptive` also has `"samples": "adaptive"` and
+`summary.caseVerdicts` (`passed`, `failed`, `tieBreaks`); its `passRate` interval is biased, so
+use the verdicts. One that `--stop-on-regression` stopped has status `cancelled` and
+`regression: {caseId, baseline}`. Both fields are absent otherwise.
+
 ### `GET /api/experiments/{id}`
 
 One experiment with its case runs (up to 5,000; `runsTruncated` says when more exist). Outputs over

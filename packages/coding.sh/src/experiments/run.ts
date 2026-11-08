@@ -21,6 +21,7 @@ import { withRetries, type RetryPolicy } from "../jobs/retry.ts";
 import { mapPool } from "../judge/limit.ts";
 import { pairedBootstrap, wilson } from "../stats/interval.ts";
 import { summarize } from "../stats/summary.ts";
+import { ADAPTIVE_MAX, ADAPTIVE_TRIALS, allPassKeys, CaseTracker, caseVerdicts, type SamplesMode } from "./samples.ts";
 import { resolveTask, type ResolvedTask, type TaskSpec } from "./task.ts";
 
 /** A task may return `withTrace(output, events)` to hand graders (judges) the agent's trace. */
@@ -78,6 +79,14 @@ export interface RunExperimentOpts {
   /** For the cluster bootstrap when trials > 1. */
   bootstrapIters?: number;
   seed?: number;
+  /** "adaptive": two trials per case, a third when they disagree (src/experiments/samples.ts); `trials` is ignored. */
+  samples?: SamplesMode;
+  /**
+   * Stop once a case that passed every graded trial of this baseline fails
+   * here (half or more of its trials): no new case-trial starts, the ones in
+   * flight finish, and the result is "cancelled" with `regression` set.
+   */
+  stopOnRegression?: ExperimentResult;
 }
 
 /**
@@ -288,6 +297,8 @@ export function experimentResult(o: {
   runs: CaseRun[];
   boot: { iters: number; seed: number };
   metadata?: Record<string, unknown>;
+  samples?: SamplesMode;
+  regression?: ExperimentResult["regression"];
 }): ExperimentResult {
   const result: ExperimentResult = {
     id: o.id,
@@ -308,6 +319,11 @@ export function experimentResult(o: {
     summary: summarizeRuns(o.runs, o.graders, o.trials, o.boot),
   };
   if (o.metadata) result.metadata = o.metadata;
+  if (o.samples === "adaptive") {
+    result.samples = "adaptive";
+    result.summary.caseVerdicts = caseVerdicts(o.runs.map((r) => ({ key: r.caseId, pass: r.ungraded ? undefined : r.pass })));
+  }
+  if (o.regression) result.regression = o.regression;
   return result;
 }
 
@@ -333,7 +349,8 @@ export async function rememberIdentity(job: JobScope | undefined, fresh: { id: s
 }
 
 export async function runExperiment(opts: RunExperimentOpts): Promise<ExperimentResult> {
-  const trials = opts.trials ?? 1;
+  const adaptive = opts.samples === "adaptive";
+  const trials = adaptive ? ADAPTIVE_TRIALS : (opts.trials ?? 1);
   if (!(Number.isInteger(trials) && trials >= 1)) throw new RangeError(`trials must be a positive integer (got ${trials})`);
   const graders = await prepareGraders(opts.graders, opts.store);
   const cases = selectCases(opts.dataset, opts.split, opts.filter);
@@ -343,31 +360,59 @@ export async function runExperiment(opts: RunExperimentOpts): Promise<Experiment
   const jobs: { c: Case; trial: number }[] = [];
   for (const c of cases) for (let t = 1; t <= trials; t++) jobs.push({ c, trial: t });
   if (job && job.prefix === "") await job.job.setTotal(jobs.length);
-  const { signal, drain } = opts;
-  // A resume keeps every case-trial already recorded with a known outcome.
-  const prior = jobs.map(({ c, trial }) => priorRun(job, c.id, trial));
-  let done = prior.filter(Boolean).length;
+  const { signal } = opts;
+  const outcome = (r: CaseRun) => ({ key: r.caseId, pass: r.ungraded ? undefined : r.pass });
+  const base = opts.stopOnRegression;
+  const tracker = new CaseTracker(adaptive ? "adaptive" : "fixed", trials, base ? allPassKeys(base.runs.map(outcome)) : undefined);
+  // A regression stops the run like a graceful drain: nothing new starts, runs in flight finish.
+  const stop = new AbortController();
+  let regression: ExperimentResult["regression"];
+  const drain = opts.drain ? AbortSignal.any([opts.drain, stop.signal]) : stop.signal;
+  const settle = (run: CaseRun | undefined): CaseRun | undefined => {
+    if (run && tracker.add(run.caseId, outcome(run).pass) && !regression) {
+      regression = { caseId: run.caseId, baseline: base!.id };
+      stop.abort();
+    }
+    return run;
+  };
+  let done = 0;
+  let total = jobs.length;
   const env: TrialEnv = {
     runId: id,
     task,
     graders,
+    drain,
     ...(signal ? { signal } : {}),
-    ...(drain ? { drain } : {}),
     ...(job ? { job } : {}),
     ...(opts.retry ? { retry: opts.retry } : {}),
     ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
   };
-  const settled = await mapPool(jobs, opts.concurrency ?? 4, async ({ c, trial }, i) => {
-    if (prior[i]) return prior[i];
-    const run = await runTrial(env, c, trial);
-    if (run) opts.onProgress?.(run, ++done, jobs.length);
-    return run;
-  });
+  const runAll = async (list: { c: Case; trial: number }[]) => {
+    // A resume keeps every case-trial already recorded with a known outcome.
+    const prior = list.map(({ c, trial }) => priorRun(job, c.id, trial));
+    done += prior.filter(Boolean).length;
+    return mapPool(list, opts.concurrency ?? 4, async ({ c, trial }, i) => {
+      if (prior[i]) return settle(prior[i]);
+      const run = await runTrial(env, c, trial);
+      if (run) opts.onProgress?.(run, ++done, total);
+      return settle(run);
+    });
+  };
+  const settled = await runAll(jobs);
+  // Adaptive: a third trial for each case whose first two disagree.
+  const ties = adaptive && !drain.aborted && !signal?.aborted ? cases.filter((c) => tracker.needsTieBreak(c.id)).map((c) => ({ c, trial: ADAPTIVE_MAX })) : [];
+  if (ties.length) {
+    total += ties.length;
+    if (job && job.prefix === "") await job.job.setTotal(total);
+    settled.push(...(await runAll(ties)));
+  }
   const result = experimentResult({
     id,
     name: opts.name,
-    // Cancelled when some case-trial never ran or was cut short (infra-failed ones did run).
-    status: settled.some((r) => r === undefined) ? "cancelled" : "completed",
+    // Cancelled when some case-trial never ran or was cut short (infra-failed ones did run), or a regression stopped it.
+    status: settled.some((r) => r === undefined) || regression ? "cancelled" : "completed",
+    ...(adaptive ? { samples: "adaptive" as const } : {}),
+    ...(regression ? { regression } : {}),
     dataset: opts.dataset,
     ...(opts.split !== undefined ? { split: opts.split } : {}),
     task: task.info,

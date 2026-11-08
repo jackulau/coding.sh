@@ -286,6 +286,8 @@ export interface ToolArmSummary {
   passAnyK: number;
   errors: number;
   latencySource: ToolMetrics["latencySource"] | "mixed";
+  /** Adaptive sampling: per-task verdicts (a task fails at half or more failing trials); no CI applies. */
+  verdicts?: { passed: number; failed: number; tieBreaks: number };
 }
 
 export interface ToolTaskOutcome {

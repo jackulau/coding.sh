@@ -227,6 +227,8 @@ export interface ExperimentSummary {
   ciMethod: "wilson" | "cluster-bootstrap";
   graders: GraderSummary[];
   latencyMs: { mean: number; median: number; p90: number; max: number };
+  /** Adaptive samples only: cases passed (fewer than half their trials failed), failed, and given a third trial. */
+  caseVerdicts?: { passed: number; failed: number; tieBreaks: number };
 }
 
 export interface TaskInfo {
@@ -275,4 +277,8 @@ export interface ExperimentResult {
   metadata?: Record<string, unknown>;
   /** Present when this run is one arm of an interleaved A/B. */
   pair?: ExperimentPair;
+  /** "adaptive": two trials per case, a third when they disagree; no CI (absent for fixed trials). */
+  samples?: "adaptive";
+  /** Present when `--stop-on-regression` stopped the run: the first case that passed every baseline trial and failed here. */
+  regression?: { caseId: string; baseline: string };
 }

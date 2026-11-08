@@ -197,14 +197,34 @@ describe("toolevals CLI", () => {
     assert.match(r.stderr, /FAKE_KEY/);
   });
 
+  it("checks --samples and --stop-on-regression before anything runs", () => {
+    const h = tmpHome();
+    writeRepo(h);
+    const run = (...args: string[]) => cli(h, ["toolevals", "run", "fake", "--driver", "model:anthropic/fake", "--yes", ...args], { FAKE_KEY: "k" });
+    let r = run("--samples", "adaptive", "-k", "3");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /drop -k/);
+    r = run("--stop-on-regression");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /--stop-on-regression needs --baseline/);
+    r = run("--baseline", "texp_x");
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /--baseline needs --stop-on-regression/);
+    r = run("--stop-on-regression", "--baseline", "texp_missing");
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /Can't find tool-eval experiment "texp_missing"/);
+    assert.ok(!existsSync(join(h.data, "toolevals")) || readdirSync(join(h.data, "toolevals")).length === 0, "nothing ran");
+  });
+
   describe("run → compare → show against the fake provider", () => {
     let p: FakeProvider;
+    let failAda = false;
     before(async () => {
       // Answer from the request: call the CLI first, then repeat what it printed.
       p = await startFakeProvider((body) => {
         const text = JSON.stringify(body);
         const said = /hello (bob|ada)/.exec(text.replace(/Greet (bob|ada) using/g, ""));
-        if (said) return { text: `The CLI said: hello ${said[1]}`, usage: { input: 200, output: 10 } };
+        if (said) return { text: failAda && said[1] === "ada" ? "I could not greet anyone" : `The CLI said: hello ${said[1]}`, usage: { input: 200, output: 10 } };
         const name = /Greet (bob|ada)/.exec(text)?.[1] ?? "bob";
         return { toolCalls: [{ name: "shell", input: { command: `fake-cli greet --name ${name}` } }], usage: { input: 150, output: 12 } };
       });
@@ -244,6 +264,33 @@ describe("toolevals CLI", () => {
         ["ok"],
       );
       assert.ok(s.sessions.length >= 1);
+    });
+
+    it("adaptive samples report verdicts without a CI; --stop-on-regression exits 1 on the first regressed task", async () => {
+      const h = tmpHome();
+      writeRepo(h, { providerUrl: p.url });
+      const base = await cliAsync(h, ["toolevals", "run", "fake", "-d", "model:anthropic/fake", "--samples", "adaptive", "--yes"], { FAKE_KEY: "k" });
+      assert.equal(base.status, 0, base.stderr);
+      assert.match(base.stderr, /4 trials \(2 tasks x 1 arm x 2\), up to 6 with tie-breaks/);
+      assert.match(base.stdout, /tasks passed/);
+      assert.match(base.stdout, /base@model:anthropic\/fake +2\/2 +4 +0 +0/);
+      assert.match(base.stdout, /adaptive, no CI/);
+      const baseId = base.stdout.trim().split("\n").pop()!;
+      assert.match(baseId, /^texp_/);
+      const cmp = cli(h, ["toolevals", "compare", baseId, "--baseline", "base@model:anthropic/fake", "--candidate", "base@model:anthropic/fake"]);
+      assert.equal(cmp.status, 1);
+      assert.match(cmp.stderr, /ran adaptive samples/);
+
+      failAda = true;
+      try {
+        const r = await cliAsync(h, ["toolevals", "run", "fake", "-d", "model:anthropic/fake", "-k", "1", "-c", "1", "--stop-on-regression", "--baseline", baseId, "--yes", "--json"], { FAKE_KEY: "k" });
+        assert.equal(r.status, 1, r.stderr);
+        const doc = one(r.stdout, "regression") as { outcome: string; regression: { taskId: string; arm: string; baseline: string } };
+        assert.equal(doc.outcome, "regression");
+        assert.deepEqual(doc.regression, { taskId: "greet-ada", arm: "base@model:anthropic/fake", baseline: baseId });
+      } finally {
+        failAda = false;
+      }
     });
   });
 });

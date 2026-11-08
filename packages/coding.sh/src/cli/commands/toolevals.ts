@@ -342,16 +342,37 @@ async function runAction(c: CommandContext): Promise<number> {
   const drivers = parseDrivers(c, cfg, list(c.flags.driver));
   const variantNames = list(c.flags.variant);
   const variants = (variantNames.length ? variantNames : ["base"]).map((v) => pickVariant(cfg, target.name, v));
-  const k = positiveInt(c.flags.k, "k") ?? 3;
+  const adaptive = str(c.flags.samples) === "adaptive";
+  if (adaptive && c.flags.k !== undefined) throw new UsageError("--samples adaptive sets the trials (2 per task and arm, a 3rd when they disagree); drop -k", { reason: "invalid_argument" });
+  const stopOnRegression = c.flags["stop-on-regression"] === true;
+  const baselineId = str(c.flags.baseline);
+  if (stopOnRegression && !baselineId) throw new UsageError("--stop-on-regression needs --baseline <EXPERIMENT>", { reason: "missing_argument" });
+  if (baselineId && !stopOnRegression) throw new UsageError("--baseline needs --stop-on-regression", { reason: "invalid_argument" });
+  const k = adaptive ? 2 : (positiveInt(c.flags.k, "k") ?? 3);
   const split = str(c.flags.split) ?? "dev";
   const tasks = selectTasks(cfg, target.name, split, list(c.flags.task));
   if (!tasks.length) throw new CliError(`No ${split === "all" ? "" : `${split} `}tasks for ${target.name}`, { reason: "no_tasks", next: ["Add tasks under:", join(root, "evals", "toolevals", target.name, "tasks")] });
+  let baseline: TrialResult[] | undefined;
+  if (baselineId) {
+    const { loadExperiment, toolevalsRoot } = await import("../../toolevals/experiment.ts");
+    try {
+      baseline = (await loadExperiment(baselineId, toolevalsRoot(c.env))).trials;
+    } catch {
+      throw new CliError(`Can't find tool-eval experiment ${JSON.stringify(baselineId)}`, { reason: "not_found", next: [`Experiments live in ${toolevalsRoot(c.env)}`] });
+    }
+    if (!baseline.some((t) => tasks.some((x) => x.id === t.taskId))) throw new CliError(`Baseline ${baselineId} ran none of these tasks`, { reason: "invalid_baseline" });
+  }
   await checkAgents(drivers);
   const arms = variants.length * drivers.length;
+  // Adaptive: 2 trials each, up to 3; the estimate counts the most it can cost.
   const trials = tasks.length * arms * k;
-  const estimate = tasks.reduce((a, t) => a + trialUsd(cfg, t), 0) * arms * k;
+  const estimate = tasks.reduce((a, t) => a + trialUsd(cfg, t), 0) * arms * (adaptive ? 3 : k);
   const drafts = tasks.filter((t) => t.status === "draft").length;
-  out.note(`${plural(trials, "trial")} (${plural(tasks.length, "task")} x ${plural(arms, "arm")} x k=${k}), estimated ${usd(estimate)}`);
+  out.note(
+    adaptive
+      ? `${plural(trials, "trial")} (${plural(tasks.length, "task")} x ${plural(arms, "arm")} x 2), up to ${tasks.length * arms * 3} with tie-breaks, estimated up to ${usd(estimate)}`
+      : `${plural(trials, "trial")} (${plural(tasks.length, "task")} x ${plural(arms, "arm")} x k=${k}), estimated ${usd(estimate)}`,
+  );
   if (drafts) out.warn(`${plural(drafts, "task")} still draft; run coding.sh toolevals validate ${target.name} to check them and mark the passing ones ${VALIDATED_EDIT}`);
   const stop = await costGate(c, cfg, estimate, `coding.sh toolevals run ${target.name} ${list(c.flags.driver).map((d) => `--driver ${d}`).join(" ")} --yes`);
   if (stop !== undefined) return stop;
@@ -378,6 +399,8 @@ async function runAction(c: CommandContext): Promise<number> {
       variants,
       drivers,
       k,
+      ...(adaptive ? { samples: "adaptive" as const } : {}),
+      ...(baseline ? { stopOnRegression: baseline } : {}),
       ...(concurrency ? { concurrency } : {}),
       adapterFor: (a) => getAdapter(a)!,
       index: ctx.index,
@@ -399,14 +422,25 @@ async function runAction(c: CommandContext): Promise<number> {
       else out.warn(`Cancelled after ${r.trials.length}/${trials} trials; finished trials are in ${r.dir}`);
       return 1;
     }
-    const summary = summarizeArms(r.trials);
-    if (out.json) out.data({ experimentId: r.experimentId, dir: r.dir, trials: r.trials.length, k, arms: summary });
+    const summary = summarizeArms(r.trials, { adaptive });
+    const regression = r.regression ? { ...r.regression, baseline: baselineId! } : undefined;
+    if (out.json)
+      out.data({
+        ...(regression ? { outcome: "regression", regression } : {}),
+        experimentId: r.experimentId,
+        dir: r.dir,
+        trials: r.trials.length,
+        k,
+        ...(adaptive ? { samples: "adaptive" } : {}),
+        arms: summary,
+      });
     else {
       out.print(formatArms(summary, { color: out.color }).trimEnd());
+      if (regression) out.fail(`regression: task ${regression.taskId} (${regression.arm}) passed every trial of ${regression.baseline} and fails here; the run stopped (--stop-on-regression)`);
       out.print(r.experimentId);
-      if (summary.length > 1) out.next("Compare two arms", `coding.sh toolevals compare ${r.experimentId} --baseline ${summary[0]!.arm} --candidate ${summary[1]!.arm}`);
+      if (summary.length > 1 && !adaptive && !regression) out.next("Compare two arms", `coding.sh toolevals compare ${r.experimentId} --baseline ${summary[0]!.arm} --candidate ${summary[1]!.arm}`);
     }
-    return 0;
+    return regression ? 1 : 0;
   });
 }
 
@@ -426,6 +460,11 @@ async function compareAction(c: CommandContext): Promise<number> {
   } catch {
     throw new CliError(`Can't find tool-eval experiment ${JSON.stringify(id)}`, { reason: "not_found", next: [`Experiments live in ${toolevalsRoot(c.env)}`] });
   }
+  if (exp.meta.samples === "adaptive")
+    throw new CliError(`Experiment ${id} ran adaptive samples: its trial count depends on its outcomes, so a paired CI over it is biased`, {
+      reason: "adaptive_samples",
+      next: ["Compare arms of a run with a fixed -k:", `coding.sh toolevals run <target> --variant <A> --variant <B> -k 3`],
+    });
   const arms = summarizeArms(exp.trials).map((a) => a.arm);
   for (const a of [baseline, candidate]) if (!arms.includes(a)) throw new CliError(`Experiment ${id} has no arm ${JSON.stringify(a)}`, { reason: "not_found", next: [`Arms: ${arms.join(", ") || "(none)"}`] });
   const surfaces = (exp.meta.surfaces ?? {}) as Record<string, SurfaceReport>;

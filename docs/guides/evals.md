@@ -514,6 +514,26 @@ once a loop runs past 1/δ rounds. Small evals can't see a small ε: `plateauRou
 warns on a dataset version or split change, rounds with fewer than 10 shared cases, and a stop
 chosen on the dev or train split (confirm the version on test before shipping it).
 
+### Gating runs: tie-breaks and the regression stop
+
+A run that only has to say pass or fail can spend fewer trials. `exp run --samples adaptive` runs
+2 trials per case and a third only when the two disagree. A case fails when half or more of its
+trials fail, so 1 of 2 failing waits for the third trial and 2 of 3 failing fails. The report
+prints the share of cases passed and how many cases got a third trial. It prints no confidence
+interval: the trial count depends on the outcomes, so an interval over the trials is biased.
+`exp compare` refuses an adaptive run unless you pass `--force`. `--json` carries `samples:
+"adaptive"` and `summary.caseVerdicts` (`passed`, `failed`, `tieBreaks`). It does not combine with
+`--trials` or a spec's `trials`.
+
+`exp run --stop-on-regression --baseline <EXPERIMENT>` holds a run to a stored one on the same
+dataset. Once a case that passed every graded trial of the baseline fails here (half or more of
+its trials), no new case starts; the ones in flight finish. The run is stored as cancelled with
+`regression: {caseId, baseline}`, the report names the case, and the command exits 1. `--json`
+prints `{outcome: "regression", experiment, regression}`. Both flags work with plain spec runs,
+not with `--arm`, matrix specs or `--watch`. `toolevals run` takes the same two flags (see
+[Tool evals](../TOOL-EVALS.md#8-experiments)). The method is T3 Code's eval loop (see
+[Theo Browne's tools](../research/theo-browne.md)).
+
 ## Long runs: resume, retries, status
 
 `exp run` (and `--arm`), `exp aa`, `exp sweep`, `compare`, `bench run` and `workflows run` write

@@ -102,6 +102,22 @@ const IMPROVE_FLAGS = (since: string, limit: number): FlagSpec[] => [
   FRESH,
 ];
 
+/** Tie-break sampling (exp run, toolevals run). */
+const SAMPLES_FLAG: FlagSpec = {
+  name: "samples",
+  type: "string",
+  value: "<MODE>",
+  choices: ["fixed", "adaptive"],
+  default: "fixed",
+  desc: "adaptive: 2 trials each, a 3rd when they disagree; it fails at half or more failing. Reports no CI",
+};
+
+/** Stop a gating run on the first regression against a stored run (exp run, toolevals run). */
+const regressionFlags = (what: string, unit: string): FlagSpec[] => [
+  { name: "stop-on-regression", type: "boolean", desc: `Stop and exit 1 once a ${unit} that passed every trial of --baseline fails` },
+  { name: "baseline", type: "string", value: `<${what.toUpperCase()}>`, desc: `With --stop-on-regression: the stored ${what} to hold the run to` },
+];
+
 /** Waive the protected-line check for one protected line (refine check, exp ab). */
 const PROTECTED_EDIT: FlagSpec = { name: "allow-protected-edit", type: "list", value: "<PATH:LINE>", desc: "Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force)" };
 
@@ -762,6 +778,8 @@ export const COMMANDS: CommandSpec[] = [
         args: [{ name: "spec", desc: "Experiment spec JSON file (options override its fields; --grader adds graders); with \"matrix\" or \"variants\" it runs every cell" }],
         flags: [
           ...EXP_RUN_FLAGS,
+          SAMPLES_FLAG,
+          ...regressionFlags("experiment", "case"),
           { name: "arm", type: "list", value: "<NAME=JSON|FILE>", desc: "One arm's task spec; give two (A then B) to interleave them case by case in one run" },
           { name: "stop-early", type: "boolean", desc: "With --arm: stop once a group sequential test (O'Brien-Fleming) is decisive" },
           { name: "looks", type: "number", value: "<N>", desc: "With --stop-early: planned looks over the case budget", default: "4" },
@@ -795,6 +813,7 @@ export const COMMANDS: CommandSpec[] = [
           "coding.sh exp run spec.json --watch",
           "coding.sh exp run -d smoke -g '{\"kind\":\"exact\"}' --arm base=base.json --arm cand=cand.json --stop-early --max-cases 400",
           "coding.sh exp run spec.json --resume",
+          "coding.sh exp run spec.json --samples adaptive --stop-on-regression --baseline last-release",
           "coding.sh exp run matrix.json --plan",
           "coding.sh exp run matrix.json --cell model=opus,prompt=short",
           "coding.sh exp run matrix.json --reuse baseline --plan",
@@ -1053,13 +1072,19 @@ export const COMMANDS: CommandSpec[] = [
           { name: "driver", short: "d", type: "list", value: "<DRIVER>", desc: "agent:<id>[:model] or model:<provider>/<model> (repeatable)" },
           { name: "variant", type: "list", value: "<VARIANT>", desc: "Variant (repeatable; default: base)" },
           { name: "k", short: "k", type: "number", value: "<N>", desc: "Trials per task and arm", default: "3" },
+          SAMPLES_FLAG,
+          ...regressionFlags("experiment", "task"),
           { name: "split", type: "string", value: "<SPLIT>", choices: ["dev", "heldout", "all"], desc: "Task split", default: "dev" },
           { name: "task", short: "t", type: "list", value: "<ID>", desc: "Only this task (repeatable)" },
           { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel trials" },
           { name: "keep", type: "boolean", desc: "Keep trial sandboxes" },
           YES,
         ],
-        examples: ["coding.sh toolevals run gh --driver agent:claude-code -k 3", "coding.sh toolevals run everything --driver model:anthropic/claude-sonnet-5-5 --variant base --variant terse"],
+        examples: [
+          "coding.sh toolevals run gh --driver agent:claude-code -k 3",
+          "coding.sh toolevals run everything --driver model:anthropic/claude-sonnet-5-5 --variant base --variant terse",
+          "coding.sh toolevals run gh --driver agent:claude-code --samples adaptive --stop-on-regression --baseline texp_01J…",
+        ],
       },
       {
         name: "compare",

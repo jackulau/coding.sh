@@ -18,6 +18,7 @@ import { computeMetrics } from "./metrics.ts";
 import { openapiPaths, startHttpTap } from "./tap/http-proxy.ts";
 import { startMcpProxy } from "./tap/mcp-proxy.ts";
 import { prepareSandbox, sandboxDir, suiteDirOf } from "./sandbox.ts";
+import { ADAPTIVE_MAX, ADAPTIVE_TRIALS, allPassKeys, CaseTracker, type SamplesMode } from "../experiments/samples.ts";
 import { armKey, driverKey, type Driver, type JudgeFn, type Prices, type TapRecord, type Target, type ToolTask, type TrialResult, type Variant } from "./types.ts";
 
 export interface ExperimentDeps {
@@ -56,6 +57,20 @@ export interface ExperimentOpts extends ExperimentDeps {
   onProgress?: (done: number, total: number, t: TrialResult) => void;
   /** Recorded in experiment.json (git commit, agent versions, surfaces…). */
   meta?: Record<string, unknown>;
+  /** "adaptive": 2 trials per task and arm, a 3rd when they disagree (k is ignored). */
+  samples?: SamplesMode;
+  /**
+   * Trials of a baseline experiment: no new trial starts once a task (in an
+   * arm) that passed every baseline trial fails here. The baseline's trials of
+   * the same arm count; a baseline without that arm counts the task's trials
+   * over all its arms.
+   */
+  stopOnRegression?: readonly TrialResult[];
+}
+
+export interface RegressionStop {
+  taskId: string;
+  arm: string;
 }
 
 export interface ToolJob {
@@ -284,42 +299,67 @@ async function runTrialInner(o: TrialOpts): Promise<TrialResult> {
   return result;
 }
 
-export async function runToolExperiment(o: ExperimentOpts): Promise<{ experimentId: string; trials: TrialResult[]; dir: string; cancelled: boolean }> {
+/** Task-and-arm keys (taskId NUL arm) of the run that passed every baseline trial. */
+export function baselinePassKeys(baseline: readonly TrialResult[], tasks: readonly ToolTask[], arms: readonly string[]): Set<string> {
+  const byArm = allPassKeys(baseline.map((t) => ({ key: caseKey(t.taskId, armKey(t.variant, t.driver)), pass: t.pass })));
+  const byTask = allPassKeys(baseline.map((t) => ({ key: t.taskId, pass: t.pass })));
+  const baseArms = new Set(baseline.map((t) => armKey(t.variant, t.driver)));
+  const out = new Set<string>();
+  for (const t of tasks) for (const a of arms) if (baseArms.has(a) ? byArm.has(caseKey(t.id, a)) : byTask.has(t.id)) out.add(caseKey(t.id, a));
+  return out;
+}
+
+const caseKey = (taskId: string, arm: string): string => `${taskId}\u0000${arm}`;
+
+export async function runToolExperiment(o: ExperimentOpts): Promise<{ experimentId: string; trials: TrialResult[]; dir: string; cancelled: boolean; regression?: RegressionStop }> {
   const experimentId = o.experimentId ?? sortableId("texp_");
   const dir = join(o.root ?? toolevalsRoot(o.env), experimentId);
   await mkdir(dir, { recursive: true });
-  const jobs = scheduleToolJobs(o.tasks, o.variants, o.drivers, Math.max(1, o.k));
-  await writeFile(
-    join(dir, "experiment.json"),
-    JSON.stringify(
-      {
-        id: experimentId,
-        createdAt: Date.now(),
-        target: o.target,
-        variants: o.variants,
-        drivers: o.drivers.map(driverKey),
-        arms: o.variants.flatMap((v) => o.drivers.map((d) => armKey(v.name, driverKey(d)))),
-        tasks: o.tasks.map((t) => ({ id: t.id, split: t.split, source: t.source })),
-        k: o.k,
-        ...(o.meta ?? {}),
-      },
-      null,
-      2,
-    ),
-  );
+  const adaptive = o.samples === "adaptive";
+  const k = adaptive ? ADAPTIVE_TRIALS : Math.max(1, o.k);
+  const jobs = scheduleToolJobs(o.tasks, o.variants, o.drivers, k);
+  const arms = o.variants.flatMap((v) => o.drivers.map((d) => armKey(v.name, driverKey(d))));
+  const meta = {
+    id: experimentId,
+    createdAt: Date.now(),
+    target: o.target,
+    variants: o.variants,
+    drivers: o.drivers.map(driverKey),
+    arms,
+    tasks: o.tasks.map((t) => ({ id: t.id, split: t.split, source: t.source })),
+    k,
+    ...(adaptive ? { samples: "adaptive" } : {}),
+    ...(o.meta ?? {}),
+  };
+  const writeMeta = (extra: Record<string, unknown> = {}) => writeFile(join(dir, "experiment.json"), JSON.stringify({ ...meta, ...extra }, null, 2));
+  await writeMeta();
+  const tracker = new CaseTracker(adaptive ? "adaptive" : "fixed", k, o.stopOnRegression ? baselinePassKeys(o.stopOnRegression, o.tasks, arms) : undefined);
+  let regression: RegressionStop | undefined;
   const trialsFile = join(dir, "trials.jsonl");
   let done = 0;
-  const settled = await pool(jobs, o.concurrency ?? defaultConcurrency(), async (job): Promise<TrialResult | undefined> => {
-    if (o.signal?.aborted) return undefined; // never started
-    const t = await runTrial({ ...o, job, target: o.target, experimentId, expDir: dir });
-    if (o.signal?.aborted) return undefined; // cut short: not a trial result
-    await appendFile(trialsFile, JSON.stringify(t) + "\n");
-    done++;
-    o.onProgress?.(done, jobs.length, t);
-    return t;
-  });
+  let total = jobs.length;
+  const runJobs = (list: ToolJob[]) =>
+    pool(list, o.concurrency ?? defaultConcurrency(), async (job): Promise<TrialResult | undefined> => {
+      if (o.signal?.aborted || regression) return undefined; // never started
+      const t = await runTrial({ ...o, job, target: o.target, experimentId, expDir: dir });
+      if (o.signal?.aborted) return undefined; // cut short: not a trial result
+      await appendFile(trialsFile, JSON.stringify(t) + "\n");
+      done++;
+      o.onProgress?.(done, total, t);
+      const arm = armKey(t.variant, t.driver);
+      if (tracker.add(caseKey(t.taskId, arm), t.pass)) regression ??= { taskId: t.taskId, arm };
+      return t;
+    });
+  const settled = await runJobs(jobs);
+  if (adaptive && !o.signal?.aborted && !regression) {
+    // Tie-breaks: a third trial for each task and arm whose first two disagree.
+    const ties = jobs.filter((j) => j.attempt === 1 && tracker.needsTieBreak(caseKey(j.task.id, armKey(j.variant.name, driverKey(j.driver))))).map((j) => ({ ...j, attempt: ADAPTIVE_MAX }));
+    total += ties.length;
+    settled.push(...(await runJobs(ties)));
+  }
+  if (regression) await writeMeta({ regression });
   const trials = settled.filter((t): t is TrialResult => t !== undefined);
-  return { experimentId, trials, dir, cancelled: o.signal?.aborted === true };
+  return { experimentId, trials, dir, cancelled: o.signal?.aborted === true, ...(regression ? { regression } : {}) };
 }
 
 /** Trials of a stored experiment. */

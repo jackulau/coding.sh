@@ -9,6 +9,7 @@ import type { VerdictKind } from "../runner/experiment.ts";
 import { mean, median } from "../stats/summary.ts";
 import { pairedBootstrap, wilson, type BootstrapResult } from "../stats/interval.ts";
 import { mcnemarPaired, pairedPermutation, type McNemarResult } from "../stats/tests.ts";
+import { caseVerdicts } from "../experiments/samples.ts";
 import { totalTokens } from "./metrics.ts";
 import type {
   ContinuousMetric,
@@ -73,10 +74,14 @@ export function summarizeArm(trials: readonly TrialResult[], arm: string): ToolA
   };
 }
 
-/** Every arm present in the trials, in first-seen order. */
-export function summarizeArms(trials: readonly TrialResult[]): ToolArmSummary[] {
+/** Every arm present in the trials, in first-seen order. Adaptive: with per-task verdicts. */
+export function summarizeArms(trials: readonly TrialResult[], o: { adaptive?: boolean } = {}): ToolArmSummary[] {
   const arms = [...new Set(trials.map(trialArm))];
-  return arms.map((a) => summarizeArm(trials, a));
+  return arms.map((a) => {
+    const s = summarizeArm(trials, a);
+    if (o.adaptive) s.verdicts = caseVerdicts(trials.filter((t) => trialArm(t) === a).map((t) => ({ key: t.taskId, pass: t.pass })));
+    return s;
+  });
 }
 
 function groupByTask(ts: readonly TrialResult[]): Map<string, TrialResult[]> {

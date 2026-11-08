@@ -6,7 +6,9 @@ import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { Adapter, RunSpec } from "../../src/core/types.ts";
 import { sh } from "../../src/runner/exec.ts";
+import { summarizeArms } from "../../src/toolevals/compare.ts";
 import { runToolExperiment, runTrial, type ToolJob } from "../../src/toolevals/experiment.ts";
+import { formatArms } from "../../src/toolevals/report.ts";
 import { fakeAdapter, MemBlobs, MemIndex } from "../helpers-eval.ts";
 import { cleanup, cliTarget, task, tmp } from "./helpers.ts";
 
@@ -104,5 +106,81 @@ describe("runToolExperiment cancellation", () => {
     assert.equal(alive, false, "agent killed");
     const runs = await index.listRuns({ experimentId: r.experimentId });
     assert.ok(runs.length === 1 && runs[0]!.cancelled === true);
+  });
+});
+
+/** An agent that follows a plan per task (named in its instruction), one letter per trial: P replies "hello bob", F does not. */
+function plannedAgent(plan: Record<string, string>): Adapter {
+  const calls = new Map<string, number>();
+  return {
+    ...fakeAdapter(),
+    run: async (spec: RunSpec) => {
+      const id = spec.instruction.split(" ")[0]!;
+      const n = calls.get(id) ?? 0;
+      calls.set(id, n + 1);
+      return { exitCode: 0, timedOut: false, durationMs: 1, stdoutTail: plan[id]![n] === "P" ? "hello bob" : "nope", stderrTail: "" };
+    },
+  };
+}
+
+const planned = (ids: string[]) => ids.map((id) => task({ id, instruction: `${id} greets bob` }));
+const runPlanned = (plan: Record<string, string>, over: Partial<Parameters<typeof runToolExperiment>[0]> = {}) => {
+  const agent = plannedAgent(plan);
+  return runToolExperiment({
+    tasks: planned(Object.keys(plan)),
+    target: cliTarget(),
+    variants: [{ name: "base" }],
+    drivers: [{ kind: "agent", agent: "claude-code" }],
+    k: 1,
+    concurrency: 1,
+    root: tmp(),
+    index: new MemIndex(),
+    blobs: new MemBlobs(),
+    adapterFor: () => agent,
+    ...over,
+  });
+};
+
+describe("runToolExperiment: adaptive samples and the regression stop (TB-3)", () => {
+  it("adaptive: 2 trials per task, a 3rd only where they disagree", async () => {
+    const r = await runPlanned({ t1: "PP", t2: "PFP", t3: "FPF" }, { samples: "adaptive", k: 5 });
+    const count = (id: string) => r.trials.filter((t) => t.taskId === id).length;
+    assert.deepEqual(["t1", "t2", "t3"].map(count), [2, 3, 3]);
+    assert.deepEqual(
+      r.trials.filter((t) => t.attempt === 3).map((t) => t.taskId),
+      ["t2", "t3"],
+    );
+    const meta = JSON.parse(readFileSync(join(r.dir, "experiment.json"), "utf8")) as { k: number; samples: string };
+    assert.equal(meta.k, 2);
+    assert.equal(meta.samples, "adaptive");
+    const [arm] = summarizeArms(r.trials, { adaptive: true });
+    assert.deepEqual(arm?.verdicts, { passed: 2, failed: 1, tieBreaks: 2 });
+    const text = formatArms(summarizeArms(r.trials, { adaptive: true }));
+    assert.match(text, /tasks passed/);
+    assert.match(text, /base@agent:claude-code +2\/3 +8 +2 +0/);
+    assert.match(text, /adaptive, no CI/);
+    assert.doesNotMatch(text, /95% CI/);
+  });
+
+  it("stops at the first task that passed every baseline trial and fails here", async () => {
+    const base = await runPlanned({ t1: "PP", t2: "PP", t3: "PP" }, { k: 2 });
+    const r = await runPlanned({ t1: "P", t2: "F", t3: "F" }, { stopOnRegression: base.trials });
+    assert.deepEqual(r.regression, { taskId: "t2", arm: "base@agent:claude-code" });
+    assert.deepEqual(
+      r.trials.map((t) => t.taskId),
+      ["t1", "t2"],
+      "t3 never started",
+    );
+    const meta = JSON.parse(readFileSync(join(r.dir, "experiment.json"), "utf8")) as { regression: unknown };
+    assert.deepEqual(meta.regression, r.regression);
+  });
+
+  it("no regression when the task failed in the baseline; another arm falls back to the task's trials", async () => {
+    const base = await runPlanned({ t1: "P", t2: "F" });
+    const same = await runPlanned({ t1: "P", t2: "F" }, { stopOnRegression: base.trials });
+    assert.equal(same.regression, undefined);
+    assert.equal(same.trials.length, 2);
+    const other = await runPlanned({ t1: "F", t2: "F" }, { stopOnRegression: base.trials, variants: [{ name: "terse" }] });
+    assert.deepEqual(other.regression, { taskId: "t1", arm: "terse@agent:claude-code" });
   });
 });

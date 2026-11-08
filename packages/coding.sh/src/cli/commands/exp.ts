@@ -210,9 +210,13 @@ async function regradeCmd(c: CommandContext, store: FileEvalStore): Promise<numb
 }
 
 /** Run one experiment (exp run without --arm). */
-async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string | undefined): Promise<{ result: ExperimentResult; job: Job; loaded: LoadedSpec }> {
+async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string | undefined, gating: { adaptive?: boolean; baseline?: ExperimentResult } = {}): Promise<{ result: ExperimentResult; job: Job; loaded: LoadedSpec }> {
   const loaded = await loadSpec(c, store, specFile);
   const { spec, dataset, graders } = loaded;
+  if (gating.adaptive && (spec.trials ?? 1) > 1) throw new UsageError("--samples adaptive sets the trials (2 per case, a 3rd when they disagree); drop trials from the spec or --trials", { reason: "invalid_argument" });
+  if (gating.baseline && gating.baseline.dataset.id !== dataset.id) {
+    throw new UsageError(`Baseline ${gating.baseline.id} ran on dataset ${gating.baseline.dataset.id}, not ${dataset.id}`, { reason: "invalid_argument" });
+  }
   // EM-19: a next-turn experiment without a control arm has no replay noise floor to read B against.
   const continuation = (spec.task as { kind?: unknown }).kind === "continuation";
   if (continuation && c.flags.control !== false) {
@@ -221,7 +225,11 @@ async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string
       suggestion: "coding.sh exp run --arm control=recorded.json --arm cand=cand.json …",
     });
   }
-  const config = specConfig(c, loaded, { task: taskFingerprint(spec.task, c.cwd) });
+  const config = specConfig(c, loaded, {
+    task: taskFingerprint(spec.task, c.cwd),
+    ...(gating.adaptive ? { samples: "adaptive" } : {}),
+    ...(gating.baseline ? { stopOnRegression: gating.baseline.id } : {}),
+  });
   const job = await openJob(c, { kind: "exp run", name: loaded.name, config, newId: () => sortableId("exp_"), concurrency: spec.concurrency ?? 4 });
   const spin = c.out.spin(`Running ${dataset.name}…`);
   const result = await job
@@ -233,6 +241,8 @@ async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string
         task: spec.task!,
         graders,
         ...(spec.trials ? { trials: spec.trials } : {}),
+        ...(gating.adaptive ? { samples: "adaptive" as const } : {}),
+        ...(gating.baseline ? { stopOnRegression: gating.baseline } : {}),
         ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
         ...(spec.split ? { split: spec.split } : {}),
         ...(continuation || seriesFlag(c) ? { metadata: { ...(continuation ? { control: "skipped" } : {}), ...(seriesFlag(c) ? { series: seriesFlag(c) } : {}) } } : {}),
@@ -621,6 +631,18 @@ export async function run(c: CommandContext): Promise<number> {
         const maxCases = positiveInt(c.flags["max-cases"], "max-cases");
         const looks = positiveInt(c.flags.looks, "looks");
         const seed = seedFlag(c);
+        // Gating mode (one task, pass or fail): adaptive samples and the regression stop.
+        const adaptive = str(c.flags.samples) === "adaptive";
+        const stopOnRegression = c.flags["stop-on-regression"] === true;
+        const baselineRef = str(c.flags.baseline);
+        if (stopOnRegression && !baselineRef) throw new UsageError("--stop-on-regression needs --baseline <EXPERIMENT>", { reason: "missing_argument" });
+        if (baselineRef && !stopOnRegression) throw new UsageError("--baseline needs --stop-on-regression", { reason: "invalid_argument" });
+        if (adaptive || stopOnRegression) {
+          const flag = adaptive ? "--samples adaptive" : "--stop-on-regression";
+          const matrix = !!c.positionals[0] && (await isMatrixFile(resolve(c.cwd, c.positionals[0])));
+          if (matrix || armFlags.length || c.flags.watch === true) throw new UsageError(`${flag} runs one task as a gate; it does not combine with ${matrix ? "a matrix spec" : armFlags.length ? "--arm" : "--watch"}`, { reason: "invalid_argument" });
+          if (adaptive && c.flags.trials !== undefined) throw new UsageError("--samples adaptive sets the trials (2 per case, a 3rd when they disagree); drop --trials", { reason: "invalid_argument" });
+        }
         // A spec with "matrix" or "variants" runs every cell against its baseline cell.
         if (c.positionals[0] && (await isMatrixFile(resolve(c.cwd, c.positionals[0])))) {
           const { matrixRun } = await import("./exp-matrix.ts");
@@ -670,7 +692,20 @@ export async function run(c: CommandContext): Promise<number> {
           return session.watchRun(c, store, c.positionals[0]);
         }
         if (list(c.flags["watch-path"]).length) throw new UsageError("--watch-path needs --watch", { reason: "invalid_argument" });
-        const { result, job, loaded } = await runSpec(c, store, c.positionals[0]);
+        let baseline: ExperimentResult | undefined;
+        if (baselineRef) {
+          baseline = await store.resolveExperiment(baselineRef);
+          if (!baseline) throw new CliError(`Can't find a completed experiment ${JSON.stringify(baselineRef)} for --baseline`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
+        }
+        const { result, job, loaded } = await runSpec(c, store, c.positionals[0], { adaptive, ...(baseline ? { baseline } : {}) });
+        if (result.regression) {
+          if (out.json) out.data({ outcome: "regression", experiment: result, regression: result.regression, ...resumeField(job) });
+          else {
+            out.print(renderExperiment(result, { color: out.color }));
+            out.print(result.id);
+          }
+          return 1;
+        }
         const cancelled = result.status === "cancelled";
         const series = cancelled ? undefined : await seriesStatus(store, seriesFlag(c));
         // In an experiment session: the run joins its timeline and is compared with the previous one.
@@ -709,6 +744,12 @@ export async function run(c: CommandContext): Promise<number> {
             throw new CliError(`Experiment ${x.name} (${x.id}) was cancelled after ${plural(x.runs.length, "case run")}; comparing a partial result is misleading`, {
               reason: "cancelled_experiment",
               next: ["Re-run it, or compare the partial result anyway:", `coding.sh exp compare ${ida} ${idb} --force`],
+            });
+          }
+          if (x.samples === "adaptive" && !force) {
+            throw new CliError(`Experiment ${x.name} (${x.id}) ran adaptive samples: its trial count depends on its outcomes, so a paired CI over it is biased`, {
+              reason: "adaptive_samples",
+              next: ["Re-run both with fixed --trials, or compare anyway:", `coding.sh exp compare ${ida} ${idb} --force`],
             });
           }
         }

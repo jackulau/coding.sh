@@ -370,6 +370,21 @@ attempts interleaved across arms, so provider drift hits every arm equally. Conc
 `defaultConcurrency()`. The `run` command prints the trial count and estimated cost to stderr
 before starting.
 
+`run --samples adaptive` replaces `-k`: 2 trials per task and arm, then a third for each task and
+arm whose two trials disagree. A task fails in an arm when half or more of its trials fail. The
+summary gives tasks passed, trials and tie-breaks per arm, and no confidence interval, because the
+trial count depends on the outcomes. `experiment.json` records `k: 2` and `samples: "adaptive"`,
+and `toolevals compare` refuses such an experiment. The cost estimate counts 3 trials per task and
+arm, the most it can run.
+
+`run --stop-on-regression --baseline <experiment>` holds the run to a stored experiment. Once a task
+that passed every baseline trial in the same arm fails here, no new trial starts; trials in flight
+finish. When the baseline has no trials in that arm, the task's baseline trials over all arms
+count. The command prints the task and arm and exits 1; `--json` adds `outcome: "regression"` and
+`regression: {taskId, arm, baseline}`, and `experiment.json` gets `regression`. The rule for a
+finished task is the same as above, so with `--samples adaptive` a disagreement waits for its
+tie-break.
+
 ### 8.1 Variant types
 
 | Variant | How it is applied |
@@ -583,7 +598,7 @@ codes are 0, 1, 2 and 130.
 | `coding.sh toolevals init --cli <bin> \| --mcp "<cmd>" \| --mcp-url <url> \| --http <url> [--name n] [--dry-run]` | Adds `[toolevals.targets.<n>]` to `coding.sh.toml`, crawls the surface, and writes `evals/toolevals/<n>/` with 3 starter tasks marked `draft` |
 | `coding.sh toolevals surface <target> [--variant v] [--json]` | Surface bytes, description bytes and estimated tokens per tool or subcommand |
 | `coding.sh toolevals validate [<target>] [--json]` | Runs task validation (§3) |
-| `coding.sh toolevals run <target> --driver <d>… [--variant <v>…] [-k 3] [--split dev\|heldout\|all] [--task id…] [--concurrency n] [--keep] [--yes] [--json]` | Runs an experiment and prints its id plus a per-arm summary |
+| `coding.sh toolevals run <target> --driver <d>… [--variant <v>…] [-k 3 \| --samples adaptive] [--stop-on-regression --baseline <experimentId>] [--split dev\|heldout\|all] [--task id…] [--concurrency n] [--keep] [--yes] [--json]` | Runs an experiment and prints its id plus a per-arm summary (§8) |
 | `coding.sh toolevals compare <experimentId> --baseline <arm> --candidate <arm> [--json]` | §8.2 report |
 | `coding.sh toolevals compress <target> --driver <d> [-k 3] [--margin 0.03] [--max-evals 40] [--batch] [--yes] [--json]` | §8.3 |
 | `coding.sh toolevals show <trialId> [--json]` | Trial metrics, tap records, and the session tree with subagents |

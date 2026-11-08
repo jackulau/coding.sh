@@ -1105,6 +1105,9 @@ coding.sh exp run [spec] [options]
 | `--trials <N>` | `1` | Attempts per case. |
 | `-c, --concurrency <N>` | `4` | Parallel case runs. |
 | `--split <SPLIT>` |  | Only cases in this split. One of: `train`, `dev`, `test`. |
+| `--samples <MODE>` | `fixed` | adaptive: 2 trials each, a 3rd when they disagree; it fails at half or more failing. Reports no CI. One of: `fixed`, `adaptive`. |
+| `--stop-on-regression` |  | Stop and exit 1 once a case that passed every trial of --baseline fails. |
+| `--baseline <EXPERIMENT>` |  | With --stop-on-regression: the stored experiment to hold the run to. |
 | `--arm <NAME=JSON|FILE>` |  | One arm's task spec; give two (A then B) to interleave them case by case in one run. Repeatable. |
 | `--stop-early` |  | With --arm: stop once a group sequential test (O'Brien-Fleming) is decisive. |
 | `--looks <N>` | `4` | With --stop-early: planned looks over the case budget. |
@@ -1127,6 +1130,7 @@ coding.sh exp run [spec] [options]
 coding.sh exp run spec.json --watch
 coding.sh exp run -d smoke -g '{"kind":"exact"}' --arm base=base.json --arm cand=cand.json --stop-early --max-cases 400
 coding.sh exp run spec.json --resume
+coding.sh exp run spec.json --samples adaptive --stop-on-regression --baseline last-release
 coding.sh exp run matrix.json --plan
 coding.sh exp run matrix.json --cell model=opus,prompt=short
 coding.sh exp run matrix.json --reuse baseline --plan
@@ -1597,6 +1601,9 @@ coding.sh toolevals run [target] [options]
 | `-d, --driver <DRIVER>` |  | agent:&lt;id&gt;[:model] or model:&lt;provider&gt;/&lt;model&gt; (repeatable) |
 | `--variant <VARIANT>` |  | Variant (repeatable; default: base) |
 | `-k, --k <N>` | `3` | Trials per task and arm. |
+| `--samples <MODE>` | `fixed` | adaptive: 2 trials each, a 3rd when they disagree; it fails at half or more failing. Reports no CI. One of: `fixed`, `adaptive`. |
+| `--stop-on-regression` |  | Stop and exit 1 once a task that passed every trial of --baseline fails. |
+| `--baseline <EXPERIMENT>` |  | With --stop-on-regression: the stored experiment to hold the run to. |
 | `--split <SPLIT>` | `dev` | Task split. One of: `dev`, `heldout`, `all`. |
 | `-t, --task <ID>` |  | Only this task (repeatable) |
 | `-c, --concurrency <N>` |  | Parallel trials. |
@@ -1606,6 +1613,7 @@ coding.sh toolevals run [target] [options]
 ```sh
 coding.sh toolevals run gh --driver agent:claude-code -k 3
 coding.sh toolevals run everything --driver model:anthropic/claude-sonnet-5-5 --variant base --variant terse
+coding.sh toolevals run gh --driver agent:claude-code --samples adaptive --stop-on-regression --baseline texp_01J…
 ```
 
 ### `coding.sh toolevals compare`

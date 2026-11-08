@@ -45,6 +45,15 @@ function fmt(v: number, unit: "count" | "usd" | "ms" | "rate"): string {
 
 export function formatArms(arms: readonly ToolArmSummary[], o: FormatOpts = {}): string {
   const p = painter(o.color);
+  if (arms.some((a) => a.verdicts)) {
+    // Adaptive sampling: per-task verdicts, no CI (the trial count depends on the outcomes).
+    const rows = [["arm", "tasks passed", "trials", "tie-breaks", "errors"].map(p.dim)];
+    for (const a of arms) {
+      const v = a.verdicts ?? { passed: 0, failed: 0, tieBreaks: 0 };
+      rows.push([a.arm, `${v.passed}/${v.passed + v.failed}`, String(a.trials), String(v.tieBreaks), a.errors ? p.bad(String(a.errors)) : "0"]);
+    }
+    return `${table(rows).join("\n")}\n${p.dim("adaptive, no CI: 2 trials per task, a 3rd when they disagree; a task fails at half or more failing")}\n`;
+  }
   const rows = [["arm", "passes", "success (95% CI)", "pass^k", "pass@k", "errors"].map(p.dim)];
   for (const a of arms) {
     rows.push([a.arm, `${a.passes}/${a.trials}`, `${pct(a.passRate.p)} [${pct(a.passRate.lo)}, ${pct(a.passRate.hi)}]`, String(a.passAllK), String(a.passAnyK), a.errors ? p.bad(String(a.errors)) : "0"]);
