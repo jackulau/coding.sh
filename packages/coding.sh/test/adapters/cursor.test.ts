@@ -5,7 +5,7 @@ import { after, before, describe, it } from "node:test";
 import { CURSOR_HOOK_EVENTS, cursor, cursorVersionHasHooks } from "../../src/adapters/cursor.ts";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { PROBE_TIMEOUT_MS } from "../../src/adapters/_shared/detect.ts";
-import { hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
+import { buildHookCommand, hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { nodeBin } from "../_bin.ts";
 import { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 
@@ -68,9 +68,9 @@ describe("cursor install", () => {
     assert.equal(c[0]!.action, "modify");
     const cfg = JSON.parse(readFileSync(file(), "utf8"));
     assert.equal(cfg.hooks.afterFileEdit[0].command, "./hooks/format.sh");
-    assert.equal(cfg.hooks.afterFileEdit[1].command, `node "${hookPathForCommand(hookCommand())}" cursor afterFileEdit`);
+    assert.equal(cfg.hooks.afterFileEdit[1].command, buildHookCommand(hookCommand(), "cursor", "afterFileEdit"));
     assert.equal(cfg.hooks.afterFileEdit[1]._codingsh, undefined, "no unknown keys in Cursor entries");
-    assert.equal(cfg.hooks.beforeSubmitPrompt[0].command, `node "${hookPathForCommand(hookCommand())}" cursor beforeSubmitPrompt --echo-continue`);
+    assert.equal(cfg.hooks.beforeSubmitPrompt[0].command, buildHookCommand(hookCommand(), "cursor", "beforeSubmitPrompt", ["--echo-continue"]));
     assert.equal((await cursor.detect()).hooked, true);
     assert.deepEqual(await cursor.install({ hookCommand: hookCommand(), scope: "user", dryRun: false }), []);
 
@@ -100,14 +100,14 @@ describe("cursor install", () => {
       await cursor.install({ hookCommand: hookCommand(), scope: "user", dryRun: false });
       const cfg = JSON.parse(readFileSync(file(), "utf8")) as { hooks: Record<string, { command: string }[]> };
       for (const e of CURSOR_HOOK_EVENTS) {
-        const ours = cfg.hooks[e.event]!.filter((h) => h.command.includes("hook.mjs"));
+        const ours = cfg.hooks[e.event]!.filter((h) => /hook\.(?:mjs|sh)"/.test(h.command));
         assert.equal(ours.length, 1, `${e.event}: exactly one coding.sh entry`);
-        assert.ok(ours[0]!.command.includes(hookPathForCommand(hookCommand())), `${e.event}: the current home's hook`);
+        assert.ok(ours[0]!.command.includes(hookPathForCommand(hookCommand()).replace(/hook\.mjs$/, "")), `${e.event}: the current home's hook`);
       }
       assert.deepEqual(cfg.hooks.sessionStart![0], userEntry, "the user's hook is kept, first");
       await cursor.uninstall({ scope: "user", dryRun: false });
       const left = readFileSync(file(), "utf8");
-      assert.doesNotMatch(left, /hook\.mjs/, "no coding.sh entry left from either home");
+      assert.doesNotMatch(left, /hook\.(?:mjs|sh)/, "no coding.sh entry left from either home");
       assert.deepEqual(JSON.parse(left).hooks.sessionStart, [userEntry]);
     } finally {
       process.env.CODING_SH_HOME = saved;

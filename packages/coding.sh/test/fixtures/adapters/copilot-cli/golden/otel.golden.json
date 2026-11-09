@@ -1,0 +1,87 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "30b31f8e-efe1-43bd-b49c-ea31a3a8d520",
+    "ts": 1794197805697,
+    "payload": {
+      "source": "new"
+    },
+    "id": "ce4e0d6a6d5f766bf283bc83fe4cdd7e99d360ca6e9e03fc5b997ff6e8a55f69",
+    "blobs": [
+      "093cf48a8d12226b5245939470bff1f4ecc7d2d62ed022507e3c19ebf944eab8"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "30b31f8e-efe1-43bd-b49c-ea31a3a8d520",
+    "ts": 1794197805704,
+    "payload": {
+      "text": "list the files here"
+    },
+    "id": "b5dc85a61e2408f27313e7e96e97028f8f7cafb052db9b8c51c6724b556a5696",
+    "blobs": [
+      "df56e5ec28d22a05df374e43204374548048ffadae6c8531b3d9f66a9c83eb8b"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "30b31f8e-efe1-43bd-b49c-ea31a3a8d520",
+    "ts": 1794197805786,
+    "payload": {
+      "tool": "bash",
+      "toolUseId": "call_mw8r1r6b1",
+      "input": {
+        "command": "ls",
+        "description": "List files"
+      }
+    },
+    "id": "77835d34f29437e89b9678fd140352a8f1a65459abba1042dc4a14dd92f28a7a",
+    "blobs": [
+      "0e3f79e2f31c9f6864364770786843c565eb895b030b0684551a5d3cb0110de1"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "30b31f8e-efe1-43bd-b49c-ea31a3a8d520",
+    "ts": 1794197805890,
+    "payload": {
+      "tool": "bash",
+      "toolUseId": "call_mw8r1r6b1",
+      "ok": true,
+      "output": "\n<shellId: 0 completed with exit code 0>"
+    },
+    "id": "e3508788d989ce9e4419938bceeee4cfd039be96fc31deec384dd031a9a95329",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "30b31f8e-efe1-43bd-b49c-ea31a3a8d520",
+    "ts": 1794197805938,
+    "payload": {
+      "stopReason": "end_turn",
+      "transcriptPath": "/home/user/.copilot/session-state/30b31f8e-efe1-43bd-b49c-ea31a3a8d520/events.jsonl"
+    },
+    "id": "26ae96c525bac0e18a985f528253fe70276d1892aa866ed9598095a0d06b6308",
+    "turnId": "15647a13e9b9b28670c9d513324e5bc251dade514555c095ee6d90735404b895",
+    "blobs": [
+      "f8a7e099babb9a7cf6974ee72c902a1e4bbc4b6e04cdeab74b32e494e9e687ed"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "30b31f8e-efe1-43bd-b49c-ea31a3a8d520",
+    "ts": 1794197805972,
+    "payload": {
+      "reason": "complete"
+    },
+    "id": "fadbb4bbd2f05e1f2f958296c2d0e5ec289c8a8d49798b27520d7bc54f75c6a7",
+    "blobs": [
+      "1900f6bb5d8469a82c1d858593887c970e05b4b18adfa3508f84a31e3d497a2b"
+    ],
+    "cwd": "/work/demo"
+  }
+]

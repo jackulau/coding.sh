@@ -14,7 +14,7 @@
 // and normalize() stays stateless. It never blocks OpenCode: each event is a
 // fire-and-forget child process.
 import { execFile } from "../core/spawn.ts";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { copyFile, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -496,6 +496,63 @@ const SQL_SCHEMAS = [
   { session: "session", messages: "SELECT * FROM message WHERE session_id = ? ORDER BY time_created, id", parts: "SELECT * FROM part WHERE session_id = ? ORDER BY message_id, id", v2: false },
 ] as const;
 
+/** The SQL_SCHEMAS entry whose session table the db has, else undefined. */
+function sqlSchemaOf(db: import("node:sqlite").DatabaseSync): (typeof SQL_SCHEMAS)[number] | undefined {
+  const hasTable = (name: string) => db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== undefined;
+  return SQL_SCHEMAS.find((x) => hasTable(x.session) && (x.v2 ? hasTable("session_message") && hasTable("session_part") : hasTable("message") && hasTable("part")));
+}
+
+const MISMATCH = /^opencode\.db\.schema-mismatch-/;
+
+/**
+ * The database the backfill reads: $OPENCODE_DB, else <data>/opencode.db. When
+ * OpenCode found a schema it could not migrate it renames the file to
+ * opencode.db.schema-mismatch-<ms> and starts over; with no opencode.db yet, the
+ * newest of those is read instead (`setAside`), so that history still imports.
+ */
+export function opencodeDbPath(env: NodeJS.ProcessEnv = process.env): { path: string; setAside?: boolean } | undefined {
+  if (env.OPENCODE_DB) return env.OPENCODE_DB === ":memory:" ? undefined : { path: env.OPENCODE_DB };
+  const data = opencodeDataDir(env);
+  const main = join(data, "opencode.db");
+  if (existsSync(main)) return { path: main };
+  let names: string[];
+  try {
+    names = readdirSync(data).filter((n) => MISMATCH.test(n) && !/-(?:wal|shm|journal)$/.test(n));
+  } catch {
+    return undefined;
+  }
+  const newest = names.map((n) => ({ path: join(data, n), mtime: statSync(join(data, n), { throwIfNoEntry: false })?.mtimeMs ?? 0 })).sort((a, b) => b.mtime - a.mtime || (a.path < b.path ? 1 : -1))[0];
+  return newest && { path: newest.path, setAside: true };
+}
+
+/**
+ * Doctor notes on the database the backfill reads: one OpenCode set aside after a
+ * schema mismatch, one with no session tables coding.sh knows, or one it cannot open.
+ * Opened read-only; never written.
+ */
+export async function opencodeDbNotes(env: NodeJS.ProcessEnv = process.env): Promise<string[]> {
+  const db = opencodeDbPath(env);
+  if (!db) return [];
+  const notes: string[] = [];
+  const name = db.path.split(/[\\/]/).pop()!;
+  if (db.setAside) notes.push(`OpenCode set its database aside after a schema mismatch (${name}) and has not written a new opencode.db: history is imported from ${name}`);
+  try {
+    const { DatabaseSync } = (await import("node:sqlite")) as typeof import("node:sqlite");
+    const conn = new DatabaseSync(db.path, { readOnly: true });
+    try {
+      if (!sqlSchemaOf(conn)) {
+        const tables = (conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as SqlRow[]).map((r) => String(r.name)).filter((n) => !n.startsWith("sqlite_"));
+        notes.push(`${name} has no session tables coding.sh can read (found: ${tables.slice(0, 12).join(", ") || "none"}); OpenCode history is not imported`);
+      }
+    } finally {
+      conn.close();
+    }
+  } catch (err) {
+    notes.push(`cannot read ${name} (${(err as Error).message.split("\n")[0]}); OpenCode history is not imported`);
+  }
+  return notes;
+}
+
 /** opencode.db (2.x tables, else 1.x tables). Copied first: WAL locks. */
 async function* backfillSqlite(ctx: NormalizeContext, dbPath: string, since?: number): AsyncIterable<AgentEvent> {
   const tmp = await mkdtemp(join(tmpdir(), "csh-opencode-"));
@@ -506,8 +563,8 @@ async function* backfillSqlite(ctx: NormalizeContext, dbPath: string, since?: nu
     const { DatabaseSync } = (await import("node:sqlite")) as typeof import("node:sqlite");
     const db = new DatabaseSync(copy);
     try {
-      const hasTable = (name: string) => db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(name) !== undefined;
-      const schema = SQL_SCHEMAS.find((x) => hasTable(x.session));
+      // No known tables: nothing to import (doctor says so, opencodeDbNotes).
+      const schema = sqlSchemaOf(db);
       if (!schema) return;
       const sessions = db.prepare(`SELECT * FROM ${schema.session} WHERE COALESCE(time_updated, time_created, 0) >= ? ORDER BY time_created`).all(since ?? 0) as SqlRow[];
       const msgStmt = db.prepare(schema.messages);
@@ -537,17 +594,16 @@ async function* backfillSqlite(ctx: NormalizeContext, dbPath: string, since?: nu
       db.close();
     }
   } catch {
-    // schema drift or unreadable db: nothing to import
+    // Unreadable db: nothing to import (doctor says why, opencodeDbNotes).
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
 }
 
 async function* backfillOpencode(ctx: NormalizeContext, opts: { since?: number } = {}): AsyncIterable<AgentEvent> {
-  const data = opencodeDataDir();
-  const db = process.env.OPENCODE_DB && process.env.OPENCODE_DB !== ":memory:" ? process.env.OPENCODE_DB : join(data, "opencode.db");
-  if (existsSync(db)) yield* backfillSqlite(ctx, db, opts.since);
-  yield* backfillJsonStorage(ctx, join(data, "storage"), opts.since);
+  const db = opencodeDbPath();
+  if (db && existsSync(db.path)) yield* backfillSqlite(ctx, db.path, opts.since);
+  yield* backfillJsonStorage(ctx, join(opencodeDataDir(), "storage"), opts.since);
 }
 
 // ---------------------------------------------------------------- install
@@ -633,7 +689,8 @@ export const opencode: Adapter = {
   displayName: "OpenCode",
   tier: "A",
   // 2 (0.1.2): backfill reads the 1.x SQLite tables.
-  parseVersion: 2,
+  // 3 (0.1.5): backfill reads a database OpenCode set aside after a schema mismatch when there is no opencode.db. A tool call that loads a skill names it (payload.skill).
+  parseVersion: 3,
 
   async detect() {
     const r = await detectAgent({
@@ -641,13 +698,13 @@ export const opencode: Adapter = {
       configDir: opencodeConfigDir(),
       hooked: () => ([1, 2] as const).some((api) => isOurPlugin(readTextIfExists(pluginPath({ scope: "user" }, api)))),
     });
+    const notes = [...(r.notes ?? [])];
     if (r.installed && r.hooked) {
       const want = apiForVersion(r.version);
-      if (!isOurPlugin(readTextIfExists(pluginPath({ scope: "user" }, want)))) {
-        return { ...r, notes: [...(r.notes ?? []), `installed plugin targets the wrong OpenCode API for ${r.version}; re-run \`coding.sh init\``] };
-      }
+      if (!isOurPlugin(readTextIfExists(pluginPath({ scope: "user" }, want)))) notes.push(`installed plugin targets the wrong OpenCode API for ${r.version}; re-run \`coding.sh init\``);
     }
-    return r;
+    notes.push(...(await opencodeDbNotes()));
+    return notes.length ? { ...r, notes } : r;
   },
 
   async install(opts: InstallOpts) {

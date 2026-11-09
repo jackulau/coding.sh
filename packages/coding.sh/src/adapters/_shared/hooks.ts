@@ -1,7 +1,10 @@
 // Hook-entry helpers shared by every hook-based adapter.
 //
 // Every adapter installs the same command:
+//   /bin/sh "<~/.coding.sh/bin/hook.sh>" <agent-id> <EventName> [--echo-continue]
+// outside Windows (the sh fast path, spool/hook.sh: no node start), and
 //   node "<~/.coding.sh/bin/hook.mjs>" <agent-id> <EventName> [flags]
+// on Windows and for flags the sh path would only pass on to node (--reply).
 // Our entries are recognized by a `_codingsh: true` marker where the format
 // tolerates unknown keys, and always by the command itself (path to our
 // hook.mjs + agent id), so uninstall removes only what we added.
@@ -27,10 +30,22 @@ export function hookPathForCommand(hookPath: string): string {
   return /^[A-Za-z]:\\/.test(hookPath) ? hookPath.replace(/\\/g, "/") : hookPath;
 }
 
-/** `node "<hook>" <agent> <event> [extra…]` — the path is always quoted. */
-export function buildHookCommand(hookPath: string, agent: string, event: string, extra: string[] = []): string {
-  const quoted = `"${hookPathForCommand(hookPath).replace(/(["\\$`])/g, "\\$1")}"`;
-  return ["node", quoted, agent, event, ...extra.map(quoteArg)].join(" ");
+/** The sh fast path installed beside a hook.mjs (spool/hook.sh). */
+export function hookShFor(hookPath: string): string {
+  return hookPath.replace(/hook\.mjs$/, "hook.sh");
+}
+
+/**
+ * `/bin/sh "<dir>/hook.sh" <agent> <event> [--echo-continue]` for a `…/hook.mjs`
+ * outside Windows, else `node "<hook>" <agent> <event> [extra…]`. The path is
+ * always quoted.
+ */
+export function buildHookCommand(hookPath: string, agent: string, event: string, extra: string[] = [], platform: NodeJS.Platform = process.platform): string {
+  const quote = (p: string) => `"${hookPathForCommand(p).replace(/(["\\$`])/g, "\\$1")}"`;
+  if (platform !== "win32" && /(^|[\\/])hook\.mjs$/.test(hookPath) && extra.every((a) => a === "--echo-continue")) {
+    return ["/bin/sh", quote(hookShFor(hookPath)), agent, event, ...extra].join(" ");
+  }
+  return ["node", quote(hookPath), agent, event, ...extra.map(quoteArg)].join(" ");
 }
 
 /** Argv form of the same command, for formats that take an array (e.g. OpenCode plugins). */
@@ -39,23 +54,30 @@ export function hookArgv(hookPath: string, agent: string, event: string, extra: 
 }
 
 const HOOK_CMD_RE = /\bnode(?:\.exe)?["']?\s+["']?([^"']*?hook\.mjs)["']?\s+([A-Za-z0-9_-]+)(?:\s|$)/;
+const SH_HOOK_CMD_RE = /(?:^|[\s;&|"'])(?:\/bin\/)?sh\s+["']?([^"']*?hook\.sh)["']?\s+([A-Za-z0-9_-]+)(?:\s|$)/;
 
-/** Parse a command we generated: hook path + agent id, else undefined. */
+/**
+ * Parse a command we generated: hook path + agent id, else undefined. For the
+ * sh fast path the hook path is the hook.mjs beside its hook.sh (the file
+ * paths(env).hook names), so both forms compare the same way.
+ */
 export function parseHookCommand(cmd: unknown): { hookPath: string; agent: string } | undefined {
   if (typeof cmd !== "string") return undefined;
   const m = HOOK_CMD_RE.exec(cmd);
-  if (!m || !m[1] || !m[2]) return undefined;
-  return { hookPath: m[1].replace(/\\(["\\$`])/g, "$1"), agent: m[2] };
+  if (m && m[1] && m[2]) return { hookPath: m[1].replace(/\\(["\\$`])/g, "$1"), agent: m[2] };
+  const sh = SH_HOOK_CMD_RE.exec(cmd);
+  if (sh && sh[1] && sh[2]) return { hookPath: sh[1].replace(/\\(["\\$`])/g, "$1").replace(/hook\.sh$/, "hook.mjs"), agent: sh[2] };
+  return undefined;
 }
 
 /**
  * The exact shape buildHookCommand writes: `node "<abs>/bin/hook.mjs" <agent>
- * <Event>` plus optional `--flags`. A command in this shape is ours whatever
+ * <Event>` (or `/bin/sh "<abs>/bin/hook.sh" …`) plus optional `--flags`. A command in this shape is ours whatever
  * CODING_SH_HOME it was installed under (a test or eval home, an old
  * override), so changing the home never duplicates hooks and uninstall still
  * finds the old ones, even in formats with no marker (Cursor).
  */
-const CANONICAL_RE = /^node "((?:[A-Za-z]:)?[\\/](?:[^"\\]|\\.)*[\\/]bin[\\/]hook\.mjs)" ([A-Za-z0-9_-]+) [A-Za-z][A-Za-z0-9_]*(?: --[a-z][a-z0-9-]*)*$/;
+const CANONICAL_RE = /^(?:node "((?:[A-Za-z]:)?[\\/](?:[^"\\]|\\.)*[\\/]bin[\\/]hook\.mjs)"|\/bin\/sh "(\/(?:[^"\\]|\\.)*\/bin\/hook\.sh)") ([A-Za-z0-9_-]+) [A-Za-z][A-Za-z0-9_]*(?: --[a-z][a-z0-9-]*)*$/;
 
 /**
  * True when `cmd` invokes coding.sh's hook for `agent` (any agent when omitted).

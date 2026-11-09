@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
 import { ClaudeTranscriptConverter } from "../../src/adapters/_shared/claude-transcript.ts";
-import { hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
+import { buildHookCommand, hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { defaultConfig } from "../../src/core/config.ts";
 import { backfill, backfillCursorKey } from "../../src/core/ingest.ts";
 import { applyPricing, pricesFor } from "../../src/core/pricing.ts";
@@ -430,7 +430,7 @@ describe("claude-code install", () => {
     const ours = cfg.hooks.PreToolUse[1];
     assert.equal(ours.matcher, "*");
     assert.equal(ours.hooks[0]._codingsh, true);
-    assert.equal(ours.hooks[0].command, `node "${hookPathForCommand(hookCommand())}" claude-code PreToolUse`);
+    assert.equal(ours.hooks[0].command, buildHookCommand(hookCommand(), "claude-code", "PreToolUse"));
     assert.ok(readFileSync(settings(), "utf8").startsWith('{\n    "model"'), "indent preserved");
     assert.equal(readdirSync(join(env.dataHome, "backups", "claude-code")).length, 1, "backup written");
     assert.equal((await claudeCode.detect()).hooked, true);
@@ -601,5 +601,97 @@ describe("claude-code harness loads and Bash edits", () => {
       events.filter((e) => e.kind === "file.change").map((e) => [e.payload.path, e.payload.op, e.payload.additions, e.payload.deletions]),
       [["x.txt", "modify", 1, 1]],
     );
+  });
+});
+
+// Real capture (scripts/e2e/claude-subagent-capture.mjs, Claude Code 2.1.319): one response with two
+// parallel Reads whose first tool result is written between its blocks, api-request records, and a
+// subagent that spawns a subagent (meta.parentAgentId, spawnDepth 2).
+describe("claude-code split responses and nested subagents (real capture)", () => {
+  const CONFIG = join(FIXTURES, "claude-code", "subagents", "config");
+  const DIR = join(CONFIG, "projects", "-work-demo");
+  const MAIN = "36d2966a-1c53-47f1-891d-aae1827d0e95";
+  const MID = "a33e97aae0b87e2b4";
+  const LEAF = "afa77c104e92d121e";
+  const SPLIT = "msg_mw8qwtvc0";
+  const files = [join(DIR, `${MAIN}.jsonl`), join(DIR, MAIN, "subagents", `agent-${MID}.jsonl`), join(DIR, MAIN, "subagents", `agent-${LEAF}.jsonl`)];
+  const entries = (f: string) => readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l) as Record<string, any>);
+  let env: TmpEnv;
+  let events: AgentEvent[];
+  let ctx: ReturnType<typeof testCtx>["ctx"];
+  before(async () => {
+    env = tmpEnv();
+    process.env.CLAUDE_CONFIG_DIR = CONFIG;
+    ctx = testCtx().ctx;
+    events = await collect(claudeCode.backfill!(ctx));
+  });
+  after(() => env.restore());
+
+  it("imports to golden events with no duplicate ids", () => {
+    assertWellFormed(events);
+    assertGolden("claude-code/golden/subagents.golden.json", summarize(events));
+  });
+
+  it("one llm.call per response id, its usage counted once", () => {
+    const want = new Map<string, Record<string, number>>();
+    for (const f of files) for (const e of entries(f)) if (e.type === "assistant" && e.message?.model !== "<synthetic>") want.set(`${f}:${e.message.id}`, e.message.usage);
+    const calls = events.filter((e) => e.kind === "llm.call");
+    assert.equal(calls.length, want.size);
+    const sum = (k: string) => [...want.values()].reduce((a, u) => a + (u[k] ?? 0), 0);
+    const got = (k: "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens") => calls.reduce((a, e) => a + (e.usage?.[k] ?? 0), 0);
+    assert.deepEqual([got("inputTokens"), got("outputTokens"), got("cacheReadTokens"), got("cacheWriteTokens")], [sum("input_tokens"), sum("output_tokens"), sum("cache_read_input_tokens"), sum("cache_creation_input_tokens")]);
+  });
+
+  it("a response split by its own tool results is one call from its api-request to its last block", () => {
+    const lines = entries(files[0]!);
+    const blocks = lines.filter((e) => e.type === "assistant" && e.message.id === SPLIT);
+    assert.equal(blocks.length, 3, "the fixture has text + two tool_use blocks");
+    const at = lines.findIndex((e) => e === blocks[0]);
+    const request = lines.slice(0, at).reverse().find((e) => e.type === "api-request")!;
+    const split = events.filter((e) => e.kind === "llm.call" && e.payload.messageId === SPLIT);
+    assert.equal(split.length, 1);
+    const start = Date.parse(request.timestamp);
+    assert.equal(split[0]!.ts, start);
+    assert.equal(split[0]!.payload.apiRequestId, request.id);
+    assert.equal(split[0]!.payload.ttftMs, Date.parse(blocks[0]!.timestamp) - start);
+    assert.equal(split[0]!.durationMs, Date.parse(blocks.at(-1)!.timestamp) - start);
+  });
+
+  it("a nested subagent hangs off the subagent that spawned it", () => {
+    const mid = `${MAIN}:sub:${MID}`;
+    const leaf = `${MAIN}:sub:${LEAF}`;
+    const ids = new Set(events.map((e) => e.id));
+    for (const e of events) if (e.parentId) assert.ok(ids.has(e.parentId), `${e.kind} parentId resolves`);
+    const leafSession = buildSession(events.filter((e) => e.sessionId === leaf));
+    assert.equal(leafSession.parent?.sessionId, mid);
+    const midSession = buildSession(events.filter((e) => e.sessionId === mid));
+    assert.equal(midSession.parent?.sessionId, MAIN);
+    const start = events.find((e) => e.kind === "subagent.start" && e.payload.subagentId === LEAF)!;
+    assert.equal(start.sessionId, mid);
+    assert.equal(start.payload.spawnDepth, 2);
+    const agentCall = events.find((e) => e.kind === "tool.start" && e.sessionId === mid && e.payload.tool === "Agent")!;
+    assert.equal(start.parentId, agentCall.id);
+    assert.ok(events.some((e) => e.kind === "subagent.end" && e.payload.subagentId === LEAF && e.sessionId === mid));
+  });
+
+  it("the live hooks link the nested subagent the same way and emit one llm.call per response", async () => {
+    const t0 = Date.parse(entries(files[0]!)[0]!.timestamp ?? "2026-11-09T04:12:55.900Z");
+    const raw = (event: string, extra: Record<string, unknown>) => ({ session_id: MAIN, transcript_path: files[0], cwd: "/work/demo", hook_event_name: event, ...extra });
+    const lines = [
+      { v: 0, agent: "claude-code", event: "SubagentStart", ts: t0 + 3500, pid: 1, cwd: "/work/demo", raw: raw("SubagentStart", { agent_id: LEAF, agent_type: "general-purpose" }) },
+      { v: 0, agent: "claude-code", event: "SubagentStop", ts: t0 + 3600, pid: 1, cwd: "/work/demo", raw: raw("SubagentStop", { agent_id: LEAF, agent_type: "general-purpose", agent_transcript_path: files[2] }) },
+      { v: 0, agent: "claude-code", event: "Stop", ts: t0 + 5000, pid: 1, cwd: "/work/demo", raw: raw("Stop", {}) },
+    ] as const;
+    const live: AgentEvent[] = [];
+    for (const l of lines) live.push(...(await claudeCode.normalize(l as never, ctx)));
+    const ids = new Set(events.map((e) => e.id));
+    const start = live.find((e) => e.kind === "subagent.start")!;
+    assert.equal(start.sessionId, `${MAIN}:sub:${MID}`);
+    assert.ok(ids.has(start.id), "live subagent.start dedupes with the backfill's");
+    assert.ok(ids.has(live.find((e) => e.kind === "subagent.end")!.id), "live subagent.end dedupes with the backfill's");
+    const calls = live.filter((e) => e.kind === "llm.call" && e.sessionId === MAIN);
+    assert.equal(calls.filter((e) => e.payload.messageId === SPLIT).length, 1);
+    assert.equal(new Set(live.map((e) => e.id)).size, live.length);
+    for (const c of calls) assert.ok(ids.has(c.id), "live llm.call dedupes with the backfill's");
   });
 });

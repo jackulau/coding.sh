@@ -9,7 +9,10 @@
 // backfilled copies of the same thing dedupe.
 //
 // Timing: Claude writes one transcript line per content block, all sharing
-// message.id and usage. One API call = one message.id. Its start is the
+// message.id and usage. One API call = one message.id, even when the tool
+// results of its parallel tool calls are written between its blocks: the
+// blocks merge into one llm.call, its usage counted once. Its start is the
+// `api-request` record written when the request went out (2.1.31x+), else the
 // timestamp of the last non-assistant entry before it (the prompt or tool
 // result that triggered the request); ttft ≈ first block line − start;
 // duration ≈ last block line − start. Approximate (line write times), but
@@ -82,6 +85,10 @@ const HOOK_TEXT_MAX = 1024;
 interface PendingCall {
   msgId: string;
   startTs: number;
+  /** The API's request id (`req_…`, the response's request-id header), as the proxy and OTel record it. */
+  requestId?: string;
+  /** Id of the api-request record Claude Code wrote when it sent the request. */
+  apiRequestId?: string;
   firstTs: number;
   lastTs: number;
   model?: string;
@@ -169,6 +176,8 @@ export class ClaudeTranscriptConverter {
   cwd?: string;
   version?: string;
   private pending?: PendingCall;
+  /** The latest api-request record not yet matched to a response: the next call's exact start. */
+  private request?: { ts: number; id?: string };
   private lastNonAssistantTs?: number;
   private lastTs = 0;
   private tools = new Map<string, ToolUse>();
@@ -239,6 +248,7 @@ export class ClaudeTranscriptConverter {
     const type = entry.type;
     if (type === "attachment") return this.attachment(entry, lineNo);
     if (type === "cost-state") return this.costState(entry);
+    if (type === "api-request") return this.apiRequest(entry);
     if (type !== "user" && type !== "assistant" && type !== "system") return;
     if (entry.isSidechain === true && !this.opts.sidechain) return;
     const ts = toMs(entry.timestamp, this.lastTs);
@@ -246,10 +256,24 @@ export class ClaudeTranscriptConverter {
     this.begin(entry, ts, lineNo);
 
     if (type === "assistant") return this.assistant(entry, ts, lineNo);
-    await this.flushCall();
+    // A tool result does not end the call: the tool results of parallel calls are
+    // written between the blocks of the one response that asked for them.
     if (type === "user") await this.user(entry, ts, lineNo);
     else await this.system(entry, ts, lineNo);
     this.lastNonAssistantTs = ts;
+  }
+
+  /**
+   * An `api-request` record: a model request went out. The call before it is
+   * complete, and the next response's call starts here. A subagent transcript
+   * holds only its own agent's requests; a main transcript's have no agentId.
+   */
+  private async apiRequest(e: Record<string, unknown>): Promise<void> {
+    if (str(e.agentId) !== this.opts.subagentId) return;
+    const ts = toMs(e.timestamp, 0);
+    if (!ts) return;
+    await this.flushCall();
+    this.request = { ts, id: str(e.id) };
   }
 
   /** Notes the entry's cwd and version; in full mode the first entry also starts the session. */
@@ -318,7 +342,9 @@ export class ClaudeTranscriptConverter {
     if (model && !SKIP_MODELS.has(model)) this.model = model;
     if (this.pending && this.pending.msgId !== msgId) await this.flushCall();
     if (!this.pending && !(model && SKIP_MODELS.has(model))) {
-      this.pending = { msgId, startTs: this.lastNonAssistantTs ?? ts, firstTs: ts, lastTs: ts, requestModel: str(e.requestedModel) };
+      const req = this.request && this.request.ts <= ts ? this.request : undefined;
+      this.pending = { msgId, startTs: req?.ts ?? this.lastNonAssistantTs ?? ts, requestId: str(e.requestId), apiRequestId: req?.id, firstTs: ts, lastTs: ts, requestModel: str(e.requestedModel) };
+      this.request = undefined;
     }
     if (this.pending) {
       this.pending.lastTs = ts;
@@ -365,6 +391,8 @@ export class ClaudeTranscriptConverter {
     if (text !== undefined && kind !== undefined) return this.synthetic(kind, text, e, uuid, ts, lineNo);
     if (text !== undefined) {
       await this.localCommand();
+      // A request recorded before this prompt got no response: the prompt's own request comes after it.
+      this.request = undefined;
       await this.openTurn(str(e.promptId) ?? uuid, ts, lineNo, async (em) => {
         const t = await clipText(this.ctx, text);
         em.emit("user.message", { text: t.value, truncated: t.truncated || undefined }, { key: [uuid], blobs: blobList(t.blob) });
@@ -608,6 +636,8 @@ export class ClaudeTranscriptConverter {
         em.emit("context.compact", { trigger: str(meta.trigger) ?? "auto", tokensBefore: num(meta.preTokens), tokensAfter: num(meta.postTokens) }, { key: [uuid], durationMs: num(meta.durationMs) });
       }
     } else if (e.subtype === "turn_duration") {
+      // The turn is over, so is its last call.
+      await this.flushCall();
       if (this.opts.mode === "full" && !this.turnEnded) {
         const d = num(e.durationMs);
         // Keyed by the turn, like a synthesized end and the hook Stop's turn.end, so all copies of one turn's end dedupe.
@@ -651,6 +681,8 @@ export class ClaudeTranscriptConverter {
         tokensPerSec: out && durationMs > 0 ? Math.round((out / (durationMs / 1000)) * 10) / 10 : undefined,
         ok: true,
         messageId: p.msgId,
+        requestId: p.requestId,
+        apiRequestId: p.apiRequestId,
         // Through AI Gateway: the session the gateway grouped the call under, the
         // provider that served it, and for a `vmc/` virtual model the model it resolved to.
         gatewaySessionId: p.gatewaySessionId,

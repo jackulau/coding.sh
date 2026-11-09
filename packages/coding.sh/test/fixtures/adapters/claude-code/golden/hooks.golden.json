@@ -430,7 +430,8 @@
       "stopReason": "tool_use",
       "tokensPerSec": 60,
       "ok": true,
-      "messageId": "msg_01"
+      "messageId": "msg_01",
+      "requestId": "req_msg_01"
     },
     "id": "74c99ce130cc23b2f3c5314273efedeeeaf8aec0f46c3d7911f21403d14d5f39",
     "turnId": "0f8d3561bb19728af7c31fca842cceea02de0ed2cb831426dda2bba05e306b1b",
@@ -456,7 +457,8 @@
       "stopReason": "tool_use",
       "tokensPerSec": 30,
       "ok": true,
-      "messageId": "msg_02"
+      "messageId": "msg_02",
+      "requestId": "req_msg_02"
     },
     "id": "cc6b8cbe57f84e798cba5dda1f573185052ddfab672969cf7659970041167e44",
     "turnId": "0f8d3561bb19728af7c31fca842cceea02de0ed2cb831426dda2bba05e306b1b",
@@ -482,7 +484,8 @@
       "stopReason": "tool_use",
       "tokensPerSec": 68.8,
       "ok": true,
-      "messageId": "msg_03"
+      "messageId": "msg_03",
+      "requestId": "req_msg_03"
     },
     "id": "90cd534ddfe0c746381c22ca32f61ae6aeb63b9631ad1ede32732998979d4738",
     "turnId": "0f8d3561bb19728af7c31fca842cceea02de0ed2cb831426dda2bba05e306b1b",
@@ -508,7 +511,8 @@
       "stopReason": "tool_use",
       "tokensPerSec": 120,
       "ok": true,
-      "messageId": "msg_04"
+      "messageId": "msg_04",
+      "requestId": "req_msg_04"
     },
     "id": "9ae4bc114d7ade56b62be371761b1130a40d6545099a564e11ae58cb5e5e1920",
     "turnId": "0f8d3561bb19728af7c31fca842cceea02de0ed2cb831426dda2bba05e306b1b",
@@ -548,7 +552,8 @@
       "stopReason": "end_turn",
       "tokensPerSec": 31.3,
       "ok": true,
-      "messageId": "msg_05"
+      "messageId": "msg_05",
+      "requestId": "req_msg_05"
     },
     "id": "ff0c79d4467e5edb15609023dac47e131328c84ae57294283bbb0ef57aaa88e2",
     "turnId": "0f8d3561bb19728af7c31fca842cceea02de0ed2cb831426dda2bba05e306b1b",

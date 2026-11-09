@@ -414,6 +414,27 @@ export function agyTranscriptFiles(dataDir: string): string[] {
   return [...byDir.values()].sort();
 }
 
+/**
+ * A tool step's result header (agy 1.5): "Created At: <iso>\nCompleted At: <iso>\n\n",
+ * then for a command "The command exited with code N." before its output. Times are whole
+ * seconds; durationMs is absent unless both parse.
+ */
+export function agyResultMeta(text: string): { durationMs?: number; exitCode?: number } {
+  const head = text.slice(0, 512);
+  const at = (k: string): number | undefined => {
+    const m = new RegExp(`^${k}: (\\S+)$`, "m").exec(head);
+    const t = m ? Date.parse(m[1]!) : NaN;
+    return Number.isFinite(t) ? t : undefined;
+  };
+  const created = at("Created At");
+  const completed = at("Completed At");
+  const exit = /^The command exited with code (-?\d+)\b/m.exec(head);
+  const out: { durationMs?: number; exitCode?: number } = {};
+  if (created !== undefined && completed !== undefined && completed >= created) out.durationMs = completed - created;
+  if (exit) out.exitCode = Number(exit[1]);
+  return out;
+}
+
 export async function* agyTranscriptEvents(file: string, ctx: NormalizeContext, since?: number, conv?: AgyConversation): AsyncGenerator<AgentEvent> {
   // Each PLANNER_RESPONSE is one model step with at most a few tool_calls; the GENERIC steps right
   // after it are their results. A tool step agy marked ERROR is left out of the transcript (seen in
@@ -437,10 +458,13 @@ export async function* agyTranscriptEvents(file: string, ctx: NormalizeContext, 
     em.push("llm.call", { provider: g?.provider ?? "google", responseModel: g?.model, ttftMs: g?.ttftMs, ok, error }, { ...(g?.usage ? { usage: g.usage } : {}), ...(g?.durationMs !== undefined ? { durationMs: g.durationMs } : {}) });
   };
   const toolEnd = async (em: Emitter, call: Call, ts: number, output: string, err: string | undefined): Promise<void> => {
-    const durationMs = Math.max(0, ts - call.ts) || undefined;
-    await emitToolEnd(em, ctx, { tool: call.tool, toolUseId: call.id, input: commonArgs(call.args), output: output || err, ok: !err, error: err, durationMs }, cwd);
+    // The result's own header times the call (whole seconds); below a second, the steps' timestamps do.
+    const meta = agyResultMeta(output);
+    const durationMs = meta.durationMs || Math.max(0, ts - call.ts) || undefined;
+    const failed = err ?? (meta.exitCode ? `exit code ${meta.exitCode}` : undefined);
+    await emitToolEnd(em, ctx, { tool: call.tool, toolUseId: call.id, input: commonArgs(call.args), output: output || err, ok: !failed, error: failed, durationMs, exitCode: meta.exitCode }, cwd);
     const sub = subagentInfo(call.tool, call.id, call.args);
-    if (sub) em.push("subagent.end", { subagentId: call.id, type: sub.type, ok: !err }, { subagentId: call.id, durationMs, key: [call.id] });
+    if (sub) em.push("subagent.end", { subagentId: call.id, type: sub.type, ok: !failed }, { subagentId: call.id, durationMs, key: [call.id] });
   };
   /** Ends the calls a newer step left without a result: failed ones from the DB; the rest stay a bare tool.start. */
   const dropPending = async (ts: number): Promise<AgentEvent[]> => {
@@ -532,7 +556,8 @@ export const antigravityAdapter: Adapter = {
   displayName: "Antigravity CLI",
   tier: "A",
   // 2 (0.1.2): calls named by their result step, turns by the last planner step, as hooks do.
-  parseVersion: 2,
+  // 3 (0.1.5): a command result's exit code (nonzero fails the call) and its Created/Completed At time it. A tool call that loads a skill names it (payload.skill).
+  parseVersion: 3,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["agy"]);
     const dir = agyCliDir();

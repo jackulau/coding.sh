@@ -3,11 +3,11 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { CODEX_HOOK_EVENTS, codex, codexExecArgs, codexTrustHash, codexUsage, convertRollout, untrustedHooks } from "../../src/adapters/codex.ts";
+import { CODEX_HOOK_EVENTS, codex, codexExecArgs, codexTrustHash, codexUsage, convertRollout, parseAgentMail, untrustedHooks } from "../../src/adapters/codex.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
-import { hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
+import { buildHookCommand, hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 
 const T0 = 1793527200000;
@@ -95,6 +95,59 @@ describe("codex backfill (rollouts)", () => {
     assert.deepEqual([pytest.payload.runner, pytest.payload.passed, pytest.payload.failed], ["pytest", 3, 1]);
     assert.equal(old.find((e) => e.kind === "tool.end")!.payload.ok, false, "exit_code 1 in JSON output");
     assert.deepEqual(old.filter((e) => e.kind === "user.message").map((e) => e.payload.text), ["Run the tests"]);
+  });
+
+  it("a subagent thread's task (agent mail addressed to it) is its prompt; mail it sends or gets back from its own children is not", async () => {
+    const events = await collect(codex.backfill!(testCtx().ctx));
+    const child = events.filter((e) => e.sessionId === SUB && e.kind === "user.message");
+    assert.deepEqual(
+      child.map((e) => e.payload),
+      [{ text: "New task for /root/audit from /root (content encrypted)", from: "/root", messageType: "NEW_TASK", taskName: "/root/audit", encrypted: true }],
+    );
+    assert.equal(child[0]!.turnId, "turn-sub-01");
+    assert.ok(buildSession(events.filter((e) => e.sessionId === SUB)).title);
+    // eval: a task drafted from the child gets past the instruction (it fails later, on the fixture's missing repo state).
+    const { MemoryBlobStore, MemoryIndexStore } = await import("../../src/store/memory.ts");
+    const { draftTaskFromSession } = await import("../../src/eval/task.ts");
+    const index = new MemoryIndexStore();
+    const mine = events.filter((e) => e.sessionId === SUB);
+    await index.putEvents(mine);
+    await index.upsertSession(buildSession(mine));
+    await assert.rejects(draftTaskFromSession({ index, blobs: new MemoryBlobStore(), sessionId: SUB }), /has no repo state/);
+    // The root thread gets the child's FINAL_ANSWER as mail: input for timing, not a user prompt.
+    assert.deepEqual(events.filter((e) => e.sessionId === SID && e.kind === "user.message").map((e) => e.payload.text), ["Fix the failing test"]);
+  });
+
+  it("agent mail: header fields and a plaintext payload", () => {
+    assert.deepEqual(parseAgentMail("Message Type: NEW_TASK\nTask name: /root/audit\nSender: /root\nPayload:\nAudit callers of add()\nand report back.\n"), {
+      messageType: "NEW_TASK",
+      taskName: "/root/audit",
+      body: "Audit callers of add()\nand report back.",
+    });
+    assert.deepEqual(parseAgentMail("Message Type: NEW_TASK\nTask name: /root/audit\nSender: /root\nPayload:\n"), { messageType: "NEW_TASK", taskName: "/root/audit", body: "" });
+    assert.deepEqual(parseAgentMail("  just text  "), { body: "just text" });
+  });
+
+  it("a plaintext task from the parent titles the child; mail to another agent is skipped", async () => {
+    const meta = { timestamp: "2026-11-01T10:00:00.000Z", type: "session_meta", payload: { id: SUB, parent_thread_id: SID, agent_path: "/root/audit", cwd: "/work/demo", cli_version: "0.166.0" } };
+    const mail = (id: string, author: string, recipient: string, text: string) => ({ timestamp: "2026-11-01T10:00:01.000Z", type: "response_item", payload: { type: "agent_message", id, author, recipient, content: [{ type: "input_text", text }] } });
+    const lines = [
+      meta,
+      mail("amsg_1", "/root", "/root/audit", "Message Type: NEW_TASK\nTask name: /root/audit\nSender: /root\nPayload:\nAudit callers of add()"),
+      mail("amsg_2", "/root", "/root/other", "Message Type: NEW_TASK\nTask name: /root/other\nSender: /root\nPayload:\nNot for this thread"),
+      mail("amsg_3", "/root/audit/deeper", "/root/audit", "Message Type: FINAL_ANSWER\nPayload:\nfrom my own child"),
+      mail("amsg_4", "/root/audit", "/root", "Message Type: FINAL_ANSWER\nPayload:\nmy answer"),
+    ];
+    const dir = mkdtempSync(join(tmpdir(), "csh-codex-mail-"));
+    try {
+      const file = join(dir, `rollout-2026-11-01T10-00-00-${SUB}.jsonl`);
+      writeFileSync(file, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+      const events = await convertRollout(testCtx().ctx, file, { mode: "full" });
+      assert.deepEqual(events.filter((e) => e.kind === "user.message").map((e) => [e.payload.text, e.payload.encrypted]), [["Audit callers of add()", undefined]]);
+      assert.equal(buildSession(events).title, "Audit callers of add()");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("shares natural keys with live hook events (dedupe)", async () => {
@@ -255,7 +308,7 @@ describe("codex install", () => {
     assert.equal(cfg.hooks.PreToolUse[0].hooks[0].command, "./guard.sh", "user hook keeps index 0 (trust state is positional)");
     const ours = cfg.hooks.PreToolUse[1];
     assert.equal(ours.matcher, undefined, "no matcher = all tools");
-    assert.deepEqual(ours.hooks[0], { type: "command", command: `node "${hookPathForCommand(hookCommand())}" codex PreToolUse`, timeout: 10, _codingsh: true });
+    assert.deepEqual(ours.hooks[0], { type: "command", command: buildHookCommand(hookCommand(), "codex", "PreToolUse"), timeout: 10, _codingsh: true });
     assert.equal(cfg.hooks.SessionEnd[0].hooks[0].timeout, 3, "SessionEnd is capped at 3s");
     assert.equal(readFileSync(join(env.home, ".codex", "config.toml"), "utf8"), configBefore, "never writes trust state");
 
@@ -345,5 +398,26 @@ describe("codex run/overlay helpers", () => {
     } finally {
       env.restore();
     }
+  });
+});
+
+describe("codex skill loads (real capture, Codex 0.167.0)", () => {
+  // scripts/e2e/codex-skill-capture.mjs: `sed -n` of a skill's SKILL.md, then `cat README.md`.
+  const dir = join(FIXTURES, "codex", "skill", "sessions", "2026", "11", "08");
+  const file = join(dir, "rollout-2026-11-08T22-33-01-01a1be94-bd43-7302-aa30-9fe348846093.jsonl");
+
+  it("the skill read is tagged on its tool.start and the session; the plain read is not", async () => {
+    const events = await convertRollout(testCtx().ctx, file, { mode: "full" });
+    assertWellFormed(events);
+    assertGolden("codex/golden/skill.golden.json", summarize(events));
+    const starts = events.filter((e) => e.kind === "tool.start");
+    const cmd = (e: AgentEvent) => JSON.stringify(e.payload.input);
+    const skillReads = starts.filter((e) => cmd(e).includes("SKILL.md"));
+    const plainReads = starts.filter((e) => cmd(e).includes("README.md"));
+    assert.ok(skillReads.length >= 1 && plainReads.length >= 1);
+    assert.ok(skillReads.every((e) => e.payload.skill === "release-notes" && e.payload.skills === undefined));
+    assert.ok(plainReads.every((e) => e.payload.skill === undefined));
+    const s = buildSession(events);
+    assert.deepEqual(s.flags.filter((f) => f.startsWith("skill:")), ["skill:release-notes"]);
   });
 });

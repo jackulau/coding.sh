@@ -62,7 +62,7 @@
       "toolUseId": "step-2",
       "ok": true,
       "durationMs": 500,
-      "output": "Created file /work/demo/src/parse.ts"
+      "output": "Created At: 2026-09-21T05:00:02-05:00\nCompleted At: 2026-09-21T05:00:02-05:00\n\nCreated file /work/demo/src/parse.ts"
     },
     "id": "e142b5acda477441e0a509d52feba431755b382d6764a40719c10bc139613280",
     "durationMs": 500
@@ -113,12 +113,14 @@
     "payload": {
       "tool": "run_command",
       "toolUseId": "step-4",
-      "ok": true,
-      "durationMs": 2000,
-      "output": "# tests 3\n# pass 2\n# fail 1"
+      "ok": false,
+      "durationMs": 3000,
+      "output": "Created At: 2026-09-21T05:00:03-05:00\nCompleted At: 2026-09-21T05:00:06-05:00\n\nThe command exited with code 2.\nOutput:\n# tests 3\n# pass 2\n# fail 1",
+      "error": "exit code 2",
+      "exitCode": 2
     },
     "id": "918b2b93881fce68f0985957197ad7bb4e0dc78b7076dcce890324decd5b9830",
-    "durationMs": 2000
+    "durationMs": 3000
   },
   {
     "kind": "test.result",

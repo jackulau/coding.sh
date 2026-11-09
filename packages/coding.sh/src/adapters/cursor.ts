@@ -352,7 +352,8 @@ export const cursor: Adapter = {
   displayName: "Cursor CLI",
   tier: "B",
   // 2 (0.1.2): prompts and replies paired without timestamps; one session start/end across hooks and backfill.
-  parseVersion: 2,
+  // 3 (0.1.5): a tool call that loads a skill names it (payload.skill).
+  parseVersion: 3,
 
   async detect() {
     const dir = cursorConfigDir();

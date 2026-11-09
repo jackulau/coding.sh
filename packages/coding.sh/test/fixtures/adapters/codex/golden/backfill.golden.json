@@ -464,18 +464,18 @@
   {
     "kind": "llm.call",
     "sessionId": "0193aaaa-1111-7222-8333-444455556666",
-    "ts": 1793527207600,
+    "ts": 1793527208460,
     "payload": {
       "provider": "openai",
       "responseModel": "gpt-5.5",
       "ok": true,
-      "tokensPerSec": 28.6,
+      "tokensPerSec": 74.1,
       "responseId": "resp_3"
     },
     "id": "5bc3f5b66cff712eb0469c04cf07c48c92020dc5945da3ebd4ec5a99ca989ba3",
     "turnId": "turn-0001",
     "model": "gpt-5.5",
-    "durationMs": 1400,
+    "durationMs": 540,
     "usage": {
       "inputTokens": 500,
       "cacheReadTokens": 6500,
@@ -575,7 +575,11 @@
     "sessionId": "0193bbbb-1111-7222-8333-444455556666",
     "ts": 1793527207570,
     "payload": {
-      "text": "Audit callers of add()"
+      "text": "New task for /root/audit from /root (content encrypted)",
+      "from": "/root",
+      "messageType": "NEW_TASK",
+      "taskName": "/root/audit",
+      "encrypted": true
     },
     "id": "948feaec9b0fdfd2e9670fc8b341a41bf5acfdb4be5537acc3bc2fd135d82f39",
     "turnId": "turn-sub-01",

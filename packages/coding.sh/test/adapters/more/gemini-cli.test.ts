@@ -5,6 +5,7 @@ import { after, before, describe, it } from "node:test";
 import { geminiCliAdapter, GEMINI_HOOK_EVENTS, replayGeminiChat } from "../../../src/adapters/more/gemini-cli.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { assertGolden, assertInstallRoundTrip, assertWellFormed, collect, FIXTURES, HOOK, moreEnv, normalizeFixture, summarize, testCtx, writeFile } from "./_helpers.ts";
+import { buildHookCommand } from "../../../src/adapters/_shared/hooks.ts";
 
 describe("gemini-cli normalize", () => {
   it("maps hook payloads to golden events", async () => {
@@ -96,7 +97,7 @@ describe("gemini-cli install", () => {
     const { installed } = await assertInstallRoundTrip(geminiCliAdapter, env.root);
     const s = JSON.parse(installed[".gemini/settings.json"]!);
     assert.deepEqual(Object.keys(s.hooks), [...GEMINI_HOOK_EVENTS]);
-    assert.deepEqual(s.hooks.AfterTool, [{ matcher: "*", hooks: [{ type: "command", name: "coding-sh", command: `node "${HOOK}" gemini-cli AfterTool`, timeout: 5000 }] }]);
+    assert.deepEqual(s.hooks.AfterTool, [{ matcher: "*", hooks: [{ type: "command", name: "coding-sh", command: buildHookCommand(HOOK, "gemini-cli", "AfterTool"), timeout: 5000 }] }]);
     assert.equal(s.hooks.SessionStart[0].matcher, undefined);
     assert.ok(!existsSync(join(env.home, ".gemini", "settings.json")));
   });
@@ -146,5 +147,24 @@ describe("gemini-cli overlay", () => {
     assert.equal(o.env.GEMINI_CLI_HOME, join(runDir, "home"));
     assert.equal(readFileSync(join(runDir, "home", ".gemini", "oauth_creds.json"), "utf8"), '{"token":"t"}');
     assert.deepEqual(JSON.parse(readFileSync(join(runDir, "home", ".gemini", "settings.json"), "utf8")), { security: { auth: { selectedType: "oauth-personal" } } });
+  });
+});
+
+describe("gemini-cli skill loads", () => {
+  it("read_file and shell reads of skill files tag the call and the session; other reads tag nothing", async () => {
+    const { buildSession } = await import("../../../src/core/sessions.ts");
+    const all = await normalizeFixture(geminiCliAdapter, "gemini-cli/skills.spool.jsonl");
+    // BeforeTool and AfterTool both emit the call's tool.start (one id): the store keeps one.
+    const events = all.filter((e, i) => all.findIndex((o) => o.id === e.id) === i);
+    assertWellFormed(events);
+    assertGolden("gemini-cli/golden/skills.golden.json", summarize(events));
+    const starts = events.filter((e) => e.kind === "tool.start").map((e) => [e.payload.skill, e.payload.skills]);
+    assert.deepEqual(starts, [
+      ["pdf", undefined],
+      ["pdf", ["pdf", "xlsx"]],
+      [undefined, undefined], // README.md
+      [undefined, undefined], // a substitution, a `..` path and an rm: no literal skill read
+    ]);
+    assert.deepEqual(buildSession(events).flags.filter((f) => f.startsWith("skill:")), ["skill:pdf", "skill:xlsx"]);
   });
 });

@@ -24,7 +24,8 @@ import { teeFile } from "../../core/tee.ts";
 import { commandOf, isVerifyCommand } from "../../core/sessions.ts";
 import { exactUninstall, existedBeforeInstall, forgetInstall, recordInstall, restoreForInstall } from "../_shared/installs.ts";
 import { resolveWriteTarget } from "../_shared/files.ts";
-import { hookPathForCommand } from "../_shared/hooks.ts";
+import { buildHookCommand, hookPathForCommand } from "../_shared/hooks.ts";
+import { skillFieldsOf } from "../_shared/tools.ts";
 import { editJsonc, parseJsonc as parseJsoncShared } from "../_shared/jsonc.ts";
 
 export type Json = Record<string, unknown>;
@@ -87,14 +88,18 @@ export function xdg(kind: "config" | "data" | "state" | "cache", env: NodeJS.Pro
 
 // ---------------------------------------------------------------- hook command
 
-/** The one hook command every adapter installs: node "<hook.mjs>" <agent> <Event>. */
-export function hookCmd(hookCommand: string, agent: AgentId, event: string, extra = ""): string {
-  return `node "${hookPathForCommand(hookCommand)}" ${agent} ${event}${extra ? ` ${extra}` : ""}`;
+/**
+ * The one hook command every adapter installs: `/bin/sh "<hook.sh>" <agent> <Event>`
+ * outside Windows (buildHookCommand), else and with `extra` flags `node "<hook.mjs>" <agent> <Event>`.
+ */
+export function hookCmd(hookCommand: string, agent: AgentId, event: string, extra = "", platform: NodeJS.Platform = process.platform): string {
+  if (!extra) return buildHookCommand(hookCommand, agent, event, [], platform);
+  return `node "${hookPathForCommand(hookCommand)}" ${agent} ${event} ${extra}`;
 }
 
 /** True when a command string is a coding.sh hook for `agent` (works without the marker). */
 export function isOurCommand(cmd: unknown, agent: AgentId): boolean {
-  return typeof cmd === "string" && /hook\.mjs"?\s/.test(cmd) && new RegExp(`\\s${agent.replace(/[-.]/g, "\\$&")}\\s`).test(`${cmd} `);
+  return typeof cmd === "string" && /hook\.(?:mjs|sh)"?\s/.test(cmd) && new RegExp(`\\s${agent.replace(/[-.]/g, "\\$&")}\\s`).test(`${cmd} `);
 }
 
 // ---------------------------------------------------------------- config files
@@ -318,6 +323,10 @@ export interface EventBase {
   agentVersion?: string | undefined;
   turnId?: string | undefined;
   subagentId?: string | undefined;
+  /** The agent's OTel trace (a traceparent it handed the hook): spans of the same trace join this session. */
+  traceId?: string | undefined;
+  /** The span the agent was in when it ran the hook (the traceparent's parent-id). */
+  parentSpanId?: string | undefined;
 }
 
 export type EventExtra = Partial<Omit<AgentEvent, "id" | "v" | "kind" | "payload" | "agent" | "sessionId">> & {
@@ -377,6 +386,8 @@ export class Emitter {
       agentVersion: this.base.agentVersion,
       turnId: this.base.turnId,
       subagentId: this.base.subagentId,
+      traceId: this.base.traceId,
+      parentSpanId: this.base.parentSpanId,
       ...extra,
     };
     for (const [k, v] of Object.entries(opt)) {
@@ -644,6 +655,8 @@ export interface ToolEndArgs {
   ok: boolean;
   durationMs?: number | undefined;
   error?: string | undefined;
+  /** A command's exit status, when the result states it. */
+  exitCode?: number | undefined;
   extra?: EventExtra;
 }
 
@@ -654,7 +667,7 @@ const toolKey = (em: Emitter, toolUseId: string | undefined, ...rest: string[]):
 export async function emitToolEnd(em: Emitter, ctx: NormalizeContext, a: ToolEndArgs, cwd: string | undefined): Promise<void> {
   const text = textOf(a.output);
   const out = await clip(ctx, text ?? a.output);
-  const payload: Json = { tool: a.tool, toolUseId: a.toolUseId, ok: a.ok, durationMs: a.durationMs, output: out.value, error: a.error };
+  const payload: Json = { tool: a.tool, toolUseId: a.toolUseId, ok: a.ok, durationMs: a.durationMs, output: out.value, error: a.error, exitCode: a.exitCode };
   em.push("tool.end", payload, { ...(a.durationMs !== undefined ? { durationMs: a.durationMs } : {}), ...a.extra, blobs: [...(a.extra?.blobs ?? []), ...(out.blob ? [out.blob] : [])], ...toolKey(em, a.toolUseId) });
   // Keyed by the path as the call gave it: the two capture paths may know different cwds.
   if (a.ok) for (const f of fileTouches(a.tool, a.input)) emitFileChange(em, { path: relPath(f.path, cwd), op: f.op, tool: a.tool, toolUseId: a.toolUseId }, a.extra, f.path);
@@ -670,7 +683,7 @@ export function emitFileChange(em: Emitter, payload: { path: string; op: string;
 /** tool.start with a clipped input. */
 export async function emitToolStart(em: Emitter, ctx: NormalizeContext, tool: string, toolUseId: string | undefined, input: unknown, extra: EventExtra = {}): Promise<void> {
   const c = await clip(ctx, input);
-  const payload: Json = { tool, toolUseId, input: c.value };
+  const payload: Json = { tool, toolUseId, input: c.value, ...skillFieldsOf(tool, input) };
   if (isVerifyCommand(commandOf(input))) payload.verify = true;
   const mcp = /^mcp__([^_]+(?:_[^_]+)*?)__/.exec(tool);
   if (mcp) payload.server = mcp[1];

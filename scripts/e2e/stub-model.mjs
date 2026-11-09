@@ -10,6 +10,8 @@
 //   import { startStub } from "./stub-model.mjs"; const s = await startStub(); s.url
 //   startStub({ decide: (body) => ({ tool: { name, args } }) | ({ text }) | undefined })  # a scenario; undefined falls back
 //   ({ text, tool }) answers with the text and then the tool call in one response.
+//   (Anthropic only: `tools: [{ name, args }, …]` asks for several tool calls in one message, run in parallel;
+//   `pauseMs` streams each content block after the first that much later, so the agent runs a tool mid-message.)
 //   (Anthropic only: a decision's `usage` replaces the prompt-side usage, e.g. cache_read_input_tokens,
 //   and its `stop` the stop_reason, e.g. "refusal".)
 //   (Responses only: `tool: { name, input: "<text>" }` is a freeform custom tool call, e.g. Codex's code-mode `exec`.)
@@ -65,9 +67,13 @@ function json(res, o) {
   res.end(JSON.stringify(o));
 }
 
-function sse(res, chunks, named) {
+/** Streams `chunks`; with `pauseMs`, waits that long before each content block after the first (a slow model). */
+async function sse(res, chunks, named, pauseMs = 0) {
   res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
-  for (const c of chunks) res.write(named ? `event: ${c.type}\ndata: ${JSON.stringify(c)}\n\n` : `data: ${JSON.stringify(c)}\n\n`);
+  for (const c of chunks) {
+    if (pauseMs && c.type === "content_block_start" && c.index > 0) await new Promise((ok) => setTimeout(ok, pauseMs));
+    res.write(named ? `event: ${c.type}\ndata: ${JSON.stringify(c)}\n\n` : `data: ${JSON.stringify(c)}\n\n`);
+  }
   if (!named) res.write("data: [DONE]\n\n");
   res.end();
 }
@@ -95,18 +101,18 @@ function chat(body, res, d) {
 
 function anthropic(body, res, d) {
   const mid = id("msg");
-  const toolId = id("toolu");
   const model = body.model || MODEL;
-  // Text first (an agent saying what it is about to do), then the tool call; either may be absent.
-  const content = [...(d.text ? [{ type: "text", text: d.text }] : []), ...(d.tool ? [{ type: "tool_use", id: toolId, name: d.tool.name, input: d.tool.args }] : [])];
-  const stop = d.stop ?? (d.tool ? "tool_use" : "end_turn");
+  // Text first (an agent saying what it is about to do), then the tool call(s); either may be absent.
+  const calls = d.tools ?? (d.tool ? [d.tool] : []);
+  const content = [...(d.text ? [{ type: "text", text: d.text }] : []), ...calls.map((t) => ({ type: "tool_use", id: id("toolu"), name: t.name, input: t.args }))];
+  const stop = d.stop ?? (calls.length ? "tool_use" : "end_turn");
   // A scenario may set the prompt side of usage (cache reads and writes) to script cache behaviour.
   const prompt = d.usage ?? { input_tokens: 120 };
   if (!body.stream) return json(res, { id: mid, type: "message", role: "assistant", model, content, stop_reason: stop, stop_sequence: null, usage: { ...prompt, output_tokens: 30 } });
   const ev = [{ type: "message_start", message: { id: mid, type: "message", role: "assistant", model, content: [], stop_reason: null, stop_sequence: null, usage: { ...prompt, output_tokens: 1 } } }];
   content.forEach((c, index) => {
     if (c.type === "tool_use") {
-      ev.push({ type: "content_block_start", index, content_block: { type: "tool_use", id: toolId, name: c.name, input: {} } });
+      ev.push({ type: "content_block_start", index, content_block: { type: "tool_use", id: c.id, name: c.name, input: {} } });
       ev.push({ type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: JSON.stringify(c.input) } });
     } else {
       ev.push({ type: "content_block_start", index, content_block: { type: "text", text: "" } });
@@ -116,7 +122,7 @@ function anthropic(body, res, d) {
   });
   ev.push({ type: "message_delta", delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: 30 } });
   ev.push({ type: "message_stop" });
-  sse(res, ev, true);
+  sse(res, ev, true, d.pauseMs);
 }
 
 function responses(body, res, d) {

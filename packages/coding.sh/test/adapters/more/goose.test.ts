@@ -6,6 +6,7 @@ import { after, before, describe, it } from "node:test";
 import { GOOSE_HOOK_EVENTS, gooseAdapter, gooseConfigDir, gooseDbEvents, gooseSessionsDb } from "../../../src/adapters/more/goose.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { assertGolden, assertInstallRoundTrip, assertRunOk, assertWellFormed, collect, fakeBinary, HOOK, moreEnv, normalizeFixture, readArgv, runSpec, summarize, testCtx, writeFile } from "./_helpers.ts";
+import { buildHookCommand } from "../../../src/adapters/_shared/hooks.ts";
 
 const T0 = 1790000000; // epoch seconds, as goose stores them
 
@@ -143,7 +144,7 @@ describe("goose install", () => {
     const h = JSON.parse(installed[".agents/plugins/coding-sh/hooks/hooks.json"]!);
     assert.deepEqual(Object.keys(h.hooks), [...GOOSE_HOOK_EVENTS]);
     for (const groups of Object.values(h.hooks) as { matcher?: string }[][]) assert.equal(groups[0]!.matcher, undefined, "a bare * matcher is invalid in goose; omit it");
-    assert.equal(h.hooks.PreToolUse[0].hooks[0].command, `node "${HOOK}" goose PreToolUse`);
+    assert.equal(h.hooks.PreToolUse[0].hooks[0].command, buildHookCommand(HOOK, "goose", "PreToolUse"));
     assert.ok(installed[".agents/plugins/coding-sh/plugin.json"]);
     assert.ok(!existsSync(join(env.home, ".agents", "plugins", "coding-sh")) || !existsSync(join(env.home, ".agents", "plugins", "coding-sh", "hooks", "hooks.json")));
   });

@@ -219,6 +219,23 @@ function textOf(content: unknown): string {
     .join("\n");
 }
 
+/**
+ * Codex inter-agent mail text: a header ("Message Type: NEW_TASK", "Task name:
+ * /root/audit", "Sender: /root") up to "Payload:", then the message. Text with no
+ * header is all body.
+ */
+export function parseAgentMail(text: string): { messageType?: string; taskName?: string; body: string } {
+  const lines = text.split("\n");
+  const at = lines.findIndex((l) => /^payload:\s*$/i.test(l.trim()));
+  if (at < 0) return { body: text.trim() };
+  const head: Record<string, string> = {};
+  for (const l of lines.slice(0, at)) {
+    const m = /^([A-Za-z][A-Za-z ]*):\s*(.*)$/.exec(l.trim());
+    if (m) head[m[1]!.toLowerCase()] = m[2]!.trim();
+  }
+  return { messageType: head["message type"] || undefined, taskName: head["task name"] || undefined, body: lines.slice(at + 1).join("\n").trim() };
+}
+
 function parseMaybeJson(v: unknown): unknown {
   if (typeof v !== "string") return v;
   const t = v.trim();
@@ -551,13 +568,31 @@ export class CodexRolloutConverter {
     this.markInput(ts);
   }
 
-  private async userMessage(em: Emitter, text: string, fallbackKey: (string | number)[]): Promise<void> {
+  private async userMessage(em: Emitter, text: string, fallbackKey: (string | number)[], extra?: Record<string, unknown>): Promise<void> {
     const t = await clipText(this.ctx, text);
     if (!t.value) return;
     const turn = this.turnId;
     const n = turn ? (this.prompts.get(turn) ?? 0) : 1;
     if (turn) this.prompts.set(turn, n + 1);
-    em.emit("user.message", { text: t.value, truncated: t.truncated || undefined }, { key: n === 0 ? ["prompt", turn!] : fallbackKey, blobs: blobList(t.blob) });
+    em.emit("user.message", { text: t.value, truncated: t.truncated || undefined, ...extra }, { key: n === 0 ? ["prompt", turn!] : fallbackKey, blobs: blobList(t.blob) });
+  }
+
+  /**
+   * Inter-agent mail addressed to this child thread (its task from the agent that
+   * spawned it, or a later message): the child's prompt. Mail this thread sends, and
+   * mail from its own subagents (their answers), is not.
+   */
+  private async agentMessage(em: Emitter, p: Record<string, unknown>): Promise<void> {
+    const author = str(p.author);
+    const recipient = str(p.recipient);
+    if (!this.parent || !author || author === this.agentPath || author.startsWith(`${this.agentPath}/`)) return;
+    if (recipient !== undefined && recipient !== this.agentPath) return;
+    const mail = parseAgentMail(textOf(p.content));
+    const encrypted = arr(p.content).some((c) => isObj(c) && c.type === "encrypted_content") || undefined;
+    const task = mail.taskName ?? recipient ?? this.agentPath;
+    // Codex encrypts the task itself: the header still says who asked for what.
+    const text = mail.body || (encrypted ? `New task for ${task} from ${author} (content encrypted)` : "");
+    await this.userMessage(em, text, [str(p.id) ?? `amsg:${author}:${mail.body.slice(0, 64)}`], { from: author, messageType: mail.messageType, taskName: mail.taskName, encrypted });
   }
 
   private async item(em: Emitter, p: Record<string, unknown>, ts: number, full: boolean): Promise<void> {
@@ -637,6 +672,7 @@ export class CodexRolloutConverter {
   }
 
   private async responseItem(em: Emitter, p: Record<string, unknown>, pt: string | undefined, ts: number): Promise<void> {
+    if (pt === "agent_message") return this.agentMessage(em, p);
     if (pt === "function_call" || pt === "custom_tool_call" || pt === "local_shell_call") {
       const id = str(p.call_id) ?? str(p.id);
       if (!id) return;
@@ -952,7 +988,8 @@ export const codex: Adapter = {
   // 2 (0.1.2): code-mode exec cells parent their commands and count once; one compaction across hooks and backfill.
   // 3 (0.1.2): a hook SessionStart records how Codex was launched (originator, launch) from the rollout.
   // 4 (0.1.2): tool.end records a tool output Codex cut before the model saw it (cut).
-  parseVersion: 4,
+  // 5 (0.1.5): a subagent thread's task (the agent mail addressed to it) is its user.message, so it has a title. A tool call that loads a skill names it (payload.skill).
+  parseVersion: 5,
 
   detect() {
     const home = codexHome();

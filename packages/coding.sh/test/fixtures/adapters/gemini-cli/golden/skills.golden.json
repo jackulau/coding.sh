@@ -1,0 +1,192 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "gem-skill-1",
+    "ts": 1789984860000,
+    "payload": {
+      "source": "startup"
+    },
+    "id": "956c38ebabf5dd1c128cfd2d0f067fec3d4fd25a3d750919fa9d10f170937ab0",
+    "blobs": [
+      "ca4b1695016e5bbe597b4fe510ebd1d7dca34a689513dd89a7166861c76b09f6"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "gem-skill-1",
+    "ts": 1789984861000,
+    "payload": {
+      "text": "Fill in the PDF form"
+    },
+    "id": "901b734af573bfae52afccc2fc28278045ab8273f45e6e35ab9f1222a4535c47",
+    "blobs": [
+      "201bf3d38e40f973fa14fd2e164df32c50c4f0b65e8f91949f86f0da10d52738"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "gem-skill-1",
+    "ts": 1789984862000,
+    "payload": {
+      "tool": "read_file",
+      "input": {
+        "absolute_path": "/work/demo/.gemini/skills/pdf/SKILL.md"
+      },
+      "skill": "pdf"
+    },
+    "id": "1fbe87c74a3e2b15b4a27f173cac227822ca013f96166ac9c5097aacab40b630",
+    "blobs": [
+      "3fb187d7ddbe535fb40ad14733f6df234f2ec979aefb731a23067297a37e94c9"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "gem-skill-1",
+    "ts": 1789984863000,
+    "payload": {
+      "tool": "read_file",
+      "ok": true,
+      "output": "---\nname: pdf\n---\nUse scripts/fill.py."
+    },
+    "id": "84eb43e21963ddc300219aa4cae1fe0100b6e8dd9fdd5dfc97fe3a15cfed7c59",
+    "blobs": [
+      "624d62309de5a2a59f8e858db77d7c8949577db6e5943c84e21653bf96ad06ac"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "gem-skill-1",
+    "ts": 1789984864000,
+    "payload": {
+      "tool": "run_shell_command",
+      "input": {
+        "command": "cat /home/user/.gemini/skills/pdf/reference.md && head -n 20 .agents/skills/xlsx/SKILL.md"
+      },
+      "skill": "pdf",
+      "skills": [
+        "pdf",
+        "xlsx"
+      ]
+    },
+    "id": "76d5d79b05706bb2d1f872fa26e19b78588d1adf27c61ee2eabc7f81623869e1",
+    "blobs": [
+      "6f28bbd258c4cd88e36448e59d79932dc990d337d236e363debcc80314b3d33a"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "gem-skill-1",
+    "ts": 1789984865000,
+    "payload": {
+      "tool": "run_shell_command",
+      "ok": true,
+      "output": "ok"
+    },
+    "id": "6a6d2efba248662b1fdf46db6a310d8b3a6425826b5a3ce23a5fec724e209ded",
+    "blobs": [
+      "28af9d825a8cf8e923a7ec059228a05fc08e98feac7abdbbd7f3d1d7b77df890"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "gem-skill-1",
+    "ts": 1789984866000,
+    "payload": {
+      "tool": "read_file",
+      "input": {
+        "absolute_path": "/work/demo/README.md"
+      }
+    },
+    "id": "03d14136fc18f8d15b435ee08eb1d4eb019845cc05275a095af64a6cde8f3a8d",
+    "blobs": [
+      "9e7c273d3910672078d91d8e435dfa8c35fe3b0a626acde1f04ee523ace62fc1"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "gem-skill-1",
+    "ts": 1789984867000,
+    "payload": {
+      "tool": "read_file",
+      "ok": true,
+      "output": "# demo"
+    },
+    "id": "f1f72e2980608f7c1230c808c476bbad5195624b19b19a445fb605877867358b",
+    "blobs": [
+      "91daca91eebcc46b5bcb759a30c94c9cde4d90132256d587da932692148063bf"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "gem-skill-1",
+    "ts": 1789984868000,
+    "payload": {
+      "tool": "run_shell_command",
+      "input": {
+        "command": "cat $(ls .gemini/skills/*/SKILL.md); cat ../.gemini/skills/pdf/SKILL.md; rm .gemini/skills/pdf/SKILL.md"
+      }
+    },
+    "id": "fc238b19552312ed232c41a7fbbba3c6c7fdd12b0afeb4a0a3b8ef6020eb8164",
+    "blobs": [
+      "06238384cb5ff082eb92e38e3ceac5f97c8726d1e16f897d2a9cc7a6e4690cf4"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "gem-skill-1",
+    "ts": 1789984869000,
+    "payload": {
+      "tool": "run_shell_command",
+      "ok": true,
+      "output": ""
+    },
+    "id": "4d550287d5c435127a57e49e44cdf362f6bc92a3cf8c106ebd86df119c8129d5",
+    "blobs": [
+      "f1d8c93bc5e594a0bd2f5a95fad88c93fbc483cca55e8c4ad2091aade7dda513"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "gem-skill-1",
+    "ts": 1789984870000,
+    "payload": {
+      "text": "Filled."
+    },
+    "id": "522cc84a625aa4939e6bc362ca360842cce247847429cf2fc3a1ab53335ea391",
+    "blobs": [
+      "88f8daf3856577f1f6c5bedc583c49e5463a72d5e747c906c4984217fe7339d9"
+    ],
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "gem-skill-1",
+    "ts": 1789984870000,
+    "payload": {},
+    "id": "4e156923c31a4a8cd14d71136d82396d2448776dc898633c6e2e812a23b1c68d",
+    "cwd": "/work/demo"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "gem-skill-1",
+    "ts": 1789984871000,
+    "payload": {
+      "reason": "exit"
+    },
+    "id": "d61dca4076df437177bd0fbf44b84837ec86eda2446f2cd23f514c7ed905f4c0",
+    "blobs": [
+      "1d6dc2b1425dfd47e881c8590d196ba807ea5778fa12abc07d227e2dc9bc7f61"
+    ],
+    "cwd": "/work/demo"
+  }
+]

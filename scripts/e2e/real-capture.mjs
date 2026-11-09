@@ -120,7 +120,8 @@ const AGENTS = {
     wrap: true,
     args: ["--model", `openai/${MODEL}`, "--openai-api-base", "{stub}/v1", "--openai-api-key", "stub", "--edit-format", "whole", "--yes-always", "--no-auto-commits", "--no-stream", "--no-pretty", "--no-check-update", "--no-analytics", "--no-show-model-warnings", "--no-show-release-notes", "--no-gitignore", "--message", PROMPT],
     // The wrapper sees argv and the repo, not tool calls or replies: one model call, no tools.
-    expect: { model: `openai/${MODEL}`, tool: false, reply: false, minCalls: 1 },
+    // Its tokens come from Aider's analytics log, read while it runs (src/capture/aider.ts).
+    expect: { model: `openai/${MODEL}`, tool: false, reply: false, minCalls: 1, usage: true },
   },
 };
 
@@ -395,10 +396,12 @@ try {
         check(replies.some((t) => t.includes(TEXT)), `${a}: the reply${when}`, replies);
       } else if (f === "cwd") check(same(session.cwd), `${a}: the cwd${when}`, [session.cwd, sessionsByAgent[a].work]);
       else if (f === "repo") check(same(session.repo), `${a}: the git repo${when}`, [session.repo, sessionsByAgent[a].work]);
+      else if (f === "usage") check((session.stats?.usage?.inputTokens ?? 0) > 0 && (session.stats?.usage?.outputTokens ?? 0) > 0, `${a}: token usage${when}`, session.stats?.usage);
     }
   };
   const FIELDS = ["prompt", "tool", "file", "model", "reply", "cwd", "repo"];
-  const liveFields = (a) => FIELDS.filter((f) => AGENTS[a].expect?.[f] !== false && !AGENTS[a].expect?.backfillOnly?.includes(f));
+  // "usage" is checked only where an agent's spec asks for it.
+  const liveFields = (a) => [...FIELDS, ...(AGENTS[a].expect?.usage ? ["usage"] : [])].filter((f) => AGENTS[a].expect?.[f] !== false && !AGENTS[a].expect?.backfillOnly?.includes(f));
   const first = await showAll();
   for (const a of opts.agents) {
     const mine = first.list.filter((s) => s.agent === a);

@@ -201,3 +201,101 @@ export async function emitDerived(em: Emitter, o: DerivedOpts): Promise<void> {
     if (s) em.emit("test.result", { runner: s.runner, passed: s.passed, failed: s.failed, skipped: s.skipped, toolUseId: o.toolUseId }, { ...o.extra, key: [o.toolUseId] });
   }
 }
+
+// ------------------------------------------------------------ skill loads
+
+export interface SkillLoad {
+  /** The skill's name: its directory under `skills/`, or what a Skill tool names. */
+  name: string;
+  /** The file read, as the call gave it ("/" separators). */
+  path?: string;
+  /** The file inside the skill's directory: "SKILL.md", "scripts/fill.py". */
+  resource?: string;
+}
+
+const SKILL_TOOLS = new Set(["skill", "activate_skill", "load_skill"]);
+const SKILL_READ_TOOLS = new Set(["read", "view", "read_file", "readfile", "view_file", "read_many_files", "notebookread"]);
+const SKILL_SHELL_READERS = new Set(["cat", "head", "tail", "sed", "less", "more", "bat", "nl"]);
+/** An agent's skills dir, then the skill's directory (past one dot container, Codex's `.system/`), then the file. */
+const SKILL_PATH = /(?:^|\/)(?:\.claude|\.agents|\.codex|\.cursor|\.gemini|\.github|\.pi\/agent|\.config\/opencode)\/skills\/(?:\.[^/]+\/)?([^/]+)\/(.+)$/;
+const SKILL_NAME_RE = /^\w[\w.:-]*$/;
+/** MCP skills (SEP-2640): `skill://<name>[/<resource>]`. */
+const SKILL_URI = /^skill:\/\/([^/?#]+)(?:\/([^?#]+))?/;
+
+/** A skill file a literal path names, or undefined (a `..` segment, a glob, a variable). */
+function skillPathLoad(raw: string): SkillLoad | undefined {
+  const path = raw.replace(/\\/g, "/");
+  if (/[$`*?[\]]/.test(path) || path.split("/").includes("..")) return undefined;
+  const m = SKILL_PATH.exec(path);
+  if (!m || !SKILL_NAME_RE.test(m[1]!)) return undefined;
+  return { name: m[1]!, path, resource: m[2]! };
+}
+
+/** Literal file arguments of shell readers (cat, head, sed, …), tokenized without running anything. */
+function shellReadPaths(cmd: string): string[] {
+  const out: string[] = [];
+  // A heredoc's body is data, not commands.
+  const head = cmd.split("<<")[0]!;
+  for (const seg of head.split(/&&|\|\||[;|\n]/)) {
+    if (/\$\(|`|<\(/.test(seg)) continue;
+    const argv = seg.trim().split(/\s+/).filter(Boolean).map((t) => t.replace(/^['"]|['"]$/g, ""));
+    const prog = argv[0]?.split("/").pop();
+    if (!prog || !SKILL_SHELL_READERS.has(prog)) continue;
+    if (prog === "sed" && argv.some((a) => /^-[a-z]*i/.test(a))) continue;
+    for (let i = 1; i < argv.length; i++) {
+      const a = argv[i]!;
+      if (/^\d*>>?$/.test(a)) i++; // `cat > file` writes it
+      else if (!a.startsWith("-") && !/^\d*[<>]/.test(a)) out.push(a);
+    }
+  }
+  return out;
+}
+
+/**
+ * The skills a tool call loads: a Skill tool naming one, a read of a file in an
+ * agent's skills dir (`.claude/skills/<name>/…`, `.codex/skills/…`, …), a shell
+ * reader (cat, head, sed, less, bat) of such a file with a literal path, or an MCP
+ * read of a `skill://` resource. Deduped by name and resource. Nothing is run.
+ */
+export function skillLoadsOf(tool: string, input: unknown, _cwd?: string): SkillLoad[] {
+  const t = lc(tool);
+  const i = obj(input);
+  const out: SkillLoad[] = [];
+  if (SKILL_TOOLS.has(t)) {
+    for (const v of [i.skill, i.name, i.command]) {
+      const name = str(v)?.trim().replace(/^\//, "");
+      if (name && SKILL_NAME_RE.test(name)) {
+        out.push({ name });
+        break;
+      }
+    }
+  } else if (SKILL_READ_TOOLS.has(t)) {
+    const paths = [i.file_path, i.filePath, i.path, i.absolute_path, i.absolutePath, i.AbsolutePath, i.target_file, i.targetFile, ...arr(i.paths)];
+    for (const p of paths) {
+      const l = typeof p === "string" ? skillPathLoad(p) : undefined;
+      if (l) out.push(l);
+    }
+  } else {
+    const cmd = shellCommandOf(tool, input);
+    if (cmd !== undefined) for (const p of shellReadPaths(cmd)) {
+      const l = skillPathLoad(p);
+      if (l) out.push(l);
+    }
+    const uri = str(i.uri);
+    const m = uri ? SKILL_URI.exec(uri) : null;
+    if (m && SKILL_NAME_RE.test(decodeURIComponent(m[1]!))) out.push({ name: decodeURIComponent(m[1]!), path: uri, ...(m[2] ? { resource: m[2] } : {}) });
+  }
+  const seen = new Set<string>();
+  return out.filter((l) => {
+    const k = `${l.name}\0${l.resource ?? ""}`;
+    return !seen.has(k) && !!seen.add(k);
+  });
+}
+
+/** tool.start payload fields for a call's skill loads: `skill` (the first) and `skills` (every name, when more than one). */
+export function skillFieldsOf(tool: unknown, input: unknown): { skill?: string; skills?: string[] } {
+  if (typeof tool !== "string") return {};
+  const names = [...new Set(skillLoadsOf(tool, input).map((l) => l.name))];
+  if (!names.length) return {};
+  return names.length > 1 ? { skill: names[0]!, skills: names } : { skill: names[0]! };
+}

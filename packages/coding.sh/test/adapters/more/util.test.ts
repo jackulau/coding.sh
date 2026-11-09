@@ -88,6 +88,7 @@ describe("small parsers", () => {
   it("isOurCommand recognises our hook for the right agent only", () => {
     assert.ok(isOurCommand('node "/x/hook.mjs" gemini-cli AfterTool', "gemini-cli"));
     assert.ok(!isOurCommand('node "/x/hook.mjs" gemini-cli AfterTool', "gemini"));
+    assert.ok(isOurCommand('/bin/sh "/x/hook.sh" gemini-cli AfterTool', "gemini-cli"));
     assert.ok(!isOurCommand("./guard.sh gemini-cli x", "gemini-cli"));
   });
 });

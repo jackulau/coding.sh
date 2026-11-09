@@ -77,7 +77,7 @@ describe("copilot-cli install", () => {
     assert.equal(f.version, 1);
     assert.deepEqual(Object.keys(f.hooks), [...COPILOT_HOOK_EVENTS]);
     assert.ok(!("preToolUse" in f.hooks), "preToolUse fails closed, never installed");
-    assert.deepEqual(f.hooks.postToolUse[0], { type: "command", bash: `node "${HOOK}" copilot-cli postToolUse`, powershell: `& node "${HOOK}" copilot-cli postToolUse`, timeoutSec: 10 });
+    assert.deepEqual(f.hooks.postToolUse[0], { type: "command", bash: `/bin/sh "${HOOK.replace(/hook\.mjs$/, "hook.sh")}" copilot-cli postToolUse`, powershell: `& node "${HOOK}" copilot-cli postToolUse`, timeoutSec: 10 });
     assert.equal(readFileSync(join(env.home, ".copilot", "hooks", "mine.json"), "utf8"), '{"version":1,"hooks":{}}\n');
   });
 
@@ -130,5 +130,96 @@ describe("copilot-cli install", () => {
     const project = join(env.root, "proj");
     writeFile(join(project, "x"), "");
     await assertInstallRoundTrip(copilotCliAdapter, env.root, { scope: "project", projectDir: project });
+  });
+});
+
+describe("copilot-cli traceparent (real capture, Copilot CLI 1.0.107 with OTel on)", () => {
+  // scripts/e2e/copilot-otel-capture.mjs: hook stdin carries the agent's W3C traceparent.
+  const SID = "30b31f8e-efe1-43bd-b49c-ea31a3a8d520";
+  const TRACE = "52d64d522262bb7dfe0a8873681dae65";
+  const SPAN = "0a20f5b72c7e2990"; // Copilot's invoke_agent span
+  const otlp = (n: string) => JSON.parse(readFileSync(join(FIXTURES, "copilot-cli", "otel", "otlp", `${n}-traces.json`), "utf8"));
+
+  it("hook events carry the trace and the caller span; ids match a line without a traceparent", async () => {
+    // preToolUse and postToolUse both emit the call's tool.start (one id): the store keeps one.
+    const all = await normalizeFixture(copilotCliAdapter, "copilot-cli/otel/hooks.spool.jsonl");
+    const events = all.filter((e, i) => all.findIndex((o) => o.id === e.id) === i);
+    assertWellFormed(events);
+    assertGolden("copilot-cli/golden/otel.golden.json", summarize(events));
+    assert.ok(events.every((e) => e.sessionId === SID));
+    const traced = events.filter((e) => e.traceId);
+    assert.ok(traced.length >= 4);
+    assert.ok(traced.every((e) => e.traceId === TRACE && e.parentSpanId === SPAN && e.spanId === undefined));
+    // sessionStart runs before the agent's trace: no traceparent, no trace.
+    assert.equal(events.find((e) => e.kind === "session.start")!.traceId, undefined);
+    // The traceparent changes no event id (live and backfilled lines still dedupe).
+    const lines = readFileSync(join(FIXTURES, "copilot-cli", "otel", "hooks.spool.jsonl"), "utf8").split("\n").filter(Boolean);
+    const bare = lines.map((l) => {
+      const o = JSON.parse(l);
+      delete o.raw.traceparent;
+      return JSON.stringify(o);
+    });
+    // (Ids of spool lines read from a file key on the file and offset, not the line's content.)
+    const ids = async (ls: string[]) => {
+      const { ctx } = testCtx();
+      const out: typeof events = [];
+      for (const [i, l] of ls.entries()) out.push(...(await copilotCliAdapter.normalize(JSON.parse(l), { ...ctx, source: { file: "copilot.jsonl", offset: i } })));
+      return out;
+    };
+    const plain = await ids(bare);
+    assert.deepEqual(plain.map((e) => e.id), (await ids(lines)).map((e) => e.id));
+    assert.ok(plain.every((e) => e.traceId === undefined));
+  });
+
+  it("an invalid traceparent sets no trace", async () => {
+    const line = JSON.parse(readFileSync(join(FIXTURES, "copilot-cli", "otel", "hooks.spool.jsonl"), "utf8").split("\n")[2]!);
+    for (const bad of ["00-00000000000000000000000000000000-0a20f5b72c7e2990-01", "ff-52d64d522262bb7dfe0a8873681dae65-0a20f5b72c7e2990-01", "garbage"]) {
+      line.raw.traceparent = bad;
+      const out = await copilotCliAdapter.normalize(line, testCtx().ctx);
+      assert.ok(out.length && out.every((e) => e.traceId === undefined), bad);
+    }
+  });
+
+  it("an OTLP span of the hook's trace that names no conversation joins the hook session", async () => {
+    const { mkdirSync, copyFileSync, mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { defaultConfig } = await import("../../../src/core/config.ts");
+    const { ingest } = await import("../../../src/core/ingest.ts");
+    const { MemoryBlobStore, MemoryIndexStore } = await import("../../../src/store/memory.ts");
+    const { createOtlpPipeline } = await import("../../../src/otel/receiver.ts");
+    const { decodeTraceJson } = await import("../../../src/otel/json.ts");
+    const { traceKvKey } = await import("../../../src/otel/map.ts");
+    const root = mkdtempSync(join(tmpdir(), "csh-copilot-trace-"));
+    try {
+      const env = { CODING_SH_HOME: join(root, "home"), HOME: join(root, "user") };
+      const dir = join(env.CODING_SH_HOME, "spool", "copilot-cli");
+      mkdirSync(dir, { recursive: true });
+      copyFileSync(join(FIXTURES, "copilot-cli", "otel", "hooks.spool.jsonl"), join(dir, "2026-11-08.1.jsonl"));
+      // A span the hook's own tooling exports under the traceparent it was given: no gen_ai.conversation.id.
+      const orphan = () => {
+        const body = otlp("000");
+        const sp = body.resourceSpans[0].scopeSpans[0].spans[0];
+        sp.attributes = sp.attributes.filter((a: { key: string }) => a.key !== "gen_ai.conversation.id");
+        sp.spanId = "1111222233334444";
+        return decodeTraceJson(body);
+      };
+      const mapOrphan = async (index: InstanceType<typeof MemoryIndexStore>) =>
+        (await createOtlpPipeline({ store: index, blobs: new MemoryBlobStore(), enrichSpan: false }).map("traces", orphan())).events;
+
+      // Without the hook session's trace on record, the span is a session of its own.
+      const before = await mapOrphan(new MemoryIndexStore());
+      assert.ok(before.length && before.every((e) => e.sessionId === TRACE));
+
+      const index = new MemoryIndexStore();
+      await ingest({ config: defaultConfig(env), index, blobs: new MemoryBlobStore(), adapters: new Map([["copilot-cli", copilotCliAdapter]]), env, lock: false });
+      assert.equal(await index.kvGet(traceKvKey(TRACE)), SID);
+      const joined = await mapOrphan(index);
+      assert.ok(joined.length && joined.every((e) => e.sessionId === SID));
+      // Copilot's own spans name the conversation and land in the same session.
+      const own = (await createOtlpPipeline({ store: index, blobs: new MemoryBlobStore(), enrichSpan: false }).map("traces", decodeTraceJson(otlp("001")))).events;
+      assert.ok(own.length && own.every((e) => e.sessionId === SID));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

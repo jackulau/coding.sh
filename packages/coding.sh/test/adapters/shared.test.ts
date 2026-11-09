@@ -130,9 +130,18 @@ describe("usage mapping", () => {
 describe("hook command + merge", () => {
   const hook = "/home/u/.coding.sh/bin/hook.mjs";
   it("builds and recognizes our command", () => {
-    const cmd = buildHookCommand("/p a/$x/hook.mjs", "codex", "Stop", ["--echo-continue"]);
-    assert.equal(cmd, 'node "/p a/\\$x/hook.mjs" codex Stop --echo-continue');
-    assert.deepEqual(parseHookCommand(cmd), { hookPath: "/p a/$x/hook.mjs", agent: "codex" });
+    // Windows: node runs hook.mjs. Elsewhere: /bin/sh runs the fast path beside it, unless a flag only hook.mjs handles is passed.
+    const win = buildHookCommand("/p a/$x/hook.mjs", "codex", "Stop", ["--echo-continue"], "win32");
+    assert.equal(win, 'node "/p a/\\$x/hook.mjs" codex Stop --echo-continue');
+    assert.deepEqual(parseHookCommand(win), { hookPath: "/p a/$x/hook.mjs", agent: "codex" });
+    const sh = buildHookCommand("/p a/$x/hook.mjs", "codex", "Stop", ["--echo-continue"], "linux");
+    assert.equal(sh, '/bin/sh "/p a/\\$x/hook.sh" codex Stop --echo-continue');
+    assert.deepEqual(parseHookCommand(sh), { hookPath: "/p a/$x/hook.mjs", agent: "codex" }, "names the hook.mjs beside it");
+    assert.equal(buildHookCommand(hook, "cursor", "stop", ["--reply", "{}"], "darwin"), `node "${hook}" cursor stop --reply "{}"`);
+    assert.equal(buildHookCommand("/x/other.mjs", "codex", "Stop", [], "linux"), 'node "/x/other.mjs" codex Stop');
+    for (const platform of ["win32", "linux"] as const) assert.ok(isCodingShCommand(buildHookCommand(hook, "codex", "Stop", [], platform), "codex"), platform);
+    assert.ok(!isCodingShCommand('/bin/sh "/x/bin/hook.sh" claude-code Stop', "codex"));
+    assert.ok(!isCodingShCommand("sh ./my-hook.sh codex Stop", "codex"));
     assert.ok(isCodingShCommand(buildHookCommand(hook, "codex", "Stop"), "codex"));
     assert.ok(!isCodingShCommand(buildHookCommand(hook, "codex", "Stop"), "claude-code"), "agent-specific");
     assert.ok(!isCodingShCommand("node ./my-hook.mjs codex Stop", "codex"));
@@ -150,7 +159,7 @@ describe("hook command + merge", () => {
 
   it("flat merge (Cursor/Copilot layout)", () => {
     const merged = mergeFlatHooks({ stop: [{ command: "mine" }] }, [{ event: "stop", entry: { command: buildHookCommand(hook, "cursor", "stop") } }], { agent: "cursor", marker: false });
-    assert.deepEqual((merged.stop as Record<string, unknown>[]).map((e) => e.command), ["mine", `node "${hook}" cursor stop`]);
+    assert.deepEqual((merged.stop as Record<string, unknown>[]).map((e) => e.command), ["mine", buildHookCommand(hook, "cursor", "stop")]);
   });
 });
 
@@ -206,5 +215,89 @@ describe("walkFiles", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("parseTraceparent (W3C Trace Context)", async () => {
+  const { parseTraceparent, rememberTraceSessions } = await import("../../src/adapters/_shared/traceparent.ts");
+  const T = "52d64d522262bb7dfe0a8873681dae65";
+  const S = "0a20f5b72c7e2990";
+  it("parses valid values and reads the sampled flag", () => {
+    assert.deepEqual(parseTraceparent(`00-${T}-${S}-01`), { traceId: T, spanId: S, sampled: true });
+    assert.deepEqual(parseTraceparent(` 00-${T}-${S}-00 `), { traceId: T, spanId: S, sampled: false });
+    assert.deepEqual(parseTraceparent(`00-${T}-${S}-03`), { traceId: T, spanId: S, sampled: true });
+    // A later version may append fields after the flags.
+    assert.deepEqual(parseTraceparent(`01-${T}-${S}-01-what-comes-next`), { traceId: T, spanId: S, sampled: true });
+  });
+  it("rejects invalid values", () => {
+    for (const v of [
+      `00-${"0".repeat(32)}-${S}-01`,
+      `00-${T}-${"0".repeat(16)}-01`,
+      `ff-${T}-${S}-01`,
+      `00-${T}-${S}-01-extra`,
+      `00-${T.toUpperCase()}-${S}-01`,
+      `00-${T.slice(1)}-${S}-01`,
+      `00-${T}-${S}`,
+      "",
+      undefined,
+      42,
+    ])
+      assert.equal(parseTraceparent(v), undefined, String(v));
+  });
+  it("rememberTraceSessions keeps the first hook session per trace and skips OTel events", async () => {
+    const kv = new Map<string, string>([["t:old", "kept"]]);
+    const index = { kvGet: async (k: string) => kv.get(k), kvSet: async (k: string, v: string | undefined) => void (v === undefined ? kv.delete(k) : kv.set(k, v)) };
+    const ev = (sessionId: string, traceId?: string, source?: string) => ({ id: sessionId + traceId, v: 0, sessionId, ts: 1, agent: "copilot-cli", kind: "notification", payload: {}, traceId, source }) as never;
+    await rememberTraceSessions(index, [ev("otel", "a", "otel-span"), ev("hook1", "a"), ev("hook2", "a"), ev("x"), ev("hook3", "old")], (t) => `t:${t}`);
+    assert.deepEqual([...kv].sort(), [["t:a", "hook1"], ["t:old", "kept"]]);
+  });
+});
+
+describe("skillLoadsOf", async () => {
+  const { skillLoadsOf, skillFieldsOf } = await import("../../src/adapters/_shared/tools.ts");
+  const cases: [string, unknown, unknown][] = [
+    ["Skill", { skill: "code-review" }, [{ name: "code-review" }]],
+    ["Skill", { skill: "frontend-design:frontend-design" }, [{ name: "frontend-design:frontend-design" }]],
+    ["skill", { name: "pdf" }, [{ name: "pdf" }]],
+    ["activate_skill", { name: "xlsx" }, [{ name: "xlsx" }]],
+    ["Read", { file_path: ".claude/skills/pdf/SKILL.md" }, [{ name: "pdf", path: ".claude/skills/pdf/SKILL.md", resource: "SKILL.md" }]],
+    ["read_file", { absolute_path: "/home/user/.gemini/skills/pdf/forms.md" }, [{ name: "pdf", path: "/home/user/.gemini/skills/pdf/forms.md", resource: "forms.md" }]],
+    ["view", { path: "/work/demo/.github/skills/deploy/SKILL.md" }, [{ name: "deploy", path: "/work/demo/.github/skills/deploy/SKILL.md", resource: "SKILL.md" }]],
+    ["read", { filePath: "/home/user/.config/opencode/skills/lint/SKILL.md" }, [{ name: "lint", path: "/home/user/.config/opencode/skills/lint/SKILL.md", resource: "SKILL.md" }]],
+    ["read_file", { target_file: "C:\\Users\\me\\.cursor\\skills\\pdf\\scripts\\fill.py" }, [{ name: "pdf", path: "C:/Users/me/.cursor/skills/pdf/scripts/fill.py", resource: "scripts/fill.py" }]],
+    ["Read", { file_path: "/home/user/.pi/agent/skills/web/SKILL.md" }, [{ name: "web", path: "/home/user/.pi/agent/skills/web/SKILL.md", resource: "SKILL.md" }]],
+    ["Read", { file_path: "/home/user/.codex/skills/.system/imagegen/SKILL.md" }, [{ name: "imagegen", path: "/home/user/.codex/skills/.system/imagegen/SKILL.md", resource: "SKILL.md" }]],
+    [
+      "exec_command",
+      { cmd: "cat .claude/skills/pdf/SKILL.md && sed -n '1,40p' ~/.agents/skills/xlsx/SKILL.md; cat .claude/skills/pdf/SKILL.md" },
+      [
+        { name: "pdf", path: ".claude/skills/pdf/SKILL.md", resource: "SKILL.md" },
+        { name: "xlsx", path: "~/.agents/skills/xlsx/SKILL.md", resource: "SKILL.md" },
+      ],
+    ],
+    ["Bash", { command: "bat --plain .codex/skills/x/README.md | head -5" }, [{ name: "x", path: ".codex/skills/x/README.md", resource: "README.md" }]],
+    ["ReadMcpResourceTool", { server: "skills", uri: "skill://pdf/SKILL.md" }, [{ name: "pdf", path: "skill://pdf/SKILL.md", resource: "SKILL.md" }]],
+    // Not loads: substitutions, traversal, globs, variables, writes, edits, other dirs, other tools.
+    ["Bash", { command: "cat $(echo .claude/skills/pdf/SKILL.md)" }, []],
+    ["Bash", { command: "cat `ls .claude/skills/*/SKILL.md`" }, []],
+    ["Bash", { command: "cat .claude/skills/../skills/pdf/SKILL.md" }, []],
+    ["Bash", { command: "cat .claude/skills/*/SKILL.md" }, []],
+    ["Bash", { command: "cat $HOME/.claude/skills/pdf/SKILL.md" }, []],
+    ["Bash", { command: "rm -rf .claude/skills/pdf" }, []],
+    ["Bash", { command: "cat > .claude/skills/pdf/SKILL.md <<'EOF'\ncat .claude/skills/x/SKILL.md\nEOF" }, []],
+    ["Bash", { command: "sed -i 's/a/b/' .claude/skills/pdf/SKILL.md" }, []],
+    ["Read", { file_path: "/work/demo/src/skills/pdf/SKILL.md" }, []],
+    ["Read", { file_path: "/work/demo/README.md" }, []],
+    ["Edit", { file_path: ".claude/skills/pdf/SKILL.md", old_string: "a", new_string: "b" }, []],
+    ["Grep", { pattern: "x", path: ".claude/skills/pdf" }, []],
+  ];
+  for (const [tool, input, want] of cases)
+    it(`${tool} ${JSON.stringify(input).slice(0, 70)}`, () => assert.deepEqual(skillLoadsOf(tool, input), want));
+
+  it("tool.start fields: the first skill, and every name when more than one", () => {
+    assert.deepEqual(skillFieldsOf("Read", { file_path: "/work/demo/README.md" }), {});
+    assert.deepEqual(skillFieldsOf("Read", { file_path: ".claude/skills/pdf/SKILL.md" }), { skill: "pdf" });
+    assert.deepEqual(skillFieldsOf("Bash", { command: "cat .claude/skills/pdf/SKILL.md .claude/skills/pdf/forms.md .claude/skills/xlsx/SKILL.md" }), { skill: "pdf", skills: ["pdf", "xlsx"] });
+    assert.deepEqual(skillFieldsOf(undefined, {}), {});
   });
 });

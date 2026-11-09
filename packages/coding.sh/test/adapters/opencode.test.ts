@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
+import type { AgentEvent } from "../../src/schema/index.ts";
 import { after, before, describe, it } from "node:test";
-import { apiForVersion, opencode, pluginPath, pluginSource, PLUGIN_MARKER } from "../../src/adapters/opencode.ts";
+import { apiForVersion, opencode, opencodeDbNotes, opencodeDbPath, pluginPath, pluginSource, PLUGIN_MARKER } from "../../src/adapters/opencode.ts";
 import { assertGolden, assertWellFormed, collect, fakeBin, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 
 const T0 = 1793527200000;
@@ -230,5 +231,90 @@ describe("opencode plugin", () => {
     assert.equal(c[0]!.path, join(proj, ".opencode", "plugins", "coding-sh.js"));
     await opencode.uninstall({ scope: "project", projectDir: proj, dryRun: false });
     assert.ok(!existsSync(c[0]!.path));
+  });
+});
+
+describe("opencode database discovery (real OpenCode 1.19.5 drizzle database)", () => {
+  let env: TmpEnv;
+  before(() => (env = tmpEnv()));
+  after(() => env.restore());
+
+  /** The real 1.x database (session/message/part tables with JSON data), rebuilt from its dump. */
+  async function realDb(path: string): Promise<void> {
+    const { DatabaseSync } = await import("node:sqlite");
+    const dump = JSON.parse(readFileSync(join(FIXTURES, "opencode", "real", "opencode.db.json"), "utf8")) as { schema: string[]; rows: Record<string, Record<string, unknown>[]> };
+    mkdirSync(dirname(path), { recursive: true });
+    const db = new DatabaseSync(path, { enableForeignKeyConstraints: false });
+    for (const sql of dump.schema) db.exec(sql);
+    for (const [table, rows] of Object.entries(dump.rows))
+      for (const r of rows) {
+        const cols = Object.keys(r);
+        db.prepare(`INSERT INTO "${table}" (${cols.map((c) => `"${c}"`).join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`).run(...(Object.values(r) as (string | number | null)[]));
+      }
+    db.close();
+  }
+  const dataDir = (name: string) => {
+    delete process.env.OPENCODE_DB;
+    process.env.XDG_DATA_HOME = join(env.root, name);
+    return join(env.root, name, "opencode");
+  };
+  const summary = (events: AgentEvent[]) => events.map((e) => [e.kind, e.payload.tool ?? e.payload.text ?? ""]);
+  const BLOCKING = /\bpredates\b|\bwill not run\b|\bnot trusted yet\b/i; // doctor's BLOCKING_NOTE
+
+  it("imports sessions, messages and tool parts from <data>/opencode.db", async () => {
+    const dir = dataDir("main");
+    await realDb(join(dir, "opencode.db"));
+    const events = await collect(opencode.backfill!(testCtx().ctx));
+    assertWellFormed(events);
+    assertGolden("opencode/golden/backfill-db.golden.json", summarize(events));
+    assert.equal(new Set(events.map((e) => e.sessionId)).size, 1);
+    for (const kind of ["session.start", "user.message", "assistant.message", "tool.start", "tool.end", "llm.call"]) assert.ok(events.some((e) => e.kind === kind), kind);
+    assert.deepEqual(await opencodeDbNotes(), []);
+  });
+
+  it("reads the newest database OpenCode set aside after a schema mismatch, and says so", async () => {
+    const want = summary(await collect(opencode.backfill!(testCtx().ctx)));
+    const dir = dataDir("mismatch");
+    const newest = join(dir, "opencode.db.schema-mismatch-1787452268462");
+    await realDb(newest);
+    writeFileSync(join(dir, "opencode.db.schema-mismatch-1787452268462-wal"), "");
+    writeFileSync(join(dir, "opencode.db.schema-mismatch-1700000000000"), "not a database");
+    utimesSync(join(dir, "opencode.db.schema-mismatch-1700000000000"), new Date(1_700_000_000_000), new Date(1_700_000_000_000));
+    assert.deepEqual(opencodeDbPath(), { path: newest, setAside: true });
+    const events = await collect(opencode.backfill!(testCtx().ctx));
+    assertWellFormed(events);
+    assert.deepEqual(summary(events), want);
+    const notes = await opencodeDbNotes();
+    assert.equal(notes.length, 1);
+    assert.match(notes[0]!, /set its database aside after a schema mismatch \(opencode\.db\.schema-mismatch-1787452268462\)/);
+    assert.ok((await opencode.detect()).notes?.includes(notes[0]!));
+    assert.ok(!BLOCKING.test(notes[0]!), "a note, not a blocking doctor failure");
+    // Once OpenCode writes a new opencode.db, that one is read.
+    await realDb(join(dir, "opencode.db"));
+    assert.deepEqual(opencodeDbPath(), { path: join(dir, "opencode.db") });
+    assert.deepEqual(await opencodeDbNotes(), []);
+  });
+
+  it("a database with no session tables imports nothing and doctor names its tables", async () => {
+    const { DatabaseSync } = await import("node:sqlite");
+    const dir = dataDir("unknown");
+    mkdirSync(dir, { recursive: true });
+    const db = new DatabaseSync(join(dir, "opencode.db"));
+    db.exec("CREATE TABLE conversation (id TEXT); CREATE TABLE turn (id TEXT);");
+    db.close();
+    assert.deepEqual(await collect(opencode.backfill!(testCtx().ctx)), []);
+    const notes = await opencodeDbNotes();
+    assert.deepEqual(notes, ["opencode.db has no session tables coding.sh can read (found: conversation, turn); OpenCode history is not imported"]);
+    assert.ok(!BLOCKING.test(notes[0]!));
+  });
+
+  it("an unreadable database imports nothing and doctor says why", async () => {
+    const dir = dataDir("broken");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "opencode.db"), "this is not a sqlite file, just text that is long enough to have a header".repeat(4));
+    assert.deepEqual(await collect(opencode.backfill!(testCtx().ctx)), []);
+    const notes = await opencodeDbNotes();
+    assert.equal(notes.length, 1);
+    assert.match(notes[0]!, /^cannot read opencode\.db \(.+\); OpenCode history is not imported$/);
   });
 });

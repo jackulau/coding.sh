@@ -15,3 +15,4 @@ export * from "./claude-transcript.ts";
 export * from "./install.ts";
 export * from "./installs.ts";
 export * from "./mcp.ts";
+export * from "./traceparent.ts";

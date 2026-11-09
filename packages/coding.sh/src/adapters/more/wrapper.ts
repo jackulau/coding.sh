@@ -5,6 +5,8 @@
 //   session.start  { sessionId, cmd, args, cwd, repo? }
 //   file.change    { sessionId, path, op, additions, deletions, binary? }   (pre/post snapshot diff)
 //   session.end    { sessionId, exitCode, signal?, durationMs, error?, repo?, startSnapshot?, endSnapshot?, patch? }
+//   llm.usage      { sessionId, seq, model?, usage, sessionCostUsd? }   (one model reply; Aider's
+//                  analytics log, read live by src/capture/aider.ts) → llm.call with that usage
 // and, if a future wrapper tees output, stdout/stderr chunks:
 //   stdout|stderr  { sessionId, text|chunk|data }
 // "process.start"/"process.end" are accepted as aliases of session.start/end.
@@ -12,7 +14,7 @@
 // normalizeWrapperLine is exported so any adapter (aider, or a hooked agent run
 // under `coding.sh run --agent <id>`) can delegate these lines here.
 import type { Adapter, AgentRunOutput, DetectResult, FileChange, NormalizeContext, RunSpec, SpoolLine } from "../../core/types.ts";
-import type { AgentEvent, RepoState } from "../../schema/index.ts";
+import type { AgentEvent, RepoState, Usage } from "../../schema/index.ts";
 import { Emitter, attachRaw, clip, isObj, num, parseTestSummary, rawBlob, runEnv, spawnAgent, spoolIdParts, str, toRunOutput } from "./_util.ts";
 import type { Json } from "./_util.ts";
 import { redactArgv } from "../../core/redact.ts";
@@ -20,10 +22,11 @@ import { redactArgv } from "../../core/redact.ts";
 const START = new Set(["session.start", "process.start"]);
 const END = new Set(["session.end", "process.end"]);
 const CHUNK = new Set(["stdout", "stderr", "output", "process.stdout", "process.stderr"]);
+const USAGE = "llm.usage";
 
 /** True for spool event names the capture wrapper writes. */
 export function isWrapperEvent(event: string): boolean {
-  return START.has(event) || END.has(event) || CHUNK.has(event) || event === "file.change";
+  return START.has(event) || END.has(event) || CHUNK.has(event) || event === "file.change" || event === USAGE;
 }
 
 /**
@@ -88,6 +91,20 @@ export async function normalizeWrapperLine(line: SpoolLine, ctx: NormalizeContex
       },
       { ...(durationMs !== undefined ? { durationMs } : {}), ...(repo ? { repo } : {}), blobs },
     );
+  } else if (ev === USAGE) {
+    const u = isObj(raw.usage) ? raw.usage : {};
+    const usage: Usage = {};
+    for (const k of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "costUsd"] as const) {
+      const n = num(u[k]);
+      if (n !== undefined && n >= 0) usage[k] = n;
+    }
+    const model = str(raw.model);
+    const seq = num(raw.seq);
+    em.push(
+      "llm.call",
+      { provider: model?.includes("/") ? model.slice(0, model.indexOf("/")) : undefined, responseModel: model, ok: true, reportedUsage: num(raw.sessionCostUsd) !== undefined ? { costUsd: num(raw.sessionCostUsd) } : undefined },
+      { ...(Object.keys(usage).length ? { usage } : {}), ...(model ? { model } : {}), ...(seq !== undefined ? { key: ["usage", seq] } : {}) },
+    );
   } else if (CHUNK.has(ev)) {
     const text = str(raw.text) ?? str(raw.chunk) ?? str(raw.data);
     if (text) {
@@ -116,8 +133,8 @@ export const wrapperAdapter: Adapter = {
   id: "wrapper",
   displayName: "Any command (coding.sh run --)",
   tier: "C",
-  // 2 (0.1.2): secret-named argv flags redacted.
-  parseVersion: 2,
+  // 2 (0.1.2): secret-named argv flags redacted. 3: llm.usage lines become llm.calls.
+  parseVersion: 3,
   async detect(): Promise<DetectResult> {
     return { installed: true, hooked: false, notes: ["Built in: capture any agent with `coding.sh run -- <cmd>`. Nothing to install."] };
   },
@@ -134,13 +151,15 @@ export const wrapperAdapter: Adapter = {
    * Headless run of an arbitrary command: spec.flags is the command line
    * (["my-agent", "--yes"] or one string "my-agent --yes"); the instruction is
    * appended as the last argument. "{instruction}" in a flag is substituted instead.
+   * "{model}" is replaced by the run's model (empty when it has none), so a
+   * wrapped agent can take a model override (refine's canary re-test).
    */
   async run(spec: RunSpec): Promise<AgentRunOutput> {
     const argv = spec.flags.length === 1 ? splitCommand(spec.flags[0]!) : [...spec.flags];
     const bin = argv.shift();
     if (!bin) return { exitCode: 127, timedOut: false, durationMs: 0, stdoutTail: "", stderrTail: "wrapper: no command given (put it in the bundle's flags)" };
     let substituted = false;
-    const args = argv.map((a) => (a.includes("{instruction}") ? ((substituted = true), a.replaceAll("{instruction}", spec.instruction)) : a));
+    const args = argv.map((a) => a.replaceAll("{model}", spec.model ?? "")).map((a) => (a.includes("{instruction}") ? ((substituted = true), a.replaceAll("{instruction}", spec.instruction)) : a));
     if (!substituted) args.push(spec.instruction);
     const r = await spawnAgent({ bin, args, cwd: spec.cwd, stdoutFile: spec.stdoutFile, env: runEnv(spec), timeoutMs: spec.timeoutMs });
     return toRunOutput(r, undefined, undefined);

@@ -269,21 +269,26 @@ export async function normalizeClaudeLine(line: SpoolLine, ctx: NormalizeContext
       const child = childSessionId(parentSid, id);
       const type = str(raw.agent_type);
       const tp = str(raw.transcript_path);
-      const description = tp && subagentId ? str((await subagentMeta(join(dirname(tp), basename(tp, ".jsonl"), "subagents", `agent-${subagentId}.jsonl`))).description) : undefined;
-      em.emit("subagent.start", { subagentId: id, type, description, childSessionId: child }, { key: [id] });
-      em.emit("session.start", { source: "subagent", description, ...parentLink(ctx, agent, parentSid, id, type) }, { sessionId: child, subagentId: id, key: ["start"] });
+      const meta = tp && subagentId ? await subagentMeta(join(dirname(tp), basename(tp, ".jsonl"), "subagents", `agent-${subagentId}.jsonl`)) : {};
+      const description = str(meta.description);
+      // A subagent another subagent spawned starts in that subagent's session.
+      const up = subagentParent(parentSid, meta);
+      em.emit("subagent.start", { subagentId: id, type, description, childSessionId: child, spawnDepth: up.spawnDepth }, { key: [id], ...up.at });
+      em.emit("session.start", { source: "subagent", description, ...parentLink(ctx, agent, up.sessionId, id, type) }, { sessionId: child, subagentId: id, key: ["start"] });
       break;
     }
     case "SubagentStop": {
       const id = subagentId ?? toolUseId;
       const child = childSessionId(parentSid, id);
-      const w = await windowEvents(ctx, str(raw.agent_transcript_path), line.ts, child, id, line.runId, true);
+      const agentPath = str(raw.agent_transcript_path);
+      const up = subagentParent(parentSid, agentPath ? await subagentMeta(agentPath) : {});
+      const w = await windowEvents(ctx, agentPath, line.ts, child, id, line.runId, true);
       // Claude Code's internal forks (the compaction summarizer, prompt suggestions) fire a
       // SubagentStop with no agent type, no SubagentStart and no transcript on disk: no session.
       if (!str(raw.agent_type) && !w.events.length) return [];
       extra.push(...w.events);
       const r = str(raw.last_assistant_message) ? await clipText(ctx, raw.last_assistant_message as string, 1024) : undefined;
-      em.emit("subagent.end", { subagentId: id, type: str(raw.agent_type), ok: true, childSessionId: child, result: r?.value }, { key: [id], blobs: blobList(r?.blob) });
+      em.emit("subagent.end", { subagentId: id, type: str(raw.agent_type), ok: true, childSessionId: child, result: r?.value }, { key: [id], blobs: blobList(r?.blob), ...up.at });
       em.emit("session.end", { reason: "subagent-stop" }, { sessionId: child, subagentId: id, key: ["end"], model: w.model });
       break;
     }
@@ -446,7 +451,21 @@ async function* readLines(path: string): AsyncGenerator<string> {
   }
 }
 
-/** The `.meta.json` sidecar of a subagent transcript (agentType, description, toolUseId, finished); {} when absent. */
+/**
+ * Where a subagent's subagent.start/end go: the main session, or, for a subagent
+ * another subagent spawned (meta.parentAgentId, spawnDepth 2+), that subagent's
+ * child session. `at` is the emit override for that session (none for the main one).
+ */
+function subagentParent(mainSid: string, meta: Record<string, unknown>): { sessionId: string; at: { sessionId?: string; subagentId?: string }; spawnDepth?: number } {
+  const parentAgentId = str(meta.parentAgentId);
+  const depth = num(meta.spawnDepth);
+  const spawnDepth = depth !== undefined && depth > 1 ? depth : undefined;
+  if (!parentAgentId) return { sessionId: mainSid, at: {}, spawnDepth };
+  const sessionId = childSessionId(mainSid, parentAgentId);
+  return { sessionId, at: { sessionId, subagentId: parentAgentId }, spawnDepth };
+}
+
+/** The `.meta.json` sidecar of a subagent transcript (agentType, description, toolUseId, finished, parentAgentId, spawnDepth); {} when absent. */
 async function subagentMeta(transcriptPath: string): Promise<Record<string, unknown>> {
   try {
     return obj(JSON.parse(await readFile(transcriptPath.replace(/\.jsonl$/, ".meta.json"), "utf8")));
@@ -475,12 +494,14 @@ async function convertSubagentFile(ctx: NormalizeContext, path: string, parentSi
   const first = events[0]!;
   const last = events[events.length - 1]!;
   const description = str(meta.description) ?? link?.label;
+  // A subagent another subagent spawned (meta.parentAgentId) hangs off that subagent's session, under its Agent call.
+  const up = subagentParent(parentSid, meta);
   const start = events.find((e) => e.kind === "session.start");
-  if (start) start.payload = { ...start.payload, source: "subagent", description, ...parentLink(ctx, CLAUDE_AGENT, parentSid, agentId, type) };
+  if (start) start.payload = { ...start.payload, source: "subagent", description, ...parentLink(ctx, CLAUDE_AGENT, up.sessionId, agentId, type) };
   const toolUseId = link?.toolUseId ?? str(meta.toolUseId);
-  const parentId = toolUseId ? ctx.id(CLAUDE_AGENT, parentSid, "tool.start", toolUseId) : undefined;
-  const em = new Emitter(ctx, { agent: CLAUDE_AGENT, sessionId: parentSid, ts: first.ts, cwd: first.cwd, agentVersion: first.agentVersion }, ["subagent", agentId]);
-  em.emit("subagent.start", { subagentId: agentId, type, description, childSessionId: child, toolUseId, workflowId: link?.workflowId, phase: str(meta.workflowPhase) ?? link?.phase }, { key: [agentId], parentId });
+  const parentId = toolUseId ? ctx.id(CLAUDE_AGENT, up.sessionId, "tool.start", toolUseId) : undefined;
+  const em = new Emitter(ctx, { agent: CLAUDE_AGENT, sessionId: up.sessionId, subagentId: up.at.subagentId, ts: first.ts, cwd: first.cwd, agentVersion: first.agentVersion }, ["subagent", agentId]);
+  em.emit("subagent.start", { subagentId: agentId, type, description, childSessionId: child, toolUseId, spawnDepth: up.spawnDepth, workflowId: link?.workflowId, phase: str(meta.workflowPhase) ?? link?.phase }, { key: [agentId], parentId });
   if (finished) {
     const lastText = [...events].reverse().find((e) => e.kind === "assistant.message");
     em.emit("subagent.end", { subagentId: agentId, type, ok: true, childSessionId: child, result: typeof lastText?.payload.text === "string" ? (lastText.payload.text as string).slice(0, 1024) : undefined }, { key: [agentId], ts: last.ts, parentId, durationMs: last.ts - first.ts });
@@ -582,7 +603,10 @@ export const claudeCode: Adapter = {
   // 9 (0.1.2): tool.end records a tool output Claude Code persisted to a file, so the model got a preview (cut).
   // 10 (0.1.3): a model fallback (system/model_fallback, model_refusal_fallback) is a model.fallback notification.
   // 11 (0.1.5): a fork subagent (meta isFork) skips the parent's context its transcript opens with; the directive opens its turn.
-  parseVersion: 11,
+  // 12 (0.1.6): one llm.call per response even when its tool results are written between its blocks (timed from the
+  //    api-request record); a subagent another subagent spawned hangs off that subagent's session; a tool call that
+  //    loads a skill names it (payload.skill).
+  parseVersion: 12,
 
   detect() {
     const dir = claudeConfigDir();

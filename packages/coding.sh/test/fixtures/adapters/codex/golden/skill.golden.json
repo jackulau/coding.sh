@@ -1,0 +1,202 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "01a1be94-bd43-7302-aa30-9fe348846093",
+    "ts": 1794198781265,
+    "payload": {
+      "source": "rollout",
+      "originator": "codex_exec",
+      "launch": "exec",
+      "provider": "stub"
+    },
+    "id": "81fff795696c1157ab12ceaf71bdefc4da1f6297f5288a6e791fbb52be57cb63",
+    "cwd": "/work/demo",
+    "agentVersion": "0.167.0"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "01a1be94-bd43-7302-aa30-9fe348846093",
+    "ts": 1794198781437,
+    "payload": {
+      "text": "Write release notes using the release-notes skill."
+    },
+    "id": "ccf81db93658ffc307e6fb011b1ff03ff8fbb90291c4327ea7babd190984bad8",
+    "turnId": "01a1be94-bd8c-7200-b615-96cbb2a5d05f",
+    "model": "gpt-5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.167.0"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "01a1be94-bd43-7302-aa30-9fe348846093",
+    "ts": 1794198781521,
+    "payload": {
+      "tool": "exec_command",
+      "toolUseId": "call_mw8rmo1v1",
+      "input": {
+        "cmd": "sed -n '1,80p' .agents/skills/release-notes/SKILL.md"
+      },
+      "skill": "release-notes"
+    },
+    "id": "e0a37aaf6ae7ffef591190706193936ca09d5d70ad649aa1578b7d052174e17c",
+    "turnId": "01a1be94-bd8c-7200-b615-96cbb2a5d05f",
+    "model": "gpt-5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.167.0"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "01a1be94-bd43-7302-aa30-9fe348846093",
+    "ts": 1794198781437,
+    "payload": {
+      "provider": "stub",
+      "responseModel": "gpt-5",
+      "ok": true,
+      "ttftMs": 84,
+      "tokensPerSec": 333.3,
+      "responseId": "resp_mw8rmo1v2"
+    },
+    "id": "71acf026512b1f36ed022cae4f75be66677109380f68236397a6b83402168551",
+    "turnId": "01a1be94-bd8c-7200-b615-96cbb2a5d05f",
+    "model": "gpt-5",
+    "durationMs": 90,
+    "usage": {
+      "inputTokens": 120,
+      "cacheReadTokens": 0,
+      "outputTokens": 30
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "0.167.0"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "01a1be94-bd43-7302-aa30-9fe348846093",
+    "ts": 1794198781698,
+    "payload": {
+      "tool": "Bash",
+      "toolUseId": "call_mw8rmo1v1",
+      "ok": true,
+      "durationMs": 0,
+      "output": "---\nname: release-notes\ndescription: Write release notes from the git log.\n---\n\nList each change in one line.\n",
+      "exitCode": 0
+    },
+    "id": "935f2369bf79fcc5be39d30c7d010766aaa723da9935a0d7b5d089f75b4689a7",
+    "turnId": "01a1be94-bd8c-7200-b615-96cbb2a5d05f",
+    "model": "gpt-5",
+    "durationMs": 0,
+    "cwd": "/work/demo",
+    "agentVersion": "0.167.0"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "01a1be94-bd43-7302-aa30-9fe348846093",
+    "ts": 1794198781765,
+    "payload": {
+      "tool": "exec_command",
+      "toolUseId": "call_mw8rmo8v4",
+      "input": {
+        "cmd": "cat README.md"
+      }
+    },
+    "id": "b53337aee1b618c5ecd270865185c82b46aaa46831477ba777087017585000d1",
+    "turnId": "01a1be94-bd8c-7200-b615-96cbb2a5d05f",
+    "model": "gpt-5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.167.0"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "01a1be94-bd43-7302-aa30-9fe348846093",
+    "ts": 1794198781716,
+    "payload": {
+      "provider": "stub",
+      "responseModel": "gpt-5",
+      "ok": true,
+      "ttftMs": 49,
+      "tokensPerSec": 526.3,
+      "responseId": "resp_mw8rmo8v5"
+    },
+    "id": "19de91226f336c9fea46febb36266a29db3fe5f3fcea7a6cf974709a49230229",
+    "turnId": "01a1be94-bd8c-7200-b615-96cbb2a5d05f",
+    "model": "gpt-5",
+    "durationMs": 57,
+    "usage": {
+      "inputTokens": 120,
+      "cacheReadTokens": 0,
+      "outputTokens": 30
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "0.167.0"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "01a1be94-bd43-7302-aa30-9fe348846093",
+    "ts": 1794198781894,
+    "payload": {
+      "tool": "Bash",
+      "toolUseId": "call_mw8rmo8v4",
+      "ok": true,
+      "durationMs": 0,
+      "output": "# demo\n",
+      "exitCode": 0
+    },
+    "id": "ae409fe1aa8b5d88828621f1753a491789f5ab88413612ae539d9ed298191cac",
+    "turnId": "01a1be94-bd8c-7200-b615-96cbb2a5d05f",
+    "model": "gpt-5",
+    "durationMs": 0,
+    "cwd": "/work/demo",
+    "agentVersion": "0.167.0"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "01a1be94-bd43-7302-aa30-9fe348846093",
+    "ts": 1794198781965,
+    "payload": {
+      "text": "Release notes: one change."
+    },
+    "id": "b61a34b2dd3df74cd2f06fed01442fc172cbb59407bdd6d4cb123397f5b89eb8",
+    "turnId": "01a1be94-bd8c-7200-b615-96cbb2a5d05f",
+    "model": "gpt-5",
+    "cwd": "/work/demo",
+    "agentVersion": "0.167.0"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "01a1be94-bd43-7302-aa30-9fe348846093",
+    "ts": 1794198781911,
+    "payload": {
+      "provider": "stub",
+      "responseModel": "gpt-5",
+      "ok": true,
+      "ttftMs": 58,
+      "tokensPerSec": 483.9,
+      "responseId": "resp_mw8rmoeb7"
+    },
+    "id": "f93385f402077c0d3b88ea86fdd1c078d5f65f3199333532a49ed852f08e97f8",
+    "turnId": "01a1be94-bd8c-7200-b615-96cbb2a5d05f",
+    "model": "gpt-5",
+    "durationMs": 62,
+    "usage": {
+      "inputTokens": 120,
+      "cacheReadTokens": 0,
+      "outputTokens": 30
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "0.167.0"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "01a1be94-bd43-7302-aa30-9fe348846093",
+    "ts": 1794198781987,
+    "payload": {
+      "ok": true,
+      "ttftMs": 189
+    },
+    "id": "588284c11e54683ce850df42fb3c2bb63645cc836a97391e2721ca44d67d4ea6",
+    "turnId": "01a1be94-bd8c-7200-b615-96cbb2a5d05f",
+    "model": "gpt-5",
+    "durationMs": 655,
+    "cwd": "/work/demo",
+    "agentVersion": "0.167.0"
+  }
+]

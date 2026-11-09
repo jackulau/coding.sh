@@ -6,6 +6,7 @@ import { DROID_HOOK_EVENTS, droidAdapter, droidHookTarget } from "../../../src/a
 import type { AgentEvent } from "../../../src/schema/index.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { assertGolden, assertInstallRoundTrip, assertRunOk, assertWellFormed, collect, fakeBinary, FIXTURES, HOOK, loadSpool, moreEnv, readArgv, runSpec, summarize, testCtx, writeFile } from "./_helpers.ts";
+import { buildHookCommand } from "../../../src/adapters/_shared/hooks.ts";
 
 describe("droid normalize", () => {
   it("maps hook payloads to golden events (model from the session sidecar)", async () => {
@@ -69,7 +70,7 @@ describe("droid install", () => {
     const h = JSON.parse(installed[".factory/hooks.json"]!);
     assert.deepEqual(Object.keys(h), [...DROID_HOOK_EVENTS]);
     assert.equal(h.hooks, undefined, "no hooks wrapper in hooks.json");
-    assert.deepEqual(h.PostToolUse, [{ matcher: "*", hooks: [{ type: "command", command: `node "${HOOK}" droid PostToolUse`, timeout: 10 }] }]);
+    assert.deepEqual(h.PostToolUse, [{ matcher: "*", hooks: [{ type: "command", command: buildHookCommand(HOOK, "droid", "PostToolUse"), timeout: 10 }] }]);
     assert.ok(!existsSync(join(env.home, ".factory", "hooks.json")));
   });
 

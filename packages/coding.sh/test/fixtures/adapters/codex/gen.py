@@ -35,6 +35,7 @@ main = [
  (7500, "response_item", {"type": "function_call", "status": "completed", "id": "fc_3", "name": "spawn_agent", "namespace": "collaboration", "arguments": json.dumps({"task_name": "audit"}), "call_id": "call_3"}),
  (7600, "response_item", {"type": "function_call_output", "call_id": "call_3", "output": json.dumps({"task_name": "audit"})}),
  (8300,) + item(8300, {"type": "McpToolCall", "id": "mcp-1", "server": "docs", "tool": "search", "arguments": {"q": "vitest"}, "status": "completed", "result": {"content": [{"type": "text", "text": "found 2 pages"}]}}, 8000, 8300),
+ (8460, "response_item", {"type": "agent_message", "id": "amsg_s2", "author": "/root/audit", "recipient": "/root", "content": [{"type": "input_text", "text": "Message Type: FINAL_ANSWER\nTask name: /root/audit\nSender: /root/audit\nPayload:\nOne caller: src/math.ts."}]}),
  (9000, "token_usage_record", {"thread_id": SID, "turn_id": T1, "session_id": SID, "response_id": "resp_3", "usage": usage(7000, 6500, 40)}),
  (9100,) + item(9100, {"type": "AgentMessage", "id": "am-1", "content": [{"type": "Text", "text": "Fixed: add() now adds; all 6 tests pass."}], "phase": "final_answer"}),
  (9200, "event_msg", {"type": "task_complete", "turn_id": T1, "last_agent_message": "Fixed", "started_at": T0//1000, "completed_at": (T0+9200)//1000, "duration_ms": 9200, "time_to_first_token_ms": 790}),
@@ -47,7 +48,8 @@ sub = [
  (11, "event_msg", {"type": "task_started", "turn_id": T1}),
  (7560, "turn_context", {"turn_id": T9, "cwd": CWD, "model": "gpt-5.5-mini"}),
  (7561, "event_msg", {"type": "task_started", "turn_id": T9}),
- (7570,) + item(7570, {"type": "UserMessage", "id": "um-s1", "content": [{"type": "text", "text": "Audit callers of add()"}]}, turn=T9, thread=SUB),
+ # The task arrives as inter-agent mail (shape from Codex 0.166 rollouts): a header, then the payload, which Codex encrypts.
+ (7570, "response_item", {"type": "agent_message", "id": "amsg_s1", "author": "/root", "recipient": "/root/audit", "content": [{"type": "input_text", "text": "Message Type: NEW_TASK\nTask name: /root/audit\nSender: /root\nPayload:\n"}, {"type": "encrypted_content", "encrypted_content": "x"}]}),
  (7900, "response_item", {"type": "function_call", "status": "completed", "id": "fc_s1", "name": "exec_command", "arguments": json.dumps({"cmd": "rg -n 'add\\('"}), "call_id": "call_s1"}),
  (7950, "token_usage_record", {"thread_id": SUB, "turn_id": T9, "session_id": SID, "response_id": "resp_s1", "usage": usage(900, 0, 30)}),
  (8100, "response_item", {"type": "function_call_output", "call_id": "call_s1", "output": "src/math.ts:1:export function add(a, b) {"}),

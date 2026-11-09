@@ -32,6 +32,7 @@ import { basename, dirname, join } from "node:path";
 import type { Adapter, AgentRunOutput, DetectResult, FileChange, HarnessBundle, InstallOpts, NormalizeContext, RunSpec, SpoolLine } from "../../core/types.ts";
 import type { AgentEvent, RepoState, Usage } from "../../schema/index.ts";
 import { forgetInstall, ownsInstall, recordInstall } from "../_shared/installs.ts";
+import { parseTraceparent } from "../_shared/traceparent.ts";
 import {
   Emitter,
   addUsage,
@@ -86,8 +87,8 @@ export function copilotHookPath(opts: { scope: "user" | "project"; projectDir?: 
 export function copilotHookFile(hookCommand: string): Json {
   const hooks: Json = {};
   for (const ev of COPILOT_HOOK_EVENTS) {
-    const cmd = hookCmd(hookCommand, ID, ev);
-    hooks[ev] = [{ type: "command", bash: cmd, powershell: `& ${cmd}`, timeoutSec: 10 }];
+    // bash runs outside Windows (the sh fast path), powershell on Windows (node).
+    hooks[ev] = [{ type: "command", bash: hookCmd(hookCommand, ID, ev, "", "linux"), powershell: `& ${hookCmd(hookCommand, ID, ev, "", "win32")}`, timeoutSec: 10 }];
   }
   return { version: 1, hooks };
 }
@@ -137,7 +138,9 @@ export async function normalizeCopilot(line: SpoolLine, ctx: NormalizeContext): 
   const ts = toMs(raw.timestamp) ?? line.ts;
   const agentId = str(pick(raw, "agentId", "agent_id"));
   const ev = EVENT_ALIASES[line.event] ?? line.event;
-  const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, runId: line.runId, subagentId: agentId }, spoolIdParts(line, sessionId, ctx), { toolKeys: true });
+  // With OpenTelemetry on, Copilot CLI hands hooks its trace context: the events join the agent's spans.
+  const trace = parseTraceparent(pick(raw, "traceparent", "trace_parent") ?? raw.traceParent);
+  const em = new Emitter(ctx, { agent: ID, sessionId, ts, cwd, runId: line.runId, subagentId: agentId, traceId: trace?.traceId, parentSpanId: trace?.spanId }, spoolIdParts(line, sessionId, ctx), { toolKeys: true });
   const tool = str(pick(raw, "toolName", "tool_name")) ?? "unknown";
   const input = pick(raw, "toolArgs", "tool_input");
   // Hooks carry no call id; postToolUse synthesizes both halves, so pair them with a stable one.
@@ -145,7 +148,7 @@ export async function normalizeCopilot(line: SpoolLine, ctx: NormalizeContext): 
   switch (ev) {
     case "sessionStart": {
       // initialPrompt is not emitted: userPromptSubmitted carries the same prompt (seen on 1.0.107).
-      em.push("session.start", { source: str(raw.source), transcriptPath: str(pick(raw, "transcriptPath", "transcript_path")) });
+      em.push("session.start", { source: str(raw.source), transcriptPath: str(pick(raw, "transcriptPath", "transcript_path")), tracestate: trace ? str(pick(raw, "tracestate", "trace_state") ?? raw.traceState)?.slice(0, 512) : undefined });
       break;
     }
     case "sessionEnd":
@@ -349,7 +352,8 @@ export const copilotCliAdapter: Adapter = {
   displayName: "GitHub Copilot CLI",
   tier: "A",
   // 2 (0.1.2): hook and transcript copies share ids; no duplicate initial prompt; one llm.call per usage record.
-  parseVersion: 2,
+  // 3 (0.1.5): hook events keep the OTel trace from the hook's traceparent (traceId, parentSpanId). A tool call that loads a skill names it (payload.skill).
+  parseVersion: 3,
   async detect(): Promise<DetectResult> {
     const binary = findBinary(["copilot"]);
     const dir = copilotHome();

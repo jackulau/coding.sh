@@ -6,6 +6,8 @@ import { SCHEMA_VERSION } from "../../schema/index.ts";
 import { geoValue } from "../../core/pricing.ts";
 import type { BackfillFile, NormalizeContext, SpoolLine } from "../../core/types.ts";
 import { resolveRaw } from "../../spool/write.ts";
+// (tools.ts imports this module too: skillFieldsOf is only called at emit time.)
+import { skillFieldsOf } from "./tools.ts";
 
 // ---------------------------------------------------------------- guards
 
@@ -272,7 +274,8 @@ export class Emitter {
       ts: this.base.ts,
       agent: this.base.agent,
       kind,
-      payload: compact(payload),
+      // A call that loads a skill says which (payload.skill, payload.skills; _shared/tools.ts skillLoadsOf).
+      payload: compact(kind === "tool.start" && payload.skill === undefined ? { ...payload, ...skillFieldsOf(payload.tool, payload.input) } : payload),
     };
     for (const k of ["cwd", "model", "agentVersion", "runId", "turnId", "subagentId"] as const) {
       const v = this.base[k];

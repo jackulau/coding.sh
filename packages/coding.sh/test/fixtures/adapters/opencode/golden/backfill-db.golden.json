@@ -1,0 +1,140 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "ts": 1794037379895,
+    "payload": {
+      "source": "store",
+      "title": "Done. I wrote hello.txt."
+    },
+    "id": "ec765636b6ceea6635b1edc80303da1f56d5f37effd665a256838400aec1498c",
+    "cwd": "/work/demo",
+    "agentVersion": "1.19.5"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "ts": 1794037379961,
+    "payload": {
+      "text": "\"create hello.txt\""
+    },
+    "id": "6368dfaebf0739e6eb748527900400d1bf94d51906116d45e1f86666dc4f29e6",
+    "cwd": "/work/demo",
+    "agentVersion": "1.19.5"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "ts": 1794037381358,
+    "payload": {
+      "tool": "write",
+      "toolUseId": "call_mw63javu3",
+      "input": {
+        "filePath": "hello.txt",
+        "file_path": "hello.txt",
+        "path": "hello.txt",
+        "content": "hello from stub\n"
+      }
+    },
+    "id": "3c08effc689a870d5b0cbb1e18147bb6056fd31344da47adaf29daa943fd7734",
+    "model": "stub-model",
+    "cwd": "/work/demo",
+    "agentVersion": "1.19.5"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "ts": 1794037381373,
+    "payload": {
+      "tool": "write",
+      "toolUseId": "call_mw63javu3",
+      "ok": true,
+      "durationMs": 15,
+      "output": "Wrote file successfully.",
+      "title": "work/demo/hello.txt"
+    },
+    "id": "449a66f9b7fc0e497600cdc6e03b60992481ccf2f23daa8f38838cc74adbeb60",
+    "model": "stub-model",
+    "durationMs": 15,
+    "cwd": "/work/demo",
+    "agentVersion": "1.19.5"
+  },
+  {
+    "kind": "file.change",
+    "sessionId": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "ts": 1794037381373,
+    "payload": {
+      "path": "hello.txt",
+      "op": "add",
+      "additions": 1,
+      "deletions": 0,
+      "tool": "write",
+      "toolUseId": "call_mw63javu3",
+      "diff": "--- /dev/null\n+++ b/hello.txt\n@@ -0,0 +1,1 @@\n+hello from stub\n"
+    },
+    "id": "e6d0190c399b9ce19bca1905615778ada13110db1158de25a40d16d3c82250ca",
+    "model": "stub-model",
+    "cwd": "/work/demo",
+    "agentVersion": "1.19.5"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "ts": 1794037380585,
+    "payload": {
+      "provider": "stub",
+      "responseModel": "stub-model",
+      "stopReason": "tool-calls",
+      "ok": true,
+      "messageId": "msg_1b4f5f5e9001gOcyu65PX0jVOt"
+    },
+    "id": "687ed8c93442dac0aabf3b4cc4d7b5f2e0a1f951fcd2c9d0d1f81ec6d04511a3",
+    "model": "stub-model",
+    "durationMs": 801,
+    "usage": {
+      "inputTokens": 120,
+      "outputTokens": 30,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "costUsd": 0
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "1.19.5"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "ts": 1794037381432,
+    "payload": {
+      "text": "Done. I wrote hello.txt."
+    },
+    "id": "a9130310d66255f204edf6c9cc1c74cddc0e653248d4fd1f7f52394f14e1e1f2",
+    "model": "stub-model",
+    "cwd": "/work/demo",
+    "agentVersion": "1.19.5"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "ses_e4b0a0cc8ffe19CiWeM0N8wEWa",
+    "ts": 1794037381390,
+    "payload": {
+      "provider": "stub",
+      "responseModel": "stub-model",
+      "stopReason": "stop",
+      "ok": true,
+      "messageId": "msg_1b4f5f90e001xvS3RKcqq0Irux"
+    },
+    "id": "a996858355057aba6ff1f264bf9c4039262e920520b4c81b3cd5c6f99b88bb4c",
+    "model": "stub-model",
+    "durationMs": 55,
+    "usage": {
+      "inputTokens": 120,
+      "outputTokens": 30,
+      "cacheReadTokens": 0,
+      "cacheWriteTokens": 0,
+      "costUsd": 0
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "1.19.5"
+  }
+]

@@ -1,0 +1,792 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          {
+            "key": "service.name",
+            "value": {
+              "stringValue": "github-copilot"
+            }
+          },
+          {
+            "key": "service.instance.id",
+            "value": {
+              "stringValue": "copilot-otel-314541-0"
+            }
+          },
+          {
+            "key": "service.version",
+            "value": {
+              "stringValue": "1.0.107"
+            }
+          }
+        ],
+        "droppedAttributesCount": 0,
+        "entityRefs": []
+      },
+      "scopeSpans": [
+        {
+          "scope": {
+            "name": "github.copilot",
+            "version": "1.0.107",
+            "attributes": [],
+            "droppedAttributesCount": 0
+          },
+          "spans": [
+            {
+              "traceId": "52d64d522262bb7dfe0a8873681dae65",
+              "spanId": "4f2aa7a20e086607",
+              "traceState": "",
+              "parentSpanId": "0a20f5b72c7e2990",
+              "flags": 257,
+              "name": "chat stub-model",
+              "kind": 3,
+              "startTimeUnixNano": "1794197805743000000",
+              "endTimeUnixNano": "1794197805785000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "stub-model"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "30b31f8e-efe1-43bd-b49c-ea31a3a8d520"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.stream",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "server.address",
+                  "value": {
+                    "stringValue": "127.0.0.1"
+                  }
+                },
+                {
+                  "key": "server.port",
+                  "value": {
+                    "intValue": "35491"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "tool_calls"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "120"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "30"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.model",
+                  "value": {
+                    "stringValue": "stub-model"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.id",
+                  "value": {
+                    "stringValue": "chatcmpl_mw8r1r6b0"
+                  }
+                },
+                {
+                  "key": "github.copilot.cost",
+                  "value": {
+                    "doubleValue": 0.0
+                  }
+                },
+                {
+                  "key": "github.copilot.server_duration",
+                  "value": {
+                    "doubleValue": 40.0
+                  }
+                },
+                {
+                  "key": "github.copilot.initiator",
+                  "value": {
+                    "stringValue": "user"
+                  }
+                },
+                {
+                  "key": "github.copilot.turn_id",
+                  "value": {
+                    "stringValue": "0"
+                  }
+                },
+                {
+                  "key": "github.copilot.interaction_id",
+                  "value": {
+                    "stringValue": "8bb75878-2a06-4e1a-a856-4436261e3a18"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.time_to_first_chunk",
+                  "value": {
+                    "doubleValue": 0.039559479
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "links": [],
+              "droppedLinksCount": 0,
+              "status": {
+                "message": "",
+                "code": 0
+              }
+            },
+            {
+              "traceId": "52d64d522262bb7dfe0a8873681dae65",
+              "spanId": "ecdb4a89111e6e8c",
+              "traceState": "",
+              "parentSpanId": "0a20f5b72c7e2990",
+              "flags": 257,
+              "name": "chat stub-model",
+              "kind": 3,
+              "startTimeUnixNano": "1794197805933000000",
+              "endTimeUnixNano": "1794197805937000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "chat"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.model",
+                  "value": {
+                    "stringValue": "stub-model"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "30b31f8e-efe1-43bd-b49c-ea31a3a8d520"
+                  }
+                },
+                {
+                  "key": "gen_ai.request.stream",
+                  "value": {
+                    "boolValue": true
+                  }
+                },
+                {
+                  "key": "server.address",
+                  "value": {
+                    "stringValue": "127.0.0.1"
+                  }
+                },
+                {
+                  "key": "server.port",
+                  "value": {
+                    "intValue": "35491"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "stop"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "120"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "30"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.model",
+                  "value": {
+                    "stringValue": "stub-model"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.id",
+                  "value": {
+                    "stringValue": "chatcmpl_mw8r1ral2"
+                  }
+                },
+                {
+                  "key": "github.copilot.cost",
+                  "value": {
+                    "doubleValue": 0.0
+                  }
+                },
+                {
+                  "key": "github.copilot.server_duration",
+                  "value": {
+                    "doubleValue": 4.0
+                  }
+                },
+                {
+                  "key": "github.copilot.initiator",
+                  "value": {
+                    "stringValue": "agent"
+                  }
+                },
+                {
+                  "key": "github.copilot.turn_id",
+                  "value": {
+                    "stringValue": "1"
+                  }
+                },
+                {
+                  "key": "github.copilot.interaction_id",
+                  "value": {
+                    "stringValue": "8bb75878-2a06-4e1a-a856-4436261e3a18"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.time_to_first_chunk",
+                  "value": {
+                    "doubleValue": 0.001124958
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [],
+              "droppedEventsCount": 0,
+              "links": [],
+              "droppedLinksCount": 0,
+              "status": {
+                "message": "",
+                "code": 0
+              }
+            },
+            {
+              "traceId": "52d64d522262bb7dfe0a8873681dae65",
+              "spanId": "0a20f5b72c7e2990",
+              "traceState": "",
+              "parentSpanId": "",
+              "flags": 257,
+              "name": "invoke_agent",
+              "kind": 1,
+              "startTimeUnixNano": "1794197805698000000",
+              "endTimeUnixNano": "1794197806017000000",
+              "attributes": [
+                {
+                  "key": "gen_ai.operation.name",
+                  "value": {
+                    "stringValue": "invoke_agent"
+                  }
+                },
+                {
+                  "key": "gen_ai.provider.name",
+                  "value": {
+                    "stringValue": "github"
+                  }
+                },
+                {
+                  "key": "gen_ai.conversation.id",
+                  "value": {
+                    "stringValue": "30b31f8e-efe1-43bd-b49c-ea31a3a8d520"
+                  }
+                },
+                {
+                  "key": "server.address",
+                  "value": {
+                    "stringValue": "127.0.0.1"
+                  }
+                },
+                {
+                  "key": "server.port",
+                  "value": {
+                    "intValue": "35491"
+                  }
+                },
+                {
+                  "key": "github.copilot.context.skills",
+                  "value": {
+                    "stringValue": "[\"customize-cloud-agent\",\"github-pr-media\",\"pr-stack\"]"
+                  }
+                },
+                {
+                  "key": "github.copilot.agent.type",
+                  "value": {
+                    "stringValue": "builtin"
+                  }
+                },
+                {
+                  "key": "github.copilot.context.mcp_server_names",
+                  "value": {
+                    "stringValue": "[]"
+                  }
+                },
+                {
+                  "key": "gen_ai.response.finish_reasons",
+                  "value": {
+                    "arrayValue": {
+                      "values": [
+                        {
+                          "stringValue": "stop"
+                        }
+                      ]
+                    }
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.input_tokens",
+                  "value": {
+                    "intValue": "240"
+                  }
+                },
+                {
+                  "key": "gen_ai.usage.output_tokens",
+                  "value": {
+                    "intValue": "60"
+                  }
+                },
+                {
+                  "key": "github.copilot.turn_count",
+                  "value": {
+                    "intValue": "2"
+                  }
+                }
+              ],
+              "droppedAttributesCount": 0,
+              "events": [
+                {
+                  "timeUnixNano": "1794197805698000000",
+                  "name": "github.copilot.hook.start",
+                  "attributes": [
+                    {
+                      "key": "github.copilot.hook.type",
+                      "value": {
+                        "stringValue": "sessionStart"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.invocation_id",
+                      "value": {
+                        "stringValue": "2db707a1-7f1c-4d81-9509-7ec8a0cd1677"
+                      }
+                    }
+                  ],
+                  "droppedAttributesCount": 0
+                },
+                {
+                  "timeUnixNano": "1794197805705000000",
+                  "name": "github.copilot.hook.start",
+                  "attributes": [
+                    {
+                      "key": "github.copilot.hook.type",
+                      "value": {
+                        "stringValue": "userPromptSubmitted"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.invocation_id",
+                      "value": {
+                        "stringValue": "b91fdcb3-fdd5-4cab-8460-626e32ff01ce"
+                      }
+                    }
+                  ],
+                  "droppedAttributesCount": 0
+                },
+                {
+                  "timeUnixNano": "1794197805735000000",
+                  "name": "github.copilot.hook.end",
+                  "attributes": [
+                    {
+                      "key": "github.copilot.hook.type",
+                      "value": {
+                        "stringValue": "sessionStart"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.invocation_id",
+                      "value": {
+                        "stringValue": "2db707a1-7f1c-4d81-9509-7ec8a0cd1677"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.duration",
+                      "value": {
+                        "doubleValue": 0.036997732
+                      }
+                    }
+                  ],
+                  "droppedAttributesCount": 0
+                },
+                {
+                  "timeUnixNano": "1794197805735000000",
+                  "name": "github.copilot.hook.end",
+                  "attributes": [
+                    {
+                      "key": "github.copilot.hook.type",
+                      "value": {
+                        "stringValue": "userPromptSubmitted"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.invocation_id",
+                      "value": {
+                        "stringValue": "b91fdcb3-fdd5-4cab-8460-626e32ff01ce"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.duration",
+                      "value": {
+                        "doubleValue": 0.03067068
+                      }
+                    }
+                  ],
+                  "droppedAttributesCount": 0
+                },
+                {
+                  "timeUnixNano": "1794197805737000000",
+                  "name": "github.copilot.user.message",
+                  "attributes": [
+                    {
+                      "key": "github.copilot.user.message.source",
+                      "value": {
+                        "stringValue": "user"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.user.message.interaction_id",
+                      "value": {
+                        "stringValue": "8bb75878-2a06-4e1a-a856-4436261e3a18"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.user.message.turn_id",
+                      "value": {
+                        "stringValue": "0"
+                      }
+                    }
+                  ],
+                  "droppedAttributesCount": 0
+                },
+                {
+                  "timeUnixNano": "1794197805742000000",
+                  "name": "github.copilot.session.usage_info",
+                  "attributes": [
+                    {
+                      "key": "github.copilot.token_limit",
+                      "value": {
+                        "intValue": "128000"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.current_tokens",
+                      "value": {
+                        "intValue": "12664"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.messages_length",
+                      "value": {
+                        "intValue": "3"
+                      }
+                    }
+                  ],
+                  "droppedAttributesCount": 0
+                },
+                {
+                  "timeUnixNano": "1794197805788000000",
+                  "name": "github.copilot.hook.start",
+                  "attributes": [
+                    {
+                      "key": "github.copilot.hook.type",
+                      "value": {
+                        "stringValue": "preToolUse"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.invocation_id",
+                      "value": {
+                        "stringValue": "162b4a86-96de-40a7-9d35-02502a20de68"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.tool_names",
+                      "value": {
+                        "stringValue": "[\"bash\"]"
+                      }
+                    }
+                  ],
+                  "droppedAttributesCount": 0
+                },
+                {
+                  "timeUnixNano": "1794197805823000000",
+                  "name": "github.copilot.hook.end",
+                  "attributes": [
+                    {
+                      "key": "github.copilot.hook.type",
+                      "value": {
+                        "stringValue": "preToolUse"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.invocation_id",
+                      "value": {
+                        "stringValue": "162b4a86-96de-40a7-9d35-02502a20de68"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.tool_names",
+                      "value": {
+                        "stringValue": "[\"bash\"]"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.decision",
+                      "value": {
+                        "stringValue": "allow"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.duration",
+                      "value": {
+                        "doubleValue": 0.035020908
+                      }
+                    }
+                  ],
+                  "droppedAttributesCount": 0
+                },
+                {
+                  "timeUnixNano": "1794197805891000000",
+                  "name": "github.copilot.hook.start",
+                  "attributes": [
+                    {
+                      "key": "github.copilot.hook.type",
+                      "value": {
+                        "stringValue": "postToolUse"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.invocation_id",
+                      "value": {
+                        "stringValue": "d704d963-a889-4ab3-82de-6b416e4bbc05"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.tool_names",
+                      "value": {
+                        "stringValue": "[\"bash\"]"
+                      }
+                    }
+                  ],
+                  "droppedAttributesCount": 0
+                },
+                {
+                  "timeUnixNano": "1794197805927000000",
+                  "name": "github.copilot.hook.end",
+                  "attributes": [
+                    {
+                      "key": "github.copilot.hook.type",
+                      "value": {
+                        "stringValue": "postToolUse"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.invocation_id",
+                      "value": {
+                        "stringValue": "d704d963-a889-4ab3-82de-6b416e4bbc05"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.tool_names",
+                      "value": {
+                        "stringValue": "[\"bash\"]"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.decision",
+                      "value": {
+                        "stringValue": "allow"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.duration",
+                      "value": {
+                        "doubleValue": 0.036253176
+                      }
+                    }
+                  ],
+                  "droppedAttributesCount": 0
+                },
+                {
+                  "timeUnixNano": "1794197805932000000",
+                  "name": "github.copilot.session.usage_info",
+                  "attributes": [
+                    {
+                      "key": "github.copilot.token_limit",
+                      "value": {
+                        "intValue": "128000"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.current_tokens",
+                      "value": {
+                        "intValue": "12723"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.messages_length",
+                      "value": {
+                        "intValue": "5"
+                      }
+                    }
+                  ],
+                  "droppedAttributesCount": 0
+                },
+                {
+                  "timeUnixNano": "1794197805940000000",
+                  "name": "github.copilot.hook.start",
+                  "attributes": [
+                    {
+                      "key": "github.copilot.hook.type",
+                      "value": {
+                        "stringValue": "agentStop"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.invocation_id",
+                      "value": {
+                        "stringValue": "279369c3-4e99-408a-a4d1-2183c364a441"
+                      }
+                    }
+                  ],
+                  "droppedAttributesCount": 0
+                },
+                {
+                  "timeUnixNano": "1794197805973000000",
+                  "name": "github.copilot.hook.end",
+                  "attributes": [
+                    {
+                      "key": "github.copilot.hook.type",
+                      "value": {
+                        "stringValue": "agentStop"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.invocation_id",
+                      "value": {
+                        "stringValue": "279369c3-4e99-408a-a4d1-2183c364a441"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.duration",
+                      "value": {
+                        "doubleValue": 0.032288808
+                      }
+                    }
+                  ],
+                  "droppedAttributesCount": 0
+                },
+                {
+                  "timeUnixNano": "1794197805973000000",
+                  "name": "github.copilot.hook.start",
+                  "attributes": [
+                    {
+                      "key": "github.copilot.hook.type",
+                      "value": {
+                        "stringValue": "sessionEnd"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.invocation_id",
+                      "value": {
+                        "stringValue": "8c1aedc8-0d2f-4491-97b9-41acd42a0305"
+                      }
+                    }
+                  ],
+                  "droppedAttributesCount": 0
+                },
+                {
+                  "timeUnixNano": "1794197806005000000",
+                  "name": "github.copilot.hook.end",
+                  "attributes": [
+                    {
+                      "key": "github.copilot.hook.type",
+                      "value": {
+                        "stringValue": "sessionEnd"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.invocation_id",
+                      "value": {
+                        "stringValue": "8c1aedc8-0d2f-4491-97b9-41acd42a0305"
+                      }
+                    },
+                    {
+                      "key": "github.copilot.hook.duration",
+                      "value": {
+                        "doubleValue": 0.032466829
+                      }
+                    }
+                  ],
+                  "droppedAttributesCount": 0
+                }
+              ],
+              "droppedEventsCount": 0,
+              "links": [],
+              "droppedLinksCount": 0,
+              "status": {
+                "message": "",
+                "code": 0
+              }
+            }
+          ],
+          "schemaUrl": ""
+        }
+      ],
+      "schemaUrl": "https://opentelemetry.io/schemas/1.45.0"
+    }
+  ]
+}

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
-import { AGY_HOOK_EVENTS, antigravityAdapter } from "../../../src/adapters/more/antigravity.ts";
+import { AGY_HOOK_EVENTS, agyResultMeta, antigravityAdapter } from "../../../src/adapters/more/antigravity.ts";
 import type { TmpEnv } from "../_helpers.ts";
 import { assertGolden, assertInstallRoundTrip, assertRunOk, assertWellFormed, collect, fakeBinary, FIXTURES, HOOK, moreEnv, normalizeFixture, readArgv, runSpec, summarize, testCtx, writeFile } from "./_helpers.ts";
 
@@ -38,7 +38,10 @@ describe("antigravity backfill", () => {
     assert.equal(events.filter((e) => e.kind === "turn.end").length, 2);
     assert.equal(events.filter((e) => e.kind === "llm.call").length, 4, "one per planner step");
     const ends = events.filter((e) => e.kind === "tool.end");
-    assert.deepEqual(ends.map((e) => [e.payload.tool, e.payload.toolUseId, e.durationMs]), [["write_to_file", "step-2", 500], ["run_command", "step-4", 2000], ["invoke_subagent", "step-9", 3000]]);
+    // write_to_file: its header says 0 s, so the steps time it; run_command: its header's Created/Completed At.
+    assert.deepEqual(ends.map((e) => [e.payload.tool, e.payload.toolUseId, e.durationMs]), [["write_to_file", "step-2", 500], ["run_command", "step-4", 3000], ["invoke_subagent", "step-9", 3000]]);
+    // "The command exited with code 2." fails the call.
+    assert.deepEqual(ends.map((e) => [e.payload.ok, e.payload.exitCode, e.payload.error]), [[true, undefined, undefined], [false, 2, "exit code 2"], [true, undefined, undefined]]);
     const subEnd = events.find((e) => e.kind === "subagent.end")!;
     assert.deepEqual([subEnd.payload.subagentId, subEnd.payload.type, subEnd.payload.ok, subEnd.durationMs], ["step-9", "researcher", true, 3000]);
     assert.equal(events.find((e) => e.kind === "file.change")!.payload.path, "/work/demo/src/parse.ts");
@@ -100,5 +103,17 @@ describe("antigravity run", () => {
     assert.equal(r.sessionId, "agy-run-1");
     assert.deepEqual(r.usage, { inputTokens: 50, outputTokens: 5, cacheReadTokens: 10 });
     assert.deepEqual(readArgv(bin, "agy").argv, ["-p", "fix the bug", "--output-format", "stream-json", "--dangerously-skip-permissions", "--model", "gemini-3-pro"]);
+  });
+});
+
+describe("antigravity tool result header", () => {
+  it("reads exit code and Created/Completed At", () => {
+    const head = (a: string, b: string, rest: string) => `Created At: ${a}\nCompleted At: ${b}\n\n${rest}`;
+    assert.deepEqual(agyResultMeta(head("2026-09-21T18:10:21-05:00", "2026-09-21T18:10:23-05:00", "The command exited with code 1.\nStdout:\n\nStderr:\n\n")), { durationMs: 2000, exitCode: 1 });
+    assert.deepEqual(agyResultMeta(head("2026-09-14T11:47:19-05:00", "2026-09-14T11:47:19-05:00", "The command exited with code 0.\nOutput:\nok\n")), { durationMs: 0, exitCode: 0 });
+    assert.deepEqual(agyResultMeta("The command exited with code -1.\n"), { exitCode: -1 });
+    // Only the header counts: an exit line inside the output is not the call's.
+    assert.deepEqual(agyResultMeta(head("2026-09-14T11:47:19-05:00", "x", `Output:\n${"y".repeat(600)}\nThe command exited with code 3.`)), {});
+    assert.deepEqual(agyResultMeta("Created file /work/demo/a.ts"), {});
   });
 });
