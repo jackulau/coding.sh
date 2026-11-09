@@ -97,6 +97,29 @@ describe("compareToolArms", () => {
     assert.ok(r.metrics.turns!.diff.lo > 0);
     const m = r.regressions.find((x) => x.kind === "metric" && x.metric === "turns");
     assert.ok(m, "turns regression listed");
+    assert.ok(r.metrics.turns!.p < 0.001);
+    assert.match(m.detail, /perm p < 0\.001\)/);
+  });
+
+  it("+2 turns on 3 tasks is not a regression: the CI is a point, the exact permutation p is 1/4", () => {
+    const ts: TrialResult[] = [];
+    for (let t = 0; t < 3; t++) {
+      ts.push(trial(`t${t}`, "base", D, 1, true, { turns: 4 }));
+      ts.push(trial(`t${t}`, "terse", D, 1, true, { turns: 6 }));
+    }
+    const r = compareToolArms(ts, { baseline: `base@${D}`, candidate: `terse@${D}` });
+    const turns = r.metrics.turns!;
+    assert.deepEqual([turns.diff.lo, turns.diff.hi], [2, 2]);
+    assert.equal(turns.p, 0.25);
+    assert.equal(turns.verdict, "inconclusive");
+    assert.equal(r.regressions.filter((x) => x.kind === "metric").length, 0);
+    assert.ok(r.notes.includes("turns: the CI excludes 0, but the exact permutation test over 3 tasks gives p = 0.250, so it is not called a change"), r.notes.join("\n"));
+    // 6 tasks that each take 2 more turns: p = 2/2⁶, a regression.
+    const six: TrialResult[] = [];
+    for (let t = 0; t < 6; t++) six.push(trial(`t${t}`, "base", D, 1, true, { turns: 4 }), trial(`t${t}`, "terse", D, 1, true, { turns: 6 }));
+    const r6 = compareToolArms(six, { baseline: `base@${D}`, candidate: `terse@${D}` });
+    assert.equal(r6.metrics.turns!.p, 2 / 64);
+    assert.equal(r6.metrics.turns!.verdict, "worse");
   });
 
   it("compares drivers on one variant, skips llm latency across latency sources, rejects two-factor pairs", () => {

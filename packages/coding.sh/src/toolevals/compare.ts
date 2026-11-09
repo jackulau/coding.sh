@@ -111,12 +111,17 @@ function decide(paired: number, boot: BootstrapResult, mcn: McNemarResult, alpha
   };
 }
 
-/** Lower is better for every continuous metric. */
-function metricVerdict(d: BootstrapResult): VerdictKind {
+/**
+ * Lower is better for every continuous metric. A change needs the bootstrap CI
+ * to exclude 0 and the exact paired permutation p to be below alpha: with a few
+ * tasks that all move the same way the CI is a single point, so the CI alone
+ * would call +2 turns on 3 tasks worse at an exact p of 0.25.
+ */
+function metricVerdict(d: BootstrapResult, p: number, alpha: number): VerdictKind {
   if (d.n === 0 || !Number.isFinite(d.lo)) return "inconclusive";
-  if (d.hi < 0) return "better";
-  if (d.lo > 0) return "worse";
-  return "no-difference";
+  if (d.hi >= 0 && d.lo <= 0) return "no-difference";
+  if (!(p < alpha)) return "inconclusive";
+  return d.hi < 0 ? "better" : "worse";
 }
 
 const rel = (a: number, b: number) => (a ? (b - a) / a : b === 0 ? 0 : NaN);
@@ -219,14 +224,16 @@ export function compareToolArms(trials: readonly TrialResult[], o: CompareToolOp
       perTask.push({ id, a: median(va), b: median(vb) });
     }
     if (!perTask.length) continue;
-    const d = pairedBootstrap(
-      perTask.map((x) => x.b - x.a),
-      { iters: o.iters, seed: o.seed, alpha },
-    );
+    const taskDiffs = perTask.map((x) => x.b - x.a);
+    const d = pairedBootstrap(taskDiffs, { iters: o.iters, seed: o.seed, alpha });
+    const exact = pairedPermutation(taskDiffs, { seed: o.seed });
     const am = mean(perTask.map((x) => x.a));
     const bm = mean(perTask.map((x) => x.b));
-    const verdict = metricVerdict(d);
-    metrics[m] = { baseline: am, candidate: bm, diff: d, relative: rel(am, bm), verdict, n: perTask.length };
+    const verdict = metricVerdict(d, exact.p, alpha);
+    metrics[m] = { baseline: am, candidate: bm, diff: d, p: exact.p, relative: rel(am, bm), verdict, n: perTask.length };
+    if (verdict === "inconclusive" && d.n > 0) {
+      notes.push(`${m}: the CI excludes 0, but the exact permutation test over ${perTask.length} task${perTask.length === 1 ? "" : "s"} gives ${pval(exact.p)}, so it is not called a change`);
+    }
     if (verdict === "worse") {
       const worst = perTask.reduce((p, c) => (c.b - c.a > p.b - p.a ? c : p));
       const ra = ta.get(worst.id)!;
@@ -235,7 +242,7 @@ export function compareToolArms(trials: readonly TrialResult[], o: CompareToolOp
         taskId: worst.id,
         kind: "metric",
         metric: m,
-        detail: `${m} up ${fmtNum(d.mean)} per task (CI [${fmtNum(d.lo)}, ${fmtNum(d.hi)}]); worst task ${fmtNum(worst.a)} → ${fmtNum(worst.b)}`,
+        detail: `${m} up ${fmtNum(d.mean)} per task (CI [${fmtNum(d.lo)}, ${fmtNum(d.hi)}], perm ${pval(exact.p)}); worst task ${fmtNum(worst.a)} → ${fmtNum(worst.b)}`,
         baselineTrials: ra.map(link),
         candidateTrials: rb.map(link),
         firstDivergence: divergence(ra[0], rb[0], o.events),

@@ -313,8 +313,13 @@ export interface ToolMetricDelta {
   candidate: number;
   /** Paired bootstrap over per-task median differences (candidate − baseline). */
   diff: BootstrapResult;
+  /** Exact two-sided paired permutation p on the same per-task differences (Monte Carlo above 20 tasks). */
+  p: number;
   relative: number;
-  /** All these metrics are lower-is-better. */
+  /**
+   * All these metrics are lower-is-better. "better" or "worse" needs the CI to
+   * exclude 0 and p below alpha; a CI that excludes 0 without that is "inconclusive".
+   */
   verdict: VerdictKind;
   n: number;
 }

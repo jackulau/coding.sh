@@ -411,13 +411,18 @@ tie-break.
   attempt-aligned trials. It is reported only; the verdict rules are unchanged (AT-AT, arXiv
   2610.34679).
 - Continuous metrics (`turns`, `tokens`, `costUsd`, `wallMs`, `invalidRate`, `helpLookups`,
-  `llmP95Ms`, `targetLatencyP95Ms`): per-task median difference → `pairedBootstrap`.
+  `llmP95Ms`, `targetLatencyP95Ms`): per-task median difference → `pairedBootstrap`, plus
+  `pairedPermutation` on the same differences (`metrics.<name>.p`). A metric is `better` or `worse`
+  only when the CI excludes 0 and that p is below alpha. When the CI excludes 0 but the p does not,
+  the metric is `inconclusive` and a note says so: 3 tasks that each take 2 more turns give a CI of
+  [2, 2] and p 0.25. The exact test needs at least 6 tasks that changed.
 - Surface metrics are deterministic per variant and are reported as absolute and relative deltas.
 - Verdict wording follows `VerdictKind`: `better`, `worse`, `no-difference` or `inconclusive`.
 - Regressions list:
   - With k ≥ 2: tasks where the candidate's pass count is lower by ≥ ⌈k/2⌉.
   - With k = 1: pass → fail.
-  - Metric regressions: the bootstrap CI excludes 0 in the bad direction.
+  - Metric regressions: a metric whose verdict is `worse` (the CI excludes 0 in the bad direction
+    and the permutation p is below alpha).
   - Each entry links to both trials' sessions and to the first divergence (`firstDivergence`).
 
 ### 8.3 Description compression mode
