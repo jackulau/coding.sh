@@ -1,6 +1,7 @@
 // AC-9: exp run --seq K, sequential attempts with grader feedback. Function,
 // command (a node script) and HTTP (a local server) tasks; temp dirs only.
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -315,7 +316,7 @@ describe("exp compare with --seq runs", () => {
 describe("exp run --seq from the CLI", () => {
   let root = "";
   let env: NodeJS.ProcessEnv = {};
-  const CLI = new URL("../../src/cli/main.ts", import.meta.url).pathname;
+  const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
   const cli = (args: string[]) => spawnSync(process.execPath, ["--no-warnings", CLI, ...args], { env, cwd: root, encoding: "utf8", timeout: 120_000 });
   before(async () => {
     root = realpathSync(await mkdtemp(join(tmpdir(), "csh-seq-cli-")));

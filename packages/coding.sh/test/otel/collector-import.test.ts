@@ -3,6 +3,7 @@
 // one document (errors go to stderr), a second run imports nothing, --dry-run writes nothing, and a
 // bad URL or bad credentials is an error with next steps.
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +12,7 @@ import { after, before, describe, it } from "node:test";
 import { decodeTraceJson } from "../../src/otel/json.ts";
 import { type StubClickHouse, stubClickHouse, toRows } from "./_clickhouse.ts";
 
-const MAIN = new URL("../../src/cli/main.ts", import.meta.url).pathname;
+const MAIN = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
 const PASSWORD = ["pa", "ss"].join("");
 const rows = toRows(decodeTraceJson(JSON.parse(readFileSync(new URL("../fixtures/otel/claude-code-traces.json", import.meta.url), "utf8"))), "map");
 

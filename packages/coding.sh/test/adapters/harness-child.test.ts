@@ -32,7 +32,7 @@ function home(edit: (line: SpoolLine) => SpoolLine = (l) => l): string {
   for (const f of readdirSync(root, { recursive: true })) {
     const p = join(root, String(f));
     if (!/\.jsonl?$/.test(p)) continue;
-    let text = readFileSync(p, "utf8").split("/home/user").join(root);
+    let text = readFileSync(p, "utf8").split("/home/user").join(JSON.stringify(root).slice(1, -1));
     if (p.includes(join(".coding.sh", "spool")) && p.endsWith(".jsonl"))
       text = text
         .split("\n")

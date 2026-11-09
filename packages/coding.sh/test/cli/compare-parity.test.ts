@@ -3,6 +3,8 @@
 import assert from "node:assert/strict";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { diffParity, readPage, type ParitySide } from "../../src/cli/commands/compare-parity.ts";
 import { tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
@@ -113,7 +115,10 @@ describe("compare --parity", () => {
 
   test("a command's stdout is a page too; a redirect is a difference against it", async () => {
     const html = page({ canonical: "https://example.com/docs", type: "TechArticle", host: "https://example.com" });
-    const cmd = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(`process.stdout.write(${JSON.stringify(html)})`)}`;
+    // The page is printed by a script file: its text would need quoting that sh and cmd.exe do not share.
+    const script = join(env.home, "page.cjs");
+    writeFileSync(script, `process.stdout.write(${JSON.stringify(html)});\n`);
+    const cmd = `"${process.execPath}" "${script}"`;
     const r = await cli(["compare", "--parity", cmd, `${a}/`, "--json"]);
     assert.equal(r.status, 1, r.stderr);
     const fields = JSON.parse(r.stdout).diffs.map((d: { field: string }) => d.field);
