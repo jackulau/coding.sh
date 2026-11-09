@@ -631,9 +631,16 @@ export async function benchViewer({ cli = CLI, events = 5000, runs = 3 } = {}) {
       return { "perf.viewerTti": Math.round(median(vals)), method: "lighthouse interactive", detail: { runs: vals.map(Math.round), events: corpus.events } };
     }
     const profile = join(root, "chrome");
-    browser = spawn(chrome, ["--headless=new", "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--disable-extensions", "--disable-background-networking", "--disable-sync", "--metrics-recording-only", "--mute-audio", "about:blank"], { stdio: "ignore" });
+    // Chrome will not start as root without --no-sandbox (the desk's WSL runs benches as root).
+    const sandbox = process.getuid?.() === 0 ? ["--no-sandbox"] : [];
+    browser = spawn(chrome, ["--headless=new", ...sandbox, "--remote-debugging-port=0", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--disable-extensions", "--disable-background-networking", "--disable-sync", "--metrics-recording-only", "--mute-audio", "about:blank"], { stdio: ["ignore", "ignore", "pipe"] });
+    let chromeErr = "";
+    browser.stderr.on("data", (d) => (chromeErr = (chromeErr + d).slice(-2000)));
     const portFile = join(profile, "DevToolsActivePort");
-    const [port, path] = (await waitFor(() => existsSync(portFile) && readFileSync(portFile, "utf8").trim().split("\n").length >= 2 && readFileSync(portFile, "utf8"), 20_000, "chrome devtools port")).trim().split("\n");
+    const portText = await waitFor(() => existsSync(portFile) && readFileSync(portFile, "utf8").trim().split("\n").length >= 2 && readFileSync(portFile, "utf8"), 20_000, "chrome devtools port").catch((e) => {
+      throw new Error(`${e.message}; chrome stderr: ${chromeErr.trim().split("\n").slice(-3).join(" | ") || "(none)"}`);
+    });
+    const [port, path] = portText.trim().split("\n");
     const c = await cdp(`ws://127.0.0.1:${port}${path}`);
     const vals = [];
     const detail = [];
