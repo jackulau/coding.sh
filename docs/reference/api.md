@@ -34,7 +34,7 @@ to encode it (the viewer always encodes ids). A read key scoped to one project s
 are filtered, other sessions answer 404, and eval data (tasks, runs, bundles, experiments) comes back
 empty. A `*` read key sees every project and can filter with `?project=`.
 
-**Content types.** Requests: `application/json` for `/v1/ingest` and `POST /api/labels`;
+**Content types.** Requests: `application/json` for `/v1/ingest`, `POST /api/labels`, `POST /api/scores` and `POST /api/score-configs`;
 `application/json` or `application/x-protobuf` for OTLP. Ingest bodies may use `Content-Encoding`
 `gzip`, `deflate` or `br`. Responses are JSON, except the viewer page (HTML), `/metrics` (Prometheus
 text), blobs (`text/plain`) and OTLP protobuf requests (answered in protobuf).
@@ -46,7 +46,7 @@ text), blobs (`text/plain`) and OTLP protobuf requests (answered in protobuf).
 | Ingest body, before and after decompression | 16 MiB (16777216 bytes) |
 | Events per `/v1/ingest` request | 10,000 |
 | Ingest queue | 50,000 events or 128 MiB (`CODING_SH_QUEUE_MAX_EVENTS`, `CODING_SH_QUEUE_MAX_BYTES`) |
-| `POST /api/labels` body | 1 MB |
+| `POST /api/labels`, `/api/scores`, `/api/score-configs` body | 1 MB |
 | Blob response | 2 MiB unless `?full=1` |
 | Request headers / whole request | 20 s / 120 s |
 
@@ -91,25 +91,38 @@ same `CODING_SH_HOME` as the server.
 | GET | [`/api/sessions/{id}`](#get-apisessionsid) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/events`](#get-apisessionsidevents) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/outline`](#get-apisessionsidoutline) | read key or basic auth | serve, ui |
+| GET | [`/api/sessions/{id}/rows`](#get-apisessionsidrows) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/tree`](#get-apisessionsidtree) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/replay`](#get-apisessionsidreplay) | read key or basic auth | serve, ui |
 | GET | [`/api/sessions/{id}/fork`](#get-apisessionsidfork-post-apisessionsidfork) | ui token | ui |
 | POST | [`/api/sessions/{id}/fork`](#get-apisessionsidfork-post-apisessionsidfork) | ui token | ui |
+| GET | [`/api/playground`](#get-apiplayground-get-apiplaygroundcallsid-post-apiplaygroundrun-post-apiplaygroundsave) | ui token | ui |
+| GET | [`/api/playground/calls/{id}`](#get-apiplayground-get-apiplaygroundcallsid-post-apiplaygroundrun-post-apiplaygroundsave) | ui token | ui |
+| POST | [`/api/playground/run`](#get-apiplayground-get-apiplaygroundcallsid-post-apiplaygroundrun-post-apiplaygroundsave) | ui token | ui |
+| POST | [`/api/playground/save`](#get-apiplayground-get-apiplaygroundcallsid-post-apiplaygroundrun-post-apiplaygroundsave) | ui token | ui |
 | GET | [`/api/blobs/{sha256}`](#get-apiblobssha256) | read key or basic auth | serve, ui |
 | GET | [`/api/calls/{id}`](#get-apicallsid) | read key or basic auth | serve, ui |
 | GET | [`/api/calls/{id}/diff`](#get-apicallsiddiff) | read key or basic auth | serve, ui |
 | GET | [`/api/search`](#get-apisearch) | read key or basic auth | serve, ui |
 | GET | [`/api/stats`](#get-apistats) | read key or basic auth | serve, ui |
+| GET | [`/api/metrics`](#get-apimetrics) | read key or basic auth | serve, ui |
 | GET | [`/api/facets`](#get-apifacets) | read key or basic auth | serve, ui |
 | GET | [`/api/events`](#get-apievents) | read key or basic auth | serve, ui |
+| GET | [`/api/events/{id}`](#get-apieventsid) | read key or basic auth | serve, ui |
 | GET | [`/api/where`](#get-apiwhere) | read key or basic auth | serve, ui |
 | GET | [`/api/labels`](#get-apilabels) | read key or basic auth | serve, ui |
 | POST | [`/api/labels`](#post-apilabels) | read key or basic auth | serve, ui |
+| GET | [`/api/scores`](#get-apiscores) | read key or basic auth | serve, ui |
+| POST | [`/api/scores`](#post-apiscores) | read key or basic auth | serve, ui |
+| GET | [`/api/score-configs`](#get-apiscore-configs-post-apiscore-configs) | read key or basic auth | serve, ui |
+| POST | [`/api/score-configs`](#get-apiscore-configs-post-apiscore-configs) | read key or basic auth | serve, ui |
 | GET | [`/api/experiments`](#get-apiexperiments) | read key or basic auth | serve, ui |
 | GET | [`/api/experiments/{id}`](#get-apiexperimentsid) | read key or basic auth | serve, ui |
 | GET | [`/api/compare`](#get-apicompare) | read key or basic auth | serve, ui |
 | GET | [`/api/benchmarks`](#get-apibenchmarks) | read key or basic auth | serve, ui |
 | GET | [`/api/benchmarks/{name}`](#get-apibenchmarksname) | read key or basic auth | serve, ui |
+| GET | [`/api/workflows`](#get-apiworkflows) | read key or basic auth | serve, ui |
+| GET | [`/api/workflows/{id}`](#get-apiworkflowsid) | read key or basic auth | serve, ui |
 | GET | [`/api/tasks`](#get-apitasks-get-apiruns-get-apibundles) | read key or basic auth | serve, ui |
 | GET | [`/api/runs`](#get-apitasks-get-apiruns-get-apibundles) | read key or basic auth | serve, ui |
 | GET | [`/api/bundles`](#get-apitasks-get-apiruns-get-apibundles) | read key or basic auth | serve, ui |
@@ -389,6 +402,12 @@ Location: /
 A missing or wrong key gets a 401 HTML page that explains how to sign in, with
 `WWW-Authenticate: Basic` when basic auth is configured. Other methods get 405.
 
+The page arrives with the first sessions page drawn as rows, so the list shows before its script
+runs, and without JavaScript. It also embeds, in a `<script type="application/json"
+id="boot-data">` element, the responses the page asks for first (`/api/sessions`, `/api/stats`,
+`/api/facets` and `/api/where` with their default parameters), and the first row's session when it
+has 400 events or fewer. The script reads each one once instead of fetching it.
+
 ## Read API
 
 All `/api/*` routes take a read key or basic auth, answer JSON with `Cache-Control: no-store`, and
@@ -494,6 +513,12 @@ used, and `payload.priceTier` when it was priced at batch, flex, priority, fast,
 enclosing call or an earlier copy of the same response already counted it. `stats.llmErrors`
 (`count`, plus the first failure's `statusCode` and `error`) counts `llm.call` events with
 `ok: false` or a status of 400 or more; it is absent when none failed.
+
+`parent` is set on a child session: `sessionId`, plus `eventId`, `subagentId` and `type` when known.
+`type` is the subagent type (`explore`, …), or `"harness"` for an agent started by another agent's
+shell tool (`codex exec` from Claude Code's Bash tool). Such a child's `session.start` payload
+also carries `parentSessionId`, `parentAgent`, `subagentType: "harness"`, and `parentToolCallId`
+when Codex started it.
 
 `model` is the model that made most of the session's main-thread model calls (calls without a
 `subagentId`; the earlier one on a tie), else the last model any event named. `stats.models`
@@ -620,6 +645,14 @@ agent, the first and last event times, the cwd and `stats.events`. The session a
 `fold:error` tag. The text is the error, at most 500 characters. `coding.sh ingest` folds these
 sessions again, and `coding.sh doctor` counts them. It is absent when the fold worked.
 
+`stats.toolErrors` counts tool calls that really failed. A shell search that found nothing (`grep`,
+`rg`, `git grep` and the like exiting 1 with no output), a probe that answered no (`test -f`,
+`which`, `command -v`) and a `diff`, `cmp` or `git diff --exit-code` that found differences are not
+errors: `stats.benignToolErrors` counts them. A call the user or the agent stopped (exit 130, or an
+interrupted result) is counted in `stats.interruptedToolCalls`. Both are absent when zero. The same
+rule decides `repeated-tool-failure`, which only counts real failures, and each phase's `toolErrors`
+in the outline. Sessions stored before this rule are counted again on the next ingest.
+
 A missing session, or one outside a scoped key's project, gets 404:
 
 ```sh
@@ -678,7 +711,50 @@ curl -sS "$CSH/api/sessions/team%2Fchat-1/outline" -H "Authorization: Bearer $RE
   "days": [{"date": "2026-11-04", "ts": 1793872802000, "index": 0, "eventId": "54b366d0…"}],
   "derails": [{"flag": "failure-streak", "ts": 1793877000000, "eventId": "c41e88a0…", "index": 2210,
                "endTs": 1793877090000, "detail": "6 failed tool calls in a row (Bash)"}],
-  "events": 3600
+  "events": 3600,
+  "turns": {"count": 8, "lengths": [412, 260, 1168, 300, 512, 220, 410, 318], "failed": [2, 4]},
+  "failures": {"count": 40, "at": [655, 1902, 1904]},
+  "compactions": [1840],
+  "subagents": {"count": 1, "items": [{"id": "a33e97aa…", "start": 2950, "end": 3011, "type": "general-purpose", "childSessionId": "…"}]},
+  "minimap": {"size": 30, "rows": [[30, 0, 12, 0], [30, 2, 14, 0]]}
+}
+```
+
+The span fields come from the session's span model. A turn starts at each prompt of the main
+agent (or a turn id not seen before); a subagent's events stay in the turn that ran it. `turns.lengths`
+is the number of events in each turn, so a turn's first index is the sum of the lengths before it
+(at most 2,000 turns, with `"truncated": true` past that). `failures.at` lists the first 100 failed
+events: failed tool calls, errors, and model calls, subagents or test runs that failed. `minimap.rows`
+splits the session into at most 120 runs of `size` events, each `[events, failures, tool calls,
+compactions]`. A session over 20,000 events builds its model in the background the first time:
+that outline has `"spans": "building"` in place of the span fields. Sessions of 5,000 events or
+more keep their model in the index, so a restarted viewer does not build it again.
+
+### `GET /api/sessions/{id}/rows`
+
+One page of a turn's rows, for a timeline that shows a long session without loading it. Takes `turn`
+(from 0, default 0), `after` (the last event index already shown; the page starts after it), `limit`
+(1 to 1,000 rows, default 200) and `fold=0` to show every event. A run of 12 or more routine events
+(model calls, successful tool calls, spans, notifications) folds into one row, with its first and
+last three events left as rows. A fold never holds a failure, a prompt, a reply, a compaction, a
+subagent's start or end, a file change or a test result. Open a fold by asking for its range with
+`after=<from - 1>&fold=0`. `next`, when present, is the `after` of the next page. A `turn`, `after`
+or `limit` out of range is a 400.
+
+```sh
+curl -sS "$CSH/api/sessions/team%2Fchat-1/rows?turn=2&limit=3" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{
+  "turn": {"n": 2, "start": 672, "end": 1839, "ts": 1793874002000, "endTs": 1793876402000, "turnId": "7dc2…",
+           "prompt": "fix the flaky test", "tools": 380, "calls": 96, "failures": 3, "subagents": 0, "compactions": 0},
+  "rows": [
+    {"i": 672, "id": "54b3…", "kind": "user.message", "ts": 1793874002000, "label": "fix the flaky test"},
+    {"i": 673, "id": "9a1f…", "kind": "llm.call", "ts": 1793874004000, "label": "claude-opus-5-5", "durationMs": 2100},
+    {"fold": {"from": 674, "to": 701, "events": 28, "tools": 12, "calls": 4}}
+  ],
+  "next": 701
 }
 ```
 
@@ -825,6 +901,45 @@ action is not the recorded one.
 
 A step out of range, a session without stored requests, or a missing key gets 400 with the reason.
 
+### `GET /api/playground`, `GET /api/playground/calls/{id}`, `POST /api/playground/run`, `POST /api/playground/save`
+
+Rebuild one recorded model call as an editable request, send it again, and save it as a dataset
+case. Only `coding.sh ui` answers these routes; `coding.sh serve` answers 404.
+
+`GET /api/playground` lists the providers and the datasets a case can go to. A provider is
+`ready` when its key is set where `coding.sh ui` runs, or when its base URL is local:
+`anthropic` (Messages API; `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`), `openai` (Responses API)
+and `openai-compatible` (chat completions), both from `OPENAI_API_KEY` and `OPENAI_BASE_URL`.
+
+`GET /api/playground/calls/{id}?session=` rebuilds an `llm.call` event. With a request the proxy
+stored, `source` is `request` and `response` is the recorded answer. Without one, `source` is
+`transcript` and the request is the conversation before the call. Both are redacted. A call with
+neither gets 404 with reason `no_request`.
+
+```json
+{
+  "call": {"id": "7a1c…", "sessionId": "proxy-…", "ts": 1767000000000, "model": "gpt-4.1-mini", "api": "openai.chat"},
+  "source": "request",
+  "provider": "openai-compatible",
+  "request": {"model": "gpt-4.1-mini", "system": "Be terse.", "messages": [{"role": "user", "text": "2+2?"}],
+              "tools": [], "maxTokens": 1024},
+  "response": {"text": "4", "toolCalls": [], "stopReason": "stop", "usage": {"inputTokens": 40, "outputTokens": 7}}
+}
+```
+
+Messages are `{"role": "user", "text"}`, `{"role": "assistant", "text"?, "toolCalls"?: [{"id", "name", "input"}]}`
+or `{"role": "tool", "toolUseId", "name", "content", "isError"?}`.
+
+`POST /api/playground/run` with `{"provider": "openai-compatible", "request": {…}}` sends the
+request and returns the answer with `latencyMs` and, when the model has a price, `usage.costUsd`.
+It calls the model and costs money. `POST /api/playground/save` with `{"dataset": "arith",
+"request": {…}, "expected"?: {…}, "sessionId"?, "callId"?}` adds the request as a case (a frozen
+prefix, tagged `playground`) to a new version of the dataset, creating it when needed, and returns
+`{"datasetId", "name", "version", "caseId", "cases", "created"}`. The case is redacted. Both POSTs
+must come from the viewer's own origin and take bodies up to 8 MB. A bad request gets 400 with
+reason `invalid_request`, a missing key 400 with `missing_api_key`, and a provider failure 502
+with `provider_error`.
+
 ### `GET /api/blobs/{sha256}`
 
 The raw content behind a ref in an event's `blobs` array (full tool output, diffs, the source span).
@@ -851,6 +966,15 @@ X-Truncated: 0
 
 A ref that is not 64 lowercase hex characters gets 400 `{"error":"blob ref must be 64 lowercase hex chars","status":400}`;
 an unknown one gets 404 `{"error":"blob not found","status":404}`.
+
+`?range=a-b` (or a `Range: bytes=a-b` header) reads bytes `a` to `b`, inclusive: `a-` reads to
+the end and `-n` the last `n` bytes. The answer is 206 with `Content-Range: bytes a-b/size`,
+as `application/octet-stream`, at most 4 MiB per read. A range that starts past the end gets 416
+with `Content-Range: bytes */size`; a malformed one gets 400.
+
+```sh
+curl -sS "$CSH/api/blobs/$BLOB?range=0-99" -H "Authorization: Bearer $READ_KEY"
+```
 
 ### `GET /api/calls/{id}`
 
@@ -894,12 +1018,20 @@ first change in the order the cache reads a request (tools, then system, then me
   "params": [],
   "tools": {"same": true, "added": [], "removed": [], "changed": [], "reordered": false},
   "system": {"same": false, "lines": [{"op": " ", "text": "Run the tests before you say done."},
-                                      {"op": "-", "text": "Today is 2026-11-06."}, {"op": "+", "text": "Today is 2026-11-07."}]},
+                                      {"op": "-", "text": "Today is 2026-11-06."}, {"op": "+", "text": "Today is 2026-11-07."}],
+             "firstChangeLine": 3, "wastedPrefixFrac": 0.023},
   "messages": {"a": 3, "b": 5, "shared": 3, "rewritten": false},
   "cache": {"reused": false, "expected": 4200, "read": 0, "write": 4400, "gapMs": 812,
             "cause": "the system prompt changed (first change: - Today is 2026-11-06.)"}
 }
 ```
+
+When the system prompt changed and both requests were stored, `system.firstChangeLine` is the
+1-based line of the earlier prompt where the two first differ, and `system.wastedPrefixFrac` is the
+share (0 to 1, by characters) of the earlier prompt from that point to the end: the part the cache
+could no longer read. Above 0.2, a system-prompt `cache.cause` adds a hint to move dynamic content
+to the end of the system prompt. Both fields are absent when the system prompt is the same and in
+`metadata` mode.
 
 `content` is `metadata` when either request was not stored: tools and system are then compared
 by their short hashes. The first call of a session, without `?with=`, gets 404.
@@ -936,6 +1068,44 @@ curl -sS "$CSH/api/stats?project=team&agent=support-bot" -H "Authorization: Bear
 ```
 
 `byAgent` still lists every agent in `team`, because a facet skips its own filter. The totals apply all of them.
+
+### `GET /api/metrics`
+
+Sessions, failures, cost, tokens, tool calls and latency per day or week: the numbers behind the
+viewer's Explore page and `coding.sh stats --json`. Parameters:
+
+| param | default | meaning |
+|---|---|---|
+| `since`, `until` | 30 days before `until`; now | epoch ms, a date, or an age such as `7d` |
+| `bucket` | `day` | `day` or `week` (weeks start on Monday); at most 400 buckets |
+| `by` | none | `agent`, `model`, `repo` or `flag`: one series per group |
+| `groups` | 6 | how many groups get their own series (1 to 50); the rest add up in `other` |
+| `tz` | 0 | minutes behind UTC, as `Date#getTimezoneOffset` gives; buckets start at local midnight |
+| `scope` | `all` | `top` leaves out subagent sessions |
+| `where`, `project` | | as on `/api/sessions` |
+
+A session counts in the bucket it started in. `failures` counts sessions with a flag that has no
+colon; `failureRate` is failures over sessions and `toolErrorRate` tool errors over tool calls.
+`llmP95Ms` is the 95th percentile (nearest rank) of the sessions' own p95 model-call time and
+`ttftP50Ms` the median of their median time to first token; both are `null` in a bucket with no
+such session. `costUsd` adds the sessions that have a cost (`pricedSessions` of them). With
+`by=flag` a session with several flags counts in each series, and sessions without a flag form
+`(none)`. `all` is every session, whatever the split. A store without a session-stats query reads
+the first 100,000 sessions and sets `truncated`.
+
+```sh
+curl -sS "$CSH/api/metrics?since=7d&by=agent&tz=-120" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{"bucket":"day","by":"agent","since":1793232000000,"until":1793836800000,"tzOffsetMin":-120,"buckets":[1793224800000,"…"],"totals":{"sessions":12,"failures":3,"costUsd":4.1,"estimatedCostUsd":0,"pricedSessions":9,"tokens":1830000,"inputTokens":600000,"outputTokens":30000,"cacheReadTokens":1200000,"cacheWriteTokens":0,"toolCalls":161,"toolErrors":16,"llmCalls":139,"llmErrors":2,"failureRate":0.25,"toolErrorRate":0.099379,"llmP95Ms":30000,"ttftP50Ms":900},"all":{"key":"all","totals":{"…":"…"},"sessions":[2,0,"…"],"failures":[1,0,"…"],"costUsd":[1.65,0,"…"],"tokens":[339000,0,"…"],"toolCalls":[42,0,"…"],"toolErrors":[3,0,"…"],"llmCalls":[36,0,"…"],"llmP95Ms":[14000,null,"…"],"ttftP50Ms":[900,null,"…"]},"series":[{"key":"claude-code","…":"…"},{"key":"codex","…":"…"}]}
+```
+
+With `scope=all` and the same range and filters, `totals.sessions`, `toolCalls`, `toolErrors`,
+`llmCalls`, `costUsd` and `pricedSessions` equal `/api/stats`, and the series' session counts
+equal its `byAgent`, `byModel` and `byFlag`. A bad `bucket`, `by`, `tz`, `groups` or time, `since`
+not before `until`, more than 400 buckets, or a bad `where` answers 400 with the reason:
+`{"error":"bucket must be day or week","status":400}`.
 
 ### `GET /api/facets`
 
@@ -979,6 +1149,15 @@ curl -sS "$CSH/api/events?where=tool:lookup_order&limit=1" -H "Authorization: Be
 A bad `where` or `cursor` answers 400. A store plugin with no event query path answers 400 with
 `reason: "unsupported_store"`.
 
+
+### `GET /api/events/{id}`
+
+One event by its id, whole, as stored (a row of `/rows` carries a line; this is what it opens to).
+An id the index does not hold, or one in a session outside the key's project, gets 404.
+
+```sh
+curl -sS "$CSH/api/events/9a1f03c2…" -H "Authorization: Bearer $READ_KEY"
+```
 ### `GET /api/where`
 
 The `--where` keys, for the viewer's query bar to complete. Each item has `name`, `level`
@@ -1036,6 +1215,89 @@ curl -sS "$CSH/api/labels?sessionId=team%2Fchat-1" -H "Authorization: Bearer $RE
 {"items":[{"id":"1cec1aa4…","sessionId":"team/chat-1","criterion":"resolved","value":"pass","by":"reader:3f9a1c0b7d2e","ts":1794030915938,"note":"Answered with the tracking status."}]}
 ```
 
+### `POST /api/scores`
+
+Adds or replaces a typed score on a session, an event, a dataset case or an eval run. Labels are
+scores too: a person's pass or fail label is a boolean score, and `GET /api/labels` reads those back.
+Body (JSON, up to 1 MB):
+
+| Field | Meaning |
+|---|---|
+| `target` | `session` (default), `event`, `case` or `run` |
+| `targetId` | Id of what is scored. For a session, `sessionId` works in its place |
+| `name` | 1-100 characters of letters, digits and `_.:/-` (or the config's name, with `configId`) |
+| `value` | A number (`numeric`), `true` or `false` (`boolean`, 0 and 1 work too), or a string (`categorical`, `text`) |
+| `dataType` | `numeric`, `boolean`, `categorical` or `text`. Default: the config's, else the value's type |
+| `source` | `human`, `judge`, `code`, `api` (default) or `monitor` |
+| `sessionId` | The session an event, case or run belongs to. An event's session is looked up when left out |
+| `configId` | Check the value against this config. Default: the config with the score's `name`, if any |
+| `judgeVersion`, `calibrated` | The judge version that gave the score, and whether it passed calibration |
+| `comment` | Up to 4,000 characters |
+| `ts` | Epoch milliseconds. Default: now |
+| `id` | Score id. Default: one score per target, name, source and caller, so scoring again replaces it |
+
+`by` is the caller, as for labels. A value outside its config's `min`/`max` or `categories` is a
+400. Posting the same id with the same content again changes nothing and answers 200 with the stored
+score (its first `ts` kept). An event id an SDK client sent to `/v1/ingest` works as `targetId` with
+its `sessionId` (serve stores such ids hashed with the project). A project-scoped key may only score
+its project's sessions and their events.
+
+```sh
+curl -sS -X POST "$CSH/api/scores" \
+  -H "Authorization: Bearer $READ_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"sessionId":"team/chat-1","name":"helpfulness","value":4,"source":"judge","comment":"Gave the tracking status."}'
+```
+
+```json
+{"id":"2c72f6d59487cd99f4ecc55472f2470c9b717061871e32fce322fb890bd84f90","target":"session","targetId":"team/chat-1","sessionId":"team/chat-1","name":"helpfulness","dataType":"numeric","value":4,"source":"judge","by":"reader:b370186b2ba8","ts":1794197173401,"configId":"helpfulness","comment":"Gave the tracking status."}
+```
+
+| Status | When | Body |
+|---|---|---|
+| 201 | stored | the score |
+| 200 | the id already held a score: replaced, or unchanged when the content is the same | the score |
+| 400 | bad field, a value outside the config, invalid JSON | `{"error":"value 7 is above helpfulness's maximum 5","status":400}` |
+| 403 | an `Origin` header that is not this server | `{"error":"forbidden origin","status":403}` |
+| 404 | session or event missing, or outside the key's project | `{"error":"session not found: team/chat-9","status":404}` |
+| 413 | body over 1 MB | `{"error":"request body exceeds 1 MB","status":413}` |
+| 415 | not `application/json` | `{"error":"content-type must be application/json","status":415}` |
+| 501 | a Postgres or ClickHouse store (scores are SQLite only for now) | `{"error":"the postgres store does not keep scores yet (use the default SQLite store)","status":501}` |
+
+### `GET /api/scores`
+
+Scores, newest first. Filters: `target`, `targetId`, `sessionId` (the session and its events, cases
+and runs scored with it), `name`, `source`, `since` and `until` (epoch milliseconds), and `limit` (1
+to 1,000, default 100). A scoped key sees only scores on its project's sessions.
+
+```sh
+curl -sS "$CSH/api/scores?sessionId=team%2Fchat-1" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{"items":[{"id":"1b6c0745…","target":"event","targetId":"b698dcca…","sessionId":"team/chat-1","name":"grounded","dataType":"boolean","value":true,"source":"code","by":"reader:b370186b2ba8","ts":1794197173426},{"id":"2c72f6d5…","target":"session","targetId":"team/chat-1","sessionId":"team/chat-1","name":"helpfulness","dataType":"numeric","value":4,"source":"judge","by":"reader:b370186b2ba8","ts":1794197173401,"configId":"helpfulness","comment":"Gave the tracking status."}]}
+```
+
+### `GET /api/score-configs`, `POST /api/score-configs`
+
+A config fixes one score name's type and allowed values. Body: `name`, `dataType`, and for
+`numeric` optional `min` and `max` (inclusive), for `categorical` the `categories` list (required);
+plus optional `description` and `id` (default: the name). One config per name: another id with the
+same name is a 409. Posting a config again replaces it (201 when new, 200 otherwise). Configs are
+shared by every project, so a project-scoped key can read them but gets 403 on a POST. `GET` lists
+them sorted by name.
+
+```sh
+curl -sS -X POST "$CSH/api/score-configs" \
+  -H "Authorization: Bearer $READ_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"helpfulness","dataType":"numeric","min":0,"max":5,"description":"How much the answer helped"}'
+```
+
+```json
+{"id":"helpfulness","name":"helpfulness","dataType":"numeric","min":0,"max":5,"description":"How much the answer helped","ts":1794197173384}
+```
+
 ### `GET /api/experiments`
 
 Dataset experiments written by `coding.sh exp run`, newest first, without their per-case runs.
@@ -1064,6 +1326,16 @@ An experiment run with `--samples adaptive` also has `"samples": "adaptive"` and
 `summary.caseVerdicts` (`passed`, `failed`, `tieBreaks`); its `passRate` interval is biased, so
 use the verdicts. One that `--stop-on-regression` stopped has status `cancelled` and
 `regression: {caseId, baseline}`. Both fields are absent otherwise.
+
+Also present only when they apply: `metadata.checkpoint` (`done`, `total`, `at`) on a partial
+record written while the run was going (status `cancelled`); `metadata.selection` (`from`
+`{kind: "failing"|"errors", experiment}`, `cases`, `sample`, `seed`, `firstN`, `selected`, `of`)
+on a run of part of the dataset; and, for `exp run --seq K`, `metadata.seq` (`k`, `feedback`,
+`history`) and `summary.seq`: `k`, `feedback`, `history`, `curve` (`[{k, rate, lo, hi}]`, Seq@1..K),
+`egs`, `lgs`, `unchangedRate`, `costToSolve`, and with 2+ trials `passAtK` (`[{k, rate}]`),
+`front` (`[{protocol, k, cost, success, overall}]`) and `costUnit` (`usd` or `attempts`). Each
+run of such an experiment has `seq`: `k`, `solvedAt`, `feedback`, `history` and `attempts`
+(`[{pass, latencyMs, costUsd?, criticCostUsd?, unchanged?, error?, feedback?}]`).
 
 ### `GET /api/experiments/{id}`
 
@@ -1128,6 +1400,9 @@ Present only when they apply: `graders[].versionChanged` (`{"a","b"}` versions) 
 run on one.
 `timing.interleaved` is also true for two cells of one `exp run` matrix (both carry the same
 `metadata.matrix.id`).
+`selectionWarning` when one side ran only on the other's failures (`exp run --failing`); the
+verdict is then `inconclusive`. `seqK` (`k`, `feedback`, `n`, `a`, `b`, `diff`) when both sides ran
+`--seq` with the same K and feedback, and `seqNote` when only one did or they differ.
 
 A missing or malformed id gets 400 `{"error":"a and b must be experiment ids","status":400}`; an
 unknown one gets 404 `{"error":"experiment not found","status":404}`.
@@ -1189,6 +1464,52 @@ curl -sS "$CSH/api/benchmarks/coding-sh-issues" -H "Authorization: Bearer $READ_
 A name outside `[a-z0-9][a-z0-9._-]*` (up to 63 characters) gets 400 `{"error":"invalid benchmark name","status":400}`;
 a benchmark with no runs gets 404 `{"error":"benchmark not found","status":404}`.
 
+### `GET /api/workflows`
+
+Workflow runs recorded by `coding.sh workflows`, newest first: the list `coding.sh workflows list
+--json` prints. Filters: `limit` (1 to 500, default 50), `framework` and `name`. `coding.sh ui`
+reads the local workflow store; `coding.sh serve` has none, so it answers an empty list, as does a
+scoped key.
+
+```sh
+curl -sS "$CSH/api/workflows?limit=1" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{
+  "runs": [{
+    "id": "wf_45d472ff-246", "framework": "claude-code-workflow", "name": "improve", "status": "ok",
+    "startedAt": "2026-11-08T09:12:04.000Z", "endedAt": "2026-11-08T10:40:51.000Z", "wallMs": 5327000,
+    "agents": 14, "costUsd": 31.2, "tokens": 18450210, "variant": null, "experimentId": null,
+    "caseId": null, "resumedFrom": null, "hostSessionId": "…", "tags": []
+  }]
+}
+```
+
+A `limit` outside 1 to 500 or a malformed `framework` gets 400.
+
+### `GET /api/workflows/{id}`
+
+One run, as `coding.sh workflows show <run> --json` prints it: `run` (the list fields plus `stats`
+and, when set, `concurrencyCap`) and `nodes` (every node but subagent, tool and LLM nodes, as
+`show` without `--tree`). `/api/workflows/{id}/gantt` answers the timeline `workflows show --gantt
+--json` prints: `phases` with one row per node (`start`, `end`, `status`, `critical`), and
+`concurrency` over time.
+
+```sh
+curl -sS "$CSH/api/workflows/wf_45d472ff-246/gantt" -H "Authorization: Bearer $READ_KEY"
+```
+
+```json
+{
+  "runId": "wf_45d472ff-246", "startedAt": 1794128524000, "endedAt": 1794133851000, "cap": 8,
+  "phases": [{"name": "Build", "rows": [{"nodeId": "…", "label": "store", "start": 1794128530000, "end": 1794129912000, "status": "ok", "critical": true, "costUsd": 2.1}, …]}],
+  "concurrency": [{"t": 1794128530000, "running": 6}, …]
+}
+```
+
+An unknown run gets 404, as does any other path under it, and on `coding.sh serve` every run.
+
 ### `GET /api/tasks`, `GET /api/runs`, `GET /api/bundles`
 
 Eval tasks (`coding.sh eval`), runs (`coding.sh compare`) and harness bundles (`coding.sh harness`). All three
@@ -1211,6 +1532,13 @@ answer `{"items":[…]}` and are empty for a scoped key.
   `--false-alarm`, and `skipped` (`error` or `timeout`) when the first attempt could not be repaired.
   `agentVersion` is the agent release the run started on (the adapter's detected version, checked at
   most once a minute); absent when the adapter can't tell and on older runs.
+  `isolation` says how the verifier's tree was built ([verifier isolation](../guides/evals.md#verifier-isolation)):
+  `carried`, the agent's changes applied to the fresh start tree, and `stripped`, each change left out
+  with `path`, `why` (`hook`, `config`, `scripts`, `verifier`, `dependency`, `symlink` or `special`)
+  and `change` (`add`, `modify` or `delete`); `skipped` names why the tree could not be isolated. It is
+  absent with `--no-isolation`, on a task without a verifier command and on older runs. `traceId` is the
+  trace id the agent got in `TRACEPARENT` with `compare --otel`, and `sequence` (`stream`, `step`) the
+  run's place with `compare --sequential`; both are absent otherwise.
 - `/api/bundles` returns `id`, `name`, `agent`, `model`, `createdAt` and `note` only; overlay files stay behind `/api/blobs`.
 
 ```sh

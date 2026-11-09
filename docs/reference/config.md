@@ -45,7 +45,7 @@ keep tokens out of the file.
 | Key | Default | Settable | What |
 |---|---|---|---|
 | `capture.mode` | `"full"` | yes | `full` keeps prompts, replies and tool input and output. `metadata` keeps ids, times, kinds, durations, token counts and short labels only. |
-| `capture.redact` | `["secrets"]` | yes | Built-in redactors: `secrets` (API keys, tokens, private keys), `env` (values of environment variables), `email` (email addresses), `none` (clears the list in your user config). |
+| `capture.redact` | `["secrets"]` | yes | Built-in redactors: `secrets` (API keys, tokens, private keys), `env` (values of environment variables), `email` (email addresses), `pii` (all of `email`, `phone`, `card`, `iban` and `national-id`), `phone` (phone numbers with a `+` country code, and North American numbers), `card` (card numbers with a known issuer prefix that pass the Luhn check), `iban` (IBANs with the right length for their country and a valid check), `national-id` (US SSNs, UK National Insurance numbers, Canadian SINs that pass the Luhn check), `none` (clears the list in your user config). |
 | `capture.redactPatterns` | `[]` | yes | Extra regular expressions to redact. Matches become `[redacted:<kind>]`. |
 | `capture.exclude` | `[]` | yes | Path globs (`*`, `**`, `?`, `~`). Sessions whose working directory, or a parent of it, matches are dropped at ingest. |
 | `capture.maxInlineBytes` | `4096` | yes | Payloads larger than this go to the blob store. Minimum 256. |
@@ -79,7 +79,9 @@ Applied by `coding.sh gc`.
 
 ## `[[sinks]]`
 
-A sink copies events to another system as they are ingested. Add one table per sink.
+A sink copies events to another system as they are ingested. Add one table per sink. Sinks run
+for local ingest, the local OTLP receiver (`coding.sh collector`) and `coding.sh serve`, which mirrors
+each committed batch after it answers the request.
 
 ```toml
 [[sinks]]
@@ -181,6 +183,7 @@ rise for a pass-rate gain in `refine test|run --suite`; see
 | `protect` | `[]` | Regexes. A CLAUDE.md, AGENTS.md, rule or skill line matching one is protected; the line is tested without its list marker or bold, so `"^Use pnpm"` matches `- Use pnpm`. A repo config's patterns are added to yours. |
 | `autoProtect` | `true` | Protect gate-word + safety-topic lines ("Never run `git push --force`") automatically. Honoured only in your user config. |
 | `maxCostRise` | `"50%"` | The default of `--max-cost-rise`: how far a listed cost, tokens, time, turns or size objective may rise for a significant pass-rate gain. `"100%"`, `"none"`, or a number: below 1 a fraction (`0.5` is +50%), from 1 up percent (`150` is +150%). A repo config can lower it but not raise it. |
+| `canary_model` | none | The model `refine test --suite` and `refine run --suite` re-test kept candidates under when `--canary-model` is not given, and the default for `refine recheck --model`. See [Canary re-test](../guides/evals.md#canary-re-test). Honoured only in your user config. |
 
 ```toml
 [refine]
@@ -222,6 +225,10 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 | `[serve.viewer]` `read_keys` | `CODING_SH_READ_KEYS` | | Read keys: `[{ project = "*", key = "sha256:<hex>", name = "alice" }]`. `name` (optional) is recorded as the author of that key's labels. |
 | `[serve.viewer]` `basic_user`, `basic_password_sha256` | `CODING_SH_BASIC_AUTH` (`user:password`) | | Basic auth for the viewer. |
 | `capture.mode` | `CODING_SH_CAPTURE_MODE` | `full` | `metadata` drops content on ingest. |
+| `[serve.forward]` `endpoint` | `CODING_SH_FORWARD_URL` | unset (no forward) | OTLP/HTTP collector that serve sends every committed trace to, as JSON. `/v1/traces` is added unless the URL already ends in it. `${ENV}` works in the file. [PRODUCTION.md §1.9](../PRODUCTION.md#19-forward-and-sinks) |
+| `[serve.forward]` `headers` | `CODING_SH_FORWARD_HEADERS` (`k=v,k2=v2`, URL-encoded values) | | Headers for the collector, such as an API key. The variable's entries are added to the table's. |
+| `[serve.forward]` `mode` | `CODING_SH_FORWARD_MODE` | `capture.mode` | `metadata` sends ids, names, models, tokens, timings and status only. `full` sends attributes after redaction. |
+| `[serve.forward]` `max_buffer_spans` | `CODING_SH_FORWARD_MAX_BUFFER_SPANS` | `20000` | Spans kept in memory while the collector is down. Past it the oldest are dropped and counted. |
 
 ## Other files
 
@@ -268,6 +275,7 @@ Read these in your agent or script to tie its output to a run.
 | `CODING_SH_AGENT`, `CODING_SH_AGENT_OUTPUT`, `CODING_SH_AGENT_STDOUT`, `CODING_SH_AGENT_DIFF` | `compare`, `exp run` eval tasks (verifier only) | The agent adapter id, a file with the agent's final answer, a file with its whole stdout (for Claude Code, stream-json with every tool call), and a file with its work-tree diff (taken before hidden files land; `judge grade` reads it for `agent-slop`). The files sit outside the work tree. `CODING_SH_SESSION_ID` is set too when the run produced a session. |
 | `CODING_SH_GRADER_USAGE` | `compare`, `exp run` eval tasks (verifier only) | A JSONL file. `judge grade` appends one row per model call (model, tokens, cost) so the run's judge spend counts in `compare`'s spend lines and `--max-cost`. |
 | `CODING_SH_CASE_ID`, `CODING_SH_TRIAL` | `exp run` command tasks | The case id and trial number. |
+| `CODING_SH_ATTEMPT`, `CODING_SH_SEQ_K` | `exp run --seq K` command tasks | This attempt (from 1) and K, the most attempts a case gets. With `envelope = true` stdin carries them too, with the earlier attempts' feedback in `history`. See [Sequential attempts](../guides/evals.md#sequential-attempts-with-feedback). |
 | `CODING_SH_WORKFLOW_RUN_ID` | `workflows run`, `workflows replay` | Workflow run id. |
 | `CODING_SH_BENCH`, `CODING_SH_BENCH_SEED`, `CODING_SH_BENCH_DATE`, `CODING_SH_BENCH_RUN_ID`, `CODING_SH_BENCH_CASES` | `bench run` command sources | Benchmark name, seed, date, run id and number of cases to print. |
 | `CODING_SH_BENCH_NOW` | you, in tests | Make `bench run` act as if it started at this time (ISO time or epoch ms), to simulate daily runs. |
@@ -306,7 +314,7 @@ Tool-eval model drivers read the key variable set by `apiKeyEnv` in `coding.sh.t
 | `FORCE_COLOR` | Color even when output is not a terminal. |
 | `CI` | Treated as non-interactive: no prompts or spinners. Commands that would ask need `--yes`. |
 | `NO_UPDATE_NOTIFIER`, `CODING_SH_NO_UPDATE_CHECK` | Turn off the update check. Same as `update.check = false`. |
-| `CODING_SH_READ_BUDGET_MS` | How long `status`, `sessions`, `search` and MCP tool calls ingest pending captures before answering from what is indexed (with a `pending` field in JSON and MCP results). Default `1500`; `--fresh` waits for all. |
+| `CODING_SH_READ_BUDGET_MS` | How long read commands (`status`, `sessions`, `search`, `show`, `tree`, `usage`, `improve`, `harness audit`, `cache doctor`, ...) and MCP tool calls ingest pending captures before answering from what is indexed (with a `pending` field in JSON and MCP results). Default `1500`; `--fresh` waits for all. While a re-parse holds `reparse.lock`, these reads skip the ingest, leave the spool to the re-parse, and add `"reparsing": true` to `pending`. |
 
 ### Installer
 

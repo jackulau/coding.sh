@@ -33,7 +33,7 @@ A query is a list of clauses. Clauses are and-ed. Between clauses:
   start with `$`.
 - Values with spaces go in double quotes: `title:"fix the build"`.
 - Bare words search prompts, replies and tool calls, like `coding.sh search`. Every word must
-  match within one event.
+  match within one event, as a whole word; the last word may also start a longer one.
 - `sort:` and `limit:` set the order and the row count. They go at the top level only.
 
 Session keys test the session. Event keys test its events: a session matches when it has a
@@ -121,10 +121,12 @@ clause such as `tool:Bash ok:false` looks up the matching events once and keeps 
 and facets on `kind`, `tool` and `mcp` read a small table of each session's distinct values.
 `error`, `event.duration` and bare words read the payload of every candidate event, so pair them
 with an indexed key (`kind:tool.end error:timeout`) on a large store. A store written by an
-older version is migrated on first open; on a 3.3 GB store that takes about a minute.
+older version is upgraded on first open, with progress on stderr; a 740,000-event store from
+index schema v2 took 20 s on the test desktop.
 
 The Postgres and ClickHouse store plugins also run queries in their own database: every key, `has:`,
-`is:`, bare words (word prefixes, as their `search` matches), `sort:`, `limit:` and `--facets`.
+`is:`, bare words (whole words, the last one also as a prefix, as their `search` matches), `sort:`,
+`limit:` and `--facets`.
 A plugin older than coding.sh fails on a key it doesn't know, with reason `unsupported_store`.
 Event results (`GET /api/events`) need the SQLite or memory store; on a plugin they fail with
 reason `unsupported_store`.
@@ -185,6 +187,25 @@ instead of running them as formulas.
 
 Rows are read a page at a time and written as they come, so memory stays flat on a large store.
 
+### Evidence folders
+
+`export --evidence <dir>` writes the raw trace of each matching session to a folder, for a person or
+a model to read as files:
+
+```sh
+coding.sh export --evidence traces/ --where 'flag:repeated-tool-failure' --limit 20
+```
+
+`<dir>/index.md` lists the sessions. Each session gets its own folder with `session.json` (the
+session row), `events.jsonl` (its events), `tools/NNNN-<tool>.txt` (each tool call's input and full
+output, read back from the blob store when the event clipped it) and `index.md` (the session's
+stats, flags and a timeline that links each tool call to its file). Everything goes through the
+`secrets` redactor and your `capture.redact` and `capture.redactPatterns` first. Each tool file is
+cut at 200 KB and each `events.jsonl` at 5 MB, with a note saying how much was left out. The same
+store and filters give the same bytes on every run. The filters are the ones above; `export
+sessions --evidence` is the same as `export --evidence`. The command stops with `target_exists`
+when the folder is not empty, unless you pass `--force`.
+
 ## Tables
 
 The SQLite index keeps these tables. Times are milliseconds since the epoch. Columns holding JSON
@@ -231,7 +252,42 @@ are text: read them with `json_extract(col, '$.path')` or `json_each(col)`.
 | `usage` | Usage JSON: `inputTokens`, `outputTokens`, `cacheReadTokens`, `costUsd` |
 | `project_id` | Serve project |
 
+### `scores`
+
+Typed scores on sessions, events, dataset cases and eval runs, from people, judges, code or the API
+(`coding.sh score`, `POST /api/scores`).
+
+| Column | Meaning |
+|---|---|
+| `id` | Score id |
+| `target` | `session`, `event`, `case` or `run` |
+| `target_id` | Id of what was scored |
+| `session_id` | Session the target belongs to, when known |
+| `name` | What was scored, such as `helpfulness` |
+| `data_type` | `numeric`, `boolean`, `categorical` or `text` |
+| `value` | The number, or 1 and 0 for a boolean (NULL otherwise) |
+| `string_value` | The value of a categorical or text score |
+| `source` | `human`, `judge`, `code`, `api` or `monitor` |
+| `config_id` | Score config the value was checked against |
+| `judge_version` | Judge version, for a judge's score |
+| `calibrated` | 1 when the judge passed calibration |
+| `comment` | Free-text comment |
+| `by` | Who scored it |
+| `ts` | Time |
+
+### `score_configs`
+
+| Column | Meaning |
+|---|---|
+| `id` | Config id |
+| `name` | Score name it applies to |
+| `data_type` | `numeric`, `boolean`, `categorical` or `text` |
+| `doc` | The config as JSON: `min`, `max`, `categories`, `description` |
+
 ### `labels`
+
+A view over `scores`: a person's boolean scores (`pass` or `fail`) and categorical `pass`, `fail` or
+`skip` scores on sessions and dataset cases.
 
 | Column | Meaning |
 |---|---|
@@ -242,6 +298,7 @@ are text: read them with `json_extract(col, '$.path')` or `json_each(col)`.
 | `note` | Free-text note |
 | `by` | Who labelled it |
 | `ts` | Time |
+| `case_id` | Dataset case, for a label on an eval case |
 
 ### `runs`
 

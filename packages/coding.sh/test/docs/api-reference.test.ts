@@ -32,7 +32,8 @@ function serverRoutes(): Map<string, string> {
 
   // serve.ts: its own paths, the OTLP signals, then everything else falls through to the viewer.
   // Ingest handlers (native and OTLP) take POST only; health and metrics are read with GET.
-  assert.match(serve, /req\.method !== "POST"/, "native ingest is POST only");
+  // The native ingest handler lives in routes.ts, shared with the serverless fetch handler.
+  assert.match(src("server/routes.ts"), /req\.method !== "POST"/, "native ingest is POST only");
   assert.match(receiver, /req\.method !== "POST"/, "OTLP is POST only");
   assert.match(serve, /return viewer\(req, res\)/, "serve falls through to the viewer handler");
   const collector = new Set(literalKeys(receiver, "ROUTES"));
@@ -60,6 +61,21 @@ function serverRoutes(): Map<string, string> {
     if (/\bget\(\);/.test(block)) methods.add("GET");
     assert.ok(methods.size > 0, `methods of /api/${c[1]}`);
     const base = `/api/${c[1]}`;
+    // A case with named sub-routes (`if (id === "calls")`): the bare path, then each name with
+    // its own methods, `/{}` after it when it reads `sub` as an id. One behind `if (!ctx.<source>)`
+    // is only in `coding.sh ui`, which passes that source.
+    const named = [...block.matchAll(/if \(id === "([a-z-]+)"\)/g)];
+    if (named.length) {
+      const by = /if \(!ctx\.\w+\) throw new HttpError\(404/.test(block) ? "ui" : "serve, ui";
+      if (/\bget\(\);/.test(block.slice(0, named[0]!.index))) routes.set(key("GET", base), by);
+      named.forEach((n, j) => {
+        const seg = block.slice(n.index!, named[j + 1]?.index ?? block.length);
+        const ms = new Set([...seg.matchAll(/method [!=]== "([A-Z]+)"/g)].map((m) => m[1]!));
+        if (/\bget\(\);/.test(seg)) ms.add("GET");
+        for (const m of ms) routes.set(key(m, `${base}/${n[1]}${/checkId\(sub\b/.test(seg) ? "/{}" : ""}`), by);
+      });
+      return;
+    }
     const collectionOnly = /if \(id !== undefined\) throw new HttpError\(404/.test(block);
     const itemOnly = /if \(id === undefined \|\| sub !== undefined\) throw new HttpError\(404/.test(block) || /if \(id === undefined \|\| id === "" \|\| \(sub !== undefined && !\w+\)\) throw notFound\(\)/.test(block);
     const paths: string[] = [];

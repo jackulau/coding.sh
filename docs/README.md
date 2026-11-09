@@ -16,6 +16,7 @@ has the terms, and [troubleshooting.md](troubleshooting.md) helps when something
 | [guides/explore.md](guides/explore.md) | the CLI, the viewer and the MCP server |
 | [guides/improve.md](guides/improve.md) | improve your agent every week: what to fix first, the line that fixes it, whether it helped |
 | [guides/evals.md](guides/evals.md) | session to eval, datasets, experiments, judges, harness A/B |
+| [guides/terse-mode.md](guides/terse-mode.md) | does a terse mode (a be-concise rule, skill or plugin) save money on your tasks: pass rate, cost, output tokens and input overhead |
 | [guides/benchmarks.md](guides/benchmarks.md) | daily benchmarks on fresh cases: sources, fairness, budget, report, schedule |
 | [guides/privacy.md](guides/privacy.md) | what is stored where, sinks, redaction and privacy |
 | [guides/team.md](guides/team.md) | one self-hosted server for a team: keys per person and service, shared viewer login, agents and apps sending to it, retention |
@@ -29,14 +30,17 @@ Short recipes you can run as written.
 | [how-to/trace-your-agent.md](how-to/trace-your-agent.md) | trace your own agent with OpenTelemetry or the SDKs, then eval and compare it |
 | [how-to/capture-with-proxy.md](how-to/capture-with-proxy.md) | log every model call through a local API proxy, see why the prompt cache missed, replay a call with another model |
 | [how-to/trace-durable-workflow.md](how-to/trace-durable-workflow.md) | trace a Vercel Workflow or Temporal run as one session, with attempts, waits and resumes |
+| [how-to/tee-agent-runs.md](how-to/tee-agent-runs.md) | send an eve or durable-harness agent's Agent Runs spans to coding.sh too, as sessions with turns, tools and usage |
 | [how-to/test-claude-md-change.md](how-to/test-claude-md-change.md) | test a CLAUDE.md change in five minutes, on your own sessions |
 | [how-to/compare-agents.md](how-to/compare-agents.md) | compare two coding agents on your repo |
+| [how-to/replay-llm-calls.md](how-to/replay-llm-calls.md) | record a run's model calls and replay them up to the first changed call |
 | [how-to/ci-regressions.md](how-to/ci-regressions.md) | catch a regression in CI |
 | [how-to/expensive-sessions.md](how-to/expensive-sessions.md) | find your most expensive sessions |
 | [how-to/status-line.md](how-to/status-line.md) | put your session cost, today's cost and the worst flag in the Claude Code status line |
 | [how-to/session-to-eval.md](how-to/session-to-eval.md) | turn a real session into an eval task or dataset case |
 | [how-to/evaluate-a-skill.md](how-to/evaluate-a-skill.md) | test whether an Agent Skill changes what the agent does |
 | [how-to/does-this-plugin-help.md](how-to/does-this-plugin-help.md) | see what a Claude Code plugin adds to your sessions, then A/B it on your own tasks |
+| [how-to/attribute-commits.md](how-to/attribute-commits.md) | see which agent session wrote the lines of each commit, per line with `blame`, and export Agent Trace records |
 | [how-to/self-host-team.md](how-to/self-host-team.md) | self-host for a team: run one container, connect each machine, open the viewer |
 
 ## Use cases

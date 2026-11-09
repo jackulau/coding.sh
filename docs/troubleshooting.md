@@ -109,6 +109,58 @@ For an agent sending over OpenTelemetry or the SDK:
   so there is no start state to replay. Record it with `coding.sh run --` from inside the repository.
   See [Turn a session into an eval](how-to/session-to-eval.md).
 
+## Check what the adapters read
+
+`coding.sh doctor --conformance` runs each agent's backfill over the transcripts on this machine
+and checks the events it produces. Use it when sessions look wrong, or after an agent update.
+
+```sh
+coding.sh doctor --conformance                      # every agent with transcripts from the last 7 days
+coding.sh doctor --conformance --agent codex --since 30d
+coding.sh doctor --conformance --json               # one JSON document with every count and example
+```
+
+```text
+✓ Claude Code     50 events, 1 session, no violations
+✗ OpenCode        0 events, 0 sessions, 1 violation: empty-backfill 1 (F3)
+  empty-backfill: 1 source file(s), 32768 bytes, but the backfill produced no events
+
+  See every violation:
+    coding.sh doctor --conformance --json
+1/2 agents conform
+```
+
+It only reads. Blobs are hashed and dropped, the adapters read SQLite sources from a temp copy,
+and the coding.sh store is not opened, so nothing is stored. Agents with no transcript files changed
+since `--since` are left out unless you name them with `--agent`. Each agent stops after
+`--max-events` events (200,000 by default) or 60 seconds; the sessions still being read then skip
+the checks that need a whole session. Reports hold ids, counts and short details, never prompt,
+reply or tool text.
+
+| Rule | What it means |
+|---|---|
+| `duplicate-id` | Two events share an id but differ in content, so the store keeps only one. |
+| `usage-double-count` | Token usage is counted twice: two model calls with one message id both carry it, or a session or turn total sits next to per-call usage. |
+| `negative-usage` | A token or cost field is negative or not a number. |
+| `dangling-parent` | An event's `parentId` names an event that is not in the data. |
+| `parent-other-session` | An event's parent is in another session. |
+| `parent-link-broken` | A child session's start names a parent event that is not in its parent session. |
+| `empty-backfill` | The agent's source files exist, but the backfill produced no events. |
+| `session-without-prompt` | A session did work but has no user message, so it has no title. |
+| `exit-code-not-failed` | The first lines of a tool's output report a nonzero exit code, but the call is not marked failed. |
+| `tool-end-without-start` | A tool end has no matching start in its session. |
+| `duplicate-tool-call` | Two different starts, or two different ends, share one tool call id in a session. |
+| `end-before-start` | A tool, subagent or session ends before it starts. |
+| `turn-end-repeated` | Two different turn ends close the same turn. |
+| `bad-timestamp` | A timestamp is not a number of milliseconds between 2000 and 2100. |
+| `negative-duration` | A duration is negative. |
+| `backfill-threw` | The backfill threw instead of skipping what it could not read. |
+
+A tool start with no end is counted, not reported: the call was cancelled or is still running.
+The F numbers name the bugs in `docs/research/round-1-self.md` that each rule was written to
+catch. doctor exits 1 when any agent has a violation. Please report one as an issue with the
+`--json` output for that agent.
+
 ## Old sessions show doubled counts
 
 Sessions captured before an upgrade keep the rows the older coding.sh parsed. When an adapter's
@@ -153,6 +205,25 @@ accident:
   real one. An `npm link` of the checkout counts as an install.
 
 If a store was already migrated past your install, update that install (`coding.sh update`).
+
+## The first command after an upgrade is slow
+
+When a new coding.sh changes the index layout, the first command that opens the index upgrades
+it, once. On a store of 100,000 events or more it says so on stderr right away, then prints
+what it is doing at most once a second:
+
+```text
+coding.sh: the index holds 756,302 events; upgrading it from schema v8 to v10. This runs once.
+coding.sh: upgrading the index: search index 300,000 of 756,302 events (39%)
+coding.sh: index upgraded in 11.5s. Run `coding.sh gc --compact` to give back the space the old layout used.
+```
+
+- **Another command waits.** A command that opens the index while another process upgrades it
+  waits for that process and prints its progress (`waiting for another coding.sh (pid …)`).
+- **Stopped halfway.** The upgrade runs in one transaction. If it is stopped, the index stays as
+  it was and the next command starts it again.
+- **The index grew.** Run `coding.sh gc --compact` once the upgrade has finished. It empties
+  what old rows still hold and gives the space back.
 
 ## Errors by reason
 
@@ -210,10 +281,13 @@ The command line was wrong. Nothing ran.
 | `invalid_arms` | (toolevals compare) a baseline or candidate that is not `<variant>@<driver>` | Use arm names from the experiment. |
 | `bundle_mismatch` | `exp_… has no runs of good; it ran base and cand. Name the arm: --failing exp_…@<bundle>` (compare --failing) | The experiment did not run the arm `--failing` picked. Name one it ran after `@`. |
 | `unsupported_target` | `compress works on MCP targets; gh is cli` | Run `compress` on an MCP target. |
-| `no_control` | `A continuation task needs a control arm: …` (exp run) | Run the recorded config as A and your change as B (`--arm control=… --arm cand=…`), or use `coding.sh exp ab`. `--no-control` runs it alone, without a noise floor. |
+| `needs_driver` | (toolevals) `Variant old-text changes what the agent reads (descriptions); its reference commands can't fail on that. Pass --driver to run agent trials` | `validate --against` on a variant that changes only descriptions, hidden tools, a bundle or model settings: add `--driver <d>` so the kinded tasks run as agent trials. |
+| `no_control` | `A continuation task needs a control arm: …` or `exp_… did not record a command or http task spec, so there is no control arm to replay` (exp run) | Run the recorded config as A and your change as B (`--arm control=… --arm cand=…`), or use `coding.sh exp ab`. `--no-control` runs it alone, without a noise floor. |
+| `no_recordings` | `exp_… has no recorded model calls to replay` (exp run --replay) | Record a run first with `coding.sh exp run spec.json --record`, then replay that experiment. See [how-to/replay-llm-calls.md](how-to/replay-llm-calls.md). |
 | `bad_arg` | `export what? one of sessions, events, labels` | Use one of the listed values. |
 | `too_short` | `1 value shorter than 8 characters; a short value would rewrite ordinary text` (purge) | Put the whole secret on its line, not a fragment. |
 | `read_only` | `DELETE is not allowed: coding.sh sql is read-only`, `only one statement is allowed (found text after ';')` | `coding.sh sql` only reads. Change data with the command that owns it. |
+| `trace_incomplete` | `incomplete trace: 5 tool result(s) in the source but 3 reached the judge` (judge grade) | Tool calls in `--trace` did not reach the judge, so a grade would miss them. Fix the capture, or pass `--allow-partial-trace` to grade anyway. |
 
 ### Errors (exit 1)
 
@@ -229,9 +303,13 @@ The command ran and something failed.
 | `port_in_use` | `Can't start the collector: port 4318 is in use` | Stop the other process, or pass `--port 0` for any free port. Same for `ui`, `serve` and `proxy`. |
 | `already_running` | `A coding.sh proxy is already running on http://127.0.0.1:4320 (pid 4182)` | Use the running one, or stop it first: `coding.sh proxy stop`. |
 | `proxy_failed` | `The background proxy did not start` | Read `~/.coding.sh/proxy.log`, or run `coding.sh proxy` in the foreground to see the error. |
+| `fetch_failed` | (compare --parity) `Couldn't fetch https://example.com/: …` | Check the URL and that the site is reachable from this machine. A fetch that takes over 30 s fails too. |
+| `redirect_loop` | (compare --parity) `https://example.com/ redirects more than 10 times` | Open the URL in a browser or `curl -sI` it to see where the redirects go. |
+| `command_failed` | (compare --parity) `"npm run render" exited 1 and printed no page` | Run the command yourself; it must print the page's HTML on stdout. |
 | `not_found` | `Can't find session "nope"` (a session id or a unique prefix of one, 4+ characters), `No sessions captured yet`, `Can't find experiment "a"` | List what exists: `coding.sh sessions`, `exp list`, `dataset list`, `eval list`, `harness list`. |
 | `bad_flag` | (usage) `--by must be one of agent, model, agent-model, day, repo` | Use one of the listed values. |
 | `config_changed` | `Can't resume exp_…: its config changed since it started (dataset, task)` | `--resume` refuses when the dataset version, graders, trials, task, agent script or timeouts differ from the interrupted run. Restore them, or start a new run without `--resume`. |
+| `target_exists` | `traces/ is not empty` (export --evidence) | Pass `--force` to write into it anyway, or pick an empty directory. |
 | `already_complete` | `exp_… already finished; nothing to resume` | The run is done: `coding.sh exp show <id>`. |
 | `busy` | `exp_… is still running (pid 4182 on desk); stop it first`, `an ingest is running and holds the store: …` (purge) | Another process is running it. Stop that process, or wait; `coding.sh exp status` shows its progress. For purge, try again in a minute. |
 | `too_broad` | `the --rule patterns match more than 10000 distinct values, which is ordinary text, not one secret` (purge) | Anchor the pattern on the secret's prefix and length, and check it with `--dry-run`. |
@@ -240,6 +318,11 @@ The command ran and something failed.
 | `no_pairs` | `No pair finished in both arms, so there is nothing to compare` (exp metrics) | Read the run errors in the report, fix the arm, and rerun. |
 | `unsupported_store` | `coding.sh sql reads the SQLite index; this store is postgres://…@db/csh`, `coding.sh purge rewrites the SQLite index; …`, a `--where` with event keys or bare words on a store plugin with no query path, or a key an older Postgres or ClickHouse plugin doesn't know | For sql, use `coding.sh export`, which reads every store, or query the database with its own client. For purge, remove the value with the database's own tools. For `--where`, upgrade the plugin, or use session keys only. |
 | `timeout` | `the query ran past 10s and was stopped` (sql) | Narrow the query, or pass a longer `--timeout`. |
+| `not_a_repo` | `not a git repository: /home/user/notes` (attribution, blame) | Run it inside the repository, or pass `--repo <dir>`. |
+| `unknown_rev` | `no commit named no-such-branch in /work/demo` (attribution, blame) | Pass a branch, tag or commit that exists to `--rev`: `git log --oneline -n 20`. |
+| `clickhouse_unreachable` | `Can't import from ClickHouse: can't reach ClickHouse at http://127.0.0.1:8123: ECONNREFUSED` (collector import) | Check the URL and port (8123, or 8443 with TLS) and that the server is up: `curl http://127.0.0.1:8123/ping`. |
+| `clickhouse_unauthorized` | `ClickHouse refused the credentials: … Authentication failed …` (collector import) | Pass the user and password in the URL or as `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`. |
+| `clickhouse_error` | `ClickHouse error: …` (collector import) | Usually a bad `--where`. Check the condition in your own client, or run with `--dry-run` first. A missing table is `not_found`: name it with `--table db.table`. |
 | `sql_error` | `SQLite: no such column: foo` (sql) | List the tables and columns: `coding.sh sql "select name, sql from sqlite_schema"`. See [Query and export](reference/query.md). |
 | `judge_error` | `The pairwise judge failed on every case: …` | Check the judge's `provider`, `model`, `baseURL` and API key variable, then re-run `exp compare --pairwise`. |
 | `model_error` | ``Every model call failed (6 of 6 trials): claude-code: `claude -p` failed: …`` (exp ab) | Every replayed turn failed, so there is nothing to compare. Fix what the message names (the key, the login, the model name or the base URL), then run it again. When only some trials fail, exp ab warns and counts them as not passing. |
@@ -271,6 +354,7 @@ The command ran and something failed.
 | `workdir_exists` | `/tmp/fork already exists` (replay --fork --run --workdir) | Pick a new `--workdir`, or leave it out for a temp dir. |
 | `no_prompt` | `The stored request has no prompt to start the agent with` (replay --fork --run) | Fork a step whose call starts from a user prompt, or fork without `--run`. |
 | `nothing_to_check` | `Step 4's recorded reply was text, and the fork gave no single tool call to expect instead` (replay --fork --save-case) | Fork with a few trials first (`-k 3`), so the case has a tool call to expect. |
+| `insufficient_data` | `Not enough to distill from: the corpus has 8 episodes; distilling needs at least 20` (refine distill) | Run more tasks or look further back (`--since 90d --repo all`), or lower the bar with `--min-episodes` and `--min-failures`. |
 | `invalid_file` | `Couldn't import cases.csv: …`, `2 problems in labels labels.jsonl` (refine score) | Fix the file. Datasets accept JSONL, JSON and CSV. refine score prints each problem with its line number. |
 | `invalid_config` | `Can't read config: …`, `Invalid serve configuration: …` (exit 2) | Fix the file or variable named in the message. See [Configuration](reference/config.md). |
 | `no_config` | `No coding.sh.toml found in … or its parents` | `coding.sh toolevals init --cli <bin>` |
@@ -279,6 +363,8 @@ The command ran and something failed.
 | `invalid_cases` / `no_cases` | `Can't read cases from …`, `No cases in …`, `No decision points in sessions since 14d` (exp ab, exit 2) | Check the workflow's cases directory. For `exp ab`, look further back (`--since 30d`) or in every repo (`--repo all`); the message lists what each behavior found. |
 | `no_diff` | `Session … has no captured diffs`, `No stored runs in experiment exp_…` (judge slop, exit 2) | The agent's capture records no diffs for its file changes, or the experiment is not a `compare` run (only those keep the agent's diff). Grade a diff directly: `git diff \| coding.sh judge slop --diff -`. |
 | `over_budget` | `Estimated cost $3.10 is over --max-cost $1.00` (exp ab) | Test fewer decision points (`--limit`), or raise `--max-cost`. A run that passes the cap partway stops and can be resumed. |
+| `cost_unknown` | `--budget needs a cost per run, and none is known: no cost known for 4 tasks (…)` (compare) | No stored run, source session or other task says what a run costs. Pass `--cost-per-run <USD>`. |
+| `budget_too_small` | `--budget $0.10 fits no task: the cheapest costs $0.20 a run, times 2 arms x 1` (compare) | Raise `--budget`, or lower `--k`. |
 | `bad_proposal` | `The proposer's reply is not a usable edit: …`, `… is not a usable cut: …` (refine propose, refine run) | Try again, or write the edit yourself and run `refine test` on it. `refine run` asks again and stops after three unusable replies in a row. |
 | `proposer_failed` | `--proposer-command exited 1: …` (refine propose, refine run) | Run the command by hand with the prompt on stdin; it must print the JSON reply on stdout and exit 0. |
 | `not_kept` | `r_… was not kept (reject: …)` (refine apply) | Apply only kept candidates, or pass `--force` to apply it anyway (the ledger records it). |
@@ -287,6 +373,7 @@ The command ran and something failed.
 | `already_applied` | `r_… is already in the working tree` (refine apply, exit 0) | Nothing to do. |
 | `not_replayable` | `None of these calls can be replayed` (exp replay) | Replay needs calls logged by `coding.sh proxy` with `capture.mode = "full"`: in `metadata` mode the request is not stored. |
 | `missing_script` | `Run … has no captured script` | The workflow run can't be replayed. |
+| `score_failed` | `Couldn't score wf_… on case-3: …` (workflows score) | The case's scorer threw. Check the case's truth file and, for a judge, its provider and API key. |
 | `unsupported_truth` | `Case … is graded by a judge; the CLI scores seeded-bugs and verifier cases only` | Score it in the viewer. |
 | `cost_confirmation_required` | `Estimated cost $7.20 exceeds confirmAboveUsd $5.00` | With `--json` this is `{"status":"action_required",…}`. Re-run with `--yes`, or raise `[toolevals] confirmAboveUsd`. |
 | `adaptive_samples` | `Experiment … ran adaptive samples: its trial count depends on its outcomes, so a paired CI over it is biased` (exp compare, toolevals compare) | Compare runs with a fixed trial count (`--trials`, `-k`). `exp compare --force` compares anyway. |

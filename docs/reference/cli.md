@@ -48,16 +48,21 @@ Every command accepts these.
 | [`show`](#codingsh-show) | Explore | Show a session timeline with subagents and latency |
 | [`tree`](#codingsh-tree) | Explore | Show a whole multi-agent run as one tree, with rolled-up totals |
 | [`replay`](#codingsh-replay) | Explore | Step through a session and see what it did to each file it touched |
+| [`attribution`](#codingsh-attribution) | Explore | Which agent session wrote the lines each commit added; export them as Agent Trace |
+| [`blame`](#codingsh-blame) | Explore | git blame with the agent session that wrote each line |
 | [`diff-calls`](#codingsh-diff-calls) | Explore | Show what changed between two model calls, and why the second missed the prompt cache |
 | [`search`](#codingsh-search) | Explore | Full-text search over prompts, replies and tool calls |
 | [`usage`](#codingsh-usage) | Explore | Tokens, cost, turns and cache hits by agent, model or day |
+| [`cache`](#codingsh-cache) | Explore | Score prompt-cache health and name what breaks the cached prefix |
+| [`stats`](#codingsh-stats) | Explore | Sessions, failures, cost, tokens and latency per day or week, split by agent, model, repo or flag |
 | [`sql`](#codingsh-sql) | Explore | Run one read-only SQL query against the SQLite index |
-| [`export`](#codingsh-export) | Explore | Stream sessions, events or labels as JSONL or CSV |
+| [`export`](#codingsh-export) | Explore | Stream sessions, events or labels as JSONL or CSV, or write raw traces to a directory |
 | [`ui`](#codingsh-ui) | Explore | Open the local session viewer |
 | [`mcp`](#codingsh-mcp) | Explore | Serve captured sessions to agents over MCP (stdio) |
 | [`eval`](#codingsh-eval) | Evaluate | Build eval suites from sessions, skills or cases, and run them |
 | [`dataset`](#codingsh-dataset) | Evaluate | Manage versioned datasets of cases |
 | [`exp`](#codingsh-exp) | Evaluate | Run a task over a dataset, compare experiments and sweep configs |
+| [`score`](#codingsh-score) | Evaluate | Add and list typed scores on sessions, events, cases and runs |
 | [`judge`](#codingsh-judge) | Evaluate | Grade one output or the slop in captured diffs, or check an LLM judge or a test verifier against human labels |
 | [`toolevals`](#codingsh-toolevals) | Evaluate | Measure how well agents use a CLI, MCP server or API |
 | [`workflows`](#codingsh-workflows) | Evaluate | Capture, measure and A/B-test multi-agent workflow runs |
@@ -84,7 +89,7 @@ coding.sh init [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `-a, --agent <AGENT>` |  | Only this agent (repeatable, or a comma list: a,b) |
 | `--scope <SCOPE>` | `user` | Install into user or project config. One of: `user`, `project`. |
 | `--mcp` | `true` | Register the coding.sh MCP server too (--no-mcp to skip) |
 | `--import` | `true` | Import each agent's past sessions so the viewer opens on your history (--no-import to skip) |
@@ -106,7 +111,7 @@ coding.sh init --dry-run
 coding.sh init --remote https://obs.example.com --key csh_ik_…
 ```
 
-- Copies the hook to ~/.coding.sh/bin/hook.mjs and points each agent at it.
+- Copies the hook to ~/.coding.sh/bin (hook.sh, and hook.mjs for what it hands on) and points each agent at it: /bin/sh hook.sh outside Windows, node hook.mjs on Windows. Run init again to move hooks from an older version to hook.sh.
 - Then imports the sessions each agent already keeps on this machine, for up to 8 seconds (CODING_SH_INIT_IMPORT_BUDGET_MS changes it). The rest imports in the background and shows up in the viewer as it lands. Running init again reads only new or changed transcripts.
 - --remote checks that the server takes the key before writing anything, then adds the sink to ~/.coding.sh/config.toml (mode 600). Run it again to change the URL, key or mode.
 - Registers the MCP server with Claude Code, Codex, Cursor, OpenCode and Gemini CLI (user scope only).
@@ -123,13 +128,20 @@ coding.sh doctor [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `-a, --agent <AGENT>` |  | Only this agent (repeatable, or a comma list: a,b) |
 | `--port <PORT>` | `4318` | OTLP receiver port to check. |
+| `--conformance` |  | Instead: read each agent's transcripts and check the events against coding.sh's invariants (read-only) |
+| `--since <WHEN>` | `7d` | With --conformance, only transcripts after this time: 7d, 12h, 30m or a date. |
+| `--max-events <N>` | `200000` | With --conformance, stop each agent after this many events. |
 
 ```sh
 coding.sh doctor
 coding.sh doctor --json
+coding.sh doctor --conformance
+coding.sh doctor --conformance --agent codex --since 30d --json
 ```
+
+- --conformance runs each agent's backfill over the transcripts on this machine and checks the events: ids, timestamps, tool and subagent pairing, parent links, usage and prompts. It only reads: blobs are hashed and dropped, SQLite sources are read from a copy, and the coding.sh store is not opened. Exits 1 when any agent has a violation.
 
 ## `coding.sh status`
 
@@ -212,7 +224,7 @@ coding.sh ingest [options]
 |---|---|---|
 | `--backfill` |  | Also import agents' local transcript history. |
 | `--rebuild` |  | Re-parse every stored session (of --agent) from its transcript and spool with the current adapters. |
-| `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `-a, --agent <AGENT>` |  | Only this agent (repeatable, or a comma list: a,b) |
 | `--since <WHEN>` |  | Only after this time: 7d, 12h, 30m or a date. |
 | `--background` |  | Don't wait for another ingest; exit quietly if one is running. With --backfill, imports history unless another import is running. |
 
@@ -253,20 +265,49 @@ coding.sh run -- aider --message 'fix the tests'
 Start a local OTLP/HTTP receiver for agents that export traces. Aliases: `otel`.
 
 ```text
-coding.sh collector [options]
+coding.sh collector [action] [options]
 ```
+
+| Action | What it does |
+|---|---|
+| [`import`](#codingsh-collector-import) | Import agent traces from a ClickHouse otel_traces table (OpenTelemetry Collector clickhouseexporter) |
 
 | Option | Default | Description |
 |---|---|---|
 | `-p, --port <PORT>` | `4318` | Port to listen on (0 = any free port) |
 | `--host <HOST>` | `127.0.0.1` | Interface to bind. |
+| `--keep-raw` |  | Also keep each source span and log record as a blob on its event (off by default: one blob write per span) |
 
 ```sh
 coding.sh collector
 coding.sh otel --port 0
+coding.sh collector import --clickhouse http://127.0.0.1:8123/?database=otel
 ```
 
 - Prints the OTEL_\* environment to stdout; status goes to stderr.
+- import keeps its place per table and starts the next run an hour before it (a root span lands after its children); a span stored once is never stored again.
+
+### `coding.sh collector import`
+
+Import agent traces from a ClickHouse otel_traces table (OpenTelemetry Collector clickhouseexporter).
+
+```text
+coding.sh collector import [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--clickhouse <URL>` |  | ClickHouse HTTP URL, e.g. http://127.0.0.1:8123/?database=otel (user and password from the URL or CLICKHOUSE_USER / CLICKHOUSE_PASSWORD) |
+| `--table <TABLE>` | `otel_traces` | Table to read (db.table also names the database) |
+| `--since <WHEN>` | `7d` | Only spans that started after this: a duration (7d, 12h) or a date. |
+| `--where <SQL>` |  | Extra ClickHouse condition on the rows, e.g. "ServiceName = 'claude-code'". |
+| `--all` |  | Read every span, not only traces with an agent span (gen_ai.\*, OpenInference, Vercel AI SDK, Claude Code, eve) |
+| `--dry-run` |  | Show the exact changes without writing anything. |
+
+```sh
+coding.sh collector import --clickhouse http://127.0.0.1:8123/?database=otel
+coding.sh collector import --clickhouse https://ch.example.com:8443/ --table otel.otel_traces --since 30d --dry-run
+```
 
 ## `coding.sh proxy`
 
@@ -417,7 +458,7 @@ coding.sh uninstall [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `-a, --agent <AGENT>` |  | Only this agent (repeatable, or a comma list: a,b) |
 | `--scope <SCOPE>` | `user` | Install into user or project config. One of: `user`, `project`. |
 | `--proxy` |  | Only stop routing agents through the proxy (undo init --proxy) |
 | `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
@@ -442,7 +483,7 @@ coding.sh sessions [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `-a, --agent <AGENT>` |  | Only sessions from this agent. |
+| `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
 | `-r, --repo <PATH>` |  | Only sessions in this repo root. |
 | `--since <WHEN>` |  | Only after this time: 7d, 12h, 30m or a date. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
@@ -483,6 +524,7 @@ coding.sh show <SESSION> [options]
 | `-n, --limit <N>` |  | List the first N events (default 200; a longer session shows as phases) |
 | `--all` |  | List every event, with phase and day lines and derail markers. |
 | `-f, --follow` |  | Keep printing new events as a running session goes on (Ctrl-C to stop) |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh show latest
@@ -510,6 +552,7 @@ coding.sh tree <SESSION|RUN> [options]
 | Option | Default | Description |
 |---|---|---|
 | `--run` |  | Read the argument as a run id (CODING_SH_RUN_ID), not a session. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh tree latest
@@ -547,6 +590,7 @@ coding.sh replay <SESSION> [options]
 | `--verify <CMD>` |  | With --run: run this command in the fork's directory afterwards; exit 1 when it fails. |
 | `--workdir <DIR>` |  | With --run: put the fork's copy here (default: a new temp dir), kept afterwards. |
 | `--save-case <SUITE>` |  | With --fork: save step N as a case in evals/&lt;SUITE&gt; (eval run sends its stored request with the project's context files and fails it when it repeats the recorded action) |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh replay latest
@@ -561,6 +605,90 @@ coding.sh replay 9f1c2e --step 12 --fork --with CLAUDE.md --save-case forks
 - File content is rebuilt from the agent's own tool calls: full writes, full reads and the edits applied to them. A file edited before any step showed it reads as unknown, with the reason, until a later read or write. A session run with `coding.sh run` also starts from its snapshot.
 - The viewer has the same replay: the Replay button on a session page, or a link ending in ?step=N.
 - --fork needs the session captured through coding.sh proxy (capture mode full): the stored request of the call that made step N is the fork's starting context. It calls the model with $ANTHROPIC_API_KEY (or $CLAUDE_CODE_OAUTH_TOKEN) or $OPENAI_API_KEY, at your cost. A context file is changed where the agent put it in the request; one it did not have is added the way Claude Code adds CLAUDE.md.
+
+## `coding.sh attribution`
+
+Which agent session wrote the lines each commit added; export them as Agent Trace.
+
+```text
+coding.sh attribution [action] [options]
+```
+
+| Action | What it does |
+|---|---|
+| [`export`](#codingsh-attribution-export) | Print one Agent Trace record (agent-trace.dev, RFC 0.1.0) per commit with agent lines, as JSONL |
+
+| Option | Default | Description |
+|---|---|---|
+| `--repo <DIR>` |  | A directory in the git repository (default: the current one) |
+| `--rev <REV>` | `HEAD` | Branch or commit to walk back from. |
+| `--since <WHEN>` |  | Only commits after this time: 30d, 12h or a date (default: the first captured session in the repo) |
+| `--all` |  | Also list commits with no agent lines. |
+| `-n, --limit <N>` | `50` | Maximum rows. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh attribution
+coding.sh attribution --since 7d --rev main
+coding.sh attribution --json
+```
+
+- Matches the lines each commit added to the lines each captured session added: the diff from its start state to its end snapshot, else its own edit tool calls. A whole-file match (patch id) or a same-file line match counts; moved long lines count at lower confidence; braces and blank lines only follow a matched neighbor. A rebased commit still matches.
+- A session gets credit for commits authored or committed from its start to 21 days later; of two sessions that wrote a line, the later one. Lines no session wrote belong to no session: a person wrote them, or an agent coding.sh did not capture.
+- Reads git only (log, diff, blame, notes). git-ai notes (refs/notes/ai), when present, credit lines no captured session matched. Each commit's result is kept in the store's key/value table.
+- --json: one document with totals, the sessions credited and per commit its attributions (path, line ranges, session, agent, model, confidence, method). export --json: {version, records}.
+
+### `coding.sh attribution export`
+
+Print one Agent Trace record (agent-trace.dev, RFC 0.1.0) per commit with agent lines, as JSONL.
+
+```text
+coding.sh attribution export [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--format <FORMAT>` | `agent-trace` | Output format. One of: `agent-trace`. |
+| `-o, --out <FILE>` |  | Write the records to FILE instead of stdout and print its path. |
+| `--viewer-url <URL>` | `http://127.0.0.1:4319` | Viewer base URL for each session link. |
+| `--repo <DIR>` |  | A directory in the git repository (default: the current one) |
+| `--rev <REV>` | `HEAD` | Branch or commit to walk back from. |
+| `--since <WHEN>` |  | Only commits after this time: 30d, 12h or a date (default: the first captured session in the repo) |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh attribution export > agent-trace.jsonl
+coding.sh attribution export --since 30d --out trace.jsonl
+coding.sh attribution export --json
+```
+
+## `coding.sh blame`
+
+git blame with the agent session that wrote each line.
+
+```text
+coding.sh blame <PATH[:LINE[-END]]> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `path[:line[-end]]` | yes | A file in the repo, optionally one line or a range (src/app.ts:40-60) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--rev <REV>` | `HEAD` | Blame the file as of this commit. |
+| `--repo <DIR>` |  | A directory in the git repository (default: the current one) |
+| `--since <WHEN>` |  | Match only commits after this time (default: the first captured session in the repo) |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh blame src/app.ts
+coding.sh blame src/app.ts:40-60
+coding.sh blame src/app.ts --json
+```
+
+- Each line shows the commit that last changed it and, when a captured session wrote that line, the session and agent; '-' means no session did. Matching works as in coding.sh attribution.
+- --json: {root, rev, path, unattributed, sessions, lines: [{line, commit, text, sessionId?, agent?, model?, confidence?, method?}]}.
 
 ## `coding.sh diff-calls`
 
@@ -597,7 +725,7 @@ coding.sh search <TEXT>... [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `-a, --agent <AGENT>` |  | Only sessions from this agent. |
+| `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
 | `-n, --limit <N>` | `20` | Maximum rows. |
 | `--project <ID>` |  | Only matches in this serve project (default: all) |
 | `--where <QUERY>` |  | Only matches matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
@@ -608,6 +736,8 @@ coding.sh search 'flaky test'
 coding.sh search migration --where 'agent:codex kind:tool.start'
 ```
 
+- Every word must appear in a match as a whole word, and the last word may also start a longer one: 'refactor tokeni' finds 'refactor the tokenizer'.
+- Matches are listed best first. When a search matches more than 20,000 events (a word as common as 'the'), the local store lists them newest first instead.
 - --where applies to each match: event keys (kind, tool, ok, …) to the matching event, session keys (agent, repo, cost, …) to its session. Keys: coding.sh sessions --help.
 - With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
@@ -623,18 +753,91 @@ coding.sh usage [options]
 |---|---|---|
 | `--by <GROUP>` | `agent` | Group rows by. One of: `agent`, `model`, `agent-model`, `day`, `repo`. |
 | `--cache` |  | Prompt-cache economics instead: hit rate, read vs write tokens, read:write ratio, breaks and their cost, with what to change. |
-| `-a, --agent <AGENT>` |  | Only sessions from this agent. |
+| `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
 | `--since <WHEN>` | `30d` | Only after this time: 7d, 12h, 30m or a date. |
 | `-n, --limit <N>` | `20` | Maximum rows. |
 | `--reprice` |  | Recompute estimated costs from the current price table first. |
+| `--baseline` |  | With --by agent or agent-model: a VS PUBLISHED column, each agent's published prompt-cache hit rate (Requesty, Apr 2026) and the points yours is above or below it; - for an agent the dataset does not list. |
 | `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh usage
+coding.sh usage --baseline
 coding.sh usage --cache --by model
 coding.sh usage --by agent-model --since 90d
 coding.sh usage --by model --where 'repo:coding-sh tool:Bash'
 ```
+
+## `coding.sh cache`
+
+Score prompt-cache health and name what breaks the cached prefix.
+
+```text
+coding.sh cache <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`doctor`](#codingsh-cache-doctor) | Hit rate, a grade, and the cache breaks ranked by cost: cause, sessions, tokens re-billed, extra USD, the fix, and two calls to diff |
+
+- Hit rate is cache reads / all prompt tokens, the CACHE READ column of coding.sh usage, over the same sessions. The breaks are the ones coding.sh show and usage count, so tokens and USD match theirs.
+- Each break gets the first change between its two calls, in the order the cache reads a request: model-switch; tools-added, tools-removed, tools-reordered, tools-changed; system-volatile-line (a line that differs only in its numbers, such as a timestamp), system-changed; history-rewritten (compaction); then idle (a wait past the cache lifetime) or other. Idle and other are not counted as avoidable.
+- Grade: 60% the hit rate against 90%, 40% the share of prompt tokens re-billed for avoidable causes (a quarter or more scores 0). A 90+, B 80+, C 70+, D 60+, else F.
+- Tool and system prompt causes need the requests: calls logged by coding.sh proxy in capture mode full. Without them a break is classified from hashes, the model and timing, and the report says how many were.
+- With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
+
+### `coding.sh cache doctor`
+
+Hit rate, a grade, and the cache breaks ranked by cost: cause, sessions, tokens re-billed, extra USD, the fix, and two calls to diff.
+
+```text
+coding.sh cache doctor [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
+| `--since <WHEN>` | `30d` | Only after this time: 7d, 12h, 30m or a date. |
+| `-n, --limit <N>` | `200` | Read the events of at most this many sessions with breaks, costliest first. |
+| `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh cache doctor
+coding.sh cache doctor --agent claude-code --since 7d
+coding.sh cache doctor --json
+```
+
+## `coding.sh stats`
+
+Sessions, failures, cost, tokens and latency per day or week, split by agent, model, repo or flag.
+
+```text
+coding.sh stats [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-m, --measure <MEASURE>` | `sessions` | What the trend shows. One of: `sessions`, `failures`, `failure-rate`, `cost`, `tokens`, `tool-calls`, `tool-errors`, `tool-error-rate`, `llm-calls`, `llm-p95`, `ttft-p50`. |
+| `--by <GROUP>` |  | One row per group, with its trend (default: one row per day or week) One of: `agent`, `model`, `repo`, `flag`. |
+| `--per <BUCKET>` | `day` | Bucket size. One of: `day`, `week`. |
+| `--since <WHEN>` | `30d` | Only after this time: 7d, 12h, 30m or a date. |
+| `--until <WHEN>` |  | Only before this time: 7d, 12h or a date (default: now) |
+| `--all` |  | Count subagent sessions as their own rows (default: top-level sessions only) |
+| `--where <QUERY>` |  | Only sessions matching a query, e.g. 'agent:codex cost&gt;0.5 tool:Bash -flag:compaction' (keys: coding.sh sessions --help) |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh stats
+coding.sh stats --measure cost --by model --since 30d
+coding.sh stats --measure failure-rate --by agent --per week --since 90d
+coding.sh stats --by flag --where 'agent:codex' --json
+```
+
+- Days and weeks start at local midnight (weeks on Monday). FAIL% = sessions with a failure flag (a flag with no colon). TOOL ERR% = failed tool calls / tool calls. P95 LLM = the 95th percentile of the sessions' own p95 model-call latency; TTFT = the median of their median time to first token.
+- With --by flag a session with several flags counts once in each; past the 6 largest groups the rest add up in "other". The same numbers: GET /api/metrics in coding.sh ui and coding.sh serve.
+- With --json, an answer given before every capture was indexed carries "pending": {"files": N, "indexing": true\|false} (files still to ingest; indexing: an ingest is still running). The field is absent once all are indexed.
 
 ## `coding.sh sql`
 
@@ -667,20 +870,22 @@ coding.sh sql "select name, sql from sqlite_schema where type = 'table'"
 
 ## `coding.sh export`
 
-Stream sessions, events or labels as JSONL or CSV.
+Stream sessions, events or labels as JSONL or CSV, or write raw traces to a directory.
 
 ```text
-coding.sh export <WHAT> [options]
+coding.sh export [what] [options]
 ```
 
 | Argument | Required | Description |
 |---|---|---|
-| `what` | yes | sessions, events or labels. |
+| `what` | no | sessions, events or labels (not needed with --evidence) |
 
 | Option | Default | Description |
 |---|---|---|
 | `--format <FORMAT>` | `jsonl` | Output format. One of: `jsonl`, `csv`. |
-| `-a, --agent <AGENT>` |  | Only sessions from this agent. |
+| `--evidence <DIR>` |  | Instead: write each matching session's events, tool inputs and full outputs, redacted, as files under DIR. |
+| `--force` |  | With --evidence, write into a directory that is not empty. |
+| `-a, --agent <AGENT>` |  | Only sessions from this agent (repeatable, or a comma list: a,b) |
 | `-r, --repo <PATH>` |  | Only sessions in this repo root. |
 | `--since <WHEN>` |  | Only after this time: 7d, 12h, 30m or a date. |
 | `--flag <NAME>` |  | Only sessions with this flag or tag, as in coding.sh sessions --flag. |
@@ -694,8 +899,10 @@ coding.sh export <WHAT> [options]
 coding.sh export sessions --since 30d --format csv > sessions.csv
 coding.sh export events --where 'agent:codex tool.errors>0' > events.jsonl
 coding.sh export labels --format csv
+coding.sh export --evidence traces/ --where 'flag:repeated-tool-failure' --limit 20
 ```
 
+- --evidence writes DIR/index.md and, per session, index.md (stats and a timeline), session.json, events.jsonl and tools/NNNN-&lt;tool&gt;.txt (one tool call: input and whole output, read back from the blob store). Everything is redacted first; a tool file stops at 200 KB and events.jsonl at 5 MB. The same index gives the same bytes. Prints DIR.
 - JSONL rows are the stored objects, one per line. CSV has fixed columns (docs/reference/query.md); event payloads are a JSON column.
 - Text cells that start with = + - or @ get a leading ' in CSV so a spreadsheet does not run them as formulas.
 - Works on every store, Postgres and ClickHouse included. Rows are streamed, so memory stays flat.
@@ -754,6 +961,7 @@ coding.sh eval <action>
 |---|---|
 | [`init`](#codingsh-eval-init) | Scaffold an eval suite in evals/&lt;name&gt;/: from failed sessions, a skill, or an app's cases |
 | [`run`](#codingsh-eval-run) | Run eval suites and report pass@1, pass@k, pass^k, flaky tasks and saturation |
+| [`candidates`](#codingsh-eval-candidates) | Rank captured sessions in this repo by how good an eval task each would make |
 | [`new`](#codingsh-eval-new) | Draft a task from a captured session |
 | [`import`](#codingsh-eval-import) | Add tasks from task directories (hand-written, or from eval export) |
 | [`validate`](#codingsh-eval-validate) | Check the reference passes, near-misses fail and nothing leaks |
@@ -781,12 +989,15 @@ coding.sh eval init [name] [options]
 | Option | Default | Description |
 |---|---|---|
 | `--sessions` |  | Tasks from failed or flagged sessions in this repo (newest first) |
-| `--session <ID>` |  | Tasks from these sessions instead: an id, a prefix or latest (repeatable) |
+| `--session <ID>` |  | Tasks from these sessions instead: an id, a prefix or latest (repeatable) Takes a comma list too (a,b). |
 | `--since <AGE>` | `14d` | With --sessions: how far back to look (30m, 12h, 7d, 2w) |
 | `--limit <N>` | `10` | With --sessions: at most N tasks. |
 | `--repo <DIR|all>` |  | With --sessions: sessions under this directory, or all, for another checkout or worktree of the project (default: this git repo) |
 | `--verifier <CMD>` |  | With --sessions: command that passes only when a task is solved (default: guessed per session) |
 | `--hidden-test <GLOB>` |  | With --sessions: test files to hide from the agent (repeatable) |
+| `--where <QUERY>` |  | Tasks from the sessions this query matches (sessions --where syntax), instead of every failed or flagged one. |
+| `--validate` |  | With --sessions or --where: validate each task before it goes into the suite. A session diff that passes the verifier becomes the reference and the task is marked validated; one that fails it is kept as a near miss. |
+| `--validate-k <N>` | `1` | With --validate: the session's end state must pass N of N verifier runs. |
 | `--skill <DIR>` |  | Should / should-not trigger prompts for this skill. |
 | `--should <PROMPT>` |  | With --skill: a prompt that should load it (repeatable) |
 | `--should-not <PROMPT>` |  | With --skill: a prompt that should not (repeatable) |
@@ -842,6 +1053,28 @@ coding.sh eval run triage --json
 coding.sh eval run triage --summary "$GITHUB_STEP_SUMMARY"
 ```
 
+### `coding.sh eval candidates`
+
+Rank captured sessions in this repo by how good an eval task each would make.
+
+```text
+coding.sh eval candidates [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <AGE>` | `14d` | How far back to look (30m, 12h, 7d, 2w) |
+| `--limit <N>` | `10` | Show the best N. |
+| `--repo <DIR|all>` |  | Sessions under this directory, or all (default: this git repo) |
+| `--flagged` |  | Only failed or flagged sessions, the ones eval init --sessions drafts from. |
+| `--all` |  | Also list the sessions that can't become a task, with the reason. |
+
+```sh
+coding.sh eval candidates
+coding.sh eval candidates --since 30d --all
+coding.sh eval candidates --repo all --json
+```
+
 ### `coding.sh eval new`
 
 Draft a task from a captured session.
@@ -858,14 +1091,17 @@ coding.sh eval new <SESSION> [options]
 |---|---|---|
 | `--name <NAME>` |  | Task name. |
 | `--instruction <TEXT|@FILE>` |  | What the agent is asked to do (default: the session's first prompt) |
+| `--statement <MODE>` | `first-prompt` | How to write the instruction when --instruction is not given. first-prompt: the session's first prompt. ledger: every user turn and approved proposal as a list of obligations, with the ones a later turn replaced left out. One of: `first-prompt`, `ledger`. |
+| `--judge <JSON|FILE>` |  | With --statement ledger: the model that merges turns into obligations, e.g. {"provider":"anthropic"} (default: one obligation per turn, no model) |
 | `--verifier <CMD>` |  | Command that passes only when the task is solved. |
 | `--setup <CMD>` |  | Setup command (repeatable) |
 | `--hidden-test <GLOB>` |  | Test files to hide from the agent (repeatable) |
-| `--tag <TAG>` |  | Tag (repeatable) |
+| `--tag <TAG>` |  | Tag (repeatable) Takes a comma list too (a,b). |
 
 ```sh
 coding.sh eval new latest --verifier 'npm test'
 coding.sh eval new latest --instruction @prompt.md --verifier 'npm test'
+coding.sh eval new latest --statement ledger --judge '{"provider":"anthropic"}' --verifier 'npm test'
 ```
 
 ### `coding.sh eval import`
@@ -986,9 +1222,17 @@ coding.sh eval trigger <SKILL> [options]
 | `--no-siblings` |  | Install only the skill under test. |
 | `--min-f1 <X>` |  | Exit 1 when the tested arm's F1 is under X (0 to 1) |
 | `--fail-on <WHAT>` |  | Exit 1 when B answers fewer prompts right than A: the 95% CI below 0 and an exact sign-flip p below 0.05. One of: `regression`. |
+| `--draft [<PROVIDER|JSON>]` |  | Write triggers.toml instead of running it: prompts of captured sessions that loaded the skill (should) or a sibling (should_not), then a model fills each side (default provider: anthropic) |
+| `--draft-model <MODEL>` |  | With --draft: the model. |
+| `--n <N>` | `8` | With --draft: prompts per side. |
+| `--since <AGE>` | `90d` | With --draft: how far back to look for sessions. |
+| `--no-traces` |  | With --draft: draft from SKILL.md only, without reading captured sessions. |
+| `--force` |  | With --draft: replace an existing triggers.toml. An agent passes it only once the user approves. |
+| `--dry-run` |  | With --draft: print the draft without writing it. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 
 ```sh
+coding.sh eval trigger .claude/skills/pdf --draft --dry-run
 coding.sh eval trigger .claude/skills/pdf -k 3 --yes
 coding.sh eval trigger .claude/skills/pdf --description @new-description.txt --fail-on regression --yes
 coding.sh eval trigger skills/pdf --candidate skills-next/pdf --min-f1 0.8 --yes
@@ -1023,7 +1267,7 @@ coding.sh eval export <TASK> [options]
 | Option | Default | Description |
 |---|---|---|
 | `-o, --out <DIR>` |  | Output directory (required) |
-| `--format <FORMAT>` | `coding.sh` | Directory layout. One of: `coding.sh`, `harbor`. |
+| `--format <FORMAT>` | `coding.sh` | coding.sh: task dir. harbor: a Harbor task (task.toml schema 1.4, the source session in solution/trajectory.json). atif: the source session as an ATIF-v1.8 trajectory.json. One of: `coding.sh`, `harbor`, `atif`. |
 | `--force` |  | Replace the named target when it already exists. An agent passes it only once the user approves. |
 
 ## `coding.sh dataset`
@@ -1055,13 +1299,15 @@ coding.sh dataset add <NAME> [options]
 | Option | Default | Description |
 |---|---|---|
 | `--case <JSON>` |  | Case as JSON: {"input":…,"expected":…} (repeatable) |
-| `--session <ID>` |  | Case from a captured session (repeatable) |
+| `--session <ID>` |  | Case from a captured session (repeatable) Takes a comma list too (a,b). |
 | `--split <SPLIT>` |  | Split for the added cases (default: stable hash of the case id, 60/20/20) One of: `train`, `dev`, `test`. |
+| `--kind <KIND>` |  | Kind for the added cases: bad fails before the fix, guard and control pass before and after. One of: `bad`, `guard`, `control`. |
 | `--note <TEXT>` |  | Version note. |
 
 ```sh
 coding.sh dataset add smoke --case '{"input":"2+2","expected":"4"}'
 coding.sh dataset add labelled --session <ID> --split test
+coding.sh dataset add prompt-fix --kind control --case '{"input":"What is 2+2?","expected":"4"}'
 ```
 
 ### `coding.sh dataset import`
@@ -1133,10 +1379,10 @@ coding.sh exp ab [spec] [options]
 |---|---|---|
 | `--a <FILE|DIR|git:REV|BUNDLE|none>` |  | Baseline harness (default: git HEAD when B is omitted, else the repo's current files; with no uncommitted edits, the version before your last harness commit) |
 | `--b <FILE|DIR|git:REV|BUNDLE|none>` |  | Candidate harness; a file replaces the file of the same path in A (default: your uncommitted edits, else your last harness commit) |
-| `--behavior <ID[,ID]>` |  | Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all) Repeatable. |
+| `--behavior <ID[,ID]>` |  | Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all) Repeatable. Takes a comma list too (a,b). |
 | `--anchor <FILE>` |  | Module exporting your own anchor(s) (see the evals guide) Repeatable. |
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
-| `--agent <AGENT>` |  | Only sessions of this agent. Repeatable. |
+| `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
 | `-n, --limit <N>` | `40` | Maximum decision points. |
 | `--provider <NAME>` |  | Who answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
@@ -1234,12 +1480,24 @@ coding.sh exp run [spec] [options]
 | `--stop-early` |  | With --arm: stop once a group sequential test (O'Brien-Fleming) is decisive. |
 | `--looks <N>` | `4` | With --stop-early: planned looks over the case budget. |
 | `--max-cases <N>` |  | With --arm: run at most N cases (a random subset) |
-| `--seed <N>` |  | With --arm or a matrix spec: seed for the case and arm order (default random, recorded) |
+| `--seed <N>` |  | With --arm or a matrix spec: seed for the case and arm order (default random, recorded). With --sample: seed for the draw (default 0) |
+| `--failing <EXPERIMENT>` |  | Only the cases this experiment failed (compare warns and holds when the other side is that experiment: regression to the mean) |
+| `--errors-from <EXPERIMENT>` |  | Only the cases with a task or infrastructure error in this experiment. |
+| `--case <PATTERN>` |  | Only cases whose id matches (\* and ? wildcards; repeatable) Takes a comma list too (a,b). |
+| `--sample <N|SHARE>` |  | A seeded random sample of the cases: a count (10) or a share (0.2); the same seed picks the same cases. |
+| `--first-n <N>` |  | Only the first N cases, in dataset order (after the other selections) |
+| `--retry-errors` |  | With --resume &lt;EXPERIMENT&gt;: also run its task-errored case-trials again (a finished experiment too); the rest are kept. |
+| `--seq <K>` |  | Sequential attempts: a case-trial that fails is tried again with feedback, up to K attempts (2-10); the pass rate stays the first attempt's (Seq@1) and the run reports Seq@1..K. Command and http tasks need "envelope": true. |
+| `--feedback <MODE>` | `reasons` | With --seq: bit (one fixed sentence), reasons (the failed graders' reasons, at most 3, 300 characters each) or critic=&lt;GRADER JSON\|FILE&gt; (a grader's reason on the failed output; it never gates). The expected answer is never shown. |
+| `--seq-history <MODE>` | `full` | With --seq: show each new attempt every earlier attempt, or only the last. One of: `full`, `last`. |
 | `--plan` |  | With a matrix spec: print the cells and what each changes, check them, and run nothing. |
-| `--cell <NAME>` |  | With a matrix spec: run only this cell (repeatable); the baseline cell always runs. |
+| `--cell <NAME>` |  | With a matrix spec: run only this cell (repeatable); the baseline cell always runs. Takes a comma list too (a,b). |
 | `--reuse <CELLS>` | `none` | With a matrix spec: copy finished case-trials of the same case, task, graders, trial and timeout from earlier experiments instead of running them again. One of: `baseline`, `all`, `none`. |
 | `--reuse-max-age <AGE>` | `7d` | With --reuse: only case-trials that started this recently (30m, 12h, 7d, 2w) |
-| `--control` | `true` | A continuation task needs a control arm (A, the recorded config) to measure replay noise; --no-control runs one task alone and marks the result. |
+| `--control` | `true` | A continuation task or a --replay needs a control arm (A, the recorded config) to measure replay noise; --no-control runs one task alone and marks the result. |
+| `--record` |  | Record the task's model calls (Anthropic and OpenAI, through a local proxy the task's ANTHROPIC_BASE_URL/OPENAI_BASE_URL point at), so a later run can --replay them. |
+| `--replay <EXPERIMENT>` |  | Serve this recorded experiment's model calls again, up to each case-trial's first changed call; later calls run live. Adds the recorded config as a control arm (A) unless --no-control. |
+| `--replay-until <N>` |  | With --replay: serve only calls 1..N from the recording; call N+1 onward runs live. |
 | `--series <NAME>` |  | Tag the experiment as the next round of an iteration loop and print whether the loop should stop (see exp plateau) |
 | `--watch` |  | Rerun on every change to the spec, the task's script, grader files or --watch-path; a grader-only change regrades the stored outputs. Enter reruns, q quits. |
 | `--watch-path <GLOB>` |  | With --watch: more files whose change reruns the task (repeatable; also the spec's "watch" field) |
@@ -1253,10 +1511,16 @@ coding.sh exp run [spec] [options]
 coding.sh exp run spec.json --watch
 coding.sh exp run -d smoke -g '{"kind":"exact"}' --arm base=base.json --arm cand=cand.json --stop-early --max-cases 400
 coding.sh exp run spec.json --resume
+coding.sh exp run spec.json --resume exp_01J… --retry-errors
+coding.sh exp run cand.json --failing base
+coding.sh exp run spec.json --sample 20 --seed 7
+coding.sh exp run spec.json --seq 3 --feedback reasons
 coding.sh exp run spec.json --samples adaptive --stop-on-regression --baseline last-release
 coding.sh exp run matrix.json --plan
 coding.sh exp run matrix.json --cell model=opus,prompt=short
 coding.sh exp run matrix.json --reuse baseline --plan
+coding.sh exp run spec.json --record
+coding.sh exp run cand.json --replay exp_01J… --replay-until 3
 ```
 
 ### `coding.sh exp session`
@@ -1299,10 +1563,14 @@ coding.sh exp compare <A> <B> [options]
 |---|---|---|
 | `--force` |  | Compare a cancelled (partial) experiment too. |
 | `--cluster <KEY>` |  | Case metadata field (e.g. repo, session) whose clusters the bootstrap resamples instead of single cases. |
-| `--pairwise <JSON|FILE>` |  | Pairwise judge spec, {"kind":"pairwise","name":…,"rubric":…}: judges A and B's outputs side by side, in both orders. |
-| `--labels <FILE>` |  | With --pairwise: human labels (JSON array or JSONL of {"caseId","winner":"a"\|"b"\|"tie"}) to calibrate the judge on the test split. |
+| `--pairwise <JSON|FILE>` |  | Pairwise judge spec, {"kind":"pairwise","name":…,"rubric":…}: judges A and B's outputs side by side, in both orders. Repeat it for more judges: compare then reports how far they agree, and --gate holds unless every judge finds B better. Repeatable. |
+| `--labels <FILE>` |  | With --pairwise: human labels (JSON array or JSONL of {"caseId","winner":"a"\|"b"\|"tie"}) to calibrate each judge on the test split. |
 | `--matrix` |  | Also print the success-count matrix: cases by passes out of k in A (rows) and B (columns) |
 | `--margin <D>` |  | Non-inferiority: exit 1 unless the 95% CI lower bound of B − A is above −D (0.05 = 5pp) |
+| `--labels-a <FILE>` |  | Human labels of A's outputs (JSON array or JSONL of {"caseId","value":"pass"\|"fail"\|"skip","criterion"?}): LLM judge graders get a PPI++ corrected B − A. |
+| `--labels-b <FILE>` |  | Human labels of B's outputs (required with --labels-a; labels are never shared across arms) |
+| `--min-labels <N>` | `20` | With --labels-a/-b: fewest usable labels per arm for a corrected delta. |
+| `--verdict <ON>` | `pass` | What the verdict reads: the first-attempt pass rate, or Seq@K when both runs used the same --seq and --feedback. One of: `pass`, `seq`. |
 | `--gate` |  | Ship-or-hold decision: exit 0 when B wins enough without breaking what A solved, 1 otherwise. |
 | `--lambda <N>` | `2` | With --gate: what breaking one solved item costs, in fixed items. |
 | `--gate-alpha <A>` | `0.05` | With --gate: one-sided significance level. |
@@ -1315,6 +1583,8 @@ coding.sh exp compare base cand --cluster repo
 coding.sh exp compare base cand --gate
 coding.sh exp compare base cand --matrix
 coding.sh exp compare base cand --pairwise judge.json
+coding.sh exp compare base cand --pairwise openai-judge.json --pairwise anthropic-judge.json --gate
+coding.sh exp compare base cand --labels-a base-labels.jsonl --labels-b cand-labels.jsonl
 ```
 
 ### `coding.sh exp regrade`
@@ -1397,6 +1667,9 @@ coding.sh exp sweep <CONFIGS>... [options]
 | `--split <SPLIT>` | `train` | Split the race runs on. One of: `train`, `dev`, `test`. |
 | `--held-out <SPLIT>` | `test` | Split the winner is re-scored on (a seeded 30% when the dataset has no splits) One of: `train`, `dev`, `test`. |
 | `--seed <N>` |  | Seed for the case and job order (default random, recorded) |
+| `--guard <DATASET[@VER]|prior>` |  | An earlier suite the winner must not forget: start and winner run on it (its test split, else every case), and a dont-ship gate blocks adoption and exits 1. prior: every dataset a sweep adopted a config on (repeatable) Takes a comma list too (a,b). |
+| `--guard-tau <T>` | `0.10` | With --guard: largest share of the start's solved guard cases the winner may break. |
+| `--guard-lambda <L>` | `2` | With --guard: loss weight of the guard gate. |
 | `--resume [<ID>]` |  | Continue an interrupted sweep: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
 | `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
@@ -1404,6 +1677,7 @@ coding.sh exp sweep <CONFIGS>... [options]
 
 ```sh
 coding.sh exp sweep base=base.json t2=temp2.json t5=temp5.json -d smoke -g '{"kind":"exact"}' --budget 300
+coding.sh exp sweep base=base.json cand=cand.json -d swe -g '{"kind":"exact"}' --guard prior
 ```
 
 ### `coding.sh exp metrics`
@@ -1419,8 +1693,8 @@ coding.sh exp metrics [options]
 | `--arm <NAME=CMD|JSON|FILE>` |  | One arm: a command line, a task spec or a spec file; give two (A then B). The command prints a JSON object of numbers. Repeatable. |
 | `--pairs <N>` | `11` | Interleaved pairs (each runs A and B once, in balanced random order) |
 | `--warmup <N>` | `0` | Runs of each arm before the pairs, not counted. |
-| `--higher <METRIC>` |  | Metric where higher is better (repeatable, \* wildcard); lower is better otherwise. |
-| `--metric <METRIC>` |  | Only report these metrics (repeatable, \* wildcard) |
+| `--higher <METRIC>` |  | Metric where higher is better (repeatable, \* wildcard); lower is better otherwise. Takes a comma list too (a,b). |
+| `--metric <METRIC>` |  | Only report these metrics (repeatable, \* wildcard) Takes a comma list too (a,b). |
 | `--correction <METHOD>` | `holm` | Multiple-comparison correction across metrics. One of: `holm`, `none`. |
 | `--timeout <SEC>` | `600` | Per-run timeout for arms that don't set timeoutMs. |
 | `--seed <N>` |  | Seed for the arm order (default random, recorded) |
@@ -1505,6 +1779,112 @@ coding.sh exp status
 coding.sh exp status exp_01JC3T6Z2Q8W1S5V0R7N4K9M2D --json
 ```
 
+## `coding.sh score`
+
+Add and list typed scores on sessions, events, cases and runs.
+
+```text
+coding.sh score <action>
+```
+
+| Action | What it does |
+|---|---|
+| [`add`](#codingsh-score-add) | Score a session, event, case or run (prints the score id) |
+| [`list`](#codingsh-score-list) | List scores, newest first |
+| [`config`](#codingsh-score-config) | Fix a score name's type and allowed values (prints the config id) |
+| [`configs`](#codingsh-score-configs) | List score configs |
+
+- Labels are human scores: a pass or fail label is a boolean score, and judge calibrate reads human boolean scores as labels.
+- A value outside its config's range or categories is refused (exit 2). The viewer and serve take the same scores at /api/scores.
+
+### `coding.sh score add`
+
+Score a session, event, case or run (prints the score id).
+
+```text
+coding.sh score add <TARGET> <NAME> <VALUE> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `target` | yes | A session id (a prefix or latest works), or event:&lt;id&gt;, case:&lt;id&gt;, run:&lt;id&gt;. |
+| `name` | yes | Score name, e.g. outcome or helpfulness. |
+| `value` | yes | A number, true or false, or a category. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--type <TYPE>` |  | Data type (default: the name's config, else what the value looks like) One of: `numeric`, `boolean`, `categorical`, `text`. |
+| `--comment <TEXT>` |  | Why this score. |
+| `--source <SOURCE>` | `human` | Who gave it. One of: `human`, `judge`, `code`, `api`, `monitor`. |
+| `--config <ID>` |  | Check the value against this config (default: the config with the score's name) |
+| `--session <ID>` |  | The session an event, case or run belongs to. |
+| `--judge-version <VERSION>` |  | Judge version that produced the score. |
+| `--id <ID>` |  | Score id; adding the same id again replaces it (default: one per target, name, source and person) |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh score add latest outcome true
+coding.sh score add 4f2a helpfulness 4 --comment 'fixed it first try'
+coding.sh score add event:evt_123 correct false --source code --session 4f2a
+```
+
+### `coding.sh score list`
+
+List scores, newest first.
+
+```text
+coding.sh score list [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--target <TARGET>` |  | Only scores on this target (as in score add) |
+| `--name <NAME>` |  | Only this score name. |
+| `--source <SOURCE>` |  | Only this source. One of: `human`, `judge`, `code`, `api`, `monitor`. |
+| `--session <ID>` |  | Only scores on this session or its events. |
+| `--since <WHEN>` |  | Only after this time: 7d, 12h, 30m or a date. |
+| `-n, --limit <N>` | `50` | Maximum rows. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
+
+```sh
+coding.sh score list --name helpfulness
+coding.sh score list --session latest --json
+```
+
+### `coding.sh score config`
+
+Fix a score name's type and allowed values (prints the config id).
+
+```text
+coding.sh score config <NAME> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `name` | yes | Score name. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--type <TYPE>` |  | Data type (required) One of: `numeric`, `boolean`, `categorical`, `text`. |
+| `--min <N>` |  | numeric: smallest allowed value. |
+| `--max <N>` |  | numeric: largest allowed value. |
+| `--categories <A,B,...>` |  | categorical: the allowed values (comma-separated or repeated) Repeatable. |
+| `--description <TEXT>` |  | What the score means. |
+| `--id <ID>` |  | Config id (default: the name) |
+
+```sh
+coding.sh score config helpfulness --type numeric --min 0 --max 5
+coding.sh score config tone --type categorical --categories positive,neutral,negative
+```
+
+### `coding.sh score configs`
+
+List score configs.
+
+```text
+coding.sh score configs
+```
+
 ## `coding.sh judge`
 
 Grade one output or the slop in captured diffs, or check an LLM judge or a test verifier against human labels.
@@ -1534,7 +1914,8 @@ coding.sh judge grade [options]
 |---|---|---|
 | `-g, --grader <JSON|FILE>` |  | Grader spec, the same JSON as `exp run --grader` (llm, llm-checklist with trace checks, contains, regex, …) |
 | `--output <FILE|->` |  | The output to grade (default: $CODING_SH_AGENT_OUTPUT, the agent's final answer in a verifier) |
-| `--trace <FILE>` |  | Claude stream-json or transcript, or coding.sh events as JSONL (default: $CODING_SH_AGENT_STDOUT) |
+| `--trace <FILE>` |  | Claude stream-json or transcript, codex exec --json, Cursor stream-json, OpenAI chat messages or Responses items, or coding.sh events as JSONL (default: $CODING_SH_AGENT_STDOUT) |
+| `--allow-partial-trace` |  | Grade even when tool calls in --trace did not reach the judge (otherwise exit 2, trace_incomplete) |
 | `--input <TEXT|@FILE>` |  | The task input shown to a judge. |
 | `--metadata <JSON|FILE>` |  | Case metadata, e.g. {"instructions": "…"} for follows-rules. |
 | `--diff <FILE|->` |  | The agent's work as a unified diff, for agent-slop (default: $CODING_SH_AGENT_DIFF in a verifier) |
@@ -1560,11 +1941,12 @@ coding.sh judge slop [target] [options]
 | Option | Default | Description |
 |---|---|---|
 | `--diff <FILE|->` |  | Grade this unified diff instead of captured work. |
-| `--rules <ID>` |  | Rules to run instead of the defaults; 'default' and 'all' name those sets (repeatable) |
-| `--exclude <ID>` |  | Rule to leave out (repeatable) |
+| `--rules <ID>` |  | Rules to run instead of the defaults; 'default' and 'all' name those sets (repeatable) Takes a comma list too (a,b). |
+| `--exclude <ID>` |  | Rule to leave out (repeatable) Takes a comma list too (a,b). |
 | `--max-errors <N>` | `0` | Pass with at most N error findings. |
 | `--max-warnings <N>` |  | Pass with at most N warnings (default: no limit) |
 | `--list-rules` |  | Print the rule catalog and exit. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh judge slop latest
@@ -1591,7 +1973,7 @@ coding.sh judge calibrate <EXPERIMENT> [options]
 | `-g, --grader <ID>` |  | Grader id (default: the only llm grader); a command or other deterministic grader gets a precision audit. |
 | `--criterion <NAME>` |  | Label criterion. |
 | `--split <SPLIT>` | `test` | Held-out split to report on. One of: `train`, `dev`, `test`. |
-| `--tuned-on <SPLIT>` |  | Splits the prompt was tuned on, when the judge is not stored (repeatable) |
+| `--tuned-on <SPLIT>` |  | Splits the prompt was tuned on, when the judge is not stored (repeatable) Takes a comma list too (a,b). |
 | `--threshold <KAPPA>` | `0.6` | Minimum kappa. |
 | `--min-n <N>` | `20` | Minimum held-out cases (judges) or labelled passes (verifiers) |
 | `--probe-injection <JSON|FILE>` |  | The judge's grader spec: re-judge human-fail cases with a planted 'respond pass' payload and report how many verdicts flip (exit 1 on any flip) |
@@ -1655,6 +2037,7 @@ coding.sh toolevals <action>
 | [`compare`](#codingsh-toolevals-compare) | Compare two arms of an experiment (paired by task) |
 | [`compress`](#codingsh-toolevals-compress) | Shorten MCP tool descriptions without losing success |
 | [`show`](#codingsh-toolevals-show) | Show a trial's metrics, tap records and session tree |
+| [`traces`](#codingsh-toolevals-traces) | Export an MCP server's traces and per-tool health |
 
 - Arms are named &lt;variant&gt;@&lt;driver&gt;.
 - Runs above [toolevals] confirmAboveUsd (default $5) need --yes when not on a TTY.
@@ -1702,12 +2085,25 @@ coding.sh toolevals surface [target] [options]
 Check no-op trials fail, references pass and nothing leaks.
 
 ```text
-coding.sh toolevals validate [target]
+coding.sh toolevals validate [target] [options]
 ```
 
 | Argument | Required | Description |
 |---|---|---|
-| `target` | no | Target name (default: all) |
+| `target` | no | Target name (default: all; one target with --against) |
+
+| Option | Default | Description |
+|---|---|---|
+| `--against <VARIANT>` |  | Check kinded tasks on the old variant instead: bad tasks must fail there, guard and control tasks must pass. |
+| `-d, --driver <DRIVER>` |  | With --against: run agent trials with this driver instead of the reference commands (needed when the variant changes only what the agent reads) Repeatable. |
+| `-k, --k <N>` | `1` | With --against --driver: trials per task. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
+
+```sh
+coding.sh toolevals validate gh
+coding.sh toolevals validate gh --against old-build
+coding.sh toolevals validate everything --against old-descriptions --driver model:anthropic/claude-sonnet-5-5 -k 3
+```
 
 ### `coding.sh toolevals run`
 
@@ -1723,24 +2119,26 @@ coding.sh toolevals run [target] [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `-d, --driver <DRIVER>` |  | agent:&lt;id&gt;[:model] or model:&lt;provider&gt;/&lt;model&gt; (repeatable) |
-| `--variant <VARIANT>` |  | Variant (repeatable; default: base) |
+| `-d, --driver <DRIVER>` |  | agent:&lt;id&gt;[:model] or model:&lt;provider&gt;/&lt;model&gt; (repeatable) Takes a comma list too (a,b). |
+| `--variant <VARIANT>` |  | Variant (repeatable; default: base) Takes a comma list too (a,b). |
 | `-k, --k <N>` | `3` | Trials per task and arm. |
 | `--samples <MODE>` | `fixed` | adaptive: 2 trials each, a 3rd when they disagree; it fails at half or more failing. Reports no CI. One of: `fixed`, `adaptive`. |
 | `--stop-on-regression` |  | Stop and exit 1 once a task that passed every trial of --baseline fails. |
 | `--baseline <EXPERIMENT>` |  | With --stop-on-regression: the stored experiment to hold the run to. |
 | `--split <SPLIT>` | `dev` | Task split. One of: `dev`, `heldout`, `all`. |
-| `-t, --task <ID>` |  | Only this task (repeatable) |
+| `-t, --task <ID>` |  | Only this task (repeatable) Takes a comma list too (a,b). |
 | `-c, --concurrency <N>` |  | Parallel trials. |
 | `--keep` |  | Keep trial sandboxes. |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
 | `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
+| `--shell-model <PROVIDER/MODEL>` |  | Model drivers on a CLI target: a model plays the shell (fixed date); it becomes part of the arm name. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 
 ```sh
 coding.sh toolevals run gh --driver agent:claude-code -k 3
 coding.sh toolevals run everything --driver model:anthropic/claude-sonnet-5-5 --variant base --variant terse
 coding.sh toolevals run gh --driver agent:claude-code --samples adaptive --stop-on-regression --baseline texp_01J…
+coding.sh toolevals run gh --driver model:openai/gpt-6-sol --shell-model anthropic/claude-haiku-4-5
 ```
 
 ### `coding.sh toolevals compare`
@@ -1792,6 +2190,33 @@ coding.sh toolevals show <TRIAL>
 | Argument | Required | Description |
 |---|---|---|
 | `trial` | yes | Trial id. |
+
+### `coding.sh toolevals traces`
+
+Export an MCP server's traces and per-tool health.
+
+```text
+coding.sh toolevals traces <TARGET> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `target` | yes | Target or MCP server name. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--from <EXPERIMENT>` |  | Trials of this tool-eval experiment (dev tasks only) |
+| `--arm <ARM>` |  | Only this arm of --from, &lt;variant&gt;@&lt;driver&gt;. |
+| `--sessions <FILTER>` |  | Captured sessions matching this query, e.g. 'since:30d'. |
+| `--server <NAME>` |  | Server name in mcp__&lt;server&gt;__&lt;tool&gt; (default: the target name) |
+| `-o, --out <DIR>` |  | Write traces/, index.jsonl, tool-health.json and tools.json here. |
+| `--max <N>` | `200` | Most traces to keep. |
+| `--no-tools` |  | Don't connect to the server to list its tools. |
+
+```sh
+coding.sh toolevals traces acme --sessions 'since:30d' --out traces-acme
+coding.sh toolevals traces acme --from texp_01J… --arm base@agent:claude-code --out traces-acme
+```
 
 ## `coding.sh workflows`
 
@@ -1919,6 +2344,7 @@ coding.sh workflows run <WORKFLOW> [options]
 | `--split <SPLIT>` |  | Only cases in this split. One of: `dev`, `heldout`. |
 | `--driver <DRIVER>` | `claude` | How a variant runs. One of: `claude`, `command`. |
 | `-j, --concurrency <N>` | `1` | Jobs at once (a workflow already fans out) |
+| `--validate` | `true` | Check seeded bugs on each case's snapshot first: each bug's test fails, and passes with the bug reverted (--no-validate to skip) |
 | `--resume [<ID>]` |  | Continue an interrupted workflow experiment: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
 | `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
@@ -2057,6 +2483,7 @@ coding.sh bench run <NAME> [options]
 | `--dry-run` |  | Sample and print the cases, the detectable gap and the cost estimate; run nothing. |
 | `--resume [<RUN>]` |  | Continue an incomplete run (budget stop, Ctrl-C, crash): same seed and cases, finished calls kept. RUN: id or YYYY-MM-DD (default: the latest) |
 | `--run <RUN>` |  | With --resume: which incomplete run, by id or YYYY-MM-DD (default: the latest) |
+| `--fresh` |  | Sessions benchmarks: wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh bench run answers
@@ -2206,7 +2633,7 @@ coding.sh improve [action] [options]
 |---|---|---|
 | `--since <WHEN>` | `14d` | Only sessions (check: changes) after this time: 7d, 12h or a date. |
 | `--repo <DIR|all>` |  | Only sessions under this directory, or all (default: this git repo) |
-| `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `-a, --agent <AGENT>` |  | Only this agent (repeatable, or a comma list: a,b) |
 | `--headless` |  | Include headless sessions (claude -p, an Agent SDK, codex exec), left out by default. |
 | `-n, --limit <N>` | `5` | Maximum rows. |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
@@ -2225,7 +2652,7 @@ coding.sh improve check
 - A failed compound line (&&, ;, \|, a loop) counts against the part that failed: the one its error names, the tool whose error it is, the part timeout stopped, or the last part of a pipeline. When nothing singles one out, the issue says compound command.
 - When sessions ran on the repo's current harness version (the newest commit that changed CLAUDE.md, AGENTS.md, a rule or a skill) and none of them had an issue, the issue is marked 'Not seen since &lt;commit&gt;', goes last, and points at improve check instead of a new line.
 - check reads the git history of CLAUDE.md, AGENTS.md, GEMINI.md, .claude/rules, .cursor/rules and skills. A session counts for the newest such commit its starting HEAD contains, so uncommitted edits count from the commit that keeps them. Sessions with no recorded HEAD, and sessions with no tool call outside MCP servers (a chat, or asking coding.sh about a change), are left out.
-- check compares sessions with a failure flag before and after each change, and, for each added line that names a command, flag, path or identifier, the share of sessions that acted on it. Two-sided Fisher exact tests at p ≤ 0.1: more flagged sessions is Regressed (exit 1); fewer, or the new line followed more with nothing worse, is Helped. Under 5 sessions after a change without a clear result is Too early to tell.
+- check compares sessions with a failure flag before and after each change (overall and per flag), and, for each added line that names a command, flag, path or identifier, the share of sessions that acted on it. Two-sided Fisher exact tests at p ≤ 0.1: more flagged sessions is Regressed (exit 1); fewer flagged sessions, or one flag falling (Holm-adjusted) with no other rising, is Helped. A new line the agent follows while flagged sessions stay put is Followed, no effect yet. More tool calls or wall time per session (median 1.25x, permutation p ≤ 0.1) with no fall is Costlier; both suggest refine test git:&lt;previous&gt; to test the harness without the change. Under 5 sessions after a change without a clear result is Too early to tell.
 - Under each change, check lists the sessions after it that still have a failure flag, newest first, with their flags (5, or all with --sessions; --json has every flagged session before and after).
 - exp ab (the replay A/B that improve suggests) needs ANTHROPIC_API_KEY, OPENAI_API_KEY, or Claude Code or Codex logged in (it runs on your subscription then). Without any of them, commit the change and let improve check judge it on new sessions.
 
@@ -2245,7 +2672,7 @@ coding.sh improve fix <ISSUE> [options]
 |---|---|---|
 | `--since <WHEN>` | `14d` | Only sessions (check: changes) after this time: 7d, 12h or a date. |
 | `--repo <DIR|all>` |  | Only sessions under this directory, or all (default: this git repo) |
-| `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `-a, --agent <AGENT>` |  | Only this agent (repeatable, or a comma list: a,b) |
 | `--headless` |  | Include headless sessions (claude -p, an Agent SDK, codex exec), left out by default. |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 | `--target <FILE>` |  | Repo file to add the line to (default: CLAUDE.md or AGENTS.md, whichever the issue's agent reads) |
@@ -2268,7 +2695,7 @@ coding.sh improve check [options]
 |---|---|---|
 | `--since <WHEN>` | `30d` | Only sessions (check: changes) after this time: 7d, 12h or a date. |
 | `--repo <DIR|all>` |  | Only sessions under this directory, or all (default: this git repo) |
-| `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
+| `-a, --agent <AGENT>` |  | Only this agent (repeatable, or a comma list: a,b) |
 | `--headless` |  | Include headless sessions (claude -p, an Agent SDK, codex exec), left out by default. |
 | `-n, --limit <N>` | `5` | Maximum rows. |
 | `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
@@ -2345,6 +2772,7 @@ coding.sh harness audit [options]
 | `-a, --agent <AGENT>` |  | Only this agent's sessions and files. |
 | `--since <WHEN>` | `30d` | Only after this time: 7d, 12h, 30m or a date. |
 | `--limit <N>` | `40` | Files to list, flagged first. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh harness audit
@@ -2362,16 +2790,26 @@ coding.sh compare <A> [b] [options]
 
 | Argument | Required | Description |
 |---|---|---|
-| `a` | yes | Baseline bundle id or name. |
-| `b` | no | Candidate bundle id or name (omit with --without or --with) |
+| `a` | yes | Baseline bundle id or name (with --parity: a URL, or a command that prints the page) |
+| `b` | no | Candidate bundle id or name (omit with --without or --with; with --parity: the other URL or command) |
 
 | Option | Default | Description |
 |---|---|---|
-| `-t, --task <ID>` |  | Task id (repeatable; default: all validated tasks) |
+| `--parity` |  | Instead: diff what a crawler reads from two pages (status, redirects, title, description, canonical, robots, Open Graph and Twitter tags, hreflang count, JSON-LD types, lang). Exits 1 when they differ. |
+| `--user-agent <UA>` |  | With --parity: the User-Agent to fetch as (default: a coding.sh crawler agent) |
+| `-t, --task <ID>` |  | Task id (repeatable; default: all validated tasks) Takes a comma list too (a,b). |
 | `--tag <TAG>` |  | Run every non-archived task with this tag, drafts included (e.g. the tag given to eval import) |
 | `--k <N>` | `1` | Attempts per task and arm. |
 | `-c, --concurrency <N>` |  | Parallel runs. |
 | `--max-cost <USD>` |  | Spend cap: once finished runs (agent plus judge grade calls) reach it, no new run starts. |
+| `--pick <N>` |  | Run the N tasks that best tell harnesses apart in stored runs; tasks every run passed go last. |
+| `--pick-by <HOW>` | `separation` | With --pick or --budget: rank by outcome-suite correlation, or by item information from an IRT fit of stored runs (mid difficulty for A, high discrimination first; needs 3+ configs) One of: `separation`, `irt`. |
+| `--budget <USD>` |  | Run the most informative tasks whose estimated cost (2 arms x k runs each) fits; also the spend cap unless --max-cost is set. |
+| `--cost-per-run <USD>` |  | With --budget: the cost of one run when no stored run, source session or other task gives one. |
+| `--sequential` |  | Run each arm's tasks in order, one stream per attempt, carrying the agent's HOME state from task to task; the report adds a learning curve. |
+| `--carry <PATH>` |  | With --sequential: what to carry, a path in the run's HOME such as ~/.claude/projects (repeatable; default: the whole HOME) |
+| `--otel` |  | Give each agent an OTLP endpoint, a TRACEPARENT and coding_sh.run_id, so its spans join the run's session. |
+| `--isolation` |  | Grade each run in a fresh copy of the start tree plus the agent's source changes (default on); --no-isolation grades the agent's own tree. |
 | `--experiment <ID>` |  | Compare the stored runs of this experiment instead of running. |
 | `--retry-errors` |  | With --experiment: run again the runs that errored or hit infrastructure errors, in place; the old runs are kept, marked superseded. |
 | `--failing <EXP>[@BUNDLE]` |  | Run only the tasks A (or BUNDLE) failed in that stored comparison. |
@@ -2400,6 +2838,7 @@ coding.sh compare <A> [b] [options]
 | `--draws <N>` | `10000` | With --promote: bootstrap draws. |
 | `--item-gate` |  | One-item gate (shown automatically when B adds or removes one rule, skill or context file): exit 0 on KEEP or ACCEPT, 1 otherwise; --no-item-gate hides it. |
 | `--audited` |  | Count passes a witness refuted (eval audit) as fails in the verdict; needs every pass in both arms audited. |
+| `--signals` |  | Check each failure flag and tool errors against the outcome: pooled, within-task and within-task-and-arm AUROC beside difficulty and length references (needs k &gt;= 2) |
 | `--resume [<ID>]` |  | Continue an interrupted comparison: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
 | `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
@@ -2412,9 +2851,12 @@ coding.sh compare base candidate --k 3 --resume
 coding.sh compare base candidate2 --k 3 --reuse baseline --dry-run
 coding.sh compare base candidate --experiment exp_01
 coding.sh compare base candidate --experiment exp_01 --audited
+coding.sh compare base candidate --experiment exp_01 --signals
 coding.sh compare base candidate --experiment exp_01 --retry-errors
 coding.sh compare base candidate2 --failing exp_01 --k 3
 coding.sh compare base candidate --sample 20 --seed 7
+coding.sh compare base candidate --budget 20 --dry-run
+coding.sh compare base memory-on --sequential --carry ~/.claude/projects
 coding.sh compare base candidate --k 3 --repair 2 --repair-signal names
 coding.sh compare base candidate --k 3 --gate
 coding.sh compare base candidate --k 3 --gate --by suite:
@@ -2425,6 +2867,8 @@ coding.sh compare base --with plugin:terse --k 3 --gate
 coding.sh compare with-terse --without plugin:terse --k 3
 coding.sh compare sonnet gpt5 --gateway
 coding.sh compare sonnet gpt5 --gateway openrouter
+coding.sh compare --parity https://staging.example.com/docs https://example.com/docs
+coding.sh compare --parity 'cat dist/index.html' https://example.com/
 ```
 
 ## `coding.sh refine`
@@ -2445,6 +2889,11 @@ coding.sh refine <action>
 | [`run`](#codingsh-refine-run) | Loop: propose (or take --candidate), test, apply when kept; stop at --rounds, --max-cost or a plateau |
 | [`protected`](#codingsh-refine-protected) | List the harness lines an edit may not delete, reword or relax |
 | [`check`](#codingsh-refine-check) | Check a harness edit for deleted, reworded or relaxed protected lines; exit 1 when it has any |
+| [`mine`](#codingsh-refine-mine) | Rank failure patterns across sessions: repeated error lines, repeated instructions you typed, flags and failed eval runs, with counts and example sessions ($0) |
+| [`recheck`](#codingsh-refine-recheck) | Re-run a suite round's base and candidate under another model (a canary) and record the verdict; suggests a rollback when the edit regresses there |
+| [`distill`](#codingsh-refine-distill) | Hand a coding agent the raw runs of an experiment (or this repo's recent sessions) to analyze with its own code and write one skill; the skill is checked by the critics and ledgered as a candidate for refine test |
+| [`diagnose`](#codingsh-refine-diagnose) | Diagnose recent sessions with a model into Signals: cited problems grouped into issues, severity scored by code. Without an API key it prints a $0 plan |
+| [`signals`](#codingsh-refine-signals) | List the Signals refine diagnose wrote, or show one with its cited evidence and fix |
 | [`score`](#codingsh-refine-score) | Score diagnoses against human labels: occurrence, Signal and session precision and recall, coverage, repeat agreement |
 
 - A protected line is inside a &lt;!-- coding.sh:protect --&gt; … &lt;!-- coding.sh:protect end --&gt; block, matches a [refine] protect regex, or pairs a gate word (never, don't, must not, only, before, ask, confirm, verify, check, require) with a safety topic (credentials, secrets, access tokens, private keys, .env, prod, deploy, push, --force, force-push, destructive, --no-verify, rm -rf, delete, drop table, reset --hard, migrations, permissions, sudo, chmod, payments, PII, another user, owner, dry-run, backups). Set [refine] autoProtect = false in your user config to keep only markers and patterns.
@@ -2454,6 +2903,9 @@ coding.sh refine <action>
 - The ledger and every tested candidate's files live under the data dir (refine/&lt;repo&gt;-&lt;hash&gt;/). Rejected candidates and their reasons go into the next proposal prompt; protected lines go in as READ-ONLY.
 - With --suite, each round runs the suite's repo tasks --trials times (default: the suite's trials, else 3) with the current files and with the candidate, interleaved, as one durable job; --model is the agent's model, --concurrency the parallel sessions, --max-cost caps agent and proposer spend. The candidate is kept when the pass rate is significantly better (one-sided paired permutation test over tasks, or the acceptance gate says ship), or when it holds within --margin (one-sided bootstrap lower bound) and a listed objective is significantly better by --min-gain (per-task log ratios, one-sided permutation test); a hard regression or a don't-ship gate rejects it, and so does a listed objective significantly worse, unless the pass rate is significantly better and the rise is within --max-cost-rise (default 50%; the verdict prints the trade). Below 5 tasks no test can reach significance.
 - With --suite and a primary objective other than pass, the proposer cuts instead of adding: it sees the target file, its largest sections and what made the last runs slow or expensive (tokens, turns, repeated tool calls, long outputs), and replies with edits: find and replace an exact string, or replace a whole section by its heading. The protected-line check and the critics still run on the result.
+- With --suite and --canary-model, a kept candidate that deletes or rewords existing lines (every kept candidate with --canary all) runs again with both arms under the canary model. It is rejected (canary-regression) when a task the base passed in every attempt passes in at most a third of the candidate's, when more of its passing runs tamper with tests, or when the paired bootstrap lower bound of the pass-rate change is at or below -10pp (--canary-delta). With fewer than 3 tasks differing on each side the decision stands, marked canary-uninformative. A subtractive candidate kept without a canary model gets a note that a success-only gate cannot see a lost safeguard the loop's model did not need. recheck runs the same check later for any suite round.
+- distill writes the corpus as episodes.jsonl (one row per run or session: pass, verifier exit, tamper, turns, tool calls and errors, tokens, cost, flags), tool_calls.jsonl (one row per call with 500-character previews and an input hash), a redacted transcript per episode and a copy of the current harness files under prompt/. Cancelled, superseded and infrastructure-error runs, and runs of tasks tagged split:dev, split:test, split:heldout or refine:heldout, are left out. The distiller works in a temp directory and must write out/SKILL.md with name and description frontmatter, at most 160 lines and 10 KB; the harmless and duplicate critics then check it. Each skill is ledgered (op propose) as proposed or rejected; none is applied.
+- diagnose sends each session (cut to the first prompt, the last 40 events and the events around failures when longer than 120) inside an untrusted &lt;trace&gt; block with the session's flags as rule candidates. An occurrence survives only when a quote it cites is in the cited event; ins.\* types, tool.invalid-args, out.false-success and out.check-subverted also need the broken requirement cited. A second call groups new occurrences into Signals (existing occurrences never move) and a third writes one fix per changed Signal. Severity is computed from the cited factors and how many analyzed sessions show the issue. Replies are cached by model, prompt and catalog, so a rerun on unchanged sessions makes no call and writes the same signals.json. A Signal with no new occurrence in the next 20 analyzed sessions of the same agent and repo is quiet, which is not evidence a fix worked.
 - score matches by code, never a model: a prediction matches a label in the same session with the same component (type, and name compared after Unicode, case, camelCase and separator normalization) whose top-3 type ids share one id, under a maximum one-to-one matching. Unmatched items count against precision or recall; a rate with nothing to divide by prints —. Without --pred, each diagnosed session flag is a prediction with no component, so it matches on session and type ids alone, and per-flag precision is reported. score writes nothing.
 
 ### `coding.sh refine propose`
@@ -2467,13 +2919,14 @@ coding.sh refine propose [options]
 | Option | Default | Description |
 |---|---|---|
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
-| `--agent <AGENT>` |  | Only sessions of this agent. Repeatable. |
+| `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
 | `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
 | `--proposer-model <MODEL>` |  | Model that writes the edit (default: --judge-model, else --model, else claude-sonnet-5-5 or gpt-6-sol) |
 | `--proposer-command <CMD>` |  | Shell command that writes the edit instead of the proposer model: the prompt on stdin, the JSON reply on stdout (e.g. 'claude -p') |
 | `--target <PATH>` |  | Harness file the proposal edits, or a skill directory for its SKILL.md (default: AGENTS.md, else CLAUDE.md, else GEMINI.md) |
+| `--mined <FILE>` |  | Also show the proposer the patterns in this file (the output of refine mine --json) |
 | `--dry-run` |  | Print the findings and the prompt; make no model call. |
 
 ```sh
@@ -2495,10 +2948,10 @@ coding.sh refine test <CANDIDATE>... [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--behavior <ID[,ID]>` |  | Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all) Repeatable. |
+| `--behavior <ID[,ID]>` |  | Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all) Repeatable. Takes a comma list too (a,b). |
 | `--anchor <FILE>` |  | Module exporting your own anchor(s) (see the evals guide) Repeatable. |
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
-| `--agent <AGENT>` |  | Only sessions of this agent. Repeatable. |
+| `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
 | `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
@@ -2515,13 +2968,16 @@ coding.sh refine test <CANDIDATE>... [options]
 | `--tau <T>` | `0.10` | Acceptance gate: largest share of solved decision points B may break. |
 | `--allow-protected-edit <PATH:LINE>` |  | Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force) |
 | `--suite <NAME>` |  | Judge candidates on this eval suite of repo tasks (evals/&lt;NAME&gt;) instead of mined decision points; a skill --target uses evals/&lt;skill&gt; when it exists. |
-| `--objective <OBJ[,OBJ]>` |  | With --suite: what to improve, primary first: pass, cost, tokens, wall, llm, turns, size (default: pass). The pass rate must hold within --margin whatever the list. Repeatable. |
+| `--objective <OBJ[,OBJ]>` |  | With --suite: what to improve, primary first: pass, cost, tokens, wall, llm, turns, size (default: pass). The pass rate must hold within --margin whatever the list. Repeatable. Takes a comma list too (a,b). |
 | `--margin <SHARE>` | `2pp` | With --suite: how far the pass rate may drop for a cheaper or faster candidate to be kept, e.g. 5pp. |
 | `--min-gain <SHARE>` | `10%` | With --suite: smallest relative gain in cost, tokens, time, turns or size that counts, e.g. 20%. |
 | `--max-cost-rise <RISE>` | `50%` | With --suite: how far a listed cost, tokens, time, turns or size objective may rise for a significant pass-rate gain, e.g. 100%, or none (default: refine.maxCostRise, else 50%) |
 | `--harness <BUNDLE>` |  | With --suite: stored harness bundle the suite runs, the repo's harness files laid over it (default: the suite's, else a snapshot of the repo) |
 | `--reuse <WHAT>` | `none` | With --suite: copy earlier rounds' finished runs of the unchanged base arm (baseline) or both arms (both) instead of running them again; the pair then did not run interleaved, so the round warns about drift (default: none) One of: `baseline`, `both`, `none`. |
 | `--reuse-max-age <AGE>` |  | With --reuse: only copy runs that finished this recently, e.g. 3d or 12h (default: 7d) |
+| `--canary-model <MODEL>` |  | With --suite: re-run a kept candidate's two arms under this cheaper model and reject it on a regression there (default: [refine] canary_model) |
+| `--canary <WHEN>` | `subtractive` | With --suite: which kept candidates the canary re-tests: the ones that delete or reword existing lines (subtractive), every one (all), or none (off) One of: `subtractive`, `all`, `off`. |
+| `--canary-delta <SHARE>` | `10pp` | With --canary-model: how far the canary pass rate's lower bound may fall before the candidate is rejected, e.g. 10pp. |
 | `--resume [<ID>]` |  | Continue an interrupted round: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
 | `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
@@ -2605,12 +3061,13 @@ coding.sh refine run [options]
 | `--candidate <FILE|r_…>` |  | Test these in order instead of asking the proposer (repeatable) |
 | `--until-plateau` |  | With --suite: keep climbing until the e-detector says the climb stopped gaining; --resume continues an interrupted round. |
 | `--proposer-model <MODEL>` |  | Model that writes the edit (default: --judge-model, else --model, else claude-sonnet-5-5 or gpt-6-sol) |
+| `--mined <FILE>` |  | Also show the proposer the patterns in this file (the output of refine mine --json) |
 | `--proposer-command <CMD>` |  | Shell command that writes the edit instead of the proposer model: the prompt on stdin, the JSON reply on stdout (e.g. 'claude -p') |
 | `--target <PATH>` |  | Harness file the proposal edits, or a skill directory for its SKILL.md (default: AGENTS.md, else CLAUDE.md, else GEMINI.md) |
-| `--behavior <ID[,ID]>` |  | Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all) Repeatable. |
+| `--behavior <ID[,ID]>` |  | Decision points to test: unverified-claim, done-while-failing, unchanged-retry (default: all) Repeatable. Takes a comma list too (a,b). |
 | `--anchor <FILE>` |  | Module exporting your own anchor(s) (see the evals guide) Repeatable. |
 | `--since <DURATION|DATE>` | `14d` | Sessions started since. |
-| `--agent <AGENT>` |  | Only sessions of this agent. Repeatable. |
+| `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
 | `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
 | `--provider <NAME>` |  | Who proposes, answers the next turn and judges it: an API, or claude-code / codex to run `claude -p` / `codex exec` on your subscription (default: anthropic; with no API key set, a logged-in Claude Code, else Codex) One of: `anthropic`, `openai`, `openai-compatible`, `claude-code`, `codex`. |
 | `--base-url <URL>` |  | API base URL (default: ANTHROPIC_BASE_URL / OPENAI_BASE_URL, else the provider's) |
@@ -2627,13 +3084,16 @@ coding.sh refine run [options]
 | `--tau <T>` | `0.10` | Acceptance gate: largest share of solved decision points B may break. |
 | `--allow-protected-edit <PATH:LINE>` |  | Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force) |
 | `--suite <NAME>` |  | Judge candidates on this eval suite of repo tasks (evals/&lt;NAME&gt;) instead of mined decision points; a skill --target uses evals/&lt;skill&gt; when it exists. |
-| `--objective <OBJ[,OBJ]>` |  | With --suite: what to improve, primary first: pass, cost, tokens, wall, llm, turns, size (default: pass). The pass rate must hold within --margin whatever the list. Repeatable. |
+| `--objective <OBJ[,OBJ]>` |  | With --suite: what to improve, primary first: pass, cost, tokens, wall, llm, turns, size (default: pass). The pass rate must hold within --margin whatever the list. Repeatable. Takes a comma list too (a,b). |
 | `--margin <SHARE>` | `2pp` | With --suite: how far the pass rate may drop for a cheaper or faster candidate to be kept, e.g. 5pp. |
 | `--min-gain <SHARE>` | `10%` | With --suite: smallest relative gain in cost, tokens, time, turns or size that counts, e.g. 20%. |
 | `--max-cost-rise <RISE>` | `50%` | With --suite: how far a listed cost, tokens, time, turns or size objective may rise for a significant pass-rate gain, e.g. 100%, or none (default: refine.maxCostRise, else 50%) |
 | `--harness <BUNDLE>` |  | With --suite: stored harness bundle the suite runs, the repo's harness files laid over it (default: the suite's, else a snapshot of the repo) |
 | `--reuse <WHAT>` | `none` | With --suite: copy earlier rounds' finished runs of the unchanged base arm (baseline) or both arms (both) instead of running them again; the pair then did not run interleaved, so the round warns about drift (default: none) One of: `baseline`, `both`, `none`. |
 | `--reuse-max-age <AGE>` |  | With --reuse: only copy runs that finished this recently, e.g. 3d or 12h (default: 7d) |
+| `--canary-model <MODEL>` |  | With --suite: re-run a kept candidate's two arms under this cheaper model and reject it on a regression there (default: [refine] canary_model) |
+| `--canary <WHEN>` | `subtractive` | With --suite: which kept candidates the canary re-tests: the ones that delete or reword existing lines (subtractive), every one (all), or none (off) One of: `subtractive`, `all`, `off`. |
+| `--canary-delta <SHARE>` | `10pp` | With --canary-model: how far the canary pass rate's lower bound may fall before the candidate is rejected, e.g. 10pp. |
 | `--resume [<ID>]` |  | Continue an interrupted round: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
 | `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
@@ -2688,6 +3148,132 @@ coding.sh refine check --a git:main --b . --json
 coding.sh refine check --allow-protected-edit AGENTS.md:12
 ```
 
+### `coding.sh refine mine`
+
+Rank failure patterns across sessions: repeated error lines, repeated instructions you typed, flags and failed eval runs, with counts and example sessions ($0).
+
+```text
+coding.sh refine mine [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <DURATION|DATE>` | `30d` | Sessions started since. |
+| `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
+| `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
+| `--min-support <SESSIONS[,DAYS]>` | `3,2` | Keep a pattern seen in at least this many sessions over this many days. |
+| `-n, --limit <N>` | `20` | Most patterns shown. |
+
+```sh
+coding.sh refine mine
+coding.sh refine mine --since 90d --repo all --json
+coding.sh refine mine --min-support 2,1 --agent codex
+```
+
+### `coding.sh refine recheck`
+
+Re-run a suite round's base and candidate under another model (a canary) and record the verdict; suggests a rollback when the edit regresses there.
+
+```text
+coding.sh refine recheck <CANDIDATE> [options]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `candidate` | yes | The round's r_… id. |
+
+| Option | Default | Description |
+|---|---|---|
+| `--model <MODEL>` |  | The model to re-run under (default: [refine] canary_model) |
+| `--trials <N>` |  | Runs per task and arm (default: the suite's trials, else 3) |
+| `--canary-delta <SHARE>` | `10pp` | How far the pass rate's lower bound may fall before it counts as a regression. |
+| `--max-cost <USD>` |  | Stop starting runs once agent spend reaches this; the recheck is then inconclusive. |
+| `--concurrency <N>` | `4` | Agent sessions at once. |
+| `--dry-run` |  | Print what would run; start no agent. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
+
+```sh
+coding.sh refine recheck r_3f9a1c02e1 --model claude-haiku-4-5
+coding.sh refine recheck r_3f9a1c02e1 --model gpt-5-mini --max-cost 3 --yes --json
+```
+
+### `coding.sh refine distill`
+
+Hand a coding agent the raw runs of an experiment (or this repo's recent sessions) to analyze with its own code and write one skill; the skill is checked by the critics and ledgered as a candidate for refine test.
+
+```text
+coding.sh refine distill [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--experiment <ID>` |  | Distill from this experiment's runs (default: captured sessions) |
+| `--since <DURATION|DATE>` | `30d` | Without --experiment: sessions started since. |
+| `--agent <AGENT>` |  | Without --experiment: only sessions of this agent (repeatable, or a comma list) |
+| `--repo <DIR|all>` |  | Without --experiment: only sessions under this directory (default: this git repo) |
+| `--distiller <AGENT>` | `claude-code` | The coding agent that analyzes the corpus. One of: `claude-code`, `codex`. |
+| `--model <MODEL>` |  | The distiller's model (default: the agent's own) |
+| `--n <N>` | `1` | Independent skills to draw, each in its own directory. |
+| `--max-cost <USD>` | `5` | Start no new draw once distiller spend reaches this. |
+| `--min-episodes <N>` | `20` | Refuse a corpus with fewer episodes. |
+| `--min-failures <N>` | `5` | Refuse a corpus with fewer failing or flagged episodes. |
+| `--keep-corpus <DIR>` |  | Write the corpus here and keep it (an empty or new directory) |
+| `--dry-run` |  | Write the corpus to a temp dir, print its counts and the plan; start no agent. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
+
+```sh
+coding.sh refine distill --experiment exp_01J9Z --dry-run
+coding.sh refine distill --experiment exp_01J9Z --n 3 --yes
+coding.sh refine distill --since 60d --agent codex --distiller codex --keep-corpus ./corpus --yes --json
+```
+
+### `coding.sh refine diagnose`
+
+Diagnose recent sessions with a model into Signals: cited problems grouped into issues, severity scored by code. Without an API key it prints a $0 plan.
+
+```text
+coding.sh refine diagnose [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--since <DURATION|DATE>` | `7d` | Sessions started since. |
+| `--agent <AGENT>` |  | Only sessions of this agent (repeatable, or a comma list) |
+| `--repo <DIR|all>` |  | Only sessions under this directory (default: this git repo) |
+| `--session <ID>` |  | Exactly these sessions (repeatable; ignores --since) Takes a comma list too (a,b). |
+| `--max-sessions <N>` | `50` | Most sessions diagnosed, newest first. |
+| `--budget-tokens <N>` |  | Stop starting uncached sessions past this many estimated input tokens; the next run picks up the rest. |
+| `--provider <PROVIDER>` |  | anthropic, openai, claude-code or codex (default: the API whose key is set; with none, a $0 plan) |
+| `--model <MODEL>` |  | The diagnosing model (default: the provider's current one) |
+| `--concurrency <N>` | `4` | Sessions diagnosed at once. |
+| `--no-split` |  | One Signal per component and type, with no grouping call. |
+| `--include-runs` |  | Also diagnose eval-run sessions. |
+| `--dry-run` |  | Print the plan and make no call. |
+
+```sh
+coding.sh refine diagnose
+coding.sh refine diagnose --since 30d --budget-tokens 400000
+coding.sh refine diagnose --session 7f3a9c --provider claude-code --json
+```
+
+### `coding.sh refine signals`
+
+List the Signals refine diagnose wrote, or show one with its cited evidence and fix.
+
+```text
+coding.sh refine signals [show]
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `show` | no | show &lt;id&gt;: one Signal's occurrences, citations and fix. |
+
+```sh
+coding.sh refine signals
+coding.sh refine signals show 3fa1c2
+coding.sh refine signals --json
+```
+
 ### `coding.sh refine score`
 
 Score diagnoses against human labels: occurrence, Signal and session precision and recall, coverage, repeat agreement.
@@ -2725,6 +3311,7 @@ coding.sh gateway <action>
 
 - Keys come from each gateway's standard env var (AI_GATEWAY_API_KEY, OPENROUTER_API_KEY, LITELLM_PROXY_API_KEY, CLOUDFLARE_API_TOKEN, PORTKEY_API_KEY, HELICONE_API_KEY) or [gateway] / [gateway.&lt;name&gt;] apiKeyEnv / apiKey in config.toml, and are never printed or stored.
 - Lookups use each gateway's per-request API (Vercel and OpenRouter /generation, LiteLLM /spend/logs, Cloudflare logs, Portkey logs, Helicone /v1/request); results are cached in the index, so re-runs make no calls.
+- enrich --gateway cliproxyapi reads CLIProxyAPI's usage queue with its management key (CLIPROXYAPI_MANAGEMENT_KEY). The read removes the records for every other reader, so it runs only when named, never with --dry-run or --offline; coding.sh keeps each record it read until it joins a call.
 
 ### `coding.sh gateway status`
 
@@ -2736,7 +3323,7 @@ coding.sh gateway status [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--gateway <NAME>` |  | Only this gateway. One of: `vercel`, `openrouter`, `litellm`, `cloudflare`, `portkey`, `helicone`, `requesty`, `ramp`, `truefoundry`, `kong`, `bifrost`, `martian`. |
+| `--gateway <NAME>` |  | Only this gateway. One of: `vercel`, `openrouter`, `litellm`, `cloudflare`, `portkey`, `helicone`, `requesty`, `ramp`, `truefoundry`, `kong`, `bifrost`, `martian`, `cliproxyapi`. |
 | `--credits` |  | Also fetch the credit balance (Vercel, OpenRouter; needs the key) |
 
 ```sh
@@ -2754,12 +3341,13 @@ coding.sh gateway enrich [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--gateway <NAME>` |  | Only this gateway. One of: `vercel`, `openrouter`, `litellm`, `cloudflare`, `portkey`, `helicone`, `requesty`, `ramp`, `truefoundry`, `kong`, `bifrost`, `martian`. |
-| `-s, --session <ID>` |  | Only this session (repeatable; or latest) |
+| `--gateway <NAME>` |  | Only this gateway. One of: `vercel`, `openrouter`, `litellm`, `cloudflare`, `portkey`, `helicone`, `requesty`, `ramp`, `truefoundry`, `kong`, `bifrost`, `martian`, `cliproxyapi`. |
+| `-s, --session <ID>` |  | Only this session (repeatable; or latest) Takes a comma list too (a,b). |
 | `--since <WHEN>` | `30d` | Sessions after this time: 7d, 12h, 30m or a date. |
 | `-n, --limit <N>` | `500` | Maximum rows. |
 | `--offline` |  | Use only the cache and drained traces; no API calls. |
 | `--dry-run` |  | Show the exact changes without writing anything. |
+| `--fresh` |  | Wait for every pending capture to be ingested (default: answer after 1.5 s) |
 
 ```sh
 coding.sh gateway enrich
