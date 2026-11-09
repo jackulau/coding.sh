@@ -16,8 +16,19 @@ import { brotliCompressSync, constants } from "node:zlib";
 const KB = 1024;
 const BUDGET = {
   // Brotli q11, per page. The CLI and API references are generated and grow
-  // with the tool, so they get their own room.
-  htmlBrotli: { "/": 24.5 * KB, "/docs/cli/": 30 * KB, "/docs/api/": 30 * KB, other: 26 * KB },
+  // with the tool, so they get their own room. So do the pages the API
+  // reference continues on (/docs/api/read is 26.3KB with the 0.1.6 routes) and
+  // troubleshooting, which gains an entry per failure a new feature can show
+  // (27.8KB with the 0.1.6 entries). Raised from 26KB for those three.
+  htmlBrotli: {
+    "/": 24.5 * KB,
+    "/docs/cli/": 30 * KB,
+    "/docs/api/": 30 * KB,
+    "/docs/api/read/": 30 * KB,
+    "/docs/api/read/search/": 30 * KB,
+    "/docs/troubleshooting/": 30 * KB,
+    other: 26 * KB,
+  },
   preloadFonts: 28.5 * KB, // woff2 bytes preloaded by one page (26.0KB today)
   moduleScripts: 1, // external <script type="module" src> per page
   // The cards are lossless PNG (gen-og.mjs, compressionLevel 9). Palette
