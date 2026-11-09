@@ -8,6 +8,7 @@
 // Read-only on git. Results per commit are kept in the index key/value store
 // (`attribution:commit:<sha>`) when asked, so other surfaces can read them
 // without git. See docs/how-to/attribute-commits.md.
+import { resolve } from "node:path";
 import { repoRoot, run } from "../core/git.ts";
 import type { Session } from "../core/types.ts";
 import { hasGitAiNotes, readCommits, resolveCommit } from "./git.ts";
@@ -70,7 +71,7 @@ export interface AttributionReport {
 export async function worktreeRoots(root: string): Promise<string[]> {
   const r = await run(["worktree", "list", "--porcelain"], { cwd: root, allowFail: true });
   const roots = new Set([root]);
-  if (r.code === 0) for (const l of r.stdout.split("\n")) if (l.startsWith("worktree ")) roots.add(l.slice(9).trim());
+  if (r.code === 0) for (const l of r.stdout.split("\n")) if (l.startsWith("worktree ")) roots.add(resolve(l.slice(9).trim())); // native separators: git prints C:/… on Windows
   return [...roots];
 }
 

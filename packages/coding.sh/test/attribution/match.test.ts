@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { blameFile, parseBlameTarget } from "../../src/attribution/blame.ts";
@@ -196,7 +196,8 @@ describe("sources", () => {
     gitc(root, "init", "-q", "-b", "main");
     write(root, { "a.txt": "base\n" });
     commitAll(root, T0, "init");
-    const wt = join(tmp("csh-attr-wt2-"), "wt");
+    // Long names on Windows (the temp dir has a short name on CI, RUNNER~1): git lists a worktree by its long name.
+    const wt = join(realpathSync.native(tmp("csh-attr-wt2-")), "wt");
     gitc(root, "worktree", "add", "-q", "-b", "agent", wt);
     const start = (await snapshot(wt))!;
     write(wt, { "lib.ts": "export const workerCount = Number(process.env.WORKERS ?? 4);\n" });
