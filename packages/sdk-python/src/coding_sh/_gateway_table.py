@@ -106,4 +106,12 @@ GATEWAY_TABLE: Tuple[Dict[str, Any], ...] = (
         "id_headers": (),
         "mark_headers": (),
     },
+    {
+        "id": "cliproxyapi",
+        "hosts": (),
+        "url_env": ("CLIPROXYAPI_URL",),
+        "id_pattern": None,
+        "id_headers": (),
+        "mark_headers": (),
+    },
 )

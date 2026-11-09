@@ -32,7 +32,7 @@ class DetectTest(unittest.TestCase):
     def test_table_covers_the_registry(self) -> None:
         ids = [g["id"] for g in GATEWAY_TABLE]
         self.assertEqual(
-            ids, ["vercel", "openrouter", "litellm", "cloudflare", "portkey", "helicone", "requesty", "ramp", "truefoundry", "kong", "bifrost", "martian"]
+            ids, ["vercel", "openrouter", "litellm", "cloudflare", "portkey", "helicone", "requesty", "ramp", "truefoundry", "kong", "bifrost", "martian", "cliproxyapi"]
         )
 
     def test_hosted_gateways_by_base_url(self) -> None:

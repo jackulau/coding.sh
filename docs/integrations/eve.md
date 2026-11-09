@@ -1,6 +1,6 @@
 # eve
 
-[eve](https://github.com/vercel/eve) is Vercel's filesystem-first framework for durable agents. coding.sh reads eve agents in three ways and evaluates them with a fourth:
+[eve](https://github.com/vercel/eve) is Vercel's filesystem-first framework for durable agents. coding.sh reads eve agents in three ways, evaluates them with a fourth, and stores eve's own eval runs with a fifth:
 
 | Path | Source | Code |
 | --- | --- | --- |
@@ -8,6 +8,7 @@
 | Import | eve's local trace store `.eve/traces/v1/`, or `eve traces show --json` output | `importEveRuns` (`import.ts`) |
 | Stream | an eve session's NDJSON stream (`/eve/v1/session/:id/stream`) | `mapEveStream` (`stream.ts`) |
 | Evals | runs dataset cases against a local agent over HTTP | `eveTask` (`task.ts`) |
+| Eval reporter | `eve eval` results, sent when the run ends | `codingShReporter` (`reporter.ts`), `storeEveEvals` (`evals.ts`) |
 
 Everything here was verified against real `eve dev` output from eve 1.0.0-rc.6 (trace schema v4, stream v27). The test fixtures in `test/integrations/eve/fixtures/` are that output, trimmed and with paths scrubbed. They were produced by `examples/eve-agent` running eve's deterministic mock model. Nothing calls Vercel, and the tests make no network requests beyond localhost.
 
@@ -84,6 +85,7 @@ How the hook treats spans:
 - It is pure and synchronous.
 - Spans from other frameworks pass through unchanged, so it can stay on for every agent.
 - It recognizes eve spans by the `eve.agent` scope, by `agent.framework.name = "eve"`, or by schema version plus run id.
+- Sessions are stored under the agent `eve`, or under the Agent Runs host named by the resource's `agent.framework.name` (`durable-harness` for a durable-harness agent). [Tee Agent Runs](../how-to/tee-agent-runs.md) sets this up.
 
 Configure the agent to export to the receiver with `agent/instrumentation/*.ts`:
 
@@ -168,6 +170,53 @@ coding.sh experiments run the same kind of cases against a running agent and add
 - One dataset run across eve and non-eve agents.
 
 The two are complementary. `examples/eve-agent` ships both over the same cases.
+
+### Send eve eval runs to coding.sh
+
+`codingShReporter` is an eve `EvalReporter`. Add it to `evals/evals.config.ts` and every `eve eval` run becomes a coding.sh dataset version and an experiment:
+
+```ts
+import { defineEvalConfig } from "eve/evals";
+import { codingShReporter } from "coding.sh/eve";
+
+export default defineEvalConfig({ reporters: [codingShReporter({ dataset: "weather" })] });
+```
+
+When the run ends, the reporter sends one JSON `POST` to `<url>/v1/evals/eve`. Two servers answer that path:
+- `coding.sh collector`, the default, at `http://127.0.0.1:4318`. It accepts only loopback requests.
+- A team's `coding.sh serve`. Set `url` (or `CODING_SH_URL`) and an ingest key (`key`, or `CODING_SH_INGEST_KEY`).
+
+Requests that carry an `Origin` header are refused, so a web page cannot post runs.
+
+The reporter never fails the eve run. It prints one line: the stored experiment and how to open it, or why the run was not stored.
+
+```
+coding.sh: 4/4 passed. Experiment exp_… on dataset weather@3f9c… (new version). See it: coding.sh exp show exp_…
+```
+
+Options:
+
+| Option | Default |
+| --- | --- |
+| `url` | `$CODING_SH_URL`, else `http://127.0.0.1:4318` |
+| `key` | `$CODING_SH_INGEST_KEY` |
+| `dataset` | `"<package.json name> evals"` of the eve app |
+| `name` | the dataset name |
+| `metadata` | none. Stored on the experiment, for example `{ commit, model }` |
+| `timeoutMs` | 15000 |
+| `log` | one line to stderr |
+
+How a run is stored:
+- Each eval is a dataset case. The case id is the eval id. The input is `{eval, description}`, and the eval's tags and metadata are kept.
+- The dataset gets a new version only when the evals change: their ids, descriptions, tags or metadata.
+- Each eval result is a case run. Each assertion is a grader, named the way eve's Braintrust reporter names scores: `gate:<name>` for a gate, `<key or name>` for a soft score. Repeated assertions with one name keep the lowest score. A failed or errored assertion fails the grade, with its message as the reason.
+- A case passes only when eve's verdict is `passed`. `failed` and `scored` (a soft threshold was missed) both count as failures.
+- Skipped evals have no run. They are listed in the experiment's `metadata.skipped`.
+- With `repeat`, each attempt is a trial, and pass rates use the cluster bootstrap.
+- The run's output holds the reply (or structured data, cut at 8000 characters), the eve session id (`wrun_…`, the same id the OTLP spans carry), tool and subagent call names, models, the verdict and trace ids.
+- `metadata.eve` keeps eve's own counts: passed, failed, scored, skipped and errored.
+
+Redaction runs on the server before anything is stored. Sending the same run twice stores it once: the second `POST` answers `200` with the first experiment's id.
 
 ## Example
 

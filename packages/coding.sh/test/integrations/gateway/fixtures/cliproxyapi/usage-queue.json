@@ -1,0 +1,167 @@
+{
+  "_note": [
+    "Recorded from a real CLIProxyAPI v8.0.61 (eceasy/cli-proxy-api:latest, commit 681ce41) on 2026-11-09:",
+    "GET /v8/management/observability/usage/queue?count=500 with the management key, after two",
+    "POST /v1/messages calls (Claude Code's x-claude-code-session-id and metadata.user_id session_id",
+    "11111111-2222-4333-8444-555555555555, model alias claude-opus-4-5) that CLIProxyAPI sent to",
+    "scripts/e2e/stub-model.mjs as its Claude API-key upstream. Config: management.secret-key, access.api-keys",
+    "[client-test-key], observability.usage.usage-statistics-enabled true, api-keys.claude[0] base-url",
+    "http://127.0.0.1:8787 with key sk-stub-upstream and models [{name: stub-model, alias: claude-opus-4-5}].",
+    "A second read returned []. Unchanged; the keys are the throwaway ones from that config. Note that",
+    "`source` carries the upstream key and `api_key` the client key: coding.sh stores neither."
+  ],
+  "records": [
+    {
+      "timestamp": "2026-11-09T13:28:57.204076861+08:00",
+      "latency_ms": 7,
+      "ttft_ms": 6,
+      "source": "sk-stub-upstream",
+      "auth_index": "14899a1658859567",
+      "client_ip": "127.0.0.1",
+      "resolved_client_ip": "127.0.0.1",
+      "x_forwarded_for": "",
+      "user_agent": "claude-cli/2.1.0 (external, cli)",
+      "tokens": {
+        "input_tokens": 120,
+        "output_tokens": 30,
+        "reasoning_tokens": 0,
+        "cached_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_read_tokens_present": true,
+        "cache_creation_tokens": 0,
+        "total_tokens": 150
+      },
+      "failed": false,
+      "generate": true,
+      "stream": false,
+      "fail": {
+        "status_code": 200,
+        "body": ""
+      },
+      "response_headers": {
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Type": [
+          "application/json"
+        ],
+        "Date": [
+          "Mon, 09 Nov 2026 05:28:57 GMT"
+        ],
+        "Keep-Alive": [
+          "timeout=5"
+        ]
+      },
+      "accounting_version": 2,
+      "token_breakdown": {
+        "schema_version": 2,
+        "quality": "complete",
+        "total_tokens": 150,
+        "input": {
+          "total_tokens": 120,
+          "uncached_tokens": 120,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output": {
+          "total_tokens": 30,
+          "non_reasoning_tokens": 30,
+          "reasoning_tokens": 0
+        },
+        "unclassified_tokens": 0
+      },
+      "provider": "claude",
+      "executor_type": "ClaudeExecutor",
+      "model": "stub-model",
+      "alias": "claude-opus-4-5",
+      "endpoint": "POST /v1/messages",
+      "auth_type": "apikey",
+      "api_key": "client-test-key",
+      "is_native_key": true,
+      "access_provider": "config-inline",
+      "request_id": "01a1bec7-f273-79a8-89fd-33884fa984a9",
+      "execution_id": "c379df87-df7e-4370-904a-1a5a84c68f29",
+      "trace_id": "01a1bec7-f273-79a8-89fd-33884fa984a9",
+      "session_id": "11111111-2222-4333-8444-555555555555",
+      "reasoning_effort": "",
+      "service_tier": "auto",
+      "response_model": "stub-model"
+    },
+    {
+      "timestamp": "2026-11-09T13:28:57.249095052+08:00",
+      "latency_ms": 1,
+      "ttft_ms": 1,
+      "source": "sk-stub-upstream",
+      "auth_index": "14899a1658859567",
+      "client_ip": "127.0.0.1",
+      "resolved_client_ip": "127.0.0.1",
+      "x_forwarded_for": "",
+      "user_agent": "claude-cli/2.1.0 (external, cli)",
+      "tokens": {
+        "input_tokens": 120,
+        "output_tokens": 30,
+        "reasoning_tokens": 0,
+        "cached_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_read_tokens_present": true,
+        "cache_creation_tokens": 0,
+        "total_tokens": 150
+      },
+      "failed": false,
+      "generate": true,
+      "stream": false,
+      "fail": {
+        "status_code": 200,
+        "body": ""
+      },
+      "response_headers": {
+        "Connection": [
+          "keep-alive"
+        ],
+        "Content-Type": [
+          "application/json"
+        ],
+        "Date": [
+          "Mon, 09 Nov 2026 05:28:57 GMT"
+        ],
+        "Keep-Alive": [
+          "timeout=5"
+        ]
+      },
+      "accounting_version": 2,
+      "token_breakdown": {
+        "schema_version": 2,
+        "quality": "complete",
+        "total_tokens": 150,
+        "input": {
+          "total_tokens": 120,
+          "uncached_tokens": 120,
+          "cache_read_tokens": 0,
+          "cache_write_tokens": 0
+        },
+        "output": {
+          "total_tokens": 30,
+          "non_reasoning_tokens": 30,
+          "reasoning_tokens": 0
+        },
+        "unclassified_tokens": 0
+      },
+      "provider": "claude",
+      "executor_type": "ClaudeExecutor",
+      "model": "stub-model",
+      "alias": "claude-opus-4-5",
+      "endpoint": "POST /v1/messages",
+      "auth_type": "apikey",
+      "api_key": "client-test-key",
+      "is_native_key": true,
+      "access_provider": "config-inline",
+      "request_id": "01a1bec7-f2a0-7ab6-bc1a-9579f240c01c",
+      "execution_id": "0355fd4a-ffba-4c5a-9e1e-12991e353e48",
+      "trace_id": "01a1bec7-f2a0-7ab6-bc1a-9579f240c01c",
+      "session_id": "11111111-2222-4333-8444-555555555555",
+      "reasoning_effort": "",
+      "service_tier": "auto",
+      "response_model": "stub-model"
+    }
+  ]
+}

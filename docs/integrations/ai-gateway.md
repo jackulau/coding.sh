@@ -14,13 +14,14 @@ call cost and which provider served it, and can run A/B experiments through a ga
 | Ramp Router (router.com) | yes | cost from the response | no | `ramp` | `RAMP_ROUTER_API_KEY` |
 | Requesty | yes | cost from the response | no | no | `REQUESTY_API_KEY` |
 | TrueFoundry, Kong, Bifrost, Martian | yes | no | TrueFoundry, Bifrost | no | |
+| CLIProxyAPI | by URL or port 8317 | usage queue, with `--gateway cliproxyapi` | no | no | `CLIPROXYAPI_MANAGEMENT_KEY` |
 
 Sources and response shapes: [docs/research/gateways.md](../research/gateways.md).
 
 | What | How | Code |
 | --- | --- | --- |
 | Detect | Sessions get a `gateway:<name>` tag, e.g. `gateway:openrouter`. `coding.sh gateway status` and `coding.sh doctor` show which agent configs route through a gateway. | `src/integrations/gateway/providers.ts`, `ids.ts`, `config.ts` |
-| Cost | `coding.sh gateway enrich` adds the billed cost and the serving provider to each linked llm call. | `enrich.ts`, `client.ts`, `lookups.ts` |
+| Cost | `coding.sh gateway enrich` adds the billed cost and the serving provider to each linked llm call. | `enrich.ts`, `client.ts`, `lookups.ts`, `cliproxyapi.ts` |
 | Traces | The OTLP receiver tags spans exported by a gateway or sent by an app that called one. | `otel.ts` |
 | Experiments | `coding.sh compare a b --gateway [name]` runs both arms through a gateway. LLM graders take `"provider": "gateway"` (Vercel). | `route.ts` |
 
@@ -46,6 +47,10 @@ baseUrl = "http://localhost:4000"   # or LITELLM_PROXY_API_BASE
 apiKey = "${CLOUDFLARE_API_TOKEN}"
 accountId = "<32 hex>"              # or CLOUDFLARE_ACCOUNT_ID
 gatewayId = "prod"
+
+[gateway.cliproxyapi]
+baseUrl = "http://127.0.0.1:8317"   # or CLIPROXYAPI_URL
+apiKeyEnv = "CLIPROXYAPI_MANAGEMENT_KEY"
 ```
 
 Cloudflare's account and gateway id also come from a base URL like
@@ -64,6 +69,7 @@ Cloudflare's account and gateway id also come from a base URL like
   that id.
 - **Ramp Router, Requesty**: no lookup API. A cost the call already carried (`usage.cost` in the response, mapped to
   `billedCostUsd`) is used as the record.
+- **CLIProxyAPI**: by session id, or by time and model, from its usage queue ([below](#cliproxyapi)).
 
 ```sh
 coding.sh gateway status                       # gateways with a key, config, routing or sessions
@@ -94,6 +100,7 @@ tagged `gateway:<name>`) and, when the gateway handed one out, `payload.gatewayG
 | Kong AI Gateway | `KONG_PROXY_URL` host, `x-kong-llm-model` | `x-kong-request-id` |
 | Bifrost | `BIFROST_URL` / `BIFROST_BASE_URL` host | none |
 | Martian | `withmartian.com` | none |
+| CLIProxyAPI | `CLIPROXYAPI_URL` host | none |
 
 The base URL decides first, then a header only one gateway sets, then the response id's shape. The SDKs read
 response headers without touching the body: the TypeScript SDK from the response the OpenAI / Anthropic client or
@@ -115,8 +122,60 @@ Point the agent's base URL at the gateway. For example, Claude Code through Open
 ```
 
 OpenCode's `openrouter/<model>` and Pi's `openrouter` provider are detected too. A self-hosted gateway is detected
-when its URL env var (`LITELLM_PROXY_API_BASE`, `LITELLM_PROXY_URL`, `KONG_PROXY_URL`, `BIFROST_URL`) names the
-same host as the agent's base URL.
+when its URL env var (`LITELLM_PROXY_API_BASE`, `LITELLM_PROXY_URL`, `KONG_PROXY_URL`, `BIFROST_URL`,
+`CLIPROXYAPI_URL`) names the same host as the agent's base URL. CLIProxyAPI is also detected by its default port:
+any base URL on port 8317, unless the host belongs to another gateway.
+
+## CLIProxyAPI
+
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) serves Claude Code, Codex and other agents from
+subscription and API-key accounts. Sessions whose base URL points at it are tagged `gateway:cliproxyapi`.
+
+`coding.sh gateway enrich --gateway cliproxyapi` reads its usage queue and adds each request's details to the llm
+call it describes. It runs only when you name the gateway, because the read is destructive:
+
+- The queue is `GET /v8/management/observability/usage/queue` on the management API (`/v0/management/usage-queue`
+  on older servers). It needs the management key in `CLIPROXYAPI_MANAGEMENT_KEY` (or `MANAGEMENT_PASSWORD`), and
+  CLIProxyAPI needs remote management and `usage-statistics-enabled` turned on.
+- A read removes the records it returns. Other readers of the same queue (Usage Keeper, tokenlayer, another
+  coding.sh) will not get them. The command prints this warning before it reads.
+- CLIProxyAPI drops records nobody read after its retention (`redis-usage-queue-retention-seconds`, 60 s by
+  default, at most 3600 s). Run the command often, or raise the retention.
+- `--dry-run` and `--offline` never read the queue.
+
+coding.sh keeps every record it reads, in its index, before it joins any. A record whose call is not captured yet
+is tried again on the next run, for up to a day.
+
+The server is `[gateway.cliproxyapi] baseUrl` or `CLIPROXYAPI_URL`, else an `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` or
+`OPENAI_API_BASE` that points at CLIProxyAPI, else `http://127.0.0.1:8317`.
+
+A record joins an llm call:
+
+1. **By session id.** CLIProxyAPI records the client's session id as a UUID: Claude Code's session id, Codex's
+   thread id. That is the coding.sh session id; Claude Code subagent sessions (`<id>:sub:<agent>`) count as the same
+   session. The record goes to the nearest call within 5 minutes of the request, skipping calls whose model differs
+   (when both name one).
+2. **By time and model**, when the record has no session id or no session with its id is stored: the only call
+   with the same model within 30 seconds of the request. When two calls fit, the record is not joined.
+
+Each joined call gets one companion span (`cliproxyapi.generation`, source `gateway`). Running the command again
+adds nothing. The span carries what the record has:
+
+- reasoning effort, service tier (requested, effective, response and upstream), speed and inference region;
+- time to first token and latency, compaction and fork marks, failure and status code;
+- tokens, and the upstream-reported cost (`cost_details.cost`, for example from OpenRouter) as `billedCostUsd`;
+- `accountHash`, the account that served it, as 16 hex characters. CLIProxyAPI's credential index already is a
+  hash and is kept as is (the proxy stores it as `upstreamAuth`). Any other value is hashed.
+
+coding.sh never stores the client API key, IP addresses, user agent, response headers or error bodies. The
+other fields go through redaction before they are kept.
+
+```sh
+export CLIPROXYAPI_MANAGEMENT_KEY=…
+coding.sh gateway status --gateway cliproxyapi
+coding.sh gateway enrich --gateway cliproxyapi
+coding.sh sessions --flag gateway:cliproxyapi
+```
 
 ## Vercel AI Gateway
 

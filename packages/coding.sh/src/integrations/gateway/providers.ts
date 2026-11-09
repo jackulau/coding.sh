@@ -5,7 +5,7 @@
 // Vercel AI Gateway keeps its own richer code paths (trace drains, session
 // joins, compare routes for four agents); the rest share the generic ones.
 
-export const GATEWAY_IDS = ["vercel", "openrouter", "litellm", "cloudflare", "portkey", "helicone", "requesty", "ramp", "truefoundry", "kong", "bifrost", "martian"] as const;
+export const GATEWAY_IDS = ["vercel", "openrouter", "litellm", "cloudflare", "portkey", "helicone", "requesty", "ramp", "truefoundry", "kong", "bifrost", "martian", "cliproxyapi"] as const;
 export type GatewayId = (typeof GATEWAY_IDS)[number];
 
 export interface GatewayDef {
@@ -16,6 +16,8 @@ export interface GatewayDef {
   hosts: readonly string[];
   /** Env vars that name a self-hosted gateway's URL: a base URL on the same host counts as routed through it. */
   urlEnv: readonly string[];
+  /** Default ports of a self-hosted gateway: a base URL on one of them counts as routed through it. */
+  ports?: readonly number[];
   /** Default lookup API base (no trailing slash); undefined when there is no lookup API or it is self-hosted. */
   apiBase?: string;
   /** Env var the API key is read from. */
@@ -38,6 +40,8 @@ export interface GatewayDef {
   providers: readonly string[];
   /** What `gateway enrich` can fetch per request. */
   lookup?: "generation" | "spend-log" | "log" | "request";
+  /** A usage feed `gateway enrich --gateway <id>` drains instead of per-request lookups (src/integrations/gateway/cliproxyapi.ts). */
+  drain?: "usage-queue";
   /** Credit balance endpoint. */
   credits?: boolean;
   /** Documentation link. */
@@ -190,6 +194,22 @@ export const GATEWAYS: Record<GatewayId, GatewayDef> = {
     providers: ["martian"],
     docs: "https://docs.withmartian.com",
   },
+  cliproxyapi: {
+    id: "cliproxyapi",
+    name: "CLIProxyAPI",
+    hosts: [],
+    urlEnv: ["CLIPROXYAPI_URL"],
+    ports: [8317],
+    // The management API (usage queue), on the same server as the proxy.
+    apiBase: "http://127.0.0.1:8317",
+    // The management key; MANAGEMENT_PASSWORD is the variable CLIProxyAPI itself reads.
+    keyEnv: "CLIPROXYAPI_MANAGEMENT_KEY",
+    keyEnvFallbacks: ["MANAGEMENT_PASSWORD"],
+    aliases: ["cli-proxy-api", "cpa"],
+    providers: ["cliproxyapi", "cli-proxy-api"],
+    drain: "usage-queue",
+    docs: "https://github.com/router-for-me/CLIProxyAPI",
+  },
 };
 
 export const isGatewayId = (v: unknown): v is GatewayId => typeof v === "string" && (GATEWAY_IDS as readonly string[]).includes(v);
@@ -212,12 +232,25 @@ function hostOf(url: unknown): string | undefined {
   }
 }
 
+/** The explicit port of a URL (none for the scheme's default). */
+function portOf(url: unknown): number | undefined {
+  if (typeof url !== "string" || !url) return undefined;
+  try {
+    const p = new URL(url).port;
+    return p ? Number(p) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const hostMatches = (host: string, pattern: string): boolean => (pattern.startsWith(".") ? host.endsWith(pattern) : host === pattern || host.endsWith(`.${pattern}`));
 
 /**
  * The gateway a base URL points at. Hosted gateways match by hostname;
  * self-hosted ones (LiteLLM, Kong, ...) when `env` names their URL in one of
- * their urlEnv vars and the host is the same. Reads URLs only.
+ * their urlEnv vars and the host is the same. A self-hosted gateway with a
+ * default port (CLIProxyAPI, 8317) also matches any URL on that port, after
+ * every host and env match. Reads URLs only.
  */
 export function gatewayForUrl(url: unknown, env: NodeJS.ProcessEnv = {}): GatewayId | undefined {
   const host = hostOf(url);
@@ -227,7 +260,8 @@ export function gatewayForUrl(url: unknown, env: NodeJS.ProcessEnv = {}): Gatewa
     if (g.hosts.some((h) => hostMatches(host, h))) return id;
     if (g.urlEnv.some((k) => hostOf(env[k]) === host)) return id;
   }
-  return undefined;
+  const port = portOf(url);
+  return port === undefined ? undefined : GATEWAY_IDS.find((id) => GATEWAYS[id].ports?.includes(port));
 }
 
 /** The gateway whose request id has this shape (Vercel `gen_…`, OpenRouter `gen-…`). */

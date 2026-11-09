@@ -29,4 +29,5 @@ export const GATEWAY_TABLE: readonly GatewayRow[] = [
   { id: "kong", hosts: [], urlEnv: ["KONG_PROXY_URL"], idHeaders: ["x-kong-request-id"], markHeaders: ["x-kong-llm-model"] },
   { id: "bifrost", hosts: [], urlEnv: ["BIFROST_URL", "BIFROST_BASE_URL"], idHeaders: [], markHeaders: [] },
   { id: "martian", hosts: ["withmartian.com"], urlEnv: [], idHeaders: [], markHeaders: [] },
+  { id: "cliproxyapi", hosts: [], urlEnv: ["CLIPROXYAPI_URL"], idHeaders: [], markHeaders: [] },
 ];

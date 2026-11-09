@@ -1,0 +1,606 @@
+{
+ "_note": "Real `eve eval` run of examples/eve-agent (eve 1.0.0-rc.6, mock model), from .eve/evals/2026-11-06T20-28-18: summary.json plus evals/weather/*.json, with each result's session streams and logs left out. `evals` mirrors evals/weather.eval.ts (what onRunStart receives).",
+ "evals": [
+  {
+   "id": "weather/0000",
+   "description": "weather in Paris: tool, then the forecaster subagent",
+   "tags": [
+    "weather"
+   ]
+  },
+  {
+   "id": "weather/0001",
+   "description": "weather in Tokyo: tool, then the forecaster subagent",
+   "tags": [
+    "weather"
+   ]
+  },
+  {
+   "id": "weather/0002",
+   "description": "follow-up turn uses the new city",
+   "tags": [
+    "weather",
+    "multi-turn"
+   ]
+  },
+  {
+   "id": "weather/0003",
+   "description": "unknown city: the tool fails and the agent says so",
+   "tags": [
+    "weather",
+    "error"
+   ]
+  }
+ ],
+ "summary": {
+  "target": {
+   "capabilities": {
+    "devRoutes": true
+   },
+   "kind": "local",
+   "url": "http://127.0.0.1:59040/"
+  },
+  "startedAt": "2026-11-06T20:28:17.033Z",
+  "completedAt": "2026-11-06T20:28:18.553Z",
+  "passed": 4,
+  "failed": 0,
+  "scored": 0,
+  "skipped": 0,
+  "errored": 0,
+  "results": [
+   {
+    "id": "weather/0000",
+    "result": {
+     "outcome": "handled",
+     "reply": "Paris: Sunny, 21°C. Outlook: staying clear through tomorrow.",
+     "sessionEnded": false,
+     "sessionId": "wrun_01M6S8RERRHAA7WM2A3H94NE5E",
+     "status": "completed",
+     "derived": {
+      "toolCalls": [
+       {
+        "callId": "mock-tool-call-1-0-1-2",
+        "input": {
+         "city": "Paris"
+        },
+        "name": "get_weather",
+        "sessionId": "wrun_01M6S8RERRHAA7WM2A3H94NE5E",
+        "turnIndex": 0,
+        "output": {
+         "city": "Paris",
+         "condition": "Sunny",
+         "temperatureC": 21
+        },
+        "status": "completed"
+       },
+       {
+        "callId": "mock-tool-call-1-1-1-4",
+        "input": {
+         "message": "Outlook for Paris. Now: {\"city\":\"Paris\",\"condition\":\"Sunny\",\"temperatureC\":21}"
+        },
+        "name": "forecaster",
+        "sessionId": "wrun_01M6S8RERRHAA7WM2A3H94NE5E",
+        "turnIndex": 0,
+        "output": "staying clear through tomorrow.",
+        "status": "completed"
+       },
+       {
+        "callId": "mock-tool-call-2-2-1-5",
+        "input": {
+         "timeoutSeconds": 30
+        },
+        "name": "eve__task_wait",
+        "sessionId": "wrun_01M6S8RERRHAA7WM2A3H94NE5E",
+        "turnIndex": 0,
+        "output": "forecaster-n6bgrd completed; its result follows.",
+        "status": "completed"
+       }
+      ],
+      "toolCallCount": 3,
+      "skillLoads": [],
+      "subagentCalls": [
+       {
+        "callId": "mock-tool-call-1-1-1-4",
+        "childSessionId": "wrun_01M6S8RF36WV2PDQRNYBM75E20",
+        "name": "forecaster",
+        "sessionId": "wrun_01M6S8RERRHAA7WM2A3H94NE5E",
+        "turnIndex": 0,
+        "output": "staying clear through tomorrow.",
+        "status": "completed"
+       }
+      ],
+      "subagentCallCount": 1,
+      "interactions": [],
+      "parked": false,
+      "messageCount": 1,
+      "reasoningBlockCount": 0,
+      "models": [
+       "eve-mock/weather-script"
+      ],
+      "usage": {
+       "cacheReadTokens": 0,
+       "cacheWriteTokens": 0,
+       "inputTokens": 1865,
+       "outputTokens": 64
+      }
+     },
+     "runtimeIdentity": {
+      "agentId": "eve-agent-example",
+      "agentName": "eve-agent-example",
+      "eveVersion": "1.0.0-rc.6"
+     },
+     "traceContexts": [
+      {
+       "decision": {
+        "action": "record",
+        "recordInputs": true,
+        "recordOutputs": true,
+        "explicitContentAudience": "unknown"
+       },
+       "spanId": "3fe21962017ad5aa",
+       "traceFlags": 1,
+       "traceId": "9d01eeb2cf8fc78da6045748ecc11adc",
+       "primary": true,
+       "sessionId": "wrun_01M6S8RERRHAA7WM2A3H94NE5E"
+      }
+     ],
+     "events": []
+    },
+    "verdict": "passed",
+    "assertions": [
+     {
+      "name": "succeeded",
+      "score": 1,
+      "severity": "gate",
+      "threshold": 1,
+      "passed": true,
+      "errored": false
+     },
+     {
+      "name": "calledTool(get_weather)",
+      "score": 1,
+      "severity": "gate",
+      "threshold": 1,
+      "passed": true,
+      "errored": false,
+      "metadata": {
+       "matchingCalls": 1
+      }
+     },
+     {
+      "name": "calledAgent(forecaster)",
+      "score": 1,
+      "severity": "gate",
+      "threshold": 1,
+      "passed": true,
+      "errored": false,
+      "metadata": {
+       "matchingCalls": 1
+      }
+     },
+     {
+      "name": "includes(Paris: Sunny, 21°C. Outlook: staying clear through tomorrow.)",
+      "score": 1,
+      "severity": "gate",
+      "threshold": 1,
+      "passed": true,
+      "errored": false
+     }
+    ],
+    "startedAt": "2026-11-06T20:28:17.033Z",
+    "completedAt": "2026-11-06T20:28:17.674Z"
+   },
+   {
+    "id": "weather/0001",
+    "result": {
+     "outcome": "handled",
+     "reply": "Tokyo: Cloudy, 18°C. Outlook: clouds breaking up overnight.",
+     "sessionEnded": false,
+     "sessionId": "wrun_01M6S8RERWQCJAS6H5Q2DVZT6B",
+     "status": "completed",
+     "derived": {
+      "toolCalls": [
+       {
+        "callId": "mock-tool-call-1-0-1-1",
+        "input": {
+         "city": "Tokyo"
+        },
+        "name": "get_weather",
+        "sessionId": "wrun_01M6S8RERWQCJAS6H5Q2DVZT6B",
+        "turnIndex": 0,
+        "output": {
+         "city": "Tokyo",
+         "condition": "Cloudy",
+         "temperatureC": 18
+        },
+        "status": "completed"
+       },
+       {
+        "callId": "mock-tool-call-1-1-1-3",
+        "input": {
+         "message": "Outlook for Tokyo. Now: {\"city\":\"Tokyo\",\"condition\":\"Cloudy\",\"temperatureC\":18}"
+        },
+        "name": "forecaster",
+        "sessionId": "wrun_01M6S8RERWQCJAS6H5Q2DVZT6B",
+        "turnIndex": 0,
+        "output": "clouds breaking up overnight.",
+        "status": "completed"
+       },
+       {
+        "callId": "mock-tool-call-2-2-1-6",
+        "input": {
+         "timeoutSeconds": 30
+        },
+        "name": "eve__task_wait",
+        "sessionId": "wrun_01M6S8RERWQCJAS6H5Q2DVZT6B",
+        "turnIndex": 0,
+        "output": "forecaster-cs3zdn completed; its result follows.",
+        "status": "completed"
+       }
+      ],
+      "toolCallCount": 3,
+      "skillLoads": [],
+      "subagentCalls": [
+       {
+        "callId": "mock-tool-call-1-1-1-3",
+        "childSessionId": "wrun_01M6S8RF37HQ31SMKMVBJD3AE8",
+        "name": "forecaster",
+        "sessionId": "wrun_01M6S8RERWQCJAS6H5Q2DVZT6B",
+        "turnIndex": 0,
+        "output": "clouds breaking up overnight.",
+        "status": "completed"
+       }
+      ],
+      "subagentCallCount": 1,
+      "interactions": [],
+      "parked": false,
+      "messageCount": 1,
+      "reasoningBlockCount": 0,
+      "models": [
+       "eve-mock/weather-script"
+      ],
+      "usage": {
+       "cacheReadTokens": 0,
+       "cacheWriteTokens": 0,
+       "inputTokens": 1866,
+       "outputTokens": 65
+      }
+     },
+     "runtimeIdentity": {
+      "agentId": "eve-agent-example",
+      "agentName": "eve-agent-example",
+      "eveVersion": "1.0.0-rc.6"
+     },
+     "traceContexts": [
+      {
+       "decision": {
+        "action": "record",
+        "recordInputs": true,
+        "recordOutputs": true,
+        "explicitContentAudience": "unknown"
+       },
+       "spanId": "1a3f8dd4b083189a",
+       "traceFlags": 1,
+       "traceId": "f32083ae85b8428aad67d291e1f49ff4",
+       "primary": true,
+       "sessionId": "wrun_01M6S8RERWQCJAS6H5Q2DVZT6B"
+      }
+     ],
+     "events": []
+    },
+    "verdict": "passed",
+    "assertions": [
+     {
+      "name": "succeeded",
+      "score": 1,
+      "severity": "gate",
+      "threshold": 1,
+      "passed": true,
+      "errored": false
+     },
+     {
+      "name": "calledTool(get_weather)",
+      "score": 1,
+      "severity": "gate",
+      "threshold": 1,
+      "passed": true,
+      "errored": false,
+      "metadata": {
+       "matchingCalls": 1
+      }
+     },
+     {
+      "name": "calledAgent(forecaster)",
+      "score": 1,
+      "severity": "gate",
+      "threshold": 1,
+      "passed": true,
+      "errored": false,
+      "metadata": {
+       "matchingCalls": 1
+      }
+     },
+     {
+      "name": "includes(Tokyo: Cloudy, 18°C. Outlook: clouds breaking up overnight.)",
+      "score": 1,
+      "severity": "gate",
+      "threshold": 1,
+      "passed": true,
+      "errored": false
+     }
+    ],
+    "startedAt": "2026-11-06T20:28:17.034Z",
+    "completedAt": "2026-11-06T20:28:17.677Z"
+   },
+   {
+    "id": "weather/0002",
+    "result": {
+     "outcome": "handled",
+     "reply": "London: Rain, 14°C. Outlook: showers easing by evening.",
+     "sessionEnded": false,
+     "sessionId": "wrun_01M6S8RFCKD7WTSZJWPB6TP4Z8",
+     "status": "completed",
+     "derived": {
+      "toolCalls": [
+       {
+        "callId": "mock-tool-call-1-0-1-8",
+        "input": {
+         "city": "Paris"
+        },
+        "name": "get_weather",
+        "sessionId": "wrun_01M6S8RFCKD7WTSZJWPB6TP4Z8",
+        "turnIndex": 0,
+        "output": {
+         "city": "Paris",
+         "condition": "Sunny",
+         "temperatureC": 21
+        },
+        "status": "completed"
+       },
+       {
+        "callId": "mock-tool-call-1-1-1-9",
+        "input": {
+         "message": "Outlook for Paris. Now: {\"city\":\"Paris\",\"condition\":\"Sunny\",\"temperatureC\":21}"
+        },
+        "name": "forecaster",
+        "sessionId": "wrun_01M6S8RFCKD7WTSZJWPB6TP4Z8",
+        "turnIndex": 0,
+        "output": "staying clear through tomorrow.",
+        "status": "completed"
+       },
+       {
+        "callId": "mock-tool-call-2-2-1-10",
+        "input": {
+         "timeoutSeconds": 30
+        },
+        "name": "eve__task_wait",
+        "sessionId": "wrun_01M6S8RFCKD7WTSZJWPB6TP4Z8",
+        "turnIndex": 0,
+        "output": "forecaster-6gwe54 completed; its result follows.",
+        "status": "completed"
+       },
+       {
+        "callId": "mock-tool-call-1-0-1-11",
+        "input": {
+         "city": "London"
+        },
+        "name": "get_weather",
+        "sessionId": "wrun_01M6S8RFR4GCCCYV7SNK3JH0DY",
+        "turnIndex": 0,
+        "output": {
+         "city": "London",
+         "condition": "Rain",
+         "temperatureC": 14
+        },
+        "status": "completed"
+       },
+       {
+        "callId": "mock-tool-call-1-1-1-12",
+        "input": {
+         "message": "Outlook for London. Now: {\"city\":\"London\",\"condition\":\"Rain\",\"temperatureC\":14}"
+        },
+        "name": "forecaster",
+        "sessionId": "wrun_01M6S8RFR4GCCCYV7SNK3JH0DY",
+        "turnIndex": 0,
+        "output": "showers easing by evening.",
+        "status": "completed"
+       },
+       {
+        "callId": "mock-tool-call-2-2-1-13",
+        "input": {
+         "timeoutSeconds": 30
+        },
+        "name": "eve__task_wait",
+        "sessionId": "wrun_01M6S8RFR4GCCCYV7SNK3JH0DY",
+        "turnIndex": 0,
+        "output": "forecaster-6048cy completed; its result follows.",
+        "status": "completed"
+       }
+      ],
+      "toolCallCount": 6,
+      "skillLoads": [],
+      "subagentCalls": [
+       {
+        "callId": "mock-tool-call-1-1-1-9",
+        "childSessionId": "wrun_01M6S8RFJMDH1WD24VQ3JJQET7",
+        "name": "forecaster",
+        "sessionId": "wrun_01M6S8RFCKD7WTSZJWPB6TP4Z8",
+        "turnIndex": 0,
+        "output": "staying clear through tomorrow.",
+        "status": "completed"
+       },
+       {
+        "callId": "mock-tool-call-1-1-1-12",
+        "childSessionId": "wrun_01M6S8RFZNANEJR5DXH96AFNZ1",
+        "name": "forecaster",
+        "sessionId": "wrun_01M6S8RFR4GCCCYV7SNK3JH0DY",
+        "turnIndex": 0,
+        "output": "showers easing by evening.",
+        "status": "completed"
+       }
+      ],
+      "subagentCallCount": 2,
+      "interactions": [],
+      "parked": false,
+      "messageCount": 2,
+      "reasoningBlockCount": 0,
+      "models": [
+       "eve-mock/weather-script"
+      ],
+      "usage": {
+       "cacheReadTokens": 0,
+       "cacheWriteTokens": 0,
+       "inputTokens": 3726,
+       "outputTokens": 128
+      }
+     },
+     "runtimeIdentity": {
+      "agentId": "eve-agent-example",
+      "agentName": "eve-agent-example",
+      "eveVersion": "1.0.0-rc.6"
+     },
+     "traceContexts": [
+      {
+       "decision": {
+        "action": "record",
+        "recordInputs": true,
+        "recordOutputs": true,
+        "explicitContentAudience": "unknown"
+       },
+       "spanId": "61dcad957a7f3388",
+       "traceFlags": 1,
+       "traceId": "8e4e58579b62729a434242bec0c38e62",
+       "primary": true,
+       "sessionId": "wrun_01M6S8RFCKD7WTSZJWPB6TP4Z8"
+      },
+      {
+       "decision": {
+        "action": "record",
+        "recordInputs": true,
+        "recordOutputs": true,
+        "explicitContentAudience": "unknown"
+       },
+       "spanId": "c43ba76f56b2231d",
+       "traceFlags": 1,
+       "traceId": "5c7148696b7a1014c7d0aa68cd899295",
+       "primary": false,
+       "sessionId": "wrun_01M6S8RFR4GCCCYV7SNK3JH0DY"
+      }
+     ],
+     "events": []
+    },
+    "verdict": "passed",
+    "assertions": [
+     {
+      "name": "includes(London: Rain, 14°C)",
+      "score": 1,
+      "severity": "gate",
+      "threshold": 1,
+      "passed": true,
+      "errored": false
+     },
+     {
+      "name": "calledAgent(forecaster)",
+      "score": 1,
+      "severity": "gate",
+      "threshold": 1,
+      "passed": true,
+      "errored": false,
+      "metadata": {
+       "matchingCalls": 2
+      }
+     }
+    ],
+    "startedAt": "2026-11-06T20:28:17.674Z",
+    "completedAt": "2026-11-06T20:28:18.553Z"
+   },
+   {
+    "id": "weather/0003",
+    "result": {
+     "outcome": "handled",
+     "reply": "Sorry, I have no weather data for Atlantis.",
+     "sessionEnded": false,
+     "sessionId": "wrun_01M6S8RFCQFY4Q0PZC88SF5NFS",
+     "status": "completed",
+     "derived": {
+      "toolCalls": [
+       {
+        "callId": "mock-tool-call-1-0-1-7",
+        "input": {
+         "city": "Atlantis"
+        },
+        "name": "get_weather",
+        "sessionId": "wrun_01M6S8RFCQFY4Q0PZC88SF5NFS",
+        "turnIndex": 0,
+        "output": "No weather data for Atlantis. Known cities: Paris, London, Tokyo, San Francisco.",
+        "status": "failed"
+       }
+      ],
+      "toolCallCount": 1,
+      "skillLoads": [],
+      "subagentCalls": [],
+      "subagentCallCount": 0,
+      "interactions": [],
+      "parked": false,
+      "messageCount": 1,
+      "reasoningBlockCount": 0,
+      "models": [
+       "eve-mock/weather-script"
+      ],
+      "usage": {
+       "cacheReadTokens": 0,
+       "cacheWriteTokens": 0,
+       "inputTokens": 765,
+       "outputTokens": 16
+      }
+     },
+     "runtimeIdentity": {
+      "agentId": "eve-agent-example",
+      "agentName": "eve-agent-example",
+      "eveVersion": "1.0.0-rc.6"
+     },
+     "traceContexts": [
+      {
+       "decision": {
+        "action": "record",
+        "recordInputs": true,
+        "recordOutputs": true,
+        "explicitContentAudience": "unknown"
+       },
+       "spanId": "2bccea2ae737ed35",
+       "traceFlags": 1,
+       "traceId": "b8f8b97522e0de89ab0f3f6917fff0d0",
+       "primary": true,
+       "sessionId": "wrun_01M6S8RFCQFY4Q0PZC88SF5NFS"
+      }
+     ],
+     "events": []
+    },
+    "verdict": "passed",
+    "assertions": [
+     {
+      "name": "calledTool(get_weather)",
+      "score": 1,
+      "severity": "gate",
+      "threshold": 1,
+      "passed": true,
+      "errored": false,
+      "metadata": {
+       "matchingCalls": 1
+      }
+     },
+     {
+      "name": "includes(no weather data)",
+      "score": 1,
+      "severity": "gate",
+      "threshold": 1,
+      "passed": true,
+      "errored": false
+     }
+    ],
+    "startedAt": "2026-11-06T20:28:17.677Z",
+    "completedAt": "2026-11-06T20:28:17.815Z"
+   }
+  ]
+ }
+}
