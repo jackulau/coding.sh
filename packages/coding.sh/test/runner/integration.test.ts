@@ -44,11 +44,14 @@ describe("integration with src/core/snapshot.ts", () => {
 
   it("snapshot → draft → validate → A/B run", async () => {
     const { snapshot } = await import("../../src/core/snapshot.ts");
-    const start = await snapshot(repo);
+    // Past its 2 s default budget a snapshot drops untracked files (partial), and the hidden
+    // test below is untracked: a budget a loaded runner can't run out of keeps it.
+    const roomy = { timeoutMs: 120_000 };
+    const start = await snapshot(repo, roomy);
     assert.ok(start?.snapshot, "start snapshot taken");
     // The "agent" fixes both bugs and writes a test, uncommitted.
     await write(repo, { ...FIXED, "test/add.test.js": HIDDEN_TEST });
-    const end = await snapshot(repo);
+    const end = await snapshot(repo, roomy);
     assert.ok(end?.snapshot && end.snapshot !== start.snapshot);
 
     const index = new MemIndex();

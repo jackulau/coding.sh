@@ -76,10 +76,16 @@ describe("git helpers", () => {
   });
 });
 
+// A snapshot that runs past its time budget (2 s by default) falls back to tracked files only
+// (partial). A loaded Windows runner can take that long even for these small repos, so the
+// tests of what a snapshot holds give it a budget it never runs out of. The default budget is
+// tested in "performance (5k files)" below, against plain git on the same machine.
+const ROOMY = { timeoutMs: 120_000 };
+
 describe("snapshot", () => {
   test("captures staged, unstaged, deleted and untracked; excludes ignored", async () => {
     const root = dirtyRepo();
-    const s = await snapshot(root);
+    const s = await snapshot(root, ROOMY);
     assert.ok(s?.snapshot);
     assert.equal(s.root, root);
     assert.equal(s.head, gitc(root, "rev-parse", "HEAD"));
@@ -108,8 +114,8 @@ describe("snapshot", () => {
       status: gitc(root, "--no-optional-locks", "status", "--porcelain=v2", "--untracked-files=all"),
     });
     const before1 = fp();
-    const s1 = await snapshot(root);
-    const s2 = await snapshot(join(root, "src"));
+    const s1 = await snapshot(root, ROOMY);
+    const s2 = await snapshot(join(root, "src"), ROOMY);
     assert.ok(s1?.snapshot && s2?.snapshot);
     assert.deepEqual(fp(), before1);
   });
@@ -118,21 +124,21 @@ describe("snapshot", () => {
     const root = makeRepo();
     write(root, { "hello.txt": "hi\n", "dir/a": "a" });
     gitc(root, "add", "dir/a");
-    const s = await snapshot(root);
+    const s = await snapshot(root, ROOMY);
     assert.ok(s?.snapshot);
     assert.equal(s.head, "");
     assert.equal(s.branch, "main");
     assert.equal(shadowGit(root, "rev-list", "--count", s.snapshot), "1");
     assert.deepEqual(shadowGit(root, "ls-tree", "-r", "--name-only", s.snapshot).split("\n").sort(), ["dir/a", "hello.txt"]);
     const empty = makeRepo();
-    const e = await snapshot(empty);
+    const e = await snapshot(empty, ROOMY);
     assert.ok(e?.snapshot);
     assert.equal(shadowGit(empty, "ls-tree", "-r", e.snapshot), "");
   });
 
   test("nested cwd resolves to the repo root; non-repos return undefined", async () => {
     const root = dirtyRepo();
-    const s = await snapshot(join(root, "src", "deep"));
+    const s = await snapshot(join(root, "src", "deep"), ROOMY);
     assert.equal(s?.root, root);
     assert.equal(shadowGit(root, "show", `${s?.snapshot}:new.txt`), "untracked");
     assert.equal(await snapshot(tmp()), undefined);
@@ -141,16 +147,16 @@ describe("snapshot", () => {
 
   test("partial fallback when over maxFiles: tracked changes only", async () => {
     const root = dirtyRepo();
-    const s = await snapshot(root, { maxFiles: 3 });
+    const s = await snapshot(root, { ...ROOMY, maxFiles: 3 });
     assert.ok(s?.snapshot);
     assert.equal(s.partial, true);
     const files = shadowGit(root, "ls-tree", "-r", "--name-only", s.snapshot).split("\n").sort();
     assert.deepEqual(files, [".gitignore", "a.txt", "b.txt", "src/deep/x.ts"]);
     assert.equal(shadowGit(root, "show", `${s.snapshot}:a.txt`), "a2 unstaged");
     // untracked count alone crossing the limit also triggers partial
-    const s2 = await snapshot(root, { maxFiles: 5 });
+    const s2 = await snapshot(root, { ...ROOMY, maxFiles: 5 });
     assert.equal(s2?.partial, true);
-    const s3 = await snapshot(root, { maxFiles: 6 });
+    const s3 = await snapshot(root, { ...ROOMY, maxFiles: 6 });
     assert.equal(s3?.partial, false);
   });
 
@@ -159,7 +165,7 @@ describe("snapshot", () => {
     const wt = join(tmp(), "wt");
     gitc(root, "worktree", "add", "-q", "-b", "feature", wt);
     write(wt, { "f.txt": "2\n", "u.txt": "u\n" });
-    const s = await snapshot(wt);
+    const s = await snapshot(wt, ROOMY);
     assert.ok(s?.snapshot);
     assert.equal(s.branch, "feature");
     const alt = readFileSync(join(shadowRepoPath(s.root), "objects", "info", "alternates"), "utf8").trim();
@@ -174,7 +180,7 @@ describe("snapshot", () => {
     const b = await ensureShadow(root);
     assert.equal(a, b);
     assert.ok(existsSync(join(a, "HEAD")));
-    const all = await Promise.all([snapshot(root), snapshot(root), snapshot(root)]);
+    const all = await Promise.all([snapshot(root, ROOMY), snapshot(root, ROOMY), snapshot(root, ROOMY)]);
     const shas = new Set(all.map((s) => s?.snapshot));
     assert.equal(all.every((s) => s?.snapshot), true);
     // same tree; commit shas may differ only by timestamp
@@ -191,7 +197,7 @@ describe("materialize / diff", () => {
     chmodSync(join(root, "bin/run.sh"), 0o755);
     // Git for Windows checks symlinks out as plain files (core.symlinks=false), so only POSIX round-trips one.
     if (process.platform !== "win32") symlinkSync("a.txt", join(root, "link-to-a"));
-    const s = await snapshot(root);
+    const s = await snapshot(root, ROOMY);
     assert.ok(s);
     const dest = join(tmp(), "task");
     const m = await materialize(s, dest);
@@ -223,10 +229,10 @@ describe("materialize / diff", () => {
 
   test("diffSnapshots: statuses, numstat and an applicable patch", async () => {
     const root = makeRepo({ "keep.txt": "same\n", "mod.txt": "1\n2\n3\n", "gone.txt": "bye\n", "img.bin": "\x00\x01\x02" });
-    const s1 = await snapshot(root);
+    const s1 = await snapshot(root, ROOMY);
     write(root, { "mod.txt": "1\nTWO\n3\n4\n", "added.txt": "new\nfile\n", "img.bin": "\x00\x09\x02\x03" });
     unlinkSync(join(root, "gone.txt"));
-    const s2 = await snapshot(root);
+    const s2 = await snapshot(root, ROOMY);
     assert.ok(s1?.snapshot && s2?.snapshot);
     const d = await diffSnapshots(root, s1.snapshot, s2.snapshot);
     const byPath = Object.fromEntries(d.files.map((f) => [f.path, f]));
@@ -250,7 +256,7 @@ describe("materialize / diff", () => {
 
   test("diffWorkdir: tracked + untracked vs start, ignores ignored, survives agent commits", async () => {
     const root = makeRepo({ "a.txt": "a\n", "b.txt": "b\n", ".gitignore": "node_modules/\n" });
-    const s = await snapshot(root);
+    const s = await snapshot(root, ROOMY);
     assert.ok(s);
     const m = await materialize(s, join(tmp(), "w"));
     assert.deepEqual((await diffWorkdir(m.dir)).files, []);
