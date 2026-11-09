@@ -272,3 +272,68 @@ export function failedRequestFixtures(t0: number): { sessions: Session[]; events
     events: [...failed, ...fine],
   };
 }
+
+/** For metrics: twelve sessions over ten days from t0 (a Wednesday by default): three agents, five models, two repos, failure flags and tags, priced and unpriced, two subagents. */
+export function metricFixtures(t0 = Date.UTC(2026, 9, 7)): Session[] {
+  const DAY_MS = 86_400_000;
+  const H = 3_600_000;
+  const T0 = t0;
+  const s = (id: string, day: number, hour: number, over: Omit<Partial<Session>, "stats"> & { stats?: Partial<Session["stats"]> } = {}): Session =>
+    session(id, {
+      ...over,
+      startedAt: T0 + day * DAY_MS + hour * H,
+      endedAt: T0 + day * DAY_MS + hour * H + 600_000,
+      stats: { events: 10, turns: 1, toolCalls: 4, toolErrors: 0, filesChanged: 1, ...over.stats },
+      flags: over.flags ?? [],
+    });
+  return [
+    s("m01", 0, 9, { model: "claude-opus-5-5", stats: { toolCalls: 12, toolErrors: 2, usage: { inputTokens: 40_000, outputTokens: 3_000, cacheReadTokens: 200_000, costUsd: 1.25, estimatedCostUsd: 1.25 }, latency: { llmCalls: 14, llmP95Ms: 9_000, ttftP50Ms: 1_100 } }, flags: ["no-verification"] }),
+    s("m02", 0, 15, { agent: "codex", model: "gpt-6.1-sol", repo: { root: "/work/demo", head: "" }, stats: { toolCalls: 30, toolErrors: 1, usage: { inputTokens: 90_000, outputTokens: 6_000, costUsd: 0.4 }, latency: { llmCalls: 22, llmP95Ms: 14_000, ttftP50Ms: 900 } }, flags: ["compaction", "skill:pdf"] }),
+    s("m03", 1, 10, { model: "claude-sonnet-5", stats: { usage: { inputTokens: 5_000, outputTokens: 400 }, latency: { llmCalls: 3, llmP95Ms: 3_000 } } }),
+    s("m04", 1, 11, { model: "claude-sonnet-5", parent: { sessionId: "m03", type: "Explore" }, stats: { toolCalls: 6, usage: { inputTokens: 2_000, outputTokens: 100, costUsd: 0.01, estimatedCostUsd: 0.01 } } }),
+    s("m05", 2, 8, { agent: "cursor", model: "gpt-6.1-sol", repo: undefined, cwd: "/home/user/notes", stats: { toolCalls: 0, latency: { llmCalls: 1, llmP95Ms: 1_200, ttftP50Ms: 300 } }, flags: ["premature-completion"] }),
+    s("m06", 3, 23, { agent: "codex", model: "gpt-6.1-sol", repo: { root: "/work/demo", head: "" }, stats: { toolCalls: 50, toolErrors: 9, usage: { inputTokens: 300_000, outputTokens: 12_000, cacheReadTokens: 1_000_000, costUsd: 2.5 }, latency: { llmCalls: 60, llmP95Ms: 30_000, ttftP50Ms: 2_000 }, llmErrors: { count: 2 } }, flags: ["repeated-tool-failure", "compaction"] }),
+    s("m07", 5, 12, { model: "claude-opus-5-5", stats: { usage: { inputTokens: 10_000, outputTokens: 1_000, costUsd: 0.3333333333, estimatedCostUsd: 0.3333333333 } }, flags: ["model:switch"] }),
+    s("m08", 5, 12, { model: "claude-opus-5-5", parent: { sessionId: "m07", type: "general-purpose" }, stats: { toolCalls: 2, usage: { inputTokens: 1_000, outputTokens: 50, costUsd: 0.1111111111, estimatedCostUsd: 0.1111111111 } } }),
+    s("m09", 6, 1, { agent: "codex", model: "gpt-6.1-mini", repo: { root: "/work/demo", head: "" }, stats: { toolCalls: 8, usage: { inputTokens: 20_000, outputTokens: 900, costUsd: 0.05 }, latency: { llmCalls: 9, llmP95Ms: 4_000, ttftP50Ms: 500 } } }),
+    s("m10", 8, 18, { model: "kimi-k3", stats: { usage: { inputTokens: 7_000, outputTokens: 700 } }, flags: ["no-verification"] }),
+    s("m11", 9, 2, { agent: "cursor", model: undefined, repo: undefined, stats: { toolCalls: 1, toolErrors: 1 } }),
+    s("m12", 9, 20, { model: "claude-opus-5-5", stats: { toolCalls: 40, toolErrors: 3, usage: { inputTokens: 80_000, outputTokens: 5_000, costUsd: 0.75 }, latency: { llmCalls: 30, llmP95Ms: 12_000, ttftP50Ms: 1_500 } }, flags: ["no-verification", "skill:pdf"] }),
+  ];
+}
+
+/** A long session: `turns` prompts, each with model calls and tool calls, some failing, a compaction now and then. */
+export function longSession(total: number, turns: number, seed = 7): AgentEvent[] {
+  let x = seed;
+  const rnd = () => ((x = (x * 1103515245 + 12345) % 2147483648) / 2147483648);
+  const out: AgentEvent[] = [];
+  const t0 = Date.UTC(2026, 10, 1);
+  const per = Math.floor(total / turns);
+  const base = { v: 0, sessionId: "long-1", agent: "claude-code" } as const;
+  let k = 0;
+  const push = (kind: AgentEvent["kind"], payload: Record<string, unknown>, extra: Partial<AgentEvent> = {}) => {
+    out.push({ ...base, id: `e${String(k).padStart(7, "0")}`, ts: t0 + k * 1000, kind, payload, ...extra } as AgentEvent);
+    k++;
+  };
+  push("session.start", {});
+  for (let t = 0; t < turns && k < total; t++) {
+    const turnId = `t${t}`;
+    push("user.message", { text: `prompt ${t}: fix the thing` }, { turnId });
+    const stop = Math.min(total - 1, k + per - 1);
+    let tool = 0;
+    while (k < stop - 2) {
+      const r = rnd();
+      if (r < 0.0002) push("context.compact", { trigger: "auto" }, { turnId });
+      else if (r < 0.2) push("llm.call", { ok: true, requestModel: "claude-opus-5-5" }, { turnId });
+      else {
+        const id = `tu${t}-${tool++}`;
+        push("tool.start", { tool: "Bash", toolUseId: id, input: { command: "npm test" } }, { turnId });
+        push("tool.end", { tool: "Bash", toolUseId: id, ok: rnd() > 0.01, output: "ok" }, { turnId });
+      }
+    }
+    push("assistant.message", { text: "done" }, { turnId });
+    push("turn.end", {}, { turnId });
+  }
+  while (k < total) push("notification", { text: "idle" });
+  return out;
+}

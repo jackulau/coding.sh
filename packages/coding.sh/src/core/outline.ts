@@ -7,6 +7,7 @@
 // way). Days are marked too, so a run that crosses midnight reads in order.
 // A fold over time-sorted events; `coding.sh show`, the viewer, MCP and ingest share it.
 import type { AgentEvent, Session, SessionDerail, SessionPhase } from "../schema/index.ts";
+import { failureState, foldFailure, type ToolFailure } from "./failures.ts";
 
 /** A gap this long between two events of the main agent opens a new phase. */
 export const IDLE_PHASE_MS = 30 * 60_000;
@@ -42,7 +43,8 @@ export function localDate(ts: number): string {
 /** Phases and day marks of one session. `sorted` must be sorted by time (as listEvents returns them). */
 export function sessionOutline(sorted: readonly AgentEvent[], derails: readonly SessionDerail[] = [], idleMs = IDLE_PHASE_MS): Outline {
   const s = outlineState({ idleMs });
-  for (let i = 0; i < sorted.length; i++) foldOutline(s, sorted[i]!, i);
+  const failures = failureState();
+  for (let i = 0; i < sorted.length; i++) foldOutline(s, sorted[i]!, i, foldFailure(failures, sorted[i]!));
   return outlineOf(s, derails);
 }
 
@@ -85,8 +87,12 @@ export function outlineOf(s: OutlineState, derails: readonly SessionDerail[] = [
   return { phases, days: [...(s.days ?? [])] };
 }
 
-/** Folds the event at index `i` of the session's time-sorted events into the outline. */
-export function foldOutline(s: OutlineState, e: AgentEvent, i: number): void {
+/**
+ * Folds the event at index `i` of the session's time-sorted events into the
+ * outline. `failure`: how a failed tool.end failed (core/failures.ts); only real
+ * failures count as the phase's toolErrors, and undefined counts as real.
+ */
+export function foldOutline(s: OutlineState, e: AgentEvent, i: number, failure?: ToolFailure): void {
   if (s.days) {
     const d = localDate(e.ts);
     if (d !== s.day) {
@@ -124,7 +130,7 @@ export function foldOutline(s: OutlineState, e: AgentEvent, i: number): void {
     p.prompts++;
     if (p.title === undefined && typeof e.payload.text === "string" && e.payload.text.trim()) p.title = e.payload.text.replace(/\s+/g, " ").trim().slice(0, 120);
   } else if (e.kind === "tool.start" && e.payload.wrapper !== true) p.toolCalls++;
-  else if (e.kind === "tool.end" && e.payload.ok === false && e.payload.wrapper !== true) p.toolErrors++;
+  else if (e.kind === "tool.end" && e.payload.ok === false && e.payload.wrapper !== true && (!failure || failure.cls === "real")) p.toolErrors++;
   else if (e.kind === "file.change" && typeof e.payload.path === "string" && !files.has(e.payload.path)) {
     files.add(e.payload.path);
     p.filesChanged++;

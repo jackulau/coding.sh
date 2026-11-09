@@ -158,6 +158,9 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
    pushing the page past the screen. The label clips, not the link, so its hit area stays. */
 .nav a, .nav a > span { min-width: 0; }
 .nav a > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Four tabs fit a phone only with short names. */
+.nav-short { display: none; }
+@media (max-width: 640px) { .nav-long { display: none; } .nav-short { display: inline; } }
 .nav a {
   display: inline-flex; align-items: center; height: 28px; padding: 0 0.65rem;
   border-radius: var(--radius-sm); font-size: 13px; color: var(--text-muted);
@@ -561,6 +564,40 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .wf-legend span { display: inline-flex; align-items: center; gap: 0.35rem; }
 .wf-legend i { position: relative; top: auto; bottom: auto; display: inline-block; width: 14px; height: 8px; border-radius: 2px; cursor: default; }
 .wf-legend i.wf-resume { position: static; width: 2px; height: 10px; margin: 0; }
+/* Workflow run (#/workflows/:id): rows per phase, critical path outlined, barrier idle shaded amber. */
+.wfg-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; align-items: start; }
+@media (min-width: 1100px) { .wfg-grid { grid-template-columns: minmax(0, 1fr) 25rem; } }
+.wfg-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.6rem; padding: 0.8rem var(--gutter) 0.9rem; min-width: 0; }
+.wfg-bar-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem 1rem; }
+.wfg-facts { display: flex; flex-wrap: wrap; gap: 0.2rem 1rem; font-size: 12px; color: var(--text-2); }
+.wfg-facts b { font-weight: 540; color: var(--text); }
+.wfg-facts .fail { color: var(--fail-ink); }
+.wfg-lanes { max-height: none; overflow: visible; }
+.wfg-conc svg { display: block; width: 100%; height: 34px; }
+.wfg-conc .area { fill: var(--bar); }
+.wfg-conc .cap { stroke: var(--warn); stroke-width: 1; stroke-dasharray: 4 3; fill: none; }
+.wfg-axis { display: flex; justify-content: space-between; font: 11px/16px var(--font-mono); color: var(--text-muted); }
+.wfg-phase { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.75rem; margin-top: 0.35rem; font-size: 12px; font-weight: 540; color: var(--text); }
+.wfg-phase .meta { font-weight: 400; }
+.wf-lane-label.critical { color: var(--text); }
+.wfg-bar { position: absolute; top: 3px; bottom: 3px; min-width: 3px; border-radius: 2px; background: var(--pass); }
+.wfg-bar.s-failed { background: var(--fail); }
+.wfg-bar.s-null, .wfg-bar.s-skipped { background: var(--text-faint); }
+.wfg-bar.s-cached { background: repeating-linear-gradient(135deg, var(--line-strong) 0 3px, transparent 3px 6px); box-shadow: inset 0 0 0 1px var(--bar-strong); }
+.wfg-bar.s-running { background: var(--pass-wash); box-shadow: inset 0 0 0 1px var(--pass); }
+.wfg-bar.s-cancelled, .wfg-bar.s-superseded { background: transparent; box-shadow: inset 0 0 0 1px var(--text-muted); }
+.wfg-bar.critical { top: 1px; bottom: 1px; outline: 2px solid var(--text); outline-offset: 0; }
+a.wfg-bar:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.wfg-idle { position: absolute; top: 5px; bottom: 5px; border-radius: 0 2px 2px 0; background: var(--warn-wash); box-shadow: inset 0 0 0 1px var(--warn); opacity: 0.8; }
+.wf-legend i.wfg-bar, .wf-legend i.wfg-idle { position: static; display: inline-block; width: 14px; height: 8px; opacity: 1; }
+.wf-legend i.wfg-bar.critical { outline-width: 1px; }
+.wfg-side { display: grid; gap: 1rem; align-content: start; min-width: 0; }
+.wfg-kv { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.wfg-kv caption { padding: 0.6rem 0.85rem 0.3rem; text-align: left; font-size: 11px; color: var(--text-muted); }
+.wfg-kv th { padding: 0.3rem 0.85rem; text-align: left; font-weight: 400; color: var(--text-muted); }
+.wfg-kv td { padding: 0.3rem 0.85rem; text-align: right; font-family: var(--font-mono); color: var(--text-2); white-space: nowrap; }
+.wfg-kv tr + tr > * { box-shadow: inset 0 1px 0 var(--line); }
+.wfg-list td a { color: var(--text); }
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
 .label-group { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; min-width: 0; }
 .label-group .meta { margin-right: 0.2rem; }
@@ -1010,6 +1047,66 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .tile .big { font-size: 1.25rem; }
 }
 
+/* ---------- explore (metrics) ---------- */
+.mx-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem 1rem; margin: -0.25rem 0 1rem; }
+.mx-by { display: inline-flex; align-items: center; gap: 0.5rem; }
+.mx-by select { height: 28px; width: auto; padding: 0 0.5rem; }
+.mx-body { display: grid; gap: 1rem; }
+.mx-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: 0.75rem; }
+.mx-panel { margin: 0; }
+.mx-cap { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; min-width: 0; }
+.mx-title { display: grid; gap: 0.1rem; min-width: 0; font-size: 13px; font-weight: 520; color: var(--text); }
+.mx-title .meta { font-weight: 400; font-size: 11px; }
+.mx-total { font-family: var(--font-mono); font-weight: 500; font-size: 1.125rem; letter-spacing: -0.02em; color: var(--text); white-space: nowrap; }
+.mx-total.none { color: var(--text-muted); }
+.mx-empty { margin: 0; }
+.mx-legend { margin-bottom: -0.25rem; }
+.mx-legend span { max-width: 16rem; }
+.mx-table-wrap { overflow-x: auto; }
+.mx-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.mx-table th, .mx-table td { padding: 0.5rem 0.85rem; text-align: right; white-space: nowrap; font-family: var(--font-mono); color: var(--text-2); }
+.mx-table thead th { font-size: 11px; font-weight: 400; color: var(--text-muted); box-shadow: inset 0 -1px 0 var(--line); }
+.mx-table th:first-child { text-align: left; max-width: 18rem; }
+.mx-table tbody tr + tr > * { box-shadow: inset 0 1px 0 var(--line); }
+.mx-table tbody tr:last-child > * { color: var(--text); }
+.mx-key { display: inline-flex; align-items: center; gap: 0.5rem; max-width: 18rem; min-width: 0; font-family: var(--font-sans); color: var(--text); }
+.mx-key a { color: var(--text); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+@media (max-width: 640px) {
+  .mx-controls { gap: 0.5rem 0.75rem; }
+  .mx-table th, .mx-table td { padding: 0.45rem 0.6rem; }
+}
+/* ---------- playground ---------- */
+.pg-slot:empty { display: none; }
+.pg-body { display: grid; gap: 1.1rem; min-width: 0; }
+.pg-settings { display: grid; grid-template-columns: minmax(10rem, 14rem) minmax(12rem, 1fr) 8rem 8rem; gap: 0.6rem 0.8rem; align-items: end; }
+.pg-set { display: grid; gap: 0.3rem; min-width: 0; }
+.pg-set .field { padding: 0 0.6rem; }
+.pg-text { display: block; width: 100%; min-height: 2.4rem; padding: 0.5rem 0.65rem; resize: vertical; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; color: var(--text); background: var(--surface); border: 0; border-radius: var(--radius-sm); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.pg-text:focus { outline: none; box-shadow: inset 0 0 0 1px var(--text-muted), 0 0 0 3px var(--select); }
+.pg-msgs { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.5rem; }
+.pg-msg { display: grid; gap: 0.4rem; padding: 0.55rem 0.65rem 0.65rem; min-width: 0; }
+.pg-msg-head { display: flex; align-items: center; gap: 0.5rem; min-width: 0; min-height: 24px; }
+.pg-grow { flex: 1; }
+.pg-role { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); }
+.pg-role-assistant { color: var(--text); }
+.pg-more { display: flex; justify-content: center; }
+.pg-row, .pg-actions, .pg-save { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.pg-actions { justify-content: space-between; gap: 0.75rem; }
+.pg-save .field { width: auto; height: 30px; padding: 0 0.6rem; }
+.pg-save input.field { width: 12rem; }
+.pg-tools summary { cursor: pointer; font-size: 12.5px; color: var(--text-2); padding: 0.2rem 0; }
+.pg-tools .pg-text { margin-top: 0.4rem; }
+.pg-status { min-height: 1.2em; }
+.pg-outs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.8rem; align-items: start; }
+.pg-out { display: grid; gap: 0.6rem; padding: 0.8rem 0.9rem; min-width: 0; }
+.pg-out-h { font-size: 13px; font-weight: 600; margin: 0; }
+.pg-out-text { margin: 0; max-height: 28rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-mono); font-size: 12px; line-height: 1.5; color: var(--text); }
+.pg-out-calls { color: var(--text-2); }
+@media (max-width: 640px) {
+  .pg-settings { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .pg-outs { grid-template-columns: minmax(0, 1fr); }
+  .pg-save, .pg-save input.field, .pg-save select.field { width: 100%; }
+}
 /* ---------- benchmarks ---------- */
 .s-0 { --c: var(--s1); } .s-1 { --c: var(--s2); } .s-2 { --c: var(--s3); } .s-3 { --c: var(--s4); } .s-x { --c: var(--text-muted); } .s-ink { --c: var(--text-2); }
 .sw { display: inline-block; flex: none; width: 10px; height: 3px; border-radius: 2px; background: var(--c); vertical-align: middle; }
@@ -1040,6 +1137,7 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
 .spark .grid, .chart .grid { stroke: var(--line); stroke-width: 1; }
 .ln { fill: none; stroke: var(--c); stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round; }
 .ln.dashed { stroke-dasharray: 4 3; }
+.ln.lone { stroke-width: 5; }
 .chart .zero { stroke: var(--text-muted); stroke-width: 1; }
 .chart .brk { stroke: var(--line-strong); stroke-width: 1; stroke-dasharray: 3 3; }
 .band { fill: var(--c); opacity: 0.16; stroke: none; }
@@ -1298,7 +1396,9 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   .fail-nav button:hover { background: var(--fail-wash); }
   .fail-nav.query-nav button:hover { background: var(--hover); color: var(--text); }
   .json details > summary:hover { color: var(--text); }
+  .pg-tools summary:hover { color: var(--text); }
   .page-head .meta button:hover { color: var(--text); }
+  .mx-key a:hover { text-decoration-color: var(--text-muted); }
   .bench-card:hover { background: color-mix(in srgb, var(--surface) 70%, var(--raised)); }
   .fail-row .open-sess:hover { text-decoration-color: var(--text-2); transition-duration: var(--hover-in); }
 }
@@ -1385,8 +1485,9 @@ mark { background: var(--warn-wash); color: var(--warn-ink); border-radius: 2px;
   </a>
   <nav class="nav" aria-label="Primary">
     <a href="#/" data-nav="sessions"><span>Sessions</span></a>
-    <a href="#/experiments" data-nav="experiments"><span>Experiments</span></a>
-    <a href="#/benchmarks" data-nav="benchmarks"><span>Benchmarks</span></a>
+    <a href="#/explore" data-nav="explore"><span>Explore</span></a>
+    <a href="#/experiments" data-nav="experiments"><span><span class="nav-long">Experiments</span><span class="nav-short">Exps</span></span></a>
+    <a href="#/benchmarks" data-nav="benchmarks"><span><span class="nav-long">Benchmarks</span><span class="nav-short">Bench</span></span></a>
   </nav>
   <span class="spacer"></span>
   <span class="update-pill indexing-pill" id="indexing" hidden></span>
@@ -1608,6 +1709,13 @@ async function request(path, init, quiet) {
   }
 }
 async function api(path, init, quiet) {
+  if (!init || !init.method || init.method === "GET") {
+    const hit = preloadTake(path);
+    if (hit) return hit;
+  }
+  return fetchJson(path, init, quiet);
+}
+async function fetchJson(path, init, quiet) {
   const res = await request(path, { ...init, headers: { Accept: "application/json", ...(init && init.headers) } }, quiet);
   let body = null;
   try { body = await res.json(); } catch { /* non-JSON error */ }
@@ -1620,6 +1728,89 @@ function qs(params) {
   const s = u.toString();
   return s ? "?" + s : "";
 }
+
+// <intent>
+/**
+ * Intent to open a row: the pointer rests `delay` ms on it (or keyboard focus stays that long),
+ * or it is pressed. A row that comes under a still pointer because the list scrolled is not
+ * intent: only a pointer that really moved arms the timer, and a scroll disarms it.
+ * The clock is injected so the rules can be tested without a browser.
+ */
+function createIntent(o) {
+  const delay = o.delay === undefined ? 100 : o.delay;
+  let timer = null;
+  let armed = null;
+  let by = "";
+  let last = null;
+  const cancel = () => {
+    if (timer !== null) { o.clearTimer(timer); timer = null; }
+    armed = null;
+    by = "";
+  };
+  const arm = (key, source) => {
+    cancel();
+    if (!key) return;
+    armed = key;
+    by = source;
+    timer = o.setTimer(() => { const k = armed; timer = null; armed = null; by = ""; if (k) o.onIntent(k); }, delay);
+  };
+  return {
+    /** A pointer move over `key` (null: over no row) at client x, y. */
+    move(key, x, y) {
+      const moved = !last || last.x !== x || last.y !== y;
+      last = { x, y };
+      if (moved) arm(key, "pointer");
+      else if (by === "pointer" && key !== armed) cancel();
+    },
+    leave() { if (by === "pointer") cancel(); last = null; },
+    /** The page scrolled: a row under the pointer now is one the person did not point at. */
+    scroll() { if (by === "pointer") cancel(); },
+    focus(key) { arm(key, "focus"); },
+    press(key) { cancel(); if (key) o.onIntent(key); },
+    get armed() { return armed; },
+  };
+}
+// </intent>
+
+// Preloaded GET responses, each used once by api() within PRELOAD_TTL.
+const PRELOAD_TTL = 20e3;
+const preloaded = new Map();
+function preloadTake(path) {
+  const p = preloaded.get(path);
+  if (!p) return null;
+  preloaded.delete(path);
+  return Date.now() - p.at < PRELOAD_TTL ? p.promise : null;
+}
+function preload(path) {
+  const p = preloaded.get(path);
+  if (p && Date.now() - p.at < PRELOAD_TTL) return p.promise;
+  const promise = fetchJson(path, undefined, true);
+  promise.catch(() => { if (preloaded.get(path)?.promise === promise) preloaded.delete(path); });
+  preloaded.set(path, { at: Date.now(), promise });
+  return promise;
+}
+/** Everything opening a session reads first (see showSession), so the click needs no request. */
+function preloadSession(id) {
+  if (navigator.connection && navigator.connection.saveData) return;
+  const base = "/api/sessions/" + encodeURIComponent(id);
+  preload(base).then((s) => { if (s && s.parent && s.parent.sessionId) preload("/api/sessions/" + encodeURIComponent(s.parent.sessionId)); }, () => {});
+  preload(base + "/events" + qs({ limit: EVENTS_PAGE }));
+  preload("/api/labels" + qs({ sessionId: id }));
+  preload("/api/sessions" + qs({ parent: id, limit: 500 }));
+  preload(base + "/outline");
+}
+// The server's first paint embeds the first responses (src/viewer/ssr.ts): each is read once.
+(() => {
+  const el = document.getElementById("boot-data");
+  if (!el) return;
+  try {
+    const at = Date.now();
+    for (const [path, body] of Object.entries(JSON.parse(el.textContent || "{}"))) preloaded.set(path, { at, promise: Promise.resolve(body) });
+  } catch { /* a bad embed: the page fetches as usual */ }
+  el.remove();
+})();
+const sessionIntent = createIntent({ delay: 100, setTimer: (f, ms) => setTimeout(f, ms), clearTimer: (t) => clearTimeout(t), onIntent: preloadSession });
+window.addEventListener("scroll", () => sessionIntent.scroll(), { passive: true, capture: true });
 
 let toastTimer = 0;
 function toast(msg) {
@@ -1705,7 +1896,7 @@ function route() {
   const seq = ++navSeq;
   clearAnnouncement();
   const { parts, query, hasQuery } = parseHash();
-  const section = parts[0] === "experiments" || parts[0] === "benchmarks" ? parts[0] : "sessions";
+  const section = parts[0] === "experiments" || parts[0] === "benchmarks" || parts[0] === "workflows" ? parts[0] : parts[0] === "explore" || parts[0] === "metrics" ? "explore" : "sessions";
   for (const a of document.querySelectorAll("[data-nav]")) {
     if (a.dataset.nav === section) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current");
   }
@@ -1716,6 +1907,10 @@ function route() {
   if (parts[0] === "experiments") return showExperiments(seq);
   if (parts[0] === "benchmarks" && parts[1]) return showBenchmark(seq, parts[1]);
   if (parts[0] === "benchmarks") return showBenchmarks(seq);
+  if (parts[0] === "workflows" && parts[1]) return showWorkflow(seq, parts[1]);
+  if (parts[0] === "workflows") return showWorkflows(seq);
+  if (parts[0] === "explore" || parts[0] === "metrics") return showExplore(seq, query);
+  if (parts[0] === "playground" && parts[1]) return showPlayground(seq, parts[1], (query.get("session") || "").slice(0, 200));
   return showSessions(seq, hasQuery ? query : null, parts[0] === "events" ? "events" : "sessions");
 }
 const current = (seq) => seq === navSeq;
@@ -1731,6 +1926,7 @@ const KEYMAP = [
   { scope: "global", id: "go-sessions", keys: ["g", "s"], label: "Go to sessions", chord: true },
   { scope: "global", id: "go-experiments", keys: ["g", "e"], label: "Go to experiments", chord: true },
   { scope: "global", id: "go-benchmarks", keys: ["g", "b"], label: "Go to benchmarks", chord: true },
+  { scope: "global", id: "go-explore", keys: ["g", "x"], label: "Go to explore", chord: true },
   { scope: "sessions", id: "search", keys: ["/"], label: "Filter or search" },
   { scope: "sessions", id: "down", keys: ["j"], alt: ["ArrowDown"], label: "Next session" },
   { scope: "sessions", id: "up", keys: ["k"], alt: ["ArrowUp"], label: "Previous session" },
@@ -1777,6 +1973,7 @@ const KEYMAP = [
   { scope: "experiment", id: "up", keys: ["k"], alt: ["ArrowUp"], label: "Previous case" },
   { scope: "experiment", id: "open", keys: ["Enter"], label: "Show or hide case detail" },
   { scope: "experiment", id: "back", keys: ["Esc"], alt: ["Escape"], label: "Back to experiments" },
+  { scope: "explore", id: "search", keys: ["/"], label: "Filter" },
   { scope: "benchmarks", id: "down", keys: ["j"], alt: ["ArrowDown"], label: "Next benchmark" },
   { scope: "benchmarks", id: "up", keys: ["k"], alt: ["ArrowUp"], label: "Previous benchmark" },
   { scope: "benchmarks", id: "open", keys: ["Enter"], label: "Open benchmark" },
@@ -1786,7 +1983,7 @@ const KEYMAP = [
   { scope: "benchmark", id: "session", keys: ["o"], label: "Open the case's session" },
   { scope: "benchmark", id: "back", keys: ["Esc"], alt: ["Escape"], label: "Back to benchmarks" },
 ];
-const SCOPE_NAMES = { global: "Anywhere", sessions: "Sessions list", events: "Events list", session: "Session", replay: "Replay", experiments: "Experiments", experiment: "Experiment and compare", benchmarks: "Benchmarks", benchmark: "Benchmark" };
+const SCOPE_NAMES = { global: "Anywhere", sessions: "Sessions list", events: "Events list", session: "Session", replay: "Replay", explore: "Explore", experiments: "Experiments", experiment: "Experiment and compare", benchmarks: "Benchmarks", benchmark: "Benchmark" };
 let chordAt = 0;
 document.addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) { e.preventDefault(); openPalette(); return; }
@@ -1799,6 +1996,7 @@ document.addEventListener("keydown", (e) => {
     if (e.key === "s") { e.preventDefault(); location.hash = listHref("sessions"); return; }
     if (e.key === "e") { e.preventDefault(); location.hash = "#/experiments"; return; }
     if (e.key === "b") { e.preventDefault(); location.hash = "#/benchmarks"; return; }
+    if (e.key === "x") { e.preventDefault(); location.hash = "#/explore"; return; }
   }
   chordAt = 0;
   if (e.key === "?") { e.preventDefault(); openHelp(); return; }
@@ -1871,6 +2069,8 @@ function openPalette() {
     { group: "Go to", label: "Events", run: () => { location.hash = listHref("events"); } },
     { group: "Go to", label: "Experiments", hint: KEYBOARD.matches ? "g e" : "", run: () => { location.hash = "#/experiments"; } },
     { group: "Go to", label: "Benchmarks", hint: KEYBOARD.matches ? "g b" : "", run: () => { location.hash = "#/benchmarks"; } },
+    { group: "Go to", label: "Explore", hint: KEYBOARD.matches ? "g x" : "", run: () => { location.hash = "#/explore"; } },
+    { group: "Go to", label: "Workflow runs", run: () => { location.hash = "#/workflows"; } },
     { group: "Commands", label: theme.get() === "light" ? "Switch to dark theme" : "Switch to light theme", run: () => theme.toggle() },
     KEYBOARD.matches ? { group: "Commands", label: "Keyboard shortcuts", hint: "?", run: () => setTimeout(openHelp, 0) } : null,
     ...(viewKeys.palette || []),
@@ -2894,7 +3094,7 @@ function sessionList(view) {
         : h("span", { class: "badge" }, plural(kids, "subagent"))
       : null;
     const row = h("div", {
-      class: "row" + (depth ? " child" : ""), role: "option", id: "opt-" + i, "aria-selected": String(i === list.active),
+      class: "row" + (depth ? " child" : ""), role: "option", id: "opt-" + i, "aria-selected": String(i === list.active), "data-sid": s.id,
       onclick: () => { list.active = i; location.hash = sessionHref(s.id); },
     },
       h("span", { class: "dot " + (tone ? "tone-" + tone : actErr || failedReqs ? "tone-fail ring" : "tone-muted"), "aria-hidden": "true", title: tone === "fail" ? "Tests failing" : tone === "pass" ? "Tests passing" : undefined }),
@@ -2913,6 +3113,11 @@ function sessionList(view) {
     lb.append(row);
   });
   lb.setAttribute("aria-activedescendant", "opt-" + list.active);
+  // Preload a session the pointer rests on, or that is pressed: opening it then needs no request.
+  const rowSid = (e) => { const r = e.target instanceof Element ? e.target.closest("[data-sid]") : null; return r ? r.dataset.sid : null; };
+  lb.addEventListener("pointermove", (e) => { if (e.pointerType !== "touch") sessionIntent.move(rowSid(e), e.clientX, e.clientY); });
+  lb.addEventListener("pointerleave", () => sessionIntent.leave());
+  lb.addEventListener("pointerdown", (e) => { const id = rowSid(e); if (id) sessionIntent.press(id); });
   lb.addEventListener("keydown", (e) => {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
@@ -3112,6 +3317,7 @@ function syncActive(lb) {
   if (el) {
     lb.setAttribute("aria-activedescendant", el.id);
     el.scrollIntoView({ block: "nearest" });
+    if (el.dataset.sid && document.activeElement === lb) sessionIntent.focus(el.dataset.sid);
   }
 }
 
@@ -5344,6 +5550,7 @@ function renderPane(pane, item, session, ctx) {
         const metaLine = [p.provider ? "provider · " + p.provider : "", p.requestModel && p.requestModel !== p.responseModel ? "requested " + p.requestModel : "",
           cost && cost.est ? "cost estimated from list prices" + (cost.as ? ", priced as " + cost.as : "") + (cost.tier ? ", at " + tierRates(cost.tier) : "") : ""].filter(Boolean).join(" · ");
         if (metaLine) nodes.push(h("p", { class: "meta call-meta" }, metaLine));
+        nodes.push(playgroundLink(ev, session.id));
         if (ev.source === "proxy") nodes.push(callDetails(ev));
         break;
       }
@@ -6031,6 +6238,561 @@ async function showCompare(seq, aId, bId) {
   announce("Comparison loaded: " + headline);
 }
 
+// ------------------------------------------------------------ explore (metrics)
+
+// GET /api/metrics, drawn as six small multiples and a breakdown table.
+// All state is in the hash: #/explore?where=…&since=30d&per=day&by=agent.
+const EXPLORE_RANGES = ["7d", "30d", "90d", "365d"];
+const EXPLORE_BY = [["", "All"], ["agent", "Agent"], ["model", "Model"], ["repo", "Repo"], ["flag", "Flag"]];
+const EXPLORE_PANELS = [
+  { id: "sessions", title: "Sessions", whole: true, value: (l, i) => l.sessions[i], total: (t) => t.sessions, fmt: fmtNum, tick: fmtCompact },
+  { id: "failure-rate", title: "Failure rate", rate: true, value: (l, i) => (l.sessions[i] ? l.failures[i] / l.sessions[i] : null), total: (t) => t.failureRate, fmt: pct, tick: pct, hint: "Sessions with a failure flag" },
+  { id: "cost", title: "Cost", value: (l, i) => l.costUsd[i], total: (t) => (t.pricedSessions ? t.costUsd : null), fmt: (v) => fmtCost(v) || "$0", tick: (v) => "$" + fmtCompact(Math.round(v * 100) / 100), hint: "Sessions with a price" },
+  { id: "tokens", title: "Tokens", value: (l, i) => l.tokens[i], total: (t) => t.tokens, fmt: fmtCompact, tick: fmtCompact, hint: "Input, output and cache" },
+  { id: "tool-error-rate", title: "Tool error rate", rate: true, value: (l, i) => (l.toolCalls[i] ? l.toolErrors[i] / l.toolCalls[i] : null), total: (t) => t.toolErrorRate, fmt: pctFine, tick: pct, hint: "Failed tool calls / tool calls" },
+  { id: "llm-p95", title: "p95 model call", value: (l, i) => l.llmP95Ms[i], total: (t) => t.llmP95Ms, fmt: fmtDuration, tick: fmtDuration, hint: "Over each session's own p95" },
+];
+function pctFine(x) { return x > 0 && x < 0.1 ? (x * 100).toFixed(1) + "%" : pct(x); }
+/** Parses #/explore's query into the API's params, dropping anything malformed. */
+function exploreState(query) {
+  const since = query.get("since") || "30d";
+  const raw = query.get("by");
+  const by = raw === null ? "agent" : raw === "none" ? "" : raw;
+  return {
+    where: (query.get("where") || "").trim().slice(0, WHERE_MAX),
+    since: /^(\d{1,4}d|\d{1,16})$/.test(since) ? since : "30d",
+    per: query.get("per") === "week" ? "week" : "day",
+    by: EXPLORE_BY.some(([k]) => k === by) ? by : "agent",
+    scope: query.get("scope") === "all" ? "all" : "top",
+  };
+}
+function exploreHref(st) {
+  return "#/explore" + qs({ where: st.where, since: st.since === "30d" ? "" : st.since, per: st.per === "day" ? "" : st.per, by: st.by === "agent" ? "" : st.by || "none", scope: st.scope === "all" ? "all" : "" });
+}
+/** Local YYYY-MM-DD, the date axis lineChart labels. */
+function ymd(t) {
+  const d = new Date(t);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+/** A 0-based axis with 4 even steps that fit the largest value. */
+function niceAxis(max, rate, whole) {
+  if (rate) {
+    const top = max > 0.5 || !(max > 0) ? 1 : [0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5].find((v) => v >= max);
+    return { y: [0, top], ticks: [0, top / 2, top] };
+  }
+  if (!(max > 0)) return { y: [0, 1], ticks: whole ? [0, 1] : [0, 0.5, 1] };
+  if (whole && max <= 4) { const top = Math.ceil(max); return { y: [0, top], ticks: Array.from({ length: top + 1 }, (_, i) => i) }; }
+  const raw = max / 4;
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = Math.max(whole ? 1 : 0, [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw && (!whole || Number.isInteger(s))) || 10 * mag);
+  return { y: [0, step * 4], ticks: [0, step, step * 2, step * 3, step * 4] };
+}
+/** A session-list link for one group of the breakdown; undefined where no query names it. */
+function exploreSessionsHref(st, m, key) {
+  if (key === "other" || key === "(none)") return undefined;
+  const clause = st.by + ":" + quoteValue(key);
+  return "#/" + qs({ where: [st.where, clause].filter(Boolean).join(" "), since: String(m.since), until: String(m.until), scope: st.scope === "all" ? "all" : "" });
+}
+
+async function showExplore(seq, query) {
+  const st = exploreState(query);
+  const view = h("section", { class: "wrap view explore", "aria-labelledby": "explore-h" });
+  const keys = { scope: "explore", actions: { search: () => { input.focus(); input.select(); } }, palette: [] };
+  const go = (patch) => { location.hash = exploreHref({ ...st, ...patch }); };
+  const input = h("input", { type: "search", value: st.where, placeholder: "Filter: agent:codex cost>0.5 -flag:compaction", "aria-label": "Filter sessions with a query", autocomplete: "off", spellcheck: "false" });
+  const form = h("form", { class: "search qbar", role: "search", onsubmit: (e) => { e.preventDefault(); go({ where: input.value.trim().slice(0, WHERE_MAX) }); } }, input);
+  input.addEventListener("keydown", (e) => { if (e.key === "Escape" && input.value) { e.preventDefault(); e.stopPropagation(); input.value = ""; go({ where: "" }); } });
+  const seg = (label, opts, cur, key) => h("div", { class: "seg", role: "group", "aria-label": label },
+    opts.map(([v, text]) => h("button", { type: "button", "aria-pressed": String(cur === v), onclick: () => go({ [key]: v }) }, text)));
+  const controls = h("div", { class: "mx-controls" },
+    seg("Range", EXPLORE_RANGES.map((r) => [r, r === "365d" ? "1y" : r]), st.since, "since"),
+    seg("Bucket", [["day", "Day"], ["week", "Week"]], st.per, "per"),
+    seg("Sessions", [["top", "Top-level"], ["all", "With subagents"]], st.scope, "scope"),
+    h("label", { class: "mx-by" }, h("span", { class: "meta" }, "Split by"),
+      (() => {
+        const sel = h("select", { class: "field", "aria-label": "Split by", onchange: (e) => go({ by: e.target.value }) }, EXPLORE_BY.map(([v, t]) => h("option", { value: v }, t)));
+        sel.value = st.by;
+        return sel;
+      })()));
+  const meta = h("p", { class: "meta" }, "Loading…");
+  view.append(h("div", { class: "page-head" }, h("div", null, h("h1", { id: "explore-h" }, "Explore"), meta), form), controls);
+  const slot = h("div", { class: "mx-body" });
+  view.append(slot);
+  setView(view, false, keys);
+  let m;
+  try {
+    m = await api("/api/metrics" + qs({ since: st.since, bucket: st.per, scope: st.scope, by: st.by || undefined, where: st.where || undefined, tz: new Date().getTimezoneOffset() }));
+  } catch (e) {
+    if (!current(seq)) return;
+    meta.textContent = "";
+    slot.replaceChildren(e.status === 400 ? h("div", { class: "panel empty", role: "alert" }, h("h2", { text: "That filter does not parse" }), h("p", { text: e.message })) : errorPanel(e, () => route()));
+    return;
+  }
+  if (!current(seq)) return;
+  const t = m.totals;
+  const range = fmtDay(m.since) + " – " + fmtDay(m.until - 1);
+  meta.textContent = range + " · " + plural(t.sessions, "session") + (m.truncated ? " · first 100,000 only" : "");
+  const dates = m.buckets.map(ymd);
+  const lines = m.by ? m.series : [m.all];
+  const color = seriesOf(lines.map((l) => l.key));
+  const panels = EXPLORE_PANELS.map((p) => {
+    // A bucket with nothing to measure (a rate with no sessions) breaks the line instead of bridging it.
+    const series = lines.map((l) => {
+      let gap = 0;
+      const points = dates.map((d, i) => { const value = p.value(l, i); if (value === null || value === undefined) gap++; return { date: d, value, segment: gap }; });
+      return { name: l.key === "all" ? "All sessions" : l.key, cls: color.get(l.key) || "s-x", points };
+    });
+    const vals = series.flatMap((s) => s.points.map((q) => q.value)).filter((v) => typeof v === "number");
+    const ax = niceAxis(Math.max(0, ...vals), p.rate, p.whole);
+    const total = p.total(t);
+    const chart = lineChart({ dates, y: ax.y, ticks: ax.ticks, small: true, series, fmtTick: p.tick, fmtValue: p.fmt, xLabels: 4, label: p.title + " per " + st.per + ", " + range + (total === null || total === undefined ? ", no data" : ", " + p.fmt(total) + " in all") });
+    return h("figure", { class: "panel chart-card mx-panel", "data-panel": p.id },
+      h("figcaption", { class: "mx-cap" }, h("span", { class: "mx-title" }, p.title, p.hint ? h("span", { class: "meta" }, p.hint) : null),
+        h("b", { class: "mx-total" + (total === null || total === undefined ? " none" : "") }, total === null || total === undefined ? "—" : p.fmt(total))),
+      chart);
+  });
+  const grid = h("div", { class: "mx-grid" }, panels);
+  const out = [];
+  if (m.by && lines.length > 1) out.push(h("div", { class: "legend mx-legend" }, lines.map((l) => h("span", null, swatch(color.get(l.key) || "s-x"), h("span", { class: "truncate" }, l.key)))));
+  out.push(grid);
+  if (!t.sessions) {
+    out.unshift(h("p", { class: "meta mx-empty", role: "status" }, st.where ? "No sessions match this filter in the range. Widen the range or clear the filter." : "No sessions in this range. Pick a longer range, or run an agent and come back."));
+  }
+  if (m.by && m.series.length) out.push(exploreTable(st, m, color));
+  if (t.pricedSessions && t.pricedSessions < t.sessions) out.push(h("p", { class: "meta" }, "Cost covers the " + fmtNum(t.pricedSessions) + " of " + plural(t.sessions, "session") + " with a price."));
+  if (m.by === "flag") out.push(h("p", { class: "meta" }, "A session with several flags counts once in each row."));
+  slot.replaceChildren(...out);
+  announce(plural(t.sessions, "session") + " in " + plural(m.buckets.length, st.per));
+}
+function exploreTable(st, m, color) {
+  const cols = ["Sessions", "Fail %", "Cost", "Tokens", "Tool err %", "p95 call", "TTFT"];
+  const cells = (tt) => [fmtNum(tt.sessions), tt.failureRate === undefined ? "—" : pct(tt.failureRate), tt.pricedSessions ? (tt.estimatedCostUsd ? "~" : "") + fmtCost(tt.costUsd) : "—", fmtCompact(tt.tokens), tt.toolErrorRate === undefined ? "—" : pctFine(tt.toolErrorRate), fmtDuration(tt.llmP95Ms) || "—", fmtDuration(tt.ttftP50Ms) || "—"];
+  const row = (key, tt, name, href) => h("tr", null,
+    h("th", { scope: "row" }, h("span", { class: "mx-key" }, name !== "total" ? swatch(color.get(key) || "s-x") : null, href ? h("a", { href, class: "truncate", title: "Open these sessions" }, key) : h("span", { class: "truncate" }, name))),
+    cells(tt).map((c) => h("td", null, c)));
+  return h("div", { class: "panel mx-table-wrap" }, h("table", { class: "mx-table" },
+    h("caption", { class: "sr-only" }, "Totals by " + st.by),
+    h("thead", null, h("tr", null, h("th", { scope: "col" }, EXPLORE_BY.find(([k]) => k === st.by)[1]), cols.map((c) => h("th", { scope: "col" }, c)))),
+    h("tbody", null, m.series.map((s) => row(s.key, s.totals, s.key, exploreSessionsHref(st, m, s.key))), row("total", m.totals, "total"))));
+}
+
+// ------------------------------------------------------------ workflows
+
+// Workflow runs (docs/design/workflows.md §8): the list, and one run as a timeline of its agents
+// grouped by phase. The page renders the /api/workflows documents, which are what
+// `coding.sh workflows show --json` and `show --gantt --json` print; it computes no stats.
+const WF_STATUS_TEXT = { ok: "ok", failed: "failed", null: "returned null", skipped: "skipped", cached: "cached from the run it resumed", running: "still running", cancelled: "cancelled", superseded: "replaced by a later call" };
+function workflowHref(id) { return "#/workflows/" + encodeURIComponent(id); }
+const wfMs = (ms) => (ms === undefined || ms === null ? "—" : fmtDuration(ms) || "0ms");
+const wfUsd = (x) => (typeof x === "number" ? fmtCost(x) : "—");
+
+async function showWorkflows(seq) {
+  const view = h("section", { class: "wrap view", "aria-labelledby": "wfl-h" });
+  view.append(h("div", { class: "page-head" }, h("div", null, h("h1", { id: "wfl-h" }, "Workflow runs"), h("p", { class: "meta" }, "Loading…"))));
+  const slot = h("div");
+  view.append(slot);
+  setView(view, false, { scope: "none", actions: {} });
+  let d;
+  try { d = await api("/api/workflows?limit=200"); } catch (e) {
+    if (!current(seq)) return;
+    slot.replaceChildren(errorPanel(e, () => route()));
+    return;
+  }
+  if (!current(seq)) return;
+  const runs = d.runs || [];
+  $(".page-head .meta", view).textContent = runs.length ? plural(runs.length, "run") + ", newest first" : "No runs yet";
+  if (!runs.length) {
+    slot.replaceChildren(h("div", { class: "panel empty" },
+      h("h2", { text: "No workflow runs yet" }),
+      h("p", { text: "A workflow run is one program that starts many agents: a Claude Code Workflow tool script, or a LangGraph, Mastra or Agents SDK app. Import the Claude Code runs on this machine, then open one here." }),
+      cmdBlock("coding.sh workflows import", "Copy workflows import command")));
+    announce("No workflow runs");
+    return;
+  }
+  const row = (r) => h("tr", null,
+    h("th", { scope: "row" }, h("a", { href: workflowHref(r.id), class: "truncate", title: r.id }, oneLine(r.name) || r.id)),
+    h("td", { class: r.status === "failed" || r.status === "aborted" ? "fail" : "" }, r.status),
+    h("td", null, fmtRel(Date.parse(r.startedAt))),
+    h("td", null, wfMs(r.wallMs)),
+    h("td", null, fmtNum(r.agents)),
+    h("td", null, wfUsd(r.costUsd)));
+  slot.replaceChildren(h("div", { class: "panel mx-table-wrap wfg-list" }, h("table", { class: "mx-table" },
+    h("caption", { class: "sr-only" }, "Workflow runs"),
+    h("thead", null, h("tr", null, ["Run", "Status", "Started", "Wall", "Agents", "Cost"].map((c) => h("th", { scope: "col" }, c)))),
+    h("tbody", null, runs.map(row)))));
+  announce(plural(runs.length, "workflow run") + " loaded");
+}
+
+async function showWorkflow(seq, id) {
+  const view = h("section", { class: "wrap view", "aria-labelledby": "wfg-h" });
+  const meta = h("p", { class: "meta" }, "Loading…");
+  view.append(h("div", { class: "page-head" }, h("div", null,
+    h("p", { class: "meta" }, h("a", { href: "#/workflows" }, "Workflow runs")),
+    h("h1", { id: "wfg-h", class: "truncate" }, id), meta)));
+  const slot = h("div");
+  view.append(slot);
+  setView(view, false, { scope: "none", actions: {} });
+  let doc, g;
+  try {
+    [doc, g] = await Promise.all([api("/api/workflows/" + encodeURIComponent(id)), api("/api/workflows/" + encodeURIComponent(id) + "/gantt")]);
+  } catch (e) {
+    if (!current(seq)) return;
+    slot.replaceChildren(e.status === 404
+      ? h("div", { class: "panel empty" }, h("h2", { text: "No such workflow run" }), h("p", { text: "There is no stored run " + id + ". List the runs this machine knows:" }), cmdBlock("coding.sh workflows list", "Copy workflows list command"))
+      : errorPanel(e, () => route()));
+    return;
+  }
+  if (!current(seq)) return;
+  const run = doc.run, st = run.stats || {};
+  $("#wfg-h", view).textContent = oneLine(run.name) || run.id;
+  meta.textContent = [run.id, run.framework, run.status, run.startedAt ? fmtDate(Date.parse(run.startedAt)) : ""].filter(Boolean).join(" · ");
+  const rows = g.phases.reduce((n, p) => n + p.rows.length, 0);
+  const facts = h("div", { class: "wfg-facts" },
+    h("span", null, h("b", null, wfMs(st.wallMs)), " wall" + (st.segments ? " (active " + wfMs(st.activeMs) + " over " + st.segments + " segments)" : "")),
+    st.criticalPathMs !== undefined ? h("span", null, "critical path " + wfMs(st.criticalPathMs) + (st.criticalPathExact ? "" : " (approx)")) : null,
+    h("span", null, plural(st.agents || 0, "agent") + " · peak " + (st.peakConcurrency || 0) + (g.cap ? " of " + g.cap : "") + " at once"),
+    st.failedAgents || st.nullAgents ? h("span", { class: "fail" }, [st.failedAgents ? st.failedAgents + " failed" : "", st.nullAgents ? st.nullAgents + " null" : ""].filter(Boolean).join(", ")) : null,
+    st.barrierIdleMs ? h("span", null, wfMs(st.barrierIdleMs) + " idle at barriers") : null,
+    h("span", null, wfUsd(st.costUsd)));
+  const timeline = rows ? workflowTimeline(g) : h("p", { class: "meta" }, "This run has no timed agents yet.");
+  const table = rows ? workflowRowsTable(g) : null;
+  let mode = PHONE.matches ? "table" : "timeline";
+  const body = h("div");
+  const seg = h("div", { class: "seg", role: "group", "aria-label": "Show as" });
+  const setMode = (m) => {
+    mode = m;
+    for (const b of seg.children) b.setAttribute("aria-pressed", String(b.dataset.mode === m));
+    body.replaceChildren(m === "table" && table ? table : timeline);
+  };
+  for (const [m, label] of [["timeline", "Timeline"], ["table", "Table"]]) seg.append(h("button", { type: "button", "data-mode": m, "aria-pressed": "false", onclick: () => setMode(m) }, label));
+  setMode(mode);
+  const mainPanel = h("section", { class: "panel wfg-main", "aria-label": "Agents by phase" }, h("div", { class: "wfg-bar-head" }, facts, rows ? seg : null), body);
+  slot.replaceChildren(h("div", { class: "wfg-grid" }, mainPanel, h("aside", { class: "wfg-side" }, workflowPhaseTable(st), workflowMetricsTable(st, g))));
+  announce("Workflow run " + (oneLine(run.name) || run.id) + ": " + plural(rows, "agent"));
+}
+
+/** One lane per agent under its phase: bars from start to end, the critical path outlined, barrier idle shaded after early finishers. */
+function workflowTimeline(g) {
+  const t0 = g.startedAt;
+  const all = g.phases.flatMap((p) => p.rows);
+  const t1 = Math.max(g.endedAt || 0, t0 + 1, ...all.map((r) => (r.end ?? r.start) + (r.idleAfterMs || 0)), ...g.concurrency.map((c) => c.t));
+  const span = Math.max(1, t1 - t0);
+  const frac = (t) => Math.max(0, Math.min(1, (t - t0) / span));
+  // The page CSP allows no style attributes: position through the CSSOM.
+  const at = (el, from, to) => { el.style.left = (frac(from) * 100).toFixed(3) + "%"; el.style.width = (Math.max(0, frac(to) - frac(from)) * 100).toFixed(3) + "%"; return el; };
+  const lanes = [];
+  const concLabel = "running agents" + (g.cap ? " (cap " + g.cap + ")" : "");
+  lanes.push(h("div", { class: "wf-lane-label", title: concLabel }, "concurrency"), h("div", { class: "wfg-conc" }, workflowConcurrency(g, t0, span)));
+  for (const p of g.phases) {
+    const ends = p.rows.filter((r) => r.end !== undefined);
+    const wall = ends.length ? Math.max(...ends.map((r) => r.end)) - Math.min(...p.rows.map((r) => r.start)) : undefined;
+    const cost = p.rows.reduce((s, r) => (typeof r.costUsd === "number" ? (s || 0) + r.costUsd : s), undefined);
+    lanes.push(h("div", { class: "wfg-phase" }, h("span", null, p.name || "(no phase)"), h("span", { class: "meta" }, [plural(p.rows.length, "agent"), wall !== undefined ? fmtDuration(wall) : "", cost !== undefined ? fmtCost(cost) : ""].filter(Boolean).join(" · "))));
+    for (const r of p.rows) {
+      const end = r.end ?? (r.status === "running" ? t1 : r.start);
+      const text = r.label + " · " + (WF_STATUS_TEXT[r.status] || r.status) + " · " + (r.end !== undefined ? fmtDuration(r.end - r.start) || "0ms" : "no end yet") + (typeof r.costUsd === "number" ? " · " + fmtCost(r.costUsd) : "") + (r.critical ? " · on the critical path" : "") + (r.idleAfterMs ? " · then idle " + fmtDuration(r.idleAfterMs) + " at the barrier" : "") + (r.sessionId ? " · open its session" : "");
+      const cls = "wfg-bar s-" + r.status + (r.critical ? " critical" : "");
+      const bars = [];
+      if (r.idleAfterMs && r.end !== undefined) bars.push(at(h("span", { class: "wfg-idle", "aria-hidden": "true" }), r.end, r.end + r.idleAfterMs));
+      bars.push(at(r.sessionId ? h("a", { class: cls, href: sessionHref(r.sessionId), title: text, "aria-label": text }) : h("span", { class: cls, title: text, role: "img", "aria-label": text }), r.start, end));
+      lanes.push(h("div", { class: "wf-lane-label" + (r.critical ? " critical" : ""), title: r.label }, r.label), h("div", { class: "wf-track" }, bars));
+    }
+  }
+  const has = (f) => all.some(f);
+  const legend = h("div", { class: "wf-legend", "aria-hidden": "true" },
+    h("span", null, h("i", { class: "wfg-bar s-ok" }), "ok"),
+    has((r) => r.status === "failed") ? h("span", null, h("i", { class: "wfg-bar s-failed" }), "failed") : null,
+    has((r) => r.status === "null" || r.status === "skipped") ? h("span", null, h("i", { class: "wfg-bar s-null" }), "null or skipped") : null,
+    has((r) => r.status === "cached") ? h("span", null, h("i", { class: "wfg-bar s-cached" }), "cached") : null,
+    has((r) => r.status === "running") ? h("span", null, h("i", { class: "wfg-bar s-running" }), "running") : null,
+    has((r) => r.status === "cancelled" || r.status === "superseded") ? h("span", null, h("i", { class: "wfg-bar s-cancelled" }), "stopped") : null,
+    has((r) => r.critical) ? h("span", null, h("i", { class: "wfg-bar s-ok critical" }), "critical path") : null,
+    has((r) => r.idleAfterMs) ? h("span", null, h("i", { class: "wfg-idle" }), "idle at a barrier") : null);
+  lanes.push(h("span", { "aria-hidden": "true" }), h("div", { class: "wfg-axis", "aria-hidden": "true" }, h("span", null, "0"), h("span", null, fmtDuration(span / 2)), h("span", null, fmtDuration(span))));
+  return h("div", null, h("div", { class: "wf-lanes wfg-lanes" }, lanes), legend);
+}
+
+/** Running agents over time as a step area, with the concurrency cap as a dashed line. */
+function workflowConcurrency(g, t0, span) {
+  const peak = Math.max(1, g.cap || 0, ...g.concurrency.map((c) => c.running));
+  const X = (t) => (Math.max(0, Math.min(1, (t - t0) / span)) * 1000).toFixed(1);
+  const Y = (n) => (34 - (n / peak) * 32).toFixed(1);
+  let d = "M0 34";
+  let prev = 0;
+  for (const c of g.concurrency) { d += " L" + X(c.t) + " " + Y(prev) + " L" + X(c.t) + " " + Y(c.running); prev = c.running; }
+  d += " L1000 " + Y(prev) + " L1000 34 Z";
+  const label = "Peak " + Math.max(0, ...g.concurrency.map((c) => c.running)) + " agents at once" + (g.cap ? " against a cap of " + g.cap : "");
+  const el = svg("svg", { viewBox: "0 0 1000 34", preserveAspectRatio: "none", role: "img", "aria-label": label }, svg("path", { d, class: "area" }));
+  if (g.cap) el.append(svg("line", { x1: 0, x2: 1000, y1: Y(g.cap), y2: Y(g.cap), class: "cap", "vector-effect": "non-scaling-stroke" }));
+  return el;
+}
+
+/** The same rows as text (what `workflows show --gantt` prints): the phone layout and a screen reader's view. */
+function workflowRowsTable(g) {
+  const off = (t) => "+" + (fmtDuration(t - g.startedAt) || "0ms");
+  return h("div", { class: "mx-table-wrap" }, h("table", { class: "mx-table" },
+    h("caption", { class: "sr-only" }, "Agents by phase"),
+    h("thead", null, h("tr", null, ["Agent", "Phase", "Status", "Start", "Time", "Idle after", "Cost"].map((c) => h("th", { scope: "col" }, c)))),
+    h("tbody", null, g.phases.flatMap((p) => p.rows.map((r) => h("tr", null,
+      h("th", { scope: "row" }, r.sessionId ? h("a", { href: sessionHref(r.sessionId), class: "truncate" }, r.label) : h("span", { class: "truncate" }, r.label), r.critical ? h("span", { class: "meta", title: "On the critical path" }, " ◆") : null),
+      h("td", null, p.name || "—"),
+      h("td", { class: r.status === "failed" ? "fail" : "" }, r.status),
+      h("td", null, off(r.start)),
+      h("td", null, r.end !== undefined ? fmtDuration(r.end - r.start) || "0ms" : "—"),
+      h("td", null, r.idleAfterMs ? fmtDuration(r.idleAfterMs) : "—"),
+      h("td", null, wfUsd(r.costUsd))))))));
+}
+
+function workflowPhaseTable(st) {
+  const phases = st.perPhase || [];
+  if (!phases.length) return null;
+  const share = st.costShareByPhase || {};
+  return h("div", { class: "panel mx-table-wrap" }, h("table", { class: "mx-table" },
+    h("caption", { class: "sr-only" }, "Time and cost per phase"),
+    h("thead", null, h("tr", null, ["Phase", "Wall", "Agents", "Cost", "Share", "Failed"].map((c) => h("th", { scope: "col" }, c)))),
+    h("tbody", null, phases.map((p) => h("tr", null,
+      h("th", { scope: "row" }, h("span", { class: "truncate" }, p.phase || "(no phase)")),
+      h("td", null, wfMs(p.wallMs)),
+      h("td", null, fmtNum(p.agents)),
+      h("td", null, wfUsd(p.costUsd)),
+      h("td", null, share[p.phase] !== undefined ? pct(share[p.phase]) : "—"),
+      h("td", null, String(p.failures + (p.cancelled ? " +" + p.cancelled + " stopped" : ""))))))));
+}
+
+/** The §4 metrics, as `workflows stats` prints them; rows with nothing to report are left out. */
+function workflowMetricsTable(st, g) {
+  const rows = [
+    ["Wall", wfMs(st.wallMs)],
+    st.activeMs !== undefined ? ["Active", wfMs(st.activeMs) + " over " + st.segments + " segments"] : null,
+    st.criticalPathMs !== undefined ? ["Critical path", wfMs(st.criticalPathMs) + (st.criticalPathExact ? " (exact)" : " (approx)")] : null,
+    st.orchestrationGapMs !== undefined ? ["Orchestration gap", wfMs(st.orchestrationGapMs)] : null,
+    ["Agent time", wfMs(st.agentMs)],
+    st.parallelism !== undefined ? ["Parallelism", st.parallelism.toFixed(2)] : null,
+    st.utilization !== undefined ? ["Utilization", pct(st.utilization) + (g.cap ? " of " + g.cap : "")] : null,
+    ["Peak concurrency", String(st.peakConcurrency || 0)],
+    ["Barrier idle", wfMs(st.barrierIdleMs)],
+    st.pipelineSavingsMs !== undefined ? ["Pipeline savings", wfMs(st.pipelineSavingsMs)] : null,
+    st.queueWaitMs !== undefined ? ["Queue wait", wfMs(st.queueWaitMs)] : null,
+    ["Agents", fmtNum(st.agents) + (st.failedAgents ? ", " + st.failedAgents + " failed" : "") + (st.nullAgents ? ", " + st.nullAgents + " null" : "")],
+    st.cancelledAgents || st.supersededAgents ? ["Stopped", [st.cancelledAgents ? st.cancelledAgents + " cancelled" : "", st.supersededAgents ? st.supersededAgents + " superseded" : ""].filter(Boolean).join(", ")] : null,
+    st.apiRetries ? ["API retries", fmtNum(st.apiRetries)] : null,
+    st.schemaFailures ? ["Schema failures", st.schemaFailures + " (" + st.schemaFinalInvalid + " still invalid)"] : null,
+    st.cacheHits ? ["Cache hits", st.cacheHits + (st.cacheHitRate !== undefined ? " (" + pct(st.cacheHitRate) + ")" : "")] : null,
+    st.resumeSavedMs !== undefined ? ["Resume saved", wfMs(st.resumeSavedMs) + (st.resumeSavedUsd !== undefined ? ", " + fmtCost(st.resumeSavedUsd) : "")] : null,
+    ["Tokens", fmtCompact((st.tokens && ((st.tokens.inputTokens || 0) + (st.tokens.outputTokens || 0) + (st.tokens.cacheReadTokens || 0) + (st.tokens.cacheWriteTokens || 0))) || 0)],
+    ["Cost", wfUsd(st.costUsd)],
+  ].filter(Boolean);
+  return h("div", { class: "panel" }, h("table", { class: "wfg-kv" },
+    h("caption", null, "Run metrics"),
+    h("tbody", null, rows.map(([k, v]) => h("tr", null, h("th", { scope: "row" }, k), h("td", null, v))))));
+}
+
+// ------------------------------------------------------------ playground
+
+// Rebuild one recorded model call, edit it, run it again, save it as a dataset case.
+// Only the local viewer (coding.sh ui) serves /api/playground; elsewhere the link stays hidden.
+let playgroundInfo = null;
+function playgroundAvailable() {
+  if (!playgroundInfo) playgroundInfo = api("/api/playground", undefined, true).catch(() => null);
+  return playgroundInfo;
+}
+function playgroundHref(callId, sessionId) {
+  return "#/playground/" + encodeURIComponent(callId) + qs({ session: sessionId });
+}
+/** An "Open in playground" link that appears once the server says the playground is on. */
+function playgroundLink(ev, sessionId) {
+  const slot = h("div", { class: "pg-slot" });
+  playgroundAvailable().then((info) => {
+    if (info) slot.replaceChildren(h("a", { class: "btn btn-sm", href: playgroundHref(ev.id, sessionId) }, "Open in playground"));
+  });
+  return slot;
+}
+const PG_SHOWN = 24;
+const PG_ROLES = { user: "user", assistant: "assistant", tool: "tool result" };
+
+async function showPlayground(seq, callId, sessionId) {
+  const view = h("section", { class: "wrap view playground", "aria-labelledby": "pg-h" });
+  const back = sessionId ? h("a", { class: "back", href: sessionHref(sessionId, callId) }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), "Session") : h("a", { class: "back", href: "#/" }, h("span", { class: "nudge", "aria-hidden": "true" }, "←"), "Sessions");
+  const meta = h("p", { class: "meta" }, "Loading the call…");
+  view.append(h("div", { class: "detail-head" }, h("div", { class: "crumbs" }, back, h("span", { class: "sep" }, "/"), h("span", { class: "sid truncate" }, callId))),
+    h("div", { class: "page-head" }, h("div", null, h("h1", { id: "pg-h" }, "Playground"), meta)));
+  const body = h("div", { class: "pg-body" });
+  view.append(body);
+  setView(view, true, { scope: "none", actions: {} });
+  let info;
+  let rebuilt;
+  try {
+    [info, rebuilt] = await Promise.all([
+      api("/api/playground", undefined, true),
+      api("/api/playground/calls/" + encodeURIComponent(callId) + qs({ session: sessionId })),
+    ]);
+  } catch (e) {
+    if (!current(seq)) return;
+    meta.textContent = "";
+    body.replaceChildren(e.status === 404 && /only in the local viewer/.test(e.message)
+      ? h("div", { class: "panel empty" }, h("h2", null, "The playground runs in the local viewer"), h("p", null, "Start it with coding.sh ui. Shared and team viewers do not send model requests."), cmdBlock("coding.sh ui"))
+      : errorPanel(e, () => showPlayground(seq, callId, sessionId)));
+    return;
+  }
+  if (!current(seq)) return;
+  const c = rebuilt.call;
+  meta.textContent = [c.model, new Date(c.ts).toLocaleString(), rebuilt.source === "request" ? "rebuilt from the recorded request" : "rebuilt from the transcript (the request body was not stored)"].filter(Boolean).join(" · ");
+  const req = rebuilt.request;
+  const state = { messages: req.messages.map((m) => ({ ...m })), showAll: req.messages.length <= PG_SHOWN, last: null };
+
+  // Settings.
+  const providers = info.providers || [];
+  const provSel = h("select", { class: "field", "aria-label": "Provider" },
+    providers.map((p) => h("option", { value: p.id, disabled: !p.ready }, p.label + (p.ready ? "" : " (set " + p.keyEnv + ")"))));
+  const firstReady = providers.find((p) => p.id === rebuilt.provider && p.ready) || providers.find((p) => p.ready);
+  if (firstReady) provSel.value = firstReady.id;
+  const model = h("input", { class: "field", type: "text", value: req.model, "aria-label": "Model", spellcheck: "false", autocomplete: "off" });
+  const maxTokens = h("input", { class: "field", type: "number", min: "1", max: "200000", step: "1", value: String(req.maxTokens), "aria-label": "Max tokens" });
+  const temp = h("input", { class: "field", type: "number", min: "0", max: "2", step: "0.1", value: req.temperature === undefined ? "" : String(req.temperature), placeholder: "default", "aria-label": "Temperature" });
+  const lab = (text, input) => h("label", { class: "pg-set" }, h("span", { class: "meta" }, text), input);
+  const settings = h("div", { class: "pg-settings" }, lab("Provider", provSel), lab("Model", model), lab("Max tokens", maxTokens), lab("Temperature", temp));
+
+  const area = (value, label, rows) => {
+    const t = h("textarea", { class: "pg-text", rows: String(rows || Math.min(10, Math.max(2, String(value || "").split("\n").length))), "aria-label": label, spellcheck: "false", text: value || "" });
+    return t;
+  };
+  const system = area(req.system, "System prompt", req.system ? 6 : 2);
+  const toolsText = area(req.tools.length ? JSON.stringify(req.tools, null, 2) : "", "Tools as JSON", 8);
+  toolsText.placeholder = "[]";
+
+  // Messages: one card each, editable in place.
+  const list = h("ol", { class: "pg-msgs" });
+  const msgCount = h("span", { class: "meta" });
+  function card(m, i) {
+    const del = h("button", { class: "btn btn-sm btn-ghost", type: "button", "aria-label": "Delete message " + (i + 1), onclick: () => { state.messages.splice(i, 1); renderMsgs(); } }, "Delete");
+    const head = h("div", { class: "pg-msg-head" }, h("span", { class: "pg-role pg-role-" + m.role }, PG_ROLES[m.role] || m.role), m.role === "tool" ? h("span", { class: "meta truncate" }, m.name + (m.isError ? " · error" : "")) : null, h("span", { class: "pg-grow" }), del);
+    const parts = [head];
+    if (m.role === "tool") {
+      const t = area(m.content, "Tool result " + (i + 1));
+      t.addEventListener("input", () => { m.content = t.value; });
+      parts.push(t);
+    } else {
+      const t = area(m.text, (m.role === "user" ? "User" : "Assistant") + " message " + (i + 1));
+      t.addEventListener("input", () => { m.text = t.value; });
+      parts.push(t);
+      if (m.role === "assistant") {
+        const calls = area(m.toolCalls && m.toolCalls.length ? JSON.stringify(m.toolCalls, null, 2) : "", "Tool calls of message " + (i + 1) + " as JSON", m.toolCalls && m.toolCalls.length ? 4 : 1);
+        calls.placeholder = "tool calls: []";
+        calls.dataset.toolCalls = String(i);
+        parts.push(calls);
+      }
+    }
+    return h("li", { class: "pg-msg panel", "data-role": m.role }, parts);
+  }
+  function renderMsgs() {
+    const from = state.showAll ? 0 : Math.max(0, state.messages.length - PG_SHOWN);
+    const items = state.messages.slice(from).map((m, k) => card(m, from + k));
+    const more = from > 0 ? [h("li", { class: "pg-more" }, h("button", { class: "btn btn-sm", type: "button", onclick: () => { state.showAll = true; renderMsgs(); } }, "Show " + plural(from, "earlier message")))] : [];
+    list.replaceChildren(...more, ...items);
+    msgCount.textContent = plural(state.messages.length, "message");
+  }
+  renderMsgs();
+  const add = (role) => h("button", { class: "btn btn-sm", type: "button", onclick: () => { state.messages.push(role === "user" ? { role, text: "" } : { role, text: "" }); renderMsgs(); list.lastElementChild.querySelector("textarea").focus(); } }, "Add " + role + " message");
+
+  // Collect the edited request; a JSON field that does not parse is named, not thrown.
+  function collect() {
+    for (const t of list.querySelectorAll("textarea[data-tool-calls]")) {
+      const m = state.messages[Number(t.dataset.toolCalls)];
+      const raw = t.value.trim();
+      if (!raw) { delete m.toolCalls; continue; }
+      try { m.toolCalls = JSON.parse(raw); } catch { throw new Error("The tool calls of message " + (Number(t.dataset.toolCalls) + 1) + " are not valid JSON."); }
+    }
+    let tools = [];
+    if (toolsText.value.trim()) {
+      try { tools = JSON.parse(toolsText.value); } catch { throw new Error("Tools are not valid JSON."); }
+    }
+    const r = { model: model.value.trim(), system: system.value, messages: state.messages.map((m) => {
+      if (m.role === "assistant" && !m.text && m.toolCalls) { const { text: _t, ...rest } = m; return rest; }
+      return m;
+    }), tools, maxTokens: Number(maxTokens.value) };
+    if (temp.value.trim() !== "") r.temperature = Number(temp.value);
+    return r;
+  }
+
+  // Run and compare with what the agent got.
+  const status = h("p", { class: "meta pg-status", role: "status" });
+  const recorded = outputCard("Recorded response", rebuilt.response, rebuilt.response ? null : "No recorded response for this call.");
+  const fresh = h("div", { class: "pg-out-slot" }, outputCard("This run", null, firstReady ? "Run the request to see the new response here." : "No provider is ready. Set ANTHROPIC_API_KEY or OPENAI_API_KEY (or a local OPENAI_BASE_URL) and restart coding.sh ui."));
+  const runBtn = h("button", { class: "btn btn-primary", type: "button", disabled: !firstReady }, "Run");
+  runBtn.addEventListener("click", async () => {
+    let r;
+    try { r = collect(); } catch (e) { status.textContent = e.message; status.classList.add("err"); return; }
+    runBtn.disabled = true;
+    status.classList.remove("err");
+    status.textContent = "Running on " + (provSel.selectedOptions[0]?.textContent || provSel.value) + "…";
+    try {
+      const out = await api("/api/playground/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider: provSel.value, request: r }) }, true);
+      if (!view.isConnected) return;
+      state.last = out;
+      fresh.replaceChildren(outputCard("This run", out));
+      status.textContent = "Done in " + fmtDuration(out.latencyMs) + ".";
+      expected.querySelector("option[value=run]").disabled = false;
+    } catch (e) {
+      if (!view.isConnected) return;
+      status.textContent = e.message;
+      status.classList.add("err");
+    } finally { runBtn.disabled = false; }
+  });
+
+  // Save as a dataset case.
+  const sets = info.datasets || [];
+  const listId = "pg-datasets";
+  const dsInput = h("input", { class: "field", type: "text", list: listId, placeholder: "dataset name", "aria-label": "Dataset", autocomplete: "off", spellcheck: "false", value: sets[0] ? sets[0].name : "playground" });
+  const expected = h("select", { class: "field", "aria-label": "Expected output" },
+    h("option", { value: "" }, "No expected output"),
+    h("option", { value: "recorded", disabled: !rebuilt.response }, "Expect the recorded response"),
+    h("option", { value: "run", disabled: true }, "Expect this run's response"));
+  const saveBtn = h("button", { class: "btn", type: "submit" }, "Save as case");
+  const saveForm = h("form", { class: "pg-save", onsubmit: async (e) => {
+    e.preventDefault();
+    let r;
+    try { r = collect(); } catch (err) { status.textContent = err.message; status.classList.add("err"); return; }
+    const pick = expected.value === "recorded" ? rebuilt.response : expected.value === "run" ? state.last : null;
+    const payload = { dataset: dsInput.value.trim(), request: r, sessionId: c.sessionId, callId: c.id };
+    if (pick) payload.expected = { text: pick.text, toolCalls: pick.toolCalls };
+    saveBtn.disabled = true;
+    try {
+      const s = await api("/api/playground/save", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }, true);
+      status.classList.remove("err");
+      status.textContent = (s.created ? "Created dataset " : "Added to dataset ") + s.name + ": version " + String(s.version).slice(0, 12) + ", " + plural(s.cases, "case") + ".";
+      toast("Saved to " + s.name);
+    } catch (err) {
+      status.textContent = err.message;
+      status.classList.add("err");
+    } finally { saveBtn.disabled = false; }
+  } }, h("datalist", { id: listId }, sets.map((d) => h("option", { value: d.name }))), dsInput, expected, saveBtn);
+
+  body.replaceChildren(
+    settings,
+    section("system prompt", system),
+    section("messages", h("div", { class: "stack pg-msg-wrap" }, list, h("div", { class: "pg-row" }, add("user"), add("assistant"))), msgCount),
+    h("details", { class: "pg-tools" }, h("summary", null, "Tools · " + fmtNum(req.tools.length)), toolsText),
+    h("div", { class: "pg-actions" }, runBtn, saveForm),
+    status,
+    h("div", { class: "pg-outs" }, recorded, fresh));
+}
+
+function outputCard(title, out, empty) {
+  const card = h("div", { class: "panel pg-out" }, h("h2", { class: "pg-out-h" }, title));
+  if (!out) { card.append(h("p", { class: "meta" }, empty || "")); return card; }
+  const u = out.usage || {};
+  card.append(h("div", { class: "kpis" },
+    kpi("stop", out.stopReason),
+    kpi("input", u.inputTokens ? fmtCompact(u.inputTokens) : undefined, "", u.inputTokens ? fmtNum(u.inputTokens) + " input tokens" : undefined),
+    kpi("output", u.outputTokens ? fmtCompact(u.outputTokens) : undefined, "", u.outputTokens ? fmtNum(u.outputTokens) + " output tokens" : undefined),
+    kpi("cost", typeof u.costUsd === "number" ? fmtCost(u.costUsd) : undefined, "", EST_TITLE),
+    kpi("time", typeof out.latencyMs === "number" ? fmtDuration(out.latencyMs) : undefined)));
+  if (out.text) card.append(h("pre", { class: "pg-out-text" }, out.text));
+  if (out.toolCalls && out.toolCalls.length) card.append(h("pre", { class: "pg-out-text pg-out-calls" }, out.toolCalls.map((t) => t.name + " " + JSON.stringify(t.input, null, 2)).join("\n\n")));
+  if (!out.text && !(out.toolCalls && out.toolCalls.length)) card.append(h("p", { class: "meta" }, "The response was empty."));
+  return card;
+}
+
 // ------------------------------------------------------------ benchmarks
 
 let benchCache = null;
@@ -6091,8 +6853,10 @@ function lineChart(o) {
       }
     }
     for (const seg of splitSegments(pts)) {
-      const d = seg.map((p, i) => (i ? "L" : "M") + X(idx.get(p.date)).toFixed(2) + " " + Y(p.value).toFixed(2)).join(" ");
-      plot.append(svg("path", { d, class: "ln " + s.cls + (s.dashed ? " dashed" : ""), "vector-effect": "non-scaling-stroke" }));
+      let d = seg.map((p, i) => (i ? "L" : "M") + X(idx.get(p.date)).toFixed(2) + " " + Y(p.value).toFixed(2)).join(" ");
+      // A lone point is a zero-length line, which the round cap draws as a dot.
+      if (seg.length === 1) d += " l0 0";
+      plot.append(svg("path", { d, class: "ln " + s.cls + (s.dashed ? " dashed" : "") + (seg.length === 1 ? " lone" : ""), "vector-effect": "non-scaling-stroke" }));
     }
   }
   const yl = h("div", { class: "ch-y", "aria-hidden": "true" }, o.ticks.map((t) => {

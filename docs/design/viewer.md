@@ -1,6 +1,7 @@
 # Viewer design: sessions, query, benches
 
-Status: design, 2026-11-06. Build order: V-1…V-13 in tasks/research-queue.md, "Round 2 additions (viewer)".
+Status: partly built. V-1…V-6 are done (non-blocking ingest, facet columns, the query language, `--where` and facets,
+session list v2, the events tab); V-7…V-13 are open. Build order: tasks/research-queue.md, "Round 2 additions (viewer)".
 Scope: `coding.sh ui` (packages/coding.sh/src/viewer). The site sample (apps/site Viewer.astro) mirrors it.
 
 **Decisions**

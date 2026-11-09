@@ -39,11 +39,13 @@ type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
 class Cdp {
   private id = 0;
   private pending = new Map<number, Pending>();
+  private listeners = new Set<(method: string, params: any, sessionId?: string) => void>();
   private ws: WebSocket;
   private constructor(ws: WebSocket) {
     this.ws = ws;
     ws.addEventListener("message", (m) => {
       const msg = JSON.parse(String(m.data));
+      if (msg.method) for (const l of this.listeners) l(msg.method, msg.params, msg.sessionId);
       const p = msg.id !== undefined ? this.pending.get(msg.id) : undefined;
       if (!p) return;
       this.pending.delete(msg.id);
@@ -66,6 +68,11 @@ class Cdp {
       this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
     });
   }
+  /** Every protocol event, from any target; returns an unsubscribe. */
+  on(fn: (method: string, params: any, sessionId?: string) => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
   close() {
     this.ws.close();
   }
@@ -78,6 +85,10 @@ export interface Page {
   /** Poll an expression until it is truthy; returns its value. */
   waitFor<T = any>(expr: string, what?: string, timeoutMs?: number): Promise<T>;
   viewport(width: number, height: number, mobile?: boolean): Promise<void>;
+  /** Uncaught exceptions and console.error calls on this page so far. */
+  errors: string[];
+  /** A raw DevTools call on this page (Input.dispatchMouseEvent, Network.emulateNetworkConditions, ...). */
+  send(method: string, params?: Record<string, unknown>): Promise<any>;
   close(): Promise<void>;
 }
 
@@ -106,6 +117,8 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
       "--no-pings",
       "--metrics-recording-only",
       "--mute-audio",
+      // Root (the desk, CI containers) cannot use Chrome's sandbox.
+      ...(process.getuid?.() === 0 ? ["--no-sandbox"] : []),
       "about:blank",
     ],
     { stdio: ["ignore", "ignore", "pipe"] },
@@ -134,9 +147,17 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
       const { targetId } = await cdp.send("Target.createTarget", { url: "about:blank", browserContextId });
       const { sessionId } = await cdp.send("Target.attachToTarget", { targetId, flatten: true });
       const send = (m: string, p?: Record<string, unknown>) => cdp.send(m, p, sessionId);
+      const errors: string[] = [];
+      const off = cdp.on((method, params, sid) => {
+        if (sid !== sessionId) return;
+        if (method === "Runtime.exceptionThrown") errors.push(params.exceptionDetails?.exception?.description ?? params.exceptionDetails?.text ?? "exception");
+        else if (method === "Runtime.consoleAPICalled" && params.type === "error") errors.push((params.args ?? []).map((a: any) => a.value ?? a.description ?? "").join(" "));
+      });
       await send("Page.enable");
       await send("Runtime.enable");
       const page: Page = {
+        errors,
+        send,
         async goto(url) {
           await send("Page.navigate", { url });
           await page.waitFor("document.readyState === 'complete' && location.href !== 'about:blank'", "page load");
@@ -161,6 +182,7 @@ export async function launchBrowser(chrome: string): Promise<Browser> {
           await send("Emulation.setTouchEmulationEnabled", { enabled: mobile });
         },
         async close() {
+          off();
           await cdp.send("Target.closeTarget", { targetId }).catch(() => {});
           await cdp.send("Target.disposeBrowserContext", { browserContextId }).catch(() => {});
         },

@@ -8,6 +8,8 @@ coding.sh show latest              # timeline with turns, tools, subagents and l
 coding.sh search "rate limit"      # full-text search over prompts, replies and tool calls
 coding.sh usage --by model         # tokens, cost, turns and cache hits by agent, model, day or repo
 coding.sh usage --cache            # prompt-cache economics: hit rate, read vs write, breaks, what to change
+coding.sh cache doctor             # prompt-cache grade and what breaks the cached prefix, costliest first
+coding.sh stats --by model         # sessions, failures, cost, tokens and latency per day or week
 coding.sh sql "select …"           # one read-only SQL query against the SQLite index
 coding.sh export events --since 7d # stream sessions, events or labels as JSONL or CSV
 coding.sh ui                       # local viewer on 127.0.0.1 (token-protected URL)
@@ -55,6 +57,55 @@ $ coding.sh sessions --where 'agent:codex modle:x'
 Every command takes `--json` and `--help`. `coding.sh` with no command runs `init` until capture
 is set up, then opens the viewer.
 
+### Trends with `stats`
+
+`coding.sh stats` counts sessions per day (or per week with `--per week`) over the last 30 days:
+sessions, the share with a failure flag, cost, tokens, tool calls and their error rate, the 95th
+percentile model-call latency and the median time to first token. Empty days stay in the table,
+newest first, with a total row. `--by agent`, `model`, `repo` or `flag` prints one row per group
+instead, with a trend of the `--measure` you pick (`cost`, `failure-rate`, `llm-p95`, ...). Past
+the 6 largest groups the rest add up in `other`. Subagent sessions count only with `--all`, and
+`--where` narrows the sessions as everywhere else.
+
+```sh
+coding.sh stats --measure cost --by model --since 30d
+coding.sh stats --per week --since 90d --where 'agent:codex'
+```
+
+A failure is a session with a flag that has no colon, so tags such as `skill:pdf` do not count.
+The latency columns rank the sessions' own numbers: `P95 LLM` is the 95th percentile of each
+session's p95 model-call time. Days start at local midnight and weeks on Monday. `--json` prints
+the same document as `GET /api/metrics`.
+
+### Prompt cache health
+
+`coding.sh cache doctor` grades the prompt cache over the last 30 days (`--since`, `--agent`,
+`--where`). The hit rate is `usage`'s: cache reads over input, cache reads and cache writes. The
+grade (A to F, from a 0-100 score) weighs that rate against 90% and the share of prompt tokens
+re-billed by breaks you can avoid. Each cache break counted in `stats.cacheBreaks` gets the first
+change between its two calls, in the order the cache reads them: `model-switch`, `tools-added`,
+`tools-removed`, `tools-reordered`, `tools-changed`, `system-volatile-line` (a system prompt line
+that changed only in its numbers, such as a timestamp), `system-changed`, `history-rewritten`,
+`idle` or `other`. Causes are ranked by extra USD over reading from cache, with their break count,
+sessions, tokens re-billed, the fix, and an example `coding.sh diff-calls <a> <b>` to look at.
+`idle` and `other` are not counted as avoidable.
+
+```sh
+coding.sh cache doctor
+coding.sh cache doctor --agent claude-code,codex --since 7d --json
+```
+
+Telling tool and system prompt changes apart needs both requests, which
+[the proxy](../how-to/capture-with-proxy.md) stores with capture mode `full`. Without them a break
+is classified from hashes, the model and timing, and a note says how many were. The events of the
+200 costliest sessions with breaks are read (`--limit`).
+
+`coding.sh usage --baseline` adds a `VS PUBLISHED` column to the by-agent table: your hit rate
+against Requesty's published rate for that agent (April 2026), as a signed point delta, or `-` for
+an agent it does not list. Requesty gives no sample size or method and divides differently, so the
+delta is a direction, not a score. The MCP `usage` tool takes `baseline: true` and adds
+`cacheBaseline` to each group.
+
 ## Model calls
 
 Calls logged by [the proxy](../how-to/capture-with-proxy.md) keep their full request and response.
@@ -70,6 +121,15 @@ coding.sh diff-calls <a> <b>       # any two calls
 messages, in the order the prompt cache reads them, and names the first change that broke the cache.
 In the viewer, a proxy call in the timeline opens to the same view, with "Compare with the previous
 call".
+
+In `coding.sh ui`, a model call also has "Open in playground". The playground rebuilds the call
+as the system prompt, the messages and the tools, from the stored request, or from the transcript
+when the proxy did not see the call. Edit any of it, pick a provider, and Run sends it again and
+shows the answer beside the recorded one. "Save as case" adds the request, with the recorded or the
+new answer as the expected output if you choose one, to a new dataset version, where a
+`continuation` task in `coding.sh exp run` can replay it. A provider is ready when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is set where
+`coding.sh ui` runs, or when `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL` points at a local server.
+See [`/api/playground`](../reference/api.md#get-apiplayground-get-apiplaygroundcallsid-post-apiplaygroundrun-post-apiplaygroundsave).
 
 ## Long sessions
 
@@ -105,7 +165,7 @@ started, and shows in `show`, on the viewer timeline, in `sessions --flag <name>
 | Flag | Fires when | Threshold |
 | --- | --- | --- |
 | `looping` | The same tool call returns the same result again and again with no edit in between. | 5 times within 10 calls |
-| `failure-streak` | Tool calls fail one after another. Calls the user interrupted don't count. | 5 in a row |
+| `failure-streak` | Tool calls fail one after another. Calls the user interrupted don't count, and neither does an exit that is an answer: a search that found nothing, a probe that said no. | 5 in a row |
 | `churn` | An edit to a file is undone, then undone again (Edit, MultiEdit, Write, apply_patch). | 2 reverts within 60 min |
 | `no-progress` | A long stretch of calls with no edit, no file-writing shell command, no subagent and no better test result, while the context grows. Only in sessions that edit. | 80 calls, 40% of them repeats, context up 1.5x (or compacted) |
 | `stalled` | A tool call sat with nothing else happening, then failed or never finished. | 15 min |
@@ -319,6 +379,11 @@ agent other than `claude-code` skips this check.
 `coding.sh ui` serves the viewer on 127.0.0.1 and opens it in your browser. It needs the
 per-process token in the URL it prints.
 
+The first page of sessions comes drawn in the page itself, with the first session's data, so the
+list shows before the page's script has run. Resting the pointer on a row for a tenth of a second,
+moving to it with <kbd>j</kbd> and <kbd>k</kbd>, or pressing it loads that session in the
+background, so it opens without waiting. Rows that scroll under a still pointer load nothing.
+
 The bar above the session list takes the same query as `--where`, so `tool:Bash ok:false
 -flag:compaction` or plain words narrow the list as you type. It completes keys, then their
 values with session counts (Tab or a click accepts; Enter runs the query and moves to the list;
@@ -329,6 +394,13 @@ adds a value to the query (two values of one key mean either), Alt-click or "not
 and each group folds shut. On a phone the sidebar is a sheet behind the Filters button. The query
 lives in the URL (`#/?where=…`), so a filtered list can be linked and survives a reload; `/`
 focuses the bar.
+
+**Explore** (`#/explore`, or <kbd>g</kbd> <kbd>x</kbd>) draws the `stats` numbers as six small
+charts: sessions, failure rate, cost, tokens, tool error rate and p95 model-call time, per day or
+week over 7, 30, 90 or 365 days. Split by agent, model, repo or flag to get one line per group
+(the 6 largest, the rest in `other`) and a table of each group's totals; a group's name opens its
+sessions in the list. The filter takes the same query as the session list, and the whole view
+lives in the URL. A range with no sessions shows the empty charts and says so.
 
 The Events tab (`#/events?where=…`, or `e` from the list and `s` back) runs the same query as
 event rows, newest first: event keys such as `tool:Bash ok:false` test each event, session keys
@@ -356,7 +428,7 @@ step. The address ends in `?step=N`, so a copied link opens the replay at that s
 
 `coding.sh mcp` serves your captured data to agents over stdio, with the tools `improve`,
 `harness_changes`, `harness_audit`, `sessions_list`, `session_get`, `session_current`, `session_replay`, `search`,
-`failures`, `latency`, `usage`, `subagents`, `session_tree`, `eval_from_session`, `eval_init`, `experiments_list`,
+`failures`, `latency`, `usage`, `subagents`, `session_tree`, `eval_from_session`, `eval_init`, `eval_candidates`, `experiments_list`,
 `experiment_compare`, `exp_session_summary`, `exp_session_note`, `harness_compare`, `benchmarks` and
 `status`. `improve` and `harness_changes` return what `coding.sh improve` and `coding.sh improve
 check` print, for the repo the server runs in or the one named by `repo`. The server also has two

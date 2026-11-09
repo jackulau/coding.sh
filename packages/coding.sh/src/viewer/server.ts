@@ -30,6 +30,15 @@ import { searchableText, searchTerms, snippet } from "../store/common.ts";
 import { andQuery, keyGuide, parseWhere, QueryError, QueryUnsupported, type Node, type Query } from "../query/where.ts";
 import { CallRefError, diffCalls, loadCall, previousCall, resolveCall } from "../proxy/calls.ts";
 import { getUpdateStatus, type UpdateStatus } from "../update/index.ts";
+import { WorkflowStore } from "../workflows/store.ts";
+import { WorkflowApiError, workflowsApi, type WorkflowViewSource } from "../workflows/viewer.ts";
+import { BOOT_LIST_PATHS, BOOT_MAX_BYTES, BOOT_SESSION_EVENTS, renderPage, renderSessionsMain, sessionBootPaths } from "./ssr.ts";
+import { layoutRows, ModelCache, modelOutline, readRows, ROWS_LIMIT, ROWS_MAX } from "./model.ts";
+import { parseRequest as parsePlaygroundRequest, PlaygroundError, rebuildCall, type PlaygroundSource } from "./playground.ts";
+import { computeMetrics, DAY_MS, MAX_GROUPS, METRIC_BUCKETS, METRIC_GROUPS, MetricsError, type MetricBucket, type MetricGroup, type MetricsSpec } from "./metrics.ts";
+import { parseTime } from "../query/where.ts";
+import { getScoreConfigs, getScores, postScore, postScoreConfig, type ApiReply, type ScoresApiCtx } from "../scores/api.ts";
+import { ScoreError } from "../scores/scores.ts";
 
 export interface ViewerOptions {
   index: IndexStore;
@@ -52,12 +61,18 @@ export interface ViewerOptions {
   experiments?: ExperimentSource;
   /** Benchmark run records behind /api/benchmarks. Default: `coding.sh bench`'s folder under env's data dir. */
   benchmarks?: BenchmarkSource;
+  /** Workflow runs behind /api/workflows (`coding.sh workflows`). Default: the workflow store under env's data dir. */
+  workflows?: WorkflowViewSource;
   /** Background ingest progress behind /api/ingest (`coding.sh ui`). Without it the route is 404. */
   ingestStatus?: () => IngestStatus | undefined;
   /** Start-snapshot content for replays (`coding.sh ui`, which can read this machine's shadow repos). */
   replayBaseline?: (s: Session) => Baseline | undefined;
   /** Forking a replay at a step (`coding.sh ui` only: it calls the model with this machine's key). Without it /fork is 404. */
   fork?: ForkSource;
+  /** The LLM-call playground (`coding.sh ui` only: it calls the model with this machine's key). Without it /api/playground is 404. */
+  playground?: PlaygroundSource;
+  /** Draw the first sessions page on the server and embed the first responses. Default: true. */
+  serverRender?: boolean;
 }
 
 /** Forks behind /api/sessions/<id>/fork: what a fork at step N starts from, and the fork itself. */
@@ -218,12 +233,18 @@ export interface ViewerHandlerOptions {
   experiments?: ExperimentSource;
   /** Benchmarks behind /api/benchmarks. Default: none. */
   benchmarks?: BenchmarkSource;
+  /** Workflow runs behind /api/workflows. Default: none (an empty list, 404 for a run). */
+  workflows?: WorkflowViewSource;
   /** Background ingest progress behind /api/ingest. Default: none (404). */
   ingestStatus?: () => IngestStatus | undefined;
   /** Start-snapshot content for replays. Default: none (replays start from what the session showed). */
   replayBaseline?: (s: Session) => Baseline | undefined;
   /** Forks from a replay step. Default: none (404). */
   fork?: ForkSource;
+  /** The LLM-call playground. Default: none (404). */
+  playground?: PlaygroundSource;
+  /** Draw the first sessions page on the server and embed the first responses. Default: true. */
+  serverRender?: boolean;
 }
 
 export type ViewerHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void>;
@@ -235,6 +256,22 @@ export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<V
   const experiments = opts.experiments ?? indexExperiments(opts.index);
 
   const unauthorizedPage = (res: ServerResponse) => sendUnauthorizedPage(res, opts.unauthorizedText, opts.basicRealm);
+  const apiCtx = (access: { by?: string; project?: string }): ApiCtx => ({
+    index: opts.index,
+    blobs: opts.blobs,
+    labeller: access.by ?? labeller,
+    checkHost: opts.checkHost,
+    updateStatus: opts.updateStatus,
+    project: access.project,
+    projects: opts.projects,
+    experiments,
+    benchmarks: opts.benchmarks,
+    workflows: opts.workflows,
+    ingestStatus: opts.ingestStatus,
+    replayBaseline: opts.replayBaseline,
+    fork: opts.fork,
+    playground: opts.playground,
+  });
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     setBaseHeaders(res);
@@ -256,9 +293,14 @@ export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<V
         res.end();
         return;
       }
-      if (!(await opts.authorize(req))) return unauthorizedPage(res);
+      const access = await opts.authorize(req);
+      if (!access) return unauthorizedPage(res);
       const nonce = randomBytes(16).toString("base64");
-      const body = page.replaceAll("__CSP_NONCE__", nonce);
+      let body = page.replaceAll("__CSP_NONCE__", nonce);
+      if (opts.serverRender !== false && req.method !== "HEAD") {
+        const first = await firstPaint(apiCtx(access)).catch(() => undefined);
+        if (first) body = renderPage(body, first.main, first.boot, nonce);
+      }
       res.writeHead(200, {
         "Content-Type": "text/html; charset=utf-8",
         "Content-Security-Policy": pageCsp(nonce),
@@ -276,20 +318,7 @@ export async function createViewerHandler(opts: ViewerHandlerOptions): Promise<V
     }
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Security-Policy", "default-src 'none'; sandbox; frame-ancestors 'none'");
-    await routeApi(req, res, url, {
-      index: opts.index,
-      blobs: opts.blobs,
-      labeller: access.by ?? labeller,
-      checkHost: opts.checkHost,
-      updateStatus: opts.updateStatus,
-      project: access.project,
-      projects: opts.projects,
-      experiments,
-      benchmarks: opts.benchmarks,
-      ingestStatus: opts.ingestStatus,
-      replayBaseline: opts.replayBaseline,
-      fork: opts.fork,
-    });
+    await routeApi(req, res, url, apiCtx(access));
   };
 
   return (req, res) =>
@@ -342,9 +371,12 @@ export async function startViewer(opts: ViewerOptions): Promise<Viewer> {
     updateStatus,
     ...(opts.experiments ? { experiments: opts.experiments } : {}),
     benchmarks: opts.benchmarks ?? benchmarkDir(opts.env ?? process.env),
+    workflows: opts.workflows ?? WorkflowStore.forEnv(opts.env ?? process.env),
     ...(opts.ingestStatus ? { ingestStatus: opts.ingestStatus } : {}),
     ...(opts.replayBaseline ? { replayBaseline: opts.replayBaseline } : {}),
     ...(opts.fork ? { fork: opts.fork } : {}),
+    ...(opts.playground ? { playground: opts.playground } : {}),
+    ...(opts.serverRender !== undefined ? { serverRender: opts.serverRender } : {}),
   });
 
   const server = createServer((req, res) => {
@@ -449,9 +481,11 @@ interface ApiCtx {
   projects?: () => Promise<string[]> | string[];
   experiments?: ExperimentSource;
   benchmarks?: BenchmarkSource;
+  workflows?: WorkflowViewSource;
   ingestStatus?: () => IngestStatus | undefined;
   replayBaseline?: (s: Session) => Baseline | undefined;
   fork?: ForkSource;
+  playground?: PlaygroundSource;
 }
 
 /** The index's own experiment methods (sqlite, memory, postgres), or undefined when it has none. */
@@ -461,6 +495,19 @@ function indexExperiments(index: IndexStore): ExperimentSource | undefined {
 }
 
 const projectOf = (s: Session): string => s.project ?? "default";
+
+/** Span models per store (src/viewer/model.ts): outline and rows read through them. */
+const MODELS = new WeakMap<IndexStore, ModelCache>();
+function modelCache(ctx: ApiCtx): ModelCache {
+  let cache = MODELS.get(ctx.index);
+  if (!cache) MODELS.set(ctx.index, (cache = new ModelCache()));
+  return cache;
+}
+function cachedModel(ctx: ApiCtx, s: Session) {
+  return modelCache(ctx).get(ctx.index, s);
+}
+/** Sessions up to this many events get their spans folded inline on the outline; longer ones in the background. */
+export const OUTLINE_INLINE_EVENTS = 20_000;
 
 /** Recent replays per store: a viewer steps through one session at a time, so a few stay warm. */
 const REPLAYS = new WeakMap<IndexStore, Map<string, { key: string; replay: Promise<Replay> }>>();
@@ -658,7 +705,25 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         const s = await visibleSession(ctx, sessionId);
         const derails = s.stats.derails ?? [];
         const o = storedOutline(s) ?? sessionOutline(await ctx.index.listEvents(sessionId), derails);
-        return sendJson(res, 200, { phases: o.phases.map((p) => ({ ...p, label: phaseLabel(p) })), days: o.days, derails, events: s.stats.events });
+        // The span fields come with the outline once the model is built; a long session's first
+        // build runs in the background ("spans": "building"), so the outline never waits on it.
+        let m = await modelCache(ctx).peek(ctx.index, s);
+        if (!m && (s.stats.events ?? 0) <= OUTLINE_INLINE_EVENTS) m = await cachedModel(ctx, s);
+        // After the response: a SQLite read of every event runs synchronously.
+        else if (!m) setImmediate(() => cachedModel(ctx, s).catch(() => undefined));
+        return sendJson(res, 200, { phases: o.phases.map((p) => ({ ...p, label: phaseLabel(p) })), days: o.days, derails, events: s.stats.events, ...(m ? modelOutline(m) : { spans: "building" }) });
+      }
+      if (sub === "rows") {
+        // One page of a turn's rows: events, with long runs of routine ones folded (never a failure).
+        const s = await visibleSession(ctx, sessionId);
+        const m = await cachedModel(ctx, s);
+        if (!m.turns.length) return sendJson(res, 200, { turn: null, rows: [] });
+        const t = m.turns[intParam(q, "turn", 0, 0, m.turns.length - 1)]!;
+        const after = q.has("after") ? intParam(q, "after", t.start - 1, t.start - 1, t.end) : t.start - 1;
+        const limit = intParam(q, "limit", ROWS_LIMIT, 1, ROWS_MAX);
+        const fold = q.get("fold") !== "0";
+        const { slots, next } = layoutRows(m, t, after + 1, limit, fold);
+        return sendJson(res, 200, { turn: t, rows: await readRows(ctx.index, sessionId, m, slots), ...(next !== undefined ? { next: next - 1 } : {}) });
       }
       if (sub === "tree") {
         // The whole multi-agent run this session belongs to: its top-level agent
@@ -723,6 +788,26 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       if (!SHA_RE.test(id)) throw new HttpError(400, "blob ref must be 64 lowercase hex chars");
       const data = await ctx.blobs.get(id);
       if (!data) throw new HttpError(404, "blob not found");
+      const range = blobRange(q.get("range") ?? (req.headers.range?.startsWith("bytes=") ? req.headers.range.slice(6) : null), data.byteLength);
+      if (range === "unsatisfiable") {
+        res.writeHead(416, { "Content-Type": "application/json; charset=utf-8", "Content-Range": `bytes */${data.byteLength}` });
+        res.end(JSON.stringify({ error: `range is outside the blob's ${data.byteLength} bytes` }));
+        return;
+      }
+      if (range) {
+        // A byte range (inclusive), as HTTP Range has it: a long output read a piece at a time.
+        const [a, b] = range;
+        const part = data.subarray(a, b + 1);
+        res.writeHead(206, {
+          "Content-Type": "application/octet-stream",
+          "Content-Length": part.byteLength,
+          "Content-Range": `bytes ${a}-${b}/${data.byteLength}`,
+          "Accept-Ranges": "bytes",
+          "X-Blob-Size": data.byteLength,
+        });
+        res.end(part);
+        return;
+      }
       const full = q.get("full") === "1";
       const truncated = !full && data.byteLength > BLOB_CAP_BYTES;
       const body = truncated ? data.subarray(0, BLOB_CAP_BYTES) : data;
@@ -732,6 +817,7 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
         "Content-Disposition": "inline",
         "X-Blob-Size": data.byteLength,
         "X-Truncated": truncated ? "1" : "0",
+        "Accept-Ranges": "bytes",
       });
       res.end(body);
       return;
@@ -785,7 +871,15 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
     case "events": {
       // `where` at event level: matching events across sessions, newest first, keyset-paged.
       get();
-      if (id !== undefined) throw new HttpError(404, "not found");
+      if (id !== undefined) {
+        // One event by id, whole (rows carry a line; this is what a row opens to).
+        if (sub !== undefined || id === "") throw notFound();
+        const ref = checkId(id, "event id");
+        const hit = ctx.index.eventsByIdPrefix ? (await ctx.index.eventsByIdPrefix(ref, 2)).find((e) => e.id === ref) : undefined;
+        if (!hit) throw new HttpError(404, "event not found");
+        await visibleSession(ctx, hit.sessionId).catch(() => Promise.reject(new HttpError(404, "event not found")));
+        return sendJson(res, 200, hit);
+      }
       const where = whereParam(q) ?? {};
       const limit = intParam(q, "limit", 50, 1, 200);
       const cursor = q.get("cursor") || undefined;
@@ -870,6 +964,21 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       return sendJson(res, 200, experimentDetail(exp));
     }
 
+    case "workflows": {
+      // Workflow runs (docs/design/workflows.md §8); they belong to no project, like benchmarks.
+      get();
+      const src = ctx.project !== undefined ? undefined : ctx.workflows;
+      if (!src) {
+        if (id === undefined || id === "") return sendJson(res, 200, { runs: [] });
+        throw new HttpError(404, "not found");
+      }
+      try {
+        return sendJson(res, 200, await workflowsApi(src, id, sub, q));
+      } catch (e) {
+        if (e instanceof WorkflowApiError) throw new HttpError(e.status, e.message);
+        throw e;
+      }
+    }
     case "benchmarks": {
       get();
       if (sub !== undefined) throw new HttpError(404, "not found");
@@ -936,6 +1045,28 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       throw new HttpError(405, "method not allowed");
     }
 
+    case "scores": {
+      if (id !== undefined) throw new HttpError(404, "not found");
+      if (method === "GET") return sendScores(res, () => getScores(scoresCtx(ctx), q));
+      if (method === "POST") {
+        checkOrigin(req, ctx.checkHost);
+        const body = await readJson(req, res);
+        return sendScores(res, () => postScore(scoresCtx(ctx), body));
+      }
+      throw new HttpError(405, "method not allowed");
+    }
+
+    case "score-configs": {
+      if (id !== undefined) throw new HttpError(404, "not found");
+      if (method === "GET") return sendScores(res, () => getScoreConfigs(scoresCtx(ctx)));
+      if (method === "POST") {
+        checkOrigin(req, ctx.checkHost);
+        const body = await readJson(req, res);
+        return sendScores(res, () => postScoreConfig(scoresCtx(ctx), body));
+      }
+      throw new HttpError(405, "method not allowed");
+    }
+
     case "update": {
       get();
       if (id !== undefined) throw new HttpError(404, "not found");
@@ -956,6 +1087,72 @@ async function routeApi(req: IncomingMessage, res: ServerResponse, url: URL, ctx
       if (id !== undefined) throw new HttpError(404, "not found");
       const project = projectParam(ctx, q);
       return sendJson(res, 200, await computeStats(ctx.index, scopeParam(q) === "top", project, facetParams(q), whereParam(q)).catch((e) => Promise.reject(queryHttpError(e))));
+    }
+
+    case "metrics": {
+      // Sessions, failures, cost, tokens, tool calls and latency per day or week, optionally split.
+      get();
+      if (id !== undefined) throw new HttpError(404, "not found");
+      const project = projectParam(ctx, q);
+      const spec = metricsParams(q);
+      const filter: MetricsSpec["filter"] = scopeParam(q) === "top" ? { parentSessionId: null } : {};
+      if (project !== undefined) filter.project = project;
+      const where = whereParam(q);
+      return sendJson(res, 200, await computeMetrics(ctx.index, { ...spec, filter, ...(where ? { where } : {}) }).catch((e) => Promise.reject(e instanceof MetricsError ? new HttpError(400, e.message, { reason: e.reason }) : queryHttpError(e))));
+    }
+
+    case "playground": {
+      // GET: providers and datasets. GET calls/<id>: a call rebuilt for editing. POST run, POST save.
+      if (!ctx.playground) throw new HttpError(404, "the playground is only in the local viewer (coding.sh ui)");
+      const pg = ctx.playground;
+      if (id === undefined || id === "") {
+        get();
+        return sendJson(res, 200, { providers: pg.providers(), datasets: await pg.datasets() });
+      }
+      if (id === "calls") {
+        get();
+        if (!sub) throw notFound();
+        const ref = checkId(sub, "call id");
+        const sessionId = q.get("session");
+        let event: AgentEvent | undefined;
+        if (sessionId) {
+          await visibleSession(ctx, checkId(sessionId, "session id"));
+          event = (await ctx.index.listEvents(sessionId, { kinds: ["llm.call"] })).find((e) => e.id === ref);
+        } else {
+          event = await resolveCall(ctx.index, ref).catch(() => undefined);
+          if (event) await visibleSession(ctx, event.sessionId);
+        }
+        if (!event) throw new HttpError(404, "call not found");
+        return sendJson(res, 200, await rebuildCall(ctx.index, ctx.blobs, event).catch(playgroundHttpError));
+      }
+      // POST run and POST save take an edited request from the viewer's own page.
+      const posted = async () => {
+        if (sub !== undefined) throw notFound();
+        checkOrigin(req, ctx.checkHost);
+        const body = await readJson(req, res, PLAYGROUND_BODY_BYTES);
+        const b = (typeof body === "object" && body !== null && !Array.isArray(body) ? body : {}) as Record<string, unknown>;
+        try {
+          return { b, request: parsePlaygroundRequest(b.request) };
+        } catch (e) {
+          return playgroundHttpError(e);
+        }
+      };
+      if (id === "run") {
+        if (method !== "POST") throw new HttpError(405, "method not allowed");
+        const { b, request } = await posted();
+        if (typeof b.provider !== "string") throw new HttpError(400, "provider is required");
+        return sendJson(res, 200, await pg.run(b.provider, request).catch(playgroundHttpError));
+      }
+      if (id === "save") {
+        if (method !== "POST") throw new HttpError(405, "method not allowed");
+        const { b, request } = await posted();
+        if (typeof b.dataset !== "string") throw new HttpError(400, "dataset is required");
+        const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+        const sessionId = str(b.sessionId);
+        const callId = str(b.callId);
+        return sendJson(res, 200, await pg.save({ dataset: b.dataset, request, ...(b.expected !== undefined ? { expected: b.expected } : {}), ...(sessionId ? { sessionId } : {}), ...(callId ? { callId } : {}) }).catch(playgroundHttpError));
+      }
+      throw notFound();
     }
 
     case "projects": {
@@ -1188,6 +1385,36 @@ function withFacets(q: Query, f: Facets, top: boolean): Query {
   return items.length ? andQuery(q, { t: "and", items }) : q;
 }
 
+/**
+ * /api/metrics range and split: since/until as epoch ms, a date or an age (30d),
+ * default the last 30 days; bucket day|week; by agent|model|repo|flag; tz as
+ * Date#getTimezoneOffset minutes. Anything else is a 400.
+ */
+export function metricsParams(q: URLSearchParams, now = Date.now()): Pick<MetricsSpec, "since" | "until" | "bucket" | "by" | "tzOffsetMin" | "maxGroups"> {
+  const time = (name: string): number | undefined => {
+    const raw = q.get(name);
+    if (raw === null || raw === "") return undefined;
+    const t = /^\d{1,16}$/.test(raw) ? Number(raw) : parseTime(raw, now);
+    if (t === undefined || !Number.isFinite(t) || t < 0 || t > 8_640_000_000_000_000) throw new HttpError(400, `${name} must be epoch ms, a date or an age such as 30d`);
+    return t;
+  };
+  const until = time("until") ?? now;
+  const since = time("since") ?? until - 30 * DAY_MS;
+  if (!(since < until)) throw new HttpError(400, "since must be before until");
+  const bucket = q.get("bucket") || "day";
+  if (!(METRIC_BUCKETS as readonly string[]).includes(bucket)) throw new HttpError(400, `bucket must be ${METRIC_BUCKETS.join(" or ")}`);
+  const by = q.get("by") || undefined;
+  if (by !== undefined && !(METRIC_GROUPS as readonly string[]).includes(by)) throw new HttpError(400, `by must be one of ${METRIC_GROUPS.join(", ")}`);
+  const tzRaw = q.get("tz");
+  let tzOffsetMin = 0;
+  if (tzRaw !== null && tzRaw !== "") {
+    if (!/^-?\d{1,4}$/.test(tzRaw) || Math.abs(Number(tzRaw)) > 840) throw new HttpError(400, "tz must be minutes from -840 to 840 (Date#getTimezoneOffset)");
+    tzOffsetMin = Number(tzRaw);
+  }
+  const maxGroups = q.get("groups") ? intParam(q, "groups", MAX_GROUPS, 1, 50) : MAX_GROUPS;
+  return { since, until, bucket: bucket as MetricBucket, ...(by ? { by: by as MetricGroup } : {}), tzOffsetMin, maxGroups };
+}
+
 /** List filters shared by /api/sessions, /api/search and /api/stats. */
 interface Facets {
   agent?: string;
@@ -1312,6 +1539,28 @@ async function computeStats(index: IndexStore, topLevelOnly = false, project?: s
   };
 }
 
+/** The scores API's view of this caller (src/scores/api.ts). */
+function scoresCtx(ctx: ApiCtx): ScoresApiCtx {
+  return {
+    index: ctx.index,
+    by: ctx.labeller,
+    project: ctx.project,
+    sessionVisible: (sid) => visibleSession(ctx, checkId(sid, "sessionId")).then(() => true, (e) => (e instanceof HttpError && e.status === 404 ? false : Promise.reject(e))),
+  };
+}
+
+/** Sends a scores API reply; its ScoreErrors become HTTP errors. */
+async function sendScores(res: ServerResponse, fn: () => Promise<ApiReply>): Promise<void> {
+  let reply: ApiReply;
+  try {
+    reply = await fn();
+  } catch (e) {
+    if (e instanceof ScoreError) throw new HttpError(e.status, e.message);
+    throw e;
+  }
+  sendJson(res, reply.status, reply.body);
+}
+
 async function createLabel(ctx: ApiCtx, body: unknown): Promise<Label> {
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "body must be a JSON object");
   const b = body as Record<string, unknown>;
@@ -1351,6 +1600,82 @@ function checkId(id: string, what: string): string {
   return id;
 }
 
+/** A GET through the API router without a socket: the JSON body of a 200, else undefined. */
+async function internalGet(ctx: ApiCtx, path: string): Promise<unknown> {
+  let status = 0;
+  let body = "";
+  const res = {
+    headersSent: false,
+    setHeader() {},
+    writeHead(s: number) { status = s; return res; },
+    end(b?: string | Buffer) { body = b === undefined ? "" : String(b); },
+  } as unknown as ServerResponse;
+  const req = { method: "GET", headers: {}, url: path } as unknown as IncomingMessage;
+  try {
+    await routeApi(req, res, new URL(path, "http://viewer.invalid"), ctx);
+  } catch {
+    return undefined;
+  }
+  if (status !== 200) return undefined;
+  try {
+    return JSON.parse(body);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The sessions page's first paint: its rows as HTML and the responses its script asks for
+ * first, plus the first row's session when it is small. Read the same way the API answers them.
+ */
+async function firstPaint(ctx: ApiCtx): Promise<{ main: string; boot: Record<string, unknown> }> {
+  const boot: Record<string, unknown> = {};
+  const got = await Promise.all(BOOT_LIST_PATHS.map((p) => internalGet(ctx, p)));
+  BOOT_LIST_PATHS.forEach((p, k) => { if (got[k] !== undefined) boot[p] = got[k]; });
+  const list = got[0] as { items?: Session[]; total?: number } | undefined;
+  const items = list?.items ?? [];
+  const first = items[0];
+  let bytes = JSON.stringify(boot).length;
+  if (first && (first.stats.events ?? 0) <= BOOT_SESSION_EVENTS) {
+    const paths = sessionBootPaths(first.id);
+    const detail = await Promise.all(paths.map((p) => internalGet(ctx, p)));
+    const size = JSON.stringify(detail).length;
+    if (detail.every((d) => d !== undefined) && bytes + size <= BOOT_MAX_BYTES) {
+      paths.forEach((p, k) => { boot[p] = detail[k]; });
+      bytes += size;
+    }
+  }
+  return { main: renderSessionsMain(items, list?.total), boot };
+}
+
+/** BLOB_RANGE_MAX caps one range read; a bigger one is cut to it (Content-Range says what came back). */
+export const BLOB_RANGE_MAX = 4 * 1024 * 1024;
+
+/**
+ * `a-b` (inclusive), `a-` (to the end) or `-n` (the last n bytes) against a blob of `size`
+ * bytes: the byte span, "unsatisfiable" past the end, or null when there is no range. A
+ * malformed range is a 400.
+ */
+export function blobRange(raw: string | null, size: number): [number, number] | "unsatisfiable" | null {
+  if (raw === null || raw === "") return null;
+  const m = /^(\d{0,15})-(\d{0,15})$/.exec(raw.trim());
+  if (!m || (m[1] === "" && m[2] === "")) throw new HttpError(400, "range must be a-b, a- or -n (bytes)");
+  let a: number;
+  let b: number;
+  if (m[1] === "") {
+    const n = Number(m[2]);
+    if (n === 0) return "unsatisfiable";
+    a = Math.max(0, size - n);
+    b = size - 1;
+  } else {
+    a = Number(m[1]);
+    b = m[2] === "" ? size - 1 : Math.min(Number(m[2]), size - 1);
+    if (m[2] !== "" && Number(m[2]) < a) throw new HttpError(400, "range end comes before its start");
+  }
+  if (a >= size) return "unsatisfiable";
+  return [a, Math.min(b, a + BLOB_RANGE_MAX - 1)];
+}
+
 function intParam(q: URLSearchParams, name: string, dflt: number, min: number, max: number): number {
   const raw = q.get(name);
   if (raw === null || raw === "") return dflt;
@@ -1358,6 +1683,16 @@ function intParam(q: URLSearchParams, name: string, dflt: number, min: number, m
   const n = Number(raw);
   if (n < min || n > max) throw new HttpError(400, `${name} must be between ${min} and ${max}`);
   return n;
+}
+
+/** Playground POSTs carry a whole conversation: up to 8 MB, where the rest of the API takes 1 MB. */
+export const PLAYGROUND_BODY_BYTES = 8 * 1024 * 1024;
+
+/** A playground problem with its status and reason; a provider failure is a 502. */
+function playgroundHttpError(e: unknown): never {
+  if (e instanceof PlaygroundError) throw new HttpError(e.status, e.message, { reason: e.reason });
+  if (e instanceof Error && e.name === "DatasetError") throw new HttpError(400, e.message, { reason: "invalid_request" });
+  throw e;
 }
 
 /** A fork that can't start (no stored calls, no key) is the caller's to fix: 400 with the reason. */
@@ -1382,21 +1717,22 @@ function checkOrigin(req: IncomingMessage, checkHost: (host: string) => boolean)
   if (!checkHost(host)) throw new HttpError(403, "forbidden origin");
 }
 
-async function readJson(req: IncomingMessage, res: ServerResponse): Promise<unknown> {
+async function readJson(req: IncomingMessage, res: ServerResponse, max = MAX_BODY_BYTES): Promise<unknown> {
   const type = (req.headers["content-type"] ?? "").split(";")[0]?.trim().toLowerCase();
   if (type !== "application/json") throw new HttpError(415, "content-type must be application/json");
   const declared = Number(req.headers["content-length"] ?? 0);
-  if (declared > MAX_BODY_BYTES) {
+  const tooBig = `request body exceeds ${Math.round(max / 1024 / 1024)} MB`;
+  if (declared > max) {
     res.setHeader("Connection", "close");
-    throw new HttpError(413, "request body exceeds 1 MB");
+    throw new HttpError(413, tooBig);
   }
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req as AsyncIterable<Buffer>) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) {
+    if (size > max) {
       res.setHeader("Connection", "close");
-      throw new HttpError(413, "request body exceeds 1 MB");
+      throw new HttpError(413, tooBig);
     }
     chunks.push(chunk);
   }
