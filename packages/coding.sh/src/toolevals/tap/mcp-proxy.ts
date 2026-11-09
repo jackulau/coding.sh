@@ -2,7 +2,10 @@
 // or the model driver) and the real server, records one TapRecord per
 // request, validates tools/call arguments against the tool's inputSchema, and
 // applies the variant's overrides (descriptions, paramDescriptions, hideTools)
-// to tools/list results.
+// to tools/list results. resources/read and prompts/get are recorded with
+// their uri / name as arguments, so `calls` checks can match them; a
+// task-augmented tools/call is recorded once, when its tasks/result arrives;
+// server → client requests (sampling, elicitation, roots) are meta records.
 //
 // Hosting: a stdio server is exposed through a relay (`bin/mcp-<name>.mjs`, a
 // generated script that pipes stdio to a loopback TCP port served here, one
@@ -22,6 +25,7 @@ import { createRedactor, type Redactor } from "../../core/redact.ts";
 import { schemaViolations } from "../jsonschema.ts";
 import { errorResponse, isNotification, isObj, isRequest, isResponse, LineSplitter, RPC, wireBytes, type RpcRequest, type RpcResponse } from "../mcp/jsonrpc.ts";
 import { parseMcpBody } from "../mcp/http.ts";
+import { SseParser } from "../model/sse.ts";
 import type { McpTarget, McpTool, TapClass, TapRecord, Variant } from "../types.ts";
 
 export const DEFAULT_VALIDATION_PATTERNS = [
@@ -74,6 +78,8 @@ interface Pending {
   requestBytes: number;
   violations?: string[];
   unknownTool?: boolean;
+  /** tasks/result: the task it reads. */
+  taskId?: string;
 }
 
 /** Above this much JSON a call's arguments are left out of the tap. */
@@ -87,13 +93,31 @@ function tapArgs(v: unknown): Record<string, unknown> | undefined {
   return Buffer.byteLength(JSON.stringify(r), "utf8") <= ARGS_MAX_BYTES ? r : undefined;
 }
 
-const META_METHODS = new Set(["initialize", "server/discover", "tools/list", "ping", "logging/setLevel"]);
+const META_METHODS = new Set([
+  "initialize",
+  "server/discover",
+  "tools/list",
+  "ping",
+  "logging/setLevel",
+  "resources/list",
+  "resources/templates/list",
+  "resources/subscribe",
+  "resources/unsubscribe",
+  "prompts/list",
+  "completion/complete",
+  "tasks/get",
+  "tasks/list",
+  "tasks/cancel",
+  "tasks/result",
+]);
 
 /** Message-level tap: feed it every message in both directions. */
 export class McpTap {
   /** Upstream tools by name (pre-override), from the last tools/list. */
   readonly tools = new Map<string, McpTool>();
   private readonly pending = new Map<string, Pending>();
+  /** Task-augmented tools/call requests, by task id, until their tasks/result. */
+  private readonly tasks = new Map<string, Pending>();
   private readonly o: McpTapOpts;
   private readonly hidden: Set<string>;
   private readonly patterns: RegExp[];
@@ -129,6 +153,10 @@ export class McpTap {
     }
     if (!isRequest(msg)) return { forward: msg }; // a response to a server → client request
     const p: Pending = { method: msg.method, ts: now, t0: performance.now(), requestBytes: wireBytes(msg) };
+    const params = isObj(msg.params) ? msg.params : {};
+    if (msg.method === "resources/read") p.args = tapArgs({ uri: params.uri });
+    else if (msg.method === "prompts/get") p.args = tapArgs({ name: params.name, ...(isObj(params.arguments) ? { arguments: params.arguments } : {}) });
+    else if (msg.method === "tasks/result" && typeof params.taskId === "string") p.taskId = params.taskId;
     if (msg.method === "tools/call") {
       const params = isObj(msg.params) ? msg.params : {};
       const name = typeof params.name === "string" ? params.name : undefined;
@@ -152,11 +180,25 @@ export class McpTap {
 
   /** Server → client. Returns the message to deliver (tools/list rewritten). */
   fromServer(msg: unknown): unknown {
+    if (isRequest(msg)) {
+      this.o.record({ ts: this.o.now?.() ?? Date.now(), durationMs: 0, target: "mcp", class: "meta", method: msg.method, direction: "server", requestBytes: wireBytes(msg), responseBytes: 0 });
+      return msg;
+    }
     if (!isResponse(msg)) return msg;
     const key = String(msg.id);
-    const p = this.pending.get(key);
+    let p = this.pending.get(key);
     if (!p) return msg;
     this.pending.delete(key);
+    // A task-augmented call: the reply is the task; the call is recorded when its result comes.
+    if (p.method === "tools/call" && !msg.error && isObj(msg.result) && isObj(msg.result.task) && typeof msg.result.task.taskId === "string" && msg.result.content === undefined) {
+      this.tasks.set(msg.result.task.taskId, p);
+      return msg;
+    }
+    if (p.method === "tasks/result" && p.taskId && this.tasks.has(p.taskId)) {
+      const call = this.tasks.get(p.taskId)!;
+      this.tasks.delete(p.taskId);
+      p = call;
+    }
     let out: RpcResponse = msg;
     if (p.method === "tools/list" && isObj(msg.result) && Array.isArray(msg.result.tools)) {
       const tools = (msg.result.tools as unknown[]).filter((t): t is McpTool => isObj(t) && typeof t.name === "string");
@@ -167,7 +209,7 @@ export class McpTap {
     if (msg.error) {
       const code = msg.error.code;
       const invalidCode = code === RPC.INVALID_REQUEST || code === RPC.METHOD_NOT_FOUND || code === RPC.INVALID_PARAMS;
-      if (invalidCode || p.unknownTool || p.violations?.length) {
+      if (!META_METHODS.has(p.method) && (invalidCode || p.unknownTool || p.violations?.length)) {
         const reason = p.unknownTool || (code === RPC.INVALID_PARAMS && /unknown tool|tool .*not found|no such tool/i.test(msg.error.message)) ? "unknown-tool" : code === RPC.METHOD_NOT_FOUND ? "unknown-method" : code === RPC.INVALID_REQUEST ? "invalid-request" : "schema";
         this.emit(p, { class: "invalid", reason, rpcErrorCode: code }, bytes);
       } else {
@@ -200,7 +242,9 @@ export class McpTap {
   /** Requests that never got a reply (server died, client closed): recorded as failed. */
   flush(reason = "no-reply"): void {
     for (const p of this.pending.values()) this.emit(p, { class: META_METHODS.has(p.method) ? "meta" : "failed", reason }, 0);
+    for (const p of this.tasks.values()) this.emit(p, { class: "failed", reason: "task-unfinished" }, 0);
     this.pending.clear();
+    this.tasks.clear();
   }
 }
 
@@ -383,7 +427,7 @@ export async function startMcpProxy(o: McpProxyOpts): Promise<McpProxyHandle> {
   const tap = makeTap(o, record);
   const doFetch = o.fetch ?? fetch;
   const server = createHttpServer((req, res) => void handleHttp(req, res));
-  const PASS = ["content-type", "accept", "mcp-session-id", "mcp-protocol-version", "mcp-method", "mcp-name", "last-event-id"];
+  const PASS = ["content-type", "accept", "authorization", "mcp-session-id", "mcp-protocol-version", "mcp-method", "mcp-name", "last-event-id"];
   async function handleHttp(req: IncomingMessage, res: ServerResponse): Promise<void> {
     try {
       const chunks: Buffer[] = [];
@@ -395,7 +439,9 @@ export async function startMcpProxy(o: McpProxyOpts): Promise<McpProxyHandle> {
         if (typeof v === "string") headers[h] = v;
       }
       if (req.method !== "POST") {
-        const r = await doFetch(upstream, { method: req.method, headers });
+        // OAuth discovery at the proxy's origin goes to the server's origin.
+        const url = req.url?.startsWith("/.well-known/") ? new URL(req.url, upstream).toString() : upstream;
+        const r = await doFetch(url, { method: req.method, headers });
         res.writeHead(r.status, { "content-type": r.headers.get("content-type") ?? "text/plain" });
         res.end(Buffer.from(await r.arrayBuffer()));
         return;
@@ -416,11 +462,39 @@ export async function startMcpProxy(o: McpProxyOpts): Promise<McpProxyHandle> {
       }
       const r = await doFetch(upstream, { method: "POST", headers, body: JSON.stringify(t.forward) });
       const ct = r.headers.get("content-type") ?? "";
-      const text = await r.text();
-      const msgs = parseMcpBody(ct, text).map((m) => tap.fromServer(m));
       const outHeaders: Record<string, string> = {};
       const sid = r.headers.get("mcp-session-id");
       if (sid) outHeaders["mcp-session-id"] = sid;
+      const challenge = r.headers.get("www-authenticate");
+      if (challenge) outHeaders["www-authenticate"] = challenge;
+      if (ct.includes("text/event-stream") && r.body) {
+        // Stream it through: a server → client request (sampling, elicitation) waits on the client's answer.
+        outHeaders["content-type"] = "text/event-stream";
+        res.writeHead(r.status, outHeaders);
+        const parser = new SseParser();
+        const dec = new TextDecoder();
+        let replied = false;
+        const pass = (events: { event?: string; data: string }[]) => {
+          for (const e of events) {
+            if (e.event && e.event !== "message") continue;
+            let m: unknown;
+            try {
+              m = JSON.parse(e.data);
+            } catch {
+              continue;
+            }
+            if (isResponse(m)) replied = true;
+            res.write(`event: message\ndata: ${JSON.stringify(tap.fromServer(m))}\n\n`);
+          }
+        };
+        for await (const chunk of r.body as unknown as AsyncIterable<Uint8Array>) pass(parser.push(dec.decode(chunk, { stream: true })));
+        pass(parser.end());
+        if (!replied && isRequest(msg)) tap.fromServer(errorResponse((msg as RpcRequest).id, RPC.INTERNAL_ERROR, "stream ended without a reply"));
+        res.end();
+        return;
+      }
+      const text = await r.text();
+      const msgs = parseMcpBody(ct, text).map((m) => tap.fromServer(m));
       if (!msgs.length) {
         if (isRequest(msg)) tap.fromServer(errorResponse((msg as RpcRequest).id, RPC.INTERNAL_ERROR, `HTTP ${r.status}`));
         if (ct) outHeaders["content-type"] = ct;

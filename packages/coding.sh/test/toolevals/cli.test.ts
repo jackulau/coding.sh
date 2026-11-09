@@ -94,6 +94,28 @@ function writeRepo(h: Home, opts: { confirmAboveUsd?: number; providerUrl?: stri
   }
 }
 
+/**
+ * TB-12: kinds on the fake suite. greet-bob is a bad task written against the
+ * `old` build (which misspells the greeting), sum is a guard, sum-bad is a bad
+ * task that passes on the old build too, and `old-text` changes only what the
+ * agent reads.
+ */
+function writeKinds(h: Home): void {
+  const tasks = join(h.repo, "evals", "toolevals", "fake", "tasks");
+  const bob = join(tasks, "greet-bob.toml");
+  writeFileSync(bob, `kind = "bad"\n${readFileSync(bob, "utf8")}`);
+  const sumTask = (id: string, kind: string, a: number, b: number) =>
+    writeFileSync(join(tasks, `${id}.toml`), [`id = ${q(id)}`, `kind = ${q(kind)}`, `instruction = "Add ${a} and ${b} with fake-cli."`, 'status = "validated"', `reference = ["fake-cli sum ${a} ${b}"]`, "", "[[checks]]", 'kind = "output"', `contains = ["${a + b}"]`, ""].join("\n"));
+  sumTask("sum", "guard", 1, 2);
+  sumTask("sum-bad", "bad", 2, 2);
+  const oldCli = join(h.repo, "old-cli.mjs");
+  writeFileSync(oldCli, 'const a = process.argv.slice(2);\nif (a[0] === "greet") { const i = a.indexOf("--name"); process.stdout.write("hullo " + (i >= 0 ? a[i + 1] : "world") + "\\n"); }\nelse if (a[0] === "sum") process.stdout.write(String(a.slice(1).reduce((s, x) => s + Number(x), 0)) + "\\n");\nelse process.exit(2);\n');
+  const variants = join(h.repo, "evals", "toolevals", "fake", "variants");
+  mkdirSync(variants, { recursive: true });
+  writeFileSync(join(variants, "old.toml"), `command = [${q(process.execPath)}, ${q(oldCli)}]\n`);
+  writeFileSync(join(variants, "old-text.toml"), '[descriptions]\ngreet = "Say hi to someone."\n');
+}
+
 describe("toolevals CLI", () => {
   it("prints toolevals help in under 200 ms from the bundle", () => {
     const h = tmpHome();
@@ -175,6 +197,47 @@ describe("toolevals CLI", () => {
 
     const after = cli(h, ["toolevals", "run", "fake", "--driver", "model:anthropic/fake"], { FAKE_KEY: "k" });
     assert.match(after.stderr, /1 task still draft; run coding\.sh toolevals validate fake/);
+  });
+
+  it("validate --against reports a bad task that passes on the old build, and needs --driver for a text-only variant", () => {
+    const h = tmpHome();
+    writeRepo(h);
+    let r = cli(h, ["toolevals", "validate", "fake", "--against", "old"]);
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /No variant "old" for fake/);
+    r = cli(h, ["toolevals", "validate", "fake", "--against", "base", "--json"]);
+    assert.equal(r.status, 1, r.stderr);
+    assert.match(r.stderr, /No task of fake has a kind/);
+    writeKinds(h);
+    r = cli(h, ["toolevals", "validate", "fake", "--against", "old", "--json"]);
+    assert.equal(r.status, 1, r.stderr);
+    const doc = one(r.stdout, "against") as { ok: boolean; mode: string; variant: string; untagged: number; counts: Record<string, { cases: number; ok: number }>; cases: { caseId: string; kind: string; ok: boolean; problem?: string }[] };
+    assert.equal(doc.ok, false);
+    assert.equal(doc.mode, "reference");
+    assert.equal(doc.variant, "old");
+    assert.equal(doc.untagged, 1, "greet-ada has no kind");
+    assert.deepEqual(
+      doc.cases.map((c) => [c.caseId, c.kind, c.ok]),
+      [
+        ["greet-bob", "bad", true],
+        ["sum-bad", "bad", false],
+        ["sum", "guard", true],
+      ],
+    );
+    assert.match(doc.cases[1]!.problem!, /bad case passes on old \(1\/1\): it doesn't reproduce the failure it was written for/);
+    assert.deepEqual(doc.counts, { bad: { cases: 2, ok: 1 }, guard: { cases: 1, ok: 1 } });
+    const text = cli(h, ["toolevals", "validate", "fake", "--against", "old"]);
+    assert.equal(text.status, 1);
+    assert.match(text.stdout, /2\/3 kinded task\(s\) hold on old \(1 task without a kind skipped\)/);
+    assert.match(text.stderr, /fake\/sum-bad \(bad\): bad case passes on old/);
+
+    r = cli(h, ["toolevals", "validate", "fake", "--against", "old-text", "--json"]);
+    assert.equal(r.status, 2, r.stderr);
+    assert.match(r.stderr, /needs_driver/);
+    assert.match(r.stderr, /changes what the agent reads \(descriptions\)/);
+    r = cli(h, ["toolevals", "validate", "fake", "-k", "2"]);
+    assert.equal(r.status, 2);
+    assert.match(r.stderr, /--k works with --against/);
   });
 
   it("stops at the cost gate without a TTY: action_required, exit 2", () => {
@@ -265,6 +328,26 @@ describe("toolevals CLI", () => {
         ["ok"],
       );
       assert.ok(s.sessions.length >= 1);
+    });
+
+    it("validate --against old-text with a driver reports a bad task that passes on the old text; run splits arms by kind", async () => {
+      const h = tmpHome();
+      writeRepo(h, { providerUrl: p.url });
+      writeKinds(h);
+      const r = await cliAsync(h, ["toolevals", "validate", "fake", "--against", "old-text", "-d", "model:anthropic/fake", "--yes", "--json"], { FAKE_KEY: "k" });
+      assert.equal(r.status, 1, r.stderr);
+      const doc = one(r.stdout, "against agent") as { ok: boolean; mode: string; experimentId: string; cases: { caseId: string; ok: boolean; passes: number; trials: number; problem?: string }[] };
+      assert.equal(doc.mode, "agent");
+      assert.match(doc.experimentId, /^texp_/);
+      const bob = doc.cases.find((c) => c.caseId === "greet-bob")!;
+      assert.equal(bob.ok, false, "the fake model greets bob whatever the text says");
+      assert.match(bob.problem!, /bad case passes on old-text \(1\/1\)/);
+
+      const run = await cliAsync(h, ["toolevals", "run", "fake", "-d", "model:anthropic/fake", "-t", "greet-bob", "-t", "greet-ada", "-k", "1", "--yes", "--json"], { FAKE_KEY: "k" });
+      assert.equal(run.status, 0, run.stderr);
+      const arms = one(run.stdout, "run").arms as { kinds?: Record<string, { cases: number; passed: number; n: number }> }[];
+      assert.deepEqual(Object.keys(arms[0]!.kinds!), ["bad"], "greet-ada has no kind");
+      assert.deepEqual([arms[0]!.kinds!.bad!.cases, arms[0]!.kinds!.bad!.n, arms[0]!.kinds!.bad!.passed], [1, 1, 1]);
     });
 
     it("adaptive samples report verdicts without a CI; --stop-on-regression exits 1 on the first regressed task", async () => {

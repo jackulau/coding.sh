@@ -49,7 +49,7 @@ describe("tool evals against the coding.sh MCP server", () => {
     const target = cfg.targets.get(TARGET) as McpTarget;
     const env = { HOME: join(root, "home"), CODING_SH_HOME: join(root, "surface-data") };
     const s = await measureSurface({ ...target, env }, { name: "base" }, { cwd: root });
-    assert.equal(s.items.length, 22);
+    assert.equal(s.items.length, 25);
     // Every tool definition (name, description, input + output schema) costs context in every turn.
     // 24 KB for 13 tools; harness_compare (the 14th) adds about 1.3 KB, exp_session_summary and
     // exp_session_note about 1.9 KB together. The where query on sessions_list, search and usage
@@ -64,8 +64,12 @@ describe("tool evals against the coding.sh MCP server", () => {
     // session_tree (the 22nd, a whole multi-agent run as one tree with rolled-up totals and the
     // worst node) adds about 2.4 KB. improve's headless argument (headless runs are left out by
     // default) adds about 50 bytes, less the default its description repeated from since.
-    assert.ok(s.surfaceBytes < 37_750, `surface is ${s.surfaceBytes} bytes`);
-    assert.ok(s.descriptionBytes < 10_400, `descriptions are ${s.descriptionBytes} bytes`);
+    // score_list and score_add (typed scores: the one way an agent records a judgement it can
+    // read back) add about 2.85 KB, 0.65 KB of it descriptions. eval_candidates (the 25th: which
+    // sessions would make good repo-replay eval tasks, before eval_init) adds about 1.6 KB, and
+    // usage's baseline argument (published cache-hit baselines per agent) about 0.3 KB.
+    assert.ok(s.surfaceBytes < 42_900, `surface is ${s.surfaceBytes} bytes`);
+    assert.ok(s.descriptionBytes < 11_750, `descriptions are ${s.descriptionBytes} bytes`);
     for (const it of s.items) assert.ok(it.bytes < 4_000, `${it.name} is ${it.bytes} bytes`);
   });
 

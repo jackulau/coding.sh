@@ -1,7 +1,7 @@
 export interface FakeTurn {
   text?: string;
   toolCalls?: { name: string; input?: unknown }[];
-  usage?: { input: number; output: number; cacheRead?: number };
+  usage?: { input: number; output: number; cacheRead?: number; cacheWrite?: number; finalCacheRead?: number; finalCacheWrite?: number };
   status?: number;
   retryAfter?: number;
   message?: string;

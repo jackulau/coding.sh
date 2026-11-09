@@ -1,10 +1,13 @@
 // MCP Streamable HTTP transport (§10). Every message is a POST; the reply is
 // JSON or an SSE stream whose event with the matching id is the response
-// (earlier events are notifications). Legacy mode keeps Mcp-Session-Id and
-// MCP-Protocol-Version; modern mode adds Mcp-Method / Mcp-Name and has no
-// sessions.
-import { parseSse } from "../model/sse.ts";
-import { isObj, isResponse, type RpcNotification, type RpcRequest, type RpcResponse } from "./jsonrpc.ts";
+// (earlier events are notifications, or server → client requests, which are
+// answered with a POST while the stream stays open). Legacy mode keeps
+// Mcp-Session-Id and MCP-Protocol-Version; modern mode adds Mcp-Method /
+// Mcp-Name and has no sessions. A 401 runs OAuth once when an OAuthSession is
+// set (mcp/oauth.ts), then the request is sent again with the token.
+import { parseSse, SseParser } from "../model/sse.ts";
+import { isNotification, isObj, isRequest, isResponse, type RpcNotification, type RpcRequest, type RpcResponse } from "./jsonrpc.ts";
+import type { OAuthSession } from "./oauth.ts";
 import { TimeoutError, type Transport } from "./stdio.ts";
 
 export class HttpStatusError extends Error {
@@ -70,18 +73,29 @@ export class HttpTransport implements Transport {
   /** Called on a 404 with a session id (legacy): re-initialize once, then the request is retried. */
   onSessionExpired?: () => Promise<void>;
   onNotification?: (m: unknown) => void;
+  /** Server → client requests that arrive on a reply stream; the answer is POSTed back. */
+  onRequest?: (m: RpcRequest) => Promise<RpcResponse>;
   private readonly url: string;
   private readonly headers: Record<string, string>;
   private readonly fetchImpl: typeof fetch;
+  private readonly oauth?: OAuthSession;
 
-  constructor(url: string, opts: { headers?: Record<string, string>; fetch?: typeof fetch } = {}) {
+  constructor(url: string, opts: { headers?: Record<string, string>; fetch?: typeof fetch; oauth?: OAuthSession } = {}) {
     this.url = url;
     this.headers = opts.headers ?? {};
     this.fetchImpl = opts.fetch ?? fetch;
+    if (opts.oauth) this.oauth = opts.oauth;
   }
 
-  private buildHeaders(msg: RpcRequest | RpcNotification): Record<string, string> {
+  private buildHeaders(msg: RpcRequest | RpcNotification | RpcResponse): Record<string, string> {
     const h: Record<string, string> = { "Content-Type": "application/json", Accept: "application/json, text/event-stream", ...this.headers };
+    const bearer = this.oauth?.authorization(this.url);
+    if (bearer) h.Authorization = bearer;
+    if (!("method" in msg) || typeof msg.method !== "string") {
+      if (this.sessionId) h["Mcp-Session-Id"] = this.sessionId;
+      if (this.protocolVersion) h["MCP-Protocol-Version"] = this.protocolVersion;
+      return h;
+    }
     if (this.sessionId) h["Mcp-Session-Id"] = this.sessionId;
     if (this.protocolVersion && msg.method !== "initialize") h["MCP-Protocol-Version"] = this.protocolVersion;
     if (this.modern) {
@@ -91,15 +105,56 @@ export class HttpTransport implements Transport {
     return h;
   }
 
-  async post(msg: RpcRequest | RpcNotification, o: { timeoutMs?: number } = {}): Promise<HttpPostResult> {
+  async post(msg: RpcRequest | RpcNotification | RpcResponse, o: { timeoutMs?: number } = {}, authRetried = false): Promise<HttpPostResult> {
     const ctrl = new AbortController();
     const timer = o.timeoutMs ? setTimeout(() => ctrl.abort(), o.timeoutMs) : undefined;
     try {
       const res = await this.fetchImpl(this.url, { method: "POST", headers: this.buildHeaders(msg), body: JSON.stringify(msg), signal: ctrl.signal });
+      if (res.status === 401 && this.oauth && !authRetried) {
+        await res.body?.cancel().catch(() => {});
+        await this.oauth.authorize(this.url, res.headers.get("www-authenticate") ?? "");
+        if (timer) clearTimeout(timer);
+        return await this.post(msg, o, true);
+      }
+      const ct = res.headers.get("content-type") ?? "";
+      if (ct.includes("text/event-stream") && res.body) {
+        // Read the stream as it comes: a server → client request on it waits for our answer.
+        const parser = new SseParser();
+        const dec = new TextDecoder();
+        const messages: unknown[] = [];
+        let text = "";
+        const take = (events: { event?: string; data: string }[]) => {
+          for (const e of events) {
+            if (e.event && e.event !== "message") continue;
+            let m: unknown;
+            try {
+              m = JSON.parse(e.data);
+            } catch {
+              continue;
+            }
+            if (isNotification(m)) {
+              this.onNotification?.(m);
+              continue;
+            }
+            if (isRequest(m) && this.onRequest) {
+              void this.onRequest(m).then((reply) => this.post(reply).catch(() => undefined));
+              continue;
+            }
+            messages.push(m);
+          }
+        };
+        for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+          const s = dec.decode(chunk, { stream: true });
+          text += s;
+          take(parser.push(s));
+        }
+        take(parser.end());
+        return { status: res.status, headers: res.headers, messages, text };
+      }
       const text = await res.text();
-      return { status: res.status, headers: res.headers, messages: parseMcpBody(res.headers.get("content-type") ?? "", text), text };
+      return { status: res.status, headers: res.headers, messages: parseMcpBody(ct, text), text };
     } catch (e) {
-      if (ctrl.signal.aborted) throw new TimeoutError(msg.method, o.timeoutMs ?? 0);
+      if (ctrl.signal.aborted) throw new TimeoutError("method" in msg ? msg.method : "reply", o.timeoutMs ?? 0);
       throw e;
     } finally {
       if (timer) clearTimeout(timer);

@@ -14,7 +14,7 @@ import { defaultConcurrency, pool } from "../runner/experiment.ts";
 import { infraKind, infraStopFor, retryPolicy, withRetries, type InfraStopReport, type RetryPolicy } from "../jobs/retry.ts";
 import { runChecks } from "./checks.ts";
 import { runAgentTrial } from "./drivers/agent.ts";
-import { runModelTrial } from "./drivers/model.ts";
+import { effectiveModelDriver, runModelTrial } from "./drivers/model.ts";
 import { computeMetrics } from "./metrics.ts";
 import { openapiPaths, startHttpTap } from "./tap/http-proxy.ts";
 import { startMcpProxy } from "./tap/mcp-proxy.ts";
@@ -158,6 +158,7 @@ async function runTrialInner(o: TrialOpts): Promise<TrialResult> {
     id: trialId,
     experimentId: o.experimentId,
     taskId: job.task.id,
+    ...(job.task.kind ? { kind: job.task.kind } : {}),
     variant: job.variant.name,
     driver: dKey,
     attempt: job.attempt,
@@ -207,8 +208,9 @@ async function runTrialInner(o: TrialOpts): Promise<TrialResult> {
     }
 
     if (job.driver.kind === "model") {
+      if (job.driver.shell) result.shellModel = `${job.driver.shell.provider}/${job.driver.shell.model}`;
       const out = await runModelTrial({
-        driver: job.driver,
+        driver: effectiveModelDriver(job.driver, job.variant),
         task: job.task,
         target,
         sandbox: sb,
@@ -345,7 +347,7 @@ export async function runToolExperiment(o: ExperimentOpts): Promise<{ experiment
     variants: o.variants,
     drivers: o.drivers.map(driverKey),
     arms,
-    tasks: o.tasks.map((t) => ({ id: t.id, split: t.split, source: t.source })),
+    tasks: o.tasks.map((t) => ({ id: t.id, split: t.split, source: t.source, ...(t.kind ? { kind: t.kind } : {}) })),
     k,
     ...(adaptive ? { samples: "adaptive" } : {}),
     ...(o.meta ?? {}),

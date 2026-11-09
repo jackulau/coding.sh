@@ -6,7 +6,8 @@ import type { AgentEvent, Usage } from "../schema/index.ts";
 import { matchAny } from "../runner/glob.ts";
 import { classifyToolStart, shellUse } from "./classify.ts";
 import type { Budget, Prices, TapRecord, Target, ToolMetrics, ToolTask } from "./types.ts";
-import { estimateCost } from "../core/pricing.ts";
+import { costFrom, estimateCost } from "../core/pricing.ts";
+import type { OutputCut } from "./model/cap.ts";
 
 export { estimateCost };
 
@@ -135,10 +136,12 @@ export function computeMetrics(i: MetricsInput): ToolMetrics {
 
   // ---- turns
   const llm = events.filter((e) => e.kind === "llm.call" && e.payload.ok !== false);
+  // Model calls made for an MCP server (sampling) or a simulated shell are not agent turns; their usage still counts.
+  const agentLlm = llm.filter((e) => e.payload.purpose === undefined);
   let turns: number;
   let turnsSource: ToolMetrics["turnsSource"];
   if (llm.length) {
-    turns = llm.length;
+    turns = agentLlm.length;
     turnsSource = "llm.call";
   } else {
     const msgs = new Set(events.filter((e) => e.kind === "assistant.message").map((e) => (typeof e.payload.messageId === "string" ? e.payload.messageId : e.id)));
@@ -251,12 +254,14 @@ export function computeMetrics(i: MetricsInput): ToolMetrics {
     if (!Object.keys(usage).length) addUsage(usage, i.run.usage);
   }
   let costUsd: number | null = null;
+  let flatCostUsd: number | null = null;
   let costSource: ToolMetrics["costSource"] = "none";
   if (typeof usage.costUsd === "number") {
     costUsd = usage.costUsd;
     costSource = "reported";
   } else {
     let total = 0;
+    let flat = 0;
     let priced = false;
     const byModel = new Map<string, Usage>();
     const source = llm.length ? llm : events.filter((e) => e.usage);
@@ -272,18 +277,46 @@ export function computeMetrics(i: MetricsInput): ToolMetrics {
       if (c !== undefined) {
         total += c;
         priced = true;
+        // Flat pricing: what the same tokens cost if cache reads and writes were billed as input.
+        const p = i.prices![m]!;
+        flat += costFrom(u, { input: p.input, output: p.output, cacheRead: p.input, cacheWrite: p.input, cacheWrite1h: p.input });
       }
     }
     if (priced) {
       costUsd = total;
+      flatCostUsd = flat;
       costSource = "estimated";
+    }
+  }
+  const promptTokens = (usage.inputTokens ?? 0) + (usage.cacheReadTokens ?? 0) + (usage.cacheWriteTokens ?? 0);
+  const cacheReadShare = promptTokens > 0 ? (usage.cacheReadTokens ?? 0) / promptTokens : null;
+
+  // ---- output cuts (model driver: tool.end carries `cut` when the cap changed a result)
+  const toolEnds = events.filter((e) => e.kind === "tool.end");
+  let outputCuts = 0;
+  let brokenJsonCuts = 0;
+  const delivery = new Map<string, { n: number; kept: number }>();
+  for (const e of toolEnds) {
+    const cut = e.payload.cut as OutputCut | undefined;
+    if (!cut || typeof cut !== "object") continue;
+    outputCuts++;
+    if (cut.json && !cut.jsonValid) brokenJsonCuts++;
+    if (cut.json && Array.isArray(cut.topKeys)) {
+      const kept = new Set(cut.topKeysKept ?? []);
+      for (const k of cut.topKeys) {
+        const key = `${String(e.payload.tool ?? "")}.${k}`;
+        const d = delivery.get(key) ?? { n: 0, kept: 0 };
+        d.n++;
+        if (kept.has(k)) d.kept++;
+        delivery.set(key, d);
+      }
     }
   }
   const tokens = totalTokens(usage);
 
   // ---- latency
-  const llmMs = llm.map((e) => num(e.durationMs)).filter((x): x is number => x !== undefined);
-  const ttft = llm.map((e) => num(e.payload.ttftMs)).filter((x): x is number => x !== undefined);
+  const llmMs = agentLlm.map((e) => num(e.durationMs)).filter((x): x is number => x !== undefined);
+  const ttft = agentLlm.map((e) => num(e.payload.ttftMs)).filter((x): x is number => x !== undefined);
   const targetMs = calls.map((r) => r.durationMs).filter((x) => Number.isFinite(x));
   const lat = latencyStats(events);
 
@@ -335,7 +368,13 @@ export function computeMetrics(i: MetricsInput): ToolMetrics {
     subagentTargetCalls,
     subagentTokenShare,
     tapCoverage: target.kind === "cli" && shellInvocations > 0 ? tap.length / shellInvocations : null,
+    outputCuts,
+    outputCutRate: toolEnds.length ? outputCuts / toolEnds.length : null,
+    brokenJsonCuts,
+    cacheReadShare,
+    flatCostUsd,
   };
+  if (delivery.size) m.fieldDelivery = Object.fromEntries([...delivery].sort(([a], [b]) => a.localeCompare(b)).map(([k, d]) => [k, d.kept / d.n]));
   if (budgetExceeded) m.budgetExceeded = budgetExceeded;
   const set = (k: "llmP50Ms" | "llmP95Ms" | "ttftP50Ms" | "ttftP95Ms" | "targetLatencyP50Ms" | "targetLatencyP95Ms" | "toolLatencyP95Ms", v: number | undefined) => {
     if (v !== undefined) m[k] = v;

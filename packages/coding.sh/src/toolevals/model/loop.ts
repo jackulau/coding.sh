@@ -54,6 +54,7 @@ export function createConversation(o: LoopOpts): Conversation {
     baseUrl: o.driver.baseUrl,
     maxOutputTokens: o.driver.maxOutputTokens,
     temperature: o.driver.temperature,
+    promptCache: o.driver.promptCache !== false,
     fetch: o.fetch,
   };
   if (o.driver.provider === "anthropic") return anthropicConversation(init);
@@ -191,7 +192,11 @@ export async function runModelLoop(o: LoopOpts): Promise<LoopResult> {
         const t0 = performance.now();
         const r = await o.tools.exec(call);
         const durationMs = Math.round((performance.now() - t0) * 10) / 10;
-        ev("tool.end", { tool: name, toolUseId: call.id, ok: !r.isError, durationMs, output: r.content.slice(0, OUTPUT_INLINE), outputBytes: Buffer.byteLength(r.content, "utf8") }, { durationMs });
+        const delivered = Buffer.byteLength(r.content, "utf8");
+        // outputBytes is what the tool returned; a cut also records what the model got.
+        const end: Record<string, unknown> = { tool: name, toolUseId: call.id, ok: !r.isError, durationMs, output: r.content.slice(0, OUTPUT_INLINE), outputBytes: r.cut ? r.cut.originalBytes : delivered, ...(r.meta ?? {}) };
+        if (r.cut) Object.assign(end, { deliveredBytes: delivered, cut: r.cut });
+        ev("tool.end", end, { durationMs });
         results.push({ id: call.id, content: r.content, isError: r.isError });
       }
       conv.pushToolResults(turn, results);

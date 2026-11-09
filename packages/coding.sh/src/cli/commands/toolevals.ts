@@ -11,7 +11,7 @@ import { list, num, str, withContext } from "../common.ts";
 import { ASK_USER, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { infraStopNote, retryFlag } from "../jobs.ts";
-import { CONFIG_FILE, loadToolEvals, markTaskValidated, parseDriver, ToolEvalsConfigError, VALIDATED_EDIT, type ToolEvalsConfig } from "../../toolevals/config.ts";
+import { CONFIG_FILE, loadToolEvals, markTaskValidated, parseDriver, ToolEvalsConfigError, VALIDATED_EDIT, withShellModel, type ToolEvalsConfig } from "../../toolevals/config.ts";
 import type { Driver, SurfaceReport, Target, ToolTask, TrialResult, Variant } from "../../toolevals/types.ts";
 
 export async function run(c: CommandContext): Promise<number> {
@@ -31,6 +31,8 @@ export async function run(c: CommandContext): Promise<number> {
         return await compress(c);
       case "show":
         return await show(c);
+      case "traces":
+        return await traces(c);
       default:
         throw new UsageError(`Unknown command toolevals ${c.action ?? ""}`.trim());
     }
@@ -293,6 +295,8 @@ async function surface(c: CommandContext): Promise<number> {
 // ------------------------------------------------------------ validate
 
 async function validate(c: CommandContext): Promise<number> {
+  if (c.flags.against !== undefined) return validateAgainst(c);
+  for (const f of ["driver", "k"] as const) if (c.flags[f] !== undefined) throw new UsageError(`--${f} works with --against <variant>`, { reason: "invalid_argument" });
   const { cfg } = await loadRepo(c);
   const targets = c.positionals[0] ? [pickTarget(cfg, c.positionals[0])] : [...cfg.targets.values()];
   const { validateToolTask } = await import("../../toolevals/validate.ts");
@@ -336,11 +340,124 @@ async function validate(c: CommandContext): Promise<number> {
 
 // ------------------------------------------------------------ run
 
+/**
+ * TB-12: check kinded tasks on the variant they were written against. A bad
+ * task must fail there, a guard or control must pass. Without --driver the
+ * reference commands run on the variant (a different build, env or URL); a
+ * variant that changes only what the agent reads needs agent trials.
+ */
+async function validateAgainst(c: CommandContext): Promise<number> {
+  const { out } = c;
+  const { root, cfg } = await loadRepo(c);
+  const target = pickTarget(cfg, c.positionals[0]);
+  const variantName = str(c.flags.against);
+  if (!variantName) throw new UsageError("--against needs a variant name", { reason: "missing_argument" });
+  const variant = pickVariant(cfg, target.name, variantName);
+  const { againstRows, agentFacingFields, referenceAgainst } = await import("../../toolevals/validate.ts");
+  const { checkAgainst } = await import("../../datasets/kinds.ts");
+  const all = cfg.tasks.filter((t) => t.target === target.name);
+  const tasks = all.filter((t): t is ToolTask & { kind: NonNullable<ToolTask["kind"]> } => t.kind !== undefined);
+  if (!tasks.length)
+    throw new CliError(`No task of ${target.name} has a kind`, { reason: "no_tasks", next: [`Add kind = "bad" (or "guard", "control") to a task under ${join(root, "evals", "toolevals", target.name, "tasks")}`] });
+  const driverFlags = list(c.flags.driver);
+  const agentOnly = agentFacingFields(variant);
+  if (!driverFlags.length && agentOnly.length)
+    throw new UsageError(`Variant ${variant.name} changes what the agent reads (${agentOnly.join(", ")}); its reference commands can't fail on that. Pass --driver to run agent trials`, { reason: "needs_driver" });
+  if (!driverFlags.length && c.flags.k !== undefined) throw new UsageError("-k sets agent trials; pass --driver too", { reason: "invalid_argument" });
+  let rows: import("../../datasets/kinds.ts").AgainstRow[];
+  let experimentId: string | undefined;
+  let mode: "reference" | "agent";
+  if (!driverFlags.length) {
+    mode = "reference";
+    const { toolevalsRoot } = await import("../../toolevals/experiment.ts");
+    const { sortableId } = await import("../../core/ids.ts");
+    const tmp = join(toolevalsRoot(c.env), sortableId("against_"));
+    await mkdir(tmp, { recursive: true });
+    rows = [];
+    try {
+      for (const t of tasks) {
+        const spin = out.spin(`Reference ${t.id} on ${variant.name}…`);
+        rows.push(await referenceAgainst(t, target, { root: tmp, variant, env: c.env }));
+        spin.stop();
+      }
+    } finally {
+      await rm(tmp, { recursive: true, force: true }).catch(() => {});
+    }
+  } else {
+    mode = "agent";
+    const drivers = parseDrivers(c, cfg, driverFlags);
+    await checkAgents(drivers);
+    const k = positiveInt(c.flags.k, "k") ?? 1;
+    const trials = tasks.length * drivers.length * k;
+    const estimate = tasks.reduce((a, t) => a + trialUsd(cfg, t), 0) * drivers.length * k;
+    out.note(`${plural(trials, "trial")} (${plural(tasks.length, "kinded task")} on ${variant.name} x ${plural(drivers.length, "driver")} x k=${k}), estimated ${usd(estimate)}`);
+    const stop = await costGate(c, cfg, estimate, `coding.sh toolevals validate ${target.name} --against ${variant.name} ${driverFlags.map((d) => `--driver ${d}`).join(" ")} --yes`);
+    if (stop !== undefined) return stop;
+    const { runToolExperiment, toolevalsRoot } = await import("../../toolevals/experiment.ts");
+    const { getAdapter } = await import("../../adapters/index.ts");
+    const r = await withContext(c, async (ctx) => {
+      const spin = out.spin(`Running 0/${trials}…`);
+      try {
+        return await runToolExperiment({
+          tasks,
+          target,
+          variants: [variant],
+          drivers,
+          k,
+          adapterFor: (a) => getAdapter(a)!,
+          index: ctx.index,
+          blobs: ctx.blobs,
+          root: toolevalsRoot(c.env),
+          ingest: () => ctx.ingest(),
+          prices: cfg.prices,
+          env: c.env,
+          bundleFor: (ref) => ctx.index.getBundle(ref),
+          meta: { repoRoot: root, against: variant.name },
+          signal: c.signal,
+          onProgress: (done, total) => spin.update(`Running ${done}/${total}…`),
+        });
+      } finally {
+        spin.stop();
+      }
+    });
+    if (r.cancelled) {
+      if (out.json) out.data({ outcome: "cancelled", experimentId: r.experimentId, dir: r.dir, trials: r.trials.length, total: trials });
+      else out.warn(`Cancelled after ${r.trials.length}/${trials} trials; finished trials are in ${r.dir}`);
+      return 1;
+    }
+    experimentId = r.experimentId;
+    rows = againstRows(tasks, r.trials);
+  }
+  const report = checkAgainst(rows, variant.name);
+  const untagged = all.length - tasks.length;
+  if (out.json) out.data({ ok: report.ok, target: target.name, variant: variant.name, mode, ...(experimentId ? { experimentId } : {}), counts: report.counts, cases: report.cases, untagged });
+  else {
+    for (const x of report.cases) {
+      if (x.ok) out.ok(`${target.name}/${x.caseId} (${x.kind}) ${x.kind === "bad" ? "fails" : "passes"} on ${variant.name}${x.trials > 1 ? ` (${x.passes}/${x.trials} pass)` : ""}`);
+      else out.fail(`${target.name}/${x.caseId} (${x.kind}): ${x.problem}`);
+    }
+    const held = report.cases.filter((x) => x.ok).length;
+    out.print(`${held}/${report.cases.length} kinded task(s) hold on ${variant.name}${untagged ? ` (${plural(untagged, "task")} without a kind skipped)` : ""}`);
+    if (experimentId) out.print(experimentId);
+  }
+  return report.ok ? 0 : 1;
+}
+
 async function runAction(c: CommandContext): Promise<number> {
   const { out } = c;
   const { root, cfg } = await loadRepo(c);
   const target = pickTarget(cfg, c.positionals[0]);
-  const drivers = parseDrivers(c, cfg, list(c.flags.driver));
+  let drivers = parseDrivers(c, cfg, list(c.flags.driver));
+  const shellModel = str(c.flags["shell-model"]);
+  if (shellModel !== undefined) {
+    if (target.kind !== "cli") throw new UsageError(`--shell-model simulates the shell tool of a CLI target; ${target.name} is ${target.kind}`, { reason: "unsupported_target" });
+    if (!/^(anthropic|openai|openai-chat)\/.+/.test(shellModel)) throw new UsageError(`--shell-model must be <anthropic|openai|openai-chat>/<model>, got ${JSON.stringify(shellModel)}`, { reason: "invalid_argument" });
+    const agent = drivers.find((d) => d.kind === "agent");
+    if (agent) throw new UsageError(`--shell-model works with model drivers only; drop --driver agent:${agent.kind === "agent" ? agent.agent : ""}`, { reason: "invalid_driver" });
+    drivers = drivers.map((d) => withShellModel(d, shellModel, cfg.drivers));
+    const sim = drivers[0]?.kind === "model" ? drivers[0].shell : undefined;
+    if (sim && !c.env[sim.apiKeyEnv]) throw new CliError(`Shell model ${shellModel} needs $${sim.apiKeyEnv}`, { reason: "missing_api_key", next: [`Export ${sim.apiKeyEnv}, or set apiKeyEnv under [toolevals.drivers."model:${shellModel}"]`] });
+  }
   const variantNames = list(c.flags.variant);
   const variants = (variantNames.length ? variantNames : ["base"]).map((v) => pickVariant(cfg, target.name, v));
   const adaptive = str(c.flags.samples) === "adaptive";
@@ -375,7 +492,7 @@ async function runAction(c: CommandContext): Promise<number> {
       : `${plural(trials, "trial")} (${plural(tasks.length, "task")} x ${plural(arms, "arm")} x k=${k}), estimated ${usd(estimate)}`,
   );
   if (drafts) out.warn(`${plural(drafts, "task")} still draft; run coding.sh toolevals validate ${target.name} to check them and mark the passing ones ${VALIDATED_EDIT}`);
-  const stop = await costGate(c, cfg, estimate, `coding.sh toolevals run ${target.name} ${list(c.flags.driver).map((d) => `--driver ${d}`).join(" ")} --yes`);
+  const stop = await costGate(c, cfg, estimate, `coding.sh toolevals run ${target.name} ${list(c.flags.driver).map((d) => `--driver ${d}`).join(" ")}${shellModel ? ` --shell-model ${shellModel}` : ""} --yes`);
   if (stop !== undefined) return stop;
 
   const { runToolExperiment, toolevalsRoot } = await import("../../toolevals/experiment.ts");
@@ -617,3 +734,69 @@ async function show(c: CommandContext): Promise<number> {
   });
 }
 
+
+// ------------------------------------------------------------ traces
+
+async function traces(c: CommandContext): Promise<number> {
+  const name = c.positionals[0];
+  if (!name) throw new UsageError("Name a target or MCP server: coding.sh toolevals traces <target> --sessions 'since:30d'", { reason: "missing_argument" });
+  const from = str(c.flags.from);
+  const sessions = str(c.flags.sessions);
+  const arm = str(c.flags.arm);
+  if (from === undefined && sessions === undefined) throw new UsageError("Pass --from <experimentId>, --sessions '<filter>', or both", { reason: "missing_argument" });
+  if (arm !== undefined && from === undefined) throw new UsageError("--arm picks an arm of --from <experimentId>", { reason: "invalid_argument" });
+  const root = findRepoRoot(c.cwd);
+  const cfg = root ? await loadToolEvals(root) : undefined;
+  const target = cfg?.targets.get(name);
+  const server = str(c.flags.server) ?? name;
+  const { buildTraceWorkspace, formatHealth, TraceError, writeTraceWorkspace } = await import("../../toolevals/traces.ts");
+  const { loadExperiment, toolevalsRoot } = await import("../../toolevals/experiment.ts");
+  let experiment: { id: string; meta: Record<string, unknown>; trials: TrialResult[] } | undefined;
+  if (from !== undefined) {
+    try {
+      experiment = { id: from, ...(await loadExperiment(from, toolevalsRoot(c.env))) };
+    } catch {
+      throw new CliError(`Can't find tool-eval experiment ${JSON.stringify(from)}`, { reason: "not_found", next: [`Experiments live in ${toolevalsRoot(c.env)}`] });
+    }
+    const expTarget = (experiment.meta.target as { name?: string } | undefined)?.name;
+    if (expTarget && expTarget !== name) c.out.warn(`experiment ${from} ran target ${expTarget}, not ${name}`);
+  }
+  // The server's tools (base variant, or the arm's), for neverCalled and tools.json.
+  let tools: import("../../toolevals/types.ts").McpTool[] | undefined;
+  if (target?.kind === "mcp" && !c.flags["no-tools"]) {
+    const variantName = arm ? arm.slice(0, arm.indexOf("@")) : "base";
+    const variant = cfg!.variants.get(target.name)?.get(variantName) ?? { name: variantName };
+    const { connectMcp } = await import("../../toolevals/mcp/client.ts");
+    const { applyToolOverrides } = await import("../../toolevals/tap/mcp-proxy.ts");
+    try {
+      const env = { ...(target.env ?? {}), ...(variant.env ?? {}) };
+      const client = await connectMcp(target.transport === "stdio" ? { stdio: variant.command ?? target.command, env, cwd: root } : { url: variant.url ?? target.url, headers: target.headers });
+      try {
+        tools = applyToolOverrides(await client.listTools(), variant);
+      } finally {
+        await client.close();
+      }
+    } catch (e) {
+      c.out.warn(`couldn't list ${target.name}'s tools (${e instanceof Error ? e.message : String(e)}); tools.json is empty and neverCalled is unknown`);
+    }
+  }
+  return withContext(c, async (ctx) => {
+    let ws;
+    try {
+      ws = await buildTraceWorkspace({ index: ctx.index, blobs: ctx.blobs, server, ...(experiment ? { experiment } : {}), ...(arm ? { arm } : {}), ...(sessions !== undefined ? { sessions } : {}), ...(tools ? { tools } : {}), ...(c.flags.max !== undefined ? { maxTraces: positiveInt(c.flags.max, "max") } : {}) });
+    } catch (e) {
+      if (e instanceof TraceError) throw new CliError(e.message, { reason: e.reason });
+      throw e;
+    }
+    const outDir = str(c.flags.out);
+    if (outDir) await writeTraceWorkspace(ws, resolve(c.cwd, outDir));
+    for (const n of ws.notes) c.out.warn(n);
+    if (c.out.json) c.out.data({ server: ws.server, matched: ws.matched, health: ws.health, traces: ws.traces.map(({ markdown: _m, ...t }) => t), notes: ws.notes, ...(outDir ? { out: resolve(c.cwd, outDir) } : {}) });
+    else {
+      if (!ws.matched) c.out.print(`No traces call ${server}. Sessions name MCP tools mcp__<server>__<tool>; pass --server if the agent registered it under another name.`);
+      else c.out.print(formatHealth(ws).trimEnd());
+      if (outDir) c.out.print(`\nWrote ${plural(ws.traces.length, "trace")} to ${resolve(c.cwd, outDir)}`);
+    }
+    return 0;
+  });
+}

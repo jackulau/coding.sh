@@ -7,9 +7,11 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parseToml, type TomlTable } from "../core/toml.ts";
+import { isCaseKind } from "../datasets/kinds.ts";
 import { callsSpecProblems } from "./calls.ts";
+import { outputCapProblems, type OutputCapConfig } from "./model/cap.ts";
 import { DEFAULT_USAGE_PATTERNS } from "./tap/cli.ts";
-import type { Budget, Check, Driver, Prices, StateAssertion, Target, ToolTask, Variant } from "./types.ts";
+import type { Budget, Check, Driver, McpOAuth, Prices, StateAssertion, Target, TaskMcp, ToolTask, Variant } from "./types.ts";
 
 export const CONFIG_FILE = "coding.sh.toml";
 
@@ -20,6 +22,26 @@ export interface DriverConfig {
   maxOutputTokens?: number;
   temperature?: number;
   flags?: string[];
+  /** Model drivers: tool-output cap. */
+  outputCap?: OutputCapConfig;
+  /** Model drivers (Anthropic): automatic prompt caching, default true. */
+  promptCache?: boolean;
+  /** Model drivers used as a simulated shell: the date the machine reports. */
+  shellDate?: string;
+}
+
+/** A validated `outputCap` table; throws with `where` on a bad one. */
+export function parseOutputCap(v: unknown, where: string): OutputCapConfig {
+  const problems = outputCapProblems(v);
+  if (problems.length) throw new ToolEvalsConfigError(`${where}: ${problems.join("; ")}`);
+  const t = v as TomlTable;
+  return { ...(t.mode !== undefined ? { mode: t.mode as OutputCapConfig["mode"] } : {}), ...(t.maxBytes !== undefined ? { maxBytes: t.maxBytes as number } : {}) };
+}
+
+function parsePromptCache(v: unknown, where: string): boolean | undefined {
+  if (v === undefined) return undefined;
+  if (typeof v !== "boolean") throw new ToolEvalsConfigError(`${where}: promptCache must be true or false, got ${JSON.stringify(v)}`);
+  return v;
 }
 
 export interface ToolEvalsConfig {
@@ -78,7 +100,8 @@ export function parseTarget(name: string, t: TomlTable, where: string): Target {
     if (t.transport === "http" || (t.transport === undefined && typeof t.url === "string")) {
       if (typeof t.url !== "string") throw new ToolEvalsConfigError(`${where}: mcp target ${name} needs url`);
       const headers = strMap(t.headers);
-      return { ...base, ...extra, kind: "mcp", transport: "http", url: t.url, ...(Object.keys(headers).length ? { headers } : {}) };
+      const oauth = t.oauth === undefined ? undefined : parseOAuth(t.oauth, `${where}: mcp target ${name} oauth`);
+      return { ...base, ...extra, kind: "mcp", transport: "http", url: t.url, ...(Object.keys(headers).length ? { headers } : {}), ...(oauth ? { oauth } : {}) };
     }
     const command = strs(t.command);
     if (!command?.length) throw new ToolEvalsConfigError(`${where}: mcp target ${name} needs command (stdio) or url (http)`);
@@ -171,6 +194,50 @@ function parseCheck(c: unknown, where: string): Check {
 }
 
 /** One task from a parsed TOML table or JSONL object. */
+function parseOAuth(v: unknown, where: string): McpOAuth {
+  if (!isTable(v)) throw new ToolEvalsConfigError(`${where} must be a table`);
+  const known = new Set(["clientId", "clientSecretEnv", "scope", "grant", "redirectUri"]);
+  for (const k of Object.keys(v)) if (!known.has(k)) throw new ToolEvalsConfigError(`${where}: unknown key ${k} (known: ${[...known].join(", ")})`);
+  for (const k of ["clientId", "clientSecretEnv", "scope", "redirectUri"] as const) if (v[k] !== undefined && typeof v[k] !== "string") throw new ToolEvalsConfigError(`${where}.${k} must be a string`);
+  if (v.grant !== undefined && v.grant !== "authorization_code" && v.grant !== "client_credentials") throw new ToolEvalsConfigError(`${where}.grant must be "authorization_code" or "client_credentials"`);
+  return v as McpOAuth;
+}
+
+/** A task's [mcp] table: prompt, elicitation answers, roots. */
+export function parseTaskMcp(v: unknown, where: string): TaskMcp {
+  if (!isTable(v)) throw new ToolEvalsConfigError(`${where}: mcp must be a table`);
+  const out: TaskMcp = {};
+  for (const k of Object.keys(v)) if (!["prompt", "elicitation", "roots"].includes(k)) throw new ToolEvalsConfigError(`${where}: unknown key mcp.${k} (known: prompt, elicitation, roots)`);
+  if (v.prompt !== undefined) {
+    const p = v.prompt;
+    if (!isTable(p) || typeof p.name !== "string" || !p.name) throw new ToolEvalsConfigError(`${where}: mcp.prompt needs name`);
+    if (p.arguments !== undefined && (!isTable(p.arguments) || !Object.values(p.arguments).every((x) => typeof x === "string"))) throw new ToolEvalsConfigError(`${where}: mcp.prompt.arguments must be a table of strings`);
+    out.prompt = { name: p.name, ...(p.arguments ? { arguments: p.arguments as Record<string, string> } : {}) };
+  }
+  if (v.elicitation !== undefined) {
+    if (!Array.isArray(v.elicitation)) throw new ToolEvalsConfigError(`${where}: mcp.elicitation must be a list of { match?, action, content? }`);
+    out.elicitation = v.elicitation.map((a, i) => {
+      if (!isTable(a) || (a.action !== "accept" && a.action !== "decline" && a.action !== "cancel")) throw new ToolEvalsConfigError(`${where}: mcp.elicitation[${i}].action must be accept, decline or cancel`);
+      if (a.match !== undefined) {
+        if (typeof a.match !== "string") throw new ToolEvalsConfigError(`${where}: mcp.elicitation[${i}].match must be a regex string`);
+        try {
+          new RegExp(a.match);
+        } catch {
+          throw new ToolEvalsConfigError(`${where}: mcp.elicitation[${i}].match is not a valid regex`);
+        }
+      }
+      if (a.content !== undefined && !isTable(a.content)) throw new ToolEvalsConfigError(`${where}: mcp.elicitation[${i}].content must be a table`);
+      return { action: a.action, ...(typeof a.match === "string" ? { match: a.match } : {}), ...(a.content ? { content: a.content as Record<string, unknown> } : {}) };
+    });
+  }
+  if (v.roots !== undefined) {
+    const roots = strs(v.roots);
+    if (!roots) throw new ToolEvalsConfigError(`${where}: mcp.roots must be a list of paths`);
+    out.roots = roots;
+  }
+  return out;
+}
+
 export function parseTask(t: TomlTable | Record<string, unknown>, source: string, defaults: { target?: string; suiteDir?: string } = {}): ToolTask {
   const where = source;
   const id = typeof t.id === "string" ? t.id : undefined;
@@ -194,9 +261,14 @@ export function parseTask(t: TomlTable | Record<string, unknown>, source: string
     status: t.status === "draft" ? "draft" : t.status === "validated" ? "validated" : "draft",
     source,
   };
+  if (t.kind !== undefined) {
+    if (!isCaseKind(t.kind)) throw new ToolEvalsConfigError(`${where}: task ${id} has kind ${JSON.stringify(t.kind)}; use bad, guard or control`);
+    task.kind = t.kind;
+  }
   const reference = strs(t.reference);
   if (reference) task.reference = reference;
   if (isTable(t.expect) && typeof t.expect.minTargetCalls === "number") task.expect = { minTargetCalls: t.expect.minTargetCalls };
+  if (t.mcp !== undefined) task.mcp = parseTaskMcp(t.mcp, `${where}: task ${id}`);
   if (defaults.suiteDir) task.suiteDir = defaults.suiteDir;
   return task;
 }
@@ -330,6 +402,9 @@ async function loadVariants(dir: string, problems: string[]): Promise<Map<string
         if (isTable(t.env)) v.env = strMap(t.env);
         if (typeof t.url === "string") v.url = t.url;
         if (typeof t.bundle === "string") v.bundle = t.bundle;
+        if (t.outputCap !== undefined) v.outputCap = parseOutputCap(t.outputCap, join(vdir, f.name));
+        const pc = parsePromptCache(t.promptCache, join(vdir, f.name));
+        if (pc !== undefined) v.promptCache = pc;
         if (strs(t.hideTools)) v.hideTools = strs(t.hideTools);
         if (isTable(t.descriptions)) v.descriptions = strMap(t.descriptions);
         out.set(name, v);
@@ -381,6 +456,9 @@ export async function loadToolEvals(repoRoot: string): Promise<ToolEvalsConfig> 
         ...(typeof d.maxOutputTokens === "number" ? { maxOutputTokens: d.maxOutputTokens } : {}),
         ...(typeof d.temperature === "number" ? { temperature: d.temperature } : {}),
         ...(strs(d.flags) ? { flags: strs(d.flags) } : {}),
+        ...(d.outputCap !== undefined ? { outputCap: parseOutputCap(d.outputCap, `${file} [toolevals.drivers."${k}"]`) } : {}),
+        ...(d.promptCache !== undefined ? { promptCache: parsePromptCache(d.promptCache, `${file} [toolevals.drivers."${k}"]`) } : {}),
+        ...(typeof d.shellDate === "string" ? { shellDate: d.shellDate } : {}),
       };
     }
   }
@@ -419,5 +497,20 @@ export function parseDriver(s: string, cfg: Record<string, DriverConfig> = {}): 
     ...(c.system ? { system: c.system } : {}),
     ...(c.maxOutputTokens !== undefined ? { maxOutputTokens: c.maxOutputTokens } : {}),
     ...(c.temperature !== undefined ? { temperature: c.temperature } : {}),
+    ...(c.outputCap ? { outputCap: c.outputCap } : {}),
+    ...(c.promptCache !== undefined ? { promptCache: c.promptCache } : {}),
   };
+}
+
+/**
+ * A model driver with a simulated shell (`--shell-model <provider/model>`).
+ * The shell model's own `[toolevals.drivers."model:<provider>/<model>"]`
+ * table supplies its apiKeyEnv, baseUrl and shellDate.
+ */
+export function withShellModel(d: Driver, shellModel: string, cfg: Record<string, DriverConfig> = {}): Driver {
+  if (d.kind !== "model") throw new ToolEvalsConfigError(`--shell-model works with model drivers; ${d.agent} is an agent driver`);
+  const s = parseDriver(`model:${shellModel}`, cfg);
+  if (s.kind !== "model") throw new ToolEvalsConfigError(`shell model ${JSON.stringify(shellModel)} must be <anthropic|openai|openai-chat>/<model>`);
+  const date = cfg[`model:${shellModel}`]?.shellDate;
+  return { ...d, shell: { provider: s.provider, model: s.model, apiKeyEnv: s.apiKeyEnv, ...(s.baseUrl ? { baseUrl: s.baseUrl } : {}), ...(date ? { date } : {}) } };
 }

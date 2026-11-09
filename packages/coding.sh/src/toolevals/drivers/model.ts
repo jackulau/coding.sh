@@ -6,11 +6,24 @@ import { currentAbortSignal } from "../../core/children.ts";
 import { buildSession } from "../../core/sessions.ts";
 import type { AgentRunOutput, IndexStore } from "../../core/types.ts";
 import type { AgentEvent } from "../../schema/index.ts";
-import { connectMcp, type McpClient, type McpConnectSpec } from "../mcp/client.ts";
+import { connectMcp, promptText, type McpClient, type McpConnectSpec } from "../mcp/client.ts";
+import { OAuthSession } from "../mcp/oauth.ts";
+import { mcpHandlers } from "../model/mcp-handlers.ts";
 import { runModelLoop, type LoopResult } from "../model/loop.ts";
 import { buildToolRuntime } from "../model/tools.ts";
+import { simulatedShell, type SimulatedShell } from "../model/shell-sim.ts";
 import type { Sandbox } from "../sandbox.ts";
-import type { Driver, Prices, Target, ToolTask } from "../types.ts";
+import type { Driver, Prices, Target, ToolTask, Variant } from "../types.ts";
+
+type ModelDriver = Extract<Driver, { kind: "model" }>;
+
+/** The driver a variant runs with: its outputCap and promptCache win over the driver's. The driver key does not change. */
+export function effectiveModelDriver(d: ModelDriver, v: Pick<Variant, "outputCap" | "promptCache">): ModelDriver {
+  const out: ModelDriver = { ...d };
+  if (v.outputCap) out.outputCap = { ...(d.outputCap ?? {}), ...v.outputCap };
+  if (v.promptCache !== undefined) out.promptCache = v.promptCache;
+  return out;
+}
 
 export interface ModelTrialOpts {
   driver: Extract<Driver, { kind: "model" }>;
@@ -36,6 +49,23 @@ function fetchWithSignal(f: typeof fetch, signal: AbortSignal | undefined): type
   return (input, init) => f(input, { ...init, signal: init?.signal ? AbortSignal.any([init.signal, signal]) : signal });
 }
 
+/** OAuth sessions per HTTP target, so the client registers once per run. */
+const oauthSessions = new Map<string, OAuthSession>();
+
+function oauthFor(target: Target, env: NodeJS.ProcessEnv, f: typeof fetch): OAuthSession | undefined {
+  if (target.kind !== "mcp" || target.transport !== "http") return undefined;
+  const cfg = target.oauth ?? {};
+  const key = JSON.stringify([target.url, cfg]);
+  let s = oauthSessions.get(key);
+  if (!s) {
+    const secret = cfg.clientSecretEnv ? env[cfg.clientSecretEnv] : undefined;
+    if (cfg.clientSecretEnv && !secret) throw new Error(`MCP target ${target.name} oauth needs $${cfg.clientSecretEnv}`);
+    s = new OAuthSession({ ...(cfg.clientId ? { clientId: cfg.clientId } : {}), ...(secret ? { clientSecret: secret } : {}), ...(cfg.scope ? { scope: cfg.scope } : {}), ...(cfg.grant ? { grant: cfg.grant } : {}), ...(cfg.redirectUri ? { redirectUri: cfg.redirectUri } : {}), fetch: f });
+    oauthSessions.set(key, s);
+  }
+  return s;
+}
+
 export type ModelTrialOutput = AgentRunOutput & { finalText: string; loop: LoopResult; events: AgentEvent[] };
 
 export async function runModelTrial(o: ModelTrialOpts): Promise<ModelTrialOutput> {
@@ -50,12 +80,27 @@ export async function runModelTrial(o: ModelTrialOpts): Promise<ModelTrialOutput
   try {
     if (o.target.kind === "mcp") {
       if (!o.mcp) throw new Error("MCP target needs the tap proxy (mcp spec)");
-      client = await connectMcp({ ...o.mcp, fetch: o.mcp.fetch ?? doFetch });
+      const handlers = mcpHandlers({ driver: o.driver, apiKey, fetch: doFetch, trialId: o.trialId, work: o.sandbox.work, ...(o.task.mcp ? { mcp: o.task.mcp } : {}), emit: (e) => events.push(e) });
+      const oauth = o.mcp.url ? oauthFor(o.target, env, doFetch) : undefined;
+      client = await connectMcp({ ...o.mcp, fetch: o.mcp.fetch ?? doFetch, handlers, ...(oauth ? { oauth } : {}) });
     }
-    const tools = await buildToolRuntime(o.target, o.sandbox, { mcp: client, httpUrl: o.httpUrl, fetch: doFetch });
+    let instruction = o.task.instruction;
+    if (o.task.mcp?.prompt) {
+      if (!client) throw new Error(`task ${o.task.id}: mcp.prompt needs an MCP target`);
+      const p = await client.getPrompt(o.task.mcp.prompt.name, o.task.mcp.prompt.arguments ?? {});
+      instruction = `${promptText(p.messages)}\n\n${instruction}`;
+    }
+    let shellSim: SimulatedShell | undefined;
+    if (o.driver.shell) {
+      if (o.target.kind !== "cli") throw new Error(`a simulated shell needs a CLI target; ${o.target.name} is ${o.target.kind}`);
+      const key = env[o.driver.shell.apiKeyEnv];
+      if (!key) throw new Error(`shell model ${o.driver.shell.provider}/${o.driver.shell.model} needs $${o.driver.shell.apiKeyEnv}`);
+      shellSim = simulatedShell({ sim: o.driver.shell, apiKey: key, fetch: doFetch, cwd: o.sandbox.work, trialId: o.trialId, emit: (e) => events.push(e) });
+    }
+    const tools = await buildToolRuntime(o.target, o.sandbox, { mcp: client, httpUrl: o.httpUrl, fetch: doFetch, ...(o.driver.outputCap ? { outputCap: o.driver.outputCap } : {}), ...(shellSim ? { shellSim } : {}) });
     const loop = await runModelLoop({
       driver: o.driver,
-      instruction: o.task.instruction,
+      instruction,
       tools,
       apiKey,
       fetch: doFetch,

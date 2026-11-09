@@ -28,6 +28,8 @@ export interface StdioOpts {
   /** Delay between shutdown steps (default 2000 ms). */
   graceMs?: number;
   onNotification?: (m: RpcNotification) => void;
+  /** Server → client requests (sampling, elicitation, roots…). Default: ping only. */
+  onRequest?: (m: RpcRequest) => Promise<RpcResponse>;
 }
 
 export class StdioTransport implements Transport {
@@ -74,9 +76,17 @@ export class StdioTransport implements Transport {
             p.resolve(msg);
           }
         } else if (isRequest(msg)) {
-          // Server → client requests (ping, sampling, roots…): only ping is supported.
-          const reply = msg.method === "ping" ? { jsonrpc: "2.0", id: msg.id, result: {} } : { jsonrpc: "2.0", id: msg.id, error: { code: RPC.METHOD_NOT_FOUND, message: `client does not support ${msg.method}` } };
-          this.write(reply);
+          // Server → client requests (ping, sampling, roots…): the client's handlers, else ping only.
+          if (opts.onRequest) {
+            const req = msg;
+            void opts.onRequest(req).then(
+              (r) => this.write(r),
+              (e: unknown) => this.write({ jsonrpc: "2.0", id: req.id, error: { code: RPC.INTERNAL_ERROR, message: e instanceof Error ? e.message : String(e) } }),
+            );
+          } else {
+            const reply = msg.method === "ping" ? { jsonrpc: "2.0", id: msg.id, result: {} } : { jsonrpc: "2.0", id: msg.id, error: { code: RPC.METHOD_NOT_FOUND, message: `client does not support ${msg.method}` } };
+            this.write(reply);
+          }
         } else if (msg && typeof msg === "object") {
           opts.onNotification?.(msg as RpcNotification);
         }

@@ -11,7 +11,10 @@ import { pairedBootstrap, wilson, type BootstrapResult } from "../stats/interval
 import { mcnemarPaired, pairedPermutation, type McNemarResult } from "../stats/tests.ts";
 import { caseVerdicts } from "../experiments/samples.ts";
 import { infraKinds, infraKindsText, voidText } from "../jobs/retry.ts";
+import { compareKinds, summarizeKinds } from "../datasets/kinds.ts";
+import type { CaseKind } from "../datasets/types.ts";
 import { totalTokens } from "./metrics.ts";
+import { shellModelOf } from "./types.ts";
 import type {
   ContinuousMetric,
   SurfaceReport,
@@ -23,7 +26,12 @@ import type {
   TrialResult,
 } from "./types.ts";
 
-export const CONTINUOUS_METRICS: readonly ContinuousMetric[] = ["turns", "tokens", "costUsd", "wallMs", "invalidRate", "helpLookups", "llmP95Ms", "targetLatencyP95Ms"];
+export const CONTINUOUS_METRICS: readonly ContinuousMetric[] = ["turns", "tokens", "costUsd", "flatCostUsd", "wallMs", "invalidRate", "helpLookups", "llmP95Ms", "targetLatencyP95Ms", "outputCutRate", "brokenJsonCuts"];
+
+/** Metrics compared only when they say something: flat cost when a trial had cache tokens, cut metrics when a result was cut. */
+const hasCacheTokens = (t: TrialResult): boolean => (t.metrics?.usage.cacheReadTokens ?? 0) + (t.metrics?.usage.cacheWriteTokens ?? 0) > 0;
+const hasCuts = (t: TrialResult): boolean => (t.metrics?.outputCuts ?? 0) > 0;
+const GATED: Partial<Record<ContinuousMetric, (t: TrialResult) => boolean>> = { flatCostUsd: hasCacheTokens, outputCutRate: hasCuts, brokenJsonCuts: hasCuts };
 
 export function metricValue(t: TrialResult, m: ContinuousMetric): number | undefined {
   const x = t.metrics;
@@ -66,6 +74,26 @@ export function summarizeArm(trials: readonly TrialResult[], arm: string): ToolA
     if (ts.some((t) => t.pass)) passAnyK++;
   }
   const sources = new Set(mine.map((t) => t.metrics?.latencySource ?? "none"));
+  const extra: Pick<ToolArmSummary, "cost" | "cuts" | "kinds"> = {};
+  if (mine.some(hasCacheTokens)) {
+    const avg = (xs: (number | null | undefined)[]) => {
+      const v = xs.filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+      return v.length ? mean(v) : null;
+    };
+    const u = mine.reduce((a, t) => ({ input: a.input + (t.metrics?.usage.inputTokens ?? 0), read: a.read + (t.metrics?.usage.cacheReadTokens ?? 0), write: a.write + (t.metrics?.usage.cacheWriteTokens ?? 0) }), { input: 0, read: 0, write: 0 });
+    const prompt = u.input + u.read + u.write;
+    extra.cost = { costUsd: avg(mine.map((t) => t.metrics?.costUsd)), flatCostUsd: avg(mine.map((t) => t.metrics?.flatCostUsd)), cacheReadShare: prompt ? u.read / prompt : null };
+  }
+  if (mine.some(hasCuts)) {
+    const outputCuts = mine.reduce((n, t) => n + (t.metrics?.outputCuts ?? 0), 0);
+    const toolResults = mine.reduce((n, t) => n + (t.metrics?.toolCalls ?? 0), 0);
+    extra.cuts = { outputCuts, toolResults, outputCutRate: toolResults ? outputCuts / toolResults : null, brokenJsonCuts: mine.reduce((n, t) => n + (t.metrics?.brokenJsonCuts ?? 0), 0) };
+  }
+  const kinds = summarizeKinds(
+    mine.map((t) => ({ caseId: t.taskId, ...(t.kind ? { kind: t.kind } : {}), pass: t.pass })),
+    Math.max(0, ...[...byTask.values()].map((ts) => ts.length)),
+  );
+  if (kinds) extra.kinds = kinds;
   return {
     arm,
     variant,
@@ -78,6 +106,7 @@ export function summarizeArm(trials: readonly TrialResult[], arm: string): ToolA
     errors: mine.filter((t) => t.error).length,
     infra,
     latencySource: sources.size === 1 ? ([...sources][0] as ToolArmSummary["latencySource"]) : sources.size === 0 ? "none" : "mixed",
+    ...extra,
   };
 }
 
@@ -151,6 +180,10 @@ export function compareToolArms(trials: readonly TrialResult[], o: CompareToolOp
   if (a.variant !== b.variant && a.driver !== b.driver) {
     throw new Error(`arms ${o.baseline} and ${o.candidate} differ on both variant and driver; compare one factor at a time`);
   }
+  // A simulated shell answers differently from a real one (and from another model): those runs measure different things.
+  const sa = shellModelOf(a.driver);
+  const sb = shellModelOf(b.driver);
+  if (sa !== sb) throw new Error(`arms ${o.baseline} and ${o.candidate} use different shells (${sa ? `simulated by ${sa}` : "real"} vs ${sb ? `simulated by ${sb}` : "real"}); compare only arms with the same shell model`);
   const comparing: ToolCompareReport["comparing"] = a.driver === b.driver ? "variant" : "driver";
   // Trials that failed on infrastructure have no outcome: they are left out of the pairs and counted in a note.
   const A = trials.filter((t) => t.variant === a.variant && t.driver === a.driver && known(t));
@@ -220,7 +253,10 @@ export function compareToolArms(trials: readonly TrialResult[], o: CompareToolOp
 
   const metrics: Partial<Record<ContinuousMetric, ToolMetricDelta>> = {};
   const latencyComparable = baseline.latencySource === candidate.latencySource && baseline.latencySource !== "mixed";
+  const both = [...A, ...B];
   for (const m of CONTINUOUS_METRICS) {
+    const gate = GATED[m];
+    if (gate && !both.some(gate)) continue;
     if (m === "llmP95Ms" && !latencyComparable) {
       notes.push(`model-call latency not compared: latency sources differ (${baseline.latencySource} vs ${candidate.latencySource})`);
       continue;
@@ -243,7 +279,8 @@ export function compareToolArms(trials: readonly TrialResult[], o: CompareToolOp
     if (verdict === "inconclusive" && d.n > 0) {
       notes.push(`${m}: the CI excludes 0, but the exact permutation test over ${perTask.length} task${perTask.length === 1 ? "" : "s"} gives ${pval(exact.p)}, so it is not called a change`);
     }
-    if (verdict === "worse") {
+    // Flat cost is a second view of the same spend, not a regression of its own.
+    if (verdict === "worse" && m !== "flatCostUsd") {
       const worst = perTask.reduce((p, c) => (c.b - c.a > p.b - p.a ? c : p));
       const ra = ta.get(worst.id)!;
       const rb = tb.get(worst.id)!;
@@ -273,6 +310,14 @@ export function compareToolArms(trials: readonly TrialResult[], o: CompareToolOp
     };
   }
 
+  const cost = metrics.costUsd;
+  const flat = metrics.flatCostUsd;
+  if (cost && flat) {
+    const cheaper = (x: ToolMetricDelta) => (x.candidate < x.baseline ? "candidate" : x.candidate > x.baseline ? "baseline" : undefined);
+    const c1 = cheaper(cost);
+    const c2 = cheaper(flat);
+    if (c1 && c2 && c1 !== c2) notes.push(`winner flips under flat pricing: the ${c1} is cheaper with cache-aware prices ($${cost.baseline.toFixed(4)} vs $${cost.candidate.toFixed(4)}), the ${c2} with flat prices ($${flat.baseline.toFixed(4)} vs $${flat.candidate.toFixed(4)})`);
+  }
   if (k > 1) notes.push(`Wilson intervals treat the ${k} trials per task as independent and are optimistic; the bootstrap CI resamples tasks and is the one to trust`);
   if (unpaired.length) notes.push(`${unpaired.length} task(s) ran in only one arm and are excluded from paired stats`);
   const errs = baseline.errors + candidate.errors;
@@ -280,6 +325,16 @@ export function compareToolArms(trials: readonly TrialResult[], o: CompareToolOp
   if (lost.length) notes.push(`${lost.length} trial(s) failed on infrastructure (${infraKindsText(infraKinds(lost))}) after their retries: outcome unknown, left out of the pass rates`);
   // Every trial lost to infrastructure (a dead login, a broken setup): no quality verdict, not "no task ran".
   const verdict = !diffs.length && lost.length ? { kind: "inconclusive" as const, text: voidText(lost.length, infraKinds(lost)) } : decide(diffs.length, boot, mcn, alpha);
+  // TB-12: split by task kind. Guards and controls that broke are named in the verdict, whatever the overall delta.
+  const kindOf = new Map<string, CaseKind>();
+  for (const t of [...A, ...B]) if (t.kind) kindOf.set(t.taskId, t.kind);
+  const rateOf = (g: Map<string, TrialResult[]>) => new Map(pairedIds.map((id) => [id, g.get(id)!.filter((t) => t.pass).length / g.get(id)!.length]));
+  const kinds = kindOf.size ? compareKinds(kindOf, rateOf(ta), rateOf(tb)) : undefined;
+  if (kinds) {
+    notes.push(...kinds.notes);
+    const broke = [...(kinds.overcorrections.length ? [`${kinds.overcorrections.length} control task(s) broke (overcorrection)`] : []), ...(kinds.regressions.length ? [`${kinds.regressions.length} guard task(s) broke`] : [])];
+    if (broke.length) verdict.text += `; but ${broke.join(" and ")}`;
+  }
   return {
     baseline,
     candidate,
@@ -295,6 +350,7 @@ export function compareToolArms(trials: readonly TrialResult[], o: CompareToolOp
     ...(surface ? { surface } : {}),
     verdict,
     regressions,
+    ...(kinds ? { kinds } : {}),
     notes,
     alpha,
   };

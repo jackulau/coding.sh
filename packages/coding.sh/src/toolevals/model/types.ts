@@ -47,6 +47,8 @@ export interface ConversationInit {
   baseUrl?: string;
   maxOutputTokens?: number;
   temperature?: number;
+  /** Anthropic: top-level automatic prompt caching (default true). */
+  promptCache?: boolean;
   fetch: typeof fetch;
 }
 

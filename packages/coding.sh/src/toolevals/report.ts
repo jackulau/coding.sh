@@ -1,5 +1,6 @@
 // Plain-text rendering of tool-eval results (stdout of the CLI without --json).
 import { formatDuration } from "../runner/experiment.ts";
+import { CASE_KINDS } from "../datasets/types.ts";
 import type { CompressReport, ContinuousMetric, SurfaceReport, TapRecord, ToolArmSummary, ToolCompareReport, TrialResult } from "./types.ts";
 
 export interface FormatOpts {
@@ -28,6 +29,9 @@ const METRIC_LABEL: Record<ContinuousMetric, { label: string; unit: "count" | "u
   turns: { label: "turns", unit: "count" },
   tokens: { label: "tokens", unit: "count" },
   costUsd: { label: "cost", unit: "usd" },
+  flatCostUsd: { label: "cost (flat)", unit: "usd" },
+  outputCutRate: { label: "output cut rate", unit: "rate" },
+  brokenJsonCuts: { label: "broken JSON cuts", unit: "count" },
   wallMs: { label: "wall time", unit: "ms" },
   invalidRate: { label: "invalid rate", unit: "rate" },
   helpLookups: { label: "help lookups", unit: "count" },
@@ -69,7 +73,43 @@ export function formatArms(arms: readonly ToolArmSummary[], o: FormatOpts = {}):
   for (const a of arms) {
     rows.push([a.arm, `${a.passes}/${a.trials}`, `${pct(a.passRate.p)} [${pct(a.passRate.lo)}, ${pct(a.passRate.hi)}]`, String(a.passAllK), String(a.passAnyK), errorsCell(a, p)]);
   }
-  return `${table(rows).join("\n")}\n${infraLine(arms, p)}`;
+  return `${table(rows).join("\n")}\n${infraLine(arms, p)}${armExtras(arms, p)}`;
+}
+
+/** Cost under both pricing models (when an arm had cache tokens) and output cuts (when an arm had any). */
+function armExtras(arms: readonly ToolArmSummary[], p: ReturnType<typeof painter>): string {
+  const out: string[] = [];
+  const usd = (v: number | null) => (v === null ? "—" : fmt(v, "usd"));
+  if (arms.some((a) => a.cost)) {
+    for (const a of arms) {
+      const c = a.cost;
+      out.push(p.dim(`${a.arm}: `) + (c ? `cost ${usd(c.costUsd)} (cache-aware) · ${usd(c.flatCostUsd)} flat · cache hit ${c.cacheReadShare === null ? "—" : pct(c.cacheReadShare)}` : "no cache tokens"));
+    }
+    const ranked = (k: "costUsd" | "flatCostUsd") => {
+      const priced = arms.filter((a) => typeof a.cost?.[k] === "number");
+      return priced.length === arms.length && priced.length > 1 ? priced.reduce((m, a) => (a.cost![k]! < m.cost![k]! ? a : m)).arm : undefined;
+    };
+    const aware = ranked("costUsd");
+    const flat = ranked("flatCostUsd");
+    if (aware && flat && aware !== flat) out.push(p.bold(`winner flips under flat pricing: ${aware} is cheapest cache-aware, ${flat} flat`));
+  }
+  if (arms.some((a) => a.cuts)) {
+    for (const a of arms) {
+      const c = a.cuts;
+      out.push(p.dim(`${a.arm}: `) + (c ? `output cuts ${c.outputCuts}/${c.toolResults} (${c.outputCutRate === null ? "—" : pct(c.outputCutRate)}) · broken JSON ${c.brokenJsonCuts}` : "no output cuts"));
+    }
+  }
+  if (arms.some((a) => a.kinds)) {
+    for (const a of arms) {
+      const k = a.kinds ?? {};
+      const cells = CASE_KINDS.flatMap((kind) => {
+        const x = k[kind];
+        return x ? [`${kind} ${pct(x.passRate.p)} (${x.passed}/${x.n})`] : [];
+      });
+      out.push(p.dim(`${a.arm}: `) + (cells.length ? cells.join(" · ") : "no kinded tasks"));
+    }
+  }
+  return out.length ? `${out.join("\n")}\n` : "";
 }
 
 export function formatToolCompare(r: ToolCompareReport, o: FormatOpts = {}): string {
@@ -95,6 +135,12 @@ export function formatToolCompare(r: ToolCompareReport, o: FormatOpts = {}): str
     rows.push(["surface", kb(s.baseline.surfaceBytes), kb(s.candidate.surfaceBytes), `${s.surfaceBytes.delta >= 0 ? "+" : ""}${s.surfaceBytes.delta} B ${signedRel(s.surfaceBytes.relative)}`]);
     rows.push(["descriptions", kb(s.baseline.descriptionBytes), kb(s.candidate.descriptionBytes), `${s.descriptionBytes.delta >= 0 ? "+" : ""}${s.descriptionBytes.delta} B ${signedRel(s.descriptionBytes.relative)}`]);
     rows.push([`tokens${s.candidate.tokensEstimated ? " (est.)" : ""}`, String(s.baseline.surfaceTokens), String(s.candidate.surfaceTokens), `${s.surfaceTokens.delta >= 0 ? "+" : ""}${s.surfaceTokens.delta} ${signedRel(s.surfaceTokens.relative)}`]);
+  }
+  for (const k of r.kinds?.kinds ?? []) {
+    // TB-12: a bad task should go from failing to passing; a guard or control that breaks is a regression or an overcorrection.
+    const moved = k.kind === "bad" ? `${k.fixed!.length}/${k.paired} fixed` : `${k.broken!.length}/${k.paired} broke`;
+    const hurt = k.kind === "bad" ? false : k.broken!.length > 0;
+    rows.push([`${k.kind} tasks`, pct(k.a), pct(k.b), hurt ? p.bad(moved) : k.kind === "bad" && k.fixed!.length === k.paired ? p.good(moved) : moved]);
   }
   out.push(...table(rows, [20, 22, 22, 30]));
   if (r.regressions.length) {
@@ -157,6 +203,11 @@ export function formatTrial(t: TrialResult, extra: { tap?: TapRecord[]; sessions
     out.push(`help lookups ${m.helpLookups} · retries ${m.retries} · self-corrections ${m.selfCorrections} · recovery ${m.recoveryRate === null ? "—" : pct(m.recoveryRate)}`);
     const tok = (m.usage.inputTokens ?? 0) + (m.usage.outputTokens ?? 0);
     out.push(`tokens ${tok} · cost ${m.costUsd === null ? "—" : fmt(m.costUsd, "usd")} (${m.costSource}) · wall ${formatDuration(m.wallMs)}${m.budgetExceeded ? p.bad(` · budget exceeded: ${m.budgetExceeded}`) : ""}`);
+    if ((m.usage.cacheReadTokens ?? 0) + (m.usage.cacheWriteTokens ?? 0) > 0) out.push(`cache read ${m.usage.cacheReadTokens ?? 0} · cache write ${m.usage.cacheWriteTokens ?? 0} · cache hit ${m.cacheReadShare == null ? "—" : pct(m.cacheReadShare)} · flat cost ${m.flatCostUsd == null ? "—" : fmt(m.flatCostUsd, "usd")}`);
+    if (m.outputCuts) {
+      const fields = Object.entries(m.fieldDelivery ?? {}).filter(([, v]) => v < 1).map(([k, v]) => `${k} ${pct(v)}`);
+      out.push(`output cuts ${m.outputCuts}/${m.toolCalls}${m.brokenJsonCuts ? p.bad(` · broken JSON ${m.brokenJsonCuts}`) : ""}${fields.length ? ` · fields delivered: ${fields.join(", ")}` : ""}`);
+    }
     const lat = [m.llmP50Ms !== undefined ? `llm p50 ${formatDuration(m.llmP50Ms)}` : "", m.llmP95Ms !== undefined ? `p95 ${formatDuration(m.llmP95Ms)}` : "", m.ttftP50Ms !== undefined ? `ttft p50 ${formatDuration(m.ttftP50Ms)}` : "", m.targetLatencyP95Ms !== undefined ? `tool p95 ${formatDuration(m.targetLatencyP95Ms)}` : ""].filter(Boolean);
     out.push(`latency (${m.latencySource}) ${lat.join(" · ") || "—"}`);
     out.push(`subagents ${m.subagents} · subagent target calls ${m.subagentTargetCalls}${m.tapCoverage !== null ? ` · tap coverage ${pct(m.tapCoverage)}` : ""}`);

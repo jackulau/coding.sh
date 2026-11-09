@@ -1,5 +1,7 @@
 // Anthropic Messages API, streamed, with no SDK (§11). TTFT is the first
-// content_block_delta: text → ttftMs, thinking → ttfThinkingMs.
+// content_block_delta: text → ttftMs, thinking → ttfThinkingMs. Requests carry
+// top-level `cache_control: {type: "ephemeral"}` (automatic prompt caching)
+// unless the driver or variant sets promptCache = false.
 import type { Usage } from "../../schema/index.ts";
 import { readSse } from "./sse.ts";
 import { ProviderHttpError, type Conversation, type ConversationInit, type ModelTurn, type ToolCall, type ToolResult } from "./types.ts";
@@ -20,6 +22,8 @@ export function anthropicConversation(init: ConversationInit): Conversation {
       };
       if (init.tools.length) body.tools = init.tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.inputSchema }));
       if (init.temperature !== undefined) body.temperature = init.temperature;
+      // Automatic prompt caching: the API caches up to the last cacheable block of each request.
+      if (init.promptCache !== false) body.cache_control = { type: "ephemeral" };
       const t0 = performance.now();
       const res = await init.fetch(url, {
         method: "POST",
@@ -87,6 +91,9 @@ export function anthropicConversation(init: ConversationInit): Conversation {
           const u = (d.usage ?? {}) as Record<string, number>;
           if (typeof u.output_tokens === "number") usage.outputTokens = u.output_tokens;
           if (typeof u.input_tokens === "number") usage.inputTokens = u.input_tokens;
+          // Cumulative counts: the last message_delta wins over message_start.
+          if (typeof u.cache_read_input_tokens === "number") usage.cacheReadTokens = u.cache_read_input_tokens;
+          if (typeof u.cache_creation_input_tokens === "number") usage.cacheWriteTokens = u.cache_creation_input_tokens;
         } else if (type === "error") {
           const err = (d.error ?? {}) as Record<string, unknown>;
           throw new ProviderHttpError(err.type === "overloaded_error" ? 529 : 500, String(err.message ?? ev.data));

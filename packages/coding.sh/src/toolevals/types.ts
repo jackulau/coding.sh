@@ -8,6 +8,11 @@ import type { VerdictKind } from "../runner/experiment.ts";
 import type { Divergence } from "../runner/divergence.ts";
 import type { CallsSpec } from "./calls.ts";
 import type { InfraKind } from "../jobs/retry.ts";
+import type { OutputCapConfig } from "./model/cap.ts";
+import type { CaseKind, KindSummary } from "../datasets/types.ts";
+import type { KindComparisonReport } from "../datasets/kinds.ts";
+
+export type { OutputCapConfig };
 
 // ------------------------------------------------------------ targets
 
@@ -32,9 +37,19 @@ export interface CliTarget extends TargetBase {
   helpCrawl: boolean;
 }
 
+/** OAuth for an HTTP MCP target (model driver). Without it, a 401 still runs OAuth with dynamic client registration. */
+export interface McpOAuth {
+  clientId?: string;
+  /** Env var holding the client secret. */
+  clientSecretEnv?: string;
+  scope?: string;
+  grant?: "authorization_code" | "client_credentials";
+  redirectUri?: string;
+}
+
 export type McpTarget = TargetBase & { kind: "mcp"; docTools?: string[]; validationPatterns?: string[] } & (
     | { transport: "stdio"; command: string[] }
-    | { transport: "http"; url: string; headers?: Record<string, string> }
+    | { transport: "http"; url: string; headers?: Record<string, string>; oauth?: McpOAuth }
   );
 
 export interface HttpTarget extends TargetBase {
@@ -63,6 +78,20 @@ export interface Variant {
   hideTools?: string[];
   /** Harness bundle id or name for agent drivers. */
   bundle?: string;
+  /** Model driver: tool-output cap for this variant (wins over the driver's). */
+  outputCap?: OutputCapConfig;
+  /** Model driver: Anthropic prompt caching for this variant (wins over the driver's). */
+  promptCache?: boolean;
+}
+
+/** Model driver: a model that plays the shell (TB-14). Shell tool calls go to it, never to a real shell. */
+export interface ShellSim {
+  provider: "anthropic" | "openai" | "openai-chat";
+  model: string;
+  baseUrl?: string;
+  apiKeyEnv: string;
+  /** The date the simulated machine reports (ISO 8601). */
+  date?: string;
 }
 
 // ------------------------------------------------------------ drivers
@@ -78,10 +107,19 @@ export type Driver =
       system?: string;
       maxOutputTokens?: number;
       temperature?: number;
+      /** Tool-output cap (default: structure mode, 16 KB). */
+      outputCap?: OutputCapConfig;
+      /** Anthropic: top-level `cache_control: {type: "ephemeral"}` on every request (default true). */
+      promptCache?: boolean;
+      /** Simulated shell for the CLI `shell` tool; part of the driver key. */
+      shell?: ShellSim;
     };
 
 export const driverKey = (d: Driver): string =>
-  d.kind === "agent" ? `agent:${d.agent}${d.model ? ":" + d.model : ""}` : `model:${d.provider}/${d.model}`;
+  d.kind === "agent" ? `agent:${d.agent}${d.model ? ":" + d.model : ""}` : `model:${d.provider}/${d.model}${d.shell ? `+shell:${d.shell.provider}/${d.shell.model}` : ""}`;
+
+/** The simulated shell model a driver key names (`provider/model`), if any. */
+export const shellModelOf = (driver: string): string | undefined => /\+shell:(.+)$/.exec(driver)?.[1];
 
 /** Arms are named `<variant>@<driver>`. */
 export const armKey = (variant: string, driver: string): string => `${variant}@${driver}`;
@@ -114,6 +152,23 @@ export type Check =
   | { kind: "judge"; judge: string; rubric: string }
   | ({ kind: "calls" } & CallsSpec);
 
+/** A scripted answer to an MCP elicitation/create request (model driver). The first whose `match` regex finds the server's message wins. */
+export interface ElicitAnswer {
+  match?: string;
+  action: "accept" | "decline" | "cancel";
+  content?: Record<string, unknown>;
+}
+
+/** What the model driver's MCP client does for a task (§10.3). */
+export interface TaskMcp {
+  /** Get this prompt before the run; its text goes before the instruction. */
+  prompt?: { name: string; arguments?: Record<string, string> };
+  /** Answers to elicitation requests; with none, the client declines. */
+  elicitation?: ElicitAnswer[];
+  /** roots/list: paths relative to the sandbox work dir, or absolute (default: the work dir). */
+  roots?: string[];
+}
+
 /** Structurally a Case: id, input (= instruction), tags, metadata. */
 export interface ToolTask {
   id: string;
@@ -126,7 +181,11 @@ export interface ToolTask {
   budget: Budget;
   reference?: string[];
   expect?: { minTargetCalls?: number };
+  /** MCP targets, model driver: prompt, elicitation answers and roots. */
+  mcp?: TaskMcp;
   status: "draft" | "validated";
+  /** TB-12: bad (fails on the old variant, passes on the new), guard or control (pass on both). Absent for an ordinary task. */
+  kind?: CaseKind;
   /** File path (and line for JSONL), for error messages. */
   source: string;
   /** Suite dir (`evals/toolevals/<target>/`): setup files and `${fixtures}` resolve against it. */
@@ -159,6 +218,8 @@ export interface TapRecord {
   isError?: boolean;
   schemaViolations?: string[];
   serverStderr?: string;
+  /** "server": a server → client request (sampling, elicitation, roots). */
+  direction?: "server";
   // http
   httpMethod?: string;
   pathTemplate?: string;
@@ -205,6 +266,18 @@ export interface ToolMetrics {
   subagentTargetCalls: number;
   subagentTokenShare: number | null;
   tapCoverage: number | null;
+  /** Model driver: tool results the output cap changed. */
+  outputCuts?: number;
+  /** outputCuts / tool results; null with no tool results. */
+  outputCutRate?: number | null;
+  /** Cut results that were JSON and reached the model as broken JSON. */
+  brokenJsonCuts?: number;
+  /** `tool.key` → share of cut JSON results of that tool whose top-level key reached the model. Only when a JSON result was cut. */
+  fieldDelivery?: Record<string, number>;
+  /** cacheRead / (input + cacheRead + cacheWrite); null with no prompt tokens. */
+  cacheReadShare?: number | null;
+  /** The same usage with cache reads and writes priced at the input rate; null when cost is unknown or reported. */
+  flatCostUsd?: number | null;
 }
 
 export interface SurfaceReport {
@@ -228,6 +301,8 @@ export interface TrialResult {
   id: string;
   experimentId: string;
   taskId: string;
+  /** The task's kind when it has one. */
+  kind?: CaseKind;
   variant: string;
   driver: string;
   attempt: number;
@@ -247,6 +322,8 @@ export interface TrialResult {
   infra?: InfraKind;
   /** Attempts the trial took when infrastructure errors were retried; absent for one. */
   attempts?: number;
+  /** Model driver with a simulated shell: its `provider/model`. */
+  shellModel?: string;
   startedAt: number;
   endedAt: number;
 }
@@ -301,6 +378,12 @@ export interface ToolArmSummary {
   latencySource: ToolMetrics["latencySource"] | "mixed";
   /** Adaptive sampling: per-task verdicts (a task fails at half or more failing trials); no CI applies. */
   verdicts?: { passed: number; failed: number; tieBreaks: number };
+  /** Only when a trial of the arm had cache tokens: mean cost per trial, cache-aware and flat, and the cache-read share of prompt tokens. */
+  cost?: { costUsd: number | null; flatCostUsd: number | null; cacheReadShare: number | null };
+  /** Only when a trial of the arm had a capped tool result. */
+  cuts?: { outputCuts: number; toolResults: number; outputCutRate: number | null; brokenJsonCuts: number };
+  /** Pass rate per task kind; only when a trial's task had a kind. */
+  kinds?: Partial<Record<CaseKind, KindSummary>>;
 }
 
 export interface ToolTaskOutcome {
@@ -318,7 +401,10 @@ export type ContinuousMetric =
   | "invalidRate"
   | "helpLookups"
   | "llmP95Ms"
-  | "targetLatencyP95Ms";
+  | "targetLatencyP95Ms"
+  | "flatCostUsd"
+  | "outputCutRate"
+  | "brokenJsonCuts";
 
 export interface ToolMetricDelta {
   /** Mean over paired tasks of the per-task median. */
@@ -375,6 +461,8 @@ export interface ToolCompareReport {
   };
   verdict: { kind: VerdictKind; text: string };
   regressions: ToolRegression[];
+  /** TB-12: baseline → candidate per task kind (bad fixed, guards broken, controls broken = overcorrection); only when a paired task has a kind. */
+  kinds?: KindComparisonReport;
   notes: string[];
   alpha: number;
 }

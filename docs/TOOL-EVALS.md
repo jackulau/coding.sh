@@ -1,6 +1,9 @@
 # Tool evals: measuring how well agents use a CLI, MCP server or API
 
-Status: design spec, not implemented. It builds on `src/schema` (events, `llm.call`, `durationMs`,
+Status: built. The code is `src/toolevals` (tests in `test/toolevals`), the command is
+`coding.sh toolevals`, and the user page is https://coding.sh/docs/tool-evals. One difference from
+this spec: the taps run from source (`src/toolevals/tap/main.ts`), not from a separate
+`dist/tap.mjs` bundle. It builds on `src/schema` (events, `llm.call`, `durationMs`,
 subagent fields, `Session.parent`, `LatencyStats`), `src/core/sessions.ts` (`latencyStats`),
 `src/stats` (Wilson, paired bootstrap, McNemar), `src/runner` (bundles, overlay, exec), the
 adapters (`src/adapters`), the OTLP receiver (`src/otel`) and the generic evals being built in
@@ -74,6 +77,18 @@ docTools = ["search_docs"]               # tools whose calls count as doc lookup
   the real server.
 - Model driver: coding.sh's MCP client (§10) connects through the same proxy and passes the tools
   to the model API directly. This measures the tool surface without any agent harness in between.
+  It also answers the server's sampling, elicitation and roots requests, and reads resources and
+  prompts (§10.3).
+- An HTTP server behind OAuth: the proxy passes `Authorization` through and the 401 challenge
+  back, and the model driver's client runs OAuth (§10.4). Without an `oauth` table it registers
+  itself and uses the authorization code grant with PKCE:
+
+  ```toml
+  [toolevals.targets.docs]
+  kind = "mcp"
+  url = "https://mcp.example.com/mcp"
+  oauth = { grant = "client_credentials", clientId = "evals", clientSecretEnv = "DOCS_SECRET", scope = "docs:read" }
+  ```
 - Variant overrides (`descriptions`, `paramDescriptions`, `hideTools`) are applied by the proxy,
   which rewrites `tools/list` results. You can compress descriptions for any server without
   touching its source, then port the winning text back to the server.
@@ -149,6 +164,27 @@ minTargetCalls = 2                       # reference count, used for the efficie
 | `judge` | A judge from `src/judge` returns pass | Results are flagged `uncalibrated` until the judge's κ reaches the threshold. Prefer the other kinds. |
 | `calls` | Every `must` match has a call, no call matches a `mustNot`, there are at most `max` calls, and the `order` tools are called in that order (other calls may come between) | Reads the trial's target calls from the tap. A match is `{ tool, args }`; `args` match partially: only the keys given are compared, a key may be a dotted path (`where.agent`), `"~text"` is a substring, `"<=N"`, `">=N"`, `"<N"`, `">N"` bound a number. The tool is the MCP tool name, the CLI subcommand words (`sessions list`; args are the flags, `--limit 5` gives `limit = "5"`, a bare `--json` gives `json = true`, and `argv` is the whole list), or `GET /path/{id}` for HTTP, which records no args. The MCP tap keeps each call's arguments, redacted, up to 4 KB. The detail names the first match that failed. |
 
+Resource reads and prompt use are calls too: `resources/read` is recorded with `args = { uri }`
+and `prompts/get` with `args = { name, arguments }`, so
+`must = [{ tool = "resources/read", args = { uri = "docs://guide" } }, { tool = "prompts/get", args = { name = "release" } }]`
+checks that the agent read the guide and that the prompt was used.
+
+On an MCP target, a task's `[mcp]` table tells the model driver's client what to do (agent
+drivers use their own MCP client and ignore it):
+
+```toml
+[mcp]
+prompt = { name = "release", arguments = { version = "2.0" } }   # got before the run; its text goes before the instruction
+roots = ["."]                                                    # roots/list; relative to the work dir (default: the work dir)
+
+[[mcp.elicitation]]                                              # answers to elicitation/create, first match wins
+match = "Delete page"                                            # regex on the server's message (optional)
+action = "accept"                                                # accept, decline or cancel
+content = { confirm = true }
+```
+
+With no matching answer, the client declines.
+
 Every check must pass, and the trial must stay within budget. A trial that exceeds a budget is a
 failure with `budgetExceeded` set to the first exceeded key. Budgets are enforced where the driver
 can enforce them: `--max-turns` and `--max-budget-usd` for Claude Code, and the timeout for every
@@ -160,6 +196,38 @@ Task validation runs before a task is used, mirroring `validateTask`:
 2. A reference trial passes: a scripted list of shell commands in `reference = [...]`, run through
    the shim.
 3. `instruction` does not contain the expected output (`ngramOverlap` from `src/eval/leakage.ts`).
+
+### 3.1 Task kinds: bad, guard, control
+
+When a task tests a change (a new build, new tool descriptions, a new harness), give it a `kind`.
+Tasks without one are ordinary tasks.
+
+| Kind | On the old variant | On the new variant |
+|---|---|---|
+| `bad` | fails: it reproduces the failure the change is for | passes |
+| `guard` | passes: behavior near the change that already works | passes |
+| `control` | passes: a task where the fix must not kick in | passes; a failure here means the change overcorrected |
+
+```toml
+id = "greet-bob"
+kind = "bad"
+```
+
+`coding.sh toolevals validate <target> --against <variant>` checks the kinded tasks on the variant
+they were written against. A `bad` task must fail every trial there; one that passes is reported,
+because it does not reproduce the failure. A `guard` or `control` task must pass every trial
+there, or it cannot catch a break. The command exits 1 when any task does not hold.
+
+- Without `--driver`, each task's `reference` commands run through the tap on the variant. This
+  works when the variant changes the tool itself (`command`, `env`, `url`). A reference command
+  that exits non-zero counts as a failing trial; a setup that cannot run is an error.
+- A variant that changes only what the agent reads (`descriptions`, `paramDescriptions`,
+  `hideTools`, `bundle`, `outputCap`, `promptCache`) needs `--driver`: the reference commands never
+  see those fields. With `--driver`, the kinded tasks run as agent trials (`-k`, default 1) under
+  the cost gate, and the experiment id is printed. Trials that recorded an error are left out.
+
+`run` splits each arm's pass rate by kind (`arms[].kinds` in `--json`), and `compare` splits the
+comparison (§8.2).
 
 ## 4. Drivers
 
@@ -181,9 +249,12 @@ agent (Aider) runs through `wrapRun` and is measured from the tap alone.
 A minimal loop with no harness:
 
 1. Build the tool list.
-   - MCP target: the proxied `tools/list`, translated to the provider format.
-   - CLI target: one `shell` tool `{command: string}`, run with `sh -c` in the sandbox, with
-     stdout and stderr truncated at 16 KB.
+   - MCP target: the proxied `tools/list`, translated to the provider format. A server with
+     resources adds `list_mcp_resources` and `read_mcp_resource {uri}` (the resources listed in
+     its description); one with prompts adds `get_mcp_prompt {name, arguments}`. These mirror the
+     resource tools Claude Code gives its model.
+   - CLI target: one `shell` tool `{command: string}`, run with `sh -c` in the sandbox. With
+     `--shell-model <provider/model>`, a model plays the shell instead (below).
    - HTTP target: one `http_request` tool `{method, path, query?, headers?, body?}` restricted to
      the base URL, plus a `read_doc` tool `{path}` over the `docs` globs.
 2. System prompt: `driver.system`, or the default: "You are working in a sandbox. Use the tools to
@@ -196,6 +267,47 @@ Events are written straight to the store as agent `coding.sh-model`, with `sessi
 This is the only driver with exact TTFT for every call. Providers use `fetch` with no SDK:
 `anthropic` (Messages), `openai` (Responses) and `openai-chat` (Chat Completions, for local or
 OpenAI-compatible servers). See §11.
+
+**Output cap.** Every tool result goes through a 16 KB cap (`maxBytes = 16384`). Output under the
+cap reaches the model byte for byte in every mode. Over it, the mode decides:
+
+| `mode` | Over the cap |
+|---|---|
+| `structure` (default) | JSON stays valid JSON and keeps every key: long strings end in `…[N chars]`, long arrays keep their first items and a `"…N more items"` marker, with one byte budget shared fairly across the document. If even that is too big, the result is `{"_truncated":true,"keys":[…],"originalBytes":N}`. Other text keeps whole lines, about 60% from the head and 40% from the tail, with `[… omitted N of M lines …]` between. |
+| `prefix` | The first `maxBytes` bytes and `[truncated N bytes]`, the behavior before structure mode. Use it as the baseline in an A/B. |
+| `none` | No cap. |
+
+Set it on a driver table or a variant, which wins; `toolevals run … --variant capped --variant
+prefix` compares two policies:
+
+```toml
+[toolevals.drivers."model:anthropic/claude-sonnet-5-5"]
+outputCap = { mode = "structure", maxBytes = 16384 }
+promptCache = true
+
+# evals/toolevals/<target>/variants/prefix.toml
+outputCap = { mode = "prefix" }
+```
+
+A cut `tool.end` keeps `outputBytes` (what the tool returned) and adds `deliveredBytes` and `cut`
+(`mode`, whether the result was JSON and stayed valid, and which top-level keys reached the
+model). §6 lists the metrics.
+
+**Prompt caching.** Anthropic requests carry a top-level `cache_control: {type: "ephemeral"}`, so
+the conversation prefix is cached between turns. `promptCache = false` on the driver table or a
+variant removes it. Cache reads and writes come from `message_start` and the final
+`message_delta`; `costUsd` prices them at the cache rates, and `flatCostUsd` prices the same
+tokens at the input rate.
+
+**Simulated shell.** `toolevals run <cli-target> --driver model:… --shell-model <provider/model>`
+sends each `shell` call to a second model told it is a Linux machine with a fixed date
+(2026-01-15T09:30:00Z, or `shellDate` on the `model:<shell model>` driver table) and the last 20
+commands and outputs. Nothing runs in the sandbox, so the tap records no target calls; checks on
+the final answer still work. The shell model's calls are `llm.call` events with `payload.purpose =
+"shell-simulator"`: their tokens and cost count, but they are not turns. The shell model becomes
+part of the driver key (`model:openai/gpt-6-sol+shell:anthropic/claude-haiku-4-5`), each trial
+records `shellModel`, and compare refuses arms with different shell models or a simulated and a
+real shell.
 
 ## 5. Sandbox, taps and mounting
 
@@ -290,7 +402,7 @@ otherwise.
 | `successRate` | passes / trials, with a Wilson 95% interval | `wilson()` |
 | `passAllK` | Fraction of tasks where all k trials pass (tau-bench pass^k) | per task |
 | `passAnyK` | Fraction of tasks where at least one trial passes (pass@k) | per task |
-| `turns` | Model calls: count of `llm.call` events. Fallbacks: distinct assistant message ids, then the adapter-reported count (Claude `result.num_turns`) | events; `turnsSource` records which was used |
+| `turns` | Model calls: count of `llm.call` events, without the ones a shell simulator or MCP sampling made (`payload.purpose`). Fallbacks: distinct assistant message ids, then the adapter-reported count (Claude `result.num_turns`) | events; `turnsSource` records which was used |
 | `toolCalls` | `tool.start` events, all tools, parent and children | events |
 | `targetCalls` | Tap records excluding `meta` | tap |
 | `invalidCalls`, `invalidRate` | Records of class `invalid`; rate = `invalidCalls / targetCalls` | tap |
@@ -307,6 +419,11 @@ otherwise.
 | `efficiency` | `targetCalls / expect.minTargetCalls` (1.0 is optimal) | tap |
 | `tokens` | Sums of input, output, cacheRead and cacheWrite over `llm.call` usage, else `Session.stats.usage` | events |
 | `costUsd` | Sum of reported `usage.costUsd`. If no cost is reported, tokens × `[prices."<model>"]` from `coding.sh.toml`, marked `estimated` | events + config |
+| `flatCostUsd` | The same estimate with cache reads and writes priced at the input rate; null when cost is reported or unknown | events + config |
+| `cacheReadShare` | cacheRead / (input + cacheRead + cacheWrite); null with no prompt tokens | events |
+| `outputCuts`, `outputCutRate` | Model driver: tool results the output cap changed, and that count / tool results (null with none) | `tool.end` `cut` |
+| `brokenJsonCuts` | Cut results that were JSON and reached the model as invalid JSON (only `prefix` does this) | `tool.end` `cut` |
+| `fieldDelivery` | Per `tool.key`: the share of cut JSON results of that tool in which the top-level key reached the model | `tool.end` `cut` |
 | `wallMs` | Driver start to driver exit (`AgentRunOutput.durationMs`) | driver |
 | `llmP50Ms`, `llmP95Ms`, `ttftP50Ms`, `ttftP95Ms` | Nearest-rank percentiles of `llm.call.durationMs` and `payload.ttftMs` | `latencyStats()`; `latencySource` in §6.1 |
 | `targetLatencyP50Ms`, `targetLatencyP95Ms` | Percentiles of tap `durationMs` for the target's own calls | tap (exact) |
@@ -416,6 +533,11 @@ tie-break.
   only when the CI excludes 0 and that p is below alpha. When the CI excludes 0 but the p does not,
   the metric is `inconclusive` and a note says so: 3 tasks that each take 2 more turns give a CI of
   [2, 2] and p 0.25. The exact test needs at least 6 tasks that changed.
+  `flatCostUsd` is added when a trial has cache tokens, and `outputCutRate` and `brokenJsonCuts`
+  when a trial had a cut. When cache-aware and flat prices pick different cheaper arms, the report
+  says so (`winner flips under flat pricing: …`). `flatCostUsd` never counts as a regression.
+- Arms with different shell models (`--shell-model`), or a simulated and a real shell, are not
+  compared.
 - Surface metrics are deterministic per variant and are reported as absolute and relative deltas.
 - Verdict wording follows `VerdictKind`: `better`, `worse`, `no-difference` or `inconclusive`.
 - Regressions list:
@@ -424,6 +546,12 @@ tie-break.
   - Metric regressions: a metric whose verdict is `worse` (the CI excludes 0 in the bad direction
     and the permutation p is below alpha).
   - Each entry links to both trials' sessions and to the first divergence (`firstDivergence`).
+- Task kinds (§3.1), when a paired task has one: a row per kind with the baseline and candidate
+  pass rates, the bad tasks fixed (failed on the baseline, pass on the candidate by majority of
+  trials), and the guard and control tasks that broke (`report.kinds`). Bad tasks that already
+  passed on the baseline or still fail are named in the notes. A broken control is reported as
+  overcorrection, and a broken guard or control is added to the verdict text whatever the overall
+  delta (`…; but 1 control task(s) broke (overcorrection)`).
 
 ### 8.3 Description compression mode
 
@@ -505,7 +633,7 @@ than from agent self-reports; the same suite runs under any adapter or a bare mo
 are paired by task with intervals; and description compression is a constrained search with a
 held-out confirmation.
 
-## 10. MCP client: minimal protocol subset
+## 10. MCP client
 
 Target spec: MCP 2026-07-28, which is stateless, plus legacy 2025-11-25, 2025-06-18 and 2025-03-26.
 The client is dual-era, and it caches the detected era per server.
@@ -525,14 +653,18 @@ have no `id`. Errors are `{code, message, data?}`. Error codes the client handle
 | −32022 | unsupported version; `data.supported` lists the versions |
 
 **Modern handshake (2026-07-28).** Every request carries
-`params._meta["io.modelcontextprotocol/protocolVersion"]`, `…/clientCapabilities` (`{}`) and
+`params._meta["io.modelcontextprotocol/protocolVersion"]`, `…/clientCapabilities` and
 `…/clientInfo`. Discovery:
 `server/discover` → `{resultType:"complete", supportedVersions, capabilities, instructions?}`. A
 missing `resultType` is treated as `"complete"`.
 
 **Legacy handshake.**
-1. Send `initialize {protocolVersion, capabilities:{}, clientInfo}`.
-2. Receive `{protocolVersion, capabilities.tools, serverInfo, instructions?}`.
+1. Send `initialize {protocolVersion, capabilities, clientInfo}`.
+2. Receive `{protocolVersion, capabilities, serverInfo, instructions?}`.
+
+The client declares a capability only when it has a handler for it: `sampling: {}`,
+`elicitation: {form: {}}` and `roots: {listChanged: false}`. The model driver sets all three; other
+callers (surface crawls, compress) declare none.
 3. Send the `notifications/initialized` notification.
 4. If the server returns a version the client does not support, close the connection.
 
@@ -566,7 +698,8 @@ present, else the concatenated text blocks, with images replaced by `[image <mim
 - POST every message with `Content-Type: application/json` and
   `Accept: application/json, text/event-stream`.
 - The response is either JSON or an SSE stream. In an SSE stream, the event whose `id` matches is
-  the response, and earlier events are notifications, which are logged.
+  the response, and earlier events are notifications or server → client requests. The stream is
+  read as it arrives: a request on it is answered with a POST while the stream stays open.
 - A notification is answered with 202.
 - Legacy mode:
   - store `Mcp-Session-Id` from the `initialize` response and echo it;
@@ -576,14 +709,65 @@ present, else the concatenated text blocks, with images replaced by `[image <mim
 - Modern mode: also send the `Mcp-Method` header, and `Mcp-Name` on `tools/call`. There are no
   sessions and no GET.
 
-Not implemented: resources, prompts, sampling, elicitation, roots, progress, tasks and OAuth. HTTP
-auth is limited to static headers from env.
+### 10.1 Resources and prompts
+
+- `resources/list` and `resources/templates/list` page through `nextCursor`. `resources/read
+  {uri}` returns `contents`; text goes to the model as-is, binary contents as `[<mimeType> N bytes
+  at <uri>]`.
+- `prompts/list` pages the same way; `prompts/get {name, arguments}` returns messages. A prompt
+  goes to the model as its text blocks (`role: text` when there is more than one message).
+- The tap records `resources/read` and `prompts/get` as target calls with `args = {uri}` and
+  `args = {name, arguments}`. The list methods are `meta`.
+
+### 10.2 Progress and tasks
+
+- Each `tools/call` from the model driver carries `_meta.progressToken`. `notifications/progress`
+  for it are counted, and the tool's `tool.end` gets `progress: {updates, last}`.
+- Tasks (2025-11-25): a tool whose `execution.taskSupport` is `"required"`, or `"optional"` on a
+  server that declares `tasks.requests.tools.call`, is called with `task: {ttl}`. The reply is a
+  task; the client polls `tasks/get` at the server's `pollInterval` (20 ms to 1 s) until the
+  status is `completed`, `failed`, `cancelled` or `input_required`, then reads `tasks/result`.
+  The tap records the call once, when its result arrives, with the time from creation to result.
+
+### 10.3 Server → client requests
+
+| Request | Model driver's answer |
+|---|---|
+| `sampling/createMessage` | One call to the driver's own model with the request's messages, `systemPrompt` and `maxTokens` (at most 4,096), and no tools. It is an `llm.call` with `payload.purpose = "mcp-sampling"`: its tokens and cost count, but it is not a turn. |
+| `elicitation/create` | The task's `[mcp] elicitation` answers: the first whose `match` regex finds the message, else `decline`. |
+| `roots/list` | The task's `[mcp] roots` as `file://` URIs, relative paths against the sandbox work dir; default the work dir. |
+| `ping` | `{}` |
+
+Anything else gets −32601. The tap records each server request as a `meta` record with
+`direction: "server"`.
+
+### 10.4 OAuth
+
+On a 401 from an HTTP server, the model driver's client:
+
+1. reads the protected-resource metadata (RFC 9728) from the challenge's `resource_metadata`
+   URL, else from `/.well-known/oauth-protected-resource` (path-inserted first);
+2. reads the first authorization server's metadata (RFC 8414 `oauth-authorization-server`, then
+   OpenID discovery);
+3. registers itself (RFC 7591) unless `oauth.clientId` is set;
+4. gets a token for the metadata's `resource` (RFC 8707) with the challenge's `scope`, else
+   `oauth.scope`, else the advertised scopes:
+   - `grant = "client_credentials"`: with the client secret (`oauth.clientSecretEnv`, or the one
+     registration returned);
+   - default, authorization code with PKCE (S256): the authorization endpoint must redirect
+     straight back to the redirect URI. Nothing opens a browser, so a login page fails the trial
+     with an error that says so. This fits a local stub or a server that pre-approves the client.
+5. sends the request again with `Authorization: Bearer <token>`.
+
+Tokens stay in memory for the run. They never reach the tap, the store or a log. The tap proxy
+passes `Authorization` through and returns the server's `WWW-Authenticate`; agent drivers do their
+own OAuth through it. Static headers from env still work for servers with API keys.
 
 ## 11. Model APIs (model driver)
 
 | Provider | Tools | Tool result | Usage | TTFT |
 |---|---|---|---|---|
-| `anthropic` | `tools:[{name, description, input_schema}]`; response blocks `tool_use {id,name,input}`, `stop_reason:"tool_use"` | user message `tool_result {tool_use_id, content, is_error}` | `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` (from `message_start` and `message_delta`) | first `content_block_delta` (text or thinking, recorded separately as `ttftMs` and `ttfThinkingMs`) |
+| `anthropic` | `tools:[{name, description, input_schema}]`; response blocks `tool_use {id,name,input}`, `stop_reason:"tool_use"` | user message `tool_result {tool_use_id, content, is_error}` | `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens` (from `message_start`, then the final `message_delta`, whose values win); requests carry top-level `cache_control: {type:"ephemeral"}` unless `promptCache = false` | first `content_block_delta` (text or thinking, recorded separately as `ttftMs` and `ttfThinkingMs`) |
 | `openai` (Responses) | `tools:[{type:"function", name, description, parameters, strict:false}]`; output `function_call {call_id, name, arguments}` | input item `function_call_output {call_id, output}` | `response.completed.usage` incl. cached and reasoning tokens | first `*.delta` event |
 | `openai-chat` | `tools:[{type:"function", function:{name, description, parameters}}]`; `message.tool_calls` | `{role:"tool", tool_call_id, content}` | last chunk with `stream_options.include_usage` | first chunk with content or tool_calls |
 
@@ -603,10 +787,12 @@ codes are 0, 1, 2 and 130.
 | `coding.sh toolevals init --cli <bin> \| --mcp "<cmd>" \| --mcp-url <url> \| --http <url> [--name n] [--dry-run]` | Adds `[toolevals.targets.<n>]` to `coding.sh.toml`, crawls the surface, and writes `evals/toolevals/<n>/` with 3 starter tasks marked `draft` |
 | `coding.sh toolevals surface <target> [--variant v] [--json]` | Surface bytes, description bytes and estimated tokens per tool or subcommand |
 | `coding.sh toolevals validate [<target>] [--json]` | Runs task validation (§3) |
-| `coding.sh toolevals run <target> --driver <d>… [--variant <v>…] [-k 3 \| --samples adaptive] [--stop-on-regression --baseline <experimentId>] [--split dev\|heldout\|all] [--task id…] [--concurrency n] [--keep] [--yes] [--json]` | Runs an experiment and prints its id plus a per-arm summary (§8) |
+| `coding.sh toolevals validate <target> --against <variant> [--driver <d>… [-k 1]] [--yes] [--json]` | Checks kinded tasks on the old variant (§3.1): bad tasks must fail, guard and control tasks must pass |
+| `coding.sh toolevals run <target> --driver <d>… [--variant <v>…] [-k 3 \| --samples adaptive] [--stop-on-regression --baseline <experimentId>] [--split dev\|heldout\|all] [--task id…] [--concurrency n] [--shell-model <provider/model>] [--keep] [--yes] [--json]` | Runs an experiment and prints its id plus a per-arm summary (§8). `--shell-model`: model drivers on a CLI target, simulated shell (§4.2) |
 | `coding.sh toolevals compare <experimentId> --baseline <arm> --candidate <arm> [--json]` | §8.2 report |
 | `coding.sh toolevals compress <target> --driver <d> [-k 3] [--margin 0.03] [--max-evals 40] [--batch] [--yes] [--json]` | §8.3 |
 | `coding.sh toolevals show <trialId> [--json]` | Trial metrics, tap records, and the session tree with subagents |
+| `coding.sh toolevals traces <target> [--from <experimentId> [--arm a]] [--sessions '<filter>'] [--server n] [--out dir] [--max 200] [--no-tools] [--json]` | An MCP server's traces and per-tool health (§12.1) |
 
 - Driver syntax: `agent:claude-code`, `agent:codex:gpt-6-sol`, `model:anthropic/claude-sonnet-5-5`.
   Arms are named `<variant>@<driver>`.
@@ -615,6 +801,36 @@ codes are 0, 1, 2 and 130.
   `{status:"action_required", reason:"cost_confirmation_required", askUser:true, next:"ask the user; rerun with --yes only once they approve the cost"}`.
 - `tap cli|mcp|http` are internal subcommands, hidden from help. `dist/tap.mjs` is a separate
   bundle so that shim startup stays small.
+
+### 12.1 `toolevals traces`
+
+`traces` collects an MCP server's trajectories, so an improver (a person or an agent) can read the
+failures in full, as AT-AT and τ²-bench recommend. Sources:
+
+- `--from <experimentId>`: the experiment's trials on the `dev` split. Held-out trials are left
+  out (and counted in a note); an arm with only held-out trials is an error. `--arm` picks one arm.
+  A trial's target calls come from its tap; its outcome is pass or fail, and its reward is the
+  share of checks that passed.
+- `--sessions '<filter>'`: captured sessions matching the query (`since:30d agent:claude-code`),
+  without trial sessions. A session's calls to the server are its `mcp__<server>__<tool>` tool
+  calls (`--server` when the agent registered it under another name than the target). It failed
+  when one of them failed or it has a failure flag.
+
+The table prints, most errors first: tool, calls, errors, error rate, repeated identical calls,
+and retries after an error (a run of failures of a tool followed by a success of the same tool
+within 3 calls). `--out <dir>` writes:
+
+| File | Contents |
+|---|---|
+| `traces/<id>.md` | One trace (`trial-<id>` or `session-<id>`): header, the session digest, the trial's checks, and one `[TARGET tool=… ok=… class=…]` line per call to the server |
+| `index.jsonl` | One line per file in `traces/`: id, source, task or session, agent, outcome, reward, target calls and errors, bytes |
+| `tool-health.json` | Per tool: calls, errors, errorRate, invalidKinds, repeatedIdenticalCalls, retriedAfterError, neverCalled, medianResultBytes and up to 3 sample failures |
+| `tools.json` | The server's tools under the base variant (or `--arm`'s), when the target is configured; `--no-tools` skips connecting |
+
+Failing traces come first, then at most 3 passing ones, up to `--max`. Output is sorted by id, so
+two runs over the same data write the same files. A trace whose text still holds a secret (for
+example, from a capture made with redaction off) is skipped with a note. `neverCalled` needs the
+tool list, so it is only set for a configured target.
 
 ## 13. File layout
 

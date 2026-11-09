@@ -1,7 +1,9 @@
 // Fake model provider: streams SSE for Anthropic Messages (/v1/messages),
 // OpenAI Responses (/responses) and Chat Completions (/chat/completions).
 // Replies come from a script: each entry is one model call,
-// { text?, toolCalls?: [{ name, input }], usage?: { input, output }, status?, delayMs? }.
+// { text?, toolCalls?: [{ name, input }], usage?: { input, output, cacheRead?, cacheWrite?,
+// finalCacheRead?, finalCacheWrite? }, status?, delayMs? }. Anthropic sends cacheRead/cacheWrite
+// on message_start and finalCacheRead/finalCacheWrite (when set) on message_delta.
 // When the script runs out, the last entry repeats. A function script picks
 // the reply from the request body, which keeps concurrent trials independent.
 import { createServer } from "node:http";
@@ -14,7 +16,7 @@ const sse = (res, events) => {
 
 function anthropic(res, turn, n, model) {
   const u = turn.usage ?? { input: 100, output: 20 };
-  const ev = [["message_start", { type: "message_start", message: { id: `msg_${n}`, model, usage: { input_tokens: u.input, output_tokens: 1, cache_read_input_tokens: u.cacheRead ?? 0 } } }]];
+  const ev = [["message_start", { type: "message_start", message: { id: `msg_${n}`, model, usage: { input_tokens: u.input, output_tokens: 1, cache_read_input_tokens: u.cacheRead ?? 0, cache_creation_input_tokens: u.cacheWrite ?? 0 } } }]];
   let i = 0;
   if (turn.text) {
     ev.push(["content_block_start", { type: "content_block_start", index: i, content_block: { type: "text", text: "" } }]);
@@ -30,7 +32,10 @@ function anthropic(res, turn, n, model) {
     ev.push(["content_block_stop", { type: "content_block_stop", index: i }]);
     i++;
   }
-  ev.push(["message_delta", { type: "message_delta", delta: { stop_reason: turn.toolCalls?.length ? "tool_use" : "end_turn" }, usage: { output_tokens: u.output } }]);
+  const finalUsage = { output_tokens: u.output };
+  if (u.finalCacheRead !== undefined) finalUsage.cache_read_input_tokens = u.finalCacheRead;
+  if (u.finalCacheWrite !== undefined) finalUsage.cache_creation_input_tokens = u.finalCacheWrite;
+  ev.push(["message_delta", { type: "message_delta", delta: { stop_reason: turn.toolCalls?.length ? "tool_use" : "end_turn" }, usage: finalUsage }]);
   ev.push(["message_stop", { type: "message_stop" }]);
   sse(res, ev);
 }
