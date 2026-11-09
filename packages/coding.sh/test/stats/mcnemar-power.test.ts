@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { mcnemar, mcnemarCasesFor, mcnemarMinDiscordant, mcnemarPlan, mcnemarPower, mulberry32 } from "../../src/stats/index.ts";
-import { cpuMs, median } from "../helpers-timing.ts";
+import { cpuMs, median, pairedRatio, referenceWork, timeMs } from "../helpers-timing.ts";
 
 const near = (x: number, y: number, eps: number, what = "") => assert.ok(Math.abs(x - y) <= eps, `${what} ${x} ≉ ${y} ±${eps}`);
 
@@ -112,13 +112,22 @@ describe("mcnemarPower: shape", () => {
     near(rejected / sims, mcnemarPower(n, d, delta), 0.01, "simulated power");
   });
 
-  it("plans 2000 cases at 30% discordance in under 50 ms of CPU", () => {
+  it("plans 2000 cases at 30% discordance in under 50 ms of CPU, or 5x a fixed loop's time on a busy machine", () => {
     mcnemarPlan(200, 0.3); // warm up
+    referenceWork();
     // CPU time, not wall time: on a busy machine the wall clock also counts the time
     // this thread waits for a core. About 9 ms on an idle laptop; the median of 5
     // keeps one GC pause from deciding it.
     const runs = Array.from({ length: 5 }, () => cpuMs(() => mcnemarPlan(2000, 0.3)));
-    assert.ok(median(runs) < 50, `took ${runs.map((x) => x.toFixed(1)).join(", ")} ms of CPU`);
+    if (median(runs) < 50) return;
+    // A busy machine can stretch CPU time too: cores that share caches and memory with other
+    // jobs, or a VM (the WSL CI runner) whose busy host deschedules it, which the guest can
+    // count as CPU. Then time the plan against fixed float math run right after it, which the
+    // same load stretches: 1 to 2x on a laptop, idle or with every core busy.
+    const plan = () => timeMs(() => mcnemarPlan(2000, 0.3));
+    const vs = pairedRatio(plan, () => timeMs(referenceWork), 9);
+    const pairs = vs.a.map((x, i) => `${x.toFixed(1)}/${vs.b[i]!.toFixed(1)}`).join(", ");
+    assert.ok(vs.ratio < 5, `took ${runs.map((x) => x.toFixed(1)).join(", ")} ms of CPU; ${vs.ratio.toFixed(2)}x the fixed loop (ms, plan/loop: ${pairs})`);
   });
 });
 

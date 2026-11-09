@@ -33,6 +33,45 @@ export const cpuMs = (fn: () => unknown): number => {
   return threadCpuMs() - start;
 };
 
+let sink = 0;
+
+/**
+ * A fixed amount of float math (a million logs and exps) to time code against:
+ * about 10 ms on an idle laptop. Returns a running total so it can't be optimized away.
+ */
+export const referenceWork = (): number => {
+  let s = 0;
+  for (let i = 1; i <= 1_000_000; i++) s += Math.log(i) * Math.exp(-i / 1_000_000);
+  return (sink += s);
+};
+
+/**
+ * The median ratio of `a` to `b` over `pairs` pairs run back to back, taking turns at
+ * going first; each returns the milliseconds it took. Load at the moment of a pair
+ * stretches both its sides, so it cancels in the pair's ratio, while each side's own
+ * times swing with it. `a` and `b` are each side's times, in pair order.
+ */
+export function pairedRatio(a: () => number, b: () => number, pairs: number): { ratio: number; a: number[]; b: number[] } {
+  const as: number[] = [];
+  const bs: number[] = [];
+  const ratios: number[] = [];
+  for (let i = 0; i < pairs; i++) {
+    let x: number;
+    let y: number;
+    if (i % 2) {
+      y = b();
+      x = a();
+    } else {
+      x = a();
+      y = b();
+    }
+    as.push(x);
+    bs.push(y);
+    ratios.push(x / y);
+  }
+  return { ratio: median(ratios), a: as, b: bs };
+}
+
 /**
  * A CLI start (`run`) against a bare `node -e ''` spawned right after it, over 7
  * interleaved pairs after one warm-up run. Passes when the median extra time is
