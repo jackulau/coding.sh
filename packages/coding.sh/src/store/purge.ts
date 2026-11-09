@@ -17,7 +17,7 @@ import type { DatabaseSync } from "node:sqlite";
 import type { BlobStore } from "../core/types.ts";
 import type { AgentEvent } from "../schema/index.ts";
 import { storedSearchText } from "./common.ts";
-import { loadSqlite } from "./sqlite.ts";
+import { loadSqlite, searchIndexOk } from "./sqlite.ts";
 
 export const PURGE_MARKER = "[redacted:purged]";
 /** Shorter literals would rewrite ordinary text. */
@@ -51,7 +51,7 @@ export interface PurgeResult {
   filesSkipped?: number;
   /** Saved session folds dropped (rebuilt on the next ingest). */
   foldsDropped: number;
-  /** After the purge: PRAGMA integrity_check and the FTS integrity check both passed. */
+  /** After the purge: PRAGMA integrity_check passed and the search index is sound (searchIndexOk). */
   integrity?: boolean;
 }
 
@@ -363,13 +363,7 @@ export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
       db.exec("VACUUM");
       db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
       const ok = (db.prepare("PRAGMA integrity_check").get() as Row | undefined)?.integrity_check === "ok";
-      let fts = true;
-      try {
-        db.exec("INSERT INTO events_fts(events_fts, rank) VALUES ('integrity-check', 1)");
-      } catch {
-        fts = false;
-      }
-      result.integrity = ok && fts;
+      result.integrity = ok && searchIndexOk(db);
     }
   } finally {
     db.close();

@@ -61,7 +61,8 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
   the value are rewritten under a new hash and every reference follows. Spool, judge-cache and
   eval run files (`~/.coding.sh/runs`) keep their length (the value becomes asterisks); a run's
   `.git` directory and files over 64 MB are left alone. The index is then VACUUMed, so the old
-  bytes leave the file. Values shorter than 8 characters are refused, the values are never
+  bytes leave the file, and checked: purge exits 1 if the database or its search index is
+  damaged. Values shorter than 8 characters are refused, the values are never
   printed, and only the SQLite store is supported. Rotate the secret as well: the agent's own
   transcripts, shell history and git are not touched.
 - **Remove secrets by shape.** `coding.sh purge --rule 'sk-ant-api03-[A-Za-z0-9_-]{80,}'` finds

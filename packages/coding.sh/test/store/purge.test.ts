@@ -11,7 +11,7 @@ import { parseLiterals } from "../../src/cli/commands/purge.ts";
 import { FsBlobStore } from "../../src/store/fs-blobs.ts";
 import { PURGE_MARKER, purgeLiterals, Scrubber } from "../../src/store/purge.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
-import { tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
+import { FIXTURES, tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
 import { cli, event, ok, seed, session } from "../query/_seed.ts";
 
 // Neither matches a redaction rule: the case purge exists for is a value the redactor missed.
@@ -340,5 +340,52 @@ describe("coding.sh purge --rule and eval run dirs", () => {
     const r = cli(["purge", "--rule", "word-[0-9]{6}", "--dry-run", "--json"]);
     assert.equal(r.status, 1);
     assert.equal(JSON.parse(r.stderr.trim().split("\n").pop()!).reason, "too_broad");
+  });
+});
+
+// Every real store holds events with no text (session starts, model calls), which
+// the external-content search index never indexes. FTS5's own check against the
+// content table counts them as missing, so purge reported every store damaged.
+describe("coding.sh purge on a store ingested from a real capture", () => {
+  let env: TmpEnv;
+  let literal = "";
+
+  before(() => {
+    env = tmpEnv();
+    const spool = join(env.dataHome, "spool", "claude-code");
+    mkdirSync(spool, { recursive: true });
+    const lines = readFileSync(join(FIXTURES, "claude-code", "hooks.spool.jsonl"), "utf8").split("${FIXTURES}").join(JSON.stringify(FIXTURES).slice(1, -1));
+    writeFileSync(join(spool, "2026-11-01.jsonl"), lines);
+    ok(["ingest"]);
+    literal = join(env.root, "leaked.txt");
+    writeFileSync(literal, "coerces inputs\n");
+  });
+  after(() => env.restore());
+
+  const kinds = (q: string): string[] => JSON.parse(ok(["search", q, "--json"]).stdout).hits.map((h: { kind: string }) => h.kind);
+
+  test("reports the index intact, and search finds the rewritten text", () => {
+    const db = new DatabaseSync(join(env.dataHome, "index.db"), { readOnly: true });
+    const n = db.prepare("SELECT count(*) AS events, count(text) AS indexed FROM events").get() as { events: number; indexed: number };
+    db.close();
+    assert.ok(n.indexed > 0 && n.indexed < n.events, "the capture has events without text");
+    assert.deepEqual(kinds("coerces"), ["assistant.message"]);
+
+    const r = cli(["purge", "--literal", literal]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stderr, /Integrity\s+index and search ok/);
+    assert.equal(JSON.parse(ok(["purge", "--literal", literal, "--json"]).stdout).integrity, true);
+    assert.deepEqual(kinds("coerces"), []);
+    assert.deepEqual(kinds("purged"), ["assistant.message"]);
+    assert.deepEqual(kinds("vitest"), ["tool.start"]);
+  });
+
+  test("still fails when an event with text is missing from the index", () => {
+    const db = new DatabaseSync(join(env.dataHome, "index.db"));
+    db.exec("INSERT INTO events_fts(events_fts, rowid, text) SELECT 'delete', rowid, text FROM events WHERE kind = 'user.message' AND text IS NOT NULL LIMIT 1");
+    db.close();
+    const r = cli(["purge", "--literal", literal]);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /Integrity\s+check failed/);
   });
 });

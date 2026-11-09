@@ -393,6 +393,39 @@ const REBUILD_FACETS = `INSERT OR IGNORE INTO session_facets (key, value, sessio
 
 export const SQLITE_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
 
+/**
+ * Whether events_fts is sound and indexes exactly the events that have text.
+ *
+ * events_fts is external-content over events, but only rows with text are
+ * indexed: session starts, model calls and the like never are. FTS5's own
+ * check against the content table ('integrity-check' with rank 1) expects an
+ * entry for every content row, so it fails on any real store. This runs FTS5's
+ * check of the index itself, then checks it against the rows that should be in
+ * it: every event with text has an entry, every entry with tokens belongs to an
+ * event with text, and the index's row count matches its entries. A 'rebuild'
+ * also gives empty entries to rows without text; those are allowed.
+ */
+export function searchIndexOk(db: DatabaseSync): boolean {
+  try {
+    db.exec("INSERT INTO events_fts(events_fts) VALUES ('integrity-check')");
+  } catch {
+    return false;
+  }
+  if (db.prepare("SELECT 1 FROM events e WHERE e.text IS NOT NULL AND NOT EXISTS (SELECT 1 FROM events_fts_docsize d WHERE d.id = e.rowid) LIMIT 1").get()) return false;
+  if (db.prepare("SELECT 1 FROM events_fts_docsize d WHERE d.sz <> x'00' AND NOT EXISTS (SELECT 1 FROM events e WHERE e.rowid = d.id AND e.text IS NOT NULL) LIMIT 1").get()) return false;
+  // The averages record (data row 1) starts with the row count as a SQLite varint.
+  const avg = (db.prepare("SELECT block FROM events_fts_data WHERE id = 1").get() as Row | undefined)?.block;
+  let total = 0;
+  if (avg instanceof Uint8Array) {
+    for (let i = 0; i < 9 && i < avg.length; i++) {
+      if (i === 8) total = total * 256 + avg[i]!;
+      else total = total * 128 + (avg[i]! & 0x7f);
+      if (i === 8 || avg[i]! < 0x80) break;
+    }
+  }
+  return total === num((db.prepare("SELECT count(*) AS n FROM events_fts_docsize").get() as Row).n);
+}
+
 // ---------------------------------------------------------------- row mapping
 
 type Row = Record<string, unknown>;

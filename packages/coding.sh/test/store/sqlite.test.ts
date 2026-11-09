@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { AgentEvent } from "../../src/schema/index.ts";
-import { loadSqlite, MIGRATIONS, SQLITE_SCHEMA_VERSION, SqliteIndexStore, WAL_SIZE_LIMIT } from "../../src/store/sqlite.ts";
+import { loadSqlite, MIGRATIONS, searchIndexOk, SQLITE_SCHEMA_VERSION, SqliteIndexStore, WAL_SIZE_LIMIT } from "../../src/store/sqlite.ts";
 import { median, timeMs } from "../helpers-timing.ts";
 
 const root = mkdtempSync(join(tmpdir(), "csh-sqlite-"));
@@ -246,6 +246,36 @@ describe("SqliteIndexStore", () => {
     const check = new DatabaseSync(path);
     check.exec("INSERT INTO events_fts(events_fts, rank) VALUES ('integrity-check', 1)");
     check.close();
+  });
+
+  it("searchIndexOk passes with events that have no text and fails on a missing, stray or miscounted entry", async () => {
+    const path = join(root, "fts-check.db");
+    const s = await SqliteIndexStore.open(path);
+    const ev = (id: string, kind: AgentEvent["kind"], payload: Record<string, unknown>): AgentEvent => ({ id, v: 0, sessionId: "s", ts: 1, agent: "claude-code", kind, payload });
+    await s.putEvents([ev("start", "session.start", {}), ev("u", "user.message", { text: "refactor the tokenizer" }), ev("llm", "llm.call", {}), ev("t", "tool.start", { tool: "Bash", input: { command: "ls" } }), ev("end", "session.end", {})]);
+    await s.close();
+    const { DatabaseSync } = await loadSqlite();
+    let copies = 0;
+    // On a copy: FTS5 writes its row count when the transaction commits.
+    const verdict = (fault?: string) => {
+      const copy = join(root, `fts-check-${copies++}.db`);
+      copyFileSync(path, copy);
+      const db = new DatabaseSync(copy);
+      try {
+        if (fault) db.exec(fault);
+        return searchIndexOk(db);
+      } finally {
+        db.close();
+      }
+    };
+    const db = new DatabaseSync(path);
+    assert.throws(() => db.exec("INSERT INTO events_fts(events_fts, rank) VALUES ('integrity-check', 1)"), /malformed/, "FTS5's content check counts rows without text as missing");
+    db.close();
+    assert.equal(verdict(), true);
+    assert.equal(verdict("INSERT INTO events_fts(events_fts) VALUES ('rebuild')"), true, "a rebuild's empty entries for rows without text are allowed");
+    assert.equal(verdict("INSERT INTO events_fts(events_fts, rowid, text) SELECT 'delete', rowid, text FROM events WHERE id = 'u'"), false, "an event with text has no entry");
+    assert.equal(verdict("DELETE FROM events WHERE id = 'u'"), false, "an entry with tokens has no event");
+    assert.equal(verdict("INSERT INTO events_fts(events_fts, rowid, text) SELECT 'delete', rowid, '' FROM events WHERE id = 'start'"), false, "a delete for a row never indexed (v4 retention)");
   });
 
   it("migrating to v5 repairs an FTS index that v4 retention corrupted", async () => {
