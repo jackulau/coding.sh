@@ -11,10 +11,11 @@ import { DraftError } from "../../eval/draft.ts";
 import { toPosix } from "../../runner/fsutil.ts";
 import type { SuitePurpose } from "../../eval/report.ts";
 import { parseAge, positiveInt, UsageError } from "../args.ts";
-import { autoIngest, jsonArg, list, resolveSession, str, withContext } from "../common.ts";
+import { autoIngest, jsonArg, list, resolveSession, str, whereFlag, withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 
 const SOURCES_HELP = [
   "coding.sh eval init --sessions                                  # tasks from failed or flagged sessions in this repo",
@@ -34,7 +35,7 @@ async function textArg(v: string | undefined, flag: string): Promise<string | un
 }
 
 /** --draft [PROVIDER|JSON]: the model that writes draft prompts or cases. */
-async function draftProvider(c: CommandContext) {
+export async function draftProvider(c: CommandContext) {
   const v = c.flags.draft;
   if (v === undefined || v === false) return undefined;
   const raw = typeof v === "string" && v ? v : "anthropic";
@@ -50,7 +51,7 @@ async function draftProvider(c: CommandContext) {
 function sourceFromFlags(c: CommandContext): InitSource | undefined {
   const f = c.flags;
   const picked = [
-    f.sessions === true || list(f.session).length ? ("sessions" as const) : undefined,
+    f.sessions === true || list(f.session).length || str(f.where) ? ("sessions" as const) : undefined,
     str(f.skill) ? ("skill" as const) : undefined,
     str(f.cases) || str(f.describe) || str(f.command) || str(f.url) ? ("cases" as const) : undefined,
   ].filter((x): x is InitSource => !!x);
@@ -116,6 +117,7 @@ export async function evalInit(c: CommandContext): Promise<number> {
   const sinceRaw = str(flags.since);
   const trials = positiveInt(flags.trials, "trials");
   const limit = positiveInt(flags.limit, "limit");
+  const where = whereFlag(c);
   let o: Partial<InitOpts> = {
     root,
     ...(purpose ? { purpose } : {}),
@@ -129,6 +131,7 @@ export async function evalInit(c: CommandContext): Promise<number> {
     ...(str(flags.repo) ? { sessionsRepo: str(flags.repo) === "all" ? "all" : resolve(c.cwd, str(flags.repo)!) } : {}),
     ...(str(flags.verifier) ? { verifier: str(flags.verifier)! } : {}),
     ...(list(flags["hidden-test"]).length ? { hiddenTests: list(flags["hidden-test"]) } : {}),
+    ...(where ? { where } : {}),
     ...(str(flags.skill) ? { skill: str(flags.skill)! } : {}),
     ...(list(flags.should).length ? { should: list(flags.should) } : {}),
     ...(list(flags["should-not"]).length ? { shouldNot: list(flags["should-not"]) } : {}),
@@ -153,6 +156,9 @@ export async function evalInit(c: CommandContext): Promise<number> {
   if (!name) name = out.interactive && !source ? await out.ask("Suite name?", { default: defaultName(o) }) : defaultName(o);
   o.name = name;
   o.signal = c.signal;
+  if (flags.validate === true && o.source !== "sessions") throw new UsageError("--validate works with --sessions, --session or --where", { reason: "invalid_argument" });
+  const workRoot = flags.validate === true ? await mkdtemp(join(tmpdir(), "codingsh-init-validate-")) : undefined;
+  if (workRoot) o.validate = { workRoot, k: positiveInt(flags["validate-k"], "validate-k") ?? 1 };
 
   const r = await withContext(c, async (ctx) => {
     // The session that just ended may still be in the ingest its hook started: wait for it, then ingest the rest.
@@ -160,6 +166,7 @@ export async function evalInit(c: CommandContext): Promise<number> {
     // `latest` and id prefixes, as in `eval new`.
     if (o.sessionIds) o.sessionIds = await Promise.all(o.sessionIds.map(async (id) => (await resolveSession(ctx, id)).id));
     if (o.draft) out.note(`Drafting with ${o.provider!.name} ${o.provider!.model}…`);
+    const spin = workRoot ? out.spin("Drafting and validating tasks…") : undefined;
     try {
       return await initSuite(o as InitOpts, { index: ctx.index, blobs: ctx.blobs });
     } catch (e) {
@@ -171,6 +178,9 @@ export async function evalInit(c: CommandContext): Promise<number> {
         });
       }
       throw e;
+    } finally {
+      spin?.stop();
+      if (workRoot) await rm(workRoot, { recursive: true, force: true }).catch(() => undefined);
     }
   });
   render(c, r, root);

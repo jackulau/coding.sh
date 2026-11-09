@@ -81,7 +81,10 @@ const REF_MAX = 20_000;
 function obligationsOf(task: EvalTask): string[] {
   const raw = task.meta?.obligations;
   if (!Array.isArray(raw)) return [];
-  return raw.flatMap((o) => (typeof o === "string" ? [o] : o && typeof o === "object" && typeof (o as { text?: unknown }).text === "string" ? [`${(o as { id?: unknown }).id ?? ""} ${(o as { text: string }).text}`.trim()] : []));
+  const skip = new Set(Array.isArray(task.meta?.notImplemented) ? (task.meta.notImplemented as unknown[]) : []);
+  // A ledger (src/eval/statement.ts) keeps superseded and unbuilt requirements; neither is an obligation.
+  const live = raw.filter((o) => !(o && typeof o === "object" && ((o as { status?: unknown }).status === "superseded" || skip.has((o as { id?: unknown }).id))));
+  return live.flatMap((o) => (typeof o === "string" ? [o] : o && typeof o === "object" && typeof (o as { text?: unknown }).text === "string" ? [`${(o as { id?: unknown }).id ?? ""} ${(o as { text: string }).text}`.trim()] : []));
 }
 
 function parseReply(text: string): { valid: boolean; reason: string; obligations?: Obligation[] } {

@@ -53,6 +53,7 @@ export async function evalTrigger(c: CommandContext, hooks: { onResult?: (r: Tri
   const current = await readSkill(resolve(c.cwd, target)).catch((e: Error) => {
     throw new CliError(e.message, { reason: "not_found" });
   });
+  if (c.flags.draft !== undefined) return (await import("./eval-trigger-draft.ts")).evalTriggerDraft(c, current, target);
   const specPath = resolve(c.cwd, str(c.flags.spec) ?? join(current.dir, "triggers.toml"));
   const specText = await readFile(specPath, "utf8").catch(() => undefined);
   if (specText === undefined) {

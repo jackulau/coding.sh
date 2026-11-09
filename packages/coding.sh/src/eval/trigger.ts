@@ -47,6 +47,8 @@ export interface TriggerPrompt {
   note?: string;
   /** should_not only: the sibling skill this prompt belongs to. Loading it is the expected route. */
   expectSkill?: string;
+  /** Where the prompt came from: `trace:<session id>` (eval trigger --draft mined it) or `draft` (a model wrote it). */
+  source?: string;
 }
 
 export interface TriggerSpec {
@@ -72,7 +74,7 @@ export class TriggerSpecError extends Error {
 }
 
 const TOP_KEYS = new Set(["skill", "k", "timeout_s", "should", "should_not"]);
-const ITEM_KEYS: Record<TriggerSide, Set<string>> = { should: new Set(["prompt", "weight", "note"]), should_not: new Set(["prompt", "weight", "note", "expect_skill"]) };
+const ITEM_KEYS: Record<TriggerSide, Set<string>> = { should: new Set(["prompt", "weight", "note", "source"]), should_not: new Set(["prompt", "weight", "note", "expect_skill", "source"]) };
 
 const isTable = (v: TomlValue | undefined): v is TomlTable => typeof v === "object" && v !== null && !Array.isArray(v);
 const normPrompt = (s: string) => s.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
@@ -111,13 +113,15 @@ export function parseTriggerSpec(text: string, file = "triggers.toml"): TriggerS
       if (weight !== 1 && weight !== 0.5) fail(`${at}.weight`, "must be 1 (high confidence) or 0.5 (medium)");
       const note = item.note;
       if (note !== undefined && typeof note !== "string") fail(`${at}.note`, "must be a string");
+      const source = item.source;
+      if (source !== undefined && (typeof source !== "string" || !source.trim())) fail(`${at}.source`, "must be a string");
       const expect = item.expect_skill;
       if (expect !== undefined && (typeof expect !== "string" || !expect.trim())) fail(`${at}.expect_skill`, "must be a skill name");
       const key = normPrompt(prompt as string);
       const prev = seen.get(key);
       if (prev) fail(`${at}.prompt`, `duplicates ${prev}`);
       seen.set(key, at);
-      return { prompt: (prompt as string).trim(), weight: weight as number, ...(note ? { note: note as string } : {}), ...(expect ? { expectSkill: (expect as string).trim() } : {}) };
+      return { prompt: (prompt as string).trim(), weight: weight as number, ...(note ? { note: note as string } : {}), ...(expect ? { expectSkill: (expect as string).trim() } : {}), ...(source ? { source: (source as string).trim() } : {}) };
     });
   };
   const should = side("should");

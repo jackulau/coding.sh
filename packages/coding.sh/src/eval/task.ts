@@ -12,7 +12,9 @@ import type { AgentEvent, BlobRef, BlobStore, EvalTask, IndexStore, Session } fr
 import { safeJoin, safeWrite, toPosix } from "../runner/fsutil.ts";
 import { rmrf, snapshotOps, type SnapshotOps } from "../runner/git.ts";
 import { matchAny } from "../runner/glob.ts";
+import type { ChatProvider } from "../judge/providers.ts";
 import { filterPatch, patchPaths } from "./patch.ts";
+import { deterministicLedger, draftStatement, renderStatement, requirementCandidates, type LedgerObligation } from "./statement.ts";
 import { taskWitnesses, type Witness } from "./witness.ts";
 
 export const TASK_FORMAT = "coding.sh/task@0";
@@ -24,9 +26,13 @@ export interface TaskMeta {
   /** Human-readable notes about what was guessed or missing. */
   notes: string[];
   setupSource: "given" | "guessed" | "none";
-  /** given: DraftTaskOpts.instruction; session: first user prompt; command: the prompt argument of a `coding.sh run -- <cmd>` session. */
-  instructionSource: "given" | "session" | "command";
+  /** given: DraftTaskOpts.instruction; session: first user prompt; command: the prompt argument of a `coding.sh run -- <cmd>` session; ledger: rendered requirement ledger (src/eval/statement.ts). */
+  instructionSource: "given" | "session" | "command" | "ledger";
   verifierSource: "given" | "session" | "manifest" | "none";
+  /** The requirement ledger behind a `statement: "ledger"` instruction (superseded ones included). */
+  obligations?: LedgerObligation[];
+  /** Ledger ids the session discussed but did not build (left out of the instruction). */
+  notImplemented?: string[];
 }
 
 /** EvalTask plus drafting metadata. Assignable to EvalTask (see report: request `meta` on the contract). */
@@ -52,6 +58,17 @@ export interface DraftTaskOpts {
    */
   hiddenTests?: string[];
   tags?: string[];
+  /**
+   * How to build the instruction when none is given. "first-prompt" (default): the first
+   * user prompt. "ledger": every user turn as a requirement ledger (src/eval/statement.ts),
+   * merged by `provider` when given, else one obligation per turn.
+   */
+  statement?: "first-prompt" | "ledger";
+  /** Model for `statement: "ledger"`. */
+  provider?: ChatProvider;
+  /** Override for draftStatement (tests). */
+  draft?: typeof draftStatement;
+  signal?: AbortSignal;
   /** Override for src/core/snapshot.ts (tests, other backends). */
   git?: SnapshotOps;
   now?: number;
@@ -295,11 +312,14 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
   const prompts = events.filter((e) => e.kind === "user.message").map(textOf).filter((t): t is string => !!t);
   let instruction = opts.instruction?.trim() || undefined;
   let instructionSource: TaskMeta["instructionSource"] = "given";
-  if (!instruction && prompts[0]) {
+  // Ledger mode builds the instruction after the reference patch exists (the model uses it to drop unbuilt requirements).
+  const ledgerCands = !instruction && opts.statement === "ledger" ? requirementCandidates(events) : [];
+  if (ledgerCands.length) instructionSource = "ledger";
+  if (!instruction && !ledgerCands.length && prompts[0]) {
     instruction = prompts[0];
     instructionSource = "session";
   }
-  if (!instruction) {
+  if (!instruction && !ledgerCands.length) {
     const wrapStart = events.find((e) => e.kind === "session.start" && e.payload.source === "wrapper");
     const args = wrapStart ? await wrapperArgs(wrapStart, blobs) : undefined;
     instruction = args ? instructionFromArgs(args) : undefined;
@@ -308,12 +328,12 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
       notes.push("instruction taken from the wrapped command's prompt argument; review it");
     }
   }
-  if (!instruction) {
+  if (!instruction && !ledgerCands.length) {
     throw new Error(
       `session ${sessionId} has no user prompt to use as the instruction; pass one with --instruction "<what the agent was asked to do>" or --instruction @FILE`,
     );
   }
-  const followUps = prompts.slice(instructionSource === "session" ? 1 : 0);
+  const followUps = instructionSource === "ledger" ? [] : prompts.slice(instructionSource === "session" ? 1 : 0);
   if (followUps.length) notes.push(`${followUps.length} ${instructionSource === "session" ? "follow-up " : "session "}prompt(s) not included in the instruction; review whether the task needs them`);
 
   const start = startOf(session, events);
@@ -351,6 +371,23 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
   } else {
     notes.push("session has no end snapshot; no reference patch (add one before validating)");
   }
+
+  let ledgerMeta: Pick<TaskMeta, "obligations" | "notImplemented"> = {};
+  if (instructionSource === "ledger") {
+    if (opts.provider) {
+      const assistantIds = new Set(events.filter((e) => e.kind === "assistant.message").map((e) => e.id));
+      const d = await (opts.draft ?? draftStatement)({ candidates: ledgerCands, provider: opts.provider, assistantIds, ...(refText ? { referencePatchText: refText } : {}), ...(opts.signal ? { signal: opts.signal } : {}) });
+      instruction = d.statement;
+      ledgerMeta = { obligations: d.ledger.obligations, ...(d.ledger.notImplemented.length ? { notImplemented: d.ledger.notImplemented } : {}) };
+      if (d.submissions > 1) notes.push(`ledger accepted on submission ${d.submissions} of ${opts.provider.name} ${opts.provider.model}`);
+    } else {
+      const obligations = deterministicLedger(ledgerCands);
+      instruction = renderStatement(obligations);
+      ledgerMeta = { obligations };
+      notes.push("ledger is unmerged user turns; review superseded requirements");
+    }
+  }
+  if (!instruction) throw new Error(`session ${sessionId}: the requirement ledger rendered no instruction`);
 
   // Setup / verifier guesses need a look at the start tree.
   let setup = opts.setup;
@@ -399,7 +436,7 @@ export async function draftTaskFromSession(opts: DraftTaskOpts): Promise<Drafted
     referencePatch,
     tags,
     createdAt: now,
-    meta: { followUps, notes, instructionSource, setupSource, verifierSource },
+    meta: { followUps, notes, instructionSource, setupSource, verifierSource, ...ledgerMeta },
   };
 }
 
@@ -672,22 +709,36 @@ export async function importTaskDir(dir: string, blobs?: BlobStore, opts: Import
 
 // ------------------------------------------------------------ Harbor export
 //
-// Assumptions about the Harbor task layout (harbor-framework, the successor
-// of terminal-bench), documented here because they are not validated against
-// Harbor itself:
-//   - task.toml has [metadata], [verifier].timeout_sec, [agent].timeout_sec, [environment].
+// The Harbor task layout (harbor-framework/harbor v0.25, task.toml schema 1.4,
+// src/harbor/models/task/config.py TaskConfig):
+//   - task.toml: schema_version, [task] name ("org/name"), [metadata], [verifier]
+//     timeout_sec and environment_mode, [agent].timeout_sec, [environment].
 //   - environment/Dockerfile builds the image; the agent works in WORKDIR /app.
 //   - tests/ is copied to /tests only at verify time; tests/test.sh must write
-//     1 (pass) or 0 (fail) to /logs/verifier/reward.txt.
+//     1 (pass) or 0 (fail) to /logs/verifier/reward.txt. The verifier runs in the
+//     agent's container (environment_mode "shared"), so it sees the agent's /app.
 //   - solution/ is copied to /solution for the oracle; solution/solve.sh is run.
+//     solution/trajectory.json (optional) is the source session as ATIF-v1.8
+//     (eval/atif.ts): next to the solution, never beside instruction.md, where
+//     Harbor would seed the agent with it.
 // Hidden files go to tests/files/<path> and are copied over /app by test.sh.
 // The start tree is exported (with its single-commit .git) to environment/repo/.
+
+export const HARBOR_SCHEMA_VERSION = "1.4";
+
+/** A Harbor package name ("org/name": letters, digits, dot, dash, underscore). */
+export function harborTaskName(task: Pick<EvalTask, "name" | "id">): string {
+  const slug = task.name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[^a-z0-9]+|-+$/g, "").replace(/\.\.+/g, ".").slice(0, 80);
+  return `coding-sh/${slug || task.id}`;
+}
 
 export interface HarborOpts {
   /** Export the start tree into environment/repo (default true). Needs the snapshot to be materializable. */
   includeRepo?: boolean;
   git?: SnapshotOps;
   agentTimeoutSec?: number;
+  /** The source session as an ATIF trajectory (eval/atif.ts), written to solution/trajectory.json. */
+  trajectory?: unknown;
 }
 
 function baseImage(setup: readonly string[]): string {
@@ -708,7 +759,8 @@ function shQuote(s: string): string {
 export async function exportHarbor(task: EvalTask, dir: string, blobs: BlobStore, opts: HarborOpts = {}): Promise<void> {
   await mkdir(dir, { recursive: true });
   const toml = stringifyToml({
-    version: "1.0",
+    schema_version: HARBOR_SCHEMA_VERSION,
+    task: { name: harborTaskName(task), ...(task.instruction ? { description: task.instruction.split("\n")[0]!.slice(0, 200) } : {}), keywords: task.tags },
     metadata: {
       name: task.name,
       source: "coding.sh",
@@ -716,7 +768,7 @@ export async function exportHarbor(task: EvalTask, dir: string, blobs: BlobStore
       ...(task.sourceSessionId ? { source_session: task.sourceSessionId } : {}),
       tags: task.tags,
     },
-    verifier: { timeout_sec: Math.ceil(task.verifier.timeoutMs / 1000) },
+    verifier: { timeout_sec: Math.ceil(task.verifier.timeoutMs / 1000), environment_mode: "shared" },
     agent: { timeout_sec: opts.agentTimeoutSec ?? 1800 },
     environment: { build_timeout_sec: 1800 },
   });
@@ -765,6 +817,10 @@ export async function exportHarbor(task: EvalTask, dir: string, blobs: BlobStore
   await writeFile(join(tests, "test.sh"), testSh);
   await chmod(join(tests, "test.sh"), 0o755);
 
+  if (opts.trajectory !== undefined) {
+    await mkdir(join(dir, "solution"), { recursive: true });
+    await writeFile(join(dir, "solution", "trajectory.json"), `${JSON.stringify(opts.trajectory, null, 2)}\n`);
+  }
   if (task.referencePatch) {
     const sol = join(dir, "solution");
     await mkdir(sol, { recursive: true });

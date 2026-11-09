@@ -24,10 +24,14 @@ import type { ChatProvider } from "../judge/providers.ts";
 import { toPosix } from "../runner/fsutil.ts";
 import type { SnapshotOps } from "../runner/git.ts";
 import { insideDir } from "./decision.ts";
+import { CANDIDATE_POOL, rankSessions, rejectSummary } from "./candidates.ts";
 import { draftCases, draftTriggers, type DraftedCase } from "./draft.ts";
 import { type SuitePurpose } from "./report.ts";
 import { DEFAULT_TRIALS, SUITE_FILE, SUITES_DIR, type SuiteKind, type SuiteSpec } from "./suite-spec.ts";
 import { draftTaskFromSession, exportTaskDir } from "./task.ts";
+import { validateTask } from "./validate.ts";
+import { sessionMatcher } from "../query/run.ts";
+import type { Query } from "../query/where.ts";
 import { parseTriggerSpec, readSkill, siblingSkills, TriggerSpecError } from "./trigger.ts";
 
 export type InitSource = "sessions" | "skill" | "cases";
@@ -68,6 +72,14 @@ export interface InitOpts {
   sessionsRepo?: string;
   verifier?: string;
   hiddenTests?: string[];
+  /** Sessions matching this query (`sessions --where` syntax) instead of only failed or flagged ones. */
+  where?: Query;
+  /**
+   * Validate each drafted task (eval/validate.ts) before it goes into the suite. The verifier
+   * decides what the session's own diff is: the reference when it passes the end state, a near
+   * miss when it fails it. Tasks that pass validation get status "validated".
+   */
+  validate?: { workRoot: string; k?: number; passToPass?: boolean; env?: Record<string, string> };
   // skill
   skill?: string;
   should?: string[];
@@ -243,10 +255,24 @@ interface Built {
 
 // ------------------------------------------------------------ sessions
 
+/** Tag on a task drafted from a session that went wrong (isFlagged): `eval run` reports which of these now pass. */
+export const CAPTURED_FAILURE_TAG = "captured-failure";
+
 /** A session that went wrong: a failure flag (not a tag), or tests still failing. */
 export const isFlagged = (s: Session): boolean => failureFlags(s.flags).length > 0 || (s.stats.testsFailed ?? 0) > 0;
 
-async function pickSessions(o: InitOpts, index: IndexStore, now: number): Promise<Session[]> {
+/** Recent root sessions in the project (only failed or flagged ones unless `flaggedOnly` is false), newest first, at most CANDIDATE_POOL. */
+export async function recentSessions(o: Pick<InitOpts, "root" | "since" | "sessionsRepo">, index: IndexStore, now: number, flaggedOnly = true): Promise<Session[]> {
+  const since = now - (o.since ?? DEFAULT_SINCE_MS);
+  const where = o.sessionsRepo;
+  const all = await index.listSessions({ ...(where ? {} : { repoRoot: o.root }), runId: null, parentSessionId: null, since });
+  return all
+    .filter((s) => (!flaggedOnly || isFlagged(s)) && s.startedAt >= since && (!where || where === "all" || insideDir(where, s.repo?.root) || insideDir(where, s.cwd)))
+    .sort((a, b) => b.startedAt - a.startedAt)
+    .slice(0, CANDIDATE_POOL);
+}
+
+async function pickSessions(o: InitOpts, index: IndexStore, now: number): Promise<{ sessions: Session[]; notes: string[] }> {
   if (o.sessionIds?.length) {
     const out: Session[] = [];
     for (const id of o.sessionIds) {
@@ -254,30 +280,39 @@ async function pickSessions(o: InitOpts, index: IndexStore, now: number): Promis
       if (!s) throw new InitError(`no session ${id}`);
       out.push(s);
     }
-    return out;
+    return { sessions: out, notes: [] };
   }
-  const since = now - (o.since ?? DEFAULT_SINCE_MS);
-  const where = o.sessionsRepo;
-  const all = await index.listSessions({ ...(where ? {} : { repoRoot: o.root }), runId: null, parentSessionId: null, since });
-  return all
-    .filter((s) => isFlagged(s) && s.startedAt >= since && (!where || where === "all" || insideDir(where, s.repo?.root) || insideDir(where, s.cwd)))
-    .sort((a, b) => b.startedAt - a.startedAt)
-    .slice(0, o.limit ?? DEFAULT_SESSION_LIMIT);
+  // Ranked (eval/candidates.ts): sessions that can't become a task are left out, the rest go best first.
+  let pool = await recentSessions(o, index, now, !o.where);
+  if (o.where) {
+    const match = sessionMatcher(index, o.where.root);
+    const hits: Session[] = [];
+    for (const s of pool) if (await match(s)) hits.push(s);
+    pool = hits;
+  }
+  const ranked = await rankSessions(index, pool, { now });
+  const byId = new Map(pool.map((s) => [s.id, s]));
+  const sessions = ranked.filter((c) => c.eligible).slice(0, o.limit ?? DEFAULT_SESSION_LIMIT).map((c) => byId.get(c.sessionId)!);
+  const rejected = rejectSummary(ranked);
+  return { sessions, notes: rejected ? [`left out ${ranked.filter((c) => !c.eligible).length} ${o.where ? "matching" : "flagged"} session(s) that can't become a task: ${rejected} (coding.sh eval candidates --all lists them)`] : [] };
 }
 
 async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: string): Promise<Built> {
   const now = deps.now ?? Date.now();
-  const sessions = await pickSessions(o, deps.index, now);
+  const picked = await pickSessions(o, deps.index, now);
+  const sessions = picked.sessions;
   if (!sessions.length) {
     const days = Math.round((o.since ?? DEFAULT_SINCE_MS) / 86_400_000);
     const where = o.sessionsRepo === "all" ? "any repo" : (o.sessionsRepo ?? o.root);
-    throw new InitError(`no failed or flagged sessions in ${where} in the last ${days} days (coding.sh sessions --where is:flagged lists them); name sessions with --session <id>${o.sessionsRepo ? "" : ", or look in another checkout with --repo <DIR|all>"}`);
+    const why = picked.notes.length ? ` that can become a task (${picked.notes[0]})` : "";
+    throw new InitError(`no ${o.where ? "matching" : "failed or flagged"} sessions${why} in ${where} in the last ${days} days (coding.sh sessions --where is:flagged lists them); name sessions with --session <id>${o.sessionsRepo ? "" : ", or look in another checkout with --repo <DIR|all>"}`);
   }
-  const notes: string[] = [];
+  const notes: string[] = [...picked.notes];
   const tasks: NonNullable<Built["tasks"]> = [];
   const used = new Set<string>();
   const agents = new Map<string, number>();
   let attempts = 0;
+  let validated = 0;
   for (const s of sessions) {
     let task;
     try {
@@ -288,20 +323,30 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
         sessionId: s.id,
         ...(o.verifier ? { verifierCommand: o.verifier } : {}),
         ...(o.hiddenTests?.length ? { hiddenTests: o.hiddenTests } : {}),
-        tags: [`suite:${name}`],
+        tags: [`suite:${name}`, ...(isFlagged(s) ? [CAPTURED_FAILURE_TAG] : [])],
         ...(deps.now ? { now: deps.now } : {}),
       });
     } catch (e) {
       notes.push(`skipped session ${s.id}: ${e instanceof Error ? e.message : String(e)}`);
       continue;
     }
-    // A failed session's diff is what the agent got wrong: a near miss the
-    // verifier must fail, not the reference solution it must pass.
-    const failed = isFlagged(s) && !!task.referencePatch;
-    if (failed) task = { ...task, referencePatch: undefined, nearMissPatches: [task.referencePatch!, ...(task.nearMissPatches ?? [])] };
-    await deps.index.putTask(task);
     let d = slug(task.name).slice(0, 48) || "task";
     for (let i = 2; used.has(d); i++) d = `${slug(task.name).slice(0, 44)}-${i}`;
+    // A failed session's diff is what the agent got wrong: a near miss the
+    // verifier must fail, not the reference solution it must pass. With
+    // validation, the verifier decides: a diff that passes it is a reference.
+    let failed = isFlagged(s) && !!task.referencePatch;
+    if (o.validate && task.referencePatch && task.verifier.command) {
+      const v = await validateTask({ task, blobs: deps.blobs, workRoot: o.validate.workRoot, k: o.validate.k ?? 1, ...(deps.git ? { git: deps.git } : {}), ...(o.validate.passToPass === false ? { passToPass: false } : {}), ...(o.validate.env ? { env: o.validate.env } : {}) });
+      failed = !v.report.ok && v.report.referencePasses.passed === 0 && isFlagged(s);
+      if (v.report.ok) {
+        task = { ...task, status: v.task.status, validation: v.task.validation };
+        validated++;
+      } else if (failed) notes.push(`${d}: the session's end state fails the verifier, so its diff is kept as a near miss; add reference.patch, a correct fix, then coding.sh eval validate`);
+      else notes.push(`${d}: not validated: ${[...v.errors, ...(v.report.errors ?? [])][0] ?? validationGap(v.report)}`);
+    }
+    if (failed) task = { ...task, referencePatch: undefined, nearMissPatches: [task.referencePatch!, ...(task.nearMissPatches ?? [])] };
+    await deps.index.putTask(task);
     used.add(d);
     tasks.push({ task, dir: d, sessionId: s.id });
     if (failed) attempts++;
@@ -310,6 +355,7 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
     else if (task.meta.verifierSource !== "given") notes.push(`${d}: verifier guessed (${task.verifier.command}); make sure it covers this task only`);
   }
   if (!tasks.length) throw new InitError(`couldn't draft a task from any of ${sessions.length} session(s): ${notes.join("; ")}`);
+  if (o.validate) notes.unshift(`${validated} of ${tasks.length} task(s) validated: the verifier fails the start, passes the session's end state and fails the near misses`);
   if (attempts) {
     notes.push(
       `the agent's failed attempt is saved as near-misses/001.patch (the verifier must fail it). Add reference.patch, a correct fix, to ${attempts === tasks.length ? "each task dir" : "those task dirs"}; then coding.sh eval import evals/${name}/tasks/<task> loads it and coding.sh eval validate <task> checks the verifier fails before the fix and passes after`,
@@ -317,6 +363,15 @@ async function fromSessions(o: InitOpts, deps: InitDeps, name: string, _dir: str
   }
   const agent = o.agent ?? [...agents.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "claude-code";
   return { purpose: "capability", fields: { description: `Tasks from ${tasks.length} failed or flagged session(s)`, tasks: "tasks", agent }, files: {}, notes, drafted: false, todo: false, tasks };
+}
+
+/** The first check a validation failed, in words. */
+function validationGap(r: { noopFails: boolean; referencePasses: { passed: number; of: number }; nearMissesFail: { failed: number; of: number }; leakage: string[] }): string {
+  if (!r.noopFails) return "the verifier already passes before any change";
+  if (r.referencePasses.passed < r.referencePasses.of) return `the session's end state passed ${r.referencePasses.passed} of ${r.referencePasses.of} verifier runs`;
+  if (r.nearMissesFail.failed < r.nearMissesFail.of) return `${r.nearMissesFail.of - r.nearMissesFail.failed} near miss(es) passed the verifier`;
+  if (r.leakage.length) return `the instruction leaks the fix: ${r.leakage[0]}`;
+  return "see coding.sh eval validate";
 }
 
 // ------------------------------------------------------------ skill

@@ -1,12 +1,13 @@
 // coding.sh eval init|run|new|import|validate|crosscheck|audit|trigger|list|export
 import { existsSync, readdirSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { paths } from "../../core/paths.ts";
 import { snapshotDir } from "../../core/snapshot.ts";
 import type { EvalTask, RunResult } from "../../core/types.ts";
 import { crossCheckMeta, crossCheckVerifier, DEFAULT_CROSSCHECK_MAX, formatCrossCheck } from "../../eval/crosscheck.ts";
+import { StatementError } from "../../eval/statement.ts";
 import { draftTaskFromSession, exportHarbor, exportTaskDir, importTaskDir, readInstructionArg, verifierPathWarnings } from "../../eval/task.ts";
 import { formatValidation, validateTask } from "../../eval/validate.ts";
 import {
@@ -27,7 +28,7 @@ import { toPosix } from "../../runner/fsutil.ts";
 import { git } from "../../runner/git.ts";
 import { providerFromSpec, type LlmProviderSpec } from "../../graders/index.ts";
 import { positiveInt, UsageError } from "../args.ts";
-import { autoIngest, jsonArg, list, oneLine, resolveSession, resolveTask, str, withContext } from "../common.ts";
+import { autoIngest, jsonArg, list, notFoundWithBacklog, oneLine, resolveSession, resolveTask, str, withContext } from "../common.ts";
 import { ago, CliError, clean } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import type { Context } from "../../core/context.ts";
@@ -94,11 +95,25 @@ export async function run(c: CommandContext): Promise<number> {
   if (c.action === "trigger") return (await import("./eval-trigger.ts")).evalTrigger(c);
   if (c.action === "init") return (await import("./eval-init.ts")).evalInit(c);
   if (c.action === "run") return (await import("./eval-run.ts")).evalRun(c);
+  if (c.action === "candidates") return (await import("./eval-candidates.ts")).evalCandidates(c);
   return withContext(c, async (ctx) => {
     switch (c.action) {
       case "new": {
-        await autoIngest(ctx);
-        const s = await resolveSession(ctx, c.positionals[0]!);
+        const statement = str(c.flags.statement) as "first-prompt" | "ledger" | undefined;
+        const judgeArg = str(c.flags.judge);
+        if (judgeArg && statement !== "ledger") throw new UsageError("--judge needs --statement ledger", { reason: "invalid_argument" });
+        let provider;
+        if (judgeArg) {
+          const spec = (await jsonArg(judgeArg, "--judge")) as LlmProviderSpec;
+          if (!spec || typeof spec !== "object" || Array.isArray(spec)) throw new UsageError('--judge must be a provider spec, e.g. {"provider":"anthropic","model":"…"}', { reason: "invalid_value" });
+          try {
+            provider = providerFromSpec(spec, { env: c.env });
+          } catch (e) {
+            throw new UsageError(`Invalid --judge: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_value" });
+          }
+        }
+        const backlog = await autoIngest(ctx);
+        const s = await resolveSession(ctx, c.positionals[0]!).catch((e) => Promise.reject(notFoundWithBacklog(e, backlog)));
         const verifier = str(c.flags.verifier);
         const name = str(c.flags.name);
         const instructionArg = str(c.flags.instruction);
@@ -116,6 +131,8 @@ export async function run(c: CommandContext): Promise<number> {
             index: ctx.index,
             blobs: ctx.blobs,
             sessionId: s.id,
+            ...(statement ? { statement } : {}),
+            ...(provider ? { provider } : {}),
             ...(name ? { name } : {}),
             ...(instruction ? { instruction } : {}),
             ...(verifier ? { verifierCommand: verifier } : {}),
@@ -124,6 +141,9 @@ export async function run(c: CommandContext): Promise<number> {
             ...(list(c.flags.tag).length ? { tags: list(c.flags.tag) } : {}),
           });
         } catch (e) {
+          if (e instanceof StatementError) {
+            throw new CliError(`Couldn't write a requirement ledger for ${s.id}: ${e.message}`, { reason: "draft_failed", next: ["Retry, use another model, or take one obligation per user turn:", `coding.sh eval new ${s.id} --statement ledger`] });
+          }
           throw new CliError(`Couldn't draft a task from ${s.id}: ${e instanceof Error ? e.message : String(e)}`, { reason: "draft_failed" });
         }
         await ctx.index.putTask(task);
@@ -134,6 +154,14 @@ export async function run(c: CommandContext): Promise<number> {
         }
         out.ok(`Drafted ${task.name}`);
         out.row("Verifier", task.verifier.command || "none: pass --verifier");
+        if (task.meta.obligations?.length) {
+          const skip = new Set(task.meta.notImplemented ?? []);
+          out.print("Obligations:");
+          for (const o of task.meta.obligations) {
+            const state = o.status === "superseded" ? ` (superseded by ${o.supersededBy})` : skip.has(o.id) ? " (not built, left out)" : "";
+            out.print(`  ${o.id} ${oneLine(o.text, 100)}${state}  [${o.evidence.join(", ")}]`);
+          }
+        }
         for (const n of notes.slice(0, 5)) out.warn(n);
         out.print(task.id);
         out.next("Check the task is fair before using it", `coding.sh eval validate ${task.id}`);
@@ -389,10 +417,25 @@ export async function run(c: CommandContext): Promise<number> {
         if (existsSync(dir) && readdirSync(dir).length && c.flags.force !== true) {
           throw new CliError(`Can't export to ${dir}: the directory is not empty`, { reason: "conflict", askUser: true, next: ["Replace its contents (deletes what is there):", `coding.sh eval export ${task.id} --out ${outDir} --force`] });
         }
+        const format = str(c.flags.format) ?? "coding.sh";
+        // The source session as an ATIF-v1.8 trajectory: the whole export for atif, solution/trajectory.json for harbor.
+        let trajectory: unknown;
+        if ((format === "atif" || format === "harbor") && task.sourceSessionId && (await ctx.index.getSession(task.sourceSessionId))) {
+          const { atifFromStore } = await import("../../eval/atif.ts");
+          const { createRedactor } = await import("../../core/redact.ts");
+          const cfg = ctx.config.capture;
+          trajectory = await atifFromStore(ctx.index, task.sourceSessionId, { redactor: createRedactor({ redact: cfg.redact, patterns: cfg.redactPatterns, env: c.env }), ...(cfg.mode === "metadata" ? { mode: "metadata" as const } : {}) });
+        }
+        if (format === "atif" && !trajectory) {
+          throw new CliError(`${task.name} has no source session in the store to export as a trajectory`, { reason: "not_found", next: ["Export the task itself:", `coding.sh eval export ${task.id} --out ${outDir} --format harbor`] });
+        }
         const replaced = existsSync(dir) && readdirSync(dir).length > 0;
         if (replaced) await rm(dir, { recursive: true, force: true });
-        if (str(c.flags.format) === "harbor") await exportHarbor(task, dir, ctx.blobs);
-        else await exportTaskDir(task, dir, ctx.blobs);
+        if (format === "harbor") await exportHarbor(task, dir, ctx.blobs, trajectory ? { trajectory } : {});
+        else if (format === "atif") {
+          await mkdir(dir, { recursive: true });
+          await writeFile(join(dir, "trajectory.json"), `${JSON.stringify(trajectory, null, 2)}\n`);
+        } else await exportTaskDir(task, dir, ctx.blobs);
         if (out.json) out.data({ outcome: replaced ? "replaced" : "exported", task: task.id, path: dir, format: str(c.flags.format) ?? "coding.sh" });
         else {
           if (replaced) out.row("Replaced", dir);

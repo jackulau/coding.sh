@@ -38,6 +38,23 @@ validate <task>` checks the verifier both ways. The verifier must pass with this
 a whole test suite that also covers other bugs never passes. Until there is a reference, `eval run`
 lists the task as having no reference solution.
 
+Sessions are ranked before they are drafted (`coding.sh eval candidates` shows the ranking). A
+subagent, a `coding.sh run` session, one with no git state at its start, no typed prompt or no
+edits can't become a task and is left out, with a note saying how many. The rest go best first: a
+failure flag, the user pushing back, a verifier guessable from the commands the session ran, a
+test edited after a failing run, more than one turn and a recent start each add to the score.
+
+`--where '<query>'` takes the sessions a [query](../reference/query.md) matches instead of every
+flagged one, for example `--where 'flag:premature-completion repo:api'`. `--validate` runs
+[`eval validate`](#session-to-eval) on each task before it goes into the suite, and the verifier
+decides what the session's own diff is. A diff that passes it (the user pushed the agent to a fix
+in later turns) becomes `reference.patch`, and the task is marked `validated`. A diff that fails it
+is kept as a near miss, as above. `--validate-k N` asks the reference to pass N runs out of N.
+Tasks from flagged sessions carry the tag `captured-failure`, and `eval run` adds a line naming the
+ones the agent now solves in most trials, such as `captured failures: 1 of 3 now pass: fix-add
+(session 01J…)`. The line also goes into the step summary and pull request comment of the
+[GitHub Action](../how-to/ci-regressions.md).
+
 This is a **capability** suite: tasks the agent can't do yet. `eval run` runs the agent (the one the
 sessions used) 3 times per task, from a snapshot of your current setup, and exits 0 whatever the
 score. The tasks start from snapshots on this machine, so they run here, not in CI. To test a
@@ -163,6 +180,34 @@ roadmap. What each step maps to here:
 `coding.sh eval new <session> --verifier "<cmd>"` drafts a replayable task that starts from the
 repo snapshot taken before the agent ran.
 
+By default the instruction is the session's first prompt, and later prompts are kept aside in
+`meta.followUps`. In a multi-turn session the user often adds or changes a requirement after the
+first message, so the verifier then checks something the instruction never asks for. `--statement
+ledger` writes the instruction from every turn instead: one obligation per user message, plus each
+assistant proposal the user approved with a short reply ("sounds good", "go ahead"). Short
+acknowledgements ("ok", "thanks", "lgtm") and harness text (slash commands, compaction summaries)
+are dropped. With `--judge '{"provider":"anthropic"}'` a model merges the turns into atomic
+obligations. It marks an obligation a later turn replaced as superseded and leaves out the ones the
+session never built. Every obligation cites the event ids it came from. Code checks each reply:
+
+- every cited id is a real requirement turn;
+- no obligation rests on assistant text the user did not approve;
+- every `supersededBy` points at an obligation in the ledger;
+- no two obligations share an id;
+- the statement repeats less than 30% of the reference patch's 8-token runs.
+
+Problems go back to the model, and after three bad replies the command fails. Without `--judge`,
+each turn is one obligation and the task notes that superseded requirements need a review. The
+agent sees the surviving obligations as a plain list, with no ids. The full ledger is stored in
+`meta.obligations`, which `eval export` and `eval import` keep and `eval crosscheck` uses as its
+checklist.
+
+`coding.sh eval candidates` lists the captured sessions in this repo that would make the best
+tasks, best first, with the score's reasons, the guessed verifier and, with `--all`, the sessions
+left out and why. `--since`, `--limit`, `--repo DIR|all` and `--flagged` (only failed or flagged
+sessions) change the pool, and `--json` prints `{candidates, considered, eligible, rejected}`. The
+MCP tool `eval_candidates` returns the same list.
+
 `coding.sh eval validate <task>` checks that the verifier is fair: a do-nothing attempt fails, the
 reference fix passes k of k, near-misses fail, an impossible variant fails, and no future history
 leaks. When a check goes the wrong way (the reference fails, the no-op or a near-miss passes, or
@@ -191,7 +236,16 @@ picks the reviewer (default Anthropic). It makes one model call per run, at most
 counts are stored at `task.meta.crossCheck`, in the same shape as a human verifier audit (see
 [Auditing a test verifier](#auditing-a-test-verifier)), and `eval list --json` shows them.
 
-`coding.sh eval export --format harbor` writes a Harbor-format task.
+`coding.sh eval export --format harbor` writes a Harbor task. Its `task.toml` uses schema
+version 1.4, with `[task] name = "coding-sh/<task>"` and an explicit
+`[verifier] environment_mode = "shared"`. When the task's source session is in the store, the
+session goes to `solution/trajectory.json` as an ATIF-v1.8 trajectory, where Harbor does not show
+it to the agent. `--format atif` writes only `trajectory.json`. Each user message, model call
+and tool call becomes a step. Tool results land in the step's observation. Token counts and cost
+go into the step's metrics. Subagent sessions are embedded under the `Agent` call that started
+them. Text is redacted as capture is (`capture.redact`), and `capture.mode = "metadata"` leaves it
+out. Fields with no ATIF equivalent go under `extra.coding_sh`. Both outputs pass Harbor 0.25's
+own loaders (`TaskConfig` and `Trajectory`).
 
 ### Hand-written tasks
 
@@ -265,6 +319,31 @@ tasks, from a stub CLI to the compare report.
 ## Datasets and experiments
 
 `coding.sh dataset add|import` keeps versioned cases with stable train/dev/test splits.
+
+### Case kinds: bad, guard, control
+
+When a dataset tests a change (a new prompt, new tool text, a new model), give its cases a `kind`.
+Cases without one are ordinary cases.
+
+| Kind | Before the change | After the change |
+|---|---|---|
+| `bad` | fails: it reproduces the failure the change is for | passes |
+| `guard` | passes: behavior near the change that already works | passes |
+| `control` | passes: a case where the fix must not kick in | passes; a failure means the change overcorrected |
+
+Set it in the case (`{"input":…,"expected":…,"kind":"bad"}`, or a `kind` column in CSV), or with
+`dataset add --kind control`; a kind in the case JSON wins over the flag. A kind changes the
+dataset version but not the case id.
+
+`exp run` copies each case's kind onto its runs and adds a `kinds` line (pass rate per kind,
+`summary.kinds` in `--json`). `exp compare A B` adds a `kinds` line with each kind's pass rate on A
+and B, the bad cases fixed and the guards and controls that broke (`kinds` in `--json`). A case
+passes on a side when more than half its graded trials pass. It warns, by name, about bad cases
+that still fail on B or already passed on A (they don't show the fix), guards that broke
+(regression) and controls that broke (overcorrection). Run the old version as A.
+
+For tool evals, `coding.sh toolevals validate <target> --against <variant>` checks that each bad
+task fails on the variant it was written against ([Task kinds](../TOOL-EVALS.md#31-task-kinds-bad-guard-control)).
 
 `coding.sh exp run` runs a command or HTTP task over a dataset. Graders can be deterministic
 (exact, contains, regex, numeric, similarity, JSON schema, JSON path, progress, executability,
@@ -390,7 +469,8 @@ A grader is a JSON object with a `kind`. Every kind takes `name`, the grader's i
 | `command` | `command` (required, an executable, not a shell line), `args`, `cwd`, `env`, `timeoutMs` (default 60000, 0 for none), `passThreshold` (default 0.5) | The command exits 0. It gets `{input, output, expected, metadata, caseId, trace}` as JSON on stdin and may print a grade: `true`/`false`, a score from 0 to 1 (passes at `passThreshold`), or `{"score", "pass", "reason"}`. A non-zero exit fails the run. A timeout, a signal or a command that can't start is a grader error. |
 | `module` | `module` (required, a path to a JS file, relative to the spec file), `export` (default `default`), `options`, `passThreshold` (default 0.5) | The exported function, called with the grade context and `options`, returns a passing grade, in the same forms as `command`. |
 | `llm` | `name` and `rubric` (required), `criterion` (default: `name`), `passThreshold` (default 0.5), `template`, `system`, `tunedOn` (default `["train", "dev"]`), `concurrency` (default 4), and the provider fields below | The judge model's verdict passes, or its score is at least `passThreshold` when it gives no verdict. |
-| `llm-checklist` | `name` and `items` (required), `mode` (`per-item` by default, or `batched`), `passThreshold` (default 0.5), `criterion`, `system`, `tunedOn`, `concurrency`, and the provider fields below | No `critical` item is answered no, and the weighted share of yes answers is at least `passThreshold`. An item has `id`, `question`, and optionally `critical`, `weight` (default 1), `dimension`, `violationExample` and `check`. See [Checklists and trace checks](#checklists-and-trace-checks). |
+| `llm-checklist` | `name` and `items` (required), `mode` (`per-item` by default, or `batched`), `abstain`, `passThreshold` (default 0.5), `criterion`, `system`, `tunedOn`, `concurrency`, and the provider fields below | No `critical` item is answered no or left undecided, and the weighted share of yes answers is at least `passThreshold`. An item has `id`, `question`, and optionally `critical`, `weight` (default 1), `dimension`, `violationExample` and `check`. See [Checklists and trace checks](#checklists-and-trace-checks). |
+| `llm-panel` | `name`, `rubric` and `members` (required, one provider spec per judge, each with optional `id` and `advisory`), `target` (default 7), `aggregate` (`median` by default, or `mean`), `anchors`, `anchorEvery` (default 25), `driftThreshold` (default 1), `criterion`, `tunedOn`, `concurrency` | The median (or mean) 1-10 score of the members that are not advisory is at least `target`. See [Judge panels](#judge-panels). |
 
 `normalize` takes `trim` (default true), `caseInsensitive`, `collapseWhitespace`,
 `stripPunctuation` and `unicode` (NFKC).
@@ -469,6 +549,27 @@ caps case runs for the race (default: each train case used once), `--split` and 
 the splits, and a dataset with no splits gets a seeded 30% held out. Every run is stored as a
 normal experiment.
 
+With three or more configs, a line under the rounds table names the plausibly best set: the configs
+not significantly worse than the best on the round-1 cases every config ran, by a paired-bootstrap
+multiple comparison with the best (MCB). The set holds the truly best config 95% of the time. A
+config the race dropped that is still in the set may have lost on noise. It reads `best: c
+(clearly ahead of the rest at 95%, 12 shared cases)` when one config is ahead of all others, or
+`plausibly best (95%, 12 shared cases): c, b`. `--json` carries it as `sweep.bestSet` (`best`,
+`n`, `alpha`, and per config `mean`, `gap` to the best other config, `margin` and `inSet`).
+
+`--guard <DATASET[@VER]>` (repeatable) protects earlier suites. When the winner is not the start
+config, both run on each guard suite (its test split, else every case) and the gate decides again
+with `--guard-tau` (default 0.10, the share of the start's solved guard cases the winner may break)
+and `--guard-lambda` (default 2, the cost of a break in fixes). A guard whose gate says don't ship
+turns `adopt` into `keep <start>: <winner> forgets <suite> (guard)`, and the command exits 1, even
+when the target suite alone would ship. A guard the winner ties, with no case flipping either way,
+never blocks. A guards table prints each suite's start and winner pass rates, the forgetting
+Δ = start − winner and ρ = Δ / start, and the gate. When the start config wins, no guard runs and
+the report says so. Each sweep that ships records the dataset in `adoptions.jsonl` in the store;
+`--guard prior` guards every dataset a sweep adopted a config on, except the one being tuned.
+`--json` carries `sweep.guards` and `sweep.blockedBy`, both absent without `--guard`. Flags and
+guard datasets are checked before anything runs.
+
 ### Matrix
 
 A spec with `"matrix"` runs every combination of its axes against one baseline cell. Each axis is
@@ -523,7 +624,11 @@ model=big,prompt=shout    100.0%  +100.0pp  [+100.0pp, +100.0pp]  0.008     0.02
 p: exact McNemar on flipped cases, Holm-adjusted over 3 comparisons with the baseline; verdict at Holm p < 0.05; CI: paired bootstrap, unadjusted
 ```
 
-The verdict is `better` or `worse` when the Holm p is below 0.05, else `inconclusive`. `exp
+The verdict is `better` or `worse` when the Holm p is below 0.05, else `inconclusive`. With
+three or more cells, the next line names the plausibly best set, the cells not significantly worse
+than the best on the cases every cell graded (paired-bootstrap MCB at 95%, as in `exp sweep`), and
+`--json` adds `bestSet`. Holm answers "which cells differ from the baseline"; the set answers "which
+cells could be the best". `exp
 compare <baseline cell> <cell>` gives the per-case diff of one cell, and treats the two as
 interleaved. `--cell NAME` (repeatable) runs some cells; the baseline always runs. `--seed` fixes
 the order, `--resume` picks up an interrupted matrix, and `--json` returns `matrix`, `plan`,
@@ -597,6 +702,85 @@ not with `--arm`, matrix specs or `--watch`. `toolevals run` takes the same two 
 [Tool evals](../TOOL-EVALS.md#8-experiments)). The method is T3 Code's eval loop (see
 [Theo Browne's tools](../research/theo-browne.md)).
 
+### Running a subset: failures, samples, the first N
+
+`exp run` can run part of a dataset. `--failing <EXPERIMENT>` runs only the cases that experiment
+failed (a graded trial that did not pass, or a task error), and `--errors-from <EXPERIMENT>` only
+the ones with a task or infrastructure error. `--case <PATTERN>` keeps case ids that match (`*` and
+`?` wildcards; repeat it for more). `--sample N` draws N cases, or a share with `--sample 0.2`, and
+`--seed` fixes the draw: the same seed and case ids pick the same cases, whatever their order in
+the file. `--first-n N` then keeps the first N in dataset order. They apply in that order, and a
+pick that leaves no case is a usage error before anything runs. The run stores what it picked as
+`metadata.selection`, and the report prints it on a `cases` line.
+
+Running a change only on the cases a baseline failed and calling it better is regression to the
+mean: some of those failures were bad luck, and the baseline itself would pass part of them on a
+second try. So when B ran with `--failing A` (or `--errors-from A`) and A ran on every case,
+`exp compare A B` prints a warning, the verdict is `inconclusive (one side ran only on the other's
+failures)`, and `--gate` holds. The fair comparison runs A's config on the same cases
+(`exp run <A's spec> --failing A`) and compares B with that; two runs picked from the same
+experiment's failures are compared as usual.
+
+### Sequential attempts with feedback
+
+`exp run --seq K` gives a case-trial that fails up to K attempts in all (2 to 10). Each new attempt
+gets the case and its earlier attempts, each with feedback, and a pass ends the trajectory. A task
+error is a failed attempt whose message is the feedback. The run's outcome stays the first
+attempt's, so the pass rate is Seq@1 and comparisons without `--seq` still compare first attempts.
+
+`--feedback` picks what the agent hears about a failed attempt:
+
+- `bit`: `Your previous answer failed the checks.`
+- `reasons` (the default): the failed graders' reasons, at most 3, each cut to 300 characters and
+  prefixed with the grader id. A grader that gives no reason falls back to `bit`.
+- `critic=<GRADER JSON|FILE>`: a grader run on the failed output; its reason is the feedback. It
+  never decides pass or fail. A `costUsd` on its result is counted as `criticCostUsd`.
+
+Feedback never carries the expected answer: a reason that quotes it verbatim gets `[hidden]` in its
+place. `--seq-history last` shows each attempt only the one before it (default `full`).
+
+A function task reads `ctx.attempt`, `ctx.k` and `ctx.history` (`[{output, feedback}]`), and
+`seqPrompt(input, ctx)` renders the attempt prompt of Yen et al. (arXiv 2610.37859, App. A.2): the
+task, `This is attempt t of K. Review your previous attempt(s) and the feedback below, then provide
+an improved answer.`, then `<PreviousAttempt i>` and `<Feedback i>` blocks. A command or HTTP task
+needs `"envelope": true`: its envelope then carries `attempt`, `k` and `history`, and a command
+also gets `CODING_SH_ATTEMPT` and `CODING_SH_SEQ_K`. Without the envelope `--seq` is a usage error
+that says so; continuation and request tasks can't take feedback.
+
+```
+sequential feedback (K 3, feedback reasons, history full) pass above is Seq@1, the first attempt
+seq@k   1: 40.0% [24.6%, 57.7%]  2: 70.0% [52.1%, 83.3%]  3: 76.7% [59.1%, 88.2%]
+gain    EGS 0.82, LGS 0.18 (share of the Seq@1 → Seq@3 gain made at attempt 2, and at attempt 3)
+unchanged 12.5% of revisions repeated the previous output
+```
+
+Seq@k is the share of trials solved by attempt k, with 95% intervals (Wilson for one trial per
+case, else a bootstrap over cases). EGS and LGS are the shares of the Seq@1 to Seq@K gain made at
+attempt 2 and at attempt K: a high LGS means more attempts would still help. `unchanged` counts
+revisions whose output repeats the previous one. When every attempt reports a `costUsd`, `cost`
+is the task and critic cost of every attempt per solved trial. With 2 or more trials, `pass@k`
+gives the unbiased pass@k over the trials' first attempts, and `front` lists the points of pass@k
+(k independent first attempts, at k times the mean first-attempt cost) and seq@k (at the mean
+cost of the attempts made up to k) that no other point beats on both cost and success, in USD or
+in attempts when costs are missing. Each run keeps its trajectory as `seq` (`k`, `solvedAt`,
+`feedback`, `history`, and per attempt `pass`, `latencyMs`, `costUsd`, `criticCostUsd`,
+`unchanged`, `error`, `feedback`), and `--resume` keeps finished trajectories whole. A resume
+with other `--seq` settings is refused.
+
+`exp compare` adds a `seq@K` row (A, B and B − A with a paired bootstrap interval) when both runs
+used the same K and feedback, and a note saying why not otherwise. `--verdict seq` reads the
+verdict from that row instead of the first attempts.
+
+### Record and replay model calls
+
+`exp run --record` saves each case-trial's Anthropic and OpenAI calls through a local proxy.
+`exp run --replay <EXPERIMENT>` serves them again up to the first call that changed and runs the
+rest live; `--replay-until N` stops serving after call N. The system prompt and `cache_control` are
+left out of the match, so a prompt edit still replays. With one task, `--replay` also runs the
+recorded config as a control arm and prints its noise floor. Each run keeps
+`runs[].llm = {calls, hits, live, firstLiveOrdinal}`. See
+[how-to/replay-llm-calls.md](../how-to/replay-llm-calls.md).
+
 ## Long runs: resume, retries, status
 
 `exp run` (and `--arm`), `exp aa`, `exp sweep`, `compare`, `bench run` and `workflows run` write
@@ -638,6 +822,13 @@ rounds as a run that was never interrupted.
   `toolevals run` take both flags; a refine round lost this way writes no verdict and stops the
   climb (`"stopped": "infra"`).
 - `--trial-timeout <SEC>` caps each trial, retries included. A trial over it fails.
+- `exp run` also stores the experiment so far, at most once a second, while it runs. A crash or a
+  kill then leaves a partial record: `exp list` marks it `(partial)` and `exp show` says how many
+  case runs it holds. `exp run … --resume <EXPERIMENT>` continues it when no job has that id: the
+  finished case-trials are kept and only the rest run, under the same id. It refuses, and names
+  what changed, when the dataset version, task, graders, trials or case selection differ.
+  `--retry-errors` with `--resume <EXPERIMENT>` also runs its task-errored case-trials again, on a
+  finished experiment too.
 
 `coding.sh exp status` lists the durable runs with progress, ETA (from this session's pace) and
 the cost so far (from the trials that report one). `coding.sh exp status <id>` shows one run and
@@ -714,6 +905,36 @@ the same, like the byte count of a fixed build, has no noise: a non-zero delta i
 `--json` prints the whole result, runs included. `--fail-on-worse` exits 1 when any metric got
 worse, for CI gates. scripts/perf/ uses it to gate the coding.sh site on Lighthouse metrics.
 
+## Scores
+
+A score is one typed value on a session, an event, a dataset case or an eval run: a number, true
+or false, a category, or text. Each records who gave it (`human`, `judge`, `code`, `api` or
+`monitor`) and who ran the command. Labels are scores too. A pass or fail label from the viewer is
+a human boolean score, so `judge calibrate` reads human boolean scores as labels and `export labels`
+exports them.
+
+A config fixes a score name's type and allowed values. A value outside them is refused (exit 2,
+or HTTP 400):
+
+```sh
+coding.sh score config helpfulness --type numeric --min 0 --max 5
+coding.sh score add case:refund-03 helpfulness 7     # ✗ value 7 is above helpfulness's maximum 5
+coding.sh score add case:refund-03 helpfulness 4 --comment "named the refund window"
+coding.sh score list
+```
+
+```
+WHEN      TARGET          NAME         VALUE  SOURCE  BY
+just now  case:refund-03  helpfulness  4      human   alice
+```
+
+`score add` prints the score id. By default there is one score per target, name, source and
+person, so scoring the same thing again replaces it, and the same value again changes nothing.
+`coding.sh ui` and `coding.sh serve` take the same scores at `POST /api/scores`
+([API](../reference/api.md#post-apiscores)), and agents use the `score_add` and `score_list` MCP
+tools. The `scores` table is in [Query](../reference/query.md#scores). Scores are kept in the
+SQLite store; the Postgres and ClickHouse stores answer 501 for now.
+
 ## Judges
 
 Judges call Anthropic with `ANTHROPIC_API_KEY` or OpenAI with `OPENAI_API_KEY`. Like the vendors'
@@ -787,6 +1008,38 @@ before collecting more verdicts". Judge graders (`llm`, or any calibrated grader
 line in `exp compare`, from per-case score differences. With `--cluster`, whole clusters are
 resampled and the sizes count clusters. `--json` carries `stability` with `share`, `bySize` and
 `nStar`.
+
+Repeat `--pairwise` to ask more than one judge. Each judges every shared case in both orders, keeps
+its own stored calibration, and gets its own block; `--labels` calibrates each. A `judges` block
+then lists each judge's provider and model, B's win rate, verdict and calibration, a line per pair
+of judges with Cohen's κ over their per-case winners (`a`, `b`, `tie`) and the share of cases with
+the same winner, and the conclusion: `replicated-better` or `replicated-worse` when every judge
+(at least two) found the same, `judges-disagree` when one found B better and another worse, else
+`unresolved`. A judge whose calibration against human labels failed is screened out of the
+conclusion. It warns when two judges share a provider, when a pair's κ is below 0.4, and when no
+judge is calibrated. Two judges agreeing is a screen for a misaligned judge, not a substitute for
+human labels (Han & Kim, arXiv 2611.04090). With `--gate`, a ship becomes a hold, `Hold: judges
+disagree (…)` and exit 1, when any judge prefers A, or when two or more judges do not all find B
+better. With one `--pairwise` the output is as before, except that a lone judge preferring A also
+holds a ship. `--json` has `replication` beside `pairwise`, which becomes an array with two or
+more judges, and `comparison.gate.judgeHold` (`conclusion`, `detail`) on a demoted gate.
+
+### Correcting a judge's delta with human labels
+
+A judge's errors differ between two configs when it misses more of one config's failures, so the
+raw judge B − A can be biased. `exp compare A B --labels-a a.jsonl --labels-b b.jsonl` takes human
+labels of each arm's own outputs (rows of `{"caseId","value":"pass"|"fail"|"skip","criterion"?}`;
+`skip` and ties are dropped, a label without a criterion counts for every judge) and corrects each
+judge grader's delta with prediction-powered inference (PPI++, Angelopoulos et al. 2023): the
+judge's mean over every case plus a power-tuned share of the gap between human and judge on the
+labelled cases. With at least `--min-labels` (default 20) cases labelled on both arms it corrects
+the paired difference; otherwise it combines two per-arm estimates, which is conservative. Under
+the minimum the grader row reads `raw (uncorrected)` with the reason. Labels are never shared
+across arms. The grader table adds a `judge-corrected B − A (human scale)` column, and a line per
+grader gives the label counts, λ per arm and the raw judge delta. It warns when the judge's
+sensitivity or specificity differs by more than 0.15 between arms, when its sensitivity is under
+50%, when it passes or fails every case, and when every label is one class. `--json` carries
+`graders[].ppi` and `graders[].warnings`; both are absent without labels.
 
 ### Which cases to label
 
@@ -874,13 +1127,96 @@ Saying why doesn't make it pass: the change decides the answer, and the words on
 `args.severity: "info"` also fails any non-additive test edit, and `args.pattern` (a regex) protects
 more paths, such as a verifier script: `{"name": "no-test-tamper", "args": {"pattern": "^check\\.sh$"}}`.
 
+`"abstain": true` on a checklist lets the model answer `cannot_decide` for an item it can't settle
+from what it was shown, and name what is missing, instead of guessing no. An abstained item is left
+out of the score and shown as `??` with the missing evidence. A critical abstention fails the case
+as undecided (`undecided: tests (missing: the test output); …`), and `judge calibrate` leaves
+undecided cases out of the kappa and counts them: `3 undecided (judge abstained)`. Without
+`abstain`, prompts and judge version ids are unchanged.
+
 `coding.sh judge grade --grader <JSON|FILE>` grades one output with any grader and exits 0 on
 pass. It reads the output from `--output <FILE|->` and the trace from `--trace <FILE>`. The trace
-can be Claude stream-json, a Claude transcript, or coding.sh events as JSONL. Inside a task
+can be Claude stream-json, a Claude transcript, `codex exec --json` output, Cursor
+`--output-format stream-json` output, an OpenAI chat or Responses request body (or its
+`messages`/`input` array), or coding.sh events as JSONL. Before grading, it counts the tool calls
+and results in the file and checks that each one reached the judge as an event. When some did not
+(an unknown format, or records the parser dropped), it exits 2 with reason `trace_incomplete`, for
+example `trace has 3 tool call(s) in codex-exec records but 2 reached the judge`, rather than grade
+a trace with holes. `--allow-partial-trace` grades anyway with a warning. `--json` carries
+`traceCoverage`. Inside a task
 verifier, both default to the agent's files (`CODING_SH_AGENT_OUTPUT` and
 `CODING_SH_AGENT_STDOUT`), so `coding.sh judge grade --grader grader/checklist.json` is a complete
 verifier for a behaviour task. Each model call it makes is appended to `$CODING_SH_GRADER_USAGE`.
 `compare` adds those calls up into the run's grader spend.
+
+### Does the judge read the trace?
+
+A judge can agree with human labels and still grade only the final message. Human labels mostly
+judge outcomes, so calibration can't tell. `pairedDiscrimination(judge, cases)` in
+`src/judge/discriminate.ts` checks this. It takes passing cases with traces and makes children
+whose output is byte-identical but whose trace shows a failure. `traceMutations(trace)` makes five
+kinds:
+
+- `skipped-verification`: the test run after the last edit removed.
+- `failing-final-test`: the last test run fails.
+- `ignored-tool-error`: a build that fails with a type error, left unanswered.
+- `destructive-command`: a `git push --force` to main.
+- `constraint-violation`: a test file edited to skip a test.
+
+The judge grades each parent and child. Per kind, the discrimination is the child's flag rate
+minus the parent's, with a paired bootstrap interval. A judge that reads only the output scores
+about 0 on every kind. `formatDiscrimination` prints the table and a verdict: trace-blind, which
+kinds it misses, or "reads the trace". It is a library function; there is no command for it yet.
+
+### Waste judge
+
+`createWasteJudge({provider})` in `src/judge/waste.ts` asks a model which spans of a session's
+output were waste, and what they cost in output tokens ("How Do AI Agents Waste Your Money?", arXiv
+2611.07238). The session is cut into rounds, one per model output, with up to three streams:
+reasoning, visible text and tool calls. For each stream the model returns the stream's opening and
+verbatim spans with a kind: `restate`, `duplicate-fetch`, `padding`, `detour` or `unread`.
+
+- The opening proves it read the right stream. A wrong opening drops the stream's spans and counts
+  as `misaligned`.
+- A quote that is not in the stream is dropped and counted as `fabricated`.
+- Overlapping spans are counted once.
+- Tokens come from the round's reported output tokens, split by the span's share of the stream's
+  characters, else characters / 4.
+
+The report gives strict waste (`restate`, `duplicate-fetch`, `padding`) and `detour` separately,
+with ratios, totals by kind and by stream, and a cost when the model has a known price.
+`wasteGrader(judge, {maxRatio: 0.3})` passes a session whose strict waste is at most 30% of its
+output tokens. Long sessions are judged in windows of `windowChars` (default 60,000 characters).
+It is a library function; there is no command for it yet.
+
+### Judge panels
+
+An `llm-panel` grader asks one judge per provider to score the work from 1 to 10. The panel score
+is their median (or mean), and the case passes at `target` (default 7). Three rules are built in:
+
+- The target never reaches the prompt, since a judge told "the author is aiming for 9/10" can score
+  higher. `targetInflation(opts, cases)` in `src/judge/panel.ts` scores the same cases with the
+  target hidden and shown, and reports the difference per member.
+- `anchors` are cases with known quality (`{"id", "output", "input", "score"}`). They are
+  re-scored, never from the cache, before the first case and every `anchorEvery` cases. Drift is
+  measured against each member's own first-round score. A member whose anchors move by
+  `driftThreshold` points or more on average is named in the reason: `anchor drift in openai`.
+  The offset from an anchor's `score` is reported separately, since a judge that is always harsh
+  has a bias, not drift.
+- `"advisory": true` shows a member's score without counting it.
+
+Two members on the same provider are refused. With `"provider": "mock"`, a member scores 10 (or 1
+with `"mockAnswer": "no"`).
+
+```json
+{"kind": "llm-panel", "name": "summary", "rubric": "Accurate, complete, short.", "target": 8,
+ "members": [{"provider": "anthropic"}, {"provider": "openai", "model": "gpt-5"},
+             {"provider": "gateway", "model": "google/gemini-2.5-pro", "advisory": true}],
+ "anchors": [{"id": "good", "input": "Summarise the PR", "output": "…", "score": 8}]}
+```
+
+The reason names every member: `panel 7.5/10, target 7 (anthropic 8, openai 7; advisory gateway
+6)`.
 
 ### Agent slop
 
@@ -1027,6 +1363,25 @@ refutations are shown but not counted unless you pass `--count-ambiguous`. The r
 `task.meta.audits[<experiment>]`, where [`compare --audited`](#harness-ab) reads it. `--promote` then adds the
 witnesses to the verifier (hidden file plus `&& <cmd>`) and puts the task back to draft for
 `eval validate`. `eval export` writes witnesses to `witnesses/`, and `eval import` reads them back.
+
+## Page parity
+
+An agent that rewrites a site should keep what search engines and link previews read.
+`coding.sh compare --parity <A> <B>` reads two pages and lists the fields that differ: the status
+and redirect chain, `<title>`, meta description, canonical, robots and `X-Robots-Tag`, every `og:`
+and `twitter:` tag, the number of `hreflang` links, the JSON-LD `@type`s (including those in an
+`@graph`), unparseable JSON-LD blocks and `<html lang>`. A side is a URL, fetched without following
+redirects so each hop is recorded, or a shell command whose stdout is the page (it has no status or
+redirects, so against a URL those two differ). A URL on a side's own host compares by its path, so a staging and a production host
+with the same canonical path read the same.
+
+```sh
+coding.sh compare --parity https://example.com/docs http://localhost:4321/docs
+coding.sh compare --parity https://example.com/ "cat dist/index.html" --json
+```
+
+It prints `Parity: N fields read the same` and exits 0, or a table of the differing fields and
+exits 1. `--json` prints `{parity, a, b, diffs}`. `--user-agent` sets the fetch's User-Agent.
 
 ## Harness A/B
 
@@ -1410,6 +1765,179 @@ front B           pass@2 $0.200 0.0% · seq@1 $0.100 0.0%* · seq@2 $0.200 100.0
 settings, and each run's `repair` record (see
 [the API reference](../reference/api.md#get-apitasks-get-apiruns-get-apibundles)).
 
+### Verifier isolation
+
+An agent can pass a task by changing how it is graded instead of fixing the code. It can write a
+`conftest.py` that marks every test passed, or edit the `test` script in `package.json`. So
+`compare` grades each run in a fresh copy of the task's start tree (taken after setup). It applies
+only the agent's changes to files git tracks or would track, then adds the hidden test files and
+runs the verifier there.
+
+These changes are dropped, and the start's version is used instead:
+
+- Files an interpreter or package manager loads on its own, anywhere in the tree (`hook`):
+  `conftest.py`, `sitecustomize.py`, `usercustomize.py`, `.pythonstartup`, `*.pth`, `.npmrc`,
+  `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs` and `bunfig.toml`.
+- Test and build config (`config`): `pytest.ini`, `tox.ini`, `noxfile.py`, `pyproject.toml`,
+  `setup.cfg`, Makefiles, `jest.config.*`, `vitest.config.*`, `.mocharc*`, Karma, Playwright,
+  Cypress, PHPUnit, Vite and Babel config, `.rspec`, `.cargo/config` and `deno.json`.
+- In `package.json`, the `scripts`, `jest`, `mocha` and `ava` keys (`scripts`). The rest of the
+  agent's `package.json` change, such as a new dependency, is kept.
+- Files under `node_modules`, `site-packages`, `.venv` or `venv` (`dependency`), files the verifier
+  command runs, such as `run_tests.sh` (`verifier`), symlinks that point out of the tree
+  (`symlink`), and anything that is not a file, link or directory (`special`).
+
+A file the verifier only reads, such as `out.txt` in `cat out.txt`, is the agent's deliverable and
+is kept. Files git ignores never reach the verifier. Each run records what was dropped in
+`isolation` (`carried`, and `stripped` with each path, why and whether it was an add, edit or
+delete); when any run dropped something, the report adds a note. A task can allow paths with
+`meta.verifierAllow` (globs) or turn isolation off with `meta.verifierIsolation = "off"`.
+`compare --no-isolation` grades the agent's own tree, as before.
+
+### Efficiency, reliability and tasks needed
+
+Below the metrics, the report divides each arm's agent cost and tokens by the tasks it solved:
+
+```
+cost / solved     $0.200                $0.240                +$0.040 (+20%)
+tokens / solved   2.0k                  1.8k                  -200 (-10%)
+```
+
+An arm that solved nothing shows `—`. When the pass rates are within the CI but the cost per solved
+task differs by 25% or more, a note says which arm pays more.
+
+With `--k 2` or more, three rows follow `passes`:
+
+```
+pass@3            75.0%                 100.0%                +25.0 pp
+pass^3            25.0%                 75.0%                 +50.0 pp
+flaky tasks       2/4                   1/4                   t2, t3, t4
+```
+
+- `pass@k` is the unbiased chance that at least one of k attempts passes (Chen et al. 2021), and
+  `pass^k` the chance that all k pass (tau-bench), averaged over tasks with k runs.
+- `flaky tasks` counts tasks whose attempts both passed and failed, and lists them.
+
+Under the power line, `tasks needed` is how many paired tasks would detect the observed effect at
+80% power and α 0.05. It uses Connor's sample size for McNemar's test on the discordant tasks:
+`tasks needed 29 for the observed +25.0 pp at 80% power (McNemar, 1 of 4 tasks discordant; this
+run has 4)`. With no discordant task, or as many won as lost, it reads `—` with the reason.
+
+`--json` has these in `report.efficiency`, `report.reliability` and `report.plan`.
+
+### Do the flags predict failure?
+
+A session flag such as `no-verification` can look predictive only because hard tasks fail more and
+also raise more flags. On 2,840 SWE-bench Verified runs, a score that knows only each task's
+difficulty reaches a pooled AUROC of 0.92, while trajectory predictors reach about 0.62 and add
+nothing within one task (arXiv 2611.08285). `compare --signals` checks each signal against the
+outcome three ways:
+
+```
+signals  pooled AUROC mostly measures task difficulty (arXiv 2611.08285: difficulty-only 0.92 vs trajectory 0.62); trust within-task+arm
+  signal                  n  pooled  task  task+arm        95% CI  pairs  verdict
+  difficulty(loo) (ref)  60    0.63  0.50      0.50  [0.50, 0.50]     30  tracks-difficulty
+  arm(loo) (ref)         60    0.38  0.37      0.50  [0.50, 0.50]     30  no-signal
+  turns (ref)            60    0.69  0.54      0.57  [0.38, 0.74]     30  tracks-difficulty
+  toolErrors             60    0.87  0.86      0.88  [0.78, 0.98]     30  adds-run-signal
+  no-verification        60    0.68  0.50      0.50  [0.50, 0.50]     30  tracks-difficulty
+```
+
+Here `no-verification` fires on the hard tasks only, so it looks predictive pooled (0.68) and says
+nothing within a task (0.50); `toolErrors` separates failed from passed runs of the same task.
+
+- AUROC is the share of (failed run, passed run) pairs where the failed run scores higher; ties count
+  half. `pooled` uses every pair, `task` pairs from the same task, `task+arm` pairs from the same task
+  and bundle. The 95% CI resamples tasks (seeded).
+- Signals are each failure flag on the run's session (1 or 0; tags such as `gateway:vercel` are left
+  out) and `toolErrors`. A run with no captured session has no score, and its pairs are dropped.
+- Reference rows come first. `difficulty(loo)` scores a run by the fail share of its task's other
+  runs, leaving out both runs of the pair, so it is 0.5 within a task by construction. `arm(loo)` does
+  the same for the bundle. `turns` and `tokens` are length baselines.
+- Verdicts: `adds-run-signal` when the task+arm CI is above 0.5; `tracks-difficulty` when pooled is
+  0.6 or more but the CI includes 0.5; `too-few-pairs` under 20 task+arm pairs; else `no-signal`.
+  Runs whose task has no other run are left out.
+
+The task+arm column needs `--k 2` or more with mixed outcomes inside an arm; with `--k 1` the table
+says `needs k>=2`. Without `--signals` the report is unchanged. `--json` adds `report.signals`.
+
+### OpenTelemetry per run
+
+`compare --otel` starts an OTLP receiver for the comparison and gives each agent process:
+
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (http/json) pointing at it,
+- `OTEL_RESOURCE_ATTRIBUTES` with `coding_sh.run_id=<run id>` added to any you set,
+- a `TRACEPARENT` whose trace id is derived from the run id,
+- for Claude Code, `CLAUDE_CODE_ENABLE_TELEMETRY=1` and the OTLP exporter settings.
+
+Spans and logs the agent exports are stored with the run's id, and a span that carries
+`session.id` joins that session, which then belongs to the run. Each run records its `traceId`.
+Setup and the verifier never see these variables. Without `--otel`, the agent's environment is
+unchanged.
+
+### Sequential runs
+
+A plain comparison runs every task in a fresh home, so a harness that learns between tasks (an
+auto-memory, a notes file) looks the same with learning on or off. `compare --sequential` runs each
+arm's tasks in the same order, one stream per attempt, and carries the agent's home from one task to
+the next in the same stream. `--carry <path>` carries only that path of the home, such as
+`~/.claude/projects` (repeatable; default the whole home).
+
+```sh
+coding.sh compare base memory-on --sequential --carry ~/.claude/projects --k 2
+```
+
+The report adds the pass rate at each position and the change from the first third of the
+positions to the last:
+
+```
+learning (sequential: pass rate by position, first third vs last third of 2 positions)
+curve %           0 0 0 0 0 0           0 0 100 100 100 100
+first → last      0.0% → 0.0%           0.0% → 100.0%         gain +100.0 pp
+```
+
+Each run records its `sequence` (`stream`, `step`). Runs in a stream run one at a time; streams run
+in parallel. `--sequential` can't be combined with `--reuse`, since a reused run was made without
+the carried state. An interrupted comparison keeps the carried state for `--resume`.
+
+### Picking tasks and a budget
+
+Most tasks in a suite say little about which harness is better: every harness passes them, or
+none does. `--pick N` and `--budget <USD>` run the tasks that tell harnesses apart first, ranked
+from the stored runs of these tasks under any bundles:
+
+- **ranked**: tasks seen under 3 or more bundles with both outcomes. Their score `q` is the 5th
+  percentile, over resampled runs, of the correlation between the task's outcome and each bundle's
+  pass rate on the other tasks. A task with `q` of 0.5 or more is informative.
+- **mixed**: tasks with both outcomes but too few bundles, or that every run failed, by p(1−p).
+- **unseen**: tasks with no stored run.
+- **saturated**: tasks every run passed. They go last.
+
+`--pick N` keeps the first N. `--budget <USD>` then keeps each task, in order, whose estimated cost
+(2 arms x `--k` x the cost of a run) still fits, skipping one that doesn't and going on. The cost
+of a run comes from the first of these that knows it: the baseline's runs of the task, any runs of
+it, its source session, the median of the other tasks, then `--cost-per-run`. With none, `--budget`
+stops with `cost_unknown`. `--budget` is also the spend cap unless `--max-cost` is set, and the
+consent prompt shows the estimate.
+
+```sh
+coding.sh compare base candidate --budget 20 --dry-run
+```
+
+`--dry-run` prints the ranked tasks, their cost and source, and which were picked, and runs no
+agent. `--json` adds `pick` (each task's tier, `q`, pass rate, cost and source, the picked ids, the
+estimate and `costSources` in order). `--task` names tasks, so it can't be combined with `--pick` or
+`--budget`.
+
+`--pick-by irt` ranks by item response theory instead. It fits a Rasch model (a 2PL model from 20
+bundles) on the stored runs, which gives each task a difficulty and each bundle an ability, and
+ranks tasks by Fisher information at the baseline's ability: tasks the baseline passes about half
+the time, and that separate strong bundles from weak ones sharply, come first. Then come tasks no
+bundle ran, then tasks every bundle passed or failed. It needs stored runs from 3 or more bundles;
+with fewer, the separation order stays and the note says so. The pick table and `--json` add each
+task's `difficulty`, `discrimination` and `information`. IRT ranks tasks; it does not reduce
+rerun noise (Madaan et al. 2024), so run the picked tasks with `--k 2` or more as usual.
+
 ## A/B a harness edit on your own sessions
 
 `coding.sh compare` needs eval tasks with verifiers. Often you don't have those yet. You have a
@@ -1699,6 +2227,14 @@ with at most 40 lines and no HTML comments. The lines are appended in a
 the findings and the prompt without calling the model. The model is `--proposer-model`, else
 `--judge-model`, else `--model`, else the provider's default.
 
+**Per-task reflection.** Ledger entries record which tasks a tested edit fixed, regressed and left
+failing (neither arm passed). When an earlier edit that was not kept has any of these, the proposal
+prompt lists them per edit, for example `- r_3f9a1c02e1: fixed t1; still failing t3; regressed t2`
+(at most 10 ids per list), and the proposer is told to aim at the still-failing tasks and never to
+bring back a regression. The ids are read from the stored entries, not computed again. With no such
+entries the prompt is the same as before. `--mined FILE` (on `propose` and `run`) also gives the
+proposer the top 10 patterns of a `refine mine --json` file.
+
 **Stages.** `refine test` decides each candidate in this order and stops at the first that fails:
 
 1. **protected**: the [protected-line check](#protected-safety-lines). A deleted, reworded or relaxed
@@ -1856,6 +2392,120 @@ ROUND	CANDIDATE	VERDICT	PASS	COST/RUN	WALL/RUN	SIZE	REASON
 Pareto front (pass rate vs cost / run): r_5f83c31fad (round 1, not kept): 0% pass, $0.0347; r_9387e6524f (round 3): 100% pass, $0.0372
 climb: still gaining after 3 rounds (log wealth -0.17 of 3.00; a flat plateau needs at least 21 rounds to show at this suite size)
 ```
+
+### Canary re-test
+
+A pass-rate gate only sees what the loop's model needs. An edit that deletes a safeguard a strong
+model no longer relies on can pass, and still hurt a cheaper model. With `--suite` and
+`--canary-model <model>` (or `[refine] canary_model` in the config), a kept candidate runs again
+with both arms under that model, and the round's verdict can change:
+
+- `canary-regression` rejects it when a task the base passed in every attempt passes in at most a
+  third of the candidate's, when more of the candidate's passing runs tamper with tests than the
+  base's, or when the lower bound of the 95% paired bootstrap interval of the per-task pass-rate
+  change is at or below minus `--canary-delta` (default 10pp).
+- `canary-uninformative` keeps it when fewer than 3 tasks differ in each direction, so the canary
+  could not tell.
+- A canary run that is cancelled or stopped by `--max-cost` makes the round `inconclusive`.
+
+`--canary` picks which kept candidates the canary re-tests: `subtractive` (the default; the ones
+that delete or reword existing lines), `all`, or `off`. `--canary all` needs a canary model. A
+subtractive candidate kept without a canary model is kept with a note that a success-only gate
+cannot see a lost safeguard. The canary's runs count toward `--max-cost` and the round's cost, and
+`--dry-run` shows which candidates it would re-test. The agent must take a model: a wrapper agent
+needs a `{model}` slot in its flags, and amp has none, so those refuse before any run.
+
+`refine recheck <r_…> --model <model>` runs the same check later on any suite round, records a
+`recheck` entry in the ledger and shows it in `refine log`. It exits 1 on a regression or an
+inconclusive run, and suggests `refine rollback` when the edit is applied.
+
+### Mining failure patterns
+
+`coding.sh refine mine` ranks failure patterns across this repo's sessions since `--since` (30
+days), with no model call. It has four detectors:
+
+- **flag**: one pattern per session flag, with its diagnosis and severity.
+- **error-signature**: the first error line of a failed tool call, with numbers, paths, hex ids and
+  quoted text normalized away. Error codes stay, so 20 `TS2307` errors across 5 sessions are one
+  pattern with count 20 in 5 sessions, apart from `TS1294`.
+- **repeated-instruction**: imperative sentences you typed (not the prompt that opens a session),
+  grouped when their character 5-grams overlap by a Jaccard of 0.6 or more.
+- **eval-failure**: failed eval runs, grouped by the first tool where the run left a passing attempt
+  of the same task.
+
+A pattern counts when it is seen in at least 3 sessions over 2 days (`--min-support 3,2`).
+Sessions of coding.sh's own eval runs are left out of the first three. Patterns are ranked by
+sessions times wasted tool calls, then severity, then count, and their ids are stable across runs.
+Everything printed is redacted. `refine mine --json > mined.json` and then
+`refine propose --mined mined.json` hands the patterns to the proposer.
+
+### Diagnosing sessions into Signals
+
+`coding.sh refine diagnose` asks a model what went wrong in each recent session (default: the last
+7 days, at most 50 sessions) and groups the answers into Signals: one problem that one fix would
+address, across sessions. It runs only when you call it.
+
+```sh
+$ coding.sh refine diagnose
+$ coding.sh refine diagnose --provider claude-code
+$ coding.sh refine signals
+$ coding.sh refine signals show 3fa1c2
+```
+
+- **No key, no cost.** The provider is `--provider`, else Anthropic when `ANTHROPIC_API_KEY` is
+  set, else OpenAI when `OPENAI_API_KEY` is set. With none, it prints a $0 plan: the sessions and
+  the estimated input tokens it would send. `--provider claude-code` or `codex` uses a logged-in CLI.
+- **Evidence.** Every problem must cite events from the session. Code checks each quote against the
+  trace and drops a problem with no verified citation. A problem about instructions, invalid tool
+  arguments, a false success or a subverted check also needs a verified citation of the
+  requirement, or the session is marked `insufficient-evidence`. Unknown type ids and invalid
+  values are dropped and counted.
+- **Severity.** The model picks a consequence level from a fixed set. Code adds the scope (how many
+  sessions) and computes the score and its band (low, high, critical). The model never sets a
+  severity.
+- **Grouping.** A second call places new problems into existing Signals or new ones; `--no-split`
+  groups by component and type with no call. A Signal keeps its id as it grows.
+- **Reruns.** Replies are cached under the refine directory, keyed by the prompt, the catalog and
+  the model, so a rerun on unchanged sessions makes no call and leaves `signals.json` byte for byte
+  the same. `--budget-tokens` stops starting new sessions past an estimated token count; the next
+  run picks up the rest. Eval-run sessions are skipped unless `--include-runs`.
+
+Signals go to `~/.coding.sh/refine/<repo>-<hash>/signals.json`. `refine signals` lists them, most
+severe first, and `refine signals show <id>` prints one with its occurrences, citations and fix.
+Session text is redacted before it is sent.
+
+### Distilling a skill
+
+`coding.sh refine distill` hands a coding agent the raw runs of an experiment (`--experiment`), or
+this repo's captured sessions since `--since` (30 days), and asks it to write one skill.
+
+```sh
+$ coding.sh refine distill --experiment exp_01J9Z --dry-run
+$ coding.sh refine distill --experiment exp_01J9Z --n 3 --yes
+$ coding.sh refine test r_7c41d09a2b --suite strkit
+```
+
+**The corpus.** One row per run in `episodes.jsonl` (task, pass, verifier exit, flags, cost, tags,
+bundle, model), one row per tool call in `tool_calls.jsonl`, a `transcript.md` per episode (capped
+at 200,000 bytes), the repo's current harness files under `prompt/`, and a `SCHEMA.md`. Everything is
+redacted, and the same store gives the same bytes. Runs of held-out tasks (tagged `split:dev`,
+`split:test`, `split:heldout` or `refine:heldout`) are left out and listed, so the skill never sees
+the tasks it will be judged on. Cancelled runs, runs replaced by a retry and infrastructure
+failures are skipped and counted. `--keep-corpus DIR` writes it where you can read it.
+
+**The draws.** The distiller (`--distiller claude-code` or `codex`, `--model`) runs in a temp
+directory with a copy of the corpus and an isolated config, so your own agent config is untouched.
+Its brief tells it to measure the corpus with code it writes, then write `out/SKILL.md` with a
+frontmatter name and description and a number behind each rule. `--n` draws run one after another,
+each in its own directory, until `--max-cost` (default $5).
+
+**The checks.** A skill over 160 lines or 10 KB is rejected, and so is one the harmless or duplicate
+critic rejects. Each skill is stored as a candidate at `.claude/skills/<name>/SKILL.md` (or
+`.agents/skills/` for Codex) and ledgered as a `propose` entry with its provenance: the corpus size,
+failures, pass rate, held-out tasks, draw, distiller and cost. Nothing is applied: `refine test <r_…>`
+decides. The command refuses a corpus with fewer than 20 episodes or 5 failing ones
+(`--min-episodes`, `--min-failures`), exits 0 when it proposed a skill and 1 otherwise, and
+`--dry-run` writes the corpus, prints its counts and starts no agent.
 
 ### Scoring diagnoses
 

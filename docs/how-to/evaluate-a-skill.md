@@ -208,6 +208,25 @@ prompt = "Write a docx memo"
 expect_skill = "docx"
 ```
 
+`coding.sh eval trigger <skill> --draft` writes this file for you. The `should` prompts start
+with the first prompt of each captured session (last 90 days, `--since` to change) that loaded the
+skill. The `should_not` prompts start with sessions that loaded a sibling skill and not this one,
+with `expect_skill` set to that sibling. A model then fills each side to 8 (`--n`). It is asked
+for prompts that describe the task without naming the skill, near misses that share its words,
+and prompts a sibling owns. Mined prompts are redacted and cut to 500 characters. Each entry
+records `source = "trace:<session>"` or `source = "draft"`, and the file says at the top that it
+was drafted. It warns when half or more of the `should` prompts name the skill, since those make
+activation look perfect. The model's reply is cached, so a second identical run makes no call.
+
+```sh
+coding.sh eval trigger .claude/skills/pdf --draft --dry-run   # print it
+coding.sh eval trigger .claude/skills/pdf --draft             # write triggers.toml
+```
+
+An existing `triggers.toml` is kept unless you pass `--force` (exit 2 otherwise).
+`--no-traces` drafts from SKILL.md alone without reading the store. `--draft openai` or a
+provider JSON picks the model, and `--draft-model` sets its name.
+
 Aim for at least 10 prompts per side. Each run starts in a fresh empty directory with the skill
 and its sibling skills installed in the agent's project skills dir (`--siblings DIR` or
 `--no-siblings` to change that). coding.sh reads from the captured session whether the agent

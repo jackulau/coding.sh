@@ -259,6 +259,17 @@ describe("initSuite: sessions", () => {
     assert.equal((await w.index.listTasks()).length, 1, "stored too, so compare --tag suite:failures finds it");
   });
 
+  it("ranks flagged sessions and leaves out the ones that can't become a task", async () => {
+    const root = await project();
+    const w = await world();
+    await w.index.upsertSession({ ...(await w.index.getSession("failed"))!, id: "sub", parent: { sessionId: "failed" }, startedAt: 11_000 });
+    await w.index.upsertSession({ ...(await w.index.getSession("failed"))!, id: "noprompt", startedAt: 11_000 });
+    await w.index.putEvents([ev("sub", "session.start", {}, { repo: { root: ROOT, head: "abc", snapshot: "start" } }), ev("sub", "user.message", { text: "subtask" }), ev("noprompt", "session.start", {}, { repo: { root: ROOT, head: "abc", snapshot: "start" } })]);
+    const r = await initSuite({ name: "ranked", root, source: "sessions", since: 5_000 }, { ...w, now: 12_000 });
+    assert.deepEqual(r.tasks!.map((t) => t.sessionId), ["failed"]);
+    assert.ok(r.notes.some((n) => /left out 2 flagged session\(s\) that can't become a task: 1 subagent, 1 no-user-prompt/.test(n)), r.notes.join("\n"));
+  });
+
   it("keeps the diff as the reference for a named session that didn't fail", async () => {
     const root = await project();
     const w = await world();

@@ -30,7 +30,7 @@ import { captureRedactor, failedRuns, renderFailedRuns, type FailedRun } from ".
 import { paint } from "../../experiments/text.ts";
 import { renderSuiteReport, renderSuitesMarkdown, suiteReport, type SuiteReport, type TaskTrials } from "../../eval/report.ts";
 import { TODO } from "../../eval/init.ts";
-import { trialsFromExperiment, trialsFromRuns, trialsFromTriggers } from "../../eval/run-suite.ts";
+import { capturedFailuresLine, trialsFromExperiment, trialsFromRuns, trialsFromTriggers } from "../../eval/run-suite.ts";
 import type { TriggerRunResult } from "./eval-trigger.ts";
 import { DEFAULT_TRIALS, resolveSuites, SuiteError, taskDirs, type LoadedSuite } from "../../eval/suite-spec.ts";
 import { positiveInt, UsageError } from "../args.ts";
@@ -196,10 +196,12 @@ async function runTaskSuite(c: CommandContext, ctx: Context, s: LoadedSuite, k: 
   if (r.infraStop) infraStopNote(c, r.infraStop);
   else if (r.cancelled) out.warn(`${s.spec.name}: cancelled; the report covers the runs that finished`);
   const runs = latestPerSlot(r.results).runs;
-  const report = suiteReport(s.spec.name, s.spec.purpose, trialsFromRuns(tasks, runs));
+  const trials = trialsFromRuns(tasks, runs);
+  const report = suiteReport(s.spec.name, s.spec.purpose, trials);
   const unverified = tasks.filter((t) => !t.referencePatch && !referenceRun(t)).map((t) => t.name);
   const failed = failedRuns(runs, captureRedactor(ctx.config, ctx.env));
-  return { suite: s.spec.name, kind: "tasks", dir: s.dir, report, ...(failed.length ? { failedRuns: failed, names: new Map(tasks.map((t) => [t.id, t.name])) } : {}), experimentId: r.experimentId, harness: { id: bundle.id, name: bundle.name, files: Object.keys(bundle.files).length }, unverified };
+  const captured = capturedFailuresLine(tasks, trials);
+  return { suite: s.spec.name, kind: "tasks", dir: s.dir, report, ...(captured ? { extra: [captured] } : {}), ...(failed.length ? { failedRuns: failed, names: new Map(tasks.map((t) => [t.id, t.name])) } : {}), experimentId: r.experimentId, harness: { id: bundle.id, name: bundle.name, files: Object.keys(bundle.files).length }, unverified };
 }
 
 async function runCaseSuite(c: CommandContext, ctx: Context, s: LoadedSuite, trials: number, root: string): Promise<SuiteOutcome> {
