@@ -980,7 +980,7 @@ coding.sh eval trigger <SKILL> [options]
 | `--siblings <DIR>` |  | Install the skills in this dir in every arm (default: the skills next to &lt;SKILL&gt;) |
 | `--no-siblings` |  | Install only the skill under test. |
 | `--min-f1 <X>` |  | Exit 1 when the tested arm's F1 is under X (0 to 1) |
-| `--fail-on <WHAT>` |  | Exit 1 when B answers fewer prompts right than A, with the 95% CI below 0. One of: `regression`. |
+| `--fail-on <WHAT>` |  | Exit 1 when B answers fewer prompts right than A: the 95% CI below 0 and an exact sign-flip p below 0.05. One of: `regression`. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. |
 
 ```sh

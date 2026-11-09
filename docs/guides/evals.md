@@ -1910,8 +1910,10 @@ The report gives precision, recall, F1 and accuracy (weighted), Wilson intervals
 the false-trigger rate, each missed prompt with x/k and a flaky mark, and the expected routes.
 `--description TEXT|@FILE` or `--candidate DIR` adds a second arm. Both arms run the same prompts,
 interleaved in a seeded order. The delta is a paired bootstrap CI on per-prompt accuracy, plus
-McNemar at k=1 and the prompts whose majority answer flipped. `--min-f1 X` exits 1 when the tested
-arm's F1 is under X. `--fail-on regression` exits 1 when B's CI is below 0. Results go to
+McNemar at k=1, an exact sign-flip test over prompts and the prompts whose majority answer flipped.
+Better and Worse need the CI to clear 0 and the sign-flip p to be below 0.05, so they take at least 6
+prompts that changed. `--min-f1 X` exits 1 when the tested arm's F1 is under X. `--fail-on
+regression` exits 1 on Worse. Results go to
 `~/.coding.sh/triggers/<skill>/`. See [Does the skill load?](../how-to/evaluate-a-skill.md#does-the-skill-load).
 
 ## Replay a model call

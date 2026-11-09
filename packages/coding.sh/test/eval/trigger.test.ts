@@ -167,6 +167,44 @@ describe("scoring", () => {
     assert.equal(a.prompts.find((p) => p.prompt.startsWith("Merge"))!.n, 0);
   });
 
+  // A current description and a broader candidate; the fake agent loads pdf when the
+  // prompt names a word from the installed description. Returns B vs A and A vs B.
+  const describedPair = async (should: string[]) => {
+    const blobs = new MemoryBlobStore();
+    const dir = join(tmp, "skills", "pdf");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "SKILL.md"), "---\nname: pdf\ndescription: Use for pdf files.\n---\nBody\n");
+    const current = await readSkill(dir);
+    const md = withDescription("---\nname: pdf\ndescription: Use for pdf files.\n---\nBody\n", "Use for pdf files, documents, reports and forms.");
+    const arms: TriggerArm[] = [
+      { label: "current", bundle: await probeBundle({ name: "a", agent: "claude-code", skills: [current], blobs }) },
+      { label: "--description", bundle: await probeBundle({ name: "b", agent: "claude-code", skills: [{ ...current, override: { "SKILL.md": md } }], blobs }) },
+    ];
+    const readsDescription = async (_j: unknown, a: TriggerArm, p: { prompt: string }) => {
+      const text = (await blobs.getText(a.bundle.files[".claude/skills/pdf/SKILL.md"]!))!;
+      const words = skillFrontmatter(text)!.description!.toLowerCase().match(/[a-z]{3,}/g)!.filter((w) => !["use", "for", "and"].includes(w));
+      return ok(words.some((w) => p.prompt.toLowerCase().includes(w.replace(/s$/, ""))) ? ["pdf"] : []);
+    };
+    const s = parseTriggerSpec(
+      `skill = "pdf"\nk = 2\n${should.map((p) => `[[should]]\nprompt = "${p}"\n`).join("")}${["Rename every txt name", "Sort this list", "Write a haiku"].map((p) => `[[should_not]]\nprompt = "${p}"\n`).join("")}`,
+    );
+    const r = await runTriggerEval({ spec: s, skill: "pdf", arms, k: 2, seed: 3, runProbe: readsDescription });
+    const rep = scoreTrigger({ spec: s, skill: "pdf", agent: "claude-code", arms, observations: r.observations, k: 2, seed: 3 });
+    const rev = scoreTrigger({ spec: s, skill: "pdf", agent: "claude-code", arms: [arms[1]!, arms[0]!], observations: r.observations.map((o) => ({ ...o, arm: 1 - o.arm })), k: 2, seed: 3 });
+    return { rep, rev };
+  };
+
+  it("6 prompts that all flip to right are Better, and the same runs reversed are a regression", async () => {
+    const { rep, rev } = await describedPair(["Fill the pdf form", "Summarize this report", "Make this document searchable", "Sign the form", "Read the report aloud", "Print the form", "Archive the document", "Split pdf pages"]);
+    const d = rep.delta!;
+    assert.equal(d.flips.length, 6);
+    assert.deepEqual(d.signFlip, { p: 2 / 64, units: 11, method: "exact" });
+    assert.equal(d.improvement, true);
+    assert.match(formatTrigger(rep), /^Better: B answers more prompts right \(the CI is above 0 and the sign-flip p is below 0\.05\)$/m);
+    assert.equal(rev.delta!.regression, true);
+    assert.match(formatTrigger(rev), /^Worse: B answers fewer prompts right/m);
+  });
+
   it("a candidate description the agent reads raises recall, lists flips and has a CI above 0", async () => {
     const blobs = new MemoryBlobStore();
     const dir = join(tmp, "skills", "pdf");
@@ -203,10 +241,15 @@ describe("scoring", () => {
     assert.equal(d.regression, false);
     assert.match(d.verdict, /^recall 4\/12→12\/12 · false triggers 0\/6→0\/6 · Δacc \+44 pp \(95% CI \+\d+ to \+\d+\)$/);
     assert.match(d.smallNote!, /6 should and 3 should_not prompts/);
-    assert.match(formatTrigger(rep), /Better: B answers more prompts right/);
-    // Reversed, the same runs read as a regression.
+    // 4 prompts that all improve: the bootstrap CI is above 0, but the exact two-sided p is 2/2⁴.
+    assert.deepEqual(d.signFlip, { p: 0.125, units: 9, method: "exact" });
+    assert.equal(d.improvement, false);
+    assert.match(formatTrigger(rep), /^ {2}sign-flip test \(exact up to 20 changed prompts\): p = 0\.125 over 9 prompts$/m);
+    assert.match(formatTrigger(rep), /^No clear difference: the CI is above 0, but the exact sign-flip test over 9 prompts gives p 0\.125$/m);
+    // Reversed, the CI is below 0, and the same exact test keeps it from reading as a regression.
     const rev = scoreTrigger({ spec: s, skill: "pdf", agent: "claude-code", arms: [arms[1]!, arms[0]!], observations: r.observations.map((o) => ({ ...o, arm: 1 - o.arm })), k: 2, seed: 3 });
-    assert.equal(rev.delta!.regression, true);
+    assert.ok(rev.delta!.ci.hi < 0);
+    assert.equal(rev.delta!.regression, false);
   });
 
   it("McNemar at k=1", async () => {

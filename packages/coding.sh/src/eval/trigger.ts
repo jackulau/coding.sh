@@ -34,7 +34,7 @@ import { runLayout, runTask } from "../runner/run.ts";
 import { SCHEMA_VERSION, type EventKind } from "../schema/index.ts";
 import { pairedBootstrap, wilson, type BootstrapResult, type Interval } from "../stats/interval.ts";
 import { mulberry32 } from "../stats/prng.ts";
-import { mcnemarPaired, type McNemarResult } from "../stats/tests.ts";
+import { clusterSignFlip, mcnemarPaired, type McNemarResult, type SignFlipResult } from "../stats/tests.ts";
 
 // ------------------------------------------------------------ spec
 
@@ -61,6 +61,8 @@ export interface TriggerSpec {
 export const TRIGGER_DEFAULTS = { k: 3, timeoutS: 120 } as const;
 /** Fewer prompts than this per side: only large differences can show. */
 export const TRIGGER_MIN_PROMPTS = 10;
+/** Level of the exact sign-flip test behind Better and Worse (and --fail-on regression). */
+const TRIGGER_ALPHA = 0.05;
 
 export class TriggerSpecError extends Error {
   constructor(message: string) {
@@ -541,8 +543,16 @@ export interface TriggerDelta {
   flips: TriggerFlip[];
   /** Too few prompts per side for anything but a large change to show. */
   smallNote?: string;
-  /** The CI lies wholly below 0. */
+  /**
+   * Exact two-sided sign-flip test of B − A over prompts. With a few prompts
+   * that all move the same way the bootstrap CI is a single point, so this is
+   * what keeps 3 worse prompts from reading as a regression.
+   */
+  signFlip: SignFlipResult;
+  /** The CI lies wholly below 0 and signFlip.p is below 0.05. */
   regression: boolean;
+  /** The CI lies wholly above 0 and signFlip.p is below 0.05. */
+  improvement: boolean;
   verdict: string;
 }
 
@@ -648,7 +658,10 @@ function deltaOf(spec: TriggerSpec, a: TriggerArmScore, b: TriggerArmScore, k: n
     flips.push({ side: ra.side, index: ra.index, prompt: ra.prompt, from, to, better: ra.side === "should" ? to : !to });
   }
   const small = spec.should.length < TRIGGER_MIN_PROMPTS || spec.shouldNot.length < TRIGGER_MIN_PROMPTS;
-  const regression = Number.isFinite(ci.hi) && ci.hi < 0;
+  const signFlip = clusterSignFlip(diffs, { seed });
+  const exact = signFlip.p < TRIGGER_ALPHA;
+  const regression = exact && Number.isFinite(ci.hi) && ci.hi < 0;
+  const improvement = exact && Number.isFinite(ci.lo) && ci.lo > 0;
   const ft = (s: TriggerArmScore) => `${s.raw.fp}/${s.raw.fp + s.raw.tn}`;
   const rc = (s: TriggerArmScore) => `${s.raw.tp}/${s.raw.tp + s.raw.fn}`;
   const accPart = Number.isFinite(ci.mean) ? `Δacc ${pp(ci.mean)} (95% CI ${ppNum(ci.lo)} to ${ppNum(ci.hi)})` : "Δacc — (no prompt answered in both arms)";
@@ -660,7 +673,9 @@ function deltaOf(spec: TriggerSpec, a: TriggerArmScore, b: TriggerArmScore, k: n
     ...(mcnemar ? { mcnemar } : {}),
     flips,
     ...(small ? { smallNote: `${spec.should.length} should and ${spec.shouldNot.length} should_not prompts: only a large change can show; aim for ${TRIGGER_MIN_PROMPTS}+ per side` } : {}),
+    signFlip,
     regression,
+    improvement,
     verdict: `recall ${rc(a)}→${rc(b)} · false triggers ${ft(a)}→${ft(b)} · ${accPart}`,
   };
 }
@@ -712,8 +727,19 @@ export function formatTrigger(r: TriggerReport): string {
     lines.push(`B vs A over ${d.prompts} prompts: ${d.verdict}`);
     if (d.mcnemar) lines.push(`  McNemar (k=1): B right where A wrong ${d.mcnemar.c}, the reverse ${d.mcnemar.b}, p = ${d.mcnemar.p.toFixed(3)}`);
     for (const f of d.flips) lines.push(`  flip ${f.better ? "better" : "worse "} ${f.side === "should" ? "should    " : "should_not"} ${f.from ? "loaded" : "skipped"} → ${f.to ? "loaded" : "skipped"}  ${JSON.stringify(clip(f.prompt))}`);
+    const flipUnits = `${d.signFlip.units} prompt${d.signFlip.units === 1 ? "" : "s"}`;
+    lines.push(`  sign-flip test (exact up to 20 changed prompts): p = ${d.signFlip.p.toFixed(3)} over ${flipUnits}`);
     if (d.smallNote) lines.push(`  note: ${d.smallNote}`);
-    lines.push(d.regression ? "Worse: B answers fewer prompts right (the CI is below 0)" : d.ci.lo > 0 ? "Better: B answers more prompts right (the CI is above 0)" : "No clear difference");
+    const side = d.ci.hi < 0 ? "below" : d.ci.lo > 0 ? "above" : undefined;
+    lines.push(
+      d.regression
+        ? "Worse: B answers fewer prompts right (the CI is below 0 and the sign-flip p is below 0.05)"
+        : d.improvement
+          ? "Better: B answers more prompts right (the CI is above 0 and the sign-flip p is below 0.05)"
+          : side
+            ? `No clear difference: the CI is ${side} 0, but the exact sign-flip test over ${flipUnits} gives p ${d.signFlip.p.toFixed(3)}`
+            : "No clear difference",
+    );
   }
   return lines.join("\n");
 }

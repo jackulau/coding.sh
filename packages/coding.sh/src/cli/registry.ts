@@ -722,7 +722,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "siblings", type: "string", value: "<DIR>", desc: "Install the skills in this dir in every arm (default: the skills next to <SKILL>)" },
           { name: "no-siblings", type: "boolean", desc: "Install only the skill under test" },
           { name: "min-f1", type: "number", value: "<X>", desc: "Exit 1 when the tested arm's F1 is under X (0 to 1)" },
-          { name: "fail-on", type: "string", value: "<WHAT>", choices: ["regression"], desc: "Exit 1 when B answers fewer prompts right than A, with the 95% CI below 0" },
+          { name: "fail-on", type: "string", value: "<WHAT>", choices: ["regression"], desc: "Exit 1 when B answers fewer prompts right than A: the 95% CI below 0 and an exact sign-flip p below 0.05" },
           YES,
         ],
         graceful: true,

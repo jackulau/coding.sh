@@ -232,6 +232,7 @@ B vs A over 8 prompts: recall 2/4→4/4 · false triggers 1/4→1/4 · Δacc +25
   McNemar (k=1): B right where A wrong 2, the reverse 0, p = 0.500
   flip better should     skipped → loaded  "Make the invoice searchable"
   flip better should     skipped → loaded  "OCR this scanned invoice"
+  sign-flip test (exact up to 20 changed prompts): p = 0.500 over 8 prompts
   note: 4 should and 4 should_not prompts: only a large change can show; aim for 10+ per side
 No clear difference
 ```
@@ -245,9 +246,11 @@ No clear difference
 - **B vs A**: `--description` swaps only the frontmatter description, `--candidate DIR` installs
   another version of the skill. Both arms run the same prompts in the same order. The CI is a paired
   bootstrap over prompts. With 8 prompts it reaches down to 0, so the verdict holds. Use more prompts
-  before you trust it.
+  before you trust it. The sign-flip test is exact: it flips the sign of each prompt's change in
+  accuracy. Better and Worse need the CI to clear 0 and this p to be below 0.05, which takes at least
+  6 prompts that changed: when a few prompts all move the same way the CI is a single point.
 
 `--min-f1 0.8` exits 1 when the tested arm's F1 is under 0.8. `--fail-on regression` exits 1 when
-B's CI is below 0. Each result is saved under `~/.coding.sh/triggers/<skill>/`. The item gate in
+B's CI is below 0 and the sign-flip p is below 0.05. Each result is saved under `~/.coding.sh/triggers/<skill>/`. The item gate in
 step 7 reads `KILL` with `g5: never fired` when the skill didn't load in a real A/B. Run this to
 find out why.
