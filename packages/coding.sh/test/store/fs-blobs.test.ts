@@ -1,15 +1,18 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
 import { after, describe, it } from "node:test";
 import { sha256Hex } from "../../src/core/ids.ts";
 import { FsBlobStore, PACK_FILE, PACK_MAX_BYTES, type FsBlobStoreOptions } from "../../src/store/fs-blobs.ts";
 import { blobPath } from "../../src/store/common.ts";
 import { ageBlob } from "./_blobs.ts";
+import { tsNodeArgs } from "../capture/_helpers.ts";
 
 const root = mkdtempSync(join(tmpdir(), "csh-blobs-"));
 const opened: FsBlobStore[] = [];
@@ -376,5 +379,100 @@ describe("FsBlobStore pack", () => {
     } finally {
       viewer.close();
     }
+  });
+
+  it("a put that finds the pack's write lock taken writes a file instead of failing, and compact moves it in", async () => {
+    const s = make();
+    await s.put("first");
+    const { loadSqlite } = await import("../../src/store/sqlite-open.ts");
+    const { DatabaseSync } = await loadSqlite();
+    const writer = new DatabaseSync(join(s.root, PACK_FILE)); // another process's long write
+    writer.exec("BEGIN IMMEDIATE");
+    let single: string;
+    let batched: string;
+    try {
+      const t0 = Date.now();
+      single = await s.put("put while the pack is locked");
+      const b = s.batch();
+      batched = await b.put("batched while the pack is locked");
+      await b.flush();
+      assert.ok(Date.now() - t0 < 3000, `waited ${Date.now() - t0} ms, not the 5 s busy timeout`);
+      assert.ok(existsSync(s.pathFor(single)) && existsSync(s.pathFor(batched)), "both became files");
+    } finally {
+      writer.exec("ROLLBACK");
+      writer.close();
+    }
+    assert.equal(await s.getText(single), "put while the pack is locked");
+    assert.equal(await s.getText(batched), "batched while the pack is locked");
+    const later = await s.put("put once the lock is free");
+    assert.ok(!existsSync(s.pathFor(later)), "back in the pack");
+    assert.deepEqual(await s.compact(), { packed: 2, readerHeld: false });
+    assert.ok(!existsSync(s.pathFor(single)) && !existsSync(s.pathFor(batched)));
+    assert.equal(await s.getText(single), "put while the pack is locked");
+  });
+
+  it("gc's delete removes a blob that is both a row and a file (a put that found the pack locked wrote the file)", async () => {
+    const s = make();
+    await s.put("first");
+    const { loadSqlite } = await import("../../src/store/sqlite-open.ts");
+    const { DatabaseSync } = await loadSqlite();
+    const writer = new DatabaseSync(join(s.root, PACK_FILE));
+    writer.exec("BEGIN IMMEDIATE");
+    let ref: string;
+    try {
+      ref = await s.put("twice over");
+    } finally {
+      writer.exec("ROLLBACK");
+      writer.close();
+    }
+    await s.put("twice over"); // the lock is free: now a row too
+    assert.ok(existsSync(s.pathFor(ref)) && (await s.stat(ref)));
+    const gone = await s.deleteIfOlder(ref, { olderThanMs: 0, now: Date.now() + 60_000 });
+    assert.equal(typeof gone, "number");
+    assert.ok(!existsSync(s.pathFor(ref)), "the file went with the row");
+    assert.equal(await s.get(ref), undefined);
+  });
+
+  it("processes putting at once lose no blob, even while one holds the write lock past the busy timeout", async () => {
+    const s = make();
+    await s.put("first");
+    await s.close();
+    const { loadSqlite } = await import("../../src/store/sqlite-open.ts");
+    const { DatabaseSync } = await loadSqlite();
+    const module = pathToFileURL(join(import.meta.dirname, "../../src/store/fs-blobs.ts")).href;
+    // Each process: says it is ready, puts one by one, then in a batch; prints its error count and refs.
+    const src = `import { FsBlobStore } from ${JSON.stringify(module)};
+      const s = new FsBlobStore(process.argv[1]); const refs = []; let errors = 0; console.log("ready");
+      for (let i = 0; i < 120; i++) { try { refs.push(await s.put("p" + process.pid + "-" + i)); } catch (e) { errors++; console.error(String(e)); } }
+      const b = s.batch(); for (let i = 0; i < 50; i++) refs.push(await b.put("b" + process.pid + "-" + i));
+      try { await b.flush(); } catch (e) { errors++; console.error(String(e)); }
+      await s.close(); console.log(JSON.stringify({ errors, refs }));`;
+    const writer = new DatabaseSync(join(s.root, PACK_FILE)); // a long transaction in another process
+    writer.exec("BEGIN IMMEDIATE");
+    const ready: Promise<void>[] = [];
+    const runs = Array.from({ length: 4 }, () => {
+      const child = spawn(process.execPath, [...tsNodeArgs(), "--input-type=module", "-e", src, s.root], { stdio: ["ignore", "pipe", "pipe"] });
+      let out = "";
+      let err = "";
+      child.stdout.on("data", (d: Buffer) => (out += d));
+      ready.push(new Promise((res) => child.stdout.on("data", () => out.startsWith("ready") && res())));
+      child.stderr.on("data", (d: Buffer) => (err += d));
+      return new Promise<{ errors: number; refs: string[] }>((res, rej) =>
+        child.once("exit", (code) => (code === 0 ? res(JSON.parse(out.trim().split("\n").pop()!)) : rej(new Error(`exit ${code}: ${err}`)))),
+      );
+    });
+    try {
+      await Promise.race([Promise.all(ready), Promise.all(runs)]);
+      await new Promise((r) => setTimeout(r, 5500)); // past the 5 s busy timeout a put used to wait before it failed
+    } finally {
+      writer.exec("ROLLBACK");
+      writer.close();
+    }
+    const results = await Promise.all(runs);
+    assert.deepEqual(results.map((r) => r.errors), [0, 0, 0, 0]);
+    const refs = results.flatMap((r) => r.refs);
+    assert.equal(refs.length, 4 * 170);
+    assert.deepEqual(await s.has(refs), refs.map(() => true));
+    for (const ref of refs) assert.ok(await s.get(ref), `${ref} reads back`);
   });
 });

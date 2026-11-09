@@ -9,7 +9,10 @@
 // for a file, so a store written before the pack (all files) reads as it did. Pack
 // commits are synchronous=FULL (and fullfsync on macOS): a put() that resolves is
 // durable, as for a file. Rows are never torn (SQLite transactions); reads still
-// verify the sha256.
+// verify the sha256. Only one process writes the pack at a time: a write that
+// cannot get the lock within PACK_WRITE_WAIT_MS writes its blobs as files, as a
+// store without the pack does, so contention slows a put but never fails it, and
+// `gc --compact` moves those files in later.
 //
 // Files: Writes go to a temp file that is
 // flushed (durable.ts writeTemp), renamed into place and the directory fsynced,
@@ -109,8 +112,9 @@ export class FsBlobStore implements BlobStore {
     const bytes = toBytes(data);
     const ref = sha256Hex(bytes);
     const staged = await this.stage(ref, bytes);
-    if (staged && "data" in staged) await this.pack.write([staged]);
-    else if (staged) await this.commit([staged]);
+    if (staged && "data" in staged) {
+      if (!(await this.pack.write([staged]))) await this.commit([await this.stageFile(ref, staged.data)]);
+    } else if (staged) await this.commit([staged]);
     return ref;
   }
 
@@ -132,6 +136,12 @@ export class FsBlobStore implements BlobStore {
     if (existsSync(file) && (await this.read(ref, file)) !== undefined && (await touch(file))) return undefined;
     const compressed = compress();
     if (compressed.byteLength < this.packMaxBytes) return { ref, data: compressed };
+    return this.stageFile(ref, compressed);
+  }
+
+  /** Writes compressed bytes to a flushed temp file beside the blob's path. */
+  private async stageFile(ref: BlobRef, compressed: Uint8Array): Promise<Staged> {
+    const file = this.pathFor(ref);
     let created = await mkdir(dirname(file), { recursive: true });
     let tmp: string;
     try {
@@ -215,13 +225,16 @@ export class FsBlobStore implements BlobStore {
         writes.clear();
         const failed = settled.find((w): w is { error: unknown } => !!w && "error" in w);
         // Pack rows (one transaction) and files both land even when the other fails; the first error is thrown after.
+        // When the pack stays locked, its rows are written as files with the rest.
         let packFailed: { error: unknown } | undefined;
+        const files = settled.filter((w): w is Staged => !!w && "tmp" in w);
         try {
-          await store.pack.write(settled.filter((w): w is Packed => !!w && "data" in w));
+          const rows = settled.filter((w): w is Packed => !!w && "data" in w);
+          if (!(await store.pack.write(rows))) await eachLimit(rows, BATCH_PARALLEL, async (r) => files.push(await store.stageFile(r.ref, r.data)));
         } catch (error) {
           packFailed = { error };
         }
-        await store.commit(settled.filter((w): w is Staged => !!w && "tmp" in w));
+        await store.commit(files);
         if (failed) throw failed.error;
         if (packFailed) throw packFailed.error;
       },
@@ -310,7 +323,14 @@ export class FsBlobStore implements BlobStore {
   async deleteIfOlder(ref: BlobRef, opts: { olderThanMs: number; now?: number }): Promise<number | "kept" | undefined> {
     // A pack row goes in one statement: a put that re-captured it since gc's stat has moved its mtime past the cutoff.
     const packed = await this.pack.deleteIfOlder(ref, (opts.now ?? Date.now()) - opts.olderThanMs);
-    if (packed !== undefined) return packed;
+    if (packed === "kept") return packed;
+    // A blob can be a row and a file too (a put that found the pack locked wrote a file).
+    const filed = await this.deleteFileIfOlder(ref, opts);
+    if (packed === undefined || filed === "kept") return filed;
+    return packed + (filed ?? 0);
+  }
+
+  private async deleteFileIfOlder(ref: BlobRef, opts: { olderThanMs: number; now?: number }): Promise<number | "kept" | undefined> {
     const file = this.pathFor(ref);
     const trash = `${file}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
     try {
@@ -370,9 +390,11 @@ export class FsBlobStore implements BlobStore {
       let rows: Packed[] = [];
       let files: string[] = [];
       const move = async () => {
-        await this.pack.write(rows);
-        for (const f of files) await unlink(f).catch(() => {});
-        packed += rows.length;
+        // A pack that other writers keep locked leaves these files for the next compact.
+        if (await this.pack.write(rows)) {
+          for (const f of files) await unlink(f).catch(() => {});
+          packed += rows.length;
+        }
         rows = [];
         files = [];
       };
@@ -418,8 +440,9 @@ export class FsBlobStore implements BlobStore {
     if (!before || !data) return 0;
     const compressed = zstdCompressSync(data, { params: { [constants.ZSTD_c_compressionLevel]: level } });
     if (compressed.byteLength >= before.size) return 0;
-    if (await this.pack.stat(ref)) await this.pack.write([{ ref, data: compressed }]);
-    else await writeFileDurable(this.pathFor(ref), compressed);
+    if (await this.pack.stat(ref)) {
+      if (!(await this.pack.write([{ ref, data: compressed }]))) return 0;
+    } else await writeFileDurable(this.pathFor(ref), compressed);
     return before.size - compressed.byteLength;
   }
 
@@ -458,6 +481,12 @@ export class FsBlobStore implements BlobStore {
 
 /** How long a pack statement waits for another process's write. */
 const PACK_BUSY_TIMEOUT_MS = 5000;
+/**
+ * How long a write waits for the pack's write lock before its blobs go to files
+ * instead. Other processes' commits hold the lock a few ms each (an fsync), but a
+ * process that puts in a loop takes it back at once, so a waiter can lose every try.
+ */
+const PACK_WRITE_WAIT_MS = 500;
 /** A reset WAL is truncated to this many bytes, about one auto-checkpoint's worth (PRAGMA journal_size_limit). */
 const PACK_WAL_LIMIT = 4 * 1024 * 1024;
 /** How long a checkpoint after a bulk write waits for readers. */
@@ -477,6 +506,8 @@ class BlobPack {
   private db: DatabaseSync | undefined;
   private opening: Promise<DatabaseSync> | undefined;
   private readonly stmts = new Map<string, StatementSync>();
+  private readonly queue: { rows: Packed[]; done: (ok: boolean) => void; fail: (err: unknown) => void }[] = [];
+  private draining = false;
 
   constructor(path: string) {
     this.path = path;
@@ -517,16 +548,49 @@ class BlobPack {
   }
 
   /**
-   * Writes rows in one transaction. An existing row gets the bytes again and the
-   * later of the two mtimes: a dedupe hit refreshes it, and compact moving in an
-   * old file never ages a row a put just refreshed.
+   * Writes rows durably. An existing row gets the bytes again and the later of
+   * the two mtimes: a dedupe hit refreshes it, and compact moving in an old file
+   * never ages a row a put just refreshed. Writes from this process queue up and
+   * share one transaction (one fsync) while another is waiting for the lock.
+   * False when other processes kept the pack's write lock for PACK_WRITE_WAIT_MS:
+   * nothing was written, and the caller writes the blobs as files instead.
    */
-  async write(rows: Packed[]): Promise<void> {
-    if (!rows.length) return;
-    const db = (await this.open(true))!;
+  write(rows: Packed[]): Promise<boolean> {
+    if (!rows.length) return Promise.resolve(true);
+    return new Promise((done, fail) => {
+      this.queue.push({ rows, done, fail });
+      if (!this.draining) void this.drain();
+    });
+  }
+
+  private async drain(): Promise<void> {
+    this.draining = true;
+    try {
+      while (this.queue.length) {
+        const group = this.queue.splice(0);
+        try {
+          const ok = await this.commitRows(group.flatMap((g) => g.rows));
+          for (const g of group) g.done(ok);
+        } catch (err) {
+          for (const g of group) g.fail(err);
+        }
+      }
+    } finally {
+      this.draining = false;
+    }
+  }
+
+  private async commitRows(rows: Packed[]): Promise<boolean> {
+    let db: DatabaseSync;
+    try {
+      db = (await this.open(true))!;
+    } catch (err) {
+      if (isBusy(err)) return false; // another process is creating the pack
+      throw err;
+    }
+    if (!(await lockForWrite(db, Date.now() + PACK_WRITE_WAIT_MS))) return false;
     const upsert = this.stmt(db, "INSERT INTO blobs (ref, mtime, data) VALUES (?, ?, ?) ON CONFLICT(ref) DO UPDATE SET mtime = max(mtime, excluded.mtime), data = excluded.data");
     const now = Date.now();
-    db.exec("BEGIN IMMEDIATE");
     try {
       for (const r of rows) upsert.run(key(r.ref), r.mtime ?? now, r.data);
       db.exec("COMMIT");
@@ -534,6 +598,7 @@ class BlobPack {
       db.exec("ROLLBACK");
       throw err;
     }
+    return true;
   }
 
   async get(ref: BlobRef): Promise<Uint8Array | undefined> {
@@ -630,6 +695,34 @@ class BlobPack {
     this.stmts.clear();
     this.db?.close();
     this.db = undefined;
+  }
+}
+
+/** SQLITE_BUSY or one of its extended codes. */
+function isBusy(err: unknown): boolean {
+  return ((err as { errcode?: number }).errcode ?? 0) % 256 === 5;
+}
+
+/**
+ * BEGIN IMMEDIATE, tried again until `deadline` after sleeps that double from
+ * 1 ms to 32 ms, each jittered by ±50%. SQLite's busy_timeout backs off the same
+ * way but blocks the event loop while it sleeps. Trying more often only hands the
+ * lock around more and commits less. False when the lock never came free.
+ */
+async function lockForWrite(db: DatabaseSync, deadline: number): Promise<boolean> {
+  for (let i = 0; ; i++) {
+    db.exec("PRAGMA busy_timeout = 0");
+    try {
+      db.exec("BEGIN IMMEDIATE");
+      return true;
+    } catch (err) {
+      if (!isBusy(err)) throw err;
+    } finally {
+      db.exec(`PRAGMA busy_timeout = ${PACK_BUSY_TIMEOUT_MS}`);
+    }
+    const left = deadline - Date.now();
+    if (left <= 0) return false;
+    await new Promise((r) => setTimeout(r, Math.min(left, 2 ** Math.min(i, 5) * (0.5 + Math.random()))));
   }
 }
 

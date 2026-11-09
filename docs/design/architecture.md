@@ -157,9 +157,11 @@ interface Sink {                                          // write-only mirror (
 - A blob whose compressed form is under 4 KiB, such as a hook line's raw payload, is a row of
   `blobs/pack.db` (SQLite, WAL, `synchronous=FULL`); a larger one is a file of its own. A file costs
   a whole disk block, a temp file, a rename and two fsyncs, and most blobs are a few hundred bytes.
-  An ingest checkpoint writes its pack rows in one transaction. Reads look in the pack and then for
-  a file, so a store written before the pack reads as it did; `coding.sh gc --compact` moves its
-  small blob files into the pack.
+  An ingest checkpoint writes its pack rows in one transaction. One process writes the pack at a
+  time: a write that waits 500 ms for the lock (other processes putting in a loop) writes its blobs
+  as files instead, so contention never fails a put. Reads look in the pack and then for a file, so
+  a store written before the pack reads as it did; `coding.sh gc --compact` moves small blob files
+  into the pack.
 - Raw spool lines are not kept after normalization. The adapter's raw payload is kept as a blob for
   re-normalization when the schema version changes.
 - `coding.sh gc`: mark-and-sweep of unreferenced blobs, plus retention rules (for example, drop

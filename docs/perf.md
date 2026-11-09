@@ -160,7 +160,8 @@ fsyncs, and that file work, not parsing or the index, was most of the ingest tim
 
 A blob that compresses to under 4 KiB is now a row of `blobs/pack.db`, a SQLite file (WAL,
 `synchronous=FULL`, `fullfsync` on macOS, so a put that returns is on disk as a file was). An
-ingest checkpoint writes its rows in one transaction. Larger blobs stay files. Reads look in the
+ingest checkpoint writes its rows in one transaction, and a write that cannot get the pack's lock
+within 500 ms writes its blobs as files instead. Larger blobs stay files. Reads look in the
 pack, then for a file, so a store written before reads as it did; `gc --compact` moves its small
 blob files into the pack, and `purge` and `gc --compact` rewrite the pack (VACUUM) so a deleted
 row leaves no bytes behind. Nothing else about what is stored changes: the same blobs, refs and
@@ -177,7 +178,9 @@ Paired on the desk (`bench.mjs ingest store --baseline`, 8 interleaved pairs, a 
 | Blobs | 409.6 MB in 100,000 files | 30.2 MB in one file | |
 
 An earlier run on a quieter desk (load 0.3 to 1.4), before a one-line change to how the pack keeps
-a row's mtime, gave +4,525 events/s, 95% CI [4,487, 4,579], and the same store sizes.
+a row's mtime, gave +4,525 events/s, 95% CI [4,487, 4,579], and the same store sizes. A rerun after
+the pack's lock wait became 500 ms with a file fallback gave 6,131 against 1,696 events/s, +4,435,
+95% CI [4,400, 4,498], with the same store sizes and no fallback files (one ingest writes alone).
 
 The store is now mostly the index (1.43 MB per 1,000 events). The largest part left there is
 `search_extra`, which copies each `tool.end` output for full-text search (22.6 MB of the 142.6).
