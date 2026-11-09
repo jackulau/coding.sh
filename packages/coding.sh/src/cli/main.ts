@@ -13,7 +13,6 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { paths } from "../core/paths.ts";
-import { sourceRunRefusal } from "../core/store-guard.ts";
 import { parseArgs, suggest, UsageError, visibleFlags, type FlagSpec } from "./args.ts";
 import { CliError, Output } from "./output.ts";
 import { version } from "./meta.ts";
@@ -258,7 +257,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
     }
 
     // A source checkout never opens the user's real store by accident (core/store-guard.ts).
-    const refusal = cmd.name === "version" ? undefined : sourceRunRefusal(env);
+    // Loaded here, not at the top, so help and version don't load the guard and mcp/launch.ts.
+    const refusal = cmd.name === "version" ? undefined : (await import("../core/store-guard.ts")).sourceRunRefusal(env);
     if (refusal) throw new CliError(refusal, { reason: "source_checkout" });
 
     const args = action ? (action.args ?? []) : (cmd.args ?? []);

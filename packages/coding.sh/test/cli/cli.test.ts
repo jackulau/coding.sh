@@ -119,6 +119,24 @@ describe("cli help", () => {
     assert.doesNotMatch(readFileSync(CLI, "utf8"), /node:sqlite/, "the store is not loaded for help");
   });
 
+  it("keeps the source-checkout guard out of what --help loads", () => {
+    // Regression: a static import of core/store-guard.ts in main.ts put it and
+    // mcp/launch.ts in cli.mjs's static graph, and --help got ~3 ms slower.
+    const sources: string[] = [];
+    const seen = new Set<string>();
+    const walk = (file: string) => {
+      if (seen.has(file)) return;
+      seen.add(file);
+      const src = readFileSync(join(dirname(CLI), file), "utf8");
+      sources.push(...(src.match(/^\/\/ src\/\S+/gm) ?? []));
+      for (const m of src.matchAll(/^import\s*(?:\{[^}]*\}\s*from\s*)?"\.\/([^"]+)"/gm)) walk(m[1]!);
+    };
+    walk("cli.mjs");
+    assert.ok(sources.includes("// src/cli/main.ts"), sources.join(", "));
+    assert.ok(!sources.includes("// src/core/store-guard.ts"), "store-guard.ts loads at startup");
+    assert.ok(!sources.includes("// src/mcp/launch.ts"), "mcp/launch.ts loads at startup");
+  });
+
   it("prints command help and help <cmd> the same way", () => {
     const h = tmpHome();
     const a = cli(h, ["init", "--help"]);
