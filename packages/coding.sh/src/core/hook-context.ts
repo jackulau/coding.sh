@@ -3,7 +3,7 @@
 // folded into Session.stats.hookContext and `hook:<source>` session tags.
 import type { AgentEvent, HookContextStats } from "../schema/index.ts";
 
-/** Tag prefix: `hook:plugin:caveman`, `hook:settings`, … */
+/** Tag prefix: `hook:plugin:terse`, `hook:settings`, … */
 export const HOOK_TAG_PREFIX = "hook:";
 /** At most this many sources tagged per session, in first-seen order. */
 const HOOK_TAG_MAX = 20;

@@ -60,7 +60,7 @@ finds that subagent and `--where is:child` lists subagents.
 | `parent` | session | Parent session id (subagent sessions) | `parent:abc123` |
 | `flag` | session | Any flag or tag | `flag:no-verification` |
 | `skill` | session | Skill tag (flag skill:<name>) | `skill:pdf` |
-| `hook` | session | Whose hooks added text to the context (flag hook:<source>): plugin:<name>, plugin, settings or unknown | `hook:plugin:caveman` |
+| `hook` | session | Whose hooks added text to the context (flag hook:<source>): plugin:<name>, plugin, settings or unknown | `hook:plugin:terse` |
 | `hook.tokens` | session | Tokens hooks added to the context (characters / 4) | `hook.tokens>500` |
 | `since` | session | Started at or after: 7d, 12h or a date | `since:7d` |
 | `until` | session | Started before: 7d, 12h or a date | `until:2026-11-01` |

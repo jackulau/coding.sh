@@ -15,8 +15,8 @@ stored with each session, with its source and an estimate of its size in tokens 
 List the sessions the plugin's hooks reached, and those it did not:
 
 ```sh
-coding.sh sessions --where hook:plugin:caveman
-coding.sh sessions --where -hook:plugin:caveman
+coding.sh sessions --where hook:plugin:terse
+coding.sh sessions --where -hook:plugin:terse
 ```
 
 Count sessions per source, and find the sessions where hooks added the most:
@@ -42,7 +42,7 @@ Scripts and SDK runs (`claude -p`, the Agent SDKs) differ from sessions at a key
 them apart. `launch:headless` and `launch:interactive` split them:
 
 ```sh
-coding.sh sessions --where 'hook:plugin:caveman launch:interactive'
+coding.sh sessions --where 'hook:plugin:terse launch:interactive'
 coding.sh sessions --facets launch
 ```
 
@@ -68,13 +68,13 @@ plugin:
 
 ```sh
 coding.sh harness snapshot --agent claude-code --name current
-coding.sh compare current --with plugin:caveman --tag suite:plugin-check --k 3 --gate --yes
+coding.sh compare current --with plugin:terse --tag suite:plugin-check --k 3 --gate --yes
 ```
 
-B is `current-with-plugin-caveman`. Each run gets its own Claude config directory, and the plugin
+B is `current-with-plugin-terse`. Each run gets its own Claude config directory, and the plugin
 is loaded with `--plugin-dir` from the run's own home, so your `~/.claude` is never changed. To
 measure a plugin your bundle already carries, drop it instead: `compare current --without
-plugin:caveman`. Details: [Claude Code plugins](../guides/evals.md#claude-code-plugins).
+plugin:terse`. Details: [Claude Code plugins](../guides/evals.md#claude-code-plugins).
 
 The report gives each arm's pass rate with an interval, the paired difference, cost and tokens per
 arm, and with `--gate` a ship-or-hold answer. A plugin often changes tokens more than the pass rate;

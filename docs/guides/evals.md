@@ -1225,7 +1225,7 @@ Failed runs:
 A claude-code bundle can carry Claude Code plugins: their hooks, skills, agents, commands and MCP
 servers, the whole plugin directory. `harness snapshot --agent claude-code --plugin <name>` takes an
 installed plugin by name (or `name@marketplace`) or a plugin directory, and can be repeated. In a
-harness TOML, write `plugins = ["caveman", "./plugins/mine"]`; a directory there is relative to the
+harness TOML, write `plugins = ["terse", "./plugins/mine"]`; a directory there is relative to the
 TOML file. A name is looked up read-only in `plugins/installed_plugins.json` under
 `$CLAUDE_CONFIG_DIR` (default `~/.claude`). A directory must hold `.claude-plugin/plugin.json`, and
 the plugin's name comes from it. An unknown or ambiguous name is an error that lists the installed

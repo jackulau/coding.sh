@@ -59,9 +59,9 @@ describe("skill use", () => {
   });
 
   it("plugin and nested skills get their scope; plugin names are qualified", () => {
-    const plugin = `${HOME}/.claude/plugins/cache/caveman/caveman/1.2.0/skills/caveman/SKILL.md`;
-    // A plugin named for its one skill is not doubled (`caveman:caveman`).
-    assert.deepEqual(brief([start("Read", { file_path: plugin })]), [["caveman", "plugin", "read", true]]);
+    const plugin = `${HOME}/.claude/plugins/cache/terse/terse/1.2.0/skills/terse/SKILL.md`;
+    // A plugin named for its one skill is not doubled (`terse:terse`).
+    assert.deepEqual(brief([start("Read", { file_path: plugin })]), [["terse", "plugin", "read", true]]);
     assert.deepEqual(brief([start("Read", { file_path: `${HOME}/.claude/plugins/cache/acme/tools/2.0.0/skills/lint/SKILL.md` })]), [["tools:lint", "plugin", "read", true]]);
     assert.deepEqual(brief([start("Read", { file_path: `${HOME}/.claude/plugins/marketplaces/acme/plugins/design/skills/design/SKILL.md` })]), [["design", "plugin", "read", true]]);
     assert.deepEqual(brief([start("Read", { file_path: `${CWD}/packages/web/.claude/skills/ui/SKILL.md` })]), [["ui", "nested", "read", true]]);

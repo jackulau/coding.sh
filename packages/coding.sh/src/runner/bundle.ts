@@ -256,7 +256,7 @@ function strMap(v: unknown, key: string): Record<string, string> | undefined {
  *   flags = ["--max-turns", "40"]
  *   include = ["CLAUDE.md", ".claude/**"]   # relative to `dir`, default DEFAULT_INCLUDE
  *   remove = ["AGENTS.md"]
- *   plugins = ["caveman", "./plugins/mine"]   # claude-code: installed plugin names or plugin dirs (relative to this file)
+ *   plugins = ["terse", "./plugins/mine"]   # claude-code: installed plugin names or plugin dirs (relative to this file)
  *   dir = "."                        # where includes are read from, relative to this file
  *   note = "..."
  *   [env]

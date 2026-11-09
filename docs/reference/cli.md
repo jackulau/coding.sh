@@ -2297,7 +2297,7 @@ coding.sh harness <action>
 | [`list`](#codingsh-harness-list) | List harness bundles |
 | [`audit`](#codingsh-harness-audit) | Count the sessions that loaded, read and wrote each memory, CLAUDE.md, AGENTS.md, rule and skill file; warn about subagent files Claude Code misreads |
 
-- A harness TOML can carry Claude Code plugins too: plugins = ["caveman", "./plugins/mine"], with a directory relative to the TOML file.
+- A harness TOML can carry Claude Code plugins too: plugins = ["terse", "./plugins/mine"], with a directory relative to the TOML file.
 - A plugin is looked up read-only in plugins/installed_plugins.json under $CLAUDE_CONFIG_DIR (default ~/.claude), or read from a directory with .claude-plugin/plugin.json. Its whole directory is stored in the bundle. A run writes it under the run's own home and starts Claude Code with --plugin-dir; your Claude config is not touched.
 
 ### `coding.sh harness snapshot`
@@ -2319,7 +2319,7 @@ coding.sh harness snapshot [options]
 
 ```sh
 coding.sh harness snapshot --agent claude-code --name base
-coding.sh harness snapshot --agent claude-code --name with-caveman --plugin caveman
+coding.sh harness snapshot --agent claude-code --name with-terse --plugin terse
 coding.sh harness snapshot --agent claude-code --plugin ./my-plugin
 coding.sh harness snapshot --file harness.toml
 ```
@@ -2421,8 +2421,8 @@ coding.sh compare base candidate --k 3 --gate --by suite:
 coding.sh compare no-skill with-skill --tag skill-eval --gate --by suite: --max-cost 15
 coding.sh compare base candidate --k 3 --promote
 coding.sh compare base --without .claude/rules/clock.md --k 3 --item-gate
-coding.sh compare base --with plugin:caveman --k 3 --gate
-coding.sh compare with-caveman --without plugin:caveman --k 3
+coding.sh compare base --with plugin:terse --k 3 --gate
+coding.sh compare with-terse --without plugin:terse --k 3
 coding.sh compare sonnet gpt5 --gateway
 coding.sh compare sonnet gpt5 --gateway openrouter
 ```

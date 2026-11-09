@@ -592,7 +592,7 @@ Agent call) and `inheritedTokens`, and is absent for other sessions.
 context (Claude Code), and their size in tokens (characters / 4). `bySource` splits them by whose
 hook it was: `plugin:<name>`, `plugin` (a plugin not installed where the session was parsed),
 `settings` (a hook in a settings file) or `unknown` (the agent recorded no command). Each source also
-adds a `hook:<source>` tag to `flags`, such as `hook:plugin:caveman`. It is absent when no hook added
+adds a `hook:<source>` tag to `flags`, such as `hook:plugin:terse`. It is absent when no hook added
 context. Each text is a `notification` event with `payload.kind: "hook.context"` and `hookEvent`,
 `hookName`, `hookSource`, `command`, `chars`, `tokens` and `text` (clipped; metadata mode keeps only
 `hookEvent`, `hookSource`, `chars` and `tokens`).

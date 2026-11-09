@@ -126,8 +126,8 @@ tags it once (`skill:frontend-design`, not `skill:frontend-design:frontend-desig
 `coding.sh sessions --flag skill:pdf` lists the sessions that used the pdf skill. Text that other
 hooks added to the context (a plugin's SessionStart notes, a UserPromptSubmit reminder) adds a
 `hook:<source>` tag: `hook:plugin:<name>`, `hook:settings`, `hook:plugin` or `hook:unknown`, and
-`stats.hookContext` counts its tokens. `coding.sh sessions --where hook:plugin:caveman` lists the
-sessions the caveman plugin's hooks added context to, and `--facets hook` counts sessions per source.
+`stats.hookContext` counts its tokens. `coding.sh sessions --where hook:plugin:terse` lists the
+sessions the terse plugin's hooks added context to, and `--facets hook` counts sessions per source.
 A session
 in which redaction replaced a vendor token (an Anthropic, OpenAI, GitHub, GitLab, Slack, AWS, Google,
 Stripe, npm, coding.sh or AI Gateway key, a Slack webhook or a private key) gets the `secret:exposed`

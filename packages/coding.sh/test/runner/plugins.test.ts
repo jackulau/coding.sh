@@ -47,17 +47,17 @@ function fingerprint(dir: string): Record<string, string> {
 }
 
 const PLUGIN = {
-  ".claude-plugin/plugin.json": JSON.stringify({ name: "caveman", version: "1.2.0" }),
+  ".claude-plugin/plugin.json": JSON.stringify({ name: "terse", version: "1.2.0" }),
   "hooks/hooks.json": JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command: "${CLAUDE_PLUGIN_ROOT}/hooks/start.sh" }] }] } }),
-  "hooks/start.sh": "#!/bin/sh\necho talk like caveman\n",
+  "hooks/start.sh": "#!/bin/sh\necho keep it short\n",
   "skills/grunt/SKILL.md": "---\nname: grunt\ndescription: Use when terse.\n---\nGrunt.\n",
   ".git/HEAD": "ref: refs/heads/main\n",
 };
 
-/** A Claude config dir with `caveman@caveman` installed (v2 shape), plus a settings.json that enables it. */
-async function claudeDirWithCaveman(): Promise<{ claudeDir: string; pluginDir: string }> {
-  const claudeDir = await tree({ "settings.json": JSON.stringify({ enabledPlugins: { "caveman@caveman": true } }) });
-  const pluginDir = join(claudeDir, "plugins", "cache", "caveman", "caveman", "1.2.0");
+/** A Claude config dir with `terse@terse` installed (v2 shape), plus a settings.json that enables it. */
+async function claudeDirWithTerse(): Promise<{ claudeDir: string; pluginDir: string }> {
+  const claudeDir = await tree({ "settings.json": JSON.stringify({ enabledPlugins: { "terse@terse": true } }) });
+  const pluginDir = join(claudeDir, "plugins", "cache", "terse", "terse", "1.2.0");
   for (const [p, c] of Object.entries(PLUGIN)) {
     await mkdir(dirname(join(pluginDir, p)), { recursive: true });
     await writeFile(join(pluginDir, p), c);
@@ -68,7 +68,7 @@ async function claudeDirWithCaveman(): Promise<{ claudeDir: string; pluginDir: s
     JSON.stringify({
       version: 2,
       plugins: {
-        "caveman@caveman": [
+        "terse@terse": [
           { scope: "project", installPath: "/nowhere", version: "0.1.0", projectPath: "/work/demo" },
           { scope: "user", installPath: pluginDir, version: "1.2.0", installedAt: "2026-01-01T00:00:00.000Z" },
         ],
@@ -88,7 +88,7 @@ describe("bundleId", () => {
     assert.equal(bundleId(b), old);
     assert.equal(bundleId({ ...b, plugins: [] }), old);
     assert.equal(bundleId(b), "b68d6d802811bb7f0dd69e08f2bf741747c55d60e8f1ef4ee3fac76f21e68046");
-    assert.notEqual(bundleId({ ...b, plugins: [{ name: "caveman" }] }), old);
+    assert.notEqual(bundleId({ ...b, plugins: [{ name: "terse" }] }), old);
   });
 
   it("changes when a plugin's content changes", async () => {
@@ -105,32 +105,32 @@ describe("bundleId", () => {
 
 describe("resolving plugins", () => {
   it("finds an installed plugin by name or name@marketplace (v2, user scope first) and stores its whole dir", async () => {
-    const { claudeDir, pluginDir } = await claudeDirWithCaveman();
+    const { claudeDir, pluginDir } = await claudeDirWithTerse();
     const before = fingerprint(claudeDir);
     const list = await installedPlugins(claudeDir);
     assert.deepEqual(
       list.map((p) => [p.key, p.installPath, p.version]),
       [
-        ["caveman@caveman", pluginDir, "1.2.0"],
         ["pdf@anthropic-agent-skills", join(claudeDir, "plugins", "cache", "pdf"), "1.0.0"],
+        ["terse@terse", pluginDir, "1.2.0"],
       ],
     );
-    const r = await resolvePlugin("caveman", { cwd: "/", claudeDir });
-    assert.deepEqual(r, { name: "caveman", dir: pluginDir, marketplace: "caveman", version: "1.2.0" });
-    assert.deepEqual(await resolvePlugin("caveman@caveman", { cwd: "/", claudeDir }), r);
+    const r = await resolvePlugin("terse", { cwd: "/", claudeDir });
+    assert.deepEqual(r, { name: "terse", dir: pluginDir, marketplace: "terse", version: "1.2.0" });
+    assert.deepEqual(await resolvePlugin("terse@terse", { cwd: "/", claudeDir }), r);
 
     const blobs = new MemBlobs();
     const proj = await tree({ "CLAUDE.md": "rules\n" });
-    const b = await bundleFromDir({ name: "with-caveman", agent: "claude-code", dir: proj, include: ["CLAUDE.md"], blobs, plugins: ["caveman"], claudeDir });
-    assert.deepEqual(b.plugins, [{ name: "caveman", marketplace: "caveman", version: "1.2.0", ...(isWin ? {} : { exec: ["hooks/start.sh"] }) }]);
+    const b = await bundleFromDir({ name: "with-terse", agent: "claude-code", dir: proj, include: ["CLAUDE.md"], blobs, plugins: ["terse"], claudeDir });
+    assert.deepEqual(b.plugins, [{ name: "terse", marketplace: "terse", version: "1.2.0", ...(isWin ? {} : { exec: ["hooks/start.sh"] }) }]);
     assert.deepEqual(Object.keys(b.files), [
       "CLAUDE.md",
-      "~/.coding.sh-plugins/caveman/.claude-plugin/plugin.json",
-      "~/.coding.sh-plugins/caveman/hooks/hooks.json",
-      "~/.coding.sh-plugins/caveman/hooks/start.sh",
-      "~/.coding.sh-plugins/caveman/skills/grunt/SKILL.md",
+      "~/.coding.sh-plugins/terse/.claude-plugin/plugin.json",
+      "~/.coding.sh-plugins/terse/hooks/hooks.json",
+      "~/.coding.sh-plugins/terse/hooks/start.sh",
+      "~/.coding.sh-plugins/terse/skills/grunt/SKILL.md",
     ]);
-    assert.equal(await blobs.getText(b.files["~/.coding.sh-plugins/caveman/hooks/start.sh"]!), PLUGIN["hooks/start.sh"]);
+    assert.equal(await blobs.getText(b.files["~/.coding.sh-plugins/terse/hooks/start.sh"]!), PLUGIN["hooks/start.sh"]);
     assert.deepEqual(fingerprint(claudeDir), before, "the Claude config dir is byte-for-byte untouched");
   });
 
@@ -165,22 +165,22 @@ describe("resolving plugins", () => {
   });
 
   it("harness.toml plugins = [...]: names from the config dir, dirs relative to the TOML", async () => {
-    const { claudeDir } = await claudeDirWithCaveman();
+    const { claudeDir } = await claudeDirWithTerse();
     const h = await tree({
       "CLAUDE.md": "rules\n",
       "plugins/mine/.claude-plugin/plugin.json": JSON.stringify({ name: "tiny" }),
       "plugins/mine/skills/s/SKILL.md": "s\n",
-      "harness.toml": 'name = "t"\nagent = "claude-code"\ninclude = ["CLAUDE.md"]\nplugins = ["./plugins/mine", "caveman@caveman"]\n',
+      "harness.toml": 'name = "t"\nagent = "claude-code"\ninclude = ["CLAUDE.md"]\nplugins = ["./plugins/mine", "terse@terse"]\n',
     });
     const b = await bundleFromToml(join(h, "harness.toml"), { blobs: new MemBlobs(), claudeDir });
     assert.deepEqual(
       b.plugins?.map((p) => p.name),
-      ["caveman", "tiny"],
+      ["terse", "tiny"],
     );
     assert.ok(b.files["~/.coding.sh-plugins/tiny/skills/s/SKILL.md"]);
-    await writeFile(join(h, "bad.toml"), 'agent = "claude-code"\nplugins = "caveman"\n');
+    await writeFile(join(h, "bad.toml"), 'agent = "claude-code"\nplugins = "terse"\n');
     await assert.rejects(bundleFromToml(join(h, "bad.toml"), { blobs: new MemBlobs(), claudeDir }), /"plugins" must be an array of strings/);
-    await writeFile(join(h, "codex.toml"), 'agent = "codex"\nplugins = ["caveman"]\n');
+    await writeFile(join(h, "codex.toml"), 'agent = "codex"\nplugins = ["terse"]\n');
     await assert.rejects(bundleFromToml(join(h, "codex.toml"), { blobs: new MemBlobs(), claudeDir }), /its agent is codex; only claude-code loads them/);
   });
 });
@@ -193,19 +193,19 @@ describe("running a bundle with plugins", () => {
   afterEach(() => env.restore());
 
   it("applyBundle writes plugins under the isolated home; overlayClaude adds --plugin-dir; the user's config is untouched", async () => {
-    const { claudeDir } = await claudeDirWithCaveman();
+    const { claudeDir } = await claudeDirWithTerse();
     process.env.CLAUDE_CONFIG_DIR = claudeDir;
     const before = fingerprint(claudeDir);
     const blobs = new MemBlobs();
     const proj = await tree({ "CLAUDE.md": "rules\n" });
-    const b = await bundleFromDir({ name: "with-caveman", agent: "claude-code", dir: proj, include: ["CLAUDE.md"], blobs, plugins: ["caveman"], claudeDir });
+    const b = await bundleFromDir({ name: "with-terse", agent: "claude-code", dir: proj, include: ["CLAUDE.md"], blobs, plugins: ["terse"], claudeDir });
 
     const root = await tree({ "work/sum.js": "x\n" });
     const work = join(root, "work");
     const home = join(root, "home");
     const applied = await applyBundle(b, work, blobs, { home });
     assert.equal(applied.usesHome, false, "plugins alone don't make the run export HOME");
-    const dir = join(home, ".coding.sh-plugins", "caveman");
+    const dir = join(home, ".coding.sh-plugins", "terse");
     assert.equal(readFileSync(join(dir, "hooks/start.sh"), "utf8"), PLUGIN["hooks/start.sh"]);
     if (!isWin) assert.ok((statSync(join(dir, "hooks/start.sh")).mode & 0o111) !== 0, "the hook script stays executable");
     assert.ok(existsSync(join(dir, "skills/grunt/SKILL.md")));
@@ -220,8 +220,8 @@ describe("running a bundle with plugins", () => {
   });
 
   it("a non-claude agent can't carry plugins", () => {
-    assert.match(pluginProblem({ agent: "codex", plugins: [{ name: "caveman" }] }) ?? "", /its agent is codex; only claude-code loads them/);
-    assert.equal(pluginProblem({ agent: "claude-code", plugins: [{ name: "caveman" }] }), undefined);
+    assert.match(pluginProblem({ agent: "codex", plugins: [{ name: "terse" }] }) ?? "", /its agent is codex; only claude-code loads them/);
+    assert.equal(pluginProblem({ agent: "claude-code", plugins: [{ name: "terse" }] }), undefined);
     assert.equal(pluginProblem({ agent: "codex" }), undefined);
   });
 });

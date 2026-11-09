@@ -181,7 +181,7 @@ const KEY_LIST: KeyDef[] = [
     level: "session",
     type: "text",
     doc: "Whose hooks added text to the context (flag hook:<source>): plugin:<name>, plugin, settings or unknown",
-    example: "hook:plugin:caveman",
+    example: "hook:plugin:terse",
     sql: ["j.value"],
     multi: { from: "s.flags", prefix: "hook:" },
     get: (s) => s.flags ?? [],
