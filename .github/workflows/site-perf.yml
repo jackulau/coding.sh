@@ -5,9 +5,12 @@ name: Site perf
 # 95% paired bootstrap CI) and fails when a budget in scripts/perf/budgets.json
 # is broken or a gated metric gets worse.
 #
-# Pushes to main and manual runs use the self-hosted desk runner. Pull requests,
-# forks included, run on GitHub-hosted ubuntu-latest (free for public repos),
-# so PR code never runs on our own machine.
+# Pushes to main and manual runs use the self-hosted desk runner labelled
+# `perf` (desk-wsl). Only one runner has that label, so two perf runs never
+# overlap; CI and deploys run beside it on the desk's other runner, and each
+# sample records cpu_busy so ab.mjs checks the _ms budgets on quiet samples
+# only. Pull requests, forks included, run on GitHub-hosted ubuntu-latest (free
+# for public repos), so PR code never runs on our own machine.
 
 on:
   push:
@@ -39,7 +42,7 @@ concurrency:
 
 jobs:
   perf:
-    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","linux","desk"]') }}
+    runs-on: ${{ github.event_name == 'pull_request' && 'ubuntu-latest' || fromJSON('["self-hosted","linux","desk","perf"]') }}
     timeout-minutes: 120
     env:
       PAIRS: ${{ inputs.pairs || '9' }}

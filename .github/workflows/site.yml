@@ -1,8 +1,9 @@
 name: Site
 
 # Deploys apps/site to Cloudflare Workers (static assets) as `coding-sh-site`,
-# which serves coding.sh and www.coding.sh. Runs only on trusted events, on the
-# self-hosted desk runner, so deploys use no GitHub-hosted minutes.
+# which serves coding.sh and www.coding.sh. Runs only on trusted events, on a
+# self-hosted desk runner (either one, so a deploy never waits behind Site
+# perf), so deploys use no GitHub-hosted minutes.
 
 on:
   push:

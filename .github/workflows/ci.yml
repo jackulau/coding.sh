@@ -16,9 +16,10 @@ concurrency:
 jobs:
   test:
     name: node ${{ matrix.node }} / ${{ matrix.os }}
-    # Linux legs of trusted runs (push to main, manual) use the self-hosted desk
-    # runner. Pull requests, including forks, stay on GitHub-hosted runners: they are
-    # free for public repos, and untrusted PR code never runs on our own machine.
+    # Linux legs of trusted runs (push to main, manual) use a self-hosted desk
+    # runner, either one, so they never wait behind Site perf. Pull requests,
+    # including forks, stay on GitHub-hosted runners: they are free for public
+    # repos, and untrusted PR code never runs on our own machine.
     runs-on: ${{ (github.event_name != 'pull_request' && matrix.os == 'ubuntu-latest') && fromJSON('["self-hosted","linux","desk"]') || matrix.os }}
     timeout-minutes: 30
     strategy:
