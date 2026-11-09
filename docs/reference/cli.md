@@ -828,7 +828,8 @@ coding.sh eval run [suite]... [options]
 | `--model <MODEL>` |  | Model for the agent. |
 | `--harness <BUNDLE>` |  | Task suites: run this stored harness bundle (default: a snapshot of the project's current setup) |
 | `--summary <FILE>` |  | Also append the report to FILE as Markdown, e.g. "$GITHUB_STEP_SUMMARY" in GitHub Actions. |
-| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
+| `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 
@@ -1153,7 +1154,8 @@ coding.sh exp ab [spec] [options]
 | `--tau <T>` | `0.10` | With --gate: largest share of solved items B may break. |
 | `--allow-protected-edit <PATH:LINE>` |  | Allow the edit to delete, reword or relax this protected line (repeatable; never implied by --force) |
 | `--resume [<ID>]` |  | Continue an interrupted A/B: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
-| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
+| `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 
 ```sh
@@ -1191,7 +1193,8 @@ coding.sh exp replay [call]... [options]
 | `--dry-run` |  | Show the calls, the arms and a cost estimate; make no model calls and need no key. |
 | `--name <NAME>` |  | Experiment name (default: replay-&lt;first call id&gt;) |
 | `--resume [<ID>]` |  | Continue an interrupted replay: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
-| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
+| `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 
 ```sh
@@ -1240,7 +1243,8 @@ coding.sh exp run [spec] [options]
 | `--watch-path <GLOB>` |  | With --watch: more files whose change reruns the task (repeatable; also the spec's "watch" field) |
 | `--session` | `true` | In an experiment session (exp session new), add the run to its timeline and print the delta against the previous run; --no-session skips it. |
 | `--resume [<ID>]` |  | Continue an interrupted experiment: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
-| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
+| `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 
 ```sh
@@ -1360,7 +1364,8 @@ coding.sh exp aa [a] [b] [options]
 | `-c, --concurrency <N>` | `4` | Parallel case runs. |
 | `--split <SPLIT>` |  | Only cases in this split. One of: `train`, `dev`, `test`. |
 | `--resume [<ID>]` |  | Continue an interrupted A/A run: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
-| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
+| `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 
 ```sh
@@ -1391,7 +1396,8 @@ coding.sh exp sweep <CONFIGS>... [options]
 | `--held-out <SPLIT>` | `test` | Split the winner is re-scored on (a seeded 30% when the dataset has no splits) One of: `train`, `dev`, `test`. |
 | `--seed <N>` |  | Seed for the case and job order (default random, recorded) |
 | `--resume [<ID>]` |  | Continue an interrupted sweep: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
-| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
+| `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 
 ```sh
@@ -1725,6 +1731,8 @@ coding.sh toolevals run [target] [options]
 | `-t, --task <ID>` |  | Only this task (repeatable) |
 | `-c, --concurrency <N>` |  | Parallel trials. |
 | `--keep` |  | Keep trial sandboxes. |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
+| `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 
 ```sh
@@ -1910,7 +1918,8 @@ coding.sh workflows run <WORKFLOW> [options]
 | `--driver <DRIVER>` | `claude` | How a variant runs. One of: `claude`, `command`. |
 | `-j, --concurrency <N>` | `1` | Jobs at once (a workflow already fans out) |
 | `--resume [<ID>]` |  | Continue an interrupted workflow experiment: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
-| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
+| `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 | `--bin <PATH>` |  | claude binary for the claude-code-workflow driver (default: claude on PATH) |
 | `-y, --yes` |  | Run without asking when the estimated cost is above the confirm threshold. |
@@ -2390,7 +2399,8 @@ coding.sh compare <A> [b] [options]
 | `--item-gate` |  | One-item gate (shown automatically when B adds or removes one rule, skill or context file): exit 0 on KEEP or ACCEPT, 1 otherwise; --no-item-gate hides it. |
 | `--audited` |  | Count passes a witness refuted (eval audit) as fails in the verdict; needs every pass in both arms audited. |
 | `--resume [<ID>]` |  | Continue an interrupted comparison: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
-| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
+| `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 
@@ -2511,7 +2521,8 @@ coding.sh refine test <CANDIDATE>... [options]
 | `--reuse <WHAT>` | `none` | With --suite: copy earlier rounds' finished runs of the unchanged base arm (baseline) or both arms (both) instead of running them again; the pair then did not run interleaved, so the round warns about drift (default: none) One of: `baseline`, `both`, `none`. |
 | `--reuse-max-age <AGE>` |  | With --reuse: only copy runs that finished this recently, e.g. 3d or 12h (default: 7d) |
 | `--resume [<ID>]` |  | Continue an interrupted round: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
-| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
+| `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 | `--dry-run` |  | Show the checks, decision points, guard set size and cost estimate; make no model calls. |
@@ -2622,7 +2633,8 @@ coding.sh refine run [options]
 | `--reuse <WHAT>` | `none` | With --suite: copy earlier rounds' finished runs of the unchanged base arm (baseline) or both arms (both) instead of running them again; the pair then did not run interleaved, so the round warns about drift (default: none) One of: `baseline`, `both`, `none`. |
 | `--reuse-max-age <AGE>` |  | With --reuse: only copy runs that finished this recently, e.g. 3d or 12h (default: 7d) |
 | `--resume [<ID>]` |  | Continue an interrupted round: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
-| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
+| `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried) |
+| `--stop-after-infra <N>` | `5` | Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops. |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
 | `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 | `--dry-run` |  | Show the findings, decision points, guard set size and per-round estimate; make no model calls. |

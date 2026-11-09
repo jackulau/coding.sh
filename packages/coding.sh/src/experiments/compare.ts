@@ -3,6 +3,7 @@
 // bootstrap CI on per-case differences and an exact McNemar test on per-case
 // outcomes detect changes an unpaired comparison would miss.
 import type { Case, CaseRun, ExperimentResult } from "../datasets/types.ts";
+import { infraKinds, infraKindsText, voidText, type InfraKind } from "../jobs/retry.ts";
 import { verifierCorrected, type VerifierAudit, type VerifierCorrection } from "../judge/verifier.ts";
 import { clusteredBootstrap } from "../stats/cluster.ts";
 import { pairedBootstrap, roganGladen, type BootstrapOpts, type RoganGladenResult } from "../stats/interval.ts";
@@ -147,11 +148,16 @@ export interface ArmAttrition {
   completed: number;
   /** Task errors (they count as fails in the pass rate). */
   errored: number;
-  /** Task errors that look like infrastructure: timeouts, spawn failures, network, HTTP 429/5xx. */
+  /**
+   * Trials lost to infrastructure: those still on an infra error after their
+   * retries (a refused login, a failed setup, a rate limit; outcome unknown,
+   * counted in `ungraded`), plus task errors that look like infrastructure
+   * (timeouts, spawn failures, network, HTTP 429/5xx).
+   */
   infra: number;
-  /** The other task errors (the agent crashed or exited non-zero). */
+  /** The task errors that do not look like infrastructure (the agent crashed or exited non-zero). */
   agent: number;
-  /** Grader errors: outcome unknown, left out. */
+  /** Grader errors and trials still on an infra error after their retries: outcome unknown, left out. */
   ungraded: number;
   /** Trials of cases that ran only in the other arm (same dataset version only). */
   missing: number;
@@ -177,16 +183,21 @@ export function isInfraError(message: string): boolean {
 
 function armAttrition(runs: readonly CaseRun[], missing: number): ArmAttrition {
   let errored = 0;
-  let infra = 0;
+  let infraErrors = 0;
+  let infraUnknown = 0;
   let ungraded = 0;
   for (const r of runs) {
-    if (r.error !== undefined) {
+    if (r.infra) {
+      // Still on an infra error after its retries: outcome unknown, not a task failure.
+      infraUnknown++;
+      ungraded++;
+    } else if (r.error !== undefined) {
       errored++;
-      if (isInfraError(r.error)) infra++;
+      if (isInfraError(r.error)) infraErrors++;
     } else if (r.ungraded) ungraded++;
   }
   const lost = errored + ungraded + missing;
-  return { runs: runs.length + missing, completed: runs.length - errored - ungraded, errored, infra, agent: errored - infra, ungraded, missing, lost };
+  return { runs: runs.length + missing, completed: runs.length - errored - ungraded, errored, infra: infraErrors + infraUnknown, agent: errored - infraErrors, ungraded, missing, lost };
 }
 
 /**
@@ -210,9 +221,11 @@ export interface Comparison {
   b: { id: string; name: string; passRate: number };
   /** Set when A and B ran on different dataset versions (pairing still by case id). */
   datasetWarning?: string;
-  /** Runs left out because a grader errored (outcome unknown), per side. */
+  /** Runs left out because a grader errored or the task still hit an infra error after its retries (outcome unknown), per side. */
   ungraded: { a: number; b: number };
-  /** Set when either side has ungraded runs: the comparison covers only graded runs. */
+  /** Of the ungraded runs, those lost to infrastructure after their retries (a refused login, a failed setup, …), per side and by kind. Absent when none. */
+  infra?: { a: number; b: number; kinds: Partial<Record<InfraKind, number>> };
+  /** Set when either side has ungraded runs: the comparison covers only graded runs. Starts with "void:" when infrastructure left no pair to compare. */
   gradeWarning?: string;
   /** Cases that ran on both sides but have no graded run on at least one, so they are not paired. Absent when none. */
   ungradedCases?: string[];
@@ -536,8 +549,22 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     const pb = passHatK(b.runs, ids);
     out.passK = { a: { k: a.trials, rate: pa }, b: { k: b.trials, rate: pb }, diff: pb - pa };
   }
+  const lostA = a.runs.filter((r) => r.infra);
+  const lostB = b.runs.filter((r) => r.infra);
+  const kinds = infraKinds([...lostA, ...lostB]);
+  if (lostA.length || lostB.length) out.infra = { a: lostA.length, b: lostB.length, kinds };
   if (ungraded.a || ungraded.b) {
-    out.gradeWarning = `${ungraded.a + ungraded.b} run(s) had a grader error (A ${ungraded.a}, B ${ungraded.b}); their outcome is unknown, so they are left out and only graded runs are compared. Re-run them before trusting the verdict`;
+    const infra = lostA.length + lostB.length;
+    const grader = { a: ungraded.a - lostA.length, b: ungraded.b - lostB.length };
+    const parts = [
+      infra ? `${infra} run(s) failed on infrastructure (${infraKindsText(kinds)}) after their retries (A ${lostA.length}, B ${lostB.length})` : "",
+      grader.a || grader.b ? `${grader.a + grader.b} run(s) had a grader error (A ${grader.a}, B ${grader.b})` : "",
+    ].filter(Boolean);
+    // Nothing left to pair because of infrastructure (a dead login): no quality verdict, not "no difference".
+    out.gradeWarning =
+      infra && !ids.length
+        ? voidText(infra, kinds)
+        : `${parts.join("; ")}; their outcome is unknown, so they are left out and only graded runs are compared. Re-run them before trusting the verdict`;
   }
   if (a.dataset.id !== b.dataset.id || a.dataset.version !== b.dataset.version) {
     out.datasetWarning = `A ran on ${a.dataset.id}@${a.dataset.version}, B on ${b.dataset.id}@${b.dataset.version}; only the ${ids.length} shared case id(s) are compared`;

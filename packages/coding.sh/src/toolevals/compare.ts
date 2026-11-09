@@ -10,6 +10,7 @@ import { mean, median } from "../stats/summary.ts";
 import { pairedBootstrap, wilson, type BootstrapResult } from "../stats/interval.ts";
 import { mcnemarPaired, pairedPermutation, type McNemarResult } from "../stats/tests.ts";
 import { caseVerdicts } from "../experiments/samples.ts";
+import { infraKinds, infraKindsText, voidText } from "../jobs/retry.ts";
 import { totalTokens } from "./metrics.ts";
 import type {
   ContinuousMetric,
@@ -48,9 +49,14 @@ export function splitArm(arm: string): { variant: string; driver: string } {
 
 export const trialArm = (t: TrialResult): string => `${t.variant}@${t.driver}`;
 
+/** Trials with a known outcome: one that failed on infrastructure is left out of every rate. */
+export const known = (t: TrialResult): boolean => !t.infra;
+
 export function summarizeArm(trials: readonly TrialResult[], arm: string): ToolArmSummary {
   const { variant, driver } = splitArm(arm);
-  const mine = trials.filter((t) => t.variant === variant && t.driver === driver);
+  const all = trials.filter((t) => t.variant === variant && t.driver === driver);
+  const mine = all.filter(known);
+  const infra = all.length - mine.length;
   const passes = mine.filter((t) => t.pass).length;
   const byTask = groupByTask(mine);
   let passAllK = 0;
@@ -70,6 +76,7 @@ export function summarizeArm(trials: readonly TrialResult[], arm: string): ToolA
     passAllK,
     passAnyK,
     errors: mine.filter((t) => t.error).length,
+    infra,
     latencySource: sources.size === 1 ? ([...sources][0] as ToolArmSummary["latencySource"]) : sources.size === 0 ? "none" : "mixed",
   };
 }
@@ -79,7 +86,7 @@ export function summarizeArms(trials: readonly TrialResult[], o: { adaptive?: bo
   const arms = [...new Set(trials.map(trialArm))];
   return arms.map((a) => {
     const s = summarizeArm(trials, a);
-    if (o.adaptive) s.verdicts = caseVerdicts(trials.filter((t) => trialArm(t) === a).map((t) => ({ key: t.taskId, pass: t.pass })));
+    if (o.adaptive) s.verdicts = caseVerdicts(trials.filter((t) => trialArm(t) === a && known(t)).map((t) => ({ key: t.taskId, pass: t.pass })));
     return s;
   });
 }
@@ -145,8 +152,10 @@ export function compareToolArms(trials: readonly TrialResult[], o: CompareToolOp
     throw new Error(`arms ${o.baseline} and ${o.candidate} differ on both variant and driver; compare one factor at a time`);
   }
   const comparing: ToolCompareReport["comparing"] = a.driver === b.driver ? "variant" : "driver";
-  const A = trials.filter((t) => t.variant === a.variant && t.driver === a.driver);
-  const B = trials.filter((t) => t.variant === b.variant && t.driver === b.driver);
+  // Trials that failed on infrastructure have no outcome: they are left out of the pairs and counted in a note.
+  const A = trials.filter((t) => t.variant === a.variant && t.driver === a.driver && known(t));
+  const B = trials.filter((t) => t.variant === b.variant && t.driver === b.driver && known(t));
+  const lost = trials.filter((t) => !known(t) && ((t.variant === a.variant && t.driver === a.driver) || (t.variant === b.variant && t.driver === b.driver)));
   const ta = groupByTask(A);
   const tb = groupByTask(B);
   const ids = [...new Set([...ta.keys(), ...tb.keys()])].sort();
@@ -268,7 +277,9 @@ export function compareToolArms(trials: readonly TrialResult[], o: CompareToolOp
   if (unpaired.length) notes.push(`${unpaired.length} task(s) ran in only one arm and are excluded from paired stats`);
   const errs = baseline.errors + candidate.errors;
   if (errs) notes.push(`${errs} trial(s) recorded an error; they count as failures`);
-  const verdict = decide(diffs.length, boot, mcn, alpha);
+  if (lost.length) notes.push(`${lost.length} trial(s) failed on infrastructure (${infraKindsText(infraKinds(lost))}) after their retries: outcome unknown, left out of the pass rates`);
+  // Every trial lost to infrastructure (a dead login, a broken setup): no quality verdict, not "no task ran".
+  const verdict = !diffs.length && lost.length ? { kind: "inconclusive" as const, text: voidText(lost.length, infraKinds(lost)) } : decide(diffs.length, boot, mcn, alpha);
   return {
     baseline,
     candidate,

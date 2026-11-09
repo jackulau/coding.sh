@@ -12,7 +12,7 @@ import { renderMatrixRun } from "../../experiments/render.ts";
 import { sortableId } from "../../core/ids.ts";
 import { taskFingerprint } from "../../jobs/config.ts";
 import { parseAge, UsageError } from "../args.ts";
-import { finishJob, openJob, resumeField, resumeNote, trialTimeout } from "../jobs.ts";
+import { finishJob, infraStopNote, openJob, resumeField, resumeNote, trialTimeout } from "../jobs.ts";
 import { list } from "../common.ts";
 import type { CommandContext } from "../types.ts";
 import { cancelledWarning, durable, loadSpec, seedFlag, specConfig } from "./exp.ts";
@@ -108,13 +108,14 @@ export async function matrixRun(c: CommandContext, store: FileEvalStore, specFil
       }),
     )
     .finally(() => spin.stop());
-  await finishJob(job, result.status === "cancelled");
+  await finishJob(job, result.status === "cancelled", result.infraStop);
   const experiments = Object.fromEntries(Object.entries(result.experiments).map(([k, v]) => [k, v.id]));
   if (out.json) {
-    out.data({ outcome: result.status, matrix: { id: result.id, seed: result.seed }, plan: planJson(plan), experiments, comparisons: result.comparisons, ...(result.reused ? { reused: result.reused } : {}), ...resumeField(job) });
+    out.data({ outcome: result.status, matrix: { id: result.id, seed: result.seed }, plan: planJson(plan), experiments, comparisons: result.comparisons, ...(result.reused ? { reused: result.reused } : {}), infraStop: result.infraStop, ...resumeField(job) });
   } else {
     out.print(renderMatrixRun(result, { color: out.color }));
   }
+  infraStopNote(c, result.infraStop);
   resumeNote(c, job);
   if (result.status === "cancelled") {
     for (const r of Object.values(result.experiments)) cancelledWarning(c, r);

@@ -11,6 +11,7 @@ import { paths } from "../core/paths.ts";
 import type { Adapter, AgentRunOutput, BlobStore, HarnessBundle, IndexStore, RunResult, Session } from "../core/types.ts";
 import type { AgentEvent, AgentId } from "../schema/index.ts";
 import { defaultConcurrency, pool } from "../runner/experiment.ts";
+import { infraKind, infraStopFor, retryPolicy, withRetries, type InfraStopReport, type RetryPolicy } from "../jobs/retry.ts";
 import { runChecks } from "./checks.ts";
 import { runAgentTrial } from "./drivers/agent.ts";
 import { runModelTrial } from "./drivers/model.ts";
@@ -38,6 +39,12 @@ export interface ExperimentDeps {
   bundleFor?: (ref: string) => Promise<HarnessBundle | undefined>;
   env?: NodeJS.ProcessEnv;
   otelEndpoint?: string;
+  /**
+   * Retries of a trial that failed on infrastructure (a setup step: once; a
+   * refused login: never) and when to stop the run on them (default: the CLI
+   * defaults, 3 retries and a stop after 5 such trials in a row).
+   */
+  retry?: RetryPolicy;
   /**
    * Interrupts the experiment: no new trial starts; running setup, tap,
    * agent and check processes are killed (through the ambient signal). A trial
@@ -170,8 +177,10 @@ async function runTrialInner(o: TrialOpts): Promise<TrialResult> {
   let tap: TapRecord[] = [];
   let trace: { sessions: Session[]; events: AgentEvent[] } = { sessions: [], events: [] };
   const closers: (() => Promise<void>)[] = [];
+  let setUp = false;
   try {
     const sb = await prepareSandbox(job.task, target, job.variant, trialId, o.expDir);
+    setUp = true;
     let mcpStdio: string[] | undefined;
     let mcpUrl: string | undefined;
     let httpUrl: string | undefined;
@@ -251,6 +260,8 @@ async function runTrialInner(o: TrialOpts): Promise<TrialResult> {
     result.checks = await runChecks(job.task, sb, finalText, o.judge, tap);
   } catch (e) {
     result.error ??= e instanceof Error ? e.message : String(e);
+    // The sandbox or a setup command failed before the driver started: nothing about the task.
+    if (!setUp) result.infra = "setup";
   } finally {
     for (const c of closers) await c().catch(() => {});
   }
@@ -264,6 +275,12 @@ async function runTrialInner(o: TrialOpts): Promise<TrialResult> {
   }
   if (result.error === "schema-rejected-by-provider") result.metrics.success = false;
   result.pass = result.metrics.success;
+  // A failed trial whose driver reported a refused login, a rate limit, a 5xx or a network error: outcome unknown, not a fail.
+  if (!result.pass && !result.infra && !run.timedOut) {
+    const said = run.exitCode ? `${run.stderrTail}\n${run.stdoutTail}` : undefined;
+    const kind = infraKind(result.error) ?? infraKind(said);
+    if (kind) result.infra = kind;
+  }
   if (tap.length) {
     try {
       result.tapBlob = await o.blobs.put(tap.map((r) => JSON.stringify(r)).join("\n") + "\n", { contentType: "application/x-ndjson" });
@@ -274,6 +291,7 @@ async function runTrialInner(o: TrialOpts): Promise<TrialResult> {
   if (o.signal?.aborted) {
     result.pass = false;
     result.error = "cancelled";
+    delete result.infra;
   }
   result.endedAt = Date.now();
   if (!o.keep) await rm(sbRoot, { recursive: true, force: true }).catch(() => {});
@@ -291,6 +309,7 @@ async function runTrialInner(o: TrialOpts): Promise<TrialResult> {
     endedAt: result.endedAt,
     ...(result.sessionId ? { sessionId: result.sessionId } : {}),
     ...(result.error ? { error: result.error } : {}),
+    infra: result.infra,
     // On the run too, not only in trials.jsonl, so blob gc sees the reference.
     ...(result.tapBlob ? { tapBlob: result.tapBlob } : {}),
     ...(o.signal?.aborted ? { cancelled: true as const } : {}),
@@ -311,7 +330,7 @@ export function baselinePassKeys(baseline: readonly TrialResult[], tasks: readon
 
 const caseKey = (taskId: string, arm: string): string => `${taskId}\u0000${arm}`;
 
-export async function runToolExperiment(o: ExperimentOpts): Promise<{ experimentId: string; trials: TrialResult[]; dir: string; cancelled: boolean; regression?: RegressionStop }> {
+export async function runToolExperiment(o: ExperimentOpts): Promise<{ experimentId: string; trials: TrialResult[]; dir: string; cancelled: boolean; regression?: RegressionStop; infraStop?: InfraStopReport }> {
   const experimentId = o.experimentId ?? sortableId("texp_");
   const dir = join(o.root ?? toolevalsRoot(o.env), experimentId);
   await mkdir(dir, { recursive: true });
@@ -335,31 +354,44 @@ export async function runToolExperiment(o: ExperimentOpts): Promise<{ experiment
   await writeMeta();
   const tracker = new CaseTracker(adaptive ? "adaptive" : "fixed", k, o.stopOnRegression ? baselinePassKeys(o.stopOnRegression, o.tasks, arms) : undefined);
   let regression: RegressionStop | undefined;
+  const policy = o.retry ?? retryPolicy(o.env ?? process.env);
+  const infraStop = infraStopFor(policy);
   const trialsFile = join(dir, "trials.jsonl");
   let done = 0;
   let total = jobs.length;
   const runJobs = (list: ToolJob[]) =>
     pool(list, o.concurrency ?? defaultConcurrency(), async (job): Promise<TrialResult | undefined> => {
-      if (o.signal?.aborted || regression) return undefined; // never started
-      const t = await runTrial({ ...o, job, target: o.target, experimentId, expDir: dir });
+      if (o.signal?.aborted || regression || infraStop?.signal.aborted) return undefined; // never started
+      // One trial id across attempts: a retry replaces the stored run instead of adding one.
+      const trialId = sortableId("trial_");
+      const tried = await withRetries(() => runTrial({ ...o, job, target: o.target, experimentId, expDir: dir, trialId }), {
+        policy,
+        errorOf: (t) => t.error,
+        classify: (t) => t.infra,
+        stop: [o.signal, infraStop?.signal],
+      });
+      const t = tried.result;
+      if (tried.attempts > 1) t.attempts = tried.attempts;
       if (o.signal?.aborted) return undefined; // cut short: not a trial result
+      infraStop?.add(t.infra);
       await appendFile(trialsFile, JSON.stringify(t) + "\n");
       done++;
       o.onProgress?.(done, total, t);
       const arm = armKey(t.variant, t.driver);
-      if (tracker.add(caseKey(t.taskId, arm), t.pass)) regression ??= { taskId: t.taskId, arm };
+      // An infra trial's outcome is unknown: it neither breaks a tie nor counts as a regression.
+      if (!t.infra && tracker.add(caseKey(t.taskId, arm), t.pass)) regression ??= { taskId: t.taskId, arm };
       return t;
     });
   const settled = await runJobs(jobs);
-  if (adaptive && !o.signal?.aborted && !regression) {
+  if (adaptive && !o.signal?.aborted && !regression && !infraStop?.report) {
     // Tie-breaks: a third trial for each task and arm whose first two disagree.
     const ties = jobs.filter((j) => j.attempt === 1 && tracker.needsTieBreak(caseKey(j.task.id, armKey(j.variant.name, driverKey(j.driver))))).map((j) => ({ ...j, attempt: ADAPTIVE_MAX }));
     total += ties.length;
     settled.push(...(await runJobs(ties)));
   }
-  if (regression) await writeMeta({ regression });
+  if (regression || infraStop?.report) await writeMeta({ regression, infraStop: infraStop?.report });
   const trials = settled.filter((t): t is TrialResult => t !== undefined);
-  return { experimentId, trials, dir, cancelled: o.signal?.aborted === true, ...(regression ? { regression } : {}) };
+  return { experimentId, trials, dir, cancelled: o.signal?.aborted === true, regression, infraStop: infraStop?.report };
 }
 
 /** Trials of a stored experiment. */

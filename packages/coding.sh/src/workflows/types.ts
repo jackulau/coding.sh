@@ -51,7 +51,7 @@ export interface WorkflowRun {
   /** Driver attempts when infrastructure errors (rate limit, 5xx, network) were retried; absent for one. */
   attempts?: number;
   /** The last attempt still failed on an infrastructure error: outcome unknown, left out of comparisons, re-run by `workflows run --resume`. */
-  infra?: "rate-limit" | "server" | "network" | "tempfail";
+  infra?: "rate-limit" | "server" | "network" | "tempfail" | "auth" | "setup";
   /** Phase titles in script order (meta.phases), when known. */
   phases?: string[];
   /**

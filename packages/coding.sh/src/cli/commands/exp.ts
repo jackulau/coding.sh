@@ -36,7 +36,7 @@ import { sortableId } from "../../core/ids.ts";
 import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
 import type { Job, JobKind } from "../../jobs/store.ts";
 import { positiveInt, UsageError } from "../args.ts";
-import { finishJob, openJob, resumeField, resumeNote, retryFlag, statusCommand, trialTimeout } from "../jobs.ts";
+import { finishJob, infraStopNote, openJob, resumeField, resumeNote, retryFlag, statusCommand, trialTimeout } from "../jobs.ts";
 import { gateFlags, jsonArg, list, num, str, withContext } from "../common.ts";
 import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -254,7 +254,7 @@ async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string
       }),
     )
     .finally(() => spin.stop());
-  await finishJob(job, result.status === "cancelled");
+  await finishJob(job, result.status === "cancelled", result.infraStop);
   return { result, job, loaded };
 }
 
@@ -491,13 +491,13 @@ export async function runArms(
       }),
     )
     .finally(() => spin.stop());
-  await finishJob(job, result.a.status === "cancelled");
+  await finishJob(job, result.a.status === "cancelled", result.a.infraStop);
   return { result, job };
 }
 
 export function cancelledWarning(c: CommandContext, result: ExperimentResult): void {
   const kept = result.runs.length ? `with the ${plural(result.runs.length, "case run")} that finished` : "with no finished case runs";
-  c.out.warn(`Cancelled: stored ${result.id} as cancelled ${kept}; exp compare refuses it unless --force. See it with: coding.sh exp show ${result.id}`);
+  c.out.warn(`${result.infraStop ? "Stopped on infrastructure errors" : "Cancelled"}: stored ${result.id} as cancelled ${kept}; exp compare refuses it unless --force. See it with: coding.sh exp show ${result.id}`);
 }
 
 /**
@@ -705,11 +705,12 @@ export async function run(c: CommandContext): Promise<number> {
           const replay = ab.a.task.kind === "continuation" ? replayNoise(ab.a, new Map(loaded.dataset.cases.map((x) => [x.id, x]))) : undefined;
           const cmp = compareExperiments(ab.a, ab.b, { force: true, ...(replay ? { replay } : {}) });
           if (out.json) {
-            out.data({ outcome: cancelled ? "cancelled" : "completed", pair: { id: ab.pairId, seed: ab.seed }, experiments: [ab.a, ab.b], comparison: cmp, ...(ab.sequential ? { sequential: ab.sequential } : {}), ...resumeField(job) });
+            out.data({ outcome: ab.a.infraStop ? "stopped" : cancelled ? "cancelled" : "completed", pair: { id: ab.pairId, seed: ab.seed }, experiments: [ab.a, ab.b], comparison: cmp, ...(ab.sequential ? { sequential: ab.sequential } : {}), ...resumeField(job) });
           } else {
             out.print(renderComparison(cmp, { color: out.color, a: ab.a, b: ab.b }));
             out.print(`${ab.a.id} ${ab.b.id}`);
           }
+          infraStopNote(c, ab.a.infraStop);
           resumeNote(c, job);
           if (cancelled) {
             cancelledWarning(c, ab.a);
@@ -743,14 +744,14 @@ export async function run(c: CommandContext): Promise<number> {
         const series = cancelled ? undefined : await seriesStatus(store, seriesFlag(c));
         // In an experiment session: the run joins its timeline and is compared with the previous one.
         const joined = cancelled ? undefined : await session.recordRun(c, store, result, loaded);
-        if (out.json) out.data({ outcome: cancelled ? "cancelled" : "completed", experiment: result, ...(series ? { plateau: series } : {}), ...(joined ? { session: joined } : {}), ...resumeField(job) });
+        if (out.json) out.data({ outcome: result.infraStop ? "stopped" : cancelled ? "cancelled" : "completed", experiment: result, ...(series ? { plateau: series } : {}), ...(joined ? { session: joined } : {}), ...resumeField(job) });
         else {
           out.print(renderExperiment(result, { color: out.color }));
           out.print(result.id);
           if (joined) out.print(`\n${session.deltaText(c, joined)}`);
           if (series) out.note(plateauLine(seriesFlag(c)!, series));
         }
-        // main.ts exits 130 (or 143 for SIGTERM) after an interrupt; say what was kept.
+        // main.ts exits 130 (or 143 for SIGTERM) after an interrupt; say what was kept. The rendered result says why an infra streak stopped it.
         resumeNote(c, job);
         if (cancelled) {
           cancelledWarning(c, result);
@@ -854,10 +855,11 @@ export async function run(c: CommandContext): Promise<number> {
             ],
             "exp aa",
           );
+          infraStopNote(c, ab.a.infraStop);
           resumeNote(c, job);
           aaResume = resumeField(job);
           if (ab.a.status === "cancelled") {
-            if (out.json) out.data({ outcome: "cancelled", pair: { id: ab.pairId, seed: ab.seed }, experiments: [ab.a, ab.b], ...aaResume });
+            if (out.json) out.data({ outcome: ab.a.infraStop ? "stopped" : "cancelled", pair: { id: ab.pairId, seed: ab.seed }, experiments: [ab.a, ab.b], ...aaResume });
             cancelledWarning(c, ab.a);
             cancelledWarning(c, ab.b);
             return 1;
@@ -914,12 +916,13 @@ export async function run(c: CommandContext): Promise<number> {
         } finally {
           spin.stop();
         }
-        await finishJob(job, result.status === "cancelled");
+        await finishJob(job, result.status === "cancelled", result.infraStop);
         if (out.json) out.data({ outcome: result.status, sweep: result, ...resumeField(job) });
         else out.print(renderSweep(result, { color: out.color }));
+        infraStopNote(c, result.infraStop);
         resumeNote(c, job);
         if (result.status === "cancelled") {
-          out.warn("Cancelled: the race stopped before a winner was re-scored on held-out cases; finished runs are stored");
+          if (!result.infraStop) out.warn("Cancelled: the race stopped before a winner was re-scored on held-out cases; finished runs are stored");
           return 1;
         }
         return 0;

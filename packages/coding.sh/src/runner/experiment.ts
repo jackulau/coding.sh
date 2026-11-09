@@ -6,7 +6,7 @@ import { sortableId } from "../core/ids.ts";
 import type { Redactor } from "../core/redact.ts";
 import type { Adapter, AgentEvent, BlobStore, EvalTask, HarnessBundle, IndexStore, RunResult, Session } from "../core/types.ts";
 import { exactPowerText, pairedPower, type PowerAnalysis } from "../experiments/power.ts";
-import { infraKind, withRetries, type InfraKind, type RetryPolicy } from "../jobs/retry.ts";
+import { infraKind, infraKinds, infraKindsText, infraStopFor, voidText, withRetries, type InfraKind, type InfraStopReport, type RetryPolicy } from "../jobs/retry.ts";
 import type { JobScope } from "../jobs/store.ts";
 import { pairedBootstrap, wilson, type BootstrapResult, type Interval } from "../stats/interval.ts";
 import { mean } from "../stats/summary.ts";
@@ -75,7 +75,12 @@ export interface RunExperimentOpts {
    * again. The experiment id lives here too.
    */
   job?: JobScope;
-  /** Re-run a run that failed on an infrastructure error (rate limit, 5xx, network) after a backoff. Task failures are never retried. */
+  /**
+   * Re-run a run that failed on an infrastructure error (rate limit, 5xx,
+   * network; a failed setup once; a refused login never) after a backoff, and
+   * with `stopAfter`, start no new run once that many runs in a row ended on
+   * one. Task failures are never retried.
+   */
   retry?: RetryPolicy;
   /**
    * Spend cap in USD over the agent cost each run reports plus its verifier's
@@ -173,12 +178,15 @@ export interface BudgetReport {
 export const runKey = (j: Job): string => `${j.task.id}\u0000${j.bundle.id}\u0000${j.attempt}`;
 
 /**
- * Whether a failed run failed on infrastructure (rate limit, 5xx, network)
- * rather than on the task: its error, or the tail of a failing agent's output.
+ * Whether a failed run failed on infrastructure (a failed setup step, a
+ * refused login, a rate limit, 5xx or network error) rather than on the task:
+ * runTask's own setup mark, its error, or the tail of a failing agent's output.
  * A pass, a cancelled run or the agent's own timeout never is.
  */
 export function runInfra(r: RunResult): InfraKind | undefined {
-  if (r.pass || r.cancelled || r.agent.timedOut) return undefined;
+  if (r.pass || r.cancelled) return undefined;
+  if (r.infra === "setup") return "setup";
+  if (r.agent.timedOut) return undefined;
   const k = infraKind(r.error);
   if (k) return k;
   if (r.agent.exitCode === 0 || r.agent.exitCode === null) return undefined;
@@ -233,6 +241,8 @@ export async function runExperiment(
   skipped: number;
   /** With `replaces`: stored runs replaced by a new run (marked superseded). */
   retried?: number;
+  /** Set when `retry.stopAfter` runs in a row failed on infrastructure and no new run started after them (`cancelled` is set too). */
+  infraStop?: InfraStopReport;
 }> {
   const jobScope = o.job;
   const experimentId = jobScope?.state<string>("experimentId") ?? o.experimentId ?? sortableId("exp_");
@@ -277,9 +287,11 @@ export async function runExperiment(
   // The release each run starts on, asked again at most once a minute so an auto-update mid-run shows.
   const release = releaseCache();
   const releaseOf = (b: HarnessBundle) => release(b.agent, () => o.adapterFor(b).detect());
+  // Runs that fail on infrastructure in a row (a dead login) stop the run like a drain: no new run starts.
+  const infraStop = infraStopFor(o.retry);
   const settled = await pool(jobs, o.concurrency ?? defaultConcurrency(), async (job, i): Promise<RunResult | undefined> => {
     if (prior[i]) return prior[i];
-    if (o.signal?.aborted || o.drain?.aborted) return undefined; // never started: not a run
+    if (o.signal?.aborted || o.drain?.aborted || infraStop?.signal.aborted) return undefined; // never started: not a run
     const src = cells.cached.get(i);
     if (src) {
       // The same cell finished in an earlier comparison: copy it under this experiment, no agent call.
@@ -315,6 +327,7 @@ export async function runExperiment(
     }
     charge(result);
     if (result.cancelled) return result; // killed mid-run: kept as cancelled in the index, not a finished run
+    infraStop?.add(result.infra);
     const old = o.replaces?.get(runKey(job));
     if (old) {
       // The slot now holds the new run; the old one stays in the index for the record.
@@ -346,6 +359,7 @@ export async function runExperiment(
     planned,
     skipped,
     ...(o.replaces ? { retried } : {}),
+    infraStop: infraStop?.report,
   };
 }
 
@@ -538,6 +552,17 @@ export interface CompareReport {
   spend: { baseline: ArmSpend; candidate: ArmSpend };
   verdict: { kind: VerdictKind; text: string };
   notes: string[];
+  /**
+   * Runs of either arm that failed on infrastructure (a failed setup step, a
+   * refused login, a rate limit, 5xx or network error) after their retries:
+   * outcome unknown, left out of every pass rate and statistic. Absent when none.
+   */
+  infra?: { runs: number; kinds: Partial<Record<InfraKind, number>> };
+  /**
+   * Set when runs lost to infrastructure left no task with a known outcome in
+   * both arms: the verdict is "inconclusive" and its text starts with "void".
+   */
+  void?: true;
   bundleDiff?: BundleDiff;
   alpha: number;
   /**
@@ -877,7 +902,9 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
   const mine = all.filter((r) => !r.superseded && (r.bundleId === opts.baseline || r.bundleId === opts.candidate));
   const results = all.filter((r) => !r.cancelled && !r.superseded && !r.infra);
   const cancelled = mine.filter((r) => r.cancelled).length;
-  const infra = mine.filter((r) => !r.cancelled && r.infra).length;
+  const lostToInfra = mine.filter((r) => !r.cancelled && r.infra);
+  const infra = lostToInfra.length;
+  const infraByKind = infraKinds(lostToInfra);
   const retried = mine.filter((r) => (r.attempts ?? 1) > 1).length;
   const A = results.filter((r) => r.bundleId === opts.baseline);
   const B = results.filter((r) => r.bundleId === opts.candidate);
@@ -1005,7 +1032,7 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
   const sa = arm(A, opts.baseline, opts.bundles?.baseline?.name, opts, atts);
   const sb = arm(B, opts.candidate, opts.bundles?.candidate?.name, opts, atts);
   if (cancelled) notes.push(`${cancelled} run(s) were cancelled before they finished and are left out`);
-  if (infra) notes.push(`${infra} run(s) still failed on infrastructure errors (rate limit, 5xx, network) after their retries and are left out; compare --resume runs them again`);
+  if (infra) notes.push(`${infra} run(s) failed on infrastructure (${infraKindsText(infraByKind)}) after their retries: outcome unknown, left out of the pass rates; compare --resume runs them again`);
   if (retried) notes.push(`${retried} run(s) were retried after infrastructure errors; only their last attempt counts (task failures are never retried)`);
   const reused = { baseline: A.filter((r) => r.reusedFrom).length, candidate: B.filter((r) => r.reusedFrom).length };
   if (reused.baseline || reused.candidate) {
@@ -1040,7 +1067,9 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     );
   }
 
-  const verdict = decide(diffs.length, boot, mcn, alpha, metrics);
+  // Runs lost to infrastructure left nothing to pair: say the round is void, not merely inconclusive.
+  const isVoid = diffs.length === 0 && infra > 0;
+  const verdict: ReturnType<typeof decide> = isVoid ? { kind: "inconclusive", text: voidText(infra, infraByKind) } : decide(diffs.length, boot, mcn, alpha, metrics);
   if (verdict.extra) notes.push(verdict.extra);
 
   const pairedIds = tasks.map((t) => t.taskId);
@@ -1090,6 +1119,8 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     spend,
     verdict: { kind: verdict.kind, text: verdict.text },
     notes,
+    infra: infra ? { runs: infra, kinds: infraByKind } : undefined,
+    void: isVoid || undefined,
     bundleDiff: opts.bundles?.baseline && opts.bundles.candidate ? diffBundles(opts.bundles.baseline, opts.bundles.candidate) : undefined,
     alpha,
     ...(anatomy ? { anatomy } : {}),

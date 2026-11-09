@@ -181,10 +181,12 @@ export interface CaseRun {
   /** Attempts the task took when infrastructure errors (rate limit, 5xx, network) were retried; absent for one. */
   attempts?: number;
   /**
-   * The last attempt still hit an infrastructure error after its retries: the
-   * outcome is unknown (also `ungraded`), and `--resume` runs it again.
+   * The last attempt still hit an infrastructure error after its retries (a
+   * rate limit, 5xx or network error; "auth": the agent was not logged in or
+   * its key was refused): the outcome is unknown (also `ungraded`), and
+   * `--resume` runs it again.
    */
-  infra?: "rate-limit" | "server" | "network" | "tempfail";
+  infra?: "rate-limit" | "server" | "network" | "tempfail" | "auth" | "setup";
   /** What the task reported it cost (`costUsd` on its output). */
   costUsd?: number;
   /** Content key of this case-trial (experiments/trial-cells.ts); set by matrix runs. */
@@ -281,4 +283,10 @@ export interface ExperimentResult {
   samples?: "adaptive";
   /** Present when `--stop-on-regression` stopped the run: the first case that passed every baseline trial and failed here. */
   regression?: { caseId: string; baseline: string };
+  /**
+   * Present when `after` case-trials in a row failed on infrastructure
+   * (`--stop-after-infra`, e.g. a login that expired) and no new case-trial
+   * started after them: the run is "cancelled", and `kinds` counts those trials.
+   */
+  infraStop?: { after: number; kinds: Partial<Record<NonNullable<CaseRun["infra"]>, number>> };
 }

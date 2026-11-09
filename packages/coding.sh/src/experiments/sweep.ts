@@ -25,7 +25,7 @@ import { sortableId } from "../core/ids.ts";
 import type { FileEvalStore } from "../datasets/store.ts";
 import type { Case, CaseRun, Dataset, ExperimentResult, Grader, Interval, Split } from "../datasets/types.ts";
 import type { JobScope } from "../jobs/store.ts";
-import type { RetryPolicy } from "../jobs/retry.ts";
+import { infraStopFor, type InfraStopReport, type RetryPolicy } from "../jobs/retry.ts";
 import { mapPool } from "../judge/limit.ts";
 import { pairedBootstrap } from "../stats/interval.ts";
 import { mulberry32 } from "../stats/prng.ts";
@@ -138,6 +138,8 @@ export interface SweepResult {
    */
   adopt?: ComparisonGate;
   notes: string[];
+  /** Set when case-trials failed on infrastructure in a row (`--stop-after-infra`) and the race stopped; `status` is "cancelled". */
+  infraStop?: InfraStopReport;
 }
 
 function shuffle<T>(xs: T[], rand: () => number): T[] {
@@ -226,10 +228,13 @@ export async function runSweep(opts: RunSweepOpts): Promise<SweepResult> {
   const expNames = opts.configs.map((c) => `${opts.name}-${c.name}`);
   const store = opts.store;
   const { signal, drain } = opts;
+  // One count over every config: case-trials that fail on infrastructure in a row stop the race.
+  const infraStop = infraStopFor(opts.retry);
   const envs: TrialEnv[] = tasks.map((task, i) => ({
     runId: ids[i]!,
     task,
     graders,
+    infraStop,
     ...(signal ? { signal } : {}),
     ...(drain ? { drain } : {}),
     ...(scopes[i] ? { job: scopes[i] } : {}),
@@ -270,7 +275,7 @@ export async function runSweep(opts: RunSweepOpts): Promise<SweepResult> {
     // Job order, not finish order: the ranking and its bootstrap CIs then come out the same however the runs interleaved.
     got.forEach((run, i) => run && runs[jobs[i]!.ci]!.push(run));
     used += jobs.length;
-    if (got.some((x) => x === undefined)) {
+    if (got.some((x) => x === undefined) || infraStop?.report) {
       cancelled = true;
       break;
     }
@@ -315,6 +320,7 @@ export async function runSweep(opts: RunSweepOpts): Promise<SweepResult> {
       runs: runs[i]!,
       boot: { iters: opts.bootstrapIters ?? 2000, seed: 0x5eed },
       metadata: { sweep: { name: opts.name, seed, role: "select", ...(droppedIn.has(i) ? { droppedIn: droppedIn.get(i) } : {}) } },
+      infraStop: infraStop?.report,
     }),
   );
   if (store) for (const r of trainResults) await storeResult(store, r);
@@ -336,6 +342,7 @@ export async function runSweep(opts: RunSweepOpts): Promise<SweepResult> {
     rounds,
     configs,
     notes,
+    infraStop: infraStop?.report,
   };
   if (cancelled || survivors.length !== 1) return out;
 
@@ -383,6 +390,7 @@ export async function runSweep(opts: RunSweepOpts): Promise<SweepResult> {
   }
   if (winnerHeld.status === "cancelled") {
     out.status = "cancelled";
+    if (winnerHeld.infraStop) out.infraStop = winnerHeld.infraStop;
     return out;
   }
   const train = rateOf(runs[w]!);

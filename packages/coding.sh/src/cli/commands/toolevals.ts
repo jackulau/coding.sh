@@ -10,6 +10,7 @@ import { positiveInt, UsageError } from "../args.ts";
 import { list, num, str, withContext } from "../common.ts";
 import { ASK_USER, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+import { infraStopNote, retryFlag } from "../jobs.ts";
 import { CONFIG_FILE, loadToolEvals, markTaskValidated, parseDriver, ToolEvalsConfigError, VALIDATED_EDIT, type ToolEvalsConfig } from "../../toolevals/config.ts";
 import type { Driver, SurfaceReport, Target, ToolTask, TrialResult, Variant } from "../../toolevals/types.ts";
 
@@ -412,6 +413,7 @@ async function runAction(c: CommandContext): Promise<number> {
       env: c.env,
       bundleFor: (ref) => ctx.index.getBundle(ref),
       meta: { repoRoot: root, split, surfaces },
+      retry: retryFlag(c),
       signal: c.signal,
       onProgress: (done, total) => spin.update(`Running ${done}/${total}…`),
     });
@@ -426,7 +428,9 @@ async function runAction(c: CommandContext): Promise<number> {
     const regression = r.regression ? { ...r.regression, baseline: baselineId! } : undefined;
     if (out.json)
       out.data({
-        ...(regression ? { outcome: "regression", regression } : {}),
+        outcome: r.infraStop ? "stopped" : regression ? "regression" : undefined,
+        regression,
+        infraStop: r.infraStop,
         experimentId: r.experimentId,
         dir: r.dir,
         trials: r.trials.length,
@@ -436,11 +440,12 @@ async function runAction(c: CommandContext): Promise<number> {
       });
     else {
       out.print(formatArms(summary, { color: out.color }).trimEnd());
+      infraStopNote(c, r.infraStop);
       if (regression) out.fail(`regression: task ${regression.taskId} (${regression.arm}) passed every trial of ${regression.baseline} and fails here; the run stopped (--stop-on-regression)`);
       out.print(r.experimentId);
-      if (summary.length > 1 && !adaptive && !regression) out.next("Compare two arms", `coding.sh toolevals compare ${r.experimentId} --baseline ${summary[0]!.arm} --candidate ${summary[1]!.arm}`);
+      if (summary.length > 1 && !adaptive && !regression && !r.infraStop) out.next("Compare two arms", `coding.sh toolevals compare ${r.experimentId} --baseline ${summary[0]!.arm} --candidate ${summary[1]!.arm}`);
     }
-    return regression ? 1 : 0;
+    return regression || r.infraStop ? 1 : 0;
   });
 }
 

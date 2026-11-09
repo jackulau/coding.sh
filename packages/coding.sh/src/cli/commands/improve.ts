@@ -109,6 +109,9 @@ function printChange(c: CommandContext, e: ChangeEffect, o: { indent?: string; f
     for (const l of ch.removed.slice(0, 2)) out.print(`${indent}    - ${l.length > 110 ? `${l.slice(0, 109)}…` : l}`);
     out.print(`${indent}  ${out.style(VERDICT_WORD[e.verdict], tone)}: ${e.reason}`);
   }
+  // Sessions that never got to work (a chat, a refused login) are no evidence either way: say how many were left out.
+  const idle = (e.before.idle ?? 0) + (e.after.idle ?? 0);
+  if (idle) out.print(`${indent}  ${out.style(`Left out: ${plural(idle, "session")} with no tool call (${e.before.idle ?? 0} before, ${e.after.idle ?? 0} after), such as a chat or an agent that was not logged in`, "faint")}`);
   const list = e.after.flaggedSessions;
   if (!o.flagged || !list.length) return;
   out.print(`${indent}  Still flagged after it, ${e.after.flagged} of ${plural(e.after.sessions, "session")} (coding.sh show <id>):`);

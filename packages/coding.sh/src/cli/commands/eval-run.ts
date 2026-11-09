@@ -36,7 +36,7 @@ import { DEFAULT_TRIALS, resolveSuites, SuiteError, taskDirs, type LoadedSuite }
 import { positiveInt, UsageError } from "../args.ts";
 import { requireConsent, str, withContext } from "../common.ts";
 import { ensureHookBin } from "../hookbin.ts";
-import { retryFlag, trialTimeout } from "../jobs.ts";
+import { infraStopNote, retryFlag, trialTimeout } from "../jobs.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { importDir } from "./eval.ts";
@@ -193,7 +193,8 @@ async function runTaskSuite(c: CommandContext, ctx: Context, s: LoadedSuite, k: 
     onProgress: (p) => spin.update(`${s.spec.name}: ${p.done}/${p.total}…`),
   }).finally(() => spin.stop());
   await ctx.ingest().catch(() => undefined);
-  if (r.cancelled) out.warn(`${s.spec.name}: cancelled; the report covers the runs that finished`);
+  if (r.infraStop) infraStopNote(c, r.infraStop);
+  else if (r.cancelled) out.warn(`${s.spec.name}: cancelled; the report covers the runs that finished`);
   const runs = latestPerSlot(r.results).runs;
   const report = suiteReport(s.spec.name, s.spec.purpose, trialsFromRuns(tasks, runs));
   const unverified = tasks.filter((t) => !t.referencePatch && !referenceRun(t)).map((t) => t.name);
@@ -253,7 +254,8 @@ async function runCaseSuite(c: CommandContext, ctx: Context, s: LoadedSuite, tri
     metadata: { suite: s.spec.name },
     onProgress: (_r, done, total) => spin.update(`${s.spec.name}: ${done}/${total}…`),
   }).finally(() => spin.stop());
-  if (result.status === "cancelled") out.warn(`${s.spec.name}: cancelled; the report covers the runs that finished`);
+  if (result.infraStop) infraStopNote(c, result.infraStop);
+  else if (result.status === "cancelled") out.warn(`${s.spec.name}: cancelled; the report covers the runs that finished`);
   const report = suiteReport(s.spec.name, s.spec.purpose, trialsFromExperiment(cases, result), "case");
   return { suite: s.spec.name, kind: "cases", dir: s.dir, report, experimentId: result.id };
 }

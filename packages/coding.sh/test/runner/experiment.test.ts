@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { after, describe, it } from "node:test";
-import type { AgentEvent, EvalTask, RunResult, Session } from "../../src/core/types.ts";
+import type { AgentEvent, AgentRunOutput, EvalTask, RunResult, RunSpec, Session } from "../../src/core/types.ts";
 import { compare, formatCompare, formatDuration, pool, runExperiment, scheduleJobs, type RunAuditStatus } from "../../src/runner/experiment.ts";
 import { auditStatuses } from "../../src/eval/witness.ts";
-import { cleanupWorlds, obedientAgent, toyWorld } from "../helpers-eval.ts";
+import { cleanupWorlds, fakeAdapter, obedientAgent, toyWorld } from "../helpers-eval.ts";
 
 after(cleanupWorlds);
 
@@ -1019,5 +1019,83 @@ describe("compare instruction surface", () => {
   it("has no surface without both bundles", () => {
     assert.equal(report(3000, false).surface, undefined);
     assert.doesNotMatch(formatCompare(report(3000, false)), /^surface/m);
+  });
+});
+
+// DF-1 / DF-2: a dead login or a broken setup is infrastructure, not a task fail.
+describe("infrastructure errors in a comparison", () => {
+  const policy = (stopAfter: number) => ({ retries: 3, baseMs: 0, maxMs: 0, stopAfter });
+  /** Claude Code with an expired login: exits 1 at once and says so. */
+  const loggedOut = () => {
+    const calls: string[] = [];
+    const a = fakeAdapter();
+    return {
+      calls,
+      adapter: {
+        ...a,
+        async run(spec: RunSpec): Promise<AgentRunOutput> {
+          calls.push(spec.runId);
+          return { exitCode: 1, timedOut: false, durationMs: 1, stdoutTail: "", stderrTail: "Invalid API key · Please run /login" };
+        },
+      },
+    };
+  };
+
+  it("a refused login is never retried, stops the round after N in a row, and leaves a void verdict instead of a fail", async () => {
+    const w = await toyWorld();
+    const A = await w.mkBundle("base", "fix");
+    const B = await w.mkBundle("cand", "fix");
+    const tasks = [w.task, { ...w.task, id: "t2" }, { ...w.task, id: "t3" }];
+    const agent = loggedOut();
+    const r = await runExperiment({ tasks, bundles: [A, B], adapterFor: () => agent.adapter, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, concurrency: 1, retry: policy(3) });
+    assert.equal(agent.calls.length, 3, "3 sessions, no retry, nothing after the stop (of 6)");
+    assert.deepEqual(r.infraStop, { after: 3, kinds: { auth: 3 } });
+    assert.equal(r.cancelled, true, "the round did not finish");
+    assert.ok(r.results.every((x) => x.infra === "auth" && x.attempts === undefined && !x.pass));
+    const report = compare(r.results, { baseline: A.id, candidate: B.id });
+    assert.equal(report.void, true);
+    assert.deepEqual(report.infra, { runs: 3, kinds: { auth: 3 } });
+    assert.equal(report.verdict.kind, "inconclusive");
+    assert.match(report.verdict.text, /^void: 3 trials failed on infrastructure \(login 3\), leaving no outcome to compare, so this is no quality verdict\. The agent is not logged in/);
+    assert.equal(report.baseline.runs + report.candidate.runs, 0, "no run counts toward a pass rate");
+    assert.match(formatCompare(report), /void: 3 trials failed on infrastructure/);
+  });
+
+  it("a setup command that exits 1 is retried once, then the run is infra-unknown, not a fail", async () => {
+    const w = await toyWorld();
+    const A = await w.mkBundle("lazy", "half effort");
+    const B = await w.mkBundle("diligent", "always fix bugs");
+    const broken = { ...w.task, id: "t2", setup: ["exit 1"] };
+    const agent = obedientAgent();
+    const r = await runExperiment({ tasks: [w.task, broken], bundles: [A, B], adapterFor: () => agent, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, concurrency: 1, retry: policy(0) });
+    const lost = r.results.filter((x) => x.taskId === "t2");
+    assert.equal(lost.length, 2);
+    for (const x of lost) {
+      assert.equal(x.infra, "setup");
+      assert.equal(x.attempts, 2, "one retry, not --retries 3");
+      assert.equal(x.pass, false);
+      assert.match(x.error ?? "", /^setup `exit 1` exited 1/);
+    }
+    assert.equal(agent.specs.length, 2, "the agent ran only on the task whose setup worked");
+    const stored = await w.index.listRuns({ experimentId: r.experimentId });
+    assert.equal(stored.filter((x) => x.taskId === "t2" && x.superseded).length, 2, "the first attempts are kept, marked superseded");
+    const report = compare(r.results, { baseline: A.id, candidate: B.id });
+    assert.deepEqual([report.baseline.runs, report.candidate.runs], [1, 1], "the setup failures count toward neither pass rate");
+    assert.deepEqual([report.baseline.passes, report.candidate.passes], [0, 1]);
+    assert.deepEqual(report.infra, { runs: 2, kinds: { setup: 2 } });
+    assert.equal(report.void, undefined);
+    assert.ok(report.notes.some((n) => /^2 run\(s\) failed on infrastructure \(setup 2\) after their retries: outcome unknown, left out of the pass rates/.test(n)), report.notes.join("\n"));
+  });
+
+  it("a work folder that can't be made is a setup failure too", async () => {
+    const w = await toyWorld();
+    const A = await w.mkBundle("a", "fix");
+    const B = await w.mkBundle("b", "fix");
+    const gone = { ...w.task, start: { ...w.task.start, snapshot: "missing" } };
+    const agent = obedientAgent();
+    const r = await runExperiment({ tasks: [gone], bundles: [A, B], adapterFor: () => agent, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, concurrency: 1, retry: policy(0) });
+    assert.ok(r.results.every((x) => x.infra === "setup" && x.attempts === 2 && /could not create the work folder: unknown snapshot missing/.test(x.error ?? "")));
+    assert.equal(agent.specs.length, 0);
+    assert.equal(compare(r.results, { baseline: A.id, candidate: B.id }).void, true);
   });
 });

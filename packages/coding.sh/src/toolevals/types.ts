@@ -7,6 +7,7 @@ import type { McNemarResult } from "../stats/tests.ts";
 import type { VerdictKind } from "../runner/experiment.ts";
 import type { Divergence } from "../runner/divergence.ts";
 import type { CallsSpec } from "./calls.ts";
+import type { InfraKind } from "../jobs/retry.ts";
 
 // ------------------------------------------------------------ targets
 
@@ -237,6 +238,15 @@ export interface TrialResult {
   metrics: ToolMetrics;
   tapBlob?: BlobRef;
   error?: string;
+  /**
+   * The trial failed on infrastructure, not on the task: a setup step failed
+   * (after one retry), the agent was not logged in, or a rate limit, 5xx or
+   * network error outlasted its retries. Its outcome is unknown: it is left
+   * out of pass rates and paired comparisons and counted on its own.
+   */
+  infra?: InfraKind;
+  /** Attempts the trial took when infrastructure errors were retried; absent for one. */
+  attempts?: number;
   startedAt: number;
   endedAt: number;
 }
@@ -284,7 +294,10 @@ export interface ToolArmSummary {
   passAllK: number;
   /** Tasks where at least one trial passes (pass@k). */
   passAnyK: number;
+  /** Task errors among the trials with a known outcome. */
   errors: number;
+  /** Trials that failed on infrastructure (outcome unknown), left out of `trials`, `passes` and the rates; absent when none. */
+  infra?: number;
   latencySource: ToolMetrics["latencySource"] | "mixed";
   /** Adaptive sampling: per-task verdicts (a task fails at half or more failing trials); no CI applies. */
   verdicts?: { passed: number; failed: number; tieBreaks: number };

@@ -412,6 +412,41 @@ describe("compare: attrition (EM-4)", () => {
     assert.match(text, /^! uneven attrition/m);
   });
 
+  it("trials lost to a refused login are unknown, not fails: left out of the pass rate and counted, and a pair with none left is void", async () => {
+    const a = await run("a", new Set(ids));
+    const loggedOut = (i: number) => i < 5;
+    const b = await runExperiment({
+      name: "b",
+      dataset: ds,
+      task: (input) => {
+        if (loggedOut(ids.indexOf(String(input)))) throw new Error("claude: exited 1: Invalid API key · Please run /login");
+        return input;
+      },
+      graders: [passing(new Set(ids))],
+      retry: { retries: 3, baseMs: 0, maxMs: 0 },
+    });
+    assert.ok(b.runs.slice(0, 5).every((r) => r.infra === "auth" && r.ungraded && r.attempts === undefined), "never retried");
+    const c = compareExperiments(a, b);
+    assert.equal(c.b.passRate, 1, "15 of 15 known trials passed: the 5 logged-out trials are no fails");
+    assert.equal(c.paired, 15);
+    assert.equal(c.verdict, "inconclusive");
+    assert.deepEqual(c.infra, { a: 0, b: 5, kinds: { auth: 5 } });
+    assert.deepEqual(c.attrition.b, { runs: 20, completed: 15, errored: 0, infra: 5, agent: 0, ungraded: 5, missing: 0, lost: 5 });
+    assert.match(c.gradeWarning ?? "", /^5 run\(s\) failed on infrastructure \(login 5\) after their retries \(A 0, B 5\); their outcome is unknown/);
+    const dead = await runExperiment({
+      name: "dead",
+      dataset: ds,
+      task: () => {
+        throw new Error("Not logged in · Please run /login");
+      },
+      graders: [passing(new Set(ids))],
+    });
+    const v = compareExperiments(a, dead);
+    assert.equal(v.paired, 0);
+    assert.match(v.gradeWarning ?? "", /^void: 20 trials failed on infrastructure \(login 20\), leaving no outcome to compare, so this is no quality verdict/);
+    assert.match(renderComparison(v, { color: false }), /^! void: 20 trials/m);
+  });
+
   it("balanced or no attrition: no warning, no line; missing trials count on the same dataset", async () => {
     const a = await run("a", new Set(range(1, 10)));
     const b = await run("b", new Set(range(1, 12)));

@@ -225,3 +225,29 @@ let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
     assert.match(r.stderr, /No unfinished refine round to resume/);
   });
 });
+
+// DF-1: an expired login fails every trial the same way. The round is no verdict, the climb stops and says why.
+describe("refine --suite: a logged-out agent", () => {
+  it("stops the round after 5 trials in a row fail on the login, writes no verdict, and says so", (t) => {
+    if (!gitBin) return t.skip("needs git");
+    const pids = join(root, "dead.pids");
+    writeFileSync(join(root, "dead.mjs"), `import { appendFileSync } from "node:fs";\nappendFileSync(${JSON.stringify(pids)}, process.pid + "\\n");\nprocess.stderr.write("Invalid API key · Please run /login\\n");\nprocess.exit(1);\n`);
+    const h = join(root, "dead-harness");
+    mkdirSync(join(h, ".claude"), { recursive: true });
+    writeFileSync(join(h, ".claude", "settings.json"), "{}\n");
+    writeFileSync(join(h, "harness.toml"), `name = "dead"\nagent = "wrapper"\nflags = ${JSON.stringify([process.execPath, join(root, "dead.mjs")])}\ninclude = [".claude/**"]\n`);
+    const snap = cli(["harness", "snapshot", "--file", join(h, "harness.toml"), "--json"]);
+    assert.equal(snap.status, 0, snap.stdout + snap.stderr);
+    const rounds = () => ((JSON.parse(cli(["refine", "log", "--json"]).stdout) as { climbs?: { rounds: unknown[] }[] }).climbs ?? []).reduce((n, x) => n + x.rounds.length, 0);
+    const before = rounds();
+    const r = cli(["refine", "test", draft("dead-trim", `${TRIMMED}- Keep commits small.\n`), "--suite", "chores", "--harness", "dead", "--objective", "wall", "--concurrency", "1", "--yes", "--json"]);
+    assert.equal(r.status, 1, r.stdout + r.stderr);
+    const doc = JSON.parse(r.stdout) as { rounds: unknown[]; stopped?: string; infraStop?: unknown; resume?: string };
+    assert.equal(doc.stopped, "infra");
+    assert.deepEqual(doc.infraStop, { after: 5, kinds: { auth: 5 } });
+    assert.deepEqual(doc.rounds, [], "no keep or reject: the round has no outcome");
+    assert.match(doc.resume ?? "", /--resume/);
+    assert.equal(readFileSync(pids, "utf8").trim().split("\n").length, 5, `5 sessions of ${TASKS * 2 * 2}, none retried`);
+    assert.equal(rounds(), before, "nothing written to the ledger");
+  });
+});

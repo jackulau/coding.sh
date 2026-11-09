@@ -144,7 +144,9 @@ describe("cli improve", () => {
     const g = cli(good, ["improve", "check"]);
     assert.equal(g.status, 0, g.stderr);
     assert.match(g.stdout, /Helped: /);
-    assert.match(g.stdout, /Helped: [^\n]*\n\n/, "nothing listed under a change no session after it is flagged on");
+    assert.match(g.stdout, /Helped: [^\n]*\n(?: {2}Left out: [^\n]*\n)?\n/, "nothing listed under a change no session after it is flagged on");
+    // The world's sessions with no tool call are left out of the verdict, and counted.
+    assert.match(g.stdout, /Left out: 2 sessions with no tool call \(2 before, 0 after\)/);
   });
 
   it("improve check lists the sessions still flagged after each change: 5 with a count of the rest, all with --sessions, every one in --json", async () => {

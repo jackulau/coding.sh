@@ -28,6 +28,7 @@ import { positiveInt, UsageError, type FlagValue } from "../args.ts";
 import { list, str } from "../common.ts";
 import { ensureHookBin } from "../hookbin.ts";
 import { finishJob, openJob, resumeCommand, retryFlag, trialTimeout } from "../jobs.ts";
+import { infraKinds, infraKindsText, infraStopText, voidText, type InfraKind, type InfraStopReport } from "../../jobs/retry.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { importDir } from "./eval.ts";
@@ -126,6 +127,17 @@ export interface SuiteRound {
   sizes: { base: number; cand: number };
   /** Runs per arm copied from earlier rounds (`refine run --reuse`); absent when none were. */
   reused?: { baseline: number; candidate: number };
+  /** Set when `--stop-after-infra` trials in a row failed on infrastructure and the round stopped (`cancelled` is set too). */
+  infraStop?: InfraStopReport;
+  /** Set when every run failed on infrastructure after its retries: the round has no outcome to judge. */
+  void?: { runs: number; kinds: Partial<Record<InfraKind, number>> };
+}
+
+/** Why a round has no verdict because of infrastructure errors, in a sentence; undefined when it has one. */
+export function infraRoundText(r: Pick<SuiteRound, "infraStop" | "void">): string | undefined {
+  if (r.infraStop) return infraStopText(r.infraStop);
+  if (r.void) return voidText(r.void.runs, r.void.kinds);
+  return undefined;
 }
 
 const counted = (r: RunResult) => !r.cancelled && !r.superseded && !r.infra;
@@ -192,9 +204,10 @@ export async function runSuiteRound(c: CommandContext, ctx: Context, f: Fitness,
       }),
     )
     .finally(() => spin.stop());
-  await finishJob(job, r.cancelled);
+  await finishJob(job, r.cancelled, r.infraStop);
   await ctx.ingest().catch(() => undefined);
   const runs = latestPerSlot(r.results).runs;
+  const lost = runs.filter((x) => !x.cancelled && !x.superseded && x.infra);
   const spent = runs.reduce((s, x) => s + (x.agent.usage?.costUsd ?? 0), 0);
   const unpriced = runs.filter((x) => x.agent.usage?.costUsd === undefined).length;
   const sizes = { base: (await instructionSurface(A, ctx.blobs)).bytes, cand: (await instructionSurface(B, ctx.blobs)).bytes };
@@ -206,13 +219,16 @@ export async function runSuiteRound(c: CommandContext, ctx: Context, f: Fitness,
   const base = { experimentId: r.experimentId, skipped: r.budget?.skipped ?? 0, spentUsd: r.budget?.spentUsd ?? spent, unpriced: r.budget?.unpriced ?? unpriced, pairs, arms, sizes, ...(reused.baseline || reused.candidate ? { reused } : {}) };
   const status = job.header.status;
   const resume = status === "completed" || status === "running" ? undefined : resumeCommand(job.header);
-  if (r.cancelled || (r.budget?.skipped ?? 0) > 0) return { ...base, cancelled: r.cancelled, ...(resume ? { resume } : {}) };
+  if (r.cancelled || (r.budget?.skipped ?? 0) > 0) return { ...base, cancelled: r.cancelled, infraStop: r.infraStop, resume };
+  // Every run lost to infrastructure (a dead login, a broken setup): no outcome, so no verdict either way.
+  if (lost.length && !runs.some(counted)) return { ...base, cancelled: false, void: { runs: lost.length, kinds: infraKinds(lost) }, resume };
   const report = await harnessReport(ctx, A, B, runs, { gate: o.gate });
   const decision = judgeObjectives(pairs, { objectives: o.objectives, margin: o.margin, minGain: o.minGain, ...(o.maxCostRise !== undefined ? { maxCostRise: o.maxCostRise } : {}), alpha: o.gate.alpha ?? 0.05, size: sizes, ...(report.gate ? { gate: report.gate.verdict } : {}) });
   // The pass-rate power analysis `compare` runs: what this suite can detect at all.
   const pw = report.power;
   if (pw && Number.isFinite(pw.mde)) decision.warnings.push(`the smallest pass-rate change this suite detects with ${Math.round(pw.power * 100)}% power is ${(pw.mde * 100).toFixed(0)} pts (MDE over ${plural(pw.n, "task")})`);
   for (const w of pw?.warnings ?? []) if (w.code === "below-mde" || w.code === "no-power") decision.warnings.push(w.message);
+  if (lost.length) decision.warnings.push(`${plural(lost.length, "run")} failed on infrastructure (${infraKindsText(infraKinds(lost))}) after their retries: outcome unknown, left out of the pass rates`);
   // Reuse trades drift-balance for speed: say so, so the verdict is read with the same honesty `compare --reuse` gets.
   if (reused.baseline || reused.candidate) {
     const which = [reused.baseline ? `${reused.baseline} base` : "", reused.candidate ? `${reused.candidate} candidate` : ""].filter(Boolean).join(" and ");

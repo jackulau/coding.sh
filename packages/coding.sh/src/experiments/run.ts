@@ -17,7 +17,7 @@ import type {
   TraceEvent,
 } from "../datasets/types.ts";
 import type { JobScope } from "../jobs/store.ts";
-import { withRetries, type RetryPolicy } from "../jobs/retry.ts";
+import { infraStopFor, withRetries, type InfraStop, type RetryPolicy } from "../jobs/retry.ts";
 import { mapPool } from "../judge/limit.ts";
 import { pairedBootstrap, wilson } from "../stats/interval.ts";
 import { summarize } from "../stats/summary.ts";
@@ -156,6 +156,11 @@ export interface TrialEnv {
   timeoutMs?: number;
   /** The content key a case-trial is stamped with (matrix runs, experiments/trial-cells.ts). */
   keyOf?: (c: Case, trial: number) => string | undefined;
+  /**
+   * Counts case-trials that fail on infrastructure in a row (infraStopFor(retry));
+   * once it stops, no new case-trial starts. Share one across every env of a run.
+   */
+  infraStop?: InfraStop;
 }
 
 /** The checkpoint key of a case-trial. */
@@ -238,13 +243,13 @@ export async function gradeOne(graders: readonly Grader[], c: Case, output: unkn
  */
 export async function runTrial(env: TrialEnv, c: Case, trial: number): Promise<CaseRun | undefined> {
   const { signal, graders } = env;
-  if (signal?.aborted || env.drain?.aborted) return undefined; // stopped before it started: not a run
+  if (signal?.aborted || env.drain?.aborted || env.infraStop?.signal.aborted) return undefined; // stopped before it started: not a run
   const startedAt = Date.now();
   const t0 = performance.now();
   const tried = await withRetries(() => attemptTask(env, c, trial), {
     policy: env.retry ?? { retries: 0, baseMs: 0, maxMs: 0 },
     errorOf: (a) => a.error,
-    stop: [signal, env.drain],
+    stop: [signal, env.drain, env.infraStop?.signal],
   });
   const { output, trace, error } = tried.result;
   const latencyMs = Math.round((performance.now() - t0) * 100) / 100;
@@ -270,6 +275,7 @@ export async function runTrial(env: TrialEnv, c: Case, trial: number): Promise<C
   if (cost !== undefined) run.costUsd = cost;
   const key = env.keyOf?.(c, trial);
   if (key) run.cellKey = key;
+  env.infraStop?.add(run.infra);
   if (env.job) {
     await env.job.record(trialKey(c.id, trial), {
       ms: latencyMs,
@@ -299,6 +305,7 @@ export function experimentResult(o: {
   metadata?: Record<string, unknown>;
   samples?: SamplesMode;
   regression?: ExperimentResult["regression"];
+  infraStop?: ExperimentResult["infraStop"];
 }): ExperimentResult {
   const result: ExperimentResult = {
     id: o.id,
@@ -324,6 +331,7 @@ export function experimentResult(o: {
     result.summary.caseVerdicts = caseVerdicts(o.runs.map((r) => ({ key: r.caseId, pass: r.ungraded ? undefined : r.pass })));
   }
   if (o.regression) result.regression = o.regression;
+  if (o.infraStop) result.infraStop = o.infraStop;
   return result;
 }
 
@@ -377,11 +385,13 @@ export async function runExperiment(opts: RunExperimentOpts): Promise<Experiment
   };
   let done = 0;
   let total = jobs.length;
+  const infraStop = infraStopFor(opts.retry);
   const env: TrialEnv = {
     runId: id,
     task,
     graders,
     drain,
+    infraStop,
     ...(signal ? { signal } : {}),
     ...(job ? { job } : {}),
     ...(opts.retry ? { retry: opts.retry } : {}),
@@ -400,7 +410,7 @@ export async function runExperiment(opts: RunExperimentOpts): Promise<Experiment
   };
   const settled = await runAll(jobs);
   // Adaptive: a third trial for each case whose first two disagree.
-  const ties = adaptive && !drain.aborted && !signal?.aborted ? cases.filter((c) => tracker.needsTieBreak(c.id)).map((c) => ({ c, trial: ADAPTIVE_MAX })) : [];
+  const ties = adaptive && !drain.aborted && !signal?.aborted && !infraStop?.signal.aborted ? cases.filter((c) => tracker.needsTieBreak(c.id)).map((c) => ({ c, trial: ADAPTIVE_MAX })) : [];
   if (ties.length) {
     total += ties.length;
     if (job && job.prefix === "") await job.job.setTotal(total);
@@ -409,10 +419,11 @@ export async function runExperiment(opts: RunExperimentOpts): Promise<Experiment
   const result = experimentResult({
     id,
     name: opts.name,
-    // Cancelled when some case-trial never ran or was cut short (infra-failed ones did run), or a regression stopped it.
-    status: settled.some((r) => r === undefined) || regression ? "cancelled" : "completed",
+    // Cancelled when some case-trial never ran or was cut short (infra-failed ones did run), or a regression or an infra streak stopped it.
+    status: settled.some((r) => r === undefined) || regression || infraStop?.report ? "cancelled" : "completed",
     ...(adaptive ? { samples: "adaptive" as const } : {}),
     ...(regression ? { regression } : {}),
+    infraStop: infraStop?.report,
     dataset: opts.dataset,
     ...(opts.split !== undefined ? { split: opts.split } : {}),
     task: task.info,

@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { Adapter, RunSpec } from "../../src/core/types.ts";
 import { sh } from "../../src/runner/exec.ts";
-import { summarizeArms } from "../../src/toolevals/compare.ts";
+import { compareToolArms, summarizeArms } from "../../src/toolevals/compare.ts";
 import { runToolExperiment, runTrial, type ToolJob } from "../../src/toolevals/experiment.ts";
 import { formatArms } from "../../src/toolevals/report.ts";
 import { fakeAdapter, MemBlobs, MemIndex } from "../helpers-eval.ts";
@@ -52,6 +52,50 @@ describe("runTrial", () => {
     const [run] = await index.listRuns({ experimentId: "texp_tap" });
     assert.equal(run?.tapBlob, r.tapBlob);
     assert.ok(await blobs.get(r.tapBlob!));
+  });
+});
+
+// DF-1 / DF-2: a broken setup or a dead login is infrastructure (outcome unknown), never a task fail.
+describe("runToolExperiment: infrastructure errors", () => {
+  const retry = (stopAfter: number) => ({ retries: 3, baseMs: 0, maxMs: 0, stopAfter });
+  const run = (tasks: ReturnType<typeof task>[], agent: Adapter, over: Partial<Parameters<typeof runToolExperiment>[0]> = {}) =>
+    runToolExperiment({ tasks, target: cliTarget(), variants: [{ name: "base" }], drivers: [{ kind: "agent", agent: "claude-code" }], k: 1, concurrency: 1, root: tmp(), index: new MemIndex(), blobs: new MemBlobs(), adapterFor: () => agent, ...over });
+
+  it("a setup command that exits 1 is retried once, then the trial is infra-unknown and left out of the pass rate", async () => {
+    const log = join(tmp(), "setup.log");
+    const broken = task({ id: "t2", setup: { commands: [`echo ran >> "${log}"; exit 1`], files: {}, env: {} } });
+    const r = await run([task(), broken], shellAgent("echo hello bob"), { retry: retry(0) });
+    assert.equal(readFileSync(log, "utf8").trim().split("\n").length, 2, "one retry, not --retries 3");
+    const t2 = r.trials.find((t) => t.taskId === "t2")!;
+    assert.deepEqual([t2.infra, t2.attempts, t2.pass], ["setup", 2, false]);
+    assert.match(t2.error ?? "", /setup .* exited 1/);
+    const [arm] = summarizeArms(r.trials);
+    assert.deepEqual([arm!.passes, arm!.trials, arm!.infra, arm!.errors], [1, 1, 1, 0], "1 of 1 known trials passed; the setup failure is no fail");
+    assert.equal(arm!.passRate.p, 1);
+    const text = formatArms([arm!]);
+    assert.match(text, /\+1 infra/);
+    assert.match(text, /infra: 1 trial\(s\) failed on infrastructure/);
+  });
+
+  it("a logged-out agent is never retried, stops the run after N trials in a row, and a comparison over it is void", async () => {
+    const pids = join(tmp(), "pids");
+    const loggedOut = shellAgent(`echo $$ >> "${pids}"; echo 'Invalid API key · Please run /login' >&2; exit 1`);
+    const tasks = ["t1", "t2", "t3", "t4"].map((id) => task({ id }));
+    const r = await run(tasks, loggedOut, { retry: retry(2) });
+    assert.deepEqual(r.infraStop, { after: 2, kinds: { auth: 2 } });
+    assert.equal(r.trials.length, 2, "no trial starts after the stop");
+    assert.equal(readFileSync(pids, "utf8").trim().split("\n").length, 2, "never retried");
+    assert.ok(r.trials.every((t) => t.infra === "auth" && t.attempts === undefined));
+    const meta = JSON.parse(readFileSync(join(r.dir, "experiment.json"), "utf8")) as { infraStop: unknown };
+    assert.deepEqual(meta.infraStop, r.infraStop);
+
+    const both = await run(tasks.slice(0, 2), loggedOut, { retry: retry(0), variants: [{ name: "base" }, { name: "terse" }] });
+    const cmp = compareToolArms(both.trials, { baseline: "base@agent:claude-code", candidate: "terse@agent:claude-code", iters: 200 });
+    assert.equal(cmp.pairedTasks, 0);
+    assert.equal(cmp.verdict.kind, "inconclusive");
+    assert.match(cmp.verdict.text, /^void: 4 trials failed on infrastructure \(login 4\)/);
+    assert.ok(cmp.notes.some((n) => /^4 trial\(s\) failed on infrastructure \(login 4\) after their retries: outcome unknown, left out of the pass rates/.test(n)));
+    assert.deepEqual([cmp.baseline.trials, cmp.baseline.infra], [0, 2]);
   });
 });
 

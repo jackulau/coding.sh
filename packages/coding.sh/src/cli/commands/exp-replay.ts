@@ -20,7 +20,7 @@ import { loadCall } from "../../proxy/calls.ts";
 import { proxySettings } from "../../proxy/state.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { jsonArg, list, num, str } from "../common.ts";
-import { resumeField, resumeNote } from "../jobs.ts";
+import { infraStopNote, resumeField, resumeNote } from "../jobs.ts";
 import { CliError, plural, tokens, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { callOrFail } from "./diff-calls.ts";
@@ -145,6 +145,7 @@ export async function expReplay(c: CommandContext, store: FileEvalStore, ctx: Co
   const task = (arm: ReplayArm) => replayTask({ cases: byId, arm, upstreams, env: c.env, prices });
   const { result: ab, job } = await runArms(c, store, loaded, [{ name: "a", task: task(arms[0]) }, { name: "b", task: task(arms[1]) }], "exp replay");
   if (ab.a.status === "cancelled") {
+    infraStopNote(c, ab.a.infraStop);
     cancelledWarning(c, ab.a);
     resumeNote(c, job);
     return 1;

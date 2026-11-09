@@ -30,7 +30,7 @@ import { sortableId } from "../../core/ids.ts";
 import { paint } from "../../experiments/text.ts";
 import { jobConfig } from "../../jobs/config.ts";
 import { parseAge, positiveInt, UsageError } from "../args.ts";
-import { finishedToResume, finishJob, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
+import { finishedToResume, finishJob, infraStopNote, openJob, resumeField, resumeNote, retryFlag, trialTimeout } from "../jobs.ts";
 import { gateFlags, list, promoteFlags, requireConsent, resolveTask, str, withContext } from "../common.ts";
 import { ensureHookBin } from "../hookbin.ts";
 import { CliError, plural } from "../output.ts";
@@ -187,6 +187,11 @@ export async function run(c: CommandContext): Promise<number> {
           }).finally(() => spin.stop());
           counts = { planned: r.planned, skipped: r.skipped, retried: r.retried ?? 0 };
           if (r.cancelled) {
+            if (r.infraStop) {
+              infraStopNote(c, r.infraStop);
+              if (out.json) out.data({ outcome: "stopped", experimentId: exp, infraStop: r.infraStop, retried: r.retried ?? 0 });
+              return 1;
+            }
             out.warn(`Cancelled after retrying ${plural(r.retried ?? 0, "run")} of ${errored.length}; the rest keep their errored runs. Run the same command again to retry them.`);
             return 1;
           }
@@ -329,7 +334,7 @@ export async function run(c: CommandContext): Promise<number> {
           }),
         )
         .finally(() => spin.stop());
-      await finishJob(job, r.cancelled);
+      await finishJob(job, r.cancelled, r.infraStop);
       experimentId = r.experimentId;
       results = r.results;
       budget = r.budget;
@@ -344,8 +349,11 @@ export async function run(c: CommandContext): Promise<number> {
       if (r.cancelled) {
         // A partial A/B is not a comparison; main.ts exits 130 (143 for SIGTERM).
         const finished = job.lines.size;
-        if (out.json) out.data({ outcome: "cancelled", experimentId, finished, total: runs, ...resumeField(job) });
-        else {
+        if (out.json) out.data({ outcome: r.infraStop ? "stopped" : "cancelled", experimentId, finished, total: runs, infraStop: r.infraStop, ...resumeField(job) });
+        else if (r.infraStop) {
+          infraStopNote(c, r.infraStop);
+          resumeNote(c, job);
+        } else {
           out.warn(`Cancelled after ${finished}/${runs} runs; no comparison yet. Analyse the stored runs: coding.sh compare ${arms} --experiment ${experimentId}`);
           resumeNote(c, job);
         }

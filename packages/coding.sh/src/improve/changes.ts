@@ -64,6 +64,12 @@ export interface GroupStats {
   examples: string[];
   /** Every flagged session, newest first (`flagged` of them). */
   flaggedSessions: FlaggedSession[];
+  /**
+   * Sessions of this version left out because they made no tool call outside
+   * MCP servers: a chat, or an agent that never got to work (one that was not
+   * logged in, or whose API key was refused). Absent when none.
+   */
+  idle?: number;
 }
 
 export interface RuleEffect {
@@ -264,18 +270,24 @@ export async function changeEffects(root: string, sessions: readonly Session[], 
   };
   const out: ChangeEffect[] = [];
   for (const c of changes) {
-    const after = await working(byVersion.get(c.commit) ?? []);
-    const before = await working(byVersion.get(c.previous ?? "") ?? []);
+    const afterAll = byVersion.get(c.commit) ?? [];
+    const beforeAll = byVersion.get(c.previous ?? "") ?? [];
+    const after = await working(afterAll);
+    const before = await working(beforeAll);
     const paths = c.files.map((f) => f.path);
     const [oldFiles, newFiles] = await Promise.all([filesAt(root, c.previous ?? (await parentOf(root, c.commit)), paths), filesAt(root, c.commit, paths)]);
     const added = diffDirectives(oldFiles, newFiles).added;
     const rules: RuleEffect[] = [];
     for (const d of added.slice(0, 5)) rules.push(await ruleEffect(d, before, after, eventsOf));
-    const b = group(before);
-    const a = group(after);
+    const b = withIdle(group(before), beforeAll.length - before.length);
+    const a = withIdle(group(after), afterAll.length - after.length);
     out.push({ change: c, before: b, after: a, rules, ...decide(b, a, rules) });
   }
   return out;
+}
+
+function withIdle(g: GroupStats, idle: number): GroupStats {
+  return idle > 0 ? { ...g, idle } : g;
 }
 
 async function parentOf(root: string, commit: string): Promise<string | undefined> {

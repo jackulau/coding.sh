@@ -246,7 +246,7 @@ describe("durable exp run", { skip: process.platform === "win32" && "signals sen
     // Retries exhausted: the trial is infra (outcome unknown), the job incomplete, and --resume runs it again.
     const down = join(root, "down.mjs");
     writeFileSync(down, `process.stderr.write("HTTP 503 Service Unavailable\\n"); process.exit(1);\n`);
-    const out = cli(["exp", "run", "-d", "ds", "--task", JSON.stringify({ kind: "command", command: process.execPath, args: [down] }), "-g", GRADER, "--retries", "1", "--json"]);
+    const out = cli(["exp", "run", "-d", "ds", "--task", JSON.stringify({ kind: "command", command: process.execPath, args: [down] }), "-g", GRADER, "--retries", "1", "--stop-after-infra", "0", "--json"]);
     const d = JSON.parse(out.stdout).experiment as Exp & { summary: { infra?: number } };
     assert.equal(d.summary.infra, N);
     assert.ok(d.runs.every((x) => x.attempts === 2));
@@ -254,9 +254,34 @@ describe("durable exp run", { skip: process.platform === "win32" && "signals sen
     assert.equal(st.status, "incomplete");
     assert.equal(st.infra, N);
     assert.match(JSON.parse(out.stdout).resume, new RegExp(`--resume ${d.id}$`));
-    const text = cli(["exp", "run", "-d", "ds", "--task", JSON.stringify({ kind: "command", command: process.execPath, args: [down] }), "-g", GRADER, "--retries", "0"]);
+    const text = cli(["exp", "run", "-d", "ds", "--task", JSON.stringify({ kind: "command", command: process.execPath, args: [down] }), "-g", GRADER, "--retries", "0", "--stop-after-infra", "0"]);
     assert.match(text.stderr, /still hit infrastructure errors after retries; finished trials are saved\. Continue with: coding\.sh exp run .*--resume exp_/);
-    assert.match(text.stdout, /infra \d+ run\(s\) still hit a rate limit, 5xx or network error after retries/);
+    assert.match(text.stdout, /infra \d+ run\(s\) failed on infrastructure after retries \(5xx \d+\): outcome unknown, left out of the pass rate/);
+  });
+
+  it("an agent that is not logged in is never retried, stops the run after 5 trials in a row, and is no fail", async () => {
+    const pids = join(root, "login.pids");
+    const agent = join(root, "login.mjs");
+    writeFileSync(agent, `import {appendFileSync} from "node:fs"; appendFileSync(${JSON.stringify(pids)}, process.pid + "\\n"); process.stderr.write("Invalid API key · Please run /login\\n"); process.exit(1);\n`);
+    const t = JSON.stringify({ kind: "command", command: process.execPath, args: [agent] });
+    const out = cli(["exp", "run", "-d", "ds", "--task", t, "-g", GRADER, "--concurrency", "1", "--json"]);
+    assert.equal(out.status, 1, out.stderr);
+    const j = JSON.parse(out.stdout) as { outcome: string; experiment: Exp & { infraStop?: unknown; summary: { infra?: number; passed: number; passRate: { p: number | null } } }; resume?: string };
+    assert.equal(j.outcome, "stopped");
+    assert.deepEqual(j.experiment.infraStop, { after: 5, kinds: { auth: 5 } });
+    assert.equal(pidsIn(pids).length, 5, `5 calls, none retried, none after the stop (of ${N})`);
+    assert.equal(j.experiment.runs.length, 5);
+    assert.ok(j.experiment.runs.every((x) => x.attempts === undefined && (x as { infra?: string }).infra === "auth" && (x as { ungraded?: boolean }).ungraded === true));
+    assert.equal(j.experiment.summary.infra, 5, "every trial is infra-unknown");
+    assert.equal(j.experiment.summary.passed, 0);
+    assert.equal(j.experiment.summary.passRate.p, null, "no graded run: no pass rate (NaN in JSON), not 0%");
+    assert.equal(statusOf(j.experiment.id).status, "incomplete", "the job waits for a resume once the login is fixed");
+    assert.match(j.resume ?? "", new RegExp(`--resume ${j.experiment.id}$`));
+    const text = cli(["exp", "run", "-d", "ds", "--task", t, "-g", GRADER, "--concurrency", "1", "--stop-after-infra", "2"]);
+    assert.equal(text.status, 1);
+    assert.match(text.stdout, /Stopped: 2 trials in a row failed on infrastructure \(login 2\), so the rest did not run and this is no quality verdict\. The agent is not logged in or its API key was refused: log in again, then resume\./);
+    assert.match(text.stdout, /^pass +— /m, "no pass rate, not 0%");
+    assert.match(text.stderr, /Stopped on infrastructure errors: stored exp_\w+ as cancelled/);
   });
 });
 

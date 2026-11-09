@@ -6,7 +6,7 @@ import type { CommandModule } from "./types.ts";
 import { GATEWAY_IDS } from "../integrations/gateway/providers.ts";
 import { WORKFLOWS_COMMAND } from "../workflows/cli-spec.ts";
 import { BENCH_COMMAND } from "../bench/cli-spec.ts";
-import { durableFlags, RETRIES_FLAG, TRIAL_TIMEOUT_FLAG } from "../jobs/flags.ts";
+import { durableFlags, RETRIES_FLAG, STOP_AFTER_INFRA_FLAG, TRIAL_TIMEOUT_FLAG } from "../jobs/flags.ts";
 import { DEFAULT_MODELS } from "../core/pricing.ts";
 import { FACET_KEYS, keyDocs } from "../query/where.ts";
 
@@ -638,6 +638,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "harness", type: "string", value: "<BUNDLE>", desc: "Task suites: run this stored harness bundle (default: a snapshot of the project's current setup)" },
           { name: "summary", type: "string", value: "<FILE>", desc: "Also append the report to FILE as Markdown, e.g. \"$GITHUB_STEP_SUMMARY\" in GitHub Actions" },
           RETRIES_FLAG,
+          STOP_AFTER_INFRA_FLAG,
           TRIAL_TIMEOUT_FLAG,
           YES,
         ],
@@ -1168,6 +1169,8 @@ export const COMMANDS: CommandSpec[] = [
           { name: "task", short: "t", type: "list", value: "<ID>", desc: "Only this task (repeatable)" },
           { name: "concurrency", short: "c", type: "number", value: "<N>", desc: "Parallel trials" },
           { name: "keep", type: "boolean", desc: "Keep trial sandboxes" },
+          RETRIES_FLAG,
+          STOP_AFTER_INFRA_FLAG,
           YES,
         ],
         examples: [

@@ -43,6 +43,17 @@ function fmt(v: number, unit: "count" | "usd" | "ms" | "rate"): string {
   return Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(1).replace(/\.0$/, "");
 }
 
+/** Task errors, then the trials lost to infrastructure (left out of the rates). */
+function errorsCell(a: ToolArmSummary, p: ReturnType<typeof painter>): string {
+  return `${a.errors ? p.bad(String(a.errors)) : "0"}${a.infra ? p.dim(` +${a.infra} infra`) : ""}`;
+}
+
+/** The line under an arm table when trials failed on infrastructure. */
+function infraLine(arms: readonly ToolArmSummary[], p: ReturnType<typeof painter>): string {
+  const n = arms.reduce((s, a) => s + (a.infra ?? 0), 0);
+  return n ? `${p.dim(`infra: ${n} trial(s) failed on infrastructure (a refused login, a failed setup, rate limits) after their retries: outcome unknown, left out of the counts and rates`)}\n` : "";
+}
+
 export function formatArms(arms: readonly ToolArmSummary[], o: FormatOpts = {}): string {
   const p = painter(o.color);
   if (arms.some((a) => a.verdicts)) {
@@ -50,15 +61,15 @@ export function formatArms(arms: readonly ToolArmSummary[], o: FormatOpts = {}):
     const rows = [["arm", "tasks passed", "trials", "tie-breaks", "errors"].map(p.dim)];
     for (const a of arms) {
       const v = a.verdicts ?? { passed: 0, failed: 0, tieBreaks: 0 };
-      rows.push([a.arm, `${v.passed}/${v.passed + v.failed}`, String(a.trials), String(v.tieBreaks), a.errors ? p.bad(String(a.errors)) : "0"]);
+      rows.push([a.arm, `${v.passed}/${v.passed + v.failed}`, String(a.trials), String(v.tieBreaks), errorsCell(a, p)]);
     }
-    return `${table(rows).join("\n")}\n${p.dim("adaptive, no CI: 2 trials per task, a 3rd when they disagree; a task fails at half or more failing")}\n`;
+    return `${table(rows).join("\n")}\n${p.dim("adaptive, no CI: 2 trials per task, a 3rd when they disagree; a task fails at half or more failing")}\n${infraLine(arms, p)}`;
   }
   const rows = [["arm", "passes", "success (95% CI)", "pass^k", "pass@k", "errors"].map(p.dim)];
   for (const a of arms) {
-    rows.push([a.arm, `${a.passes}/${a.trials}`, `${pct(a.passRate.p)} [${pct(a.passRate.lo)}, ${pct(a.passRate.hi)}]`, String(a.passAllK), String(a.passAnyK), a.errors ? p.bad(String(a.errors)) : "0"]);
+    rows.push([a.arm, `${a.passes}/${a.trials}`, `${pct(a.passRate.p)} [${pct(a.passRate.lo)}, ${pct(a.passRate.hi)}]`, String(a.passAllK), String(a.passAnyK), errorsCell(a, p)]);
   }
-  return `${table(rows).join("\n")}\n`;
+  return `${table(rows).join("\n")}\n${infraLine(arms, p)}`;
 }
 
 export function formatToolCompare(r: ToolCompareReport, o: FormatOpts = {}): string {

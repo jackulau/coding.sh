@@ -33,7 +33,8 @@ import { checkProtected, type ProtectCheck } from "../../refine/protect.ts";
 import { gateHeadline } from "../../stats/gate.ts";
 import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
 import { autoIngest, gateFlags, jsonArg, list, num, readIngest, str } from "../common.ts";
-import { resumeField, resumeNote } from "../jobs.ts";
+import { infraStopNote, resumeField, resumeNote } from "../jobs.ts";
+import { infraKinds, infraKindsText } from "../../jobs/retry.ts";
 import { protectJson, protectOptions, protectOverrides, rejectionLines } from "../protect.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -827,20 +828,25 @@ export async function expAb(c: CommandContext, store: FileEvalStore, ctx: Contex
     if (!comparison) {
       if (run.overBudget) out.warn(`Stopped at ${costText(spend.usd + spend.judgeUsd, setup.provider)}: over --max-cost ${money(o.maxCost!)}`);
       if (run.limited) out.warn(`Stopped: ${run.limited}`);
+      infraStopNote(c, ab.a.infraStop);
       cancelledWarning(c, ab.a);
       resumeNote(c, job);
       return undefined;
     }
-    // A failed model call counts as a failed trial; when every one failed, the comparison means nothing.
+    // A failed model call counts as a failed trial, one lost to infrastructure (a refused login, a rate limit)
+    // is left out; when every one failed, the comparison means nothing.
     const runs = [...ab.a.runs, ...ab.b.runs];
-    const failedRuns = runs.filter((r) => r.error !== undefined);
-    if (failedRuns.length && failedRuns.length === runs.length) {
-      throw new CliError(`Every model call failed (${failedRuns.length} of ${runs.length} trials): ${failedRuns[0]!.error}`, {
+    const errored = runs.filter((r) => r.error !== undefined);
+    const lost = errored.filter((r) => r.infra);
+    const failedRuns = errored.filter((r) => !r.infra);
+    if (errored.length && errored.length === runs.length) {
+      throw new CliError(`Every model call failed (${errored.length} of ${runs.length} trials${lost.length ? `, ${lost.length} on infrastructure: ${infraKindsText(infraKinds(lost))}` : ""}): ${errored[0]!.error}`, {
         reason: "model_error",
         next: ["See each failure:", `coding.sh exp show ${ab.b.id}`],
       });
     }
     if (failedRuns.length && !quiet) out.warn(`${failedRuns.length} of ${runs.length} trials failed and count as not passing: ${failedRuns[0]!.error}`);
+    if (lost.length && !quiet) out.warn(`${lost.length} of ${runs.length} trials failed on infrastructure (${infraKindsText(infraKinds(lost))}): outcome unknown, left out of the pass rates: ${lost[0]!.error}`);
     const pa = casePass(ab.a.runs);
     const pb = casePass(ab.b.runs);
     const fixed = cases.filter((x) => pa.get(x.id) === false && pb.get(x.id) === true).map((x) => x.id);

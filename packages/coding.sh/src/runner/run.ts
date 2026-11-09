@@ -187,17 +187,27 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
       result.error = pluginErr;
       return result;
     }
-    await mkdir(layout.root, { recursive: true });
-    const ops = await snapshotOps(opts.git);
-    await ops.materialize({ root: task.start.repoRoot, head: task.start.head, snapshot: task.start.snapshot }, layout.work);
+    // Setup runs before the agent, so its failure says nothing about the harness:
+    // infra (outcome unknown), retried once by runExperiment, never a task fail.
+    const setupFailed = (why: string): RunResult => {
+      result.error = why;
+      result.infra = "setup";
+      return result;
+    };
+    let ops: SnapshotOps;
+    try {
+      await mkdir(layout.root, { recursive: true });
+      ops = await snapshotOps(opts.git);
+      await ops.materialize({ root: task.start.repoRoot, head: task.start.head, snapshot: task.start.snapshot }, layout.work);
+    } catch (e) {
+      checkpoint();
+      return setupFailed(`setup: could not create the work folder: ${e instanceof Error ? e.message : String(e)}`);
+    }
 
     for (const cmd of task.setup) {
       const r = await sh(cmd, { cwd: layout.work, env: baseEnv, timeoutMs: SETUP_TIMEOUT_MS });
       checkpoint();
-      if (r.exitCode !== 0) {
-        result.error = `setup \`${cmd}\` ${r.timedOut ? "timed out" : `exited ${r.exitCode}`}: ${r.stderrTail.slice(-500)}`;
-        return result;
-      }
+      if (r.exitCode !== 0) return setupFailed(`setup \`${cmd}\` ${r.timedOut ? "timed out" : `exited ${r.exitCode}`}: ${r.stderrTail.slice(-500)}`);
     }
 
     const applied = await applyBundle(bundle, layout.work, blobs, { home: layout.home });

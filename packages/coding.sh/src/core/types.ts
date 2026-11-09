@@ -782,10 +782,12 @@ export interface RunResult {
   attempts?: number;
   /**
    * The last attempt still failed on an infrastructure error after its
-   * retries: the outcome is unknown, comparisons leave it out, and
+   * retries (a rate limit, 5xx or network error; "auth": the agent was not
+   * logged in or its key was refused; "setup": a setup step failed before
+   * the agent started): the outcome is unknown, comparisons leave it out, and
    * `compare --resume` runs it again.
    */
-  infra?: "rate-limit" | "server" | "network" | "tempfail";
+  infra?: "rate-limit" | "server" | "network" | "tempfail" | "auth" | "setup";
   /** Tool-eval trials: the tap log (tool calls seen on the wire) as NDJSON. Referenced so blob gc keeps it. */
   tapBlob?: BlobRef;
   /**

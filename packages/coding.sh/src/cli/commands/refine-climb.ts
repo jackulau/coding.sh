@@ -45,7 +45,7 @@ import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { money, newSpend, type Arm, type Spend } from "./exp-ab.ts";
 import { applyCandidate, baseArm, defaultTarget, printApplied, propose, proposerName, proposerReply, resolveCandidate, spendJson, type Candidate, type Env } from "./refine-loop.ts";
-import { armBundle, armDrivers, clearPending, loadFitness, readPending, roundsText, runSuiteRound, writePending, type Fitness, type SuiteRound } from "./refine-suite.ts";
+import { armBundle, armDrivers, clearPending, infraRoundText, loadFitness, readPending, roundsText, runSuiteRound, writePending, type Fitness, type SuiteRound } from "./refine-suite.ts";
 
 const CLIMB_FLAGS = ["suite", "objective", "margin", "min-gain", "max-cost-rise", "until-plateau", "harness", "proposer-command", "reuse", "reuse-max-age"] as const;
 
@@ -202,7 +202,7 @@ function climbJson(rounds: readonly ClimbRound[], key: ClimbKey, p: ClimbPlateau
 
 interface Round {
   entry?: TestEntry;
-  stopped?: "interrupted" | "budget";
+  stopped?: "interrupted" | "budget" | "infra";
   resume?: string;
   run?: SuiteRound;
 }
@@ -249,6 +249,8 @@ async function climbRound(c: CommandContext, e: Env, f: Fitness, o: ClimbOpts, b
   const reuse: ReuseOpts | undefined = o.reuse ? { bundleIds: o.reuse.what === "both" ? [A.id, B.id] : [A.id], ...(o.reuse.maxAgeMs !== undefined ? { maxAgeMs: o.reuse.maxAgeMs } : {}) } : undefined;
   writePending(e.dir, { suite: o.suite, candidate: cand.id, base: base.files.map((b) => ({ path: b.path, sha: sha(b.text) })), at: new Date().toISOString() });
   const run = await runSuiteRound(c, e.ctx, f, A, B, { objectives: o.objectives, margin: o.margin, minGain: o.minGain, maxCostRise: o.maxCostRise, gate: e.gate, ...(x.cap !== undefined ? { maxCostUsd: x.cap } : {}), resume: x.resume, label: cand.id, ...(reuse ? { reuse } : {}) });
+  // A round lost to infrastructure (a dead login, a broken setup) is no verdict: nothing goes in the ledger, and the climb stops.
+  if (run.infraStop || run.void) return { stopped: "infra", run, resume: run.resume };
   if (run.cancelled || run.skipped) return { stopped: run.cancelled ? "interrupted" : "budget", run, ...(run.resume ? { resume: run.resume } : {}) };
   const d = run.decision!;
   const entry: TestEntry = {
@@ -350,6 +352,7 @@ export async function climbTest(c: CommandContext, e: Env): Promise<number> {
   const done: TestEntry[] = [];
   let agentUsd = 0;
   let stopped: Round["stopped"];
+  let infra: SuiteRound | undefined;
   let resume: string | undefined;
   for (const [i, cand] of cands.entries()) {
     if ((c.drain ?? c.signal).aborted) {
@@ -362,13 +365,15 @@ export async function climbTest(c: CommandContext, e: Env): Promise<number> {
     if (r.entry) done.push(r.entry);
     if (r.stopped) {
       stopped = r.stopped;
+      if (r.stopped === "infra") infra = r.run;
       resume = r.resume;
       break;
     }
   }
-  if (out.json) out.data({ ledger: ledgerFile(e.dir), rounds: done, spent: { usd: agentUsd }, ...(stopped ? { stopped } : {}), ...(resume ? { resume } : {}) });
+  if (out.json) out.data({ ledger: ledgerFile(e.dir), rounds: done, spent: { usd: agentUsd }, ...(stopped ? { stopped } : {}), ...infraJson(infra), resume });
   else {
-    if (stopped) out.warn(`${stopped === "budget" ? "Stopped at --max-cost" : "Interrupted"}; finished runs are saved.${resume ? ` Continue with: ${resume}` : ""}`);
+    if (stopped === "infra") out.warn(`${infraRoundText(infra!)} Finished runs are saved.${resume ? ` Continue with: ${resume}` : ""}`);
+    else if (stopped) out.warn(`${stopped === "budget" ? "Stopped at --max-cost" : "Interrupted"}; finished runs are saved.${resume ? ` Continue with: ${resume}` : ""}`);
     out.print(`Spent ${money(agentUsd)} on agent sessions`);
     const win = done.find((d) => d.verdict === "keep");
     if (win) out.next("Write the kept edit to your files (with a backup)", `coding.sh refine apply ${win.id}`);
@@ -377,7 +382,12 @@ export async function climbTest(c: CommandContext, e: Env): Promise<number> {
   return done.some((d) => d.verdict === "keep") ? 0 : 1;
 }
 
-type StopReason = "rounds" | "candidates" | "plateau" | "budget" | "interrupted" | "proposer";
+type StopReason = "rounds" | "candidates" | "plateau" | "budget" | "interrupted" | "proposer" | "infra";
+
+/** For --json: why a round lost to infrastructure has no verdict. */
+function infraJson(r: SuiteRound | undefined): { infraStop?: SuiteRound["infraStop"]; void?: SuiteRound["void"] } {
+  return { infraStop: r?.infraStop, void: r?.void };
+}
 
 export async function climbRun(c: CommandContext, e: Env): Promise<number> {
   const { out } = c;
@@ -434,6 +444,7 @@ export async function climbRun(c: CommandContext, e: Env): Promise<number> {
   const done: TestEntry[] = [];
   const applied: string[] = [];
   let stopped: StopReason = "rounds";
+  let infra: SuiteRound | undefined;
   let resume: string | undefined;
   let p = before;
   let badProposals = 0;
@@ -492,6 +503,7 @@ export async function climbRun(c: CommandContext, e: Env): Promise<number> {
     if (r.run) agentUsd += r.run.spentUsd;
     if (r.stopped) {
       stopped = r.stopped;
+      if (r.stopped === "infra") infra = r.run;
       resume = `coding.sh refine run --suite ${o.suite}${o.objectives.length > 1 || o.primary !== "pass" ? ` --objective ${o.objectives.join(",")}` : ""}${untilPlateau ? " --until-plateau" : ""} --resume --yes`;
       break;
     }
@@ -512,7 +524,7 @@ export async function climbRun(c: CommandContext, e: Env): Promise<number> {
   const all = climbRounds(readLedger(e.dir), key);
   const fk = frontKey(o.primary, all);
   if (out.json) {
-    out.data({ ledger: ledgerFile(e.dir), rounds: done, applied, stopped, spent: { agentUsd, proposer: spendJson(spend) }, ...(resume ? { resume, askUser: true } : {}), climb: climbJson(all, key, p) });
+    out.data({ ledger: ledgerFile(e.dir), rounds: done, applied, stopped, ...infraJson(infra), spent: { agentUsd, proposer: spendJson(spend) }, ...(resume ? { resume, askUser: true } : {}), climb: climbJson(all, key, p) });
   } else {
     const why: Record<StopReason, string> = {
       rounds: `ran ${plural(rounds, "round")}`,
@@ -521,7 +533,9 @@ export async function climbRun(c: CommandContext, e: Env): Promise<number> {
       budget: "reached --max-cost",
       interrupted: "interrupted",
       proposer: "the proposer gave 3 unusable replies in a row",
+      infra: "a round failed on infrastructure, so it has no verdict",
     };
+    if (infra) out.warn(infraRoundText(infra)!);
     out.print(`Stopped: ${why[stopped]}. ${plural(done.length, "round")}, ${applied.length} kept and applied, spent ${money(agentUsd + spend.usd + spend.judgeUsd)} (${money(agentUsd)} on agent sessions)`);
     // The resume command carries --yes and spends more: the user approves it, not an agent.
     if (resume) out.note(`The round's finished runs are saved. Continuing spends more, so ask the user first; with their approval: ${resume}`);

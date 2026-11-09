@@ -7,7 +7,7 @@ import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import { configChanges, jobConfig, taskFingerprint } from "../../src/jobs/config.ts";
-import { backoffMs, infraKind, retryAfterMs, retryPolicy, withRetries } from "../../src/jobs/retry.ts";
+import { backoffMs, DEFAULT_STOP_AFTER, infraKind, infraStopFor, infraStopText, retryAfterMs, retryPolicy, voidText, withRetries } from "../../src/jobs/retry.ts";
 import { JobStore, liveStatus, parseLines, progressOf, STALE_MS, type JobHeader } from "../../src/jobs/store.ts";
 
 const root = mkdtempSync(join(tmpdir(), "csh-jobs-"));
@@ -164,5 +164,47 @@ describe("retries: infrastructure errors only", () => {
     stop.abort();
     const stopped = await withRetries(async () => "HTTP 429", { policy: { ...policy, baseMs: 60_000, maxMs: 60_000 }, errorOf: (r) => r, stop: [stop.signal] });
     assert.deepEqual([stopped.attempts, stopped.infra], [1, "rate-limit"], "an interrupt starts no new attempt");
+  });
+  it("reads a refused login as infra, not a task failure", () => {
+    assert.equal(infraKind("claude: exited 1: Invalid API key · Please run /login"), "auth");
+    assert.equal(infraKind("codex: exited 1: Not logged in"), "auth");
+    assert.equal(infraKind("Error: 401 Unauthorized"), "auth");
+    assert.equal(infraKind('API Error: 401 {"type":"authentication_error"}'), "auth");
+    assert.equal(infraKind("OAuth token has expired. Please run /login"), "auth");
+    assert.equal(infraKind("Incorrect API key provided: sk-…"), "auth");
+    assert.equal(infraKind("expected 401 from the endpoint, got 200"), undefined, "a number in a task's own output is not a login");
+    assert.equal(infraKind("./agent: exited 1: assertion failed"), undefined);
+  });
+  it("never retries a refused login and retries a failed setup once, whatever --retries says", async () => {
+    const policy = { retries: 3, baseMs: 0, maxMs: 0 };
+    let n = 0;
+    const login = await withRetries(async () => (++n, "Not logged in · Please run /login"), { policy, errorOf: (r) => r });
+    assert.deepEqual([login.attempts, login.infra, n], [1, "auth", 1], "a login does not come back after a backoff");
+    n = 0;
+    const setup = await withRetries(async () => (++n, "setup `exit 1` exited 1"), { policy, errorOf: (r) => r, classify: () => "setup" });
+    assert.deepEqual([setup.attempts, setup.infra, n], [2, "setup", 2], "one retry, then the trial is infra-unknown");
+    n = 0;
+    const noRetry = await withRetries(async () => (++n, "setup failed"), { policy: { ...policy, retries: 0 }, errorOf: (r) => r, classify: () => "setup" });
+    assert.equal(noRetry.attempts, 1, "--retries 0 turns the setup retry off too");
+    n = 0;
+    const fixed = await withRetries(async () => (++n < 2 ? "setup failed" : "ok"), { policy, errorOf: (r) => r, classify: (r) => (r === "ok" ? undefined : "setup") });
+    assert.deepEqual([fixed.result, fixed.attempts, fixed.infra], ["ok", 2, undefined], "a setup that works the second time is a normal trial");
+  });
+  it("stops after N trials in a row end on infra; a known outcome resets the count", () => {
+    assert.equal(retryPolicy({}).stopAfter, DEFAULT_STOP_AFTER);
+    assert.equal(retryPolicy({}, 3, 0).stopAfter, 0);
+    assert.equal(infraStopFor(retryPolicy({}, 3, 0)), undefined, "0 never stops");
+    const stop = infraStopFor(retryPolicy({}, 3, 3))!;
+    stop.add("auth");
+    stop.add("auth");
+    stop.add(undefined);
+    stop.add("auth");
+    stop.add("setup");
+    assert.equal(stop.signal.aborted, false, "the pass in between reset the streak");
+    stop.add("auth");
+    assert.equal(stop.signal.aborted, true);
+    assert.deepEqual(stop.report, { after: 3, kinds: { auth: 2, setup: 1 } });
+    assert.match(infraStopText(stop.report!), /^Stopped: 3 trials in a row failed on infrastructure \(login 2, setup 1\), so the rest did not run and this is no quality verdict\. The agent is not logged in/);
+    assert.match(voidText(4, { auth: 4 }), /^void: 4 trials failed on infrastructure \(login 4\), leaving no outcome to compare, so this is no quality verdict/);
   });
 });

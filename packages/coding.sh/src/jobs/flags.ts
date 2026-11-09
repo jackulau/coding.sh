@@ -16,11 +16,25 @@ export function resumeFlag(what = "run"): FlagSpec {
   };
 }
 
-export const RETRIES_FLAG: FlagSpec = { name: "retries", type: "number", value: "<N>", desc: "Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried)", default: "3" };
+export const RETRIES_FLAG: FlagSpec = {
+  name: "retries",
+  type: "number",
+  value: "<N>",
+  desc: "Retries per trial after a rate limit, 5xx or network error, with backoff; a failed setup step is retried once and a refused login never (failures are never retried)",
+  default: "3",
+};
+
+export const STOP_AFTER_INFRA_FLAG: FlagSpec = {
+  name: "stop-after-infra",
+  type: "number",
+  value: "<N>",
+  desc: "Stop once N trials in a row fail on infrastructure after their retries (a refused login, a failed setup, rate limits, 5xx, network): no new trial starts and the run is no quality verdict; 0 never stops",
+  default: "5",
+};
 
 export const TRIAL_TIMEOUT_FLAG: FlagSpec = { name: "trial-timeout", type: "number", value: "<SEC>", desc: "Time limit per trial, retries included; a trial over it fails" };
 
 /** What a durable command adds to its flags. */
 export function durableFlags(what?: string, o: { timeout?: boolean } = {}): FlagSpec[] {
-  return [resumeFlag(what), RETRIES_FLAG, ...(o.timeout === false ? [] : [TRIAL_TIMEOUT_FLAG])];
+  return [resumeFlag(what), RETRIES_FLAG, STOP_AFTER_INFRA_FLAG, ...(o.timeout === false ? [] : [TRIAL_TIMEOUT_FLAG])];
 }

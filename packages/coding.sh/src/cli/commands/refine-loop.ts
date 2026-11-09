@@ -50,6 +50,7 @@ import { positiveInt, UsageError } from "../args.ts";
 import { sh } from "../../runner/exec.ts";
 import { gateFlags, list, num, str, withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
+import { infraStopNote } from "../jobs.ts";
 import { protectOptions, protectOverrides } from "../protect.ts";
 import type { CommandContext } from "../types.ts";
 import { targetPath as targetPathOf } from "../../refine/target.ts";
@@ -319,6 +320,7 @@ async function runRound(e: Env, plan: Plan, spend: Spend, cap: number | undefine
     const { mined, setup } = plan;
     const run = await runPair(e.c, e.store, setup, mined.dataset, mined.caseMap, plan.base, cand.arm, { spend, gate: e.gate, ...(cap !== undefined ? { maxCost: cap } : {}), name: `refine-${cand.id}` });
     if (run.limited) e.c.out.warn(`Stopped: ${run.limited}`);
+    infraStopNote(e.c, run.ab.a.infraStop);
     const devA = outcomesByCase(run.ab.a.runs);
     const devB = outcomesByCase(run.ab.b.runs);
     const cmp = run.comparison;

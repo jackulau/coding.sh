@@ -13,14 +13,17 @@ import { ago, CliError, duration, plural, usd } from "./output.ts";
 import type { CommandContext } from "./types.ts";
 import { configChanges } from "../jobs/config.ts";
 import { RESUME_ID } from "../jobs/flags.ts";
-import { retryPolicy, type RetryPolicy } from "../jobs/retry.ts";
+import { infraStopText, retryPolicy, type InfraStopReport, type RetryPolicy } from "../jobs/retry.ts";
 import { JobStore, type Job, type JobConfig, type JobKind, type JobView } from "../jobs/store.ts";
 
-/** The retry policy from --retries. */
+/** The retry policy from --retries and --stop-after-infra. */
 export function retryFlag(c: CommandContext): RetryPolicy {
-  const raw = num(c.flags.retries);
-  if (raw !== undefined && (!Number.isInteger(raw) || raw < 0)) throw new UsageError(`--retries must be a whole number ≥ 0, got ${raw}`, { reason: "invalid_argument" });
-  return retryPolicy(c.env, raw);
+  const whole = (flag: string): number | undefined => {
+    const raw = num(c.flags[flag]);
+    if (raw !== undefined && (!Number.isInteger(raw) || raw < 0)) throw new UsageError(`--${flag} must be a whole number ≥ 0, got ${raw}`, { reason: "invalid_argument" });
+    return raw;
+  };
+  return retryPolicy(c.env, whole("retries"), whole("stop-after-infra"));
 }
 
 /** --trial-timeout in ms. */
@@ -125,9 +128,17 @@ export async function finishedToResume(c: CommandContext, kind: JobKind, config:
   return v && open(v) && v.header.kind === kind && v.header.config.hash === config.hash ? v.progress.done : 0;
 }
 
-/** End the session: interrupted when cancelled, incomplete when infra-failed trials remain, else completed. */
-export async function finishJob(job: Job, cancelled: boolean): Promise<void> {
-  await job.finish(cancelled ? "interrupted" : job.infraCount() ? "incomplete" : "completed");
+/**
+ * End the session: interrupted when cancelled, incomplete when infra-failed
+ * trials remain (a run that stopped on an infra streak among them), else completed.
+ */
+export async function finishJob(job: Job, cancelled: boolean, infraStop?: InfraStopReport): Promise<void> {
+  await job.finish(cancelled && !infraStop ? "interrupted" : job.infraCount() ? "incomplete" : "completed");
+}
+
+/** After a run that stopped on an infra streak: say why, in plain words (the --json output carries `infraStop`). */
+export function infraStopNote(c: CommandContext, stop: InfraStopReport | undefined): void {
+  if (stop && !c.out.json) c.out.warn(infraStopText(stop));
 }
 
 /** For --json output: how to continue a run that stopped short. */

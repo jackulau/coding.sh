@@ -2,6 +2,7 @@
 // from judges that are not calibrated on held-out human labels are marked
 // with "*" wherever they appear, including the overall pass rate they feed.
 import type { CalibrationStatus, ExperimentResult } from "../datasets/types.ts";
+import { infraKinds, infraKindsText, infraStopText, voidText } from "../jobs/retry.ts";
 import { calibrationBadge } from "../judge/render.ts";
 import { formatVerifierAudit, verifierCorrected, type VerifierAudit, type VerifierCorrection } from "../judge/verifier.ts";
 import type { RoganGladenResult } from "../stats/interval.ts";
@@ -80,11 +81,15 @@ export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verif
     );
   }
   if (r.regression) out.push(paint(`regression: case ${r.regression.caseId} passed every trial of ${r.regression.baseline} and fails here; the run stopped (--stop-on-regression)`, "red", color));
+  else if (r.infraStop) out.push(paint(infraStopText(r.infraStop), "red", color));
   else if (r.status === "cancelled") out.push(paint(`cancelled: only ${s.n} case run${s.n === 1 ? "" : "s"} finished before the interrupt; this result is partial`, "yellow", color));
-  if (s.errors) out.push(paint(`errors  ${s.errors} task error(s)`, "red", color));
+  if (s.n > 0 && s.infra === s.n && !r.infraStop) out.push(paint(voidText(s.n, infraKinds(r.runs)), "red", color));
+  // Task errors that were infrastructure are reported on the infra line, not as task errors.
+  const taskErrors = s.errors - (s.infra ?? 0);
+  if (taskErrors > 0) out.push(paint(`errors  ${taskErrors} task error(s)`, "red", color));
   const graderErrors = (s.ungraded ?? 0) - (s.infra ?? 0);
   if (graderErrors > 0) out.push(paint(`ungraded ${graderErrors} run(s) with a grader error: outcome unknown, left out of the pass rate`, "yellow", color));
-  if (s.infra) out.push(paint(`infra ${s.infra} run(s) still hit a rate limit, 5xx or network error after retries: outcome unknown, left out of the pass rate; --resume runs them again`, "yellow", color));
+  if (s.infra) out.push(paint(`infra ${s.infra} run(s) failed on infrastructure after retries (${infraKindsText(infraKinds(r.runs))}): outcome unknown, left out of the pass rate; --resume runs them again`, "yellow", color));
   const retried = r.runs.filter((x) => (x.attempts ?? 1) > 1);
   if (retried.length) out.push(paint(`retried ${retried.length} run(s) after infrastructure errors (${retried.reduce((n, x) => n + (x.attempts ?? 1) - 1, 0)} extra attempts); failures are never retried`, "dim", color));
   out.push(`latency median ${ms(s.latencyMs.median)}, p90 ${ms(s.latencyMs.p90)}, max ${ms(s.latencyMs.max)}`);

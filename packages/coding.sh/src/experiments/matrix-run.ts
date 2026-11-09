@@ -7,7 +7,7 @@
 import { sortableId } from "../core/ids.ts";
 import type { FileEvalStore } from "../datasets/store.ts";
 import type { Case, CaseRun, Dataset, ExperimentResult, Grader, Split } from "../datasets/types.ts";
-import type { RetryPolicy } from "../jobs/retry.ts";
+import { infraStopFor, type InfraStopReport, type RetryPolicy } from "../jobs/retry.ts";
 import type { JobScope } from "../jobs/store.ts";
 import { mapPool } from "../judge/limit.ts";
 import { mulberry32 } from "../stats/prng.ts";
@@ -113,6 +113,8 @@ export interface MatrixResult {
   comparisons: Record<string, MatrixComparison>;
   /** With `reuse`: case-trials copied per cell (every cell listed, 0 included). */
   reused?: Record<string, number>;
+  /** Set when case-trials failed on infrastructure in a row (`--stop-after-infra`) and the run stopped; `status` is "cancelled". */
+  infraStop?: InfraStopReport;
 }
 
 function shuffle<T>(xs: T[], rand: () => number): T[] {
@@ -239,10 +241,13 @@ export async function runMatrixExperiment(opts: RunMatrixOpts): Promise<MatrixRe
     ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
     exclude: new Set(ids),
   });
+  // One count over every cell: case-trials that fail on infrastructure in a row stop the matrix.
+  const infraStop = infraStopFor(opts.retry);
   const envs: TrialEnv[] = cells.map((_, i) => ({
     runId: ids[i] as string,
     task: tasks[i]!,
     graders,
+    infraStop,
     ...(opts.signal ? { signal: opts.signal } : {}),
     ...(opts.drain ? { drain: opts.drain } : {}),
     ...(scopes[i] ? { job: scopes[i] } : {}),
@@ -254,7 +259,7 @@ export async function runMatrixExperiment(opts: RunMatrixOpts): Promise<MatrixRe
   let done = prior.filter(Boolean).length;
   const settled = await mapPool(jobs, opts.concurrency ?? 4, async (j, i) => {
     if (prior[i]) return prior[i];
-    if (opts.signal?.aborted || opts.drain?.aborted) return undefined;
+    if (opts.signal?.aborted || opts.drain?.aborted || infraStop?.signal.aborted) return undefined;
     const src = trialPlan.hit(j.cell, j.c, j.trial);
     if (src) {
       // The same case-trial finished in an earlier experiment: copy it, no task call.
@@ -267,7 +272,7 @@ export async function runMatrixExperiment(opts: RunMatrixOpts): Promise<MatrixRe
     if (run) opts.onProgress?.(run, cells[j.cell]!.name, ++done, jobs.length);
     return run;
   });
-  const cancelled = settled.some((r) => r === undefined);
+  const cancelled = settled.some((r) => r === undefined) || !!infraStop?.report;
   const experiments: Record<string, ExperimentResult> = {};
   const reused: Record<string, number> = {};
   for (const [i, cell] of cells.entries()) {
@@ -296,6 +301,7 @@ export async function runMatrixExperiment(opts: RunMatrixOpts): Promise<MatrixRe
       runs,
       boot: { iters: opts.bootstrapIters ?? 2000, seed: 0x5eed },
       metadata: { matrix },
+      infraStop: infraStop?.report,
     });
     if (opts.store) await storeResult(opts.store, r);
     experiments[cell.name] = r;
@@ -303,7 +309,7 @@ export async function runMatrixExperiment(opts: RunMatrixOpts): Promise<MatrixRe
   const base = experiments[plan.baseline]!;
   const raw: Record<string, Comparison> = {};
   for (const cell of cells) if (cell.name !== plan.baseline) raw[cell.name] = compareExperiments(base, experiments[cell.name]!, { force: true, iters: opts.bootstrapIters ?? 10_000 });
-  return { id: matrixId, seed, status: cancelled ? "cancelled" : "completed", plan, experiments, comparisons: holmComparisons(raw, opts.alpha), ...(opts.reuse ? { reused } : {}) };
+  return { id: matrixId, seed, status: cancelled ? "cancelled" : "completed", plan, experiments, comparisons: holmComparisons(raw, opts.alpha), ...(opts.reuse ? { reused } : {}), infraStop: infraStop?.report };
 }
 
 /** The matrix id an experiment belongs to, from `metadata.matrix`. */
