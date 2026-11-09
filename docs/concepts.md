@@ -33,7 +33,8 @@ directly. Coding-agent hooks do not see them, so most adapters recover them from
 transcript. See [Agents and OpenTelemetry](guides/agents.md). With
 [the proxy](how-to/capture-with-proxy.md), a model call also keeps the full request and response:
 system prompt, tool definitions, messages, cache use and timings. `coding.sh show <session>#n` reads
-one, and `coding.sh diff-calls` compares two.
+one, and `coding.sh diff-calls` compares two. `coding.sh cache doctor` ranks a window's cache
+breaks by cause and cost, from the same diff.
 A session's model is the one that made most of its main-thread model calls (calls outside
 subagents), not the last one seen. When more than one model made calls, `stats.models` counts the
 calls per model.
@@ -60,6 +61,14 @@ calls, its turn opens with the directive, and `stats.inheritedTokens` says how m
 it started with. Its own calls read that context from the prompt cache, so their cache reads count in
 its cost.
 
+**Harness child.** An agent started by another agent's shell tool, such as `codex exec` run from
+Claude Code's Bash tool. It is linked to that session as a child with `parent.type` `"harness"`.
+Claude Code and Codex export their session id to the commands they run
+(`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`), and the child's hooks record it as `spawnedBy` on
+its spool lines. Without that marker, a new session is linked when another session's shell call
+ran its agent's CLI, the session started while that call ran, and its cwd is the call's cwd or
+below it. Eval runs (`CODING_SH_RUN_ID`) are never linked this way.
+
 **Run.** A whole multi-agent run: a top-level agent, the subagents it spawned, and their
 subagents, as one tree. `coding.sh tree <session>` shows it from any session in it (following the
 parent ids up to the top-level agent, then back down), with per-node model, cost, tokens, duration
@@ -76,8 +85,13 @@ from the parent ids already stored, so nothing extra is recorded.
   to pass", "not done yet") or asks how to go on about a failing test is not flagged. The check
   reads the agent's text after its last tool call in the turn, with a few word patterns, not a
   model.
-- `repeated-tool-failure`: the same tool failed three times in a row with similar input.
-- `no-verification`: files changed, but no test, type check, lint or build ran.
+- `repeated-tool-failure`: the same tool failed three times in a row with similar input. Only
+  real failures count: a search that found nothing, a `test -f` that answered no or a `diff` that
+  found differences is a benign result (`stats.benignToolErrors`), and a call that was stopped is
+  an interruption (`stats.interruptedToolCalls`). Neither adds to `stats.toolErrors`.
+- `no-verification`: files changed, but no test, type check, lint or build ran. A command run from
+  a REPL or code tool's cell counts too: `bash("npm test")`, `subprocess.run(["pytest"])`,
+  `os.system(...)`, an IPython `!cargo test` line or a `%%bash` cell. Plain Python does not.
 - `compaction`: the agent's context was compacted.
 - `test-tamper`: the agent edited a test or test-runner config in a way that hides failures: it
   added a skip marker, deleted a test file while tests were failing, or changed an assertion and that
@@ -123,7 +137,9 @@ used (through the Skill tool, or by reading or running a file in the skill's fol
 `.agents`, `.codex`, `.config/opencode`, …) or inside a plugin; a `skills/` folder in source code,
 text inside a heredoc and a write to a skill file do not count. A plugin named for its one skill
 tags it once (`skill:frontend-design`, not `skill:frontend-design:frontend-design`).
-`coding.sh sessions --flag skill:pdf` lists the sessions that used the pdf skill. Text that other
+`coding.sh sessions --flag skill:pdf` lists the sessions that used the pdf skill. The call that
+loaded the skill says so on its `tool.start`: `payload.skill` names it, and `payload.skills` lists
+every name when one call loaded several (`cat` of two skills' files). Text that other
 hooks added to the context (a plugin's SessionStart notes, a UserPromptSubmit reminder) adds a
 `hook:<source>` tag: `hook:plugin:<name>`, `hook:settings`, `hook:plugin` or `hook:unknown`, and
 `stats.hookContext` counts its tokens. `coding.sh sessions --where hook:plugin:terse` lists the
@@ -190,6 +206,11 @@ and an `llm` grader asks a model.
 agreement with your pass/fail labels (Cohen's kappa) on a held-out split. Reports mark uncalibrated
 judges.
 
+**Score.** One typed value (a number, true or false, a category or text) on a session, an event,
+a dataset case or an eval run, from a person, a judge, code, the API or a monitor. A score config
+fixes a name's type and range, and a value outside it is refused. Labels are human pass or fail
+scores. See `coding.sh score` and [Scores](guides/evals.md#scores).
+
 **Paired comparison.** How `exp compare` decides. It matches cases by id, reports the mean change in
 pass rate with a paired bootstrap confidence interval, and runs McNemar's test on the cases that
 flipped. The verdict is `better` or `worse` only when the interval excludes zero and an exact
@@ -219,6 +240,38 @@ See [Your first eval](guides/evals.md#your-first-eval-in-5-minutes).
 pass^k the chance that all k pass. Both are estimated from n trials as C(n−c, k) and C(c, k) over
 C(n, k), with c passes. A task that passes some trials and fails others is **flaky**: it counts for
 pass@k and against pass^k.
+
+**Seq@K.** With `exp run --seq K`, a trial that fails is tried again with feedback on its earlier
+attempts, up to K attempts. Seq@k is the share of trials solved by attempt k. pass@k counts k
+independent attempts and Seq@k k attempts that learn from each other, and the two can rank
+configs differently, so the report prints the whole Seq@1..K curve, where its gain lands (EGS at
+attempt 2, LGS at attempt K), how often a revision repeated itself, and which protocol buys a pass
+cheaper. The pass rate stays Seq@1. See [Sequential attempts](guides/evals.md#sequential-attempts-with-feedback).
+
+**Regression to the mean.** Running a change only on the cases a baseline failed makes it look
+better even when it changes nothing, because some failures were bad luck. `exp compare` marks
+such a pair inconclusive and `--gate` holds until the baseline runs on the same cases. See
+[Running a subset](guides/evals.md#running-a-subset-failures-samples-the-first-n).
+
+**Judge-corrected delta.** Human labels on a sample of each arm's outputs correct an LLM judge's
+B − A for the judge's own errors (PPI++). See [Correcting a judge's delta](guides/evals.md#correcting-a-judges-delta-with-human-labels).
+
+**Signal validity.** Whether a trace signal (a session flag, tool errors) predicts failure beyond
+task difficulty: its AUROC within the same task and bundle, beside difficulty and length references.
+`compare --signals` prints it. See [Do the flags predict failure?](guides/evals.md#do-the-flags-predict-failure).
+
+**Plausibly best set.** With three or more configs, the ones not significantly worse than the best,
+by a paired-bootstrap multiple comparison with the best. It holds the truly best config 95% of the
+time, so a winner that is not alone in the set may be the luckiest config, not the best. `exp sweep`
+and a matrix spec in `exp run` print it.
+
+**Item difficulty.** A Rasch (1PL) or 2PL item response model fit on stored runs gives each task a
+difficulty and each config an ability. A task is most informative for a config that passes it about
+half the time. `compare --pick N --pick-by irt` runs those tasks first. See
+[Picking tasks and a budget](guides/evals.md#picking-tasks-and-a-budget).
+
+**Forgetting guard.** `exp sweep --guard` re-runs the start and winning configs on earlier suites
+and keeps the start config when the winner breaks what it solved there. See [Sweeping configs](guides/evals.md#datasets-and-experiments).
 
 **Harness bundle.** A snapshot of an agent's setup: its config files, instructions and model, and
 for Claude Code any plugins named with `--plugin`.

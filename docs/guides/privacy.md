@@ -10,13 +10,13 @@ Everything lives in `~/.coding.sh` (override it with `CODING_SH_HOME`):
 | `blobs/` | content-addressed, zstd-compressed blobs (large prompts and tool output) |
 | `spool/` | raw hook payloads waiting to be ingested |
 | `repos/` | shadow git objects for repo snapshots (your repository's refs are never touched) |
-| `bin/hook.mjs` | the hook agents run |
+| `bin/hook.sh`, `bin/hook.mjs` | the hook agents run (`hook.sh` outside Windows, which hands what it does not cover to `hook.mjs`) |
 | `backups/` | copies of every agent config file before coding.sh edited it |
 | `config.toml` | settings (`coding.sh config get` / `set`) |
 
 Store URLs are pluggable. `sqlite://` and `file://` are built in. Other schemes load a plugin
-package named `coding.sh-store-<scheme>`. This repo has `coding.sh-store-postgres` and
-`coding.sh-store-s3`, which are not published yet.
+package named `coding.sh-store-<scheme>`. `coding.sh-store-postgres`, `coding.sh-store-clickhouse`
+and `coding.sh-store-s3` are on npm.
 
 ## Sinks
 
@@ -46,7 +46,16 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
   rules catch private keys, vendor API keys and tokens (Anthropic, OpenAI, GitHub, GitLab, Slack,
   AWS, Google, Stripe, npm and more), JWTs, bearer and basic auth, and values next to secret-looking
   names. Add `redact = ["secrets", "env"]` to also replace the literal values of secret-looking
-  environment variables, and `redactPatterns` for your own regexes.
+  environment variables, and `redactPatterns` for your own regexes. The `env` rule skips
+  variables that hold a place rather than a secret (`PWD`, `OLDPWD`, names ending in `_PATH`,
+  `_DIR`, `_FILE` or `_SOCK`, such as `SSH_AUTH_SOCK`) and values that are existing paths on this
+  machine, so a path such as your working directory is not replaced wherever it appears.
+- **Personal data** is opt-in: `redact = ["secrets", "pii"]` also replaces email addresses, phone
+  numbers, card numbers, IBANs and national ids (US SSN, UK National Insurance number, Canadian
+  SIN) with `[redacted:<kind>]`. Card numbers must have a known issuer prefix and pass the Luhn
+  check, and IBANs must have their country's length and a valid check, so ids, versions, dates and
+  timestamps pass through. Each kind can be turned on alone: `phone`, `card`, `iban`,
+  `national-id`, `email`.
 - **Exposed secrets.** Redaction keeps a secret out of the store, but the agent and its model
   provider still saw it. Each session counts what was redacted by kind (`coding.sh show` prints a
   `Redacted` row), and a session that held a vendor token gets the `secret:exposed` tag:

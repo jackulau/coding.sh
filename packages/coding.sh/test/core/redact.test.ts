@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { AgentEvent, Session } from "../../src/schema/index.ts";
@@ -147,6 +148,30 @@ describe("redact: secrets", () => {
     assert.throws(() => createRedactor({ patterns: ["("] }), /redactPatterns\[0\] is not a valid regular expression/);
     assert.throws(() => createRedactor({ patterns: ["a*"] }), /matches the empty string/);
     assert.throws(() => createRedactor({ redact: ["nope"] }), /unknown redactor "nope"/);
+  });
+
+  // Gaps seen on real data (research queue RT-2). Literals are joined at run time.
+  it("RT-2: a dotted GitLab token and a pasted PAT redact whole", () => {
+    assert.equal(r.string(["glpat-", "AbCdEfGhIjKlMnOpQrStU1", ".01.abcdefghi"].join("")), "[redacted:gitlab-token]");
+    assert.equal(r.string(["here is the PAT here ya go: ", "abcD3f-ghiJkl-mnoPqr"].join("")), "here is the PAT here ya go: [redacted:prose-secret]");
+    assert.equal(r.string("the token is valid"), "the token is valid");
+    assert.equal(r.string("key: value"), "key: value");
+    const sha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+    assert.equal(r.string(`token ${sha}`), `token ${sha}`);
+    assert.equal(r.string(`${sha} token`), `${sha} token`);
+  });
+
+  it("RT-2: env redaction leaves the cwd and other places, and still redacts a key", () => {
+    const key = ["sk-", "proj-", "Xy7", "Qm2Lp9Rs4Tv8Wn3Kd6"].join("");
+    const dir = mkdtempSync(join(tmpdir(), "csh-redact-env-"));
+    const er = createRedactor({
+      redact: ["env"],
+      env: { PWD: "/Users/x/proj", OLDPWD: "/Users/x/old-proj", SESSION_MANAGER: "local/host:@/tmp/.ICE-unix/1234", AUTH_CONFIG_DIR: "/etc/auth-config", SSH_AUTH_SOCK: "/private/tmp/launch-abc/Listeners", MY_SECRET_HOME: dir, OPENAI_API_KEY: key },
+    });
+    assert.equal(er.string("edit /Users/x/proj/src/a.ts"), "edit /Users/x/proj/src/a.ts");
+    assert.equal(er.string("cd /Users/x/old-proj && ls /etc/auth-config /private/tmp/launch-abc/Listeners"), "cd /Users/x/old-proj && ls /etc/auth-config /private/tmp/launch-abc/Listeners");
+    assert.equal(er.string(`ls ${dir}/a`), `ls ${dir}/a`, "a value that is an existing directory");
+    assert.equal(er.string(`OPENAI=${key} at /Users/x/proj/src/a.ts`), "OPENAI=[redacted:env] at /Users/x/proj/src/a.ts");
   });
 
   it("redacts secret flag values in argv arrays", () => {

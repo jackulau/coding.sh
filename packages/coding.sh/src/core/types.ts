@@ -28,6 +28,10 @@ export interface SpoolLine {
   gateway?: string;
   /** Claude Code hooks: how Claude Code was launched (CLAUDE_CODE_ENTRYPOINT: `cli`, `sdk-cli` for `claude -p`, `sdk-ts`, …). */
   entrypoint?: string;
+  /** Agent sessions whose shell tool started this agent, from the session ids they export to commands
+   *  (CLAUDE_CODE_SESSION_ID, CODEX_THREAD_ID + CODEX_TOOL_CALL_ID), outermost first. May include the
+   *  line's own session; ingest links the child to the nearest other one (spool/spawned.ts). */
+  spawnedBy?: { agent: AgentId; session: string; toolCallId?: string }[];
   /** Written only by 0.1.3 hooks, on session-start and prompt lines: the repo root, HEAD commit ("" on an
    *  unborn branch) and branch at the line's cwd. Later hooks do no git work and leave it out; ingest
    *  still reads it from old spool files (core/ingest.ts). */
@@ -136,6 +140,67 @@ export interface Label {
   ts: number;
 }
 
+/** What a score is about (src/scores). */
+export type ScoreTarget = "session" | "event" | "case" | "run";
+export type ScoreDataType = "numeric" | "boolean" | "categorical" | "text";
+/** Who gave the score: a person, an LLM judge, a code check, an API client, or an online monitor. */
+export type ScoreSource = "human" | "judge" | "code" | "api" | "monitor";
+
+/**
+ * A typed score on a session, event, dataset case or eval run (src/scores).
+ * Labels are human boolean scores: putLabel/listLabels read and write these.
+ */
+export interface Score {
+  id: string;
+  target: ScoreTarget;
+  targetId: string;
+  /** The session the target belongs to (the target itself for a session). Retention deletes a session's scores with it. */
+  sessionId?: string;
+  name: string;
+  dataType: ScoreDataType;
+  /** A number (numeric), a boolean (boolean), or a string (categorical, text). */
+  value: number | boolean | string;
+  source: ScoreSource;
+  /** The ScoreConfig the value was checked against. */
+  configId?: string;
+  /** Judge version that produced it (source judge or monitor). */
+  judgeVersion?: string;
+  /** Whether that judge version passed calibration against human labels. */
+  calibrated?: boolean;
+  comment?: string;
+  by: string;
+  ts: number;
+}
+
+/** The type and allowed values of one score name (src/scores). */
+export interface ScoreConfig {
+  id: string;
+  name: string;
+  dataType: ScoreDataType;
+  /** numeric: inclusive bounds. */
+  min?: number;
+  max?: number;
+  /** categorical: the allowed values. */
+  categories?: string[];
+  description?: string;
+  ts: number;
+}
+
+/** IndexStore.listScores filter. Every field narrows. */
+export interface ScoreFilter {
+  id?: string;
+  target?: ScoreTarget;
+  targetId?: string;
+  sessionId?: string;
+  name?: string;
+  source?: ScoreSource;
+  /** ts >= since, ts < until. */
+  since?: number;
+  until?: number;
+  /** The newest this many. */
+  limit?: number;
+}
+
 /** A price-table cost for one stored event (IndexStore.setEventCosts). */
 export interface EventCost {
   id: string;
@@ -144,6 +209,28 @@ export interface EventCost {
   pricedAs?: string;
   /** Non-standard rates the call was priced at (`batch`, `long-context`, `priority+long-context`, ...). */
   priceTier?: string;
+}
+
+/** One session as metrics read it (IndexStore.metricRows): fields absent when the session has no value. */
+export interface MetricRow {
+  startedAt: number;
+  agent: string;
+  model?: string;
+  /** Repo root, else the working directory. */
+  dir?: string;
+  flags: string[];
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  costUsd?: number;
+  estimatedCostUsd?: number;
+  toolCalls: number;
+  toolErrors: number;
+  llmCalls?: number;
+  llmErrors?: number;
+  llmP95Ms?: number;
+  ttftP50Ms?: number;
 }
 
 /** The queryable index. Default: SQLite. Must be idempotent on ids. */
@@ -223,6 +310,12 @@ export interface IndexStore {
    */
   queryEvents?(q: Query, opts?: EventQueryOpts): Promise<EventPage>;
   /**
+   * Metrics (src/viewer/metrics.ts): every session matching the filter and the
+   * query, reduced to the numbers metrics add up, in any order. Without it,
+   * metrics scan listSessions and evaluate the query in memory.
+   */
+  metricRows?(q: Query, opts?: QueryOpts): Promise<MetricRow[]>;
+  /**
    * The single-writer lock `coding.sh serve` holds while it ingests. Resolves
    * undefined when another process holds it (after waiting up to waitMs, default 0).
    */
@@ -263,6 +356,17 @@ export interface IndexStore {
    */
   transaction?<T>(fn: () => Promise<T>): Promise<T>;
 
+  /**
+   * Rebuilds one session under a lock that holds across processes: reads its
+   * stored row and all its events, calls `build`, and upserts what it returns
+   * (nothing when it returns undefined), as one transaction. Concurrent writers
+   * to one session (serverless instances behind createFetchHandler) then never
+   * replace a newer rebuild with a stale one. Postgres: pg_advisory_xact_lock on
+   * the session id. Without it, rebuildSessions reads and upserts unlocked,
+   * which is safe with one writer (serve's writer lock).
+   */
+  rebuildSession?(id: string, build: (prev: Session | undefined, events: AgentEvent[]) => Session | undefined): Promise<Session | undefined>;
+
   /** Small durable key/value state (e.g. the OTLP trace → session map). */
   kvGet?(key: string): Promise<string | undefined>;
   kvSet?(key: string, value: string | undefined): Promise<void>;
@@ -296,6 +400,17 @@ export interface IndexStore {
   getExperiment?(id: string): Promise<ExperimentResult | undefined>;
   /** Newest first (id descending). `limit` 0 returns none; undefined or negative means no limit. */
   listExperiments?(filter?: { datasetId?: string; name?: string; limit?: number }): Promise<ExperimentResult[]>;
+
+  /**
+   * Typed scores (src/scores). Upsert by id. Labels are the human boolean
+   * scores (and categorical pass/fail/skip ones), so putLabel writes a score
+   * and listLabels reads them back. Newest first (ts, then id, descending).
+   */
+  putScore?(score: Score): Promise<void>;
+  listScores?(filter?: ScoreFilter): Promise<Score[]>;
+  /** Upsert by id. Sorted by name, then id. */
+  putScoreConfig?(config: ScoreConfig): Promise<void>;
+  listScoreConfigs?(): Promise<ScoreConfig[]>;
 
   putJudge?(v: JudgeVersion): Promise<void>;
   getJudge?(id: string): Promise<JudgeVersion | undefined>;
@@ -825,6 +940,32 @@ export interface RunResult {
    * when it printed nothing, when there was no verifier, and on older runs.
    */
   verifierOutput?: VerifierOutput;
+  /**
+   * Verifier isolation (runner/isolate.ts): the verifier ran in a fresh copy of
+   * the start plus the agent's changes, and these changes stayed out. Absent
+   * when isolation was off and on older runs.
+   */
+  isolation?: VerifierIsolation;
+  /** With per-run OpenTelemetry (`compare --otel`): the trace id handed to the agent in TRACEPARENT. */
+  traceId?: string;
+  /** Sequential comparisons (`compare --sequential`): which stream of tasks the run belongs to, and its 1-based position in it. */
+  sequence?: { stream: number; step: number };
+}
+
+/** What verifier isolation left out of the verified tree, and how many of the agent's changes it carried. */
+export interface VerifierIsolation {
+  /** Agent changes copied into the verified tree (merged package.json files included). */
+  carried: number;
+  /**
+   * Agent changes the verifier did not see. why: "hook" (conftest.py, *.pth, .npmrc, …),
+   * "config" (test runner or build config, restored from the start), "scripts" (a
+   * package.json whose scripts or test config were restored; its other edits stay),
+   * "verifier" (a file the verifier command runs), "dependency" (node_modules,
+   * site-packages, .venv), "symlink" (points out of the tree), "special" (FIFO, socket).
+   */
+  stripped: { path: string; why: "hook" | "config" | "scripts" | "verifier" | "dependency" | "symlink" | "special"; change: "add" | "modify" | "delete" }[];
+  /** Set when the start copy could not be made, so the verifier ran in the agent's tree. */
+  skipped?: string;
 }
 
 /** What a verifier printed, kept on its run. Each field is absent when that stream was empty. */

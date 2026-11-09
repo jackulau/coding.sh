@@ -68,6 +68,22 @@ describe("derail detection", () => {
   });
 
   describe("failure-streak", () => {
+    it("does not count an exit that is an answer: searches that found nothing, probes, files that differ", () => {
+      reset();
+      const noMatch = Array.from({ length: 6 }, (_, i) => call("Bash", { command: `rg -n symbol${i} src` }, { ok: false, output: "Exit code 1" })).flat();
+      assert.deepEqual(flags(noMatch), []);
+      reset();
+      const probes = [`test -f a.txt`, `command -v pnpm`, `grep -rn TODO lib`, `diff a.txt b.txt`, `rg foo src`, `test -d out`].flatMap((command) => call("Bash", { command }, { ok: false, output: "Exit code 1" }));
+      assert.deepEqual(flags(probes), []);
+      reset();
+      // A real failure between answers is still one failure, not a streak; five real ones in a row are.
+      const mixed = [...noMatch.slice(0, 4), ...call("Bash", { command: "npx vitest run" }, { ok: false, output: "Exit code 1\nFAIL src/a.test.ts" }), ...noMatch.slice(4, 8)];
+      assert.deepEqual(flags(mixed), []);
+      reset();
+      const real = Array.from({ length: 5 }, () => call("Bash", { command: "rg foo missing_dir" }, { ok: false, output: "Exit code 2\nrg: missing_dir: No such file or directory (os error 2)" })).flat();
+      assert.ok(flags(real).includes("failure-streak"));
+    });
+
     it("flags five failed calls in a row, not four, and not user interrupts", () => {
       reset();
       const five = Array.from({ length: 5 }, (_, i) => call("Bash", { command: `cmd${i}` }, { ok: false })).flat();

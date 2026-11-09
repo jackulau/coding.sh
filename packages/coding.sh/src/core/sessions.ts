@@ -13,7 +13,9 @@ import { detectTestTamper, foldTamper, tamperState, type TamperState } from "./i
 import { cacheBreakState, cacheBreaksOf, cacheUnderused, foldCacheBreaks, type CacheBreakState } from "./cache-breaks.ts";
 import { foldSkills, skillFlags, skillState, skillUseOf, type SkillState } from "./skills-use.ts";
 import { foldHookContext, hookContextFlags, hookContextOf, hookContextState, type HookContextState } from "./hook-context.ts";
+import { shellCommandsInCode } from "./cells.ts";
 import { claimsSuccess, reportsFailure } from "./failure-report.ts";
+import { failureState, foldFailure, type FailureClass, type FailureState } from "./failures.ts";
 import { foldWaste, wasteState, wasteStatsOf, type WasteState } from "./waste.ts";
 import { foldModels, mainModelOf, MODEL_FALLBACK, MODEL_SWITCH, modelFlags, modelState, modelSwitchOf, modelsOf, REFUSAL, type ModelState } from "./models.ts";
 import { exposesSecret, foldRedactions, redactionsOf, redactionState, SECRET_EXPOSED, type RedactionState } from "./redaction-stats.ts";
@@ -86,7 +88,11 @@ const VERIFY_COMMAND = new RegExp(
   "i",
 );
 
-/** Extracts a shell command from common tool input shapes across agents. */
+/**
+ * Extracts a shell command from common tool input shapes across agents. A REPL
+ * cell (`{code}`, no command key) gives the shell commands its code runs
+ * (core/cells.ts), joined with " && ", or undefined when it runs none.
+ */
 export function commandOf(input: unknown): string | undefined {
   if (typeof input === "string") return input;
   if (typeof input !== "object" || input === null) return undefined;
@@ -95,6 +101,10 @@ export function commandOf(input: unknown): string | undefined {
     const v = o[k];
     if (typeof v === "string") return v;
     if (Array.isArray(v) && v.every((x) => typeof x === "string")) return v.join(" ");
+  }
+  if (typeof o.code === "string") {
+    const cmds = shellCommandsInCode(o.code);
+    if (cmds.length) return cmds.join(" && ");
   }
   return undefined;
 }
@@ -426,7 +436,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * new derivation. A new or retyped sub-state changes the stamp by itself; a
  * new optional field or a change of meaning still needs the bump.
  */
-export const SESSION_FOLD_VERSION = 15; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context).
+export const SESSION_FOLD_VERSION = 16; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context). 16: tool failures classified (core/failures.ts): toolErrors counts real ones, stats.benignToolErrors and stats.interruptedToolCalls the rest, repeated-tool-failure and phase toolErrors skip them; a REPL cell's bash()/subprocess commands count as verification (core/cells.ts).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -485,7 +495,14 @@ export interface SessionState {
   toolIds: Set<string>;
   idlessStarts: number;
   idlessEnds: number;
+  /** Failed tool calls that are real failures (core/failures.ts). */
   toolErrors: number;
+  /** Failed tool calls whose exit 1 is an answer (no match, a probe, files differ). */
+  benignToolErrors: number;
+  /** Tool calls the user or the harness stopped. */
+  interruptedToolCalls: number;
+  /** Started shell commands, to classify their failed ends. */
+  failures: FailureState;
   llmErrors?: LlmErrors;
   lastTest?: { passed: number; failed: number };
   title?: string;
@@ -543,6 +560,9 @@ export function sessionState(): SessionState {
     idlessStarts: 0,
     idlessEnds: 0,
     toolErrors: 0,
+    benignToolErrors: 0,
+    interruptedToolCalls: 0,
+    failures: failureState(),
     usage: usageState(),
     latency: latencyState(),
     flags: flagState(),
@@ -666,6 +686,7 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
     const { gitBranch, gitCommit, git } = e.payload;
     s.gitStart = { gitBranch, gitCommit, git };
   }
+  const failure = foldFailure(s.failures, e);
   const proxyCall = isProxyCall(e);
   if (proxyCall) s.sansProxy ??= structuredClone({ usage: s.usage, latency: s.latency, outline: s.outline, cacheBreaks: s.cacheBreaks });
   else if (e.kind === "llm.call" && !isEnrichment(e)) s.otherCalls = true;
@@ -673,15 +694,15 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
   if (sans) {
     foldUsage(sans.usage, e);
     foldLatency(sans.latency, e);
-    foldOutline(sans.outline, e, index);
+    foldOutline(sans.outline, e, index, failure);
     foldCacheBreaks(sans.cacheBreaks, e);
   }
   foldUsage(s.usage, e);
   foldLatency(s.latency, e);
-  foldFlags(s.flags, e);
+  foldFlags(s.flags, e, failure?.cls);
   if (s.flags.tamper.needsEvents) s.simple = false;
   foldDerails(s.derails, e, index);
-  foldOutline(s.outline, e, index);
+  foldOutline(s.outline, e, index, failure);
   foldWaste(s.waste, e);
   foldCacheBreaks(s.cacheBreaks, e);
   foldSkills(s.skills, e);
@@ -751,7 +772,11 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
       if (typeof id === "string" && id) s.toolIds.add(id);
       else if (e.kind === "tool.start") s.idlessStarts++;
       else s.idlessEnds++;
-      if (e.kind === "tool.end" && e.payload.ok === false) s.toolErrors++;
+      if (e.kind === "tool.end" && e.payload.ok === false) {
+        if (!failure || failure.cls === "real") s.toolErrors++;
+        else if (failure.cls === "benign") s.benignToolErrors++;
+        else s.interruptedToolCalls++;
+      }
       break;
     }
     case "llm.call":
@@ -816,6 +841,8 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
     },
     flags: flagsOf(s.flags, derails, sorted),
   };
+  if (s.benignToolErrors) session.stats.benignToolErrors = s.benignToolErrors;
+  if (s.interruptedToolCalls) session.stats.interruptedToolCalls = s.interruptedToolCalls;
   if (durable) {
     session.stats.durable = durable;
     session.flags.push(...durableFlags(durable));
@@ -1069,9 +1096,10 @@ export function writesToolCallAsText(text: string): boolean {
   return text.includes("<invoke name=") && TEXT_TOOL_CALL.test(text.replace(CODE_BLOCK, ""));
 }
 
-function foldFlags(s: FlagState, e: AgentEvent): void {
+/** `failure`: how a failed tool.end failed (core/failures.ts); undefined counts it as real. */
+function foldFlags(s: FlagState, e: AgentEvent, failure?: FailureClass): void {
   foldPremature(s.premature, e);
-  foldRepeatedFailure(s.repeated, e);
+  foldRepeatedFailure(s.repeated, e, 3, failure);
   foldTamper(s.tamper, e);
   foldUnapproved(s.unapproved, e);
   if (e.kind === "file.change") s.fileChange = true;
@@ -1111,7 +1139,8 @@ export function isEmptySession(s: Pick<Session, "stats">): boolean {
 export function detectFlags(events: AgentEvent[], derails?: readonly Derail[]): string[] {
   const sorted = byTime(events);
   const s = flagState();
-  for (const e of sorted) foldFlags(s, e);
+  const failures = failureState();
+  for (const e of sorted) foldFlags(s, e, foldFailure(failures, e)?.cls);
   return flagsOf(s, derails ?? detectDerails(sorted), sorted);
 }
 
@@ -1201,7 +1230,7 @@ interface RepeatedFailureState {
 
 const repeatedFailureState = (): RepeatedFailureState => ({ inputs: new Map(), streaks: new Map(), found: false });
 
-function foldRepeatedFailure(s: RepeatedFailureState, e: AgentEvent, threshold = 3): void {
+function foldRepeatedFailure(s: RepeatedFailureState, e: AgentEvent, threshold = 3, failure?: FailureClass): void {
   if (s.found) return;
   const id = typeof e.payload.toolUseId === "string" ? e.payload.toolUseId : undefined;
   if (e.kind === "tool.start" && id) {
@@ -1215,6 +1244,8 @@ function foldRepeatedFailure(s: RepeatedFailureState, e: AgentEvent, threshold =
     s.streaks.delete(tool);
     return;
   }
+  // No match, a probe, files that differ, a call the user stopped: not a failure to retry, and no success either.
+  if (failure !== undefined && failure !== "real") return;
   const input = e.payload.input;
   const sig = input !== undefined && input !== null ? signature(tool, input) : ((id ? s.inputs.get(id) : undefined) ?? signature(tool, input ?? undefined));
   const prev = s.streaks.get(tool);
@@ -1228,11 +1259,16 @@ function foldRepeatedFailure(s: RepeatedFailureState, e: AgentEvent, threshold =
   s.streaks.set(tool, { count, sig });
 }
 
-/** ≥3 consecutive failures of the same tool with similar input (the agent is stuck retrying). */
+/**
+ * ≥3 consecutive real failures of the same tool with similar input (the agent
+ * is stuck retrying). Benign failures (`rg` finding nothing) and interrupted
+ * calls are skipped (core/failures.ts).
+ */
 export function detectRepeatedToolFailure(sorted: AgentEvent[], threshold = 3): boolean {
   const s = repeatedFailureState();
+  const failures = failureState();
   for (const e of sorted) {
-    foldRepeatedFailure(s, e, threshold);
+    foldRepeatedFailure(s, e, threshold, foldFailure(failures, e)?.cls);
     if (s.found) return true;
   }
   return false;

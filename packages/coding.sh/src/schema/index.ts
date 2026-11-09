@@ -310,7 +310,16 @@ export interface Session {
     events: number;
     turns: number;
     toolCalls: number;
+    /**
+     * Tool calls that failed for real (core/failures.ts). A shell command whose
+     * exit 1 is an answer (`rg` found nothing, `test -f` was false, `diff` saw a
+     * difference) and a call the user stopped are counted apart, below.
+     */
     toolErrors: number;
+    /** Failed tool calls whose exit 1 is an answer: no match, a probe, files that differ. Absent when none. */
+    benignToolErrors?: number;
+    /** Tool calls the user or the harness stopped (Ctrl-C, a rejected prompt). Absent when none. */
+    interruptedToolCalls?: number;
     filesChanged: number;
     testsPassed?: number;
     testsFailed?: number;

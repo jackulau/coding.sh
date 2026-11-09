@@ -12,10 +12,18 @@ grouped by area, with links to the docs for the details.
 ### Added
 
 - **Privacy.** `CODING_SH_PURGE_WAIT_MS` sets how long `purge` waits for another process's read of the index or the blob pack before it says which file still holds the old bytes. The defaults stay 10 s before the VACUUM and 5 s after it. [Configuration](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md#paths-and-stores).
+- **Export.** `coding.sh export --evidence <dir>` writes each matching session as a folder of files: `index.md` with stats and a timeline, `session.json`, `events.jsonl`, and one file per tool call with its input and full output. Everything is redacted first, files are size-capped, and the same store gives the same bytes. [Query and export](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md#evidence-folders).
+- **Privacy.** An opt-in PII pack: `capture.redact = ["secrets", "pii"]` also redacts email addresses, phone numbers, card numbers (issuer prefix and Luhn check), IBANs (country length and mod 97) and national ids (US SSN, UK NINO, Canadian SIN). Each kind (`phone`, `card`, `iban`, `national-id`, `email`) can be turned on alone. [Privacy](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#privacy).
+
+### Changed
+
+- **Sessions.** `stats.toolErrors`, `repeated-tool-failure` and the `failure-streak` derail count only real failures. A search that found nothing (`grep`, `rg` exiting 1 with no output), a probe that answered no (`test -f`, `command -v`) and a `diff` that found differences are counted in the new `stats.benignToolErrors`, and a stopped call in `stats.interruptedToolCalls`. Stored sessions are counted again on the next ingest. [API](https://github.com/jackulau/coding.sh/blob/main/docs/reference/api.md#get-apisessionsid).
+- **Sessions.** A shell command run from a REPL or code tool's cell (`bash("npm test")`, `subprocess.run(["pytest"])`, `os.system`, an IPython `!` line, a `%%bash` cell) counts as verification for `no-verification`, as the same command in a shell tool does. [Concepts](https://github.com/jackulau/coding.sh/blob/main/docs/concepts.md).
 
 ### Fixed
 
 - **Privacy.** A purge given a wait (`CODING_SH_PURGE_WAIT_MS`, or `waitMs` in code) now keeps to it while another process reads the index. The checkpoint before the VACUUM used to wait the full 10 s whatever wait was given. [Privacy](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md).
+- **Privacy.** The `env` redactor no longer replaces `PWD`, `OLDPWD` or variables named `*_PATH`, `*_DIR`, `*_FILE` or `*_SOCK`, or any value that is an existing path, so the working directory stopped turning into `[redacted:env]` in every path. [Privacy](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#privacy).
 
 ## [0.1.5] - 2026-11-09
 

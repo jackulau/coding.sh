@@ -1,6 +1,7 @@
 // Redaction runs before anything is written (index, blobs, sinks). Rules are
 // tuned for precision: they key on vendor prefixes or on an explicit secret
 // name next to the value, so ordinary code, paths and sha hashes pass through.
+import { statSync } from "node:fs";
 import type { AgentEvent, Session } from "../schema/index.ts";
 
 export interface RedactRule {
@@ -366,6 +367,99 @@ export function emailRules(): RedactRule[] {
   return [{ kind: "email", pattern: /(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@(?!\d+x\.)[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?<=\.[A-Za-z]{2,})(?![A-Za-z0-9-])/g }];
 }
 
+// ---------------------------------------------------------------- PII pack
+//
+// Opt-in personal data rules (capture.redact: "pii", or one of PII_KINDS). Each
+// candidate is checked before it is replaced, so ids, versions and timestamps
+// that look like numbers pass through: a card number needs a known issuer prefix,
+// a grouping a card uses and a valid Luhn check digit; an IBAN a known country,
+// its length and the mod-97 check; a phone number a leading + with 8 to 15
+// digits, or the North American (555) 123-4567 / 555-123-4567 shape.
+
+/** The PII rule sets, by the name capture.redact takes. "pii" turns on all of them. */
+export const PII_KINDS = ["email", "phone", "card", "iban", "national-id"] as const;
+export type PiiKind = (typeof PII_KINDS)[number];
+
+/** Luhn check over a digit string. */
+export function luhnValid(digits: string): boolean {
+  let sum = 0;
+  for (let i = 0; i < digits.length; i++) {
+    let d = digits.charCodeAt(digits.length - 1 - i) - 48;
+    if (i % 2 === 1) {
+      d *= 2;
+      if (d > 9) d -= 9;
+    }
+    sum += d;
+  }
+  return sum % 10 === 0;
+}
+
+/** Issuer prefixes and lengths: Visa, Mastercard, Amex, Discover, JCB, Diners, UnionPay, Maestro. */
+const CARD_ISSUER = /^(?:4\d{12}(?:\d{3}){0,2}|5[1-5]\d{14}|2(?:2[2-9]|[3-6]\d|7[01])\d{13}|2720\d{12}|3[47]\d{13}|6(?:011|5\d\d|4[4-9]\d)\d{12,15}|35(?:2[89]|[3-8]\d)\d{12,15}|3(?:0[0-5]|[689]\d)\d{11,16}|62\d{14,17}|(?:5018|5020|5038|6304|6759|676[1-3])\d{8,15})$/;
+
+/** A card number's digits as people write them: unbroken, or in groups of 4 (Amex 4-6-5, Diners 4-6-4), one separator. */
+function isCardNumber(m: string): boolean {
+  const digits = m.replace(/[ -]/g, "");
+  if (digits.length < 13 || digits.length > 19 || !CARD_ISSUER.test(digits) || /^(\d)\1+$/.test(digits)) return false;
+  const seps = m.match(/[ -]/g);
+  if (seps) {
+    if (new Set(seps).size > 1) return false;
+    const groups = m.split(/[ -]/).map((g) => g.length).join(",");
+    if (!/^(?:4,)+[1-4]$/.test(groups) && groups !== "4,6,5" && groups !== "4,6,4") return false;
+  }
+  return luhnValid(digits);
+}
+
+/** IBAN lengths by country (ISO 13616 registry). */
+const IBAN_LENGTH: Record<string, number> = {
+  AD: 24, AE: 23, AL: 28, AT: 20, AZ: 28, BA: 20, BE: 16, BG: 22, BH: 22, BR: 29, BY: 28, CH: 21, CR: 22, CY: 28, CZ: 24, DE: 22, DK: 18, DO: 28, EE: 20, EG: 29,
+  ES: 24, FI: 18, FO: 18, FR: 27, GB: 22, GE: 22, GI: 23, GL: 18, GR: 27, GT: 28, HR: 21, HU: 28, IE: 22, IL: 23, IQ: 23, IS: 26, IT: 27, JO: 30, KW: 30, KZ: 20,
+  LB: 28, LC: 32, LI: 21, LT: 20, LU: 20, LV: 21, MC: 27, MD: 24, ME: 22, MK: 19, MR: 27, MT: 31, MU: 30, NL: 18, NO: 15, PK: 24, PL: 28, PS: 29, PT: 25, QA: 29,
+  RO: 24, RS: 22, SA: 24, SC: 31, SE: 24, SI: 19, SK: 24, SM: 27, ST: 25, SV: 28, TL: 23, TN: 24, TR: 26, UA: 29, VA: 22, VG: 24, XK: 20,
+};
+
+/** An IBAN: a known country, that country's length, and the mod-97 check. */
+export function ibanValid(m: string): boolean {
+  const iban = m.replace(/ /g, "");
+  if (IBAN_LENGTH[iban.slice(0, 2)] !== iban.length) return false;
+  const moved = iban.slice(4) + iban.slice(0, 4);
+  let rem = 0;
+  for (const c of moved) {
+    const v = c >= "A" ? String(c.charCodeAt(0) - 55) : c;
+    for (const d of v) rem = (rem * 10 + (d.charCodeAt(0) - 48)) % 97;
+  }
+  return rem === 1;
+}
+
+/** A + phone number's digit count (E.164 allows at most 15). */
+const phoneDigits = (m: string): number => m.replace(/\D/g, "").length;
+
+/** The rules of one PII kind. */
+export function piiRules(kinds: readonly string[] = PII_KINDS): RedactRule[] {
+  const want = new Set(kinds);
+  const rules: RedactRule[] = [];
+  const checked = (kind: string, pattern: RegExp, ok: (m: string) => boolean): RedactRule => ({ kind, pattern, replace: (m) => (ok(m) ? marker(kind) : m) });
+  if (want.has("email")) rules.push(...emailRules());
+  // Unbroken, 4-4-4-4(-3), or Amex/Diners 4-6-5/4-6-4: a looser shape would swallow a number before the card.
+  if (want.has("card")) rules.push(checked("card", /(?<![\w.+-])(?:\d{13,19}|\d{4}([ -])(?:\d{6}\1\d{4,5}|\d{4}\1\d{4}\1\d{1,4}(?:\1\d{1,3})?))(?![\w-]|\.\d)/g, isCardNumber));
+  if (want.has("iban")) rules.push(checked("iban", /(?<![A-Za-z0-9])[A-Z]{2}\d{2}(?: ?[A-Z0-9]{4}){2,7}(?: ?[A-Z0-9]{1,3})?(?![A-Za-z0-9])/g, ibanValid));
+  if (want.has("national-id")) {
+    // US SSN, dashed (an undashed nine-digit number is anything): no 000, 666 or 9xx area, no 00 group, no 0000 serial.
+    rules.push({ kind: "national-id", pattern: /(?<![\w.-])(?!000|666|9\d\d)\d{3}-(?!00)\d{2}-(?!0000)\d{4}(?![\w-]|\.\d)/g });
+    // UK National Insurance number: two prefix letters (not BG, GB, KN, NK, NT, TN, ZZ), six digits, a suffix A-D.
+    rules.push({ kind: "national-id", pattern: /(?<![A-Za-z0-9])(?!BG|GB|KN|NK|NT|TN|ZZ)[A-CEGHJ-PR-TW-Z][A-CEGHJ-NPR-TW-Z] ?\d{2} ?\d{2} ?\d{2} ?[A-D](?![A-Za-z0-9])/g });
+    // Canadian SIN, grouped 3-3-3 with a valid Luhn digit.
+    rules.push(checked("national-id", /(?<![\w.-])[1-9]\d{2}([ -])\d{3}\1\d{3}(?![\w-]|\.\d)/g, (m) => luhnValid(m.replace(/\D/g, ""))));
+  }
+  if (want.has("phone")) {
+    // +<country> then 7-14 more digits in groups; a "+05:30" offset or "+1.2.3" has too few digits.
+    rules.push(checked("phone", /(?<![\w+])\+\d{1,3}(?:[ .-]?\(\d{1,4}\))?(?:[ .-]?\d{1,5}){2,5}(?![\w-]|\.\d)/g, (m) => phoneDigits(m) >= 8 && phoneDigits(m) <= 15));
+    // North American: (555) 123-4567, 555-123-4567, 555.123.4567 (one separator throughout).
+    rules.push({ kind: "phone", pattern: /(?<![\w.+-])(?:\(\d{3}\) ?\d{3}-\d{4}|\d{3}([-.])\d{3}\1\d{4})(?![\w-]|\.\d)/g });
+  }
+  return rules;
+}
+
 /** Redacts what coding.sh prints or returns as a summary: the secret rules, then emails. */
 let shown: Redactor | undefined;
 export function redactShown(s: string): string {
@@ -373,12 +467,35 @@ export function redactShown(s: string): string {
   return shown.string(s);
 }
 
-/** Rules that replace literal values of secret-looking environment variables. */
+/**
+ * Env names that match the secret words but hold a place, not a secret: the
+ * working directory (PWD, OLDPWD), the X session manager's socket, and
+ * *_PATH, *_DIR, *_FILE, *_SOCK locations (SSH_AUTH_SOCK, AUTH_CONFIG_DIR).
+ */
+const ENV_PLACE_NAME = /^(?:OLD)?PWD$|^SESSION_MANAGER$|_(?:PATH|DIR|FILE|SOCK)$/i;
+
+/** True when `value` names a file or directory that exists: a location, which redacting would cut out of every path. */
+function isExistingPath(value: string): boolean {
+  if (!/^(?:\/|[A-Za-z]:[\\/])/.test(value) || value.includes("\n")) return false;
+  try {
+    return statSync(value, { throwIfNoEntry: false }) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Rules that replace literal values of secret-looking environment variables.
+ * Names that hold a place (ENV_PLACE_NAME) and values that are an existing file
+ * or directory are left out: the cwd in PWD would otherwise turn every path
+ * under it into `[redacted:env]/src/a.ts`.
+ */
 export function envRules(env: NodeJS.ProcessEnv = process.env): RedactRule[] {
   const values: string[] = [];
   for (const [name, value] of Object.entries(env)) {
     if (!value || value.length < 8) continue;
     if (!/KEY|TOKEN|SECRET|PASSW|PWD|CREDENTIAL|AUTH|COOKIE|SESSION/i.test(name)) continue;
+    if (ENV_PLACE_NAME.test(name) || isExistingPath(value)) continue;
     values.push(value);
   }
   if (!values.length) return [];
@@ -402,8 +519,11 @@ export function patternRules(patterns: readonly string[]): RedactRule[] {
   });
 }
 
+/** Names capture.redact takes. */
+export const REDACTORS = ["secrets", "env", "pii", ...PII_KINDS.filter((k) => k !== "email"), "email", "none"] as const;
+
 export interface RedactOptions {
-  /** Built-in redactors: "secrets", "env", "email". Unknown names throw. */
+  /** Built-in redactors (REDACTORS): "secrets", "env", "email", "pii" (every PII rule) or one PII kind. Unknown names throw. */
   redact?: readonly string[];
   patterns?: readonly string[];
   env?: NodeJS.ProcessEnv;
@@ -411,13 +531,17 @@ export interface RedactOptions {
 
 export function createRedactor(opts: RedactOptions = {}): Redactor {
   const rules: RedactRule[] = [];
+  const pii = new Set<string>();
   for (const name of opts.redact ?? ["secrets"]) {
     if (name === "secrets") rules.push(...secretRules());
     else if (name === "env") rules.push(...envRules(opts.env));
-    else if (name === "email") rules.push(...emailRules());
+    else if (name === "pii") for (const k of PII_KINDS) pii.add(k);
+    else if ((PII_KINDS as readonly string[]).includes(name)) pii.add(name);
     else if (name === "none") continue;
-    else throw new Error(`unknown redactor ${JSON.stringify(name)} in capture.redact (expected "secrets", "env" or "email")`);
+    else throw new Error(`unknown redactor ${JSON.stringify(name)} in capture.redact (expected ${REDACTORS.map((r) => JSON.stringify(r)).join(", ")})`);
   }
+  // In PII_KINDS order (cards before phone numbers), after the secret rules.
+  if (pii.size) rules.push(...piiRules(PII_KINDS.filter((k) => pii.has(k))));
   rules.push(...patternRules(opts.patterns ?? []));
 
   const string = (s: string, tally?: RedactionTally): string => {
@@ -669,6 +793,11 @@ export function sessionToMetadata(s: Session): Session {
   const out: Session = { ...s, stats: { ...s.stats }, flags: [...s.flags] };
   delete out.title;
   delete out.cwd;
+  // A model error message can quote the prompt; keep the count and status code.
+  if (out.stats.llmErrors?.error !== undefined) {
+    const { error: _error, ...rest } = out.stats.llmErrors;
+    out.stats.llmErrors = rest;
+  }
   if (s.repo) {
     out.repo = { root: "", head: s.repo.head };
     if (s.repo.snapshot) out.repo.snapshot = s.repo.snapshot;

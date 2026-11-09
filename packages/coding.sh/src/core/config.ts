@@ -10,6 +10,7 @@ import type { Config, SinkConfig } from "./types.ts";
 import { PRICE_TIERS, type Price, type Prices, type Rates, type TierRates } from "./pricing.ts";
 import { dataHome, expandHome, paths } from "./paths.ts";
 import { parseToml, stringifyToml, TomlError, type TomlTable } from "./toml.ts";
+import { REDACTORS } from "./redact.ts";
 
 export class ConfigError extends Error {
   readonly file?: string;
@@ -369,8 +370,8 @@ function applyCapture(out: Config, r: Reader, how: "replace" | "union", file: st
   const exclude = r.strings(capture, "exclude", "capture.exclude");
   const maxInline = r.int(capture, "maxInlineBytes", "capture.maxInlineBytes", 256);
   for (const name of redact ?? []) {
-    if (!["secrets", "env", "email", "none"].includes(name)) {
-      throw new ConfigError(`capture.redact: unknown redactor ${JSON.stringify(name)} (expected "secrets", "env", "email" or "none")`, file);
+    if (!(REDACTORS as readonly string[]).includes(name)) {
+      throw new ConfigError(`capture.redact: unknown redactor ${JSON.stringify(name)} (expected ${REDACTORS.map((r) => JSON.stringify(r)).join(", ")})`, file);
     }
   }
   for (const [i, src] of (patterns ?? []).entries()) {

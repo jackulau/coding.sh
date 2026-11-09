@@ -9,6 +9,7 @@
 // lists them): a flag should mean "look here", not "an agent did agent things".
 import { createHash } from "node:crypto";
 import type { AgentEvent } from "../schema/index.ts";
+import { failureState, foldFailure, type FailureState, type ToolFailure } from "./failures.ts";
 
 export const DERAIL_FLAGS = {
   /** The same tool call (tool + input) over and over with nothing changing in between. */
@@ -34,7 +35,7 @@ export const DERAIL_THRESHOLDS = {
   loopRepeats: 5,
   /** …within this many consecutive calls of one agent, with no successful edit among them. */
   loopWindow: 10,
-  /** failure-streak: this many failed tool calls in a row (user interrupts do not count). */
+  /** failure-streak: this many failed tool calls in a row (user interrupts and exits that are an answer, core/failures.ts, do not count). */
   failureStreak: 5,
   /** churn: this many reverts (an edit that undoes an earlier one) of one file… */
   churnReverts: 2,
@@ -133,6 +134,8 @@ interface Call extends At {
   out?: string;
   ok?: boolean;
   interrupted: boolean;
+  /** A failed call whose exit is an answer (`rg` found nothing, `test -f` was false): not a failure (core/failures.ts). */
+  benign: boolean;
   label: string;
   poll: boolean;
   editTool: boolean;
@@ -231,6 +234,8 @@ export interface DerailState {
   queue: (Call | Ev)[];
   loop: Map<string, LoopStream>;
   fail: Map<string, FailStream>;
+  /** Shell commands of open calls, to tell a real failure from an exit that is an answer. */
+  failures: FailureState;
   churn: Map<string, ChurnFile>;
   churnOut: Episode[];
   np: NoProgress;
@@ -371,6 +376,7 @@ export function derailState(): DerailState {
     queue: [],
     loop: new Map(),
     fail: new Map(),
+    failures: failureState(),
     churn: new Map(),
     churnOut: [],
     np: { len: 0, seen: new Set(), repeats: 0, filled: false, bestFailed: null, bestPassed: -1, flagged: false, out: [] },
@@ -391,7 +397,7 @@ export function foldDerails(s: DerailState, e: AgentEvent, index: number, t: Der
   stallStep(s.stall, e, index, t);
   thrashStep(s.thrash, e, index, t);
   if (e.kind === "file.change") s.anyFileChange = true;
-  if ((e.kind === "tool.start" || e.kind === "tool.end") && e.payload.wrapper !== true) joinCall(s, e, index);
+  if ((e.kind === "tool.start" || e.kind === "tool.end") && e.payload.wrapper !== true) joinCall(s, e, index, foldFailure(s.failures, e));
   else if (!e.subagentId) {
     const ev = npEvent(e);
     if (ev) s.queue.push(ev);
@@ -439,7 +445,7 @@ export function detectDerails(sorted: readonly AgentEvent[], t: DerailThresholds
 
 // ---------------------------------------------------------------- calls
 
-function joinCall(s: DerailState, e: AgentEvent, index: number): void {
+function joinCall(s: DerailState, e: AgentEvent, index: number, failure: ToolFailure | undefined): void {
   const id = str(e.payload.toolUseId);
   const key = id ? `${e.subagentId ?? ""}\u0000${id}` : undefined;
   const tool = str(e.payload.tool) ?? "?";
@@ -469,6 +475,7 @@ function joinCall(s: DerailState, e: AgentEvent, index: number): void {
     c.ok = ok;
     c.out = out;
     c.interrupted = e.payload.interrupted === true;
+    c.benign = failure?.cls === "benign";
     c.endTs = e.ts;
     c.settled = true;
     return;
@@ -478,6 +485,7 @@ function joinCall(s: DerailState, e: AgentEvent, index: number): void {
   o.ok = ok;
   o.out = out;
   o.interrupted = e.payload.interrupted === true;
+  o.benign = failure?.cls === "benign";
   o.settled = true;
   s.queue.push(o);
 }
@@ -500,6 +508,7 @@ function newCall(s: DerailState, e: AgentEvent, index: number, tool: string, inp
     tool,
     sig,
     interrupted: false,
+    benign: false,
     label: label(tool, input),
     poll: POLL_TOOLS.has(tool) || POLL_NAME.test(base) || UI_SERVER.test(tool) || UI_TOOL.test(base) || WAIT_COMMAND.test(cmd),
     editTool,
@@ -604,7 +613,7 @@ function closeRun(f: FailStream, t: DerailThresholds): void {
 
 function failStep(f: FailStream, c: Call, t: DerailThresholds): void {
   if (c.ok === undefined) return; // still running or its end was lost
-  if (c.ok === false && !c.interrupted) f.run.push({ ...atOf(c), tool: c.tool });
+  if (c.ok === false && !c.interrupted && !c.benign) f.run.push({ ...atOf(c), tool: c.tool });
   else closeRun(f, t);
 }
 
