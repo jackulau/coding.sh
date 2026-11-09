@@ -19,7 +19,7 @@ agent's hook config, payload ids and known breakage, see [ADAPTERS.md](../ADAPTE
 | Pi | extension + transcript | yes | no | Verified on a real install (1.5.0) |
 | Amp | plugin | no | no | Fixture-tested. Not run live: `amp` needs an ampcode.com login and has no local model option. |
 | T3 Code | reads its local store on every ingest | yes | no | Verified on a real install (0.1.7, driving Pi) |
-| Aider | wrapper (`coding.sh run -- aider …`); eval runs parse its token and cost lines | no | no | Verified on a real install (0.86.2) |
+| Aider | wrapper (`coding.sh run -- aider …`), with each reply's tokens and cost read from Aider's analytics log while it runs; eval runs parse its token and cost lines | no | no | Verified on a real install (0.86.2) |
 | Anything else | `coding.sh run -- <cmd>`: shadow-git snapshots before and after | no | no | Tested |
 
 What the statuses mean:

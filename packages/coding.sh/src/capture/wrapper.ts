@@ -15,6 +15,8 @@
 //   file.change:   { sessionId, path, op: "add"|"modify"|"delete", additions, deletions, binary? }
 //   session.end:   { sessionId, exitCode, signal?, durationMs, error?, repo?: RepoState,
 //                    startSnapshot?, endSnapshot?, patch? }   (large → side file via appendSpool)
+//   llm.usage:     { sessionId, seq, model?, usage: Usage, sessionCostUsd? }   (Aider only: one per
+//                    model reply, read from Aider's analytics log while it runs; see aider.ts)
 //
 // Signals: SIGTERM/SIGHUP/SIGQUIT received by the wrapper are forwarded to the
 // child. SIGINT is forwarded too, except when stdin is a TTY: then Ctrl-C has
@@ -38,6 +40,8 @@ import { redactArgv } from "../core/redact.ts";
 import { diffSnapshots, snapshot } from "../core/snapshot.ts";
 import type { DiffResult, SnapshotOptions } from "../core/snapshot.ts";
 import { appendSpool, isDisabled, logSpoolError } from "../spool/write.ts";
+import { aiderUsageTap } from "./aider.ts";
+import type { AiderUsageRecord, AiderUsageTap } from "./aider.ts";
 
 export interface WrapRunOptions {
   cmd: string;
@@ -89,10 +93,10 @@ export async function wrapRunDetailed(opts: WrapRunOptions): Promise<WrapRunResu
   const gateway = gatewayFromEnv(env);
   const snapOpts: SnapshotOptions = { ...opts.snapshot, env };
 
-  const spool = (event: string, raw: Record<string, unknown>) => {
+  const spool = (event: string, raw: Record<string, unknown>, ts = Date.now()) => {
     if (disabled) return;
     try {
-      const line: SpoolLine = { v: 0, agent, event, ts: Date.now(), pid: process.pid, cwd, raw: { sessionId, ...raw } };
+      const line: SpoolLine = { v: 0, agent, event, ts, pid: process.pid, cwd, raw: { sessionId, ...raw } };
       if (runId) line.runId = runId;
       if (gateway) line.gateway = gateway;
       appendSpool(line, env);
@@ -115,6 +119,15 @@ export async function wrapRunDetailed(opts: WrapRunOptions): Promise<WrapRunResu
   spool("session.start", { cmd: opts.cmd, args: redactArgv(args), cwd, repo: start });
 
   const t0 = Date.now();
+  // Aider prints usage to the terminal it owns; read the copies it writes to disk instead.
+  const tap: AiderUsageTap | undefined = agent === "aider" && !disabled ? aiderUsageTap({ args, cwd, env, gitRoot: start?.root, startedAt: t0 }) : undefined;
+  Object.assign(env, tap?.env);
+  let seq = 0;
+  const spoolUsage = (records: AiderUsageRecord[]) => {
+    for (const r of records) spool("llm.usage", { seq: seq++, ...(r.model ? { model: r.model } : {}), usage: r.usage, ...(r.sessionCostUsd ? { sessionCostUsd: r.sessionCostUsd } : {}) }, r.ts);
+  };
+  const timer = tap ? setInterval(() => spoolUsage(tap.poll()), 1000) : undefined;
+  timer?.unref();
   const { exitCode, signal, error } = await new Promise<{ exitCode: number; signal?: NodeJS.Signals; error?: string }>((resolve) => {
     // isatty(0), not process.stdin: touching process.stdin would open a reader on the TTY the child owns.
     const stdinIsTTY = isatty(0);
@@ -151,6 +164,8 @@ export async function wrapRunDetailed(opts: WrapRunOptions): Promise<WrapRunResu
     });
   });
   const durationMs = Date.now() - t0;
+  if (timer) clearInterval(timer);
+  if (tap) spoolUsage(tap.close());
 
   const end = await snap("end");
   let diff: DiffResult | undefined;
