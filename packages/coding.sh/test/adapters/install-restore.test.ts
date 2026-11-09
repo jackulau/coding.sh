@@ -111,7 +111,7 @@ describe("symlinked agent configs stay symlinks", () => {
     if (withMcp) await a.installMcp!({ server: { name: "coding-sh", command: "node", args: ["mcp.mjs"] }, dryRun: false });
     assert.ok(lstatSync(file).isSymbolicLink(), `${a.id}: still a symlink after install`);
     assert.equal(readlinkSync(file), target);
-    assert.match(readFileSync(target, "utf8"), /hook\.mjs/, `${a.id}: the dotfiles target holds the hooks`);
+    assert.match(readFileSync(target, "utf8"), /hook\.(?:mjs|sh)/, `${a.id}: the dotfiles target holds the hooks`);
     assert.deepEqual(readdirSync(join(target, "..")).sort(), [`${a.id}-settings.json`], "no temp file left next to the target");
     if (withMcp) await a.uninstallMcp!({ name: "coding-sh", dryRun: false });
     await a.uninstall({ scope: "user", dryRun: false });

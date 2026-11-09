@@ -74,6 +74,10 @@ import { listSpoolFiles, readSpoolFile, type SpoolFile } from "./spool-read.ts";
 import { repoResolver, type RepoResolver } from "./repo-state.ts";
 import { snapshot } from "./snapshot.ts";
 import { isWrapperLine } from "../adapters/more/wrapper.ts";
+import { rememberTraceSessions } from "../adapters/_shared/traceparent.ts";
+import { traceKvKey } from "../otel/map.ts";
+import { linkSpawned } from "../spool/spawned.ts";
+import { matchSpawnedParent } from "../spool/spawned-match.ts";
 
 export const PUT_BATCH = 500;
 const DEFAULT_CHECKPOINT_EVENTS = 5000;
@@ -329,11 +333,10 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   const sinkBatchSize = (sink: Sink) => config.sinks.find((s) => (s.name ?? s.kind) === sink.name)?.batchSize ?? DEFAULT_SINK_BATCH;
   const touchedAll = new Set<string>();
 
-  const normalize = spoolNormalizer({ adapters, blobs: blobStore, env, profileFor, error, excluded: () => result.excluded++ });
-
   const durations = toolDurationFiller(index);
 
   const linker = childLinker(index);
+  const normalize = spoolNormalizer({ adapters, blobs: blobStore, env, profileFor, error, excluded: () => result.excluded++, spawned: (child, link) => linker.offer(child, link) });
   const repo = repoResolver();
   const versionFor = (agent: string) => parseVersionFor(adapters, agent);
   // Latest live end-of-turn/session ts per session, from lines new in this run.
@@ -448,6 +451,8 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
     const inserted = await atomically(async () => {
       let n = 0;
       for (let i = 0; i < pending.length; i += PUT_BATCH) n += (await index.putEvents(pending.slice(i, i + PUT_BATCH))).inserted;
+      // Hook events in an agent's OTel trace (a traceparent): that trace's spans join their session.
+      await rememberTraceSessions(index, pending, traceKvKey);
       durations.settle();
       await recompute(touched);
       for (const f of open) {
@@ -588,6 +593,8 @@ export interface SpoolNormalizerOptions {
   error: (e: IngestError) => void;
   /** A line skipped because its cwd matched capture.exclude. */
   excluded: () => void;
+  /** A session started from another agent's shell tool (SpoolLine.spawnedBy): its parent link. */
+  spawned?: (childSessionId: string, link: NonNullable<Session["parent"]>) => Promise<void>;
 }
 
 /**
@@ -637,6 +644,15 @@ export function spoolNormalizer(o: SpoolNormalizerOptions): (line: SpoolLine, so
       if (line.gateway && ev.payload.gateway === undefined && (ev.kind === "llm.call" || out.length === 0)) ev = { ...ev, payload: { ...ev.payload, gateway: line.gateway } };
       // Host app (T3 Code) that launched the agent: buildSession attributes the session to it.
       if (line.host && ev.payload.via === undefined) ev = { ...ev, payload: { ...ev.payload, via: line.host.id, ...(line.host.thread ? { hostThreadId: line.host.thread } : {}) } };
+      // Started from another agent's shell tool (spool/spawned.ts): the start names that session as
+      // its parent, and the linker keeps the link for a start stored earlier without it.
+      if (line.spawnedBy) {
+        const link = linkSpawned(line.spawnedBy, ev.sessionId);
+        if (link) {
+          if (ev.kind === "session.start" && ev.payload.parentSessionId === undefined) ev = { ...ev, payload: { ...ev.payload, ...link } };
+          await o.spawned?.(ev.sessionId, { sessionId: link.parentSessionId!, type: "harness" });
+        }
+      }
       // HEAD a 0.1.3 hook read from .git as the session started: the start commit (./repo-state.ts).
       // Later hooks do no git work; their sessions' start commit comes from the reflog.
       if (line.git && ev.kind === "session.start" && ev.payload.git === undefined) {
@@ -750,19 +766,28 @@ export function toolDurationFiller(index: IndexStore): DurationFiller {
 export interface ChildLinker {
   /** Remember links named by these (parent) events. */
   observe(parentId: string, events: AgentEvent[]): Promise<void>;
+  /** Remember a link the child named itself (a harness child's spool line), unless one is known already. */
+  offer(childId: string, link: NonNullable<Session["parent"]>): Promise<void>;
   /** A pending link for a session that has none, if any. */
   pending(childId: string): Promise<NonNullable<Session["parent"]> | undefined>;
+  /** A session new to the index that nothing links: apply() matches it to another session's shell call. */
+  consider(childId: string): void;
   /** Applies links observed this run to children already in the index. Returns updated ids. */
   apply(): Promise<string[]>;
 }
 
 /**
- * Parent links named only by a parent's subagent.start|end { childSessionId }.
- * Kept in memory for this run and, when the store has kv, durably, so a child
- * ingested in a later run than its parent is still linked.
+ * Parent links named only by a parent's subagent.start|end { childSessionId },
+ * or offered by a child started from another agent's shell tool (its spool
+ * lines' spawnedBy, linked with type "harness"). Kept in memory for this run and, when the store has kv, durably, so a child
+ * ingested in a later run than its parent is still linked. New sessions linked by neither are matched at apply() to a
+ * shell call of another session that ran their agent's CLI (spool/spawned-match.ts).
  */
 export function childLinker(index: IndexStore): ChildLinker {
   const links = new Map<string, NonNullable<Session["parent"]>>();
+  /** Children whose offered link was settled this run (one kv read each, not one per line). */
+  const offered = new Set<string>();
+  const unlinked = new Set<string>();
   const kv = index.kvGet && index.kvSet ? { get: index.kvGet.bind(index), set: index.kvSet.bind(index) } : undefined;
   return {
     async observe(parentId, events) {
@@ -780,6 +805,13 @@ export function childLinker(index: IndexStore): ChildLinker {
         if (kv && JSON.stringify(prev) !== JSON.stringify(link)) await kv.set(childLinkKey(child), JSON.stringify(link));
       }
     },
+    async offer(childId, link) {
+      if (childId === link.sessionId || offered.has(childId) || links.has(childId)) return;
+      offered.add(childId);
+      if (kv && (await kv.get(childLinkKey(childId)))) return;
+      links.set(childId, link);
+      if (kv) await kv.set(childLinkKey(childId), JSON.stringify(link));
+    },
     async pending(childId) {
       const mem = links.get(childId);
       if (mem) return mem;
@@ -791,6 +823,9 @@ export function childLinker(index: IndexStore): ChildLinker {
         return undefined;
       }
     },
+    consider(childId) {
+      unlinked.add(childId);
+    },
     async apply() {
       const updated: string[] = [];
       for (const [childId, link] of links) {
@@ -799,6 +834,16 @@ export function childLinker(index: IndexStore): ChildLinker {
         await index.upsertSession({ ...child, parent: link });
         updated.push(childId);
       }
+      // After the whole run, so a parent whose lines came later in it (another agent's spool) is in the index.
+      for (const childId of unlinked) {
+        const child = links.has(childId) ? undefined : await index.getSession(childId);
+        if (!child || child.parent) continue;
+        const link = await matchSpawnedParent(index, child);
+        if (!link) continue;
+        await index.upsertSession({ ...child, parent: link });
+        updated.push(childId);
+      }
+      unlinked.clear();
       return updated;
     },
   };
@@ -872,6 +917,8 @@ export async function recomputeSession(index: IndexStore, id: string, o: Recompu
   if (!session.parent) {
     const link = await linker.pending(id);
     if (link) session.parent = link;
+    // New to the index and linked by nothing: maybe started by another session's shell call (spool/spawned-match.ts).
+    else if (!prev) linker.consider(id);
   }
   if (!session.repo) {
     const start = await repo.start(session, { start: state.gitStart, live: state.live });

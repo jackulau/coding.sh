@@ -52,7 +52,8 @@ const shells: { name: string; argv: (cmd: string) => [string, string[]] | undefi
 describe("installed hook command", () => {
   it("points at the hook under a home with a space in it", () => {
     const cmd = hookCommand("UserPromptSubmit");
-    assert.match(cmd, /^node "[^"]*First Last[^"]*hook\.mjs" claude-code UserPromptSubmit$/);
+    // The sh fast path outside Windows (spool/hook.sh), node and hook.mjs on Windows.
+    assert.match(cmd, win ? /^node "[^"]*First Last[^"]*hook\.mjs" claude-code UserPromptSubmit$/ : /^\/bin\/sh "[^"]*First Last[^"]*hook\.sh" claude-code UserPromptSubmit$/);
     if (win) assert.doesNotMatch(cmd, /\\/, "forward slashes only, so no shell eats a backslash");
   });
 

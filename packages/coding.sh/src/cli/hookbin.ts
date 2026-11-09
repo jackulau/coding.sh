@@ -1,10 +1,12 @@
 // The hook entry agents run: dist/hook.mjs copied to ~/.coding.sh/bin/hook.mjs,
-// so agent configs point at a stable path that survives package upgrades and
-// `npx` cache eviction. Next to it, bin/cli-path names the installed
+// and its POSIX sh fast path dist/hook.sh to bin/hook.sh (what agents run
+// outside Windows), so agent configs point at a stable path that survives
+// package upgrades and `npx` cache eviction. Next to it, bin/cli-path names the installed
 // dist/cli.mjs so the hook can start a background ingest when a session ends,
 // and bin/mcp.mjs launches that CLI's MCP server for agents. `coding.sh
 // update` refreshes all three from the new install (refreshHookBin).
 import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { paths } from "../core/paths.ts";
 import { mcpLauncherSource, runningCli } from "../mcp/launch.ts";
@@ -16,6 +18,16 @@ export function hookSource(env: NodeJS.ProcessEnv = process.env): string {
   const candidates = [env.CODING_SH_HOOK_SOURCE, fileURLToPath(new URL("./hook.mjs", import.meta.url)), fileURLToPath(new URL("../../dist/hook.mjs", import.meta.url))];
   for (const c of candidates) if (c && existsSync(c)) return c;
   throw new CliError("Can't find hook.mjs to install", { reason: "hook_missing", next: ["Build the package first:", "npm run build"] });
+}
+
+/**
+ * The sh fast path shipped with that hook.mjs: hook.sh beside it, else beside
+ * the running bundle, else src/spool/hook.sh when running from source.
+ */
+export function hookShSource(env: NodeJS.ProcessEnv = process.env): string {
+  const candidates = [join(dirname(hookSource(env)), "hook.sh"), fileURLToPath(new URL("./hook.sh", import.meta.url)), fileURLToPath(new URL("../spool/hook.sh", import.meta.url))];
+  for (const c of candidates) if (existsSync(c)) return c;
+  throw new CliError("Can't find hook.sh to install", { reason: "hook_missing", next: ["Build the package first:", "npm run build"] });
 }
 
 function readOr(path: string): string | undefined {
@@ -32,7 +44,7 @@ export function planHookBin(env: NodeJS.ProcessEnv = process.env, cli: string | 
   const dest = p.hook;
   const after = readFileSync(hookSource(env), "utf8");
   const before = readOr(dest);
-  if (before === after && readOr(p.mcpLauncher) === mcpLauncherSource() && (cli === undefined || readOr(p.cliPointer) === cli + "\n")) return undefined;
+  if (before === after && readOr(p.hookSh) === readFileSync(hookShSource(env), "utf8") && readOr(p.mcpLauncher) === mcpLauncherSource() && (cli === undefined || readOr(p.cliPointer) === cli + "\n")) return undefined;
   // Text is omitted from the plan (a minified bundle is not a useful diff).
   return { path: dest, action: before === undefined ? "create" : "modify", summary: before === undefined ? "install the coding.sh hook" : "update the coding.sh hook" };
 }
@@ -41,6 +53,7 @@ export async function writeHookBin(env: NodeJS.ProcessEnv = process.env, cli: st
   const { atomicWrite } = await import("../adapters/_shared/files.ts");
   const p = paths(env);
   await atomicWrite(p.hook, readFileSync(hookSource(env), "utf8"), 0o755);
+  await atomicWrite(p.hookSh, readFileSync(hookShSource(env), "utf8"), 0o755);
   await atomicWrite(p.mcpLauncher, mcpLauncherSource(), 0o755);
   if (cli !== undefined) await atomicWrite(p.cliPointer, cli + "\n", 0o644);
   return p.hook;
@@ -52,9 +65,15 @@ export async function writeHookBin(env: NodeJS.ProcessEnv = process.env, cli: st
  * not touched, so this does not install capture for the user's own sessions.
  */
 export async function ensureHookBin(env: NodeJS.ProcessEnv = process.env): Promise<"present" | "written" | "unavailable"> {
-  if (existsSync(paths(env).hook)) return "present";
+  const p = paths(env);
+  const hasHook = existsSync(p.hook);
+  if (hasHook && existsSync(p.hookSh)) return "present";
   try {
-    await writeHookBin(env);
+    if (hasHook) {
+      // A bin from before the sh fast path: add hook.sh, leave the installed hook.mjs as it is.
+      const { atomicWrite } = await import("../adapters/_shared/files.ts");
+      await atomicWrite(p.hookSh, readFileSync(hookShSource(env), "utf8"), 0o755);
+    } else await writeHookBin(env);
     return "written";
   } catch {
     return "unavailable";
@@ -95,7 +114,7 @@ export async function healHookBin(env: NodeJS.ProcessEnv = process.env, cli: str
 }
 
 export interface HookBinHealth {
-  /** hook.mjs matches the hook this CLI ships (null: no bundled hook to compare with). */
+  /** hook.mjs and hook.sh match the hook this CLI ships (null: no bundled hook to compare with). */
   hookCurrent: boolean | null;
   /** What bin/cli-path names, if anything. */
   cliPath: string | null;
@@ -112,7 +131,7 @@ export function hookBinHealth(env: NodeJS.ProcessEnv = process.env, cli: string 
   let hookCurrent: boolean | null = null;
   try {
     const installed = readOr(p.hook);
-    hookCurrent = installed === undefined ? false : installed === readFileSync(hookSource(env), "utf8");
+    hookCurrent = installed === undefined ? false : installed === readFileSync(hookSource(env), "utf8") && readOr(p.hookSh) === readFileSync(hookShSource(env), "utf8");
   } catch {
     hookCurrent = null; // running from source without a build: nothing to compare against
   }

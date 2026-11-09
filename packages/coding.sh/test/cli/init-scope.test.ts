@@ -47,7 +47,7 @@ describe("init with coding.sh hooks already in the other scope", () => {
 
     const f = await init(proj, { scope: "project", force: true });
     assert.equal(f.code, 0);
-    assert.match(readFileSync(join(proj, ".cursor", "hooks.json"), "utf8"), /hook\.mjs/);
+    assert.match(readFileSync(join(proj, ".cursor", "hooks.json"), "utf8"), /hook\.(?:mjs|sh)/);
     assert.match(f.stderr, /also hooked in user scope/);
   });
 

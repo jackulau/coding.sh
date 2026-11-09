@@ -94,7 +94,9 @@ export function hookTarget(file: string, hook: string): { hook: string | null; c
   }
   // JSON and TOML escape the quotes and backslashes of `node "<hook>" <agent> <event>`.
   const plain = text.replace(/\\(["\\])/g, "$1");
-  const forms = [hook, hook.replace(/\\/g, "/")];
+  // The sh fast path names hook.sh beside the hook (`/bin/sh "<dir>/hook.sh" <agent> <event>`).
+  const sh = hook.replace(/hook\.mjs$/, "hook.sh");
+  const forms = [hook, hook.replace(/\\/g, "/"), ...(sh !== hook ? [sh] : [])];
   if (forms.some((f) => plain.includes(f))) return { hook, current: true };
   const cmd = plain.split("\n").map((l) => parseHookCommand(l)).find((x) => x)?.hookPath;
   const found = cmd ?? /["']([^"'\n]*hook\.mjs)["']/.exec(plain)?.[1] ?? null;

@@ -214,6 +214,85 @@ The store is now mostly the index (1.43 MB per 1,000 events). The largest part l
 The other costs the profile showed are small next to the file work: a new zstd context per blob
 (about 1 s per 100k blobs) and the index's commit.
 
+## OTLP collector
+
+`coding.sh collector` stores concurrent OTLP requests together:
+
+- **Group commit.** Requests that arrive while a write runs wait for it, then the next write maps
+  and stores all of them at once, in one SQLite transaction. Each request still gets its own
+  answer, with only its own events and sessions, and a request whose spans fail to map fails alone.
+- **Blob batch.** The blobs a group writes (large payloads) go through the blob store's batch API
+  and are flushed once, before the events that point at them are stored.
+- **No raw span blobs by default.** The collector used to keep every source span as a blob on its
+  event, one blob write per span. That is now opt-in: `coding.sh collector --keep-raw`.
+  `coding.sh serve` still keeps them, as before.
+- **Sessions from the events in hand.** A new session is built from the events the request just
+  stored instead of reading them back. A test checks the two builds are equal.
+
+[scripts/dogfood/bench.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/dogfood/bench.mjs) `collector` starts the built
+collector in a temp home and runs 8 clients, each posting 61-span OTLP/JSON requests (an
+`invoke_agent` span with 30 model calls and 30 tool calls) one at a time over a kept-alive
+connection. It reports spans/s, request latency percentiles, the collector's peak RSS and its CPU
+time per 1,000 spans. `--sessions request` (the default) makes each request a session of its own;
+`--sessions client` makes each client one session that grows by 61 spans a request.
+
+```sh
+DESK_DIR=coding-sh-otel .claude/bin/desk run "node scripts/dogfood/bench.mjs collector --seconds 8"
+```
+
+On the desk, interleaved 8-second runs of the commit before this change and this change, on
+Nov 8, 2026, with the desk's load average between 10 and 55 (other jobs):
+
+| | Before | After |
+| --- | --- | --- |
+| spans/s, a session per request | 1,437 to 3,075 | 5,585 to 6,865 |
+| request p95 | 283 to 613 ms | 125 to 155 ms |
+| request p50 | 143 to 307 ms | 62 to 77 ms |
+| peak RSS | 159 to 219 MB | 178 to 183 MB |
+| CPU per 1,000 spans | 360 to 719 ms | 156 to 195 ms |
+| spans/s, one long session per client | 1,106 | 1,158 |
+
+The targets are 5,000 spans/s, a p95 under 100 ms and 200 MB of RSS. Throughput and RSS meet
+them; the p95 does not. A request that arrives during a write waits for that write and then its
+own, so the p95 is about twice the p50. In a profile of the new build, SQLite's inserts and
+commit take about 40% of the time, rebuilding sessions 13% and mapping spans 11%.
+
+Long sessions are not faster. Every write rebuilds each session it touched from all of its
+events, so the cost of a request grows with the size of its session, and peak RSS in that mode
+reached about 250 MB in both builds. When the desk was busier (load average above 40) both builds
+fell to about 1,250 spans/s.
+
+## Hook
+
+Agents run the hook on every tool call, so its cost adds to every step. Outside Windows the hook
+is `hook.sh`, a POSIX sh script that writes the spool line without starting node. `node -e 0`
+alone costs about 25 ms on the desk. `node scripts/dogfood/bench.mjs hook` times `/bin/sh
+dist/hook.sh` against `/bin/true`, interleaved, 200 calls each, and reports the difference
+(`perf.hookSh`, `perf.hookShP95`; budget 3 ms and 5 ms).
+
+On Debian and Ubuntu `/bin/sh` is dash, and the hook runs itself again under bash 5. bash in POSIX
+mode reads a pipe or socket one byte per `read(2)`, about 1 ms per KB, so the hook used to read only
+the first 2 KB with the `read` builtin and the rest with `cat`, a process start. In 160 Claude Code
+PostToolUse hook lines from one machine, half were over 2.5 KB and a tenth over 11 KB. The
+hook now turns POSIX mode off around one `read -N 262144`, which reads in blocks.
+
+Desk, WSL Ubuntu, bash 5.3, Node 24, Nov 9, 2026. Difference over `/bin/true`, median / p95, 100
+interleaved calls per row. Socket stdin is how Node agents (Claude Code, Gemini CLI) call hooks; Codex gives a pipe; the pipe
+rows feed the hook from `cat`, with the same `cat` in front of `/bin/true`.
+
+| Payload | Before | After |
+| --- | --- | --- |
+| socket, 0.6 KB | +2.3 / +3.2 ms | +1.6 / +2.2 ms |
+| socket, 2 KB | +8.2 / +9.5 ms | +2.0 / +2.3 ms |
+| socket, 6 KB | +8.4 / +10.0 ms | +2.3 / +2.6 ms |
+| socket, 12 KB | +8.8 / +13.2 ms | +2.8 / +2.7 ms |
+| pipe, 2 KB | +6.1 / +6.8 ms | +1.2 / +1.0 ms |
+| pipe, 12 KB | +7.4 / +11.1 ms | +1.9 / +1.5 ms |
+
+`bench.mjs hook` on the same machine: `perf.hookShP95` 2.78 ms for a 600-byte payload and
+`perf.hookSh2kbP95` 2.75 ms for 2 KB (8.47 ms before). The node hook, `hook.mjs`, still costs
+about 8.5 ms more than `node -e ""`; Windows and the cases `hook.sh` hands on pay that.
+
 ## Long sessions
 
 [scripts/perf/longrun.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/longrun.mjs) generates a synthetic 12-hour Claude Code session with no

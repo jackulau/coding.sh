@@ -2,7 +2,7 @@
 // Performance budgets (docs/design/dogfood.md §3.5). Every benchmark runs in a temp
 // HOME / CODING_SH_HOME, never against the live home.
 //
-//   node scripts/dogfood/bench.mjs [hook|ingest|store|help|viewer|replay|proxy|proxy-session]... [--baseline <dist dir>] [--calls N] [--json] [--check]
+//   node scripts/dogfood/bench.mjs [hook|ingest|store|help|viewer|replay|proxy|proxy-session|collector]... [--baseline <dist dir>] [--calls N] [--json] [--check]
 //
 // `viewer` also runs `replay` (session replay through the viewer API).
 // --check exits 1 when a result misses its budget in TARGETS (CI runs it for the proxy).
@@ -15,12 +15,16 @@ import { spawn, spawnSync } from "node:child_process";
 import http from "node:http";
 import net from "node:net";
 import { join, resolve } from "node:path";
+import { benchCollector } from "./bench-collector.mjs";
 import { bootstrapMedianDiff, CLI, DIST, isolatedEnv, log, median, nearestRank, parseArgs, prng, quantile, round, sh, shAsync, tempDir } from "./lib/util.mjs";
 
 export const TARGETS = {
   "perf.hook": { target: 10, unit: "ms", dir: "max" },
   "perf.hookP95": { target: 25, unit: "ms", dir: "max" },
   "perf.hook1mb": { target: 40, unit: "ms", dir: "max" },
+  // The sh fast path agents run outside Windows (dist/hook.sh), over a bare `/bin/true` spawn.
+  "perf.hookSh": { target: 3, unit: "ms", dir: "max" },
+  "perf.hookShP95": { target: 5, unit: "ms", dir: "max" },
   "perf.ingest": { target: 5000, unit: "events/s", dir: "min" },
   "perf.storeSize": { target: 2.0, unit: "MB/1k events", dir: "max" },
   "perf.viewerTti": { target: 1000, unit: "ms", dir: "max" },
@@ -30,6 +34,10 @@ export const TARGETS = {
   "perf.replayStep": { target: 300, unit: "ms", dir: "max" },
   "perf.proxyChunk": { target: 2, unit: "ms", dir: "max" },
   "perf.proxyTtfb": { target: 5, unit: "ms", dir: "max" },
+  // 8 clients streaming 61-span OTLP/JSON requests to `coding.sh collector` (bench-collector.mjs).
+  "perf.collectorSpans": { target: 5000, unit: "spans/s", dir: "min" },
+  "perf.collectorP95": { target: 100, unit: "ms", dir: "max" },
+  "perf.collectorRss": { target: 200, unit: "MB", dir: "max" },
 };
 export function meets(key, value) {
   const t = TARGETS[key];
@@ -63,7 +71,11 @@ function timeSpawn(cmd, args, env, input) {
   return ms;
 }
 
-/** perf.hook: hook spawn overhead over a bare `node -e ""`, median and p95, plus a 1 MB payload. */
+/**
+ * perf.hook: hook spawn overhead over a bare `node -e ""`, median and p95, plus a 1 MB payload.
+ * perf.hookSh: the sh fast path (`/bin/sh dist/hook.sh`, what agents run outside Windows) over a
+ * bare `/bin/true`, median and p95, with a 600-byte payload (inline) and a 2 KB one (side file).
+ */
 export function benchHook({ dist = DIST, baseline, n = 50, warmup = 5 } = {}) {
   const root = tempDir("cs-bench-hook-");
   try {
@@ -101,6 +113,25 @@ export function benchHook({ dist = DIST, baseline, n = 50, warmup = 5 } = {}) {
       candStart.push(start(dist));
       if (baseline) baseStart.push(start(baseline));
     }
+    // The sh fast path, interleaved with /bin/true so machine noise hits both alike.
+    const shHook = existsSync(join(dist, "hook.sh")) && process.platform !== "win32";
+    const tiny = hookPayload(600, root);
+    const trueBin = existsSync("/bin/true") ? "/bin/true" : "/usr/bin/true";
+    const shRun = (payload) => timeSpawn("/bin/sh", [join(dist, "hook.sh"), "claude-code", "PostToolUse"], env, payload);
+    const truth = [];
+    const shTiny = [];
+    const shSmall = [];
+    if (shHook) {
+      for (let i = 0; i < warmup; i++) {
+        timeSpawn(trueBin, [], env, "");
+        shRun(tiny);
+      }
+      for (let i = 0; i < n * 4; i++) {
+        truth.push(timeSpawn(trueBin, [], env, ""));
+        shTiny.push(shRun(tiny));
+        shSmall.push(shRun(small));
+      }
+    }
     const nodeMed = median(node);
     const spoolFiles = existsSync(join(env.CODING_SH_HOME, "spool")) ? walkCount(join(env.CODING_SH_HOME, "spool")) : 0;
     const out = {
@@ -108,6 +139,15 @@ export function benchHook({ dist = DIST, baseline, n = 50, warmup = 5 } = {}) {
       "perf.hookP95": round(quantile(cand, 0.95) - quantile(node, 0.95), 1),
       "perf.hook1mb": round(median(candBig) - nodeMed, 1),
       "perf.hookStart": round(median(candStart) - nodeMed, 1),
+      ...(shHook
+        ? {
+            "perf.hookSh": round(median(shTiny) - median(truth), 2),
+            "perf.hookShP95": round(quantile(shTiny, 0.95) - quantile(truth, 0.95), 2),
+            "perf.hookSh2kb": round(median(shSmall) - median(truth), 2),
+            "perf.hookSh2kbP95": round(quantile(shSmall, 0.95) - quantile(truth, 0.95), 2),
+            shDetail: { n: n * 4, trueMedianMs: round(median(truth), 2), trueP95Ms: round(quantile(truth, 0.95), 2), shMedianMs: round(median(shTiny), 2), shP95Ms: round(quantile(shTiny, 0.95), 2), sh2kbMedianMs: round(median(shSmall), 2), sh2kbP95Ms: round(quantile(shSmall, 0.95), 2) },
+          }
+        : {}),
       detail: { n, warmup, nodeMedianMs: round(nodeMed, 1), hookMedianMs: round(median(cand), 1), hookP95Ms: round(quantile(cand, 0.95), 1), hook1mbMedianMs: round(median(candBig), 1), hookStartMedianMs: round(median(candStart), 1), spoolFilesWritten: spoolFiles },
     };
     if (baseline) {
@@ -833,6 +873,7 @@ export async function runBenches(which = ["hook", "ingest", "help", "viewer"], o
   if (which.includes("viewer") || which.includes("replay")) await step("replay", () => benchReplay({ ...opts, events: opts.replayEvents }));
   if (which.includes("proxy")) await step("proxy", () => benchProxy(opts));
   if (which.includes("proxy-session")) await step("proxy-session", () => benchProxySession(opts));
+  if (which.includes("collector")) await step("collector", () => benchCollector({ ...(opts.clients ? { clients: opts.clients } : {}), ...(opts.seconds ? { seconds: opts.seconds } : {}), ...(opts.dist ? { dist: opts.dist } : {}), ...(opts.sessions ? { sessions: opts.sessions } : {}) }));
   return { results: out, errors };
 }
 
@@ -840,7 +881,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const args = parseArgs(process.argv.slice(2), { booleans: ["json", "check"] });
   const which = args._.length ? args._ : ["hook", "ingest", "help", "viewer"];
   const baseline = args.baseline ? resolve(args.baseline) : undefined;
-  const r = await runBenches(which, { baseline, events: args.events ? Number(args.events) : undefined, calls: args.calls ? Number(args.calls) : undefined, pairs: args.pairs ? Number(args.pairs) : undefined });
+  const r = await runBenches(which, { baseline, events: args.events ? Number(args.events) : undefined, calls: args.calls ? Number(args.calls) : undefined, pairs: args.pairs ? Number(args.pairs) : undefined, clients: args.clients ? Number(args.clients) : undefined, seconds: args.seconds ? Number(args.seconds) : undefined, dist: args.dist ? resolve(args.dist) : undefined, sessions: args.sessions });
   process.stdout.write(JSON.stringify(r, null, args.json ? 0 : 2) + "\n");
   const missed = Object.values(r.results).flatMap((x) => Object.entries(x).filter(([k, v]) => k.startsWith("perf.") && meets(k, v) === false));
   for (const [k, v] of missed) log(`over budget: ${k} ${v} ${TARGETS[k].unit} (target ${TARGETS[k].dir === "max" ? "≤" : "≥"} ${TARGETS[k].target})`);

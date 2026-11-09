@@ -6,13 +6,13 @@
 //        cache eviction or update.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { refreshAfterUpdate, runUpdate } from "../../src/cli/commands/update.ts";
 import { checkMcpEntries } from "../../src/cli/commands/doctor.ts";
-import { hookBinHealth, writeHookBin } from "../../src/cli/hookbin.ts";
+import { ensureHookBin, hookBinHealth, writeHookBin } from "../../src/cli/hookbin.ts";
 import { Output } from "../../src/cli/output.ts";
 import type { CommandContext } from "../../src/cli/types.ts";
 import { mcpLaunchSpec, runningCli } from "../../src/mcp/launch.ts";
@@ -125,5 +125,27 @@ describe("hook bin after `coding.sh update` (INS-6)", () => {
     const h = hookBinHealth(e, join(e.root, "new", "cli.mjs"));
     assert.equal(h.cliPathCurrent, false);
     assert.equal(h.cliPathExists, false);
+  });
+});
+
+describe("the sh fast path in the bin (TE-12)", () => {
+  const SH_SRC = join(import.meta.dirname, "..", "..", "src", "spool", "hook.sh");
+  test("init writes hook.sh beside hook.mjs, executable; a bin from before it gets hook.sh alone; doctor counts it", async () => {
+    const e = env();
+    const bin = join(e.CODING_SH_HOME!, "bin");
+    await writeHookBin(e, undefined);
+    assert.equal(readFileSync(join(bin, "hook.sh"), "utf8"), readFileSync(SH_SRC, "utf8"));
+    if (process.platform !== "win32") assert.equal(statSync(join(bin, "hook.sh")).mode & 0o777, 0o755);
+    assert.equal(hookBinHealth(e).hookCurrent, true);
+    writeFileSync(join(bin, "hook.sh"), "# old\n");
+    assert.equal(hookBinHealth(e).hookCurrent, false, "a stale hook.sh is a stale hook");
+
+    // A bin an older version installed: hook.mjs only.
+    rmSync(join(bin, "hook.sh"));
+    writeFileSync(join(bin, "hook.mjs"), "// hook v1\n");
+    assert.equal(await ensureHookBin(e), "written");
+    assert.ok(existsSync(join(bin, "hook.sh")));
+    assert.equal(readFileSync(join(bin, "hook.mjs"), "utf8"), "// hook v1\n", "the installed hook.mjs is left as it is");
+    assert.equal(await ensureHookBin(e), "present");
   });
 });

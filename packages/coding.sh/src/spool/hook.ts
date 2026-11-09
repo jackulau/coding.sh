@@ -3,6 +3,11 @@
 //
 //   node ~/.coding.sh/bin/hook.mjs <agent> <event> [--echo-continue | --reply '<json>']   < hook JSON on stdin
 //
+// Outside Windows, agents run the POSIX sh fast path instead (./hook.sh, copied
+// to ~/.coding.sh/bin/hook.sh): it writes the same SpoolLine without starting
+// node, and hands every case it does not cover to this file. Both must keep
+// the contract below (test/capture/hook.test.ts runs it against both).
+//
 // Contract with the agent:
 // - Exits 0, always. A capture bug must never block or fail the agent.
 //   Failures go to ~/.coding.sh/spool/errors.log.
@@ -21,6 +26,9 @@
 // - CODING_SH_DISABLE=1: drain stdin and exit without writing anything.
 // - CODING_SH_HOME overrides the data dir; CODING_SH_RUN_ID is recorded as runId.
 // - A host app's env marker (T3 Code, see ./host.ts) is recorded as host.
+// - Parent agents' session ids in the env (CLAUDE_CODE_SESSION_ID,
+//   CODEX_THREAD_ID: this agent was started from their shell tool) are recorded
+//   as spawnedBy (./spawned.ts).
 //
 // Work done: read stdin (synchronously, capped at 64 MB; a TTY counts as empty),
 // JSON.parse it when possible, and append one SpoolLine via appendSpool(). No
@@ -38,6 +46,7 @@ import type { SpoolLine } from "../core/types.ts";
 import { gatewayFromEnv } from "../integrations/gateway/ids.ts";
 import { hostOf } from "./host.ts";
 import { kickIngest, kickProxy } from "./kick.ts";
+import { spawnedByFromEnv } from "./spawned.ts";
 import { MAX_INLINE_LINE_BYTES, appendSpool, isDisabled, logSpoolError } from "./write.ts";
 
 const MAX_STDIN_BYTES = 64 * 1024 * 1024;
@@ -149,6 +158,9 @@ function main(): void {
       if (gateway) line.gateway = gateway;
       // Claude Code says how it was launched: `sdk-cli` for `claude -p`, `cli` in a terminal.
       if (agent === "claude-code" && env.CLAUDE_CODE_ENTRYPOINT) line.entrypoint = env.CLAUDE_CODE_ENTRYPOINT.slice(0, 64);
+      // Started from another agent's shell tool: that agent's session id is in the env (./spawned.ts).
+      const spawnedBy = spawnedByFromEnv(env);
+      if (spawnedBy) line.spawnedBy = spawnedBy;
       appendSpool(line, env, { rawText: text });
       if (truncated) logSpoolError(new Error(`stdin truncated at ${MAX_STDIN_BYTES} bytes`), { agent, event }, env);
       captured = true;

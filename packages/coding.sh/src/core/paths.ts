@@ -25,6 +25,8 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     config: join(root, "config.toml"),
     bin: join(root, "bin"),
     hook: join(root, "bin", "hook.mjs"),
+    /** The POSIX sh fast path agents run outside Windows (spool/hook.sh); it hands what it does not cover to hook.mjs. */
+    hookSh: join(root, "bin", "hook.sh"),
     /** Text file holding the absolute path of the installed dist/cli.mjs (the hook starts background ingests with it). */
     cliPointer: join(root, "bin", "cli-path"),
     /** Stable MCP entry agents run with `node`: starts the CLI named in cli-path (see mcp/launch.ts). */
@@ -37,6 +39,8 @@ export function paths(env: NodeJS.ProcessEnv = process.env) {
     runs: join(root, "runs"),
     backups: join(root, "backups"),
     judgeCache: join(root, "judge-cache"),
+    /** Recorded model calls for `exp run --record/--replay` (src/llmcache). */
+    llmCache: join(root, "llm-cache"),
     /** Cross-process ingest lock (see core/lock.ts). */
     ingestLock: join(root, "spool", ".ingest.lock"),
     /** Held for a whole re-parse run (core/reparse.ts), so one runs at a time. */

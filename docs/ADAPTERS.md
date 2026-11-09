@@ -49,7 +49,7 @@ sessions; `gemini-cli` stays for older Gemini CLI history. Aider is stale (last 
 | Kiro CLI | SQLite under `~/.kiro/` (U) | `kiro-cli chat --no-interactive --trust-all-tools --v3 --output-format stream-json --model M "…"` | `KIRO_HOME`, `.kiro/steering` | B |
 | Qwen Code | `~/.qwen/projects/<cwd>/chats/*.jsonl` | `qwen -p "…" -o stream-json -m M --yolo --max-session-turns N --max-wall-time 10m` | `QWEN_HOME`, `--system-prompt`, `QWEN_SYSTEM_MD` | A |
 | Crush | SQLite `./.crush/crush.db` | `crush run -q -y -m prov/model -c cwd -D datadir` (text output only) | `CRUSH_GLOBAL_CONFIG`, `CRUSH_GLOBAL_DATA` | B |
-| Aider | `.aider.chat.history.md` (markdown, no session id). Usage from its `Tokens: … sent, … received` and `Cost: $… message, $… session` lines. | `aider -m "…" --yes-always --no-auto-commits --model M --no-stream --no-pretty` | `-c file`, `--read CONVENTIONS.md` | C |
+| Aider | `.aider.chat.history.md` (markdown, no session id). Usage from its `Tokens: … sent, … received` and `Cost: $… message, $… session` lines. Live (`coding.sh run -- aider`): one `llm.call` per reply, with exact tokens and cost from Aider's analytics log (a temp file passed as `AIDER_ANALYTICS_LOG`, or the log you named with `--analytics-log`, the env var or `.aider.conf.yml`; a named log that two Aider sessions write at once counts both in each) and the cache split from the chat history's usage lines. `inputTokens` is the uncached part: Aider's "sent" counts cache reads once and cache writes twice. A cost of 0 (no price for the model) is stored as unknown. | `aider -m "…" --yes-always --no-auto-commits --model M --no-stream --no-pretty` | `-c file`, `--read CONVENTIONS.md` | C |
 | T3 Code | SQLite `$T3CODE_HOME/userdata/statev2.sqlite` (default `~/.t3`; `orchestration_v2_projection_*`), v1 `state.sqlite`. Read as copies. | None (desktop GUI) | — | B |
 
 **History on read.** Before `coding.sh init` installs its hooks, a read (`usage`, `sessions`,
@@ -65,8 +65,8 @@ How each agent marks a subagent, and where coding.sh pairs it with its parent:
 
 | Agent | Spawned by | Child id and parent link |
 |---|---|---|
-| Claude Code | `Agent` tool | SubagentStart/Stop `agent_id`; transcript `subagents/agent-*.jsonl`, with its `description` in the `.meta.json` sidecar. `SubagentStop` lacks `tool_use_id`. Internal forks (the compaction summarizer, prompt suggestions) fire a `SubagentStop` with an empty `agent_type` and no transcript; coding.sh records no session for them. Some agents (`web-fetch`) fire no SubagentStart or SubagentStop: the parent's `PostToolUse` for the `Agent` call carries `agentId`, `agentType`, `content`, `resolvedModel` and `totalDurationMs`, which link and end the child. A fork (`subagent_type: "fork"`; the sidecar has `isFork: true` and the parent's `toolUseId`) opens its transcript with the parent's context: every parent entry copied with its uuid and `message.id`, or a `fork-context-ref` line and a copy of the parent's Agent call. Its own entries start at the user entry with the `tool_result` for `toolUseId` ("Fork started"). coding.sh skips everything before that entry (backfill and live windows), opens the fork's turn with the Agent call's `prompt`, and records how much context it inherited (`stats.inheritedTokens`). Without that entry the transcript is read whole. |
-| Codex | Threads | SubagentStart/Stop `agent_id`. |
+| Claude Code | `Agent` tool | SubagentStart/Stop `agent_id`; transcript `subagents/agent-*.jsonl`, with its `description` in the `.meta.json` sidecar. `SubagentStop` lacks `tool_use_id`. Internal forks (the compaction summarizer, prompt suggestions) fire a `SubagentStop` with an empty `agent_type` and no transcript; coding.sh records no session for them. Some agents (`web-fetch`) fire no SubagentStart or SubagentStop: the parent's `PostToolUse` for the `Agent` call carries `agentId`, `agentType`, `content`, `resolvedModel` and `totalDurationMs`, which link and end the child. A fork (`subagent_type: "fork"`; the sidecar has `isFork: true` and the parent's `toolUseId`) opens its transcript with the parent's context: every parent entry copied with its uuid and `message.id`, or a `fork-context-ref` line and a copy of the parent's Agent call. Its own entries start at the user entry with the `tool_result` for `toolUseId` ("Fork started"). coding.sh skips everything before that entry (backfill and live windows), opens the fork's turn with the Agent call's `prompt`, and records how much context it inherited (`stats.inheritedTokens`). Without that entry the transcript is read whole. A subagent another subagent spawned has `parentAgentId` and `spawnDepth` in its `.meta.json`; its session hangs off that subagent's session, and its `subagent.start` (with `spawnDepth`) sits there under the spawning `Agent` call. |
+| Codex | Threads | SubagentStart/Stop `agent_id`. A child thread gets its task as an `agent_message` addressed to its `agent_path` (`Message Type: NEW_TASK`, `Task name`, `Sender`, then the payload, which Codex 0.166 encrypts). That message becomes the child's `user.message`, with `from`, `messageType`, `taskName` and `encrypted`, so the child has a title; with an encrypted payload the text says which agent asked for which task. Mail the thread sends, and answers from its own children, are not prompts. |
 | Gemini CLI | `invoke_agent` tool `{agent_name,prompt}` | Child chat `chats/<parentSessionId>/<agentId>.jsonl` with `kind:'subagent'` and `sessionId == agentId`; the parent's `toolCalls[].agentId` names the child file. Hooks inside it carry the main `session_id`. |
 | Amp | `Task`, `oracle`, `librarian`, `finder` tools; `create_thread` makes child threads | No payload carries a subagent field. |
 | Factory Droid | `Task` tool: `subagent_type`, `description`, `prompt` (optional `image_paths`, `complexity`, `run_in_background`, `resume`) | SubagentStop only. |
@@ -80,6 +80,14 @@ Harness surfaces:
 - `AGENTS.md` is read by nearly every agent.
 - Per-agent instruction files: CLAUDE.md, GEMINI.md, QWEN.md, `.cursor/rules/*.mdc`, `.github/instructions/**`, `.clinerules/`, `.kiro/steering/`, `.goosehints`, CRUSH.md.
 - `.agents/skills` is close to a universal skills directory. Claude Code uses `.claude/skills` instead.
+- A tool call that loads a skill names it on its `tool.start`: `payload.skill` (the first) and
+  `payload.skills` (every name, when there are more). It counts a Skill tool (`Skill`, `skill`,
+  `activate_skill`) naming one; a file read (`Read`, `read_file`, `view`, `view_file`, …) of a
+  file under `.claude`, `.agents`, `.codex`, `.cursor`, `.gemini`, `.github`, `.pi/agent` or
+  `.config/opencode` `/skills/<name>/`; a shell `cat`, `head`, `tail`, `sed`, `less`, `more`, `bat`
+  or `nl` of such a file by a literal path (no `$`, backticks, globs or `..`); and an MCP read of a
+  `skill://<name>/…` resource. Nothing is run. Verified for Codex by
+  `scripts/e2e/codex-skill-capture.mjs`.
 
 ## Replay
 
@@ -148,6 +156,24 @@ order.
   `chatgpt-account-id`, and the proxy forwards it to the ChatGPT backend. Verified by
   `scripts/e2e/proxy-capture.mjs`.
 - **OpenCode 2.0** broke git-ai's and Entire's plugins. Pin the plugin to the V2 API and detect the version.
+- **OpenCode:** when it finds a database schema it cannot migrate, OpenCode renames the file to
+  `opencode.db.schema-mismatch-<ms>` and starts over. Until it writes a new `opencode.db`, backfill
+  reads the newest of those files, and `doctor` says so. A database with no session tables
+  coding.sh knows, or one it cannot open, imports nothing, and `doctor` names its tables or the error.
+- **Claude Code:** a response with parallel tool calls is written one line per content block, and
+  Claude Code runs the first call before the next block arrives, so `tool_result` lines can sit
+  between lines of one `message.id`. They are one `llm.call` with the usage counted once, timed from
+  the `api-request` line that starts the request (`apiRequestId`; `requestId` is the API's
+  `req_…`). Verified by `scripts/e2e/claude-subagent-capture.mjs`.
+- **Copilot CLI:** with OpenTelemetry on (`COPILOT_OTEL_ENABLED`), 1.0.107 adds a W3C
+  `traceparent` to every hook payload after `sessionStart`. Hook events keep its trace id and the
+  caller's span (`traceId`, `parentSpanId`), and ingest records the trace's session, so an OTLP span
+  of that trace that names no `gen_ai.conversation.id` joins the hook session. Copilot's own spans
+  name the conversation. Verified by `scripts/e2e/copilot-otel-capture.mjs`.
+- **Antigravity:** a tool step's result starts with `Created At:` and `Completed At:` (whole
+  seconds), and a command's adds `The command exited with code N.` The call's `tool.end` takes
+  `exitCode` from it, fails on a nonzero code, and is timed by the header when it spans a second or
+  more.
 - **Copilot:** bash-only hooks fail on Windows, so provide `powershell` too. Token totals are written after hooks return, so read them at backfill.
 - **Amp:** no session id in tool payloads. Correlate by `thread.id` from `session.start`.
 - **Cross-cutting:**
@@ -160,12 +186,36 @@ order.
 
 ## Hook command
 
-Every adapter installs the same command:
+Every adapter installs the same command. Outside Windows it runs the POSIX sh hook:
 
 ```
-node "<~/.coding.sh/bin/hook.mjs>" <agent-id> <EventName>
+/bin/sh "<~/.coding.sh/bin/hook.sh>" <agent-id> <EventName> [--echo-continue]
 ```
 
+On Windows, and for flags only the node hook handles (`--reply`), it runs node:
+
+```
+node "<~/.coding.sh/bin/hook.mjs>" <agent-id> <EventName> [flags]
+```
+
+- `hook.sh` writes the same spool line as `hook.mjs` without starting node, where a node start
+  costs about 30 ms. Under bash 5 it reads the clock from `EPOCHREALTIME` and a payload
+  under 256 KB with the `read` builtin, outside POSIX mode so that bash reads a pipe or socket a block
+  at a time instead of a byte at a time. Such a call starts no other process and costs about 3 ms
+  more than `/bin/true`. Where `/bin/sh` is dash (Debian, Ubuntu) it runs itself again under
+  `/bin/bash` when that exists. Older bash and zsh read a pipe with `$(< /dev/stdin)`, and on macOS
+  any stdin. Other shells read the payload with `cat` and the clock with `date`. A session end also starts `coding.sh ingest --background`,
+  and the agent does not wait for it. A payload that is one line of the form `{"…}` goes inline
+  when the spool line fits in 1024 bytes. Shells print through a 1024-byte buffer on macOS, and a
+  longer line could be split by another hook's write. Any other payload goes verbatim to a side file
+  that the line names in `rawFile`, as `hook.mjs` does for payloads over 256 KB.
+- `hook.sh` hands the call to `hook.mjs` beside it, with the same arguments and stdin, when it sees
+  `--reply`, `CODING_SH_RUN_ID`, a T3 Code env marker, a model base URL other than a loopback one
+  (the `init --proxy` proxy) on a port no gateway uses, a session start while `init --proxy` is
+  installed, a relative `CODING_SH_HOME`, a value it cannot copy into JSON as is, or a write that
+  fails.
+- Hooks installed by an older version run `node …/hook.mjs` and keep working. Run `coding.sh init`
+  again to switch them to `hook.sh`. Codex asks you to review changed hooks in `/hooks` once.
 - The command path is quoted.
 - Each entry is tagged with a marker (`"_codingsh": true` where JSON allows, or a `# coding.sh` comment
   in TOML) so `uninstall` removes only our entries. Where the format has no room for a marker,
