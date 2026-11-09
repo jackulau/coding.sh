@@ -105,6 +105,7 @@ export function renderCalibration(r: CalibrationReport, opts: RenderOpts): strin
     ex.noVerdict ? `${ex.noVerdict} labelled but unjudged` : "",
     ex.noLabel ? `${ex.noLabel} judged but unlabelled` : "",
     ex.noSplit ? `${ex.noSplit} without a split` : "",
+    ex.undecided ? `${ex.undecided} undecided (judge abstained)` : "",
   ].filter(Boolean);
   if (exParts.length) out.push(paint(`excluded: ${exParts.join(", ")}`, "dim", color));
   if (r.injection) {

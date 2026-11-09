@@ -9,7 +9,7 @@ import type { Context } from "../../core/context.ts";
 import type { RunResult } from "../../core/types.ts";
 import { looksLikeDiff, SLOP_RULES, selectSlopRules, slopFindings, slopScore, traceDiffs, type SlopReport, type SlopRule, type SlopThresholds } from "../../graders/slop.ts";
 import { UsageError } from "../args.ts";
-import { autoIngest, list, oneLine, resolveSession, str, withContext } from "../common.ts";
+import { autoIngest, list, oneLine, resolveSession, str, withContext, notFoundWithBacklog, readIngest } from "../common.ts";
 import { CliError } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -159,8 +159,8 @@ export async function slop(c: CommandContext): Promise<number> {
       if (!run) throw new CliError(`Can't find run ${JSON.stringify(id)}`, { reason: "not_found", next: ["List runs:", "coding.sh exp status"] });
       return single(grade(await runPatch(ctx, run), rules, t), { kind: "run", id: run.id, bundleId: run.bundleId, taskId: run.taskId }, `run ${run.id}`);
     }
-    await autoIngest(ctx);
-    const s = await resolveSession(ctx, id);
+    const backlog = await autoIngest(ctx, readIngest(c));
+    const s = await resolveSession(ctx, id).catch((e) => Promise.reject(notFoundWithBacklog(e, backlog)));
     const d = await traceDiffs(await sessionChanges(ctx, s.id), (r) => ctx.blobs.getText(r));
     if (!d.patches.length) {
       throw new CliError(`Session ${s.id} has no captured diffs${d.missing ? ` (${plural(d.missing, "file change")} without one: ${s.agent}'s capture does not record diffs)` : ""}`, {

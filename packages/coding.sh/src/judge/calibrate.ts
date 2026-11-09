@@ -37,6 +37,8 @@ export interface JudgedCase {
   score?: number;
   confidence?: number;
   reason?: string;
+  /** The judge abstained on a deciding (critical) item: no verdict to compare with a human. */
+  undecided?: boolean;
 }
 
 /** Map core session labels onto case ids (default: case id = session id). */
@@ -97,7 +99,8 @@ export interface CalibrationReport extends SplitMetrics {
   reasons: string[];
   /** Metrics on the tuning split(s), for diagnosis only — never a calibration claim. */
   inSample?: SplitMetrics;
-  excluded: { noVerdict: number; noLabel: number; tied: number; noSplit: number };
+  /** `undecided`: labelled cases the judge abstained on (checklist `abstain`); absent when none. */
+  excluded: { noVerdict: number; noLabel: number; tied: number; noSplit: number; undecided?: number };
   noisy: NoisyCase[];
   status: CalibrationStatus;
   ts: number;
@@ -283,7 +286,7 @@ export function calibrate(opts: CalibrateOpts): CalibrationReport {
     votes.set(l.caseId, v);
   }
 
-  const excluded = { noVerdict: 0, noLabel: 0, tied: 0, noSplit: 0 };
+  const excluded: CalibrationReport["excluded"] = { noVerdict: 0, noLabel: 0, tied: 0, noSplit: 0 };
   const noisy: NoisyCase[] = [];
   const held: { human: boolean; judge: boolean }[] = [];
   const tuning: { human: boolean; judge: boolean }[] = [];
@@ -312,6 +315,11 @@ export function calibrate(opts: CalibrateOpts): CalibrationReport {
     const human = v.pass > v.fail;
     if (!j || !judgeInfo) {
       excluded.noVerdict++;
+      continue;
+    }
+    // An abstention is not a "fail": counting it as one would credit the judge for missing evidence.
+    if (j.undecided) {
+      excluded.undecided = (excluded.undecided ?? 0) + 1;
       continue;
     }
     const unanimous = v.pass === 0 || v.fail === 0;

@@ -20,6 +20,10 @@ export interface CachedVerdict {
   /** Raw reply text, for audit. */
   raw: string;
   ts: number;
+  /** A checklist item the model abstained on (cannot_decide): pass is false but means nothing. */
+  abstained?: true;
+  /** With abstained: what the model said was missing. */
+  missing?: string;
 }
 
 export interface JudgeCache {

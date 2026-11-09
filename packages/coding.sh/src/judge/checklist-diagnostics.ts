@@ -69,6 +69,10 @@ export interface ItemDiagnostics {
   unverifiedNoShare: number;
   /** Critical items only: share of answered cases this item gated. */
   gateRate?: number;
+  /** Cases where the model abstained (cannot_decide) on this item. Absent when 0. */
+  abstained?: number;
+  /** abstained / (n + abstained). Absent when nothing abstained. */
+  abstainRate?: number;
 }
 
 export interface DimensionDiagnostics {
@@ -136,10 +140,12 @@ export function checklistDiagnostics(runs: readonly ChecklistRun[], opts: Diagno
     let sole = 0;
     let llmNo = 0;
     let unverified = 0;
+    let abstained = 0;
     const xs: boolean[] = [];
     const ys: boolean[] = [];
     runs.forEach((r, i) => {
       const a = (maps[i] as Map<string, ChecklistItemAnswer>).get(id);
+      if (a?.abstained) abstained++;
       if (!a || a.answer === null) return;
       n++;
       if (a.answer) yes++;
@@ -175,6 +181,10 @@ export function checklistDiagnostics(runs: readonly ChecklistRun[], opts: Diagno
     };
     if (m.dimension) d.dimension = m.dimension;
     if (m.critical) d.gateRate = n ? (n - yes) / n : NaN;
+    if (abstained) {
+      d.abstained = abstained;
+      d.abstainRate = abstained / (n + abstained);
+    }
     return d;
   });
 
@@ -243,7 +253,8 @@ export function formatChecklistDiagnostics(d: ChecklistDiagnostics): string {
         `  ${it.critical ? "!" : " "} ${it.id.padEnd(28)} yes=${f2(it.yesRate)} n=${it.n} φ=${f2(it.phiOutcome)} sole-no=${f2(it.soleNoShare)}` +
         (it.gateRate !== undefined ? ` gate=${f2(it.gateRate)}` : "") +
         (it.nearConstant ? " [near-constant]" : "") +
-        (it.unverifiedNoShare > 0 ? ` [unverified-no ${f2(it.unverifiedNoShare)}]` : ""),
+        (it.unverifiedNoShare > 0 ? ` [unverified-no ${f2(it.unverifiedNoShare)}]` : "") +
+        (it.abstainRate !== undefined ? ` [abstained ${f2(it.abstainRate)}]` : ""),
     ),
     ...d.dimensions.map((x) => `  dim ${x.dimension}: spread=${f2(x.yesRateSpread)} ceiling=${f2(x.ceilingShare)}`),
     ...d.redundantPairs.map((p) => `  redundant: ${p.a} ~ ${p.b} φ=${f2(p.phi)} (n=${p.n})`),

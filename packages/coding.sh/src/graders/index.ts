@@ -7,6 +7,7 @@ import { CHECKLIST_KIND, checklistGrader, createChecklistJudge, type ChecklistIt
 import { createJudge, judgeGrader } from "../judge/judge.ts";
 import { nextActionGrader, type NextActionGraderSpec } from "./next-action.ts";
 import { createPairwiseJudge, PAIRWISE_KIND, type PairwiseJudge } from "../judge/pairwise.ts";
+import { createPanel, PANEL_KIND, panelGrader } from "../judge/panel.ts";
 import { anthropicProvider, openAICompatibleProvider, type ChatProvider } from "../judge/providers.ts";
 import { claudeCodeProvider, codexProvider } from "../judge/subscription.ts";
 import {
@@ -80,6 +81,8 @@ export interface LlmChecklistGraderSpec extends LlmProviderSpec {
   criterion?: string;
   /** "per-item" (default): one call per question; "batched": one call for all. */
   mode?: ChecklistMode;
+  /** Let the model answer "cannot_decide" and name what is missing, instead of "no". A critical abstention makes the case undecided. */
+  abstain?: boolean;
   /** Weighted yes-fraction at or above which a case without a critical "no" passes. Default 0.5. */
   passThreshold?: number;
   system?: string;
@@ -96,6 +99,26 @@ export interface PairwiseGraderSpec extends LlmProviderSpec {
   criterion?: string;
   template?: string;
   system?: string;
+  tunedOn?: Split[];
+  concurrency?: number;
+  calibration?: CalibrationStatus;
+}
+
+/** Judge panel (src/judge/panel.ts): one judge per provider scores 1-10, and the target never reaches the prompt. */
+export interface PanelGraderSpec {
+  kind: typeof PANEL_KIND;
+  name: string;
+  rubric: string;
+  /** One per provider. `advisory: true` shows a member's score without counting it. */
+  members: readonly (LlmProviderSpec & { id?: string; advisory?: boolean })[];
+  criterion?: string;
+  /** Panel score (1-10) at or above which a case passes. Default 7. */
+  target?: number;
+  aggregate?: "median" | "mean";
+  /** Re-scored fresh before the first case and every `anchorEvery` cases; drift is reported in the reason. */
+  anchors?: readonly { id: string; input?: string; output: string; expected?: string; score?: number }[];
+  anchorEvery?: number;
+  driftThreshold?: number;
   tunedOn?: Split[];
   concurrency?: number;
   calibration?: CalibrationStatus;
@@ -118,6 +141,7 @@ export type GraderSpec =
   | ModuleGraderSpec
   | LlmGraderSpec
   | LlmChecklistGraderSpec
+  | PanelGraderSpec
   | PairwiseGraderSpec;
 
 export interface GraderDeps {
@@ -227,6 +251,7 @@ export async function createGrader(spec: GraderSpec, deps: GraderDeps = {}): Pro
         ...(provider ? { provider } : {}),
         ...(s.criterion ? { criterion: s.criterion } : {}),
         ...(s.mode ? { mode: s.mode } : {}),
+        ...(s.abstain === true ? { abstain: true } : {}),
         ...(s.passThreshold !== undefined ? { passThreshold: s.passThreshold } : {}),
         ...(s.system ? { system: s.system } : {}),
         ...(s.tunedOn ? { tunedOn: s.tunedOn } : {}),
@@ -235,6 +260,31 @@ export async function createGrader(spec: GraderSpec, deps: GraderDeps = {}): Pro
         ...(provider ? cacheFor(provider, deps) : {}),
       });
       return checklistGrader(judge);
+    }
+    case PANEL_KIND: {
+      const s = spec;
+      if (!Array.isArray(s.members)) throw new Error('a panel needs "members": one provider spec per judge');
+      // Each member builds its own provider: a single deps.provider override would make every member the same judge.
+      const { provider: _one, ...memberDeps } = deps;
+      const members = s.members.map((m) => {
+        const provider = providerFromSpec(m, memberDeps);
+        return { provider, ...(m.id ? { id: m.id } : {}), ...(m.advisory === true ? { advisory: true } : {}) };
+      });
+      const panel = createPanel({
+        name: s.name,
+        rubric: s.rubric,
+        members,
+        ...(s.criterion ? { criterion: s.criterion } : {}),
+        ...(s.target !== undefined ? { target: s.target } : {}),
+        ...(s.aggregate ? { aggregate: s.aggregate } : {}),
+        ...(s.anchors ? { anchors: s.anchors.map((a) => ({ id: a.id, ctx: { input: a.input ?? "", output: a.output, ...(a.expected !== undefined ? { expected: a.expected } : {}) }, ...(a.score !== undefined ? { score: a.score } : {}) })) } : {}),
+        ...(s.driftThreshold !== undefined ? { driftThreshold: s.driftThreshold } : {}),
+        ...(s.tunedOn ? { tunedOn: s.tunedOn } : {}),
+        ...(s.concurrency ? { concurrency: s.concurrency } : {}),
+        ...(s.calibration ? { calibration: s.calibration } : {}),
+        ...(deps.judgeCache && members.every((m) => m.provider.name !== "mock") ? { cache: deps.judgeCache } : {}),
+      });
+      return panelGrader(panel, s.anchorEvery !== undefined ? { anchorEvery: s.anchorEvery } : {});
     }
     case PAIRWISE_KIND:
       throw new Error(`a "${PAIRWISE_KIND}" judge compares two experiments; use it with: coding.sh exp compare A B --pairwise <JSON|FILE>`);

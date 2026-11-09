@@ -23,7 +23,7 @@ import { FileJudgeCache } from "../../judge/cache.ts";
 import { calibrate, labelsFromCore, withCalibration, type HumanLabel, type JudgedCase } from "../../judge/calibrate.ts";
 import { CHECKLIST_KIND, type ChecklistVerdict } from "../../judge/checklist.ts";
 import type { ChatProvider, ChatResponse } from "../../judge/providers.ts";
-import { traceFromText } from "../../judge/trace-file.ts";
+import { describeCoverage, traceCoverage, traceFromText, type TraceCoverage } from "../../judge/trace-file.ts";
 import { humanFailCases, injectionProbe, type ProbeCase } from "../../judge/injection.ts";
 import { renderAuditPlan, renderCalibration } from "../../judge/render.ts";
 import { auditVerifier, DEFAULT_MIN_PASSES, parseCaseLabels, renderVerifierAudit, samplePasses } from "../../judge/verifier.ts";
@@ -109,7 +109,14 @@ async function grade(c: CommandContext): Promise<number> {
   if (outputArg === "-" && diffArg === "-") throw new UsageError("--output and --diff can't both read stdin", { reason: "invalid_argument" });
   const output = !outputArg ? "" : outputArg === "-" ? await readStdin() : await readText(outputArg, "--output", c.cwd);
   const traceArg = str(c.flags.trace) ?? env.CODING_SH_AGENT_STDOUT;
-  const trace = traceArg ? traceFromText(await readText(traceArg, "--trace", c.cwd)) : [];
+  const traceText = traceArg ? await readText(traceArg, "--trace", c.cwd) : undefined;
+  const trace = traceText !== undefined ? traceFromText(traceText) : [];
+  // Never grade a trace whose tool calls were dropped on the way (arXiv 2611.02676).
+  const coverage: TraceCoverage | undefined = traceText !== undefined ? traceCoverage(traceText, trace) : undefined;
+  const partial = coverage && !coverage.ok ? describeCoverage(coverage) : undefined;
+  if (partial && c.flags["allow-partial-trace"] !== true) {
+    throw new UsageError(`incomplete trace: ${partial}`, { reason: "trace_incomplete", suggestion: "pass --allow-partial-trace to grade anyway" });
+  }
   const inputArg = str(c.flags.input);
   const input = inputArg === undefined ? "" : inputArg.startsWith("@") ? await readText(inputArg.slice(1), "--input", c.cwd) : inputArg;
   const metadata = c.flags.metadata === undefined ? undefined : ((await jsonArg(String(c.flags.metadata), "--metadata")) as Record<string, unknown>);
@@ -132,10 +139,15 @@ async function grade(c: CommandContext): Promise<number> {
     if (file && calls.length) await appendFile(file, calls.map((x) => JSON.stringify({ grader: g.id, ...x })).join("\n") + "\n").catch(() => {});
   }
   const items = (r as Partial<ChecklistVerdict>).items;
-  if (out.json) out.data({ grader: g.id, pass: r.pass, score: r.score, reason: r.reason ?? null, items: items ?? null, traceEvents: trace.length, calls });
+  if (partial) out.warn(`incomplete trace graded anyway: ${partial}`);
+  if (out.json) out.data({ grader: g.id, pass: r.pass, score: r.score, reason: r.reason ?? null, items: items ?? null, traceEvents: trace.length, ...(coverage ? { traceCoverage: coverage } : {}), calls });
   else {
     out.print(`${r.pass ? "pass" : "fail"}  ${g.id}  score ${r.score.toFixed(2)}${trace.length ? `  (${trace.length} trace events)` : ""}`);
     for (const it of items ?? []) {
+      if (it.abstained) {
+        out.print(`  ??  ${it.critical ? "!" : " "} ${it.id}: missing ${oneLine(it.missing ?? "not stated", 160)}`);
+        continue;
+      }
       const a = it.answer === null ? "n/a" : it.answer ? "yes" : "no";
       out.print(`  ${a.padEnd(3)} ${it.critical ? "!" : " "} ${it.id}${it.explanation ? `: ${oneLine(it.explanation, 160)}` : ""}`);
     }
@@ -235,6 +247,7 @@ export async function run(c: CommandContext): Promise<number> {
       const v: JudgedCase = { caseId: r.caseId, pass: g.result.pass };
       if (typeof g.result.score === "number") v.score = g.result.score;
       if (g.result.reason) v.reason = g.result.reason;
+      if ((g.result as { undecided?: unknown }).undecided === true) v.undecided = true;
       // Only the sample plan stratifies on confidence; calibrate keeps its verdicts as before.
       const conf = (g.result as { confidence?: unknown }).confidence;
       if (sampling && typeof conf === "number" && conf >= 0 && conf <= 1) v.confidence = conf;

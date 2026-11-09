@@ -1,0 +1,10 @@
+{"model":"gpt-5","messages":[
+ {"role":"system","content":"You are a coding agent."},
+ {"role":"user","content":"Run the tests and fix the failure in src/sum.js."},
+ {"role":"assistant","content":null,"tool_calls":[{"id":"call_a1","type":"function","function":{"name":"shell","arguments":"{\"command\":\"npm test\"}"}}]},
+ {"role":"tool","tool_call_id":"call_a1","content":"1 failing: sum(2, 2) expected 4, got 5"},
+ {"role":"assistant","content":"The sum is off by one; fixing it.","tool_calls":[{"id":"call_a2","type":"function","function":{"name":"edit_file","arguments":"{\"path\":\"src/sum.js\",\"old\":\"a + b + 1\",\"new\":\"a + b\"}"}},{"id":"call_a3","type":"function","function":{"name":"shell","arguments":"{\"command\":\"npm test\"}"}}]},
+ {"role":"tool","tool_call_id":"call_a2","content":"edited src/sum.js"},
+ {"role":"tool","tool_call_id":"call_a3","content":"3 passing"},
+ {"role":"assistant","content":"Fixed the off-by-one in src/sum.js; the tests pass."}
+]}

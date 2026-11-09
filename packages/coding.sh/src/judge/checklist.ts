@@ -89,6 +89,13 @@ export interface ChecklistJudgeOptions extends RenderLimits {
   concurrency?: number;
   /** Extra attempts when a reply has no parseable answer. Default 1. */
   parseRetries?: number;
+  /**
+   * Let the model answer "cannot_decide" and name the missing evidence, instead
+   * of "no" (arXiv 2611.02676). An abstained item is left out of the score; a
+   * critical one makes the case undecided (pass false). Part of the version.
+   * Default false: prompts and version ids stay as they were.
+   */
+  abstain?: boolean;
 }
 
 export interface ChecklistJudgeVersion extends JudgeVersion {
@@ -101,7 +108,7 @@ export interface ChecklistJudgeVersion extends JudgeVersion {
 
 export interface ChecklistItemAnswer {
   id: string;
-  /** true = yes, false = no, null = not applicable (predicate said so). */
+  /** true = yes, false = no, null = not applicable (predicate said so) or the model abstained. */
   answer: boolean | null;
   source: "predicate" | "llm";
   critical: boolean;
@@ -111,6 +118,10 @@ export interface ChecklistItemAnswer {
   citations?: Citation[];
   /** An LLM "no" with no verified citation: weakly supported, worth a look. */
   unverifiedNo?: true;
+  /** The model answered "cannot_decide" (only with `abstain`): answer is null. */
+  abstained?: true;
+  /** What the model said it would need to decide. */
+  missing?: string;
 }
 
 export interface ChecklistVerdict extends JudgeVerdict {
@@ -121,6 +132,10 @@ export interface ChecklistVerdict extends JudgeVerdict {
   /** Items answered yes / answered at all (null answers excluded). */
   yes: number;
   answered: number;
+  /** Items the model abstained on. Absent when 0. */
+  abstained?: number;
+  /** A critical item abstained: the case is neither passed nor failed on evidence (pass is false). */
+  undecided?: true;
 }
 
 export const CHECKLIST_SYSTEM = `You are a strict, impartial evaluator of AI agent behavior.
@@ -134,6 +149,15 @@ const ITEM_REPLY = `Reply with a single JSON object and nothing else:
 
 const BATCH_REPLY = `Answer every question independently. Reply with a single JSON object and nothing else:
 {"answers": [{"id": "<question id>", "answer": "yes" | "no", "explanation": "<one sentence>", "citations": [{"eventId": "<id or \\"\\">", "quote": "<exact excerpt>"}]}]}`;
+
+/** The one sentence `abstain: true` adds to the system prompt. */
+export const ABSTAIN_RULE = `If the material lacks what a question needs (a step, a tool call or a result it asks about is not shown), answer "cannot_decide" and say in "missing" what is missing; never answer "no" for missing evidence.`;
+
+const ITEM_REPLY_ABSTAIN = `Reply with a single JSON object and nothing else:
+{"answer": "yes" | "no" | "cannot_decide", "missing": "<what the material lacks, or \"\">", "explanation": "<one sentence>", "citations": [{"eventId": "<id of the trace event, or \"\" if quoting the output>", "quote": "<exact excerpt>"}]}`;
+
+const BATCH_REPLY_ABSTAIN = `Answer every question independently. Reply with a single JSON object and nothing else:
+{"answers": [{"id": "<question id>", "answer": "yes" | "no" | "cannot_decide", "missing": "<what the material lacks, or \"\">", "explanation": "<one sentence>", "citations": [{"eventId": "<id or \"\">", "quote": "<exact excerpt>"}]}]}`;
 
 const ITEM_TEMPLATE = `Criterion: {{criterion}}
 
@@ -195,6 +219,40 @@ export const CHECKLIST_BATCH_SCHEMA: Record<string, unknown> = {
   required: ["answers"],
   additionalProperties: false,
 };
+
+const ABSTAIN_PROPS = { ...ANSWER_PROPS, answer: { type: "string", enum: ["yes", "no", "cannot_decide"] }, missing: { type: "string" } };
+
+export const CHECKLIST_ITEM_SCHEMA_ABSTAIN: Record<string, unknown> = {
+  type: "object",
+  properties: ABSTAIN_PROPS,
+  required: ["answer", "missing", "explanation", "citations"],
+  additionalProperties: false,
+};
+
+export const CHECKLIST_BATCH_SCHEMA_ABSTAIN: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    answers: {
+      type: "array",
+      items: { type: "object", properties: { id: { type: "string" }, ...ABSTAIN_PROPS }, required: ["id", "answer", "missing", "explanation", "citations"], additionalProperties: false },
+    },
+  },
+  required: ["answers"],
+  additionalProperties: false,
+};
+
+/** System prompt, reply template and schemas for a mode, with or without the abstain outlet. */
+function promptParts(mode: ChecklistMode, abstain: boolean, system: string | undefined) {
+  const sys = abstain ? `${system ?? CHECKLIST_SYSTEM}\n${ABSTAIN_RULE}` : (system ?? CHECKLIST_SYSTEM);
+  const item = `${ITEM_TEMPLATE}\n${abstain ? ITEM_REPLY_ABSTAIN : ITEM_REPLY}`;
+  const batch = `${BATCH_TEMPLATE}\n${abstain ? BATCH_REPLY_ABSTAIN : BATCH_REPLY}`;
+  return {
+    system: sys,
+    template: mode === "batched" ? batch : item,
+    itemSchema: abstain ? CHECKLIST_ITEM_SCHEMA_ABSTAIN : CHECKLIST_ITEM_SCHEMA,
+    batchSchema: abstain ? CHECKLIST_BATCH_SCHEMA_ABSTAIN : CHECKLIST_BATCH_SCHEMA,
+  };
+}
 
 // ---------------------------------------------------------------- freezing + versioning
 
@@ -287,11 +345,11 @@ export function checklistVersionFor(opts: ChecklistJudgeOptions): ChecklistJudge
   const mode: ChecklistMode = opts.mode ?? "per-item";
   if (mode !== "per-item" && mode !== "batched") throw new TypeError(`checklist mode must be "per-item" or "batched"`);
   const passThreshold = opts.passThreshold ?? 0.5;
-  const system = opts.system ?? CHECKLIST_SYSTEM;
-  const template = mode === "batched" ? `${BATCH_TEMPLATE}\n${BATCH_REPLY}` : `${ITEM_TEMPLATE}\n${ITEM_REPLY}`;
+  const abstain = opts.abstain === true && needsModel;
+  const { system, template } = promptParts(mode, abstain, opts.system);
   const criterion = opts.criterion ?? opts.name;
   const provider = needsModel && opts.provider ? opts.provider : undefined;
-  const params: Record<string, unknown> = { ...(provider?.params ?? {}), passThreshold, mode, ...limitsOf(opts) };
+  const params: Record<string, unknown> = { ...(provider?.params ?? {}), passThreshold, mode, ...limitsOf(opts), ...(abstain ? { abstain: true } : {}) };
   const promptHash = sha256Hex(`${system}\u001f${template}`);
   const hash = checklistHash(items);
   const providerName = provider?.name ?? "none";
@@ -347,39 +405,56 @@ function parseCitations(v: unknown): Citation[] {
 }
 
 export interface ParsedItemAnswer {
-  answer: boolean;
+  /** null: the model abstained (only when abstain is on). */
+  answer: boolean | null;
   explanation?: string;
   citations: Citation[];
+  /** With answer null: what the model said it would need. */
+  missing?: string;
 }
 
-function normalizeAnswer(o: Record<string, unknown>): ParsedItemAnswer | undefined {
-  const answer = yesNo(o.answer) ?? yesNo(o.pass);
+/** "cannot_decide" and its near spellings, accepted only when abstain is on. */
+function isAbstain(v: unknown): boolean {
+  if (typeof v !== "string") return false;
+  const t = v.trim().toLowerCase().replace(/[.!]$/, "").replace(/[\s-]+/g, "_");
+  return t === "cannot_decide" || t === "can't_decide" || t === "undecided" || t === "unsure" || t === "insufficient" || t === "insufficient_evidence" || t === "unknown";
+}
+
+function answerOf(o: Record<string, unknown>, abstain: boolean): boolean | null | undefined {
+  const yn = yesNo(o.answer) ?? yesNo(o.pass);
+  if (yn !== undefined) return yn;
+  return abstain && isAbstain(o.answer) ? null : undefined;
+}
+
+function normalizeAnswer(o: Record<string, unknown>, abstain = false): ParsedItemAnswer | undefined {
+  const answer = answerOf(o, abstain);
   if (answer === undefined) return undefined;
   const out: ParsedItemAnswer = { answer, citations: parseCitations(o.citations) };
   const ex = o.explanation ?? o.reason;
   if (typeof ex === "string" && ex.trim()) out.explanation = ex.trim();
+  if (answer === null) out.missing = typeof o.missing === "string" && o.missing.trim() ? o.missing.trim() : (out.explanation ?? "not stated");
   return out;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
-/** One item's yes/no answer from reply text. Throws JudgeParseError when there is none. */
-export function parseItemAnswer(raw: string): ParsedItemAnswer {
-  const found = extractJson(raw, { accept: (v) => isObj(v) && yesNo(v.answer ?? v.pass) !== undefined });
-  const a = isObj(found) ? normalizeAnswer(found) : undefined;
-  if (!a) throw new JudgeParseError('checklist reply contained no {"answer": "yes"|"no"}', raw);
+/** One item's yes/no answer from reply text (or cannot_decide, with `abstain`). Throws JudgeParseError when there is none. */
+export function parseItemAnswer(raw: string, abstain = false): ParsedItemAnswer {
+  const found = extractJson(raw, { accept: (v) => isObj(v) && answerOf(v, abstain) !== undefined });
+  const a = isObj(found) ? normalizeAnswer(found, abstain) : undefined;
+  if (!a) throw new JudgeParseError(abstain ? 'checklist reply contained no {"answer": "yes"|"no"|"cannot_decide"}' : 'checklist reply contained no {"answer": "yes"|"no"}', raw);
   return a;
 }
 
 /** Answers for every id in `ids` from a batched reply. Throws JudgeParseError when any is missing. */
-export function parseBatchAnswers(raw: string, ids: readonly string[]): Map<string, ParsedItemAnswer> {
+export function parseBatchAnswers(raw: string, ids: readonly string[], abstain = false): Map<string, ParsedItemAnswer> {
   const found = extractJson(raw, { accept: (v) => (isObj(v) && Array.isArray(v.answers)) || Array.isArray(v) });
   const list = Array.isArray(found) ? found : isObj(found) && Array.isArray(found.answers) ? found.answers : undefined;
   if (!list) throw new JudgeParseError('checklist reply contained no {"answers": [...]}', raw);
   const out = new Map<string, ParsedItemAnswer>();
   for (const x of list) {
     if (!isObj(x) || typeof x.id !== "string") continue;
-    const a = normalizeAnswer(x);
+    const a = normalizeAnswer(x, abstain);
     if (a && !out.has(x.id.trim())) out.set(x.id.trim(), a);
   }
   const missing = ids.filter((id) => !out.has(id));
@@ -395,16 +470,29 @@ export interface ChecklistScore {
   gatedBy: string[];
   yes: number;
   answered: number;
+  /** Items the model abstained on (left out of the score). Absent when 0. */
+  abstained?: number;
+  /** Critical items that abstained: the case is undecided and does not pass. Absent when none. */
+  undecided?: string[];
 }
 
-/** Weighted yes fraction over answered items; any critical "no" fails. No applicable item → score 0, fail. */
-export function scoreChecklist(answers: readonly Pick<ChecklistItemAnswer, "id" | "answer" | "critical" | "weight">[], passThreshold = 0.5): ChecklistScore {
+/**
+ * Weighted yes fraction over answered items; any critical "no" fails. No applicable item → score 0, fail.
+ * An abstained item is out of the score; a critical one makes the case undecided (pass false).
+ */
+export function scoreChecklist(answers: readonly (Pick<ChecklistItemAnswer, "id" | "answer" | "critical" | "weight"> & { abstained?: true })[], passThreshold = 0.5): ChecklistScore {
   let w = 0;
   let wy = 0;
   let yes = 0;
   let answered = 0;
+  let abstained = 0;
   const gatedBy: string[] = [];
+  const undecided: string[] = [];
   for (const a of answers) {
+    if (a.abstained) {
+      abstained++;
+      if (a.critical) undecided.push(a.id);
+    }
     if (a.answer === null) continue;
     answered++;
     w += a.weight;
@@ -414,7 +502,10 @@ export function scoreChecklist(answers: readonly Pick<ChecklistItemAnswer, "id" 
     } else if (a.critical) gatedBy.push(a.id);
   }
   const score = w > 0 ? wy / w : 0;
-  return { score, pass: answered > 0 && gatedBy.length === 0 && score >= passThreshold, gatedBy, yes, answered };
+  const out: ChecklistScore = { score, pass: answered > 0 && gatedBy.length === 0 && undecided.length === 0 && score >= passThreshold, gatedBy, yes, answered };
+  if (abstained) out.abstained = abstained;
+  if (undecided.length) out.undecided = undecided;
+  return out;
 }
 
 // ---------------------------------------------------------------- judge
@@ -428,15 +519,20 @@ const RETRY_NOTE = "\n\nYour previous reply could not be parsed. Reply with ONLY
 const clip = (s: string, n = 300) => (s.length <= n ? s : `${s.slice(0, n)}…`);
 
 function fromCache(hit: CachedVerdict): ParsedItemAnswer {
-  const a: ParsedItemAnswer = { answer: hit.pass, citations: hit.citations ?? [] };
+  const a: ParsedItemAnswer = { answer: hit.abstained ? null : hit.pass, citations: hit.citations ?? [] };
   if (hit.reason) a.explanation = hit.reason;
+  if (hit.abstained) a.missing = hit.missing ?? a.explanation ?? "not stated";
   return a;
 }
 
 function toEntry(a: ParsedItemAnswer, citations: Citation[], model: string, raw: string): CachedVerdict {
-  const e: CachedVerdict = { score: a.answer ? 1 : 0, pass: a.answer, confidence: 1, model, raw, ts: Date.now() };
+  const e: CachedVerdict = { score: a.answer ? 1 : 0, pass: a.answer === true, confidence: a.answer === null ? 0 : 1, model, raw, ts: Date.now() };
   if (a.explanation) e.reason = a.explanation;
   if (citations.length) e.citations = citations;
+  if (a.answer === null) {
+    e.abstained = true;
+    if (a.missing) e.missing = a.missing;
+  }
   return e;
 }
 
@@ -446,7 +542,9 @@ export function createChecklistJudge(opts: ChecklistJudgeOptions): ChecklistJudg
   const limit = createLimiter(opts.concurrency ?? 4);
   const parseRetries = opts.parseRetries ?? 1;
   const provider = opts.provider;
-  const system = opts.system ?? CHECKLIST_SYSTEM;
+  const abstain = version.params.abstain === true;
+  const parts = promptParts(version.mode, abstain, opts.system);
+  const system = parts.system;
   const limits = limitsOf(opts);
 
   const render = (rubric: string, template: string, ctx: GradeContext): RenderedPrompt =>
@@ -503,7 +601,11 @@ export function createChecklistJudge(opts: ChecklistJudgeOptions): ChecklistJudg
         if (it.dimension) a.dimension = it.dimension;
         if (parsed.explanation) a.explanation = parsed.explanation;
         if (citations.length) a.citations = citations;
-        if (!parsed.answer && !citations.some((c) => c.verified)) a.unverifiedNo = true;
+        if (parsed.answer === false && !citations.some((c) => c.verified)) a.unverifiedNo = true;
+        if (parsed.answer === null) {
+          a.abstained = true;
+          a.missing = parsed.missing ?? "not stated";
+        }
         answers.set(it.id, a);
         return citations;
       };
@@ -511,7 +613,7 @@ export function createChecklistJudge(opts: ChecklistJudgeOptions): ChecklistJudg
       if (llmItems.length && version.mode === "per-item") {
         await Promise.all(
           llmItems.map(async (it) => {
-            const prompt = render(renderItemQuestion(it), `${ITEM_TEMPLATE}\n${ITEM_REPLY}`, ctx);
+            const prompt = render(renderItemQuestion(it), parts.template, ctx);
             const inputHash = sha256Hex(`${prompt.system}\u001f${prompt.user}`);
             const hit = await opts.cache?.get(version.id, inputHash);
             if (hit) {
@@ -519,14 +621,14 @@ export function createChecklistJudge(opts: ChecklistJudgeOptions): ChecklistJudg
               record(it, fromCache(hit), prompt.material, true);
               return;
             }
-            const { value, raw, model } = await ask(prompt, CHECKLIST_ITEM_SCHEMA, parseItemAnswer, ctx.signal);
+            const { value, raw, model } = await ask(prompt, parts.itemSchema, (r) => parseItemAnswer(r, abstain), ctx.signal);
             anyFresh = true;
             const citations = record(it, value, prompt.material, false);
             await opts.cache?.set(version.id, inputHash, toEntry(value, citations, model, raw));
           }),
         );
       } else if (llmItems.length) {
-        const prompt = render(renderBatchQuestions(llmItems), `${BATCH_TEMPLATE}\n${BATCH_REPLY}`, ctx);
+        const prompt = render(renderBatchQuestions(llmItems), parts.template, ctx);
         const batchHash = sha256Hex(`${prompt.system}\u001f${prompt.user}`);
         const keyOf = (id: string) => sha256Hex(`${batchHash}\u001f${id}`);
         const hits = await Promise.all(llmItems.map((it) => opts.cache?.get(version.id, keyOf(it.id))));
@@ -535,7 +637,7 @@ export function createChecklistJudge(opts: ChecklistJudgeOptions): ChecklistJudg
           llmItems.forEach((it, i) => record(it, fromCache(hits[i] as CachedVerdict), prompt.material, true));
         } else {
           const ids = llmItems.map((it) => it.id);
-          const { value, raw, model } = await ask(prompt, CHECKLIST_BATCH_SCHEMA, (r) => parseBatchAnswers(r, ids), ctx.signal);
+          const { value, raw, model } = await ask(prompt, parts.batchSchema, (r) => parseBatchAnswers(r, ids, abstain), ctx.signal);
           anyFresh = true;
           for (const it of llmItems) {
             const parsed = value.get(it.id) as ParsedItemAnswer;
@@ -549,12 +651,17 @@ export function createChecklistJudge(opts: ChecklistJudgeOptions): ChecklistJudg
       const ordered = items.map((it) => answers.get(it.id) as ChecklistItemAnswer);
       const s = scoreChecklist(ordered, version.passThreshold);
       const no = ordered.filter((a) => a.answer === false).map((a) => a.id);
-      const reason =
+      const missingOf = (id: string) => answers.get(id)?.missing ?? "not stated";
+      const undecided = s.undecided ? `undecided: ${s.undecided.map((id) => `${id} (missing: ${missingOf(id)})`).join(", ")}` : "";
+      const abstainedIds = ordered.filter((a) => a.abstained && !a.critical).map((a) => a.id);
+      const summary =
         s.answered === 0
           ? "no checklist item applied to this case"
           : `${s.yes}/${s.answered} yes (score ${s.score.toFixed(2)})` +
             (s.gatedBy.length ? `; critical failed: ${s.gatedBy.join(", ")}` : "") +
-            (no.length > s.gatedBy.length ? `; no: ${no.filter((id) => !s.gatedBy.includes(id)).join(", ")}` : "");
+            (no.length > s.gatedBy.length ? `; no: ${no.filter((id) => !s.gatedBy.includes(id)).join(", ")}` : "") +
+            (abstainedIds.length ? `; abstained: ${abstainedIds.join(", ")}` : "");
+      const reason = undecided ? `${undecided}; ${summary}` : summary;
       const citations = ordered.filter((a) => a.answer === false).flatMap((a) => (a.citations ?? []).filter((c) => c.verified));
       const gatedByPredicate = ordered.some((a) => a.answer === false && a.critical && a.source === "predicate");
       const v: ChecklistVerdict = {
@@ -570,6 +677,8 @@ export function createChecklistJudge(opts: ChecklistJudgeOptions): ChecklistJudg
         yes: s.yes,
         answered: s.answered,
       };
+      if (s.abstained) v.abstained = s.abstained;
+      if (s.undecided) v.undecided = true;
       if (citations.length) v.citations = citations;
       return v;
     },
@@ -592,9 +701,11 @@ export function checklistGrader(judge: ChecklistJudge, opts: { id?: string; cali
     version: judge.version.id,
     async grade(ctx) {
       const v = await judge.evaluate(ctx);
-      const r: { score: number; pass: boolean; reason?: string; citations?: Citation[]; items: ChecklistItemAnswer[]; gatedBy: string[] } = { score: v.score, pass: v.pass, items: v.items, gatedBy: v.gatedBy };
+      const r: { score: number; pass: boolean; reason?: string; citations?: Citation[]; items: ChecklistItemAnswer[]; gatedBy: string[]; abstained?: number; undecided?: true } = { score: v.score, pass: v.pass, items: v.items, gatedBy: v.gatedBy };
       if (v.reason) r.reason = v.reason;
       if (v.citations) r.citations = v.citations;
+      if (v.abstained) r.abstained = v.abstained;
+      if (v.undecided) r.undecided = true;
       return r;
     },
   };
