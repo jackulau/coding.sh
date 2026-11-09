@@ -48,7 +48,8 @@ for (const file of htmlFiles(DIST)) {
   const html = readFileSync(file, "utf8");
   const bad = (msg) => problems.push(`${route}: ${msg}`);
   // Internal links are checked on every page, the 404 page included.
-  for (const [, href] of html.matchAll(/<a\s[^>]*href="(\/[^"#?]*)[^"]*"/g)) {
+  // Absolute links to this site (https://coding.sh/…, as CHANGELOG.md writes them) count too.
+  for (const [, href] of html.matchAll(/<a\s[^>]*href="(?:https:\/\/coding\.sh)?(\/[^"#?]*)[^"]*"/g)) {
     if (!href.startsWith("//") && !exists(href)) bad(`links to ${href}, which is not in dist`);
   }
   if (/<meta name="robots" content="noindex/.test(html)) continue;
