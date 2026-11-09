@@ -178,6 +178,16 @@ export class MemoryIndexStore implements IndexStore {
     return [...this.sessions.keys()].filter((id) => id.startsWith(prefix)).sort().slice(0, limit);
   }
 
+  async sessionsWithoutRow(): Promise<{ sessionId: string; agent: string }[]> {
+    const out = new Map<string, string>();
+    for (const { event: e } of this.events.values()) {
+      if (this.sessions.has(e.sessionId)) continue;
+      const agent = out.get(e.sessionId);
+      if (agent === undefined || e.agent < agent) out.set(e.sessionId, e.agent);
+    }
+    return [...out].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)).map(([sessionId, agent]) => ({ sessionId, agent }));
+  }
+
   async eventsByIdPrefix(prefix: string, limit: number): Promise<AgentEvent[]> {
     return [...this.events.values()]
       .map((r) => r.event)

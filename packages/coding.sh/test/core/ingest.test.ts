@@ -672,3 +672,85 @@ describe("ingest", () => {
     assert.equal(await t.index.getCursor(sinkCursorKey("remote", src)), statSync(t.file).size);
   });
 });
+
+/**
+ * A store whose fold of session `bad` throws, standing in for a fold bug: in
+ * coding.sh 0.1.4, a Codex command named `constructor` made the fold throw,
+ * the import stopped there, and every session after it kept its events with no
+ * row (RT-11). Only the fold's read (no `kinds`) gets the unreadable event.
+ */
+class FoldBugStore extends MemoryIndexStore {
+  override async listEvents(sessionId: string, opts: { kinds?: string[]; limit?: number; offset?: number } = {}): Promise<AgentEvent[]> {
+    const events = await super.listEvents(sessionId, opts);
+    if (sessionId !== "bad" || opts.kinds || !events.length) return events;
+    const poison = { ...events[0]!, id: "poison", kind: "user.message" as const, payload: {} };
+    Object.defineProperty(poison.payload, "text", { enumerable: true, get: () => { throw new Error("boom in fold"); } });
+    return [...events, poison];
+  }
+}
+
+describe("sessions with events and no row (RT-11)", () => {
+  const base = 1_700_000_000_000;
+  const ev = (sessionId: string, kind: EventKind, ts: number, payload: Record<string, unknown> = {}): AgentEvent => ({ id: `t-${sessionId}-${kind}-${ts}`, v: 0, sessionId, ts: base + ts, agent: "fake", kind, cwd: "/work/demo", payload });
+  const threeSessions = ["a", "bad", "c"].flatMap((s, i) => [ev(s, "session.start", i * 10_000), ev(s, "user.message", i * 10_000 + 1000, { text: `hi ${s}` }), ev(s, "session.end", i * 10_000 + 2000)]);
+
+  it("backfill: a session whose fold throws gets a row flagged fold:error, and the sessions after it still get theirs", async () => {
+    const t = setup();
+    const index = new FoldBugStore();
+    const historian: Adapter = { ...fakeAdapter, id: "hist", async *backfill() { yield* threeSessions; } };
+    const r = await backfill({ config: t.config, index, blobs: t.blobs, env: t.env, adapters: [historian] });
+    assert.equal((await index.getSession("a"))?.title, "hi a");
+    assert.equal((await index.getSession("c"))?.title, "hi c", "the session after the one that failed to fold has its row");
+    const bad = await index.getSession("bad");
+    assert.ok(bad, "the session that failed to fold has a row");
+    assert.deepEqual([bad.agent, bad.startedAt, bad.cwd], ["fake", base + 10_000, "/work/demo"]);
+    assert.ok(bad.flags.includes("fold:error"));
+    assert.match(bad.stats.foldError ?? "", /boom in fold/);
+    assert.equal((await index.getSession("a"))?.stats.foldError, undefined, "absent when the fold worked");
+    assert.ok(r.errors.some((e) => /fake session bad/.test(e.message) && /fold:error/.test(e.message)), JSON.stringify(r.errors));
+  });
+
+  it("spool ingest: a session whose fold throws gets a flagged row instead of failing every later ingest", async () => {
+    const t = setup();
+    const index = new FoldBugStore();
+    t.write(...["a", "bad", "c"].flatMap((s) => [t.line({ session: s, kind: "session.start" }), t.line({ session: s, kind: "user.message", text: `hi ${s}` })]));
+    const r = await ingest({ config: t.config, index, blobs: t.blobs, adapters, env: t.env });
+    assert.equal((await index.getSession("c"))?.title, "hi c");
+    assert.ok((await index.getSession("bad"))?.flags.includes("fold:error"));
+    assert.ok(r.errors.some((e) => /fake session bad/.test(e.message)), JSON.stringify(r.errors));
+    assert.equal(await index.getCursor("fake/2026-11-06.1.jsonl"), statSync(t.file).size, "the spool cursor moves past the lines");
+  });
+
+  it("ingest with repair folds sessions that have events but no row, and rows whose fold failed", async () => {
+    const t = setup();
+    const index = await SqliteIndexStore.open(join(t.root, "index.db"));
+    try {
+      // Events an import stored before it stopped short of their rows.
+      await index.putEvents(threeSessions.filter((e) => e.sessionId !== "bad"));
+      // A row an earlier build could not fold, its events now foldable.
+      await index.putEvents(threeSessions.filter((e) => e.sessionId === "bad"));
+      await index.upsertSession({ id: "bad", agent: "fake", startedAt: base + 10_000, stats: { events: 3, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0, foldError: "boom" }, flags: ["fold:error"] });
+      assert.deepEqual(await index.sessionsWithoutRow!(), [{ sessionId: "a", agent: "fake" }, { sessionId: "c", agent: "fake" }]);
+
+      const plain = await ingest({ config: t.config, index, blobs: t.blobs, adapters, env: t.env });
+      assert.equal(plain.repaired, undefined, "only an ingest asked to repair looks for them");
+      const r = await ingest({ config: t.config, index, blobs: t.blobs, adapters, env: t.env, repair: true });
+      assert.equal(r.repaired, 3);
+      assert.deepEqual(await index.sessionsWithoutRow!(), []);
+      assert.deepEqual([(await index.getSession("a"))?.title, (await index.getSession("c"))?.title], ["hi a", "hi c"]);
+      const bad = (await index.getSession("bad"))!;
+      assert.deepEqual([bad.title, bad.flags.includes("fold:error"), bad.stats.foldError], ["hi bad", false, undefined]);
+      const again = await ingest({ config: t.config, index, blobs: t.blobs, adapters, env: t.env, repair: true });
+      assert.equal(again.repaired, undefined, "nothing left to repair");
+    } finally {
+      await index.close();
+    }
+  });
+
+  it("the memory store lists sessions with events and no row too", async () => {
+    const index = new MemoryIndexStore();
+    await index.putEvents(threeSessions);
+    await index.upsertSession({ id: "a", agent: "fake", startedAt: base, stats: { events: 3, turns: 1, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] });
+    assert.deepEqual(await index.sessionsWithoutRow!(), [{ sessionId: "bad", agent: "fake" }, { sessionId: "c", agent: "fake" }]);
+  });
+});

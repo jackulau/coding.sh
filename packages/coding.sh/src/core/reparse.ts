@@ -64,6 +64,7 @@ export { REFOLD_CURSOR } from "./ingest.ts";
 import {
   backfillEvent,
   childLinker,
+  foldFailureMessage,
   normalizeContext,
   parseVersionFor,
   profileCache,
@@ -71,6 +72,7 @@ import {
   REFOLD_CURSOR,
   spoolNormalizer,
   toolDurationFiller,
+  type FoldFailure,
   type IngestError,
 } from "./ingest.ts";
 
@@ -329,6 +331,8 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
 
     const linker = childLinker(index);
     const repo = repoResolver();
+    // A fold that throws leaves the session a row tagged fold:error (recomputeSession); reported here.
+    const onFoldError = (f: FoldFailure) => error({ message: foldFailureMessage(f) });
 
     /** Rebuilds one session: transcript events read for it (undefined = none found) and its re-normalized spool events. */
     const rebuild = async (id: string, transcript: AgentEvent[] | undefined): Promise<void> => {
@@ -343,7 +347,7 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
         if (fresh.length) {
           const r = await index.replaceSessionEvents!(id, [], await toolDurationFiller(viewOf([...stored, ...fresh]))(fresh));
           result.inserted += r.inserted;
-          await recomputeSession(index, id, { linker, repo });
+          await recomputeSession(index, id, { linker, repo, onFoldError });
         }
         return;
       }
@@ -379,7 +383,7 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
         result.removed += r.removed;
         result.inserted += r.inserted;
       }
-      await recomputeSession(index, id, reparsed ? { linker, repo, parseVersion: version } : { linker, repo });
+      await recomputeSession(index, id, reparsed ? { linker, repo, parseVersion: version, onFoldError } : { linker, repo, onFoldError });
       if (reparsed) {
         result.reparsed++;
         await index.kvSet?.(reparseKeptKey(id), undefined);
@@ -497,7 +501,7 @@ export async function reparse(opts: ReparseOptions): Promise<ReparseResult> {
       opts.onProgress?.({ phase: "refold", done: 0, total: ids.length });
       await underLock(ids, async (id) => {
         try {
-          if (await recomputeSession(index, id, { linker, repo })) result.refolded++;
+          if (await recomputeSession(index, id, { linker, repo, onFoldError })) result.refolded++;
         } catch (err) {
           error({ message: `refold of session ${id} failed: ${(err as Error).message}` });
         }

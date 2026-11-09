@@ -1,7 +1,7 @@
 // coding.sh doctor: per agent, installed / hooked / last event age; then the
 // hook bin (current with this CLI?), each registered MCP server (does its
-// command exist?), the spool (writable), the store (opens, migrates), and the
-// OTLP receiver port.
+// command exist?), the spool (writable), the store (opens, migrates; sessions
+// with events but no row, rows whose fold failed), and the OTLP receiver port.
 import { accessSync, closeSync, constants, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createConnection } from "node:net";
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
@@ -13,12 +13,13 @@ import { proxyRoutes } from "../../proxy/install.ts";
 import { pidAlive, probeProxy, readProxyState } from "../../proxy/state.ts";
 import { hookBinHealth } from "../hookbin.ts";
 import { openContext } from "../../core/context.ts";
+import { FLAGS } from "../../core/sessions.ts";
 import { paths, userHome } from "../../core/paths.ts";
 import { allGatewayConfigs, detectGatewaySetups, gatewaySettings } from "../../integrations/gateway/config.ts";
 import { GATEWAYS } from "../../integrations/gateway/providers.ts";
 import { GATEWAY_FLAG } from "../../integrations/gateway/ids.ts";
 import { list, port as portFlag } from "../common.ts";
-import { ago, LABEL_WIDTH } from "../output.ts";
+import { ago, LABEL_WIDTH, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { blockingNotes, hookTarget, otherScopeHooks, pickAdapters } from "./init.ts";
 
@@ -213,7 +214,17 @@ export async function run(c: CommandContext): Promise<number> {
   spin.stop();
 
   // Store: opens and answers a query.
-  const store: { ok: boolean; kind?: string; url?: string; error?: string; lastEventAt?: Record<string, number> } = { ok: false };
+  const store: {
+    ok: boolean;
+    kind?: string;
+    url?: string;
+    error?: string;
+    lastEventAt?: Record<string, number>;
+    /** Sessions with stored events and no row, by agent: invisible to sessions, the viewer and stats until `coding.sh ingest` folds them. Unset when the store can't tell. */
+    missingRows?: { count: number; byAgent: Record<string, number> };
+    /** Rows tagged fold:error (Session.stats.foldError). */
+    foldErrors?: number;
+  } = { ok: false };
   const lastByAgent: Record<string, number> = {};
   // Where the agent's recent sessions ran: project-level hooks are looked for there.
   const cwdsByAgent: Record<string, string[]> = {};
@@ -230,6 +241,13 @@ export async function run(c: CommandContext): Promise<number> {
         cwdsByAgent[adapter.id] = recent.map((r) => r.cwd).filter((d): d is string => !!d);
       }
       gatewaySessions = (await ctx.index.listSessions({ flag: GATEWAY_FLAG, limit: 1000 })).length;
+      const missing = await ctx.index.sessionsWithoutRow?.();
+      if (missing) {
+        const byAgent: Record<string, number> = {};
+        for (const m of missing) byAgent[m.agent] = (byAgent[m.agent] ?? 0) + 1;
+        store.missingRows = { count: missing.length, byAgent };
+      }
+      store.foldErrors = (await ctx.index.listSessions({ flag: FLAGS.foldError })).length;
       store.ok = true;
     } finally {
       await ctx.close();
@@ -352,6 +370,12 @@ export async function run(c: CommandContext): Promise<number> {
   for (const m of mcp.filter((x) => !x.ok)) out.row("MCP", `${m.agent}: ${m.problem} (${m.file}); run coding.sh init`, "warn");
   out.row("Spool", spool.ok ? `${spool.path} writable` : `${spool.path} not writable: ${spool.error}`, spool.ok ? "ok" : "fail");
   out.row("Store", store.ok ? `${store.kind} ${store.url}` : `can't open: ${store.error}`, store.ok ? "ok" : "fail");
+  const missing = store.missingRows;
+  if (missing?.count) {
+    const byAgent = Object.entries(missing.byAgent).sort((a, b) => b[1] - a[1]).map(([agent, n]) => `${agent} ${n}`);
+    out.row("Sessions", `${plural(missing.count, "session")} ${missing.count === 1 ? "has" : "have"} events but no session row (${byAgent.join(", ")}); run coding.sh ingest`, "warn");
+  }
+  if (store.foldErrors) out.row("Sessions", `${plural(store.foldErrors, "session")} could not be folded (tagged ${FLAGS.foldError}); update coding.sh, then run coding.sh ingest`, "warn");
   out.row("Receiver", receiver.listening ? `port ${port} in use (collector running?)` : `port ${port} free; start with coding.sh collector`, receiver.listening ? "ok" : "none");
   const routedNames = proxy.routes.filter((r) => r.ok).map((r) => `${ADAPTERS.find((a) => a.id === r.agent)?.displayName ?? r.agent}${r.chained ? ` (then ${r.chained})` : ""}`);
   if (proxy.running) out.row("Proxy", `${proxy.url} (pid ${proxy.pid})${routedNames.length ? `, routes ${routedNames.join(", ")}` : ""}`, "ok");

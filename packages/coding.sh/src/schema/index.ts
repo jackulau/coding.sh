@@ -355,6 +355,13 @@ export interface Session {
     redactions?: Record<string, number>;
     /** Destructive or paid commands the agent ran without a user turn approving them (core/unapproved.ts); it also flags the session `unapproved-action`. Unset when none. */
     unapprovedActions?: UnapprovedActions;
+    /**
+     * Why coding.sh could not fold this session's stored events into its stats (a coding.sh bug, not
+     * the agent's): the row then holds only what the events say directly (agent, start, end, cwd,
+     * event count), and the session is tagged `fold:error`. `coding.sh ingest` folds it again. Unset
+     * when the fold worked.
+     */
+    foldError?: string;
   };
   /** Detected failure patterns, e.g. "premature-completion". */
   flags: string[];

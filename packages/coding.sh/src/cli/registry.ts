@@ -269,6 +269,7 @@ export const COMMANDS: CommandSpec[] = [
     notes: [
       "Rarely needed: read commands, the viewer and the MCP server ingest first, and the hook starts one when a session ends.",
       "After an upgrade, sessions stored by an older adapter parse are re-parsed in the background. --rebuild does it for every session now; a session whose transcript and spool lines are gone keeps its rows, minus duplicates.",
+      "Run in the foreground, it also folds sessions that have events but no session row, and sessions tagged fold:error; doctor counts both.",
     ],
     load: () => import("./commands/ingest.ts"),
   },

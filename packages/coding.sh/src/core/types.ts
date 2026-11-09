@@ -192,6 +192,12 @@ export interface IndexStore {
   ping?(): Promise<void>;
   /** Up to `limit` session ids starting with `prefix`, sorted (`coding.sh show <prefix>`, like a git short hash). */
   sessionIdsByPrefix?(prefix: string, limit: number): Promise<string[]>;
+  /**
+   * Sessions that have stored events but no row, sorted by id, each with the agent of its
+   * events (the least, if they differ). Should be empty: ingest folds every session it
+   * stores events for. `coding.sh doctor` counts them; `coding.sh ingest` folds them.
+   */
+  sessionsWithoutRow?(): Promise<{ sessionId: string; agent: string }[]>;
   /** Up to `limit` events whose id starts with `prefix`, sorted by id (`coding.sh diff-calls`, `exp replay`). */
   eventsByIdPrefix?(prefix: string, limit: number): Promise<AgentEvent[]>;
   /**

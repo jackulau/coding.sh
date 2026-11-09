@@ -9,6 +9,9 @@
 // it imports the rest of the history under paths.importLock (one at a time).
 //
 // --rebuild re-parses every session (of --agent) from its transcript and spool now.
+//
+// The foreground run also folds sessions that have events but no row, and rows
+// tagged fold:error (core/ingest.ts repairSessions): the repair `doctor` names.
 import { parseSince } from "../args.ts";
 import { list, lockContention, str, tailIngest, underImportLock, withContext } from "../common.ts";
 import { CliError, plural, type Output } from "../output.ts";
@@ -56,7 +59,7 @@ export async function run(c: CommandContext): Promise<number> {
     const spin = out.spin("Ingesting spool…");
     let r;
     try {
-      r = await ctx.ingest();
+      r = await ctx.ingest({ repair: true });
     } catch (e) {
       spin.stop();
       if ((e as Error).name === "LockBusyError") throw new CliError(`Can't ingest: ${(e as Error).message}`, { reason: "locked", next: ["Wait for the other ingest to finish, then run:", "coding.sh ingest"] });
@@ -76,6 +79,7 @@ export async function run(c: CommandContext): Promise<number> {
       return errors ? 1 : 0;
     }
     out.row("Spool", `${plural(r.events, "event")}, ${plural(r.sessions, "session")}${r.errors.length ? `, ${plural(r.errors.length, "error")}` : ""}`, r.errors.length ? "warn" : "ok");
+    if (r.repaired) out.row("Repaired", `${plural(r.repaired, "session")} that had events but no session row, or a failed fold`, "ok");
     if (bf) out.row("Backfill", `${plural(bf.events, "event")}, ${plural(bf.sessions, "session")}, ${bf.duplicates} already captured${bf.errors.length ? `, ${plural(bf.errors.length, "error")}` : ""}`, bf.errors.length ? "warn" : "ok");
     if (rp) {
       out.row("Re-parsed", `${plural(rp.reparsed, "session")} (${plural(rp.removed, "row")} removed, ${rp.inserted} written)${rp.errors.length ? `, ${plural(rp.errors.length, "error")}` : ""}`, rp.errors.length ? "warn" : "ok");

@@ -49,6 +49,13 @@
 // Backfill keeps a per-file cursor (size, mtime, since) for adapters that
 // report their source files, skips files unchanged since the last run, and
 // recomputes only sessions that received new events.
+//
+// A fold that throws (a coding.sh bug on some stored events) never stops an
+// ingest or a backfill: the session gets a row with what its events say
+// directly, tagged fold:error with Session.stats.foldError, and the error is
+// reported. Before, one such session ended the run there, and every session
+// after it kept its events with no row (RT-11). `repair` (`coding.sh ingest`)
+// folds sessions that have events but no row, and fold:error rows, again.
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { isEventKind } from "../schema/index.ts";
 import type { Adapter, BackfillFile, BlobStore, Config, IndexStore, NormalizeContext, Sink, SpoolLine } from "./types.ts";
@@ -60,7 +67,7 @@ import { join } from "node:path";
 import { hashParts, sha256Hex } from "./ids.ts";
 import { paths } from "./paths.ts";
 import { createRedactor, noteBlobHits, redactEventCounted, redactionTally, sessionToMetadata, toMetadata, type RedactionTally, type Redactor } from "./redact.ts";
-import { byTime, foldSession, foldStamp, isBackfillEvent, isFoldState, isRealPrompt, isVerifyToolStart, sessionOf, sessionState, type SessionState } from "./sessions.ts";
+import { byTime, FLAGS, foldSession, foldStamp, isBackfillEvent, isFoldState, isRealPrompt, isVerifyToolStart, sessionOf, sessionState, type SessionState } from "./sessions.ts";
 import { copyFilter } from "./message-copies.ts";
 import { priceEvent, pricesFor } from "./pricing.ts";
 import { listSpoolFiles, readSpoolFile, type SpoolFile } from "./spool-read.ts";
@@ -112,6 +119,8 @@ export interface IngestOptions {
   signal?: AbortSignal;
   /** Called with the number of spool files still holding unread lines: once listed, then after each checkpoint. */
   onProgress?: (p: { filesPending: number }) => void;
+  /** Also fold sessions that have events but no row, and rows tagged fold:error (repairSessions), under the lock. */
+  repair?: boolean;
 }
 
 export interface IngestError {
@@ -144,6 +153,8 @@ export interface IngestResult {
   sinks: SinkReport[];
   /** Spool files left with unread lines because `deadline` passed or `signal` aborted (0 otherwise). */
   pendingFiles: number;
+  /** With `repair`: sessions that had events but no row, or a fold:error row, folded again. Unset when there were none. */
+  repaired?: number;
 }
 
 interface LineEvents {
@@ -237,7 +248,8 @@ export async function ingest(opts: IngestOptions): Promise<IngestResult> {
       // Cleared before listing files: a hook appends, then touches the marker,
       // so a file this pass misses always leaves the marker set.
       rmSync(marker, { force: true });
-      const r = await ingestLocked(opts, env, spoolDir, () => lock.assertHeld());
+      // Repair once: a later pass only drains what hooks appended meanwhile.
+      const r = await ingestLocked(pass === 0 ? opts : { ...opts, repair: false }, env, spoolDir, () => lock.assertHeld());
       total = total ? mergeResults(total, r) : r;
     } finally {
       lock.release();
@@ -278,6 +290,7 @@ function mergeResults(a: IngestResult, b: IngestResult): IngestResult {
     errors: [...a.errors, ...b.errors].slice(0, MAX_ERRORS + 1),
     sinks,
     pendingFiles: b.pendingFiles,
+    ...(a.repaired || b.repaired ? { repaired: (a.repaired ?? 0) + (b.repaired ?? 0) } : {}),
   };
 }
 
@@ -340,9 +353,10 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
       error({ message: `end snapshot of ${root} for session ${s.id} failed: ${(err as Error).message}` });
     }
   };
+  const onFoldError = (f: FoldFailure) => error({ message: foldFailureMessage(f) });
   const recompute = async (ids: Iterable<string>) => {
     for (const id of ids) {
-      if (await recomputeSession(index, id, { linker, repo, versionFor })) touchedAll.add(id);
+      if (await recomputeSession(index, id, { linker, repo, versionFor, onFoldError })) touchedAll.add(id);
     }
   };
   // After the checkpoint commits: git can take seconds, too long to hold the index's write lock.
@@ -542,6 +556,13 @@ async function ingestLocked(opts: IngestOptions, env: NodeJS.ProcessEnv, spoolDi
   }
   await checkpoint();
   opts.onProgress?.({ filesPending: result.pendingFiles });
+
+  if (opts.repair) {
+    fence();
+    const repaired = await repairSessions(index, { linker, repo, versionFor, onFoldError });
+    for (const id of repaired) touchedAll.add(id);
+    if (repaired.length) result.repaired = repaired.length;
+  }
 
   // Applied after every file so a child ingested before its parent is still linked.
   for (const id of await linker.apply()) touchedAll.add(id);
@@ -790,13 +811,58 @@ export interface RecomputeOptions {
   versionFor?: (agent: string) => number | undefined;
   /** Stamp this parse version whatever the stored one (re-parse). */
   parseVersion?: number;
+  /** Called when the fold threw and the session got a row tagged fold:error instead. */
+  onFoldError?: (f: FoldFailure) => void;
 }
 
-/** Folds a session's stored events into its row and upserts it. False when it has no events. */
+/** A session whose fold threw: its row is tagged fold:error (recomputeSession). */
+export interface FoldFailure {
+  sessionId: string;
+  agent: string;
+  message: string;
+}
+
+/** The ingest/backfill/re-parse error line for a FoldFailure. */
+export const foldFailureMessage = (f: FoldFailure): string => `${f.agent} session ${f.sessionId}: folding its events failed (${f.message}); its row is tagged ${FLAGS.foldError}`;
+
+/** What a fold (foldSession or sessionOf) threw on a session's stored events: a coding.sh bug, not a store failure. */
+export class FoldError extends Error {
+  readonly sessionId: string;
+  constructor(sessionId: string, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "FoldError";
+    this.sessionId = sessionId;
+  }
+}
+
+/** foldSession, with what it throws wrapped in a FoldError. */
+function foldInto(state: SessionState, e: AgentEvent): void {
+  try {
+    foldSession(state, e);
+  } catch (err) {
+    throw new FoldError(e.sessionId, err);
+  }
+}
+
+/** Longest Session.stats.foldError kept. */
+const FOLD_ERROR_MAX = 500;
+
+/**
+ * Folds a session's stored events into its row and upserts it. False when it
+ * has no events. When the fold throws (FoldError), the session still gets a
+ * row, tagged fold:error (flagFoldError), so one bad session never hides the
+ * others or stops the run that folds them.
+ */
 export async function recomputeSession(index: IndexStore, id: string, o: RecomputeOptions): Promise<boolean> {
   const { linker, repo } = o;
   const prev = await index.getSession(id);
-  const folded = await foldRow(index, id, prev, o.parseVersion !== undefined);
+  let folded;
+  try {
+    folded = await foldRow(index, id, prev, o.parseVersion !== undefined);
+  } catch (err) {
+    if (!(err instanceof FoldError)) throw err;
+    return flagFoldError(index, id, prev, err, o);
+  }
   if (!folded) return false;
   const { state, session } = folded;
   // parseVersion 0: a row the proxy created before any hook or transcript event (proxy/record.ts).
@@ -814,6 +880,63 @@ export async function recomputeSession(index: IndexStore, id: string, o: Recompu
   await index.upsertSession(session);
   await linker.observe(id, folded.read);
   return true;
+}
+
+/**
+ * The row of a session whose fold threw, tagged fold:error with the error in
+ * stats.foldError: its stored row as it was, else what its events say
+ * directly (agent, start, last event, cwd, event count). False: no events.
+ */
+async function flagFoldError(index: IndexStore, id: string, prev: Session | undefined, err: FoldError, o: RecomputeOptions): Promise<boolean> {
+  const events = await index.listEvents(id);
+  if (!events.length && !prev) return false;
+  // A saved fold may hold part of the fold that threw.
+  await index.putSessionFold?.(id, undefined);
+  let row: Session;
+  if (prev) row = { ...prev, stats: { ...prev.stats }, flags: prev.flags.filter((f) => f !== FLAGS.foldError) };
+  else {
+    const sorted = byTime(events);
+    const first = sorted[0]!;
+    row = { id, agent: first.agent, startedAt: first.ts, endedAt: sorted.at(-1)!.ts, stats: { events: events.length, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] };
+    const cwd = sorted.find((e) => e.cwd)?.cwd;
+    if (cwd) row.cwd = cwd;
+    if (first.agentVersion) row.agentVersion = first.agentVersion;
+    if (first.project && first.project !== "default") row.project = first.project;
+    const link = await o.linker.pending(id);
+    if (link) row.parent = link;
+  }
+  const version = o.parseVersion ?? (!prev || prev.parseVersion === 0 ? o.versionFor?.(row.agent) : undefined);
+  if (version !== undefined) row.parseVersion = version;
+  row.stats.foldError = err.message.length > FOLD_ERROR_MAX ? `${err.message.slice(0, FOLD_ERROR_MAX - 1)}…` : err.message;
+  row.flags.push(FLAGS.foldError);
+  await index.upsertSession(row);
+  await o.linker.observe(id, events);
+  o.onFoldError?.({ sessionId: id, agent: row.agent, message: err.message });
+  return true;
+}
+
+/**
+ * Folds again the sessions that have stored events but no row (an import cut
+ * short, or one an older build's throwing fold stopped: RT-11), and the rows
+ * tagged fold:error. The first kind needs IndexStore.sessionsWithoutRow.
+ * Returns the ids now folded cleanly; one that throws again stays tagged
+ * (o.onFoldError says so).
+ */
+export async function repairSessions(index: IndexStore, o: RecomputeOptions): Promise<string[]> {
+  const ids = new Set<string>();
+  for (const s of (await index.sessionsWithoutRow?.()) ?? []) ids.add(s.sessionId);
+  for (const s of await index.listSessions({ flag: FLAGS.foldError })) ids.add(s.id);
+  const failed = new Set<string>();
+  const each: RecomputeOptions = {
+    ...o,
+    onFoldError: (f) => {
+      failed.add(f.sessionId);
+      o.onFoldError?.(f);
+    },
+  };
+  const done: string[] = [];
+  for (const id of ids) if ((await recomputeSession(index, id, each)) && !failed.has(id)) done.push(id);
+  return done;
 }
 
 /**
@@ -838,7 +961,14 @@ export async function foldSessionRow(index: IndexStore, id: string, prev: Sessio
 async function foldRow(index: IndexStore, id: string, prev: Session | undefined, rebuild: boolean) {
   const row = async (rebuild: boolean) => {
     const folded = await foldStoredSession(index, id, prev, rebuild);
-    return folded && { ...folded, session: sessionOf(folded.state, prev, folded.events) };
+    if (!folded) return undefined;
+    let session: Session;
+    try {
+      session = sessionOf(folded.state, prev, folded.events);
+    } catch (err) {
+      throw new FoldError(id, err);
+    }
+    return { ...folded, session };
   };
   if (rebuild || !prev || !canFold(index)) return row(rebuild);
   try {
@@ -901,7 +1031,7 @@ const canFold = (index: IndexStore): index is FoldStore => !!(index.listEventsSi
 async function foldStoredSession(index: IndexStore, id: string, prev: Session | undefined, rebuild: boolean): Promise<{ state: SessionState; events?: AgentEvent[]; read: AgentEvent[]; seq?: number } | undefined> {
   const all = (events: AgentEvent[]) => {
     const state = sessionState();
-    for (const e of events) foldSession(state, e);
+    for (const e of events) foldInto(state, e);
     return { state, events, read: events };
   };
   if (!canFold(index)) {
@@ -925,9 +1055,9 @@ async function foldStoredSession(index: IndexStore, id: string, prev: Session | 
   const from = saved?.upTo ?? -Infinity;
   const upTo = Math.max(from, Math.min(lastTs - FOLD_LAG_MS, lastPrompt === undefined ? Infinity : lastPrompt - PROMPT_SLACK_MS));
   let i = 0;
-  for (; i < events.length && events[i]!.ts <= upTo; i++) foldSession(state, events[i]!);
+  for (; i < events.length && events[i]!.ts <= upTo; i++) foldInto(state, events[i]!);
   if (state.simple && (!saved || i > 0 || seq !== saved.seq || upTo !== from)) await index.putSessionFold(id, serialize({ v: foldStamp(), seq, upTo, state } satisfies SavedFold));
-  for (; i < events.length; i++) foldSession(state, events[i]!);
+  for (; i < events.length; i++) foldInto(state, events[i]!);
   if (state.simple) return { state, read: events, seq };
   // Spans or enrichment: sessionOf needs every event, and no fold is kept.
   await index.putSessionFold(id, undefined);
@@ -1083,7 +1213,10 @@ export async function backfill(opts: BackfillOptions): Promise<BackfillResult> {
   const byId = new Map(opts.adapters.map((a) => [a.id, a]));
   const versionFor = (agent: string) => parseVersionFor(byId, agent);
   const updated = new Set<string>();
-  for (const id of touched) if (await recomputeSession(index, id, { linker, repo, versionFor })) updated.add(id);
+  const onFoldError = (f: FoldFailure) => {
+    if (result.errors.length < MAX_ERRORS) result.errors.push({ message: foldFailureMessage(f) });
+  };
+  for (const id of touched) if (await recomputeSession(index, id, { linker, repo, versionFor, onFoldError })) updated.add(id);
   for (const id of await linker.apply()) updated.add(id);
   for (const { agent, file } of fileCursors) {
     await index.setCursor(backfillCursorKey(agent, file.path, "size"), file.size);

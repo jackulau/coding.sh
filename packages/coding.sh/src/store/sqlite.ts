@@ -844,6 +844,14 @@ export class SqliteIndexStore implements IndexStore {
     return rows.map((r) => String(r.id)).filter((id) => id.startsWith(prefix));
   }
 
+  async sessionsWithoutRow(): Promise<{ sessionId: string; agent: string }[]> {
+    // One pass over the events' session index (0.5 s for 2.8M events), a primary-key probe per session.
+    const rows = this.stmt(
+      "SELECT e.session_id AS id, MIN(e.agent) AS agent FROM events e WHERE NOT EXISTS (SELECT 1 FROM sessions s WHERE s.id = e.session_id) GROUP BY e.session_id ORDER BY e.session_id",
+    ).all() as Row[];
+    return rows.map((r) => ({ sessionId: String(r.id), agent: String(r.agent) }));
+  }
+
   async eventsByIdPrefix(prefix: string, limit: number): Promise<AgentEvent[]> {
     const rows = this.stmt("SELECT * FROM events WHERE id >= ? AND id < ? ORDER BY id LIMIT ?").all(prefix, `${prefix}\u{10FFFF}`, limit) as Row[];
     return rows.map(rowToEvent).filter((e) => e.id.startsWith(prefix));

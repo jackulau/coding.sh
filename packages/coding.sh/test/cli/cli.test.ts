@@ -12,6 +12,7 @@ import { assertStartupBudget } from "../helpers-timing.ts";
 import { which } from "../../src/adapters/_shared/detect.ts";
 import { hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
 import { pathOf, printBin } from "../_bin.ts";
+import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 
 let distDir = "";
 let CLI = "";
@@ -1059,6 +1060,25 @@ describe("cli QA regressions", () => {
     assert.match(r.stderr, /^✓ Any command\s+no hooks needed; capture with coding\.sh run -- <cmd>, no runs yet$/m);
     assert.doesNotMatch(r.stderr, /Any command \(co/);
     assert.doesNotMatch(r.stderr, /--agent wrapper/);
+  });
+
+  it("doctor counts sessions that have events but no session row, and names the command that repairs them (RT-11)", async () => {
+    // Dogfood: 906 Codex sessions had events and no row, invisible to sessions,
+    // the viewer and stats, and nothing said so.
+    const h = tmpHome();
+    mkdirSync(h.data, { recursive: true });
+    const index = await SqliteIndexStore.open(join(h.data, "index.db"));
+    const ts = Date.now() - 60_000;
+    await index.putEvents(["lost-1", "lost-2"].map((sessionId, i) => ({ id: `e-${i}`, v: 0, sessionId, ts: ts + i, agent: "codex", kind: "session.start", payload: {} })));
+    await index.close();
+    const doc = parseJson(cli(h, ["doctor", "--json"]).stdout, "doctor") as { store: { missingRows?: unknown; foldErrors?: unknown } };
+    assert.deepEqual([doc.store.missingRows, doc.store.foldErrors], [{ count: 2, byAgent: { codex: 2 } }, 0]);
+    assert.match(cli(h, ["doctor"]).stderr, /^! Sessions\s+2 sessions have events but no session row \(codex 2\); run coding\.sh ingest$/m);
+    // The repair command it names folds them, and doctor then says nothing about it.
+    assert.equal(cli(h, ["ingest"]).status, 0);
+    const after = parseJson(cli(h, ["doctor", "--json"]).stdout, "doctor") as { store: { missingRows?: unknown } };
+    assert.deepEqual(after.store.missingRows, { count: 0, byAgent: {} });
+    assert.doesNotMatch(cli(h, ["doctor"]).stderr, /Sessions/);
   });
 
   it("show reports files a hook session wrote outside edit tools, from its end snapshot", () => {

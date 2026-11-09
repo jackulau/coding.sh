@@ -204,6 +204,8 @@ export const FLAG_DIAGNOSIS: Readonly<Record<string, FlagDiagnosis | "context-on
   "model:fallback": "context-only",
   // Under-reused prompt cache is a setup/cost signal, not a behaviour defect; the priced waste is in stats.cacheBreaks.
   "cache:low": "context-only",
+  // coding.sh could not fold the session's events: a bug in coding.sh, nothing the agent did.
+  "fold:error": "context-only",
   // A refusal can be the correct answer (a safety refusal); harm not observed.
   refusal: { typeIds: ["ins.inappropriate-refusal"], nature: "risk", reach: 0.4 },
   // The call never ran, and the model then works from a result it never got.

@@ -136,7 +136,11 @@ A key whose value is plainly made up, as in docs and test fixtures (`AKIAIOSFODN
 word EXAMPLE or test after the vendor prefix, eight of one character, a chunk repeated three times,
 `abcdefgh`), is redacted too but counts as `placeholder-key` and does not add the tag.
 `coding.sh sessions --flag secret:exposed` lists them, and `stats.redactions` counts what was replaced
-by kind. A session whose model changed mid-session gets the `model:switch` tag, and
+by kind. A session whose stored events coding.sh could not fold into stats (a coding.sh bug) gets the
+`fold:error` tag and `stats.foldError`, the error; its row holds only the agent, times, cwd and event
+count. Ingest gives such a session a row and goes on, so one bad session never hides the ones after
+it. `coding.sh ingest` folds fold:error sessions again, and sessions that have events but no row
+(left by coding.sh 0.1.4 and earlier); `coding.sh doctor` counts both. A session whose model changed mid-session gets the `model:switch` tag, and
 `stats.modelSwitch` names both models, the trigger, how many switches there were and what the calls
 on the other model cost over the first model's list prices. A change counts when the agent recorded
 a fallback for it (Claude Code falls back to `--fallback-model` when the main model is overloaded,

@@ -24,7 +24,7 @@ export interface Context {
    */
   storeOverridden: boolean;
   /** Drains the spool through the adapters' normalize into the index and sinks (lazy-loads adapters). */
-  ingest(opts?: Pick<IngestOptions, "lock" | "checkpointEvents" | "now" | "deadline" | "signal" | "onProgress">): Promise<IngestResult>;
+  ingest(opts?: Pick<IngestOptions, "lock" | "checkpointEvents" | "now" | "deadline" | "signal" | "onProgress" | "repair">): Promise<IngestResult>;
   /** Imports agents' local transcript history (adapter.backfill), skipping copies live capture already has. */
   backfill(opts?: { agents?: string[]; since?: number; deadline?: number; onProgress?: (p: BackfillProgress) => void }): Promise<BackfillResult>;
   /** Rebuilds sessions stored by an older adapter parse (or every one with `all`) from their transcripts and spool. */

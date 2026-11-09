@@ -52,6 +52,8 @@ export const FLAGS = {
   unapprovedAction: "unapproved-action",
   /** A tag, not a failure: the session wrote a prompt cache it barely read back (core/cache-breaks.ts cacheUnderused). */
   cacheLow: "cache:low",
+  /** A tag, not a failure: coding.sh could not fold the session's events into its stats (Session.stats.foldError, core/ingest.ts recomputeSession). */
+  foldError: "fold:error",
   /** Derails (core/derail.ts): where the session went off the rails. */
   ...DERAIL_FLAGS,
 } as const;

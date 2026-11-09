@@ -614,6 +614,12 @@ the first one: `kind`, `command` (whitespace collapsed, at most 200 characters),
 `afterError: true` when a tool call had failed since the user's turn. It is absent when there were
 none. `--where unapproved>0` lists those sessions.
 
+`stats.foldError` is set when coding.sh could not fold the session's stored events into its stats,
+which is a coding.sh bug, not the agent's. The row then holds only what the events say directly: the
+agent, the first and last event times, the cwd and `stats.events`. The session also gets the
+`fold:error` tag. The text is the error, at most 500 characters. `coding.sh ingest` folds these
+sessions again, and `coding.sh doctor` counts them. It is absent when the fold worked.
+
 A missing session, or one outside a scoped key's project, gets 404:
 
 ```sh
