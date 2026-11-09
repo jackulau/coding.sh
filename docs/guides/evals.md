@@ -299,8 +299,11 @@ test on flipped cases and the minimum detectable effect. It also reports:
 - **A Bayesian check at small n.** Below 100 paired cases it adds P(B>A) and a credible interval
   from a Dirichlet posterior on the paired outcomes. The bootstrap interval stays.
 - **Attrition.** Per arm, trials lost to task errors, grader errors or missing runs, split into
-  infra errors (timeouts, network, HTTP 429/5xx) and agent errors. Fisher's exact test flags an
-  uneven split at p < 0.01.
+  infra errors (timeouts, network, HTTP 429/5xx, a refused login, a failed setup) and agent
+  errors. Fisher's exact test flags an uneven split at p < 0.01. A trial still on an infra error
+  after its retries is unknown: it is left out of the pass rate like an ungraded run, and the
+  yellow line above the verdict counts it by kind. When no pair is left, that line starts with
+  `void:`.
 - **Grader versions.** Each grader's version is part of the comparison. When a grader changed
   version between A and B, or graded only one side, a yellow line above the verdict says so: the
   pass rate requires every grader to pass, so B − A then mixes the change under test with a change
@@ -620,6 +623,20 @@ rounds as a run that was never interrupted.
   rate up. Each run records its attempts. A trial still failing on infrastructure after its
   retries counts as unknown, not as a failure: it is left out of the pass rate, the run ends
   `incomplete`, and `--resume` runs those trials again.
+- Two more failures are infrastructure, not the task. An agent that is not logged in (`Not logged
+  in`, `Invalid API key · Please run /login`, an HTTP 401) is never retried: a backoff does not
+  bring a login back. A setup step that failed before the agent started (the work folder could
+  not be made, a setup command exited non-zero) is retried once. Either way the trial is unknown,
+  not a fail.
+- `--stop-after-infra N` (default 5) stops the run once N trials in a row ended on infrastructure
+  after their retries: no new trial starts. The output says `Stopped: 5 trials in a row failed on
+  infrastructure (login 5), so the rest did not run and this is no quality verdict`, with what to
+  fix, and `--json` has `"outcome": "stopped"` and `infraStop: { after, kinds }`. A comparison
+  whose trials all failed on infrastructure is void: its verdict starts with `void:` and it is no
+  quality verdict either way. Fix the login or the setup, then `--resume`. `0` never stops.
+  `compare`, `refine test|run --suite`, `eval run`, `exp run|ab|aa|sweep|matrix|replay` and
+  `toolevals run` take both flags; a refine round lost this way writes no verdict and stops the
+  climb (`"stopped": "infra"`).
 - `--trial-timeout <SEC>` caps each trial, retries included. A trial over it fails.
 
 `coding.sh exp status` lists the durable runs with progress, ETA (from this session's pace) and
