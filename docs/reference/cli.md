@@ -2381,7 +2381,7 @@ coding.sh compare <A> [b] [options]
 | `--tau <T>` | `0.10` | With --gate: largest share of solved items B may break. |
 | `--by <PREFIX>` |  | With --gate: also gate each task group (first tag with this prefix, e.g. suite:); any group's don't-ship blocks. |
 | `--promote` |  | Pareto promotion gate: exit 0 when B is credibly better on quality or cheaper (cost, else tokens), 1 otherwise. |
-| `--gamma <G>` | `0.7` | With --promote: support needed to promote. |
+| `--gamma <G>` | `0.7` | With --promote: support needed to promote; the exact sign-flip test over tasks must also have p at most 1 − G. |
 | `--eps-q <Q>` | `0.1` | With --promote: pass rate a cheaper B may give up. |
 | `--eps-c <C|inf>` | `inf` | With --promote: relative cost rise a better B may take (0.2 = +20%) |
 | `--draws <N>` | `10000` | With --promote: bootstrap draws. |

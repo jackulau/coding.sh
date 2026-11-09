@@ -5,9 +5,11 @@
 // cost, so a run's q and c stay together) and, by default, Dirichlet(1)
 // weights on the cases (shared by both arms). The event is
 //   (dQ > 0 and dC ≤ εC)  or  (dC < 0 and dQ ≥ −εQ)
-// and support is its share of draws; promote when support ≥ γ.
+// and support is its share of draws; promote when support ≥ γ and an exact
+// sign-flip test over cases agrees at level 1 − γ (see ParetoSupport.exact).
 import { mulberry32 } from "./prng.ts";
 import { quantileSorted } from "./summary.ts";
+import { clusterSignFlip } from "./tests.ts";
 
 /** One run's quality (pass = 1, or a partial score) and cost (USD, tokens, …). */
 export interface QC {
@@ -46,7 +48,16 @@ export interface ParetoOpts {
 export interface ParetoSupport {
   /** Share of draws where the candidate is credible progress in quality or cost. */
   support: number;
+  /** support ≥ gamma and min(exact.pQuality, exact.pCost) ≤ exact.level. */
   promote: boolean;
+  /**
+   * Exact one-sided sign-flip tests over cases (Monte Carlo above 20): pQuality
+   * of "per-case quality did not rise", pCost of "per-case cost did not fall".
+   * level is 1 − gamma. When every case moves the same way the support is 1 at
+   * any number of cases, so this is what keeps 1 task from promoting: its p is
+   * 1/2, and it takes 2 cases to reach 1/4 ≤ 0.3.
+   */
+  exact: { pQuality: number; pCost: number; level: number };
   /** Share of draws with dQ > 0 and dC ≤ εC. */
   pQualityGain: number;
   /** Share of draws with dC < 0 and dQ ≥ −εQ. */
@@ -106,7 +117,7 @@ export function paretoSupport(input: readonly ParetoCase[], o: ParetoOpts = {}):
   const empty = { mean: NaN, lo: NaN, hi: NaN };
   if (!n) {
     notes.push("no case has a usable run in both arms");
-    return { support: 0, promote: false, pQualityGain: 0, pCostCut: 0, branchShares: { quality: 0, cost: 0 }, dQ: empty, dC: { ...empty, scale }, draws: 0, cases: 0, runs, gamma, epsQ, epsC, skipped, notes };
+    return { support: 0, promote: false, exact: { pQuality: 1, pCost: 1, level: 1 - gamma }, pQualityGain: 0, pCostCut: 0, branchShares: { quality: 0, cost: 0 }, dQ: empty, dC: { ...empty, scale }, draws: 0, cases: 0, runs, gamma, epsQ, epsC, skipped, notes };
   }
   if (cases.every((c) => c.base.length === 1 && c.cand.length === 1)) {
     notes.push(caseWeights === "equal" ? "no within-case replicates: equal-weight gate is the mean gate" : "no within-case replicates: support comes from resampling cases only");
@@ -168,9 +179,27 @@ export function paretoSupport(input: readonly ParetoCase[], o: ParetoOpts = {}):
     return { mean: s.reduce((t, x) => t + x, 0) / s.length, lo: quantileSorted(s, alpha / 2), hi: quantileSorted(s, 1 - alpha / 2) };
   };
   const support = event / draws;
+  // Per-case mean differences; the sign of a cost change is the same on either scale.
+  const seed = o.seed ?? 0x5eed;
+  const pQuality = clusterSignFlip(
+    cases.map((c) => avg(c.cand, (r) => r.q) - avg(c.base, (r) => r.q)),
+    { alternative: "greater", seed },
+  ).p;
+  const pCost = clusterSignFlip(
+    cases.map((c) => avg(c.cand, (r) => r.c) - avg(c.base, (r) => r.c)),
+    { alternative: "less", seed },
+  ).p;
+  const level = 1 - gamma;
+  const exactOk = Math.min(pQuality, pCost) <= level + 1e-12;
+  if (support >= gamma && !exactOk) {
+    notes.push(
+      `support reaches ${gamma.toFixed(2)}, but the exact sign-flip test over ${n} case${n === 1 ? "" : "s"} gives p ${Math.min(pQuality, pCost).toFixed(3)} > ${level.toFixed(2)} (1 − γ); add cases`,
+    );
+  }
   return {
     support,
-    promote: support >= gamma,
+    promote: support >= gamma && exactOk,
+    exact: { pQuality, pCost, level },
     pQualityGain: quality / draws,
     pCostCut: cost / draws,
     branchShares: { quality: event ? quality / event : 0, cost: event ? cost / event : 0 },

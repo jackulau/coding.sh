@@ -34,6 +34,20 @@ describe("paretoSupport (AA-17)", () => {
     assert.deepEqual([p.cases, p.runs.base, p.runs.cand], [10, 30, 30]);
   });
 
+  it("one case that improves has support 1 but is held: its exact one-sided p is 1/2 > 1 − γ", () => {
+    const one = paretoSupport([{ id: "t0", base: runs([0], 1), cand: runs([1], 1) }], { seed: 1, draws: 2000 });
+    assert.equal(one.support, 1);
+    assert.deepEqual(one.exact, { pQuality: 0.5, pCost: 1, level: 1 - 0.7 });
+    assert.equal(one.promote, false);
+    assert.match(one.notes.join("\n"), /exact sign-flip test over 1 case gives p 0\.500 > 0\.30/);
+    // Two cases reach 1/4 ≤ 0.3; a cheaper single case is held the same way on the cost side.
+    const two = paretoSupport(["t0", "t1"].map((id) => ({ id, base: runs([0], 1), cand: runs([1], 1) })), { seed: 1, draws: 2000 });
+    assert.equal(two.exact.pQuality, 0.25);
+    assert.equal(two.promote, true);
+    const cheaper = paretoSupport([{ id: "t0", base: runs([1], 1), cand: runs([1], 0.5) }], { seed: 1, draws: 2000 });
+    assert.deepEqual([cheaper.support, cheaper.exact.pCost, cheaper.promote], [1, 0.5, false]);
+  });
+
   it("a lucky single run (net +1 pass, equal cost) has dQ > 0 but no promote", () => {
     const cases: ParetoCase[] = [];
     for (let i = 0; i < 4; i++) cases.push({ id: `l${i}`, base: runs([1, 1, 0], 1), cand: runs([1, 0, 0], 1) });

@@ -1060,14 +1060,19 @@ cache writes. A Bayesian bootstrap draws Dirichlet weights on each task's attemp
 move together) and on the tasks, 10,000 times (`--draws`). A draw counts when B gains quality and
 its cost rises by at most `--eps-c` (relative, default `inf`), or when B is cheaper and gives up at
 most `--eps-q` of pass rate (default 0.1). The share of draws that count is the support. B is
-promoted when it is at least `--gamma` (default 0.7). The line reads `pareto: support 0.86 ≥ 0.70 →
-promote (cost-cut: cost -38% [-45%, -30%], quality -1.2 pp [-6.0, +3.0 pp])`, or `→ hold`.
-`--promote` exits 0 only when B is promoted. With `--gate` too, both must pass. `--json` carries
-`report.pareto`: `support`, `promote`, `reason` (`quality-gain`, `cost-cut`, `both` or `none`),
-`unit`, `pQualityGain`, `pCostCut`, `dQ`, `dC`, the settings and notes (`epsC: null` means no
-limit). With `--k 1` there are no repeat attempts to resample, so the note says to run `--k 3`. This
-is ParetoSaddler's promotion gate (Qian et al., arXiv 2611.02079). The paper weights tasks equally;
-coding.sh also resamples tasks, so one lucky run on one task can't promote B.
+promoted when it is at least `--gamma` (default 0.7) and an exact one-sided sign-flip test over
+tasks agrees at level 1 − γ (0.3): per-task pass rate rose, or per-task cost fell. When every task
+that changed moved the same way the support is 1 however few they are, so the exact test is what
+holds a gain on one task (p 0.5); two tasks give p 0.25. The line reads `pareto: support 0.86 ≥
+0.70 → promote (cost-cut: cost -38% [-45%, -30%], quality -1.2 pp [-6.0, +3.0 pp])`, `→ hold`, or
+`support 1.00 ≥ 0.70, exact p 0.500 > 0.30 → hold` with a note. `--promote` exits 0 only when B is
+promoted. With `--gate` too, both must pass. `--json` carries `report.pareto`: `support`,
+`promote`, `exact` (`pQuality`, `pCost`, `level`), `reason` (`quality-gain`, `cost-cut`, `both` or
+`none`), `unit`, `pQualityGain`, `pCostCut`, `dQ`, `dC`, the settings and notes (`epsC: null` means
+no limit). With `--k 1` there are no repeat attempts to resample, so the note says to run `--k 3`.
+This is ParetoSaddler's promotion gate (Qian et al., arXiv 2611.02079). The paper weights tasks
+equally; coding.sh also resamples tasks and adds the exact test, so a lucky run on one task can't
+promote B.
 
 When B adds or removes exactly one instruction item and changes nothing else (one rule file, one
 skill, or one `CLAUDE.md`/`AGENTS.md`; `--without` counts), the report adds the one-item gate:

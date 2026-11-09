@@ -725,11 +725,25 @@ describe("compare --promote (AA-18)", () => {
     assert.match(formatCompare(r), /^pareto: support 1\.00 ≥ 0\.70 → promote \(cost-cut: cost -40% \[-40%, -40%\], quality \+0\.0 pp \[\+0\.0, \+0\.0 pp\]\)$/m);
   });
 
-  it("+2 passes on one task at +60% cost: promoted under εC=inf, held with εC=0.2", () => {
+  it("+2 passes on one task at +60% cost: support 1, but one task is held by the exact test", () => {
     const pass = (t: number, arm: "A" | "B", a: number) => t < 6 || (arm === "B" && t === 6 && a <= 2);
+    const rs = grid(12, 3, pass, (arm) => ({ costUsd: arm === "A" ? 0.1 : 0.16 }));
+    const r = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 1, pareto: {} });
+    const one = r.pareto!;
+    assert.equal(one.support, 1);
+    assert.deepEqual(one.exact, { pQuality: 0.5, pCost: 1, level: 1 - 0.7 });
+    assert.equal(one.promote, false);
+    assert.equal(one.reason, "none");
+    assert.match(formatCompare(r), /^pareto: support 1\.00 ≥ 0\.70, exact p 0\.500 > 0\.30 → hold \(cost \+60%/m);
+    assert.match(one.notes.join("\n"), /exact sign-flip test over 12 cases gives p 0\.500 > 0\.30 \(1 − γ\); add cases/);
+  });
+
+  it("+2 passes on each of two tasks at +60% cost: promoted under εC=inf, held with εC=0.2", () => {
+    const pass = (t: number, arm: "A" | "B", a: number) => t < 6 || (arm === "B" && (t === 6 || t === 7) && a <= 2);
     const rs = grid(12, 3, pass, (arm) => ({ costUsd: arm === "A" ? 0.1 : 0.16 }));
     const free = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 1, pareto: {} }).pareto!;
     assert.ok(free.support >= 0.7 && free.promote);
+    assert.equal(free.exact.pQuality, 0.25);
     assert.equal(free.reason, "quality-gain");
     const capped = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 1, pareto: { epsC: 0.2 } });
     assert.equal(capped.pareto!.promote, false);
@@ -762,7 +776,10 @@ describe("compare --promote (AA-18)", () => {
     const a = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 4, pareto: { draws: 2000 } });
     const b = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 4, pareto: { draws: 2000 } });
     assert.deepEqual(a.pareto, b.pareto);
-    assert.deepEqual(a.pareto!.notes, ["k=1: pareto support uses case-level resampling only; run --k 3 for the paper's within-task replicates"]);
+    assert.deepEqual(a.pareto!.notes, [
+      "support reaches 0.70, but the exact sign-flip test over 10 cases gives p 0.500 > 0.30 (1 − γ); add cases",
+      "k=1: pareto support uses case-level resampling only; run --k 3 for the paper's within-task replicates",
+    ]);
     const plain = compare(rs, { baseline: "A", candidate: "B", iters: 200, seed: 4 });
     assert.equal("pareto" in plain, false);
     const { pareto: _p, ...rest } = a;

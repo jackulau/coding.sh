@@ -1597,7 +1597,9 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
       !Number.isFinite(v) ? "—" : x.dC.scale === "relative" ? `${v > 0 ? "+" : ""}${(v * 100).toFixed(0)}%` : `${v > 0 ? "+" : ""}${fmtValue(v, x.unit === "usd" ? "usd" : "count")}`;
     const head = x.refused
       ? `support ${x.support.toFixed(2)} → hold (release confound: the arms ran on different agent releases)`
-      : `support ${x.support.toFixed(2)} ${x.promote ? "≥" : "<"} ${x.gamma.toFixed(2)} → ${x.promote ? "promote" : "hold"}`;
+      : x.support >= x.gamma && !x.promote
+        ? `support ${x.support.toFixed(2)} ≥ ${x.gamma.toFixed(2)}, exact p ${Math.min(x.exact.pQuality, x.exact.pCost).toFixed(3)} > ${x.exact.level.toFixed(2)} → hold`
+        : `support ${x.support.toFixed(2)} ${x.promote ? "≥" : "<"} ${x.gamma.toFixed(2)} → ${x.promote ? "promote" : "hold"}`;
     const detail = `(${x.reason === "none" ? "" : `${x.reason}: `}${what} ${cv(x.dC.mean)} [${cv(x.dC.lo)}, ${cv(x.dC.hi)}], quality ${pp(x.dQ.mean)} [${pp(x.dQ.lo).replace(" pp", "")}, ${pp(x.dQ.hi)}])`;
     out.push(`pareto: ${x.promote ? good(head) : bold(head)} ${detail}`);
     for (const n of x.notes) out.push(dim(`        ${n}`));

@@ -1343,7 +1343,7 @@ export const COMMANDS: CommandSpec[] = [
       ...GATE_FLAGS,
       { name: "by", type: "string", value: "<PREFIX>", desc: "With --gate: also gate each task group (first tag with this prefix, e.g. suite:); any group's don't-ship blocks" },
       { name: "promote", type: "boolean", desc: "Pareto promotion gate: exit 0 when B is credibly better on quality or cheaper (cost, else tokens), 1 otherwise" },
-      { name: "gamma", type: "number", value: "<G>", desc: "With --promote: support needed to promote", default: "0.7" },
+      { name: "gamma", type: "number", value: "<G>", desc: "With --promote: support needed to promote; the exact sign-flip test over tasks must also have p at most 1 − G", default: "0.7" },
       { name: "eps-q", type: "number", value: "<Q>", desc: "With --promote: pass rate a cheaper B may give up", default: "0.1" },
       { name: "eps-c", type: "string", value: "<C|inf>", desc: "With --promote: relative cost rise a better B may take (0.2 = +20%)", default: "inf" },
       { name: "draws", type: "number", value: "<N>", desc: "With --promote: bootstrap draws", default: "10000" },
