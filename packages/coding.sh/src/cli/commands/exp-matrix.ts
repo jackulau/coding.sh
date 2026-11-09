@@ -111,7 +111,7 @@ export async function matrixRun(c: CommandContext, store: FileEvalStore, specFil
   await finishJob(job, result.status === "cancelled", result.infraStop);
   const experiments = Object.fromEntries(Object.entries(result.experiments).map(([k, v]) => [k, v.id]));
   if (out.json) {
-    out.data({ outcome: result.status, matrix: { id: result.id, seed: result.seed }, plan: planJson(plan), experiments, comparisons: result.comparisons, ...(result.reused ? { reused: result.reused } : {}), infraStop: result.infraStop, ...resumeField(job) });
+    out.data({ outcome: result.status, matrix: { id: result.id, seed: result.seed }, plan: planJson(plan), experiments, comparisons: result.comparisons, ...(result.reused ? { reused: result.reused } : {}), infraStop: result.infraStop, ...(result.bestSet ? { bestSet: result.bestSet } : {}), ...resumeField(job) });
   } else {
     out.print(renderMatrixRun(result, { color: out.color }));
   }

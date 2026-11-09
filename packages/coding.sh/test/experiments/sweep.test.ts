@@ -96,6 +96,11 @@ describe("runSweep", () => {
     assert.match(text, /^winner {2}good {2}train \d+\.\d% \(\d+ cases\) {2}held-out \d+\.\d% \[\d+\.\d%, \d+\.\d%\] \(30 cases\)$/m);
     assert.match(text, /^gap {5}[+-]?\d+\.\dpp optimism \(train − held-out\)/m);
     assert.match(text, /dropped, -\d+\.\dpp \[-\d+\.\dpp, -\d+\.\dpp\] vs leader/);
+    // EM-7: the plausibly-best set on the round-1 cases every config ran.
+    assert.equal(r.bestSet?.n, r.rounds[0]!.cases);
+    assert.equal(r.bestSet?.best[0], "good");
+    assert.ok(!r.bestSet?.best.includes("bad"));
+    assert.match(text, /^(best: good \(clearly ahead|plausibly best \(95%, \d+ shared cases\): good)/m);
     // Same seed, same race.
     const again = await runSweep({ name: "s", dataset: dataset(70, 30), configs, graders: [truthy], seed: 7, concurrency: 3 });
     assert.deepEqual(again.rounds, r.rounds);

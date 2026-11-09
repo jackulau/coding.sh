@@ -18,12 +18,19 @@ import { runAb, type AbArm, type AbResult, type RunAbOpts } from "../../experime
 import { clusterMap, compareExperiments, type CompareOpts } from "../../experiments/compare.ts";
 import { MetricRunError, renderMetrics, runMetrics, type MetricArm } from "../../experiments/metrics.ts";
 import { runPairwise, summarizePairwise, type PairwiseSummary } from "../../experiments/pairwise.ts";
-import { renderAa, renderComparison, renderExperiment, renderPairwise, renderSweep } from "../../experiments/render.ts";
+import { isCheckpoint, renderAa, renderComparison, renderExperiment, renderPairwise, renderReplication, renderSweep } from "../../experiments/render.ts";
+import { judgeHold, replicatePairwise } from "../../experiments/replicate.ts";
 import { replayNoise } from "../../experiments/continuation.ts";
 import { plateau, plateauLine, renderPlateau, type PlateauGate, type PlateauResult } from "../../experiments/plateau.ts";
-import { regradeExperiment, runExperiment } from "../../experiments/run.ts";
+import { regradeExperiment, ResumeMismatchError, runExperiment } from "../../experiments/run.ts";
+import { validSample, type SelectOpts } from "../../experiments/select.ts";
+import { JobStore } from "../../jobs/store.ts";
 import { regradeDiff, renderRegradeDiff } from "../../experiments/regrade.ts";
-import { runSweep, type SweepConfig } from "../../experiments/sweep.ts";
+import { runSweep, type SweepConfig, type SweepGuardSpec } from "../../experiments/sweep.ts";
+import { appendAdoption, listAdoptions, priorDatasets } from "../../experiments/adoptions.ts";
+import { resolveTask } from "../../experiments/task.ts";
+import { seqTaskError, type SeqOpts } from "../../experiments/seq.ts";
+import type { GateOpts } from "../../stats/tests.ts";
 import type { MatrixSpec } from "../../experiments/matrix.ts";
 import type { TaskSpec } from "../../experiments/task.ts";
 import { createGrader, createPairwiseJudgeFromSpec, type GraderSpec, type PairwiseGraderSpec } from "../../graders/index.ts";
@@ -31,7 +38,7 @@ import { FileJudgeCache } from "../../judge/cache.ts";
 import { withCalibration } from "../../judge/calibrate.ts";
 import { calibratePairwise, PAIRWISE_KIND, parsePairLabels, type PairCalibration, type PairwiseJudge } from "../../judge/pairwise.ts";
 import { renderCalibration } from "../../judge/render.ts";
-import type { VerifierAudit } from "../../judge/verifier.ts";
+import { parseCaseLabels, type VerifierAudit } from "../../judge/verifier.ts";
 import { sortableId } from "../../core/ids.ts";
 import { jobConfig, taskFingerprint } from "../../jobs/config.ts";
 import type { Job, JobKind } from "../../jobs/store.ts";
@@ -41,6 +48,7 @@ import { gateFlags, jsonArg, list, num, str, withContext } from "../common.ts";
 import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import type { IndexStore, RunResult } from "../../core/types.ts";
+import type { LlmRunOpts } from "../../llmcache/run.ts";
 
 interface ExpSpec {
   name?: string;
@@ -57,6 +65,8 @@ interface ExpSpec {
   variants?: MatrixSpec["variants"];
   matrix?: MatrixSpec["matrix"];
   baseline?: MatrixSpec["baseline"];
+  /** X-11: record the task's model calls or replay them (exp-llm.ts LlmSpec; --record/--replay override it). */
+  llm?: Record<string, unknown>;
 }
 
 function isObj(v: unknown): v is Record<string, unknown> {
@@ -210,9 +220,122 @@ async function regradeCmd(c: CommandContext, store: FileEvalStore): Promise<numb
   return 0;
 }
 
+/**
+ * `exp sweep --guard <DATASET[@VER]|prior>` (AB-1): the earlier suites the
+ * winner must not forget, and `--guard-tau`/`--guard-lambda` for their gate.
+ * Checked before any run: a guard equal to the target, or one that does not
+ * exist, is a usage error.
+ */
+async function sweepGuards(c: CommandContext, store: FileEvalStore, target: Dataset): Promise<{ guards: SweepGuardSpec[]; gate: GateOpts } | undefined> {
+  const refs = list(c.flags.guard);
+  const tau = num(c.flags["guard-tau"]);
+  const lambda = num(c.flags["guard-lambda"]);
+  if (!refs.length) {
+    for (const [f, v] of [["guard-tau", tau], ["guard-lambda", lambda]] as const) if (v !== undefined) throw new UsageError(`--${f} needs --guard`, { reason: "invalid_argument" });
+    return undefined;
+  }
+  if (tau !== undefined && !(tau >= 0 && tau <= 1)) throw new UsageError(`--guard-tau must be between 0 and 1, got ${tau}`, { reason: "invalid_argument" });
+  if (lambda !== undefined && !(lambda >= 1 && Number.isFinite(lambda))) throw new UsageError(`--guard-lambda must be a number of at least 1, got ${lambda}`, { reason: "invalid_argument" });
+  const want: { id: string; version?: string; ref: string }[] = [];
+  for (const ref of refs) {
+    if (ref === "prior") {
+      for (const id of priorDatasets(await listAdoptions(store.root), target.id)) want.push({ id, ref: `prior (${id})` });
+      continue;
+    }
+    const at = ref.lastIndexOf("@");
+    want.push(at > 0 ? { id: ref.slice(0, at), version: ref.slice(at + 1), ref } : { id: ref, ref });
+  }
+  const guards: SweepGuardSpec[] = [];
+  for (const w of want) {
+    const ds = await store.getDataset(w.id, w.version);
+    if (!ds) throw new UsageError(`--guard ${w.ref}: no dataset ${JSON.stringify(w.id)}${w.version ? ` at version ${w.version}` : ""}`, { reason: "invalid_argument", suggestion: "coding.sh dataset list" });
+    if (ds.id === target.id) throw new UsageError(`--guard ${w.ref} is the dataset the sweep tunes on; a guard is an earlier suite the winner must not forget`, { reason: "invalid_argument" });
+    if (!guards.some((g) => g.dataset.id === ds.id)) guards.push({ dataset: ds });
+  }
+  return { guards, gate: { ...(tau !== undefined ? { tau } : {}), ...(lambda !== undefined ? { lambda } : {}) } };
+}
+
+/** The X-26 selection flags of exp run, or undefined when none is set. */
+const SELECT_FLAGS = ["failing", "errors-from", "case", "sample", "first-n"] as const;
+export const selectionFlagsSet = (c: CommandContext): string[] => SELECT_FLAGS.filter((f) => (f === "case" ? list(c.flags.case).length > 0 : c.flags[f] !== undefined));
+
+async function selectionFlags(c: CommandContext, store: FileEvalStore): Promise<{ opts: SelectOpts; config: Record<string, unknown> } | undefined> {
+  const set = selectionFlagsSet(c);
+  const seed = seedFlag(c);
+  if (!set.length) return undefined;
+  if (c.flags.failing !== undefined && c.flags["errors-from"] !== undefined) throw new UsageError("Use either --failing or --errors-from, not both", { reason: "invalid_argument" });
+  if (seed !== undefined && c.flags.sample === undefined) throw new UsageError("--seed needs --sample (or two --arm options)", { reason: "invalid_argument" });
+  const from = async (flag: "failing" | "errors-from") => {
+    const ref = str(c.flags[flag]);
+    if (!ref) throw new UsageError(`--${flag} needs an experiment id or name`, { reason: "missing_argument" });
+    const e = await store.resolveExperiment(ref, { includeCancelled: true });
+    if (!e) throw new CliError(`Can't find experiment ${JSON.stringify(ref)} for --${flag}`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
+    return e;
+  };
+  const sample = num(c.flags.sample);
+  if (c.flags.sample !== undefined && !(sample !== undefined && validSample(sample))) {
+    throw new UsageError(`--sample must be a count (10) or a share between 0 and 1 (0.2), got ${JSON.stringify(c.flags.sample)}`, { reason: "invalid_argument" });
+  }
+  const firstN = positiveInt(c.flags["first-n"], "first-n");
+  const opts: SelectOpts = {
+    ...(c.flags.failing !== undefined ? { fromFailing: await from("failing") } : {}),
+    ...(c.flags["errors-from"] !== undefined ? { fromErrors: await from("errors-from") } : {}),
+    ...(list(c.flags.case).length ? { cases: list(c.flags.case) } : {}),
+    ...(sample !== undefined ? { sample, seed: seed ?? 0 } : {}),
+    ...(firstN !== undefined ? { firstN } : {}),
+  };
+  return { opts, config: { failing: opts.fromFailing?.id, errorsFrom: opts.fromErrors?.id, case: opts.cases, sample: opts.sample, seed: opts.seed, firstN } };
+}
+
 /** Run one experiment (exp run without --arm). */
-async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string | undefined, gating: { adaptive?: boolean; baseline?: ExperimentResult } = {}): Promise<{ result: ExperimentResult; job: Job; loaded: LoadedSpec }> {
+/**
+ * AC-9: `--seq K --feedback bit|reasons|critic=<grader> --seq-history full|last`.
+ * Undefined without --seq; --feedback or --seq-history alone is a usage error.
+ */
+async function seqFlags(c: CommandContext): Promise<SeqOpts | undefined> {
+  const k = num(c.flags.seq);
+  const fb = str(c.flags.feedback);
+  const hist = str(c.flags["seq-history"]);
+  if (k === undefined) {
+    if (fb !== undefined || hist !== undefined) throw new UsageError(`--${fb !== undefined ? "feedback" : "seq-history"} needs --seq <K>`, { reason: "invalid_argument" });
+    return undefined;
+  }
+  if (!Number.isInteger(k) || k < 2 || k > 10) throw new UsageError(`--seq must be an integer from 2 to 10 (attempts per case-trial), got ${k}`, { reason: "invalid_argument" });
+  if (hist !== undefined && hist !== "full" && hist !== "last") throw new UsageError(`--seq-history must be full or last, got ${JSON.stringify(hist)}`, { reason: "invalid_argument" });
+  let feedback: SeqOpts["feedback"] = "reasons";
+  if (fb === "bit" || fb === "reasons") feedback = fb;
+  else if (fb?.startsWith("critic=")) {
+    const spec = await jsonArg(fb.slice("critic=".length), "--feedback critic");
+    try {
+      feedback = { critic: await createGrader(spec as GraderSpec, { baseDir: c.cwd, env: c.env, judgeCache: FileJudgeCache.forEnv(c.env) }) };
+    } catch (e) {
+      throw new UsageError(`Invalid --feedback critic: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_grader" });
+    }
+  } else if (fb !== undefined) throw new UsageError(`--feedback must be bit, reasons or critic=<GRADER JSON|FILE>, got ${JSON.stringify(fb)}`, { reason: "invalid_argument" });
+  return { k, feedback, ...(hist ? { history: hist as "full" | "last" } : {}) };
+}
+
+async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string | undefined, gating: { adaptive?: boolean; baseline?: ExperimentResult; llm?: LlmRunOpts } = {}): Promise<{ result: ExperimentResult; job: Job; loaded: LoadedSpec }> {
   const loaded = await loadSpec(c, store, specFile);
+  const selection = await selectionFlags(c, store);
+  const seq = await seqFlags(c);
+  if (seq) {
+    const why = seqTaskError(loaded.spec.task!);
+    if (why) throw new UsageError(why, { reason: "invalid_argument" });
+    if (gating.adaptive) throw new UsageError("--seq does not combine with --samples adaptive", { reason: "invalid_argument" });
+  }
+  // X-26: --resume <EXPERIMENT> continues a stored partial run when no job has it, and --retry-errors re-runs its task errors.
+  const retryErrors = c.flags["retry-errors"] === true;
+  const resumeRef = str(c.flags.resume);
+  if (retryErrors && !resumeRef) throw new UsageError("--retry-errors needs --resume <EXPERIMENT>: the stored run whose errored case-trials to run again", { reason: "missing_argument" });
+  let resumeFrom: ExperimentResult | undefined;
+  let jobCtx = c;
+  if (resumeRef && (retryErrors || !(await JobStore.forEnv(c.env).find(resumeRef)))) {
+    resumeFrom = await store.resolveExperiment(resumeRef, { includeCancelled: true });
+    if (!resumeFrom) throw new CliError(`No run or experiment ${JSON.stringify(resumeRef)} to resume`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
+    if (resumeFrom.status !== "cancelled" && !retryErrors) throw new CliError(`${resumeFrom.id} already finished; nothing to resume (--retry-errors runs its errored case-trials again)`, { reason: "already_complete" });
+    jobCtx = { ...c, flags: { ...c.flags, resume: false } };
+  }
   const { spec, dataset, graders } = loaded;
   if (gating.adaptive && (spec.trials ?? 1) > 1) throw new UsageError("--samples adaptive sets the trials (2 per case, a 3rd when they disagree); drop trials from the spec or --trials", { reason: "invalid_argument" });
   if (gating.baseline && gating.baseline.dataset.id !== dataset.id) {
@@ -230,8 +353,17 @@ async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string
     task: taskFingerprint(spec.task, c.cwd),
     ...(gating.adaptive ? { samples: "adaptive" } : {}),
     ...(gating.baseline ? { stopOnRegression: gating.baseline.id } : {}),
+    ...(gating.llm ? { llm: { mode: gating.llm.mode, source: gating.llm.source, until: gating.llm.until } } : {}),
+    ...(selection ? { selection: selection.config } : {}),
+    ...(seq ? { seq: { k: seq.k, feedback: str(c.flags.feedback) ?? "reasons", history: seq.history ?? "full" } } : {}),
   });
-  const job = await openJob(c, { kind: "exp run", name: loaded.name, config, newId: () => sortableId("exp_"), concurrency: spec.concurrency ?? 4 });
+  const job = await openJob(jobCtx, { kind: "exp run", name: resumeFrom?.name ?? loaded.name, config, newId: () => sortableId("exp_"), concurrency: spec.concurrency ?? 4 });
+  // A resumed job: the partial result it stored also holds case-trials finished before a crash cut the job short.
+  const priorId = !resumeFrom && job.scope().state<string>("experimentId");
+  if (priorId) {
+    const stored = await store.getExperiment(priorId).catch(() => undefined);
+    if (stored?.status === "cancelled") resumeFrom = stored;
+  }
   const spin = c.out.spin(`Running ${dataset.name}…`);
   const result = await job
     .guard(() =>
@@ -247,12 +379,23 @@ async function runSpec(c: CommandContext, store: FileEvalStore, specFile: string
         ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
         ...(spec.split ? { split: spec.split } : {}),
         ...(continuation || seriesFlag(c) ? { metadata: { ...(continuation ? { control: "skipped" } : {}), ...(seriesFlag(c) ? { series: seriesFlag(c) } : {}) } } : {}),
+        ...(selection ? { selection: selection.opts } : {}),
+        ...(resumeFrom ? { resumeFrom } : {}),
+        ...(retryErrors ? { retryErrors } : {}),
+        ...(gating.llm ? { llm: gating.llm } : {}),
+        ...(seq ? { seq } : {}),
+        checkpointMs: 1000,
         store,
         signal: c.signal,
         ...durable(c, job),
         onProgress: (_r, done, total) => spin.update(`Running ${dataset.name}… ${done}/${total}`),
       }),
     )
+    .catch((e: unknown) => {
+      if (e instanceof ResumeMismatchError) throw new CliError(e.message, { reason: "config_changed", next: ["Run it with the original dataset, task, graders, trials and case selection, or start a new run without --resume"] });
+      if (e instanceof RangeError) throw new UsageError(e.message, { reason: "invalid_argument" });
+      throw e;
+    })
     .finally(() => spin.stop());
   await finishJob(job, result.status === "cancelled", result.infraStop);
   return { result, job, loaded };
@@ -371,6 +514,44 @@ async function verifierAudits(store: FileEvalStore, ...exps: ExperimentResult[])
   return out;
 }
 
+/**
+ * `exp compare --labels-a FILE --labels-b FILE [--min-labels N]`: human labels
+ * of each arm's outputs (never shared across arms), and each LLM judge's
+ * criterion for matching the labels' `criterion`. Undefined without the flags.
+ */
+async function judgeLabelFlags(c: CommandContext, store: FileEvalStore, a: ExperimentResult, b: ExperimentResult): Promise<Pick<CompareOpts, "labels" | "minLabels" | "criteria"> | undefined> {
+  const fa = str(c.flags["labels-a"]);
+  const fb = str(c.flags["labels-b"]);
+  const min = positiveInt(c.flags["min-labels"], "min-labels");
+  if (!fa && !fb) {
+    if (min !== undefined) throw new UsageError("--min-labels needs --labels-a and --labels-b", { reason: "invalid_argument" });
+    return undefined;
+  }
+  if (!fa || !fb) throw new UsageError(`--labels-${fa ? "b" : "a"} is missing: give human labels for both arms (labels are never shared across arms)`, { reason: "missing_argument" });
+  const read = async (file: string, flag: string) => {
+    let text: string;
+    try {
+      text = await readFile(resolve(c.cwd, file), "utf8");
+    } catch {
+      throw new UsageError(`can't read ${flag} ${JSON.stringify(file)}`, { reason: "invalid_argument" });
+    }
+    try {
+      const t = text.trim();
+      const rows = t.startsWith("[") ? (JSON.parse(t) as unknown[]) : t.split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l) as unknown);
+      return parseCaseLabels(rows);
+    } catch (e) {
+      throw new UsageError(`${flag} ${file}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_argument" });
+    }
+  };
+  const criteria = new Map<string, string>();
+  for (const g of [...a.graders, ...b.graders]) {
+    if (g.kind !== "llm" || criteria.has(g.id)) continue;
+    const j = await store.getJudge(g.version).catch(() => undefined);
+    if (j?.criterion) criteria.set(g.id, j.criterion);
+  }
+  return { labels: { a: await read(fa, "--labels-a"), b: await read(fb, "--labels-b") }, ...(min !== undefined ? { minLabels: min } : {}), ...(criteria.size ? { criteria } : {}) };
+}
+
 /** Human pairwise labels: a JSON array or JSONL rows. */
 async function readPairLabels(file: string) {
   let text: string;
@@ -401,7 +582,7 @@ async function pairwiseCompare(
   specArg: string,
   labelsFile: string | undefined,
   cluster: CompareOpts["cluster"],
-): Promise<{ summary: PairwiseSummary; calibration?: PairCalibration }> {
+): Promise<{ summary: PairwiseSummary; calibration?: PairCalibration; meta: { id: string; provider: string; model: string } }> {
   const spec = await jsonArg(specArg, "--pairwise");
   if (!isObj(spec) || spec.kind !== PAIRWISE_KIND) {
     throw new UsageError(`--pairwise must be a pairwise judge spec, e.g. {"kind":"pairwise","name":"quality","rubric":"…","provider":"openai","model":"…"}`, { reason: "invalid_grader" });
@@ -435,7 +616,8 @@ async function pairwiseCompare(
   if (!summary.n && summary.skipped.judgeErrors) {
     throw new CliError(`The pairwise judge failed on every case: ${summary.skipped.firstError ?? "unknown error"}`, { reason: "judge_error" });
   }
-  if (!labels) return { summary };
+  const meta = { id: version.id, provider: version.provider, model: version.model };
+  if (!labels) return { summary, meta };
   const splits = new Map<string, Split>();
   for (const cs of cases.values()) if (cs.split) splits.set(cs.id, cs.split);
   const calibration = calibratePairwise({
@@ -446,7 +628,7 @@ async function pairwiseCompare(
   });
   await store.putJudge(withCalibration(version, calibration.report));
   summary = summarizePairwise(summary.cases, { id: version.id, calibration: calibration.report.status }, summary.skipped, opts);
-  return { summary, calibration };
+  return { summary, calibration, meta };
 }
 
 /** Run two tasks as one interleaved A/B (exp run --arm, exp aa). */
@@ -678,13 +860,22 @@ export async function run(c: CommandContext): Promise<number> {
         }
         // A spec with "matrix" or "variants" runs every cell against its baseline cell.
         if (c.positionals[0] && (await isMatrixFile(resolve(c.cwd, c.positionals[0])))) {
+          if (c.flags.seq !== undefined) throw new UsageError("--seq runs one task; it does not combine with a matrix spec", { reason: "invalid_argument" });
+          const llmFlag = (await import("./exp-llm.ts")).llmFlagsSet(c)[0];
+          if (llmFlag) throw new UsageError(`--${llmFlag} runs one task or two --arm options; it does not combine with a matrix spec`, { reason: "invalid_argument" });
           const { matrixRun } = await import("./exp-matrix.ts");
           return matrixRun(c, store, c.positionals[0]);
         }
         if (c.flags.plan === true || list(c.flags.cell).length) throw new UsageError(`--${c.flags.plan === true ? "plan" : "cell"} needs a spec file with "matrix" or "variants"`, { reason: "invalid_argument" });
         if ((c.flags.reuse !== undefined && c.flags.reuse !== "none") || c.flags["reuse-max-age"] !== undefined) throw new UsageError('--reuse needs a spec file with "matrix" or "variants"', { reason: "invalid_argument" });
+        // X-26 case selection, --retry-errors and AC-9 --seq run one task.
+        const picked = [...selectionFlagsSet(c), ...(c.flags["retry-errors"] === true ? ["retry-errors"] : []), ...(["seq", "feedback", "seq-history"] as const).filter((f) => c.flags[f] !== undefined)];
+        if (picked.length) {
+          const matrix = !!c.positionals[0] && (await isMatrixFile(resolve(c.cwd, c.positionals[0])));
+          if (matrix || armFlags.length || c.flags.watch === true) throw new UsageError(`--${picked[0]} runs one task; it does not combine with ${matrix ? "a matrix spec" : armFlags.length ? "--arm" : "--watch"}`, { reason: "invalid_argument" });
+        }
         if (!armFlags.length) {
-          for (const [flag, set] of [["stop-early", stopEarly], ["max-cases", maxCases !== undefined], ["looks", looks !== undefined], ["seed", seed !== undefined]] as const) {
+          for (const [flag, set] of [["stop-early", stopEarly], ["max-cases", maxCases !== undefined], ["looks", looks !== undefined], ["seed", seed !== undefined && c.flags.sample === undefined]] as const) {
             if (set) throw new UsageError(`--${flag} needs two --arm options (an interleaved A/B)`, { reason: "invalid_argument" });
           }
         }
@@ -695,11 +886,16 @@ export async function run(c: CommandContext): Promise<number> {
           if (c.flags.watch === true) throw new UsageError("--watch reruns one task; for an A/B of harness edits on save use coding.sh exp ab --watch", { reason: "invalid_argument" });
           const arms = await parseArms(armFlags);
           const loaded = await loadSpec(c, store, c.positionals[0], false);
+          // X-11: both arms record, or both replay one source at one boundary (A is the control).
+          const llmExp = await import("./exp-llm.ts");
+          const llm = await llmExp.llmPlan(c, store, c.positionals[0]);
           const { result: ab, job } = await runArms(c, store, loaded, arms, "exp ab", {
+            ...(llm ? { llm: llm.opts } : {}),
             ...(seed !== undefined ? { seed } : {}),
             ...(maxCases !== undefined ? { maxCases } : {}),
             ...(stopEarly ? { stopEarly: looks !== undefined ? { looks } : true } : {}),
           });
+          if (llm?.source) await llmExp.storeControlNoise(store, ab.a, llm.source);
           const cancelled = ab.a.status === "cancelled";
           // Continuation arms: A is the control, so its divergence from the recorded turns is the replay noise floor.
           const replay = ab.a.task.kind === "continuation" ? replayNoise(ab.a, new Map(loaded.dataset.cases.map((x) => [x.id, x]))) : undefined;
@@ -721,8 +917,10 @@ export async function run(c: CommandContext): Promise<number> {
           return broken(ab.a) || broken(ab.b) ? 1 : 0;
         }
         const session = await import("./exp-session.ts");
+        const llmExp = await import("./exp-llm.ts");
         if (c.flags.watch === true) {
           if (seriesFlag(c) !== undefined) throw new UsageError("--series tags one experiment per loop round; it does not combine with --watch", { reason: "invalid_argument" });
+          if (llmExp.llmFlagsSet(c).length) throw new UsageError(`--${llmExp.llmFlagsSet(c)[0]} does not combine with --watch`, { reason: "invalid_argument" });
           return session.watchRun(c, store, c.positionals[0]);
         }
         if (list(c.flags["watch-path"]).length) throw new UsageError("--watch-path needs --watch", { reason: "invalid_argument" });
@@ -731,7 +929,15 @@ export async function run(c: CommandContext): Promise<number> {
           baseline = await store.resolveExperiment(baselineRef);
           if (!baseline) throw new CliError(`Can't find a completed experiment ${JSON.stringify(baselineRef)} for --baseline`, { reason: "not_found", next: ["List experiments:", "coding.sh exp list"] });
         }
-        const { result, job, loaded } = await runSpec(c, store, c.positionals[0], { adaptive, ...(baseline ? { baseline } : {}) });
+        // X-11: --replay runs the recorded config as a control arm next to this task, unless --no-control.
+        const llm = await llmExp.llmPlan(c, store, c.positionals[0]);
+        if (llm?.source && llm.control) {
+          if (adaptive || baseline || seriesFlag(c) !== undefined || picked.length) {
+            throw new UsageError(`--replay with a control arm runs an A/B; pass --no-control to combine it with ${picked.length ? `--${picked[0]}` : "--samples, --stop-on-regression or --series"}`, { reason: "invalid_argument" });
+          }
+          return llmExp.replayWithControl(c, store, llm, c.positionals[0], seed);
+        }
+        const { result, job, loaded } = await runSpec(c, store, c.positionals[0], { adaptive, ...(baseline ? { baseline } : {}), ...(llm ? { llm: llm.opts } : {}) });
         if (result.regression) {
           if (out.json) out.data({ outcome: "regression", experiment: result, regression: result.regression, ...resumeField(job) });
           else {
@@ -763,9 +969,9 @@ export async function run(c: CommandContext): Promise<number> {
       case "compare": {
         const [ida, idb] = c.positionals as [string, string];
         const force = c.flags.force === true;
-        const pairSpec = str(c.flags.pairwise);
+        const pairSpecs = list(c.flags.pairwise);
         const labelsFile = str(c.flags.labels);
-        if (labelsFile && !pairSpec) throw new UsageError("--labels needs --pairwise", { reason: "invalid_argument" });
+        if (labelsFile && !pairSpecs.length) throw new UsageError("--labels needs --pairwise", { reason: "invalid_argument" });
         const gate = gateFlags(c.flags);
         // Without --force a name resolves to its newest completed experiment; when only a
         // cancelled one has that name, find it anyway so the error can say why it is refused.
@@ -789,7 +995,9 @@ export async function run(c: CommandContext): Promise<number> {
         }
         const margin = num(c.flags.margin);
         if (margin !== undefined && !(margin >= 0 && margin < 1)) throw new UsageError(`--margin must be at least 0 and below 1 (pass-rate points: 0.05 = 5pp), got ${margin}`, { reason: "invalid_argument" });
-        const opts: CompareOpts = { force, ...(gate ? { gate } : {}), ...(margin !== undefined ? { margin } : {}) };
+        const verdictOn = str(c.flags.verdict);
+        if (verdictOn !== undefined && verdictOn !== "pass" && verdictOn !== "seq") throw new UsageError(`--verdict must be pass or seq, got ${JSON.stringify(verdictOn)}`, { reason: "invalid_argument" });
+        const opts: CompareOpts = { force, ...(gate ? { gate } : {}), ...(margin !== undefined ? { margin } : {}), ...(verdictOn === "seq" ? { verdictOn } : {}) };
         const key = str(c.flags.cluster);
         if (key) {
           // Case metadata lives on the dataset; B's cases fill in ones A's version lacks.
@@ -806,6 +1014,9 @@ export async function run(c: CommandContext): Promise<number> {
         if (noise) opts.noise = noise;
         const verifiers = await verifierAudits(store, a!, b!);
         if (verifiers.size) opts.verifiers = verifiers;
+        // R1-18: human labels of each arm's outputs correct judge graders' deltas (PPI++).
+        const ppiLabels = await judgeLabelFlags(c, store, a!, b!);
+        if (ppiLabels) Object.assign(opts, ppiLabels);
         // A next-turn A/B: A is the control arm, and its divergence from the recorded turns is the replay noise floor.
         if (a!.task.kind === "continuation" && a!.metadata?.control !== "skipped") {
           const ds = await store.getDataset(a!.dataset.id, a!.dataset.version);
@@ -813,16 +1024,33 @@ export async function run(c: CommandContext): Promise<number> {
           if (replay) opts.replay = replay;
         }
         const cmp = compareExperiments(a!, b!, opts);
-        const pw = pairSpec ? await pairwiseCompare(c, store, a!, b!, pairSpec, labelsFile, opts.cluster) : undefined;
+        // Each --pairwise judge in turn (AB-13); --labels calibrates every one, and each keeps its own stored calibration.
+        const pws: Awaited<ReturnType<typeof pairwiseCompare>>[] = [];
+        for (const spec of pairSpecs) pws.push(await pairwiseCompare(c, store, a!, b!, spec, labelsFile, opts.cluster));
+        const pw = pws.length === 1 ? pws[0] : undefined;
+        const replication = pws.length >= 2 ? replicatePairwise(pws.map((x) => x.summary), pws.map((x) => x.meta)) : undefined;
+        // A gate that would ship holds when a judge prefers A, or when two or more judges do not replicate "better".
+        const hold = pws.length && cmp.gate?.verdict === "ship" ? judgeHold(replication ?? replicatePairwise([pws[0]!.summary], [pws[0]!.meta])) : undefined;
+        if (hold && cmp.gate) Object.assign(cmp.gate, { decision: "abstain", verdict: "hold", judgeHold: hold });
+        const calField = (x: (typeof pws)[number]) => (x.calibration ? { ...x.calibration.report, abstained: x.calibration.abstained } : undefined);
         if (out.json) {
-          out.data({ comparison: cmp, ...(pw ? { pairwise: pw.summary } : {}), ...(pw?.calibration ? { pairwiseCalibration: { ...pw.calibration.report, abstained: pw.calibration.abstained } } : {}) });
+          out.data({
+            comparison: cmp,
+            ...(pw ? { pairwise: pw.summary } : {}),
+            ...(pw?.calibration ? { pairwiseCalibration: calField(pw) } : {}),
+            ...(replication ? { pairwise: pws.map((x) => x.summary), replication } : {}),
+            ...(replication && pws.some((x) => x.calibration) ? { pairwiseCalibration: pws.map(calField) } : {}),
+          });
         } else {
           out.print(renderComparison(cmp, { color: out.color, a: a!, b: b!, matrix: c.flags.matrix === true }));
-          if (pw) out.print(`\n${renderPairwise(pw.summary, { color: out.color })}`);
-          if (pw?.calibration) {
-            out.print(`\n${renderCalibration(pw.calibration.report, { color: out.color })}`);
-            if (pw.calibration.abstained) out.print(`${pw.calibration.abstained} human-decisive case(s) the judge called a tie were left out of kappa`);
+          for (const x of pws) {
+            out.print(`\n${renderPairwise(x.summary, { color: out.color })}`);
+            if (x.calibration) {
+              out.print(`\n${renderCalibration(x.calibration.report, { color: out.color })}`);
+              if (x.calibration.abstained) out.print(`${x.calibration.abstained} human-decisive case(s) the judge called a tie were left out of kappa`);
+            }
           }
+          if (replication) out.print(`\n${renderReplication(replication, { color: out.color })}`);
         }
         // --gate: exit 0 only when the gate accepts B; --margin: only when B is non-inferior.
         return (cmp.gate && cmp.gate.decision !== "accept") || (cmp.nonInferiority && !cmp.nonInferiority.nonInferior) ? 1 : 0;
@@ -881,7 +1109,15 @@ export async function run(c: CommandContext): Promise<number> {
         if (select === heldOut) throw new UsageError(`--split and --held-out are both ${select}; the held-out split must be one the race never sees`, { reason: "invalid_argument" });
         const loaded = await loadSpec(c, store, undefined, false);
         const { spec, dataset, graders } = loaded;
-        const config = specConfig(c, loaded, { configs: configs.map((x) => ({ name: x.name, task: taskFingerprint(x.task, c.cwd) })), budget, seed, select, heldOut });
+        const guard = await sweepGuards(c, store, dataset);
+        const config = specConfig(c, loaded, {
+          configs: configs.map((x) => ({ name: x.name, task: taskFingerprint(x.task, c.cwd) })),
+          budget,
+          seed,
+          select,
+          heldOut,
+          ...(guard ? { guards: guard.guards.map((g) => `${g.dataset.id}@${g.dataset.version}`), guardGate: guard.gate } : {}),
+        });
         const job = await openJob(c, {
           kind: "exp sweep",
           name: spec.name ?? `${dataset.name}-sweep-${new Date().toISOString().slice(0, 10)}`,
@@ -907,6 +1143,7 @@ export async function run(c: CommandContext): Promise<number> {
               ...(budget !== undefined ? { budget } : {}),
               ...(seed !== undefined ? { seed } : {}),
               ...(spec.concurrency ? { concurrency: spec.concurrency } : {}),
+              ...(guard?.guards.length ? { guards: guard.guards, guardGate: guard.gate } : {}),
               onProgress: (stage, done, total) => spin.update(`Sweeping ${dataset.name}: ${stage} ${done}/${total}`),
             }),
           );
@@ -925,7 +1162,13 @@ export async function run(c: CommandContext): Promise<number> {
           if (!result.infraStop) out.warn("Cancelled: the race stopped before a winner was re-scored on held-out cases; finished runs are stored");
           return 1;
         }
-        return 0;
+        // Adoption memory for --guard prior: a winner that ships is adopted on this dataset.
+        if (result.adopt?.verdict === "ship" && result.winner) {
+          const w = configs.find((x) => x.name === result.winner!.name)!;
+          await appendAdoption(store.root, { dataset: dataset.id, name: dataset.name, version: dataset.version, config: w.name, taskKey: taskKey(resolveTask(w.task).info), sweep: name, at: Date.now() });
+        }
+        if (guard && !guard.guards.length) out.note("--guard prior: no earlier dataset has an adopted config yet; nothing to guard");
+        return result.blockedBy?.length ? 1 : 0;
       }
       case "regrade":
         return regradeCmd(c, store);
@@ -949,7 +1192,7 @@ export async function run(c: CommandContext): Promise<number> {
         const limit = positiveInt(c.flags.limit, "limit") ?? 20;
         const all = await store.listExperiments({ limit });
         if (out.json) {
-          out.data({ experiments: all.map((e) => ({ id: e.id, name: e.name, status: e.status ?? "completed", dataset: e.dataset, trials: e.trials, runs: e.runs.length, createdAt: new Date(e.createdAt).toISOString(), summary: e.summary })) });
+          out.data({ experiments: all.map((e) => ({ id: e.id, name: e.name, status: e.status ?? "completed", ...(isCheckpoint(e) ? { partial: true } : {}), dataset: e.dataset, trials: e.trials, runs: e.runs.length, createdAt: new Date(e.createdAt).toISOString(), summary: e.summary })) });
           return 0;
         }
         if (!all.length) {
@@ -958,7 +1201,7 @@ export async function run(c: CommandContext): Promise<number> {
         }
         out.table(
           ["ID", "NAME", "DATASET", "RUNS", "CREATED"],
-          all.map((e) => [e.id, e.status === "cancelled" ? `${e.name} (cancelled)` : e.name, `${e.dataset.name}@${e.dataset.version}`, plural(e.runs.length, "run"), ago(e.createdAt)]),
+          all.map((e) => [e.id, e.status === "cancelled" ? `${e.name} (${isCheckpoint(e) ? "partial" : "cancelled"})` : e.name, `${e.dataset.name}@${e.dataset.version}`, plural(e.runs.length, "run"), ago(e.createdAt)]),
         );
         return 0;
       }

@@ -1,9 +1,12 @@
 // Plain-text experiment and comparison reports (stdout = the answer). Scores
 // from judges that are not calibrated on held-out human labels are marked
 // with "*" wherever they appear, including the overall pass rate they feed.
-import type { CalibrationStatus, ExperimentResult } from "../datasets/types.ts";
+import type { CalibrationStatus, ExperimentResult, SeqSummary } from "../datasets/types.ts";
+import { CASE_KINDS } from "../datasets/types.ts";
+import type { KindComparisonReport } from "../datasets/kinds.ts";
 import { infraKinds, infraKindsText, infraStopText, voidText } from "../jobs/retry.ts";
 import { calibrationBadge } from "../judge/render.ts";
+import { llmLine, llmTotals, renderLlmReplay } from "../llmcache/report.ts";
 import { formatVerifierAudit, verifierCorrected, type VerifierAudit, type VerifierCorrection } from "../judge/verifier.ts";
 import type { RoganGladenResult } from "../stats/interval.ts";
 import type { SequentialOutcome } from "../stats/sequential.ts";
@@ -12,12 +15,15 @@ import type { MatrixResult } from "./matrix-run.ts";
 import { gateDetail, gateHeadline, idList } from "../stats/gate.ts";
 import type { ArmAttrition, Comparison, ComparisonGate, ComparisonNonInferiority, ComparisonTurnover } from "./compare.ts";
 import type { PairwiseSummary } from "./pairwise.ts";
+import type { PairwiseReplication } from "./replicate.ts";
+import { selectionOf, type CaseSelection } from "./select.ts";
 import { exactPowerText } from "./power.ts";
 import type { ExperimentBlock, ExpSession, SessionBlock } from "./session.ts";
 import { stabilityLine } from "./stability.ts";
 import type { SweepResult } from "./sweep.ts";
 import type { Turnover } from "./turnover.ts";
 import { fixed, ms, paint, pct, pValue, signedPct, table, truncate, type RenderOpts } from "./text.ts";
+import { formatBestSet } from "../stats/mcb.ts";
 
 const trusted = (c: CalibrationStatus | undefined) => c === undefined || c.state === "calibrated";
 
@@ -45,6 +51,23 @@ export function failureReason(run: ExperimentResult["runs"][number]): string {
     if (g.result && !g.result.pass) return `${g.graderId}: ${g.result.reason ?? `score ${fixed(g.result.score)}`}`;
   }
   return "";
+}
+
+/** Whether a stored experiment is a checkpoint written mid-run (`exp run` keeps one while it runs). */
+export function isCheckpoint(r: Pick<ExperimentResult, "metadata">): boolean {
+  const ck = r.metadata?.checkpoint as { done?: unknown } | undefined;
+  return !!ck && typeof ck.done === "number";
+}
+
+/** "12 of 40: failing in exp_…, sample 10 (seed 3)". */
+export function selectionText(s: CaseSelection): string {
+  const parts = [
+    ...(s.from ? [`${s.from.kind === "failing" ? "failing in" : "errors in"} ${s.from.experiment}`] : []),
+    ...(s.cases?.length ? [`case ${s.cases.join(", ")}`] : []),
+    ...(s.sample !== undefined ? [`sample ${s.sample} (seed ${s.seed ?? 0})`] : []),
+    ...(s.firstN !== undefined ? [`first ${s.firstN}`] : []),
+  ];
+  return `${s.selected} of ${s.of}${parts.length ? `: ${parts.join(", ")}` : ""}`;
 }
 
 export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verifiers?: ReadonlyMap<string, VerifierAudit> }): string {
@@ -82,17 +105,34 @@ export function renderExperiment(r: ExperimentResult, opts: RenderOpts & { verif
   }
   if (r.regression) out.push(paint(`regression: case ${r.regression.caseId} passed every trial of ${r.regression.baseline} and fails here; the run stopped (--stop-on-regression)`, "red", color));
   else if (r.infraStop) out.push(paint(infraStopText(r.infraStop), "red", color));
-  else if (r.status === "cancelled") out.push(paint(`cancelled: only ${s.n} case run${s.n === 1 ? "" : "s"} finished before the interrupt; this result is partial`, "yellow", color));
+  else if (r.status === "cancelled" && isCheckpoint(r)) {
+    const ck = r.metadata!.checkpoint as { done: number; total: number };
+    out.push(paint(`partial: ${ck.done} of ${ck.total} case runs, written while the run was going; it is still running or stopped without finishing. Continue with: coding.sh exp run … --resume ${r.id}`, "yellow", color));
+  } else if (r.status === "cancelled") out.push(paint(`cancelled: only ${s.n} case run${s.n === 1 ? "" : "s"} finished before the interrupt; this result is partial`, "yellow", color));
   if (s.n > 0 && s.infra === s.n && !r.infraStop) out.push(paint(voidText(s.n, infraKinds(r.runs)), "red", color));
+  const sel = selectionOf(r);
+  if (sel) out.push(paint(`cases   ${selectionText(sel)}`, "dim", color));
+  if (s.kinds) {
+    const cells = CASE_KINDS.flatMap((k) => {
+      const x = s.kinds![k];
+      return x ? [`${k} ${pct(x.passRate.p)} ${paint(`(${x.passed}/${x.n - (x.ungraded ?? 0)})`, "dim", color)}`] : [];
+    });
+    out.push(`kinds   ${cells.join("  ")}`);
+  }
   // Task errors that were infrastructure are reported on the infra line, not as task errors.
   const taskErrors = s.errors - (s.infra ?? 0);
   if (taskErrors > 0) out.push(paint(`errors  ${taskErrors} task error(s)`, "red", color));
-  const graderErrors = (s.ungraded ?? 0) - (s.infra ?? 0);
+  const unscored = llmTotals(r.runs)?.unscored ?? 0;
+  const graderErrors = (s.ungraded ?? 0) - (s.infra ?? 0) - unscored;
   if (graderErrors > 0) out.push(paint(`ungraded ${graderErrors} run(s) with a grader error: outcome unknown, left out of the pass rate`, "yellow", color));
   if (s.infra) out.push(paint(`infra ${s.infra} run(s) failed on infrastructure after retries (${infraKindsText(infraKinds(r.runs))}): outcome unknown, left out of the pass rate; --resume runs them again`, "yellow", color));
   const retried = r.runs.filter((x) => (x.attempts ?? 1) > 1);
   if (retried.length) out.push(paint(`retried ${retried.length} run(s) after infrastructure errors (${retried.reduce((n, x) => n + (x.attempts ?? 1) - 1, 0)} extra attempts); failures are never retried`, "dim", color));
   out.push(`latency median ${ms(s.latencyMs.median)}, p90 ${ms(s.latencyMs.p90)}, max ${ms(s.latencyMs.max)}`);
+  const llm = llmLine(r);
+  if (llm) out.push(llm);
+  if (unscored) out.push(paint(`unscored ${unscored} replayed run(s) could not run past the replay boundary (no source recording, or an upstream error): left out of the pass rate`, "yellow", color));
+  if (s.seq) out.push("", ...renderSeq(s.seq, color));
   if (s.graders.length) {
     out.push("");
     out.push(
@@ -164,6 +204,7 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   if (c.ungradedCases) out.push(paint(`unpaired because ungraded on a side: ${idList(c.ungradedCases)}`, "dim", color));
   if (c.instrumentWarning) out.push(paint(`! ${c.instrumentWarning}`, "yellow", color));
   if (c.timing.warning) out.push(paint(`! ${c.timing.warning}`, "yellow", color));
+  if (c.selectionWarning) out.push(paint(`! ${c.selectionWarning}`, "yellow", color));
   const vColor = c.verdict === "better" ? "green" : c.verdict === "worse" ? "red" : "dim";
   out.push("");
   out.push(
@@ -196,20 +237,37 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
         `${signedPct(c.passK.diff)} ${paint("(cases where every trial passed)", "dim", color)}`,
     );
   }
+  if (c.seqK) {
+    const q = c.seqK;
+    out.push(
+      `${`seq@${q.k}`.padEnd(8)}A ${pct(q.a)}  B ${pct(q.b)}  B − A ${signedPct(q.diff.mean)} [${signedPct(q.diff.lo)}, ${signedPct(q.diff.hi)}] ` +
+        paint(`(solved within ${q.k} attempts, ${q.feedback} feedback, ${q.n} paired cases, 95% paired bootstrap)`, "dim", color),
+    );
+  }
+  if (c.seqNote) out.push(paint(`! ${c.seqNote}`, "yellow", color));
   // With one trial per case, coverage is the pass rate and gained/lost are McNemar's flips.
   const multi = c.passK !== undefined;
   if (multi && c.turnover.paired) out.push(...renderTurnover(c.turnover, color));
   if (c.sequential) out.push(...renderSequential(c.sequential, color));
   if (c.sequentialWarning) out.push(paint(`! ${c.sequentialWarning}`, "yellow", color));
+  const onSeq = c.verdictOn === "seq" && c.seqK ? `Seq@${c.seqK.k}` : undefined;
   const ciExcludes0 = c.diff.lo > 0 || c.diff.hi < 0;
-  const why = c.sequential
-    ? c.verdict === "inconclusive"
-      ? "no boundary crossed"
-      : "group sequential test"
-    : ciExcludes0
-      ? `the CI excludes 0, but the exact sign-flip test does not: p=${pValue(c.signFlip.p)} over ${flipUnits}`
-      : "CI includes 0";
-  out.push(`verdict ${paint(c.verdict === "inconclusive" ? `inconclusive (${why})` : `B is ${c.verdict}${c.sequential ? ` (${why})` : ""}`, vColor, color)}`);
+  const seqExcludes0 = !!c.seqK && (c.seqK.diff.lo > 0 || c.seqK.diff.hi < 0);
+  const why = c.selectionWarning
+    ? "one side ran only on the other's failures"
+    : onSeq
+      ? seqExcludes0
+        ? `the ${onSeq} CI excludes 0, but the exact sign-flip test over its per-case differences does not`
+        : `${onSeq} CI includes 0`
+      : c.sequential
+        ? c.verdict === "inconclusive"
+          ? "no boundary crossed"
+          : "group sequential test"
+        : ciExcludes0
+          ? `the CI excludes 0, but the exact sign-flip test does not: p=${pValue(c.signFlip.p)} over ${flipUnits}`
+          : "CI includes 0";
+  out.push(`verdict ${paint(c.verdict === "inconclusive" ? `inconclusive (${why})` : `B is ${c.verdict}${onSeq ? ` (on ${onSeq})` : c.sequential ? ` (${why})` : ""}`, vColor, color)}`);
+  if (c.verdictOn === "pass") out.push(paint("! --verdict seq: no Seq@K row to read the verdict from, so it is the first-attempt pass rate's", "yellow", color));
   if (c.gate) out.push(...renderGate(c.gate, color));
   if (c.nonInferiority) out.push(...renderNonInferiority(c.nonInferiority, color));
   const p = c.power;
@@ -233,6 +291,7 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
     if (r.warning) out.push(paint(`! ${r.warning}`, "yellow", color));
   }
   if (c.controlWarning) out.push(paint(`! ${c.controlWarning}`, "yellow", color));
+  if (c.llmReplay) out.push(...renderLlmReplay(c.llmReplay, (s, style) => paint(s, style, color)));
   for (const w of p.warnings) out.push(paint(`! ${w.message}`, "yellow", color));
   const att = c.attrition;
   if (att.a.lost || att.b.lost) {
@@ -248,18 +307,46 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   const untrusted = new Set(
     [...(opts.a?.graders ?? []), ...(opts.b?.graders ?? [])].filter((g) => !trusted(g.calibration)).map((g) => g.id),
   );
+  const anyPpi = c.graders.some((g) => g.ppi);
   if (c.graders.length) {
     out.push("");
     out.push(
       table(
-        [{ header: "grader" }, { header: "A", align: "right" }, { header: "B", align: "right" }, { header: "B − A", align: "right" }, { header: "95% CI" }],
+        [
+          { header: "grader" },
+          { header: "A", align: "right" },
+          { header: "B", align: "right" },
+          { header: "B − A", align: "right" },
+          { header: "95% CI" },
+          ...(anyPpi ? [{ header: "judge-corrected B − A (human scale)" }] : []),
+        ],
         c.graders.map((g) => {
           const s = untrusted.has(g.id) ? paint("*", "yellow", color) : "";
-          return [g.id + s, fixed(g.meanA), fixed(g.meanB), (g.diff.mean >= 0 ? "+" : "") + fixed(g.diff.mean), `[${fixed(g.diff.lo)}, ${fixed(g.diff.hi)}]`];
+          const row = [g.id + s, fixed(g.meanA), fixed(g.meanB), (g.diff.mean >= 0 ? "+" : "") + fixed(g.diff.mean), `[${fixed(g.diff.lo)}, ${fixed(g.diff.hi)}]`];
+          if (anyPpi) {
+            const d = g.ppi?.corrected?.diff;
+            row.push(d ? `${signedPct(d.mean)} [${signedPct(d.lo)}, ${signedPct(d.hi)}]` : paint("raw (uncorrected)", "dim", color));
+          }
+          return row;
         }),
         { color },
       ),
     );
+    for (const g of c.graders) {
+      const p = g.ppi;
+      if (!p) continue;
+      if (p.corrected) {
+        const k = p.corrected;
+        out.push(
+          paint(
+            `${g.id} PPI++ ${k.method}: ${p.labels.a} + ${p.labels.b} human labels, λ A ${fixed(k.a.lambda)} B ${fixed(k.b.lambda)}; raw judge B − A ${signedPct(k.raw)}; A ${pct(k.a.theta)} B ${pct(k.b.theta)} on the human scale`,
+            "dim",
+            color,
+          ),
+        );
+      } else if (p.reason) out.push(paint(`${g.id} raw (uncorrected): ${p.reason}`, "dim", color));
+      for (const w of g.warnings ?? []) out.push(paint(`! ${g.id}: ${w}`, "yellow", color));
+    }
     if (untrusted.size) out.push(paint("* uncalibrated judge: score differences are not validated against human labels", "yellow", color));
     for (const g of c.graders) if (g.stability) out.push(paint(`${g.id} ${stabilityLine(g.stability)}`, "dim", color));
     const side = (r: RoganGladenResult | undefined) =>
@@ -288,6 +375,7 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
     );
     if (rows.length > limit) out.push(paint(`… ${rows.length - limit} more (use --json for all)`, "dim", color));
   };
+  if (c.kinds) out.push("", ...renderKinds(c.kinds, color));
   if (opts.matrix && c.turnover.matrix) out.push("", ...renderMatrix(c.turnover, color));
   if (multi && c.turnover.lost.length) {
     const lost = new Set(c.turnover.lost);
@@ -296,6 +384,18 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   list("regressions", c.regressions, "red");
   list("improvements", c.improvements, "green");
   return out.join("\n");
+}
+
+/** TB-12: A → B per case kind, then the bad cases still failing and the guards and controls that broke. */
+function renderKinds(k: KindComparisonReport, color: boolean): string[] {
+  const cells = k.kinds.map((x) => {
+    const moved = x.kind === "bad" ? `${x.fixed!.length}/${x.paired} fixed` : `${x.broken!.length}/${x.paired} broke`;
+    const bad = x.kind === "bad" ? x.stillFailing!.length > 0 : x.broken!.length > 0;
+    return `${x.kind} ${pct(x.a)} → ${pct(x.b)} ${paint(`(${moved})`, bad ? (x.kind === "bad" ? "yellow" : "red") : "dim", color)}`;
+  });
+  const out = [`kinds   ${cells.join("  ")}`];
+  for (const n of k.notes) out.push(paint(`! ${n}`, /^(regression|overcorrection)/.test(n) ? "red" : "yellow", color));
+  return out;
 }
 
 const pp = (x: number) => signedPct(x);
@@ -337,7 +437,8 @@ const GATE_COLOR = { ship: "green", hold: "bold", "dont-ship": "red" } as const;
 
 /** `gate    Ship it: …`, the numbers under it, the lost cases and any note. */
 function renderGate(g: ComparisonGate, color: boolean): string[] {
-  const out = [`gate    ${paint(gateHeadline(g, "case"), GATE_COLOR[g.verdict], color)}`, `        ${paint(gateDetail(g), "dim", color)}`];
+  const head = g.judgeHold ? `Hold: judges disagree (${g.judgeHold.detail})` : gateHeadline(g, "case");
+  const out = [`gate    ${paint(head, GATE_COLOR[g.verdict], color)}`, `        ${paint(gateDetail(g), "dim", color)}`];
   if (g.lostCases.length) out.push(`        lost: ${idList(g.lostCases)}`);
   if (g.note) out.push(paint(`! ${g.note}`, "yellow", color));
   return out;
@@ -437,6 +538,53 @@ export function renderPairwise(s: PairwiseSummary, opts: RenderOpts): string {
   return out.join("\n");
 }
 
+const CONCLUSION_COLOR = { "replicated-better": "green", "replicated-worse": "red", "judges-disagree": "red", unresolved: "yellow" } as const;
+
+/** `exp compare` with two or more `--pairwise` judges: each judge's verdict, how far they agree, and the conclusion. */
+export function renderReplication(r: PairwiseReplication, opts: RenderOpts): string {
+  const color = opts.color;
+  const out: string[] = [];
+  out.push(`${paint("judges", "bold", color)}  ${r.judges.length} pairwise judges, ${r.providers.length} provider${r.providers.length === 1 ? "" : "s"}`);
+  out.push(
+    table(
+      [{ header: "judge" }, { header: "provider/model" }, { header: "B wins", align: "right" }, { header: "95% CI" }, { header: "verdict" }, { header: "calibration" }],
+      r.judges.map((j) => [
+        j.id,
+        `${j.provider}/${j.model}`,
+        j.n ? pct(j.winRate.b) : "-",
+        j.n ? ci(j.winRate.lo, j.winRate.hi) : "-",
+        r.screened.includes(j.id) ? paint(`${j.verdict} (screened out)`, "dim", color) : paint(j.verdict, j.verdict === "better" ? "green" : j.verdict === "worse" ? "red" : "dim", color),
+        j.calibration ?? "none",
+      ]),
+      { color },
+    ),
+  );
+  for (const a of r.agreement) {
+    const k = Number.isFinite(a.kappa) ? a.kappa.toFixed(2) : "undefined";
+    out.push(`agree   ${a.a} vs ${a.b}: κ ${k}, ${a.n ? pct(a.percentAgreement) : "-"} same winner ${paint(`(${a.n} shared case${a.n === 1 ? "" : "s"})`, "dim", color)}`);
+  }
+  out.push(`judges  ${paint(r.conclusion, CONCLUSION_COLOR[r.conclusion], color)}`);
+  for (const w of r.warnings) out.push(paint(`! ${w}`, "yellow", color));
+  return out.join("\n");
+}
+
+/** `exp run --seq K`: the Seq@1..K curve, where the gain lands, unchanged revisions, and the pass@k vs seq@k front. */
+function renderSeq(q: SeqSummary, color: boolean): string[] {
+  const out = [`${paint("sequential feedback", "bold", color)} (K ${q.k}, feedback ${q.feedback}, history ${q.history}) ${paint("pass above is Seq@1, the first attempt", "dim", color)}`];
+  out.push(`seq@k   ${q.curve.map((p) => `${p.k}: ${pct(p.rate)} ${paint(ci(p.lo, p.hi), "dim", color)}`).join("  ")}`);
+  if (q.egs !== undefined) {
+    out.push(`gain    EGS ${q.egs.toFixed(2)}${q.lgs !== undefined ? `, LGS ${q.lgs.toFixed(2)}` : ""} ${paint(`(share of the Seq@1 → Seq@${q.k} gain made at attempt 2${q.lgs !== undefined ? `, and at attempt ${q.k}` : ""})`, "dim", color)}`);
+  } else out.push(paint("gain    none: feedback solved nothing the first attempt missed", "dim", color));
+  if (q.unchangedRate !== undefined) out.push(`unchanged ${pct(q.unchangedRate)} of revisions repeated the previous output`);
+  if (q.costToSolve !== undefined) out.push(`cost    $${q.costToSolve.toFixed(4)} per solved trial (task and critic, every attempt)`);
+  if (q.passAtK?.length) out.push(`pass@k  ${q.passAtK.map((p) => `${p.k}: ${pct(p.rate)}`).join("  ")} ${paint("(independent first attempts, unbiased estimator)", "dim", color)}`);
+  if (q.front?.length) {
+    const cost = (x: number) => (q.costUnit === "usd" ? `$${x.toFixed(4)}` : `${fixed(x)} attempts`);
+    out.push(`front   ${q.front.map((p) => `${p.protocol.replace("@k", `@${p.k}`)} ${pct(p.success)} at ${cost(p.cost)}${p.overall ? "" : paint(" (beaten)", "dim", color)}`).join(" · ")}`);
+  }
+  return out;
+}
+
 /** `exp sweep`: the race, the winner's held-out score and the optimism gap. */
 export function renderSweep(r: SweepResult, opts: RenderOpts): string {
   const color = opts.color;
@@ -468,6 +616,7 @@ export function renderSweep(r: SweepResult, opts: RenderOpts): string {
       { color },
     ),
   );
+  if (r.bestSet) out.push(formatBestSet(r.bestSet) + paint(`  (on the ${sp.select} cases every config ran; paired-bootstrap MCB)`, "dim", color));
   for (const n of r.notes) out.push(paint(`! ${n}`, "yellow", color));
   if (r.status === "cancelled") {
     out.push(paint("cancelled: no winner was re-scored on the held-out split", "yellow", color));
@@ -494,8 +643,9 @@ export function renderSweep(r: SweepResult, opts: RenderOpts): string {
   const g = r.adopt;
   if (g && r.start) {
     const cases = (n: number) => `${n} case${n === 1 ? "" : "s"}`;
-    const line =
-      g.verdict === "ship"
+    const line = r.blockedBy?.length
+      ? `keep    ${paint(r.start.name, "bold", color)}: ${w.name} ${g.losses ? `loses ${g.losses} held-out case${g.losses === 1 ? "" : "s"} and ` : ""}forgets ${r.blockedBy.join(", ")} (guard)`
+      : g.verdict === "ship"
         ? `adopt   ${paint(w.name, "green", color)}: wins ${cases(g.wins)}, loses ${g.losses} on held-out`
         : g.verdict === "dont-ship"
           ? `keep    ${paint(r.start.name, "bold", color)}: ${w.name} breaks ${cases(g.losses)} ${r.start.name} solved`
@@ -503,6 +653,24 @@ export function renderSweep(r: SweepResult, opts: RenderOpts): string {
     out.push(line, `        ${paint(gateDetail(g), "dim", color)}`);
     if (g.lostCases.length) out.push(`        lost: ${idList(g.lostCases)}`);
   }
+  if (r.guards?.length) {
+    out.push("");
+    out.push(paint("guards", "bold", color) + paint(" (start vs winner on earlier suites; a dont-ship gate blocks adoption)", "dim", color));
+    out.push(
+      table(
+        [{ header: "suite" }, { header: "start", align: "right" }, { header: "winner", align: "right" }, { header: "Δforget", align: "right" }, { header: "ρforget", align: "right" }, { header: "gate" }],
+        r.guards.map((x) => [
+          `${x.name}@${x.version}`,
+          pct(x.start.p),
+          pct(x.winner.p),
+          signedPct(x.deltaForget),
+          pct(x.rhoForget),
+          x.blocks ? paint(`BLOCKS: ${gateHeadline(x.gate, "case")}`, "red", color) : paint(gateHeadline(x.gate, "case"), GATE_COLOR[x.gate.verdict], color),
+        ]),
+        { color },
+      ),
+    );
+  } else if (r.guards && r.winner && r.start?.name === r.winner.name) out.push(paint("guards  not run: the start config won", "dim", color));
   return out.join("\n");
 }
 
@@ -609,6 +777,7 @@ export function renderMatrixRun(r: MatrixResult, opts: RenderOpts): string {
       color,
     ),
   );
+  if (r.bestSet) out.push(formatBestSet(r.bestSet) + paint("  (configs not significantly worse than the best, paired-bootstrap MCB)", "dim", color));
   for (const n of names) {
     const c = r.comparisons[n];
     if (!c) continue;

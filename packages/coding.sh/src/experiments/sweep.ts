@@ -31,8 +31,11 @@ import { pairedBootstrap } from "../stats/interval.ts";
 import { mulberry32 } from "../stats/prng.ts";
 import { runAb } from "./ab.ts";
 import { compareExperiments, type Comparison, type ComparisonGate } from "./compare.ts";
+import type { GateOpts } from "../stats/tests.ts";
 import { caseRates, experimentResult, prepareGraders, priorRun, rememberIdentity, runExperiment, runTrial, selectCases, storeResult, type TrialEnv } from "./run.ts";
 import { resolveTask, type TaskSpec } from "./task.ts";
+import { runsBestSet } from "./matrix-run.ts";
+import type { BestSet } from "../stats/mcb.ts";
 
 /** Held-out share when the dataset has no splits and the sweep makes its own. */
 export const RANDOM_HOLDOUT = 0.3;
@@ -71,6 +74,39 @@ export interface RunSweepOpts {
   seed?: number;
   bootstrapIters?: number;
   onProgress?: (stage: string, done: number, total: number) => void;
+  /**
+   * Earlier suites the winner must not forget (AB-1): when the winner is not
+   * the start config, both run on each guard (its split, else its "test"
+   * split, else every case), and a guard whose gate says dont-ship blocks
+   * adoption. Without guards the sweep is unchanged.
+   */
+  guards?: readonly SweepGuardSpec[];
+  /** Gate settings for the guard comparisons. Default: the acceptance gate's defaults. */
+  guardGate?: GateOpts;
+}
+
+export interface SweepGuardSpec {
+  dataset: Dataset;
+  /** Graders for this suite. Default: the sweep's. */
+  graders?: readonly Grader[];
+  split?: Split;
+}
+
+/** One guard suite: the start and winner configs on an earlier dataset (arXiv 2611.03219 eqs. 4-5). */
+export interface SweepGuard {
+  dataset: string;
+  name: string;
+  version: string;
+  start: Interval & { n: number; experiment: string };
+  winner: Interval & { n: number; experiment: string };
+  /** Δforget = start − winner pass rate on this suite. */
+  deltaForget: number;
+  /** ρforget = Δforget / start (0 when the start solved nothing). */
+  rhoForget: number;
+  /** Winner (B) against start (A) on this suite. */
+  gate: ComparisonGate;
+  /** The gate says dont-ship: the winner breaks too many of the start's solved cases. A hold never blocks. */
+  blocks: boolean;
 }
 
 export interface SweepRoundConfig {
@@ -137,6 +173,16 @@ export interface SweepResult {
    * settings) on that held-out comparison. Absent when the start config won.
    */
   adopt?: ComparisonGate;
+  /** Present with guards: one per guard suite; empty when the start config won (no guard runs). */
+  guards?: SweepGuard[];
+  /** Guard datasets whose gate blocked adoption; `adopt` is then dont-ship. */
+  blockedBy?: string[];
+  /**
+   * Three or more configs: the ones not significantly worse than the best on the
+   * selection cases every config ran (round 1), by a paired-bootstrap MCB (EM-7).
+   * A config the race dropped but that is in this set may have lost on noise.
+   */
+  bestSet?: BestSet;
   notes: string[];
   /** Set when case-trials failed on infrastructure in a row (`--stop-after-infra`) and the race stopped; `status` is "cancelled". */
   infraStop?: InfraStopReport;
@@ -344,6 +390,11 @@ export async function runSweep(opts: RunSweepOpts): Promise<SweepResult> {
     notes,
     infraStop: infraStop?.report,
   };
+  const best = runsBestSet(
+    opts.configs.map((c, i) => ({ name: c.name, runs: runs[i]! })),
+    { iters: opts.bootstrapIters ?? 2000 },
+  );
+  if (best) out.bestSet = best;
   if (cancelled || survivors.length !== 1) return out;
 
   // Held-out re-score: the start config and the winner, interleaved, on cases the race never saw.
@@ -398,5 +449,52 @@ export async function runSweep(opts: RunSweepOpts): Promise<SweepResult> {
   out.winner = { name: opts.configs[w]!.name, train, heldOut: h, optimismGap: train.passRate - h.p };
   out.start = { name: opts.configs[0]!.name, heldOut: scoreOf(startHeld) };
   if (h.n < 30) notes.push(`only ${h.n} held-out case(s): the held-out score, and so the optimism gap, is rough (Wilson ${(h.lo * 100).toFixed(0)}-${(h.hi * 100).toFixed(0)}%)`);
+  if (!opts.guards?.length) return out;
+  // AB-1: the winner must keep what the start config solved on every earlier suite.
+  out.guards = [];
+  if (w === 0) return out;
+  const blockedBy: string[] = [];
+  for (const [gi, g] of opts.guards.entries()) {
+    const gds = g.dataset;
+    const split = g.split ?? (gds.cases.some((c) => c.split === "test") ? "test" : undefined);
+    const gJob = job?.scope(`guard${gi}:`);
+    const ab = await runAb({
+      name: `${opts.name}-guard-${gds.name}`,
+      arms: [opts.configs[0]!, opts.configs[w]!],
+      seed,
+      dataset: gds,
+      graders: g.graders ?? opts.graders,
+      ...(split ? { split } : {}),
+      ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+      ...(store ? { store } : {}),
+      ...(signal ? { signal } : {}),
+      ...(drain ? { drain } : {}),
+      ...(gJob ? { job: gJob } : {}),
+      ...(opts.retry ? { retry: opts.retry } : {}),
+      ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+      ...(opts.bootstrapIters ? { bootstrapIters: opts.bootstrapIters } : {}),
+      onProgress: (_r, _arm, done, total) => opts.onProgress?.(`guard ${gds.name}`, done, total),
+    });
+    if (ab.a.status === "cancelled" || ab.b.status === "cancelled") {
+      out.status = "cancelled";
+      delete out.adopt;
+      return out;
+    }
+    const cmp = compareExperiments(ab.a, ab.b, { force: true, gate: opts.guardGate ?? {} });
+    const st = scoreOf(ab.a);
+    const wn = scoreOf(ab.b);
+    const deltaForget = st.p - wn.p;
+    const gate = cmp.gate!;
+    const blocks = gate.verdict === "dont-ship";
+    out.guards.push({ dataset: gds.id, name: gds.name, version: gds.version, start: st, winner: wn, deltaForget, rhoForget: st.p > 0 ? deltaForget / st.p : 0, gate, blocks });
+    if (blocks) blockedBy.push(gds.name);
+  }
+  if (blockedBy.length && out.adopt) {
+    out.adopt = { ...out.adopt, decision: "abstain", verdict: "dont-ship" };
+    out.blockedBy = blockedBy;
+    for (const g of out.guards.filter((x) => x.blocks)) {
+      notes.push(`winner forgets ${g.name}: ${Math.round(g.start.p * 100)}% -> ${Math.round(g.winner.p * 100)}% (rho ${Math.round(g.rhoForget * 100)}%)`);
+    }
+  }
   return out;
 }

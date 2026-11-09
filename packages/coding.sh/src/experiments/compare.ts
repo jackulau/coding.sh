@@ -2,7 +2,8 @@
 // removes between-case variance (most of it, on agent evals), so a paired
 // bootstrap CI on per-case differences and an exact McNemar test on per-case
 // outcomes detect changes an unpaired comparison would miss.
-import type { Case, CaseRun, ExperimentResult } from "../datasets/types.ts";
+import type { Case, CaseKind, CaseRun, ExperimentResult } from "../datasets/types.ts";
+import { compareKinds, type KindComparisonReport } from "../datasets/kinds.ts";
 import { infraKinds, infraKindsText, voidText, type InfraKind } from "../jobs/retry.ts";
 import { verifierCorrected, type VerifierAudit, type VerifierCorrection } from "../judge/verifier.ts";
 import { clusteredBootstrap } from "../stats/cluster.ts";
@@ -12,10 +13,15 @@ import type { SequentialOutcome } from "../stats/sequential.ts";
 import { gateVerdict, type GateVerdict } from "../stats/gate.ts";
 import { acceptanceGate, clusterSignFlip, fisherExact, hardRegressions, mcnemar, nonInferiority, type GateOpts, type GateResult, type McNemarResult, type NonInferiorityResult, type SignFlipResult } from "../stats/tests.ts";
 import type { ReplayNoise } from "./continuation.ts";
+import { llmReplayNote, type ComparisonLlmReplay } from "../llmcache/report.ts";
 import { pairedPower, passHatK, type NoisePrior, type PowerAnalysis } from "./power.ts";
 import { caseRates } from "./run.ts";
 import { directionStability, type DirectionStability } from "./stability.ts";
 import { outcomesByCase, turnover, type Turnover } from "./turnover.ts";
+import type { HumanLabel } from "../judge/calibrate.ts";
+import { graderPpi, labelMajority, type GraderPpi } from "./ppi.ts";
+import type { ReplicationConclusion } from "./replicate.ts";
+import { selectionWarning } from "./select.ts";
 
 export interface CaseDelta {
   caseId: string;
@@ -48,6 +54,13 @@ export interface GraderDelta {
   stability?: DirectionStability;
   /** Set when A and B graded with different versions of this grader: its B − A mixes the change with a new measurement. */
   versionChanged?: { a: string; b: string };
+  /**
+   * Judge graders with human labels (`labels` option): the PPI++ corrected
+   * B − A on the human scale, or why it is missing. Absent without labels.
+   */
+  ppi?: GraderPpi;
+  /** Judge error warnings from the human labels (ΔJ between arms, low sensitivity). Absent without labels. */
+  warnings?: string[];
 }
 
 const unit = (x: unknown): x is number => typeof x === "number" && x >= 0 && x <= 1;
@@ -301,6 +314,25 @@ export interface Comparison {
   replay?: ComparisonReplay;
   /** Set when A is a continuation experiment with no control arm (`exp run --no-control`). */
   controlWarning?: string;
+  /**
+   * X-11: a side replayed recorded model calls (`exp run --replay`). The arms
+   * are correlated; `noise` is the control arm's divergence from the recording.
+   */
+  llmReplay?: ComparisonLlmReplay;
+  /**
+   * Set when one side ran only on the other side's failures or errors
+   * (`exp run --failing`/`--errors-from`) and the two were not chosen alike:
+   * the verdict is forced to inconclusive (regression to the mean).
+   */
+  selectionWarning?: string;
+  /** AC-9: Seq@K of each side and B − A, when both ran --seq with the same K and feedback. */
+  seqK?: ComparisonSeqK;
+  /** Why there is no Seq@K row although one side ran --seq. */
+  seqNote?: string;
+  /** Set with CompareOpts.verdictOn: what the verdict was read from ("pass" when Seq@K was asked for but missing). */
+  verdictOn?: "pass" | "seq";
+  /** TB-12: the comparison split by case kind (bad fixed, guards and controls broken); absent when no paired case has a kind. */
+  kinds?: KindComparisonReport;
 }
 
 export interface ComparisonReplay extends ReplayNoise {
@@ -337,9 +369,23 @@ export interface ComparisonGate extends GateResult {
   wonCases: string[];
   /** Set when trials were lost to errors: the gate counts errored trials as failures. */
   note?: string;
+  /** `exp compare --pairwise` (AB-13): the pairwise judges turned a ship into a hold. */
+  judgeHold?: { conclusion: ReplicationConclusion; detail: string };
+}
+
+export interface ComparisonSeqK {
+  k: number;
+  feedback: string;
+  /** Paired cases. */
+  n: number;
+  a: number;
+  b: number;
+  diff: { mean: number; lo: number; hi: number; n: number };
 }
 
 export interface CompareOpts {
+  /** "seq": read the verdict from the Seq@K difference instead of the first-attempt pass rate, when both sides have one. */
+  verdictOn?: "pass" | "seq";
   iters?: number;
   seed?: number;
   /** Two-sided level for the bootstrap CI and the MDE. Default 0.05. */
@@ -362,6 +408,15 @@ export interface CompareOpts {
   verifiers?: ReadonlyMap<string, VerifierAudit>;
   /** The control arm's replay noise floor (continuation.ts replayNoise on A). */
   replay?: ReplayNoise;
+  /**
+   * Human labels of each arm's outputs, by case (never shared across arms):
+   * judge graders get a PPI++ corrected delta (src/experiments/ppi.ts).
+   */
+  labels?: { a: readonly HumanLabel[]; b: readonly HumanLabel[] };
+  /** Minimum usable labels per arm for a corrected delta. Default 20. */
+  minLabels?: number;
+  /** Judge criterion by grader id, for matching labels' `criterion` (default: the grader id). */
+  criteria?: ReadonlyMap<string, string>;
 }
 
 /** Thrown when a side of a comparison is a cancelled (partial) experiment and `force` is not set. */
@@ -372,6 +427,20 @@ export class IncompleteExperimentError extends Error {
     this.name = "IncompleteExperimentError";
     this.experimentId = r.id;
   }
+}
+
+/** Per case: the share of graded trials this grader passed. */
+function graderPassShares(r: ExperimentResult, graderId: string): Map<string, number> {
+  const acc = new Map<string, { s: number; n: number }>();
+  for (const run of r.runs) {
+    const g = run.grades.find((x) => x.graderId === graderId);
+    if (!g?.result) continue;
+    const a = acc.get(run.caseId) ?? { s: 0, n: 0 };
+    if (g.result.pass) a.s++;
+    a.n++;
+    acc.set(run.caseId, a);
+  }
+  return new Map([...acc].map(([k, v]) => [k, v.s / v.n]));
 }
 
 function graderMeans(r: ExperimentResult, graderId: string): Map<string, number> {
@@ -385,6 +454,41 @@ function graderMeans(r: ExperimentResult, graderId: string): Map<string, number>
     acc.set(run.caseId, a);
   }
   return new Map([...acc].map(([k, v]) => [k, v.s / v.n]));
+}
+
+/** Seq@K per case: the share of its graded trials solved by attempt K. */
+function seqRates(r: ExperimentResult): Map<string, number> {
+  const acc = new Map<string, { s: number; n: number }>();
+  for (const run of r.runs) {
+    if (!run.seq || run.ungraded) continue;
+    const x = acc.get(run.caseId) ?? { s: 0, n: 0 };
+    x.s += run.seq.solvedAt !== undefined ? 1 : 0;
+    x.n++;
+    acc.set(run.caseId, x);
+  }
+  return new Map([...acc].map(([k, v]) => [k, v.s / v.n]));
+}
+
+/** The Seq@K row (paired bootstrap over cases) when A and B ran --seq alike, else a note saying why there is none. */
+function seqKCompare(
+  a: ExperimentResult,
+  b: ExperimentResult,
+  boot: (ids: readonly string[], diffs: readonly number[]) => { mean: number; lo: number; hi: number; n: number },
+): { seqK?: ComparisonSeqK; seqNote?: string } {
+  const qa = a.summary.seq;
+  const qb = b.summary.seq;
+  if (!qa && !qb) return {};
+  const say = (q: typeof qa) => (q ? `K ${q.k} with ${q.feedback} feedback` : "no --seq");
+  if (!qa || !qb || qa.k !== qb.k || qa.feedback !== qb.feedback) return { seqNote: `Seq@K not compared: A ran ${say(qa)}, B ran ${say(qb)}; run both with the same --seq and --feedback` };
+  const ra = seqRates(a);
+  const rb = seqRates(b);
+  const ids = [...ra.keys()].filter((id) => rb.has(id)).sort();
+  const d = boot(
+    ids,
+    ids.map((id) => (rb.get(id) as number) - (ra.get(id) as number)),
+  );
+  const mean = (m: Map<string, number>) => (ids.length ? ids.reduce((s, id) => s + (m.get(id) as number), 0) / ids.length : NaN);
+  return { seqK: { k: qa.k, feedback: qa.feedback, n: ids.length, a: mean(ra), b: mean(rb), diff: { mean: d.mean, lo: d.lo, hi: d.hi, n: d.n } } };
 }
 
 export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opts: CompareOpts = {}): Comparison {
@@ -438,14 +542,24 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     deltas.map((x) => x.delta),
     { seed: boot.seed, iters: boot.iters, ...(cl ? { clusterIds: ids.map(clusterOf) } : {}) },
   );
-  const exact = signFlip.p < boot.alpha;
-  const verdict: Comparison["verdict"] = seq ? seq.verdict : d.n > 0 && exact && d.lo > 0 ? "better" : d.n > 0 && exact && d.hi < 0 ? "worse" : "inconclusive";
+  const rtm = selectionWarning(a, b);
+  // AC-9: Seq@K, when both sides ran --seq with the same K and feedback. Its verdict takes the same exact test over its own per-case differences.
+  let seqP = 1;
+  const sk = seqKCompare(a, b, (ids2, diffs) => {
+    seqP = clusterSignFlip(diffs, { seed: boot.seed, iters: boot.iters, ...(cl ? { clusterIds: ids2.map(clusterOf) } : {}) }).p;
+    return bootstrap(ids2, diffs, boot);
+  });
+  const onSeq = opts.verdictOn === "seq" && sk.seqK ? sk.seqK.diff : undefined;
+  const v = onSeq ?? d;
+  const exact = (onSeq ? seqP : signFlip.p) < boot.alpha;
+  const verdict: Comparison["verdict"] = rtm ? "inconclusive" : seq && !onSeq ? seq.verdict : v.n > 0 && exact && v.lo > 0 ? "better" : v.n > 0 && exact && v.hi < 0 ? "worse" : "inconclusive";
   const byDelta = (x: CaseDelta, y: CaseDelta) => x.delta - y.delta || (x.caseId < y.caseId ? -1 : 1);
   const rateOf = (r: Map<string, number>) => {
     const v = [...r.values()];
     return v.length ? v.reduce((s, x) => s + x, 0) / v.length : NaN;
   };
   const gIds = a.graders.map((g) => g.id).filter((id) => b.graders.some((g) => g.id === id));
+  const pairedIds = new Set(ids);
   const graders: GraderDelta[] = gIds.map((gid) => {
     const ma = graderMeans(a, gid);
     const mb = graderMeans(b, gid);
@@ -462,8 +576,20 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     if (va || vb) out.verifier = { ...(va ? { a: va } : {}), ...(vb ? { b: vb } : {}) };
     const infoA = a.graders.find((g) => g.id === gid);
     const infoB = b.graders.find((g) => g.id === gid);
-    if (common.length && (infoA?.kind === "llm" || infoB?.kind === "llm" || infoA?.calibration || infoB?.calibration)) {
+    const judge = infoA?.kind === "llm" || infoB?.kind === "llm" || !!infoA?.calibration || !!infoB?.calibration;
+    if (common.length && judge) {
       out.stability = directionStability(diffs, { seed: boot.seed, ...(cl ? { clusterIds: common.map(clusterOf) } : {}) });
+    }
+    if (opts.labels && judge) {
+      const criterion = opts.criteria?.get(gid) ?? gid;
+      const keep = (m: Map<string, number>) => new Map([...m].filter(([k]) => pairedIds.has(k)));
+      const p = graderPpi(
+        { a: keep(graderPassShares(a, gid)), b: keep(graderPassShares(b, gid)) },
+        { a: labelMajority(opts.labels.a, criterion), b: labelMajority(opts.labels.b, criterion) },
+        { alpha: boot.alpha, ...(opts.minLabels !== undefined ? { minLabels: opts.minLabels } : {}) },
+      );
+      out.ppi = p.ppi;
+      out.warnings = p.warnings;
     }
     return out;
   });
@@ -587,12 +713,25 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
   if (a.task.kind === "continuation" && a.metadata?.control === "skipped") {
     out.controlWarning = "A ran without a control arm (--no-control): there is no replay noise floor to read the difference against";
   }
+  const llmReplay = llmReplayNote(a, b, ids.length ? d.mean : undefined);
+  if (llmReplay) out.llmReplay = llmReplay;
+  if (rtm) out.selectionWarning = rtm;
+  if (sk.seqK) out.seqK = sk.seqK;
+  if (sk.seqNote) out.seqNote = sk.seqNote;
+  if (opts.verdictOn === "seq") out.verdictOn = sk.seqK ? "seq" : "pass";
+  const kindOf = new Map<string, CaseKind>();
+  for (const r of [...a.runs, ...b.runs]) if (r.kind) kindOf.set(r.caseId, r.kind);
+  const caseKinds = kindOf.size ? compareKinds(kindOf, ra, rb) : undefined;
+  if (caseKinds) out.kinds = caseKinds;
   if (opts.gate) {
     const g = acceptanceGate({ wins: improve, losses: regress, solved }, opts.gate);
     out.gate = { ...g, verdict: gateVerdict(g), lostCases, wonCases };
+    // Regression to the mean: a run on the other side's failures cannot ship on its own.
+    if (rtm && out.gate.verdict === "ship") Object.assign(out.gate, { decision: "abstain", verdict: "hold" });
     const notes = [
       ...(attrition.warning || out.gradeWarning ? ["trials were lost to errors: the gate counts a task error as a failure and leaves ungraded runs out"] : []),
       ...(out.instrumentWarning ? ["the arms were graded with different graders, so the gate also counts the grader change"] : []),
+      ...(rtm ? ["one side ran only on the other's failures: the gate holds until the baseline is re-run on the same cases"] : []),
     ];
     if (notes.length) out.gate.note = notes.join("; ");
   }

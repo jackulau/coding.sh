@@ -3,6 +3,7 @@
 import { performance } from "node:perf_hooks";
 import { sortableId } from "../core/ids.ts";
 import type { FileEvalStore } from "../datasets/store.ts";
+import { stampKinds, summarizeKinds } from "../datasets/kinds.ts";
 import type {
   Case,
   CaseRun,
@@ -13,6 +14,8 @@ import type {
   Grader,
   GraderOutcome,
   GraderSummary,
+  SeqAttempt,
+  SeqTrajectory,
   Split,
   TraceEvent,
 } from "../datasets/types.ts";
@@ -22,7 +25,11 @@ import { mapPool } from "../judge/limit.ts";
 import { pairedBootstrap, wilson } from "../stats/interval.ts";
 import { summarize } from "../stats/summary.ts";
 import { ADAPTIVE_MAX, ADAPTIVE_TRIALS, allPassKeys, CaseTracker, caseVerdicts, type SamplesMode } from "./samples.ts";
-import { resolveTask, type ResolvedTask, type TaskSpec } from "./task.ts";
+import { selectRunCases, type CaseSelection, type SelectOpts } from "./select.ts";
+import { checkSeq, markUnchanged, seqCritic, seqFeedback, seqFeedbackName, seqTaskError, summarizeSeq, type SeqOpts } from "./seq.ts";
+import { resolveTask, type ResolvedTask, type TaskContext, type TaskSpec } from "./task.ts";
+import type { LlmCache } from "../llmcache/proxy.ts";
+import { llmMetadata, openLlmCache, withLlmJob, type LlmRunOpts, type TaskLlm } from "../llmcache/run.ts";
 
 /** A task may return `withTrace(output, events)` to hand graders (judges) the agent's trace. */
 const TRACED = Symbol.for("coding.sh/traced-output");
@@ -87,6 +94,85 @@ export interface RunExperimentOpts {
    * flight finish, and the result is "cancelled" with `regression` set.
    */
   stopOnRegression?: ExperimentResult;
+  /** Run only some cases (X-26): another run's failures or errors, id patterns, a seeded sample, the first N. Stored as `metadata.selection`. */
+  selection?: SelectOpts;
+  /**
+   * Continue this stored (cancelled or partial) experiment: same id, its
+   * finished case-trials are kept and only the rest run. It must have run the
+   * same dataset version, task, graders, trials and selection
+   * (ResumeMismatchError names what changed). Infra-failed trials always run again.
+   */
+  resumeFrom?: ExperimentResult;
+  /** With resumeFrom: also run again the case-trials whose task errored. */
+  retryErrors?: boolean;
+  /**
+   * With a store: write the experiment so far, marked `metadata.checkpoint`
+   * and status "cancelled", at most this often (ms) while it runs, so a crash
+   * keeps a partial result to resume from.
+   */
+  checkpointMs?: number;
+  /**
+   * `exp run --seq K` (AC-9): a case-trial whose first attempt fails is tried
+   * again with feedback, up to K attempts (seq.ts). The run's outcome stays
+   * the first attempt's; `CaseRun.seq` holds the trajectory.
+   */
+  seq?: SeqOpts;
+  /**
+   * X-11: record the task's model calls, or replay them from another
+   * experiment's recording (src/llmcache). Command tasks get
+   * ANTHROPIC_BASE_URL/OPENAI_BASE_URL, function tasks `ctx.llm`; each
+   * case-trial's counts land in `CaseRun.llm`, the settings in `metadata.llm`.
+   */
+  llm?: LlmRunOpts;
+}
+
+/** Thrown when resumeFrom ran with a different dataset, task, graders, trials or selection. */
+export class ResumeMismatchError extends Error {
+  /** What changed: "dataset", "task", "graders", "trials", "selection". */
+  readonly fields: string[];
+  constructor(id: string, fields: string[], detail: string[]) {
+    super(`can't resume ${id}: ${detail.join("; ")}. Its finished case-trials would mix with ones measured differently`);
+    this.name = "ResumeMismatchError";
+    this.fields = fields;
+  }
+}
+
+/** Throw ResumeMismatchError unless `prev` measured what this run measures. */
+export function assertResumable(
+  prev: ExperimentResult,
+  now: { dataset: Pick<Dataset, "id" | "version">; task: ResolvedTask["info"]; graders: readonly Pick<Grader, "id" | "version">[]; trials: number; selection?: CaseSelection; seq?: unknown },
+): void {
+  const fields: string[] = [];
+  const detail: string[] = [];
+  const ds = (d: { id: string; version: string }) => `${d.id}@${d.version}`;
+  if (ds(prev.dataset) !== ds(now.dataset)) {
+    fields.push("dataset");
+    detail.push(`dataset changed (${ds(prev.dataset)} → ${ds(now.dataset)})`);
+  }
+  if (prev.task.kind !== now.task.kind || prev.task.ref !== now.task.ref) {
+    fields.push("task");
+    detail.push(`task changed (${prev.task.kind}: ${prev.task.ref} → ${now.task.kind}: ${now.task.ref})`);
+  }
+  const gs = (g: readonly Pick<Grader, "id" | "version">[]) => g.map((x) => `${x.id}@${x.version.slice(0, 12)}`).sort().join(", ");
+  if (gs(prev.graders) !== gs(now.graders)) {
+    fields.push("graders");
+    detail.push(`graders changed (${gs(prev.graders) || "none"} → ${gs(now.graders) || "none"})`);
+  }
+  if (prev.trials !== now.trials) {
+    fields.push("trials");
+    detail.push(`trials changed (${prev.trials} → ${now.trials})`);
+  }
+  const sel = (x: CaseSelection | undefined) => (x ? JSON.stringify({ ...x, selected: 0, of: 0 }) : "all cases");
+  const prevSel = prev.metadata?.selection as CaseSelection | undefined;
+  if (sel(prevSel) !== sel(now.selection)) {
+    fields.push("selection");
+    detail.push("the case selection changed");
+  }
+  if (JSON.stringify(prev.metadata?.seq ?? null) !== JSON.stringify(now.seq ?? null)) {
+    fields.push("seq");
+    detail.push("the --seq settings changed");
+  }
+  if (fields.length) throw new ResumeMismatchError(prev.id, fields, detail);
 }
 
 /**
@@ -161,6 +247,12 @@ export interface TrialEnv {
    * once it stops, no new case-trial starts. Share one across every env of a run.
    */
   infraStop?: InfraStop;
+  /** Sequential attempts with feedback (seq.ts). */
+  seq?: SeqOpts;
+  /** The run's llm cache (src/llmcache): each case-trial gets its own job on it. */
+  llm?: LlmCache;
+  /** Set by runTrial: the case-trial's llm job, handed to the task. */
+  llmTask?: TaskLlm;
 }
 
 /** The checkpoint key of a case-trial. */
@@ -182,7 +274,7 @@ export function costOf(output: unknown): number | undefined {
 }
 
 /** One attempt of the task: its output (and trace) or its error. A per-attempt timeout is the task's failure. */
-async function attemptTask(env: TrialEnv, c: Case, trial: number): Promise<{ output?: unknown; trace?: TraceEvent[]; error?: string }> {
+async function attemptTask(env: TrialEnv, c: Case, trial: number, seqCtx?: Pick<TaskContext, "attempt" | "k" | "history">): Promise<{ output?: unknown; trace?: TraceEvent[]; error?: string }> {
   const { signal, task } = env;
   const timer = env.timeoutMs ? AbortSignal.timeout(env.timeoutMs) : undefined;
   const sig = timer ? (signal ? AbortSignal.any([signal, timer]) : timer) : signal;
@@ -194,6 +286,8 @@ async function attemptTask(env: TrialEnv, c: Case, trial: number): Promise<{ out
       trial,
       ...(c.metadata ? { metadata: c.metadata } : {}),
       ...(sig ? { signal: sig } : {}),
+      ...(seqCtx ?? {}),
+      ...(env.llmTask ? { llm: env.llmTask } : {}),
     });
     if (timedOut()) return { error: `timed out after ${env.timeoutMs} ms (trial timeout)` };
     return isTraced(raw) ? { output: raw.output, trace: raw.trace } : { output: raw };
@@ -235,6 +329,82 @@ export async function gradeOne(graders: readonly Grader[], c: Case, output: unkn
 }
 
 /**
+ * The rest of a sequential trajectory (seq.ts): while the latest attempt
+ * failed, give feedback on it and try again, up to K attempts. Sets
+ * `run.seq`; a pass ends it. A task error is a failed attempt whose message
+ * is the feedback; an infra failure after retries ends the trial ungraded. A
+ * drain lets the trajectory finish (it is one case-trial); the kill signal
+ * drops it, and then this returns false.
+ */
+async function sequence(env: TrialEnv, c: Case, trial: number, run: CaseRun, first: { output: unknown; latencyMs: number; costUsd?: number }): Promise<boolean> {
+  const o = env.seq!;
+  const mode = o.feedback;
+  const traj: SeqTrajectory = { k: o.k, feedback: seqFeedbackName(mode), history: o.history ?? "full", attempts: [] };
+  const firstAttempt: SeqAttempt = { pass: run.pass, latencyMs: first.latencyMs, ...(first.costUsd !== undefined ? { costUsd: first.costUsd } : {}), ...(run.error !== undefined ? { error: run.error } : {}) };
+  traj.attempts.push(firstAttempt);
+  run.seq = traj;
+  if (run.pass) {
+    traj.solvedAt = 1;
+    return true;
+  }
+  if (run.ungraded) return true; // outcome unknown: no feedback to give
+  const outputs: unknown[] = [first.output];
+  const history: { output: unknown; feedback: string }[] = [];
+  let last = { output: first.output, error: run.error, grades: run.grades, attempt: firstAttempt };
+  for (let t = 2; t <= o.k; t++) {
+    if (env.signal?.aborted) return false;
+    let feedback: string;
+    if (typeof mode === "string") feedback = seqFeedback(mode, { ...(last.error !== undefined ? { error: last.error } : {}), grades: last.grades }, c.expected);
+    else {
+      const critic = await seqCritic(mode.critic, {
+        input: c.input,
+        output: last.output,
+        expected: c.expected,
+        caseId: c.id,
+        ...(c.metadata ? { metadata: c.metadata } : {}),
+        ...(env.signal ? { signal: env.signal } : {}),
+        ...(last.error !== undefined ? { error: last.error } : {}),
+      });
+      feedback = critic.feedback;
+      if (critic.costUsd !== undefined) last.attempt.criticCostUsd = critic.costUsd;
+    }
+    last.attempt.feedback = feedback;
+    history.push({ output: last.output ?? null, feedback });
+    const shown = traj.history === "last" ? history.slice(-1) : [...history];
+    const t0 = performance.now();
+    const tried = await withRetries(() => attemptTask(env, c, trial, { attempt: t, k: o.k, history: shown }), {
+      policy: env.retry ?? { retries: 0, baseMs: 0, maxMs: 0 },
+      errorOf: (a) => a.error,
+      stop: [env.signal],
+    });
+    if (env.signal?.aborted) return false;
+    const { output, trace, error } = tried.result;
+    const latencyMs = Math.round((performance.now() - t0) * 100) / 100;
+    if (tried.infra) {
+      run.ungraded = true;
+      run.infra = tried.infra;
+      traj.attempts.push({ pass: false, latencyMs, error: error ?? tried.infra });
+      return true;
+    }
+    const grades = error !== undefined ? [] : await gradeOne(env.graders, c, output, trace, env.signal);
+    if (env.signal?.aborted) return false;
+    const pass = error === undefined && !gradeUnknown(grades) && grades.every((g) => g.result?.pass === true);
+    const cost = costOf(output);
+    const a: SeqAttempt = { pass, latencyMs, ...(cost !== undefined ? { costUsd: cost } : {}), ...(error !== undefined ? { error } : {}) };
+    traj.attempts.push(a);
+    outputs.push(output);
+    if (pass) {
+      traj.solvedAt = t;
+      break;
+    }
+    if (error === undefined && gradeUnknown(grades)) break; // a grader outage: no feedback to give
+    last = { output, error, grades, attempt: a };
+  }
+  markUnchanged(traj.attempts, outputs);
+  return true;
+}
+
+/**
  * Run and grade one case-trial, retrying infrastructure errors with backoff.
  * Undefined when it was not run (stopped before it started) or the signal
  * killed it part way: a killed task says nothing about the agent. A trial whose
@@ -242,11 +412,43 @@ export async function gradeOne(graders: readonly Grader[], c: Case, output: unkn
  * `ungraded`: outcome unknown, and a resume runs it again.
  */
 export async function runTrial(env: TrialEnv, c: Case, trial: number): Promise<CaseRun | undefined> {
+  if (env.signal?.aborted || env.drain?.aborted || env.infraStop?.signal.aborted) return undefined; // stopped before it started: not a run
+  if (!env.llm) return runTrialWith(env, c, trial);
+  // One llm job per case-trial (every seq attempt shares it); it is closed, and its recording written, before the run is recorded.
+  let run: CaseRun | undefined;
+  const { llm } = await withLlmJob(env.llm, { expId: env.runId, caseId: c.id, trial }, async (llmTask) => {
+    run = await runTrialWith({ ...env, ...(llmTask ? { llmTask } : {}) }, c, trial, true);
+  });
+  if (!run) return undefined;
+  const r = run as CaseRun;
+  if (llm) {
+    r.llm = llm;
+    // A replay that could not run past its boundary (no source recording, an upstream error) is not scored.
+    if (llm.unscored) {
+      r.ungraded = true;
+      r.pass = false;
+    }
+  }
+  if (env.job) await recordTrial(env.job, c, trial, r);
+  return r;
+}
+
+async function recordTrial(job: JobScope, c: Case, trial: number, run: CaseRun): Promise<void> {
+  await job.record(trialKey(c.id, trial), {
+    ms: run.latencyMs,
+    ...(run.attempts ? { attempts: run.attempts } : {}),
+    ...(run.costUsd !== undefined ? { costUsd: run.costUsd } : {}),
+    ...(run.infra ? { infra: run.infra } : {}),
+    outcome: run.error !== undefined ? "error" : run.pass ? "pass" : "fail",
+    data: run,
+  });
+}
+
+async function runTrialWith(env: TrialEnv, c: Case, trial: number, deferRecord = false): Promise<CaseRun | undefined> {
   const { signal, graders } = env;
-  if (signal?.aborted || env.drain?.aborted || env.infraStop?.signal.aborted) return undefined; // stopped before it started: not a run
   const startedAt = Date.now();
   const t0 = performance.now();
-  const tried = await withRetries(() => attemptTask(env, c, trial), {
+  const tried = await withRetries(() => attemptTask(env, c, trial, env.seq ? { attempt: 1, k: env.seq.k, history: [] } : undefined), {
     policy: env.retry ?? { retries: 0, baseMs: 0, maxMs: 0 },
     errorOf: (a) => a.error,
     stop: [signal, env.drain, env.infraStop?.signal],
@@ -276,16 +478,8 @@ export async function runTrial(env: TrialEnv, c: Case, trial: number): Promise<C
   const key = env.keyOf?.(c, trial);
   if (key) run.cellKey = key;
   env.infraStop?.add(run.infra);
-  if (env.job) {
-    await env.job.record(trialKey(c.id, trial), {
-      ms: latencyMs,
-      ...(run.attempts ? { attempts: run.attempts } : {}),
-      ...(cost !== undefined ? { costUsd: cost } : {}),
-      ...(run.infra ? { infra: run.infra } : {}),
-      outcome: run.error !== undefined ? "error" : run.pass ? "pass" : "fail",
-      data: run,
-    });
-  }
+  if (env.seq && !(await sequence(env, c, trial, run, { output, latencyMs, ...(cost !== undefined ? { costUsd: cost } : {}) }))) return undefined;
+  if (env.job && !deferRecord) await recordTrial(env.job, c, trial, run);
   return run;
 }
 
@@ -307,6 +501,7 @@ export function experimentResult(o: {
   regression?: ExperimentResult["regression"];
   infraStop?: ExperimentResult["infraStop"];
 }): ExperimentResult {
+  const runs = stampKinds(o.runs, o.dataset.cases);
   const result: ExperimentResult = {
     id: o.id,
     name: o.name,
@@ -322,13 +517,13 @@ export function experimentResult(o: {
     trials: o.trials,
     createdAt: o.createdAt,
     finishedAt: Date.now(),
-    runs: o.runs,
-    summary: summarizeRuns(o.runs, o.graders, o.trials, o.boot),
+    runs,
+    summary: summarizeRuns(runs, o.graders, o.trials, o.boot),
   };
   if (o.metadata) result.metadata = o.metadata;
   if (o.samples === "adaptive") {
     result.samples = "adaptive";
-    result.summary.caseVerdicts = caseVerdicts(o.runs.map((r) => ({ key: r.caseId, pass: r.ungraded ? undefined : r.pass })));
+    result.summary.caseVerdicts = caseVerdicts(runs.map((r) => ({ key: r.caseId, pass: r.ungraded ? undefined : r.pass })));
   }
   if (o.regression) result.regression = o.regression;
   if (o.infraStop) result.infraStop = o.infraStop;
@@ -361,10 +556,26 @@ export async function runExperiment(opts: RunExperimentOpts): Promise<Experiment
   const trials = adaptive ? ADAPTIVE_TRIALS : (opts.trials ?? 1);
   if (!(Number.isInteger(trials) && trials >= 1)) throw new RangeError(`trials must be a positive integer (got ${trials})`);
   const graders = await prepareGraders(opts.graders, opts.store);
-  const cases = selectCases(opts.dataset, opts.split, opts.filter);
+  let cases = selectCases(opts.dataset, opts.split, opts.filter);
+  let selection: CaseSelection | undefined;
+  if (opts.selection) ({ cases, selection } = selectRunCases(cases, opts.selection));
+  if (opts.seq) {
+    checkSeq(opts.seq);
+    const why = seqTaskError(opts.task);
+    if (why) throw new RangeError(why);
+  }
+  const seqMeta = opts.seq ? { k: opts.seq.k, feedback: seqFeedbackName(opts.seq.feedback), history: opts.seq.history ?? "full" } : undefined;
+  const withSel = selection ? { ...(opts.metadata ?? {}), selection } : opts.metadata;
+  const withSeq = seqMeta ? { ...(withSel ?? {}), seq: seqMeta } : withSel;
+  const metadata = opts.llm ? { ...(withSeq ?? {}), llm: llmMetadata(opts.llm, opts.task) } : withSeq;
   const task = resolveTask(opts.task);
   const job = opts.job;
-  const { id, createdAt } = await rememberIdentity(job, { id: opts.id ?? sortableId("exp_"), createdAt: Date.now() });
+  const prev = opts.resumeFrom;
+  if (prev) assertResumable(prev, { dataset: opts.dataset, task: task.info, graders, trials, ...(selection ? { selection } : {}), ...(seqMeta ? { seq: seqMeta } : {}) });
+  const { id, createdAt } = await rememberIdentity(job, prev ? { id: prev.id, createdAt: prev.createdAt } : { id: opts.id ?? sortableId("exp_"), createdAt: Date.now() });
+  // Case-trials resumeFrom finished: kept unless infra-failed (or task-errored, with retryErrors).
+  const kept = new Map<string, CaseRun>();
+  for (const r of prev?.runs ?? []) if (!r.infra && !(opts.retryErrors && r.error !== undefined)) kept.set(trialKey(r.caseId, r.trial), r);
   const jobs: { c: Case; trial: number }[] = [];
   for (const c of cases) for (let t = 1; t <= trials; t++) jobs.push({ c, trial: t });
   if (job && job.prefix === "") await job.job.setTotal(jobs.length);
@@ -376,7 +587,41 @@ export async function runExperiment(opts: RunExperimentOpts): Promise<Experiment
   const stop = new AbortController();
   let regression: ExperimentResult["regression"];
   const drain = opts.drain ? AbortSignal.any([opts.drain, stop.signal]) : stop.signal;
+  // Checkpoints (checkpointMs): the experiment so far, written while it runs.
+  const finished: CaseRun[] = [];
+  let lastCheckpoint = 0;
+  let writes = Promise.resolve();
+  // A throttled checkpoint is written when the window ends, so a hung case after a burst still finds the burst stored.
+  let trailing: ReturnType<typeof setTimeout> | undefined;
+  const checkpoint = () => {
+    if (!opts.store || opts.checkpointMs === undefined) return;
+    const now = Date.now();
+    const wait = opts.checkpointMs - (now - lastCheckpoint);
+    if (wait > 0) {
+      trailing ??= setTimeout(() => ((trailing = undefined), checkpoint()), wait);
+      trailing.unref?.();
+      return;
+    }
+    lastCheckpoint = now;
+    const snap = experimentResult({
+      id,
+      name: opts.name,
+      status: "cancelled",
+      dataset: opts.dataset,
+      ...(opts.split !== undefined ? { split: opts.split } : {}),
+      task: task.info,
+      graders,
+      trials,
+      createdAt,
+      runs: [...finished],
+      boot: { iters: opts.bootstrapIters ?? 2000, seed: opts.seed ?? 0x5eed },
+      metadata: { ...(metadata ?? {}), checkpoint: { done: finished.length, total, at: now } },
+    });
+    const store = opts.store;
+    writes = writes.then(() => store.putExperiment(snap)).catch(() => {});
+  };
   const settle = (run: CaseRun | undefined): CaseRun | undefined => {
+    if (run) finished.push(run);
     if (run && tracker.add(run.caseId, outcome(run).pass) && !regression) {
       regression = { caseId: run.caseId, baseline: base!.id };
       stop.abort();
@@ -396,25 +641,35 @@ export async function runExperiment(opts: RunExperimentOpts): Promise<Experiment
     ...(job ? { job } : {}),
     ...(opts.retry ? { retry: opts.retry } : {}),
     ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
+    ...(opts.seq ? { seq: opts.seq } : {}),
   };
+  const cache = opts.llm ? await openLlmCache(opts.llm) : undefined;
+  if (cache) env.llm = cache;
   const runAll = async (list: { c: Case; trial: number }[]) => {
     // A resume keeps every case-trial already recorded with a known outcome.
-    const prior = list.map(({ c, trial }) => priorRun(job, c.id, trial));
+    const prior = list.map(({ c, trial }) => priorRun(job, c.id, trial) ?? kept.get(trialKey(c.id, trial)));
     done += prior.filter(Boolean).length;
     return mapPool(list, opts.concurrency ?? 4, async ({ c, trial }, i) => {
       if (prior[i]) return settle(prior[i]);
       const run = await runTrial(env, c, trial);
       if (run) opts.onProgress?.(run, ++done, total);
-      return settle(run);
+      const out = settle(run);
+      if (run) checkpoint();
+      return out;
     });
   };
-  const settled = await runAll(jobs);
-  // Adaptive: a third trial for each case whose first two disagree.
-  const ties = adaptive && !drain.aborted && !signal?.aborted && !infraStop?.signal.aborted ? cases.filter((c) => tracker.needsTieBreak(c.id)).map((c) => ({ c, trial: ADAPTIVE_MAX })) : [];
-  if (ties.length) {
-    total += ties.length;
-    if (job && job.prefix === "") await job.job.setTotal(total);
-    settled.push(...(await runAll(ties)));
+  let settled: (CaseRun | undefined)[];
+  try {
+    settled = await runAll(jobs);
+    // Adaptive: a third trial for each case whose first two disagree.
+    const ties = adaptive && !drain.aborted && !signal?.aborted && !infraStop?.signal.aborted ? cases.filter((c) => tracker.needsTieBreak(c.id)).map((c) => ({ c, trial: ADAPTIVE_MAX })) : [];
+    if (ties.length) {
+      total += ties.length;
+      if (job && job.prefix === "") await job.job.setTotal(total);
+      settled.push(...(await runAll(ties)));
+    }
+  } finally {
+    await cache?.close();
   }
   const result = experimentResult({
     id,
@@ -432,8 +687,10 @@ export async function runExperiment(opts: RunExperimentOpts): Promise<Experiment
     createdAt,
     runs: settled.filter((r): r is CaseRun => r !== undefined),
     boot: { iters: opts.bootstrapIters ?? 2000, seed: opts.seed ?? 0x5eed },
-    ...(opts.metadata ? { metadata: opts.metadata } : {}),
+    ...(metadata ? { metadata } : {}),
   });
+  clearTimeout(trailing);
+  await writes;
   if (opts.store) await storeResult(opts.store, result);
   return result;
 }
@@ -566,6 +823,8 @@ export function summarizeRuns(
     return s;
   });
   const lat = summarize(runs.map((r) => r.latencyMs));
+  const seq = summarizeSeq(runs, trials, boot);
+  const kinds = summarizeKinds(runs, trials, boot);
   return {
     n,
     cases: new Set(runs.map((r) => r.caseId)).size,
@@ -577,5 +836,7 @@ export function summarizeRuns(
     ciMethod,
     graders: gs,
     latencyMs: { mean: lat.mean, median: lat.median, p90: lat.p90, max: lat.max },
+    ...(seq ? { seq } : {}),
+    ...(kinds ? { kinds } : {}),
   };
 }

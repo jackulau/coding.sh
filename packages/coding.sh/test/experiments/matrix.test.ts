@@ -199,6 +199,11 @@ describe("runMatrixExperiment", () => {
     const text = renderMatrixRun(r, { color: false });
     assert.match(text, /model=bad +0\.0% +-100\.0pp/);
     assert.match(text, /Holm-adjusted over 2 comparisons/);
+    // EM-7: three cells get a plausibly-best set (paired-bootstrap MCB on the shared cases).
+    assert.equal(r.bestSet?.n, 4);
+    assert.equal(r.bestSet?.best[0], "model=good");
+    assert.ok(!r.bestSet?.best.includes("model=bad"));
+    assert.match(text, /^(best: model=good \(clearly ahead|plausibly best \(95%, 4 shared cases\): model=good)/m);
   });
 
   it("--cell runs a subset and always the baseline", async () => {
@@ -206,6 +211,7 @@ describe("runMatrixExperiment", () => {
     const r = await runMatrixExperiment({ name: "m", dataset: ds, graders: [exactGrader()], plan, only: ["model=bad"], seed: 1 });
     assert.deepEqual(Object.keys(r.experiments), ["model=good", "model=bad"]);
     assert.equal(r.comparisons["model=bad"]!.pHolm, r.comparisons["model=bad"]!.mcnemar.p, "a single comparison: adjusted = raw");
+    assert.equal(r.bestSet, undefined, "two cells are a paired comparison, not a best set");
     await assert.rejects(runMatrixExperiment({ name: "m", dataset: ds, graders: [exactGrader()], plan, only: ["nope"] }), /not a cell/);
   });
 });

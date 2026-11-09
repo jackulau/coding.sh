@@ -19,6 +19,7 @@ import { infraStopFor, type RetryPolicy } from "../jobs/retry.ts";
 import { mapPool } from "../judge/limit.ts";
 import { mulberry32 } from "../stats/prng.ts";
 import { planSequential, sequentialLook, sequentialOutcome, type LookResult, type SequentialOutcome } from "../stats/sequential.ts";
+import { llmMetadata, openLlmCache, type LlmRunOpts } from "../llmcache/run.ts";
 import { caseRates, experimentResult, prepareGraders, priorRun, rememberIdentity, runTrial, selectCases, storeResult, type TrialEnv } from "./run.ts";
 import { resolveTask, type TaskSpec } from "./task.ts";
 
@@ -70,6 +71,8 @@ export interface RunAbOpts {
   bootstrapIters?: number;
   onProgress?: (run: CaseRun, arm: 0 | 1, done: number, total: number) => void;
   onLook?: (look: LookResult) => void;
+  /** X-11: both arms record, or both replay the same source at the same boundary (src/llmcache). */
+  llm?: LlmRunOpts;
 }
 
 export interface AbResult {
@@ -151,6 +154,8 @@ export async function runAb(opts: RunAbOpts): Promise<AbResult> {
     ...(opts.retry ? { retry: opts.retry } : {}),
     ...(opts.timeoutMs ? { timeoutMs: opts.timeoutMs } : {}),
   })) as [TrialEnv, TrialEnv];
+  const cache = opts.llm ? await openLlmCache(opts.llm) : undefined;
+  if (cache) for (const e of envs) e.llm = cache;
 
   const left = cases.map(() => 2 * trials); // case-trials still to finish, per case
   const finished: [CaseRun[], CaseRun[]] = [[], []];
@@ -193,7 +198,7 @@ export async function runAb(opts: RunAbOpts): Promise<AbResult> {
     opts.onProgress?.(run, j.arm, ++done, jobs.length);
     take();
     return run;
-  });
+  }).finally(() => cache?.close());
 
   const keep = stopAt ?? cases.length;
   // Cancelled: some case-trial the result needs never ran (an early stop drops the rest on purpose).
@@ -214,6 +219,7 @@ export async function runAb(opts: RunAbOpts): Promise<AbResult> {
       runs: settled.filter((run, j): run is CaseRun => run !== undefined && jobs[j]!.arm === i && jobs[j]!.ci < keep),
       boot: { iters: opts.bootstrapIters ?? 2000, seed: 0x5eed },
       infraStop: infraStop?.report,
+      ...(opts.llm ? { metadata: { llm: llmMetadata(opts.llm, opts.arms[i].task) } } : {}),
     });
     r.pair = { id: pairId, arm: opts.arms[i].name, experiments: ids, seed, ...(sequential ? { sequential } : {}) };
     return r;

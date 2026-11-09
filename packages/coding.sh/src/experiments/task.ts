@@ -21,7 +21,20 @@ export interface TaskContext {
   trial: number;
   metadata?: Record<string, unknown>;
   signal?: AbortSignal;
+  /** `exp run --seq K` only: this attempt (1-based), K, and the earlier attempts with feedback on each (seqPrompt renders them). */
+  attempt?: number;
+  k?: number;
+  history?: { output: unknown; feedback: string }[];
+  /**
+   * `exp run --record/--replay` (src/llmcache): this case-trial's model-call
+   * proxy. Point the SDK at its base URLs; command tasks get `env`
+   * (ANTHROPIC_BASE_URL, OPENAI_BASE_URL) in their environment.
+   */
+  llm?: { env: Record<string, string>; anthropicBaseUrl: string; openaiBaseUrl: string };
 }
+
+/** The seq fields of a context, for an envelope; empty outside seq mode. */
+const seqFields = (ctx: TaskContext) => (ctx.attempt !== undefined ? { attempt: ctx.attempt, k: ctx.k, history: ctx.history ?? [] } : {});
 
 export type TaskFn = (input: unknown, ctx: TaskContext) => unknown;
 
@@ -29,7 +42,7 @@ export interface CommandTask extends CommandSpec {
   kind: "command";
   /** How to read stdout: "json" (must parse), "text" (trimmed string), "auto" (JSON if it parses). Default "auto". */
   output?: "json" | "text" | "auto";
-  /** Send `{input, caseId, trial, metadata}` instead of the bare input. Default false. */
+  /** Send `{input, caseId, trial, metadata}` instead of the bare input (with `--seq`, also attempt, k and history). Default false. */
   envelope?: boolean;
 }
 
@@ -40,7 +53,7 @@ export interface HttpTask {
   headers?: Record<string, string>;
   /** Header name → env var holding its value (secrets stay out of config files). */
   headerEnv?: Record<string, string>;
-  /** Send `{input, caseId, trial, runId, metadata}` instead of the bare input. Default false. */
+  /** Send `{input, caseId, trial, runId, metadata}` instead of the bare input (with `--seq`, also attempt, k and history). Default false. */
   envelope?: boolean;
   /** JSON path selecting the output from the response, e.g. "$.output". */
   responsePath?: string;
@@ -139,10 +152,11 @@ function commandTask(raw: CommandTask): ResolvedTask {
   return {
     info: { kind: "command", ref: formatArgv(spec) },
     async run(input, ctx) {
-      const stdin = JSON.stringify(spec.envelope ? { input, caseId: ctx.caseId, trial: ctx.trial, metadata: ctx.metadata } : input) ?? "null";
+      const stdin = JSON.stringify(spec.envelope ? { input, caseId: ctx.caseId, trial: ctx.trial, metadata: ctx.metadata, ...seqFields(ctx) } : input) ?? "null";
+      const seqEnv: Record<string, string> = ctx.attempt !== undefined ? { CODING_SH_ATTEMPT: String(ctx.attempt), CODING_SH_SEQ_K: String(ctx.k ?? "") } : {};
       const r = await runProcess({
         ...spec,
-        env: { ...(spec.env ?? {}), CODING_SH_RUN_ID: ctx.runId, CODING_SH_CASE_ID: ctx.caseId, CODING_SH_TRIAL: String(ctx.trial) },
+        env: { ...(spec.env ?? {}), ...(ctx.llm?.env ?? {}), CODING_SH_RUN_ID: ctx.runId, CODING_SH_CASE_ID: ctx.caseId, CODING_SH_TRIAL: String(ctx.trial), ...seqEnv },
         stdin,
         ...(ctx.signal ? { signal: ctx.signal } : {}),
       });
@@ -174,6 +188,7 @@ function httpTask(spec: HttpTask): ResolvedTask {
         accept: "application/json",
         "x-coding-sh-run-id": ctx.runId,
         "x-coding-sh-case-id": ctx.caseId,
+        ...(ctx.attempt !== undefined ? { "x-coding-sh-attempt": String(ctx.attempt) } : {}),
         ...(spec.headers ?? {}),
       };
       for (const [h, name] of Object.entries(spec.headerEnv ?? {})) {
@@ -181,7 +196,7 @@ function httpTask(spec: HttpTask): ResolvedTask {
         if (!v) throw new TaskError(`http task: env ${name} (for header ${h}) is not set`);
         headers[h] = v;
       }
-      const body = spec.envelope ? { input, caseId: ctx.caseId, trial: ctx.trial, runId: ctx.runId, metadata: ctx.metadata } : input;
+      const body = spec.envelope ? { input, caseId: ctx.caseId, trial: ctx.trial, runId: ctx.runId, metadata: ctx.metadata, ...seqFields(ctx) } : input;
       const ctrl = new AbortController();
       const timeoutMs = spec.timeoutMs ?? 120_000;
       const timer = setTimeout(() => ctrl.abort(new Error(`timed out after ${timeoutMs} ms`)), timeoutMs);

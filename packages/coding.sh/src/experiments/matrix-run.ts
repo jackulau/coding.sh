@@ -10,11 +10,12 @@ import type { Case, CaseRun, Dataset, ExperimentResult, Grader, Split } from "..
 import { infraStopFor, type InfraStopReport, type RetryPolicy } from "../jobs/retry.ts";
 import type { JobScope } from "../jobs/store.ts";
 import { mapPool } from "../judge/limit.ts";
+import { bestSet, type BestSet } from "../stats/mcb.ts";
 import { mulberry32 } from "../stats/prng.ts";
 import { holm } from "../stats/tests.ts";
 import { compareExperiments, type Comparison } from "./compare.ts";
 import { MatrixPlanError, parsePointer, type MatrixPlan, type MatrixSpec } from "./matrix.ts";
-import { experimentResult, prepareGraders, priorRun, rememberIdentity, runTrial, selectCases, storeResult, trialKey, type TrialEnv } from "./run.ts";
+import { caseRates, experimentResult, prepareGraders, priorRun, rememberIdentity, runTrial, selectCases, storeResult, trialKey, type TrialEnv } from "./run.ts";
 import { resolveTask, type TaskSpec } from "./task.ts";
 import { DEFAULT_TRIAL_REUSE_MAX_AGE_MS, newestTrialByCell, trialCellKey, trialTaskKey } from "./trial-cells.ts";
 
@@ -115,6 +116,23 @@ export interface MatrixResult {
   reused?: Record<string, number>;
   /** Set when case-trials failed on infrastructure in a row (`--stop-after-infra`) and the run stopped; `status` is "cancelled". */
   infraStop?: InfraStopReport;
+  /** Three or more cells: the cells not significantly worse than the best (EM-7, paired-bootstrap MCB). */
+  bestSet?: BestSet;
+}
+
+/**
+ * EM-7: the configs not significantly worse than the best, by a paired-bootstrap
+ * MCB over per-case pass rates on the cases every config graded. Undefined for
+ * fewer than three configs: two are already a paired comparison.
+ */
+export function runsBestSet(configs: readonly { name: string; runs: readonly CaseRun[] }[], opts: { alpha?: number; iters?: number; seed?: number } = {}): BestSet | undefined {
+  if (configs.length < 3) return undefined;
+  const rates = configs.map((c) => caseRates(c.runs));
+  const ids = [...new Set(rates.flatMap((m) => [...m.keys()]))].sort();
+  return bestSet(
+    configs.map((c, i) => ({ name: c.name, scores: ids.map((id) => rates[i]!.get(id) ?? NaN) })),
+    opts,
+  );
 }
 
 function shuffle<T>(xs: T[], rand: () => number): T[] {
@@ -309,7 +327,11 @@ export async function runMatrixExperiment(opts: RunMatrixOpts): Promise<MatrixRe
   const base = experiments[plan.baseline]!;
   const raw: Record<string, Comparison> = {};
   for (const cell of cells) if (cell.name !== plan.baseline) raw[cell.name] = compareExperiments(base, experiments[cell.name]!, { force: true, iters: opts.bootstrapIters ?? 10_000 });
-  return { id: matrixId, seed, status: cancelled ? "cancelled" : "completed", plan, experiments, comparisons: holmComparisons(raw, opts.alpha), ...(opts.reuse ? { reused } : {}), infraStop: infraStop?.report };
+  const best = runsBestSet(
+    cells.map((c) => ({ name: c.name, runs: experiments[c.name]!.runs })),
+    { ...(opts.alpha !== undefined ? { alpha: opts.alpha } : {}), iters: opts.bootstrapIters ?? 2000 },
+  );
+  return { id: matrixId, seed, status: cancelled ? "cancelled" : "completed", plan, experiments, comparisons: holmComparisons(raw, opts.alpha), ...(opts.reuse ? { reused } : {}), infraStop: infraStop?.report, ...(best ? { bestSet: best } : {}) };
 }
 
 /** The matrix id an experiment belongs to, from `metadata.matrix`. */
