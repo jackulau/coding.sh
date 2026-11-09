@@ -1,0 +1,401 @@
+{
+ "resourceLogs": [
+  {
+   "resource": {
+    "attributes": [
+     {
+      "key": "service.name",
+      "value": {
+       "stringValue": "codex_cli_rs"
+      }
+     },
+     {
+      "key": "service.version",
+      "value": {
+       "stringValue": "0.130.0"
+      }
+     }
+    ]
+   },
+   "scopeLogs": [
+    {
+     "scope": {
+      "name": "codex_otel"
+     },
+     "logRecords": [
+      {
+       "timeUnixNano": "1767225601000000000",
+       "body": {
+        "stringValue": "codex.sse_event"
+       },
+       "attributes": [
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "codex.sse_event"
+         }
+        },
+        {
+         "key": "conversation.id",
+         "value": {
+          "stringValue": "019a0000-0000-7000-8000-00000000c0de"
+         }
+        },
+        {
+         "key": "app.version",
+         "value": {
+          "stringValue": "0.130.0"
+         }
+        },
+        {
+         "key": "originator",
+         "value": {
+          "stringValue": "codex_cli_rs"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "gpt-5.1-codex"
+         }
+        },
+        {
+         "key": "event.kind",
+         "value": {
+          "stringValue": "response.completed"
+         }
+        },
+        {
+         "key": "input_token_count",
+         "value": {
+          "stringValue": "2400"
+         }
+        },
+        {
+         "key": "output_token_count",
+         "value": {
+          "stringValue": "300"
+         }
+        },
+        {
+         "key": "cached_token_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "cache_write_token_count",
+         "value": {
+          "intValue": "0"
+         }
+        },
+        {
+         "key": "reasoning_token_count",
+         "value": {
+          "intValue": "192"
+         }
+        },
+        {
+         "key": "tool_token_count",
+         "value": {
+          "stringValue": "2700"
+         }
+        },
+        {
+         "key": "ttft_ms",
+         "value": {
+          "intValue": "640"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1767225601100000000",
+       "body": {
+        "stringValue": "codex.skill_invocation"
+       },
+       "attributes": [
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "codex.skill_invocation"
+         }
+        },
+        {
+         "key": "conversation.id",
+         "value": {
+          "stringValue": "019a0000-0000-7000-8000-00000000c0de"
+         }
+        },
+        {
+         "key": "app.version",
+         "value": {
+          "stringValue": "0.130.0"
+         }
+        },
+        {
+         "key": "originator",
+         "value": {
+          "stringValue": "codex_cli_rs"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "gpt-5.1-codex"
+         }
+        },
+        {
+         "key": "turn.id",
+         "value": {
+          "stringValue": "turn-1"
+         }
+        },
+        {
+         "key": "skill.name",
+         "value": {
+          "stringValue": "release-notes"
+         }
+        },
+        {
+         "key": "skill.scope",
+         "value": {
+          "stringValue": "repo"
+         }
+        },
+        {
+         "key": "skill.invocation_type",
+         "value": {
+          "stringValue": "explicit"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1767225601500000000",
+       "body": {
+        "stringValue": "codex.sse_event"
+       },
+       "attributes": [
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "codex.sse_event"
+         }
+        },
+        {
+         "key": "conversation.id",
+         "value": {
+          "stringValue": "019a0000-0000-7000-8000-00000000c0de"
+         }
+        },
+        {
+         "key": "app.version",
+         "value": {
+          "stringValue": "0.130.0"
+         }
+        },
+        {
+         "key": "originator",
+         "value": {
+          "stringValue": "codex_cli_rs"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "gpt-5.1-codex"
+         }
+        },
+        {
+         "key": "event.kind",
+         "value": {
+          "stringValue": "response.output_item.done"
+         }
+        },
+        {
+         "key": "duration_ms",
+         "value": {
+          "stringValue": "3"
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1767225605000000000",
+       "body": {
+        "stringValue": "codex.agent_response"
+       },
+       "attributes": [
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "codex.agent_response"
+         }
+        },
+        {
+         "key": "conversation.id",
+         "value": {
+          "stringValue": "019a0000-0000-7000-8000-00000000c1d0"
+         }
+        },
+        {
+         "key": "app.version",
+         "value": {
+          "stringValue": "0.130.0"
+         }
+        },
+        {
+         "key": "originator",
+         "value": {
+          "stringValue": "codex_cli_rs"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "gpt-5.1-codex"
+         }
+        },
+        {
+         "key": "agent.type",
+         "value": {
+          "stringValue": "subagent"
+         }
+        },
+        {
+         "key": "turn.id",
+         "value": {
+          "stringValue": "turn-c1"
+         }
+        },
+        {
+         "key": "item.id",
+         "value": {
+          "stringValue": "msg_1"
+         }
+        },
+        {
+         "key": "parent.conversation.id",
+         "value": {
+          "stringValue": "019a0000-0000-7000-8000-00000000c0de"
+         }
+        },
+        {
+         "key": "parent.turn.id",
+         "value": {
+          "stringValue": "turn-1"
+         }
+        },
+        {
+         "key": "root.turn.id",
+         "value": {
+          "stringValue": "turn-1"
+         }
+        },
+        {
+         "key": "initiating.agent.path",
+         "value": {
+          "stringValue": "/root"
+         }
+        },
+        {
+         "key": "response",
+         "value": {
+          "stringValue": "The changelog has 3 entries."
+         }
+        },
+        {
+         "key": "response_length",
+         "value": {
+          "intValue": "28"
+         }
+        },
+        {
+         "key": "response_truncated",
+         "value": {
+          "boolValue": false
+         }
+        }
+       ]
+      },
+      {
+       "timeUnixNano": "1767225606000000000",
+       "body": {
+        "stringValue": "codex.agent_response"
+       },
+       "attributes": [
+        {
+         "key": "event.name",
+         "value": {
+          "stringValue": "codex.agent_response"
+         }
+        },
+        {
+         "key": "conversation.id",
+         "value": {
+          "stringValue": "019a0000-0000-7000-8000-00000000c0de"
+         }
+        },
+        {
+         "key": "app.version",
+         "value": {
+          "stringValue": "0.130.0"
+         }
+        },
+        {
+         "key": "originator",
+         "value": {
+          "stringValue": "codex_cli_rs"
+         }
+        },
+        {
+         "key": "model",
+         "value": {
+          "stringValue": "gpt-5.1-codex"
+         }
+        },
+        {
+         "key": "agent.type",
+         "value": {
+          "stringValue": "main"
+         }
+        },
+        {
+         "key": "turn.id",
+         "value": {
+          "stringValue": "turn-1"
+         }
+        },
+        {
+         "key": "item.id",
+         "value": {
+          "stringValue": "msg_2"
+         }
+        },
+        {
+         "key": "response",
+         "value": {
+          "stringValue": "Done: release notes drafted."
+         }
+        },
+        {
+         "key": "response_length",
+         "value": {
+          "intValue": "28"
+         }
+        },
+        {
+         "key": "response_truncated",
+         "value": {
+          "boolValue": false
+         }
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

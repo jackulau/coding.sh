@@ -258,8 +258,12 @@ const EVENT_PREFIX: [string, AgentId][] = [
  */
 export function detectAgent(resource: Attrs, scope?: OtelScope, eventName?: string): AgentId {
   const service = str(resource, "service.name");
+  const main = str(resource, "gen_ai.main_agent.name");
   for (const [re, id] of KNOWN) if ((service && re.test(service)) || (scope?.name && re.test(scope.name))) return id;
   if (eventName) for (const [p, id] of EVENT_PREFIX) if (eventName.startsWith(p)) return id;
+  // GenAI semconv: the process's top-level agent names it better than the service does.
+  const named = main ? kebab(main) : undefined;
+  if (named) return named;
   if (service && !service.startsWith("unknown_service")) {
     const k = kebab(service);
     if (k) return k;
@@ -467,11 +471,31 @@ function assistantText(msgs: Msg[]): string | undefined {
 const INPUT_TOTAL = ["gen_ai.usage.input_tokens", "gen_ai.usage.prompt_tokens", "llm.token_count.prompt", "ai.usage.inputTokens", "ai.usage.promptTokens"];
 const CACHE_READ = ["gen_ai.usage.cache_read.input_tokens", "gen_ai.usage.cache_read_input_tokens", "llm.token_count.prompt_details.cache_read", "ai.usage.cachedInputTokens", "ai.usage.inputTokenDetails.cacheReadTokens"];
 const CACHE_WRITE = ["gen_ai.usage.cache_write.input_tokens", "gen_ai.usage.cache_creation.input_tokens", "gen_ai.usage.cache_creation_input_tokens", "llm.token_count.prompt_details.cache_write", "ai.usage.inputTokenDetails.cacheWriteTokens"];
+// Reasoning (thinking) tokens, a part of the output tokens: GenAI semconv, OpenInference, AI SDK
+// (v5 reasoningTokens, v6+ outputTokenDetails), Codex sse_event, Gemini CLI api_response.
+const REASONING = [
+  "gen_ai.usage.reasoning.output_tokens",
+  "gen_ai.usage.reasoning_tokens",
+  "llm.token_count.completion_details.reasoning",
+  "ai.usage.reasoningTokens",
+  "ai.usage.outputTokenDetails.reasoningTokens",
+  "reasoning_token_count",
+  "thoughts_token_count",
+];
+/** Reasoning tokens a model call reports (payload.reasoningTokens, as the gateway and the OTLP sink name it); 0 is none. */
+const reasoningTokens = (a: Attrs): number | undefined => {
+  const v = num(a, ...REASONING);
+  return v !== undefined && v > 0 ? v : undefined;
+};
+// Cache counts that mean "none" when 0: semconv usage counters record only positive
+// contributions, and the transcript adapters leave a zero cache count out, so a
+// reported 0 is omitted (Usage stays deep-equal across exporter versions).
+const OMIT_ZERO = new Set<UsageNumberKey>(["cacheReadTokens", "cacheWriteTokens"]);
 
 function usageOf(a: Attrs): Usage | undefined {
   const u: Usage = {};
   const set = (k: UsageNumberKey, v: number | undefined) => {
-    if (v !== undefined && v >= 0) u[k] = v;
+    if (v !== undefined && (v > 0 || (v === 0 && !OMIT_ZERO.has(k)))) u[k] = v;
   };
   const total = num(a, ...INPUT_TOTAL);
   const read = num(a, ...CACHE_READ);
@@ -488,9 +512,33 @@ function usageOf(a: Attrs): Usage | undefined {
   const m5 = num(a, "cache_creation_5m_tokens");
   const h1 = num(a, "cache_creation_1h_tokens");
   set("cacheWriteTokens", write ?? num(a, "cache_creation_tokens") ?? (m5 || h1 ? (m5 ?? 0) + (h1 ?? 0) : undefined));
-  set("costUsd", num(a, "gen_ai.usage.cost", "llm.cost.total", "cost_usd"));
+  set("costUsd", num(a, "gen_ai.usage.cost", "llm.cost.total", "coding_sh.cost_usd", "cost_usd"));
   return Object.keys(u).length ? u : undefined;
 }
+
+// ---------------------------------------------------------------- skills, compaction, agents
+
+/** Names agents put in place of a user-defined skill or agent unless detailed logging is on (Claude Code). */
+const PLACEHOLDER_NAMES = new Set(["custom_skill", "custom", "third-party", "third_party"]);
+
+/**
+ * The skill a span or log record names: GenAI semconv gen_ai.skill.name, Claude Code's
+ * skill_name (Skill tool spans) and skill.name (api_request attribution, skill_activated),
+ * Codex's skill.name (codex.skill_invocation). Redaction placeholders are no name.
+ */
+function skillTag(a: Attrs): string | undefined {
+  const name = str(a, "gen_ai.skill.name", "skill_name", "skill.name");
+  return name && !PLACEHOLDER_NAMES.has(name) ? name : undefined;
+}
+
+/** GenAI semconv: the operation ran on a compacted view of the conversation (only ever set to true). */
+const compacted = (a: Attrs): true | undefined => (bool(a, "gen_ai.conversation.compacted") === true ? true : undefined);
+
+/**
+ * A skill's script or command exit code: GenAI semconv skill executions
+ * (gen_ai.skill.script.exit_code) or process.exit.code on a tool span.
+ */
+const exitCode = (a: Attrs): number | undefined => num(a, "gen_ai.skill.script.exit_code", "process.exit.code");
 
 const requestModel = (a: Attrs) => str(a, "gen_ai.request.model", "llm.model_name", "ai.model.id", "model");
 const responseModel = (a: Attrs) => str(a, "gen_ai.response.model", "ai.response.model");
@@ -776,6 +824,8 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
       .set("name", span.name)
       .set("ttftMs", ttftMs(span))
       .set("stopReason", finishReason(a))
+      .set("reasoningTokens", reasoningTokens(a))
+      .set("compacted", compacted(a))
       .set("ok", !failed)
       .set("error", error)
       .set("replay", c.replayed || undefined);
@@ -803,10 +853,19 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
     const ids = cc && explicitId ? [ccToolId(c.sessionId, explicitId, "start"), ccToolId(c.sessionId, explicitId, "end")] : [];
     const input = first(a, "gen_ai.tool.call.arguments", "tool.parameters", "ai.toolCall.args", "ai.toolCall.input", "input.value", "tool_input", "tool_parameters");
     const output = first(a, "gen_ai.tool.call.result", "ai.toolCall.result", "ai.toolCall.output", "output.value");
-    const s = draft().set("tool", name).set("toolUseId", toolUseId).set("description", str(a, "gen_ai.tool.description", "tool.description"));
+    // An Agent Skill the call loads or runs (GenAI semconv execute_tool load_skill / command, Claude Code's Skill tool span):
+    // payload.skill is what session skill tags (skill:<name>) read.
+    const s = draft()
+      .set("tool", name)
+      .set("toolUseId", toolUseId)
+      .set("description", str(a, "gen_ai.tool.description", "tool.description"))
+      .set("skill", skillTag(a))
+      .set("skillSource", str(a, "gen_ai.skill.source.uri"))
+      .set("skillResource", str(a, "gen_ai.skill.resource.name"))
+      .set("subagentType", cc ? str(a, "subagent_type") : undefined);
     await s.content("input", toolInput(input));
     emit(startSlot, "tool.start", startMs, s, {}, ids[0]);
-    const e = draft().set("tool", name).set("toolUseId", toolUseId).set("ok", !failed).set("durationMs", durationMs).set("error", error);
+    const e = draft().set("tool", name).set("toolUseId", toolUseId).set("ok", !failed).set("durationMs", durationMs).set("exitCode", exitCode(a)).set("error", error);
     await e.content("output", maybeJson(output));
     emit(endSlot, "tool.end", endMs, e, { durationMs }, ids[1]);
   };
@@ -876,6 +935,19 @@ async function mapSpan(c: SpanCtx, ctx: MapContext, store: Blobs): Promise<Agent
   }
   // Where a span from another process runs (code a Restate server attempt invoked): core/durable.ts reads the attempt's process off it.
   if (c.instance && out[0]) out[0].payload.instance = c.instance;
+  // Claude Code: the agent that spawned this span's subagent (absent for the main session and its direct children).
+  if (cc && out[0]) {
+    const parentAgent = str(a, "parent_agent_id");
+    if (parentAgent) out[0].payload.parentAgentId = parentAgent;
+  }
+
+  // ---- GenAI semconv gen_ai.conversation.compacted: the context was compacted before this
+  // operation. Every later operation may say so too, so it is one context.compact per
+  // (sub)session, keyed on the session: the first compacted span to arrive places it.
+  if (compacted(a)) {
+    const d = draft().set("source", "gen_ai.conversation.compacted").set("spanId", spanId);
+    emit(11, "context.compact", startMs, d, {}, hashParts("otel-compacted", c.sessionId, c.subagentId ?? ""));
+  }
 
   // ---- span events: exceptions become error events; content events were folded in above.
   for (const [i, ev] of span.events.entries()) {
@@ -974,6 +1046,7 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
   for (const [t, s] of traceConv) ctx.traceSessions?.set(t, s);
   // A trace already keyed (an explicit conversation, or an earlier batch) keeps its session.
   for (const [t, s] of traceRun) if (!traceConv.has(t) && !ctx.traceSessions?.has(t)) ctx.traceSessions?.set(t, s);
+  const compactIds = new Set<string>();
 
   for (const rs of batch) {
     const resource = rs.resource.attributes;
@@ -1016,9 +1089,21 @@ export async function mapTraces(batch: ResourceSpans[], ctx: MapContext): Promis
         if (sub) {
           c.subagentId = sub;
           c.sessionId = childSessionId(span.traceId, sub);
+        } else if (agent === "claude-code") {
+          // Claude Code's beta spans name the subagent that issued them (agent_id), as its log events do:
+          // they stay in the main session, tagged with that subagent.
+          const aid = str(span.attributes, "agent_id");
+          if (aid) c.subagentId = aid;
         }
         try {
-          result.events.push(...(await mapSpan(c, ctx, store)));
+          for (const e of await mapSpan(c, ctx, store)) {
+            // One context.compact per session (see mapSpan): the first compacted span of the batch places it.
+            if (e.kind === "context.compact") {
+              if (compactIds.has(e.id)) continue;
+              compactIds.add(e.id);
+            }
+            result.events.push(e);
+          }
         } catch (err) {
           result.rejected++;
           if (result.errors.length < 5) result.errors.push(`span ${span.spanId}: ${(err as Error).message}`);
@@ -1108,6 +1193,8 @@ async function mapLog(rec: OtelLogRecord, resource: Attrs, scope: OtelScope, ctx
   const runId = str(a, ...RUN_KEYS) ?? str(resource, ...RUN_KEYS);
   const promptId = str(a, "prompt.id");
   const subagentId = str(a, "agent_id");
+  // Claude Code: the agent that spawned this subagent (absent for the main session and its direct children).
+  const parentAgent = str(a, "parent_agent_id");
   const out: AgentEvent[] = [];
   const draft = () => new Draft(store, ctx.maxInlineBytes, raw);
   const emit = (slot: number, kind: EventKind, at: number, d: Draft, extra: Partial<AgentEvent> = {}, id?: string) => {
@@ -1118,6 +1205,7 @@ async function mapLog(rec: OtelLogRecord, resource: Attrs, scope: OtelScope, ctx
     if (runId) e.runId = runId;
     if (promptId) e.turnId = promptId;
     if (subagentId) e.subagentId = subagentId;
+    if (parentAgent) e.payload.parentAgentId = parentAgent;
     if (d.blobs.length) e.blobs = d.blobs;
     Object.assign(e, extra);
     out.push(e);
@@ -1149,6 +1237,8 @@ async function mapLog(rec: OtelLogRecord, resource: Attrs, scope: OtelScope, ctx
       .set("speed", tierValue(str(a, "speed")))
       .set("cacheWrite1hTokens", hints.cacheWrite1hTokens)
       .set("inferenceGeo", hints.inferenceGeo)
+      .set("reasoningTokens", reasoningTokens(a))
+      .set("skill", skillTag(a))
       .set("event", name);
     emit(0, "llm.call", startTs, d, { ...timing, ...(model ? { model } : {}), usage }, requestId ? ccLlmId(sessionId, requestId, "call") : undefined);
   } else if (suffix === "api_error") {
@@ -1186,10 +1276,38 @@ async function mapLog(rec: OtelLogRecord, resource: Attrs, scope: OtelScope, ctx
     await e.content("output", maybeJson(first(a, "tool_result", "output", "gen_ai.tool.call.result")));
     emit(0, "tool.end", ts, e, timing, cc && explicitId ? ccToolId(sessionId, explicitId, "end") : undefined);
   } else if (suffix === "compaction") {
+    const ok = bool(a, "success");
     const d = draft()
       .set("trigger", str(a, "trigger") === "manual" ? "manual" : "auto")
-      .set("tokensBefore", num(a, "tokens_before", "pre_tokens", "input_tokens"));
-    emit(0, "context.compact", ts, d);
+      .set("tokensBefore", num(a, "tokens_before", "pre_tokens", "input_tokens"))
+      .set("tokensAfter", num(a, "tokens_after", "post_tokens"))
+      .set("ok", ok)
+      .set("error", ok === false ? str(a, "error") : undefined);
+    emit(0, "context.compact", ts, d, timing);
+  } else if ((suffix === "skill_activated" || suffix === "skill_invocation") && skillTag(a)) {
+    // Claude Code's skill_activated (the Skill tool or a /command) and Codex's skill_invocation:
+    // the skill was invoked. Recorded as the transcript adapters record a skill the harness
+    // loaded (harness.loaded, loadedBy invoked_skills), which is what session skill tags read.
+    const d = draft()
+      .set("kind", "harness.loaded")
+      .set("loadedBy", "invoked_skills")
+      .set("skills", [skillTag(a)])
+      .set("trigger", str(a, "invocation_trigger", "skill.invocation_type"))
+      .set("scope", str(a, "skill.source", "skill.scope"))
+      .set("plugin", str(a, "plugin.name", "skill.plugin_id"))
+      .set("event", name);
+    emit(0, "notification", ts, d);
+  } else if (suffix === "agent_response" && content(str(a, "response"))) {
+    // Codex: a final answer of the main agent or of a spawned subagent (otel.log_agent_responses).
+    const d = draft().set("responseLength", num(a, "response_length")).set("truncated", bool(a, "response_truncated") || undefined);
+    await d.content("text", content(str(a, "response")));
+    emit(0, "assistant.message", ts, d, model ? { model } : {});
+    // A subagent's thread is its own conversation: link it to the thread that spawned it.
+    const parent = str(a, "parent.conversation.id");
+    if (str(a, "agent.type") === "subagent" && parent && parent !== sessionId) {
+      const s = draft().set("parentSessionId", parent).set("source", "subagent").set("event", name);
+      emit(1, "session.start", ts, s, {}, hashParts("otel-codex-subagent", sessionId));
+    }
   } else if (name === "gen_ai.choice" || name === "gen_ai.client.inference.operation.details") {
     const text = assistantText(name === "gen_ai.choice" ? messagesFrom(rec.body, true) : outputMessages(a));
     if (text) emit(0, "assistant.message", ts, await draft().content("text", text), model ? { model } : {});

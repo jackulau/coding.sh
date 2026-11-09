@@ -134,6 +134,8 @@ import { decodeLogsRequest, decodeTraceRequest, encodeExportResponse, encodeStat
 export const DEFAULT_PORT = 4318;
 export const DEFAULT_MAX_BODY_BYTES = 16 * 1024 * 1024;
 const DEFAULT_MAX_INLINE_BYTES = 4096;
+/** Spans or log records the receiver commits together, at most (one request is never split). */
+const GROUP_MAX_ITEMS = 5000;
 
 export type Signal = "traces" | "logs" | "metrics";
 
@@ -166,7 +168,10 @@ export interface ReceiverOptions {
   corsOrigins?: (string | RegExp)[];
   /** Redaction for event payloads and blobs. Default: built-in secret rules. false disables. */
   redactor?: Redactor | false;
-  /** Keep each source span/log as blobs[0] (default true). */
+  /**
+   * Keep each source span/log as blobs[0]. Default false: a raw blob per span
+   * costs a blob write per span, and the mapped events already hold its content.
+   */
   keepRaw?: boolean;
   /** Prices for model calls that report tokens but no cost (as serve and ingest do). Default: the built-in table. */
   prices?: Prices;
@@ -178,6 +183,8 @@ export interface ReceiverOptions {
    */
   enrichSpan?: SpanEnricher | false;
   onBatch?: (batch: BatchInfo) => void | Promise<void>;
+  /** Extra routes by exact path, answered before the OTLP routes (e.g. eve evals at /v1/evals/eve). Each does its own checks. */
+  routes?: Record<string, (req: IncomingMessage, res: ServerResponse) => Promise<void>>;
   /** Store failures and onBatch errors. Default: ignored (the client gets a 503). */
   onError?: (err: Error) => void;
 }
@@ -318,8 +325,10 @@ export interface OtlpPipeline {
   /**
    * Seeds trace → conversation entries from the kv, maps one decoded request to
    * events and saves new kv entries. Not serialized: callers run one at a time.
+   * `blobs` (a BlobStore.batch() the caller flushes) takes this request's blob
+   * writes in place of the pipeline's store.
    */
-  map(signal: Signal, decoded: ResourceSpans[] | ResourceLogs[]): Promise<OtlpMapOutcome>;
+  map(signal: Signal, decoded: ResourceSpans[] | ResourceLogs[], blobs?: BlobStore): Promise<OtlpMapOutcome>;
 }
 
 /** The decode → map → redact half of the receiver, shared with `coding.sh serve`. */
@@ -327,9 +336,10 @@ export function createOtlpPipeline(opts: OtlpPipelineOptions): OtlpPipeline {
   const redactor = opts.redactor;
   const traceSessions = new TraceSessionMap();
   const kvKey = opts.kvKey ?? traceKvKey;
+  let blobs = opts.blobs;
   const mapCtx: MapContext = {
     maxInlineBytes: opts.maxInlineBytes ?? DEFAULT_MAX_INLINE_BYTES,
-    blob: opts.blob ?? ((data) => opts.blobs.put(redactor && typeof data === "string" ? redactor.string(data) : data)),
+    blob: opts.blob ?? ((data) => blobs.put(redactor && typeof data === "string" ? redactor.string(data) : data)),
     traceSessions,
     spanTree: new SpanTree(),
     keepRaw: opts.keepRaw ?? true,
@@ -351,10 +361,15 @@ export function createOtlpPipeline(opts: OtlpPipelineOptions): OtlpPipeline {
   };
 
   return {
-    async map(signal, decoded) {
+    async map(signal, decoded, into) {
       await seedTraces(signal, decoded);
-      const mapped: MapResult =
-        signal === "traces" ? await mapTraces(decoded as ResourceSpans[], mapCtx) : await mapLogs(decoded as ResourceLogs[], mapCtx);
+      let mapped: MapResult;
+      blobs = into ?? opts.blobs;
+      try {
+        mapped = signal === "traces" ? await mapTraces(decoded as ResourceSpans[], mapCtx) : await mapLogs(decoded as ResourceLogs[], mapCtx);
+      } finally {
+        blobs = opts.blobs;
+      }
       if (opts.store.kvSet) for (const [t, s] of traceSessions.takeDirty()) await opts.store.kvSet(kvKey(t), s);
       const events = redactor ? mapped.events.map((e) => redactEventCounted(redactor, e)) : mapped.events;
       return { events, rejected: mapped.rejected, errors: mapped.errors };
@@ -377,13 +392,24 @@ export async function storeAndRebuild(store: IndexStore, events: AgentEvent[]): 
   return { inserted, sessions: await rebuildSessions(store, new Set(events.map((e) => e.sessionId))) };
 }
 
-/** Rebuilds sessions from all their stored events (spans arrive out of order). */
-export async function rebuildSessions(store: IndexStore, ids: Iterable<string>): Promise<Session[]> {
+/**
+ * Rebuilds sessions from all their stored events (spans arrive out of order).
+ * `stored`: events the caller just stored, all of them new, by session; a
+ * session that has no row yet is built from these instead of being read back.
+ */
+export async function rebuildSessions(store: IndexStore, ids: Iterable<string>, stored?: Map<string, AgentEvent[]>): Promise<Session[]> {
   const sessions: Session[] = [];
   for (const id of ids) {
-    const all = await store.listEvents(id);
+    if (store.rebuildSession) {
+      // The store reads and writes under a per-session lock (concurrent writers).
+      const s = await store.rebuildSession(id, (prev, all) => (all.length ? buildSession(all, prev) : undefined));
+      if (s) sessions.push(s);
+      continue;
+    }
+    const prev = await store.getSession(id);
+    const all = !prev && stored?.get(id) ? stored.get(id)! : await store.listEvents(id);
     if (!all.length) continue;
-    const session = buildSession(all, await store.getSession(id));
+    const session = buildSession(all, prev);
     await store.upsertSession(session);
     sessions.push(session);
   }
@@ -550,7 +576,7 @@ export async function startReceiver(opts: ReceiverOptions): Promise<Receiver> {
     blobs: opts.blobs,
     ...(opts.maxInlineBytes !== undefined ? { maxInlineBytes: opts.maxInlineBytes } : {}),
     ...(redactor ? { redactor } : {}),
-    ...(opts.keepRaw !== undefined ? { keepRaw: opts.keepRaw } : {}),
+    keepRaw: opts.keepRaw ?? false,
     ...(opts.enrichSpan !== undefined ? { enrichSpan: opts.enrichSpan } : {}),
   });
   const reportError = (err: unknown) => {
@@ -561,22 +587,70 @@ export async function startReceiver(opts: ReceiverOptions): Promise<Receiver> {
     }
   };
 
-  // Batches are persisted one at a time: session rebuilds read-modify-write the
-  // session row, and two interleaved rebuilds could store a stale aggregate.
-  let queue: Promise<unknown> = Promise.resolve();
-  const serial = <T>(fn: () => Promise<T>): Promise<T> => {
-    const p = queue.then(fn);
-    queue = p.catch(() => undefined);
-    return p;
-  };
-
+  // Requests are persisted by one worker, a group at a time (group commit):
+  // every request that arrived while the previous group was being written is
+  // mapped in arrival order, its blobs written together and flushed once, its
+  // events stored, and each session the group touched rebuilt once. Session
+  // rebuilds read-modify-write the session row, so they never interleave.
+  // A request is answered once its group is durable.
   const prices = opts.prices ?? pricesFor();
+  type Job = {
+    signal: Signal;
+    decoded: ResourceSpans[] | ResourceLogs[];
+    items: number;
+    resolve: (r: { batch: BatchInfo; errors: string[] }) => void;
+    reject: (err: unknown) => void;
+  };
+  const waiting: Job[] = [];
+  let working: Promise<void> | undefined;
+  const commit = async (group: Job[]): Promise<void> => {
+    const batch = opts.blobs.batch?.();
+    const done: { job: Job; events: AgentEvent[]; rejected: number; errors: string[] }[] = [];
+    for (const job of group) {
+      try {
+        const mapped = await pipeline.map(job.signal, job.decoded, batch);
+        done.push({ job, events: applyPricing(mapped.events, prices), rejected: mapped.rejected, errors: mapped.errors });
+      } catch (err) {
+        job.reject(err);
+      }
+    }
+    try {
+      await batch?.flush();
+      // The group's events and session rows commit together (one transaction
+      // where the store has them), and each request still counts its own inserts.
+      const write = async () => {
+        const inserted: number[] = [];
+        for (const d of done) inserted.push(d.events.length ? (await opts.store.putEvents(d.events)).inserted : 0);
+        // A session with no row yet whose events were all new is built from the
+        // events in hand, without reading them back from the store.
+        const fresh = done.every((d, i) => inserted[i] === d.events.length);
+        const touched = new Map<string, AgentEvent[]>();
+        for (const d of done) for (const e of d.events) (touched.get(e.sessionId) ?? touched.set(e.sessionId, []).get(e.sessionId)!).push(e);
+        const rebuilt = new Map((await rebuildSessions(opts.store, touched.keys(), fresh ? touched : undefined)).map((s) => [s.id, s]));
+        return { inserted, rebuilt };
+      };
+      const { inserted, rebuilt } = opts.store.transaction ? await opts.store.transaction(write) : await write();
+      done.forEach((d, i) => {
+        const sessions = [...new Set(d.events.map((e) => e.sessionId))].flatMap((id) => rebuilt.get(id) ?? []);
+        d.job.resolve({ batch: { signal: d.job.signal, events: d.events, inserted: inserted[i]!, sessions, rejected: d.rejected }, errors: d.errors });
+      });
+    } catch (err) {
+      for (const d of done) d.job.reject(err);
+    }
+  };
+  const work = async (): Promise<void> => {
+    while (waiting.length) {
+      // Up to GROUP_MAX_ITEMS spans or log records per group, and at least one request.
+      let n = 1;
+      for (let items = waiting[0]!.items; n < waiting.length && items + waiting[n]!.items <= GROUP_MAX_ITEMS; n++) items += waiting[n]!.items;
+      await commit(waiting.splice(0, n));
+    }
+    working = undefined;
+  };
   const persist = (signal: Signal, decoded: ResourceSpans[] | ResourceLogs[]): Promise<{ batch: BatchInfo; errors: string[] }> =>
-    serial(async () => {
-      const mapped = await pipeline.map(signal, decoded);
-      const events = applyPricing(mapped.events, prices);
-      const { inserted, sessions } = await storeAndRebuild(opts.store, events);
-      return { batch: { signal, events, inserted, sessions, rejected: mapped.rejected }, errors: mapped.errors };
+    new Promise((resolve, reject) => {
+      waiting.push({ signal, decoded, items: countOtlpItems(signal, decoded), resolve, reject });
+      working ??= work();
     });
 
   const handle = createOtlpHandler<true>({
@@ -614,7 +688,8 @@ export async function startReceiver(opts: ReceiverOptions): Promise<Receiver> {
     if (stopping) res.shouldKeepAlive = false;
     live.add(res);
     res.once("close", () => live.delete(res));
-    void handle(req, res);
+    const route = opts.routes && Object.hasOwn(opts.routes, (req.url ?? "/").split("?")[0]!) ? opts.routes[(req.url ?? "/").split("?")[0]!] : undefined;
+    void (route ?? handle)(req, res);
   });
   server.on("clientError", (_err, socket) => {
     if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
@@ -642,7 +717,9 @@ export async function startReceiver(opts: ReceiverOptions): Promise<Receiver> {
       closing ??= new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
         server.closeIdleConnections();
-      }).then(() => queue.then(() => undefined));
+      }).then(async () => {
+        while (working) await working;
+      });
       return closing;
     },
   };

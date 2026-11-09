@@ -460,7 +460,7 @@ describe("token usage: cached input is not counted twice", () => {
       const u = await usageOfSpan([iAttr("gen_ai.usage.input_tokens", input), iAttr("gen_ai.usage.output_tokens", 10), iAttr("gen_ai.usage.cache_read.input_tokens", cached)], genai);
       assert.equal(u?.inputTokens, expected);
       inSum += u!.inputTokens!;
-      cacheSum += u!.cacheReadTokens!;
+      cacheSum += u!.cacheReadTokens ?? 0;
     }
     assert.deepEqual([inSum, cacheSum], [1000, 1400]);
     const w = await usageOfSpan(
@@ -659,5 +659,154 @@ describe("GenAI semconv nested invoke_agent", () => {
     const later = (await mapTraces(decodeTraceJson(otlpTraces("orchestrator", work)), c)).events;
     assert.ok(ofKind(later, "llm.call").every((e) => e.sessionId === childSessionId(T, e.parentSpanId!)));
     assert.equal(later.filter((e) => e.sessionId === readerSession && e.kind === "tool.end").length, 1);
+  });
+});
+
+describe("agent attributes: reasoning, skills, compaction, main agent and subagents", () => {
+  it("GenAI semconv: reasoning tokens, skills, compaction and the main agent's name", async () => {
+    const events = await traces("genai-semconv-agents.json");
+    // gen_ai.main_agent.name names the agent, over service.name.
+    assert.ok(events.every((e) => e.agent === "research-assistant"));
+    const [first, second] = ofKind(events, "llm.call").sort((a, b) => a.ts - b.ts);
+    assert.equal(first!.payload.reasoningTokens, 64);
+    assert.equal(first!.payload.compacted, true);
+    // A reported cache read of 0 is left out; reasoning is part of the output, not added to usage.
+    assert.deepEqual(first!.usage, { inputTokens: 900, outputTokens: 120 });
+    assert.equal(second!.payload.reasoningTokens, undefined);
+    assert.deepEqual(second!.usage, { inputTokens: 700, outputTokens: 80, cacheReadTokens: 800 });
+
+    const load = ofKind(events, "tool.start").find((e) => e.payload.tool === "load_skill")!;
+    assert.equal(load.payload.skill, "pdf-processing");
+    assert.equal(load.payload.skillSource, "file:///opt/skills/pdf-processing");
+    const run = ofKind(events, "tool.start").find((e) => e.payload.tool === "run_skill_script")!;
+    assert.equal(run.payload.skillResource, "scripts/extract.py");
+    const runEnd = ofKind(events, "tool.end").find((e) => e.payload.tool === "run_skill_script")!;
+    assert.equal(runEnd.payload.exitCode, 2);
+    assert.equal(runEnd.payload.ok, false);
+    const plain = ofKind(events, "tool.start").find((e) => e.payload.tool === "search")!;
+    assert.equal(plain.payload.skill, undefined);
+    assert.equal(ofKind(events, "tool.end").find((e) => e.payload.tool === "search")!.payload.exitCode, undefined);
+
+    // Two compacted spans, one context.compact for the session, at the first.
+    const compacts = ofKind(events, "context.compact");
+    assert.equal(compacts.length, 1);
+    assert.equal(compacts[0]!.ts, first!.ts);
+    assert.equal(compacts[0]!.payload.source, "gen_ai.conversation.compacted");
+
+    const session = buildSession(events);
+    assert.equal(session.agent, "research-assistant");
+    assert.ok(session.flags.includes("skill:pdf-processing"), session.flags.join(","));
+    assert.ok(session.flags.includes("compaction"));
+    // Posting the same spans again in another batch adds the same compaction id.
+    const again = await traces("genai-semconv-agents.json");
+    assert.equal(ofKind(again, "context.compact")[0]!.id, compacts[0]!.id);
+  });
+
+  it("Claude Code logs: skill_activated, compaction details, subagent attribution", async () => {
+    const events = (await mapLogs(decodeLogsJson(fixture("claude-code-agents-logs.json")), ctx())).events;
+    const loaded = ofKind(events, "notification").filter((e) => e.payload.kind === "harness.loaded");
+    // The custom_skill placeholder (OTEL_LOG_TOOL_DETAILS off) names no skill: it stays a plain notification.
+    assert.equal(loaded.length, 1);
+    assert.deepEqual(loaded[0]!.payload.skills, ["pdf"]);
+    assert.equal(loaded[0]!.payload.loadedBy, "invoked_skills");
+    assert.equal(loaded[0]!.payload.trigger, "claude-proactive");
+    assert.equal(loaded[0]!.payload.scope, "projectSettings");
+
+    const call = ofKind(events, "llm.call")[0]!;
+    assert.equal(call.subagentId, "a1b2c3");
+    assert.equal(call.payload.parentAgentId, "a0a0a0");
+    assert.equal(call.payload.skill, "pdf");
+    // Zero cache counts are left out (cost unchanged).
+    assert.deepEqual(call.usage, { inputTokens: 12, outputTokens: 40, costUsd: 0.0012 });
+
+    const [auto, manual] = ofKind(events, "context.compact").sort((a, b) => a.ts - b.ts);
+    assert.deepEqual(
+      { trigger: auto!.payload.trigger, before: auto!.payload.tokensBefore, after: auto!.payload.tokensAfter, ok: auto!.payload.ok, ms: auto!.durationMs },
+      { trigger: "auto", before: 155000, after: 21000, ok: true, ms: 4200 },
+    );
+    assert.equal(manual!.payload.ok, false);
+    assert.equal(manual!.payload.error, "summary request failed");
+
+    const session = buildSession(events);
+    assert.ok(session.flags.includes("skill:pdf"), session.flags.join(","));
+    assert.ok(!session.flags.some((f) => f.includes("custom_skill")));
+  });
+
+  it("Claude Code beta spans: agent_id tags the subagent, parent_agent_id is kept", async () => {
+    const T = "cc0000000000000000000000000000aa";
+    const span = otlpSpan(T, "cc00000000000001", undefined, "claude_code.llm_request", [
+      sAttr("span.type", "claude_code.llm_request"),
+      sAttr("session.id", "cc-agents-2"),
+      sAttr("model", "claude-sonnet-4-5"),
+      sAttr("agent_id", "sub-9"),
+      sAttr("parent_agent_id", "sub-1"),
+      iAttr("input_tokens", 5),
+      iAttr("output_tokens", 6),
+    ], 0, 500);
+    const req = otlpTraces("claude-code", [{ ...span, parentSpanId: "cc00000000000000" }]);
+    const call = ofKind((await mapTraces(decodeTraceJson(req), ctx())).events, "llm.call")[0]!;
+    assert.equal(call.sessionId, "cc-agents-2");
+    assert.equal(call.subagentId, "sub-9");
+    assert.equal(call.payload.parentAgentId, "sub-1");
+  });
+
+  it("Codex logs: reasoning tokens, skill_invocation, and a subagent's thread linked to its parent", async () => {
+    const events = (await mapLogs(decodeLogsJson(fixture("codex-agents-logs.json")), ctx())).events;
+    const parent = "019a0000-0000-7000-8000-00000000c0de";
+    const child = "019a0000-0000-7000-8000-00000000c1d0";
+    const call = ofKind(events, "llm.call")[0]!;
+    assert.equal(call.agent, "codex");
+    assert.equal(call.payload.reasoningTokens, 192);
+    assert.deepEqual(call.usage, { inputTokens: 2400, outputTokens: 300 });
+
+    const skill = ofKind(events, "notification").find((e) => e.payload.kind === "harness.loaded")!;
+    assert.deepEqual(skill.payload.skills, ["release-notes"]);
+    assert.equal(skill.payload.trigger, "explicit");
+    assert.equal(skill.sessionId, parent);
+
+    const replies = ofKind(events, "assistant.message");
+    assert.deepEqual(replies.map((e) => [e.sessionId, e.payload.text]).sort(), [
+      [parent, "Done: release notes drafted."],
+      [child, "The changelog has 3 entries."],
+    ]);
+    const start = ofKind(events, "session.start");
+    assert.equal(start.length, 1, "only the subagent's thread gets a parent link");
+    assert.equal(start[0]!.sessionId, child);
+    assert.equal(start[0]!.payload.parentSessionId, parent);
+
+    const sub = buildSession(events.filter((e) => e.sessionId === child));
+    assert.equal(sub.parent?.sessionId, parent);
+    const main = buildSession(events.filter((e) => e.sessionId === parent));
+    assert.ok(main.flags.includes("skill:release-notes"), main.flags.join(","));
+  });
+
+  it("AI SDK 7: a cache read of 0 is no cacheReadTokens; non-zero values and cost are unchanged", async () => {
+    const T = "a5d7a5d7a5d7a5d7a5d7a5d7a5d7a5d7";
+    const call = (cacheRead: number) =>
+      otlpTraces("ai-sdk-app", [
+        otlpSpan(T, cacheRead ? "a5d7000000000002" : "a5d7000000000001", undefined, "ai.streamText.doStream", [
+          sAttr("ai.operationId", "ai.streamText.doStream"),
+          sAttr("ai.model.id", "claude-sonnet-4-5"),
+          sAttr("ai.model.provider", "anthropic.messages"),
+          iAttr("ai.usage.inputTokens", 1000),
+          iAttr("ai.usage.outputTokens", 50),
+          iAttr("ai.usage.inputTokenDetails.noCacheTokens", 1000 - cacheRead),
+          iAttr("ai.usage.inputTokenDetails.cacheReadTokens", cacheRead),
+          iAttr("ai.usage.inputTokenDetails.cacheWriteTokens", 0),
+          iAttr("ai.usage.outputTokenDetails.reasoningTokens", 0),
+        ], 0, 1000),
+      ]);
+    const zero = ofKind((await mapTraces(decodeTraceJson(call(0)), ctx())).events, "llm.call")[0]!;
+    assert.deepEqual(zero.usage, { inputTokens: 1000, outputTokens: 50 });
+    assert.equal(zero.payload.reasoningTokens, undefined);
+    const some = ofKind((await mapTraces(decodeTraceJson(call(400)), ctx())).events, "llm.call")[0]!;
+    assert.deepEqual(some.usage, { inputTokens: 600, outputTokens: 50, cacheReadTokens: 400 });
+    // Cost: the same as a usage with an explicit 0 cache read.
+    const { applyPricing, pricesFor } = await import("../../src/core/pricing.ts");
+    const prices = pricesFor();
+    const [priced] = applyPricing([zero], prices);
+    const [explicit] = applyPricing([{ ...zero, usage: { ...zero.usage, cacheReadTokens: 0, cacheWriteTokens: 0 } }], prices);
+    assert.ok(priced!.usage?.costUsd! > 0);
+    assert.equal(priced!.usage?.costUsd, explicit!.usage?.costUsd);
   });
 });

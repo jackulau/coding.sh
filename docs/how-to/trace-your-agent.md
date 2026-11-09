@@ -47,6 +47,9 @@ LangGraph, the Vercel AI SDK and the Claude Agent SDK is on
 [OpenTelemetry](https://coding.sh/docs/otel). The collector reads the GenAI semantic conventions
 (`gen_ai.*`), OpenInference and the AI SDK's `ai.*` attributes.
 
+The collector stores each span's events, not the span itself. Start it with `--keep-raw` to also
+keep every source span as a blob on its event.
+
 One trace becomes one session. Spans with the same `gen_ai.conversation.id` or `session.id` become
 turns of one session. Model-call spans become model calls with tokens and latency; tool spans
 become tool calls.
@@ -93,12 +96,11 @@ running; they use the same port.
 coding.sh serve
 ```
 
-The SDKs are in the coding.sh repository and not on npm or PyPI yet. Install them from a checkout:
+The TypeScript SDK is on npm. The Python SDK is not on PyPI yet, so install it from a checkout:
 
 ```sh
+npm install @codingdotsh/sdk                                        # in your agent's folder
 git clone https://github.com/jackulau/coding.sh ~/src/coding.sh
-(cd ~/src/coding.sh && npm ci && npm run build -w @codingdotsh/sdk && cd packages/sdk && npm pack)
-npm install ~/src/coding.sh/packages/sdk/codingdotsh-sdk-*.tgz      # in your agent's folder
 pip install ~/src/coding.sh/packages/sdk-python                    # Python
 ```
 

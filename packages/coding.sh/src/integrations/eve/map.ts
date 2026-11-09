@@ -120,8 +120,12 @@ export function enrichFromEve(span: OtelSpan, events: AgentEvent[], info: EveEnr
   const a = span.attributes;
   const runId = str(a, A.runId);
   const frameworkVersion = str(a, A.frameworkVersion);
+  // Agent Runs (@vercel/agent-runs) writes these spans for other hosts too:
+  // durable-harness names itself in its resource (agent.framework.name).
+  const host = (info.resource && str(info.resource, A.frameworkName)) ?? str(a, A.frameworkName);
+  const agent = host && /^[a-z0-9][a-z0-9-]*$/.test(host) ? host : EVE_AGENT_ID;
   const rekey = (e: AgentEvent): AgentEvent => {
-    const out: AgentEvent = { ...e, payload: { ...e.payload }, agent: EVE_AGENT_ID };
+    const out: AgentEvent = { ...e, payload: { ...e.payload }, agent };
     if (runId) out.sessionId = runId;
     if (!out.agentVersion && frameworkVersion) out.agentVersion = frameworkVersion;
     return out;
@@ -323,10 +327,11 @@ function approvalPayload(span: OtelSpan): Record<string, unknown> {
 /** Replace the generic { type: "span", attributes } notification with a compact eve payload. */
 function compactNotification(evs: AgentEvent[], payload: Record<string, unknown>): AgentEvent[] {
   return evs.map((e) => {
-    if (e.kind !== "notification") return e;
+    // The generic mapper keeps a span it has no mapping for as kind "span".
+    if (e.kind !== "notification" && e.kind !== "span") return e;
     const p: Record<string, unknown> = { ...payload };
     setIf(p, "ok", e.payload.ok);
     setIf(p, "error", e.payload.error);
-    return { ...e, payload: p };
+    return { ...e, kind: "notification", payload: p };
   });
 }

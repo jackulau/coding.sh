@@ -221,7 +221,8 @@ describe("OTLP receiver over HTTP", () => {
     assert.equal(r?.stats.latency?.llmCalls, 1);
     // Tokens but no reported cost: priced from the list price, and marked as an estimate.
     const { costUsd: rc, estimatedCostUsd: re, ...rTokens } = r?.stats.usage ?? {};
-    assert.deepEqual(rTokens, { inputTokens: 300, outputTokens: 30, cacheReadTokens: 0 });
+    // A reported cache read of 0 is no cache read (as the transcript adapters store it).
+    assert.deepEqual(rTokens, { inputTokens: 300, outputTokens: 30 });
     assert.ok(rc !== undefined && rc > 0 && re === rc, `estimated cost ${rc} / ${re}`);
     const call = (await store.listEvents(r!.id)).find((e) => e.kind === "llm.call");
     assert.equal(call?.payload.costEstimated, true);
