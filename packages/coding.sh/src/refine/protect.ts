@@ -15,6 +15,10 @@
 // a safety topic (credentials, prod, push, --force, delete, …). Fenced code and
 // frontmatter are skipped. Pure: files come in as text.
 import { stripLine } from "../core/rules.ts";
+import { isInstructionHarnessPath } from "../core/harness-paths.ts";
+
+/** A file under a skill dir other than its SKILL.md: a script, reference or template the skill ships. */
+export const isSkillAsset = (path: string): boolean => /^\.(?:claude|agents)\/skills\/[^/]+\//.test(path.replace(/\\/g, "/")) && !isInstructionHarnessPath(path);
 
 export interface HarnessText {
   /** Repo-relative POSIX path. */
@@ -180,6 +184,7 @@ export function compileProtect(sources: readonly string[] = []): RegExp[] {
  * (list marker and bold dropped), so `^Use pnpm` matches "- Use pnpm …".
  */
 export function protectedLines(files: readonly HarnessText[], opts: ProtectOpts = {}): ProtectedLine[] {
+  files = files.filter((f) => !isSkillAsset(f.path));
   const res = compileProtect(opts.protect);
   const auto = opts.autoProtect !== false;
   const out: ProtectedLine[] = [];
@@ -255,6 +260,9 @@ export function parseOverride(v: string): { path: string; line: number } {
  * `allow` lists `path:line` of protected lines the edit may touch.
  */
 export function checkProtected(before: readonly HarnessText[], after: readonly HarnessText[], opts: ProtectOpts & { allow?: readonly string[]; protected?: readonly ProtectedLine[] } = {}): ProtectCheck {
+  // A skill's scripts and data aren't instructions, so they carry no protected lines.
+  before = before.filter((f) => !isSkillAsset(f.path));
+  after = after.filter((f) => !isSkillAsset(f.path));
   const prot = opts.protected ? [...opts.protected] : protectedLines(before, opts);
   const beforeBy = new Map(before.map((f) => [f.path, f.text]));
   const afterBy = new Map(after.map((f) => [f.path, f.text]));

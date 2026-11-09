@@ -6,7 +6,7 @@
 // compares them with the same machinery as `exp run --arm` and `exp compare`:
 // the interleaved durable runner (resume, retries), the acceptance gate, the
 // one-item gate and the EM-19 replay noise floor.
-import { HARNESS_DIRS, HARNESS_PATHSPECS, isHarnessPath } from "../../core/harness-paths.ts";
+import { HARNESS_DIRS, HARNESS_PATHSPECS, isHarnessPath, isInstructionHarnessPath } from "../../core/harness-paths.ts";
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync, watch, type FSWatcher } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
@@ -124,7 +124,12 @@ export function harnessFilesIn(dir: string): ContextFile[] {
   const rels: string[] = [];
   for (const n of ["CLAUDE.md", "AGENTS.md", "GEMINI.md"]) if (existsSync(join(dir, n)) && statSync(join(dir, n)).isFile()) rels.push(n);
   for (const d of HARNESS_DIRS) walk(join(dir, d), dir, rels);
-  return rels.filter(isHarnessPath).map((p) => ({ path: p, text: readFileSync(join(dir, p), "utf8") }));
+  // A skill's supporting files come along as text; binary or large ones (images, archives) don't.
+  return rels
+    .filter(isHarnessPath)
+    .filter((p) => isInstructionHarnessPath(p) || statSync(join(dir, p)).size <= 1_000_000)
+    .map((p) => ({ path: p, text: readFileSync(join(dir, p), "utf8") }))
+    .filter((f) => isInstructionHarnessPath(f.path) || !f.text.includes("\u0000"));
 }
 
 function git(root: string, args: string[]): string | undefined {

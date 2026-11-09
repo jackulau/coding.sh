@@ -17,6 +17,7 @@ grouped by area, with links to the docs for the details.
 - **Harness A/B.** `compare` counts cache reads and writes in `tokens / run`. With prompt caching the row tracked output tokens only, so a harness that cost 40% more could read as 11% more tokens. [Harness A/B](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#harness-ab).
 - **Privacy.** `coding.sh purge` no longer reports `Integrity check failed` and exits 1 after every purge. The check asked SQLite's full-text search to find an entry for every event, but events with no text, such as a session start or a model call, are never indexed. It now checks that the index is sound and holds exactly the events with text. Search was not affected. [Privacy](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md#privacy).
 - **Harness A/B.** `compare` leaves out `time to first derail` when no run in either arm derailed, where it only repeated the session length. [Derails](https://github.com/jackulau/coding.sh/blob/main/docs/guides/explore.md#derails).
+- **Refine.** `refine` and `exp ab` carry a skill's whole folder into each trial: its `scripts/`, `references/` and other files as well as its SKILL.md, so a skill that runs a helper script is tested with it. Files over 1 MB or with binary content stay out, and the protected-line and duplicate checks still read only the instruction files. [Refine loop](https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#refine-loop).
 
 ## [0.1.4] - 2026-11-08
 

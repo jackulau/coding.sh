@@ -13,7 +13,7 @@
 //
 // Pure: files come in as text.
 import { createRedactor } from "../core/redact.ts";
-import { normLine, type HarnessText } from "./protect.ts";
+import { isSkillAsset, normLine, type HarnessText } from "./protect.ts";
 
 export type CriticId = "harmless" | "duplicate";
 
@@ -100,6 +100,9 @@ export const DUPLICATE_JACCARD = 0.8;
 
 /** C2 and C4 on the lines `after` adds to `before`. */
 export function runCritics(before: readonly HarnessText[], after: readonly HarnessText[]): CriticCheck {
+  // The critics read instructions; a skill's scripts and references are code and data.
+  before = before.filter((f) => !isSkillAsset(f.path));
+  after = after.filter((f) => !isSkillAsset(f.path));
   const added = addedLines(before, after);
   const rejections: CriticRejection[] = [];
   // Lines the candidate kept from the file: a reworded line is compared with what stays, not with its old self.
