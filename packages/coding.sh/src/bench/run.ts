@@ -31,11 +31,13 @@ import { resolveContender, type Answer, type ResolvedContender } from "./contend
 import { dateOf, resolveSeed, sampleCases, seededShuffle, type SampleResult } from "./sample.ts";
 import { generateCases, snapshotPage, sourceRef, type FetchFn, type PageSnapshot } from "./sources.ts";
 import { assignPlaces, cellsToRuns, comparePairs, countedCells, discordanceOf, powerPlan, summarizeContender, type PowerPlan } from "./stats.ts";
+import { gridAnalysis, type GridAxes } from "./grid.ts";
+import { specialization } from "./specialization.ts";
 import { getBlob, historyRuns, ledger, listRuns, putBlob, putRun } from "./store.ts";
 import { jobConfig } from "../jobs/config.ts";
 import { infraKind, retryPolicy, withRetries, type InfraKind } from "../jobs/retry.ts";
 import { JobStore, type Job } from "../jobs/store.ts";
-import type { AnchorResult, BenchDef, BenchRun, Cell, ContenderRecord, ExcludeReason, FailureMode, FrozenCase, SeedCommit } from "./types.ts";
+import type { AnchorResult, BenchDef, BenchRun, Cell, ContenderRecord, ContenderSpec, ExcludeReason, FailureMode, FrozenCase, SeedCommit } from "./types.ts";
 
 export class BenchRunError extends Error {
   constructor(message: string) {
@@ -281,9 +283,9 @@ async function loadGraders(def: BenchDef, env: NodeJS.ProcessEnv, deps?: GraderD
 /** Comparisons, summaries, exclusions and warnings from a run's cells. Shared by run and regrade. */
 function finalize(
   cells: readonly Cell[],
-  contenders: readonly { name: string; kind: string; ref: string; experimentId?: string }[],
+  contenders: readonly { name: string; kind: string; ref: string; experimentId?: string; axes?: GridAxes }[],
   o: { trials: number; dataset: { id: string; name: string; version: string }; graders: string[]; cases: number; stopReason?: string },
-): Pick<BenchRun, "summaries" | "comparisons" | "excluded" | "warnings"> {
+): Pick<BenchRun, "summaries" | "comparisons" | "excluded" | "warnings" | "specialization" | "grid"> {
   const names = contenders.map((c) => c.name);
   const { cells: counted, dropped } = countedCells(cells, names, o.trials);
   const byReason: Record<string, number> = {};
@@ -306,7 +308,17 @@ function finalize(
     comparisons,
   );
   for (const s of summaries) if (s.n && s.errors === s.n) warnings.push(`${s.contender} errored on every case: check its command or endpoint`);
-  return { summaries, comparisons, excluded: { cases: dropped.size, ids: [...dropped].sort(), byReason }, warnings };
+  // Both are left out of the record when they don't apply (too few cases or contenders, no complete grid).
+  const spec = specialization(counted, names, o.trials);
+  const grid = gridAnalysis(counted, contenders);
+  return {
+    summaries,
+    comparisons,
+    excluded: { cases: dropped.size, ids: [...dropped].sort(), byReason },
+    warnings,
+    ...("skipped" in spec ? {} : { specialization: spec }),
+    ...("skipped" in grid ? {} : { grid }),
+  };
 }
 
 // ---------------------------------------------------------------- run
@@ -539,7 +551,7 @@ async function execute(def: BenchDef, plan: Plan, opts: RunBenchOpts, job?: Job)
 function finalizeSplit(
   cells: readonly Cell[],
   frozen: readonly FrozenCase[],
-  contenders: readonly { name: string; kind: string; ref: string; experimentId?: string }[],
+  contenders: readonly { name: string; kind: string; ref: string; experimentId?: string; axes?: GridAxes }[],
   o: { trials: number; dataset: { id: string; name: string; version: string }; graders: string[]; stopReason?: string; anchor?: { version: string; requested: number; frozenBy: string } },
 ): { fin: ReturnType<typeof finalize>; anchor?: AnchorResult } {
   const anchorCases = frozen.filter((c) => c.anchor);
@@ -561,6 +573,28 @@ function finalizeSplit(
     fin,
     anchor: { version: o.anchor.version, requested: o.anchor.requested, cases: anchorCases.length, sha256: casesSha256(anchorCases), frozenBy: o.anchor.frozenBy, summaries: a.summaries, comparisons: a.comparisons, excluded: a.excluded! },
   };
+}
+
+/**
+ * Grid coordinates of a contender. Agents: harness = agent id (+ " +<harness>"),
+ * model = the configured one, else the one its calls reported most often;
+ * `axes` in the definition overrides either. Others: `axes` only.
+ */
+export function axesOf(spec: ContenderSpec, cells: readonly Cell[]): GridAxes | undefined {
+  const out: GridAxes = {};
+  if (spec.kind === "agent") {
+    out.harness = `${spec.agent}${spec.harness ? ` +${spec.harness}` : ""}`;
+    let model = spec.model;
+    if (!model) {
+      const n = new Map<string, number>();
+      for (const x of cells) if (x.contender === spec.name && x.model) n.set(x.model, (n.get(x.model) ?? 0) + 1);
+      model = [...n].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0]?.[0];
+    }
+    if (model) out.model = model;
+  }
+  if (spec.axes?.model) out.model = spec.axes.model;
+  if (spec.axes?.harness) out.harness = spec.axes.harness;
+  return out.model || out.harness ? out : undefined;
 }
 
 /** The run record from a plan and what ran; creates the experiments when the run is complete. */
@@ -597,6 +631,7 @@ async function assemble(def: BenchDef, plan: Plan, ex: Executed, opts: RunBenchO
     const spec = byName.get(who.name)!;
     const model = (spec.kind === "agent" ? spec.model : undefined) ?? cells.find((x) => x.contender === who.name && x.model)?.model;
     const v = ex.versions[i];
+    const axes = axesOf(spec, cells);
     return {
       name: who.name,
       kind: who.kind,
@@ -605,6 +640,7 @@ async function assemble(def: BenchDef, plan: Plan, ex: Executed, opts: RunBenchO
       ...(model ? { model } : {}),
       ...(v ? { version: v } : {}),
       ...(experimentIds.has(who.name) ? { experimentId: experimentIds.get(who.name)! } : {}),
+      ...(axes ? { axes } : {}),
     };
   });
   const { fin, anchor } = finalizeSplit(cells, plan.frozen, records, {
@@ -660,6 +696,8 @@ async function assemble(def: BenchDef, plan: Plan, ex: Executed, opts: RunBenchO
     cells,
     summaries: fin.summaries,
     comparisons: fin.comparisons,
+    ...(fin.specialization ? { specialization: fin.specialization } : {}),
+    ...(fin.grid ? { grid: fin.grid } : {}),
     warnings,
   };
 }
@@ -1004,7 +1042,7 @@ export async function regradeRun(orig: BenchRun, o: RegradeOpts): Promise<BenchR
     ...(orig.anchor ? { anchor: { version: orig.anchor.version, requested: orig.anchor.requested, frozenBy: orig.anchor.frozenBy } } : {}),
   });
   const integrity = await verifyFrozen(orig, env);
-  const { experimentId: _x, ...rest } = orig as BenchRun & { experimentId?: string };
+  const { experimentId: _x, specialization: _s, grid: _g, ...rest } = orig as BenchRun & { experimentId?: string };
   const run: BenchRun = {
     ...rest,
     id: sortableId("bench_", now),
@@ -1018,6 +1056,8 @@ export async function regradeRun(orig: BenchRun, o: RegradeOpts): Promise<BenchR
     cells,
     summaries: fin.summaries,
     comparisons: fin.comparisons,
+    ...(fin.specialization ? { specialization: fin.specialization } : {}),
+    ...(fin.grid ? { grid: fin.grid } : {}),
     excluded: fin.excluded!,
     ...(anchor ? { anchor } : {}),
     warnings: [`regraded from ${orig.id} with the current graders`, ...integrity, ...fin.warnings],

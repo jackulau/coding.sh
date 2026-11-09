@@ -190,6 +190,13 @@ function parseContender(raw: unknown, i: number): ContenderSpec {
   if (raw.timeoutMs !== undefined) throw new BenchDefError(`contender ${name}: set timeoutMs at the top of the file so every contender gets the same limit`);
   if (raw.retries !== undefined) throw new BenchDefError(`contender ${name}: set retries at the top of the file so every contender gets the same policy`);
   if (raw.version !== undefined && typeof raw.version !== "string") throw new BenchDefError(`contender ${name}: version must be a string`);
+  if (raw.axes !== undefined) {
+    if (!isTable(raw.axes)) throw new BenchDefError(`contender ${name}: axes must be a table, e.g. axes = { model = "gpt-5", harness = "my-agent" }`);
+    for (const [k, v] of Object.entries(raw.axes)) {
+      if (k !== "model" && k !== "harness") throw new BenchDefError(`contender ${name}: axes takes model and harness, not ${JSON.stringify(k)}`);
+      if (typeof v !== "string" || !v.trim()) throw new BenchDefError(`contender ${name}: axes.${k} must be a non-empty string`);
+    }
+  }
   return { ...raw, kind } as unknown as ContenderSpec;
 }
 
@@ -260,7 +267,8 @@ export function parseDefinition(text: string, file: string): BenchDef {
     hash: contentHash(t),
     // Protocol: everything that decides what is measured and how, minus who is measured, labels and analysis settings.
     protocolHash: contentHash(Object.fromEntries(Object.entries(t).filter(([k]) => !NOT_PROTOCOL.has(k)))),
-    contenderHashes: Object.fromEntries((contendersRaw as TomlTable[]).map((c, i) => [contenders[i]!.name, contentHash(c)])),
+    // axes are grid labels, not part of what is measured: changing them keeps the contender's history.
+    contenderHashes: Object.fromEntries((contendersRaw as TomlTable[]).map((c, i) => [contenders[i]!.name, contentHash(Object.fromEntries(Object.entries(c).filter(([k]) => k !== "axes")))])),
   };
   if (budget !== undefined) def.budgetUsd = budget as number;
   if (def.seed === "secret") def.seedKeyEnv = seedKeyEnv ?? "CODING_SH_BENCH_SEED_KEY";

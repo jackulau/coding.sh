@@ -11,6 +11,8 @@ import { verifySeed, type SeedCheck } from "./commit.ts";
 import { pooledGap, type PooledGap } from "./stats.ts";
 import { contentChanges, historyRuns, otherRuns, protocolBreaks, series, vsSeries, type ContentChange } from "./store.ts";
 import type { AnchorResult, BenchRun, ContenderSummary, FrozenCase, Metric, PairComparison, SeriesPoint } from "./types.ts";
+import { excludesZero, type GridAnalysis } from "./grid.ts";
+import type { Specialization } from "./specialization.ts";
 
 export interface ReportOpts {
   /** Only runs within this many days of the latest run. Default 90. */
@@ -410,6 +412,72 @@ function pooledTable(r: BenchReport): string {
   return `<h3>Gap over the last ${r.window} days</h3><p class="meta">Each day's paired gap, pooled. The main interval lets the true gap move from day to day (DerSimonian-Laird with the Hartung-Knapp correction); "next day" is where one more day's gap should land; I² is the share of day-to-day spread that is real rather than sampling noise. The window size is set in the definition before looking at results.</p><div class="scroll"><table><thead><tr><th>Pair</th><th class="num">Days</th><th class="num">Cases</th><th class="num">Pooled gap<br><span class="meta">95% CI</span></th><th class="num">Next day<br><span class="meta">95%</span></th><th class="num">Fixed effect<br><span class="meta">95% CI</span></th><th class="num">I²</th></tr></thead><tbody>${body}</tbody></table></div>`;
 }
 
+/** Routing headroom: the any-contender gap against the band a no-specialization Rasch reference predicts. */
+function routingSection(x: Specialization | undefined): string {
+  if (!x) return "";
+  const upset = typeof x.upset === "number" && Number.isFinite(x.upset) ? x.upset : undefined;
+  const top = Math.max(x.gap, x.gapExpected.hi, 0.01) * 1.25;
+  const at = (v: number) => `${((Math.max(0, v) / top) * 100).toFixed(2)}%`;
+  const verdict =
+    x.verdict === "contenders-specialize"
+      ? `Contenders specialize (Holm p ${pval(x.pAdj)}): routing each case to the right contender could beat running ${esc(x.best.contender)} alone.`
+      : `No evidence of specialization: per-case routing is unlikely to beat running ${esc(x.best.contender)} alone.`;
+  const recurring = x.recurringUpsets.length
+    ? `<h3>Recurring upsets</h3><ul class="notes">${x.recurringUpsets.map((u) => `<li><code>${esc(u.caseId)}</code>: ${esc(u.winner)} beat ${esc(u.over)} in ${u.trials} of ${x.trials} trials</li>`).join("")}</ul>`
+    : "";
+  return `<section id="routing">
+  <h2>Routing headroom</h2>
+  <p class="sub">Would picking a contender per case beat running the best one everywhere? Run noise alone makes contenders split cases, so the gap is compared with ${x.sims} simulated runs of a Rasch model in which no contender is better at any kind of case.</p>
+  <div class="facts"><span>any contender <b>${pct(x.oracle)}</b></span><span>best single (${esc(x.best.contender)}) <b>${pct(x.bestSingle)}</b></span><span>gap <b>${pp(x.gap).replace("+", "")} pp</b></span><span>expected <b>${pp(x.gapExpected.lo).replace("+", "")} to ${pp(x.gapExpected.hi).replace("+", "")} pp</b></span><span>p <b>${pval(x.pGap)}</b></span><span>upsets <b>${pct(upset)}</b>${x.upsetExpected ? ` (expected ${pct(x.upsetExpected.lo)} to ${pct(x.upsetExpected.hi)})` : ""}</span></div>
+  <div class="band" role="img" aria-label="${esc(`observed gap ${pp(x.gap)} pp; expected ${pp(x.gapExpected.lo)} to ${pp(x.gapExpected.hi)} pp`)}"><i style="left:${at(x.gapExpected.lo)};width:${((Math.max(0, x.gapExpected.hi - Math.max(0, x.gapExpected.lo)) / top) * 100).toFixed(2)}%"></i><b style="left:${at(x.gap)}"></b></div>
+  <p class="meta">Shaded: where the gap lands with no specialization (95%). Line: this run.</p>
+  <p class="lead">${verdict}</p>
+  ${recurring}
+</section>`;
+}
+
+/** Model × harness grid: pass rate and interaction per cell, Cross-Model Fit and regret. CSS only, scrolls sideways on a phone. */
+function gridSection(g: GridAnalysis | undefined): string {
+  if (!g) return "";
+  const cellAt = (m: string, h: string) => g.cells.find((c) => c.model === m && c.harness === h)!;
+  const head = `<tr><th>Model</th>${g.harnesses.map((h) => `<th class="num">${esc(h)}</th>`).join("")}</tr>`;
+  const body = g.models
+    .map(
+      (m) =>
+        `<tr><td>${esc(m)}</td>${g.harnesses
+          .map((h) => {
+            const c = cellAt(m, h);
+            const sig = excludesZero(c.dp);
+            return `<td class="num"><span class="strong">${pct(c.p)}</span><div class="${sig ? (c.dp.est > 0 ? "win" : "neg") : "meta"}">${pp(c.dp.est)} pp${sig ? "*" : ""}</div><div class="meta">${pp(c.dp.lo)} to ${pp(c.dp.hi)}</div></td>`;
+          })
+          .join("")}</tr>`,
+    )
+    .join("");
+  const cf = g.crossFit
+    .map((x) => `<div class="frow"><div class="fname">${esc(x.harness)}<span class="meta"> ${Number.isFinite(x.est) ? x.est.toFixed(1) : "–"} (${Number.isFinite(x.lo) ? x.lo.toFixed(1) : "–"} to ${Number.isFinite(x.hi) ? x.hi.toFixed(1) : "–"})</span></div><div class="fbar"><span style="width:${Math.max(0, Math.min(100, x.est || 0)).toFixed(2)}%;background:var(--text-2)"></span></div></div>`)
+    .join("");
+  const gap = g.crossFitGap;
+  const notes = [
+    g.dropped.length === g.models.length ? "" : `${esc(gap.top)} leads ${esc(gap.second)} by ${Number.isFinite(gap.est) ? gap.est.toFixed(1) : "–"} (95% CI ${Number.isFinite(gap.lo) ? gap.lo.toFixed(1) : "–"} to ${Number.isFinite(gap.hi) ? gap.hi.toFixed(1) : "–"})${excludesZero(gap) ? "." : ": not a clear lead."}`,
+    ...g.reversals.map((r) => `Rank reversal: ${esc(r.models[0])} leads ${esc(r.models[1])} under ${esc(r.harnesses[0])}, ${esc(r.models[1])} leads under ${esc(r.harnesses[1])}.`),
+    ...g.cells.filter((c) => excludesZero(c.dv) && c.dv.est < 0).map((c) => `${esc(c.model)} with ${esc(c.harness)} completes cleanly ${pp(c.dv.est).replace("−", "")} pp less often than its model and harness predict.`),
+    ...g.notes.map(esc),
+  ];
+  const lomo = g.lomo.length
+    ? `<h3>Leave one model out</h3><p class="meta">Pick the harness with the best Cross-Model Fit over the other models, then see how far it falls short of the held-out model's best harness (points of joint rate).</p><div class="scroll"><table><thead><tr><th>Held-out model</th><th>Picked</th><th>Its best</th><th class="num">Regret</th></tr></thead><tbody>${g.lomo.map((x) => `<tr><td>${esc(x.model)}</td><td>${esc(x.pick)}</td><td>${esc(x.best)}</td><td class="num">${x.regret.toFixed(1)}</td></tr>`).join("")}</tbody></table></div><p class="meta">Mean regret ${Number.isFinite(g.meanRegret) ? g.meanRegret.toFixed(1) : "–"} points.</p>`
+    : "";
+  return `<section id="grid">
+  <h2>Model × harness</h2>
+  <p class="sub">The contenders form a grid of ${g.models.length} models and ${g.harnesses.length} harnesses over ${g.cases} paired cases. Each cell shows the pass rate and the interaction: how far it sits from what its model and harness predict on their own. * marks a 95% interval (case bootstrap, ${g.draws} draws) that excludes 0.</p>
+  <div class="scroll"><table class="grid"><thead>${head}</thead><tbody>${body}</tbody></table></div>
+  <h3>Cross-model fit</h3>
+  <p class="meta">100 × the geometric mean, over models, of each harness's joint rate (passed and completed cleanly) as a share of that model's best harness. 100 means it is every model's best harness.</p>
+  ${g.dropped.length === g.models.length ? `<p class="muted">No model passed cleanly with any harness.</p>` : `<div class="fbars">${cf}</div>`}
+  <ul class="notes">${notes.filter(Boolean).map((n) => `<li>${n}</li>`).join("")}</ul>
+  ${lomo}
+</section>`;
+}
+
 const MODE_COLORS: Record<string, string> = { wrong: "#f59ba1", timeout: "#f5b041", crash: "#f0616a", "http-error": "#fb923c", empty: "#a8a8ae", "grader-error": "#c084fc", error: "#6f6f76" };
 
 function failureBars(s: readonly ContenderSummary[]): string {
@@ -492,6 +560,12 @@ details{margin-top:12px}summary{cursor:pointer;color:var(--text-2)}
 .kv{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px;font-size:13px}
 .kv dt{color:var(--muted)}.kv dd{margin:0;font-family:var(--mono);font-size:12px;word-break:break-all}
 footer{margin-top:28px;color:var(--muted);font-size:12px}
+.neg{color:var(--fail-ink)}
+.band{position:relative;height:10px;margin:18px 0 6px;border-radius:5px;background:var(--raised)}
+.band i{position:absolute;top:0;bottom:0;border-radius:5px;background:rgba(255,255,255,.2)}
+.band b{position:absolute;top:-4px;width:2px;height:18px;margin-left:-1px;background:var(--text)}
+#routing .lead{margin-top:12px}
+table.grid td:first-child{white-space:nowrap}
 @media(max-width:600px){main{padding-top:24px}section{padding:16px}.frow{grid-template-columns:1fr}}
 `;
 
@@ -607,6 +681,8 @@ ${anchorSection}
   ${headToHead(L.comparisons)}
 </section>
 
+${routingSection(L.specialization)}
+${gridSection(L.grid)}
 <section id="failures">
   <h2>Where each contender fails</h2>
   <p class="sub">Failure reasons in the latest run, then the worst cases for each contender.</p>

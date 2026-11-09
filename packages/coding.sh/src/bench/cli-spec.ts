@@ -55,6 +55,7 @@ export const BENCH_COMMAND: CommandSpec = {
           desc: "Continue an incomplete run (budget stop, Ctrl-C, crash): same seed and cases, finished calls kept. RUN: id or YYYY-MM-DD (default: the latest)",
         },
         { name: "run", type: "string", value: "<RUN>", desc: "With --resume: which incomplete run, by id or YYYY-MM-DD (default: the latest)" },
+        { name: "fresh", type: "boolean", desc: "Sessions benchmarks: wait for every pending capture to be ingested (default: answer after 1.5 s)" },
       ],
       graceful: true,
       examples: ["coding.sh bench run answers", "coding.sh bench run answers --dry-run", "coding.sh bench run answers --seed try-1 --cases 10", "coding.sh bench run answers --resume"],

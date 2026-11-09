@@ -194,7 +194,7 @@ function agentContender(spec: AgentContender & { name: string }, deps: Contender
 
 export function resolveContender(spec: ContenderSpec, deps: ContenderDeps): ResolvedContender {
   if (spec.kind === "agent") return agentContender(spec, deps);
-  const { name: _n, costPerRun: _c, version: label, ...rest } = spec as ContenderSpec & Record<string, unknown>;
+  const { name: _n, costPerRun: _c, version: label, axes: _a, ...rest } = spec as ContenderSpec & Record<string, unknown>;
   let task: ResolvedTask;
   if (spec.kind === "command") {
     task = resolveTask({ ...(rest as object), kind: "command", timeoutMs: deps.timeoutMs, cwd: resolve(deps.baseDir, (rest as { cwd?: string }).cwd ?? ".") } as TaskSpec);

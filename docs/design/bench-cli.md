@@ -4,6 +4,10 @@ Status: design, queued for round 2 (item B-1). The `bench` name now ships dynami
 (fresh cases per run, see [guides/benchmarks.md](../guides/benchmarks.md)); the wrapper over
 `eval`/`exp`/`compare` described here would need another noun or a `bench` source kind. Replaces the user-facing parts of `eval`, `exp`,
 `compare`, `toolevals`, `harness` and `dataset`, which stay available under "Advanced".
+The [CLI contract](#cli-contract-humans-and-agents) at the end already applies to every command:
+the stdout/stderr split and `--json` in `src/cli/output.ts`, errors with `reason` and `next`, help as data
+with `--help --json` (`test/cli/help.test.ts`), the exit codes in `src/cli/main.ts` and closest-match
+suggestions in `src/cli/args.ts`. Errors do not carry `retryable` yet.
 
 ## Why
 

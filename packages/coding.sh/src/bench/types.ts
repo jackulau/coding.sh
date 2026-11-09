@@ -6,6 +6,8 @@
 // report needs (so reports can be rebuilt and published from records alone).
 import type { CommandTask, HttpTask } from "../experiments/task.ts";
 import type { GraderSpec } from "../graders/index.ts";
+import type { GridAnalysis, GridAxes } from "./grid.ts";
+import type { Specialization } from "./specialization.ts";
 
 // ---------------------------------------------------------------- definition
 
@@ -95,6 +97,8 @@ export type ContenderSpec = ContenderTask & {
   costPerRun?: number;
   /** Version label recorded with every run (command and HTTP contenders; agents are detected). */
   version?: string;
+  /** Grid coordinates for the model × harness analysis (command and HTTP contenders; agents get theirs from agent, harness and model). A label: outside the protocol and contender hashes. */
+  axes?: GridAxes;
 };
 
 export type Visibility = "public" | "private";
@@ -306,6 +310,8 @@ export interface ContenderRecord {
   /** Agent CLI version (detected) or the configured version label. */
   version?: string;
   experimentId?: string;
+  /** Grid coordinates: agents get harness = agent id (+ " +<harness>") and model = configured or most reported; others take `axes` from the definition. */
+  axes?: GridAxes;
 }
 
 export interface BenchRun {
@@ -375,6 +381,10 @@ export interface BenchRun {
   cells: Cell[];
   summaries: ContenderSummary[];
   comparisons: PairComparison[];
+  /** Routing headroom: any-contender oracle gap and upset rate against a no-specialization reference. Absent under 2 contenders or 20 counted cases. */
+  specialization?: Specialization;
+  /** Model × harness grid: interaction residuals, fit, Cross-Model Fit and leave-one-model-out regret. Absent unless the contenders form a complete grid. */
+  grid?: GridAnalysis;
   warnings: string[];
 }
 

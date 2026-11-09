@@ -7,7 +7,9 @@ import { after, describe, test } from "node:test";
 import { parseDefinition } from "../../src/bench/define.ts";
 import { casesSha256, estimateCost, exclusionOf, regradeRun, runBench } from "../../src/bench/run.ts";
 import { getBlob, historyRuns, listRuns, seenKeys } from "../../src/bench/store.ts";
+import { buildReport, renderReportHtml } from "../../src/bench/report.ts";
 import type { BenchRun } from "../../src/bench/types.ts";
+import type { Adapter } from "../../src/core/types.ts";
 import { FileEvalStore } from "../../src/datasets/store.ts";
 import { cleanup, day, project } from "./helpers.ts";
 
@@ -269,6 +271,16 @@ describe("bench definitions", () => {
     assert.equal(parseDefinition(base("budget_usd = 3"), "/p/bench/t.toml").protocolHash, a.protocolHash, "the budget isn't");
   });
 
+  test("axes: parsed from an inline table, validated, and outside every hash", () => {
+    const plain = parseDefinition(base(), "/p/bench/t.toml");
+    const withAxes = parseDefinition(base("", '[[contenders]]\nname = "a"\ncommand = "x"\naxes = { model = "m1", harness = "h1" }\n[[contenders]]\nname = "b"\ncommand = "y"\n'), "/p/bench/t.toml");
+    assert.deepEqual(withAxes.contenders[0]!.axes, { model: "m1", harness: "h1" });
+    assert.equal(withAxes.protocolHash, plain.protocolHash);
+    assert.deepEqual(withAxes.contenderHashes, plain.contenderHashes, "a grid label keeps the contender's history");
+    assert.throws(() => parseDefinition(base("", '[[contenders]]\nname = "a"\ncommand = "x"\naxes = { gpu = "a100" }\n[[contenders]]\nname = "b"\ncommand = "y"\n'), "/p/t.toml"), /axes takes model and harness, not "gpu"/);
+    assert.throws(() => parseDefinition(base("", '[[contenders]]\nname = "a"\ncommand = "x"\naxes = "m1"\n[[contenders]]\nname = "b"\ncommand = "y"\n'), "/p/t.toml"), /axes must be a table/);
+  });
+
   test("limits are bench-level only", () => {
     assert.throws(() => parseDefinition(base("", '[[contenders]]\nname = "a"\ncommand = "x"\ntimeoutMs = 5\n[[contenders]]\nname = "b"\ncommand = "y"\n'), "/p/t.toml"), /top of the file/);
     assert.equal(parseDefinition(base("timeoutMs = 9000\nretries = 2"), "/p/t.toml").timeoutMs, 9000);
@@ -283,5 +295,83 @@ describe("bench definitions", () => {
     assert.equal(parseDefinition(base(), "/p/t.toml").visibility, "private");
     assert.equal(parseDefinition(base(), "/p/t.toml").reference, "a");
     assert.throws(() => parseDefinition(base('reference = "zz"'), "/p/t.toml"), /reference must name/);
+  });
+});
+
+describe("bench grid and routing headroom", () => {
+  // Two agents × two models, crossed: alpha is right with m1 and half right with m2; beta the reverse.
+  const agents = `name = "arith"
+cases = 40
+concurrency = 4
+[source]
+kind = "command"
+command = "node gen.mjs"
+[[contenders]]
+name = "alpha-m1"
+agent = "alpha"
+model = "m1"
+[[contenders]]
+name = "alpha-m2"
+agent = "alpha"
+model = "m2"
+[[contenders]]
+name = "beta-m1"
+agent = "beta"
+model = "m1"
+[[contenders]]
+name = "beta-m2"
+agent = "beta"
+model = "m2"
+[[graders]]
+kind = "exact"
+`;
+  const fake = (id: string) =>
+    ({
+      id,
+      async run(spec: { instruction: string; model?: string }) {
+        const { a, b } = JSON.parse(spec.instruction) as { a: number; b: number };
+        const right = (id === "alpha") === (spec.model === "m1") || Math.abs(a) % 2 === 0;
+        return { exitCode: 0, timedOut: false, durationMs: 1, stdoutTail: String(a + b + (right ? 0 : 1)), stderrTail: "" };
+      },
+    }) as unknown as Adapter;
+
+  test("agent contenders get axes; a complete grid is analysed, kept by regrade, and shown by the report", async () => {
+    const p = project(agents);
+    const def = p.def();
+    const r = await run({ def, env: p.env, now: day("2026-11-03"), getAdapter: fake });
+    assert.deepEqual(r.contenders.map((c) => c.axes), [
+      { harness: "alpha", model: "m1" },
+      { harness: "alpha", model: "m2" },
+      { harness: "beta", model: "m1" },
+      { harness: "beta", model: "m2" },
+    ]);
+    assert.ok(r.grid, "grid present");
+    assert.deepEqual(r.grid.models, ["m1", "m2"]);
+    assert.deepEqual(r.grid.harnesses, ["alpha", "beta"]);
+    assert.deepEqual(r.grid.reversals, [{ models: ["m1", "m2"], harnesses: ["alpha", "beta"] }]);
+    const c = r.grid.cells.find((x) => x.model === "m1" && x.harness === "alpha")!;
+    assert.equal(c.p, 1);
+    assert.ok(c.dp.est > 0 && c.dp.lo > 0, `Δp ${JSON.stringify(c.dp)}`);
+    assert.ok(r.specialization, "40 cases, 4 contenders: routing headroom present");
+    assert.equal(r.specialization.cases, 40);
+    const stored = (await listRuns("arith", p.env)).at(-1)!;
+    assert.deepEqual(stored.grid, JSON.parse(JSON.stringify(r.grid)));
+    const re = await regradeRun(stored, { def, env: p.env });
+    assert.deepEqual(re.grid, stored.grid);
+    assert.deepEqual(re.specialization, stored.specialization);
+    const html = renderReportHtml(buildReport([r], { now: day("2026-11-03") }));
+    assert.match(html, /<section id="grid">[\s\S]*<h2>Model × harness<\/h2>/);
+    assert.match(html, /Rank reversal: m1 leads m2 under alpha, m2 leads under beta\./);
+    assert.match(html, /<section id="routing">[\s\S]*<h2>Routing headroom<\/h2>/);
+  });
+
+  test("a flat bench under 20 cases has no grid and no routing headroom key", async () => {
+    const p = project();
+    const r = await run({ def: p.def(), env: p.env, now: day("2026-11-03") });
+    assert.equal(r.cases.length, 12);
+    assert.ok(!("grid" in r) && !("specialization" in r));
+    assert.ok(r.contenders.every((c) => !("axes" in c)));
+    const html = renderReportHtml(buildReport([r], { now: day("2026-11-03") }));
+    assert.doesNotMatch(html, /id="grid"|id="routing"/);
   });
 });

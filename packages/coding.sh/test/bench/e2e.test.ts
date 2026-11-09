@@ -155,3 +155,35 @@ describe("bench e2e", () => {
     for (const a of ["new", "run", "regrade", "list", "show", "history", "report", "schedule"]) assert.match(r.stdout, new RegExp(`\\b${a}\\b`));
   });
 });
+
+describe("bench e2e: model × harness grid and routing headroom", () => {
+  // Four command contenders labelled with axes: m1 is right under h1, m2 under h2, and each is right on even a elsewhere.
+  const GRID = `const input = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+const [model, harness] = process.argv.slice(2);
+const right = (model === "m1") === (harness === "h1") || Math.abs(input.a) % 2 === 0;
+process.stdout.write(String(input.a + input.b + (right ? 0 : 1)));
+`;
+  const contender = (m: string, h: string) => `[[contenders]]\nname = "${m}-${h}"\ncommand = "node grid.cjs ${m} ${h}"\naxes = { model = "${m}", harness = "${h}" }\n`;
+  const p = project(`name = "grid"\ncases = 40\nconcurrency = 4\n[source]\nkind = "command"\ncommand = "node gen.mjs"\n${contender("m1", "h1")}${contender("m1", "h2")}${contender("m2", "h1")}${contender("m2", "h2")}[[graders]]\nkind = "exact"\n`);
+  p.write("grid.cjs", GRID);
+  writeFileSync(join(p.root, "bench", "grid.toml"), readFileSync(p.file, "utf8"));
+  const run = (args: string[], extra?: NodeJS.ProcessEnv) => cli(p.root, p.env, args, extra);
+
+  test("bench show prints the grid table, the reversal and the routing headroom; --json carries both", () => {
+    const r = run(["bench", "run", "grid", "--json"], { CODING_SH_BENCH_NOW: "2026-11-04T06:15:00Z" });
+    assert.equal(r.status, 0, r.stderr);
+    const shown = run(["bench", "show", "grid"]);
+    assert.equal(shown.status, 0, shown.stderr);
+    assert.match(shown.stdout, /Model × harness grid: 40 cases/);
+    assert.match(shown.stdout, /MODEL\s+H1\s+H2/);
+    assert.match(shown.stdout, /m1\s+100\.0% \+\d+\.\d\*/);
+    assert.match(shown.stdout, /Rank reversal: m1 leads m2 under h1, m2 leads under h2\./);
+    assert.match(shown.stdout, /Cross-model fit: /);
+    assert.match(shown.stdout, /Leave-one-model-out regret: /);
+    assert.match(shown.stdout, /Routing headroom: any contender \d+\.\d% vs best single \(\S+\) \d+\.\d%/);
+    const j = run(["bench", "show", "grid", "--json"]).json();
+    assert.deepEqual(j.run.grid.models, ["m1", "m2"]);
+    assert.deepEqual(j.run.contenders[0].axes, { model: "m1", harness: "h1" });
+    assert.equal(j.run.specialization.cases, 40);
+  });
+});

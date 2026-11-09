@@ -62,6 +62,12 @@ Two or more, each with a `name`:
 `costPerRun` sets a fixed price per call for contenders that don't report cost. `version` is a label
 that gets recorded with each run. Agent versions are detected.
 
+`axes = { model = "…", harness = "…" }` places a contender on the
+[model × harness grid](#model--harness-grid). Agent contenders get their axes on their own: the
+harness is the agent id (plus ` +<harness>` when one is set), and the model is the configured one, or
+else the one their calls reported most often. Axes are labels: changing them keeps the contender's
+history and the protocol hash.
+
 Each call's cost records where it came from, checked in this order:
 
 1. **reported**: the contender's own `costUsd`.
@@ -133,6 +139,77 @@ lines break.
 Every day draws new cases, so some days are harder than others. The report's difficulty chart shows
 the mean pass rate over all contenders per day. When every contender drops on the same day, the
 sample was probably harder. An anchor set makes that clear.
+
+## Routing headroom
+
+Some contender usually passes a case the best one fails, so "pick the right contender per case"
+always looks better than running the best one everywhere. Most of that gap is run noise. With 20 or
+more counted cases and two or more contenders, each run checks it against a reference with no
+specialization:
+
+- **Gap**: the share of cases any contender passed minus the best single contender's pass rate
+  (both averaged over trial indexes).
+- **Upsets**: of the cases where two contenders with different pass rates split, the share the
+  weaker one won.
+- **Reference**: a Rasch model (one ability per contender, one difficulty per case) fitted to the
+  same outcomes, then simulated 500 times. Each simulated case draws its difficulty from what its own
+  outcomes say, so easy cases stay easy. The run shows where the gap and upset rate land in 95% of
+  those simulations, and a p-value for each.
+- **Verdict**: "contenders specialize" when the smaller p-value, Holm-adjusted over the two, is below
+  0.05. Otherwise per-case routing is unlikely to beat running the best contender alone. With several
+  trials, a specialized run also lists up to 10 cases a weaker contender won in two or more trials.
+
+Three contenders on 50 cases where none specializes: an 18-point raw gap, inside the band that noise
+alone gives.
+
+```text
+Routing headroom: any contender 88.0% vs best single (claude) 70.0%: gap 18.0 pp; with no specialization expect 8.0-26.0 pp (p 0.44).
+Upsets 31.7% of 60 split cells (expected 17.8%-42.1%, p 0.40).
+No evidence of specialization: per-case routing is unlikely to beat running claude alone.
+```
+
+When no two contenders with different pass rates split a case, the upset rate is undefined and
+shows as `-`. The check is deterministic: the same cells give the same numbers. It is somewhat
+conservative: on simulated benches with no specialization, the gap stayed inside the 95% band every
+time. The record's `specialization` field holds it; it is absent when the check is skipped.
+
+## Model × harness grid
+
+When contenders cover two or more models and two or more harnesses, with exactly one contender for
+each combination, the run reads them as a grid instead of a flat list. A harness that is best with
+one model can be worst with another, and a flat ranking hides that. Contenders without both axes are
+left off the grid. Each cell gets:
+
+- **p**: the pass rate (each case's share of passing trials, averaged over cases).
+- **v**: the share of attempts that completed cleanly (no timeout, crash, HTTP error, error or empty
+  answer). **J**: passed and completed cleanly.
+- **Δp and Δv**: the interaction, `x(m,h) − x(m,·) − x(·,h) + x(·,·)` with equal-weight margins. A
+  positive Δp means this model does better with this harness than the model and the harness do on
+  their own.
+- **F**: J as a share of the model's best J over harnesses.
+
+Then, per harness, **Cross-Model Fit** = 100 × the geometric mean of F over models (0 when any F is
+0): 100 means it is every model's best harness. A model that never passed cleanly with any harness is
+left out of the fit numbers, with a note. **Leave-one-model-out regret** picks the harness with the
+best Cross-Model Fit over the other models and reports how many points of J the held-out model loses
+against its own best harness. **Rank reversals** list each pair of models whose order flips between
+two harnesses.
+
+Intervals are 95% from 2,000 case bootstrap draws (the trials of a case move together). `bench show`
+stars a Δp whose interval excludes 0:
+
+```text
+Model × harness grid: 40 cases; pass rate and interaction Δp in pp (* = 95% CI excludes 0)
+MODEL  H1             H2
+m1     100.0% +17.5*  65.0% -17.5*
+m2     65.0% -17.5*   100.0% +17.5*
+Cross-model fit: h1 80.6 (70.7-89.4); h2 80.6 (70.7-89.4). h1 leads h2 by +0.0 (95% CI +0.0 to +0.0), not a clear lead.
+Rank reversal: m1 leads m2 under h1, m2 leads under h2.
+Leave-one-model-out regret: m1 35.0 pts (picks h2, best h1); m2 35.0 pts (picks h1, best h2); mean 35.0.
+```
+
+An incomplete grid (a missing or duplicated combination, one model or one harness) is skipped, and
+the record has no `grid` field.
 
 ## Anchor set
 
@@ -222,6 +299,11 @@ self-contained file with no scripts and no external assets, so you can publish t
 - **Anchor set**: its leaderboard, trend, gap chart and head-to-head table, when the definition has
   one.
 - **Head to head**: every pair, with the paired interval, McNemar and Holm p-values.
+- **Routing headroom**: the any-contender gap against the band a no-specialization reference
+  predicts, and the verdict. See [Routing headroom](#routing-headroom).
+- **Model × harness**: when the contenders form a grid, the pass rate and Δp per cell, Cross-Model
+  Fit per harness, rank reversals and leave-one-model-out regret. See
+  [Model × harness grid](#model--harness-grid).
 - **Where each contender fails**: failure reasons per contender, then its worst cases with a link
   to the session when there is one.
 - **Method and audit**: source, sampling, seed (with the revealed salt, its check and the next
