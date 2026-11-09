@@ -2,6 +2,7 @@
 // [serve.forward]) and mirrors committed events to [[sinks]]. A stub collector
 // runs in-process; see src/server/forward.ts and src/server/mirror.ts.
 import assert from "node:assert/strict";
+import { fileURLToPath } from "node:url";
 import { createServer, type Server } from "node:http";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
@@ -304,7 +305,11 @@ describe("serve forward: failures never touch ingest", () => {
       times.push(r.ms);
     }
     assert.ok(Math.max(...times) < 1000, `ingest latency ${times.map((t) => t.toFixed(0)).join(",")} ms`);
-    const m = await fetch(`${h.url}/metrics`).then((x) => x.text());
+    // A refused connection takes about 2 s to fail on Windows, so the first attempt may still be under way:
+    // the gauge counts its spans too, and the oldest are dropped once they are back in the buffer.
+    const metricsText = () => fetch(`${h.url}/metrics`).then((x) => x.text());
+    let m = await metricsText();
+    for (const deadline = Date.now() + 15_000; !m.includes('coding_sh_forward_spans_total{result="dropped"} 3') && Date.now() < deadline; m = await metricsText()) await new Promise((r) => setTimeout(r, 50));
     assert.match(m, /coding_sh_forward_spans_total\{result="dropped"\} 3/);
     assert.match(m, /coding_sh_forward_buffer_spans 3/);
     await h.shutdown();
@@ -487,7 +492,7 @@ describe("the local collector mirrors OTLP events to [[sinks]]", () => {
     delete env.CODING_SH_STORE_URL;
     mkdirSync(env.CODING_SH_HOME!, { recursive: true });
     writeFileSync(join(env.CODING_SH_HOME!, "config.toml"), `[[sinks]]\nkind = "http"\nname = "relay"\nendpoint = "http://127.0.0.1:${(server.address() as AddressInfo).port}/ingest"\nmode = "metadata"\n`);
-    const main = new URL("../../src/cli/main.ts", import.meta.url).pathname;
+    const main = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
     const p = spawn(process.execPath, ["--no-warnings", main, "collector", "--port", "0", "--json"], { env: { PATH: process.env.PATH, ...env, NO_COLOR: "1" }, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";

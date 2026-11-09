@@ -233,6 +233,8 @@ export class OtlpForwarder {
   private running: Promise<void> | undefined;
   private retryAt = 0;
   private backoff = 0;
+  /** Spans in the request under way: out of `items` until it answers, back in when it is to be retried. */
+  private sending = 0;
   private lastWarn = 0;
   private closed = false;
 
@@ -244,9 +246,9 @@ export class OtlpForwarder {
     this.timer.unref();
   }
 
-  /** Spans waiting to be sent. */
+  /** Spans waiting to be sent, the batch in a request that has not answered included. */
   get buffered(): number {
-    return this.items.length;
+    return this.items.length + this.sending;
   }
 
   /** Spans received over OTLP, as the receiver decoded them, after the tick that stored them committed. */
@@ -325,7 +327,8 @@ export class OtlpForwarder {
     const size = this.o.batchSpans ?? BATCH_SPANS;
     while (this.items.length && Date.now() >= this.retryAt) {
       const batch = this.items.splice(0, size);
-      const r = await this.post(toRequest(batch));
+      this.sending = batch.length;
+      const r = await this.post(toRequest(batch)).finally(() => (this.sending = 0));
       if (r.ok) {
         this.backoff = 0;
         this.o.metrics?.forwardSpans.inc({ result: "sent" }, batch.length);
