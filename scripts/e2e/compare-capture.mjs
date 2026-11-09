@@ -426,7 +426,9 @@ try {
     const loud = `${agent}-loud`;
     const sl = await cs(["harness", "snapshot", "--file", bundle(loud, { [A.loud.path]: A.loud.text }), "--json"]);
     check(sl.code === 0, tag(`harness snapshot ${loud}`), sl.stderr);
-    const tr = await cs(["compare", base, loud, "-t", divId, "--k", String(opts.k), "-c", "4", "--yes", "--json"]);
+    // --no-isolation grades the agent's own tree, where the overwritten test passes. By default the
+    // verifier runs in a fresh copy of the start tree, the edit never reaches it and the run fails.
+    const tr = await cs(["compare", base, loud, "-t", divId, "--k", String(opts.k), "-c", "4", "--no-isolation", "--yes", "--json"]);
     const t = json(tr, `compare ${base} ${loud}`);
     const ttext = (await cs(["compare", base, loud, "--experiment", t.experimentId], { quiet: true })).stdout;
     log(`compare ${base} ${loud}:\n${ttext}`);
