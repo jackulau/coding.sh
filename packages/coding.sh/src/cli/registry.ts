@@ -1079,7 +1079,7 @@ export const COMMANDS: CommandSpec[] = [
           { name: "feedback", type: "string", value: "<MODE>", desc: "With --seq: bit (one fixed sentence), reasons (the failed graders' reasons, at most 3, 300 characters each) or critic=<GRADER JSON|FILE> (a grader's reason on the failed output; it never gates). The expected answer is never shown", default: "reasons" },
           { name: "seq-history", type: "string", value: "<MODE>", choices: ["full", "last"], default: "full", desc: "With --seq: show each new attempt every earlier attempt, or only the last" },
           { name: "plan", type: "boolean", desc: "With a matrix spec: print the cells and what each changes, check them, and run nothing" },
-          { name: "cell", type: "list", commas: true, value: "<NAME>", desc: "With a matrix spec: run only this cell (repeatable); the baseline cell always runs" },
+          { name: "cell", type: "list", value: "<NAME>", desc: "With a matrix spec: run only this cell (repeatable); the baseline cell always runs" },
           {
             name: "reuse",
             type: "string",

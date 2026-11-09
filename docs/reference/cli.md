@@ -1491,7 +1491,7 @@ coding.sh exp run [spec] [options]
 | `--feedback <MODE>` | `reasons` | With --seq: bit (one fixed sentence), reasons (the failed graders' reasons, at most 3, 300 characters each) or critic=&lt;GRADER JSON\|FILE&gt; (a grader's reason on the failed output; it never gates). The expected answer is never shown. |
 | `--seq-history <MODE>` | `full` | With --seq: show each new attempt every earlier attempt, or only the last. One of: `full`, `last`. |
 | `--plan` |  | With a matrix spec: print the cells and what each changes, check them, and run nothing. |
-| `--cell <NAME>` |  | With a matrix spec: run only this cell (repeatable); the baseline cell always runs. Takes a comma list too (a,b). |
+| `--cell <NAME>` |  | With a matrix spec: run only this cell (repeatable); the baseline cell always runs. |
 | `--reuse <CELLS>` | `none` | With a matrix spec: copy finished case-trials of the same case, task, graders, trial and timeout from earlier experiments instead of running them again. One of: `baseline`, `all`, `none`. |
 | `--reuse-max-age <AGE>` | `7d` | With --reuse: only case-trials that started this recently (30m, 12h, 7d, 2w) |
 | `--control` | `true` | A continuation task or a --replay needs a control arm (A, the recorded config) to measure replay noise; --no-control runs one task alone and marks the result. |

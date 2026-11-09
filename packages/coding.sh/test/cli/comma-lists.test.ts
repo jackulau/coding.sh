@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, test } from "node:test";
 import { parseArgs, UsageError, type FlagSpec } from "../../src/cli/args.ts";
+import { findCommand } from "../../src/cli/registry.ts";
 import { tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
 import { cli, ok, seed, session } from "../query/_seed.ts";
 import type { Session } from "../../src/schema/index.ts";
@@ -33,6 +34,10 @@ describe("parser: comma lists", () => {
   });
   test("a list flag without commas keeps its value whole (JSON, commands)", () => {
     assert.deepEqual(parseArgs(["--grader", '{"kind":"exact","a":[1,2]}'], [GRADER]).flags.grader, ['{"kind":"exact","a":[1,2]}']);
+  });
+  test("exp run --cell keeps a matrix cell's name whole: it holds a comma per axis", () => {
+    const flags = findCommand("exp")!.actions!.find((a) => a.name === "run")!.flags!;
+    assert.deepEqual(parseArgs(["--cell", "model=big,prompt=shout", "--cell", "model=small,prompt=shout"], flags).flags.cell, ["model=big,prompt=shout", "model=small,prompt=shout"]);
   });
 });
 
