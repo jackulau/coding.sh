@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { ASK_USER } from "../../src/cli/output.ts";
 import { claimSession, putSession, retrySession } from "../helpers-decision.ts";
 
 const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
@@ -176,6 +177,9 @@ describe("cli refine loop", () => {
     const applied = await cli(e, ["refine", "apply"]);
     assert.equal(applied.status, 0, applied.stderr + applied.stdout);
     assert.match(applied.stderr, new RegExp(`Applied ${r.id} to CLAUDE\\.md`));
+    // A success's undo hint is advice, not a request for consent: no askUser line.
+    assert.match(applied.stderr, new RegExp(`Undo it:\\s+coding\\.sh refine rollback ${r.id}`));
+    assert.ok(!applied.stderr.includes(ASK_USER), applied.stderr);
     assert.equal(readFileSync(join(e.repo, "CLAUDE.md"), "utf8"), `${BASE}${TEST_RULE}\n`);
     const again = await cli(e, ["refine", "apply", r.id]);
     assert.equal(again.status, 0);
@@ -191,6 +195,10 @@ describe("cli refine loop", () => {
     const refused = await cli(e, ["refine", "rollback"]);
     assert.equal(refused.status, 1);
     assert.match(refused.stderr, /changed since .* was applied/);
+    // An error whose way out drops the user's edits is theirs to decide.
+    assert.ok(refused.stderr.includes(ASK_USER), refused.stderr);
+    const refusedJson = await cli(e, ["refine", "rollback", "--json"]);
+    assert.equal((JSON.parse(refusedJson.stderr.trim().split("\n").at(-1)!) as { askUser?: boolean }).askUser, true);
     writeFileSync(join(e.repo, "CLAUDE.md"), `${BASE}${TEST_RULE}\n`);
     const back = await cli(e, ["refine", "rollback", "--json"]);
     assert.equal(back.status, 0, back.stderr + back.stdout);
