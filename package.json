@@ -13,7 +13,10 @@
     "check": "npm run check --workspaces --if-present",
     "dogfood": "node scripts/dogfood/score.mjs",
     "dogfood:validate": "node scripts/dogfood/cli-suite.mjs validate",
-    "dogfood:test": "node --test \"scripts/dogfood/test/*.test.mjs\""
+    "dogfood:test": "node --test \"scripts/dogfood/test/*.test.mjs\"",
+    "lint": "node scripts/lint/slop.mjs",
+    "lint:test": "node --test \"scripts/lint/test/*.test.mjs\" \"scripts/hooks/test/*.test.mjs\"",
+    "hooks:install": "node scripts/hooks/install.mjs"
   },
   "engines": {
     "node": ">=22.15"

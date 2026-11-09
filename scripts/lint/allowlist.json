@@ -1,0 +1,3286 @@
+{
+  "$comment": "Exceptions to scripts/lint/slop.mjs. `max` caps findings in that file; lower it as code is fixed, never raise it to fit new code. See CONTRIBUTING.md.",
+  "entries": [
+    {
+      "rule": "barrel-file",
+      "path": "packages/coding.sh/src/adapters/_shared/index.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-08: internal barrel; new code imports from the module that defines the name"
+    },
+    {
+      "rule": "barrel-file",
+      "path": "packages/coding.sh/src/datasets/index.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-08: internal barrel; new code imports from the module that defines the name"
+    },
+    {
+      "rule": "barrel-file",
+      "path": "packages/coding.sh/src/eval/index.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-08: internal barrel; new code imports from the module that defines the name"
+    },
+    {
+      "rule": "barrel-file",
+      "path": "packages/coding.sh/src/experiments/index.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-08: internal barrel; new code imports from the module that defines the name"
+    },
+    {
+      "rule": "barrel-file",
+      "path": "packages/coding.sh/src/integrations/eve/index.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-08: internal barrel; new code imports from the module that defines the name"
+    },
+    {
+      "rule": "barrel-file",
+      "path": "packages/coding.sh/src/integrations/gateway/index.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-08: internal barrel; new code imports from the module that defines the name"
+    },
+    {
+      "rule": "barrel-file",
+      "path": "packages/coding.sh/src/judge/index.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-08: internal barrel; new code imports from the module that defines the name"
+    },
+    {
+      "rule": "barrel-file",
+      "path": "packages/coding.sh/src/llmcache/index.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-08: internal barrel; new code imports from the module that defines the name"
+    },
+    {
+      "rule": "barrel-file",
+      "path": "packages/coding.sh/src/mcp/index.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-08: internal barrel; new code imports from the module that defines the name"
+    },
+    {
+      "rule": "barrel-file",
+      "path": "packages/coding.sh/src/refine/index.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-08: internal barrel; new code imports from the module that defines the name"
+    },
+    {
+      "rule": "barrel-file",
+      "path": "packages/coding.sh/src/runner/index.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-08: internal barrel; new code imports from the module that defines the name"
+    },
+    {
+      "rule": "barrel-file",
+      "path": "packages/coding.sh/src/server/index.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "barrel-file",
+      "path": "packages/coding.sh/src/stats/index.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-08: internal barrel; new code imports from the module that defines the name"
+    },
+    {
+      "rule": "barrel-file",
+      "path": "packages/coding.sh/src/toolevals/index.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-08: internal barrel; new code imports from the module that defines the name"
+    },
+    {
+      "rule": "barrel-file",
+      "path": "packages/sdk/src/index.ts",
+      "reason": "the package entry point: package.json exports build from it"
+    },
+    {
+      "rule": "chained-as",
+      "path": "apps/site/src/lib/field-worker.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/adapters/_shared/normalize.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/adapters/more/_util.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/bench/define.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/cli/commands/compare-parity.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/cli/commands/config.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/cli/commands/eval-run.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/cli/commands/exp.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/cli/commands/refine.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/core/redact.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/core/reparse.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/eval/decision.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/experiments/fork-case.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/experiments/replay.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/graders/builtin.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/integrations/gateway/lookups.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/judge/predicates.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/otel/clickhouse.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/proxy/server.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/refine/distill.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/refine/signals.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/server/fetch.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/server/native.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/spool/kick.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/stats/interval.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/stats/seqk.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/store/conformance.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/toolevals/experiment.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/toolevals/mcp/client.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/toolevals/mcp/http.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/toolevals/tap/mcp-proxy.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/update/index.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/viewer/metrics.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/viewer/server.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/workflows/experiment.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/workflows/import.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/src/workflows/tree.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/bench/e2e.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/bench/run.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/cli/ask-user.test.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/cli/cli.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/cli/exp-ab.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/cli/first-run.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/conformance/check-adapter.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/conformance/invariants.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/core/exposure.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/core/fold-stamp.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/core/ingest.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/core/memory-audit.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/core/replay.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/datasets/cli.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/datasets/dataset.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/docs/query-reference.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/eval/atif.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/eval/trigger-draft.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/experiments/continuation-cli.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/experiments/continuation.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/experiments/fork.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/experiments/plateau.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/experiments/turnover.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/graders/executability.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/jobs/resume.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/judge/checklist-abstain.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/judge/checklist.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/judge/predicates.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/judge/verifier.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/mcp/resources.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/proxy/blocks.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/proxy/replay.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/proxy/store-writer.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/refine/loop.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/refine/reflect.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/refine/taxonomy.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/runner/selfcheck.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/scores/scores.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/server/units.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/toolevals/mcp-client.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/toolevals/mcp.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/update/update.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/viewer/bench-first-row.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/workflows/_fixtures.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/workflows/experiment.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/workflows/otel-metrics.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/coding.sh/test/workflows/store-import.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/sdk/src/context.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/sdk/src/fetch.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/sdk/src/observe.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/store-clickhouse/src/client.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/store-clickhouse/test/clickhouse.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/store-postgres/src/pool.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "chained-as",
+      "path": "packages/store-postgres/test/session-lock.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": ".github/assets/sample-sessions.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "apps/site/scripts/perf-budget.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "apps/site/scripts/shots/seed.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "apps/site/src/components/docs/DocsLayout.astro",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "apps/site/src/components/docs/nav.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "apps/site/src/layouts/Layout.astro",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "apps/site/src/lib/lastmod.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "apps/site/src/lib/schema.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "deploy/test/smoke.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "examples/eve-agent/scripts/import-traces.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/scripts/github-action.mjs",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/scripts/sdk-reference.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/adapters/_shared/claude-transcript.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/adapters/_shared/installs.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/adapters/_shared/normalize.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/adapters/_shared/tools.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/adapters/more/_util.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/adapters/more/amp.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/adapters/more/antigravity.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/adapters/more/copilot-cli.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/adapters/more/droid.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/adapters/more/gemini-cli.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/adapters/more/pi.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/adapters/more/wrapper.ts",
+      "max": 7,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/attribution/export.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/attribution/git.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/attribution/index.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/attribution/match.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/attribution/sources.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/bench/commit.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/bench/contenders.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/bench/define.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/bench/report.ts",
+      "max": 8,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/bench/run.ts",
+      "max": 78,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/bench/sample.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/bench/sources.ts",
+      "max": 12,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/bench/stats.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/capture/aider.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/capture/wrapper.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/args.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/cache-health.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/attribution.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/bench.ts",
+      "max": 26,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/blame.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/cache.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/collector.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/compare-parity.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/compare.ts",
+      "max": 42,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/config.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/dataset.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/diff-calls.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/doctor.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/eval-candidates.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/eval-init.ts",
+      "max": 24,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/eval-run.ts",
+      "max": 16,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/eval-trigger.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/eval.ts",
+      "max": 17,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/exp-ab.ts",
+      "max": 20,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/exp-llm.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/exp-matrix.ts",
+      "max": 19,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/exp-replay.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/exp-session.ts",
+      "max": 16,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/exp.ts",
+      "max": 67,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/export.ts",
+      "max": 8,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/gateway.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/harness.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/improve.ts",
+      "max": 18,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/ingest.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/init.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/judge-slop.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/judge.ts",
+      "max": 21,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/proxy.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/purge.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/refine-climb.ts",
+      "max": 36,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/refine-diagnose.ts",
+      "max": 14,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/refine-distill.ts",
+      "max": 11,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/refine-loop.ts",
+      "max": 41,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/refine-mine.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/refine-score.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/refine-suite.ts",
+      "max": 12,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/replay-fork.ts",
+      "max": 8,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/run.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/search.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/serve.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/sessions.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/stats.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/toolevals.ts",
+      "max": 16,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/tree.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/update.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/usage.ts",
+      "max": 7,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/commands/workflows.ts",
+      "max": 19,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/common.ts",
+      "max": 16,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/jobs.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/main.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/output.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/protect.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/cli/remote.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/conformance/index.ts",
+      "max": 8,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/agent-files.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/cache-breaks.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/config.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/context.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/derail.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/durable.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/evidence.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/executability.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/gc.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/ingest.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/memory-audit.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/memory-files.ts",
+      "max": 9,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/models.ts",
+      "max": 10,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/outline.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/pricing.ts",
+      "max": 12,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/replay.ts",
+      "max": 12,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/reprice.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/rules.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/sessions.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/shell-diff.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/skills-use.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/snapshot.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/spawn.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/store-guard.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/tree.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/unapproved.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/core/waste.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/datasets/dataset.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/datasets/kinds.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/eval/candidates.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/eval/crosscheck.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/eval/decision.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/eval/draft.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/eval/init.ts",
+      "max": 24,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/eval/report.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/eval/run-suite.ts",
+      "max": 8,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/eval/statement.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/eval/task.ts",
+      "max": 9,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/eval/trigger-draft.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/eval/trigger.ts",
+      "max": 15,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/eval/validate.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/eval/witness.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/ab.ts",
+      "max": 8,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/compare.ts",
+      "max": 13,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/continuation.ts",
+      "max": 23,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/fork-case.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/fork-run.ts",
+      "max": 10,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/fork.ts",
+      "max": 11,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/matrix-run.ts",
+      "max": 19,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/metrics.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/pairwise.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/plateau.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/ppi.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/regrade.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/render.ts",
+      "max": 7,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/replay.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/replicate.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/run.ts",
+      "max": 37,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/seq.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/session.ts",
+      "max": 13,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/sweep.ts",
+      "max": 26,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/task.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/experiments/watch.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/graders/builtin.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/graders/external.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/graders/index.ts",
+      "max": 48,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/graders/next-action.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/graders/slop.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/improve/changes.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/improve/issues.ts",
+      "max": 9,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/improve/report.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/integrations/eve/evals.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/integrations/eve/import.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/integrations/eve/reporter.ts",
+      "max": 11,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/integrations/gateway/client.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/integrations/gateway/cliproxyapi.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/integrations/gateway/config.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/integrations/gateway/enrich.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/integrations/gateway/lookups.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/integrations/gateway/route.ts",
+      "max": 7,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/jobs/config.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/jobs/flags.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/jobs/store.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/judge/checklist.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/judge/discriminate.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/judge/judge.ts",
+      "max": 8,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/judge/pairwise.ts",
+      "max": 10,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/judge/panel.ts",
+      "max": 9,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/judge/predicates.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/judge/providers.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/judge/subscription.ts",
+      "max": 7,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/judge/trace-file.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/judge/verifier.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/judge/waste.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/llmcache/proxy.ts",
+      "max": 8,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/llmcache/run.ts",
+      "max": 9,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/mcp/audit.ts",
+      "max": 9,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/mcp/data.ts",
+      "max": 25,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/mcp/digest.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/mcp/harness.ts",
+      "max": 18,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/mcp/improve.ts",
+      "max": 25,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/mcp/protocol.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/mcp/resources.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/mcp/tools.ts",
+      "max": 68,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/otel/clickhouse.ts",
+      "max": 11,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/otel/map.ts",
+      "max": 8,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/otel/receiver.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/proxy/calls.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/proxy/index.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/proxy/install.ts",
+      "max": 12,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/proxy/wire.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/query/export.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/query/run.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/query/where.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/canary.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/config.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/corpus.ts",
+      "max": 7,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/diagnose.ts",
+      "max": 8,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/distill.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/drivers.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/findings.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/guard.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/keep.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/ledger.ts",
+      "max": 9,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/match.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/mine.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/objectives.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/severity.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/signals.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/refine/taxonomy.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/runner/bundle.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/runner/cells.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/runner/experiment.ts",
+      "max": 30,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/runner/gate-item.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/runner/harness-report.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/runner/iterate.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/runner/model-mix.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/runner/otel.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/runner/plugins.ts",
+      "max": 8,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/runner/release.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/runner/repair-report.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/runner/run.ts",
+      "max": 10,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/runner/sequence.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/runner/tamper.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/runner/verifier-output.ts",
+      "max": 8,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/scores/scores.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/server/config.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/server/fetch.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/server/forward.ts",
+      "max": 8,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/server/queue.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/server/routes.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/server/serve.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/sinks/otlp.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/stats/seqk.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/stats/tests.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/store/memory.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/store/sqlite.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/calls.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/compare.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/compress.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/config.ts",
+      "max": 56,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/drivers/agent.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/drivers/model.ts",
+      "max": 10,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/experiment.ts",
+      "max": 8,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/mcp/client.ts",
+      "max": 8,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/mcp/oauth.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/model/cap.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/model/loop.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/model/mcp-handlers.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/model/openai.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/model/shell-sim.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/model/tools.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/surface.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/tap/mcp-proxy.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/traces.ts",
+      "max": 13,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/toolevals/validate.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/update/refresh.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/viewer/model.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/viewer/playground.ts",
+      "max": 29,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/viewer/server.ts",
+      "max": 27,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/workflows/cases.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/workflows/drivers/claude-workflow.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/workflows/experiment.ts",
+      "max": 12,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/workflows/gantt.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/workflows/import.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/workflows/replay.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/workflows/score/case.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/workflows/seed/bugs.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/workflows/tree.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/src/workflows/viewer.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/adapters/claude-code.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/adapters/more/_helpers.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/adapters/more/antigravity-db.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/adapters/t3code.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/attribution/_fixture.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/bench/grid.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/capture/hook.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/cli/cache-doctor.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/cli/cli.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/cli/durable.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/cli/exp-ab.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/cli/longrun.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/conformance/check-adapter.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/conformance/invariants.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/core/children.test.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/core/derail.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/core/executability.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/core/failing-command.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/core/fold-stamp.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/core/ingest-repo.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/core/ingest.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/core/intent.test.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/core/launch.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/core/memory-audit.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/core/models.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/core/reparse.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/core/sessions.test.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/core/tree.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/core/waste.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/docs/reference-drift.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/eval/trigger-draft.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/experiments/compare.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/experiments/continuation-cli.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/experiments/plateau.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/experiments/replicate.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/experiments/select.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/experiments/seq.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/graders/executability.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/graders/graders.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/helpers-decision.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/helpers-eval.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/helpers-improve.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/improve/changes.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/improve/issues.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/improve/report.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/integrations/gateway/_fixtures.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/integrations/gateway/cliproxyapi.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/integrations/gateway/enrich.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/integrations/gateway/multi.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/integrations/gateway/route.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/judge/audit.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/judge/checklist-abstain.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/judge/injection.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/judge/predicates.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/judge/verifier.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/llmcache/_stub.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/llmcache/proxy.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/llmcache/run.test.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/mcp/harness.test.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/mcp/helpers.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/otel/durable.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/otel/receiver.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/proxy/_helpers.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/proxy/calls.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/query/_seed.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/query/_where-fixture.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/query/where.test.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/refine/diagnose.test.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/refine/distill.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/refine/keep.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/refine/metaeval.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/refine/mine.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/runner/experiment.test.ts",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/runner/plugins.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/runner/run.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/scores/api.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/scores/migration.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/scripts/github-action.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/server/cli.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/server/fetch-handler.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/server/forward.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/server/serve.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/sinks/otlp.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/store/sqlite.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/toolevals/cap.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/toolevals/cli.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/toolevals/traces.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/viewer/browser.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/viewer/metrics.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/viewer/playground.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/viewer/ui-browser.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/workflows/_fixtures.ts",
+      "max": 5,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/workflows/cli.test.ts",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/coding.sh/test/workflows/experiment.test.ts",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/sdk/src/ai-sdk.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/sdk/test/golden.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/store-clickhouse/src/client.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/store-clickhouse/src/index-store.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/store-clickhouse/test/where.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "packages/store-postgres/test/where.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/dogfood/bench-collector.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/dogfood/bench-where.mjs",
+      "max": 7,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/dogfood/bench.mjs",
+      "max": 6,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/dogfood/cli-guidelines.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/dogfood/cli-suite.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/dogfood/score.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/claude-edge-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/claude-fallback-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/claude-fork-subagent-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/claude-subagent-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/claude-transcript-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/claude-unapproved-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/compare-capture.mjs",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/ease.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/eval-init-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/exp-ab-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/fork-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/harness-child-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/hook-context-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/plugin-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/proxy-capture.mjs",
+      "max": 3,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/real-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/refine-suite-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/repair-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/stub-model.mjs",
+      "max": 4,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/e2e/trigger-capture.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/perf/ab.mjs",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "conditional-empty-spread",
+      "path": "scripts/perf/lighthouse.mjs",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "site-placeholder",
+      "path": "apps/site/src/components/docs/nav.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-08: labels a feature that is not built; drop the label when it ships"
+    },
+    {
+      "rule": "site-placeholder",
+      "path": "apps/site/src/data/agents.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-08: labels a feature that is not built; drop the label when it ships"
+    },
+    {
+      "rule": "site-placeholder",
+      "path": "apps/site/src/lib/llms.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-08: labels a feature that is not built; drop the label when it ships"
+    },
+    {
+      "rule": "site-placeholder",
+      "path": "apps/site/src/pages/docs/evals.astro",
+      "max": 1,
+      "reason": "describes what the agent-slop grader flags (placeholder text)"
+    },
+    {
+      "rule": "site-placeholder",
+      "path": "apps/site/src/pages/docs/index.astro",
+      "max": 3,
+      "reason": "baseline 2026-11-08: labels a feature that is not built; drop the label when it ships"
+    },
+    {
+      "rule": "site-placeholder",
+      "path": "CHANGELOG.md",
+      "max": 1,
+      "reason": "\"a TODO template\" names what eval init used to write, not an unfinished page"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "examples/plugin-ab/analysis/judge.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/coding.sh/src/cli/common.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/coding.sh/src/llmcache/proxy.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/coding.sh/src/otel/map.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/coding.sh/src/server/serve.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/coding.sh/src/spool/write.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/coding.sh/src/toolevals/config.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/coding.sh/test/datasets/kinds.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/coding.sh/test/experiments/regrade.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/coding.sh/test/experiments/run.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/coding.sh/test/experiments/samples.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/coding.sh/test/experiments/session.test.ts",
+      "max": 2,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/coding.sh/test/experiments/watch.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/coding.sh/test/jobs/resume.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/sdk/src/ai-sdk.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/store-clickhouse/src/client.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/store-clickhouse/test/where.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/store-postgres/src/pool.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    },
+    {
+      "rule": "unknown-param",
+      "path": "packages/store-postgres/test/where.test.ts",
+      "max": 1,
+      "reason": "baseline 2026-11-09: existing code, do not add more"
+    }
+  ]
+}

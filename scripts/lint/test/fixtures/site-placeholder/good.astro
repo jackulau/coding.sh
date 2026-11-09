@@ -1,0 +1,15 @@
+---
+const planned = ["replay"];
+const note = "coming soon";
+---
+<p>Run <code>coding.sh exp --sample 20</code> to test a seeded random sample of cases.</p>
+<p>It stops at planned looks over the case budget, and the dry run lists every planned edit.</p>
+<img alt="Sample data from a seeded store" src="/shot.png" />
+<input placeholder="Search docs" />
+<!-- TODO: a hidden note for maintainers -->
+<style>.tag--planned { color: red; }</style>
+<script>const s = "coming soon";</script>
+<p>{planned.length} features ship in this release. {note.length}</p>
+<span class="sample">Real sessions from coding.sh itself</span>
+<pre>TODO: shown as a code sample</pre>
+<p>Samples are drawn per stratum; in-sample kappa is reported as such.</p>

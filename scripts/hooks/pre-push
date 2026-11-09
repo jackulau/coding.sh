@@ -1,0 +1,5 @@
+#!/bin/sh
+# coding.sh pre-push: tests of each package the pushed commits touch, and of the
+# packages that depend on it. Opt in with `npm run hooks:install`.
+# Skip once with `git push --no-verify`, or set CODING_SH_SKIP_HOOKS=1.
+exec node "$(git rev-parse --show-toplevel)/scripts/hooks/run.mjs" pre-push "$@"

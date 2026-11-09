@@ -1,0 +1,18 @@
+---
+// Frontmatter is code, so the word planned here is not on the page.
+import Tag from "./Tag.astro";
+const status = "planned";
+---
+<section>
+  <h2>Experiments (planned)</h2> <!-- slop:expect -->
+  <p class="tag--planned">Coming soon: replay.</p> <!-- slop:expect -->
+  <span>Sample data</span> <!-- slop:expect -->
+  <Tag status="planned" /> <!-- slop:expect -->
+  <figcaption>sample</figcaption> <!-- slop:expect -->
+  <p>TODO write this section</p> <!-- slop:expect -->
+  <p>Lorem ipsum dolor sit amet.</p> <!-- slop:expect -->
+  <p>Mirroring OTLP events is planned.</p> <!-- slop:expect -->
+  <p>Replay is not implemented yet.</p> <!-- slop:expect -->
+  <button title="Demo data">Load</button> <!-- slop:expect -->
+  <p>{status}</p>
+</section>

@@ -1,0 +1,5 @@
+#!/bin/sh
+# coding.sh pre-commit: anti-slop lint on staged files, then a typecheck of each
+# package the commit touches. Opt in with `npm run hooks:install`.
+# Skip once with `git commit --no-verify`, or set CODING_SH_SKIP_HOOKS=1.
+exec node "$(git rev-parse --show-toplevel)/scripts/hooks/run.mjs" pre-commit "$@"

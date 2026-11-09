@@ -77,6 +77,9 @@ set it for the user's store unless they ask.
   root). `test/docs/cli-reference.test.ts` fails when it is stale.
 - `docs/reference/sdk.md` and the SDK gateway tables are generated too, by
   `packages/coding.sh/scripts/sdk-reference.ts` and `packages/coding.sh/scripts/sdk-gateways.ts`.
+- A change to the types in `src/schema/index.ts`: regenerate the trace JSON Schema with
+  `node --no-warnings packages/coding.sh/scripts/json-schema.ts`. `test/schema/json-schema.test.ts`
+  fails when it is stale.
 - New stats or flags: `docs/reference/api.md` and `docs/concepts.md`. Adapter behavior:
   `docs/ADAPTERS.md`.
 - Every user-visible change gets one line in `CHANGELOG.md` under the unreleased version's
@@ -86,7 +89,8 @@ set it for the user's store unless they ask.
 ## Routines
 
 **Before a commit.** Run `npm run check` in `packages/coding.sh` (and `npm run build && npm run
-check` in `apps/site` if you touched the site). If you touched `.github/workflows`, run
+check` in `apps/site` if you touched the site), and `npm run lint` from the repo root (the
+anti-slop lint; exceptions and opt-in git hooks are in CONTRIBUTING.md "Lint and git hooks"). If you touched `.github/workflows`, run
 `actionlint -shellcheck= .github/workflows/*.yml`. Scan the diff and any new fixture for secrets,
 tokens, emails and home paths.
 

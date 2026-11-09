@@ -58,6 +58,47 @@ Docs index: [docs/README.md](docs/README.md). Start with [docs/design/architectu
 - **Docs claim only what the code does.** If you add or change a command, update its help in
   `src/cli/registry.ts`, the README and `CHANGELOG.md`.
 
+## Lint and git hooks
+
+`npm run lint` (from the repo root) runs `scripts/lint/slop.mjs`, a zero-dependency check for
+patterns that read as unreviewed agent output:
+
+| Rule | Flags |
+| --- | --- |
+| `chained-as` | `x as unknown as T` and `(x as A) as B`: a cast that skips the type checker |
+| `unknown-param` | a parameter typed `unknown` that the function casts with `as` and never checks. Type guards, functions named for the check (`is*`, `parse*`, `validate*`, ...) and functions that check the value (`typeof`, `instanceof`, `Array.isArray`, `in`, a null check, or passing it to another function) are trust boundaries and pass |
+| `conditional-empty-spread` | `...(c ? { a } : {})` and `...(c && { a })`. Assign the field in an `if` instead |
+| `barrel-file` | a module that only re-exports other modules |
+| `site-placeholder` | visible "planned", "coming soon", "sample data", a bare "Sample" label, TODO or lorem ipsum on the site: text and visible attributes in `apps/site/src`, and the repo docs and changelog the site renders. Code, comments, `alt` text and `<code>` are not read |
+
+It reads every file git does not ignore, and skips `node_modules`, `dist`, `fixtures` and hidden
+folders other than `.github`. Exit 0 means clean, 1 means findings, 2 means a usage error.
+`--json` prints one document, `--rule <id>` runs one rule, `--staged` reads the staged version of
+staged files, and `--help --json` lists flags and rules as data.
+
+Code that existed when the lint landed is listed in `scripts/lint/allowlist.json`. Each entry names
+a rule, a file (or glob), a reason, and usually a `max`: the number of findings that file may
+keep. A file that goes over its `max` fails, so new code can't add more. When you fix some, run
+`node scripts/lint/slop.mjs --update-allowlist` to lower the counts. It also adds an entry for any
+file with findings and no entry, so read its diff and never commit a raised count for new code.
+For a one-off exception, put `slop-allow <rule>: <reason>` in a comment on the line or the line
+above.
+
+The git hooks are opt in. `npm run hooks:install` points this checkout's `core.hooksPath` at
+`scripts/hooks`. It refuses to replace another hooks path, or to hide hooks in `.git/hooks`,
+unless you pass `--force`; `node scripts/hooks/install.mjs --status` and `--uninstall` check and
+undo it.
+
+- **pre-commit** runs the lint on staged files, then the `typecheck` script (the site's
+  `astro check`) of each package the commit touches.
+- **pre-push** runs the `test` script of each package the pushed commits touch and of the
+  packages that depend on it (a `packages/coding.sh` change also runs the store plugins' tests),
+  the Python SDK's tests, and the lint, hook and dogfood script tests when those change.
+
+Skip a hook once with `--no-verify`, or set `CODING_SH_SKIP_HOOKS=1`.
+`node scripts/hooks/run.mjs pre-commit --dry-run` prints what a hook would run. The lint and hook
+tests run with `npm run lint:test`.
+
 ## Adding an agent
 
 1. Read the agent's hook, plugin or OpenTelemetry docs and add a row to `docs/ADAPTERS.md`.
