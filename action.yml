@@ -50,9 +50,11 @@ runs:
   using: composite
   steps:
     - if: inputs.node-version != ''
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v5
       with:
         node-version: ${{ inputs.node-version }}
+        # v5 caches on its own when the caller's package.json names a packageManager; v4 never did.
+        package-manager-cache: false
 
     - name: Install coding.sh
       shell: bash

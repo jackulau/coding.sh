@@ -28,9 +28,9 @@ jobs:
         os: [ubuntu-latest, macos-latest]
         node: [22.x, 24.x]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -106,9 +106,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22.x
           cache: npm
@@ -184,9 +184,9 @@ jobs:
         options: >-
           --health-cmd "wget -qO- http://127.0.0.1:8123/ping" --health-interval 2s --health-timeout 5s --health-retries 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24.x
           cache: npm
@@ -207,11 +207,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24.x
           cache: npm
@@ -225,7 +225,7 @@ jobs:
       - name: Static checks of the deploy recipes and fixtures
         run: node --no-warnings --test deploy/test/deploy.test.mjs deploy/test/fixtures.test.mjs
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # The build stage runs on the runner's platform and the runtime stage only copies files,
       # so arm64 builds without emulation. This proves both platforms build, as release.yml does.
@@ -269,9 +269,9 @@ jobs:
         shell: bash
     steps:
       # .gitattributes keeps LF in the checkout, whatever core.autocrlf says.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node }}
           cache: npm
@@ -335,9 +335,9 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24.x
           cache: npm
@@ -350,7 +350,7 @@ jobs:
         run: npm run build
 
       # Aider installs through uv (it fetches a Python aider supports).
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v7
 
       # coding.sh from its tarball plus pinned OpenCode, Pi, Factory Droid and GitHub Copilot CLI
       # from npm, Goose from its GitHub release and Aider from PyPI, under a temp HOME, each
