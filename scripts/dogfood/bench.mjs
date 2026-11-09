@@ -238,6 +238,7 @@ export function benchIngest({ cli = CLI, baseline, events = 100_000, pairs = 8 }
   const candMs = [];
   const baseMs = [];
   let last;
+  let lastBase;
   one(cli); // warmup (fills OS cache, JIT)
   for (let i = 0; i < pairs; i++) {
     const b = one(baseCli);
@@ -245,17 +246,19 @@ export function benchIngest({ cli = CLI, baseline, events = 100_000, pairs = 8 }
     baseMs.push(b.ms);
     candMs.push(c.ms);
     last = c;
+    lastBase = b;
   }
   const eps = (ms) => Math.round(last.count / (ms / 1000));
   const candEps = candMs.map(eps);
   const baseEps = baseMs.map(eps);
   const d = bootstrapMedianDiff(baseEps, candEps);
+  const storeSize = (r) => round((r.idx + r.blobs) / 1e6 / (r.count / 1000), 3);
   return {
     "perf.ingest": median(candEps),
-    "perf.storeSize": round((last.idx + last.blobs) / 1e6 / (last.count / 1000), 3),
-    baseline: { "perf.ingest": median(baseEps) },
+    "perf.storeSize": storeSize(last),
+    baseline: { "perf.ingest": median(baseEps), "perf.storeSize": storeSize(lastBase) },
     paired: { "perf.ingest": { diff: round(d.diff, 1), ci: d.ci.map((x) => round(x, 1)), unit: "events/s (candidate − baseline)" } },
-    detail: { pairs, events: last.corpus.events, candIngestMedianMs: round(median(candMs), 0), baseIngestMedianMs: round(median(baseMs), 0), indexMB: round(last.idx / 1e6, 2), blobsMB: round(last.blobs / 1e6, 2), blobFiles: last.blobsApparent.files },
+    detail: { pairs, events: last.corpus.events, candIngestMedianMs: round(median(candMs), 0), baseIngestMedianMs: round(median(baseMs), 0), indexMB: round(last.idx / 1e6, 2), blobsMB: round(last.blobs / 1e6, 2), blobFiles: last.blobsApparent.files, baseIndexMB: round(lastBase.idx / 1e6, 2), baseBlobsMB: round(lastBase.blobs / 1e6, 2), baseBlobFiles: lastBase.blobsApparent.files },
   };
 }
 
