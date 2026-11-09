@@ -9,6 +9,7 @@ import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, test } from "node:test";
 import { parseLiterals } from "../../src/cli/commands/purge.ts";
 import { FsBlobStore } from "../../src/store/fs-blobs.ts";
+import { closeBlobs, fsBlobs } from "./_blobs.ts";
 import { PURGE_MARKER, purgeLiterals, Scrubber } from "../../src/store/purge.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { FIXTURES, tmpEnv, type TmpEnv } from "../adapters/_helpers.ts";
@@ -33,7 +34,7 @@ const forms = (s: string): string[] => [s, JSON.stringify(s).slice(1, -1)];
 const holds = (buf: Buffer, s: string): boolean => forms(s).some((f) => buf.includes(Buffer.from(f)));
 
 async function seedStore(env: TmpEnv): Promise<{ blobRef: string; cleanRef: string; spoolFile: string; spoolSize: number }> {
-  const blobs = new FsBlobStore(join(env.dataHome, "blobs"));
+  const blobs = fsBlobs(join(env.dataHome, "blobs"));
   const blobRef = await blobs.put(`$ env\nAPI_TOKEN=${SECRET}\nPATH=/usr/bin\n`);
   const cleanRef = await blobs.put("nothing to see here");
   await seed(env.dataHome, {
@@ -72,7 +73,10 @@ describe("coding.sh purge --literal", () => {
     secrets = join(env.root, "leaked.txt");
     writeFileSync(secrets, `${SECRET}\r\n\n${QUOTED}\n`);
   });
-  after(() => env.restore());
+  after(async () => {
+    await closeBlobs();
+    env.restore();
+  });
 
   test("--dry-run counts every copy and changes nothing", () => {
     const before = readFileSync(join(env.dataHome, "index.db"));
@@ -102,7 +106,7 @@ describe("coding.sh purge --literal", () => {
       assert.ok(!holds(buf, SECRET), `${f} still holds the secret`);
       assert.ok(!holds(buf, QUOTED), `${f} still holds the quoted secret`);
     }
-    const blobs = new FsBlobStore(join(env.dataHome, "blobs"));
+    const blobs = fsBlobs(join(env.dataHome, "blobs"));
     let n = 0;
     for await (const ref of blobs.list()) {
       const data = Buffer.from((await blobs.get(ref))!);
@@ -129,7 +133,7 @@ describe("coding.sh purge --literal", () => {
       const ref = JSON.parse(end.payload).outputRef as string;
       assert.notEqual(ref, seeded.blobRef);
       assert.deepEqual(JSON.parse(end.blobs), [ref]);
-      const text = await new FsBlobStore(join(env.dataHome, "blobs")).getText(ref);
+      const text = await fsBlobs(join(env.dataHome, "blobs")).getText(ref);
       assert.equal(text, `$ env\nAPI_TOKEN=${PURGE_MARKER}\nPATH=/usr/bin\n`);
       assert.equal(db.prepare("SELECT 1 FROM kv WHERE key = 'fold:s1'").get(), undefined, "the saved fold is dropped");
       assert.equal((db.prepare("SELECT note FROM labels WHERE id = 'l1'").get() as { note: string }).note, `leaked ${PURGE_MARKER}`);
@@ -163,7 +167,10 @@ describe("purge input and store checks", () => {
     env = tmpEnv();
     await seed(env.dataHome, { sessions: [session("s1")] });
   });
-  after(() => env.restore());
+  after(async () => {
+    await closeBlobs();
+    env.restore();
+  });
 
   test("reads stdin with --literal -", () => {
     const j = JSON.parse(ok(["purge", "--literal", "-", "--dry-run", "--json"], {}, `${SECRET}\n`).stdout);
@@ -250,7 +257,7 @@ describe("coding.sh purge --rule and eval run dirs", () => {
 
   before(async () => {
     env = tmpEnv();
-    const blobs = new FsBlobStore(join(env.dataHome, "blobs"));
+    const blobs = fsBlobs(join(env.dataHome, "blobs"));
     const blobRef = await blobs.put(`export TOKEN=${TOKEN_B}\n`);
     await seed(env.dataHome, {
       sessions: [session("s1", { title: `rotate ${TOKEN_A}` }), session("s2")],
@@ -270,7 +277,10 @@ describe("coding.sh purge --rule and eval run dirs", () => {
     gitFile = join(objects, "ab");
     writeFileSync(gitFile, `raw ${TOKEN_A}`);
   });
-  after(() => env.restore());
+  after(async () => {
+    await closeBlobs();
+    env.restore();
+  });
 
   test("--literal also masks eval run files, same length, and leaves .git alone", () => {
     const secrets = join(env.root, "one.txt");

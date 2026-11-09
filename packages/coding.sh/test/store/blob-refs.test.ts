@@ -9,12 +9,15 @@ import { defaultConfig } from "../../src/core/config.ts";
 import { gc } from "../../src/core/gc.ts";
 import type { IndexStore, RunResult } from "../../src/core/types.ts";
 import { fixtureRun, fixtureTask } from "../../src/store/conformance.ts";
-import { FsBlobStore } from "../../src/store/fs-blobs.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
+import { closeBlobs, fsBlobs } from "./_blobs.ts";
 
 const root = mkdtempSync(join(tmpdir(), "csh-blobrefs-"));
-after(() => rmSync(root, { recursive: true, force: true }));
+after(async () => {
+  await closeBlobs();
+  rmSync(root, { recursive: true, force: true });
+});
 let n = 0;
 
 for (const [name, make] of [
@@ -24,7 +27,7 @@ for (const [name, make] of [
   describe(`gc blob references (${name})`, () => {
     it("keeps impossible-variant hidden files and toolevals tap logs", async () => {
       const index = await make();
-      const blobs = new FsBlobStore(join(root, `blobs-${n++}`));
+      const blobs = fsBlobs(join(root, `blobs-${n++}`));
       const hidden = await blobs.put("test('a', () => expect(add(1,2)).toBe(3))");
       const variantHidden = await blobs.put("test('a', () => expect(add(1,2)).toBe('3_impossible'))");
       const tap = await blobs.put('{"tool":"x","args":{}}\n');

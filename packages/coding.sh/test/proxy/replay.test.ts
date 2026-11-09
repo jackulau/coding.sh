@@ -118,6 +118,7 @@ describe("CLI: exp replay", () => {
     } finally {
       await proxy.close();
       await stores.index.close();
+      await stores.blobs.close?.();
     }
     writeFileSync(join(root, "prompt.md"), "You are a fast coding agent.");
   });

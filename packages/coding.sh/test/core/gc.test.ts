@@ -8,11 +8,15 @@ import { gc } from "../../src/core/gc.ts";
 import { ingest, sinkCursorKey } from "../../src/core/ingest.ts";
 import type { Adapter, BlobStore } from "../../src/core/types.ts";
 import { FsBlobStore } from "../../src/store/fs-blobs.ts";
+import { ageBlob, closeBlobs, fsBlobs, track } from "../store/_blobs.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 
 const DAY = 86_400_000;
 const roots: string[] = [];
-after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
+after(async () => {
+  await closeBlobs();
+  roots.forEach((r) => rmSync(r, { recursive: true, force: true }));
+});
 function setup() {
   const root = mkdtempSync(join(tmpdir(), "csh-gc-"));
   roots.push(root);
@@ -43,14 +47,14 @@ describe("gc", () => {
   it("sweeps only unreferenced blobs older than a day; dry run deletes nothing", async () => {
     const t = setup();
     const index = new MemoryIndexStore();
-    const blobs = new FsBlobStore(join(t.root, "blobs"));
+    const blobs = fsBlobs(join(t.root, "blobs"));
     const kept = await blobs.put("referenced");
     const stale = await blobs.put("stale garbage");
     const young = await blobs.put("just written");
     await index.putEvents([{ id: "e", v: 0, sessionId: "s", ts: 1, agent: "a", kind: "notification", payload: {}, blobs: [kept] }]);
-    old(blobs.pathFor(kept), 30);
-    old(blobs.pathFor(stale), 2);
-    const staleSize = statSync(blobs.pathFor(stale)).size;
+    await ageBlob(blobs, kept, 30);
+    await ageBlob(blobs, stale, 2);
+    const staleSize = (await blobs.stat(stale))!.size;
 
     const dry = await gc({ index, blobs, config: t.config, env: t.env, dryRun: true });
     assert.deepEqual(dry.blobs, { scanned: 3, referenced: 1, deleted: 1, bytes: staleSize, skippedYoung: 1, skippedNoAge: 0, expired: 0, tmpFiles: 0, tmpBytes: 0 });
@@ -234,9 +238,9 @@ describe("gc", () => {
         return s;
       }
     }
-    const blobs = new RacingBlobs(join(t.root, "blobs"));
+    const blobs = track(new RacingBlobs(join(t.root, "blobs")));
     const ref = await blobs.put(payload); // its old event was deleted by retention
-    old(blobs.pathFor(ref), 3);
+    await ageBlob(blobs, ref, 3);
     await gc({ index, blobs, config: t.config, env: t.env, judgeCacheDir: false });
     await racing;
     const [e] = await index.listEvents("s");
@@ -261,11 +265,11 @@ describe("gc", () => {
         return s;
       }
     }
-    const blobs = new RacingBlobs(join(t.root, "blobs"));
+    const blobs = track(new RacingBlobs(join(t.root, "blobs")));
     const ref = await blobs.put(payload);
     const gone = await blobs.put("nobody wants this");
-    old(blobs.pathFor(ref), 3);
-    old(blobs.pathFor(gone), 3);
+    await ageBlob(blobs, ref, 3);
+    await ageBlob(blobs, gone, 3);
     const r = await gc({ index, blobs, config: t.config, env: t.env, judgeCacheDir: false });
     assert.equal(r.blobs.skippedYoung, 1);
     assert.equal(r.blobs.deleted, 1);
@@ -277,7 +281,7 @@ describe("gc", () => {
 
   it("removes orphan temp files of interrupted blob writes older than minBlobAgeMs, and keeps fresh ones", async () => {
     const t = setup();
-    const blobs = new FsBlobStore(join(t.root, "blobs"));
+    const blobs = fsBlobs(join(t.root, "blobs"), { packMaxBytes: 0 }); // temp files belong to file blobs
     const ref = await blobs.put("anything");
     const shard = join(blobs.pathFor(ref), "..");
     const oldTmp = join(shard, `${"a".repeat(64)}.zst.123.abcd.tmp`);

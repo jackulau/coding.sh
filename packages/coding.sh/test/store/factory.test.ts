@@ -26,6 +26,7 @@ describe("openStores", () => {
     assert.ok(existsSync(join(c.home, "index.db")));
     assert.ok(existsSync(join(c.home, "blobs")));
     await index.close();
+    await blobs.close?.();
   });
 
   it("supports memory:// and built-in sinks", async () => {

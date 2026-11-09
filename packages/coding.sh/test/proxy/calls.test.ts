@@ -274,6 +274,7 @@ describe("CLI: show <call> and diff-calls", () => {
     } finally {
       await proxy.close();
       await stores.index.close();
+      await stores.blobs.close?.();
     }
   });
   after(() => rmSync(root, { recursive: true, force: true }));

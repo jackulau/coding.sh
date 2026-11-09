@@ -87,6 +87,7 @@ describe("show on a session the proxy and the hooks both captured", () => {
       }
     } finally {
       await stores.index.close();
+      await stores.blobs.close?.();
     }
   });
   after(() => rmSync(root, { recursive: true, force: true }));

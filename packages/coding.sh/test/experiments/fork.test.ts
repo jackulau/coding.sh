@@ -238,6 +238,7 @@ describe("CLI: replay --fork against a stub API", () => {
     } finally {
       await proxy.close();
       await stores.index.close();
+      await stores.blobs.close?.();
     }
     writeFileSync(join(proj, "CLAUDE.md"), "Run the tests with npm test.\n");
     writeFileSync(join(proj, "fixed.md"), "Run the tests with node --test.\n");

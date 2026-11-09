@@ -824,6 +824,7 @@ export function runProxyCallConformance(name: string, make: () => Promise<{ inde
           assert.deepEqual(left, []);
         }
       } finally {
+        if (!made.blobs) await blobs.close?.(); // the pack holds a file open, which Windows will not delete
         rmSync(home, { recursive: true, force: true });
         await close();
       }

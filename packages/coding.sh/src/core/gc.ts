@@ -86,6 +86,8 @@ export interface GcResult {
   judgeCache?: JudgeCacheGcResult;
   /** True when the index was compacted. */
   compacted?: boolean;
+  /** Small blob files moved into the blob store's pack by --compact (file store only). */
+  blobsPacked?: number;
   spool: {
     scanned: number;
     deleted: number;
@@ -99,6 +101,7 @@ type Stat = { size: number; mtimeMs: number };
 type DeleteIfOlder = (ref: BlobRef, opts: { olderThanMs: number; now?: number }) => Promise<number | "kept" | undefined>;
 type SweepTmp = (opts: { olderThanMs: number; now?: number; dryRun?: boolean }) => Promise<{ files: number; bytes: number }>;
 type StatFn = (ref: BlobRef) => Promise<Stat | undefined>;
+type CompactBlobs = () => Promise<{ packed: number }>;
 
 /** Optional capability: stores that can report blob age implement stat(ref). */
 function statOf(blobs: BlobStore): StatFn | undefined {
@@ -142,6 +145,8 @@ export async function gc(opts: GcOptions): Promise<GcResult> {
     await index.compact();
     result.compacted = true;
   }
+  const compactBlobs = (opts.blobs as BlobStore & { compact?: CompactBlobs }).compact;
+  if (opts.compact && !dryRun && typeof compactBlobs === "function") result.blobsPacked = (await compactBlobs.call(opts.blobs)).packed;
   return result;
 }
 

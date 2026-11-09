@@ -89,7 +89,7 @@ export async function openContext(opts: OpenContextOptions = {}): Promise<Contex
     async close() {
       if (closed) return;
       closed = true;
-      const results = await Promise.allSettled([...sinks.map((s) => s.close?.()), index.close()]);
+      const results = await Promise.allSettled([...sinks.map((s) => s.close?.()), index.close(), blobs.close?.()]);
       const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
       if (failed) throw failed.reason;
     },

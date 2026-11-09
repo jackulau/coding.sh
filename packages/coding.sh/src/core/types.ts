@@ -329,6 +329,8 @@ export interface BlobStore {
    * no index row that references a blob of the batch before `flush()` resolves.
    */
   batch?(): BlobBatch;
+  /** Releases open handles (the file store's pack database). The store stays usable: the next call opens them again. */
+  close?(): Promise<void>;
 }
 
 /** See BlobStore.batch. Reads through the batch see its unflushed puts. */

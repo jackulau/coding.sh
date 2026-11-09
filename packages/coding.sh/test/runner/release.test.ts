@@ -222,6 +222,7 @@ describe("CLI: compare --promote refuses across releases", () => {
       await stores.index.putBundle(claude.candidate);
       for (const r of arms(() => "2.1.316", () => "2.1.319")) await stores.index.putRun({ ...r, experimentId: "exp_release" });
       await stores.index.close();
+      await stores.blobs.close?.();
       const CLI = fileURLToPath(new URL("../../src/cli/main.ts", import.meta.url));
       const cli = (...extra: string[]) =>
         spawnSync(process.execPath, ["--no-warnings", CLI, "compare", "base", "cand", "--experiment", "exp_release", "--promote", ...extra], {

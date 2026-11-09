@@ -1,17 +1,30 @@
 import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
 import { after, describe, it } from "node:test";
 import { sha256Hex } from "../../src/core/ids.ts";
-import { FsBlobStore } from "../../src/store/fs-blobs.ts";
+import { FsBlobStore, PACK_FILE, PACK_MAX_BYTES, type FsBlobStoreOptions } from "../../src/store/fs-blobs.ts";
+import { blobPath } from "../../src/store/common.ts";
+import { ageBlob } from "./_blobs.ts";
 
 const root = mkdtempSync(join(tmpdir(), "csh-blobs-"));
-after(() => rmSync(root, { recursive: true, force: true }));
+const opened: FsBlobStore[] = [];
+after(async () => {
+  for (const s of opened) await s.close();
+  rmSync(root, { recursive: true, force: true });
+});
 let n = 0;
-const fresh = () => new FsBlobStore(join(root, `b${n++}`));
+const make = (opts?: FsBlobStoreOptions) => {
+  const s = new FsBlobStore(join(root, `b${n++}`), opts);
+  opened.push(s);
+  return s;
+};
+/** Every blob a file: the file-layout tests below. */
+const fresh = () => make({ packMaxBytes: 0 });
 
 describe("FsBlobStore", () => {
   it("stores zstd-compressed bytes at ab/cd/<sha>.zst", async () => {
@@ -177,11 +190,141 @@ describe("FsBlobStore", () => {
 
   it("works on a root that does not exist yet", async () => {
     const s = new FsBlobStore(join(root, "missing", "deep"));
+    opened.push(s);
     const listed: string[] = [];
     for await (const r of s.list()) listed.push(r);
     assert.deepEqual(listed, []);
     assert.equal(await s.size(), 0);
     await s.put("first");
     assert.ok(existsSync(s.root));
+  });
+});
+
+describe("FsBlobStore pack", () => {
+  /** Incompressible bytes: their zstd frame is about as big as they are. */
+  const noise = (bytes: number) => randomBytes(bytes);
+  const walk = (d: string): string[] => (existsSync(d) ? readdirSync(d, { recursive: true }).map(String) : []);
+
+  it("keeps a blob under one disk block in pack.db, and a larger one as a file", async () => {
+    const s = make();
+    const small = "a hook line's raw payload ".repeat(20);
+    const big = noise(PACK_MAX_BYTES + 100);
+    const [sr, br] = [await s.put(small), await s.put(big)];
+    assert.equal(sr, sha256Hex(small));
+    assert.ok(!existsSync(s.pathFor(sr)), "no file for the small blob");
+    assert.ok(existsSync(s.pathFor(br)), "the big one is a file");
+    assert.ok(existsSync(join(s.root, PACK_FILE)));
+    assert.equal(await s.getText(sr), small);
+    assert.deepEqual(Buffer.from((await s.get(br))!), big);
+    assert.deepEqual(await s.has([sr, br, sha256Hex("nope")]), [true, true, false]);
+    const listed: string[] = [];
+    for await (const r of s.list()) listed.push(r);
+    assert.deepEqual(listed.sort(), [sr, br].sort());
+    assert.equal(await s.size(), (await s.stat(sr))!.size + statSync(s.pathFor(br)).size);
+    // Highly compressible data well over a block still packs: the compressed size decides.
+    const log = "line 7 of the same output\n".repeat(2000);
+    const lr = await s.put(log);
+    assert.ok(!existsSync(s.pathFor(lr)));
+    assert.equal(await s.getText(lr), log);
+  });
+
+  it("a store with no pack reads, lists and sizes without creating one", async () => {
+    const s = make();
+    assert.equal(await s.get(sha256Hex("x")), undefined);
+    assert.deepEqual(await s.has([sha256Hex("x")]), [false]);
+    for await (const _ of s.list()) assert.fail("nothing to list");
+    assert.equal(await s.size(), 0);
+    assert.ok(!existsSync(join(s.root, PACK_FILE)));
+  });
+
+  it("reads a store written before the pack (every blob a file), and a re-put of a file blob writes nothing new", async () => {
+    const dir = join(root, `b${n++}`);
+    const before = new FsBlobStore(dir, { packMaxBytes: 0 });
+    const big = noise(5000);
+    const refs = [await before.put("old small blob"), await before.put(big)];
+    const now = new FsBlobStore(dir);
+    opened.push(now);
+    assert.equal(await now.getText(refs[0]!), "old small blob");
+    assert.deepEqual(Buffer.from((await now.get(refs[1]!))!), big);
+    assert.equal(await now.put(big), refs[1]);
+    const listed: string[] = [];
+    for await (const r of now.list()) listed.push(r);
+    assert.deepEqual(listed.sort(), [...refs].sort());
+  });
+
+  it("refreshes a row's mtime on a dedupe hit, and gc's deleteIfOlder keeps a row re-captured after its stat", async () => {
+    const s = make();
+    const ref = await s.put("x");
+    await ageBlob(s, ref, 10);
+    assert.ok(Date.now() - (await s.stat(ref))!.mtimeMs > 9 * 86_400_000);
+    await s.put("x");
+    assert.ok(Date.now() - (await s.stat(ref))!.mtimeMs < 60_000);
+    assert.equal(await s.deleteIfOlder(ref, { olderThanMs: 86_400_000 }), "kept");
+    await ageBlob(s, ref, 2);
+    const size = (await s.stat(ref))!.size;
+    assert.equal(await s.deleteIfOlder(ref, { olderThanMs: 86_400_000 }), size);
+    assert.equal(await s.get(ref), undefined);
+    assert.equal(await s.deleteIfOlder(ref, { olderThanMs: 86_400_000 }), undefined);
+  });
+
+  it("batch: small blobs are readable before the flush and land in one transaction on it", async () => {
+    const s = make();
+    const b = s.batch();
+    const texts = Array.from({ length: 200 }, (_, i) => `blob ${i}`);
+    const refs = await Promise.all(texts.map((t) => b.put(t)));
+    assert.equal(await b.getText(refs[7]!), texts[7]);
+    assert.deepEqual(await b.has([refs[3]!]), [true]);
+    assert.deepEqual(await s.has([refs[3]!]), [false], "nothing in the store before the flush");
+    await b.flush();
+    for (const [i, r] of refs.entries()) assert.equal(await s.getText(r), texts[i]);
+    assert.deepEqual(walk(s.root).filter((f) => f.endsWith(".zst") || f.endsWith(".tmp")), [], "no blob files");
+  });
+
+  it("a corrupt row reads as missing, and a re-put heals it", async () => {
+    const s = make();
+    const ref = await s.put("data to keep");
+    const { loadSqlite } = await import("../../src/store/sqlite-open.ts");
+    const { DatabaseSync } = await loadSqlite();
+    const db = new DatabaseSync(join(s.root, PACK_FILE));
+    db.prepare("UPDATE blobs SET data = ? WHERE ref = ?").run(zstdCompressSync(Buffer.from("other")), Buffer.from(ref, "hex"));
+    db.close();
+    assert.equal(await s.get(ref), undefined);
+    await s.put("data to keep");
+    assert.equal(await s.getText(ref), "data to keep");
+  });
+
+  it("delete removes a row; compact moves small file blobs in (keeping mtime) and leaves no deleted bytes in the pack or its WAL", async () => {
+    const dir = join(root, `b${n++}`);
+    const files = new FsBlobStore(dir, { packMaxBytes: 0 });
+    const secret = "sk-live-TOPSECRET-0123456789";
+    const oldRef = await files.put("written before the pack");
+    const big = noise(6000);
+    const bigRef = await files.put(big);
+    await ageBlob(files, oldRef, 5);
+    const s = new FsBlobStore(dir);
+    opened.push(s);
+    const gone = await s.put(`payload with ${secret} inside`);
+    await s.delete(gone);
+    assert.equal(await s.get(gone), undefined);
+    assert.deepEqual(await s.compact(), { packed: 1 });
+    assert.ok(!existsSync(s.pathFor(oldRef)), "the small file moved into the pack");
+    assert.ok(existsSync(s.pathFor(bigRef)), "a big one stays a file");
+    assert.equal(await s.getText(oldRef), "written before the pack");
+    assert.ok(Date.now() - (await s.stat(oldRef))!.mtimeMs > 4 * 86_400_000, "mtime kept");
+    for (const f of readdirSync(dir).filter((f) => f.startsWith(PACK_FILE))) {
+      assert.ok(!readFileSync(join(dir, f)).includes(secret), `${f} still holds the deleted bytes`);
+    }
+  });
+
+  it("compact never ages a row that a put refreshed: an old file of the same blob moves in under the newer mtime", async () => {
+    const dir = join(root, `b${n++}`);
+    const ref = await new FsBlobStore(dir, { packMaxBytes: 0 }).put("captured last week and again today");
+    utimesSync(join(dir, ...blobPath(ref)), new Date(Date.now() - 7 * 86_400_000), new Date(Date.now() - 7 * 86_400_000));
+    const t = new FsBlobStore(dir);
+    opened.push(t);
+    await t.put("captured last week and again today");
+    assert.deepEqual(await t.compact(), { packed: 1 });
+    assert.ok(!existsSync(t.pathFor(ref)));
+    assert.ok(Date.now() - (await t.stat(ref))!.mtimeMs < 60_000, "the put's mtime stands");
   });
 });

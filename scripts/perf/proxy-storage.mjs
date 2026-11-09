@@ -86,6 +86,7 @@ async function fromStore(home, session) {
     return calls;
   } finally {
     await index.close();
+    await blobs.close?.();
   }
 }
 
@@ -101,7 +102,8 @@ function filesUnder(dir) {
 
 async function recordAll(calls, blocks) {
   const root = join(tmp, blocks ? "blocks" : "whole");
-  const blobs = new FsBlobStore(join(root, "blobs"));
+  // Every blob a file, as before the pack, so the two formats compare file for file.
+  const blobs = new FsBlobStore(join(root, "blobs"), { packMaxBytes: 0 });
   const index = await SqliteIndexStore.open(join(root, "index.db"));
   const cfg = defaultConfig({});
   const rec = createRecorder({ blobs, redactor: createRedactor({ redact: cfg.capture.redact, patterns: [], env: {} }), metadata: false, prices: pricesFor({}), write: storeWriter(index), blocks });

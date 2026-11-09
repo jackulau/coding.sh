@@ -9,6 +9,10 @@ grouped by area, with links to the docs for the details.
 
 ## [0.1.5] - Unreleased
 
+### Changed
+
+- **Store.** A blob that compresses to under 4 KiB, such as a hook line's raw payload, is a row of one SQLite file, `blobs/pack.db`, instead of a file of its own; larger blobs stay files. On the 100k-event ingest benchmark the store takes 1.72 MB per 1,000 events instead of 5.51, and ingest runs at about 6,200 events/s instead of 1,700. Blob files written before still read, and `gc --compact` moves the small ones into the pack. A coding.sh older than 0.1.5 does not see packed blobs. [Storage](https://github.com/jackulau/coding.sh/blob/main/docs/design/architecture.md#efficiency), [Store ingest](https://github.com/jackulau/coding.sh/blob/main/docs/perf.md#store-ingest).
+
 ### Fixed
 
 - **Sessions.** `sessions --where id:<id>` and `export --where id:<id>` find a subagent's session, such as a Claude Code workflow agent's, as `show <id>` does. Both commands leave out subagents unless you pass `--subagents`, and that default hid every session the query named. A query with `id:`, `parent:`, `is:root` or `is:child` now decides that itself, so `--where is:child` lists subagents too. [Query and export](https://github.com/jackulau/coding.sh/blob/main/docs/reference/query.md#filter-with---where).

@@ -362,6 +362,8 @@ export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
       db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
       db.exec("VACUUM");
       db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+      // The file store's pack keeps deleted rows' bytes in free pages and its WAL until it is rewritten.
+      await (o.blobs as BlobStore & { compact?: () => Promise<unknown> }).compact?.();
       const ok = (db.prepare("PRAGMA integrity_check").get() as Row | undefined)?.integrity_check === "ok";
       result.integrity = ok && searchIndexOk(db);
     }

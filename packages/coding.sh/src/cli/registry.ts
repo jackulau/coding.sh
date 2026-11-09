@@ -1519,7 +1519,7 @@ export const COMMANDS: CommandSpec[] = [
     name: "gc",
     group: "Maintain",
     summary: "Delete expired spool files, blobs and judge cache",
-    flags: [{ name: "compact", type: "boolean", desc: "Also compact the index (VACUUM)" }, DRY_RUN],
+    flags: [{ name: "compact", type: "boolean", desc: "Also compact the index and the blob pack (VACUUM), and move small blob files into the pack" }, DRY_RUN],
     load: () => import("./commands/gc.ts"),
   },
   {

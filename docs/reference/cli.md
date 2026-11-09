@@ -2759,7 +2759,7 @@ coding.sh gc [options]
 
 | Option | Default | Description |
 |---|---|---|
-| `--compact` |  | Also compact the index (VACUUM) |
+| `--compact` |  | Also compact the index and the blob pack (VACUUM), and move small blob files into the pack. |
 | `--dry-run` |  | Show the exact changes without writing anything. |
 
 ## `coding.sh purge`

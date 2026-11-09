@@ -71,7 +71,8 @@ export class WorkflowStore {
 
   constructor(root: string) {
     this.root = root;
-    this.blobs = new FsBlobStore(join(root, "blobs"));
+    // Every blob a file (no pack database): nothing is held open between calls, and there is no close().
+    this.blobs = new FsBlobStore(join(root, "blobs"), { packMaxBytes: 0 });
   }
 
   static forEnv(env: NodeJS.ProcessEnv = process.env): WorkflowStore {

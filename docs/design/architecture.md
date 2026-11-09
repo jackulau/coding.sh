@@ -110,7 +110,7 @@ Two stores with different shapes:
 | Holds | sessions, turns, events, evals, runs, harness bundles, labels | transcripts, tool results, file contents, diffs, raw API bodies |
 | Shape | small rows, queried and filtered | large, immutable, write-once |
 | Key | ids | `sha256` of uncompressed content |
-| Default | SQLite (`node:sqlite`, WAL, FTS5) | `~/.coding.sh/blobs/ab/cd/<sha256>.zst` |
+| Default | SQLite (`node:sqlite`, WAL, FTS5) | `~/.coding.sh/blobs/pack.db` under 4 KiB compressed, else `~/.coding.sh/blobs/ab/cd/<sha256>.zst` |
 
 ### Interfaces
 
@@ -153,8 +153,13 @@ interface Sink {                                          // write-only mirror (
   with a small JSON `payload`. Anything over 4 KB becomes a blob ref. This keeps the index small
   enough to scan.
 - Blobs are content-addressed, so a file read 50 times, or the same CLAUDE.md in 1,000 sessions, is
-  stored once. They are compressed with zstd (`node:zlib`) at level 3 for writes and level 19 for
-  `coding.sh gc --compact`.
+  stored once. They are compressed with zstd (`node:zlib`) at level 3.
+- A blob whose compressed form is under 4 KiB, such as a hook line's raw payload, is a row of
+  `blobs/pack.db` (SQLite, WAL, `synchronous=FULL`); a larger one is a file of its own. A file costs
+  a whole disk block, a temp file, a rename and two fsyncs, and most blobs are a few hundred bytes.
+  An ingest checkpoint writes its pack rows in one transaction. Reads look in the pack and then for
+  a file, so a store written before the pack reads as it did; `coding.sh gc --compact` moves its
+  small blob files into the pack.
 - Raw spool lines are not kept after normalization. The adapter's raw payload is kept as a blob for
   re-normalization when the schema version changes.
 - `coding.sh gc`: mark-and-sweep of unreferenced blobs, plus retention rules (for example, drop

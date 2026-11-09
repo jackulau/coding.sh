@@ -149,6 +149,41 @@ DESK_DIR=coding-sh-perf .claude/bin/desk run \
   "node scripts/dogfood/bench.mjs ingest --baseline /root/dist-baseline --pairs 8"
 ```
 
+### Small blobs in a pack
+
+The two changes above left ingest at about 1,700 events/s and the store at 5.5 MB per 1,000
+events, against budgets of 5,000 and 2. A profile of the 100k-event benchmark corpus showed both
+had one cause: every hook line's raw payload is a blob, so the corpus wrote 100,000 blob files.
+Each compresses to about 200 bytes but takes a whole 4 KiB disk block, so 410 MB of the 552 MB
+store was blob files that held about 20 MB. Each also cost a temp file, a rename and directory
+fsyncs, and that file work, not parsing or the index, was most of the ingest time.
+
+A blob that compresses to under 4 KiB is now a row of `blobs/pack.db`, a SQLite file (WAL,
+`synchronous=FULL`, `fullfsync` on macOS, so a put that returns is on disk as a file was). An
+ingest checkpoint writes its rows in one transaction. Larger blobs stay files. Reads look in the
+pack, then for a file, so a store written before reads as it did; `gc --compact` moves its small
+blob files into the pack, and `purge` and `gc --compact` rewrite the pack (VACUUM) so a deleted
+row leaves no bytes behind. Nothing else about what is stored changes: the same blobs, refs and
+index rows.
+
+Paired on the desk (`bench.mjs ingest store --baseline`, 8 interleaved pairs, a 100k-event corpus,
+32 cores, load average 7 at the start, falling to 2 by the end):
+
+| | origin/main | pack | |
+| --- | --- | --- | --- |
+| Ingest | 1,688 events/s (59.4 s) | 6,195 events/s (16.2 s) | +4,507 events/s, 95% CI [4,443, 4,618] |
+| Store size | 5.51 MB / 1k events | 1.72 MB / 1k events | same bytes every run |
+| Index | 142.6 MB | 142.6 MB | unchanged |
+| Blobs | 409.6 MB in 100,000 files | 30.2 MB in one file | |
+
+An earlier run on a quieter desk (load 0.3 to 1.4), before a one-line change to how the pack keeps
+a row's mtime, gave +4,525 events/s, 95% CI [4,487, 4,579], and the same store sizes.
+
+The store is now mostly the index (1.43 MB per 1,000 events). The largest part left there is
+`search_extra`, which copies each `tool.end` output for full-text search (22.6 MB of the 142.6).
+The other costs the profile showed are small next to the file work: a new zstd context per blob
+(about 1 s per 100k blobs) and the index's commit.
+
 ## Long sessions
 
 [scripts/perf/longrun.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/longrun.mjs) generates a synthetic 12-hour Claude Code session with no

@@ -201,6 +201,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
       }
     } catch (e) {
       await index.close().catch(() => {});
+      await blobs.close?.().catch(() => {});
       throw e;
     }
     queue.start();
@@ -424,6 +425,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
     if (lockTimer) clearTimeout(lockTimer);
     await lock?.release().catch(() => {});
     await index.close().catch(() => {});
+    await blobs.close?.().catch(() => {});
     throw e;
   }
   const addr = server.address() as AddressInfo;
@@ -473,7 +475,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
         await closed;
         await lock?.release().catch(() => {});
         await index.close().catch((e: Error) => log.error("closing the store failed", { error: e.message }));
-        await (blobs as BlobStore & { close?: () => Promise<void> }).close?.().catch(() => {});
+        await blobs.close?.().catch(() => {});
         metrics.close();
         log.info("stopped", { drained });
         return { drained };

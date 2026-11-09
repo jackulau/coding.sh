@@ -2,7 +2,7 @@
 // costs about its own size in blobs, the exact redacted body reads back, old
 // whole-body documents still read, and gc and purge follow the blocks.
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, utimesSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
@@ -15,12 +15,16 @@ import { loadCall } from "../../src/proxy/calls.ts";
 import { type CapturedCall, createRecorder, storeWriter } from "../../src/proxy/record.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
 import { FsBlobStore } from "../../src/store/fs-blobs.ts";
+import { ageBlob, closeBlobs, fsBlobs } from "../store/_blobs.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { purgeLiterals } from "../../src/store/purge.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 
 const roots: string[] = [];
-after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
+after(async () => {
+  await closeBlobs();
+  roots.forEach((r) => rmSync(r, { recursive: true, force: true }));
+});
 const tmp = () => {
   const d = mkdtempSync(join(tmpdir(), "csh-blocks-"));
   roots.push(d);
@@ -177,13 +181,12 @@ describe("proxy request blocks", () => {
   it("gc keeps every page and message blob of a stored request and sweeps them with the session", async () => {
     const root = tmp();
     const env = { CODING_SH_HOME: join(root, "home"), HOME: root };
-    const blobs = new FsBlobStore(join(root, "blobs"));
+    const blobs = fsBlobs(join(root, "blobs"));
     const index = new MemoryIndexStore();
     const events = await record(blobs, index, 40);
     const all: string[] = [];
     for await (const ref of blobs.list()) all.push(ref);
-    const past = new Date(Date.now() - 3 * 86_400_000);
-    for (const ref of all) utimesSync(blobs.pathFor(ref), past, past);
+    for (const ref of all) await ageBlob(blobs, ref, 3);
     const nested = await requestBlobRefs(blobs, events.at(-1)!.payload.requestRef as string, new Set());
     assert.ok(nested.length >= 4 && nested.every((r) => !events.at(-1)!.blobs?.includes(r)), "blocks are reachable only through the document");
 
@@ -198,7 +201,7 @@ describe("proxy request blocks", () => {
 
   it("purge rewrites a literal inside a message block, and the request still reads back", async () => {
     const root = tmp();
-    const blobs = new FsBlobStore(join(root, "blobs"));
+    const blobs = fsBlobs(join(root, "blobs"));
     const dbPath = join(root, "index.db");
     const index = await SqliteIndexStore.open(dbPath);
     const events = await record(blobs, index, 30);
