@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   test:
-    name: node ${{ matrix.node }} / ${{ matrix.os }}
+    name: node ${{ matrix.node }} / ${{ matrix.os }}${{ matrix.of > 1 && format(' ({0}/{1})', matrix.shard, matrix.of) || '' }}
     # Linux legs of trusted runs (push to main, manual) use a self-hosted desk
     # runner, either one, so they never wait behind Site perf. Pull requests,
     # including forks, stay on GitHub-hosted runners: they are free for public
@@ -24,9 +24,23 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      # The test files split across `of` jobs (node --test-shard) so no leg runs much past
+      # 5 minutes: hosted macOS takes about 10 minutes for the whole suite, Linux on the
+      # desk about 2. Shard 1 also runs the typecheck, the build and the other checks.
       matrix:
         os: [ubuntu-latest, macos-latest]
         node: [22.x, 24.x]
+        shard: [1, 2, 3]
+        exclude:
+          - os: ubuntu-latest
+            shard: 2
+          - os: ubuntu-latest
+            shard: 3
+        include:
+          - os: ubuntu-latest
+            of: 1
+          - os: macos-latest
+            of: 3
     steps:
       - uses: actions/checkout@v5
 
@@ -60,6 +74,7 @@ jobs:
           echo "chrome-path=${last#* }" >> "$GITHUB_OUTPUT"
 
       - name: Typecheck
+        if: matrix.shard == 1
         working-directory: packages/coding.sh
         run: npx tsc -p tsconfig.json --noEmit
 
@@ -67,18 +82,22 @@ jobs:
         working-directory: packages/coding.sh
         env:
           CODING_SH_TEST_CHROME: ${{ steps.chrome.outputs.chrome-path || (runner.os == 'Linux' && '/usr/bin/google-chrome' || '') }}
-        run: npm test
+          SHARD: ${{ matrix.shard }}/${{ matrix.of }}
+        run: node --no-warnings --test --test-shard="$SHARD" 'test/**/*.test.ts'
 
       # The SDK's golden test builds sessions with coding.sh's core, so a core change can break it.
       - name: SDK typecheck and test
+        if: matrix.shard == 1
         working-directory: packages/sdk
         run: npm run check
 
       - name: Build
+        if: matrix.shard == 1
         working-directory: packages/coding.sh
         run: npm run build
 
       - name: Smoke test the bundle
+        if: matrix.shard == 1
         working-directory: packages/coding.sh
         env:
           NO_UPDATE_NOTIFIER: "1"
@@ -87,14 +106,17 @@ jobs:
           node dist/cli.mjs --help > /dev/null
 
       - name: Package contents
+        if: matrix.shard == 1
         working-directory: packages/coding.sh
         run: npm pack --dry-run
 
       - name: Site build
+        if: matrix.shard == 1
         working-directory: apps/site
         run: npm run build
 
       - name: Site check
+        if: matrix.shard == 1
         working-directory: apps/site
         run: npm run check
 
@@ -255,14 +277,17 @@ jobs:
         run: node deploy/test/smoke.mjs compose coding-sh:smoke deploy/compose/compose.clickhouse.yml
 
   windows:
-    name: node ${{ matrix.node }} / windows-latest
+    name: node ${{ matrix.node }} / windows-latest (${{ matrix.shard }}/4)
     # Always GitHub-hosted: the self-hosted desk runner is Linux only.
     runs-on: windows-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      # Four shards (node --test-shard): the whole suite takes about 12 minutes on hosted
+      # Windows. Shard 1 also runs the typecheck, the build and the installer.
       matrix:
         node: [22.x, 24.x]
+        shard: [1, 2, 3, 4]
     defaults:
       run:
         # bash (Git for Windows) keeps the quoted test glob and /dev/null the same as on Linux.
@@ -285,18 +310,23 @@ jobs:
         run: npm ci
 
       - name: Typecheck
+        if: matrix.shard == 1
         working-directory: packages/coding.sh
         run: npx tsc -p tsconfig.json --noEmit
 
       - name: Test
         working-directory: packages/coding.sh
-        run: node --no-warnings --test 'test/**/*.test.ts'
+        env:
+          SHARD: ${{ matrix.shard }}/4
+        run: node --no-warnings --test --test-shard="$SHARD" 'test/**/*.test.ts'
 
       - name: Build
+        if: matrix.shard == 1
         working-directory: packages/coding.sh
         run: npm run build
 
       - name: Smoke test the bundle
+        if: matrix.shard == 1
         working-directory: packages/coding.sh
         env:
           NO_UPDATE_NOTIFIER: "1"
@@ -306,6 +336,7 @@ jobs:
 
       # install.sh in Git Bash, into a throwaway npm prefix and home, then init + doctor.
       - name: Installer (Git Bash)
+        if: matrix.shard == 1
         env:
           CODING_SH_YES: "1"
           CODING_SH_NO_UI: "1"
