@@ -8,7 +8,7 @@ import { join } from "node:path";
 import type { BlobStore } from "../../core/types.ts";
 import { parsePatch } from "../../eval/patch.ts";
 import { commandEnv, execFileTail, sh } from "../../runner/exec.ts";
-import type { SeededBug } from "../types.ts";
+import type { SeededBug, WorkflowCase } from "../types.ts";
 
 export interface BugSpec {
   id: string;
@@ -118,4 +118,29 @@ export async function validateSeededTree(o: { dir: string; bugs: BugSpec[]; time
     out.push(v);
   }
   return out;
+}
+
+/**
+ * Validates a seeded-bugs case before use (docs/design/workflows.md §5): on its seeded snapshot
+ * (`start.snapshot`), each bug with a test must fail there and pass with its own patch reverted.
+ * undefined when there is nothing to validate: another truth kind, no snapshot, or no bug with a test.
+ */
+export async function validateCase(
+  kase: WorkflowCase,
+  getText: (ref: string) => Promise<string | undefined>,
+  o: { timeoutMs?: number } = {},
+): Promise<BugValidation[] | undefined> {
+  if (kase.truth.kind !== "seeded-bugs" || !kase.start?.snapshot) return undefined;
+  const testable = kase.truth.bugs.filter((b) => b.test);
+  if (!testable.length) return undefined;
+  const specs: BugSpec[] = [];
+  const missing: BugValidation[] = [];
+  for (const b of testable) {
+    const patch = b.patch ? await getText(b.patch) : undefined;
+    if (!patch) missing.push({ id: b.id, failsSeeded: false, passesReverted: false, ok: false, error: "no patch to revert" });
+    else specs.push({ id: b.id, patch, category: b.category, severity: b.severity, test: b.test! });
+  }
+  const checked = await validateSeededTree({ dir: kase.start.snapshot, bugs: specs, ...(o.timeoutMs !== undefined ? { timeoutMs: o.timeoutMs } : {}) });
+  const byId = new Map([...checked, ...missing].map((v) => [v.id, v]));
+  return testable.map((b) => byId.get(b.id)!);
 }

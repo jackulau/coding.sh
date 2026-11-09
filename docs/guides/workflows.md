@@ -25,6 +25,13 @@ resumed run, and cost per phase. An agent you stopped (Claude Code writes "[Requ
 user]" into its transcript) shows as `cancelled`, and one a resume ran again under the same label
 shows as `superseded`. `show` and `stats` list both apart from failures.
 
+`coding.sh ui` shows the same runs at `#/workflows`. A run's page draws one bar per agent, grouped
+by phase, with the critical path outlined, idle time at barriers shaded, and a strip of how many
+agents ran at once against the cap. A bar links to that agent's session. A side panel shows time
+and cost per phase and the metrics `stats` prints. On a phone the page opens as a table. The page
+reads the documents `workflows show --json` and `show --gantt --json` print, from
+`/api/workflows/<run>` and `/api/workflows/<run>/gantt`.
+
 ## Cases
 
 A case is one input to the workflow with a known answer. Cases live in
@@ -45,6 +52,52 @@ bug when it names the same file and a line within 5 of the bug's lines (`--slack
 is the F1 of its findings against the bugs. `coding.sh workflows score <run> --case seeded-1` scores
 one run by hand.
 
+A `[start]` table names the tree the workflow works on. Paths are relative to the case file. The
+truth file may not sit inside `repoRoot` or `snapshot`, because the workflow's agents could read
+it there; the case fails to load if it does. Keep it in `hidden/` next to `cases/`.
+
+```toml
+[start]
+repoRoot = "../../../.."
+snapshot = "/tmp/seeded-1"       # the clean tree with the bugs applied
+```
+
+When a case has a snapshot and its bugs have a `test`, `workflows run` checks each bug before any
+run starts: the test must fail on the snapshot and pass with the bug's patch reverted. A bug that
+fails the check stops the run with the case and bug named. `--no-validate` skips the check.
+
+For a fix workflow, the truth is a verifier. `command = "npm test"` scores 1 when it exits 0 and 0
+otherwise. Named tests score the share that pass, and a test marked `before = "pass"` that fails
+after the run is reported as a regression:
+
+```toml
+[truth]
+kind = "verifier"
+[[truth.tests]]
+id = "orders"
+command = "node --test test/orders.test.ts"
+before = "fail"                  # the bug the workflow should fix
+[[truth.tests]]
+id = "cart"
+command = "node --test test/cart.test.ts"
+before = "pass"                  # failing after the run is a regression
+```
+
+The commands run in the current directory with `CODING_SH_WORKFLOW_RUN_ID` set.
+
+For a synthesis or research workflow, the truth is a rubric graded by an LLM judge:
+
+```toml
+[truth]
+kind = "judge"
+rubric = "Names the three sources and the one claim they disagree on."
+judge = "anthropic"              # or "<provider>:<model>", or a table like a grader's
+```
+
+The score is the judge's. It is marked uncalibrated, and `score` warns, until that exact judge
+version has a calibration from `coding.sh judge calibrate`. `workflows run` scores every case kind
+the same way `score` does.
+
 ## Run an experiment
 
 ```sh
@@ -53,7 +106,8 @@ coding.sh workflows run review -v base=wf/review.js -v cand=wf/review-v2.js -k 3
 
 Each `-v` is a variant: a name and a script for the Claude Code driver, or a name and a command for
 `--driver command`. A command gets `--args <json>`, runs with `CODING_SH_WORKFLOW_RUN_ID` set, and
-prints its output as JSON. `-k` runs each case that many times per variant. Attempts alternate
+prints its output as JSON. The verifier and judge cases above cost their commands' time and the
+judge's tokens per run. `-k` runs each case that many times per variant. Attempts alternate
 between variants (base, cand, base, cand, …) so a slow afternoon or a rate limit hits both alike.
 One job runs at a time by default, because a workflow already fans out.
 
@@ -136,6 +190,17 @@ A variant in an experiment can resume too:
 coding.sh workflows run review \
   -v '{"name":"control","script":"wf/review.js","resumeFromRunId":"<run>"}' \
   -v '{"name":"cand","script":"wf/review-v2.js","resumeFromRunId":"<run>"}'
+```
+
+A command-driver variant can fork the same way, when the program supports it. A variant with
+`fromCheckpoint` gets `--from-checkpoint <id>` after `--args` (for example a LangGraph fork from a
+stored checkpoint), and one with `replayFrom` gets `--replay-from <node>`. The program decides what
+the flags mean; coding.sh only passes them:
+
+```sh
+coding.sh workflows run graph --driver command \
+  -v '{"name":"control","command":["node","app.mjs"],"fromCheckpoint":"<checkpoint>"}' \
+  -v '{"name":"cand","command":["node","app-v2.mjs"],"fromCheckpoint":"<checkpoint>"}'
 ```
 
 A replay keeps the upstream outputs fixed, so it understates how much results vary. Replay three or

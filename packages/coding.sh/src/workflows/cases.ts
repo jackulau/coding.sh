@@ -12,12 +12,18 @@
 //   id = "b1"  file = "src/a.ts"  lines = [10, 12]  category = "logic"  severity = "P1"
 //   patch = "bugs/b1.patch"          # path relative to the case file
 //
-// verifier: kind = "verifier", command = "npm test"; judge: kind = "judge", rubric, judge.
+//   [start]                          # optional: the tree the workflow works on
+//   repoRoot = "../../../.."  snapshot = "/tmp/seeded-1"   # truth.file may not sit inside either
+//
+// verifier (Fix workflows): kind = "verifier", command = "npm test", or named tests:
+//   [[truth.tests]]
+//   id = "orders"  command = "node --test test/orders.test.ts"  before = "pass"   # failing now = regression
+// judge (synthesis / research): kind = "judge", rubric = "…", judge = "anthropic" | "<provider>:<model>" | '{json}'.
 import { readdir, readFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { BlobStore } from "../core/types.ts";
 import { parseToml, type TomlTable } from "../core/toml.ts";
-import type { SeededBug, WorkflowCase, WorkflowTruth } from "./types.ts";
+import type { SeededBug, VerifierTest, WorkflowCase, WorkflowTruth } from "./types.ts";
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const SEVERITIES = new Set(["P0", "P1", "P2"]);
@@ -59,6 +65,29 @@ async function parseBugs(list: unknown, baseDir: string, blobs: Pick<BlobStore, 
   return out;
 }
 
+/** [[truth.tests]]: {id, command, before?}; undefined when absent. */
+function parseTests(list: unknown, where: string): VerifierTest[] | undefined {
+  if (list === undefined) return undefined;
+  if (!Array.isArray(list) || !list.length) throw new Error(`${where}: truth.tests must be a non-empty array of tables`);
+  const seen = new Set<string>();
+  return list.map((x, i) => {
+    if (!isObj(x) || typeof x.command !== "string" || !x.command.trim()) throw new Error(`${where}: test ${i + 1} needs a command`);
+    const id = typeof x.id === "string" && x.id ? x.id : `test-${i + 1}`;
+    if (seen.has(id)) throw new Error(`${where}: test id ${JSON.stringify(id)} is used twice`);
+    seen.add(id);
+    if (x.before !== undefined && x.before !== "pass" && x.before !== "fail") throw new Error(`${where}: test ${id}: before must be "pass" or "fail"`);
+    const t: VerifierTest = { id, command: x.command };
+    if (x.before === "pass" || x.before === "fail") t.before = x.before;
+    return t;
+  });
+}
+
+/** `p` is `dir` or below it (after resolving both). */
+function isInside(p: string, dir: string): boolean {
+  const r = relative(resolve(dir), resolve(p));
+  return r === "" || (r !== ".." && !r.startsWith(`..${sep}`) && !isAbsolute(r));
+}
+
 export async function parseCase(text: string, file: string, workflow: string, blobs: Pick<BlobStore, "put">): Promise<WorkflowCase> {
   const t: TomlTable = parseToml(text, file);
   const baseDir = dirname(file);
@@ -73,17 +102,23 @@ export async function parseCase(text: string, file: string, workflow: string, bl
   }
   const tr = isObj(t.truth) ? t.truth : {};
   let truth: WorkflowTruth;
+  let truthFile: string | undefined;
   const kind = typeof tr.kind === "string" ? tr.kind : "seeded-bugs";
   if (kind === "verifier") {
-    if (typeof tr.command !== "string") throw new Error(`${file}: truth.command is required for kind = "verifier"`);
-    truth = { kind: "verifier", command: tr.command };
+    const tests = parseTests(tr.tests, file);
+    if (typeof tr.command !== "string" && !tests) throw new Error(`${file}: truth.command or [[truth.tests]] is required for kind = "verifier"`);
+    if (typeof tr.command === "string" && tests) throw new Error(`${file}: use truth.command or [[truth.tests]], not both`);
+    truth = { kind: "verifier", ...(typeof tr.command === "string" ? { command: tr.command } : {}), ...(tests ? { tests } : {}) };
   } else if (kind === "judge") {
-    truth = { kind: "judge", rubric: typeof tr.rubric === "string" ? tr.rubric : "", judge: typeof tr.judge === "string" ? tr.judge : "" };
+    if (typeof tr.rubric !== "string" || !tr.rubric.trim()) throw new Error(`${file}: truth.rubric is required for kind = "judge"`);
+    const judge = typeof tr.judge === "string" ? tr.judge : isObj(tr.judge) ? JSON.stringify(tr.judge) : "anthropic";
+    truth = { kind: "judge", rubric: tr.rubric, judge };
   } else if (kind === "seeded-bugs") {
     let list: unknown = tr.bugs;
     let listBase = baseDir;
     if (typeof tr.file === "string") {
       const p = isAbsolute(tr.file) ? tr.file : resolve(baseDir, tr.file);
+      truthFile = p;
       const v = JSON.parse(await readFile(p, "utf8")) as unknown;
       list = Array.isArray(v) ? v : isObj(v) ? v.bugs : undefined;
       listBase = dirname(p);
@@ -94,7 +129,12 @@ export async function parseCase(text: string, file: string, workflow: string, bl
   }
   const c: WorkflowCase = { id, workflow, split: t.split === "heldout" ? "heldout" : "dev", args, truth };
   if (isObj(t.start) && typeof t.start.repoRoot === "string") {
-    c.start = { repoRoot: t.start.repoRoot, snapshot: typeof t.start.snapshot === "string" ? t.start.snapshot : "", head: typeof t.start.head === "string" ? t.start.head : "" };
+    const at = (p: unknown) => (typeof p === "string" && p ? (isAbsolute(p) ? p : resolve(baseDir, p)) : "");
+    c.start = { repoRoot: at(t.start.repoRoot), snapshot: at(t.start.snapshot), head: typeof t.start.head === "string" ? t.start.head : "" };
+    // The truth is hidden from the workflow: a truth file inside the tree it works on could be read by its agents.
+    for (const tree of [c.start.repoRoot, c.start.snapshot]) {
+      if (truthFile && tree && isInside(truthFile, tree)) throw new Error(`${file}: truth.file ${JSON.stringify(t.truth && isObj(t.truth) ? t.truth.file : "")} is inside the workflow's tree ${tree}; keep it outside, e.g. in hidden/ next to cases/`);
+    }
   }
   if (typeof t.threshold === "number") c.threshold = t.threshold;
   return c;

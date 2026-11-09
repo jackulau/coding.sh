@@ -70,6 +70,7 @@ export const WORKFLOWS_COMMAND: CommandSpec = {
         { name: "split", type: "string", value: "<SPLIT>", choices: ["dev", "heldout"], desc: "Only cases in this split" },
         { name: "driver", type: "string", value: "<DRIVER>", choices: ["claude", "command"], desc: "How a variant runs", default: "claude" },
         { name: "concurrency", short: "j", type: "number", value: "<N>", desc: "Jobs at once (a workflow already fans out)", default: "1" },
+        { name: "validate", type: "boolean", desc: "Check seeded bugs on each case's snapshot first: each bug's test fails, and passes with the bug reverted (--no-validate to skip)", default: "true" },
         ...durableFlags("workflow experiment"),
         BIN,
         YES,

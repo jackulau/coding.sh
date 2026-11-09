@@ -11,7 +11,7 @@ import { Output } from "../../src/cli/output.ts";
 import { WORKFLOWS_COMMAND } from "../../src/workflows/cli-spec.ts";
 import type { WorkflowNode } from "../../src/workflows/types.ts";
 import { nodeBin } from "../_bin.ts";
-import { RESUMED, RUN, RUN_OUTPUT, SCRIPT, SID, writeClaudeWorkflowFixture, writeReviewCases } from "./_fixtures.ts";
+import { BUG_PATCH, RESUMED, RUN, RUN_OUTPUT, SCRIPT, SID, writeClaudeWorkflowFixture, writeReviewCases } from "./_fixtures.ts";
 
 let root = "";
 let env: NodeJS.ProcessEnv = {};
@@ -157,6 +157,41 @@ describe("coding.sh workflows", () => {
     await assert.rejects(cli("score", [RUN], { case: "x", cases: join(root, "none") }), /Can't read cases/);
   });
 
+  it("score runs named verifier tests and grades judge cases, flagging an uncalibrated judge", async () => {
+    const dir = join(root, "cases-more");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "fix-1.toml"), `[truth]\nkind = "verifier"\n[[truth.tests]]\nid = "ok"\ncommand = "true"\nbefore = "fail"\n[[truth.tests]]\nid = "broke"\ncommand = "exit 2"\nbefore = "pass"\n`);
+    writeFileSync(join(dir, "synth-1.toml"), `[truth]\nkind = "judge"\nrubric = "Names every seeded bug."\njudge = "mock"\n`);
+    const v = await json("score", [RUN], { case: "fix-1", cases: dir });
+    assert.deepEqual([v.kind, v.score, v.verifier.regressions], ["verifier", 0.5, ["broke"]]);
+    const human = await cli("score", [RUN], { case: "fix-1", cases: dir });
+    assert.match(human.stdout, /TEST\tRESULT\tBEFORE\tEXIT\nok\tpass\tfail\t0\nbroke\tregression\tpass\t2/);
+    assert.match(human.stderr, /✗ Pass rate +1 of 2 \(50%\), 1 regression: broke/);
+    const j = await json("score", [RUN], { case: "synth-1", cases: dir });
+    assert.deepEqual([j.kind, j.score, j.judge.pass, j.judge.uncalibrated], ["judge", 1, true, true]);
+    const jh = await cli("score", [RUN], { case: "synth-1", cases: dir });
+    assert.match(jh.stderr, /Judge +workflow-review@\S+: pass/);
+    assert.match(jh.stderr, /Uncalibrated judge \(uncalibrated: never calibrated[^)]*\); calibrate it with coding\.sh judge calibrate/);
+  });
+
+  it("run checks seeded bugs on each case's snapshot first, unless --no-validate", async () => {
+    const dir = join(root, "cases-seeded");
+    const snap = join(root, "snapshot");
+    mkdirSync(join(dir, "bugs"), { recursive: true });
+    mkdirSync(join(snap, "src"), { recursive: true });
+    writeFileSync(join(snap, "src", "a.ts"), "export function last(xs: number[]) {\n  return xs[xs.length];\n}\n");
+    writeFileSync(join(dir, "bugs", "b1.patch"), BUG_PATCH);
+    const kase = (test: string) => `[start]\nrepoRoot = "${snap.replaceAll("\\", "/")}"\nsnapshot = "${snap.replaceAll("\\", "/")}"\n[[truth.bugs]]\nid = "b1"\nfile = "src/a.ts"\nlines = [2, 2]\ncategory = "logic"\nseverity = "P0"\npatch = "bugs/b1.patch"\ntest = "${test}"\n`;
+    writeFileSync(join(dir, "s1.toml"), kase("true"));
+    const flags = { driver: "command", variant: [`good=node ${join(root, "fake-wf.mjs")} good`], cases: dir, yes: true };
+    await assert.rejects(cli("run", ["review"], flags), (e: Error & { reason?: string }) => e.reason === "invalid_cases" && /1 seeded bug failed validation/.test(e.message));
+    assert.equal((await cli("run", ["review"], { ...flags, validate: false })).code, 0);
+    writeFileSync(join(dir, "s1.toml"), kase("grep -q 'xs.length - 1' src/a.ts"));
+    const ok = await cli("run", ["review"], flags);
+    assert.equal(ok.code, 0);
+    assert.match(ok.stderr, /Validated 1 seeded bug/);
+  });
+
   let experimentId = "";
 
   it("run asks before spending above the threshold, then runs the experiment", async () => {
@@ -174,7 +209,8 @@ describe("coding.sh workflows", () => {
     assert.equal(doc.runs.length, 4);
     const goodSeeded = doc.runs.find((r: { variant: string; caseId: string }) => r.variant === "good" && r.caseId === "seeded-1");
     assert.ok(Math.abs(goodSeeded.score - 0.8) < 1e-9);
-    assert.equal(doc.runs.find((r: { caseId: string }) => r.caseId === "verify-1").score, null);
+    // Verifier cases are scored during the run too, as `workflows score` grades them.
+    assert.equal(doc.runs.find((r: { caseId: string }) => r.caseId === "verify-1").score, 1);
     // Under the threshold no confirmation is needed.
     const cheap = await cli("run", ["review"], flags, { env: { CODING_SH_CONFIRM_ABOVE_USD: "100" } });
     assert.equal(cheap.code, 0);
@@ -188,12 +224,12 @@ describe("coding.sh workflows", () => {
   it("compare reports the paired comparison", async () => {
     const doc = await json("compare", [experimentId], { baseline: "bad", candidate: "good" });
     assert.equal(doc.experimentId, experimentId);
-    assert.equal(doc.pairedCases, 1);
-    assert.equal(doc.quality.candidate, 0.8);
+    assert.equal(doc.pairedCases, 2);
+    assert.ok(Math.abs(doc.quality.candidate - 0.9) < 1e-9);
     const human = await cli("compare", [experimentId], { baseline: "bad", candidate: "good" });
     assert.match(human.stdout.split("\n")[0]!, /^(inconclusive|no significant difference|candidate)/);
     assert.match(human.stdout, /METRIC\tBAD\tGOOD\tDIFF \[CI\]\tPAIRS/);
-    assert.match(human.stdout, /quality\t0\.000\t0\.800/);
+    assert.match(human.stdout, /quality\t0\.500\t0\.900/);
     await assert.rejects(cli("compare", [experimentId], { baseline: "bad", candidate: "zzz" }), /no variant "zzz"/);
     await assert.rejects(cli("compare", ["wfx_none"], { baseline: "a", candidate: "b" }), /Can't find workflow experiment/);
     await assert.rejects(cli("compare", [experimentId], {}), /--baseline/);
@@ -203,14 +239,16 @@ describe("coding.sh workflows", () => {
     const flags = { baseline: "bad", candidate: "good", seed: 1 };
     const doc = await json("compare", [experimentId], { ...flags, select: "pareto" });
     const good = doc.pareto.find((p: { variant: string }) => p.variant === "good");
-    // good scores 0.8 against bad's 0: no draw puts bad above it.
+    // good scores 0.8 and 1 against bad's 0 and 1: no draw puts bad above it.
     assert.equal(good.pFront, 1);
     assert.equal(doc.deployment.rule.kind, "pareto");
     assert.ok(doc.deployment.picked.includes("good"), JSON.stringify(doc.deployment));
     assert.ok(Array.isArray(doc.frontierAxes), JSON.stringify(doc.frontierAxes));
     const human = await cli("compare", [experimentId], { ...flags, select: "weighted", lambda: 0 });
     assert.match(human.stdout, /\tfront 1\.00\n/);
-    assert.match(human.stdout, /^deploy: good \(weighted λ=0: highest quality − 0 × (cost|wall time): 0\.800\)$/m);
+    assert.match(human.stdout, /^deploy: good \(weighted λ=0: highest quality − 0 × (cost|wall time): 0\.900\)$/m);
+    // No run records a cost: the cost column says so instead of printing $NaN.
+    assert.match(human.stdout, /^good\t2\t0\.900 \[[^\]]+\]\t-\t/m);
     const minCost = await json("compare", [experimentId], { ...flags, select: "min-cost", "q-min": 2 });
     assert.deepEqual(minCost.deployment.picked, []);
     assert.deepEqual(minCost.deployment.rule, { kind: "min-cost", qMin: 2 });
@@ -253,6 +291,12 @@ console.log(JSON.stringify({ session_id: ${JSON.stringify(SID)}, result: JSON.st
 });
 
 describe("workflows command helpers", () => {
+  it("accepts fromCheckpoint and replayFrom only for the command driver", async () => {
+    const v = await parseVariant(JSON.stringify({ name: "fork", command: ["node", "app.mjs"], fromCheckpoint: "ckpt-1", replayFrom: "plan" }), "command");
+    assert.deepEqual([v.fromCheckpoint, v.replayFrom], ["ckpt-1", "plan"]);
+    await assert.rejects(parseVariant(JSON.stringify({ name: "fork", script: "a.js", fromCheckpoint: "ckpt-1" }), "claude"), /fromCheckpoint and replayFrom need --driver command/);
+  });
+
   it("parses variants in every accepted form", async () => {
     assert.deepEqual(await parseVariant("base=wf/a.js", "claude"), { name: "base", script: "wf/a.js" });
     assert.deepEqual(await parseVariant("wf/improve-v2.js", "claude"), { name: "improve-v2", script: "wf/improve-v2.js" });

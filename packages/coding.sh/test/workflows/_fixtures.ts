@@ -11,6 +11,8 @@
 // The resumed run replays Find and Fix from the cache and runs Verify live.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { workflowStats } from "../../src/workflows/metrics.ts";
+import type { WorkflowNode, WorkflowRun } from "../../src/workflows/types.ts";
 
 export const T0 = Date.UTC(2026, 10, 1, 10, 0, 0);
 export const SID = "11111111-2222-4333-8444-555555555555";
@@ -416,3 +418,21 @@ command = "exit 0"
 `,
   );
 }
+
+export const GT = Date.UTC(2026, 10, 3, 9, 0, 0);
+
+/** A stored run for the viewer: two phases: a parallel barrier of two finders (one slow), then a verify agent and a failed one. */
+export function ganttRunFixture(): { run: WorkflowRun; nodes: WorkflowNode[] } {
+  const nodes: WorkflowNode[] = [
+    { id: "wf", runId: "wf_view01", kind: "workflow", name: "review", status: "ok", startedAt: GT, endedAt: GT + 60_000 },
+    { id: "a1", runId: "wf_view01", parentId: "wf", kind: "agent", name: "find-a", phase: "Find", groupId: "g1", groupKind: "parallel", ordinal: 0, status: "ok", startedAt: GT, endedAt: GT + 10_000, sessionId: "child-a1", usage: { inputTokens: 100, outputTokens: 10, costUsd: 0.5 } },
+    { id: "a2", runId: "wf_view01", parentId: "wf", kind: "agent", name: "find-b", phase: "Find", groupId: "g1", groupKind: "parallel", ordinal: 1, status: "ok", startedAt: GT, endedAt: GT + 30_000, usage: { inputTokens: 100, outputTokens: 10, costUsd: 1.5 } },
+    { id: "a3", runId: "wf_view01", parentId: "wf", kind: "agent", name: "verify", phase: "Verify", ordinal: 2, status: "ok", startedAt: GT + 31_000, endedAt: GT + 60_000, usage: { costUsd: 1 } },
+    { id: "a4", runId: "wf_view01", parentId: "wf", kind: "agent", name: "verify-2", phase: "Verify", ordinal: 3, status: "failed", startedAt: GT + 31_000, endedAt: GT + 40_000 },
+    { id: "t1", runId: "wf_view01", parentId: "a3", kind: "tool", name: "Read", status: "ok", startedAt: GT + 32_000, endedAt: GT + 32_100 },
+  ];
+  const run: WorkflowRun = { id: "wf_view01", framework: "claude-code-workflow", name: "review", startedAt: GT, endedAt: GT + 60_000, status: "ok", concurrencyCap: 4, phases: ["Find", "Verify"], stats: undefined as unknown as WorkflowRun["stats"], tags: [] };
+  run.stats = workflowStats(run, nodes);
+  return { run, nodes };
+}
+

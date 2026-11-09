@@ -1,8 +1,28 @@
 # Workflows: capturing, measuring and A/B-testing multi-agent runs
 
-Status: design spec, not implemented. It builds on the trace schema (`subagentId`,
+Status: built, with the gaps listed below. The code is `packages/coding.sh/src/workflows` (tests
+in `test/workflows`), the command is `coding.sh workflows` (`src/cli/commands/workflows.ts`, flags
+in `src/workflows/cli-spec.ts`), the viewer pages are `#/workflows` and `#/workflows/:runId`
+(`src/workflows/viewer.ts` behind `/api/workflows`), and the user guide is
+[guides/workflows.md](../guides/workflows.md). It builds on the trace schema (`subagentId`,
 `Session.parent`, `llm.call`, `durationMs`, span ids), the OTLP receiver (`src/otel`), `src/stats`,
 `src/judge` and the viewer. It proposes contract additions, listed in §3. None are made here.
+
+| Section | State | Code | Test, or the plan for a gap |
+|---|---|---|---|
+| §1 Runs per framework | Built for Claude Code workflows; the Agents SDK, LangGraph, Mastra and CrewAI rows marked (U) are unverified | `sources/claude-workflow.ts`, `sources/otel-frameworks.ts` (`certainty: "unverified"`) | `claude-workflow.test.ts`. Gap: record one run per framework with `scripts/e2e`, commit it under `test/fixtures/adapters/`, and assert the node kinds and names in `otel-metrics.test.ts`; flip the rule to `documented` when it passes |
+| §2.1 Claude Code workflows | Built from the journal, record, script and transcripts. Not built: merging `claude_code.llm_request` spans by `agent_id` when a transcript is missing | `sources/claude-workflow.ts`, `import.ts` | `claude-workflow.test.ts`, `resume-in-place.test.ts`, `running-run.test.ts`, `pricing.test.ts`, `redact.test.ts`. Gap: a journal fixture with one transcript removed plus receiver spans carrying `agent_id`; assert that agent gets `llm` children and its usage from the spans |
+| §2.2 OTel frameworks | Built | `sources/otel.ts`, `sources/otel-frameworks.ts` | `otel-metrics.test.ts` (Agents SDK handoff, LangGraph supersteps, split by run id) |
+| §2.3 Our own runner | Built | `experiment.ts` sets `CODING_SH_RUN_ID` and `CODING_SH_WORKFLOW_RUN_ID` | `experiment.test.ts` ("builds run trees … from receiver spans in the index") |
+| §3 Data model | Interim store built. The `IndexStore` methods and `AgentEvent.workflowRunId` are for the contract owners and are not added | `store.ts` (`~/.coding.sh/workflows/index.jsonl`), `types.ts` | `store-import.test.ts`. Gap: when the contract lands, run the same store tests against `IndexStore` in the store conformance suite and both store plugins |
+| §4 Metrics | Built | `metrics.ts`, `critical-path.ts` | `otel-metrics.test.ts`, `claude-workflow.test.ts`, `resume-in-place.test.ts` |
+| §5 Scoring | Built: seeded bugs with the verify confusion, verifier tests with regressions, judge cases with their calibration, hidden truth outside `[start]`, and seeded bugs validated before `workflows run`. Council budgets: out of scope here, they belong to docs/design/dogfood.md §3.4 | `cases.ts`, `score/case.ts`, `score/findings.ts`, `score/verify.ts`, `seed/bugs.ts` | `score.test.ts`, `case-score.test.ts`, `cli.test.ts` |
+| §6 Experiments | Built | `experiment.ts`, `drivers/claude-workflow.ts`, `drivers/command.ts` | `experiment.test.ts`, `cli.test.ts` |
+| §7 Replay | Built: Claude Code resume, the control fork and the noise floor; the command driver passes `--from-checkpoint` and `--replay-from` when a variant sets `fromCheckpoint` or `replayFrom` | `replay.ts`, `drivers/command.ts` (`commandArgs`) | `experiment.test.ts`, `cli.test.ts`, `case-score.test.ts` |
+| §8 Viewer | Built | `viewer.ts`, `src/viewer/server.ts` (`/api/workflows`), `src/viewer/ui/index.html` (`showWorkflow`) | `viewer.test.ts`, `viewer-browser.test.ts` |
+| §9 Dogfooding | Not built: needs paid runs of `.claude/workflows/coding-sh-improve.js` | none | Gap: write the 5 seeded cases under `evals/workflows/coding-sh-improve/cases/` with `[start]` snapshots, run `coding.sh workflows run coding-sh-improve` (validation runs first), and append each run to `tasks/dogfood/workflows.jsonl`; the check is that every case validates and scores |
+| §10 CLI and modules | Built | `cli-spec.ts`, `src/cli/commands/workflows.ts` | `cli.test.ts`, `test/docs/cli-reference.test.ts` |
+| §11 Build order, step 1 fixtures | Partly built: only a running Claude Code run is recorded (`test/fixtures/workflows/claude-code-running`) | none | Gap: record the 3-phase run (a barrier, a pipeline, a schema-forced agent) and a resumed run with `scripts/e2e` against the stub model, then replace the synthetic journals in `claude-workflow.test.ts` with them |
 
 A workflow is a program that orchestrates many agent invocations: fan-out, pipelines, barriers,
 verification and synthesis. People build them with:

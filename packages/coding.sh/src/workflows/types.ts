@@ -258,9 +258,19 @@ export interface SeededBug {
   test?: string;
 }
 
+/** One named test of a verifier case (a Fix workflow): its command, and how it ended on the start snapshot. */
+export interface VerifierTest {
+  id: string;
+  command: string;
+  /** "pass": it passed before the workflow ran, so failing now is a regression. */
+  before?: "pass" | "fail";
+}
+
 export type WorkflowTruth =
   | { kind: "seeded-bugs"; bugs: SeededBug[] }
-  | { kind: "verifier"; command: string }
+  /** `command` alone scores 1 on exit 0; `tests` score the share that pass and count regressions. */
+  | { kind: "verifier"; command?: string; tests?: VerifierTest[] }
+  /** `judge`: a provider spec, `<provider>[:<model>]` or a JSON object (graders' LlmProviderSpec). */
   | { kind: "judge"; rubric: string; judge: string };
 
 export interface WorkflowCase {
@@ -283,6 +293,10 @@ export interface WorkflowVariant {
   args?: unknown;
   /** Resume from this run id (replay). */
   resumeFromRunId?: string;
+  /** Command driver: fork from this stored checkpoint (LangGraph); passed as `--from-checkpoint <id>`. */
+  fromCheckpoint?: string;
+  /** Command driver: re-run from this node using the stored inputs and outputs before it; passed as `--replay-from <node>`. */
+  replayFrom?: string;
 }
 
 /** Inputs buildWorkflowTree merges. */

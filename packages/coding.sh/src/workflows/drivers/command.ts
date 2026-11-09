@@ -1,5 +1,5 @@
 // `command` driver (docs/design/workflows.md §6): any program, e.g. a LangGraph or
-// Mastra app. Called as `<cmd…> --args <json>` with CODING_SH_WORKFLOW_RUN_ID
+// Mastra app. Called as `<cmd…> --args <json> [--from-checkpoint <id>] [--replay-from <node>]` with CODING_SH_WORKFLOW_RUN_ID
 // (and CODING_SH_RUN_ID) set; prints its output JSON on stdout. Its spans go
 // to the receiver, tagged with the run id through the inherited env.
 import { commandEnv, execFileTail } from "../../runner/exec.ts";
@@ -39,6 +39,18 @@ export function parseOutput(stdout: string): unknown {
   }
 }
 
+/**
+ * What the command gets after its own argv: `--args <json>`, then `--from-checkpoint <id>` (a
+ * LangGraph fork from a stored checkpoint) and `--replay-from <node>` (re-run from a node with the
+ * stored inputs and outputs before it) when the variant sets them (docs/design/workflows.md §7).
+ */
+export function commandArgs(v: WorkflowVariant, c: WorkflowCase): string[] {
+  const out = ["--args", JSON.stringify(mergeArgs(c.args, v.args))];
+  if (v.fromCheckpoint) out.push("--from-checkpoint", v.fromCheckpoint);
+  if (v.replayFrom) out.push("--replay-from", v.replayFrom);
+  return out;
+}
+
 export function commandDriver(o: CommandDriverOpts = {}): WorkflowDriver {
   return {
     id: "command",
@@ -47,7 +59,7 @@ export function commandDriver(o: CommandDriverOpts = {}): WorkflowDriver {
       if (!argv?.length) throw new Error(`variant ${JSON.stringify(v.name)} has no command or script`);
       const runId = env.CODING_SH_WORKFLOW_RUN_ID ?? "";
       const startedAt = Date.now();
-      const r = await execFileTail(argv[0]!, [...argv.slice(1), "--args", JSON.stringify(mergeArgs(c.args, v.args))], {
+      const r = await execFileTail(argv[0]!, [...argv.slice(1), ...commandArgs(v, c)], {
         cwd: o.cwd ?? process.cwd(),
         env: commandEnv(env),
         timeoutMs: o.timeoutMs ?? 60 * 60_000,

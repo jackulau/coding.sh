@@ -4,7 +4,6 @@
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
-import { commandEnv, sh } from "../../runner/exec.ts";
 import { median } from "../../stats/index.ts";
 import { profileCache } from "../../core/ingest.ts";
 import { claudeWorkflowDriver } from "../../workflows/drivers/claude-workflow.ts";
@@ -14,9 +13,10 @@ import { buildGantt, ganttTsv } from "../../workflows/gantt.ts";
 import { claudeProjectsDir, importClaudeWorkflows, type ImportResult } from "../../workflows/import.ts";
 import { loadCases } from "../../workflows/cases.ts";
 import { replayWorkflow } from "../../workflows/replay.ts";
-import { extractFindings, matchFindings, type Finding, type FindingsScore } from "../../workflows/score/findings.ts";
-import { verifyConfusion, type VerifyEntry, type VerifyScore } from "../../workflows/score/verify.ts";
+import { scoreWorkflowCase, verifyEntries, type CaseScore, type ScoreCaseDeps } from "../../workflows/score/case.ts";
+import { validateCase } from "../../workflows/seed/bugs.ts";
 import { WorkflowStore } from "../../workflows/store.ts";
+import { DETAIL_KINDS, runSummary } from "../../workflows/viewer.ts";
 import { buildWorkflowTree } from "../../workflows/tree.ts";
 import { totalTokens } from "../../workflows/metrics.ts";
 import type { DeploymentRule, WorkflowCase, WorkflowDriver,WorkflowFramework, WorkflowNode, WorkflowRun, WorkflowVariant } from "../../workflows/types.ts";
@@ -91,26 +91,8 @@ function wallOf(run: WorkflowRun): number | undefined {
   return run.stats.wallMs ?? (run.endedAt !== undefined ? run.endedAt - run.startedAt : undefined);
 }
 
-function runJson(run: WorkflowRun): Record<string, unknown> {
-  return {
-    id: run.id,
-    framework: run.framework,
-    name: run.name,
-    status: run.status,
-    startedAt: new Date(run.startedAt).toISOString(),
-    endedAt: run.endedAt !== undefined ? new Date(run.endedAt).toISOString() : null,
-    wallMs: wallOf(run) ?? null,
-    agents: run.stats.agents,
-    costUsd: run.stats.costUsd ?? null,
-    tokens: totalTokens(run.stats.tokens),
-    variant: run.variant ?? null,
-    experimentId: run.experimentId ?? null,
-    caseId: run.caseId ?? null,
-    resumedFrom: run.resumedFrom ?? null,
-    hostSessionId: run.hostSessionId ?? null,
-    tags: run.tags,
-  };
-}
+/** One run as `workflows list --json` prints it; /api/workflows serves the same shape. */
+const runJson = runSummary;
 
 /** Imports new or changed Claude Code workflow run dirs (journal + transcripts). */
 async function doImport(c: CommandContext, root: string, force: boolean): Promise<ImportResult> {
@@ -191,8 +173,6 @@ async function importRuns(c: CommandContext): Promise<number> {
 }
 
 // ------------------------------------------------------------ show / stats
-
-const DETAIL_KINDS = new Set<WorkflowNode["kind"]>(["subagent", "tool", "llm"]);
 
 function nodeLine(n: WorkflowNode): string {
   const dur = n.startedAt !== undefined && n.endedAt !== undefined ? duration(n.endedAt - n.startedAt) : "-";
@@ -343,33 +323,16 @@ async function stats(c: CommandContext): Promise<number> {
 
 // ------------------------------------------------------------ score
 
-const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+export { verifyEntries };
 
-/** Findings that entered a verify stage, with whether verify kept them: output.candidates[{…, survived, votes?}]. */
-export function verifyEntries(output: unknown): { findings: Finding[]; entered: VerifyEntry[] } | undefined {
-  if (!isObj(output) || !Array.isArray(output.candidates)) return undefined;
-  const findings: Finding[] = [];
-  const entered: VerifyEntry[] = [];
-  for (const cand of output.candidates) {
-    if (!isObj(cand) || typeof cand.survived !== "boolean") continue;
-    const [f] = extractFindings({ findings: [cand] });
-    if (!f) continue;
-    const e: VerifyEntry = { findingIdx: findings.length, survived: cand.survived };
-    if (Array.isArray(cand.votes) && cand.votes.every((v) => typeof v === "boolean")) e.votes = cand.votes as boolean[];
-    findings.push(f);
-    entered.push(e);
-  }
-  return entered.length ? { findings, entered } : undefined;
+export interface ScoreReport extends CaseScore {
+  runId: string;
 }
 
-export interface ScoreReport {
-  runId: string;
-  caseId: string;
-  kind: WorkflowCase["truth"]["kind"];
-  score: number;
-  findings?: FindingsScore & { count: number };
-  verify?: VerifyScore;
-  verifier?: { command: string; exitCode: number | null; timedOut: boolean };
+/** Score deps for a run: verifiers run in the cwd, judges look up their stored calibration. */
+function scoreDeps(c: CommandContext, runId: string | undefined, getJudge?: ScoreCaseDeps["getJudge"]): ScoreCaseDeps {
+  const slack = num(c.flags.slack);
+  return { cwd: c.cwd, env: c.env, signal: c.signal, ...(runId ? { runId } : {}), ...(slack !== undefined ? { slack } : {}), ...(getJudge ? { getJudge } : {}) };
 }
 
 async function score(c: CommandContext): Promise<number> {
@@ -390,25 +353,17 @@ async function score(c: CommandContext): Promise<number> {
   const kase = cases.find((k) => k.id === caseId);
   if (!kase) throw new CliError(`Can't find case ${JSON.stringify(caseId)} in ${dir}`, { reason: "not_found", details: [["cases", cases.map((k) => k.id).join(", ") || "(none)"]] });
   const output = run.output ? await store.getValue(run.output) : undefined;
-  const report: ScoreReport = { runId: run.id, caseId, kind: kase.truth.kind, score: 0 };
-  if (kase.truth.kind === "seeded-bugs") {
-    const slack = num(c.flags.slack);
-    const findings = extractFindings(output);
-    const m = matchFindings(findings, kase.truth.bugs, slack !== undefined ? { slack } : {});
-    report.findings = { ...m, count: findings.length };
-    report.score = m.f1;
-    const v = verifyEntries(output);
-    if (v) {
-      const real = new Set(matchFindings(v.findings, kase.truth.bugs, slack !== undefined ? { slack } : {}).matches.map(([i]) => i));
-      report.verify = verifyConfusion(v.entered, real);
-    }
-  } else if (kase.truth.kind === "verifier") {
-    const r = await sh(kase.truth.command, { cwd: c.cwd, env: commandEnv({ CODING_SH_WORKFLOW_RUN_ID: run.id }), timeoutMs: 30 * 60_000 });
-    report.verifier = { command: kase.truth.command, exitCode: r.exitCode, timedOut: r.timedOut };
-    report.score = r.exitCode === 0 ? 1 : 0;
-  } else {
-    throw new CliError(`Case ${caseId} is graded by a judge; the CLI scores seeded-bugs and verifier cases only`, { reason: "unsupported_truth", next: ["Score judge cases through an eval judge:", "coding.sh judge --help"] });
+  let scored: CaseScore;
+  try {
+    scored =
+      kase.truth.kind === "judge"
+        ? await withContext(c, (ctx) => scoreWorkflowCase(output, kase, scoreDeps(c, run.id, ctx.index.getJudge ? (jid) => ctx.index.getJudge!(jid) : undefined)))
+        : await scoreWorkflowCase(output, kase, scoreDeps(c, run.id));
+  } catch (e) {
+    if (e instanceof CliError || e instanceof UsageError) throw e;
+    throw new CliError(`Couldn't score ${run.id} on ${caseId}: ${e instanceof Error ? e.message : String(e)}`, { reason: "score_failed" });
   }
+  const report: ScoreReport = { runId: run.id, ...scored };
   if (run.experimentId) {
     if (await store.getExperiment(run.experimentId)) await store.setExperimentScore(run.experimentId, run.id, report.score);
   }
@@ -449,11 +404,26 @@ async function score(c: CommandContext): Promise<number> {
       ],
     );
   }
-  if (report.verifier) out.print(`verifier exit ${report.verifier.exitCode ?? "-"}${report.verifier.timedOut ? " (timed out)" : ""}`);
+  const vr = report.verifier;
+  if (vr?.tests) {
+    out.print();
+    out.table(
+      ["TEST", "RESULT", "BEFORE", "EXIT"],
+      vr.tests.map((t) => [clean(t.id), t.regression ? "regression" : t.passed ? "pass" : t.timedOut ? "timed out" : "fail", t.before ?? "-", String(t.exitCode ?? "-")]),
+    );
+    out.row("Pass rate", `${vr.passed} of ${vr.total} (${pct(vr.passRate)})${vr.regressions.length ? `, ${plural(vr.regressions.length, "regression")}: ${vr.regressions.join(", ")}` : ""}`, vr.regressions.length ? "fail" : vr.passed === vr.total ? "ok" : "none");
+  } else if (vr) out.print(`verifier exit ${vr.exitCode ?? "-"}${vr.timedOut ? " (timed out)" : ""}`);
+  if (report.judge) {
+    const j = report.judge;
+    out.row("Judge", `${j.judgeVersion}: ${j.pass ? "pass" : "fail"}${j.reason ? ` (${oneLine(clean(j.reason), 80)})` : ""}`);
+    if (j.uncalibrated) out.warn(`Uncalibrated judge (${j.calibration.state}${j.calibration.reason ? `: ${j.calibration.reason}` : ""}); calibrate it with coding.sh judge calibrate`);
+  }
   return 0;
 }
 
 // ------------------------------------------------------------ run / compare
+
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 /** `name=script` (claude), `name=cmd args…` (command), a JSON object, or a .json path. */
 export async function parseVariant(raw: string, driver: "claude" | "command"): Promise<WorkflowVariant> {
@@ -475,6 +445,9 @@ export async function parseVariant(raw: string, driver: "claude" | "command"): P
   else if (typeof v.command === "string") out.command = v.command.split(/\s+/);
   if (v.args !== undefined) out.args = v.args;
   if (typeof v.resumeFromRunId === "string") out.resumeFromRunId = v.resumeFromRunId;
+  if (typeof v.fromCheckpoint === "string" && v.fromCheckpoint) out.fromCheckpoint = v.fromCheckpoint;
+  if (typeof v.replayFrom === "string" && v.replayFrom) out.replayFrom = v.replayFrom;
+  if ((out.fromCheckpoint || out.replayFrom) && driver !== "command") throw new UsageError(`Variant ${JSON.stringify(out.name)}: fromCheckpoint and replayFrom need --driver command`, { reason: "invalid_value" });
   return out;
 }
 
@@ -498,6 +471,36 @@ function driverFor(c: CommandContext, kind: "claude" | "command"): WorkflowDrive
   const timeoutMs = trialTimeout(c);
   const t = timeoutMs !== undefined ? { timeoutMs } : {};
   return kind === "claude" ? claudeWorkflowDriver({ cwd: c.cwd, env: c.env, ...(bin ? { bin } : {}), ...t }) : commandDriver({ cwd: c.cwd, ...t });
+}
+
+/**
+ * Seeded cases are checked before use (docs/design/workflows.md §5): on each case's seeded
+ * snapshot, every bug with a test fails, and passes with its own patch reverted.
+ */
+async function validateCases(c: CommandContext, cases: readonly WorkflowCase[], store: WorkflowStore, workflow: string): Promise<void> {
+  const bad: [string, string][] = [];
+  let checked = 0;
+  const spin = c.out.spin("Validating seeded cases");
+  try {
+    for (const kase of cases) {
+      const v = await validateCase(kase, (ref) => store.getText(ref));
+      if (!v) continue;
+      checked += v.length;
+      for (const b of v.filter((x) => !x.ok)) {
+        bad.push([`${kase.id}/${b.id}`, b.error ?? (!b.failsSeeded ? "its test passes on the seeded snapshot" : "its test still fails with the bug reverted")]);
+      }
+    }
+  } finally {
+    spin.stop();
+  }
+  if (bad.length) {
+    throw new CliError(`${plural(bad.length, "seeded bug")} failed validation`, {
+      reason: "invalid_cases",
+      details: bad,
+      next: ["Fix the bug patches or tests, or run without the check:", `coding.sh workflows run ${workflow} … --no-validate`],
+    });
+  }
+  if (checked) c.out.note(`Validated ${plural(checked, "seeded bug")}`);
 }
 
 async function runExperiment(c: CommandContext): Promise<number> {
@@ -529,6 +532,7 @@ async function runExperiment(c: CommandContext): Promise<number> {
     throw new CliError(`Can't read cases from ${dir}: ${e instanceof Error ? e.message : String(e)}`, { reason: "invalid_cases", next: ["Point at the cases directory:", `coding.sh workflows run ${workflow} --cases <dir> --variant …`] });
   }
   if (!cases.length) throw new CliError(`No cases in ${dir}${split ? ` for split ${split}` : ""}`, { reason: "no_cases", next: ["Add cases as TOML files:", `${dir}/<case>.toml`] });
+  if (c.flags.validate !== false) await validateCases(c, cases, store, workflow);
   const jobs = scheduleWorkflowJobs(cases, variants, k).length;
   const est = await estimateCost(store, workflow, jobs);
   if (est) out.note(`Estimated cost ${usd(est.total)} (${plural(jobs, "run")} × median ${usd(est.perRun)} over ${plural(est.basis, "past run")})`);
@@ -564,6 +568,8 @@ async function runExperiment(c: CommandContext): Promise<number> {
           job: job.scope(),
           retry: retryFlag(c),
           experimentId: job.id,
+          // Every truth kind, as `workflows score` grades it: seeded bugs, verifier tests, judge.
+          score: async (r, output, kase) => (await scoreWorkflowCase(output, kase, scoreDeps(c, r.id, ctx.index.getJudge ? (jid) => ctx.index.getJudge!(jid) : undefined))).score,
           onProgress: (p) =>
             spin.update(`Running workflow runs: ${p.done}/${p.total} (${p.run.variant} on ${p.run.caseId}: ${p.run.status}${p.score !== undefined ? `, score ${p.score.toFixed(2)}` : ""})`),
         }),
@@ -685,7 +691,7 @@ function printCompare(out: Output, r: ReturnType<typeof compareWorkflowVariants>
       ["VARIANT", "CASES", "QUALITY", "COST", "WALL", "PARETO"],
       r.pareto.map((p) => {
         const front = p.pFront !== undefined ? `front ${p.pFront.toFixed(2)}` : "front";
-        return [p.variant, String(p.cases), ci(p.quality, fixed3), ci(p.costUsd, usd), ci(p.wallMs, duration), p.dominated ? `dominated by ${(p.dominatedBy ?? []).join(", ")}${p.pFront !== undefined ? ` (${front})` : ""}` : front];
+        return [p.variant, String(p.cases), ci(p.quality, fixed3), Number.isFinite(p.costUsd.mean) ? ci(p.costUsd, usd) : "-", Number.isFinite(p.wallMs.mean) ? ci(p.wallMs, duration) : "-", p.dominated ? `dominated by ${(p.dominatedBy ?? []).join(", ")}${p.pFront !== undefined ? ` (${front})` : ""}` : front];
       }),
     );
   }
