@@ -18,6 +18,16 @@ import type { CommandContext } from "../types.ts";
 
 const safeUrl = (url: string): string => url.replace(/\/\/[^@/]*@/, "//…@");
 
+/**
+ * How long purge waits for another process's read of the index or the blob pack before it reports
+ * that the old bytes stay: CODING_SH_PURGE_WAIT_MS in whole milliseconds. Unset or not a whole
+ * number: purgeLiterals' defaults (10 s for the checkpoint before VACUUM, 5 s after it).
+ */
+export function purgeWait(env: NodeJS.ProcessEnv): { waitMs?: number } {
+  const v = env.CODING_SH_PURGE_WAIT_MS?.trim();
+  return v && /^\d+$/.test(v) ? { waitMs: Number(v) } : {};
+}
+
 /** One value per line; blank lines skipped, a trailing \r dropped, nothing else trimmed (a secret may hold spaces). */
 export function parseLiterals(text: string): string[] {
   return [...new Set(text.split("\n").map((l) => l.replace(/\r$/, "")).filter((l) => l.trim() !== ""))];
@@ -99,7 +109,7 @@ export async function run(c: CommandContext): Promise<number> {
         literals = [...new Set([...given, ...found.values])];
       }
       if (!literals.length) return undefined;
-      return await purgeLiterals({ dbPath: fileUrlPath(rest), blobs: ctx.blobs, fileDirs, literals, dryRun });
+      return await purgeLiterals({ dbPath: fileUrlPath(rest), blobs: ctx.blobs, fileDirs, literals, dryRun, ...purgeWait(c.env) });
     } finally {
       lock?.release();
     }

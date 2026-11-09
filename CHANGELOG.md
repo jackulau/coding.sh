@@ -7,6 +7,16 @@ follow [Semantic Versioning](https://semver.org/) from the first npm release.
 Each release opens with a short summary. The list under it has one line per change,
 grouped by area, with links to the docs for the details.
 
+## [0.1.6] - Unreleased
+
+### Added
+
+- **Privacy.** `CODING_SH_PURGE_WAIT_MS` sets how long `purge` waits for another process's read of the index or the blob pack before it says which file still holds the old bytes. The defaults stay 10 s before the VACUUM and 5 s after it. [Configuration](https://github.com/jackulau/coding.sh/blob/main/docs/reference/config.md#paths-and-stores).
+
+### Fixed
+
+- **Privacy.** A purge given a wait (`CODING_SH_PURGE_WAIT_MS`, or `waitMs` in code) now keeps to it while another process reads the index. The checkpoint before the VACUUM used to wait the full 10 s whatever wait was given. [Privacy](https://github.com/jackulau/coding.sh/blob/main/docs/guides/privacy.md).
+
 ## [0.1.5] - 2026-11-09
 
 ### Added

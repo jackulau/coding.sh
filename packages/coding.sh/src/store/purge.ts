@@ -36,7 +36,11 @@ export interface PurgeOptions {
   literals: readonly string[];
   /** Count only; change nothing. */
   dryRun?: boolean;
-  /** How long emptying the index's and the blob pack's WALs waits for other processes' reads (default 5 s; tests shorten it). */
+  /**
+   * How long emptying the index's and the blob pack's WALs waits for other processes' reads
+   * (default 5 s, and 10 s for the index checkpoint before VACUUM; when set, it bounds both).
+   * Tests shorten it; the CLI takes it from CODING_SH_PURGE_WAIT_MS.
+   */
   waitMs?: number;
 }
 
@@ -369,6 +373,7 @@ export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
       // A checkpoint that a reader in another process keeps busy says so in its result row; it does not throw.
       const truncate = () => (db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy?: number } | undefined)?.busy === 0;
       db.exec("INSERT INTO events_fts(events_fts) VALUES ('optimize')");
+      if (o.waitMs !== undefined) db.exec(`PRAGMA busy_timeout = ${o.waitMs}`);
       truncate();
       db.exec("VACUUM");
       db.exec(`PRAGMA busy_timeout = ${o.waitMs ?? 5000}`); // how long the checkpoint waits for readers

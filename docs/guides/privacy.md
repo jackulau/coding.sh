@@ -64,11 +64,11 @@ headers = { Authorization = "Bearer ${OTEL_TOKEN}" }
   (`blobs/pack.db`) are then VACUUMed, so the old bytes leave the files, and checked: purge exits 1
   if the database or its search index is damaged. If another process holds a read on one of them
   (the viewer, `serve`, a `sqlite3` shell, a backup), SQLite keeps the old bytes until it closes:
-  purge waits a few seconds, then says which file still holds them and exits 1. Close that process
-  and run the same purge again. Purge with coding.sh 0.1.5 or newer: an older purge does not see
-  blobs in the pack. Values shorter than 8 characters are refused, the values are never printed,
-  and only the SQLite store is supported. Rotate the secret as well: the agent's own transcripts,
-  shell history and git are not touched.
+  purge waits a few seconds (`CODING_SH_PURGE_WAIT_MS` sets how long), then says which file still
+  holds them and exits 1. Close that process and run the same purge again. Purge with coding.sh
+  0.1.5 or newer: an older purge does not see blobs in the pack. Values shorter than 8 characters
+  are refused, the values are never printed, and only the SQLite store is supported. Rotate the
+  secret as well: the agent's own transcripts, shell history and git are not touched.
 - **Remove secrets by shape.** `coding.sh purge --rule 'sk-ant-api03-[A-Za-z0-9_-]{80,}'` finds
   every distinct match of a regular expression in the same places and purges each one like a
   `--literal` value. `--rule` repeats, and combines with `--literal`. Matches shorter than 8

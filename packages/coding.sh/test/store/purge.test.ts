@@ -8,7 +8,7 @@ import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "n
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { after, before, describe, test } from "node:test";
-import { parseLiterals } from "../../src/cli/commands/purge.ts";
+import { parseLiterals, purgeWait } from "../../src/cli/commands/purge.ts";
 import { FsBlobStore } from "../../src/store/fs-blobs.ts";
 import { closeBlobs, fsBlobs } from "./_blobs.ts";
 import { PURGE_MARKER, purgeLiterals, Scrubber } from "../../src/store/purge.ts";
@@ -238,6 +238,12 @@ describe("Scrubber", () => {
     assert.equal(Buffer.from(s.bytes(Buffer.from(`a ${SECRET} é`))!).toString("utf8"), `a ${PURGE_MARKER} é`);
   });
 
+  test("CODING_SH_PURGE_WAIT_MS sets the wait in whole milliseconds; anything else keeps the defaults", () => {
+    assert.deepEqual(purgeWait({ CODING_SH_PURGE_WAIT_MS: "200" }), { waitMs: 200 });
+    assert.deepEqual(purgeWait({ CODING_SH_PURGE_WAIT_MS: " 0 " }), { waitMs: 0 });
+    for (const v of [undefined, "", "  ", "-1", "1.5", "5s", "abc"]) assert.deepEqual(purgeWait({ CODING_SH_PURGE_WAIT_MS: v }), {}, String(v));
+  });
+
   test("parseLiterals keeps inner spaces, drops blank lines and CR", () => {
     assert.deepEqual(parseLiterals("a b c d e\r\n\n  \nxyz12345\na b c d e\n"), ["a b c d e", "xyz12345"]);
   });
@@ -461,11 +467,14 @@ describe("coding.sh purge with another process reading the blob pack or the inde
     };
     const reader = await holdRead(index, "events");
     let r;
+    const t0 = Date.now();
     try {
       r = await run();
     } finally {
       await stop(reader);
     }
+    // waitMs bounds the checkpoint before VACUUM too, which used to wait the 10 s busy timeout regardless.
+    assert.ok(Date.now() - t0 < 6000, `purge waited ${Date.now() - t0} ms for a reader with waitMs 200`);
     assert.deepEqual(r.oldBytesKept, ["index"]);
     assert.ok(fileHolds(env.dataHome, "index.db", INDEX_ONLY), "SQLite kept the old pages while the reader held them");
 
@@ -477,7 +486,8 @@ describe("coding.sh purge with another process reading the blob pack or the inde
     const reader = await holdRead(pack, "blobs");
     let r;
     try {
-      r = cli(["purge", "--literal", secrets]);
+      // A short wait for the reader: the default 5 s would only make the test slower.
+      r = cli(["purge", "--literal", secrets], { CODING_SH_PURGE_WAIT_MS: "200" });
     } finally {
       await stop(reader);
     }

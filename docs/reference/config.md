@@ -242,6 +242,7 @@ Read only by `coding.sh serve`. Every key has an environment variable, which win
 | `CODING_SH_STORE_URL` | Index store for every command; same as `--store`. Skips the automatic ingest of the local spool. |
 | `CODING_SH_BLOB_URL` | Blob store; same as `--blobs`. |
 | `CODING_SH_DEV_REAL_STORE=1` | Lets coding.sh run from a source checkout (`src/*.ts`, or a `dist/` built inside it) open the default home. Without it, or `CODING_SH_HOME` or a store URL, such a run stops before it opens anything. Migrations still wait for the install that owns the store ([Troubleshooting](../troubleshooting.md#a-store-another-codingsh-cant-open)). |
+| `CODING_SH_PURGE_WAIT_MS` | How long `purge` waits for another process's read of the index or the blob pack before it reports that the old bytes stay. Default `10000` for the index checkpoint before VACUUM and `5000` after it. Tests set a short wait. |
 | `DATABASE_URL` | `coding.sh serve` only: the store when it is a `postgres://` URL and `CODING_SH_STORE_URL` is unset. |
 
 ### Capture
