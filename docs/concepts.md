@@ -167,8 +167,11 @@ judges.
 
 **Paired comparison.** How `exp compare` decides. It matches cases by id, reports the mean change in
 pass rate with a paired bootstrap confidence interval, and runs McNemar's test on the cases that
-flipped. The verdict is `better` or `worse` only when the interval excludes zero; otherwise it is
-`inconclusive`.
+flipped. The verdict is `better` or `worse` only when the interval excludes zero and an exact
+two-sided sign-flip test on the per-case differences (per-cluster sums with `--cluster`) has p below
+0.05; otherwise it is `inconclusive`. With every case moving the same way the interval is a single
+point, so the exact test is what stops 3 improved cases from reading as `better`: it needs at least 6
+cases or clusters that changed.
 
 **Minimum detectable effect (MDE).** The smallest true gap a comparison finds 80% of the time. The
 `power` line gives a normal approximation and the exact McNemar one, from the share of cases that

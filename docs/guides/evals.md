@@ -284,6 +284,15 @@ identical to one already in the spec is not added twice.
 `coding.sh exp compare A B` reports the paired bootstrap CI of the difference, an exact McNemar
 test on flipped cases and the minimum detectable effect. It also reports:
 
+- **An exact check on the verdict.** `better` or `worse` needs the interval to exclude zero and an
+  exact two-sided sign-flip test to have p below 0.05. The test flips the sign of each case's
+  difference (each cluster's sum with `--cluster`), enumerating every flip up to 20 units. When a
+  handful of cases all move the same way the interval is a single point, so without this 3 improved
+  cases would read as `better`; the sign-flip p there is 0.25. The test needs at least 6 changed
+  cases or clusters. The McNemar line ends with `sign-flip p=… over N cases`, an inconclusive
+  verdict says when the interval excluded zero but the exact test did not, and `--json` carries
+  `comparison.signFlip` (`p`, `units`, `method`). With one trial per case the sign-flip p equals
+  the McNemar p.
 - **Clusters.** `--cluster repo` resamples groups of related cases (any case metadata field;
   `session` falls back to the case's source session) instead of single cases. It prints the cluster
   count and warns below 10 clusters. Without the flag, cases are treated as independent.

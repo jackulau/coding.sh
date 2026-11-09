@@ -965,6 +965,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
           onlyInBaseline: cmp.onlyInA.length,
           onlyInCandidate: cmp.onlyInB.length,
           mcnemar: { regressions: cmp.mcnemar.b, improvements: cmp.mcnemar.c, p: round(cmp.mcnemar.p) },
+          signFlip: { p: round(cmp.signFlip.p), units: cmp.signFlip.units },
           regressions: cases(cmp.regressions),
           improvements: cases(cmp.improvements),
           graders: cmp.graders.slice(0, limit).map((g) => ({ id: g.id, meanBaseline: round(g.meanA), meanCandidate: round(g.meanB), diff: round(g.diff.mean), lo: round(g.diff.lo), hi: round(g.diff.hi) })),

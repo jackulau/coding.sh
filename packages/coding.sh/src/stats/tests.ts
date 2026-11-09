@@ -378,8 +378,13 @@ export function clusterSignFlip(diffs: readonly number[], opts: SignFlipOpts = {
     diffs.forEach((d, i) => sums.set(clusterIds[i] as string, (sums.get(clusterIds[i] as string) ?? 0) + d + shift));
     units = [...sums.values()];
   } else units = diffs.map((d) => d + shift);
-  const r = pairedPermutation(units, perm);
-  return { p: r.p, units: r.n, method: r.method };
+  // A unit of 0 sums the same either sign, so leaving it out changes no p, and
+  // a pass/fail suite (mostly ties) is often exact where it was Monte Carlo.
+  const r = pairedPermutation(
+    units.filter((u) => u !== 0),
+    perm,
+  );
+  return { p: r.p, units: units.length, method: r.method };
 }
 
 export interface NonInferiorityOpts {

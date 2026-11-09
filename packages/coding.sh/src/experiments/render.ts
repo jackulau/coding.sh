@@ -173,7 +173,9 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   );
   if (c.cluster?.missing) out.push(paint(`${c.cluster.missing} paired case(s) have no ${c.cluster.key}; each counts as its own cluster`, "dim", color));
   if (c.cluster?.warning) out.push(paint(`! ${c.cluster.warning}`, "yellow", color));
-  out.push(`mcnemar p=${pValue(c.mcnemar.p)}  ${c.mcnemar.b} regressed, ${c.mcnemar.c} improved`);
+  const unit = c.cluster ? `${c.cluster.key} cluster` : "case";
+  const flipUnits = `${c.signFlip.units} ${unit}${c.signFlip.units === 1 ? "" : "s"}`;
+  out.push(`mcnemar p=${pValue(c.mcnemar.p)}  ${c.mcnemar.b} regressed, ${c.mcnemar.c} improved  ${paint(`sign-flip p=${pValue(c.signFlip.p)} over ${flipUnits}`, "dim", color)}`);
   if (c.posterior) {
     const q = c.posterior;
     out.push(
@@ -194,7 +196,14 @@ export function renderComparison(c: Comparison, opts: RenderOpts & { a?: Experim
   if (multi && c.turnover.paired) out.push(...renderTurnover(c.turnover, color));
   if (c.sequential) out.push(...renderSequential(c.sequential, color));
   if (c.sequentialWarning) out.push(paint(`! ${c.sequentialWarning}`, "yellow", color));
-  const why = c.sequential ? (c.verdict === "inconclusive" ? "no boundary crossed" : "group sequential test") : "CI includes 0";
+  const ciExcludes0 = c.diff.lo > 0 || c.diff.hi < 0;
+  const why = c.sequential
+    ? c.verdict === "inconclusive"
+      ? "no boundary crossed"
+      : "group sequential test"
+    : ciExcludes0
+      ? `the CI excludes 0, but the exact sign-flip test does not: p=${pValue(c.signFlip.p)} over ${flipUnits}`
+      : "CI includes 0";
   out.push(`verdict ${paint(c.verdict === "inconclusive" ? `inconclusive (${why})` : `B is ${c.verdict}${c.sequential ? ` (${why})` : ""}`, vColor, color)}`);
   if (c.gate) out.push(...renderGate(c.gate, color));
   if (c.nonInferiority) out.push(...renderNonInferiority(c.nonInferiority, color));

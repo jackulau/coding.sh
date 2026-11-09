@@ -1080,7 +1080,7 @@ curl -sS "$CSH/api/compare?a=$EXP_A&b=$EXP_B" -H "Authorization: Bearer $READ_KE
   "b": {"id": "exp_01M6T9E94FSMK542B6WQHNCDMR", "name": "candidate", "passRate": 1},
   "ungraded": {"a": 0, "b": 0}, "paired": 3, "onlyInA": [], "onlyInB": [],
   "diff": {"mean": 0.6666666666666666, "lo": 0, "hi": 1, "iters": 4000},
-  "mcnemar": {"b": 0, "c": 2, "n": 2, "p": 0.5}, "verdict": "inconclusive",
+  "mcnemar": {"b": 0, "c": 2, "n": 2, "p": 0.5}, "signFlip": {"p": 0.5, "units": 3, "method": "exact"}, "verdict": "inconclusive",
   "timing": {"interleaved": false, "gapMs": 81, "warning": "A and B ran one after the other, not interleaved, …"},
   "regressions": [], "improvements": [{"caseId": "c_47dd42650c395e5c", "a": 0, "b": 1, "delta": 1}, …],
   "graders": [{"id": "exact", "n": 3, "meanA": 0.3333333333333333, "meanB": 1, "diff": {"mean": 0.6666666666666666, "lo": 0, "hi": 1}}],
@@ -1090,6 +1090,11 @@ curl -sS "$CSH/api/compare?a=$EXP_A&b=$EXP_B" -H "Authorization: Bearer $READ_KE
   "partial": []
 }
 ```
+
+`signFlip` is the exact two-sided sign-flip test on the per-case differences (per-cluster sums when
+clustered): `units` counts cases or clusters, and `method` is `exact` up to 20 changed units and
+`monte-carlo` above. `verdict` is `better` or `worse` only when `diff` excludes zero and
+`signFlip.p` is below 0.05.
 
 `power.exact` is the exact McNemar design when some case flipped: `{"n", "discordance",
 "alpha", "power", "minDiscordant", "ceiling", "mde"}`, where `ceiling` is the power at the largest

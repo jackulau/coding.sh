@@ -9,7 +9,7 @@ import { pairedBootstrap, roganGladen, type BootstrapOpts, type RoganGladenResul
 import { pairedPosterior, type PairedPosterior } from "../stats/posterior.ts";
 import type { SequentialOutcome } from "../stats/sequential.ts";
 import { gateVerdict, type GateVerdict } from "../stats/gate.ts";
-import { acceptanceGate, fisherExact, hardRegressions, mcnemar, nonInferiority, type GateOpts, type GateResult, type McNemarResult, type NonInferiorityResult } from "../stats/tests.ts";
+import { acceptanceGate, clusterSignFlip, fisherExact, hardRegressions, mcnemar, nonInferiority, type GateOpts, type GateResult, type McNemarResult, type NonInferiorityResult, type SignFlipResult } from "../stats/tests.ts";
 import type { ReplayNoise } from "./continuation.ts";
 import { pairedPower, passHatK, type NoisePrior, type PowerAnalysis } from "./power.ts";
 import { caseRates } from "./run.ts";
@@ -242,9 +242,16 @@ export interface Comparison {
   /** On per-case majority outcomes: b = A pass → B fail (regressions), c = A fail → B pass. */
   mcnemar: McNemarResult;
   /**
-   * "better" / "worse" when the CI excludes 0; otherwise "inconclusive". For
-   * a group sequential A/B (`sequential`), the sequential test's verdict: the
-   * fixed-n interval is not valid for that design.
+   * Exact two-sided sign-flip test of the same per-case differences at the
+   * bootstrap's unit: cases, or clusters with `cluster`. p is 1 with no pairs.
+   */
+  signFlip: SignFlipResult;
+  /**
+   * "better" / "worse" when the CI excludes 0 and the sign-flip p is below
+   * alpha; otherwise "inconclusive". A percentile interval is [x, x] when a few
+   * units all move the same way, so on its own it calls 3 improved cases
+   * better. For a group sequential A/B (`sequential`), the sequential test's
+   * verdict: the fixed-n interval is not valid for that design.
    */
   verdict: "better" | "worse" | "inconclusive";
   /** Whether A and B were interleaved, and how far apart they ran if not. */
@@ -414,7 +421,12 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
   // A regrade reuses the other side's outputs: when it ran says nothing about drift.
   if (b.metadata?.regradeOf === a.id || a.metadata?.regradeOf === b.id) delete timing.warning;
   const seq = timing.interleaved && a.pair?.experiments[0] === a.id && b.pair?.experiments[1] === b.id ? a.pair.sequential : undefined;
-  const verdict: Comparison["verdict"] = seq ? seq.verdict : d.n > 0 && d.lo > 0 ? "better" : d.n > 0 && d.hi < 0 ? "worse" : "inconclusive";
+  const signFlip = clusterSignFlip(
+    deltas.map((x) => x.delta),
+    { seed: boot.seed, iters: boot.iters, ...(cl ? { clusterIds: ids.map(clusterOf) } : {}) },
+  );
+  const exact = signFlip.p < boot.alpha;
+  const verdict: Comparison["verdict"] = seq ? seq.verdict : d.n > 0 && exact && d.lo > 0 ? "better" : d.n > 0 && exact && d.hi < 0 ? "worse" : "inconclusive";
   const byDelta = (x: CaseDelta, y: CaseDelta) => x.delta - y.delta || (x.caseId < y.caseId ? -1 : 1);
   const rateOf = (r: Map<string, number>) => {
     const v = [...r.values()];
@@ -472,6 +484,7 @@ export function compareExperiments(a: ExperimentResult, b: ExperimentResult, opt
     onlyInB,
     diff: { mean: d.mean, lo: d.lo, hi: d.hi, iters: d.iters },
     mcnemar: mcnemar(regress, improve),
+    signFlip,
     verdict,
     timing,
     regressions: deltas.filter((x) => x.delta < 0).sort(byDelta),

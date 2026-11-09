@@ -6,7 +6,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FileEvalStore } from "../../src/datasets/store.ts";
-import { clusterMap, compareExperiments, isInfraError } from "../../src/experiments/compare.ts";
+import { clusterMap, compareExperiments, isInfraError, type Comparison } from "../../src/experiments/compare.ts";
 import { calibrate, withCalibration, type HumanLabel, type JudgedCase } from "../../src/judge/calibrate.ts";
 import { createJudge, judgeGrader } from "../../src/judge/judge.ts";
 import type { ChatProvider } from "../../src/judge/providers.ts";
@@ -551,6 +551,62 @@ describe("compare: A/A noise floor (EM-10)", () => {
 // few cases (or clusters) it decides alone what no exact test can support.
 describe("compareExperiments on a few cases", () => {
   const few = (n: number) => createDataset({ name: `few${n}`, createdAt: 1, cases: ids.slice(0, n).map((id) => ({ id, input: id })) });
+
+  it("3 cases that all improve are inconclusive: the CI is [+100pp, +100pp], the exact two-sided p is 1/4", async () => {
+    const d = few(3);
+    const c = compareExperiments(await run("a", new Set(), { dataset: d }), await run("b", new Set(ids), { dataset: d }), { seed: 1, iters: 2000 });
+    assert.deepEqual([c.diff.lo, c.diff.hi], [1, 1]);
+    assert.deepEqual(c.signFlip, { p: 0.25, units: 3, method: "exact" });
+    assert.equal(c.verdict, "inconclusive");
+    const text = renderComparison(c, { color: false });
+    assert.match(text, /^mcnemar p=0\.250 {2}0 regressed, 3 improved {2}sign-flip p=0\.250 over 3 cases$/m);
+    assert.match(text, /^verdict inconclusive \(the CI excludes 0, but the exact sign-flip test does not: p=0\.250 over 3 cases\)$/m);
+  });
+
+  it("6 cases that all improve are better (2/2⁶ < 0.05); 5 that all get worse are not (2/2⁵)", async () => {
+    const d6 = few(6);
+    const up = compareExperiments(await run("a", new Set(), { dataset: d6 }), await run("b", new Set(ids), { dataset: d6 }), { seed: 1, iters: 2000 });
+    assert.equal(up.signFlip.p, 0.03125);
+    assert.equal(up.verdict, "better");
+    const d5 = few(5);
+    const down = compareExperiments(await run("a", new Set(ids), { dataset: d5 }), await run("b", new Set(), { dataset: d5 }), { seed: 1, iters: 2000 });
+    assert.equal(down.diff.hi, -1);
+    assert.equal(down.verdict, "inconclusive");
+  });
+
+  it("clusters: 20 improved cases in 3 repos flip as 3 units, so the verdict is inconclusive", async () => {
+    const d = few(20);
+    const of = new Map(ids.map((id, i) => [id, `r${i % 3}`]));
+    const c = compareExperiments(await run("a", new Set(), { dataset: d }), await run("b", new Set(ids), { dataset: d }), { seed: 1, iters: 2000, cluster: { key: "repo", of } });
+    assert.deepEqual([c.diff.lo, c.diff.hi], [1, 1]);
+    assert.equal(c.signFlip.units, 3);
+    assert.equal(c.signFlip.p, 0.25);
+    assert.equal(c.verdict, "inconclusive");
+    assert.match(renderComparison(c, { color: false }), /sign-flip p=0\.250 over 3 repo clusters/);
+    // Without the cluster key the same 20 cases are 20 units, and B is better.
+    assert.equal(compareExperiments(await run("a", new Set(), { dataset: d }), await run("b", new Set(ids), { dataset: d }), { seed: 1, iters: 2000 }).verdict, "better");
+  });
+
+  it("20 cases: a call McNemar supports keeps the bootstrap's verdict; one it doesn't (4 flips) is dropped", async () => {
+    // [improved, regressed] of 20 cases → verdict. For one trial per case the sign-flip p is McNemar's.
+    const cases: [number, number, Comparison["verdict"], Comparison["verdict"]][] = [
+      // improved, regressed, bootstrap-only verdict, verdict now
+      [12, 2, "better", "better"],
+      [2, 11, "worse", "worse"],
+      [8, 0, "better", "better"],
+      [4, 0, "better", "inconclusive"],
+      [7, 4, "inconclusive", "inconclusive"],
+    ];
+    for (const [up, down, old, now] of cases) {
+      const a = await run("a", new Set(ids.slice(up, up + down)));
+      const b = await run("b", new Set(ids.slice(0, up)));
+      const c = compareExperiments(a, b, { seed: 1, iters: 4000 });
+      const ciOnly = c.diff.lo > 0 ? "better" : c.diff.hi < 0 ? "worse" : "inconclusive";
+      assert.equal(ciOnly, old, `${up}/${down} bootstrap`);
+      assert.equal(c.verdict, now, `${up}/${down}`);
+      assert.ok(Math.abs(c.signFlip.p - c.mcnemar.p) < 1e-9, `${up}/${down}: sign-flip ${c.signFlip.p} vs McNemar ${c.mcnemar.p}`);
+    }
+  });
 
   it("--margin: 4 cases with no change are not shown non-inferior (sign-flip p 1/16 ≥ 0.025)", async () => {
     const d = few(4);
