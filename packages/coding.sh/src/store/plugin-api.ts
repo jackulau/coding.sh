@@ -47,6 +47,7 @@ export {
   snippet,
   storedSearchText,
   taskBlobs,
+  termMatches,
   toBytes,
 } from "./common.ts";
 export { sha256Hex } from "../core/ids.ts";

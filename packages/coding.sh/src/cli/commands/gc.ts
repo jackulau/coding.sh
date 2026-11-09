@@ -17,6 +17,7 @@ export async function run(c: CommandContext): Promise<number> {
     out.row("Spool", `${verb} ${plural(r.spool.deleted, "file")}`, "ok");
     out.row("Blobs", `${verb} ${plural(r.blobs.deleted, "blob")} (${r.blobs.expired} expired tool output)`, "ok");
     if (r.judgeCache) out.row("Judge cache", `${verb} ${plural(r.judgeCache.deleted, "entry", "entries")}, ${bytes(r.judgeCache.keptBytes)} kept`, "ok");
+    if (r.llmCache) out.row("LLM cache", `${verb} ${plural(r.llmCache.deleted, "recording")}, ${bytes(r.llmCache.keptBytes)} kept`, "ok");
     if (r.compacted) out.row("Index", "compacted", "ok");
     if (r.blobsPacked) out.row("Blob pack", `moved ${plural(r.blobsPacked, "small blob file")} in`, "ok");
     if (r.blobPackHeld) out.row("Blob pack", "not compacted: another process is reading blobs/pack.db; run gc --compact again once it closes", "warn");

@@ -162,6 +162,45 @@ describe("coding.sh purge --literal", () => {
   });
 });
 
+describe("purge of rows from before index schema v10", () => {
+  let env: TmpEnv;
+  before(async () => {
+    env = tmpEnv();
+    await seed(env.dataHome, {
+      sessions: [session("s1")],
+      events: [event("s1", 1, { kind: "tool.end", payload: { tool: "Read", ok: true, output: "nothing here" } }), event("s1", 2, { payload: { text: "fine" } })],
+    });
+    // What a v9 row keeps until gc --compact empties it: a search_extra copy of its tool
+    // text (here holding the secret raw, where the payload would hold it JSON-escaped) and an inline cwd.
+    const db = new DatabaseSync(join(env.dataHome, "index.db"));
+    db.prepare("UPDATE events SET search_extra = ?, cwd = ? WHERE id = 's1-e1'").run(`Read\n${QUOTED}`, `/home/user/${SECRET}`);
+    db.close();
+  });
+  after(async () => {
+    await closeBlobs();
+    env.restore();
+  });
+
+  test("scrubs search_extra and an inline cwd", () => {
+    const secrets = join(env.root, "leaked.txt");
+    writeFileSync(secrets, `${SECRET}\n${QUOTED}\n`);
+    const j = JSON.parse(ok(["purge", "--literal", secrets, "--json"]).stdout);
+    assert.equal(j.events, 1);
+    const db = new DatabaseSync(join(env.dataHome, "index.db"), { readOnly: true });
+    try {
+      const row = db.prepare("SELECT search_extra, cwd FROM events WHERE id = 's1-e1'").get() as { search_extra: string | null; cwd: string };
+      assert.equal(row.search_extra, null);
+      assert.equal(row.cwd, `/home/user/${PURGE_MARKER}`);
+    } finally {
+      db.close();
+    }
+    for (const f of files(env.dataHome)) {
+      const buf = readFileSync(f);
+      assert.ok(!holds(buf, SECRET) && !holds(buf, QUOTED), `${f} still holds a secret`);
+    }
+  });
+});
+
 describe("purge input and store checks", () => {
   let env: TmpEnv;
   before(async () => {
@@ -383,7 +422,7 @@ describe("coding.sh purge on a store ingested from a real capture", () => {
 
   test("reports the index intact, and search finds the rewritten text", () => {
     const db = new DatabaseSync(join(env.dataHome, "index.db"), { readOnly: true });
-    const n = db.prepare("SELECT count(*) AS events, count(text) AS indexed FROM events").get() as { events: number; indexed: number };
+    const n = db.prepare("SELECT (SELECT count(*) FROM events) AS events, (SELECT count(*) FROM events_fts_docsize) AS indexed").get() as { events: number; indexed: number };
     db.close();
     assert.ok(n.indexed > 0 && n.indexed < n.events, "the capture has events without text");
     assert.deepEqual(kinds("coerces"), ["assistant.message"]);
@@ -399,7 +438,7 @@ describe("coding.sh purge on a store ingested from a real capture", () => {
 
   test("still fails when an event with text is missing from the index", () => {
     const db = new DatabaseSync(join(env.dataHome, "index.db"));
-    db.exec("INSERT INTO events_fts(events_fts, rowid, text) SELECT 'delete', rowid, text FROM events WHERE kind = 'user.message' AND text IS NOT NULL LIMIT 1");
+    db.exec("DELETE FROM events_fts WHERE rowid = (SELECT e.rowid FROM events e JOIN events_fts_docsize d ON d.id = e.rowid WHERE e.kind = 'user.message' LIMIT 1)");
     db.close();
     const r = cli(["purge", "--literal", literal]);
     assert.equal(r.status, 1);

@@ -248,7 +248,7 @@ describe("SqliteIndexStore", () => {
     check.close();
   });
 
-  it("searchIndexOk passes with events that have no text and fails on a missing, stray or miscounted entry", async () => {
+  it("searchIndexOk passes with events that have no text and fails on a missing or stray entry", async () => {
     const path = join(root, "fts-check.db");
     const s = await SqliteIndexStore.open(path);
     const ev = (id: string, kind: AgentEvent["kind"], payload: Record<string, unknown>): AgentEvent => ({ id, v: 0, sessionId: "s", ts: 1, agent: "claude-code", kind, payload });
@@ -268,14 +268,11 @@ describe("SqliteIndexStore", () => {
         db.close();
       }
     };
-    const db = new DatabaseSync(path);
-    assert.throws(() => db.exec("INSERT INTO events_fts(events_fts, rank) VALUES ('integrity-check', 1)"), /malformed/, "FTS5's content check counts rows without text as missing");
-    db.close();
     assert.equal(verdict(), true);
-    assert.equal(verdict("INSERT INTO events_fts(events_fts) VALUES ('rebuild')"), true, "a rebuild's empty entries for rows without text are allowed");
-    assert.equal(verdict("INSERT INTO events_fts(events_fts, rowid, text) SELECT 'delete', rowid, text FROM events WHERE id = 'u'"), false, "an event with text has no entry");
-    assert.equal(verdict("DELETE FROM events WHERE id = 'u'"), false, "an entry with tokens has no event");
-    assert.equal(verdict("INSERT INTO events_fts(events_fts, rowid, text) SELECT 'delete', rowid, '' FROM events WHERE id = 'start'"), false, "a delete for a row never indexed (v4 retention)");
+    assert.equal(verdict("DELETE FROM events_fts WHERE rowid = (SELECT rowid FROM events WHERE id = 'u')"), false, "an event with text has no entry");
+    assert.equal(verdict("DELETE FROM events WHERE id = 'u'"), false, "an entry has no event");
+    assert.equal(verdict("INSERT INTO events_fts (rowid, text) SELECT rowid, 'stray' FROM events WHERE id = 'start'"), false, "an entry for an event that has no search text");
+    assert.equal(verdict("DELETE FROM events_fts WHERE rowid = (SELECT rowid FROM events WHERE id = 'llm')"), true, "deleting a rowid that has no entry changes nothing");
   });
 
   it("migrating to v5 repairs an FTS index that v4 retention corrupted", async () => {
@@ -307,8 +304,7 @@ describe("SqliteIndexStore", () => {
     await s.close();
     const check = new DatabaseSync(path);
     assert.equal((check.prepare("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v, SQLITE_SCHEMA_VERSION);
-    assert.equal((check.prepare("SELECT text FROM events WHERE id = 'k'").get() as { text: string }).text, "refactor the tokenizer");
-    check.exec("INSERT INTO events_fts(events_fts, rank) VALUES ('integrity-check', 1)");
+    assert.equal(searchIndexOk(check), true, "v10 built a sound index from the events");
     check.close();
   });
 
@@ -457,6 +453,153 @@ describe("SqliteIndexStore", () => {
     assert.equal((await s.listEvents("resumed")).length, 5);
     assert.equal((await s.listEvents("long")).length, 2);
     assert.equal(await s.getSession("over"), undefined);
+    await s.close();
+  });
+
+  /** A database at schema v9, as coding.sh before v10 left it: tool text in search_extra, cwd inline, events_project. */
+  async function v9Store(path: string, write: (db: import("node:sqlite").DatabaseSync) => void): Promise<void> {
+    const { DatabaseSync } = await loadSqlite();
+    const db = new DatabaseSync(path);
+    db.exec("PRAGMA journal_mode = WAL"); // as every store coding.sh opened is
+    db.exec("CREATE TABLE migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
+    for (const m of MIGRATIONS.filter((m) => m.version <= 9)) {
+      db.exec(m.sql);
+      m.after?.(db);
+      db.prepare("INSERT INTO migrations (version, applied_at) VALUES (?, 0)").run(m.version);
+    }
+    db.exec("CREATE INDEX events_project ON events(project_id, ts)");
+    write(db);
+    db.close();
+  }
+
+  /** Rows as v9 putEvents wrote them (search_extra = storedSearchText, FTS fed the same text). */
+  function writeV9Events(db: import("node:sqlite").DatabaseSync, rows: { id: string; kind: string; payload: Record<string, unknown>; cwd?: string; text?: string; extra?: string }[]): void {
+    const insert = db.prepare("INSERT INTO events (id, session_id, ts, agent, kind, tool, cwd, payload, search_extra) VALUES (?, 's', ?, 'claude-code', ?, ?, ?, ?, ?)");
+    const fts = db.prepare("INSERT INTO events_fts (rowid, text) VALUES (?, ?)");
+    rows.forEach((r, i) => {
+      const tool = typeof r.payload.tool === "string" ? r.payload.tool : null;
+      const res = insert.run(r.id, i, r.kind, tool, r.cwd ?? null, JSON.stringify(r.payload), r.extra ?? null);
+      const text = r.text ?? r.extra;
+      if (text) fts.run(res.lastInsertRowid, text);
+    });
+  }
+
+  it("migrating to v10 keeps search results and paths, and gc --compact empties search_extra and inline cwd", async () => {
+    const path = join(root, "v9-slim.db");
+    await v9Store(path, (db) =>
+      writeV9Events(db, [
+        { id: "u", kind: "user.message", payload: { text: "ask emil kowalski" }, cwd: "/work/demo", text: "ask emil kowalski" },
+        { id: "t", kind: "tool.start", payload: { tool: "Bash", toolUseId: "x", input: { command: "pgrep -fl vision_connector.py" } }, cwd: "/work/demo", extra: "Bash\npgrep -fl vision_connector.py" },
+        { id: "o", kind: "tool.end", payload: { tool: "Bash", toolUseId: "x", ok: true, output: "4242 vision_connector.py" }, cwd: "/work/other", extra: "Bash\n4242 vision_connector.py" },
+        // A tool call whose search_extra was never filled (a store that skipped v3's fill): v10 computes it.
+        { id: "late", kind: "tool.start", payload: { tool: "Grep", input: { pattern: "narwhal" } } },
+        { id: "llm", kind: "llm.call", payload: { model: "m" }, cwd: "/work/demo" },
+      ]),
+    );
+    const lines: string[] = [];
+    const s = await SqliteIndexStore.open(path, { progress: (l) => lines.push(l), progressMinRows: 1 });
+    const ids = async (q: string) => (await s.search(q)).map((h) => h.event.id).sort();
+    assert.deepEqual(await ids("kowalski"), ["u"]);
+    assert.deepEqual(await ids("pgrep"), ["t"]);
+    assert.deepEqual(await ids("vision_connector"), ["o", "t"]);
+    assert.deepEqual(await ids("narwhal"), ["late"]);
+    assert.match((await s.search("pgrep"))[0]!.snippet, /«pgrep»/);
+    assert.deepEqual((await s.listEvents("s")).map((e) => [e.id, e.cwd]), [["u", "/work/demo"], ["t", "/work/demo"], ["o", "/work/other"], ["late", undefined], ["llm", "/work/demo"]]);
+    // New writes intern their cwd and index their text.
+    await s.putEvents([{ id: "n", v: 0, sessionId: "s", ts: 9, agent: "a", kind: "tool.start", cwd: "/work/other", payload: { tool: "TaskStop", input: { task_id: "q1" } } }]);
+    assert.deepEqual(await ids("taskstop"), ["n"]);
+    assert.equal((await s.listEvents("s")).at(-1)!.cwd, "/work/other");
+    const { DatabaseSync } = await loadSqlite();
+    const peek = new DatabaseSync(path, { readOnly: true });
+    const columns = () => ({ ...(peek.prepare("SELECT count(search_extra) AS extra, count(cwd) AS cwd, count(cwd_id) AS ids FROM events").get() as object) });
+    // The upgrade rewrites no rows: old ones keep search_extra and their inline cwd.
+    assert.deepEqual(columns(), { extra: 2, cwd: 4, ids: 1 });
+    assert.match(lines[0]!, /the index holds 5 events; upgrading it from schema v9 to v\d+\. This runs once\./);
+    assert.match(lines.at(-1)!, /index upgraded in [\d.]+s\. Run `coding\.sh gc --compact` to give back the space the old layout used\./);
+    assert.equal(existsSync(`${path}.upgrade`), false, "the upgrade state file is removed");
+
+    await s.compact();
+    assert.deepEqual(columns(), { extra: 0, cwd: 0, ids: 5 });
+    assert.deepEqual(peek.prepare("SELECT path FROM cwds ORDER BY id").all().map((r) => (r as { path: string }).path), ["/work/other", "/work/demo"]);
+    assert.deepEqual((await s.listEvents("s")).map((e) => [e.id, e.cwd]), [["u", "/work/demo"], ["t", "/work/demo"], ["o", "/work/other"], ["late", undefined], ["llm", "/work/demo"], ["n", "/work/other"]]);
+    assert.deepEqual(await ids("vision_connector"), ["o", "t"]);
+    assert.deepEqual(await ids("narwhal"), ["late"]);
+    await s.close();
+
+    assert.equal(peek.prepare("SELECT 1 FROM sqlite_schema WHERE name = 'events_project'").get(), undefined);
+    assert.ok(!(peek.prepare("PRAGMA table_xinfo(events)").all() as { name: string }[]).some((c) => c.name === "text"), "the generated text column is gone");
+    assert.match(String((peek.prepare("SELECT sql FROM sqlite_schema WHERE name = 'events_fts'").get() as { sql: string }).sql), /content=''.*contentless_delete=1/);
+    peek.close();
+    const check = new DatabaseSync(path); // the integrity-check is a write
+    assert.equal(searchIndexOk(check), true);
+    check.close();
+  });
+
+  it("a store under the progress threshold upgrades silently", async () => {
+    const path = join(root, "v9-quiet.db");
+    await v9Store(path, (db) => writeV9Events(db, [{ id: "u", kind: "user.message", payload: { text: "hello" }, text: "hello" }]));
+    const lines: string[] = [];
+    const s = await SqliteIndexStore.open(path, { progress: (l) => lines.push(l), progressMinRows: 2 });
+    await s.close();
+    assert.deepEqual(lines, []);
+  });
+
+  it("a failed upgrade leaves the store as it was, at its old schema", async () => {
+    const path = join(root, "v9-fail.db");
+    await v9Store(path, (db) => {
+      writeV9Events(db, [{ id: "u", kind: "user.message", payload: { text: "hello" }, text: "hello" }]);
+      db.exec("CREATE TABLE cwds (x)"); // v10's CREATE TABLE cwds fails
+    });
+    const lines: string[] = [];
+    await assert.rejects(SqliteIndexStore.open(path, { progress: (l) => lines.push(l), progressMinRows: 1 }), /cwds already exists/);
+    assert.match(lines.at(-1)!, /the index upgrade stopped after [\d.]+s; nothing was changed\./);
+    const { DatabaseSync } = await loadSqlite();
+    const db = new DatabaseSync(path);
+    assert.equal((db.prepare("SELECT MAX(version) AS v FROM migrations").get() as { v: number }).v, 9);
+    assert.equal((db.prepare("SELECT count(*) AS n FROM events WHERE search_extra IS NULL AND text = 'hello'").get() as { n: number }).n, 1);
+    db.close();
+  });
+
+  it("waits for another process's upgrade and says how far it is", async () => {
+    const path = join(root, "v9-wait.db");
+    await v9Store(path, (db) => writeV9Events(db, [{ id: "u", kind: "user.message", payload: { text: "hello" }, text: "hello" }]));
+    const { DatabaseSync } = await loadSqlite();
+    const holder = new DatabaseSync(path);
+    holder.exec("BEGIN IMMEDIATE");
+    // What a live upgrading process keeps beside the database (its pid must be another live process).
+    writeFileSync(`${path}.upgrade`, JSON.stringify({ pid: process.ppid, host: hostname(), from: 9, to: SQLITE_SCHEMA_VERSION, startedAt: Date.now(), step: "search index", done: 300_000, total: 740_614 }));
+    const lines: string[] = [];
+    // Released after the 5 s busy timeout, which a plain lock holder would hit.
+    const release = setTimeout(() => {
+      holder.exec("ROLLBACK");
+      holder.close();
+      rmSync(`${path}.upgrade`, { force: true });
+    }, 5600);
+    const s = await SqliteIndexStore.open(path, { progress: (l) => lines.push(l), progressMinRows: 1_000_000 });
+    clearTimeout(release);
+    assert.deepEqual((await s.search("hello")).map((h) => h.event.id), ["u"]);
+    await s.close();
+    assert.ok(lines.length >= 5, lines.join(""));
+    assert.equal(lines[0], `coding.sh: waiting for another coding.sh (pid ${process.ppid}) to finish upgrading the index: search index 300,000 of 740,614 events (40%)\n`);
+  });
+
+  it("ranks a search by bm25 and lists one with more matches than the cap newest first", async () => {
+    const s = await SqliteIndexStore.open(":memory:", { searchRankMaxMatches: 5 });
+    const msg = (id: string, ts: number, text: string, agent = "claude-code"): AgentEvent => ({ id, v: 0, sessionId: "s", ts, agent, kind: "user.message", payload: { text } });
+    await s.putEvents([
+      msg("long", 1, "zebra and many other words that dilute the zebra a little bit more"),
+      msg("short", 2, "zebra zebra"),
+      msg("mid", 3, "zebra crossing", "codex"),
+    ]);
+    assert.deepEqual((await s.search("zebra")).map((h) => h.event.id), ["short", "mid", "long"], "ranked: few matches");
+    assert.deepEqual((await s.search("zebra", { agent: "claude-code" })).map((h) => h.event.id), ["short", "long"], "ranked and filtered");
+    assert.deepEqual((await s.search("zebra", { limit: 1 })).map((h) => h.event.id), ["short"]);
+    await s.putEvents([msg("a", 4, "zebra one"), msg("b", 5, "zebra two"), msg("c", 6, "zebra three", "codex")]);
+    assert.deepEqual((await s.search("zebra")).map((h) => h.event.id), ["c", "b", "a", "mid", "short", "long"], "6 matches > cap 5: newest first");
+    assert.deepEqual((await s.search("zebra", { agent: "codex" })).map((h) => h.event.id), ["c", "mid"], "newest first and filtered");
+    assert.deepEqual((await s.search("zebra", { limit: 2 })).map((h) => h.event.id), ["c", "b"]);
+    assert.deepEqual((await s.searchWhere("zebra", { root: undefined } as never, { limit: 2 })).map((h) => h.event.id), ["c", "b"]);
+    for (const h of await s.search("zebra")) assert.match(h.snippet, /«zebra»/);
     await s.close();
   });
 

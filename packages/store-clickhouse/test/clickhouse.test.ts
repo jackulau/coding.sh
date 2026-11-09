@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { AgentEvent, Session } from "coding.sh/store";
-import { ChClient, ChIndexStore, encodeParam, indexStore, likeTerms, parseChUrl, quoteLiteral, redactUrl, searchText } from "../src/index.ts";
+import { ChClient, ChIndexStore, encodeParam, indexStore, likeTerms, parseChUrl, quoteLiteral, redactUrl, searchText, termsSql } from "../src/index.ts";
 import { CH_URL, SKIP, dbUrl } from "./helpers.ts";
 
 const ev = (over: Partial<AgentEvent> = {}): AgentEvent => ({
@@ -58,6 +58,10 @@ describe("clickhouse URL and parameters", () => {
     assert.deepEqual(likeTerms("Café  zürich!"), ["cafe", "zurich"]);
     assert.deepEqual(likeTerms("100% _done_ \\x"), ["100", "done", "x"]);
     assert.deepEqual(likeTerms(" & | ! :* "), []);
+    const bound: string[] = [];
+    const sql = termsSql(["cafe", "zur"], (v) => (bound.push(v), `{p${bound.length - 1}:String}`));
+    assert.equal(sql, "(search_text LIKE {p0:String} OR endsWith(search_text, {p1:String})) AND search_text LIKE {p2:String}");
+    assert.deepEqual(bound, ["% cafe %", " cafe", "% zur%"]);
     assert.equal(searchText(ev({ kind: "user.message", payload: { text: "Hello, Wörld_42" } })), " hello world 42");
     assert.equal(searchText(ev({ kind: "notification", payload: { text: "x" } })), "");
   });
@@ -179,7 +183,9 @@ describe("clickhouse store", { skip: SKIP }, () => {
       assert.deepEqual((await s.search("pong")).map((h) => h.event.id).sort(), ["d1", "f1"], "text past the index cap is not searchable");
       assert.ok((await s.search("w5")).length > 0);
       assert.deepEqual((await s.search("%")).map((h) => h.event.id), [], "a bare wildcard matches nothing");
-      assert.deepEqual((await s.search("10 don")).map((h) => h.event.id), ["pct"]);
+      assert.deepEqual((await s.search("100 don")).map((h) => h.event.id), ["pct"]);
+      assert.deepEqual((await s.search("10 don")).map((h) => h.event.id), [], "only the last term is a prefix");
+      assert.deepEqual((await s.search("done now")).map((h) => h.event.id), ["pct"], "a whole word at the end of the text");
     } finally {
       await s.close();
     }

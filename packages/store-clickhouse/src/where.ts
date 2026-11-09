@@ -24,6 +24,16 @@ export function likeTerms(text: string): string[] {
   return searchTerms(text).flatMap((t) => t.match(/[\p{L}\p{N}]+/gu) ?? []);
 }
 
+/**
+ * SQL over `search_text` (folded words after a space each) for the core store's
+ * ftsQuery rule: every term is a whole word and the last one a word prefix.
+ */
+export function termsSql(terms: readonly string[], bind: (value: string) => string): string {
+  return terms
+    .map((t, i) => (i === terms.length - 1 ? `search_text LIKE ${bind(`% ${t}%`)}` : `(search_text LIKE ${bind(`% ${t} %`)} OR endsWith(search_text, ${bind(` ${t}`)}))`))
+    .join(" AND ");
+}
+
 const asciiLower = (s: string): string => s.replace(/[A-Z]/g, (c) => c.toLowerCase());
 
 /** LIKE pattern from a value: `*` → %, and %, _ and \ escaped with \. */
@@ -161,11 +171,11 @@ class Compiler {
     return negated && !def.notNull ? `ifNull(${sql}, 0)` : sql;
   }
 
-  /** Every word is a word prefix in one event's search text (the store's search()). */
+  /** Every word is a word, and the last a word prefix, in one event's search text (the store's search()). */
   text(words: string[], at: number): string {
     const terms = likeTerms(words.join(" "));
     if (!terms.length) throw new QueryError("search text has no letters or digits", at, { reason: "bad_value", next: ['quote it as a key value instead, e.g. title:"#42"'] });
-    return `id IN (SELECT session_id FROM ${this.events} FINAL WHERE ${terms.map((t) => `search_text LIKE ${this.bind("String", `% ${t}%`)}`).join(" AND ")})`;
+    return `id IN (SELECT session_id FROM ${this.events} FINAL WHERE ${termsSql(terms, (v) => this.bind("String", v))})`;
   }
 
   /** Condition over an events row. */

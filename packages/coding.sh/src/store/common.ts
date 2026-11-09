@@ -105,14 +105,21 @@ export function searchTerms(text: string): string[] {
 }
 
 /**
- * Builds a safe FTS5 MATCH expression: every term must appear as a word
- * prefix ("refactor tokeni" finds "refactored the tokenizer"). Terms are
- * quoted, so user input can never inject FTS syntax.
+ * Builds a safe FTS5 MATCH expression: every term must appear as a word, and the
+ * last one as a word prefix, since it is the one still being typed ("refactor
+ * tokeni" finds "refactor the tokenizer", not "refactored the tokenizer"). A
+ * prefix on every term made "the fix" expand "the" to every word starting with it.
+ * Terms are quoted, so user input can never inject FTS syntax.
  */
 export function ftsQuery(text: string): string | undefined {
   const terms = searchTerms(text);
   if (!terms.length) return undefined;
-  return terms.map((t) => `"${t.replace(/"/g, '""')}"*`).join(" ");
+  return terms.map((t, i) => `"${t.replace(/"/g, '""')}"${i === terms.length - 1 ? "*" : ""}`).join(" ");
+}
+
+/** Whether a folded word matches term `i` of `terms` (the ftsQuery rule: the last term is a prefix). */
+export function termMatches(word: string, terms: readonly string[], i: number): boolean {
+  return i === terms.length - 1 ? word.startsWith(terms[i]!) : word === terms[i];
 }
 
 export function blobPath(ref: BlobRef): [string, string, string] {

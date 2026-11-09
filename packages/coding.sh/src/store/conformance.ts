@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import type { AgentEvent, Session } from "../schema/index.ts";
-import type { BlobStore, EvalTask, HarnessBundle, IndexStore, Label, RunResult } from "../core/types.ts";
+import type { BlobStore, EvalTask, HarnessBundle, IndexStore, Label, RunResult, Score, ScoreConfig } from "../core/types.ts";
 import { defaultConfig } from "../core/config.ts";
 import { gc } from "../core/gc.ts";
 import { sha256Hex } from "../core/ids.ts";
@@ -177,7 +177,9 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.deepEqual(hits.map((h) => h.event.id).sort(), ["a1", "u1"], "only searchable kinds are indexed");
       for (const h of hits) assert.ok(h.snippet.includes(`${SNIPPET_OPEN}tokenizer${SNIPPET_CLOSE}`), h.snippet);
       assert.deepEqual((await s.search("tokenizer", { agent: "codex" })).map((h) => h.event.id), ["a1"]);
-      assert.deepEqual((await s.search("refactor tokeni")).length, 2, "every term is a word prefix");
+      assert.deepEqual((await s.search("tokenizer refact")).map((h) => h.event.id).sort(), ["a1", "u1"], "the last term is a word prefix");
+      assert.deepEqual((await s.search("refactor tokeni")).map((h) => h.event.id), ["u1"], "earlier terms are whole words: refactor is not refactored");
+      assert.deepEqual(await s.search("refact tokenizer"), []);
       assert.deepEqual(await s.search("nonexistentword"), []);
       await s.putEvents([fixtureEvent({ id: "cafe", kind: "user.message", payload: { text: "Meet at the Café Zürich" } })]);
       assert.deepEqual((await s.search("cafe zurich")).map((h) => h.event.id), ["cafe"], "diacritics are folded");
@@ -301,6 +303,64 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       assert.deepEqual(await s.listLabels({ sessionId: "s1" }), [label]);
       assert.deepEqual((await s.listLabels({ criterion: "judge:x" })).map((l) => l.id), ["l2"]);
       assert.equal((await s.listLabels()).length, 2);
+    }));
+
+    it("optional scores round-trip every type, filter, upsert, and keep labels as human scores", withStore(async (s) => {
+      if (!s.putScore || !s.listScores || !s.putScoreConfig || !s.listScoreConfigs) return;
+      const num: Score = { id: "sc1", target: "session", targetId: "s1", sessionId: "s1", name: "helpfulness", dataType: "numeric", value: 3.5, source: "judge", configId: "helpfulness", judgeVersion: "j@2", calibrated: true, comment: "ok", by: "judge", ts: 10 };
+      const bool: Score = { id: "sc2", target: "event", targetId: "e1", sessionId: "s1", name: "correct", dataType: "boolean", value: false, source: "code", by: "ci", ts: 20 };
+      const cat: Score = { id: "sc3", target: "case", targetId: "c1", name: "tone", dataType: "categorical", value: "neutral", source: "api", by: "me", ts: 30 };
+      const text: Score = { id: "sc4", target: "run", targetId: "r1", name: "why", dataType: "text", value: "", source: "monitor", calibrated: false, by: "mon", ts: 30 };
+      for (const x of [num, bool, cat, text]) await s.putScore(x);
+      assert.deepEqual(await s.listScores(), [text, cat, bool, num], "newest first, then id descending");
+      assert.deepEqual(await s.listScores({ id: "sc2" }), [bool]);
+      assert.deepEqual(await s.listScores({ sessionId: "s1" }), [bool, num]);
+      assert.deepEqual((await s.listScores({ target: "case" })).map((x) => x.id), ["sc3"]);
+      assert.deepEqual((await s.listScores({ target: "event", targetId: "e1" })).map((x) => x.id), ["sc2"]);
+      assert.deepEqual((await s.listScores({ name: "helpfulness", source: "judge" })).map((x) => x.id), ["sc1"]);
+      assert.deepEqual((await s.listScores({ since: 20, until: 30 })).map((x) => x.id), ["sc2"]);
+      assert.deepEqual((await s.listScores({ limit: 2 })).map((x) => x.id), ["sc4", "sc3"]);
+      const moved: Score = { ...num, value: -0.25, ts: 40 };
+      delete moved.comment;
+      delete moved.calibrated;
+      await s.putScore(moved);
+      assert.deepEqual(await s.listScores({ id: "sc1" }), [moved], "upsert by id replaces every field");
+      assert.equal((await s.listScores()).length, 4);
+      // Scores are not labels unless a person gave a pass/fail/skip on a session or case.
+      assert.deepEqual(await s.listLabels(), []);
+
+      // Labels: stored as human scores and read back unchanged.
+      const pass: Label = { id: "lab-pass", sessionId: "s1", criterion: "outcome", value: "pass", note: "", by: "me", ts: 50 };
+      const skip: Label = { id: "lab-skip", sessionId: "s2", criterion: "outcome", value: "skip", by: "me", ts: 51 };
+      const onCase: Label = { id: "lab-case", sessionId: "s3", caseId: "case-7", criterion: "judge:x", value: "fail", note: "wrong file", by: "you", ts: 52 };
+      for (const l of [pass, skip, onCase]) await s.putLabel(l);
+      assert.deepEqual(await s.listLabels(), [pass, skip, onCase]);
+      assert.deepEqual(await s.listLabels({ sessionId: "s3" }), [onCase]);
+      assert.deepEqual(await s.listLabels({ criterion: "outcome" }), [pass, skip]);
+      const [asScore] = await s.listScores({ id: "lab-pass" });
+      assert.deepEqual(asScore, { id: "lab-pass", target: "session", targetId: "s1", sessionId: "s1", name: "outcome", dataType: "boolean", value: true, source: "human", comment: "", by: "me", ts: 50 });
+      assert.deepEqual((await s.listScores({ id: "lab-case" }))[0], { id: "lab-case", target: "case", targetId: "case-7", sessionId: "s3", name: "judge:x", dataType: "boolean", value: false, source: "human", comment: "wrong file", by: "you", ts: 52 });
+      // A person's boolean score is a label; a judge's is not.
+      await s.putScore({ id: "human-bool", target: "session", targetId: "s4", sessionId: "s4", name: "outcome", dataType: "boolean", value: false, source: "human", by: "me", ts: 60 });
+      await s.putScore({ id: "judge-bool", target: "session", targetId: "s4", sessionId: "s4", name: "outcome", dataType: "boolean", value: true, source: "judge", by: "j", ts: 61 });
+      assert.deepEqual(await s.listLabels({ sessionId: "s4" }), [{ id: "human-bool", sessionId: "s4", criterion: "outcome", value: "fail", by: "me", ts: 60 }]);
+
+      const c1: ScoreConfig = { id: "helpfulness", name: "helpfulness", dataType: "numeric", min: 0, max: 5, description: "How much it helped", ts: 1 };
+      const c2: ScoreConfig = { id: "tone-v1", name: "tone", dataType: "categorical", categories: ["positive", "neutral", "negative"], ts: 2 };
+      await s.putScoreConfig(c2);
+      await s.putScoreConfig(c1);
+      assert.deepEqual(await s.listScoreConfigs(), [c1, c2], "sorted by name");
+      const c1b: ScoreConfig = { ...c1, max: 10, ts: 3 };
+      await s.putScoreConfig(c1b);
+      assert.deepEqual(await s.listScoreConfigs(), [c1b, c2]);
+
+      if (!s.deleteBefore) return;
+      await s.upsertSession(fixtureSession({ id: "s1", startedAt: 10, endedAt: 20 }));
+      await s.upsertSession(fixtureSession({ id: "s2", startedAt: 500 }));
+      await s.deleteBefore(100);
+      assert.deepEqual(await s.listScores({ sessionId: "s1" }), [], "retention deletes a session's scores");
+      assert.deepEqual((await s.listLabels()).map((l) => l.id), ["lab-skip", "lab-case", "human-bool"]);
+      assert.ok((await s.listScores({ id: "sc3" })).length, "scores without a session stay");
     }));
 
     it("optional kv round-trips and deletes", withStore(async (s) => {

@@ -6,7 +6,7 @@
 // positive event clauses ANDed together must hold for the same event, and a
 // negated one means "no such event". Text means one event holds every word.
 import type { AgentEvent, Session } from "../schema/index.ts";
-import { searchableText, searchTerms } from "../store/common.ts";
+import { searchableText, searchTerms, termMatches } from "../store/common.ts";
 import { HAS, IS, KEYS, levelOf, type Cmp, type KeyDef, type Leaf, type Node, type Query, type Value } from "./where.ts";
 
 /** ASCII-only lower case, as SQLite's LIKE folds case. */
@@ -61,14 +61,14 @@ export function leafMatches(n: Leaf, row: Session | AgentEvent): boolean {
   });
 }
 
-/** Every word is a word prefix in the event's searchable text (the FTS prefix query). */
+/** Every word is a word in the event's searchable text, the last a word prefix (the FTS query, ftsQuery). */
 export function textMatches(words: string[], e: AgentEvent): boolean {
   const terms = words.flatMap((w) => searchTerms(w));
   if (!terms.length) return false;
   const body = searchableText(e);
   if (!body) return false;
   const have = searchTerms(body);
-  return terms.every((t) => have.some((w) => w.startsWith(t)));
+  return terms.every((_, i) => have.some((w) => termMatches(w, terms, i)));
 }
 
 /** The query on one event and its session (event level: `search --where`). */

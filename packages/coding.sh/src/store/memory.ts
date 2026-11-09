@@ -13,18 +13,23 @@ import type {
   IndexStore,
   Label,
   RunResult,
+  Score,
+  ScoreConfig,
+  ScoreFilter,
   SearchHit,
   SearchOpts,
   SessionFilter,
   WriterLock,
 } from "../core/types.ts";
 import { sha256Hex } from "../core/ids.ts";
+import { labelToScore, scoreToLabel } from "../scores/labels.ts";
 import {
   assertBlobRef,
   bundleBlobs,
   runBlobs,
   searchableText,
   searchTerms,
+  termMatches,
   snippet,
   taskBlobs,
   toBytes,
@@ -46,7 +51,8 @@ export class MemoryIndexStore implements IndexStore {
   private readonly tasks = new Map<string, EvalTask>();
   private readonly bundles = new Map<string, HarnessBundle>();
   private readonly runs = new Map<string, RunResult>();
-  private readonly labels = new Map<string, Label>();
+  private readonly scores = new Map<string, Score>();
+  private readonly scoreConfigs = new Map<string, ScoreConfig>();
   private readonly kv = new Map<string, string>();
   /** dataset id → version → { doc, info } (insertion order = history order). */
   private readonly datasets = new Map<string, Map<string, { doc: Dataset; info: DatasetVersionInfo }>>();
@@ -97,7 +103,7 @@ export class MemoryIndexStore implements IndexStore {
         events++;
       }
     }
-    for (const [id, l] of this.labels) if (doomed.has(l.sessionId)) this.labels.delete(id);
+    for (const [id, s] of this.scores) if (s.sessionId !== undefined && doomed.has(s.sessionId)) this.scores.delete(id);
     for (const id of doomed) this.sessions.delete(id);
     return { sessions: doomed.size, events };
   }
@@ -152,9 +158,9 @@ export class MemoryIndexStore implements IndexStore {
       const body = searchableText(event);
       if (!body) continue;
       const words = searchTerms(body);
-      // Every term must appear as a word prefix (mirrors the FTS prefix query, minus stemming).
-      if (!terms.every((t) => words.some((w) => w.startsWith(t)))) continue;
-      const score = terms.reduce((n, t) => n + words.filter((w) => w.startsWith(t)).length, 0);
+      // Every term must appear as a word, the last as a word prefix (mirrors ftsQuery, minus stemming).
+      if (!terms.every((_, i) => words.some((w) => termMatches(w, terms, i)))) continue;
+      const score = terms.reduce((n, _, i) => n + words.filter((w) => termMatches(w, terms, i)).length, 0);
       hits.push({ hit: { event: clone(event), snippet: snippet(body, terms) }, score });
     }
     hits.sort((a, b) => b.score - a.score || b.hit.event.ts - a.hit.event.ts);
@@ -275,15 +281,47 @@ export class MemoryIndexStore implements IndexStore {
       .map(clone);
   }
 
+  // Labels are human scores (src/scores/labels.ts).
   async putLabel(l: Label): Promise<void> {
-    this.labels.set(l.id, clone(l));
+    await this.putScore(labelToScore(l));
   }
 
   async listLabels(f: { sessionId?: string; criterion?: string } = {}): Promise<Label[]> {
-    return [...this.labels.values()]
-      .filter((l) => (!f.sessionId || l.sessionId === f.sessionId) && (!f.criterion || l.criterion === f.criterion))
-      .sort((a, b) => a.ts - b.ts || cmp(a.id, b.id))
-      .map(clone);
+    const out: Label[] = [];
+    for (const s of this.scores.values()) {
+      const l = scoreToLabel(s);
+      if (l && (!f.sessionId || l.sessionId === f.sessionId) && (!f.criterion || l.criterion === f.criterion)) out.push(l);
+    }
+    return out.sort((a, b) => a.ts - b.ts || cmp(a.id, b.id));
+  }
+
+  async putScore(s: Score): Promise<void> {
+    this.scores.set(s.id, clone(s));
+  }
+
+  async listScores(f: ScoreFilter = {}): Promise<Score[]> {
+    const rows = [...this.scores.values()]
+      .filter(
+        (s) =>
+          (f.id === undefined || s.id === f.id) &&
+          (f.target === undefined || s.target === f.target) &&
+          (f.targetId === undefined || s.targetId === f.targetId) &&
+          (f.sessionId === undefined || s.sessionId === f.sessionId) &&
+          (f.name === undefined || s.name === f.name) &&
+          (f.source === undefined || s.source === f.source) &&
+          (f.since === undefined || s.ts >= f.since) &&
+          (f.until === undefined || s.ts < f.until),
+      )
+      .sort((a, b) => b.ts - a.ts || cmp(b.id, a.id));
+    return (f.limit === undefined ? rows : rows.slice(0, Math.max(0, Math.floor(f.limit)))).map(clone);
+  }
+
+  async putScoreConfig(c: ScoreConfig): Promise<void> {
+    this.scoreConfigs.set(c.id, clone(c));
+  }
+
+  async listScoreConfigs(): Promise<ScoreConfig[]> {
+    return [...this.scoreConfigs.values()].sort((a, b) => cmp(a.name, b.name) || cmp(a.id, b.id)).map(clone);
   }
 
   async kvGet(key: string): Promise<string | undefined> {

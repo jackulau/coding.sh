@@ -43,9 +43,9 @@ describe("postgres URL handling", () => {
     assert.equal(redactUrl("postgres://host/db"), "postgres://host/db");
   });
 
-  it("builds tsquery prefixes from letters and digits only", () => {
-    assert.deepEqual(tsQuery("Café  zürich!"), { query: "cafe:* & zurich:*", terms: ["cafe", "zurich"] });
-    assert.equal(tsQuery("'); DROP TABLE x; --")?.query, "drop:* & table:* & x:*");
+  it("builds a tsquery from letters and digits only, with the last term a prefix", () => {
+    assert.deepEqual(tsQuery("Café  zürich!"), { query: "cafe & zurich:*", terms: ["cafe", "zurich"] });
+    assert.equal(tsQuery("'); DROP TABLE x; --")?.query, "drop & table & x:*");
     assert.equal(tsQuery(" & | ! :* "), undefined);
     assert.equal(searchFolded(ev({ kind: "user.message", payload: { text: "Hello, Wörld_42" } })), "hello world 42");
     assert.equal(searchFolded(ev({ kind: "notification", payload: { text: "x" } })), null);

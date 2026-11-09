@@ -30,6 +30,7 @@ import { paths } from "./paths.ts";
 import { bundleBlobs, runBlobs, taskBlobs } from "../store/common.ts";
 import { requestBlobRefs } from "../proxy/blocks.ts";
 import { gcJudgeCache, type JudgeCacheGcResult } from "../judge/cache.ts";
+import { gcLlmCache, type LlmCacheGcResult } from "../llmcache/store.ts";
 import { sinkCursorKey } from "./ingest.ts";
 import { acquireLock, type Lock, type LockOptions } from "./lock.ts";
 import { listSpoolFiles, rawFilesOf, spoolFileDay, type SpoolFile } from "./spool-read.ts";
@@ -53,6 +54,10 @@ export interface GcOptions {
   judgeCacheDir?: string | false;
   /** Judge cache size cap in bytes (default 256 MB). */
   judgeCacheMaxBytes?: number;
+  /** Recorded model calls (default paths(env).llmCache, see src/llmcache); false skips it. */
+  llmCacheDir?: string | false;
+  /** LLM cache size cap in bytes (default 1 GB). */
+  llmCacheMaxBytes?: number;
   /** Also reclaim index space (IndexStore.compact) when not a dry run. */
   compact?: boolean;
   /**
@@ -84,6 +89,8 @@ export interface GcResult {
     tmpBytes: number;
   };
   judgeCache?: JudgeCacheGcResult;
+  /** Absent when the llm cache holds nothing. */
+  llmCache?: LlmCacheGcResult;
   /** True when the index was compacted. */
   compacted?: boolean;
   /** Small blob files moved into the blob store's pack by --compact (file store only). */
@@ -141,6 +148,11 @@ export async function gc(opts: GcOptions): Promise<GcResult> {
     const jopts: { dryRun: boolean; maxBytes?: number } = { dryRun };
     if (opts.judgeCacheMaxBytes !== undefined) jopts.maxBytes = opts.judgeCacheMaxBytes;
     result.judgeCache = await gcJudgeCache(jdir, jopts);
+  }
+  const ldir = opts.llmCacheDir ?? paths(opts.env ?? process.env).llmCache;
+  if (ldir !== false) {
+    const l = await gcLlmCache(ldir, { dryRun, ...(opts.llmCacheMaxBytes !== undefined ? { maxBytes: opts.llmCacheMaxBytes } : {}) });
+    if (l.scanned) result.llmCache = l;
   }
 
   if (opts.compact && !dryRun && index.compact) {

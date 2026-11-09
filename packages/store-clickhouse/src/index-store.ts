@@ -38,7 +38,7 @@ import {
   type WriterLock,
 } from "coding.sh/store";
 import { ChClient, migrateDatabase, nextVer, openError, Params, parseChUrl, quoteIdent, quoteLiteral, type RequestOpts } from "./client.ts";
-import { compileWhere, facetRows, likeTerms, orderBy } from "./where.ts";
+import { compileWhere, facetRows, likeTerms, orderBy, termsSql } from "./where.ts";
 
 /** Rows per INSERT request. */
 const INSERT_CHUNK = 5000;
@@ -408,15 +408,15 @@ export class ChIndexStore implements IndexStore {
   }
 
   /**
-   * Every term must start a word of the event's folded search text
-   * (`LIKE '% term%'`), which the ngram skip index narrows to the granules
+   * Every term must be a word of the event's folded search text and the last
+   * one start a word (`LIKE '% term%'`), which the ngram skip index narrows to the granules
    * that can match. Newest first.
    */
   async search(text: string, opts: { limit?: number; agent?: AgentId; project?: string } = {}): Promise<SearchHit[]> {
     const terms = likeTerms(text);
     if (!terms.length) return [];
     const w = new Where();
-    for (const t of terms) w.add(`search_text LIKE ${w.bind("String", `% ${t}%`)}`);
+    w.add(termsSql(terms, (v) => w.bind("String", v)));
     if (opts.agent) w.add(`agent = ${w.bind("String", opts.agent)}`);
     if (opts.project) w.add(`project_id = ${w.bind("String", opts.project)}`);
     const sql = `SELECT ${EVENT_COLS} FROM ${this.t("events")} FINAL ${w.sql} ORDER BY ts DESC, id LIMIT ${w.bind("UInt64", opts.limit ?? 50)}`;

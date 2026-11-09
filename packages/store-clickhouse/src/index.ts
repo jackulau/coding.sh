@@ -11,7 +11,7 @@ import type { IndexStore } from "coding.sh/store";
 import { ChIndexStore } from "./index-store.ts";
 
 export { ChIndexStore, searchText, type ChIndexOptions } from "./index-store.ts";
-export { likeTerms } from "./where.ts";
+export { likeTerms, termsSql } from "./where.ts";
 export { ChClient, ChError, encodeParam, parseChUrl, quoteLiteral, redactUrl, CH_SCHEMA_VERSION } from "./client.ts";
 
 /** Index store factory for the core plugin loader: (url, config) → migrated store. */

@@ -41,7 +41,9 @@ describe("clickhouse --where compiler", () => {
     assert.deepEqual(c.params, { p0: "Bash", p1: "false", p2: "codex", p3: "%fix%", p4: "0.5" });
     assert.equal(orderBy(p("sort:-cost").sort), `isNull(${cost}), ${cost} DESC, started_at DESC, id`);
     assert.equal(orderBy(undefined), "started_at DESC, id");
-    assert.equal(compile("migration flaky").sql, "id IN (SELECT session_id FROM `t`.events FINAL WHERE search_text LIKE {p0:String} AND search_text LIKE {p1:String})");
+    const words = compile("migration flaky");
+    assert.equal(words.sql, "id IN (SELECT session_id FROM `t`.events FINAL WHERE (search_text LIKE {p0:String} OR endsWith(search_text, {p1:String})) AND search_text LIKE {p2:String})");
+    assert.deepEqual(words.params, { p0: "% migration %", p1: " migration", p2: "% flaky%" }, "a whole word, then a word prefix");
   });
 
   it("binds every value: hostile input never changes the SQL", () => {
@@ -57,11 +59,13 @@ describe("clickhouse --where compiler", () => {
       const tsv = (s: string) => s.replace(/\\/g, "\\\\").replace(/\u0000/g, "\\0");
       assert.ok(sent.includes(tsv(v)), `${JSON.stringify(v)} is bound`);
       assert.ok(sent.includes(tsv(`skill:${v}`)));
-      // Free text is one bound LIKE per word (letters and digits only), whatever else it holds.
+      // Free text is bound word by word (letters and digits only), whatever else it holds.
       const t = compile(`${qt(`${v} word`)}`);
       const words = Object.values(t.params);
-      assert.ok(words.every((w) => /^% [\p{L}\p{N}]+%$/u.test(w)), JSON.stringify(words));
-      assert.equal(t.sql, `id IN (SELECT session_id FROM \`t\`.events FINAL WHERE ${words.map((_, i) => `search_text LIKE {p${i}:String}`).join(" AND ")})`);
+      assert.ok(words.every((w) => /^(% [\p{L}\p{N}]+ ?%| [\p{L}\p{N}]+)$/u.test(w)), JSON.stringify(words));
+      assert.equal(words.at(-1), "% word%");
+      const whole = (i: number) => `(search_text LIKE {p${i}:String} OR endsWith(search_text, {p${i + 1}:String}))`;
+      assert.equal(t.sql, `id IN (SELECT session_id FROM \`t\`.events FINAL WHERE ${[...Array.from({ length: (words.length - 1) / 2 }, (_, k) => whole(2 * k)), `search_text LIKE {p${words.length - 1}:String}`].join(" AND ")})`);
     }
     assert.equal(shapes.size, 1, "every value compiles to the same statement");
   });

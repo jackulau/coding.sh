@@ -14,14 +14,15 @@ import { HAS, IS, KEYS, levelOf, QueryError, QueryUnsupported, searchTerms, type
 export type Bind = (v: unknown) => string;
 
 /**
- * to_tsquery input: every term is a word prefix, ANDed. Terms are letters and
- * digits only (anything else splits them), so user input can never form
- * tsquery operators; the string is still bound as a parameter.
+ * to_tsquery input: every term is a word and the last one a word prefix, ANDed
+ * (the core store's ftsQuery rule). Terms are letters and digits only (anything
+ * else splits them), so user input can never form tsquery operators; the string
+ * is still bound as a parameter.
  */
 export function tsQuery(text: string): { query: string; terms: string[] } | undefined {
   const terms = searchTerms(text).flatMap((t) => t.match(/[\p{L}\p{N}]+/gu) ?? []);
   if (!terms.length) return undefined;
-  return { query: terms.map((t) => `${t}:*`).join(" & "), terms };
+  return { query: terms.map((t, i) => (i === terms.length - 1 ? `${t}:*` : t)).join(" & "), terms };
 }
 
 const UPPER = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";

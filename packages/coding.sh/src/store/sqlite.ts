@@ -14,7 +14,11 @@ import type {
   HarnessBundle,
   IndexStore,
   Label,
+  MetricRow,
   RunResult,
+  Score,
+  ScoreConfig,
+  ScoreFilter,
   SearchHit,
   SearchOpts,
   QueryOpts,
@@ -26,19 +30,10 @@ import type { Query } from "../query/where.ts";
 import { acquireLock, LockBusyError, type Lock } from "../core/lock.ts";
 import type { Dataset, DatasetVersionInfo, ExperimentResult, JudgeVersion } from "../datasets/types.ts";
 import type { DatasetListing } from "../core/types.ts";
-import {
-  BLOB_REF_FIELDS,
-  type BlobRefField,
-  ftsQuery,
-  MESSAGE_SEARCH_KINDS,
-  searchableText,
-  SEARCHABLE_KINDS,
-  SNIPPET_CLOSE,
-  SNIPPET_ELLIPSIS,
-  SNIPPET_OPEN,
-  storedSearchText,
-} from "./common.ts";
+import { BLOB_REF_FIELDS, type BlobRefField, ftsQuery, searchableText, SEARCHABLE_KINDS, searchTerms, snippet } from "./common.ts";
 import { loadSqlite, switchToWal } from "./sqlite-open.ts";
+import { runningUpgrade, describeStep, splitSql, UPGRADE_PROGRESS_MIN_ROWS, UpgradeProgress } from "./upgrade.ts";
+import { labelToScore } from "../scores/labels.ts";
 
 export { loadSqlite };
 
@@ -47,8 +42,13 @@ export { loadSqlite };
 interface Migration {
   version: number;
   sql: string;
-  /** Runs after `sql`, in the same transaction, for data changes SQL alone cannot compute. */
-  after?: (db: DatabaseSync) => void;
+  /**
+   * Runs after `sql`, in the same transaction, for data changes SQL alone cannot compute.
+   * A loop over events reports through `progress` (throttled; see ./upgrade.ts).
+   */
+  after?: (db: DatabaseSync, progress?: UpgradeProgress) => void;
+  /** Leaves data in old event rows that only `coding.sh gc --compact` (SqliteIndexStore.compact) gives back. */
+  compactAfter?: boolean;
 }
 
 const sqlList = (xs: readonly string[]) => xs.map((x) => `'${x.replace(/'/g, "''")}'`).join(", ");
@@ -244,22 +244,10 @@ CREATE VIRTUAL TABLE events_fts USING fts5(
   text, content='events', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2'
 );
 `,
-    after: (db) => {
-      const kinds = SEARCHABLE_KINDS.filter((k) => !MESSAGE_SEARCH_KINDS.includes(k));
-      const select = db.prepare(`SELECT rowid AS rid, * FROM events WHERE rowid > ? AND kind IN (${sqlList(kinds)}) ORDER BY rowid LIMIT 1000`);
-      const update = db.prepare("UPDATE events SET search_extra = ? WHERE rowid = ?");
-      // Page by rowid: rows are not updated while a SELECT over them is still open.
-      for (let last = 0; ;) {
-        const rows = select.all(last) as Row[];
-        if (!rows.length) break;
-        for (const r of rows) {
-          const text = storedSearchText(rowToEvent(r));
-          if (text !== undefined) update.run(text, r.rid as number);
-          last = num(r.rid)!;
-        }
-      }
-      db.exec("INSERT INTO events_fts(events_fts) VALUES ('rebuild')");
-    },
+    // This used to fill search_extra for every stored tool call and rebuild the index
+    // (34 s on a 740k-event store). v10 indexes every event from scratch and no longer
+    // keeps search_extra, and all pending migrations commit together, so that work is
+    // left to v10: it computes the text of tool calls that have no search_extra.
   },
   {
     // Projects (coding.sh serve): 'default' is all unscoped data, read back as an unset field.
@@ -268,8 +256,8 @@ CREATE VIRTUAL TABLE events_fts USING fts5(
 ALTER TABLE events ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default';
 ALTER TABLE sessions ADD COLUMN project_id TEXT NOT NULL DEFAULT 'default';
 CREATE INDEX sessions_project ON sessions(project_id, started_at DESC);
-CREATE INDEX events_project ON events(project_id, ts);
 `,
+    // events_project (project_id, ts) was created here too; no query used it and v10 drops it.
   },
   {
     // events.text is NULL exactly when putEvents indexed nothing (searchableText is
@@ -290,7 +278,8 @@ CREATE VIRTUAL TABLE events_fts USING fts5(
   text, content='events', content_rowid='rowid', tokenize='unicode61 remove_diacritics 2'
 );
 `,
-    after: (db) => db.exec("INSERT INTO events_fts(events_fts) VALUES ('rebuild')"),
+    // The 'rebuild' that repaired the index here is left to v10, which builds a new index
+    // from the events (all pending migrations commit together).
   },
   {
     // Adapter parse version per session (Session.parseVersion). Sessions stored
@@ -362,6 +351,110 @@ INSERT OR IGNORE INTO session_facets (key, value, session_id) SELECT DISTINCT 't
 INSERT OR IGNORE INTO session_facets (key, value, session_id) SELECT DISTINCT 'mcp', mcp, session_id FROM events WHERE mcp IS NOT NULL AND mcp <> '';
 `,
   },
+  {
+    // Typed scores (src/scores). value holds numeric and boolean (1/0) values,
+    // string_value categorical and text ones. Labels move into scores (pass and
+    // fail as boolean, anything else as categorical) and `labels` becomes a view
+    // that reads them back with the rules of src/scores/labels.ts, so SQL over
+    // labels keeps working.
+    version: 9,
+    sql: `
+CREATE TABLE scores (
+  id TEXT PRIMARY KEY,
+  target TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  session_id TEXT,
+  name TEXT NOT NULL,
+  data_type TEXT NOT NULL,
+  value REAL,
+  string_value TEXT,
+  source TEXT NOT NULL,
+  config_id TEXT,
+  judge_version TEXT,
+  calibrated INTEGER,
+  comment TEXT,
+  by TEXT NOT NULL,
+  ts INTEGER NOT NULL
+);
+CREATE INDEX scores_target ON scores(target, target_id, name);
+CREATE INDEX scores_session ON scores(session_id, name) WHERE session_id IS NOT NULL;
+CREATE INDEX scores_name_ts ON scores(name, ts);
+CREATE INDEX scores_ts ON scores(ts);
+CREATE TABLE score_configs (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  data_type TEXT NOT NULL,
+  doc TEXT NOT NULL
+);
+INSERT OR IGNORE INTO scores (id, target, target_id, session_id, name, data_type, value, string_value, source, comment, by, ts)
+  SELECT id, 'session', session_id, session_id, criterion,
+    CASE WHEN value IN ('pass', 'fail') THEN 'boolean' ELSE 'categorical' END,
+    CASE value WHEN 'pass' THEN 1 WHEN 'fail' THEN 0 END,
+    CASE WHEN value IN ('pass', 'fail') THEN NULL ELSE value END,
+    'human', note, by, ts
+  FROM labels;
+DROP TABLE labels;
+CREATE VIEW labels AS
+  SELECT id, session_id, name AS criterion,
+    CASE WHEN data_type = 'boolean' THEN CASE WHEN value <> 0 THEN 'pass' ELSE 'fail' END ELSE string_value END AS value,
+    comment AS note, by, ts,
+    CASE WHEN target = 'case' THEN target_id END AS case_id
+  FROM scores
+  WHERE source = 'human' AND session_id IS NOT NULL AND target IN ('session', 'case')
+    AND (data_type = 'boolean' OR (data_type = 'categorical' AND string_value IN ('pass', 'fail', 'skip')));
+`,
+  },
+  {
+    // A smaller index (TE-15):
+    // - events_fts becomes contentless (contentless_delete=1) and is fed the search text
+    //   at insert, so the tool text copied into search_extra (210 MB on a 756k-event
+    //   store) is no longer needed. Snippets are cut in JS from the event (common.ts).
+    // - cwd moves to the cwds lookup table (848 distinct paths over 756k rows).
+    // - events_project goes: no query reads events by project.
+    // The new index is built from events.text, the generated column of v5 (message text
+    // or search_extra), and from the tool calls that have no search_extra (stores that
+    // skipped v3's fill, see there), whose text is computed here.
+    // Old rows keep their search_extra and inline cwd: emptying them rewrites every row,
+    // which took over a minute on a 756k-event store. New rows never write them, reads
+    // take an inline cwd as it is, and compact() (`gc --compact`, which the upgrade
+    // suggests) empties them before its VACUUM. The columns stay in the schema: dropping
+    // them would rewrite the table too.
+    version: 10,
+    compactAfter: true,
+    sql: `
+CREATE TABLE cwds (id INTEGER PRIMARY KEY, path TEXT NOT NULL);
+CREATE INDEX cwds_path ON cwds(path);
+ALTER TABLE events ADD COLUMN cwd_id INTEGER;
+DROP INDEX IF EXISTS events_project;
+CREATE VIRTUAL TABLE events_fts_v10 USING fts5(
+  text, content='', contentless_delete=1, tokenize='unicode61 remove_diacritics 2'
+);
+`,
+    after: (db, progress) => {
+      const total = num((db.prepare("SELECT max(rowid) AS m FROM events").get() as Row).m) ?? 0;
+      // One pass over the events: a tool call with no search_extra gets its text from JS.
+      db.function("coding_sh_search_text", (kind, payload) => {
+        const p = typeof payload === "string" ? parse<Record<string, unknown>>(payload) : undefined;
+        return searchableText({ kind, payload: p ?? {} } as AgentEvent) ?? null;
+      });
+      // Kinds as SEARCHABLE_KINDS minus MESSAGE_SEARCH_KINDS in common.ts (written out so this migration never changes).
+      const build = db.prepare(`INSERT INTO events_fts_v10 (rowid, text) SELECT rowid, t FROM (
+        SELECT rowid, CASE WHEN text IS NOT NULL THEN text
+          WHEN search_extra IS NULL AND kind IN ('tool.start', 'tool.end', 'subagent.start') THEN coding_sh_search_text(kind, payload) END AS t
+        FROM events WHERE rowid > ? AND rowid <= ?) WHERE t IS NOT NULL`);
+      const CHUNK = 20_000;
+      for (let lo = 0; lo < total; lo += CHUNK) {
+        const hi = Math.min(total, lo + CHUNK);
+        build.run(lo, hi);
+        progress?.step("search index", hi, total);
+      }
+      progress?.step("swapping in the new search index");
+      db.exec("DROP TABLE events_fts");
+      db.exec("ALTER TABLE events_fts_v10 RENAME TO events_fts");
+      // A VIRTUAL generated column: dropping it rewrites nothing.
+      db.exec("ALTER TABLE events DROP COLUMN text");
+    },
+  },
 ];
 
 /** session_facets rows of one session, rebuilt from its events (SESSION_FACET_KEYS). */
@@ -373,16 +466,14 @@ const REBUILD_FACETS = `INSERT OR IGNORE INTO session_facets (key, value, sessio
 export const SQLITE_SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1]!.version;
 
 /**
- * Whether events_fts is sound and indexes exactly the events that have text.
+ * Whether events_fts is sound and indexes exactly the events that have search text.
  *
- * events_fts is external-content over events, but only rows with text are
- * indexed: session starts, model calls and the like never are. FTS5's own
- * check against the content table ('integrity-check' with rank 1) expects an
- * entry for every content row, so it fails on any real store. This runs FTS5's
- * check of the index itself, then checks it against the rows that should be in
- * it: every event with text has an entry, every entry with tokens belongs to an
- * event with text, and the index's row count matches its entries. A 'rebuild'
- * also gives empty entries to rows without text; those are allowed.
+ * events_fts is contentless (v10): putEvents feeds it searchableText(event), and
+ * events without text (session starts, model calls and the like) have no entry.
+ * This runs FTS5's check of the index itself, then checks it against the events:
+ * every entry belongs to an event of a searchable kind, and every event with search
+ * text has an entry. Only events of a searchable kind with
+ * no entry are read in full, so a sound index is checked without parsing payloads.
  */
 export function searchIndexOk(db: DatabaseSync): boolean {
   try {
@@ -390,19 +481,16 @@ export function searchIndexOk(db: DatabaseSync): boolean {
   } catch {
     return false;
   }
-  if (db.prepare("SELECT 1 FROM events e WHERE e.text IS NOT NULL AND NOT EXISTS (SELECT 1 FROM events_fts_docsize d WHERE d.id = e.rowid) LIMIT 1").get()) return false;
-  if (db.prepare("SELECT 1 FROM events_fts_docsize d WHERE d.sz <> x'00' AND NOT EXISTS (SELECT 1 FROM events e WHERE e.rowid = d.id AND e.text IS NOT NULL) LIMIT 1").get()) return false;
-  // The averages record (data row 1) starts with the row count as a SQLite varint.
-  const avg = (db.prepare("SELECT block FROM events_fts_data WHERE id = 1").get() as Row | undefined)?.block;
-  let total = 0;
-  if (avg instanceof Uint8Array) {
-    for (let i = 0; i < 9 && i < avg.length; i++) {
-      if (i === 8) total = total * 256 + avg[i]!;
-      else total = total * 128 + (avg[i]! & 0x7f);
-      if (i === 8 || avg[i]! < 0x80) break;
-    }
+  if (db.prepare("SELECT 1 FROM events_fts_docsize d WHERE NOT EXISTS (SELECT 1 FROM events e WHERE e.rowid = d.id) LIMIT 1").get()) return false;
+  if (db.prepare(`SELECT 1 FROM events_fts_docsize d JOIN events e ON e.rowid = d.id WHERE e.kind NOT IN (${sqlList(SEARCHABLE_KINDS)}) LIMIT 1`).get()) return false;
+  const unindexed = db.prepare(`SELECT kind, payload FROM events e WHERE kind IN (${sqlList(SEARCHABLE_KINDS)})
+    AND NOT EXISTS (SELECT 1 FROM events_fts_docsize d WHERE d.id = e.rowid)`);
+  for (const r of unindexed.iterate() as IterableIterator<Row>) {
+    if (searchableText({ kind: r.kind, payload: parse<Record<string, unknown>>(r.payload) ?? {} } as AgentEvent) !== undefined) return false;
   }
-  return total === num((db.prepare("SELECT count(*) AS n FROM events_fts_docsize").get() as Row).n);
+  // No check of the averages record's row count: a contentless_delete delete cannot
+  // know the tokens it removes, so FTS5 leaves the totals (bm25's averages) as they were.
+  return true;
 }
 
 // ---------------------------------------------------------------- row mapping
@@ -414,8 +502,33 @@ const parse = <T>(v: unknown): T | undefined => (typeof v === "string" ? (JSON.p
 const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 const num = (v: unknown): number | undefined => (typeof v === "number" ? v : typeof v === "bigint" ? Number(v) : undefined);
 
+function rowToScore(r: Row): Score {
+  const dataType = r.data_type as Score["dataType"];
+  const value = dataType === "boolean" ? num(r.value) !== 0 : dataType === "numeric" ? num(r.value)! : (r.string_value as string);
+  const sc: Score = {
+    id: r.id as string,
+    target: r.target as Score["target"],
+    targetId: r.target_id as string,
+    ...(typeof r.session_id === "string" ? { sessionId: r.session_id } : {}),
+    name: r.name as string,
+    dataType,
+    value,
+    source: r.source as Score["source"],
+    by: r.by as string,
+    ts: num(r.ts)!,
+  };
+  if (typeof r.config_id === "string") sc.configId = r.config_id;
+  if (typeof r.judge_version === "string") sc.judgeVersion = r.judge_version;
+  if (r.calibrated !== null && r.calibrated !== undefined) sc.calibrated = num(r.calibrated) !== 0;
+  if (typeof r.comment === "string") sc.comment = r.comment;
+  return sc;
+}
+
 /** kv key of a session's saved fold (IndexStore.getSessionFold). */
 const foldKey = (sessionId: string): string => `fold:${sessionId}`;
+
+/** The columns rowToEvent reads, for events aliased `a`: every column plus the cwd path (v10 cwds table). */
+const eventCols = (a: string): string => `${a}.*, (SELECT path FROM cwds WHERE cwds.id = ${a}.cwd_id) AS cwd_path`;
 
 function rowToEvent(r: Row): AgentEvent {
   const e: AgentEvent = {
@@ -440,7 +553,8 @@ function rowToEvent(r: Row): AgentEvent {
   set("agentVersion", str(r.agent_version));
   set("model", str(r.model));
   set("runId", str(r.run_id));
-  set("cwd", str(r.cwd));
+  // v10 keeps cwd in the cwds table (EVENT_COLS reads it back as cwd_path).
+  set("cwd", str(r.cwd) ?? str(r.cwd_path));
   set("repo", parse(r.repo));
   set("blobs", parse(r.blobs));
   set("usage", parse(r.usage));
@@ -452,6 +566,9 @@ function rowToEvent(r: Row): AgentEvent {
 /** 'default' (the column default) reads back as an unset field. */
 const projectField = (v: unknown): string | undefined => (typeof v === "string" && v !== "default" ? v : undefined);
 const projectCol = (p: string | undefined): string => p ?? "default";
+
+/** A search matching more events than this lists them newest first instead of ranking them all (TE-8). */
+export const SEARCH_RANK_MAX_MATCHES = 20_000;
 
 /** Per-connection page cache, in KiB (negative cache_size = KiB, not pages). Bounded RAM, freed on close. */
 const CACHE_SIZE_KIB = 16_000;
@@ -531,6 +648,12 @@ export interface SqliteIndexOptions {
    * leave the file as it is (core/store-guard.ts: another install owns the store).
    */
   beforeMigrate?: (from: number, to: number) => void;
+  /** Where upgrade progress lines go (each ends in a newline). Default: stderr. */
+  progress?: (line: string) => void;
+  /** Events a store must hold before an upgrade reports progress. Default: UPGRADE_PROGRESS_MIN_ROWS. */
+  progressMinRows?: number;
+  /** Matches above which search lists newest first instead of by rank. Default: SEARCH_RANK_MAX_MATCHES. */
+  searchRankMaxMatches?: number;
 }
 
 export class SqliteIndexStore implements IndexStore {
@@ -543,13 +666,13 @@ export class SqliteIndexStore implements IndexStore {
   private readonly memId = SqliteIndexStore.memSeq++;
 
   private readonly readOnly: boolean;
-  private readonly beforeMigrate?: (from: number, to: number) => void;
+  private readonly opts: SqliteIndexOptions;
 
-  private constructor(db: DatabaseSync, path: string, readOnly: boolean, beforeMigrate?: (from: number, to: number) => void) {
+  private constructor(db: DatabaseSync, path: string, opts: SqliteIndexOptions) {
     this.db = db;
     this.path = path;
-    this.readOnly = readOnly;
-    if (beforeMigrate) this.beforeMigrate = beforeMigrate;
+    this.readOnly = opts.readOnly ?? false;
+    this.opts = { progress: (line) => void process.stderr.write(line), progressMinRows: UPGRADE_PROGRESS_MIN_ROWS, ...opts };
   }
 
   /** Opens (creating if needed) the database at `path` (":memory:" for tests) and migrates it. */
@@ -570,7 +693,7 @@ export class SqliteIndexStore implements IndexStore {
       // re-decode pages this keeps resident. No effect on the on-disk file or its
       // locking, so it is safe for read-only connections and on Windows.
       db.exec(`PRAGMA cache_size = -${CACHE_SIZE_KIB}; PRAGMA temp_store = MEMORY;`);
-      const store = new SqliteIndexStore(db, path, opts.readOnly ?? false, opts.beforeMigrate);
+      const store = new SqliteIndexStore(db, path, opts);
       if (!opts.readOnly) await store.migrate();
       return store;
     } catch (e) {
@@ -600,6 +723,7 @@ export class SqliteIndexStore implements IndexStore {
         return out;
       } catch (err) {
         this.db.exec("ROLLBACK TO w; RELEASE w");
+        this.cwdIds.clear();
         throw err;
       }
     }
@@ -611,8 +735,22 @@ export class SqliteIndexStore implements IndexStore {
       return out;
     } catch (err) {
       this.db.exec("ROLLBACK");
+      this.cwdIds.clear();
       throw err;
     }
+  }
+
+  /** cwds ids by path; cleared on rollback, which may have undone an id it holds. */
+  private readonly cwdIds = new Map<string, number>();
+
+  /** The cwds row of a path, added if new (the caller holds the transaction). */
+  private cwdId(path: string): number {
+    let id = this.cwdIds.get(path);
+    if (id === undefined) {
+      id = num((this.stmt("SELECT min(id) AS id FROM cwds WHERE path = ?").get(path) as Row).id) ?? Number(this.stmt("INSERT INTO cwds (path) VALUES (?)").run(path).lastInsertRowid);
+      this.cwdIds.set(path, id);
+    }
+    return id;
   }
 
   private txDepth = 0;
@@ -628,31 +766,95 @@ export class SqliteIndexStore implements IndexStore {
       return out;
     } catch (err) {
       this.db.exec("ROLLBACK");
+      this.cwdIds.clear();
       throw err;
     } finally {
       this.txDepth--;
     }
   }
 
-  async migrate(): Promise<void> {
-    this.db.exec("CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
-    const row = this.db.prepare("SELECT MAX(version) AS v FROM migrations").get() as Row | undefined;
-    const current = num(row?.v) ?? 0;
+  private schemaVersion(): number {
+    const current = num((this.db.prepare("SELECT MAX(version) AS v FROM migrations").get() as Row | undefined)?.v) ?? 0;
     if (current > SQLITE_SCHEMA_VERSION) {
       throw new Error(`${this.path} uses index schema v${current}, but this coding.sh only knows up to v${SQLITE_SCHEMA_VERSION}. Upgrade coding.sh.`);
     }
-    if (current < SQLITE_SCHEMA_VERSION) this.beforeMigrate?.(current, SQLITE_SCHEMA_VERSION);
-    const applied = this.db.prepare("SELECT 1 FROM migrations WHERE version = ?");
-    for (const m of MIGRATIONS) {
-      if (m.version <= current) continue;
-      this.tx(() => {
-        // Another process (the background hook ingest, a second CLI) may have applied
-        // this version between the read above and taking the write lock.
-        if (applied.get(m.version)) return;
-        this.db.exec(m.sql);
-        m.after?.(this.db);
-        this.db.prepare("INSERT INTO migrations (version, applied_at) VALUES (?, ?)").run(m.version, Date.now());
-      });
+    return current;
+  }
+
+  /**
+   * Brings the schema to SQLITE_SCHEMA_VERSION. Every pending migration runs in one
+   * transaction, so no reader ever sees a half-upgraded store and a failed upgrade
+   * leaves it as it was. On a store of UPGRADE_PROGRESS_MIN_ROWS events or more it
+   * prints progress to stderr (see ./upgrade.ts) and, when it rewrote the events,
+   * suggests `coding.sh gc --compact` to give the freed space back. A process that
+   * finds another one upgrading waits for it and says so.
+   */
+  async migrate(): Promise<void> {
+    this.db.exec("CREATE TABLE IF NOT EXISTS migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)");
+    const current = this.schemaVersion();
+    if (current === SQLITE_SCHEMA_VERSION) return;
+    // core/store-guard.ts: another install owns this store, so leave its schema as it is.
+    this.opts.beforeMigrate?.(current, SQLITE_SCHEMA_VERSION);
+    // The highest rowid stands for the event count: read from the b-tree's edge, no scan.
+    const rows = current === 0 ? 0 : (num((this.db.prepare("SELECT max(rowid) AS n FROM events").get() as Row).n) ?? 0);
+    const report = rows >= this.opts.progressMinRows! ? this.opts.progress : undefined;
+    const progress = new UpgradeProgress(this.path, current, SQLITE_SCHEMA_VERSION, rows, report);
+    await this.lockForUpgrade(report);
+    let ok = false;
+    let rewrote = false;
+    try {
+      // Another process (the background hook ingest, a second CLI) may have upgraded while this one waited.
+      const from = this.schemaVersion();
+      if (from < SQLITE_SCHEMA_VERSION) progress.begin();
+      const record = this.db.prepare("INSERT INTO migrations (version, applied_at) VALUES (?, ?)");
+      for (const m of MIGRATIONS) {
+        if (m.version <= from) continue;
+        for (const statement of splitSql(m.sql)) {
+          progress.step(`schema v${m.version} of v${SQLITE_SCHEMA_VERSION}`);
+          this.db.exec(statement);
+        }
+        m.after?.(this.db, progress);
+        record.run(m.version, Date.now());
+        if (m.compactAfter && from > 0) rewrote = true;
+      }
+      this.db.exec("COMMIT");
+      ok = true;
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    } finally {
+      progress.end(ok, rewrote ? "Run `coding.sh gc --compact` to give back the space the old layout used." : undefined);
+    }
+  }
+
+  /**
+   * BEGIN IMMEDIATE for migrate(). While another process holds the write lock to upgrade
+   * the index (it keeps `<db>.upgrade`), this waits as long as that process lives and
+   * prints how far it is once a second; any other writer gets the usual busy timeout.
+   */
+  private async lockForUpgrade(report: ((line: string) => void) | undefined): Promise<void> {
+    const started = Date.now();
+    let lastPrint = 0;
+    this.db.exec("PRAGMA busy_timeout = 200");
+    try {
+      for (;;) {
+        try {
+          this.db.exec("BEGIN IMMEDIATE");
+          return;
+        } catch (e) {
+          if ((e as { errcode?: number }).errcode !== 5) throw e;
+        }
+        const other = this.path === ":memory:" ? undefined : runningUpgrade(this.path);
+        if (!other && Date.now() - started >= BUSY_TIMEOUT_MS) throw new Error(`${this.path} is locked by another process (database is locked)`);
+        if (other && Date.now() - lastPrint >= 1000) {
+          lastPrint = Date.now();
+          // Always said, even on a small store: this process is blocked on another one.
+          (report ?? this.opts.progress)?.(`coding.sh: waiting for another coding.sh (pid ${other.pid}) to finish upgrading the index: ${describeStep(other)}\n`);
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    } finally {
+      this.db.exec(`PRAGMA busy_timeout = ${BUSY_TIMEOUT_MS}`);
     }
   }
 
@@ -695,8 +897,8 @@ export class SqliteIndexStore implements IndexStore {
   }
 
   async replaceSessionEvents(sessionId: string, removeIds: string[], add: AgentEvent[]): Promise<{ removed: number; inserted: number }> {
-    // External-content FTS: drop each row's index entry with the text it was indexed under (see deleteBefore).
-    const ftsDelete = this.stmt("INSERT INTO events_fts(events_fts, rowid, text) SELECT 'delete', rowid, text FROM events WHERE id = ? AND session_id = ? AND text IS NOT NULL AND text <> ''");
+    // Contentless FTS with contentless_delete: an entry is removed by rowid (see deleteBefore).
+    const ftsDelete = this.stmt(`DELETE FROM events_fts WHERE rowid = (SELECT rowid FROM events WHERE id = ? AND session_id = ? AND kind IN (${sqlList(SEARCHABLE_KINDS)}))`);
     const del = this.stmt("DELETE FROM events WHERE id = ? AND session_id = ?");
     return this.tx(() => {
       let removed = 0;
@@ -718,8 +920,8 @@ export class SqliteIndexStore implements IndexStore {
   private insertEvents(batch: AgentEvent[]): number {
     const insert = this.stmt(`INSERT OR IGNORE INTO events
       (id, session_id, turn_id, parent_id, ts, duration_ms, trace_id, span_id, parent_span_id, subagent_id,
-       agent, agent_version, model, kind, tool, ok, run_id, cwd, repo, payload, blobs, usage, source, search_extra, project_id, mcp)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+       agent, agent_version, model, kind, tool, ok, run_id, cwd_id, repo, payload, blobs, usage, source, project_id, mcp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
     const fts = this.stmt("INSERT INTO events_fts (rowid, text) VALUES (?, ?)");
     const facet = this.stmt("INSERT OR IGNORE INTO session_facets (key, value, session_id) VALUES (?, ?, ?)");
     // A session repeats a handful of (key, value) facets across hundreds of events,
@@ -742,8 +944,8 @@ export class SqliteIndexStore implements IndexStore {
       const r = insert.run(
         e.id, e.sessionId, e.turnId ?? null, e.parentId ?? null, e.ts, e.durationMs ?? null, e.traceId ?? null,
         e.spanId ?? null, e.parentSpanId ?? null, e.subagentId ?? null, e.agent, e.agentVersion ?? null,
-        e.model ?? null, e.kind, tool, ok, e.runId ?? null, e.cwd ?? null, json(e.repo), JSON.stringify(p),
-        e.blobs?.length ? JSON.stringify(e.blobs) : null, json(e.usage), e.source ?? null, storedSearchText(e) ?? null,
+        e.model ?? null, e.kind, tool, ok, e.runId ?? null, e.cwd ? this.cwdId(e.cwd) : null, json(e.repo), JSON.stringify(p),
+        e.blobs?.length ? JSON.stringify(e.blobs) : null, json(e.usage), e.source ?? null,
         projectCol(e.project), mcp,
       );
       if (Number(r.changes) === 0) continue;
@@ -752,7 +954,7 @@ export class SqliteIndexStore implements IndexStore {
       if (e.kind) addFacet("kind", e.kind, e.sessionId);
       if (tool) addFacet("tool", tool, e.sessionId);
       if (mcp) addFacet("mcp", mcp, e.sessionId);
-      // Must equal the generated events.text, which the external-content FTS reads for snippets.
+      // The contentless FTS keeps no text: search cuts snippets from searchableText of the row it reads.
       const text = searchableText(e);
       if (text !== undefined) fts.run(r.lastInsertRowid, text);
     }
@@ -781,7 +983,7 @@ export class SqliteIndexStore implements IndexStore {
 
   async listEvents(sessionId: string, opts: { kinds?: string[]; limit?: number; offset?: number } = {}): Promise<AgentEvent[]> {
     const params: (string | number)[] = [sessionId];
-    let sql = "SELECT * FROM events WHERE session_id = ?";
+    let sql = `SELECT ${eventCols("events")} FROM events WHERE session_id = ?`;
     if (opts.kinds?.length) {
       sql += ` AND kind IN (${opts.kinds.map(() => "?").join(", ")})`;
       params.push(...opts.kinds);
@@ -792,24 +994,57 @@ export class SqliteIndexStore implements IndexStore {
   }
 
   async search(text: string, opts: SearchOpts = {}): Promise<SearchHit[]> {
-    const q = ftsQuery(text);
-    if (!q) return [];
-    const params: (string | number)[] = [q];
-    let sql = `SELECT e.*, snippet(events_fts, 0, ?, ?, ?, 16) AS snip
-      FROM events_fts JOIN events e ON e.rowid = events_fts.rowid
-      WHERE events_fts MATCH ?`;
-    params.unshift(SNIPPET_OPEN, SNIPPET_CLOSE, SNIPPET_ELLIPSIS);
-    if (opts.agent) {
-      sql += " AND e.agent = ?";
-      params.push(opts.agent);
+    return this.searchHits(text, opts);
+  }
+
+  /**
+   * search() and searchWhere(). Hits are ranked by bm25 inside the FTS table, and only
+   * the page of hits is joined to events; a term that matches more than
+   * SEARCH_RANK_MAX_MATCHES events is listed newest first (by rowid) instead, because
+   * ranking every match costs more than the answer is worth (TE-8: "the" matches 177k).
+   * Snippets are cut in JS from the event's search text: the contentless index keeps none.
+   */
+  private searchHits(text: string, opts: SearchOpts, q?: Query): SearchHit[] {
+    const fts = ftsQuery(text);
+    if (!fts) return [];
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    if (opts.agent) where.push("e.agent = ?"), params.push(opts.agent);
+    if (opts.project !== undefined) where.push("e.project_id = ?"), params.push(opts.project);
+    if (q?.root) {
+      const c = compileWhere(q.root, "event");
+      where.push(c.sql);
+      params.push(...c.params);
     }
-    if (opts.project !== undefined) {
-      sql += " AND e.project_id = ?";
-      params.push(opts.project);
+    const limit = opts.limit ?? 50;
+    const sessions = q?.root ? "LEFT JOIN sessions s ON s.id = e.session_id" : "";
+    const cond = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const cap = this.opts.searchRankMaxMatches ?? SEARCH_RANK_MAX_MATCHES;
+    const count = this.stmt("SELECT count(*) AS n FROM (SELECT 1 FROM events_fts WHERE events_fts MATCH ? LIMIT ?)");
+    const over = (match: string) => num((count.get(match, cap + 1) as Row).n)! > cap;
+    // The last term as a whole word matches a subset of it as a prefix, and costs a few ms
+    // where the prefix ("the*": then, there, these, …) merges every matching word's list.
+    const many = over(fts.slice(0, -1)) || over(fts);
+    let sql: string;
+    let args: (string | number)[];
+    if (many) {
+      sql = `SELECT ${eventCols("e")} FROM events_fts JOIN events e ON e.rowid = events_fts.rowid ${sessions}
+        WHERE events_fts MATCH ? ${where.length ? `AND ${where.join(" AND ")}` : ""} ORDER BY events_fts.rowid DESC LIMIT ?`;
+      args = [fts, ...params, limit];
+    } else {
+      // Unfiltered, the FTS table ranks and cuts the page itself; filtered, it ranks its (at most
+      // SEARCH_RANK_MAX_MATCHES) matches and the join keeps the best that pass.
+      const page = where.length ? "" : "ORDER BY rank LIMIT ?";
+      sql = `SELECT ${eventCols("e")} FROM (SELECT rowid AS r, rank AS rk FROM events_fts WHERE events_fts MATCH ? ${page}) f
+        JOIN events e ON e.rowid = f.r ${sessions} ${cond} ORDER BY f.rk, e.ts DESC LIMIT ?`;
+      args = where.length ? [fts, ...params, limit] : [fts, limit, limit];
     }
-    sql += " ORDER BY bm25(events_fts), e.ts DESC LIMIT ?";
-    params.push(opts.limit ?? 50);
-    return (this.stmt(sql).all(...params) as Row[]).map((r) => ({ event: rowToEvent(r), snippet: String(r.snip ?? "") }));
+    const terms = searchTerms(text);
+    // A --where query compiles to new SQL each time: prepared once, not cached.
+    return ((q?.root ? this.db.prepare(sql) : this.stmt(sql)).all(...args) as Row[]).map((r) => {
+      const event = rowToEvent(r);
+      return { event, snippet: snippet(searchableText(event) ?? "", terms) };
+    });
   }
 
   // ------------------------------------------------------------ sessions
@@ -853,7 +1088,7 @@ export class SqliteIndexStore implements IndexStore {
   }
 
   async eventsByIdPrefix(prefix: string, limit: number): Promise<AgentEvent[]> {
-    const rows = this.stmt("SELECT * FROM events WHERE id >= ? AND id < ? ORDER BY id LIMIT ?").all(prefix, `${prefix}\u{10FFFF}`, limit) as Row[];
+    const rows = this.stmt(`SELECT ${eventCols("events")} FROM events WHERE id >= ? AND id < ? ORDER BY id LIMIT ?`).all(prefix, `${prefix}\u{10FFFF}`, limit) as Row[];
     return rows.map(rowToEvent).filter((e) => e.id.startsWith(prefix));
   }
 
@@ -909,6 +1144,31 @@ export class SqliteIndexStore implements IndexStore {
     return (this.db.prepare(sql).all(...params) as Row[]).map((r) => ({ value: String(r.v), count: num(r.n) ?? 0 }));
   }
 
+  async metricRows(q: Query, o: QueryOpts = {}): Promise<MetricRow[]> {
+    const { where, params } = filterSql(o.filter ?? {}, "s.");
+    if (q.root) {
+      const c = compileWhere(q.root, "session");
+      where.push(c.sql);
+      params.push(...c.params);
+    }
+    // Only the numbers metrics add up, read with json_extract: no full stats parse per session.
+    const x = (path: string) => `json_extract(s.stats, '$.${path}')`;
+    const cols = ["usage.inputTokens", "usage.outputTokens", "usage.cacheReadTokens", "usage.cacheWriteTokens", "usage.costUsd", "usage.estimatedCostUsd", "toolCalls", "toolErrors", "latency.llmCalls", "llmErrors.count", "latency.llmP95Ms", "latency.ttftP50Ms"];
+    const sql = `SELECT s.started_at, s.agent, s.model, coalesce(s.repo_root, s.cwd) AS dir, s.flags, ${cols.map((c, i) => `${x(c)} AS c${i}`).join(", ")}
+      FROM sessions s ${where.length ? `WHERE ${where.join(" AND ")}` : ""}`;
+    const keys = ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens", "costUsd", "estimatedCostUsd", "toolCalls", "toolErrors", "llmCalls", "llmErrors", "llmP95Ms", "ttftP50Ms"] as const;
+    return (this.db.prepare(sql).all(...params) as Row[]).map((r) => {
+      const m: MetricRow = { startedAt: num(r.started_at) ?? 0, agent: String(r.agent), flags: parse<string[]>(r.flags) ?? [], toolCalls: 0, toolErrors: 0 };
+      if (typeof r.model === "string") m.model = r.model;
+      if (typeof r.dir === "string") m.dir = r.dir;
+      keys.forEach((k, i) => {
+        const v = num(r[`c${i}`]);
+        if (v !== undefined) m[k] = v;
+      });
+      return m;
+    });
+  }
+
   async queryEvents(q: Query, o: EventQueryOpts = {}): Promise<EventPage> {
     const { where, params } = filterSql(o.filter ?? {}, "s.");
     if (q.root) {
@@ -922,7 +1182,7 @@ export class SqliteIndexStore implements IndexStore {
     const limit = o.limit ?? 50;
     // The inner query picks the page from index columns alone (ts, rowid); only the
     // rows on the page are read in full, so a broad match never sorts payloads.
-    const sql = `SELECT e.rowid AS rid, e.* FROM events e WHERE e.rowid IN (
+    const sql = `SELECT e.rowid AS rid, ${eventCols("e")} FROM events e WHERE e.rowid IN (
         SELECT e.rowid ${base} ${page} ORDER BY e.ts DESC, e.rowid DESC LIMIT ?)
       ORDER BY e.ts DESC, e.rowid DESC`;
     const rows = this.db.prepare(sql).all(...params, ...(cur ? [cur.ts, cur.ts, cur.rowid] : []), limit + 1) as Row[];
@@ -942,22 +1202,7 @@ export class SqliteIndexStore implements IndexStore {
   }
 
   async searchWhere(text: string, q: Query, opts: SearchOpts = {}): Promise<SearchHit[]> {
-    const fts = ftsQuery(text);
-    if (!fts) return [];
-    const params: (string | number)[] = [SNIPPET_OPEN, SNIPPET_CLOSE, SNIPPET_ELLIPSIS, fts];
-    let sql = `SELECT e.*, snippet(events_fts, 0, ?, ?, ?, 16) AS snip
-      FROM events_fts JOIN events e ON e.rowid = events_fts.rowid LEFT JOIN sessions s ON s.id = e.session_id
-      WHERE events_fts MATCH ?`;
-    if (opts.agent) sql += " AND e.agent = ?", params.push(opts.agent);
-    if (opts.project !== undefined) sql += " AND e.project_id = ?", params.push(opts.project);
-    if (q.root) {
-      const c = compileWhere(q.root, "event");
-      sql += ` AND ${c.sql}`;
-      params.push(...c.params);
-    }
-    sql += " ORDER BY bm25(events_fts), e.ts DESC LIMIT ?";
-    params.push(opts.limit ?? 50);
-    return (this.db.prepare(sql).all(...params) as Row[]).map((r) => ({ event: rowToEvent(r), snippet: String(r.snip ?? "") }));
+    return this.searchHits(text, opts, q);
   }
 
   // ------------------------------------------------------------ cursors
@@ -1036,12 +1281,9 @@ export class SqliteIndexStore implements IndexStore {
     return (this.db.prepare(sql).all(...params) as Row[]).map((r) => parse<RunResult>(r.doc)!);
   }
 
+  // Labels are human scores (src/scores/labels.ts); the labels view reads them back.
   async putLabel(l: Label): Promise<void> {
-    this.stmt(`INSERT INTO labels (id, session_id, criterion, value, note, by, ts) VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET session_id = excluded.session_id, criterion = excluded.criterion, value = excluded.value,
-        note = excluded.note, by = excluded.by, ts = excluded.ts`).run(
-      l.id, l.sessionId, l.criterion, l.value, l.note ?? null, l.by, l.ts,
-    );
+    await this.putScore(labelToScore(l));
   }
 
   async listLabels(f: { sessionId?: string; criterion?: string } = {}): Promise<Label[]> {
@@ -1059,9 +1301,56 @@ export class SqliteIndexStore implements IndexStore {
         by: r.by as string,
         ts: num(r.ts)!,
       };
+      if (typeof r.case_id === "string") l.caseId = r.case_id;
       if (typeof r.note === "string") l.note = r.note;
       return l;
     });
+  }
+
+  // ------------------------------------------------------------ scores
+
+  async putScore(sc: Score): Promise<void> {
+    const numeric = sc.dataType === "numeric" || sc.dataType === "boolean";
+    this.stmt(`INSERT INTO scores (id, target, target_id, session_id, name, data_type, value, string_value, source, config_id, judge_version, calibrated, comment, by, ts)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET target = excluded.target, target_id = excluded.target_id, session_id = excluded.session_id, name = excluded.name,
+        data_type = excluded.data_type, value = excluded.value, string_value = excluded.string_value, source = excluded.source,
+        config_id = excluded.config_id, judge_version = excluded.judge_version, calibrated = excluded.calibrated,
+        comment = excluded.comment, by = excluded.by, ts = excluded.ts`).run(
+      sc.id, sc.target, sc.targetId, sc.sessionId ?? null, sc.name, sc.dataType,
+      numeric ? (typeof sc.value === "boolean" ? (sc.value ? 1 : 0) : Number(sc.value)) : null,
+      numeric ? null : String(sc.value),
+      sc.source, sc.configId ?? null, sc.judgeVersion ?? null, sc.calibrated === undefined ? null : sc.calibrated ? 1 : 0,
+      sc.comment ?? null, sc.by, sc.ts,
+    );
+  }
+
+  async listScores(f: ScoreFilter = {}): Promise<Score[]> {
+    const where: string[] = [];
+    const params: (string | number)[] = [];
+    const eq = (col: string, v: string | undefined) => {
+      if (v !== undefined) where.push(`${col} = ?`), params.push(v);
+    };
+    eq("id", f.id);
+    eq("target", f.target);
+    eq("target_id", f.targetId);
+    eq("session_id", f.sessionId);
+    eq("name", f.name);
+    eq("source", f.source);
+    if (f.since !== undefined) where.push("ts >= ?"), params.push(f.since);
+    if (f.until !== undefined) where.push("ts < ?"), params.push(f.until);
+    let sql = `SELECT * FROM scores ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY ts DESC, id DESC`;
+    if (f.limit !== undefined) sql += " LIMIT ?", params.push(Math.max(0, Math.floor(f.limit)));
+    return (this.db.prepare(sql).all(...params) as Row[]).map(rowToScore);
+  }
+
+  async putScoreConfig(c: ScoreConfig): Promise<void> {
+    this.stmt(`INSERT INTO score_configs (id, name, data_type, doc) VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET name = excluded.name, data_type = excluded.data_type, doc = excluded.doc`).run(c.id, c.name, c.dataType, JSON.stringify(c));
+  }
+
+  async listScoreConfigs(): Promise<ScoreConfig[]> {
+    return (this.stmt("SELECT doc FROM score_configs ORDER BY name, id").all() as Row[]).map((r) => parse<ScoreConfig>(r.doc)!);
   }
 
   // ------------------------------------------------------------ kv
@@ -1086,8 +1375,8 @@ export class SqliteIndexStore implements IndexStore {
   async listEventsSince(sessionId: string, since: { seq: number; ts: number }): Promise<{ events: AgentEvent[]; seq: number }> {
     const rows = (
       since.seq > 0
-        ? this.stmt("SELECT rowid AS seq_, * FROM events WHERE session_id = ? AND (ts > ? OR rowid > ?) ORDER BY ts, rowid").all(sessionId, Number.isFinite(since.ts) ? since.ts : -Number.MAX_VALUE, since.seq)
-        : this.stmt("SELECT rowid AS seq_, * FROM events WHERE session_id = ? ORDER BY ts, rowid").all(sessionId)
+        ? this.stmt(`SELECT rowid AS seq_, ${eventCols("events")} FROM events WHERE session_id = ? AND (ts > ? OR rowid > ?) ORDER BY ts, rowid`).all(sessionId, Number.isFinite(since.ts) ? since.ts : -Number.MAX_VALUE, since.seq)
+        : this.stmt(`SELECT rowid AS seq_, ${eventCols("events")} FROM events WHERE session_id = ? ORDER BY ts, rowid`).all(sessionId)
     ) as Row[];
     let seq = since.seq;
     for (const r of rows) seq = Math.max(seq, Number(r.seq_));
@@ -1202,11 +1491,32 @@ export class SqliteIndexStore implements IndexStore {
   }
 
   async compact(): Promise<void> {
+    this.slimEvents();
     this.db.exec("INSERT INTO events_fts(events_fts) VALUES ('optimize')");
     // Rows of cursors at 0 (spool files gc removed) from before setCursor stopped keeping them.
     this.db.exec("DELETE FROM cursors WHERE offset = 0");
     if (this.path !== ":memory:") this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     this.db.exec("VACUUM");
+  }
+
+  /**
+   * Empties what rows written before v10 still hold (see the v10 migration): the
+   * search_extra copy of their tool text and an inline cwd, which moves to cwds. One
+   * transaction per chunk of rows, so the WAL stays small and writers get turns.
+   */
+  private slimEvents(): void {
+    const total = num((this.db.prepare("SELECT max(rowid) AS m FROM events").get() as Row).m) ?? 0;
+    const addCwds = this.db.prepare(`INSERT INTO cwds (path) SELECT DISTINCT cwd FROM events
+      WHERE rowid > ? AND rowid <= ? AND cwd IS NOT NULL AND NOT EXISTS (SELECT 1 FROM cwds c WHERE c.path = events.cwd)`);
+    const slim = this.db.prepare(`UPDATE events SET cwd_id = (SELECT min(id) FROM cwds c WHERE c.path = events.cwd), cwd = NULL, search_extra = NULL
+      WHERE rowid > ? AND rowid <= ? AND (cwd IS NOT NULL OR search_extra IS NOT NULL)`);
+    const CHUNK = 20_000;
+    for (let lo = 0; lo < total; lo += CHUNK) {
+      this.tx(() => {
+        addCwds.run(lo, lo + CHUNK);
+        slim.run(lo, lo + CHUNK);
+      });
+    }
   }
 
   // ------------------------------------------------------------ serve capabilities
@@ -1271,18 +1581,17 @@ export class SqliteIndexStore implements IndexStore {
       // Selected inside the transaction so an event committed meanwhile is seen.
       const ids = (this.stmt(sql).all(...params) as Row[]).map((r) => r.id as string);
       let events = 0;
-      // External-content FTS: remove each row's index entry with the text it was indexed under.
-      // events.text is NULL or '' exactly when putEvents indexed nothing (searchableText undefined).
-      const ftsDelete = this.stmt("INSERT INTO events_fts(events_fts, rowid, text) SELECT 'delete', rowid, text FROM events WHERE session_id = ? AND text IS NOT NULL AND text <> ''");
+      // Contentless FTS with contentless_delete: entries go by rowid. Only searchable kinds can have one.
+      const ftsDelete = this.stmt(`DELETE FROM events_fts WHERE rowid IN (SELECT rowid FROM events WHERE session_id = ? AND kind IN (${sqlList(SEARCHABLE_KINDS)}))`);
       const delEvents = this.stmt("DELETE FROM events WHERE session_id = ?");
-      const delLabels = this.stmt("DELETE FROM labels WHERE session_id = ?");
+      const delScores = this.stmt("DELETE FROM scores WHERE session_id = ?");
       const delSession = this.stmt("DELETE FROM sessions WHERE id = ?");
       const delFold = this.stmt("DELETE FROM kv WHERE key = ?");
       const delFacets = this.stmt("DELETE FROM session_facets WHERE session_id = ?");
       for (const id of ids) {
         ftsDelete.run(id);
         events += Number(delEvents.run(id).changes);
-        delLabels.run(id);
+        delScores.run(id);
         delSession.run(id);
         delFold.run(foldKey(id));
         delFacets.run(id);

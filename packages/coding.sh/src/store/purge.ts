@@ -16,7 +16,7 @@ import { join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import type { BlobStore } from "../core/types.ts";
 import type { AgentEvent } from "../schema/index.ts";
-import { storedSearchText } from "./common.ts";
+import { searchableText } from "./common.ts";
 import { loadSqlite, searchIndexOk } from "./sqlite.ts";
 
 export const PURGE_MARKER = "[redacted:purged]";
@@ -48,7 +48,7 @@ export interface PurgeResult {
   /** Rows changed (or that would be), by what they are. */
   events: number;
   sessions: number;
-  /** Labels, eval tasks, runs, bundles, datasets, experiments, judges and kv rows. */
+  /** Scores (labels included), eval tasks, runs, bundles, datasets, experiments, judges and kv rows. */
   otherRows: number;
   blobs: number;
   /** Files masked in the spool, judge cache and eval run dirs. */
@@ -208,7 +208,8 @@ function maskFile(path: string, scrub: Scrubber, dryRun: boolean): boolean {
 
 /** JSON-holding columns, by table; others are plain text. */
 const OTHER_TABLES: { table: string; key: string; json: string[]; text: string[] }[] = [
-  { table: "labels", key: "id", json: [], text: ["note"] },
+  { table: "scores", key: "id", json: [], text: ["comment", "string_value"] },
+  { table: "score_configs", key: "id", json: ["doc"], text: [] },
   { table: "tasks", key: "id", json: ["doc", "tags"], text: ["name"] },
   { table: "runs", key: "id", json: ["doc"], text: [] },
   { table: "bundles", key: "id", json: ["doc"], text: ["name"] },
@@ -274,36 +275,51 @@ export async function purgeLiterals(o: PurgeOptions): Promise<PurgeResult> {
     if (!dry) await repointNested(o.blobs, refs, repoint, oldRefs);
 
     const run = () => {
-      // External-content FTS: a row's old text must be deleted before the row changes, the new text indexed after.
-      const ftsDelete = db.prepare("INSERT INTO events_fts(events_fts, rowid, text) VALUES ('delete', ?, ?)");
-      const ftsInsert = db.prepare("INSERT INTO events_fts(rowid, text) SELECT rowid, text FROM events WHERE rowid = ? AND text IS NOT NULL AND text <> ''");
-      const update = db.prepare("UPDATE events SET payload = ?, search_extra = ?, cwd = ? WHERE rowid = ?");
-      // ---- events: payload, search text and cwd, with the FTS row replaced.
-      const cols = ["payload", "search_extra", "cwd"];
-      const rows = db.prepare(`SELECT rowid AS rid, session_id, kind, payload, search_extra, cwd, text FROM events WHERE ${instrAny(cols, needles)}`).all(...params(cols, needles)) as Row[];
+      // Contentless FTS (sqlite.ts v10): a changed row's entry is dropped by rowid and its new search text indexed.
+      const ftsDelete = db.prepare("DELETE FROM events_fts WHERE rowid = ?");
+      const ftsInsert = db.prepare("INSERT INTO events_fts (rowid, text) VALUES (?, ?)");
+      const reindex = (rid: number, kind: unknown, before: Record<string, unknown>, after: Record<string, unknown>) => {
+        if (searchableText({ kind, payload: before } as AgentEvent) !== undefined) ftsDelete.run(rid);
+        const text = searchableText({ kind, payload: after } as AgentEvent);
+        if (text !== undefined) ftsInsert.run(rid, text);
+      };
+      // search_extra (a copy of tool text) is read by nothing since v10, so a changed row drops it.
+      const update = db.prepare("UPDATE events SET payload = ?, cwd = ?, search_extra = NULL WHERE rowid = ?");
+      // ---- events: payload, plus cwd and search_extra in rows from before v10 that gc --compact has not emptied
+      // yet, with the FTS row replaced.
+      const cols = ["payload", "cwd", "search_extra"];
+      const rows = db.prepare(`SELECT rowid AS rid, session_id, kind, payload, cwd FROM events WHERE ${instrAny(cols, needles)}`).all(...params(cols, needles)) as Row[];
       for (const r of rows) {
         result.events++;
         touchedSessions.add(String(r.session_id));
         if (dry) continue;
-        const payload = scrub.value(JSON.parse(String(r.payload))) as Record<string, unknown>;
-        const searchExtra = r.search_extra === null ? null : (storedSearchText({ kind: r.kind, payload } as AgentEvent) ?? null);
-        if (typeof r.text === "string" && r.text !== "") ftsDelete.run(r.rid as number, r.text);
-        update.run(JSON.stringify(payload), searchExtra, typeof r.cwd === "string" ? scrub.text(r.cwd) : null, r.rid as number);
-        ftsInsert.run(r.rid as number);
+        const before = JSON.parse(String(r.payload)) as Record<string, unknown>;
+        const payload = scrub.value(before) as Record<string, unknown>;
+        update.run(JSON.stringify(payload), typeof r.cwd === "string" ? scrub.text(r.cwd) : null, r.rid as number);
+        reindex(r.rid as number, r.kind, before, payload);
+      }
+      // ---- cwds: one row per distinct path, shared by every event in it.
+      for (const c of db.prepare(`SELECT id, path FROM cwds WHERE ${instrAny(["path"], needles)}`).all(...needles) as Row[]) {
+        for (const r of db.prepare("SELECT session_id, count(*) AS n FROM events WHERE cwd_id = ? GROUP BY session_id").all(c.id as number) as Row[]) {
+          result.events += Number(r.n);
+          touchedSessions.add(String(r.session_id));
+        }
+        if (!dry) db.prepare("UPDATE cwds SET path = ? WHERE id = ?").run(scrub.text(String(c.path)), c.id as number);
       }
 
       // ---- refs to rewritten blobs: events.blobs, and ref-valued strings in payloads and eval docs.
       for (const [from, to] of repoint) {
         const swap = (v: unknown): unknown => (v === from ? to : Array.isArray(v) ? v.map(swap) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, swap(x)])) : v);
-        for (const r of db.prepare("SELECT rowid AS rid, session_id, blobs, payload, text FROM events WHERE instr(blobs, ?) > 0 OR instr(payload, ?) > 0").all(from, from) as Row[]) {
+        for (const r of db.prepare("SELECT rowid AS rid, session_id, kind, blobs, payload FROM events WHERE instr(blobs, ?) > 0 OR instr(payload, ?) > 0").all(from, from) as Row[]) {
           touchedSessions.add(String(r.session_id));
-          if (typeof r.text === "string" && r.text !== "") ftsDelete.run(r.rid as number, r.text);
+          const before = JSON.parse(String(r.payload)) as Record<string, unknown>;
+          const payload = swap(before) as Record<string, unknown>;
           db.prepare("UPDATE events SET blobs = ?, payload = ? WHERE rowid = ?").run(
             typeof r.blobs === "string" ? JSON.stringify(swap(JSON.parse(r.blobs))) : null,
-            JSON.stringify(swap(JSON.parse(String(r.payload)))),
+            JSON.stringify(payload),
             r.rid as number,
           );
-          ftsInsert.run(r.rid as number);
+          reindex(r.rid as number, r.kind, before, payload);
         }
         for (const t of ["tasks", "runs", "bundles", "experiments", "datasets"]) db.prepare(`UPDATE ${t} SET doc = replace(doc, ?, ?) WHERE instr(doc, ?) > 0`).run(from, to, from);
       }
@@ -459,7 +475,8 @@ export async function findRuleMatches(o: RuleScanOptions): Promise<RuleScan> {
   const { DatabaseSync } = await loadSqlite();
   const db: DatabaseSync = new DatabaseSync(o.dbPath, { readOnly: true });
   try {
-    for (const r of db.prepare("SELECT payload, cwd FROM events").iterate() as Iterable<Row>) scanJson(r.payload), text(r.cwd);
+    for (const r of db.prepare("SELECT payload, cwd, search_extra FROM events").iterate() as Iterable<Row>) scanJson(r.payload), text(r.cwd), text(r.search_extra);
+    for (const r of db.prepare("SELECT path FROM cwds").iterate() as Iterable<Row>) text(r.path);
     for (const r of db.prepare("SELECT title, cwd, stats, repo, parent FROM sessions").iterate() as Iterable<Row>) {
       text(r.title), text(r.cwd), scanJson(r.stats), scanJson(r.repo), scanJson(r.parent);
     }
