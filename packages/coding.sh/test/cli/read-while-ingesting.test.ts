@@ -18,7 +18,7 @@ import type { FlagValue } from "../../src/cli/args.ts";
 import { openContext } from "../../src/core/context.ts";
 import { acquireLock } from "../../src/core/lock.ts";
 import { paths } from "../../src/core/paths.ts";
-import { median, threadCpuMs } from "../helpers-timing.ts";
+import { threadCpuMs } from "../helpers-timing.ts";
 
 const roots: string[] = [];
 after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
@@ -136,14 +136,17 @@ describe("reads during ingest", () => {
 
     const h = home(20, 10);
     const ctx = await openContext({ env: h.env, cwd: h.cwd });
-    // Reads 20 ms apart until `done`: this thread's CPU in each read, and in each wait
-    // between reads (where an ingest sharing this thread would run).
+    // Reads 250 ms apart until `done`: this thread's CPU in each read, and in each wait
+    // between reads (where an ingest sharing this thread would run, whatever the spacing).
+    // Each wait costs this thread a little of its own (timers, promises, the last read's
+    // garbage), and the worker's pass can take 10 s on a Windows runner, so the waits are
+    // spaced for that cost to stay small next to an ingest's, not packed 20 ms apart.
     const sample = async (done: (n: number) => boolean) => {
       const reads: number[] = [];
       const waits: number[] = [];
       while (!done(waits.length)) {
         const w = cpu();
-        await new Promise((r) => setTimeout(r, 20));
+        await new Promise((r) => setTimeout(r, 250));
         waits.push(cpu() - w);
         const c = cpu();
         await ctx.index.listSessions({ limit: 50 });
@@ -152,18 +155,22 @@ describe("reads during ingest", () => {
       return { reads, waits };
     };
     try {
-      // What a wait costs this thread on an idle store (timers, promises), same process, same moment.
-      const idle = await sample((n) => n >= 15);
+      // What a wait costs this thread on an idle store, same process, same moment.
+      const idle = await sample((n) => n >= 6);
       const bg = startBackgroundIngest({ env: h.env, cwd: h.cwd, intervalMs: 60_000 });
       const started = performance.now();
       const busy = await sample(() => bg.status().lastIngestAt !== null || performance.now() - started > 120_000);
+      const seconds = (performance.now() - started) / 1000;
       await bg.close();
       assert.ok(bg.status().lastIngestAt !== null, "the pass finished");
       assert.equal((await ctx.index.listSessions({ limit: 100 })).length, 20, "the worker's writes are visible on this connection");
       assert.ok(busy.reads.length > 0);
       const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
-      const extra = sum(busy.waits) - busy.waits.length * median(idle.waits);
-      const detail = `this thread, ms of CPU: ${sum(busy.waits).toFixed(1)} in ${busy.waits.length} waits (${extra.toFixed(1)} over idle), max read ${Math.max(...busy.reads).toFixed(2)}; the ingest inline: ${inline.toFixed(1)}`;
+      // The mean idle wait, not the median: Windows counts thread CPU in whole clock ticks
+      // (15.6 ms), so most waits read 0 and the odd one a tick. Their median is 0; their mean
+      // still adds up to what the waits cost.
+      const extra = sum(busy.waits) - busy.waits.length * (sum(idle.waits) / idle.waits.length);
+      const detail = `this thread, ms of CPU: ${sum(busy.waits).toFixed(1)} in ${busy.waits.length} waits over ${seconds.toFixed(1)} s (${extra.toFixed(1)} over idle), max read ${Math.max(...busy.reads).toFixed(2)}; the ingest inline: ${inline.toFixed(1)}`;
       // The ingest ran elsewhere: between reads this thread did no more than when idle.
       assert.ok(extra < inline / 4, detail);
       // And no read did a share of it.
