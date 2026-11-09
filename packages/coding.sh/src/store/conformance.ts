@@ -414,6 +414,22 @@ export function runIndexStoreConformance(name: string, make: () => Promise<Index
       }
     }));
 
+    it("optional sessionsWithoutRow lists sessions with events and no row, by id, with their least agent", withStore(async (s) => {
+      if (!s.sessionsWithoutRow) return;
+      assert.deepEqual(await s.sessionsWithoutRow(), []);
+      await s.putEvents([
+        fixtureEvent({ sessionId: "nr-b", agent: "codex" }),
+        fixtureEvent({ sessionId: "nr-a", agent: "codex" }),
+        fixtureEvent({ sessionId: "nr-a", agent: "claude-code" }),
+        fixtureEvent({ sessionId: "nr-c" }),
+      ]);
+      await s.upsertSession({ id: "nr-c", agent: "claude-code", startedAt: 1000, stats: { events: 1, turns: 0, toolCalls: 0, toolErrors: 0, filesChanged: 0 }, flags: [] });
+      assert.deepEqual(await s.sessionsWithoutRow(), [
+        { sessionId: "nr-a", agent: "claude-code" },
+        { sessionId: "nr-b", agent: "codex" },
+      ]);
+    }));
+
     it("optional datasets are immutable per version with a latest pointer", withStore(async (s) => {
       if (!s.putDataset || !s.getDataset || !s.listDatasets) return;
       const v1 = { id: "qa", name: "QA", version: "v1", cases: [{ id: "c1", input: "a" }] };

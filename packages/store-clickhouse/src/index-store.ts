@@ -514,6 +514,15 @@ export class ChIndexStore implements IndexStore {
     return (await this.q<{ id: string }>(sql, p)).map((r) => r.id);
   }
 
+  /** Sessions with stored events and no row (doctor counts them; `coding.sh ingest` folds them). */
+  async sessionsWithoutRow(): Promise<{ sessionId: string; agent: string }[]> {
+    // No FINAL on events: every version of an event shares its sort key (session_id, id), so it groups alike.
+    const sql = `SELECT session_id AS id, min(agent) AS agent FROM ${this.t("events")}
+      WHERE session_id NOT IN (SELECT id FROM ${this.t("sessions")} FINAL)
+      GROUP BY session_id ORDER BY session_id`;
+    return (await this.q<{ id: string; agent: string }>(sql)).map((r) => ({ sessionId: r.id, agent: r.agent }));
+  }
+
   async listProjects(): Promise<string[]> {
     return (await this.q<{ p: string }>(`SELECT DISTINCT project_id AS p FROM ${this.t("sessions")} FINAL ORDER BY p`)).map((r) => r.p);
   }

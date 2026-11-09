@@ -409,6 +409,16 @@ export class PgIndexStore implements IndexStore {
     return (await this.q<{ v: string; n: number }>(sql, w.params)).map((r) => ({ value: r.v, count: r.n }));
   }
 
+  /** Sessions with stored events and no row (doctor counts them; `coding.sh ingest` folds them). */
+  async sessionsWithoutRow(): Promise<{ sessionId: string; agent: string }[]> {
+    const rows = await this.q<{ id: string; agent: string }>(
+      `SELECT e.session_id AS id, min(e.agent COLLATE "C") AS agent FROM ${this.t("events")} e
+       WHERE NOT EXISTS (SELECT 1 FROM ${this.t("sessions")} s WHERE s.id = e.session_id)
+       GROUP BY e.session_id ORDER BY e.session_id`,
+    );
+    return rows.map((r) => ({ sessionId: r.id, agent: r.agent }));
+  }
+
   /** Distinct project ids with sessions (sessions_project index), for serve's GET /api/projects. */
   async listProjects(): Promise<string[]> {
     return (await this.q<{ p: string }>(`SELECT DISTINCT project_id AS p FROM ${this.t("sessions")} ORDER BY 1`)).map((r) => r.p);
