@@ -110,6 +110,7 @@ Specs and plans. Each one states its status at the top.
 | [design/bench-cli.md](design/bench-cli.md) | `coding.sh bench`: benchmarks in one noun |
 | [design/viewer.md](design/viewer.md) | viewer: sessions, query language, benches |
 | [design/dogfood.md](design/dogfood.md) | testing coding.sh on itself: scorecard and improvement loop |
+| [design/stats-audit.md](design/stats-audit.md) | audit of bootstrap intervals and shares used as decisions, and the exact tests added |
 
 ## Maintainers
 
