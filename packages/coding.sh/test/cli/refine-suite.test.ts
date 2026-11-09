@@ -73,7 +73,8 @@ before(() => {
     `import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 const md = existsSync("CLAUDE.md") ? readFileSync("CLAUDE.md", "utf8") : "";
-for (let i = 0; i < Math.floor(Buffer.byteLength(md) / 200); i++) spawnSync(process.execPath, ["-e", ""]);
+const slow = !process.argv.includes("--size-only");
+for (let i = 0; slow && i < Math.floor(Buffer.byteLength(md) / 200); i++) spawnSync(process.execPath, ["-e", ""]);
 if (md.includes("ESSENTIAL:")) writeFileSync("done.txt", "ok\\n");
 console.log(JSON.stringify({ type: "result", result: "Done." }));
 `,
@@ -84,6 +85,13 @@ console.log(JSON.stringify({ type: "result", result: "Done." }));
   writeFileSync(join(h, "harness.toml"), `name = "fake"\nagent = "wrapper"\nflags = ${JSON.stringify([process.execPath, join(root, "agent.mjs")])}\ninclude = [".claude/**"]\n`);
   const snap = cli(["harness", "snapshot", "--file", join(h, "harness.toml"), "--json"]);
   assert.equal(snap.status, 0, snap.stdout + snap.stderr);
+  // The same agent without the process starts, for a climb on size alone, where wall time is not judged.
+  const q = join(root, "size-harness");
+  mkdirSync(join(q, ".claude"), { recursive: true });
+  writeFileSync(join(q, ".claude", "settings.json"), "{}\n");
+  writeFileSync(join(q, "harness.toml"), `name = "fake-size"\nagent = "wrapper"\nflags = ${JSON.stringify([process.execPath, join(root, "agent.mjs"), "--size-only"])}\ninclude = [".claude/**"]\n`);
+  const qsnap = cli(["harness", "snapshot", "--file", join(q, "harness.toml"), "--json"]);
+  assert.equal(qsnap.status, 0, qsnap.stdout + qsnap.stderr);
 
   const git = (...a: string[]) => assert.equal(spawnSync(gitBin, ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: repo, env }).status, 0, a.join(" "));
   writeFileSync(join(repo, "CLAUDE.md"), BLOATED);
@@ -159,7 +167,7 @@ let s = ""; process.stdin.on("data", (d) => (s += d)).on("end", () => {
 `,
     );
     const cmd = `"${process.execPath}" "${join(root, "proposer.mjs")}"`;
-    const r = cli(["refine", "run", "--suite", "chores", "--objective", "size", "--rounds", "1", "--proposer-command", cmd, "--yes", "--json"]);
+    const r = cli(["refine", "run", "--suite", "chores", "--harness", "fake-size", "--objective", "size", "--rounds", "1", "--proposer-command", cmd, "--yes", "--json"]);
     assert.equal(r.status, 0, r.stdout + r.stderr);
     const doc = JSON.parse(r.stdout) as ClimbDoc;
     assert.equal(doc.rounds[0]!.verdict, "keep", doc.rounds[0]!.reasons.join("\n"));

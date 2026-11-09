@@ -40,6 +40,14 @@ async function setup(opts: { start?: Tree; end?: Tree; hidden?: string; verifier
   return { blobs, git, task, workRoot, patch };
 }
 
+/**
+ * validateTask without the pass-to-pass check. With it on, every call runs the toy repo's
+ * `npm test` twice (before and after the reference), the slowest step by far, and the tests
+ * that use this assert nothing about it. The first test below runs the full default pipeline;
+ * "validateTask: pass-to-pass" covers the check itself.
+ */
+const validateNoSuite = (o: ValidateOpts) => validateTask({ passToPass: false, ...o });
+
 describe("validateTask", () => {
   it("validates a sound task: no-op fails, reference k/k, both near-misses fail, no leakage", async () => {
     const { blobs, git, task, workRoot } = await setup();
@@ -108,7 +116,7 @@ describe("validateTask", () => {
   it("catches a verifier that accepts an incomplete fix (near-miss passes)", async () => {
     const weak = 'import assert from "node:assert/strict";\nimport { add } from "../src/add.js";\nassert.equal(add(2, 3), 5);\n';
     const { blobs, git, task, workRoot } = await setup({ hidden: weak });
-    const o = await validateTask({ task, blobs, git, workRoot, k: 1 });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 1 });
     assert.equal(o.report.ok, false);
     assert.deepEqual(o.report.nearMissesFail, { failed: 1, of: 2 });
     const passed = o.nearMisses.filter((n) => n.passed);
@@ -120,7 +128,7 @@ describe("validateTask", () => {
   it("shows the end of the verifier's output when the reference fails", async () => {
     const verifier = `'${process.execPath}' -e "for (let i = 1; i <= 30; i++) console.log('line ' + i); process.exit(1)"`;
     const { blobs, git, task, workRoot } = await setup({ verifier });
-    const o = await validateTask({ task, blobs, git, workRoot, k: 2, passToPass: false, impossible: false });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 2, impossible: false });
     const text = formatValidation(o);
     assert.match(text, /^output of reference #1 \(verifier exited 1\), last 12 lines:$/m);
     assert.match(text, /^ {4}line 30$/m);
@@ -129,12 +137,12 @@ describe("validateTask", () => {
     assert.doesNotMatch(text, /output of reference #2/, "one block per kind");
     assert.doesNotMatch(text, /output of no-op/, "a failing no-op is expected");
     const sound = await setup();
-    assert.doesNotMatch(formatValidation(await validateTask({ ...sound, k: 1, passToPass: false })), /output of/);
+    assert.doesNotMatch(formatValidation(await validateNoSuite({ ...sound, k: 1 })), /output of/);
   });
 
   it("catches a verifier that passes without any change", async () => {
     const { blobs, git, task, workRoot } = await setup({ verifier: "true" });
-    const o = await validateTask({ task, blobs, git, workRoot, k: 1 });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 1 });
     assert.equal(o.report.noopFails, false);
     assert.equal(o.report.ok, false);
   });
@@ -145,7 +153,7 @@ describe("validateTask", () => {
     dirs.push(counter);
     // Passes on every other invocation once the real test passes.
     task.verifier.command = `node test/add.test.js && n=$(cat "$FLAKY" 2>/dev/null || echo 0) && echo $((n+1)) > "$FLAKY" && [ $((n % 2)) -eq 0 ]`;
-    const o = await validateTask({ task, blobs, git, workRoot, k: 4, env: { FLAKY: counter } });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 4, env: { FLAKY: counter } });
     assert.deepEqual(o.report.referencePasses, { passed: 2, of: 4 });
     assert.equal(o.report.ok, false);
     assert.ok(o.notes.some((n) => /flaky/.test(n)));
@@ -153,7 +161,7 @@ describe("validateTask", () => {
 
   it("flags hidden tests visible in the start tree", async () => {
     const { blobs, git, task, workRoot } = await setup({ start: { ...BUGGY, "test/add.test.js": HIDDEN_TEST } });
-    const o = await validateTask({ task, blobs, git, workRoot, k: 1 });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 1 });
     assert.ok(o.report.leakage.some((l) => /visible to the agent/.test(l)), o.report.leakage.join("\n"));
     assert.equal(o.report.ok, false);
   });
@@ -161,14 +169,14 @@ describe("validateTask", () => {
   it("flags a start tree that already contains the solution", async () => {
     const { blobs, git, task, workRoot } = await setup();
     git.add("start", FIXED); // now start == end state; reference reverse-applies
-    const o = await validateTask({ task, blobs, git, workRoot, k: 1 });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 1 });
     assert.ok(o.report.leakage.some((l) => /already contains the reference/.test(l)), o.report.leakage.join("\n"));
   });
 
   it("flags future history reachable from refs", async () => {
     const { blobs, git, task, workRoot } = await setup();
     git.extraCommits.set("start", FIXED);
-    const o = await validateTask({ task, blobs, git, workRoot, k: 1 });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 1 });
     assert.ok(o.report.leakage.some((l) => /not from HEAD/.test(l)), o.report.leakage.join("\n"));
     assert.ok(o.report.leakage.some((l) => /history contains reference code/.test(l)), o.report.leakage.join("\n"));
   });
@@ -177,18 +185,18 @@ describe("validateTask", () => {
     const add = "export function add(a, b) {\n  const sum = Number(a) + Number(b);\n  return sum;\n}\n";
     const end = { ...FIXED, "src/add.js": add };
     const clean = await setup({ end });
-    const ok = await validateTask({ task: clean.task, blobs: clean.blobs, git: clean.git, workRoot: clean.workRoot, k: 1 });
+    const ok = await validateNoSuite({ task: clean.task, blobs: clean.blobs, git: clean.git, workRoot: clean.workRoot, k: 1 });
     assert.deepEqual(ok.report.leakage, []);
     const { blobs, git, task, workRoot } = await setup({ end });
     task.instruction = `Fix it. Use exactly:\n${add}\n${FIXED["src/mul.js"]}`;
-    const o = await validateTask({ task, blobs, git, workRoot, k: 1 });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 1 });
     assert.ok(o.report.leakage.some((l) => /instruction contains/.test(l)), o.report.leakage.join("\n"));
   });
 
   it("reports missing verifier / reference as errors and keeps the draft", async () => {
     const { blobs, git, task, workRoot } = await setup({ reference: false });
     task.verifier.command = "";
-    const o = await validateTask({ task, blobs, git, workRoot, k: 2 });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 2 });
     assert.equal(o.report.ok, false);
     assert.equal(o.errors.length, 2);
     assert.deepEqual(o.report.referencePasses, { passed: 0, of: 0 });
@@ -197,7 +205,7 @@ describe("validateTask", () => {
 
   it("explicit near-misses replace auto-generated ones; non-applying ones are skipped", async () => {
     const { blobs, git, task, workRoot } = await setup();
-    const o = await validateTask({
+    const o = await validateNoSuite({
       task,
       blobs,
       git,
@@ -213,7 +221,7 @@ describe("validateTask", () => {
   it("failing setup is an error, not a pass", async () => {
     const { blobs, git, task, workRoot } = await setup();
     task.setup = ["exit 3"];
-    const o = await validateTask({ task, blobs, git, workRoot, k: 1 });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 1 });
     assert.equal(o.report.ok, false);
     assert.ok(o.errors.some((e) => /setup `exit 3` exited 3/.test(e)));
   });
@@ -222,7 +230,7 @@ describe("validateTask", () => {
     const { blobs, git, task, workRoot } = await setup({ verifier: `test "$(cat README.md)" = "# toy"` });
     task.setup = ["printf 'stray\\n' >> README.md"];
     task.referencePatch = await blobs.put("--- a/README.md\n+++ b/README.md\n@@ -1,2 +1 @@\n # toy\n-stray\n");
-    const o = await validateTask({ task, blobs, git, workRoot, k: 1, nearMisses: [README_NEAR_MISS] });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 1, nearMisses: [README_NEAR_MISS] });
     assert.deepEqual(o.errors, []);
     assert.equal(o.report.noopFails, true);
     assert.deepEqual(o.report.referencePasses, { passed: 1, of: 1 });
@@ -233,7 +241,7 @@ describe("validateTask", () => {
     const { blobs, git, task, workRoot } = await setup();
     task.setup = ["printf 'stray\\n' >> README.md"];
     task.referencePatch = await blobs.put("--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-# other\n+# toy\n");
-    const o = await validateTask({ task, blobs, git, workRoot, k: 1 });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 1 });
     assert.equal(o.report.ok, false);
     assert.ok(o.errors.some((e) => /^reference: patch did not apply: .*README\.md/.test(e)), o.errors.join("\n"));
   });
@@ -242,7 +250,7 @@ describe("validateTask", () => {
 describe("validateTask: impossible variant", () => {
   it("builds an impossible variant the reference and the no-op both fail, and stores it", async () => {
     const { blobs, git, task, workRoot } = await setup();
-    const o = await validateTask({ task, blobs, git, workRoot, k: 1 });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 1 });
     const imp = o.report.impossible;
     assert.ok(imp);
     assert.equal(imp.gameable, false);
@@ -270,7 +278,7 @@ describe("validateTask: impossible variant", () => {
   it("flags a verifier that passes the reference on every impossible variant as gameable", async () => {
     // Fails the no-op, passes the reference, rejects both near-misses, yet never runs the hidden test.
     const { blobs, git, task, workRoot } = await setup({ verifier: "grep -q 'a + b' src/add.js && grep -q 'a \\* b' src/mul.js" });
-    const o = await validateTask({ task, blobs, git, workRoot, k: 2 });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 2 });
     assert.equal(o.report.noopFails, true);
     assert.deepEqual(o.report.referencePasses, { passed: 2, of: 2 });
     assert.deepEqual(o.report.nearMissesFail, { failed: 2, of: 2 });
@@ -292,12 +300,12 @@ describe("validateTask: impossible variant", () => {
       'import assert from "node:assert/strict";\nimport { add } from "../src/add.js";\nimport { mul } from "../src/mul.js";\n' +
       "if (false) assert.equal(add(2, 3), 5);\nassert.equal(mul(2, 3), 6);\n";
     const { blobs, git, task, workRoot } = await setup({ hidden, verifier: "node test/add.test.js && grep -q 'a + b' src/add.js" });
-    const o = await validateTask({ task, blobs, git, workRoot, k: 1 });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 1 });
     assert.equal(o.report.impossible?.gameable, false);
     assert.equal(o.report.impossible?.tried, 2);
     assert.deepEqual(o.report.impossible?.passedByReference, ["test/add.test.js:4 5→6"]);
     assert.equal(o.report.impossible?.variant?.label, "test/add.test.js:5 6→7");
-    const capped = await validateTask({ task, blobs, git, workRoot, k: 1, impossible: { max: 1 } });
+    const capped = await validateNoSuite({ task, blobs, git, workRoot, k: 1, impossible: { max: 1 } });
     assert.equal(capped.report.impossible?.gameable, true);
     assert.equal(capped.report.impossible?.tried, 1);
   });
@@ -308,7 +316,7 @@ describe("validateTask: impossible variant", () => {
     const end = { ...FIXED, "test/visible.test.js": visible };
     const { blobs, git, task, workRoot } = await setup({ start, end, verifier: "node test/visible.test.js" });
     task.verifier.hiddenFiles = {};
-    const o = await validateTask({ task, blobs, git, workRoot, k: 1, nearMisses: [] });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 1, nearMisses: [] });
     const v = o.report.impossible?.variant;
     assert.equal(o.report.impossible?.gameable, false);
     assert.equal(v?.label, "test/visible.test.js:3 5→6");
@@ -322,7 +330,7 @@ describe("validateTask: impossible variant", () => {
     const start = { ...BUGGY, "src/add.js": "export function add(a, b) {\n  return a + b + 1;\n}\n", "src/mul.js": FIXED["src/mul.js"] as string };
     const hidden = 'import assert from "node:assert/strict";\nimport { add } from "../src/add.js";\nassert.equal(add(2, 3), 5);\n';
     const { blobs, git, task, workRoot } = await setup({ start, hidden });
-    const o = await validateTask({ task, blobs, git, workRoot, k: 1 });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 1 });
     assert.equal(o.report.impossible?.gameable, false);
     assert.equal(o.report.impossible?.variant?.noopFails, false);
     assert.equal(o.report.impossible?.variant?.hiddenFiles, undefined);
@@ -335,13 +343,13 @@ describe("validateTask: impossible variant", () => {
       'import assert from "node:assert/strict";\nimport { add } from "../src/add.js";\nimport { mul } from "../src/mul.js";\n' +
       "const two = 2, three = 3, five = 5, six = 6;\nassert.ok(add(two, three) === five);\nassert.ok(mul(two, three) === six);\n";
     const { blobs, git, task, workRoot } = await setup({ hidden });
-    const o = await validateTask({ task, blobs, git, workRoot, k: 1 });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 1 });
     assert.equal(o.report.impossible, undefined);
     assert.ok(o.notes.some((n) => /no impossible variant/.test(n)), o.notes.join("\n"));
     assert.equal(o.report.ok, true);
     const off = await (async () => {
       const s2 = await setup();
-      return validateTask({ task: s2.task, blobs: s2.blobs, git: s2.git, workRoot: s2.workRoot, k: 1, impossible: false });
+      return validateNoSuite({ task: s2.task, blobs: s2.blobs, git: s2.git, workRoot: s2.workRoot, k: 1, impossible: false });
     })();
     assert.equal(off.report.impossible, undefined);
     assert.equal(off.steps.filter((s) => s.kind === "impossible").length, 0);
@@ -349,7 +357,7 @@ describe("validateTask: impossible variant", () => {
 
   it("skips the impossible check when the reference never passes", async () => {
     const { blobs, git, task, workRoot } = await setup({ verifier: "node test/add.test.js && false" });
-    const o = await validateTask({ task, blobs, git, workRoot, k: 1 });
+    const o = await validateNoSuite({ task, blobs, git, workRoot, k: 1 });
     assert.equal(o.report.impossible, undefined);
     assert.equal(o.steps.filter((s) => s.kind === "impossible").length, 0);
   });

@@ -127,7 +127,8 @@ describe("durable exp run", { skip: process.platform === "win32" && "signals sen
     const before = pidsIn(pids).length;
 
     // The same command again offers the unfinished run (non-interactive: a note) and starts fresh unless --resume.
-    const resumed = cli(runArgs(t, ["--resume"]));
+    // Concurrency is not part of the resume config; the default is 1 on a 3-core runner, which would run the 150 ms trials one by one.
+    const resumed = cli(runArgs(t, ["--resume", "--concurrency", "8"]));
     assert.equal(resumed.status, 0, resumed.stderr);
     const got = JSON.parse(resumed.stdout).experiment as Exp;
     assert.equal(got.id, job.id, "the resumed run keeps its id");
@@ -145,15 +146,15 @@ describe("durable exp run", { skip: process.platform === "win32" && "signals sen
     const spec = join(home, "matrix.json");
     const t = JSON.parse(task({ delay: 150, pids })) as Record<string, unknown>;
     writeFileSync(spec, JSON.stringify({ name: "mx", dataset: "ds", task: t, graders: [JSON.parse(GRADER)], vary: ["/task/env/MODE"], variants: { base: {}, same: { "/task/env/MODE": "same" } }, baseline: "base" }));
-    const args = ["exp", "run", spec, "--seed", "5", "--concurrency", "2", "--json"];
-    const killed = await interrupt(args, pids, ["SIGKILL"], 7);
+    const args = ["exp", "run", spec, "--seed", "5", "--json"];
+    const killed = await interrupt([...args, "--concurrency", "2"], pids, ["SIGKILL"], 7);
     assert.equal(killed.code, -1);
     const job = (JSON.parse(cli(["exp", "status", "--json"]).stdout) as { runs: Status[] }).runs.find((r) => r.kind === "exp matrix" && r.status === "interrupted")!;
     assert.ok(job, "the killed matrix is listed as interrupted");
     assert.equal(job.total, 2 * N);
     assert.ok(job.done >= 4 && job.done < 2 * N, `finished case-trials were checkpointed (${job.done})`);
     const before = pidsIn(pids).length;
-    const resumed = cli([...args, "--resume"]);
+    const resumed = cli([...args, "--resume", "--concurrency", "8"]);
     assert.equal(resumed.status, 0, resumed.stderr);
     const r = JSON.parse(resumed.stdout) as { matrix: { seed: number }; experiments: Record<string, string>; comparisons: Record<string, { diff: { mean: number } }> };
     assert.equal(pidsIn(pids).length - before, 2 * N - job.done, "only unfinished case-trials ran again");
@@ -177,7 +178,7 @@ describe("durable exp run", { skip: process.platform === "win32" && "signals sen
     // Every agent that started finished and was kept: none was killed.
     assert.equal(st.done, pidsIn(pids).length, "in-flight trials finished and were saved");
     assert.match(JSON.parse(r.stdout).resume, new RegExp(`^coding\\.sh exp run .*--resume ${id}$`));
-    const done = cli(runArgs(t, ["--resume", id]));
+    const done = cli(runArgs(t, ["--resume", id, "--concurrency", "8"]));
     assert.equal(done.status, 0, done.stderr);
     assert.equal((JSON.parse(done.stdout).experiment as Exp).runs.length, 2 * N);
   });
