@@ -7,7 +7,7 @@ follow [Semantic Versioning](https://semver.org/) from the first npm release.
 Each release opens with a short summary. The list under it has one line per change,
 grouped by area, with links to the docs for the details.
 
-## [0.1.5] - Unreleased
+## [0.1.5] - 2026-11-09
 
 ### Added
 
@@ -418,6 +418,7 @@ It also runs as a server on SQLite or Postgres, with SDKs for apps that call mod
 - **Docs.** README with a quickstart, the agent matrix, OTLP setup, storage, privacy and uninstall.
 - **Docs.** CONTRIBUTING, SECURITY and a release checklist in docs/RELEASE.md.
 
+[0.1.5]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.5
 [0.1.4]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.4
 [0.1.3]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.3
 [0.1.2]: https://github.com/jackulau/coding.sh/releases/tag/v0.1.2

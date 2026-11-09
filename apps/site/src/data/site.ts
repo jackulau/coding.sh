@@ -37,7 +37,7 @@ export const INSTALL_CMD = "npx coding.sh init";
 /** The installer (repo root install.sh, served at /install): latest GitHub release, then `init`, then the viewer. */
 export const INSTALL_SH = "curl -fsSL https://coding.sh/install | sh";
 /** The release tarball the installer fetches (install.sh: releases/download/<tag>/coding.sh-<n>.tgz). */
-export const RELEASE = "0.1.4";
+export const RELEASE = "0.1.5";
 export const RELEASE_TGZ = `${REPO_URL}/releases/download/v${RELEASE}/coding.sh-${RELEASE}.tgz`;
 
 export const SITE = {
@@ -56,7 +56,7 @@ export const SITE = {
 } as const;
 
 /** Shown in the version pill; the full history is in /CHANGELOG.md. */
-export const VERSION = "0.1.4";
+export const VERSION = "0.1.5";
 
 export const NAV_PAGES = [
   {
