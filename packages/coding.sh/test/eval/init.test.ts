@@ -75,7 +75,7 @@ describe("initSuite: cases", () => {
     assert.equal(s.spec.trials, 3);
     assert.match(r.ci!, /command: eval run triage --yes/);
     assert.ok(r.notes.some((n) => /2 cases: grow toward 20 to 50/.test(n)));
-    await assert.rejects(initSuite({ name: "triage", root, source: "cases", casesFile: "cases.jsonl", command: "x" }, deps()), /already exists; pass --force/);
+    await assert.rejects(initSuite({ name: "triage", root, source: "cases", casesFile: "cases.jsonl", command: "x" }, deps()), (e: Error) => e instanceof InitError && /already exists\. Replacing it deletes the suite's files: ask the user, and pass --force only once they approve/.test(e.message) && e.askUser === true);
     await initSuite({ name: "triage", root, source: "cases", casesFile: "cases.jsonl", url: "http://localhost:1/x", force: true, trials: 5, purpose: "capability" }, deps());
     const again = await loadSuite(r.dir);
     assert.deepEqual([again.spec.task, again.spec.trials, again.spec.purpose], [{ kind: "http", url: "http://localhost:1/x" }, 5, "capability"]);
@@ -91,7 +91,7 @@ describe("initSuite: cases", () => {
     // A file you added (a reference solution, notes) is refused, and so is an edit to a written one.
     await mkdir(join(r.dir, "tasks", "t1"), { recursive: true });
     await writeFile(join(r.dir, "tasks", "t1", "reference.patch"), "diff\n");
-    await assert.rejects(initSuite({ ...o, force: true }, deps()), (e: Error) => e instanceof InitError && /evals\/triage has files eval init did not write, or that changed since: tasks\/t1\/reference\.patch\. Pass --force-all/.test(e.message));
+    await assert.rejects(initSuite({ ...o, force: true }, deps()), (e: Error) => e instanceof InitError && /evals\/triage has files eval init did not write, or that changed since: tasks\/t1\/reference\.patch\. Move them out first, or ask the user and pass --force-all/.test(e.message) && e.askUser === true);
     assert.ok(existsSync(join(r.dir, "tasks", "t1", "reference.patch")), "nothing was deleted");
     await rm(join(r.dir, "tasks"), { recursive: true });
     await writeFile(join(r.dir, "suite.json"), (await readFile(join(r.dir, "suite.json"), "utf8")).replace('"trials": 5', '"trials": 9'));

@@ -141,7 +141,7 @@ function routeFor(proxy: string, chained: string | undefined, suffix: string, wh
   }
   // Credentials in the URL would end up in the install record: never chain through those.
   if (!u || (u.protocol !== "http:" && u.protocol !== "https:") || u.search || u.hash || u.username || u.password) {
-    throw new Error(`${what} is not a plain http(s) URL the proxy can chain through; run init --proxy --force to replace it`);
+    throw new Error(`${what} is not a plain http(s) URL the proxy can chain through. Replacing it needs the user's approval: with it, run init --proxy --force`);
   }
   return { target: `${root}${trimSlash(u.pathname)}`, chained, upstream: u.origin };
 }
@@ -255,7 +255,7 @@ function unrouteProvider(file: string, text: string, id: string, target: string,
 function planCodexProvider(file: string, before: string, st: CodexState, id: string, o: ProxyPlanOpts, rec: ProxyInstall | undefined): ProxyChange | undefined {
   const base = providerBaseUrl(st, id);
   if (base === undefined) {
-    throw new Error(`${file} uses model_provider = "${id}" with no base_url to chain through. Run init --proxy --force to switch Codex to OpenAI through the proxy`);
+    throw new Error(`${file} uses model_provider = "${id}" with no base_url to chain through. Switching Codex to OpenAI through the proxy replaces that provider and needs the user's approval: with it, run init --proxy --force`);
   }
   let text = before;
   let chained = base;

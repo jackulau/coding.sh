@@ -119,9 +119,12 @@ export interface InitResult {
 }
 
 export class InitError extends Error {
-  constructor(message: string) {
+  /** The way out deletes files: the user decides, not an agent. */
+  readonly askUser?: true;
+  constructor(message: string, opts: { askUser?: boolean } = {}) {
     super(message);
     this.name = "InitError";
+    if (opts.askUser) this.askUser = true;
   }
 }
 
@@ -181,12 +184,12 @@ export async function initSuite(o: InitOpts, deps: InitDeps): Promise<InitResult
   const name = suiteName(o.name);
   const dir = join(o.root, SUITES_DIR, name);
   const rel = toPosix(relative(o.root, dir));
-  if (existsSync(join(dir, SUITE_FILE)) && !o.force) throw new InitError(`${rel} already exists; pass --force to replace it`);
+  if (existsSync(join(dir, SUITE_FILE)) && !o.force) throw new InitError(`${rel} already exists. Replacing it deletes the suite's files: ask the user, and pass --force only once they approve`, { askUser: true });
   if (o.force && !o.forceAll && existsSync(dir)) {
     const yours = await userFiles(dir);
     if (yours.length) {
       const shown = yours.slice(0, 8).join(", ") + (yours.length > 8 ? `, and ${yours.length - 8} more` : "");
-      throw new InitError(`${rel} has files eval init did not write, or that changed since: ${shown}. Pass --force-all to delete them too, or move them out first`);
+      throw new InitError(`${rel} has files eval init did not write, or that changed since: ${shown}. Move them out first, or ask the user and pass --force-all (it deletes them) only once they approve`, { askUser: true });
     }
   }
   if (o.trials !== undefined && !(Number.isInteger(o.trials) && o.trials >= 1)) throw new InitError("trials must be a whole number ≥ 1");

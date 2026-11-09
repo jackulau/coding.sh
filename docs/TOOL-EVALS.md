@@ -612,7 +612,7 @@ codes are 0, 1, 2 and 130.
   Arms are named `<variant>@<driver>`.
 - Cost gate: if the estimated cost exceeds `[toolevals] confirmAboveUsd` (default 5), a TTY gets a
   y/N prompt. In non-interactive mode the command fails with
-  `{status:"action_required", reason:"cost_confirmation_required", next:"rerun with --yes"}`.
+  `{status:"action_required", reason:"cost_confirmation_required", askUser:true, next:"ask the user; rerun with --yes only once they approve the cost"}`.
 - `tap cli|mcp|http` are internal subcommands, hidden from help. `dist/tap.mjs` is a separate
   bundle so that shim startup stays small.
 

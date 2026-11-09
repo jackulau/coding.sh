@@ -54,9 +54,9 @@ export interface CommandSpec {
 
 // ------------------------------------------------------------ shared flags
 
-export const YES: FlagSpec = { name: "yes", short: "y", type: "boolean", desc: "Answer yes to confirmation prompts" };
+export const YES: FlagSpec = { name: "yes", short: "y", type: "boolean", desc: "Answer yes to confirmation prompts. An agent passes it only once the user approves" };
 export const DRY_RUN: FlagSpec = { name: "dry-run", type: "boolean", desc: "Show the exact changes without writing anything" };
-export const FORCE: FlagSpec = { name: "force", type: "boolean", desc: "Replace the named target when it already exists" };
+export const FORCE: FlagSpec = { name: "force", type: "boolean", desc: "Replace the named target when it already exists. An agent passes it only once the user approves" };
 const AGENT_LIST: FlagSpec = { name: "agent", short: "a", type: "list", value: "<AGENT>", desc: "Only this agent (repeatable)" };
 const AGENT_ONE: FlagSpec = { name: "agent", short: "a", type: "string", value: "<AGENT>", desc: "Only sessions from this agent" };
 const SINCE: FlagSpec = { name: "since", type: "string", value: "<WHEN>", desc: "Only after this time: 7d, 12h, 30m or a date" };

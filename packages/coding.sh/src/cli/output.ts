@@ -27,7 +27,9 @@ export class CliError extends Error {
   readonly next: string[];
   readonly details: [string, string][];
   readonly data?: unknown;
-  constructor(message: string, opts: { reason?: string; exitCode?: number; next?: string[]; details?: [string, string][]; data?: unknown } = {}) {
+  /** `next` is destructive, irreversible or paid: the user decides, not an agent (`askUser: true` in --json). */
+  readonly askUser?: true;
+  constructor(message: string, opts: { reason?: string; exitCode?: number; next?: string[]; details?: [string, string][]; data?: unknown; askUser?: boolean } = {}) {
     super(message);
     this.name = "CliError";
     this.reason = opts.reason ?? "error";
@@ -35,8 +37,12 @@ export class CliError extends Error {
     this.next = (opts.next ?? []).slice(0, 2);
     this.details = opts.details ?? [];
     if (opts.data !== undefined) this.data = opts.data;
+    if (opts.askUser) this.askUser = true;
   }
 }
+
+/** The line an error prints before a step that only the user may approve (askUser). */
+export const ASK_USER = "The user must approve this first: ask them, and run it only once they agree.";
 
 /** Ctrl-C at a prompt or during work: exit 130. */
 export class Interrupted extends Error {
@@ -250,10 +256,13 @@ export class Output {
     this.stopSpinner();
     if (e instanceof UsageError) {
       if (this.json) {
-        this.se.write(JSON.stringify({ status: "error", reason: e.reason, message: e.message, next: e.suggestion ? [e.suggestion] : [] }) + "\n");
+        this.se.write(JSON.stringify({ status: "error", reason: e.reason, message: e.message, ...(e.askUser ? { askUser: true } : {}), next: e.suggestion ? [e.suggestion] : [] }) + "\n");
       } else {
         this.se.write(`${this.style("✗", "red", "err")} ${e.message}\n`);
-        if (e.suggestion) this.se.write(`    Did you mean ${this.style(e.suggestion, "cyan", "err")}?\n`);
+        if (e.askUser) {
+          this.se.write(`    ${ASK_USER}\n`);
+          if (e.suggestion) this.se.write(`    With their approval: ${this.style(e.suggestion, "cyan", "err")}\n`);
+        } else if (e.suggestion) this.se.write(`    Did you mean ${this.style(e.suggestion, "cyan", "err")}?\n`);
       }
       return 2;
     }
@@ -265,12 +274,13 @@ export class Output {
     const ce = e instanceof CliError ? e : undefined;
     const message = ce ? ce.message : e instanceof Error ? `Failed to complete: ${e.message}` : `Failed to complete: ${String(e)}`;
     if (this.json) {
-      const doc: Record<string, unknown> = { status: "error", reason: ce?.reason ?? "internal_error", message, next: ce?.next ?? [] };
+      const doc: Record<string, unknown> = { status: "error", reason: ce?.reason ?? "internal_error", message, ...(ce?.askUser ? { askUser: true } : {}), next: ce?.next ?? [] };
       if (ce?.data !== undefined) doc.data = ce.data;
       this.se.write(JSON.stringify(doc) + "\n");
     } else {
       this.se.write(`${this.style("✗", "red", "err")} ${message}\n`);
       for (const [k, v] of ce?.details ?? []) this.se.write(`  ${formatLabel(k)}${v}\n`);
+      if (ce?.askUser) this.se.write(`    ${ASK_USER}\n`);
       for (const n of ce?.next ?? []) this.se.write(`    ${n}\n`);
       if (debug && e instanceof Error && e.stack) this.se.write(e.stack + "\n");
     }

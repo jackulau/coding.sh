@@ -25,8 +25,10 @@ Every command accepts these.
 - With `--json`, a command prints one JSON document on stdout. An error is one JSON line on stderr:
   `{"status":"error","reason":"<reason>","message":"<text>","next":["<what to do>:","<command>"]}`.
   `next` holds up to two lines: the step, then the command to run. The reasons are listed in [Troubleshooting](../troubleshooting.md).
+  When that step deletes or overwrites data, cannot be undone, or spends money, the error also has `askUser: true`
+  and the text says the user must approve it first. An agent that reads such an error asks the user instead of running the step.
 - Exit codes: `0` success, `1` error, `2` usage error (unknown option, bad value, missing `--yes`), `130` canceled.
-- Commands that change agent config ask first. In scripts and CI, pass `--yes`.
+- Commands that change agent config or start paid runs ask first. In scripts and CI, pass `--yes`; an agent passes it only once the user approves.
 
 ## Commands
 
@@ -87,7 +89,7 @@ coding.sh init [options]
 | `--import` | `true` | Import each agent's past sessions so the viewer opens on your history (--no-import to skip) |
 | `--proxy` |  | Also route Claude Code and Codex model calls through the local proxy, and start it. |
 | `--force` |  | Install hooks even when the agent already has coding.sh hooks in the other scope; with --proxy, replace a base URL or provider you set instead of chaining through it. |
-| `-y, --yes` |  | Answer yes to confirmation prompts. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 | `--dry-run` |  | Print the plan (agents, files, blockers) without writing anything. |
 | `--diff` |  | With --dry-run, also print the full diff of every planned edit. |
 | `--remote <URL>` |  | Also send new sessions to a team's coding.sh serve at this URL (an http sink named team) |
@@ -416,7 +418,7 @@ coding.sh uninstall [options]
 | `-a, --agent <AGENT>` |  | Only this agent (repeatable) |
 | `--scope <SCOPE>` | `user` | Install into user or project config. One of: `user`, `project`. |
 | `--proxy` |  | Only stop routing agents through the proxy (undo init --proxy) |
-| `-y, --yes` |  | Answer yes to confirmation prompts. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 | `--dry-run` |  | Show the exact changes without writing anything. |
 
 ```sh
@@ -828,7 +830,7 @@ coding.sh eval run [suite]... [options]
 | `--summary <FILE>` |  | Also append the report to FILE as Markdown, e.g. "$GITHUB_STEP_SUMMARY" in GitHub Actions. |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
-| `-y, --yes` |  | Answer yes to confirmation prompts. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 
 ```sh
 coding.sh eval run
@@ -981,7 +983,7 @@ coding.sh eval trigger <SKILL> [options]
 | `--no-siblings` |  | Install only the skill under test. |
 | `--min-f1 <X>` |  | Exit 1 when the tested arm's F1 is under X (0 to 1) |
 | `--fail-on <WHAT>` |  | Exit 1 when B answers fewer prompts right than A: the 95% CI below 0 and an exact sign-flip p below 0.05. One of: `regression`. |
-| `-y, --yes` |  | Answer yes to confirmation prompts. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 
 ```sh
 coding.sh eval trigger .claude/skills/pdf -k 3 --yes
@@ -1019,7 +1021,7 @@ coding.sh eval export <TASK> [options]
 |---|---|---|
 | `-o, --out <DIR>` |  | Output directory (required) |
 | `--format <FORMAT>` | `coding.sh` | Directory layout. One of: `coding.sh`, `harbor`. |
-| `--force` |  | Replace the named target when it already exists. |
+| `--force` |  | Replace the named target when it already exists. An agent passes it only once the user approves. |
 
 ## `coding.sh dataset`
 
@@ -1723,7 +1725,7 @@ coding.sh toolevals run [target] [options]
 | `-t, --task <ID>` |  | Only this task (repeatable) |
 | `-c, --concurrency <N>` |  | Parallel trials. |
 | `--keep` |  | Keep trial sandboxes. |
-| `-y, --yes` |  | Answer yes to confirmation prompts. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 
 ```sh
 coding.sh toolevals run gh --driver agent:claude-code -k 3
@@ -1767,7 +1769,7 @@ coding.sh toolevals compress [target] [options]
 | `--margin <DELTA>` | `0.03` | Allowed success drop (CI lower bound) |
 | `--max-evals <N>` | `40` | Maximum candidate evaluations. |
 | `--batch` |  | Compress every tool at one level per step. |
-| `-y, --yes` |  | Answer yes to confirmation prompts. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 
 ### `coding.sh toolevals show`
 
@@ -2390,7 +2392,7 @@ coding.sh compare <A> [b] [options]
 | `--resume [<ID>]` |  | Continue an interrupted comparison: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
-| `-y, --yes` |  | Answer yes to confirmation prompts. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 
 ```sh
 coding.sh compare base candidate --k 3
@@ -2510,7 +2512,7 @@ coding.sh refine test <CANDIDATE>... [options]
 | `--resume [<ID>]` |  | Continue an interrupted round: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
-| `-y, --yes` |  | Answer yes to confirmation prompts. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 | `--dry-run` |  | Show the checks, decision points, guard set size and cost estimate; make no model calls. |
 
 ```sh
@@ -2620,7 +2622,7 @@ coding.sh refine run [options]
 | `--resume [<ID>]` |  | Continue an interrupted round: finished trials are kept, only the rest run (no ID: the newest unfinished one with the same config) |
 | `--retries <N>` | `3` | Retries per trial after a rate limit, 5xx or network error, with backoff (failures are never retried) |
 | `--trial-timeout <SEC>` |  | Time limit per trial, retries included; a trial over it fails. |
-| `-y, --yes` |  | Answer yes to confirmation prompts. |
+| `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
 | `--dry-run` |  | Show the findings, decision points, guard set size and per-round estimate; make no model calls. |
 
 ```sh

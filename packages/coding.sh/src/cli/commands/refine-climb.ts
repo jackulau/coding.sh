@@ -495,7 +495,7 @@ export async function climbRun(c: CommandContext, e: Env): Promise<number> {
   const all = climbRounds(readLedger(e.dir), key);
   const fk = frontKey(o.primary, all);
   if (out.json) {
-    out.data({ ledger: ledgerFile(e.dir), rounds: done, applied, stopped, spent: { agentUsd, proposer: spendJson(spend) }, ...(resume ? { resume } : {}), climb: climbJson(all, key, p) });
+    out.data({ ledger: ledgerFile(e.dir), rounds: done, applied, stopped, spent: { agentUsd, proposer: spendJson(spend) }, ...(resume ? { resume, askUser: true } : {}), climb: climbJson(all, key, p) });
   } else {
     const why: Record<StopReason, string> = {
       rounds: `ran ${plural(rounds, "round")}`,
@@ -506,7 +506,8 @@ export async function climbRun(c: CommandContext, e: Env): Promise<number> {
       proposer: "the proposer gave 3 unusable replies in a row",
     };
     out.print(`Stopped: ${why[stopped]}. ${plural(done.length, "round")}, ${applied.length} kept and applied, spent ${money(agentUsd + spend.usd + spend.judgeUsd)} (${money(agentUsd)} on agent sessions)`);
-    if (resume) out.note(`The round's finished runs are saved. Continue it with: ${resume}`);
+    // The resume command carries --yes and spends more: the user approves it, not an agent.
+    if (resume) out.note(`The round's finished runs are saved. Continuing spends more, so ask the user first; with their approval: ${resume}`);
     if (fk && all.length) out.print(`Pareto front (pass rate vs ${OBJECTIVE_LABEL[fk]}): ${frontText(all, fk)}`);
     if (p.status === "stop" && p.keep) out.print(`The plateau began at round ${p.result.changePoint} of this climb: the version to keep is ${p.keep}`);
     if (applied.length) out.next("Undo the last applied edit", "coding.sh refine rollback");

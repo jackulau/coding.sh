@@ -63,7 +63,7 @@ export async function run(c: CommandContext): Promise<number> {
   const source = c.flags.literal;
   const ruleSources = Array.isArray(c.flags.rule) ? c.flags.rule : [];
   if ((typeof source !== "string" || source === "") && !ruleSources.length) {
-    throw new UsageError("give the values to remove in a file, one per line: coding.sh purge --literal secrets.txt (or --literal - to read stdin), or their shape: --rule 'sk-[A-Za-z0-9]{20,}'");
+    throw new UsageError("give the values to remove in a file, one per line: coding.sh purge --literal secrets.txt (or --literal - to read stdin), or their shape: --rule 'sk-[A-Za-z0-9]{20,}'", { askUser: true });
   }
   const rules = parseRules(ruleSources);
   const given = typeof source === "string" && source !== "" ? readLiterals(source, c.cwd) : [];
@@ -73,6 +73,7 @@ export async function run(c: CommandContext): Promise<number> {
   if (scheme !== "sqlite" || rest === ":memory:") {
     throw new CliError(`coding.sh purge rewrites the SQLite index; this store is ${safeUrl(config.store.index)}`, {
       reason: "unsupported_store",
+      askUser: true,
       next: [`Remove the value with the ${scheme} database's own tools, then rotate it.`],
     });
   }
@@ -86,7 +87,7 @@ export async function run(c: CommandContext): Promise<number> {
   const r: PurgeResult | undefined = await withContext(c, async (ctx) => {
     // No spool dir: nothing ingests, and none is created just to lock it (as in ingest and gc).
     const lock = !existsSync(p.spool) ? undefined : await acquireLock(p.ingestLock, { waitMs: 30_000 }).catch((e) => {
-      throw new CliError(`an ingest is running and holds the store: ${(e as Error).message}`, { reason: "busy", next: ["Try again in a minute:", "coding.sh purge --literal …"] });
+      throw new CliError(`an ingest is running and holds the store: ${(e as Error).message}`, { reason: "busy", askUser: true, next: ["Try again in a minute:", "coding.sh purge --literal …"] });
     });
     try {
       if (rules.length) {
@@ -138,7 +139,7 @@ export async function run(c: CommandContext): Promise<number> {
   if (r.oldBytesKept?.length) return 1;
   const total = r.events + r.sessions + r.otherRows + r.blobs + r.files;
   if (!total) out.note(`No copies of ${literals.length === 1 ? "the value" : "these values"} in the store`);
-  else if (dryRun) out.note("Dry run: nothing changed. Run again without --dry-run to scrub");
+  else if (dryRun) out.note("Dry run: nothing changed. Run again without --dry-run to scrub; that cannot be undone, so an agent asks the user first");
   else out.note("Rotate the secret too: copies outside coding.sh (agent transcripts, shell history, git) are not touched");
   return r.integrity === false ? 1 : 0;
 }

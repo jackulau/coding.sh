@@ -377,14 +377,15 @@ export function port(v: FlagValue, fallback: number): number {
 }
 
 /**
- * Consent for writes outside coding.sh's own data (agent configs): `--yes`,
+ * Consent for writes outside coding.sh's own data (agent configs) and for paid runs: `--yes`,
  * or an interactive y/N. Non-interactive without --yes fails with
- * confirmation_required (exit 2) and writes nothing.
+ * confirmation_required (exit 2, askUser) and writes nothing: an agent asks the user
+ * before it passes --yes.
  */
 export async function requireConsent(c: CommandContext, question: string, rerun: string, opts: { defaultYes?: boolean } = {}): Promise<void> {
   if (c.flags.yes === true) return;
   if (!c.out.interactive) {
-    throw new UsageError(`${question.replace(/\?$/, "")} needs confirmation. Pass --yes to confirm`, { reason: "confirmation_required", suggestion: rerun });
+    throw new UsageError(`${question.replace(/\?$/, "")} needs confirmation from the user`, { reason: "confirmation_required", suggestion: rerun, askUser: true });
   }
   if (!(await c.out.confirm(question, opts))) throw new CliError("Canceled. Nothing was changed", { reason: "canceled", exitCode: 130 });
 }

@@ -8,7 +8,7 @@ import { stringifyToml } from "../../core/toml.ts";
 import type { Session } from "../../core/types.ts";
 import { positiveInt, UsageError } from "../args.ts";
 import { list, num, str, withContext } from "../common.ts";
-import { CliError, plural } from "../output.ts";
+import { ASK_USER, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { CONFIG_FILE, loadToolEvals, markTaskValidated, parseDriver, ToolEvalsConfigError, VALIDATED_EDIT, type ToolEvalsConfig } from "../../toolevals/config.ts";
 import type { Driver, SurfaceReport, Target, ToolTask, TrialResult, Variant } from "../../toolevals/types.ts";
@@ -127,10 +127,10 @@ async function costGate(c: CommandContext, cfg: ToolEvalsConfig, estimate: numbe
     if (await c.out.confirm(`${message}. Continue?`)) return undefined;
     throw new CliError("Canceled. Nothing was run", { reason: "canceled", exitCode: 130 });
   }
-  if (c.out.json) c.out.data({ status: "action_required", reason: "cost_confirmation_required", message, estimateUsd: estimate, confirmAboveUsd: cfg.confirmAboveUsd, next: "rerun with --yes" });
+  if (c.out.json) c.out.data({ status: "action_required", reason: "cost_confirmation_required", message, estimateUsd: estimate, confirmAboveUsd: cfg.confirmAboveUsd, askUser: true, next: "ask the user; rerun with --yes only once they approve the cost" });
   else {
-    c.out.fail(`${message}. Confirm to continue`);
-    c.out.next("Run anyway", rerun);
+    c.out.fail(`${message}. ${ASK_USER}`);
+    c.out.next("With the user's approval, run", rerun);
   }
   return 2;
 }

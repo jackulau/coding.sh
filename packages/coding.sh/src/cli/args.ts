@@ -49,11 +49,14 @@ export interface ParsedArgs {
 export class UsageError extends Error {
   readonly suggestion?: string;
   readonly reason: string;
-  constructor(message: string, opts: { suggestion?: string; reason?: string } = {}) {
+  /** The suggestion is destructive, irreversible or paid: the user decides, not an agent (`askUser: true` in --json). */
+  readonly askUser?: true;
+  constructor(message: string, opts: { suggestion?: string; reason?: string; askUser?: boolean } = {}) {
     super(message);
     this.name = "UsageError";
     if (opts.suggestion) this.suggestion = opts.suggestion;
     this.reason = opts.reason ?? "invalid_usage";
+    if (opts.askUser) this.askUser = true;
   }
 }
 

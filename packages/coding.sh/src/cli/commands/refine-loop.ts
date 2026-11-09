@@ -586,7 +586,7 @@ export function applyCandidate(root: string, dir: string, id: string | undefined
   }
   const forced: string[] = [];
   if (test.verdict !== "keep") {
-    if (!force) throw new CliError(`${test.id} was not kept (${test.verdict}: ${test.reasons[0] ?? "no reason"})`, { reason: "not_kept", next: ["Apply it anyway (recorded in the ledger):", `coding.sh refine apply ${test.id} --force`] });
+    if (!force) throw new CliError(`${test.id} was not kept (${test.verdict}: ${test.reasons[0] ?? "no reason"})`, { reason: "not_kept", askUser: true, next: ["Apply it anyway (recorded in the ledger):", `coding.sh refine apply ${test.id} --force`] });
     forced.push(`verdict ${test.verdict}`);
   }
   const stored = loadCandidate(dir, test.id);
@@ -846,10 +846,10 @@ function rollbackCommand(c: CommandContext, root: string, dir: string): number {
   const apply = id ? [...live].reverse().find((a) => a.candidate === id || a.id === id) : live[live.length - 1];
   if (!apply) throw new CliError(id ? `${id} is not applied (or was rolled back already)` : "Nothing applied to roll back", { reason: "not_found", next: ["See the rounds:", "coding.sh refine log"] });
   const later = live.filter((a) => entries.indexOf(a) > entries.indexOf(apply) && a.files.some((f) => apply.files.some((g) => g.path === f.path)));
-  if (later.length && !force) throw new CliError(`${later.map((a) => a.candidate).join(", ")} was applied over ${apply.candidate} on the same file; roll ${later.length === 1 ? "it" : "them"} back first`, { reason: "applied_over", next: ["Roll back the newest first:", `coding.sh refine rollback ${later[later.length - 1]!.candidate}`] });
+  if (later.length && !force) throw new CliError(`${later.map((a) => a.candidate).join(", ")} was applied over ${apply.candidate} on the same file; roll ${later.length === 1 ? "it" : "them"} back first`, { reason: "applied_over", askUser: true, next: ["Roll back the newest first:", `coding.sh refine rollback ${later[later.length - 1]!.candidate}`] });
   const now = currentShas(root, apply.files.map((f) => f.path));
   const edited = apply.files.filter((f) => now.get(f.path) !== f.after).map((f) => f.path);
-  if (edited.length && !force) throw new CliError(`${edited.join(", ")} changed since ${apply.candidate} was applied; a rollback would drop those edits`, { reason: "files_changed", next: ["Roll back anyway (your later edits to the file are lost):", `coding.sh refine rollback ${apply.candidate} --force`] });
+  if (edited.length && !force) throw new CliError(`${edited.join(", ")} changed since ${apply.candidate} was applied; a rollback would drop those edits`, { reason: "files_changed", askUser: true, next: ["Roll back anyway (your later edits to the file are lost):", `coding.sh refine rollback ${apply.candidate} --force`] });
   const files = writeRollback(dir, root, apply);
   appendLedger(dir, { op: "rollback", id: `b_${sha(`${apply.id}\u0000${Date.now()}`).slice(0, 10)}`, apply: apply.id, candidate: apply.candidate, at: new Date().toISOString(), files, ...(edited.length ? { forced: true } : {}) });
   if (out.json) {

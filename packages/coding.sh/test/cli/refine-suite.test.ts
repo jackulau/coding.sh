@@ -140,7 +140,7 @@ describe("refine --suite: flags", () => {
     assert.match(plan.drivers.join("\n"), /CLAUDE\.md is \d+ bytes .* Largest sections: ## Style/);
     const text = cli(["refine", "run", "--suite", "chores", "--objective", "wall", "--dry-run"]);
     assert.match(text.stdout, /Until|Up to 3 rounds: cut CLAUDE\.md/);
-    assert.equal(cli(["refine", "run", "--suite", "chores", "--objective", "wall"]).stderr.includes("Pass --yes"), true, "a climb runs agents, so it asks first");
+    assert.equal(cli(["refine", "run", "--suite", "chores", "--objective", "wall"]).stderr.includes("needs confirmation from the user"), true, "a climb runs agents, so it asks first");
   });
 });
 

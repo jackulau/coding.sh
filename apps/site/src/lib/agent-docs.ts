@@ -106,6 +106,8 @@ Details: ${abs("/docs/evals")} and ${abs("/docs/experiments#compare")}.
 - Every command takes \`--json\`: one JSON document on stdout. Errors are one JSON line on stderr:
   \`{"status":"error","reason":"<reason>","message":"<text>","next":["<what to do>:","<command>"]}\`. \`next\` holds
   up to two lines, the step and then the command to run; branch on \`reason\`, never on \`message\`.
+- An error with \`"askUser": true\` names a step that deletes or overwrites data, cannot be undone, or costs money
+  (\`--yes\`, \`--force\`, \`purge\`, a rollback). Ask the user before you run it, even when \`next\` gives the command.
 - Exit codes: 0 success, 1 error, 2 usage error (unknown option, bad value, missing \`--yes\`), 130 canceled.
 - Commands that change config ask first. Pass \`--yes\` only when the user asked you to set it up.
 

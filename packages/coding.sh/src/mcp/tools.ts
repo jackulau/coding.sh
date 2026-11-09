@@ -830,6 +830,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
             { index: ctx.index, blobs: ctx.blobs, now: c.now() },
           );
         } catch (e) {
+          // The message says when replacing needs the user's approval; a structured field would cost context on every turn.
           if (e instanceof InitError) throw new ToolError(e.message);
           throw e;
         }

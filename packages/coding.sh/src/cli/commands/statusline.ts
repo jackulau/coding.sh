@@ -104,6 +104,7 @@ async function install(c: CommandContext): Promise<number> {
   if (existing !== undefined && !oursAlready && !c.flags.force) {
     throw new CliError(`Claude Code already has a status line: ${existing}`, {
       reason: "statusline_exists",
+      askUser: true,
       next: ["Replace it (the old one is restored on uninstall):", "coding.sh statusline install --force"],
     });
   }

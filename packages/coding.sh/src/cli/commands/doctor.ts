@@ -357,7 +357,7 @@ export async function run(c: CommandContext): Promise<number> {
   if (proxy.running) out.row("Proxy", `${proxy.url} (pid ${proxy.pid})${routedNames.length ? `, routes ${routedNames.join(", ")}` : ""}`, "ok");
   else if (routedNames.length) out.row("Proxy", `not running, but ${routedNames.join(" and ")} call it; it restarts on the next session start, or now with coding.sh proxy --background`, "warn");
   else out.row("Proxy", "not running; route agents through it with coding.sh init --proxy", "none");
-  for (const r of proxy.routes.filter((x) => !x.ok)) out.row("Proxy", `${r.agent} no longer points at the proxy (${r.file}); coding.sh init --proxy or coding.sh uninstall --proxy`, "warn");
+  for (const r of proxy.routes.filter((x) => !x.ok)) out.row("Proxy", `${r.agent} no longer points at the proxy (${r.file}); with the user's approval, coding.sh init --proxy or coding.sh uninstall --proxy`, "warn");
   const routed = [...new Set(gateway.configured.filter((f) => f.active).map((f) => (f.gateway === "vercel" ? f.agent : `${f.agent} via ${f.gateway}`)))];
   const gwParts = [routed.length ? `routes ${routed.join(", ")}` : "not configured", gateway.key.set ? `key set (${gateway.key.source})` : "no key", `${gateway.sessions >= 1000 ? "1000+" : gateway.sessions} tagged sessions`];
   out.row("AI Gateway", gwParts.join(", "), routed.length || gateway.key.set || gateway.sessions ? "ok" : "none");

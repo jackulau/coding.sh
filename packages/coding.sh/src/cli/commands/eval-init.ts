@@ -166,6 +166,7 @@ export async function evalInit(c: CommandContext): Promise<number> {
       if (e instanceof InitError || e instanceof DraftError) {
         throw new CliError(e.message, {
           reason: "init_failed",
+          ...(e instanceof InitError && e.askUser ? { askUser: true } : {}),
           ...(o.source === "sessions" && !o.sessionIds ? { next: ["List failed sessions:", `coding.sh sessions --where is:flagged --since ${Math.round((o.since ?? DEFAULT_SINCE_MS) / 86_400_000) * 2}d`] } : {}),
         });
       }

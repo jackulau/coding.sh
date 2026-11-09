@@ -387,7 +387,7 @@ export async function run(c: CommandContext): Promise<number> {
         if (!outDir) throw new UsageError("Missing --out <DIR>", { reason: "missing_argument" });
         const dir = resolve(c.cwd, outDir);
         if (existsSync(dir) && readdirSync(dir).length && c.flags.force !== true) {
-          throw new CliError(`Can't export to ${dir}: the directory is not empty`, { reason: "conflict", next: ["Replace its contents:", `coding.sh eval export ${task.id} --out ${outDir} --force`] });
+          throw new CliError(`Can't export to ${dir}: the directory is not empty`, { reason: "conflict", askUser: true, next: ["Replace its contents (deletes what is there):", `coding.sh eval export ${task.id} --out ${outDir} --force`] });
         }
         const replaced = existsSync(dir) && readdirSync(dir).length > 0;
         if (replaced) await rm(dir, { recursive: true, force: true });

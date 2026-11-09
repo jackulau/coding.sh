@@ -264,7 +264,8 @@ async function runTriggers(c: CommandContext, s: LoadedSuite, k: number): Promis
   if (todo) {
     throw new CliError(`Suite ${s.spec.name}: ${plural(todo, "prompt")} in ${toPosix(relative(c.cwd, specFile)) || specFile} still say ${TODO}`, {
       reason: "draft_suite",
-      next: ["Write real prompts there, or have a model draft them:", `coding.sh eval init ${s.spec.name} --skill ${toPosix(relative(c.cwd, resolve(s.dir, s.spec.skill!))) || "."} --draft --force`],
+      askUser: true,
+      next: ["Write real prompts there, or have a model draft them (replaces the file and calls a model):", `coding.sh eval init ${s.spec.name} --skill ${toPosix(relative(c.cwd, resolve(s.dir, s.spec.skill!))) || "."} --draft --force`],
     });
   }
   const flags = { ...c.flags, spec: specFile, k, ...(s.spec.agent && c.flags.agent === undefined ? { agent: s.spec.agent } : {}), ...(s.spec.model && c.flags.model === undefined ? { model: s.spec.model } : {}) };

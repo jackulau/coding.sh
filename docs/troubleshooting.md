@@ -140,6 +140,16 @@ stderr:
 {"status":"error","reason":"not_found","message":"Can't find session \"nope\"","next":["List sessions:","coding.sh sessions"]}
 ```
 
+When the next step deletes or overwrites data, cannot be undone, or spends money (`--yes`, `--force`,
+`purge`, a rollback), the error also says the user must approve it first, and the JSON has
+`askUser: true`:
+
+```json
+{"status":"error","reason":"confirmation_required","message":"Run 8 agent sessions (1 arm x 8 prompts x 1) needs confirmation from the user","askUser":true,"next":["coding.sh eval trigger ./skill --yes"]}
+```
+
+An agent that reads `askUser: true` asks the user instead of running `next` itself.
+
 Exit codes: `1` error, `2` usage error, `130` canceled. Add `--debug` for a stack trace.
 
 ### Usage errors (exit 2)
@@ -158,7 +168,7 @@ The command line was wrong. Nothing ran.
 | `missing_argument` | `Missing --out <DIR>` | Add the argument or option named. |
 | `invalid_argument` | (bench) a bad `--date`, `--seed` or contender | Fix the value the message names. |
 | `invalid_usage` | Any other usage error. | Read the message. |
-| `confirmation_required` | `Set up coding.sh for 1 agent (2 config files, backed up first) needs confirmation. Pass --yes to confirm` | Not a terminal, so it can't ask. Re-run with `--yes`, or `--dry-run` first to see the changes. |
+| `confirmation_required` | `Set up coding.sh for 1 agent (2 config files, backed up first) needs confirmation from the user` | Not a terminal, so it can't ask. Re-run with `--yes`, or `--dry-run` first to see the changes. An agent asks the user first (`askUser: true`). |
 | `insecure_bind` | `refusing to listen on 0.0.0.0 without auth: …` | Only some credentials are set. Set both `CODING_SH_INGEST_KEYS` and `CODING_SH_READ_KEYS` (make keys with `coding.sh serve keygen`), unset both to use the first-start keys, or pass `--insecure` on a trusted network. |
 | `remote_unauthorized` | `https://obs.example.com refused the key. Nothing was changed` | `init --remote` needs an ingest key the server knows. A server with no configured keys prints its own on every start: `docker logs coding-sh`. |
 | `remote_unreachable` | `Can't reach https://obs.example.com: …. Nothing was changed` | Check the URL and that the server is up: `curl -s <url>/healthz`. |

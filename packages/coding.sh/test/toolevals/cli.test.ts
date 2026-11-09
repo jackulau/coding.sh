@@ -185,7 +185,8 @@ describe("toolevals CLI", () => {
     const doc = one(r.stdout, "cost gate");
     assert.equal(doc.status, "action_required");
     assert.equal(doc.reason, "cost_confirmation_required");
-    assert.equal(doc.next, "rerun with --yes");
+    assert.equal(doc.askUser, true);
+    assert.match(String(doc.next), /ask the user; rerun with --yes/);
     assert.ok(!existsSync(join(h.data, "toolevals")) || readdirSync(join(h.data, "toolevals")).length === 0, "nothing ran");
   });
 

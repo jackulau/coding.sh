@@ -248,7 +248,7 @@ async function dispatch(c: CommandContext): Promise<number> {
       const graders = (await Promise.all(list(c.flags.grader).map((g) => jsonArg(g, "--grader")))) as GraderSpec[];
       const dir = c.flags.global === true ? benchHome(env) : join(c.cwd, "bench");
       const file = join(dir, `${name}.toml`);
-      if (existsSync(file) && c.flags.force !== true) throw new CliError(`${file} already exists`, { reason: "exists", next: ["Edit it, or overwrite it:", `coding.sh bench new ${name} --force …`] });
+      if (existsSync(file) && c.flags.force !== true) throw new CliError(`${file} already exists`, { reason: "exists", askUser: true, next: ["Edit it, or overwrite it:", `coding.sh bench new ${name} --force …`] });
       const text = renderDefinition({ name, source: sourceFromFlags(c), contenders, graders, cases: positiveInt(c.flags.cases, "cases") ?? 50 });
       try {
         parseDefinition(text, file); // what `run` will parse, checked before writing

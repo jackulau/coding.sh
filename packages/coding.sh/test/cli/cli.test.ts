@@ -217,8 +217,11 @@ describe("cli exit codes", () => {
     const h = tmpHome();
     const r = cli(h, ["init", "--agent", "claude-code", "--json"], {}, "");
     assert.equal(r.status, 2, r.stderr);
-    const e = JSON.parse(r.stderr.trim().split("\n").at(-1)!) as { reason: string };
+    const e = JSON.parse(r.stderr.trim().split("\n").at(-1)!) as { reason: string; askUser?: boolean; next: string[] };
     assert.equal(e.reason, "confirmation_required");
+    // An agent reading this must ask the user before it re-runs with --yes.
+    assert.equal(e.askUser, true);
+    assert.deepEqual(e.next, ["coding.sh init --yes"]);
     assert.equal(existsSync(join(h.home, ".claude", "settings.json")), false);
   });
 

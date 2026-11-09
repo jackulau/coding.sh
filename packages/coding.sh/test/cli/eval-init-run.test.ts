@@ -122,7 +122,7 @@ describe("eval init + eval run: skill", () => {
     writeFileSync(toml, readFileSync(toml, "utf8").replace("TODO:", "merge these two PDFs"));
     const kept = cli(["eval", "init", "--skill", ".claude/skills/pdf", "--force"]);
     assert.equal(kept.status, 1);
-    assert.match(kept.stderr, /evals\/pdf has files eval init did not write, or that changed since: triggers\.toml\. Pass --force-all/);
+    assert.match(kept.stderr, /evals\/pdf has files eval init did not write, or that changed since: triggers\.toml\. Move them out first, or ask the user and pass --force-all/);
     assert.match(readFileSync(toml, "utf8"), /merge these two PDFs/, "your edit is still there");
     assert.equal(cli(["eval", "init", "--skill", ".claude/skills/pdf", "--force-all"]).status, 0);
     assert.doesNotMatch(readFileSync(toml, "utf8"), /merge these two PDFs/);
@@ -219,7 +219,7 @@ say({ type: "result", result: existsSync(".claude/skills/demo/SKILL.md") ? "Whic
       JSON.stringify({ kind: "llm-checklist", name: "scope", provider: "mock", items: [{ id: "asks", question: "Did it ask which team?", critical: true, check: { name: "output-matches", args: { pattern: "which team", flags: "i" } } }] }),
     );
 
-    assert.match(cli(["eval", "run", "scope"]).stderr, /needs confirmation\. Pass --yes/);
+    assert.match(cli(["eval", "run", "scope"]).stderr, /needs confirmation from the user\n.*The user must approve this first/);
     const good = cli(["eval", "run", "scope", "--harness", "skilled", "--yes", "--json"]);
     assert.equal(good.status, 0, good.stdout + good.stderr);
     const doc = JSON.parse(good.stdout) as { kind: string; experimentId: string; harness: { name: string }; unverified: string[]; report: { ok: boolean; passed: number; trials: number; passHatK: number } };

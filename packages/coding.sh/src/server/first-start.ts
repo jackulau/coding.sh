@@ -38,11 +38,11 @@ export function loadOrCreateKeys(env: NodeJS.ProcessEnv): FirstStartKeys {
     try {
       doc = JSON.parse(readFileSync(file, "utf8")) as typeof doc;
     } catch (e) {
-      throw new ConfigError(`${file} is not valid JSON (${(e as Error).message}); fix it, or delete it to make new keys`);
+      throw new ConfigError(`${file} is not valid JSON (${(e as Error).message}); fix it, or, with the user's approval, delete it to make new keys (clients holding the old keys stop working)`);
     }
     const { ingest, read } = doc ?? {};
     if (typeof ingest !== "string" || !KEY(INGEST_KEY_PREFIX).test(ingest) || typeof read !== "string" || !KEY(READ_KEY_PREFIX).test(read)) {
-      throw new ConfigError(`${file} needs "ingest": "csh_ik_…" and "read": "csh_rk_…"; fix it, or delete it to make new keys`);
+      throw new ConfigError(`${file} needs "ingest": "csh_ik_…" and "read": "csh_rk_…"; fix it, or, with the user's approval, delete it to make new keys (clients holding the old keys stop working)`);
     }
     return { ingest, read, file, created: false };
   }
