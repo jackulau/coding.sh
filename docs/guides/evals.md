@@ -1771,9 +1771,15 @@ agent loads). The pass rate is always judged. A candidate is:
 
 - **rejected** when a task the base passed every time now mostly fails (a hard regression), when the
   acceptance gate says "Don't ship", or when a listed objective is significantly worse by
-  `--min-gain`;
+  `--min-gain` and the pass rate is not significantly better;
 - **kept on quality** when the pass rate is significantly better (a one-sided paired permutation
-  test over tasks), or the gate says "Ship it";
+  test over tasks), or the gate says "Ship it", and no listed objective rose past
+  `--max-cost-rise` (default 50%, or `refine.maxCostRise` in config). A gain beyond noise outranks
+  a cost, token, time, turn or size rise up to that limit, and the verdict prints the trade:
+  `quality improved: +33.3 pts per task [+33.3 pts, +33.3 pts], p 0.016, for cost / run +20% [+20%, +20%], p 0.016 (limit +50%)`.
+  A rise past the limit rejects the candidate (`cost rose past the limit: …`), and
+  `--max-cost-rise none` removes the limit. Only a rise that is itself significant counts, and it
+  is compared with the limit by its point estimate;
 - **kept on efficiency** when the pass rate holds within `--margin` (default 2pp: the one-sided
   95% bootstrap lower bound of the per-task difference is above minus the margin, and an exact
   one-sided sign-flip test over tasks of "it fell by the margin or more" has p below 0.05, the

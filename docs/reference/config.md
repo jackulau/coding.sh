@@ -172,12 +172,15 @@ Keys are never printed or stored. See [LLM gateways](../integrations/ai-gateway.
 
 Which harness lines an edit may not delete, reword or relax (`coding.sh refine check`,
 `refine test`, `refine run` and `exp ab`), and which `refine propose` marks READ-ONLY. See
-[Protected safety lines](../guides/evals.md#protected-safety-lines).
+[Protected safety lines](../guides/evals.md#protected-safety-lines). Also how far a listed cost may
+rise for a pass-rate gain in `refine test|run --suite`; see
+[Climbing on an eval suite](../guides/evals.md#climbing-on-an-eval-suite).
 
 | Key | Default | What |
 |---|---|---|
 | `protect` | `[]` | Regexes. A CLAUDE.md, AGENTS.md, rule or skill line matching one is protected; the line is tested without its list marker or bold, so `"^Use pnpm"` matches `- Use pnpm`. A repo config's patterns are added to yours. |
 | `autoProtect` | `true` | Protect gate-word + safety-topic lines ("Never run `git push --force`") automatically. Honoured only in your user config. |
+| `maxCostRise` | `"50%"` | The default of `--max-cost-rise`: how far a listed cost, tokens, time, turns or size objective may rise for a significant pass-rate gain. `"100%"`, `"none"`, or a number: below 1 a fraction (`0.5` is +50%), from 1 up percent (`150` is +150%). A repo config can lower it but not raise it. |
 
 ```toml
 [refine]

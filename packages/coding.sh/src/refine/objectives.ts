@@ -18,14 +18,16 @@
 //
 // A candidate is kept when
 //   - quality is significantly better (or the SAGE gate says ship), no hard
-//     regression, and no listed objective significantly worse; or
+//     regression, and no listed objective significantly worse by more than
+//     --max-cost-rise (default +50%): a gain beyond noise outranks a cost rise
+//     up to that limit, and the verdict prints the trade; or
 //   - quality is non-inferior within the margin, no hard regression, the gate
 //     does not say don't ship, a listed efficiency objective is significantly
 //     better by at least --min-gain, and none is significantly worse.
 // It is rejected when quality fell (mean below 0 and not non-inferior), a hard
-// regression, the gate says don't ship, or a listed objective got worse; else
-// it is inconclusive. So a faster candidate that loses quality beyond the
-// margin is never kept.
+// regression, the gate says don't ship, a listed objective got worse with no
+// quality gain, or got worse past the limit with one; else it is inconclusive.
+// So a faster candidate that loses quality beyond the margin is never kept.
 //
 // Pure: the CLI gathers runs and sizes and writes the result to the ledger.
 import { pairedBootstrap } from "../stats/interval.ts";
@@ -51,6 +53,8 @@ export const OBJECTIVE_LABEL: Record<Objective, string> = {
 /** Defaults: quality may drop at most 5 points; an efficiency gain must be at least 10%. */
 export const DEFAULT_MARGIN = 0.02;
 export const DEFAULT_MIN_GAIN = 0.1;
+/** How far a listed efficiency objective may rise for a significant pass-rate gain (0.5 = +50%). */
+export const DEFAULT_MAX_COST_RISE = 0.5;
 /** The smallest one-sided permutation p over n tasks is 2^−n: below 5 tasks no test reaches α = 0.05. */
 export const MIN_TASKS = 5;
 
@@ -77,6 +81,8 @@ export interface ObjectiveOpts {
   margin: number;
   /** Smallest relative efficiency gain that counts (0.1 = 10%). */
   minGain: number;
+  /** How far a listed efficiency objective may rise for a significant pass-rate gain (0.5 = +50%; Infinity: no limit). Default DEFAULT_MAX_COST_RISE. */
+  maxCostRise?: number;
   alpha?: number;
   /** Instruction bytes per arm, for "size". */
   size?: { base: number; cand: number };
@@ -139,6 +145,12 @@ export interface ObjectiveDecision {
   warnings: string[];
   /** Per-task gain in [−1, 1] on the primary objective, for the e-detector. */
   gains: number[];
+  /**
+   * A significant quality gain met a significant rise on a listed objective:
+   * the limit, the objectives that rose, and whether every rise stayed within
+   * it (kept) or not (rejected). Absent otherwise.
+   */
+  trade?: { limit: number; rose: Exclude<Objective, "pass">[]; within: boolean };
 }
 
 const mean = (xs: readonly number[]) => (xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : NaN);
@@ -268,7 +280,7 @@ export function judgeObjectives(pairs: readonly TaskPair[], o: ObjectiveOpts): O
   const worse = metrics.filter((m) => m.worse);
   const mText = (m: MetricResult) => `${OBJECTIVE_LABEL[m.objective]} ${pct(m.relative)}${m.objective === "size" ? "" : ` [${pct(m.lo)}, ${pct(m.hi)}], p ${m.p === undefined ? "—" : m.p.toFixed(3)}`}`;
   const gains = taskGains(pairs, primary, o.size);
-  const out = (verdict: ObjectiveVerdict, branch?: "quality" | "efficiency"): ObjectiveDecision => ({ verdict, ...(branch ? { branch } : {}), reasons, quality: q, metrics, warnings, gains });
+  const out = (verdict: ObjectiveVerdict, branch?: "quality" | "efficiency", trade?: ObjectiveDecision["trade"]): ObjectiveDecision => ({ verdict, ...(branch ? { branch } : {}), reasons, quality: q, metrics, warnings, gains, ...(trade ? { trade } : {}) });
 
   if (!q.n) {
     reasons.push("no task ran in both arms");
@@ -282,11 +294,27 @@ export function judgeObjectives(pairs: readonly TaskPair[], o: ObjectiveOpts): O
     reasons.push("the acceptance gate says don't ship: the candidate broke tasks the base solved", qText);
     return out("reject");
   }
+  const gained = q.better || o.gate === "ship";
+  if (gained && worse.length) {
+    // A pass-rate gain beyond noise outranks a rise up to the limit (DF-3):
+    // listing cost must not throw away +30 pts for a few cents more a run.
+    const limit = o.maxCostRise ?? DEFAULT_MAX_COST_RISE;
+    const over = worse.filter((m) => m.relative > limit);
+    const limitText = Number.isFinite(limit) ? `(limit ${pct(limit)})` : "(no limit)";
+    const gain = `${pts(q.mean)} per task [${pts(q.lo)}, ${pts(q.hi)}], ${q.better ? `p ${q.p.toFixed(3)}` : "the acceptance gate says ship"}`;
+    const trade = { limit, rose: worse.map((m) => m.objective as Exclude<Objective, "pass">), within: !over.length };
+    if (over.length) {
+      reasons.push(`cost rose past the limit: ${over.map(mText).join("; ")} ${limitText} for ${gain}`, qText);
+      return out("reject", undefined, trade);
+    }
+    reasons.push(`quality improved: ${gain}, for ${worse.map(mText).join("; ")} ${limitText}`, qText, ...better.map(mText));
+    return out("keep", "quality", trade);
+  }
   if (worse.length) {
     reasons.push(`worse on ${worse.map(mText).join("; ")}`, qText);
     return out("reject");
   }
-  if (q.better || o.gate === "ship") {
+  if (gained) {
     reasons.push(`quality improved: ${qText}${q.better ? `, p ${q.p.toFixed(3)}` : ", the acceptance gate says ship"}`, ...better.map(mText));
     return out("keep", "quality");
   }
@@ -347,6 +375,16 @@ export function parseShare(raw: string | number, what: string): number {
   const v = m[2] || n >= 1 ? n / 100 : n;
   if (!(v >= 0 && v < 1)) throw new RangeError(`${what} must be between 0 and 100%, got ${JSON.stringify(String(raw))}`);
   return v;
+}
+
+/** A rise limit from "50%", "+150%", "0.5" or "50" (as parseShare: points from 1 up), or none / inf for no limit. */
+export function parseRise(raw: string | number, what: string): number {
+  const s = String(raw).trim().toLowerCase();
+  if (/^\+?(none|inf|infinity)$/.test(s)) return Infinity;
+  const m = /^\+?(\d+(?:\.\d+)?)\s*(pp|pts?|%)?$/.exec(s);
+  if (!m) throw new RangeError(`${what} must be a rise like 50%, 0.5 or none, got ${JSON.stringify(String(raw))}`);
+  const n = Number(m[1]);
+  return m[2] || n >= 1 ? n / 100 : n;
 }
 
 // ---------------------------------------------------------------- the climb across rounds

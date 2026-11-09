@@ -3,7 +3,7 @@
 // cheaper or faster candidate whose pass rate fell beyond the margin.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { climbFront, climbPlateau, frontKey, judgeObjectives, parseObjectives, parseShare, taskGains, type ClimbRound, type RunPoint, type TaskPair } from "../../src/refine/objectives.ts";
+import { climbFront, climbPlateau, DEFAULT_MAX_COST_RISE, frontKey, judgeObjectives, parseObjectives, parseRise, parseShare, taskGains, type ClimbRound, type RunPoint, type TaskPair } from "../../src/refine/objectives.ts";
 
 /** k runs of one arm: `passes` of them pass, each with this cost and wall time. */
 const runs = (k: number, passes: number, m: Omit<RunPoint, "pass"> = {}): RunPoint[] => Array.from({ length: k }, (_, i) => ({ pass: i < passes, ...m }));
@@ -137,6 +137,63 @@ describe("judgeObjectives", () => {
     assert.match(d.warnings.join("\n"), /the exact hold test over 2 tasks gives p 0\.250 ≥ α 0\.05/);
   });
 
+  // DF-3: a beyond-noise pass-rate gain outranks a cost rise up to --max-cost-rise.
+  describe("trading a quality gain against a cost rise", () => {
+    /** 8 tasks: the base passes 2 of 3 runs, the candidate `passes` of 3; cost per run scales by `rise`. */
+    const trade = (passes: number, rise: number) => suite(8, (i) => runs(3, 2, { cost: 0.01 * (1 + i / 10) }), (i) => runs(3, passes, { cost: 0.01 * (1 + i / 10) * (1 + rise) }));
+
+    it("keeps +33 pts at +20% cost and prints the trade", () => {
+      const d = judgeObjectives(trade(3, 0.2), { ...opts, objectives: ["pass", "cost"] });
+      assert.equal(d.verdict, "keep", d.reasons.join("\n"));
+      assert.equal(d.branch, "quality");
+      assert.ok(d.quality.better && d.quality.p < 0.05, "the gain passes the exact permutation test");
+      const cost = d.metrics.find((m) => m.objective === "cost")!;
+      assert.ok(cost.worse, "the cost rise is itself beyond noise");
+      assert.match(d.reasons[0]!, /^quality improved: \+33\.3 pts per task \[\+33\.3 pts, \+33\.3 pts\], p 0\.004, for cost \/ run \+20% \[\+20%, \+20%\], p 0\.004 \(limit \+50%\)$/);
+      assert.deepEqual(d.trade, { limit: 0.5, rose: ["cost"], within: true });
+    });
+
+    it("rejects +0 pts at +20% cost: a rise with no gain beyond noise", () => {
+      const d = judgeObjectives(trade(2, 0.2), { ...opts, objectives: ["pass", "cost"] });
+      assert.equal(d.verdict, "reject");
+      assert.match(d.reasons[0]!, /^worse on cost \/ run \+20%/);
+      assert.equal(d.trade, undefined);
+    });
+
+    it("rejects +33 pts at +80% cost under the default limit, and keeps it at --max-cost-rise 100%", () => {
+      assert.equal(DEFAULT_MAX_COST_RISE, 0.5);
+      const d = judgeObjectives(trade(3, 0.8), { ...opts, objectives: ["pass", "cost"] });
+      assert.equal(d.verdict, "reject", d.reasons.join("\n"));
+      assert.match(d.reasons[0]!, /^cost rose past the limit: cost \/ run \+80% \[\+80%, \+80%\], p 0\.004 \(limit \+50%\) for \+33\.3 pts per task/);
+      assert.deepEqual(d.trade, { limit: 0.5, rose: ["cost"], within: false });
+      const wide = judgeObjectives(trade(3, 0.8), { ...opts, objectives: ["pass", "cost"], maxCostRise: 1 });
+      assert.equal(wide.verdict, "keep", wide.reasons.join("\n"));
+      assert.match(wide.reasons[0]!, /for cost \/ run \+80% .*\(limit \+100%\)$/);
+      const none = judgeObjectives(trade(3, 5), { ...opts, objectives: ["pass", "cost"], maxCostRise: Infinity });
+      assert.equal(none.verdict, "keep");
+      assert.match(none.reasons[0]!, /\(no limit\)$/);
+    });
+
+    it("needs the gain itself beyond noise: an unproven gain at +20% cost is rejected", () => {
+      // +33 pts on 4 of 8 tasks only (p 1/16 > 0.05): not a gain the exact test accepts.
+      const pairs = suite(8, (i) => runs(3, 2, { cost: 0.01 }), (i) => runs(3, i < 4 ? 3 : 2, { cost: 0.012 }));
+      const d = judgeObjectives(pairs, { ...opts, objectives: ["pass", "cost"] });
+      assert.equal(d.quality.better, false);
+      assert.equal(d.verdict, "reject");
+      assert.match(d.reasons[0]!, /^worse on cost/);
+    });
+
+    it("trades every listed efficiency objective, and an acceptance-gate ship counts as the gain", () => {
+      const pairs = suite(8, () => runs(3, 2, { wall: 10_000 }), () => runs(3, 2, { wall: 13_000 }));
+      const d = judgeObjectives(pairs, { ...opts, objectives: ["pass", "wall"], gate: "ship" });
+      assert.equal(d.verdict, "keep", d.reasons.join("\n"));
+      assert.match(d.reasons[0]!, /^quality improved: .*the acceptance gate says ship, for wall time \/ run \+30% .*\(limit \+50%\)$/);
+      const size = judgeObjectives(trade(3, 0), { ...opts, objectives: ["pass", "size"], size: { base: 1000, cand: 1800 } });
+      assert.equal(size.verdict, "reject");
+      assert.match(size.reasons[0]!, /^cost rose past the limit: harness size \+80% \(limit \+50%\)/);
+    });
+  });
+
   it("is inconclusive when no task ran in both arms", () => {
     const d = judgeObjectives([{ task: "a", base: runs(2, 2), cand: [] }], { ...opts, objectives: ["cost"] });
     assert.equal(d.verdict, "inconclusive");
@@ -157,6 +214,17 @@ describe("parseObjectives and parseShare", () => {
     assert.equal(parseShare("5", "--margin"), 0.05);
     assert.throws(() => parseShare("lots", "--margin"), /--margin must be a share/);
     assert.throws(() => parseShare("100%", "--margin"), /between 0 and 100%/);
+  });
+
+  it("reads a rise limit, which may pass 100%, or none", () => {
+    assert.equal(parseRise("50%", "--max-cost-rise"), 0.5);
+    assert.equal(parseRise("+150%", "--max-cost-rise"), 1.5);
+    assert.equal(parseRise("0.2", "--max-cost-rise"), 0.2);
+    assert.equal(parseRise("50", "--max-cost-rise"), 0.5);
+    assert.equal(parseRise(0.5, "--max-cost-rise"), 0.5);
+    assert.equal(parseRise("none", "--max-cost-rise"), Infinity);
+    assert.equal(parseRise("inf", "--max-cost-rise"), Infinity);
+    assert.throws(() => parseRise("-10%", "--max-cost-rise"), /--max-cost-rise must be a rise like 50%, 0\.5 or none/);
   });
 });
 

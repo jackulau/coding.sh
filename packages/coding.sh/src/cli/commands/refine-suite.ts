@@ -99,6 +99,8 @@ export interface SuiteRoundOpts {
   objectives: Objective[];
   margin: number;
   minGain: number;
+  /** How far a listed objective may rise for a significant pass-rate gain (objectives.ts). */
+  maxCostRise?: number;
   gate: GateOpts;
   maxCostUsd?: number;
   /** The --resume value to open this round's job with (false: start a new one). */
@@ -206,7 +208,7 @@ export async function runSuiteRound(c: CommandContext, ctx: Context, f: Fitness,
   const resume = status === "completed" || status === "running" ? undefined : resumeCommand(job.header);
   if (r.cancelled || (r.budget?.skipped ?? 0) > 0) return { ...base, cancelled: r.cancelled, ...(resume ? { resume } : {}) };
   const report = await harnessReport(ctx, A, B, runs, { gate: o.gate });
-  const decision = judgeObjectives(pairs, { objectives: o.objectives, margin: o.margin, minGain: o.minGain, alpha: o.gate.alpha ?? 0.05, size: sizes, ...(report.gate ? { gate: report.gate.verdict } : {}) });
+  const decision = judgeObjectives(pairs, { objectives: o.objectives, margin: o.margin, minGain: o.minGain, ...(o.maxCostRise !== undefined ? { maxCostRise: o.maxCostRise } : {}), alpha: o.gate.alpha ?? 0.05, size: sizes, ...(report.gate ? { gate: report.gate.verdict } : {}) });
   // The pass-rate power analysis `compare` runs: what this suite can detect at all.
   const pw = report.power;
   if (pw && Number.isFinite(pw.mde)) decision.warnings.push(`the smallest pass-rate change this suite detects with ${Math.round(pw.power * 100)}% power is ${(pw.mde * 100).toFixed(0)} pts (MDE over ${plural(pw.n, "task")})`);

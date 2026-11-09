@@ -76,7 +76,11 @@ export interface TestEntry {
     list: Objective[];
     margin: number;
     minGain: number;
+    /** --max-cost-rise for this round; null: no limit. Absent on rounds before it existed. */
+    maxCostRise?: number | null;
     branch?: "quality" | "efficiency";
+    /** A significant quality gain met a significant rise on a listed objective (objectives.ts ObjectiveDecision.trade); limit null: no limit. */
+    trade?: { limit: number | null; rose: Exclude<Objective, "pass">[]; within: boolean };
     quality: QualityResult;
     metrics: MetricResult[];
     arms: { base: ArmPoint; cand: ArmPoint };
