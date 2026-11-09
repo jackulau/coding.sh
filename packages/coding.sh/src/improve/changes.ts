@@ -17,13 +17,19 @@
 //                   identifier (src/core/rules.ts): the share of sessions that
 //                   acted on it, before vs after
 // Each is a two-sided Fisher exact test at ALPHA. Worse flagged share is a
-// regression; fewer flags or more rule-following, with nothing worse, helped.
+// regression. Helped needs the failure itself to fall: the flagged share, or one
+// diagnosed flag's share (Holm-adjusted across the flags seen before) with no
+// other flag rising in its place. A new line the agent follows while flags stay
+// put is "followed, no effect yet": following a line is not fixing what it
+// targets (Treude & Baltes, arXiv 2610.34938, RQ2). A third measure, work (tool
+// calls and wall time per session), turns a change that adds work without
+// fixing anything into "costlier", and is noted on one that helped.
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { git, run } from "../core/git.ts";
 import { HARNESS_PATHSPECS, isHarnessPath } from "../core/harness-paths.ts";
 import { diffDirectives, directiveOutcome, type Directive } from "../core/rules.ts";
 import { FLAG_DIAGNOSIS } from "../refine/taxonomy.ts";
-import { fisherExact } from "../stats/tests.ts";
+import { fisherExact, holm } from "../stats/tests.ts";
 
 /** Significance level for helped / regressed. */
 export const ALPHA = 0.1;
@@ -70,6 +76,8 @@ export interface GroupStats {
    * logged in, or whose API key was refused). Absent when none.
    */
   idle?: number;
+  /** Per-session work: tool calls, and wall time (ms) for sessions with an end. */
+  work?: { toolCalls: number[]; durationMs: number[] };
 }
 
 export interface RuleEffect {
@@ -83,7 +91,20 @@ export interface RuleEffect {
   p?: number;
 }
 
-export type Verdict = "helped" | "regressed" | "no-clear-change" | "too-early" | "no-sessions-after" | "no-baseline";
+export type Verdict = "helped" | "followed-no-effect" | "costlier" | "regressed" | "no-clear-change" | "too-early" | "no-sessions-after" | "no-baseline";
+
+/** One work measure, before vs after: medians and a two-sided permutation p on mean log1p. */
+export interface WorkMeasure {
+  before: number;
+  after: number;
+  p: number;
+}
+
+/** Work per session before vs after; a measure only when both sides have MIN_AFTER values and they differ. */
+export interface WorkEffect {
+  toolCalls?: WorkMeasure;
+  durationMs?: WorkMeasure;
+}
 
 export interface ChangeEffect {
   change: HarnessChange;
@@ -95,6 +116,8 @@ export interface ChangeEffect {
   verdict: Verdict;
   /** One sentence: why the verdict. */
   reason: string;
+  /** Work per session before vs after; absent with too little data or no difference. */
+  work?: WorkEffect;
 }
 
 const diagnosed = (s: Session): string[] => [...new Set(s.flags ?? [])].filter((f) => !f.includes(":") && FLAG_DIAGNOSIS[f] !== undefined && FLAG_DIAGNOSIS[f] !== "context-only");
@@ -197,31 +220,156 @@ function group(sessions: readonly Session[]): GroupStats {
     flaggedSessions.push({ id: s.id, startedAt: s.startedAt, ...(s.title ? { title: s.title } : {}), flags });
     for (const f of flags) byFlag[f] = (byFlag[f] ?? 0) + 1;
   }
-  return { sessions: sessions.length, flagged: flaggedSessions.length, byFlag, examples: newest.slice(0, 5).map((s) => s.id), flaggedSessions };
+  const toolCalls = newest.map((s) => s.stats.toolCalls);
+  const durationMs = newest.filter((s) => s.endedAt !== undefined && s.endedAt > s.startedAt).map((s) => s.endedAt! - s.startedAt);
+  return { sessions: sessions.length, flagged: flaggedSessions.length, byFlag, examples: newest.slice(0, 5).map((s) => s.id), flaggedSessions, work: { toolCalls, durationMs } };
 }
 
 const share = (k: number, n: number): number => (n ? k / n : 0);
 const pct = (k: number, n: number): string => `${k} of ${n}`;
 
-/** Verdict and reason from the flagged share and the new rules' effects. */
-export function decide(before: GroupStats, after: GroupStats, rules: readonly RuleEffect[]): { verdict: Verdict; reason: string; p?: number } {
+/** Shuffles per work permutation test. */
+const WORK_SHUFFLES = 2000;
+/** After median at least this many times the before median counts as added work. */
+const WORK_RATIO = 1.25;
+
+/** A small seeded PRNG (mulberry32), so a report gives the same p every run. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Two-sample permutation test on the difference of mean log1p(x), two-sided, with
+ * `shuffles` seeded relabellings. p = (1 + shuffles at least as extreme) / (1 + shuffles),
+ * so identical inputs give 1. Pure and deterministic for a given seed.
+ */
+export function permutationP(before: readonly number[], after: readonly number[], o: { shuffles?: number; seed?: number } = {}): number {
+  const xs = [...before, ...after].map((x) => Math.log1p(Math.max(0, x)));
+  const nb = before.length;
+  const na = after.length;
+  if (!nb || !na) return 1;
+  const total = xs.reduce((a, b) => a + b, 0);
+  const diff = (sumAfter: number) => Math.abs(sumAfter / na - (total - sumAfter) / nb);
+  const observed = diff(xs.slice(nb).reduce((a, b) => a + b, 0));
+  const shuffles = o.shuffles ?? WORK_SHUFFLES;
+  const rand = mulberry32(o.seed ?? 0x5eed);
+  const pool = [...xs];
+  let extreme = 0;
+  for (let k = 0; k < shuffles; k++) {
+    // Partial Fisher-Yates: the first na slots become the "after" sample.
+    let sum = 0;
+    for (let i = 0; i < na; i++) {
+      const j = i + Math.floor(rand() * (pool.length - i));
+      const t = pool[i]!;
+      pool[i] = pool[j]!;
+      pool[j] = t;
+      sum += pool[i]!;
+    }
+    if (diff(sum) >= observed - 1e-12) extreme++;
+  }
+  return (1 + extreme) / (1 + shuffles);
+}
+
+const median = (xs: readonly number[]): number => {
+  const v = [...xs].sort((a, b) => a - b);
+  const m = v.length >> 1;
+  return v.length % 2 ? v[m]! : (v[m - 1]! + v[m]!) / 2;
+};
+
+/** Work before vs after: each measure with MIN_AFTER values on both sides whose medians differ (or p ≤ ALPHA); undefined when none. */
+export function workEffect(before: GroupStats, after: GroupStats): WorkEffect | undefined {
+  const out: WorkEffect = {};
+  for (const key of ["toolCalls", "durationMs"] as const) {
+    const b = before.work?.[key] ?? [];
+    const a = after.work?.[key] ?? [];
+    if (b.length < MIN_AFTER || a.length < MIN_AFTER) continue;
+    const m = { before: median(b), after: median(a), p: permutationP(b, a) };
+    if (m.before !== m.after || m.p <= ALPHA) out[key] = m;
+  }
+  return out.toolCalls || out.durationMs ? out : undefined;
+}
+
+const fmtP = (p: number): string => p.toFixed(2);
+const seconds = (ms: number): string => (ms < 10_000 ? (ms / 1000).toFixed(1) : `${Math.round(ms / 1000)}`);
+
+/** The added-work clause ("make more tool calls (median 20 → 45, p 0.00) and take longer (…)"), or undefined when work did not rise. */
+function addedWork(w: WorkEffect | undefined): string | undefined {
+  const up = (m: WorkMeasure | undefined): m is WorkMeasure => !!m && m.p <= ALPHA && m.after >= WORK_RATIO * m.before && m.after > m.before;
+  const parts: string[] = [];
+  if (up(w?.toolCalls)) parts.push(`make more tool calls (median ${w.toolCalls.before} → ${w.toolCalls.after}, p ${fmtP(w.toolCalls.p)})`);
+  if (up(w?.durationMs)) parts.push(`take longer (median ${seconds(w.durationMs.before)} → ${seconds(w.durationMs.after)} s, p ${fmtP(w.durationMs.p)})`);
+  return parts.length ? parts.join(" and ") : undefined;
+}
+
+/** Per diagnosed flag: share before vs after, Fisher p, and the Holm-adjusted p within `family`. */
+interface FlagMove {
+  flag: string;
+  before: number;
+  after: number;
+  /** Holm-adjusted p across the family it was tested in. */
+  p: number;
+}
+
+function flagMoves(before: GroupStats, after: GroupStats, flags: readonly string[], dir: "down" | "up"): FlagMove[] {
+  const raw = flags.map((f) => {
+    const b = before.byFlag[f] ?? 0;
+    const a = after.byFlag[f] ?? 0;
+    return { flag: f, before: b, after: a, p: fisherExact(a, after.sessions - a, b, before.sessions - b) };
+  });
+  const adj = holm(raw.map((r) => r.p));
+  return raw
+    .map((r, i) => ({ ...r, p: adj[i]! }))
+    .filter((r) => r.p <= ALPHA && (dir === "down" ? share(r.after, after.sessions) < share(r.before, before.sessions) : share(r.after, after.sessions) > share(r.before, before.sessions)))
+    .sort((x, y) => x.p - y.p || x.flag.localeCompare(y.flag));
+}
+
+/** Verdict and reason from the flagged share, each flag's share, the new rules' effects and the work per session. */
+export function decide(before: GroupStats, after: GroupStats, rules: readonly RuleEffect[]): { verdict: Verdict; reason: string; p?: number; work?: WorkEffect } {
   if (!after.sessions) return { verdict: "no-sessions-after", reason: "No captured session ran with this change yet." };
   if (!before.sessions) return { verdict: "no-baseline", reason: `No captured session ran with the version before it, so there is nothing to compare ${after.sessions} session(s) with.` };
+  const work = workEffect(before, after);
+  const w = work ? { work } : {};
   const p = fisherExact(after.flagged, after.sessions - after.flagged, before.flagged, before.sessions - before.flagged);
   const up = share(after.flagged, after.sessions) > share(before.flagged, before.sessions);
   const down = share(after.flagged, after.sessions) < share(before.flagged, before.sessions);
   const flagText = `flagged sessions ${pct(before.flagged, before.sessions)} before, ${pct(after.flagged, after.sessions)} after`;
-  if (up && p <= ALPHA) return { verdict: "regressed", reason: `More sessions went wrong after it: ${flagText} (p ${p.toFixed(2)}).`, p };
+  if (up && p <= ALPHA) return { verdict: "regressed", reason: `More sessions went wrong after it: ${flagText} (p ${fmtP(p)}).`, p, ...w };
+  const extra = addedWork(work);
+  const alsoWork = extra ? ` It also added work: sessions after it ${extra}.` : "";
+  if (down && p <= ALPHA) return { verdict: "helped", reason: `Fewer sessions went wrong after it: ${flagText} (p ${fmtP(p)}).${alsoWork}`, p, ...w };
+  // One diagnosed flag falling counts when it survives Holm across the flags seen before,
+  // the flagged share did not rise, and no other flag rose in its place.
+  const fell = flagMoves(before, after, Object.keys(before.byFlag).filter((f) => (before.byFlag[f] ?? 0) > 0).sort(), "down");
+  const rose = flagMoves(before, after, Object.keys(after.byFlag).filter((f) => (after.byFlag[f] ?? 0) > 0).sort(), "up");
+  const counts = (m: FlagMove) => `${pct(m.before, before.sessions)} before, ${pct(m.after, after.sessions)} after`;
+  if (fell.length && !up && !rose.length) {
+    const f = fell[0]!;
+    return { verdict: "helped", reason: `Fewer sessions had ${f.flag} after it: ${counts(f)} (Holm p ${fmtP(f.p)}); ${flagText}.${alsoWork}`, p, ...w };
+  }
+  const moved = fell.length && rose.length ? ` ${fell[0]!.flag} fell (${counts(fell[0]!)}) but ${rose[0]!.flag} rose (${counts(rose[0]!)}): the failures moved.` : "";
   const followed = rules.filter((r) => r.p !== undefined && r.p <= ALPHA && share(r.after.acted, r.after.n) > share(r.before.acted, r.before.n));
-  if (down && p <= ALPHA) return { verdict: "helped", reason: `Fewer sessions went wrong after it: ${flagText} (p ${p.toFixed(2)}).`, p };
-  if (followed.length && !up) {
+  const notFallen = `flagged sessions did not ${down ? "clearly " : ""}fall (${pct(before.flagged, before.sessions)} before, ${pct(after.flagged, after.sessions)} after, p ${fmtP(p)})`;
+  if (extra) return { verdict: "costlier", reason: `Sessions after it ${extra}, and ${notFallen}.${moved}`, p, ...w };
+  if (followed.length) {
     const r = followed[0]!;
-    return { verdict: "helped", reason: `The agent follows the new line more: ${pct(r.after.acted, r.after.n)} sessions after, ${pct(r.before.acted, r.before.n)} before (p ${r.p!.toFixed(2)}); ${flagText}.`, p };
+    return {
+      verdict: "followed-no-effect",
+      reason: `The agent follows the new line (${pct(r.after.acted, r.after.n)} sessions after, ${pct(r.before.acted, r.before.n)} before, p ${fmtP(r.p!)}), but ${notFallen}: following a line is not the same as fixing what it targets.${moved}`,
+      p,
+      ...w,
+    };
   }
   const direction = down ? "Looks better" : up ? "Looks worse" : "No difference yet";
   const ruleText = rules.length ? ` The new line was followed in ${pct(rules[0]!.after.acted, rules[0]!.after.n)} sessions after, ${pct(rules[0]!.before.acted, rules[0]!.before.n)} before.` : "";
-  if (after.sessions < MIN_AFTER) return { verdict: "too-early", reason: `${direction}, but only ${after.sessions} session(s) ran with it: ${flagText} (p ${p.toFixed(2)}).${ruleText}`, p };
-  return { verdict: "no-clear-change", reason: `${direction}, but the difference could be chance: ${flagText} (p ${p.toFixed(2)}).${ruleText}`, p };
+  if (after.sessions < MIN_AFTER) return { verdict: "too-early", reason: `${direction}, but only ${after.sessions} session(s) ran with it: ${flagText} (p ${fmtP(p)}).${moved}${ruleText}`, p, ...w };
+  return { verdict: "no-clear-change", reason: `${direction}, but the difference could be chance: ${flagText} (p ${fmtP(p)}).${moved}${ruleText}`, p, ...w };
 }
 
 export interface EffectsOptions {

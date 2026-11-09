@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent, Session } from "../../src/core/types.ts";
-import { changeEffects, decide, harnessChanges, sessionVersions, withoutMcp } from "../../src/improve/changes.ts";
+import { ALPHA, changeEffects, decide, harnessChanges, permutationP, sessionVersions, withoutMcp, workEffect, type GroupStats, type RuleEffect } from "../../src/improve/changes.ts";
 import { claimSession, sessionEvents } from "../helpers-decision.ts";
 
 const T0 = 1_790_000_000_000;
@@ -140,12 +140,109 @@ describe("changeEffects", () => {
 });
 
 describe("decide", () => {
-  const g = (sessions: number, flagged: number) => ({ sessions, flagged, byFlag: {}, examples: [], flaggedSessions: [] });
+  const g = (sessions: number, flagged: number, o: { byFlag?: Record<string, number>; toolCalls?: number[]; durationMs?: number[] } = {}): GroupStats => ({
+    sessions,
+    flagged,
+    byFlag: o.byFlag ?? {},
+    examples: [],
+    flaggedSessions: [],
+    ...(o.toolCalls || o.durationMs ? { work: { toolCalls: o.toolCalls ?? [], durationMs: o.durationMs ?? [] } } : {}),
+  });
+  const rule = (b: [number, number], a: [number, number], p: number): RuleEffect => ({ text: "Run `npm test` before you say you are done.", path: "CLAUDE.md", line: 2, polarity: "require", before: { acted: b[0], n: b[1] }, after: { acted: a[0], n: a[1] }, p });
+
   it("too early with few sessions after; no clear change when it could be chance", () => {
     assert.equal(decide(g(6, 3), g(2, 0), []).verdict, "too-early");
     assert.equal(decide(g(6, 3), g(6, 2), []).verdict, "no-clear-change");
     assert.equal(decide(g(0, 0), g(6, 2), []).verdict, "no-baseline");
     assert.equal(decide(g(6, 2), g(0, 0), []).verdict, "no-sessions-after");
+  });
+
+  it("a line the agent follows with the flagged share unchanged is followed-no-effect, not helped (5/10 → 5/10, acted 0/10 → 9/10)", () => {
+    const d = decide(g(10, 5, { byFlag: { "no-verification": 5 } }), g(10, 5, { byFlag: { "no-verification": 5 } }), [rule([0, 10], [9, 10], 0.0001)]);
+    assert.equal(d.verdict, "followed-no-effect", d.reason);
+    assert.equal(
+      d.reason,
+      "The agent follows the new line (9 of 10 sessions after, 0 of 10 before, p 0.00), but flagged sessions did not fall (5 of 10 before, 5 of 10 after, p 1.00): following a line is not the same as fixing what it targets.",
+    );
+    assert.equal(d.work, undefined, "no work data, no work field");
+  });
+
+  it("the flagged share falling is helped (8/20 → 1/20)", () => {
+    const d = decide(g(20, 8), g(20, 1), []);
+    assert.equal(d.verdict, "helped", d.reason);
+    assert.ok(d.p! <= ALPHA);
+    assert.equal(d.reason, `Fewer sessions went wrong after it: flagged sessions 8 of 20 before, 1 of 20 after (p ${d.p!.toFixed(2)}).`);
+  });
+
+  it("one flag falling while another rises in its place is not helped (6/20 → 6/20, repeated failures 6 → 0, looping 0 → 6)", () => {
+    const d = decide(g(20, 6, { byFlag: { "repeated-tool-failure": 6 } }), g(20, 6, { byFlag: { looping: 6 } }), []);
+    assert.notEqual(d.verdict, "helped", d.reason);
+    assert.equal(d.verdict, "no-clear-change");
+    assert.match(d.reason, /repeated-tool-failure fell \(6 of 20 before, 0 of 20 after\) but looping rose \(0 of 20 before, 6 of 20 after\): the failures moved\./);
+  });
+
+  it("one flag falling with Holm p ≤ ALPHA, nothing rising and the flagged share not up, is helped", () => {
+    // 6 had repeated failures (3 of them also looping); after, 3 have looping only.
+    const d = decide(g(20, 6, { byFlag: { "repeated-tool-failure": 6, looping: 3 } }), g(20, 3, { byFlag: { looping: 3 } }), []);
+    assert.ok(d.p! > ALPHA, "the flagged share alone is not significant");
+    assert.equal(d.verdict, "helped", d.reason);
+    assert.match(d.reason, /^Fewer sessions had repeated-tool-failure after it: 6 of 20 before, 0 of 20 after \(Holm p 0\.0\d\); flagged sessions 6 of 20 before, 3 of 20 after\.$/);
+  });
+
+  it("one flag falling is not helped when the flagged share rose, even with no single flag rising significantly", () => {
+    const d = decide(g(20, 6, { byFlag: { "repeated-tool-failure": 6 } }), g(20, 9, { byFlag: { looping: 3, churn: 3, "no-progress": 3 } }), []);
+    assert.notEqual(d.verdict, "helped", d.reason);
+    assert.equal(d.verdict, "no-clear-change");
+  });
+
+  it("one flag falling that does not survive Holm is not helped", () => {
+    // 3 → 0 of 20 (raw p 0.23) among three flags seen before.
+    const d = decide(g(20, 5, { byFlag: { "repeated-tool-failure": 3, looping: 1, churn: 1 } }), g(20, 2, { byFlag: { looping: 1, churn: 1 } }), []);
+    assert.equal(d.verdict, "no-clear-change", d.reason);
+  });
+
+  it("more tool calls after it with the flags unchanged is costlier, naming both medians", () => {
+    const before = g(10, 5, { byFlag: { "no-verification": 5 }, toolCalls: [18, 19, 20, 20, 20, 20, 21, 22, 20, 19] });
+    const after = g(10, 5, { byFlag: { "no-verification": 5 }, toolCalls: [44, 45, 45, 46, 45, 43, 47, 45, 45, 44] });
+    const d = decide(before, after, [rule([0, 10], [9, 10], 0.0001)]);
+    assert.equal(d.verdict, "costlier", d.reason);
+    assert.match(d.reason, /^Sessions after it make more tool calls \(median 20 → 45, p 0\.00\), and flagged sessions did not fall \(5 of 10 before, 5 of 10 after, p 1\.00\)\.$/);
+    assert.deepEqual(d.work?.toolCalls && [d.work.toolCalls.before, d.work.toolCalls.after], [20, 45]);
+    assert.ok(d.work!.toolCalls!.p <= ALPHA);
+  });
+
+  it("helped with added work stays helped and says so; longer sessions count as work too", () => {
+    const secs = (xs: number[]) => xs.map((x) => x * 1000);
+    const before = g(20, 8, { durationMs: secs([80, 85, 88, 90, 86, 84, 82, 88, 90, 87, 89, 88, 85, 86, 84, 90, 88, 87, 86, 88]) });
+    const after = g(20, 1, { durationMs: secs([150, 156, 160, 158, 152, 154, 156, 157, 159, 155, 156, 153, 151, 160, 156, 158, 157, 156, 155, 154]) });
+    const d = decide(before, after, []);
+    assert.equal(d.verdict, "helped", d.reason);
+    assert.match(d.reason, / It also added work: sessions after it take longer \(median 87 → 156 s, p 0\.00\)\.$/);
+  });
+
+  it("regressed is unchanged by the new rules", () => {
+    const d = decide(g(10, 0), g(10, 6), [rule([0, 10], [9, 10], 0.0001)]);
+    assert.equal(d.verdict, "regressed");
+    assert.equal(d.reason, `More sessions went wrong after it: flagged sessions 0 of 10 before, 6 of 10 after (p ${d.p!.toFixed(2)}).`);
+  });
+});
+
+describe("work", () => {
+  it("the permutation p is seeded and deterministic; identical inputs give p = 1", () => {
+    const a = [3, 5, 8, 2, 9, 4];
+    const b = [12, 15, 9, 20, 14, 11];
+    assert.equal(permutationP(a, b), permutationP(a, b));
+    assert.equal(permutationP(a, a), 1);
+    assert.equal(permutationP([5, 5, 5, 5, 5], [5, 5, 5, 5, 5]), 1);
+    assert.ok(permutationP(a, b) <= 0.05, String(permutationP(a, b)));
+    assert.ok(permutationP(a, b, { shuffles: 500, seed: 7 }) > 0);
+  });
+
+  it("no work field with equal work or fewer than MIN_AFTER sessions a side", () => {
+    const g = (toolCalls: number[]): GroupStats => ({ sessions: toolCalls.length, flagged: 0, byFlag: {}, examples: [], flaggedSessions: [], work: { toolCalls, durationMs: [] } });
+    assert.equal(workEffect(g([5, 6, 7, 8, 9]), g([5, 6, 7, 8, 9])), undefined, "equal work");
+    assert.equal(workEffect(g([5, 6, 7, 8]), g([50, 60, 70, 80, 90])), undefined, "4 sessions before");
+    assert.ok(workEffect(g([5, 6, 7, 8, 9]), g([50, 60, 70, 80, 90]))?.toolCalls);
   });
 });
 

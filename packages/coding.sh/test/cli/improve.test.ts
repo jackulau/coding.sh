@@ -176,6 +176,53 @@ describe("cli improve", () => {
     assert.doesNotMatch(all.stdout, /more \(--sessions/);
   });
 
+  it("improve check: a line the agent follows while flagged sessions stay put is 'Followed, no effect yet', exit 0, with a removal test", async () => {
+    // 5 of 10 flagged on each side (a build failing three times), the npm test line acted on 0 of 10 → 9 of 10; equal work.
+    const w = await world("followed", {
+      afterFlagged: 0,
+      plan: {
+        before: [...Array.from({ length: 5 }, () => ({ failing: true, reads: 2 })), ...Array.from({ length: 5 }, () => ({ reads: 2 }))],
+        after: [...Array.from({ length: 5 }, () => ({ failing: true, test: true, reads: 1 })), ...Array.from({ length: 4 }, () => ({ test: true, reads: 1 })), { reads: 2 }],
+      },
+    });
+    const prev = w.commits.init!.slice(0, 7);
+    const r = cli(w, ["improve", "check", "--json"]);
+    assert.equal(r.status, 0, r.stderr);
+    const j = JSON.parse(r.stdout) as { regressed: string[]; changes: { verdict: string; reason: string; before: Record<string, unknown>; after: { flagged: number; sessions: number }; rules: { before: unknown; after: unknown }[]; work?: unknown; next?: string }[] };
+    const ch = j.changes[0]!;
+    assert.equal(ch.verdict, "followed-no-effect", ch.reason);
+    assert.deepEqual(j.regressed, []);
+    assert.deepEqual([ch.after.flagged, ch.after.sessions], [5, 10]);
+    assert.deepEqual([ch.rules[0]!.before, ch.rules[0]!.after], [{ acted: 0, n: 10 }, { acted: 9, n: 10 }]);
+    assert.equal(ch.work, undefined, "equal work: no work field");
+    assert.equal("work" in ch.before, false, "per-session work stays out of the group counts");
+    assert.equal(ch.next, `coding.sh refine test git:${prev}`);
+
+    const text = cli(w, ["improve", "check"]);
+    assert.equal(text.status, 0, text.stderr);
+    assert.match(
+      text.stdout,
+      /^ {2}Followed, no effect yet: The agent follows the new line \(9 of 10 sessions after, 0 of 10 before, p 0\.00\), but flagged sessions did not fall \(5 of 10 before, 5 of 10 after, p 1\.00\): following a line is not the same as fixing what it targets\.$/m,
+    );
+    assert.match(text.stderr, new RegExp(`Test whether the harness does as well without this change:\\n\\s+coding\\.sh refine test git:${prev}`));
+  });
+
+  it("improve check: more tool calls after a change with the flags unchanged is 'Costlier', with both medians and a removal test", async () => {
+    const w = await world("costlier", { afterFlagged: 0, plan: { before: Array.from({ length: 10 }, () => ({ reads: 20 })), after: Array.from({ length: 10 }, () => ({ reads: 45 })) } });
+    const r = cli(w, ["improve", "check", "--json"]);
+    assert.equal(r.status, 0, r.stderr);
+    const ch = (JSON.parse(r.stdout) as { changes: { verdict: string; reason: string; work?: { toolCalls?: { before: number; after: number; p: number }; durationMs?: { before: number; after: number } }; next?: string }[] }).changes[0]!;
+    assert.equal(ch.verdict, "costlier", ch.reason);
+    assert.deepEqual([ch.work?.toolCalls?.before, ch.work?.toolCalls?.after], [20, 45]);
+    assert.ok(ch.work!.toolCalls!.p <= 0.1);
+    assert.equal(ch.work!.durationMs, undefined, "these sessions never ended (no session.end), so no wall time");
+    assert.equal(ch.next, `coding.sh refine test git:${w.commits.init!.slice(0, 7)}`);
+    const text = cli(w, ["improve", "check"]);
+    assert.equal(text.status, 0, text.stderr);
+    assert.match(text.stdout, /^ {2}Costlier: Sessions after it make more tool calls \(median 20 → 45, p 0\.00\), and flagged sessions did not fall \(0 of 10 before, 0 of 10 after, p 1\.00\)\.$/m);
+    assert.match(text.stderr, /Test whether the harness does as well without this change:\n\s+coding\.sh refine test git:/);
+  });
+
   it("improve check --repo counts sessions from another checkout of the repo against its history", async () => {
     const w = await world("checkouts", { afterFlagged: 0, elsewhere: true });
     const here = JSON.parse(cli(w, ["improve", "check", "--json"]).stdout) as { changes: { verdict: string; after: { sessions: number } }[] };

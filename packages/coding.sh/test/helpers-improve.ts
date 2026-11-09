@@ -14,8 +14,18 @@ export interface World {
   commits: Record<string, string>;
 }
 
-/** Before the CLAUDE.md change, 4 of 6 sessions edit without a check (or, with `beforeTested`, all 6 run the tests); after it, `afterFlagged` of 6 skip the check. With `elsewhere`, every session ran in another checkout of the repo (`<name>/other`). */
-export async function improveWorld(root: string, name: string, opts: { afterFlagged: number; beforeTested?: boolean; elsewhere?: boolean; headless?: number; cacheBreaks?: boolean }): Promise<World> {
+/** One planned session: `reads` Read calls, a command that fails three times in a row (`failing`: repeated-tool-failure), `npm test` (`test`). No file edits. */
+export interface PlannedSession {
+  reads?: number;
+  failing?: boolean;
+  test?: boolean;
+}
+
+/**
+ * Before the CLAUDE.md change, 4 of 6 sessions edit without a check (or, with `beforeTested`, all 6 run the tests); after it, `afterFlagged` of 6 skip the check. With `elsewhere`, every session ran in another checkout of the repo (`<name>/other`).
+ * With `plan`, the sessions before and after are exactly those listed instead (`afterFlagged` is then ignored).
+ */
+export async function improveWorld(root: string, name: string, opts: { afterFlagged: number; beforeTested?: boolean; elsewhere?: boolean; headless?: number; cacheBreaks?: boolean; plan?: { before: PlannedSession[]; after: PlannedSession[] } }): Promise<World> {
   const o = opts;
   const elsewhere = o.elsewhere === true;
   const home = join(root, name, "home");
@@ -77,6 +87,19 @@ export async function improveWorld(root: string, name: string, opts: { afterFlag
       }
       return putSession(ctx.index, ev);
     };
+    if (o.plan) {
+      const planned = (id: string, head: string, daysAgo: number, p: PlannedSession) => {
+        const steps: Parameters<typeof sessionEvents>[2] = [["user.message", { text: `Task ${id}` }]];
+        for (let i = 0; i < (p.reads ?? 1); i++) steps.push(["tool.start", { tool: "Read", toolUseId: `${id}-r${i}`, input: { file_path: join(repo, `src/f${i}.js`) } }], ["tool.end", { tool: "Read", toolUseId: `${id}-r${i}`, ok: true, output: "x" }]);
+        if (p.failing) for (let i = 0; i < 3; i++) steps.push(["tool.start", { tool: "Bash", toolUseId: `${id}-b${i}`, input: { command: "npm run build" } }], ["tool.end", { tool: "Bash", toolUseId: `${id}-b${i}`, ok: false, output: "Error: Cannot find module './gen.js'" }]);
+        if (p.test) steps.push(["tool.start", { tool: "Bash", toolUseId: `${id}-t`, input: { command: "npm test" } }], ["tool.end", { tool: "Bash", toolUseId: `${id}-t`, ok: true, output: "ok" }]);
+        steps.push(["assistant.message", { text: "Done." }]);
+        return putSession(ctx.index, sessionEvents(id, { cwd: repo, startedAt: now - daysAgo * 86_400_000 }, steps).map((e) => ({ ...e, repo: { root: repo, head } })));
+      };
+      for (const [k, p] of o.plan.before.entries()) await planned(`before-${k}`, commits.init, 11 - k * 0.25, p);
+      for (const [k, p] of o.plan.after.entries()) await planned(`after-${k}`, commits.rule, 5 - k * 0.25, p);
+      return { repo, env, commits };
+    }
     for (let k = 0; k < 6; k++) await put(`before-${k}`, commits.init, 11 - k * 0.5, o.beforeTested ? { edit: true, test: true } : { edit: k < 4, test: false });
     for (let k = 0; k < 6; k++) await put(`after-${k}`, commits.rule, 5 - k * 0.5, { edit: true, test: k >= o.afterFlagged });
     for (let k = 0; k < (o.headless ?? 0); k++) await put(`headless-${k}`, commits.rule, 4 - k * 0.5, { edit: true, test: false, headless: true });

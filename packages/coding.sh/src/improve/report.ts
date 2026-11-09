@@ -187,6 +187,16 @@ export function stepsFor(issue: Issue, n: number, o: { provider: ModelProvider |
   return steps;
 }
 
+/**
+ * The step after a change the agent follows, or that adds work, without fewer failures
+ * (followed-no-effect, costlier): test the harness without it. Undefined otherwise, and
+ * for a change with no previous harness commit to go back to.
+ */
+export function removalStep(e: ChangeEffect): Step | undefined {
+  if ((e.verdict !== "followed-no-effect" && e.verdict !== "costlier") || !e.change.previous) return undefined;
+  return { label: "Test whether the harness does as well without this change", command: `coding.sh refine test git:${e.change.previous.slice(0, 7)}` };
+}
+
 /** Where a fix line goes: the context file the issue's agents read, else the one the repo has. */
 export function targetFile(root: string, agents: readonly string[]): string {
   const has = (f: string) => existsSync(join(root, f));

@@ -13,7 +13,7 @@ import type { Context } from "../../core/context.ts";
 import { repoRoot } from "../../core/git.ts";
 import type { ChangeEffect, GroupStats, Verdict } from "../../improve/changes.ts";
 import type { Issue } from "../../improve/issues.ts";
-import { abCommand, findChanges, findIssues, isHeadless, modelProvider, NEEDS_MODEL, scopeSessions, stepsFor, targetFile, testCommandOf, type ImproveScope, type ModelProvider } from "../../improve/report.ts";
+import { abCommand, findChanges, findIssues, isHeadless, modelProvider, NEEDS_MODEL, removalStep, scopeSessions, stepsFor, targetFile, testCommandOf, type ImproveScope, type ModelProvider } from "../../improve/report.ts";
 import { CLI_PLAN, isCliProvider } from "../../judge/subscription.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
 import { autoIngest, list, oneLine, pendingField, readIngest, str, withContext } from "../common.ts";
@@ -63,7 +63,7 @@ function issueJson(i: Issue, n: number, provider: ModelProvider | undefined) {
 }
 
 /** A group's counts, with every flagged session (id, ISO start, title, flags). */
-const groupJson = (g: GroupStats) => ({ ...g, flaggedSessions: g.flaggedSessions.map((s) => ({ id: s.id, at: new Date(s.startedAt).toISOString(), ...(s.title ? { title: s.title } : {}), flags: s.flags })) });
+const groupJson = ({ work: _work, ...g }: GroupStats) => ({ ...g, flaggedSessions: g.flaggedSessions.map((s) => ({ id: s.id, at: new Date(s.startedAt).toISOString(), ...(s.title ? { title: s.title } : {}), flags: s.flags })) });
 
 export function changeJson(e: ChangeEffect) {
   return {
@@ -79,17 +79,26 @@ export function changeJson(e: ChangeEffect) {
     before: groupJson(e.before),
     after: groupJson(e.after),
     rules: e.rules.map((r) => ({ ...r, ...(r.p !== undefined ? { p: Math.round(r.p * 1000) / 1000 } : {}) })),
+    ...(e.work ? { work: workJson(e.work) } : {}),
+    ...(removalStep(e) ? { next: removalStep(e)!.command } : {}),
   };
 }
 
+const workJson = (w: NonNullable<ChangeEffect["work"]>) =>
+  Object.fromEntries(Object.entries(w).map(([k, m]) => [k, { before: m.before, after: m.after, p: Math.round(m.p * 1000) / 1000 }]));
+
 const VERDICT_WORD: Record<Verdict, string> = {
   helped: "Helped",
+  "followed-no-effect": "Followed, no effect yet",
+  costlier: "Costlier",
   regressed: "Regressed",
   "no-clear-change": "No clear change",
   "too-early": "Too early to tell",
   "no-sessions-after": "No sessions yet",
   "no-baseline": "No sessions before it",
 };
+
+const verdictTone = (v: Verdict) => (v === "helped" ? "green" : v === "regressed" ? "red" : v === "costlier" || v === "followed-no-effect" ? "yellow" : "faint");
 
 /** Flagged sessions listed under each change by improve check, unless --sessions. */
 const FLAGGED_SHOWN = 5;
@@ -100,7 +109,7 @@ function printChange(c: CommandContext, e: ChangeEffect, o: { indent?: string; f
   const indent = o.indent ?? "  ";
   const ch = e.change;
   const files = ch.files.map((f) => `${f.path} +${f.added} -${f.removed}`).join(", ");
-  const tone = e.verdict === "helped" ? "green" : e.verdict === "regressed" ? "red" : "faint";
+  const tone = verdictTone(e.verdict);
   out.print(`${indent}${out.style(ch.short, "bold")}  ${localTime(ch.at)}  ${files}  ${JSON.stringify(ch.subject)}`);
   // A change with no sessions before it (often the commit that added the file) has nothing to compare: one line is enough.
   if (e.verdict === "no-baseline") out.print(`${indent}  ${out.style(VERDICT_WORD[e.verdict], tone)}: ${e.after.sessions} session(s) after it.`);
@@ -292,7 +301,9 @@ async function check(c: CommandContext): Promise<number> {
     }
     if (!watch) {
       const after = regressed[0]?.after;
+      const removal = first.changes.map(removalStep).find((s) => s !== undefined);
       if (after) out.next("See the sessions that went wrong after it", `coding.sh show ${after.flaggedSessions[0]?.id ?? after.examples[0] ?? "latest"}`);
+      else if (removal) out.next(removal.label, removal.command);
       else if (first.changes.some((e) => e.verdict === "too-early" || e.verdict === "no-sessions-after")) out.next("Re-check as new sessions arrive", "coding.sh improve check --watch");
       return regressed.length ? 1 : 0;
     }
@@ -320,7 +331,7 @@ async function watchLoop(c: CommandContext, initial: readonly ChangeEffect[], re
         if (seen.get(e.change.commit) === k) continue;
         seen.set(e.change.commit, k);
         const word = VERDICT_WORD[e.verdict];
-        out.print(`${new Date().toTimeString().slice(0, 8)}  ${e.change.short} ${JSON.stringify(e.change.subject)}  ${out.style(word, e.verdict === "regressed" ? "red" : e.verdict === "helped" ? "green" : "faint")}: ${e.reason}`);
+        out.print(`${new Date().toTimeString().slice(0, 8)}  ${e.change.short} ${JSON.stringify(e.change.subject)}  ${out.style(word, verdictTone(e.verdict))}: ${e.reason}`);
       }
     } catch (e) {
       out.warn(e instanceof Error ? e.message : String(e));

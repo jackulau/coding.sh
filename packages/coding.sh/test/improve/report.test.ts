@@ -2,7 +2,8 @@
 // stored events kept. Synthetic sessions in a memory index.
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { findIssues, isHeadless, scopeSessions } from "../../src/improve/report.ts";
+import type { ChangeEffect, Verdict } from "../../src/improve/changes.ts";
+import { findIssues, isHeadless, removalStep, scopeSessions } from "../../src/improve/report.ts";
 import { MemoryIndexStore } from "../../src/store/memory.ts";
 import { putSession, sessionEvents } from "../helpers-decision.ts";
 
@@ -50,5 +51,22 @@ describe("improve report", () => {
     assert.deepEqual(await ids(true), ["cli", "exec", "print", "unknown"]);
     const all = await scopeSessions(index, { since: 0, headless: true });
     assert.deepEqual(all.filter(isHeadless).map((s) => s.id).sort(), ["exec", "print"]);
+  });
+
+  it("suggests testing the harness without a change only for followed-no-effect and costlier, and only with a previous commit", () => {
+    const g = { sessions: 10, flagged: 5, byFlag: {}, examples: [], flaggedSessions: [] };
+    const e = (verdict: Verdict, previous?: string): ChangeEffect => ({
+      change: { commit: "b".repeat(40), short: "bbbbbbb", at: 0, subject: "s", files: [], added: [], removed: [], ...(previous ? { previous } : {}) },
+      before: g,
+      after: g,
+      rules: [],
+      verdict,
+      reason: "",
+    });
+    const prev = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+    assert.deepEqual(removalStep(e("followed-no-effect", prev)), { label: "Test whether the harness does as well without this change", command: "coding.sh refine test git:a1b2c3d" });
+    assert.equal(removalStep(e("costlier", prev))?.command, "coding.sh refine test git:a1b2c3d");
+    assert.equal(removalStep(e("costlier")), undefined, "no previous harness commit");
+    for (const v of ["helped", "regressed", "no-clear-change", "too-early"] as const) assert.equal(removalStep(e(v, prev)), undefined, v);
   });
 });
