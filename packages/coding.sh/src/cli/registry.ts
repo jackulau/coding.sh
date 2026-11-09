@@ -1581,6 +1581,18 @@ export const COMMANDS: CommandSpec[] = [
     load: () => import("./commands/update.ts"),
   },
   {
+    name: "upgrade-store",
+    group: "Maintain",
+    summary: "Migrate the store for this install when another install owns it",
+    flags: [YES],
+    examples: ["coding.sh upgrade-store"],
+    notes: [
+      "The store's owner is the coding.sh that ~/.coding.sh/bin/cli-path names: init and update write it, and hooks start it. Only the owner migrates the index on its own.",
+      "Migrations are one-way, so the old owner may not open the store after. This command also points the hooks at the running coding.sh.",
+    ],
+    load: () => import("./commands/upgrade-store.ts"),
+  },
+  {
     name: "version",
     group: "Maintain",
     summary: "Print the version",

@@ -1225,6 +1225,8 @@ describe("doctor on a dogfood machine", () => {
     assert.equal(existsSync(join(fresh.h.data, "bin", "hook.mjs")), false);
 
     const { h, run } = claudeHome();
+    // The store exists at this schema: a migration would wait for the owner (core/store-guard.ts).
+    assert.equal(run(h.home, ["ingest"]).status, 0);
     const binDir = join(h.data, "bin");
     mkdirSync(binDir, { recursive: true });
     const otherCli = join(h.root, "other", "dist", "cli.mjs");

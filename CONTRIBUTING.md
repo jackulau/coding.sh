@@ -16,6 +16,11 @@ npm run build     # dist/cli.mjs, dist/hook.mjs, dist/schema.mjs
 node dist/cli.mjs --help
 ```
 
+Run from the checkout (`node src/cli/main.ts` or `node dist/cli.mjs`), coding.sh won't open your
+real `~/.coding.sh`: a newer build would migrate the index, and your installed coding.sh could not
+open it again. Give it a throwaway home with `export CODING_SH_HOME=$(mktemp -d)`, or set
+`CODING_SH_DEV_REAL_STORE=1` to use the real one. `npm link` counts as an install.
+
 Website: `cd apps/site && npm run dev` (then `npm run build && npm run check` before a PR).
 
 ## Layout

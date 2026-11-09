@@ -131,6 +131,27 @@ works them out again for every stored session from the rows it already has.
 - **Nothing happens.** Re-parse needs the local SQLite index (or a store plugin that supports it),
   and `CODING_SH_NO_AUTO_INGEST=1` turns off the background run. `--rebuild` still works.
 
+## A store another coding.sh can't open
+
+Index migrations are one-way. A coding.sh that migrates `~/.coding.sh/index.db` to a newer schema
+leaves every older install that shares it unable to open it (`uses index schema v9, but this
+coding.sh only knows up to v8`), and capture stops. Two checks keep that from happening by
+accident:
+
+- **The store has an owner.** It is the coding.sh that `~/.coding.sh/bin/cli-path` names: `init`
+  and `update` write that file, and hooks start that CLI. When another install finds migrations
+  to run (a second global install, an `npx coding.sh@<version>`, a build from source), it stops
+  with `store_owned`, names both versions, and changes nothing. `coding.sh upgrade-store`
+  migrates the store and points the hooks at the install you ran it from. The owner itself, and
+  an upgrade in place (`coding.sh update`, `npm i -g coding.sh`), migrate as before.
+- **A source checkout doesn't open the default home.** coding.sh run from a git checkout (`node
+  src/cli/main.ts`, or a `dist/` built inside it) stops with `source_checkout` unless
+  `CODING_SH_HOME`, `--store` or `CODING_SH_STORE_URL` names a store. Set
+  `CODING_SH_HOME=$(mktemp -d)` for a throwaway home, or `CODING_SH_DEV_REAL_STORE=1` to use the
+  real one. An `npm link` of the checkout counts as an install.
+
+If a store was already migrated past your install, update that install (`coding.sh update`).
+
 ## Errors by reason
 
 Every error prints a message and, usually, the next command to try. With `--json` it is one line on
@@ -199,6 +220,9 @@ The command ran and something failed.
 | Reason | Example message | Fix |
 |---|---|---|
 | `store_unavailable` | `Couldn't open the coding.sh store: no index store for "foo://". Install the npm package "coding.sh-store-foo" …` | Check `[store]` in the config (`coding.sh config path`) and `CODING_SH_STORE_URL`. For `postgres://`, install `coding.sh-store-postgres` and check the database is reachable (`connect ECONNREFUSED` means it is not). |
+| `store_owned` | `~/.coding.sh/index.db is at index schema v8, and this coding.sh 0.1.5 would migrate it to v9. Your hooks run the coding.sh 0.1.4 at …/dist/cli.mjs, which may not open v9.` | Another install owns the store. Ask the user, then run `coding.sh upgrade-store` from the install the hooks should run, or use the one the message names. See [A store another coding.sh can't open](#a-store-another-codingsh-cant-open). |
+| `store_newer` | `~/.coding.sh/index.db uses index schema v10, but this coding.sh 0.1.5 only knows up to v9` (upgrade-store) | A newer coding.sh migrated the store. Run that one, or update this one: `coding.sh update`. |
+| `source_checkout` | `coding.sh is running from a source checkout (…), so it won't open your real store in ~/.coding.sh: …` | Set `CODING_SH_HOME` to a temp dir, or `CODING_SH_DEV_REAL_STORE=1` to use the real store. |
 | `locked` | `Can't ingest: …` | Another ingest is running. Wait for it, then run `coding.sh ingest`. |
 | `port_in_use` | `Can't start the collector: port 4318 is in use` | Stop the other process, or pass `--port 0` for any free port. Same for `ui`, `serve` and `proxy`. |
 | `already_running` | `A coding.sh proxy is already running on http://127.0.0.1:4320 (pid 4182)` | Use the running one, or stop it first: `coding.sh proxy stop`. |

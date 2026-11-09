@@ -28,7 +28,8 @@
 // Exit code: coding.sh's (0 ok, 1 runs failed or --fail-on-worse tripped, 2 usage),
 // or 1 when the gate or a budget fails.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -92,7 +93,11 @@ const args = [
   ...(values["fail-on-worse"] ? ["--fail-on-worse"] : []),
   "--json",
 ];
-const r = spawnSync(process.execPath, args, { stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+// The CLI runs from source, which won't open the default ~/.coding.sh: the result is read from
+// stdout, so a throwaway home does unless CODING_SH_HOME names one.
+const home = process.env.CODING_SH_HOME ? undefined : mkdtempSync(join(tmpdir(), "csh-perf-ab-"));
+const r = spawnSync(process.execPath, args, { stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", maxBuffer: 256 * 1024 * 1024, env: home ? { ...process.env, CODING_SH_HOME: home } : process.env });
+if (home) rmSync(home, { recursive: true, force: true });
 if (r.error) throw r.error;
 let doc;
 try {

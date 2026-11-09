@@ -7,6 +7,7 @@ import type { EvalTask, Session } from "../core/types.ts";
 import type { GateOpts } from "../stats/tests.ts";
 import { parseWhere, QueryError, QueryUnsupported, type Query } from "../query/where.ts";
 import { runningCli } from "../mcp/launch.ts";
+import { StoreOwnerError, UPGRADE_STORE } from "../core/store-guard.ts";
 import { acquireLock, isLocked, wakeMarker } from "../core/lock.ts";
 import { spawnBackgroundIngest } from "../spool/kick.ts";
 import { UsageError, type FlagValue } from "./args.ts";
@@ -19,6 +20,7 @@ export async function withContext<T>(c: CommandContext, fn: (ctx: Context) => Pr
   try {
     ctx = await openContext({ env: c.env, cwd: c.cwd });
   } catch (e) {
+    if (e instanceof StoreOwnerError) throw storeOwnedError(e);
     throw new CliError(`Couldn't open the coding.sh store: ${e instanceof Error ? e.message : String(e)}`, {
       reason: "store_unavailable",
       next: ["Check the [store] section of the config:", "coding.sh config path"],
@@ -29,6 +31,16 @@ export async function withContext<T>(c: CommandContext, fn: (ctx: Context) => Pr
   } finally {
     await ctx.close();
   }
+}
+
+/** Pending migrations of a store another install owns: the user decides on `coding.sh upgrade-store`. */
+export function storeOwnedError(e: StoreOwnerError): CliError {
+  return new CliError(e.detail, {
+    reason: "store_owned",
+    askUser: true,
+    next: ["Migrate it for this install (hooks then run this one):", UPGRADE_STORE],
+    data: { path: e.path, from: e.from, to: e.to, version: e.version, owner: e.owner, ownerVersion: e.ownerVersion ?? null },
+  });
 }
 
 /** Another ingest holds (or took over) the spool lock: it, or the next read, picks the events up. */

@@ -71,6 +71,7 @@ Every command accepts these.
 | [`purge`](#codingsh-purge) | Maintain | Remove a leaked secret from the store: events, search, blobs, spool, eval runs |
 | [`config`](#codingsh-config) | Maintain | Read and write ~/.coding.sh/config.toml |
 | [`update`](#codingsh-update) | Maintain | Install the latest coding.sh release |
+| [`upgrade-store`](#codingsh-upgrade-store) | Maintain | Migrate the store for this install when another install owns it |
 | [`version`](#codingsh-version) | Maintain | Print the version |
 
 ## `coding.sh init`
@@ -2874,6 +2875,25 @@ coding.sh update --check
 
 - Other commands print one line when a newer release is out (checked at most daily, in the background).
 - Turn that off with NO_UPDATE_NOTIFIER=1, CODING_SH_NO_UPDATE_CHECK=1 or `[update] check = false` in ~/.coding.sh/config.toml.
+
+## `coding.sh upgrade-store`
+
+Migrate the store for this install when another install owns it.
+
+```text
+coding.sh upgrade-store [options]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-y, --yes` |  | Answer yes to confirmation prompts. An agent passes it only once the user approves. |
+
+```sh
+coding.sh upgrade-store
+```
+
+- The store's owner is the coding.sh that ~/.coding.sh/bin/cli-path names: init and update write it, and hooks start it. Only the owner migrates the index on its own.
+- Migrations are one-way, so the old owner may not open the store after. This command also points the hooks at the running coding.sh.
 
 ## `coding.sh version`
 

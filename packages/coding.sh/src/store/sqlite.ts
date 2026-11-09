@@ -526,6 +526,11 @@ const CLOSE_CHECKPOINT_WAIT_MS = 50;
 export interface SqliteIndexOptions {
   /** Open read-only (no migrations). */
   readOnly?: boolean;
+  /**
+   * Runs before pending migrations (schema `from` → `to`); throws to refuse them and
+   * leave the file as it is (core/store-guard.ts: another install owns the store).
+   */
+  beforeMigrate?: (from: number, to: number) => void;
 }
 
 export class SqliteIndexStore implements IndexStore {
@@ -538,11 +543,13 @@ export class SqliteIndexStore implements IndexStore {
   private readonly memId = SqliteIndexStore.memSeq++;
 
   private readonly readOnly: boolean;
+  private readonly beforeMigrate?: (from: number, to: number) => void;
 
-  private constructor(db: DatabaseSync, path: string, readOnly: boolean) {
+  private constructor(db: DatabaseSync, path: string, readOnly: boolean, beforeMigrate?: (from: number, to: number) => void) {
     this.db = db;
     this.path = path;
     this.readOnly = readOnly;
+    if (beforeMigrate) this.beforeMigrate = beforeMigrate;
   }
 
   /** Opens (creating if needed) the database at `path` (":memory:" for tests) and migrates it. */
@@ -563,7 +570,7 @@ export class SqliteIndexStore implements IndexStore {
       // re-decode pages this keeps resident. No effect on the on-disk file or its
       // locking, so it is safe for read-only connections and on Windows.
       db.exec(`PRAGMA cache_size = -${CACHE_SIZE_KIB}; PRAGMA temp_store = MEMORY;`);
-      const store = new SqliteIndexStore(db, path, opts.readOnly ?? false);
+      const store = new SqliteIndexStore(db, path, opts.readOnly ?? false, opts.beforeMigrate);
       if (!opts.readOnly) await store.migrate();
       return store;
     } catch (e) {
@@ -634,6 +641,7 @@ export class SqliteIndexStore implements IndexStore {
     if (current > SQLITE_SCHEMA_VERSION) {
       throw new Error(`${this.path} uses index schema v${current}, but this coding.sh only knows up to v${SQLITE_SCHEMA_VERSION}. Upgrade coding.sh.`);
     }
+    if (current < SQLITE_SCHEMA_VERSION) this.beforeMigrate?.(current, SQLITE_SCHEMA_VERSION);
     const applied = this.db.prepare("SELECT 1 FROM migrations WHERE version = ?");
     for (const m of MIGRATIONS) {
       if (m.version <= current) continue;

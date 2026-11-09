@@ -33,6 +33,11 @@ node --no-warnings src/cli/main.ts --help            # the CLI from source, no b
 
 There is no build step for development and no formatter; match the style of the file you edit.
 
+The CLI from source (`src/cli/main.ts`, or a `dist/` built in the repo) won't open the default
+`~/.coding.sh`: set `CODING_SH_HOME=$(mktemp -d)` for each run. A newer build migrates the index
+one way and strands the user's installed coding.sh. `CODING_SH_DEV_REAL_STORE=1` opts in; never
+set it for the user's store unless they ask.
+
 ## Code rules
 
 - **Zero runtime dependencies** in `packages/coding.sh`. Use `node:` built-ins.

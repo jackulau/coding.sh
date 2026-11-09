@@ -13,8 +13,9 @@
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { paths } from "../core/paths.ts";
+import { sourceRunRefusal } from "../core/store-guard.ts";
 import { parseArgs, suggest, UsageError, visibleFlags, type FlagSpec } from "./args.ts";
-import { Output } from "./output.ts";
+import { CliError, Output } from "./output.ts";
 import { version } from "./meta.ts";
 import { COMMANDS, findCommand, GLOBAL_FLAGS, type ActionSpec, type CommandSpec } from "./registry.ts";
 
@@ -255,6 +256,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2), env:
       else process.stdout.write(commandHelp(cmd, action, helpStyle(out)));
       return 0;
     }
+
+    // A source checkout never opens the user's real store by accident (core/store-guard.ts).
+    const refusal = cmd.name === "version" ? undefined : sourceRunRefusal(env);
+    if (refusal) throw new CliError(refusal, { reason: "source_checkout" });
 
     const args = action ? (action.args ?? []) : (cmd.args ?? []);
     const flags = action ? (action.flags ?? []) : (cmd.flags ?? []);
