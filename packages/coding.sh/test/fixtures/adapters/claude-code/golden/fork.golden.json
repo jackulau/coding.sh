@@ -1,0 +1,189 @@
+[
+  {
+    "kind": "session.start",
+    "sessionId": "3237ea33-26be-4229-b1c2-c8fb71d0b32c:sub:a863ace31075f5115",
+    "ts": 1794230632372,
+    "payload": {
+      "source": "subagent",
+      "gitBranch": "HEAD",
+      "entrypoint": "sdk-cli",
+      "description": "Count lines",
+      "parentSessionId": "3237ea33-26be-4229-b1c2-c8fb71d0b32c",
+      "parentEventId": "c5b3c9ebe83b6f85a1fed235143917b29c8544dfe8b91d45593feaeeaa013e23",
+      "subagentId": "a863ace31075f5115",
+      "subagentType": "fork"
+    },
+    "id": "fdedbcccbee09d24a15979c4baf0f4c4e0875e5f4486b35626b2e3431ba165b4",
+    "subagentId": "a863ace31075f5115",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "user.message",
+    "sessionId": "3237ea33-26be-4229-b1c2-c8fb71d0b32c:sub:a863ace31075f5115",
+    "ts": 1794230632372,
+    "payload": {
+      "text": "Count the lines in notes.txt and report the number."
+    },
+    "id": "ab5bf709e3a46552d87e101708c34bb8a5e2342967c3ab47dba68180aeeb6adc",
+    "turnId": "c7ab002094a16865439bef088a37b0c768aee0bfc4e066ae9a0d833dad46d0b1",
+    "subagentId": "a863ace31075f5115",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "notification",
+    "sessionId": "3237ea33-26be-4229-b1c2-c8fb71d0b32c:sub:a863ace31075f5115",
+    "ts": 1794230632372,
+    "payload": {
+      "kind": "fork",
+      "toolUseId": "toolu_mw9alcc13",
+      "inheritedTokens": 20470
+    },
+    "id": "671fb5eb3f8ea197aa416161d6c76c57dcd2c066645c873ce16255bd885b7c49",
+    "turnId": "c7ab002094a16865439bef088a37b0c768aee0bfc4e066ae9a0d833dad46d0b1",
+    "subagentId": "a863ace31075f5115",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "tool.start",
+    "sessionId": "3237ea33-26be-4229-b1c2-c8fb71d0b32c:sub:a863ace31075f5115",
+    "ts": 1794230632386,
+    "payload": {
+      "tool": "Read",
+      "toolUseId": "toolu_mw9alccf5",
+      "input": {
+        "file_path": "/work/demo/notes.txt"
+      }
+    },
+    "id": "2762ebb38c277cda49e0ff79776321ee98b1fe3e9e6a5d1d13d4623e29514219",
+    "turnId": "c7ab002094a16865439bef088a37b0c768aee0bfc4e066ae9a0d833dad46d0b1",
+    "subagentId": "a863ace31075f5115",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "3237ea33-26be-4229-b1c2-c8fb71d0b32c:sub:a863ace31075f5115",
+    "ts": 1794230632372,
+    "payload": {
+      "provider": "anthropic",
+      "requestModel": "claude-sonnet-4-5",
+      "responseModel": "claude-sonnet-4-5",
+      "ttftMs": 14,
+      "stopReason": "tool_use",
+      "tokensPerSec": 2142.9,
+      "ok": true,
+      "messageId": "msg_mw9alccf4",
+      "costEstimated": true
+    },
+    "id": "f43b1622981efa0ba4beaf7f79a4017173c8d26c7d4881e9f218ca9bcfe34c89",
+    "turnId": "c7ab002094a16865439bef088a37b0c768aee0bfc4e066ae9a0d833dad46d0b1",
+    "subagentId": "a863ace31075f5115",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 14,
+    "usage": {
+      "inputTokens": 40,
+      "outputTokens": 30,
+      "cacheReadTokens": 20400,
+      "cacheWriteTokens": 600,
+      "costUsd": 0.00894
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "tool.end",
+    "sessionId": "3237ea33-26be-4229-b1c2-c8fb71d0b32c:sub:a863ace31075f5115",
+    "ts": 1794230632396,
+    "payload": {
+      "tool": "Read",
+      "toolUseId": "toolu_mw9alccf5",
+      "ok": true,
+      "durationMs": 10,
+      "output": "1\talpha\n2\tbravo\n3\tcharlie\n4\t"
+    },
+    "id": "a221ac334f6ba5d8223b722f5d78679627c7056fe98e845ce4963764494ef904",
+    "turnId": "c7ab002094a16865439bef088a37b0c768aee0bfc4e066ae9a0d833dad46d0b1",
+    "subagentId": "a863ace31075f5115",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 10,
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "assistant.message",
+    "sessionId": "3237ea33-26be-4229-b1c2-c8fb71d0b32c:sub:a863ace31075f5115",
+    "ts": 1794230632405,
+    "payload": {
+      "text": "notes.txt has 3 lines.",
+      "messageId": "msg_mw9alcd08"
+    },
+    "id": "4b4fd9a99e91908bd3409c0284ca12c0a5ed4a54107798a1ed4f8ab43a76d5dc",
+    "turnId": "c7ab002094a16865439bef088a37b0c768aee0bfc4e066ae9a0d833dad46d0b1",
+    "subagentId": "a863ace31075f5115",
+    "model": "claude-sonnet-4-5",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "llm.call",
+    "sessionId": "3237ea33-26be-4229-b1c2-c8fb71d0b32c:sub:a863ace31075f5115",
+    "ts": 1794230632396,
+    "payload": {
+      "provider": "anthropic",
+      "requestModel": "claude-sonnet-4-5",
+      "responseModel": "claude-sonnet-4-5",
+      "ttftMs": 9,
+      "stopReason": "end_turn",
+      "tokensPerSec": 3333.3,
+      "ok": true,
+      "messageId": "msg_mw9alcd08",
+      "costEstimated": true
+    },
+    "id": "cf69b0a5ec1352d9a27788c436bc352317fda4c58aeb49b3390fd43c6731acc5",
+    "turnId": "c7ab002094a16865439bef088a37b0c768aee0bfc4e066ae9a0d833dad46d0b1",
+    "subagentId": "a863ace31075f5115",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 9,
+    "usage": {
+      "inputTokens": 40,
+      "outputTokens": 30,
+      "cacheReadTokens": 21000,
+      "cacheWriteTokens": 300,
+      "costUsd": 0.007995
+    },
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "turn.end",
+    "sessionId": "3237ea33-26be-4229-b1c2-c8fb71d0b32c:sub:a863ace31075f5115",
+    "ts": 1794230632405,
+    "payload": {
+      "durationMs": 33,
+      "synthesized": true
+    },
+    "id": "adb601766765928cc3c7c88e177eece1faea7c8564320449087198578a36a2b6",
+    "turnId": "c7ab002094a16865439bef088a37b0c768aee0bfc4e066ae9a0d833dad46d0b1",
+    "subagentId": "a863ace31075f5115",
+    "model": "claude-sonnet-4-5",
+    "durationMs": 33,
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  },
+  {
+    "kind": "session.end",
+    "sessionId": "3237ea33-26be-4229-b1c2-c8fb71d0b32c:sub:a863ace31075f5115",
+    "ts": 1794230632405,
+    "payload": {
+      "reason": "subagent-stop"
+    },
+    "id": "7d24e4bee8ed7b4f964e0aacc7ab28c48599ecec66959da58cd037b02c5e89a4",
+    "subagentId": "a863ace31075f5115",
+    "cwd": "/work/demo",
+    "agentVersion": "2.1.319"
+  }
+]

@@ -421,7 +421,7 @@ function turnCount(t: { live: number; backfill: number; liveIdless: number; back
  * events, and every stored session is folded again once in the background
  * (core/reparse.ts, REFOLD_CURSOR), so old sessions get the new derivation.
  */
-export const SESSION_FOLD_VERSION = 14; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions).
+export const SESSION_FOLD_VERSION = 15; // 3: TamperState tracks shell calls, own lines and source edits since the last green run. 4: skip markers inside string literals are not skips. 5: proxy calls (sansProxy, otherCalls). 6: hook context (stats.hookContext, hook: tags). 7: stats.launch. 8: premature-completion reads what the agent said as it stopped (PrematureState.said, reported). 9: models and proxyModels (stats.models, stats.modelSwitch, model:switch, refusal; model = the main thread's most used). 10: text-tool-call (FlagState.textToolCall). 11: cache:low tag (core/cache-breaks.ts cacheUnderused). 12: model switches per scope (recorded fallbacks, subagents; ModelSwitch count, switchedCalls, extraUsd; model:fallback). 13: idle cache breaks split by where the wait was (CacheBreak.idle, CacheBreakStats.byIdle). 14: unapproved-action (FlagState.unapproved, stats.unapprovedActions). 15: stats.inheritedTokens (a fork subagent's inherited context).
 
 /**
  * A session's events folded so far: everything buildSession needs from them,
@@ -514,6 +514,8 @@ export interface SessionState {
   proxyModels: ModelState;
   /** How the agent was launched, from the first session.start that says (launchOf). */
   launch?: "headless" | "interactive";
+  /** A fork subagent: tokens of the parent's context it started with, from its `fork` notification. */
+  inheritedTokens?: number;
 }
 
 /** A fresh fold: no events seen. */
@@ -701,6 +703,10 @@ export function foldSession(s: SessionState, e: AgentEvent): void {
       s.endedAt = e.ts;
       if (e.repo?.snapshot) s.endSnapshot = e.repo.snapshot;
       break;
+    case "notification":
+      // A fork subagent (Claude Code): how much of the parent's context it started with.
+      if (e.payload.kind === "fork" && typeof e.payload.inheritedTokens === "number") s.inheritedTokens ??= e.payload.inheritedTokens;
+      break;
   }
 }
 
@@ -764,6 +770,7 @@ export function sessionOf(s: SessionState, prev?: Session, sorted?: readonly Age
   const hookContext = hookContextOf(s.hookContext);
   if (hookContext) session.stats.hookContext = hookContext;
   if (s.launch) session.stats.launch = s.launch;
+  if (s.inheritedTokens) session.stats.inheritedTokens = s.inheritedTokens;
   session.flags.push(...hookContextFlags(s.hookContext));
   const redactions = redactionsOf(s.redactions);
   if (redactions) session.stats.redactions = redactions;

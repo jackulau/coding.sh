@@ -53,7 +53,12 @@ span in an OpenTelemetry trace. It is stored as
 its own session with a parent id. Its prompt counts as its turn, and its title is the task
 description the parent gave it (Claude Code's `description`), else the first line of its prompt.
 `coding.sh sessions --subagents` lists them, and `coding.sh show` places them on the parent's
-timeline. Through the proxy, a Claude Code subagent's model calls land in its session too.
+timeline. Through the proxy, a Claude Code subagent's model calls land in its session too. A Claude
+Code fork (`subagent_type: "fork"`) starts with the parent's whole conversation, and its transcript
+opens with a copy of it. Those copied calls stay the parent's: the fork's session holds only its own
+calls, its turn opens with the directive, and `stats.inheritedTokens` says how many tokens of context
+it started with. Its own calls read that context from the prompt cache, so their cache reads count in
+its cost.
 
 **Run.** A whole multi-agent run: a top-level agent, the subagents it spawned, and their
 subagents, as one tree. `coding.sh tree <session>` shows it from any session in it (following the

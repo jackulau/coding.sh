@@ -339,6 +339,13 @@ export interface Session {
      * `interactive` (a terminal UI or an IDE). Unset when the agent's start does not say.
      */
     launch?: "headless" | "interactive";
+    /**
+     * A fork subagent (Claude Code's `subagent_type: "fork"`): tokens of the parent's context it
+     * started with (the prompt and output of the parent's call that started it). Its own calls
+     * read that context from the prompt cache and count in `usage`; the parent's calls count only
+     * in the parent. Unset for other sessions.
+     */
+    inheritedTokens?: number;
     /** Text hooks added to the model's context, by source (`plugin:<name>`, `settings`, …). Unset when no hook added any. */
     hookContext?: HookContextStats;
     /**

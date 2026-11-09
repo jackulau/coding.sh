@@ -147,7 +147,8 @@ async function windowEvents(ctx: NormalizeContext, path: string | undefined, unt
     return { events: [] };
   }
   // A subagent's prompt reaches no hook: its window records it (same id as the backfill's).
-  const conv = new ClaudeTranscriptConverter(ctx, { agent: CLAUDE_AGENT, mode: "assistant", sessionId, subagentId, runId, source: basename(path), sidechain: subagentId !== undefined, prompts: subagentId !== undefined, pluginHooks: pluginHooksFor(path) });
+  const forkToolUseId = subagentId !== undefined ? forkCall(await subagentMeta(path)) : undefined;
+  const conv = new ClaudeTranscriptConverter(ctx, { agent: CLAUDE_AGENT, mode: "assistant", sessionId, subagentId, runId, source: basename(path), sidechain: subagentId !== undefined, prompts: subagentId !== undefined, pluginHooks: pluginHooksFor(path), forkToolUseId });
   let i = 0;
   for (const e of entries) await conv.add(e, i++);
   return { events: await conv.finish(), model: conv.model, turnId: conv.currentTurnId };
@@ -454,12 +455,16 @@ async function subagentMeta(transcriptPath: string): Promise<Record<string, unkn
   }
 }
 
+/** A fork subagent's meta (`isFork`): the parent's Agent call that started it, whose context its transcript opens with. */
+const forkCall = (meta: Record<string, unknown>): string | undefined => (meta.isFork === true ? str(meta.toolUseId) : undefined);
+
 async function convertSubagentFile(ctx: NormalizeContext, path: string, parentSid: string, agentId: string, resolveLink?: (firstTs: number | undefined) => Promise<SubagentLink>): Promise<AgentEvent[]> {
   const child = childSessionId(parentSid, agentId);
   const meta = await subagentMeta(path);
   const type = str(meta.agentType);
-  const conv = new ClaudeTranscriptConverter(ctx, { agent: CLAUDE_AGENT, mode: "full", sessionId: child, subagentId: agentId, source: basename(path), sidechain: true, pluginHooks: pluginHooksFor(path) });
+  const conv = new ClaudeTranscriptConverter(ctx, { agent: CLAUDE_AGENT, mode: "full", sessionId: child, subagentId: agentId, source: basename(path), sidechain: true, pluginHooks: pluginHooksFor(path), forkToolUseId: forkCall(meta) });
   for await (const r of readJsonl(path)) await conv.add(r.value, r.lineNo);
+  await conv.release();
   if (!conv.out.length) return conv.finish();
   const link = resolveLink ? await resolveLink(conv.out[0]!.ts) : undefined;
   // Finished per the meta sidecar; without that flag (Workflow agents, old versions), per the run journal or an idle transcript.
@@ -576,7 +581,8 @@ export const claudeCode: Adapter = {
   // 8 (0.1.2): API errors keep their HTTP status, error class, rate-limit type and retry wait.
   // 9 (0.1.2): tool.end records a tool output Claude Code persisted to a file, so the model got a preview (cut).
   // 10 (0.1.3): a model fallback (system/model_fallback, model_refusal_fallback) is a model.fallback notification.
-  parseVersion: 10,
+  // 11 (0.1.5): a fork subagent (meta isFork) skips the parent's context its transcript opens with; the directive opens its turn.
+  parseVersion: 11,
 
   detect() {
     const dir = claudeConfigDir();

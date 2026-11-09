@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { claudeCode } from "../../src/adapters/claude-code.ts";
@@ -10,7 +10,7 @@ import { backfill, backfillCursorKey } from "../../src/core/ingest.ts";
 import { applyPricing, pricesFor } from "../../src/core/pricing.ts";
 import { toMetadata } from "../../src/core/redact.ts";
 import { buildSession } from "../../src/core/sessions.ts";
-import type { AgentEvent } from "../../src/schema/index.ts";
+import type { AgentEvent, Usage } from "../../src/schema/index.ts";
 import { MemoryBlobStore, MemoryIndexStore } from "../../src/store/memory.ts";
 import { assertGolden, assertWellFormed, collect, FIXTURES, loadSpool, summarize, testCtx, tmpEnv, writeFile, type TmpEnv } from "./_helpers.ts";
 
@@ -283,6 +283,113 @@ describe("claude-code backfill", () => {
     const some = await collect(claudeCode.backfill!(ctx, { since: cut }));
     assert.ok(some.length > 0 && some.length < all.length);
     assert.ok(some.every((e) => e.ts >= cut));
+  });
+});
+
+describe("claude-code fork subagents", () => {
+  // Real capture (scripts/e2e/claude-fork-subagent-capture.mjs): the parent reads notes.txt, then
+  // starts a fork (Agent, subagent_type "fork"). The fork's transcript opens with the parent's
+  // context (a fork-context-ref line and a copy of the parent's Agent call, same message.id and
+  // usage), then the "Fork started" tool_result with the directive, then the fork's own two calls.
+  const CONFIG = join(FIXTURES, "claude-code", "fork", "config");
+  const PSID = "3237ea33-26be-4229-b1c2-c8fb71d0b32c";
+  const AID = "a863ace31075f5115";
+  const CHILD = `${PSID}:sub:${AID}`;
+  const SUB = join(CONFIG, "projects", "-work-demo", PSID, "subagents", `agent-${AID}.jsonl`);
+  let env: TmpEnv;
+  before(() => {
+    env = tmpEnv();
+    process.env.CLAUDE_CONFIG_DIR = CONFIG;
+  });
+  after(() => env.restore());
+
+  const ids = (events: AgentEvent[], sid: string) => events.filter((e) => e.kind === "llm.call" && e.sessionId === sid).map((e) => e.payload.messageId as string);
+
+  it("counts only the fork's own calls: session cost and tokens are the parent's plus the fork's", async () => {
+    const events = applyPricing(await collect(claudeCode.backfill!(testCtx().ctx)), pricesFor());
+    assertWellFormed(events);
+    const parent = buildSession(events.filter((e) => e.sessionId === PSID));
+    const child = buildSession(events.filter((e) => e.sessionId === CHILD));
+    assert.equal(child.parent?.sessionId, PSID);
+    // The parent's four calls; the fork's two. The parent's Agent call (copied into the fork's transcript) is the parent's alone.
+    assert.equal(ids(events, PSID).length, 4);
+    assert.deepEqual(ids(events, CHILD).filter((id) => ids(events, PSID).includes(id)), []);
+    assert.equal(ids(events, CHILD).length, 2);
+    const tokens = ({ inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens }: Usage) => ({ inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens });
+    assert.deepEqual(tokens(parent.stats.usage!), { inputTokens: 160, outputTokens: 120, cacheReadTokens: 61300, cacheWriteTokens: 21200 });
+    // The fork's calls read the parent's context from the prompt cache: real reads, counted once, in the fork.
+    // Before the fix the fork also held the parent's Agent call: 120 / 90 / 61,400 / 1,300 tokens and $0.025005.
+    assert.deepEqual(tokens(child.stats.usage!), { inputTokens: 80, outputTokens: 60, cacheReadTokens: 41400, cacheWriteTokens: 900 });
+    // claude-sonnet-4-5: $3 input, $15 output, $0.30 cache read, $3.75 cache write per M.
+    assert.equal(Math.round(parent.stats.usage!.costUsd! * 1e6), 100170);
+    assert.equal(Math.round(child.stats.usage!.costUsd! * 1e6), 16935);
+    // What the fork started with: the prompt and output of the parent's call that started it.
+    assert.equal(child.stats.inheritedTokens, 40 + 400 + 20000 + 30);
+    assert.equal(parent.stats.inheritedTokens, undefined);
+    // The directive opens the fork's turn and titles it; the parent's Agent call ends in the parent only.
+    const prompts = events.filter((e) => e.sessionId === CHILD && e.kind === "user.message");
+    assert.deepEqual(prompts.map((e) => e.payload.text), ["Count the lines in notes.txt and report the number."]);
+    assert.equal(child.stats.turns, 1);
+    assert.equal(child.title, "Count lines");
+    assert.ok(!events.some((e) => e.sessionId === CHILD && e.kind.startsWith("tool.") && e.payload.tool === "Agent"));
+    assert.ok(events.some((e) => e.sessionId === PSID && e.kind === "subagent.start" && e.payload.childSessionId === CHILD));
+    assertGolden("claude-code/golden/fork.golden.json", summarize(events.filter((e) => e.sessionId === CHILD)));
+  });
+
+  it("live SubagentStop and PostToolUse(Agent) windows skip the parent's context too, with the backfill's ids", async () => {
+    const { ctx } = testCtx();
+    const back = new Set((await collect(claudeCode.backfill!(ctx))).map((e) => e.id));
+    const stop = loadSpool("claude-code/hooks.spool.jsonl").find((l) => (l.raw as { hook_event_name?: string }).hook_event_name === "SubagentStop")!;
+    const ts = Date.parse("2026-11-09T13:30:00.000Z");
+    const transcript = join(CONFIG, "projects", "-work-demo", `${PSID}.jsonl`);
+    const line = (raw: Record<string, unknown>) => ({ ...stop, event: raw.hook_event_name as string, ts, raw: { session_id: PSID, transcript_path: transcript, cwd: "/work/demo", ...raw } });
+    const live = [
+      ...(await claudeCode.normalize(line({ hook_event_name: "SubagentStop", agent_id: AID, agent_type: "fork", agent_transcript_path: SUB, last_assistant_message: "notes.txt has 3 lines." }), ctx)),
+      ...(await claudeCode.normalize(line({ hook_event_name: "PostToolUse", tool_name: "Agent", tool_use_id: "toolu_mw9alcc13", tool_input: { subagent_type: "fork", description: "Count lines", prompt: "Count the lines in notes.txt and report the number." }, tool_response: { status: "completed", agentId: AID, agentType: "fork", content: [{ type: "text", text: "notes.txt has 3 lines." }] } }), ctx)),
+    ];
+    const child = live.filter((e) => e.sessionId === CHILD);
+    assert.equal(new Set(ids(child, CHILD)).size, 2);
+    for (const e of child.filter((e) => e.kind === "llm.call" || e.kind === "user.message")) assert.ok(back.has(e.id), `${e.kind} not deduped with the backfill`);
+    assert.equal(new Set(child.filter((e) => e.kind === "user.message").map((e) => e.id)).size, 1);
+  });
+
+  it("a fork whose Agent call never shows up in its transcript parses as any subagent", async () => {
+    const dir = join(env.home, "fork-config");
+    cpSync(CONFIG, dir, { recursive: true });
+    const meta = join(dir, "projects", "-work-demo", PSID, "subagents", `agent-${AID}.meta.json`);
+    const parse = async (m: Record<string, unknown>) => {
+      writeFile(meta, JSON.stringify(m));
+      process.env.CLAUDE_CONFIG_DIR = dir;
+      try {
+        return summarize((await collect(claudeCode.backfill!(testCtx().ctx))).filter((e) => e.sessionId === CHILD));
+      } finally {
+        process.env.CLAUDE_CONFIG_DIR = CONFIG;
+      }
+    };
+    const m = JSON.parse(readFileSync(join(CONFIG, "projects", "-work-demo", PSID, "subagents", `agent-${AID}.meta.json`), "utf8"));
+    const plain = await parse({ ...m, isFork: undefined });
+    assert.deepEqual(await parse({ ...m, toolUseId: "toolu_not_in_transcript" }), plain);
+    // Not a fork: the copied call is converted as today.
+    assert.equal((plain as { kind: string }[]).filter((e) => e.kind === "llm.call").length, 3);
+  });
+
+  it("a fork whose own start is not written yet adds none of the parent's calls (a live window at launch)", async () => {
+    const { ctx } = testCtx();
+    const dir = join(env.home, "fork-early");
+    cpSync(CONFIG, dir, { recursive: true });
+    const early = join(dir, "projects", "-work-demo", PSID, "subagents", `agent-${AID}.jsonl`);
+    // The fork-context-ref line and the copy of the parent's Agent call only.
+    writeFile(early, readFileSync(SUB, "utf8").split("\n").slice(0, 2).join("\n") + "\n");
+    const stop = loadSpool("claude-code/hooks.spool.jsonl").find((l) => (l.raw as { hook_event_name?: string }).hook_event_name === "SubagentStop")!;
+    const raw = { hook_event_name: "PostToolUse", session_id: PSID, transcript_path: join(dir, "projects", "-work-demo", `${PSID}.jsonl`), cwd: "/work/demo", tool_name: "Agent", tool_use_id: "toolu_mw9alcc13", tool_input: { subagent_type: "fork", description: "Count lines", prompt: "Count the lines in notes.txt and report the number." }, tool_response: { status: "async_launched", agentId: AID } };
+    const events = await claudeCode.normalize({ ...stop, event: "PostToolUse", ts: Date.parse("2026-11-09T13:30:00.000Z"), raw }, ctx);
+    assert.deepEqual(ids(events, CHILD), []);
+    process.env.CLAUDE_CONFIG_DIR = dir;
+    try {
+      assert.deepEqual(ids(await collect(claudeCode.backfill!(ctx)), CHILD), []);
+    } finally {
+      process.env.CLAUDE_CONFIG_DIR = CONFIG;
+    }
   });
 });
 

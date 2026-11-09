@@ -52,6 +52,17 @@ export interface ClaudeConvertOpts {
   prompts?: boolean;
   /** Hook command → plugin name (pluginHookCommands of the transcript's config dir), to name the plugin behind hook context. */
   pluginHooks?: ReadonlyMap<string, string>;
+  /**
+   * A fork subagent's transcript (its `.meta.json` has `isFork` and this Agent call's
+   * `toolUseId`). It opens with the parent's context, up to the user entry holding
+   * the tool_result for this call ("Fork started"): every parent entry copied (same
+   * uuid and message.id), or a `fork-context-ref` line and a copy of the parent's
+   * Agent call. Those entries are the parent's and emit nothing; the call's
+   * `input.prompt` (the directive) opens the fork's turn, and a `notification`
+   * (`kind: "fork"`) says how many tokens of context the fork started with. A
+   * transcript without that user entry is converted whole, as any subagent.
+   */
+  forkToolUseId?: string;
 }
 
 /** A hook run the transcript recorded (hook_success): its command and stdout, to trace later additionalContext back to it. */
@@ -129,6 +140,16 @@ export function promptText(e: Record<string, unknown>): string | undefined {
   return t !== undefined && syntheticUserKind(t) === undefined ? t : undefined;
 }
 
+/** The user entry where a fork's own transcript starts: it holds the tool_result for the parent's Agent call `toolUseId`. */
+function isForkStart(e: Record<string, unknown>, toolUseId: string): boolean {
+  return e.type === "user" && arr(obj(e.message).content).some((b) => isObj(b) && b.type === "tool_result" && b.tool_use_id === toolUseId);
+}
+
+/** A copy of the parent's call that started a fork: an assistant entry with the Agent tool_use `toolUseId`. */
+function isForkCall(e: unknown, toolUseId: string): e is Record<string, unknown> {
+  return isObj(e) && e.type === "assistant" && arr(obj(e.message).content).some((b) => isObj(b) && b.type === "tool_use" && b.id === toolUseId);
+}
+
 const tag = (text: string, name: string) => new RegExp(`<${name}>([\\s\\S]*?)</${name}>`).exec(text)?.[1]?.trim() || undefined;
 
 interface PendingCommand {
@@ -160,10 +181,13 @@ export class ClaudeTranscriptConverter {
   private hookRuns: HookRun[] = [];
   /** What the latest cost-state line reported (full mode), for the session.end. */
   private reported?: Record<string, unknown>;
+  /** A fork's entries before its own start (forkToolUseId): the parent's context, unless no start turns up. */
+  private held?: { entry: unknown; lineNo: number }[];
 
   constructor(ctx: NormalizeContext, opts: ClaudeConvertOpts) {
     this.ctx = ctx;
     this.opts = opts;
+    if (opts.forkToolUseId) this.held = [];
   }
 
   /** Id of the latest turn opened so far: a hook Stop keys its turn.end by it, as the transcript does. */
@@ -206,6 +230,11 @@ export class ClaudeTranscriptConverter {
 
   /** Feed one parsed transcript entry. */
   async add(entry: unknown, lineNo: number): Promise<void> {
+    if (this.held) {
+      this.held.push({ entry, lineNo });
+      if (isObj(entry) && isForkStart(entry, this.opts.forkToolUseId!)) await this.forkStart(entry, lineNo);
+      return;
+    }
     if (!isObj(entry)) return;
     const type = entry.type;
     if (type === "attachment") return this.attachment(entry, lineNo);
@@ -233,6 +262,53 @@ export class ClaudeTranscriptConverter {
     const payload: Record<string, unknown> = { source: "transcript", gitBranch: str(entry.gitBranch), entrypoint: str(entry.entrypoint) };
     em.emit("session.start", payload, { key: ["start"] });
     this.push(em);
+  }
+
+  /**
+   * A fork's own start (the user entry with the "Fork started" tool_result): the
+   * entries held so far are the parent's context and are dropped. The directive
+   * opens the fork's turn, keyed by this entry like any subagent prompt, so a live
+   * window and a backfill store it once.
+   */
+  private async forkStart(e: Record<string, unknown>, lineNo: number): Promise<void> {
+    const id = this.opts.forkToolUseId!;
+    const held = this.held!;
+    this.held = undefined;
+    // The parent's call that started the fork, copied into the fork's transcript (its last line, if it took several).
+    const call = held.findLast((h) => isForkCall(h.entry, id));
+    const m = obj(isObj(call?.entry) ? call.entry.message : undefined);
+    const use = arr(m.content).map(obj).find((b) => b.type === "tool_use" && b.id === id);
+    const u = anthropicUsage(m.usage);
+    // The context the fork starts with: that call's prompt and its output.
+    const inherited = u ? (u.inputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0) + (u.outputTokens ?? 0) : 0;
+    const ts = toMs(e.timestamp, this.lastTs);
+    this.lastTs = Math.max(this.lastTs, ts);
+    this.begin(e, ts, lineNo);
+    const uuid = str(e.uuid) ?? `line-${lineNo}`;
+    const text = str(obj(use?.input).prompt) ?? (arr(obj(e.message).content).map((b) => (isObj(b) && b.type === "text" ? str(b.text) : undefined)).filter(Boolean).join("\n") || undefined);
+    await this.openTurn(str(e.promptId) ?? uuid, ts, lineNo, async (em) => {
+      if (!text) return;
+      const t = await clipText(this.ctx, text);
+      em.emit("user.message", { text: t.value, truncated: t.truncated || undefined }, { key: [uuid], blobs: blobList(t.blob) });
+    });
+    const em = this.em(ts, lineNo);
+    em.emit("notification", { kind: "fork", toolUseId: id, inheritedTokens: inherited || undefined }, { key: [uuid, "fork"] });
+    this.push(em);
+    this.lastNonAssistantTs = ts;
+  }
+
+  /**
+   * End of input with entries still held: the fork's own start is not there (not
+   * written yet, in a live window). A copy of the parent's call that started the
+   * fork, and anything before it, is still the parent's; the rest is converted.
+   * Without that copy the transcript is converted whole.
+   */
+  async release(): Promise<void> {
+    const held = this.held;
+    if (!held) return;
+    this.held = undefined;
+    const id = this.opts.forkToolUseId!;
+    for (const h of held.slice(held.findLastIndex((h) => isForkCall(h.entry, id)) + 1)) await this.add(h.entry, h.lineNo);
   }
 
   private async assistant(e: Record<string, unknown>, ts: number, lineNo: number): Promise<void> {
@@ -598,7 +674,9 @@ export class ClaudeTranscriptConverter {
    * closed only when `closed` (default: the transcript is idle): a live
    * transcript's open turn ends later, with its real end.
    */
-  async finish(closed = this.idle()): Promise<AgentEvent[]> {
+  async finish(closed?: boolean): Promise<AgentEvent[]> {
+    await this.release();
+    closed ??= this.idle();
     await this.localCommand();
     if (closed) await this.endTurn(this.lastTs, "eof");
     else await this.flushCall();

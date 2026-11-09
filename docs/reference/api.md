@@ -581,6 +581,13 @@ terminal or IDE session. It comes from the session's start: Claude Code's `entry
 `session_meta.source`). It is absent when the start does not say. `--where launch:headless` and
 `--facets launch` use it.
 
+`stats.inheritedTokens` is set on a Claude Code fork subagent (`subagent_type: "fork"`): the tokens
+of the parent's context it started with, the prompt and output of the parent's call that started it.
+The fork's session holds only its own model calls, so the parent's calls count once, in the parent.
+The fork's own calls read the inherited context from the prompt cache, and those reads count in its
+`usage`. It comes from a `notification` event with `payload.kind: "fork"`, `toolUseId` (the parent's
+Agent call) and `inheritedTokens`, and is absent for other sessions.
+
 `stats.hookContext` (`count`, `tokens`, `bySource`) counts the texts hooks added to the model's
 context (Claude Code), and their size in tokens (characters / 4). `bySource` splits them by whose
 hook it was: `plugin:<name>`, `plugin` (a plugin not installed where the session was parsed),
