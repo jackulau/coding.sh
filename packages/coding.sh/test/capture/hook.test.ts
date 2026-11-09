@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import type { SpoolLine } from "../../src/core/types.ts";
 import { MAX_INLINE_LINE_BYTES, SPOOL_FILE_CAP, appendSpool, resolveRaw, safeAgentId, spoolFile } from "../../src/spool/write.ts";
 import { PKG_ROOT, gitc, isolate, makeRepo, removeTmp, tmp, tsNodeArgs } from "./_helpers.ts";
+import { median, pairedRatio, timeMs } from "../helpers-timing.ts";
 
 const HOOK_TS = join(PKG_ROOT, "src", "spool", "hook.ts");
 let home = "";
@@ -323,11 +324,15 @@ describe("appendSpool", () => {
 });
 
 describe("hook performance", () => {
-  // Absolute times swing 10x under parallel test load, so the hook is timed against a
-  // bare node start that reads the same stdin, interleaved pair by pair so both see
-  // the same load. Idle on the desk: hook/bare ≈ 1.05; a hook made 2x slower ≈ 2.1
-  // (≈ 1.8 with every core busy). One re-measure absorbs a burst; a real
-  // regression fails both.
+  // Absolute times swing 10x under parallel test load, so the hook is measured against a
+  // bare node start that reads the same stdin, in pairs run back to back, two ways:
+  // - CPU time, as each process reports it at exit: waiting for a core doesn't count, so
+  //   it holds on a loaded runner. Hook/bare ≈ 1.2 on a laptop, idle or with every core
+  //   busy. Windows counts it in 15.6 ms ticks, so it is summed over the pairs.
+  // - Wall time, the median of the pairs' ratios: load at the moment of a pair stretches
+  //   both its sides. Hook/bare ≈ 1.05 idle; under load it swings (0.8 to 1.9 on the desk).
+  // A hook made 2x slower is about 2x on both, so passing either one is enough. One
+  // re-measure absorbs a burst; a real regression fails both.
   test("bundled hook: 10 KB payload costs under 1.5x a bare node start", { timeout: 120_000 }, async () => {
     let script = HOOK_TS;
     try {
@@ -341,31 +346,42 @@ describe("hook performance", () => {
     const bundled = script.endsWith(".mjs");
     const h = freshHome();
     const payload = JSON.stringify({ cwd: "/p", session_id: "s", tool_response: "z".repeat(10_000) });
-    const bare = () => spawnSync(process.execPath, ["-e", "process.stdin.resume()"], { input: payload, env: { ...process.env, CODING_SH_HOME: h } });
-    runHook(["claude-code", "warmup"], payload, { CODING_SH_HOME: h }, script); // warms the OS file cache only
-    bare();
-    const median = (a: number[]) => [...a].sort((x, y) => x - y)[a.length >> 1]!;
+    // Preloaded into both: at exit, the process's own CPU time (user + system, since it started) on stderr.
+    const reporter = join(tmp("csh-cpu-"), "cpu.cjs");
+    writeFileSync(reporter, `process.on("exit", () => { const u = process.resourceUsage(); require("node:fs").writeSync(2, "\\ncpu-us:" + (u.userCPUTime + u.systemCPUTime) + "\\n"); });\n`);
+    const env = { ...process.env, CODING_SH_HOME: h };
+    const nodeArgs = bundled ? [] : tsNodeArgs();
+    // Wall ms of one run; its CPU ms goes on `cpu`.
+    const run = (args: string[], cpu: number[]) => {
+      let r: ReturnType<typeof spawnSync> | undefined;
+      const ms = timeMs(() => (r = spawnSync(process.execPath, ["-r", reporter, ...args], { input: payload, env, encoding: "utf8" })));
+      assert.equal(r!.status, 0, String(r!.stderr));
+      const used = /cpu-us:(\d+)/.exec(String(r!.stderr));
+      assert.ok(used, `no CPU time reported: ${String(r!.stderr)}`);
+      cpu.push(Number(used[1]) / 1000);
+      return ms;
+    };
+    const hookArgs = [...nodeArgs, script, "claude-code", "PostToolUse"];
+    const bareArgs = ["-e", "process.stdin.resume()"];
+    run([...nodeArgs, script, "claude-code", "warmup"], []); // warms the OS file cache only
+    run(bareArgs, []);
+    const PAIRS = 15;
+    const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
     const measure = () => {
-      const hook: number[] = [];
-      const base: number[] = [];
-      for (let i = 0; i < 9; i++) {
-        let t = performance.now();
-        bare();
-        base.push(performance.now() - t);
-        t = performance.now();
-        const r = runHook(["claude-code", "PostToolUse"], payload, { CODING_SH_HOME: h }, script);
-        hook.push(performance.now() - t);
-        assert.equal(r.code, 0);
-      }
-      return { hook: median(hook), bare: median(base), ratio: median(hook) / median(base) };
+      const hookCpu: number[] = [];
+      const bareCpu: number[] = [];
+      const wall = pairedRatio(() => run(hookArgs, hookCpu), () => run(bareArgs, bareCpu), PAIRS);
+      const cpu = sum(hookCpu) / sum(bareCpu);
+      const text = `CPU ${cpu.toFixed(2)}x (medians ${median(hookCpu).toFixed(1)} and ${median(bareCpu).toFixed(1)} ms), wall ${wall.ratio.toFixed(2)}x (medians ${median(wall.a).toFixed(1)} and ${median(wall.b).toFixed(1)} ms)`;
+      return { ratio: Math.min(cpu, wall.ratio), text };
     };
     const limit = bundled ? 1.5 : 3; // .ts source pays for type stripping
     let m = measure();
     const first = m;
     if (m.ratio >= limit) m = measure();
-    console.log(`# hook (${bundled ? "bundled" : "ts source"}): median ${m.hook.toFixed(1)} ms, bare node ${m.bare.toFixed(1)} ms, ratio ${m.ratio.toFixed(2)}${m === first ? "" : ` (first try ${first.ratio.toFixed(2)})`}`);
-    assert.ok(m.ratio < limit, `hook ${m.hook.toFixed(1)} ms is ${m.ratio.toFixed(2)}x a bare node start (${m.bare.toFixed(1)} ms); limit ${limit}x`);
-    assert.equal(readLines(h, "claude-code").length, m === first ? 10 : 19);
+    console.log(`# hook (${bundled ? "bundled" : "ts source"}) against a bare node start over ${PAIRS} pairs: ${m.text}${m === first ? "" : ` (first try: ${first.text})`}`);
+    assert.ok(m.ratio < limit, `hook against a bare node start over ${PAIRS} pairs: ${m.text}; limit ${limit}x on either`);
+    assert.equal(readLines(h, "claude-code").length, 1 + (m === first ? 1 : 2) * PAIRS);
   });
 });
 
