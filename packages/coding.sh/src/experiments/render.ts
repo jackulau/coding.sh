@@ -405,17 +405,25 @@ export function renderPairwise(s: PairwiseSummary, opts: RenderOpts): string {
   } else {
     out.push(`wins    B ${s.wins.b}, A ${s.wins.a}, ties ${s.ties}${s.inconsistent ? ` (${s.inconsistent} from order flips)` : ""}`);
     const vColor = s.verdict === "better" ? "green" : s.verdict === "worse" ? "red" : "dim";
+    // Without clusters the sign-flip p is the sign test's p; with them it runs over cluster sums.
+    const decisive = s.wins.a + s.wins.b;
+    const flipUnits = s.cluster
+      ? `${s.signFlip.units} ${s.cluster.key} cluster${s.signFlip.units === 1 ? "" : "s"}`
+      : `${decisive} decisive case${decisive === 1 ? "" : "s"}`;
     out.push(
       `B wins  ${paint(pct(s.winRate.b), vColor, color)} ${ci(s.winRate.lo, s.winRate.hi)} ` +
         paint(`(ties count half, 95% ${s.cluster ? `cluster bootstrap over ${s.cluster.clusters} ${s.cluster.key} clusters` : "paired bootstrap"})`, "dim", color) +
-        `  sign test p=${pValue(s.signTest.p)}`,
+        `  sign test p=${pValue(s.signTest.p)}` +
+        (s.cluster ? paint(`  sign-flip p=${pValue(s.signFlip.p)} over ${flipUnits}`, "dim", color) : ""),
     );
     const b = s.positionBias;
     out.push(
       `order   answer changed with the order on ${s.inconsistent} of ${s.n} (${pct(b.rate)})` +
         (b.first || b.second ? `: ${b.first} favored the first response, ${b.second} the second` : ""),
     );
-    out.push(`verdict ${paint(s.verdict === "inconclusive" ? "inconclusive (CI includes 50%)" : `B is ${s.verdict}`, vColor, color)}`);
+    const why =
+      s.winRate.lo > 0.5 || s.winRate.hi < 0.5 ? `the CI excludes 50%, but the exact test does not: p=${pValue(s.signFlip.p)} over ${flipUnits}` : "CI includes 50%";
+    out.push(`verdict ${paint(s.verdict === "inconclusive" ? `inconclusive (${why})` : `B is ${s.verdict}`, vColor, color)}`);
     out.push(paint(stabilityLine(s.stability), "dim", color));
   }
   const skipped = s.skipped.noOutput;

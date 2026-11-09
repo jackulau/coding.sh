@@ -121,6 +121,33 @@ describe("summarizePairwise: stability and its warnings", () => {
     assert.match(s.warnings.join("\n"), /unresolved: pick or calibrate the judge before collecting more verdicts/);
   });
 
+  it("3 decisive B wins are inconclusive: the CI is [100%, 100%], the exact sign test p is 1/4", () => {
+    const s = summarizePairwise(cases(3, 0, 0), { id: "j", calibration: calibrated });
+    assert.deepEqual([s.winRate.lo, s.winRate.hi], [1, 1]);
+    assert.deepEqual(s.signFlip, { p: 0.25, units: 3, method: "exact" });
+    assert.ok(Math.abs(s.signFlip.p - s.signTest.p) < 1e-12);
+    assert.equal(s.verdict, "inconclusive");
+    assert.match(renderPairwise(s, { color: false }), /^verdict inconclusive \(the CI excludes 50%, but the exact test does not: p=0\.25\d* over 3 decisive cases\)$/m);
+  });
+
+  it("6 decisive B wins are better (p 2/2⁶); ties do not count toward the 6", () => {
+    assert.equal(summarizePairwise(cases(6, 0, 4), { id: "j", calibration: calibrated }).verdict, "better");
+    const five = summarizePairwise(cases(5, 0, 4), { id: "j", calibration: calibrated });
+    assert.equal(five.signFlip.p, 0.0625);
+    assert.equal(five.verdict, "inconclusive");
+  });
+
+  it("clusters: 20 B wins in 3 repos flip as 3 units, so the verdict is inconclusive", () => {
+    const cs = cases(20, 0, 0);
+    const of = new Map(cs.map((c, i) => [c.caseId, `r${i % 3}`]));
+    const s = summarizePairwise(cs, { id: "j", calibration: calibrated }, undefined, { cluster: { key: "repo", of } });
+    assert.equal(s.signFlip.units, 3);
+    assert.equal(s.signFlip.p, 0.25);
+    assert.equal(s.verdict, "inconclusive");
+    assert.match(renderPairwise(s, { color: false }), /sign-flip p=0\.25\d* over 3 repo clusters/);
+    assert.equal(summarizePairwise(cs, { id: "j", calibration: calibrated }).verdict, "better");
+  });
+
   it("clustered summaries resample clusters", () => {
     const cs = cases(20, 10, 0);
     const of = new Map(cs.map((c, i) => [c.caseId, `r${i % 6}`]));

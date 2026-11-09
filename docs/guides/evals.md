@@ -746,6 +746,10 @@ shared case it shows the judge both outputs, then asks again with the order swap
 only when both orders agree. When the answer changes with the order, the case is a tie, and the
 share of such cases is printed as the position-bias rate (Wang et al., 2023). It reports B's win
 rate (ties count half) with a bootstrap CI, a sign test on the decisive cases, and the ties.
+B is `better` or `worse` only when the CI excludes 50% and the exact sign test has p below 0.05,
+which takes at least 6 decisive cases: 3 wins out of 3 give a CI of [100%, 100%] but p 0.25. With
+`--cluster` the test flips whole clusters instead (`sign-flip p=… over N repo clusters`), so it
+needs at least 6 clusters. `--json` carries `pairwise.signFlip` (`p`, `units`, `method`).
 `--labels labels.jsonl` (rows of `{"caseId","winner":"a"|"b"|"tie"}`) calibrates it the same way
 as `judge calibrate`: kappa on the test split, with judge ties left out, stored on the judge.
 

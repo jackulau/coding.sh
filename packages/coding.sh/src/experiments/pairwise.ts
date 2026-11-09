@@ -8,7 +8,7 @@ import { mapPool } from "../judge/limit.ts";
 import type { PairVerdict, PairwiseJudge } from "../judge/pairwise.ts";
 import { clusteredBootstrap } from "../stats/cluster.ts";
 import { pairedBootstrap } from "../stats/interval.ts";
-import { mcnemar, type McNemarResult } from "../stats/tests.ts";
+import { clusterSignFlip, mcnemar, type McNemarResult, type SignFlipResult } from "../stats/tests.ts";
 import { directionStability, type DirectionStability } from "./stability.ts";
 
 /** Position-bias rate above which the summary warns. */
@@ -34,7 +34,16 @@ export interface PairwiseSummary {
   winRate: { b: number; lo: number; hi: number; iters: number };
   /** Exact two-sided sign test on decisive cases (`b` = A wins, `c` = B wins). */
   signTest: McNemarResult;
-  /** "better" / "worse" when the win-rate CI excludes 50%. */
+  /**
+   * Exact two-sided sign-flip test at the bootstrap's unit: per case (where it
+   * equals the sign test) or per cluster sum with a cluster key.
+   */
+  signFlip: SignFlipResult;
+  /**
+   * "better" / "worse" when the win-rate CI excludes 50% and signFlip.p is
+   * below alpha. With a few decisive cases that all go one way the bootstrap
+   * CI is a single point, so the exact test is what holds the verdict back.
+   */
   verdict: "better" | "worse" | "inconclusive";
   /** How often a resample of the cases (or clusters) picks the same winner, and n* (arXiv 2611.04090). */
   stability: DirectionStability;
@@ -134,7 +143,9 @@ export function summarizePairwise(
   const cl = opts.cluster;
   const clusterIds = sorted.map((c) => cl?.of.get(c.caseId) ?? `\u0000${c.caseId}`);
   const d = cl ? clusteredBootstrap(centered, clusterIds, boot) : pairedBootstrap(centered, boot);
-  const verdict: PairwiseSummary["verdict"] = n > 0 && d.lo > 0 ? "better" : n > 0 && d.hi < 0 ? "worse" : "inconclusive";
+  const signFlip = clusterSignFlip(centered, { seed: boot.seed, iters: boot.iters, ...(cl ? { clusterIds } : {}) });
+  const exact = signFlip.p < boot.alpha;
+  const verdict: PairwiseSummary["verdict"] = n > 0 && exact && d.lo > 0 ? "better" : n > 0 && exact && d.hi < 0 ? "worse" : "inconclusive";
   const rate = n ? inconsistent / n : NaN;
   const warnings: string[] = [];
   if (n > 0 && rate > POSITION_BIAS_WARN) {
@@ -162,6 +173,7 @@ export function summarizePairwise(
     positionBias: { rate, ...bias },
     winRate: { b: 0.5 + d.mean, lo: 0.5 + d.lo, hi: 0.5 + d.hi, iters: d.iters },
     signTest: mcnemar(wins.a, wins.b),
+    signFlip,
     verdict,
     stability,
     skipped,
