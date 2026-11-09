@@ -112,7 +112,7 @@ export function alternativeCheck(input: { k1: boolean; dev: ArmOutcomes; heldOut
 /** One kept candidate, as `rankKeeps` sees it. */
 export interface KeepCandidate {
   id: string;
-  /** K2 dev effect: bootstrap mean and its Holm-adjusted interval. */
+  /** K2 dev effect: the paired bootstrap mean and its 95% interval from exp compare, not adjusted for multiplicity; used only to order and tie keeps. */
   effect: { mean: number; lo: number; hi: number };
   /** R(C) from its preservation report. */
   R: number;
