@@ -6,7 +6,7 @@ Docs: [coding.sh/docs](https://coding.sh/docs) · Quickstart: [coding.sh/docs/qu
 
 # coding.sh
 
-Open-source, local-first observability and evals for any AI agent. Coding agents first-class.
+coding.sh is open-source, local-first observability and evals for any AI agent. Coding agents first-class.
 
 coding.sh records what your agents do (prompts, tool calls, file changes, model calls, latency and
 token usage) into a SQLite index on your machine. You browse it in a local viewer, query it from
@@ -14,6 +14,12 @@ the CLI or from your agents over MCP, turn failures into evals, and compare chan
 statistics. Zero runtime dependencies. Node 22.15 or newer.
 
 ## Quickstart
+
+```sh
+npx coding.sh      # try it: finds your agents, shows one plan, asks once (Y/n)
+```
+
+Run `npx coding.sh` again to open the viewer. To keep it, install it globally:
 
 ```sh
 npm install -g coding.sh
@@ -26,8 +32,8 @@ coding.sh MCP server with Claude Code, Codex, Cursor and OpenCode. Every config 
 edits is backed up first. `coding.sh init --dry-run` shows the plan (agents, files, blockers) without writing
 anything; add `--diff` for the exact edits. After that, use your agents as usual. New sessions appear without an ingest step.
 
-`npx coding.sh init` works too. The hook is copied to a stable path, but the MCP entry then points
-at the npx cache, so a global install is the sturdier choice.
+With `npx` only, the hook is copied to a stable path, but the MCP entry points at the npx cache,
+so a global install is the sturdier choice for daily use.
 
 Commands print one dim line when a newer release is out (checked in the background, at most once a
 day). `coding.sh update` installs it. Turn the check off with `NO_UPDATE_NOTIFIER=1`,

@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <b>Open-source, local-first observability and evals for any AI agent. Coding agents first-class.<br>
+  <b>coding.sh is open-source, local-first observability and evals for any AI agent. Coding agents first-class.<br>
   Your sessions stay on your machine.</b>
 </p>
 

@@ -13,8 +13,10 @@ const PKG = join(import.meta.dirname, "..", "..");
 describe("help summary", () => {
   it("root help leads with the summary both READMEs use", () => {
     assert.match(rootHelp(plain), new RegExp(`^  ${SUMMARY.replace(/[.]/g, "\\.")}$`, "m"));
+    // The READMEs open with "coding.sh is open-source, …", so the summary's first letter may be lowercase there.
     for (const readme of [join(PKG, "README.md"), join(PKG, "..", "..", "README.md")]) {
-      assert.ok(readFileSync(readme, "utf8").includes(SUMMARY), `${readme} carries the CLI summary`);
+      const text = readFileSync(readme, "utf8").toLowerCase();
+      assert.ok(text.includes(SUMMARY.toLowerCase()), `${readme} carries the CLI summary`);
     }
     assert.match(SUMMARY, /any AI agent/);
   });
