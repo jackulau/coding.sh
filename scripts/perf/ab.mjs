@@ -12,12 +12,14 @@
 // per-metric medians over all runs plus the run-to-run noise of the paired
 // deltas: use it with --base and --cand set to the same build (an A/A run),
 // where every metric should come out inconclusive.
-// --gate (CI) fails when a gated metric's verdict is worse. The gated metrics
-// (GATE below) are re-analysed on their own, so the Holm correction spans only
-// them and 9 pairs can call a change. HTML and image bytes are left to the
-// budgets: every new paragraph adds HTML, and a fixed build makes any added byte
-// a "worse" verdict. --budgets fails when the candidate's median of a metric is
-// over its budget; --skip-budget drops matching budgets (hosted runners skip
+// --gate (CI) fails when a gated metric's verdict is worse by at least its
+// minimum effect (MIN_EFFECT in gate.mjs: 3% or 20 ms for load times). The
+// gated metrics (GATE in gate.mjs) are re-analysed on their own, so the Holm
+// correction spans only them and 9 pairs can call a change. HTML and image
+// bytes are left to the budgets: every new paragraph adds HTML, and a fixed
+// build makes any added byte a "worse" verdict. --budgets fails when the lower
+// end of the 95% bootstrap CI of the candidate's median of a metric is over its
+// budget; --skip-budget drops matching budgets (hosted runners skip
 // the machine-dependent _ms ones). An _ms budget counts only the candidate's
 // samples of that page taken while the machine was quiet (its cpu_busy, from
 // lighthouse.mjs, at most --quiet-cpu, default 0.5): other work on a shared
@@ -37,7 +39,6 @@ import { parseArgs } from "node:util";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const CLI = join(ROOT, "packages/coding.sh/src/cli/main.ts");
 const HARNESS = join(ROOT, "scripts/perf/lighthouse.mjs");
-const GATE = ["mobile.*.lcp_ms", "mobile.*.cls", "*.js_bytes", "*.font_bytes", "*.css_bytes", "mobile.*.startup_requests"];
 
 const { values } = parseArgs({
   options: {
@@ -111,56 +112,32 @@ if (values.out) {
   mkdirSync(dirname(resolve(values.out)), { recursive: true });
   writeFileSync(resolve(values.out), `${JSON.stringify(result, null, 2)}\n`);
 }
-const { renderMetrics, analyzeMetrics, metricMatches, metricUnit } = await import(join(ROOT, "packages/coding.sh/src/experiments/metrics.ts"));
-const { median } = await import(join(ROOT, "packages/coding.sh/src/stats/summary.ts"));
+const { renderMetrics } = await import(join(ROOT, "packages/coding.sh/src/experiments/metrics.ts"));
+const { checkBudgets, checkGate } = await import("./gate.mjs");
 process.stdout.write(`${renderMetrics(result, { color: process.stdout.isTTY === true })}\n`);
 
 const failures = [];
 if (values.gate) {
-  const gated = analyzeMetrics(result.runs, { only: GATE, correction: result.correction, alpha: result.alpha, seed: result.seed });
-  const r4 = (x) => Math.round(x * 1e4) / 1e4;
-  for (const m of gated.metrics.filter((x) => x.verdict === "worse")) {
-    const ci = m.deterministic ? "every run" : `95% CI [${r4(m.delta.lo)}, ${r4(m.delta.hi)}], p ${m.pAdjusted.toFixed(3)}`;
-    failures.push(`${m.name} got worse: ${m.a.median} -> ${m.b.median} (${ci})`);
-  }
-  console.log(`gate: ${gated.metrics.length} gated metrics over ${gated.pairsComplete} pairs, ${failures.length} worse`);
+  const g = checkGate(result);
+  failures.push(...g.failures);
+  for (const s of g.small) console.log(`ok, too small to count: ${s}`);
+  console.log(`gate: ${g.metrics} gated metrics over ${g.pairs} pairs, ${g.failures.length} worse`);
 }
 if (values.budgets) {
   const budgets = JSON.parse(readFileSync(resolve(values.budgets), "utf8"));
-  const skip = values["skip-budget"] ?? [];
   const quietCpu = Number(values["quiet-cpu"]);
-  const candRuns = result.runs.filter((x) => !x.warmup && x.metrics && x.arm === 1);
-  let checked = 0;
-  const busy = [];
-  for (const [pattern, max] of Object.entries(budgets)) {
-    if (pattern.startsWith("$") || metricMatches(pattern, skip)) continue;
-    const hits = result.metrics.filter((m) => metricMatches(m.name, [pattern]));
-    for (const m of hits) {
-      let value = m.b.median;
-      if (metricUnit(m.name) === "ms") {
-        // "mobile.quickstart.lcp_ms" -> that page's "mobile.quickstart.cpu_busy"; a sample without one counts as quiet.
-        const load = `${m.name.slice(0, m.name.lastIndexOf("."))}.cpu_busy`;
-        const quiet = candRuns.filter((x) => typeof x.metrics[m.name] === "number" && !(x.metrics[load] > quietCpu)).map((x) => x.metrics[m.name]);
-        if (quiet.length * 2 < result.pairs) {
-          busy.push(`${m.name} (${quiet.length} of ${result.pairs})`);
-          continue;
-        }
-        value = Math.round(median(quiet) * 10) / 10;
-      }
-      checked++;
-      if (value > max) failures.push(`${m.name} is ${value}, budget ${max} (${pattern})`);
-    }
-  }
-  console.log(`budgets: ${checked} checked`);
-  if (busy.length) {
-    const msg = `${busy.length} timing budgets not checked: the machine was busy (cpu_busy over ${quietCpu}) in more than half the candidate's samples of ${busy.join(", ")}`;
+  const b = checkBudgets(result, budgets, { skip: values["skip-budget"] ?? [], quietCpu });
+  failures.push(...b.failures);
+  console.log(`budgets: ${b.checked} checked`);
+  if (b.busy.length) {
+    const msg = `${b.busy.length} timing budgets not checked: the machine was busy (cpu_busy over ${quietCpu}) in more than half the candidate's samples of ${b.busy.join(", ")}`;
     console.log(process.env.GITHUB_ACTIONS ? `::warning::perf: ${msg}` : `WARN ${msg}`);
   }
 }
 for (const f of failures) console.log(`${process.env.GITHUB_ACTIONS ? "::error::perf: " : "FAIL "}${f}`);
 
 if (values.baseline) {
-  const { stddev } = await import(join(ROOT, "packages/coding.sh/src/stats/summary.ts"));
+  const { median, stddev } = await import(join(ROOT, "packages/coding.sh/src/stats/summary.ts"));
   const runs = result.runs.filter((x) => !x.warmup && x.metrics);
   const metrics = {};
   for (const m of result.metrics) {

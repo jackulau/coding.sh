@@ -60,6 +60,10 @@ jobs:
           node-version: 24.x
           cache: npm
 
+      # The gate and budget rules against synthetic samples, before the long A/B.
+      - name: Gate tests
+        run: node --no-warnings --test scripts/perf/test/*.test.mjs
+
       - name: Pick the base commit
         id: base
         env:

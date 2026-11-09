@@ -75,16 +75,41 @@ See [Experiments](https://coding.sh/docs/experiments#metrics) for the metric A/B
 ## Budgets in CI
 
 [.github/workflows/site-perf.yml](https://github.com/jackulau/coding.sh/blob/main/.github/workflows/site-perf.yml) builds the base and head
-commits and runs 9 pairs. It fails when a gated metric gets worse, or when a page goes over its
-budget in [scripts/perf/budgets.json](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/budgets.json). The budgets sit about 10%
-above the numbers above. Pull requests run on GitHub's hosted runners and skip the load-time
-budgets, which only hold on our own machine. Pushes to main run on the one desk runner labelled
-`perf`, so two perf runs never overlap, but CI and deploys run beside it on the desk's second
-runner. Our machine runs other jobs too, so each sample also
-records `cpu_busy`, the share of the machine's CPU in use while that page loaded. A load-time
-budget counts only the samples where it was 0.5 or less (`--quiet-cpu`). When fewer than half the
-pairs were quiet, the run says so in a warning and skips that budget. The deploy also checks page weight, fonts, scripts
-and images in the build (`npm run perf:budget` in apps/site).
+commits and runs 9 pairs. It fails when a gated metric gets worse by an amount that matters, or
+when a page goes over its budget in [scripts/perf/budgets.json](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/budgets.json).
+The budgets sit about 10% above the numbers above. Pull requests run on GitHub's hosted runners
+and skip the load-time budgets, which only hold on our own machine. Pushes to main run on the one
+desk runner labelled `perf`, so two perf runs never overlap, but CI and deploys run beside it on
+the desk's second runner. Our machine runs other jobs too, so each sample also records
+`cpu_busy`, the share of the machine's CPU in use while that page loaded. A load-time budget
+counts only the samples where it was 0.5 or less (`--quiet-cpu`). When fewer than half the pairs
+were quiet, the run says so in a warning and skips that budget. The deploy also checks page
+weight, fonts, scripts and images in the build (`npm run perf:budget` in apps/site).
+
+The gated metrics are mobile LCP, mobile layout shift, mobile startup requests, and the script,
+font and stylesheet bytes. A gated metric fails when both of these hold:
+
+- **It is significant.** The test in "When a change counts" above calls it worse.
+- **It is big enough to matter.** The median paired difference is at least the metric's minimum
+  effect. For a load time that is 3% of the old median or 20 ms, whichever is larger: 49 ms on
+  the home page's mobile LCP (about 1.65 s), 27 ms on a docs page (about 0.9 s). For layout
+  shift it is 3% or 0.01. Bytes and request counts have no minimum: a fixed build gives the same
+  number every run, so one added byte of script is real and fails.
+
+Nine quiet pairs can find a shift much smaller than anyone would notice. A version bump that
+changed no page once failed on a 15 ms (0.9%) slower home LCP, with a 95% interval of 8 to 39 ms.
+That difference now passes and the run prints it as too small to count. A 10% slower LCP is
+165 ms on the home page and still fails.
+
+A budget is checked against the low end of the 95% bootstrap interval of the head build's median
+(over the quiet samples, for a load time), not against the median itself. The budget fails only
+when the samples show the page is over it. A median of 130.5 ms against a budget of 130 ms, with
+samples from 112 to 150 ms, is noise and passes. Samples from 150 to 170 ms against the same
+budget fail. Bytes and request counts give the same number in every run, so their interval has
+no width and one byte over still fails. We chose the interval over a fixed margin because it
+follows the noise of each run: on a quiet machine the interval is narrow and the check is close
+to the median, and on a busy one it widens instead of failing at random. The rules are in
+[scripts/perf/gate.mjs](https://github.com/jackulau/coding.sh/blob/main/scripts/perf/gate.mjs), with tests in `scripts/perf/test`.
 
 ## What we took from X's rewrite
 
