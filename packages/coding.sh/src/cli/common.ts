@@ -5,7 +5,7 @@ import { openContext, type Context } from "../core/context.ts";
 import type { IngestError } from "../core/ingest.ts";
 import type { EvalTask, Session } from "../core/types.ts";
 import type { GateOpts } from "../stats/tests.ts";
-import { parseWhere, QueryError, QueryUnsupported, type Query } from "../query/where.ts";
+import { andQuery, parseWhere, QueryError, QueryUnsupported, type Node, type Query } from "../query/where.ts";
 import { runningCli } from "../mcp/launch.ts";
 import { StoreOwnerError, UPGRADE_STORE } from "../core/store-guard.ts";
 import { acquireLock, isLocked, wakeMarker } from "../core/lock.ts";
@@ -101,14 +101,24 @@ export interface IngestBacklog {
   pendingFiles: number;
   /** A background ingest was started, or another ingest holds the lock. */
   indexing: boolean;
+  /** A re-parse holds reparse.lock: the read did not ingest, the re-parse indexes the files between its steps. */
+  reparsing?: true;
 }
 
 /**
  * The machine-readable form of a read's backlog: `{ pending: { files, indexing } }` while
  * captures are still waiting to be indexed (the answer is partial), else nothing.
+ * `reparsing: true` is there only while a re-parse runs.
  */
-export function pendingField(b: IngestBacklog): { pending?: { files: number; indexing: boolean } } {
-  return b.pendingFiles ? { pending: { files: b.pendingFiles, indexing: b.indexing } } : {};
+export function pendingField(b: IngestBacklog): { pending?: { files: number; indexing: boolean; reparsing?: true } } {
+  return b.pendingFiles ? { pending: { files: b.pendingFiles, indexing: b.indexing, ...(b.reparsing ? { reparsing: true as const } : {}) } } : {};
+}
+
+/** A not_found error that may only be not indexed yet: says so, and carries the backlog in data.pending. */
+export function notFoundWithBacklog(e: unknown, b: IngestBacklog): unknown {
+  if (!(e instanceof CliError) || e.reason !== "not_found" || !b.pendingFiles) return e;
+  const data = { ...(e.data && typeof e.data === "object" ? (e.data as Record<string, unknown>) : {}), ...pendingField(b) };
+  return new CliError(`${e.message}; it may be in the ${plural(b.pendingFiles, "file")} not yet ingested. Retry in a moment, or pass --fresh`, { reason: e.reason, exitCode: e.exitCode, next: e.next, details: e.details, data });
 }
 
 /** The read budget: CODING_SH_READ_BUDGET_MS when it is a number >= 0, else READ_INGEST_BUDGET_MS. */
@@ -141,6 +151,9 @@ export function readIngest(c: CommandContext): AutoIngestOptions {
 export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promise<IngestBacklog> {
   // A remote store (--store / CODING_SH_STORE_URL) is read as is: never push this machine's spool into it.
   if (ctx.storeOverridden) return { pendingFiles: 0, indexing: false };
+  // A re-parse holds the store: a budgeted read leaves the spool to it (it ingests between its
+  // steps when the wake marker says something waits) and answers from what is indexed.
+  if (o.budgetMs !== undefined && isLocked(ctx.paths.reparseLock)) return reparseBacklog(ctx, o);
   const deadline = o.budgetMs !== undefined ? Date.now() + o.budgetMs : undefined;
   let pending = 0;
   let busy = false;
@@ -183,6 +196,24 @@ export async function autoIngest(ctx: Context, o: AutoIngestOptions = {}): Promi
   }
   await kickReparse(ctx, o.env ?? process.env);
   return { pendingFiles: pending, indexing };
+}
+
+/** The backlog while a re-parse runs: the spool files still waiting, and a wake marker so the re-parse picks them up. */
+async function reparseBacklog(ctx: Context, o: AutoIngestOptions): Promise<IngestBacklog> {
+  let pending = 0;
+  if (existsSync(ctx.paths.spool)) {
+    const { spoolBacklog } = await import("../core/ingest.ts");
+    pending = await spoolBacklog(ctx.index, ctx.paths.spool).catch(() => 0);
+  }
+  if (pending) {
+    try {
+      writeFileSync(wakeMarker(ctx.paths.ingestLock), "", { mode: 0o600 });
+    } catch {
+      // the re-parse ingests at its next hook's marker instead
+    }
+    o.out?.note(`${plural(pending, "file")} not yet ingested; a re-parse is running and indexes them between its steps; showing what is indexed so far (--fresh waits for all)`);
+  }
+  return { pendingFiles: pending, indexing: true, reparsing: true };
 }
 
 let reparseKicked = false;
@@ -323,6 +354,24 @@ export function str(v: FlagValue): string | undefined {
 
 export function list(v: FlagValue): string[] {
   return Array.isArray(v) ? v : typeof v === "string" ? [v] : [];
+}
+
+/** `--agent`: every agent named, repeated or as a comma list (the parser splits those), each once. */
+export function agentsFlag(c: CommandContext): string[] {
+  return [...new Set(list(c.flags.agent))];
+}
+
+/**
+ * The agents as a store filter: one agent is SessionFilter.agent; several become an
+ * `agent:a,b` clause and-joined to the `--where` query, so every read path filters the same way.
+ */
+export function agentScope(agents: readonly string[], where: Query | undefined): { agent?: string; where?: Query } {
+  if (agents.length === 0) return where ? { where } : {};
+  if (agents.length === 1) return { agent: agents[0]!, ...(where ? { where } : {}) };
+  const cmp: Node = { t: "cmp", key: "agent", op: ":", values: agents.map((raw) => ({ raw, quoted: true, kind: "eq" as const })), at: 0 };
+  // Wrapped in a group: the flag filters like SessionFilter.agent, so an agent facet must not drop
+  // it the way it drops a typed `agent:` clause (withoutKey only removes top-level clauses).
+  return { where: andQuery(where ?? {}, { t: "or", items: [cmp] }) };
 }
 
 export function num(v: FlagValue): number | undefined {

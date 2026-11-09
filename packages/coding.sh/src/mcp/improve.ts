@@ -7,7 +7,7 @@ import type { Context } from "../core/context.ts";
 import { repoRoot } from "../core/git.ts";
 import { parseSince } from "../cli/args.ts";
 import type { ChangeEffect, GroupStats } from "../improve/changes.ts";
-import { findChanges, findIssues, isHeadless, modelProvider, scopeSessions, stepsFor, targetFile, testCommandOf } from "../improve/report.ts";
+import { findChanges, findIssues, isHeadless, modelProvider, removalStep, scopeSessions, stepsFor, targetFile, testCommandOf } from "../improve/report.ts";
 import { clip, iso } from "./data.ts";
 import { ToolError } from "./protocol.ts";
 
@@ -91,6 +91,8 @@ export function changeSummary(e: ChangeEffect, o: { full?: boolean; flagged?: nu
           after: { sessions: e.after.sessions, flagged: e.after.flagged, byFlag: e.after.byFlag, examples: e.after.examples.slice(0, 3), ...flaggedList(e.after, o.flagged ?? FLAGGED_LIST) },
           ...(e.p !== undefined ? { p: Math.round(e.p * 1000) / 1000 } : {}),
           rules: e.rules.map((r) => ({ line: clip(r.text, 160), followedBefore: `${r.before.acted}/${r.before.n}`, followedAfter: `${r.after.acted}/${r.after.n}`, ...(r.p !== undefined ? { p: Math.round(r.p * 1000) / 1000 } : {}) })),
+          ...(e.work ? { work: Object.fromEntries(Object.entries(e.work).map(([k, m]) => [k, { ...m, p: Math.round(m.p * 1000) / 1000 }])) } : {}),
+          ...(removalStep(e) ? { next: removalStep(e)!.command } : {}),
         }
       : {}),
   };

@@ -7,7 +7,7 @@
 import { createRedactor } from "../../core/redact.ts";
 import { loadReplay, snapshotBaseline, type Replay, type ReplayStep, type StepChange, type RangeFile } from "../../core/replay.ts";
 import { UsageError, positiveInt } from "../args.ts";
-import { autoIngest, oneLine, resolveSession, str, withContext } from "../common.ts";
+import { autoIngest, oneLine, resolveSession, str, withContext, notFoundWithBacklog, readIngest } from "../common.ts";
 import { fork } from "./replay-fork.ts";
 import { clean, duration, plural, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
@@ -22,8 +22,8 @@ export async function run(c: CommandContext): Promise<number> {
   const to = positiveInt(c.flags.to, "to");
   const file = str(c.flags.file);
   return withContext(c, async (ctx) => {
-    await autoIngest(ctx);
-    const s = await resolveSession(ctx, c.positionals[0]!);
+    const backlog = await autoIngest(ctx, readIngest(c));
+    const s = await resolveSession(ctx, c.positionals[0]!).catch((e) => Promise.reject(notFoundWithBacklog(e, backlog)));
     const redactor = createRedactor({ redact: ctx.config.capture.redact, patterns: ctx.config.capture.redactPatterns, env: ctx.env });
     const replay = await loadReplay(ctx, s, { baseline: snapshotBaseline(s, ctx.env, redactor) });
     const total = replay.steps.length;

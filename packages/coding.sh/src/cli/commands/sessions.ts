@@ -6,7 +6,7 @@ import { facetCounts, findSessions } from "../../query/run.ts";
 import { FACET_KEYS, scopesSubagents, type Query } from "../../query/where.ts";
 import type { Session } from "../../schema/index.ts";
 import { parseSince, positiveInt, UsageError } from "../args.ts";
-import { autoIngest, pendingField, queryCliError, readIngest, num, oneLine, sessionJson, str, whereFlag, withContext, type IngestBacklog } from "../common.ts";
+import { agentScope, agentsFlag, autoIngest, pendingField, queryCliError, readIngest, num, oneLine, sessionJson, str, whereFlag, withContext, type IngestBacklog } from "../common.ts";
 import { ago, clean, duration } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 import { noSessionsNext } from "../first-session.ts";
@@ -30,10 +30,13 @@ export async function run(c: CommandContext): Promise<number> {
   const since = str(c.flags.since) !== undefined ? parseSince(str(c.flags.since)!) : undefined;
   const repo = str(c.flags.repo);
   const where = whereFlag(c);
+  const agents = agentsFlag(c);
+  // Several agents: an `agent:a,b` clause on the query (facets, --where), or one listing per agent.
+  const scope = agentScope(agents, where);
   return withContext(c, async (ctx) => {
     const backlog = await autoIngest(ctx, readIngest(c));
     const filter: SessionFilter = {
-      ...(str(c.flags.agent) ? { agent: str(c.flags.agent)! } : {}),
+      ...(scope.agent ? { agent: scope.agent } : {}),
       ...(repo ? { repoRoot: resolve(c.cwd, repo) } : {}),
       ...(since !== undefined ? { since } : {}),
       ...(c.flags.subagents === true || scopesSubagents(where?.root) ? {} : { parentSessionId: null }),
@@ -41,20 +44,13 @@ export async function run(c: CommandContext): Promise<number> {
       ...(str(c.flags.flag) ? { flag: str(c.flags.flag)! } : {}),
     };
     const facets = facetKeys(c.flags.facets, ctx.index.queryFacets !== undefined || ctx.index.kind === "memory");
-    if (facets) return printFacets(c, await counts(ctx.index, where ?? {}, facets, filter, positiveInt(c.flags.limit, "limit") ?? 10), backlog);
+    if (facets) return printFacets(c, await counts(ctx.index, scope.where ?? {}, facets, filter, positiveInt(c.flags.limit, "limit") ?? 10), backlog);
     let sessions: Session[];
-    if (where) sessions = await query(ctx.index, where, filter, positiveInt(c.flags.limit, "limit") ?? where.limit ?? 20);
-    else if (c.flags.empty === true) sessions = await ctx.index.listSessions({ ...filter, limit });
-    else {
-      // Empty sessions are left out after the store's page, so read pages until `limit` are kept.
-      sessions = [];
-      const page = Math.max(limit * 2, 50);
-      for (let offset = 0; sessions.length < limit; offset += page) {
-        const got = await ctx.index.listSessions({ ...filter, limit: page, offset });
-        for (const s of got) if (!isEmptySession(s) && sessions.length < limit) sessions.push(s);
-        if (got.length < page) break;
-      }
-    }
+    if (where) sessions = await query(ctx.index, scope.where!, filter, positiveInt(c.flags.limit, "limit") ?? where.limit ?? 20);
+    else if (agents.length > 1) {
+      const each = await Promise.all(agents.map((agent) => listPlain(ctx.index, { ...filter, agent }, limit, c.flags.empty === true)));
+      sessions = each.flat().sort((a, b) => b.startedAt - a.startedAt).slice(0, limit);
+    } else sessions = await listPlain(ctx.index, filter, limit, c.flags.empty === true);
     if (out.json) {
       out.data({ sessions: sessions.map(sessionJson), ...pendingField(backlog) });
       return 0;
@@ -90,6 +86,20 @@ export async function run(c: CommandContext): Promise<number> {
     }
     return 0;
   });
+}
+
+/** The newest `limit` sessions the filter keeps; empty ones left out unless `empty`. */
+async function listPlain(index: IndexStore, filter: SessionFilter, limit: number, empty: boolean): Promise<Session[]> {
+  if (empty) return index.listSessions({ ...filter, limit });
+  // Empty sessions are left out after the store's page, so read pages until `limit` are kept.
+  const sessions: Session[] = [];
+  const page = Math.max(limit * 2, 50);
+  for (let offset = 0; sessions.length < limit; offset += page) {
+    const got = await index.listSessions({ ...filter, limit: page, offset });
+    for (const s of got) if (!isEmptySession(s) && sessions.length < limit) sessions.push(s);
+    if (got.length < page) break;
+  }
+  return sessions;
 }
 
 async function query(index: IndexStore, q: Query, filter: SessionFilter, limit: number): Promise<Session[]> {

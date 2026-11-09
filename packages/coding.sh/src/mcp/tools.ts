@@ -40,6 +40,7 @@ import { sessionDigest } from "./digest.ts";
 import { facetCounts, searchWhere } from "../query/run.ts";
 import { andQuery, FACET_KEYS, parseWhere, QueryError, QueryUnsupported, type Query } from "../query/where.ts";
 import { ToolError, type ToolDef } from "./protocol.ts";
+import { scoreTools } from "../scores/mcp.ts";
 
 type Obj = Record<string, unknown>;
 
@@ -601,6 +602,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         agent: AGENT,
         repo: REPO,
         groupBy: { type: "string", enum: [...USAGE_GROUPS], default: "day", description: "Group rows by this; agent-model compares harnesses at a fixed model." },
+        baseline: { type: "boolean", default: false, description: "With groupBy agent or agent-model: rows of an agent a published dataset lists carry cacheBaseline {rate, source, period, delta} (delta = cacheReadShare - rate), plus a note on the source and its denominator." },
         where: WHERE_SAME(""),
         limit: LIMIT(31, 100),
       }),
@@ -609,7 +611,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
           window: WINDOW_OUT,
           groupBy: S,
           total: out({ costUsd: N, estimatedCostUsd: N, estimatedCostByTier: BY_TIER, totalTokens: N }),
-          groups: arr(out({ key: S, costUsd: N, estimatedCostUsd: N, estimatedCostByTier: BY_TIER, totalTokens: N }, ["key"])),
+          groups: arr(out({ key: S, costUsd: N, estimatedCostUsd: N, estimatedCostByTier: BY_TIER, totalTokens: N, cacheBaseline: out({ rate: N, source: S, period: S, delta: N }, ["rate", "source", "period", "delta"]) }, ["key"])),
           topSessions: arr(out({ id: S, costUsd: N, costEstimated: { type: "boolean" } }, ["id"])),
           topSessionsRankedBy: { type: "string", enum: ["costUsd", "outputTokens"] },
           notes: arr(S),
@@ -622,7 +624,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         const q = query(a, c, { sinceDefault: "7d", topLevel: false });
         const where = whereArg(a, c.now());
         if (where) q.query = where;
-        return usage(ctx.index, q, (strArg(a, "groupBy") ?? "day") as UsageGroup, numArg(a, "limit", 31)).catch((e) => Promise.reject(queryToolError(e)));
+        return usage(ctx.index, q, (strArg(a, "groupBy") ?? "day") as UsageGroup, numArg(a, "limit", 31), { baseline: a.baseline === true }).catch((e) => Promise.reject(queryToolError(e)));
       },
     },
     {
@@ -846,6 +848,54 @@ export function buildTools(): ToolDef<ToolCtx>[] {
           todo: r.todo,
           run: r.run,
           ...(r.ci ? { ci: r.ci } : {}),
+        };
+      },
+    },
+    {
+      name: "eval_candidates",
+      title: "Rank sessions as eval tasks",
+      description:
+        "Rank this repo's recent sessions by how good a repo-replay eval task each would make: failure flags, pushback and a guessable verifier score up; subagents, eval runs and sessions with no git start, prompt or edits are rejected.",
+      inputSchema: input({
+        since: { type: "string", description: "How far back: 30m, 12h, 7d, 2w. Default 14d." },
+        limit: LIMIT(10, 50),
+        repo: { type: "string", description: "Sessions under this directory, or all. Default: this git repo." },
+        flagged: { type: "boolean", description: "Only failed or flagged sessions (what eval_init drafts from)." },
+        includeRejected: { type: "boolean", description: "Also return rejected sessions with the reason." },
+      }),
+      outputSchema: out(
+        {
+          candidates: arr(out({ sessionId: S, eligible: B, reject: S, score: N, reasons: arr(S), verifierGuess: S }, ["sessionId", "eligible", "score"])),
+          considered: N,
+          eligible: N,
+          next: S,
+        },
+        ["candidates", "considered", "eligible"],
+      ),
+      annotations: READ,
+      async run(a, c) {
+        const ctx = await c.store();
+        const { rankSessions } = await import("../eval/candidates.ts");
+        const { recentSessions, DEFAULT_SINCE_MS } = await import("../eval/init.ts");
+        const { repoRoot } = await import("../core/git.ts");
+        const { resolve } = await import("node:path");
+        const sinceArg = strArg(a, "since");
+        const m = sinceArg ? /^(\d+(?:\.\d+)?)\s*(m|h|d|w)$/.exec(sinceArg.trim()) : null;
+        if (sinceArg && !m) throw new ToolError(`since must be a duration such as 12h, 7d or 2w, got ${JSON.stringify(sinceArg)}`);
+        const since = m ? Number(m[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000, w: 604_800_000 }[m[2] as "m" | "h" | "d" | "w"] : DEFAULT_SINCE_MS;
+        const repo = strArg(a, "repo");
+        const root = (await repoRoot(c.cwd)) ?? c.cwd;
+        const now = c.now();
+        const pool = await recentSessions({ root, since, ...(repo ? { sessionsRepo: repo === "all" ? "all" : resolve(c.cwd, repo) } : {}) }, ctx.index, now, a.flagged === true);
+        const ranked = await rankSessions(ctx.index, pool, { now });
+        const eligible = ranked.filter((x) => x.eligible);
+        const limit = numArg(a, "limit", 10);
+        const shown = [...eligible.slice(0, limit), ...(a.includeRejected === true ? ranked.filter((x) => !x.eligible) : [])];
+        return {
+          candidates: shown.map((x) => ({ ...x, title: clip(x.title, 100), startedAt: new Date(x.startedAt).toISOString() })),
+          considered: ranked.length,
+          eligible: eligible.length,
+          ...(eligible.length ? { next: "eval_init with source: sessions and these sessionIds builds a suite from them (ask the user first)" } : {}),
         };
       },
     },
@@ -1244,6 +1294,7 @@ export function buildTools(): ToolDef<ToolCtx>[] {
         };
       },
     },
+    ...scoreTools(),
   ];
 }
 

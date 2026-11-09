@@ -1,5 +1,6 @@
 // Hand-rolled argv parser (no deps). Supports `--name value`, `--name=value`,
-// `-x value`, `--no-name` for booleans, repeated list flags, and `--` to end
+// `-x value`, `--no-name` for booleans, repeated list flags (comma lists too where
+// the flag says so), and `--` to end
 // option parsing. Unknown options and extra positionals are usage errors raised
 // before any work happens.
 
@@ -27,6 +28,11 @@ export interface FlagSpec {
   dashValue?: boolean;
   /** Accepted but left out of help, `--help --json` and the CLI reference (internal plumbing). */
   hidden?: boolean;
+  /**
+   * List flag whose values are ids or names: `--agent a,b` is `--agent a --agent b`. Left off
+   * where a value may itself hold a comma (JSON, a command, a regex, a path or glob).
+   */
+  commas?: boolean;
 }
 
 /** The flags help shows: everything but the hidden ones. */
@@ -139,16 +145,22 @@ export function parseArgs(argv: readonly string[], specs: readonly FlagSpec[], o
       return;
     }
     if (raw === undefined) throw new UsageError(`${token} needs a value${spec.value ? ` ${spec.value}` : ""}`, { reason: "missing_value" });
-    if (spec.choices && !spec.choices.includes(raw)) {
-      throw new UsageError(`${label} must be one of ${spec.choices.join(", ")}, got ${shown(raw)}`, { suggestion: suggest(raw, spec.choices) ? `${label} ${suggest(raw, spec.choices)}` : undefined });
-    }
+    const choice = (v: string) => {
+      if (spec.choices && !spec.choices.includes(v)) {
+        throw new UsageError(`${label} must be one of ${spec.choices.join(", ")}, got ${shown(v)}`, { suggestion: suggest(v, spec.choices) ? `${label} ${suggest(v, spec.choices)}` : undefined });
+      }
+    };
+    if (!(spec.type === "list" && spec.commas)) choice(raw);
     if (spec.type === "number") {
       const n = Number(raw);
       if (raw.trim() === "" || !Number.isFinite(n)) throw new UsageError(`${label} must be a number, got ${shown(raw)}`);
       flags[spec.name] = n;
     } else if (spec.type === "list") {
       const prev = flags[spec.name];
-      flags[spec.name] = [...(Array.isArray(prev) ? prev : []), raw];
+      const parts = spec.commas ? raw.split(",").map((x) => x.trim()).filter(Boolean) : [raw];
+      if (!parts.length) throw new UsageError(`${token} needs a value${spec.value ? ` ${spec.value}` : ""}`, { reason: "missing_value" });
+      parts.forEach(choice);
+      flags[spec.name] = [...(Array.isArray(prev) ? prev : []), ...parts];
     } else {
       flags[spec.name] = raw;
     }

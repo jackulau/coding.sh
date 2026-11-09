@@ -7,7 +7,7 @@ import { bundleFromDir, bundleFromToml, DEFAULT_INCLUDE } from "../../runner/bun
 import { claudeDirOf, isPluginPath } from "../../runner/plugins.ts";
 import type { HarnessBundle } from "../../core/types.ts";
 import { parseSince, positiveInt, suggest, UsageError } from "../args.ts";
-import { autoIngest, list, str, withContext } from "../common.ts";
+import { autoIngest, list, str, withContext, pendingField, readIngest } from "../common.ts";
 import { ago, bytes, CliError, plural, tokens } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -45,10 +45,10 @@ async function audit(c: CommandContext): Promise<number> {
   const agentFiles = claudeOnly ? agentFileProblems([join(memoryDirs(c.env).claudeDir, "agents"), join(c.cwd, ".claude", "agents")]) : [];
   const fallback = claudeOnly ? fallbackModelRisks([memoryDirs(c.env).claudeDir, join(c.cwd, ".claude")]) : [];
   return withContext(c, async (ctx) => {
-    await autoIngest(ctx);
+    const backlog = await autoIngest(ctx, readIngest(c));
     const a = await memoryAudit(ctx.index, { since, env: c.env, ...(agent ? { agent } : {}) });
     if (out.json) {
-      out.data({ ...a, ...(agentFiles.length ? { agentFiles } : {}), ...(fallback.length ? { fallbackModels: fallback } : {}) });
+      out.data({ ...a, ...(agentFiles.length ? { agentFiles } : {}), ...(fallback.length ? { fallbackModels: fallback } : {}), ...pendingField(backlog) });
       return 0;
     }
     if (fallback.length) {

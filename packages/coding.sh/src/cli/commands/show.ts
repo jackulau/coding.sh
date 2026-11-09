@@ -14,7 +14,7 @@ import type { AgentEvent, Session } from "../../core/types.ts";
 import type { DurableStats } from "../../schema/index.ts";
 import { positiveInt } from "../args.ts";
 import { loadCall, resolveCall } from "../../proxy/calls.ts";
-import { autoIngest, oneLine, resolveSession, sessionJson, withContext } from "../common.ts";
+import { autoIngest, oneLine, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest } from "../common.ts";
 import { ago, clean, CliError, duration, localTime, tokens, usd, type Output } from "../output.ts";
 import { printCall } from "./diff-calls.ts";
 import type { CommandContext } from "../types.ts";
@@ -283,7 +283,7 @@ function printTree(out: Output, t: Tree[], depth = 1): void {
   for (const x of t) {
     const s = x.session;
     const d = s.endedAt !== undefined ? duration(s.endedAt - s.startedAt) : "-";
-    out.print(`${"  ".repeat(depth)}└ ${s.id}  ${s.parent?.type ?? s.agent}  ${d}  ${s.stats.toolCalls} tools  ${oneLine(clean(s.title ?? ""), 60)}`);
+    out.print(`${"  ".repeat(depth)}└ ${s.id}  ${s.parent?.type === "harness" ? `harness ${s.agent}` : (s.parent?.type ?? s.agent)}  ${d}  ${s.stats.toolCalls} tools  ${oneLine(clean(s.title ?? ""), 60)}`);
     printTree(out, x.children, depth + 1);
   }
 }
@@ -330,16 +330,16 @@ export async function run(c: CommandContext): Promise<number> {
   const limit = explicitLimit ?? DEFAULT_LIMIT;
   const all = c.flags.all === true;
   return withContext(c, async (ctx) => {
-    await autoIngest(ctx);
+    const backlog = await autoIngest(ctx, readIngest(c));
     const ref = c.positionals[0]!;
     let s: Session;
     try {
       s = await resolveSession(ctx, ref);
     } catch (err) {
       // Not a session: maybe a model call.
-      if (!(err instanceof CliError) || err.reason !== "not_found" || c.flags.follow === true) throw err;
+      if (!(err instanceof CliError) || err.reason !== "not_found" || c.flags.follow === true) throw notFoundWithBacklog(err, backlog);
       const call = await resolveCall(ctx.index, ref).catch(() => undefined);
-      if (!call) throw err;
+      if (!call) throw notFoundWithBacklog(err, backlog);
       const loaded = await loadCall(ctx.blobs, call);
       if (out.json) out.data({ call: call, request: loaded.request ?? null, response: loaded.response ?? null });
       else printCall(out, loaded, all);
@@ -361,7 +361,7 @@ export async function run(c: CommandContext): Promise<number> {
     const filesChanged = Math.max(s.stats.filesChanged, changed.size);
     const skills = await sessionSkills(ctx.index, s);
     if (out.json) {
-      out.data({ session: sessionJson(s), snapshot: changes ?? null, events: all ? full : events, phases: outline?.phases ?? [], days: outline?.days ?? [], subagents: treeJson(tree), skills: skills?.used ?? [] });
+      out.data({ session: sessionJson(s), snapshot: changes ?? null, events: all ? full : events, phases: outline?.phases ?? [], days: outline?.days ?? [], subagents: treeJson(tree), skills: skills?.used ?? [], ...pendingField(backlog) });
       return 0;
     }
     const lat = s.stats.latency;
@@ -549,7 +549,7 @@ async function follow(c: CommandContext, ctx: Parameters<Parameters<typeof withC
     } catch {
       break; // Ctrl-C
     }
-    await autoIngest(ctx);
+    await autoIngest(ctx, readIngest(c));
     s = (await ctx.index.getSession(id)) ?? s;
     batch = await tail();
   }

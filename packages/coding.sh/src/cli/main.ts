@@ -95,7 +95,7 @@ export function commandHelp(cmd: CommandSpec, action: ActionSpec | undefined, s:
 
 /** `--help --json`: machine-readable metadata. */
 export function helpMetadata(cmd?: CommandSpec, action?: ActionSpec): unknown {
-  const flag = (f: FlagSpec) => ({ name: f.name, short: f.short ?? null, type: f.type, description: f.desc, default: f.default ?? null, choices: f.choices ?? null });
+  const flag = (f: FlagSpec) => ({ name: f.name, short: f.short ?? null, type: f.type, description: f.desc, default: f.default ?? null, choices: f.choices ?? null, ...(f.commas ? { commaList: true } : {}) });
   const arg = (a: NonNullable<ActionSpec["args"]>[number]) => ({ name: a.name, description: a.desc, required: a.required === true, variadic: a.variadic === true });
   const describe = (c: CommandSpec) => ({
     name: c.name,

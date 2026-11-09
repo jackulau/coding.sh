@@ -50,6 +50,7 @@
       "types": "./dist/types/schema/index.d.ts",
       "default": "./dist/schema.mjs"
     },
+    "./schema.json": "./dist/schema.json",
     "./store": {
       "source": "./src/store/plugin-api.ts",
       "types": "./dist/types/store/plugin-api.d.ts",
@@ -60,10 +61,22 @@
       "types": "./dist/types/store/conformance.d.ts",
       "default": "./dist/store-conformance.mjs"
     },
+    "./eve": {
+      "source": "./src/integrations/eve/reporter.ts",
+      "types": "./dist/types/integrations/eve/reporter.d.ts",
+      "default": "./dist/eve.mjs"
+    },
+    "./server": {
+      "source": "./src/server/index.ts",
+      "types": "./dist/types/server/index.d.ts",
+      "default": "./dist/server.mjs"
+    },
     "./package.json": "./package.json"
   },
   "files": [
     "dist/*.mjs",
+    "dist/schema.json",
+    "dist/hook.sh",
     "dist/types/**/*.d.ts",
     "README.md",
     "LICENSE"

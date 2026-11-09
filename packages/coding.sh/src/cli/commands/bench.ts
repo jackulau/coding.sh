@@ -5,6 +5,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import { BenchDefError, benchHome, checkName, findDefinition, listDefinitions, loadDefinition, parseDefinition, renderDefinition } from "../../bench/define.ts";
 import { verifySeed, type SeedCheck } from "../../bench/commit.ts";
 import { buildReport, renderReportHtml } from "../../bench/report.ts";
+import { gridText } from "../../bench/grid.ts";
+import { specializationLines } from "../../bench/specialization.ts";
 import { BenchRunError, regradeRun, resumeBench, resumeTarget, runBench, type DryRunResult } from "../../bench/run.ts";
 import { JobStore } from "../../jobs/store.ts";
 import { cronLine, envRefs, installCron, systemCrontab, workflowYaml } from "../../bench/schedule.ts";
@@ -19,7 +21,7 @@ import { FileEvalStore } from "../../datasets/store.ts";
 import type { GraderSpec } from "../../graders/index.ts";
 import { FileJudgeCache } from "../../judge/cache.ts";
 import { positiveInt, UsageError } from "../args.ts";
-import { autoIngest, jsonArg, list, requireConsent, str, withContext } from "../common.ts";
+import { autoIngest, jsonArg, list, requireConsent, str, withContext, readIngest } from "../common.ts";
 import { ago, CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -157,6 +159,17 @@ function printRun(c: CommandContext, r: BenchRun, opts: { failures?: number; cas
   const costly = r.summaries.filter((s) => s.n);
   if (costly.length) out.print(`Cost source: ${costly.map((s) => `${s.contender} ${costSources(s)}`).join("; ")}${r.pricing ? ` (price table checked ${[...new Set(Object.values(r.pricing.updated))].sort().at(-1)})` : ""}`);
   if (costly.some((s) => s.tokensIn?.known || s.tokensOut?.known)) out.print(`Tokens in/out per call: ${costly.map((s) => `${s.contender} ${tok(s.tokensIn)}/${tok(s.tokensOut)}`).join("; ")}`);
+  if (r.specialization) {
+    out.print("");
+    for (const l of specializationLines(r.specialization)) out.print(l);
+  }
+  if (r.grid) {
+    const g = gridText(r.grid);
+    out.print("");
+    out.print(g.heading);
+    out.table(g.columns, g.rows);
+    for (const l of g.lines) out.print(l);
+  }
   if (r.anchor) {
     out.print("");
     out.print(`Anchor set v${r.anchor.version}: ${plural(r.anchor.cases, "case")}, the same every day since run ${r.anchor.frozenBy} (sha256 ${r.anchor.sha256.slice(0, 12)})`);
@@ -302,7 +315,7 @@ async function dispatch(c: CommandContext): Promise<number> {
         }
       }
       return withContext(c, async (ctx) => {
-        if (def.source.kind === "sessions") await autoIngest(ctx);
+        if (def.source.kind === "sessions") await autoIngest(ctx, readIngest(c));
         const evalStore = new FileEvalStore({ env, index: ctx.index });
         const needsAgents = def.contenders.some((x) => x.kind === "agent");
         const adapters = needsAgents ? await import("../../adapters/index.ts") : undefined;

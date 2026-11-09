@@ -1,4 +1,4 @@
-// npm run build: dist/cli.mjs, dist/hook.mjs, dist/schema.mjs, dist/store*.mjs (see bundle.mjs),
+// npm run build: dist/cli.mjs, dist/hook.mjs, dist/hook.sh, dist/schema.mjs, dist/store*.mjs (see bundle.mjs),
 // plus dist/types/**/*.d.ts for the published entry points (tsconfig.types.json).
 // Type errors are `npm run typecheck`'s job (prepublishOnly runs it first); the build only
 // fails when a declared `types` file was not emitted.
@@ -20,4 +20,4 @@ if (missing.length) {
   process.exit(1);
 }
 if (r.status !== 0) console.error("build: tsc reported type errors (declarations were still emitted; run npm run typecheck)");
-console.log("built dist/cli.mjs, dist/hook.mjs, dist/schema.mjs, dist/store.mjs and dist/types");
+console.log("built dist/cli.mjs, dist/hook.mjs, dist/hook.sh, dist/schema.mjs, dist/store.mjs and dist/types");

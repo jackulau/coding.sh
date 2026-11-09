@@ -10,19 +10,21 @@ import { after, before, describe, it } from "node:test";
 import { bundle } from "../../scripts/bundle.mjs";
 import { assertStartupBudget } from "../helpers-timing.ts";
 import { which } from "../../src/adapters/_shared/detect.ts";
-import { hookPathForCommand } from "../../src/adapters/_shared/hooks.ts";
+import { hookPathForCommand, hookShFor } from "../../src/adapters/_shared/hooks.ts";
 import { pathOf, printBin } from "../_bin.ts";
 import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 
 let distDir = "";
 let CLI = "";
 let HOOK = "";
+let CLI_INPUTS: string[] = [];
 
 before(async () => {
   distDir = realpathSync(mkdtempSync(join(tmpdir(), "csh-cli-dist-")));
   const b = await bundle(distDir);
   CLI = b.cli;
   HOOK = b.hook;
+  CLI_INPUTS = b.cliInputs;
 });
 after(() => rmSync(distDir, { recursive: true, force: true }));
 
@@ -114,8 +116,14 @@ describe("cli help", () => {
   it("keeps command code out of the entry bundle (code splitting)", () => {
     // Regression: one 1.5 MB cli.mjs cost ~300 ms of module compile on every
     // `--help`, even though commands load through dynamic import().
+    // The entry holds the dispatcher and the registry (every command's help text) and nothing else.
+    const allowed = /^src\/(cli\/(main|registry)|bench\/cli-spec|workflows\/cli-spec)\.ts$/;
+    assert.ok(CLI_INPUTS.includes("src/cli/main.ts"), "the bundle reports cli.mjs's inputs");
+    const leaked = CLI_INPUTS.filter((f) => !allowed.test(f));
+    assert.deepEqual(leaked, [], `these modules leaked into cli.mjs; load them with import() after dispatch`);
+    // A coarse ceiling for what the inputs check cannot see (a huge help string): the registry is ~160 KB.
     const size = lstatSync(CLI).size;
-    assert.ok(size < 150_000, `cli.mjs is ${size} bytes; command modules leaked into the entry`);
+    assert.ok(size < 300_000, `cli.mjs is ${size} bytes; command modules leaked into the entry`);
     assert.ok(readdirSync(dirname(CLI)).some((f) => /^chunk-.*\.mjs$/.test(f)), "command chunks sit next to cli.mjs");
     assert.doesNotMatch(readFileSync(CLI, "utf8"), /node:sqlite/, "the store is not loaded for help");
   });
@@ -414,7 +422,8 @@ describe("cli init/uninstall round trip", () => {
     assert.ok(existsSync(res.hook), "hook bin copied");
     assert.ok(res.hook.startsWith(h.data), "hook bin under CODING_SH_HOME");
     const installed = readFileSync(settings, "utf8");
-    assert.ok(installed.includes(hookPathForCommand(res.hook)), "settings point at the hook bin");
+    // Outside Windows the commands run the sh fast path beside the hook (hook.sh).
+    assert.ok(installed.includes(hookPathForCommand(process.platform === "win32" ? res.hook : hookShFor(res.hook))), "settings point at the hook bin");
     assert.match(installed, /echo mine/);
     assert.ok(existsSync(join(h.data, "config.toml")), "default config written");
 
@@ -700,7 +709,8 @@ describe("cli ingest re-parse", () => {
     const rows = () => db((d) => d.prepare("SELECT id, parse_version AS v, stats FROM sessions WHERE agent = 'pi' ORDER BY id").all()) as { id: string; v: number; stats: string }[];
     const fresh = rows();
     assert.ok(fresh.length >= 1);
-    assert.ok(fresh.every((r) => r.v === 2), "ingest stamps the adapter's parse version");
+    const { piAdapter } = await import("../../src/adapters/more/pi.ts");
+    assert.ok(fresh.every((r) => r.v === piAdapter.parseVersion), "ingest stamps the adapter's parse version");
     // As a 0.1.1 index looks after the upgrade: version 1 rows, no stamp for the new versions.
     db((d) => d.exec("UPDATE sessions SET parse_version = 1; DELETE FROM cursors WHERE source = 'reparse:stamp'"));
 
@@ -1397,6 +1407,9 @@ describe("cli exp run matrix", () => {
     assert.deepEqual(Object.keys(r.comparisons), ["model=bad", "model=also-good"]);
     assert.equal(r.comparisons["model=bad"]!.mcnemar.b, 4);
     for (const c of Object.values(r.comparisons)) assert.ok(c.pHolm >= c.mcnemar.p);
+    // EM-7: three cells carry the plausibly-best set; the always-wrong cell is not in it.
+    const best = (r as unknown as { bestSet: { best: string[]; n: number } }).bestSet;
+    assert.ok(best.best.includes("model=good") && !best.best.includes("model=bad"), JSON.stringify(best));
     assert.deepEqual(listOf().map((e) => e.name).sort(), ["mx/model=also-good", "mx/model=bad", "mx/model=good"]);
 
     writeFileSync(join(h.home, "variants.json"), JSON.stringify({ ...base, vary: ["/task/env/MODEL"], variants: { a: {}, b: { "/task/env/MODEL": "bad", "/task/timeoutMs": 5000 } }, baseline: "a" }));

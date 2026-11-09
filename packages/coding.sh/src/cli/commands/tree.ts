@@ -6,7 +6,7 @@
 import { costNote } from "../../core/pricing.ts";
 import { buildRunTree, buildSessionTree, worstNode, worstFirst, type Tree, type TreeNode } from "../../core/tree.ts";
 import type { Session } from "../../core/types.ts";
-import { autoIngest, oneLine, resolveSession, sessionJson, withContext } from "../common.ts";
+import { autoIngest, oneLine, resolveSession, sessionJson, withContext, notFoundWithBacklog, pendingField, readIngest } from "../common.ts";
 import { clean, duration, plural, tokens, usd, type Output } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -79,7 +79,7 @@ export async function run(c: CommandContext): Promise<number> {
   const arg = c.positionals[0]!;
   const forceRun = c.flags.run === true;
   return withContext(c, async (ctx) => {
-    await autoIngest(ctx);
+    const backlog = await autoIngest(ctx, readIngest(c));
 
     let tree: Tree | undefined;
     let label: string;
@@ -91,7 +91,7 @@ export async function run(c: CommandContext): Promise<number> {
         label = tree && tree.roots[0] ? treeLabel(tree.roots[0]!.session) : s.id;
       } catch (e) {
         tree = await buildRunTree(ctx.index, arg);
-        if (!tree) throw e; // neither a session nor a run: surface the session error
+        if (!tree) throw notFoundWithBacklog(e, backlog); // neither a session nor a run: surface the session error
         label = `run ${arg}`;
       }
     } else {
@@ -109,7 +109,7 @@ export async function run(c: CommandContext): Promise<number> {
     }
 
     if (out.json) {
-      out.data(treeJson(tree));
+      out.data({ ...treeJson(tree), ...pendingField(backlog) });
       return 0;
     }
 

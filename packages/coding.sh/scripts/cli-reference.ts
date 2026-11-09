@@ -36,7 +36,7 @@ function flagTable(all: FlagSpec[]): string[] {
   const flags = visibleFlags(all);
   if (!flags.length) return [];
   const rows = flags.map((f) => {
-    const extra = [f.choices ? `One of: ${f.choices.map((c) => `\`${c}\``).join(", ")}.` : "", f.type === "list" && !/repeatable/i.test(f.desc) ? "Repeatable." : ""];
+    const extra = [f.choices ? `One of: ${f.choices.map((c) => `\`${c}\``).join(", ")}.` : "", f.type === "list" && !/repeatable/i.test(f.desc) ? "Repeatable." : "", f.commas && !/comma/i.test(f.desc) ? "Takes a comma list too (a,b)." : ""];
     return `| \`${flagSyntax(f)}\` | ${f.default !== undefined ? `\`${f.default}\`` : ""} | ${[sentence(cell(f.desc)), ...extra].filter(Boolean).join(" ")} |`;
   });
   return ["| Option | Default | Description |", "|---|---|---|", ...rows, ""];

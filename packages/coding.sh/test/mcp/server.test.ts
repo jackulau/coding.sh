@@ -71,6 +71,7 @@ describe("handshake (legacy era)", () => {
     tools = r.result!.tools as Tool[];
     assert.deepEqual(tools.map((t) => t.name).sort(), [
       "benchmarks",
+      "eval_candidates",
       "eval_from_session",
       "eval_init",
       "exp_session_note",
@@ -83,6 +84,8 @@ describe("handshake (legacy era)", () => {
       "harness_compare",
       "improve",
       "latency",
+      "score_add",
+      "score_list",
       "search",
       "session_current",
       "session_get",
@@ -100,7 +103,7 @@ describe("handshake (legacy era)", () => {
       assert.equal(t.inputSchema.additionalProperties, false, `${t.name} rejects unknown args`);
       for (const [k, p] of Object.entries((t.inputSchema.properties ?? {}) as Record<string, { description?: string }>)) assert.ok(p.description, `${t.name}.${k} has a description`);
       assert.equal(t.outputSchema.type, "object", `${t.name} outputSchema`);
-      assert.equal(t.annotations.readOnlyHint, !["eval_from_session", "eval_init", "exp_session_note"].includes(t.name), `${t.name} readOnlyHint`);
+      assert.equal(t.annotations.readOnlyHint, !["eval_from_session", "eval_init", "exp_session_note", "score_add"].includes(t.name), `${t.name} readOnlyHint`);
       assert.equal(t.annotations.destructiveHint, false);
       // session_replay's fork calls the model API.
       assert.equal(t.annotations.openWorldHint, t.name === "session_replay", `${t.name} openWorldHint`);
@@ -470,7 +473,7 @@ describe("modern era (2026-07-28)", () => {
     try {
       assert.equal(client.era, "2026-07-28");
       assert.equal(client.serverInfo?.name, "coding.sh");
-      assert.equal((await client.listTools()).length, 22);
+      assert.equal((await client.listTools()).length, 25);
       const r = await client.callTool("session_get", { sessionId: SEED.b });
       assert.equal((r.structuredContent as { session: { agent: string } }).session.agent, "codex");
     } finally {

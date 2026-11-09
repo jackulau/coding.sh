@@ -6,6 +6,7 @@ import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 import type { AgentEvent, IndexStore, Session, SessionFilter } from "../core/types.ts";
 import type { CacheBreakCause } from "../schema/index.ts";
 import { CACHE_BREAK_FIX, CACHE_IDLE_FIX } from "../core/cache-breaks.ts";
+import { cacheBaseline, CACHE_BASELINE_NOTE } from "../core/cache-baselines.ts";
 import { mergeCallCopies } from "../core/call-copies.ts";
 import { failureFlags, percentile } from "../core/sessions.ts";
 import { sessionMatcher } from "../query/run.ts";
@@ -588,7 +589,12 @@ export async function latency(index: IndexStore, q: ScanQuery, opts: { model?: s
 export type UsageGroup = "day" | "agent" | "model" | "agent-model" | "repo";
 export const USAGE_GROUPS: readonly UsageGroup[] = ["day", "agent", "model", "agent-model", "repo"];
 
-export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup, limit: number): Promise<Obj> {
+/** Usage options: `baseline` adds each agent row's published prompt-cache hit rate (core/cache-baselines.ts). */
+export interface UsageOpts {
+  baseline?: boolean;
+}
+
+export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup, limit: number, opts: UsageOpts = {}): Promise<Obj> {
   const { sessions, truncated } = await collectSessions(index, { ...q, topLevel: false });
   interface Acc {
     sessions: number;
@@ -704,7 +710,16 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
       ...(cacheLowSessions ? { cacheLowSessions } : {}),
     };
   };
-  const rows = [...groups].map(([key, a]) => ({ key, ...fix(a) }));
+  // Published hit rates apply to an agent, so only rows keyed by one carry them; never a guess for an unlisted agent.
+  const withBaseline = opts.baseline === true && (groupBy === "agent" || groupBy === "agent-model");
+  const baselineOf = (key: string, share: number | undefined) => {
+    const b = withBaseline && share !== undefined ? cacheBaseline(groupBy === "agent" ? key : key.split(" ")[0]!) : undefined;
+    return b ? { cacheBaseline: { rate: b.rate, source: b.source, period: b.period, delta: Math.round((share! - b.rate) * 1000) / 1000 } } : {};
+  };
+  const rows = [...groups].map(([key, a]) => {
+    const row = { key, ...fix(a) };
+    return { ...row, ...baselineOf(key, row.cacheReadShare) };
+  });
   if (groupBy === "day") rows.sort((a, b) => b.key.localeCompare(a.key));
   else rows.sort((a, b) => (b.costUsd ?? 0) - (a.costUsd ?? 0) || b.totalTokens - a.totalTokens);
   const anyCost = total.priced > 0;
@@ -729,6 +744,7 @@ export async function usage(index: IndexStore, q: ScanQuery, groupBy: UsageGroup
     notes.push(`${total.cacheBreaks} prompt-cache ${total.cacheBreaks === 1 ? "break" : "breaks"} billed ${total.cacheBreakTokens} prompt tokens again${total.cacheBreakUsd > 0 ? ` (~$${round4(total.cacheBreakUsd)} more than reading them from cache)` : ""}.${fix}${idleText} Fields: cacheBreaks, cacheBreakTokens, cacheBreakUsd, cacheBreakCauses, cacheBreakIdle; causes per session in session_get stats.cacheBreaks.`);
   }
   if (total.duplicateFetches) notes.push(`${total.duplicateFetches} read-only ${total.duplicateFetches === 1 ? "call was" : "calls were"} repeated with the same result while the earlier result was still in context (duplicateFetches, ~${total.duplicateFetchTokens} tokens re-sent).`);
+  if (withBaseline) notes.push(CACHE_BASELINE_NOTE);
   if (unpricedModels.size) notes.push(`No price for: ${[...unpricedModels].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([m, n]) => `${m} (${n})`).join(", ")}. Add [prices."<model>"] to config.toml to price them.`);
   return {
     window: windowOf(q, sessions.length, truncated),

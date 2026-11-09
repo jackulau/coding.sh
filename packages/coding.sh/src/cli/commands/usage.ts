@@ -11,8 +11,9 @@
 import { CACHE_BREAK_FIX, CACHE_IDLE_FIX, CACHE_IDLE_LABEL } from "../../core/cache-breaks.ts";
 import type { CacheBreakCause, CacheIdleKind } from "../../schema/index.ts";
 import { repriceStored } from "../../core/reprice.ts";
-import { parseSince, positiveInt } from "../args.ts";
-import { autoIngest, queryCliError, str, whereFlag, withContext } from "../common.ts";
+import { CACHE_BASELINE_NOTE } from "../../core/cache-baselines.ts";
+import { parseSince, positiveInt, UsageError } from "../args.ts";
+import { agentScope, agentsFlag, autoIngest, queryCliError, str, whereFlag, withContext, pendingField, readIngest } from "../common.ts";
 import { CliError, Output, usd } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
@@ -78,7 +79,16 @@ interface Row {
   cacheBreakCauses?: Record<string, number>;
   cacheBreakIdle?: Record<string, { count: number; extraUsd?: number }>;
   cacheLowSessions?: number;
+  cacheBaseline?: { rate: number; source: string; period: string; delta: number };
 }
+
+/** `92% (-21pt)`: the published rate and how many points this row's hit rate is above or below it; `-` without one. */
+export const vsPublished = (g: Row): string => {
+  const b = g.cacheBaseline;
+  if (!b) return "-";
+  const pt = Math.round(b.delta * 100);
+  return `${pct(b.rate)} (${pt > 0 ? "+" : pt < 0 ? "-" : "±"}${Math.abs(pt)}pt)`;
+};
 
 /** `$1.23`, `~$1.23` when part of it is estimated, `≥$1.23` (a lower bound) when some sessions in the row have tokens but no cost. */
 const costCell = (g: Row): string => (g.costUsd === undefined ? "-" : `${g.costPartial ? "≥" : ""}${g.estimatedCostUsd ? "~" : ""}${usd(g.costUsd)}`);
@@ -90,19 +100,21 @@ export async function run(c: CommandContext): Promise<number> {
   if (!(USAGE_GROUPS as readonly string[]).includes(by)) throw new CliError(`--by must be one of ${USAGE_GROUPS.join(", ")}`, { reason: "bad_flag" });
   const since = parseSince(str(c.flags.since) ?? "30d");
   const limit = positiveInt(c.flags.limit, "limit") ?? 20;
-  const agent = str(c.flags.agent);
-  const where = whereFlag(c);
+  const { agent, where } = agentScope(agentsFlag(c), whereFlag(c));
+  const baseline = c.flags.baseline === true;
+  if (baseline && by !== "agent" && by !== "agent-model") throw new UsageError("--baseline compares agents: use it with --by agent or --by agent-model", { reason: "invalid_argument" });
+  if (baseline && c.flags.cache === true) throw new UsageError("--baseline adds a column to the main table; drop --cache", { reason: "invalid_argument" });
   return withContext(c, async (ctx) => {
-    await autoIngest(ctx);
+    const backlog = await autoIngest(ctx, readIngest(c));
     const repriced = c.flags.reprice === true ? await repriceStored(ctx.index, ctx.config.pricing, { force: true }) : undefined;
-    const r = (await usage(ctx.index, { since, topLevel: false, ...(agent ? { agent } : {}), ...(where ? { query: where } : {}) }, by as (typeof USAGE_GROUPS)[number], limit).catch((e) => Promise.reject(queryCliError(e)))) as {
+    const r = (await usage(ctx.index, { since, topLevel: false, ...(agent ? { agent } : {}), ...(where ? { query: where } : {}) }, by as (typeof USAGE_GROUPS)[number], limit, baseline ? { baseline } : {}).catch((e) => Promise.reject(queryCliError(e)))) as {
       groups: Row[];
       total: Row;
       notes?: string[];
       unpricedModels?: Record<string, number>;
     };
     if (out.json) {
-      out.data(repriced ? { ...r, repriced: { events: repriced.events, sessions: repriced.sessions } } : r);
+      out.data({ ...r, ...(repriced ? { repriced: { events: repriced.events, sessions: repriced.sessions } } : {}), ...pendingField(backlog) });
       return 0;
     }
     if (repriced) out.note(`Repriced ${repriced.events} model calls in ${repriced.sessions} sessions`);
@@ -116,10 +128,11 @@ export async function run(c: CommandContext): Promise<number> {
     }
     const cost = r.groups.some((g) => g.costUsd !== undefined);
     out.table(
-      [by.toUpperCase(), "SESSIONS", "TURNS", "TOKENS", "OUTPUT", "TOK/TURN", "CACHE READ", ...(cost ? ["COST"] : [])],
-      r.groups.map((g) => [g.key, String(g.sessions), String(g.turns), fmt(g.totalTokens), fmt(g.outputTokens), fmt(g.tokensPerTurn), pct(g.cacheReadShare), ...(cost ? [costCell(g)] : [])]),
+      [by.toUpperCase(), "SESSIONS", "TURNS", "TOKENS", "OUTPUT", "TOK/TURN", baseline ? "CACHE HIT" : "CACHE READ", ...(baseline ? ["VS PUBLISHED"] : []), ...(cost ? ["COST"] : [])],
+      r.groups.map((g) => [g.key, String(g.sessions), String(g.turns), fmt(g.totalTokens), fmt(g.outputTokens), fmt(g.tokensPerTurn), pct(g.cacheReadShare), ...(baseline ? [vsPublished(g)] : []), ...(cost ? [costCell(g)] : [])]),
     );
-    out.note("TURNS = user turns (top-level sessions). TOK/TURN = top-level sessions' input + output + cache-write tokens per turn; subagents' tokens and cache reads are left out. CACHE READ = cache reads / all prompt tokens. TOKENS counts subagents.");
+    out.note(`TURNS = user turns (top-level sessions). TOK/TURN = top-level sessions' input + output + cache-write tokens per turn; subagents' tokens and cache reads are left out. ${baseline ? "CACHE HIT = the prompt-cache hit rate, " : "CACHE READ = "}cache reads / all prompt tokens. TOKENS counts subagents.`);
+    if (baseline) out.note(CACHE_BASELINE_NOTE);
     if (r.groups.some((g) => g.estimatedCostUsd)) out.note("~ = includes cost estimated from tokens × list price (no reported cost).");
     if (r.groups.some((g) => g.costPartial)) out.note("≥ = some sessions in the row have tokens but no price; the cost is a lower bound.");
     const tiers = Object.entries(r.total.estimatedCostByTier ?? {});

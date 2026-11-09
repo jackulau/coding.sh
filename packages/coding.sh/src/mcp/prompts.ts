@@ -48,6 +48,7 @@ export function buildPrompts(): PromptDef[] {
           `Call the coding.sh harness_changes tool${inRepo(a)}${a.commit ? ` and commit ${JSON.stringify(a.commit)}` : ""}.`,
           "For each change, give the verdict in one sentence with the counts behind it: flagged sessions before and after, and how often the agent followed each new line.",
           'If the verdict is "too-early" or "no-sessions-after", say so plainly: the answer needs more sessions with the change (at least 5).',
+          'If the verdict is "followed-no-effect" or "costlier", say the agent follows the change (or works more) but the failures did not fall, and suggest the next command it gives (refine test git:<previous>) to test the harness without it.',
           "List the sessions still flagged after it (after.flaggedSessions) with their flags. If it regressed, open the newest of them with session_get and say what went wrong.",
           "Do not claim more than the numbers show.",
         ].join("\n"),
