@@ -153,13 +153,19 @@ describe("repair rounds", () => {
     const VISIBLE = 'import { add } from "../src/add.js";\nif (add(2, 3) !== 5) process.exit(1);\n';
     w.git.add("vis", { ...BUGGY, "test/add.vis.test.js": VISIBLE });
     const task: EvalTask = { ...w.task, start: { ...w.task.start, snapshot: "vis" }, verifier: { command: "node test/add.vis.test.js", hiddenFiles: {}, timeoutMs: 30_000 } };
-    const cheat = fakeAdapter({ canResume: true, act: (spec) => (spec.resumeSessionId ? { "test/add.vis.test.js": "process.exit(0);\n" } : undefined) });
-    const r = await runTask({ task, bundle: await w.mkBundle("x", "x"), adapter: cheat, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, repair: { rounds: 3, signal: "bit" } });
+    const cheat = () => fakeAdapter({ canResume: true, act: (spec) => (spec.resumeSessionId ? { "test/add.vis.test.js": "process.exit(0);\n" } : undefined) });
+    // Graded in the agent's own tree, the edited test passes; the tamper check is what refuses it.
+    const r = await runTask({ task, bundle: await w.mkBundle("x", "x"), adapter: cheat(), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, repair: { rounds: 3, signal: "bit" }, isolation: false });
     assert.equal(r.pass, false);
     assert.equal(r.repair?.rounds.length, 1, "a tampering round ends the loop");
     assert.equal(r.repair?.rounds[0]?.pass, true, "the verifier passed");
     assert.equal(r.repair?.rounds[0]?.tamper?.flagged, true);
     assert.equal(r.repair?.pass, false, "but the repair does not count");
+    // Isolated (the default), the verifier runs the start's test, so the edit never passes.
+    const iso = await runTask({ task, bundle: await w.mkBundle("x", "x"), adapter: cheat(), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, repair: { rounds: 3, signal: "bit" } });
+    assert.equal(iso.repair?.rounds[0]?.pass, false, "the edited test never reaches the verifier");
+    assert.equal(iso.repair?.rounds[0]?.tamper?.flagged, true);
+    assert.equal(iso.repair?.pass, false);
   });
 
   it("cancel during a repair round: cancelled, not passing", async () => {

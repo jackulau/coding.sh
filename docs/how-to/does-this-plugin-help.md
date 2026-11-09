@@ -91,6 +91,9 @@ The tamper check flags runs that edited, skipped or deleted tests. A run that on
 cases to an existing test file is not flagged, and its `tamper.addedTests` names those files, so a
 plugin that makes the agent write regression tests is not counted against it.
 
+For a terse-output plugin, [Does a terse mode save money?](../guides/terse-mode.md) splits the cost
+into output tokens and the input the plugin adds, and compares it with a one-line rule.
+
 ## What this does not tell you
 
 - The token count of hook text is an estimate, characters divided by 4.

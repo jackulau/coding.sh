@@ -181,13 +181,18 @@ describe("runTask tamper check", () => {
     assert.deepEqual(w.index.runs[0]?.tamper, r.tamper, "stored on the RunResult");
   });
 
-  it("a run that edits the test to pass is flagged (and still passes: the flag is the signal)", async () => {
+  it("a run that edits the test to pass is flagged (and, graded in its own tree, still passes: the flag is the signal)", async () => {
     const w = await visibleTestWorld();
     const cheater = fakeAdapter({ act: () => ({ "test/visible.test.js": "// nothing to see\n" }) });
-    const r = await runTask({ task: w.task, bundle: await w.mkBundle("x", "x"), adapter: cheater, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    const r = await runTask({ task: w.task, bundle: await w.mkBundle("x", "x"), adapter: cheater, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, isolation: false });
     assert.equal(r.pass, true);
     assert.equal(r.tamper?.flagged, true);
     assert.deepEqual(r.tamper?.flags.map((f) => [f.kind, f.path, f.why]), [["edit", "test/visible.test.js", "verifier"]]);
+    // Isolated (the default): the verifier runs the start's test, so the run fails, and the flag stays.
+    const iso = await runTask({ task: w.task, bundle: await w.mkBundle("x", "x"), adapter: cheater, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(iso.pass, false);
+    assert.equal(iso.tamper?.flagged, true);
+    assert.deepEqual(iso.isolation?.stripped, [{ path: "test/visible.test.js", why: "verifier", change: "modify" }]);
   });
 
   it("deleting the test or adding a skip marker is flagged", async () => {

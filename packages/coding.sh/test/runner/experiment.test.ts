@@ -200,7 +200,8 @@ describe("formatCompare", () => {
     const rs: RunResult[] = [];
     for (let a = 1; a <= 3; a++) rs.push(run(id, "A", a, a === 1), run(id, "B", a, true));
     const text = formatCompare(compare(rs, { baseline: "A", candidate: "B" }));
-    const line = text.split("\n").find((l) => l.includes("task_f7"));
+    // The flaky tasks row (k >= 2) names the id too; the task row is the one with the outcomes.
+    const line = text.split("\n").find((l) => l.includes("task_f7") && !l.startsWith("flaky tasks"));
     assert.ok(line, text);
     assert.match(line, /…\s+1\/3\s+3\/3/, line);
     // The truncated id still fits its column, so the baseline cell stays aligned with the header.

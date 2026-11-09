@@ -11,12 +11,15 @@ import { removeOnExit, withAbortSignal } from "../core/children.ts";
 import { sortableId } from "../core/ids.ts";
 import { paths } from "../core/paths.ts";
 import { createRedactor, type Redactor } from "../core/redact.ts";
-import type { Adapter, AgentRunOutput, BlobStore, EvalTask, HarnessBundle, IndexStore, RepairReport, RepairRound, RunResult, TamperReport } from "../core/types.ts";
+import type { Adapter, AgentRunOutput, BlobStore, EvalTask, HarnessBundle, IndexStore, RepairReport, RepairRound, RunResult, TamperReport, VerifierIsolation } from "../core/types.ts";
 import { applyBundle } from "./bundle.ts";
 import { pluginProblem } from "./plugins.ts";
 import { commandEnv, sh, type ExecResult } from "./exec.ts";
 import { safeJoin, writeHiddenFiles } from "./fsutil.ts";
 import { rebaseStart, rmrf, snapshotOps, type SnapshotOps, type WorkdirDiff } from "./git.ts";
+import { copyTree, isolationOff, withIsolatedTree } from "./isolate.ts";
+import { otelEnv, runTraceContext, startRunReceiver, type OtelOpt, type RunOtel } from "./otel.ts";
+import { carryIn, carryOut, type CarryOpts } from "./sequence.ts";
 import { falseAlarmFires, failingTestNames, repairMessage, restoreFiles, saveFiles, type RepairOpts, type SavedFiles } from "./repair.ts";
 import { detectTamper, tamperOptsFor } from "./tamper.ts";
 import { verifierOutput } from "./verifier-output.ts";
@@ -70,6 +73,22 @@ export interface RunTaskOpts {
    * `pass` stays the first attempt's; `repair` holds the rounds.
    */
   repair?: RepairOpts;
+  /**
+   * Run the verifier in a fresh copy of the start plus the agent's changes to
+   * source files (runner/isolate.ts). Default true; a task can turn it off with
+   * `meta.verifierIsolation: "off"`.
+   */
+  isolation?: boolean;
+  /**
+   * Per-run OpenTelemetry for the agent process (runner/otel.ts): true starts a
+   * receiver on an ephemeral port that writes into `index`; an endpoint (or a
+   * RunOtel from runExperiment) sends there. Off by default: no env changes.
+   */
+  otel?: OtelOpt | RunOtel;
+  /** Sequential runs (`compare --sequential`): harness state copied into the run's HOME before the agent and out after it. */
+  carry?: CarryOpts;
+  /** Sequential runs: the stream and 1-based position, stamped on the result. */
+  sequence?: { stream: number; step: number };
 }
 
 export type AgentRoute = (bundle: HarnessBundle) => { env: Record<string, string>; flags: string[]; model?: string } | undefined;
@@ -80,11 +99,13 @@ export interface RunLayout {
   home: string;
   /** The agent's stdout and final answer, outside the work tree so the agent can't edit what the verifier reads. */
   agent: string;
+  /** Verifier isolation: the work tree as it was after setup, before the agent. */
+  start: string;
 }
 
 export function runLayout(runId: string, runsDir = paths().runs): RunLayout {
   const root = join(runsDir, runId);
-  return { root, work: join(root, "work"), home: join(root, "home"), agent: join(root, "agent") };
+  return { root, work: join(root, "work"), home: join(root, "home"), agent: join(root, "agent"), start: join(root, "start") };
 }
 
 /** The stored run keeps this many characters of the final answer; CODING_SH_AGENT_OUTPUT has all of it. */
@@ -168,6 +189,7 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
     endedAt: startedAt,
     ...(opts.cellKey ? { cellKey: opts.cellKey } : {}),
     ...(opts.agentVersion ? { agentVersion: opts.agentVersion } : {}),
+    ...(opts.sequence ? { sequence: opts.sequence } : {}),
   };
   const baseEnv = commandEnv({ ...(opts.env ?? {}), CODING_SH_RUN_ID: runId });
   const redactor = opts.redactor ?? createRedactor();
@@ -179,6 +201,8 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
 
   // A hard exit (second Ctrl-C) skips the finally below; the exit hook removes the dir then.
   const forgetDir = opts.keep ? () => {} : removeOnExit(layout.root);
+  /** A receiver this run started itself (otel: true), closed in finally. */
+  let ownReceiver: (RunOtel & { close: () => Promise<void> }) | undefined;
   try {
     checkpoint();
     // Plugins only claude-code loads: fail the run rather than silently drop them.
@@ -210,10 +234,23 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
       if (r.exitCode !== 0) return setupFailed(`setup \`${cmd}\` ${r.timedOut ? "timed out" : `exited ${r.exitCode}`}: ${r.stderrTail.slice(-500)}`);
     }
 
+    // Carried harness state first, so the bundle's own files win over it.
+    if (opts.carry) await carryIn(opts.carry, layout.home);
     const applied = await applyBundle(bundle, layout.work, blobs, { home: layout.home });
     const overlay = adapter.overlay ? await adapter.overlay(bundle, layout.work) : { env: {}, flags: [] };
     // Setup output + harness are part of the start, not the agent's diff.
     await rebaseStart(layout.work, `coding.sh: setup + harness ${bundle.name}`);
+    // The verifier runs in a copy of this start plus the agent's source changes (runner/isolate.ts).
+    let isolate = opts.isolation !== false && !isolationOff(task) && task.verifier.command.trim() !== "";
+    let isoSkipped: string | undefined;
+    if (isolate) {
+      try {
+        await copyTree(layout.work, layout.start);
+      } catch (e) {
+        isolate = false;
+        isoSkipped = `could not copy the start: ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
 
     if (!adapter.run) {
       result.error = `adapter ${adapter.id} has no headless run()`;
@@ -223,9 +260,15 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
     checkpoint();
     const route = opts.route?.(bundle);
     const env: Record<string, string> = { ...bundle.env, ...(opts.env ?? {}), ...overlay.env, ...(route?.env ?? {}), CODING_SH_RUN_ID: runId };
-    if (applied.usesHome && !overlay.env.HOME) {
+    // Carried state lives in the run's HOME, so a sequential run always gets one.
+    if ((applied.usesHome || opts.carry) && !overlay.env.HOME) {
       await mkdir(layout.home, { recursive: true });
       env.HOME = layout.home;
+    }
+    if (opts.otel) {
+      const o = opts.otel === true ? (ownReceiver = await startRunReceiver(index, blobs)) : opts.otel;
+      Object.assign(env, otelEnv(runId, adapter.id, o.endpoint, { OTEL_RESOURCE_ATTRIBUTES: process.env.OTEL_RESOURCE_ATTRIBUTES, ...env }));
+      result.traceId = runTraceContext(runId).traceId;
     }
     await mkdir(layout.agent, { recursive: true });
     const stdoutFile = join(layout.agent, "stdout");
@@ -249,6 +292,9 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
         out = emptyAgent(e instanceof Error ? e.message : String(e));
         error = `agent failed: ${e instanceof Error ? e.message : String(e)}`;
       }
+      // Exporters flush on exit; give late batches a moment to land.
+      const settle = opts.otel && opts.otel !== true && "settle" in opts.otel ? opts.otel.settle : ownReceiver?.settle;
+      if (settle) await settle();
       // The final answer, from the whole stdout when the adapter wrote it (else the tail).
       const stdout = existsSync(stdoutFile) ? await readFile(stdoutFile, "utf8").catch(() => out.stdoutTail) : out.stdoutTail;
       if (stdout.trim()) {
@@ -271,10 +317,9 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
     };
     const hiddenPaths = Object.keys(task.verifier.hiddenFiles);
     /** Hidden files in, then the verifier. With repair, what the hidden files replace is saved so they can come out again. */
-    const grade = async (agent: AgentRunOutput): Promise<Graded> => {
-      const saved = opts.repair ? await saveFiles(layout.work, hiddenPaths) : undefined;
+    const verify = async (agent: AgentRunOutput): Promise<ExecResult | undefined> => {
       await writeHiddenFiles(layout.work, task.verifier.hiddenFiles, blobs);
-      if (!task.verifier.command.trim()) return { saved };
+      if (!task.verifier.command.trim()) return undefined;
       checkpoint();
       const usageFile = join(layout.agent, "grader-usage.jsonl");
       const v = await sh(task.verifier.command, {
@@ -288,8 +333,23 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
       const graderUsage = await readGraderUsage(usageFile);
       if (graderUsage) result.graderUsage = graderUsage;
       checkpoint();
-      return { saved, v };
+      return v;
     };
+    const grade = async (agent: AgentRunOutput): Promise<Graded> => {
+      if (isolate) {
+        // The hidden files go into the verified copy, never the agent's tree: nothing to save.
+        const dirs = { work: layout.work, start: layout.start, aside: join(layout.root, "agent-tree"), verified: join(layout.root, "verified") };
+        const v = await withIsolatedTree(dirs, { task, reuseStart: !!opts.repair, keepVerified: !!opts.keep }, async (report: VerifierIsolation) => {
+          result.isolation ??= report;
+          return verify(agent);
+        });
+        return v ? { v } : {};
+      }
+      const saved = opts.repair ? await saveFiles(layout.work, hiddenPaths) : undefined;
+      const v = await verify(agent);
+      return v ? { saved, v } : { saved };
+    };
+    if (isoSkipped) result.isolation = { carried: 0, stripped: [], skipped: isoSkipped };
 
     const first = await callAgent(task.instruction);
     result.agent = first.out;
@@ -350,6 +410,8 @@ async function runTaskInner(opts: RunTaskOpts): Promise<RunResult> {
       result.error = "cancelled";
     }
     result.endedAt = Date.now();
+    if (opts.carry && !signal?.aborted) await carryOut(opts.carry, layout.home).catch(() => {});
+    if (ownReceiver) await ownReceiver.close().catch(() => {});
     if (!opts.keep && !signal?.aborted && opts.ingest) await opts.ingest().catch(() => {});
     if (!opts.keep) await rmrf(layout.root).catch(() => {});
     forgetDir();

@@ -9,6 +9,9 @@
 // the one-item gate (`--item-gate` makes it decide the exit code, `--no-item-gate` hides it).
 // `--repair N` gives each failed run up to N rounds of "Verification failed." in its own
 // session (runner/repair.ts); the report adds the pass after repair per arm.
+// `--pick N` and `--budget USD` choose the tasks that best tell harnesses apart from
+// stored runs (runner/select.ts); `--sequential` carries HOME state from task to task
+// (runner/sequence.ts); `--otel` gives each agent an OTLP endpoint tagged with its run.
 import { getAdapter } from "../../adapters/index.ts";
 import { defaultGateway, gatewayConfig, gatewaySettings, type GatewayConfig } from "../../integrations/gateway/config.ts";
 import { GATEWAYS, resolveGatewayName, type GatewayId } from "../../integrations/gateway/providers.ts";
@@ -22,9 +25,13 @@ import { git } from "../../runner/git.ts";
 import { hasGlob } from "../../runner/glob.ts";
 import { repairOptsProblem, type RepairOpts } from "../../runner/repair.ts";
 import type { AgentRoute } from "../../runner/run.ts";
+import { COST_SOURCES, estimateTaskCosts, fitBudget, rankTasks, TaskCostUnknown, type CostSource, type RankedTask, type TaskTier } from "../../runner/select.ts";
+import { irtOrderTasks, type IrtTaskFields } from "../../stats/irt.ts";
+import { carryRel } from "../../runner/sequence.ts";
 import { captureRedactor, failedRuns, renderFailedRuns } from "../../runner/verifier-output.ts";
 import type { EvalTask, HarnessBundle, RunResult } from "../../core/types.ts";
-import { formatCompare, PARETO_NEEDS_COST, planCells, runExperiment, runKey, type BudgetReport } from "../../runner/experiment.ts";
+import { formatCompare, loadRunSessions, PARETO_NEEDS_COST, planCells, runExperiment, runKey, type BudgetReport } from "../../runner/experiment.ts";
+import { formatSignalValidity, hasRepeatedAttempts, signalRows, signalValidity, type SignalRow } from "../../stats/validity.ts";
 import { describeSelection, erroredRuns, latestPerSlot, sampleTasks, selectFailing, slotKey, type FailingMode, type Selection } from "../../runner/iterate.ts";
 import { sortableId } from "../../core/ids.ts";
 import { paint } from "../../experiments/text.ts";
@@ -35,9 +42,13 @@ import { gateFlags, list, promoteFlags, requireConsent, resolveTask, str, withCo
 import { ensureHookBin } from "../hookbin.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
+import type { Context } from "../../core/context.ts";
 
 export async function run(c: CommandContext): Promise<number> {
   const { out } = c;
+  // --parity compares two pages, not two harnesses: no store, no runs.
+  if (c.flags.parity === true) return (await import("./compare-parity.ts")).run(c);
+  if (c.flags["user-agent"] !== undefined) throw new UsageError("--user-agent needs --parity", { reason: "invalid_argument" });
   // Fail on a missing gateway key before touching the store or running anything.
   const gateway = c.flags.gateway === undefined || c.flags.gateway === false ? undefined : requireGateway(c.env, c.flags.gateway === true ? defaultGateway(c.env) : String(c.flags.gateway));
   // Before running anything: a typo in the gate flags must not cost a full A/B.
@@ -65,6 +76,26 @@ export async function run(c: CommandContext): Promise<number> {
   if (seedFlag !== undefined && sampleN === undefined && !repair?.falseAlarm) throw new UsageError("--seed needs --sample or --false-alarm", { reason: "invalid_argument" });
   if (repair && c.flags.experiment !== undefined && !retryErrors) throw new UsageError("--repair runs new runs; --experiment re-analyses stored ones (their repair rounds are reported as they are)", { reason: "invalid_argument" });
   if (c.flags.experiment !== undefined && (failingRef || sampleN !== undefined)) throw new UsageError("--failing and --sample pick tasks for new runs; --experiment re-analyses stored ones", { reason: "invalid_argument" });
+  const pickN = positiveInt(c.flags.pick, "pick");
+  const budgetUsd = usdFlag(c.flags.budget, "budget", false);
+  const pickBy = (str(c.flags["pick-by"]) ?? "separation") as PickBy;
+  if (c.flags["pick-by"] !== undefined && pickN === undefined && budgetUsd === undefined) throw new UsageError("--pick-by needs --pick or --budget", { reason: "invalid_argument" });
+  const costPerRun = usdFlag(c.flags["cost-per-run"], "cost-per-run", true);
+  if ((pickN !== undefined || budgetUsd !== undefined) && list(c.flags.task).length) throw new UsageError("--pick and --budget choose among the tasks; --task names them. Pass one or the other", { reason: "invalid_argument" });
+  if (costPerRun !== undefined && budgetUsd === undefined) throw new UsageError("--cost-per-run needs --budget", { reason: "invalid_argument" });
+  const sequential = c.flags.sequential === true;
+  const carry = list(c.flags.carry);
+  if (carry.length && !sequential) throw new UsageError("--carry needs --sequential", { reason: "invalid_argument" });
+  for (const p of carry) {
+    try {
+      carryRel(p);
+    } catch (e) {
+      throw new UsageError(`--carry: ${(e as Error).message}`, { reason: "invalid_argument" });
+    }
+  }
+  if (sequential && reuseWhat !== "none") throw new UsageError("--sequential runs each arm's tasks in order with carried state; --reuse would copy runs made without it", { reason: "invalid_argument" });
+  const newRunOnly = [pickN !== undefined && "--pick", budgetUsd !== undefined && "--budget", sequential && "--sequential", c.flags.otel === true && "--otel", c.flags.isolation === false && "--no-isolation"].filter(Boolean);
+  if (c.flags.experiment !== undefined && !retryErrors && newRunOnly.length) throw new UsageError(`${newRunOnly.join(" and ")} apply to new runs; --experiment re-analyses stored ones`, { reason: "invalid_argument" });
   return withContext(c, async (ctx) => {
     const without = list(c.flags.without);
     const withs = list(c.flags.with);
@@ -258,8 +289,19 @@ export async function run(c: CommandContext): Promise<number> {
         selection = describeSelection({ from, tasks, ...(failing ? { failing } : {}), ...(sample ? { sample } : {}) });
         notes.push(selection.note);
       }
+      let pick: PickReport | undefined;
+      if (pickN !== undefined || budgetUsd !== undefined) {
+        pick = await pickTasks(ctx, tasks, A, { pick: pickN, budget: budgetUsd, costPerRun, k: positiveInt(c.flags.k, "k") ?? 1, by: pickBy });
+        const order = new Map(pick.tasks.map((t, i) => [t.taskId, i]));
+        const chosen = new Set(pick.picked);
+        tasks = tasks.filter((t) => chosen.has(t.id)).sort((a, b) => (order.get(a.id) as number) - (order.get(b.id) as number));
+        if (!tasks.length) throw new CliError(`--budget $${budgetUsd?.toFixed(2)} fits no task: the cheapest costs $${Math.min(...pick.tasks.map((t) => t.costUsd ?? Infinity)).toFixed(2)} a run, times 2 arms x ${positiveInt(c.flags.k, "k") ?? 1}`, { reason: "budget_too_small" });
+        notes.push(pick.note);
+      }
       const maxCost = c.flags["max-cost"];
       if (maxCost !== undefined && (typeof maxCost !== "number" || !(maxCost > 0))) throw new UsageError("--max-cost needs a positive amount in USD, e.g. --max-cost 15", { reason: "invalid_argument" });
+      // --budget is also the spend cap, unless --max-cost names another.
+      const capUsd = typeof maxCost === "number" ? maxCost : budgetUsd;
       if (gateBy) taskTags = byTagPrefix(tasks, gateBy);
       taskNames = new Map(tasks.map((t) => [t.id, t.name]));
       if (ablation && !ablation.dropped.length && !(await anyInTaskRepo(tasks, ablation.unmatched, c.env))) {
@@ -277,14 +319,16 @@ export async function run(c: CommandContext): Promise<number> {
         return versions.get(b.agent)!;
       };
       const cellOpts = { tasks, bundles: [A, B], adapterFor: (b: HarnessBundle) => getAdapter(b.agent)!, index: ctx.index, k, agentVersion, ...(route ? { route } : {}), ...(timeoutMs !== undefined ? { timeoutMs } : {}), ...(reuse ? { reuse } : {}), ...(repair ? { repair } : {}) };
-      const plan = reuse || c.flags["dry-run"] === true ? await planCells(cellOpts) : undefined;
+      // Only reuse needs the cells (and the agent versions behind them): a plain dry run calls no adapter.
+      const plan = reuse ? await planCells(cellOpts) : undefined;
       const cachedIn = (b: HarnessBundle) => [...(plan?.cached.keys() ?? [])].filter((i) => plan!.jobs[i]!.bundle.id === b.id).length;
       const cached = plan?.cached.size ?? 0;
       if (c.flags["dry-run"] === true) {
         const arm = (b: HarnessBundle) => ({ bundle: b.id, name: b.name, reused: cachedIn(b), toRun: runs / 2 - cachedIn(b) });
-        if (out.json) out.data({ dryRun: true, runs, toRun: runs - cached, baseline: arm(A), candidate: arm(B), ...(plan?.unknownVersion.length ? { unknownVersion: plan.unknownVersion } : {}), ...(selection ? { selection, tasks: tasks.map((t) => t.id) } : {}) });
+        if (out.json) out.data({ dryRun: true, runs, toRun: runs - cached, baseline: arm(A), candidate: arm(B), ...(plan?.unknownVersion.length ? { unknownVersion: plan.unknownVersion } : {}), ...(selection || pick ? { tasks: tasks.map((t) => t.id) } : {}), ...(selection ? { selection } : {}), ...(pick ? { pick: pickJson(pick) } : {}) });
         else {
           if (selection) out.print(selection.note);
+          if (pick) out.print(formatPick(pick, taskNames));
           out.print(`dry run: ${plural(runs, "run")} (${plural(tasks.length, "task")} x 2 arms x ${k}), ${cached} reused, ${runs - cached} to run`);
           const w = Math.max(A.name.length, B.name.length);
           for (const [label, b] of [["baseline ", A], ["candidate", B]] as const) out.print(`${label}  ${b.name.padEnd(w)}  ${cachedIn(b)} reused, ${runs / 2 - cachedIn(b)} to run`);
@@ -300,7 +344,8 @@ export async function run(c: CommandContext): Promise<number> {
       const finished = await finishedToResume(c, "compare", config);
       const extra = [cached ? `${cached} reused` : "", finished ? `${finished} already finished` : ""].filter(Boolean).join(", ");
       const rounds = repair ? `, plus up to ${plural(repair.rounds, "repair round")} per failed run` : "";
-      await requireConsent(c, `Run ${plural(Math.max(0, runs - cached - finished), "agent session")} (${plural(tasks.length, "task")} x 2 arms x ${k}${extra ? `, ${extra}` : ""}${rounds})?`, `coding.sh compare ${arms} --yes`);
+      const dollars = pick?.estimateUsd !== undefined ? `, about $${pick.estimateUsd.toFixed(2)}` : "";
+      await requireConsent(c, `Run ${plural(Math.max(0, runs - cached - finished), "agent session")} (${plural(tasks.length, "task")} x 2 arms x ${k}${extra ? `, ${extra}` : ""}${rounds}${dollars})?`, `coding.sh compare ${arms} --yes`);
       await storeAblation();
       const job = await openJob(c, { kind: "compare", name: `${A.name} vs ${B.name}`, config, newId: () => sortableId("exp_"), concurrency: concurrency ?? 4 });
       // The isolated agent configs call the hook bin; without it no run is captured (no turns, tokens, divergence or item gate).
@@ -319,7 +364,10 @@ export async function run(c: CommandContext): Promise<number> {
             ...(concurrency ? { concurrency } : {}),
             ...(route ? { route } : {}),
             ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-            ...(typeof maxCost === "number" ? { maxCostUsd: maxCost } : {}),
+            ...(capUsd !== undefined ? { maxCostUsd: capUsd } : {}),
+            ...(sequential ? { sequence: { carry: carry.length ? carry : ["~"] } } : {}),
+            ...(c.flags.otel === true ? { otel: true } : {}),
+            ...(c.flags.isolation === false ? { isolation: false } : {}),
             signal: c.signal,
             // Each run's hooks are ingested before its dir (and the agent's transcript in it) is removed.
             ingest: () => ctx.ingest(),
@@ -381,11 +429,18 @@ export async function run(c: CommandContext): Promise<number> {
     });
     if (versionNote) report.notes.push(versionNote);
     report.notes.push(...notes);
+    // --signals (Z-11): does each trace signal predict failure beyond task difficulty?
+    let signalRowsList: SignalRow[] | undefined;
+    if (c.flags.signals === true) {
+      signalRowsList = signalRows(results, await loadRunSessions(ctx.index, results));
+      report.signals = signalValidity(signalRowsList);
+    }
     // Each failed run with the end of what its verifier printed (and its agent, when that failed), so a failure reads without a rerun.
     const failedList = failedRuns(results, captureRedactor(ctx.config, ctx.env));
     if (out.json) out.data({ experimentId, report, ...(failedList.length ? { failedRuns: failedList } : {}), ...resume, ...(budget ? { budget } : {}), ...(counts ?? {}), ...(selection ? { selection } : {}) });
     else {
       out.print(formatCompare(report, { color: out.color, arms, taskNames }));
+      if (report.signals && signalRowsList) out.print(["", formatSignalValidity(report.signals, { repeated: hasRepeatedAttempts(signalRowsList) })].join("\n"));
       const block = renderFailedRuns(failedList, {
         names: (id) => taskNames?.get(id) ?? id,
         arm: (id) => (id === A.id ? `A ${A.name}` : id === B.id ? `B ${B.name}` : id),
@@ -402,6 +457,107 @@ export async function run(c: CommandContext): Promise<number> {
     const failed = (report.gate && report.gate.decision !== "accept") || (promote && !report.pareto?.promote) || (itemFlag === true && !itemOk);
     return failed ? 1 : 0;
   });
+}
+
+/** A dollar flag: a finite amount above 0 (or at least 0 when `zero` is allowed). */
+function usdFlag(v: unknown, name: string, zero: boolean): number | undefined {
+  if (v === undefined) return undefined;
+  if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || (!zero && v === 0)) throw new UsageError(`--${name} needs ${zero ? "an amount" : "a positive amount"} in USD, e.g. --${name} ${zero ? "0.5" : "10"}`, { reason: "invalid_argument" });
+  return v;
+}
+
+interface PickReport {
+  /** Tasks considered, in rank order, with their tier and estimated cost per run. */
+  tasks: { taskId: string; tier: TaskTier; q?: number; p: number; configs: number; runs: number; costUsd?: number; costSource?: CostSource; picked: boolean; difficulty?: number; discrimination?: number; information?: number }[];
+  picked: string[];
+  pick?: number;
+  budgetUsd?: number;
+  /** Estimated agent cost of the picked tasks: 2 arms x k x cost per run. */
+  estimateUsd?: number;
+  k: number;
+  note: string;
+}
+
+/**
+ * `--pick N` / `--budget USD`: rank the tasks by how well stored runs say they
+ * tell harnesses apart (runner/select.ts), keep the first N, then fit the
+ * budget greedily. A budget with no cost known from any source is a CliError.
+ */
+async function pickTasks(ctx: Context, tasks: readonly EvalTask[], baseline: HarnessBundle, o: { pick?: number; budget?: number; costPerRun?: number; k: number; by?: PickBy }): Promise<PickReport> {
+  const history = (await Promise.all(tasks.map((t) => ctx.index.listRuns({ taskId: t.id })))).flat();
+  let ranked: IrtRanked[] = rankTasks(
+    tasks.map((t) => t.id),
+    history,
+  );
+  // --pick-by irt (EM-12): item information at the baseline's ability from an IRT fit of the stored runs.
+  const irt = o.by === "irt" ? irtOrderTasks(ranked, history, { target: baseline.id }) : undefined;
+  if (irt) ranked = irt.tasks;
+  const sessionCost = new Map<string, number>();
+  for (const t of tasks) {
+    if (!t.sourceSessionId) continue;
+    const c = (await ctx.index.getSession(t.sourceSessionId).catch(() => undefined))?.stats.usage?.costUsd;
+    if (typeof c === "number") sessionCost.set(t.id, c);
+  }
+  let costs: ReturnType<typeof estimateTaskCosts> | undefined;
+  try {
+    costs = estimateTaskCosts(tasks, history, { baselineId: baseline.id, sessionCost: (t) => sessionCost.get(t.id), ...(o.costPerRun !== undefined ? { flag: o.costPerRun } : {}) });
+  } catch (e) {
+    if (!(e instanceof TaskCostUnknown)) throw e;
+    if (o.budget !== undefined) {
+      throw new CliError(`--budget needs a cost per run, and none is known: ${e.message} (no stored run, source session or other task to estimate from)`, {
+        reason: "cost_unknown",
+        next: ["Say what one run costs:", `--cost-per-run <USD>`],
+      });
+    }
+  }
+  let order = ranked.map((r) => r.taskId);
+  if (o.pick !== undefined) order = order.slice(0, o.pick);
+  const picked = o.budget !== undefined && costs ? fitBudget(order, costs, { budget: o.budget, arms: 2, k: o.k }).picked : order;
+  const chosen = new Set(picked);
+  const estimateUsd = costs ? picked.reduce((a, id) => a + 2 * o.k * (costs.get(id)?.usd ?? 0), 0) : undefined;
+  const informative = ranked.filter((r) => r.tier === "ranked" && (r.q as number) >= 0.5 && chosen.has(r.taskId)).length;
+  const saturated = ranked.filter((r) => r.tier === "saturated" && chosen.has(r.taskId)).length;
+  const how = [o.pick !== undefined ? `the first ${o.pick}` : "", o.budget !== undefined ? `what fits $${o.budget.toFixed(2)}` : ""].filter(Boolean).join(" then ");
+  const note =
+    `picked ${picked.length} of ${tasks.length} tasks (${how}), most informative first from ${plural(history.length, "stored run")}: ` +
+    (irt?.fitted ? irt.note : `${informative} informative (q >= 0.5)`) +
+    `${saturated ? `, ${saturated} saturated` : ""}${estimateUsd !== undefined ? `; about $${estimateUsd.toFixed(2)} of agent spend` : ""}` +
+    (irt && !irt.fitted ? `; ${irt.note}` : "");
+  return {
+    tasks: ranked.map((r) => {
+      const c = costs?.get(r.taskId);
+      return { ...r, ...(c ? { costUsd: c.usd, costSource: c.source } : {}), picked: chosen.has(r.taskId) };
+    }),
+    picked,
+    ...(o.pick !== undefined ? { pick: o.pick } : {}),
+    ...(o.budget !== undefined ? { budgetUsd: o.budget } : {}),
+    ...(estimateUsd !== undefined ? { estimateUsd } : {}),
+    k: o.k,
+    note,
+  };
+}
+
+type PickBy = "separation" | "irt";
+type IrtRanked = RankedTask & IrtTaskFields;
+
+/** The pick for --json: NaN rates as null, and where costs come from, first to last. */
+function pickJson(p: PickReport) {
+  return {
+    ...p,
+    tasks: p.tasks.map((t) => ({ ...t, p: Number.isFinite(t.p) ? t.p : null })),
+    costSources: COST_SOURCES,
+  };
+}
+
+function formatPick(p: PickReport, names?: Map<string, string>): string {
+  // --pick-by irt adds each task's fitted difficulty and information.
+  const irt = p.tasks.some((t) => t.information !== undefined);
+  const irtCells = (t: PickReport["tasks"][number]) => (irt ? [t.difficulty !== undefined ? t.difficulty.toFixed(2) : "", t.information !== undefined ? t.information.toFixed(3) : ""] : []);
+  const rows = p.tasks.map((t) => [t.picked ? "+" : " ", names?.get(t.taskId) ?? t.taskId, t.tier, t.q !== undefined ? t.q.toFixed(2) : "", ...irtCells(t), Number.isFinite(t.p) ? `${Math.round(t.p * 100)}%` : "", t.costUsd !== undefined ? `$${t.costUsd.toFixed(3)} (${t.costSource})` : "—"]);
+  const head = ["", "task", "tier", "q", ...(irt ? ["difficulty", "info"] : []), "pass", "cost / run"];
+  const w = head.map((h, i) => Math.max(h.length, ...rows.map((r) => (r[i] as string).length)));
+  const line = (r: string[]) => r.map((x, i) => x.padEnd(w[i] as number)).join("  ").trimEnd();
+  return [p.note, line(head), ...rows.map(line), `cost sources, first to last: ${COST_SOURCES.join(", ")}`].join("\n");
 }
 
 /** `--repair N [--repair-signal bit|names] [--false-alarm P] [--seed S]`, checked before anything runs. */

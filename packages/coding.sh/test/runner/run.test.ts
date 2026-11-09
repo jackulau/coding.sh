@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
 import type { RunSpec } from "../../src/core/types.ts";
 import { createRedactor } from "../../src/core/redact.ts";
 import { readGraderUsage, runTask } from "../../src/runner/run.ts";
-import { cleanupWorlds, fakeAdapter, obedientAgent, toyWorld } from "../helpers-eval.ts";
+import { BUGGY, FIXED, cleanupWorlds, fakeAdapter, obedientAgent, toyWorld } from "../helpers-eval.ts";
 
 after(cleanupWorlds);
 
@@ -165,3 +166,191 @@ describe("runTask", () => {
     assert.equal(r.pass, false);
   });
 });
+
+// R1-6: verifier isolation. Each exploit makes the verifier pass without the
+// fix when the verifier runs in the agent's tree (isolation off), and fails
+// with isolation on; an honest fix still passes.
+const hasBin = (b: string) => spawnSync(b, ["--version"], { encoding: "utf8" }).status === 0;
+const hasPytest = hasBin("python3") && spawnSync("python3", ["-c", "import pytest"]).status === 0;
+
+/** A start whose `npm test` (and a run_tests.sh) runs the hidden test, so package.json, .npmrc and the script decide what runs. */
+async function exploitWorld(extraStart: Record<string, string> = {}) {
+  const w = await toyWorld();
+  w.git.add("npm-start", {
+    ...BUGGY,
+    "package.json": JSON.stringify({ name: "toy", version: "1.0.0", type: "module", scripts: { test: "node test/add.test.js" } }, null, 2) + "\n",
+    "run_tests.sh": "node test/add.test.js\n",
+    ".gitignore": "build/\n",
+    ...extraStart,
+  });
+  const task = (command: string, meta?: Record<string, unknown>) => ({
+    ...w.task,
+    setup: [],
+    start: { ...w.task.start, snapshot: "npm-start" },
+    verifier: { ...w.task.verifier, command },
+    ...(meta ? { meta } : {}),
+  });
+  return { w, task };
+}
+
+/** An agent that leaves src unfixed and writes these files instead. */
+const cheat = (files: Record<string, string>) => fakeAdapter({ act: () => files });
+
+describe("runTask: verifier isolation", () => {
+  it("an honest source fix still passes, and nothing is stripped", async () => {
+    const { w, task } = await exploitWorld();
+    const r = await runTask({ task: task("npm test --silent"), bundle: await w.mkBundle("fixer", "always fix bugs"), adapter: obedientAgent(), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.pass, true, r.verifierOutput?.stderr ?? r.error);
+    assert.deepEqual(r.isolation, { carried: 2, stripped: [] });
+  });
+
+  it("package.json test script edited to exit 0: passes in the agent's tree, fails isolated; other package.json edits stay", { skip: !hasBin("npm") && "npm not found" }, async () => {
+    const { w, task } = await exploitWorld();
+    const pkg = JSON.stringify({ name: "toy", version: "1.0.0", type: "module", description: "agent edit", scripts: { test: "exit 0" } }, null, 2) + "\n";
+    const bundle = await w.mkBundle("x", "x");
+    const open = await runTask({ task: task("npm test --silent", { verifierIsolation: "off" }), bundle, adapter: cheat({ "package.json": pkg }), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(open.pass, true, "the exploit works without isolation");
+    assert.equal(open.isolation, undefined);
+    const verify = 'npm test --silent && grep -q "agent edit" package.json';
+    const r = await runTask({ task: task(verify), bundle, adapter: cheat({ "package.json": pkg }), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, keep: true });
+    assert.equal(r.pass, false);
+    assert.deepEqual(r.isolation?.stripped, [{ path: "package.json", why: "scripts", change: "modify" }]);
+    // The verified tree kept the description but not the script; the agent's tree is untouched.
+    const verified = JSON.parse(await readFile(join(w.runsDir, r.id, "verified", "package.json"), "utf8"));
+    assert.equal(verified.description, "agent edit");
+    assert.equal(verified.scripts.test, "node test/add.test.js");
+    assert.equal(JSON.parse(await readFile(join(w.runsDir, r.id, "work", "package.json"), "utf8")).scripts.test, "exit 0");
+    assert.ok(!existsSync(join(w.runsDir, r.id, "work", "test/add.test.js")), "hidden tests never land in the agent's tree");
+  });
+
+  it(".npmrc node-options=--require: passes in the agent's tree, fails isolated", { skip: !hasBin("npm") && "npm not found" }, async () => {
+    const { w, task } = await exploitWorld();
+    const files = { ".npmrc": "node-options=--require ./hack.cjs\n", "hack.cjs": "process.exit(0);\n" };
+    const bundle = await w.mkBundle("x", "x");
+    const open = await runTask({ task: task("npm test --silent", { verifierIsolation: "off" }), bundle, adapter: cheat(files), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(open.pass, true, "the exploit works without isolation");
+    const r = await runTask({ task: task("npm test --silent"), bundle, adapter: cheat(files), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.pass, false);
+    assert.deepEqual(r.isolation?.stripped, [{ path: ".npmrc", why: "hook", change: "add" }]);
+  });
+
+  it("sitecustomize.py on PYTHONPATH: passes in the agent's tree, fails isolated", { skip: !hasBin("python3") && "python3 not found" }, async () => {
+    const { w, task } = await exploitWorld({ "check.py": "import subprocess, sys\nsys.exit(subprocess.call(['node', 'test/add.test.js']))\n" });
+    const files = { "sitecustomize.py": "import os\nos._exit(0)\n" };
+    const bundle = await w.mkBundle("x", "x");
+    const cmd = "PYTHONPATH=. python3 check.py";
+    const open = await runTask({ task: task(cmd, { verifierIsolation: "off" }), bundle, adapter: cheat(files), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(open.pass, true, "the exploit works without isolation");
+    const r = await runTask({ task: task(cmd), bundle, adapter: cheat(files), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.pass, false);
+    assert.deepEqual(r.isolation?.stripped, [{ path: "sitecustomize.py", why: "hook", change: "add" }]);
+  });
+
+  it("a .pth file in a vendored site-packages: stripped", async () => {
+    const { w, task } = await exploitWorld();
+    const r = await runTask({ task: task("node test/add.test.js"), bundle: await w.mkBundle("x", "x"), adapter: cheat({ ".venv/lib/python3.12/site-packages/zz.pth": "import os; os._exit(0)\n" }), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.deepEqual(r.isolation?.stripped, [{ path: ".venv/lib/python3.12/site-packages/zz.pth", why: "hook", change: "add" }]);
+  });
+
+  it("conftest.py that marks every test passed: passes in the agent's tree, fails isolated", { skip: !hasPytest && "pytest not installed" }, async () => {
+    const { w, task } = await exploitWorld({ "test_add.py": "import subprocess\n\ndef test_add():\n    assert subprocess.call(['node', 'test/add.test.js']) == 0\n" });
+    const conftest = [
+      "import pytest",
+      "@pytest.hookimpl(hookwrapper=True)",
+      "def pytest_runtest_makereport(item, call):",
+      "    outcome = yield",
+      "    rep = outcome.get_result()",
+      "    rep.outcome = 'passed'",
+      "",
+    ].join("\n");
+    const bundle = await w.mkBundle("x", "x");
+    const cmd = "python3 -m pytest -q -p no:cacheprovider test_add.py";
+    const open = await runTask({ task: task(cmd, { verifierIsolation: "off" }), bundle, adapter: cheat({ "conftest.py": conftest }), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(open.pass, true, "the exploit works without isolation");
+    const r = await runTask({ task: task(cmd), bundle, adapter: cheat({ "conftest.py": conftest }), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.pass, false);
+    assert.deepEqual(r.isolation?.stripped, [{ path: "conftest.py", why: "hook", change: "add" }]);
+  });
+
+  it("conftest.py never reaches the verified tree, pytest or not", async () => {
+    const { w, task } = await exploitWorld();
+    const r = await runTask({ task: task("test ! -e conftest.py && test ! -e tests/conftest.py && node test/add.test.js"), bundle: await w.mkBundle("fixer", "always fix bugs"), adapter: fakeAdapter({ act: () => ({ ...FIXED_SRC, "conftest.py": "x = 1\n", "tests/conftest.py": "x = 1\n" }) }), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.pass, true, r.verifierOutput?.stderr ?? r.error);
+    assert.deepEqual(r.isolation?.stripped.map((s) => s.path).sort(), ["conftest.py", "tests/conftest.py"]);
+  });
+
+  it("a script the verifier runs is restored from the start; test config and Makefile too", async () => {
+    const { w, task } = await exploitWorld({ Makefile: "test:\n\tnode test/add.test.js\n", "pytest.ini": "[pytest]\n" });
+    const r = await runTask({ task: task("sh run_tests.sh"), bundle: await w.mkBundle("x", "x"), adapter: cheat({ "run_tests.sh": "exit 0\n", Makefile: "test:\n\ttrue\n", "pytest.ini": "[pytest]\naddopts = -k nothing\n" }), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.pass, false);
+    assert.deepEqual(
+      r.isolation?.stripped.map((s) => `${s.path}:${s.why}`).sort(),
+      ["Makefile:config", "pytest.ini:config", "run_tests.sh:verifier"],
+    );
+  });
+
+  it("a file the verifier only reads is the deliverable and is carried", async () => {
+    const { w, task } = await exploitWorld();
+    const r = await runTask({ task: task('test "$(cat answer.txt)" = 42'), bundle: await w.mkBundle("x", "x"), adapter: cheat({ "answer.txt": "42" }), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.pass, true);
+    assert.deepEqual(r.isolation, { carried: 1, stripped: [] });
+  });
+
+  it("meta.verifierAllow lets a task's agent change a path isolation would restore", async () => {
+    const { w, task } = await exploitWorld();
+    const r = await runTask({ task: task("sh run_tests.sh", { verifierAllow: ["run_tests.sh"] }), bundle: await w.mkBundle("x", "x"), adapter: cheat({ "run_tests.sh": "exit 0\n" }), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.pass, true);
+    assert.deepEqual(r.isolation, { carried: 1, stripped: [] });
+  });
+
+  it("files git ignores never reach the verifier; deletions and new source files do", async () => {
+    const { w, task } = await exploitWorld();
+    const cmd = "test ! -e build/out.js && test ! -e package-lock.json && test -e src/extra.js && node test/add.test.js";
+    const adapter = fakeAdapter({
+      act: async (spec) => {
+        await rm(join(spec.cwd, "package-lock.json"));
+        return { ...FIXED_SRC, "build/out.js": "x\n", "src/extra.js": "export const x = 1;\n" };
+      },
+    });
+    const r = await runTask({ task: task(cmd), bundle: await w.mkBundle("x", "x"), adapter, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.pass, true, r.verifierOutput?.stderr ?? r.error);
+  });
+
+  it("a symlink out of the tree is left out", { skip: process.platform === "win32" && "symlinks need privileges on Windows" }, async () => {
+    const { w, task } = await exploitWorld();
+    const adapter = fakeAdapter({
+      act: async (spec) => {
+        await symlink("/etc/hosts", join(spec.cwd, "hosts"));
+        return FIXED_SRC;
+      },
+    });
+    const r = await runTask({ task: task("test ! -e hosts && node test/add.test.js"), bundle: await w.mkBundle("x", "x"), adapter, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir });
+    assert.equal(r.pass, true, r.verifierOutput?.stderr ?? r.error);
+    assert.deepEqual(r.isolation?.stripped, [{ path: "hosts", why: "symlink", change: "add" }]);
+  });
+
+  it("repair rounds verify each round in a fresh copy; hidden tests stay out of the agent's tree", async () => {
+    const { w, task } = await exploitWorld();
+    let n = 0;
+    const adapter = fakeAdapter({
+      act: async (spec) => {
+        n++;
+        assert.ok(!existsSync(join(spec.cwd, "test/add.test.js")), "no hidden test in the agent's tree");
+        return n === 1 ? { "notes.txt": "x\n" } : FIXED_SRC;
+      },
+    });
+    const r = await runTask({ task: task("node test/add.test.js"), bundle: await w.mkBundle("x", "x"), adapter, blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, repair: { rounds: 2, signal: "bit" } });
+    assert.equal(r.pass, false);
+    assert.equal(r.repair?.pass, true, JSON.stringify(r.repair));
+    assert.equal(r.repair?.rounds.length, 1);
+  });
+
+  it("isolation: false verifies in the agent's tree, as before", async () => {
+    const { w, task } = await exploitWorld();
+    const r = await runTask({ task: task("sh run_tests.sh"), bundle: await w.mkBundle("x", "x"), adapter: cheat({ "run_tests.sh": "exit 0\n" }), blobs: w.blobs, index: w.index, git: w.git, runsDir: w.runsDir, isolation: false });
+    assert.equal(r.pass, true);
+    assert.equal(r.isolation, undefined);
+  });
+});
+
+const FIXED_SRC = { "src/add.js": FIXED["src/add.js"] as string, "src/mul.js": FIXED["src/mul.js"] as string };

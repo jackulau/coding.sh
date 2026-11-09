@@ -22,10 +22,18 @@ import type { SnapshotOps } from "./git.ts";
 import { attributeTamper, tamperDisclosure, type TamperAttribution, type TamperDisclosure } from "./tamper.ts";
 import type { RepairOpts } from "./repair.ts";
 import { armRepair, armSeq, passAfterRepair, seqRanking, type ArmRepair, type ArmSeq, type SeqRanking } from "./repair-report.ts";
-import { runTask, type AgentRoute } from "./run.ts";
+import { runTask, type AgentRoute, type RunTaskOpts } from "./run.ts";
+import { join } from "node:path";
+import { paths } from "../core/paths.ts";
+import { normalQuantile } from "../stats/normal.ts";
+import { passAllK, passAtK } from "../stats/seqk.ts";
+import { startRunReceiver, type OtelOpt, type RunOtel } from "./otel.ts";
+import { learningReport, streamDir, streamOrders, type ArmLearning, type LearningReport, type SequenceOpts } from "./sequence.ts";
+import { rmrf } from "./git.ts";
 import { cellKey, DEFAULT_REUSE_MAX_AGE_MS, newestByCell, type ReuseOpts } from "./cells.ts";
 import { agentVersions, releaseCache, releaseList, releaseNote, type AgentVersions } from "./release.ts";
 import { modelMix, modelNote, type ModelMix } from "./model-mix.ts";
+import type { SignalValidity } from "../stats/validity.ts";
 
 // ------------------------------------------------------------ running
 
@@ -105,6 +113,21 @@ export interface RunExperimentOpts {
   replaces?: ReadonlyMap<string, RunResult>;
   /** Repair rounds after a failed verifier (`compare --repair N`, see RunTaskOpts.repair). Part of each cell key. */
   repair?: RepairOpts;
+  /** Verifier isolation for every run (RunTaskOpts.isolation). Default on. */
+  isolation?: boolean;
+  /**
+   * Per-run OpenTelemetry (`compare --otel`): true starts one receiver on an
+   * ephemeral port for the whole experiment and closes it at the end; an
+   * endpoint sends there. Each run's agent gets the endpoint and its run id.
+   */
+  otel?: OtelOpt;
+  /**
+   * Sequential runs (`compare --sequential`, runner/sequence.ts): per arm and
+   * attempt (a stream), the tasks run one after another in a fixed order, and
+   * the `carry` paths of the agent's HOME pass from each run to the next.
+   * Streams of different arms run side by side. Reuse is off.
+   */
+  sequence?: SequenceOpts;
 }
 
 /** The jobs of a run: scheduleJobs order, narrowed by `select`. */
@@ -260,7 +283,8 @@ export async function runExperiment(
     return id ? stored.get(id) : undefined;
   });
   let done = prior.filter(Boolean).length;
-  const cells = await planCells(o, experimentId);
+  // A sequential run's outcome depends on what ran before it: never stands in for another.
+  const cells = await planCells(o.sequence ? { ...o, reuse: undefined } : o, experimentId);
   let reused = prior.filter((r) => r?.reusedFrom).length;
   const skipped = prior.filter(Boolean).length;
   const planned = jobs.filter((_, i) => !prior[i] && !cells.cached.has(i)).length;
@@ -289,7 +313,37 @@ export async function runExperiment(
   const releaseOf = (b: HarnessBundle) => release(b.agent, () => o.adapterFor(b).detect());
   // Runs that fail on infrastructure in a row (a dead login) stop the run like a drain: no new run starts.
   const infraStop = infraStopFor(o.retry);
-  const settled = await pool(jobs, o.concurrency ?? defaultConcurrency(), async (job, i): Promise<RunResult | undefined> => {
+  // One OTLP receiver for every run of the experiment.
+  const receiver = o.otel === true ? await startRunReceiver(o.index, o.blobs) : undefined;
+  const otel: RunOtel | undefined = receiver ?? (o.otel && o.otel !== true ? o.otel : undefined);
+  // Sequential: each (arm, attempt) is a stream that runs its tasks in order, carrying HOME state.
+  const seq = o.sequence;
+  const stateRoot = seq ? join(o.runsDir ?? paths().runs, `${experimentId}.state`) : "";
+  const position = new Map<number, { stream: number; step: number }>();
+  const chains: number[][] = [];
+  if (seq) {
+    const orders = streamOrders(o.tasks, Math.max(1, o.k ?? 1), seq);
+    for (const b of o.bundles)
+      orders.forEach((order, s) => {
+        const chain: number[] = [];
+        order.forEach((t, step) => {
+          const i = jobs.findIndex((j) => j.task.id === t.id && j.bundle.id === b.id && j.attempt === s + 1);
+          if (i < 0) return;
+          chain.push(i);
+          position.set(i, { stream: s + 1, step: step + 1 });
+        });
+        if (chain.length) chains.push(chain);
+      });
+  }
+  const extraFor = (job: Job, i: number): Partial<RunTaskOpts> => {
+    const pos = position.get(i);
+    return {
+      ...(o.isolation === false ? { isolation: false } : {}),
+      ...(otel ? { otel } : {}),
+      ...(seq && pos ? { sequence: pos, carry: { paths: seq.carry, dir: streamDir(stateRoot, job.bundle.id, pos.stream) } } : {}),
+    };
+  };
+  const runOne = async (job: Job, i: number): Promise<RunResult | undefined> => {
     if (prior[i]) return prior[i];
     if (o.signal?.aborted || o.drain?.aborted || infraStop?.signal.aborted) return undefined; // never started: not a run
     const src = cells.cached.get(i);
@@ -314,7 +368,7 @@ export async function runExperiment(
       async () => {
         // A retried attempt stays in the index for the record, marked so comparisons leave it out.
         if (last) await o.index.putRun({ ...last, superseded: true }).catch(() => {});
-        last = await attemptRun(o, job, experimentId, cells.keys[i], await releaseOf(job.bundle));
+        last = await attemptRun(o, job, experimentId, cells.keys[i], await releaseOf(job.bundle), extraFor(job, i));
         return last;
       },
       { policy: o.retry ?? { retries: 0, baseMs: 0, maxMs: 0 }, errorOf: (r) => r.error, classify: runInfra, stop: [o.signal, o.drain] },
@@ -348,12 +402,29 @@ export async function runExperiment(
     done++;
     o.onProgress?.({ done, total: jobs.length, result, task: job.task, bundle: job.bundle });
     return result;
-  });
+  };
+  let settled: (RunResult | undefined)[];
+  try {
+    if (seq) {
+      settled = new Array<RunResult | undefined>(jobs.length);
+      await pool(chains, o.concurrency ?? defaultConcurrency(), async (chain) => {
+        for (const i of chain) settled[i] = await runOne(jobs[i] as Job, i);
+      });
+    } else settled = await pool(jobs, o.concurrency ?? defaultConcurrency(), runOne);
+  } finally {
+    if (receiver) {
+      await receiver.settle?.();
+      await receiver.close().catch(() => {});
+    }
+  }
   const results = settled.filter((r): r is RunResult => r !== undefined);
+  // A finished sequential experiment needs its carried state no more; an interrupted one resumes from it.
+  const interrupted = settled.some((r, i) => (r === undefined && !capped.has(i)) || r?.cancelled === true);
+  if (seq && !interrupted && !o.keep) await rmrf(stateRoot).catch(() => {});
   return {
     experimentId,
     results,
-    cancelled: settled.some((r, i) => (r === undefined && !capped.has(i)) || r?.cancelled === true),
+    cancelled: interrupted,
     ...(budget ? { budget } : {}),
     ...(o.reuse ? { reuse: { reused, unknownVersion: cells.unknownVersion } } : {}),
     planned,
@@ -364,9 +435,10 @@ export async function runExperiment(
 }
 
 /** One attempt of one job, stored in the index (runTask never throws for what the agent does). */
-async function attemptRun(o: RunExperimentOpts, job: Job, experimentId: string, key?: string, agentVersion?: string): Promise<RunResult> {
+async function attemptRun(o: RunExperimentOpts, job: Job, experimentId: string, key?: string, agentVersion?: string, extra: Partial<RunTaskOpts> = {}): Promise<RunResult> {
   try {
     return await runTask({
+      ...extra,
       ...(key ? { cellKey: key } : {}),
       ...(agentVersion ? { agentVersion } : {}),
       task: job.task,
@@ -403,6 +475,7 @@ async function attemptRun(o: RunExperimentOpts, job: Job, experimentId: string, 
       startedAt: now,
       endedAt: now,
       error: e instanceof Error ? e.message : String(e),
+      ...(extra.sequence ? { sequence: extra.sequence } : {}),
     };
     await o.index.putRun(result).catch(() => {});
     return result;
@@ -526,6 +599,8 @@ export interface ArmSpend {
 }
 
 export interface CompareReport {
+  /** `compare --signals` (Z-11): pooled, within-task and within-task-and-arm AUROC per trace signal. */
+  signals?: SignalValidity[];
   baseline: ArmSummary;
   candidate: ArmSummary;
   tasks: TaskOutcome[];
@@ -618,6 +693,59 @@ export interface CompareReport {
    * (runner/model-mix.ts), present when an arm names a model and its runs were captured.
    */
   modelMix?: ModelMix;
+  /** What each solved task cost per arm: agent cost and tokens over all runs, divided by passes. */
+  efficiency: { baseline: ArmEfficiency; candidate: ArmEfficiency };
+  /** Per-task consistency per arm: unbiased pass@k and pass^k, and the tasks with mixed outcomes. */
+  reliability: { baseline: ArmReliability; candidate: ArmReliability };
+  /** Paired tasks needed to detect the observed effect at 80% power (Connor's McNemar sample size). */
+  plan: ComparePlan;
+  /** Sequential comparisons (`compare --sequential`): pass rate by position per arm. */
+  learning?: LearningReport;
+}
+
+export interface ArmEfficiency {
+  /** Passing runs. */
+  solved: number;
+  /** Agent cost over the runs where it is known, USD. */
+  costUsd: number;
+  /** Runs with a known cost. */
+  costRuns: number;
+  /** costUsd / solved; null when nothing was solved or no cost is known. */
+  costPerSolved: number | null;
+  /** Every token of the runs where usage is known (cache reads and writes included). */
+  tokens: number;
+  tokenRuns: number;
+  /** tokens / solved; null when nothing was solved or no usage is known. */
+  tokensPerSolved: number | null;
+}
+
+export interface ArmReliability {
+  /** Tasks with at least one run in the arm. */
+  tasks: number;
+  /** Attempts per task the pass@k and pass^k use (the report's k). */
+  k: number;
+  /** Mean over tasks of the task's pass rate. */
+  passAt1: number;
+  /** k >= 2: mean over tasks with k runs of the unbiased pass@k (any of k passes; Chen et al. 2021). */
+  passAnyK?: number;
+  /** k >= 2: mean over tasks with k runs of the unbiased pass^k (all k pass; tau-bench). */
+  passAllK?: number;
+  /** Tasks whose attempts both passed and failed, sorted. */
+  flaky: string[];
+  /** flaky / tasks with 2+ runs (NaN when none has). */
+  flakeRate: number;
+}
+
+export interface ComparePlan {
+  /** Paired tasks in this comparison. */
+  paired: number;
+  /** McNemar discordant tasks: A passed and B failed (b), A failed and B passed (c). */
+  discordant: { b: number; c: number };
+  /** Observed effect |c − b| / paired. */
+  effect: number;
+  /** Paired tasks needed at α 0.05 and 80% power for the observed effect; null with a reason when there is none to plan for. */
+  tasksNeeded: number | null;
+  reason?: string;
 }
 
 /** A candidate whose instruction surface grows by more than this gets the bloat note. */
@@ -894,6 +1022,58 @@ function compareAudited(all: readonly RunResult[], opts: CompareOpts): CompareRe
   return r;
 }
 
+/** Cost and tokens per solved task: totals over the runs where each is known, divided by the arm's passes. */
+export function armEfficiency(rs: readonly RunResult[], sessions?: Map<string, Session>): ArmEfficiency {
+  const solved = rs.filter((r) => r.pass).length;
+  const known = (key: MetricKey) => rs.map((r) => runMetric(key, r, sessions?.get(r.id))).filter((x): x is number => typeof x === "number" && Number.isFinite(x));
+  const cost = known("cost");
+  const tokens = known("tokens");
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+  return {
+    solved,
+    costUsd: sum(cost),
+    costRuns: cost.length,
+    costPerSolved: solved && cost.length ? sum(cost) / solved : null,
+    tokens: sum(tokens),
+    tokenRuns: tokens.length,
+    tokensPerSolved: solved && tokens.length ? sum(tokens) / solved : null,
+  };
+}
+
+/** pass@1, unbiased pass@k and pass^k (k >= 2) over tasks, and the flaky ones (some attempts passed, some failed). */
+export function armReliability(byTask: ReadonlyMap<string, readonly RunResult[]>, k: number): ArmReliability {
+  const cells = [...byTask.entries()].filter(([, rs]) => rs.length).map(([id, rs]) => ({ id, n: rs.length, c: rs.filter((r) => r.pass).length }));
+  const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);
+  const multi = cells.filter((x) => x.n >= 2);
+  const flaky = multi.filter((x) => x.c > 0 && x.c < x.n).map((x) => x.id).sort();
+  const out: ArmReliability = { tasks: cells.length, k, passAt1: avg(cells.map((x) => x.c / x.n)), flaky, flakeRate: multi.length ? flaky.length / multi.length : NaN };
+  if (k >= 2) {
+    const full = cells.filter((x) => x.n >= k);
+    out.passAnyK = avg(full.map((x) => passAtK(x.n, x.c, k)));
+    out.passAllK = avg(full.map((x) => passAllK(x.n, x.c, k)));
+  }
+  return out;
+}
+
+/**
+ * Paired tasks needed to detect the observed McNemar effect (Connor 1987):
+ * n = ⌈(z₁₋α/₂·√pd + z_power·√(pd − δ²))² / δ²⌉ with pd the discordant share
+ * and δ = |c − b| / paired. Null when nothing is discordant or b = c.
+ */
+export function tasksNeeded(b: number, c: number, paired: number, o: { alpha?: number; power?: number } = {}): ComparePlan {
+  const base = { paired, discordant: { b, c }, effect: paired ? Math.abs(c - b) / paired : NaN };
+  if (!paired || b + c === 0) return { ...base, tasksNeeded: null, reason: "no discordant pairs" };
+  if (b === c) return { ...base, tasksNeeded: null, reason: "no observed effect (as many tasks won as lost)" };
+  const pd = (b + c) / paired;
+  const d = base.effect;
+  const za = normalQuantile(1 - (o.alpha ?? 0.05) / 2);
+  const zb = normalQuantile(o.power ?? 0.8);
+  return { ...base, tasksNeeded: Math.ceil((za * Math.sqrt(pd) + zb * Math.sqrt(Math.max(0, pd - d * d))) ** 2 / (d * d)) };
+}
+
+/** A pass rate tie with a cost per solved task that differs by this much gets a note. */
+export const COST_PER_SOLVED_NOTE = 0.25;
+
 function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareReport {
   const alpha = opts.alpha ?? 0.05;
   // Interrupted runs were killed mid-flight, and runs that failed on infrastructure (rate
@@ -1071,6 +1251,23 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
   const isVoid = diffs.length === 0 && infra > 0;
   const verdict: ReturnType<typeof decide> = isVoid ? { kind: "inconclusive", text: voidText(infra, infraByKind) } : decide(diffs.length, boot, mcn, alpha, metrics);
   if (verdict.extra) notes.push(verdict.extra);
+  const efficiency = { baseline: armEfficiency(A, opts.sessions), candidate: armEfficiency(B, opts.sessions) };
+  const reliability = { baseline: armReliability(ta, k), candidate: armReliability(tb, k) };
+  const plan = tasksNeeded(mb, mc, diffs.length, { alpha });
+  {
+    const a = efficiency.baseline.costPerSolved;
+    const b = efficiency.candidate.costPerSolved;
+    // Same pass rate within the CI, but one arm pays much more for each task it solves.
+    if ((verdict.kind === "no-difference" || verdict.kind === "inconclusive") && a !== null && b !== null && a > 0 && Math.abs(b / a - 1) >= COST_PER_SOLVED_NOTE) {
+      notes.push(`pass rates are within the CI, but the candidate costs ${Math.round(Math.abs(b / a - 1) * 100)}% ${b < a ? "less" : "more"} per solved task ($${b.toFixed(3)} vs $${a.toFixed(3)})`);
+    }
+  }
+  const isolated = [...A, ...B].filter((r) => r.isolation?.stripped.length);
+  if (isolated.length) {
+    const passed = isolated.filter((r) => r.pass).length;
+    notes.push(`${isolated.length} run(s) changed hook files, test config or scripts that the verifier did not see (verifier isolation); ${passed} of them passed anyway: see each run's isolation in --json`);
+  }
+  const learning = learningReport(A, B);
 
   const pairedIds = tasks.map((t) => t.taskId);
   const failed = pairedIds.some((id) => (ta.get(id) ?? []).some((r) => !r.pass) || (tb.get(id) ?? []).some((r) => !r.pass));
@@ -1134,6 +1331,10 @@ function compareRuns(all: readonly RunResult[], opts: CompareOpts): CompareRepor
     ...(reused.baseline || reused.candidate ? { reused } : {}),
     ...(releases ? { agentVersions: releases } : {}),
     ...(models ? { modelMix: models } : {}),
+    efficiency,
+    reliability,
+    plan,
+    ...(learning ? { learning } : {}),
   };
 }
 
@@ -1320,6 +1521,7 @@ function fmtValue(v: number, unit: MetricDelta["unit"]): string {
 }
 
 const pct = (x: number) => (Number.isFinite(x) ? `${(x * 100).toFixed(1)}%` : "—");
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? "" : "s"}`;
 
 const ITEM_PASS = new Set(["KEEP", "ACCEPT"]);
 const ITEM_FAIL = new Set(["KILL", "REJECT"]);
@@ -1498,6 +1700,22 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   const dtext = `${pp(r.diff.mean)} [${pp(r.diff.lo).replace(" pp", "")}, ${pp(r.diff.hi)}]`;
   out.push(row(["pass rate", rate(r.baseline), rate(r.candidate), signed(r.diff.mean, false, dtext)]));
   out.push(row(["passes", `${r.baseline.passes}/${r.baseline.runs}`, `${r.candidate.passes}/${r.candidate.runs}`, `McNemar ${pval(r.mcnemar.p)}`]));
+  // Older stored reports (and hand-built ones) may lack the efficiency, reliability and plan fields.
+  const rl = r.reliability;
+  if (rl && rl.baseline.k >= 2) {
+    const kk = rl.baseline.k;
+    const relRow = (label: string, get: (x: ArmReliability) => number | undefined) => {
+      const a = get(rl.baseline);
+      const b = get(rl.candidate);
+      const d = a !== undefined && b !== undefined ? b - a : NaN;
+      out.push(row([label, pct(a ?? NaN), pct(b ?? NaN), Number.isFinite(d) ? signed(d, false, pp(d)) : ""]));
+    };
+    relRow(`pass@${kk}`, (x) => x.passAnyK);
+    relRow(`pass^${kk}`, (x) => x.passAllK);
+    const fl = (x: ArmReliability) => `${x.flaky.length}/${x.tasks}`;
+    const ids = [...new Set([...rl.baseline.flaky, ...rl.candidate.flaky])].sort();
+    out.push(row(["flaky tasks", fl(rl.baseline), fl(rl.candidate), ids.length ? dim(idList(ids)) : ""]));
+  }
   const rv = r.agentVersions;
   if (rv?.confound) {
     const cell = (m: Record<string, number>, unknown: number) => `${releaseList(m, true) || "—"}${unknown ? dim(` ?×${unknown}`) : ""}`;
@@ -1525,6 +1743,23 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
     // "(3/10)": the mean covers only the runs where the metric is known.
     const val = (v: number, n: number, runs: number) => (n > 0 && n < runs ? `${fmtValue(v, m.unit)} ${dim(`(${n}/${runs})`)}` : fmtValue(v, m.unit));
     out.push(row([m.label, val(m.baseline, m.n.baseline, m.runs.baseline), val(m.candidate, m.n.candidate, m.runs.candidate), covered(m) ? signed(m.delta, m.better !== "higher", d) : d]));
+  }
+  const ef = r.efficiency;
+  if (ef) {
+    for (const [label, unit, get] of [
+      ["cost / solved", "usd", (x: ArmEfficiency) => x.costPerSolved],
+      ["tokens / solved", "count", (x: ArmEfficiency) => x.tokensPerSolved],
+    ] as const) {
+      const a = get(ef.baseline);
+      const b = get(ef.candidate);
+      if (a === null && b === null) continue;
+      const cell = (v: number | null) => (v === null ? "—" : fmtValue(v, unit));
+      // Snap float noise ($1.80/6 vs $1.20/4) to an exact tie.
+      const raw = a !== null && b !== null ? b - a : NaN;
+      const d = Math.abs(raw) < 1e-9 * Math.max(1, Math.abs(a ?? 0)) ? 0 : raw;
+      const rel = a && b !== null ? ` (${d >= 0 ? "+" : ""}${((d / a) * 100).toFixed(0)}%)` : "";
+      out.push(row([label, cell(a), cell(b), Number.isFinite(d) ? signed(d, true, `${d >= 0 ? "+" : ""}${fmtValue(d, unit)}${rel}`) : ""]));
+    }
   }
   if (r.surface) {
     const kb = (n: number) => (n < 1024 ? `${n} B` : `${(n / 1024).toFixed(1)} KB`);
@@ -1576,6 +1811,15 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
   });
   out.push(...tamperedPassLines(r, { pad: (s) => pad(s, W[0] as number), bad, dim }));
   out.push(...repairLines(r, { row: (cells) => row(cells), bad, dim, signed }));
+  if (r.learning) {
+    const L = r.learning;
+    out.push("", dim(`learning (sequential: pass rate by position, first third vs last third of ${plural(L.third, "position")})`));
+    const curve = (x: ArmLearning | undefined) => (x ? x.steps.map((s) => (s.runs ? `${Math.round(s.rate * 100)}` : "—")).join(" ") : "—");
+    const third = (x: ArmLearning | undefined) => (x ? `${pct(x.first.rate)} → ${pct(x.last.rate)}` : "—");
+    out.push(row(["curve %", curve(L.baseline), curve(L.candidate)]));
+    const d = L.diff;
+    out.push(row(["first → last", third(L.baseline), third(L.candidate), d !== undefined ? signed(d, false, `gain ${pp(d)}`) : ""]));
+  }
   if (r.tasks.length) {
     out.push("");
     const max = opts.maxTasks ?? 20;
@@ -1645,6 +1889,14 @@ export function formatCompare(r: CompareReport, opts: FormatOpts = {}): string {
     `power   MDE ${Number.isFinite(p.mde) ? `${(p.mde * 100).toFixed(1)}pp` : "—"}${exactPowerText(p)} ` +
       dim(`(α ${p.alpha}, power ${Math.round(p.power * 100)}%, paired, sd of per-case Δ ${Number.isFinite(p.sd) ? p.sd.toFixed(2) : "—"}${p.exact ? `, ${Math.round(p.exact.discordance * 100)}% discordant` : ""})`),
   );
+  const pl = r.plan;
+  if (pl && pl.paired) {
+    out.push(
+      pl.tasksNeeded === null
+        ? dim(`tasks needed: — (${pl.reason})`)
+        : `tasks needed ${pl.tasksNeeded} ${dim(`for the observed ${pp(pl.effect)} at 80% power (McNemar, ${pl.discordant.b + pl.discordant.c} of ${pl.paired} tasks discordant; this run has ${pl.paired})`)}`,
+    );
+  }
   for (const w of p.warnings) out.push(paint("33", `! ${w.message}`));
   for (const n of r.notes) out.push(dim(`note: ${n}`));
   const est = r.metrics.find((m) => m.key === "cost")?.costEstimatedRuns;
