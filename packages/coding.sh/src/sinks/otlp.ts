@@ -5,6 +5,12 @@
 //   session              → span "invoke_agent {agent}"   (root, emitted with session.end)
 //   tool.start/tool.end  → span "execute_tool {tool}"    (child, emitted with tool.end)
 //   assistant.message    → span "chat {model}"           (child, carries token usage)
+// Token usage follows the GenAI gen_ai.usage.* attributes: input_tokens counts the
+// whole prompt (uncached + cache reads + cache writes), and the cache parts go to
+// cache_read.input_tokens and cache_write.input_tokens (renamed from
+// cache_creation.input_tokens in open-telemetry/semantic-conventions-genai#440).
+// Usage.inputTokens is the uncached part only, so it also goes to
+// coding_sh.usage.uncached_input_tokens.
 // Trace and span ids are derived from session/event ids, so a re-sent batch
 // produces identical spans and backends can de-duplicate.
 import type { AgentEvent, Session, Usage } from "../schema/index.ts";
@@ -74,13 +80,19 @@ function attrs(obj: Record<string, unknown>): KeyValue[] {
   return out;
 }
 
-function usageAttrs(u: Usage | undefined): Record<string, unknown> {
+function usageAttrs(u: Usage | undefined, reasoningTokens?: unknown): Record<string, unknown> {
   if (!u) return {};
+  const { inputTokens: uncached, cacheReadTokens: read, cacheWriteTokens: write } = u;
+  const anyInput = uncached !== undefined || read !== undefined || write !== undefined;
   return {
-    "gen_ai.usage.input_tokens": u.inputTokens,
+    "gen_ai.usage.input_tokens": anyInput ? (uncached ?? 0) + (read ?? 0) + (write ?? 0) : undefined,
     "gen_ai.usage.output_tokens": u.outputTokens,
-    "gen_ai.usage.cache_read.input_tokens": u.cacheReadTokens,
-    "gen_ai.usage.cache_creation.input_tokens": u.cacheWriteTokens,
+    "gen_ai.usage.cache_read.input_tokens": read,
+    "gen_ai.usage.cache_write.input_tokens": write,
+    // The old name for cache writes (still the key in the semconv 1.41 registry), sent through 0.1.5 so existing dashboards keep working.
+    "gen_ai.usage.cache_creation.input_tokens": write,
+    "gen_ai.usage.reasoning.output_tokens": typeof reasoningTokens === "number" && Number.isFinite(reasoningTokens) ? reasoningTokens : undefined,
+    "coding_sh.usage.uncached_input_tokens": uncached,
     "coding_sh.cost_usd": u.costUsd,
   };
 }
@@ -168,7 +180,7 @@ export function toOtlpSpans(batch: AgentEvent[], sessions: Session[], mode: "ful
           "coding_sh.ttft_ms": p.ttftMs,
           "coding_sh.tokens_per_sec": p.tokensPerSec,
           "coding_sh.event.id": e.id,
-          ...usageAttrs(e.usage),
+          ...usageAttrs(e.usage, p.reasoningTokens),
         }),
         status: p.ok === false ? { code: STATUS_ERROR, message: full && typeof p.error === "string" ? p.error.slice(0, 500) : "model call failed" } : undefined,
       });
