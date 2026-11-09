@@ -263,7 +263,9 @@ describe("CLIProxyAPI usage queue", () => {
     try {
       const home = join(root, "home");
       mkdirSync(home);
-      const env: Record<string, string> = { HOME: home, USERPROFILE: home, CODING_SH_HOME: join(home, ".coding.sh"), XDG_CONFIG_HOME: join(home, ".config"), PATH: dirname(process.execPath), TMPDIR: tmpdir(), NO_COLOR: "1", CLIPROXYAPI_URL: stub.url };
+      // No background ingest: this store was never refolded, so each command would start one, and
+      // its refold of the session can land after the enrich's and drop the tag the last assert reads.
+      const env: Record<string, string> = { HOME: home, USERPROFILE: home, CODING_SH_HOME: join(home, ".coding.sh"), XDG_CONFIG_HOME: join(home, ".config"), PATH: dirname(process.execPath), TMPDIR: tmpdir(), NO_COLOR: "1", CLIPROXYAPI_URL: stub.url, CODING_SH_NO_AUTO_INGEST: "1" };
       mkdirSync(env.CODING_SH_HOME!);
       const index = await SqliteIndexStore.open(join(env.CODING_SH_HOME!, "index.db"));
       await index.migrate();
