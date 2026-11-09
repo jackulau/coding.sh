@@ -2,21 +2,23 @@
 import { resolve } from "node:path";
 import { addCases, assignSplits, caseFromSession, createDataset, loadDatasetFile, slugify } from "../../datasets/dataset.ts";
 import { FileEvalStore } from "../../datasets/store.ts";
-import type { Dataset, Split } from "../../datasets/types.ts";
+import type { CaseKind, Dataset, Split } from "../../datasets/types.ts";
 import { UsageError } from "../args.ts";
 import { jsonArg, list, resolveSession, str, withContext } from "../common.ts";
 import { CliError, plural } from "../output.ts";
 import type { CommandContext } from "../types.ts";
 
 function summary(ds: Dataset) {
-  return { id: ds.id, name: ds.name, version: ds.version, cases: ds.cases.length };
+  const kinds: Partial<Record<CaseKind, number>> = {};
+  for (const c of ds.cases) if (c.kind) kinds[c.kind] = (kinds[c.kind] ?? 0) + 1;
+  return { id: ds.id, name: ds.name, version: ds.version, cases: ds.cases.length, ...(Object.keys(kinds).length ? { kinds } : {}) };
 }
 
-/** A split given in the case JSON wins over --split; malformed cases pass through for normalizeCase to report. */
-function withDefaultSplit(v: unknown, split: Split): unknown {
+/** A field given in the case JSON (split, kind) wins over the flag; malformed cases pass through for normalizeCase to report. */
+function withDefault(v: unknown, key: "split" | "kind", value: string): unknown {
   if (v === null || typeof v !== "object" || Array.isArray(v)) return v;
-  const own = (v as { split?: unknown }).split;
-  return own === undefined || own === null || own === "" ? { ...v, split } : v;
+  const own = (v as Record<string, unknown>)[key];
+  return own === undefined || own === null || own === "" ? { ...v, [key]: value } : v;
 }
 
 export async function run(c: CommandContext): Promise<number> {
@@ -43,14 +45,18 @@ export async function run(c: CommandContext): Promise<number> {
         const name = c.positionals[0]!;
         // Registry `choices` validates the value.
         const split = str(c.flags.split) as Split | undefined;
+        const kind = str(c.flags.kind) as CaseKind | undefined;
         const raw: unknown[] = [];
         for (const j of list(c.flags.case)) {
-          const v = await jsonArg(j, "--case");
-          raw.push(split ? withDefaultSplit(v, split) : v);
+          let v = await jsonArg(j, "--case");
+          if (split) v = withDefault(v, "split", split);
+          if (kind) v = withDefault(v, "kind", kind);
+          raw.push(v);
         }
         for (const id of list(c.flags.session)) {
           const s = await resolveSession(ctx, id);
-          raw.push(caseFromSession(s, await ctx.index.listEvents(s.id), split ? { split } : {}));
+          const harvested = caseFromSession(s, await ctx.index.listEvents(s.id), split ? { split } : {});
+          raw.push(kind ? { ...harvested, kind } : harvested);
         }
         if (!raw.length) throw new UsageError("Nothing to add. Pass --case <JSON> or --session <ID>", { reason: "missing_argument" });
         const existing = await store.getDataset(slugify(name));

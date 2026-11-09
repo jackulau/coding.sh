@@ -111,3 +111,26 @@ describe("dataset add/import assign splits", () => {
     assert.deepEqual(Object.fromEntries(got.map((c) => [c.id, c.split])), { x: splitFor("x"), y: "test" });
   });
 });
+
+describe("dataset add/import with case kinds (TB-12)", () => {
+  it("--kind marks the added cases; a kind in the case JSON wins; the summary counts kinds", async () => {
+    const out = cli(["dataset", "add", "fix", "--kind", "control", "--session", SESSIONS[1]!, "--case", '{"input":"a"}', "--case", '{"input":"b","kind":"bad"}']) as unknown as { dataset: { kinds?: Record<string, number> } };
+    assert.deepEqual(out.dataset.kinds, { control: 2, bad: 1 });
+    const got = await cases("fix");
+    assert.deepEqual(got.map((c) => [c.input, c.kind]).sort(), [["a", "control"], ["b", "bad"], ["question 1", "control"]]);
+    const plain = cli(["dataset", "add", "nokind", "--case", '{"input":"a"}']) as unknown as { dataset: Record<string, unknown> };
+    assert.equal("kinds" in plain.dataset, false);
+  });
+
+  it("import keeps kinds and refuses an unknown one", async () => {
+    const file = join(root, "kinds.jsonl");
+    writeFileSync(file, '{"id":"g","input":"g","kind":"guard"}\n{"id":"o","input":"o"}\n');
+    cli(["dataset", "import", file]);
+    assert.deepEqual(Object.fromEntries((await cases("kinds")).map((c) => [c.id, c.kind ?? null])), { g: "guard", o: null });
+    const bad = join(root, "bogus.jsonl");
+    writeFileSync(bad, '{"input":"x","kind":"regression"}\n');
+    const r = spawnSync(process.execPath, ["--no-warnings", MAIN, "dataset", "import", bad, "--json"], { env, cwd: root, encoding: "utf8", timeout: 30_000 });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /case 1: \\"kind\\" must be one of bad, guard, control/);
+  });
+});

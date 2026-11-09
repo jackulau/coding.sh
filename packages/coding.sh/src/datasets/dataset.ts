@@ -7,7 +7,8 @@ import { basename, extname } from "node:path";
 import type { AgentEvent, Session } from "../schema/index.ts";
 import { parseCsvObjects, stringifyCsv } from "./csv.ts";
 import { canonicalJson, contentHash, hashUnit, shortHash } from "./hash.ts";
-import { SPLITS, type Case, type Dataset, type Split } from "./types.ts";
+import { isCaseKind } from "./kinds.ts";
+import { CASE_KINDS, SPLITS, type Case, type Dataset, type Split } from "./types.ts";
 
 export class DatasetError extends Error {
   constructor(message: string) {
@@ -62,6 +63,10 @@ export function normalizeCase(raw: unknown, where = "case"): Case {
     if (!isSplit(r.split)) throw new DatasetError(`${where}: "split" must be one of ${SPLITS.join(", ")}`);
     c.split = r.split;
   }
+  if (r.kind !== undefined && r.kind !== null && r.kind !== "") {
+    if (!isCaseKind(r.kind)) throw new DatasetError(`${where}: "kind" must be one of ${CASE_KINDS.join(", ")}`);
+    c.kind = r.kind;
+  }
   if (r.id !== undefined && r.id !== null && r.id !== "") {
     if (typeof r.id !== "string" && typeof r.id !== "number") throw new DatasetError(`${where}: "id" must be a string`);
     c.id = String(r.id);
@@ -99,6 +104,7 @@ export function dedupeCases(cases: readonly Case[]): DedupeReport {
     if (prev) {
       duplicates.push({ dropped: c.id, kept: prev.id });
       if (c.tags?.length) prev.tags = [...new Set([...(prev.tags ?? []), ...c.tags])];
+      if (c.kind && !prev.kind) prev.kind = c.kind;
       continue;
     }
     const otherHash = byId.get(c.id);
@@ -222,6 +228,7 @@ function orderCase(c: Case): Record<string, unknown> {
   const o: Record<string, unknown> = { id: c.id, input: c.input };
   if (c.expected !== undefined) o.expected = c.expected;
   if (c.split !== undefined) o.split = c.split;
+  if (c.kind !== undefined) o.kind = c.kind;
   if (c.tags !== undefined) o.tags = c.tags;
   if (c.metadata !== undefined) o.metadata = c.metadata;
   if (c.sourceSessionId !== undefined) o.sourceSessionId = c.sourceSessionId;
@@ -254,7 +261,7 @@ function cell(v: string, parseJson: boolean): unknown {
 
 /**
  * CSV → case records. Columns: `input` (or `input.<key>` columns, which build
- * an object), `expected` (or `expected.<key>`), `id`, `split`, `tags`,
+ * an object), `expected` (or `expected.<key>`), `id`, `split`, `kind`, `tags`,
  * `sourceSessionId`, `metadata.<key>`. Unknown columns go to metadata.
  */
 export function casesFromCsv(text: string, opts: CsvCaseOpts = {}): unknown[] {
@@ -274,6 +281,7 @@ export function casesFromCsv(text: string, opts: CsvCaseOpts = {}): unknown[] {
         if (v !== "") rec.expected = cell(v, parseJson);
       } else if (k === "id") rec.id = v;
       else if (k === "split") rec.split = v.trim();
+      else if (k === "kind") rec.kind = v.trim();
       else if (k === "sourceSessionId") {
         if (v !== "") rec.sourceSessionId = v;
       } else if (k === "tags") {
@@ -308,16 +316,18 @@ function toCell(v: unknown): string {
   return typeof v === "string" ? v : JSON.stringify(v);
 }
 
-/** Cases → CSV with columns id,input,expected,split,tags,sourceSessionId,metadata.* */
+/** Cases → CSV with columns id,input,expected,split,[kind,]tags,sourceSessionId,metadata.* (kind only when a case has one). */
 export function datasetToCsv(ds: Pick<Dataset, "cases">, opts: { tagSeparator?: string } = {}): string {
   const sep = opts.tagSeparator ?? ";";
   const metaKeys = [...new Set(ds.cases.flatMap((c) => Object.keys(c.metadata ?? {})))].sort();
-  const header = ["id", "input", "expected", "split", "tags", "sourceSessionId", ...metaKeys.map((k) => `metadata.${k}`)];
+  const kinds = ds.cases.some((c) => c.kind);
+  const header = ["id", "input", "expected", "split", ...(kinds ? ["kind"] : []), "tags", "sourceSessionId", ...metaKeys.map((k) => `metadata.${k}`)];
   const rows = ds.cases.map((c) => [
     c.id,
     toCell(c.input),
     toCell(c.expected),
     c.split ?? "",
+    ...(kinds ? [c.kind ?? ""] : []),
     (c.tags ?? []).join(sep),
     c.sourceSessionId ?? "",
     ...metaKeys.map((k) => toCell(c.metadata?.[k])),
