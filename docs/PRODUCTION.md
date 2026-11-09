@@ -34,6 +34,7 @@ One Node process with one port (default **4318**, so an `OTEL_EXPORTER_OTLP_ENDP
 | `POST /v1/traces`, `/v1/logs` | ingest key | OTLP/HTTP, JSON or protobuf, gzip/deflate/br. Reuses `src/otel` decode + map + enrichers (eve, gateway). |
 | `POST /v1/metrics` | ingest key | Accepted and dropped, as today. |
 | `POST /v1/ingest` | ingest key | Native batched `AgentEvent` JSON (§2). |
+| `POST /v1/evals/eve` | ingest key | One `eve eval` run from `codingShReporter`, stored as a dataset version and an experiment ([eve](integrations/eve.md#send-eve-eval-runs-to-codingsh)). Requests with an `Origin` header get 403. |
 | `GET /`, `/api/*` | read key or basic auth | The existing viewer and its API. Adds `GET /api/projects` and a `?project=` filter on list/search/stats. |
 | `GET /healthz` | none | 200 `{"ok":true}` while the process is up. It never touches the store. |
 | `GET /readyz` | none | 200 when the store pings, migrations are done, this replica holds the writer lock (or runs `--role viewer`), the queue is under 90% and the server is not shutting down. Otherwise 503. The body is `{ok, store, writer, role, queue:{events,max}, insecure, reason?}` (`reason` says why it is 503) and contains no secrets. |
@@ -225,6 +226,9 @@ In serve, an `llm.call` that has tokens but no `costUsd` gets
 - `coding_sh_writer_tick_seconds` (histogram), `coding_sh_store_errors_total`
 - `coding_sh_writer_lock_held`
 - `process_resident_memory_bytes`, `nodejs_eventloop_lag_seconds`
+- `coding_sh_forward_spans_total{result="sent|dropped|failed"}`, `coding_sh_forward_buffer_spans`
+  (only when `[serve.forward]` is set)
+- `coding_sh_sink_events_total{sink,result="sent|failed"}` (only when `[[sinks]]` are set)
 
 **Logs.** One JSON line per event. Store URLs pass through `redactUrl` (`src/sinks/post.ts`).
 There is one summary line per minute (events in/out, throttled, queue depth).
@@ -242,6 +246,49 @@ There is one summary line per minute (events in/out, throttled, queue depth).
   returns `{project?}` or undefined. `startViewer` is unchanged for local use.
 - Do not edit `src/integrations/gateway`, `src/adapters` or `apps/site`. Serve uses
   `defaultEnricher` as is, so a Gateway trace drain pointed at `/v1/traces` with an ingest key works.
+
+### 1.9 Forward and sinks
+
+Serve can send what it commits on to other systems. Both run after the writer commits and answers
+the request, from memory, so a slow or failing target never changes an ingest response.
+
+**Forward to an OTLP collector.** Set `CODING_SH_FORWARD_URL` (or `[serve.forward] endpoint`) to an
+OTLP/HTTP endpoint, such as a Datadog, Honeycomb or Grafana collector. Serve posts every committed
+trace there as OTLP/HTTP JSON:
+
+```toml
+[serve.forward]
+endpoint = "https://otel-collector.internal:4318"     # /v1/traces is added
+headers = { "x-api-key" = "${COLLECTOR_KEY}" }
+mode = "metadata"                                     # default: capture.mode
+max_buffer_spans = 20000
+```
+
+- OTLP posted to `/v1/traces` keeps its traceId, spanId and parent ids. Native `/v1/ingest` batches
+  are sent as `invoke_agent`, `execute_tool` and `chat` spans, the same mapping as the `otlp` sink.
+  Every resource gets `coding_sh.project` set to the ingest key's project.
+- `metadata` mode keeps an allowlist: gen_ai operation, provider, model, response id and finish
+  reasons, tool name, call id and type, agent and conversation ids, token usage, `service.*`,
+  `telemetry.*`, `coding_sh.*` (except the session title and repo root), and numbers and booleans.
+  Messages, prompts, tool arguments and results, `input.value`, `output.value`, span event
+  attributes other than `exception.type`, and status messages are dropped. `full` mode sends every attribute after `capture.redact`.
+- Spans are sent in batches of up to 1,000, about once a second. A network error, 408, 429 or 5xx
+  keeps the batch and retries with backoff from 1 s to 60 s (`Retry-After` wins). Another 4xx drops
+  the batch and logs it.
+- While the collector is down, up to `max_buffer_spans` spans wait in memory and are sent when it
+  recovers. Past that, the oldest are dropped and counted in
+  `coding_sh_forward_spans_total{result="dropped"}`. On shutdown serve tries to send the rest
+  within the drain window, then counts what is left as dropped.
+- Only traces are forwarded. OTLP logs and metrics are stored but not forwarded. A client that
+  retries a request can cause its spans to be forwarded twice, with the same ids.
+- Unset, nothing is forwarded. A `--role viewer` replica never forwards.
+
+**Mirror to `[[sinks]]`.** Serve also mirrors each committed batch, from both OTLP and native
+ingest, to the `[[sinks]]` in its config, the same sinks local ingest uses
+([config reference](reference/config.md#sinks)). Metadata sinks get the metadata transform. A sink
+that answers with a retryable error (429, 5xx, a network error) is retried with backoff; another
+error drops that batch and counts it in `coding_sh_sink_events_total{result="failed"}`. On a team,
+set the forward or a sink once on serve instead of on every laptop.
 
 ## 2. Native ingest API
 
@@ -585,22 +632,23 @@ export OTEL_SERVICE_NAME=checkout-api                              # becomes the
 
 ### 5.1 Serverless (Vercel Functions)
 
-Ingest does **not** run as a Function in v1. Run serve as a long-running service (Fly, Railway,
-Render, or any container). Apps on Vercel are first-class *senders*: the SDK works in Functions with
-`waitUntil(flush())`, and the AI Gateway drain posts to serve.
+Apps on Vercel are first-class *senders*: the SDK works in Functions with `waitUntil(flush())`, and
+the AI Gateway drain posts to serve. The ingest routes can also run as a Function, through
+`createFetchHandler()` from `coding.sh/server` ([serverless.md](production/serverless.md)):
 
-Why:
+- It is a WHATWG `Request` → `Response` handler for `/v1/traces`, `/v1/logs`, `/v1/metrics`,
+  `/v1/ingest`, `/healthz` and `/readyz`, with the same auth, limits, validation, cost estimate,
+  forward and sinks as serve. The viewer, `/api/*`, `/metrics`, the proxy and retention stay on serve.
+- Several instances can write one Postgres database at once. `coding.sh-store-postgres` takes
+  `pg_advisory_xact_lock` on the session id around each session rebuild (read the session and its
+  events, build, upsert, in one transaction), so concurrent writers to one session end with the
+  same stats as serial writes. The lock is per transaction, so a transaction-mode pooler is fine.
+- The SQLite and memory stores have no such lock. Use one instance with them.
+- Limits: OTLP mapping keeps per-instance trace state, so spans of one trace that land on different
+  instances can map less well than on one serve. Each instance opens its own store connection.
 
-1. Session aggregates are rebuilt with a read-modify-write. Serve guarantees a single writer, while
-   concurrent Function instances would store stale stats.
-2. OTLP mapping keeps per-process trace state (`SpanTree`, `TraceSessionMap`) that is only partly
-   persisted to kv.
-3. Backpressure and batching need a process that outlives a request. Per-request Functions turn every
-   exporter flush into a DB connection, which needs a pooler, and poolers break session advisory locks.
-
-Path forward: the ingest core (decode → map → scope → write) is transport-agnostic. A
-`createFetchHandler()` becomes a small adapter once the pg store takes a per-session
-`pg_advisory_xact_lock` around each rebuild.
+Run serve as a long-running service (Fly, Railway, Render, or any container) when you also want the
+viewer, retention and `/metrics` in one place.
 
 ## 6. Build, test and ownership
 

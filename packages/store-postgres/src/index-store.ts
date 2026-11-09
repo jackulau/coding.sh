@@ -352,7 +352,29 @@ export class PgIndexStore implements IndexStore {
   // ------------------------------------------------------------ sessions
 
   async upsertSession(s: Session): Promise<void> {
-    await this.pool.query(
+    await this.upsertSessionOn(this.pool, s);
+  }
+
+  /**
+   * Rebuilds one session in one transaction under pg_advisory_xact_lock on its
+   * id (keyed by schema): concurrent writers to the same session (serverless
+   * instances, several serve processes) queue on the lock, and each reads the
+   * events every earlier writer committed, so the last rebuild always sees them
+   * all. Works through transaction-mode poolers (the lock ends with the transaction).
+   */
+  async rebuildSession(id: string, build: (prev: Session | undefined, events: AgentEvent[]) => Session | undefined): Promise<Session | undefined> {
+    return withTx(this.pool, async (c) => {
+      await c.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [`coding.sh:session:${this.schema}:${id}`]);
+      const [row] = (await c.query(`SELECT * FROM ${this.t("sessions")} WHERE id = $1`, [id])).rows;
+      const events = (await c.query(`SELECT ${EVENT_COLS} FROM ${this.t("events")} WHERE session_id = $1 ORDER BY ts, seq`, [id])).rows.map(rowToEvent);
+      const next = build(row ? rowToSession(row) : undefined, events);
+      if (next) await this.upsertSessionOn(c, next);
+      return next;
+    });
+  }
+
+  private async upsertSessionOn(c: pg.Pool | pg.PoolClient, s: Session): Promise<void> {
+    await c.query(
       `INSERT INTO ${this.t("sessions")} AS cur (id, project_id, agent, agent_version, model, cwd, repo, repo_root, title, started_at, ended_at,
          stats, flags, run_id, end_snapshot, parent, parent_session_id, trace_ids, parse_version)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)

@@ -42,19 +42,28 @@ export class ServeMetrics {
   readonly throttled = new Counter("coding_sh_ingest_throttled_total", "Ingest requests refused with 429 (queue full).");
   readonly authFailures = new Counter("coding_sh_ingest_auth_failures_total", "Ingest requests with a missing or bad key.");
   readonly storeErrors = new Counter("coding_sh_store_errors_total", "Writer ticks that failed on a store error.");
+  readonly forwardSpans = new Counter("coding_sh_forward_spans_total", "Spans forwarded to the OTLP collector, by result (sent, dropped, failed).");
+  readonly sinkEvents = new Counter("coding_sh_sink_events_total", "Events mirrored to [[sinks]], by sink and result (sent, dropped, failed).");
   private readonly tickCounts = new Array<number>(TICK_BUCKETS.length + 1).fill(0);
   private tickSum = 0;
   private tickCount = 0;
-  private readonly loop = monitorEventLoopDelay({ resolution: 20 });
+  // Absent on some serverless runtimes (the fetch handler); the lag gauge then reads 0.
+  private readonly loop: ReturnType<typeof monitorEventLoopDelay> | undefined = (() => {
+    try {
+      return monitorEventLoopDelay({ resolution: 20 });
+    } catch {
+      return undefined;
+    }
+  })();
   /** Read at render time. */
-  gauges: { queueEvents: () => number; queueBytes: () => number; writerLockHeld: () => boolean } = {
+  gauges: { queueEvents: () => number; queueBytes: () => number; writerLockHeld: () => boolean; forwardBufferSpans?: () => number } = {
     queueEvents: () => 0,
     queueBytes: () => 0,
     writerLockHeld: () => false,
   };
 
   constructor() {
-    this.loop.enable();
+    this.loop?.enable();
   }
 
   observeTick(seconds: number): void {
@@ -65,12 +74,17 @@ export class ServeMetrics {
   }
 
   close(): void {
-    this.loop.disable();
+    this.loop?.disable();
   }
 
   render(): string {
     const out: string[] = [];
     for (const c of [this.httpRequests, this.ingestEvents, this.throttled, this.authFailures, this.storeErrors]) out.push(...c.render());
+    if (this.gauges.forwardBufferSpans) {
+      out.push(...this.forwardSpans.render());
+      out.push("# HELP coding_sh_forward_buffer_spans Spans waiting to be forwarded.", "# TYPE coding_sh_forward_buffer_spans gauge", `coding_sh_forward_buffer_spans ${this.gauges.forwardBufferSpans()}`);
+    }
+    if (this.sinkEvents.values.size) out.push(...this.sinkEvents.render());
     out.push("# HELP coding_sh_queue_events Events waiting for the writer.", "# TYPE coding_sh_queue_events gauge", `coding_sh_queue_events ${this.gauges.queueEvents()}`);
     out.push("# HELP coding_sh_queue_bytes Decoded bytes waiting for the writer.", "# TYPE coding_sh_queue_bytes gauge", `coding_sh_queue_bytes ${this.gauges.queueBytes()}`);
     out.push("# HELP coding_sh_writer_lock_held 1 when this replica holds the writer lock.", "# TYPE coding_sh_writer_lock_held gauge", `coding_sh_writer_lock_held ${this.gauges.writerLockHeld() ? 1 : 0}`);
@@ -82,10 +96,10 @@ export class ServeMetrics {
     });
     cum += this.tickCounts[TICK_BUCKETS.length]!;
     out.push(`coding_sh_writer_tick_seconds_bucket{le="+Inf"} ${cum}`, `coding_sh_writer_tick_seconds_sum ${this.tickSum}`, `coding_sh_writer_tick_seconds_count ${this.tickCount}`);
-    out.push("# HELP process_resident_memory_bytes Resident memory size in bytes.", "# TYPE process_resident_memory_bytes gauge", `process_resident_memory_bytes ${process.memoryUsage.rss()}`);
-    const lag = Number.isFinite(this.loop.mean) ? this.loop.mean / 1e9 : 0;
+    out.push("# HELP process_resident_memory_bytes Resident memory size in bytes.", "# TYPE process_resident_memory_bytes gauge", `process_resident_memory_bytes ${process.memoryUsage?.rss?.() ?? 0}`);
+    const lag = this.loop && Number.isFinite(this.loop.mean) ? this.loop.mean / 1e9 : 0;
     out.push("# HELP nodejs_eventloop_lag_seconds Mean event loop delay.", "# TYPE nodejs_eventloop_lag_seconds gauge", `nodejs_eventloop_lag_seconds ${lag}`);
-    this.loop.reset();
+    this.loop?.reset();
     return out.join("\n") + "\n";
   }
 }

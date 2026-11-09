@@ -3,23 +3,26 @@
 // Prometheus metrics are served next to them. See docs/PRODUCTION.md §1.
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { BlobStore, IndexStore, WriterLock } from "../core/types.ts";
-import { canonicalScheme, openBlobStore, openIndexStore, parseStoreUrl } from "../store/factory.ts";
+import type { BlobStore, IndexStore, Sink, WriterLock } from "../core/types.ts";
+import { canonicalScheme, openBlobStore, openIndexStore, openSink, parseStoreUrl } from "../store/factory.ts";
 import type { SpanEnricher } from "../otel/map.ts";
-import { createOtlpHandler, decompress, hostOf, HttpError, isLoopbackHost, readBody, RPC, type Signal } from "../otel/receiver.ts";
+import { hostOf, isLoopbackHost, type Signal } from "../otel/receiver.ts";
 import { createViewerHandler } from "../viewer/server.ts";
+import { createRedactor } from "../core/redact.ts";
+import { FileEvalStore } from "../datasets/store.ts";
+import { createEveEvalsHandler, EVE_EVALS_PATH } from "../integrations/eve/evals.ts";
 import { recorderFor } from "../proxy/index.ts";
 import type { Recorder } from "../proxy/record.ts";
 import { createProxyHandler, type Upstreams } from "../proxy/server.ts";
 import { proxySettings } from "../proxy/state.ts";
 import type { UpdateStatus } from "../update/index.ts";
 import { createAuthenticator, READ_COOKIE } from "./auth.ts";
-import { DRAIN_TIMEOUT_MS, MAX_BODY_BYTES, type ServeConfig } from "./config.ts";
+import { DRAIN_TIMEOUT_MS, type ServeConfig } from "./config.ts";
 import { createLogger, type Logger, safeUrl } from "./log.ts";
 import { ServeMetrics } from "./metrics.ts";
-import { parseNativeBatch } from "./native.ts";
 import { IngestQueue } from "./queue.ts";
 import { startRetention } from "./retention.ts";
+import { createCommitHooks, createNativeIngestHandler, createServeOtlpHandler, type HookTiming, sendJson } from "./routes.ts";
 import { retryTransient } from "./startup.ts";
 
 /** How long serve waits for a database that refuses connections at startup. */
@@ -38,6 +41,12 @@ export interface ServeOptions {
   drainMs?: number;
   /** Where the /proxy/* routes forward (default: [proxy] in config.toml, then the public APIs). */
   proxyUpstreams?: Partial<Upstreams>;
+  /** Mirror to these instead of opening config.core.sinks (tests). */
+  sinks?: Sink[];
+  /** fetch for the OTLP forward (tests). */
+  fetch?: typeof fetch;
+  /** Forward and sink flush/backoff timing (tests). */
+  hookTiming?: HookTiming;
 }
 
 export interface ServeHandle {
@@ -88,12 +97,6 @@ export async function storeProjects(index: IndexStore, cap = 100_000): Promise<s
   return [...ids];
 }
 
-function sendJson(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}): void {
-  const json = JSON.stringify(body);
-  res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Content-Length": String(Buffer.byteLength(json)), "Cache-Control": "no-store", ...headers });
-  res.end(json);
-}
-
 // Servers never phone home (update.check is forced off).
 const noUpdates = async (): Promise<UpdateStatus> => ({
   current: "",
@@ -136,6 +139,23 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
   }
   log.info("store opened", { index: safeUrl(cfg.core.store.index), blobs: safeUrl(cfg.core.store.blobs) });
 
+  // ---- after a commit: the OTLP forward and [[sinks]] mirroring (writer only)
+  let sinks: Sink[] = o.sinks ?? [];
+  if (!o.sinks && cfg.role === "all") {
+    try {
+      for (const sc of cfg.core.sinks) sinks.push(await openSink(sc, cfg.core));
+    } catch (e) {
+      for (const s of sinks) await s.close?.().catch(() => {});
+      await index.close().catch(() => {});
+      await blobs.close?.().catch(() => {});
+      throw e;
+    }
+  }
+  if (cfg.role === "viewer") sinks = [];
+  const hooks = createCommitHooks({ cfg: cfg.role === "viewer" ? { ...cfg, forward: undefined } : cfg, blobs, sinks, metrics, log, ...(o.fetch ? { fetch: o.fetch } : {}), ...(o.hookTiming ? { timing: o.hookTiming } : {}) });
+  if (hooks.forwarder) log.info("forwarding committed traces", { endpoint: safeUrl(hooks.forwarder.url), mode: cfg.forward!.mode });
+  if (hooks.mirror) log.info("mirroring committed events to sinks", { sinks: sinks.map((s) => s.name) });
+
   const queue = new IngestQueue({
     store: index,
     blobs,
@@ -147,6 +167,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
     ...(o.tickEvents !== undefined ? { tickEvents: o.tickEvents } : {}),
     ...(o.enrichSpan !== undefined ? { enrichSpan: o.enrichSpan } : {}),
     onLeaseLost: () => void loseWriter(),
+    ...(hooks.onCommit ? { onCommit: hooks.onCommit } : {}),
   });
 
   // ---- writer lock (role all): repair before taking traffic, standby retries every 5 s
@@ -168,7 +189,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
     stopRetention = startRetention({ store: index, blobs, config: cfg.core, days: cfg.retentionDays, run: (fn) => queue.runExclusive(fn), log });
     return true;
   };
-  metrics.gauges = { queueEvents: () => queue.depth.events, queueBytes: () => queue.depth.bytes, writerLockHeld: () => queue.isWritable };
+  Object.assign(metrics.gauges, { queueEvents: () => queue.depth.events, queueBytes: () => queue.depth.bytes, writerLockHeld: () => queue.isWritable });
   const retry = () => {
     lockTimer = setTimeout(async () => {
       if (shuttingDown) return;
@@ -200,6 +221,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
         retry();
       }
     } catch (e) {
+      await hooks.close(0);
       await index.close().catch(() => {});
       await blobs.close?.().catch(() => {});
       throw e;
@@ -208,86 +230,23 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
   }
 
   // ---- handlers
-  const otlp = createOtlpHandler<string>({
-    maxBodyBytes: MAX_BODY_BYTES,
-    allowRemote: !loopback,
-    corsOrigins: cfg.corsOrigins,
-    allowLocalOrigins: false,
-    authorize(req) {
-      const project = auth.ingest(req);
-      if (project === undefined) metrics.authFailures.inc({ route: (req.url ?? "").split("?")[0]! });
-      return project;
-    },
-    async submit({ signal, decoded, auth: project, bytes, items }) {
-      const r = await queue.submit({ kind: "otlp", project, signal, decoded, items: Math.max(items, 1), bytes });
-      return { rejected: r.rejected, message: r.message };
-    },
-    onError: (err) => log.error("otlp", { error: err.message }),
-  });
+  const routeDeps = { cfg, auth, queue, metrics, log, allowRemote: !loopback };
+  const otlp = createServeOtlpHandler(routeDeps);
+  const native = createNativeIngestHandler(routeDeps);
 
-  // serve.cors_origins applies to both ingest routes (a browser SDK posts here with a preflight); /api stays same-origin.
-  const native = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    const cors: Record<string, string> = {};
-    try {
-      const origin = req.headers.origin;
-      if (origin !== undefined) {
-        if (!cfg.corsOrigins.includes(origin)) {
-          req.resume();
-          throw new HttpError(403, RPC.PERMISSION_DENIED, `origin ${origin} is not allowed`);
-        }
-        cors["Access-Control-Allow-Origin"] = origin;
-        cors["Access-Control-Expose-Headers"] = "Retry-After";
-        cors.Vary = "Origin";
-      }
-      if (req.method === "OPTIONS") {
-        res.writeHead(204, {
-          ...cors,
-          "Access-Control-Allow-Methods": "POST, OPTIONS",
-          "Access-Control-Allow-Headers": "Authorization, Content-Type, Content-Encoding",
-          "Access-Control-Max-Age": "86400",
-          "Content-Length": "0",
-        });
-        res.end();
-        return;
-      }
-      if (req.method !== "POST") throw new HttpError(405, RPC.UNIMPLEMENTED, "use POST", { Allow: "POST, OPTIONS" });
-      const project = auth.ingest(req);
-      if (project === undefined) {
-        metrics.authFailures.inc({ route: "/v1/ingest" });
-        req.resume();
-        throw new HttpError(401, RPC.UNAUTHENTICATED, "missing or invalid ingest key; send Authorization: Bearer <key>", { "WWW-Authenticate": "Bearer" });
-      }
-      const ct = (req.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase();
-      if (ct !== "application/json") {
-        req.resume();
-        throw new HttpError(415, RPC.INVALID_ARGUMENT, "Content-Type must be application/json");
-      }
-      const raw = await readBody(req, MAX_BODY_BYTES);
-      const body = await decompress(raw, req.headers["content-encoding"], MAX_BODY_BYTES);
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(body.toString("utf8"));
-      } catch {
-        throw new HttpError(400, RPC.INVALID_ARGUMENT, "body is not valid JSON");
-      }
-      const batch = parseNativeBatch(parsed, project);
-      let inserted = 0;
-      if (batch.events.length) {
-        const r = await queue.submit({ kind: "native", project, events: batch.events, items: batch.events.length, bytes: body.byteLength });
-        inserted = r.inserted;
-      }
-      if (batch.rejected.length) metrics.ingestEvents.inc({ project, result: "rejected" }, batch.rejected.length);
-      sendJson(res, 200, { accepted: batch.events.length, inserted, rejected: batch.rejected }, cors);
-    } catch (err) {
-      const e = err instanceof HttpError ? err : new HttpError(500, RPC.INTERNAL, "internal error");
-      if (!(err instanceof HttpError)) log.error("ingest", { error: (err as Error).message });
-      if (res.headersSent) {
-        res.destroy();
-        return;
-      }
-      sendJson(res, e.status, { error: e.message, status: e.status }, { ...cors, ...e.headers });
-    }
-  };
+  // ---- eve eval runs (codingShReporter): a dataset version and an experiment. Eval assets belong to no project.
+  const eveEvals = createEveEvalsHandler({
+    store: new FileEvalStore({ index }),
+    redactor: createRedactor({ redact: cfg.core.capture.redact, patterns: cfg.core.capture.redactPatterns }),
+    allowRemote: !loopback,
+    authorize: (req) => {
+      const ok = auth.ingest(req) !== undefined;
+      if (!ok) metrics.authFailures.inc({ route: EVE_EVALS_PATH });
+      return ok;
+    },
+    unavailable: () => (queue.isWritable ? undefined : "standby: another replica holds the writer lock"),
+    onError: (err) => log.error("eve evals", { error: err.message }),
+  });
 
   // ---- the model API proxy at /proxy/*: logs each call into the caller's project
   // (x-coding-sh-key, an ingest key) and forwards the client's own API key upstream.
@@ -391,6 +350,10 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
       res.end(text);
       return;
     }
+    if (path === EVE_EVALS_PATH) {
+      if (cfg.role === "viewer") return sendJson(res, 404, { error: "this replica runs --role viewer and takes no ingest", status: 404 });
+      return eveEvals(req, res);
+    }
     if (SIGNALS[path] || path === "/v1/ingest" || path.startsWith(PROXY_PREFIX)) {
       if (cfg.role === "viewer") return sendJson(res, 404, { error: "this replica runs --role viewer and takes no ingest", status: 404 });
       if (path.startsWith(PROXY_PREFIX)) return proxy(req, res);
@@ -422,6 +385,7 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
     });
   } catch (e) {
     stopRetention?.();
+    await hooks.close(0);
     if (lockTimer) clearTimeout(lockTimer);
     await lock?.release().catch(() => {});
     await index.close().catch(() => {});
@@ -468,8 +432,12 @@ export async function startServe(cfg: ServeConfig, o: ServeOptions = {}): Promis
         server.closeIdleConnections();
         // Calls the proxy routes answered reach the queue before it drains.
         await Promise.all([...recorders.values()].map((r) => r.flush().catch(() => {})));
-        const { drained } = cfg.role === "all" ? await queue.drain(o.drainMs ?? DRAIN_TIMEOUT_MS) : { drained: true };
+        const drainMs = o.drainMs ?? DRAIN_TIMEOUT_MS;
+        const t0 = Date.now();
+        const { drained } = cfg.role === "all" ? await queue.drain(drainMs) : { drained: true };
         stopRetention?.();
+        // What the drain committed goes on to the collector and sinks within what is left of the timeout.
+        await hooks.close(Math.max(1000, drainMs - (Date.now() - t0)));
         // Requests answered during the drain have flushed; drop what is left (keep-alive sockets).
         server.closeAllConnections();
         await closed;

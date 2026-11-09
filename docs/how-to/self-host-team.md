@@ -205,7 +205,7 @@ There are two ways to use ClickHouse. They answer different questions:
 | | Store plugin | Collector route |
 | --- | --- | --- |
 | What goes to ClickHouse | Everything coding.sh stores: sessions, events, search text, eval assets | Span metadata only, in the collector's `otel_traces` table |
-| Who reads it | coding.sh (viewer, CLI, MCP) and your own SQL | Your own SQL, Grafana or other tools; coding.sh does not read it back |
+| Who reads it | coding.sh (viewer, CLI, MCP) and your own SQL | Your own SQL, Grafana or other tools; `coding.sh collector import` can pull agent traces back ([Pull from ClickHouse](#pull-from-clickhouse)) |
 | What runs | `coding.sh serve` with `--store clickhouse://…` | Your OpenTelemetry Collector with the `clickhouse` exporter |
 | Pick it when | ClickHouse is the database you want coding.sh to run on | You already collect traces into ClickHouse and want coding.sh sessions next to them |
 
@@ -262,7 +262,8 @@ Caveats:
 - The tables use plain MergeTree engines. On a self-managed cluster, create the database with the
   `Replicated` engine before the first start. ClickHouse Cloud converts the tables to
   SharedMergeTree itself; add `?select_sequential_consistency=1` so a read sees the write before it.
-- Search matches word prefixes, like the other stores, on a column with an ngram bloom filter index.
+- Search matches whole words, and the last word also as a prefix, like the other stores, on a
+  column with an ngram bloom filter index. Matches come newest first.
 
 ### Export to ClickHouse through an OpenTelemetry Collector
 
@@ -307,8 +308,7 @@ service:
       exporters: [clickhouse]
 ```
 
-Then add a sink on each machine that captures sessions. Sinks run where sessions are ingested, not
-in `coding.sh serve`:
+Then add a sink on each machine that captures sessions:
 
 ```toml
 [[sinks]]
@@ -321,6 +321,10 @@ mode = "metadata"
 The Compose file publishes the collector on 4319 so it can share a host with `coding.sh serve` on
 4318. Use whatever host and port your collector listens on.
 
+On a team, set this once on serve instead of per-laptop sinks: `CODING_SH_FORWARD_URL=http://collector:4319`
+forwards every trace serve commits, or put the same `[[sinks]]` table in serve's config.toml
+([Forward and sinks](../PRODUCTION.md#19-forward-and-sinks)).
+
 What lands in `otel_traces`, with `ServiceName = 'coding.sh'`:
 
 | `SpanName` | One per | Attributes (`SpanAttributes['…']`) |
@@ -330,8 +334,13 @@ What lands in `otel_traces`, with `ServiceName = 'coding.sh'`:
 | `chat <model>` | model call | `gen_ai.operation.name`, `gen_ai.request.model`, `gen_ai.provider.name`, `gen_ai.usage.*`, `coding_sh.cost_usd` |
 
 `gen_ai.usage.*` is `input_tokens`, `output_tokens`, `cache_read.input_tokens` and
-`cache_creation.input_tokens`. A session's spans share one `TraceId`, and subagent sessions join
-their parent's trace. `Duration` is in nanoseconds.
+`cache_write.input_tokens`. As in the OpenTelemetry GenAI conventions, `input_tokens` is the whole
+prompt with cache reads and writes included, and the two cache keys are parts of it; the uncached
+part is `coding_sh.usage.uncached_input_tokens`. Through 0.1.5 the sink also sends cache writes
+under their old name, `cache_creation.input_tokens`, so move queries to `cache_write.input_tokens`.
+A model call whose agent or gateway reports reasoning tokens also gets `reasoning.output_tokens`.
+A session's spans share one `TraceId`, and subagent sessions join their parent's trace. `Duration`
+is in nanoseconds.
 
 Cost per agent and model per day:
 
@@ -420,6 +429,39 @@ Things to know:
 - The `invoke_agent` span is sent when the session ends, so a session that is still running has
   tool and chat rows but no session row yet. Its `Timestamp` is the session's start.
 - `ttl: 720h` drops rows after 30 days. Set it to your retention.
+
+### Pull from ClickHouse
+
+If your agents already send traces to an OpenTelemetry Collector with the `clickhouse` exporter
+(your own collector, ClickStack or HyperDX), `coding.sh collector import` reads them from the
+`otel_traces` table into your local store:
+
+```sh
+CLICKHOUSE_USER=otel CLICKHOUSE_PASSWORD=… \
+  coding.sh collector import --clickhouse "http://127.0.0.1:8123/?database=otel"
+```
+
+It reads over ClickHouse's HTTP interface (port 8123, or 8443 with TLS), turns each row back into
+an OTLP span and maps it as `coding.sh collector` maps a span posted to it: the same events,
+redaction and pricing. Rows from Claude Code, the Vercel AI SDK, GenAI semantic conventions,
+OpenInference and eve become sessions with turns, model calls, tool calls and usage.
+
+- By default it reads only traces that hold an agent span (a `gen_ai.*`, `openinference.span.kind`,
+  `ai.operationId` or `langsmith.span.kind` attribute, a `claude_code.*` span or the `eve.agent`
+  scope), with every span of those traces. `--all` reads every span.
+- `--since 7d` is the default window. `--where` adds your own condition, for example
+  `--where "ServiceName = 'claude-code'"`. Every other value is sent as a query parameter.
+- `--table db.table` names another table or database.
+- It keeps its place per host, database and table. The next run starts an hour before where the
+  last one stopped, because a row's `Timestamp` is its span's start and an agent's root span reaches
+  the table after the spans under it. Nothing is stored twice: a second run reports 0 new events,
+  and a span that also reached coding.sh live is stored once.
+- `--dry-run` reads and maps the rows and writes nothing. `--json` prints the counts and the cursor.
+- The user and password come from the URL (`http://user:password@host:8123/`) or from
+  `CLICKHOUSE_USER` and `CLICKHOUSE_PASSWORD`. They are sent as headers, never in the query string.
+- Both attribute layouts work: the exporter's default `Map(String, String)` columns and `json: true`
+  columns. In Map columns every value is a string, so a string that looks like a number (an id such
+  as `"42"`) comes back as a number.
 
 ## Next
 

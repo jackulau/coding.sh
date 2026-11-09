@@ -69,11 +69,10 @@ duplicates. The CLI, MCP tools, datasets and experiments work on the same store 
 
 ## Current status
 
-- The SDKs (`@codingdotsh/sdk`, `coding-sh` on PyPI) and the store plugins
-  (`coding.sh-store-postgres`, `coding.sh-store-clickhouse`, `coding.sh-store-s3`) are in the repo
-  but not published yet. The Docker image includes the store plugins.
-- The image is published from the 0.1.2 release on. Until that tag exists, build it from a
-  checkout with `docker build -t ghcr.io/jackulau/coding.sh .` and run the same commands.
+- `@codingdotsh/sdk` and the store plugins (`coding.sh-store-postgres`,
+  `coding.sh-store-clickhouse`, `coding.sh-store-s3`) are on npm. The Python SDK, `coding-sh`, is
+  not on PyPI yet; install it from a checkout. The Docker image includes the store plugins.
+- The image `ghcr.io/jackulau/coding.sh` is published for every release from 0.1.2 on.
 
 ## Questions
 

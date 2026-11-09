@@ -1,7 +1,7 @@
 // Effective configuration for `coding.sh serve`: flags > env > the --config file
 // (or ~/.coding.sh/config.toml) > defaults. See docs/PRODUCTION.md §1.1.
 import type { Config } from "../core/types.ts";
-import { ConfigError, isPostgresUrl, loadConfig, readUserConfigTable } from "../core/config.ts";
+import { ConfigError, interpolateEnv, isPostgresUrl, loadConfig, readUserConfigTable } from "../core/config.ts";
 import type { TomlTable } from "../core/toml.ts";
 import { isLoopbackHost } from "../otel/receiver.ts";
 import { type BasicCredential, type Credentials, KeyFormatError, keyHash, parseBasicAuth, parseIngestKeys, parseReadKeys } from "./auth.ts";
@@ -14,6 +14,7 @@ export const MAX_BODY_BYTES = 16 * 1024 * 1024;
 export const MAX_EVENTS_PER_REQUEST = 10_000;
 export const WRITER_TICK_EVENTS = 5_000;
 export const DRAIN_TIMEOUT_MS = 25_000;
+export const DEFAULT_FORWARD_MAX_BUFFER_SPANS = 20_000;
 
 export type ServeRole = "all" | "viewer";
 
@@ -23,6 +24,17 @@ export interface ServeFlags {
   config?: string;
   role?: ServeRole;
   insecure?: boolean;
+}
+
+/** `[serve.forward]` / CODING_SH_FORWARD_URL: committed traces go on to an OTLP/HTTP collector. */
+export interface ForwardConfig {
+  /** Collector base URL (…/v1/traces is appended unless present). */
+  endpoint: string;
+  headers: Record<string, string>;
+  /** metadata: an allowlist of attributes; full: every attribute, redacted. Default capture.mode. */
+  mode: "full" | "metadata";
+  /** Spans held while the collector is down; the oldest are dropped past this. */
+  maxBufferSpans: number;
 }
 
 export interface ServeConfig {
@@ -44,6 +56,8 @@ export interface ServeConfig {
   corsOrigins: string[];
   /** Config file read (exists or not), for messages. */
   configFile: string;
+  /** Unset: serve forwards nothing. */
+  forward?: ForwardConfig;
 }
 
 /** Thrown when serve must refuse to start (exit 2). */
@@ -188,6 +202,8 @@ export function resolveServeConfig(flags: ServeFlags, envIn: NodeJS.ProcessEnv):
   const cors = serve?.cors_origins;
   if (cors !== undefined && (!Array.isArray(cors) || !cors.every((c) => typeof c === "string"))) throw new ConfigError("serve.cors_origins must be an array of origins", file);
 
+  const forward = resolveForward(serve, env, core.capture.mode, file);
+
   return {
     core,
     host,
@@ -203,7 +219,59 @@ export function resolveServeConfig(flags: ServeFlags, envIn: NodeJS.ProcessEnv):
     log: (logFormat as "json" | "text" | undefined) ?? (process.stderr.isTTY ? "text" : "json"),
     corsOrigins: (cors as string[] | undefined) ?? [],
     configFile: file,
+    ...(forward ? { forward } : {}),
   };
+}
+
+/** `k=v,k2=v2`, each part URL-decoded (the OTEL_EXPORTER_OTLP_HEADERS format). */
+export function parseHeaderList(raw: string, where: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const part of raw.split(",")) {
+    if (!part.trim()) continue;
+    const eq = part.indexOf("=");
+    if (eq <= 0) throw new ConfigError(`${where} must be k=v pairs separated by commas, got ${JSON.stringify(part.trim().replace(/=.*/, "=…"))}`);
+    let k: string;
+    let v: string;
+    try {
+      k = decodeURIComponent(part.slice(0, eq).trim());
+      v = decodeURIComponent(part.slice(eq + 1).trim());
+    } catch {
+      throw new ConfigError(`${where} has a value that is not valid URL encoding`);
+    }
+    if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(k)) throw new ConfigError(`${where}: ${JSON.stringify(k)} is not a valid header name`);
+    out[k] = v;
+  }
+  return out;
+}
+
+function resolveForward(serve: TomlTable | undefined, env: NodeJS.ProcessEnv, captureMode: "full" | "metadata", file: string): ForwardConfig | undefined {
+  const t = table(serve, "forward", file);
+  const fileEndpoint = tomlString(t, "endpoint", "serve.forward.endpoint", file);
+  const endpoint = env.CODING_SH_FORWARD_URL?.trim() || (fileEndpoint !== undefined ? interpolateEnv(fileEndpoint, env, "serve.forward.endpoint", file).trim() : undefined);
+  if (!endpoint) return undefined;
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    throw new ConfigError(`CODING_SH_FORWARD_URL / serve.forward.endpoint is not a URL: ${JSON.stringify(endpoint.replace(/\/\/[^@/]*@/, "//…@"))}`);
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new ConfigError(`CODING_SH_FORWARD_URL / serve.forward.endpoint must be an http:// or https:// OTLP endpoint, got ${url.protocol}//`);
+  }
+  const headers: Record<string, string> = {};
+  const h = t?.headers;
+  if (h !== undefined) {
+    if (typeof h !== "object" || h === null || Array.isArray(h)) throw new ConfigError("serve.forward.headers must be a table", file);
+    for (const [k, v] of Object.entries(h)) {
+      if (typeof v !== "string") throw new ConfigError(`serve.forward.headers.${k} must be a string`, file);
+      headers[k] = interpolateEnv(v, env, `serve.forward.headers.${k}`, file);
+    }
+  }
+  if (env.CODING_SH_FORWARD_HEADERS?.trim()) Object.assign(headers, parseHeaderList(env.CODING_SH_FORWARD_HEADERS, "CODING_SH_FORWARD_HEADERS"));
+  const mode = env.CODING_SH_FORWARD_MODE?.trim() || tomlString(t, "mode", "serve.forward.mode", file) || captureMode;
+  if (mode !== "full" && mode !== "metadata") throw new ConfigError(`CODING_SH_FORWARD_MODE / serve.forward.mode must be "full" or "metadata", got ${JSON.stringify(mode)}`);
+  const maxBufferSpans = envInt(env, "CODING_SH_FORWARD_MAX_BUFFER_SPANS", 1) ?? tomlInt(t, "max_buffer_spans", "serve.forward.max_buffer_spans", file, 1) ?? DEFAULT_FORWARD_MAX_BUFFER_SPANS;
+  return { endpoint, headers, mode, maxBufferSpans };
 }
 
 /**

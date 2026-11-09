@@ -4,7 +4,7 @@
 // putEvents, rebuilds every touched session once, and only then answers the
 // requests. A 200 therefore means committed; a store error answers 503 with
 // Retry-After, and clients retry (putEvents is idempotent).
-import type { AgentEvent } from "../schema/index.ts";
+import type { AgentEvent, Session } from "../schema/index.ts";
 import type { BlobStore, Config, IndexStore } from "../core/types.ts";
 import { sha256Hex } from "../core/ids.ts";
 import { offloadPayload } from "../core/offload.ts";
@@ -38,6 +38,15 @@ export interface EntryResult {
   message: string;
 }
 
+/** One request's share of a committed tick (see IngestQueueOptions.onCommit). */
+export interface CommittedEntry {
+  entry: QueueEntry;
+  /** Events as stored: mapped, scoped to the project, redacted, priced. */
+  events: AgentEvent[];
+  /** The rebuilt sessions those events touch. */
+  sessions: Session[];
+}
+
 export interface IngestQueueOptions {
   store: IndexStore;
   blobs: BlobStore;
@@ -53,6 +62,19 @@ export interface IngestQueueOptions {
   enrichSpan?: SpanEnricher | false;
   /** Called once when the writer lease is found lost (see setWritable); the queue is standby by then. */
   onLeaseLost?: (err: Error) => void;
+  /**
+   * Called after a tick committed (events stored, sessions rebuilt) and its
+   * requests were answered: the OTLP forward and sink mirroring. Synchronous
+   * hand-off only; errors are logged and never fail ingest.
+   */
+  onCommit?: (committed: CommittedEntry[]) => void;
+  /**
+   * Keep the sessions a tick writes in the `serve:dirty` kv until they are
+   * rebuilt, so the next writer repairs a crash (default true). The fetch
+   * handler turns it off: many instances write at once, and a failed request
+   * answers 503 and its retry rebuilds the same sessions.
+   */
+  dirtyKv?: boolean;
 }
 
 interface Pending {
@@ -342,13 +364,14 @@ export class IngestQueue {
         return;
       }
       for (const e of unique) this.dirty.add(e.sessionId);
-      if (this.dirty.size && store.kvSet) await store.kvSet(DIRTY_KEY, JSON.stringify([...this.dirty]));
+      const dirtyKv = this.o.dirtyKv !== false && !!store.kvSet;
+      if (this.dirty.size && dirtyKv) await store.kvSet!(DIRTY_KEY, JSON.stringify([...this.dirty]));
       const { inserted } = unique.length ? await store.putEvents(unique) : { inserted: 0 };
       // Every touched session is rebuilt once, from all its stored events. Rebuild
       // keys off the batch, not `inserted`, so a retried batch repairs its sessions too.
-      await rebuildSessions(store, this.dirty);
+      const rebuilt = await rebuildSessions(store, this.dirty);
       this.dirty.clear();
-      if (store.kvSet) await store.kvSet(DIRTY_KEY, undefined);
+      if (dirtyKv) await store.kvSet!(DIRTY_KEY, undefined);
 
       // One putEvents per tick reports one total. It is credited to requests in
       // arrival order, which is exact whenever a tick holds a single request.
@@ -365,6 +388,19 @@ export class IngestQueue {
         }
         p.resolve({ inserted: ins, stored: r.events.length, rejected: r.rejected, message: r.message });
       });
+      if (this.o.onCommit) {
+        const byId = new Map(rebuilt.map((s) => [s.id, s]));
+        const committed = batch.map((p, i): CommittedEntry => {
+          const events = prepared[i]!.events;
+          const ids = new Set(events.map((e) => e.sessionId));
+          return { entry: p.entry, events, sessions: [...ids].flatMap((id) => (byId.has(id) ? [byId.get(id)!] : [])) };
+        });
+        try {
+          this.o.onCommit(committed);
+        } catch (e) {
+          log?.error("after-commit hand-off failed", { error: (e as Error).message });
+        }
+      }
       const secs = (performance.now() - started) / 1000;
       if (unique.length && secs > 0) {
         const r = unique.length / secs;

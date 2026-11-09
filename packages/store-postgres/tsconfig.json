@@ -17,5 +17,6 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.mjs"]
+  // html.d.ts: test/session-lock.test.ts imports coding.sh/server, whose viewer inlines its page.
+  "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.mjs", "../coding.sh/src/viewer/ui/html.d.ts"]
 }

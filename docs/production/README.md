@@ -83,7 +83,7 @@ pass the key once.
 | Fly.io | SQLite on a volume, or Postgres | [fly.md](fly.md) |
 | Railway | Railway Postgres | [railway.md](railway.md) |
 | Render | Render Postgres, Deploy button | [render.md](render.md) |
-| Vercel Functions | not as the server; apps on Vercel send to it | [serverless.md](serverless.md) |
+| Vercel Functions | Postgres; the ingest routes as a Function with `createFetchHandler()` | [serverless.md](serverless.md) |
 
 ## Send traces
 
