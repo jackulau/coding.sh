@@ -131,6 +131,8 @@ export interface SuiteRound {
   infraStop?: InfraStopReport;
   /** Set when every run failed on infrastructure after its retries: the round has no outcome to judge. */
   void?: { runs: number; kinds: Partial<Record<InfraKind, number>> };
+  /** Passing runs per arm whose diff the tamper check flagged. */
+  tampered: { base: number; cand: number };
 }
 
 /** Why a round has no verdict because of infrastructure errors, in a sentence; undefined when it has one. */
@@ -216,7 +218,8 @@ export async function runSuiteRound(c: CommandContext, ctx: Context, f: Fitness,
   const arms = { base: armPoint(pairs, "base", sizes.base), cand: armPoint(pairs, "cand", sizes.cand) };
   // Runs copied from an earlier round, per arm: they were not run next to this round's, so the pair is not fully interleaved.
   const reused = { baseline: runs.filter((x) => x.reusedFrom && x.bundleId === A.id).length, candidate: runs.filter((x) => x.reusedFrom && x.bundleId === B.id).length };
-  const base = { experimentId: r.experimentId, skipped: r.budget?.skipped ?? 0, spentUsd: r.budget?.spentUsd ?? spent, unpriced: r.budget?.unpriced ?? unpriced, pairs, arms, sizes, ...(reused.baseline || reused.candidate ? { reused } : {}) };
+  const tampered = { base: runs.filter((x) => x.bundleId === A.id && x.pass && x.tamper?.flagged).length, cand: runs.filter((x) => x.bundleId === B.id && x.pass && x.tamper?.flagged).length };
+  const base = { experimentId: r.experimentId, tampered, skipped: r.budget?.skipped ?? 0, spentUsd: r.budget?.spentUsd ?? spent, unpriced: r.budget?.unpriced ?? unpriced, pairs, arms, sizes, ...(reused.baseline || reused.candidate ? { reused } : {}) };
   const status = job.header.status;
   const resume = status === "completed" || status === "running" ? undefined : resumeCommand(job.header);
   if (r.cancelled || (r.budget?.skipped ?? 0) > 0) return { ...base, cancelled: r.cancelled, infraStop: r.infraStop, resume };

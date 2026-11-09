@@ -9,6 +9,10 @@
 //   apply      the candidate's files written to the working tree (never git),
 //              with the sha of what was there before and a backup of it
 //   rollback   an apply undone from its backup
+//   propose    a candidate a distiller wrote (`refine distill`, AD-3), with
+//              its provenance and critic result; `refine test` decides it
+//   recheck    a suite round's arms run again under another model (Z-14,
+//              `refine recheck <id> --model`): the canary verdict and spend
 //
 // guardEntries turns the ledger into AB-3's GuardEntry list: a kept round is
 // 'kept', an applied one 'applied', and a rolled-back apply no longer guards.
@@ -18,8 +22,11 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { dataHome } from "../core/paths.ts";
 import type { RefineStage, RefineVerdict } from "./decide.ts";
 import type { GuardEntry } from "./guard.ts";
+import type { Preservation } from "./keep.ts";
 import type { ArmPoint, MetricResult, Objective, QualityResult } from "./objectives.ts";
+import type { RejectedEdit } from "./propose.ts";
 import type { HarnessText } from "./protect.ts";
+import type { CanaryRecord } from "./canary.ts";
 
 export const sha = (text: string): string => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
@@ -28,8 +35,13 @@ export interface FileRef {
   sha: string;
 }
 
+/** The version new ledger entries carry. 2: per-task `preservation.fixed` and `stillFailing` (AE-2). Entries without `v` are version 1. */
+export const LEDGER_VERSION = 2;
+
 export interface TestEntry {
   op: "test";
+  /** LEDGER_VERSION when written; absent on version 1 entries. */
+  v?: number;
   /** The candidate id (r_…). */
   id: string;
   /** 1-based count of test rounds in this ledger. */
@@ -62,7 +74,12 @@ export interface TestEntry {
   effect?: { mean: number; lo: number; hi: number; paired: number };
   gate?: { verdict: string; wins: number; losses: number; solved: number; p: number };
   guard?: { size: number; fromDev: number; rerun: number; missing: number; dropped: number; ok: boolean; verdict: string; forgets: string[]; forgotten: { task: string; entries: string[] }[] };
-  preservation?: { gained: number; lost: number; regressed: string[]; R: number; reasons: string[] };
+  /**
+   * Per-task outcomes of the round. `fixed` (tasks the base never passed and the
+   * candidate did), `stillFailing` (neither arm passed) and `basis` were added in
+   * ledger v2 (AE-2); entries written before lack them.
+   */
+  preservation?: { gained: number; lost: number; regressed: string[]; R: number; reasons: string[]; fixed?: string[]; stillFailing?: string[]; basis?: "heldOut" | "dev" };
   alternative?: { uniqueGains: string[] };
   /** Dev tasks won (kept rounds): they guard later candidates. */
   guardTasks: string[];
@@ -87,6 +104,8 @@ export interface TestEntry {
     gains: number[];
     warnings: string[];
   };
+  /** `--suite` rounds: stage 3, the base and candidate re-run under the canary model (Z-14). */
+  canary?: CanaryRecord;
   cost: { usd: number; unpriced: number };
 }
 
@@ -112,7 +131,46 @@ export interface RollbackEntry {
   forced?: boolean;
 }
 
-export type LedgerEntry = TestEntry | ApplyEntry | RollbackEntry;
+export interface RecheckEntry {
+  op: "recheck";
+  /** k_… */
+  id: string;
+  /** The re-checked candidate (r_…). */
+  candidate: string;
+  at: string;
+  canary: CanaryRecord;
+  /** Whether the candidate was applied (and not rolled back) when it was re-checked. */
+  applied: boolean;
+  cost: { usd: number; unpriced: number };
+}
+
+export interface ProposeEntry {
+  op: "propose";
+  /** The candidate id (r_…); `refine test <id>` tests it. */
+  id: string;
+  at: string;
+  proposer: "distill";
+  files: FileRef[];
+  /** "rejected": a critic or the size cap turned it down before any test. */
+  verdict: "proposed" | "rejected";
+  reasons: string[];
+  provenance: {
+    corpusEpisodes: number;
+    failures: number;
+    passRate: number | null;
+    /** The experiment, or "sessions". */
+    source: string;
+    /** Held-out tasks whose runs the corpus left out. */
+    leftOut: string[];
+    draw: number;
+    distiller: string;
+    model?: string;
+    costUsd?: number;
+    durationMs: number;
+  };
+}
+
+export type LedgerEntry = TestEntry | ApplyEntry | RollbackEntry | RecheckEntry | ProposeEntry;
 
 /** `<data>/refine/<repo name>-<sha of the repo path>`. */
 export function refineDir(env: NodeJS.ProcessEnv, repoRoot: string): string {
@@ -135,7 +193,7 @@ export function readLedger(dir: string): LedgerEntry[] {
     if (!line.trim()) continue;
     try {
       const e = JSON.parse(line) as LedgerEntry;
-      if (e && (e.op === "test" || e.op === "apply" || e.op === "rollback")) out.push(e);
+      if (e && (e.op === "test" || e.op === "apply" || e.op === "rollback" || e.op === "recheck" || e.op === "propose")) out.push(e);
     } catch {
       // A torn last line from a crash: skip it.
     }
@@ -154,6 +212,35 @@ export const tests = (entries: readonly LedgerEntry[]): TestEntry[] => entries.f
 export function liveApplies(entries: readonly LedgerEntry[]): ApplyEntry[] {
   const undone = new Set(entries.filter((e): e is RollbackEntry => e.op === "rollback").map((e) => e.apply));
   return entries.filter((e): e is ApplyEntry => e.op === "apply" && !undone.has(e.id));
+}
+
+/** A preservation report as the ledger stores it (ids of fixed, regressed and still-failing tasks on the basis set). */
+export function preservationEntry(p: Preservation): NonNullable<TestEntry["preservation"]> {
+  const basis = p.heldOut ?? p.dev;
+  return { gained: p.dev.gained.length, lost: p.dev.lost.length, regressed: p.regressed, R: p.R, reasons: p.reasons, fixed: [...basis.gained].sort(), stillFailing: p.stillFailing, basis: p.basis };
+}
+
+/**
+ * The rounds not kept, as the proposer sees them, oldest first: id, verdict,
+ * reasons, added lines and (ledger v2, AE-2) the task ids the edit fixed,
+ * regressed and left failing. Read from the stored entries, never recomputed;
+ * an entry without per-task outcomes gets none.
+ */
+export function rejectedEdits(entries: readonly LedgerEntry[]): RejectedEdit[] {
+  return tests(entries)
+    .filter((t) => t.verdict !== "keep")
+    .map((t) => {
+      const p = t.preservation;
+      return {
+        id: t.id,
+        verdict: t.verdict,
+        reasons: t.reasons,
+        added: t.candidate.added,
+        ...(p?.fixed?.length ? { fixed: p.fixed } : {}),
+        ...(p?.regressed?.length ? { regressed: p.regressed } : {}),
+        ...(p?.stillFailing?.length ? { stillFailing: p.stillFailing } : {}),
+      };
+    });
 }
 
 /** AB-3's view of the ledger: each kept candidate's latest round, applied or not, rolled back or not. */
@@ -208,6 +295,8 @@ export interface StoredCandidate {
   source: "file" | "proposal";
   findings?: string[];
   rationale?: string;
+  /** Who wrote it, when not the proposer model (`distill`). */
+  proposer?: string;
 }
 
 const candidateDir = (dir: string, id: string): string => {
@@ -223,7 +312,7 @@ export function saveCandidate(dir: string, c: StoredCandidate): string {
     mkdirSync(dirname(abs), { recursive: true });
     writeFileSync(abs, f.text);
   }
-  const meta = { id: c.id, source: c.source, paths: c.files.map((f) => f.path), ...(c.findings ? { findings: c.findings } : {}), ...(c.rationale ? { rationale: c.rationale } : {}) };
+  const meta = { id: c.id, source: c.source, paths: c.files.map((f) => f.path), ...(c.findings ? { findings: c.findings } : {}), ...(c.rationale ? { rationale: c.rationale } : {}), ...(c.proposer ? { proposer: c.proposer } : {}) };
   writeFileSync(join(cd, "candidate.json"), `${JSON.stringify(meta, null, 2)}\n`);
   return join(cd, "files");
 }

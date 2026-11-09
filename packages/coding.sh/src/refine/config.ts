@@ -5,6 +5,7 @@
 //   protect = ["^Use pnpm", "staging"]   # regexes; a matching line is protected
 //   autoProtect = false                  # user config only: turn off gate-word + safety-topic protection
 //   maxCostRise = "50%"                  # --max-cost-rise's default; "none" for no limit
+//   canary_model = "claude-haiku-4-5"    # user config only: the cheaper model suite rounds re-test removals under
 //
 // The repo's `.coding.sh/config.toml` may add `protect` patterns but cannot turn
 // auto-protection off: an agent that edits the repo could otherwise unprotect a
@@ -60,6 +61,17 @@ function readRepoSection(cwd: string, env: NodeJS.ProcessEnv): { file: string; s
     throw new ConfigError(`invalid TOML: ${(e as Error).message}`, repoFile);
   }
   return { file: repoFile, section: section(root, repoFile) };
+}
+
+/** `[refine] canary_model` from the user config (a repo config cannot set it). */
+export function refineCanaryModel(env: NodeJS.ProcessEnv): string | undefined {
+  const user = readUserConfigTable(env);
+  const t = user.table.refine;
+  if (!t || typeof t !== "object" || Array.isArray(t)) return undefined;
+  const m = (t as TomlTable).canary_model;
+  if (m === undefined) return undefined;
+  if (typeof m !== "string" || !m.trim()) throw new ConfigError("refine.canary_model must be a model name", user.file);
+  return m.trim();
 }
 
 /** The effective protect options: user config, plus the repo config's extra patterns. */

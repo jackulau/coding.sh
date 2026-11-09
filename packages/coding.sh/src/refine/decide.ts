@@ -22,7 +22,7 @@ import { alternativeCheck, preservation, type AlternativeCheck, type ArmOutcomes
 import type { ProtectCheck } from "./protect.ts";
 
 export type RefineVerdict = "keep" | "reject" | "inconclusive" | "alternative";
-export type RefineStage = "protected" | "critics" | "dev" | "guard" | "done";
+export type RefineStage = "protected" | "critics" | "dev" | "guard" | "canary" | "done";
 
 export interface DevStage {
   /** Absent when the run stopped before it finished. */

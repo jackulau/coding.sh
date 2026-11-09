@@ -25,14 +25,18 @@ import { decideRound, type RoundDecision } from "../../refine/decide.ts";
 import { flagFindings, type Finding } from "../../refine/findings.ts";
 import { checkGuard, guardSet, type GuardCheck, type GuardSet } from "../../refine/guard.ts";
 import { rankKeeps, type Outcomes } from "../../refine/keep.ts";
+import type { MinedFinding } from "../../refine/mine.ts";
 import {
   appendLedger,
   currentShas,
   guardEntries,
   ledgerFile,
+  LEDGER_VERSION,
   liveApplies,
   loadCandidate,
+  preservationEntry,
   readLedger,
+  rejectedEdits,
   refineDir,
   saveCandidate,
   sha,
@@ -40,6 +44,7 @@ import {
   writeApply,
   writeRollback,
   type ApplyEntry,
+  type ProposeEntry,
   type LedgerEntry,
   type TestEntry,
 } from "../../refine/ledger.ts";
@@ -401,6 +406,7 @@ async function runRound(e: Env, plan: Plan, spend: Spend, cap: number | undefine
     const pos = ranking?.order.indexOf(r.cand.id) ?? -1;
     const entry: TestEntry = {
       op: "test",
+      v: LEDGER_VERSION,
       id: r.cand.id,
       round: ++round,
       at,
@@ -420,7 +426,7 @@ async function runRound(e: Env, plan: Plan, spend: Spend, cap: number | undefine
       ...(r.effect ? { effect: r.effect } : {}),
       ...(r.gate ? { gate: r.gate } : {}),
       ...(r.guard ? { guard: r.guard } : {}),
-      ...(d.preservation ? { preservation: { gained: d.preservation.dev.gained.length, lost: d.preservation.dev.lost.length, regressed: d.preservation.regressed, R: d.preservation.R, reasons: d.preservation.reasons } } : {}),
+      ...(d.preservation ? { preservation: preservationEntry(d.preservation) } : {}),
       ...(d.alternative?.alternative ? { alternative: { uniqueGains: d.alternative.uniqueGains } } : {}),
       guardTasks: d.guardTasks,
       ...(plan.mined && r.experiments ? { dataset: { id: plan.mined.dataset.id, version: plan.mined.dataset.version, cases: plan.mined.cases.length } } : {}),
@@ -514,15 +520,31 @@ export function proposerModel(e: Env): string {
   return m;
 }
 
+/** `--mined <file>`: the patterns of a `refine mine --json` run, for the proposal prompt. */
+function minedFor(e: Env): MinedFinding[] | undefined {
+  const file = str(e.c.flags.mined);
+  if (!file) return undefined;
+  let doc: unknown;
+  try {
+    doc = JSON.parse(readFileSync(resolve(e.c.cwd, file), "utf8"));
+  } catch (err) {
+    throw new UsageError(`--mined ${file}: ${(err as NodeJS.ErrnoException).code ?? "not JSON"}; pass the output of coding.sh refine mine --json`, { reason: "invalid_file", suggestion: "coding.sh refine mine --json > mined.json" });
+  }
+  const list = Array.isArray(doc) ? doc : (doc as { findings?: unknown })?.findings;
+  if (!Array.isArray(list) || !list.every((f) => f && typeof f === "object" && typeof (f as MinedFinding).label === "string" && typeof (f as MinedFinding).count === "number" && typeof (f as MinedFinding).support?.sessions === "number")) {
+    throw new UsageError(`--mined ${file} holds no findings; pass the output of coding.sh refine mine --json`, { reason: "invalid_file", suggestion: "coding.sh refine mine --json > mined.json" });
+  }
+  return list as MinedFinding[];
+}
+
 /** The prompt for the next proposal (no model call). */
 async function proposalInput(e: Env, base: Arm) {
   const findings = await findingsFor(e);
   const targetPath = targetPathOf(str(e.c.flags.target), e.root) ?? defaultTarget(base.files);
   const target = base.files.find((f) => f.path === targetPath) ?? { path: targetPath, text: "" };
-  const rejected = tests(readLedger(e.dir))
-    .filter((t) => t.verdict !== "keep")
-    .map((t) => ({ id: t.id, verdict: t.verdict, reasons: t.reasons, added: t.candidate.added }));
-  const prompt = proposalPrompt({ findings, target, protectedLines: protectedLines(base.files, e.protect), rejected });
+  const rejected = rejectedEdits(readLedger(e.dir));
+  const mined = minedFor(e);
+  const prompt = proposalPrompt({ findings, target, protectedLines: protectedLines(base.files, e.protect), rejected, ...(mined ? { mined } : {}) });
   return { findings, target, prompt };
 }
 
@@ -715,6 +737,10 @@ async function proposeCommand(c: CommandContext, e: Env): Promise<number> {
   return 0;
 }
 
+/** A `refine distill` candidate in `refine log`. */
+const proposeLine = (k: ProposeEntry): string =>
+  `Distilled ${k.id} ${k.files[0]?.path ?? ""} from ${k.provenance.corpusEpisodes} episodes (${k.at.slice(0, 10)}): ${k.verdict}${k.reasons.length ? `, ${k.reasons[0]}` : `; test it with coding.sh refine test ${k.id}`}`;
+
 async function logCommand(c: CommandContext, e: Pick<Env, "dir" | "store">): Promise<number> {
   const { out } = c;
   const entries = readLedger(e.dir);
@@ -729,13 +755,21 @@ async function logCommand(c: CommandContext, e: Pick<Env, "dir" | "store">): Pro
     return 0;
   }
   if (!rounds.length) {
+    for (const k of entries) if (k.op === "propose") out.print(proposeLine(k));
     out.note(`No refine rounds in this repo yet (${ledgerFile(e.dir)})`);
     out.next("Test an edit to CLAUDE.md or AGENTS.md", "coding.sh refine test ./drafts/AGENTS.md");
     return 0;
   }
   const decisionRounds = rounds.filter((t) => !t.suite);
+  const rechecks = () => {
+    for (const k of entries) {
+      if (k.op === "recheck") out.print(`Recheck ${k.candidate} under ${k.canary.model} (${k.at.slice(0, 10)}): ${k.canary.reason}`);
+      if (k.op === "propose") out.print(proposeLine(k));
+    }
+  };
   if (climb && decisionRounds.length === 0) {
     climb.printClimbs(c, entries, { live, ever: everApplied });
+    rechecks();
     return 0;
   }
   out.table(
@@ -748,6 +782,7 @@ async function logCommand(c: CommandContext, e: Pick<Env, "dir" | "store">): Pro
   );
   if (p) out.print(plateauLine("refine", p));
   climb?.printClimbs(c, entries, { live, ever: everApplied });
+  rechecks();
   return 0;
 }
 
@@ -884,6 +919,7 @@ export async function refineLoop(c: CommandContext): Promise<number> {
   return withContext(c, async (ctx) => {
     if (c.action === "log") return logCommand(c, { dir, store: new FileEvalStore({ env: c.env, index: ctx.index }) });
     const e = await setupEnv(c, ctx);
+    if (c.action === "recheck") return (await import("./refine-climb.ts")).climbRecheck(c, e);
     if (c.action === "test" || c.action === "run") {
       const climb = await import("./refine-climb.ts");
       if (climb.climbing(c, e)) return c.action === "test" ? climb.climbTest(c, e) : climb.climbRun(c, e);

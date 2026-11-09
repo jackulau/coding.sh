@@ -46,6 +46,8 @@ export interface Preservation {
   regressed: string[];
   /** R(C): regressed.length. */
   R: number;
+  /** Tasks of the basis set neither arm passed in any attempt (AE-2: the proposer's next target). Sorted. */
+  stillFailing: string[];
   /** Non-gating notes: `lost-coverage: N tasks`. */
   reasons: string[];
 }
@@ -68,6 +70,16 @@ export function regressedTasks(s: ArmOutcomes): string[] {
   return out.sort();
 }
 
+/** Tasks in both arms that neither arm passed in any attempt. */
+export function stillFailingTasks(s: ArmOutcomes): string[] {
+  const out: string[] = [];
+  for (const [id, a] of s.base) {
+    const b = s.cand.get(id);
+    if (a.length && b?.length && !a.some(Boolean) && !b.some(Boolean)) out.push(id);
+  }
+  return out.sort();
+}
+
 /** The preservation report for a decision. It never changes the decision. */
 export function preservation(sets: { dev: ArmOutcomes; heldOut?: ArmOutcomes }): Preservation {
   const dev = setPreservation(sets.dev);
@@ -75,7 +87,7 @@ export function preservation(sets: { dev: ArmOutcomes; heldOut?: ArmOutcomes }):
   const basis = sets.heldOut ? "heldOut" : "dev";
   const regressed = regressedTasks(sets.heldOut ?? sets.dev);
   const lost = (heldOut ?? dev).lost;
-  return { dev, ...(heldOut ? { heldOut } : {}), basis, regressed, R: regressed.length, reasons: lost.length ? [`lost-coverage: ${plural(lost.length, "task")}`] : [] };
+  return { dev, ...(heldOut ? { heldOut } : {}), basis, regressed, R: regressed.length, stillFailing: stillFailingTasks(sets.heldOut ?? sets.dev), reasons: lost.length ? [`lost-coverage: ${plural(lost.length, "task")}`] : [] };
 }
 
 export interface AlternativeCheck {

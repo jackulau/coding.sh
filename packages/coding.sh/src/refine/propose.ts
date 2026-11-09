@@ -15,6 +15,7 @@
 import { createHash } from "node:crypto";
 import { createRedactor } from "../core/redact.ts";
 import type { Finding } from "./findings.ts";
+import type { MinedFinding } from "./mine.ts";
 import { readOnlySection, type HarnessText, type ProtectedLine } from "./protect.ts";
 
 export const MAX_PROPOSAL_LINES = 40;
@@ -43,6 +44,31 @@ export interface RejectedEdit {
   reasons: readonly string[];
   /** Lines it added. */
   added: readonly string[];
+  /** AE-2, from the ledger: task ids the edit fixed (the base never passed them), */
+  fixed?: readonly string[];
+  /** made worse (pass rate fell), */
+  regressed?: readonly string[];
+  /** and left failing (neither arm passed). */
+  stillFailing?: readonly string[];
+}
+
+/** The PROPOSER_SYSTEM sentence added when the prompt carries per-task reflection (AE-2). */
+export const REFLECTION_RULE = "- Aim the new lines at the tasks earlier edits left failing, and never bring back what made a task regress.";
+
+const MAX_REFLECT_IDS = 10;
+const idList = (xs: readonly string[]): string => (xs.length > MAX_REFLECT_IDS ? `${xs.slice(0, MAX_REFLECT_IDS).join(", ")} +${xs.length - MAX_REFLECT_IDS} more` : xs.join(", "));
+
+/** "- r_…: fixed t1; still failing t3; regressed t2" for each rejected edit with per-task outcomes; undefined when none has any. */
+export function reflectionSection(rejected: readonly RejectedEdit[]): string | undefined {
+  const lines: string[] = [];
+  for (const r of rejected) {
+    const parts: string[] = [];
+    if (r.fixed?.length) parts.push(`fixed ${idList(r.fixed)}`);
+    if (r.stillFailing?.length) parts.push(`still failing ${idList(r.stillFailing)}`);
+    if (r.regressed?.length) parts.push(`regressed ${idList(r.regressed)}`);
+    if (parts.length) lines.push(`- ${r.id}: ${parts.join("; ")}`);
+  }
+  return lines.length ? ["What your earlier edits changed, per task (help the still-failing tasks; never reintroduce a regression):", ...lines].join("\n") : undefined;
 }
 
 export const PROPOSER_SYSTEM = `You improve the instruction file a coding agent reads at the start of every session (CLAUDE.md, AGENTS.md, a rule or a skill).
@@ -65,11 +91,17 @@ function findingLines(f: Finding): string[] {
   return out;
 }
 
+/** Mined patterns (`refine mine --json`) as prompt lines: the pattern, its evidence count and support. */
+function minedLines(xs: readonly MinedFinding[]): string[] {
+  return xs.map((f) => `- ${f.kind}: ${f.label.replace(/\s+/g, " ").slice(0, 200)} (${f.count}x in ${f.support.sessions} sessions over ${f.support.days} day${f.support.days === 1 ? "" : "s"})`);
+}
+
 /** The proposer's system and user prompt. The user prompt is redacted. */
-export function proposalPrompt(o: { findings: readonly Finding[]; target: HarnessText; protectedLines: readonly ProtectedLine[]; rejected?: readonly RejectedEdit[] }): { system: string; user: string } {
+export function proposalPrompt(o: { findings: readonly Finding[]; target: HarnessText; protectedLines: readonly ProtectedLine[]; rejected?: readonly RejectedEdit[]; mined?: readonly MinedFinding[] }): { system: string; user: string } {
   const parts: string[] = [];
   parts.push(o.findings.length ? ["Failure patterns in recent sessions, most severe first:", ...o.findings.flatMap(findingLines)].join("\n") : "No session flags were found. Propose lines that make the agent verify its work before it says it is done.");
   parts.push(`The file to extend, ${o.target.path}:\n<file path="${o.target.path}">\n${o.target.text}\n</file>`);
+  if (o.mined?.length) parts.push(["Patterns mined across sessions (refine mine), most frequent first:", ...minedLines(o.mined.slice(0, 10))].join("\n"));
   const ro = readOnlySection(o.protectedLines.filter((p) => p.path === o.target.path));
   if (ro) parts.push(ro);
   const rejected = (o.rejected ?? []).slice(-MAX_REJECTED);
@@ -81,7 +113,9 @@ export function proposalPrompt(o: { findings: readonly Finding[]; target: Harnes
       ].join("\n"),
     );
   }
-  return { system: PROPOSER_SYSTEM, user: createRedactor().string(parts.join("\n\n")) };
+  const reflect = reflectionSection(rejected);
+  if (reflect) parts.push(reflect);
+  return { system: reflect ? PROPOSER_SYSTEM.replace("\nReply with JSON only", `\n${REFLECTION_RULE}\nReply with JSON only`) : PROPOSER_SYSTEM, user: createRedactor().string(parts.join("\n\n")) };
 }
 
 /** The JSON object in a reply (bare, or inside a code fence or prose). */

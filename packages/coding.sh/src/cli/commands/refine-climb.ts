@@ -11,11 +11,16 @@
 // every candidate before any agent session, as in the decision-point loop.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { getAdapter } from "../../adapters/index.ts";
+import { CANARY_POLICIES, canaryBundle, canaryCheck, canaryRefusal, canaryStage, DEFAULT_CANARY_DELTA, removedCount, type CanaryPolicy, type CanaryRecord } from "../../refine/canary.ts";
+import { refineCanaryModel } from "../../refine/config.ts";
+import type { HarnessBundle } from "../../core/types.ts";
 import { runCritics, type CriticCheck } from "../../refine/critics.ts";
 import { cutCandidate, cutPrompt, CUT_SCHEMA, cutSections, parseCut, removedLines } from "../../refine/cut.ts";
 import { decideRound } from "../../refine/decide.ts";
 import { costDrivers } from "../../refine/drivers.ts";
-import { appendLedger, ledgerFile, readLedger, saveCandidate, sha, tests, type LedgerEntry, type TestEntry } from "../../refine/ledger.ts";
+import { preservation } from "../../refine/keep.ts";
+import { appendLedger, ledgerFile, LEDGER_VERSION, liveApplies, preservationEntry, readLedger, saveCandidate, sha, tests, type LedgerEntry, type RecheckEntry, type TestEntry } from "../../refine/ledger.ts";
 import {
   climbFront,
   climbPlateau,
@@ -47,7 +52,7 @@ import { money, newSpend, type Arm, type Spend } from "./exp-ab.ts";
 import { applyCandidate, baseArm, defaultTarget, printApplied, propose, proposerName, proposerReply, resolveCandidate, spendJson, type Candidate, type Env } from "./refine-loop.ts";
 import { armBundle, armDrivers, clearPending, infraRoundText, loadFitness, readPending, roundsText, runSuiteRound, writePending, type Fitness, type SuiteRound } from "./refine-suite.ts";
 
-const CLIMB_FLAGS = ["suite", "objective", "margin", "min-gain", "max-cost-rise", "until-plateau", "harness", "proposer-command", "reuse", "reuse-max-age"] as const;
+const CLIMB_FLAGS = ["suite", "objective", "margin", "min-gain", "max-cost-rise", "until-plateau", "harness", "proposer-command", "reuse", "reuse-max-age", "canary", "canary-model", "canary-delta"] as const;
 
 /** The suite to climb on: --suite, else the target skill's own tasks suite (evals/<skill>). */
 function suiteName(c: CommandContext, root: string): string | undefined {
@@ -75,6 +80,46 @@ interface ClimbOpts {
   maxCostRise: number;
   /** `--reuse`: which arm's earlier runs to copy, and how recent they must be. Absent means run everything fresh. */
   reuse?: { what: "baseline" | "both"; maxAgeMs?: number };
+  /** Stage 3 (Z-14): which kept candidates are re-run under the canary model. */
+  canary: { policy: CanaryPolicy; model?: string; delta: number };
+}
+
+/** --canary, --canary-model (else `[refine] canary_model`) and --canary-delta. */
+function canaryOpts(c: CommandContext): ClimbOpts["canary"] {
+  const policy = (str(c.flags.canary) ?? "subtractive") as CanaryPolicy;
+  if (!CANARY_POLICIES.includes(policy)) throw new UsageError(`--canary takes ${CANARY_POLICIES.join(", ")}, got ${JSON.stringify(policy)}`, { reason: "invalid_argument" });
+  let delta = DEFAULT_CANARY_DELTA;
+  if (c.flags["canary-delta"] !== undefined) {
+    try {
+      delta = parseShare(c.flags["canary-delta"] as string | number, "--canary-delta");
+    } catch (err) {
+      throw new UsageError((err as Error).message, { reason: "invalid_argument" });
+    }
+  }
+  const model = str(c.flags["canary-model"]) ?? refineCanaryModel(c.env);
+  if (policy === "all" && !model) throw new UsageError("--canary all needs a model to re-test under", { reason: "missing_argument", suggestion: "coding.sh refine run --suite <name> --canary all --canary-model <cheaper model>" });
+  return { policy, ...(model ? { model } : {}), delta };
+}
+
+/** Refuses a canary model the suite's agent can't take, before any run. */
+function checkCanary(o: ClimbOpts, harness: HarnessBundle): void {
+  if (!o.canary.model || o.canary.policy === "off") return;
+  const why = canaryRefusal(harness, !!getAdapter(harness.agent)?.run);
+  if (why) throw new CliError(why, { reason: "unsupported_agent", next: ["Run without a canary (subtractive candidates then carry a note):", "coding.sh refine run --suite <name> --canary off"] });
+}
+
+/** Up to this many more agent sessions per kept candidate the policy selects, and their cost at the last round's $/run. */
+function canaryPlan(e: Env, f: Fitness, o: ClimbOpts): { policy: CanaryPolicy; model: string | null; sessions: number; estimateUsd?: number } {
+  const sessions = o.canary.model && o.canary.policy !== "off" ? f.tasks.length * f.k * 2 : 0;
+  const last = tests(readLedger(e.dir)).reverse().find((t) => t.suite?.name === o.suite && t.suite.experiment && t.cost.usd > 0);
+  const perRun = last ? last.cost.usd / (last.suite!.tasks * last.suite!.k * 2) : undefined;
+  return { policy: o.canary.policy, model: o.canary.model ?? null, sessions, ...(sessions && perRun !== undefined ? { estimateUsd: perRun * sessions } : {}) };
+}
+
+function canaryPlanLine(p: ReturnType<typeof canaryPlan>): string {
+  if (p.policy === "off") return "Canary: off";
+  if (!p.model) return "Canary: none (a kept candidate that removes lines gets a note; set --canary-model to re-test it under a cheaper model)";
+  return `Canary: ${p.policy === "all" ? "every" : "a"} kept candidate${p.policy === "all" ? "" : " that removes lines"} runs again under ${p.model}, up to ${plural(p.sessions, "agent session")}${p.estimateUsd !== undefined ? ` (about ${money(p.estimateUsd)} at the last round's cost per run)` : ""}`;
 }
 
 function climbOpts(c: CommandContext, root: string): ClimbOpts {
@@ -98,7 +143,7 @@ function climbOpts(c: CommandContext, root: string): ClimbOpts {
   if (reuseMaxAgeMs !== undefined && reuseWhat === "none") throw new UsageError("--reuse-max-age needs --reuse baseline or --reuse both", { reason: "invalid_argument" });
   const reuse = reuseWhat !== "none" ? { what: reuseWhat as "baseline" | "both", ...(reuseMaxAgeMs !== undefined ? { maxAgeMs: reuseMaxAgeMs } : {}) } : undefined;
   maxCostRise ??= refineMaxCostRise(c.env, c.cwd) ?? DEFAULT_MAX_COST_RISE;
-  return { suite, objectives, primary: objectives[0]!, margin, minGain, maxCostRise, ...(reuse ? { reuse } : {}) };
+  return { suite, objectives, primary: objectives[0]!, margin, minGain, maxCostRise, ...(reuse ? { reuse } : {}), canary: canaryOpts(c) };
 }
 
 // ---------------------------------------------------------------- the ledger's climbs
@@ -205,6 +250,20 @@ interface Round {
   stopped?: "interrupted" | "budget" | "infra";
   resume?: string;
   run?: SuiteRound;
+  /** Agent spend of the canary experiment (stage 3). */
+  canaryUsd?: number;
+}
+
+/** Per-task pass lists of one arm of a suite round (tasks both arms ran). */
+const armOutcomes = (run: SuiteRound, arm: "base" | "cand") => new Map(run.pairs.filter((p) => p.base.length && p.cand.length).map((p) => [p.task, p[arm].map((x) => x.pass)]));
+
+/** Runs the canary arms on the suite (pass only) inside what is left of the cap. */
+function canaryRunner(c: CommandContext, e: Env, f: Fitness, o: Pick<ClimbOpts, "margin" | "minGain">, label: string, cap: number | undefined) {
+  return async (A: HarnessBundle, B: HarnessBundle) => {
+    if (!c.out.json) c.out.note(`Canary: running ${A.name} and ${B.name} (${roundsText(f)})`);
+    const r = await runSuiteRound(c, e.ctx, f, A, B, { objectives: ["pass"], margin: o.margin, minGain: o.minGain, gate: e.gate, ...(cap !== undefined ? { maxCostUsd: cap } : {}), resume: false, label });
+    return { experimentId: r.experimentId, cancelled: r.cancelled, skipped: r.skipped, spentUsd: r.spentUsd, outcomes: { base: armOutcomes(r, "base"), cand: armOutcomes(r, "cand") }, tampered: r.tampered };
+  };
 }
 
 async function climbRound(c: CommandContext, e: Env, f: Fitness, o: ClimbOpts, base: Arm, cand: Candidate, x: { resume: Parameters<typeof runSuiteRound>[5]["resume"]; cap?: number; proposerUsd: number }): Promise<Round> {
@@ -253,20 +312,39 @@ async function climbRound(c: CommandContext, e: Env, f: Fitness, o: ClimbOpts, b
   if (run.infraStop || run.void) return { stopped: "infra", run, resume: run.resume };
   if (run.cancelled || run.skipped) return { stopped: run.cancelled ? "interrupted" : "budget", run, ...(run.resume ? { resume: run.resume } : {}) };
   const d = run.decision!;
+  // Z-14 stage 3: a kept candidate the canary policy selects runs again under the canary model.
+  const capLeft = x.cap === undefined ? undefined : Math.max(0, x.cap - run.spentUsd);
+  const st = await canaryStage({
+    verdict: d.verdict,
+    reasons: d.reasons,
+    removed: removedCount(base.files, cand.changed),
+    policy: o.canary.policy,
+    ...(o.canary.model ? { model: o.canary.model } : {}),
+    delta: o.canary.delta,
+    base: A,
+    cand: B,
+    runArms: canaryRunner(c, e, f, o, `${cand.id}@${o.canary.model}`, capLeft),
+  });
+  const canaryUsd = st.canary?.spentUsd ?? 0;
+  // AE-2: which suite tasks the candidate fixed, regressed or left failing, for the next proposal.
+  const outcomes = (arm: "base" | "cand") => armOutcomes(run, arm);
   const entry: TestEntry = {
     ...entryBase(),
-    verdict: d.verdict,
-    stage: d.verdict === "keep" ? "done" : "dev",
-    reasons: d.reasons,
+    v: LEDGER_VERSION,
+    verdict: st.verdict,
+    stage: st.verdict === "keep" ? "done" : st.ran && st.verdict !== d.verdict ? "canary" : "dev",
+    reasons: st.reasons,
     suite: { name: o.suite, tasks: f.tasks.length, k: f.k, primary: o.primary, experiment: run.experimentId, base: A.id, cand: B.id },
     objectives: { list: o.objectives, margin: o.margin, minGain: o.minGain, maxCostRise: limitJson(o.maxCostRise), ...(d.branch ? { branch: d.branch } : {}), ...(d.trade ? { trade: { ...d.trade, limit: limitJson(d.trade.limit) } } : {}), quality: d.quality, metrics: d.metrics, arms: run.arms, gains: d.gains, warnings: d.warnings },
+    preservation: preservationEntry(preservation({ dev: { base: outcomes("base"), cand: outcomes("cand") } })),
     ...(A.model ? { model: A.model } : {}),
-    cost: { usd: run.spentUsd + x.proposerUsd, unpriced: run.unpriced },
+    ...(st.canary ? { canary: st.canary } : {}),
+    cost: { usd: run.spentUsd + canaryUsd + x.proposerUsd, unpriced: run.unpriced },
   };
   appendLedger(e.dir, entry);
   clearPending(e.dir);
   if (!c.out.json) printRound(c, entry, { protect, critics });
-  return { entry, run };
+  return { entry, run, ...(canaryUsd ? { canaryUsd } : {}) };
 }
 
 // ---------------------------------------------------------------- proposing a cut
@@ -328,6 +406,7 @@ export async function climbTest(c: CommandContext, e: Env): Promise<number> {
   if (!c.positionals.length) throw new UsageError("Name the candidate(s) to test: a file, a directory, git:REV, a bundle or a stored r_… id", { reason: "missing_argument", suggestion: "coding.sh refine test ./drafts/CLAUDE.md --suite <name>" });
   const o = climbOpts(c, e.root);
   const f = await loadFitness(c, e.ctx, e.root, o.suite);
+  checkCanary(o, f.harness);
   const base = baseArm(e.root);
   const cands: Candidate[] = [];
   for (const v of c.positionals) {
@@ -336,15 +415,16 @@ export async function climbTest(c: CommandContext, e: Env): Promise<number> {
   }
   const sessions = f.tasks.length * f.k * 2 * cands.length;
   if (e.o.dryRun) {
-    const checks = cands.map((k) => ({ id: k.id, files: k.changed.map((x) => x.path), protect: checkProtected(base.files, k.arm.files, { ...e.protect, allow: e.allow }), critics: runCritics(base.files, k.arm.files) }));
+    const checks = cands.map((k) => ({ id: k.id, files: k.changed.map((x) => x.path), removed: removedCount(base.files, k.changed), protect: checkProtected(base.files, k.arm.files, { ...e.protect, allow: e.allow }), critics: runCritics(base.files, k.arm.files) }));
     if (out.json) {
-      out.data({ dryRun: true, ledger: ledgerFile(e.dir), suite: o.suite, tasks: f.tasks.length, k: f.k, sessions, harness: f.harness.name, objectives: o.objectives, margin: o.margin, minGain: o.minGain, maxCostRise: limitJson(o.maxCostRise), reuse: o.reuse?.what ?? null, candidates: checks.map((x) => ({ id: x.id, files: x.files, protected: x.protect.ok, critics: x.critics.ok })) });
+      out.data({ dryRun: true, ledger: ledgerFile(e.dir), suite: o.suite, tasks: f.tasks.length, k: f.k, sessions, harness: f.harness.name, objectives: o.objectives, margin: o.margin, minGain: o.minGain, maxCostRise: limitJson(o.maxCostRise), reuse: o.reuse?.what ?? null, canary: canaryPlan(e, f, o), candidates: checks.map((x) => ({ id: x.id, files: x.files, protected: x.protect.ok, critics: x.critics.ok, removed: x.removed })) });
       return 0;
     }
     out.print(`Suite ${o.suite}: ${roundsText(f)} per candidate, harness ${f.harness.name} (${f.harness.agent})`);
     out.print(objectivesLine(o));
     if (o.reuse) out.print(`Reuse: copy earlier rounds' finished runs of ${o.reuse.what === "both" ? "both arms" : "the base arm"} instead of re-running them (the pair is then not interleaved; drift is not balanced)`);
     for (const x of checks) out.print(`${x.id}  ${x.files.join(", ")}: ${!x.protect.ok ? `rejected before any run: ${x.protect.rejections[0]!.reason}` : !x.critics.ok ? `rejected before any run: ${x.critics.rejections[0]!.reason}` : "passes the protected-line and critic checks"}`);
+    out.print(canaryPlanLine(canaryPlan(e, f, o)));
     out.print(`Would run up to ${plural(sessions, "agent session")}`);
     return 0;
   }
@@ -361,7 +441,7 @@ export async function climbTest(c: CommandContext, e: Env): Promise<number> {
     }
     const cap = e.o.maxCost === undefined ? undefined : Math.max(0, e.o.maxCost - agentUsd);
     const r = await climbRound(c, e, f, o, base, cand, { resume: i === 0 && isResume(c) ? c.flags.resume : false, ...(cap !== undefined ? { cap } : {}), proposerUsd: 0 });
-    if (r.run) agentUsd += r.run.spentUsd;
+    if (r.run) agentUsd += r.run.spentUsd + (r.canaryUsd ?? 0);
     if (r.entry) done.push(r.entry);
     if (r.stopped) {
       stopped = r.stopped;
@@ -396,6 +476,7 @@ export async function climbRun(c: CommandContext, e: Env): Promise<number> {
   const maxRounds = positiveInt(c.flags.rounds, "rounds") ?? (untilPlateau ? Infinity : 3);
   const given = list(c.flags.candidate);
   const f = await loadFitness(c, e.ctx, e.root, o.suite);
+  checkCanary(o, f.harness);
   const start = baseArm(e.root);
   const path = targetPath(str(c.flags.target), e.root) ?? defaultTarget(start.files);
   const mode = o.primary === "pass" ? "add" : "cut";
@@ -404,7 +485,7 @@ export async function climbRun(c: CommandContext, e: Env): Promise<number> {
   const perRound = f.tasks.length * f.k * 2;
   if (e.o.dryRun) {
     const { drivers, from } = given.length ? { drivers: [] as string[], from: undefined } : await driversFor(e, f, o, start, path);
-    const plan = { dryRun: true, ledger: ledgerFile(e.dir), suite: o.suite, tasks: f.tasks.length, k: f.k, sessionsPerRound: perRound, rounds: Number.isFinite(maxRounds) ? maxRounds : null, untilPlateau, target: path, mode, proposer: given.length ? null : proposerName(e), objectives: o.objectives, margin: o.margin, minGain: o.minGain, maxCostRise: limitJson(o.maxCostRise), reuse: o.reuse?.what ?? null, drivers, ...(from ? { driversFrom: from } : {}), plateau: before.status };
+    const plan = { dryRun: true, ledger: ledgerFile(e.dir), suite: o.suite, tasks: f.tasks.length, k: f.k, sessionsPerRound: perRound, rounds: Number.isFinite(maxRounds) ? maxRounds : null, untilPlateau, target: path, mode, proposer: given.length ? null : proposerName(e), objectives: o.objectives, margin: o.margin, minGain: o.minGain, maxCostRise: limitJson(o.maxCostRise), reuse: o.reuse?.what ?? null, canary: canaryPlan(e, f, o), drivers, ...(from ? { driversFrom: from } : {}), plateau: before.status };
     if (out.json) {
       out.data(plan);
       return 0;
@@ -412,6 +493,7 @@ export async function climbRun(c: CommandContext, e: Env): Promise<number> {
     out.print(`${untilPlateau ? "Until the e-detector says plateau" : `Up to ${plural(maxRounds, "round")}`}: ${given.length ? "test each --candidate" : `${mode === "cut" ? "cut" : "add to"} ${path} with ${proposerName(e)}`}, run ${o.suite} (${roundsText(f)} = ${plural(perRound, "agent session")} a round), apply what is kept`);
     out.print(objectivesLine(o));
     if (o.reuse) out.print(`Reuse: copy earlier rounds' finished runs of ${o.reuse.what === "both" ? "both arms" : "the base arm"} instead of re-running them (the pair is then not interleaved; drift is not balanced)`);
+    out.print(canaryPlanLine(canaryPlan(e, f, o)));
     if (drivers.length) {
       out.print(`What the proposer is shown${from ? ` (from ${from})` : ""}:`);
       for (const d of drivers) out.print(`  ${d}`);
@@ -500,7 +582,7 @@ export async function climbRun(c: CommandContext, e: Env): Promise<number> {
     const cap = e.o.maxCost === undefined ? undefined : Math.max(0, e.o.maxCost - agentUsd - spend.usd - spend.judgeUsd);
     const r = await climbRound(c, e, f, o, base, cand, { resume: resumeFlag, ...(cap !== undefined ? { cap } : {}), proposerUsd: spend.usd + spend.judgeUsd - proposerBefore });
     rounds++;
-    if (r.run) agentUsd += r.run.spentUsd;
+    if (r.run) agentUsd += r.run.spentUsd + (r.canaryUsd ?? 0);
     if (r.stopped) {
       stopped = r.stopped;
       if (r.stopped === "infra") infra = r.run;
@@ -590,4 +672,57 @@ export function printClimbs(c: CommandContext, entries: readonly LedgerEntry[], 
     if (fk && x.rounds.length) out.print(`Pareto front (pass rate vs ${OBJECTIVE_LABEL[fk]}): ${frontText(x.rounds, fk)}`);
     out.print(climbPlateauLine(x.plateau));
   }
+}
+
+// ---------------------------------------------------------------- refine recheck
+
+/** `refine recheck <id> --model <m>`: a suite round's two arms again under another model (stage 3 on its own), ledgered as op 'recheck'. */
+export async function climbRecheck(c: CommandContext, e: Env): Promise<number> {
+  const { out } = c;
+  const id = c.positionals[0];
+  if (!id) throw new UsageError("Name the round to re-check: its r_… id", { reason: "missing_argument", suggestion: "coding.sh refine recheck r_3f9a1c02e1 --model <cheaper model>" });
+  const model = str(c.flags.model) ?? refineCanaryModel(c.env);
+  if (!model) throw new UsageError("refine recheck needs --model: the model to re-run the round under", { reason: "missing_argument", suggestion: `coding.sh refine recheck ${id} --model <cheaper model>` });
+  const o = { margin: DEFAULT_MARGIN, minGain: DEFAULT_MIN_GAIN, canary: canaryOpts({ ...c, flags: { ...c.flags, "canary-model": model, canary: "all" } }) };
+  const entries = readLedger(e.dir);
+  const t = tests(entries).reverse().find((x) => x.id === id || x.id.startsWith(id));
+  if (!t) throw new UsageError(`No round ${id} in this repo's ledger`, { reason: "not_found", suggestion: "coding.sh refine log" });
+  if (!t.suite?.base || !t.suite.cand) throw new CliError(`Round ${t.id} did not run a suite, so there are no arms to re-run`, { reason: "invalid_argument", next: ["refine recheck re-runs a --suite round; test the edit on a suite first:", `coding.sh refine test ${t.id} --suite <name>`] });
+  const A0 = await e.ctx.index.getBundle(t.suite.base);
+  const B0 = await e.ctx.index.getBundle(t.suite.cand);
+  if (!A0 || !B0) throw new CliError(`The harness bundles of round ${t.id} are no longer in the store`, { reason: "not_found", next: ["Test the edit again on the suite:", `coding.sh refine test ${t.id} --suite ${t.suite.name}`] });
+  const why = canaryRefusal(A0, !!getAdapter(A0.agent)?.run);
+  if (why) throw new CliError(why, { reason: "unsupported_agent" });
+  const f = await loadFitness(c, e.ctx, e.root, t.suite.name);
+  const sessions = f.tasks.length * f.k * 2;
+  const applied = liveApplies(entries).some((a) => a.candidate === t.id);
+  if (e.o.dryRun) {
+    if (out.json) out.data({ dryRun: true, candidate: t.id, suite: t.suite.name, model, applied, tasks: f.tasks.length, k: f.k, sessions });
+    else out.print(`Would re-run ${t.id}'s base and candidate on ${t.suite.name} under ${model}: ${roundsText(f)} = ${plural(sessions, "agent session")}`);
+    return 0;
+  }
+  await requireConsent(c, `Run ${plural(sessions, "agent session")} (${t.suite.name}: ${roundsText(f)} under ${model})?`, `coding.sh refine recheck ${t.id} --model ${model} --yes`);
+  const A = canaryBundle(A0, model);
+  const B = canaryBundle(B0, model);
+  const r = await canaryRunner(c, e, f, o, `${t.id}@${model}`, e.o.maxCost)(A, B);
+  let canary: CanaryRecord;
+  const rec = { model, experiment: r.experimentId, base: A.id, cand: B.id, spentUsd: r.spentUsd };
+  if (r.cancelled || r.skipped) canary = { ...rec, verdict: "inconclusive", reason: `canary: ${model} ${r.cancelled ? "was interrupted" : `stopped at --max-cost with ${r.skipped} runs not started`}; inconclusive` };
+  else {
+    const k = canaryCheck(model, r.outcomes, { delta: o.canary.delta, ...(r.tampered ? { tampered: r.tampered } : {}) });
+    canary = { ...rec, verdict: k.verdict, reason: k.reason, discordant: k.discordant, ...(k.hardRegressions.length ? { hardRegressions: k.hardRegressions } : {}), ...(k.lower !== undefined ? { lower: k.lower } : {}) };
+  }
+  const at = new Date().toISOString();
+  const entry: RecheckEntry = { op: "recheck", id: `k_${sha(`${t.id}\u0000${model}\u0000${at}`).slice(0, 10)}`, candidate: t.id, at, canary, applied, cost: { usd: r.spentUsd, unpriced: 0 } };
+  appendLedger(e.dir, entry);
+  const failed = canary.verdict === "regression" || canary.verdict === "inconclusive";
+  if (out.json) out.data({ ledger: ledgerFile(e.dir), recheck: entry });
+  else {
+    if (canary.verdict === "regression") out.fail(canary.reason);
+    else if (canary.verdict === "inconclusive") out.warn(canary.reason);
+    else out.ok(canary.reason);
+    out.print(`Spent ${money(r.spentUsd)} on agent sessions`);
+    if (canary.verdict === "regression" && applied) out.next("Undo the applied edit", `coding.sh refine rollback ${t.id}`);
+  }
+  return failed ? 1 : 0;
 }

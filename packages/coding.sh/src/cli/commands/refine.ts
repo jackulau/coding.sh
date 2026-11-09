@@ -27,11 +27,15 @@ async function withArms<T>(c: CommandContext, values: (string | undefined)[], fn
   return fn({ index: none, blobs: undefined as unknown as ArmCtx["blobs"] });
 }
 
-const LOOP = new Set(["propose", "test", "apply", "rollback", "log", "run"]);
+const LOOP = new Set(["propose", "test", "apply", "rollback", "log", "run", "recheck"]);
 
 export async function run(c: CommandContext): Promise<number> {
   if (c.action && LOOP.has(c.action)) return (await import("./refine-loop.ts")).refineLoop(c);
   if (c.action === "score") return (await import("./refine-score.ts")).refineScore(c);
+  if (c.action === "mine") return (await import("./refine-mine.ts")).refineMine(c);
+  if (c.action === "diagnose") return (await import("./refine-diagnose.ts")).refineDiagnose(c);
+  if (c.action === "signals") return (await import("./refine-diagnose.ts")).refineSignals(c);
+  if (c.action === "distill") return (await import("./refine-distill.ts")).refineDistill(c);
   const { out } = c;
   const root = gitRoot(c.cwd);
   const repoRoot = root ?? c.cwd;

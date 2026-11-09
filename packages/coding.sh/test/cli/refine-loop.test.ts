@@ -171,7 +171,11 @@ describe("cli refine loop", () => {
     assert.deepEqual([r.gate?.verdict, r.gate?.wins, r.gate?.losses], ["ship", 8, 0]);
     assert.equal(r.effect?.mean, 1);
     assert.equal(r.guardTasks.length, 8, "the eight won decision points guard later candidates");
-    assert.deepEqual(r.preservation, { gained: 8, lost: 0, regressed: [], R: 0, reasons: [] });
+    const p = r.preservation as { fixed?: string[] } & Record<string, unknown>;
+    assert.deepEqual({ ...p, fixed: undefined }, { gained: 8, lost: 0, regressed: [], R: 0, reasons: [], fixed: undefined, stillFailing: [], basis: "dev" });
+    // AE-2: the ledger names the tasks the edit fixed, one per decision point it gained.
+    assert.equal(p.fixed?.length, 8);
+    assert.ok(p.fixed!.every((id) => id.startsWith("dp_")));
     assert.ok(j.ledger.startsWith(join(e.home, ".coding.sh", "refine")), j.ledger);
 
     const applied = await cli(e, ["refine", "apply"]);

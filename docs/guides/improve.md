@@ -147,8 +147,8 @@ coding.sh improve check
 ```text
 533729e  Nov 3 09:00  CLAUDE.md +2 -0  "CLAUDE.md: run the tests before saying done"
     + Run `npm test` before you say you are done, and never claim a fix works without running it.
-  Helped: The agent follows the new line more: 4 of 4 sessions after, 1 of 6 before (p 0.05); flagged sessions 3 of 6 before, 1 of 4 after.
-  Still flagged after it, 1 of 4 sessions (coding.sh show <id>):
+  Helped: Fewer sessions went wrong after it: flagged sessions 6 of 10 before, 1 of 9 after (p 0.06).
+  Still flagged after it, 1 of 9 sessions (coding.sh show <id>):
     4b1c90d2-7a8e-4c55-9f0e-2d1f6e3b8a41  Nov 4 10:12  no-verification  "Add a --width flag to the CLI"
 ```
 
@@ -159,28 +159,44 @@ agent never got to work because it was not logged in. A `Left out:` line under t
 them (`idle` on each side in `--json`). When your agents
 work in other checkouts or worktrees of the repo, `--repo <DIR>` or `--repo all` counts their
 sessions too, against this repo's history: a session counts when this repo has the commit it
-started from. It uses two measures:
+started from. It asks three questions of each change:
 
-- **Flagged sessions**: the share of sessions with a failure flag, before and after.
-- **The new lines**: for each added line that names a command, flag, path or identifier (like
-  `` `npm test` ``), the share of sessions that did what it says.
+- **Did the failure fall?** The share of sessions with a failure flag, before and after, and the
+  share for each flag on its own.
+- **Did the agent follow the new lines?** For each added line that names a command, flag, path or
+  identifier (like `` `npm test` ``), the share of sessions that did what it says.
+- **Did it add work?** Tool calls and wall time per session, before and after.
 
-Each measure gets a two-sided Fisher exact test. The verdicts:
+Shares get a two-sided Fisher exact test at p ≤ 0.1. A single flag's test is Holm-adjusted across
+the flags seen before the change. Work gets a two-sided permutation test on the mean of
+log(1 + x), with 2000 seeded shuffles, when both sides have 5 or more sessions. Following a line is
+not the same as fixing what it targets: in a study of agent harness changes, Claude read the new
+instructions in nearly every session, but only 2 of 7 changes stopped the action they targeted
+([Treude and Baltes](https://arxiv.org/html/2610.34938v1)). So a line the agent follows is not
+"Helped" unless the failures fall too. The verdicts:
 
 | Verdict | When |
 |---|---|
-| Helped | fewer flagged sessions (p ≤ 0.1), or the new line followed more with no more flagged sessions |
-| Regressed | more flagged sessions (p ≤ 0.1); `check` exits 1 |
-| No clear change | 5 or more sessions after, and the difference could be chance |
+| Helped | fewer flagged sessions (p ≤ 0.1), or one flag fell (Holm p ≤ 0.1) while no other flag rose and the flagged share did not rise. When sessions also got costlier, the reason says "It also added work" |
+| Followed, no effect yet | the agent follows a new line more (p ≤ 0.1), but flagged sessions did not fall |
+| Costlier | sessions after it make at least 1.25 times the tool calls or take 1.25 times as long (median, p ≤ 0.1), and flagged sessions did not fall |
+| Regressed | more flagged sessions (p ≤ 0.1); `check` exits 1. This is the only verdict that exits 1 |
+| No clear change | 5 or more sessions after, and the difference could be chance. When one flag fell but another rose in its place, the reason says the failures moved |
 | Too early to tell | fewer than 5 sessions after, and no clear result yet |
 | No sessions yet | no session ran with the change |
 | No sessions before it | nothing to compare with, often the commit that added the file |
+
+For "Followed, no effect yet" and "Costlier", `check` suggests testing the harness without the
+change: `coding.sh refine test git:<previous>`, where `<previous>` is the harness commit before it.
+A line that adds work and fixes nothing is a candidate for removal.
 
 Under each change, `check` lists the sessions that ran with it and still got a failure flag:
 newest first, with the session id, when it started, its flags and its title. It shows five and
 counts the rest; `--sessions` lists them all. `coding.sh show <id>` opens one. With `--json`, each
 change's `before` and `after` have `flaggedSessions`, every flagged session on that side, each
-with `id`, `at`, `title` and `flags`.
+with `id`, `at`, `title` and `flags`. A change has `work` (`toolCalls` and `durationMs`, each with
+the `before` and `after` medians and `p`) only when both sides have 5 or more sessions and the
+medians differ, and `next` (the `refine test` command) for the two verdicts above.
 
 `coding.sh improve` shows the same verdicts for up to three changes from the last 30 days. Once sessions have run on
 your latest change, an issue none of them had is marked "Not seen in the N sessions since
@@ -208,7 +224,7 @@ The coding.sh MCP server (`coding.sh init` sets it up) has the same loop:
   agent followed each new line, and the verdict. `after.flaggedSessions` lists the sessions still
   flagged after the change (`sessionId`, `at`, `flags`, `title`), newest first: five per change,
   or up to 20 when `commit` picks one change. `after.moreFlagged` counts the ones left out. Your
-  agent opens one with `session_get`.
+  agent opens one with `session_get`. `work` is there when `check --json` has it.
 - Two prompts run the loop. In Claude Code they are `/mcp__coding-sh__improve` and
   `/mcp__coding-sh__did-it-help`.
 - The `harness_audit` tool lists the memory files, skills and instruction files your sessions

@@ -62,7 +62,7 @@ const labelCells = (l: Label): unknown[] => [l.id, l.sessionId, l.caseId ?? null
  * A store with a query path pages the query itself; otherwise each page of
  * listSessions is filtered in memory.
  */
-async function* sessionsOf(index: IndexStore, o: ExportOptions): AsyncGenerator<Session> {
+export async function* sessionsOf(index: IndexStore, o: Pick<ExportOptions, "filter" | "maxSessions" | "query" | "pageSize">): AsyncGenerator<Session> {
   const page = o.pageSize ?? 500;
   const q = o.query?.root || o.query?.sort ? o.query : undefined;
   const native = q && index.querySessions ? index.querySessions.bind(index) : undefined;
