@@ -32,7 +32,7 @@ export interface Context {
   /** True when sessions stored by an older adapter parse wait for an automatic re-parse (cheap once none do). */
   reparseDue(): Promise<boolean>;
   /** Blob/spool/judge-cache garbage collection with the effective config. */
-  gc(opts?: Pick<GcOptions, "dryRun" | "compact" | "minBlobAgeMs" | "judgeCacheMaxBytes">): Promise<GcResult>;
+  gc(opts?: Pick<GcOptions, "dryRun" | "compact" | "minBlobAgeMs" | "judgeCacheMaxBytes" | "llmCacheMaxBytes">): Promise<GcResult>;
   close(): Promise<void>;
 }
 
