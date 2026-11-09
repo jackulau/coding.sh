@@ -11,7 +11,6 @@ import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
 import { deserialize, serialize } from "node:v8";
 import type { AgentEvent, EventKind } from "../../src/schema/index.ts";
 import type { Adapter, Session } from "../../src/core/types.ts";
@@ -24,7 +23,12 @@ import { SqliteIndexStore } from "../../src/store/sqlite.ts";
 import { FIXTURES } from "../adapters/_helpers.ts";
 
 const roots: string[] = [];
-after(() => roots.forEach((r) => rmSync(r, { recursive: true, force: true })));
+const opened: SqliteIndexStore[] = [];
+// Close every store before removing its dir: Windows can't delete an open database.
+after(async () => {
+  for (const i of opened) await i.close();
+  for (const r of roots) rmSync(r, { recursive: true, force: true });
+});
 
 const T0 = 1_700_000_000_000;
 const MIN = 60_000;
@@ -82,6 +86,7 @@ async function store() {
   const spool = join(env.CODING_SH_HOME, "spool", "ff");
   mkdirSync(spool, { recursive: true });
   const index = await SqliteIndexStore.open(join(root, "index.db"));
+  opened.push(index);
   const base = { config: defaultConfig(env), index, blobs: new MemoryBlobStore(), env, adapters };
   let n = 0;
   const spoolLines = (lines: [number, Raw][]) => {
@@ -249,7 +254,8 @@ describe("the refold cursor", () => {
     assert.equal(stamp, foldStamp(), "a fresh store is stamped current");
     assert.notEqual(stamp, SESSION_FOLD_VERSION, "with more than the integer another build may share");
     assert.ok(Number.isSafeInteger(stamp) && stamp > 0, "a cursor every store keeps exactly");
-    const src = fileURLToPath(new URL("../../src/core/sessions.ts", import.meta.url));
+    // Import by file URL: on Windows a bare C:\ path is not a valid ESM specifier.
+    const src = new URL("../../src/core/sessions.ts", import.meta.url).href;
     const next = spawnSync(process.execPath, ["--no-warnings", "--input-type=module", "-e", `import { foldStamp } from ${JSON.stringify(src)}; console.log(foldStamp());`], { encoding: "utf8" });
     assert.equal(next.status, 0, next.stderr);
     assert.equal(Number(next.stdout.trim()), stamp, "the next process computes the same stamp");
