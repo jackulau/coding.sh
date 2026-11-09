@@ -569,17 +569,30 @@ describe("SqliteIndexStore", () => {
     // What a live upgrading process keeps beside the database (its pid must be another live process).
     writeFileSync(`${path}.upgrade`, JSON.stringify({ pid: process.ppid, host: hostname(), from: 9, to: SQLITE_SCHEMA_VERSION, startedAt: Date.now(), step: "search index", done: 300_000, total: 740_614 }));
     const lines: string[] = [];
-    // Released after the 5 s busy timeout, which a plain lock holder would hit.
-    const release = setTimeout(() => {
+    let held = true;
+    const release = (): void => {
+      if (!held) return;
+      held = false;
       holder.exec("ROLLBACK");
       holder.close();
       rmSync(`${path}.upgrade`, { force: true });
-    }, 5600);
-    const s = await SqliteIndexStore.open(path, { progress: (l) => lines.push(l), progressMinRows: 1_000_000 });
-    clearTimeout(release);
+    };
+    // Released on the sixth line. Lines are a second apart, so that is past the 5 s busy
+    // timeout a plain lock holder would hit, however slow the machine is.
+    const guard = setTimeout(release, 60_000);
+    const started = Date.now();
+    const s = await SqliteIndexStore.open(path, {
+      progress: (l) => {
+        lines.push(l);
+        if (lines.length === 6) release();
+      },
+      progressMinRows: 1_000_000,
+    });
+    clearTimeout(guard);
+    assert.ok(Date.now() - started >= 5000, "waited past the busy timeout");
     assert.deepEqual((await s.search("hello")).map((h) => h.event.id), ["u"]);
     await s.close();
-    assert.ok(lines.length >= 5, lines.join(""));
+    assert.equal(lines.length, 6, lines.join(""));
     assert.equal(lines[0], `coding.sh: waiting for another coding.sh (pid ${process.ppid}) to finish upgrading the index: search index 300,000 of 740,614 events (40%)\n`);
   });
 
