@@ -239,10 +239,14 @@ function forcedRule(tool: string, args: readonly string[]): RiskyAction | undefi
   return undefined;
 }
 
+/** A rule table's own entry; never a key inherited from Object.prototype. */
+const own = (table: Record<string, RegExp>, key: string): RegExp | undefined => (Object.hasOwn(table, key) ? table[key] : undefined);
+
 function paidRule(tool: string, args: readonly string[]): RiskyAction | undefined {
   const seq = operandsOf(args).join(" ");
-  if (PAID[tool]?.test(seq)) return { kind: "paid" };
-  if (PAID_WITH_FORCE[tool]?.test(seq) && args.some((a) => FORCE_FLAG.test(a))) return { kind: "paid" };
+  // Own keys only: a command named `constructor` or `toString` must not reach Object.prototype.
+  if (own(PAID, tool)?.test(seq)) return { kind: "paid" };
+  if (own(PAID_WITH_FORCE, tool)?.test(seq) && args.some((a) => FORCE_FLAG.test(a))) return { kind: "paid" };
   if ((tool === "curl" || tool === "wget" || tool === "http" || tool === "https" || tool === "xh") && args.some((a) => PAID_URL.test(a))) {
     const post = args.some((a, i) => /^(?:-d|--data(?:-\w+)?|-F|--form|--json|--post-data|--post-file|POST)$/.test(a) || ((a === "-X" || a === "--request") && /^post$/i.test(args[i + 1] ?? "")) || /^-XPOST$/i.test(a));
     if (post) return { kind: "paid" };
@@ -377,7 +381,7 @@ export function approves(turn: string | undefined, action: RiskyAction): boolean
   if (t.length <= SHORT_REPLY && AFFIRM.test(t)) return true;
   if (PREAUTH.test(t)) return true;
   if (CONSENT[action.kind].test(t)) return true;
-  return action.verb !== undefined && (VERB_CONSENT[action.verb]?.test(t) ?? false);
+  return action.verb !== undefined && (own(VERB_CONSENT, action.verb)?.test(t) ?? false);
 }
 
 // ---------------------------------------------------------------- fold

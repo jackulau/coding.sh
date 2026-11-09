@@ -245,3 +245,11 @@ describe("real captures", () => {
     assert.ok(sessions >= 20, `${sessions} sessions`);
   });
 });
+
+describe("command names that are Object.prototype keys", () => {
+  test("constructor, toString and __proto__ as commands never throw", () => {
+    for (const cmd of ["constructor run", "toString x", "__proto__ x", "hasOwnProperty a", "valueOf"]) {
+      assert.equal(riskyAction(cmd), undefined, cmd);
+    }
+  });
+});
