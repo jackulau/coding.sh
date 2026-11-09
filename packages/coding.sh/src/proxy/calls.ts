@@ -250,7 +250,19 @@ export interface CallDiff {
   model?: { a?: string; b?: string };
   params: { key: string; a?: unknown; b?: unknown }[];
   tools: { same: boolean; added: string[]; removed: string[]; changed: string[]; reordered: boolean };
-  system: { same: boolean; a?: string; b?: string; lines?: LineOp[] };
+  system: {
+    same: boolean;
+    a?: string;
+    b?: string;
+    lines?: LineOp[];
+    /** Full content only: the 1-based line of a's system prompt where b's first differs. */
+    firstChangeLine?: number;
+    /**
+     * Full content only: the share (0..1) of a's system prompt, by characters, from the first change
+     * to the end. The cache reads a prefix, so all of it was re-billed (and the messages after it).
+     */
+    wastedPrefixFrac?: number;
+  };
   messages: { a: number; b: number; shared: number; rewritten: boolean };
   cache: { reused: boolean; expected: number; read: number; write: number; gapMs: number; cause?: string };
 }
@@ -305,6 +317,10 @@ export function diffCalls(a: LoadedCall, b: LoadedCall): CallDiff {
     if (!d.system.same) {
       const lines = lineDiff(sa, sb);
       if (lines) d.system.lines = lines;
+      let k = 0;
+      while (k < sa.length && k < sb.length && sa.charCodeAt(k) === sb.charCodeAt(k)) k++;
+      d.system.firstChangeLine = sa.slice(0, k).split("\n").length;
+      if (sa.length) d.system.wastedPrefixFrac = (sa.length - k) / sa.length;
     }
     const ka = ia.messages.map(contentKey);
     const kb = ib.messages.map(contentKey);
@@ -334,6 +350,9 @@ export function diffCalls(a: LoadedCall, b: LoadedCall): CallDiff {
   return d;
 }
 
+/** Above this share of the system prompt re-billed after an edit, the cause says to move the changing part to the end. */
+export const WASTED_PREFIX_HINT = 0.2;
+
 /** The first change in cache order (tools, system, messages), or the lifetime. */
 function cacheCause(d: CallDiff): string {
   if (d.model) return `the model changed (${d.model.a ?? "?"} → ${d.model.b ?? "?"}); each model has its own cache`;
@@ -344,7 +363,12 @@ function cacheCause(d: CallDiff): string {
   }
   if (!d.system.same) {
     const first = d.system.lines?.find((l) => l.op !== " ");
-    return `the system prompt changed${first ? ` (first change: ${first.op} ${first.text.trim().slice(0, 80)})` : ""}`;
+    const w = d.system.wastedPrefixFrac;
+    const hint =
+      w !== undefined && w > WASTED_PREFIX_HINT
+        ? `; ~${Math.round(w * 100)}% of the system prompt came after this change and was re-billed; move dynamic content (timestamps, session ids) to the end of the system prompt, after the stable text, so the prefix before it stays cached`
+        : "";
+    return `the system prompt changed${first ? ` (first change: ${first.op} ${first.text.trim().slice(0, 80)})` : ""}${hint}`;
   }
   if (d.messages.rewritten) return `the history was rewritten from message ${d.messages.shared + 1} (compaction or an edit)`;
   if (d.cache.gapMs > CACHE_TTL_MS) return `${Math.round(d.cache.gapMs / 60_000)} min passed between the calls; the default cache lasts 5 min`;

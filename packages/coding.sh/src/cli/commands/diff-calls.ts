@@ -49,7 +49,8 @@ export function printDiff(out: Output, d: CallDiff): void {
   if (d.system.same) row("System", "same");
   else if (d.content === "metadata") row("System", `changed (hash ${d.system.a ?? "-"} → ${d.system.b ?? "-"})`);
   else {
-    row("System", "changed");
+    const w = d.system.wastedPrefixFrac;
+    row("System", `changed${d.system.firstChangeLine ? ` from line ${d.system.firstChangeLine}` : ""}${w !== undefined ? ` (${Math.round(w * 100)}% of a's system prompt comes after the change)` : ""}`);
     for (const l of d.system.lines ?? []) {
       const text = `          ${l.op} ${oneLine(clean(l.text), 110)}`;
       out.print(l.op === "+" ? out.style(text, "green") : l.op === "-" ? out.style(text, "red") : out.style(text, "faint"));

@@ -161,7 +161,7 @@ b  77d2e0b15a9c  claude-sonnet-4-5  16:09:40  in 4 out 96  cache read 0 write 41
 Model     same
 Settings  same
 Tools     same
-System    changed
+System    changed from line 2 (2% of a's system prompt comes after the change)
             Use the tools available to you.
           - Today's date is 2026-11-06.
           + Today's date is 2026-11-07.
@@ -170,8 +170,19 @@ Cache     miss: b read 0 of the 41.2k a cached, and wrote 41.6k
 Why       the system prompt changed (first change: - Today's date is 2026-11-06.)
 ```
 
+The `System` row gives the line where the prompt first changed and the share of the earlier prompt
+that comes after it. The cache reads a prefix, so that share is billed again, along with every
+message after it. When more than 20% comes after the change, `Why` adds a hint: move the dynamic
+content (timestamps, session ids) to the end of the system prompt, so the text before it stays
+cached. A date on the last line, as above, costs little; the same date on the first line costs the
+whole prompt.
+
 When nothing in the prefix changed, the cause is the gap between the calls (over five minutes), or
 the cache entry was evicted.
+
+`coding.sh cache doctor` does this for every cache break over a window and ranks the causes by
+what they cost, each with a pair of calls to pass to `diff-calls`. See
+[Prompt cache health](../guides/explore.md#prompt-cache-health).
 
 The viewer has the same comparison under "Compare with the previous call". The API has
 [`GET /api/calls/{id}/diff`](../reference/api.md#get-apicallsiddiff).

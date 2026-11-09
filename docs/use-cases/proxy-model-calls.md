@@ -59,8 +59,10 @@ coding.sh diff-calls <call-a> <call-b>
 
 `diff-calls` compares two requests in the order the prompt cache reads them: model, settings, tool
 definitions, system prompt (line by line), then messages. When the second call read much less from
-the cache than the first one cached, a `Why` line names the first difference. When nothing in the
-prefix changed, the cause is the gap between the calls or an evicted cache entry.
+the cache than the first one cached, a `Why` line names the first difference. For a system prompt
+edit it also gives the share of the prompt after the change, which the cache could not read, and
+when that is over 20% it says to move the dynamic content to the end. When nothing in the prefix
+changed, the cause is the gap between the calls or an evicted cache entry.
 
 ## Replay a call with another model
 

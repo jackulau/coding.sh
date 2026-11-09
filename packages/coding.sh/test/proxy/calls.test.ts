@@ -9,6 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { printDiff } from "../../src/cli/commands/diff-calls.ts";
+import { Output } from "../../src/cli/output.ts";
 import { loadConfig } from "../../src/core/config.ts";
 import { buildSession } from "../../src/core/sessions.ts";
 import type { AgentEvent } from "../../src/schema/index.ts";
@@ -154,6 +156,39 @@ describe("proxy calls: refs, load and diff", () => {
     assert.equal(d.cache.reused, false);
     assert.equal(d.cache.expected, 4200);
     assert.match(d.cache.cause ?? "", /^the system prompt changed \(first change: - Today is 2026-11-06\.\)/);
+    // The date sits on the last line: almost all of the prefix before it stays cacheable, so no move-to-end hint.
+    assert.equal(d.system.firstChangeLine, 3);
+    assert.ok(d.system.wastedPrefixFrac! > 0 && d.system.wastedPrefixFrac! < 0.05, String(d.system.wastedPrefixFrac));
+    assert.doesNotMatch(d.cache.cause ?? "", /move dynamic content/);
+  });
+
+  it("a system prompt edit near the top: the share re-billed after it, and the move-to-end hint", async () => {
+    const [x, y] = [await loadCall(t.blobs, calls[1]!), await loadCall(t.blobs, calls[2]!)];
+    const rules = Array.from({ length: 40 }, (_, i) => `Rule ${i}: keep the change small and run the tests.`);
+    const top = (date: string) => [`Today is ${date}.`, ...rules].join("\n");
+    const d = diffCalls({ ...x, info: { ...x.info!, system: top("2026-11-06") } }, { ...y, info: { ...y.info!, system: top("2026-11-07") } });
+    assert.equal(d.cache.reused, false);
+    assert.equal(d.system.firstChangeLine, 1);
+    assert.ok(d.system.wastedPrefixFrac! > 0.95, String(d.system.wastedPrefixFrac));
+    assert.match(d.cache.cause ?? "", /^the system prompt changed \(first change: - Today is 2026-11-06\.\); ~(9[5-9]|100)% of the system prompt came after this change and was re-billed; move dynamic content \(timestamps, session ids\) to the end of the system prompt/);
+
+    // The same edit moved to the bottom: a small share and no hint.
+    const bottom = (date: string) => [...rules, `Today is ${date}.`].join("\n");
+    const low = diffCalls({ ...x, info: { ...x.info!, system: bottom("2026-11-06") } }, { ...y, info: { ...y.info!, system: bottom("2026-11-07") } });
+    assert.equal(low.system.firstChangeLine, 41);
+    assert.ok(low.system.wastedPrefixFrac! < 0.01, String(low.system.wastedPrefixFrac));
+    assert.doesNotMatch(low.cache.cause ?? "", /move dynamic content/);
+
+    // diff-calls prints the share on the System row and the hint on the Why row.
+    let text = "";
+    printDiff(new Output({ json: false, noColor: true, env: {}, stdout: { write: (x: string) => (text += x), isTTY: false }, stdin: { isTTY: false } }), d);
+    assert.match(text, /^System {4}changed from line 1 \(9\d% of a's system prompt comes after the change\)$/m);
+    assert.match(text, /^Why {7}the system prompt changed .*move dynamic content \(timestamps, session ids\) to the end/m);
+
+    // Unchanged system prompts carry neither field.
+    const same = diffCalls(x, { ...y, info: { ...y.info!, system: x.info!.system } });
+    assert.equal(same.system.firstChangeLine, undefined);
+    assert.equal(same.system.wastedPrefixFrac, undefined);
   });
 
   it("a new tool: a miss, blamed on the tools before the system prompt", async () => {
@@ -191,6 +226,8 @@ describe("proxy calls: metadata mode", () => {
       assert.equal(sys.system.same, false);
       assert.match(sys.system.a ?? "", /^[0-9a-f]{16}$/);
       assert.match(sys.cache.cause ?? "", /^the system prompt changed$/);
+      assert.equal(sys.system.firstChangeLine, undefined, "no content, no line");
+      assert.equal(sys.system.wastedPrefixFrac, undefined, "no content, no fraction");
       const tools = diffCalls(l3!, l4!);
       assert.deepEqual(tools.tools.added, ["Grep"]);
     } finally {
@@ -283,7 +320,7 @@ describe("CLI: show <call> and diff-calls", () => {
   it("diff-calls <session>#3 explains the miss against the call before it", () => {
     const r = cli("diff-calls", `${SESSION}#3`);
     assert.equal(r.status, 0, r.stderr);
-    assert.match(r.stdout, /^System {4}changed$/m);
+    assert.match(r.stdout, /^System {4}changed from line 3 \(2% of a's system prompt comes after the change\)$/m);
     assert.match(r.stdout, /- Today is 2026-11-06\./);
     assert.match(r.stdout, /\+ Today is 2026-11-07\./);
     assert.match(r.stdout, /^Cache {5}miss: b read 0 of the 4.2k a cached, and wrote 4.4k/m);
