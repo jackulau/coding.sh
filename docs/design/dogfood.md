@@ -1,6 +1,8 @@
 # Dogfood: testing coding.sh on itself, continuously
 
-Status: plan. This doc is the contract for `npm run dogfood`, the self-capture setup in this repo,
+Status: partly built. The self-evals (§3) and the scorecard (§4) are in `scripts/dogfood`
+(`npm run dogfood`, `npm run dogfood:validate`); the project-scope hook files of §1.1 are not
+committed. §6 gives the state of each step, with code pointers. This doc is the contract for `npm run dogfood`, the self-capture setup in this repo,
 and the improvement loop.
 
 coding.sh is built mostly by coding agents. Every one of those sessions is data about agents, and
@@ -462,25 +464,28 @@ Fix agents in worktrees are recorded by the project hooks, and their sessions fe
 | Merging a kept change over 600 lines, or one touching protected paths | Review size |
 | Raising the daily budget; installing new agent CLIs on `PATH` | Cost and machine state |
 | Deleting anything under `~/.coding.sh` except the loop's own temp dirs | Data loss |
-| The first commit of this repo | The repo has no commits yet; worktrees need one, and the user decides when and how to commit |
 
 ## 6. Bootstrapping order
 
-What exists today:
+The order the pieces were planned in. The State column is checked against the code; the commit
+history has started, so step 0 is done.
 
-- spool hook and writer;
-- ingest;
-- SQLite and memory stores, FS blobs;
-- snapshot, capture wrapper;
-- eval tasks, validate, judge calibration, leakage, patch;
-- runner, bundles, experiments and compare;
-- stats;
-- viewer;
-- OTLP sink;
-- a `.claude/workflows/coding-sh-improve.js` workflow.
+| Step | State |
+|---|---|
+| 0 | Done. |
+| 1 | Partly built. The build and the hook are in `packages/coding.sh`; `coding.sh init --scope project` writes project-scope hooks. Open: `scripts/dogfood/hooks.mjs`, `npm run dogfood:install-hook` and a committed `.claude/settings.json` (§1.1). |
+| 2 | Built: `scripts/dogfood/score.mjs`, `bench.mjs` and `bench-{hook,ingest,store,help,viewer,where,proxy,collector}.mjs`; `npm run dogfood`. |
+| 3 | Built: `src/adapters/claude-code.ts`, fixtures in `packages/coding.sh/test/fixtures/adapters/claude-code`, checked by `scripts/dogfood/conformance.mjs`. |
+| 4 | Built: the OTLP receiver (`src/otel`) and `scripts/dogfood/claude-otel.json`. Open: `mise.toml`. |
+| 5 | Built: the CLI (`src/cli`) and `scripts/dogfood/cli-guidelines.mjs` for `cli.guidelines`. |
+| 6 | Built: tool evals (`src/toolevals`), `evals/cli` (25 dev tasks, `fixtures/make-home.mjs`) and `scripts/dogfood/cli-suite.mjs`. The held-out tasks live outside the repo (`heldoutDir` in `evals/cli/suite.toml`) and are written by a human. |
+| 7 | Built: `src/adapters/codex.ts`. The project `.codex/hooks.json` is installed per machine, not committed. |
+| 8 | Open: `harvest.mjs` and the replay of promoted tasks; `score.mjs` reports `replay.success` as skipped. |
+| 9 | Partly built: `scripts/dogfood/site.mjs` runs Lighthouse and the JS budget. Open: the council script (`site.council` is skipped). |
+| 10 | Open: `tick.mjs`, `pick.mjs`, `brief.mjs` and `keep.mjs`. The loop runs as `.claude/workflows/coding-sh-improve.js` for now. |
+| 11 | Open: workflow scoring of `coding-sh-improve.js` (docs/design/workflows.md §9). |
 
-Not built yet: adapters, OTLP receiver, CLI, generic evals, tool evals, workflows. There are also
-no git commits.
+The plan for each step:
 
 | Step | Work | Gives the scorecard |
 |---|---|---|

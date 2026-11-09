@@ -56,8 +56,8 @@ dependencies; the parts below are folders under `packages/coding.sh/src`.
 | `apps/site` | coding.sh website (Astro) |
 
 Drivers with dependencies live in their own packages (`coding.sh-store-<scheme>`,
-`coding.sh-sink-<kind>`), so the core install stays dependency-free. None of these packages are on npm
-or PyPI yet.
+`coding.sh-sink-<kind>`), so the core install stays dependency-free. The npm packages are published;
+the Python SDK is not on PyPI yet.
 
 ## Capture
 
@@ -167,8 +167,17 @@ interface Sink {                                          // write-only mirror (
 - `coding.sh gc`: mark-and-sweep of unreferenced blobs, plus retention rules (for example, drop
   file-read blobs older than 90 days while keeping diffs and eval tasks).
 - SQLite settings: `journal_mode=WAL`, `synchronous=NORMAL`, `journal_size_limit` of 64 MB,
-  batched transactions of about 500 events, prepared statements, FTS5 over prompt and assistant
-  text only.
+  batched transactions of about 500 events, prepared statements.
+- Search is a contentless FTS5 index over prompt, reply and tool text: each event's text is fed to
+  it on insert and not kept a second time, and snippets are cut from the event when a search shows
+  it. A working directory is stored once in a `cwds` table, and events point at it.
+- A search ranks its matches by bm25 when there are at most 20,000 of them. With more (a word as
+  common as "the"), ranking every match costs more than the answer is worth, so it lists the
+  newest first. Only the last word of a search matches as a prefix.
+- An index upgrade runs in one transaction, so a reader never sees a half-upgraded store. On a
+  store of 100,000 events or more it prints progress to stderr and keeps `<index>.upgrade` with
+  its step, so another process that waits for it says how far it is. An upgrade that leaves old
+  data behind says to run `coding.sh gc --compact`, which empties it and VACUUMs.
 - The WAL is folded back in and emptied (`wal_checkpoint(TRUNCATE)`) when an ingest or transcript
   import stored more than 10,000 events, and when a command closes the index. SQLite does this on
   its own only when the last connection closes, so with the viewer open a bulk import used to

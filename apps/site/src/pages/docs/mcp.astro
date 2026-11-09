@@ -19,14 +19,17 @@ const TOOLS: [string, string][] = [
   ["usage", "Tokens and cost by day, agent, model or repo, with the most expensive sessions. Takes where too."],
   ["subagents", "The subagents a session spawned, as a tree with durations and errors."],
   ["session_tree", "A whole multi-agent run as one tree: a parent agent and its subagents (or, by run id, a fan-out of separate agents), with per-node cost, tokens and flags, rolled-up totals and the worst flag to fix first."],
+  ["eval_candidates", "Captured sessions ranked as eval candidates: subagents, runs, sessions with no git start, no prompt or no edits left out, the rest scored by failure flags, pushback, a guessable verifier and recency."],
   ["experiments_list", "Dataset experiments with pass rate and confidence interval."],
   ["experiment_compare", "Paired comparison of two experiments: difference, p-value, regressed and improved cases."],
   ["exp_session_summary", "The experiment session's timeline, oldest first: notes, commands and each run with its delta against the previous run."],
   ["exp_session_note", "Add a note to the experiment session: the hypothesis before a run, the reading after it. Secrets are redacted."],
   ["harness_compare", "Harness A/B results from coding.sh compare: the list, or one report with the ship gate, item gate and own-tests split."],
   ["benchmarks", "Benchmarks: the list, one run's leaderboard with paired verdicts and worst failures, or one metric over time."],
-  ["eval_from_session", "Draft an eval task from a session. Agents ask you first; it, eval_init and exp_session_note are the only tools that write."],
+  ["eval_from_session", "Draft an eval task from a session. Agents ask you first; it, eval_init, score_add and exp_session_note are the only tools that write."],
   ["eval_init", "Write an eval suite to evals/<name>/: tasks from failed sessions, a skill's trigger prompts, or cases the agent writes, marked draft. Agents ask you first."],
+  ["score_list", "Typed scores on sessions, events, dataset cases and eval runs, newest first, filtered by target, name, source or session."],
+  ["score_add", "Score a session, event, case or run: a number, true or false, or a category, checked against the score's config. Scoring the same thing again replaces it."],
   ["status", "Health of coding.sh: version, available update, recent captures, pending spool, last error."],
 ];
 

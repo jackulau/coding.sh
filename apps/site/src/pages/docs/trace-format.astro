@@ -71,6 +71,13 @@ const session = `interface Session {
 }`;
 
 const importSchema = `import { SCHEMA_ID, SCHEMA_VERSION, EVENT_KINDS, KNOWN_AGENTS, isEventKind } from "coding.sh/schema";`;
+const jsonSchema = `import schema from "coding.sh/schema.json" with { type: "json" };
+import Ajv2020 from "ajv/dist/2020.js";
+
+const ajv = new Ajv2020();
+ajv.addSchema(schema);
+const validEvent = ajv.getSchema("https://coding.sh/schema.json#/$defs/AgentEvent");
+if (!validEvent(event)) console.error(validEvent.errors);`;
 ---
 
 <DocsLayout>
@@ -124,7 +131,22 @@ const importSchema = `import { SCHEMA_ID, SCHEMA_VERSION, EVENT_KINDS, KNOWN_AGE
   <p>The CLI package exports the constants under <code>coding.sh/schema</code>:</p>
   <Code title="javascript" code={importSchema} />
   <p>
-    TypeScript types and a JSON Schema for the format are <Tag status="planned" />. Until then, the types live in
-    <code>packages/coding.sh/src/schema/index.ts</code>.
+    TypeScript types ship with it (<code>dist/types/schema/index.d.ts</code>, from <code>packages/coding.sh/src/schema/index.ts</code>)
+    <Tag status="built" />.
   </p>
+
+  <h2 id="json-schema">JSON Schema</h2>
+  <p>
+    A JSON Schema (draft 2020-12) for <code>AgentEvent</code> and <code>Session</code> ships as <code>coding.sh/schema.json</code>
+    <Tag status="built" />. It is served at <a href="/schema.json">coding.sh/schema.json</a>, its <code>$id</code>, and lives in the repository as
+    <a href="https://github.com/jackulau/coding.sh/blob/main/packages/coding.sh/src/schema/trace.schema.json"><code>src/schema/trace.schema.json</code></a>.
+    The root accepts either type; validate one with <code>#/$defs/AgentEvent</code> or <code>#/$defs/Session</code>.
+  </p>
+  <Code title="javascript" code={jsonSchema} />
+  <ul>
+    <li><strong>Generated.</strong> <code>scripts/json-schema.ts</code> writes it from the TypeScript types, with their doc comments as descriptions. A test fails when it is stale.</li>
+    <li><strong>Closed objects.</strong> A field the types don't name fails validation. <code>payload</code> and map fields such as <code>stats.models</code> stay open.</li>
+    <li><strong>Payloads.</strong> The per-kind payload conventions above are in the <code>payload</code> description, not enforced.</li>
+    <li><strong>Tested.</strong> Every event the adapters produce from their recorded fixtures, every OTLP fixture, and the sessions built from them validate against it.</li>
+  </ul>
 </DocsLayout>

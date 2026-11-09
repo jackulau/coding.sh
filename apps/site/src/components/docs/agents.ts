@@ -131,6 +131,14 @@ export const ADAPTER_ROWS: AdapterRow[] = [
     subagents: "sub_agent sessions become child sessions",
   },
   {
+    name: "Aider",
+    id: "aider",
+    status: "real-install",
+    live: "coding.sh run -- aider … (each reply's tokens and cost from Aider's analytics log)",
+    headless: "aider --message … --yes-always --no-stream",
+    subagents: "None",
+  },
+  {
     name: "Any other command",
     id: "wrapper",
     status: "tested",

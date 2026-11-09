@@ -79,6 +79,7 @@ const SESSION = [
     <pre set:html={COMPARE} />
   </Terminal>
   <ul>
+    <li>With <a href="/docs/evals#case-kinds">case kinds</a>, a <code>kinds</code> line shows each kind's pass rate on A and B. It names bad cases that still fail or already passed on A, guards that broke (regression) and controls that broke (overcorrection).</li>
     <li><code>--cluster &lt;key&gt;</code> resamples groups of related cases, such as <code>repo</code> or <code>session</code>, instead of single cases. It prints the cluster count and warns below 10 clusters.</li>
     <li>Below 100 paired cases, compare also prints P(B&gt;A) from a Bayesian posterior on the paired outcomes. The bootstrap interval stays.</li>
     <li>It counts trials each arm lost to errors, split into infra and agent errors, and warns when Fisher's exact test finds an uneven split.</li>
@@ -113,6 +114,26 @@ const SESSION = [
       pass rate then mixes your change with a change of measurement. A grader error leaves that run ungraded, not failed, and cases with no
       graded run on one side are listed and left out of the pairing.
     </li>
+    <li id="judges">
+      <code>--pairwise judge.json</code> adds a pairwise judge that sees both outputs in both orders. Repeat it to ask several judges:
+      compare prints how far they agree case by case (Cohen's κ) and concludes <code>replicated-better</code>,
+      <code>judges-disagree</code> or <code>unresolved</code>. With <code>--gate</code>, a ship holds (<code>Hold: judges disagree</code>,
+      exit 1) when any judge prefers A or two judges do not both find B better
+      (<a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#judges">details</a>).
+    </li>
+    <li id="ppi">
+      <code>--labels-a a.jsonl --labels-b b.jsonl</code> takes human pass/fail labels on a sample of each arm's outputs and corrects each
+      LLM judge grader's B − A for the judge's errors (PPI++). It warns when the judge errs differently on the two arms
+      (<a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#correcting-a-judges-delta-with-human-labels">details</a>).
+    </li>
+    <li id="failing">
+      When B ran with <code>exp run --failing A</code>, only on A's failures, compare says the gain may be regression to the mean, the verdict
+      is inconclusive and <code>--gate</code> holds. Run A's config on the same cases and compare with that.
+    </li>
+    <li id="seq">
+      Two runs of <code>exp run --seq K</code> with the same K and feedback get a <code>seq@K</code> row, and <code>--verdict seq</code> reads the
+      verdict from it.
+    </li>
   </ul>
   <p id="regrade">
     <code>exp regrade &lt;experiment&gt; spec.json</code> grades a stored experiment's outputs again with the spec's graders (or
@@ -137,6 +158,17 @@ const SESSION = [
     split, which the race never saw. The output prints both scores for the winner and the <strong>optimism gap</strong> (train minus
     held-out). On those held-out cases the same gate as <code>exp compare --gate</code> prints <code>adopt &lt;winner&gt;</code> or
     <code>keep &lt;start&gt;</code> with the reason. <code>--budget</code> caps the race's case runs.
+  </p>
+  <p id="best-set">
+    With three or more configs, a line names the <strong>plausibly best</strong> set: the configs not significantly worse than the best on
+    the cases every config ran, by a paired-bootstrap multiple comparison with the best. The set holds the truly best config 95% of the
+    time, so a dropped config that is still in it may have lost on noise. A matrix with three or more cells prints the same line.
+  </p>
+  <p id="guard">
+    <code>--guard old-suite</code> (repeatable) makes sure the winner does not forget an earlier suite. The start and winning configs run on it
+    too, and when the winner breaks more than <code>--guard-tau</code> (default 10%) of the guard cases the start solved, the sweep keeps the
+    start config and exits 1, even if the target suite alone would ship. Each sweep that ships is remembered, and <code>--guard prior</code>
+    guards every suite a sweep adopted a config on before.
   </p>
 
   <h2 id="matrix">Matrix <Tag status="built" /></h2>
@@ -184,6 +216,18 @@ const SESSION = [
     the resumed run stops at the same point and gives the same verdict as one that was never interrupted. If the dataset, graders, task or
     agent script changed, it refuses to resume and names what changed. The first Ctrl-C lets the trials in flight finish; the second stops
     them.
+  </p>
+  <p>
+    <code>exp run</code> also stores the experiment so far while it runs. After a crash, <code>exp list</code> marks it
+    <code>(partial)</code>, and <code>exp run … --resume &lt;experiment&gt;</code> runs only what is left; <code>--retry-errors</code> also
+    runs its task errors again. <code>--failing &lt;experiment&gt;</code>, <code>--errors-from</code>, <code>--case</code>,
+    <code>--sample N --seed S</code> and <code>--first-n</code> run part of a dataset.
+  </p>
+  <p id="seq-attempts">
+    <code>exp run --seq 3 --feedback reasons</code> tries a failing case-trial again with feedback, up to 3 attempts, and reports the Seq@1..3
+    curve, where the gain lands, how often a revision repeated itself and, with 2+ trials, pass@k against seq@k by cost. The pass rate stays
+    the first attempt's. Feedback is <code>bit</code>, the failed graders' reasons, or <code>critic=&lt;grader&gt;</code>, and never shows
+    the expected answer (<a href="https://github.com/jackulau/coding.sh/blob/main/docs/guides/evals.md#sequential-attempts-with-feedback">details</a>).
   </p>
   <p>
     <code>--retries N</code> (default 3) retries rate limits, 5xx and network errors with backoff. Task failures are never retried, since

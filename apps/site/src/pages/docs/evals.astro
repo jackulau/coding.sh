@@ -47,6 +47,10 @@ const spec = `{
 const judge = `coding.sh ui                                   # label sessions pass / fail
 coding.sh judge calibrate <experiment> --criterion outcome --split test`;
 
+const scores = `coding.sh score config helpfulness --type numeric --min 0 --max 5
+coding.sh score add case:refund-03 helpfulness 4 --comment "named the refund window"
+coding.sh score list --name helpfulness`;
+
 // Sections that moved to their own pages. An old /docs/evals#<id> link follows its section.
 const moved = {
   "/docs/experiments": ["compare", "non-inferiority", "coverage", "grader-versions", "regrade", "sweep", "matrix", "plateau", "resume", "sessions", "metrics", "exp-replay"],
@@ -144,6 +148,13 @@ const RUN = [
     the cases, so the same cases always give the same version and an experiment records exactly what it ran on.
   </p>
   <Code code={dataset} />
+  <p id="case-kinds">
+    When a dataset tests a change, a case can carry a <code>kind</code>. A <code>bad</code> case reproduces the failure the change is for: it
+    fails before the change and passes after. A <code>guard</code> case covers behavior that already works and must keep passing. A
+    <code>control</code> case is one where the fix must not kick in, so a failure there means the change overcorrected. Set it in the case
+    or with <code>dataset add --kind</code>. <code>exp run</code> prints the pass rate per kind, and
+    <a href="/docs/experiments#compare"><code>exp compare</code></a> names the bad cases fixed and the guards and controls that broke.
+  </p>
 
   <h2 id="tasks">What gets run</h2>
   <p>The task is the agent under test. Two kinds work from the CLI:</p>
@@ -187,7 +198,8 @@ const RUN = [
         <tr><td><code>command</code></td><td>Your script, any language: JSON on stdin; a boolean, a score or <code>&#123;score, pass, reason&#125;</code> on stdout, or the exit code.</td></tr>
         <tr><td><code>module</code></td><td>A JS module's exported grade function returns pass.</td></tr>
         <tr><td><code>llm</code></td><td>A model judge returns pass on your rubric. See below.</td></tr>
-        <tr><td><code>llm-checklist</code></td><td>Yes/no questions, each answered by the model or by a trace check. Rule checks need no model: <code>ran-command</code>, <code>read-path</code>, <code>wrote-identifier</code> and <code>follows-rules</code> (every backticked command, flag, path or identifier a rule requires was used, and none it forbids). A path-scoped rule (Claude Code <code>paths:</code>, Cursor <code>globs:</code>) counts only once the agent touches a matching file. <code>no-test-tamper</code> answers no when a test edit hid a failure (a skip marker, a deleted test while red, an assertion edit that alone turned the tests green) and quotes what the agent said about it; saying why never makes it pass.</td></tr>
+        <tr><td><code>llm-checklist</code></td><td>Yes/no questions, each answered by the model or by a trace check. Rule checks need no model: <code>ran-command</code>, <code>read-path</code>, <code>wrote-identifier</code> and <code>follows-rules</code> (every backticked command, flag, path or identifier a rule requires was used, and none it forbids). A path-scoped rule (Claude Code <code>paths:</code>, Cursor <code>globs:</code>) counts only once the agent touches a matching file. <code>no-test-tamper</code> answers no when a test edit hid a failure (a skip marker, a deleted test while red, an assertion edit that alone turned the tests green) and quotes what the agent said about it; saying why never makes it pass. With <code>"abstain": true</code> the model can answer <code>cannot_decide</code> and name what is missing; a critical abstention leaves the case undecided.</td></tr>
+        <tr><td><code>llm-panel</code></td><td>One judge per provider scores 1-10 and the median reaches <code>target</code> (default 7). The target never reaches the prompt, anchor cases are re-scored to catch drift, and advisory members are shown but not counted.</td></tr>
       </tbody>
     </table>
   </div>
@@ -245,6 +257,19 @@ const RUN = [
     from a file. The audit reports precision with a Wilson interval and the false accepts. A verifier never sees the labels, so no held-out
     split is needed. After that, <code>exp show</code> and <code>exp compare</code> print the precision and a corrected
     pass rate.
+  </p>
+
+  <h2 id="scores">Scores <Tag status="built" /></h2>
+  <p>
+    A score is one typed value on a session, an event, a dataset case or an eval run: a number, true or false, a category or text, from a
+    person, a judge, code, the API or a monitor. A config fixes a score name's type and range, and a value outside it is refused (exit 2, or
+    HTTP 400). Labels are scores too: a pass or fail label is a human boolean score, which is what <code>judge calibrate</code> reads.
+  </p>
+  <Code code={scores} />
+  <p>
+    Scoring the same target, name and source again replaces the score, and the same value again changes nothing. The viewer and
+    <code>coding.sh serve</code> take scores at <code>POST /api/scores</code>, and agents use the <code>score_add</code> and
+    <code>score_list</code> MCP tools. Scores are kept in the SQLite store.
   </p>
 
   <h2 id="workflows">Workflows</h2>

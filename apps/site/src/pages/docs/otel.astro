@@ -166,6 +166,30 @@ trace.set_tracer_provider(provider)
     <code>tool.start</code>/<code>tool.end</code>; nested agent spans become subagents with their own child session. Usage is read only from
     model-call spans, because agent spans usually repeat their children's totals.
   </p>
+  <p>The receiver also reads these attributes:</p>
+  <ul>
+    <li>
+      Reasoning tokens (<code>gen_ai.usage.reasoning.output_tokens</code>, AI SDK <code>reasoningTokens</code>, Codex
+      <code>reasoning_token_count</code>, Gemini CLI <code>thoughts_token_count</code>) go to <code>payload.reasoningTokens</code> on the
+      <code>llm.call</code>. They are part of the output tokens, so usage totals do not change. A reported cache read or write of 0 is left out.
+    </li>
+    <li>
+      Skills: <code>gen_ai.skill.name</code> on a tool span sets <code>payload.skill</code> (with <code>skillSource</code> and
+      <code>skillResource</code>), and a script's <code>gen_ai.skill.script.exit_code</code> sets <code>exitCode</code> on
+      <code>tool.end</code>. Claude Code's <code>skill_activated</code> and Codex's <code>codex.skill_invocation</code> record the skill as
+      invoked. Each skill becomes a <code>skill:&lt;name&gt;</code> tag on the session. Placeholder names such as
+      <code>custom_skill</code> are skipped.
+    </li>
+    <li>
+      Compaction: <code>gen_ai.conversation.compacted</code> adds one <code>context.compact</code> event per session. Claude Code's
+      <code>compaction</code> event keeps <code>tokensBefore</code>, <code>tokensAfter</code>, <code>ok</code> and the duration.
+    </li>
+    <li>
+      Agents: the resource's <code>gen_ai.main_agent.name</code> names the agent, ahead of <code>service.name</code>. Claude Code's
+      <code>agent_id</code> tags a subagent's events and <code>parent_agent_id</code> is kept as <code>payload.parentAgentId</code>. A Codex
+      subagent's <code>codex.agent_response</code> links its thread to the parent thread (<code>parent.conversation.id</code>).
+    </li>
+  </ul>
 
   <h2 id="claude-code">Claude Code and the Claude Agent SDK</h2>
   <p>The Agent SDK inherits Claude Code's environment variables.</p>
@@ -208,10 +232,17 @@ trace.set_tracer_provider(provider)
     </li>
   </ul>
 
-  <div class="note">
-    <p>
-      <strong>Not yet:</strong> events received over OTLP are stored locally only. Configured <a href="/docs/storage#sinks">sinks</a> mirror
-      hook events at ingest; mirroring OTLP events to them is planned.
-    </p>
-  </div>
+  <h2 id="forward">Forward and sinks</h2>
+  <ul>
+    <li>
+      Configured <a href="/docs/storage#sinks">sinks</a> mirror events received over OTLP, both in the local <code>coding.sh collector</code>
+      and in <code>coding.sh serve</code>.
+    </li>
+    <li>
+      <code>coding.sh serve</code> can forward every trace it commits to another OTLP collector: set <code>CODING_SH_FORWARD_URL</code>. Spans keep
+      their trace and span ids and gain <code>coding_sh.project</code>. In <code>metadata</code> mode, messages, tool arguments and results,
+      <code>input.value</code> and <code>output.value</code> are not sent.
+      <a href="https://github.com/jackulau/coding.sh/blob/main/docs/PRODUCTION.md#19-forward-and-sinks">Forward and sinks</a>.
+    </li>
+  </ul>
 </DocsLayout>

@@ -35,16 +35,19 @@ minTargetCalls = 2            # reference count for the efficiency ratio`;
 const cli = `coding.sh toolevals init --cli <bin>
 coding.sh toolevals surface <target>
 coding.sh toolevals run <target> --driver agent:claude-code --driver model:anthropic/<model> -k 3
+coding.sh toolevals validate <target> --against old-build
 coding.sh toolevals compare <experiment> --baseline base@agent:claude-code --candidate help-v2@agent:claude-code
-coding.sh toolevals compress <target> --driver agent:claude-code`;
+coding.sh toolevals compress <target> --driver agent:claude-code
+coding.sh toolevals show <trial>
+coding.sh toolevals traces <target> --from <experiment> --out traces/`;
 ---
 
 <DocsLayout>
   <div class="note">
     <p>
-      <strong>Planned, not implemented.</strong> This page summarizes the design in <a href={SPEC_URL}>docs/TOOL-EVALS.md</a>. None of the
-      <code>toolevals</code> commands below exist yet. What it builds on does: adapters, the OTLP receiver, <code>llm.call</code> latency,
-      graders, judges and the paired statistics.
+      <strong>Built.</strong> <code>coding.sh toolevals</code> lives in <code>packages/coding.sh/src/toolevals</code>, with tests in
+      <code>test/toolevals</code>. The full spec is <a href={SPEC_URL}>docs/TOOL-EVALS.md</a>; every flag is in the
+      <a href="/docs/cli/toolevals">CLI reference</a>.
     </p>
   </div>
 
@@ -100,6 +103,19 @@ coding.sh toolevals compress <target> --driver agent:claude-code`;
     the held-out split.
   </p>
 
-  <h2 id="cli">Proposed commands</h2>
-  <Code title="planned" code={cli} />
+  <h2 id="kinds">Task kinds</h2>
+  <p>
+    A task that tests a change can carry a <code>kind</code>. A <code>bad</code> task fails on the old variant and passes on the new one.
+    <code>guard</code> and <code>control</code> tasks pass on both; a control that breaks means the change overcorrected.
+    <code>toolevals validate &lt;target&gt; --against &lt;variant&gt;</code> reports a bad task that passes on the old variant, since it does not
+    reproduce the failure. It runs the reference commands, or agent trials with <code>--driver</code> when the variant changes only what
+    the agent reads. <code>run</code> and <code>compare</code> split results by kind.
+  </p>
+
+  <h2 id="cli">Commands</h2>
+  <Code code={cli} />
+  <p>
+    <code>show</code> prints one trial's metrics, tap records and session tree. <code>traces</code> writes an MCP server's failing traces
+    and per-tool health to a directory, from an experiment's dev trials or from captured sessions (<code>--sessions 'since:30d'</code>).
+  </p>
 </DocsLayout>

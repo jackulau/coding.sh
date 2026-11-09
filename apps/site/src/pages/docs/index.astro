@@ -2,7 +2,7 @@
 import DocsLayout from "../../components/docs/DocsLayout.astro";
 import Tag from "../../components/docs/Tag.astro";
 import { DOC_GROUPS } from "../../components/docs/nav";
-import { REPO_URL, ISSUES_URL } from "../../data/site";
+import { REPO_URL, ISSUES_URL, NPM_URL } from "../../data/site";
 
 const groups = DOC_GROUPS.map((g) => ({ ...g, pages: g.pages.filter((p) => p.path !== "/docs") })).filter((g) => g.pages.length);
 ---
@@ -49,7 +49,7 @@ const groups = DOC_GROUPS.map((g) => ({ ...g, pages: g.pages.filter((p) => p.pat
         <tr>
           <td>Coding-agent capture</td>
           <td><Tag status="built" /></td>
-          <td>Hook, plugin and extension adapters for 11 agents, and a wrapper for any other command. <a href="/docs/agents">Matrix</a>.</td>
+          <td>Hook, plugin and extension adapters for 12 agents, and a wrapper for any other command. <code>src/adapters</code>. <a href="/docs/agents">Matrix</a>.</td>
         </tr>
         <tr>
           <td>OTLP receiver</td>
@@ -58,8 +58,8 @@ const groups = DOC_GROUPS.map((g) => ({ ...g, pages: g.pages.filter((p) => p.pat
         </tr>
         <tr>
           <td>TypeScript and Python SDKs</td>
-          <td><Tag status="partial" /></td>
-          <td>Wrap OpenAI and Anthropic clients, trace turns and tool calls, AI SDK tracer. In the repository, not on npm or PyPI yet. <a href="/docs/sdk">Reference</a>.</td>
+          <td><Tag status="built" /></td>
+          <td>Wrap OpenAI and Anthropic clients, trace turns and tool calls, AI SDK tracer. TypeScript on npm as <code>@codingdotsh/sdk</code>; the Python SDK (<code>packages/sdk-python</code>) is not on PyPI yet, so install it from a checkout. <a href="/docs/sdk">Reference</a>.</td>
         </tr>
         <tr>
           <td>Explore</td>
@@ -87,19 +87,39 @@ const groups = DOC_GROUPS.map((g) => ({ ...g, pages: g.pages.filter((p) => p.pat
           <td>SQLite index, zstd blob store, OTLP and HTTP sinks, plugin loading for other stores. <a href="/docs/storage">Storage</a>.</td>
         </tr>
         <tr>
-          <td>Postgres, S3 stores</td>
-          <td><Tag status="partial" /></td>
-          <td>Plugin packages in the repository, used by <code>coding.sh serve</code>. Not on npm yet. <a href="/docs/production">Production</a>.</td>
+          <td>Postgres, ClickHouse and S3 stores</td>
+          <td><Tag status="built" /></td>
+          <td>Plugin packages on npm, used by <code>coding.sh serve</code>: <code>coding.sh-store-postgres</code>, <code>coding.sh-store-clickhouse</code> and <code>coding.sh-store-s3</code>. <a href="/docs/production">Production</a>.</td>
         </tr>
         <tr>
           <td>Tool evals</td>
-          <td><Tag status="planned" /></td>
-          <td>A design spec for scoring how well agents use a CLI, MCP server or API. <a href="/docs/tool-evals">Spec</a>.</td>
+          <td><Tag status="built" /></td>
+          <td><code>coding.sh toolevals</code> scores how well agents use a CLI, MCP server or HTTP API, with taps, model and agent drivers, paired compare and description compression. <code>src/toolevals</code>. <a href="/docs/tool-evals">Tool evals</a>.</td>
+        </tr>
+        <tr>
+          <td>Workflows</td>
+          <td><Tag status="built" /></td>
+          <td><code>coding.sh workflows</code> captures multi-agent runs as one tree, scores them and compares two versions. <code>src/workflows</code>. <a href="/docs/workflows">Workflows</a>.</td>
         </tr>
         <tr>
           <td>npm package</td>
+          <td><Tag status="built" /></td>
+          <td><a href={NPM_URL}><code>coding.sh</code> on npm</a>, with TypeScript types for <code>coding.sh/schema</code> and <code>coding.sh/store</code>. The install line takes the latest GitHub release.</td>
+        </tr>
+        <tr>
+          <td>Trace format JSON Schema</td>
+          <td><Tag status="built" /></td>
+          <td>A JSON Schema for <a href="/docs/trace-format#json-schema">coding.sh/trace</a>, generated from the TypeScript types, ships as <code>coding.sh/schema.json</code> and is served at <a href="/schema.json">coding.sh/schema.json</a>.</td>
+        </tr>
+        <tr>
+          <td>Kiro, Cline CLI, Qwen Code and Crush adapters</td>
           <td><Tag status="planned" /></td>
-          <td>The name is reserved in <code>package.json</code>; nothing is published.</td>
+          <td>No adapter yet. Record these agents with <code>coding.sh run -- &lt;cmd&gt;</code> for now. <a href="/docs/agents">Matrix</a>.</td>
+        </tr>
+        <tr>
+          <td>One <code>bench</code> noun and <code>coding.sh try</code></td>
+          <td><Tag status="planned" /></td>
+          <td>One command over <code>eval</code>, <code>exp</code> and <code>compare</code>. Today those three commands do the work. <code>coding.sh bench</code> runs dynamic <a href="/docs/benchmarks">benchmarks</a>.</td>
         </tr>
       </tbody>
     </table>

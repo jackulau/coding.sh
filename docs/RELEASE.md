@@ -27,9 +27,9 @@ so change all of them together if the repo moves (for example to a `coding-sh` o
 
 ## First publish
 
-Nothing is on npm or PyPI yet. Until it is, each tag still makes its GitHub release, and the
-npm and PyPI jobs sit waiting for approval; reject them, or leave them, until the steps below are
-done. Everything in the repo is ready (`scripts/release/smoke.sh` packs, installs and exercises
+The npm steps are done: `coding.sh`, `@codingdotsh/sdk` and the store plugins are on npm. PyPI is
+not: `coding-sh` has no release yet, so step 4 is still open. Until it is done, each tag's PyPI job
+sits waiting for approval; reject it, or leave it. Everything in the repo is ready (`scripts/release/smoke.sh` packs, installs and exercises
 all five packages); these are the steps only you can do. Your npm and PyPI accounts need
 two-factor authentication on.
 

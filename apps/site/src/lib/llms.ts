@@ -79,9 +79,12 @@ but on your machine. Pre-alpha: what is built is covered by the package's tests;
 3. Compare (built): two experiments paired by case, with a paired bootstrap CI of the difference and McNemar's
    test on flipped cases; harness compare adds per-arm Wilson intervals and the first step where traces diverge.
 4. Storage (built): SQLite index and a content-addressed, zstd-compressed blob store by default; OTLP and HTTP
-   sinks, metadata-only by default; third-party stores and sinks load as npm plugins. Postgres, ClickHouse and S3
-   store plugins are in the repository and used by \`coding.sh serve\`, not on npm yet. One npm package,
-   Node 22.15 or newer.
+   sinks, metadata-only by default; third-party stores and sinks load as npm plugins. The Postgres, ClickHouse and S3
+   store plugins are on npm (coding.sh-store-postgres, coding.sh-store-clickhouse, coding.sh-store-s3) and used by
+   \`coding.sh serve\`. The core is one npm package with zero runtime dependencies, Node 22.15 or newer.
+5. Tool evals (built): \`coding.sh toolevals\` scores how well agents use a CLI, MCP server or HTTP API.
+   Workflows (built): \`coding.sh workflows\` captures, scores and compares multi-agent runs.
+   Trace format (built): TypeScript types (\`coding.sh/schema\`) and a JSON Schema (\`coding.sh/schema.json\`, ${abs("/schema.json")}).
 
 ## Compared with other tools
 

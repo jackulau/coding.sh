@@ -20,6 +20,12 @@
   Access-Control-Allow-Origin: *
   Cache-Control: public, max-age=3600, stale-while-revalidate=86400
 
+# The trace format's JSON Schema: CORS-open so validators can fetch it by its $id.
+/schema.json
+  Content-Type: application/schema+json; charset=utf-8
+  Access-Control-Allow-Origin: *
+  Cache-Control: public, max-age=3600, stale-while-revalidate=86400
+
 # Images in public/ are not content-hashed, so they get a shorter TTL
 # plus revalidation rather than an immutable year.
 /*.webp

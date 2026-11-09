@@ -31,9 +31,9 @@ endpoint = "https://relay.example.com/ingest"
 mode = "full"
 headers = { Authorization = "Bearer \${RELAY_TOKEN}" }   # read from the environment`;
 
-const plugin = `// coding.sh-store-postgres/index.mjs (hypothetical package)
+const plugin = `// coding.sh-store-postgres/index.mjs (the real package, abridged)
 export function indexStore(url, config) {
-  return new PostgresIndexStore(url);   // implements IndexStore
+  return PgIndexStore.open(url);   // resolves to an IndexStore
 }
 
 // coding.sh-sink-kafka/index.mjs (hypothetical package)
@@ -133,7 +133,7 @@ interface Sink {
   <ul>
     <li><strong><code>otlp</code></strong>: OTLP/HTTP JSON. A session becomes an <code>invoke_agent</code> span, tools <code>execute_tool</code> spans and replies <code>chat</code> spans, with <code>gen_ai.*</code> attributes pinned to semconv 1.37.0. Span ids derive from event ids, so a resent batch de-duplicates.</li>
     <li><strong><code>http</code></strong>: posts coding.sh/trace JSON as is, for a collector or relay that speaks it.</li>
-    <li>Sinks mirror hook events at ingest. Events from the <a href="/docs/otel">OTLP receiver</a> are not mirrored yet <Tag status="planned" />.</li>
+    <li>Sinks mirror hook events at ingest, and events from the <a href="/docs/otel">OTLP receiver</a>. <code>coding.sh serve</code> mirrors every batch it commits to the sinks in its own config, so a team can set one there instead of on each laptop.</li>
   </ul>
 
   <h2 id="remote">Plugging in a remote store</h2>
@@ -157,9 +157,10 @@ interface Sink {
   <Code title="src/core/types.ts (abridged)" code={iface} />
   <div class="note">
     <p>
-      <strong>Postgres and S3:</strong> <code>coding.sh-store-postgres</code> and <code>coding.sh-store-s3</code> (S3, R2, MinIO) live in the
-      repository and back <a href="/docs/production">production mode</a>. They are not on npm yet, and the npm package doesn't ship the
-      TypeScript types for <code>coding.sh/store</code> yet, so a plugin built outside the repository copies them for now.
+      <strong>Postgres, ClickHouse and S3:</strong> <code>coding.sh-store-postgres</code>, <code>coding.sh-store-clickhouse</code> and
+      <code>coding.sh-store-s3</code> (S3, R2, MinIO) are on npm and back <a href="/docs/production">production mode</a>. Install one next to
+      coding.sh. The npm package ships the TypeScript types for <code>coding.sh/store</code> and <code>coding.sh/store/conformance</code>, so a
+      plugin built outside the repository imports them.
     </p>
   </div>
 

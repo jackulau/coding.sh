@@ -3,9 +3,9 @@
 
 export const SITE_URL = "https://coding.sh";
 
-// The repository is public; the npm name is not published yet. Every copyable
-// `npx` command stays gated on PACKAGE_PUBLISHED so the page never invites
-// people to run a package name nobody owns.
+// The repository is public and coding.sh is on npm. Every copyable `npx`
+// command stays gated on PACKAGE_PUBLISHED so the page never invites people to
+// run a package name nobody owns.
 export const REPO_URL = "https://github.com/jackulau/coding.sh";
 export const REPO_PUBLIC = true;
 export const PACKAGE_PUBLISHED = true;
@@ -26,7 +26,7 @@ export const SAME_AS = [REPO_URL, NPM_URL, NPM_ORG_URL] as const;
 export const DOCS_PUBLIC =
   Object.keys(import.meta.glob("/src/pages/docs/**/*.{astro,md,mdx,ts}")).length > 0;
 
-/** Build from source, the way to run it before the first npm release. */
+/** Build from source, for running the repository version. */
 export const SOURCE_STEPS = [
   `git clone ${REPO_URL}`,
   "cd coding.sh && npm i && npm run build",
