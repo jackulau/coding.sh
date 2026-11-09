@@ -1,0 +1,1262 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coding.sh/schema.json",
+  "title": "coding.sh/trace v0",
+  "description": "The coding.sh trace format: an AgentEvent (one normalized event) or a Session (the row ingest builds from a session's events). Validate one of them with #/$defs/AgentEvent or #/$defs/Session. Generated from packages/coding.sh/src/schema/index.ts by scripts/json-schema.ts.",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/AgentEvent"
+    },
+    {
+      "$ref": "#/$defs/Session"
+    }
+  ],
+  "$defs": {
+    "AgentEvent": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Deterministic: sha256(agent, sessionId, source line/offset). Re-ingest is idempotent.",
+          "type": "string"
+        },
+        "v": {
+          "const": 0
+        },
+        "sessionId": {
+          "type": "string"
+        },
+        "turnId": {
+          "type": "string"
+        },
+        "parentId": {
+          "description": "Parent event (subagent or nested tool).",
+          "type": "string"
+        },
+        "ts": {
+          "description": "Milliseconds since epoch. For spans, the start time.",
+          "type": "number"
+        },
+        "durationMs": {
+          "description": "Wall time of the thing this event describes (tool call, model call, turn), when known.",
+          "type": "number"
+        },
+        "traceId": {
+          "description": "OpenTelemetry ids when the event came from (or is exported as) a span.",
+          "type": "string"
+        },
+        "spanId": {
+          "type": "string"
+        },
+        "parentSpanId": {
+          "type": "string"
+        },
+        "subagentId": {
+          "description": "Subagent this event belongs to, when the agent runs subagents inside one session.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Capture path that produced the event, for cross-path dedupe: \"hook\" | \"transcript\" | \"otel-span\" | \"otel-log\" | \"wrapper\" | …",
+          "type": "string"
+        },
+        "agent": {
+          "$ref": "#/$defs/AgentId"
+        },
+        "agentVersion": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/EventKind"
+        },
+        "cwd": {
+          "description": "Working directory the agent ran in.",
+          "type": "string"
+        },
+        "repo": {
+          "$ref": "#/$defs/RepoState"
+        },
+        "payload": {
+          "description": "Kind-specific, small (< 4 KB after normalization). Conventions:\n- user.message / assistant.message: { text }\n- llm.call: { provider?, requestModel?, responseModel?, ttftMs?, stopReason?,\n              tokensPerSec?, ok, error? } — one model API call; durationMs on the event\n- subagent.start: { subagentId, type?, description?, prompt? }\n- subagent.end:   { subagentId, ok?, result? (truncated), childSessionId? }\n- tool.start: { tool, toolUseId, input, server? (MCP server name) }\n- tool.end:   { tool, toolUseId, ok, durationMs?, output? (truncated), cut? (the agent's\n  harness cut the output before the model saw it: adapters/_shared/cut.ts OutputCut) }\n  (both: wrapper? — a call that runs other tool calls, e.g. a Codex code-mode\n  cell; its calls point at it by parentId and only they count in session stats)\n- file.change: { path, op: \"add\"|\"modify\"|\"delete\", additions?, deletions? }\n- test.result: { runner?, passed, failed, skipped? }\n- context.compact: { trigger: \"auto\"|\"manual\", tokensBefore? }\n- error: { message, source?, statusCode?, errorType?, errorClass?, rateLimitType?, retryAfterMs?, retryAttempt? }\n- session.end: { reason?, reportedUsage? (Claude Code's cost-state: costUsd, apiDurationMs, costUsdByModel) }\n- span: { name, attributes } — an OTel span with no better mapping\n- any kind: payload.reportedUsage = totals an agent span reports (not summed, avoids double counting)\n\nPairing keys (how consumers match the two halves of a span-like pair):\n- tool.start ↔ tool.end: same sessionId + payload.toolUseId.\n- subagent.start ↔ subagent.end: same sessionId + payload.subagentId (also on\n  event.subagentId for events the subagent itself emits). The child's own\n  session, when it has one, is named by childSessionId on either event and\n  carries `session.start` payload { parentSessionId, subagentId, … }.\n- llm.call has no pair: one event per model call, durationMs on the event.\n\nUsage convention: `usage` holds the tokens/cost of THIS event only, so\nsumming `usage` over a session's events gives its total. An event that\nmerely repeats a running or final total (an agent span, a session summary)\nputs it in payload.reportedUsage instead, never in `usage`.\nAnything larger is moved to a blob and referenced from `blobs`.",
+          "type": "object"
+        },
+        "blobs": {
+          "description": "Blob refs: full tool output, diffs, raw source payload (\"raw\" is always blobs[0] when kept).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/BlobRef"
+          }
+        },
+        "usage": {
+          "$ref": "#/$defs/Usage"
+        },
+        "runId": {
+          "description": "Run id when the event came from a coding.sh eval run (CODING_SH_RUN_ID).",
+          "type": "string"
+        },
+        "project": {
+          "description": "Project the event belongs to (`coding.sh serve` sets it from the ingest\nkey). Unset means \"default\", which is all local data.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "v",
+        "sessionId",
+        "ts",
+        "agent",
+        "kind",
+        "payload"
+      ],
+      "additionalProperties": false
+    },
+    "AgentId": {
+      "type": "string",
+      "examples": [
+        "claude-code",
+        "codex",
+        "opencode",
+        "cursor",
+        "gemini-cli",
+        "antigravity",
+        "copilot-cli",
+        "amp",
+        "pi",
+        "droid",
+        "goose",
+        "aider",
+        "t3code",
+        "wrapper"
+      ]
+    },
+    "BlobRef": {
+      "description": "sha256 hex of the uncompressed content.",
+      "type": "string"
+    },
+    "CacheBreakStats": {
+      "description": "Session.stats.cacheBreaks: model calls whose prompt prefix was no longer cached,\nso tokens read from cache on the previous call were billed again at the write\n(or full input) rate.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "number"
+        },
+        "lostTokens": {
+          "description": "Prompt tokens that were cached before the break and paid for again.",
+          "type": "number"
+        },
+        "extraUsd": {
+          "description": "USD the re-billing cost over cache-read prices; set only when every break's model has a price.",
+          "type": "number"
+        },
+        "byCause": {
+          "type": "object",
+          "properties": {
+            "compaction": {
+              "type": "object",
+              "properties": {
+                "count": {
+                  "type": "number"
+                },
+                "lostTokens": {
+                  "type": "number"
+                },
+                "extraUsd": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "count",
+                "lostTokens"
+              ],
+              "additionalProperties": false
+            },
+            "idle": {
+              "type": "object",
+              "properties": {
+                "count": {
+                  "type": "number"
+                },
+                "lostTokens": {
+                  "type": "number"
+                },
+                "extraUsd": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "count",
+                "lostTokens"
+              ],
+              "additionalProperties": false
+            },
+            "model-switch": {
+              "type": "object",
+              "properties": {
+                "count": {
+                  "type": "number"
+                },
+                "lostTokens": {
+                  "type": "number"
+                },
+                "extraUsd": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "count",
+                "lostTokens"
+              ],
+              "additionalProperties": false
+            },
+            "other": {
+              "type": "object",
+              "properties": {
+                "count": {
+                  "type": "number"
+                },
+                "lostTokens": {
+                  "type": "number"
+                },
+                "extraUsd": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "count",
+                "lostTokens"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "byIdle": {
+          "description": "The idle breaks (byCause.idle) split by where the wait was. Unset when none was idle.",
+          "type": "object",
+          "properties": {
+            "wait": {
+              "type": "object",
+              "properties": {
+                "count": {
+                  "type": "number"
+                },
+                "lostTokens": {
+                  "type": "number"
+                },
+                "extraUsd": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "count",
+                "lostTokens"
+              ],
+              "additionalProperties": false
+            },
+            "subagent": {
+              "type": "object",
+              "properties": {
+                "count": {
+                  "type": "number"
+                },
+                "lostTokens": {
+                  "type": "number"
+                },
+                "extraUsd": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "count",
+                "lostTokens"
+              ],
+              "additionalProperties": false
+            },
+            "away": {
+              "type": "object",
+              "properties": {
+                "count": {
+                  "type": "number"
+                },
+                "lostTokens": {
+                  "type": "number"
+                },
+                "extraUsd": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "count",
+                "lostTokens"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "unpriced": {
+          "description": "Breaks on models with no price (extraUsd is then left out).",
+          "type": "number"
+        }
+      },
+      "required": [
+        "count",
+        "lostTokens",
+        "byCause"
+      ],
+      "additionalProperties": false
+    },
+    "DuplicateUsage": {
+      "description": "Usage a session did not count because another model call already covered it (a nested span, a repeated response id).",
+      "type": "object",
+      "properties": {
+        "calls": {
+          "type": "number"
+        },
+        "tokens": {
+          "type": "number"
+        },
+        "costUsd": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "calls",
+        "tokens"
+      ],
+      "additionalProperties": false
+    },
+    "DurableAttempt": {
+      "description": "One attempt of a durable workflow step (DurableStats.steps[].attempts). Times are ms since epoch.",
+      "type": "object",
+      "properties": {
+        "n": {
+          "description": "Attempt number: as the engine reported it, else by start order.",
+          "type": "number"
+        },
+        "startedAt": {
+          "type": "number"
+        },
+        "endedAt": {
+          "type": "number"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": "string"
+        },
+        "replay": {
+          "description": "The engine re-ran recorded history here; nothing under it is counted again.",
+          "type": "boolean"
+        },
+        "instance": {
+          "description": "Process that ran it (service.instance.id, faas.instance, host:pid).",
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "spanId": {
+          "description": "Span id, for linking to the timeline.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "n",
+        "startedAt",
+        "endedAt",
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "DurableResume": {
+      "description": "A point where the run continued after a break: a crash, a deploy, a worker restart or a durable wait.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "number"
+        },
+        "reason": {
+          "enum": [
+            "crash",
+            "deploy",
+            "restart",
+            "wait"
+          ]
+        },
+        "step": {
+          "description": "Step the run resumed at, and the span of the attempt that ran first.",
+          "type": "string"
+        },
+        "spanId": {
+          "type": "string"
+        },
+        "fromInstance": {
+          "type": "string"
+        },
+        "toInstance": {
+          "type": "string"
+        },
+        "fromVersion": {
+          "type": "string"
+        },
+        "toVersion": {
+          "type": "string"
+        },
+        "afterMs": {
+          "description": "How long the run was stopped before it resumed.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "at",
+        "reason"
+      ],
+      "additionalProperties": false
+    },
+    "DurableStats": {
+      "description": "One durable workflow run (Session.stats.durable), folded from the\npayload.durable tags the OTLP mapper puts on its spans (src/otel/durable.ts).",
+      "type": "object",
+      "properties": {
+        "engine": {
+          "type": "string"
+        },
+        "runId": {
+          "description": "The engine's run id.",
+          "type": "string"
+        },
+        "workflow": {
+          "type": "string"
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DurableStep"
+          }
+        },
+        "stepCount": {
+          "description": "Steps in the run when `steps` keeps only some of them (retried, failed and unreported first).",
+          "type": "number"
+        },
+        "retries": {
+          "description": "Step attempts beyond each step's first, reported or not.",
+          "type": "number"
+        },
+        "failedAttempts": {
+          "type": "number"
+        },
+        "replays": {
+          "description": "Replayed spans seen (history re-run; not counted as new work).",
+          "type": "number"
+        },
+        "replayedCalls": {
+          "description": "Model calls under replay spans, left out of usage.",
+          "type": "number"
+        },
+        "waits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DurableWait"
+          }
+        },
+        "resumes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DurableResume"
+          }
+        },
+        "instances": {
+          "description": "Processes that worked on the run.",
+          "type": "number"
+        },
+        "wallMs": {
+          "description": "First to last activity of the run.",
+          "type": "number"
+        },
+        "activeMs": {
+          "description": "Time something ran: the union of step attempts, invocations and model/tool calls.",
+          "type": "number"
+        },
+        "waitMs": {
+          "description": "Time inside explicit durable waits.",
+          "type": "number"
+        },
+        "idleMs": {
+          "description": "wallMs − activeMs: waits, retry backoff, queueing and downtime.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "engine",
+        "runId",
+        "steps",
+        "retries",
+        "failedAttempts",
+        "replays",
+        "waits",
+        "resumes",
+        "instances",
+        "wallMs",
+        "activeMs",
+        "waitMs",
+        "idleMs"
+      ],
+      "additionalProperties": false
+    },
+    "DurableStep": {
+      "description": "A durable workflow step and its attempts, in start order.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "id": {
+          "description": "Stable step id (step.id, activity id) when the engine gives one.",
+          "type": "string"
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/DurableAttempt"
+          }
+        },
+        "unreported": {
+          "description": "Attempts the run made but never reported (a gap in attempt numbers, or time before the first reported attempt).",
+          "type": "number"
+        },
+        "unreportedMs": {
+          "description": "Time between scheduling and the first reported attempt, when an earlier attempt went unreported.",
+          "type": "number"
+        },
+        "unreportedRanMs": {
+          "description": "Of unreportedMs, how long the lost attempt's process was still seen working (to its last export); the rest is lost.",
+          "type": "number"
+        },
+        "ok": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "attempts",
+        "ok"
+      ],
+      "additionalProperties": false
+    },
+    "DurableWait": {
+      "description": "A durable sleep or wait for an event (not busy time).",
+      "type": "object",
+      "properties": {
+        "startedAt": {
+          "type": "number"
+        },
+        "endedAt": {
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "startedAt"
+      ],
+      "additionalProperties": false
+    },
+    "EventKind": {
+      "enum": [
+        "session.start",
+        "session.end",
+        "user.message",
+        "assistant.message",
+        "llm.call",
+        "tool.start",
+        "tool.end",
+        "context.compact",
+        "turn.end",
+        "subagent.start",
+        "subagent.end",
+        "file.change",
+        "test.result",
+        "notification",
+        "span",
+        "error"
+      ]
+    },
+    "HookContextStats": {
+      "description": "Session.stats.hookContext: text hooks added to the model's context\n(`notification` events with `payload.kind: \"hook.context\"`), counted and\nsized (characters / 4), in all and by source: `plugin:<name>`, `plugin` (a\nplugin not installed where the session was parsed), `settings` (a hook from\na settings file) or `unknown` (the agent recorded no command).",
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "number"
+        },
+        "tokens": {
+          "type": "number"
+        },
+        "bySource": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "number"
+              },
+              "tokens": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "count",
+              "tokens"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "count",
+        "tokens",
+        "bySource"
+      ],
+      "additionalProperties": false
+    },
+    "LatencyStats": {
+      "description": "Latency aggregates kept on Session.stats.latency. All milliseconds.",
+      "type": "object",
+      "properties": {
+        "wallMs": {
+          "type": "number"
+        },
+        "llmCalls": {
+          "type": "number"
+        },
+        "llmMs": {
+          "type": "number"
+        },
+        "llmP50Ms": {
+          "type": "number"
+        },
+        "llmP95Ms": {
+          "type": "number"
+        },
+        "ttftP50Ms": {
+          "type": "number"
+        },
+        "toolMs": {
+          "type": "number"
+        },
+        "toolP95Ms": {
+          "type": "number"
+        },
+        "subagents": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": false
+    },
+    "LlmErrors": {
+      "description": "Session.stats.llmErrors: how many model calls failed, and why the first one did.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "number"
+        },
+        "statusCode": {
+          "description": "HTTP status of the first failed call, when it had one.",
+          "type": "number"
+        },
+        "error": {
+          "description": "The first failed call's error message, up to 300 characters.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "count"
+      ],
+      "additionalProperties": false
+    },
+    "ModelSwitch": {
+      "description": "Session.stats.modelSwitch: the model changed mid-session (core/models.ts): a\nfallback the agent recorded (a switch and back included), any change inside a\nsubagent, or a main-thread hand-over from one model to another. The fields\nname the first switch; the counts cover them all.",
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string"
+        },
+        "to": {
+          "type": "string"
+        },
+        "at": {
+          "description": "ts of the first call on `to`.",
+          "type": "number"
+        },
+        "trigger": {
+          "description": "What came right before: a fallback the agent recorded, `from`'s last call was refused\nor failed, or a /model command. Unset when unknown.",
+          "enum": [
+            "fallback",
+            "refusal",
+            "error",
+            "command"
+          ]
+        },
+        "reason": {
+          "description": "For a recorded fallback: why, as the agent said (`overloaded`, `refusal`, `model_not_found`, …).",
+          "type": "string"
+        },
+        "subagent": {
+          "description": "The first switch was inside a subagent (a subagent's own session, or one in this session).",
+          "type": "boolean"
+        },
+        "count": {
+          "description": "Switches in the session, when more than one. A return to the model a switch left is not one.",
+          "type": "number"
+        },
+        "switchedCalls": {
+          "description": "Model calls that ran on a model a switch moved to (until the scope went back).",
+          "type": "number"
+        },
+        "extraUsd": {
+          "description": "What those calls cost at their model's list prices minus what the same tokens cost at the\nlist prices of the model the switch left (standard rates); negative when the other model is\ncheaper. Unset when either model has no price.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "at"
+      ],
+      "additionalProperties": false
+    },
+    "RepoState": {
+      "type": "object",
+      "properties": {
+        "root": {
+          "description": "Absolute path of the repository root.",
+          "type": "string"
+        },
+        "head": {
+          "description": "HEAD commit at the time of the event (\"\" for an unborn branch).",
+          "type": "string"
+        },
+        "snapshot": {
+          "description": "Snapshot commit in the shadow repo capturing the full working tree.",
+          "type": "string"
+        },
+        "partial": {
+          "description": "True when the snapshot fell back to tracked-files-only.",
+          "type": "boolean"
+        },
+        "branch": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "head"
+      ],
+      "additionalProperties": false
+    },
+    "Session": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "agent": {
+          "$ref": "#/$defs/AgentId"
+        },
+        "provider": {
+          "description": "The agent a host app ran, when `agent` is a host (T3 Code driving Codex or\nClaude Code): \"codex\", \"claude-code\", or the host's driver name.",
+          "type": "string"
+        },
+        "agentVersion": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "repo": {
+          "$ref": "#/$defs/RepoState"
+        },
+        "title": {
+          "description": "First user prompt, truncated to 280 chars, for lists.",
+          "type": "string"
+        },
+        "startedAt": {
+          "type": "number"
+        },
+        "endedAt": {
+          "description": "ts of the session.end event. Sessions keyed by conversation rather than by\na process (OTel: every event has an \"otel-*\" source, the session id is a\nconversation id such as gen_ai.conversation.id rather than one of its\ntraceIds, and no session.end ever arrives) use the end of the last event\nseen (ts + durationMs for events stamped at their start, ts for *.end\nevents), so the value moves forward as more turns arrive. Log-keyed OTel\nsessions (no traceId at all) and sessions known only from a backfilled\ntranscript do the same. Trace-keyed OTel sessions end with their root\nspan. Unset = still running/unknown.",
+          "type": "number"
+        },
+        "stats": {
+          "description": "Aggregates maintained at ingest.",
+          "type": "object",
+          "properties": {
+            "events": {
+              "type": "number"
+            },
+            "turns": {
+              "type": "number"
+            },
+            "toolCalls": {
+              "type": "number"
+            },
+            "toolErrors": {
+              "description": "Tool calls that failed for real (core/failures.ts). A shell command whose\nexit 1 is an answer (`rg` found nothing, `test -f` was false, `diff` saw a\ndifference) and a call the user stopped are counted apart, below.",
+              "type": "number"
+            },
+            "benignToolErrors": {
+              "description": "Failed tool calls whose exit 1 is an answer: no match, a probe, files that differ. Absent when none.",
+              "type": "number"
+            },
+            "interruptedToolCalls": {
+              "description": "Tool calls the user or the harness stopped (Ctrl-C, a rejected prompt). Absent when none.",
+              "type": "number"
+            },
+            "filesChanged": {
+              "type": "number"
+            },
+            "testsPassed": {
+              "type": "number"
+            },
+            "testsFailed": {
+              "type": "number"
+            },
+            "usage": {
+              "$ref": "#/$defs/Usage"
+            },
+            "duplicateUsage": {
+              "description": "Model-call usage left out of `usage` because an enclosing call or an earlier copy of the same response already counted it.",
+              "$ref": "#/$defs/DuplicateUsage"
+            },
+            "latency": {
+              "$ref": "#/$defs/LatencyStats"
+            },
+            "llmErrors": {
+              "description": "Failed model calls: llm.call with `ok: false` or an HTTP status of 400 or more. Unset when none failed.",
+              "$ref": "#/$defs/LlmErrors"
+            },
+            "models": {
+              "description": "Model calls by model, when more than one model made them (core/models.ts).",
+              "type": "object",
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "modelSwitch": {
+              "description": "Model switches mid-session (the first one, how many, what the switched calls cost extra); it also tags the session `model:switch`.",
+              "$ref": "#/$defs/ModelSwitch"
+            },
+            "durable": {
+              "description": "Set when the session is one run of a durable workflow engine (Vercel Workflow, Temporal, …).",
+              "$ref": "#/$defs/DurableStats"
+            },
+            "derails": {
+              "description": "Where the session went off the rails (looping, failure-streak, churn, no-progress, stalled, context-thrash), earliest first.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SessionDerail"
+              }
+            },
+            "phases": {
+              "description": "The session's phases (core/outline.ts) when it has more than one: start, resumes, compactions, long idle gaps.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/SessionPhase"
+              }
+            },
+            "waste": {
+              "description": "Read-only calls repeated with an unchanged result (core/waste.ts). Unset when none repeated.",
+              "$ref": "#/$defs/WasteStats"
+            },
+            "cacheBreaks": {
+              "description": "Model calls that found the prompt cache gone and paid for the prompt again (core/cache-breaks.ts). Unset when none did.",
+              "$ref": "#/$defs/CacheBreakStats"
+            },
+            "launch": {
+              "description": "How the agent was launched: `headless` (`claude -p`, an Agent SDK, `codex exec`) or\n`interactive` (a terminal UI or an IDE). Unset when the agent's start does not say.",
+              "enum": [
+                "headless",
+                "interactive"
+              ]
+            },
+            "inheritedTokens": {
+              "description": "A fork subagent (Claude Code's `subagent_type: \"fork\"`): tokens of the parent's context it\nstarted with (the prompt and output of the parent's call that started it). Its own calls\nread that context from the prompt cache and count in `usage`; the parent's calls count only\nin the parent. Unset for other sessions.",
+              "type": "number"
+            },
+            "hookContext": {
+              "description": "Text hooks added to the model's context, by source (`plugin:<name>`, `settings`, …). Unset when no hook added any.",
+              "$ref": "#/$defs/HookContextStats"
+            },
+            "redactions": {
+              "description": "Values redaction replaced before storage, by rule kind (`anthropic-key`, `password`, …): counts, never\nthe values. A vendor token kind also tags the session `secret:exposed`. Unset when nothing was redacted.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            "unapprovedActions": {
+              "description": "Destructive or paid commands the agent ran without a user turn approving them (core/unapproved.ts); it also flags the session `unapproved-action`. Unset when none.",
+              "$ref": "#/$defs/UnapprovedActions"
+            },
+            "foldError": {
+              "description": "Why coding.sh could not fold this session's stored events into its stats (a coding.sh bug, not\nthe agent's): the row then holds only what the events say directly (agent, start, end, cwd,\nevent count), and the session is tagged `fold:error`. `coding.sh ingest` folds it again. Unset\nwhen the fold worked.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "events",
+            "turns",
+            "toolCalls",
+            "toolErrors",
+            "filesChanged"
+          ],
+          "additionalProperties": false
+        },
+        "flags": {
+          "description": "Detected failure patterns, e.g. \"premature-completion\".",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "runId": {
+          "type": "string"
+        },
+        "endSnapshot": {
+          "description": "Snapshot at session end, for diffs.",
+          "type": "string"
+        },
+        "parent": {
+          "description": "Set when this session is a subagent of another session (own transcript / child trace).\nIngest links a child from either its `session.start` payload\n`{ parentSessionId, parentEventId?, subagentId?, subagentType? }` or the parent's\n`subagent.start|end` payload `childSessionId`. Adapters should prefer the former.",
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string"
+            },
+            "eventId": {
+              "type": "string"
+            },
+            "subagentId": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "sessionId"
+          ],
+          "additionalProperties": false
+        },
+        "traceIds": {
+          "description": "OTel trace ids that contributed to this session (first seen first, capped at 256). Filled by buildSession from events' traceId.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "project": {
+          "description": "Project, copied from the events by buildSession. Unset means \"default\".",
+          "type": "string"
+        },
+        "parseVersion": {
+          "description": "Adapter.parseVersion of the code that produced this session's rows, set when\ningest first creates the session and kept as later events arrive (so it is\nthe oldest parse in the session). Older than the adapter's: re-parsed from\nits transcript or spool (core/reparse.ts). Unset: not produced by an\nadapter's ingest (OTel, SDK batches), never re-parsed automatically.\nA store keeps the stored value when an upsert leaves it unset.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "agent",
+        "startedAt",
+        "stats",
+        "flags"
+      ],
+      "additionalProperties": false
+    },
+    "SessionDerail": {
+      "description": "One derail episode on Session.stats.derails: where it started and what happened.",
+      "type": "object",
+      "properties": {
+        "flag": {
+          "description": "\"looping\", \"failure-streak\", \"churn\", \"no-progress\", \"stalled\" or \"context-thrash\".",
+          "type": "string"
+        },
+        "ts": {
+          "description": "Onset time (ms epoch) and event.",
+          "type": "number"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "index": {
+          "description": "Index of the onset event in the session's events sorted by time.",
+          "type": "number"
+        },
+        "endTs": {
+          "description": "When it was last seen.",
+          "type": "number"
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "flag",
+        "ts",
+        "eventId",
+        "index",
+        "endTs",
+        "detail"
+      ],
+      "additionalProperties": false
+    },
+    "SessionPhase": {
+      "description": "One phase of a long session on Session.stats.phases (core/outline.ts).",
+      "type": "object",
+      "properties": {
+        "n": {
+          "description": "1-based.",
+          "type": "number"
+        },
+        "kind": {
+          "enum": [
+            "start",
+            "resume",
+            "compaction",
+            "idle"
+          ]
+        },
+        "trigger": {
+          "description": "compaction: \"auto\" or \"manual\".",
+          "type": "string"
+        },
+        "gapMs": {
+          "description": "idle/resume: the gap before it, ms.",
+          "type": "number"
+        },
+        "startTs": {
+          "type": "number"
+        },
+        "endTs": {
+          "description": "ts of its last event.",
+          "type": "number"
+        },
+        "from": {
+          "description": "Index range [from, to) into the time-sorted events, and the first event's id (a deep link).",
+          "type": "number"
+        },
+        "to": {
+          "type": "number"
+        },
+        "eventId": {
+          "type": "string"
+        },
+        "events": {
+          "type": "number"
+        },
+        "prompts": {
+          "type": "number"
+        },
+        "toolCalls": {
+          "type": "number"
+        },
+        "toolErrors": {
+          "type": "number"
+        },
+        "filesChanged": {
+          "type": "number"
+        },
+        "tests": {
+          "description": "Last test result in the phase.",
+          "type": "object",
+          "properties": {
+            "passed": {
+              "type": "number"
+            },
+            "failed": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "passed",
+            "failed"
+          ],
+          "additionalProperties": false
+        },
+        "tokens": {
+          "type": "number"
+        },
+        "costUsd": {
+          "type": "number"
+        },
+        "title": {
+          "description": "First prompt in the phase, up to 120 characters.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "n",
+        "kind",
+        "startTs",
+        "endTs",
+        "from",
+        "to",
+        "eventId",
+        "events",
+        "prompts",
+        "toolCalls",
+        "toolErrors",
+        "filesChanged",
+        "tokens"
+      ],
+      "additionalProperties": false
+    },
+    "UnapprovedActions": {
+      "description": "Session.stats.unapprovedActions: destructive or paid commands the agent ran when the user's last turn had not\napproved them (it did not ask for the action, pre-approve it or say yes to the agent's question).",
+      "type": "object",
+      "properties": {
+        "count": {
+          "type": "number"
+        },
+        "byKind": {
+          "type": "object",
+          "properties": {
+            "rm-rf": {
+              "type": "number"
+            },
+            "git-reset-hard": {
+              "type": "number"
+            },
+            "git-clean": {
+              "type": "number"
+            },
+            "git-discard": {
+              "type": "number"
+            },
+            "git-push-force": {
+              "type": "number"
+            },
+            "db-drop": {
+              "type": "number"
+            },
+            "forced-subcommand": {
+              "type": "number"
+            },
+            "data-dir": {
+              "type": "number"
+            },
+            "paid": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": false
+        },
+        "first": {
+          "description": "The first one: its kind, its command (up to 200 characters), when, and whether a tool call had failed since the user's last turn.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "$ref": "#/$defs/UnapprovedKind"
+            },
+            "command": {
+              "type": "string"
+            },
+            "at": {
+              "type": "number"
+            },
+            "afterError": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "command",
+            "at"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "count",
+        "byKind",
+        "first"
+      ],
+      "additionalProperties": false
+    },
+    "UnapprovedKind": {
+      "description": "What an unapproved action did (core/unapproved.ts): `rm -rf` outside temp and build dirs; `git reset --hard`,\n`git clean -f`, or `git checkout|restore .` with no commit or stash first; `git push --force`; dropping or\ntruncating a database; a tool's own `--yes`/`--force` on a repair, reinit, migrate, delete or purge\nsubcommand; deleting, moving or overwriting a data file or dir; a paid cloud or API batch job.",
+      "enum": [
+        "rm-rf",
+        "git-reset-hard",
+        "git-clean",
+        "git-discard",
+        "git-push-force",
+        "db-drop",
+        "forced-subcommand",
+        "data-dir",
+        "paid"
+      ]
+    },
+    "Usage": {
+      "type": "object",
+      "properties": {
+        "inputTokens": {
+          "type": "number"
+        },
+        "outputTokens": {
+          "type": "number"
+        },
+        "cacheReadTokens": {
+          "type": "number"
+        },
+        "cacheWriteTokens": {
+          "type": "number"
+        },
+        "costUsd": {
+          "description": "Reported (agent or gateway) or, when `estimatedCostUsd` covers it, computed from the price table.",
+          "type": "number"
+        },
+        "estimatedCostUsd": {
+          "description": "Session totals only: the part of `costUsd` computed from token counts and list\nprices rather than reported (events say so with `payload.costEstimated`).",
+          "type": "number"
+        },
+        "estimatedCostByTier": {
+          "description": "Session totals only: the part of `estimatedCostUsd` priced at non-standard\nrates, keyed by the calls' `payload.priceTier` (`batch`, `long-context`, ...).",
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "WasteStats": {
+      "description": "Session.stats.waste: duplicate fetches, read-only tool calls (Read, Grep, a\n`cat`, an MCP get) repeated while the first result was still in context and\nunchanged, so the repeat re-sent tokens the model already had.",
+      "type": "object",
+      "properties": {
+        "duplicateFetches": {
+          "type": "number"
+        },
+        "duplicateFetchTokens": {
+          "description": "Estimated tokens the repeats re-sent: output characters / 4.",
+          "type": "number"
+        },
+        "readOnlyCalls": {
+          "description": "All read-only calls in the session, the base for a duplicate share.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "duplicateFetches",
+        "duplicateFetchTokens",
+        "readOnlyCalls"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

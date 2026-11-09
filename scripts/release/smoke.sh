@@ -89,6 +89,10 @@ export type T = [BlobStore, IndexStore, typeof observe, typeof trace, typeof spa
 EOF
 "$ROOT/node_modules/.bin/tsc" --noEmit --strict --skipLibCheck false --module nodenext --moduleResolution nodenext --target es2022 --types node --typeRoots "$ROOT/node_modules/@types" check.ts
 echo "types resolve"
+node --input-type=module -e '
+const { default: s } = await import("coding.sh/schema.json", { with: { type: "json" } });
+if (s.$id !== "https://coding.sh/schema.json" || !s.$defs?.AgentEvent || !s.$defs?.Session) throw new Error("coding.sh/schema.json lacks AgentEvent or Session");
+console.log("coding.sh/schema.json resolves");'
 
 step "@codingdotsh/sdk: import and send a trace to a local coding.sh serve"
 "$B" serve --port 0 >"$W/serve.out" 2>"$W/serve.err" &
